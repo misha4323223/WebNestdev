@@ -6,6 +6,8 @@ import { AgentRuntime } from "./agent-runtime.js";
 import { createProject,ensureDataDir,getProject } from "./project-store.js";
 import { listTools } from "./tool-registry.js";
 import "./tools/project-tools.js";
+import "./tools/filesystem-tools.js";
+import "./tools/terminal-tools.js";
 const app=Fastify({logger:true});const runtime=new AgentRuntime();
 await ensureDataDir();await app.register(cors,{origin:true});await app.register(websocket);
 app.get("/api/health",async()=>({ok:true,service:"webnestdev-server"}));
