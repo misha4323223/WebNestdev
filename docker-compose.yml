@@ -1,0 +1,24 @@
+services:
+  webnestdev-server:
+    build:
+      context: ./server
+    environment:
+      AI_PROVIDER: ${AI_PROVIDER:-ollama}
+      AI_BASE_URL: ${AI_BASE_URL:-http://host.docker.internal:11434}
+      AI_MODEL: ${AI_MODEL:-llama3.2}
+      PORT: 8787
+      SANDBOX_MODE: docker
+      SANDBOX_IMAGE: node:22-bookworm-slim
+      SANDBOX_MEMORY: 1g
+      SANDBOX_CPUS: 1
+      SANDBOX_PIDS_LIMIT: 128
+      SANDBOX_NETWORK: none
+    ports:
+      - "8787:8787"
+    volumes:
+      - webnestdev-data:/app/.webnestdev
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+
+volumes:
+  webnestdev-data:
