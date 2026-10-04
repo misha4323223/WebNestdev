@@ -2,6 +2,8 @@ import { getSandbox,assertInsideSandbox } from "../sandbox-manager.js";
 import { runInSandbox } from "../sandbox-worker.js";
 import { registerTool } from "../tool-registry.js";
 
+function quote(value:string){return "'"+value.replaceAll("'","'\\''")+"'"}
+
 async function git(c:{projectId:string;runId:string},command:string){
   const sandbox=await getSandbox(c.projectId);
   return runInSandbox(sandbox,"git "+command,sandbox.root);
