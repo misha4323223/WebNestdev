@@ -1,0 +1,6 @@
+import { randomUUID } from "node:crypto";
+import type { AgentEvent,AgentRunRequest } from "./types.js";
+import { getTool,listTools } from "./tool-registry.js";
+export type EventSink=(event:AgentEvent)=>void;
+export class AgentRuntime{
+ async run(request:AgentRunRequest,emit:EventSink){const runId=randomUUID();emit({type:"run.started",runId});try{const last=request.messages.at(-1)?.content?.trim()??"";if(!last)throw new Error("Empty prompt");const tools=listTools();emit({type:"message.delta",runId,delta:"Принял задачу: "+last+"\n\nДоступные инструменты: "+(tools.map(t=>t.name).join(", ")||"пока нет")+"."});if(/\b(файл|файлы|структур|список)\b/i.test(last)){const tool=getTool("project.list_files");if(tool){const toolCallId=randomUUID();emit({type:"tool.started",runId,toolCallId,name:tool.name,input:{}});const output=await tool.execute({},{projectId:request.projectId,runId});emit({type:"tool.finished",runId,toolCallId,name:tool.name,output});emit({type:"message.delta",runId,delta:"\n\nСодержимое проекта: "+JSON.stringify(output)}})}}emit({type:"run.completed",runId})}catch(error){emit({type:"run.failed",runId,error:error instanceof Error?error.message:String(error)})}}}
