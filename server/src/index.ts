@@ -3,7 +3,7 @@ import cors from "@fastify/cors";
 import websocket from "@fastify/websocket";
 import { z } from "zod";
 import { AgentRuntime } from "./agent-runtime.js";
-import { createProject,ensureDataDir,getProject } from "./project-store.js";
+import { createProject,ensureDataDir,getProject,createConversation,getConversation,listConversations,appendConversationMessages } from "./project-store.js";
 import { listTools } from "./tool-registry.js";
 import { sandboxStatus } from "./docker-sandbox.js";
 import "./tools/project-tools.js";
@@ -23,13 +23,16 @@ const messageSchema=z.discriminatedUnion("role",[
   z.object({role:z.literal("assistant"),content:z.string(),tool_calls:z.array(z.object({id:z.string(),name:z.string(),arguments:z.record(z.unknown())})).optional()}),
   z.object({role:z.literal("tool"),content:z.string(),tool_call_id:z.string()})
 ]);
-const runSchema=z.object({projectId:z.string().min(1),messages:z.array(messageSchema).min(1),model:z.string().optional()});
+const runSchema=z.object({projectId:z.string().min(1),conversationId:z.string().optional(),messages:z.array(messageSchema).min(1),model:z.string().optional()});
 
 app.get("/api/health",async()=>({ok:true,service:"webnestdev-server",sandbox:await sandboxStatus()}));
 app.get("/api/sandbox/status",async()=>sandboxStatus());
 app.get("/api/tools",async()=>({tools:listTools()}));
 app.get("/api/projects/:id",async(request,reply)=>{const params=z.object({id:z.string().min(1)}).parse(request.params);const project=await getProject(params.id);if(!project)return reply.code(404).send({error:"Project not found"});return project});
 app.post("/api/projects",async(request,reply)=>{const body=z.object({name:z.string().max(120).optional()}).parse(request.body);return reply.code(201).send(await createProject(body.name??"Новый проект"))});
+app.get("/api/projects/:id/conversations",async(request,reply)=>{const p=z.object({id:z.string().min(1)}).parse(request.params);if(!await getProject(p.id))return reply.code(404).send({error:"Project not found"});return {conversations:await listConversations(p.id)}});
+app.post("/api/projects/:id/conversations",async(request,reply)=>{const p=z.object({id:z.string().min(1)}).parse(request.params);const body=z.object({title:z.string().max(120).optional()}).parse(request.body);return reply.code(201).send(await createConversation(p.id,body.title))});
+app.get("/api/conversations/:id",async(request,reply)=>{const p=z.object({id:z.string().min(1)}).parse(request.params);const c=await getConversation(p.id);if(!c)return reply.code(404).send({error:"Conversation not found"});return c});
 
 app.get("/ws",{websocket:true},(socket)=>{
   socket.on("message",async raw=>{
