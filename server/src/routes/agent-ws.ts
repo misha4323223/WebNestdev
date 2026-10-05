@@ -15,12 +15,13 @@ export async function registerAgentWebSocket(app:FastifyInstance,runtime=new Age
   app.get("/ws",{websocket:true},(socket)=>{
     let running=false;
     let closed=false;
+    let controller:AbortController|null=null;
 
     const safeSend=(payload:unknown)=>{
       if(!closed)try{socket.send(JSON.stringify(payload))}catch{closed=true}
     };
 
-    socket.on("close",()=>{closed=true});
+    socket.on("close",()=>{closed=true;controller?.abort();controller=null;});
     socket.on("message",async raw=>{
       if(closed)return;
       if(running){safeSend({type:"error",error:"Agent is already running for this connection"});return}
@@ -45,7 +46,8 @@ export async function registerAgentWebSocket(app:FastifyInstance,runtime=new Age
           }
         }
 
-        await runtime.run(request,event=>safeSend(event));
+        controller=new AbortController();
+        await runtime.run(request,event=>safeSend(event),controller.signal);
       }catch(error){
         safeSend({type:"error",error:error instanceof Error?error.message:String(error)});
       }finally{
