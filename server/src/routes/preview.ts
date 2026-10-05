@@ -27,7 +27,7 @@ export async function registerPreviewRoutes(app:FastifyInstance){
     const state=await previewStatus(projectId);
     if(!state.running||!state.port)throw new Error("Preview is not running");
     const incoming=new URL(request.raw.url??"/","http://webnestdev.local");
-    const host=process.env.PREVIEW_PROXY_HOST??"127.0.0.1";
+    const host=state.host||process.env.PREVIEW_PROXY_HOST||"127.0.0.1";
     const target="http://"+host+":"+state.port+"/"+suffix+(incoming.search||"");
     try{
       const response=await fetch(target);
