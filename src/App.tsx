@@ -4,7 +4,7 @@ import { Bot, ChevronDown, FolderGit2, Github, Menu, Plus, Send, Settings2, Spar
 type Message={role:"user"|"assistant";content:string};
 type ServerEvent={type:string;delta?:string;error?:string};
 type FileEntry={name:string;type:"file"|"directory"};
-const API=import.meta.env.VITE_API_URL??"http://localhost:8787";
+const API=import.meta.env.VITE_API_URL??"";
 
 export function App(){
   const [messages,setMessages]=useState<Message[]>([{role:"assistant",content:"Привет. Я WebNestdev — веб-агент для создания и развития проектов. Опиши, что нужно сделать."}]);
@@ -61,7 +61,7 @@ export function App(){
     const history=[...messages,{role:"user" as const,content:value}];
     setMessages([...history,{role:"assistant",content:""}]);
     setPrompt("");setRunning(true);
-    const wsUrl=API.replace(/^http/,"ws")+"/ws";
+    const wsUrl=(window.location.protocol==="https:"?"wss:":"ws:")+"//"+window.location.host+"/ws";
     const ws=new WebSocket(wsUrl);socket.current=ws;
     ws.onopen=()=>ws.send(JSON.stringify({type:"agent.run",request:{projectId,messages:history}}));
     ws.onmessage=e=>{
@@ -103,7 +103,7 @@ export function App(){
         </section>
 
         <aside className="preview">
-          <div className="preview-head"><div><span className="eyebrow">PREVIEW</span><strong>Рабочая область</strong></div><div className="preview-actions">{preview.running?<button className="icon-button" onClick={stopPreview}><Square size={14}/></button>:<button className="icon-button" onClick={startPreview}><Terminal size={14}/></button>}<button className="icon-button" onClick={refreshPreview}><RefreshCw size={14}/></button>{preview.running&&<a className="icon-button" href={API.replace(":8787",":"+preview.port)} target="_blank" rel="noreferrer"><ExternalLink size={14}/></a>}</div></div>
+          <div className="preview-head"><div><span className="eyebrow">PREVIEW</span><strong>Рабочая область</strong></div><div className="preview-actions">{preview.running?<button className="icon-button" onClick={stopPreview}><Square size={14}/></button>:<button className="icon-button" onClick={startPreview}><Terminal size={14}/></button>}<button className="icon-button" onClick={refreshPreview}><RefreshCw size={14}/></button>{preview.running&&<a className="icon-button" href={API+"/api/projects/"+projectId+"/preview/open"} target="_blank" rel="noreferrer"><ExternalLink size={14}/></a>}</div></div>
           {preview.running&&preview.port?<iframe className="preview-frame" title="Live preview" src={API.replace(":8787",":"+preview.port)}/>:<div className="preview-empty"><div className="preview-icon"><FolderGit2 size={20}/></div><strong>Предпросмотр проекта</strong><span>Запусти preview после создания файлов проекта.</span><button className="ghost-button" onClick={startPreview}>Запустить preview</button></div>}
         </aside>
       </main>
