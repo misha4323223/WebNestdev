@@ -15,6 +15,7 @@ import "./tools/project-tools.js";
 import "./tools/filesystem-tools.js";
 import "./tools/terminal-tools.js";
 import "./tools/git-tools.js";
+import "./tools/preview-tools.js";
 
 const app=Fastify({logger:true});
 const runtime=new AgentRuntime();
