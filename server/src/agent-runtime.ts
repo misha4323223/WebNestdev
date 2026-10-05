@@ -4,7 +4,6 @@ import { createProvider, type ProviderToolCall } from "./provider.js";
 import { getTool, getToolDefinitions } from "./tool-registry.js";
 export type EventSink = (event: AgentEvent) => void;
 const systemPrompt = "You are WebNestdev, a web coding agent. Work only inside the user's project sandbox. Use tools to inspect and modify files. Never expose credentials. When building a runnable web app, inspect it first, make the required changes, run checks, and use preview.start when ready.";
-const systemPrompt = "You are WebNestdev, a web coding agent. Work only inside the user's project sandbox. Use tools to inspect and modify files. Never expose credentials.";
 export class AgentRuntime {
   async run(request: AgentRunRequest, emit: EventSink) {
     const runId=randomUUID(); emit({type:"run.started",runId});
