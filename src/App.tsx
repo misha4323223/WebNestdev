@@ -11,6 +11,7 @@ export function App(){
   const [prompt,setPrompt]=useState("");
   const [sidebarOpen,setSidebarOpen]=useState(true);
   const [projectId,setProjectId]=useState("");
+  const [conversationId,setConversationId]=useState("");
   const [projectName,setProjectName]=useState("Новый проект");
   const [running,setRunning]=useState(false);
   const [view,setView]=useState<"agent"|"files"|"terminal">("agent");
@@ -23,7 +24,7 @@ export function App(){
   useEffect(()=>{
     let active=true;
     fetch(API+"/api/projects",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({name:"Новый проект"})})
-      .then(r=>r.json()).then(p=>{if(active){setProjectId(p.id);setProjectName(p.name)}}).catch(()=>{});
+      .then(r=>r.json()).then(async p=>{if(!active)return;setProjectId(p.id);setProjectName(p.name);const cr=await fetch(API+"/api/projects/"+p.id+"/conversations",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({title:"Новая сессия"})});if(cr.ok){const c=await cr.json();setConversationId(c.id)}}).catch(()=>{});
     return()=>{active=false;socket.current?.close()};
   },[]);
 
