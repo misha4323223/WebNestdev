@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Bot, ChevronDown, FolderGit2, Github, Menu, Plus, Send, Settings2, Sparkles, Terminal, X } from "lucide-react";
 
 type Message = { role: "user" | "assistant"; content: string };
-type ServerEvent = { type: string; delta?: string; error?: string };
+type ServerEvent = { type: string; delta?: string; error?: string; name?: string; output?: unknown };\ntype FileEntry = { name:string; type:"file"|"directory" };
 
 const API = import.meta.env.VITE_API_URL ?? "http://localhost:8787";
 const starterMessages: Message[] = [{ role: "assistant", content: "Привет. Я WebNestdev — веб-агент для создания и развития проектов. Опиши, что нужно сделать." }];
@@ -14,7 +14,7 @@ export function App() {
   const [projectId, setProjectId] = useState("");
   const [projectName, setProjectName] = useState("Новый проект");
   const [model] = useState("WebNestdev Agent");
-  const [running, setRunning] = useState(false);
+  const [running, setRunning] = useState(false);\n  const [view, setView] = useState<"agent"|"files"|"terminal">("agent");\n  const [files, setFiles] = useState<FileEntry[]>([]);\n  const [terminalCommand, setTerminalCommand] = useState("");\n  const [terminalOutput, setTerminalOutput] = useState("");
   const socket = useRef<WebSocket | null>(null);
 
   useEffect(() => {
@@ -25,7 +25,7 @@ export function App() {
     return () => { active = false; socket.current?.close(); };
   }, []);
 
-  function sendPrompt() {
+  async function loadFiles() { if (!projectId) return; try { const r=await fetch(API+"/api/projects/"+projectId+"/files"); const data=await r.json(); setFiles(data.files??[]); } catch {} }\n\n  async function runTerminal() { if (!projectId || !terminalCommand.trim()) return; setTerminalOutput("Выполняю…"); try { const r=await fetch(API+"/api/projects/"+projectId+"/terminal",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({command:terminalCommand})}); const data=await r.json(); setTerminalOutput([data.stdout,data.stderr].filter(Boolean).join("\\n") || "Готово"); } catch(e) { setTerminalOutput("Ошибка подключения к серверу"); } }\n\n  function sendPrompt() {
     const value = prompt.trim();
     if (!value || !projectId || running) return;
     setMessages((current) => [...current, { role: "user", content: value }, { role: "assistant", content: "" }]);
@@ -54,12 +54,12 @@ export function App() {
       <div className="workspace">
         <aside className={`sidebar ${sidebarOpen ? "open" : ""}`}>
           <div className="sidebar-head"><button className="new-project"><Plus size={15} /> Новый проект</button><button className="icon-button mobile-only" onClick={() => setSidebarOpen(false)} aria-label="Закрыть"><X size={16} /></button></div>
-          <div className="sidebar-section"><div className="section-label">Рабочая область</div><button className="nav-item active"><Bot size={15} /> Agent</button><button className="nav-item"><FolderGit2 size={15} /> Файлы</button><button className="nav-item"><Terminal size={15} /> Терминал</button></div>
+          <div className="sidebar-section"><div className="section-label">Рабочая область</div><button className={`nav-item ${view === "agent" ? "active" : ""}`} onClick={() => setView("agent")}><Bot size={15} /> Agent</button><button className={`nav-item ${view === "files" ? "active" : ""}`} onClick={() => { setView("files"); loadFiles(); }}><FolderGit2 size={15} /> Файлы</button><button className={`nav-item ${view === "terminal" ? "active" : ""}`} onClick={() => setView("terminal")}><Terminal size={15} /> Терминал</button></div>
           <div className="sidebar-section"><div className="section-label">Проекты</div><div className="project-row"><span className="status-dot" /> {projectName}</div></div>
           <div className="sidebar-footer"><div className="sponsor-label">СПОНСОР СЕССИИ</div><div className="sponsor-card"><div className="sponsor-logo">YC</div><div><strong>Yandex Cloud</strong><span>Инфраструктура проекта</span></div></div></div>
         </aside>
         <main className="main">
-          <section className="chat">
+          <section className="chat">{view === "files" ? <div className="panel"><div className="panel-title">Файлы проекта</div><button className="ghost-button" onClick={loadFiles}>Обновить</button><div className="file-list">{files.map(f => <div className="file-item" key={f.name}><FolderGit2 size={15} />{f.name}<span>{f.type}</span></div>)}</div></div> : view === "terminal" ? <div className="panel"><div className="panel-title">Терминал sandbox</div><textarea className="terminal-input" value={terminalCommand} onChange={e=>setTerminalCommand(e.target.value)} placeholder="npm --version" /><button className="send-button" onClick={runTerminal}>Запустить</button><pre className="terminal-output">{terminalOutput}</pre></div> : 
             <div className="chat-header"><div><div className="eyebrow">AGENT</div><h1>Что создаём?</h1></div><button className="model-select">{model}<ChevronDown size={14} /></button></div>
             <div className="messages">{messages.map((message, index) => <div className={`message-row ${message.role}`} key={index}><div className="message-avatar">{message.role === "assistant" ? <Sparkles size={14} /> : "Вы"}</div><div className="message-content"><div className="message-role">{message.role === "assistant" ? "WebNestdev" : "Вы"}</div><div className="message-text">{message.content || (running ? "Работаю…" : "")}</div></div></div>)}</div>
             <div className="composer-wrap"><div className="composer"><textarea value={prompt} onChange={(e) => setPrompt(e.target.value)} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendPrompt(); } }} placeholder="Опишите проект или задачу..." rows={3} /><div className="composer-footer"><span>Enter — отправить · Shift + Enter — новая строка</span><button className="send-button" disabled={running || !projectId} onClick={sendPrompt} aria-label="Отправить"><Send size={15} /></button></div></div></div>
