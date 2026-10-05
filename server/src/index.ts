@@ -86,6 +86,12 @@ app.get("/ws",{websocket:true},(socket)=>{
       const message=JSON.parse(raw.toString()) as {type?:string;request?:unknown};
       if(message.type!=="agent.run"){socket.send(JSON.stringify({type:"error",error:"Unknown websocket message type"}));return}
       const request=runSchema.parse(message.request);
+      if(request.conversationId){
+        const conversation=await getConversation(request.conversationId);
+        if(!conversation||conversation.projectId!==request.projectId)throw new Error("Conversation not found for project");
+        const last=request.messages.at(-1);
+        if(last?.role==="user")await appendConversationMessages(request.conversationId,[last]);
+      }
       await runtime.run(request,event=>socket.send(JSON.stringify(event)));
     }catch(error){socket.send(JSON.stringify({type:"error",error:error instanceof Error?error.message:String(error)}))}
   });
