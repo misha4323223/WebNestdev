@@ -29,7 +29,9 @@ export function useWorkspace(){
         localStorage.setItem("webnestdev.projectId",project.id);
         localStorage.setItem("webnestdev.projectName",project.name);
         localStorage.setItem("webnestdev.conversationId",conversation.id);
-      }catch{}
+      }catch(error){
+    console.error("WebNestdev workspace initialization failed",error);
+  }
     })();
     return()=>{cancelled=true};
   },[projectId,conversationId,projectName]);
