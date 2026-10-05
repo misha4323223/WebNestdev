@@ -35,6 +35,27 @@ app.get("/api/sandbox/status",async()=>sandboxStatus());
 app.post("/api/projects/:id/preview/start",async(request,reply)=>{const p=z.object({id:z.string().min(1)}).parse(request.params);const sandbox=await getSandbox(p.id);return reply.send(await startPreview(sandbox));});
 app.post("/api/projects/:id/preview/stop",async(request,reply)=>{const p=z.object({id:z.string().min(1)}).parse(request.params);return reply.send(await stopPreview(p.id));});
 app.get("/api/projects/:id/preview/status",async(request,reply)=>{const p=z.object({id:z.string().min(1)}).parse(request.params);return reply.send(await previewStatus(p.id));});
+app.get("/api/projects/:id/preview/open",async(request,reply)=>{
+  const p=z.object({id:z.string().min(1)}).parse(request.params);
+  const state=await previewStatus(p.id);
+  if(!state.running||!state.port)return reply.code(404).send({error:"Preview is not running"});
+  const response=await fetch("http://127.0.0.1:"+state.port+"/");
+  reply.code(response.status);
+  response.headers.forEach((value,key)=>{if(!["content-length","connection","transfer-encoding"].includes(key))reply.header(key,value)});
+  return reply.send(Buffer.from(await response.arrayBuffer()));
+});
+app.get("/api/projects/:id/preview/open/*",async(request,reply)=>{
+  const p=z.object({id:z.string().min(1)}).parse(request.params);
+  const params=request.params as {id:string;"*":string};
+  const state=await previewStatus(p.id);
+  if(!state.running||!state.port)return reply.code(404).send({error:"Preview is not running"});
+  const suffix=params["*"]||"";
+  const query=request.url.includes("?")?request.url.slice(request.url.indexOf("?")):"";
+  const response=await fetch("http://127.0.0.1:"+state.port+"/"+suffix+query);
+  reply.code(response.status);
+  response.headers.forEach((value,key)=>{if(!["content-length","connection","transfer-encoding"].includes(key))reply.header(key,value)});
+  return reply.send(Buffer.from(await response.arrayBuffer()));
+});
 app.get("/api/tools",async()=>({tools:listTools()}));
 app.get("/api/projects/:id/files",async(request,reply)=>{
   const p=z.object({id:z.string().min(1)}).parse(request.params);
