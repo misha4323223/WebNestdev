@@ -7,12 +7,14 @@ import { WorkspaceNav,type WorkspaceView } from "./WorkspaceNav";
 import { WorkspaceContent } from "./WorkspaceContent";
 
 export function WorkspaceShell(){
-  const {projectId,conversationId,projectName}=useWorkspace();
+  const {projectId,conversationId,projectName,loading,error,retry}=useWorkspace();
   const [view,setView]=useState<WorkspaceView>("agent");
   const [settingsOpen,setSettingsOpen]=useState(false);
   const [deployOpen,setDeployOpen]=useState(false);
 
-  if(!projectId||!conversationId)return <div className="app-loading">Создаём рабочую область…</div>;
+  if(loading)return <div className="app-loading">Подключаем рабочую область…</div>;
+  if(error)return <div className="app-loading"><strong>WebNestdev API недоступен</strong><span>{error}</span><button className="ghost-button" onClick={()=>void retry()}>Повторить</button></div>;
+  if(!projectId||!conversationId)return <div className="app-loading">Рабочая область не создана.</div>;
 
   const createNewProject=()=>{localStorage.removeItem("webnestdev.projectId");localStorage.removeItem("webnestdev.conversationId");localStorage.removeItem("webnestdev.projectName");window.location.reload()};
   const openDeploy=()=>{setSettingsOpen(false);setDeployOpen(true)};
