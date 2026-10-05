@@ -11,16 +11,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-                - name: Install server dependencies
+
+      - name: Install server dependencies
         run: npm install
         working-directory: server
+
       - name: Build server
         run: npm run build
         working-directory: server
+
       - name: Install web dependencies
-        run: npm ci
+        run: npm install
+
       - name: Build web
         run: npm run build
