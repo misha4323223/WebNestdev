@@ -7,7 +7,7 @@ export function Topbar({projectName,onMenu,onNewProject}:{projectName:string;onM
     <div className="topbar-project">{projectName}</div>
     <div className="topbar-actions">
       <button className="ghost-button" onClick={onNewProject}><Plus size={14}/> Новый проект</button>
-      <button className="icon-button" aria-label="GitHub"><Github size={15}/></button>
+      <a className="icon-button" href="https://github.com/misha4323223/WebNestdev" target="_blank" rel="noreferrer" aria-label="GitHub"><Github size={15}/></a>
     </div>
   </header>;
 }
