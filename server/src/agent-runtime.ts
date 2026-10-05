@@ -10,16 +10,17 @@ import type { EventSink } from "./agent/types.js";
 export class AgentRuntime {
   private readonly provider=createProvider();
 
-  async run(request:AgentRunRequest,emit:EventSink){
+  async run(request:AgentRunRequest,emit:EventSink,signal?:AbortSignal){
     const runId=randomUUID();
     emit({type:"run.started",runId});
     try{
       const messages:ChatMessage[]=buildInitialMessages(request.messages);
       const model=request.model??process.env.AI_MODEL??"llama3.2";
-      const maxSteps=Math.max(1,Number(process.env.AGENT_MAX_STEPS??12));
+      const maxSteps=Math.min(50,Math.max(1,Number(process.env.AGENT_MAX_STEPS??12)));
 
       for(let step=0;step<maxSteps;step++){
-        const context={runId,request,emit};
+        if(signal?.aborted)throw new Error("Agent run cancelled");
+        const context={runId,request,emit,signal};
         const result=await runAgentStep(this.provider,messages,model,context);
         if(!result.calls.length){
           const text=result.text||"Модель не вернула ответ.";
@@ -33,9 +34,11 @@ export class AgentRuntime {
 
         messages.push({role:"assistant",content:result.text,tool_calls:result.calls});
         for(const call of result.calls){
+          if(signal?.aborted)throw new Error("Agent run cancelled");
           emit({type:"tool.started",runId,toolCallId:call.id,name:call.name,input:call.arguments});
           try{
             const output=await executeTool(call,context);
+            if(signal?.aborted)throw new Error("Agent run cancelled");
             emit({type:"tool.finished",runId,toolCallId:call.id,name:call.name,output});
             messages.push({role:"tool",content:JSON.stringify(output),tool_call_id:call.id});
           }catch(error){
