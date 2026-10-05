@@ -11,11 +11,21 @@ export function useWorkspace(){
     let cancelled=false;
     (async()=>{
       try{
+        if(projectId&&!conversationId){
+          const conversation=await createConversation(projectId);
+          if(cancelled)return;
+          setConversationId(conversation.id);
+          localStorage.setItem("webnestdev.conversationId",conversation.id);
+          return;
+        }
+
         const project=await createProject(projectName);
         if(cancelled)return;
         const conversation=await createConversation(project.id);
         if(cancelled)return;
-        setProjectId(project.id);setProjectName(project.name);setConversationId(conversation.id);
+        setProjectId(project.id);
+        setProjectName(project.name);
+        setConversationId(conversation.id);
         localStorage.setItem("webnestdev.projectId",project.id);
         localStorage.setItem("webnestdev.projectName",project.name);
         localStorage.setItem("webnestdev.conversationId",conversation.id);
