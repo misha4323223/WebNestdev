@@ -1,31 +1,13 @@
-import { useEffect,useState } from "react";
+import { useState } from "react";
 import { FilePanel } from "../files/FilePanel";
 import { TerminalPanel } from "../terminal/TerminalPanel";
 import { PreviewPanel } from "../preview/PreviewPanel";
 import { AgentPanel } from "../agent/AgentPanel";
-import { createConversation,createProject } from "../../lib/project-api";
+import { useWorkspace } from "./useWorkspace";
 
 export function WorkspaceShell(){
-  const [projectId,setProjectId]=useState(()=>localStorage.getItem("webnestdev.projectId")??"");
-  const [conversationId,setConversationId]=useState(()=>localStorage.getItem("webnestdev.conversationId")??"");
+  const {projectId,conversationId}=useWorkspace();
   const [view,setView]=useState<"agent"|"files"|"terminal">("agent");
-
-  useEffect(()=>{
-    if(projectId&&conversationId)return;
-    let cancelled=false;
-    (async()=>{
-      try{
-        const project=await createProject();
-        if(cancelled)return;
-        const conversation=await createConversation(project.id);
-        if(cancelled)return;
-        setProjectId(project.id);setConversationId(conversation.id);
-        localStorage.setItem("webnestdev.projectId",project.id);
-        localStorage.setItem("webnestdev.conversationId",conversation.id);
-      }catch{}
-    })();
-    return()=>{cancelled=true};
-  },[projectId,conversationId]);
 
   if(!projectId||!conversationId)return <div className="app-loading">Создаём рабочую область…</div>;
 
