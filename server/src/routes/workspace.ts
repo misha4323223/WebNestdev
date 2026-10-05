@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { readdir,readFile } from "node:fs/promises";
+import { readdir,readFile,stat } from "node:fs/promises";
 import path from "node:path";
 import { getSandbox,assertInsideSandbox } from "../sandbox-manager.js";
 import { assertRegularFile,resolveInsideSandbox } from "../sandbox/path-guard.js";
@@ -25,7 +25,7 @@ export async function registerWorkspaceRoutes(app:FastifyInstance){
     const q=z.object({path:z.string().min(1).max(2000)}).parse(request.query);
     const sandbox=await getSandbox(p.id);
     const file=await assertRegularFile(sandbox.root,path.join(sandbox.root,q.path));
-    const info=await import("node:fs/promises").then(fs=>fs.stat(file));
+    const info=await stat(file);
     if(info.size>MAX_FILE_BYTES)throw new Error("File is too large to open in the workspace");
     return {path:q.path,content:await readFile(file,"utf8")};
   });
