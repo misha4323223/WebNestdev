@@ -10,6 +10,7 @@ import { getSandbox,assertInsideSandbox } from "./sandbox-manager.js";
 import { readdir,readFile } from "node:fs/promises";
 import path from "node:path";
 import { runInSandbox } from "./sandbox-worker.js";
+import { startPreview,stopPreview,previewStatus } from "./preview-manager.js";
 import "./tools/project-tools.js";
 import "./tools/filesystem-tools.js";
 import "./tools/terminal-tools.js";
@@ -31,6 +32,9 @@ const runSchema=z.object({projectId:z.string().min(1),conversationId:z.string().
 
 app.get("/api/health",async()=>({ok:true,service:"webnestdev-server",sandbox:await sandboxStatus()}));
 app.get("/api/sandbox/status",async()=>sandboxStatus());
+app.post("/api/projects/:id/preview/start",async(request,reply)=>{const p=z.object({id:z.string().min(1)}).parse(request.params);const sandbox=await getSandbox(p.id);return reply.send(await startPreview(sandbox));});
+app.post("/api/projects/:id/preview/stop",async(request,reply)=>{const p=z.object({id:z.string().min(1)}).parse(request.params);return reply.send(await stopPreview(p.id));});
+app.get("/api/projects/:id/preview/status",async(request,reply)=>{const p=z.object({id:z.string().min(1)}).parse(request.params);return reply.send(await previewStatus(p.id));});
 app.get("/api/tools",async()=>({tools:listTools()}));
 app.get("/api/projects/:id/files",async(request,reply)=>{
   const p=z.object({id:z.string().min(1)}).parse(request.params);
