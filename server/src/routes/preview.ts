@@ -16,7 +16,7 @@ export async function registerPreviewRoutes(app:FastifyInstance){
     const p=z.object({id:z.string().min(1)}).parse(request.params);
     return reply.send(await previewStatus(p.id));
   });
-  app.get("/api/projects/:id/preview/open",async(request)=>proxyPreview(request,p.id,""));
+  app.get("/api/projects/:id/preview/open",async(request)=>{const p=z.object({id:z.string().min(1)}).parse(request.params);return proxyPreview(request,p.id,"");});
   app.get("/api/projects/:id/preview/open/*",async(request)=>{
     const p=z.object({id:z.string().min(1)}).parse(request.params);
     const params=request.params as {id:string;"*":string};
