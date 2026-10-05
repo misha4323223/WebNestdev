@@ -64,7 +64,7 @@ export function App(){
     setPrompt("");setRunning(true);
     const wsUrl=(window.location.protocol==="https:"?"wss:":"ws:")+"//"+window.location.host+"/ws";
     const ws=new WebSocket(wsUrl);socket.current=ws;
-    ws.onopen=()=>ws.send(JSON.stringify({type:"agent.run",request:{projectId,messages:history}}));
+    ws.onopen=()=>ws.send(JSON.stringify({type:"agent.run",request:{projectId,conversationId,messages:history}}));
     ws.onmessage=e=>{
       const data=JSON.parse(e.data) as ServerEvent;
       if(data.type==="message.delta")setMessages(cur=>{const next=[...cur];const last=next.at(-1);if(last?.role==="assistant")next[next.length-1]={...last,content:last.content+(data.delta??"")};return next});
