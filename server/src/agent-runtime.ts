@@ -16,7 +16,7 @@ export class AgentRuntime {
     try{
       const messages:ChatMessage[]=buildInitialMessages(request.messages);
       const model=request.model??process.env.AI_MODEL??"llama3.2";
-      const maxSteps=Number(process.env.AGENT_MAX_STEPS??12);
+      const maxSteps=Math.max(1,Number(process.env.AGENT_MAX_STEPS??12));
 
       for(let step=0;step<maxSteps;step++){
         const context={runId,request,emit};
@@ -24,7 +24,9 @@ export class AgentRuntime {
         if(!result.calls.length){
           const text=result.text||"Модель не вернула ответ.";
           if(!result.text)emit({type:"message.delta",runId,delta:text});
-          if(request.conversationId)await appendConversationMessages(request.conversationId,[{role:"assistant",content:result.text}]);
+          if(request.conversationId){
+            await appendConversationMessages(request.conversationId,[{role:"assistant",content:text}]);
+          }
           emit({type:"run.completed",runId});
           return;
         }
