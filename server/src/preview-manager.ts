@@ -27,5 +27,5 @@ export async function previewStatus(projectId:string){
     removePreview(projectId);
     return {running:false};
   }
-  return {running:true,port:current.port,containerId:current.containerId,startedAt:current.startedAt};
+  return {running:true,port:current.port,host:current.host,containerId:current.containerId,startedAt:current.startedAt};
 }
