@@ -1,0 +1,15 @@
+{
+  "name": "WebNestdev",
+  "image": "mcr.microsoft.com/devcontainers/javascript-node:1-22-bookworm",
+  "forwardPorts": [5173, 8787],
+  "portsAttributes": {
+    "5173": { "label": "WebNestdev", "onAutoForward": "openBrowser" },
+    "8787": { "label": "WebNestdev API", "onAutoForward": "silent" }
+  },
+  "postCreateCommand": "npm ci && npm --prefix server ci",
+  "customizations": {
+    "vscode": {
+      "extensions": ["dbaeumer.vscode-eslint"]
+    }
+  }
+}
