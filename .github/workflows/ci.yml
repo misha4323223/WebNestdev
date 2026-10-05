@@ -14,10 +14,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-          cache: npm
-          cache-dependency-path: server/package-lock.json
-      - name: Install server dependencies
-        run: npm ci
+                - name: Install server dependencies
+        run: npm install
         working-directory: server
       - name: Build server
         run: npm run build
