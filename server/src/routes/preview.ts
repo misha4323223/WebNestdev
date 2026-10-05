@@ -16,11 +16,8 @@ export async function registerPreviewRoutes(app:FastifyInstance){
     const p=z.object({id:z.string().min(1)}).parse(request.params);
     return reply.send(await previewStatus(p.id));
   });
-  app.get("/api/projects/:id/preview/open",async(request,reply)=>{
-    const p=z.object({id:z.string().min(1)}).parse(request.params);
-    return proxyPreview(request,p.id,"");
-  });
-  app.get("/api/projects/:id/preview/open/*",async(request,reply)=>{
+  app.get("/api/projects/:id/preview/open",async(request)=>proxyPreview(request,p.id,""));
+  app.get("/api/projects/:id/preview/open/*",async(request)=>{
     const p=z.object({id:z.string().min(1)}).parse(request.params);
     const params=request.params as {id:string;"*":string};
     return proxyPreview(request,p.id,params["*"]||"");
@@ -30,11 +27,16 @@ export async function registerPreviewRoutes(app:FastifyInstance){
     const state=await previewStatus(projectId);
     if(!state.running||!state.port)throw new Error("Preview is not running");
     const incoming=new URL(request.raw.url??"/","http://webnestdev.local");
-    const target="http://127.0.0.1:"+state.port+"/"+suffix+(incoming.search||"");
-    const response=await fetch(target);
-    const headers=new Headers(response.headers);
-    headers.delete("connection");
-    headers.delete("content-encoding");
-    return new Response(await response.arrayBuffer(),{status:response.status,headers});
+    const host=process.env.PREVIEW_PROXY_HOST??"127.0.0.1";
+    const target="http://"+host+":"+state.port+"/"+suffix+(incoming.search||"");
+    try{
+      const response=await fetch(target);
+      const headers=new Headers(response.headers);
+      headers.delete("connection");
+      headers.delete("content-encoding");
+      return new Response(await response.arrayBuffer(),{status:response.status,headers});
+    }catch(error){
+      throw new Error("Preview proxy failed: "+(error instanceof Error?error.message:String(error)));
+    }
   }
 }
