@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { AgentEvent, AgentRunRequest, ChatMessage } from "./types.js";
 import { createProvider, type ProviderToolCall } from "./provider.js";
 import { getTool, getToolDefinitions } from "./tool-registry.js";
+import { appendConversationMessages } from "./project-store.js";
 export type EventSink = (event: AgentEvent) => void;
 const systemPrompt = "You are WebNestdev, a web coding agent. Work only inside the user's project sandbox. Use tools to inspect and modify files. Never expose credentials. When building a runnable web app, inspect it first, make the required changes, run checks, and use preview.start when ready.";
 export class AgentRuntime {
@@ -17,7 +18,7 @@ export class AgentRuntime {
           if(chunk.type==="text"){text+=chunk.text;emit({type:"message.delta",runId,delta:chunk.text});}
           else if(chunk.type==="tool_call") calls.push(chunk.call);
         }
-        if(!calls.length){if(!text)emit({type:"message.delta",runId,delta:"Модель не вернула ответ."});emit({type:"run.completed",runId});return;}
+        if(!calls.length){if(!text)emit({type:"message.delta",runId,delta:"Модель не вернула ответ."});if(request.conversationId)await appendConversationMessages(request.conversationId,[{role:"assistant",content:text}]);emit({type:"run.completed",runId});return;}
         messages.push({role:"assistant",content:text,tool_calls:calls});
         for(const call of calls){
           emit({type:"tool.started",runId,toolCallId:call.id,name:call.name,input:call.arguments});
