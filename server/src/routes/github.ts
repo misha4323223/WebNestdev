@@ -2,7 +2,11 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { getGitHubConnection, saveGitHubConnection } from "../github/github-connection-store.js";
 import { createOAuthState, consumeOAuthState } from "../github/github-oauth-state.js";
-import { getGitHubUser, listGitHubRepositories } from "../github/github-api.js";
+import { getGitHubUser, listGitHubRepositories, getGitHubRepository, getGitHubTree, getGitHubBlob } from "../github/github-api.js";
+import { createConversation, createProject } from "../project-store.js";
+import { getSandbox } from "../sandbox-manager.js";
+import { mkdir, writeFile } from "node:fs/promises";
+import path from "node:path";
 
 const clientId = process.env.GITHUB_CLIENT_ID;
 const clientSecret = process.env.GITHUB_CLIENT_SECRET;
@@ -31,7 +35,6 @@ export async function registerGitHubRoutes(app: FastifyInstance) {
     if (!clientId || !clientSecret) return reply.code(503).send({ error: "GitHub OAuth is not configured" });
     const query = z.object({ code: z.string().min(1), state: z.string().min(1) }).parse(request.query);
     if (!consumeOAuthState(query.state)) return reply.code(400).send({ error: "Invalid or expired GitHub OAuth state" });
-
     const response = await fetch("https://github.com/login/oauth/access_token", {
       method: "POST",
       headers: { Accept: "application/json", "Content-Type": "application/json" },
@@ -39,7 +42,6 @@ export async function registerGitHubRoutes(app: FastifyInstance) {
     });
     const token = await response.json() as { access_token?: string; error?: string };
     if (!token.access_token) return reply.code(400).send({ error: token.error ?? "GitHub OAuth token exchange failed" });
-
     const userResponse = await fetch("https://api.github.com/user", {
       headers: { Accept: "application/vnd.github+json", Authorization: "Bearer " + token.access_token, "X-GitHub-Api-Version": "2022-11-28" },
     });
@@ -50,6 +52,31 @@ export async function registerGitHubRoutes(app: FastifyInstance) {
   });
 
   app.get("/api/github/repositories", async () => ({ repositories: await listGitHubRepositories() }));
-
   app.get("/api/github/me", async () => getGitHubUser());
+
+  app.post("/api/github/import", async (request, reply) => {
+    const body = z.object({ owner: z.string().min(1).max(100), repo: z.string().min(1).max(100) }).parse(request.body);
+    const repository = await getGitHubRepository(body.owner, body.repo);
+    const project = await createProject(repository.name, {
+      owner: repository.owner.login,
+      name: repository.name,
+      fullName: repository.full_name,
+      defaultBranch: repository.default_branch,
+      url: repository.html_url,
+    });
+    const sandbox = await getSandbox(project.id);
+    const tree = await getGitHubTree(repository.owner.login, repository.name, repository.default_branch);
+    const files = tree.tree.filter((entry: { type: string; path: string }) => entry.type === "blob" && entry.path);
+    if (files.length > 5000) throw new Error("Repository contains too many files to import");
+    for (const entry of files) {
+      const blob = await getGitHubBlob(repository.owner.login, repository.name, entry.path);
+      if (blob.encoding !== "base64") continue;
+      const target = path.join(sandbox.root, entry.path);
+      if (!target.startsWith(sandbox.root + path.sep)) throw new Error("Unsafe repository path");
+      await mkdir(path.dirname(target), { recursive: true });
+      await writeFile(target, Buffer.from(blob.content.replace(/\n/g, ""), "base64"));
+    }
+    const conversation = await createConversation(project.id, "GitHub: " + repository.full_name);
+    return reply.code(201).send({ project, conversation, importedFiles: files.length });
+  });
 }
