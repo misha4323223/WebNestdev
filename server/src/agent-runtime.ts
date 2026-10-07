@@ -18,7 +18,7 @@ export class AgentRuntime {
       const model=request.model??config?.model;
       if(!model)throw new Error("AI model is not configured");
 
-      const maxSteps=Math.min(50,Math.max(1,Number(process.env.AGENT_MAX_STEPS??12)));
+      const maxSteps=Math.min(50,Math.max(1,Number(process.env.AGENT_MAX_STEPS??20)));
       for(let step=0;step<maxSteps;step++){
         if(signal?.aborted)throw new Error("Agent run cancelled");
         const context={runId,request,emit,signal};
