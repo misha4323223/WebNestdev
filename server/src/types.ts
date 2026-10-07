@@ -9,6 +9,7 @@ export type AgentEvent=
   | {type:"tool.started";runId:string;toolCallId:string;name:string;input:unknown}
   | {type:"tool.finished";runId:string;toolCallId:string;name:string;output:unknown}
   | {type:"run.progress";runId:string;step:number;maxSteps:number}
+  | {type:"run.progress";runId:string;step:number;maxSteps:number}
   | {type:"run.completed";runId:string}
   | {type:"run.failed";runId:string;error:string};
 export type AgentRunRequest={projectId:string;conversationId?:string;messages:ChatMessage[];model?:string;userId:string};
