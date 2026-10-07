@@ -28,3 +28,29 @@ Each command gets only the project workspace, a read-only container root, isolat
 - authentication and secrets
 - sponsor service with privacy isolation
 - usage limits, moderation and abuse protection
+
+
+## Local development
+
+The repository uses npm workspaces, so the frontend and backend dependencies are installed from the repository root.
+
+```bash
+npm install
+npm run dev
+```
+
+The development UI runs on port 5173 and the API on port 8787. Vite proxies `/api` and `/ws` to the API during local development.
+
+## Local accounts
+
+WebNestDev now uses a real local authentication flow before opening the workspace:
+
+- register with email and password;
+- login and logout;
+- HTTP-only session cookie;
+- password hashing with salted scrypt;
+- projects and conversations are scoped to the authenticated user.
+
+Local account data is stored under `.webnestdev/auth`. This is a development storage layer; production storage will move to managed infrastructure without changing the user-facing flow.
+
+See `docs/AUTH_PRODUCTION_PLAN.md` for the staged rollout.
