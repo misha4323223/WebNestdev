@@ -6,7 +6,7 @@
     "5173": { "label": "WebNestdev", "onAutoForward": "openBrowser" },
     "8787": { "label": "WebNestdev API", "onAutoForward": "silent" }
   },
-  "postCreateCommand": "npm ci && npm --prefix server ci",
+  "postCreateCommand": "npm install && npm --prefix server install",
   "customizations": {
     "vscode": {
       "extensions": ["dbaeumer.vscode-eslint"]
