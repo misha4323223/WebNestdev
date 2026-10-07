@@ -7,7 +7,10 @@ export type { PreviewState } from "./preview/types.js";
 
 export async function startPreview(config: SandboxConfig) {
   const current = getPreview(config.projectId);
-  if (current) return current;
+  if (current) {
+    const status = await previewStatus(config.projectId);
+    if (status.running) return status;
+  }
   return startPreviewContainer(config);
 }
 
