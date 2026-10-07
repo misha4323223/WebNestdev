@@ -30,6 +30,17 @@ function score(file: string, taskTokens: Set<string>): number {
   return value;
 }
 
+function localImports(source: string): string[] {
+  const result: string[] = [];
+  for (const line of source.split("\n")) {
+    const parts = line.split(/["']/);
+    for (const part of parts) {
+      if (part.startsWith("./") || part.startsWith("../")) result.push(part);
+    }
+  }
+  return result;
+}
+
 async function collectFiles(root: string, current: string, relative: string, result: string[]) {
   if (result.length >= 1500) return;
   let entries;
