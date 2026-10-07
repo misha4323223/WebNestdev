@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Github, LogOut, UploadCloud } from "lucide-react";
+import { GitBranch, LogOut, UploadCloud } from "lucide-react";
 
 type Repository = { id:number; name:string; full_name:string; private:boolean; default_branch:string; html_url:string; owner:{login:string} };
 
@@ -40,8 +40,8 @@ export function GitHubConnect({ onImported }:{ onImported:(projectId:string,conv
 
   if(loading && !connected) return <section className="github-panel"><span>Подключение к GitHub…</span></section>;
   return <section className="github-panel">
-    <div className="github-panel-head"><div><span className="eyebrow">GITHUB</span><h2>{connected ? "Репозитории" : "Подключить GitHub"}</h2>{login&&<span className="github-login">@{login}</span>}</div><Github size={22}/></div>
-    {!connected ? <button className="send-button" onClick={()=>{window.location.href=api+"/github/connect"}}><Github size={15}/> Connect GitHub</button> :
+    <div className="github-panel-head"><div><span className="eyebrow">GITHUB</span><h2>{connected ? "Репозитории" : "Подключить GitHub"}</h2>{login&&<span className="github-login">@{login}</span>}</div><GitBranch size={22}/></div>
+    {!connected ? <button className="send-button" onClick={()=>{window.location.href=api+"/github/connect"}}><GitBranch size={15}/> Connect GitHub</button> :
       <>
         <div className="github-repositories">{repositories.map(repo=><button key={repo.id} className={"github-repository"+(selected?.id===repo.id?" selected":"")} onClick={()=>setSelected(repo)}><span><strong>{repo.full_name}</strong><small>{repo.private?"Private":"Public"} · {repo.default_branch}</small></span></button>)}</div>
         <div className="github-actions"><button className="ghost-button" onClick={()=>{setSelected(null);setConnected(false);setRepositories([])}}><LogOut size={14}/> Сменить GitHub</button><button className="send-button" disabled={!selected} onClick={()=>void importRepository()}><UploadCloud size={14}/> Импортировать в WebNestDev</button></div>
