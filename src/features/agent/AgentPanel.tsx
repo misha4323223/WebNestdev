@@ -9,7 +9,22 @@ export function AgentPanel({projectId,conversationId,onChanged}:{projectId:strin
   const [prompt,setPrompt]=useState("");
   const [running,setRunning]=useState(false);
   const [loaded,setLoaded]=useState(false);
-  const socketRef=useRef<WebSocket|null>(null);\n  const messagesRef=useRef<HTMLDivElement|null>(null);\n  const shouldStickToBottomRef=useRef(true);\n\n  function updateStickiness(){\n    const el=messagesRef.current;\n    if(!el)return;\n    const distance=el.scrollHeight-el.scrollTop-el.clientHeight;\n    shouldStickToBottomRef.current=distance<96;\n  }\n\n  function scrollToBottom(behavior: ScrollBehavior="smooth"){\n    const el=messagesRef.current;\n    if(!el||!shouldStickToBottomRef.current)return;\n    el.scrollTo({top:el.scrollHeight,behavior});\n  }
+  const socketRef=useRef<WebSocket|null>(null);
+  const messagesRef=useRef<HTMLDivElement|null>(null);
+  const shouldStickToBottomRef=useRef(true);
+
+  function updateStickiness(){
+    const el=messagesRef.current;
+    if(!el)return;
+    const distance=el.scrollHeight-el.scrollTop-el.clientHeight;
+    shouldStickToBottomRef.current=distance<96;
+  }
+
+  function scrollToBottom(behavior: ScrollBehavior="smooth"){
+    const el=messagesRef.current;
+    if(!el||!shouldStickToBottomRef.current)return;
+    el.scrollTo({top:el.scrollHeight,behavior});
+  }
 
   useEffect(()=>{
     let cancelled=false;
@@ -17,7 +32,8 @@ export function AgentPanel({projectId,conversationId,onChanged}:{projectId:strin
     void getConversation(conversationId).then(conversation=>{
       if(cancelled)return;
       const persisted=conversation.messages.filter((message):message is ChatMessage=>message.role==="user"||message.role==="assistant");
-      setMessages(persisted.length?persisted:[{role:"assistant",content:"Привет. Я WebNestdev — веб-агент для создания и развития проектов. Опиши, что нужно сделать."}]);\n      requestAnimationFrame(()=>scrollToBottom("auto"));
+      setMessages(persisted.length?persisted:[{role:"assistant",content:"Привет. Я WebNestdev — веб-агент для создания и развития проектов. Опиши, что нужно сделать."}]);
+      requestAnimationFrame(()=>scrollToBottom("auto"));
       setLoaded(true);
     }).catch(()=>{
       if(cancelled)return;
@@ -38,7 +54,10 @@ export function AgentPanel({projectId,conversationId,onChanged}:{projectId:strin
     setRunning(true);
 
     const socket=createAgentSocket(event=>{
-      if(event.type==="message.delta"){\n        setMessages(cur=>{const next=[...cur];const last=next.at(-1);if(last?.role==="assistant")next[next.length-1]={...last,content:last.content+(event.delta??"")};return next});\n        requestAnimationFrame(()=>scrollToBottom("smooth"));\n      }
+      if(event.type==="message.delta"){
+        setMessages(cur=>{const next=[...cur];const last=next.at(-1);if(last?.role==="assistant")next[next.length-1]={...last,content:last.content+(event.delta??"")};return next});
+        requestAnimationFrame(()=>scrollToBottom("smooth"));
+      }
       if(event.type==="run.completed"){setRunning(false);socket.close();socketRef.current=null;onChanged()}
       if(event.type==="run.failed"){setRunning(false);setMessages(cur=>[...cur,{role:"assistant",content:"Ошибка: "+(event.error??"неизвестная ошибка")}]);socket.close();socketRef.current=null}
       if(event.type==="error"){setRunning(false);setMessages(cur=>[...cur,{role:"assistant",content:"Ошибка: "+(event.error??"WebSocket")}]);socket.close();socketRef.current=null}
