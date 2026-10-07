@@ -2,8 +2,8 @@ import { getSandbox, assertInsideSandbox } from "../sandbox-manager.js";
 import { runInSandbox } from "../sandbox-worker.js";
 import { registerTool } from "../tool-registry.js";
 
-async function git(context: { projectId: string; runId: string }, command: string) {
-  const sandbox = await getSandbox(context.projectId);
+async function git(context: { projectId: string; userId: string }, command: string) {
+  const sandbox = await getSandbox(context.projectId, context.userId);
   return runInSandbox(sandbox, "git " + command, sandbox.root);
 }
 
