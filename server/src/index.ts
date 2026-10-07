@@ -9,6 +9,7 @@ import { registerToolRoutes } from "./routes/tools.js";
 import { registerWorkspaceRoutes } from "./routes/workspace.js";
 import { registerAgentWebSocket } from "./routes/agent-ws.js";
 import { registerProviderRoutes } from "./routes/providers.js";
+import { registerGitHubRoutes } from "./routes/github.js";
 import "./tools/project-tools.js";
 import "./tools/filesystem-tools.js";
 import "./tools/terminal-tools.js";
@@ -27,6 +28,7 @@ await registerPreviewRoutes(app);
 await registerToolRoutes(app);
 await registerWorkspaceRoutes(app);
 await registerProviderRoutes(app);
+await registerGitHubRoutes(app);
 await registerAgentWebSocket(app);
 
 await app.listen({host:"0.0.0.0",port:Number(process.env.PORT??8787)});
