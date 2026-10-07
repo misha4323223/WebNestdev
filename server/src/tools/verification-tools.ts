@@ -8,7 +8,7 @@ registerTool({
   name: "project.verify",
   description:
     "Verify the current project after changes. Checks that Preview is running and requests the root page over HTTP. Returns a structured pass/fail diagnostic including status, content type, and bounded HTML. Use this after implementing or fixing a web task; if verification fails, inspect the diagnostic, fix the project, restart Preview when needed, and verify again.",
-  async (_input, context) {
+  execute: async (_input, context) {
     const status = await previewStatus(context.projectId);
     if (!status.running) {
       return {
