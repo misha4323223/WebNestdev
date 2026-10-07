@@ -10,6 +10,7 @@ import { runAgentStep } from "./agent/step-runner.js";
 import type { EventSink } from "./agent/types.js";
 
 const MAX_CONSECUTIVE_VERIFY_FAILURES=3;
+const DEFAULT_QA_SCENARIO={path:"/",steps:[{action:"expectText",text:""}]};
 const MUTATING_TOOLS=new Set(["fs.write","fs.rename","fs.delete","terminal.exec","npm.install"]);
 
 type CommandResultLike={ok?:unknown;exitCode?:unknown;signal?:unknown};
