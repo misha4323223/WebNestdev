@@ -1,14 +1,16 @@
-const states = new Map<string, number>();
+type OAuthState = { expiresAt:number; userId:string };
+const states = new Map<string, OAuthState>();
 const TTL_MS = 10 * 60 * 1000;
 
-export function createOAuthState() {
+export function createOAuthState(userId:string) {
   const state = crypto.randomUUID();
-  states.set(state, Date.now() + TTL_MS);
+  states.set(state, { expiresAt: Date.now() + TTL_MS, userId });
   return state;
 }
 
-export function consumeOAuthState(state: string) {
-  const expiresAt = states.get(state);
+export function consumeOAuthState(state:string) {
+  const value = states.get(state);
   states.delete(state);
-  return Boolean(expiresAt && expiresAt > Date.now());
+  if(!value || value.expiresAt <= Date.now()) return null;
+  return value.userId;
 }
