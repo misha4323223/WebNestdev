@@ -1,24 +1,29 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { requireProjectUser } from "../auth/auth.js";
 import { getSandbox } from "../sandbox-manager.js";
 import { startPreview,stopPreview,previewStatus } from "../preview-manager.js";
 
 export async function registerPreviewRoutes(app:FastifyInstance){
   app.post("/api/projects/:id/preview/start",async(request,reply)=>{
     const p=z.object({id:z.string().min(1)}).parse(request.params);
+    if(!await requireProjectUser(request,reply,p.id))return;
     return reply.send(await startPreview(await getSandbox(p.id)));
   });
   app.post("/api/projects/:id/preview/stop",async(request,reply)=>{
     const p=z.object({id:z.string().min(1)}).parse(request.params);
+    if(!await requireProjectUser(request,reply,p.id))return;
     return reply.send(await stopPreview(p.id));
   });
   app.get("/api/projects/:id/preview/status",async(request,reply)=>{
     const p=z.object({id:z.string().min(1)}).parse(request.params);
+    if(!await requireProjectUser(request,reply,p.id))return;
     return reply.send(await previewStatus(p.id));
   });
-  app.get("/api/projects/:id/preview/open",async(request)=>{const p=z.object({id:z.string().min(1)}).parse(request.params);return proxyPreview(request,p.id,"");});
-  app.get("/api/projects/:id/preview/open/*",async(request)=>{
+  app.get("/api/projects/:id/preview/open",async(request,reply)=>{const p=z.object({id:z.string().min(1)}).parse(request.params);if(!await requireProjectUser(request,reply,p.id))return;return proxyPreview(request,p.id,"");});
+  app.get("/api/projects/:id/preview/open/*",async(request,reply)=>{
     const p=z.object({id:z.string().min(1)}).parse(request.params);
+    if(!await requireProjectUser(request,reply,p.id))return;
     const params=request.params as {id:string;"*":string};
     return proxyPreview(request,p.id,params["*"]||"");
   });
