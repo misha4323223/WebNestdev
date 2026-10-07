@@ -4,9 +4,13 @@ Web-native evolution of the NestDev agent architecture.
 
 ## Architecture
 
-Browser -> Fastify API/WebSocket -> Agent Runtime -> Provider -> Tool Registry -> Project Sandbox -> Preview/Deployment
+Browser -> Fastify API/WebSocket -> Agent Runtime -> OpenAI-compatible Provider -> Tool Registry -> Project Sandbox -> Preview/Deployment
 
 The Electron NestDev project remains separate and is not modified.
+
+## AI provider
+
+The web version uses an OpenAI-compatible API. Configure the provider with a Base URL, optional API key, and model. This supports hosted providers and compatible gateways without requiring a local model runtime.
 
 ## Security boundary
 
