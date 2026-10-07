@@ -52,14 +52,14 @@ function extractMatches(body: string, pattern: RegExp) {
 }
 
 function inspectHtml(body: string) {
-  const scripts = extractMatches(body, /<script\\b[^>]*?(?:src=["']([^"']+)["'][^>]*|)(?:\\/>|>)/gi);
+  const scripts = extractMatches(body, /<script\b[^>]*?(?:src=["']([^"']+)["'][^>]*|)(?:\/>|>)/gi);
   const stylesheets = extractMatches(
     body,
-    /<link\\b[^>]*rel=["']stylesheet["'][^>]*href=["']([^"']+)["'][^>]*>/gi
+    /<link\b[^>]*rel=["']stylesheet["'][^>]*href=["']([^"']+)["'][^>]*>/gi
   );
-  const links = extractMatches(body, /<a\\b[^>]*href=["']([^"']+)["'][^>]*>/gi);
-  const images = extractMatches(body, /<img\\b[^>]*src=["']([^"']+)["'][^>]*>/gi);
-  const title = body.match(/<title\\b[^>]*>([\\s\\S]*?)<\\/title>/i)?.[1]?.trim() ?? null;
+  const links = extractMatches(body, /<a\b[^>]*href=["']([^"']+)["'][^>]*>/gi);
+  const images = extractMatches(body, /<img\b[^>]*src=["']([^"']+)["'][^>]*>/gi);
+  const title = body.match(/<title\b[^>]*>([\s\\S]*?)<\/title>/i)?.[1]?.trim() ?? null;
   const errorSignals = [
     "Uncaught ",
     "Unhandled Runtime Error",
