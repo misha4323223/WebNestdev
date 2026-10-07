@@ -1,40 +1,45 @@
-import { useEffect,useState } from "react";
+import { useCallback,useEffect,useState } from "react";
 import { createConversation,createProject } from "../../lib/project-api";
 
 export function useWorkspace(){
   const [projectId,setProjectId]=useState(()=>localStorage.getItem("webnestdev.projectId")??"");
   const [conversationId,setConversationId]=useState(()=>localStorage.getItem("webnestdev.conversationId")??"");
   const [projectName,setProjectName]=useState(()=>localStorage.getItem("webnestdev.projectName")??"Новый проект");
+  const [loading,setLoading]=useState(()=>!Boolean(projectId&&conversationId));
+  const [error,setError]=useState("");
 
-  useEffect(()=>{
-    if(projectId&&conversationId)return;
-    let cancelled=false;
-    (async()=>{
-      try{
-        if(projectId&&!conversationId){
-          const conversation=await createConversation(projectId);
-          if(cancelled)return;
-          setConversationId(conversation.id);
-          localStorage.setItem("webnestdev.conversationId",conversation.id);
-          return;
-        }
+  const initialize=useCallback(async()=>{
+    setLoading(true);
+    setError("");
+    try{
+      if(projectId&&conversationId)return;
 
-        const project=await createProject(projectName);
-        if(cancelled)return;
-        const conversation=await createConversation(project.id);
-        if(cancelled)return;
-        setProjectId(project.id);
-        setProjectName(project.name);
+      if(projectId&&!conversationId){
+        const conversation=await createConversation(projectId);
         setConversationId(conversation.id);
-        localStorage.setItem("webnestdev.projectId",project.id);
-        localStorage.setItem("webnestdev.projectName",project.name);
         localStorage.setItem("webnestdev.conversationId",conversation.id);
-      }catch(error){
-    console.error("WebNestdev workspace initialization failed",error);
-  }
-    })();
-    return()=>{cancelled=true};
+        return;
+      }
+
+      const project=await createProject(projectName);
+      const conversation=await createConversation(project.id);
+      setProjectId(project.id);
+      setProjectName(project.name);
+      setConversationId(conversation.id);
+      localStorage.setItem("webnestdev.projectId",project.id);
+      localStorage.setItem("webnestdev.projectName",project.name);
+      localStorage.setItem("webnestdev.conversationId",conversation.id);
+    }catch(error){
+      console.error("WebNestdev workspace initialization failed",error);
+      setError(error instanceof Error?error.message:String(error));
+    }finally{
+      setLoading(false);
+    }
   },[projectId,conversationId,projectName]);
 
-  return {projectId,conversationId,projectName};
+  useEffect(()=>{
+    void initialize();
+  },[initialize]);
+
+  return {projectId,conversationId,projectName,loading,error,retry:initialize};
 }
