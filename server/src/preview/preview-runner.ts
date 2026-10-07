@@ -33,6 +33,18 @@ export async function startPreviewContainer(config:SandboxConfig):Promise<Previe
   const ipResult=await dockerExec(["inspect","-f","{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}",containerId]);
   const host=ipResult.stdout.trim();
   if(ipResult.code!==0||!host){await dockerExec(["stop",containerId]);throw new Error("Preview container address was not assigned");}
+  // Give the dev server a short startup window and surface its logs if it exits.
+  // This makes preview failures actionable for the agent instead of looking like a generic start error.
+  for(let attempt=0;attempt<10;attempt++){
+    const inspect=await dockerExec(["inspect","-f","{{.State.Running}}",containerId]);
+    if(inspect.code!==0||inspect.stdout.trim()!=="true"){
+      const logs=await dockerExec(["logs","--tail","120",containerId]);
+      await dockerExec(["stop",containerId]);
+      throw new Error((logs.stdout||logs.stderr||"Preview process exited during startup").trim());
+    }
+    await new Promise(resolve=>setTimeout(resolve,300));
+  }
+
   const state={containerId,port:Number(match[1]),host,projectId:config.projectId,startedAt:Date.now()};
   setPreview(state);
   return state;
