@@ -203,7 +203,8 @@ type BrowserScenarioStep =
   | { action: "fill"; selector: string; value: string }
   | { action: "press"; selector: string; key: string }
   | { action: "expectText"; text: string }
-  | { action: "expectUrl"; pattern: string };
+  | { action: "expectUrl"; pattern: string }
+  | { action: "expectVisible"; selector: string };
 
 const MAX_SCENARIO_STEPS = 20;
 
@@ -244,10 +245,16 @@ async function runBrowserScenario(projectId: string, input: unknown) {
           case "goto":
             await page.goto(`http://${current.host}:${current.port}${getPath({ path: step.path })}`, { waitUntil: "networkidle", timeout: MAX_RUNTIME_MS });
             break;
-          case "click":
-            await page.locator(step.selector).first().click({ timeout: 5000 });
+          case "click": {
+            const target = page.locator(step.selector).first();
+            await target.waitFor({ state: "visible", timeout: 5000 });
+            if (!(await target.isEnabled())) {
+              throw new Error(`Element is visible but disabled: ${step.selector}`);
+            }
+            await target.click({ timeout: 5000 });
             await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => undefined);
             break;
+          }
           case "fill":
             await page.locator(step.selector).first().fill(step.value, { timeout: 5000 });
             break;
@@ -263,6 +270,9 @@ async function runBrowserScenario(projectId: string, input: unknown) {
             if (!matched) throw new Error(`URL did not match /${step.pattern}/: ${page.url()}`);
             break;
           }
+          case "expectVisible":
+            await page.locator(step.selector).first().waitFor({ state: "visible", timeout: 5000 });
+            break;
           default:
             throw new Error(`Unsupported scenario action: ${(step as { action?: string }).action ?? "unknown"}`);
         }
@@ -274,7 +284,8 @@ async function runBrowserScenario(projectId: string, input: unknown) {
     }
 
     const ok = results.length === steps.length && results.every(item => item.ok) && consoleErrors.length === 0 && pageErrors.length === 0 && failedRequests.length === 0 && httpErrors.length === 0;
-    return { ok, initialPath, steps: results, finalUrl: page.url(), consoleErrors, pageErrors, failedRequests, httpErrors, diagnostic: ok ? "Browser scenario passed with no console, page, or network errors." : "Browser scenario failed; inspect the failed step and runtime diagnostics before retrying." };
+    const screenshot = !ok ? await page.screenshot({ type: "png", fullPage: true, timeout: 5000 }).catch(() => null) : null;
+    return { ok, initialPath, steps: results, finalUrl: page.url(), consoleErrors, pageErrors, failedRequests, httpErrors, screenshotBase64: screenshot ? screenshot.toString("base64") : null, diagnostic: ok ? "Browser scenario passed with no console, page, or network errors." : "Browser scenario failed; inspect the failed step, runtime diagnostics, and failure screenshot before retrying." };ying." };
   } finally {
     await browser.close();
   }
