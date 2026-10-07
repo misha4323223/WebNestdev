@@ -18,6 +18,7 @@ import "./tools/terminal-tools.js";
 import "./tools/git-tools.js";
 import "./tools/preview-tools.js";
 import "./tools/browser-tools.js";
+import "./tools/verification-tools.js";
 
 const app=Fastify({logger:true});
 const allowedOrigins=(process.env.WEBNESTDEV_ALLOWED_ORIGINS??"http://localhost:5173").split(",").map(value=>value.trim()).filter(Boolean);
