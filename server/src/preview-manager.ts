@@ -38,6 +38,12 @@ export async function previewStatus(projectId: string) {
     return { running: false };
   }
 
+  const health=await dockerExec(["exec",current.containerId,"node","-e","fetch('http://127.0.0.1:3000').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))"]);
+  if(health.code!==0){
+    removePreview(projectId);
+    return { running: false, error: "Preview container is running, but the web server is not responding on port 3000" };
+  }
+
   return {
     running: true,
     port: current.port,
