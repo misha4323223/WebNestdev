@@ -23,9 +23,11 @@ type WireMessage=
 
 function toWireMessages(messages:ChatMessage[]):WireMessage[]{
   return messages.map(message=>{
-    if(message.role!=="assistant")return message;
-    if(!message.tool_calls?.length)return message;
-    return {
+    if(message.role==="assistant"){
+      if(!message.tool_calls?.length){
+        return {role:"assistant",content:message.content};
+      }
+      return {
       role:"assistant",
       content:message.content,
       tool_calls:message.tool_calls.map(call=>({
@@ -36,7 +38,9 @@ function toWireMessages(messages:ChatMessage[]):WireMessage[]{
           arguments:JSON.stringify(call.arguments??{})
         }
       }))
-    };
+      };
+    }
+    return message;
   });
 }
 
