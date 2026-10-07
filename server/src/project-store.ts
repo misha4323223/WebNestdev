@@ -17,6 +17,7 @@ export type Project = {
   createdAt:string;
   updatedAt:string;
   github?: GitHubRepositoryRef;
+  userId: string;
 };
 export type Conversation = { id:string; projectId:string; title:string; messages:ChatMessage[]; createdAt:string; updatedAt:string };
 export type ProjectProviderConfig = { provider:string; baseUrl:string; model:string; token?:string };
@@ -24,7 +25,7 @@ const root=process.env.WEBNESTDEV_DATA_DIR ?? path.resolve(".webnestdev");
 
 export async function ensureDataDir(){await mkdir(root,{recursive:true})}
 export async function getProject(projectId:string):Promise<Project|null>{try{return JSON.parse(await readFile(path.join(root,"projects",projectId+".json"),"utf8")) as Project}catch{return null}}
-export async function createProject(name:string,github?:GitHubRepositoryRef):Promise<Project>{const project={id:randomUUID(),name:name.trim()||"Новый проект",github,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};await mkdir(path.join(root,"projects"),{recursive:true});await writeFile(path.join(root,"projects",project.id+".json"),JSON.stringify(project,null,2));return project}
+export async function createProject(name:string,github:GitHubRepositoryRef|undefined,userId:string):Promise<Project>{const project={id:randomUUID(),name:name.trim()||"Новый проект",github,userId,createdAt:new Date().toISOString(),updatedAt:new Date().toISOString()};await mkdir(path.join(root,"projects"),{recursive:true});await writeFile(path.join(root,"projects",project.id+".json"),JSON.stringify(project,null,2));return project}
 export async function getProjectProvider(projectId:string):Promise<ProjectProviderConfig|null>{try{return JSON.parse(await readFile(path.join(root,"providers",projectId+".json"),"utf8")) as ProjectProviderConfig}catch{return null}}
 export async function saveProjectProvider(projectId:string,config:ProjectProviderConfig){if(!await getProject(projectId))throw new Error("Project not found");await mkdir(path.join(root,"providers"),{recursive:true});await writeFile(path.join(root,"providers",projectId+".json"),JSON.stringify(config,null,2),{mode:0o600});return config}
 async function conversationsDir(){const d=path.join(root,"conversations");await mkdir(d,{recursive:true});return d}
