@@ -6,7 +6,6 @@ import { getProject,getConversation,appendConversationMessages } from "../projec
 
 const messageSchema=z.discriminatedUnion("role",[
   z.object({role:z.literal("user"),content:z.string().max(100000)}),
-  z.object({role:z.literal("system"),content:z.string().max(100000)}),
   z.object({role:z.literal("assistant"),content:z.string().max(100000),tool_calls:z.array(z.object({id:z.string(),name:z.string(),arguments:z.record(z.unknown())})).optional()}),
   z.object({role:z.literal("tool"),content:z.string().max(100000),tool_call_id:z.string()})
 ]);
