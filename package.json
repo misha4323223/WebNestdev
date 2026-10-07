@@ -21,7 +21,9 @@
     "lucide-react": "latest"
   },
   "devDependencies": {
-    "concurrently": "latest"
+    "concurrently": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest"
   },
   "workspaces": [
     "server"
