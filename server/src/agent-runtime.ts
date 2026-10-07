@@ -44,6 +44,7 @@ export class AgentRuntime {
 
       const runVerification=async (browserRuntime:boolean)=>{
         const verifyCalls=[
+          {id:randomUUID(),name:"terminal.exec",arguments:{command:"npm run build"}},
           {id:randomUUID(),name:"preview.start",arguments:{}},
           {id:randomUUID(),name:"project.verify",arguments:{}},
           ...(browserRuntime?[{id:randomUUID(),name:"browser.runtime",arguments:{}}]:[]),
