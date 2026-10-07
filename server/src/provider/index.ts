@@ -11,11 +11,9 @@ export type ProviderConfig = {
 };
 
 export function createProvider(config?: Partial<ProviderConfig>): Provider {
-  const base = config?.baseUrl?.trim() || process.env.AI_BASE_URL?.trim();
+  const base = config?.baseUrl?.trim();
   if (!base) {
-    throw new Error("AI provider Base URL is not configured");
+    throw new Error("AI provider Base URL is not configured for this project");
   }
-
-  const key = config?.token || process.env.AI_API_KEY;
-  return new OpenAICompatibleProvider(base, key);
+  return new OpenAICompatibleProvider(base, config?.token);
 }
