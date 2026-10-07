@@ -3,6 +3,7 @@ import type { AgentRunRequest,ChatMessage } from "./types.js";
 import { createProvider } from "./provider.js";
 import { appendConversationMessages,getProject,getProjectProvider } from "./project-store.js";
 import { buildInitialMessages } from "./agent/message-builder.js";
+import { buildProjectContext } from "./agent/context-builder.js";
 import { executeTool } from "./agent/tool-executor.js";
 import { runAgentStep } from "./agent/step-runner.js";
 import type { EventSink } from "./agent/types.js";
@@ -15,7 +16,8 @@ export class AgentRuntime {
       if(!project||project.userId!==request.userId)throw new Error("Project not found");
       const config=await getProjectProvider(request.projectId);
       const provider=createProvider(config??undefined);
-      const messages:ChatMessage[]=buildInitialMessages(request.messages);
+      const projectContext=await buildProjectContext(project,request.userId);
+      const messages:ChatMessage[]=buildInitialMessages(request.messages,projectContext);
       const model=request.model??config?.model;
       if(!model)throw new Error("AI model is not configured");
       const maxSteps=Math.min(50,Math.max(1,Number(process.env.AGENT_MAX_STEPS??20)));
