@@ -10,7 +10,7 @@ registerTool({
     const command = value.command?.trim();
     if (!command) throw new Error("command is required");
 
-    const sandbox = await getSandbox(context.projectId);
+    const sandbox = await getSandbox(context.projectId, context.userId);
     const cwd = assertInsideSandbox(
       sandbox.root,
       sandbox.root + "/" + (value.cwd ?? ""),
