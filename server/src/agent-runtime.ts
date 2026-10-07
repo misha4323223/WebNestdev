@@ -9,7 +9,7 @@ import { executeTool } from "./agent/tool-executor.js";
 import { runAgentStep } from "./agent/step-runner.js";
 import type { EventSink } from "./agent/types.js";
 
-const MAX_AUTO_VERIFY=3;
+const MAX_CONSECUTIVE_VERIFY_FAILURES=3;
 const MUTATING_TOOLS=new Set(["fs.write","fs.rename","fs.delete","terminal.exec","npm.install"]);
 
 function shouldRunBrowserRuntime(name:string,args:Record<string,unknown>){
@@ -39,7 +39,7 @@ export class AgentRuntime {
       const model=request.model??config?.model;
       if(!model)throw new Error("AI model is not configured");
       const maxSteps=Math.min(50,Math.max(1,Number(process.env.AGENT_MAX_STEPS??20)));
-      let autoVerifyCount=0;
+      let consecutiveVerifyFailures=0;
 
       const runVerification=async (browserRuntime:boolean)=>{
         const verifyCalls=[
@@ -99,22 +99,14 @@ export class AgentRuntime {
             messages.push({role:"tool",content:JSON.stringify({error:message}),tool_call_id:call.id});
           }
 
-          if(toolSucceeded && MUTATING_TOOLS.has(call.name) && autoVerifyCount<MAX_AUTO_VERIFY){
-            autoVerifyCount++;
+          if(toolSucceeded && MUTATING_TOOLS.has(call.name) && consecutiveVerifyFailures<MAX_CONSECUTIVE_VERIFY_FAILURES){
             const browserRuntime=shouldRunBrowserRuntime(call.name,call.arguments);
             const verified=await runVerification(browserRuntime);
-            messages.push({
-              role:"tool",
-              content:JSON.stringify({
-                automaticVerification:true,
-                attempt:autoVerifyCount,
-                verified,
-                nextAction:verified
-                  ?"Runtime verification passed. Continue the task and do not claim success until the requested change itself is complete."
-                  :"Runtime verification failed. Treat the diagnostics above as actionable, inspect the reported error, make the smallest necessary fix, and verify again.",
-              }),
-              tool_call_id:call.id,
-            });
+            if(verified){
+              consecutiveVerifyFailures=0;
+            }else{
+              consecutiveVerifyFailures++;
+            }
           }
         }
       }
