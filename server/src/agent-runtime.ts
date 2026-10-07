@@ -10,7 +10,6 @@ import { runAgentStep } from "./agent/step-runner.js";
 import type { EventSink } from "./agent/types.js";
 
 const MAX_CONSECUTIVE_VERIFY_FAILURES=3;
-const DEFAULT_QA_SCENARIO={path:"/",steps:[{action:"expectText",text:""}]};
 const MUTATING_TOOLS=new Set(["fs.write","fs.rename","fs.delete","terminal.exec","npm.install"]);
 
 type CommandResultLike={ok?:unknown;exitCode?:unknown;signal?:unknown};
@@ -58,7 +57,9 @@ export class AgentRuntime {
       if(!model)throw new Error("AI model is not configured");
       const maxSteps=Math.min(50,Math.max(1,Number(process.env.AGENT_MAX_STEPS??20)));
       let consecutiveVerifyFailures=0;
+      let consecutiveScenarioFailures=0;
       let verificationPending=false;
+      let scenarioPending=false;
 
       const runVerification=async (browserRuntime:boolean,routes:string[])=>{
         const verifyCalls=[
@@ -110,13 +111,15 @@ export class AgentRuntime {
         const result=await runAgentStep(provider,messages,model,context);
 
         if(!result.calls.length){
-          if(verificationPending){
+          if(verificationPending||scenarioPending){
             if(consecutiveVerifyFailures>=MAX_CONSECUTIVE_VERIFY_FAILURES){
               throw new Error("Verification failed repeatedly; maximum verification attempts reached");
             }
             messages.push({
               role:"system",
-              content:"The requested change is not verified yet. Do not finish the task. Inspect the latest verification diagnostic, make the smallest necessary fix, and run the verification again. A successful tool call is not sufficient proof of completion.",
+              content:scenarioPending
+              ? "The user-visible change passed build, preview, SSR and browser smoke verification, but Browser QA is still pending. You MUST call browser.scenario now. Derive the shortest meaningful end-to-end user flow from the original task and the changed route, using at most 20 steps. If the scenario fails, inspect its diagnostics, fix the smallest necessary issue, and run the scenario again. Do not finish the task until browser.scenario returns ok=true."
+              : "The requested change is not verified yet. Do not finish the task. Inspect the latest verification diagnostic, make the smallest necessary fix, and run the verification again. A successful tool call is not sufficient proof of completion.",
             });
             continue;
           }
@@ -146,6 +149,20 @@ export class AgentRuntime {
             emit({type:"tool.finished",runId,toolCallId:call.id,name:call.name,output});
             messages.push({role:"tool",content:JSON.stringify(output),tool_call_id:call.id});
 
+            if(call.name==="browser.scenario"){
+              if((output as {ok?:boolean}).ok===true){
+                scenarioPending=false;
+                consecutiveScenarioFailures=0;
+                messages.push({role:"system",content:"BROWSER QA SCENARIO PASSED: user-visible flow completed successfully with no browser console, page, HTTP, or network errors."});
+              }else{
+                scenarioPending=true;
+                consecutiveScenarioFailures++;
+                if(consecutiveScenarioFailures>=MAX_CONSECUTIVE_VERIFY_FAILURES){
+                  throw new Error("Browser QA scenario failed repeatedly; maximum scenario attempts reached");
+                }
+              }
+            }
+
             if(call.name==="project.verify"||call.name==="browser.runtime"){
               if((output as {ok?:boolean}).ok===true){
                 verificationPending=false;
@@ -174,6 +191,13 @@ export class AgentRuntime {
           if(verified){
             consecutiveVerifyFailures=0;
             verificationPending=false;
+            if(browserRuntimeRequired){
+              scenarioPending=true;
+              consecutiveScenarioFailures=0;
+              messages.push({role:"system",content:"Browser smoke verification passed. Browser QA scenario is now mandatory: call browser.scenario with a minimal user flow derived from the original task and the changed route. Do not finish until it returns ok=true."});
+            }else{
+              scenarioPending=false;
+            }
           }else{
             consecutiveVerifyFailures++;
             verificationPending=true;
@@ -185,6 +209,7 @@ export class AgentRuntime {
       }
 
       if(verificationPending)throw new Error("Agent step limit reached with unverified changes");
+      if(scenarioPending)throw new Error("Agent step limit reached with pending Browser QA scenario");
       throw new Error("Agent step limit reached");
     }catch(error){emit({type:"run.failed",runId,error:error instanceof Error?error.message:String(error)});}
   }
