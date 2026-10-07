@@ -9,6 +9,21 @@ import { executeTool } from "./agent/tool-executor.js";
 import { runAgentStep } from "./agent/step-runner.js";
 import type { EventSink } from "./agent/types.js";
 
+const MAX_AUTO_VERIFY=3;
+const MUTATING_TOOLS=new Set(["fs.write","fs.rename","fs.delete","terminal.exec","npm.install"]);
+
+function shouldRunBrowserRuntime(name:string,args:Record<string,unknown>){
+  if(name==="fs.write"||name==="fs.rename"){
+    const value=typeof args.path==="string"?args.path:typeof args.to==="string"?args.to:"";
+    return /\.(tsx?|jsx?|html?|css|scss|vue|svelte)$/i.test(value)||/^(src|app|pages|components)\//i.test(value);
+  }
+  if(name==="terminal.exec"){
+    const command=typeof args.command==="string"?args.command:"";
+    return /(^|\s)(npm\s+(run|install)|pnpm\s+(run|install)|yarn\s+(run|install)|vite|next|react|webpack|tsc)\b/i.test(command);
+  }
+  return name==="npm.install";
+}
+
 export class AgentRuntime {
   async run(request:AgentRunRequest,emit:EventSink,signal?:AbortSignal){
     const runId=randomUUID(); emit({type:"run.started",runId});
@@ -24,6 +39,34 @@ export class AgentRuntime {
       const model=request.model??config?.model;
       if(!model)throw new Error("AI model is not configured");
       const maxSteps=Math.min(50,Math.max(1,Number(process.env.AGENT_MAX_STEPS??20)));
+      let autoVerifyCount=0;
+
+      const runVerification=async (browserRuntime:boolean)=>{
+        const verifyCalls=[
+          {id:randomUUID(),name:"preview.start",arguments:{}},
+          {id:randomUUID(),name:"project.verify",arguments:{}},
+          ...(browserRuntime?[{id:randomUUID(),name:"browser.runtime",arguments:{}}]:[]),
+        ];
+        for(const verifyCall of verifyCalls){
+          if(signal?.aborted)throw new Error("Agent run cancelled");
+          emit({type:"tool.started",runId,toolCallId:verifyCall.id,name:verifyCall.name,input:verifyCall.arguments});
+          try{
+            const output=await executeTool(verifyCall as any,{runId,request,emit,signal});
+            emit({type:"tool.finished",runId,toolCallId:verifyCall.id,name:verifyCall.name,output});
+            messages.push({role:"tool",content:JSON.stringify(output),tool_call_id:verifyCall.id});
+            if(verifyCall.name==="project.verify" && !(output as {ok?:boolean}).ok) return false;
+            if(verifyCall.name==="browser.runtime" && !(output as {ok?:boolean}).ok) return false;
+          }catch(error){
+            const message=error instanceof Error?error.message:String(error);
+            const output={error:message};
+            emit({type:"tool.finished",runId,toolCallId:verifyCall.id,name:verifyCall.name,output});
+            messages.push({role:"tool",content:JSON.stringify(output),tool_call_id:verifyCall.id});
+            return false;
+          }
+        }
+        return true;
+      };
+
       for(let step=0;step<maxSteps;step++){
         if(signal?.aborted)throw new Error("Agent run cancelled");
         emit({type:"run.progress",runId,step:step+1,maxSteps});
@@ -43,15 +86,35 @@ export class AgentRuntime {
         for(const call of result.calls){
           if(signal?.aborted)throw new Error("Agent run cancelled");
           emit({type:"tool.started",runId,toolCallId:call.id,name:call.name,input:call.arguments});
+          let toolSucceeded=false;
           try{
             const output=await executeTool(call,context);
             if(signal?.aborted)throw new Error("Agent run cancelled");
+            toolSucceeded=true;
             emit({type:"tool.finished",runId,toolCallId:call.id,name:call.name,output});
             messages.push({role:"tool",content:JSON.stringify(output),tool_call_id:call.id});
           }catch(error){
             const message=error instanceof Error?error.message:String(error);
             emit({type:"tool.finished",runId,toolCallId:call.id,name:call.name,output:{error:message}});
             messages.push({role:"tool",content:JSON.stringify({error:message}),tool_call_id:call.id});
+          }
+
+          if(toolSucceeded && MUTATING_TOOLS.has(call.name) && autoVerifyCount<MAX_AUTO_VERIFY){
+            autoVerifyCount++;
+            const browserRuntime=shouldRunBrowserRuntime(call.name,call.arguments);
+            const verified=await runVerification(browserRuntime);
+            messages.push({
+              role:"tool",
+              content:JSON.stringify({
+                automaticVerification:true,
+                attempt:autoVerifyCount,
+                verified,
+                nextAction:verified
+                  ?"Runtime verification passed. Continue the task and do not claim success until the requested change itself is complete."
+                  :"Runtime verification failed. Treat the diagnostics above as actionable, inspect the reported error, make the smallest necessary fix, and verify again.",
+              }),
+              tool_call_id:call.id,
+            });
           }
         }
       }
