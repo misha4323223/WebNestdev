@@ -197,14 +197,7 @@ async function inspectRuntimePage(projectId: string, path: string) {
   }
 }
 
-type BrowserScenarioStep =
-  | { action: "goto"; path: string }
-  | { action: "click"; selector: string }
-  | { action: "fill"; selector: string; value: string }
-  | { action: "press"; selector: string; key: string }
-  | { action: "expectText"; text: string }
-  | { action: "expectUrl"; pattern: string }
-  | { action: "expectVisible"; selector: string };
+import type { QaScenarioStep as BrowserScenarioStep } from "../qa/scenario-planner.js";
 
 const MAX_SCENARIO_STEPS = 20;
 
