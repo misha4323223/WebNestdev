@@ -278,7 +278,7 @@ async function runBrowserScenario(projectId: string, input: unknown) {
 
     const ok = results.length === steps.length && results.every(item => item.ok) && consoleErrors.length === 0 && pageErrors.length === 0 && failedRequests.length === 0 && httpErrors.length === 0;
     const screenshot = !ok ? await page.screenshot({ type: "png", fullPage: true, timeout: 5000 }).catch(() => null) : null;
-    return { ok, initialPath, steps: results, finalUrl: page.url(), consoleErrors, pageErrors, failedRequests, httpErrors, screenshotBase64: screenshot ? screenshot.toString("base64") : null, diagnostic: ok ? "Browser scenario passed with no console, page, or network errors." : "Browser scenario failed; inspect the failed step, runtime diagnostics, and failure screenshot before retrying." };ying." };
+    return { ok, initialPath, steps: results, finalUrl: page.url(), consoleErrors, pageErrors, failedRequests, httpErrors, screenshotBase64: screenshot ? screenshot.toString("base64") : null, diagnostic: ok ? "Browser scenario passed with no console, page, or network errors." : "Browser scenario failed; inspect the failed step, runtime diagnostics, and failure screenshot before retrying." };
   } finally {
     await browser.close();
   }
