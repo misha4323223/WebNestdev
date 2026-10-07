@@ -3,6 +3,7 @@ import path from "node:path";
 import { getSandbox } from "../sandbox-manager.js";
 
 const MAX_FILES = 12;
+const MAX_RELATED_FILES = 8;
 const MAX_FILE_CHARS = 12000;
 const MAX_TOTAL_CHARS = 70000;
 const IGNORED = new Set([".git", "node_modules", "dist", "build", ".next", ".cache", ".turbo"]);
