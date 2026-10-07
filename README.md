@@ -30,7 +30,7 @@ Preview inspection uses the actual host port assigned to the project, rather tha
 
 `project.verify` uses the same Preview state and performs an HTTP-level readiness check. The Agent Runtime is instructed to treat verification failures and tool errors as actionable diagnostics and retry after making fixes.
 
-The next browser milestone is a real headless-browser worker for client-side console/runtime errors, failed network requests, DOM inspection after JavaScript execution, and screenshots. Those signals can then feed a bounded automatic fix/retry loop.
+The real headless-browser worker is now implemented as `browser.runtime`. It executes the Preview in Chromium, captures console messages, failed network requests, page title, rendered HTML size, and a PNG screenshot. The Agent Runtime is instructed to treat runtime errors and failed requests as actionable diagnostics. The next step is to harden the browser worker with resource/time limits and connect its diagnostics to a bounded automatic fix/retry policy.
 
 ## CI
 
