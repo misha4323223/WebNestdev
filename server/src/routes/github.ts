@@ -11,6 +11,7 @@ import path from "node:path";
 const clientId = process.env.GITHUB_CLIENT_ID;
 const clientSecret = process.env.GITHUB_CLIENT_SECRET;
 const callbackUrl = process.env.GITHUB_CALLBACK_URL ?? "http://localhost:8787/api/github/callback";
+const frontendUrl = process.env.GITHUB_FRONTEND_URL ?? "http://localhost:5173/";
 
 export async function registerGitHubRoutes(app: FastifyInstance) {
   app.get("/api/github/status", async () => {
@@ -48,7 +49,7 @@ export async function registerGitHubRoutes(app: FastifyInstance) {
     if (!userResponse.ok) return reply.code(400).send({ error: "GitHub user lookup failed" });
     const user = await userResponse.json() as { login?: string };
     await saveGitHubConnection(token.access_token, user.login);
-    return reply.redirect("/?github=connected");
+    return reply.redirect(frontendUrl + (frontendUrl.includes("?") ? "&" : "?") + "github=connected");
   });
 
   app.get("/api/github/repositories", async () => ({ repositories: await listGitHubRepositories() }));
