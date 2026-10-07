@@ -12,8 +12,18 @@ const messageSchema=z.discriminatedUnion("role",[
 ]);
 const runSchema=z.object({projectId:z.string().min(1).max(200),conversationId:z.string().max(200).optional(),messages:z.array(messageSchema).min(1).max(100),model:z.string().max(200).optional()});
 
+function allowedOrigin(origin:string|undefined){
+  if(!origin)return true;
+  const allowed=(process.env.WEBNESTDEV_ALLOWED_ORIGINS??"http://localhost:5173").split(",").map(value=>value.trim()).filter(Boolean);
+  return allowed.includes(origin);
+}
+
 export async function registerAgentWebSocket(app:FastifyInstance,runtime=new AgentRuntime()){
   app.get("/ws",{websocket:true},(socket,request)=>{
+    if(!allowedOrigin(request.headers.origin)){
+      socket.close(1008,"Origin not allowed");
+      return;
+    }
     let running=false,closed=false; let controller:AbortController|null=null;
     const safeSend=(payload:unknown)=>{if(!closed)try{socket.send(JSON.stringify(payload))}catch{closed=true}};
     socket.on("close",()=>{closed=true;controller?.abort();controller=null;});
