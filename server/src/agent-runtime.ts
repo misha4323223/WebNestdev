@@ -9,6 +9,7 @@ import { executeTool } from "./agent/tool-executor.js";
 import { runAgentStep } from "./agent/step-runner.js";
 import type { EventSink } from "./agent/types.js";
 import { planQaScenario } from "./qa/scenario-planner.js";
+import { analyzeChangedFiles } from "./qa/diff-analyzer.js";
 
 const MAX_CONSECUTIVE_VERIFY_FAILURES=3;
 const MUTATING_TOOLS=new Set(["fs.write","fs.rename","fs.delete","terminal.exec","npm.install"]);
@@ -61,6 +62,7 @@ export class AgentRuntime {
       let consecutiveScenarioFailures=0;
       let verificationPending=false;
       let scenarioPending=false;
+      const changedFiles=new Set<string>();
 
       const runVerification=async (browserRuntime:boolean,routes:string[])=>{
         const verifyCalls=[
@@ -178,6 +180,8 @@ export class AgentRuntime {
               mutationSucceeded=true;
               browserRuntimeRequired=browserRuntimeRequired||shouldRunBrowserRuntime(call.name,call.arguments);
               verificationRoutes.add(routeFromMutation(call.name,call.arguments));
+              const changedPath=typeof call.arguments.path==="string"?call.arguments.path:typeof call.arguments.to==="string"?call.arguments.to:"";
+              if(changedPath)changedFiles.add(changedPath);
             }
           }catch(error){
             const message=error instanceof Error?error.message:String(error);
@@ -196,7 +200,9 @@ export class AgentRuntime {
               scenarioPending=true;
               consecutiveScenarioFailures=0;
               const affectedRoute=[...verificationRoutes][0]??"/";
-              const plannedScenario=planQaScenario(task,affectedRoute);
+              const changeAnalysis=analyzeChangedFiles([...changedFiles]);
+              const plannedScenario=planQaScenario(task,affectedRoute,changeAnalysis.kind,changeAnalysis.confidence);
+              (plannedScenario as Record<string,unknown>).changeAnalysis=changeAnalysis;
               const scenarioCall={id:randomUUID(),name:"browser.scenario",arguments:plannedScenario};
               emit({type:"tool.started",runId,toolCallId:scenarioCall.id,name:scenarioCall.name,input:scenarioCall.arguments});
               try{
