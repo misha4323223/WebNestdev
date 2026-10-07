@@ -2,6 +2,7 @@ import { GitBranch,Menu,Plus } from "lucide-react";
 import { GitHubConnect } from "../github/GitHubConnect";
 import { useState } from "react";
 import { logout } from "../../lib/auth-api";
+import { WebNestLogo } from "../../components/WebNestLogo";
 
 export function Topbar({projectName,onMenu,onNewProject}:{projectName:string;onMenu:()=>void;onNewProject:()=>void}){
   const [githubOpen,setGithubOpen]=useState(false);
@@ -13,7 +14,7 @@ export function Topbar({projectName,onMenu,onNewProject}:{projectName:string;onM
   };
   return <header className="topbar">
     <button className="icon-button mobile-only" onClick={onMenu} aria-label="Открыть меню"><Menu size={16}/></button>
-    <div className="brand"><span className="brand-mark">N</span><span>WebNestdev</span><span className="version">WEB</span></div>
+    <div className="brand"><WebNestLogo size={26}/><span>WebNestdev</span><span className="version">WEB</span></div>
     <div className="topbar-project">{projectName}</div>
     <div className="topbar-actions">
       <button className="ghost-button" onClick={onNewProject}><Plus size={14}/> Новый проект</button>
