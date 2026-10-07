@@ -1,6 +1,6 @@
-import { WorkspaceShell } from "./features/workspace/WorkspaceShell";
+import { AuthGate } from "./features/auth/AuthGate";
 
 export function App(){
-  return <div className="app"><WorkspaceShell/></div>;
+  return <div className="app"><AuthGate/></div>;
 }
 export default App;
