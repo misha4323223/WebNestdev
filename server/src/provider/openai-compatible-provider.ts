@@ -10,6 +10,36 @@ function chatCompletionsUrl(baseUrl:string){
     : base+"/v1/chat/completions";
 }
 
+type WireToolCall={
+  id:string;
+  type:"function";
+  function:{name:string;arguments:string};
+};
+
+type WireMessage=
+  | {role:"user"|"system";content:string}
+  | {role:"assistant";content:string;tool_calls?:WireToolCall[]}
+  | {role:"tool";content:string;tool_call_id:string};
+
+function toWireMessages(messages:ChatMessage[]):WireMessage[]{
+  return messages.map(message=>{
+    if(message.role!=="assistant")return message;
+    if(!message.tool_calls?.length)return message;
+    return {
+      role:"assistant",
+      content:message.content,
+      tool_calls:message.tool_calls.map(call=>({
+        id:call.id,
+        type:"function",
+        function:{
+          name:call.name,
+          arguments:JSON.stringify(call.arguments??{})
+        }
+      }))
+    };
+  });
+}
+
 export class OpenAICompatibleProvider implements Provider{
   constructor(private base:string,private key?:string){}
 
@@ -21,7 +51,7 @@ export class OpenAICompatibleProvider implements Provider{
         "content-type":"application/json",
         ...(this.key?{authorization:"Bearer "+this.key}:{})
       },
-      body:JSON.stringify({model,messages,tools,stream:true})
+      body:JSON.stringify({model,messages:toWireMessages(messages),tools,stream:true})
     });
     if(!response.ok){
       const detail=await response.text().catch(()=>"");
