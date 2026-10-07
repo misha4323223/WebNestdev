@@ -1,5 +1,6 @@
-import { FormEvent, useEffect, useState } from "react";
-import { ArrowRight, Code2, LayoutDashboard, ShoppingBag, Sparkles, Github, Globe, Layers3 } from "lucide-react";
+import type { FormEvent } from "react";
+import { useEffect, useState } from "react";
+import { ArrowRight, Code2, LayoutDashboard, ShoppingBag, Sparkles, GitBranch, Globe, Layers3 } from "lucide-react";
 import { createConversation, createProject, listProjects, type Project } from "../../lib/project-api";
 
 const templates = [
@@ -54,6 +55,6 @@ export function HomeScreen({onOpenWorkspace}:{onOpenWorkspace:()=>void}){
       <div className="recent-grid">{projects.map(project=><button key={project.id} className="recent-card" onClick={()=>{localStorage.setItem("webnestdev.projectId",project.id);localStorage.setItem("webnestdev.projectName",project.name);localStorage.removeItem("webnestdev.conversationId");onOpenWorkspace();}}><div className="recent-thumb"><Code2 size={18}/></div><strong>{project.name}</strong><span>{new Date(project.updatedAt).toLocaleDateString("ru-RU",{day:"numeric",month:"short"})}</span></button>)}</div>
     </section>}
 
-    <footer className="home-footer"><span>WebNestdev</span><span>Build faster. Stay in control.</span><span><Github size={12}/> GitHub</span></footer>
+    <footer className="home-footer"><span>WebNestdev</span><span>Build faster. Stay in control.</span><span><GitBranch size={12}/> GitHub</span></footer>
   </main>;
 }

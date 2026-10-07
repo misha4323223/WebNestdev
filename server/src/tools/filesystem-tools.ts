@@ -15,7 +15,7 @@ async function target(projectId: string, userId: string, relative: string) {
 registerTool({
   name: "fs.list",
   description: "List files and directories. Input: {path?: string}.",
-  async (input, context) {
+  execute: async (input, context) => {
     const value = input as { path?: string };
     const { path: targetPath } = await target(context.projectId, context.userId, value.path ?? ".");
     const entries = await readdir(targetPath, { withFileTypes: true });
@@ -29,7 +29,7 @@ registerTool({
 registerTool({
   name: "fs.read",
   description: "Read a UTF-8 text file. Input: {path:string}.",
-  async (input, context) {
+  execute: async (input, context) => {
     const value = input as { path?: string };
     if (!value.path) throw new Error("path is required");
     const resolved = await target(context.projectId, context.userId, value.path);
@@ -40,7 +40,7 @@ registerTool({
 registerTool({
   name: "fs.write",
   description: "Create or replace a UTF-8 text file. Input: {path:string,content:string}.",
-  async (input, context) {
+  execute: async (input, context) => {
     const value = input as { path?: string; content?: string };
     if (!value.path || typeof value.content !== "string") {
       throw new Error("path and content are required");
@@ -59,7 +59,7 @@ registerTool({
 registerTool({
   name: "fs.rename",
   description: "Rename a path inside the project. Input: {from:string,to:string}.",
-  async (input, context) {
+  execute: async (input, context) => {
     const value = input as { from?: string; to?: string };
     if (!value.from || !value.to) throw new Error("from and to are required");
     const from = await target(context.projectId, context.userId, value.from);
@@ -73,7 +73,7 @@ registerTool({
 registerTool({
   name: "fs.delete",
   description: "Delete a path inside the project. Input: {path:string}.",
-  async (input, context) {
+  execute: async (input, context) => {
     const value = input as { path?: string };
     if (!value.path || value.path === ".") {
       throw new Error("Refusing to delete sandbox root");
