@@ -1,9 +1,24 @@
 {
-  "name":"webnestdev",
-  "private":true,
-  "version":"0.1.0",
-  "type":"module",
-  "scripts":{"dev":"vite","build":"tsc -b && vite build","preview":"vite preview"},
-  "dependencies":{"@vitejs/plugin-react":"latest","vite":"latest","typescript":"latest","react":"latest","react-dom":"latest","lucide-react":"latest"},
-  "devDependencies":{}
+  "name": "webnestdev",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n WEB,API -c auto \"npm:dev:web\" \"npm:dev:server\"",
+    "dev:web": "vite --host 0.0.0.0 --port 5173",
+    "dev:server": "npm --prefix server run dev",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@vitejs/plugin-react": "latest",
+    "vite": "latest",
+    "typescript": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "lucide-react": "latest"
+  },
+  "devDependencies": {
+    "concurrently": "latest"
+  }
 }
