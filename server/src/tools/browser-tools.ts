@@ -129,12 +129,22 @@ async function inspectRuntimePage(projectId: string, path: string) {
   const browser = await chromium.launch({ headless: true });
   const consoleMessages: Array<{ type: string; text: string }> = [];
   const failedRequests: Array<{ url: string; method: string; error: string }> = [];
+  const httpErrors: Array<{ url: string; method: string; status: number }> = [];
+  const pageErrors: string[] = [];
 
   try {
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     page.on("console", message => {
       if (consoleMessages.length < MAX_CONSOLE_ITEMS) {
         consoleMessages.push({ type: message.type(), text: message.text().slice(0, 2000) });
+      }
+    });
+    page.on("pageerror", error => {
+      if (pageErrors.length < MAX_CONSOLE_ITEMS) pageErrors.push(error.message.slice(0, 2000));
+    });
+    page.on("response", response => {
+      if (response.status() >= 400 && httpErrors.length < MAX_NETWORK_ITEMS) {
+        httpErrors.push({ url: response.url().slice(0, 4000), method: response.request().method(), status: response.status() });
       }
     });
     page.on("requestfailed", request => {
@@ -169,13 +179,15 @@ async function inspectRuntimePage(projectId: string, path: string) {
       };
     }
     return {
-      ok: Boolean(response?.ok()) && consoleMessages.every(item => item.type !== "error") && failedRequests.length === 0,
+      ok: Boolean(response?.ok()) && consoleMessages.every(item => item.type !== "error") && pageErrors.length === 0 && failedRequests.length === 0 && httpErrors.length === 0,
       status: response?.status() ?? null,
       statusText: response?.statusText() ?? null,
       url,
       title,
       console: consoleMessages,
       failedRequests,
+      httpErrors,
+      pageErrors,
       screenshotBase64: screenshot.toString("base64"),
       screenshotBytes: screenshot.byteLength,
       htmlBytes: Buffer.byteLength(html, "utf8"),
