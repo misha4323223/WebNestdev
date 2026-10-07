@@ -4,6 +4,7 @@ import { createProvider } from "./provider.js";
 import { appendConversationMessages,getProject,getProjectProvider } from "./project-store.js";
 import { buildInitialMessages } from "./agent/message-builder.js";
 import { buildProjectContext } from "./agent/context-builder.js";
+import { retrieveRelevantFiles } from "./agent/context-retrieval.js";
 import { executeTool } from "./agent/tool-executor.js";
 import { runAgentStep } from "./agent/step-runner.js";
 import type { EventSink } from "./agent/types.js";
@@ -17,7 +18,9 @@ export class AgentRuntime {
       const config=await getProjectProvider(request.projectId);
       const provider=createProvider(config??undefined);
       const projectContext=await buildProjectContext(project,request.userId);
-      const messages:ChatMessage[]=buildInitialMessages(request.messages,projectContext);
+      const task=request.messages.filter(message=>message.role==="user").at(-1)?.content??"";
+      const relevantFiles=await retrieveRelevantFiles(request.projectId,request.userId,task);
+      const messages:ChatMessage[]=buildInitialMessages(request.messages,projectContext+"\n\nTASK-RELEVANT SOURCE FILES\n"+relevantFiles);
       const model=request.model??config?.model;
       if(!model)throw new Error("AI model is not configured");
       const maxSteps=Math.min(50,Math.max(1,Number(process.env.AGENT_MAX_STEPS??20)));
