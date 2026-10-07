@@ -1,4 +1,5 @@
-import { FormEvent,useState } from "react";
+import { useState } from "react";
+import type { FormEvent } from "react";
 import { login,register } from "../../lib/auth-api";
 
 export function AuthScreen({onAuthenticated}:{onAuthenticated:()=>void}){
