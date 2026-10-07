@@ -20,8 +20,9 @@ import "./tools/preview-tools.js";
 import "./tools/browser-tools.js";
 
 const app=Fastify({logger:true});
+const allowedOrigins=(process.env.WEBNESTDEV_ALLOWED_ORIGINS??"http://localhost:5173").split(",").map(value=>value.trim()).filter(Boolean);
 await ensureDataDir();
-await app.register(cors,{origin:true,credentials:true});
+await app.register(cors,{origin:(origin,callback)=>{if(!origin||allowedOrigins.includes(origin))callback(null,true);else callback(new Error("Origin not allowed"),false)},credentials:true});
 await app.register(cookie);
 await app.register(websocket);
 
