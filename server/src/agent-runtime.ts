@@ -21,6 +21,7 @@ export class AgentRuntime {
       const maxSteps=Math.min(50,Math.max(1,Number(process.env.AGENT_MAX_STEPS??20)));
       for(let step=0;step<maxSteps;step++){
         if(signal?.aborted)throw new Error("Agent run cancelled");
+        emit({type:"run.progress",runId,step:step+1,maxSteps});
         const context={runId,request,emit,signal};
         const result=await runAgentStep(provider,messages,model,context);
         if(!result.calls.length){
