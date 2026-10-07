@@ -3,7 +3,6 @@ import path from "node:path";
 import { getSandbox } from "../sandbox-manager.js";
 
 const MAX_FILES = 12;
-const MAX_RELATED_FILES = 8;
 const MAX_FILE_CHARS = 12000;
 const MAX_TOTAL_CHARS = 70000;
 const IGNORED = new Set([".git", "node_modules", "dist", "build", ".next", ".cache", ".turbo"]);
@@ -28,17 +27,6 @@ function score(file: string, taskTokens: Set<string>): number {
   if (/\.(tsx?|jsx?|vue|svelte)$/.test(file)) value += 1;
   if (/(package\.json|tsconfig|vite\.config|next\.config|README|AGENTS\.md|WEBNEST\.md)$/i.test(file)) value += 2;
   return value;
-}
-
-function localImports(source: string): string[] {
-  const result: string[] = [];
-  for (const line of source.split("\n")) {
-    const parts = line.split(/["']/);
-    for (const part of parts) {
-      if (part.startsWith("./") || part.startsWith("../")) result.push(part);
-    }
-  }
-  return result;
 }
 
 async function collectFiles(root: string, current: string, relative: string, result: string[]) {
