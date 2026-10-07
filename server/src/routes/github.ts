@@ -1,6 +1,6 @@
-import { requireUser } from "../auth/auth.js";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
+import { requireUser } from "../auth/auth.js";
 import { getGitHubConnection, saveGitHubConnection } from "../github/github-connection-store.js";
 import { createOAuthState, consumeOAuthState } from "../github/github-oauth-state.js";
 import { getGitHubUser, listGitHubRepositories, getGitHubRepository, getGitHubTree, getGitHubBlob } from "../github/github-api.js";
@@ -15,15 +15,15 @@ const callbackUrl = process.env.GITHUB_CALLBACK_URL ?? "http://localhost:8787/ap
 const frontendUrl = process.env.GITHUB_FRONTEND_URL ?? "http://localhost:5173/";
 
 export async function registerGitHubRoutes(app: FastifyInstance) {
-  app.get("/api/github/status", async (request,reply) => {\n    const user=await requireUser(request,reply); if(!user)return;
+  app.get("/api/github/status", async (request,reply) => {
+    const user=await requireUser(request,reply); if(!user)return;
     const connection = await getGitHubConnection();
     return { connected: Boolean(connection), githubLogin: connection?.githubLogin ?? null };
   });
 
-  app.get("/api/github/connect", async (_request, reply) => {
-    if (!clientId || !clientSecret) {
-      return reply.code(503).send({ error: "GitHub OAuth is not configured", required: ["GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"] });
-    }
+  app.get("/api/github/connect", async (request, reply) => {
+    const user=await requireUser(request,reply); if(!user)return;
+    if (!clientId || !clientSecret) return reply.code(503).send({ error: "GitHub OAuth is not configured", required: ["GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"] });
     const state = createOAuthState();
     const url = new URL("https://github.com/login/oauth/authorize");
     url.searchParams.set("client_id", clientId);
@@ -44,19 +44,24 @@ export async function registerGitHubRoutes(app: FastifyInstance) {
     });
     const token = await response.json() as { access_token?: string; error?: string };
     if (!token.access_token) return reply.code(400).send({ error: token.error ?? "GitHub OAuth token exchange failed" });
-    const userResponse = await fetch("https://api.github.com/user", {
-      headers: { Accept: "application/vnd.github+json", Authorization: "Bearer " + token.access_token, "X-GitHub-Api-Version": "2022-11-28" },
-    });
+    const userResponse = await fetch("https://api.github.com/user", { headers: { Accept: "application/vnd.github+json", Authorization: "Bearer " + token.access_token, "X-GitHub-Api-Version": "2022-11-28" } });
     if (!userResponse.ok) return reply.code(400).send({ error: "GitHub user lookup failed" });
-    const user = await userResponse.json() as { login?: string };
-    await saveGitHubConnection(token.access_token, user.login);
+    const githubUser = await userResponse.json() as { login?: string };
+    await saveGitHubConnection(token.access_token, githubUser.login);
     return reply.redirect(frontendUrl + (frontendUrl.includes("?") ? "&" : "?") + "github=connected");
   });
 
-  app.get("/api/github/repositories", async (request,reply) => { const user=await requireUser(request,reply); if(!user)return; return ({ repositories: await listGitHubRepositories() });
-  app.get("/api/github/me", async (request,reply) => { const user=await requireUser(request,reply); if(!user)return; return getGitHubUser(); });
+  app.get("/api/github/repositories", async (request,reply) => {
+    const user=await requireUser(request,reply); if(!user)return;
+    return { repositories: await listGitHubRepositories() };
+  });
+  app.get("/api/github/me", async (request,reply) => {
+    const user=await requireUser(request,reply); if(!user)return;
+    return getGitHubUser();
+  });
 
-  app.post("/api/github/import", async (request, reply) => {\n    const user=await requireUser(request,reply); if(!user)return;
+  app.post("/api/github/import", async (request, reply) => {
+    const user=await requireUser(request,reply); if(!user)return;
     const body = z.object({ owner: z.string().min(1).max(100), repo: z.string().min(1).max(100) }).parse(request.body);
     const repository = await getGitHubRepository(body.owner, body.repo);
     const project = await createProject(repository.name, {
