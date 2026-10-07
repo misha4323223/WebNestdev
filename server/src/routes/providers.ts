@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { getProjectProvider, getProject, saveProjectProvider } from "../project-store.js";
 
 type ModelsRequest = {
   baseUrl?: string;
@@ -16,6 +17,31 @@ function modelUrl(baseUrl: string) {
 }
 
 export async function registerProviderRoutes(app: FastifyInstance) {
+  app.get("/api/projects/:projectId/provider", async (request) => {
+    const { projectId } = request.params as { projectId: string };
+    const config = await getProjectProvider(projectId);
+    if (!config) return { configured: false, provider: "", baseUrl: "", model: "", hasToken: false };
+    return { configured: true, provider: config.provider, baseUrl: config.baseUrl, model: config.model, hasToken: Boolean(config.token) };
+  });
+
+  app.put("/api/projects/:projectId/provider", async (request, reply) => {
+    const { projectId } = request.params as { projectId: string };
+    if (!await getProject(projectId)) return reply.code(404).send({ error: "Project not found" });
+    const body = (request.body ?? {}) as ModelsRequest & { provider?: string; model?: string };
+    const baseUrl = body.baseUrl?.trim() ?? "";
+    if (!baseUrl) return reply.code(400).send({ error: "Base URL is required" });
+    if (!/^https?:\/\//i.test(baseUrl)) return reply.code(400).send({ error: "Base URL must start with http:// or https://" });
+    const existing = await getProjectProvider(projectId);
+    const token = body.token?.trim() || existing?.token;
+    const config = {
+      provider: body.provider?.trim() || "OpenAI-compatible",
+      baseUrl: normalizeBaseUrl(baseUrl),
+      model: body.model?.trim() || "",
+      ...(token ? { token } : {}),
+    };
+    await saveProjectProvider(projectId, config);
+    return { configured: true, provider: config.provider, baseUrl: config.baseUrl, model: config.model, hasToken: Boolean(config.token) };
+  });
   app.post("/api/providers/models", async (request, reply) => {
     const body = (request.body ?? {}) as ModelsRequest;
     const baseUrl = body.baseUrl?.trim();
