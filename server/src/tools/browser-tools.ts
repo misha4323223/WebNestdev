@@ -197,6 +197,95 @@ async function inspectRuntimePage(projectId: string, path: string) {
   }
 }
 
+type BrowserScenarioStep =
+  | { action: "goto"; path: string }
+  | { action: "click"; selector: string }
+  | { action: "fill"; selector: string; value: string }
+  | { action: "press"; selector: string; key: string }
+  | { action: "expectText"; text: string }
+  | { action: "expectUrl"; pattern: string };
+
+const MAX_SCENARIO_STEPS = 20;
+
+async function runBrowserScenario(projectId: string, input: unknown) {
+  const value = (input && typeof input === "object" ? input : {}) as {
+    path?: unknown;
+    steps?: unknown;
+  };
+  const initialPath = typeof value.path === "string" ? getPath({ path: value.path }) : "/";
+  const steps = Array.isArray(value.steps) ? value.steps.slice(0, MAX_SCENARIO_STEPS) as BrowserScenarioStep[] : [];
+  if (!steps.length) return { ok: false, error: "At least one scenario step is required." };
+
+  const status = await previewStatus(projectId);
+  if (!status.running) throw new Error(String((status as { error?: string }).error ?? "Preview is not running"));
+  const current = getPreview(projectId);
+  if (!current) throw new Error("Preview state is unavailable");
+
+  const browser = await chromium.launch({ headless: true });
+  const consoleErrors: string[] = [];
+  const pageErrors: string[] = [];
+  const failedRequests: Array<{ url: string; error: string }> = [];
+  const httpErrors: Array<{ url: string; status: number }> = [];
+  const results: Array<{ step: number; action: string; ok: boolean; detail?: string }> = [];
+
+  try {
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    page.on("console", message => { if (message.type() === "error" && consoleErrors.length < 50) consoleErrors.push(message.text().slice(0, 2000)); });
+    page.on("pageerror", error => { if (pageErrors.length < 50) pageErrors.push(error.message.slice(0, 2000)); });
+    page.on("response", response => { if (response.status() >= 400 && httpErrors.length < 50) httpErrors.push({ url: response.url().slice(0, 2000), status: response.status() }); });
+    page.on("requestfailed", request => { if (failedRequests.length < 50) failedRequests.push({ url: request.url().slice(0, 2000), error: request.failure()?.errorText ?? "request failed" }); });
+
+    await page.goto(`http://${current.host}:${current.port}${initialPath}`, { waitUntil: "networkidle", timeout: MAX_RUNTIME_MS });
+
+    for (let index = 0; index < steps.length; index++) {
+      const step = steps[index];
+      try {
+        switch (step.action) {
+          case "goto":
+            await page.goto(`http://${current.host}:${current.port}${getPath({ path: step.path })}`, { waitUntil: "networkidle", timeout: MAX_RUNTIME_MS });
+            break;
+          case "click":
+            await page.locator(step.selector).first().click({ timeout: 5000 });
+            await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => undefined);
+            break;
+          case "fill":
+            await page.locator(step.selector).first().fill(step.value, { timeout: 5000 });
+            break;
+          case "press":
+            await page.locator(step.selector).first().press(step.key, { timeout: 5000 });
+            await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => undefined);
+            break;
+          case "expectText":
+            await page.getByText(step.text, { exact: false }).first().waitFor({ state: "visible", timeout: 5000 });
+            break;
+          case "expectUrl": {
+            const matched = new RegExp(step.pattern).test(page.url());
+            if (!matched) throw new Error(`URL did not match /${step.pattern}/: ${page.url()}`);
+            break;
+          }
+          default:
+            throw new Error(`Unsupported scenario action: ${(step as { action?: string }).action ?? "unknown"}`);
+        }
+        results.push({ step: index + 1, action: step.action, ok: true });
+      } catch (error) {
+        results.push({ step: index + 1, action: step.action, ok: false, detail: error instanceof Error ? error.message : String(error) });
+        break;
+      }
+    }
+
+    const ok = results.length === steps.length && results.every(item => item.ok) && consoleErrors.length === 0 && pageErrors.length === 0 && failedRequests.length === 0 && httpErrors.length === 0;
+    return { ok, initialPath, steps: results, finalUrl: page.url(), consoleErrors, pageErrors, failedRequests, httpErrors, diagnostic: ok ? "Browser scenario passed with no console, page, or network errors." : "Browser scenario failed; inspect the failed step and runtime diagnostics before retrying." };
+  } finally {
+    await browser.close();
+  }
+}
+
+registerTool({
+  name: "browser.scenario",
+  description: "Run a real Chromium user-flow scenario against Preview. Input: {path?:string,steps:[{action:'goto',path}|{action:'click',selector}|{action:'fill',selector,value}|{action:'press',selector,key}|{action:'expectText',text}|{action:'expectUrl',pattern}]}. Maximum 20 steps. Stops on the first failed step and reports console/page/network errors.",
+  execute: async (input, context) => runBrowserScenario(context.projectId, input),
+});
+
 registerTool({
   name: "browser.runtime",
   description:
