@@ -28,6 +28,10 @@ jobs:
         run: npm run build
         working-directory: server
 
+      - name: Test server
+        run: npm test
+        working-directory: server
+
       - name: Install web dependencies
         run: npm install
 
