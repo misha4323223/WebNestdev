@@ -2,6 +2,7 @@ import type { FormEvent } from "react";
 import { useEffect, useState } from "react";
 import { ArrowRight, Code2, LayoutDashboard, ShoppingBag, Sparkles, GitBranch, Globe, Layers3 } from "lucide-react";
 import { createConversation, createProject, listProjects, type Project } from "../../lib/project-api";
+import { WebNestLogo } from "../../components/WebNestLogo";
 
 const templates = [
   { name: "Landing Page", icon: Globe, prompt: "Создай современный лендинг для продукта" },
@@ -36,7 +37,7 @@ export function HomeScreen({onOpenWorkspace}:{onOpenWorkspace:()=>void}){
 
   return <main className="home-screen">
     <section className="home-hero">
-      <div className="home-kicker"><Sparkles size={13}/> AI development workspace</div>
+      <div className="home-logo"><WebNestLogo size={78}/></div>\n      <div className="home-kicker"><Sparkles size={13}/> AI development workspace</div>
       <h1>Создай что угодно.</h1>
       <p>Опиши идею — WebNestdev поможет превратить её в рабочий проект.</p>
       <form className="home-composer" onSubmit={submit}>
