@@ -1,3 +1,4 @@
+import { requireUser } from "../auth/auth.js";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { getGitHubConnection, saveGitHubConnection } from "../github/github-connection-store.js";
@@ -14,7 +15,7 @@ const callbackUrl = process.env.GITHUB_CALLBACK_URL ?? "http://localhost:8787/ap
 const frontendUrl = process.env.GITHUB_FRONTEND_URL ?? "http://localhost:5173/";
 
 export async function registerGitHubRoutes(app: FastifyInstance) {
-  app.get("/api/github/status", async () => {
+  app.get("/api/github/status", async (request,reply) => {\n    const user=await requireUser(request,reply); if(!user)return;
     const connection = await getGitHubConnection();
     return { connected: Boolean(connection), githubLogin: connection?.githubLogin ?? null };
   });
@@ -52,10 +53,10 @@ export async function registerGitHubRoutes(app: FastifyInstance) {
     return reply.redirect(frontendUrl + (frontendUrl.includes("?") ? "&" : "?") + "github=connected");
   });
 
-  app.get("/api/github/repositories", async () => ({ repositories: await listGitHubRepositories() }));
-  app.get("/api/github/me", async () => getGitHubUser());
+  app.get("/api/github/repositories", async (request,reply) => { const user=await requireUser(request,reply); if(!user)return; return ({ repositories: await listGitHubRepositories() });
+  app.get("/api/github/me", async (request,reply) => { const user=await requireUser(request,reply); if(!user)return; return getGitHubUser(); });
 
-  app.post("/api/github/import", async (request, reply) => {
+  app.post("/api/github/import", async (request, reply) => {\n    const user=await requireUser(request,reply); if(!user)return;
     const body = z.object({ owner: z.string().min(1).max(100), repo: z.string().min(1).max(100) }).parse(request.body);
     const repository = await getGitHubRepository(body.owner, body.repo);
     const project = await createProject(repository.name, {
@@ -64,7 +65,7 @@ export async function registerGitHubRoutes(app: FastifyInstance) {
       fullName: repository.full_name,
       defaultBranch: repository.default_branch,
       url: repository.html_url,
-    });
+    }, user.id);
     const sandbox = await getSandbox(project.id);
     const tree = await getGitHubTree(repository.owner.login, repository.name, repository.default_branch);
     const files = tree.tree.filter((entry: { type: string; path: string }) => entry.type === "blob" && entry.path);
