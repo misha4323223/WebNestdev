@@ -6,7 +6,7 @@ import { getProject,getConversation,appendConversationMessages } from "../projec
 
 const messageSchema=z.discriminatedUnion("role",[
   z.object({role:z.literal("user"),content:z.string().max(100000)}),
-  z.object({role:z.literal("assistant"),content:z.string().max(100000),tool_calls:z.array(z.object({id:z.string(),name:z.string(),arguments:z.record(z.unknown())})).optional()}),
+  z.object({role:z.literal("assistant"),content:z.string().max(100000),tool_calls:z.array(z.object({id:z.string(),name:z.string(),arguments:z.record(z.string(),z.unknown())})).optional()}),
   z.object({role:z.literal("tool"),content:z.string().max(100000),tool_call_id:z.string()})
 ]);
 const runSchema=z.object({projectId:z.string().min(1).max(200),conversationId:z.string().max(200).optional(),messages:z.array(messageSchema).min(1).max(100),model:z.string().max(200).optional()});
@@ -26,7 +26,7 @@ export async function registerAgentWebSocket(app:FastifyInstance,runtime=new Age
     let running=false,closed=false; let controller:AbortController|null=null;
     const safeSend=(payload:unknown)=>{if(!closed)try{socket.send(JSON.stringify(payload))}catch{closed=true}};
     socket.on("close",()=>{closed=true;controller?.abort();controller=null;});
-    socket.on("message",async raw=>{
+    socket.on("message",async (raw:Buffer)=>{
       if(closed)return;
       if(running){safeSend({type:"error",error:"Agent is already running for this connection"});return}
       running=true;
