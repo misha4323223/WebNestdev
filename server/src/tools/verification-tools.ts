@@ -16,7 +16,8 @@ registerTool({
         stage: "preview",
         reason: "Preview is not running",
         status,
-        nextAction: "Call preview.start, inspect any startup error, fix the project, then run project.verify again.",
+        nextAction:
+          "Call preview.start, inspect any startup error, fix the project, then run project.verify again.",
       };
     }
 
@@ -30,11 +31,21 @@ registerTool({
       };
     }
 
+    const port = current.port;
+    if (!port) {
+      return {
+        ok: false,
+        stage: "preview",
+        reason: "Preview is running but its host port is unavailable",
+        nextAction: "Restart the Preview and run project.verify again.",
+      };
+    }
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);
 
     try {
-      const port = current.port;\n      if (!port) {\n        return {\n          ok: false,\n          stage: "preview",\n          reason: "Preview is running but its host port is unavailable",\n          nextAction: "Restart the Preview and run project.verify again.",\n        };\n      }\n\n      const response = await fetch(`http://${current.host}:${port}/`, {
+      const response = await fetch(`http://${current.host}:${port}/`, {
         redirect: "manual",
         signal: controller.signal,
       });
