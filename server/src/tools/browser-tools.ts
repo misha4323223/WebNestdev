@@ -28,7 +28,7 @@ registerTool({
         : DEFAULT_PATH;
 
     const path = requestedPath.startsWith("/") ? requestedPath : "/" + requestedPath;
-    const url = `http://${current.host}:3000${path}`;
+    const url = `http://${current.host}:${current.port}${path}`;
 
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 8000);
