@@ -7,8 +7,15 @@ const MAX_BODY = 20_000;
 registerTool({
   name: "project.verify",
   description:
-    "Verify the current project after changes. Checks Preview health, successful HTML, a non-empty document, and common server-rendered error signals. Returns structured pass/fail diagnostics. Use this after implementing or fixing a web task; if verification fails, inspect the failed checks, fix the project, and verify again.",
-  execute: async (_input, context) => {
+    "Verify the current project after changes. Checks a requested Preview route (input: {path?:string}), successful HTML, a non-empty document, and common server-rendered error signals. Returns structured pass/fail diagnostics. Use this after implementing or fixing a web task; if verification fails, inspect the failed checks, fix the project, and verify again.",
+  execute: async (input, context) => {
+    const requestedPath =
+      typeof input === "object" &&
+      input !== null &&
+      typeof (input as { path?: unknown }).path === "string"
+        ? (input as { path: string }).path
+        : "/";
+    const path = requestedPath.startsWith("/") ? requestedPath : "/" + requestedPath;
     const status = await previewStatus(context.projectId);
     if (!status.running) {
       return {
@@ -44,7 +51,7 @@ registerTool({
     const timeout = setTimeout(() => controller.abort(), 8000);
 
     try {
-      const response = await fetch(`http://${current.host}:${current.port}/`, {
+      const response = await fetch(`http://${current.host}:${current.port}${path}`, {
         redirect: "manual",
         signal: controller.signal,
       });
@@ -74,6 +81,7 @@ registerTool({
       return {
         ok,
         stage: "http",
+        path,
         status: response.status,
         statusText: response.statusText,
         contentType,
@@ -81,8 +89,8 @@ registerTool({
         body,
         truncated: body.length >= MAX_BODY,
         nextAction: ok
-          ? "Verification passed. Preview returned a non-empty HTML document without common server-rendered error signals."
-          : "Verification failed. Inspect the failed checks, HTTP response, or error signals, fix the project, then verify again.",
+          ? "Verification passed. Preview returned a non-empty HTML document for the requested route without common server-rendered error signals."
+          : "Verification failed for the requested route. Inspect the failed checks, HTTP response, or error signals, fix the project, then verify again.",
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
