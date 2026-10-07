@@ -8,6 +8,7 @@ import { retrieveRelevantFiles } from "./agent/context-retrieval.js";
 import { executeTool } from "./agent/tool-executor.js";
 import { runAgentStep } from "./agent/step-runner.js";
 import type { EventSink } from "./agent/types.js";
+import { planQaScenario } from "./qa/scenario-planner.js";
 
 const MAX_CONSECUTIVE_VERIFY_FAILURES=3;
 const MUTATING_TOOLS=new Set(["fs.write","fs.rename","fs.delete","terminal.exec","npm.install"]);
@@ -194,7 +195,32 @@ export class AgentRuntime {
             if(browserRuntimeRequired){
               scenarioPending=true;
               consecutiveScenarioFailures=0;
-              messages.push({role:"system",content:"Browser smoke verification passed. Browser QA scenario is now mandatory: call browser.scenario with a minimal user flow derived from the original task and the changed route. Do not finish until it returns ok=true."});
+              const affectedRoute=[...verificationRoutes][0]??"/";
+              const plannedScenario=planQaScenario(task,affectedRoute);
+              const scenarioCall={id:randomUUID(),name:"browser.scenario",arguments:plannedScenario};
+              emit({type:"tool.started",runId,toolCallId:scenarioCall.id,name:scenarioCall.name,input:scenarioCall.arguments});
+              try{
+                const scenarioOutput=await executeTool(scenarioCall as any,{runId,request,emit,signal});
+                emit({type:"tool.finished",runId,toolCallId:scenarioCall.id,name:scenarioCall.name,output:scenarioOutput});
+                messages.push({role:"tool",content:JSON.stringify(scenarioOutput),tool_call_id:scenarioCall.id});
+                if((scenarioOutput as {ok?:boolean}).ok===true){
+                  scenarioPending=false;
+                  consecutiveScenarioFailures=0;
+                  messages.push({role:"system",content:"BROWSER QA SCENARIO PASSED: the automatically planned user flow passed in Chromium with no browser console, page, HTTP, or network errors."});
+                }else{
+                  scenarioPending=true;
+                  consecutiveScenarioFailures++;
+                  messages.push({role:"system",content:"AUTOMATIC BROWSER QA FAILED. Inspect the scenario diagnostics and failure screenshot, fix the smallest necessary issue, then repeat verification. Do not finish while Browser QA is pending."});
+                  if(consecutiveScenarioFailures>=MAX_CONSECUTIVE_VERIFY_FAILURES) throw new Error("Browser QA scenario failed repeatedly; maximum scenario attempts reached");
+                }
+              }catch(error){
+                const message=error instanceof Error?error.message:String(error);
+                scenarioPending=true;
+                consecutiveScenarioFailures++;
+                emit({type:"tool.finished",runId,toolCallId:scenarioCall.id,name:scenarioCall.name,output:{ok:false,error:message}});
+                messages.push({role:"tool",content:JSON.stringify({ok:false,error:message}),tool_call_id:scenarioCall.id});
+                if(consecutiveScenarioFailures>=MAX_CONSECUTIVE_VERIFY_FAILURES) throw new Error("Browser QA scenario failed repeatedly; maximum scenario attempts reached");
+              }
             }else{
               scenarioPending=false;
             }
