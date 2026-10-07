@@ -1,15 +1,16 @@
 import { spawn } from "node:child_process";
 import type { SandboxConfig } from "./sandbox-manager.js";
 import { dockerOptions } from "./sandbox/docker/options.js";
+import type { SandboxRunOptions } from "./sandbox-worker.js";
 import { dockerRunArgs } from "./sandbox/docker/args.js";
 import type { DockerCommandResult } from "./sandbox/docker/types.js";
 
 export type { DockerCommandResult };
 
-export async function runDockerSandbox(config:SandboxConfig,command:string,cwd:string):Promise<DockerCommandResult>{
+export async function runDockerSandbox(config:SandboxConfig,command:string,cwd:string,runOptions:SandboxRunOptions={}):Promise<DockerCommandResult>{
   if((process.env.SANDBOX_MODE??"docker")!=="docker")throw new Error("Host execution is disabled. Set SANDBOX_MODE=docker.");
   const options=dockerOptions(config);
-  const args=dockerRunArgs(config,cwd,options,command);
+  const args=dockerRunArgs(config,cwd,options,command,runOptions);
   return new Promise((resolve,reject)=>{
     const child=spawn("docker",args,{stdio:["ignore","pipe","pipe"],windowsHide:true});
     let stdout="",stderr="",truncated=false;
