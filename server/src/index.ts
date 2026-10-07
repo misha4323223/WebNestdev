@@ -14,6 +14,7 @@ import "./tools/filesystem-tools.js";
 import "./tools/terminal-tools.js";
 import "./tools/git-tools.js";
 import "./tools/preview-tools.js";
+import "./tools/browser-tools.js";
 
 const app=Fastify({logger:true});
 await ensureDataDir();
