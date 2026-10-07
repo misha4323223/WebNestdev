@@ -24,7 +24,7 @@ export async function registerGitHubRoutes(app: FastifyInstance) {
   app.get("/api/github/connect", async (request, reply) => {
     const user=await requireUser(request,reply); if(!user)return;
     if (!clientId || !clientSecret) return reply.code(503).send({ error: "GitHub OAuth is not configured", required: ["GITHUB_CLIENT_ID", "GITHUB_CLIENT_SECRET"] });
-    const state = createOAuthState();
+    const state = createOAuthState(user.id);
     const url = new URL("https://github.com/login/oauth/authorize");
     url.searchParams.set("client_id", clientId);
     url.searchParams.set("redirect_uri", callbackUrl);
@@ -37,7 +37,7 @@ export async function registerGitHubRoutes(app: FastifyInstance) {
     const user=await requireUser(request,reply); if(!user)return;
     if (!clientId || !clientSecret) return reply.code(503).send({ error: "GitHub OAuth is not configured" });
     const query = z.object({ code: z.string().min(1), state: z.string().min(1) }).parse(request.query);
-    if (!consumeOAuthState(query.state)) return reply.code(400).send({ error: "Invalid or expired GitHub OAuth state" });
+    const oauthUserId = consumeOAuthState(query.state); if (!oauthUserId || oauthUserId !== user.id) return reply.code(400).send({ error: "Invalid or expired GitHub OAuth state" });
     const response = await fetch("https://github.com/login/oauth/access_token", {
       method: "POST",
       headers: { Accept: "application/json", "Content-Type": "application/json" },
