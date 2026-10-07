@@ -72,7 +72,7 @@ export async function registerGitHubRoutes(app: FastifyInstance) {
       defaultBranch: repository.default_branch,
       url: repository.html_url,
     }, user.id);
-    const sandbox = await getSandbox(project.id);
+    const sandbox = await getSandbox(project.id,user.id);
     const tree = await getGitHubTree(user.id, repository.owner.login, repository.name, repository.default_branch);
     const files = tree.tree.filter((entry: { type: string; path: string }) => entry.type === "blob" && entry.path);
     if (files.length > 5000) throw new Error("Repository contains too many files to import");
