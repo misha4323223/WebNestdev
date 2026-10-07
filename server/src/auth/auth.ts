@@ -1,5 +1,6 @@
 import type { FastifyRequest } from "fastify";
 import { createSession, getSession, getUser } from "./auth-store.js";
+import { getProject, type Project } from "../project-store.js";
 
 export const SESSION_COOKIE = "webnestdev_session";
 
@@ -13,6 +14,16 @@ export async function requireUser(request:FastifyRequest, reply:any){
   const user = await getCurrentUser(request);
   if(!user){
     await reply.code(401).send({error:"Authentication required"});
+    return null;
+  }
+  return user;
+}
+export async function requireProjectUser(request:FastifyRequest, reply:any, projectId:string):Promise<{id:string;email:string}|null>{
+  const user=await requireUser(request,reply);
+  if(!user)return null;
+  const project=await getProject(projectId);
+  if(!project||project.userId!==user.id){
+    await reply.code(404).send({error:"Project not found"});
     return null;
   }
   return user;
