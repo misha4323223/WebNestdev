@@ -4,6 +4,7 @@ import type { ChatMessage, FileEntry, PreviewState } from "./types";
 export type Project={id:string;name:string;createdAt:string;updatedAt:string};
 export type Conversation={id:string;projectId:string;title:string;messages:ChatMessage[];createdAt:string;updatedAt:string};
 
+export const listProjects=()=>apiJson<{projects:Project[]}>("/api/projects");
 export const createProject=(name="Новый проект")=>apiJson<Project>("/api/projects",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({name})});
 export const createConversation=(projectId:string,title="Новая сессия")=>apiJson<Conversation>("/api/projects/"+projectId+"/conversations",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({title})});
 export const getConversation=(conversationId:string)=>apiJson<Conversation>("/api/conversations/"+conversationId);
