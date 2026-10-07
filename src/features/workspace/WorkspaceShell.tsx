@@ -24,7 +24,7 @@ export function WorkspaceShell(){
     <main className="main">
       <div className="workspace-main">
         {(settingsOpen||deployOpen)?<div className="workspace-overlay-panel">
-          {settingsOpen?<SettingsPanel projectName={projectName} onClose={()=>setSettingsOpen(false)}/>:<section className="settings-panel">
+          {settingsOpen?<SettingsPanel projectId={projectId} projectName={projectName} onClose={()=>setSettingsOpen(false)}/>:<section className="settings-panel">
             <div className="panel-title"><div><span className="eyebrow">DEPLOY</span><strong>Публикация проекта</strong></div><button className="ghost-button" onClick={()=>setDeployOpen(false)}>Закрыть</button></div>
             <div className="settings-body"><p>Deployment-модуль подключим к выбранному провайдеру после настройки окружения.</p><button className="send-button" onClick={()=>setDeployOpen(false)}>Понятно</button></div>
           </section>}
