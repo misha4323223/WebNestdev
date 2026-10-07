@@ -1,5 +1,6 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
+import cookie from "@fastify/cookie";
 import websocket from "@fastify/websocket";
 import { ensureDataDir } from "./project-store.js";
 import { registerHealthRoutes } from "./routes/health.js";
@@ -10,6 +11,7 @@ import { registerWorkspaceRoutes } from "./routes/workspace.js";
 import { registerAgentWebSocket } from "./routes/agent-ws.js";
 import { registerProviderRoutes } from "./routes/providers.js";
 import { registerGitHubRoutes } from "./routes/github.js";
+import { registerAuthRoutes } from "./routes/auth.js";
 import "./tools/project-tools.js";
 import "./tools/filesystem-tools.js";
 import "./tools/terminal-tools.js";
@@ -19,10 +21,12 @@ import "./tools/browser-tools.js";
 
 const app=Fastify({logger:true});
 await ensureDataDir();
-await app.register(cors,{origin:true});
+await app.register(cors,{origin:true,credentials:true});
+await app.register(cookie);
 await app.register(websocket);
 
 await registerHealthRoutes(app);
+await registerAuthRoutes(app);
 await registerProjectRoutes(app);
 await registerPreviewRoutes(app);
 await registerToolRoutes(app);
