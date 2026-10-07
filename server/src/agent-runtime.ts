@@ -1,37 +1,35 @@
 import { randomUUID } from "node:crypto";
 import type { AgentRunRequest,ChatMessage } from "./types.js";
 import { createProvider } from "./provider.js";
-import { appendConversationMessages } from "./project-store.js";
+import { appendConversationMessages,getProjectProvider } from "./project-store.js";
 import { buildInitialMessages } from "./agent/message-builder.js";
 import { executeTool } from "./agent/tool-executor.js";
 import { runAgentStep } from "./agent/step-runner.js";
 import type { EventSink } from "./agent/types.js";
 
 export class AgentRuntime {
-  private readonly provider=createProvider();
-
   async run(request:AgentRunRequest,emit:EventSink,signal?:AbortSignal){
     const runId=randomUUID();
     emit({type:"run.started",runId});
     try{
+      const config=await getProjectProvider(request.projectId);
+      const provider=createProvider(config??undefined);
       const messages:ChatMessage[]=buildInitialMessages(request.messages);
-      const model=request.model??process.env.AI_MODEL??"llama3.2";
-      const maxSteps=Math.min(50,Math.max(1,Number(process.env.AGENT_MAX_STEPS??12)));
+      const model=request.model??config?.model??process.env.AI_MODEL??"llama3.2";
+      if(!model)throw new Error("AI model is not configured");
 
+      const maxSteps=Math.min(50,Math.max(1,Number(process.env.AGENT_MAX_STEPS??12)));
       for(let step=0;step<maxSteps;step++){
         if(signal?.aborted)throw new Error("Agent run cancelled");
         const context={runId,request,emit,signal};
-        const result=await runAgentStep(this.provider,messages,model,context);
+        const result=await runAgentStep(provider,messages,model,context);
         if(!result.calls.length){
           const text=result.text||"Модель не вернула ответ.";
           if(!result.text)emit({type:"message.delta",runId,delta:text});
-          if(request.conversationId){
-            await appendConversationMessages(request.conversationId,[{role:"assistant",content:text}]);
-          }
+          if(request.conversationId)await appendConversationMessages(request.conversationId,[{role:"assistant",content:text}]);
           emit({type:"run.completed",runId});
           return;
         }
-
         messages.push({role:"assistant",content:result.text,tool_calls:result.calls});
         for(const call of result.calls){
           if(signal?.aborted)throw new Error("Agent run cancelled");
@@ -49,8 +47,6 @@ export class AgentRuntime {
         }
       }
       throw new Error("Agent step limit reached");
-    }catch(error){
-      emit({type:"run.failed",runId,error:error instanceof Error?error.message:String(error)});
-    }
+    }catch(error){emit({type:"run.failed",runId,error:error instanceof Error?error.message:String(error)});}
   }
 }
