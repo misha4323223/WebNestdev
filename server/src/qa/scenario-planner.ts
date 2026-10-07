@@ -7,14 +7,14 @@ export type QaScenarioStep =
   | { action: "expectUrl"; pattern: string }
   | { action: "expectVisible"; selector: string };
 
-export type QaScenario = { path: string; steps: QaScenarioStep[]; reason: string };
+export type QaScenario = { path: string; steps: QaScenarioStep[]; reason: string; changeKind?: string; confidence?: number };
 
 const route = (value: string) => value.startsWith("/") ? value : "/" + value;
 
 /** Builds a conservative smoke scenario from the task text and affected route.
  * It intentionally prefers observable assertions over destructive actions.
  */
-export function planQaScenario(task: string, affectedRoute = "/"): QaScenario {
+export function planQaScenario(task: string, affectedRoute = "/", changeKind = "unknown", confidence = 0.35): QaScenario {
   const text = task.toLowerCase();
   const path = route(affectedRoute || "/");
   const steps: QaScenarioStep[] = [
@@ -30,8 +30,8 @@ export function planQaScenario(task: string, affectedRoute = "/"): QaScenario {
   for (const [pattern, selector, reason] of checks) {
     if (pattern.test(text)) {
       steps.push({ action: "expectVisible", selector });
-      return { path, steps, reason };
+      return { path, steps, reason, changeKind, confidence };
     }
   }
-  return { path, steps, reason: "Generic route smoke scenario; no safe interactive action was inferred." };
+  return { path, steps, reason: "Generic route smoke scenario; no safe interactive action was inferred.", changeKind, confidence };
 }
