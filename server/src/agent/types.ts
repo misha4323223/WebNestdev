@@ -1,3 +1,3 @@
-import type { AgentEvent,AgentRunRequest,ChatMessage } from "../types.js";
+import type { AgentEvent,AgentRunRequest } from "../types.js";
 export type EventSink=(event:AgentEvent)=>void;
 export type AgentContext={runId:string;request:AgentRunRequest;emit:EventSink;signal?:AbortSignal};
