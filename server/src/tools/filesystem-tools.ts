@@ -1,10 +1,85 @@
-import { mkdir,readFile,readdir,rename,rm,writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { getSandbox,assertInsideSandbox } from "../sandbox-manager.js";
+import { getSandbox, assertInsideSandbox } from "../sandbox-manager.js";
 import { registerTool } from "../tool-registry.js";
-async function target(projectId:string,relative:string){const sandbox=await getSandbox(projectId);return{sandbox,path:assertInsideSandbox(sandbox.root,path.join(sandbox.root,relative||"."))}};
-registerTool({name:"fs.list",description:"List files and directories. Input: {path?: string}.",async(input,c)=>{const {path:p}=await target(c.projectId,(input as {path?:string}).path??".");return(await readdir(p,{withFileTypes:true})).map(e=>({name:e.name,type:e.isDirectory()?"directory":"file"}))}});
-registerTool({name:"fs.read",description:"Read a UTF-8 text file. Input: {path:string}.",async(input,c)=>{const p=(input as {path?:string}).path;if(!p)throw new Error("path is required");return{path:p,content:await readFile((await target(c.projectId,p)).path,"utf8")}}});
-registerTool({name:"fs.write",description:"Create or replace a UTF-8 text file. Input: {path:string,content:string}.",async(input,c)=>{const v=input as {path?:string;content?:string};if(!v.path||typeof v.content!=="string")throw new Error("path and content are required");const p=(await target(c.projectId,v.path)).path;await mkdir(path.dirname(p),{recursive:true});await writeFile(p,v.content,"utf8");return{ok:true,path:v.path,bytes:Buffer.byteLength(v.content)}}});
-registerTool({name:"fs.rename",description:"Rename a path inside the project. Input: {from:string,to:string}.",async(input,c)=>{const v=input as {from?:string;to?:string};if(!v.from||!v.to)throw new Error("from and to are required");const from=(await target(c.projectId,v.from)).path;const to=(await target(c.projectId,v.to)).path;await mkdir(path.dirname(to),{recursive:true});await rename(from,to);return{ok:true,from:v.from,to:v.to}}});
-registerTool({name:"fs.delete",description:"Delete a path inside the project. Input: {path:string}.",async(input,c)=>{const p=(input as {path?:string}).path;if(!p||p===".")throw new Error("Refusing to delete sandbox root");await rm((await target(c.projectId,p)).path,{recursive:true,force:true});return{ok:true,path:p}}});
+
+async function target(projectId: string, relative: string) {
+  const sandbox = await getSandbox(projectId);
+  const safePath = assertInsideSandbox(
+    sandbox.root,
+    path.join(sandbox.root, relative || "."),
+  );
+  return { sandbox, path: safePath };
+}
+
+registerTool({
+  name: "fs.list",
+  description: "List files and directories. Input: {path?: string}.",
+  async (input, context) {
+    const value = input as { path?: string };
+    const { path: targetPath } = await target(context.projectId, value.path ?? ".");
+    const entries = await readdir(targetPath, { withFileTypes: true });
+    return entries.map((entry) => ({
+      name: entry.name,
+      type: entry.isDirectory() ? "directory" : "file",
+    }));
+  },
+});
+
+registerTool({
+  name: "fs.read",
+  description: "Read a UTF-8 text file. Input: {path:string}.",
+  async (input, context) {
+    const value = input as { path?: string };
+    if (!value.path) throw new Error("path is required");
+    const resolved = await target(context.projectId, value.path);
+    return { path: value.path, content: await readFile(resolved.path, "utf8") };
+  },
+});
+
+registerTool({
+  name: "fs.write",
+  description: "Create or replace a UTF-8 text file. Input: {path:string,content:string}.",
+  async (input, context) {
+    const value = input as { path?: string; content?: string };
+    if (!value.path || typeof value.content !== "string") {
+      throw new Error("path and content are required");
+    }
+    const resolved = await target(context.projectId, value.path);
+    await mkdir(path.dirname(resolved.path), { recursive: true });
+    await writeFile(resolved.path, value.content, "utf8");
+    return {
+      ok: true,
+      path: value.path,
+      bytes: Buffer.byteLength(value.content),
+    };
+  },
+});
+
+registerTool({
+  name: "fs.rename",
+  description: "Rename a path inside the project. Input: {from:string,to:string}.",
+  async (input, context) {
+    const value = input as { from?: string; to?: string };
+    if (!value.from || !value.to) throw new Error("from and to are required");
+    const from = await target(context.projectId, value.from);
+    const to = await target(context.projectId, value.to);
+    await mkdir(path.dirname(to.path), { recursive: true });
+    await rename(from.path, to.path);
+    return { ok: true, from: value.from, to: value.to };
+  },
+});
+
+registerTool({
+  name: "fs.delete",
+  description: "Delete a path inside the project. Input: {path:string}.",
+  async (input, context) {
+    const value = input as { path?: string };
+    if (!value.path || value.path === ".") {
+      throw new Error("Refusing to delete sandbox root");
+    }
+    const resolved = await target(context.projectId, value.path);
+    await rm(resolved.path, { recursive: true, force: true });
+    return { ok: true, path: value.path };
+  },
+});
