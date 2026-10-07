@@ -21,7 +21,7 @@ type WireMessage=
   | {role:"assistant";content:string;tool_calls?:WireToolCall[]}
   | {role:"tool";content:string;tool_call_id:string};
 
-function toWireMessages(messages:ChatMessage[]):WireMessage[]{
+export function toWireMessages(messages:ChatMessage[]):WireMessage[]{
   return messages.map(message=>{
     if(message.role==="assistant"){
       if(!message.tool_calls?.length){
