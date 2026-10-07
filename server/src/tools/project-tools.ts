@@ -1,6 +1,5 @@
-import { mkdir, readdir, stat } from "node:fs/promises";
-import path from "node:path";
-import { getProject } from "../project-store.js";
+import { readdir, stat } from "node:fs/promises";
+import { getSandbox, assertInsideSandbox } from "../sandbox-manager.js";
 import { registerTool } from "../tool-registry.js";
 
 const sandboxRoot = path.resolve(
@@ -24,11 +23,7 @@ registerTool({
   name: "project.list_files",
   description: "List files in the current project sandbox.",
   async (_input, context) {
-    if (!await getProject(context.projectId)) {
-      throw new Error("Project not found");
-    }
-    const root = projectPath(context.projectId);
-    await mkdir(root, { recursive: true });
+    const root = (await getSandbox(context.projectId, context.userId)).root;
     const entries = await readdir(root, { withFileTypes: true });
     return entries.map((entry) => ({
       name: entry.name,
@@ -43,7 +38,8 @@ registerTool({
   async (input, context) {
     const value = input as { path?: string };
     const relative = value.path ?? ".";
-    const info = await stat(safePath(context.projectId, relative));
+    const sandbox = await getSandbox(context.projectId, context.userId);
+    const info = await stat(assertInsideSandbox(sandbox.root, `${sandbox.root}/${relative}`));
     return {
       path: relative,
       directory: info.isDirectory(),
