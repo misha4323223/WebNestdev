@@ -15,7 +15,7 @@ export class AgentRuntime {
       const config=await getProjectProvider(request.projectId);
       const provider=createProvider(config??undefined);
       const messages:ChatMessage[]=buildInitialMessages(request.messages);
-      const model=request.model??config?.model??process.env.AI_MODEL??"llama3.2";
+      const model=request.model??config?.model??process.env.AI_MODEL;
       if(!model)throw new Error("AI model is not configured");
 
       const maxSteps=Math.min(50,Math.max(1,Number(process.env.AGENT_MAX_STEPS??12)));
