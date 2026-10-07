@@ -66,12 +66,19 @@ export function SettingsPanel({projectName,onClose}:{projectName:string;onClose:
     setError("");
     setStatus("");
     try {
-      const items = await fetchModels(config.baseUrl, config.token);
+      const response = await fetch("/api/providers/models", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ baseUrl: config.baseUrl, token: config.token }),
+      });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.error ?? `HTTP ${response.status}`);
+      const items = Array.isArray(data?.models) ? data.models : [];
       setModels(items);
       localStorage.setItem(STORAGE_KEY + ".models", JSON.stringify(items));
       setConfig(current => ({
         ...current,
-        model: current.model && items.some(item => item.id === current.model) ? current.model : items[0]?.id ?? "",
+        model: current.model && items.some((item: ModelItem) => item.id === current.model) ? current.model : items[0]?.id ?? "",
       }));
       setStatus(`Загружено моделей: ${items.length}`);
     } catch (e) {
