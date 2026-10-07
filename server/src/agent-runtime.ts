@@ -19,6 +19,16 @@ function commandSucceeded(output:unknown){
   return result.ok===true&&result.exitCode===0&&result.signal==null;
 }
 
+function routeFromMutation(name:string,args:Record<string,unknown>){
+  if(name!=="fs.write"&&name!=="fs.rename")return "/";
+  const value=typeof args.path==="string"?args.path:typeof args.to==="string"?args.to:"";
+  const normalized=value.replace(/^\\.\\//,"").replace(/\\.(tsx?|jsx?|html?)$/i,"");
+  const page=normalized.match(/(?:^|\\/)pages\\/(.+)$/i)?.[1]??normalized.match(/(?:^|\\/)app\\/(.+?)(?:\\/page)?$/i)?.[1];
+  if(!page)return "/";
+  const route="/"+page.replace(/\\/index$/i,"").replace(/\\[(?:[^\\]]+)\\]/g,":param");
+  return route==="/"?"/":route.replace(/\\/+/g,"/");
+}
+
 function shouldRunBrowserRuntime(name:string,args:Record<string,unknown>){
   if(name==="fs.write"||name==="fs.rename"){
     const value=typeof args.path==="string"?args.path:typeof args.to==="string"?args.to:"";
@@ -49,12 +59,12 @@ export class AgentRuntime {
       let consecutiveVerifyFailures=0;
       let verificationPending=false;
 
-      const runVerification=async (browserRuntime:boolean)=>{
+      const runVerification=async (browserRuntime:boolean,routes:string[])=>{
         const verifyCalls=[
           {id:randomUUID(),name:"terminal.exec",arguments:{command:"npm run build"}},
           {id:randomUUID(),name:"preview.start",arguments:{}},
-          {id:randomUUID(),name:"project.verify",arguments:{}},
-          ...(browserRuntime?[{id:randomUUID(),name:"browser.runtime",arguments:{}}]:[]),
+          {id:randomUUID(),name:"project.verify",arguments:{path:routes[0]??"/"}},
+          ...(browserRuntime?routes.map(path=>({id:randomUUID(),name:"browser.runtime",arguments:{path}})):[]),
         ];
         const qa={build:false,preview:false,ssr:false,browser:browserRuntime?false:true};
         for(const verifyCall of verifyCalls){
@@ -124,6 +134,7 @@ export class AgentRuntime {
 
         let mutationSucceeded=false;
         let browserRuntimeRequired=false;
+        const verificationRoutes=new Set<string>();
 
         for(const call of result.calls){
           if(signal?.aborted)throw new Error("Agent run cancelled");
@@ -147,6 +158,7 @@ export class AgentRuntime {
             if(MUTATING_TOOLS.has(call.name)){
               mutationSucceeded=true;
               browserRuntimeRequired=browserRuntimeRequired||shouldRunBrowserRuntime(call.name,call.arguments);
+              verificationRoutes.add(routeFromMutation(call.name,call.arguments));
             }
           }catch(error){
             const message=error instanceof Error?error.message:String(error);
@@ -157,7 +169,7 @@ export class AgentRuntime {
 
         if(mutationSucceeded){
           verificationPending=true;
-          const verified=await runVerification(browserRuntimeRequired);
+          const verified=await runVerification(browserRuntimeRequired,[...verificationRoutes]);
           if(verified){
             consecutiveVerifyFailures=0;
             verificationPending=false;
