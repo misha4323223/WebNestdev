@@ -20,13 +20,21 @@ Each command gets only the project workspace, a read-only container root, isolat
 
 ## Current implementation status
 
-The agent can start a Docker-based project Preview and inspect the running service with project.verify and browser.open.
+The agent can start a Docker-based project Preview and inspect the running service with `project.verify`, `browser.open`, and `browser.inspect`.
 
 Preview inspection uses the actual host port assigned to the project, rather than assuming port 3000. This matters because different projects may expose different ports.
 
-browser.open returns the HTTP status, status text, response headers, content type, and a bounded response body. project.verify uses the same Preview state and performs an HTTP-level readiness check.
+`browser.open` returns the HTTP status, status text, response headers, content type, a bounded response body, and basic HTML diagnostics when the response is HTML.
 
-The current verification layer validates that a Preview is actually serving HTTP. The next runtime milestone is to extend browser inspection with richer runtime diagnostics (console/runtime errors, failed network requests, and screenshots) and then connect those signals to an automatic fix/retry loop in the Agent Runtime.
+`browser.inspect` provides a compact HTML diagnostic view: page title, script/style/link/image references, resource counts, and common error strings found in server-rendered HTML. It deliberately does not claim to execute client-side JavaScript.
+
+`project.verify` uses the same Preview state and performs an HTTP-level readiness check. The Agent Runtime is instructed to treat verification failures and tool errors as actionable diagnostics and retry after making fixes.
+
+The next browser milestone is a real headless-browser worker for client-side console/runtime errors, failed network requests, DOM inspection after JavaScript execution, and screenshots. Those signals can then feed a bounded automatic fix/retry loop.
+
+## CI
+
+GitHub Actions runs the server and web builds for pull requests targeting `main` and pushes to `main`. The current verification branch has a successful CI run on its latest verified commit.
 
 ## Roadmap
 
