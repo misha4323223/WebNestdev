@@ -1,9 +1,10 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireUser } from "../auth/auth.js";
-import { createProject, getProject, createConversation, getConversation, listConversations } from "../project-store.js";
+import { createProject, getProject, createConversation, getConversation, listConversations, listProjects } from "../project-store.js";
 
 export async function registerProjectRoutes(app:FastifyInstance){
+  app.get("/api/projects",async(request,reply)=>{const user=await requireUser(request,reply);if(!user)return;return {projects:await listProjects(user.id)};});
   app.get("/api/projects/:id",async(request,reply)=>{
     const user=await requireUser(request,reply); if(!user)return;
     const p=z.object({id:z.string().min(1)}).parse(request.params);
