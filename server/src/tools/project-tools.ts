@@ -1,4 +1,5 @@
 import { readdir, stat } from "node:fs/promises";
+import path from "node:path";
 import { getSandbox, assertInsideSandbox } from "../sandbox-manager.js";
 import { registerTool } from "../tool-registry.js";
 
