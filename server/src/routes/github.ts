@@ -34,6 +34,7 @@ export async function registerGitHubRoutes(app: FastifyInstance) {
   });
 
   app.get("/api/github/callback", async (request, reply) => {
+    const user=await requireUser(request,reply); if(!user)return;
     if (!clientId || !clientSecret) return reply.code(503).send({ error: "GitHub OAuth is not configured" });
     const query = z.object({ code: z.string().min(1), state: z.string().min(1) }).parse(request.query);
     if (!consumeOAuthState(query.state)) return reply.code(400).send({ error: "Invalid or expired GitHub OAuth state" });
