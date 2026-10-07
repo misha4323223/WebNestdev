@@ -1,6 +1,7 @@
 import { useState } from "react";
 import type { FormEvent } from "react";
 import { login,register } from "../../lib/auth-api";
+import { WebNestLogo } from "../../components/WebNestLogo";
 
 export function AuthScreen({onAuthenticated}:{onAuthenticated:()=>void}){
   const [mode,setMode]=useState<"login"|"register">("login");
@@ -24,7 +25,7 @@ export function AuthScreen({onAuthenticated}:{onAuthenticated:()=>void}){
 
   return <main className="auth-screen">
     <section className="auth-card">
-      <div className="brand auth-brand"><span className="brand-mark">N</span><span>WebNestdev</span><span className="version">WEB</span></div>
+      <div className="auth-logo"><WebNestLogo size={42}/><div className="brand"><span>WebNestdev</span><span className="version">WEB</span></div></div>
       <div className="auth-heading"><span className="eyebrow">ACCOUNT</span><h1>{mode==="login"?"Вход в WebNestdev":"Создание аккаунта"}</h1><p>{mode==="login"?"Войдите, чтобы открыть рабочую область.":"Создайте аккаунт для локального тестирования полного пользовательского сценария."}</p></div>
       <form onSubmit={submit} className="auth-form">
         <label><span>Email</span><input type="email" value={email} onChange={event=>setEmail(event.target.value)} autoComplete="email" required /></label>
