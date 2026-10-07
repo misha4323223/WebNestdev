@@ -12,6 +12,13 @@ import type { EventSink } from "./agent/types.js";
 const MAX_CONSECUTIVE_VERIFY_FAILURES=3;
 const MUTATING_TOOLS=new Set(["fs.write","fs.rename","fs.delete","terminal.exec","npm.install"]);
 
+type CommandResultLike={ok?:unknown;exitCode?:unknown;signal?:unknown};
+function commandSucceeded(output:unknown){
+  if(typeof output!=="object"||output===null)return false;
+  const result=output as CommandResultLike;
+  return result.ok===true&&result.exitCode===0&&result.signal==null;
+}
+
 function shouldRunBrowserRuntime(name:string,args:Record<string,unknown>){
   if(name==="fs.write"||name==="fs.rename"){
     const value=typeof args.path==="string"?args.path:typeof args.to==="string"?args.to:"";
@@ -49,6 +56,7 @@ export class AgentRuntime {
           {id:randomUUID(),name:"project.verify",arguments:{}},
           ...(browserRuntime?[{id:randomUUID(),name:"browser.runtime",arguments:{}}]:[]),
         ];
+        const qa={build:false,preview:false,ssr:false,browser:browserRuntime?false:true};
         for(const verifyCall of verifyCalls){
           if(signal?.aborted)throw new Error("Agent run cancelled");
           emit({type:"tool.started",runId,toolCallId:verifyCall.id,name:verifyCall.name,input:verifyCall.arguments});
@@ -56,8 +64,22 @@ export class AgentRuntime {
             const output=await executeTool(verifyCall as any,{runId,request,emit,signal});
             emit({type:"tool.finished",runId,toolCallId:verifyCall.id,name:verifyCall.name,output});
             messages.push({role:"tool",content:JSON.stringify(output),tool_call_id:verifyCall.id});
-            if(verifyCall.name==="project.verify" && !(output as {ok?:boolean}).ok) return false;
-            if(verifyCall.name==="browser.runtime" && !(output as {ok?:boolean}).ok) return false;
+            if(verifyCall.name==="terminal.exec"){
+              qa.build=commandSucceeded(output);
+              if(!qa.build)return false;
+            }
+            if(verifyCall.name==="preview.start"){
+              qa.preview=Boolean((output as {running?:boolean;ok?:boolean}).running??(output as {ok?:boolean}).ok);
+              if(!qa.preview)return false;
+            }
+            if(verifyCall.name==="project.verify"){
+              qa.ssr=Boolean((output as {ok?:boolean}).ok);
+              if(!qa.ssr)return false;
+            }
+            if(verifyCall.name==="browser.runtime"){
+              qa.browser=Boolean((output as {ok?:boolean}).ok);
+              if(!qa.browser)return false;
+            }
           }catch(error){
             const message=error instanceof Error?error.message:String(error);
             const output={ok:false,error:message};
@@ -66,6 +88,7 @@ export class AgentRuntime {
             return false;
           }
         }
+        messages.push({role:"system",content:"QA VERIFICATION PASSED: BUILD=PASS, PREVIEW=PASS, SSR=PASS"+(browserRuntime?", BROWSER=PASS":"")});
         return true;
       };
 
