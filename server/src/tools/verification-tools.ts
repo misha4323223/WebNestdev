@@ -34,7 +34,7 @@ registerTool({
     const timeout = setTimeout(() => controller.abort(), 8000);
 
     try {
-      const response = await fetch(`http://${current.host}:3000/`, {
+      const port = current.port;\n      if (!port) {\n        return {\n          ok: false,\n          stage: "preview",\n          reason: "Preview is running but its host port is unavailable",\n          nextAction: "Restart the Preview and run project.verify again.",\n        };\n      }\n\n      const response = await fetch(`http://${current.host}:${port}/`, {
         redirect: "manual",
         signal: controller.signal,
       });
