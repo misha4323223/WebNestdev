@@ -114,6 +114,8 @@ import { chromium } from "playwright";
 
 const MAX_CONSOLE_ITEMS = 100;
 const MAX_NETWORK_ITEMS = 100;
+const MAX_RUNTIME_MS = 20_000;
+const MAX_SCREENSHOT_BYTES = 2_000_000;
 
 async function inspectRuntimePage(projectId: string, path: string) {
   const status = await previewStatus(projectId);
@@ -129,7 +131,7 @@ async function inspectRuntimePage(projectId: string, path: string) {
   const failedRequests: Array<{ url: string; method: string; error: string }> = [];
 
   try {
-    const page = await browser.newPage();
+    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     page.on("console", message => {
       if (consoleMessages.length < MAX_CONSOLE_ITEMS) {
         consoleMessages.push({ type: message.type(), text: message.text().slice(0, 2000) });
@@ -145,10 +147,27 @@ async function inspectRuntimePage(projectId: string, path: string) {
       }
     });
 
-    const response = await page.goto(url, { waitUntil: "networkidle", timeout: 15000 });
+    const runtimeDeadline = setTimeout(() => void page.close().catch(() => undefined), MAX_RUNTIME_MS);
+    const response = await page.goto(url, { waitUntil: "networkidle", timeout: MAX_RUNTIME_MS });
     const title = await page.title();
     const html = await page.content();
-    const screenshot = await page.screenshot({ type: "png", fullPage: true });
+    const screenshot = await page.screenshot({ type: "png", fullPage: true, timeout: MAX_RUNTIME_MS });
+    clearTimeout(runtimeDeadline);
+    if (screenshot.byteLength > MAX_SCREENSHOT_BYTES) {
+      return {
+        ok: false,
+        status: response?.status() ?? null,
+        statusText: response?.statusText() ?? null,
+        url,
+        title,
+        console: consoleMessages,
+        failedRequests,
+        screenshotBase64: null,
+        screenshotBytes: screenshot.byteLength,
+        htmlBytes: Buffer.byteLength(html, "utf8"),
+        diagnostic: "Screenshot exceeded the browser runtime size limit and was omitted.",
+      };
+    }
     return {
       ok: Boolean(response?.ok()) && consoleMessages.every(item => item.type !== "error") && failedRequests.length === 0,
       status: response?.status() ?? null,
