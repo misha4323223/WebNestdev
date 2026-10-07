@@ -10,7 +10,7 @@ async function git(context: { projectId: string; userId: string }, command: stri
 registerTool({
   name: "git.status",
   description: "Show Git working tree status for the project.",
-  async (_input, context) {
+  execute: async (_input, context) {
     return git(context, "status --short --branch");
   },
 });
@@ -18,7 +18,7 @@ registerTool({
 registerTool({
   name: "git.diff",
   description: "Show unstaged Git diff for the project.",
-  async (_input, context) {
+  execute: async (_input, context) {
     return git(context, "diff --no-ext-diff");
   },
 });
@@ -26,7 +26,7 @@ registerTool({
 registerTool({
   name: "git.log",
   description: "Show recent Git commits.",
-  async (_input, context) {
+  execute: async (_input, context) {
     return git(context, "log --oneline -20");
   },
 });
@@ -34,7 +34,7 @@ registerTool({
 registerTool({
   name: "git.branch",
   description: "List local Git branches.",
-  async (_input, context) {
+  execute: async (_input, context) {
     return git(context, "branch --list");
   },
 });
@@ -42,7 +42,7 @@ registerTool({
 registerTool({
   name: "git.add",
   description: "Stage project paths. Input: {paths:string[]}.",
-  async (input, context) {
+  execute: async (input, context) {
     const value = input as { paths?: string[] };
     if (!value.paths?.length) throw new Error("paths is required");
 
@@ -64,7 +64,7 @@ registerTool({
 registerTool({
   name: "git.commit",
   description: "Create a Git commit. Input: {message:string}.",
-  async (input, context) {
+  execute: async (input, context) {
     const value = input as { message?: string };
     const message = value.message?.trim();
     if (!message) throw new Error("message is required");
