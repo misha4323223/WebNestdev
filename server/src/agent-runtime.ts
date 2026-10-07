@@ -24,11 +24,11 @@ function commandSucceeded(output:unknown){
 function routeFromMutation(name:string,args:Record<string,unknown>){
   if(name!=="fs.write"&&name!=="fs.rename")return "/";
   const value=typeof args.path==="string"?args.path:typeof args.to==="string"?args.to:"";
-  const normalized=value.replace(/^\\.\\//,"").replace(/\\.(tsx?|jsx?|html?)$/i,"");
-  const page=normalized.match(/(?:^|\\/)pages\\/(.+)$/i)?.[1]??normalized.match(/(?:^|\\/)app\\/(.+?)(?:\\/page)?$/i)?.[1];
+  const normalized=value.replace(/^\.\//,"").replace(/\.(tsx?|jsx?|html?)$/i,"");
+  const page=normalized.match(/(?:^|\/)pages\/(.+)$/i)?.[1]??normalized.match(/(?:^|\/)app\/(.+?)(?:\/page)?$/i)?.[1];
   if(!page)return "/";
-  const route="/"+page.replace(/\\/index$/i,"").replace(/\\[(?:[^\\]]+)\\]/g,":param");
-  return route==="/"?"/":route.replace(/\\/+/g,"/");
+  const route="/"+page.replace(/\/index$/i,"").replace(/\[(?:[^\]]+)\]/g,":param");
+  return route==="/"?"/":route.replace(/\/+/g,"/");
 }
 
 function shouldRunBrowserRuntime(name:string,args:Record<string,unknown>){
