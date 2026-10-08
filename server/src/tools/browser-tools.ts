@@ -289,7 +289,7 @@ async function runBrowserScenario(projectId: string, input: unknown) {
 
 registerTool({
   name: "browser.scenario",
-  description: "Run a real Chromium user-flow scenario against Preview. Input: {path?:string,steps:[{action:'goto',path}|{action:'click',selector}|{action:'fill',selector,value}|{action:'press',selector,key}|{action:'expectText',text}|{action:'expectUrl',pattern}]}. Maximum 20 steps. Supports visibility assertions, stops on the first failed step, and reports console/page/network errors.",
+  description: "Run a real Chromium user-flow scenario against Preview. Input: {path?:string,steps:[{action:'goto',path}|{action:'click',selector}|{action:'fill',selector,value}|{action:'press',selector,key}|{action:'expectText',text}|{action:'expectUrl',pattern}|{action:'expectVisible',selector}|{action:'expectNotVisible',selector}]}. Maximum 20 steps. Supports visibility assertions, stops on the first failed step, and reports console/page/network errors.",
   execute: async (input, context) => runBrowserScenario(context.projectId, input),
 });
 
