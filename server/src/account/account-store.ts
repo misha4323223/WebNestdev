@@ -1,5 +1,5 @@
 import { mkdir, readFile, writeFile, rename, unlink } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { isYdbEnabled, ydbQuery, getTable } from "../storage/ydb.js";
 
@@ -121,6 +121,13 @@ async function withSubscriptionLock<T>(key: string, action: () => Promise<T>): P
   finally { release(); if (subscriptionLocks.get(key) === current) subscriptionLocks.delete(key); }
 }
 
+export class PhoneVerificationRequiredError extends Error {
+  constructor() {
+    super("A verified phone number is required to claim a demo");
+    this.name = "PhoneVerificationRequiredError";
+  }
+}
+
 export async function activateDemoOnce(userId: string, plan: Exclude<PlanId, "free">, now = new Date()): Promise<Subscription> {
   const subscription: Subscription = {
     userId,
@@ -132,25 +139,54 @@ export async function activateDemoOnce(userId: string, plan: Exclude<PlanId, "fr
   };
   if (isYdbEnabled()) {
     const sql = ydbQuery();
-    const table = sql.identifier(getTable("subscriptions"));
-    await sql.transaction({ idempotent: true }, async tx => {
-      const [rows] = await tx<Array<{ status: string }>>`
-        SELECT status FROM ${table} WHERE user_id = ${userId} LIMIT 1
-      `;
-      if (rows[0] && rows[0].status !== "free") throw new DemoAlreadyClaimedError();
-      await tx`
-        UPSERT INTO ${table}
-          (user_id,plan,status,started_at,expires_at,updated_at)
-        VALUES (${subscription.userId},${subscription.plan},${subscription.status},${subscription.startedAt ?? ""},${subscription.expiresAt ?? ""},${subscription.updatedAt})
-      `;
-    });
+    const subscriptions = sql.identifier(getTable("subscriptions"));
+    const identities = sql.identifier(getTable("phone_identities"));
+    const claims = sql.identifier(getTable("demo_claims"));
+    try {
+      await sql.transaction({ idempotent: true }, async tx => {
+        const [identityRows] = await tx<Array<{ phone: string }>>`
+          SELECT phone FROM ${identities} WHERE user_id = ${userId} LIMIT 1
+        `;
+        const phone = identityRows?.[0]?.phone;
+        if (!phone) throw new PhoneVerificationRequiredError();
+        const claimKey = createHash("sha256").update(phone).digest("hex");
+        const [claimRows] = await tx<Array<{ claim_key: string }>>`
+          SELECT claim_key FROM ${claims} WHERE claim_key = ${claimKey} LIMIT 1
+        `;
+        if (claimRows.length) throw new DemoAlreadyClaimedError();
+        const [subscriptionRows] = await tx<Array<{ status: string }>>`
+          SELECT status FROM ${subscriptions} WHERE user_id = ${userId} LIMIT 1
+        `;
+        if (subscriptionRows[0] && subscriptionRows[0].status !== "free") throw new DemoAlreadyClaimedError();
+        await tx`
+          INSERT INTO ${claims} (claim_key,user_id,claimed_at)
+          VALUES (${claimKey},${userId},${now.toISOString()})
+        `;
+        await tx`
+          UPSERT INTO ${subscriptions}
+            (user_id,plan,status,started_at,expires_at,updated_at)
+          VALUES (${subscription.userId},${subscription.plan},${subscription.status},${subscription.startedAt ?? ""},${subscription.expiresAt ?? ""},${subscription.updatedAt})
+        `;
+      });
+    } catch (error) {
+      if (error instanceof DemoAlreadyClaimedError || error instanceof PhoneVerificationRequiredError) throw error;
+      throw error;
+    }
     return subscription;
   }
-  return withSubscriptionLock(userId, async () => {
+  const identities = await readJson<Record<string, string>>(path.join(root, "auth", "phone-identities.json"), {});
+  const phone = Object.entries(identities).find(([, id]) => id === userId)?.[0];
+  if (!phone) throw new PhoneVerificationRequiredError();
+  const claimKey = createHash("sha256").update(phone).digest("hex");
+  return withSubscriptionLock("demo:" + claimKey, async () => {
     const file = path.join(root, "account", "subscriptions.json");
+    const claimsFile = path.join(root, "account", "demo-claims.json");
     const all = await readJson<Record<string, Subscription>>(file, {});
+    const demoClaims = await readJson<Record<string, { userId: string; claimedAt: string }>>(claimsFile, {});
     const current = all[userId];
-    if (current && current.status !== "free") throw new DemoAlreadyClaimedError();
+    if (demoClaims[claimKey] || (current && current.status !== "free")) throw new DemoAlreadyClaimedError();
+    demoClaims[claimKey] = { userId, claimedAt: now.toISOString() };
+    await writeJsonAtomic(claimsFile, demoClaims);
     all[userId] = subscription;
     await writeJsonAtomic(file, all);
     return subscription;
