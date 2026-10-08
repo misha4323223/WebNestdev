@@ -21,16 +21,22 @@ async function main(){
   await initializeStorage();
   const sql=ydbQuery();
 
-  for(const name of await files(path.join(root,"auth"))){
-    const value=json<User|Session>(await readFile(path.join(root,"auth",name),"utf8"));
-    if("passwordHash" in value){
-      const u=value as User;
+  const usersFile=path.join(root,"auth","users.json");
+  try{
+    const users=json<User[]>(await readFile(usersFile,"utf8"));
+    for(const u of users){
       await sql\`UPSERT INTO \${sql.identifier(getTable("users"))} (id,email,password_hash,created_at) VALUES (\${u.id},\${u.email},\${u.passwordHash},\${u.createdAt})\`;
-    }else{
-      const s=value as Session;
+    }
+  }catch{}
+
+  const sessionsFile=path.join(root,"auth","sessions.json");
+  try{
+    const sessions=json<Session[]>(await readFile(sessionsFile,"utf8"));
+    for(const s of sessions){
       await sql\`UPSERT INTO \${sql.identifier(getTable("sessions"))} (id,user_id,expires_at) VALUES (\${s.id},\${s.userId},\${s.expiresAt})\`;
     }
-  }
+  }catch{}
+
 
   for(const name of await files(path.join(root,"projects"))){
     const p=json<Project>(await readFile(path.join(root,"projects",name),"utf8"));
