@@ -24,7 +24,7 @@ test("OTP is one-time and locks after five incorrect attempts", async () => {
   try {
     const { requestPhoneOtp, verifyPhoneOtp } = await import("./phone-otp.js");
     const phone = "+79001234567";
-    await requestPhoneOtp(phone);
+    await requestPhoneOtp(phone, "127.0.0.1");
     assert.match(capturedCode, /^\d{6}$/);
     for (let attempt = 0; attempt < 5; attempt++) {
       assert.equal(await verifyPhoneOtp(phone, "999999" === capturedCode ? "000000" : "999999"), false);
