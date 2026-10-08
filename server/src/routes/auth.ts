@@ -61,7 +61,7 @@ export async function registerAuthRoutes(app:FastifyInstance){
     } catch (error) {
       const statusCode = Number((error as {statusCode?:number})?.statusCode);
       if (statusCode === 429) return reply.code(429).send({error:error instanceof Error ? error.message : "Попробуйте позже."});
-      request.log.error({err:error},"Phone OTP delivery failed");
+      request.log.warn("Phone OTP delivery failed");
       return reply.code(503).send({error:"Не удалось отправить SMS. Попробуйте позже."});
     }
   });
@@ -90,7 +90,7 @@ export async function registerAuthRoutes(app:FastifyInstance){
     const body = phoneBody.parse(request.body);
     const phone = phoneOrNull(body.phone);
     if (!phone) return reply.code(400).send({error:"Введите российский номер в формате +7 900 123-45-67."});
-    if (!allowPhoneOtpRequest(phone, request.ip)) {
+    if (!await allowPhoneOtpRequest(phone, request.ip)) {
       reply.header("Retry-After", "3600");
       return reply.code(429).send({error:"Слишком много запросов кода. Попробуйте позже."});
     }
@@ -100,7 +100,7 @@ export async function registerAuthRoutes(app:FastifyInstance){
     } catch (error) {
       const statusCode = Number((error as {statusCode?:number})?.statusCode);
       if (statusCode === 429) return reply.code(429).send({error:error instanceof Error ? error.message : "Попробуйте позже."});
-      request.log.error({err:error},"Phone link OTP delivery failed");
+      request.log.warn("Phone link OTP delivery failed");
       return reply.code(503).send({error:"Не удалось отправить SMS. Попробуйте позже."});
     }
   });
