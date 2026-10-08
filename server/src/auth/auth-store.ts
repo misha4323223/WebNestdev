@@ -224,11 +224,15 @@ export async function linkPhoneToUser(phone: string, userId: string): Promise<vo
     const sql = ydbQuery();
     const identities = sql.identifier(getTable("phone_identities"));
     await sql.transaction({ idempotent: true }, async tx => {
-      const [rows] = await tx<Array<{ user_id: string }>>`
+      const [phoneRows] = await tx<Array<{ user_id: string }>>`
         SELECT user_id FROM ${identities} WHERE phone = ${phone} LIMIT 1
       `;
-      if (rows[0] && rows[0].user_id !== userId) throw new PhoneAlreadyLinkedError();
-      if (!rows[0]) await tx`INSERT INTO ${identities} (phone,user_id,verified_at) VALUES (${phone},${userId},${new Date().toISOString()})`;
+      if (phoneRows[0] && phoneRows[0].user_id !== userId) throw new PhoneAlreadyLinkedError();
+      const [userRows] = await tx<Array<{ phone: string }>>`
+        SELECT phone FROM ${identities} WHERE user_id = ${userId} LIMIT 1
+      `;
+      if (userRows[0] && userRows[0].phone !== phone) throw new PhoneAlreadyLinkedError();
+      if (!phoneRows[0]) await tx`INSERT INTO ${identities} (phone,user_id,verified_at) VALUES (${phone},${userId},${new Date().toISOString()})`;
     });
     return;
   }
@@ -236,6 +240,8 @@ export async function linkPhoneToUser(phone: string, userId: string): Promise<vo
     const identitiesFile = path.join(usersDir, "phone-identities.json");
     const identities = await readJson<Record<string, string>>(identitiesFile, {});
     if (identities[phone] && identities[phone] !== userId) throw new PhoneAlreadyLinkedError();
+    const existingPhone = Object.entries(identities).find(([, id]) => id === userId)?.[0];
+    if (existingPhone && existingPhone !== phone) throw new PhoneAlreadyLinkedError();
     identities[phone] = userId;
     await writeJson(identitiesFile, identities);
   });
