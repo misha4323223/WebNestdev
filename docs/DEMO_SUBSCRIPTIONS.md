@@ -13,7 +13,7 @@ Billing remains demo-only: there is no payment provider, card collection, charge
 - `browser.runtime` and `browser.scenario` consume one daily browser-check unit each, including checks invoked automatically after agent changes.
 - `GET /api/billing` returns the current plan limits and UTC-day usage counters. The settings screen shows usage.
 - Usage is stored as append-only daily events in JSON mode and in the `usage_events` YDB table in YDB mode.
-- JSON-mode writes are serialized within one server process. YDB writes are serialized per user within one process; this demo implementation is not yet a distributed atomic quota reservation system, so concurrent requests across multiple server replicas may overshoot a limit. Before production or multi-replica deployment, move quota consumption into a database transaction/atomic conditional update and add integration tests against YDB.
+- JSON-mode writes are serialized within one server process. YDB usage writes are serialized per user within one process; project-count checks and this demo's quota reservations are not yet atomic across multiple requests or server replicas, so simultaneous requests can overshoot a limit. Before production or multi-replica deployment, enforce project creation and usage consumption with database transactions/atomic conditional updates and add integration tests against YDB.
 
 ## API
 - `GET /api/account/settings`, `PUT /api/account/settings`
