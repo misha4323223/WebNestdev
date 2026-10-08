@@ -25,7 +25,13 @@ import "./tools/preview-tools.js";
 import "./tools/browser-tools.js";
 
 const app=Fastify({logger:true,bodyLimit:2_000_000,requestTimeout:120_000});
-const allowedOrigins=(process.env.WEBNESTDEV_ALLOWED_ORIGINS??"http://localhost:5173").split(",").map(value=>value.trim()).filter(Boolean);
+const production = process.env.NODE_ENV === "production";
+const configuredOrigins = process.env.WEBNESTDEV_ALLOWED_ORIGINS;
+if (production && !configuredOrigins) throw new Error("WEBNESTDEV_ALLOWED_ORIGINS is required in production");
+const allowedOrigins=(configuredOrigins??"http://localhost:5173").split(",").map(value=>value.trim()).filter(Boolean);
+if (production && allowedOrigins.some(origin => /^https?:\\/\\/localhost(?::\\d+)?$/i.test(origin))) {
+  throw new Error("localhost is not allowed in WEBNESTDEV_ALLOWED_ORIGINS in production");
+}
 await ensureDataDir();
 await initializeStorage();
 
@@ -61,7 +67,6 @@ await registerProviderRoutes(app);
 await registerGitHubRoutes(app);
 await registerAgentWebSocket(app);
 
-const production = process.env.NODE_ENV === "production";
 if (production) {
   const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../dist");
   await app.register(fastifyStatic, {
