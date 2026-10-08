@@ -70,4 +70,4 @@ WebNestDev now uses a real local authentication flow before opening the workspac
 
 Local account data is stored under .webnestdev/auth. This is a development storage layer; production storage will move to managed infrastructure without changing the user-facing flow.
 
-See docs/AUTH_PRODUCTION_PLAN.md for the staged rollout.
+See docs/AUTH_PRODUCTION_PLAN.md for the staged rollout. Credential encryption, legacy-token migration, and key rotation are documented in docs/SECRET_ENCRYPTION.md.
