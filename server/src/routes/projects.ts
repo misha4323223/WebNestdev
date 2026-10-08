@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireUser } from "../auth/auth.js";
-import { createProject, getProject, createConversation, getConversation, listConversations, listProjects } from "../project-store.js";
+import { createProjectWithinLimit, ProjectLimitError, getProject, createConversation, getConversation, listConversations, listProjects } from "../project-store.js";
 import { getSubscription } from "../account/account-store.js";
 import { limitsForPlan, type PlanId } from "../account/plans.js";
 
@@ -21,10 +21,15 @@ export async function registerProjectRoutes(app:FastifyInstance){
   app.post("/api/projects",async(request,reply)=>{
     const user=await requireUser(request,reply); if(!user)return;
     const body=z.object({name:z.string().max(120).optional()}).parse(request.body);
-    const [projects, subscription]=await Promise.all([listProjects(user.id),getSubscription(user.id)]);
-    const limit=limitsForPlan(planFor(subscription)).projects;
-    if(projects.length>=limit)return reply.code(403).send({error:"Project limit reached",code:"PROJECT_LIMIT_REACHED",limit,used:projects.length,plan:planFor(subscription)});
-    return reply.code(201).send(await createProject(body.name??"Новый проект",undefined,user.id));
+    const subscription=await getSubscription(user.id);
+    const plan=planFor(subscription);
+    const limit=limitsForPlan(plan).projects;
+    try{
+      return reply.code(201).send(await createProjectWithinLimit(body.name??"Новый проект",undefined,user.id,limit));
+    }catch(error){
+      if(error instanceof ProjectLimitError)return reply.code(403).send({error:error.message,code:"PROJECT_LIMIT_REACHED",limit:error.limit,used:error.used,plan});
+      throw error;
+    }
   });
   app.get("/api/projects/:id/conversations",async(request,reply)=>{
     const user=await requireUser(request,reply); if(!user)return;
