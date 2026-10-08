@@ -106,9 +106,12 @@ export async function allowPhoneOtpRequest(phone: string, ip: string): Promise<b
   return consumeRateLimit("global-sms", globalLimit, windowMs);
 }
 export async function allowPhoneOtpVerify(phone: string, ip: string): Promise<boolean> {
-  const phoneAllowed = await consumeRateLimit("verify-phone:" + phone, 10, 15 * 60_000);
-  if (!phoneAllowed) return false;
-  return consumeRateLimit("verify-ip:" + ip, 30, 15 * 60_000);
+  const windowMs = 15 * 60_000;
+  if (!await rateLimitAvailable("verify-phone:" + phone, 10)) return false;
+  if (!await rateLimitAvailable("verify-ip:" + ip, 30)) return false;
+  const ipAllowed = await consumeRateLimit("verify-ip:" + ip, 30, windowMs);
+  if (!ipAllowed) return false;
+  return consumeRateLimit("verify-phone:" + phone, 10, windowMs);
 }
 
 export async function recordPhoneConsent(phone: string, ip: string, purpose: "sign_in" | "link_account"): Promise<void> {
