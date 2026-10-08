@@ -22,7 +22,7 @@ export function inferExpectedOutcomes(change: ParsedQaChange): ExpectedOutcome[]
   const outcomes: ExpectedOutcome[] = [];
   const semantic = outcomeText(change);
 
-  if (change.element === "a" && change.route) {
+  if (change.element === "link" && change.route) {
     outcomes.push({
       kind: "url",
       value: change.route,
