@@ -23,7 +23,7 @@ export function normalizeRussianPhone(value: string): string | null {
 }
 
 function secret(): string {
-  const value = process.env.WEBNESTDEV_PHONE_OTP_SECRET ?? process.env.WEBNESTDEV_ENCRYPTION_KEY;
+  const value = process.env.WEBNESTDEV_PHONE_OTP_SECRET ?? (process.env.NODE_ENV === "production" ? "" : process.env.WEBNESTDEV_ENCRYPTION_KEY);
   if (!value || value.length < 32) throw new Error("WEBNESTDEV_PHONE_OTP_SECRET (32+ chars) is required for phone OTP");
   return value;
 }
