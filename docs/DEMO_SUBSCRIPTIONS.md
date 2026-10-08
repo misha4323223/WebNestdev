@@ -12,8 +12,10 @@ Billing remains demo-only: there is no payment provider, card collection, charge
 - Agent runs consume one daily unit at the authenticated WebSocket run boundary.
 - `browser.runtime` and `browser.scenario` consume one daily browser-check unit each, including checks invoked automatically after agent changes.
 - `GET /api/billing` returns the current plan limits and UTC-day usage counters. The settings screen shows usage.
-- Usage is stored as append-only daily events in JSON mode and in the `usage_events` YDB table in YDB mode.
-- JSON-mode writes are serialized within one server process. YDB usage writes are serialized per user within one process; project-count checks and this demo's quota reservations are not yet atomic across multiple requests or server replicas, so simultaneous requests can overshoot a limit. Before production or multi-replica deployment, enforce project creation and usage consumption with database transactions/atomic conditional updates and add integration tests against YDB.
+- Usage is stored as append-only daily events plus per-user/day/kind counters in YDB. Counter updates and usage-event inserts are committed in one serializable read-write transaction; retryable transaction conflicts are retried by the YDB query SDK.
+- YDB project creation reserves a per-user project counter and inserts the project in one serializable transaction. Existing projects are counted when the per-user counter is first initialized.
+- JSON mode serializes quota writes and project creation only within one server process. Do not use JSON storage on multiple replicas or shared deployments; use YDB for multi-instance operation.
+- The code and CI builds are covered by unit tests, but a live YDB integration/load test still needs to run against an actual configured YDB database before calling multi-replica quota enforcement production-verified.
 
 ## API
 - `GET /api/account/settings`, `PUT /api/account/settings`
