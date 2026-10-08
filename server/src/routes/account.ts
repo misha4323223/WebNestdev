@@ -29,7 +29,7 @@ function publicSubscription(subscription: Subscription) {
 export async function registerAccountRoutes(app: FastifyInstance) {
   app.get("/api/account/settings", async (request, reply) => {
     const user = await requireUser(request, reply); if (!user) return;
-    return { user: { id: user.id, email: user.email, createdAt: user.createdAt }, preferences: await getUserPreferences(user.id) };
+    return { user: { id: user.id, email: user.email.endsWith("@phone.webnestdev.invalid") ? "" : user.email, phone: user.phone ?? null, createdAt: user.createdAt }, preferences: await getUserPreferences(user.id) };
   });
   app.put("/api/account/settings", async (request, reply) => {
     const user = await requireUser(request, reply); if (!user) return;
@@ -50,6 +50,7 @@ export async function registerAccountRoutes(app: FastifyInstance) {
   app.post("/api/billing/demo/activate", async (request, reply) => {
     const user = await requireUser(request, reply); if (!user) return;
     const { plan } = demoPlanSchema.parse(request.body);
+    if (!user.phone) return reply.code(403).send({ error: "Для активации демо подтвердите номер телефона в настройках аккаунта." });
     try {
       const subscription = await activateDemoOnce(user.id, plan);
       return { mode: "demo", subscription: publicSubscription(subscription), message: "Демо-тариф активирован. Оплата не выполнялась." };
