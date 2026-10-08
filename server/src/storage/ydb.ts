@@ -57,7 +57,7 @@ export async function initializeStorage() {
     )`;
     await q`CREATE TABLE IF NOT EXISTS ${q.identifier(getTable("phone_otp_limits"))} (
       bucket_key Utf8 NOT NULL,
-      count Uint32 NOT NULL,
+      request_count Uint32 NOT NULL,
       reset_at Utf8 NOT NULL,
       PRIMARY KEY (bucket_key)
     )`;
