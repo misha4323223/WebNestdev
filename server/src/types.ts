@@ -13,4 +13,5 @@ export type AgentEvent=
   | {type:"run.failed";runId:string;error:string};
 export type AgentRunRequest={projectId:string;conversationId?:string;messages:ChatMessage[];model?:string;userId:string};
 export type ToolContext={projectId:string;runId:string;userId:string};
-export type ToolDefinition={name:string;description:string;execute:(input:unknown,context:ToolContext)=>Promise<unknown>};
+export type ToolHandler=(input:unknown,context:ToolContext)=>Promise<unknown>;
+export type ToolDefinition={name:string;description:string;execute?:ToolHandler;async?:ToolHandler};

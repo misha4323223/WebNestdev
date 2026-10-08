@@ -5,7 +5,7 @@ COPY package.json ./
 COPY server/package.json ./server/package.json
 RUN npm install
 
-COPY tsconfig.json vite.config.ts index.html ./
+COPY tsconfig.json tsconfig.app.json tsconfig.node.json vite.config.ts index.html ./
 COPY src ./src
 COPY server/tsconfig.json ./server/tsconfig.json
 COPY server/src ./server/src

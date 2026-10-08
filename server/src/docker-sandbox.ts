@@ -33,7 +33,7 @@ export async function runDockerSandbox(config:SandboxConfig,command:string,cwd:s
   });
 }
 
-export async function sandboxStatus(){
+export async function sandboxStatus():Promise<{mode:string;available:boolean;reason?:string;dockerVersion?:string}>{
   const mode=process.env.SANDBOX_MODE??"docker";
   if(mode!=="docker")return {mode,available:false,reason:"Docker sandbox is required."};
   return new Promise(resolve=>{

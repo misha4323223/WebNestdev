@@ -1,0 +1,41 @@
+name: Generate npm lockfiles
+
+on:
+  push:
+    branches: ["feat/agent-verify-loop"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  lockfiles:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Generate lockfile only for an uninitialized branch
+        run: |
+          if [ ! -f package-lock.json ]; then
+            npm install --package-lock-only --ignore-scripts
+          else
+            echo "Existing committed lockfile is authoritative; leaving it unchanged."
+          fi
+      - name: Commit lockfiles
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add package-lock.json
+          if ! git diff --cached --quiet; then
+            git commit -m "build: add reproducible npm lockfiles"
+            git push
+          fi
+          gh workflow run ci.yml --ref "${{ github.ref_name }}"

@@ -7,6 +7,7 @@ import fastifyStatic from "@fastify/static";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { initializeStorage, closeStorage } from "./storage/ydb.js";
+import { assertEncryptionConfigured } from "./storage/secret-crypto.js";
 import { ensureDataDir } from "./project-store.js";
 import { registerHealthRoutes } from "./routes/health.js";
 import { registerProjectRoutes } from "./routes/projects.js";
@@ -23,6 +24,9 @@ import "./tools/terminal-tools.js";
 import "./tools/git-tools.js";
 import "./tools/preview-tools.js";
 import "./tools/browser-tools.js";
+import "./tools/verification-tools.js";
+
+assertEncryptionConfigured();
 
 const app=Fastify({logger:true,bodyLimit:2_000_000,requestTimeout:120_000});
 const production = process.env.NODE_ENV === "production";

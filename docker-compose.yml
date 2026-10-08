@@ -1,7 +1,8 @@
 services:
   webnestdev-server:
     build:
-      context: ./server
+      context: .
+      dockerfile: Dockerfile
     environment:
       PORT: 8787
       SANDBOX_MODE: docker

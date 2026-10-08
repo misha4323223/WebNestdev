@@ -8,6 +8,15 @@ import { retrieveRelevantFiles } from "./agent/context-retrieval.js";
 import { executeTool } from "./agent/tool-executor.js";
 import { runAgentStep } from "./agent/step-runner.js";
 import type { EventSink } from "./agent/types.js";
+import { planQaScenario } from "./qa/scenario-planner.js";
+import { analyzeChangedFiles } from "./qa/diff-analyzer.js";
+import { parseChangedSource, type ParsedChange } from "./qa/change-parser.js";
+
+const MAX_CONSECUTIVE_VERIFY_FAILURES=3;
+const MUTATING_TOOLS=new Set(["fs.write","fs.rename","fs.delete","terminal.exec","npm.install"]);
+
+import { commandSucceeded, routeFromMutation, shouldRunBrowserRuntime } from "./agent/verification-policy.js";
+
 
 export class AgentRuntime {
   async run(request:AgentRunRequest,emit:EventSink,signal?:AbortSignal){
@@ -24,12 +33,76 @@ export class AgentRuntime {
       const model=request.model??config?.model;
       if(!model)throw new Error("AI model is not configured");
       const maxSteps=Math.min(50,Math.max(1,Number(process.env.AGENT_MAX_STEPS??20)));
+      let consecutiveVerifyFailures=0;
+      let consecutiveScenarioFailures=0;
+      let verificationPending=false;
+      let scenarioPending=false;
+      const changedFiles=new Set<string>();
+      const parsedChanges:ParsedChange[]=[];
+
+      const runVerification=async (browserRuntime:boolean,routes:string[])=>{
+        const verifyCalls=[
+          {id:randomUUID(),name:"terminal.exec",arguments:{command:"npm run build"}},
+          {id:randomUUID(),name:"preview.start",arguments:{}},
+          {id:randomUUID(),name:"project.verify",arguments:{path:routes[0]??"/"}},
+          ...(browserRuntime?routes.map(path=>({id:randomUUID(),name:"browser.runtime",arguments:{path}})):[]),
+        ];
+        const qa={build:false,preview:false,ssr:false,browser:browserRuntime?false:true};
+        for(const verifyCall of verifyCalls){
+          if(signal?.aborted)throw new Error("Agent run cancelled");
+          emit({type:"tool.started",runId,toolCallId:verifyCall.id,name:verifyCall.name,input:verifyCall.arguments});
+          try{
+            const output=await executeTool(verifyCall as any,{runId,request,emit,signal});
+            emit({type:"tool.finished",runId,toolCallId:verifyCall.id,name:verifyCall.name,output});
+            messages.push({role:"tool",content:JSON.stringify(output),tool_call_id:verifyCall.id});
+            if(verifyCall.name==="terminal.exec"){
+              qa.build=commandSucceeded(output);
+              if(!qa.build)return false;
+            }
+            if(verifyCall.name==="preview.start"){
+              qa.preview=Boolean((output as {running?:boolean;ok?:boolean}).running??(output as {ok?:boolean}).ok);
+              if(!qa.preview)return false;
+            }
+            if(verifyCall.name==="project.verify"){
+              qa.ssr=Boolean((output as {ok?:boolean}).ok);
+              if(!qa.ssr)return false;
+            }
+            if(verifyCall.name==="browser.runtime"){
+              qa.browser=Boolean((output as {ok?:boolean}).ok);
+              if(!qa.browser)return false;
+            }
+          }catch(error){
+            const message=error instanceof Error?error.message:String(error);
+            const output={ok:false,error:message};
+            emit({type:"tool.finished",runId,toolCallId:verifyCall.id,name:verifyCall.name,output});
+            messages.push({role:"tool",content:JSON.stringify(output),tool_call_id:verifyCall.id});
+            return false;
+          }
+        }
+        messages.push({role:"system",content:"QA VERIFICATION PASSED: BUILD=PASS, PREVIEW=PASS, SSR=PASS"+(browserRuntime?", BROWSER=PASS":"")});
+        return true;
+      };
+
       for(let step=0;step<maxSteps;step++){
         if(signal?.aborted)throw new Error("Agent run cancelled");
         emit({type:"run.progress",runId,step:step+1,maxSteps});
         const context={runId,request,emit,signal};
         const result=await runAgentStep(provider,messages,model,context);
+
         if(!result.calls.length){
+          if(verificationPending||scenarioPending){
+            if(consecutiveVerifyFailures>=MAX_CONSECUTIVE_VERIFY_FAILURES){
+              throw new Error("Verification failed repeatedly; maximum verification attempts reached");
+            }
+            messages.push({
+              role:"system",
+              content:scenarioPending
+              ? "The user-visible change passed build, preview, SSR and browser smoke verification, but Browser QA is still pending. You MUST call browser.scenario now. Derive the shortest meaningful end-to-end user flow from the original task and the changed route, using at most 20 steps. If the scenario fails, inspect its diagnostics, fix the smallest necessary issue, and run the scenario again. Do not finish the task until browser.scenario returns ok=true."
+              : "The requested change is not verified yet. Do not finish the task. Inspect the latest verification diagnostic, make the smallest necessary fix, and run the verification again. A successful tool call is not sufficient proof of completion.",
+            });
+            continue;
+          }
+
           const text=result.text||"Модель не вернула ответ.";
           if(!result.text)emit({type:"message.delta",runId,delta:text});
           if(request.conversationId){
@@ -39,7 +112,13 @@ export class AgentRuntime {
           }
           emit({type:"run.completed",runId}); return;
         }
+
         messages.push({role:"assistant",content:result.text,tool_calls:result.calls});
+
+        let mutationSucceeded=false;
+        let browserRuntimeRequired=false;
+        const verificationRoutes=new Set<string>();
+
         for(const call of result.calls){
           if(signal?.aborted)throw new Error("Agent run cancelled");
           emit({type:"tool.started",runId,toolCallId:call.id,name:call.name,input:call.arguments});
@@ -48,13 +127,103 @@ export class AgentRuntime {
             if(signal?.aborted)throw new Error("Agent run cancelled");
             emit({type:"tool.finished",runId,toolCallId:call.id,name:call.name,output});
             messages.push({role:"tool",content:JSON.stringify(output),tool_call_id:call.id});
+
+            if(call.name==="browser.scenario"){
+              if((output as {ok?:boolean}).ok===true){
+                scenarioPending=false;
+                consecutiveScenarioFailures=0;
+                messages.push({role:"system",content:"BROWSER QA SCENARIO PASSED: user-visible flow completed successfully with no browser console, page, HTTP, or network errors."});
+              }else{
+                scenarioPending=true;
+                consecutiveScenarioFailures++;
+                if(consecutiveScenarioFailures>=MAX_CONSECUTIVE_VERIFY_FAILURES){
+                  throw new Error("Browser QA scenario failed repeatedly; maximum scenario attempts reached");
+                }
+              }
+            }
+
+            if(call.name==="project.verify"||call.name==="browser.runtime"){
+              if((output as {ok?:boolean}).ok===true){
+                verificationPending=false;
+                consecutiveVerifyFailures=0;
+              }else{
+                verificationPending=true;
+                consecutiveVerifyFailures++;
+              }
+            }
+
+            if(MUTATING_TOOLS.has(call.name)){
+              mutationSucceeded=true;
+              browserRuntimeRequired=browserRuntimeRequired||shouldRunBrowserRuntime(call.name,call.arguments);
+              verificationRoutes.add(routeFromMutation(call.name,call.arguments));
+              const changedPath=typeof call.arguments.path==="string"?call.arguments.path:typeof call.arguments.to==="string"?call.arguments.to:"";
+              if(changedPath){
+                changedFiles.add(changedPath);
+                const source=typeof call.arguments.content==="string"?call.arguments.content:"";
+                if(source) parsedChanges.push(...parseChangedSource(changedPath,source).changes);
+                const removedChanges=(output as {removedChanges?:ParsedChange[]}).removedChanges;
+                if(call.name==="fs.delete"&&Array.isArray(removedChanges)) parsedChanges.push(...removedChanges);
+              }
+            }
           }catch(error){
             const message=error instanceof Error?error.message:String(error);
             emit({type:"tool.finished",runId,toolCallId:call.id,name:call.name,output:{error:message}});
             messages.push({role:"tool",content:JSON.stringify({error:message}),tool_call_id:call.id});
           }
         }
+
+        if(mutationSucceeded){
+          verificationPending=true;
+          const verified=await runVerification(browserRuntimeRequired,[...verificationRoutes]);
+          if(verified){
+            consecutiveVerifyFailures=0;
+            verificationPending=false;
+            if(browserRuntimeRequired){
+              scenarioPending=true;
+              consecutiveScenarioFailures=0;
+              const affectedRoute=[...verificationRoutes][0]??"/";
+              const changeAnalysis=analyzeChangedFiles([...changedFiles],parsedChanges);
+              const plannedScenario=planQaScenario(task,affectedRoute,changeAnalysis.kind,changeAnalysis.confidence,parsedChanges);
+              (plannedScenario as Record<string,unknown>).changeAnalysis=changeAnalysis;
+              const scenarioCall={id:randomUUID(),name:"browser.scenario",arguments:plannedScenario};
+              emit({type:"tool.started",runId,toolCallId:scenarioCall.id,name:scenarioCall.name,input:scenarioCall.arguments});
+              try{
+                const scenarioOutput=await executeTool(scenarioCall as any,{runId,request,emit,signal});
+                emit({type:"tool.finished",runId,toolCallId:scenarioCall.id,name:scenarioCall.name,output:scenarioOutput});
+                messages.push({role:"tool",content:JSON.stringify(scenarioOutput),tool_call_id:scenarioCall.id});
+                if((scenarioOutput as {ok?:boolean}).ok===true){
+                  scenarioPending=false;
+                  consecutiveScenarioFailures=0;
+                  messages.push({role:"system",content:"BROWSER QA SCENARIO PASSED: the automatically planned user flow passed in Chromium with no browser console, page, HTTP, or network errors."});
+                }else{
+                  scenarioPending=true;
+                  consecutiveScenarioFailures++;
+                  messages.push({role:"system",content:"AUTOMATIC BROWSER QA FAILED. Inspect the scenario diagnostics and failure screenshot, fix the smallest necessary issue, then repeat verification. Do not finish while Browser QA is pending."});
+                  if(consecutiveScenarioFailures>=MAX_CONSECUTIVE_VERIFY_FAILURES) throw new Error("Browser QA scenario failed repeatedly; maximum scenario attempts reached");
+                }
+              }catch(error){
+                const message=error instanceof Error?error.message:String(error);
+                scenarioPending=true;
+                consecutiveScenarioFailures++;
+                emit({type:"tool.finished",runId,toolCallId:scenarioCall.id,name:scenarioCall.name,output:{ok:false,error:message}});
+                messages.push({role:"tool",content:JSON.stringify({ok:false,error:message}),tool_call_id:scenarioCall.id});
+                if(consecutiveScenarioFailures>=MAX_CONSECUTIVE_VERIFY_FAILURES) throw new Error("Browser QA scenario failed repeatedly; maximum scenario attempts reached");
+              }
+            }else{
+              scenarioPending=false;
+            }
+          }else{
+            consecutiveVerifyFailures++;
+            verificationPending=true;
+            if(consecutiveVerifyFailures>=MAX_CONSECUTIVE_VERIFY_FAILURES){
+              throw new Error("Verification failed repeatedly; maximum verification attempts reached");
+            }
+          }
+        }
       }
+
+      if(verificationPending)throw new Error("Agent step limit reached with unverified changes");
+      if(scenarioPending)throw new Error("Agent step limit reached with pending Browser QA scenario");
       throw new Error("Agent step limit reached");
     }catch(error){emit({type:"run.failed",runId,error:error instanceof Error?error.message:String(error)});}
   }
