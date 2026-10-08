@@ -8,7 +8,7 @@ import { allowPhoneOtpRequest, allowPhoneOtpVerify, normalizeRussianPhone, recor
 const credentials = z.object({email:z.string().email().max(200).refine(value => !value.toLowerCase().endsWith("@phone.webnestdev.invalid"), "Email domain is reserved"),password:z.string().min(8).max(200)});
 const phoneBody = z.object({phone:z.string().min(10).max(30)});
 const phoneRequestBody = phoneBody.extend({consent:z.literal(true)});
-const verifyPhoneBody = phoneBody.extend({code:z.string().regex(/^\d{6}$/)});
+const verifyPhoneBody = phoneBody.extend({code:z.string().regex(/^\d{6}$/),intent:z.enum(["login","register"]).optional().default("login")});
 function publicUser(user: {id:string;email:string;createdAt:string;phone?:string}) {
   const isPhoneOnly = user.email.endsWith("@phone.webnestdev.invalid");
   return { id:user.id, email:isPhoneOnly ? "" : user.email, phone:user.phone ?? null, createdAt:user.createdAt };
