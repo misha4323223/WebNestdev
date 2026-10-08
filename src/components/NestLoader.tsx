@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react";
+import { useId, type CSSProperties } from "react";
 
 type NestLoaderProps = {
   size?: number;
@@ -29,17 +29,17 @@ export function NestLoader({ size = 42, className = "", label }: NestLoaderProps
     >
       <svg viewBox="0 0 68 68" width={size} height={size} aria-hidden="true">
         <defs>
-          <linearGradient id="nest-stroke" x1="8" y1="8" x2="60" y2="60">
+          <linearGradient id={`${id}-stroke`} x1="8" y1="8" x2="60" y2="60">
             <stop offset="0" stopColor="currentColor" stopOpacity=".98" />
             <stop offset=".52" stopColor="currentColor" stopOpacity=".72" />
             <stop offset="1" stopColor="currentColor" stopOpacity=".28" />
           </linearGradient>
-          <filter id="nest-glow" x="-80%" y="-80%" width="260%" height="260%">
+          <filter id={`${id}-glow`} x="-80%" y="-80%" width="260%" height="260%">
             <feGaussianBlur stdDeviation="1.6" />
           </filter>
         </defs>
 
-        <g className="nest-loader__glow" filter="url(#nest-glow)">
+        <g className="nest-loader__glow" filter={`url(#${id}-glow)`}>
           {pieces.map((piece, index) => (
             <path
               key={`glow-${index}`}
