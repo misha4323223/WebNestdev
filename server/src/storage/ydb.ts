@@ -48,6 +48,22 @@ export async function initializeStorage() {
       PRIMARY KEY (id),
       INDEX email_idx GLOBAL UNIQUE ON (email)
     )`;
+    await q`CREATE TABLE IF NOT EXISTS ${q.identifier(getTable("phone_identities"))} (
+      phone Utf8 NOT NULL,
+      user_id Utf8 NOT NULL,
+      verified_at Utf8 NOT NULL,
+      PRIMARY KEY (phone),
+      INDEX user_idx GLOBAL UNIQUE ON (user_id)
+    )`;
+    await q`CREATE TABLE IF NOT EXISTS ${q.identifier(getTable("phone_otp_challenges"))} (
+      phone Utf8 NOT NULL,
+      code_hash Utf8 NOT NULL,
+      expires_at Utf8 NOT NULL,
+      resend_after Utf8 NOT NULL,
+      attempts Uint32 NOT NULL,
+      created_at Utf8 NOT NULL,
+      PRIMARY KEY (phone)
+    )`;
     await q`CREATE TABLE IF NOT EXISTS ${q.identifier(getTable("sessions"))} (
       id Utf8 NOT NULL,
       user_id Utf8 NOT NULL,
