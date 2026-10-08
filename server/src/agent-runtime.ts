@@ -15,34 +15,8 @@ import { parseChangedSource, type ParsedChange } from "./qa/change-parser.js";
 const MAX_CONSECUTIVE_VERIFY_FAILURES=3;
 const MUTATING_TOOLS=new Set(["fs.write","fs.rename","fs.delete","terminal.exec","npm.install"]);
 
-type CommandResultLike={ok?:unknown;exitCode?:unknown;signal?:unknown};
-function commandSucceeded(output:unknown){
-  if(typeof output!=="object"||output===null)return false;
-  const result=output as CommandResultLike;
-  return result.ok===true&&result.exitCode===0&&result.signal==null;
-}
+import { commandSucceeded, routeFromMutation, shouldRunBrowserRuntime } from "./agent/verification-policy.js";
 
-function routeFromMutation(name:string,args:Record<string,unknown>){
-  if(name!=="fs.write"&&name!=="fs.rename")return "/";
-  const value=typeof args.path==="string"?args.path:typeof args.to==="string"?args.to:"";
-  const normalized=value.replace(/^\.\//,"").replace(/\.(tsx?|jsx?|html?)$/i,"");
-  const page=normalized.match(/(?:^|\/)pages\/(.+)$/i)?.[1]??normalized.match(/(?:^|\/)app\/(.+?)(?:\/page)?$/i)?.[1];
-  if(!page)return "/";
-  const route="/"+page.replace(/\/index$/i,"").replace(/\[(?:[^\]]+)\]/g,":param");
-  return route==="/"?"/":route.replace(/\/+/g,"/");
-}
-
-function shouldRunBrowserRuntime(name:string,args:Record<string,unknown>){
-  if(name==="fs.write"||name==="fs.rename"){
-    const value=typeof args.path==="string"?args.path:typeof args.to==="string"?args.to:"";
-    return /\.(tsx?|jsx?|html?|css|scss|vue|svelte)$/i.test(value)||/^(src|app|pages|components)\//i.test(value);
-  }
-  if(name==="terminal.exec"){
-    const command=typeof args.command==="string"?args.command:"";
-    return /(^|\s)(npm\s+(run|install)|pnpm\s+(run|install)|yarn\s+(run|install)|vite|next|react|webpack|tsc)\b/i.test(command);
-  }
-  return name==="npm.install";
-}
 
 export class AgentRuntime {
   async run(request:AgentRunRequest,emit:EventSink,signal?:AbortSignal){
