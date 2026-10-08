@@ -125,6 +125,13 @@ export async function initializeStorage() {
       product_updates Bool NOT NULL,
       PRIMARY KEY (user_id)
     )`;
+    await q`CREATE TABLE IF NOT EXISTS ${q.identifier(getTable("demo_claims"))} (
+      claim_key Utf8 NOT NULL,
+      user_id Utf8 NOT NULL,
+      claimed_at Utf8 NOT NULL,
+      PRIMARY KEY (claim_key),
+      INDEX user_idx GLOBAL ON (user_id)
+    )`;
     await q`CREATE TABLE IF NOT EXISTS ${q.identifier(getTable("subscriptions"))} (
       user_id Utf8 NOT NULL,
       plan Utf8 NOT NULL,
