@@ -100,3 +100,59 @@ export async function saveSubscription(subscription: Subscription) {
   await writeJsonAtomic(file, all);
   return subscription;
 }
+
+export class DemoAlreadyClaimedError extends Error {
+  readonly statusCode = 409;
+  constructor() {
+    super("Demo access has already been claimed for this account");
+    this.name = "DemoAlreadyClaimedError";
+  }
+}
+
+const subscriptionLocks = new Map<string, Promise<unknown>>();
+async function withSubscriptionLock<T>(key: string, action: () => Promise<T>): Promise<T> {
+  const previous = subscriptionLocks.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const current = previous.then(() => gate);
+  subscriptionLocks.set(key, current);
+  await previous;
+  try { return await action(); }
+  finally { release(); if (subscriptionLocks.get(key) === current) subscriptionLocks.delete(key); }
+}
+
+export async function activateDemoOnce(userId: string, plan: Exclude<PlanId, "free">, now = new Date()): Promise<Subscription> {
+  const subscription: Subscription = {
+    userId,
+    plan,
+    status: "demo_active",
+    startedAt: now.toISOString(),
+    expiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+    updatedAt: now.toISOString(),
+  };
+  if (isYdbEnabled()) {
+    const sql = ydbQuery();
+    const table = sql.identifier(getTable("subscriptions"));
+    await sql.transaction({ idempotent: true }, async tx => {
+      const [rows] = await tx<Array<{ status: string }>>`
+        SELECT status FROM ${table} WHERE user_id = ${userId} LIMIT 1
+      `;
+      if (rows[0] && rows[0].status !== "free") throw new DemoAlreadyClaimedError();
+      await tx`
+        UPSERT INTO ${table}
+          (user_id,plan,status,started_at,expires_at,updated_at)
+        VALUES (${subscription.userId},${subscription.plan},${subscription.status},${subscription.startedAt ?? ""},${subscription.expiresAt ?? ""},${subscription.updatedAt})
+      `;
+    });
+    return subscription;
+  }
+  return withSubscriptionLock(userId, async () => {
+    const file = path.join(root, "account", "subscriptions.json");
+    const all = await readJson<Record<string, Subscription>>(file, {});
+    const current = all[userId];
+    if (current && current.status !== "free") throw new DemoAlreadyClaimedError();
+    all[userId] = subscription;
+    await writeJsonAtomic(file, all);
+    return subscription;
+  });
+}
