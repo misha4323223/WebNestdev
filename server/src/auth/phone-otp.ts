@@ -177,18 +177,62 @@ export async function requestPhoneOtp(phone: string): Promise<{ resendAfter: str
   return { resendAfter: challenge.resendAfter };
 }
 
-export async function verifyPhoneOtp(phone: string, code: string): Promise<boolean> {
-  const challenge = await getChallenge(phone);
-  if (!challenge || Date.parse(challenge.expiresAt) <= Date.now() || challenge.attempts >= MAX_ATTEMPTS) {
-    if (challenge && (Date.parse(challenge.expiresAt) <= Date.now() || challenge.attempts >= MAX_ATTEMPTS)) await removeChallenge(phone);
-    return false;
-  }
+const challengeLocks = new Map<string, Promise<unknown>>();
+async function withChallengeLock<T>(phone: string, action: () => Promise<T>): Promise<T> {
+  const previous = challengeLocks.get(phone) ?? Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const current = previous.then(() => gate);
+  challengeLocks.set(phone, current);
+  await previous;
+  try { return await action(); }
+  finally { release(); if (challengeLocks.get(phone) === current) challengeLocks.delete(phone); }
+}
+
+function matchesCode(phone: string, code: string, expectedHash: string): boolean {
   const supplied = Buffer.from(hashCode(phone, code), "hex");
-  const expected = Buffer.from(challenge.codeHash, "hex");
-  if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
-    await saveChallenge({ ...challenge, attempts: challenge.attempts + 1 });
-    return false;
+  const expected = Buffer.from(expectedHash, "hex");
+  return supplied.length === expected.length && timingSafeEqual(supplied, expected);
+}
+
+export async function verifyPhoneOtp(phone: string, code: string): Promise<boolean> {
+  if (isYdbEnabled()) {
+    const sql = ydbQuery();
+    const table = sql.identifier(getTable("phone_otp_challenges"));
+    return sql.transaction({ idempotent: true }, async tx => {
+      const [rows] = await tx<Array<{phone:string;code_hash:string;expires_at:string;resend_after:string;attempts:number;created_at:string}>>`
+        SELECT phone,code_hash,expires_at,resend_after,attempts,created_at
+        FROM ${table} WHERE phone = ${phone} LIMIT 1
+      `;
+      const row = rows?.[0];
+      if (!row) return false;
+      const challenge: Challenge = { phone: row.phone, codeHash: row.code_hash, expiresAt: row.expires_at, resendAfter: row.resend_after, attempts: Number(row.attempts), createdAt: row.created_at };
+      if (Date.parse(challenge.expiresAt) <= Date.now() || challenge.attempts >= MAX_ATTEMPTS) {
+        await tx`DELETE FROM ${table} WHERE phone = ${phone}`;
+        return false;
+      }
+      if (!matchesCode(phone, code, challenge.codeHash)) {
+        await tx`
+          UPSERT INTO ${table} (phone,code_hash,expires_at,resend_after,attempts,created_at)
+          VALUES (${challenge.phone},${challenge.codeHash},${challenge.expiresAt},${challenge.resendAfter},${challenge.attempts + 1},${challenge.createdAt})
+        `;
+        return false;
+      }
+      await tx`DELETE FROM ${table} WHERE phone = ${phone}`;
+      return true;
+    });
   }
-  await removeChallenge(phone);
-  return true;
+  return withChallengeLock(phone, async () => {
+    const challenge = await getChallenge(phone);
+    if (!challenge || Date.parse(challenge.expiresAt) <= Date.now() || challenge.attempts >= MAX_ATTEMPTS) {
+      if (challenge && (Date.parse(challenge.expiresAt) <= Date.now() || challenge.attempts >= MAX_ATTEMPTS)) await removeChallenge(phone);
+      return false;
+    }
+    if (!matchesCode(phone, code, challenge.codeHash)) {
+      await saveChallenge({ ...challenge, attempts: challenge.attempts + 1 });
+      return false;
+    }
+    await removeChallenge(phone);
+    return true;
+  });
 }
