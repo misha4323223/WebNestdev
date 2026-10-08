@@ -2,6 +2,7 @@ import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promise
 import path from "node:path";
 import { getSandbox, assertInsideSandbox } from "../sandbox-manager.js";
 import { registerTool } from "../tool-registry.js";
+import { parseChangedSource } from "../qa/change-parser.js";
 
 async function target(projectId: string, userId: string, relative: string) {
   const sandbox = await getSandbox(projectId, userId);
@@ -79,7 +80,14 @@ registerTool({
       throw new Error("Refusing to delete sandbox root");
     }
     const resolved = await target(context.projectId, context.userId, value.path);
+    let removedChanges: ReturnType<typeof parseChangedSource>["changes"] = [];
+    try {
+      const source = await readFile(resolved.path, "utf8");
+      removedChanges = parseChangedSource(value.path, source).changes.map(change => ({ ...change, action: "removed" as const }));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    }
     await rm(resolved.path, { recursive: true, force: true });
-    return { ok: true, path: value.path };
+    return { ok: true, path: value.path, removedChanges };
   },
 });
