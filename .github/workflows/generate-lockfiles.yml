@@ -20,8 +20,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Generate root workspace lockfile
-        run: npm install --package-lock-only --ignore-scripts
+      - name: Generate lockfile only for an uninitialized branch
+        run: |
+          if [ ! -f package-lock.json ]; then
+            npm install --package-lock-only --ignore-scripts
+          else
+            echo "Existing committed lockfile is authoritative; leaving it unchanged."
+          fi
       - name: Commit lockfiles
         env:
           GH_TOKEN: ${{ github.token }}
