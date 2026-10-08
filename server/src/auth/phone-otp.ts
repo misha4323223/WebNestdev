@@ -49,16 +49,16 @@ async function consumeRateLimit(key: string, limit: number, windowMs: number): P
   const table = sql.identifier(getTable("phone_otp_limits"));
   const bucketKey = createHash("sha256").update(key).digest("hex");
   return sql.transaction({ idempotent: true }, async tx => {
-    const [rows] = await tx<Array<{ count: number; reset_at: string }>>`
-      SELECT count,reset_at FROM ${table} WHERE bucket_key = ${bucketKey} LIMIT 1
+    const [rows] = await tx<Array<{ request_count: number; reset_at: string }>>`
+      SELECT request_count,reset_at FROM ${table} WHERE bucket_key = ${bucketKey} LIMIT 1
     `;
     const now = Date.now();
     const row = rows?.[0];
-    const currentCount = row && Date.parse(row.reset_at) > now ? Number(row.count) : 0;
+    const currentCount = row && Date.parse(row.reset_at) > now ? Number(row.request_count) : 0;
     const resetAt = row && Date.parse(row.reset_at) > now ? row.reset_at : new Date(now + windowMs).toISOString();
     if (currentCount >= limit) return false;
     await tx`
-      UPSERT INTO ${table} (bucket_key,count,reset_at)
+      UPSERT INTO ${table} (bucket_key,request_count,reset_at)
       VALUES (${bucketKey},${currentCount + 1},${resetAt})
     `;
     return true;
