@@ -224,17 +224,31 @@ export async function linkPhoneToUser(phone: string, userId: string): Promise<vo
   if (isYdbEnabled()) {
     const sql = ydbQuery();
     const identities = sql.identifier(getTable("phone_identities"));
-    await sql.transaction({ idempotent: true }, async tx => {
-      const [phoneRows] = await tx<Array<{ user_id: string }>>`
+    try {
+      await sql.transaction({ idempotent: true }, async tx => {
+        const [phoneRows] = await tx<Array<{ user_id: string }>>`
+          SELECT user_id FROM ${identities} WHERE phone = ${phone} LIMIT 1
+        `;
+        if (phoneRows[0] && phoneRows[0].user_id !== userId) throw new PhoneAlreadyLinkedError();
+        const [userRows] = await tx<Array<{ phone: string }>>`
+          SELECT phone FROM ${identities} WHERE user_id = ${userId} LIMIT 1
+        `;
+        if (userRows[0] && userRows[0].phone !== phone) throw new PhoneAlreadyLinkedError();
+        if (!phoneRows[0]) await tx`INSERT INTO ${identities} (phone,user_id,verified_at) VALUES (${phone},${userId},${new Date().toISOString()})`;
+      });
+    } catch (error) {
+      if (error instanceof PhoneAlreadyLinkedError) throw error;
+      const [phoneRows] = await sql<Array<{ user_id: string }>>`
         SELECT user_id FROM ${identities} WHERE phone = ${phone} LIMIT 1
       `;
-      if (phoneRows[0] && phoneRows[0].user_id !== userId) throw new PhoneAlreadyLinkedError();
-      const [userRows] = await tx<Array<{ phone: string }>>`
+      const [userRows] = await sql<Array<{ phone: string }>>`
         SELECT phone FROM ${identities} WHERE user_id = ${userId} LIMIT 1
       `;
-      if (userRows[0] && userRows[0].phone !== phone) throw new PhoneAlreadyLinkedError();
-      if (!phoneRows[0]) await tx`INSERT INTO ${identities} (phone,user_id,verified_at) VALUES (${phone},${userId},${new Date().toISOString()})`;
-    });
+      if ((phoneRows[0] && phoneRows[0].user_id !== userId) || (userRows[0] && userRows[0].phone !== phone)) {
+        throw new PhoneAlreadyLinkedError();
+      }
+      throw error;
+    }
     return;
   }
   await withAuthStoreLock("auth-store-write", async () => {
