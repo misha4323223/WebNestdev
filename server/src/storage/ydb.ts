@@ -1,6 +1,7 @@
 import { Driver } from "@ydbjs/core";
 import { query } from "@ydbjs/query";
 import { EnvironCredentialsProvider } from "@ydbjs/auth/environ";
+import { AccessTokenCredentialsProvider } from "@ydbjs/auth/access-token";
 
 const mode = process.env.WEBNESTDEV_STORAGE ?? (process.env.NODE_ENV === "production" ? "ydb" : "json");
 const connectionString = process.env.YDB_CONNECTION_STRING;
@@ -31,7 +32,9 @@ export async function initializeStorage() {
       throw new Error("YDB_CONNECTION_STRING is required when WEBNESTDEV_STORAGE=ydb");
     }
     driver = new Driver(connectionString, {
-      credentialsProvider: new EnvironCredentialsProvider(connectionString),
+      credentialsProvider: process.env.YDB_TOKEN
+        ? new AccessTokenCredentialsProvider({ token: process.env.YDB_TOKEN })
+        : new EnvironCredentialsProvider(connectionString),
     });
     await driver.ready();
     sql = query(driver);
