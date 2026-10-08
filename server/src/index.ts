@@ -8,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { initializeStorage, closeStorage } from "./storage/ydb.js";
 import { assertEncryptionConfigured } from "./storage/secret-crypto.js";
+import { assertPhoneAuthConfigured } from "./auth/phone-otp.js";
 import { ensureDataDir } from "./project-store.js";
 import { registerHealthRoutes } from "./routes/health.js";
 import { registerProjectRoutes } from "./routes/projects.js";
@@ -28,6 +29,7 @@ import "./tools/browser-tools.js";
 import "./tools/verification-tools.js";
 
 assertEncryptionConfigured();
+assertPhoneAuthConfigured();
 
 const trustedProxies = (process.env.WEBNESTDEV_TRUST_PROXY ?? "").split(",").map(value => value.trim()).filter(Boolean);
 const app=Fastify({logger:true,bodyLimit:2_000_000,requestTimeout:120_000,trustProxy:trustedProxies.length ? trustedProxies : false});
