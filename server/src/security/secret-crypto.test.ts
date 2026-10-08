@@ -42,7 +42,7 @@ test("provider and GitHub tokens are encrypted at rest and legacy tokens migrate
 
 test("authenticated encryption rejects tampering and invalid key configuration", async () => {
   process.env.WEBNESTDEV_ENCRYPTION_KEY = "0123456789abcdef".repeat(4);
-  const crypto = await import("./security/secret-crypto.js");
+  const crypto = await import("./secret-crypto.js");
   const encrypted = crypto.encryptSecret("test-only-plaintext");
   assert.notEqual(encrypted, "test-only-plaintext");
   assert.equal(crypto.decryptSecret(encrypted), "test-only-plaintext");
