@@ -207,7 +207,7 @@ export class AgentRuntime {
               consecutiveScenarioFailures=0;
               const affectedRoute=[...verificationRoutes][0]??"/";
               const changeAnalysis=analyzeChangedFiles([...changedFiles],parsedChanges);
-              const plannedScenario=planQaScenario(task,affectedRoute,changeAnalysis.kind,changeAnalysis.confidence);
+              const plannedScenario=planQaScenario(task,affectedRoute,changeAnalysis.kind,changeAnalysis.confidence,parsedChanges);
               (plannedScenario as Record<string,unknown>).changeAnalysis=changeAnalysis;
               const scenarioCall={id:randomUUID(),name:"browser.scenario",arguments:plannedScenario};
               emit({type:"tool.started",runId,toolCallId:scenarioCall.id,name:scenarioCall.name,input:scenarioCall.arguments});
