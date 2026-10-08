@@ -69,10 +69,15 @@ export async function getSubscription(userId: string): Promise<Subscription> {
     const row = rows?.[0];
     if (!row) return { userId, plan: "free", status: "free", startedAt: null, expiresAt: null, updatedAt: new Date(0).toISOString() };
     const subscription: Subscription = { userId: row.user_id, plan: row.plan as PlanId, status: row.status as Subscription["status"], startedAt: row.started_at || null, expiresAt: row.expires_at || null, updatedAt: row.updated_at };
-    return expireIfNeeded(subscription);
+    const normalized = expireIfNeeded(subscription);
+    if (normalized.status !== subscription.status) await saveSubscription(normalized);
+    return normalized;
   }
   const all = await readJson<Record<string, Subscription>>(path.join(root, "account", "subscriptions.json"), {});
-  return expireIfNeeded(all[userId] ?? { userId, plan: "free", status: "free", startedAt: null, expiresAt: null, updatedAt: new Date(0).toISOString() });
+  const subscription = all[userId] ?? { userId, plan: "free" as const, status: "free" as const, startedAt: null, expiresAt: null, updatedAt: new Date(0).toISOString() };
+  const normalized = expireIfNeeded(subscription);
+  if (normalized.status !== subscription.status) await saveSubscription(normalized);
+  return normalized;
 }
 function expireIfNeeded(subscription: Subscription): Subscription {
   if (subscription.status === "demo_active" && subscription.expiresAt && Date.parse(subscription.expiresAt) <= Date.now()) {
