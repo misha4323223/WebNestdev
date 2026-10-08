@@ -9,7 +9,8 @@ export type QaScenarioStep =
   | { action: "press"; selector: string; key: string }
   | { action: "expectText"; text: string }
   | { action: "expectUrl"; pattern: string }
-  | { action: "expectVisible"; selector: string };
+  | { action: "expectVisible"; selector: string }
+  | { action: "expectNotVisible"; selector: string };
 
 export type QaScenario = { path: string; steps: QaScenarioStep[]; reason: string; changeKind?: string; confidence?: number; parsedChanges?: ParsedQaChange[] };
 
@@ -26,7 +27,11 @@ export function planQaScenario(task: string, affectedRoute = "/", changeKind = "
     { action: "expectVisible", selector: "body" },
   ];
 
-  const concrete = parsedChanges.find(change => change.action === "added" && change.selector);
+  const concrete = parsedChanges.find(change => change.selector && (change.action === "added" || change.action === "removed"));
+  if (concrete?.selector && concrete.action === "removed") {
+    steps.push({ action: "expectNotVisible", selector: concrete.selector });
+    return { path, steps, reason: "Scenario verifies that a removed UI element is no longer visible.", changeKind, confidence, parsedChanges };
+  }
   if (concrete?.selector) {
     steps.push({ action: "expectVisible", selector: concrete.selector });
     if (concrete.element === "button" || concrete.element === "link") {
