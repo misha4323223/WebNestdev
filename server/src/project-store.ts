@@ -28,12 +28,12 @@ export async function ensureDataDir(){await mkdir(root,{recursive:true})}
 
 export async function getProject(projectId:string):Promise<Project|null>{
   if(isYdbEnabled()){
-    const [rows]=await ydbQuery()<Array<{id:string;name:string;created_at:string;updated_at:string;github_json:string;user_id:string}>>\`
+    const [rows]=await ydbQuery()<Array<{id:string;name:string;created_at:string;updated_at:string;github_json:string;user_id:string}>>`
       SELECT id,name,created_at,updated_at,github_json,user_id
-      FROM \${ydbQuery().identifier(getTable("projects"))}
-      WHERE id = \${projectId}
+      FROM ${ydbQuery().identifier(getTable("projects"))}
+      WHERE id = ${projectId}
       LIMIT 1
-    \`;
+    `;
     const row=rows?.[0];
     if(!row)return null;
     return {
@@ -46,12 +46,12 @@ export async function getProject(projectId:string):Promise<Project|null>{
 
 export async function listProjects(userId:string){
   if(isYdbEnabled()){
-    const [rows]=await ydbQuery()<Array<{id:string;name:string;created_at:string;updated_at:string;github_json:string;user_id:string}>>\`
+    const [rows]=await ydbQuery()<Array<{id:string;name:string;created_at:string;updated_at:string;github_json:string;user_id:string}>>`
       SELECT id,name,created_at,updated_at,github_json,user_id
-      FROM \${ydbQuery().identifier(getTable("projects"))}
-      WHERE user_id = \${userId}
+      FROM ${ydbQuery().identifier(getTable("projects"))}
+      WHERE user_id = ${userId}
       ORDER BY updated_at DESC
-    \`;
+    `;
     return rows.map(row=>({
       id:row.id,name:row.name,createdAt:row.created_at,updatedAt:row.updated_at,userId:row.user_id,
       ...(row.github_json ? {github:JSON.parse(row.github_json) as GitHubRepositoryRef} : {})
@@ -75,11 +75,11 @@ export async function createProject(name:string,github:GitHubRepositoryRef|undef
   const now=new Date().toISOString();
   const project={id:randomUUID(),name:name.trim()||"Новый проект",github,userId,createdAt:now,updatedAt:now};
   if(isYdbEnabled()){
-    await ydbQuery()\`
-      INSERT INTO \${ydbQuery().identifier(getTable("projects"))}
+    await ydbQuery()`
+      INSERT INTO ${ydbQuery().identifier(getTable("projects"))}
         (id,name,created_at,updated_at,github_json,user_id)
-      VALUES (\${project.id},\${project.name},\${project.createdAt},\${project.updatedAt},\${project.github ? JSON.stringify(project.github) : ""},\${project.userId})
-    \`;
+      VALUES (${project.id},${project.name},${project.createdAt},${project.updatedAt},${project.github ? JSON.stringify(project.github) : ""},${project.userId})
+    `;
     return project;
   }
   await mkdir(path.join(root,"projects"),{recursive:true});
@@ -89,12 +89,12 @@ export async function createProject(name:string,github:GitHubRepositoryRef|undef
 
 export async function getProjectProvider(projectId:string):Promise<ProjectProviderConfig|null>{
   if(isYdbEnabled()){
-    const [rows]=await ydbQuery()<Array<{project_id:string;provider:string;base_url:string;model:string;token:string}>>\`
+    const [rows]=await ydbQuery()<Array<{project_id:string;provider:string;base_url:string;model:string;token:string}>>`
       SELECT project_id,provider,base_url,model,token
-      FROM \${ydbQuery().identifier(getTable("providers"))}
-      WHERE project_id = \${projectId}
+      FROM ${ydbQuery().identifier(getTable("providers"))}
+      WHERE project_id = ${projectId}
       LIMIT 1
-    \`;
+    `;
     const row=rows?.[0];
     if(!row)return null;
     return {provider:row.provider,baseUrl:row.base_url,model:row.model,...(row.token ? {token:row.token} : {})};
@@ -105,11 +105,11 @@ export async function getProjectProvider(projectId:string):Promise<ProjectProvid
 export async function saveProjectProvider(projectId:string,config:ProjectProviderConfig){
   if(!await getProject(projectId))throw new Error("Project not found");
   if(isYdbEnabled()){
-    await ydbQuery()\`
-      UPSERT INTO \${ydbQuery().identifier(getTable("providers"))}
+    await ydbQuery()`
+      UPSERT INTO ${ydbQuery().identifier(getTable("providers"))}
         (project_id,provider,base_url,model,token)
-      VALUES (\${projectId},\${config.provider},\${config.baseUrl},\${config.model},\${config.token ?? ""})
-    \`;
+      VALUES (${projectId},${config.provider},${config.baseUrl},${config.model},${config.token ?? ""})
+    `;
     return config;
   }
   await mkdir(path.join(root,"providers"),{recursive:true});
@@ -141,11 +141,11 @@ export async function createConversation(projectId:string,title="Новая се
   const now=new Date().toISOString();
   const c:Conversation={id:randomUUID(),projectId,title:title.trim()||"Новая сессия",messages:[],createdAt:now,updatedAt:now};
   if(isYdbEnabled()){
-    await ydbQuery()\`
-      INSERT INTO \${ydbQuery().identifier(getTable("conversations"))}
+    await ydbQuery()`
+      INSERT INTO ${ydbQuery().identifier(getTable("conversations"))}
         (id,project_id,title,messages_json,created_at,updated_at)
-      VALUES (\${c.id},\${c.projectId},\${c.title},"",\${c.createdAt},\${c.updatedAt})
-    \`;
+      VALUES (${c.id},${c.projectId},${c.title},"",${c.createdAt},${c.updatedAt})
+    `;
     return c;
   }
   await writeFile(path.join(await conversationsDir(),c.id+".json"),JSON.stringify(c,null,2));
@@ -154,20 +154,20 @@ export async function createConversation(projectId:string,title="Новая се
 
 export async function getConversation(id:string):Promise<Conversation|null>{
   if(isYdbEnabled()){
-    const [rows]=await ydbQuery()<Array<{id:string;project_id:string;title:string;messages_json:string;created_at:string;updated_at:string}>>\`
+    const [rows]=await ydbQuery()<Array<{id:string;project_id:string;title:string;messages_json:string;created_at:string;updated_at:string}>>`
       SELECT id,project_id,title,messages_json,created_at,updated_at
-      FROM \${ydbQuery().identifier(getTable("conversations"))}
-      WHERE id = \${id}
+      FROM ${ydbQuery().identifier(getTable("conversations"))}
+      WHERE id = ${id}
       LIMIT 1
-    \`;
+    `;
     const row=rows?.[0];
     if(!row)return null;
-    const [messageRows]=await ydbQuery()<Array<{created_at:string;message_id:string;role:string;content:string;tool_calls_json:string;tool_call_id:string}>>\`
+    const [messageRows]=await ydbQuery()<Array<{created_at:string;message_id:string;role:string;content:string;tool_calls_json:string;tool_call_id:string}>>`
       SELECT created_at,message_id,role,content,tool_calls_json,tool_call_id
-      FROM \${ydbQuery().identifier(getTable("conversation_messages"))}
-      WHERE conversation_id = \${id}
+      FROM ${ydbQuery().identifier(getTable("conversation_messages"))}
+      WHERE conversation_id = ${id}
       ORDER BY created_at,message_id
-    \`;
+    `;
     const messages=messageRows.length ? messageRows.map(messageFromRow) : JSON.parse(row.messages_json || "[]") as ChatMessage[];
     return {id:row.id,projectId:row.project_id,title:row.title,messages,createdAt:row.created_at,updatedAt:row.updated_at};
   }
@@ -176,19 +176,19 @@ export async function getConversation(id:string):Promise<Conversation|null>{
 
 export async function listConversations(projectId:string){
   if(isYdbEnabled()){
-    const [rows]=await ydbQuery()<Array<{id:string;project_id:string;title:string;messages_json:string;created_at:string;updated_at:string}>>\`
+    const [rows]=await ydbQuery()<Array<{id:string;project_id:string;title:string;messages_json:string;created_at:string;updated_at:string}>>`
       SELECT id,project_id,title,messages_json,created_at,updated_at
-      FROM \${ydbQuery().identifier(getTable("conversations"))}
-      WHERE project_id = \${projectId}
+      FROM ${ydbQuery().identifier(getTable("conversations"))}
+      WHERE project_id = ${projectId}
       ORDER BY updated_at DESC
-    \`;
+    `;
     const result=rows.map(row=>({id:row.id,projectId:row.project_id,title:row.title,messages:[] as ChatMessage[],createdAt:row.created_at,updatedAt:row.updated_at}));
-    const [messageRows]=await ydbQuery()<Array<{conversation_id:string;created_at:string;message_id:string;role:string;content:string;tool_calls_json:string;tool_call_id:string}>>\`
+    const [messageRows]=await ydbQuery()<Array<{conversation_id:string;created_at:string;message_id:string;role:string;content:string;tool_calls_json:string;tool_call_id:string}>>`
       SELECT conversation_id,created_at,message_id,role,content,tool_calls_json,tool_call_id
-      FROM \${ydbQuery().identifier(getTable("conversation_messages"))}
-      WHERE project_id = \${projectId}
+      FROM ${ydbQuery().identifier(getTable("conversation_messages"))}
+      WHERE project_id = ${projectId}
       ORDER BY created_at,message_id
-    \`;
+    `;
     const byId=new Map(result.map(item=>[item.id,item]));
     for(const row of messageRows)byId.get(row.conversation_id)?.messages.push(messageFromRow(row));
     for(const item of result){
@@ -217,17 +217,17 @@ export async function appendConversationMessages(id:string,messages:ChatMessage[
     const now=Date.now();
     for(let index=0;index<messages.length;index++){
       const row=messageRow(projectId,id,messages[index],new Date(now+index).toISOString());
-      await ydbQuery()\`
-        UPSERT INTO \${ydbQuery().identifier(getTable("conversation_messages"))}
+      await ydbQuery()`
+        UPSERT INTO ${ydbQuery().identifier(getTable("conversation_messages"))}
           (conversation_id,created_at,message_id,project_id,role,content,tool_calls_json,tool_call_id)
-        VALUES (\${row.conversationId},\${row.createdAt},\${row.messageId},\${row.projectId},\${row.role},\${row.content},\${row.toolCallsJson},\${row.toolCallId})
-      \`;
+        VALUES (${row.conversationId},${row.createdAt},${row.messageId},${row.projectId},${row.role},${row.content},${row.toolCallsJson},${row.toolCallId})
+      `;
     }
-    await ydbQuery()\`
-      UPDATE \${ydbQuery().identifier(getTable("conversations"))}
-      SET updated_at=\${c.updatedAt}
-      WHERE id=\${id}
-    \`;
+    await ydbQuery()`
+      UPDATE ${ydbQuery().identifier(getTable("conversations"))}
+      SET updated_at=${c.updatedAt}
+      WHERE id=${id}
+    `;
     return c;
   }
   await writeFile(path.join(root,"conversations",id+".json"),JSON.stringify(c,null,2));
