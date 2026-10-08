@@ -7,6 +7,7 @@ on:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   lockfiles:
@@ -25,6 +26,8 @@ jobs:
         working-directory: server
         run: npm install --package-lock-only --ignore-scripts
       - name: Commit lockfiles
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -34,4 +37,5 @@ jobs:
           else
             git commit -m "build: add reproducible npm lockfiles"
             git push
+            gh workflow run ci.yml --ref "${{ github.ref_name }}"
           fi
