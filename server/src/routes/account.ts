@@ -14,6 +14,11 @@ const preferencesSchema = z.object({
 });
 const demoPlanSchema = z.object({ plan: z.enum(["pro", "team"]) });
 
+export function canActivateDemo(subscription: Subscription): boolean {
+  // A demo is a one-time entitlement. Expired or cancelled demos must not be reactivated.
+  return subscription.status === "free";
+}
+
 function currentPlan(subscription: Subscription): PlanId {
   return subscription.status === "demo_active" && subscription.expiresAt && Date.parse(subscription.expiresAt) > Date.now() ? subscription.plan : "free";
 }
@@ -45,6 +50,10 @@ export async function registerAccountRoutes(app: FastifyInstance) {
   app.post("/api/billing/demo/activate", async (request, reply) => {
     const user = await requireUser(request, reply); if (!user) return;
     const { plan } = demoPlanSchema.parse(request.body);
+    const current = await getSubscription(user.id);
+    if (!canActivateDemo(current)) {
+      return reply.code(409).send({ error: "Демо-доступ можно активировать только один раз на аккаунт." });
+    }
     const now = new Date();
     const subscription: Subscription = { userId: user.id, plan, status: "demo_active", startedAt: now.toISOString(), expiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString(), updatedAt: now.toISOString() };
     await saveSubscription(subscription);
