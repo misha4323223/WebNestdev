@@ -20,6 +20,7 @@ const pieces = [
 ];
 
 export function NestLoader({ size = 42, className = "", label }: NestLoaderProps) {
+  const id = useId().replace(/:/g, "");
   return (
     <span
       className={`nest-loader ${className}`}
