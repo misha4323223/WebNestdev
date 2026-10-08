@@ -192,7 +192,7 @@ export async function activateDemoOnce(userId: string, plan: Exclude<PlanId, "fr
   const identities = await readJson<Record<string, string>>(path.join(root, "auth", "phone-identities.json"), {});
   const phone = Object.entries(identities).find(([, id]) => id === userId)?.[0];
   if (!phone) throw new PhoneVerificationRequiredError();
-  const claimKey = createHash("sha256").update(phone).digest("hex");
+  const claimKey = phoneDemoClaimKey(phone);
   return withSubscriptionLock("demo:" + claimKey, async () => {
     const file = path.join(root, "account", "subscriptions.json");
     const claimsFile = path.join(root, "account", "demo-claims.json");
