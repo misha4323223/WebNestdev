@@ -2,6 +2,7 @@ import { readdir, readFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { initializeStorage, isYdbEnabled, ydbQuery, getTable, closeStorage } from "./ydb.js";
+import { encryptSecret } from "./secret-crypto.js";
 
 const root=process.env.WEBNESTDEV_DATA_DIR ?? path.resolve(".webnestdev");
 
@@ -59,12 +60,12 @@ async function main(){
 
   for(const name of await files(path.join(root,"providers"))){
     const p=json<Provider>(await readFile(path.join(root,"providers",name),"utf8"));
-    await sql`UPSERT INTO ${sql.identifier(getTable("providers"))} (project_id,provider,base_url,model,token) VALUES (${name.slice(0,-5)},${p.provider},${p.baseUrl},${p.model},${p.token ?? ""})`;
+    await sql`UPSERT INTO ${sql.identifier(getTable("providers"))} (project_id,provider,base_url,model,token) VALUES (${name.slice(0,-5)},${p.provider},${p.baseUrl},${p.model},${p.token ? encryptSecret(p.token) : ""})`;
   }
 
   for(const name of await files(path.join(root,"github"))){
     const g=json<GitHub>(await readFile(path.join(root,"github",name),"utf8"));
-    await sql`UPSERT INTO ${sql.identifier(getTable("github_connections"))} (user_id,id,access_token,github_login,created_at) VALUES (${g.userId},${g.id},${g.accessToken},${g.githubLogin ?? ""},${g.createdAt})`;
+    await sql`UPSERT INTO ${sql.identifier(getTable("github_connections"))} (user_id,id,access_token,github_login,created_at) VALUES (${g.userId},${g.id},${encryptSecret(g.accessToken)},${g.githubLogin ?? ""},${g.createdAt})`;
   }
 
   console.log("JSON → YDB migration completed");
