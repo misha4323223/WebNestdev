@@ -144,7 +144,7 @@ async function removeChallenge(phone: string) {
   await writeLocal(all);
 }
 
-async function deliverSms(phone: string, code: string): Promise<void> {
+async function deliverSms(phone: string, code: string, ip: string): Promise<void> {
   const mode = process.env.WEBNESTDEV_SMS_MODE ?? (process.env.NODE_ENV === "production" ? "smsru" : "disabled");
   if (mode === "console" && process.env.NODE_ENV !== "production") {
     // Local-only development helper; never enabled in production.
@@ -157,6 +157,7 @@ async function deliverSms(phone: string, code: string): Promise<void> {
   const form = new URLSearchParams({
     api_id: apiId,
     to: phone.slice(1),
+    ip,
     msg: `Код входа WebNestdev: ${code}. Не сообщайте его никому.`,
     json: "1",
   });
@@ -180,7 +181,7 @@ async function deliverSms(phone: string, code: string): Promise<void> {
   if (!recipient && !payload.status_code) throw new Error("SMS provider response was incomplete");
 }
 
-export async function requestPhoneOtp(phone: string): Promise<{ resendAfter: string }> {
+export async function requestPhoneOtp(phone: string, ip: string): Promise<{ resendAfter: string }> {
   const existing = await getChallenge(phone);
   if (existing && Date.parse(existing.resendAfter) > Date.now()) {
     const error = new Error("Повторно запросить код можно через минуту.");
@@ -198,7 +199,7 @@ export async function requestPhoneOtp(phone: string): Promise<{ resendAfter: str
     createdAt: now.toISOString(),
   };
   await saveChallenge(challenge);
-  try { await deliverSms(phone, code); }
+  try { await deliverSms(phone, code, ip); }
   catch (error) { await removeChallenge(phone); throw error; }
   return { resendAfter: challenge.resendAfter };
 }
