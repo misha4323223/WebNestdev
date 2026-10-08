@@ -4,15 +4,18 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-test("concurrent demo activation grants only one plan for an account", async () => {
+test("concurrent demo activation grants only one plan for a verified phone", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "webnestdev-demo-"));
   process.env.WEBNESTDEV_STORAGE = "json";
   process.env.WEBNESTDEV_DATA_DIR = root;
   try {
-    const { activateDemoOnce, DemoAlreadyClaimedError } = await import("../account/account-store.js");
+    const { createUser, linkPhoneToUser } = await import("../auth/auth-store.js");
+    const { activateDemoOnce, DemoAlreadyClaimedError } = await import("./account-store.js");
+    const user = await createUser("trial-test@example.test", "long-enough-test-password");
+    await linkPhoneToUser("+79001234567", user.id);
     const results = await Promise.allSettled([
-      activateDemoOnce("race-user", "pro"),
-      activateDemoOnce("race-user", "team"),
+      activateDemoOnce(user.id, "pro"),
+      activateDemoOnce(user.id, "team"),
     ]);
     assert.equal(results.filter(result => result.status === "fulfilled").length, 1);
     assert.equal(results.filter(result => result.status === "rejected" && result.reason instanceof DemoAlreadyClaimedError).length, 1);
