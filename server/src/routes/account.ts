@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireUser } from "../auth/auth.js";
-import { activateDemoOnce, DemoAlreadyClaimedError, getSubscription, getUserPreferences, saveSubscription, saveUserPreferences, type Subscription, type UserPreferences } from "../account/account-store.js";
+import { activateDemoOnce, DemoAlreadyClaimedError, PhoneVerificationRequiredError, getSubscription, getUserPreferences, saveSubscription, saveUserPreferences, type Subscription, type UserPreferences } from "../account/account-store.js";
 import { PLAN_CATALOG, limitsForPlan, type PlanId } from "../account/plans.js";
 import { getUsageSnapshot } from "../account/usage-store.js";
 
@@ -56,7 +56,10 @@ export async function registerAccountRoutes(app: FastifyInstance) {
       return { mode: "demo", subscription: publicSubscription(subscription), message: "Демо-тариф активирован. Оплата не выполнялась." };
     } catch (error) {
       if (error instanceof DemoAlreadyClaimedError) {
-        return reply.code(409).send({ error: "Демо-доступ можно активировать только один раз на аккаунт." });
+        return reply.code(409).send({ error: "Демо-доступ можно активировать только один раз на подтверждённый номер телефона." });
+      }
+      if (error instanceof PhoneVerificationRequiredError) {
+        return reply.code(403).send({ error: "Для активации демо подтвердите номер телефона в настройках аккаунта." });
       }
       throw error;
     }
