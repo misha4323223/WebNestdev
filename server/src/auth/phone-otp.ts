@@ -12,6 +12,19 @@ const RESEND_DELAY_MS = 60_000;
 const MAX_ATTEMPTS = 5;
 const buckets = new Map<string, { count: number; resetAt: number }>();
 
+export function assertPhoneAuthConfigured(): void {
+  if (process.env.NODE_ENV !== "production") return;
+  if (!process.env.WEBNESTDEV_PHONE_OTP_SECRET || process.env.WEBNESTDEV_PHONE_OTP_SECRET.length < 32) {
+    throw new Error("WEBNESTDEV_PHONE_OTP_SECRET (32+ chars) is required in production");
+  }
+  if (!process.env.WEBNESTDEV_TRIAL_CLAIM_SECRET || process.env.WEBNESTDEV_TRIAL_CLAIM_SECRET.length < 32) {
+    throw new Error("WEBNESTDEV_TRIAL_CLAIM_SECRET (32+ chars) is required in production");
+  }
+  if ((process.env.WEBNESTDEV_SMS_MODE ?? "smsru") !== "smsru" || !process.env.SMSRU_API_ID) {
+    throw new Error("WEBNESTDEV_SMS_MODE=smsru and SMSRU_API_ID are required in production");
+  }
+}
+
 export function normalizeRussianPhone(value: string): string | null {
   const digits = value.replace(/[\s().-]/g, "");
   let normalized = digits;
