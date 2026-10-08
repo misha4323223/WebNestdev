@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { initializeStorage, isYdbEnabled, ydbQuery, getTable, closeStorage } from "./ydb.js";
 import { encryptSecret } from "./secret-crypto.js";
+import type { ChatMessage } from "../types.js";
 
 const root=process.env.WEBNESTDEV_DATA_DIR ?? path.resolve(".webnestdev");
 
@@ -14,7 +15,7 @@ async function files(dir:string){
 type User={id:string;email:string;passwordHash:string;createdAt:string};
 type Session={id:string;userId:string;expiresAt:string};
 type Project={id:string;name:string;createdAt:string;updatedAt:string;github?:unknown;userId:string};
-type Conversation={id:string;projectId:string;title:string;messages:unknown[];createdAt:string;updatedAt:string};
+type Conversation={id:string;projectId:string;title:string;messages:ChatMessage[];createdAt:string;updatedAt:string};
 type Provider={provider:string;baseUrl:string;model:string;token?:string};
 type GitHub={id:string;userId:string;accessToken:string;githubLogin?:string;createdAt:string};
 
