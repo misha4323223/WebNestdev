@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -10,7 +10,7 @@ const usersDir = path.join(root, "auth");
 const usersFile = path.join(usersDir, "users.json");
 const sessionsFile = path.join(usersDir, "sessions.json");
 
-export type User = { id:string; email:string; passwordHash:string; createdAt:string };
+export type User = { id:string; email:string; passwordHash:string; createdAt:string; phone?: string };
 type Session = { id:string; userId:string; expiresAt:string };
 
 async function readJson<T>(file:string, fallback:T):Promise<T>{
@@ -137,4 +137,70 @@ export async function deleteSession(sessionId:string){
   }
   const sessions = await readJson<Session[]>(sessionsFile, []);
   await writeJson(sessionsFile, sessions.filter(item => item.id !== sessionId));
+}
+
+
+function normalizeStoredUser(row: {id:string;email:string;password_hash:string;created_at:string}): User {
+  return { id: row.id, email: row.email, passwordHash: row.password_hash, createdAt: row.created_at };
+}
+
+export async function findUserByPhone(phone: string): Promise<User | null> {
+  if (isYdbEnabled()) {
+    const [rows] = await ydbQuery()<Array<{ user_id: string }>>`
+      SELECT user_id FROM ${ydbQuery().identifier(getTable("phone_identities"))}
+      WHERE phone = ${phone} LIMIT 1
+    `;
+    if (!rows?.[0]) return null;
+    const user = await getUser(rows[0].user_id);
+    return user ? { ...user, phone } : null;
+  }
+  const identities = await readJson<Record<string, string>>(path.join(usersDir, "phone-identities.json"), {});
+  const userId = identities[phone];
+  if (!userId) return null;
+  const user = await getUser(userId);
+  return user ? { ...user, phone } : null;
+}
+
+export async function createPhoneUser(phone: string): Promise<User> {
+  const id = randomUUID();
+  const emailKey = createHash("sha256").update(phone).digest("hex");
+  const now = new Date().toISOString();
+  const salt = randomBytes(16).toString("hex");
+  const passwordHash = salt + ":" + randomBytes(64).toString("hex");
+  const user: User = { id, email: `phone_${emailKey}@phone.webnestdev.invalid`, passwordHash, createdAt: now, phone };
+  if (isYdbEnabled()) {
+    const sql = ydbQuery();
+    const users = sql.identifier(getTable("users"));
+    const identities = sql.identifier(getTable("phone_identities"));
+    await sql.transaction({ idempotent: true }, async tx => {
+      await tx`INSERT INTO ${users} (id,email,password_hash,created_at) VALUES (${user.id},${user.email},${user.passwordHash},${user.createdAt})`;
+      await tx`INSERT INTO ${identities} (phone,user_id,verified_at) VALUES (${phone},${user.id},${now})`;
+    });
+    return user;
+  }
+  const lockKey = "phone:" + phone;
+  return withAuthStoreLock(lockKey, async () => {
+    const existing = await findUserByPhone(phone);
+    if (existing) return existing;
+    const users = await readJson<User[]>(usersFile, []);
+    users.push({ id: user.id, email: user.email, passwordHash: user.passwordHash, createdAt: user.createdAt });
+    await writeJson(usersFile, users);
+    const identitiesFile = path.join(usersDir, "phone-identities.json");
+    const identities = await readJson<Record<string, string>>(identitiesFile, {});
+    identities[phone] = user.id;
+    await writeJson(identitiesFile, identities);
+    return user;
+  });
+}
+
+const authStoreLocks = new Map<string, Promise<unknown>>();
+async function withAuthStoreLock<T>(key: string, action: () => Promise<T>): Promise<T> {
+  const previous = authStoreLocks.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const current = previous.then(() => gate);
+  authStoreLocks.set(key, current);
+  await previous;
+  try { return await action(); }
+  finally { release(); if (authStoreLocks.get(key) === current) authStoreLocks.delete(key); }
 }
