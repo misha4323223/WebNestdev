@@ -37,7 +37,8 @@ export async function findUserByEmail(email:string){
   return users.find(user => user.email === normalized) ?? null;
 }
 
-export async function getUser(userId:string){
+export async function getUser(userId:string): Promise<User | null> {
+  let user: User | null;
   if(isYdbEnabled()){
     const [rows]=await ydbQuery()<Array<{id:string;email:string;password_hash:string;created_at:string}>>`
       SELECT id,email,password_hash,created_at
@@ -46,10 +47,22 @@ export async function getUser(userId:string){
       LIMIT 1
     `;
     const row=rows?.[0];
-    return row ? {id:row.id,email:row.email,passwordHash:row.password_hash,createdAt:row.created_at} : null;
+    user = row ? {id:row.id,email:row.email,passwordHash:row.password_hash,createdAt:row.created_at} : null;
+  } else {
+    const users = await readJson<User[]>(usersFile, []);
+    user = users.find(item => item.id === userId) ?? null;
   }
-  const users = await readJson<User[]>(usersFile, []);
-  return users.find(user => user.id === userId) ?? null;
+  if (!user) return null;
+  if (isYdbEnabled()) {
+    const [rows] = await ydbQuery()<Array<{ phone: string }>>`
+      SELECT phone FROM ${ydbQuery().identifier(getTable("phone_identities"))}
+      WHERE user_id = ${userId} LIMIT 1
+    `;
+    return rows?.[0] ? { ...user, phone: rows[0].phone } : user;
+  }
+  const identities = await readJson<Record<string, string>>(path.join(usersDir, "phone-identities.json"), {});
+  const phone = Object.entries(identities).find(([, id]) => id === userId)?.[0];
+  return phone ? { ...user, phone } : user;
 }
 
 export async function createUser(email:string, password:string){
@@ -139,10 +152,6 @@ export async function deleteSession(sessionId:string){
   await writeJson(sessionsFile, sessions.filter(item => item.id !== sessionId));
 }
 
-
-function normalizeStoredUser(row: {id:string;email:string;password_hash:string;created_at:string}): User {
-  return { id: row.id, email: row.email, passwordHash: row.password_hash, createdAt: row.created_at };
-}
 
 export async function findUserByPhone(phone: string): Promise<User | null> {
   if (isYdbEnabled()) {
