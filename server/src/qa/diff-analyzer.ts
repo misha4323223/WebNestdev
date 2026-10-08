@@ -8,7 +8,9 @@ export type QaChangeAnalysis = {
   requiresBrowser: boolean;
 };
 
-export function analyzeChangedFiles(files: string[]): QaChangeAnalysis {
+import type { ParsedChange } from "./change-parser.js";
+
+export function analyzeChangedFiles(files: string[], parsedChanges: ParsedChange[] = []): QaChangeAnalysis {
   const normalized = files.map(file => file.replaceAll("\\\\", "/"));
   const text = normalized.join(" ").toLowerCase();
   const reasons: string[] = [];
@@ -39,5 +41,13 @@ export function analyzeChangedFiles(files: string[]): QaChangeAnalysis {
     reasons.push("Test source changed.");
   }
 
+  if (parsedChanges.length) {
+    const hasForm = parsedChanges.some(change => change.kind === "form-field");
+    const hasRoute = parsedChanges.some(change => change.kind === "route");
+    const hasUi = parsedChanges.some(change => change.kind === "ui-element");
+    if (hasForm) { kind = "form"; confidence = Math.max(confidence, 0.95); requiresBrowser = true; reasons.push("Structured parser found a changed form control."); }
+    else if (hasRoute) { kind = "route"; confidence = Math.max(confidence, 0.95); requiresBrowser = true; reasons.push("Structured parser found a changed route reference."); }
+    else if (hasUi) { kind = "ui"; confidence = Math.max(confidence, 0.95); requiresBrowser = true; reasons.push("Structured parser found a concrete UI element."); }
+  }
   return { kind, confidence, files: normalized, reasons, requiresBrowser };
 }
