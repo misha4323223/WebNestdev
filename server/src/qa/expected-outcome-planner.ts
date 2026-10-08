@@ -1,4 +1,5 @@
-import type { ParsedQaChange, QaScenarioStep } from "./scenario-planner.js";
+import type { ParsedChange as ParsedQaChange } from "./change-parser.js";
+import type { QaScenarioStep } from "./scenario-planner.js";
 
 export type ExpectedOutcome = {
   kind: "url" | "text" | "visible" | "state";
