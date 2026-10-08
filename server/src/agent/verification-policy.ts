@@ -20,6 +20,7 @@ export function routeFromMutation(name: string, args: Record<string, unknown>): 
     let page = pagesMatch[1];
     if (/^_(app|document)$/i.test(page)) return "/";
     page = page.replace(/\/index$/i, "");
+    if (/^index$/i.test(page)) return "/";
     page = page.replace(/\[(\.\.\.)?\[?([^\]]+)\]?\]/g, "test");
     return page ? normalizeRoute("/" + page) : "/";
   }
