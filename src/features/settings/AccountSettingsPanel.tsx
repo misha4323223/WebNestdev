@@ -6,7 +6,8 @@ type Preferences = { language: "ru" | "en"; compactMode: boolean; emailNotificat
 type Plan = { id: "free" | "pro" | "team"; name: string; priceLabel: string; description: string; limits: { projects: number; agentRunsPerDay: number; browserChecksPerDay: number }; features: string[] };
 type Subscription = { plan: "free" | "pro" | "team"; status: "free" | "demo_active" | "demo_expired" | "demo_cancelled"; startedAt: string | null; expiresAt: string | null; updatedAt: string; mode: "demo" };
 type AccountData = { user: { id: string; email: string; createdAt: string }; preferences: Preferences };
-type BillingData = { mode: "demo"; subscription: Subscription; plans: Plan[] };
+type Usage = { date: string; agentRuns: number; browserChecks: number };
+type BillingData = { mode: "demo"; subscription: Subscription; plans: Plan[]; limits: Plan["limits"]; usage: Usage };
 
 const initialPreferences: Preferences = { language: "ru", compactMode: false, emailNotifications: true, productUpdates: false };
 const dateLabel = (value: string | null) => value ? new Date(value).toLocaleDateString("ru-RU", { day: "numeric", month: "long", year: "numeric" }) : "—";
@@ -59,6 +60,10 @@ export function AccountSettingsPanel() {
 
   const nav = [{ id: "account", label: "Аккаунт", icon: UserRound }, { id: "preferences", label: "Предпочтения", icon: Settings2 }, { id: "subscription", label: "Тариф и подписка", icon: CreditCard }] as const;
   const activePlan = billing?.plans.find(plan => plan.id === billing.subscription.plan);
+  const usageRows = billing ? [
+    { label: "Запуски агента", used: billing.usage.agentRuns, limit: billing.limits.agentRunsPerDay },
+    { label: "Браузерные проверки", used: billing.usage.browserChecks, limit: billing.limits.browserChecksPerDay },
+  ] : [];
   return <section className="account-settings settings-panel">
     <div className="panel-title"><div><span className="eyebrow">ACCOUNT CENTER</span><strong>Настройки аккаунта</strong></div><span className="demo-pill"><ShieldCheck size={12}/> DEMO MODE</span></div>
     {loading ? <div className="settings-body">Загружаем настройки аккаунта…</div> : <>
@@ -84,6 +89,7 @@ export function AccountSettingsPanel() {
             <span className="eyebrow">SUBSCRIPTION</span><h3>Тариф и подписка</h3>
             <div className="subscription-current"><div><span>Текущий тариф</span><strong>{activePlan?.name ?? "Free"}</strong></div><span className="demo-pill"><Sparkles size={12}/> Только демо</span></div>
             <p className="account-muted">{billing?.subscription.status === "demo_active" ? `Демо действует до ${dateLabel(billing.subscription.expiresAt)}.` : billing?.subscription.status === "demo_cancelled" ? "Демо-подписка отменена." : billing?.subscription.status === "demo_expired" ? "Срок демо закончился. Доступен Free." : "Бесплатный режим активен. Можно включить демо-тариф на 30 дней."}</p>
+            <div className="usage-meter-list"><div className="usage-meter-title"><strong>Использование за сегодня</strong><small>Сброс по UTC · ${billing?.usage.date ?? ""}</small></div>{usageRows.map(row => <div className="usage-meter" key={row.label}><div><span>{row.label}</span><strong>{row.used} / {row.limit}</strong></div><div className="usage-meter-track"><span style={{ width: `${Math.min(100, row.used / Math.max(1, row.limit) * 100)}%` }}/></div></div>)}</div>
             <div className="plan-grid">{billing?.plans.map(plan => <article key={plan.id} className={"plan-card" + (plan.id === billing.subscription.plan ? " selected" : "")}>
               <div className="plan-card-head"><div><strong>{plan.name}</strong><small>{plan.description}</small></div><span>{plan.priceLabel}</span></div>
               <ul>{plan.features.map(feature => <li key={feature}><Check size={12}/>{feature}</li>)}</ul>
