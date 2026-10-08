@@ -77,6 +77,9 @@ export async function registerAuthRoutes(app:FastifyInstance){
     }
     if (!await verifyPhoneOtp(phone, body.code)) return reply.code(401).send({error:"Код неверен или срок его действия истёк."});
     let user = await findUserByPhone(phone);
+    if (!user && body.intent === "login") {
+      return reply.code(404).send({error:"Номер ещё не зарегистрирован. Создайте аккаунт по телефону или войдите по email, чтобы привязать номер к существующему аккаунту."});
+    }
     if (!user) {
       try { user = await createPhoneUser(phone); }
       catch (error) {
