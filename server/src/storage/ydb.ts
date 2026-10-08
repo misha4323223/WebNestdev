@@ -112,6 +112,14 @@ export async function initializeStorage() {
       updated_at Utf8 NOT NULL,
       PRIMARY KEY (user_id)
     )`;
+    await q`CREATE TABLE IF NOT EXISTS ${q.identifier(getTable("usage_events"))} (
+      user_id Utf8 NOT NULL,
+      usage_date Utf8 NOT NULL,
+      event_id Utf8 NOT NULL,
+      kind Utf8 NOT NULL,
+      created_at Utf8 NOT NULL,
+      PRIMARY KEY (user_id, usage_date, event_id)
+    )`;
     await q`CREATE TABLE IF NOT EXISTS ${q.identifier(getTable("oauth_states"))} (
       state Utf8 NOT NULL,
       user_id Utf8 NOT NULL,
