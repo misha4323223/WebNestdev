@@ -1,0 +1,156 @@
+import { createHmac, randomInt, timingSafeEqual } from "node:crypto";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
+import { isYdbEnabled, ydbQuery, getTable } from "../storage/ydb.js";
+
+type Challenge = { phone: string; codeHash: string; expiresAt: string; resendAfter: string; attempts: number; createdAt: string };
+const root = process.env.WEBNESTDEV_DATA_DIR ?? path.resolve(".webnestdev");
+const challengeFile = path.join(root, "auth", "phone-otp-challenges.json");
+const OTP_TTL_MS = 5 * 60_000;
+const RESEND_DELAY_MS = 60_000;
+const MAX_ATTEMPTS = 5;
+const buckets = new Map<string, { count: number; resetAt: number }>();
+
+export function normalizeRussianPhone(value: string): string | null {
+  const digits = value.replace(/[\s().-]/g, "");
+  let normalized = digits;
+  if (/^8\d{10}$/.test(digits)) normalized = "7" + digits.slice(1);
+  else if (/^\d{10}$/.test(digits)) normalized = "7" + digits;
+  else if (/^\+7\d{10}$/.test(digits)) normalized = digits.slice(1);
+  if (!/^7\d{10}$/.test(normalized)) return null;
+  return "+" + normalized;
+}
+
+function secret(): string {
+  const value = process.env.WEBNESTDEV_PHONE_OTP_SECRET ?? process.env.WEBNESTDEV_ENCRYPTION_KEY;
+  if (!value || value.length < 32) throw new Error("WEBNESTDEV_PHONE_OTP_SECRET (32+ chars) is required for phone OTP");
+  return value;
+}
+function hashCode(phone: string, code: string) {
+  return createHmac("sha256", secret()).update(phone + ":" + code).digest("hex");
+}
+function allow(key: string, limit: number, windowMs: number): boolean {
+  const now = Date.now();
+  const item = buckets.get(key);
+  if (!item || item.resetAt <= now) {
+    if (buckets.size > 20_000) {
+      for (const [bucketKey, bucket] of buckets) if (bucket.resetAt <= now) buckets.delete(bucketKey);
+    }
+    buckets.set(key, { count: 1, resetAt: now + windowMs });
+    return true;
+  }
+  if (item.count >= limit) return false;
+  item.count++;
+  return true;
+}
+export function allowPhoneOtpRequest(phone: string, ip: string): boolean {
+  return allow("phone:" + phone, 3, 60 * 60_000) && allow("ip:" + ip, 10, 60 * 60_000);
+}
+export function allowPhoneOtpVerify(phone: string, ip: string): boolean {
+  return allow("verify-phone:" + phone, 10, 15 * 60_000) && allow("verify-ip:" + ip, 30, 15 * 60_000);
+}
+
+async function readLocal(): Promise<Record<string, Challenge>> {
+  try { return JSON.parse(await readFile(challengeFile, "utf8")) as Record<string, Challenge>; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return {}; throw error; }
+}
+async function writeLocal(value: Record<string, Challenge>) {
+  await mkdir(path.dirname(challengeFile), { recursive: true });
+  await writeFile(challengeFile, JSON.stringify(value), { mode: 0o600 });
+}
+async function getChallenge(phone: string): Promise<Challenge | null> {
+  if (isYdbEnabled()) {
+    const [rows] = await ydbQuery()<Array<{phone:string;code_hash:string;expires_at:string;resend_after:string;attempts:number;created_at:string}>>`
+      SELECT phone,code_hash,expires_at,resend_after,attempts,created_at
+      FROM ${ydbQuery().identifier(getTable("phone_otp_challenges"))}
+      WHERE phone = ${phone} LIMIT 1
+    `;
+    const row = rows?.[0];
+    return row ? { phone: row.phone, codeHash: row.code_hash, expiresAt: row.expires_at, resendAfter: row.resend_after, attempts: Number(row.attempts), createdAt: row.created_at } : null;
+  }
+  return (await readLocal())[phone] ?? null;
+}
+async function saveChallenge(challenge: Challenge) {
+  if (isYdbEnabled()) {
+    await ydbQuery()`
+      UPSERT INTO ${ydbQuery().identifier(getTable("phone_otp_challenges"))}
+        (phone,code_hash,expires_at,resend_after,attempts,created_at)
+      VALUES (${challenge.phone},${challenge.codeHash},${challenge.expiresAt},${challenge.resendAfter},${challenge.attempts},${challenge.createdAt})
+    `;
+    return;
+  }
+  const all = await readLocal();
+  all[challenge.phone] = challenge;
+  await writeLocal(all);
+}
+async function removeChallenge(phone: string) {
+  if (isYdbEnabled()) {
+    await ydbQuery()`DELETE FROM ${ydbQuery().identifier(getTable("phone_otp_challenges"))} WHERE phone = ${phone}`;
+    return;
+  }
+  const all = await readLocal();
+  delete all[phone];
+  await writeLocal(all);
+}
+
+async function deliverSms(phone: string, code: string): Promise<void> {
+  const mode = process.env.WEBNESTDEV_SMS_MODE ?? (process.env.NODE_ENV === "production" ? "smsru" : "disabled");
+  if (mode === "console" && process.env.NODE_ENV !== "production") {
+    // Local-only development helper; never enabled in production.
+    console.info("[phone-otp] Local development code issued for a phone ending in", phone.slice(-4), ":", code);
+    return;
+  }
+  if (mode !== "smsru") throw new Error("SMS delivery is not configured");
+  const apiId = process.env.SMSRU_API_ID;
+  if (!apiId) throw new Error("SMSRU_API_ID is required");
+  const url = new URL("https://sms.ru/sms/send");
+  url.searchParams.set("api_id", apiId);
+  url.searchParams.set("to", phone.slice(1));
+  url.searchParams.set("msg", `Код входа WebNestdev: ${code}. Не сообщайте его никому.`);
+  url.searchParams.set("json", "1");
+  const response = await fetch(url, { signal: AbortSignal.timeout(8_000) });
+  if (!response.ok) throw new Error("SMS provider request failed");
+  const payload = await response.json() as { status?: string; status_code?: string };
+  if (payload.status !== "OK" || (payload.status_code && payload.status_code !== "100")) {
+    throw new Error("SMS provider rejected the request");
+  }
+}
+
+export async function requestPhoneOtp(phone: string): Promise<{ resendAfter: string }> {
+  const existing = await getChallenge(phone);
+  if (existing && Date.parse(existing.resendAfter) > Date.now()) {
+    const error = new Error("Повторно запросить код можно через минуту.");
+    Object.assign(error, { statusCode: 429 });
+    throw error;
+  }
+  const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
+  const now = new Date();
+  const challenge: Challenge = {
+    phone,
+    codeHash: hashCode(phone, code),
+    expiresAt: new Date(now.getTime() + OTP_TTL_MS).toISOString(),
+    resendAfter: new Date(now.getTime() + RESEND_DELAY_MS).toISOString(),
+    attempts: 0,
+    createdAt: now.toISOString(),
+  };
+  await saveChallenge(challenge);
+  try { await deliverSms(phone, code); }
+  catch (error) { await removeChallenge(phone); throw error; }
+  return { resendAfter: challenge.resendAfter };
+}
+
+export async function verifyPhoneOtp(phone: string, code: string): Promise<boolean> {
+  const challenge = await getChallenge(phone);
+  if (!challenge || Date.parse(challenge.expiresAt) <= Date.now() || challenge.attempts >= MAX_ATTEMPTS) {
+    if (challenge && (Date.parse(challenge.expiresAt) <= Date.now() || challenge.attempts >= MAX_ATTEMPTS)) await removeChallenge(phone);
+    return false;
+  }
+  const supplied = Buffer.from(hashCode(phone, code), "hex");
+  const expected = Buffer.from(challenge.codeHash, "hex");
+  if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
+    await saveChallenge({ ...challenge, attempts: challenge.attempts + 1 });
+    return false;
+  }
+  await removeChallenge(phone);
+  return true;
+}
