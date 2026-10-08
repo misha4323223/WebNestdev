@@ -3,10 +3,11 @@ import { z } from "zod";
 import { attachSession, getCurrentUser, requireUser, SESSION_COOKIE } from "../auth/auth.js";
 import { createUser, createPhoneUser, deleteSession, findUserByPhone, linkPhoneToUser, PhoneAlreadyLinkedError, verifyUser } from "../auth/auth-store.js";
 import { checkAuthRateLimit } from "../auth/auth-rate-limit.js";
-import { allowPhoneOtpRequest, allowPhoneOtpVerify, normalizeRussianPhone, requestPhoneOtp, verifyPhoneOtp } from "../auth/phone-otp.js";
+import { allowPhoneOtpRequest, allowPhoneOtpVerify, normalizeRussianPhone, recordPhoneConsent, requestPhoneOtp, verifyPhoneOtp } from "../auth/phone-otp.js";
 
 const credentials = z.object({email:z.string().email().max(200).refine(value => !value.toLowerCase().endsWith("@phone.webnestdev.invalid"), "Email domain is reserved"),password:z.string().min(8).max(200)});
 const phoneBody = z.object({phone:z.string().min(10).max(30)});
+const phoneRequestBody = phoneBody.extend({consent:z.literal(true)});
 const verifyPhoneBody = phoneBody.extend({code:z.string().regex(/^\d{6}$/)});
 function publicUser(user: {id:string;email:string;createdAt:string;phone?:string}) {
   const isPhoneOnly = user.email.endsWith("@phone.webnestdev.invalid");
@@ -48,13 +49,14 @@ export async function registerAuthRoutes(app:FastifyInstance){
     return {user:publicUser(user)};
   });
   app.post("/api/auth/phone/request", async (request,reply) => {
-    const body = phoneBody.parse(request.body);
+    const body = phoneRequestBody.parse(request.body);
     const phone = phoneOrNull(body.phone);
     if (!phone) return reply.code(400).send({error:"Введите российский номер в формате +7 900 123-45-67."});
     if (!await allowPhoneOtpRequest(phone, request.ip)) {
       reply.header("Retry-After", "3600");
       return reply.code(429).send({error:"Слишком много запросов кода. Попробуйте позже."});
     }
+    await recordPhoneConsent(phone, request.ip, "sign_in");
     try {
       const result = await requestPhoneOtp(phone);
       return {ok:true,resendAfter:result.resendAfter,message:"Если номер указан верно, код будет отправлен SMS."};
@@ -94,6 +96,7 @@ export async function registerAuthRoutes(app:FastifyInstance){
       reply.header("Retry-After", "3600");
       return reply.code(429).send({error:"Слишком много запросов кода. Попробуйте позже."});
     }
+    await recordPhoneConsent(phone, request.ip, "link_account");
     try {
       const result = await requestPhoneOtp(phone);
       return {ok:true,resendAfter:result.resendAfter,message:"Если номер указан верно, код будет отправлен SMS."};
