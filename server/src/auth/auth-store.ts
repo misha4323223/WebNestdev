@@ -84,10 +84,13 @@ export async function createUser(email:string, password:string){
     }
     return user;
   }
-  const users = await readJson<User[]>(usersFile, []);
-  users.push(user);
-  await writeJson(usersFile, users);
-  return user;
+  return withAuthStoreLock("auth-store-write", async () => {
+    if (await findUserByEmail(normalized)) throw new Error("Email already registered");
+    const users = await readJson<User[]>(usersFile, []);
+    users.push(user);
+    await writeJson(usersFile, users);
+    return user;
+  });
 }
 
 export async function verifyUser(email:string,password:string){
@@ -186,8 +189,7 @@ export async function createPhoneUser(phone: string): Promise<User> {
     });
     return user;
   }
-  const lockKey = "phone:" + phone;
-  return withAuthStoreLock(lockKey, async () => {
+  return withAuthStoreLock("auth-store-write", async () => {
     const existing = await findUserByPhone(phone);
     if (existing) return existing;
     const users = await readJson<User[]>(usersFile, []);
@@ -235,7 +237,7 @@ export async function linkPhoneToUser(phone: string, userId: string): Promise<vo
     });
     return;
   }
-  await withAuthStoreLock("phone:" + phone, async () => {
+  await withAuthStoreLock("auth-store-write", async () => {
     const identitiesFile = path.join(usersDir, "phone-identities.json");
     const identities = await readJson<Record<string, string>>(identitiesFile, {});
     if (identities[phone] && identities[phone] !== userId) throw new PhoneAlreadyLinkedError();
