@@ -51,7 +51,7 @@ export function AccountSettingsPanel() {
     if (!phoneConsent) { setError("Подтвердите согласие на обработку номера телефона."); return; }
     setPhoneBusy(true); setError(""); setNotice("");
     try {
-      await requestPhoneLinkCode(linkPhone);
+      await requestPhoneLinkCode(linkPhone, phoneConsent);
       setPhoneCodeRequested(true);
       setNotice("Если номер корректен, SMS-код отправлен. Код действует 5 минут.");
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
