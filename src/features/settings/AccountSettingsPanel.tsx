@@ -27,6 +27,7 @@ export function AccountSettingsPanel() {
   const [linkCode, setLinkCode] = useState("");
   const [phoneCodeRequested, setPhoneCodeRequested] = useState(false);
   const [phoneBusy, setPhoneBusy] = useState(false);
+  const [phoneConsent, setPhoneConsent] = useState(false);
 
   async function reload() {
     setLoading(true); setError("");
@@ -47,6 +48,7 @@ export function AccountSettingsPanel() {
     finally { setSaving(false); }
   }
   async function requestPhoneLink() {
+    if (!phoneConsent) { setError("Подтвердите согласие на обработку номера телефона."); return; }
     setPhoneBusy(true); setError(""); setNotice("");
     try {
       await requestPhoneLinkCode(linkPhone);
@@ -102,6 +104,7 @@ export function AccountSettingsPanel() {
               <p className="account-muted">Подтвердите номер, чтобы защитить аккаунт и получить право на демо-тариф. Один номер можно привязать только к одному аккаунту.</p>
               <label>Российский номер<input type="tel" value={linkPhone} onChange={event => setLinkPhone(event.target.value)} placeholder="+7 900 123-45-67" disabled={phoneCodeRequested}/></label>
               {phoneCodeRequested && <label>Код из SMS<input type="text" inputMode="numeric" autoComplete="one-time-code" value={linkCode} onChange={event => setLinkCode(event.target.value.replace(/\\D/g, "").slice(0, 6))} placeholder="000000" maxLength={6}/></label>}
+              <label className="phone-consent"><input type="checkbox" checked={phoneConsent} onChange={event => setPhoneConsent(event.target.checked)}/><span>Согласен на обработку номера для входа, защиты аккаунта и ограничения повторного демо.</span></label>
               {!phoneCodeRequested ? <button className="send-button account-save" disabled={phoneBusy || !linkPhone.trim()} onClick={() => void requestPhoneLink()}>{phoneBusy ? "Отправляем…" : "Подтвердить телефон"}</button> : <div className="phone-link-actions"><button className="send-button account-save" disabled={phoneBusy || linkCode.length !== 6} onClick={() => void confirmPhoneLink()}>{phoneBusy ? "Проверяем…" : "Подтвердить код"}</button><button className="ghost-button" disabled={phoneBusy} onClick={() => {setPhoneCodeRequested(false);setLinkCode("");}}>Изменить номер</button></div>}
             </div>}
             <label>ID аккаунта<input value={account?.user.id ?? ""} readOnly/></label>
