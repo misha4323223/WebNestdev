@@ -1,5 +1,5 @@
 import { mkdir, readFile, writeFile, rename, unlink } from "node:fs/promises";
-import { createHash, randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import path from "node:path";
 import { isYdbEnabled, ydbQuery, getTable } from "../storage/ydb.js";
 
@@ -20,6 +20,13 @@ export type Subscription = {
 };
 const root = process.env.WEBNESTDEV_DATA_DIR ?? path.resolve(".webnestdev");
 const defaults: UserPreferences = { language: "ru", compactMode: false, emailNotifications: true, productUpdates: false };
+
+function phoneDemoClaimKey(phone: string): string {
+  const key = process.env.WEBNESTDEV_TRIAL_CLAIM_SECRET ??
+    (process.env.NODE_ENV === "production" ? "" : "webnestdev-local-demo-claim-key");
+  if (key.length < 32) throw new Error("WEBNESTDEV_TRIAL_CLAIM_SECRET (32+ chars) is required in production");
+  return createHmac("sha256", key).update(phone).digest("hex");
+}
 
 async function readJson<T>(file: string, fallback: T): Promise<T> {
   try { return JSON.parse(await readFile(file, "utf8")) as T; } catch (error) {
@@ -150,7 +157,7 @@ export async function activateDemoOnce(userId: string, plan: Exclude<PlanId, "fr
         `;
         const phone = identityRows?.[0]?.phone;
         if (!phone) throw new PhoneVerificationRequiredError();
-        const claimKey = createHash("sha256").update(phone).digest("hex");
+        const claimKey = phoneDemoClaimKey(phone);
         attemptedClaimKey = claimKey;
         const [claimRows] = await tx<Array<{ claim_key: string }>>`
           SELECT claim_key FROM ${claims} WHERE claim_key = ${claimKey} LIMIT 1
