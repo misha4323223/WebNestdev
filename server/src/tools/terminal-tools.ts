@@ -24,7 +24,7 @@ registerTool({
   description: "Install the project's npm dependencies in the sandbox. This is the only tool that enables outbound network access for package installation. Input: {cwd?:string}. Use only when package.json exists.",
   execute: async (input, context) => {
     const value = input as { cwd?: string };
-    const sandbox = await getSandbox(context.projectId);
+    const sandbox = await getSandbox(context.projectId, context.userId);
     const cwd = assertInsideSandbox(
       sandbox.root,
       sandbox.root + "/" + (value.cwd ?? ""),
