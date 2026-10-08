@@ -1,6 +1,6 @@
 import { appendExpectedOutcomeSteps } from "./expected-outcome-planner.js";
 
-export type ParsedQaChange = { kind: string; action: string; element?: string; selector?: string; text?: string; route?: string };
+import type { ParsedChange as ParsedQaChange } from "./change-parser.js";
 
 export type QaScenarioStep =
   | { action: "goto"; path: string }
