@@ -1,4 +1,5 @@
 import { readdir, readFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { initializeStorage, isYdbEnabled, ydbQuery, getTable, closeStorage } from "./ydb.js";
 
@@ -46,6 +47,14 @@ async function main(){
   for(const name of await files(path.join(root,"conversations"))){
     const c=json<Conversation>(await readFile(path.join(root,"conversations",name),"utf8"));
     await sql\`UPSERT INTO \${sql.identifier(getTable("conversations"))} (id,project_id,title,messages_json,created_at,updated_at) VALUES (\${c.id},\${c.projectId},\${c.title},\${JSON.stringify(c.messages)},\${c.createdAt},\${c.updatedAt})\`;
+    for(let index=0;index<c.messages.length;index++){
+      const message=c.messages[index];
+      const createdAt=new Date(Date.parse(c.createdAt)+index).toISOString();
+      await sql\`UPSERT INTO \${sql.identifier(getTable("conversation_messages"))}
+        (conversation_id,created_at,message_id,project_id,role,content,tool_calls_json,tool_call_id)
+        VALUES (\${c.id},\${createdAt},\${randomUUID()},\${c.projectId},\${message.role},\${message.content},\${message.role==="assistant"&&message.tool_calls ? JSON.stringify(message.tool_calls):""},\${message.role==="tool" ? message.tool_call_id:""})
+      \`;
+    }
   }
 
   for(const name of await files(path.join(root,"providers"))){
