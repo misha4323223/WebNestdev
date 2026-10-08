@@ -1,0 +1,9 @@
+node_modules
+.git
+.github
+.webnestdev
+dist
+*.log
+.env
+.env.*
+!.env.example
