@@ -89,7 +89,7 @@ export async function registerAuthRoutes(app:FastifyInstance){
   });
   app.post("/api/auth/phone/link/request", async (request,reply) => {
     const user = await requireUser(request,reply); if (!user) return;
-    const body = phoneBody.parse(request.body);
+    const body = phoneRequestBody.parse(request.body);
     const phone = phoneOrNull(body.phone);
     if (!phone) return reply.code(400).send({error:"Введите российский номер в формате +7 900 123-45-67."});
     if (!await allowPhoneOtpRequest(phone, request.ip)) {
