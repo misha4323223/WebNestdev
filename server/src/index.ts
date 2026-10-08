@@ -23,6 +23,9 @@ import "./tools/preview-tools.js";
 import "./tools/browser-tools.js";
 import "./tools/verification-tools.js";
 
+import { assertEncryptionConfigured } from "./security/secret-crypto.js";
+
+assertEncryptionConfigured();
 const app=Fastify({logger:true});
 const allowedOrigins=(process.env.WEBNESTDEV_ALLOWED_ORIGINS??"http://localhost:5173").split(",").map(value=>value.trim()).filter(Boolean);
 await ensureDataDir();
