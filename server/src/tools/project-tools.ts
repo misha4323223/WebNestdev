@@ -23,7 +23,7 @@ function safePath(projectId: string, relative: string) {
 registerTool({
   name: "project.list_files",
   description: "List files in the current project sandbox.",
-  async (_input, context) {
+  execute: async (_input, context) {
     const root = (await getSandbox(context.projectId, context.userId)).root;
     const entries = await readdir(root, { withFileTypes: true });
     return entries.map((entry) => ({
@@ -36,7 +36,7 @@ registerTool({
 registerTool({
   name: "project.stat",
   description: "Read basic metadata for a path inside the project sandbox.",
-  async (input, context) {
+  execute: async (input, context) {
     const value = input as { path?: string };
     const relative = value.path ?? ".";
     const sandbox = await getSandbox(context.projectId, context.userId);
