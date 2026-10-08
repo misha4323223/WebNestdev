@@ -67,21 +67,24 @@ export async function consumeUsage(userId: string, kind: UsageKind, plan: PlanId
     if (isYdbEnabled()) {
       // Serializable read-write transaction: competing reservations conflict on the same counter key.
       // The SDK retries retryable conflicts, so every replica observes the committed counter value.
-      await ydbQuery().transaction({ idempotent: true }, async tx => {
+      const sql = ydbQuery();
+      const usageCountersTable = sql.identifier(getTable("usage_counters"));
+      const usageEventsTable = sql.identifier(getTable("usage_events"));
+      await sql.transaction({ idempotent: true }, async tx => {
         const [rows] = await tx<Array<{used:number|string|bigint}>>`
-          SELECT used FROM ${tx.identifier(getTable("usage_counters"))}
+          SELECT used FROM ${usageCountersTable}
           WHERE user_id = ${userId} AND usage_date = ${date} AND kind = ${kind}
           LIMIT 1
         `;
         const used = Number(rows[0]?.used ?? 0);
         if (used >= limit) throw new UsageLimitError(kind, limit, used);
         await tx`
-          UPSERT INTO ${tx.identifier(getTable("usage_counters"))}
+          UPSERT INTO ${usageCountersTable}
             (user_id, usage_date, kind, used)
           VALUES (${userId}, ${date}, ${kind}, ${used + 1})
         `;
         await tx`
-          INSERT INTO ${tx.identifier(getTable("usage_events"))}
+          INSERT INTO ${usageEventsTable}
             (user_id, usage_date, event_id, kind, created_at)
           VALUES (${userId}, ${date}, ${event.id}, ${kind}, ${event.createdAt})
         `;
