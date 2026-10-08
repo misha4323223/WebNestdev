@@ -1,3 +1,5 @@
+import { appendExpectedOutcomeSteps } from "./expected-outcome-planner.js";
+
 export type ParsedQaChange = { kind: string; action: string; element?: string; selector?: string; text?: string; route?: string };
 
 export type QaScenarioStep =
@@ -27,7 +29,10 @@ export function planQaScenario(task: string, affectedRoute = "/", changeKind = "
   const concrete = parsedChanges.find(change => change.action === "added" && change.selector);
   if (concrete?.selector) {
     steps.push({ action: "expectVisible", selector: concrete.selector });
-    if (concrete.element === "button" || concrete.element === "a") steps.push({ action: "click", selector: concrete.selector });
+    if (concrete.element === "button" || concrete.element === "a") {
+      steps.push({ action: "click", selector: concrete.selector });
+      appendExpectedOutcomeSteps(steps, concrete);
+    }
     return { path, steps, reason: "Scenario derived from a concrete parsed change.", changeKind, confidence, parsedChanges };
   }
 
