@@ -5,6 +5,7 @@ import { inferExpectedOutcomes, appendExpectedOutcomeSteps } from "./expected-ou
 test("infers a cart result from a cart button", () => {
   const change = {
     kind: "ui-element",
+    file: "src/cart.tsx",
     action: "added",
     element: "button",
     selector: '[data-action="cart"]',
@@ -20,8 +21,9 @@ test("infers a cart result from a cart button", () => {
 test("adds a URL assertion for an explicit link route", () => {
   const change = {
     kind: "ui-element",
+    file: "src/checkout.tsx",
     action: "added",
-    element: "a",
+    element: "link",
     selector: 'a[name="checkout"]',
     route: "/checkout",
     evidence: "",
