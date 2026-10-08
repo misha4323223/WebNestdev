@@ -27,3 +27,13 @@ test("daily browser quota is enforced independently from agent runs", async () =
   );
   assert.equal((await getUsageSnapshot(userId)).browserChecks, 5);
 });
+
+test("concurrent reservations never exceed the daily quota", async () => {
+  const userId = "quota-concurrency-" + randomUUID();
+  const results = await Promise.allSettled(
+    Array.from({ length: 20 }, () => consumeUsage(userId, "agentRuns", "free")),
+  );
+  assert.equal(results.filter(result => result.status === "fulfilled").length, 10);
+  assert.equal(results.filter(result => result.status === "rejected" && result.reason instanceof UsageLimitError).length, 10);
+  assert.equal((await getUsageSnapshot(userId)).agentRuns, 10);
+});
