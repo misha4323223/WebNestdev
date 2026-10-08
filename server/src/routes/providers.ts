@@ -33,6 +33,11 @@ export async function registerProviderRoutes(app: FastifyInstance) {
     const baseUrl = body.baseUrl?.trim(); const token = body.token?.trim();
     if (!baseUrl) return reply.code(400).send({ error: "Base URL is required" });
     if (!/^https?:\/\//i.test(baseUrl)) return reply.code(400).send({ error: "Base URL must start with http:// or https://" });
+    let parsedUrl: URL;
+    try { parsedUrl = new URL(baseUrl); } catch { return reply.code(400).send({error:"Base URL must be a valid URL"}); }
+    if (!["http:", "https:"].includes(parsedUrl.protocol)) return reply.code(400).send({error:"Only HTTP and HTTPS providers are supported"});
+    const host = parsedUrl.hostname.toLowerCase();
+    if (host === "localhost" || host.endsWith(".localhost") || host === "metadata.google.internal" || host === "169.254.169.254" || host === "0.0.0.0" || host === "::1" || /^127\./.test(host) || /^10\./.test(host) || /^192\.168\./.test(host) || /^172\.(1[6-9]|2[0-9]|3[01])\./.test(host)) return reply.code(400).send({error:"Private and local provider addresses are not allowed"});
     const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), 10_000);
     try {
       const response = await fetch(modelUrl(baseUrl), {method:"GET",headers:{Accept:"application/json",...(token ? {Authorization:`Bearer ${token}`}: {})},signal:controller.signal});
