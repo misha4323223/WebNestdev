@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { attachSession, getCurrentUser, SESSION_COOKIE } from "../auth/auth.js";
 import { createUser, deleteSession, verifyUser } from "../auth/auth-store.js";
+import { checkAuthRateLimit } from "../auth/auth-rate-limit.js";
 
 const credentials = z.object({email:z.string().email().max(200),password:z.string().min(8).max(200)});
 
