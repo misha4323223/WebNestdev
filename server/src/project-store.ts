@@ -119,6 +119,23 @@ export async function saveProjectProvider(projectId:string,config:ProjectProvide
 
 async function conversationsDir(){const d=path.join(root,"conversations");await mkdir(d,{recursive:true});return d}
 
+function messageFromRow(row:{created_at:string;message_id:string;role:string;content:string;tool_calls_json:string;tool_call_id:string}):ChatMessage{
+  const base={role:row.role as ChatMessage["role"],content:row.content};
+  if(row.role==="assistant"){
+    return {...base,role:"assistant",...(row.tool_calls_json ? {tool_calls:JSON.parse(row.tool_calls_json) as Extract<ChatMessage,{role:"assistant"}>["tool_calls"]}: {})} as ChatMessage;
+  }
+  if(row.role==="tool")return {...base,role:"tool",tool_call_id:row.tool_call_id};
+  return {...base,role:row.role as "user"|"system"};
+}
+function messageRow(projectId:string,conversationId:string,message:ChatMessage,createdAt:string){
+  return {
+    conversationId,projectId,messageId:randomUUID(),createdAt,
+    role:message.role,content:message.content,
+    toolCallsJson:message.role==="assistant"&&message.tool_calls ? JSON.stringify(message.tool_calls):"",
+    toolCallId:message.role==="tool" ? message.tool_call_id:""
+  };
+}
+
 export async function createConversation(projectId:string,title="Новая сессия"){
   if(!await getProject(projectId))throw new Error("Project not found");
   const now=new Date().toISOString();
@@ -127,7 +144,7 @@ export async function createConversation(projectId:string,title="Новая се
     await ydbQuery()\`
       INSERT INTO \${ydbQuery().identifier(getTable("conversations"))}
         (id,project_id,title,messages_json,created_at,updated_at)
-      VALUES (\${c.id},\${c.projectId},\${c.title},\${JSON.stringify(c.messages)},\${c.createdAt},\${c.updatedAt})
+      VALUES (\${c.id},\${c.projectId},\${c.title},"",\${c.createdAt},\${c.updatedAt})
     \`;
     return c;
   }
@@ -145,7 +162,14 @@ export async function getConversation(id:string):Promise<Conversation|null>{
     \`;
     const row=rows?.[0];
     if(!row)return null;
-    return {id:row.id,projectId:row.project_id,title:row.title,messages:JSON.parse(row.messages_json) as ChatMessage[],createdAt:row.created_at,updatedAt:row.updated_at};
+    const [messageRows]=await ydbQuery()<Array<{created_at:string;message_id:string;role:string;content:string;tool_calls_json:string;tool_call_id:string}>>\`
+      SELECT created_at,message_id,role,content,tool_calls_json,tool_call_id
+      FROM \${ydbQuery().identifier(getTable("conversation_messages"))}
+      WHERE conversation_id = \${id}
+      ORDER BY created_at,message_id
+    \`;
+    const messages=messageRows.length ? messageRows.map(messageFromRow) : JSON.parse(row.messages_json || "[]") as ChatMessage[];
+    return {id:row.id,projectId:row.project_id,title:row.title,messages,createdAt:row.created_at,updatedAt:row.updated_at};
   }
   try{return JSON.parse(await readFile(path.join(root,"conversations",id+".json"),"utf8")) as Conversation}catch{return null}
 }
@@ -158,7 +182,19 @@ export async function listConversations(projectId:string){
       WHERE project_id = \${projectId}
       ORDER BY updated_at DESC
     \`;
-    return rows.map(row=>({id:row.id,projectId:row.project_id,title:row.title,messages:JSON.parse(row.messages_json) as ChatMessage[],createdAt:row.created_at,updatedAt:row.updated_at}));
+    const result=rows.map(row=>({id:row.id,projectId:row.project_id,title:row.title,messages:[] as ChatMessage[],createdAt:row.created_at,updatedAt:row.updated_at}));
+    const [messageRows]=await ydbQuery()<Array<{conversation_id:string;created_at:string;message_id:string;role:string;content:string;tool_calls_json:string;tool_call_id:string}>>\`
+      SELECT conversation_id,created_at,message_id,role,content,tool_calls_json,tool_call_id
+      FROM \${ydbQuery().identifier(getTable("conversation_messages"))}
+      WHERE project_id = \${projectId}
+      ORDER BY created_at,message_id
+    \`;
+    const byId=new Map(result.map(item=>[item.id,item]));
+    for(const row of messageRows)byId.get(row.conversation_id)?.messages.push(messageFromRow(row));
+    for(const item of result){
+      if(item.messages.length===0 && rows.find(row=>row.id===item.id)?.messages_json) item.messages=JSON.parse(rows.find(row=>row.id===item.id)?.messages_json ?? "[]") as ChatMessage[];
+    }
+    return result;
   }
   const result:Conversation[]=[];
   try{
@@ -177,9 +213,19 @@ export async function appendConversationMessages(id:string,messages:ChatMessage[
   c.messages.push(...messages);
   c.updatedAt=new Date().toISOString();
   if(isYdbEnabled()){
+    const projectId=c.projectId;
+    const now=Date.now();
+    for(let index=0;index<messages.length;index++){
+      const row=messageRow(projectId,id,messages[index],new Date(now+index).toISOString());
+      await ydbQuery()\`
+        UPSERT INTO \${ydbQuery().identifier(getTable("conversation_messages"))}
+          (conversation_id,created_at,message_id,project_id,role,content,tool_calls_json,tool_call_id)
+        VALUES (\${row.conversationId},\${row.createdAt},\${row.messageId},\${row.projectId},\${row.role},\${row.content},\${row.toolCallsJson},\${row.toolCallId})
+      \`;
+    }
     await ydbQuery()\`
       UPDATE \${ydbQuery().identifier(getTable("conversations"))}
-      SET messages_json=\${JSON.stringify(c.messages)},updated_at=\${c.updatedAt}
+      SET updated_at=\${c.updatedAt}
       WHERE id=\${id}
     \`;
     return c;
