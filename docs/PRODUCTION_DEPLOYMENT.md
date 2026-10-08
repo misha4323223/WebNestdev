@@ -65,3 +65,7 @@ Terminate TLS at Caddy/nginx/another reverse proxy. Keep Fastify on the private 
 
 - `GET /api/health` — liveness plus dependency state.
 - `GET /api/ready` — readiness; returns HTTP 503 when required dependencies are unavailable.
+
+
+## Verification note
+Production changes are validated in CI before merge; runtime YDB connectivity is checked separately in the target Yandex Cloud environment.
