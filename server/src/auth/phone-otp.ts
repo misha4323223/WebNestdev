@@ -1,5 +1,5 @@
 import { createHash, createHmac, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { isYdbEnabled, ydbQuery, getTable } from "../storage/ydb.js";
 
@@ -94,11 +94,7 @@ export async function recordPhoneConsent(phone: string, ip: string, purpose: "si
     return;
   }
   await mkdir(path.dirname(consentFile), { recursive: true });
-  let records: Array<typeof record> = [];
-  try { records = JSON.parse(await readFile(consentFile, "utf8")) as typeof record[]; }
-  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
-  records.push(record);
-  await writeFile(consentFile, JSON.stringify(records), { mode: 0o600 });
+  await appendFile(consentFile, JSON.stringify(record) + "\n", { mode: 0o600 });
 }
 
 async function readLocal(): Promise<Record<string, Challenge>> {
