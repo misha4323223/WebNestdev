@@ -67,10 +67,12 @@ if (production) {
   await app.register(fastifyStatic, {
     root: rootDir,
     wildcard: false,
-    index: "index.html",
-    maxAge: "1h",
+    index: false,
+    maxAge: "30d",
+    immutable: true,
   });
-  app.get("/*", async (_request, reply) => reply.sendFile("index.html"));
+  app.get("/", async (_request, reply) => reply.sendFile("index.html", {maxAge: 0, immutable: false}));
+  app.get("/*", async (_request, reply) => reply.sendFile("index.html", {maxAge: 0, immutable: false}));
 }
 
 await app.listen({host:"0.0.0.0",port:Number(process.env.PORT??8787)});
