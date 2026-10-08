@@ -1,4 +1,4 @@
-import { createHash, randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
+import { randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -172,11 +172,10 @@ export async function findUserByPhone(phone: string): Promise<User | null> {
 
 export async function createPhoneUser(phone: string): Promise<User> {
   const id = randomUUID();
-  const emailKey = createHash("sha256").update(phone).digest("hex");
   const now = new Date().toISOString();
   const salt = randomBytes(16).toString("hex");
   const passwordHash = salt + ":" + randomBytes(64).toString("hex");
-  const user: User = { id, email: `phone_${emailKey}@phone.webnestdev.invalid`, passwordHash, createdAt: now, phone };
+  const user: User = { id, email: `phone_${randomUUID()}@phone.webnestdev.invalid`, passwordHash, createdAt: now, phone };
   if (isYdbEnabled()) {
     const sql = ydbQuery();
     const users = sql.identifier(getTable("users"));
