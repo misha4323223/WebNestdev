@@ -124,7 +124,7 @@ export async function registerAuthRoutes(app:FastifyInstance){
       await linkPhoneToUser(phone,user.id);
       return {ok:true,phone};
     } catch (error) {
-      if (error instanceof PhoneAlreadyLinkedError) return reply.code(409).send({error:"Этот номер уже привязан к другому аккаунту."});
+      if (error instanceof PhoneAlreadyLinkedError) return reply.code(409).send({error:"Номер уже привязан к аккаунту или у вашего аккаунта уже есть другой подтверждённый номер."});
       throw error;
     }
   });
