@@ -10,8 +10,8 @@ test("provider and GitHub tokens are encrypted at rest and legacy tokens migrate
   process.env.WEBNESTDEV_ENCRYPTION_KEY = "0123456789abcdef".repeat(4);
   process.env.NODE_ENV = "test";
   try {
-    const store = await import("./project-store.js");
-    const github = await import("./github/github-connection-store.js");
+    const store = await import("../project-store.js");
+    const github = await import("../github/github-connection-store.js");
     const project = await store.createProject("security-test", undefined, "user-1");
     const providerToken = "provider-test-credential-123";
     await store.saveProjectProvider(project.id, { provider: "test", baseUrl: "https://provider.example", model: "test-model", token: providerToken });
