@@ -3,6 +3,10 @@ import { ZodError } from "zod";
 import cors from "@fastify/cors";
 import cookie from "@fastify/cookie";
 import websocket from "@fastify/websocket";
+import fastifyStatic from "@fastify/static";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { initializeStorage } from "./storage/ydb.js";
 import { ensureDataDir } from "./project-store.js";
 import { registerHealthRoutes } from "./routes/health.js";
 import { registerProjectRoutes } from "./routes/projects.js";
@@ -23,6 +27,7 @@ import "./tools/browser-tools.js";
 const app=Fastify({logger:true,bodyLimit:2_000_000,requestTimeout:120_000});
 const allowedOrigins=(process.env.WEBNESTDEV_ALLOWED_ORIGINS??"http://localhost:5173").split(",").map(value=>value.trim()).filter(Boolean);
 await ensureDataDir();
+await initializeStorage();
 
 app.addHook("onSend", async (_request, reply) => {
   reply.header("X-Content-Type-Options", "nosniff");
@@ -55,5 +60,17 @@ await registerWorkspaceRoutes(app);
 await registerProviderRoutes(app);
 await registerGitHubRoutes(app);
 await registerAgentWebSocket(app);
+
+const production = process.env.NODE_ENV === "production";
+if (production) {
+  const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../dist");
+  await app.register(fastifyStatic, {
+    root: rootDir,
+    wildcard: false,
+    index: "index.html",
+    maxAge: "1h",
+  });
+  app.get("/*", async (_request, reply) => reply.sendFile("index.html"));
+}
 
 await app.listen({host:"0.0.0.0",port:Number(process.env.PORT??8787)});
