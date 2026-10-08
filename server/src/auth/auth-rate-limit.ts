@@ -7,6 +7,15 @@ function allow(key: string, limit: number) {
   const now = Date.now();
   const current = buckets.get(key);
   if (!current || current.resetAt <= now) {
+    if (buckets.size >= 10_000) {
+      for (const [bucketKey, bucket] of buckets) {
+        if (bucket.resetAt <= now) buckets.delete(bucketKey);
+      }
+      if (buckets.size >= 10_000) {
+        const oldestKey = buckets.keys().next().value;
+        if (oldestKey !== undefined) buckets.delete(oldestKey);
+      }
+    }
     buckets.set(key, { count: 1, resetAt: now + WINDOW_MS });
     return { allowed: true, retryAfter: 0 };
   }
