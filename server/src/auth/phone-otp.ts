@@ -1,4 +1,4 @@
-import { createHmac, randomInt, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomInt, timingSafeEqual } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { isYdbEnabled, ydbQuery, getTable } from "../storage/ydb.js";
@@ -29,7 +29,7 @@ function secret(): string {
 function hashCode(phone: string, code: string) {
   return createHmac("sha256", secret()).update(phone + ":" + code).digest("hex");
 }
-function allow(key: string, limit: number, windowMs: number): boolean {
+function allowLocal(key: string, limit: number, windowMs: number): boolean {
   const now = Date.now();
   const item = buckets.get(key);
   if (!item || item.resetAt <= now) {
@@ -43,11 +43,36 @@ function allow(key: string, limit: number, windowMs: number): boolean {
   item.count++;
   return true;
 }
-export function allowPhoneOtpRequest(phone: string, ip: string): boolean {
-  return allow("phone:" + phone, 3, 60 * 60_000) && allow("ip:" + ip, 10, 60 * 60_000);
+async function consumeRateLimit(key: string, limit: number, windowMs: number): Promise<boolean> {
+  if (!isYdbEnabled()) return allowLocal(key, limit, windowMs);
+  const sql = ydbQuery();
+  const table = sql.identifier(getTable("phone_otp_limits"));
+  const bucketKey = createHash("sha256").update(key).digest("hex");
+  return sql.transaction({ idempotent: true }, async tx => {
+    const [rows] = await tx<Array<{ count: number; reset_at: string }>>`
+      SELECT count,reset_at FROM ${table} WHERE bucket_key = ${bucketKey} LIMIT 1
+    `;
+    const now = Date.now();
+    const row = rows?.[0];
+    const currentCount = row && Date.parse(row.reset_at) > now ? Number(row.count) : 0;
+    const resetAt = row && Date.parse(row.reset_at) > now ? row.reset_at : new Date(now + windowMs).toISOString();
+    if (currentCount >= limit) return false;
+    await tx`
+      UPSERT INTO ${table} (bucket_key,count,reset_at)
+      VALUES (${bucketKey},${currentCount + 1},${resetAt})
+    `;
+    return true;
+  });
 }
-export function allowPhoneOtpVerify(phone: string, ip: string): boolean {
-  return allow("verify-phone:" + phone, 10, 15 * 60_000) && allow("verify-ip:" + ip, 30, 15 * 60_000);
+export async function allowPhoneOtpRequest(phone: string, ip: string): Promise<boolean> {
+  const phoneAllowed = await consumeRateLimit("phone:" + phone, 3, 60 * 60_000);
+  if (!phoneAllowed) return false;
+  return consumeRateLimit("ip:" + ip, 10, 60 * 60_000);
+}
+export async function allowPhoneOtpVerify(phone: string, ip: string): Promise<boolean> {
+  const phoneAllowed = await consumeRateLimit("verify-phone:" + phone, 10, 15 * 60_000);
+  if (!phoneAllowed) return false;
+  return consumeRateLimit("verify-ip:" + ip, 30, 15 * 60_000);
 }
 
 async function readLocal(): Promise<Record<string, Challenge>> {
