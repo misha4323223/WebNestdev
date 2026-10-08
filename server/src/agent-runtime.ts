@@ -161,6 +161,8 @@ export class AgentRuntime {
                 changedFiles.add(changedPath);
                 const source=typeof call.arguments.content==="string"?call.arguments.content:"";
                 if(source) parsedChanges.push(...parseChangedSource(changedPath,source).changes);
+                const removedChanges=(output as {removedChanges?:ParsedChange[]}).removedChanges;
+                if(call.name==="fs.delete"&&Array.isArray(removedChanges)) parsedChanges.push(...removedChanges);
               }
             }
           }catch(error){
