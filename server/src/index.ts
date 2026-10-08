@@ -1,4 +1,5 @@
 import Fastify from "fastify";
+import { ZodError } from "zod";
 import cors from "@fastify/cors";
 import cookie from "@fastify/cookie";
 import websocket from "@fastify/websocket";
@@ -19,9 +20,28 @@ import "./tools/git-tools.js";
 import "./tools/preview-tools.js";
 import "./tools/browser-tools.js";
 
-const app=Fastify({logger:true});
+const app=Fastify({logger:true,bodyLimit:2_000_000,requestTimeout:120_000});
 const allowedOrigins=(process.env.WEBNESTDEV_ALLOWED_ORIGINS??"http://localhost:5173").split(",").map(value=>value.trim()).filter(Boolean);
 await ensureDataDir();
+
+app.addHook("onSend", async (_request, reply) => {
+  reply.header("X-Content-Type-Options", "nosniff");
+  reply.header("X-Frame-Options", "DENY");
+  reply.header("Referrer-Policy", "strict-origin-when-cross-origin");
+  reply.header("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
+});
+
+app.setErrorHandler((error, request, reply) => {
+  if (error instanceof ZodError) {
+    return reply.code(400).send({
+      error: "Invalid request",
+      issues: error.issues.map(issue => ({ path: issue.path, message: issue.message })),
+    });
+  }
+  request.log.error(error);
+  if (reply.sent) return;
+  return reply.code(500).send({ error: "Internal server error" });
+});
 await app.register(cors,{origin:(origin,callback)=>{if(!origin||allowedOrigins.includes(origin))callback(null,true);else callback(new Error("Origin not allowed"),false)},credentials:true});
 await app.register(cookie);
 await app.register(websocket);
