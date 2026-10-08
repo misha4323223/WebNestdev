@@ -18,6 +18,7 @@ import { registerAgentWebSocket } from "./routes/agent-ws.js";
 import { registerProviderRoutes } from "./routes/providers.js";
 import { registerGitHubRoutes } from "./routes/github.js";
 import { registerAuthRoutes } from "./routes/auth.js";
+import { registerAccountRoutes } from "./routes/account.js";
 import "./tools/project-tools.js";
 import "./tools/filesystem-tools.js";
 import "./tools/terminal-tools.js";
@@ -65,6 +66,7 @@ await app.register(websocket);
 
 await registerHealthRoutes(app);
 await registerAuthRoutes(app);
+await registerAccountRoutes(app);
 await registerProjectRoutes(app);
 await registerPreviewRoutes(app);
 await registerToolRoutes(app);
