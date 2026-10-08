@@ -29,7 +29,8 @@ import "./tools/verification-tools.js";
 
 assertEncryptionConfigured();
 
-const app=Fastify({logger:true,bodyLimit:2_000_000,requestTimeout:120_000});
+const trustedProxies = (process.env.WEBNESTDEV_TRUST_PROXY ?? "").split(",").map(value => value.trim()).filter(Boolean);
+const app=Fastify({logger:true,bodyLimit:2_000_000,requestTimeout:120_000,trustProxy:trustedProxies.length ? trustedProxies : false});
 const production = process.env.NODE_ENV === "production";
 const configuredOrigins = process.env.WEBNESTDEV_ALLOWED_ORIGINS;
 if (production && !configuredOrigins) throw new Error("WEBNESTDEV_ALLOWED_ORIGINS is required in production");
