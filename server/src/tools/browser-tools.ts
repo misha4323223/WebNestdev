@@ -266,6 +266,9 @@ async function runBrowserScenario(projectId: string, input: unknown) {
           case "expectVisible":
             await page.locator(step.selector).first().waitFor({ state: "visible", timeout: 5000 });
             break;
+          case "expectNotVisible":
+            await page.locator(step.selector).first().waitFor({ state: "hidden", timeout: 5000 });
+            break;
           default:
             throw new Error(`Unsupported scenario action: ${(step as { action?: string }).action ?? "unknown"}`);
         }
@@ -286,7 +289,7 @@ async function runBrowserScenario(projectId: string, input: unknown) {
 
 registerTool({
   name: "browser.scenario",
-  description: "Run a real Chromium user-flow scenario against Preview. Input: {path?:string,steps:[{action:'goto',path}|{action:'click',selector}|{action:'fill',selector,value}|{action:'press',selector,key}|{action:'expectText',text}|{action:'expectUrl',pattern}]}. Maximum 20 steps. Stops on the first failed step and reports console/page/network errors.",
+  description: "Run a real Chromium user-flow scenario against Preview. Input: {path?:string,steps:[{action:'goto',path}|{action:'click',selector}|{action:'fill',selector,value}|{action:'press',selector,key}|{action:'expectText',text}|{action:'expectUrl',pattern}]}. Maximum 20 steps. Supports visibility assertions, stops on the first failed step, and reports console/page/network errors.",
   execute: async (input, context) => runBrowserScenario(context.projectId, input),
 });
 
