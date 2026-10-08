@@ -47,8 +47,8 @@ export function NestLoader({ size = 42, className = "", label }: NestLoaderProps
         <ellipse className="nest-loader__shadow" cx="44" cy="54" rx="22" ry="3.4" />
 
         <g className="nest-loader__eggs">
-          <ellipse cx="40.5" cy="28.2" rx="4.1" ry="5.5" transform="rotate(-15 40.5 28.2)" />
-          <ellipse cx="48.3" cy="29.1" rx="3.8" ry="5.1" transform="rotate(13 48.3 29.1)" />
+          <ellipse cx="40.5" cy="28.2" rx="4.1" ry="5.5" transform="rotate(-15 40.5 28.2)" fill={`url(#${id}-egg)`} />
+          <ellipse cx="48.3" cy="29.1" rx="3.8" ry="5.1" transform="rotate(13 48.3 29.1)" fill={`url(#${id}-egg)`} />
         </g>
 
         <g className="nest-loader__strands">
