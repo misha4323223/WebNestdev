@@ -6,7 +6,7 @@ import websocket from "@fastify/websocket";
 import fastifyStatic from "@fastify/static";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { initializeStorage } from "./storage/ydb.js";
+import { initializeStorage, closeStorage } from "./storage/ydb.js";
 import { ensureDataDir } from "./project-store.js";
 import { registerHealthRoutes } from "./routes/health.js";
 import { registerProjectRoutes } from "./routes/projects.js";
@@ -34,6 +34,8 @@ if (production && allowedOrigins.some(origin => /^https?:\/\/localhost(?::\d+)?$
 }
 await ensureDataDir();
 await initializeStorage();
+
+app.addHook("onClose", async () => { await closeStorage(); });
 
 app.addHook("onSend", async (_request, reply) => {
   reply.header("X-Content-Type-Options", "nosniff");
