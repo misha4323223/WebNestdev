@@ -23,7 +23,7 @@ const defaults: UserPreferences = { language: "ru", compactMode: false, emailNot
 
 function phoneDemoClaimKey(phone: string): string {
   const key = process.env.WEBNESTDEV_TRIAL_CLAIM_SECRET ??
-    (process.env.NODE_ENV === "production" ? "" : "webnestdev-local-demo-claim-key");
+    (process.env.NODE_ENV === "production" ? "" : "webnestdev-local-demo-claim-key-v1");
   if (key.length < 32) throw new Error("WEBNESTDEV_TRIAL_CLAIM_SECRET (32+ chars) is required in production");
   return createHmac("sha256", key).update(phone).digest("hex");
 }
