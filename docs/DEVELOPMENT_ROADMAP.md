@@ -34,12 +34,14 @@
 - [x] Вернуть результат агенту в tool result
 - [x] Обработать таймауты и ошибки подключения
 - [ ] Проверить работу инструмента на тестовом Preview
+- [x] Headless browser inspection: DOM/text snapshot, console, runtime errors и failed requests
+- [x] Опциональный PNG screenshot через Chromium
 
 Второй этап:
 - [ ] Получать JavaScript-консоль браузера
 - [ ] Фиксировать runtime errors
 - [ ] Фиксировать failed network requests
-- [ ] Делать скриншот страницы
+- [x] Делать скриншот страницы
 
 ## После Browser Tool
 
