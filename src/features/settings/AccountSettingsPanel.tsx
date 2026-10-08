@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { apiJson } from "../../lib/api";
-import { Check, CreditCard, Globe2, Settings2, ShieldCheck, Sparkles, UserRound } from "lucide-react";
+import { Check, CreditCard, Settings2, ShieldCheck, Sparkles, UserRound } from "lucide-react";
 
 type Preferences = { language: "ru" | "en"; compactMode: boolean; emailNotifications: boolean; productUpdates: boolean };
 type Plan = { id: "free" | "pro" | "team"; name: string; priceLabel: string; description: string; limits: { projects: number; agentRunsPerDay: number; browserChecksPerDay: number }; features: string[] };
@@ -87,7 +87,7 @@ export function AccountSettingsPanel() {
             <div className="plan-grid">{billing?.plans.map(plan => <article key={plan.id} className={"plan-card" + (plan.id === billing.subscription.plan ? " selected" : "")}>
               <div className="plan-card-head"><div><strong>{plan.name}</strong><small>{plan.description}</small></div><span>{plan.priceLabel}</span></div>
               <ul>{plan.features.map(feature => <li key={feature}><Check size={12}/>{feature}</li>)}</ul>
-              {plan.id === "free" ? <span className="plan-current">{billing.subscription.plan === "free" ? "Текущий тариф" : "Бесплатный тариф"}</span> : <button className="plan-action" disabled={Boolean(busyPlan) || billing.subscription.plan === plan.id && billing.subscription.status === "demo_active"} onClick={() => void activate(plan.id)}>{busyPlan === plan.id ? "Активируем…" : billing.subscription.plan === plan.id && billing.subscription.status === "demo_active" ? "Активен (демо)" : "Попробовать 30 дней"}</button>}
+              {plan.id === "free" ? <span className="plan-current">{billing.subscription.plan === "free" ? "Текущий тариф" : "Бесплатный тариф"}</span> : <button className="plan-action" disabled={Boolean(busyPlan) || billing.subscription.plan === plan.id && billing.subscription.status === "demo_active"} onClick={() => void activate(plan.id as "pro" | "team")}>{busyPlan === plan.id ? "Активируем…" : billing.subscription.plan === plan.id && billing.subscription.status === "demo_active" ? "Активен (демо)" : "Попробовать 30 дней"}</button>}
             </article>)}</div>
             {billing?.subscription.status === "demo_active" && <button className="ghost-button account-cancel-demo" disabled={Boolean(busyPlan)} onClick={() => void cancelDemo()}>{busyPlan === "cancel" ? "Отменяем…" : "Отменить демо-подписку"}</button>}
             <p className="billing-disclaimer">Демо-режим: платежи, банковские карты и реальные списания отключены. Тарифы пока демонстрационные.</p>
