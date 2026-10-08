@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
+import { createHmac, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
 import { appendFile, mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { isYdbEnabled, ydbQuery, getTable } from "../storage/ydb.js";
@@ -48,7 +48,7 @@ async function consumeRateLimit(key: string, limit: number, windowMs: number): P
   if (!isYdbEnabled()) return allowLocal(key, limit, windowMs);
   const sql = ydbQuery();
   const table = sql.identifier(getTable("phone_otp_limits"));
-  const bucketKey = createHash("sha256").update(key).digest("hex");
+  const bucketKey = createHmac("sha256", secret()).update(key).digest("hex");
   return sql.transaction({ idempotent: true }, async tx => {
     const [rows] = await tx<Array<{ request_count: number; reset_at: string }>>`
       SELECT request_count,reset_at FROM ${table} WHERE bucket_key = ${bucketKey} LIMIT 1
@@ -87,7 +87,7 @@ export async function recordPhoneConsent(phone: string, ip: string, purpose: "si
     version: process.env.WEBNESTDEV_PHONE_CONSENT_VERSION ?? "phone-auth-v1",
     purpose,
     consentedAt: new Date().toISOString(),
-    ipHash: createHash("sha256").update(ip).digest("hex"),
+    ipHash: createHmac("sha256", secret()).update(ip).digest("hex"),
   };
   if (isYdbEnabled()) {
     await ydbQuery()`
