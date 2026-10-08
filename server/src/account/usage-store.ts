@@ -42,11 +42,15 @@ export class UsageLimitError extends Error {
 export async function getUsageSnapshot(userId: string, now = new Date()): Promise<UsageSnapshot> {
   const date = utcDay(now);
   if (isYdbEnabled()) {
-    const [rows] = await ydbQuery()<Array<{kind:string}>>`
-      SELECT kind FROM ${ydbQuery().identifier(getTable("usage_events"))}
+    const [rows] = await ydbQuery()<Array<{kind:string;used:number|string|bigint}>>`
+      SELECT kind, used FROM ${ydbQuery().identifier(getTable("usage_counters"))}
       WHERE user_id = ${userId} AND usage_date = ${date}
     `;
-    return { date, agentRuns: rows.filter(row => row.kind === "agentRuns").length, browserChecks: rows.filter(row => row.kind === "browserChecks").length };
+    return {
+      date,
+      agentRuns: Number(rows.find(row => row.kind === "agentRuns")?.used ?? 0),
+      browserChecks: Number(rows.find(row => row.kind === "browserChecks")?.used ?? 0),
+    };
   }
   const events = await readJson<UsageEvent[]>(path.join(root, "account", "usage", date + ".json"), []);
   const own = events.filter(event => event.userId === userId && event.date === date);
@@ -58,23 +62,41 @@ export async function consumeUsage(userId: string, kind: UsageKind, plan: PlanId
   // JSON mode shares a daily file, so serialize all writers. YDB mode serializes per account in this process.
   const lockKey = isYdbEnabled() ? userId + ":" + date : "json:" + date;
   return withLock(lockKey, async () => {
-    const snapshot = await getUsageSnapshot(userId, now);
     const limit = kind === "agentRuns" ? limitsForPlan(plan).agentRunsPerDay : limitsForPlan(plan).browserChecksPerDay;
-    const used = kind === "agentRuns" ? snapshot.agentRuns : snapshot.browserChecks;
-    if (used >= limit) throw new UsageLimitError(kind, limit, used);
     const event: UsageEvent = { id: randomUUID(), userId, date, kind, createdAt: now.toISOString() };
     if (isYdbEnabled()) {
-      await ydbQuery()`
-        INSERT INTO ${ydbQuery().identifier(getTable("usage_events"))}
-          (user_id, usage_date, event_id, kind, created_at)
-        VALUES (${userId}, ${date}, ${event.id}, ${kind}, ${event.createdAt})
-      `;
-    } else {
-      const file = path.join(root, "account", "usage", date + ".json");
-      const events = await readJson<UsageEvent[]>(file, []);
-      events.push(event);
-      await writeJsonAtomic(file, events);
+      // Serializable read-write transaction: competing reservations conflict on the same counter key.
+      // The SDK retries retryable conflicts, so every replica observes the committed counter value.
+      const nextUsed = await ydbQuery().transaction({ idempotent: true }, async tx => {
+        const [rows] = await tx<Array<{used:number|string|bigint}>>`
+          SELECT used FROM ${tx.identifier(getTable("usage_counters"))}
+          WHERE user_id = ${userId} AND usage_date = ${date} AND kind = ${kind}
+          LIMIT 1
+        `;
+        const used = Number(rows[0]?.used ?? 0);
+        if (used >= limit) throw new UsageLimitError(kind, limit, used);
+        await tx`
+          UPSERT INTO ${tx.identifier(getTable("usage_counters"))}
+            (user_id, usage_date, kind, used)
+          VALUES (${userId}, ${date}, ${kind}, ${used + 1})
+        `;
+        await tx`
+          INSERT INTO ${tx.identifier(getTable("usage_events"))}
+            (user_id, usage_date, event_id, kind, created_at)
+          VALUES (${userId}, ${date}, ${event.id}, ${kind}, ${event.createdAt})
+        `;
+        return used + 1;
+      });
+      const snapshot = await getUsageSnapshot(userId, now);
+      return { ...snapshot, [kind === "agentRuns" ? "agentRuns" : "browserChecks"]: nextUsed };
     }
+    const snapshot = await getUsageSnapshot(userId, now);
+    const used = kind === "agentRuns" ? snapshot.agentRuns : snapshot.browserChecks;
+    if (used >= limit) throw new UsageLimitError(kind, limit, used);
+    const file = path.join(root, "account", "usage", date + ".json");
+    const events = await readJson<UsageEvent[]>(file, []);
+    events.push(event);
+    await writeJsonAtomic(file, events);
     return { ...snapshot, [kind === "agentRuns" ? "agentRuns" : "browserChecks"]: used + 1 };
   });
 }
