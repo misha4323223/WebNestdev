@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { getProjectProvider, getProject, saveProjectProvider } from "../project-store.js";
-import { requireProjectUser } from "../auth/auth.js";
+import { requireProjectUser, requireUser } from "../auth/auth.js";
 
 type ModelsRequest = { baseUrl?: string; token?: string; };
 function normalizeBaseUrl(value: string) { return value.trim().replace(/\/+$/, ""); }
@@ -28,6 +28,7 @@ export async function registerProviderRoutes(app: FastifyInstance) {
     return { configured: true, provider: config.provider, baseUrl: config.baseUrl, model: config.model, hasToken: Boolean(config.token) };
   });
   app.post("/api/providers/models", async (request, reply) => {
+    if (!await requireUser(request, reply)) return;
     const body = (request.body ?? {}) as ModelsRequest;
     const baseUrl = body.baseUrl?.trim(); const token = body.token?.trim();
     if (!baseUrl) return reply.code(400).send({ error: "Base URL is required" });
