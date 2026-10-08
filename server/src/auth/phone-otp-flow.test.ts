@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -36,6 +36,13 @@ test("OTP is one-time and locks after five incorrect attempts", async () => {
     assert.match(secondCode, /^\d{6}$/);
     assert.equal(await verifyPhoneOtp(phone, secondCode), true);
     assert.equal(await verifyPhoneOtp(phone, secondCode), false, "successful OTP must not be reusable");
+
+    await requestPhoneOtp(phone, "127.0.0.1");
+    const challengePath = path.join(root, "auth", "phone-otp-challenges.json");
+    const challenges = JSON.parse(await readFile(challengePath, "utf8")) as Record<string, { expiresAt: string }>;
+    challenges[phone].expiresAt = new Date(Date.now() - 1_000).toISOString();
+    await writeFile(challengePath, JSON.stringify(challenges), { mode: 0o600 });
+    assert.equal(await verifyPhoneOtp(phone, capturedCode), false, "expired OTP must be rejected");
   } finally {
     console.info = originalInfo;
     for (const [key, value] of Object.entries({
