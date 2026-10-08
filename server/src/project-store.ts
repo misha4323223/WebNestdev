@@ -114,9 +114,12 @@ async function withProjectLock<T>(userId:string,action:()=>Promise<T>):Promise<T
 export async function createProjectWithinLimit(name:string,github:GitHubRepositoryRef|undefined,userId:string,limit:number):Promise<Project>{
   const project=newProject(name,github,userId);
   if(isYdbEnabled()){
-    await ydbQuery().transaction({idempotent:true},async tx=>{
+    const sql=ydbQuery();
+    const projectCountersTable=sql.identifier(getTable("project_counters"));
+    const projectsTable=sql.identifier(getTable("projects"));
+    await sql.transaction({idempotent:true},async tx=>{
       const [counterRows]=await tx<Array<{project_count:number|string|bigint}>>`
-        SELECT project_count FROM ${tx.identifier(getTable("project_counters"))}
+        SELECT project_count FROM ${projectCountersTable}
         WHERE user_id=${userId} LIMIT 1
       `;
       let used:number;
@@ -124,18 +127,18 @@ export async function createProjectWithinLimit(name:string,github:GitHubReposito
         used=Number(counterRows[0].project_count);
       }else{
         const [countRows]=await tx<Array<{project_count:number|string|bigint}>>`
-          SELECT COUNT(*) AS project_count FROM ${tx.identifier(getTable("projects"))}
+          SELECT COUNT(*) AS project_count FROM ${projectsTable}
           WHERE user_id=${userId}
         `;
         used=Number(countRows[0]?.project_count??0);
       }
       if(used>=limit)throw new ProjectLimitError(limit,used);
       await tx`
-        UPSERT INTO ${tx.identifier(getTable("project_counters"))}(user_id,project_count)
+        UPSERT INTO ${projectCountersTable}(user_id,project_count)
         VALUES(${userId},${used+1})
       `;
       await tx`
-        INSERT INTO ${tx.identifier(getTable("projects"))}
+        INSERT INTO ${projectsTable}
           (id,name,created_at,updated_at,github_json,user_id)
         VALUES (${project.id},${project.name},${project.createdAt},${project.updatedAt},${project.github?JSON.stringify(project.github):""},${project.userId})
       `;
