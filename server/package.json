@@ -15,7 +15,8 @@
     "fastify": "latest",
     "zod": "latest",
     "@fastify/cookie": "latest",
-    "playwright": "latest"
+    "playwright": "latest",
+    "@fastify/static": "latest"
   },
   "devDependencies": {
     "@types/node": "latest",
