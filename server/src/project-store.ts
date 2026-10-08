@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile, readdir } from "node:fs/promises";
+import { mkdir, readFile, writeFile, readdir, rename, unlink } from "node:fs/promises";
 import path from "node:path";
 import type { ChatMessage } from "./types.js";
 import { isYdbEnabled, ydbQuery, getTable } from "./storage/ydb.js";
+import { decryptSecret, encryptSecret, isEncryptedSecret } from "./storage/secret-crypto.js";
 
 export type GitHubRepositoryRef = {
   owner: string;
@@ -87,6 +88,13 @@ export async function createProject(name:string,github:GitHubRepositoryRef|undef
   return project;
 }
 
+async function writeSecretJsonAtomic(file:string,value:unknown){
+  await mkdir(path.dirname(file),{recursive:true});
+  const temp=file+"."+randomUUID()+".tmp";
+  try { await writeFile(temp,JSON.stringify(value,null,2),{mode:0o600}); await rename(temp,file); }
+  catch(error){ try{await unlink(temp)}catch{} throw error; }
+}
+
 export async function getProjectProvider(projectId:string):Promise<ProjectProviderConfig|null>{
   if(isYdbEnabled()){
     const [rows]=await ydbQuery()<Array<{project_id:string;provider:string;base_url:string;model:string;token:string}>>`
@@ -97,23 +105,48 @@ export async function getProjectProvider(projectId:string):Promise<ProjectProvid
     `;
     const row=rows?.[0];
     if(!row)return null;
-    return {provider:row.provider,baseUrl:row.base_url,model:row.model,...(row.token ? {token:row.token} : {})};
+    let token=row.token || undefined;
+    if(token && !isEncryptedSecret(token)){
+      const plaintext=token;
+      token=encryptSecret(token);
+      await ydbQuery()`
+        UPSERT INTO ${ydbQuery().identifier(getTable("providers"))}
+          (project_id,provider,base_url,model,token)
+        VALUES (${projectId},${row.provider},${row.base_url},${row.model},${token})
+      `;
+      token=plaintext;
+    } else if(token) token=decryptSecret(token);
+    return {provider:row.provider,baseUrl:row.base_url,model:row.model,...(token ? {token} : {})};
   }
-  try{return JSON.parse(await readFile(path.join(root,"providers",projectId+".json"),"utf8")) as ProjectProviderConfig}catch{return null}
+  const file=path.join(root,"providers",projectId+".json");
+  try{
+    const config=JSON.parse(await readFile(file,"utf8")) as ProjectProviderConfig;
+    if(!config.token)return config;
+    if(!isEncryptedSecret(config.token)){
+      const plaintext=config.token;
+      await writeSecretJsonAtomic(file,{...config,token:encryptSecret(plaintext)});
+      return {...config,token:plaintext};
+    }
+    return {...config,token:decryptSecret(config.token)};
+  }catch(error){
+    if((error as NodeJS.ErrnoException).code==="ENOENT")return null;
+    throw error;
+  }
 }
 
 export async function saveProjectProvider(projectId:string,config:ProjectProviderConfig){
   if(!await getProject(projectId))throw new Error("Project not found");
+  const token=config.token ? encryptSecret(config.token) : "";
   if(isYdbEnabled()){
     await ydbQuery()`
       UPSERT INTO ${ydbQuery().identifier(getTable("providers"))}
         (project_id,provider,base_url,model,token)
-      VALUES (${projectId},${config.provider},${config.baseUrl},${config.model},${config.token ?? ""})
+      VALUES (${projectId},${config.provider},${config.baseUrl},${config.model},${token})
     `;
     return config;
   }
-  await mkdir(path.join(root,"providers"),{recursive:true});
-  await writeFile(path.join(root,"providers",projectId+".json"),JSON.stringify(config,null,2),{mode:0o600});
+  const persisted={...config,...(config.token ? {token} : {})};
+  await writeSecretJsonAtomic(path.join(root,"providers",projectId+".json"),persisted);
   return config;
 }
 
