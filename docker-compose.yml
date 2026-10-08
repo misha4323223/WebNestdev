@@ -7,6 +7,11 @@ services:
       NODE_ENV: production
       PORT: 8787
       WEBNESTDEV_STORAGE: ydb
+      WEBNESTDEV_PHONE_OTP_SECRET: ${WEBNESTDEV_PHONE_OTP_SECRET:?Set a dedicated 32+ character OTP secret}
+      WEBNESTDEV_SMS_MODE: ${WEBNESTDEV_SMS_MODE:-smsru}
+      SMSRU_API_ID: ${SMSRU_API_ID:?Set the SMS.RU API ID}
+      WEBNESTDEV_SMS_MAX_PER_HOUR: ${WEBNESTDEV_SMS_MAX_PER_HOUR:-100}
+      WEBNESTDEV_PHONE_CONSENT_VERSION: ${WEBNESTDEV_PHONE_CONSENT_VERSION:-phone-auth-v1}
       WEBNESTDEV_ENCRYPTION_KEY: ${WEBNESTDEV_ENCRYPTION_KEY:?Set a 32-byte base64 or 64-character hex encryption key}
       WEBNESTDEV_ALLOWED_ORIGINS: ${WEBNESTDEV_ALLOWED_ORIGINS:?Set the public frontend origin(s), comma-separated}
       YDB_CONNECTION_STRING: ${YDB_CONNECTION_STRING:?Set the YDB connection string}
