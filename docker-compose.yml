@@ -2,9 +2,16 @@ services:
   webnestdev-server:
     build:
       context: .
-      dockerfile: Dockerfile
+      dockerfile: server/Dockerfile
     environment:
+      NODE_ENV: production
       PORT: 8787
+      WEBNESTDEV_STORAGE: ydb
+      WEBNESTDEV_ENCRYPTION_KEY: ${WEBNESTDEV_ENCRYPTION_KEY:?Set a 32-byte base64 or 64-character hex encryption key}
+      WEBNESTDEV_ALLOWED_ORIGINS: ${WEBNESTDEV_ALLOWED_ORIGINS:?Set the public frontend origin(s), comma-separated}
+      YDB_CONNECTION_STRING: ${YDB_CONNECTION_STRING:?Set the YDB connection string}
+      YDB_TOKEN: ${YDB_TOKEN:-}
+      YDB_TABLE_PREFIX: ${YDB_TABLE_PREFIX:-webnestdev}
       SANDBOX_MODE: docker
       SANDBOX_IMAGE: node:22-bookworm-slim
       SANDBOX_MEMORY: 1g
