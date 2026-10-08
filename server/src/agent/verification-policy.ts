@@ -11,7 +11,7 @@ export function commandSucceeded(output: unknown): boolean {
  * Files that cannot be mapped confidently to a page fall back to "/".
  */
 export function routeFromMutation(name: string, args: Record<string, unknown>): string {
-  if (name !== "fs.write" && name !== "fs.rename") return "/";
+  if (name !== "fs.write" && name !== "fs.rename" && name !== "fs.delete") return "/";
   const value = typeof args.path === "string" ? args.path : typeof args.to === "string" ? args.to : "";
   const normalized = value.replace(/^\.\//, "").replace(/\.(tsx?|jsx?|html?)$/i, "");
 
@@ -40,7 +40,7 @@ function normalizeRoute(route: string): string {
 }
 
 export function shouldRunBrowserRuntime(name: string, args: Record<string, unknown>): boolean {
-  if (name === "fs.write" || name === "fs.rename") {
+  if (name === "fs.write" || name === "fs.rename" || name === "fs.delete") {
     const value = typeof args.path === "string" ? args.path : typeof args.to === "string" ? args.to : "";
     return /\.(tsx?|jsx?|html?|css|scss|vue|svelte)$/i.test(value) || /^(src|app|pages|components)\//i.test(value);
   }
