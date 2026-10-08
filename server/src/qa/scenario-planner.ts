@@ -1,3 +1,5 @@
+export type ParsedQaChange = { kind: string; action: string; element?: string; selector?: string; text?: string; route?: string };
+
 export type QaScenarioStep =
   | { action: "goto"; path: string }
   | { action: "click"; selector: string }
