@@ -100,6 +100,7 @@ registerTool({
     const consoleMessages: Array<{ type: string; text: string }> = [];
     const runtimeErrors: string[] = [];
     const failedRequests: Array<{ url: string; error: string }> = [];
+    const httpErrors: Array<{ url: string; status: number; statusText: string }> = [];
 
     page.on("console", message => {
       consoleMessages.push({
@@ -110,6 +111,15 @@ registerTool({
     page.on("pageerror", error => {
       runtimeErrors.push(error.message.slice(0, 4000));
     });
+    page.on("response", response => {
+      if (response.status() >= 400) {
+        httpErrors.push({
+          url: response.url().slice(0, 2000),
+          status: response.status(),
+          statusText: response.statusText().slice(0, 500),
+        });
+      }
+    });
     page.on("requestfailed", request => {
       failedRequests.push({
         url: request.url().slice(0, 2000),
@@ -119,24 +129,33 @@ registerTool({
 
     try {
       const response = await page.goto(url, {
-        waitUntil: "networkidle",
+        waitUntil: "domcontentloaded",
         timeout: 10_000,
       });
+      await page.waitForLoadState("networkidle", { timeout: 3_000 }).catch(() => undefined);
       const bodyText = (await page.locator("body").innerText()).slice(0, MAX_BODY);
       const result: Record<string, unknown> = {
-        ok: Boolean(response?.ok()) && runtimeErrors.length === 0,
+        ok:
+          Boolean(response?.ok()) &&
+          runtimeErrors.length === 0 &&
+          failedRequests.length === 0 &&
+          httpErrors.length === 0,
         status: response?.status() ?? null,
         title: await page.title(),
         finalUrl: page.url(),
         console: consoleMessages.slice(-100),
         runtimeErrors: runtimeErrors.slice(-50),
         failedRequests: failedRequests.slice(-50),
+        httpErrors: httpErrors.slice(-50),
         bodyText,
         truncated: bodyText.length >= MAX_BODY,
       };
 
       if (screenshot) {
         const buffer = await page.screenshot({ type: "png", fullPage: true });
+        if (buffer.byteLength > 5_000_000) {
+          throw new Error("Screenshot exceeds the 5 MB safety limit");
+        }
         result.screenshotBase64 = buffer.toString("base64");
       }
 
