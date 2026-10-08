@@ -7,20 +7,27 @@ export type QaScenarioStep =
   | { action: "expectUrl"; pattern: string }
   | { action: "expectVisible"; selector: string };
 
-export type QaScenario = { path: string; steps: QaScenarioStep[]; reason: string; changeKind?: string; confidence?: number };
+export type QaScenario = { path: string; steps: QaScenarioStep[]; reason: string; changeKind?: string; confidence?: number; parsedChanges?: ParsedQaChange[] };
 
 const route = (value: string) => value.startsWith("/") ? value : "/" + value;
 
 /** Builds a conservative smoke scenario from the task text and affected route.
  * It intentionally prefers observable assertions over destructive actions.
  */
-export function planQaScenario(task: string, affectedRoute = "/", changeKind = "unknown", confidence = 0.35): QaScenario {
+export function planQaScenario(task: string, affectedRoute = "/", changeKind = "unknown", confidence = 0.35, parsedChanges: ParsedQaChange[] = []): QaScenario {
   const text = task.toLowerCase();
   const path = route(affectedRoute || "/");
   const steps: QaScenarioStep[] = [
     { action: "goto", path },
     { action: "expectVisible", selector: "body" },
   ];
+
+  const concrete = parsedChanges.find(change => change.action === "added" && change.selector);
+  if (concrete?.selector) {
+    steps.push({ action: "expectVisible", selector: concrete.selector });
+    if (concrete.element === "button" || concrete.element === "a") steps.push({ action: "click", selector: concrete.selector });
+    return { path, steps, reason: "Scenario derived from a concrete parsed change.", changeKind, confidence, parsedChanges };
+  }
 
   const checks: Array<[RegExp, string, string]> = [
     [/button|кнопк/i, "button", "Task appears to introduce or change a button."],
@@ -30,8 +37,8 @@ export function planQaScenario(task: string, affectedRoute = "/", changeKind = "
   for (const [pattern, selector, reason] of checks) {
     if (pattern.test(text)) {
       steps.push({ action: "expectVisible", selector });
-      return { path, steps, reason, changeKind, confidence };
+      return { path, steps, reason, changeKind, confidence, parsedChanges };
     }
   }
-  return { path, steps, reason: "Generic route smoke scenario; no safe interactive action was inferred.", changeKind, confidence };
+  return { path, steps, reason: "Generic route smoke scenario; no safe interactive action was inferred.", changeKind, confidence, parsedChanges };
 }
