@@ -1,4 +1,4 @@
-import { createHash, createHmac, randomInt, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomInt, randomUUID, timingSafeEqual } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { isYdbEnabled, ydbQuery, getTable } from "../storage/ydb.js";
@@ -6,6 +6,7 @@ import { isYdbEnabled, ydbQuery, getTable } from "../storage/ydb.js";
 type Challenge = { phone: string; codeHash: string; expiresAt: string; resendAfter: string; attempts: number; createdAt: string };
 const root = process.env.WEBNESTDEV_DATA_DIR ?? path.resolve(".webnestdev");
 const challengeFile = path.join(root, "auth", "phone-otp-challenges.json");
+const consentFile = path.join(root, "auth", "phone-consents.json");
 const OTP_TTL_MS = 5 * 60_000;
 const RESEND_DELAY_MS = 60_000;
 const MAX_ATTEMPTS = 5;
@@ -73,6 +74,31 @@ export async function allowPhoneOtpVerify(phone: string, ip: string): Promise<bo
   const phoneAllowed = await consumeRateLimit("verify-phone:" + phone, 10, 15 * 60_000);
   if (!phoneAllowed) return false;
   return consumeRateLimit("verify-ip:" + ip, 30, 15 * 60_000);
+}
+
+export async function recordPhoneConsent(phone: string, ip: string, purpose: "sign_in" | "link_account"): Promise<void> {
+  const record = {
+    consentId: randomUUID(),
+    phone,
+    version: process.env.WEBNESTDEV_PHONE_CONSENT_VERSION ?? "phone-auth-v1",
+    purpose,
+    consentedAt: new Date().toISOString(),
+    ipHash: createHash("sha256").update(ip).digest("hex"),
+  };
+  if (isYdbEnabled()) {
+    await ydbQuery()`
+      INSERT INTO ${ydbQuery().identifier(getTable("phone_consents"))}
+        (consent_id,phone,consent_version,purpose,consented_at,ip_hash)
+      VALUES (${record.consentId},${record.phone},${record.version},${record.purpose},${record.consentedAt},${record.ipHash})
+    `;
+    return;
+  }
+  await mkdir(path.dirname(consentFile), { recursive: true });
+  let records: typeof record[] = [];
+  try { records = JSON.parse(await readFile(consentFile, "utf8")) as typeof record[]; }
+  catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
+  records.push(record);
+  await writeFile(consentFile, JSON.stringify(records), { mode: 0o600 });
 }
 
 async function readLocal(): Promise<Record<string, Challenge>> {
