@@ -128,12 +128,18 @@ async function deliverSms(phone: string, code: string): Promise<void> {
   if (mode !== "smsru") throw new Error("SMS delivery is not configured");
   const apiId = process.env.SMSRU_API_ID;
   if (!apiId) throw new Error("SMSRU_API_ID is required");
-  const url = new URL("https://sms.ru/sms/send");
-  url.searchParams.set("api_id", apiId);
-  url.searchParams.set("to", phone.slice(1));
-  url.searchParams.set("msg", `Код входа WebNestdev: ${code}. Не сообщайте его никому.`);
-  url.searchParams.set("json", "1");
-  const response = await fetch(url, { signal: AbortSignal.timeout(8_000) });
+  const form = new URLSearchParams({
+    api_id: apiId,
+    to: phone.slice(1),
+    msg: `Код входа WebNestdev: ${code}. Не сообщайте его никому.`,
+    json: "1",
+  });
+  const response = await fetch("https://sms.ru/sms/send", {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded" },
+    body: form,
+    signal: AbortSignal.timeout(8_000),
+  });
   if (!response.ok) throw new Error("SMS provider request failed");
   const payload = await response.json() as {
     status?: string;
