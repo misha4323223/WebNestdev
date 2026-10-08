@@ -10,7 +10,10 @@
     "build": "npm run build:server && tsc -b && vite build",
     "preview": "vite preview",
     "build:server": "npm run build --workspace=server",
-    "start:server": "npm run start --workspace=server"
+    "start:server": "npm run start --workspace=server",
+    "local": "node scripts/local.mjs dev",
+    "local:setup": "node scripts/local.mjs setup",
+    "local:verify": "node scripts/local.mjs verify"
   },
   "dependencies": {
     "@vitejs/plugin-react": "latest",
