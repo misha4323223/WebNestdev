@@ -6,7 +6,7 @@ async function dependencyStatus(){
   const sandbox=await sandboxStatus();
   let storage:{mode:"json"|"ydb";ok:boolean}={mode:isYdbEnabled()?"ydb":"json",ok:true};
   if(isYdbEnabled()){
-    try{await ydbQuery()\`SELECT 1 AS ok\`;}catch{storage={mode:"ydb",ok:false};}
+    try{await ydbQuery()`SELECT 1 AS ok`;}catch{storage={mode:"ydb",ok:false};}
   }
   return {storage,sandbox};
 }
