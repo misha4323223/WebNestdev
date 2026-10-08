@@ -94,7 +94,7 @@ export async function recordPhoneConsent(phone: string, ip: string, purpose: "si
     return;
   }
   await mkdir(path.dirname(consentFile), { recursive: true });
-  let records: typeof record[] = [];
+  let records: Array<typeof record> = [];
   try { records = JSON.parse(await readFile(consentFile, "utf8")) as typeof record[]; }
   catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; }
   records.push(record);
@@ -169,11 +169,11 @@ async function deliverSms(phone: string, code: string): Promise<void> {
   if (!response.ok) throw new Error("SMS provider request failed");
   const payload = await response.json() as {
     status?: string;
-    status_code?: string;
+    status_code?: string | number;
     sms?: Record<string, { status?: string; status_code?: string | number }>;
   };
   const recipient = payload.sms?.[phone.slice(1)];
-  if (payload.status !== "OK" || (payload.status_code && payload.status_code !== "100") ||
+  if (payload.status !== "OK" || (payload.status_code && String(payload.status_code) !== "100") ||
       (recipient && (recipient.status !== "OK" || String(recipient.status_code) !== "100"))) {
     throw new Error("SMS provider rejected the request");
   }
