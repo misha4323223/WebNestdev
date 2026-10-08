@@ -9,6 +9,7 @@ export function AuthScreen({onAuthenticated}:{onAuthenticated:()=>void}){
   const [phone,setPhone]=useState("");
   const [code,setCode]=useState("");
   const [codeRequested,setCodeRequested]=useState(false);
+  const [phoneConsent,setPhoneConsent]=useState(false);
   const [error,setError]=useState("");
   const [notice,setNotice]=useState("");
   const [busy,setBusy]=useState(false);
@@ -17,6 +18,7 @@ export function AuthScreen({onAuthenticated}:{onAuthenticated:()=>void}){
     event.preventDefault();
     setError("");
     setNotice("");
+    if(method==="phone"&&!phoneConsent){setError("Подтвердите согласие на обработку номера телефона.");return;}
     setBusy(true);
     try{
       if(method==="email"){
@@ -37,7 +39,7 @@ export function AuthScreen({onAuthenticated}:{onAuthenticated:()=>void}){
   }
 
   function switchMethod(next:"email"|"phone"){
-    setMethod(next);setError("");setNotice("");setCodeRequested(false);setCode("");
+    setMethod(next);setError("");setNotice("");setCodeRequested(false);setCode("");setPhoneConsent(false);
   }
 
   return <main className="auth-screen">
@@ -55,6 +57,7 @@ export function AuthScreen({onAuthenticated}:{onAuthenticated:()=>void}){
         </> : <>
           <label><span>Российский номер телефона</span><input type="tel" value={phone} onChange={event=>setPhone(event.target.value)} placeholder="+7 900 123-45-67" autoComplete="tel" required disabled={codeRequested} /></label>
           {codeRequested&&<label><span>Код из SMS</span><input type="text" value={code} onChange={event=>setCode(event.target.value.replace(/\D/g,"").slice(0,6))} inputMode="numeric" autoComplete="one-time-code" pattern="[0-9]{6}" minLength={6} maxLength={6} placeholder="000000" required /></label>}
+          <label className="auth-phone-consent"><input type="checkbox" checked={phoneConsent} onChange={event=>setPhoneConsent(event.target.checked)}/><span>Согласен на обработку номера телефона для входа, защиты аккаунта и предотвращения повторного получения демо-доступа.</span></label>
         </>}
         {error&&<div className="auth-error">{error}</div>}
         {notice&&<div className="auth-notice">{notice}</div>}
