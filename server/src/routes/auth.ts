@@ -5,7 +5,7 @@ import { createUser, createPhoneUser, deleteSession, findUserByPhone, linkPhoneT
 import { checkAuthRateLimit } from "../auth/auth-rate-limit.js";
 import { allowPhoneOtpRequest, allowPhoneOtpVerify, normalizeRussianPhone, requestPhoneOtp, verifyPhoneOtp } from "../auth/phone-otp.js";
 
-const credentials = z.object({email:z.string().email().max(200),password:z.string().min(8).max(200)});
+const credentials = z.object({email:z.string().email().max(200).refine(value => !value.toLowerCase().endsWith("@phone.webnestdev.invalid"), "Email domain is reserved"),password:z.string().min(8).max(200)});
 const phoneBody = z.object({phone:z.string().min(10).max(30)});
 const verifyPhoneBody = phoneBody.extend({code:z.string().regex(/^\d{6}$/)});
 function publicUser(user: {id:string;email:string;createdAt:string;phone?:string}) {
