@@ -98,7 +98,7 @@ export async function registerAuthRoutes(app:FastifyInstance){
     }
     await recordPhoneConsent(phone, request.ip, "link_account");
     try {
-      const result = await requestPhoneOtp(phone);
+      const result = await requestPhoneOtp(phone, request.ip);
       return {ok:true,resendAfter:result.resendAfter,message:"Если номер указан верно, код будет отправлен SMS."};
     } catch (error) {
       const statusCode = Number((error as {statusCode?:number})?.statusCode);
