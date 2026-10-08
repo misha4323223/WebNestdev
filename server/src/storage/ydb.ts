@@ -40,7 +40,7 @@ export async function initializeStorage() {
     sql = query(driver);
 
     const q = sql;
-    await q.`CREATE TABLE IF NOT EXISTS ${q.identifier(getTable("users"))} (
+    await q`CREATE TABLE IF NOT EXISTS ${q.identifier(getTable("users"))} (
       id Utf8 NOT NULL,
       email Utf8 NOT NULL,
       password_hash Utf8 NOT NULL,
@@ -48,14 +48,14 @@ export async function initializeStorage() {
       PRIMARY KEY (id),
       INDEX email_idx GLOBAL UNIQUE ON (email)
     )`;
-    await q.`CREATE TABLE IF NOT EXISTS ${q.identifier(getTable("sessions"))} (
+    await q`CREATE TABLE IF NOT EXISTS ${q.identifier(getTable("sessions"))} (
       id Utf8 NOT NULL,
       user_id Utf8 NOT NULL,
       expires_at Utf8 NOT NULL,
       PRIMARY KEY (id),
       INDEX user_idx GLOBAL ON (user_id)
     )`;
-    await q.`CREATE TABLE IF NOT EXISTS ${q.identifier(getTable("projects"))} (
+    await q`CREATE TABLE IF NOT EXISTS ${q.identifier(getTable("projects"))} (
       id Utf8 NOT NULL,
       name Utf8 NOT NULL,
       created_at Utf8 NOT NULL,
@@ -65,7 +65,7 @@ export async function initializeStorage() {
       PRIMARY KEY (id),
       INDEX user_idx GLOBAL ON (user_id)
     )`;
-    await q.`CREATE TABLE IF NOT EXISTS ${q.identifier(getTable("conversations"))} (
+    await q`CREATE TABLE IF NOT EXISTS ${q.identifier(getTable("conversations"))} (
       id Utf8 NOT NULL,
       project_id Utf8 NOT NULL,
       title Utf8 NOT NULL,
@@ -75,7 +75,19 @@ export async function initializeStorage() {
       PRIMARY KEY (id),
       INDEX project_idx GLOBAL ON (project_id)
     )`;
-    await q.`CREATE TABLE IF NOT EXISTS ${q.identifier(getTable("providers"))} (
+    await q`CREATE TABLE IF NOT EXISTS ${q.identifier(getTable("conversation_messages"))} (
+      conversation_id Utf8 NOT NULL,
+      created_at Utf8 NOT NULL,
+      message_id Utf8 NOT NULL,
+      project_id Utf8 NOT NULL,
+      role Utf8 NOT NULL,
+      content Utf8 NOT NULL,
+      tool_calls_json Utf8 NOT NULL,
+      tool_call_id Utf8 NOT NULL,
+      PRIMARY KEY (conversation_id, created_at, message_id),
+      INDEX project_idx GLOBAL ON (project_id, created_at)
+    )`;
+    await q`CREATE TABLE IF NOT EXISTS ${q.identifier(getTable("providers"))} (
       project_id Utf8 NOT NULL,
       provider Utf8 NOT NULL,
       base_url Utf8 NOT NULL,
@@ -83,7 +95,7 @@ export async function initializeStorage() {
       token Utf8 NOT NULL,
       PRIMARY KEY (project_id)
     )`;
-    await q.`CREATE TABLE IF NOT EXISTS ${q.identifier(getTable("github_connections"))} (
+    await q`CREATE TABLE IF NOT EXISTS ${q.identifier(getTable("github_connections"))} (
       user_id Utf8 NOT NULL,
       id Utf8 NOT NULL,
       access_token Utf8 NOT NULL,
