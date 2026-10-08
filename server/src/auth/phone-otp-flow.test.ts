@@ -31,7 +31,7 @@ test("OTP is one-time and locks after five incorrect attempts", async () => {
     }
     assert.equal(await verifyPhoneOtp(phone, capturedCode), false, "challenge must be locked after five wrong codes");
 
-    await requestPhoneOtp(phone);
+    await requestPhoneOtp(phone, "127.0.0.1");
     const secondCode = capturedCode;
     assert.match(secondCode, /^\d{6}$/);
     assert.equal(await verifyPhoneOtp(phone, secondCode), true);
