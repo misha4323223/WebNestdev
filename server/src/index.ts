@@ -29,7 +29,7 @@ const production = process.env.NODE_ENV === "production";
 const configuredOrigins = process.env.WEBNESTDEV_ALLOWED_ORIGINS;
 if (production && !configuredOrigins) throw new Error("WEBNESTDEV_ALLOWED_ORIGINS is required in production");
 const allowedOrigins=(configuredOrigins??"http://localhost:5173").split(",").map(value=>value.trim()).filter(Boolean);
-if (production && allowedOrigins.some(origin => /^https?:\\/\\/localhost(?::\\d+)?$/i.test(origin))) {
+if (production && allowedOrigins.some(origin => /^https?:\/\/localhost(?::\d+)?$/i.test(origin))) {
   throw new Error("localhost is not allowed in WEBNESTDEV_ALLOWED_ORIGINS in production");
 }
 await ensureDataDir();
