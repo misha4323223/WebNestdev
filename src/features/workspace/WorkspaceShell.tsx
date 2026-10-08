@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { LayoutShell } from "../layout/LayoutShell";
 import { PreviewPanel } from "../preview/PreviewPanel";
-import { SettingsPanel } from "../settings/SettingsPanel";
+import { SettingsHub } from "../settings/SettingsHub";
 import { useWorkspace } from "./useWorkspace";
 import { WorkspaceNav,type WorkspaceView } from "./WorkspaceNav";
 import { WorkspaceContent } from "./WorkspaceContent";
@@ -24,7 +24,7 @@ export function WorkspaceShell(){
     <main className="main">
       <div className="workspace-main">
         {(settingsOpen||deployOpen)?<div className="workspace-overlay-panel">
-          {settingsOpen?<SettingsPanel projectId={projectId} projectName={projectName} onClose={()=>setSettingsOpen(false)}/>:<section className="settings-panel">
+          {settingsOpen?<SettingsHub projectId={projectId} projectName={projectName}/>:<section className="settings-panel">
             <div className="panel-title"><div><span className="eyebrow">DEPLOY</span><strong>Публикация проекта</strong></div><button className="ghost-button" onClick={()=>setDeployOpen(false)}>Закрыть</button></div>
             <div className="settings-body"><p>Deployment-модуль подключим к выбранному провайдеру после настройки окружения.</p><button className="send-button" onClick={()=>setDeployOpen(false)}>Понятно</button></div>
           </section>}
