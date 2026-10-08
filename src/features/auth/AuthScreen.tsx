@@ -26,7 +26,7 @@ export function AuthScreen({onAuthenticated}:{onAuthenticated:()=>void}){
         else await register(email,password);
         onAuthenticated();
       }else if(!codeRequested){
-        const result=await requestPhoneCode(phone);
+        const result=await requestPhoneCode(phone,phoneConsent);
         setCodeRequested(true);
         setNotice(result.message);
       }else{
