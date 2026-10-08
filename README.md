@@ -34,7 +34,7 @@ The real headless-browser worker is now implemented as `browser.runtime`. It exe
 
 ## CI
 
-GitHub Actions runs the server and web builds for pull requests targeting `main` and pushes to `main`. The current verification branch has a successful CI run on its latest verified commit.
+GitHub Actions runs the server build, server tests, web build, and production Docker image build for pull requests targeting `main` and pushes to `main`. Check the latest run for the exact commit before merging; local JSON tests do not replace live YDB or SMS-provider integration checks.
 
 ## Roadmap
 
