@@ -142,6 +142,7 @@ export async function activateDemoOnce(userId: string, plan: Exclude<PlanId, "fr
     const subscriptions = sql.identifier(getTable("subscriptions"));
     const identities = sql.identifier(getTable("phone_identities"));
     const claims = sql.identifier(getTable("demo_claims"));
+    let attemptedClaimKey: string | null = null;
     try {
       await sql.transaction({ idempotent: true }, async tx => {
         const [identityRows] = await tx<Array<{ phone: string }>>`
@@ -150,6 +151,7 @@ export async function activateDemoOnce(userId: string, plan: Exclude<PlanId, "fr
         const phone = identityRows?.[0]?.phone;
         if (!phone) throw new PhoneVerificationRequiredError();
         const claimKey = createHash("sha256").update(phone).digest("hex");
+        attemptedClaimKey = claimKey;
         const [claimRows] = await tx<Array<{ claim_key: string }>>`
           SELECT claim_key FROM ${claims} WHERE claim_key = ${claimKey} LIMIT 1
         `;
@@ -170,6 +172,12 @@ export async function activateDemoOnce(userId: string, plan: Exclude<PlanId, "fr
       });
     } catch (error) {
       if (error instanceof DemoAlreadyClaimedError || error instanceof PhoneVerificationRequiredError) throw error;
+      if (attemptedClaimKey) {
+        const [rows] = await sql<Array<{ claim_key: string }>>`
+          SELECT claim_key FROM ${claims} WHERE claim_key = ${attemptedClaimKey} LIMIT 1
+        `;
+        if (rows.length) throw new DemoAlreadyClaimedError();
+      }
       throw error;
     }
     return subscription;
