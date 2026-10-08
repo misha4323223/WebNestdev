@@ -72,9 +72,11 @@ export async function listProjects(userId:string){
   return result.sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt));
 }
 
-export async function createProject(name:string,github:GitHubRepositoryRef|undefined,userId:string):Promise<Project>{
+function newProject(name:string,github:GitHubRepositoryRef|undefined,userId:string):Project{
   const now=new Date().toISOString();
-  const project={id:randomUUID(),name:name.trim()||"Новый проект",github,userId,createdAt:now,updatedAt:now};
+  return {id:randomUUID(),name:name.trim()||"Новый проект",github,userId,createdAt:now,updatedAt:now};
+}
+async function persistProject(project:Project){
   if(isYdbEnabled()){
     await ydbQuery()`
       INSERT INTO ${ydbQuery().identifier(getTable("projects"))}
@@ -84,8 +86,67 @@ export async function createProject(name:string,github:GitHubRepositoryRef|undef
     return project;
   }
   await mkdir(path.join(root,"projects"),{recursive:true});
-  await writeFile(path.join(root,"projects",project.id+".json"),JSON.stringify(project,null,2));
+  await writeFile(path.join(root,"projects",project.id+".json"),JSON.stringify(project,null,2),{flag:"wx"});
   return project;
+}
+export async function createProject(name:string,github:GitHubRepositoryRef|undefined,userId:string):Promise<Project>{
+  return persistProject(newProject(name,github,userId));
+}
+
+export class ProjectLimitError extends Error{
+  readonly statusCode=403;
+  constructor(readonly limit:number,readonly used:number){
+    super("Project limit reached");
+    this.name="ProjectLimitError";
+  }
+}
+const projectLocks=new Map<string,Promise<unknown>>();
+async function withProjectLock<T>(userId:string,action:()=>Promise<T>):Promise<T>{
+  const previous=projectLocks.get(userId)??Promise.resolve();
+  let release!:()=>void;
+  const gate=new Promise<void>(resolve=>{release=resolve});
+  const current=previous.then(()=>gate);
+  projectLocks.set(userId,current);
+  await previous;
+  try{return await action()}
+  finally{release();if(projectLocks.get(userId)===current)projectLocks.delete(userId)}
+}
+export async function createProjectWithinLimit(name:string,github:GitHubRepositoryRef|undefined,userId:string,limit:number):Promise<Project>{
+  const project=newProject(name,github,userId);
+  if(isYdbEnabled()){
+    await ydbQuery().transaction({idempotent:true},async tx=>{
+      const [counterRows]=await tx<Array<{project_count:number|string|bigint}>>`
+        SELECT project_count FROM ${tx.identifier(getTable("project_counters"))}
+        WHERE user_id=${userId} LIMIT 1
+      `;
+      let used:number;
+      if(counterRows[0]){
+        used=Number(counterRows[0].project_count);
+      }else{
+        const [countRows]=await tx<Array<{project_count:number|string|bigint}>>`
+          SELECT COUNT(*) AS project_count FROM ${tx.identifier(getTable("projects"))}
+          WHERE user_id=${userId}
+        `;
+        used=Number(countRows[0]?.project_count??0);
+      }
+      if(used>=limit)throw new ProjectLimitError(limit,used);
+      await tx`
+        UPSERT INTO ${tx.identifier(getTable("project_counters"))}(user_id,project_count)
+        VALUES(${userId},${used+1})
+      `;
+      await tx`
+        INSERT INTO ${tx.identifier(getTable("projects"))}
+          (id,name,created_at,updated_at,github_json,user_id)
+        VALUES (${project.id},${project.name},${project.createdAt},${project.updatedAt},${project.github?JSON.stringify(project.github):""},${project.userId})
+      `;
+    });
+    return project;
+  }
+  return withProjectLock(userId,async()=>{
+    const projects=await listProjects(userId);
+    if(projects.length>=limit)throw new ProjectLimitError(limit,projects.length);
+    return persistProject(project);
+  });
 }
 
 async function writeSecretJsonAtomic(file:string,value:unknown){
