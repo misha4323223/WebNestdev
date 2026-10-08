@@ -56,8 +56,8 @@ export async function registerAuthRoutes(app:FastifyInstance){
       reply.header("Retry-After", "3600");
       return reply.code(429).send({error:"Слишком много запросов кода. Попробуйте позже."});
     }
-    await recordPhoneConsent(phone, request.ip, "sign_in");
     try {
+      await recordPhoneConsent(phone, request.ip, "sign_in");
       const result = await requestPhoneOtp(phone, request.ip);
       return {ok:true,resendAfter:result.resendAfter,message:"Если номер указан верно, код будет отправлен SMS."};
     } catch (error) {
@@ -99,8 +99,8 @@ export async function registerAuthRoutes(app:FastifyInstance){
       reply.header("Retry-After", "3600");
       return reply.code(429).send({error:"Слишком много запросов кода. Попробуйте позже."});
     }
-    await recordPhoneConsent(phone, request.ip, "link_account");
     try {
+      await recordPhoneConsent(phone, request.ip, "link_account");
       const result = await requestPhoneOtp(phone, request.ip);
       return {ok:true,resendAfter:result.resendAfter,message:"Если номер указан верно, код будет отправлен SMS."};
     } catch (error) {
