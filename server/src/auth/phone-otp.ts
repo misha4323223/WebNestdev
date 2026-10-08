@@ -97,10 +97,12 @@ export async function allowPhoneOtpRequest(phone: string, ip: string): Promise<b
   const globalLimit = Number.isInteger(configuredGlobalLimit) && configuredGlobalLimit > 0 ? configuredGlobalLimit : 100;
   const windowMs = 60 * 60_000;
   if (!await rateLimitAvailable("global-sms", globalLimit)) return false;
-  const phoneAllowed = await consumeRateLimit("phone:" + phone, 3, windowMs);
-  if (!phoneAllowed) return false;
+  if (!await rateLimitAvailable("phone:" + phone, 3)) return false;
+  if (!await rateLimitAvailable("ip:" + ip, 10)) return false;
   const ipAllowed = await consumeRateLimit("ip:" + ip, 10, windowMs);
   if (!ipAllowed) return false;
+  const phoneAllowed = await consumeRateLimit("phone:" + phone, 3, windowMs);
+  if (!phoneAllowed) return false;
   return consumeRateLimit("global-sms", globalLimit, windowMs);
 }
 export async function allowPhoneOtpVerify(phone: string, ip: string): Promise<boolean> {
