@@ -50,5 +50,5 @@ test("authenticated encryption rejects tampering and invalid key configuration",
   tamperedParts[3] = (tamperedParts[3][0] === "A" ? "B" : "A") + tamperedParts[3].slice(1);
   assert.throws(() => crypto.decryptSecret(tamperedParts.join(":")));
   process.env.WEBNESTDEV_ENCRYPTION_KEY = "too-short";
-  assert.throws(() => crypto.encryptSecret("token"), /32 bytes/);
+  assert.throws(() => crypto.encryptSecret("token"), /32[- ]byte/);
 });
