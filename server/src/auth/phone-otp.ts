@@ -44,6 +44,20 @@ function allowLocal(key: string, limit: number, windowMs: number): boolean {
   item.count++;
   return true;
 }
+async function rateLimitAvailable(key: string, limit: number): Promise<boolean> {
+  if (!isYdbEnabled()) {
+    const item = buckets.get(key);
+    return !item || item.resetAt <= Date.now() || item.count < limit;
+  }
+  const bucketKey = createHmac("sha256", secret()).update(key).digest("hex");
+  const [rows] = await ydbQuery()<Array<{ request_count: number; reset_at: string }>>`
+    SELECT request_count,reset_at FROM ${ydbQuery().identifier(getTable("phone_otp_limits"))}
+    WHERE bucket_key = ${bucketKey} LIMIT 1
+  `;
+  const row = rows?.[0];
+  return !row || Date.parse(row.reset_at) <= Date.now() || Number(row.request_count) < limit;
+}
+
 async function consumeRateLimit(key: string, limit: number, windowMs: number): Promise<boolean> {
   if (!isYdbEnabled()) return allowLocal(key, limit, windowMs);
   const sql = ydbQuery();
@@ -66,13 +80,15 @@ async function consumeRateLimit(key: string, limit: number, windowMs: number): P
   });
 }
 export async function allowPhoneOtpRequest(phone: string, ip: string): Promise<boolean> {
-  const phoneAllowed = await consumeRateLimit("phone:" + phone, 3, 60 * 60_000);
-  if (!phoneAllowed) return false;
-  const ipAllowed = await consumeRateLimit("ip:" + ip, 10, 60 * 60_000);
-  if (!ipAllowed) return false;
   const configuredGlobalLimit = Number(process.env.WEBNESTDEV_SMS_MAX_PER_HOUR ?? 100);
   const globalLimit = Number.isInteger(configuredGlobalLimit) && configuredGlobalLimit > 0 ? configuredGlobalLimit : 100;
-  return consumeRateLimit("global-sms", globalLimit, 60 * 60_000);
+  const windowMs = 60 * 60_000;
+  if (!await rateLimitAvailable("global-sms", globalLimit)) return false;
+  const phoneAllowed = await consumeRateLimit("phone:" + phone, 3, windowMs);
+  if (!phoneAllowed) return false;
+  const ipAllowed = await consumeRateLimit("ip:" + ip, 10, windowMs);
+  if (!ipAllowed) return false;
+  return consumeRateLimit("global-sms", globalLimit, windowMs);
 }
 export async function allowPhoneOtpVerify(phone: string, ip: string): Promise<boolean> {
   const phoneAllowed = await consumeRateLimit("verify-phone:" + phone, 10, 15 * 60_000);
