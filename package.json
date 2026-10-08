@@ -24,7 +24,7 @@
     "lucide-react": "latest"
   },
   "devDependencies": {
-    "concurrently": "latest",
+    "concurrently": "9.2.1",
     "@types/react": "latest",
     "@types/react-dom": "latest"
   },
