@@ -68,7 +68,11 @@ async function consumeRateLimit(key: string, limit: number, windowMs: number): P
 export async function allowPhoneOtpRequest(phone: string, ip: string): Promise<boolean> {
   const phoneAllowed = await consumeRateLimit("phone:" + phone, 3, 60 * 60_000);
   if (!phoneAllowed) return false;
-  return consumeRateLimit("ip:" + ip, 10, 60 * 60_000);
+  const ipAllowed = await consumeRateLimit("ip:" + ip, 10, 60 * 60_000);
+  if (!ipAllowed) return false;
+  const configuredGlobalLimit = Number(process.env.WEBNESTDEV_SMS_MAX_PER_HOUR ?? 1000);
+  const globalLimit = Number.isInteger(configuredGlobalLimit) && configuredGlobalLimit > 0 ? configuredGlobalLimit : 1000;
+  return consumeRateLimit("global-sms", globalLimit, 60 * 60_000);
 }
 export async function allowPhoneOtpVerify(phone: string, ip: string): Promise<boolean> {
   const phoneAllowed = await consumeRateLimit("verify-phone:" + phone, 10, 15 * 60_000);
