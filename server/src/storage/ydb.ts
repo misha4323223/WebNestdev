@@ -95,6 +95,23 @@ export async function initializeStorage() {
       token Utf8 NOT NULL,
       PRIMARY KEY (project_id)
     )`;
+    await q`CREATE TABLE IF NOT EXISTS ${q.identifier(getTable("user_settings"))} (
+      user_id Utf8 NOT NULL,
+      language Utf8 NOT NULL,
+      compact_mode Bool NOT NULL,
+      email_notifications Bool NOT NULL,
+      product_updates Bool NOT NULL,
+      PRIMARY KEY (user_id)
+    )`;
+    await q`CREATE TABLE IF NOT EXISTS ${q.identifier(getTable("subscriptions"))} (
+      user_id Utf8 NOT NULL,
+      plan Utf8 NOT NULL,
+      status Utf8 NOT NULL,
+      started_at Utf8 NOT NULL,
+      expires_at Utf8 NOT NULL,
+      updated_at Utf8 NOT NULL,
+      PRIMARY KEY (user_id)
+    )`;
     await q`CREATE TABLE IF NOT EXISTS ${q.identifier(getTable("oauth_states"))} (
       state Utf8 NOT NULL,
       user_id Utf8 NOT NULL,
