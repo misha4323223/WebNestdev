@@ -24,12 +24,12 @@ async function writeJson(file:string, value:unknown){
 export async function findUserByEmail(email:string){
   const normalized=email.toLowerCase();
   if(isYdbEnabled()){
-    const [rows]=await ydbQuery()<Array<{id:string;email:string;password_hash:string;created_at:string}>>\`
+    const [rows]=await ydbQuery()<Array<{id:string;email:string;password_hash:string;created_at:string}>>`
       SELECT id,email,password_hash,created_at
-      FROM \${ydbQuery().identifier(getTable("users"))}
-      WHERE email = \${normalized}
+      FROM ${ydbQuery().identifier(getTable("users"))}
+      WHERE email = ${normalized}
       LIMIT 1
-    \`;
+    `;
     const row=rows?.[0];
     return row ? {id:row.id,email:row.email,passwordHash:row.password_hash,createdAt:row.created_at} : null;
   }
@@ -39,12 +39,12 @@ export async function findUserByEmail(email:string){
 
 export async function getUser(userId:string){
   if(isYdbEnabled()){
-    const [rows]=await ydbQuery()<Array<{id:string;email:string;password_hash:string;created_at:string}>>\`
+    const [rows]=await ydbQuery()<Array<{id:string;email:string;password_hash:string;created_at:string}>>`
       SELECT id,email,password_hash,created_at
-      FROM \${ydbQuery().identifier(getTable("users"))}
-      WHERE id = \${userId}
+      FROM ${ydbQuery().identifier(getTable("users"))}
+      WHERE id = ${userId}
       LIMIT 1
-    \`;
+    `;
     const row=rows?.[0];
     return row ? {id:row.id,email:row.email,passwordHash:row.password_hash,createdAt:row.created_at} : null;
   }
@@ -60,11 +60,11 @@ export async function createUser(email:string, password:string){
   const user:User = {id:randomUUID(), email:normalized, passwordHash:salt + ":" + derived.toString("hex"), createdAt:new Date().toISOString()};
   if(isYdbEnabled()){
     try {
-      await ydbQuery()\`
-        INSERT INTO \${ydbQuery().identifier(getTable("users"))}
+      await ydbQuery()`
+        INSERT INTO ${ydbQuery().identifier(getTable("users"))}
           (id,email,password_hash,created_at)
-        VALUES (\${user.id},\${user.email},\${user.passwordHash},\${user.createdAt})
-      \`;
+        VALUES (${user.id},${user.email},${user.passwordHash},${user.createdAt})
+      `;
     } catch (error) {
       if(await findUserByEmail(normalized)) throw new Error("Email already registered");
       throw error;
@@ -90,11 +90,11 @@ export async function verifyUser(email:string,password:string){
 export async function createSession(userId:string){
   const session:Session = {id:randomBytes(32).toString("hex"), userId, expiresAt:new Date(Date.now()+1000*60*60*24*30).toISOString()};
   if(isYdbEnabled()){
-    await ydbQuery()\`
-      INSERT INTO \${ydbQuery().identifier(getTable("sessions"))}
+    await ydbQuery()`
+      INSERT INTO ${ydbQuery().identifier(getTable("sessions"))}
         (id,user_id,expires_at)
-      VALUES (\${session.id},\${session.userId},\${session.expiresAt})
-    \`;
+      VALUES (${session.id},${session.userId},${session.expiresAt})
+    `;
     return session;
   }
   const sessions = await readJson<Session[]>(sessionsFile, []);
@@ -105,12 +105,12 @@ export async function createSession(userId:string){
 
 export async function getSession(sessionId:string){
   if(isYdbEnabled()){
-    const [rows]=await ydbQuery()<Array<{id:string;user_id:string;expires_at:string}>>\`
+    const [rows]=await ydbQuery()<Array<{id:string;user_id:string;expires_at:string}>>`
       SELECT id,user_id,expires_at
-      FROM \${ydbQuery().identifier(getTable("sessions"))}
-      WHERE id = \${sessionId}
+      FROM ${ydbQuery().identifier(getTable("sessions"))}
+      WHERE id = ${sessionId}
       LIMIT 1
-    \`;
+    `;
     const row=rows?.[0];
     if(!row)return null;
     const session:Session={id:row.id,userId:row.user_id,expiresAt:row.expires_at};
@@ -132,7 +132,7 @@ export async function getSession(sessionId:string){
 
 export async function deleteSession(sessionId:string){
   if(isYdbEnabled()){
-    await ydbQuery()\`DELETE FROM \${ydbQuery().identifier(getTable("sessions"))} WHERE id = \${sessionId}\`;
+    await ydbQuery()`DELETE FROM ${ydbQuery().identifier(getTable("sessions"))} WHERE id = ${sessionId}`;
     return;
   }
   const sessions = await readJson<Session[]>(sessionsFile, []);
