@@ -29,7 +29,7 @@ export function planQaScenario(task: string, affectedRoute = "/", changeKind = "
   const concrete = parsedChanges.find(change => change.action === "added" && change.selector);
   if (concrete?.selector) {
     steps.push({ action: "expectVisible", selector: concrete.selector });
-    if (concrete.element === "button" || concrete.element === "a") {
+    if (concrete.element === "button" || concrete.element === "link") {
       steps.push({ action: "click", selector: concrete.selector });
       appendExpectedOutcomeSteps(steps, concrete);
     }
@@ -38,7 +38,7 @@ export function planQaScenario(task: string, affectedRoute = "/", changeKind = "
 
   const checks: Array<[RegExp, string, string]> = [
     [/button|кнопк/i, "button", "Task appears to introduce or change a button."],
-    [/link|ссылк|navigate|переход/i, "a", "Task appears to change navigation."],
+    [/link|ссылк|navigate|переход/i, "a, [href]", "Task appears to change navigation."],
     [/input|form|поле|форма/i, "input, textarea, select", "Task appears to change a form/input."],
   ];
   for (const [pattern, selector, reason] of checks) {
