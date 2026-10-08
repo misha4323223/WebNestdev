@@ -16,10 +16,10 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: npm
 
-      - name: Install server dependencies
-        run: npm install
-        working-directory: server
+      - name: Install locked dependencies
+        run: npm ci
 
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
@@ -32,9 +32,6 @@ jobs:
       - name: Test server
         run: npm test
         working-directory: server
-
-      - name: Install web dependencies
-        run: npm install
 
       - name: Build web
         run: npm run build
