@@ -67,7 +67,7 @@ export async function consumeUsage(userId: string, kind: UsageKind, plan: PlanId
     if (isYdbEnabled()) {
       // Serializable read-write transaction: competing reservations conflict on the same counter key.
       // The SDK retries retryable conflicts, so every replica observes the committed counter value.
-      const nextUsed = await ydbQuery().transaction({ idempotent: true }, async tx => {
+      await ydbQuery().transaction({ idempotent: true }, async tx => {
         const [rows] = await tx<Array<{used:number|string|bigint}>>`
           SELECT used FROM ${tx.identifier(getTable("usage_counters"))}
           WHERE user_id = ${userId} AND usage_date = ${date} AND kind = ${kind}
@@ -85,10 +85,8 @@ export async function consumeUsage(userId: string, kind: UsageKind, plan: PlanId
             (user_id, usage_date, event_id, kind, created_at)
           VALUES (${userId}, ${date}, ${event.id}, ${kind}, ${event.createdAt})
         `;
-        return used + 1;
       });
-      const snapshot = await getUsageSnapshot(userId, now);
-      return { ...snapshot, [kind === "agentRuns" ? "agentRuns" : "browserChecks"]: nextUsed };
+      return getUsageSnapshot(userId, now);
     }
     const snapshot = await getUsageSnapshot(userId, now);
     const used = kind === "agentRuns" ? snapshot.agentRuns : snapshot.browserChecks;
