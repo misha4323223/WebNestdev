@@ -61,6 +61,16 @@ export async function initializeStorage() {
       reset_at Utf8 NOT NULL,
       PRIMARY KEY (bucket_key)
     )`;
+    await q`CREATE TABLE IF NOT EXISTS ${q.identifier(getTable("phone_consents"))} (
+      consent_id Utf8 NOT NULL,
+      phone Utf8 NOT NULL,
+      consent_version Utf8 NOT NULL,
+      purpose Utf8 NOT NULL,
+      consented_at Utf8 NOT NULL,
+      ip_hash Utf8 NOT NULL,
+      PRIMARY KEY (consent_id),
+      INDEX phone_idx GLOBAL ON (phone, consented_at)
+    )`;
     await q`CREATE TABLE IF NOT EXISTS ${q.identifier(getTable("phone_otp_challenges"))} (
       phone Utf8 NOT NULL,
       code_hash Utf8 NOT NULL,
