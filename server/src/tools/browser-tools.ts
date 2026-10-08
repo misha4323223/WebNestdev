@@ -9,7 +9,7 @@ registerTool({
   name: "browser.open",
   description:
     "Open the project's running Preview page over HTTP and return the status, headers, content type, and a bounded response body. Use this to inspect what the generated website actually serves. The URL is restricted to the current project's Preview.",
-  async (input, context) {
+  execute: async (input, context) {
     const status = await previewStatus(context.projectId);
     if (!status.running) {
       throw new Error(
