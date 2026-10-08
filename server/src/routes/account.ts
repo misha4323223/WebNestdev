@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireUser } from "../auth/auth.js";
-import { getSubscription, getUserPreferences, saveSubscription, saveUserPreferences, type Subscription, type UserPreferences } from "../account/account-store.js";
+import { activateDemoOnce, DemoAlreadyClaimedError, getSubscription, getUserPreferences, saveSubscription, saveUserPreferences, type Subscription, type UserPreferences } from "../account/account-store.js";
 import { PLAN_CATALOG, limitsForPlan, type PlanId } from "../account/plans.js";
 import { getUsageSnapshot } from "../account/usage-store.js";
 
@@ -50,14 +50,15 @@ export async function registerAccountRoutes(app: FastifyInstance) {
   app.post("/api/billing/demo/activate", async (request, reply) => {
     const user = await requireUser(request, reply); if (!user) return;
     const { plan } = demoPlanSchema.parse(request.body);
-    const current = await getSubscription(user.id);
-    if (!canActivateDemo(current)) {
-      return reply.code(409).send({ error: "Демо-доступ можно активировать только один раз на аккаунт." });
+    try {
+      const subscription = await activateDemoOnce(user.id, plan);
+      return { mode: "demo", subscription: publicSubscription(subscription), message: "Демо-тариф активирован. Оплата не выполнялась." };
+    } catch (error) {
+      if (error instanceof DemoAlreadyClaimedError) {
+        return reply.code(409).send({ error: "Демо-доступ можно активировать только один раз на аккаунт." });
+      }
+      throw error;
     }
-    const now = new Date();
-    const subscription: Subscription = { userId: user.id, plan, status: "demo_active", startedAt: now.toISOString(), expiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString(), updatedAt: now.toISOString() };
-    await saveSubscription(subscription);
-    return { mode: "demo", subscription: publicSubscription(subscription), message: "Демо-тариф активирован. Оплата не выполнялась." };
   });
   app.post("/api/billing/demo/cancel", async (request, reply) => {
     const user = await requireUser(request, reply); if (!user) return;
