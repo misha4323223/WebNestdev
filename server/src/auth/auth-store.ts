@@ -213,3 +213,30 @@ async function withAuthStoreLock<T>(key: string, action: () => Promise<T>): Prom
   try { return await action(); }
   finally { release(); if (authStoreLocks.get(key) === current) authStoreLocks.delete(key); }
 }
+
+
+export class PhoneAlreadyLinkedError extends Error {
+  constructor() { super("Phone number is already linked to another account"); this.name = "PhoneAlreadyLinkedError"; }
+}
+
+export async function linkPhoneToUser(phone: string, userId: string): Promise<void> {
+  if (isYdbEnabled()) {
+    const sql = ydbQuery();
+    const identities = sql.identifier(getTable("phone_identities"));
+    await sql.transaction({ idempotent: true }, async tx => {
+      const [rows] = await tx<Array<{ user_id: string }>>`
+        SELECT user_id FROM ${identities} WHERE phone = ${phone} LIMIT 1
+      `;
+      if (rows[0] && rows[0].user_id !== userId) throw new PhoneAlreadyLinkedError();
+      if (!rows[0]) await tx`INSERT INTO ${identities} (phone,user_id,verified_at) VALUES (${phone},${userId},${new Date().toISOString()})`;
+    });
+    return;
+  }
+  await withAuthStoreLock("phone:" + phone, async () => {
+    const identitiesFile = path.join(usersDir, "phone-identities.json");
+    const identities = await readJson<Record<string, string>>(identitiesFile, {});
+    if (identities[phone] && identities[phone] !== userId) throw new PhoneAlreadyLinkedError();
+    identities[phone] = userId;
+    await writeJson(identitiesFile, identities);
+  });
+}
