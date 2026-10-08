@@ -30,7 +30,8 @@ export async function saveGitHubConnection(userId:string,accessToken:string,gith
 
 export async function getGitHubConnection(userId:string):Promise<GitHubConnection|null>{
   if(isYdbEnabled()){
-    const [rows]=await ydbQuery()<Array<{user_id:string;id:string;access_token:string;github_login:string;created_at:string}>`
+    const sql=ydbQuery();
+    const [rows]=await sql<Array<{user_id:string;id:string;access_token:string;github_login:string;created_at:string}>>`
       SELECT user_id,id,access_token,github_login,created_at
       FROM ${ydbQuery().identifier(getTable("github_connections"))}
       WHERE user_id = ${userId}
