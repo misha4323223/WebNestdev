@@ -13,6 +13,11 @@ const clientId = process.env.GITHUB_CLIENT_ID;
 const clientSecret = process.env.GITHUB_CLIENT_SECRET;
 const callbackUrl = process.env.GITHUB_CALLBACK_URL ?? "http://localhost:8787/api/github/callback";
 const frontendUrl = process.env.GITHUB_FRONTEND_URL ?? "http://localhost:5173/";
+if (process.env.NODE_ENV === "production" && clientId && clientSecret) {
+  if (!/^https:\/\//i.test(callbackUrl) || !/^https:\/\//i.test(frontendUrl)) {
+    throw new Error("Production GitHub OAuth requires HTTPS callback and frontend URLs");
+  }
+}
 
 export async function registerGitHubRoutes(app: FastifyInstance) {
   app.get("/api/github/status", async (request,reply) => {
