@@ -12,6 +12,11 @@ export async function registerAuthRoutes(app:FastifyInstance){
     return {authenticated:Boolean(user),user:user?{id:user.id,email:user.email,createdAt:user.createdAt}:null};
   });
   app.post("/api/auth/register", async (request,reply) => {
+    const rateLimit = checkAuthRateLimit(request.ip, "register");
+    if (!rateLimit.allowed) {
+      reply.header("Retry-After", String(rateLimit.retryAfter));
+      return reply.code(429).send({error:"Too many registration attempts. Try again later."});
+    }
     const body = credentials.parse(request.body);
     try{
       const user = await createUser(body.email,body.password);
@@ -23,6 +28,11 @@ export async function registerAuthRoutes(app:FastifyInstance){
     }
   });
   app.post("/api/auth/login", async (request,reply) => {
+    const rateLimit = checkAuthRateLimit(request.ip, "login");
+    if (!rateLimit.allowed) {
+      reply.header("Retry-After", String(rateLimit.retryAfter));
+      return reply.code(429).send({error:"Too many login attempts. Try again later."});
+    }
     const body = credentials.parse(request.body);
     const user = await verifyUser(body.email,body.password);
     if(!user) return reply.code(401).send({error:"Invalid email or password"});
