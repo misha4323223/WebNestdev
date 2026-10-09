@@ -215,14 +215,40 @@ async function deliverSms(phone: string, code: string, ip: string): Promise<void
   if (!recipient && !payload.status_code) throw new Error("SMS provider response was incomplete");
 }
 
+async function reserveChallenge(challenge: Challenge): Promise<void> {
+  const tooSoon = () => {
+    const error = new Error("Повторно запросить код можно через минуту.");
+    Object.assign(error, { statusCode: 429 });
+    return error;
+  };
+
+  if (!isYdbEnabled()) {
+    const existing = await getChallenge(challenge.phone);
+    if (existing && Date.parse(existing.resendAfter) > Date.now()) throw tooSoon();
+    await saveChallenge(challenge);
+    return;
+  }
+
+  // The in-memory lock below only coordinates requests within one process.
+  // Reserve the challenge in a YDB transaction so parallel server instances
+  // cannot both pass the resend check and send competing codes.
+  const sql = ydbQuery();
+  const table = sql.identifier(getTable("phone_otp_challenges"));
+  await sql.transaction({ idempotent: true }, async tx => {
+    const [rows] = await tx<Array<{ resend_after: string }>>`
+      SELECT resend_after FROM ${table} WHERE phone = ${challenge.phone} LIMIT 1
+    `;
+    if (rows?.[0] && Date.parse(rows[0].resend_after) > Date.now()) throw tooSoon();
+    await tx`
+      UPSERT INTO ${table}
+        (phone,code_hash,expires_at,resend_after,attempts,created_at)
+      VALUES (${challenge.phone},${challenge.codeHash},${challenge.expiresAt},${challenge.resendAfter},${challenge.attempts},${challenge.createdAt})
+    `;
+  });
+}
+
 export async function requestPhoneOtp(phone: string, ip: string): Promise<{ resendAfter: string }> {
   return withChallengeLock(phone, async () => {
-    const existing = await getChallenge(phone);
-    if (existing && Date.parse(existing.resendAfter) > Date.now()) {
-      const error = new Error("Повторно запросить код можно через минуту.");
-      Object.assign(error, { statusCode: 429 });
-      throw error;
-    }
     const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
     const now = new Date();
     const challenge: Challenge = {
@@ -233,13 +259,12 @@ export async function requestPhoneOtp(phone: string, ip: string): Promise<{ rese
       attempts: 0,
       createdAt: now.toISOString(),
     };
-    await saveChallenge(challenge);
+    await reserveChallenge(challenge);
     try { await deliverSms(phone, code, ip); }
     catch (error) { await removeChallenge(phone); throw error; }
     return { resendAfter: challenge.resendAfter };
   });
 }
-
 const challengeLocks = new Map<string, Promise<unknown>>();
 async function withChallengeLock<T>(phone: string, action: () => Promise<T>): Promise<T> {
   const previous = challengeLocks.get(phone) ?? Promise.resolve();
