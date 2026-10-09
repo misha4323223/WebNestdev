@@ -216,26 +216,28 @@ async function deliverSms(phone: string, code: string, ip: string): Promise<void
 }
 
 export async function requestPhoneOtp(phone: string, ip: string): Promise<{ resendAfter: string }> {
-  const existing = await getChallenge(phone);
-  if (existing && Date.parse(existing.resendAfter) > Date.now()) {
-    const error = new Error("Повторно запросить код можно через минуту.");
-    Object.assign(error, { statusCode: 429 });
-    throw error;
-  }
-  const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
-  const now = new Date();
-  const challenge: Challenge = {
-    phone,
-    codeHash: hashCode(phone, code),
-    expiresAt: new Date(now.getTime() + OTP_TTL_MS).toISOString(),
-    resendAfter: new Date(now.getTime() + RESEND_DELAY_MS).toISOString(),
-    attempts: 0,
-    createdAt: now.toISOString(),
-  };
-  await saveChallenge(challenge);
-  try { await deliverSms(phone, code, ip); }
-  catch (error) { await removeChallenge(phone); throw error; }
-  return { resendAfter: challenge.resendAfter };
+  return withChallengeLock(phone, async () => {
+    const existing = await getChallenge(phone);
+    if (existing && Date.parse(existing.resendAfter) > Date.now()) {
+      const error = new Error("Повторно запросить код можно через минуту.");
+      Object.assign(error, { statusCode: 429 });
+      throw error;
+    }
+    const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
+    const now = new Date();
+    const challenge: Challenge = {
+      phone,
+      codeHash: hashCode(phone, code),
+      expiresAt: new Date(now.getTime() + OTP_TTL_MS).toISOString(),
+      resendAfter: new Date(now.getTime() + RESEND_DELAY_MS).toISOString(),
+      attempts: 0,
+      createdAt: now.toISOString(),
+    };
+    await saveChallenge(challenge);
+    try { await deliverSms(phone, code, ip); }
+    catch (error) { await removeChallenge(phone); throw error; }
+    return { resendAfter: challenge.resendAfter };
+  });
 }
 
 const challengeLocks = new Map<string, Promise<unknown>>();
