@@ -48,6 +48,38 @@ export async function initializeStorage() {
       PRIMARY KEY (id),
       INDEX email_idx GLOBAL UNIQUE ON (email)
     )`;
+    await q`CREATE TABLE IF NOT EXISTS ${q.identifier(getTable("phone_identities"))} (
+      phone Utf8 NOT NULL,
+      user_id Utf8 NOT NULL,
+      verified_at Utf8 NOT NULL,
+      PRIMARY KEY (phone),
+      INDEX user_idx GLOBAL UNIQUE ON (user_id)
+    )`;
+    await q`CREATE TABLE IF NOT EXISTS ${q.identifier(getTable("phone_otp_limits"))} (
+      bucket_key Utf8 NOT NULL,
+      request_count Uint32 NOT NULL,
+      reset_at Utf8 NOT NULL,
+      PRIMARY KEY (bucket_key)
+    )`;
+    await q`CREATE TABLE IF NOT EXISTS ${q.identifier(getTable("phone_consents"))} (
+      consent_id Utf8 NOT NULL,
+      phone Utf8 NOT NULL,
+      consent_version Utf8 NOT NULL,
+      purpose Utf8 NOT NULL,
+      consented_at Utf8 NOT NULL,
+      ip_hash Utf8 NOT NULL,
+      PRIMARY KEY (consent_id),
+      INDEX phone_idx GLOBAL ON (phone, consented_at)
+    )`;
+    await q`CREATE TABLE IF NOT EXISTS ${q.identifier(getTable("phone_otp_challenges"))} (
+      phone Utf8 NOT NULL,
+      code_hash Utf8 NOT NULL,
+      expires_at Utf8 NOT NULL,
+      resend_after Utf8 NOT NULL,
+      attempts Uint32 NOT NULL,
+      created_at Utf8 NOT NULL,
+      PRIMARY KEY (phone)
+    )`;
     await q`CREATE TABLE IF NOT EXISTS ${q.identifier(getTable("sessions"))} (
       id Utf8 NOT NULL,
       user_id Utf8 NOT NULL,
@@ -102,6 +134,13 @@ export async function initializeStorage() {
       email_notifications Bool NOT NULL,
       product_updates Bool NOT NULL,
       PRIMARY KEY (user_id)
+    )`;
+    await q`CREATE TABLE IF NOT EXISTS ${q.identifier(getTable("demo_claims"))} (
+      claim_key Utf8 NOT NULL,
+      user_id Utf8 NOT NULL,
+      claimed_at Utf8 NOT NULL,
+      PRIMARY KEY (claim_key),
+      INDEX user_idx GLOBAL ON (user_id)
     )`;
     await q`CREATE TABLE IF NOT EXISTS ${q.identifier(getTable("subscriptions"))} (
       user_id Utf8 NOT NULL,
