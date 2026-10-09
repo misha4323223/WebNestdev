@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
 import { apiJson } from "../../lib/api";
+import { requestPhoneLinkCode, verifyPhoneLinkCode } from "../../lib/auth-api";
 import { Check, CreditCard, Settings2, ShieldCheck, Sparkles, UserRound } from "lucide-react";
 
 type Preferences = { language: "ru" | "en"; compactMode: boolean; emailNotifications: boolean; productUpdates: boolean };
 type Plan = { id: "free" | "pro" | "team"; name: string; priceLabel: string; description: string; limits: { projects: number; agentRunsPerDay: number; browserChecksPerDay: number }; features: string[] };
 type Subscription = { plan: "free" | "pro" | "team"; status: "free" | "demo_active" | "demo_expired" | "demo_cancelled"; startedAt: string | null; expiresAt: string | null; updatedAt: string; mode: "demo" };
-type AccountData = { user: { id: string; email: string; createdAt: string }; preferences: Preferences };
+type AccountData = { user: { id: string; email: string; phone: string | null; createdAt: string }; preferences: Preferences };
 type Usage = { date: string; agentRuns: number; browserChecks: number };
 type BillingData = { mode: "demo"; subscription: Subscription; plans: Plan[]; limits: Plan["limits"]; usage: Usage };
 
@@ -22,6 +23,11 @@ export function AccountSettingsPanel() {
   const [busyPlan, setBusyPlan] = useState("");
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [linkPhone, setLinkPhone] = useState("");
+  const [linkCode, setLinkCode] = useState("");
+  const [phoneCodeRequested, setPhoneCodeRequested] = useState(false);
+  const [phoneBusy, setPhoneBusy] = useState(false);
+  const [phoneConsent, setPhoneConsent] = useState(false);
 
   async function reload() {
     setLoading(true); setError("");
@@ -41,6 +47,26 @@ export function AccountSettingsPanel() {
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setSaving(false); }
   }
+  async function requestPhoneLink() {
+    if (!phoneConsent) { setError("Подтвердите согласие на обработку номера телефона."); return; }
+    setPhoneBusy(true); setError(""); setNotice("");
+    try {
+      await requestPhoneLinkCode(linkPhone, phoneConsent);
+      setPhoneCodeRequested(true);
+      setNotice("Если номер корректен, SMS-код отправлен. Код действует 5 минут.");
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setPhoneBusy(false); }
+  }
+  async function confirmPhoneLink() {
+    setPhoneBusy(true); setError(""); setNotice("");
+    try {
+      await verifyPhoneLinkCode(linkPhone, linkCode);
+      setPhoneCodeRequested(false); setLinkCode(""); setLinkPhone("");
+      await reload(); setNotice("Номер телефона подтверждён. Повторно привязать его к другому аккаунту нельзя.");
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setPhoneBusy(false); }
+  }
+
   async function activate(plan: "pro" | "team") {
     setBusyPlan(plan); setError(""); setNotice("");
     try {
@@ -72,7 +98,15 @@ export function AccountSettingsPanel() {
         <div className="account-settings-content">
           {section === "account" && <div className="account-section">
             <span className="eyebrow">PROFILE</span><h3>Профиль</h3><p className="account-muted">Основная информация вашего аккаунта WebNestdev.</p>
-            <label>Email<input value={account?.user.email ?? ""} readOnly/></label>
+            {account?.user.email && <label>Email<input value={account.user.email} readOnly/></label>}
+            <label>Телефон<input value={account?.user.phone ?? "Не подтверждён"} readOnly/></label>
+            {!account?.user.phone && <div className="phone-link-form">
+              <p className="account-muted">Подтвердите номер, чтобы защитить аккаунт и получить право на демо-тариф. Один номер можно привязать только к одному аккаунту.</p>
+              <label>Российский номер<input type="tel" value={linkPhone} onChange={event => setLinkPhone(event.target.value)} placeholder="+7 900 123-45-67" disabled={phoneCodeRequested}/></label>
+              {phoneCodeRequested && <label>Код из SMS<input type="text" inputMode="numeric" autoComplete="one-time-code" value={linkCode} onChange={event => setLinkCode(event.target.value.replace(/\D/g, "").slice(0, 6))} placeholder="000000" maxLength={6}/></label>}
+              <label className="phone-consent"><input type="checkbox" checked={phoneConsent} onChange={event => setPhoneConsent(event.target.checked)}/><span>Согласен на обработку номера для входа, защиты аккаунта и ограничения повторного демо.</span></label>
+              {!phoneCodeRequested ? <button className="send-button account-save" disabled={phoneBusy || !linkPhone.trim()} onClick={() => void requestPhoneLink()}>{phoneBusy ? "Отправляем…" : "Подтвердить телефон"}</button> : <div className="phone-link-actions"><button className="send-button account-save" disabled={phoneBusy || linkCode.length !== 6} onClick={() => void confirmPhoneLink()}>{phoneBusy ? "Проверяем…" : "Подтвердить код"}</button><button className="ghost-button" disabled={phoneBusy} onClick={() => {setPhoneCodeRequested(false);setLinkCode("");}}>Изменить номер</button></div>}
+            </div>}
             <label>ID аккаунта<input value={account?.user.id ?? ""} readOnly/></label>
             <label>Дата регистрации<input value={dateLabel(account?.user.createdAt ?? null)} readOnly/></label>
             <div className="account-note"><ShieldCheck size={14}/> Данные аккаунта доступны только после авторизации.</div>

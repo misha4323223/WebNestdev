@@ -34,7 +34,7 @@ The real headless-browser worker is now implemented as `browser.runtime`. It exe
 
 ## CI
 
-GitHub Actions runs the server and web builds for pull requests targeting `main` and pushes to `main`. The current verification branch has a successful CI run on its latest verified commit.
+GitHub Actions runs the server build, server tests, web build, and production Docker image build for pull requests targeting `main` and pushes to `main`. Check the latest run for the exact commit before merging; local JSON tests do not replace live YDB or SMS-provider integration checks.
 
 ## Roadmap
 
@@ -43,9 +43,9 @@ GitHub Actions runs the server and web builds for pull requests targeting `main`
 - live preview workers
 - browser worker
 - Yandex Cloud resource/deployment tools
-- authentication and secrets
+- CAPTCHA, phone recovery, and privacy-policy review for phone authentication
 - sponsor service with privacy isolation
-- usage limits, moderation and abuse protection
+- production monitoring and abuse protection
 
 ## Local development
 
@@ -62,12 +62,13 @@ The development UI runs on port 5173 and the API on port 8787. Vite proxies /api
 
 WebNestDev now uses a real local authentication flow before opening the workspace:
 
-- register with email and password;
-- login and logout;
+- register/login with email and password;
+- phone login with a one-time SMS code when an SMS provider is configured;
+- link a verified phone to an existing email account;
 - HTTP-only session cookie;
 - password hashing with salted scrypt;
 - projects and conversations are scoped to the authenticated user.
 
-Local account data is stored under .webnestdev/auth. This is a development storage layer; production storage will move to managed infrastructure without changing the user-facing flow.
+Local account data is stored under .webnestdev/auth. Phone-based demo activation is limited to one verified phone, and the permanent demo claim is stored separately from the active subscription state. Production phone login uses YDB-backed OTP challenges and rate limits plus SMS.RU; the provider credentials and dedicated secrets must be configured before production startup. CAPTCHA, self-service phone recovery, a published privacy policy, and live YDB/SMS integration checks remain production blockers.
 
 See docs/AUTH_PRODUCTION_PLAN.md for the staged rollout. Credential encryption, legacy-token migration, and key rotation are documented in docs/SECRET_ENCRYPTION.md.

@@ -10,7 +10,7 @@ const usersDir = path.join(root, "auth");
 const usersFile = path.join(usersDir, "users.json");
 const sessionsFile = path.join(usersDir, "sessions.json");
 
-export type User = { id:string; email:string; passwordHash:string; createdAt:string };
+export type User = { id:string; email:string; passwordHash:string; createdAt:string; phone?: string };
 type Session = { id:string; userId:string; expiresAt:string };
 
 async function readJson<T>(file:string, fallback:T):Promise<T>{
@@ -37,7 +37,8 @@ export async function findUserByEmail(email:string){
   return users.find(user => user.email === normalized) ?? null;
 }
 
-export async function getUser(userId:string){
+export async function getUser(userId:string): Promise<User | null> {
+  let user: User | null;
   if(isYdbEnabled()){
     const [rows]=await ydbQuery()<Array<{id:string;email:string;password_hash:string;created_at:string}>>`
       SELECT id,email,password_hash,created_at
@@ -46,10 +47,22 @@ export async function getUser(userId:string){
       LIMIT 1
     `;
     const row=rows?.[0];
-    return row ? {id:row.id,email:row.email,passwordHash:row.password_hash,createdAt:row.created_at} : null;
+    user = row ? {id:row.id,email:row.email,passwordHash:row.password_hash,createdAt:row.created_at} : null;
+  } else {
+    const users = await readJson<User[]>(usersFile, []);
+    user = users.find(item => item.id === userId) ?? null;
   }
-  const users = await readJson<User[]>(usersFile, []);
-  return users.find(user => user.id === userId) ?? null;
+  if (!user) return null;
+  if (isYdbEnabled()) {
+    const [rows] = await ydbQuery()<Array<{ phone: string }>>`
+      SELECT phone FROM ${ydbQuery().identifier(getTable("phone_identities"))}
+      WHERE user_id = ${userId} LIMIT 1
+    `;
+    return rows?.[0] ? { ...user, phone: rows[0].phone } : user;
+  }
+  const identities = await readJson<Record<string, string>>(path.join(usersDir, "phone-identities.json"), {});
+  const phone = Object.entries(identities).find(([, id]) => id === userId)?.[0];
+  return phone ? { ...user, phone } : user;
 }
 
 export async function createUser(email:string, password:string){
@@ -71,10 +84,13 @@ export async function createUser(email:string, password:string){
     }
     return user;
   }
-  const users = await readJson<User[]>(usersFile, []);
-  users.push(user);
-  await writeJson(usersFile, users);
-  return user;
+  return withAuthStoreLock("auth-store-write", async () => {
+    if (await findUserByEmail(normalized)) throw new Error("Email already registered");
+    const users = await readJson<User[]>(usersFile, []);
+    users.push(user);
+    await writeJson(usersFile, users);
+    return user;
+  });
 }
 
 export async function verifyUser(email:string,password:string){
@@ -137,4 +153,111 @@ export async function deleteSession(sessionId:string){
   }
   const sessions = await readJson<Session[]>(sessionsFile, []);
   await writeJson(sessionsFile, sessions.filter(item => item.id !== sessionId));
+}
+
+
+export async function findUserByPhone(phone: string): Promise<User | null> {
+  if (isYdbEnabled()) {
+    const [rows] = await ydbQuery()<Array<{ user_id: string }>>`
+      SELECT user_id FROM ${ydbQuery().identifier(getTable("phone_identities"))}
+      WHERE phone = ${phone} LIMIT 1
+    `;
+    if (!rows?.[0]) return null;
+    const user = await getUser(rows[0].user_id);
+    return user ? { ...user, phone } : null;
+  }
+  const identities = await readJson<Record<string, string>>(path.join(usersDir, "phone-identities.json"), {});
+  const userId = identities[phone];
+  if (!userId) return null;
+  const user = await getUser(userId);
+  return user ? { ...user, phone } : null;
+}
+
+export async function createPhoneUser(phone: string): Promise<User> {
+  const id = randomUUID();
+  const now = new Date().toISOString();
+  const salt = randomBytes(16).toString("hex");
+  const passwordHash = salt + ":" + randomBytes(64).toString("hex");
+  const user: User = { id, email: `phone_${randomUUID()}@phone.webnestdev.invalid`, passwordHash, createdAt: now, phone };
+  if (isYdbEnabled()) {
+    const sql = ydbQuery();
+    const users = sql.identifier(getTable("users"));
+    const identities = sql.identifier(getTable("phone_identities"));
+    await sql.transaction({ idempotent: true }, async tx => {
+      await tx`INSERT INTO ${users} (id,email,password_hash,created_at) VALUES (${user.id},${user.email},${user.passwordHash},${user.createdAt})`;
+      await tx`INSERT INTO ${identities} (phone,user_id,verified_at) VALUES (${phone},${user.id},${now})`;
+    });
+    return user;
+  }
+  return withAuthStoreLock("auth-store-write", async () => {
+    const existing = await findUserByPhone(phone);
+    if (existing) return existing;
+    const users = await readJson<User[]>(usersFile, []);
+    users.push({ id: user.id, email: user.email, passwordHash: user.passwordHash, createdAt: user.createdAt });
+    await writeJson(usersFile, users);
+    const identitiesFile = path.join(usersDir, "phone-identities.json");
+    const identities = await readJson<Record<string, string>>(identitiesFile, {});
+    identities[phone] = user.id;
+    await writeJson(identitiesFile, identities);
+    return user;
+  });
+}
+
+const authStoreLocks = new Map<string, Promise<unknown>>();
+async function withAuthStoreLock<T>(key: string, action: () => Promise<T>): Promise<T> {
+  const previous = authStoreLocks.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const current = previous.then(() => gate);
+  authStoreLocks.set(key, current);
+  await previous;
+  try { return await action(); }
+  finally { release(); if (authStoreLocks.get(key) === current) authStoreLocks.delete(key); }
+}
+
+
+export class PhoneAlreadyLinkedError extends Error {
+  constructor() { super("Phone number is already linked to another account"); this.name = "PhoneAlreadyLinkedError"; }
+}
+
+export async function linkPhoneToUser(phone: string, userId: string): Promise<void> {
+  if (isYdbEnabled()) {
+    const sql = ydbQuery();
+    const identities = sql.identifier(getTable("phone_identities"));
+    try {
+      await sql.transaction({ idempotent: true }, async tx => {
+        const [phoneRows] = await tx<Array<{ user_id: string }>>`
+          SELECT user_id FROM ${identities} WHERE phone = ${phone} LIMIT 1
+        `;
+        if (phoneRows[0] && phoneRows[0].user_id !== userId) throw new PhoneAlreadyLinkedError();
+        const [userRows] = await tx<Array<{ phone: string }>>`
+          SELECT phone FROM ${identities} WHERE user_id = ${userId} LIMIT 1
+        `;
+        if (userRows[0] && userRows[0].phone !== phone) throw new PhoneAlreadyLinkedError();
+        if (!phoneRows[0]) await tx`INSERT INTO ${identities} (phone,user_id,verified_at) VALUES (${phone},${userId},${new Date().toISOString()})`;
+      });
+    } catch (error) {
+      if (error instanceof PhoneAlreadyLinkedError) throw error;
+      const [phoneRows] = await sql<Array<{ user_id: string }>>`
+        SELECT user_id FROM ${identities} WHERE phone = ${phone} LIMIT 1
+      `;
+      const [userRows] = await sql<Array<{ phone: string }>>`
+        SELECT phone FROM ${identities} WHERE user_id = ${userId} LIMIT 1
+      `;
+      if ((phoneRows[0] && phoneRows[0].user_id !== userId) || (userRows[0] && userRows[0].phone !== phone)) {
+        throw new PhoneAlreadyLinkedError();
+      }
+      throw error;
+    }
+    return;
+  }
+  await withAuthStoreLock("auth-store-write", async () => {
+    const identitiesFile = path.join(usersDir, "phone-identities.json");
+    const identities = await readJson<Record<string, string>>(identitiesFile, {});
+    if (identities[phone] && identities[phone] !== userId) throw new PhoneAlreadyLinkedError();
+    const existingPhone = Object.entries(identities).find(([, id]) => id === userId)?.[0];
+    if (existingPhone && existingPhone !== phone) throw new PhoneAlreadyLinkedError();
+    identities[phone] = userId;
+    await writeJson(identitiesFile, identities);
+  });
 }
