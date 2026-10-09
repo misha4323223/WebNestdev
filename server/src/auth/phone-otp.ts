@@ -43,75 +43,75 @@ function secret(): string {
 function hashCode(phone: string, code: string) {
   return createHmac("sha256", secret()).update(phone + ":" + code).digest("hex");
 }
-function allowLocal(key: string, limit: number, windowMs: number): boolean {
+type RateLimitSpec = { key: string; limit: number };
+
+async function consumeRateLimits(specs: RateLimitSpec[], windowMs: number): Promise<boolean> {
   const now = Date.now();
-  const item = buckets.get(key);
-  if (!item || item.resetAt <= now) {
-    if (buckets.size > 20_000) {
-      for (const [bucketKey, bucket] of buckets) if (bucket.resetAt <= now) buckets.delete(bucketKey);
+  if (!isYdbEnabled()) {
+    // Check every bucket before changing any of them, so a rejected request
+    // does not partially consume the caller's remaining allowance.
+    for (const spec of specs) {
+      const item = buckets.get(spec.key);
+      if (item && item.resetAt > now && item.count >= spec.limit) return false;
     }
-    buckets.set(key, { count: 1, resetAt: now + windowMs });
+    for (const spec of specs) {
+      const item = buckets.get(spec.key);
+      if (!item || item.resetAt <= now) buckets.set(spec.key, { count: 1, resetAt: now + windowMs });
+      else item.count++;
+    }
+    if (buckets.size > 20_000) {
+      for (const [key, item] of buckets) if (item.resetAt <= now) buckets.delete(key);
+    }
     return true;
   }
-  if (item.count >= limit) return false;
-  item.count++;
-  return true;
-}
-async function rateLimitAvailable(key: string, limit: number): Promise<boolean> {
-  if (!isYdbEnabled()) {
-    const item = buckets.get(key);
-    return !item || item.resetAt <= Date.now() || item.count < limit;
-  }
-  const bucketKey = createHmac("sha256", secret()).update(key).digest("hex");
-  const [rows] = await ydbQuery()<Array<{ request_count: number; reset_at: string }>>`
-    SELECT request_count,reset_at FROM ${ydbQuery().identifier(getTable("phone_otp_limits"))}
-    WHERE bucket_key = ${bucketKey} LIMIT 1
-  `;
-  const row = rows?.[0];
-  return !row || Date.parse(row.reset_at) <= Date.now() || Number(row.request_count) < limit;
-}
 
-async function consumeRateLimit(key: string, limit: number, windowMs: number): Promise<boolean> {
-  if (!isYdbEnabled()) return allowLocal(key, limit, windowMs);
+  // Read and increment all buckets in one YDB transaction, so concurrent
+  // API instances cannot pass separate pre-checks and exceed the limits.
   const sql = ydbQuery();
   const table = sql.identifier(getTable("phone_otp_limits"));
-  const bucketKey = createHmac("sha256", secret()).update(key).digest("hex");
+  const states: Array<{ bucketKey: string; count: number; resetAt: string }> = [];
   return sql.transaction({ idempotent: true }, async tx => {
-    const [rows] = await tx<Array<{ request_count: number; reset_at: string }>>`
-      SELECT request_count,reset_at FROM ${table} WHERE bucket_key = ${bucketKey} LIMIT 1
-    `;
-    const now = Date.now();
-    const row = rows?.[0];
-    const currentCount = row && Date.parse(row.reset_at) > now ? Number(row.request_count) : 0;
-    const resetAt = row && Date.parse(row.reset_at) > now ? row.reset_at : new Date(now + windowMs).toISOString();
-    if (currentCount >= limit) return false;
-    await tx`
-      UPSERT INTO ${table} (bucket_key,request_count,reset_at)
-      VALUES (${bucketKey},${currentCount + 1},${resetAt})
-    `;
+    for (const spec of specs) {
+      const bucketKey = createHmac("sha256", secret()).update(spec.key).digest("hex");
+      const [rows] = await tx<Array<{ request_count: number; reset_at: string }>>`
+        SELECT request_count,reset_at FROM ${table}
+        WHERE bucket_key = ${bucketKey} LIMIT 1
+      `;
+      const row = rows?.[0];
+      const active = Boolean(row && Date.parse(row.reset_at) > now);
+      const count = active ? Number(row!.request_count) : 0;
+      if (count >= spec.limit) return false;
+      states.push({
+        bucketKey,
+        count: count + 1,
+        resetAt: active ? row!.reset_at : new Date(now + windowMs).toISOString(),
+      });
+    }
+    for (const state of states) {
+      await tx`
+        UPSERT INTO ${table} (bucket_key,request_count,reset_at)
+        VALUES (${state.bucketKey},${state.count},${state.resetAt})
+      `;
+    }
     return true;
   });
 }
+
 export async function allowPhoneOtpRequest(phone: string, ip: string): Promise<boolean> {
   const configuredGlobalLimit = Number(process.env.WEBNESTDEV_SMS_MAX_PER_HOUR ?? 100);
   const globalLimit = Number.isInteger(configuredGlobalLimit) && configuredGlobalLimit > 0 ? configuredGlobalLimit : 100;
-  const windowMs = 60 * 60_000;
-  if (!await rateLimitAvailable("global-sms", globalLimit)) return false;
-  if (!await rateLimitAvailable("phone:" + phone, 3)) return false;
-  if (!await rateLimitAvailable("ip:" + ip, 10)) return false;
-  const ipAllowed = await consumeRateLimit("ip:" + ip, 10, windowMs);
-  if (!ipAllowed) return false;
-  const phoneAllowed = await consumeRateLimit("phone:" + phone, 3, windowMs);
-  if (!phoneAllowed) return false;
-  return consumeRateLimit("global-sms", globalLimit, windowMs);
+  return consumeRateLimits([
+    { key: "global-sms", limit: globalLimit },
+    { key: "phone:" + phone, limit: 3 },
+    { key: "ip:" + ip, limit: 10 },
+  ], 60 * 60_000);
 }
+
 export async function allowPhoneOtpVerify(phone: string, ip: string): Promise<boolean> {
-  const windowMs = 15 * 60_000;
-  if (!await rateLimitAvailable("verify-phone:" + phone, 10)) return false;
-  if (!await rateLimitAvailable("verify-ip:" + ip, 30)) return false;
-  const ipAllowed = await consumeRateLimit("verify-ip:" + ip, 30, windowMs);
-  if (!ipAllowed) return false;
-  return consumeRateLimit("verify-phone:" + phone, 10, windowMs);
+  return consumeRateLimits([
+    { key: "verify-phone:" + phone, limit: 10 },
+    { key: "verify-ip:" + ip, limit: 30 },
+  ], 15 * 60_000);
 }
 
 export async function recordPhoneConsent(phone: string, ip: string, purpose: "sign_in" | "link_account"): Promise<void> {
@@ -177,6 +177,28 @@ async function removeChallenge(phone: string) {
   delete all[phone];
   await writeLocal(all);
 }
+
+async function removeChallengeIfMatches(phone: string, expectedHash: string) {
+  if (isYdbEnabled()) {
+    const sql = ydbQuery();
+    const table = sql.identifier(getTable("phone_otp_challenges"));
+    await sql.transaction({ idempotent: true }, async tx => {
+      const [rows] = await tx<Array<{ code_hash: string }>>`
+        SELECT code_hash FROM ${table} WHERE phone = ${phone} LIMIT 1
+      `;
+      if (rows?.[0]?.code_hash === expectedHash) {
+        await tx`DELETE FROM ${table} WHERE phone = ${phone}`;
+      }
+    });
+    return;
+  }
+  const all = await readLocal();
+  if (all[phone]?.codeHash === expectedHash) {
+    delete all[phone];
+    await writeLocal(all);
+  }
+}
+
 
 async function deliverSms(phone: string, code: string, ip: string): Promise<void> {
   const mode = process.env.WEBNESTDEV_SMS_MODE ?? (process.env.NODE_ENV === "production" ? "smsru" : "disabled");
@@ -261,7 +283,7 @@ export async function requestPhoneOtp(phone: string, ip: string): Promise<{ rese
     };
     await reserveChallenge(challenge);
     try { await deliverSms(phone, code, ip); }
-    catch (error) { await removeChallenge(phone); throw error; }
+    catch (error) { await removeChallengeIfMatches(phone, challenge.codeHash); throw error; }
     return { resendAfter: challenge.resendAfter };
   });
 }
