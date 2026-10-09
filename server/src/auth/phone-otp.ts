@@ -57,61 +57,65 @@ function allowLocal(key: string, limit: number, windowMs: number): boolean {
   item.count++;
   return true;
 }
-async function rateLimitAvailable(key: string, limit: number): Promise<boolean> {
-  if (!isYdbEnabled()) {
-    const item = buckets.get(key);
-    return !item || item.resetAt <= Date.now() || item.count < limit;
-  }
-  const bucketKey = createHmac("sha256", secret()).update(key).digest("hex");
-  const [rows] = await ydbQuery()<Array<{ request_count: number; reset_at: string }>>`
-    SELECT request_count,reset_at FROM ${ydbQuery().identifier(getTable("phone_otp_limits"))}
-    WHERE bucket_key = ${bucketKey} LIMIT 1
-  `;
-  const row = rows?.[0];
-  return !row || Date.parse(row.reset_at) <= Date.now() || Number(row.request_count) < limit;
-}
+type RateLimitRule = { key: string; limit: number };
 
-async function consumeRateLimit(key: string, limit: number, windowMs: number): Promise<boolean> {
-  if (!isYdbEnabled()) return allowLocal(key, limit, windowMs);
+async function consumeRateLimitSet(rules: RateLimitRule[], windowMs: number): Promise<boolean> {
+  if (!isYdbEnabled()) {
+    const now = Date.now();
+    for (const rule of rules) {
+      const item = buckets.get(rule.key);
+      if (item && item.resetAt > now && item.count >= rule.limit) return false;
+    }
+    for (const rule of rules) allowLocal(rule.key, rule.limit, windowMs);
+    return true;
+  }
+
   const sql = ydbQuery();
   const table = sql.identifier(getTable("phone_otp_limits"));
-  const bucketKey = createHmac("sha256", secret()).update(key).digest("hex");
   return sql.transaction({ idempotent: true }, async tx => {
-    const [rows] = await tx<Array<{ request_count: number; reset_at: string }>>`
-      SELECT request_count,reset_at FROM ${table} WHERE bucket_key = ${bucketKey} LIMIT 1
-    `;
     const now = Date.now();
-    const row = rows?.[0];
-    const currentCount = row && Date.parse(row.reset_at) > now ? Number(row.request_count) : 0;
-    const resetAt = row && Date.parse(row.reset_at) > now ? row.reset_at : new Date(now + windowMs).toISOString();
-    if (currentCount >= limit) return false;
-    await tx`
-      UPSERT INTO ${table} (bucket_key,request_count,reset_at)
-      VALUES (${bucketKey},${currentCount + 1},${resetAt})
-    `;
+    const pending: Array<{ bucketKey: string; count: number; resetAt: string }> = [];
+    for (const rule of rules) {
+      const bucketKey = createHmac("sha256", secret()).update(rule.key).digest("hex");
+      const [rows] = await tx<Array<{ request_count: number; reset_at: string }>>`
+        SELECT request_count,reset_at FROM ${table}
+        WHERE bucket_key = ${bucketKey} LIMIT 1
+      `;
+      const row = rows?.[0];
+      const active = Boolean(row && Date.parse(row.reset_at) > now);
+      const currentCount = active ? Number(row!.request_count) : 0;
+      if (currentCount >= rule.limit) return false;
+      pending.push({
+        bucketKey,
+        count: currentCount + 1,
+        resetAt: active ? row!.reset_at : new Date(now + windowMs).toISOString(),
+      });
+    }
+    for (const item of pending) {
+      await tx`
+        UPSERT INTO ${table} (bucket_key,request_count,reset_at)
+        VALUES (${item.bucketKey},${item.count},${item.resetAt})
+      `;
+    }
     return true;
   });
 }
+
 export async function allowPhoneOtpRequest(phone: string, ip: string): Promise<boolean> {
   const configuredGlobalLimit = Number(process.env.WEBNESTDEV_SMS_MAX_PER_HOUR ?? 100);
   const globalLimit = Number.isInteger(configuredGlobalLimit) && configuredGlobalLimit > 0 ? configuredGlobalLimit : 100;
-  const windowMs = 60 * 60_000;
-  if (!await rateLimitAvailable("global-sms", globalLimit)) return false;
-  if (!await rateLimitAvailable("phone:" + phone, 3)) return false;
-  if (!await rateLimitAvailable("ip:" + ip, 10)) return false;
-  const ipAllowed = await consumeRateLimit("ip:" + ip, 10, windowMs);
-  if (!ipAllowed) return false;
-  const phoneAllowed = await consumeRateLimit("phone:" + phone, 3, windowMs);
-  if (!phoneAllowed) return false;
-  return consumeRateLimit("global-sms", globalLimit, windowMs);
+  return consumeRateLimitSet([
+    { key: "global-sms", limit: globalLimit },
+    { key: "phone:" + phone, limit: 3 },
+    { key: "ip:" + ip, limit: 10 },
+  ], 60 * 60_000);
 }
+
 export async function allowPhoneOtpVerify(phone: string, ip: string): Promise<boolean> {
-  const windowMs = 15 * 60_000;
-  if (!await rateLimitAvailable("verify-phone:" + phone, 10)) return false;
-  if (!await rateLimitAvailable("verify-ip:" + ip, 30)) return false;
-  const ipAllowed = await consumeRateLimit("verify-ip:" + ip, 30, windowMs);
-  if (!ipAllowed) return false;
-  return consumeRateLimit("verify-phone:" + phone, 10, windowMs);
+  return consumeRateLimitSet([
+    { key: "verify-phone:" + phone, limit: 10 },
+    { key: "verify-ip:" + ip, limit: 30 },
+  ], 15 * 60_000);
 }
 
 export async function recordPhoneConsent(phone: string, ip: string, purpose: "sign_in" | "link_account"): Promise<void> {
@@ -176,6 +180,35 @@ async function removeChallenge(phone: string) {
   const all = await readLocal();
   delete all[phone];
   await writeLocal(all);
+}
+
+async function reserveChallenge(challenge: Challenge): Promise<void> {
+  if (isYdbEnabled()) {
+    const sql = ydbQuery();
+    const table = sql.identifier(getTable("phone_otp_challenges"));
+    await sql.transaction({ idempotent: true }, async tx => {
+      const [rows] = await tx<Array<{ resend_after: string }>>`
+        SELECT resend_after FROM ${table} WHERE phone = ${challenge.phone} LIMIT 1
+      `;
+      if (rows?.[0] && Date.parse(rows[0].resend_after) > Date.now()) {
+        const error = new Error("Повторно запросить код можно через минуту.");
+        Object.assign(error, { statusCode: 429 });
+        throw error;
+      }
+      await tx`
+        UPSERT INTO ${table} (phone,code_hash,expires_at,resend_after,attempts,created_at)
+        VALUES (${challenge.phone},${challenge.codeHash},${challenge.expiresAt},${challenge.resendAfter},${challenge.attempts},${challenge.createdAt})
+      `;
+    });
+    return;
+  }
+  const existing = await getChallenge(challenge.phone);
+  if (existing && Date.parse(existing.resendAfter) > Date.now()) {
+    const error = new Error("Повторно запросить код можно через минуту.");
+    Object.assign(error, { statusCode: 429 });
+    throw error;
+  }
+  await saveChallenge(challenge);
 }
 
 async function deliverSms(phone: string, code: string, ip: string): Promise<void> {
@@ -248,7 +281,7 @@ async function reserveChallenge(challenge: Challenge): Promise<void> {
 }
 
 export async function requestPhoneOtp(phone: string, ip: string): Promise<{ resendAfter: string }> {
-  return withChallengeLock(phone, async () => {
+  const action = async () => {
     const code = String(randomInt(0, 1_000_000)).padStart(6, "0");
     const now = new Date();
     const challenge: Challenge = {
@@ -263,8 +296,10 @@ export async function requestPhoneOtp(phone: string, ip: string): Promise<{ rese
     try { await deliverSms(phone, code, ip); }
     catch (error) { await removeChallenge(phone); throw error; }
     return { resendAfter: challenge.resendAfter };
-  });
+  };
+  return isYdbEnabled() ? action() : withChallengeLock(phone, action);
 }
+
 const challengeLocks = new Map<string, Promise<unknown>>();
 async function withChallengeLock<T>(phone: string, action: () => Promise<T>): Promise<T> {
   const previous = challengeLocks.get(phone) ?? Promise.resolve();
