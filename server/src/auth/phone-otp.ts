@@ -182,35 +182,6 @@ async function removeChallenge(phone: string) {
   await writeLocal(all);
 }
 
-async function reserveChallenge(challenge: Challenge): Promise<void> {
-  if (isYdbEnabled()) {
-    const sql = ydbQuery();
-    const table = sql.identifier(getTable("phone_otp_challenges"));
-    await sql.transaction({ idempotent: true }, async tx => {
-      const [rows] = await tx<Array<{ resend_after: string }>>`
-        SELECT resend_after FROM ${table} WHERE phone = ${challenge.phone} LIMIT 1
-      `;
-      if (rows?.[0] && Date.parse(rows[0].resend_after) > Date.now()) {
-        const error = new Error("Повторно запросить код можно через минуту.");
-        Object.assign(error, { statusCode: 429 });
-        throw error;
-      }
-      await tx`
-        UPSERT INTO ${table} (phone,code_hash,expires_at,resend_after,attempts,created_at)
-        VALUES (${challenge.phone},${challenge.codeHash},${challenge.expiresAt},${challenge.resendAfter},${challenge.attempts},${challenge.createdAt})
-      `;
-    });
-    return;
-  }
-  const existing = await getChallenge(challenge.phone);
-  if (existing && Date.parse(existing.resendAfter) > Date.now()) {
-    const error = new Error("Повторно запросить код можно через минуту.");
-    Object.assign(error, { statusCode: 429 });
-    throw error;
-  }
-  await saveChallenge(challenge);
-}
-
 async function deliverSms(phone: string, code: string, ip: string): Promise<void> {
   const mode = process.env.WEBNESTDEV_SMS_MODE ?? (process.env.NODE_ENV === "production" ? "smsru" : "disabled");
   if (mode === "console" && process.env.NODE_ENV !== "production") {
