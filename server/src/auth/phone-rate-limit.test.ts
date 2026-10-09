@@ -1,30 +1,29 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 
-test("OTP rate limits do not partially consume buckets when one limit is exhausted", async () => {
+test("concurrent OTP requests do not partially consume rate-limit buckets", async () => {
   const previousStorage = process.env.WEBNESTDEV_STORAGE;
   process.env.WEBNESTDEV_STORAGE = "json";
   try {
     const { allowPhoneOtpRequest } = await import("./phone-otp.js");
-    const exhaustedIp = "rate-limit-test-ip-exhausted";
+    const sharedPhone = "phone-concurrent-rate-limit-test";
+    const ips = Array.from({ length: 12 }, (_, index) => "parallel-rate-limit-ip-" + index);
+    const results = await Promise.all(ips.map(ip => allowPhoneOtpRequest(sharedPhone, ip)));
+
+    assert.equal(results.filter(Boolean).length, 3, "only three requests per phone should pass");
+    const rejectedIp = ips[results.findIndex(result => !result)];
+    assert.ok(rejectedIp, "at least one concurrent request should be rate-limited");
+
+    // A request rejected by the phone bucket must not consume its IP bucket.
+    // That IP should still have its full allowance for unrelated phone numbers.
     for (let index = 0; index < 10; index++) {
       assert.equal(
-        await allowPhoneOtpRequest("phone-" + index, exhaustedIp),
+        await allowPhoneOtpRequest("unrelated-phone-" + index, rejectedIp),
         true,
-        "the first ten requests from an IP should be allowed",
+        "a rejected request must not partially consume the IP bucket",
       );
     }
-    assert.equal(await allowPhoneOtpRequest("phone-ip-blocked", exhaustedIp), false);
-
-    const otherIp = "rate-limit-test-ip-other";
-    assert.equal(
-      await allowPhoneOtpRequest("phone-ip-blocked", otherIp),
-      true,
-      "a rejected request must not consume the phone bucket",
-    );
-    assert.equal(await allowPhoneOtpRequest("phone-ip-blocked", otherIp), true);
-    assert.equal(await allowPhoneOtpRequest("phone-ip-blocked", otherIp), true);
-    assert.equal(await allowPhoneOtpRequest("phone-ip-blocked", otherIp), false);
+    assert.equal(await allowPhoneOtpRequest("unrelated-phone-final", rejectedIp), false);
   } finally {
     if (previousStorage === undefined) delete process.env.WEBNESTDEV_STORAGE;
     else process.env.WEBNESTDEV_STORAGE = previousStorage;
