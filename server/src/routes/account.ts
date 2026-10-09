@@ -1,13 +1,11 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireUser } from "../auth/auth.js";
-import { getSubscription, getUserPreferences, saveSubscription, saveUserPreferences, type PlanId, type Subscription, type UserPreferences } from "../account/account-store.js";
+import { getSubscription, getUserPreferences, saveSubscription, saveUserPreferences, type Subscription, type UserPreferences } from "../account/account-store.js";
+import { PLAN_CATALOG, limitsForPlan, type PlanId } from "../account/plans.js";
+import { getUsageSnapshot } from "../account/usage-store.js";
 
-export const PLAN_CATALOG = {
-  free: { id: "free", name: "Free", priceLabel: "$0", description: "Чтобы познакомиться с WebNestdev", limits: { projects: 3, agentRunsPerDay: 10, browserChecksPerDay: 5 }, features: ["3 проекта", "10 запусков агента в день", "5 браузерных проверок в день"] },
-  pro: { id: "pro", name: "Pro", priceLabel: "Демо", description: "Для регулярной разработки", limits: { projects: 15, agentRunsPerDay: 100, browserChecksPerDay: 50 }, features: ["15 проектов", "100 запусков агента в день", "50 браузерных проверок в день", "Приоритетные возможности (демо)"] },
-  team: { id: "team", name: "Team", priceLabel: "Демо", description: "Для небольшой команды", limits: { projects: 50, agentRunsPerDay: 500, browserChecksPerDay: 250 }, features: ["50 проектов", "500 запусков агента в день", "250 браузерных проверок в день", "Командные возможности (демо)"] },
-} as const;
+export { PLAN_CATALOG } from "../account/plans.js";
 const preferencesSchema = z.object({
   language: z.enum(["ru", "en"]),
   compactMode: z.boolean(),
@@ -36,12 +34,13 @@ export async function registerAccountRoutes(app: FastifyInstance) {
   app.get("/api/billing", async (request, reply) => {
     const user = await requireUser(request, reply); if (!user) return;
     const subscription = await getSubscription(user.id);
-    if (subscription.status === "demo_active" && currentPlan(subscription) === "free") {
-      const expired = { ...subscription, plan: "free" as const, status: "demo_expired" as const, updatedAt: new Date().toISOString() };
-      await saveSubscription(expired);
-      return { mode: "demo", subscription: publicSubscription(expired), plans: Object.values(PLAN_CATALOG) };
+    const plan = currentPlan(subscription);
+    let normalized = subscription;
+    if (subscription.status === "demo_active" && plan === "free") {
+      normalized = { ...subscription, plan: "free", status: "demo_expired", updatedAt: new Date().toISOString() };
+      await saveSubscription(normalized);
     }
-    return { mode: "demo", subscription: publicSubscription(subscription), plans: Object.values(PLAN_CATALOG) };
+    return { mode: "demo", subscription: publicSubscription(normalized), plans: Object.values(PLAN_CATALOG), limits: limitsForPlan(currentPlan(normalized)), usage: await getUsageSnapshot(user.id) };
   });
   app.post("/api/billing/demo/activate", async (request, reply) => {
     const user = await requireUser(request, reply); if (!user) return;

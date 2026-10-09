@@ -4,7 +4,9 @@ import { requireUser } from "../auth/auth.js";
 import { getGitHubConnection, saveGitHubConnection } from "../github/github-connection-store.js";
 import { createOAuthState, consumeOAuthState } from "../github/github-oauth-state.js";
 import { getGitHubUser, listGitHubRepositories, getGitHubRepository, getGitHubTree, getGitHubBlob } from "../github/github-api.js";
-import { createConversation, createProject } from "../project-store.js";
+import { createConversation, createProjectWithinLimit, ProjectLimitError } from "../project-store.js";
+import { getSubscription } from "../account/account-store.js";
+import { limitsForPlan, type PlanId } from "../account/plans.js";
 import { getSandbox } from "../sandbox-manager.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -70,13 +72,26 @@ export async function registerGitHubRoutes(app: FastifyInstance) {
     const user=await requireUser(request,reply); if(!user)return;
     const body = z.object({ owner: z.string().min(1).max(100), repo: z.string().min(1).max(100) }).parse(request.body);
     const repository = await getGitHubRepository(user.id, body.owner, body.repo);
-    const project = await createProject(repository.name, {
-      owner: repository.owner.login,
-      name: repository.name,
-      fullName: repository.full_name,
-      defaultBranch: repository.default_branch,
-      url: repository.html_url,
-    }, user.id);
+    const subscription = await getSubscription(user.id);
+    const plan: PlanId = subscription.status === "demo_active" && subscription.expiresAt && Date.parse(subscription.expiresAt) > Date.now()
+      ? subscription.plan
+      : "free";
+    const limit = limitsForPlan(plan).projects;
+    let project;
+    try {
+      project = await createProjectWithinLimit(repository.name, {
+        owner: repository.owner.login,
+        name: repository.name,
+        fullName: repository.full_name,
+        defaultBranch: repository.default_branch,
+        url: repository.html_url,
+      }, user.id, limit);
+    } catch (error) {
+      if (error instanceof ProjectLimitError) {
+        return reply.code(403).send({ error: error.message, code: "PROJECT_LIMIT_REACHED", limit: error.limit, used: error.used, plan });
+      }
+      throw error;
+    }
     const sandbox = await getSandbox(project.id,user.id);
     const tree = await getGitHubTree(user.id, repository.owner.login, repository.name, repository.default_branch);
     const files = tree.tree.filter((entry: { type: string; path: string }) => entry.type === "blob" && entry.path);

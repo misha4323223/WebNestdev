@@ -46,7 +46,7 @@ registerTool({
     const value = input as { paths?: string[] };
     if (!value.paths?.length) throw new Error("paths is required");
 
-    const sandbox = await getSandbox(context.projectId);
+    const sandbox = await getSandbox(context.projectId, context.userId);
     const safe = value.paths.map((projectPath) =>
       assertInsideSandbox(
         sandbox.root,
@@ -69,7 +69,7 @@ registerTool({
     const message = value.message?.trim();
     if (!message) throw new Error("message is required");
 
-    const sandbox = await getSandbox(context.projectId);
+    const sandbox = await getSandbox(context.projectId, context.userId);
     const quoted = message.replaceAll("'", "'\\''");
     return runInSandbox(
       sandbox,

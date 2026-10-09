@@ -4,6 +4,7 @@ import { z } from "zod";
 import { AgentRuntime } from "../agent-runtime.js";
 import { getCurrentUser } from "../auth/auth.js";
 import { getProject,getConversation,appendConversationMessages } from "../project-store.js";
+import { consumeUsageForCurrentPlan } from "../account/usage-store.js";
 
 const messageSchema=z.discriminatedUnion("role",[
   z.object({role:z.literal("user"),content:z.string().max(100000)}),
@@ -47,9 +48,15 @@ export async function registerAgentWebSocket(app:FastifyInstance,runtime=new Age
           const last=parsed.messages.at(-1),storedLast=conversation.messages.at(-1);
           if(last?.role==="user"&&!(storedLast?.role==="user"&&storedLast.content===last.content))await appendConversationMessages(parsed.conversationId,[last]);
         }
+        const usage = await consumeUsageForCurrentPlan(user.id,"agentRuns");
+        safeSend({type:"usage.updated",usage});
         controller=new AbortController();
         await runtime.run({...parsed,userId:user.id},event=>safeSend(event),controller.signal);
-      }catch(error){safeSend({type:"error",error:error instanceof Error?error.message:String(error)});}
+      }catch(error){
+        const message = error instanceof Error ? error.message : String(error);
+        const quota = error && typeof error === "object" && "statusCode" in error && (error as {statusCode?:unknown}).statusCode === 429;
+        safeSend({type:"error",error:message,...(quota?{code:"DAILY_QUOTA_EXCEEDED"}:{})});
+      }
       finally{running=false;}
     });
   });

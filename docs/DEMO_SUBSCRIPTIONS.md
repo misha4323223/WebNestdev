@@ -1,36 +1,26 @@
-# Demo subscriptions
+# Demo subscriptions and quota enforcement
 
-WebNestdev currently runs subscriptions in **demo-only mode**. This is not a payment integration.
+Billing remains demo-only: there is no payment provider, card collection, charge, invoice, or webhook integration.
 
 ## Demo plans
+- Free: 3 projects, 10 agent runs/day, 5 browser checks/day.
+- Pro demo: 15 projects, 100 agent runs/day, 50 browser checks/day.
+- Team demo: 50 projects, 500 agent runs/day, 250 browser checks/day.
 
-| Plan | Demo project limit | Agent runs/day | Browser checks/day |
-| --- | ---: | ---: | ---: |
-| Free | 3 | 10 | 5 |
-| Pro | 15 | 100 | 50 |
-| Team | 50 | 500 | 250 |
+## Enforcement and usage
+- Project creation checks the authenticated user's current plan and project count.
+- Agent runs consume one daily unit at the authenticated WebSocket run boundary.
+- `browser.runtime` and `browser.scenario` consume one daily browser-check unit each, including checks invoked automatically after agent changes.
+- `GET /api/billing` returns the current plan limits and UTC-day usage counters. The settings screen shows usage.
+- Usage is stored as append-only daily events plus per-user/day/kind counters in YDB. Counter updates and usage-event inserts are committed in one serializable read-write transaction; retryable transaction conflicts are retried by the YDB query SDK.
+- YDB project creation reserves a per-user project counter and inserts the project in one serializable transaction. Existing projects are counted when the per-user counter is first initialized.
+- JSON mode serializes quota writes and project creation only within one server process. Do not use JSON storage on multiple replicas or shared deployments; use YDB for multi-instance operation.
+- The code and CI builds are covered by unit tests, but a live YDB integration/load test still needs to run against an actual configured YDB database before calling multi-replica quota enforcement production-verified.
 
-The current catalog exposes these values for product/UI development. End-to-end enforcement of agent and browser quotas is a separate implementation stage and must be completed before presenting the limits as production guarantees.
+## API
+- `GET /api/account/settings`, `PUT /api/account/settings`
+- `GET /api/billing`
+- `POST /api/billing/demo/activate` with `{ "plan": "pro" | "team" }`
+- `POST /api/billing/demo/cancel`
 
-## Available API
-
-All endpoints require an authenticated WebNestdev session:
-
-- `GET /api/account/settings` — account profile and preferences.
-- `PUT /api/account/settings` — persist preferences.
-- `GET /api/billing` — current demo subscription and plan catalog.
-- `POST /api/billing/demo/activate` with `{"plan":"pro"}` or `{"plan":"team"}` — activate a 30-day demo subscription.
-- `POST /api/billing/demo/cancel` — cancel demo access and return to Free.
-
-There are deliberately no checkout, payment-method, charge, invoice, or webhook routes. Activation changes only the subscription record. No card details are requested and no money is charged.
-
-## Storage
-
-Account preferences and subscription state are stored per user, using the configured JSON store in local development and YDB when `WEBNESTDEV_STORAGE=ydb`. Demo activation is not proof of payment and must never be treated as one by future payment code.
-
-## Before enabling real payments
-
-1. Enforce every plan quota server-side at project creation and agent/browser execution boundaries.
-2. Add idempotent payment-provider webhook handling and reconcile subscription state only from verified provider events.
-3. Add audit events, cancellation/refund handling, billing support flows, and tests for expiry, replayed webhooks, and cross-user isolation.
-4. Keep demo mode as a separate configuration and test environment.
+All account/billing endpoints require authentication. Limits are checked on the server; client UI values are informational only. Payment integration is explicitly out of scope until quota enforcement and storage semantics are production-safe.
