@@ -115,7 +115,7 @@ export async function registerAuthRoutes(app:FastifyInstance){
     const body = verifyPhoneBody.parse(request.body);
     const phone = phoneOrNull(body.phone);
     if (!phone) return reply.code(400).send({error:"Введите российский номер в формате +7 900 123-45-67."});
-    if (!allowPhoneOtpVerify(phone, request.ip)) {
+    if (!await allowPhoneOtpVerify(phone, request.ip)) {
       reply.header("Retry-After", "900");
       return reply.code(429).send({error:"Слишком много попыток проверки кода. Попробуйте позже."});
     }
