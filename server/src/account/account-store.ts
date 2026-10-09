@@ -1,5 +1,5 @@
 import { mkdir, readFile, writeFile, rename, unlink } from "node:fs/promises";
-import { randomUUID } from "node:crypto";
+import { createHmac, randomUUID } from "node:crypto";
 import path from "node:path";
 import { isYdbEnabled, ydbQuery, getTable } from "../storage/ydb.js";
 
@@ -20,6 +20,13 @@ export type Subscription = {
 };
 const root = process.env.WEBNESTDEV_DATA_DIR ?? path.resolve(".webnestdev");
 const defaults: UserPreferences = { language: "ru", compactMode: false, emailNotifications: true, productUpdates: false };
+
+function phoneDemoClaimKey(phone: string): string {
+  const key = process.env.WEBNESTDEV_TRIAL_CLAIM_SECRET ??
+    (process.env.NODE_ENV === "production" ? "" : "webnestdev-local-demo-claim-key-v1");
+  if (key.length < 32) throw new Error("WEBNESTDEV_TRIAL_CLAIM_SECRET (32+ chars) is required in production");
+  return createHmac("sha256", key).update(phone).digest("hex");
+}
 
 async function readJson<T>(file: string, fallback: T): Promise<T> {
   try { return JSON.parse(await readFile(file, "utf8")) as T; } catch (error) {
@@ -99,4 +106,104 @@ export async function saveSubscription(subscription: Subscription) {
   all[subscription.userId] = subscription;
   await writeJsonAtomic(file, all);
   return subscription;
+}
+
+export class DemoAlreadyClaimedError extends Error {
+  readonly statusCode = 409;
+  constructor() {
+    super("Demo access has already been claimed for this account");
+    this.name = "DemoAlreadyClaimedError";
+  }
+}
+
+const subscriptionLocks = new Map<string, Promise<unknown>>();
+async function withSubscriptionLock<T>(key: string, action: () => Promise<T>): Promise<T> {
+  const previous = subscriptionLocks.get(key) ?? Promise.resolve();
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const current = previous.then(() => gate);
+  subscriptionLocks.set(key, current);
+  await previous;
+  try { return await action(); }
+  finally { release(); if (subscriptionLocks.get(key) === current) subscriptionLocks.delete(key); }
+}
+
+export class PhoneVerificationRequiredError extends Error {
+  constructor() {
+    super("A verified phone number is required to claim a demo");
+    this.name = "PhoneVerificationRequiredError";
+  }
+}
+
+export async function activateDemoOnce(userId: string, plan: Exclude<PlanId, "free">, now = new Date()): Promise<Subscription> {
+  const subscription: Subscription = {
+    userId,
+    plan,
+    status: "demo_active",
+    startedAt: now.toISOString(),
+    expiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+    updatedAt: now.toISOString(),
+  };
+  if (isYdbEnabled()) {
+    const sql = ydbQuery();
+    const subscriptions = sql.identifier(getTable("subscriptions"));
+    const identities = sql.identifier(getTable("phone_identities"));
+    const claims = sql.identifier(getTable("demo_claims"));
+    let attemptedClaimKey: string | null = null;
+    try {
+      await sql.transaction({ idempotent: true }, async tx => {
+        const [identityRows] = await tx<Array<{ phone: string }>>`
+          SELECT phone FROM ${identities} WHERE user_id = ${userId} LIMIT 1
+        `;
+        const phone = identityRows?.[0]?.phone;
+        if (!phone) throw new PhoneVerificationRequiredError();
+        const claimKey = phoneDemoClaimKey(phone);
+        attemptedClaimKey = claimKey;
+        const [claimRows] = await tx<Array<{ claim_key: string }>>`
+          SELECT claim_key FROM ${claims} WHERE claim_key = ${claimKey} LIMIT 1
+        `;
+        if (claimRows.length) throw new DemoAlreadyClaimedError();
+        const [subscriptionRows] = await tx<Array<{ status: string }>>`
+          SELECT status FROM ${subscriptions} WHERE user_id = ${userId} LIMIT 1
+        `;
+        if (subscriptionRows[0] && subscriptionRows[0].status !== "free") throw new DemoAlreadyClaimedError();
+        await tx`
+          INSERT INTO ${claims} (claim_key,user_id,claimed_at)
+          VALUES (${claimKey},${userId},${now.toISOString()})
+        `;
+        await tx`
+          UPSERT INTO ${subscriptions}
+            (user_id,plan,status,started_at,expires_at,updated_at)
+          VALUES (${subscription.userId},${subscription.plan},${subscription.status},${subscription.startedAt ?? ""},${subscription.expiresAt ?? ""},${subscription.updatedAt})
+        `;
+      });
+    } catch (error) {
+      if (error instanceof DemoAlreadyClaimedError || error instanceof PhoneVerificationRequiredError) throw error;
+      if (attemptedClaimKey) {
+        const [rows] = await sql<Array<{ claim_key: string }>>`
+          SELECT claim_key FROM ${claims} WHERE claim_key = ${attemptedClaimKey} LIMIT 1
+        `;
+        if (rows.length) throw new DemoAlreadyClaimedError();
+      }
+      throw error;
+    }
+    return subscription;
+  }
+  const identities = await readJson<Record<string, string>>(path.join(root, "auth", "phone-identities.json"), {});
+  const phone = Object.entries(identities).find(([, id]) => id === userId)?.[0];
+  if (!phone) throw new PhoneVerificationRequiredError();
+  const claimKey = phoneDemoClaimKey(phone);
+  return withSubscriptionLock("demo:" + claimKey, async () => {
+    const file = path.join(root, "account", "subscriptions.json");
+    const claimsFile = path.join(root, "account", "demo-claims.json");
+    const all = await readJson<Record<string, Subscription>>(file, {});
+    const demoClaims = await readJson<Record<string, { userId: string; claimedAt: string }>>(claimsFile, {});
+    const current = all[userId];
+    if (demoClaims[claimKey] || (current && current.status !== "free")) throw new DemoAlreadyClaimedError();
+    demoClaims[claimKey] = { userId, claimedAt: now.toISOString() };
+    await writeJsonAtomic(claimsFile, demoClaims);
+    all[userId] = subscription;
+    await writeJsonAtomic(file, all);
+    return subscription;
+  });
 }
