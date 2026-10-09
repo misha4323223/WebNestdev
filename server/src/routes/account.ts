@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireUser } from "../auth/auth.js";
-import { getSubscription, getUserPreferences, saveSubscription, saveUserPreferences, type Subscription, type UserPreferences } from "../account/account-store.js";
+import { activateDemoOnce, DemoAlreadyClaimedError, PhoneVerificationRequiredError, getSubscription, getUserPreferences, saveSubscription, saveUserPreferences, type Subscription, type UserPreferences } from "../account/account-store.js";
 import { PLAN_CATALOG, limitsForPlan, type PlanId } from "../account/plans.js";
 import { getUsageSnapshot } from "../account/usage-store.js";
 
@@ -14,6 +14,11 @@ const preferencesSchema = z.object({
 });
 const demoPlanSchema = z.object({ plan: z.enum(["pro", "team"]) });
 
+export function canActivateDemo(subscription: Subscription): boolean {
+  // A demo is a one-time entitlement. Expired or cancelled demos must not be reactivated.
+  return subscription.status === "free";
+}
+
 function currentPlan(subscription: Subscription): PlanId {
   return subscription.status === "demo_active" && subscription.expiresAt && Date.parse(subscription.expiresAt) > Date.now() ? subscription.plan : "free";
 }
@@ -24,7 +29,7 @@ function publicSubscription(subscription: Subscription) {
 export async function registerAccountRoutes(app: FastifyInstance) {
   app.get("/api/account/settings", async (request, reply) => {
     const user = await requireUser(request, reply); if (!user) return;
-    return { user: { id: user.id, email: user.email, createdAt: user.createdAt }, preferences: await getUserPreferences(user.id) };
+    return { user: { id: user.id, email: user.email.endsWith("@phone.webnestdev.invalid") ? "" : user.email, phone: user.phone ?? null, createdAt: user.createdAt }, preferences: await getUserPreferences(user.id) };
   });
   app.put("/api/account/settings", async (request, reply) => {
     const user = await requireUser(request, reply); if (!user) return;
@@ -45,10 +50,19 @@ export async function registerAccountRoutes(app: FastifyInstance) {
   app.post("/api/billing/demo/activate", async (request, reply) => {
     const user = await requireUser(request, reply); if (!user) return;
     const { plan } = demoPlanSchema.parse(request.body);
-    const now = new Date();
-    const subscription: Subscription = { userId: user.id, plan, status: "demo_active", startedAt: now.toISOString(), expiresAt: new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString(), updatedAt: now.toISOString() };
-    await saveSubscription(subscription);
-    return { mode: "demo", subscription: publicSubscription(subscription), message: "Демо-тариф активирован. Оплата не выполнялась." };
+    if (!user.phone) return reply.code(403).send({ error: "Для активации демо подтвердите номер телефона в настройках аккаунта." });
+    try {
+      const subscription = await activateDemoOnce(user.id, plan);
+      return { mode: "demo", subscription: publicSubscription(subscription), message: "Демо-тариф активирован. Оплата не выполнялась." };
+    } catch (error) {
+      if (error instanceof DemoAlreadyClaimedError) {
+        return reply.code(409).send({ error: "Демо-доступ можно активировать только один раз на подтверждённый номер телефона." });
+      }
+      if (error instanceof PhoneVerificationRequiredError) {
+        return reply.code(403).send({ error: "Для активации демо подтвердите номер телефона в настройках аккаунта." });
+      }
+      throw error;
+    }
   });
   app.post("/api/billing/demo/cancel", async (request, reply) => {
     const user = await requireUser(request, reply); if (!user) return;
