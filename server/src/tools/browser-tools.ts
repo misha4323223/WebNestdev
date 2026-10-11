@@ -25,7 +25,7 @@ async function fetchPreview(projectId: string, path: string) {
   }
 
   const current = getPreview(projectId);
-  if (!current) throw new Error("Preview state is unavailable");
+  if (!current) throw new Error("Состояние предпросмотра недоступно — предпросмотр не запущен");
   const url = `http://${current.host}:${current.port}${path}`;
 
   const controller = new AbortController();
@@ -123,7 +123,7 @@ async function inspectRuntimePage(projectId: string, path: string) {
     throw new Error(String((status as { error?: string }).error ?? "Preview is not running"));
   }
   const current = getPreview(projectId);
-  if (!current) throw new Error("Preview state is unavailable");
+  if (!current) throw new Error("Состояние предпросмотра недоступно — предпросмотр не запущен");
 
   const url = `http://${current.host}:${current.port}${path}`;
   const browser = await chromium.launch({ headless: true, executablePath: process.env.WEBNESTDEV_BROWSER_EXECUTABLE || undefined });
@@ -208,12 +208,12 @@ async function runBrowserScenario(projectId: string, input: unknown) {
   };
   const initialPath = typeof value.path === "string" ? getPath({ path: value.path }) : "/";
   const steps = Array.isArray(value.steps) ? value.steps.slice(0, MAX_SCENARIO_STEPS) as BrowserScenarioStep[] : [];
-  if (!steps.length) return { ok: false, error: "At least one scenario step is required." };
+  if (!steps.length) return { ok: false, error: "Нужен хотя бы один шаг сценария." };
 
   const status = await previewStatus(projectId);
   if (!status.running) throw new Error(String((status as { error?: string }).error ?? "Preview is not running"));
   const current = getPreview(projectId);
-  if (!current) throw new Error("Preview state is unavailable");
+  if (!current) throw new Error("Состояние предпросмотра недоступно — предпросмотр не запущен");
 
   const browser = await chromium.launch({ headless: true, executablePath: process.env.WEBNESTDEV_BROWSER_EXECUTABLE || undefined });
   const consoleErrors: string[] = [];

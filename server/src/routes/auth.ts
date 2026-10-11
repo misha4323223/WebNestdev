@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { attachSession, getCurrentUser, SESSION_COOKIE } from "../auth/auth.js";
-import { createUser, deleteSession, verifyUser } from "../auth/auth-store.js";
+import { createUser, deleteSession, verifyUser, EMAIL_TAKEN_MESSAGE } from "../auth/auth-store.js";
 import { checkAuthRateLimit } from "../auth/auth-rate-limit.js";
 
 const credentials = z.object({email:z.string().email().max(200),password:z.string().min(8).max(200)});
@@ -15,7 +15,7 @@ export async function registerAuthRoutes(app:FastifyInstance){
     const rateLimit = checkAuthRateLimit(request.ip, "register");
     if (!rateLimit.allowed) {
       reply.header("Retry-After", String(rateLimit.retryAfter));
-      return reply.code(429).send({error:"Too many registration attempts. Try again later."});
+      return reply.code(429).send({error:"Слишком много попыток регистрации. Попробуйте позже."});
     }
     const body = credentials.parse(request.body);
     try{
@@ -23,7 +23,7 @@ export async function registerAuthRoutes(app:FastifyInstance){
       await attachSession(reply,user.id);
       return reply.code(201).send({user:{id:user.id,email:user.email,createdAt:user.createdAt}});
     }catch(error){
-      if(error instanceof Error && error.message==="Email already registered") return reply.code(409).send({error:error.message});
+      if(error instanceof Error && error.message===EMAIL_TAKEN_MESSAGE) return reply.code(409).send({error:EMAIL_TAKEN_MESSAGE});
       throw error;
     }
   });
@@ -31,11 +31,11 @@ export async function registerAuthRoutes(app:FastifyInstance){
     const rateLimit = checkAuthRateLimit(request.ip, "login");
     if (!rateLimit.allowed) {
       reply.header("Retry-After", String(rateLimit.retryAfter));
-      return reply.code(429).send({error:"Too many login attempts. Try again later."});
+      return reply.code(429).send({error:"Слишком много попыток входа. Попробуйте позже."});
     }
     const body = credentials.parse(request.body);
     const user = await verifyUser(body.email,body.password);
-    if(!user) return reply.code(401).send({error:"Invalid email or password"});
+    if(!user) return reply.code(401).send({error:"Неверный email или пароль"});
     await attachSession(reply,user.id);
     return {user:{id:user.id,email:user.email,createdAt:user.createdAt}};
   });

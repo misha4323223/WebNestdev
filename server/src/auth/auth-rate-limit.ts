@@ -26,8 +26,10 @@ function allow(key: string, limit: number) {
   return { allowed: true, retryAfter: 0 };
 }
 
-export function checkAuthRateLimit(ip: string, action: "login" | "register") {
-  const limit = action === "login" ? 12 : 6;
+export function checkAuthRateLimit(ip: string, action: "login" | "register" | "phone" | "phoneVerify" | "phoneDemo") {
+  // Phone codes are also limited per number inside phone-store: this is the per-IP guard.
+  // The demo number is rate limited too, just generously, so local testing is not blocked.
+  const limit = action === "login" ? 12 : action === "phone" ? 10 : action === "phoneVerify" ? 30 : action === "phoneDemo" ? 60 : 6;
   const result = allow(action + ":" + ip, limit);
   if (!result.allowed) {
     return { allowed: false as const, retryAfter: result.retryAfter };

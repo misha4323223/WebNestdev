@@ -60,16 +60,19 @@ export class OpenAICompatibleProvider implements Provider{
     if(!response.ok){
       const detail=await response.text().catch(()=>"");
       throw new Error(
-        "AI provider returned HTTP "+response.status+
+        "Провайдер вернул HTTP "+response.status+
         (detail?": "+detail.slice(0,500):"")
       );
     }
-    if(!response.body)throw new Error("AI provider returned no stream");
+    if(!response.body)throw new Error("Провайдер не вернул поток данных");
 
     const pending=new Map<number,ProviderToolCall>();
     for await(const line of lines(response.body)){
       if(!line||line==="[DONE]")continue;
       const data=JSON.parse(line) as any;
+      if(data.usage){
+        yield {type:"usage",promptTokens:Number(data.usage.prompt_tokens??0),completionTokens:Number(data.usage.completion_tokens??0)};
+      }
       const delta=data.choices?.[0]?.delta;
       if(delta?.content)yield {type:"text",text:delta.content};
       for(const call of delta?.tool_calls??[]){

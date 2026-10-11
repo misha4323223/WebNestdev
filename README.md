@@ -1,6 +1,10 @@
 # WebNestdev
 
+<img src="public/brand/nestdev-icon-180.png" alt="Логотип WebNestdev" width="96" height="96" />
+
 Web-native evolution of the NestDev agent architecture.
+
+Product artwork source: docs/7277-removebg-preview.png. The UI assets in public/brand are cropped, retina-sized derivatives of it.
 
 ## Architecture
 
@@ -42,7 +46,7 @@ GitHub Actions runs the server and web builds for pull requests targeting `main`
 - Git/GitHub integration
 - live preview workers
 - browser worker
-- Yandex Cloud resource/deployment tools
+- Yandex Cloud resource/deployment tools (resource reads, create/change/delete behind the user's consent switch)
 - authentication and secrets
 - sponsor service with privacy isolation
 - usage limits, moderation and abuse protection
@@ -63,11 +67,71 @@ The development UI runs on port 5173 and the API on port 8787. Vite proxies /api
 WebNestDev now uses a real local authentication flow before opening the workspace:
 
 - register with email and password;
+- passwordless **sign-in by phone number** for Russian numbers (`+7…`): an SMS one-time code, no password;
+- a shared demo account `demo@webnestdev.local` / `demo1234` is seeded at startup, so a fresh install can be opened without registering (disabled in production unless `WEBNESTDEV_DEMO_USER=1`; change the credentials with `WEBNESTDEV_DEMO_EMAIL` / `WEBNESTDEV_DEMO_PASSWORD`);
 - login and logout;
 - HTTP-only session cookie;
 - password hashing with salted scrypt;
 - projects and conversations are scoped to the authenticated user.
 
 Local account data is stored under .webnestdev/auth. This is a development storage layer; production storage will move to managed infrastructure without changing the user-facing flow.
+
+### Phone login and SMS delivery
+
+The sign-in screen currently offers **phone only**; the e-mail/password routes still exist on the server but are not shown in the UI.
+
+A **demo number** signs in without any SMS, so the flow can be used before a provider is connected. It defaults to `+7 999 000-00-00`, is on outside production and opt-in in production through `WEBNESTDEV_DEMO_PHONE_ENABLED=1` (set the number with `WEBNESTDEV_DEMO_PHONE`, turn it off entirely with `WEBNESTDEV_DEMO_PHONE_ENABLED=0`). It is entered like any other number; the sign-in screen keeps no dev notes, so it is documented here instead.
+
+Phone sign-in sends a code through a Russian SMS provider. The first choice is **Yandex Cloud Notification Service** (SNS-compatible HTTP API), configured with `YANDEX_NOTIFY_IAM_TOKEN` **or** a service account key (`YANDEX_SA_KEY` / `YANDEX_SA_KEY_FILE`) plus `YANDEX_CLOUD_ID`; the service account needs the `editor` role on the folder. Alternative providers are `SMS_RU_API_ID`, `SMSC_LOGIN`+`SMSC_PASSWORD`, `EXOLVE_API_KEY`, or `SMSAERO_EMAIL`+`SMSAERO_API_KEY`. With none set the server runs in test mode: the code is logged and (outside production) returned as `devCode`, so the whole flow can be tested before a provider exists.
+
+Yandex Cloud Notification Service delivers SMS only to Russian numbers, and until an individual sender is registered the channel sits in the sandbox, where only verified test numbers receive messages — see docs/AUTH_PRODUCTION_PLAN.md for the registration lead time.
+
+## Agent modes
+
+The message composer has one button that shows the current mode and switches it on click, and the choice is sent with every run. The same row shows the model the project will run on — the project provider model, or the platform default — and opens the AI provider settings when pressed:
+
+- **Разработчик (developer)** — the full agent: it writes files, runs the terminal, starts the Preview and verifies the result.
+- **Планировщик (planner)** — read-only: the agent studies the project and publishes a plan with `plan.update` without changing anything. Enforcement lives on the server, not in the prompt: the runtime refuses `fs.write`, `fs.rename`, `fs.delete`, `npm.install`, `database.env`, `git.add`, `git.commit` and mutating `yandex.request` calls, and `terminal.exec` only runs a single inspection command (`ls`, `cat`, `grep`, `find`, `git status|log|diff|branch`, `npm ls`). Anything chained, piped, redirecting output, installing packages or running a script is refused, so the planner can read a project but can never write to one. The policy is covered by `server/src/agent/planner-policy.test.ts`.
+
+## Project database
+
+Every project keeps its data in a database of the user's own, so nothing depends on the platform's storage. The integrations list has a **База данных** card that offers Russian providers first — Yandex Cloud (Managed PostgreSQL, Serverless YDB), VK Cloud, Selectel, Timeweb Cloud, Cloud.ru — plus a custom server, with the exact console steps for each. The card accepts the connection string the provider shows (`postgresql://…`, `mysql://…`, `mongodb://…`, `grpcs://…` for YDB, `redis://…`) or the same values field by field; the password and the full string are encrypted at rest like every other credential (see docs/SECRET_ENCRYPTION.md) and are never returned to the browser or to the model.
+
+The user has two ways to connect it, and both end in the same place:
+
+1. paste the connection string into the card (Settings → Integrations → База данных), or
+2. tell the agent in chat — the agent asks for the connection string, explains where to create the database on a Russian provider, and stores it the same way.
+
+After that the agent uses two tools: `database.status` reports the engine, host, port and database name (never the password), and `database.env` merges `DATABASE_URL` (plus `MONGODB_URI`, `REDIS_URL` or `YDB_CONNECTION_STRING` where the engine expects it) into the project's `.env.local`, leaving every other line untouched. The card can also run a TCP reachability check from the API host — it answers "this address is reachable", which is honest about not being a login test.
+
+## GitHub integration
+
+The integrations list connects services one button at a time: the connect button opens the provider's authorization page in a separate window, and the card shows a green indicator once the account is linked. A service stays on "Не настроено на сервере" until its OAuth app is registered — only in that state does the GitHub card also show the setup steps below, so a configured server keeps the card to the service name, its status and the buttons:
+
+1. Open GitHub → Settings → Developer settings → OAuth Apps → "New OAuth App" (`https://github.com/settings/applications/new`). Any name and homepage URL work.
+2. Add the Redirect URI `https://<app-host>/api/github/callback` — the card shows the exact value to copy, because the server derives it from the origin the app is open at (`GITHUB_CALLBACK_URL` overrides it; up to 10 URIs are allowed, so the local `http://localhost:5173/api/github/callback` fits in the same app). Leave "Allow wildcard matching", "Enable Device Flow" and "Expire user access tokens" switched off: the server stores only the access token and never refreshes it.
+3. Press "Register application": the page shows the **Client ID**, and "Generate a new client secret" issues the **Client secret** (shown once — copy it immediately; generate a new one if it is lost).
+4. Provide `GITHUB_CLIENT_ID` and `GITHUB_CLIENT_SECRET` to the server environment and restart the server. In Freebuff that is Settings → Environment. Development generates the credential-encryption key into the data directory on first use; production requires `WEBNESTDEV_ENCRYPTION_KEY` (see docs/SECRET_ENCRYPTION.md).
+5. Set `GITHUB_FRONTEND_URL` when the app is served from a different host than the callback.
+
+The callback must be reachable by the browser, and in production the app host has to be listed in `WEBNESTDEV_ALLOWED_ORIGINS` — the OAuth flow only returns to an origin from that list.
+
+## Yandex Cloud integration
+
+The Yandex Cloud card works like the GitHub one — press "Подключить" and the authorization window reports back on its own — and it additionally accepts a credential the user pastes, which is the path that always works:
+
+- **Authorized key of a service account (recommended)** — Yandex Cloud console → "Сервисные аккаунты" → create an account → grant `viewer` on the cloud plus the roles the agent needs on the folder → "Создать новый ключ" → "Создать авторизованный ключ" → download the JSON and paste it. The server signs a PS256 JWT with it and exchanges that for an IAM token (`iam.api.cloud.yandex.net/iam/v1/tokens`).
+- **IAM token** (`t1.…`) — from `yc iam create-token` or the console button; it lives about 12 hours.
+- **Yandex ID OAuth token** (`y0_…`) — only for the OAuth button flow.
+
+Credentials are verified against `resource-manager` before they are stored, then encrypted like every other secret (see docs/SECRET_ENCRYPTION.md) and used only on behalf of that user.
+
+Reads and writes are separated: the agent can always read the account (clouds, folders, VM instances, disks, buckets, Serverless functions) with `yandex.status` and `yandex.resources`, while `yandex.request` refuses any method other than GET/HEAD until the user turns on "Разрешить агенту изменять ресурсы" in the card. With that switch on, the agent creates, changes and deletes resources through the same authenticated call, so it can act on the user's explicit command.
+
+Server environment:
+
+1. Register an OAuth app at `https://oauth.yandex.ru/client/new` with the Yandex Cloud API scope and the callback `https://<app-host>/api/yandex/callback`.
+2. Provide `YANDEX_CLIENT_ID` and `YANDEX_CLIENT_SECRET` (`YANDEX_CALLBACK_URL`, `YANDEX_FRONTEND_URL` and `YANDEX_OAUTH_SCOPE` override the defaults; the scope defaults to `cloud-api`).
+3. Without those values the button explains that OAuth is not configured and opens the key form instead — the pasted-credential path does not need an OAuth app at all.
 
 See docs/AUTH_PRODUCTION_PLAN.md for the staged rollout. Credential encryption, legacy-token migration, and key rotation are documented in docs/SECRET_ENCRYPTION.md.

@@ -9,8 +9,10 @@ const newKey = process.env.WEBNESTDEV_ENCRYPTION_KEY_NEXT;
 if (!oldKey || !newKey || oldKey === newKey) {
   throw new Error("Set WEBNESTDEV_ENCRYPTION_KEY to the current key and WEBNESTDEV_ENCRYPTION_KEY_NEXT to a different new key.");
 }
+// Every credential store keeps its encrypted value under its own field name.
+const fieldByFolder = { providers: "token", github: "accessToken", yandex: "secret" };
 const files = [];
-for (const folder of ["providers", "github"]) {
+for (const folder of ["providers", "github", "yandex"]) {
   const dir = path.join(root, folder);
   try {
     for (const name of await readdir(dir)) if (name.endsWith(".json")) files.push(path.join(dir, name));
@@ -22,7 +24,7 @@ const changes = [];
 try {
   for (const file of files) {
     const value = JSON.parse(await readFile(file, "utf8"));
-    const field = path.basename(path.dirname(file)) === "providers" ? "token" : "accessToken";
+    const field = fieldByFolder[path.basename(path.dirname(file))] ?? "token";
     if (typeof value[field] !== "string" || !value[field]) continue;
     process.env.WEBNESTDEV_ENCRYPTION_KEY = oldKey;
     const plaintext = decryptSecret(value[field]);

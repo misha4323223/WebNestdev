@@ -8,7 +8,7 @@ import type { DockerCommandResult } from "./sandbox/docker/types.js";
 export type { DockerCommandResult };
 
 export async function runDockerSandbox(config:SandboxConfig,command:string,cwd:string,runOptions:SandboxRunOptions={}):Promise<DockerCommandResult>{
-  if((process.env.SANDBOX_MODE??"docker")!=="docker")throw new Error("Host execution is disabled. Set SANDBOX_MODE=docker.");
+  if((process.env.SANDBOX_MODE??"docker")!=="docker")throw new Error("Выполнение команды на хосте отключено. Установите SANDBOX_MODE=docker.");
   const options=dockerOptions(config);
   const args=dockerRunArgs(config,cwd,options,command,runOptions.network ?? options.network);
   return new Promise((resolve,reject)=>{
@@ -26,9 +26,9 @@ export async function runDockerSandbox(config:SandboxConfig,command:string,cwd:s
     const timer=setTimeout(()=>{
       child.kill("SIGTERM");
       setTimeout(()=>child.kill("SIGKILL"),1500).unref();
-      reject(new Error("Sandbox command timeout"));
+      reject(new Error("Превышено время выполнения команды в песочнице"));
     },config.timeoutMs);
-    child.once("error",e=>{clearTimeout(timer);reject(new Error("Docker sandbox unavailable: "+e.message))});
+    child.once("error",e=>{clearTimeout(timer);reject(new Error("Песочница Docker недоступна: "+e.message))});
     child.once("close",(code,signal)=>{clearTimeout(timer);resolve({ok:code===0,exitCode:code,signal,stdout,stderr,truncated})});
   });
 }

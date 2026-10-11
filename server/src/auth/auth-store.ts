@@ -11,6 +11,7 @@ const usersFile = path.join(usersDir, "users.json");
 const sessionsFile = path.join(usersDir, "sessions.json");
 
 export type User = { id:string; email:string; passwordHash:string; createdAt:string };
+export const EMAIL_TAKEN_MESSAGE = "Этот email уже зарегистрирован";
 type Session = { id:string; userId:string; expiresAt:string };
 
 async function readJson<T>(file:string, fallback:T):Promise<T>{
@@ -54,7 +55,7 @@ export async function getUser(userId:string){
 
 export async function createUser(email:string, password:string){
   const normalized = email.trim().toLowerCase();
-  if(await findUserByEmail(normalized)) throw new Error("Email already registered");
+  if(await findUserByEmail(normalized)) throw new Error(EMAIL_TAKEN_MESSAGE);
   const salt = randomBytes(16).toString("hex");
   const derived = await scrypt(password, salt, 64) as Buffer;
   const user:User = {id:randomUUID(), email:normalized, passwordHash:salt + ":" + derived.toString("hex"), createdAt:new Date().toISOString()};
@@ -66,7 +67,7 @@ export async function createUser(email:string, password:string){
         VALUES (${user.id},${user.email},${user.passwordHash},${user.createdAt})
       `;
     } catch (error) {
-      if(await findUserByEmail(normalized)) throw new Error("Email already registered");
+      if(await findUserByEmail(normalized)) throw new Error(EMAIL_TAKEN_MESSAGE);
       throw error;
     }
     return user;
@@ -75,6 +76,27 @@ export async function createUser(email:string, password:string){
   users.push(user);
   await writeJson(usersFile, users);
   return user;
+}
+
+export const DEMO_ACCOUNT = { email: "demo@webnestdev.local", password: "demo1234" };
+
+/**
+ * Shared demo account: WebNestdev seeds it on startup so a fresh install can be
+ * opened without registering. Disabled in production unless WEBNESTDEV_DEMO_USER=1;
+ * credentials can be overridden with WEBNESTDEV_DEMO_EMAIL / WEBNESTDEV_DEMO_PASSWORD.
+ */
+export async function ensureDemoUser(){
+  const email = process.env.WEBNESTDEV_DEMO_EMAIL?.trim().toLowerCase() || DEMO_ACCOUNT.email;
+  const password = process.env.WEBNESTDEV_DEMO_PASSWORD?.trim() || DEMO_ACCOUNT.password;
+  if(await findUserByEmail(email)) return {email,created:false};
+  try{
+    await createUser(email,password);
+    return {email,created:true};
+  }catch(error){
+    // Another worker may have seeded it first; that is not an error.
+    if(await findUserByEmail(email)) return {email,created:false};
+    throw error;
+  }
 }
 
 export async function verifyUser(email:string,password:string){

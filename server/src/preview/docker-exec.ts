@@ -7,7 +7,7 @@ export function dockerExec(args:string[],timeoutMs=15000):Promise<DockerExecResu
     let stdout="",stderr="";
     process.stdout.on("data",(x:Buffer)=>stdout+=x.toString());
     process.stderr.on("data",(x:Buffer)=>stderr+=x.toString());
-    const timer=setTimeout(()=>{process.kill("SIGKILL");reject(new Error("Docker operation timeout"))},timeoutMs);
+    const timer=setTimeout(()=>{process.kill("SIGKILL");reject(new Error("Превышено время ожидания операции Docker"))},timeoutMs);
     process.once("error",error=>{clearTimeout(timer);reject(error)});
     process.once("close",code=>{clearTimeout(timer);resolve({code:code??1,stdout,stderr})});
   });

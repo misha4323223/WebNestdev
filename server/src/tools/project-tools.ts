@@ -15,7 +15,7 @@ function safePath(projectId: string, relative: string) {
   const root = projectPath(projectId);
   const target = path.resolve(root, relative);
   if (target !== root && !target.startsWith(root + path.sep)) {
-    throw new Error("Path escapes project sandbox");
+    throw new Error("Путь выходит за пределы песочницы проекта");
   }
   return target;
 }

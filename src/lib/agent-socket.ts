@@ -1,4 +1,18 @@
-export type AgentSocketEvent={type:string;runId?:string;delta?:string;error?:string;name?:string;input?:unknown;output?:unknown};
+import type { PlanState } from "./types";
+
+export type AgentSocketEvent={
+  type:string;
+  runId?:string;
+  delta?:string;
+  error?:string;
+  name?:string;
+  toolCallId?:string;
+  input?:unknown;
+  output?:unknown;
+  plan?:PlanState;
+  step?:number;
+  maxSteps?:number;
+};
 
 export function createAgentSocket(onEvent:(event:AgentSocketEvent)=>void,onError:()=>void){
   const configured=import.meta.env.VITE_WS_URL as string|undefined;

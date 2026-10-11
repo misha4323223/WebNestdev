@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireProjectUser } from "../auth/auth.js";
 import { getSandbox } from "../sandbox-manager.js";
-import { startPreview,stopPreview,previewStatus } from "../preview-manager.js";
+import { startPreview,stopPreview,previewStatus,previewLogs } from "../preview-manager.js";
 
 export async function registerPreviewRoutes(app:FastifyInstance){
   app.post("/api/projects/:id/preview/start",async(request,reply)=>{
@@ -20,6 +20,11 @@ export async function registerPreviewRoutes(app:FastifyInstance){
     if(!await requireProjectUser(request,reply,p.id))return;
     return reply.send(await previewStatus(p.id));
   });
+  app.get("/api/projects/:id/preview/logs",async(request,reply)=>{
+    const p=z.object({id:z.string().min(1)}).parse(request.params);
+    if(!await requireProjectUser(request,reply,p.id))return;
+    return reply.send(await previewLogs(p.id));
+  });
   app.get("/api/projects/:id/preview/open",async(request,reply)=>{const p=z.object({id:z.string().min(1)}).parse(request.params);if(!await requireProjectUser(request,reply,p.id))return;return proxyPreview(request,p.id,"");});
   app.get("/api/projects/:id/preview/open/*",async(request,reply)=>{
     const p=z.object({id:z.string().min(1)}).parse(request.params);
@@ -30,7 +35,7 @@ export async function registerPreviewRoutes(app:FastifyInstance){
 
   async function proxyPreview(request:{raw:{url?:string}},projectId:string,suffix:string){
     const state=await previewStatus(projectId);
-    if(!state.running||!state.port)throw new Error("Preview is not running");
+    if(!state.running||!state.port)throw new Error("Предпросмотр не запущен");
     const incoming=new URL(request.raw.url??"/","http://webnestdev.local");
     const host=state.host||process.env.PREVIEW_PROXY_HOST||"127.0.0.1";
     const target="http://"+host+":"+state.port+"/"+suffix+(incoming.search||"");
@@ -41,7 +46,7 @@ export async function registerPreviewRoutes(app:FastifyInstance){
       headers.delete("content-encoding");
       return new Response(await response.arrayBuffer(),{status:response.status,headers});
     }catch(error){
-      throw new Error("Preview proxy failed: "+(error instanceof Error?error.message:String(error)));
+      throw new Error("Прокси предпросмотра не сработал: "+(error instanceof Error?error.message:String(error)));
     }
   }
 }

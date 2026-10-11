@@ -3,13 +3,13 @@ import { getGitHubConnection } from "./github-connection-store.js";
 const API="https://api.github.com";
 async function githubFetch(userId:string,pathname:string,init:RequestInit={}){
   const connection=await getGitHubConnection(userId);
-  if(!connection)throw new Error("GitHub is not connected");
+  if(!connection)throw new Error("GitHub не подключён");
   const headers=new Headers(init.headers);
   headers.set("Accept","application/vnd.github+json"); headers.set("X-GitHub-Api-Version","2022-11-28");
   headers.set("Authorization","Bearer "+connection.accessToken);
   const response=await fetch(API+pathname,{...init,headers});
   const body=await response.text();
-  if(!response.ok)throw new Error("GitHub API "+response.status+": "+body.slice(0,1000));
+  if(!response.ok)throw new Error("GitHub API вернул "+response.status+": "+body.slice(0,1000));
   return body?JSON.parse(body):null;
 }
 export async function getGitHubUser(userId:string){return githubFetch(userId,"/user")}

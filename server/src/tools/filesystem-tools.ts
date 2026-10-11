@@ -32,7 +32,7 @@ registerTool({
   description: "Read a UTF-8 text file. Input: {path:string}.",
   execute: async (input, context) => {
     const value = input as { path?: string };
-    if (!value.path) throw new Error("path is required");
+    if (!value.path) throw new Error("не указан путь");
     const resolved = await target(context.projectId, context.userId, value.path);
     return { path: value.path, content: await readFile(resolved.path, "utf8") };
   },
@@ -44,7 +44,7 @@ registerTool({
   execute: async (input, context) => {
     const value = input as { path?: string; content?: string };
     if (!value.path || typeof value.content !== "string") {
-      throw new Error("path and content are required");
+      throw new Error("нужны путь и содержимое файла");
     }
     const resolved = await target(context.projectId, context.userId, value.path);
     await mkdir(path.dirname(resolved.path), { recursive: true });
@@ -62,7 +62,7 @@ registerTool({
   description: "Rename a path inside the project. Input: {from:string,to:string}.",
   execute: async (input, context) => {
     const value = input as { from?: string; to?: string };
-    if (!value.from || !value.to) throw new Error("from and to are required");
+    if (!value.from || !value.to) throw new Error("нужны пути from и to");
     const from = await target(context.projectId, context.userId, value.from);
     const to = await target(context.projectId, context.userId, value.to);
     await mkdir(path.dirname(to.path), { recursive: true });
@@ -77,7 +77,7 @@ registerTool({
   execute: async (input, context) => {
     const value = input as { path?: string };
     if (!value.path || value.path === ".") {
-      throw new Error("Refusing to delete sandbox root");
+      throw new Error("Отказано: нельзя удалить корень песочницы");
     }
     const resolved = await target(context.projectId, context.userId, value.path);
     let removedChanges: ReturnType<typeof parseChangedSource>["changes"] = [];

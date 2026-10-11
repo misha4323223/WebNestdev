@@ -44,7 +44,7 @@ registerTool({
   description: "Stage project paths. Input: {paths:string[]}.",
   execute: async (input, context) => {
     const value = input as { paths?: string[] };
-    if (!value.paths?.length) throw new Error("paths is required");
+    if (!value.paths?.length) throw new Error("не указаны пути");
 
     const sandbox = await getSandbox(context.projectId, context.userId);
     const safe = value.paths.map((projectPath) =>
@@ -67,7 +67,7 @@ registerTool({
   execute: async (input, context) => {
     const value = input as { message?: string };
     const message = value.message?.trim();
-    if (!message) throw new Error("message is required");
+    if (!message) throw new Error("не указано сообщение коммита");
 
     const sandbox = await getSandbox(context.projectId, context.userId);
     const quoted = message.replaceAll("'", "'\\''");

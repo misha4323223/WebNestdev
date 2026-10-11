@@ -22,6 +22,23 @@ export async function stopPreview(projectId: string) {
   return { stopped: true };
 }
 
+/**
+ * Returns the recent output of the running preview container, so the panel can
+ * show the dev-server logs behind the preview.
+ */
+export async function previewLogs(projectId: string) {
+  const current = getPreview(projectId);
+  if (!current) return { running: false, logs: "" };
+
+  const result = await dockerExec(["logs", "--tail", "300", current.containerId]);
+  const logs = [result.stdout, result.stderr]
+    .map(value => value.replace(/\r/g, "").trim())
+    .filter(Boolean)
+    .join("\n");
+  if (result.code !== 0 && !logs) throw new Error("Не удалось прочитать логи предпросмотра");
+  return { running: true, logs };
+}
+
 export async function previewStatus(projectId: string) {
   const current = getPreview(projectId);
   if (!current) return { running: false };
@@ -43,7 +60,7 @@ export async function previewStatus(projectId: string) {
     removePreview(projectId);
     return {
       running: false,
-      error: "Preview container is running, but no host port is assigned",
+      error: "Контейнер предпросмотра запущен, но порт не назначен",
     };
   }
 
@@ -59,7 +76,7 @@ export async function previewStatus(projectId: string) {
     removePreview(projectId);
     return {
       running: false,
-      error: `Preview container is running, but the web server is not responding on port ${port}`,
+      error: `Контейнер предпросмотра запущен, но веб-сервер не отвечает на порту ${port}`,
     };
   }
 

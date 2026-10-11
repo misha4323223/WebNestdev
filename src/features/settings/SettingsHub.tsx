@@ -1,15 +1,35 @@
-import { useState } from "react";
-import { SlidersHorizontal, Sparkles } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Plug, SlidersHorizontal, Sparkles } from "lucide-react";
 import { SettingsPanel } from "./SettingsPanel";
 import { AccountSettingsPanel } from "./AccountSettingsPanel";
+import { IntegrationsPanel } from "./IntegrationsPanel";
 
 export function SettingsHub({ projectId, projectName }: { projectId: string; projectName: string }) {
-  const [tab, setTab] = useState<"account" | "provider">("account");
+  const [tab, setTab] = useState<"account" | "provider" | "integrations">("account");
+  // Set when the app returns from the GitHub authorization page, or when the composer
+  // asks for the model tab. Read in an effect because state initializers run twice
+  // under StrictMode.
+  useEffect(() => {
+    if (localStorage.getItem("webnestdev.openProviderTab")) {
+      localStorage.removeItem("webnestdev.openProviderTab");
+      setTab("provider");
+      return;
+    }
+    if (!localStorage.getItem("webnestdev.openIntegrations")) return;
+    localStorage.removeItem("webnestdev.openIntegrations");
+    setTab("integrations");
+  }, []);
+  const tabs = [
+    { id: "account" as const, label: "Аккаунт и тариф", icon: SlidersHorizontal },
+    { id: "provider" as const, label: "AI-провайдер", icon: Sparkles },
+    { id: "integrations" as const, label: "Интеграции", icon: Plug },
+  ];
   return <div className="settings-hub">
     <nav className="settings-hub-tabs">
-      <button className={tab === "account" ? "active" : ""} onClick={() => setTab("account")}><SlidersHorizontal size={14}/> Аккаунт и тариф</button>
-      <button className={tab === "provider" ? "active" : ""} onClick={() => setTab("provider")}><Sparkles size={14}/> AI-провайдер</button>
+      {tabs.map(item => { const Icon = item.icon; return <button key={item.id} className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)}><Icon size={14}/> {item.label}</button>; })}
     </nav>
-    {tab === "account" ? <AccountSettingsPanel/> : <SettingsPanel projectId={projectId} projectName={projectName} onClose={() => setTab("account")}/>}
+    {tab === "account" && <AccountSettingsPanel/>}
+    {tab === "provider" && <SettingsPanel projectId={projectId} projectName={projectName} onClose={() => setTab("account")}/>}
+    {tab === "integrations" && <IntegrationsPanel/>}
   </div>;
 }

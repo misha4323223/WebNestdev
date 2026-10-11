@@ -34,7 +34,7 @@ function utcDay(now = new Date()) { return now.toISOString().slice(0, 10); }
 export class UsageLimitError extends Error {
   readonly statusCode = 429;
   constructor(readonly kind: UsageKind, readonly limit: number, readonly used: number) {
-    super(kind === "agentRuns" ? "Daily agent run limit reached" : "Daily browser check limit reached");
+    super(kind === "agentRuns" ? "Достигнут дневной лимит запусков агента" : "Достигнут дневной лимит браузерных проверок");
     this.name = "UsageLimitError";
   }
 }
@@ -107,4 +107,152 @@ export async function consumeUsageForCurrentPlan(userId: string, kind: UsageKind
   const active = subscription.status === "demo_active" && subscription.expiresAt && Date.parse(subscription.expiresAt) > now.getTime();
   const plan: PlanId = active ? subscription.plan : "free";
   return consumeUsage(userId, kind, plan, now);
+}
+
+export type RunUsageInput = {
+  runId: string;
+  projectId: string;
+  conversationId?: string;
+  model: string;
+  promptTokens: number;
+  completionTokens: number;
+  estimated: boolean;
+};
+
+type UsageCostRecord = {
+  id: string;
+  userId: string;
+  date: string;
+  projectId: string;
+  conversationId: string;
+  model: string;
+  promptTokens: number;
+  completionTokens: number;
+  estimated: boolean;
+  createdAt: string;
+};
+
+export type CostSnapshot = {
+  date: string;
+  runs: number;
+  promptTokens: number;
+  completionTokens: number;
+  exact: boolean;
+  pricesConfigured: boolean;
+  costEstimate: number | null;
+  currency: string;
+  lastRun: {
+    model: string;
+    promptTokens: number;
+    completionTokens: number;
+    exact: boolean;
+    costEstimate: number | null;
+    createdAt: string;
+  } | null;
+};
+
+type PlatformPricing = { inputPerMillion: number; outputPerMillion: number; currency: string };
+
+/** Optional pricing of the platform model, per 1M tokens. Returns null until configured. */
+export function platformPricing(): PlatformPricing | null {
+  const input = Number(process.env.PLATFORM_AI_PRICE_INPUT_PER_MILLION ?? "");
+  const output = Number(process.env.PLATFORM_AI_PRICE_OUTPUT_PER_MILLION ?? "");
+  const hasInput = Number.isFinite(input) && input > 0;
+  const hasOutput = Number.isFinite(output) && output > 0;
+  if (!hasInput && !hasOutput) return null;
+  return {
+    inputPerMillion: hasInput ? input : 0,
+    outputPerMillion: hasOutput ? output : 0,
+    currency: (process.env.PLATFORM_AI_PRICE_CURRENCY ?? "USD").trim() || "USD",
+  };
+}
+
+function costFor(record: { promptTokens: number; completionTokens: number }, pricing: PlatformPricing | null) {
+  if (!pricing) return null;
+  return (record.promptTokens / 1_000_000) * pricing.inputPerMillion + (record.completionTokens / 1_000_000) * pricing.outputPerMillion;
+}
+
+/** Records model spend of one agent run so the owner can measure real cost per generated site. */
+export async function recordRunUsage(userId: string, input: RunUsageInput, now = new Date()) {
+  const date = utcDay(now);
+  const record: UsageCostRecord = {
+    id: input.runId,
+    userId,
+    date,
+    projectId: input.projectId,
+    conversationId: input.conversationId ?? "",
+    model: input.model,
+    promptTokens: Math.max(0, Math.round(input.promptTokens)),
+    completionTokens: Math.max(0, Math.round(input.completionTokens)),
+    estimated: input.estimated,
+    createdAt: now.toISOString(),
+  };
+  if (isYdbEnabled()) {
+    await ydbQuery()`
+      UPSERT INTO ${ydbQuery().identifier(getTable("model_usage"))}
+        (user_id, usage_date, run_id, project_id, conversation_id, model, prompt_tokens, completion_tokens, estimated, created_at)
+      VALUES (${userId}, ${date}, ${record.id}, ${record.projectId}, ${record.conversationId}, ${record.model}, ${record.promptTokens}, ${record.completionTokens}, ${record.estimated}, ${record.createdAt})
+    `;
+    return record;
+  }
+  await withLock("json-cost:" + date, async () => {
+    const file = path.join(root, "account", "costs", date + ".json");
+    const records = await readJson<UsageCostRecord[]>(file, []);
+    records.push(record);
+    await writeJsonAtomic(file, records);
+  });
+  return record;
+}
+
+export async function getCostSnapshot(userId: string, now = new Date()): Promise<CostSnapshot> {
+  const date = utcDay(now);
+  let records: UsageCostRecord[];
+  if (isYdbEnabled()) {
+    const [rows] = await ydbQuery()<Array<{run_id:string;project_id:string;conversation_id:string;model:string;prompt_tokens:number|string|bigint;completion_tokens:number|string|bigint;estimated:boolean;created_at:string}>>`
+      SELECT run_id, project_id, conversation_id, model, prompt_tokens, completion_tokens, estimated, created_at
+      FROM ${ydbQuery().identifier(getTable("model_usage"))}
+      WHERE user_id = ${userId} AND usage_date = ${date}
+      ORDER BY created_at DESC
+    `;
+    records = rows.map(row => ({
+      id: row.run_id,
+      userId,
+      date,
+      projectId: row.project_id,
+      conversationId: row.conversation_id,
+      model: row.model,
+      promptTokens: Number(row.prompt_tokens),
+      completionTokens: Number(row.completion_tokens),
+      estimated: Boolean(row.estimated),
+      createdAt: row.created_at,
+    }));
+  } else {
+    const file = path.join(root, "account", "costs", date + ".json");
+    records = (await readJson<UsageCostRecord[]>(file, [])).filter(record => record.userId === userId && record.date === date);
+    records.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+  const pricing = platformPricing();
+  const promptTokens = records.reduce((sum, record) => sum + record.promptTokens, 0);
+  const completionTokens = records.reduce((sum, record) => sum + record.completionTokens, 0);
+  const last = records[0];
+  return {
+    date,
+    runs: records.length,
+    promptTokens,
+    completionTokens,
+    exact: records.length > 0 && records.every(record => !record.estimated),
+    pricesConfigured: Boolean(pricing),
+    costEstimate: pricing ? records.reduce((sum, record) => sum + (costFor(record, pricing) ?? 0), 0) : null,
+    currency: pricing?.currency ?? "USD",
+    lastRun: last
+      ? {
+          model: last.model,
+          promptTokens: last.promptTokens,
+          completionTokens: last.completionTokens,
+          exact: !last.estimated,
+          costEstimate: costFor(last, pricing),
+          createdAt: last.createdAt,
+        }
+      : null,
+  };
 }

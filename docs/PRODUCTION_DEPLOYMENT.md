@@ -29,6 +29,14 @@ WebNestDev Fastify
 - `YDB_CONNECTION_STRING=grpcs://...`
 - `YDB_TOKEN=...` when using an explicit access token, or YDB environment/metadata credentials in Yandex Cloud.
 - GitHub OAuth URLs must use HTTPS when OAuth credentials are enabled.
+- Phone login sends real SMS as soon as one Russian provider block is set. Yandex
+  Cloud Notification Service first (`YANDEX_NOTIFY_IAM_TOKEN` or `YANDEX_SA_KEY` +
+  `YANDEX_CLOUD_ID`), otherwise `SMS_RU_API_ID`, or `SMSC_LOGIN`+`SMSC_PASSWORD`, or
+  `EXOLVE_API_KEY`, or `SMSAERO_EMAIL`+`SMSAERO_API_KEY`; sender name via `SMS_SENDER`
+  or `YANDEX_SMS_SENDER`. With none set, the server stays in test mode and logs the
+  code — safe for staging, not for real users. Keep `WEBNESTDEV_SMS_TEST_MODE` unset in
+  production. Note the Yandex sender registration lead time (see
+  [AUTH_PRODUCTION_PLAN.md](AUTH_PRODUCTION_PLAN.md)).
 
 The server intentionally fails fast in production when the allowed-origin list is missing or contains localhost.
 

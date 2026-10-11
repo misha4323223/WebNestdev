@@ -11,18 +11,24 @@ const messageSchema=z.discriminatedUnion("role",[
   z.object({role:z.literal("assistant"),content:z.string().max(100000),tool_calls:z.array(z.object({id:z.string(),name:z.string(),arguments:z.record(z.string(),z.unknown())})).optional()}),
   z.object({role:z.literal("tool"),content:z.string().max(100000),tool_call_id:z.string()})
 ]);
-const runSchema=z.object({projectId:z.string().min(1).max(200),conversationId:z.string().max(200).optional(),messages:z.array(messageSchema).min(1).max(100),model:z.string().max(200).optional()});
+const runSchema=z.object({projectId:z.string().min(1).max(200),conversationId:z.string().max(200).optional(),messages:z.array(messageSchema).min(1).max(100),model:z.string().max(200).optional(),mode:z.enum(["planner","developer"]).optional()});
 
+// Mirrors the HTTP CORS rule in index.ts: in development the browser origin varies
+// (localhost, LAN IP, hosted preview domain), so any origin is accepted unless
+// WEBNESTDEV_ALLOWED_ORIGINS pins a list. Production always uses the list.
 function allowedOrigin(origin:string|undefined){
   if(!origin)return true;
-  const allowed=(process.env.WEBNESTDEV_ALLOWED_ORIGINS??"http://localhost:5173").split(",").map(value=>value.trim()).filter(Boolean);
+  const production=process.env.NODE_ENV==="production";
+  const configured=process.env.WEBNESTDEV_ALLOWED_ORIGINS;
+  if(!production&&!configured)return true;
+  const allowed=(configured??"").split(",").map(value=>value.trim()).filter(Boolean);
   return allowed.includes(origin);
 }
 
 export async function registerAgentWebSocket(app:FastifyInstance,runtime=new AgentRuntime()){
   app.get("/ws",{websocket:true},(socket,request)=>{
     if(!allowedOrigin(request.headers.origin)){
-      socket.close(1008,"Origin not allowed");
+      socket.close(1008,"Источник запроса не разрешён");
       return;
     }
     let running=false,closed=false; let controller:AbortController|null=null;
@@ -30,21 +36,21 @@ export async function registerAgentWebSocket(app:FastifyInstance,runtime=new Age
     socket.on("close",()=>{closed=true;controller?.abort();controller=null;});
     socket.on("message",async (raw:RawData)=>{
       if(closed)return;
-      if(running){safeSend({type:"error",error:"Agent is already running for this connection"});return}
+      if(running){safeSend({type:"error",error:"Агент уже выполняется в этом соединении"});return}
       running=true;
       try{
         const user=await getCurrentUser(request);
-        if(!user){socket.close(1008,"Authentication required");closed=true;return}
+        if(!user){socket.close(1008,"Требуется вход в аккаунт");closed=true;return}
         const message=JSON.parse(raw.toString()) as {type?:string;request?:unknown};
-        if(message.type!=="agent.run")throw new Error("Unknown websocket message type");
+        if(message.type!=="agent.run")throw new Error("Неизвестный тип сообщения");
         const parsed=runSchema.parse(message.request);
         const payloadSize=Buffer.byteLength(JSON.stringify(parsed),"utf8");
-        if(payloadSize>2_000_000)throw new Error("Agent request is too large");
+        if(payloadSize>2_000_000)throw new Error("Запрос агента слишком большой");
         const project=await getProject(parsed.projectId);
-        if(!project||project.userId!==user.id)throw new Error("Project not found");
+        if(!project||project.userId!==user.id)throw new Error("Проект не найден");
         if(parsed.conversationId){
           const conversation=await getConversation(parsed.conversationId);
-          if(!conversation||conversation.projectId!==parsed.projectId)throw new Error("Conversation not found for project");
+          if(!conversation||conversation.projectId!==parsed.projectId)throw new Error("Сессия не найдена в этом проекте");
           const last=parsed.messages.at(-1),storedLast=conversation.messages.at(-1);
           if(last?.role==="user"&&!(storedLast?.role==="user"&&storedLast.content===last.content))await appendConversationMessages(parsed.conversationId,[last]);
         }

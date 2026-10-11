@@ -31,7 +31,7 @@ export function FilePanel({projectId}:{projectId:string}){
   const parent=currentPath==="."?null:currentPath.split("/").slice(0,-1).join("/")||".";
   return <section className="files-panel">
     <div className="panel-title">
-      <div><span className="eyebrow">FILES</span><strong>{currentPath==="."?"Корень проекта":currentPath}</strong></div>
+      <div><span className="eyebrow">ФАЙЛЫ</span><strong>{currentPath==="."?"Корень проекта":currentPath}</strong></div>
       <button className="ghost-button" onClick={()=>void load()} disabled={loading}><RefreshCw size={14}/> Обновить</button>
     </div>
     <div className="file-browser">

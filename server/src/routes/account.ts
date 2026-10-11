@@ -3,7 +3,7 @@ import { z } from "zod";
 import { requireUser } from "../auth/auth.js";
 import { getSubscription, getUserPreferences, saveSubscription, saveUserPreferences, type Subscription, type UserPreferences } from "../account/account-store.js";
 import { PLAN_CATALOG, limitsForPlan, type PlanId } from "../account/plans.js";
-import { getUsageSnapshot } from "../account/usage-store.js";
+import { getCostSnapshot, getUsageSnapshot } from "../account/usage-store.js";
 
 export { PLAN_CATALOG } from "../account/plans.js";
 const preferencesSchema = z.object({
@@ -40,7 +40,7 @@ export async function registerAccountRoutes(app: FastifyInstance) {
       normalized = { ...subscription, plan: "free", status: "demo_expired", updatedAt: new Date().toISOString() };
       await saveSubscription(normalized);
     }
-    return { mode: "demo", subscription: publicSubscription(normalized), plans: Object.values(PLAN_CATALOG), limits: limitsForPlan(currentPlan(normalized)), usage: await getUsageSnapshot(user.id) };
+    return { mode: "demo", subscription: publicSubscription(normalized), plans: Object.values(PLAN_CATALOG), limits: limitsForPlan(currentPlan(normalized)), usage: await getUsageSnapshot(user.id), cost: await getCostSnapshot(user.id) };
   });
   app.post("/api/billing/demo/activate", async (request, reply) => {
     const user = await requireUser(request, reply); if (!user) return;

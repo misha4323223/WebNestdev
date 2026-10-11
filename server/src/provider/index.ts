@@ -13,7 +13,7 @@ export type ProviderConfig = {
 export function createProvider(config?: Partial<ProviderConfig>): Provider {
   const base = config?.baseUrl?.trim();
   if (!base) {
-    throw new Error("AI provider Base URL is not configured for this project");
+    throw new Error("Base URL провайдера не настроен для этого проекта");
   }
   return new OpenAICompatibleProvider(base, config?.token);
 }

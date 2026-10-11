@@ -18,7 +18,7 @@ export function TerminalPanel({projectId}:{projectId:string}){
     finally{setRunning(false)}
   }
   return <section className="panel">
-    <div className="panel-title"><div><span className="eyebrow">TERMINAL</span><strong>Sandbox console</strong></div><button className="ghost-button" onClick={()=>setOutput("")}><Trash2 size={14}/> Очистить</button></div>
+    <div className="panel-title"><div><span className="eyebrow">ТЕРМИНАЛ</span><strong>Консоль песочницы</strong></div><button className="ghost-button" onClick={()=>setOutput("")}><Trash2 size={14}/> Очистить</button></div>
     <div className="terminal-controls"><input value={cwd} onChange={e=>setCwd(e.target.value)} placeholder="Рабочая папка: ."/><button className="send-button" disabled={running||!command.trim()} onClick={()=>void run()} title={running?"Выполняется":"Запустить"}>{running?<Square size={14}/>:<Play size={14}/>}</button></div>
     <textarea className="terminal-input" value={command} onChange={e=>setCommand(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();void run()}}} placeholder="npm --version"/>
     <pre className="terminal-output">{output||"Результат выполнения появится здесь."}</pre>

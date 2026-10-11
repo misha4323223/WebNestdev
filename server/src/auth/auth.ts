@@ -13,7 +13,7 @@ export async function getCurrentUser(request:FastifyRequest){
 export async function requireUser(request:FastifyRequest, reply:any){
   const user = await getCurrentUser(request);
   if(!user){
-    await reply.code(401).send({error:"Authentication required"});
+    await reply.code(401).send({error:"Требуется вход в аккаунт"});
     return null;
   }
   return user;
@@ -23,7 +23,7 @@ export async function requireProjectUser(request:FastifyRequest, reply:any, proj
   if(!user)return null;
   const project=await getProject(projectId);
   if(!project||project.userId!==user.id){
-    await reply.code(404).send({error:"Project not found"});
+    await reply.code(404).send({error:"Проект не найден"});
     return null;
   }
   return user;

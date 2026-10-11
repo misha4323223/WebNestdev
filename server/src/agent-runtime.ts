@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { AgentRunRequest,ChatMessage } from "./types.js";
+import type { AgentRunRequest,ChatMessage,PlanState } from "./types.js";
 import { createProvider } from "./provider.js";
 import { appendConversationMessages,getProject,getProjectProvider } from "./project-store.js";
 import { buildInitialMessages } from "./agent/message-builder.js";
@@ -12,31 +12,81 @@ import { planQaScenario } from "./qa/scenario-planner.js";
 import { analyzeChangedFiles } from "./qa/diff-analyzer.js";
 import { parseChangedSource, type ParsedChange } from "./qa/change-parser.js";
 
+/**
+ * Tools that change the project and therefore trigger the automatic verification cycle.
+ * `database.env` writes the project's connection string, so it belongs here too.
+ */
+const MUTATING_TOOLS=new Set(["fs.write","fs.rename","fs.delete","terminal.exec","npm.install","database.env"]);
 const MAX_CONSECUTIVE_VERIFY_FAILURES=3;
-const MUTATING_TOOLS=new Set(["fs.write","fs.rename","fs.delete","terminal.exec","npm.install"]);
+/** Git bookkeeping changes the repository, not the code, so it is not verified. */
+const PLANNER_FORBIDDEN_TOOLS=new Set(["git.add","git.commit"]);
+
+/**
+ * Planner mode still has to read the project, so plain inspection commands are allowed
+ * while everything that writes is refused. Anything chained or piped is refused too:
+ * one command, one answer, with no room for a write hidden behind a pipe.
+ */
+const READ_ONLY_COMMANDS=new Set(["ls","cat","head","tail","wc","find","grep","rg","tree","pwd","file","stat","du","df","which","whereis","echo","jq","diff","sort","uniq","cut","basename","dirname","realpath","sed","awk","git","npm","node","tsc","eslint","prettier"]);
+const WRITE_MARKERS=[">","tee ","sed -i","perl -i","--in-place","--write","--fix","rm ","rmdir ","mv ","cp ","mkdir ","touch ","truncate ","chmod ","chown ","ln ","dd ","patch ","git add","git commit","git push","git checkout","git switch","git restore","git reset","git clean","git stash","git merge","git rebase","git rm","git mv","npm i ","npm install","npm ci","npm run","npm exec","yarn add","pnpm add","bun add","bun run","pip install","python -c","node -e","node --eval","curl ","wget ","ssh ","scp ","sudo ","kill ","systemctl ","docker "];
+
+function isReadOnlyCommand(command:string){
+  const value=command.trim();
+  if(!value)return false;
+  if(/[;&|]/.test(value))return false;
+  if(WRITE_MARKERS.some(marker=>value.includes(marker)))return false;
+  return READ_ONLY_COMMANDS.has(value.split(/\s+/)[0].replace(/^.*\//,""));
+}
+
+/**
+ * Planner mode is read-only, so any call that changes something is refused. Two tool
+ * families depend on the input: yandex.request reads with GET/HEAD and changes the
+ * account with every other method, and terminal.exec only inspects when the command is
+ * on the read-only list.
+ */
+export function changesSomething(name:string,input:unknown){
+  if(name==="terminal.exec"){
+    const command=(input as {command?:unknown}|null)?.command;
+    return typeof command!=="string"||!isReadOnlyCommand(command);
+  }
+  if(MUTATING_TOOLS.has(name)||PLANNER_FORBIDDEN_TOOLS.has(name))return true;
+  if(name!=="yandex.request")return false;
+  const method=(input as {method?:unknown}|null)?.method;
+  if(typeof method!=="string")return false;
+  return method.toUpperCase()!=="GET"&&method.toUpperCase()!=="HEAD";
+}
 
 import { commandSucceeded, routeFromMutation, shouldRunBrowserRuntime } from "./agent/verification-policy.js";
+import { getPlatformProviderConfig } from "./provider/platform-provider.js";
+import { recordRunUsage } from "./account/usage-store.js";
 
 
 export class AgentRuntime {
   async run(request:AgentRunRequest,emit:EventSink,signal?:AbortSignal){
     const runId=randomUUID(); emit({type:"run.started",runId});
+    const usageTotals={promptTokens:0,completionTokens:0,estimated:false};
+    let usageModel="";
     try{
       const project=await getProject(request.projectId);
-      if(!project||project.userId!==request.userId)throw new Error("Project not found");
+      if(!project||project.userId!==request.userId)throw new Error("Проект не найден");
       const config=await getProjectProvider(request.projectId);
-      const provider=createProvider(config??undefined);
+      const platformConfig=getPlatformProviderConfig();
+      const provider=createProvider(config??platformConfig??undefined);
       const projectContext=await buildProjectContext(project,request.userId);
       const task=request.messages.filter(message=>message.role==="user").at(-1)?.content??"";
       const relevantFiles=await retrieveRelevantFiles(request.projectId,request.userId,task);
-      const messages:ChatMessage[]=buildInitialMessages(request.messages,projectContext+"\n\nTASK-RELEVANT SOURCE FILES\n"+relevantFiles);
-      const model=request.model??config?.model;
-      if(!model)throw new Error("AI model is not configured");
+      const mode=request.mode==="planner"?"planner":"developer";
+      const messages:ChatMessage[]=buildInitialMessages(request.messages,projectContext+"\n\nTASK-RELEVANT SOURCE FILES\n"+relevantFiles,mode);
+      const model=request.model??config?.model??(config?undefined:platformConfig?.model);
+      if(!model)throw new Error("Модель AI не настроена");
+      usageModel=model;
       const maxSteps=Math.min(50,Math.max(1,Number(process.env.AGENT_MAX_STEPS??20)));
       let consecutiveVerifyFailures=0;
       let consecutiveScenarioFailures=0;
       let verificationPending=false;
       let scenarioPending=false;
+      // The plan is what the user watches during a long run, so it is tracked per run.
+      let planSeen=false;
+      let planNudged=false;
       const changedFiles=new Set<string>();
       const parsedChanges:ParsedChange[]=[];
 
@@ -49,7 +99,7 @@ export class AgentRuntime {
         ];
         const qa={build:false,preview:false,ssr:false,browser:browserRuntime?false:true};
         for(const verifyCall of verifyCalls){
-          if(signal?.aborted)throw new Error("Agent run cancelled");
+          if(signal?.aborted)throw new Error("Запуск агента отменён");
           emit({type:"tool.started",runId,toolCallId:verifyCall.id,name:verifyCall.name,input:verifyCall.arguments});
           try{
             const output=await executeTool(verifyCall as any,{runId,request,emit,signal});
@@ -84,15 +134,18 @@ export class AgentRuntime {
       };
 
       for(let step=0;step<maxSteps;step++){
-        if(signal?.aborted)throw new Error("Agent run cancelled");
+        if(signal?.aborted)throw new Error("Запуск агента отменён");
         emit({type:"run.progress",runId,step:step+1,maxSteps});
         const context={runId,request,emit,signal};
         const result=await runAgentStep(provider,messages,model,context);
+        usageTotals.promptTokens+=result.usage.promptTokens;
+        usageTotals.completionTokens+=result.usage.completionTokens;
+        usageTotals.estimated=usageTotals.estimated||result.usage.estimated;
 
         if(!result.calls.length){
           if(verificationPending||scenarioPending){
             if(consecutiveVerifyFailures>=MAX_CONSECUTIVE_VERIFY_FAILURES){
-              throw new Error("Verification failed repeatedly; maximum verification attempts reached");
+              throw new Error("Проверка не прошла несколько раз подряд — достигнут предел попыток проверки");
             }
             messages.push({
               role:"system",
@@ -107,7 +160,7 @@ export class AgentRuntime {
           if(!result.text)emit({type:"message.delta",runId,delta:text});
           if(request.conversationId){
             const conversation=await import("./project-store.js").then(m=>m.getConversation(request.conversationId!));
-            if(!conversation||conversation.projectId!==request.projectId)throw new Error("Conversation not found for project");
+            if(!conversation||conversation.projectId!==request.projectId)throw new Error("Сессия не найдена в этом проекте");
             await appendConversationMessages(request.conversationId,[{role:"assistant",content:text}]);
           }
           emit({type:"run.completed",runId}); return;
@@ -120,13 +173,25 @@ export class AgentRuntime {
         const verificationRoutes=new Set<string>();
 
         for(const call of result.calls){
-          if(signal?.aborted)throw new Error("Agent run cancelled");
+          if(signal?.aborted)throw new Error("Запуск агента отменён");
           emit({type:"tool.started",runId,toolCallId:call.id,name:call.name,input:call.arguments});
+          // Planner mode is read-only by construction, not just by instruction.
+          if(mode==="planner"&&changesSomething(call.name,call.arguments)){
+            const refusal={error:"Режим «Планировщик»: изменения отключены. Разрешены только чтение файлов, команды из списка только-для-чтения (без перенаправлений, установки пакетов и git add/commit) и GET/HEAD-запросы. Опишите этот шаг в плане и продолжите изучение проекта.",mode:"planner"};
+            emit({type:"tool.finished",runId,toolCallId:call.id,name:call.name,output:refusal});
+            messages.push({role:"tool",content:JSON.stringify(refusal),tool_call_id:call.id});
+            continue;
+          }
           try{
             const output=await executeTool(call,context);
-            if(signal?.aborted)throw new Error("Agent run cancelled");
+            if(signal?.aborted)throw new Error("Запуск агента отменён");
             emit({type:"tool.finished",runId,toolCallId:call.id,name:call.name,output});
             messages.push({role:"tool",content:JSON.stringify(output),tool_call_id:call.id});
+
+            if(call.name==="plan.update"){
+              const plan=(output as {plan?:PlanState}).plan;
+              if(plan){planSeen=true;emit({type:"plan.updated",runId,plan});}
+            }
 
             if(call.name==="browser.scenario"){
               if((output as {ok?:boolean}).ok===true){
@@ -137,7 +202,7 @@ export class AgentRuntime {
                 scenarioPending=true;
                 consecutiveScenarioFailures++;
                 if(consecutiveScenarioFailures>=MAX_CONSECUTIVE_VERIFY_FAILURES){
-                  throw new Error("Browser QA scenario failed repeatedly; maximum scenario attempts reached");
+                  throw new Error("Сценарий проверки в браузере не прошёл несколько раз подряд — достигнут предел попыток");
                 }
               }
             }
@@ -199,7 +264,7 @@ export class AgentRuntime {
                   scenarioPending=true;
                   consecutiveScenarioFailures++;
                   messages.push({role:"system",content:"AUTOMATIC BROWSER QA FAILED. Inspect the scenario diagnostics and failure screenshot, fix the smallest necessary issue, then repeat verification. Do not finish while Browser QA is pending."});
-                  if(consecutiveScenarioFailures>=MAX_CONSECUTIVE_VERIFY_FAILURES) throw new Error("Browser QA scenario failed repeatedly; maximum scenario attempts reached");
+                  if(consecutiveScenarioFailures>=MAX_CONSECUTIVE_VERIFY_FAILURES) throw new Error("Сценарий проверки в браузере не прошёл несколько раз подряд — достигнут предел попыток");
                 }
               }catch(error){
                 const message=error instanceof Error?error.message:String(error);
@@ -207,7 +272,7 @@ export class AgentRuntime {
                 consecutiveScenarioFailures++;
                 emit({type:"tool.finished",runId,toolCallId:scenarioCall.id,name:scenarioCall.name,output:{ok:false,error:message}});
                 messages.push({role:"tool",content:JSON.stringify({ok:false,error:message}),tool_call_id:scenarioCall.id});
-                if(consecutiveScenarioFailures>=MAX_CONSECUTIVE_VERIFY_FAILURES) throw new Error("Browser QA scenario failed repeatedly; maximum scenario attempts reached");
+                if(consecutiveScenarioFailures>=MAX_CONSECUTIVE_VERIFY_FAILURES) throw new Error("Сценарий проверки в браузере не прошёл несколько раз подряд — достигнут предел попыток");
               }
             }else{
               scenarioPending=false;
@@ -216,15 +281,31 @@ export class AgentRuntime {
             consecutiveVerifyFailures++;
             verificationPending=true;
             if(consecutiveVerifyFailures>=MAX_CONSECUTIVE_VERIFY_FAILURES){
-              throw new Error("Verification failed repeatedly; maximum verification attempts reached");
+              throw new Error("Проверка не прошла несколько раз подряд — достигнут предел попыток проверки");
             }
           }
         }
+
+        // Asked once per run: a task that already changed files should be visible as a
+        // plan. Waiting for the model to remember on its own would make the plan empty.
+        if(!planSeen&&!planNudged&&(mutationSucceeded||(mode==="planner"&&step>=1))){
+          planNudged=true;
+          messages.push({role:"system",content:mode==="planner"
+            ? "NO PLAN PUBLISHED YET: in Planner mode the plan is the deliverable. Call plan.update now with the full ordered list of steps and their statuses, so the user can read and confirm it."
+            : "NO USER-VISIBLE PLAN YET: this task already changed files, so the user cannot see the remaining steps. Call plan.update now with the complete ordered list of the remaining work, mark exactly one step 'in_progress', and keep the list current until every step is 'done'."});
+        }
       }
 
-      if(verificationPending)throw new Error("Agent step limit reached with unverified changes");
-      if(scenarioPending)throw new Error("Agent step limit reached with pending Browser QA scenario");
-      throw new Error("Agent step limit reached");
+      if(verificationPending)throw new Error("Достигнут лимит шагов агента, а изменения не проверены");
+      if(scenarioPending)throw new Error("Достигнут лимит шагов агента, проверка в браузере не завершена");
+      throw new Error("Достигнут лимит шагов агента");
     }catch(error){emit({type:"run.failed",runId,error:error instanceof Error?error.message:String(error)});}
+    finally{
+      if(usageModel&&usageTotals.promptTokens+usageTotals.completionTokens>0){
+        try{
+          await recordRunUsage(request.userId,{runId,projectId:request.projectId,conversationId:request.conversationId,model:usageModel,promptTokens:usageTotals.promptTokens,completionTokens:usageTotals.completionTokens,estimated:usageTotals.estimated});
+        }catch(error){console.error("Failed to record run usage",error);}
+      }
+    }
   }
 }

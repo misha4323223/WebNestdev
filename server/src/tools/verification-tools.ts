@@ -21,7 +21,7 @@ registerTool({
       return {
         ok: false,
         stage: "preview",
-        reason: "Preview is not running",
+        reason: "Предпросмотр не запущен",
         status,
         nextAction:
           "Call preview.start, inspect any startup error, fix the project, then run project.verify again.",
@@ -33,7 +33,7 @@ registerTool({
       return {
         ok: false,
         stage: "preview",
-        reason: "Preview state is unavailable",
+        reason: "Состояние предпросмотра недоступно",
         nextAction: "Restart the Preview and run project.verify again.",
       };
     }
@@ -42,7 +42,7 @@ registerTool({
       return {
         ok: false,
         stage: "preview",
-        reason: "Preview is running but its host port is unavailable",
+        reason: "Предпросмотр запущен, но его порт недоступен",
         nextAction: "Restart the Preview and run project.verify again.",
       };
     }

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile, readdir, rename, unlink } from "node:fs/promises";
+import { mkdir, readFile, writeFile, readdir, rename, rm, unlink } from "node:fs/promises";
 import path from "node:path";
+import { sandboxRootPath } from "./sandbox/config.js";
 import type { ChatMessage } from "./types.js";
 import { isYdbEnabled, ydbQuery, getTable } from "./storage/ydb.js";
 import { decryptSecret, encryptSecret, isEncryptedSecret } from "./storage/secret-crypto.js";
@@ -96,7 +97,7 @@ export async function createProject(name:string,github:GitHubRepositoryRef|undef
 export class ProjectLimitError extends Error{
   readonly statusCode=403;
   constructor(readonly limit:number,readonly used:number){
-    super("Project limit reached");
+    super("Достигнут лимит проектов");
     this.name="ProjectLimitError";
   }
 }
@@ -152,6 +153,64 @@ export async function createProjectWithinLimit(name:string,github:GitHubReposito
   });
 }
 
+/**
+ * Deletes a project together with everything that belongs to it: conversations,
+ * provider credentials and the sandbox directory. Returns false when the project
+ * does not exist or belongs to another account.
+ */
+export async function deleteProject(projectId:string,userId:string):Promise<boolean>{
+  const project=await getProject(projectId);
+  if(!project||project.userId!==userId)return false;
+  if(isYdbEnabled()){
+    const sql=ydbQuery();
+    await sql.transaction({idempotent:true},async tx=>{
+      await tx`DELETE FROM ${sql.identifier(getTable("conversation_messages"))} WHERE project_id=${projectId}`;
+      await tx`DELETE FROM ${sql.identifier(getTable("conversations"))} WHERE project_id=${projectId}`;
+      await tx`DELETE FROM ${sql.identifier(getTable("providers"))} WHERE project_id=${projectId}`;
+      await tx`DELETE FROM ${sql.identifier(getTable("projects"))} WHERE id=${projectId}`;
+      await tx`UPDATE ${sql.identifier(getTable("project_counters"))} SET project_count=CASE WHEN project_count>0 THEN project_count-1 ELSE 0 END WHERE user_id=${userId}`;
+    });
+  }else{
+    await rm(path.join(root,"projects",projectId+".json"),{force:true});
+    await rm(path.join(root,"providers",projectId+".json"),{force:true});
+    const conversations=path.join(root,"conversations");
+    try{
+      for(const name of await readdir(conversations)){
+        if(!name.endsWith(".json"))continue;
+        const file=path.join(conversations,name);
+        try{
+          const conversation=JSON.parse(await readFile(file,"utf8")) as Conversation;
+          if(conversation.projectId===projectId)await rm(file,{force:true});
+        }catch{}
+      }
+    }catch{}
+  }
+  await rm(sandboxRootPath(projectId),{recursive:true,force:true});
+  return true;
+}
+
+/**
+ * Renames a project and bumps its updated time. Returns null when the project is
+ * missing or belongs to another account.
+ */
+export async function renameProject(projectId:string,userId:string,name:string):Promise<Project|null>{
+  const project=await getProject(projectId);
+  if(!project||project.userId!==userId)return null;
+  const nextName=name.trim().slice(0,120)||project.name;
+  const updated:Project={...project,name:nextName,updatedAt:new Date().toISOString()};
+  if(isYdbEnabled()){
+    await ydbQuery()`
+      UPDATE ${ydbQuery().identifier(getTable("projects"))}
+      SET name=${updated.name},updated_at=${updated.updatedAt}
+      WHERE id=${projectId}
+    `;
+    return updated;
+  }
+  await mkdir(path.join(root,"projects"),{recursive:true});
+  await writeFile(path.join(root,"projects",projectId+".json"),JSON.stringify(updated,null,2));
+  return updated;
+}
+
 async function writeSecretJsonAtomic(file:string,value:unknown){
   await mkdir(path.dirname(file),{recursive:true});
   const temp=file+"."+randomUUID()+".tmp";
@@ -199,7 +258,7 @@ export async function getProjectProvider(projectId:string):Promise<ProjectProvid
 }
 
 export async function saveProjectProvider(projectId:string,config:ProjectProviderConfig){
-  if(!await getProject(projectId))throw new Error("Project not found");
+  if(!await getProject(projectId))throw new Error("Проект не найден");
   const token=config.token ? encryptSecret(config.token) : "";
   if(isYdbEnabled()){
     await ydbQuery()`
@@ -234,7 +293,7 @@ function messageRow(projectId:string,conversationId:string,message:ChatMessage,c
 }
 
 export async function createConversation(projectId:string,title="Новая сессия"){
-  if(!await getProject(projectId))throw new Error("Project not found");
+  if(!await getProject(projectId))throw new Error("Проект не найден");
   const now=new Date().toISOString();
   const c:Conversation={id:randomUUID(),projectId,title:title.trim()||"Новая сессия",messages:[],createdAt:now,updatedAt:now};
   if(isYdbEnabled()){
@@ -306,7 +365,7 @@ export async function listConversations(projectId:string){
 
 export async function appendConversationMessages(id:string,messages:ChatMessage[]){
   const c=await getConversation(id);
-  if(!c)throw new Error("Conversation not found");
+  if(!c)throw new Error("Сессия не найдена");
   c.messages.push(...messages);
   c.updatedAt=new Date().toISOString();
   if(isYdbEnabled()){

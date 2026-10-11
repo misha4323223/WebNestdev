@@ -8,7 +8,7 @@ registerTool({
   execute: async (input, context) => {
     const value = input as { command?: string; cwd?: string };
     const command = value.command?.trim();
-    if (!command) throw new Error("command is required");
+    if (!command) throw new Error("не указана команда");
 
     const sandbox = await getSandbox(context.projectId, context.userId);
     const cwd = assertInsideSandbox(

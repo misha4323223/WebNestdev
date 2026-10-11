@@ -7,6 +7,7 @@ RUN npm install
 
 COPY tsconfig.json tsconfig.app.json tsconfig.node.json vite.config.ts index.html ./
 COPY src ./src
+COPY public ./public
 COPY server/tsconfig.json ./server/tsconfig.json
 COPY server/src ./server/src
 

@@ -12,6 +12,10 @@ openssl rand -hex 32
 
 Store it in the deployment platform's secret manager. Do not commit it, print it to logs, or reuse it across environments. Production startup fails if the key is missing or malformed. Keep the same key across restarts and replicas that share the data directory.
 
+### Development
+
+When the variable is absent outside production, the server generates a key once and keeps it in `<data directory>/encryption-key` (mode `0600`, inside the git-ignored data directory) and reuses it, so credential writes such as the GitHub connect callback work without any setup. Before this fallback existed, the callback answered `500` after GitHub had already redirected the user back. Production never creates the file — startup fails instead (`assertEncryptionConfigured`) — so set the variable for any workspace whose secrets must stay readable from another machine or data directory, and always in deployed environments.
+
 ## Existing installations
 
 The first read of a legacy plaintext provider or GitHub connection migrates its token to ciphertext using an atomic temporary-file replacement. The in-memory value returned to existing callers remains plaintext, so the existing provider and GitHub API integration contracts do not change. If encryption fails, the read fails closed; the original record is not deliberately overwritten with plaintext. Back up the data directory and configure the key before deploying this version. Do not delete or recreate existing connection records.

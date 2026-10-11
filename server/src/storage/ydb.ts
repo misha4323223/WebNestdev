@@ -48,6 +48,13 @@ export async function initializeStorage() {
       PRIMARY KEY (id),
       INDEX email_idx GLOBAL UNIQUE ON (email)
     )`;
+    await q`CREATE TABLE IF NOT EXISTS ${q.identifier(getTable("phone_accounts"))} (
+      phone Utf8 NOT NULL,
+      user_id Utf8 NOT NULL,
+      created_at Utf8 NOT NULL,
+      PRIMARY KEY (phone),
+      INDEX user_idx GLOBAL ON (user_id)
+    )`;
     await q`CREATE TABLE IF NOT EXISTS ${q.identifier(getTable("sessions"))} (
       id Utf8 NOT NULL,
       user_id Utf8 NOT NULL,
@@ -132,6 +139,19 @@ export async function initializeStorage() {
       project_count Uint64 NOT NULL,
       PRIMARY KEY (user_id)
     )`;
+    await q`CREATE TABLE IF NOT EXISTS ${q.identifier(getTable("model_usage"))} (
+      user_id Utf8 NOT NULL,
+      usage_date Utf8 NOT NULL,
+      run_id Utf8 NOT NULL,
+      project_id Utf8 NOT NULL,
+      conversation_id Utf8 NOT NULL,
+      model Utf8 NOT NULL,
+      prompt_tokens Uint64 NOT NULL,
+      completion_tokens Uint64 NOT NULL,
+      estimated Bool NOT NULL,
+      created_at Utf8 NOT NULL,
+      PRIMARY KEY (user_id, usage_date, run_id)
+    )`;
     await q`CREATE TABLE IF NOT EXISTS ${q.identifier(getTable("oauth_states"))} (
       state Utf8 NOT NULL,
       user_id Utf8 NOT NULL,
@@ -144,6 +164,35 @@ export async function initializeStorage() {
       access_token Utf8 NOT NULL,
       github_login Utf8 NOT NULL,
       created_at Utf8 NOT NULL,
+      PRIMARY KEY (user_id)
+    )`;
+    await q`CREATE TABLE IF NOT EXISTS ${q.identifier(getTable("database_connections"))} (
+      user_id Utf8 NOT NULL,
+      id Utf8 NOT NULL,
+      provider Utf8 NOT NULL,
+      scheme Utf8 NOT NULL,
+      host Utf8 NOT NULL,
+      port Uint32 NOT NULL,
+      database_name Utf8 NOT NULL,
+      username Utf8 NOT NULL,
+      password Utf8 NOT NULL,
+      url Utf8 NOT NULL,
+      ssl Bool NOT NULL,
+      created_at Utf8 NOT NULL,
+      updated_at Utf8 NOT NULL,
+      PRIMARY KEY (user_id)
+    )`;
+    await q`CREATE TABLE IF NOT EXISTS ${q.identifier(getTable("yandex_connections"))} (
+      user_id Utf8 NOT NULL,
+      id Utf8 NOT NULL,
+      kind Utf8 NOT NULL,
+      secret Utf8 NOT NULL,
+      folder_id Utf8 NOT NULL,
+      cloud_id Utf8 NOT NULL,
+      account Utf8 NOT NULL,
+      allow_writes Bool NOT NULL,
+      created_at Utf8 NOT NULL,
+      updated_at Utf8 NOT NULL,
       PRIMARY KEY (user_id)
     )`;
   })().catch(error => {
