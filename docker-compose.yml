@@ -1,17 +1,51 @@
 services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-webnestdev}
+      POSTGRES_USER: ${POSTGRES_USER:-webnestdev}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - webnestdev
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-webnestdev} -d ${POSTGRES_DB:-webnestdev}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   webnestdev-server:
     build:
       context: .
       dockerfile: server/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
     environment:
       NODE_ENV: production
       PORT: 8787
-      WEBNESTDEV_STORAGE: ydb
+      WEBNESTDEV_STORAGE: postgres
       WEBNESTDEV_ENCRYPTION_KEY: ${WEBNESTDEV_ENCRYPTION_KEY:?Set a 32-byte base64 or 64-character hex encryption key}
       WEBNESTDEV_ALLOWED_ORIGINS: ${WEBNESTDEV_ALLOWED_ORIGINS:?Set the public frontend origin(s), comma-separated}
-      YDB_CONNECTION_STRING: ${YDB_CONNECTION_STRING:?Set the YDB connection string}
-      YDB_TOKEN: ${YDB_TOKEN:-}
-      YDB_TABLE_PREFIX: ${YDB_TABLE_PREFIX:-webnestdev}
+      DATABASE_URL: postgres://${POSTGRES_USER:-webnestdev}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-webnestdev}
+      # Yandex Cloud OAuth (optional)
+      YANDEX_CLIENT_ID: ${YANDEX_CLIENT_ID:-}
+      YANDEX_CLIENT_SECRET: ${YANDEX_CLIENT_SECRET:-}
+      YANDEX_CALLBACK_URL: ${YANDEX_CALLBACK_URL:-}
+      YANDEX_FRONTEND_URL: ${YANDEX_FRONTEND_URL:-}
+      YANDEX_OAUTH_SCOPE: ${YANDEX_OAUTH_SCOPE:-cloud-api}
+      # GitHub OAuth (optional)
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      GITHUB_CALLBACK_URL: ${GITHUB_CALLBACK_URL:-}
+      GITHUB_FRONTEND_URL: ${GITHUB_FRONTEND_URL:-}
+      # AI Provider (optional)
+      AI_PROVIDER: ${AI_PROVIDER:-}
+      AI_BASE_URL: ${AI_BASE_URL:-}
+      AI_MODEL: ${AI_MODEL:-}
+      AI_API_KEY: ${AI_API_KEY:-}
       SANDBOX_MODE: docker
       SANDBOX_IMAGE: node:22-bookworm-slim
       SANDBOX_MEMORY: 1g
@@ -23,7 +57,13 @@ services:
     volumes:
       - webnestdev-data:/app/.webnestdev
       - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - webnestdev
     restart: unless-stopped
 
 volumes:
   webnestdev-data:
+  postgres-data:
+
+networks:
+  webnestdev:

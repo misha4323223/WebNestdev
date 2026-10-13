@@ -273,6 +273,18 @@ export async function saveProjectProvider(projectId:string,config:ProjectProvide
   return config;
 }
 
+export async function removeProjectProvider(projectId:string){
+  if(!await getProject(projectId))throw new Error("Проект не найден");
+  if(isYdbEnabled()){
+    await ydbQuery()`
+      DELETE FROM ${ydbQuery().identifier(getTable("providers"))}
+      WHERE project_id=${projectId}
+    `;
+    return;
+  }
+  await rm(path.join(root,"providers",projectId+".json"),{force:true});
+}
+
 async function conversationsDir(){const d=path.join(root,"conversations");await mkdir(d,{recursive:true});return d}
 
 function messageFromRow(row:{created_at:string;message_id:string;role:string;content:string;tool_calls_json:string;tool_call_id:string}):ChatMessage{

@@ -10,6 +10,13 @@ const faq = [
   { question: "Как отменить демо-подписку?", answer: "В рабочей области откройте «Настройки» → «Аккаунт и тариф» и нажмите «Отменить демо-подписку». Списаний не будет." },
 ];
 
+function bytesLabel(value: number): string {
+  if (value < 1024) return value + " Б";
+  if (value < 1024 * 1024) return Math.round(value / 1024) + " КБ";
+  if (value < 1024 * 1024 * 1024) return (value / 1024 / 1024).toFixed(1) + " МБ";
+  return (value / 1024 / 1024 / 1024).toFixed(1) + " ГБ";
+}
+
 const limitRows: Array<{ label: string; key: keyof PlanLimits }> = [
   { label: "Проектов одновременно", key: "projects" },
   { label: "Запусков агента в день", key: "agentRunsPerDay" },
@@ -115,6 +122,17 @@ export function SubscriptionPage({ onBack, onOpenPicker }: { onBack: () => void;
           <div className="usage-meter-title"><strong>Текущий день</strong><small>Сброс по UTC · {billing.usage.date}</small></div>
           <div className="usage-meter"><div><span>Запуски агента</span><strong>{billing.usage.agentRuns} / {billing.limits.agentRunsPerDay}</strong></div><div className="usage-meter-track"><span style={{ width: `${Math.min(100, billing.usage.agentRuns / Math.max(1, billing.limits.agentRunsPerDay) * 100)}%` }}/></div></div>
           <div className="usage-meter"><div><span>Браузерные проверки</span><strong>{billing.usage.browserChecks} / {billing.limits.browserChecksPerDay}</strong></div><div className="usage-meter-track"><span style={{ width: `${Math.min(100, billing.usage.browserChecks / Math.max(1, billing.limits.browserChecksPerDay) * 100)}%` }}/></div></div>
+          {(() => {
+            const storageLimit = billing.limits.storageBytes ?? 0;
+            const storageUsed = billing.storage?.usedBytes ?? 0;
+            if (storageLimit <= 0) return null;
+            return (
+              <div className="usage-meter">
+                <div><span>Хранилище аккаунта</span><strong>{bytesLabel(storageUsed)} из {bytesLabel(storageLimit)}</strong></div>
+                <div className="usage-meter-track"><span style={{ width: `${Math.min(100, (storageUsed / storageLimit) * 100)}%` }} /></div>
+              </div>
+            );
+          })()}
         </div>
       </section>
     </>}

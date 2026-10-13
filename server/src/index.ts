@@ -5,6 +5,7 @@ import cookie from "@fastify/cookie";
 import websocket from "@fastify/websocket";
 import fastifyStatic from "@fastify/static";
 import path from "node:path";
+import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { initializeStorage, closeStorage } from "./storage/ydb.js";
 import { assertEncryptionConfigured } from "./storage/secret-crypto.js";
@@ -45,7 +46,12 @@ if (production && allowedOrigins.some(origin => /^https?:\/\/localhost(?::\d+)?$
   throw new Error("В production в WEBNESTDEV_ALLOWED_ORIGINS нельзя указывать localhost");
 }
 await ensureDataDir();
-await initializeStorage();
+// YDB-инициализация в фоне: DDL на «холодной» серверлесс-базе занимает 30–60 с.
+// Если дождаться её здесь, app.listen() так и не выполнится (порт 8787 не поднимется,
+// а healthcheck и клиенты не дождутся ответа). HTTP стартует сразу; DDL отрабатывает в фоне.
+initializeStorage().catch((err) => {
+  console.error("[ydb] storage init failed (background):", err?.message ?? err);
+});
 
 const demoEnabled = process.env.WEBNESTDEV_DEMO_USER ? process.env.WEBNESTDEV_DEMO_USER !== "0" : !production;
 if (demoEnabled) {
@@ -93,17 +99,21 @@ await registerYandexRoutes(app);
 await registerDatabaseRoutes(app);
 await registerAgentWebSocket(app);
 
-if (production) {
-  const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../dist");
+const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../dist");
+if (fs.existsSync(rootDir)) {
   await app.register(fastifyStatic, {
     root: rootDir,
-    wildcard: false,
-    index: false,
     maxAge: "30d",
     immutable: true,
   });
-  app.get("/", async (_request, reply) => reply.sendFile("index.html", {maxAge: 0, immutable: false}));
-  app.get("/*", async (_request, reply) => reply.sendFile("index.html", {maxAge: 0, immutable: false}));
+  app.setNotFoundHandler((request, reply) => {
+    const url = request.raw.url ?? "";
+    if (request.method === "GET" && !url.startsWith("/api")) {
+      return reply.sendFile("index.html", { maxAge: 0, immutable: false });
+    }
+    return reply.code(404).send({ error: "Not Found" });
+  });
 }
+
 
 await app.listen({host:"0.0.0.0",port:Number(process.env.PORT??8787)});

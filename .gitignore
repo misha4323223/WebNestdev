@@ -3,3 +3,39 @@ dist/
 .webnestdev/
 .env
 .env.local
+
+# --- Deploy: приватные ключи и секреты (НЕ пушить на GitHub) ---
+deploy/secret/
+deploy/webnestdev-ssh
+deploy/webnestdev-ssh.pub
+deploy/*.b64
+deploy/*.sh
+deploy/diag-ydb-token.py
+
+# --- Дневник/миссии агента ---
+.agent/
+
+# --- Временные файлы диагностики и бэкапы в корне ---
+auth-ts.b64
+check-agnes.sh
+cookie-check.b64
+cookie-check.sh
+diag-by.mjs
+diag-by.sh
+diag-by2.sh
+fix-cookie.b64
+fix-cookie.sh
+nul
+pg-ts.b64
+project-flow.b64
+project-flow.sh
+tmp-compose-clean.b64
+tmp-compose.b64
+wn-diag.sh
+wn-proxy-patch.sh
+
+# --- Мусор doc-генератора ---
+doc/
+
+# --- Секретные бэкапы скриптов ---
+scripts/tmp.env.b64

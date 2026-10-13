@@ -40,7 +40,7 @@ export function WorkspaceShell({onHome}:{onHome:()=>void}){
             <div className="panel-title"><div><span className="eyebrow">ПУБЛИКАЦИЯ</span><strong>Публикация проекта</strong></div><button className="ghost-button" onClick={()=>setDeployOpen(false)}>Закрыть</button></div>
             <div className="settings-body"><p>Модуль публикации подключим к выбранному облаку, когда настроим окружение.</p><button className="send-button" onClick={()=>setDeployOpen(false)}>Понятно</button></div>
           </section>}
-        </div>:<><WorkspaceNav view={view} onChange={setView}/><WorkspaceContent view={view} projectId={projectId} conversationId={conversationId} onOpenModelSettings={openModelSettings}/></>}
+        </div>:<><WorkspaceNav view={view} onChange={setView}/><WorkspaceContent view={view} projectId={projectId} conversationId={conversationId} onOpenModelSettings={openModelSettings} onOpenAccountSettings={openSettings}/></>}
       </div>
       <PreviewPanel projectId={projectId}/>
     </main>

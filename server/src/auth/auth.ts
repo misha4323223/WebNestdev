@@ -30,5 +30,11 @@ export async function requireProjectUser(request:FastifyRequest, reply:any, proj
 }
 export async function attachSession(reply:any,userId:string){
   const session = await createSession(userId);
-  reply.setCookie(SESSION_COOKIE, session.id, {httpOnly:true,sameSite:"lax",secure:process.env.NODE_ENV==="production",path:"/",maxAge:60*60*24*30});
+  // secure: по умолчанию как в production; но если сервис крутится без TLS
+  // (прямой HTTP-адрес), флаг Secure делает cookie непригодной для браузера.
+  // WEBNESTDEV_COOKIE_SECURE=false явно включает http-режим cookie.
+  const secure = process.env.WEBNESTDEV_COOKIE_SECURE !== undefined
+    ? process.env.WEBNESTDEV_COOKIE_SECURE === "true"
+    : process.env.NODE_ENV === "production";
+  reply.setCookie(SESSION_COOKIE, session.id, {httpOnly:true,sameSite:"lax",secure,path:"/",maxAge:60*60*24*30});
 }

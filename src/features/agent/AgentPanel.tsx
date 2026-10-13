@@ -1,5 +1,5 @@
 import { useEffect,useRef,useState } from "react";
-import { ArrowLeftRight,ClipboardList,Code2,Cpu,FileText,Image as ImageIcon,ListPlus,Paperclip,Send,Sparkles,Square,X } from "lucide-react";
+import { AlertTriangle,ArrowLeftRight,ClipboardList,Code2,Cpu,FileText,Image as ImageIcon,ListPlus,Paperclip,Send,Sparkles,Square,X } from "lucide-react";
 import { createAgentSocket } from "../../lib/agent-socket";
 import { apiJson } from "../../lib/api";
 import { getConversation,uploadProjectFile } from "../../lib/project-api";
@@ -48,9 +48,9 @@ function withAttachments(text:string,attachments:Attachment[]){
   return text+"\n\nЭти файлы уже лежат в проекте, используй их по путям:\n"+list;
 }
 
-export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettings}:{projectId:string;conversationId:string;onChanged:()=>void;onOpenModelSettings?:()=>void}){
+export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettings,onOpenAccountSettings}:{projectId:string;conversationId:string;onChanged:()=>void;onOpenModelSettings?:()=>void;onOpenAccountSettings?:()=>void}){
   const [messages,setMessages]=useState<ChatMessage[]>([]);
-  const [prompt,setPrompt]=useState("");
+  const [prompt,setPrompt]=useState<string>(()=>{try{return localStorage.getItem("webnestdev.draft."+conversationId)??""}catch(_){return ""}});
   const [running,setRunning]=useState(false);
   const [loaded,setLoaded]=useState(false);
   const [queue,setQueue]=useState<QueuedMessage[]>([]);
@@ -64,6 +64,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   const [plan,setPlan]=useState<PlanState|null>(()=>readPlan(conversationId));
   const [actions,setActions]=useState<AgentAction[]>([]);
   const [progress,setProgress]=useState<{step:number;maxSteps:number}|null>(null);
+  const [quotaNotice,setQuotaNotice]=useState<"storage"|"daily"|null>(null);
   const socketRef=useRef<WebSocket|null>(null);
   const actionsRef=useRef<AgentAction[]>([]);
   // Queued messages start runs from socket callbacks, so the mode is read from a ref.
@@ -75,6 +76,14 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   const queueRef=useRef<QueuedMessage[]>([]);
 
   useEffect(()=>{queueRef.current=queue},[queue]);
+
+  // The composer draft belongs to the conversation, so it survives reloads and tab switches.
+  useEffect(()=>{
+    try{
+      if(prompt)localStorage.setItem("webnestdev.draft."+conversationId,prompt);
+      else localStorage.removeItem("webnestdev.draft."+conversationId);
+    }catch{}
+  },[prompt,conversationId]);
 
   function updateMessages(updater:(current:ChatMessage[])=>ChatMessage[]){
     messagesRef.current=updater(messagesRef.current);
@@ -174,7 +183,15 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       if(event.type==="plan.updated"&&event.plan)updatePlan(event.plan);
       if(event.type==="run.completed"){finishRun(socket,{drain:true});onChanged()}
       if(event.type==="run.failed"){updateMessages(current=>[...current,{role:"assistant",content:"Ошибка: "+(event.error??"неизвестная ошибка")}]);finishRun(socket,{drain:false,reason:"Очередь на паузе: последняя задача завершилась ошибкой."})}
-      if(event.type==="error"){updateMessages(current=>[...current,{role:"assistant",content:"Ошибка: "+(event.error??"соединение потеряно")}]);finishRun(socket,{drain:false,reason:"Очередь на паузе: Agent Runtime вернул ошибку."})}
+      if(event.type==="error"){
+        const errorMsg = event.error ?? "соединение потеряно";
+        const isStorageLimit = event.code === "STORAGE_LIMIT_REACHED";
+        const isDailyQuota = event.code === "DAILY_QUOTA_EXCEEDED";
+        const quotaKind = isStorageLimit ? "storage" : isDailyQuota ? "daily" : null;
+        updateMessages(current=>[...current,{role:"assistant",content:(quotaKind==="storage"?"Достигнут лимит хранилища вашего тарифа. ":quotaKind==="daily"?"Дневной лимит запусков агента исчерпан. ":"Ошибка: ")+errorMsg}]);
+        if(quotaKind)setQuotaNotice(quotaKind);
+        finishRun(socket,{drain:false,reason:quotaKind==="storage"?"Хранилище заполнено — обновите тариф":quotaKind==="daily"?"Дневной лимит исчерпан":"Очередь на паузе: Agent Runtime вернул ошибку."});
+      }
     },()=>{
       updateMessages(current=>[...current,{role:"assistant",content:"Не удалось подключиться к Agent Runtime."}]);
       finishRun(null,{drain:false,reason:"Очередь на паузе: нет соединения с Agent Runtime."});
@@ -347,5 +364,24 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       </div>
       {notice&&<div className="composer-notice">{notice}</div>}
     </div>
+
+    {quotaNotice&&<div className="modal-backdrop" role="presentation" onMouseDown={()=>setQuotaNotice(null)}>
+      <section className="modal quota-modal" role="dialog" aria-modal="true" aria-label="Лимит тарифа достигнут" onMouseDown={event=>event.stopPropagation()}>
+        <header className="modal-head">
+          <div><span className="eyebrow">ЛИМИТ ТАРИФА</span><h2>{quotaNotice==="storage"?"Хранилище заполнено":"Дневной лимит исчерпан"}</h2></div>
+          <button className="icon-button" onClick={()=>setQuotaNotice(null)} aria-label="Закрыть"><X size={16}/></button>
+        </header>
+        <div className="modal-body">
+          <div className="quota-modal-icon"><AlertTriangle size={18}/></div>
+          <p className="modal-lead">{quotaNotice==="storage"
+            ?"Лимит хранилища вашего тарифа достигнут: агент больше не может писать файлы в проект. Освободите место или обновите тариф — лимиты: Бесплатный 1 ГБ, Про 10 ГБ, Команда 50 ГБ."
+            :"Дневная квота запусков агента исчерпана. Новые запуски станут доступны после сброса по UTC или при обновлении тарифа."}</p>
+        </div>
+        <footer className="modal-foot">
+          <button className="ghost-button" onClick={()=>setQuotaNotice(null)}>Понятно</button>
+          <button className="send-button" onClick={()=>{setQuotaNotice(null);onOpenAccountSettings?.()}}>Обновить тариф</button>
+        </footer>
+      </section>
+    </div>}
   </section>;
 }

@@ -167,6 +167,14 @@ export class AgentRuntime {
         }
 
         messages.push({role:"assistant",content:result.text,tool_calls:result.calls});
+        // Intermediate assistant messages are part of the user-visible history, so they
+        // are persisted as they are produced and survive a reload or tab switch mid-run.
+        if(request.conversationId&&result.calls.length&&result.text.trim()){
+          try{
+            const conversation=await import("./project-store.js").then(m=>m.getConversation(request.conversationId!));
+            if(conversation&&conversation.projectId===request.projectId)await appendConversationMessages(request.conversationId,[{role:"assistant",content:result.text,tool_calls:result.calls}]);
+          }catch(error){console.error("Failed to persist intermediate assistant message",error);}
+        }
 
         let mutationSucceeded=false;
         let browserRuntimeRequired=false;

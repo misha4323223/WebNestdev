@@ -2,7 +2,7 @@ import { apiJson } from "./api";
 
 export type PlanId = "free" | "pro" | "team";
 export type PlanStatus = "free" | "demo_active" | "demo_expired" | "demo_cancelled";
-export type PlanLimits = { projects: number; agentRunsPerDay: number; browserChecksPerDay: number };
+export type PlanLimits = { projects: number; agentRunsPerDay: number; browserChecksPerDay: number; storageBytes?: number };
 export type Plan = {
   id: PlanId;
   name: string;
@@ -24,6 +24,7 @@ export type Subscription = {
   mode: "demo";
 };
 export type Usage = { date: string; agentRuns: number; browserChecks: number };
+export type Storage = { usedBytes: number; limitBytes: number };
 export type CostRun = { model: string; promptTokens: number; completionTokens: number; exact: boolean; costEstimate: number | null; createdAt: string };
 export type Cost = {
   date: string;
@@ -42,6 +43,7 @@ export type BillingData = {
   plans: Plan[];
   limits: PlanLimits;
   usage: Usage;
+  storage?: Storage;
   cost: Cost;
 };
 

@@ -51,8 +51,9 @@ export async function registerAgentWebSocket(app:FastifyInstance,runtime=new Age
         if(parsed.conversationId){
           const conversation=await getConversation(parsed.conversationId);
           if(!conversation||conversation.projectId!==parsed.projectId)throw new Error("Сессия не найдена в этом проекте");
-          const last=parsed.messages.at(-1),storedLast=conversation.messages.at(-1);
-          if(last?.role==="user"&&!(storedLast?.role==="user"&&storedLast.content===last.content))await appendConversationMessages(parsed.conversationId,[last]);
+          const storedUserContent=new Set(conversation.messages.filter(m=>m.role==="user").map(m=>m.content));
+          const newMessages=parsed.messages.filter(m=>m.role==="user"&&!storedUserContent.has(m.content));
+          if(newMessages.length)await appendConversationMessages(parsed.conversationId,newMessages);
         }
         const usage = await consumeUsageForCurrentPlan(user.id,"agentRuns");
         safeSend({type:"usage.updated",usage});
@@ -60,8 +61,10 @@ export async function registerAgentWebSocket(app:FastifyInstance,runtime=new Age
         await runtime.run({...parsed,userId:user.id},event=>safeSend(event),controller.signal);
       }catch(error){
         const message = error instanceof Error ? error.message : String(error);
-        const quota = error && typeof error === "object" && "statusCode" in error && (error as {statusCode?:unknown}).statusCode === 429;
-        safeSend({type:"error",error:message,...(quota?{code:"DAILY_QUOTA_EXCEEDED"}:{})});
+        const isQuota = error && typeof error === "object" && "statusCode" in error && (error as {statusCode?:unknown}).statusCode === 429;
+        const isStorage = error instanceof Error && error.name === "StorageLimitError";
+        const quotaCode = isStorage ? "STORAGE_LIMIT_REACHED" : "DAILY_QUOTA_EXCEEDED";
+        safeSend({type:"error",error:message,...(isQuota?{code:quotaCode}:{})});
       }
       finally{running=false;}
     });

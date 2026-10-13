@@ -4,9 +4,10 @@ import { isYdbEnabled, ydbQuery } from "../storage/ydb.js";
 
 async function dependencyStatus(){
   const sandbox=await sandboxStatus();
-  let storage:{mode:"json"|"ydb";ok:boolean}={mode:isYdbEnabled()?"ydb":"json",ok:true};
+  const mode: "json"|"ydb"|"postgres" = isYdbEnabled() ? "postgres" : "json";
+  let storage:{mode:string;ok:boolean}={mode,ok:true};
   if(isYdbEnabled()){
-    try{await ydbQuery()`SELECT 1 AS ok`;}catch{storage={mode:"ydb",ok:false};}
+    try{await ydbQuery()`SELECT 1 AS ok`;}catch{storage={mode,ok:false};}
   }
   return {storage,sandbox};
 }

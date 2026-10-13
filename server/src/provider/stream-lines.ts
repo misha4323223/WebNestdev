@@ -6,7 +6,7 @@ export async function* lines(body:ReadableStream<Uint8Array>){
       if(done)break;
       buffer+=decoder.decode(value,{stream:true});
       const parts=buffer.split("\n");buffer=parts.pop()??"";
-      for(const line of parts){const value=line.trim();if(value)yield value.startsWith("data:")?value.slice(5).trim():value}
+      for(const line of parts){const value=line.trim();if(!value)continue;if(value.startsWith(":"))continue;const payload=value.startsWith("data:")?value.slice(5).trim():value;if(payload)yield payload}
     }
     if(buffer.trim())yield buffer.trim();
   }finally{reader.releaseLock()}

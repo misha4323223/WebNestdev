@@ -21,6 +21,7 @@ export function SettingsPanel({projectId,projectName,onClose}:{projectId:string;
   const [error,setError]=useState("");
   const [hasToken,setHasToken]=useState(false);
   const [configured,setConfigured]=useState(false);
+  const [removing,setRemoving]=useState(false);
   const [platformDefault,setPlatformDefault]=useState<PlatformDefault|null>(null);
 
   useEffect(()=>{void (async()=>{
@@ -126,6 +127,22 @@ export function SettingsPanel({projectId,projectName,onClose}:{projectId:string;
     finally{setTesting(false)}
   }
 
+  async function resetToPlatform(){
+    if(!configured)return;
+    if(!window.confirm("Вернуть встроенный ИИ платформы? Свой провайдер будет удалён."))return;
+    setRemoving(true);setError("");setStatus("");
+    try{
+      await apiJson(`/api/projects/${encodeURIComponent(projectId)}/provider`,{method:"DELETE"});
+      localStorage.removeItem(providerStorageKey(projectId));
+      setConfig({provider:"",baseUrl:"",token:"",model:""});
+      setModels([]);
+      setHasToken(false);
+      setConfigured(false);
+      setStatus("Возвращаемся к встроенному ИИ платформы"+(platformDefault?.providerName?" · "+platformDefault.providerName+" · "+platformDefault.model:""));
+    }catch(e){setError(e instanceof Error?e.message:String(e))}
+    finally{setRemoving(false)}
+  }
+
   if(loading)return <section className="settings-panel"><div className="settings-body">Загрузка настроек…</div></section>;
 
   return <section className="settings-panel">
@@ -148,6 +165,7 @@ export function SettingsPanel({projectId,projectName,onClose}:{projectId:string;
       <div className="model-row">
         <button className="ghost-button" onClick={()=>void testConnection()} disabled={testing}>{testing?"Проверяю модель…":"Проверить подключение"}</button>
         <button className="send-button settings-save" onClick={()=>void save()} disabled={saving||loadingModels}>{saving?"Сохранение…":"Сохранить"}</button>
+        {configured&&<button className="ghost-button" onClick={()=>void resetToPlatform()} disabled={removing}>{removing?"Удаляю…":"Вернуть встроенный ИИ"}</button>}
       </div>
     </div>
   </section>;

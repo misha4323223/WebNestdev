@@ -1,6 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { getProjectProvider, getProject, saveProjectProvider, type ProjectProviderConfig } from "../project-store.js";
+import { getProjectProvider, getProject, saveProjectProvider, removeProjectProvider, type ProjectProviderConfig } from "../project-store.js";
 import { getPlatformProviderConfig } from "../provider/platform-provider.js";
 import { createProvider } from "../provider.js";
 import { requireProjectUser, requireUser } from "../auth/auth.js";
@@ -33,6 +33,17 @@ export async function registerProviderRoutes(app: FastifyInstance) {
     const config = { provider: body.provider?.trim() || "OpenAI-compatible", baseUrl: normalizeBaseUrl(baseUrl), model: body.model?.trim() || "", ...(token ? { token } : {}) };
     await saveProjectProvider(projectId, config);
     return { configured: true, provider: config.provider, baseUrl: config.baseUrl, model: config.model, hasToken: Boolean(config.token) };
+  });
+  app.delete("/api/projects/:projectId/provider", async (request, reply) => {
+    const { projectId } = request.params as { projectId: string };
+    if(!await requireProjectUser(request,reply,projectId))return;
+    await removeProjectProvider(projectId);
+    const platform = getPlatformProviderConfig();
+    return {
+      configured:false,
+      removed:true,
+      platformDefault: platform ? { available:true, providerName:platform.provider, model:platform.model } : { available:false, providerName:"", model:"" }
+    };
   });
   app.post("/api/providers/models", async (request, reply) => {
     if (!await requireUser(request, reply)) return;

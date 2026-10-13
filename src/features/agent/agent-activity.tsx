@@ -89,18 +89,31 @@ export function actionTarget(name: string, input: unknown): string {
 }
 
 /**
- * Plans live per conversation so a remount (switching to Files and back) keeps showing
- * the last published plan. Runs themselves are aborted by that switch, so only the
- * finished state needs to survive.
+ * Plans persist in localStorage per conversation so they survive page reloads,
+ * tab switches and workspace remounts. The key is scoped to the conversation id.
  */
-const plans = new Map<string, PlanState>();
+function planKey(conversationId: string) {
+  return "webnestdev.plan." + conversationId;
+}
 
 export function readPlan(conversationId: string): PlanState | null {
-  return plans.get(conversationId) ?? null;
+  try {
+    const raw = localStorage.getItem(planKey(conversationId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as PlanState;
+    if (Array.isArray(parsed.items) && parsed.items.length) return parsed;
+    return null;
+  } catch {
+    return null;
+  }
 }
 
 export function writePlan(conversationId: string, plan: PlanState) {
-  plans.set(conversationId, plan);
+  try {
+    localStorage.setItem(planKey(conversationId), JSON.stringify(plan));
+  } catch {
+    // storage full or unavailable — plan still shows in-memory for this session
+  }
 }
 
 export function PlanCard({ plan }: { plan: PlanState }) {

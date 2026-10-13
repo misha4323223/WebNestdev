@@ -10,6 +10,10 @@ function chatCompletionsUrl(baseUrl:string){
     : base+"/v1/chat/completions";
 }
 
+// AI-прокси: если задан AI_PROXY_URL, запрос идёт через зарубежный прокси.
+const proxyUrl=(process.env.AI_PROXY_URL??"").replace(/\/+$/,"");
+const proxyToken=(process.env.AI_PROXY_TOKEN??"").trim();
+
 type WireToolCall={
   id:string;
   type:"function";
@@ -48,15 +52,33 @@ export class OpenAICompatibleProvider implements Provider{
   constructor(private base:string,private key?:string){}
 
   async *stream(messages:ChatMessage[],model:string,tools?:unknown[],signal?:AbortSignal):AsyncGenerator<ProviderChunk>{
-    const response=await fetch(chatCompletionsUrl(this.base),{
-      method:"POST",
-      signal,
-      headers:{
-        "content-type":"application/json",
-        ...(this.key?{authorization:"Bearer "+this.key}:{})
-      },
-      body:JSON.stringify({model,messages:toWireMessages(messages),tools,stream:true})
-    });
+    const targetUrl=chatCompletionsUrl(this.base);
+    // Для прокси: шлём только суффикс (без домена), target идёт в X-AI-Proxy-Target.
+    // Если base оканчивается на /v1 — суффикс /chat/completions, иначе /v1/chat/completions.
+    // Так склейка на стороне прокси всегда корректная (нет дублей /v1/v1 и /api/v1/api/v1).
+    const normBase=this.base.trim().replace(/\/+$/,"");
+    const chatPath=normBase.endsWith("/v1")?"/chat/completions":"/v1/chat/completions";
+    const response=proxyUrl
+      ? await fetch(proxyUrl+chatPath,{
+        method:"POST",
+        signal,
+        headers:{
+          "content-type":"application/json",
+          "x-ai-proxy-target":this.base.replace(/\/+$/,""),
+          ...(proxyToken?{"x-proxy-token":proxyToken}:{}),
+          ...(this.key?{authorization:"Bearer "+this.key}:{})
+        },
+        body:JSON.stringify({model,messages:toWireMessages(messages),tools,stream:true})
+      })
+      : await fetch(targetUrl,{
+        method:"POST",
+        signal,
+        headers:{
+          "content-type":"application/json",
+          ...(this.key?{authorization:"Bearer "+this.key}:{})
+        },
+        body:JSON.stringify({model,messages:toWireMessages(messages),tools,stream:true})
+      });
     if(!response.ok){
       const detail=await response.text().catch(()=>"");
       throw new Error(

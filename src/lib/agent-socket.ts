@@ -5,6 +5,7 @@ export type AgentSocketEvent={
   runId?:string;
   delta?:string;
   error?:string;
+  code?:string;
   name?:string;
   toolCallId?:string;
   input?:unknown;
