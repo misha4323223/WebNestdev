@@ -349,7 +349,7 @@ export async function initializeStorage(): Promise<void> {
       updated_at TEXT NOT NULL
     )`);
 
-    await pool.query(`CREATE INDEX IF NOT EXISTS idx_${tbl("project_sizes")}_user ON ${tbl("project_sizes")} (user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("project_sizes")}_user ON ${tbl("project_sizes")} (user_id)`);
 
     await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("user_storage")} (
       user_id TEXT NOT NULL PRIMARY KEY,
