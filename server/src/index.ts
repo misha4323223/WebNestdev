@@ -15,6 +15,8 @@ import { describePreviewLimits } from "./preview/preview-limiter.js";
 import { describeRunLimiter } from "./agent/run-limiter.js";
 import { describeSandboxLimiter } from "./sandbox/sandbox-limiter.js";
 import { assertEncryptionConfigured } from "./storage/secret-crypto.js";
+import { describeSandboxPaths } from "./sandbox/config.js";
+import { describeSandboxMount,verifySandboxMount } from "./sandbox/sandbox-check.js";
 import { ensureDataDir } from "./project-store.js";
 import { registerHealthRoutes } from "./routes/health.js";
 import { registerProjectRoutes } from "./routes/projects.js";
@@ -63,6 +65,10 @@ console.log("[preview] " + describePreviewMode() + "; " + describePreviewLimits(
 // one: a run is mostly waiting on the model, a container is what costs RAM.
 console.log("[agent] " + describeRunLimiter());
 console.log("[sandbox] " + describeSandboxLimiter());
+// Каталог песочниц у сервера и у docker — разные вещи: контейнеры проектов монтируют путь,
+// который демон разбирает на хосте. Оба печатаются при старте, чтобы расхождение было видно
+// сразу, а не после того, как агент пожалуется на пустой терминал.
+console.log("[sandbox] " + describeSandboxPaths());
 // База инициализируется в фоне: DDL на «холодной» серверлесс-базе занимает 30–60 с.
 // Если дождаться её здесь, app.listen() так и не выполнится (порт 8787 не поднимется,
 // а healthcheck и клиенты не дождутся ответа). HTTP стартует сразу; DDL отрабатывает в фоне.
@@ -141,6 +147,16 @@ await app.listen({host:"0.0.0.0",port:Number(process.env.PORT??8787)});
 void reapOrphanPreviews()
   .then(result => { if (result.stopped) app.log.info({ stopped: result.stopped }, "stopped orphan preview containers"); })
   .catch(error => app.log.warn({ error: error instanceof Error ? error.message : error }, "preview reap skipped"));
+// Песочница проверяется один раз после старта: маркер в каталоге песочниц и `cat` его из
+// контейнера. Это единственный способ узнать, что контейнеры видят те же файлы, что и агент;
+// результат остаётся в /api/health (`sandbox.mount`), а расхождение ещё и понижает /api/ready.
+void verifySandboxMount()
+  .then(result => {
+    const line = describeSandboxMount(result);
+    if (result.ok) app.log.info("sandbox mount ok: " + line);
+    else app.log.error("sandbox mount failed: " + line);
+  })
+  .catch(error => app.log.warn({ error: error instanceof Error ? error.message : error }, "sandbox mount check skipped"));
 // A preview nobody uses is stopped after PREVIEW_IDLE_MS (five minutes by default): without
 // the sweep every project that was ever previewed would keep a dev server and its memory.
 startPreviewSweeper();

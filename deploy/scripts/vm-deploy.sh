@@ -10,6 +10,14 @@
 #   IMAGE_REF=ghcr.io/…        образ для MODE=image
 #   APP_DIR=~/webnestdev/src   каталог развёртывания (docker-compose.yml и .env)
 #   COMPOSE_FILE=docker-compose.yml
+#   SYNC_COMPOSE=1             обновлять docker-compose.yml из репозитория при image-деплое.
+#                              Раньше выкатка готового образа не касалась compose-файла на ВМ,
+#                              и он молча оставался старым: сервер не получал SANDBOX_DIR, а
+#                              контейнеры проектов монтировали чужой путь (пустой /workspace).
+#   COMPOSE_B64=…              сам файл в base64 (его присылает workflow); без него берётся
+#                              COMPOSE_SRC — путь к локальной копии (self-hosted runner).
+#   MIGRATE_SANDBOXES=1        перенести файлы проектов из старого тома в SANDBOX_DIR,
+#                              если на хосте каталог пуст.
 #   SERVICE=webnestdev-server  сервис в compose
 #   GIT_BRANCH=main            ветка для MODE=source
 #   SYSTEMD_UNIT=webnestdev    юнит, который перезапускается в MODE=source
@@ -38,6 +46,10 @@ DRY_RUN="${DRY_RUN:-0}"
 KEEP_IMAGES="${KEEP_IMAGES:-2}"
 IMAGE_REPO_PATTERN="${IMAGE_REPO_PATTERN:-webnestdev}"
 PRUNE_BUILD_CACHE="${PRUNE_BUILD_CACHE:-all}"
+SYNC_COMPOSE="${SYNC_COMPOSE:-1}"
+COMPOSE_B64="${COMPOSE_B64:-}"
+COMPOSE_SRC="${COMPOSE_SRC:-}"
+MIGRATE_SANDBOXES="${MIGRATE_SANDBOXES:-1}"
 
 log(){ printf '[deploy] %s\n' "$*"; }
 run(){ if [ "$DRY_RUN" = "1" ]; then log "dry-run: $*"; else "$@"; fi; }
@@ -124,6 +136,114 @@ wait_for_health(){
   return 1
 }
 
+#
+# compose-файл на ВМ и файл в репозитории — два разных файла, и раньше они расходились молча:
+# выкатка готового образа обновляла только образ. Из-за этого ВМ работала со старым compose без
+# SANDBOX_DIR, сервер писал проекты в каталог по умолчанию, а контейнеры проектов монтировали
+# путь на хосте — терминал песочницы показывал пустую папку при живых файлах агента.
+# Файл проверяется `docker compose config` ДО подмены: если в .env нет нужной переменной,
+# присланный compose не станет валидным, и подмена сломала бы выкатку, которую старый вытянет.
+install_compose(){
+  if [ "$SYNC_COMPOSE" != "1" ]; then
+    log "compose не синхронизирую (SYNC_COMPOSE=0)"
+    return 0
+  fi
+  local staged="$APP_DIR/.docker-compose.yml.synced"
+  if [ -n "$COMPOSE_B64" ]; then
+    if ! printf '%s' "$COMPOSE_B64" | base64 -d > "$staged" 2>/dev/null; then
+      log "присланный compose не распаковался — оставляю файл на ВМ"
+      rm -f "$staged"
+      return 1
+    fi
+  elif [ -n "$COMPOSE_SRC" ] && [ -f "$COMPOSE_SRC" ]; then
+    cp "$COMPOSE_SRC" "$staged"
+  else
+    log "compose не передан — оставляю файл на ВМ"
+    return 0
+  fi
+  if ! (cd "$APP_DIR" && docker compose -f "$staged" config -q 2>&1 | sed 's/^/[deploy]   /'); then
+    log "присланный compose не проходит проверку — оставляю текущий"
+    rm -f "$staged"
+    return 1
+  fi
+  if cmp -s "$staged" "$APP_DIR/$COMPOSE_FILE"; then
+    log "$COMPOSE_FILE уже совпадает с репозиторием"
+    rm -f "$staged"
+    return 0
+  fi
+  log "обновляю $COMPOSE_FILE из репозитория (прежний — $COMPOSE_FILE.bak)"
+  cp "$APP_DIR/$COMPOSE_FILE" "$APP_DIR/$COMPOSE_FILE.bak" 2>/dev/null || true
+  mv "$staged" "$APP_DIR/$COMPOSE_FILE"
+}
+
+#
+# Файлы уже созданных проектов лежат в именованном томе (там их писал сервер, когда песочницы
+# жили внутри тома). Новый каталог песочниц — это каталог хоста, поэтому файлы переносятся один
+# раз. Переносится только в пустой каталог: если на хосте уже что-то есть, решает оператор
+# (`deploy/scripts/migrate-sandboxes.sh`), а не выкатка.
+#
+migrate_sandboxes(){
+  local dir="${SANDBOX_DIR:-}"
+  if [ -z "$dir" ] && [ -f "$APP_DIR/.env" ]; then
+    # `|| true` — из-за pipefail пустой grep иначе уронил бы скрипт до самого переноса.
+    dir=$(grep -m1 '^SANDBOX_DIR=' "$APP_DIR/.env" 2>/dev/null | cut -d= -f2- || true)
+  fi
+  dir="${dir:-/var/lib/webnestdev/sandboxes}"
+  if [ "$MIGRATE_SANDBOXES" != "1" ]; then
+    log "перенос файлов проектов отключён (MIGRATE_SANDBOXES=0), каталог $dir"
+    return 0
+  fi
+  local project volume
+  project="${COMPOSE_PROJECT_NAME:-$(basename "$APP_DIR")}"
+  volume="${VOLUME:-${project}_webnestdev-data}"
+  if ! docker volume inspect "$volume" >/dev/null 2>&1; then
+    log "тома $volume нет — переносить нечего"
+    return 0
+  fi
+  mkdir -p "$dir" 2>/dev/null || true
+  local existing
+  existing=$(find "$dir" -mindepth 1 -maxdepth 1 2>/dev/null | wc -l | tr -d ' ' || true)
+  if [ "${existing:-0}" != "0" ]; then
+    log "каталог $dir уже не пуст ($existing записей) — перенос не выполняю"
+    return 0
+  fi
+  log "переношу файлы проектов из тома $volume в $dir"
+  # Перенос не должен ронять выкатку: если копирование не удалось, каталог остаётся пустым и
+  # следующая выкатка повторит попытку (условие — «каталог пуст»).
+  if ! docker run --rm --network none -v "$volume:/from:ro" -v "$dir:/to" "${SANDBOX_IMAGE:-node:22-bookworm-slim}" \
+    sh -c 'if [ -d /from/sandboxes ]; then cp -a /from/sandboxes/. /to/ 2>/dev/null || true; echo "файлов: $(find /to -type f 2>/dev/null | wc -l)"; else echo "в томе нет каталога sandboxes"; fi'; then
+    log "перенос файлов проектов не удался — повторю при следующей выкатке"
+  fi
+}
+
+#
+# Проверка песочницы после выкатки: маркер в каталоге песочниц читает контейнер. Без неё тот же
+# самый дефект (сервер пишет в один каталог, контейнеры монтируют другой) замечает только агент —
+# и сообщает об этом как о «пропавших файлах». Расхождение путей делает деплой неуспешным.
+#
+verify_sandbox(){
+  local output verdict
+  if [ "$MODE" = "source" ]; then
+    # В режиме source сервер запущен systemd прямо на хосте: обе стороны — один и тот же путь.
+    output=$(cd "$APP_DIR" && node server/dist/scripts/sandbox-selfcheck.js 2>&1 || true)
+  else
+    output=$(run docker compose exec -T "$SERVICE" node server/dist/scripts/sandbox-selfcheck.js 2>&1 || true)
+  fi
+  printf '%s\n' "$output" | sed 's/^/[deploy] /'
+  verdict=$(printf '%s\n' "$output" | grep -o 'SANDBOX-MOUNT=[a-z]*' | tail -1 | cut -d= -f2 || true)
+  case "$verdict" in
+    ok) log "песочница видна контейнерам" ; return 0 ;;
+    mismatch)
+      log "ПЕСОЧНИЦА СЛОМАНА: сервер и контейнеры видят разные каталоги. Исправьте SANDBOX_DIR/WEBNESTDEV_SANDBOX_DIR и монтирование в $COMPOSE_FILE, затем выкатите снова"
+      return 1
+      ;;
+    image) log "образ песочницы ещё не скачан на эту ВМ — команды агента скачают его при первом запуске" ; return 0 ;;
+    docker) log "docker недоступен из контейнера сервера — проверка песочницы пропущена" ; return 0 ;;
+    disk) log "каталог песочниц недоступен для записи — проверка песочницы пропущена" ; return 0 ;;
+    *) log "проверка песочницы не ответила — пропускаю" ; return 0 ;;
+  esac
+}
+
 if [ ! -d "$APP_DIR" ]; then
   if [ "$MODE" = "prune" ]; then
     log "каталог развёртывания не найден ($APP_DIR), но для уборки образов он не нужен"
@@ -153,6 +273,10 @@ case "$MODE" in
     fi
     # Compose берёт образ из WEBNESTDEV_IMAGE, а --no-build запрещает собирать на месте.
     export WEBNESTDEV_IMAGE="$IMAGE_REF"
+    # Сначала файл сервисов, потом перенос файлов проектов, и только потом запуск: контейнеры
+    # поднимаются уже с правильным каталогом песочниц.
+    install_compose || log "выкатываю на compose, который лежит на ВМ"
+    migrate_sandboxes
     run docker compose -f "$COMPOSE_FILE" up -d --no-build "$SERVICE"
     ;;
   source)
@@ -180,6 +304,12 @@ case "$MODE" in
 esac
 
 wait_for_health
+# Расхождение путей песочницы — не справка, а сломанная выкатка: агент пишет файлы, которых
+# не видит терминал. Такой деплой не считается успешным.
+if ! verify_sandbox; then
+  log "выкатка не принята: песочница и контейнеры видят разные каталоги"
+  exit 4
+fi
 log "деплой завершён"
 # Уборка после успешной выкатки, а не до неё: если сервис не поднялся, предыдущий образ
 # остаётся на месте и можно сразу откатиться на него без сборки.

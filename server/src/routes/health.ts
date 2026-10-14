@@ -5,7 +5,8 @@ import { runQueueStats } from "../agent/run-limiter.js";
 import { sandboxQueueStats } from "../sandbox/sandbox-limiter.js";
 import { browserQueueStats } from "../tools/browser-limiter.js";
 import { liveRuntimePreviews, liveStaticPreviews, runtimePreviewLimit } from "../preview/preview-limiter.js";
-import { sandboxRootDir } from "../sandbox/config.js";
+import { sandboxHostRootDir,sandboxRootDir } from "../sandbox/config.js";
+import { lastSandboxMountCheck } from "../sandbox/sandbox-check.js";
 import { diskStatus, memoryStatus } from "../health/host-metrics.js";
 
 async function dependencyStatus(){
@@ -15,7 +16,13 @@ async function dependencyStatus(){
   if(isYdbEnabled()){
     try{await ydbQuery()`SELECT 1 AS ok`;}catch{storage={mode,ok:false};}
   }
-  return {storage,sandbox};
+  return {
+    storage,
+    // Пути и последняя проверка монтирования. Без них расхождение «сервер пишет в один
+    // каталог, контейнеры монтируют другой» выглядит как жалоба агента на пропавшие файлы,
+    // а не как ошибка выкатки с понятным исправлением.
+    sandbox:{...sandbox,sandboxDir:sandboxRootDir(),sandboxHostDir:sandboxHostRootDir(),mount:lastSandboxMountCheck()},
+  };
 }
 
 /**
@@ -52,7 +59,9 @@ export async function registerHealthRoutes(app:FastifyInstance){
   }));
   app.get("/api/ready",async(_request,reply)=>{
     const dependencies=await dependencyStatus();
-    const ok=dependencies.storage.ok && dependencies.sandbox.available;
+    // Расхождение путей песочницы — не временная неисправность хоста, а сломанная выкатка:
+    // агент пишет файлы, которых не видит терминал. Готовность обязана об этом сказать.
+    const ok=dependencies.storage.ok && dependencies.sandbox.available && dependencies.sandbox.mount?.reason!=="mismatch";
     return reply.code(ok?200:503).send({ok,service:"webnestdev-server",...dependencies,activity:await activity()});
   });
   app.get("/api/sandbox/status",async()=>sandboxStatus());

@@ -55,6 +55,9 @@ services:
       # каталог, пока агент пишет файлы в серверный. `WEBNESTDEV_SANDBOX_DIR` задаёт его
       # внутри сервера, второй пункт монтирования — тот же путь с хоста.
       WEBNESTDEV_SANDBOX_DIR: ${SANDBOX_DIR:-/var/lib/webnestdev/sandboxes}
+      # Явно, а не через молчаливый фолбэк: если это значение когда-нибудь разойдётся с
+      # монтированием ниже, сервер отдаст контейнерам правильный путь вместо угадывания.
+      WEBNESTDEV_SANDBOX_HOST_DIR: ${SANDBOX_DIR:-/var/lib/webnestdev/sandboxes}
       SANDBOX_MODE: docker
       SANDBOX_IMAGE: node:22-bookworm-slim
       SANDBOX_MEMORY: 1g

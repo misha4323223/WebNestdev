@@ -143,11 +143,14 @@ jobs:
             echo "Недопустимый тег образа: $image" >&2
             exit 1
           fi
+          # Файл сервисов едет на ВМ вместе со скриптом: выкатка образа раньше не касалась
+          # compose, и ВМ молча оставалась со старым — без SANDBOX_DIR и монтирования песочниц.
+          COMPOSE_B64=$(base64 -w0 docker-compose.yml)
           ssh -i "$HOME/.ssh/deploy_key" \
             -p "${DEPLOY_PORT:-22}" \
             -o BatchMode=yes -o StrictHostKeyChecking=yes \
             "$DEPLOY_USER@$DEPLOY_HOST" \
-            "MODE='$MODE' IMAGE_REF='$image' APP_DIR='$DEPLOY_APP_DIR' bash -s" \
+            "MODE='$MODE' IMAGE_REF='$image' APP_DIR='$DEPLOY_APP_DIR' COMPOSE_B64='$COMPOSE_B64' bash -s" \
             < deploy/scripts/vm-deploy.sh
 
       - name: Deploy on the VM (self-hosted runner)
@@ -162,4 +165,5 @@ jobs:
           image="$IMAGE_INPUT"
           [ -n "$image" ] || image="$BUILT_IMAGE"
           MODE="$MODE" IMAGE_REF="$image" APP_DIR="$DEPLOY_APP_DIR" \
+            COMPOSE_SRC="$PWD/docker-compose.yml" \
             bash deploy/scripts/vm-deploy.sh

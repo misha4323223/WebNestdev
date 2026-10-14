@@ -1,4 +1,5 @@
 import type { SandboxConfig } from "../sandbox-manager.js";
+import { workspaceMountSource } from "../sandbox/config.js";
 import { dockerExec } from "./docker-exec.js";
 import { previewNetwork } from "./preview-network.js";
 import { resolvePreviewCommand } from "./preview-command.js";
@@ -30,7 +31,8 @@ export async function startPreviewContainer(config:SandboxConfig){
     ...(network?["--network",network]:[]),
     // The label is how a restarted server finds previews it no longer knows about.
     "--label",PREVIEW_LABEL+"="+config.projectId,
-    "-v",config.root+":/workspace",
+    // Путь хоста, а не сервера: docker разбирает его до контейнера (см. sandbox/config.ts).
+    "-v",workspaceMountSource(config)+":/workspace",
     "-w","/workspace",
     "-e","HOME=/tmp",
     "-e","CI=1",
