@@ -13,7 +13,9 @@ const messageSchema=z.discriminatedUnion("role",[
   z.object({role:z.literal("assistant"),content:z.string().max(100000),tool_calls:z.array(z.object({id:z.string(),name:z.string(),arguments:z.record(z.string(),z.unknown())})).optional()}),
   z.object({role:z.literal("tool"),content:z.string().max(100000),tool_call_id:z.string()})
 ]);
-const runSchema=z.object({projectId:z.string().min(1).max(200),conversationId:z.string().max(200).optional(),messages:z.array(messageSchema).min(1).max(100),model:z.string().max(200).optional(),mode:z.enum(["planner","developer"]).optional()});
+// `resume` — продолжение прерванного запуска: сообщения приходят как обычно, а рантайм добавляет
+// модели системную заметку о том, что это продолжение и на каком шаге остановился план.
+const runSchema=z.object({projectId:z.string().min(1).max(200),conversationId:z.string().max(200).optional(),messages:z.array(messageSchema).min(1).max(100),model:z.string().max(200).optional(),mode:z.enum(["planner","developer"]).optional(),resume:z.object({reason:z.string().max(300).optional()}).optional()});
 
 // Mirrors the HTTP CORS rule in index.ts: in development the browser origin varies
 // (localhost, LAN IP, hosted preview domain), so any origin is accepted unless

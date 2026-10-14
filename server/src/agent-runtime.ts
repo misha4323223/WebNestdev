@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { AgentRunRequest,ChatMessage,PlanState } from "./types.js";
 import { createProvider } from "./provider.js";
 import { appendConversationMessages,getConversation,getProject,getProjectProvider,saveConversationPlan } from "./project-store.js";
-import { buildInitialMessages } from "./agent/message-builder.js";
+import { buildInitialMessages,insertSystemNotice,resumeNotice } from "./agent/message-builder.js";
 import { buildProjectContext } from "./agent/context-builder.js";
 import { retrieveRelevantFiles } from "./agent/context-retrieval.js";
 import { executeTool } from "./agent/tool-executor.js";
@@ -80,6 +80,15 @@ export class AgentRuntime {
       const relevantFiles=await retrieveRelevantFiles(request.projectId,request.userId,task);
       const mode=request.mode==="planner"?"planner":"developer";
       let messages:ChatMessage[]=buildInitialMessages(request.messages,projectContext+"\n\nTASK-RELEVANT SOURCE FILES\n"+relevantFiles,mode);
+      if(request.resume){
+        // Возобновление: история — это память о сделанном, сохранённый план — закладка. Без заметки
+        // модель с большой историей часто начинает задачу заново или переспрашивает пользователя.
+        let plan:PlanState|undefined;
+        if(request.conversationId){
+          try{plan=(await getConversation(request.conversationId))?.plan??undefined}catch(error){console.error("Failed to read the stored plan for resume",error);}
+        }
+        messages=insertSystemNotice(messages,resumeNotice(request.resume.reason,plan));
+      }
       const model=request.model??config?.model??(config?undefined:platformConfig?.model);
       if(!model)throw new Error("Модель AI не настроена");
       usageModel=model;

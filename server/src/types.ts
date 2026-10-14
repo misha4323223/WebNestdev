@@ -24,7 +24,11 @@ export type AgentEvent=
  * "developer" is the full agent that writes code and verifies the result.
  */
 export type AgentMode="planner"|"developer";
-export type AgentRunRequest={projectId:string;conversationId?:string;messages:ChatMessage[];model?:string;mode?:AgentMode;userId:string};
+/**
+ * `resume` marks a run that continues an interrupted one: the history arrives as usual, but the
+ * runtime tells the model that this is a continuation and where the plan stopped.
+ */
+export type AgentRunRequest={projectId:string;conversationId?:string;messages:ChatMessage[];model?:string;mode?:AgentMode;resume?:{reason?:string};userId:string};
 export type ToolContext={projectId:string;runId:string;userId:string};
 export type ToolHandler=(input:unknown,context:ToolContext)=>Promise<unknown>;
 export type ToolDefinition={name:string;description:string;execute?:ToolHandler;async?:ToolHandler;/** Optional JSON Schema sent to the provider so the model knows the exact input shape. */parameters?:Record<string,unknown>};

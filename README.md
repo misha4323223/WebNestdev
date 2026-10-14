@@ -55,6 +55,22 @@ On top of the host-wide limit there is **one run per account**: a second tab or 
 of the same user is answered with `RUN_ALREADY_ACTIVE` and the panel says the agent is still
 running, instead of one person taking every place while everyone else queues behind them.
 
+### A lost connection does not lose the task
+
+The panel reconnects by itself instead of dropping the work: three attempts with growing pauses
+while the socket has not opened yet, and then, if the connection dies mid-run, up to two automatic
+reconnects that resume the run. A run is aborted server-side when its socket closes, but the
+conversation, the plan and every tool result are already stored — so a resume continues from the
+same step, and the runtime adds a system notice saying that the history above is finished work and
+the stored plan is the bookmark. Once the automatic attempts are used up — or when a run failed,
+was stopped, or a reloaded tab opens a conversation whose last turn has no answer — the panel
+shows a **Продолжить** button. Refusals that never started a run (daily quota, storage limit, a
+second run in the same account) deliberately do not offer it.
+
+Inside the project sandbox there is no Docker: `docker`, `docker build` and `docker compose` are
+refused by `terminal.exec` with an explanation, because the platform starts the Preview itself and
+serves it (see below). A `Dockerfile` is still a normal project artifact to create or edit.
+
 Previews are cheaper still, and the cheapest tier needs nothing at all: a project that is already
 plain HTML/CSS/JS (`index.html`, no build script) is **served as is — no build, no container** — and
 a `dist`/`build`/`out` that is already there is served the same way. A project with a build script

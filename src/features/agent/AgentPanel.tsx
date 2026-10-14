@@ -1,5 +1,5 @@
 import { useCallback,useEffect,useRef,useState } from "react";
-import { AlertTriangle,ArrowLeftRight,ClipboardList,Code2,Cpu,FileText,Image as ImageIcon,ListPlus,MessagesSquare,Paperclip,Plus,Send,Sparkles,Square,X } from "lucide-react";
+import { AlertTriangle,ArrowLeftRight,ClipboardList,Code2,Cpu,FileText,Image as ImageIcon,ListPlus,MessagesSquare,Paperclip,Play,Plus,RotateCcw,Send,Sparkles,Square,X } from "lucide-react";
 import { createAgentSocket } from "../../lib/agent-socket";
 import { apiJson } from "../../lib/api";
 import { createConversation,getConversation,listConversations,uploadProjectFile,type ConversationSummary } from "../../lib/project-api";
@@ -39,6 +39,13 @@ function readStoredMode():AgentMode{
 
 type Attachment={id:string;name:string;path:string;bytes:number;image:boolean};
 type QueuedMessage={id:string;text:string;attachments:Attachment[]};
+/**
+ * Сколько раз панель переподключается к серверу сама, прежде чем отдать решение пользователю.
+ * Две попытки закрывают короткий обрыв сети или перезапуск сервера; дальше нужен явный «Продолжить»,
+ * иначе долгий сбой превратился бы в бесконечный цикл попыток.
+ */
+const MAX_AUTO_RESUME=2;
+
 /** The provider state the composer reads to show the model a run will use. */
 type ProviderStatus={configured:boolean;provider:string;model:string;platformDefault?:{available:boolean;providerName:string;model:string}|null};
 type ModelInfo={model:string;provider:string;source:"project"|"platform"|"none"|"unknown"};
@@ -81,6 +88,20 @@ function withAttachments(text:string,attachments:Attachment[]){
   return text+"\n\nЭти файлы уже лежат в проекте, используй их по путям:\n"+list;
 }
 
+/**
+ * Запуск, оборвавшийся вместо завершения — перезагрузка вкладки, перезапуск сервера, потеря сети —
+ * остаётся в истории ходом без финального ответа: последнее сообщение либо результат инструмента, либо
+ * ответ модели с вызовами, на которые результата уже нет. По этому признаку панель после перезагрузки
+ * понимает, что работа не закончена, и предлагает продолжить с того же места.
+ */
+function interruptedRun(messages:ChatMessage[]):{reason:string;label:string}|null{
+  const last=messages.at(-1);
+  if(!last)return null;
+  const pending=last.role==="tool"||(last.role==="assistant"&&Boolean(last.tool_calls?.length));
+  if(!pending)return null;
+  return {reason:"предыдущий запуск был прерван и не завершён",label:"Прошлый запуск прервался — агент продолжит с того же места."};
+}
+
 export function AgentPanel({projectId,conversationId,onOpenConversation,onChanged,onOpenModelSettings,onOpenAccountSettings}:{projectId:string;conversationId:string;onOpenConversation:(id:string)=>void;onChanged:()=>void;onOpenModelSettings?:()=>void;onOpenAccountSettings?:()=>void}){
   const [messages,setMessages]=useState<ChatMessage[]>([]);
   const [prompt,setPrompt]=useState<string>(()=>{try{return localStorage.getItem("webnestdev.draft."+conversationId)??""}catch(_){return ""}});
@@ -110,8 +131,20 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
   const [sessions,setSessions]=useState<ConversationSummary[]|null>(null);
   const [sessionsError,setSessionsError]=useState("");
   const [sessionBusy,setSessionBusy]=useState(false);
+  // Остановленный запуск — не потеря задачи: история и план уже на сервере, поэтому панель
+  // держит кнопку «Продолжить», пока пользователь не продолжит или не отправит новое сообщение.
+  const [resume,setResume]=useState<{reason:string;label:string}|null>(null);
+  // Автоматическое переподключение: сколько попыток сделано и сколько осталось.
+  const [reconnect,setReconnect]=useState<{attempt:number;max:number}|null>(null);
   const socketRef=useRef<WebSocket|null>(null);
   const actionsRef=useRef<AgentAction[]>([]);
+  // Сокет закрыт нами (остановка, завершение запуска) — тогда обрыв не считается потерей связи.
+  const closedByUsRef=useRef(false);
+  /** Запуск дошёл до конца: новые ответы после этого не могут быть его продолжением. */
+  const completedRef=useRef(false);
+  // Сколько ограниченных автопереподключений уже сделано; сбрасывается в ноль при новом запуске.
+  const autoResumeRef=useRef(0);
+  const autoResumeTimerRef=useRef<number|null>(null);
   // Queued messages start runs from socket callbacks, so the mode is read from a ref.
   const modeRef=useRef<AgentMode>(mode);
   const fileRef=useRef<HTMLInputElement|null>(null);
@@ -165,6 +198,13 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
     writePlan(conversationId,next);
   }
 
+  /** Отложенное автоматическое переподключение отменяется, когда панель переключает чат или размонтируется. */
+  function cancelAutoResume(){
+    if(autoResumeTimerRef.current!==null){window.clearTimeout(autoResumeTimerRef.current);autoResumeTimerRef.current=null}
+  }
+
+  useEffect(()=>()=>cancelAutoResume(),[]);
+
   /** A cancelled or aborted run leaves rows spinning, so they are settled as failed. */
   function settleActions(){
     updateActions(current=>current.map(action=>action.status==="running"?{...action,status:"failed" as const,durationMs:Date.now()-action.startedAt}:action));
@@ -175,6 +215,8 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
     setLoaded(false);
     queueRef.current=[];setQueue([]);
     setAttachments([]);setNotice("");
+    cancelAutoResume();
+    autoResumeRef.current=0;setReconnect(null);setResume(null);closedByUsRef.current=true;
     actionsRef.current=[];setActions([]);setProgress(null);setThinking("");
     setPlan(readPlan(conversationId));
     void getConversation(conversationId).then(conversation=>{
@@ -188,6 +230,8 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
       // The plan is stored with the conversation; localStorage is only the fallback.
       setPlan(conversation.plan??readPlan(conversationId));
       setThinking([...persisted].reverse().find(message=>message.role==="assistant"&&message.reasoning)?.reasoning??"");
+      // Диалог, в котором запуск не дошёл до ответа, открывается сразу с кнопкой «Продолжить».
+      setResume(interruptedRun(persisted));
       setLoaded(true);
     }).catch(()=>{
       if(cancelled)return;
@@ -224,18 +268,49 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
     return()=>{cancelled=true};
   },[projectId]);
 
-  function startRun(item:{text:string;attachments:Attachment[]}){
-    const content=withAttachments(item.text,item.attachments);
-    const history=[...toProviderHistory(messagesRef.current),{role:"user" as const,content}];
-    replaceMessages([...messagesRef.current,{role:"user",content},{role:"assistant",content:""}]);
+  /**
+   * Запуск задачи. `resumeReason` означает продолжение прерванного запуска: сообщение пользователя не
+   * добавляется, а сервер получает пометку, по которой модели добавляется заметка о продолжении —
+   * история и план уже сохранены, поэтому работа продолжается с того же места, а не с начала.
+   */
+  function startRun(item:{text:string;attachments:Attachment[]}|null,options:{resumeReason?:string;auto?:boolean}={}){
+    const resuming=Boolean(options.resumeReason);
+    // Ручное продолжение начинает счёт попыток переподключения заново, автоматическое — продолжает
+    // считать, чтобы потеря связи не превратилась в бесконечный цикл перезапусков.
+    autoResumeRef.current=resuming&&options.auto?autoResumeRef.current+1:0;
+    // Новое сообщение или ручное продолжение отменяет отложенную попытку: иначе она сработала бы
+    // поверх только что начатого запуска и заменила его.
+    if(!options.auto)cancelAutoResume();
+    const content=item?withAttachments(item.text,item.attachments):"";
+    const history=resuming
+      ?toProviderHistory(messagesRef.current)
+      :[...toProviderHistory(messagesRef.current),{role:"user" as const,content}];
+    replaceMessages(resuming
+      ?[...messagesRef.current,{role:"assistant",content:""}]
+      :[...messagesRef.current,{role:"user",content},{role:"assistant",content:""}]);
+    setResume(null);
     setRunning(true);
     setNotice("");
+    // При автопереподключении строка «переподключаюсь…» остаётся видимой до открытия сокета: панель
+    // не должна выглядеть бездействующей, пока идёт повторная попытка.
+    if(!resuming)setReconnect(null);
     updateActions(()=>[]);
     setProgress(null);
     setThinking("");
     setRunStartedAt(Date.now());
+    completedRef.current=false;
 
-    const socket=createAgentSocket(event=>{
+    /**
+     * Соединение и запрос. Оборвавшийся до отправки сокет — это состояние сети, а не ошибка запуска,
+     * поэтому попыток несколько с растущей паузой; оборвавшийся во время работы — это точка
+     * продолжения, а не потерянная задача: история и план уже на сервере.
+     */
+    const connect=(attempt:number)=>{
+      let opened=false;
+      let settled=false;
+      closedByUsRef.current=false;
+      const maxAttempts=3;
+      const socket=createAgentSocket(event=>{
       if(event.type==="message.delta")updateMessages(current=>{
         const next=[...current];
         const last=next.at(-1);
@@ -272,13 +347,16 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
         updateActions(current=>current.map(action=>action.id===id?{...action,status:failed?"failed":"done",durationMs:Date.now()-action.startedAt}:action));
       }
       if(event.type==="plan.updated"&&event.plan)updatePlan(event.plan);
-      if(event.type==="run.completed"){finishRun(socket,{drain:true});onChanged();void loadSessions()}
+      if(event.type==="run.completed"){completedRef.current=true;endRun(socket,{drain:true});onChanged();void loadSessions()}
       if(event.type==="run.failed"){
         // A run that died on the context limit has a different fix than a failed tool call, so the
         // panel says which one it is instead of leaving the user with the provider's wording.
         const overflow=event.code==="CONTEXT_OVERFLOW";
-        updateMessages(current=>[...current,{role:"assistant",content:"Ошибка: "+(event.error??"неизвестная ошибка")+(overflow?"\n\nИстория этого диалога уже слишком большая для модели: начните новый диалог или разбейте задачу на части — тогда запуск продолжится.":"")}]);
-        finishRun(socket,{drain:false,reason:overflow?"Остановлено: переполнен контекст модели — начните новый диалог":"Очередь на паузе: последняя задача завершилась ошибкой."});
+        updateMessages(current=>[...current,{role:"assistant",content:"Ошибка: "+(event.error??"неизвестная ошибка")+(overflow?"\n\nИстория этого диалога уже слишком большая для модели: начните новый диалог или разбейте задачу на части — либо нажмите «Продолжить»: история будет сокращена.":"")}]);
+        endRun(socket,{drain:false,notice:overflow?"Запуск остановлен: переполнен контекст модели.":"Запуск остановлен ошибкой — можно продолжить с этого места.",resume:{
+          reason:"запуск был остановлен ошибкой: "+(event.error??"неизвестная ошибка").slice(0,160),
+          label:overflow?"Переполнен контекст модели: продолжение начнётся с сокращённой историей.":"Запуск остановлен ошибкой — агент продолжит с того же места.",
+        }});
       }
       if(event.type==="error"){
         const errorMsg = event.error ?? "соединение потеряно";
@@ -291,23 +369,85 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
         const quotaKind = isStorageLimit ? "storage" : isDailyQuota ? "daily" : null;
         updateMessages(current=>[...current,{role:"assistant",content:(quotaKind==="storage"?"Достигнут лимит хранилища вашего тарифа. ":quotaKind==="daily"?"Дневной лимит запусков агента исчерпан. ":isAccountBusy?"Агент уже работает в этом аккаунте. ":isBusy?"Сервер занят. ":"Ошибка: ")+errorMsg}]);
         if(quotaKind)setQuotaNotice(quotaKind);
-        finishRun(socket,{drain:false,reason:quotaKind==="storage"?"Хранилище заполнено — обновите тариф":quotaKind==="daily"?"Дневной лимит исчерпан":isAccountBusy?"Агент уже работает в этом аккаунте — дождитесь завершения или остановите его":isBusy?"Сервер занят — повторите запуск позже":"Очередь на паузе: Agent Runtime вернул ошибку."});
+        // Тариф и очередь аккаунта требуют не «Продолжить», а действия с тарифом или ожидания: у этих
+        // отказов запуск даже не начался, и кнопка продолжения только запутала бы.
+        const resumable=!quotaKind&&!isAccountBusy;
+        endRun(socket,{drain:false,notice:quotaKind==="storage"?"Хранилище заполнено — обновите тариф":quotaKind==="daily"?"Дневной лимит исчерпан":isAccountBusy?"Агент уже работает в этом аккаунте — дождитесь завершения или остановите его":isBusy?"Сервер занят — повторите запуск позже":"Запуск остановлен",...(resumable?{resume:{reason:"запуск был отклонён сервером: "+errorMsg.slice(0,160),label:"Запуск остановлен — агент продолжит с того же места."}}:{})});
       }
-    },()=>{
-      updateMessages(current=>[...current,{role:"assistant",content:"Не удалось подключиться к Agent Runtime."}]);
-      finishRun(null,{drain:false,reason:"Очередь на паузе: нет соединения с Agent Runtime."});
-    });
-    socketRef.current=socket;
-    socket.addEventListener("open",()=>socket.send(JSON.stringify({type:"agent.run",request:{projectId,conversationId,messages:history,mode:modeRef.current}})),{once:true});
+    },()=>drop());
+      socketRef.current=socket;
+      // Обрыв виден и как ошибка, и как закрытие: сервер отдаёт "connection closed before
+      // receiving a handshake response" без ошибки, поэтому считаем и close.
+      socket.addEventListener("close",()=>drop());
+      socket.addEventListener("open",()=>{
+        opened=true;
+        setReconnect(null);
+        socket.send(JSON.stringify({type:"agent.run",request:{projectId,conversationId,messages:history,mode:modeRef.current,...(resuming?{resume:{reason:options.resumeReason}}:{})}}));
+      },{once:true});
+
+      /**
+       * Обрыв соединения. Пока сокет не открылся, это состояние сети — панель сама повторяет попытки.
+       * Если связь потеряна во время работы, сервер уже остановил запуск, а история и план сохранены:
+       * панель сначала переподключается и продолжает сама, и только исчерпав попытки показывает кнопку
+       * «Продолжить» — так задача не ждёт пользователя из-за пары секунд без сети.
+       */
+      function drop(){
+        if(settled||closedByUsRef.current||completedRef.current||socketRef.current!==socket)return;
+        settled=true;
+        if(!opened&&attempt<maxAttempts){
+          setReconnect({attempt:attempt+1,max:maxAttempts});
+          window.setTimeout(()=>{if(!closedByUsRef.current&&socketRef.current===socket)connect(attempt+1)},700*(attempt+1)*(attempt+1));
+          return;
+        }
+        const reason="связь с сервером прервалась во время работы";
+        if(autoResumeRef.current<MAX_AUTO_RESUME){
+          const attemptNumber=autoResumeRef.current+1;
+          setReconnect({attempt:attemptNumber,max:MAX_AUTO_RESUME});
+          setNotice("Связь с сервером прервалась — переподключаюсь и продолжаю с того же места…");
+          updateMessages(current=>{
+            const next=[...current];
+            const last=next.at(-1);
+            const text="Связь с сервером прервалась — продолжаю с того же места.";
+            if(last?.role==="assistant")next[next.length-1]={...last,content:(last.content?last.content+"\n\n":"")+text};
+            else next.push({role:"assistant",content:text});
+            return next;
+          });
+          cancelAutoResume();
+          autoResumeTimerRef.current=window.setTimeout(()=>{
+            autoResumeTimerRef.current=null;
+            if(closedByUsRef.current)return;
+            startRun(null,{resumeReason:reason,auto:true});
+          },1200*attemptNumber);
+          // Сокет мёртв, поэтому ссылка освобождается сразу: следующая попытка создаст новый.
+          socketRef.current=null;
+          setRunning(false);
+          setRunStartedAt(null);
+          settleActions();
+          return;
+        }
+        setReconnect(null);
+        updateMessages(current=>[...current,{role:"assistant",content:"Соединение с Agent Runtime прервалось во время работы."}]);
+        endRun(null,{drain:false,notice:"Связь потеряна — нажмите «Продолжить», чтобы агент вернулся к тому же шагу.",resume:{reason,label:"Связь потеряна: запуск продолжится с того же места."}});
+      }
+    };
+    connect(0);
   }
 
-  function finishRun(socket:WebSocket|null,options:{drain:boolean;reason?:string}){
+  /**
+   * Конец запуска: панель выходит из состояния «работает» и решает, что показать дальше.
+   * `resume` включает кнопку «Продолжить» — так завершается любой остановленный запуск, кроме
+   * успешного: история и план уже сохранены, поэтому продолжение начинается с того же места.
+   */
+  function endRun(socket:WebSocket|null,options:{drain:boolean;notice?:string;resume?:{reason:string;label:string}}){
+    closedByUsRef.current=true;
     if(socket&&socketRef.current===socket)socketRef.current=null;
     if(socket)try{socket.close()}catch{}
     setRunning(false);
     setRunStartedAt(null);
+    setReconnect(null);
     settleActions();
-    if(options.reason)setNotice(options.reason);
+    setResume(options.resume??null);
+    if(options.notice)setNotice(options.notice);
     if(!options.drain)return;
     // The queue keeps working while the agent is busy, so a finished task hands over
     // to the next message without the user having to press anything.
@@ -318,14 +458,21 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
     startRun(next);
   }
 
-  /** Stops the run in flight; the server aborts its work when the socket closes. */
-  function interrupt(){
+  /**
+   * Stops the run in flight; the server aborts its work when the socket closes. `resume: false` is for
+   * the case where another message is starting right away: a continuation button there would point at
+   * a run the user has already replaced.
+   */
+  function interrupt(options:{resume?:boolean}={}){
+    closedByUsRef.current=true;
     const socket=socketRef.current;
     socketRef.current=null;
     if(socket)try{socket.close()}catch{}
     setRunning(false);
     setRunStartedAt(null);
+    setReconnect(null);
     settleActions();
+    setResume(options.resume===false?null:{reason:"пользователь остановил запуск вручную",label:"Запуск остановлен вами — агент продолжит с того же места."});
     updateMessages(current=>{
       const next=[...current];
       const last=next.at(-1);
@@ -337,7 +484,18 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
   function stop(){
     if(!running)return;
     interrupt();
-    setNotice(queueRef.current.length?"Очередь ждёт: отправьте сообщение кнопкой «Отправить сейчас».":"");
+    setNotice(queueRef.current.length?"Очередь ждёт: отправьте сообщение кнопкой «Отправить сейчас».":"Выполнение остановлено — можно продолжить с этого же места.");
+  }
+
+  /** Продолжение прерванного запуска: без нового сообщения и с пометкой для модели. */
+  function continueRun(){
+    if(running||!resume)return;
+    startRun(null,{resumeReason:resume.reason});
+  }
+
+  /** Остановка другим сообщением: кнопка продолжения относилась бы к уже заменённому запуску. */
+  function interruptForNewRun(){
+    if(running)interrupt({resume:false});
   }
 
   function send(){
@@ -359,7 +517,7 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
     if(!item)return;
     queueRef.current=queueRef.current.filter(entry=>entry.id!==id);
     setQueue(queueRef.current);
-    if(running)interrupt();
+    interruptForNewRun();
     startRun(item);
   }
 
@@ -474,6 +632,11 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
     </div>
 
     <div className="composer-wrap">
+      {resume&&!running&&<div className="resume-bar" role="status">
+        <span className="resume-text"><RotateCcw size={13}/> {resume.label}</span>
+        <button className="send-button resume-button" onClick={continueRun} title="Продолжить прерванный запуск с того же шага" aria-label="Продолжить запуск"><Play size={13}/> Продолжить</button>
+      </div>}
+      {reconnect&&<div className="composer-notice reconnecting">Связь потеряна — переподключаюсь… попытка {reconnect.attempt}/{reconnect.max}</div>}
       <div className="composer">
         <textarea disabled={!loaded} value={prompt} onChange={e=>setPrompt(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send()}}} placeholder={loaded?"Опишите проект или задачу...":"Загружаем сессию…"} rows={3}/>
 

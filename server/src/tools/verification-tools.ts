@@ -3,6 +3,52 @@ import { previewStatus } from "../preview-manager.js";
 import { registerTool } from "../tool-registry.js";
 
 const MAX_BODY = 20_000;
+/** Сколько ссылок страницы проверяется: хватает для реальной страницы и дёшево для вызова инструмента. */
+const MAX_ASSET_CHECKS = 12;
+const ASSET_TIMEOUT_MS = 4000;
+/** Расширения, которые обязаны отдаваться: стили, скрипты, картинки, шрифты. */
+const ASSET_EXTENSIONS = /\.(css|m?js|cjs|png|jpe?g|svg|webp|avif|ico|gif|woff2?|ttf|json|map|txt|webmanifest)$/i;
+
+/**
+ * Ссылки самой страницы, разрешённые относительно запрошенного маршрута. Внешние адреса пропускаются:
+ * за чужой CDN платформа не отвечает, а обычные ссылки-навигация без расширения — это переходы,
+ * а не файлы, и SPA-фолбэк отдаёт для них index.html.
+ */
+export function referencedAssets(html: string, route: string) {
+  const directory = route.endsWith("/") ? route : route.replace(/[^/]*$/, "") || "/";
+  const seen = new Set<string>();
+  for (const match of html.matchAll(/\s(?:src|href)\s*=\s*["']([^"']+)["']/gi)) {
+    const raw = match[1].trim();
+    if (!raw || raw.startsWith("//") || /^[a-z]+:/i.test(raw) || raw.startsWith("#")) continue;
+    const value = raw.split("#")[0].split("?")[0];
+    if (!ASSET_EXTENSIONS.test(value)) continue;
+    seen.add(value.startsWith("/") ? value : directory + value.replace(/^\.\//, ""));
+    if (seen.size >= MAX_ASSET_CHECKS) break;
+  }
+  return [...seen];
+}
+
+/**
+ * Проверка, что каждый файл, на который ссылается страница, действительно отдаётся. Проверка одного
+ * HTML говорит «страница работает» и при 404 у style.css: пользователь видит в консоли браузера
+ * отказ применить стили и пустой экран, а агент считает задачу выполненной.
+ */
+async function checkReferencedAssets(host: string, port: number, route: string, html: string) {
+  const results: { ref: string; status: number; ok: boolean }[] = [];
+  for (const ref of referencedAssets(html, route)) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), ASSET_TIMEOUT_MS);
+    try {
+      const response = await fetch(`http://${host}:${port}${ref}`, { redirect: "manual", signal: controller.signal });
+      results.push({ ref, status: response.status, ok: response.status < 400 });
+    } catch {
+      results.push({ ref, status: 0, ok: false });
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  return results;
+}
 
 registerTool({
   name: "project.verify",
@@ -70,12 +116,16 @@ registerTool({
         "TypeError:",
       ].some((signal) => body.includes(signal));
 
+      // Файлы страницы проверяются только когда ответ — HTML: для JSON или картинки ссылок нет.
+      const assets = isHtml ? await checkReferencedAssets(current.host, current.port, path, body) : [];
+      const brokenAssets = assets.filter((asset) => !asset.ok);
       const checks = {
         httpOk: response.ok,
         htmlContentType: isHtml,
         nonEmptyBody: trimmedBody.length > 0,
         htmlDocument: hasDocument,
         noRuntimeErrorSignal: !hasRuntimeErrorSignal,
+        assetsResolve: brokenAssets.length === 0,
       };
       const ok = Object.values(checks).every(Boolean);
 
@@ -87,11 +137,14 @@ registerTool({
         statusText: response.statusText,
         contentType,
         checks,
+        assets: { checked: assets.length, failed: brokenAssets },
         body,
         truncated: body.length >= MAX_BODY,
         nextAction: ok
-          ? "Verification passed. Preview returned a non-empty HTML document for the requested route without common server-rendered error signals."
-          : "Verification failed for the requested route. Inspect the failed checks, HTTP response, or error signals, fix the project, then verify again.",
+          ? "Verification passed. Preview returned a non-empty HTML document for the requested route, its referenced assets resolve, and no common server-rendered error signals were found."
+          : brokenAssets.length
+            ? "Verification failed: the page references files Preview does not serve (" + brokenAssets.map((asset) => asset.ref + " → " + asset.status).join(", ") + "). Create or rename those files, or fix the links in the HTML, then run project.verify again."
+            : "Verification failed for the requested route. Inspect the failed checks, HTTP response, or error signals, fix the project, then verify again.",
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

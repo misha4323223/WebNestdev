@@ -5,6 +5,14 @@ import type { PreviewState } from "../../lib/types";
 
 type Face="preview"|"logs";
 
+/**
+ * Адрес живого превью. Слэш в конце обязателен: без него относительные ссылки приложения
+ * ("style.css", "app.js") разрешаются на уровень выше — в платформенный 404 с JSON, и браузер
+ * отказывается применять стили и скрипты ("MIME type application/json"). Сервер так же
+ * перенаправляет вход без слэша на этот адрес.
+ */
+function previewUrl(projectId:string){return "/api/projects/"+encodeURIComponent(projectId)+"/preview/open/";}
+
 export function PreviewPanel({projectId,reloadToken=0}:{projectId:string;reloadToken?:number}){
   const [preview,setPreview]=useState<PreviewState>({running:false});
   const [face,setFace]=useState<Face>("preview");
@@ -70,7 +78,7 @@ export function PreviewPanel({projectId,reloadToken=0}:{projectId:string;reloadT
           ? <>
               {preview.running?<button className="icon-button" onClick={()=>void stop()} title="Остановить"><Square size={14}/></button>:<button className="icon-button" onClick={()=>void start()} title="Запустить"><Terminal size={14}/></button>}
               <button className="icon-button" onClick={()=>void refresh()} title="Обновить"><RefreshCw size={14}/></button>
-              {preview.running&&<a className="icon-button" href={"/api/projects/"+projectId+"/preview/open"} target="_blank" rel="noreferrer" title="Открыть"><ExternalLink size={14}/></a>}
+              {preview.running&&<a className="icon-button" href={previewUrl(projectId)} target="_blank" rel="noreferrer" title="Открыть"><ExternalLink size={14}/></a>}
             </>
           : <button className="icon-button" onClick={()=>void loadLogs()} disabled={loadingLogs} title="Обновить логи"><RefreshCw size={14}/></button>}
       </div>
@@ -83,7 +91,7 @@ export function PreviewPanel({projectId,reloadToken=0}:{projectId:string;reloadT
       <div className={"preview-stage"+(face==="logs"?" flipped":"")}>
         <div className="preview-face preview-front">
           {preview.running
-            ? <iframe key={reloadToken} className="preview-frame" title="Живой предпросмотр" src={"/api/projects/"+projectId+"/preview/open"}/>
+            ? <iframe key={reloadToken} className="preview-frame" title="Живой предпросмотр" src={previewUrl(projectId)}/>
             : <div className="preview-empty"><div className="preview-icon"><Terminal size={20}/></div><strong>Предпросмотр проекта</strong><span>Запусти preview после создания файлов проекта.</span><button className="ghost-button" onClick={()=>void start()}>Запустить preview</button></div>}
         </div>
         <div className="preview-face preview-back">

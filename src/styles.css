@@ -43,6 +43,13 @@ button,textarea{font:inherit}button{color:inherit}
 .attachment-remove:hover{background:#1f242b;color:#e8eaed}
 .composer-notice{max-width:760px;margin:8px auto 0;padding:8px 10px;border:1px solid #3a3424;border-radius:7px;background:#1a1710;color:#d7bd79;font-size:10px;line-height:1.5}
 
+/* Остановленный запуск: история и план на сервере, поэтому продолжение начинается с того же шага. */
+.resume-bar{max-width:760px;margin:0 auto 8px;padding:9px 11px;display:flex;align-items:center;gap:10px;border:1px solid #3d3420;border-radius:9px;background:#191510;color:#dcc48a;font-size:10px;line-height:1.5}
+.resume-text{display:flex;align-items:center;gap:7px;min-width:0;flex:1}
+.resume-text svg{flex:none;color:#c9a34d}
+.resume-button{flex:none;gap:6px;padding:0 11px;height:28px;font-size:10px}
+.composer-notice.reconnecting{border-color:#2f3d4d;background:#101720;color:#8fb4d8}
+
 /* Messages waiting for the running agent */
 .message-queue{max-width:760px;margin:0 auto 20px;border:1px solid #2b3139;border-radius:9px;background:#0f1216;overflow:hidden}
 .message-queue-head{display:flex;align-items:center;gap:7px;padding:9px 12px;border-bottom:1px solid #1d2229;color:#9aa2ad;font-size:10px}

@@ -125,7 +125,7 @@ test("the workspace proxy serves the static preview through the project's own UR
     assert.equal(status.json().running, true);
     assert.equal(status.json().mode, "static");
 
-    const page = await app.inject({ method: "GET", url: "/api/projects/" + PROJECT_ID + "/preview/open" });
+    const page = await app.inject({ method: "GET", url: "/api/projects/" + PROJECT_ID + "/preview/open/" });
     assert.equal(page.statusCode, 200);
     assert.match(String(page.headers["content-type"]), /text\/html/);
     assert.match(page.body, /WebNestDev static build/);

@@ -53,7 +53,7 @@ test("the proxy rewrites the app's root-absolute urls onto the proxy prefix", as
   const site = await upstream(() => ({ body: Buffer.from(page) }));
   const app = await appWith(depsFor(site.port));
   try {
-    const response = await app.inject({ method: "GET", url: "/api/projects/p1/preview/open" });
+    const response = await app.inject({ method: "GET", url: "/api/projects/p1/preview/open/" });
     assert.equal(response.statusCode, 200);
     assert.equal(response.headers["content-type"], "text/html; charset=utf-8");
     const base = previewProxyBase("p1");
@@ -117,10 +117,26 @@ test("the heartbeat marks the project as used and reports whether a preview is o
   }
 });
 
+test("the preview address without the trailing slash is redirected onto the canonical one", async () => {
+  const site = await upstream(() => ({ body: Buffer.from("<html><body>ok</body></html>") }));
+  const app = await appWith(depsFor(site.port));
+  try {
+    // Без слэша относительные ссылки приложения ("style.css") уходят на уровень выше — в JSON-404,
+    // поэтому браузер отказывается применять стили и скрипты. Вход всегда переводится на адрес со слэшем.
+    const response = await app.inject({ method: "GET", url: "/api/projects/p1/preview/open" });
+    assert.equal(response.statusCode, 302);
+    assert.equal(response.headers.location, previewProxyBase("p1"));
+    assert.equal(site.hits.length, 0);
+  } finally {
+    await app.close();
+    await site.close();
+  }
+});
+
 test("a stopped preview answers with an error instead of an empty page", async () => {
   const app = await appWith(depsFor(1, { previewStatus: async () => ({ running: false }) }));
   try {
-    const response = await app.inject({ method: "GET", url: "/api/projects/p1/preview/open" });
+    const response = await app.inject({ method: "GET", url: "/api/projects/p1/preview/open/" });
     // 400 с причиной, а не 500 «Внутренняя ошибка сервера»: панель показывает её пользователю.
     assert.equal(response.statusCode, 400);
     assert.match(response.body, /Предпросмотр не запущен/);

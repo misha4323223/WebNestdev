@@ -61,7 +61,15 @@ export async function registerPreviewRoutes(app:FastifyInstance,deps:PreviewRout
     if(!await deps.authorize(request,reply,p.id))return;
     return reply.send({ok:deps.touchPreview(p.id)});
   });
-  app.get("/api/projects/:id/preview/open",async(request,reply)=>{const p=z.object({id:z.string().min(1)}).parse(request.params);if(!await deps.authorize(request,reply,p.id))return;return previewReply(reply,()=>proxyPreview(request,p.id,""));});
+  // Без слэша в конце относительные ссылки приложения ("style.css", "app.js") разрешаются на
+  // уровень выше — в платформенный обработчик, который отвечает JSON-404. Браузер тогда отказывается
+  // применять стили и скрипты ("MIME type application/json"), а страница выглядит сломанной.
+  // Поэтому вход без слэша всегда переводится на канонический адрес со слэшем.
+  app.get("/api/projects/:id/preview/open",async(request,reply)=>{
+    const p=z.object({id:z.string().min(1)}).parse(request.params);
+    if(!await deps.authorize(request,reply,p.id))return;
+    return reply.code(302).redirect(previewProxyBase(p.id));
+  });
   app.get("/api/projects/:id/preview/open/*",async(request,reply)=>{
     const p=z.object({id:z.string().min(1)}).parse(request.params);
     if(!await deps.authorize(request,reply,p.id))return;
