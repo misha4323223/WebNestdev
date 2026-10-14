@@ -31,15 +31,14 @@ concurrency:
   group: deploy-production
   cancel-in-progress: false
 
-env:
-  IMAGE_NAME: ghcr.io/${{ github.repository.toLowerCase() }}
-
 jobs:
   build:
     # В режиме source образ не нужен: на ВМ собирается код из репозитория.
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'image' }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    env:
+      IMAGE_NAME: ghcr.io/${{ github.repository.toLowerCase() }}
     outputs:
       image: ${{ steps.tag.outputs.image }}
     steps:
