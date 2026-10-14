@@ -1,6 +1,7 @@
 import { readFile,readdir,stat } from "node:fs/promises";
 import path from "node:path";
 import type { SandboxConfig } from "../sandbox-manager.js";
+import { detectProject } from "./project-kind.js";
 
 /**
  * Static preview: instead of one dev-server container per project, the *built* app is served
@@ -21,7 +22,12 @@ const MAX_SCAN_ENTRIES=4000;
 /** Filesystem timestamp tolerance, so a build is not repeated for a write in the same second. */
 const FRESHNESS_TOLERANCE_MS=1000;
 
-export type StaticPlan={ok:true;dir:string;built:boolean}|{ok:false;reason:string};
+/**
+ * `build` is the whole point of the cheapest tier: a project whose files are already servable
+ * (`index.html` with no build script) needs no build at all, so opening its preview costs a
+ * listener in this process and nothing else. `built` only says whether something is there yet.
+ */
+export type StaticPlan={ok:true;dir:string;built:boolean;build:boolean}|{ok:false;reason:string};
 
 /** Candidate output directories: PREVIEW_STATIC_DIR wins, otherwise the usual names. */
 export function staticOutputCandidates(root:string){
@@ -35,26 +41,44 @@ export async function indexFileExists(dir:string){
   return Boolean(info?.isFile());
 }
 
+/** The project's build command, or "" when it has none. */
+export async function readBuildScript(root:string){
+  try{
+    const packageJson=JSON.parse(await readFile(path.join(root,"package.json"),"utf8")) as {scripts?:Record<string,string>};
+    return packageJson.scripts?.build?.trim()??"";
+  }catch{
+    return "";
+  }
+}
+
 /**
- * A project can be previewed statically when it has a build script and produces an
- * index.html. Nothing built yet is not a refusal: the first candidate is returned as the
- * directory the build is expected to fill, and `built` says whether it is there already.
+ * The plan, cheapest path first:
+ *
+ * 1. files that are already servable and no build script — `index.html` in the root, which is
+ *    a plain HTML/CSS/JS project: served from disk, no build, no container;
+ * 2. files that are already servable in a build output directory (`dist`/`build`/`out`, or
+ *    `PREVIEW_STATIC_DIR`) — served as they are when the project has no build script, and
+ *    rebuilt only when a build script says they can be regenerated;
+ * 3. a build script and no output yet — the build runs and fills the directory;
+ * 4. neither files nor a build — the reason is taken from the project detector so the panel can
+ *    explain the decision instead of answering "нет package.json".
  */
 export async function planStaticPreview(config:SandboxConfig):Promise<StaticPlan>{
-  let packageJson:{scripts?:Record<string,string>};
-  try{
-    packageJson=JSON.parse(await readFile(path.join(config.root,"package.json"),"utf8")) as {scripts?:Record<string,string>};
-  }catch{
-    // A project without package.json is not a static site; the dev-server preview explains
-    // the rest (it refuses with "нет скрипта dev или start").
-    return {ok:false,reason:"нет package.json"};
-  }
-  if(!packageJson.scripts?.build)return {ok:false,reason:"в package.json проекта нет скрипта build"};
   const candidates=staticOutputCandidates(config.root);
-  for(const dir of candidates){
-    if(await indexFileExists(dir))return {ok:true,dir,built:true};
+  const shape=await detectProject(config.root).catch(()=>null);
+  // A project that answers HTTP itself has no build output to serve: an express or fastapi app
+  // has no index.html to find. Answering that here, before the build script runs, saves a whole
+  // container command — and a command container is the most expensive thing on a small host.
+  if(shape&&(shape.kind==="node-runtime"||shape.kind==="python-runtime"))return {ok:false,reason:shape.reason};
+  const buildScript=await readBuildScript(config.root);
+  if(!buildScript&&await indexFileExists(config.root)){
+    return {ok:true,dir:config.root,built:true,build:false};
   }
-  return {ok:true,dir:candidates[0],built:false};
+  for(const dir of candidates){
+    if(await indexFileExists(dir))return {ok:true,dir,built:true,build:Boolean(buildScript)};
+  }
+  if(buildScript)return {ok:true,dir:candidates[0],built:false,build:true};
+  return {ok:false,reason:shape?shape.reason:"нет ни index.html, ни скрипта сборки"};
 }
 
 /** The moment the served build was produced: the recorded build time, or index.html's mtime. */

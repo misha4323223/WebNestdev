@@ -3,6 +3,9 @@ import type { SandboxConfig } from "./sandbox-types.js";
 
 const sandboxRoot=path.resolve(process.env.WEBNESTDEV_SANDBOX_DIR??".webnestdev/sandboxes");
 
+/** The directory every project lives in — the path health reports free space for. */
+export function sandboxRootDir(){return sandboxRoot}
+
 export function sandboxRootPath(projectId:string){return path.join(sandboxRoot,projectId)}
 
 export function buildSandboxConfig(projectId:string,root:string):SandboxConfig{

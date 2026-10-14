@@ -30,7 +30,7 @@ const buildScript = JSON.stringify({ scripts: { build: "vite build" } });
 test("a project that already built is served from its output directory", async () => {
   const root = await project({ "package.json": buildScript, "dist/index.html": "<html></html>" });
   try {
-    assert.deepEqual(await planStaticPreview(config(root)), { ok: true, dir: path.join(root, "dist"), built: true });
+    assert.deepEqual(await planStaticPreview(config(root)), { ok: true, dir: path.join(root, "dist"), built: true, build: true });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -39,7 +39,7 @@ test("a project that already built is served from its output directory", async (
 test("a build output other than dist is still found", async () => {
   const root = await project({ "package.json": buildScript, "build/index.html": "<html></html>" });
   try {
-    assert.deepEqual(await planStaticPreview(config(root)), { ok: true, dir: path.join(root, "build"), built: true });
+    assert.deepEqual(await planStaticPreview(config(root)), { ok: true, dir: path.join(root, "build"), built: true, build: true });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -48,31 +48,72 @@ test("a build output other than dist is still found", async () => {
 test("nothing built yet points at the directory the build is expected to fill", async () => {
   const root = await project({ "package.json": buildScript });
   try {
-    assert.deepEqual(await planStaticPreview(config(root)), { ok: true, dir: path.join(root, "dist"), built: false });
+    assert.deepEqual(await planStaticPreview(config(root)), { ok: true, dir: path.join(root, "dist"), built: false, build: true });
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("a project without a build script is never served statically", async () => {
+test("a plain HTML/CSS/JS project is served as is, with no build and no container", async () => {
+  const root = await project({ "index.html": "<html></html>", "app.js": "console.log(1)" });
+  try {
+    assert.deepEqual(await planStaticPreview(config(root)), { ok: true, dir: root, built: true, build: false });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("files already present in dist are served even without a build script", async () => {
+  const root = await project({ "dist/index.html": "<html></html>", "dist/app.js": "" });
+  try {
+    assert.deepEqual(await planStaticPreview(config(root)), { ok: true, dir: path.join(root, "dist"), built: true, build: false });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a build script wins over a root index.html: the template is not the app", async () => {
+  const root = await project({ "package.json": buildScript, "index.html": "<div id=root></div>" });
+  try {
+    assert.deepEqual(await planStaticPreview(config(root)), { ok: true, dir: path.join(root, "dist"), built: false, build: true });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a project with neither files nor a build is refused, with the detector's reason", async () => {
   const root = await project({ "package.json": JSON.stringify({ scripts: { dev: "vite" } }) });
   try {
     const plan = await planStaticPreview(config(root));
     assert.equal(plan.ok, false);
     if (plan.ok) return;
-    assert.match(plan.reason, /build/);
+    assert.match(plan.reason, /без скрипта сборки/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("a project without package.json is never served statically", async () => {
-  const root = await project({ "index.html": "<html></html>" });
+test("an empty project is refused with a reason that names the problem", async () => {
+  const root = await project({ "README.md": "# пусто" });
   try {
     const plan = await planStaticPreview(config(root));
     assert.equal(plan.ok, false);
     if (plan.ok) return;
-    assert.match(plan.reason, /package\.json/);
+    assert.match(plan.reason, /тип проекта/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a server project is refused before anything is built, so no container is spent on it", async () => {
+  const root = await project({
+    "package.json": JSON.stringify({ scripts: { build: "tsc", start: "node dist/server.js" }, dependencies: { express: "^5.0.0" } }),
+  });
+  try {
+    const plan = await planStaticPreview(config(root));
+    assert.equal(plan.ok, false);
+    if (plan.ok) return;
+    assert.match(plan.reason, /express/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -83,7 +124,7 @@ test("PREVIEW_STATIC_DIR replaces the usual candidate directories", async () => 
   const previous = process.env.PREVIEW_STATIC_DIR;
   process.env.PREVIEW_STATIC_DIR = "site";
   try {
-    assert.deepEqual(await planStaticPreview(config(root)), { ok: true, dir: path.join(root, "site"), built: true });
+    assert.deepEqual(await planStaticPreview(config(root)), { ok: true, dir: path.join(root, "site"), built: true, build: true });
   } finally {
     if (previous === undefined) delete process.env.PREVIEW_STATIC_DIR;
     else process.env.PREVIEW_STATIC_DIR = previous;

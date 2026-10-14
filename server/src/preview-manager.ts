@@ -1,5 +1,7 @@
 import type { SandboxConfig } from "./sandbox-manager.js";
+import { getProject } from "./project-store.js";
 import { dockerExec } from "./preview/docker-exec.js";
+import { decideRuntimePreviewStart, liveRuntimePreviews } from "./preview/preview-limiter.js";
 import { getPreview, removePreview, touchPreview } from "./preview/preview-store.js";
 import { previewAppAnswers, recentPreviewLogs, startPreviewContainer } from "./preview/preview-runner.js";
 import { previewModeSetting, startStaticPreview, staticAppAnswers, staticPreviewLogs, stopStaticPreview } from "./preview/static-preview.js";
@@ -41,6 +43,20 @@ async function startContainerPreview(config: SandboxConfig, staticReason?: strin
     const status = await previewStatus(config.projectId);
     if (status.running) return status;
   }
+  // A running dev server holds its memory until it is stopped, so this is the one preview kind
+  // that has to be counted. A static preview is not: it is a listener, and the panel shows it
+  // from the same process whatever this number says.
+  const project = await getProject(config.projectId);
+  const live = await Promise.all(
+    liveRuntimePreviews().map(async state => ({
+      projectId: state.projectId,
+      lastUsedAt: state.lastUsedAt,
+      userId: (await getProject(state.projectId))?.userId,
+    })),
+  );
+  const decision = decideRuntimePreviewStart({ live, projectId: config.projectId, userId: project?.userId ?? "" });
+  if (!decision.ok) throw new Error(decision.reason);
+  if (decision.stopProjectId) await stopPreview(decision.stopProjectId);
   const status = await startPreviewContainer(config);
   if (!staticReason || !status.ready) return status;
   return { ...status, hint: "Статическая сборка недоступна (" + staticReason + "), работает dev-сервер." };

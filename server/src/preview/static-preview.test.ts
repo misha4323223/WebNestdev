@@ -167,7 +167,34 @@ test("a project without a build script reports why it cannot be served staticall
     const started = await startStaticPreview(config(root));
     assert.equal(started.ok, false);
     if (started.ok) return;
-    assert.match(started.reason, /build/);
+    // The reason now comes from the project detector, which describes the whole project rather
+    // than one missing field: "нет скрипта сборки" says what to add, "нет package.json" did not.
+    assert.match(started.reason, /без скрипта сборки/);
+    assert.match(started.reason, /песочниц/, "причина объясняет, что проект проверим в песочнице");
+  } finally {
+    restore();
+    await cleanup(root);
+  }
+});
+
+test("a plain HTML project is served instantly, without a build and without a container", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "webnestdev-instant-site-"));
+  const restore = env({ PREVIEW_MODE: "auto", PREVIEW_STATIC_BUILD: undefined, PREVIEW_STATIC_DIR: undefined });
+  try {
+    await writeFile(path.join(root, "index.html"), "<!doctype html><html><body>готовая статика</body></html>");
+    const started = await startStaticPreview(config(root));
+    assert.equal(started.ok, true, "готовая статика должна отдаваться с первого раза, без сборки");
+    if (!started.ok) return;
+    const status = started.status;
+    assert.equal(status.running, true);
+    if (!status.running) return;
+    assert.equal(status.mode, "static");
+    assert.equal(status.ready, true);
+    assert.match(staticPreviewLogs(PROJECT_ID), /сборка не нужна/);
+    // The served file is read from disk on every request, so an edit is visible without a rebuild.
+    await writeFile(path.join(root, "index.html"), "<!doctype html><html><body>правка видна сразу</body></html>");
+    const page = await fetch("http://127.0.0.1:" + status.port + "/");
+    assert.match(await page.text(), /правка видна сразу/);
   } finally {
     restore();
     await cleanup(root);

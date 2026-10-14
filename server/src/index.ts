@@ -11,6 +11,7 @@ import { initializeStorage, closeStorage, describeStorage } from "./storage/ydb.
 import { reapOrphanPreviews } from "./preview-manager.js";
 import { startPreviewSweeper } from "./preview/idle-sweep.js";
 import { describePreviewMode } from "./preview/static-preview.js";
+import { describePreviewLimits } from "./preview/preview-limiter.js";
 import { describeRunLimiter } from "./agent/run-limiter.js";
 import { describeSandboxLimiter } from "./sandbox/sandbox-limiter.js";
 import { assertEncryptionConfigured } from "./storage/secret-crypto.js";
@@ -56,7 +57,7 @@ await ensureDataDir();
 console.log("[storage] " + describeStorage());
 // Which preview mode this host runs is the first thing to check when memory or a project's
 // preview behaves unexpectedly (PREVIEW_MODE: auto | static | container).
-console.log("[preview] " + describePreviewMode());
+console.log("[preview] " + describePreviewMode() + "; " + describePreviewLimits());
 // How many conversations this host runs in parallel (AGENT_MAX_CONCURRENT_RUNS) and how many
 // containers they may start at once (SANDBOX_MAX_CONCURRENT). The second line is the memory
 // one: a run is mostly waiting on the model, a container is what costs RAM.

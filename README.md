@@ -55,12 +55,16 @@ On top of the host-wide limit there is **one run per account**: a second tab or 
 of the same user is answered with `RUN_ALREADY_ACTIVE` and the panel says the agent is still
 running, instead of one person taking every place while everyone else queues behind them.
 
-Previews are cheaper still. A static preview is a listener in the server process: measured,
-thirty of them together add about 14 MB to the server (roughly 0.5 MB each), so the limit is CPU
-and file descriptors, not memory. A container preview is capped by `SANDBOX_MEMORY` (1 GB), so a
-4 GB host keeps two or three of those at once — which is what the static default exists to avoid.
-An idle preview is stopped after five minutes without use, so an open tab does not hold memory for
-the whole session.
+Previews are cheaper still, and the cheapest tier needs nothing at all: a project that is already
+plain HTML/CSS/JS (`index.html`, no build script) is **served as is — no build, no container** — and
+a `dist`/`build`/`out` that is already there is served the same way. A project with a build script
+is built once and served from the server process (measured: ~0.5 MB per preview, thirty of them
++13.7 MB), and a project that answers HTTP itself (express, FastAPI, Next in server mode) is
+recognised *before* anything is built, so no container is spent on a build that cannot produce a
+static preview (`server/src/preview/project-kind.ts` decides from structure, dependencies and
+commands — `package.json` alone proves nothing, and a user's `Dockerfile` is never executed).
+Runtime previews are the only counted kind (`PREVIEW_MAX_CONTAINERS`, default 3), because they
+hold memory while they run; an idle preview is stopped after five minutes without use.
 
 ## CI
 

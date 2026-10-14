@@ -1,4 +1,4 @@
-import { createLimiter, positiveInt, type Slot } from "../concurrency.js";
+import { createLimiter, positiveInt, type LimiterStats, type Slot } from "../concurrency.js";
 
 /**
  * How many Chromium instances run at the same time. The browser worker launches Chromium
@@ -11,6 +11,11 @@ const limiter = createLimiter(() => ({
   waitTimeoutMs: positiveInt(process.env.BROWSER_QUEUE_TIMEOUT_MS, 60_000),
   busyLabel: "Браузерная проверка",
 }));
+
+/** What Chromium is doing right now, for /api/health and the startup line. */
+export function browserQueueStats(): LimiterStats {
+  return limiter.stats();
+}
 
 /** Holds a browser place for the whole check; the slot is released even when the check fails. */
 export async function withBrowserSlot<T>(work: () => Promise<T>): Promise<T> {

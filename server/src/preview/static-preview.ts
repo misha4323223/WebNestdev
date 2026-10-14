@@ -52,7 +52,7 @@ export function describePreviewMode(){
   return "auto (статическая сборка, иначе dev-сервер)";
 }
 
-type StaticRun={server:FastifyInstance;dir:string;port:number;log:string;builtAt:number;startedAt:number};
+type StaticRun={server:FastifyInstance;dir:string;port:number;log:string;builtAt:number;startedAt:number;/** Files served as they are: nothing was built, so nothing has to be rebuilt. */instant:boolean};
 
 const runs=new Map<string,StaticRun>();
 
@@ -72,8 +72,10 @@ export async function startStaticPreview(config:SandboxConfig):Promise<StaticSta
   const previous=runs.get(config.projectId);
   const build=staticBuildSetting();
   const builtAt=previous?.builtAt??0;
-  const fresh=await isStaticBuildFresh(config.root,plan.dir,builtAt);
-  const needsBuild=build==="always"||(build!=="never"&&!fresh);
+  // An instant site is read from disk on every request, so "fresh" is meaningless for it and
+  // a build script does not exist to run: the build flags apply only to projects with a build.
+  const fresh=plan.build?await isStaticBuildFresh(config.root,plan.dir,builtAt):true;
+  const needsBuild=plan.build&&(build==="always"||(build!=="never"&&!fresh));
 
   if(previous&&!needsBuild){
     touchPreview(config.projectId);
@@ -94,7 +96,7 @@ export async function startStaticPreview(config:SandboxConfig):Promise<StaticSta
   }
 
   const listener=await listenStatic(plan.dir);
-  const run:StaticRun={server:listener.app,dir:plan.dir,port:listener.port,log,builtAt:marker,startedAt:Date.now()};
+  const run:StaticRun={server:listener.app,dir:plan.dir,port:listener.port,log,builtAt:marker,startedAt:Date.now(),instant:!plan.build};
   runs.set(config.projectId,run);
   setPreview({mode:"static",containerId:"",host:STATIC_HOST,port:run.port,projectId:config.projectId,startedAt:run.startedAt,lastUsedAt:run.startedAt});
   return {ok:true,status:statusFor(run)};
@@ -125,7 +127,9 @@ export async function stopAllStaticPreviews(){
 export function staticPreviewLogs(projectId:string){
   const run=runs.get(projectId);
   if(!run)return "";
-  const header="Статический предпросмотр: приложение отдаётся из "+run.dir+", горячей перезагрузки нет — обновление после сборки.";
+  const header=run.instant
+    ?"Готовая статика: файлы отдаются из "+run.dir+" как есть, сборка не нужна — правки видны сразу после обновления страницы."
+    :"Статический предпросмотр: приложение отдаётся из "+run.dir+", горячей перезагрузки нет — обновление после сборки.";
   return run.log?header+"\n\n"+run.log:header;
 }
 
