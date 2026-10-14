@@ -9,6 +9,11 @@ export const SYSTEM_PROMPT = "LANGUAGE RULE, READ FIRST: think, reason and write
  */
 export const PLANNER_MODE_PROMPT = "PLANNER MODE IS ON. The user asked for a plan or analysis, not for changes. Inspect the project with read-only tools (fs.list, fs.read, git status, read-only terminal commands, browser checks) and publish the result with plan.update: the full ordered list of steps, each with a concrete title, exactly one step 'in_progress' only while you are still working on that exploration step. Do not call fs.write, fs.rename, fs.delete, npm.install, database.env, git.add or git.commit, and do not call yandex.request with anything other than GET or HEAD — the runtime rejects them in this mode. A single read-only terminal command is allowed (ls, cat, head, tail, grep, find, git status, git log, git diff, git branch, npm ls); anything chained, piped, redirecting output, installing packages or running a script is refused, so keep inspection commands separate and simple. Write the plan items, the reasoning and the summary in Russian (code, paths and commands keep their original spelling). Finish your answer with the plan, the reasoning behind it, and what the user should confirm before switching to Developer mode.";
 
+/**
+ * This pass bounds the history that arrives from the client, and only that: the authoritative limit
+ * of a run is the token budget in `agent/context-budget.ts`, applied before every step, because the
+ * conversation keeps growing with tool output after this point. Keep this one cheap.
+ */
 const MAX_CONTEXT_CHARS = 60000;
 const MAX_RECENT_MESSAGES = 14;
 const MAX_MESSAGE_CHARS = 9000;

@@ -291,6 +291,31 @@ async function runBrowserScenario(projectId: string, input: unknown) {
 registerTool({
   name: "browser.scenario",
   description: "Run a real Chromium user-flow scenario against Preview. Input: {path?:string,steps:[{action:'goto',path}|{action:'click',selector}|{action:'fill',selector,value}|{action:'press',selector,key}|{action:'expectText',text}|{action:'expectUrl',pattern}|{action:'expectVisible',selector}|{action:'expectNotVisible',selector}]}. Maximum 20 steps. Supports visibility assertions, stops on the first failed step, and reports console/page/network errors.",
+  parameters: {
+    type: "object",
+    required: ["steps"],
+    properties: {
+      path: { type: "string", description: "Маршрут предпросмотра, с которого начинается сценарий; по умолчанию /" },
+      steps: {
+        type: "array",
+        maxItems: 20,
+        description: "Шаги сценария по порядку; выполнение останавливается на первом неудачном",
+        items: {
+          type: "object",
+          required: ["action"],
+          properties: {
+            action: { type: "string", enum: ["goto", "click", "fill", "press", "expectText", "expectUrl", "expectVisible", "expectNotVisible"] },
+            path: { type: "string", description: "Для action=goto" },
+            selector: { type: "string", description: "CSS-селектор для click/fill/press/expectVisible/expectNotVisible" },
+            value: { type: "string", description: "Значение для action=fill" },
+            key: { type: "string", description: "Клавиша для action=press, например Enter" },
+            text: { type: "string", description: "Ожидаемый текст для action=expectText" },
+            pattern: { type: "string", description: "Регулярное выражение URL для action=expectUrl" },
+          },
+        },
+      },
+    },
+  },
   // Chromium is launched inside the server container without a memory limit, so only a
   // configured number of checks may run at once; withBrowserSlot holds that place.
   execute: async (input, context) => withBrowserSlot(() => runBrowserScenario(context.projectId, input)),
@@ -300,6 +325,7 @@ registerTool({
   name: "browser.runtime",
   description:
     "Open the Preview in a real headless Chromium browser, execute client-side JavaScript, capture console errors, failed network requests, page title, and a PNG screenshot. Use this after browser.open or project.verify when runtime behavior matters.",
+  parameters: { type: "object", additionalProperties: false, properties: { path: { type: "string", description: "Маршрут предпросмотра, например / или /about; по умолчанию /" } } },
   execute: async (input, context) => withBrowserSlot(() => inspectRuntimePage(context.projectId, getPath(input))),
 });
 

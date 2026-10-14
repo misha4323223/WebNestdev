@@ -14,9 +14,11 @@ export type AgentEvent=
   | {type:"tool.started";runId:string;toolCallId:string;name:string;input:unknown}
   | {type:"tool.finished";runId:string;toolCallId:string;name:string;output:unknown}
   | {type:"plan.updated";runId:string;plan:PlanState}
-  | {type:"run.progress";runId:string;step:number;maxSteps:number}
+  /** `tokens`/`budget` are the context size of the step that is starting (agent/context-budget.ts). */
+  | {type:"run.progress";runId:string;step:number;maxSteps:number;tokens?:number;budget?:number}
   | {type:"run.completed";runId:string}
-  | {type:"run.failed";runId:string;error:string};
+  /** `code` is a machine-readable reason (CONTEXT_OVERFLOW, AUTH, RATE_LIMIT) for the panel. */
+  | {type:"run.failed";runId:string;error:string;code?:string};
 /**
  * "planner" studies the project and publishes a plan without touching files;
  * "developer" is the full agent that writes code and verifies the result.

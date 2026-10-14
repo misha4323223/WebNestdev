@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Activity,
   Brain,
@@ -262,11 +262,38 @@ export function ActionsPanel({ actions, running, progress, collapsed, onToggle }
   </RunPanel>;
 }
 
-/** The model's chain of thought, streamed while it works. */
-export function ThinkingPanel({ text, running, collapsed, onToggle }: {
+/**
+ * Seconds since the run started, ticked once a second. The panel used to show one frozen sentence
+ * while the model worked, which read as a hang; the elapsed time is what makes it visibly alive even
+ * for models that stream no reasoning at all.
+ */
+function useElapsedSeconds(since: number | null | undefined) {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!since) return;
+    const timer = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [since]);
+  return since ? Math.max(0, Math.round((now - since) / 1000)) : null;
+}
+
+function formatTokens(value: number) {
+  return value >= 1000 ? Math.round(value / 1000) + "K" : String(value);
+}
+
+/** The model's chain of thought, streamed while it works, with the step and the context size next to it. */
+export function ThinkingPanel({ text, running, progress, startedAt, collapsed, onToggle }: {
   text: string;
   running: boolean;
+  progress?: { step: number; maxSteps: number; tokens?: number; budget?: number } | null;
+  startedAt?: number | null;
 } & PanelToggles) {
+  const elapsed = useElapsedSeconds(running ? startedAt : null);
+  const detail = [
+    progress ? "шаг " + progress.step + " из " + progress.maxSteps : "",
+    progress?.tokens ? "контекст " + formatTokens(progress.tokens) + (progress.budget ? " / " + formatTokens(progress.budget) : "") : "",
+    elapsed !== null ? elapsed + " с" : "",
+  ].filter(Boolean).join(" · ");
   return <RunPanel
     id="thinking"
     icon={<Brain size={13}/>}
@@ -275,7 +302,8 @@ export function ThinkingPanel({ text, running, collapsed, onToggle }: {
     collapsed={collapsed}
     onToggle={onToggle}
   >
-    <div className="agent-thinking">{text}</div>
+    <div className="agent-thinking">{text || (running ? "Запрос отправлен модели. Размышления появятся здесь, если модель их присылает." : "Модель не прислала размышления на этом шаге.")}</div>
+    {detail && <div className="agent-thinking-note">{detail}</div>}
   </RunPanel>;
 }
 

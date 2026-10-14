@@ -5,6 +5,7 @@ import { registerTool } from "../tool-registry.js";
 registerTool({
   name: "terminal.exec",
   description: "Execute a development command in the project's sandbox. Input: {command:string,cwd?:string}. Network is disabled by default.",
+  parameters: { type: "object", additionalProperties: false, required: ["command"], properties: { command: { type: "string", description: "Одна команда оболочки, например `npm run build`" }, cwd: { type: "string", description: "Рабочий каталог внутри проекта; по умолчанию корень проекта" } } },
   execute: async (input, context) => {
     const value = input as { command?: string; cwd?: string };
     const command = value.command?.trim();
@@ -22,6 +23,7 @@ registerTool({
 registerTool({
   name: "npm.install",
   description: "Install the project's npm dependencies in the sandbox. This is the only tool that enables outbound network access for package installation. Input: {cwd?:string}. Use only when package.json exists.",
+  parameters: { type: "object", additionalProperties: false, properties: { cwd: { type: "string", description: "Каталог с package.json внутри проекта; по умолчанию корень проекта" } } },
   execute: async (input, context) => {
     const value = input as { cwd?: string };
     const sandbox = await getSandbox(context.projectId, context.userId);

@@ -6,8 +6,9 @@ import { buildInitialMessages } from "./agent/message-builder.js";
 import { buildProjectContext } from "./agent/context-builder.js";
 import { retrieveRelevantFiles } from "./agent/context-retrieval.js";
 import { executeTool } from "./agent/tool-executor.js";
-import { runAgentStep } from "./agent/step-runner.js";
+import { runBudgetedStep,type StepBudget } from "./agent/step-runner.js";
 import type { EventSink } from "./agent/types.js";
+import { contextBudgetTokens,boundToolOutput,DEFAULT_CHARS_PER_TOKEN } from "./agent/context-budget.js";
 import { planQaScenario } from "./qa/scenario-planner.js";
 import { analyzeChangedFiles } from "./qa/diff-analyzer.js";
 import { parseChangedSource, type ParsedChange } from "./qa/change-parser.js";
@@ -78,11 +79,15 @@ export class AgentRuntime {
       const task=request.messages.filter(message=>message.role==="user").at(-1)?.content??"";
       const relevantFiles=await retrieveRelevantFiles(request.projectId,request.userId,task);
       const mode=request.mode==="planner"?"planner":"developer";
-      const messages:ChatMessage[]=buildInitialMessages(request.messages,projectContext+"\n\nTASK-RELEVANT SOURCE FILES\n"+relevantFiles,mode);
+      let messages:ChatMessage[]=buildInitialMessages(request.messages,projectContext+"\n\nTASK-RELEVANT SOURCE FILES\n"+relevantFiles,mode);
       const model=request.model??config?.model??(config?undefined:platformConfig?.model);
       if(!model)throw new Error("Модель AI не настроена");
       usageModel=model;
       const maxSteps=Math.min(50,Math.max(1,Number(process.env.AGENT_MAX_STEPS??20)));
+      // Контекст ограничен на каждом шаге, а не только в начале запуска: сообщения добавляются
+      // по ходу (выводы инструментов, проверки), а модель получает их целиком. Как именно шаг
+      // подрезается и что происходит при отказе провайдера — в agent/step-runner.ts.
+      let budget:StepBudget={budgetTokens:contextBudgetTokens(),charsPerToken:DEFAULT_CHARS_PER_TOKEN};
       let consecutiveVerifyFailures=0;
       let consecutiveScenarioFailures=0;
       let verificationPending=false;
@@ -125,7 +130,7 @@ export class AgentRuntime {
           try{
             const output=await executeTool(verifyCall as any,{runId,request,emit,signal});
             await finishTool(verifyCall,output);
-            messages.push({role:"tool",content:JSON.stringify(output),tool_call_id:verifyCall.id});
+            messages.push({role:"tool",content:boundToolOutput(verifyCall.name,output),tool_call_id:verifyCall.id});
             if(verifyCall.name==="terminal.exec"){
               qa.build=commandSucceeded(output);
               if(!qa.build)return false;
@@ -146,7 +151,7 @@ export class AgentRuntime {
             const message=error instanceof Error?error.message:String(error);
             const output={ok:false,error:message};
             await finishTool(verifyCall,output);
-            messages.push({role:"tool",content:JSON.stringify(output),tool_call_id:verifyCall.id});
+            messages.push({role:"tool",content:boundToolOutput(verifyCall.name,output),tool_call_id:verifyCall.id});
             return false;
           }
         }
@@ -156,9 +161,14 @@ export class AgentRuntime {
 
       for(let step=0;step<maxSteps;step++){
         if(signal?.aborted)throw new Error("Запуск агента отменён");
-        emit({type:"run.progress",runId,step:step+1,maxSteps});
         const context={runId,request,emit,signal};
-        const result=await runAgentStep(provider,messages,model,context);
+        const stepRun=await runBudgetedStep(provider,messages,model,context,budget,{
+          // Шаг и размер контекста идут в панель: видно, что запуск работает и сколько занято.
+          onPrepared:prepared=>emit({type:"run.progress",runId,step:step+1,maxSteps,tokens:prepared.tokens,budget:prepared.budgetTokens}),
+        });
+        messages=stepRun.messages;
+        budget=stepRun.budget;
+        const result=stepRun.result;
         usageTotals.promptTokens+=result.usage.promptTokens;
         usageTotals.completionTokens+=result.usage.completionTokens;
         usageTotals.estimated=usageTotals.estimated||result.usage.estimated;
@@ -207,7 +217,8 @@ export class AgentRuntime {
             const output=await executeTool(call,context);
             if(signal?.aborted)throw new Error("Запуск агента отменён");
             await finishTool(call,output);
-            messages.push({role:"tool",content:JSON.stringify(output),tool_call_id:call.id});
+            // Ограниченный вывод: журнал сборки читается один раз, а в истории остаётся до конца запуска.
+            messages.push({role:"tool",content:boundToolOutput(call.name,output),tool_call_id:call.id});
 
             if(call.name==="plan.update"){
               const plan=(output as {plan?:PlanState}).plan;
@@ -283,7 +294,7 @@ export class AgentRuntime {
               try{
                 const scenarioOutput=await executeTool(scenarioCall as any,{runId,request,emit,signal});
                 await finishTool(scenarioCall,scenarioOutput);
-                messages.push({role:"tool",content:JSON.stringify(scenarioOutput),tool_call_id:scenarioCall.id});
+                messages.push({role:"tool",content:boundToolOutput(scenarioCall.name,scenarioOutput),tool_call_id:scenarioCall.id});
                 if((scenarioOutput as {ok?:boolean}).ok===true){
                   scenarioPending=false;
                   consecutiveScenarioFailures=0;
@@ -327,7 +338,12 @@ export class AgentRuntime {
       if(verificationPending)throw new Error("Достигнут лимит шагов агента, а изменения не проверены");
       if(scenarioPending)throw new Error("Достигнут лимит шагов агента, проверка в браузере не завершена");
       throw new Error("Достигнут лимит шагов агента");
-    }catch(error){emit({type:"run.failed",runId,error:error instanceof Error?error.message:String(error)});}
+    }catch(error){
+      // `code` lets the panel explain the failure (context size, provider key, rate limit) instead of
+      // repeating a sentence the model wrote.
+      const code=error&&typeof error==="object"&&"code" in error&&typeof (error as {code?:unknown}).code==="string"?(error as {code:string}).code:undefined;
+      emit({type:"run.failed",runId,error:error instanceof Error?error.message:String(error),...(code?{code}:{})});
+    }
     finally{
       endRun(request.projectId);
       if(usageModel&&usageTotals.promptTokens+usageTotals.completionTokens>0){

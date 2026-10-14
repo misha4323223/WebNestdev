@@ -1,4 +1,4 @@
-import { getTool } from "../tool-registry.js";
+import { getTool,toolNames } from "../tool-registry.js";
 import type { ProviderToolCall } from "../provider.js";
 import type { AgentContext } from "./types.js";
 import { consumeUsageForCurrentPlan } from "../account/usage-store.js";
@@ -18,7 +18,9 @@ const heavyStorageMutationTools = new Set(["terminal.exec", "npm.install"]);
 
 export async function executeTool(call:ProviderToolCall,context:AgentContext){
   const tool=getTool(call.name);
-  if(!tool)throw new Error("Неизвестный инструмент: "+call.name);
+  // The list is what turns a wrong tool name into a corrected next step instead of a dead end —
+  // a model that guessed a tool name (and told the user it was "unavailable") can pick a real one.
+  if(!tool)throw new Error("Неизвестный инструмент: "+call.name+". Доступные инструменты: "+toolNames().join(", "));
   const handler=tool.execute??tool.async;
   if(!handler)throw new Error("У инструмента нет обработчика: "+call.name);
   if(call.name==="browser.runtime"||call.name==="browser.scenario"){

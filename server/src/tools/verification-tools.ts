@@ -8,6 +8,7 @@ registerTool({
   name: "project.verify",
   description:
     "Verify the current project after changes. Checks a requested Preview route (input: {path?:string}), successful HTML, a non-empty document, and common server-rendered error signals. Returns structured pass/fail diagnostics. Use this after implementing or fixing a web task; if verification fails, inspect the failed checks, fix the project, and verify again.",
+  parameters: { type: "object", additionalProperties: false, properties: { path: { type: "string", description: "Маршрут предпросмотра, например / или /about; по умолчанию /" } } },
   execute: async (input, context) => {
     const requestedPath =
       typeof input === "object" &&

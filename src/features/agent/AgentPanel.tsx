@@ -99,7 +99,10 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
   const [panels,setPanels]=useState<PanelState>(readPanelState);
   // The thinking of the run in flight, streamed into its own window.
   const [thinking,setThinking]=useState("");
-  const [progress,setProgress]=useState<{step:number;maxSteps:number}|null>(null);
+  const [progress,setProgress]=useState<{step:number;maxSteps:number;tokens?:number;budget?:number}|null>(null);
+  // When the current run started: the thinking window shows the elapsed time, so a model that
+  // streams no reasoning does not look like a hang.
+  const [runStartedAt,setRunStartedAt]=useState<number|null>(null);
   const [quotaNotice,setQuotaNotice]=useState<"storage"|"daily"|null>(null);
   // The project's saved chats. The list comes from the server, so a chat is something
   // the user can return to from another device, not just from this browser.
@@ -230,6 +233,7 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
     updateActions(()=>[]);
     setProgress(null);
     setThinking("");
+    setRunStartedAt(Date.now());
 
     const socket=createAgentSocket(event=>{
       if(event.type==="message.delta")updateMessages(current=>{
@@ -254,7 +258,7 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
       if(event.type==="run.queued"||event.type==="run.started"){
         setNotice(event.type==="run.queued"?"Сервер занят другим запуском — вы в очереди"+(typeof event.queued==="number"&&event.queued>0?" (впереди: "+event.queued+")":"")+"…":"");
       }
-      if(event.type==="run.progress"&&typeof event.step==="number"&&typeof event.maxSteps==="number")setProgress({step:event.step,maxSteps:event.maxSteps});
+      if(event.type==="run.progress"&&typeof event.step==="number"&&typeof event.maxSteps==="number")setProgress({step:event.step,maxSteps:event.maxSteps,...(typeof event.tokens==="number"?{tokens:event.tokens}:{}),...(typeof event.budget==="number"?{budget:event.budget}:{})});
       if(event.type==="tool.started"&&event.name){
         const name=event.name;
         const id=event.toolCallId??nextId();
@@ -269,7 +273,13 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
       }
       if(event.type==="plan.updated"&&event.plan)updatePlan(event.plan);
       if(event.type==="run.completed"){finishRun(socket,{drain:true});onChanged();void loadSessions()}
-      if(event.type==="run.failed"){updateMessages(current=>[...current,{role:"assistant",content:"Ошибка: "+(event.error??"неизвестная ошибка")}]);finishRun(socket,{drain:false,reason:"Очередь на паузе: последняя задача завершилась ошибкой."})}
+      if(event.type==="run.failed"){
+        // A run that died on the context limit has a different fix than a failed tool call, so the
+        // panel says which one it is instead of leaving the user with the provider's wording.
+        const overflow=event.code==="CONTEXT_OVERFLOW";
+        updateMessages(current=>[...current,{role:"assistant",content:"Ошибка: "+(event.error??"неизвестная ошибка")+(overflow?"\n\nИстория этого диалога уже слишком большая для модели: начните новый диалог или разбейте задачу на части — тогда запуск продолжится.":"")}]);
+        finishRun(socket,{drain:false,reason:overflow?"Остановлено: переполнен контекст модели — начните новый диалог":"Очередь на паузе: последняя задача завершилась ошибкой."});
+      }
       if(event.type==="error"){
         const errorMsg = event.error ?? "соединение потеряно";
         const isStorageLimit = event.code === "STORAGE_LIMIT_REACHED";
@@ -295,6 +305,7 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
     if(socket&&socketRef.current===socket)socketRef.current=null;
     if(socket)try{socket.close()}catch{}
     setRunning(false);
+    setRunStartedAt(null);
     settleActions();
     if(options.reason)setNotice(options.reason);
     if(!options.drain)return;
@@ -313,6 +324,7 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
     socketRef.current=null;
     if(socket)try{socket.close()}catch{}
     setRunning(false);
+    setRunStartedAt(null);
     settleActions();
     updateMessages(current=>{
       const next=[...current];
@@ -434,7 +446,7 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
       ?<div className="chat-status">
         {plan&&plan.items.length>0&&<PlanPanel plan={plan} collapsed={panels} onToggle={togglePanel}/>}
         {(actions.length>0||running)&&<ActionsPanel actions={actions} running={running} progress={progress} collapsed={panels} onToggle={togglePanel}/>}
-        {(thinking||running)&&<ThinkingPanel text={thinking||"Ждём размышления модели…"} running={running} collapsed={panels} onToggle={togglePanel}/>}
+        {(thinking||running)&&<ThinkingPanel text={thinking} running={running} progress={progress} startedAt={runStartedAt} collapsed={panels} onToggle={togglePanel}/>}
       </div>
       :null}
 

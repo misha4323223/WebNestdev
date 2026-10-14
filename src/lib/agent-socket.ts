@@ -13,6 +13,9 @@ export type AgentSocketEvent={
   plan?:PlanState;
   step?:number;
   maxSteps?:number;
+  /** Context size of the step that just started, and the budget it is bounded by. */
+  tokens?:number;
+  budget?:number;
   /** Set on run.queued: how many runs are waiting ahead of this one. */
   queued?:number;
   limit?:number;

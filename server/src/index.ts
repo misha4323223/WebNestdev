@@ -13,6 +13,7 @@ import { startPreviewSweeper } from "./preview/idle-sweep.js";
 import { describePreviewMode } from "./preview/static-preview.js";
 import { describePreviewLimits } from "./preview/preview-limiter.js";
 import { describeRunLimiter } from "./agent/run-limiter.js";
+import { describeContextBudget } from "./agent/context-budget.js";
 import { describeSandboxLimiter } from "./sandbox/sandbox-limiter.js";
 import { assertEncryptionConfigured } from "./storage/secret-crypto.js";
 import { describeSandboxPaths } from "./sandbox/config.js";
@@ -64,6 +65,9 @@ console.log("[preview] " + describePreviewMode() + "; " + describePreviewLimits(
 // containers they may start at once (SANDBOX_MAX_CONCURRENT). The second line is the memory
 // one: a run is mostly waiting on the model, a container is what costs RAM.
 console.log("[agent] " + describeRunLimiter());
+// Сколько контекста сервер готов отправить модели за один шаг: именно это число (а не лимит
+// провайдера) решает, дойдёт ли запрос вообще — см. agent/context-budget.ts.
+console.log("[agent] " + describeContextBudget());
 console.log("[sandbox] " + describeSandboxLimiter());
 // Каталог песочниц у сервера и у docker — разные вещи: контейнеры проектов монтируют путь,
 // который демон разбирает на хосте. Оба печатаются при старте, чтобы расхождение было видно
