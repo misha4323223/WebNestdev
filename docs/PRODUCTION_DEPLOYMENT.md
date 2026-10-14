@@ -253,7 +253,11 @@ place so the rollback target is still there.
   `0 4 * * 0 MODE=prune bash /path/to/vm-deploy.sh >> /var/log/webnestdev-prune.log 2>&1` is enough.
 - Other repositories (`postgres`, `node:22-bookworm-slim`) are deliberately **not** touched: they are
   small, and deleting them only means re-pulling them later. `IMAGE_REPO_PATTERN` changes which
-  repositories are cleaned; `PRUNE_BUILD_CACHE=1` also drops build cache older than a week.
+  repositories are cleaned.
+- Build cache is pruned too, and on a real VM it turned out to be the biggest single line in
+  `docker system df` — **15 GB**, more than every image together, because an image-mode deploy never
+  builds on the server. `PRUNE_BUILD_CACHE` (default `1`) drops cache older than a week, `all` drops
+  all of it (do that once when space is tight), `0` disables it.
 - `DRY_RUN=1` lists what would be removed without removing anything — worth a look the first time.
 
 Object storage is **not** a substitute for this: a bucket cannot hold `node_modules` or `/var/lib/docker`

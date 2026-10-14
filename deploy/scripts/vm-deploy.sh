@@ -17,7 +17,8 @@
 #   HEALTH_TRIES=30            попыток по 2 секунды
 #   KEEP_IMAGES=2              сколько версий образа оставлять на диске (текущая + одна на откат)
 #   IMAGE_REPO_PATTERN=webnestdev  какие репозитории чистить
-#   PRUNE_BUILD_CACHE=1        разрешить ещё и чистку кеша сборки (по умолчанию нет)
+#   PRUNE_BUILD_CACHE=1|all|0  чистка кеша сборки: старше недели (по умолчанию), всё или ничего
+#                              На этой ВМ кеш сборки занимал 15 ГБ — больше, чем образы.
 #   DRY_RUN=1                  показать шаги, ничего не меняя
 #
 # MODE=prune — только уборка образов, без выкатки и без перезапуска сервиса.
@@ -35,7 +36,7 @@ HEALTH_TRIES="${HEALTH_TRIES:-30}"
 DRY_RUN="${DRY_RUN:-0}"
 KEEP_IMAGES="${KEEP_IMAGES:-2}"
 IMAGE_REPO_PATTERN="${IMAGE_REPO_PATTERN:-webnestdev}"
-PRUNE_BUILD_CACHE="${PRUNE_BUILD_CACHE:-0}"
+PRUNE_BUILD_CACHE="${PRUNE_BUILD_CACHE:-1}"
 
 log(){ printf '[deploy] %s\n' "$*"; }
 run(){ if [ "$DRY_RUN" = "1" ]; then log "dry-run: $*"; else "$@"; fi; }
@@ -77,9 +78,13 @@ prune_images(){
       fi
     done <<< "$doomed"
     docker image prune -f >/dev/null 2>&1 || true
-    if [ "$PRUNE_BUILD_CACHE" = "1" ]; then
-      docker builder prune -f --filter until=168h >/dev/null 2>&1 || true
-    fi
+    # Кеш сборки — самая крупная строка в docker system df и при этом самый безопасный для
+    # удаления ресурс: он только ускоряет сборки, а на этой ВМ сборок нет вообще (деплой
+    # идёт готовым образом). Неделю трогаем, старее — удаляем; `all` чистит всё.
+    case "$PRUNE_BUILD_CACHE" in
+      1) docker builder prune -f --filter until=168h >/dev/null 2>&1 || true ;;
+      all) docker builder prune -af >/dev/null 2>&1 || true ;;
+    esac
   fi
   after=$(docker system df --format '{{.Size}}' 2>/dev/null | tr '\n' ' ' || true)
   log "docker system df: было [$before], стало [$after]"
