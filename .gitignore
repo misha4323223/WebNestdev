@@ -3,6 +3,7 @@ dist/
 .webnestdev/
 .env
 .env.local
+*.tsbuildinfo
 
 # --- Deploy: приватные ключи и секреты (НЕ пушить на GitHub) ---
 deploy/secret/

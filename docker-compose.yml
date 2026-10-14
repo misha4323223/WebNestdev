@@ -49,16 +49,37 @@ services:
       AI_BASE_URL: ${AI_BASE_URL:-}
       AI_MODEL: ${AI_MODEL:-}
       AI_API_KEY: ${AI_API_KEY:-}
+      # Песочницы и предпросмотр монтируются в контейнеры проектов через `docker run -v`,
+      # а этот путь разбирает демон на ХОСТЕ. Поэтому каталог обязан существовать на хосте и
+      # в контейнере под одним и тем же абсолютным путём — иначе контейнеры видят пустой
+      # каталог, пока агент пишет файлы в серверный. `WEBNESTDEV_SANDBOX_DIR` задаёт его
+      # внутри сервера, второй пункт монтирования — тот же путь с хоста.
+      WEBNESTDEV_SANDBOX_DIR: ${SANDBOX_DIR:-/var/lib/webnestdev/sandboxes}
       SANDBOX_MODE: docker
       SANDBOX_IMAGE: node:22-bookworm-slim
       SANDBOX_MEMORY: 1g
       SANDBOX_CPUS: 1
       SANDBOX_PIDS_LIMIT: 128
       SANDBOX_NETWORK: none
+      # Предпросмотр: auto — статическая сборка, когда проект собирается, иначе dev-сервер
+      # в контейнере. container — прежнее поведение, static — без контейнера предпросмотра
+      # вообще (см. docs/PRODUCTION_DEPLOYMENT.md).
+      PREVIEW_MODE: ${PREVIEW_MODE:-auto}
+      # Сколько диалогов с агентом этот хост ведёт одновременно. Прогон почти всё время ждёт
+      # модель, поэтому дефолт 8: память ограничивают контейнеры, а не прогоны (см. ниже).
+      AGENT_MAX_CONCURRENT_RUNS: ${AGENT_MAX_CONCURRENT_RUNS:-8}
+      # Сколько контейнеров-команд (install/build/git/терминал) стартует одновременно — это и
+      # есть настоящий лимит памяти хоста: SANDBOX_MEMORY на контейнер. И на аккаунт не больше
+      # одного прогона. На 2 ГБ ВМ хватает 2, на 8 ГБ — 4 и больше (docs/PRODUCTION_DEPLOYMENT.md).
+      SANDBOX_MAX_CONCURRENT: ${SANDBOX_MAX_CONCURRENT:-2}
+      SANDBOX_MAX_QUEUE: ${SANDBOX_MAX_QUEUE:-32}
+      SANDBOX_QUEUE_TIMEOUT_MS: ${SANDBOX_QUEUE_TIMEOUT_MS:-180000}
+      BROWSER_MAX_CONCURRENT: ${BROWSER_MAX_CONCURRENT:-1}
     ports:
       - "8787:8787"
     volumes:
       - webnestdev-data:/app/.webnestdev
+      - ${SANDBOX_DIR:-/var/lib/webnestdev/sandboxes}:${SANDBOX_DIR:-/var/lib/webnestdev/sandboxes}
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - webnestdev

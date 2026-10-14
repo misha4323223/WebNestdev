@@ -1,6 +1,7 @@
 import { getPreview } from "../preview/preview-store.js";
 import { previewStatus } from "../preview-manager.js";
 import { registerTool } from "../tool-registry.js";
+import { withBrowserSlot } from "./browser-limiter.js";
 
 const MAX_BODY = 200_000;
 const MAX_DIAGNOSTIC_ITEMS = 100;
@@ -290,14 +291,16 @@ async function runBrowserScenario(projectId: string, input: unknown) {
 registerTool({
   name: "browser.scenario",
   description: "Run a real Chromium user-flow scenario against Preview. Input: {path?:string,steps:[{action:'goto',path}|{action:'click',selector}|{action:'fill',selector,value}|{action:'press',selector,key}|{action:'expectText',text}|{action:'expectUrl',pattern}|{action:'expectVisible',selector}|{action:'expectNotVisible',selector}]}. Maximum 20 steps. Supports visibility assertions, stops on the first failed step, and reports console/page/network errors.",
-  execute: async (input, context) => runBrowserScenario(context.projectId, input),
+  // Chromium is launched inside the server container without a memory limit, so only a
+  // configured number of checks may run at once; withBrowserSlot holds that place.
+  execute: async (input, context) => withBrowserSlot(() => runBrowserScenario(context.projectId, input)),
 });
 
 registerTool({
   name: "browser.runtime",
   description:
     "Open the Preview in a real headless Chromium browser, execute client-side JavaScript, capture console errors, failed network requests, page title, and a PNG screenshot. Use this after browser.open or project.verify when runtime behavior matters.",
-  execute: async (input, context) => inspectRuntimePage(context.projectId, getPath(input)),
+  execute: async (input, context) => withBrowserSlot(() => inspectRuntimePage(context.projectId, getPath(input))),
 });
 
 registerTool({

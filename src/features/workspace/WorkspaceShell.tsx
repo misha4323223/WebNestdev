@@ -8,10 +8,13 @@ import { WorkspaceContent } from "./WorkspaceContent";
 import { NestLoader } from "../../components/NestLoader";
 
 export function WorkspaceShell({onHome}:{onHome:()=>void}){
-  const {projectId,conversationId,projectName,loading,error,retry}=useWorkspace();
+  const {projectId,conversationId,projectName,loading,error,retry,openConversation}=useWorkspace();
   const [view,setView]=useState<WorkspaceView>("agent");
   const [settingsOpen,setSettingsOpen]=useState(false);
   const [deployOpen,setDeployOpen]=useState(false);
+  // Every finished run bumps this: the preview panel re-reads the status and reloads the
+  // frame, so the app the agent just changed is what the user sees, without a restart.
+  const [previewReload,setPreviewReload]=useState(0);
 
   // A GitHub OAuth return asks for the settings overlay with the Integrations tab.
   // Read in an effect: state initializers run twice under StrictMode.
@@ -40,9 +43,9 @@ export function WorkspaceShell({onHome}:{onHome:()=>void}){
             <div className="panel-title"><div><span className="eyebrow">ПУБЛИКАЦИЯ</span><strong>Публикация проекта</strong></div><button className="ghost-button" onClick={()=>setDeployOpen(false)}>Закрыть</button></div>
             <div className="settings-body"><p>Модуль публикации подключим к выбранному облаку, когда настроим окружение.</p><button className="send-button" onClick={()=>setDeployOpen(false)}>Понятно</button></div>
           </section>}
-        </div>:<><WorkspaceNav view={view} onChange={setView}/><WorkspaceContent view={view} projectId={projectId} conversationId={conversationId} onOpenModelSettings={openModelSettings} onOpenAccountSettings={openSettings}/></>}
+        </div>:<><WorkspaceNav view={view} onChange={setView}/><WorkspaceContent view={view} projectId={projectId} conversationId={conversationId} onOpenConversation={openConversation} onRunFinished={()=>setPreviewReload(value=>value+1)} onOpenModelSettings={openModelSettings} onOpenAccountSettings={openSettings}/></>}
       </div>
-      <PreviewPanel projectId={projectId}/>
+      <PreviewPanel projectId={projectId} reloadToken={previewReload}/>
     </main>
   </LayoutShell>;
 }

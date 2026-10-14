@@ -58,11 +58,14 @@ export function changesSomething(name:string,input:unknown){
 import { commandSucceeded, routeFromMutation, shouldRunBrowserRuntime } from "./agent/verification-policy.js";
 import { getPlatformProviderConfig } from "./provider/platform-provider.js";
 import { recordRunUsage } from "./account/usage-store.js";
+import { beginRun,endRun } from "./agent/active-runs.js";
 
 
 export class AgentRuntime {
   async run(request:AgentRunRequest,emit:EventSink,signal?:AbortSignal){
     const runId=randomUUID(); emit({type:"run.started",runId});
+    // The idle sweeper must not stop this project's preview while the run is still working.
+    beginRun(request.projectId);
     const usageTotals={promptTokens:0,completionTokens:0,estimated:false};
     let usageModel="";
     try{
@@ -326,6 +329,7 @@ export class AgentRuntime {
       throw new Error("Достигнут лимит шагов агента");
     }catch(error){emit({type:"run.failed",runId,error:error instanceof Error?error.message:String(error)});}
     finally{
+      endRun(request.projectId);
       if(usageModel&&usageTotals.promptTokens+usageTotals.completionTokens>0){
         try{
           await recordRunUsage(request.userId,{runId,projectId:request.projectId,conversationId:request.conversationId,model:usageModel,promptTokens:usageTotals.promptTokens,completionTokens:usageTotals.completionTokens,estimated:usageTotals.estimated});

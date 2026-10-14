@@ -11,7 +11,10 @@ export type ChatMessage={
 /** "planner" only studies the project and publishes a plan; "developer" applies changes. */
 export type AgentMode="planner"|"developer";
 export type FileEntry={name:string;type:"file"|"directory"};
-export type PreviewState={running:boolean;port?:number};
+/** `static` serves the built app without a dev server, so there is no hot reload. */
+export type PreviewMode="container"|"static";
+/** `ready` is false while the dev server has not answered yet; `hint` explains that. */
+export type PreviewState={running:boolean;port?:number;ready?:boolean;mode?:PreviewMode;hint?:string;error?:string};
 
 export type PlanItemStatus="pending"|"in_progress"|"done";
 export type PlanItem={title:string;status:PlanItemStatus;note?:string};

@@ -36,6 +36,32 @@ Preview inspection uses the actual host port assigned to the project, rather tha
 
 The real headless-browser worker is now implemented as `browser.runtime`. It executes the Preview in Chromium, captures console messages, page errors, failed network requests, HTTP errors, page title, rendered HTML size, and a bounded PNG screenshot. The worker is protected by a 20-second runtime limit and a 2 MB screenshot limit. After mutating tools such as `fs.write`, `fs.rename`, `fs.delete`, `terminal.exec`, and `npm.install`, Agent Runtime automatically starts Preview and runs `project.verify`; for relevant web changes it also runs `browser.runtime`. This automatic verification is bounded to three attempts per agent run, and failures are returned to the model as actionable diagnostics for the next fix.
 
+A preview runs in one of two modes (`PREVIEW_MODE`, logged at startup). By default the project is **built once and served statically from the server process**: `npm run build` runs in the sandbox when a source file is newer than the served output, and `dist`/`build`/`out` (or `PREVIEW_STATIC_DIR`) is served with the SPA fallback the platform's own frontend uses. No container and no dev server means a 4 GB host can keep several projects previewable at once. A project without a build script — or whose build fails, or that produces no `index.html` — automatically falls back to the per-project **dev-server container** with live reload, and the panel says why; `PREVIEW_MODE=container` pins the dev server and `PREVIEW_MODE=static` forbids the fallback. A static preview has no hot reload: it is rebuilt on the next start, and the logs face shows the build output.
+
+## How much runs at once
+
+Three different things are bounded, because they cost different things. A conversation mostly
+waits for the model, so `AGENT_MAX_CONCURRENT_RUNS` (default **8**) controls how many run at once;
+the memory lives in the containers, so `SANDBOX_MAX_CONCURRENT` (default **2**) controls how many
+`docker run` command containers exist at the same moment — that second number is the one to raise
+with the host's RAM; and `BROWSER_MAX_CONCURRENT` (default one) controls Chromium instances. A
+request that arrives while a limit is reached waits in a bounded queue instead of failing, the
+panel shows it waiting, and the daily run quota is consumed only once the run actually starts.
+All limits are logged at startup (`[agent] …`, `[sandbox] …`). See
+docs/PRODUCTION_DEPLOYMENT.md for the queue settings, the scaling path and what a small host
+costs in Russia.
+
+On top of the host-wide limit there is **one run per account**: a second tab or a second project
+of the same user is answered with `RUN_ALREADY_ACTIVE` and the panel says the agent is still
+running, instead of one person taking every place while everyone else queues behind them.
+
+Previews are cheaper still. A static preview is a listener in the server process: measured,
+thirty of them together add about 14 MB to the server (roughly 0.5 MB each), so the limit is CPU
+and file descriptors, not memory. A container preview is capped by `SANDBOX_MEMORY` (1 GB), so a
+4 GB host keeps two or three of those at once — which is what the static default exists to avoid.
+An idle preview is stopped after five minutes without use, so an open tab does not hold memory for
+the whole session.
+
 ## CI
 
 GitHub Actions runs the server tests, the server build and the web build for pull requests targeting `main` and pushes to `main` (`.github/workflows/ci.yml`), and builds the production Docker image in `.github/workflows/production-ci.yml`.
@@ -95,6 +121,8 @@ Yandex Cloud Notification Service delivers SMS only to Russian numbers, and unti
 ## Chat history and the run windows
 
 A conversation is the record of the work, not a scrollback of the open tab. Stored with it: the user messages, every assistant answer, the **thinking** the model published before answering, every **tool call together with its result**, and the **task plan**. Reopening the workspace, switching a tab, reloading the page or opening the project on another device shows the same run again — the action list and the thinking are rebuilt from the stored turns, not kept only in the browser.
+
+A project keeps several chats, and they belong to the account rather than to the browser: the **Чаты** button above the conversation opens the project's saved sessions — each labelled by the question it started with, with the last answer as a preview and the time it was last used — any of them reopens, and **Новая сессия** starts the next one. Opening a project returns to the last chat, and a project without chats gets a new one, so the history is there on another device and after the browser storage is cleared.
 
 Above the chat sit three windows that collapse and remember their state: **План задач**, **Действия агента** and **Размышления агента**. Each has its own scroll, so a long run no longer pushes the conversation down; a stored answer keeps its own thinking folded underneath it. When the model's gateway does not send reasoning at all (most non-reasoning models), the thinking window says so by staying empty instead of inventing text.
 

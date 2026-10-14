@@ -13,6 +13,9 @@ export type AgentSocketEvent={
   plan?:PlanState;
   step?:number;
   maxSteps?:number;
+  /** Set on run.queued: how many runs are waiting ahead of this one. */
+  queued?:number;
+  limit?:number;
 };
 
 export function createAgentSocket(onEvent:(event:AgentSocketEvent)=>void,onError:()=>void){

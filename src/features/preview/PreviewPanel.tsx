@@ -1,11 +1,11 @@
 import { ExternalLink, Monitor, RefreshCw, ScrollText, Square, Terminal } from "lucide-react";
 import { useCallback,useEffect,useState } from "react";
-import { getPreviewLogs,getPreviewStatus,startPreview,stopPreview } from "../../lib/project-api";
+import { getPreviewLogs,getPreviewStatus,startPreview,stopPreview,touchPreview } from "../../lib/project-api";
 import type { PreviewState } from "../../lib/types";
 
 type Face="preview"|"logs";
 
-export function PreviewPanel({projectId}:{projectId:string}){
+export function PreviewPanel({projectId,reloadToken=0}:{projectId:string;reloadToken?:number}){
   const [preview,setPreview]=useState<PreviewState>({running:false});
   const [face,setFace]=useState<Face>("preview");
   const [logs,setLogs]=useState("");
@@ -14,7 +14,9 @@ export function PreviewPanel({projectId}:{projectId:string}){
   const [loadingLogs,setLoadingLogs]=useState(false);
 
   const refresh=async()=>{setError("");try{setPreview(await getPreviewStatus(projectId))}catch(e){setError(e instanceof Error?e.message:"Не удалось получить статус preview")}};
-  useEffect(()=>{void refresh()},[projectId]);
+  // Refreshed when the project changes and after every agent run: a preview the agent
+  // started through preview.start shows up here without the user pressing anything.
+  useEffect(()=>{void refresh()},[projectId,reloadToken]);
 
   const loadLogs=useCallback(async()=>{
     setLoadingLogs(true);setLogsError("");
@@ -22,6 +24,20 @@ export function PreviewPanel({projectId}:{projectId:string}){
     catch(e){setLogsError(e instanceof Error?e.message:"Не удалось получить логи")}
     finally{setLoadingLogs(false)}
   },[projectId]);
+
+  // An open, visible panel keeps the preview alive: the server stops a preview nobody has
+  // used for PREVIEW_IDLE_MS (five minutes by default), and a closed tab simply stops
+  // sending the heartbeat, so the container is freed.
+  useEffect(()=>{
+    if(!preview.running)return;
+    const beat=()=>{
+      if(document.visibilityState!=="visible")return;
+      void touchPreview(projectId).catch(()=>undefined);
+    };
+    beat();
+    const timer=window.setInterval(beat,60000);
+    return ()=>window.clearInterval(timer);
+  },[preview.running,projectId]);
 
   // Logs refresh while the back face is visible, so the dev server output stays current.
   useEffect(()=>{
@@ -60,11 +76,14 @@ export function PreviewPanel({projectId}:{projectId:string}){
       </div>
     </div>
     {error&&<div className="preview-error">{error}</div>}
+    {!error&&preview.running&&preview.ready===false&&<div className="preview-hint">{preview.hint??"Приложение ещё запускается…"}</div>}
+    {/* Статический режим отдаёт собранную версию: обновления появляются после сборки, а не сами. */}
+    {!error&&preview.running&&preview.mode==="static"&&<div className="preview-hint">Статическая сборка: показывается собранная версия приложения, горячей перезагрузки нет.</div>}
     <div className="preview-body">
       <div className={"preview-stage"+(face==="logs"?" flipped":"")}>
         <div className="preview-face preview-front">
           {preview.running
-            ? <iframe className="preview-frame" title="Живой предпросмотр" src={"/api/projects/"+projectId+"/preview/open"}/>
+            ? <iframe key={reloadToken} className="preview-frame" title="Живой предпросмотр" src={"/api/projects/"+projectId+"/preview/open"}/>
             : <div className="preview-empty"><div className="preview-icon"><Terminal size={20}/></div><strong>Предпросмотр проекта</strong><span>Запусти preview после создания файлов проекта.</span><button className="ghost-button" onClick={()=>void start()}>Запустить preview</button></div>}
         </div>
         <div className="preview-face preview-back">

@@ -8,6 +8,11 @@ import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { initializeStorage, closeStorage, describeStorage } from "./storage/ydb.js";
+import { reapOrphanPreviews } from "./preview-manager.js";
+import { startPreviewSweeper } from "./preview/idle-sweep.js";
+import { describePreviewMode } from "./preview/static-preview.js";
+import { describeRunLimiter } from "./agent/run-limiter.js";
+import { describeSandboxLimiter } from "./sandbox/sandbox-limiter.js";
 import { assertEncryptionConfigured } from "./storage/secret-crypto.js";
 import { ensureDataDir } from "./project-store.js";
 import { registerHealthRoutes } from "./routes/health.js";
@@ -49,6 +54,14 @@ await ensureDataDir();
 // The live backend is printed once at startup: it is the first thing to check when an
 // account, a conversation or an integration seems to have disappeared.
 console.log("[storage] " + describeStorage());
+// Which preview mode this host runs is the first thing to check when memory or a project's
+// preview behaves unexpectedly (PREVIEW_MODE: auto | static | container).
+console.log("[preview] " + describePreviewMode());
+// How many conversations this host runs in parallel (AGENT_MAX_CONCURRENT_RUNS) and how many
+// containers they may start at once (SANDBOX_MAX_CONCURRENT). The second line is the memory
+// one: a run is mostly waiting on the model, a container is what costs RAM.
+console.log("[agent] " + describeRunLimiter());
+console.log("[sandbox] " + describeSandboxLimiter());
 // База инициализируется в фоне: DDL на «холодной» серверлесс-базе занимает 30–60 с.
 // Если дождаться её здесь, app.listen() так и не выполнится (порт 8787 не поднимется,
 // а healthcheck и клиенты не дождутся ответа). HTTP стартует сразу; DDL отрабатывает в фоне.
@@ -66,7 +79,9 @@ app.addHook("onClose", async () => { await closeStorage(); });
 
 app.addHook("onSend", async (_request, reply) => {
   reply.header("X-Content-Type-Options", "nosniff");
-  reply.header("X-Frame-Options", "DENY");
+  // SAMEORIGIN, not DENY: the live preview of a user's project is framed by our own
+  // workspace, and DENY made the browser refuse to render it.
+  reply.header("X-Frame-Options", "SAMEORIGIN");
   reply.header("Referrer-Policy", "strict-origin-when-cross-origin");
   reply.header("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
 });
@@ -120,3 +135,11 @@ if (fs.existsSync(rootDir)) {
 
 
 await app.listen({host:"0.0.0.0",port:Number(process.env.PORT??8787)});
+// Preview containers outlive the server that started them, so the ones left from a
+// previous run are stopped on boot instead of running on with nothing owning them.
+void reapOrphanPreviews()
+  .then(result => { if (result.stopped) app.log.info({ stopped: result.stopped }, "stopped orphan preview containers"); })
+  .catch(error => app.log.warn({ error: error instanceof Error ? error.message : error }, "preview reap skipped"));
+// A preview nobody uses is stopped after PREVIEW_IDLE_MS (five minutes by default): without
+// the sweep every project that was ever previewed would keep a dev server and its memory.
+startPreviewSweeper();

@@ -1,8 +1,8 @@
-import { useEffect,useRef,useState } from "react";
-import { AlertTriangle,ArrowLeftRight,ClipboardList,Code2,Cpu,FileText,Image as ImageIcon,ListPlus,Paperclip,Send,Sparkles,Square,X } from "lucide-react";
+import { useCallback,useEffect,useRef,useState } from "react";
+import { AlertTriangle,ArrowLeftRight,ClipboardList,Code2,Cpu,FileText,Image as ImageIcon,ListPlus,MessagesSquare,Paperclip,Plus,Send,Sparkles,Square,X } from "lucide-react";
 import { createAgentSocket } from "../../lib/agent-socket";
 import { apiJson } from "../../lib/api";
-import { getConversation,uploadProjectFile } from "../../lib/project-api";
+import { createConversation,getConversation,listConversations,uploadProjectFile,type ConversationSummary } from "../../lib/project-api";
 import { NestLoader } from "../../components/NestLoader";
 import { ActionsPanel,MessageThinking,PlanPanel,ThinkingPanel,actionTarget,deriveActions,readPlan,writePlan,type PanelId,type PanelState } from "./agent-activity";
 import type { AgentAction,AgentMode,ChatMessage,PlanState } from "../../lib/types";
@@ -53,6 +53,15 @@ function formatBytes(bytes:number){
   return (bytes/1024/1024).toFixed(1)+" МБ";
 }
 
+/** A chat row says when it was last touched, not a full timestamp. */
+function formatSessionTime(value:string){
+  const date=new Date(value);
+  if(Number.isNaN(date.getTime()))return "";
+  const today=new Date();
+  if(date.toDateString()===today.toDateString())return date.toLocaleTimeString("ru-RU",{hour:"2-digit",minute:"2-digit"});
+  return date.toLocaleDateString("ru-RU",{day:"numeric",month:"short"});
+}
+
 function readAsBase64(file:File){
   return new Promise<string>((resolve,reject)=>{
     const reader=new FileReader();
@@ -72,7 +81,7 @@ function withAttachments(text:string,attachments:Attachment[]){
   return text+"\n\nЭти файлы уже лежат в проекте, используй их по путям:\n"+list;
 }
 
-export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettings,onOpenAccountSettings}:{projectId:string;conversationId:string;onChanged:()=>void;onOpenModelSettings?:()=>void;onOpenAccountSettings?:()=>void}){
+export function AgentPanel({projectId,conversationId,onOpenConversation,onChanged,onOpenModelSettings,onOpenAccountSettings}:{projectId:string;conversationId:string;onOpenConversation:(id:string)=>void;onChanged:()=>void;onOpenModelSettings?:()=>void;onOpenAccountSettings?:()=>void}){
   const [messages,setMessages]=useState<ChatMessage[]>([]);
   const [prompt,setPrompt]=useState<string>(()=>{try{return localStorage.getItem("webnestdev.draft."+conversationId)??""}catch(_){return ""}});
   const [running,setRunning]=useState(false);
@@ -92,6 +101,12 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   const [thinking,setThinking]=useState("");
   const [progress,setProgress]=useState<{step:number;maxSteps:number}|null>(null);
   const [quotaNotice,setQuotaNotice]=useState<"storage"|"daily"|null>(null);
+  // The project's saved chats. The list comes from the server, so a chat is something
+  // the user can return to from another device, not just from this browser.
+  const [sessionsOpen,setSessionsOpen]=useState(false);
+  const [sessions,setSessions]=useState<ConversationSummary[]|null>(null);
+  const [sessionsError,setSessionsError]=useState("");
+  const [sessionBusy,setSessionBusy]=useState(false);
   const socketRef=useRef<WebSocket|null>(null);
   const actionsRef=useRef<AgentAction[]>([]);
   // Queued messages start runs from socket callbacks, so the mode is read from a ref.
@@ -179,6 +194,19 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     return()=>{cancelled=true;socketRef.current?.close();socketRef.current=null};
   },[conversationId]);
 
+  const loadSessions=useCallback(async()=>{
+    try{
+      setSessionsError("");
+      setSessions((await listConversations(projectId)).conversations);
+    }catch(error){
+      setSessionsError(error instanceof Error?error.message:"Не удалось загрузить список чатов");
+    }
+  },[projectId]);
+
+  // Loaded for the header counter and refreshed when the open chat changes, so the list
+  // and the counter stay honest after a run, a switch or a reload.
+  useEffect(()=>{void loadSessions()},[loadSessions,conversationId]);
+
   // The model is a project setting, so the composer reads it instead of assuming one;
   // it shows the same model the runtime picks: the project one, or the platform default.
   useEffect(()=>{
@@ -221,6 +249,11 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
           return next;
         });
       }
+      // The server runs only a few agents at once, so a busy moment makes the run wait instead
+      // of failing. The line says so and disappears the moment the run really starts.
+      if(event.type==="run.queued"||event.type==="run.started"){
+        setNotice(event.type==="run.queued"?"Сервер занят другим запуском — вы в очереди"+(typeof event.queued==="number"&&event.queued>0?" (впереди: "+event.queued+")":"")+"…":"");
+      }
       if(event.type==="run.progress"&&typeof event.step==="number"&&typeof event.maxSteps==="number")setProgress({step:event.step,maxSteps:event.maxSteps});
       if(event.type==="tool.started"&&event.name){
         const name=event.name;
@@ -235,16 +268,20 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
         updateActions(current=>current.map(action=>action.id===id?{...action,status:failed?"failed":"done",durationMs:Date.now()-action.startedAt}:action));
       }
       if(event.type==="plan.updated"&&event.plan)updatePlan(event.plan);
-      if(event.type==="run.completed"){finishRun(socket,{drain:true});onChanged()}
+      if(event.type==="run.completed"){finishRun(socket,{drain:true});onChanged();void loadSessions()}
       if(event.type==="run.failed"){updateMessages(current=>[...current,{role:"assistant",content:"Ошибка: "+(event.error??"неизвестная ошибка")}]);finishRun(socket,{drain:false,reason:"Очередь на паузе: последняя задача завершилась ошибкой."})}
       if(event.type==="error"){
         const errorMsg = event.error ?? "соединение потеряно";
         const isStorageLimit = event.code === "STORAGE_LIMIT_REACHED";
         const isDailyQuota = event.code === "DAILY_QUOTA_EXCEEDED";
+        // The server is at its parallel-run limit: the queue was full or the wait ran out.
+        const isBusy = event.code === "SERVER_BUSY";
+        // One account runs one agent at a time, so a second tab or project is turned away.
+        const isAccountBusy = event.code === "RUN_ALREADY_ACTIVE";
         const quotaKind = isStorageLimit ? "storage" : isDailyQuota ? "daily" : null;
-        updateMessages(current=>[...current,{role:"assistant",content:(quotaKind==="storage"?"Достигнут лимит хранилища вашего тарифа. ":quotaKind==="daily"?"Дневной лимит запусков агента исчерпан. ":"Ошибка: ")+errorMsg}]);
+        updateMessages(current=>[...current,{role:"assistant",content:(quotaKind==="storage"?"Достигнут лимит хранилища вашего тарифа. ":quotaKind==="daily"?"Дневной лимит запусков агента исчерпан. ":isAccountBusy?"Агент уже работает в этом аккаунте. ":isBusy?"Сервер занят. ":"Ошибка: ")+errorMsg}]);
         if(quotaKind)setQuotaNotice(quotaKind);
-        finishRun(socket,{drain:false,reason:quotaKind==="storage"?"Хранилище заполнено — обновите тариф":quotaKind==="daily"?"Дневной лимит исчерпан":"Очередь на паузе: Agent Runtime вернул ошибку."});
+        finishRun(socket,{drain:false,reason:quotaKind==="storage"?"Хранилище заполнено — обновите тариф":quotaKind==="daily"?"Дневной лимит исчерпан":isAccountBusy?"Агент уже работает в этом аккаунте — дождитесь завершения или остановите его":isBusy?"Сервер занят — повторите запуск позже":"Очередь на паузе: Agent Runtime вернул ошибку."});
       }
     },()=>{
       updateMessages(current=>[...current,{role:"assistant",content:"Не удалось подключиться к Agent Runtime."}]);
@@ -319,6 +356,28 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     setQueue(queueRef.current);
   }
 
+  /** Another chat of the same project: the panel loads its stored turns on switch. */
+  function openSession(id:string){
+    setSessionsOpen(false);
+    if(id!==conversationId)onOpenConversation(id);
+  }
+
+  /** A finished thread can be left as it is: a project keeps several chats side by side. */
+  async function startSession(){
+    setSessionBusy(true);
+    setSessionsError("");
+    try{
+      const created=await createConversation(projectId);
+      setSessionsOpen(false);
+      onOpenConversation(created.id);
+      void loadSessions();
+    }catch(error){
+      setSessionsError(error instanceof Error?error.message:"Не удалось создать сессию");
+    }finally{
+      setSessionBusy(false);
+    }
+  }
+
   async function pickFiles(files:FileList|null){
     if(!files?.length)return;
     setNotice("");
@@ -365,6 +424,10 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   return <section className="chat">
     <div className="chat-header">
       <div><div className="eyebrow">АГЕНТ</div><h1>Что создаём?</h1></div>
+      <button type="button" className="chat-sessions-button" onClick={()=>{setSessionsOpen(true);void loadSessions()}} title="Сохранённые чаты проекта — вернуться к любому" aria-label="Чаты проекта">
+        <MessagesSquare size={14}/>
+        <span>Чаты{sessions&&sessions.length>1?" · "+sessions.length:""}</span>
+      </button>
     </div>
 
     {(plan&&plan.items.length>0)||actions.length>0||thinking||running
@@ -451,6 +514,31 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
         <footer className="modal-foot">
           <button className="ghost-button" onClick={()=>setQuotaNotice(null)}>Понятно</button>
           <button className="send-button" onClick={()=>{setQuotaNotice(null);onOpenAccountSettings?.()}}>Обновить тариф</button>
+        </footer>
+      </section>
+    </div>}
+
+    {sessionsOpen&&<div className="modal-backdrop" role="presentation" onMouseDown={()=>setSessionsOpen(false)}>
+      <section className="modal sessions-modal" role="dialog" aria-modal="true" aria-label="Чаты проекта" onMouseDown={event=>event.stopPropagation()}>
+        <header className="modal-head">
+          <div><span className="eyebrow">ИСТОРИЯ</span><h2>Чаты проекта</h2></div>
+          <button className="icon-button" onClick={()=>setSessionsOpen(false)} aria-label="Закрыть"><X size={16}/></button>
+        </header>
+        <div className="modal-body">
+          {sessionsError?<div className="modal-state">{sessionsError}</div>
+            :sessions===null?<div className="modal-state"><NestLoader size={26}/><span>Загружаем историю…</span></div>
+            :sessions.length===0?<div className="modal-state">В проекте ещё нет сохранённых чатов.</div>
+            :<ul className="session-list">{sessions.map(session=><li key={session.id}>
+              <button className={"session-item"+(session.id===conversationId?" active":"")} onClick={()=>openSession(session.id)} title={session.label}>
+                <span className="session-item-head"><strong>{session.label}</strong><small>{formatSessionTime(session.updatedAt)}</small></span>
+                {session.preview&&<span className="session-item-preview">{session.preview}</span>}
+                <span className="session-item-meta">{session.messageCount} сообщ.{session.id===conversationId?" · открыт сейчас":""}</span>
+              </button>
+            </li>)}</ul>}
+        </div>
+        <footer className="modal-foot">
+          <p className="modal-lead">Чаты хранятся на сервере: история проекта открывается с любого устройства и переживает перезагрузку.</p>
+          <button className="send-button" onClick={()=>void startSession()} disabled={sessionBusy}><Plus size={14}/> Новая сессия</button>
         </footer>
       </section>
     </div>}

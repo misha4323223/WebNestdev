@@ -2,8 +2,42 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireUser } from "../auth/auth.js";
 import { createProjectWithinLimit, ProjectLimitError, getProject, createConversation, getConversation, listConversations, listProjects, deleteProject, renameProject } from "../project-store.js";
+import type { Conversation } from "../project-store.js";
 import { getSubscription } from "../account/account-store.js";
 import { limitsForPlan, type PlanId } from "../account/plans.js";
+
+/** How many chats the picker shows. Older sessions stay stored and reachable by id. */
+const CONVERSATION_LIST_LIMIT = 50;
+
+/** One line, trimmed: a chat title and a preview are read in a narrow row, not as text. */
+function firstLine(value:string|undefined,max:number){
+  const text=(value??"").split("\n").find(line=>line.trim())?.trim()??"";
+  return text.length>max?text.slice(0,max)+"…":text;
+}
+
+/**
+ * The chat list answers "which sessions does this project have", so it carries a label
+ * and a short preview instead of the stored turns: a long run holds hundreds of tool
+ * results, and no picker needs them. Conversation titles stay "Новая сессия" until the
+ * user renames them, so the first question the user asked is what the row is called.
+ */
+export function conversationSummaries(conversations:Conversation[],limit=CONVERSATION_LIST_LIMIT){
+  return conversations.slice(0,limit).map(conversation=>{
+    const visible=conversation.messages.filter(message=>message.role==="user"||message.role==="assistant");
+    const firstUser=visible.find(message=>message.role==="user");
+    const last=visible.at(-1);
+    return {
+      id:conversation.id,
+      projectId:conversation.projectId,
+      title:conversation.title,
+      label:firstLine(firstUser?.content,80)||conversation.title,
+      preview:firstLine(last?.content,120),
+      messageCount:visible.length,
+      createdAt:conversation.createdAt,
+      updatedAt:conversation.updatedAt,
+    };
+  });
+}
 
 function planFor(subscription: Awaited<ReturnType<typeof getSubscription>>, now = Date.now()): PlanId {
   return subscription.status === "demo_active" && subscription.expiresAt && Date.parse(subscription.expiresAt) > now ? subscription.plan : "free";
@@ -50,7 +84,7 @@ export async function registerProjectRoutes(app:FastifyInstance){
     const p=z.object({id:z.string().min(1)}).parse(request.params);
     const project=await getProject(p.id);
     if(!project||project.userId!==user.id)return reply.code(404).send({error:"Проект не найден"});
-    return {conversations:await listConversations(p.id)};
+    return {conversations:conversationSummaries(await listConversations(p.id))};
   });
   app.post("/api/projects/:id/conversations",async(request,reply)=>{
     const user=await requireUser(request,reply); if(!user)return;

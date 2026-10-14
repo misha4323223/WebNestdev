@@ -6,6 +6,7 @@ import { getCurrentUser } from "../auth/auth.js";
 import { getProject,getConversation,appendConversationMessages } from "../project-store.js";
 import type { ChatMessage } from "../types.js";
 import { consumeUsageForCurrentPlan } from "../account/usage-store.js";
+import { runQueueStats,runWithRunSlot } from "../agent/run-limiter.js";
 
 const messageSchema=z.discriminatedUnion("role",[
   z.object({role:z.literal("user"),content:z.string().max(100000)}),
@@ -54,11 +55,17 @@ export async function registerAgentWebSocket(app:FastifyInstance,runtime=new Age
     }
     let running=false,closed=false; let controller:AbortController|null=null;
     const safeSend=(payload:unknown)=>{if(!closed)try{socket.send(JSON.stringify(payload))}catch{closed=true}};
+    // Aborting on close stops a run in flight *and* a wait for a free run slot, so a closed
+    // tab never keeps a place in the queue while the server waits for it to answer.
     socket.on("close",()=>{closed=true;controller?.abort();controller=null;});
     socket.on("message",async (raw:RawData)=>{
       if(closed)return;
       if(running){safeSend({type:"error",error:"Агент уже выполняется в этом соединении"});return}
       running=true;
+      // The controller lives for the whole request, not only for the run: the queue wait below
+      // has to end when the connection does.
+      const runController=new AbortController();
+      controller=runController;
       try{
         const user=await getCurrentUser(request);
         if(!user){socket.close(1008,"Требуется вход в аккаунт");closed=true;return}
@@ -75,18 +82,34 @@ export async function registerAgentWebSocket(app:FastifyInstance,runtime=new Age
           const newMessages=newUserMessages(conversation.messages,parsed.messages);
           if(newMessages.length)await appendConversationMessages(parsed.conversationId,newMessages);
         }
-        const usage = await consumeUsageForCurrentPlan(user.id,"agentRuns");
-        safeSend({type:"usage.updated",usage});
-        controller=new AbortController();
-        await runtime.run({...parsed,userId:user.id},event=>safeSend(event),controller.signal);
+        // Only so many runs this host can hold at once, so a busy server makes the new run wait
+        // instead of starting a second build container and a second Chromium. The daily quota is
+        // consumed *inside* the place, so a full queue never burns one of the user's daily runs.
+        // The account is passed along because one account runs one agent at a time: a second tab
+        // or a second project of the same user is refused instead of taking another place.
+        await runWithRunSlot(async()=>{
+          const usage = await consumeUsageForCurrentPlan(user.id,"agentRuns");
+          safeSend({type:"usage.updated",usage});
+          await runtime.run({...parsed,userId:user.id},event=>safeSend(event),runController.signal);
+        },{
+          signal:runController.signal,
+          userId:user.id,
+          onQueued:waiting=>safeSend({type:"run.queued",queued:waiting,limit:runQueueStats().limit}),
+        });
       }catch(error){
         const message = error instanceof Error ? error.message : String(error);
-        const isQuota = error && typeof error === "object" && "statusCode" in error && (error as {statusCode?:unknown}).statusCode === 429;
+        const statusCode = error && typeof error === "object" && "statusCode" in error ? (error as {statusCode?:unknown}).statusCode : undefined;
+        const isQuota = statusCode === 429;
         const isStorage = error instanceof Error && error.name === "StorageLimitError";
+        // 503 is the limiter: the queue is full at this moment, or the wait ran out.
+        const isBusy = statusCode === 503;
+        // Anything that carries its own code ("this account is already running an agent") is
+        // passed straight through, so the panel can say what happened instead of "Ошибка".
+        const ownCode = error && typeof error === "object" && "code" in error && typeof (error as {code?:unknown}).code === "string" ? (error as {code:string}).code : undefined;
         const quotaCode = isStorage ? "STORAGE_LIMIT_REACHED" : "DAILY_QUOTA_EXCEEDED";
-        safeSend({type:"error",error:message,...(isQuota?{code:quotaCode}:{})});
+        safeSend({type:"error",error:message,...(isQuota?{code:quotaCode}:isBusy?{code:"SERVER_BUSY"}:ownCode?{code:ownCode}:{})});
       }
-      finally{running=false;}
+      finally{controller=null;running=false;}
     });
   });
 }

@@ -1,47 +1,121 @@
 import type { SandboxConfig } from "./sandbox-manager.js";
 import { dockerExec } from "./preview/docker-exec.js";
-import { getPreview, removePreview } from "./preview/preview-store.js";
-import { startPreviewContainer } from "./preview/preview-runner.js";
+import { getPreview, removePreview, touchPreview } from "./preview/preview-store.js";
+import { previewAppAnswers, recentPreviewLogs, startPreviewContainer } from "./preview/preview-runner.js";
+import { previewModeSetting, startStaticPreview, staticAppAnswers, staticPreviewLogs, stopStaticPreview } from "./preview/static-preview.js";
+import { PREVIEW_LABEL, type PreviewStatus } from "./preview/types.js";
 
-export type { PreviewState } from "./preview/types.js";
+export type { PreviewState, PreviewStatus } from "./preview/types.js";
 
+/**
+ * Starts the preview the way the panel's button and the agent's verification do. The mode is
+ * decided here: `static` builds the project and serves the output from the server process
+ * (no container, no memory), `container` is the dev server with live reload, and `auto` — the
+ * default — serves the build when the project has one and falls back to the dev server when
+ * it does not (no build script, a failing build, or an output without index.html).
+ */
 export async function startPreview(config: SandboxConfig) {
+  const setting = previewModeSetting();
+  if (setting !== "container") {
+    const result = await startStaticPreview(config);
+    if (result.ok) return result.status;
+    // A host that requires static previews must not silently start a container, so the reason
+    // is the answer there; every other mode falls back and carries the reason as a hint.
+    if (setting === "static") throw new Error(result.reason);
+    return startContainerPreview(config, result.reason);
+  }
+  return startContainerPreview(config);
+}
+
+/**
+ * The dev-server preview. A running one is reused instead of restarted: the dev server
+ * watches the project files itself, so the agent's edits appear without another start.
+ */
+async function startContainerPreview(config: SandboxConfig, staticReason?: string) {
   const current = getPreview(config.projectId);
-  if (current) {
+  if (current?.mode === "static") {
+    // The mode changed, or the static start fell back: a listener must not be left behind.
+    await stopStaticPreview(config.projectId);
+    removePreview(config.projectId);
+  } else if (current) {
     const status = await previewStatus(config.projectId);
     if (status.running) return status;
   }
-  return startPreviewContainer(config);
+  const status = await startPreviewContainer(config);
+  if (!staticReason || !status.ready) return status;
+  return { ...status, hint: "Статическая сборка недоступна (" + staticReason + "), работает dev-сервер." };
 }
 
 export async function stopPreview(projectId: string) {
   const current = getPreview(projectId);
   if (!current) return { stopped: false };
+  if (current.mode === "static") {
+    await stopStaticPreview(projectId);
+    removePreview(projectId);
+    return { stopped: true };
+  }
   await dockerExec(["stop", current.containerId]);
   removePreview(projectId);
   return { stopped: true };
 }
 
 /**
- * Returns the recent output of the running preview container, so the panel can
- * show the dev-server logs behind the preview.
+ * Returns what the panel shows behind the preview: the dev-server output for a container
+ * preview, the build output for a static one (nothing runs that could produce more).
  */
 export async function previewLogs(projectId: string) {
   const current = getPreview(projectId);
   if (!current) return { running: false, logs: "" };
 
-  const result = await dockerExec(["logs", "--tail", "300", current.containerId]);
-  const logs = [result.stdout, result.stderr]
-    .map(value => value.replace(/\r/g, "").trim())
-    .filter(Boolean)
-    .join("\n");
-  if (result.code !== 0 && !logs) throw new Error("Не удалось прочитать логи предпросмотра");
+  if (current.mode === "static") {
+    // Somebody is reading the logs, so the preview is in use.
+    touchPreview(projectId);
+    return { running: true, logs: staticPreviewLogs(projectId) };
+  }
+
+  const logs = await recentPreviewLogs(current.containerId);
+  // Somebody is reading the logs, so the preview is in use.
+  touchPreview(projectId);
   return { running: true, logs };
 }
 
-export async function previewStatus(projectId: string) {
+/**
+ * The preview state lives in memory, so after a server restart every labelled preview
+ * container is an orphan: nothing owns it, it keeps running with its resources, and the
+ * next start would create a second one for the same project. Reaping on boot keeps that
+ * bounded. Set PREVIEW_REAP_ON_START=0 when several server replicas share one Docker host.
+ * Static previews live in this process, so a restart leaves nothing of them behind.
+ */
+export async function reapOrphanPreviews() {
+  if (process.env.PREVIEW_REAP_ON_START === "0") return { stopped: 0 };
+  const listed = await dockerExec(["ps", "-q", "--filter", "label=" + PREVIEW_LABEL]);
+  const ids = listed.stdout.split("\n").map(value => value.trim()).filter(Boolean);
+  for (const id of ids) await dockerExec(["stop", id], 30000);
+  return { stopped: ids.length };
+}
+
+export async function previewStatus(projectId: string): Promise<PreviewStatus> {
   const current = getPreview(projectId);
   if (!current) return { running: false };
+
+  // Nothing runs in a container for a static preview, so there is nothing to inspect: the
+  // listener answers or it does not.
+  if (current.mode === "static") {
+    const ready = await staticAppAnswers(current.host, current.port);
+    touchPreview(projectId);
+    return {
+      running: true,
+      ready,
+      mode: "static",
+      port: current.port,
+      host: current.host,
+      containerId: current.containerId,
+      startedAt: current.startedAt,
+      ...(ready
+        ? {}
+        : { hint: "Статическая сборка не отвечает — запустите предпросмотр заново." }),
+    };
+  }
 
   const inspect = await dockerExec([
     "inspect",
@@ -55,36 +129,25 @@ export async function previewStatus(projectId: string) {
     return { running: false };
   }
 
-  const port = current.port;
-  if (!port) {
-    removePreview(projectId);
-    return {
-      running: false,
-      error: "Контейнер предпросмотра запущен, но порт не назначен",
-    };
-  }
+  // Every status read counts as use: the panel refreshes it, the logs tab polls it and the
+  // agent's project.verify/browser.* checks go through it, as does every proxied request.
+  touchPreview(projectId);
 
-  const health = await dockerExec([
-    "exec",
-    current.containerId,
-    "node",
-    "-e",
-    `fetch('http://127.0.0.1:${port}').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))`,
-  ]);
-
-  if (health.code !== 0) {
-    removePreview(projectId);
-    return {
-      running: false,
-      error: `Контейнер предпросмотра запущен, но веб-сервер не отвечает на порту ${port}`,
-    };
-  }
+  // A dev server that is still compiling has not failed: the container is the truth here,
+  // and `ready` says whether the app answers yet. Dropping the state on a slow first start
+  // used to lose the container and leave it running with nothing left to stop it.
+  const ready = await previewAppAnswers(current);
 
   return {
     running: true,
-    port,
+    ready,
+    mode: "container",
+    port: current.port,
     host: current.host,
     containerId: current.containerId,
     startedAt: current.startedAt,
+    ...(ready
+      ? {}
+      : { hint: "Приложение ещё запускается: первый старт dev-сервера занимает несколько секунд." }),
   };
 }
