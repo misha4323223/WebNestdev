@@ -8,4 +8,5 @@ export {
   getTable,
   initializeStorage,
   closeStorage,
+  describeStorage,
 } from "./pg.js";

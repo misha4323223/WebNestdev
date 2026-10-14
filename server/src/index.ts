@@ -7,7 +7,7 @@ import fastifyStatic from "@fastify/static";
 import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
-import { initializeStorage, closeStorage } from "./storage/ydb.js";
+import { initializeStorage, closeStorage, describeStorage } from "./storage/ydb.js";
 import { assertEncryptionConfigured } from "./storage/secret-crypto.js";
 import { ensureDataDir } from "./project-store.js";
 import { registerHealthRoutes } from "./routes/health.js";
@@ -46,11 +46,14 @@ if (production && allowedOrigins.some(origin => /^https?:\/\/localhost(?::\d+)?$
   throw new Error("В production в WEBNESTDEV_ALLOWED_ORIGINS нельзя указывать localhost");
 }
 await ensureDataDir();
-// YDB-инициализация в фоне: DDL на «холодной» серверлесс-базе занимает 30–60 с.
+// The live backend is printed once at startup: it is the first thing to check when an
+// account, a conversation or an integration seems to have disappeared.
+console.log("[storage] " + describeStorage());
+// База инициализируется в фоне: DDL на «холодной» серверлесс-базе занимает 30–60 с.
 // Если дождаться её здесь, app.listen() так и не выполнится (порт 8787 не поднимется,
 // а healthcheck и клиенты не дождутся ответа). HTTP стартует сразу; DDL отрабатывает в фоне.
 initializeStorage().catch((err) => {
-  console.error("[ydb] storage init failed (background):", err?.message ?? err);
+  console.error("[storage] init failed (background):", err?.message ?? err);
 });
 
 const demoEnabled = process.env.WEBNESTDEV_DEMO_USER ? process.env.WEBNESTDEV_DEMO_USER !== "0" : !production;

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { AgentRunRequest,ChatMessage,PlanState } from "./types.js";
 import { createProvider } from "./provider.js";
-import { appendConversationMessages,getProject,getProjectProvider } from "./project-store.js";
+import { appendConversationMessages,getConversation,getProject,getProjectProvider,saveConversationPlan } from "./project-store.js";
 import { buildInitialMessages } from "./agent/message-builder.js";
 import { buildProjectContext } from "./agent/context-builder.js";
 import { retrieveRelevantFiles } from "./agent/context-retrieval.js";
@@ -90,6 +90,24 @@ export class AgentRuntime {
       const changedFiles=new Set<string>();
       const parsedChanges:ParsedChange[]=[];
 
+      /**
+       * Everything the user can see — the answers, the thinking behind them and every
+       * action with its result — belongs to the conversation, so it is written there as
+       * it happens. A reload, a switched tab or a closed window loses nothing.
+       */
+      const persist=async (entries:ChatMessage[])=>{
+        if(!request.conversationId||!entries.length)return;
+        try{
+          const conversation=await getConversation(request.conversationId);
+          if(!conversation||conversation.projectId!==request.projectId)throw new Error("Сессия не найдена в этом проекте");
+          await appendConversationMessages(request.conversationId,entries);
+        }catch(error){console.error("Failed to persist conversation messages",error);}
+      };
+      const finishTool=async (call:{id:string;name:string},output:unknown)=>{
+        emit({type:"tool.finished",runId,toolCallId:call.id,name:call.name,output});
+        await persist([{role:"tool",content:JSON.stringify(output??null),tool_call_id:call.id}]);
+      };
+
       const runVerification=async (browserRuntime:boolean,routes:string[])=>{
         const verifyCalls=[
           {id:randomUUID(),name:"terminal.exec",arguments:{command:"npm run build"}},
@@ -103,7 +121,7 @@ export class AgentRuntime {
           emit({type:"tool.started",runId,toolCallId:verifyCall.id,name:verifyCall.name,input:verifyCall.arguments});
           try{
             const output=await executeTool(verifyCall as any,{runId,request,emit,signal});
-            emit({type:"tool.finished",runId,toolCallId:verifyCall.id,name:verifyCall.name,output});
+            await finishTool(verifyCall,output);
             messages.push({role:"tool",content:JSON.stringify(output),tool_call_id:verifyCall.id});
             if(verifyCall.name==="terminal.exec"){
               qa.build=commandSucceeded(output);
@@ -124,7 +142,7 @@ export class AgentRuntime {
           }catch(error){
             const message=error instanceof Error?error.message:String(error);
             const output={ok:false,error:message};
-            emit({type:"tool.finished",runId,toolCallId:verifyCall.id,name:verifyCall.name,output});
+            await finishTool(verifyCall,output);
             messages.push({role:"tool",content:JSON.stringify(output),tool_call_id:verifyCall.id});
             return false;
           }
@@ -158,23 +176,15 @@ export class AgentRuntime {
 
           const text=result.text||"Модель не вернула ответ.";
           if(!result.text)emit({type:"message.delta",runId,delta:text});
-          if(request.conversationId){
-            const conversation=await import("./project-store.js").then(m=>m.getConversation(request.conversationId!));
-            if(!conversation||conversation.projectId!==request.projectId)throw new Error("Сессия не найдена в этом проекте");
-            await appendConversationMessages(request.conversationId,[{role:"assistant",content:text}]);
-          }
+          await persist([{role:"assistant",content:text,...(result.reasoning?{reasoning:result.reasoning}:{})}]);
           emit({type:"run.completed",runId}); return;
         }
 
-        messages.push({role:"assistant",content:result.text,tool_calls:result.calls});
-        // Intermediate assistant messages are part of the user-visible history, so they
-        // are persisted as they are produced and survive a reload or tab switch mid-run.
-        if(request.conversationId&&result.calls.length&&result.text.trim()){
-          try{
-            const conversation=await import("./project-store.js").then(m=>m.getConversation(request.conversationId!));
-            if(conversation&&conversation.projectId===request.projectId)await appendConversationMessages(request.conversationId,[{role:"assistant",content:result.text,tool_calls:result.calls}]);
-          }catch(error){console.error("Failed to persist intermediate assistant message",error);}
-        }
+        const assistantMessage:ChatMessage={role:"assistant",content:result.text,tool_calls:result.calls,...(result.reasoning?{reasoning:result.reasoning}:{})};
+        messages.push(assistantMessage);
+        // The assistant turn is part of the user-visible history, so it is persisted as it
+        // is produced — with the thinking behind it — and survives a reload mid-run.
+        if(result.calls.length||result.text.trim())await persist([assistantMessage]);
 
         let mutationSucceeded=false;
         let browserRuntimeRequired=false;
@@ -186,19 +196,26 @@ export class AgentRuntime {
           // Planner mode is read-only by construction, not just by instruction.
           if(mode==="planner"&&changesSomething(call.name,call.arguments)){
             const refusal={error:"Режим «Планировщик»: изменения отключены. Разрешены только чтение файлов, команды из списка только-для-чтения (без перенаправлений, установки пакетов и git add/commit) и GET/HEAD-запросы. Опишите этот шаг в плане и продолжите изучение проекта.",mode:"planner"};
-            emit({type:"tool.finished",runId,toolCallId:call.id,name:call.name,output:refusal});
+            await finishTool(call,refusal);
             messages.push({role:"tool",content:JSON.stringify(refusal),tool_call_id:call.id});
             continue;
           }
           try{
             const output=await executeTool(call,context);
             if(signal?.aborted)throw new Error("Запуск агента отменён");
-            emit({type:"tool.finished",runId,toolCallId:call.id,name:call.name,output});
+            await finishTool(call,output);
             messages.push({role:"tool",content:JSON.stringify(output),tool_call_id:call.id});
 
             if(call.name==="plan.update"){
               const plan=(output as {plan?:PlanState}).plan;
-              if(plan){planSeen=true;emit({type:"plan.updated",runId,plan});}
+              if(plan){
+                planSeen=true;
+                emit({type:"plan.updated",runId,plan});
+                if(request.conversationId){
+                  try{await saveConversationPlan(request.conversationId,plan);}
+                  catch(error){console.error("Failed to persist the plan",error);}
+                }
+              }
             }
 
             if(call.name==="browser.scenario"){
@@ -240,7 +257,7 @@ export class AgentRuntime {
             }
           }catch(error){
             const message=error instanceof Error?error.message:String(error);
-            emit({type:"tool.finished",runId,toolCallId:call.id,name:call.name,output:{error:message}});
+            await finishTool(call,{error:message});
             messages.push({role:"tool",content:JSON.stringify({error:message}),tool_call_id:call.id});
           }
         }
@@ -262,7 +279,7 @@ export class AgentRuntime {
               emit({type:"tool.started",runId,toolCallId:scenarioCall.id,name:scenarioCall.name,input:scenarioCall.arguments});
               try{
                 const scenarioOutput=await executeTool(scenarioCall as any,{runId,request,emit,signal});
-                emit({type:"tool.finished",runId,toolCallId:scenarioCall.id,name:scenarioCall.name,output:scenarioOutput});
+                await finishTool(scenarioCall,scenarioOutput);
                 messages.push({role:"tool",content:JSON.stringify(scenarioOutput),tool_call_id:scenarioCall.id});
                 if((scenarioOutput as {ok?:boolean}).ok===true){
                   scenarioPending=false;
@@ -278,7 +295,7 @@ export class AgentRuntime {
                 const message=error instanceof Error?error.message:String(error);
                 scenarioPending=true;
                 consecutiveScenarioFailures++;
-                emit({type:"tool.finished",runId,toolCallId:scenarioCall.id,name:scenarioCall.name,output:{ok:false,error:message}});
+                await finishTool(scenarioCall,{ok:false,error:message});
                 messages.push({role:"tool",content:JSON.stringify({ok:false,error:message}),tool_call_id:scenarioCall.id});
                 if(consecutiveScenarioFailures>=MAX_CONSECUTIVE_VERIFY_FAILURES) throw new Error("Сценарий проверки в браузере не прошёл несколько раз подряд — достигнут предел попыток");
               }

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile, readdir, rename, rm, unlink } from "node:fs/promises";
 import path from "node:path";
 import { sandboxRootPath } from "./sandbox/config.js";
-import type { ChatMessage } from "./types.js";
+import type { ChatMessage, PlanState } from "./types.js";
 import { isYdbEnabled, ydbQuery, getTable } from "./storage/ydb.js";
 import { decryptSecret, encryptSecret, isEncryptedSecret } from "./storage/secret-crypto.js";
 
@@ -22,7 +22,7 @@ export type Project = {
   github?:GitHubRepositoryRef;
   userId: string;
 };
-export type Conversation = { id:string; projectId:string; title:string; messages:ChatMessage[]; createdAt:string; updatedAt:string };
+export type Conversation = { id:string; projectId:string; title:string; messages:ChatMessage[]; plan?:PlanState|null; createdAt:string; updatedAt:string };
 export type ProjectProviderConfig = { provider:string; baseUrl:string; model:string; token?:string };
 const root=process.env.WEBNESTDEV_DATA_DIR ?? path.resolve(".webnestdev");
 
@@ -287,19 +287,34 @@ export async function removeProjectProvider(projectId:string){
 
 async function conversationsDir(){const d=path.join(root,"conversations");await mkdir(d,{recursive:true});return d}
 
-function messageFromRow(row:{created_at:string;message_id:string;role:string;content:string;tool_calls_json:string;tool_call_id:string}):ChatMessage{
+function messageFromRow(row:{created_at:string;message_id:string;role:string;content:string;tool_calls_json:string;tool_call_id:string;reasoning?:string}):ChatMessage{
   const base={role:row.role as ChatMessage["role"],content:row.content};
   if(row.role==="assistant"){
-    return {...base,role:"assistant",...(row.tool_calls_json ? {tool_calls:JSON.parse(row.tool_calls_json) as Extract<ChatMessage,{role:"assistant"}>["tool_calls"]}: {})} as ChatMessage;
+    return {
+      ...base,role:"assistant",
+      ...(row.tool_calls_json ? {tool_calls:JSON.parse(row.tool_calls_json) as Extract<ChatMessage,{role:"assistant"}>["tool_calls"]}: {}),
+      ...(row.reasoning ? {reasoning:row.reasoning}: {}),
+    } as ChatMessage;
   }
   if(row.role==="tool")return {...base,role:"tool",tool_call_id:row.tool_call_id};
   return {...base,role:row.role as "user"|"system"};
+}
+/**
+ * Tool output can be megabytes of logs, and a stored conversation is not a log archive:
+ * the row keeps enough for the user to read what happened (and for the action list to
+ * be rebuilt after a reload), while the model's own context keeps the full output.
+ */
+const MAX_STORED_TOOL_CHARS=8000;
+function boundMessage(message:ChatMessage):ChatMessage{
+  if(message.role!=="tool"||message.content.length<=MAX_STORED_TOOL_CHARS)return message;
+  return {...message,content:message.content.slice(0,MAX_STORED_TOOL_CHARS)+'\n…[вывод обрезан при сохранении]'};
 }
 function messageRow(projectId:string,conversationId:string,message:ChatMessage,createdAt:string){
   return {
     conversationId,projectId,messageId:randomUUID(),createdAt,
     role:message.role,content:message.content,
     toolCallsJson:message.role==="assistant"&&message.tool_calls ? JSON.stringify(message.tool_calls):"",
+    reasoningJson:message.role==="assistant"&&message.reasoning ? message.reasoning:"",
     toolCallId:message.role==="tool" ? message.tool_call_id:""
   };
 }
@@ -311,8 +326,8 @@ export async function createConversation(projectId:string,title="Новая се
   if(isYdbEnabled()){
     await ydbQuery()`
       INSERT INTO ${ydbQuery().identifier(getTable("conversations"))}
-        (id,project_id,title,messages_json,created_at,updated_at)
-      VALUES (${c.id},${c.projectId},${c.title},"",${c.createdAt},${c.updatedAt})
+        (id,project_id,title,messages_json,plan_json,created_at,updated_at)
+      VALUES (${c.id},${c.projectId},${c.title},"","",${c.createdAt},${c.updatedAt})
     `;
     return c;
   }
@@ -322,22 +337,22 @@ export async function createConversation(projectId:string,title="Новая се
 
 export async function getConversation(id:string):Promise<Conversation|null>{
   if(isYdbEnabled()){
-    const [rows]=await ydbQuery()<Array<{id:string;project_id:string;title:string;messages_json:string;created_at:string;updated_at:string}>>`
-      SELECT id,project_id,title,messages_json,created_at,updated_at
+    const [rows]=await ydbQuery()<Array<{id:string;project_id:string;title:string;messages_json:string;plan_json:string;created_at:string;updated_at:string}>>`
+      SELECT id,project_id,title,messages_json,plan_json,created_at,updated_at
       FROM ${ydbQuery().identifier(getTable("conversations"))}
       WHERE id = ${id}
       LIMIT 1
     `;
     const row=rows?.[0];
     if(!row)return null;
-    const [messageRows]=await ydbQuery()<Array<{created_at:string;message_id:string;role:string;content:string;tool_calls_json:string;tool_call_id:string}>>`
-      SELECT created_at,message_id,role,content,tool_calls_json,tool_call_id
+    const [messageRows]=await ydbQuery()<Array<{created_at:string;message_id:string;role:string;content:string;tool_calls_json:string;tool_call_id:string;reasoning:string}>>`
+      SELECT created_at,message_id,role,content,tool_calls_json,tool_call_id,reasoning
       FROM ${ydbQuery().identifier(getTable("conversation_messages"))}
       WHERE conversation_id = ${id}
       ORDER BY created_at,message_id
     `;
     const messages=messageRows.length ? messageRows.map(messageFromRow) : JSON.parse(row.messages_json || "[]") as ChatMessage[];
-    return {id:row.id,projectId:row.project_id,title:row.title,messages,createdAt:row.created_at,updatedAt:row.updated_at};
+    return {id:row.id,projectId:row.project_id,title:row.title,messages,plan:row.plan_json ? JSON.parse(row.plan_json) as PlanState : null,createdAt:row.created_at,updatedAt:row.updated_at};
   }
   try{return JSON.parse(await readFile(path.join(root,"conversations",id+".json"),"utf8")) as Conversation}catch{return null}
 }
@@ -378,17 +393,19 @@ export async function listConversations(projectId:string){
 export async function appendConversationMessages(id:string,messages:ChatMessage[]){
   const c=await getConversation(id);
   if(!c)throw new Error("Сессия не найдена");
-  c.messages.push(...messages);
+  // Bounding happens here, once, so both backends store the same readable copy.
+  const bounded=messages.map(boundMessage);
+  c.messages.push(...bounded);
   c.updatedAt=new Date().toISOString();
   if(isYdbEnabled()){
     const projectId=c.projectId;
     const now=Date.now();
-    for(let index=0;index<messages.length;index++){
-      const row=messageRow(projectId,id,messages[index],new Date(now+index).toISOString());
+    for(let index=0;index<bounded.length;index++){
+      const row=messageRow(projectId,id,bounded[index],new Date(now+index).toISOString());
       await ydbQuery()`
         UPSERT INTO ${ydbQuery().identifier(getTable("conversation_messages"))}
-          (conversation_id,created_at,message_id,project_id,role,content,tool_calls_json,tool_call_id)
-        VALUES (${row.conversationId},${row.createdAt},${row.messageId},${row.projectId},${row.role},${row.content},${row.toolCallsJson},${row.toolCallId})
+          (conversation_id,created_at,message_id,project_id,role,content,tool_calls_json,reasoning,tool_call_id)
+        VALUES (${row.conversationId},${row.createdAt},${row.messageId},${row.projectId},${row.role},${row.content},${row.toolCallsJson},${row.reasoningJson},${row.toolCallId})
       `;
     }
     await ydbQuery()`
@@ -400,4 +417,26 @@ export async function appendConversationMessages(id:string,messages:ChatMessage[
   }
   await writeFile(path.join(root,"conversations",id+".json"),JSON.stringify(c,null,2));
   return c;
+}
+
+/**
+ * The plan belongs to the conversation, not to the browser: it is what the user watches
+ * during a long run, so it is stored with the messages and comes back after a reload.
+ */
+export async function saveConversationPlan(id:string,plan:PlanState){
+  const updatedAt=new Date().toISOString();
+  if(isYdbEnabled()){
+    await ydbQuery()`
+      UPDATE ${ydbQuery().identifier(getTable("conversations"))}
+      SET plan_json=${JSON.stringify(plan)},updated_at=${updatedAt}
+      WHERE id=${id}
+    `;
+    return plan;
+  }
+  const c=await getConversation(id);
+  if(!c)throw new Error("Сессия не найдена");
+  c.plan=plan;
+  c.updatedAt=updatedAt;
+  await writeFile(path.join(root,"conversations",id+".json"),JSON.stringify(c,null,2));
+  return plan;
 }

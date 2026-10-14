@@ -1,4 +1,4 @@
-import { type CSSProperties } from "react";
+import { useId, type CSSProperties } from "react";
 
 type NestLoaderProps = {
   size?: number;
@@ -6,45 +6,23 @@ type NestLoaderProps = {
   label?: string;
 };
 
-type Twig = { kind: "twig"; d: string; dx: string; dy: string; r: string; delay: string };
-type Egg = { kind: "egg"; cx: number; cy: number; rx: number; ry: number; dx: string; dy: string; r: string; delay: string };
-
-/**
- * A woven nest: the twigs of the bowl weave themselves together, two eggs settle
- * in the middle and the front rim closes over them. Then it comes apart again,
- * so the icon visibly assembles and disassembles.
- *
- * Pieces are listed in painting order: back rim, bowl, weave, eggs, front rim.
- */
-const pieces: Array<Twig | Egg> = [
-  // Back rim of the bowl (behind the eggs).
-  { kind: "twig", d: "M11 30C21 25 43 25 53 30", dx: "0px", dy: "-13px", r: "0deg", delay: "0s" },
-  // Bowl and its woven twigs. The centre stays open so the eggs are readable.
-  { kind: "twig", d: "M13 33C13 44 21 50 32 50C43 50 51 44 51 33", dx: "0px", dy: "13px", r: "0deg", delay: ".06s" },
-  { kind: "twig", d: "M12 32C10.5 39 13 45 18 49", dx: "-16px", dy: "2px", r: "-10deg", delay: ".12s" },
-  { kind: "twig", d: "M52 32C53.5 39 51 45 46 49", dx: "16px", dy: "2px", r: "10deg", delay: ".18s" },
-  { kind: "twig", d: "M17 38C25 44 39 44 47 38", dx: "-13px", dy: "8px", r: "-12deg", delay: ".24s" },
-  { kind: "twig", d: "M21 32C23 38 26 42 30 45", dx: "-11px", dy: "-6px", r: "-14deg", delay: ".30s" },
-  { kind: "twig", d: "M43 32C41 38 38 42 34 45", dx: "11px", dy: "-6px", r: "14deg", delay: ".36s" },
-  // Eggs resting inside the bowl.
-  { kind: "egg", cx: 26.4, cy: 26.4, rx: 4.9, ry: 6.1, dx: "-7px", dy: "-15px", r: "-7deg", delay: ".46s" },
-  { kind: "egg", cx: 37.6, cy: 26, rx: 4.7, ry: 5.9, dx: "7px", dy: "-15px", r: "7deg", delay: ".52s" },
-  // Front rim, woven last so it closes over the eggs.
-  { kind: "twig", d: "M11 30C18 36 46 36 53 30", dx: "0px", dy: "9px", r: "0deg", delay: ".58s" },
+const strands = [
+  { d: "M14 29 C21 17 34 15 44 16 C56 16 68 20 74 29 C66 38 22 39 14 29Z", dx: -10, dy: -9, r: -16 },
+  { d: "M17 27 C28 32 59 34 71 27", dx: 0, dy: -13, r: 7 },
+  { d: "M17 31 C28 37 59 38 71 31", dx: 11, dy: -8, r: 18 },
+  { d: "M20 36 C31 42 56 43 68 36", dx: 14, dy: 0, r: 28 },
+  { d: "M24 42 C34 47 53 48 64 42", dx: 10, dy: 10, r: 18 },
+  { d: "M31 48 C38 52 50 52 57 48", dx: 0, dy: 13, r: -6 },
+  { d: "M20 22 C25 29 28 39 35 48", dx: -12, dy: 9, r: -22 },
+  { d: "M28 18 C33 29 37 41 42 52", dx: -13, dy: 1, r: -14 },
+  { d: "M39 17 C42 28 46 41 49 52", dx: -6, dy: -8, r: 8 },
+  { d: "M51 19 C53 29 56 39 59 46", dx: 7, dy: -7, r: 14 },
+  { d: "M63 23 C61 30 63 36 67 40", dx: 12, dy: 3, r: 25 },
+  { d: "M24 25 C34 22 53 23 64 28", dx: -7, dy: -5, r: -8 },
 ];
 
 export function NestLoader({ size = 42, className = "", label }: NestLoaderProps) {
-  const renderPiece = (piece: Twig | Egg, key: string) => {
-    const style = {
-      "--dx": piece.dx,
-      "--dy": piece.dy,
-      "--r": piece.r,
-      "--nest-delay": piece.delay,
-    } as CSSProperties;
-    return piece.kind === "twig"
-      ? <path key={key} className="nest-loader__piece" d={piece.d} style={style} />
-      : <ellipse key={key} className="nest-loader__piece nest-loader__egg" cx={piece.cx} cy={piece.cy} rx={piece.rx} ry={piece.ry} style={style} />;
-  };
+  const id = useId().replace(/:/g, "");
   return (
     <span
       className={`nest-loader ${className}`}
@@ -52,9 +30,43 @@ export function NestLoader({ size = 42, className = "", label }: NestLoaderProps
       aria-label={label}
       style={{ "--nest-size": `${size}px` } as CSSProperties}
     >
-      <svg viewBox="0 0 64 64" width={size} height={size} aria-hidden="true">
-        <g className="nest-loader__body">
-          {pieces.map((piece, index) => renderPiece(piece, `piece-${index}`))}
+      <svg viewBox="0 0 88 68" width={size} height={size} aria-hidden="true">
+        <defs>
+          <linearGradient id={`${id}-twig`} x1="14" y1="18" x2="72" y2="53" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stopColor="#ead6ad" />
+            <stop offset=".34" stopColor="#b99060" />
+            <stop offset=".68" stopColor="#dfc18e" />
+            <stop offset="1" stopColor="#8a6442" />
+          </linearGradient>
+          <linearGradient id={`${id}-egg`} x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stopColor="#fff4d8" />
+            <stop offset="1" stopColor="#c8b28b" />
+          </linearGradient>
+        </defs>
+
+        <ellipse className="nest-loader__shadow" cx="44" cy="54" rx="22" ry="3.4" />
+
+        <g className="nest-loader__eggs">
+          <ellipse cx="40.5" cy="28.2" rx="4.1" ry="5.5" transform="rotate(-15 40.5 28.2)" fill={`url(#${id}-egg)`} />
+          <ellipse cx="48.3" cy="29.1" rx="3.8" ry="5.1" transform="rotate(13 48.3 29.1)" fill={`url(#${id}-egg)`} />
+        </g>
+
+        <g className="nest-loader__strands">
+          {strands.map((strand, index) => (
+            <path
+              key={index}
+              className="nest-loader__strand"
+              d={strand.d}
+              pathLength="1"
+              stroke={`url(#${id}-twig)`}
+              style={{
+                "--dx": `${strand.dx}px`,
+                "--dy": `${strand.dy}px`,
+                "--r": `${strand.r}deg`,
+                "--delay": `${index * -0.075}s`,
+              } as CSSProperties}
+            />
+          ))}
         </g>
       </svg>
     </span>

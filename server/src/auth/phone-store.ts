@@ -69,6 +69,21 @@ export async function findUserIdByPhone(phone: string) {
   return accounts.find(account => account.phone === phone)?.userId ?? null;
 }
 
+/** The number an account signed in with, oldest link first. Null when it has none. */
+export async function findPhoneByUserId(userId: string) {
+  if (isYdbEnabled()) {
+    const [rows] = await ydbQuery()<Array<{ phone: string }>>`
+      SELECT phone FROM ${ydbQuery().identifier(getTable("phone_accounts"))}
+      WHERE user_id = ${userId}
+      ORDER BY created_at ASC
+      LIMIT 1
+    `;
+    return rows?.[0]?.phone ?? null;
+  }
+  const accounts = await readAccounts();
+  return accounts.find(account => account.userId === userId)?.phone ?? null;
+}
+
 export async function linkPhone(phone: string, userId: string) {
   if (isYdbEnabled()) {
     await ydbQuery()`

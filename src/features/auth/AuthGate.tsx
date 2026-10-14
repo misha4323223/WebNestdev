@@ -51,7 +51,7 @@ export function AuthGate(){
     }
     setHome(true);
   },[]);
-  if(state==="loading") return <div className="app-loading"><NestLoader size={46} label="Загружаем WebNestdev"/><span>Проверяем сессию…</span></div>;
+  if(state==="loading") return <div className="app-loading"><NestLoader size={58} label="Проверяем сессию"/><strong>Проверяем сессию…</strong><span>Подготавливаем ваше рабочее пространство</span></div>;
   if(state==="guest") return <AuthScreen onAuthenticated={refresh}/>;
   if(home) return <HomeScreen onOpenWorkspace={()=>setHome(false)}/>;
   return <WorkspaceShell onHome={()=>setHome(true)}/>;

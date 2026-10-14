@@ -4,6 +4,7 @@ import { z } from "zod";
 import { AgentRuntime } from "../agent-runtime.js";
 import { getCurrentUser } from "../auth/auth.js";
 import { getProject,getConversation,appendConversationMessages } from "../project-store.js";
+import type { ChatMessage } from "../types.js";
 import { consumeUsageForCurrentPlan } from "../account/usage-store.js";
 
 const messageSchema=z.discriminatedUnion("role",[
@@ -23,6 +24,26 @@ function allowedOrigin(origin:string|undefined){
   if(!production&&!configured)return true;
   const allowed=(configured??"").split(",").map(value=>value.trim()).filter(Boolean);
   return allowed.includes(origin);
+}
+
+/**
+ * The client sends its whole history, so only the messages the conversation does not
+ * hold yet are appended. Occurrences are counted instead of remembered by text: sending
+ * the same words twice stores two messages, while the old set-based check dropped the
+ * repeat silently and the user saw their own message disappear after a reload.
+ */
+export function newUserMessages(stored:ChatMessage[],incoming:{role:string;content:string}[]):ChatMessage[]{
+  const storedCounts=new Map<string,number>();
+  for(const message of stored)if(message.role==="user")storedCounts.set(message.content,(storedCounts.get(message.content)??0)+1);
+  const seenCounts=new Map<string,number>();
+  const result:ChatMessage[]=[];
+  for(const message of incoming){
+    if(message.role!=="user")continue;
+    const count=(seenCounts.get(message.content)??0)+1;
+    seenCounts.set(message.content,count);
+    if(count>(storedCounts.get(message.content)??0))result.push({role:"user",content:message.content});
+  }
+  return result;
 }
 
 export async function registerAgentWebSocket(app:FastifyInstance,runtime=new AgentRuntime()){
@@ -51,8 +72,7 @@ export async function registerAgentWebSocket(app:FastifyInstance,runtime=new Age
         if(parsed.conversationId){
           const conversation=await getConversation(parsed.conversationId);
           if(!conversation||conversation.projectId!==parsed.projectId)throw new Error("Сессия не найдена в этом проекте");
-          const storedUserContent=new Set(conversation.messages.filter(m=>m.role==="user").map(m=>m.content));
-          const newMessages=parsed.messages.filter(m=>m.role==="user"&&!storedUserContent.has(m.content));
+          const newMessages=newUserMessages(conversation.messages,parsed.messages);
           if(newMessages.length)await appendConversationMessages(parsed.conversationId,newMessages);
         }
         const usage = await consumeUsageForCurrentPlan(user.id,"agentRuns");

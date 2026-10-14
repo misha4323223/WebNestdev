@@ -3,9 +3,10 @@ import { z } from "zod";
 import { attachSession } from "../auth/auth.js";
 import { checkAuthRateLimit } from "../auth/auth-rate-limit.js";
 import { demoPhone, ensurePhoneAccount, formatPhone, normalizePhone, startPhoneLogin, verifyPhoneCode } from "../auth/phone-store.js";
+import { PHONE_CONSENT_REQUIRED_MESSAGE, recordPhoneConsent } from "../auth/phone-consent.js";
 import { sendLoginCode, smsConfig, smsConfigHint, smsProviderLabel } from "../auth/sms.js";
 
-const phoneInput = z.object({ phone: z.string().min(1).max(30) });
+const phoneInput = z.object({ phone: z.string().min(1).max(30), consent: z.boolean().optional() });
 const verifyInput = z.object({ phone: z.string().min(1).max(30), code: z.string().min(1).max(10) });
 
 /**
@@ -43,6 +44,13 @@ export async function registerPhoneAuthRoutes(app: FastifyInstance) {
       reply.header("Retry-After", String(rateLimit.retryAfter));
       return reply.code(429).send({ error: "Слишком много запросов кода. Попробуйте позже." });
     }
+
+    // Signing in with a number needs an explicit consent. The refusal comes before any
+    // code exists, so nothing is sent and nothing is stored for the number.
+    if (body.consent !== true) {
+      return reply.code(400).send({ error: PHONE_CONSENT_REQUIRED_MESSAGE, consentRequired: true });
+    }
+    await recordPhoneConsent(phone, request.ip, "sign_in");
 
     // The demo number is let straight in: no code, no SMS, an ordinary session.
     if (isDemo) {

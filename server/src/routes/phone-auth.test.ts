@@ -63,7 +63,7 @@ test("a Russian number gets a code and only that code opens a session", async t 
   const start = await app.inject({
     method: "POST",
     url: "/api/auth/phone/start",
-    payload: { phone: "8 (999) 123-45-67" },
+    payload: { phone: "8 (999) 123-45-67", consent: true },
   });
   assert.equal(start.statusCode, 200);
   const started = start.json();
@@ -93,7 +93,7 @@ test("a Russian number gets a code and only that code opens a session", async t 
   assert.equal(me.json().authenticated, true);
 
   // A second sign-in with the same number reaches the same account, not a new one.
-  const again = await app.inject({ method: "POST", url: "/api/auth/phone/start", payload: { phone: "+79991234567" } });
+  const again = await app.inject({ method: "POST", url: "/api/auth/phone/start", payload: { phone: "+79991234567", consent: true } });
   assert.equal(again.statusCode, 200);
   const redo = await app.inject({
     method: "POST",
@@ -115,7 +115,7 @@ test("the demo number signs in immediately, without an SMS code", async t => {
   const response = await app.inject({
     method: "POST",
     url: "/api/auth/phone/start",
-    payload: { phone: "+7 999 000-00-00" },
+    payload: { phone: "+7 999 000-00-00", consent: true },
   });
   assert.equal(response.statusCode, 200);
   const body = response.json();
@@ -136,9 +136,40 @@ test("the demo number is opt-in in production", async t => {
   const status = await app.inject({ method: "GET", url: "/api/auth/phone/status" });
   assert.equal(status.json().demoPhone, undefined);
 
-  const response = await app.inject({ method: "POST", url: "/api/auth/phone/start", payload: { phone: "+7 999 000-00-00" } });
+  const response = await app.inject({ method: "POST", url: "/api/auth/phone/start", payload: { phone: "+7 999 000-00-00", consent: true } });
   assert.equal(response.statusCode, 200);
   assert.notEqual(response.json().demo, true);
+});
+
+test("a code is not generated without the phone-number consent", async t => {
+  clearPendingCodes();
+  const app = await buildApp();
+  t.after(async () => { await app.close(); });
+
+  const refused = await app.inject({
+    method: "POST",
+    url: "/api/auth/phone/start",
+    payload: { phone: "+7 999 123-45-99" },
+  });
+  assert.equal(refused.statusCode, 400);
+  assert.match(refused.json().error, /согласие/i);
+  assert.equal(refused.json().consentRequired, true);
+
+  // Without consent no code exists at all, so even a valid-looking one cannot be used.
+  const nothing = await app.inject({
+    method: "POST",
+    url: "/api/auth/phone/verify",
+    payload: { phone: "+7 999 123-45-99", code: "000000" },
+  });
+  assert.equal(nothing.statusCode, 401);
+
+  const consented = await app.inject({
+    method: "POST",
+    url: "/api/auth/phone/start",
+    payload: { phone: "+7 999 123-45-99", consent: true },
+  });
+  assert.equal(consented.statusCode, 200);
+  assert.match(consented.json().devCode, /^\d{6}$/);
 });
 
 test("a non-Russian number is rejected before any code exists", async t => {
@@ -148,7 +179,7 @@ test("a non-Russian number is rejected before any code exists", async t => {
   const response = await app.inject({
     method: "POST",
     url: "/api/auth/phone/start",
-    payload: { phone: "+1 415 555 0132" },
+    payload: { phone: "+1 415 555 0132", consent: true },
   });
   assert.equal(response.statusCode, 400);
   assert.match(response.json().error, /российский/i);

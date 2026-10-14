@@ -8,6 +8,8 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void })
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
   const [stage, setStage] = useState<"number" | "code">("number");
+  // Signing in by number needs an explicit consent to process it.
+  const [consent, setConsent] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [seconds, setSeconds] = useState(0);
@@ -23,7 +25,7 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void })
     setError("");
     setBusy(true);
     try {
-      const data = await startPhoneLogin(phone);
+      const data = await startPhoneLogin(phone, consent);
       // A configured demo number returns a session right away; nothing to type next.
       if (data.user) { onAuthenticated(); return; }
       setStage("code");
@@ -61,8 +63,12 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void })
 
       {stage === "number" && <form onSubmit={requestCode} className="auth-form">
         <label><span>Номер телефона</span><input type="tel" inputMode="tel" value={phone} onChange={event => setPhone(event.target.value)} placeholder="+7 999 123-45-67" autoComplete="tel" required /></label>
+        <label className="auth-consent">
+          <input type="checkbox" checked={consent} onChange={event => { setConsent(event.target.checked); setError(""); }} />
+          <span>Согласен на обработку номера телефона для входа по SMS</span>
+        </label>
         {error && <div className="auth-error">{error}</div>}
-        <button className="send-button auth-submit" disabled={busy || !phone.trim()}>{busy ? "Отправляем код…" : "Получить код"}</button>
+        <button className="send-button auth-submit" disabled={busy || !phone.trim() || !consent}>{busy ? "Отправляем код…" : "Получить код"}</button>
       </form>}
 
       {stage === "code" && <form onSubmit={submitCode} className="auth-form">

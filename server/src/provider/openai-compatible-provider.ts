@@ -25,6 +25,25 @@ type WireMessage=
   | {role:"assistant";content:string;tool_calls?:WireToolCall[]}
   | {role:"tool";content:string;tool_call_id:string};
 
+/**
+ * Reasoning-capable models stream their chain of thought in one of several fields,
+ * depending on the gateway: DeepSeek uses `reasoning_content`, Qwen `reasoning`, and a
+ * few gateways send `reasoning_details`. Any of them becomes a reasoning chunk. It is
+ * shown to the user and never sent back to the provider.
+ */
+function reasoningDelta(delta:unknown):string{
+  if(!delta||typeof delta!=="object")return "";
+  const value=delta as {reasoning_content?:unknown;reasoning?:unknown;reasoning_details?:unknown};
+  if(typeof value.reasoning_content==="string")return value.reasoning_content;
+  if(typeof value.reasoning==="string")return value.reasoning;
+  if(Array.isArray(value.reasoning_details)){
+    return value.reasoning_details
+      .map(item => (item&&typeof item==="object"&&typeof (item as {text?:unknown}).text==="string" ? (item as {text:string}).text : ""))
+      .join("");
+  }
+  return "";
+}
+
 export function toWireMessages(messages:ChatMessage[]):WireMessage[]{
   return messages.map(message=>{
     if(message.role==="assistant"){
@@ -97,6 +116,8 @@ export class OpenAICompatibleProvider implements Provider{
       }
       const delta=data.choices?.[0]?.delta;
       if(delta?.content)yield {type:"text",text:delta.content};
+      const reasoning=reasoningDelta(delta);
+      if(reasoning)yield {type:"reasoning",text:reasoning};
       for(const call of delta?.tool_calls??[]){
         const index=call.index??0;
         const existing=pending.get(index)??{

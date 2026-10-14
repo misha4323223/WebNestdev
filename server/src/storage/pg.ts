@@ -1,3 +1,4 @@
+import path from "node:path";
 import { Pool } from "pg";
 
 /**
@@ -25,6 +26,20 @@ export function getTable(name: string): string {
 /** Совместимость: isYdbEnabled() → postgres mode */
 export function isYdbEnabled(): boolean {
   return mode === "postgres";
+}
+
+/**
+ * Which backend is actually live, for the startup line. A wrong WEBNESTDEV_STORAGE —
+ * the old `ydb` value, for example — used to fail silently: the server kept running and
+ * wrote JSON files while the operator believed the data was in a database. The returned
+ * text says so out loud instead.
+ */
+export function describeStorage(): string {
+  if (mode === "postgres") return "storage: postgres";
+  const dir = process.env.WEBNESTDEV_DATA_DIR ?? path.resolve(".webnestdev");
+  const suffix = process.env.WEBNESTDEV_DATA_DIR ? "" : " (inside the working directory — set WEBNESTDEV_DATA_DIR so a redeploy keeps accounts and conversations)";
+  if (mode === "json") return "storage: json files in " + dir + suffix;
+  return "storage: WEBNESTDEV_STORAGE=" + mode + " is not a known backend (json | postgres) — using json files in " + dir + suffix;
 }
 
 // ─── Marker для безопасных идентификаторов ───────────────────────────────────
@@ -98,6 +113,8 @@ const PK_BY_TABLE: Record<string, string[]> = {
   yandex_connections: ["user_id"],
   project_sizes: ["project_id"],
   user_storage: ["user_id"],
+  phone_consents: ["consent_id"],
+  demo_claims: ["claim_key"],
 };
 
 /**
@@ -220,6 +237,7 @@ export async function initializeStorage(): Promise<void> {
       project_id TEXT NOT NULL,
       title TEXT NOT NULL,
       messages_json TEXT NOT NULL,
+      plan_json TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     )`);
@@ -233,10 +251,15 @@ export async function initializeStorage(): Promise<void> {
       role TEXT NOT NULL,
       content TEXT NOT NULL,
       tool_calls_json TEXT NOT NULL DEFAULT '',
+      reasoning TEXT NOT NULL DEFAULT '',
       tool_call_id TEXT NOT NULL DEFAULT '',
       PRIMARY KEY (conversation_id, created_at, message_id)
     )`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("conversation_messages")}_project ON ${tbl("conversation_messages")} (project_id, created_at)`);
+    // Databases created before the plan and reasoning columns existed are upgraded here:
+    // CREATE TABLE IF NOT EXISTS would leave them without the new columns.
+    await pool.query(`ALTER TABLE ${tbl("conversations")} ADD COLUMN IF NOT EXISTS plan_json TEXT NOT NULL DEFAULT ''`);
+    await pool.query(`ALTER TABLE ${tbl("conversation_messages")} ADD COLUMN IF NOT EXISTS reasoning TEXT NOT NULL DEFAULT ''`);
 
     await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("providers")} (
       project_id TEXT NOT NULL PRIMARY KEY,
@@ -356,6 +379,23 @@ export async function initializeStorage(): Promise<void> {
       used_bytes BIGINT NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL
     )`);
+
+    await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("phone_consents")} (
+      consent_id TEXT NOT NULL PRIMARY KEY,
+      phone TEXT NOT NULL,
+      consent_version TEXT NOT NULL,
+      purpose TEXT NOT NULL,
+      consented_at TEXT NOT NULL,
+      ip_hash TEXT NOT NULL
+    )`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("phone_consents")}_phone ON ${tbl("phone_consents")} (phone, consented_at)`);
+
+    await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("demo_claims")} (
+      claim_key TEXT NOT NULL PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      claimed_at TEXT NOT NULL
+    )`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("demo_claims")}_user ON ${tbl("demo_claims")} (user_id)`);
 
     console.log("[pg] storage initialized: all tables ready");
   })().catch((error) => {

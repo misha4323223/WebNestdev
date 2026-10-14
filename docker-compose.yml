@@ -17,6 +17,9 @@ services:
       retries: 10
 
   webnestdev-server:
+    # Образ приходит из реестра при деплое (WEBNESTDEV_IMAGE задаёт GitHub Actions);
+    # ключ build остаётся для локальной сборки через `docker compose build`.
+    image: ${WEBNESTDEV_IMAGE:-webnestdev:production}
     build:
       context: .
       dockerfile: server/Dockerfile

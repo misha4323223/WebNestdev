@@ -1,5 +1,9 @@
+import { useState } from "react";
 import {
   Activity,
+  Brain,
+  ChevronDown,
+  ChevronRight,
   CircleAlert,
   CircleCheck,
   CircleDashed,
@@ -23,7 +27,7 @@ import {
   Trash2,
   Wrench,
 } from "lucide-react";
-import type { AgentAction, PlanState } from "../../lib/types";
+import type { AgentAction, ChatMessage, PlanState } from "../../lib/types";
 
 type IconComponent = typeof Globe;
 type ActionDescriptor = { icon: IconComponent; label: string };
@@ -89,8 +93,51 @@ export function actionTarget(name: string, input: unknown): string {
 }
 
 /**
- * Plans persist in localStorage per conversation so they survive page reloads,
- * tab switches and workspace remounts. The key is scoped to the conversation id.
+ * The actions of a past run are rebuilt from the conversation itself: every assistant
+ * turn keeps the tool calls it made, and every tool call keeps its result as a separate
+ * message. That is why the action list survives a reload instead of living only in the
+ * browser tab that watched the run.
+ */
+export function deriveActions(messages: ChatMessage[]): AgentAction[] {
+  const results = new Map<string, { failed: boolean }>();
+  for (const message of messages) {
+    if (message.role !== "assistant" || !message.tool_call_id) continue;
+    results.set(message.tool_call_id, { failed: hasError(message.content) });
+  }
+  const actions: AgentAction[] = [];
+  for (const message of messages) {
+    if (message.role !== "assistant" || !message.tool_calls) continue;
+    for (const call of message.tool_calls) {
+      if (call.name === "plan.update") continue;
+      const result = results.get(call.id);
+      actions.push({
+        id: call.id,
+        name: call.name,
+        target: actionTarget(call.name, call.arguments).slice(0, 200),
+        // A call without a stored result was interrupted: it is not reported as done.
+        status: !result ? "running" : result.failed ? "failed" : "done",
+        startedAt: 0,
+      });
+    }
+  }
+  return actions;
+}
+
+/** A tool result is a JSON payload; an `error` key means the call itself failed. */
+function hasError(content: string): boolean {
+  try {
+    const parsed = JSON.parse(content) as { error?: unknown; ok?: unknown };
+    if (parsed && typeof parsed === "object" && "error" in parsed && parsed.error) return true;
+    if (parsed && typeof parsed === "object" && parsed.ok === false) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Plans persist in localStorage per conversation, so the panel still shows something
+ * when the server plan is missing (an old conversation, or an offline API).
  */
 function planKey(conversationId: string) {
   return "webnestdev.plan." + conversationId;
@@ -116,15 +163,43 @@ export function writePlan(conversationId: string, plan: PlanState) {
   }
 }
 
-export function PlanCard({ plan }: { plan: PlanState }) {
+/** The three windows of a run: the plan, the actions and the model's thinking. */
+export type PanelId = "plan" | "actions" | "thinking";
+export type PanelState = Record<PanelId, boolean>;
+export type PanelToggles = { collapsed: PanelState; onToggle: (id: PanelId) => void };
+
+function RunPanel({ id, icon, title, meta, status, collapsed, onToggle, children }: {
+  id: PanelId;
+  icon: React.ReactNode;
+  title: string;
+  meta?: React.ReactNode;
+  status?: React.ReactNode;
+  children: React.ReactNode;
+} & PanelToggles) {
+  const open = !collapsed[id];
+  return <section className={"run-panel run-panel-" + id + (open ? " run-panel-open" : "")}>
+    <button type="button" className="run-panel-head" onClick={() => onToggle(id)} aria-expanded={open}>
+      {open ? <ChevronDown size={13}/> : <ChevronRight size={13}/>}
+      {icon}
+      <strong>{title}</strong>
+      {status}
+      {meta && <span className="run-panel-meta">{meta}</span>}
+    </button>
+    {open && <div className="run-panel-body">{children}</div>}
+  </section>;
+}
+
+export function PlanPanel({ plan, collapsed, onToggle }: { plan: PlanState } & PanelToggles) {
   const done = plan.items.filter(item => item.status === "done").length;
   const total = plan.items.length;
-  return <div className="agent-plan">
-    <div className="agent-plan-head">
-      <ListChecks size={13}/>
-      <strong>План задач</strong>
-      <span className="agent-plan-count">{done} из {total} выполнено</span>
-    </div>
+  return <RunPanel
+    id="plan"
+    icon={<ListChecks size={13}/>}
+    title="План задач"
+    meta={done + " из " + total + " выполнено"}
+    collapsed={collapsed}
+    onToggle={onToggle}
+  >
     <div className="agent-plan-bar" role="presentation"><span style={{ width: Math.round((done / total) * 100) + "%" }}/></div>
     <ul>
       {plan.items.map((item, index) => <li key={index} className={"plan-item plan-" + item.status}>
@@ -142,22 +217,30 @@ export function PlanCard({ plan }: { plan: PlanState }) {
         {item.status === "in_progress" && <span className="plan-now">сейчас</span>}
       </li>)}
     </ul>
-  </div>;
+  </RunPanel>;
 }
 
-export function ActionsCard({ actions, running, progress }: { actions: AgentAction[]; running: boolean; progress: { step: number; maxSteps: number } | null }) {
+export function ActionsPanel({ actions, running, progress, collapsed, onToggle }: {
+  actions: AgentAction[];
+  running: boolean;
+  progress: { step: number; maxSteps: number } | null;
+} & PanelToggles) {
   const failed = actions.filter(action => action.status === "failed").length;
-  return <div className="agent-actions">
-    <div className="agent-actions-head">
-      <Activity size={13}/>
-      <strong>Действия агента</strong>
-      <span className="agent-actions-state">
-        {running
-          ? <><LoaderCircle size={12} className="agent-spin"/> выполняется{progress ? " · шаг " + progress.step + " из " + progress.maxSteps : ""}</>
-          : "завершено"}
-      </span>
-      {failed > 0 && <span className="agent-actions-error"><CircleAlert size={12}/> с ошибкой: {failed}</span>}
-    </div>
+  const status = <span className="run-panel-state">
+    {running
+      ? <><LoaderCircle size={12} className="agent-spin"/> выполняется{progress ? " · шаг " + progress.step + " из " + progress.maxSteps : ""}</>
+      : "завершено"}
+    {failed > 0 && <span className="run-panel-error"><CircleAlert size={12}/> с ошибкой: {failed}</span>}
+  </span>;
+  return <RunPanel
+    id="actions"
+    icon={<Activity size={13}/>}
+    title="Действия агента"
+    meta={actions.length ? actions.length + " действий" : undefined}
+    status={status}
+    collapsed={collapsed}
+    onToggle={onToggle}
+  >
     <ul>
       {actions.map(action => {
         const { icon: Icon, label } = describeAction(action.name);
@@ -176,5 +259,36 @@ export function ActionsCard({ actions, running, progress }: { actions: AgentActi
         </li>;
       })}
     </ul>
+  </RunPanel>;
+}
+
+/** The model's chain of thought, streamed while it works. */
+export function ThinkingPanel({ text, running, collapsed, onToggle }: {
+  text: string;
+  running: boolean;
+} & PanelToggles) {
+  return <RunPanel
+    id="thinking"
+    icon={<Brain size={13}/>}
+    title="Размышления агента"
+    status={<span className="run-panel-state">{running ? <><LoaderCircle size={12} className="agent-spin"/> думает</> : "готово"}</span>}
+    collapsed={collapsed}
+    onToggle={onToggle}
+  >
+    <div className="agent-thinking">{text}</div>
+  </RunPanel>;
+}
+
+/** The thinking of one past turn, folded away under its answer. */
+export function MessageThinking({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  if (!text.trim()) return null;
+  return <div className={"message-thinking" + (open ? " message-thinking-open" : "")}>
+    <button type="button" className="message-thinking-head" onClick={() => setOpen(value => !value)} aria-expanded={open}>
+      {open ? <ChevronDown size={12}/> : <ChevronRight size={12}/>}
+      <Brain size={12}/>
+      <span>Размышления</span>
+    </button>
+    {open && <div className="agent-thinking">{text}</div>}
   </div>;
 }

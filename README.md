@@ -38,7 +38,11 @@ The real headless-browser worker is now implemented as `browser.runtime`. It exe
 
 ## CI
 
-GitHub Actions runs the server and web builds for pull requests targeting `main` and pushes to `main`. The current verification branch has a successful CI run on its latest verified commit.
+GitHub Actions runs the server tests, the server build and the web build for pull requests targeting `main` and pushes to `main` (`.github/workflows/ci.yml`), and builds the production Docker image in `.github/workflows/production-ci.yml`.
+
+## Deployment
+
+`.github/workflows/deploy.yml` deploys to the VM: it builds and publishes the image to GHCR, then runs `deploy/scripts/vm-deploy.sh` on the server over SSH (or on a self-hosted runner installed there). It starts manually from Actions → **deploy** → *Run workflow* and accepts `mode=image` (pull the published image) or `mode=source` (build from the repository on the VM); passing an older `image=…:sha-…` tag rolls back. Secrets and variables to create — `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_SSH_KEY`, `DEPLOY_PORT`, `DEPLOY_KNOWN_HOSTS`, and the optional `DEPLOY_APP_DIR` / `DEPLOY_RUNNER` — are listed in [docs/PRODUCTION_DEPLOYMENT.md](docs/PRODUCTION_DEPLOYMENT.md).
 
 ## Roadmap
 
@@ -80,11 +84,27 @@ Local account data is stored under .webnestdev/auth. This is a development stora
 
 The sign-in screen currently offers **phone only**; the e-mail/password routes still exist on the server but are not shown in the UI.
 
+Sign-in by number requires an explicit consent to process the number: the screen keeps a checkbox, and the server refuses to generate a code (`400`, `consentRequired`) without it. Every accepted consent is appended to an audit log — `auth/phone-consents.json` locally, the `phone_consents` table on PostgreSQL — with the consent version, the purpose (sign-in or linking) and an HMAC of the address instead of the address itself. Set `WEBNESTDEV_PHONE_CONSENT_SECRET` (32+ characters) to key that hash in production; the encryption key is used when it is missing.
+
 A **demo number** signs in without any SMS, so the flow can be used before a provider is connected. It defaults to `+7 999 000-00-00`, is on outside production and opt-in in production through `WEBNESTDEV_DEMO_PHONE_ENABLED=1` (set the number with `WEBNESTDEV_DEMO_PHONE`, turn it off entirely with `WEBNESTDEV_DEMO_PHONE_ENABLED=0`). It is entered like any other number; the sign-in screen keeps no dev notes, so it is documented here instead.
 
 Phone sign-in sends a code through a Russian SMS provider. The first choice is **Yandex Cloud Notification Service** (SNS-compatible HTTP API), configured with `YANDEX_NOTIFY_IAM_TOKEN` **or** a service account key (`YANDEX_SA_KEY` / `YANDEX_SA_KEY_FILE`) plus `YANDEX_CLOUD_ID`; the service account needs the `editor` role on the folder. Alternative providers are `SMS_RU_API_ID`, `SMSC_LOGIN`+`SMSC_PASSWORD`, `EXOLVE_API_KEY`, or `SMSAERO_EMAIL`+`SMSAERO_API_KEY`. With none set the server runs in test mode: the code is logged and (outside production) returned as `devCode`, so the whole flow can be tested before a provider exists.
 
 Yandex Cloud Notification Service delivers SMS only to Russian numbers, and until an individual sender is registered the channel sits in the sandbox, where only verified test numbers receive messages — see docs/AUTH_PRODUCTION_PLAN.md for the registration lead time.
+
+## Chat history and the run windows
+
+A conversation is the record of the work, not a scrollback of the open tab. Stored with it: the user messages, every assistant answer, the **thinking** the model published before answering, every **tool call together with its result**, and the **task plan**. Reopening the workspace, switching a tab, reloading the page or opening the project on another device shows the same run again — the action list and the thinking are rebuilt from the stored turns, not kept only in the browser.
+
+Above the chat sit three windows that collapse and remember their state: **План задач**, **Действия агента** and **Размышления агента**. Each has its own scroll, so a long run no longer pushes the conversation down; a stored answer keeps its own thinking folded underneath it. When the model's gateway does not send reasoning at all (most non-reasoning models), the thinking window says so by staying empty instead of inventing text.
+
+The agent is instructed to think and answer **in Russian first**, switching to another language only where the work itself needs it — code, paths, commands, error messages and quoted documentation.
+
+## Storage: where the data actually lives
+
+`WEBNESTDEV_STORAGE` accepts exactly two backends: `json` (files) and `postgres`. Anything else — including the old `ydb` value — is not a backend any more, and the server now says so on startup (`[storage] …`) instead of silently writing somewhere else. In production the variable defaults to `postgres` when it is unset, and `DATABASE_URL` is then required.
+
+With `json`, set `WEBNESTDEV_DATA_DIR` to a path outside the source tree: the default is `.webnestdev` inside the working directory, so a redeploy that replaces the code directory takes accounts, projects, conversations and connected integrations with it. `deploy/scripts/make-env-vm.sh` writes such a directory (`~/webnestdev/data`) and reuses the existing `WEBNESTDEV_ENCRYPTION_KEY`, because a new key makes every secret encrypted earlier unreadable.
 
 ## Agent modes
 

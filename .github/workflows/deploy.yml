@@ -1,0 +1,161 @@
+name: deploy
+
+# Деплой на ВМ: GitHub Actions собирает Docker-образ, кладёт его в GHCR и выполняет
+# deploy/scripts/vm-deploy.sh на сервере (по SSH или локально на self-hosted runner).
+#
+# По умолчанию деплой запускается вручную кнопкой «Run workflow», чтобы каждый push в
+# main не уходил в прод во время разработки. Чтобы деплоить автоматически — раскомментируйте
+# блок push ниже. Подтверждение перед выкаткой включается без изменения файла:
+# Settings → Environments → production → Required reviewers.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "image — готовый образ из реестра, source — сборка на ВМ из репозитория"
+        type: choice
+        options: ["image", "source"]
+        default: "image"
+      image:
+        description: "Тег образа для выкатки или отката, например sha-1a2b3c4d5e6f (по умолчанию — сборка этого запуска)"
+        type: string
+        required: false
+  # push:
+  #   branches: ["main"]
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: deploy-production
+  cancel-in-progress: false
+
+env:
+  IMAGE_NAME: ghcr.io/${{ github.repository }}
+
+jobs:
+  build:
+    # В режиме source образ не нужен: на ВМ собирается код из репозитория.
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'image' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      image: ${{ steps.tag.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+        working-directory: server
+
+      - name: Test server
+        run: npm test
+        working-directory: server
+
+      - name: Build web and server
+        run: npm run build
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve the image tag
+        id: tag
+        run: echo "image=$IMAGE_NAME:sha-${GITHUB_SHA::12}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push the image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: server/Dockerfile
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:latest
+            ${{ steps.tag.outputs.image }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build
+    # build пропускается в режиме source, и тогда деплой всё равно должен выполняться.
+    if: ${{ always() && (needs.build.result == 'success' || needs.build.result == 'skipped') }}
+    # Переменная репозитория DEPLOY_RUNNER переключает деплой на self-hosted runner,
+    # установленный на самой ВМ (нужно, если у неё нет доступного извне SSH).
+    runs-on: ${{ vars.DEPLOY_RUNNER || 'ubuntu-latest' }}
+    environment: production
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare the SSH key
+        if: ${{ vars.DEPLOY_RUNNER == '' }}
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$HOME/.ssh/deploy_key"
+          chmod 600 "$HOME/.ssh/deploy_key"
+          if [ -n "${DEPLOY_KNOWN_HOSTS:-}" ]; then
+            printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          else
+            ssh-keyscan -H "$DEPLOY_HOST" > "$HOME/.ssh/known_hosts" 2>/dev/null
+          fi
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Deploy over SSH
+        if: ${{ vars.DEPLOY_RUNNER == '' }}
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_APP_DIR: ${{ vars.DEPLOY_APP_DIR }}
+          MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'image' }}
+          IMAGE_INPUT: ${{ inputs.image }}
+          BUILT_IMAGE: ${{ needs.build.outputs.image }}
+        run: |
+          set -euo pipefail
+          image="$IMAGE_INPUT"
+          [ -n "$image" ] || image="$BUILT_IMAGE"
+          # Значение приходит из поля ввода, поэтому перед подстановкой в команду на ВМ
+          # оно проверяется: только буквы, цифры и знаки, допустимые в имени образа.
+          if [ -n "$image" ] && ! printf '%s' "$image" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._/-]*:[A-Za-z0-9._-]+$'; then
+            echo "Недопустимый тег образа: $image" >&2
+            exit 1
+          fi
+          ssh -i "$HOME/.ssh/deploy_key" \
+            -p "${DEPLOY_PORT:-22}" \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "MODE='$MODE' IMAGE_REF='$image' APP_DIR='$DEPLOY_APP_DIR' bash -s" \
+            < deploy/scripts/vm-deploy.sh
+
+      - name: Deploy on the VM (self-hosted runner)
+        if: ${{ vars.DEPLOY_RUNNER != '' }}
+        env:
+          MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'image' }}
+          IMAGE_INPUT: ${{ inputs.image }}
+          BUILT_IMAGE: ${{ needs.build.outputs.image }}
+          DEPLOY_APP_DIR: ${{ vars.DEPLOY_APP_DIR }}
+        run: |
+          set -euo pipefail
+          image="$IMAGE_INPUT"
+          [ -n "$image" ] || image="$BUILT_IMAGE"
+          MODE="$MODE" IMAGE_REF="$image" APP_DIR="$DEPLOY_APP_DIR" \
+            bash deploy/scripts/vm-deploy.sh

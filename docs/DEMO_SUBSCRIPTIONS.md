@@ -17,10 +17,15 @@ Billing remains demo-only: there is no payment provider, card collection, charge
 - JSON mode serializes quota writes and project creation only within one server process. Do not use JSON storage on multiple replicas or shared deployments; use YDB for multi-instance operation.
 - The code and CI builds are covered by unit tests, but a live YDB integration/load test still needs to run against an actual configured YDB database before calling multi-replica quota enforcement production-verified.
 
+## One demo per phone number
+- A demo is a one-time entitlement: it is claimed once per phone number, not per account. A second account on a number that already claimed one is refused with `409`, and a cancelled or expired demo is never handed out again.
+- Only an account that signed in with a phone number can claim a demo; an account without one gets `403`. Both paths are covered by `server/src/account/account-demo.test.ts`.
+- The claim stores an HMAC of the number, never the number itself. `WEBNESTDEV_TRIAL_CLAIM_SECRET` (32+ characters) is the key to set in production; the encryption key is used when it is missing.
+
 ## API
 - `GET /api/account/settings`, `PUT /api/account/settings`
 - `GET /api/billing`
-- `POST /api/billing/demo/activate` with `{ "plan": "pro" | "team" }`
+- `POST /api/billing/demo/activate` with `{ "plan": "pro" | "team" }` — `403` without a verified phone number, `409` when the number already used its demo
 - `POST /api/billing/demo/cancel`
 
 All account/billing endpoints require authentication. Limits are checked on the server; client UI values are informational only. Payment integration is explicitly out of scope until quota enforcement and storage semantics are production-safe.

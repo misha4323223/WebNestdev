@@ -1,7 +1,8 @@
 export type Role="user"|"assistant"|"system"|"tool";
 export type ChatMessage=
   | {role:"user"|"system";content:string}
-  | {role:"assistant";content:string;tool_calls?:Array<{id:string;name:string;arguments:Record<string,unknown>}>}
+  /** `reasoning` is what the model thought before answering; it is kept for the user, never sent back to the provider. */
+  | {role:"assistant";content:string;reasoning?:string;tool_calls?:Array<{id:string;name:string;arguments:Record<string,unknown>}>}
   | {role:"tool";content:string;tool_call_id:string};
 export type PlanItemStatus="pending"|"in_progress"|"done";
 export type PlanItem={title:string;status:PlanItemStatus;note?:string};
@@ -9,6 +10,7 @@ export type PlanState={items:PlanItem[];updatedAt:string};
 export type AgentEvent=
   | {type:"run.started";runId:string}
   | {type:"message.delta";runId:string;delta:string}
+  | {type:"reasoning.delta";runId:string;delta:string}
   | {type:"tool.started";runId:string;toolCallId:string;name:string;input:unknown}
   | {type:"tool.finished";runId:string;toolCallId:string;name:string;output:unknown}
   | {type:"plan.updated";runId:string;plan:PlanState}
