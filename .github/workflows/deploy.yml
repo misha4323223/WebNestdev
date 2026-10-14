@@ -20,8 +20,9 @@ on:
         description: "Тег образа для выкатки или отката, например sha-1a2b3c4d5e6f (по умолчанию — сборка этого запуска)"
         type: string
         required: false
-  # push:
-  #   branches: ["main"]
+  push:
+    branches:
+      - main
 
 permissions:
   contents: read
