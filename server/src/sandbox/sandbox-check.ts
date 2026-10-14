@@ -1,10 +1,15 @@
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { sandboxHostRootDir,sandboxRootDir } from "./config.js";
 
-/** The marker the check writes and a container has to read back through the mounted directory. */
+/**
+ * Prefix of the marker file the check writes and a container reads back through the mounted
+ * directory. Every run appends its own token, because two checks can overlap — the deploy runs one
+ * while the freshly started server runs its startup one — and a shared file name made each of them
+ * overwrite the marker of the other, which looked exactly like a real path mismatch.
+ */
 export const MOUNT_MARKER_FILE=".webnestdev-mount-check";
 
 /**
@@ -55,8 +60,9 @@ export async function checkSandboxMount(options:{serverDir?:string;hostDir?:stri
   const hostDir=options.hostDir??sandboxHostRootDir();
   const image=options.image??process.env.SANDBOX_IMAGE??"node:22-bookworm-slim";
   const timeoutMs=options.timeoutMs??30000;
-  const marker=path.join(serverDir,MOUNT_MARKER_FILE);
   const token=randomUUID();
+  const markerName=`${MOUNT_MARKER_FILE}-${token}`;
+  const marker=path.join(serverDir,markerName);
   const base={serverDir,hostDir,image,checkedAt:Date.now()};
   // Относительный путь docker разбирает от корня хоста, а сервер — от своего рабочего каталога:
   // такой `-v` монтирует чужой каталог или не монтируется вовсе. Это тот же дефект, поэтому и
@@ -71,20 +77,44 @@ export async function checkSandboxMount(options:{serverDir?:string;hostDir?:stri
   }
   const mount=["--rm","--pull=never","--network","none","--user","1000:1000","-v",hostDir+":/workspace","-w","/workspace",image];
   try{
-    const read=await dockerRun(["run",...mount,"/bin/sh","-lc","cat /workspace/"+MOUNT_MARKER_FILE],timeoutMs);
+    const read=await dockerRun(["run",...mount,"/bin/sh","-lc","cat /workspace/"+markerName],timeoutMs);
     if(read.code!==0){
       return {...base,ok:false,reason:classifyDockerFailure(read.stderr),detail:tail(read.stderr||`docker run завершился с кодом ${read.code}`)};
     }
     if(markerMatches(token,read.stdout))return {...base,ok:true};
     // Что именно видно в контейнере — самое полезное в отчёте: пустая папка или чужие файлы.
-    const listing=await dockerRun(["run",...mount,"/bin/sh","-lc","ls -A /workspace 2>/dev/null | head -20"],timeoutMs).catch(()=>null);
+    // Идущие параллельно проверки не считаем: их маркеры исчезают вместе с ними.
+    const listing=await dockerRun(["run",...mount,"/bin/sh","-lc",`ls -A /workspace 2>/dev/null | grep -v "^${MOUNT_MARKER_FILE}" | head -20`],timeoutMs).catch(()=>null);
     const seen=listing&&listing.code===0?listing.stdout.trim():"";
-    return {...base,ok:false,reason:"mismatch",detail:`маркер ${MOUNT_MARKER_FILE} не виден контейнеру; в /workspace контейнера: ${seen?seen.split("\n").join(", "):"пусто"}`};
+    return {...base,ok:false,reason:"mismatch",detail:`маркер ${markerName} не виден контейнеру; в /workspace контейнера: ${seen?seen.split("\n").join(", "):"пусто"}`};
   }catch(error){
     return {...base,ok:false,reason:"docker",detail:tail(error instanceof Error?error.message:String(error))};
   }finally{
     await rm(marker,{force:true}).catch(()=>{});
   }
+}
+
+/**
+ * How many files each side sees in the sandbox directory. The marker proves the directory is shared;
+ * the two counts are the operator's evidence that a migration actually carried the projects over
+ * (they can differ while an agent is writing, so this is a number to read, not a verdict).
+ */
+export async function sandboxFileCounts(options:{serverDir?:string;hostDir?:string;image?:string;timeoutMs?:number}={}){
+  const serverDir=options.serverDir??sandboxRootDir();
+  const hostDir=options.hostDir??sandboxHostRootDir();
+  const image=options.image??process.env.SANDBOX_IMAGE??"node:22-bookworm-slim";
+  const timeoutMs=options.timeoutMs??30000;
+  const container=await dockerRun(["run","--rm","--pull=never","--network","none","--user","1000:1000","-v",hostDir+":/workspace","-w","/workspace",image,"/bin/sh","-lc","find /workspace -type f 2>/dev/null | wc -l"],timeoutMs).catch(()=>null);
+  const parsed=container&&container.code===0?Number(container.stdout.trim()):NaN;
+  return {server:await countFiles(serverDir),container:Number.isFinite(parsed)?parsed:null};
+}
+
+/** Files under a directory, with a bound so a huge project cannot turn a check into a scan. */
+export async function countFiles(dir:string,max=5000){
+  let total=0;
+  const walk=async(current:string)=>{if(total>=max)return;let entries;try{entries=await readdir(current,{withFileTypes:true})}catch{return}for(const entry of entries){if(total>=max)return;if(entry.isDirectory())await walk(path.join(current,entry.name));else if(entry.isFile())total++}};
+  await walk(dir);
+  return total;
 }
 
 /** The last result, so `/api/health` can answer for free instead of repeating the round trip. */

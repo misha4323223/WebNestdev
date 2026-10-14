@@ -1,10 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp,rm,writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { mkdir,mkdtemp,rm,writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { hostPathFor,sandboxRootPath,workspaceMountSource } from "./config.js";
-import { checkSandboxMount,classifyDockerFailure,describeSandboxMount,markerMatches,type SandboxMountCheck } from "./sandbox-check.js";
+import { MOUNT_MARKER_FILE,checkSandboxMount,classifyDockerFailure,countFiles,describeSandboxMount,markerMatches,type SandboxMountCheck } from "./sandbox-check.js";
 
 const check=(overrides:Partial<SandboxMountCheck>={}):SandboxMountCheck=>({
   ok:true,
@@ -62,6 +63,26 @@ test("относительный путь песочницы — это то ж�
   assert.equal(result.ok,false);
   assert.equal(result.reason,"mismatch");
   assert.match(result.detail??"",/относительный/);
+});
+
+test("счёт файлов видит вложенные каталоги, а не только верхний уровень", async () => {
+  const dir=await mkdtemp(path.join(tmpdir(),"sandbox-count-"));
+  try{
+    await writeFile(path.join(dir,"index.html"),"x");
+    await mkdir(path.join(dir,"src"),{recursive:true});
+    await writeFile(path.join(dir,"src","app.js"),"x");
+    await writeFile(path.join(dir,"src","style.css"),"x");
+    assert.equal(await countFiles(dir),3);
+  }finally{
+    await rm(dir,{recursive:true,force:true});
+  }
+});
+
+test("две одновременные проверки пишут разные маркеры", () => {
+  const first=`${MOUNT_MARKER_FILE}-${randomUUID()}`;
+  const second=`${MOUNT_MARKER_FILE}-${randomUUID()}`;
+  assert.notEqual(first,second);
+  assert.match(first,new RegExp("^"+MOUNT_MARKER_FILE.replace(/\./g,"\\.")));
 });
 
 test("недоступный для записи каталог песочницы не доходит до docker", async () => {
