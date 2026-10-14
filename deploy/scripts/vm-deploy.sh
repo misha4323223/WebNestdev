@@ -17,8 +17,9 @@
 #   HEALTH_TRIES=30            попыток по 2 секунды
 #   KEEP_IMAGES=2              сколько версий образа оставлять на диске (текущая + одна на откат)
 #   IMAGE_REPO_PATTERN=webnestdev  какие репозитории чистить
-#   PRUNE_BUILD_CACHE=1|all|0  чистка кеша сборки: старше недели (по умолчанию), всё или ничего
-#                              На этой ВМ кеш сборки занимал 15 ГБ — больше, чем образы.
+#   PRUNE_BUILD_CACHE=all|1|0  чистка кеша сборки: всё (по умолчанию), старше недели, не трогать.
+#                              По умолчанию «всё», потому что эта ВМ никогда не собирает образы:
+#                              выкатка приходит готовым образом, а кеш занимал 15 ГБ.
 #   DRY_RUN=1                  показать шаги, ничего не меняя
 #
 # MODE=prune — только уборка образов, без выкатки и без перезапуска сервиса.
@@ -36,7 +37,7 @@ HEALTH_TRIES="${HEALTH_TRIES:-30}"
 DRY_RUN="${DRY_RUN:-0}"
 KEEP_IMAGES="${KEEP_IMAGES:-2}"
 IMAGE_REPO_PATTERN="${IMAGE_REPO_PATTERN:-webnestdev}"
-PRUNE_BUILD_CACHE="${PRUNE_BUILD_CACHE:-1}"
+PRUNE_BUILD_CACHE="${PRUNE_BUILD_CACHE:-all}"
 
 log(){ printf '[deploy] %s\n' "$*"; }
 run(){ if [ "$DRY_RUN" = "1" ]; then log "dry-run: $*"; else "$@"; fi; }
@@ -77,13 +78,26 @@ prune_images(){
         log "образ $id занят или уже удалён — оставляю"
       fi
     done <<< "$doomed"
-    docker image prune -f >/dev/null 2>&1 || true
-    # Кеш сборки — самая крупная строка в docker system df и при этом самый безопасный для
-    # удаления ресурс: он только ускоряет сборки, а на этой ВМ сборок нет вообще (деплой
-    # идёт готовым образом). Неделю трогаем, старее — удаляем; `all` чистит всё.
+    local dangling
+    dangling=$(docker image prune -f 2>&1 | tail -1) || true
+    log "dangling-слои: ${dangling:-нет}"
+    # Кеш сборки — самая крупная строка в docker system df и самый безопасный для удаления
+    # ресурс: он только ускоряет сборки, а на этой ВМ сборок нет вовсе (выкатка идёт готовым
+    # образом), поэтому по умолчанию чистим всё. Фильтр until=168h на молодой ВМ не находит
+    # ничего: кеш всегда свежее недели — это и было причиной, почему 15 ГБ оставались.
+    local cache
     case "$PRUNE_BUILD_CACHE" in
-      1) docker builder prune -f --filter until=168h >/dev/null 2>&1 || true ;;
-      all) docker builder prune -af >/dev/null 2>&1 || true ;;
+      all)
+        log "чищу весь кеш сборки"
+        cache=$(docker builder prune -af 2>&1 | tail -2) || true
+        log "кеш сборки: ${cache:-пусто}"
+        ;;
+      1)
+        log "чищу кеш сборки старше недели"
+        cache=$(docker builder prune -f --filter until=168h 2>&1 | tail -2) || true
+        log "кеш сборки: ${cache:-нечего удалять}"
+        ;;
+      *) log "кеш сборки не трогаю (PRUNE_BUILD_CACHE=0)" ;;
     esac
   fi
   after=$(docker system df --format '{{.Size}}' 2>/dev/null | tr '\n' ' ' || true)
