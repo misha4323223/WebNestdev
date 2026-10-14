@@ -38,7 +38,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
-      IMAGE_NAME: ghcr.io/${{ github.repository.toLowerCase() }}
+      IMAGE_NAME: ghcr.io/misha4323223/webnestdev
     outputs:
       image: ${{ steps.tag.outputs.image }}
     steps:
