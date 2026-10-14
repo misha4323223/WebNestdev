@@ -130,6 +130,10 @@ jobs:
           BUILT_IMAGE: ${{ needs.build.outputs.image }}
         run: |
           set -euo pipefail
+          # Чистим переменные от скрытых символов (CRLF из Windows при вставке секретов)
+          DEPLOY_USER=$(printf '%s' "$DEPLOY_USER" | tr -d '[:space:]')
+          DEPLOY_HOST=$(printf '%s' "$DEPLOY_HOST" | tr -d '[:space:]')
+          DEPLOY_PORT=$(printf '%s' "${DEPLOY_PORT:-22}" | tr -d '[:space:]')
           image="$IMAGE_INPUT"
           [ -n "$image" ] || image="$BUILT_IMAGE"
           # Значение приходит из поля ввода, поэтому перед подстановкой в команду на ВМ
