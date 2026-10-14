@@ -48,7 +48,9 @@ async function activity(){
     },
     // Сколько контекста уходит модели за один шаг: без этого числа отказ провайдера по размеру
     // промпта выглядит необъяснимым (agent/context-budget.ts).
-    context: { budgetTokens: contextBudgetTokens(), charsPerToken: DEFAULT_CHARS_PER_TOKEN },
+    // `charsPerTokenDefault` — стартовая оценка: во время запуска она уточняется по отчёту
+    // провайдера (см. `run.progress.tokens`), поэтому здесь честно только значение по умолчанию.
+    context: { budgetTokens: contextBudgetTokens(), charsPerTokenDefault: DEFAULT_CHARS_PER_TOKEN },
     disk: await diskStatus(sandboxRootDir()),
     memory: await memoryStatus(),
   };
