@@ -1,6 +1,7 @@
 import { useCallback,useEffect,useState } from "react";
 import { Database, KeyRound, ShieldCheck, TriangleAlert } from "lucide-react";
 import { ConnectorCard,type ConnectorStatus } from "../integrations/ConnectorCard";
+import type { ConnectorSurface } from "../github/GitHubConnect";
 
 type DatabaseStatus = {
   connected?:boolean;
@@ -115,11 +116,14 @@ const providers:Provider[]=[
  * service: it takes the connection string any provider shows, stores it encrypted, and
  * the agent then writes it into the project's environment.
  */
-export function DatabaseConnect(){
+export function DatabaseConnect({surface="home"}:{surface?:ConnectorSurface}){
   const [status,setStatus]=useState<ConnectorStatus>("loading");
   const [info,setInfo]=useState<DatabaseStatus|null>(null);
   const [busy,setBusy]=useState(false);
-  const [formOpen,setFormOpen]=useState(false);
+  // В настройках рабочей области форма со строкой подключения открыта сразу: подключить базу —
+  // единственная причина открыть эту карточку, и поле не должно быть спрятано за кнопкой. На
+  // домашней панели карточка остаётся короткой, поле открывается кнопкой «Подключить».
+  const [formOpen,setFormOpen]=useState(surface==="workspace");
   const [hintOpen,setHintOpen]=useState(false);
   const [fieldsOpen,setFieldsOpen]=useState(false);
   const [provider,setProvider]=useState<ProviderId>("yandex-postgresql");
@@ -223,7 +227,7 @@ export function DatabaseConnect(){
       <p className="connector-text">
         {connected
           ? "Данные проекта хранятся в этой базе. Агент запишет строку подключения в файл окружения проекта по вашей просьбе."
-          : "Чтобы проект сохранял данные между сессиями, подключите базу. Подойдёт любая — рекомендуем российские: Yandex Cloud, VK Cloud, Selectel, Timeweb Cloud, Cloud.ru."}
+          : "Чтобы проект сохранял данные между сессиями, подключите базу: вставьте строку подключения ниже или откройте форму кнопкой «Подключить». Подойдёт любая — рекомендуем российские: Yandex Cloud, VK Cloud, Selectel, Timeweb Cloud, Cloud.ru."}
       </p>
 
       {/* Not connected: the header button opens this same form, so the row stays short. */}
@@ -280,7 +284,7 @@ export function DatabaseConnect(){
           <button className="connector-action connector-connect" onClick={()=>void save()} disabled={busy||(!fieldsOpen&&!url.trim())}>{busy?"Сохраняем…":"Сохранить подключение"}</button>
           <button className="ghost-button" onClick={()=>setFieldsOpen(open=>!open)}>{fieldsOpen?"Вставить строкой":"Вставить полями"}</button>
           <label className="connector-ssl"><input type="checkbox" checked={ssl} onChange={event=>setSsl(event.target.checked)}/> TLS/SSL</label>
-          <button className="ghost-button" onClick={()=>{setFormOpen(false);setError(null)}}>Отмена</button>
+          <button className="ghost-button" onClick={()=>{setFormOpen(false);setError(null)}}>{connected?"Отмена":"Свернуть"}</button>
         </div>
         <span className="connector-meta-line">Строка подключения шифруется на сервере и никогда не возвращается в браузер и не попадает в ответы агента.</span>
       </div>}

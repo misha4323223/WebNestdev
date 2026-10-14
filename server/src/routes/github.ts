@@ -4,7 +4,7 @@ import { requireUser } from "../auth/auth.js";
 import { resolveOAuthFlow, redirectToApp, type OAuthFlowOptions } from "../oauth/oauth-flow.js";
 import { getGitHubConnection, saveGitHubConnection, deleteGitHubConnection } from "../github/github-connection-store.js";
 import { createOAuthState, consumeOAuthState, originFromOAuthState } from "../github/github-oauth-state.js";
-import { getGitHubUser, listGitHubRepositories, getGitHubRepository, getGitHubTree, getGitHubBlob } from "../github/github-api.js";
+import { getGitHubUser, getGitHubLoginFromToken, listGitHubRepositories, getGitHubRepository, getGitHubTree, getGitHubBlob } from "../github/github-api.js";
 import { createConversation, createProjectWithinLimit, ProjectLimitError } from "../project-store.js";
 import { getSubscription } from "../account/account-store.js";
 import { limitsForPlan, type PlanId } from "../account/plans.js";
@@ -93,6 +93,29 @@ export async function registerGitHubRoutes(app: FastifyInstance) {
     const githubUser = await userResponse.json() as { login?: string };
     await saveGitHubConnection(user.id, token.access_token, githubUser.login);
     return redirect(reply, flow.frontendUrl, "connected");
+  });
+
+  /**
+   * Подключение личным токеном: своё OAuth-приложение GitHub для этого не нужно, поэтому способ
+   * работает на любом сервере — в том числе там, где `GITHUB_CLIENT_ID` и `GITHUB_CLIENT_SECRET`
+   * никто не заводил. Токен проверяется у GitHub, шифруется и хранится как обычное подключение,
+   * поэтому статус, импорт репозиториев и отключение работают без изменений.
+   */
+  app.post("/api/github/token", async (request, reply) => {
+    const user=await requireUser(request,reply); if(!user)return;
+    const body = z.object({ token: z.string().min(20).max(500) }).parse(request.body);
+    // Скопированный с переносом строки или кавычками токен легко принять за недействительный.
+    const token=body.token.trim();
+    if(!/^[A-Za-z0-9_-]+$/.test(token)){
+      return reply.code(400).send({ error: "Токен GitHub содержит лишние символы — скопируйте его целиком, без пробелов, кавычек и переносов строк" });
+    }
+    try {
+      const githubLogin = await getGitHubLoginFromToken(token);
+      await saveGitHubConnection(user.id, token, githubLogin);
+      return { connected: true, githubLogin };
+    } catch (error) {
+      return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+    }
   });
 
   app.post("/api/github/disconnect", async (request, reply) => {

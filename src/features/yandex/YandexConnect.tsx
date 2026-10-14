@@ -41,7 +41,9 @@ export function YandexConnect({surface="home"}:{surface?:ConnectorSurface}){
   const [status,setStatus]=useState<ConnectorStatus>("loading");
   const [info,setInfo]=useState<YandexStatus|null>(null);
   const [busy,setBusy]=useState(false);
-  const [keyOpen,setKeyOpen]=useState(false);
+  // Поле для ключа видно сразу в настройках рабочей области: подключение ключом — основной способ,
+  // и его не должно быть нужно искать за кнопкой. На домашней панели карточка остаётся короткой.
+  const [keyOpen,setKeyOpen]=useState(surface==="workspace");
   const [hintOpen,setHintOpen]=useState(false);
   const [secret,setSecret]=useState("");
   const [saving,setSaving]=useState(false);
@@ -191,7 +193,7 @@ export function YandexConnect({surface="home"}:{surface?:ConnectorSurface}){
       </label>}
 
       <div className="connector-actions-row">
-        <button className="ghost-button" onClick={()=>setKeyOpen(open=>!open)}>{connected?"Заменить ключ":"Подключить ключом"}</button>
+        <button className="ghost-button" onClick={()=>setKeyOpen(open=>!open)}>{connected?"Заменить ключ":keyOpen?"Скрыть поле ключа":"Подключить ключом"}</button>
         <button className="ghost-button" onClick={()=>setHintOpen(open=>!open)}>{hintOpen?"Скрыть инструкцию":"Где взять ключи"}</button>
       </div>
 

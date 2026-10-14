@@ -1,5 +1,5 @@
 import { useCallback,useEffect,useRef,useState } from "react";
-import { UploadCloud } from "lucide-react";
+import { KeyRound, UploadCloud } from "lucide-react";
 import { GitHubMark } from "../../components/GitHubMark";
 import { openImportedProject } from "../../lib/project-api";
 import { ConnectorCard,type ConnectorStatus } from "../integrations/ConnectorCard";
@@ -13,7 +13,7 @@ export type ConnectorSurface = "home" | "workspace";
 const notices: Record<string,string> = {
   connected: "GitHub подключён. Репозитории можно импортировать.",
   denied: "Доступ не подтверждён — подключение можно начать заново.",
-  not_configured: "GitHub OAuth не настроен на сервере: задайте GITHUB_CLIENT_ID и GITHUB_CLIENT_SECRET.",
+  not_configured: "GitHub OAuth не настроен на сервере (GITHUB_CLIENT_ID и GITHUB_CLIENT_SECRET). Подключите аккаунт личным токеном — поле ниже работает всегда.",
   state_expired: "Ссылка авторизации устарела. Начните подключение заново.",
   token_error: "GitHub не выдал токен доступа. Попробуйте подключиться снова.",
   profile_error: "Не удалось получить профиль GitHub.",
@@ -41,6 +41,13 @@ export function GitHubConnect({surface="home",onImported=openImportedProject}:{s
   const [error,setError]=useState<string|null>(null);
   const [callbackUrl,setCallbackUrl]=useState<string|null>(null);
   const [copied,setCopied]=useState(false);
+  // Личный токен — второй способ подключения рядом с OAuth: он не требует заводить приложение
+  // GitHub на сервере, поэтому поле видно сразу там, где пользователь пришёл подключать сервисы
+  // (в настройках рабочей области), а на домашней панели остаётся кнопка.
+  const [token,setToken]=useState("");
+  const [tokenOpen,setTokenOpen]=useState(surface==="workspace");
+  const [savingToken,setSavingToken]=useState(false);
+  const [oauthHintOpen,setOauthHintOpen]=useState(false);
   const watchRef=useRef<number|null>(null);
 
   const stopWatching=useCallback(()=>{
@@ -122,7 +129,7 @@ export function GitHubConnect({surface="home",onImported=openImportedProject}:{s
    */
   function connect(){
     setError(null);setNotice(null);
-    if(status==="unavailable"){setNotice("not_configured");return;}
+    if(status==="unavailable"){setNotice("not_configured");setTokenOpen(true);return;}
     const url="/api/github/connect?origin="+encodeURIComponent(window.location.origin);
     const popup=window.open(url,connectorWindowName,"width=620,height=760,left=140,top=90");
     if(!popup||popup.closed){
@@ -156,6 +163,24 @@ export function GitHubConnect({surface="home",onImported=openImportedProject}:{s
     finally{setBusy(false)}
   }
 
+  /**
+   * Сохранение личного токена. Сервер сам проверяет его у GitHub, поэтому ошибка здесь — это уже
+   * понятная причина (не принят, истёк, лишние символы), а не «пустой список репозиториев».
+   */
+  async function saveToken(){
+    const value=token.trim();
+    if(!value)return;
+    setSavingToken(true);setError(null);setNotice(null);
+    try{
+      const response=await fetch("/api/github/token",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({token:value})});
+      const data=await response.json() as GitHubStatus;
+      if(!response.ok)throw new Error(data.error??"GitHub не принял токен");
+      setToken("");setTokenOpen(false);setNotice("connected");
+      await loadStatus(true);
+    }catch(e){setError(e instanceof Error?e.message:"Не удалось сохранить токен")}
+    finally{setSavingToken(false)}
+  }
+
   async function importRepository(){
     if(!selected)return;
     setImporting(true);setError(null);
@@ -184,9 +209,8 @@ export function GitHubConnect({surface="home",onImported=openImportedProject}:{s
       {notice&&<div className={"connector-notice"+(notice==="connected"?" ok":"")}>{notices[notice]??notices.error}</div>}
       {error&&<div className="connector-notice">{error}</div>}
       {/* The setup steps are only useful while the server has no OAuth credentials, so
-          they appear in that one state. A configured server keeps the card to the
-          service name, its status and the buttons. */}
-      {status==="unavailable"&&<div className="connector-hint">
+          they stay behind a button: личный токен работает без них и подключён быстрее. */}
+      {status==="unavailable"&&oauthHintOpen&&<div className="connector-hint">
         <strong>Своё OAuth-приложение GitHub — 5 минут</strong>
         <p>1. Откройте GitHub → Settings → Developer settings → OAuth Apps → «New OAuth App». Если в меню настроек нет Developer settings, откройте форму по прямой ссылке: <code>github.com/settings/applications/new</code>.</p>
         <p>2. <em>Application name</em> — любое понятное имя, например <code>WebNestDev</code>. <em>Homepage URL</em> — адрес приложения: <code>{appOrigin}</code>.</p>
@@ -199,6 +223,26 @@ export function GitHubConnect({surface="home",onImported=openImportedProject}:{s
       </div>}
     </>}
   >
+    {status!=="connected"&&<div className="connector-body">
+      <p className="connector-text">Два способа подключения: окно авторизации GitHub (нужны <code>GITHUB_CLIENT_ID</code> и <code>GITHUB_CLIENT_SECRET</code> на сервере) или личный токен — он работает сразу и без настройки сервера.</p>
+      <div className="connector-actions-row">
+        <button className="ghost-button connector-toggle" onClick={()=>setTokenOpen(open=>!open)}>{tokenOpen?"Скрыть поле токена":"Ввести токен"}</button>
+        <a className="connector-link" href="https://github.com/settings/tokens/new?scopes=repo,read:user&description=WebNestDev" target="_blank" rel="noreferrer">Создать токен на GitHub</a>
+        {status==="unavailable"&&<button className="ghost-button" onClick={()=>setOauthHintOpen(open=>!open)}>{oauthHintOpen?"Скрыть инструкцию OAuth":"Настроить OAuth-приложение"}</button>}
+      </div>
+
+      {tokenOpen&&<div className="connector-key">
+        <label>
+          <span><KeyRound size={12}/> Личный токен GitHub</span>
+          <input type="password" autoComplete="new-password" value={token} onChange={event=>setToken(event.target.value)} placeholder="ghp_… или github_pat_…"/>
+        </label>
+        <div className="connector-actions-row">
+          <button className="connector-action connector-connect" onClick={()=>void saveToken()} disabled={!token.trim()||savingToken}>{savingToken?"Проверяем токен…":"Сохранить токен"}</button>
+          <span className="connector-meta-line">Права: <code>repo</code> (репозитории) и <code>read:user</code> (профиль). Токен шифруется на сервере и больше не показывается.</span>
+        </div>
+      </div>}
+    </div>}
+
     {status==="connected"&&<div className="connector-body">
       <button className="ghost-button connector-toggle" onClick={()=>setReposOpen(open=>!open)}>{reposOpen?"Скрыть репозитории":"Импортировать репозиторий"}</button>
       {reposOpen&&<>

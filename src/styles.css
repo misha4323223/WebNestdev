@@ -351,7 +351,7 @@ button,textarea{font:inherit}button{color:inherit}
 .connector-hint strong{display:flex;align-items:center;gap:6px;color:#dfe3e8;font-size:11px}
 .connector-hint p{margin:0}
 .connector-hint em{color:#b6bcc4;font-style:normal}
-.connector-hint code{font:600 10px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:#c6ccd4;background:#141a20;border:1px solid #1f262e;border-radius:4px;padding:1px 4px;overflow-wrap:anywhere}
+.connector-hint code,.connector-text code,.connector-meta-line code{font:600 10px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:#c6ccd4;background:#141a20;border:1px solid #1f262e;border-radius:4px;padding:1px 4px;overflow-wrap:anywhere}
 .connector-warning{display:flex;align-items:flex-start;gap:6px;color:#d7bd79}
 /* The database card: a connection string, or the same values split into fields */
 .connector-key select,.connector-key input{height:30px;border:1px solid #2a3038;border-radius:7px;background:#0b0d10;color:#dce0e5;padding:0 9px;outline:none;font-size:10.5px}
