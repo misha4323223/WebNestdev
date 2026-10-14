@@ -236,6 +236,30 @@ with `PREVIEW_MODE=container` the honest answer is a couple. Idle previews free 
 sandbox like any other command. Concurrent builds are not limited beyond the agent-run limit — a
 preview built by the panel is a short sandbox command, not a run.
 
+## Keeping the disk from filling up
+
+Every deploy pulls a new image, and the server image contains Chromium — that is gigabytes per
+version. Left alone, a 30 GB disk fills after a handful of deploys, and a full disk takes down
+Postgres, builds and project writes at once. So the deploy script keeps the **two** newest images
+of the deployment repository (`KEEP_IMAGES`, default `2`: the running one plus one to roll back to)
+and removes the rest *after* the health check passes — a failed deploy keeps the previous image in
+place so the rollback target is still there.
+
+- **Automatic:** every image deploy prunes old versions; nothing to schedule.
+- **By hand, without SSH:** Actions → **deploy** → *Run workflow* → `mode=prune`. It only cleans
+  images and never touches the running service.
+- **On a timer (optional):** the same logic is reachable from the VM if the repository is checked
+  out there — `MODE=prune KEEP_IMAGES=2 bash deploy/scripts/vm-deploy.sh`, so a cron line
+  `0 4 * * 0 MODE=prune bash /path/to/vm-deploy.sh >> /var/log/webnestdev-prune.log 2>&1` is enough.
+- Other repositories (`postgres`, `node:22-bookworm-slim`) are deliberately **not** touched: they are
+  small, and deleting them only means re-pulling them later. `IMAGE_REPO_PATTERN` changes which
+  repositories are cleaned; `PRUNE_BUILD_CACHE=1` also drops build cache older than a week.
+- `DRY_RUN=1` lists what would be removed without removing anything — worth a look the first time.
+
+Object storage is **not** a substitute for this: a bucket cannot hold `node_modules` or `/var/lib/docker`
+(no POSIX semantics, no locks), so it is for Postgres dumps and cold archives of idle projects,
+not for the working disk.
+
 ## GitHub Actions deployment
 
 [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) builds the image, pushes it to GHCR (`ghcr.io/<owner>/<repo>`) and then runs [`deploy/scripts/vm-deploy.sh`](../deploy/scripts/vm-deploy.sh) **on the server** — over SSH, or locally when the job runs on a self-hosted runner installed on the VM itself.

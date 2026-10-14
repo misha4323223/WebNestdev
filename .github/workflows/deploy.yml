@@ -12,9 +12,9 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "image — готовый образ из реестра, source — сборка на ВМ из репозитория"
+        description: "image — готовый образ из реестра, source — сборка на ВМ из репозитория, prune — только уборка старых образов"
         type: choice
-        options: ["image", "source"]
+        options: ["image", "source", "prune"]
         default: "image"
       image:
         description: "Тег образа для выкатки или отката, например sha-1a2b3c4d5e6f (по умолчанию — сборка этого запуска)"
