@@ -1,9 +1,15 @@
 import { useEffect, useState } from "react";
+import { Eye, EyeOff } from "lucide-react";
 import { apiJson } from "../../lib/api";
 
 type ProviderConfig={provider:string;baseUrl:string;token:string;model:string};
 type ModelItem={id:string;name?:string};
-type StoredProviderConfig={provider:string;baseUrl:string;model:string};
+/**
+ * Что браузер помнит о провайдере проекта. Ключ тоже: он остаётся зашифрованным на сервере, а
+ * здесь лежит копия того, что ввёл пользователь, — иначе после перезагрузки поле выглядело бы
+ * пустым, хотя ключ сохранён.
+ */
+type StoredProviderConfig={provider:string;baseUrl:string;model:string;token?:string};
 type PlatformDefault={available:boolean;providerName:string;model:string};
 type TestResult={ok:boolean;source?:string;provider?:string;model?:string;latencyMs?:number;tools?:boolean;text?:string;error?:string;usage?:{promptTokens:number;completionTokens:number}|null};
 
@@ -23,6 +29,8 @@ export function SettingsPanel({projectId,projectName,onClose}:{projectId:string;
   const [configured,setConfigured]=useState(false);
   const [removing,setRemoving]=useState(false);
   const [platformDefault,setPlatformDefault]=useState<PlatformDefault|null>(null);
+  // Ключ показывается по «глазику»: по умолчанию он скрыт звёздочками.
+  const [showToken,setShowToken]=useState(false);
 
   useEffect(()=>{void (async()=>{
     let cachedConfig:StoredProviderConfig|undefined;
@@ -39,13 +47,16 @@ export function SettingsPanel({projectId,projectName,onClose}:{projectId:string;
         provider:cachedConfig?.provider??current.provider,
         baseUrl:cachedConfig?.baseUrl??current.baseUrl,
         model:cachedConfig?.model??current.model,
+        token:cachedConfig?.token??current.token,
       }));
     }
 
     try{
       const data=await apiJson<{configured:boolean;provider:string;baseUrl:string;model:string;hasToken:boolean;platformDefault?:PlatformDefault}>(`/api/projects/${encodeURIComponent(projectId)}/provider`);
       const next={provider:data.provider,baseUrl:data.baseUrl,model:data.model};
-      setConfig(current=>({...current,...next,token:""}));
+      // Ключ полем не перетирается: на сервере он есть (`hasToken`), а в поле остаётся копия
+      // из этого браузера, чтобы после перезагрузки ключ был виден, а не только упомянут.
+      setConfig(current=>({...current,...next}));
       setHasToken(data.hasToken);
       setConfigured(data.configured);
       setPlatformDefault(data.platformDefault??null);
@@ -56,12 +67,12 @@ export function SettingsPanel({projectId,projectName,onClose}:{projectId:string;
   })()},[projectId]);
 
   function persistConfig(next:StoredProviderConfig){
-    localStorage.setItem(providerStorageKey(projectId),JSON.stringify(next));
+    try{localStorage.setItem(providerStorageKey(projectId),JSON.stringify(next))}catch{}
   }
 
   function updateConfig(next:ProviderConfig){
     setConfig(next);
-    persistConfig({provider:next.provider,baseUrl:next.baseUrl,model:next.model});
+    persistConfig({provider:next.provider,baseUrl:next.baseUrl,model:next.model,token:next.token});
   }
 
   async function loadModels(){
@@ -79,7 +90,7 @@ export function SettingsPanel({projectId,projectName,onClose}:{projectId:string;
       const model=config.model&&items.some(item=>item.id===config.model)?config.model:items[0]?.id??"";
       const next={...config,baseUrl,model};
       setConfig(next);
-      persistConfig({provider:next.provider,baseUrl:next.baseUrl,model:next.model});
+      persistConfig({provider:next.provider,baseUrl:next.baseUrl,model:next.model,token:next.token});
       setStatus(`Загружено моделей: ${items.length}`);
     }catch(e){setError(e instanceof Error?e.message:String(e))}
     finally{setLoadingModels(false)}
@@ -101,9 +112,11 @@ export function SettingsPanel({projectId,projectName,onClose}:{projectId:string;
           ...(config.token.trim()?{token:config.token.trim()}: {})
         })
       });
+      const savedToken=config.token.trim();
       const next={provider:config.provider.trim()||"OpenAI-compatible",baseUrl,model};
-      persistConfig(next);
-      setConfig(current=>({...current,...next,token:""}));
+      persistConfig({...next,token:savedToken});
+      // Поле сохраняет ключ после «Сохранить»: это оно и обещает — ключ есть и после перезагрузки.
+      setConfig(current=>({...current,...next,token:savedToken}));
       setHasToken(data.hasToken);
       setStatus(data.hasToken?"Настройки сохранены · API key сохранён":"Настройки сохранены");
       onClose();
@@ -135,6 +148,7 @@ export function SettingsPanel({projectId,projectName,onClose}:{projectId:string;
       await apiJson(`/api/projects/${encodeURIComponent(projectId)}/provider`,{method:"DELETE"});
       localStorage.removeItem(providerStorageKey(projectId));
       setConfig({provider:"",baseUrl:"",token:"",model:""});
+      setShowToken(false);
       setModels([]);
       setHasToken(false);
       setConfigured(false);
@@ -152,7 +166,10 @@ export function SettingsPanel({projectId,projectName,onClose}:{projectId:string;
       {!configured&&platformDefault?.available&&<div className="settings-status">По умолчанию используется модель платформы: {platformDefault.providerName} · {platformDefault.model}. Свой провайдер ниже — опция.</div>}
       <label>Провайдер<input value={config.provider} onChange={e=>updateConfig({...config,provider:e.target.value})} placeholder="OpenRouter, DeepSeek, OpenAI, YandexGPT…"/></label>
       <label>Base URL<input value={config.baseUrl} onChange={e=>updateConfig({...config,baseUrl:e.target.value})} placeholder="https://api.example.com/v1" type="url" autoComplete="url"/></label>
-      <label>API-ключ<input value={config.token} onChange={e=>setConfig({...config,token:e.target.value})} placeholder={hasToken?"Ключ сохранён — повторно вводить не нужно":"Введите API-ключ"} type="password" autoComplete="new-password"/></label>
+      <label>API-ключ<div className="secret-field">
+        <input value={config.token} onChange={e=>updateConfig({...config,token:e.target.value})} placeholder={hasToken?"Ключ сохранён — можно заменить, вставив новый":"Введите API-ключ"} type={showToken?"text":"password"} autoComplete="new-password" spellCheck={false}/>
+        <button type="button" className="secret-toggle" onClick={()=>setShowToken(value=>!value)} title={showToken?"Скрыть ключ":"Показать ключ"} aria-label={showToken?"Скрыть API-ключ":"Показать API-ключ"} aria-pressed={showToken}>{showToken?<EyeOff size={14}/>:<Eye size={14}/>}</button>
+      </div></label>
       <div className="model-row">
         <label>Модель<select value={config.model} onChange={e=>updateConfig({...config,model:e.target.value})} disabled={loadingModels||models.length===0}>
           {!models.length&&<option value="">Сначала загрузите модели</option>}

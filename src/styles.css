@@ -409,6 +409,12 @@ button,textarea{font:inherit}button{color:inherit}
 /* Text buttons must size to their label: .send-button is a fixed square. */
 .settings-body .send-button{width:max-content;min-width:0;height:32px;padding:0 14px;gap:7px;white-space:nowrap;justify-content:center;justify-self:start}
 .integrations-panel .settings-body{gap:16px}
+/* Секретное поле (API-ключ): значение скрыто, «глазик» внутри строки показывает и прячет его. */
+.secret-field{position:relative;display:block}
+.secret-field input{width:100%;padding-right:34px}
+.secret-field .secret-toggle{position:absolute;right:3px;top:50%;transform:translateY(-50%);width:26px;height:26px;display:grid;place-items:center;border:0;border-radius:5px;background:transparent;color:#7b838d;cursor:pointer}
+.secret-field .secret-toggle:hover{background:#1b1f25;color:#dce0e5}
+.secret-field .secret-toggle:focus-visible{outline:1px solid #3c4551;outline-offset:1px}
 
 :root[data-density=compact] .messages{padding-top:14px;padding-bottom:14px}
 :root[data-density=compact] .message-row{margin-bottom:14px}

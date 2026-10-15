@@ -41,6 +41,24 @@ function toUserTurns(messages:ChatMessage[]){
     .filter(message=>message.role==="user")
     .map(message=>({role:"user" as const,content:message.content}));
 }
+/**
+ * Черновик поля ввода принадлежит чату: он лежит под ключом разговора, поэтому перезагрузка
+ * страницы возвращает написанный текст, а переключение чата — свой текст для каждого чата,
+ * а не текст предыдущего.
+ */
+const draftKey=(conversationId:string)=>"webnestdev.draft."+conversationId;
+function readDraft(conversationId:string){
+  if(!conversationId)return "";
+  try{return localStorage.getItem(draftKey(conversationId))??""}catch{return ""}
+}
+function writeDraft(conversationId:string,value:string){
+  if(!conversationId)return;
+  try{
+    if(value)localStorage.setItem(draftKey(conversationId),value);
+    else localStorage.removeItem(draftKey(conversationId));
+  }catch{}
+}
+
 /** The mode is a user choice, so it survives reloads and is sent with every run. */
 function readStoredMode():AgentMode{
   try{return localStorage.getItem(modeKey)==="planner"?"planner":"developer"}catch{return "developer"}
@@ -113,7 +131,7 @@ function interruptedRun(messages:ChatMessage[]):{reason:string;label:string}|nul
 
 export function AgentPanel({projectId,conversationId,onOpenConversation,onChanged,onOpenModelSettings,onOpenAccountSettings,onRunningChange}:{projectId:string;conversationId:string;onOpenConversation:(id:string)=>void;onChanged:()=>void;onOpenModelSettings?:()=>void;onOpenAccountSettings?:()=>void;onRunningChange?:(running:boolean)=>void}){
   const [messages,setMessages]=useState<ChatMessage[]>([]);
-  const [prompt,setPrompt]=useState<string>(()=>{try{return localStorage.getItem("webnestdev.draft."+conversationId)??""}catch(_){return ""}});
+  const [prompt,setPrompt]=useState<string>(()=>readDraft(conversationId));
   const [running,setRunning]=useState(false);
   const [loaded,setLoaded]=useState(false);
   const [queue,setQueue]=useState<QueuedMessage[]>([]);
@@ -159,6 +177,9 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
   // conversation and queue from refs instead of the render they were created in.
   const messagesRef=useRef<ChatMessage[]>([]);
   const queueRef=useRef<QueuedMessage[]>([]);
+  // Чат, которому принадлежит текст в поле: по нему панель отличает «пользователь печатает»
+  // от «открыт другой чат, и текст надо взять из его черновика».
+  const draftOwnerRef=useRef(conversationId);
 
   useEffect(()=>{queueRef.current=queue},[queue]);
 
@@ -166,13 +187,20 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
   // продолжает работать над проектом, даже когда панель не на экране.
   useEffect(()=>{onRunningChange?.(running)},[running,onRunningChange]);
 
-  // The composer draft belongs to the conversation, so it survives reloads and tab switches.
+  // Черновик сохраняется на каждое нажатие, поэтому текст переживает перезагрузку страницы.
+  // Эффект стоит перед эффектом переключения чата: черновик уходит под ключ того чата, в котором
+  // текст набран, и не переезжает в открытый следом.
   useEffect(()=>{
-    try{
-      if(prompt)localStorage.setItem("webnestdev.draft."+conversationId,prompt);
-      else localStorage.removeItem("webnestdev.draft."+conversationId);
-    }catch{}
+    if(draftOwnerRef.current!==conversationId)return;
+    writeDraft(conversationId,prompt);
   },[prompt,conversationId]);
+
+  // Открыт другой чат: прежний текст уже лежит в его черновике, а поле показывает черновик нового.
+  useEffect(()=>{
+    if(draftOwnerRef.current===conversationId)return;
+    draftOwnerRef.current=conversationId;
+    setPrompt(readDraft(conversationId));
+  },[conversationId]);
 
   function updateMessages(updater:(current:ChatMessage[])=>ChatMessage[]){
     messagesRef.current=updater(messagesRef.current);

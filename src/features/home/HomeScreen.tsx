@@ -17,6 +17,8 @@ const templates = [
 ];
 
 const activeProjectKey = "webnestdev.projectId";
+/** Черновик идеи на главной: страница открывается с нуля, а написанное должно остаться. */
+const ideaDraftKey = "webnestdev.ideaDraft";
 
 /** На телефоне та же колонка, что на ПК, но вкладками: главная страница плюс её разделы. */
 type HomeTab = "home" | RailSection;
@@ -30,7 +32,7 @@ const homeTabs: Array<{ id: HomeTab; label: string; icon: typeof Home }> = [
 ];
 
 export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(projectId:string)=>void;activeRun:{projectId:string;projectName:string}|null}){
-  const [idea,setIdea]=useState("");
+  const [idea,setIdea]=useState(()=>{try{return localStorage.getItem(ideaDraftKey)??""}catch{return ""}});
   const [projects,setProjects]=useState<Project[]>([]);
   const [busy,setBusy]=useState(false);
   const [deleting,setDeleting]=useState("");
@@ -54,6 +56,14 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
   useEffect(() => {
     tabsRef.current?.querySelector(".home-tab.active")?.scrollIntoView({ block: "nearest", inline: "center" });
   }, [tab]);
+
+  // Идея сохраняется на каждое нажатие, поэтому перезагрузка страницы не теряет написанное.
+  useEffect(()=>{
+    try{
+      if(idea)localStorage.setItem(ideaDraftKey,idea);
+      else localStorage.removeItem(ideaDraftKey);
+    }catch{}
+  },[idea]);
 
   const reload=useCallback(async()=>{try{setProjects((await listProjects()).projects)}catch{}},[]);
   useEffect(()=>{void reload()},[reload]);
@@ -102,8 +112,9 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
   }
 
   /** Creates the project and opens it. Failures (for example a reached project
-   *  limit) are reported instead of the button appearing to do nothing. */
-  async function start(name:string){
+   *  limit) are reported instead of the button appearing to do nothing. Возвращает признак
+   *  успеха: по нему отправившая идею форма убирает свой черновик. */
+  async function start(name:string):Promise<boolean>{
     setBusy(true);
     setError("");
     try{
@@ -113,8 +124,10 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
       localStorage.setItem("webnestdev.projectName",project.name);
       localStorage.setItem("webnestdev.conversationId",conversation.id);
       onOpenWorkspace(project.id);
+      return true;
     }catch(e){
       setError(e instanceof Error?e.message:"Не удалось создать проект");
+      return false;
     }finally{setBusy(false);}
   }
 
@@ -122,7 +135,8 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
     event.preventDefault();
     const value=idea.trim();
     if(!value||busy)return;
-    await start(value.slice(0,80));
+    // Черновик убирается только после того, как проект создан: иначе ошибка стирала бы идею.
+    if(await start(value.slice(0,80)))setIdea("");
   }
 
   async function exit(){
