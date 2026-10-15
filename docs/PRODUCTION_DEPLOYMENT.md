@@ -257,6 +257,11 @@ and removes the rest *after* the health check passes — a failed deploy keeps t
 place so the rollback target is still there.
 
 - **Automatic:** every image deploy prunes old versions; nothing to schedule.
+- **Automatic, when the disk is already full:** a `docker pull` that fails is answered with the same
+  cleanup and **one retry**. Without it a full disk was a dead end — the layers of a new image (and
+  Chromium inside them) do not extract with `no space left on device`, the pull dies before the
+  post-deploy cleanup can run, and every later deploy fails the same way until someone logs into the
+  VM. The retry only runs on a failed pull, so a healthy deploy never pays for it.
 - **By hand, without SSH:** Actions → **deploy** → *Run workflow* → `mode=prune`. It only cleans
   images and never touches the running service.
 - **On a timer (optional):** the same logic is reachable from the VM if the repository is checked
@@ -267,8 +272,8 @@ place so the rollback target is still there.
   repositories are cleaned.
 - Build cache is pruned too, and on a real VM it turned out to be the biggest single line in
   `docker system df` — **15 GB**, more than every image together, because an image-mode deploy never
-  builds on the server. `PRUNE_BUILD_CACHE` (default `1`) drops cache older than a week, `all` drops
-  all of it (do that once when space is tight), `0` disables it.
+  builds on the server. `PRUNE_BUILD_CACHE` (default `all`, because that VM never builds) sweeps the
+  whole cache, `1` only what is older than a week, `0` disables it.
 - `DRY_RUN=1` lists what would be removed without removing anything — worth a look the first time.
 
 Object storage is **not** a substitute for this: a bucket cannot hold `node_modules` or `/var/lib/docker`

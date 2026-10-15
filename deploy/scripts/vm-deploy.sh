@@ -67,6 +67,9 @@ prune_images(){
   before=$(docker system df --format '{{.Size}}' 2>/dev/null | tr '\n' ' ' || true)
   # Один образ может быть с двумя тегами (latest и sha-…): в листинге это две строки с одним
   # ID, и без дедупликации он съел бы два места из «двух последних».
+  # `|| true` — как и у строки выше: уборка вызывается и из ветки отказа выкатки, а падать там
+  # она не должна. Без docker (или с ним не отвечающим) список просто оказывается пустым, и
+  # выкатка продолжает свою работу и показывает свою причину.
   doomed=$(docker images --format '{{.ID}}\t{{.Repository}}\t{{.CreatedAt}}' 2>/dev/null \
     | awk -F'\t' -v pattern="$IMAGE_REPO_PATTERN" '
         index($2, pattern) == 0 { next }
@@ -74,7 +77,7 @@ prune_images(){
         { print $3 "\t" $1 "\t" $2 }
       ' \
     | sort -r \
-    | awk -F'\t' -v keep="$keep" '{ count[$3]++ ; if (count[$3] > keep) print $2 }')
+    | awk -F'\t' -v keep="$keep" '{ count[$3]++ ; if (count[$3] > keep) print $2 }' || true)
   log "чищу старые образы: оставляю $keep последних для репозиториев со «$IMAGE_REPO_PATTERN»"
   if [ -z "$doomed" ]; then
     log "лишних образов нет"
@@ -267,9 +270,19 @@ case "$MODE" in
     fi
     log "скачиваю образ $IMAGE_REF"
     if ! run docker pull "$IMAGE_REF"; then
-      log "образ не скачался. У приватного образа GHCR нужен однократный вход на этой ВМ:"
-      log "  docker login ghcr.io -u <логин GitHub> -p <токен с правом read:packages>"
-      exit 3
+      # Уборка стоит после успешной выкатки (чтобы неудачный деплой оставлял образ для отката), но
+      # из-за неё заполненный диск и был тупиком: слои образа (в нём Chromium — гигабайты) не
+      # распаковываются с «no space left on device», pull падает, до уборки дело не доходит, и
+      # каждая следующая выкатка падает так же — ВМ чинится только руками. Поэтому отказ на
+      # скачивании лечится уборкой и одной повторной попыткой; если и она не удалась, причина
+      # почти наверняка другая, и сообщение о входе в GHCR остаётся.
+      log "образ не скачался — убираю старые образы и кеш сборки, затем пробую ещё раз"
+      prune_images
+      if ! run docker pull "$IMAGE_REF"; then
+        log "образ не скачался и со второй попытки. У приватного образа GHCR нужен однократный вход на этой ВМ:"
+        log "  docker login ghcr.io -u <логин GitHub> -p <токен с правом read:packages>"
+        exit 3
+      fi
     fi
     # Compose берёт образ из WEBNESTDEV_IMAGE, а --no-build запрещает собирать на месте.
     export WEBNESTDEV_IMAGE="$IMAGE_REF"
