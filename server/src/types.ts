@@ -27,8 +27,14 @@ export type AgentMode="planner"|"developer";
 /**
  * `resume` marks a run that continues an interrupted one: the history arrives as usual, but the
  * runtime tells the model that this is a continuation and where the plan stopped.
+ *
+ * `history` is the conversation as it is stored, put there by the route that already read it. What
+ * the model sees is that, not the copy the browser sent: the stored one is the same chat the user
+ * reads, it carries the tool results of the previous runs, and it does not depend on the panel
+ * re-uploading the whole conversation on every run. `messages` stays the fallback for a run that
+ * starts before anything is stored.
  */
-export type AgentRunRequest={projectId:string;conversationId?:string;messages:ChatMessage[];model?:string;mode?:AgentMode;resume?:{reason?:string};userId:string};
+export type AgentRunRequest={projectId:string;conversationId?:string;messages:ChatMessage[];history?:ChatMessage[];model?:string;mode?:AgentMode;resume?:{reason?:string};userId:string};
 export type ToolContext={projectId:string;runId:string;userId:string};
 export type ToolHandler=(input:unknown,context:ToolContext)=>Promise<unknown>;
 export type ToolDefinition={name:string;description:string;execute?:ToolHandler;async?:ToolHandler;/** Optional JSON Schema sent to the provider so the model knows the exact input shape. */parameters?:Record<string,unknown>};

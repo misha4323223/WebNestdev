@@ -1,14 +1,14 @@
 import { randomUUID } from "node:crypto";
 import type { AgentRunRequest,ChatMessage,PlanState } from "./types.js";
 import { createProvider } from "./provider.js";
-import { appendConversationMessages,getConversation,getProject,getProjectProvider,saveConversationPlan } from "./project-store.js";
-import { buildInitialMessages,insertSystemNotice,resumeNotice } from "./agent/message-builder.js";
+import { appendConversationMessages,getConversationPlan,getProject,getProjectProvider,saveConversationPlan } from "./project-store.js";
+import { buildInitialMessages,insertSystemNotice,resumeNotice,storedHistory } from "./agent/message-builder.js";
 import { buildProjectContext } from "./agent/context-builder.js";
 import { retrieveRelevantFiles } from "./agent/context-retrieval.js";
 import { executeTool } from "./agent/tool-executor.js";
 import { runBudgetedStep,type StepBudget } from "./agent/step-runner.js";
 import type { EventSink } from "./agent/types.js";
-import { contextBudgetTokens,boundToolOutput,DEFAULT_CHARS_PER_TOKEN } from "./agent/context-budget.js";
+import { contextBudgetTokens,contextMaxMessages,boundToolOutput,DEFAULT_CHARS_PER_TOKEN } from "./agent/context-budget.js";
 import { planQaScenario } from "./qa/scenario-planner.js";
 import { analyzeChangedFiles } from "./qa/diff-analyzer.js";
 import { parseChangedSource, type ParsedChange } from "./qa/change-parser.js";
@@ -76,16 +76,23 @@ export class AgentRuntime {
       const platformConfig=getPlatformProviderConfig();
       const provider=createProvider(config??platformConfig??undefined);
       const projectContext=await buildProjectContext(project,request.userId);
-      const task=request.messages.filter(message=>message.role==="user").at(-1)?.content??"";
+      // История — это сохранённый разговор, а не копия из браузера: в ней лежат результаты
+      // инструментов, она не растёт от длины переписки в панели и не расходится с тем, что
+      // пользователь видит в чате. Присланные сообщения остаются запасным путём для запуска,
+      // который начался раньше первой записи в сессию.
+      const stored=request.history?.length?storedHistory(request.history):[];
+      const history:ChatMessage[]=stored.length?stored:request.messages;
+      const task=history.filter(message=>message.role==="user").at(-1)?.content??"";
       const relevantFiles=await retrieveRelevantFiles(request.projectId,request.userId,task);
       const mode=request.mode==="planner"?"planner":"developer";
-      let messages:ChatMessage[]=buildInitialMessages(request.messages,projectContext+"\n\nTASK-RELEVANT SOURCE FILES\n"+relevantFiles,mode);
+      let messages:ChatMessage[]=buildInitialMessages(history,projectContext+"\n\nTASK-RELEVANT SOURCE FILES\n"+relevantFiles,mode);
       if(request.resume){
         // Возобновление: история — это память о сделанном, сохранённый план — закладка. Без заметки
         // модель с большой историей часто начинает задачу заново или переспрашивает пользователя.
         let plan:PlanState|undefined;
         if(request.conversationId){
-          try{plan=(await getConversation(request.conversationId))?.plan??undefined}catch(error){console.error("Failed to read the stored plan for resume",error);}
+          // Только план: закладка продолжения не стоит чтения всей переписки сессии.
+          try{plan=await getConversationPlan(request.conversationId);}catch(error){console.error("Failed to read the stored plan for resume",error);}
         }
         messages=insertSystemNotice(messages,resumeNotice(request.resume.reason,plan));
       }
@@ -96,7 +103,7 @@ export class AgentRuntime {
       // Контекст ограничен на каждом шаге, а не только в начале запуска: сообщения добавляются
       // по ходу (выводы инструментов, проверки), а модель получает их целиком. Как именно шаг
       // подрезается и что происходит при отказе провайдера — в agent/step-runner.ts.
-      let budget:StepBudget={budgetTokens:contextBudgetTokens(),charsPerToken:DEFAULT_CHARS_PER_TOKEN};
+      let budget:StepBudget={budgetTokens:contextBudgetTokens(),charsPerToken:DEFAULT_CHARS_PER_TOKEN,maxMessages:contextMaxMessages()};
       let consecutiveVerifyFailures=0;
       let consecutiveScenarioFailures=0;
       let verificationPending=false;
@@ -114,11 +121,11 @@ export class AgentRuntime {
        */
       const persist=async (entries:ChatMessage[])=>{
         if(!request.conversationId||!entries.length)return;
-        try{
-          const conversation=await getConversation(request.conversationId);
-          if(!conversation||conversation.projectId!==request.projectId)throw new Error("Сессия не найдена в этом проекте");
-          await appendConversationMessages(request.conversationId,entries);
-        }catch(error){console.error("Failed to persist conversation messages",error);}
+        // Никакого чтения сессии ради записи: каждый шаг добавляет сообщения, и разговор целиком
+        // загружался бы несколько раз за шаг только для того, чтобы его же и дописать. Что сессия
+        // принадлежит этому проекту, маршрут проверил при старте запуска.
+        try{ await appendConversationMessages(request.conversationId,entries); }
+        catch(error){console.error("Failed to persist conversation messages",error);}
       };
       const finishTool=async (call:{id:string;name:string},output:unknown)=>{
         emit({type:"tool.finished",runId,toolCallId:call.id,name:call.name,output});

@@ -5,7 +5,7 @@ import { runQueueStats } from "../agent/run-limiter.js";
 import { sandboxQueueStats } from "../sandbox/sandbox-limiter.js";
 import { browserQueueStats } from "../tools/browser-limiter.js";
 import { liveRuntimePreviews, liveStaticPreviews, runtimePreviewLimit } from "../preview/preview-limiter.js";
-import { DEFAULT_CHARS_PER_TOKEN,contextBudgetTokens } from "../agent/context-budget.js";
+import { DEFAULT_CHARS_PER_TOKEN,contextBudgetTokens,contextMaxMessages } from "../agent/context-budget.js";
 import { sandboxHostRootDir,sandboxRootDir } from "../sandbox/config.js";
 import { lastSandboxMountCheck } from "../sandbox/sandbox-check.js";
 import { diskStatus, memoryStatus } from "../health/host-metrics.js";
@@ -50,7 +50,7 @@ async function activity(){
     // промпта выглядит необъяснимым (agent/context-budget.ts).
     // `charsPerTokenDefault` — стартовая оценка: во время запуска она уточняется по отчёту
     // провайдера (см. `run.progress.tokens`), поэтому здесь честно только значение по умолчанию.
-    context: { budgetTokens: contextBudgetTokens(), charsPerTokenDefault: DEFAULT_CHARS_PER_TOKEN },
+    context: { budgetTokens: contextBudgetTokens(), maxMessages: contextMaxMessages(), charsPerTokenDefault: DEFAULT_CHARS_PER_TOKEN },
     disk: await diskStatus(sandboxRootDir()),
     memory: await memoryStatus(),
   };

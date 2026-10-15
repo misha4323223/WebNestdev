@@ -14,10 +14,12 @@ const messageSchema=z.discriminatedUnion("role",[
   z.object({role:z.literal("tool"),content:z.string().max(100000),tool_call_id:z.string()})
 ]);
 /**
- * Верхняя граница истории в одном запросе. Диалог законно перерастает сотню сообщений: каждый шаг
- * агента сохраняет ответ и результат инструмента, поэтому прежний предел в 100 сообщений превращал
- * обычный разговор в ошибку проверки ещё до запуска. Что реально видит модель, ограничивает бюджет
- * контекста (context-budget.ts), а размер самого запроса проверяется ниже по байтам.
+ * Верхняя граница того, что сервер примет в одном запросе. Панель отправляет только реплики
+ * пользователя — ответы агента и результаты инструментов живут в сохранённой сессии и в запросе не
+ * нужны, — но запрос приходит не только от неё, поэтому предел остаётся: разговор законно
+ * перерастает сотню реплик, и прежний предел в 100 сообщений превращал обычный диалог в ошибку
+ * проверки ещё до запуска. Что реально видит модель, ограничивает бюджет контекста
+ * (context-budget.ts), а размер самого запроса проверяется ниже по байтам.
  */
 export const MAX_REQUEST_MESSAGES=1000;
 // `resume` — продолжение прерванного запуска: сообщения приходят как обычно, а рантайм добавляет
@@ -100,11 +102,19 @@ export async function registerAgentWebSocket(app:FastifyInstance,runtime=new Age
         if(payloadSize>2_000_000)throw new Error("Запрос агента слишком большой");
         const project=await getProject(parsed.projectId);
         if(!project||project.userId!==user.id)throw new Error("Проект не найден");
+        // Одно чтение сессии отвечает на два вопроса: какие из присланных сообщений новые, и какая
+        // история на самом деле была у разговора. Второе важнее: модель получает её, а не копию из
+        // браузера, поэтому в контекст попадают результаты инструментов прошлых запусков — и запуск
+        // не зависит от того, сколько переписки панель смогла отправить.
+        let history:ChatMessage[]|undefined;
         if(parsed.conversationId){
           const conversation=await getConversation(parsed.conversationId);
           if(!conversation||conversation.projectId!==parsed.projectId)throw new Error("Сессия не найдена в этом проекте");
           const newMessages=newUserMessages(conversation.messages,parsed.messages);
           if(newMessages.length)await appendConversationMessages(parsed.conversationId,newMessages);
+          // Ровно то, что лежит в сессии сейчас: сохранённые ходы плюс только что добавленные.
+          const stored=[...conversation.messages,...newMessages];
+          if(stored.length)history=stored;
         }
         // Only so many runs this host can hold at once, so a busy server makes the new run wait
         // instead of starting a second build container and a second Chromium. The daily quota is
@@ -114,7 +124,7 @@ export async function registerAgentWebSocket(app:FastifyInstance,runtime=new Age
         await runWithRunSlot(async()=>{
           const usage = await consumeUsageForCurrentPlan(user.id,"agentRuns");
           safeSend({type:"usage.updated",usage});
-          await runtime.run({...parsed,userId:user.id},event=>safeSend(event),runController.signal);
+          await runtime.run({...parsed,userId:user.id,...(history?{history}:{})},event=>safeSend(event),runController.signal);
         },{
           signal:runController.signal,
           userId:user.id,

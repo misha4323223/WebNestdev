@@ -1,7 +1,7 @@
 import type { ChatMessage } from "../types.js";
 import type { Provider,ProviderToolCall } from "../provider.js";
 import { getToolDefinitions } from "../tool-registry.js";
-import { ContextBudgetError,calibrateCharsPerToken,estimateTokens,trimMessagesToBudget } from "./context-budget.js";
+import { ContextBudgetError,MIN_MAX_MESSAGES,calibrateCharsPerToken,estimateTokens,trimMessagesToBudget } from "./context-budget.js";
 import { ProviderHttpError,describeProviderFailure } from "../provider/provider-errors.js";
 import type { AgentContext } from "./types.js";
 
@@ -28,8 +28,10 @@ export async function runAgentStep(provider:Provider,messages:ChatMessage[],mode
   return {text,reasoning,calls,usage};
 }
 
-/** How much of the model's window this run is allowed to use, and how characters map to tokens. */
-export type StepBudget={budgetTokens:number;charsPerToken:number};
+/** How much of the model's window this run is allowed to use, how characters map to tokens, and how
+ * many messages one request may carry — a gateway can refuse the second limit while the first one is
+ * nowhere near reached. */
+export type StepBudget={budgetTokens:number;charsPerToken:number;maxMessages:number};
 
 export type BudgetedStep={result:StepResult;messages:ChatMessage[];budget:StepBudget;estimatedTokens:number};
 
@@ -52,8 +54,11 @@ export function toolDefinitionChars(){
  * - the running estimate is optimistic: the provider's own `prompt_tokens` calibrates it after every
  *   step, and a prompt that turns out to be larger than the budget shrinks the budget for the next one;
  * - the provider refuses the request as too large: the budget is halved, the conversation is trimmed
- *   again — closest history kept — and the step is retried exactly once. A second refusal becomes a
- *   `ContextBudgetError` with both numbers, which is a sentence the user can act on, not a 400 body.
+ *   again — closest history kept — and the step is retried exactly once. A refusal on the *number* of
+ *   messages is the same kind of refusal and is answered the same way, by halving the cap on how many
+ *   messages may go (a gateway that states its own cap gets a little less than that, and the reduced
+ *   cap stays for the rest of the run, so no later step walks into it again). A second refusal becomes
+ *   a `ContextBudgetError` with the numbers, which is a sentence the user can act on, not a 400 body.
  */
 export async function runBudgetedStep(
   provider:Provider,
@@ -65,7 +70,7 @@ export async function runBudgetedStep(
 ):Promise<BudgetedStep>{
   let current:StepBudget={...budget};
   const overheadChars=toolDefinitionChars();
-  const trim=(list:ChatMessage[],keepRecent?:number)=>trimMessagesToBudget(list,{budgetTokens:current.budgetTokens,charsPerToken:current.charsPerToken,overheadChars,...(keepRecent?{keepRecent}:{})});
+  const trim=(list:ChatMessage[],keepRecent?:number)=>trimMessagesToBudget(list,{budgetTokens:current.budgetTokens,charsPerToken:current.charsPerToken,maxMessages:current.maxMessages,overheadChars,...(keepRecent?{keepRecent}:{})});
   let prepared=trim(messages);
   hooks.onPrepared?.({tokens:prepared.report.estimatedTokens,budgetTokens:current.budgetTokens});
 
@@ -81,11 +86,24 @@ export async function runBudgetedStep(
       }
       return {result,messages:prepared.messages,budget:current,estimatedTokens:prepared.report.estimatedTokens};
     }catch(error){
-      if(!(error instanceof ProviderHttpError)||error.code!=="CONTEXT_OVERFLOW")throw error;
-      if(attempt>0)throw new ContextBudgetError(error.inputTokens??estimateTokens(prepared.messages,current.charsPerToken),error.limitTokens??current.budgetTokens);
-      console.error("[agent] провайдер отказал по размеру контекста, сокращаю и повторяю шаг: "+describeProviderFailure(error));
-      current.budgetTokens=Math.max(4_000,Math.min(Math.floor(current.budgetTokens/2),Math.floor((error.limitTokens??current.budgetTokens)*0.7)));
-      prepared=trim(prepared.messages,4);
+      if(!(error instanceof ProviderHttpError)||(error.code!=="CONTEXT_OVERFLOW"&&error.code!=="TOO_MANY_MESSAGES"))throw error;
+      const tooMany=error.code==="TOO_MANY_MESSAGES";
+      if(attempt>0)throw new ContextBudgetError(
+        error.inputTokens??estimateTokens(prepared.messages,current.charsPerToken),
+        error.limitTokens??current.budgetTokens,
+        tooMany?{messages:prepared.messages.length,maxMessages:error.limitMessages??current.maxMessages}:undefined,
+      );
+      console.error("[agent] провайдер отказал по "+(tooMany?"числу сообщений":"размеру контекста")+", сокращаю и повторяю шаг: "+describeProviderFailure(error));
+      if(tooMany){
+        // Отказ по числу сообщений: уменьшается не бюджет токенов, а предел длины запроса. Названный
+        // самим провайдером предел берётся с запасом, иначе — половина своего: и то и другое остаётся
+        // на весь запуск, чтобы следующий шаг не наткнулся на тот же отказ.
+        const stated=error.limitMessages?Math.max(MIN_MAX_MESSAGES,error.limitMessages-4):undefined;
+        current.maxMessages=Math.max(MIN_MAX_MESSAGES,Math.min(stated??current.maxMessages,Math.floor(current.maxMessages/2)));
+      }else{
+        current.budgetTokens=Math.max(4_000,Math.min(Math.floor(current.budgetTokens/2),Math.floor((error.limitTokens??current.budgetTokens)*0.7)));
+      }
+      prepared=trim(prepared.messages,tooMany?undefined:4);
       hooks.onPrepared?.({tokens:prepared.report.estimatedTokens,budgetTokens:current.budgetTokens});
     }
   }

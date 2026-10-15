@@ -305,9 +305,26 @@ function messageFromRow(row:{created_at:string;message_id:string;role:string;con
  * be rebuilt after a reload), while the model's own context keeps the full output.
  */
 const MAX_STORED_TOOL_CHARS=8000;
+/**
+ * The chain of thought is read back in the panel after a reload, but it is not the work and it is not
+ * sent to the provider again: a step of thinking can be tens of kilobytes, and a long chat would
+ * carry every one of them in the database for good.
+ */
+const MAX_STORED_REASONING_CHARS=4000;
+function clipStored(text:string,limit:number,label:string){
+  return text.length<=limit?text:text.slice(0,limit)+'\n…['+label+']';
+}
 function boundMessage(message:ChatMessage):ChatMessage{
-  if(message.role!=="tool"||message.content.length<=MAX_STORED_TOOL_CHARS)return message;
-  return {...message,content:message.content.slice(0,MAX_STORED_TOOL_CHARS)+'\n…[вывод обрезан при сохранении]'};
+  if(message.role==="tool"){
+    if(message.content.length<=MAX_STORED_TOOL_CHARS)return message;
+    return {...message,content:clipStored(message.content,MAX_STORED_TOOL_CHARS,"вывод обрезан при сохранении")};
+  }
+  if(message.role!=="assistant")return message;
+  const reasoning=message.reasoning&&message.reasoning.length>MAX_STORED_REASONING_CHARS
+    ? clipStored(message.reasoning,MAX_STORED_REASONING_CHARS,"размышление обрезано при сохранении")
+    : message.reasoning;
+  if(reasoning===message.reasoning)return message;
+  return {...message,reasoning};
 }
 function messageRow(projectId:string,conversationId:string,message:ChatMessage,createdAt:string){
   return {
@@ -390,18 +407,42 @@ export async function listConversations(projectId:string){
   return result.sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt));
 }
 
-export async function appendConversationMessages(id:string,messages:ChatMessage[]){
+/**
+ * The conversation row without its messages. A run appends a message per tool call, so the append
+ * path must not read the chat it appends to: loading a session of a thousand messages to add one is
+ * what made a long dialog pay for its own length on every step, and the messages are exactly the part
+ * the append does not need. The JSON backend keeps a whole conversation in one file and has to
+ * rewrite it anyway, so there the cheap read only saves the parse of what is about to be written.
+ */
+async function conversationMeta(id:string):Promise<{id:string;projectId:string}|null>{
+  if(isYdbEnabled()){
+    const [rows]=await ydbQuery()<Array<{id:string;project_id:string}>>`
+      SELECT id,project_id
+      FROM ${ydbQuery().identifier(getTable("conversations"))}
+      WHERE id = ${id}
+      LIMIT 1
+    `;
+    const row=rows?.[0];
+    return row?{id:row.id,projectId:row.project_id}:null;
+  }
   const c=await getConversation(id);
-  if(!c)throw new Error("Сессия не найдена");
+  return c?{id:c.id,projectId:c.projectId}:null;
+}
+
+/** What an append reports back: which conversation grew and by how much. */
+export type AppendedConversation={id:string;projectId:string;updatedAt:string;appended:number};
+
+/** Appends turns to a stored conversation. The value it returns is a receipt, not the chat. */
+export async function appendConversationMessages(id:string,messages:ChatMessage[]):Promise<AppendedConversation>{
   // Bounding happens here, once, so both backends store the same readable copy.
   const bounded=messages.map(boundMessage);
-  c.messages.push(...bounded);
-  c.updatedAt=new Date().toISOString();
+  const updatedAt=new Date().toISOString();
   if(isYdbEnabled()){
-    const projectId=c.projectId;
+    const meta=await conversationMeta(id);
+    if(!meta)throw new Error("Сессия не найдена");
     const now=Date.now();
     for(let index=0;index<bounded.length;index++){
-      const row=messageRow(projectId,id,bounded[index],new Date(now+index).toISOString());
+      const row=messageRow(meta.projectId,id,bounded[index],new Date(now+index).toISOString());
       await ydbQuery()`
         UPSERT INTO ${ydbQuery().identifier(getTable("conversation_messages"))}
           (conversation_id,created_at,message_id,project_id,role,content,tool_calls_json,reasoning,tool_call_id)
@@ -410,13 +451,36 @@ export async function appendConversationMessages(id:string,messages:ChatMessage[
     }
     await ydbQuery()`
       UPDATE ${ydbQuery().identifier(getTable("conversations"))}
-      SET updated_at=${c.updatedAt}
+      SET updated_at=${updatedAt}
       WHERE id=${id}
     `;
-    return c;
+    return {id,projectId:meta.projectId,updatedAt,appended:bounded.length};
   }
-  await writeFile(path.join(root,"conversations",id+".json"),JSON.stringify(c,null,2));
-  return c;
+  const c=await getConversation(id);
+  if(!c)throw new Error("Сессия не найдена");
+  c.messages.push(...bounded);
+  c.updatedAt=updatedAt;
+  await writeFile(path.join(await conversationsDir(),id+".json"),JSON.stringify(c,null,2));
+  return {id,projectId:c.projectId,updatedAt,appended:bounded.length};
+}
+
+/**
+ * The stored plan on its own: a resumed run needs the bookmark, not the chat it is written in, and a
+ * long conversation is not worth loading to read one field. The JSON backend has no separate column,
+ * so there the whole file is read anyway.
+ */
+export async function getConversationPlan(id:string):Promise<PlanState|undefined>{
+  if(isYdbEnabled()){
+    const [rows]=await ydbQuery()<Array<{plan_json:string}>>`
+      SELECT plan_json
+      FROM ${ydbQuery().identifier(getTable("conversations"))}
+      WHERE id = ${id}
+      LIMIT 1
+    `;
+    const value=rows?.[0]?.plan_json;
+    return value?JSON.parse(value) as PlanState:undefined;
+  }
+  return (await getConversation(id))?.plan??undefined;
 }
 
 /**

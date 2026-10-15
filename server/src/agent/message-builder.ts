@@ -10,38 +10,45 @@ export const SYSTEM_PROMPT = "LANGUAGE RULE, READ FIRST: think, reason and write
 export const PLANNER_MODE_PROMPT = "PLANNER MODE IS ON. The user asked for a plan or analysis, not for changes. Inspect the project with read-only tools (fs.list, fs.read, git status, read-only terminal commands, browser checks) and publish the result with plan.update: the full ordered list of steps, each with a concrete title, exactly one step 'in_progress' only while you are still working on that exploration step. Do not call fs.write, fs.rename, fs.delete, npm.install, database.env, git.add or git.commit, and do not call yandex.request with anything other than GET or HEAD — the runtime rejects them in this mode. A single read-only terminal command is allowed (ls, cat, head, tail, grep, find, git status, git log, git diff, git branch, npm ls); anything chained, piped, redirecting output, installing packages or running a script is refused, so keep inspection commands separate and simple. Write the plan items, the reasoning and the summary in Russian (code, paths and commands keep their original spelling). Finish your answer with the plan, the reasoning behind it, and what the user should confirm before switching to Developer mode.";
 
 /**
- * This pass bounds the history that arrives from the client, and only that: the authoritative limit
- * of a run is the token budget in `agent/context-budget.ts`, applied before every step, because the
- * conversation keeps growing with tool output after this point. Keep this one cheap.
+ * The stored conversation as the model's history.
+ *
+ * It is the same chat the user reads, so a run continues from what actually happened — including the
+ * tool results of the previous run, which the panel cannot send back (it sends plain turns). Two
+ * things are cleaned up before it goes to a provider:
+ *
+ * - `reasoning` is dropped: the user reads the thinking, the provider does not get it back;
+ * - every tool call keeps its result and every result its call. A run interrupted mid-step leaves an
+ *   unanswered call, and a write that failed halfway leaves a result without its call; a provider
+ *   rejects both, so such a pair is removed. Where the work stopped is said by the resume notice
+ *   (`resumeNotice`), not by a dangling call.
+ *
+ * There is no size trimming here: the one authority for that is `context-budget.ts`, which runs
+ * before every step and reports what it cut.
  */
-const MAX_CONTEXT_CHARS = 60000;
-const MAX_RECENT_MESSAGES = 14;
-const MAX_MESSAGE_CHARS = 9000;
-
-function compactMessage(message: ChatMessage, keepFull: boolean): ChatMessage {
-  if (keepFull || message.content.length <= MAX_MESSAGE_CHARS) return message;
-  const marker = message.role === "tool" ? "[older tool output compacted]" : "[older message compacted]";
-  return { ...message, content: marker + "\n" + message.content.slice(-1800) };
-}
-
-export function compactConversation(messages: ChatMessage[]): ChatMessage[] {
-  const safe = messages.filter(message => message.role !== "system");
-  const recentStart = Math.max(0, safe.length - MAX_RECENT_MESSAGES);
-  const compacted = safe.map((message, index) => compactMessage(message, index >= recentStart || message.role === "user"));
-
-  let total = compacted.reduce((sum, message) => sum + message.content.length, 0);
-  if (total <= MAX_CONTEXT_CHARS) return compacted;
-
-  for (let i = 0; i < compacted.length && total > MAX_CONTEXT_CHARS; i++) {
-    if (i >= recentStart || compacted[i].role === "user") continue;
-    const message = compacted[i];
-    if (message.content.length <= 700) continue;
-    const next = { ...message, content: "[compacted]\n" + message.content.slice(-600) } as ChatMessage;
-    total -= message.content.length - next.content.length;
-    compacted[i] = next;
+export function storedHistory(messages: ChatMessage[]): ChatMessage[] {
+  const announced = new Set<string>();
+  const kept: ChatMessage[] = [];
+  for (const message of messages) {
+    if (message.role === "system") continue;
+    if (message.role === "tool") {
+      if (!announced.has(message.tool_call_id)) continue;
+      kept.push({ role: "tool", content: message.content, tool_call_id: message.tool_call_id });
+      continue;
+    }
+    if (message.role === "assistant") {
+      for (const call of message.tool_calls ?? []) announced.add(call.id);
+      kept.push({ role: "assistant", content: message.content, ...(message.tool_calls?.length ? { tool_calls: message.tool_calls } : {}) });
+      continue;
+    }
+    kept.push({ role: "user", content: message.content });
   }
-
-  return compacted;
+  const answered = new Set(kept.filter(message => message.role === "tool").map(message => message.tool_call_id));
+  return kept.map(message => {
+    if (message.role !== "assistant" || !message.tool_calls?.length) return message;
+    const calls = message.tool_calls.filter(call => answered.has(call.id));
+    if (calls.length === message.tool_calls.length) return message;
+    return { role: "assistant" as const, content: message.content, ...(calls.length ? { tool_calls: calls } : {}) };
+  });
 }
 
 /**
@@ -81,6 +88,6 @@ export function buildInitialMessages(messages: ChatMessage[], projectContext: st
     { role: "system", content: SYSTEM_PROMPT },
     ...(mode === "planner" ? [{ role: "system" as const, content: PLANNER_MODE_PROMPT }] : []),
     { role: "system", content: projectContext },
-    ...compactConversation(messages),
+    ...messages.filter(message => message.role !== "system"),
   ];
 }
