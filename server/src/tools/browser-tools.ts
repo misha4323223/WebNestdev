@@ -1,5 +1,8 @@
 import { getPreview } from "../preview/preview-store.js";
 import { previewStatus } from "../preview-manager.js";
+import { previewProxyBase } from "../preview/preview-rewrite.js";
+import { createSession, deleteSession } from "../auth/auth-store.js";
+import { SESSION_COOKIE } from "../auth/auth.js";
 import { registerTool } from "../tool-registry.js";
 import { withBrowserSlot } from "./browser-limiter.js";
 
@@ -111,7 +114,7 @@ registerTool({
 });
 
 
-import { chromium,type Page } from "playwright";
+import { chromium,type Browser,type Page } from "playwright";
 
 const MAX_CONSOLE_ITEMS = 100;
 const MAX_NETWORK_ITEMS = 100;
@@ -132,6 +135,36 @@ const SETTLE_MS = 900;
  */
 const NETWORK_IDLE_MS = 4_000;
 
+/**
+ * Применились ли стили. Без этого «белая страница» остаётся загадкой: DOM полон элементов, текст на
+ * месте, а пользователь видит неоформленный экран — и модель ходит по файлам наугад, потому что в
+ * отчёте проверки не было ни одного признака внешнего вида.
+ */
+export type PageStyleFacts = {
+  /** Объявленные в разметке таблицы стилей (`<link rel="stylesheet">`). */
+  declaredStylesheets: number;
+  /**
+   * Сколько ссылок браузер не отверг (`sheet` не null). Это ещё не признак применения: Chrome
+   * оставляет пустую таблицу и для ответа 404, поэтому о применении судят по правилам, а это число —
+   * только улика рядом с ними.
+   */
+  loadedStylesheets: number;
+  /** `<style>`, вставленные скриптом: так Vite отдаёт CSS, импортированный из JS. */
+  inlineStyles: number;
+  /** Действующих правил CSS: ноль при объявленных стилях означает «стили не применились». */
+  cssRules: number;
+  /** Фон и цвет текста так, как их видит браузер: белое поле с чёрным текстом — вид белой страницы. */
+  bodyBackground: string;
+  bodyColor: string;
+  /** Объявленные стили не действуют: страница неоформленная, то есть выглядит белой. */
+  unstyled: boolean;
+  /**
+   * Ни одного правила CSS на странице. Это не поломка сама по себе (проект может быть без стилей),
+   * но вместе с белым экраном это первое, что нужно проверить: подключён ли CSS вообще.
+   */
+  noStyles: boolean;
+};
+
 /** Что на самом деле видно на странице: то единственное, по чему можно судить о белом экране. */
 export type PageEvidence = {
   title: string;
@@ -142,6 +175,8 @@ export type PageEvidence = {
   visibleElements: number;
   /** Ничего не отрисовано. Картинка, canvas или видео считаются содержимым: это про пустоту. */
   blank: boolean;
+  /** Вид страницы: объявленные и действующие стили. */
+  styles: PageStyleFacts;
 };
 
 /**
@@ -158,7 +193,48 @@ async function readPageEvidence(page: Page): Promise<PageEvidence> {
       if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") continue;
       if (element.clientWidth > 2 && element.clientHeight > 2) visibleElements++;
     }
-    return { title: document.title, text, textChars: text.length, visibleElements };
+    const links = Array.from(document.querySelectorAll('link[rel~="stylesheet"][href]')) as HTMLLinkElement[];
+    let cssRules = 0;
+    let sheetsWithRules = 0;
+    let unreadableSheets = 0;
+    for (const sheet of Array.from(document.styleSheets)) {
+      try {
+        const rules = sheet.cssRules.length;
+        cssRules += rules;
+        if (rules > 0) sheetsWithRules++;
+      } catch {
+        // Таблица из другого источника: правила прочитать нельзя, значит о применении судить не по ней.
+        unreadableSheets++;
+      }
+    }
+    const declaredStylesheets = links.length;
+    const loadedStylesheets = links.filter(link => link.sheet !== null).length;
+    const inlineStyles = document.querySelectorAll("style").length;
+    // Всё, что вообще объявляет стили: ссылка в разметке или таблица, добавленная скриптом.
+    const declared = declaredStylesheets + inlineStyles;
+    const bodyStyle = body ? getComputedStyle(body) : null;
+    return {
+      title: document.title,
+      text,
+      textChars: text.length,
+      visibleElements,
+      styles: {
+        declaredStylesheets,
+        loadedStylesheets,
+        inlineStyles,
+        cssRules,
+        bodyBackground: bodyStyle?.backgroundColor ?? "",
+        bodyColor: bodyStyle?.color ?? "",
+        // Стили объявлены (ссылкой или скриптом), а ни одного действующего правила нет: страница
+        // неоформленная. Одной ссылки для вывода мало — Chrome оставляет пустую таблицу даже там,
+        // где ответил 404, — поэтому решают именно правила. Если прочитать их не удалось ни у одной
+        // таблицы (чужие источники), о применении стилей не судим.
+        // Случай «стилей нет вовсе» сюда не входит: так выглядит и проект, которому стили не нужны,
+        // поэтому он называется отдельно (noStyles) и не превращается в провал проверки.
+        unstyled: declared > 0 && sheetsWithRules === 0 && unreadableSheets === 0,
+        noStyles: declared === 0,
+      },
+    };
   });
   return {
     title: raw.title,
@@ -166,6 +242,7 @@ async function readPageEvidence(page: Page): Promise<PageEvidence> {
     textChars: raw.textChars,
     visibleElements: raw.visibleElements,
     blank: raw.textChars === 0 && raw.visibleElements === 0,
+    styles: raw.styles,
   };
 }
 
@@ -188,7 +265,19 @@ export type RuntimeFailureInput = {
   /** Статус самого документа: 404 на маршруте — это не «фон», а несуществующая страница. */
   documentStatus: number | null;
   blank: boolean;
+  /** Вид страницы; без него проверка судит только о наличии текста и не видит неоформленный экран. */
+  styles?: PageStyleFacts;
 };
+
+/**
+ * Расширения стилей и скриптов: их отсутствие оставляет белый экран (нет вида или логики), а не фон.
+ * `favicon.ico` и картинки сюда не входят: браузер спрашивает их сам, и их 404 ничего не ломает.
+ */
+const CODE_ASSET_EXTENSIONS = /\.(css|js|mjs|cjs|jsx|tsx|ts)$/i;
+
+function isCodeAsset(url: string) {
+  return CODE_ASSET_EXTENSIONS.test(url.split(/[?#]/)[0]);
+}
 
 /**
  * Что считать поломкой, а что — фоном.
@@ -199,17 +288,23 @@ export type RuntimeFailureInput = {
  * Тот же 401 приходит второй раз — как ошибка консоли «Failed to load resource: … status of 401»,
  * поэтому сообщения этого вида с ответом 4xx относятся к фону, а не к ошибкам приложения.
  *
- * Поломка — то, что видит пользователь: пустой экран, ошибки страницы и консоли, недошедшие
- * запросы, 5xx и несуществующий маршрут. Это и делает проверку строже прежней, потому что
- * пустой экран раньше проходил её: `expectVisible body` виден и на белой странице.
+ * Поломка — то, что видит пользователь: пустой экран, неоформленная страница (стили объявлены, но
+ * ни одно правило не действует), ошибки страницы и консоли, недошедшие запросы, 5xx, несуществующий
+ * маршрут и путь к стилю или скрипту, который не отдался. Это и делает проверку строже прежней:
+ * `expectVisible body` виден и на белой странице, а DOM с текстом был и когда стили не применились.
  */
 export function classifyRuntimeFailures(input: RuntimeFailureInput) {
   const aborted = input.failedRequests.filter(item => /ERR_ABORTED|NS_BINDING_ABORTED/i.test(item.error));
   const broken = input.failedRequests.filter(item => !/ERR_ABORTED|NS_BINDING_ABORTED/i.test(item.error));
   const serverErrors = input.httpErrors.filter(item => item.status >= 500);
   const backgroundHttp = input.httpErrors.filter(item => item.status < 500);
+  // Стиль или скрипт, который не отдался, — это белая и нерабочая страница, а не фон: браузер без
+  // него не применяет ни вида, ни логики. Всё остальное 4xx от своего же API — фон.
+  const missingAssets = backgroundHttp.filter(item => isCodeAsset(item.url));
+  const backgroundOnly = backgroundHttp.filter(item => !isCodeAsset(item.url));
   // Браузер пишет загрузку с 4xx в консоль как ошибку; это тот же фон, а не ошибка приложения.
   const resourceFailures = input.consoleErrors.filter(isFailedResource);
+  const assetRefusals = resourceFailures.filter(item => isCodeAsset(item.url ?? ""));
   const consoleErrors = input.consoleErrors.filter(item => !isFailedResource(item));
 
   const failures: string[] = [];
@@ -219,10 +314,22 @@ export function classifyRuntimeFailures(input: RuntimeFailureInput) {
   if (consoleErrors.length) failures.push("ошибки консоли (" + consoleErrors.length + "): " + consoleErrors[0].text);
   if (broken.length) failures.push("запросы не дошли (" + broken.length + "): " + broken[0].error + " " + broken[0].url);
   if (serverErrors.length) failures.push("ответы сервера 5xx (" + serverErrors.length + "): " + serverErrors.slice(0, 3).map(item => item.status + " " + item.url).join(", "));
+  if (missingAssets.length) failures.push("файлы стилей или скриптов не отдались (" + missingAssets.length + "): " + missingAssets.slice(0, 3).map(item => item.status + " " + item.url).join(", ") + " — без них страница остаётся белой");
+  if (assetRefusals.length) failures.push("браузер отказался применить стиль или скрипт: " + assetRefusals[0].text + (assetRefusals[0].url ? " — " + assetRefusals[0].url : ""));
+  // Неоформленная страница с текстом раньше проходила проверку: текст есть, значит «не пусто».
+  if (input.styles?.unstyled) {
+    const facts = input.styles;
+    failures.push(
+      "стили не применились: объявлено таблиц " + facts.declaredStylesheets + ", из них загрузилось " + facts.loadedStylesheets +
+      ", встроенных <style> " + facts.inlineStyles + ", действующих правил CSS " + facts.cssRules +
+      ", фон " + facts.bodyBackground + ", цвет текста " + facts.bodyColor +
+      " — страница неоформленная и выглядит белой, хотя элементы на ней есть",
+    );
+  }
 
   const background = [
-    ...backgroundHttp.map(item => "HTTP " + item.status + " " + item.url),
-    ...resourceFailures.map(item => item.text + (item.url ? " — " + item.url : "")),
+    ...backgroundOnly.map(item => "HTTP " + item.status + " " + item.url),
+    ...resourceFailures.filter(item => !assetRefusals.includes(item)).map(item => item.text + (item.url ? " — " + item.url : "")),
     ...aborted.map(item => "отменён запрос " + item.url),
   ];
   return { ok: failures.length === 0, failures, background };
@@ -241,23 +348,35 @@ function briefList(values: string[], limit = 3) {
   return values.slice(0, limit).join("; ") + (values.length > limit ? " …" : "");
 }
 
-async function inspectRuntimePage(projectId: string, path: string) {
-  const status = await previewStatus(projectId);
-  if (!status.running) {
-    throw new Error(String((status as { error?: string }).error ?? "Preview is not running"));
-  }
-  const current = getPreview(projectId);
-  if (!current) throw new Error("Состояние предпросмотра недоступно — предпросмотр не запущен");
+/** Что дала одна загрузка страницы: адрес контейнера и прокси панели возвращают одно и то же по форме. */
+type DoorEvidence = {
+  url: string;
+  status: number | null;
+  statusText: string | null;
+  rendered: PageEvidence;
+  htmlBytes: number;
+  console: Array<ConsoleMessage & { type: string }>;
+  failedRequests: Array<{ url: string; method: string; error: string }>;
+  httpErrors: Array<{ url: string; method: string; status: number }>;
+  pageErrors: string[];
+  failures: string[];
+  background: string[];
+};
 
-  const url = `http://${current.host}:${current.port}${path}`;
-  const browser = await chromium.launch({ headless: true, executablePath: process.env.WEBNESTDEV_BROWSER_EXECUTABLE || undefined });
+/**
+ * Одна дверь к приложению: адрес контейнера и адрес прокси платформы — два разных пути к одному
+ * проекту. Кука нужна только второй двери: прокси пускает лишь владельца проекта.
+ */
+async function loadDoor(browser: Browser, url: string, cookie?: { name: string; value: string }): Promise<DoorEvidence> {
+  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  // Кука ставится на весь источник: приложение внутри кадра ходит и в свой /api.
+  if (cookie) await context.addCookies([{ name: cookie.name, value: cookie.value, url: new URL(url).origin }]);
+  const page = await context.newPage();
   const consoleMessages: Array<ConsoleMessage & { type: string }> = [];
   const failedRequests: Array<{ url: string; method: string; error: string }> = [];
   const httpErrors: Array<{ url: string; method: string; status: number }> = [];
   const pageErrors: string[] = [];
-
   try {
-    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     page.on("console", message => {
       if (consoleMessages.length < MAX_CONSOLE_ITEMS) {
         consoleMessages.push({ type: message.type(), text: message.text().slice(0, 2000), url: message.location()?.url ?? "" });
@@ -295,35 +414,141 @@ async function inspectRuntimePage(projectId: string, path: string) {
       httpErrors,
       documentStatus: response?.status() ?? null,
       blank: rendered.blank,
+      styles: rendered.styles,
     });
     return {
-      ok: judged.ok,
+      url,
       status: response?.status() ?? null,
       statusText: response?.statusText() ?? null,
-      url,
-      title: rendered.title,
-      /** Что видно на странице — по этому и судят о белом экране, а не по скриншоту в base64. */
       rendered,
+      htmlBytes: Buffer.byteLength(html, "utf8"),
       console: consoleMessages,
       failedRequests,
       httpErrors,
       pageErrors,
-      background: judged.background,
-      htmlBytes: Buffer.byteLength(html, "utf8"),
       failures: judged.failures,
-      diagnostic: judged.ok
-        ? "Рендеринг прошел: страница отрисовала содержимое, ошибок страницы, консоли и сети нет."
-        : "Проверка рендеринга не прошла: " + briefList(judged.failures) +
-          (judged.background.length ? " Фоновые ответы (" + briefList(judged.background) + ") — не поломка: страница без авторизации отвечает 401, и чинить их не нужно." : ""),
-      nextAction: judged.ok
-        ? "Runtime verification passed."
-        : rendered.blank
-          ? "Страница пустая: приложение ничего не отрисовало. Проверьте точку входа (монтирование в #root или #app), стартовый маршрут и состояние загрузки до ответа авторизации: экран не должен оставаться пустым, пока запросы сессии не ответили."
-          : "Исправьте то, что перечислено в failures, и запустите browser.runtime снова.",
+      background: judged.background,
     };
+  } finally {
+    await context.close().catch(() => undefined);
+  }
+}
+
+/** Результат второй двери: она может быть недоступна, и это не поломка проекта. */
+type ProxyDoorResult = {
+  checked: boolean;
+  url: string;
+  reason?: string;
+  ok?: boolean;
+  status?: number | null;
+  rendered?: PageEvidence;
+  failures?: string[];
+  background?: string[];
+};
+
+/**
+ * Проверка той дверью, которой пользуется панель. Прямая проверка контейнера видит приложение, а не
+ * предпросмотр: переписанные пути, отданные заголовки и отказ в кадре живут только в прокси, и
+ * именно так получается «всё запустилось, а у пользователя белая страница». Кука передаётся снаружи,
+ * чтобы этот проход можно было проверить тестом без входа в аккаунт.
+ */
+export async function inspectPreviewThroughPanelProxy(input: { projectId: string; path: string; selfBase: string; cookie: { name: string; value: string } }): Promise<ProxyDoorResult> {
+  const url = input.selfBase.replace(/\/+$/, "") + previewProxyBase(input.projectId) + input.path.replace(/^\/+/, "");
+  try {
+    const browser = await chromium.launch({ headless: true, executablePath: process.env.WEBNESTDEV_BROWSER_EXECUTABLE || undefined });
+    try {
+      const door = await loadDoor(browser, url, input.cookie);
+      // Сам вход не открылся: прокси ответил отказом (нет сессии, проект не найден). Это не поломка
+      // страницы — проверка честно говорит, что через панель посмотреть не удалось.
+      if (door.status === null || door.status === 401 || door.status === 403 || door.status === 404) {
+        return { checked: false, url, reason: "прокси панели ответил HTTP " + (door.status ?? "без ответа") };
+      }
+      return { checked: true, url, ok: door.failures.length === 0, status: door.status, rendered: door.rendered, failures: door.failures, background: door.background };
+    } finally {
+      await browser.close();
+    }
+  } catch (error) {
+    // Адрес платформы может быть недостижим изнутри проверки: это ограничение среды, а не поломка
+    // проекта, поэтому причина называется, а не превращается в провал.
+    return { checked: false, url, reason: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/**
+ * Дверь панели с сессией владельца проекта. Chromium запускается внутри того же контейнера, поэтому
+ * «что видит пользователь» — это 127.0.0.1 и тот же маршрут прокси, который отдаёт iframe панели.
+ * `WEBNESTDEV_SELF_URL` переопределяет адрес платформы (отдельная сеть, тесты).
+ */
+async function inspectProxyDoor(input: { projectId: string; path: string; userId?: string }): Promise<ProxyDoorResult> {
+  const selfBase = process.env.WEBNESTDEV_SELF_URL?.trim() || "http://127.0.0.1:" + (process.env.PORT?.trim() || "8787");
+  if (!input.userId) return { checked: false, url: selfBase + previewProxyBase(input.projectId), reason: "неизвестен владелец проекта" };
+  let sessionId = "";
+  try {
+    const session = await createSession(input.userId);
+    sessionId = session.id;
+    return await inspectPreviewThroughPanelProxy({ projectId: input.projectId, path: input.path, selfBase, cookie: { name: SESSION_COOKIE, value: session.id } });
+  } catch (error) {
+    return { checked: false, url: selfBase + previewProxyBase(input.projectId), reason: error instanceof Error ? error.message : String(error) };
+  } finally {
+    // Кука нужна только на время проверки: сессия не должна её пережить.
+    if (sessionId) await deleteSession(sessionId).catch(() => undefined);
+  }
+}
+
+async function inspectRuntimePage(projectId: string, path: string, userId?: string) {
+  const status = await previewStatus(projectId);
+  if (!status.running) {
+    throw new Error(String((status as { error?: string }).error ?? "Preview is not running"));
+  }
+  const current = getPreview(projectId);
+  if (!current) throw new Error("Состояние предпросмотра недоступно — предпросмотр не запущен");
+
+  const browser = await chromium.launch({ headless: true, executablePath: process.env.WEBNESTDEV_BROWSER_EXECUTABLE || undefined });
+  let door: DoorEvidence;
+  try {
+    door = await loadDoor(browser, `http://${current.host}:${current.port}${path}`);
   } finally {
     await browser.close();
   }
+  const panel = await inspectProxyDoor({ projectId, path, userId });
+  const failures = [...door.failures, ...(panel.failures ?? []).map(item => "через прокси панели: " + item)];
+  const rendered = door.rendered;
+  const ok = failures.length === 0;
+  const sameBothWays = panel.checked && door.failures.length === 0 && (panel.failures?.length ?? 0) > 0;
+  return {
+    ok,
+    status: door.status,
+    statusText: door.statusText,
+    url: door.url,
+    title: rendered.title,
+    /** Что видно на странице — по этому и судят о белом экране, а не по скриншоту в base64. */
+    rendered,
+    console: door.console,
+    failedRequests: door.failedRequests,
+    httpErrors: door.httpErrors,
+    pageErrors: door.pageErrors,
+    background: door.background,
+    htmlBytes: door.htmlBytes,
+    /** Та же страница, но дверью панели: только она показывает, что видит пользователь в iframe. */
+    panelDoor: panel.checked
+      ? { checked: true, url: panel.url, status: panel.status ?? null, ok: panel.ok === true, rendered: panel.rendered, failures: panel.failures ?? [], background: panel.background ?? [] }
+      : { checked: false, url: panel.url, reason: panel.reason ?? "" },
+    failures,
+    diagnostic: (ok
+      ? "Рендеринг прошёл: страница отрисовала содержимое, ошибок страницы, консоли и сети нет."
+      : "Проверка рендеринга не прошла: " + briefList(failures) +
+        (door.background.length ? " Фоновые ответы (" + briefList(door.background) + ") — не поломка: страница без авторизации отвечает 401, и чинить их не нужно." : "")) +
+      (rendered.styles.noStyles ? " На странице нет ни одного правила CSS: если проект и должен быть без стилей, это нормально, иначе стили не подключены и экран выглядит белым." : "") +
+      (sameBothWays ? " Прямо из контейнера приложение отвечает нормально — значит пользователь видит пустой или неоформленный экран из-за прокси панели, а не из-за самого приложения." : "") +
+      (panel.checked ? "" : " Через прокси панели проверить не удалось: " + (panel.reason ?? "неизвестная причина") + "."),
+    nextAction: ok
+      ? "Runtime verification passed."
+      : rendered.styles.unstyled
+        ? "Стили не применились, поэтому страница выглядит белой. Проверьте подключение CSS: импорт стилей в точке входа, путь к собранному css-файлу и ответ сервера на него (для файла .css ожидается текстовый тип, а не HTML) — без действующих правил страница останется неоформленной."
+        : rendered.blank
+          ? "Страница пустая: приложение ничего не отрисовало. Проверьте точку входа (монтирование в #root или #app), стартовый маршрут и состояние загрузки до ответа авторизации: экран не должен оставаться пустым, пока запросы сессии не ответили."
+          : "Исправьте то, что перечислено в failures, и запустите browser.runtime снова.",
+  };
 }
 
 import type { QaScenarioStep as BrowserScenarioStep } from "../qa/scenario-planner.js";
@@ -413,7 +638,7 @@ async function runBrowserScenario(projectId: string, input: unknown) {
 
     const rendered = await readPageEvidence(page);
     const stepsPassed = results.length === steps.length && results.every(item => item.ok);
-    const judged = classifyRuntimeFailures({ pageErrors, consoleErrors, failedRequests, httpErrors, documentStatus, blank: rendered.blank });
+    const judged = classifyRuntimeFailures({ pageErrors, consoleErrors, failedRequests, httpErrors, documentStatus, blank: rendered.blank, styles: rendered.styles });
     const ok = stepsPassed && judged.ok;
     const failedStep = results.find(item => !item.ok);
     return {
@@ -484,9 +709,9 @@ registerTool({
 registerTool({
   name: "browser.runtime",
   description:
-    "Open the Preview in a real headless Chromium browser, execute client-side JavaScript, and report what the page actually rendered (visible text, its size, blank screen), plus console errors, failed network requests, HTTP 5xx and the document status. Background 4xx from the app's own API calls and aborted requests are listed separately as `background` and are not failures. Use this after browser.open or project.verify when runtime behavior matters.",
+    "Open the Preview in a real headless Chromium browser, execute client-side JavaScript, and report what the page actually rendered: visible text, its size, blank screen, and whether styles applied (declared vs loaded stylesheets, CSS rules in effect, body background/color, `unstyled`). Console errors, failed network requests, HTTP 5xx and the document status come with it. Both doors are checked and returned: `url`/`rendered` is the container address the app itself answers on, `panelDoor` is the same page loaded through the platform's own preview proxy — the door the panel's iframe uses, so a page that only breaks for the user is reported too. Background 4xx from the app's own API calls and aborted requests are listed separately as `background` and are not failures; a 4xx for a .css or .js file is a failure, because without it the page is white. Use this after browser.open or project.verify when runtime behavior matters.",
   parameters: { type: "object", additionalProperties: false, properties: { path: { type: "string", description: "Маршрут предпросмотра, например / или /about; по умолчанию /" } } },
-  execute: async (input, context) => withBrowserSlot(() => inspectRuntimePage(context.projectId, getPath(input))),
+  execute: async (input, context) => withBrowserSlot(() => inspectRuntimePage(context.projectId, getPath(input), context.userId)),
 });
 
 registerTool({

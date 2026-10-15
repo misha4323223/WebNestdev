@@ -21,7 +21,19 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
   const [logsError,setLogsError]=useState("");
   const [loadingLogs,setLoadingLogs]=useState(false);
 
-  const refresh=async()=>{setError("");try{setPreview(await getPreviewStatus(projectId))}catch(e){setError(e instanceof Error?e.message:"Не удалось получить статус preview")}};
+  // Номер загрузки кадра: каждый свежий статус (открытие проекта, конец прогона агента, кнопка
+  // «Обновить») грузит кадр заново. Раньше он загружался один раз и оставался тем, что прокси успел
+  // отдать пустым во время старта: логи говорили «запущено», а в панели так и висела белая страница.
+  const [frameToken,setFrameToken]=useState(0);
+  const refresh=async()=>{
+    setError("");
+    try{
+      const next=await getPreviewStatus(projectId);
+      setPreview(next);
+      // Приложение могло подняться уже после того, как кадр загрузился: со новым статусом он берётся заново.
+      if(next.running)setFrameToken(value=>value+1);
+    }catch(e){setError(e instanceof Error?e.message:"Не удалось получить статус preview")}
+  };
   // Refreshed when the project changes and after every agent run: a preview the agent
   // started through preview.start shows up here without the user pressing anything.
   useEffect(()=>{void refresh()},[projectId,reloadToken]);
@@ -108,7 +120,7 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
       <div className={"preview-stage"+(face==="logs"?" flipped":"")}>
         <div className="preview-face preview-front">
           {preview.running
-            ? <iframe key={reloadToken} className="preview-frame" title="Живой предпросмотр" src={previewUrl(projectId)}/>
+            ? <iframe key={reloadToken+"-"+frameToken} className="preview-frame" title="Живой предпросмотр" src={previewUrl(projectId)}/>
             : <div className="preview-empty"><div className="preview-icon"><Terminal size={20}/></div><strong>Предпросмотр проекта</strong><span>Запусти preview после создания файлов проекта.</span><button className="ghost-button" onClick={()=>void start()}>Запустить preview</button></div>}
         </div>
         <div className="preview-face preview-back">

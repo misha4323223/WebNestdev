@@ -2,9 +2,10 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { chromium } from "playwright";
+import Fastify from "fastify";
 import { getTool } from "../tool-registry.js";
 import { setPreview } from "../preview/preview-store.js";
-import { classifyRuntimeFailures } from "./browser-tools.js";
+import { classifyRuntimeFailures, inspectPreviewThroughPanelProxy } from "./browser-tools.js";
 
 /**
  * The situation the agent kept losing whole runs on: the app answers, the page is white, and the
@@ -31,6 +32,15 @@ const RENDERED_PAGE = `<!doctype html><html><head><meta charset="utf-8"><title>A
 
 const NOT_FOUND_PAGE = `<!doctype html><html><head><meta charset="utf-8"><title>404</title></head><body><p>Страница не найдена</p></body></html>`;
 
+/**
+ * Страница, на которой текст есть, а стиль не пришёл: ровно та "белая страница", на которой
+ * проверка терялась — DOM не пуст, консоль молчит, а пользователь видит неоформленный экран.
+ */
+const UNSTYLED_PAGE = `<!doctype html><html><head><meta charset="utf-8"><title>Вход</title>
+<link rel="stylesheet" href="/styles.css"></head><body>
+<div id="root"><h1>Вход в аккаунт</h1><button>Войти</button></div>
+</body></html>`;
+
 async function startApp() {
   const server = createServer((request, response) => {
     const url = request.url ?? "/";
@@ -42,6 +52,17 @@ async function startApp() {
     if (url === "/missing") {
       response.writeHead(404, { "content-type": "text/html" });
       response.end(NOT_FOUND_PAGE);
+      return;
+    }
+    if (url.startsWith("/styles.css")) {
+      // Стиль не отдался: браузер отказывается применять HTML вместо css, и страница остаётся белой.
+      response.writeHead(404, { "content-type": "text/html" });
+      response.end("<!doctype html><html><body>Not found</body></html>");
+      return;
+    }
+    if (url === "/unstyled") {
+      response.writeHead(200, { "content-type": "text/html" });
+      response.end(UNSTYLED_PAGE);
       return;
     }
     response.writeHead(200, { "content-type": "text/html" });
@@ -175,5 +196,83 @@ test("сценарий в реальном Chromium: несуществующи�
     assert.match(result.diagnostic ?? "", /шаге 2|404/);
   } finally {
     await app.close();
+  }
+});
+
+test("404 на стиль или скрипт и неприменившиеся стили — поломка, а 401 от своего API и favicon — фон", () => {
+  const judged = classifyRuntimeFailures({
+    pageErrors: [],
+    consoleErrors: [{ text: "Failed to load resource: the server responded with a status of 404 (Not Found)", url: "http://app/assets/index-abc.css" }],
+    failedRequests: [],
+    httpErrors: [
+      { url: "http://app/assets/index-abc.css", status: 404 },
+      { url: "http://app/api/account/settings", status: 401 },
+      { url: "http://app/favicon.ico", status: 404 },
+    ],
+    documentStatus: 200,
+    blank: false,
+    styles: { declaredStylesheets: 1, loadedStylesheets: 0, inlineStyles: 0, cssRules: 0, bodyBackground: "rgb(255, 255, 255)", bodyColor: "rgb(0, 0, 0)", unstyled: true, noStyles: false },
+  });
+  assert.equal(judged.ok, false, "страница с текстом, но без вида — не выполненная работа");
+  assert.ok(judged.failures.some(item => /стили не применились/.test(item)), judged.failures.join(" | "));
+  assert.ok(judged.failures.some(item => /index-abc\.css/.test(item)), "отсутствующий стиль назван по имени");
+  assert.ok(judged.background.some(item => item.includes("401")), "401 от своего API остаётся фоном");
+  assert.ok(judged.background.some(item => item.includes("favicon")), "favicon браузер спрашивает сам, его 404 ничего не ломает");
+
+  // Те же ответы, но стили применились: проверка не валится на пустом месте.
+  const fine = classifyRuntimeFailures({
+    pageErrors: [], consoleErrors: [], failedRequests: [], httpErrors: [], documentStatus: 200, blank: false,
+    styles: { declaredStylesheets: 1, loadedStylesheets: 1, inlineStyles: 3, cssRules: 120, bodyBackground: "rgb(13, 15, 19)", bodyColor: "rgb(232, 234, 237)", unstyled: false, noStyles: false },
+  });
+  assert.equal(fine.ok, true);
+});
+
+test("страница с текстом и неприменившимся стилем — это белый экран, а не успех", async t => {
+  if (!(await chromiumAvailable())) return t.skip("Chromium недоступен в этой среде");
+  const app = await startApp();
+  try {
+    setPreview({ mode: "static", containerId: "", host: "127.0.0.1", port: app.port, projectId: "p-unstyled", startedAt: Date.now(), lastUsedAt: Date.now() });
+    const runtime = getTool("browser.runtime");
+    assert.ok(runtime?.execute);
+    // Владелец не указан: проверка не создаёт сессию, а door панели разбирается отдельным тестом.
+    const result = (await runtime.execute({ path: "/unstyled" }, { projectId: "p-unstyled", runId: "r", userId: "" })) as {
+      ok: boolean;
+      rendered: { text: string; styles: { declaredStylesheets: number; cssRules: number; unstyled: boolean } };
+      failures: string[];
+      nextAction: string;
+    };
+
+    assert.match(result.rendered.text, /Вход в аккаунт/, "текст на странице есть — именно так выглядел «белый экран»");
+    assert.equal(result.rendered.styles.declaredStylesheets, 1);
+    // Chrome оставляет пустую таблицу и на 404, поэтому применение стилей считается по правилам.
+    assert.equal(result.rendered.styles.cssRules, 0);
+    assert.equal(result.rendered.styles.unstyled, true);
+    assert.equal(result.ok, false, "неоформленная страница не считается выполненной работой");
+    assert.ok(result.failures.some(item => /стили не применились/.test(item)), result.failures.join(" | "));
+    assert.match(result.nextAction, /CSS/);
+  } finally {
+    await app.close();
+  }
+});
+
+test("дверь панели: пустая страница через прокси видна, даже когда сам контейнер отвечает", async t => {
+  if (!(await chromiumAvailable())) return t.skip("Chromium недоступен в этой среде");
+  // Прокси платформы, который отдаёт пустую страницу: так выглядит предпросмотр, сломанный на пути
+  // к пользователю. Кука передаётся явно, поэтому тест не трогает хранилище сессий.
+  const platform = Fastify();
+  platform.get("/api/projects/:id/preview/open/*", async (_request, reply) => {
+    reply.header("content-type", "text/html; charset=utf-8");
+    return reply.send("<!doctype html><html><head><title>Пусто</title></head><body></body></html>");
+  });
+  await platform.ready();
+  const port = await platform.listen({ host: "127.0.0.1", port: 0 }).then(() => (platform.server.address() as { port: number }).port);
+  try {
+    const door = await inspectPreviewThroughPanelProxy({ projectId: "p-panel", path: "/", selfBase: "http://127.0.0.1:" + port, cookie: { name: "webnestdev_session", value: "test-session" } });
+    assert.equal(door.checked, true, door.reason ?? "");
+    assert.equal(door.rendered?.blank, true, "через прокси пользователь видит пустой экран");
+    assert.equal(door.ok, false);
+    assert.ok((door.failures ?? []).some(item => /пустая/.test(item)), (door.failures ?? []).join(" | "));
+  } finally {
+    await platform.close();
   }
 });
