@@ -203,8 +203,24 @@ button,textarea{font:inherit}button{color:inherit}
 .home-run span{display:block;margin-top:3px;color:#7f8a84;font-size:10px;line-height:1.5}
 .home-run .home-run-open{height:30px;flex:none}
 .home-main.has-run .home-hero{padding-top:26px}
-@media(max-width:800px){.home-hero{padding-top:58px}.home-hero-mark img{width:104px;height:104px}.template-grid{grid-template-columns:repeat(2,1fr)}.recent-grid{grid-template-columns:repeat(2,1fr)}}
-@media(max-width:520px){.home-screen{padding:0 14px}.home-tabs{margin:0 -14px;padding:10px 14px}.home-hero{padding-top:42px}.home-hero-mark img{width:88px;height:88px}.home-composer-bottom span{display:none}.template-grid,.recent-grid{grid-template-columns:1fr}.home-footer{flex-wrap:wrap}.home-footer span:nth-child(2){display:none}}
+@media(max-width:800px){.home-hero{padding-top:58px}.home-hero-mark img{width:104px;height:104px}.template-grid{grid-template-columns:repeat(2,1fr)}.recent-grid{grid-template-columns:repeat(2,1fr)}.template-card{min-height:92px;gap:10px;padding:12px}}
+/*
+ * Шаблоны на телефоне — компактная плитка в две колонки: иконка, имя и короткое описание в две
+ * строки. Раньше на узком экране каждая карточка занимала всю ширину и 108 пикселей высоты, поэтому
+ * «Быстрый старт» уезжал за экран; теперь четыре шаблона видны сразу. Технологичность — угловая
+ * подсветка фона и стрелка в углу карточки, без чужих цветов: палитра остаётся той же тёмной.
+ */
+@media(max-width:520px){.home-screen{padding:0 14px}.home-tabs{margin:0 -14px;padding:10px 14px}.home-hero{padding-top:34px}.home-hero-mark{margin-bottom:14px}.home-hero-mark img{width:76px;height:76px}.home-composer{margin-top:20px}.home-composer-bottom span{display:none}.home-section{margin-bottom:26px}.home-section-head{margin-bottom:9px}.recent-grid{grid-template-columns:1fr}.home-footer{flex-wrap:wrap}.home-footer span:nth-child(2){display:none}
+  .template-grid{grid-template-columns:repeat(2,1fr);gap:7px}
+  /* Угловая подсветка — часть фона карточки, а не слой поверх текста: накладка ослабляла бы его. */
+  .template-card{position:relative;min-height:0;padding:9px 10px;gap:7px;border-color:#242b34;background:radial-gradient(125% 95% at 100% 0,rgba(120,168,224,.11),transparent 58%),linear-gradient(170deg,#141922,#101317 62%)}
+  .template-card:active{border-color:#3b4653;background:radial-gradient(125% 95% at 100% 0,rgba(120,168,224,.18),transparent 58%),linear-gradient(170deg,#161b24,#111419 62%)}
+  .template-card>svg{position:absolute;top:9px;right:9px;width:12px;height:12px;color:#4f5865}
+  .template-icon{width:24px;height:24px;border-radius:7px}
+  .template-card strong{font-size:11.5px}
+  /* Описание остаётся, но в две строки: по нему выбирают шаблон, а высоту карточки задаёт он один. */
+  .template-card small{margin-top:3px;font-size:9px;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+}
 
 .nest-loader{--nest-size:42px;position:relative;display:inline-grid;width:var(--nest-size);height:var(--nest-size);place-items:center;flex:none;vertical-align:middle;isolation:isolate}
 .nest-loader svg{display:block;width:100%;height:100%;overflow:visible}

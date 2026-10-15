@@ -72,6 +72,11 @@ type QueuedMessage={id:string;text:string;attachments:Attachment[]};
  * иначе долгий сбой превратился бы в бесконечный цикл попыток.
  */
 const MAX_AUTO_RESUME=2;
+/**
+ * События, после которых ожидание лимита провайдера закончилось: за любым из них идёт настоящая
+ * работа или конец запуска, поэтому строка «жду N с и продолжаю» должна уйти.
+ */
+const RETRY_NOTICE_CLEAR_EVENTS=new Set(["message.delta","reasoning.delta","tool.started","tool.finished","plan.updated","run.completed","run.failed","error"]);
 
 /** The provider state the composer reads to show the model a run will use. */
 type ProviderStatus={configured:boolean;provider:string;model:string;platformDefault?:{available:boolean;providerName:string;model:string}|null};
@@ -169,6 +174,20 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
   const completedRef=useRef(false);
   // Сколько ограниченных автопереподключений уже сделано; сбрасывается в ноль при новом запуске.
   const autoResumeRef=useRef(0);
+  /**
+   * Строка «провайдер просил подождать — жду и продолжаю» сейчас на экране. Она живёт только до
+   * первого признака настоящей работы: пока агент ждёт лимит, панель не должна выглядеть как ошибка.
+   */
+  const retryNoticeRef=useRef(false);
+  // Список сообщений: открытие проекта начинается с самого верха переписки, а не с её конца, и
+  // ответ работающего агента остаётся в поле зрения, пока пользователь у нижнего края.
+  const messagesBoxRef=useRef<HTMLDivElement|null>(null);
+  /**
+   * Пользователь у нижнего края переписки: только тогда новые сообщения подхватываются сами.
+   * Открытый чат стоит в начале, поэтому сразу после входа это false — иначе первый же ответ агента
+   * утащил бы список вниз, и проект снова открывался бы с конца чата.
+   */
+  const pinnedToEndRef=useRef(false);
   const autoResumeTimerRef=useRef<number|null>(null);
   // Queued messages start runs from socket callbacks, so the mode is read from a ref.
   const modeRef=useRef<AgentMode>(mode);
@@ -207,6 +226,33 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
     setMessages(messagesRef.current);
   }
 
+  /**
+   * Прокрутка нужна только тому, кто читает последнее. Если человек отлистал переписку вверх
+   * (читать историю), панель его не выдёргивает обратно на каждый ответ агента.
+   */
+  function trackMessagesScroll(){
+    const box=messagesBoxRef.current;
+    if(!box)return;
+    pinnedToEndRef.current=box.scrollHeight-box.scrollTop-box.clientHeight<120;
+  }
+
+  /** Прокрутка к началу: у открытого проекта первым видно самое раннее сообщение переписки. */
+  function scrollMessagesToTop(){
+    const box=messagesBoxRef.current;
+    if(box)box.scrollTop=0;
+  }
+
+  /**
+   * Новые сообщения показываются сразу, но только тому, кто читает последнее. Открытый чат стоит
+   * в начале, поэтому ответ агента не сдвигает список, пока пользователь сам не ушёл вниз или не
+   * отправил сообщение.
+   */
+  useEffect(()=>{
+    const box=messagesBoxRef.current;
+    if(!box||!pinnedToEndRef.current)return;
+    box.scrollTop=box.scrollHeight;
+  },[messages,loaded]);
+
   function replaceMessages(next:ChatMessage[]){
     messagesRef.current=next;
     setMessages(next);
@@ -242,6 +288,13 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
     if(autoResumeTimerRef.current!==null){window.clearTimeout(autoResumeTimerRef.current);autoResumeTimerRef.current=null}
   }
 
+  /** Ожидание лимита провайдера кончилось: строка «жду … с» уходит вместе с ним. */
+  function clearRetryNotice(){
+    if(!retryNoticeRef.current)return;
+    retryNoticeRef.current=false;
+    setNotice("");
+  }
+
   useEffect(()=>()=>cancelAutoResume(),[]);
 
   /** A cancelled or aborted run leaves rows spinning, so they are settled as failed. */
@@ -254,6 +307,10 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
     setLoaded(false);
     queueRef.current=[];setQueue([]);
     setAttachments([]);setNotice("");
+    retryNoticeRef.current=false;
+    // Другой чат — с самого верха: место прокрутки прошлой переписки к новой не относится.
+    pinnedToEndRef.current=false;
+    scrollMessagesToTop();
     cancelAutoResume();
     autoResumeRef.current=0;setReconnect(null);setResume(null);closedByUsRef.current=true;
     actionsRef.current=[];setActions([]);setProgress(null);
@@ -329,6 +386,9 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
     setResume(null);
     setRunning(true);
     setNotice("");
+    // Отправленное сообщение и ответ на него — то, что хочется видеть, даже если до этого
+    // переписка была отлистана вверх.
+    pinnedToEndRef.current=true;
     // При автопереподключении строка «переподключаюсь…» остаётся видимой до открытия сокета: панель
     // не должна выглядеть бездействующей, пока идёт повторная попытка.
     if(!resuming)setReconnect(null);
@@ -348,6 +408,8 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
       closedByUsRef.current=false;
       const maxAttempts=3;
       const socket=createAgentSocket(event=>{
+      // Строка ожидания снимается первым же признаком работы: ответом, размышлением или действием.
+      if(RETRY_NOTICE_CLEAR_EVENTS.has(event.type))clearRetryNotice();
       if(event.type==="message.delta")updateMessages(current=>{
         const next=[...current];
         const last=next.at(-1);
@@ -368,9 +430,20 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
       // The server runs only a few agents at once, so a busy moment makes the run wait instead
       // of failing. The line says so and disappears the moment the run really starts.
       if(event.type==="run.queued"||event.type==="run.started"){
+        // Признак начатого запуска снимает и сам факт ожидания: строка очереди и строка лимита
+        // провайдера делят одно место, а ссылка не должна пережить показанную строку.
+        if(event.type==="run.started")retryNoticeRef.current=false;
         setNotice(event.type==="run.queued"?"Сервер занят другим запуском — вы в очереди"+(typeof event.queued==="number"&&event.queued>0?" (впереди: "+event.queued+")":"")+"…":"");
       }
       if(event.type==="run.progress"&&typeof event.step==="number"&&typeof event.maxSteps==="number")setProgress({step:event.step,maxSteps:event.maxSteps,...(typeof event.tokens==="number"?{tokens:event.tokens}:{}),...(typeof event.budget==="number"?{budget:event.budget}:{})});
+      // Провайдер ответил «подожди»: запуск не прерывается, шаг ждёт и повторяется сам. Пользователь
+      // видит это строкой над полем ввода, а не ошибкой в переписке.
+      if(event.type==="run.retrying"){
+        const wait=typeof event.waitSeconds==="number"&&event.waitSeconds>0?event.waitSeconds:1;
+        const reason=event.code==="RATE_LIMIT"?"Провайдер ограничил частоту запросов":event.code==="NETWORK"?"Связь с провайдером прервалась":"Провайдер временно недоступен";
+        retryNoticeRef.current=true;
+        setNotice(reason+" — жду "+wait+" с и продолжаю (попытка "+event.attempt+" из "+event.attempts+")…");
+      }
       if(event.type==="tool.started"&&event.name){
         const name=event.name;
         const id=event.toolCallId??nextId();
@@ -431,6 +504,8 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
       function drop(){
         if(settled||closedByUsRef.current||completedRef.current||socketRef.current!==socket)return;
         settled=true;
+        // Ожидание лимита оборвалось вместе с соединением: следующее уведомление своё.
+        retryNoticeRef.current=false;
         if(!opened&&attempt<maxAttempts){
           setReconnect({attempt:attempt+1,max:maxAttempts});
           window.setTimeout(()=>{if(!closedByUsRef.current&&socketRef.current===socket)connect(attempt+1)},700*(attempt+1)*(attempt+1));
@@ -637,7 +712,7 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
       </button>
     </div>
 
-    <div className="messages">
+    <div className="messages" ref={messagesBoxRef} onScroll={trackMessagesScroll}>
       {visibleMessages.map((m,i)=>{
         // Ответ, который модель пишет прямо сейчас: над ним идёт её размышление.
         const live=running&&i===visibleMessages.length-1;
