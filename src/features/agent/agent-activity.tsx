@@ -163,8 +163,11 @@ export function writePlan(conversationId: string, plan: PlanState) {
   }
 }
 
-/** The three windows of a run: the plan, the actions and the model's thinking. */
-export type PanelId = "plan" | "actions" | "thinking";
+/**
+ * The two windows of a run that sit next to the composer: the plan and the actions. The model's
+ * thinking is not one of them — it belongs to the answer it produced and lives in the message itself.
+ */
+export type PanelId = "plan" | "actions";
 export type PanelState = Record<PanelId, boolean>;
 export type PanelToggles = { collapsed: PanelState; onToggle: (id: PanelId) => void };
 
@@ -281,42 +284,44 @@ function formatTokens(value: number) {
   return value >= 1000 ? Math.round(value / 1000) + "K" : String(value);
 }
 
-/** The model's chain of thought, streamed while it works, with the step and the context size next to it. */
-export function ThinkingPanel({ text, running, progress, startedAt, collapsed, onToggle }: {
+/**
+ * The chain of thought of one answer, shown **above** it — the model thinks first and writes after,
+ * and the thinking is the container the user can fold away rather than a separate window far from the
+ * text it explains — the shape Replit uses.
+ *
+ * While the run is working the container is open, so the user sees the reasoning where the answer
+ * will appear, with the step, the context size and the elapsed time next to it — a model that streams
+ * no reasoning still shows that something is happening instead of a frozen screen. The user's own
+ * choice is stronger than that default: once the block was folded or unfolded by hand, it stays the
+ * way the user left it.
+ */
+export function MessageThinking({ text, running, progress, startedAt }: {
   text: string;
-  running: boolean;
+  /** The answer this block belongs to is being written right now. */
+  running?: boolean;
   progress?: { step: number; maxSteps: number; tokens?: number; budget?: number } | null;
   startedAt?: number | null;
-} & PanelToggles) {
+}) {
+  const [open, setOpen] = useState(Boolean(running));
+  const [chosen, setChosen] = useState(false);
+  useEffect(() => { if (!chosen) setOpen(Boolean(running)); }, [running, chosen]);
   const elapsed = useElapsedSeconds(running ? startedAt : null);
-  const detail = [
+  // A finished turn without thinking says nothing: an empty folded row would only be noise.
+  if (!text.trim() && !running) return null;
+  // Шаг, размер контекста и время — это признаки живого запуска: у сохранённого ответа они значили бы
+  // чужой прогресс, поэтому строка собирается только пока блок работает.
+  const detail = !running ? "" : [
     progress ? "шаг " + progress.step + " из " + progress.maxSteps : "",
     progress?.tokens ? "контекст " + formatTokens(progress.tokens) + (progress.budget ? " / " + formatTokens(progress.budget) : "") : "",
     elapsed !== null ? elapsed + " с" : "",
   ].filter(Boolean).join(" · ");
-  return <RunPanel
-    id="thinking"
-    icon={<Brain size={13}/>}
-    title="Размышления агента"
-    status={<span className="run-panel-state">{running ? <><LoaderCircle size={12} className="agent-spin"/> думает</> : "готово"}</span>}
-    collapsed={collapsed}
-    onToggle={onToggle}
-  >
-    <div className="agent-thinking">{text || (running ? "Запрос отправлен модели. Размышления появятся здесь, если модель их присылает." : "Модель не прислала размышления на этом шаге.")}</div>
-    {detail && <div className="agent-thinking-note">{detail}</div>}
-  </RunPanel>;
-}
-
-/** The thinking of one past turn, folded away under its answer. */
-export function MessageThinking({ text }: { text: string }) {
-  const [open, setOpen] = useState(false);
-  if (!text.trim()) return null;
-  return <div className={"message-thinking" + (open ? " message-thinking-open" : "")}>
-    <button type="button" className="message-thinking-head" onClick={() => setOpen(value => !value)} aria-expanded={open}>
+  return <div className={"message-thinking" + (open ? " message-thinking-open" : "") + (running ? " message-thinking-live" : "")}>
+    <button type="button" className="message-thinking-head" onClick={() => { setChosen(true); setOpen(value => !value); }} aria-expanded={open}>
       {open ? <ChevronDown size={12}/> : <ChevronRight size={12}/>}
-      <Brain size={12}/>
-      <span>Размышления</span>
+      {running ? <LoaderCircle size={12} className="agent-spin"/> : <Brain size={12}/>}
+      <span>{running ? "Размышляет…" : "Размышления"}</span>
+      {detail && <span className="message-thinking-meta">{detail}</span>}
     </button>
-    {open && <div className="agent-thinking">{text}</div>}
+    {open && <div className="agent-thinking">{text.trim() ? text : "Запрос отправлен модели. Размышления появятся здесь, если модель их присылает."}</div>}
   </div>;
 }

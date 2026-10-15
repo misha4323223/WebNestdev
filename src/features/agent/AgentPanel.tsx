@@ -4,7 +4,7 @@ import { createAgentSocket } from "../../lib/agent-socket";
 import { apiJson } from "../../lib/api";
 import { createConversation,getConversation,listConversations,uploadProjectFile,type ConversationSummary } from "../../lib/project-api";
 import { NestLoader } from "../../components/NestLoader";
-import { ActionsPanel,MessageThinking,PlanPanel,ThinkingPanel,actionTarget,deriveActions,readPlan,writePlan,type PanelId,type PanelState } from "./agent-activity";
+import { ActionsPanel,MessageThinking,PlanPanel,actionTarget,deriveActions,readPlan,writePlan,type PanelId,type PanelState } from "./agent-activity";
 import type { AgentAction,AgentMode,ChatMessage,PlanState } from "../../lib/types";
 
 const modeKey="webnestdev.agentMode";
@@ -20,17 +20,26 @@ function readPanelState():PanelState{
     const raw=localStorage.getItem(panelsKey);
     if(raw){
       const parsed=JSON.parse(raw) as Partial<PanelState>;
-      return {plan:parsed.plan!==false,actions:parsed.actions!==false,thinking:parsed.thinking!==false};
+      return {plan:parsed.plan!==false,actions:parsed.actions!==false};
     }
   }catch{}
-  return {plan:true,actions:true,thinking:true};
+  return {plan:true,actions:true};
 }
 
-/** The provider receives plain turns: thinking and tool bookkeeping stay in the UI. */
-function toProviderHistory(messages:ChatMessage[]){
+/**
+ * Что панель отправляет на каждый запуск: реплики пользователя, и только они.
+ *
+ * Историю модели владеет сервер: он читает сохранённую сессию и передаёт её в рантайм, поэтому
+ * ответы агента и результаты инструментов в запросе не нужны — они там полнее, чем здесь (панель
+ * видит только то, что успела получить потоком). Клиентский список нужен для одного: сервер
+ * сравнивает его с сессией и дописывает то, чего в ней ещё нет (маршрут agent-ws). Отправка всей
+ * переписки означала бы, что длинный диалог уезжает по сети целиком на каждый шаг, а его длина
+ * ограничивает запрос ещё до того, как запуск начнётся.
+ */
+function toUserTurns(messages:ChatMessage[]){
   return messages
-    .filter(message=>message.role==="user"||message.role==="assistant")
-    .map(message=>({role:message.role as "user"|"assistant",content:message.content}));
+    .filter(message=>message.role==="user")
+    .map(message=>({role:"user" as const,content:message.content}));
 }
 /** The mode is a user choice, so it survives reloads and is sent with every run. */
 function readStoredMode():AgentMode{
@@ -118,11 +127,9 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
   const [plan,setPlan]=useState<PlanState|null>(()=>readPlan(conversationId));
   const [actions,setActions]=useState<AgentAction[]>([]);
   const [panels,setPanels]=useState<PanelState>(readPanelState);
-  // The thinking of the run in flight, streamed into its own window.
-  const [thinking,setThinking]=useState("");
   const [progress,setProgress]=useState<{step:number;maxSteps:number;tokens?:number;budget?:number}|null>(null);
-  // When the current run started: the thinking window shows the elapsed time, so a model that
-  // streams no reasoning does not look like a hang.
+  // When the current run started: the thinking container of the answer shows the elapsed time, so a
+  // model that streams no reasoning does not look like a hang.
   const [runStartedAt,setRunStartedAt]=useState<number|null>(null);
   const [quotaNotice,setQuotaNotice]=useState<"storage"|"daily"|null>(null);
   // The project's saved chats. The list comes from the server, so a chat is something
@@ -217,19 +224,18 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
     setAttachments([]);setNotice("");
     cancelAutoResume();
     autoResumeRef.current=0;setReconnect(null);setResume(null);closedByUsRef.current=true;
-    actionsRef.current=[];setActions([]);setProgress(null);setThinking("");
+    actionsRef.current=[];setActions([]);setProgress(null);
     setPlan(readPlan(conversationId));
     void getConversation(conversationId).then(conversation=>{
       if(cancelled)return;
-      // The whole stored history comes back: answers, the thinking behind them and the
-      // tool results that say how each action ended.
+      // The whole stored history comes back: answers, the thinking that now sits above each of them
+      // and the tool results that say how each action ended.
       const persisted=Array.isArray(conversation.messages)?conversation.messages:[];
       replaceMessages(persisted.length?persisted:[{role:"assistant",content:"Привет. Я WebNestdev — веб-агент для создания и развития проектов. Опиши, что нужно сделать."}]);
       actionsRef.current=deriveActions(persisted);
       setActions(actionsRef.current);
       // The plan is stored with the conversation; localStorage is only the fallback.
       setPlan(conversation.plan??readPlan(conversationId));
-      setThinking([...persisted].reverse().find(message=>message.role==="assistant"&&message.reasoning)?.reasoning??"");
       // Диалог, в котором запуск не дошёл до ответа, открывается сразу с кнопкой «Продолжить».
       setResume(interruptedRun(persisted));
       setLoaded(true);
@@ -283,8 +289,8 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
     if(!options.auto)cancelAutoResume();
     const content=item?withAttachments(item.text,item.attachments):"";
     const history=resuming
-      ?toProviderHistory(messagesRef.current)
-      :[...toProviderHistory(messagesRef.current),{role:"user" as const,content}];
+      ?toUserTurns(messagesRef.current)
+      :[...toUserTurns(messagesRef.current),{role:"user" as const,content}];
     replaceMessages(resuming
       ?[...messagesRef.current,{role:"assistant",content:""}]
       :[...messagesRef.current,{role:"user",content},{role:"assistant",content:""}]);
@@ -296,7 +302,6 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
     if(!resuming)setReconnect(null);
     updateActions(()=>[]);
     setProgress(null);
-    setThinking("");
     setRunStartedAt(Date.now());
     completedRef.current=false;
 
@@ -319,8 +324,8 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
       });
       if(event.type==="reasoning.delta"&&event.delta){
         const delta=event.delta;
-        setThinking(current=>current+delta);
-        // The thinking is kept on the answer it belongs to, so it survives the reload.
+        // Размышление живёт на том ответе, к которому относится: оно показывается над ним, пока
+        // модель работает, и сохраняется вместе с сообщением, поэтому переживает перезагрузку.
         updateMessages(current=>{
           const next=[...current];
           const last=next.at(-1);
@@ -600,23 +605,20 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
       </button>
     </div>
 
-    {(plan&&plan.items.length>0)||actions.length>0||thinking||running
-      ?<div className="chat-status">
-        {plan&&plan.items.length>0&&<PlanPanel plan={plan} collapsed={panels} onToggle={togglePanel}/>}
-        {(actions.length>0||running)&&<ActionsPanel actions={actions} running={running} progress={progress} collapsed={panels} onToggle={togglePanel}/>}
-        {(thinking||running)&&<ThinkingPanel text={thinking} running={running} progress={progress} startedAt={runStartedAt} collapsed={panels} onToggle={togglePanel}/>}
-      </div>
-      :null}
-
     <div className="messages">
-      {visibleMessages.map((m,i)=><div className={"message-row "+m.role} key={i}>
-        <div className="message-avatar">{m.role==="assistant"?<Sparkles size={14}/>:"Вы"}</div>
-        <div className="message-content">
-          <div className="message-role">{m.role==="assistant"?"WebNestdev":"Вы"}</div>
-          <div className="message-text">{m.content || (running ? <NestLoader size={34} label="WebNestdev выполняет задачу" /> : "")}</div>
-          {m.role==="assistant"&&m.reasoning&&<MessageThinking text={m.reasoning}/>}
-        </div>
-      </div>)}
+      {visibleMessages.map((m,i)=>{
+        // Ответ, который модель пишет прямо сейчас: над ним идёт её размышление.
+        const live=running&&i===visibleMessages.length-1;
+        return <div className={"message-row "+m.role} key={i}>
+          <div className="message-avatar">{m.role==="assistant"?<Sparkles size={14}/>:"Вы"}</div>
+          <div className="message-content">
+            <div className="message-role">{m.role==="assistant"?"WebNestdev":"Вы"}</div>
+            {/* Размышление — над ответом, в своём контейнере, который можно свернуть и развернуть. */}
+            {m.role==="assistant"&&(m.reasoning||live)&&<MessageThinking text={m.reasoning??""} running={live} progress={progress} startedAt={runStartedAt}/>}
+            <div className="message-text">{m.content || (running ? <NestLoader size={34} label="WebNestdev выполняет задачу" /> : "")}</div>
+          </div>
+        </div>;
+      })}
 
       {queue.length>0&&<div className="message-queue">
         <div className="message-queue-head"><ListPlus size={13}/> В очереди: {queue.length}</div>
@@ -630,6 +632,15 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
         </li>)}</ul>
       </div>}
     </div>
+
+    {/* План и действия — у поля ввода: они относятся к тому, что происходит сейчас, и не должны
+        уезжать вверх вместе с длинной перепиской. */}
+    {(plan&&plan.items.length>0)||actions.length>0||running
+      ?<div className="chat-status chat-status-bottom">
+        {plan&&plan.items.length>0&&<PlanPanel plan={plan} collapsed={panels} onToggle={togglePanel}/>}
+        {(actions.length>0||running)&&<ActionsPanel actions={actions} running={running} progress={progress} collapsed={panels} onToggle={togglePanel}/>}
+      </div>
+      :null}
 
     <div className="composer-wrap">
       {resume&&!running&&<div className="resume-bar" role="status">
