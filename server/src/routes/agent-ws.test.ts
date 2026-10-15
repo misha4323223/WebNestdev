@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { MAX_REQUEST_MESSAGES,newUserMessages,requestErrorMessage,runSchema } from "./agent-ws.js";
+import { MAX_REQUEST_MESSAGES,newUserMessages,requestErrorMessage,runHeartbeatMs,runSchema } from "./agent-ws.js";
 import type { ChatMessage } from "../types.js";
 
 const stored: ChatMessage[] = [
@@ -48,6 +48,28 @@ test("the too-long error reaches the panel as an ordinary sentence", () => {
   const text = requestErrorMessage(result.error);
   assert.match(text, /слишком длинная/);
   assert.ok(!text.includes("too_big"), "служебный код не должен доходить до пользователя");
+});
+
+/**
+ * Долгий шаг молчит — модель думает или ждёт лимит провайдера, — и молчащий сокет закрывает прокси
+ * на пути; для сервера это обрыв и отмена работы. Поэтому интервал «жив» проверяется, включая
+ * случай опечатки в настройке: ноль или мусор не должны выключить его совсем.
+ */
+test("интервал «жив» остаётся разумным даже при мусоре в настройке", () => {
+  const before = process.env.AGENT_RUN_HEARTBEAT_MS;
+  try {
+    delete process.env.AGENT_RUN_HEARTBEAT_MS;
+    assert.equal(runHeartbeatMs(), 20000);
+    process.env.AGENT_RUN_HEARTBEAT_MS = "0";
+    assert.equal(runHeartbeatMs(), 20000);
+    process.env.AGENT_RUN_HEARTBEAT_MS = "abc";
+    assert.equal(runHeartbeatMs(), 20000);
+    process.env.AGENT_RUN_HEARTBEAT_MS = "5000";
+    assert.equal(runHeartbeatMs(), 5000);
+  } finally {
+    if (before === undefined) delete process.env.AGENT_RUN_HEARTBEAT_MS;
+    else process.env.AGENT_RUN_HEARTBEAT_MS = before;
+  }
 });
 
 test("other failures keep their own wording", () => {

@@ -19,6 +19,10 @@ export type AgentSocketEvent={
   /** Set on run.queued: how many runs are waiting ahead of this one. */
   queued?:number;
   limit?:number;
+  /** Set on run.retrying: the provider refused this step, so it waits and tries again by itself. */
+  attempt?:number;
+  attempts?:number;
+  waitSeconds?:number;
 };
 
 export function createAgentSocket(onEvent:(event:AgentSocketEvent)=>void,onError:()=>void){

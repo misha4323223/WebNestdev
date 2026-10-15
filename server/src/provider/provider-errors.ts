@@ -24,6 +24,37 @@ const LIMIT_TOKENS_PATTERN = /(?:context (?:length|window)|limit)(?:\s*is)?\s*\(
  */
 const MESSAGE_COUNT_PATTERN = /"code"\s*:\s*"too[_ ]?big"[\s\S]{0,200}?"path"\s*:\s*\[\s*"messages"|expected array to have|too many messages|at most \d+ (?:items|messages)|maximum of \d+ (?:items|messages)/i;
 const MAX_MESSAGES_PATTERN = /"maximum"\s*:\s*(\d+)|at most (\d+)\s+(?:items|messages)|maximum of (\d+)\s+(?:items|messages)/i;
+/**
+ * The two ways a gateway says "come back later": the standard header, and the same number inside the
+ * body, which is what the routers this platform talks to actually send. A rate-limited step waits
+ * that long before it tries again (provider-retry.ts), so the hint is worth reading.
+ */
+const RETRY_AFTER_SECONDS_PATTERN = /"retry[_ ]?after"\s*:\s*"?(\d+(?:\.\d+)?)"?/i;
+const RETRY_AFTER_MILLIS_PATTERN = /"retry[_ ]?after_ms"\s*:\s*"?(\d+)"?/i;
+const RETRY_AFTER_PHRASE_PATTERN = /retry[^0-9]{0,20}(\d+)\s*(?:sec|second|s\b)|повторите[^0-9]{0,20}(\d+)\s*сек/i;
+
+/**
+ * `Retry-After` in milliseconds, from either of its two forms: a number of seconds or an HTTP date.
+ * `undefined` means the gateway said nothing useful, and the caller falls back to its own backoff.
+ */
+export function parseRetryAfterHeader(value:string|null|undefined,now=Date.now()):number|undefined {
+  const trimmed=(value??"").trim();
+  if(!trimmed)return undefined;
+  if(/^\d+(\.\d+)?$/.test(trimmed))return Math.max(0,Math.ceil(Number(trimmed)*1000));
+  const date=Date.parse(trimmed);
+  return Number.isFinite(date)?Math.max(0,date-now):undefined;
+}
+
+/** The same hint when it is written in the JSON body instead of the headers. */
+export function parseRetryAfterHint(body:string):number|undefined {
+  const millis=RETRY_AFTER_MILLIS_PATTERN.exec(body);
+  if(millis)return Math.max(0,Number(millis[1]));
+  const seconds=RETRY_AFTER_SECONDS_PATTERN.exec(body);
+  if(seconds)return Math.max(0,Math.ceil(Number(seconds[1])*1000));
+  const phrase=RETRY_AFTER_PHRASE_PATTERN.exec(body);
+  const fromPhrase=phrase?Number(phrase[1]??phrase[2]):NaN;
+  return Number.isFinite(fromPhrase)?Math.max(0,fromPhrase*1000):undefined;
+}
 
 export function classifyProviderError(status: number, body: string): ProviderErrorCode {
   if (status === 401 || status === 403) return "AUTH";
@@ -63,8 +94,10 @@ export class ProviderHttpError extends Error {
   readonly limitTokens?: number;
   /** The `messages` cap the gateway stated, when it refused on the length of the array. */
   readonly limitMessages?: number;
+  /** How long the gateway itself asked to wait, when it said so (`Retry-After`, or the same in the body). */
+  readonly retryAfterMs?: number;
 
-  constructor(status: number, body: string) {
+  constructor(status: number, body: string, retryAfterMs?: number) {
     const code = classifyProviderError(status, body);
     const numbers: ProviderErrorNumbers = code === "CONTEXT_OVERFLOW" ? parseContextOverflow(body)
       : code === "TOO_MANY_MESSAGES" ? { limitMessages: parseMaxMessages(body) }
@@ -78,6 +111,8 @@ export class ProviderHttpError extends Error {
     this.inputTokens = numbers.inputTokens;
     this.limitTokens = numbers.limitTokens;
     this.limitMessages = numbers.limitMessages;
+    const wait = retryAfterMs ?? parseRetryAfterHint(detail);
+    this.retryAfterMs = wait && wait > 0 ? wait : undefined;
   }
 }
 

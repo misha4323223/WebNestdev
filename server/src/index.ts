@@ -14,6 +14,7 @@ import { describePreviewMode } from "./preview/static-preview.js";
 import { describePreviewLimits } from "./preview/preview-limiter.js";
 import { describeRunLimiter } from "./agent/run-limiter.js";
 import { describeContextBudget } from "./agent/context-budget.js";
+import { describeProviderRetry } from "./provider/provider-retry.js";
 import { describeSandboxLimiter } from "./sandbox/sandbox-limiter.js";
 import { assertEncryptionConfigured } from "./storage/secret-crypto.js";
 import { describeSandboxPaths } from "./sandbox/config.js";
@@ -68,6 +69,9 @@ console.log("[agent] " + describeRunLimiter());
 // Сколько контекста сервер готов отправить модели за один шаг: именно это число (а не лимит
 // провайдера) решает, дойдёт ли запрос вообще — см. agent/context-budget.ts.
 console.log("[agent] " + describeContextBudget());
+// Что делает отказ провайдера по лимиту частоты: шаг ждёт и повторяется, а запуск продолжается
+// (provider-retry.ts). Без этой строки «агент вдруг думает дольше обычного» выглядит непонятно.
+console.log("[agent] " + describeProviderRetry());
 console.log("[sandbox] " + describeSandboxLimiter());
 // Каталог песочниц у сервера и у docker — разные вещи: контейнеры проектов монтируют путь,
 // который демон разбирает на хосте. Оба печатаются при старте, чтобы расхождение было видно

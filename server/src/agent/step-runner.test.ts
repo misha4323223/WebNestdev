@@ -2,8 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import type { Provider, ProviderChunk } from "../provider.js";
 import { ProviderHttpError } from "../provider/provider-errors.js";
-import type { ChatMessage } from "../types.js";
+import type { AgentEvent,ChatMessage } from "../types.js";
 import type { AgentContext } from "./types.js";
+import { ProviderRetryExhaustedError } from "../provider/provider-retry.js";
 import { ContextBudgetError } from "./context-budget.js";
 import { runBudgetedStep, toolDefinitionChars, type StepBudget } from "./step-runner.js";
 
@@ -96,6 +97,70 @@ test("отчёт провайдера калибрует оценку, а бюд
   assert.ok(step.budget.charsPerToken !== 3.6, "оценка символов на токен откалибрована: " + step.budget.charsPerToken);
   // Провайдер прислал больше, чем бюджет: потолок не поднимается, а следующий отбор отправит меньше.
   assert.ok(step.budget.budgetTokens <= 10000, "бюджет не вырос: " + step.budget.budgetTokens);
+});
+
+/**
+ * Провайдер с лимитом частоты: первые `refusals` запросов отвечают 429, а не модель.
+ * Раньше такой отказ был концом запуска и пользователь читал «подождите минуту и повторите запуск».
+ */
+function rateLimitedProvider(seen: number[], refusals = 1): Provider {
+  return {
+    async *stream(): AsyncGenerator<ProviderChunk> {
+      seen.push(Date.now());
+      if (seen.length <= refusals) throw new ProviderHttpError(429, "rate limited");
+      yield { type: "text", text: "готово" };
+      yield { type: "usage", promptTokens: 100, completionTokens: 10 };
+    },
+  };
+}
+
+test("лимит частоты не обрывает запуск: шаг ждёт и повторяется сам", async () => {
+  const before = process.env.AGENT_PROVIDER_RETRY_BASE_MS;
+  // Пауза проверяется отдельно (provider-retry.test.ts), здесь важно, что повтор вообще есть.
+  process.env.AGENT_PROVIDER_RETRY_BASE_MS = "1";
+  try {
+    const seen: number[] = [];
+    const events: AgentEvent[] = [];
+    const step = await runBudgetedStep(rateLimitedProvider(seen), longHistory(), "agnes-3.0-flash", {
+      ...context(),
+      emit: event => events.push(event),
+    }, { budgetTokens: 20000, charsPerToken: 3.6, maxMessages: 80 });
+    assert.equal(step.result.text, "готово");
+    assert.equal(seen.length, 2, "провайдер получает повторный запрос");
+    const retry = events.find((event): event is Extract<AgentEvent, { type: "run.retrying" }> => event.type === "run.retrying");
+    assert.ok(retry, "панель узнаёт, что шаг ждёт лимит, а не падает");
+    assert.equal(retry.code, "RATE_LIMIT");
+    assert.equal(retry.attempt, 2);
+    assert.ok(retry.waitSeconds >= 1, "в панель уходит целое число секунд: " + retry.waitSeconds);
+  } finally {
+    if (before === undefined) delete process.env.AGENT_PROVIDER_RETRY_BASE_MS;
+    else process.env.AGENT_PROVIDER_RETRY_BASE_MS = before;
+  }
+});
+
+test("лимит, который держится дольше бюджета, объясняется словами и оставляет шанс продолжить", async () => {
+  const before = { base: process.env.AGENT_PROVIDER_RETRY_BASE_MS, budget: process.env.AGENT_PROVIDER_RETRY_BUDGET_MS };
+  process.env.AGENT_PROVIDER_RETRY_BASE_MS = "1";
+  process.env.AGENT_PROVIDER_RETRY_BUDGET_MS = "3";
+  try {
+    const seen: number[] = [];
+    await assert.rejects(
+      runBudgetedStep(rateLimitedProvider(seen, 99), longHistory(), "модель", context(), { budgetTokens: 20000, charsPerToken: 3.6, maxMessages: 80 }),
+      (error: unknown) => {
+        assert.ok(error instanceof ProviderRetryExhaustedError);
+        assert.equal(error.code, "RATE_LIMIT");
+        assert.match(error.message, /частоту/);
+        assert.match(error.message, /Продолжить/);
+        return true;
+      },
+    );
+    assert.ok(seen.length > 1, "повторы были: " + seen.length);
+  } finally {
+    if (before.base === undefined) delete process.env.AGENT_PROVIDER_RETRY_BASE_MS;
+    else process.env.AGENT_PROVIDER_RETRY_BASE_MS = before.base;
+    if (before.budget === undefined) delete process.env.AGENT_PROVIDER_RETRY_BUDGET_MS;
+    else process.env.AGENT_PROVIDER_RETRY_BUDGET_MS = before.budget;
+  }
 });
 
 test("другие ошибки провайдера не повторяются", async () => {

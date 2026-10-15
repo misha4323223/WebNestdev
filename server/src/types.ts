@@ -16,6 +16,11 @@ export type AgentEvent=
   | {type:"plan.updated";runId:string;plan:PlanState}
   /** `tokens`/`budget` are the context size of the step that is starting (agent/context-budget.ts). */
   | {type:"run.progress";runId:string;step:number;maxSteps:number;tokens?:number;budget?:number}
+  /**
+   * Провайдер ответил «подожди» (лимит частоты, 5xx, обрыв сети), и шаг ждёт, а не падает:
+   * `attempt` — какая попытка идёт, `waitSeconds` — сколько агент подождёт перед ней.
+   */
+  | {type:"run.retrying";runId:string;attempt:number;attempts:number;waitSeconds:number;code?:string}
   | {type:"run.completed";runId:string}
   /** `code` is a machine-readable reason (CONTEXT_OVERFLOW, AUTH, RATE_LIMIT) for the panel. */
   | {type:"run.failed";runId:string;error:string;code?:string};

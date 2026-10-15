@@ -116,6 +116,14 @@ All three limits are printed at startup (`[agent] …`, `[sandbox] …`).
   Chromium **inside the server container**, where no memory limit applies, so this is what keeps a
   browser check from taking the whole platform down. `BROWSER_MAX_QUEUE` (default `8`) and
   `BROWSER_QUEUE_TIMEOUT_MS` (default `60000`) bound the rest.
+- `AGENT_PROVIDER_RETRIES` (default `5`), `AGENT_PROVIDER_RETRY_BASE_MS` (default `2000`),
+  `AGENT_PROVIDER_RETRY_MAX_MS` (default `60000`), `AGENT_PROVIDER_RETRY_BUDGET_MS` (default
+  `300000`) — how a step waits out a provider that answers `429` or `5xx` instead of ending the run.
+  The place a run holds is kept while it waits, so a provider that refuses everyone makes runs wait
+  rather than fail: lower the budget if the queue has to turn over faster, and raise it (or
+  `AGENT_MAX_CONCURRENT_RUNS`) when the gateway's limit is the real constraint.
+  `AGENT_RUN_HEARTBEAT_MS` (default `20000`) is the interval of the `run.alive` message that keeps a
+  long, silent step from looking like an idle connection to a proxy or load balancer.
 
 Raise these only together with memory. The server container has no memory limit of its own, so
 exceeding the host shows up as an OOM of the entire server rather than of one sandbox.

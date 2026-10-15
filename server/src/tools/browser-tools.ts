@@ -111,12 +111,135 @@ registerTool({
 });
 
 
-import { chromium } from "playwright";
+import { chromium,type Page } from "playwright";
 
 const MAX_CONSOLE_ITEMS = 100;
 const MAX_NETWORK_ITEMS = 100;
 const MAX_RUNTIME_MS = 20_000;
-const MAX_SCREENSHOT_BYTES = 2_000_000;
+/**
+ * Сколько символов видимого текста возвращается модели. Раньше обе проверки не возвращали ничего,
+ * что описывает *содержимое* страницы: модель получала список ошибок и скриншот в base64, который
+ * прочитать не может. Отсюда и запуски, потраченные на «белый экран»: агент видел, что проверка не
+ * прошла, но не знал, что именно отрисовано, и перебирал файлы наугад.
+ */
+const MAX_EVIDENCE_TEXT = 1200;
+/** Сколько времени страница получает на отрисовку после загрузки — SPA монтируется не в load. */
+const SETTLE_MS = 900;
+/**
+ * `networkidle` ждётся не дольше этого. Приложение, которое опрашивает свой API, не становится
+ * «тихим» никогда, и прежний `goto(..., {waitUntil:"networkidle"})` на нём висел до таймаута —
+ * проверка падала по времени, а не по делу.
+ */
+const NETWORK_IDLE_MS = 4_000;
+
+/** Что на самом деле видно на странице: то единственное, по чему можно судить о белом экране. */
+export type PageEvidence = {
+  title: string;
+  /** Видимый текст страницы одной строкой (начало, до MAX_EVIDENCE_TEXT символов). */
+  text: string;
+  textChars: number;
+  /** Элементы с ненулевым размером: у пустой страницы их нет. */
+  visibleElements: number;
+  /** Ничего не отрисовано. Картинка, canvas или видео считаются содержимым: это про пустоту. */
+  blank: boolean;
+};
+
+/**
+ * Снимок того, что браузер отрисовал. `clientWidth/clientHeight` вместо innerHTML: пустой
+ * `<div id="root">` и страница с текстом различаются именно размером видимого содержимого.
+ */
+async function readPageEvidence(page: Page): Promise<PageEvidence> {
+  const raw = await page.evaluate(() => {
+    const body = document.body;
+    const text = (body?.innerText ?? "").replace(/\s+/g, " ").trim();
+    let visibleElements = 0;
+    for (const element of Array.from(body?.querySelectorAll("*") ?? [])) {
+      const style = getComputedStyle(element);
+      if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") continue;
+      if (element.clientWidth > 2 && element.clientHeight > 2) visibleElements++;
+    }
+    return { title: document.title, text, textChars: text.length, visibleElements };
+  });
+  return {
+    title: raw.title,
+    text: raw.text.slice(0, MAX_EVIDENCE_TEXT),
+    textChars: raw.textChars,
+    visibleElements: raw.visibleElements,
+    blank: raw.textChars === 0 && raw.visibleElements === 0,
+  };
+}
+
+/** Загрузка плюс короткое ожидание отрисовки: SPA рисует себя уже после `load`. */
+async function loadAndSettle(page: Page, url: string) {
+  const response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: MAX_RUNTIME_MS });
+  await page.waitForLoadState("networkidle", { timeout: NETWORK_IDLE_MS }).catch(() => undefined);
+  await page.waitForTimeout(SETTLE_MS);
+  return response;
+}
+
+/** Сообщение консоли: `url` нужен, чтобы отличить фон от настоящей ошибки приложения. */
+export type ConsoleMessage = { text: string; url?: string };
+
+export type RuntimeFailureInput = {
+  pageErrors: string[];
+  consoleErrors: ConsoleMessage[];
+  failedRequests: Array<{ url: string; error: string }>;
+  httpErrors: Array<{ url: string; status: number }>;
+  /** Статус самого документа: 404 на маршруте — это не «фон», а несуществующая страница. */
+  documentStatus: number | null;
+  blank: boolean;
+};
+
+/**
+ * Что считать поломкой, а что — фоном.
+ *
+ * Фон — это 4xx от собственных запросов приложения и отменённые запросы; страница без авторизации
+ * обязана отвечать 401, а переход отменяет ещё летящие запросы, и требование «ноль таких ответов»
+ * делало проверку непроходимой навсегда: агент бесконечно «чинил» работающее приложение.
+ * Тот же 401 приходит второй раз — как ошибка консоли «Failed to load resource: … status of 401»,
+ * поэтому сообщения этого вида с ответом 4xx относятся к фону, а не к ошибкам приложения.
+ *
+ * Поломка — то, что видит пользователь: пустой экран, ошибки страницы и консоли, недошедшие
+ * запросы, 5xx и несуществующий маршрут. Это и делает проверку строже прежней, потому что
+ * пустой экран раньше проходил её: `expectVisible body` виден и на белой странице.
+ */
+export function classifyRuntimeFailures(input: RuntimeFailureInput) {
+  const aborted = input.failedRequests.filter(item => /ERR_ABORTED|NS_BINDING_ABORTED/i.test(item.error));
+  const broken = input.failedRequests.filter(item => !/ERR_ABORTED|NS_BINDING_ABORTED/i.test(item.error));
+  const serverErrors = input.httpErrors.filter(item => item.status >= 500);
+  const backgroundHttp = input.httpErrors.filter(item => item.status < 500);
+  // Браузер пишет загрузку с 4xx в консоль как ошибку; это тот же фон, а не ошибка приложения.
+  const resourceFailures = input.consoleErrors.filter(isFailedResource);
+  const consoleErrors = input.consoleErrors.filter(item => !isFailedResource(item));
+
+  const failures: string[] = [];
+  if (input.documentStatus !== null && input.documentStatus >= 400) failures.push("страница ответила HTTP " + input.documentStatus);
+  if (input.blank) failures.push("страница пустая: ни текста, ни видимых элементов — приложение ничего не отрисовало");
+  if (input.pageErrors.length) failures.push("ошибки страницы (" + input.pageErrors.length + "): " + input.pageErrors[0]);
+  if (consoleErrors.length) failures.push("ошибки консоли (" + consoleErrors.length + "): " + consoleErrors[0].text);
+  if (broken.length) failures.push("запросы не дошли (" + broken.length + "): " + broken[0].error + " " + broken[0].url);
+  if (serverErrors.length) failures.push("ответы сервера 5xx (" + serverErrors.length + "): " + serverErrors.slice(0, 3).map(item => item.status + " " + item.url).join(", "));
+
+  const background = [
+    ...backgroundHttp.map(item => "HTTP " + item.status + " " + item.url),
+    ...resourceFailures.map(item => item.text + (item.url ? " — " + item.url : "")),
+    ...aborted.map(item => "отменён запрос " + item.url),
+  ];
+  return { ok: failures.length === 0, failures, background };
+}
+
+/** «Failed to load resource: the server responded with a status of 401» — это загрузка с 4xx. */
+function isFailedResource(item: ConsoleMessage) {
+  const match = /status of (\d{3})/.exec(item.text);
+  if (!match) return false;
+  const status = Number(match[1]);
+  return status >= 400 && status < 500;
+}
+
+/** Короткий хвост ответа для сообщения о поломке: модели нужен адрес, а не весь список. */
+function briefList(values: string[], limit = 3) {
+  return values.slice(0, limit).join("; ") + (values.length > limit ? " …" : "");
+}
 
 async function inspectRuntimePage(projectId: string, path: string) {
   const status = await previewStatus(projectId);
@@ -128,7 +251,7 @@ async function inspectRuntimePage(projectId: string, path: string) {
 
   const url = `http://${current.host}:${current.port}${path}`;
   const browser = await chromium.launch({ headless: true, executablePath: process.env.WEBNESTDEV_BROWSER_EXECUTABLE || undefined });
-  const consoleMessages: Array<{ type: string; text: string }> = [];
+  const consoleMessages: Array<ConsoleMessage & { type: string }> = [];
   const failedRequests: Array<{ url: string; method: string; error: string }> = [];
   const httpErrors: Array<{ url: string; method: string; status: number }> = [];
   const pageErrors: string[] = [];
@@ -137,7 +260,7 @@ async function inspectRuntimePage(projectId: string, path: string) {
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
     page.on("console", message => {
       if (consoleMessages.length < MAX_CONSOLE_ITEMS) {
-        consoleMessages.push({ type: message.type(), text: message.text().slice(0, 2000) });
+        consoleMessages.push({ type: message.type(), text: message.text().slice(0, 2000), url: message.location()?.url ?? "" });
       }
     });
     page.on("pageerror", error => {
@@ -159,39 +282,44 @@ async function inspectRuntimePage(projectId: string, path: string) {
     });
 
     const runtimeDeadline = setTimeout(() => void page.close().catch(() => undefined), MAX_RUNTIME_MS);
-    const response = await page.goto(url, { waitUntil: "networkidle", timeout: MAX_RUNTIME_MS });
-    const title = await page.title();
+    const response = await loadAndSettle(page, url);
+    const rendered = await readPageEvidence(page);
     const html = await page.content();
-    const screenshot = await page.screenshot({ type: "png", fullPage: true, timeout: MAX_RUNTIME_MS });
     clearTimeout(runtimeDeadline);
-    if (screenshot.byteLength > MAX_SCREENSHOT_BYTES) {
-      return {
-        ok: false,
-        status: response?.status() ?? null,
-        statusText: response?.statusText() ?? null,
-        url,
-        title,
-        console: consoleMessages,
-        failedRequests,
-        screenshotBase64: null,
-        screenshotBytes: screenshot.byteLength,
-        htmlBytes: Buffer.byteLength(html, "utf8"),
-        diagnostic: "Screenshot exceeded the browser runtime size limit and was omitted.",
-      };
-    }
+
+    const consoleErrors = consoleMessages.filter(item => item.type === "error").map(item => ({ text: item.text, url: item.url ?? "" }));
+    const judged = classifyRuntimeFailures({
+      pageErrors,
+      consoleErrors,
+      failedRequests,
+      httpErrors,
+      documentStatus: response?.status() ?? null,
+      blank: rendered.blank,
+    });
     return {
-      ok: Boolean(response?.ok()) && consoleMessages.every(item => item.type !== "error") && pageErrors.length === 0 && failedRequests.length === 0 && httpErrors.length === 0,
+      ok: judged.ok,
       status: response?.status() ?? null,
       statusText: response?.statusText() ?? null,
       url,
-      title,
+      title: rendered.title,
+      /** Что видно на странице — по этому и судят о белом экране, а не по скриншоту в base64. */
+      rendered,
       console: consoleMessages,
       failedRequests,
       httpErrors,
       pageErrors,
-      screenshotBase64: screenshot.toString("base64"),
-      screenshotBytes: screenshot.byteLength,
+      background: judged.background,
       htmlBytes: Buffer.byteLength(html, "utf8"),
+      failures: judged.failures,
+      diagnostic: judged.ok
+        ? "Рендеринг прошел: страница отрисовала содержимое, ошибок страницы, консоли и сети нет."
+        : "Проверка рендеринга не прошла: " + briefList(judged.failures) +
+          (judged.background.length ? " Фоновые ответы (" + briefList(judged.background) + ") — не поломка: страница без авторизации отвечает 401, и чинить их не нужно." : ""),
+      nextAction: judged.ok
+        ? "Runtime verification passed."
+        : rendered.blank
+          ? "Страница пустая: приложение ничего не отрисовало. Проверьте точку входа (монтирование в #root или #app), стартовый маршрут и состояние загрузки до ответа авторизации: экран не должен оставаться пустым, пока запросы сессии не ответили."
+          : "Исправьте то, что перечислено в failures, и запустите browser.runtime снова.",
     };
   } finally {
     await browser.close();
@@ -217,7 +345,7 @@ async function runBrowserScenario(projectId: string, input: unknown) {
   if (!current) throw new Error("Состояние предпросмотра недоступно — предпросмотр не запущен");
 
   const browser = await chromium.launch({ headless: true, executablePath: process.env.WEBNESTDEV_BROWSER_EXECUTABLE || undefined });
-  const consoleErrors: string[] = [];
+  const consoleErrors: ConsoleMessage[] = [];
   const pageErrors: string[] = [];
   const failedRequests: Array<{ url: string; error: string }> = [];
   const httpErrors: Array<{ url: string; status: number }> = [];
@@ -225,20 +353,23 @@ async function runBrowserScenario(projectId: string, input: unknown) {
 
   try {
     const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
-    page.on("console", message => { if (message.type() === "error" && consoleErrors.length < 50) consoleErrors.push(message.text().slice(0, 2000)); });
+    page.on("console", message => { if (message.type() === "error" && consoleErrors.length < 50) consoleErrors.push({ text: message.text().slice(0, 2000), url: message.location()?.url ?? "" }); });
     page.on("pageerror", error => { if (pageErrors.length < 50) pageErrors.push(error.message.slice(0, 2000)); });
     page.on("response", response => { if (response.status() >= 400 && httpErrors.length < 50) httpErrors.push({ url: response.url().slice(0, 2000), status: response.status() }); });
     page.on("requestfailed", request => { if (failedRequests.length < 50) failedRequests.push({ url: request.url().slice(0, 2000), error: request.failure()?.errorText ?? "request failed" }); });
 
-    await page.goto(`http://${current.host}:${current.port}${initialPath}`, { waitUntil: "networkidle", timeout: MAX_RUNTIME_MS });
+    const startResponse = await loadAndSettle(page, `http://${current.host}:${current.port}${initialPath}`);
+    let documentStatus: number | null = startResponse?.status() ?? null;
 
     for (let index = 0; index < steps.length; index++) {
       const step = steps[index];
       try {
         switch (step.action) {
-          case "goto":
-            await page.goto(`http://${current.host}:${current.port}${getPath({ path: step.path })}`, { waitUntil: "networkidle", timeout: MAX_RUNTIME_MS });
+          case "goto": {
+            const response = await loadAndSettle(page, `http://${current.host}:${current.port}${getPath({ path: step.path })}`);
+            documentStatus = response?.status() ?? null;
             break;
+          }
           case "click": {
             const target = page.locator(step.selector).first();
             await target.waitFor({ state: "visible", timeout: 5000 });
@@ -280,9 +411,38 @@ async function runBrowserScenario(projectId: string, input: unknown) {
       }
     }
 
-    const ok = results.length === steps.length && results.every(item => item.ok) && consoleErrors.length === 0 && pageErrors.length === 0 && failedRequests.length === 0 && httpErrors.length === 0;
-    const screenshot = !ok ? await page.screenshot({ type: "png", fullPage: true, timeout: 5000 }).catch(() => null) : null;
-    return { ok, initialPath, steps: results, finalUrl: page.url(), consoleErrors, pageErrors, failedRequests, httpErrors, screenshotBase64: screenshot ? screenshot.toString("base64") : null, diagnostic: ok ? "Browser scenario passed with no console, page, or network errors." : "Browser scenario failed; inspect the failed step, runtime diagnostics, and failure screenshot before retrying." };
+    const rendered = await readPageEvidence(page);
+    const stepsPassed = results.length === steps.length && results.every(item => item.ok);
+    const judged = classifyRuntimeFailures({ pageErrors, consoleErrors, failedRequests, httpErrors, documentStatus, blank: rendered.blank });
+    const ok = stepsPassed && judged.ok;
+    const failedStep = results.find(item => !item.ok);
+    return {
+      ok,
+      initialPath,
+      steps: results,
+      finalUrl: page.url(),
+      documentStatus,
+      /** Что отрисовано на последнем экране сценария — единственное доказательство белого экрана. */
+      rendered,
+      consoleErrors,
+      pageErrors,
+      failedRequests,
+      httpErrors,
+      background: judged.background,
+      failures: judged.failures,
+      diagnostic: ok
+        ? "Сценарий прошёл: шаги выполнились, страница отрисовала содержимое, ошибок страницы, консоли и сети нет."
+        : (!stepsPassed ? "Сценарий остановлен на шаге " + failedStep?.step + " (" + failedStep?.action + "): " + (failedStep?.detail ?? "шаг не выполнился") + ". " : "") +
+          (judged.failures.length ? "Поломки: " + briefList(judged.failures) + ". " : "") +
+          (judged.background.length ? "Фон, который чинить не нужно: " + briefList(judged.background) + "." : ""),
+      nextAction: ok
+        ? "Browser QA passed."
+        : rendered.blank
+          ? "Страница пустая: приложение ничего не отрисовало (0 видимых элементов и 0 символов текста). Проверьте точку входа (монтирование в #root или #app), стартовый маршрут и состояние загрузки до ответа авторизации — экран не должен оставаться пустым, пока запросы сессии не ответили."
+          : !stepsPassed
+            ? "Исправьте то, на чём остановился шаг (selector/text выше), и запустите сценарий снова. Фоновые 4xx и отменённые запросы чинить не нужно."
+            : "Исправьте перечисленное в failures, затем запустите сценарий снова.",
+    };
   } finally {
     await browser.close();
   }
@@ -290,7 +450,7 @@ async function runBrowserScenario(projectId: string, input: unknown) {
 
 registerTool({
   name: "browser.scenario",
-  description: "Run a real Chromium user-flow scenario against Preview. Input: {path?:string,steps:[{action:'goto',path}|{action:'click',selector}|{action:'fill',selector,value}|{action:'press',selector,key}|{action:'expectText',text}|{action:'expectUrl',pattern}|{action:'expectVisible',selector}|{action:'expectNotVisible',selector}]}. Maximum 20 steps. Supports visibility assertions, stops on the first failed step, and reports console/page/network errors.",
+  description: "Run a real Chromium user-flow scenario against Preview. Input: {path?:string,steps:[{action:'goto',path}|{action:'click',selector}|{action:'fill',selector,value}|{action:'press',selector,key}|{action:'expectText',text}|{action:'expectUrl',pattern}|{action:'expectVisible',selector}|{action:'expectNotVisible',selector}]}. Maximum 20 steps. Supports visibility assertions, stops on the first failed step, and reports what the page rendered (visible text, blank screen), console/page errors, HTTP 5xx and failed requests; 4xx from the app's own API and aborted requests come back as `background`, not as failures.",
   parameters: {
     type: "object",
     required: ["steps"],
@@ -324,7 +484,7 @@ registerTool({
 registerTool({
   name: "browser.runtime",
   description:
-    "Open the Preview in a real headless Chromium browser, execute client-side JavaScript, capture console errors, failed network requests, page title, and a PNG screenshot. Use this after browser.open or project.verify when runtime behavior matters.",
+    "Open the Preview in a real headless Chromium browser, execute client-side JavaScript, and report what the page actually rendered (visible text, its size, blank screen), plus console errors, failed network requests, HTTP 5xx and the document status. Background 4xx from the app's own API calls and aborted requests are listed separately as `background` and are not failures. Use this after browser.open or project.verify when runtime behavior matters.",
   parameters: { type: "object", additionalProperties: false, properties: { path: { type: "string", description: "Маршрут предпросмотра, например / или /about; по умолчанию /" } } },
   execute: async (input, context) => withBrowserSlot(() => inspectRuntimePage(context.projectId, getPath(input))),
 });

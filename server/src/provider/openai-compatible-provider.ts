@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ChatMessage } from "../types.js";
 import { lines } from "./stream-lines.js";
-import { ProviderHttpError } from "./provider-errors.js";
+import { ProviderHttpError,parseRetryAfterHeader } from "./provider-errors.js";
 import type { Provider,ProviderChunk,ProviderToolCall } from "./provider-types.js";
 
 function chatCompletionsUrl(baseUrl:string){
@@ -121,7 +121,9 @@ export class OpenAICompatibleProvider implements Provider{
       const detail=await response.text().catch(()=>"");
       // Типизированная ошибка: переполнение контекста рантайм умеет лечить повтором с меньшим
       // контекстом, остальные коды объясняются пользователю по-человечески (provider-errors.ts).
-      throw new ProviderHttpError(response.status,detail);
+      // Подсказка Retry-After едет вместе с ошибкой: по ней шаг решает, сколько подождать, прежде
+      // чем повторить запрос, вместо того чтобы падать на лимите частоты (provider-retry.ts).
+      throw new ProviderHttpError(response.status,detail,parseRetryAfterHeader(response.headers.get("retry-after")));
     }
     if(!response.body)throw new Error("Провайдер не вернул поток данных");
 

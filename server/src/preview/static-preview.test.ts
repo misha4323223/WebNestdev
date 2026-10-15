@@ -89,6 +89,14 @@ test("a static preview serves the build, its assets and client-side routes", asy
 
     // A missing asset stays a 404 instead of silently becoming HTML.
     assert.equal((await fetch(base + "/assets/missing.js")).status, 404);
+
+    // A server path is not a client route: answering it with index.html made an app that expects
+    // JSON render a blank screen (its session check got HTML), and the failure looked like the
+    // app's own bug. The static preview has no API, and now it says so with a 404.
+    const api = await fetch(base + "/api/account/settings");
+    assert.equal(api.status, 404);
+    assert.match(String(api.headers.get("content-type")), /application\/json/);
+    assert.ok(!(await api.text()).includes("WebNestDev static build"), "на /api не должен отдаваться index.html");
     // ...and nothing outside the build output is reachable.
     const traversal = await fetch(base + "/..%2f..%2fpackage.json");
     assert.ok(traversal.status >= 400, "выход за пределы каталога сборки запрещён: " + traversal.status);

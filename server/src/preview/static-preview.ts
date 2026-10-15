@@ -181,8 +181,13 @@ async function listenStatic(dir:string){
   const app=Fastify({logger:false,disableRequestLogging:true});
   await app.register(fastifyStatic,{root:dir,index:["index.html"],maxAge:0,cacheControl:true});
   app.setNotFoundHandler((request,reply)=>{
-    if((request.method==="GET"||request.method==="HEAD")&&!looksLikeFile(request.raw.url??"")){
-      return reply.sendFile("index.html",{maxAge:0,immutable:false});
+    if(request.method==="GET"||request.method==="HEAD"){
+      // Приложение, которому нужен собственный сервер, статически показать нельзя: его запросы к
+      // /api отвечали бы index.html, фронтенд разбирал бы HTML как JSON — или падал, или, если он
+      // ждёт сессию, рисовал пустой экран. Ошибка выглядела бы как «сломано приложение», хотя дело в
+      // отсутствующем API. Поэтому такой путь честно отвечает 404, а не отдаёт страницу.
+      if(looksLikeApiPath(request.raw.url??""))return reply.code(404).send({error:"Not Found",detail:"Статический предпросмотр не отвечает на /api: если приложению нужен собственный сервер, запустите его командой запуска (PREVIEW_MODE=container)."});
+      if(!looksLikeFile(request.raw.url??""))return reply.sendFile("index.html",{maxAge:0,immutable:false});
     }
     return reply.code(404).send({error:"Not Found"});
   });
@@ -199,6 +204,13 @@ async function listenStatic(dir:string){
 function looksLikeFile(url:string){
   const pathname=url.split(/[?#]/)[0];
   return /\.[a-z0-9]{1,8}$/i.test(pathname);
+}
+
+/** `/api/...` без расширения — это вызов API, а не клиентский маршрут: index.html ему не ответ. */
+export function looksLikeApiPath(url:string){
+  const pathname=url.split(/[?#]/)[0];
+  if(looksLikeFile(pathname))return false;
+  return pathname==="/api"||pathname.startsWith("/api/");
 }
 
 /** The output directory as the project sees it, for a message the user can act on. */

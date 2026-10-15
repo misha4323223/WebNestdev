@@ -7,6 +7,7 @@ import { getProject,getConversation,appendConversationMessages } from "../projec
 import type { ChatMessage } from "../types.js";
 import { consumeUsageForCurrentPlan } from "../account/usage-store.js";
 import { runQueueStats,runWithRunSlot } from "../agent/run-limiter.js";
+import { positiveInt } from "../concurrency.js";
 
 const messageSchema=z.discriminatedUnion("role",[
   z.object({role:z.literal("user"),content:z.string().max(100000)}),
@@ -25,6 +26,19 @@ export const MAX_REQUEST_MESSAGES=1000;
 // `resume` — продолжение прерванного запуска: сообщения приходят как обычно, а рантайм добавляет
 // модели системную заметку о том, что это продолжение и на каком шаге остановился план.
 export const runSchema=z.object({projectId:z.string().min(1).max(200),conversationId:z.string().max(200).optional(),messages:z.array(messageSchema).min(1).max(MAX_REQUEST_MESSAGES),model:z.string().max(200).optional(),mode:z.enum(["planner","developer"]).optional(),resume:z.object({reason:z.string().max(300).optional()}).optional()});
+
+/**
+ * Как часто работающий запуск говорит в сокет «жив».
+ *
+ * Запуск молчит, пока модель думает, а теперь ещё и пока ждёт лимит провайдера — до минуты в одной
+ * паузе и до пяти минут за шаг (provider-retry.ts). Пустое соединение закрывает любой прокси или
+ * балансировщик на пути, а закрытый сокет означает для сервера обрыв и отмену работы — то самое
+ * «обрывание», из-за которого длинную задачу нельзя было довести до конца. Поэтому раз в несколько
+ * секунд уходит короткое `run.alive`: панель его не показывает, он нужен только соединению.
+ */
+export function runHeartbeatMs(){
+  return positiveInt(process.env.AGENT_RUN_HEARTBEAT_MS,20_000);
+}
 
 /**
  * Текст ошибки для панели. У ZodError `message` — это JSON-массив замечаний, и пользователь видел
@@ -121,15 +135,22 @@ export async function registerAgentWebSocket(app:FastifyInstance,runtime=new Age
         // consumed *inside* the place, so a full queue never burns one of the user's daily runs.
         // The account is passed along because one account runs one agent at a time: a second tab
         // or a second project of the same user is refused instead of taking another place.
-        await runWithRunSlot(async()=>{
-          const usage = await consumeUsageForCurrentPlan(user.id,"agentRuns");
-          safeSend({type:"usage.updated",usage});
-          await runtime.run({...parsed,userId:user.id,...(history?{history}:{})},event=>safeSend(event),runController.signal);
-        },{
-          signal:runController.signal,
-          userId:user.id,
-          onQueued:waiting=>safeSend({type:"run.queued",queued:waiting,limit:runQueueStats().limit}),
-        });
+        // Сердцебиение охватывает и ожидание в очереди, и сам запуск: и то и другое может молчать
+        // минутами, а молчащий сокет закрывает прокси на пути (см. runHeartbeatMs).
+        const heartbeat=setInterval(()=>safeSend({type:"run.alive",at:Date.now()}),runHeartbeatMs());
+        try{
+          await runWithRunSlot(async()=>{
+            const usage = await consumeUsageForCurrentPlan(user.id,"agentRuns");
+            safeSend({type:"usage.updated",usage});
+            await runtime.run({...parsed,userId:user.id,...(history?{history}:{})},event=>safeSend(event),runController.signal);
+          },{
+            signal:runController.signal,
+            userId:user.id,
+            onQueued:waiting=>safeSend({type:"run.queued",queued:waiting,limit:runQueueStats().limit}),
+          });
+        }finally{
+          clearInterval(heartbeat);
+        }
       }catch(error){
         const message = requestErrorMessage(error);
         const statusCode = error && typeof error === "object" && "statusCode" in error ? (error as {statusCode?:unknown}).statusCode : undefined;

@@ -34,7 +34,11 @@ Preview inspection uses the actual host port assigned to the project, rather tha
 
 `project.verify` uses the same Preview state and performs an HTTP-level readiness check. The Agent Runtime is instructed to treat verification failures and tool errors as actionable diagnostics and retry after making fixes.
 
-The real headless-browser worker is now implemented as `browser.runtime`. It executes the Preview in Chromium, captures console messages, page errors, failed network requests, HTTP errors, page title, rendered HTML size, and a bounded PNG screenshot. The worker is protected by a 20-second runtime limit and a 2 MB screenshot limit. After mutating tools such as `fs.write`, `fs.rename`, `fs.delete`, `terminal.exec`, and `npm.install`, Agent Runtime automatically starts Preview and runs `project.verify`; for relevant web changes it also runs `browser.runtime`. This automatic verification is bounded to three attempts per agent run, and failures are returned to the model as actionable diagnostics for the next fix.
+The real headless-browser worker is now implemented as `browser.runtime`. It executes the Preview in Chromium and reports **what the page actually rendered** — the visible text (bounded), how many characters of it, how many visible elements, and whether the screen is empty — together with console messages, page errors, failed network requests, HTTP errors, and the document status. The worker is protected by a 20-second runtime limit.
+
+The evidence is the point: a PNG screenshot was captured and returned as base64 before, which a text model cannot read, so a run that failed with a white screen could only guess why. What is a *failure* is now also decided explicitly (`classifyRuntimeFailures` in `tools/browser-tools.ts`): page errors, console errors, requests that never arrived, `5xx`, a missing route and an **empty screen** fail the check, while `4xx` answers from the app's own API (a page without a session is supposed to answer `401`) and requests aborted by a navigation are reported as `background` and never fail it. Including the empty-screen case makes the check *stricter* than before: `expectVisible body` passes on a blank page.
+
+After mutating tools such as `fs.write`, `fs.rename`, `fs.delete`, `terminal.exec`, and `npm.install`, Agent Runtime automatically starts Preview and runs `project.verify`; for relevant web changes it also runs `browser.runtime`. This automatic verification is bounded to three attempts per agent run, and failures are returned to the model as actionable diagnostics for the next fix.
 
 A dev-server preview does not trust the launch flags for its address. The command gets `--host 0.0.0.0 --port 3000`, but a script such as `concurrently "vite" "node server.js"` ignores them, and Vite without `--host` listens on `127.0.0.1` inside the container only — reachable for `docker exec`, invisible to the server, the panel's proxy and Chromium. So the address is settled from evidence instead: the real port comes from the container's `/proc/net/tcp`, and an app bound to loopback gets a TCP relay inside its own container on the platform's port (`server/src/preview/preview-address.ts`). Before this, `preview.ready` was honest ("the app answers") while `project.verify` failed with `Unable to reach Preview: fetch failed` three times and ended the run on the verification-attempt limit.
 
@@ -68,6 +72,30 @@ the stored plan is the bookmark. Once the automatic attempts are used up — or 
 was stopped, or a reloaded tab opens a conversation whose last turn has no answer — the panel
 shows a **Продолжить** button. Refusals that never started a run (daily quota, storage limit, a
 second run in the same account) deliberately do not offer it.
+
+### A provider that says "wait" does not end the run
+
+`429` and `503` mean the request never reached the model, so nothing about it has to change for the
+next attempt — it only has to wait. That is what a step does now: it pauses and sends the very same
+request again, up to `AGENT_PROVIDER_RETRIES` attempts (default **5**) with a doubling pause of up to
+`AGENT_PROVIDER_RETRY_MAX_MS` (default **60 s**), inside a total budget of
+`AGENT_PROVIDER_RETRY_BUDGET_MS` (default **5 min**) per step. A numeric `Retry-After` from the
+gateway — header or body — wins over the backoff, so a router that asks for 40 seconds gets 40
+seconds. The panel shows `провайдер ограничил частоту запросов — жду N с и продолжаю (попытка k из n)`
+while that happens; it is a progress line, not an error, and the run keeps its place, its history and
+its plan. Only when the whole budget is spent does the run stop, with a sentence saying how long it
+already waited (`provider/provider-retry.ts`). That is why a free-tier router no longer turns a
+quarter-hour task into "подождите минуту и повторите запуск".
+
+What is *not* retried is a refusal about the request itself: a wrong key, a bad shape, or a context
+that is too large (step-runner.ts already answers that one by trimming). And a failure that happens
+*after* part of the answer was already streamed is not retried either — the text would arrive twice;
+that run stops and offers the **Продолжить** button instead.
+
+Because a step can now wait a minute in silence, a running run sends a short `run.alive` every
+`AGENT_RUN_HEARTBEAT_MS` (default **20 s**). The panel ignores it: it exists so that a proxy or
+load balancer on the way does not close an idle `/ws` connection, which the server would read as
+"the user left" and answer by aborting the work.
 
 ### Leaving the project does not stop the agent
 

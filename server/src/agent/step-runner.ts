@@ -3,6 +3,7 @@ import type { Provider,ProviderToolCall } from "../provider.js";
 import { getToolDefinitions } from "../tool-registry.js";
 import { ContextBudgetError,MIN_MAX_MESSAGES,calibrateCharsPerToken,estimateTokens,trimMessagesToBudget } from "./context-budget.js";
 import { ProviderHttpError,describeProviderFailure } from "../provider/provider-errors.js";
+import { providerRetryPolicy,withProviderRetry } from "../provider/provider-retry.js";
 import type { AgentContext } from "./types.js";
 
 export type StepUsage={promptTokens:number;completionTokens:number;estimated:boolean};
@@ -13,12 +14,22 @@ const estimateTokensOfText=(text:string)=>Math.max(1,Math.ceil(text.length/4));
 
 export async function runAgentStep(provider:Provider,messages:ChatMessage[],model:string,context:AgentContext):Promise<StepResult>{
   let text="";let reasoning="";const calls:ProviderToolCall[]=[];let reported:StepUsage|null=null;
-  for await(const chunk of provider.stream(messages,model,getToolDefinitions(),context.signal)){
-    if(context.signal?.aborted)throw new Error("Запуск агента отменён");
-    if(chunk.type==="text"){text+=chunk.text;context.emit({type:"message.delta",runId:context.runId,delta:chunk.text});}
-    else if(chunk.type==="reasoning"){reasoning+=chunk.text;context.emit({type:"reasoning.delta",runId:context.runId,delta:chunk.text});}
-    else if(chunk.type==="tool_call")calls.push(chunk.call);
-    else if(chunk.type==="usage")reported={promptTokens:chunk.promptTokens,completionTokens:chunk.completionTokens,estimated:false};
+  /** Whether any of this step reached the panel already. */
+  let streamed=false;
+  try{
+    for await(const chunk of provider.stream(messages,model,getToolDefinitions(),context.signal)){
+      if(context.signal?.aborted)throw new Error("Запуск агента отменён");
+      if(chunk.type==="text"){text+=chunk.text;streamed=true;context.emit({type:"message.delta",runId:context.runId,delta:chunk.text});}
+      else if(chunk.type==="reasoning"){reasoning+=chunk.text;streamed=true;context.emit({type:"reasoning.delta",runId:context.runId,delta:chunk.text});}
+      else if(chunk.type==="tool_call")calls.push(chunk.call);
+      else if(chunk.type==="usage")reported={promptTokens:chunk.promptTokens,completionTokens:chunk.completionTokens,estimated:false};
+    }
+  }catch(error){
+    // Отказ посреди потока: часть ответа уже показана и в панели, и в сессии, поэтому повтор прислал
+    // бы её второй раз. Такой сбой остаётся ошибкой запуска (у пользователя есть «Продолжить»),
+    // а повторяются только отказы до первого байта — их и лечит provider-retry.ts.
+    if(streamed&&error&&typeof error==="object")Object.assign(error,{partialStreamed:true});
+    throw error;
   }
   const usage:StepUsage=reported??{
     promptTokens:estimateTokens(messages),
@@ -59,6 +70,11 @@ export function toolDefinitionChars(){
  *   messages may go (a gateway that states its own cap gets a little less than that, and the reduced
  *   cap stays for the rest of the run, so no later step walks into it again). A second refusal becomes
  *   a `ContextBudgetError` with the numbers, which is a sentence the user can act on, not a 400 body.
+ *
+ * A refusal to serve the request *at all* — the 429 and the 503 — is not answered by sending less: the
+ * step waits out the window the provider asked for and sends the very same request again, up to the
+ * budget in provider-retry.ts. Every wait is announced to the panel (`run.retrying`), so a rate-limited
+ * run reads as "waits and keeps going" instead of an interruption the user has to restart by hand.
  */
 export async function runBudgetedStep(
   provider:Provider,
@@ -76,7 +92,14 @@ export async function runBudgetedStep(
 
   for(let attempt=0;attempt<2;attempt++){
     try{
-      const result=await runAgentStep(provider,prepared.messages,model,context);
+      // Отказ по лимиту частоты или временная недоступность лечится ожиданием и тем же запросом:
+      // шаг переживает 429 сам, а панель получает строку «жду и продолжаю». Если провайдер держит
+      // лимит дольше бюджета, шаг падает с понятной фразой (ProviderRetryExhaustedError).
+      const result=await withProviderRetry(()=>runAgentStep(provider,prepared.messages,model,context),{
+        ...providerRetryPolicy(),
+        ...(context.signal?{signal:context.signal}:{}),
+        onWait:info=>context.emit({type:"run.retrying",runId:context.runId,attempt:info.attempt,attempts:info.attempts,waitSeconds:Math.max(1,Math.round(info.waitMs/1000)),...(info.code?{code:info.code}:{})}),
+      });
       if(!result.usage.estimated&&result.usage.promptTokens>0){
         // The provider counted the real prompt, so it says how many characters a token really is.
         current.charsPerToken=calibrateCharsPerToken(prepared.report.chars,result.usage.promptTokens);
