@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
-import { ArrowRight, Code2, LayoutDashboard, Pencil, ShoppingBag, GitBranch, Globe, Layers3, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { ArrowRight, Code2, CreditCard, FolderGit2, Home, LayoutDashboard, LogOut, Pencil, Plug, ShoppingBag, GitBranch, Globe, Layers3, Trash2, UserRound } from "lucide-react";
 import { createConversation, createProject, deleteProject, listProjects, renameProject, type Project } from "../../lib/project-api";
 import { logout } from "../../lib/auth-api";
-import { HomeRail } from "./HomeRail";
+import { HomeRail, type RailSection } from "./HomeRail";
 import { WebNestLogo } from "../../components/WebNestLogo";
+import { NestLoader } from "../../components/NestLoader";
 import { ProjectRenameForm } from "./ProjectRename";
 import { PlanPickerModal } from "../billing/PlanPickerModal";
 import { SubscriptionPage } from "../billing/SubscriptionPage";
@@ -17,7 +18,18 @@ const templates = [
 
 const activeProjectKey = "webnestdev.projectId";
 
-export function HomeScreen({onOpenWorkspace}:{onOpenWorkspace:()=>void}){
+/** На телефоне та же колонка, что на ПК, но вкладками: главная страница плюс её разделы. */
+type HomeTab = "home" | RailSection;
+
+const homeTabs: Array<{ id: HomeTab; label: string; icon: typeof Home }> = [
+  { id: "home", label: "Главная", icon: Home },
+  { id: "integrations", label: "Интеграции", icon: Plug },
+  { id: "projects", label: "Проекты", icon: FolderGit2 },
+  { id: "account", label: "Аккаунт", icon: UserRound },
+  { id: "billing", label: "Оплата", icon: CreditCard },
+];
+
+export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(projectId:string)=>void;activeRun:{projectId:string;projectName:string}|null}){
   const [idea,setIdea]=useState("");
   const [projects,setProjects]=useState<Project[]>([]);
   const [busy,setBusy]=useState(false);
@@ -26,6 +38,22 @@ export function HomeScreen({onOpenWorkspace}:{onOpenWorkspace:()=>void}){
   const [error,setError]=useState("");
   const [page,setPage]=useState<"home"|"subscription">("home");
   const [plansOpen,setPlansOpen]=useState(false);
+  // Вкладка телефона и раздел колонки: выбор раздела на телефоне показывает его сразу,
+  // а на ПК та же колонка остаётся рядом с главной страницей.
+  const [tab,setTab]=useState<HomeTab>("home");
+  const [section,setSection]=useState<RailSection>("integrations");
+
+  const tabsRef = useRef<HTMLDivElement | null>(null);
+
+  function pick(next:HomeTab){
+    setTab(next);
+    if(next!=="home")setSection(next);
+  }
+
+  // Строка вкладок на телефоне прокручивается: выбранный раздел подъезжает в видимую часть.
+  useEffect(() => {
+    tabsRef.current?.querySelector(".home-tab.active")?.scrollIntoView({ block: "nearest", inline: "center" });
+  }, [tab]);
 
   const reload=useCallback(async()=>{try{setProjects((await listProjects()).projects)}catch{}},[]);
   useEffect(()=>{void reload()},[reload]);
@@ -35,7 +63,7 @@ export function HomeScreen({onOpenWorkspace}:{onOpenWorkspace:()=>void}){
     localStorage.setItem("webnestdev.projectId",project.id);
     localStorage.setItem("webnestdev.projectName",project.name);
     localStorage.removeItem("webnestdev.conversationId");
-    onOpenWorkspace();
+    onOpenWorkspace(project.id);
   }
 
   /** Returns true when the new name was stored, so inline forms know to close. */
@@ -84,7 +112,7 @@ export function HomeScreen({onOpenWorkspace}:{onOpenWorkspace:()=>void}){
       localStorage.setItem("webnestdev.projectId",project.id);
       localStorage.setItem("webnestdev.projectName",project.name);
       localStorage.setItem("webnestdev.conversationId",conversation.id);
-      onOpenWorkspace();
+      onOpenWorkspace(project.id);
     }catch(e){
       setError(e instanceof Error?e.message:"Не удалось создать проект");
     }finally{setBusy(false);}
@@ -112,8 +140,25 @@ export function HomeScreen({onOpenWorkspace}:{onOpenWorkspace:()=>void}){
 
   return <>
     <main className="home-screen">
-      <div className="home-layout">
-        <div className="home-main">
+      <div className="home-layout" data-tab={tab}>
+        {/* Только на телефоне: там разделы переключаются вкладками, как колонка рядом с ПК. */}
+        <nav className="home-tabs" aria-label="Разделы главной">
+          <div className="home-tabs-track" ref={tabsRef}>
+            {homeTabs.map(item => { const Icon = item.icon; return <button key={item.id} className={"home-tab" + (tab === item.id ? " active" : "")} onClick={() => pick(item.id)} aria-current={tab === item.id ? true : undefined}>
+              <Icon size={14}/> <span>{item.label}</span>
+            </button>; })}
+          </div>
+          <button className="home-tab-exit" onClick={() => void exit()} title="Выйти" aria-label="Выйти из аккаунта"><LogOut size={14}/></button>
+        </nav>
+
+        <div className={"home-main" + (activeRun ? " has-run" : "")}>
+          {/* Рабочая область живёт дальше на главной, поэтому запуск виден и здесь. */}
+          {activeRun && <div className="home-run" role="status">
+            <NestLoader size={24} label="Агент работает"/>
+            <div><strong>Агент продолжает работу над проектом «{activeRun.projectName}»</strong><span>Запуск не остановится, пока вы на главной — вернитесь, когда захотите.</span></div>
+            <button className="ghost-button home-run-open" onClick={() => onOpenWorkspace(activeRun.projectId)}>Вернуться в проект</button>
+          </div>}
+
           <section className="home-hero">
             <span className="home-hero-mark"><WebNestLogo size={132} tone="light"/></span>
             <p>Опиши идею — WebNestdev поможет превратить её в рабочий проект.</p>
@@ -152,6 +197,8 @@ export function HomeScreen({onOpenWorkspace}:{onOpenWorkspace:()=>void}){
         <HomeRail
           projects={projects}
           activeProjectId={activeProjectId}
+          section={section}
+          onSection={pick}
           onOpen={open}
           onRename={rename}
           onDelete={project=>void remove(project)}

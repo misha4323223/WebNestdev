@@ -290,10 +290,13 @@ function formatTokens(value: number) {
  * text it explains — the shape Replit uses.
  *
  * While the run is working the container is open, so the user sees the reasoning where the answer
- * will appear, with the step, the context size and the elapsed time next to it — a model that streams
- * no reasoning still shows that something is happening instead of a frozen screen. The user's own
- * choice is stronger than that default: once the block was folded or unfolded by hand, it stays the
- * way the user left it.
+ * will appear, with the step, the context size and the elapsed time next to it. The user's own choice
+ * is stronger than that default: once the block was folded or unfolded by hand, it stays the way the
+ * user left it.
+ *
+ * A model that sends no reasoning at all (most non-reasoning gateways) gets no empty window with a
+ * promise in it — only a live line saying that the answer is being prepared, with the same step,
+ * context and time. The window itself appears at the moment the model really says something.
  */
 export function MessageThinking({ text, running, progress, startedAt }: {
   text: string;
@@ -306,8 +309,7 @@ export function MessageThinking({ text, running, progress, startedAt }: {
   const [chosen, setChosen] = useState(false);
   useEffect(() => { if (!chosen) setOpen(Boolean(running)); }, [running, chosen]);
   const elapsed = useElapsedSeconds(running ? startedAt : null);
-  // A finished turn without thinking says nothing: an empty folded row would only be noise.
-  if (!text.trim() && !running) return null;
+  const said = Boolean(text.trim());
   // Шаг, размер контекста и время — это признаки живого запуска: у сохранённого ответа они значили бы
   // чужой прогресс, поэтому строка собирается только пока блок работает.
   const detail = !running ? "" : [
@@ -315,6 +317,15 @@ export function MessageThinking({ text, running, progress, startedAt }: {
     progress?.tokens ? "контекст " + formatTokens(progress.tokens) + (progress.budget ? " / " + formatTokens(progress.budget) : "") : "",
     elapsed !== null ? elapsed + " с" : "",
   ].filter(Boolean).join(" · ");
+  // Ни строчки размышления — не повод для пустого окна с обещанием: пока модель молчит, видно только
+  // то, что запуск идёт, а окно размышлений появляется в тот момент, когда модель что-то прислала.
+  if (!said && running) return <div className="message-thinking-waiting" role="status">
+    <LoaderCircle size={12} className="agent-spin"/>
+    <span>Готовит ответ…</span>
+    {detail && <span className="message-thinking-meta">{detail}</span>}
+  </div>;
+  // A finished turn without thinking says nothing: an empty folded row would only be noise.
+  if (!said) return null;
   return <div className={"message-thinking" + (open ? " message-thinking-open" : "") + (running ? " message-thinking-live" : "")}>
     <button type="button" className="message-thinking-head" onClick={() => { setChosen(true); setOpen(value => !value); }} aria-expanded={open}>
       {open ? <ChevronDown size={12}/> : <ChevronRight size={12}/>}
@@ -322,6 +333,6 @@ export function MessageThinking({ text, running, progress, startedAt }: {
       <span>{running ? "Размышляет…" : "Размышления"}</span>
       {detail && <span className="message-thinking-meta">{detail}</span>}
     </button>
-    {open && <div className="agent-thinking">{text.trim() ? text : "Запрос отправлен модели. Размышления появятся здесь, если модель их присылает."}</div>}
+    {open && <div className="agent-thinking">{text}</div>}
   </div>;
 }

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { toWireMessages } from "./openai-compatible-provider.js";
+import { reasoningDelta, toWireMessages } from "./openai-compatible-provider.js";
 import type { ChatMessage } from "../types.js";
 
 test("converts assistant tool calls to Chat Completions wire format",()=>{
@@ -34,6 +34,21 @@ test("converts assistant tool calls to Chat Completions wire format",()=>{
     },
     {role:"tool",tool_call_id:"call_123",content:"ok"}
   ]);
+});
+
+// Размышления приходят под разными именами и в разной упаковке, и промах здесь тихий: ответ
+// стримится, а цепочка рассуждений просто пропадает. Поэтому принимаем все известные формы.
+test("рассуждение читается из любого поля, которым шлюз его называет",()=>{
+  assert.equal(reasoningDelta({reasoning_content:"шаг 1"}),"шаг 1");
+  assert.equal(reasoningDelta({reasoning:"шаг 2"}),"шаг 2");
+  // Шлюзы, которые упаковывают рассуждение в объект, а не в строку.
+  assert.equal(reasoningDelta({reasoning:{text:"шаг 3"}}),"шаг 3");
+  assert.equal(reasoningDelta({reasoning_details:[{text:"а"},{content:"б"}]}),"аб");
+  assert.equal(reasoningDelta({reasoning_details:{summary:"итог"}}),"итог");
+  // Обычный ответ и служебные поля не должны превращаться в размышления.
+  assert.equal(reasoningDelta({content:"ответ"}),"");
+  assert.equal(reasoningDelta({reasoning:{enabled:true}}),"");
+  assert.equal(reasoningDelta(null),"");
 });
 
 test("keeps ordinary assistant messages unchanged in meaning",()=>{

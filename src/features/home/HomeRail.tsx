@@ -9,11 +9,14 @@ import { getBilling, subscriptionSummary, type BillingData, type PlanId } from "
 import { chosenPlanId, isPendingChoice, planName, upgradeLabel, usePlanChoice } from "../../lib/plan-choice";
 import { readCachedPreferences, type UserPreferences } from "../../lib/preferences";
 
-type RailSection = "integrations" | "projects" | "account" | "billing";
+export type RailSection = "integrations" | "projects" | "account" | "billing";
 
 export type HomeRailProps = {
   projects: Project[];
   activeProjectId: string | null;
+  /** Раздел колонки: на ПК переключается здесь, на телефоне — вкладками над главной. */
+  section: RailSection;
+  onSection: (section: RailSection) => void;
   onOpen: (project: Project) => void;
   onRename: (project: Project, name: string) => Promise<boolean>;
   onDelete: (project: Project) => void;
@@ -35,8 +38,7 @@ function dateLabel(value: string) {
 }
 
 export function HomeRail(props: HomeRailProps) {
-  const { projects, activeProjectId, onOpen, onRename, onDelete, onNewProject, onOpenPlans, onOpenSubscriptions, onExit } = props;
-  const [section, setSection] = useState<RailSection>("integrations");
+  const { projects, activeProjectId, section, onSection, onOpen, onRename, onDelete, onNewProject, onOpenPlans, onOpenSubscriptions, onExit } = props;
   const [renaming, setRenaming] = useState("");
   // One billing request for the rail: the billing section and the footer call to action
   // both show the plan the user actually has (or would get next).
@@ -58,7 +60,7 @@ export function HomeRail(props: HomeRailProps) {
   useEffect(() => {
     if (!localStorage.getItem("webnestdev.openIntegrations")) return;
     localStorage.removeItem("webnestdev.openIntegrations");
-    setSection("integrations");
+    onSection("integrations");
   }, []);
 
   return <aside className="home-rail">
@@ -72,7 +74,7 @@ export function HomeRail(props: HomeRailProps) {
     <nav className="rail-nav" aria-label="Разделы аккаунта">
       {nav.map(item => {
         const Icon = item.icon;
-        return <button key={item.id} className={"rail-nav-item" + (section === item.id ? " active" : "")} onClick={() => { setSection(item.id); setRenaming(""); }}>
+        return <button key={item.id} className={"rail-nav-item" + (section === item.id ? " active" : "")} onClick={() => { onSection(item.id); setRenaming(""); }}>
           <Icon size={14}/> <span>{item.label}</span><ArrowRight size={12} className="rail-nav-chevron"/>
         </button>;
       })}

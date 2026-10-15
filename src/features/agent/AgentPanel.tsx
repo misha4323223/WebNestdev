@@ -111,7 +111,7 @@ function interruptedRun(messages:ChatMessage[]):{reason:string;label:string}|nul
   return {reason:"предыдущий запуск был прерван и не завершён",label:"Прошлый запуск прервался — агент продолжит с того же места."};
 }
 
-export function AgentPanel({projectId,conversationId,onOpenConversation,onChanged,onOpenModelSettings,onOpenAccountSettings}:{projectId:string;conversationId:string;onOpenConversation:(id:string)=>void;onChanged:()=>void;onOpenModelSettings?:()=>void;onOpenAccountSettings?:()=>void}){
+export function AgentPanel({projectId,conversationId,onOpenConversation,onChanged,onOpenModelSettings,onOpenAccountSettings,onRunningChange}:{projectId:string;conversationId:string;onOpenConversation:(id:string)=>void;onChanged:()=>void;onOpenModelSettings?:()=>void;onOpenAccountSettings?:()=>void;onRunningChange?:(running:boolean)=>void}){
   const [messages,setMessages]=useState<ChatMessage[]>([]);
   const [prompt,setPrompt]=useState<string>(()=>{try{return localStorage.getItem("webnestdev.draft."+conversationId)??""}catch(_){return ""}});
   const [running,setRunning]=useState(false);
@@ -161,6 +161,10 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
   const queueRef=useRef<QueuedMessage[]>([]);
 
   useEffect(()=>{queueRef.current=queue},[queue]);
+
+  // Запуск сообщается наверх: рабочая область и главная по этому признаку знают, что агент
+  // продолжает работать над проектом, даже когда панель не на экране.
+  useEffect(()=>{onRunningChange?.(running)},[running,onRunningChange]);
 
   // The composer draft belongs to the conversation, so it survives reloads and tab switches.
   useEffect(()=>{

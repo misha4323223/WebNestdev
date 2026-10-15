@@ -69,9 +69,35 @@ was stopped, or a reloaded tab opens a conversation whose last turn has no answe
 shows a **Продолжить** button. Refusals that never started a run (daily quota, storage limit, a
 second run in the same account) deliberately do not offer it.
 
+### Leaving the project does not stop the agent
+
+The workspace is hidden rather than unmounted when the user goes to the main page or switches to the
+Files/Terminal tab of the workspace. Its WebSocket — the connection the server watches to decide that
+a run is still wanted — stays open, so the agent keeps working; the panel's queue, plan and reconnect
+handling stay alive with it. The main page says so in a banner ("Агент продолжает работу над проектом
+«…»") that leads back into the project, where the finished turn is already on screen. Reloading the
+tab, signing out, or opening another project does end the run: those close the socket, which is the
+case the **Продолжить** button above covers.
+
 Inside the project sandbox there is no Docker: `docker`, `docker build` and `docker compose` are
 refused by `terminal.exec` with an explanation, because the platform starts the Preview itself and
 serves it (see below). A `Dockerfile` is still a normal project artifact to create or edit.
+
+### A host without a Docker daemon
+
+`terminal.exec`, `npm.install`, the git tools, the static build and a container preview all end in
+`docker run`, so on a host whose binary or daemon is missing none of them can work. That reason
+travels to whoever asked instead of being hidden: the Terminal panel and the preview panel show it
+(the terminal route answers 503, not «Внутренняя ошибка сервера»), `/api/sandbox/status` and
+`/api/health` carry it as `sandbox.available:false` with a `detail`, `/api/ready` answers 503, and the
+agent receives it as the result of the tool it called — one sentence that names the cause, says which
+capabilities are gone and what is available instead, so a run adapts rather than repeating a command
+that cannot work.
+
+What still works on such a host is not nothing: the file tools, chat attachments, the storage quota
+and the **static preview of a buildless project** — `index.html`/CSS/JS as they are, or an already
+built `dist` — which is the same preview `project.verify` and `browser.runtime` check. A project that
+needs `npm install`, a build or its own HTTP server does need Docker.
 
 Previews are cheaper still, and the cheapest tier needs nothing at all: a project that is already
 plain HTML/CSS/JS (`index.html`, no build script) is **served as is — no build, no container** — and
@@ -146,7 +172,7 @@ A conversation is the record of the work, not a scrollback of the open tab. Stor
 
 A project keeps several chats, and they belong to the account rather than to the browser: the **Чаты** button above the conversation opens the project's saved sessions — each labelled by the question it started with, with the last answer as a preview and the time it was last used — any of them reopens, and **Новая сессия** starts the next one. Opening a project returns to the last chat, and a project without chats gets a new one, so the history is there on another device and after the browser storage is cleared.
 
-Two windows that collapse and remember their state — **План задач** and **Действия агента** — sit next to the composer: what is happening right now stays next to the input instead of scrolling away with the chat, and each window has its own scroll, so a long run never pushes the conversation down. The model's thinking is not a window of its own: it belongs to the answer it produced and is folded **above** it, so the model reasons first and writes the answer below — the shape Replit uses. While a run works, that container is open and carries the step, the context size and the elapsed time; a stored answer keeps its thinking folded. When the model's gateway sends no reasoning at all (most non-reasoning models), the container says so instead of inventing text.
+Two windows that collapse and remember their state — **План задач** and **Действия агента** — sit next to the composer: what is happening right now stays next to the input instead of scrolling away with the chat, and each window has its own scroll, so a long run never pushes the conversation down. The model's thinking is not a window of its own: it belongs to the answer it produced and is folded **above** it, so the model reasons first and writes the answer below — the shape Replit uses. While a run works, that container is open and carries the step, the context size and the elapsed time; a stored answer keeps its thinking folded. When the model's gateway sends no reasoning at all (most non-reasoning models) there is no empty window to stare at: a single live line says the answer is being prepared, with the same step, context and time, and the window appears at the moment the model really says something.
 
 The agent is instructed to think and answer **in Russian first**, switching to another language only where the work itself needs it — code, paths, commands, error messages and quoted documentation.
 

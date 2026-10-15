@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { LayoutShell } from "../layout/LayoutShell";
 import { PreviewPanel } from "../preview/PreviewPanel";
 import { SettingsHub } from "../settings/SettingsHub";
@@ -7,9 +7,13 @@ import { WorkspaceNav,type WorkspaceView } from "./WorkspaceNav";
 import { WorkspaceContent } from "./WorkspaceContent";
 import { NestLoader } from "../../components/NestLoader";
 
-export function WorkspaceShell({onHome}:{onHome:()=>void}){
+export function WorkspaceShell({onHome,onAgentState}:{onHome:()=>void;onAgentState?:(state:{running:boolean;projectName:string}|null)=>void}){
   const {projectId,conversationId,projectName,loading,error,retry,openConversation}=useWorkspace();
   const [view,setView]=useState<WorkspaceView>("agent");
+  // Рабочая область остаётся смонтированной, когда пользователь уходит на главную, поэтому
+  // запуск продолжается; состояние поднимается наверх, чтобы главная сказала, над чем идёт работа.
+  const [agentRunning,setAgentRunning]=useState(false);
+  const reportAgentState=useCallback((running:boolean)=>setAgentRunning(running),[]);
   const [settingsOpen,setSettingsOpen]=useState(false);
   const [deployOpen,setDeployOpen]=useState(false);
   // On a phone the preview is a drawer that slides over the workspace, opened from the top bar.
@@ -18,6 +22,10 @@ export function WorkspaceShell({onHome}:{onHome:()=>void}){
   // Every finished run bumps this: the preview panel re-reads the status and reloads the
   // frame, so the app the agent just changed is what the user sees, without a restart.
   const [previewReload,setPreviewReload]=useState(0);
+
+  useEffect(()=>{onAgentState?.(agentRunning?{running:true,projectName}:null)},[agentRunning,projectName,onAgentState]);
+  // Пока рабочая область жива, главная не имеет своего запуска: уходя, она снимает свой статус.
+  useEffect(()=>()=>{onAgentState?.(null)},[onAgentState]);
 
   // A GitHub OAuth return asks for the settings overlay with the Integrations tab.
   // Read in an effect: state initializers run twice under StrictMode.
@@ -47,7 +55,7 @@ export function WorkspaceShell({onHome}:{onHome:()=>void}){
             <div className="panel-title"><div><span className="eyebrow">ПУБЛИКАЦИЯ</span><strong>Публикация проекта</strong></div><button className="ghost-button" onClick={()=>setDeployOpen(false)}>Закрыть</button></div>
             <div className="settings-body"><p>Модуль публикации подключим к выбранному облаку, когда настроим окружение.</p><button className="send-button" onClick={()=>setDeployOpen(false)}>Понятно</button></div>
           </section>}
-        </div>:<><WorkspaceNav view={view} onChange={setView}/><WorkspaceContent view={view} projectId={projectId} conversationId={conversationId} onOpenConversation={openConversation} onRunFinished={()=>setPreviewReload(value=>value+1)} onOpenModelSettings={openModelSettings} onOpenAccountSettings={openSettings}/></>}
+        </div>:<><WorkspaceNav view={view} onChange={setView}/><WorkspaceContent view={view} projectId={projectId} conversationId={conversationId} onOpenConversation={openConversation} onRunFinished={()=>setPreviewReload(value=>value+1)} onOpenModelSettings={openModelSettings} onOpenAccountSettings={openSettings} onRunningChange={reportAgentState}/></>}
       </div>
       <PreviewPanel projectId={projectId} reloadToken={previewReload} open={previewOpen} onClose={()=>setPreviewOpen(false)} onRunningChange={setPreviewRunning}/>
     </main>

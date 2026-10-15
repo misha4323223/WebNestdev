@@ -3,6 +3,7 @@ import type { SandboxConfig } from "./sandbox-manager.js";
 import { dockerOptions } from "./sandbox/docker/options.js";
 import type { SandboxRunOptions } from "./sandbox-worker.js";
 import { dockerRunArgs } from "./sandbox/docker/args.js";
+import { dockerUnavailableMessage } from "./sandbox/docker/unavailable.js";
 import type { DockerCommandResult } from "./sandbox/docker/types.js";
 
 export type { DockerCommandResult };
@@ -28,19 +29,23 @@ export async function runDockerSandbox(config:SandboxConfig,command:string,cwd:s
       setTimeout(()=>child.kill("SIGKILL"),1500).unref();
       reject(new Error("Превышено время выполнения команды в песочнице"));
     },config.timeoutMs);
-    child.once("error",e=>{clearTimeout(timer);reject(new Error("Песочница Docker недоступна: "+e.message))});
+    // Хост без Docker (или без прав на сокет демона): сообщение одно и то же для панели, лога и
+    // модели — с объяснением, что доступно вместо контейнера.
+    child.once("error",e=>{clearTimeout(timer);reject(new Error(dockerUnavailableMessage(e)))});
     child.once("close",(code,signal)=>{clearTimeout(timer);resolve({ok:code===0,exitCode:code,signal,stdout,stderr,truncated})});
   });
 }
 
-export async function sandboxStatus():Promise<{mode:string;available:boolean;reason?:string;dockerVersion?:string}>{
+export async function sandboxStatus():Promise<{mode:string;available:boolean;reason?:string;detail?:string;dockerVersion?:string}>{
   const mode=process.env.SANDBOX_MODE??"docker";
   if(mode!=="docker")return {mode,available:false,reason:"Docker sandbox is required."};
   return new Promise(resolve=>{
     const child=spawn("docker",["version","--format","{{.Server.Version}}"],{stdio:["ignore","pipe","pipe"]});
     let output="";
     child.stdout.on("data",(x:Buffer)=>output+=x.toString());
-    child.on("error",()=>resolve({mode,available:false}));
+    // `/api/health` и `/api/ready` показывают эту причину: без неё «available:false» выглядит
+    // как временная неисправность, хотя это отсутствие Docker на хосте.
+    child.on("error",error=>resolve({mode,available:false,detail:dockerUnavailableMessage(error)}));
     child.on("close",code=>resolve({mode,available:code===0,dockerVersion:code===0?output.trim():undefined}));
   });
 }

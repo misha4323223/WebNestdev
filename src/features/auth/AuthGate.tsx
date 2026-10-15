@@ -1,5 +1,6 @@
-import { useEffect,useState } from "react";
+import { useCallback,useEffect,useState } from "react";
 import { getAuth } from "../../lib/auth-api";
+import { refreshPreferences } from "../../lib/preferences";
 import { AuthScreen } from "./AuthScreen";
 import { NestLoader } from "../../components/NestLoader";
 import { WorkspaceShell } from "../workspace/WorkspaceShell";
@@ -19,7 +20,20 @@ export function AuthGate(){
   const [state,setState]=useState<"loading"|"authenticated"|"guest">("loading");
   // Integrations (for example a GitHub import) ask for the workspace directly after a reload.
   const [home,setHome]=useState(()=>!localStorage.getItem("webnestdev.openWorkspace"));
-  const refresh=()=>{setState("loading");void getAuth().then(result=>setState(result.authenticated?"authenticated":"guest")).catch(()=>setState("guest"));};
+  /**
+   * Проект, для которого смонтирована рабочая область, или null, если она ещё не открывалась.
+   * Уход на главную её больше не размонтирует: запуск агента живёт, пока открыт сокет панели,
+   * поэтому «выйти из проекта» не значит «остановить агента». Второй проект — другая область
+   * (key пересоздаёт её), тот же проект продолжается с того же места.
+   */
+  const [workspaceProject,setWorkspaceProject]=useState<string|null>(()=>localStorage.getItem("webnestdev.openWorkspace")?localStorage.getItem("webnestdev.projectId")??"":null);
+  // Идёт ли запуск прямо сейчас: главная показывает это, пока пользователь вне проекта.
+  const [agentRun,setAgentRun]=useState<{running:boolean;projectName:string}|null>(null);
+  const reportAgentState=useCallback((next:{running:boolean;projectName:string}|null)=>setAgentRun(next),[]);
+  const openWorkspace=useCallback((projectId:string)=>{setWorkspaceProject(projectId);setHome(false)},[]);
+  // Account preferences are fetched only after the session is confirmed: the caller is a guest
+  // on this screen often enough that asking first would answer 401 in the browser console.
+  const refresh=()=>{setState("loading");void getAuth().then(result=>{setState(result.authenticated?"authenticated":"guest");if(result.authenticated)void refreshPreferences();}).catch(()=>setState("guest"));};
   useEffect(()=>{refresh()},[]);
   useEffect(()=>{localStorage.removeItem("webnestdev.openWorkspace")},[]);
   // An OAuth callback returns with ?<provider>=<status>: drop the query from the
@@ -46,13 +60,21 @@ export function AuthGate(){
     localStorage.setItem("webnestdev.openIntegrations","1");
     if(returnTo==="workspace"){
       localStorage.setItem("webnestdev.openSettings","1");
-      setHome(false);
+      openWorkspace(localStorage.getItem("webnestdev.projectId")??"");
       return;
     }
     setHome(true);
   },[]);
   if(state==="loading") return <div className="app-loading"><NestLoader size={58} label="Проверяем сессию"/><strong>Проверяем сессию…</strong><span>Подготавливаем ваше рабочее пространство</span></div>;
   if(state==="guest") return <AuthScreen onAuthenticated={refresh}/>;
-  if(home) return <HomeScreen onOpenWorkspace={()=>setHome(false)}/>;
-  return <WorkspaceShell onHome={()=>setHome(true)}/>;
+  // Обе поверхности живут в дереве одновременно, а показывается одна: скрытая рабочая область
+  // продолжает держать сокет запуска, поэтому агент не останавливается на главной.
+  return <>
+    <div className="app-pane" hidden={!home}>
+      <HomeScreen onOpenWorkspace={openWorkspace} activeRun={agentRun?.running?{projectId:workspaceProject??"",projectName:agentRun.projectName}:null}/>
+    </div>
+    {workspaceProject!==null&&<div className="app-pane" hidden={home}>{
+      <WorkspaceShell key={workspaceProject} onHome={()=>setHome(true)} onAgentState={reportAgentState}/>
+    }</div>}
+  </>;
 }

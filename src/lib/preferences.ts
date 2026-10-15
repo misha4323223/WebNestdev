@@ -29,15 +29,24 @@ export function applyPreferences(preferences: UserPreferences) {
 }
 
 /**
- * Applies cached preferences immediately (so the interface does not flicker on reload)
- * and then refreshes them from the account when the user is signed in.
+ * Applies cached preferences immediately, so the interface does not flicker on reload.
+ * No request is made here on purpose: this runs on every boot, including the sign-in
+ * screen, and `/api/account/settings` needs a session — asking for it before the user
+ * is known is what put 401 Unauthorized in the browser console of a signed-out visitor.
  */
-export async function loadPreferences() {
+export function loadCachedPreferences() {
   applyPreferences(readCachedPreferences());
+}
+
+/**
+ * Replaces the cached preferences with the ones the account stores. Called only once the
+ * user is known to be signed in, because the endpoint answers 401 without a session.
+ */
+export async function refreshPreferences() {
   try {
     const data = await apiJson<{ preferences: UserPreferences }>("/api/account/settings");
     applyPreferences(data.preferences);
   } catch {
-    // Guest or API unavailable: the cached values stay in effect.
+    // Session expired or API unavailable: the cached values stay in effect.
   }
 }
