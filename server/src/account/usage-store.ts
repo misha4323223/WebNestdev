@@ -106,6 +106,17 @@ export async function consumeUsageForCurrentPlan(userId: string, kind: UsageKind
   return consumeUsage(userId, kind, FREE_PLAN, now);
 }
 
+/**
+ * Запуск агента. Дневной лимит заведён на встроенную модель платформы: она отвечает за счёт
+ * платформы, поэтому её запуски считаются и ограничиваются. Проект со своим AI-провайдером тратит
+ * свои токены и свой ключ, поэтому его запуски не считаются и не блокируются — вместо ошибки
+ * возвращается текущий снимок использования, чтобы панель показала те же цифры, что и раньше.
+ */
+export async function consumeAgentRun(userId: string, options: { ownProvider: boolean }, now = new Date()) {
+  if (options.ownProvider) return getUsageSnapshot(userId, now);
+  return consumeUsage(userId, "agentRuns", FREE_PLAN, now);
+}
+
 export type RunUsageInput = {
   runId: string;
   projectId: string;

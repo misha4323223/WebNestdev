@@ -36,23 +36,42 @@ function reasoningText(value:unknown):string{
   if(typeof value==="string")return value;
   if(Array.isArray(value))return value.map(reasoningText).join("");
   if(value&&typeof value==="object"){
-    const item=value as {text?:unknown;content?:unknown;summary?:unknown};
-    return reasoningText(item.text)||reasoningText(item.content)||reasoningText(item.summary);
+    const item=value as {text?:unknown;content?:unknown;summary?:unknown;thinking?:unknown;reasoning?:unknown;thought?:unknown;value?:unknown};
+    return reasoningText(item.text)||reasoningText(item.content)||reasoningText(item.summary)
+      ||reasoningText(item.thinking)||reasoningText(item.reasoning)||reasoningText(item.thought)||reasoningText(item.value);
+  }
+  return "";
+}
+
+/** Все имена, которыми шлюзы называют цепочку рассуждений в одном чанке. */
+const REASONING_FIELDS=["reasoning_content","reasoning","reasoning_details","reasoning_text","thinking","thought"] as const;
+
+/**
+ * Reasoning-capable models stream their chain of thought in one of several fields,
+ * depending on the gateway: DeepSeek uses `reasoning_content`, Qwen `reasoning`, and a
+ * few gateways send `reasoning_details`, `reasoning_text`, `thinking` or `thought`. Any of
+ * them becomes a reasoning chunk. It is shown to the user and never sent back to the provider.
+ */
+export function reasoningDelta(delta:unknown):string{
+  if(!delta||typeof delta!=="object")return "";
+  const value=delta as Record<string,unknown>;
+  for(const field of REASONING_FIELDS){
+    const text=reasoningText(value[field]);
+    if(text)return text;
   }
   return "";
 }
 
 /**
- * Reasoning-capable models stream their chain of thought in one of several fields,
- * depending on the gateway: DeepSeek uses `reasoning_content`, Qwen `reasoning`, and a
- * few gateways send `reasoning_details`. Any of them becomes a reasoning chunk. It is
- * shown to the user and never sent back to the provider.
+ * Шлюзы отдают цепочку рассуждений только по просьбе: один и тот же адрес без `reasoning_effort`
+ * присылает ответ и молчит о мыслях, а с ним — стримит их отдельным полем. Поэтому просим
+ * по умолчанию; WEBNESTDEV_AI_REASONING=off выключает просьбу целиком, low/medium/high задают
+ * глубину. Шлюз, который такого поля не знает, отказывает с 400 — тогда запуск не ломается, а
+ * повторяется без него (см. ниже), и адрес запоминается, чтобы не платить двумя запросами за шаг.
  */
-export function reasoningDelta(delta:unknown):string{
-  if(!delta||typeof delta!=="object")return "";
-  const value=delta as {reasoning_content?:unknown;reasoning?:unknown;reasoning_details?:unknown};
-  return reasoningText(value.reasoning_content)||reasoningText(value.reasoning)||reasoningText(value.reasoning_details);
-}
+const REASONING_REQUEST=(process.env.WEBNESTDEV_AI_REASONING??"medium").trim().toLowerCase();
+const REASONING_EFFORT=["low","medium","high"].includes(REASONING_REQUEST)?REASONING_REQUEST:null;
+const reasoningRejected=new Set<string>();
 
 /**
  * A gateway that keeps its chain of thought under an undocumented field is diagnosed from the stream
@@ -96,27 +115,39 @@ export class OpenAICompatibleProvider implements Provider{
     // Так склейка на стороне прокси всегда корректная (нет дублей /v1/v1 и /api/v1/api/v1).
     const normBase=this.base.trim().replace(/\/+$/,"");
     const chatPath=normBase.endsWith("/v1")?"/chat/completions":"/v1/chat/completions";
-    const response=proxyUrl
-      ? await fetch(proxyUrl+chatPath,{
+    const wire=toWireMessages(messages);
+    const send=(body:unknown)=>proxyUrl
+      ? fetch(proxyUrl+chatPath,{
         method:"POST",
         signal,
         headers:{
           "content-type":"application/json",
-          "x-ai-proxy-target":this.base.replace(/\/+$/,""),
+          "x-ai-proxy-target":normBase,
           ...(proxyToken?{"x-proxy-token":proxyToken}:{}),
           ...(this.key?{authorization:"Bearer "+this.key}:{})
         },
-        body:JSON.stringify({model,messages:toWireMessages(messages),tools,stream:true})
+        body:JSON.stringify(body)
       })
-      : await fetch(targetUrl,{
+      : fetch(targetUrl,{
         method:"POST",
         signal,
         headers:{
           "content-type":"application/json",
           ...(this.key?{authorization:"Bearer "+this.key}:{})
         },
-        body:JSON.stringify({model,messages:toWireMessages(messages),tools,stream:true})
+        body:JSON.stringify(body)
       });
+    const payload=(withReasoning:boolean)=>({model,messages:wire,tools,stream:true,...(withReasoning&&REASONING_EFFORT?{reasoning_effort:REASONING_EFFORT}:{})});
+    // Мысли нужны пользователю, но не настолько, чтобы сломать запуск: шлюз, отвечающий на просьбу
+    // о рассуждении отказом формы (400/422), получает тот же запрос без неё — и запоминается, чтобы
+    // следующие шаги запуска не платили за это двумя запросами каждый.
+    const askReasoning=Boolean(REASONING_EFFORT)&&!reasoningRejected.has(normBase);
+    let response=await send(payload(askReasoning));
+    if(!response.ok&&askReasoning&&(response.status===400||response.status===422)){
+      try{await response.body?.cancel()}catch{}
+      reasoningRejected.add(normBase);
+      response=await send(payload(false));
+    }
     if(!response.ok){
       const detail=await response.text().catch(()=>"");
       // Типизированная ошибка: переполнение контекста рантайм умеет лечить повтором с меньшим
@@ -129,6 +160,9 @@ export class OpenAICompatibleProvider implements Provider{
 
     const pending=new Map<number,ProviderToolCall>();
     let debugged=0;
+    // Шлюзы делятся надвое: одни стримят размышление чанками, другие присылают его готовым
+    // сообщением в последнем чанке. Флаг не даёт показать одно и то же дважды.
+    let sawReasoning=false;
     for await(const line of lines(response.body)){
       if(!line||line==="[DONE]")continue;
       const data=JSON.parse(line) as any;
@@ -144,7 +178,16 @@ export class OpenAICompatibleProvider implements Provider{
       }
       if(delta?.content)yield {type:"text",text:delta.content};
       const reasoning=reasoningDelta(delta);
-      if(reasoning)yield {type:"reasoning",text:reasoning};
+      if(reasoning){
+        sawReasoning=true;
+        yield {type:"reasoning",text:reasoning};
+      }
+      if(!sawReasoning){
+        const whole=reasoningDelta(data.choices?.[0]?.message);        if(whole){
+          sawReasoning=true;
+          yield {type:"reasoning",text:whole};
+        }
+      }
       for(const call of delta?.tool_calls??[]){
         const index=call.index??0;
         const existing=pending.get(index)??{

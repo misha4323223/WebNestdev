@@ -3,9 +3,9 @@ import type { RawData } from "ws";
 import { z } from "zod";
 import { AgentRuntime } from "../agent-runtime.js";
 import { getCurrentUser } from "../auth/auth.js";
-import { getProject,getConversation,appendConversationMessages } from "../project-store.js";
+import { getProject,getConversation,appendConversationMessages,getProjectProvider } from "../project-store.js";
 import type { ChatMessage } from "../types.js";
-import { consumeUsageForCurrentPlan } from "../account/usage-store.js";
+import { consumeAgentRun } from "../account/usage-store.js";
 import { runQueueStats,runWithRunSlot } from "../agent/run-limiter.js";
 import { positiveInt } from "../concurrency.js";
 
@@ -116,6 +116,9 @@ export async function registerAgentWebSocket(app:FastifyInstance,runtime=new Age
         if(payloadSize>2_000_000)throw new Error("Запрос агента слишком большой");
         const project=await getProject(parsed.projectId);
         if(!project||project.userId!==user.id)throw new Error("Проект не найден");
+        // Свой AI-провайдер проекта: запуски идут за счёт пользователя, поэтому дневной лимит
+        // встроенной модели к ним не применяется (см. consumeAgentRun).
+        const ownProvider=Boolean(await getProjectProvider(project.id));
         // Одно чтение сессии отвечает на два вопроса: какие из присланных сообщений новые, и какая
         // история на самом деле была у разговора. Второе важнее: модель получает её, а не копию из
         // браузера, поэтому в контекст попадают результаты инструментов прошлых запусков — и запуск
@@ -140,7 +143,7 @@ export async function registerAgentWebSocket(app:FastifyInstance,runtime=new Age
         const heartbeat=setInterval(()=>safeSend({type:"run.alive",at:Date.now()}),runHeartbeatMs());
         try{
           await runWithRunSlot(async()=>{
-            const usage = await consumeUsageForCurrentPlan(user.id,"agentRuns");
+            const usage = await consumeAgentRun(user.id,{ownProvider});
             safeSend({type:"usage.updated",usage});
             await runtime.run({...parsed,userId:user.id,...(history?{history}:{})},event=>safeSend(event),runController.signal);
           },{

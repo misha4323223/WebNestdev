@@ -133,6 +133,7 @@ export function SubscriptionPage({ onBack, onOpenPicker }: { onBack: () => void;
             );
           })()}
         </div>
+        <p className="account-muted">Запуски считаются только для встроенной модели платформы. Подключите свой AI-провайдер в настройках проекта — запуски пойдут через ваш ключ и модель, и дневная квота к ним не применяется.</p>
       </section>
     </>}
 

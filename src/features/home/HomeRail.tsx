@@ -177,6 +177,7 @@ function RailBilling({ billing, choice, error, onOpenPlans, onOpenSubscriptions 
         <div><span>Браузерные проверки</span><strong>{billing.usage.browserChecks} / {billing.limits.browserChecksPerDay}</strong></div>
         <div className="usage-meter-track"><span style={{ width: `${Math.min(100, billing.usage.browserChecks / Math.max(1, billing.limits.browserChecksPerDay) * 100)}%` }}/></div>
       </div>
+      <p className="account-muted">Запуски считаются на встроенной модели платформы. Со своим AI-провайдером — без дневного лимита.</p>
       <div className="rail-plan-actions">
         <button className="plan-action" onClick={onOpenPlans}>Сменить тариф</button>
         <button className="ghost-button" onClick={onOpenSubscriptions}>Подробнее о тарифах <ArrowRight size={12}/></button>

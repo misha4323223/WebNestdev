@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Activity,
   Brain,
@@ -285,14 +285,31 @@ function formatTokens(value: number) {
 }
 
 /**
+ * Последняя содержательная строка размышления — то, что видно в свёрнутом контейнере. Читая только
+ * её, пользователь видит, что модель действительно думает над его задачей, а не ждёт ответа.
+ */
+function lastThoughtLine(text: string) {
+  const lines = text.split("\n").map(line => line.trim()).filter(Boolean);
+  const last = lines.at(-1) ?? "";
+  return last.length > 160 ? "…" + last.slice(-160) : last;
+}
+
+/** Объём размышления — единственное, что можно сказать о свёрнутом готовом блоке. */
+function thoughtSize(text: string) {
+  const chars = text.trim().length;
+  return chars >= 1000 ? (Math.round(chars / 100) / 10).toLocaleString("ru-RU") + " тыс. символов" : chars + " символов";
+}
+
+/**
  * The chain of thought of one answer, shown **above** it — the model thinks first and writes after,
  * and the thinking is the container the user can fold away rather than a separate window far from the
- * text it explains — the shape Replit uses.
+ * text it explains.
  *
  * While the run is working the container is open, so the user sees the reasoning where the answer
  * will appear, with the step, the context size and the elapsed time next to it. The user's own choice
  * is stronger than that default: once the block was folded or unfolded by hand, it stays the way the
- * user left it.
+ * user left it. Folded it is not silent: the header keeps showing the **last line** of the thought
+ * stream, so hiding the window means "give me space", not "stop showing me that it works".
  *
  * A model that sends no reasoning at all (most non-reasoning gateways) gets no empty window with a
  * promise in it — only a live line saying that the answer is being prepared, with the same step,
@@ -307,7 +324,14 @@ export function MessageThinking({ text, running, progress, startedAt }: {
 }) {
   const [open, setOpen] = useState(Boolean(running));
   const [chosen, setChosen] = useState(false);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => { if (!chosen) setOpen(Boolean(running)); }, [running, chosen]);
+  // Поток мыслей длиннее окна: пока модель говорит, видны её последние строки, а не начало абзаца.
+  useEffect(() => {
+    const box = bodyRef.current;
+    if (!box || !running) return;
+    box.scrollTop = box.scrollHeight;
+  }, [text, running]);
   const elapsed = useElapsedSeconds(running ? startedAt : null);
   const said = Boolean(text.trim());
   // Шаг, размер контекста и время — это признаки живого запуска: у сохранённого ответа они значили бы
@@ -319,20 +343,24 @@ export function MessageThinking({ text, running, progress, startedAt }: {
   ].filter(Boolean).join(" · ");
   // Ни строчки размышления — не повод для пустого окна с обещанием: пока модель молчит, видно только
   // то, что запуск идёт, а окно размышлений появляется в тот момент, когда модель что-то прислала.
-  if (!said && running) return <div className="message-thinking-waiting" role="status">
+  if (!said && running) return <div className="thinking-waiting" role="status">
     <LoaderCircle size={12} className="agent-spin"/>
     <span>Готовит ответ…</span>
-    {detail && <span className="message-thinking-meta">{detail}</span>}
+    {detail && <span className="thinking-meta">{detail}</span>}
   </div>;
   // A finished turn without thinking says nothing: an empty folded row would only be noise.
   if (!said) return null;
-  return <div className={"message-thinking" + (open ? " message-thinking-open" : "") + (running ? " message-thinking-live" : "")}>
-    <button type="button" className="message-thinking-head" onClick={() => { setChosen(true); setOpen(value => !value); }} aria-expanded={open}>
-      {open ? <ChevronDown size={12}/> : <ChevronRight size={12}/>}
-      {running ? <LoaderCircle size={12} className="agent-spin"/> : <Brain size={12}/>}
-      <span>{running ? "Размышляет…" : "Размышления"}</span>
-      {detail && <span className="message-thinking-meta">{detail}</span>}
+  const meta = running ? detail : thoughtSize(text);
+  return <div className={"thinking" + (open ? " thinking-open" : "") + (running ? " thinking-live" : "")}>
+    <button type="button" className="thinking-head" title={open ? "Свернуть размышления" : "Развернуть размышления"} onClick={() => { setChosen(true); setOpen(value => !value); }} aria-expanded={open}>
+      <span className="thinking-badge">{running ? <LoaderCircle size={12} className="agent-spin"/> : <Brain size={12}/>}</span>
+      <span className="thinking-title">{running ? "Размышляю…" : "Размышления"}</span>
+      {!open && <span className="thinking-preview">{lastThoughtLine(text)}</span>}
+      {meta && <span className="thinking-meta">{meta}</span>}
+      <span className="thinking-toggle">{open ? <ChevronDown size={12}/> : <ChevronRight size={12}/>}</span>
     </button>
-    {open && <div className="agent-thinking">{text}</div>}
+    {open && <div className="thinking-body" ref={bodyRef}>
+      <div className="thinking-text">{text}{running && <span className="thinking-cursor" aria-hidden="true"/>}</div>
+    </div>}
   </div>;
 }

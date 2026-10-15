@@ -164,6 +164,9 @@ export function SettingsPanel({projectId,projectName,onClose}:{projectId:string;
     <div className="settings-body">
       <label>Проект<span>{projectName}</span></label>
       {!configured&&platformDefault?.available&&<div className="settings-status">По умолчанию используется модель платформы: {platformDefault.providerName} · {platformDefault.model}. Свой провайдер ниже — опция.</div>}
+      <div className="settings-status">{configured
+        ? "Этот проект работает через ваш ключ и модель: запуски агента идут за ваш счёт и дневным лимитом платформы не ограничены."
+        : "Свой AI-провайдер — это ваш ключ и ваша модель. Запуски агента идут за ваш счёт, поэтому дневной лимит платформы (запуски на встроенной модели) к ним не применяется."}</div>
       <label>Провайдер<input value={config.provider} onChange={e=>updateConfig({...config,provider:e.target.value})} placeholder="OpenRouter, DeepSeek, OpenAI, YandexGPT…"/></label>
       <label>Base URL<input value={config.baseUrl} onChange={e=>updateConfig({...config,baseUrl:e.target.value})} placeholder="https://api.example.com/v1" type="url" autoComplete="url"/></label>
       <label>API-ключ<div className="secret-field">

@@ -85,17 +85,31 @@ button,textarea{font:inherit}button{color:inherit}
 .run-panel-error{display:inline-flex;align-items:center;gap:4px;color:#c96f6f}
 .run-panel-body{border-top:1px solid #1d2229;max-height:220px;overflow:auto;scrollbar-width:thin}
 .run-panel-body ul{list-style:none;margin:0;padding:0}
-.agent-thinking{white-space:pre-wrap;color:#9aa2ad;font-size:11px;line-height:1.62;padding:9px 12px;max-height:220px;overflow:auto;scrollbar-width:thin}
-/* Размышление стоит над ответом: контейнер, который можно свернуть, с шагом, контекстом и временем. */
-.message-thinking{margin:0 0 8px;border:1px solid #222831;border-radius:8px;background:#0f1216;overflow:hidden}
-.message-thinking-head{display:flex;align-items:center;gap:6px;width:100%;padding:5px 9px;border:0;background:transparent;color:#8b939e;font-size:10px;cursor:pointer}
-.message-thinking-head:hover{background:#131820}
-.message-thinking-meta{margin-left:auto;color:#6d7681;font-variant-numeric:tabular-nums}
+/*
+ * Размышление модели — над её ответом: контейнер, который можно свернуть одним нажатием, с шагом,
+ * контекстом и временем в шапке. Пока модель думает, шапка подписана «Размышляю…» и даже в свёрнутом
+ * виде показывает последнюю строку мыслей, а развёрнутый блок — окно с самим потоком мыслей.
+ */
+.thinking{margin:0 0 8px;border:1px solid #232a34;border-radius:10px;background:linear-gradient(180deg,#111721,#0e1116 72%);overflow:hidden}
+.thinking-live{border-color:#2b3a4e;box-shadow:0 10px 26px -22px rgba(120,168,224,.55)}
+.thinking-head{display:flex;align-items:center;gap:7px;width:100%;padding:6px 10px;border:0;background:transparent;color:#8b939e;font-size:10.5px;cursor:pointer;text-align:left}
+.thinking-head:hover{background:#141a23}
+.thinking-badge{flex:none;width:19px;height:19px;display:grid;place-items:center;border:1px solid #27303b;border-radius:999px;background:#151b24;color:#8d97a3}
+.thinking-live .thinking-badge{border-color:#31506f;background:radial-gradient(circle at 32% 30%,rgba(120,168,224,.3),rgba(120,168,224,.05));color:#bcd3ec}
+.thinking-title{flex:none;font-weight:600;color:#98a2ae}
+.thinking-live .thinking-title{color:#cfdcea}
+/* Свёрнутый блок не молчит: в шапке живёт последняя мысль модели, обрезанная по левому краю. */
+.thinking-preview{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#6d7784;font:400 10px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;mask-image:linear-gradient(90deg,#000 76%,transparent);-webkit-mask-image:linear-gradient(90deg,#000 76%,transparent)}
+.thinking-meta{margin-left:auto;flex:none;color:#6d7681;font-variant-numeric:tabular-nums}
+.thinking-toggle{flex:none;display:grid;place-items:center;color:#6d7681}
+.thinking-body{border-top:1px solid #1c232c;max-height:260px;overflow:auto;scrollbar-width:thin;background:radial-gradient(120% 80% at 0 0,rgba(120,168,224,.05),transparent 62%),#0d1015}
+.thinking-text{position:relative;white-space:pre-wrap;overflow-wrap:anywhere;padding:10px 12px 12px 20px;color:#98a1ac;font:400 11px/1.72 ui-monospace,SFMono-Regular,Menlo,monospace}
+/* Тонкая линия слева — «рельс» потока мыслей: она связывает строки в одно размышление. */
+.thinking-text::before{content:"";position:absolute;left:9px;top:12px;bottom:12px;width:1px;background:linear-gradient(180deg,rgba(120,168,224,.5),rgba(120,168,224,0))}
+.thinking-cursor{display:inline-block;width:6px;height:11px;margin-left:2px;vertical-align:-1px;background:#7ea6d4;animation:thinking-blink 1s steps(2,start) infinite}
+@keyframes thinking-blink{50%{opacity:0}}
 /* Пока модель не прислала ни строчки размышления, вместо окна — строка о том, что ответ готовится. */
-.message-thinking-waiting{display:flex;align-items:center;gap:6px;margin:0 0 8px;padding:5px 9px;border:1px solid #222831;border-radius:8px;background:#0f1216;color:#8b939e;font-size:10px}
-/* Пока модель думает, строка видна на фоне ответа: шаг, размер контекста и время — видно, что запуск работает. */
-.message-thinking-live .message-thinking-head{color:#c2cad4}
-.message-thinking-open .message-thinking-head{border-bottom:1px solid #1b2129}
+.thinking-waiting{display:flex;align-items:center;gap:7px;margin:0 0 8px;padding:6px 10px;border:1px solid #232a34;border-radius:10px;background:#0f1216;color:#8b939e;font-size:10.5px}
 .agent-plan-bar{height:3px;background:#1a1f26}
 .agent-plan-bar span{display:block;height:100%;background:linear-gradient(90deg,#3d6a4d,#6aa37c);transition:width .25s ease}
 

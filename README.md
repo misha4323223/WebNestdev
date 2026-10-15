@@ -36,11 +36,17 @@ Preview inspection uses the actual host port assigned to the project, rather tha
 
 The real headless-browser worker is now implemented as `browser.runtime`. It executes the Preview in Chromium and reports **what the page actually rendered** — the visible text (bounded), how many characters of it, how many visible elements, and whether the screen is empty — together with console messages, page errors, failed network requests, HTTP errors, and the document status. The worker is protected by a 20-second runtime limit.
 
-The evidence is the point: a PNG screenshot was captured and returned as base64 before, which a text model cannot read, so a run that failed with a white screen could only guess why. What is a *failure* is now also decided explicitly (`classifyRuntimeFailures` in `tools/browser-tools.ts`): page errors, console errors, requests that never arrived, `5xx`, a missing route and an **empty screen** fail the check, while `4xx` answers from the app's own API (a page without a session is supposed to answer `401`) and requests aborted by a navigation are reported as `background` and never fail it. Including the empty-screen case makes the check *stricter* than before: `expectVisible body` passes on a blank page.
+The evidence is the point: a PNG screenshot was captured and returned as base64 before, which a text model cannot read, so a run that failed with a white screen could only guess why. What a *failure* is is decided explicitly (`classifyRuntimeFailures` in `tools/browser-tools.ts`): page errors, console errors, requests that never arrived, `5xx`, a missing route, an **empty screen** and an **unstyled screen** fail the check, while `4xx` answers from the app's own API (a page without a session is supposed to answer `401`) and requests aborted by a navigation are reported as `background` and never fail it. Including the empty-screen case makes the check *stricter* than before: `expectVisible body` passes on a blank page.
+
+The white screen was still being missed, because a page whose styles never arrived has text and elements in the DOM and nothing in the console: `expectVisible body` was satisfied and the model went looking through files. So the evidence now says how the page *looks* (`rendered.styles`): declared vs. loaded stylesheet links, `<style>` blocks, the number of CSS rules in effect, the computed body background and text colour, plus `unstyled` and `noStyles`. Rules, not links, decide: Chromium keeps an empty stylesheet even for a `404`, so a page with declared styles and zero rules is reported as unstyled rather than as fine. In the same spirit, a `4xx` for a `.css` or `.js` file is a failure — without it the page is white — while `favicon.ico` and other browser-invented requests stay `background`.
+
+And the check no longer looks only through the door the *agent* has. `browser.runtime` loads the page twice: at the container address (`url`, `rendered`) and through the platform's own preview proxy (`panelDoor`) with a short-lived session for the project owner — the same route, cookie and headers the panel's iframe uses. A page that breaks in the proxy (rewritten paths, framing, headers) is invisible from the container address; the proxy pass mints a session, deletes it afterwards, and reports "could not check" rather than a failure when the platform address is unreachable from inside the check.
 
 After mutating tools such as `fs.write`, `fs.rename`, `fs.delete`, `terminal.exec`, and `npm.install`, Agent Runtime automatically starts Preview and runs `project.verify`; for relevant web changes it also runs `browser.runtime`. This automatic verification is bounded to three attempts per agent run, and failures are returned to the model as actionable diagnostics for the next fix.
 
 A dev-server preview does not trust the launch flags for its address. The command gets `--host 0.0.0.0 --port 3000`, but a script such as `concurrently "vite" "node server.js"` ignores them, and Vite without `--host` listens on `127.0.0.1` inside the container only — reachable for `docker exec`, invisible to the server, the panel's proxy and Chromium. So the address is settled from evidence instead: the real port comes from the container's `/proc/net/tcp`, and an app bound to loopback gets a TCP relay inside its own container on the platform's port (`server/src/preview/preview-address.ts`). Before this, `preview.ready` was honest ("the app answers") while `project.verify` failed with `Unable to reach Preview: fetch failed` three times and ended the run on the verification-attempt limit.
+
+In the panel the preview frame is reloaded on every fresh status (opening the project, the end of an agent run, the ⟳ button), so a frame that was loaded while the app was still starting — the proxy answers with an empty document until the dev server is up — does not stay white after the logs already say "запущено".
 
 A preview runs in one of two modes (`PREVIEW_MODE`, logged at startup). By default the project is **built once and served statically from the server process**: `npm run build` runs in the sandbox when a source file is newer than the served output, and `dist`/`build`/`out` (or `PREVIEW_STATIC_DIR`) is served with the SPA fallback the platform's own frontend uses. No container and no dev server means a 4 GB host can keep several projects previewable at once. A project without a build script — or whose build fails, or that produces no `index.html` — automatically falls back to the per-project **dev-server container** with live reload, and the panel says why; `PREVIEW_MODE=container` pins the dev server and `PREVIEW_MODE=static` forbids the fallback. A static preview has no hot reload: it is rebuilt on the next start, and the logs face shows the build output.
 
@@ -56,6 +62,16 @@ panel shows it waiting, and the daily run quota is consumed only once the run ac
 All limits are logged at startup (`[agent] …`, `[sandbox] …`). See
 docs/PRODUCTION_DEPLOYMENT.md for the queue settings, the scaling path and what a small host
 costs in Russia.
+
+### Which runs the daily quota counts
+
+The free plan allows **10 agent runs a day**, and that number is about the model the *platform*
+pays for. A project with its own AI provider spends the owner's key and the owner's tokens, so its
+runs are neither counted nor blocked: `routes/agent-ws.ts` asks once whether the project has a
+provider of its own and hands the answer to `consumeAgentRun` (`account/usage-store.ts`), which
+returns the current usage snapshot instead of reserving a place in the quota. Runs on the built-in
+platform model keep counting exactly as before, and the panel, the settings screen and the plans
+page all say so next to the numbers.
 
 On top of the host-wide limit there is **one run per account**: a second tab or a second project
 of the same user is answered with `RUN_ALREADY_ACTIVE` and the panel says the agent is still
@@ -201,6 +217,16 @@ A conversation is the record of the work, not a scrollback of the open tab. Stor
 A project keeps several chats, and they belong to the account rather than to the browser: the **Чаты** button above the conversation opens the project's saved sessions — each labelled by the question it started with, with the last answer as a preview and the time it was last used — any of them reopens, and **Новая сессия** starts the next one. Opening a project returns to the last chat, and a project without chats gets a new one, so the history is there on another device and after the browser storage is cleared.
 
 Two windows that collapse and remember their state — **План задач** and **Действия агента** — sit next to the composer: what is happening right now stays next to the input instead of scrolling away with the chat, and each window has its own scroll, so a long run never pushes the conversation down. The model's thinking is not a window of its own: it belongs to the answer it produced and is folded **above** it, so the model reasons first and writes the answer below — the shape Replit uses. While a run works, that container is open and carries the step, the context size and the elapsed time; a stored answer keeps its thinking folded. When the model's gateway sends no reasoning at all (most non-reasoning models) there is no empty window to stare at: a single live line says the answer is being prepared, with the same step, context and time, and the window appears at the moment the model really says something.
+
+The chain of thought is asked for rather than hoped for, and it is asked for in every request: the
+gateways publish `reasoning_content`/`reasoning`/`reasoning_details` (and a few more names) **only**
+when the request carries `reasoning_effort`, so `WEBNESTDEV_AI_REASONING` (default `medium`, `off`
+to stop asking, `low`/`high` for the depth) is sent with every step. A gateway that does not know
+the field answers `400`/`422` to the first attempt, so the provider repeats the very same request
+without it and remembers the address for the rest of the process — the run never ends over a field
+nobody asked for. Folded, the container is not silent: its header keeps the **last line** of the
+thought stream next to «Размышляю…», and a finished answer is labelled with the size of what the
+model thought.
 
 The agent is instructed to think and answer **in Russian first**, switching to another language only where the work itself needs it — code, paths, commands, error messages and quoted documentation.
 
