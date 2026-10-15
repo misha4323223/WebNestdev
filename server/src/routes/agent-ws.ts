@@ -13,9 +13,31 @@ const messageSchema=z.discriminatedUnion("role",[
   z.object({role:z.literal("assistant"),content:z.string().max(100000),tool_calls:z.array(z.object({id:z.string(),name:z.string(),arguments:z.record(z.string(),z.unknown())})).optional()}),
   z.object({role:z.literal("tool"),content:z.string().max(100000),tool_call_id:z.string()})
 ]);
+/**
+ * Верхняя граница истории в одном запросе. Диалог законно перерастает сотню сообщений: каждый шаг
+ * агента сохраняет ответ и результат инструмента, поэтому прежний предел в 100 сообщений превращал
+ * обычный разговор в ошибку проверки ещё до запуска. Что реально видит модель, ограничивает бюджет
+ * контекста (context-budget.ts), а размер самого запроса проверяется ниже по байтам.
+ */
+export const MAX_REQUEST_MESSAGES=1000;
 // `resume` — продолжение прерванного запуска: сообщения приходят как обычно, а рантайм добавляет
 // модели системную заметку о том, что это продолжение и на каком шаге остановился план.
-const runSchema=z.object({projectId:z.string().min(1).max(200),conversationId:z.string().max(200).optional(),messages:z.array(messageSchema).min(1).max(100),model:z.string().max(200).optional(),mode:z.enum(["planner","developer"]).optional(),resume:z.object({reason:z.string().max(300).optional()}).optional()});
+export const runSchema=z.object({projectId:z.string().min(1).max(200),conversationId:z.string().max(200).optional(),messages:z.array(messageSchema).min(1).max(MAX_REQUEST_MESSAGES),model:z.string().max(200).optional(),mode:z.enum(["planner","developer"]).optional(),resume:z.object({reason:z.string().max(300).optional()}).optional()});
+
+/**
+ * Текст ошибки для панели. У ZodError `message` — это JSON-массив замечаний, и пользователь видел
+ * служебную строку вида `[{"code":"too_big","maximum":100,…}]` вместо причины. То, что человеку
+ * есть чем исправить, переводится; остальное сохраняет исходную формулировку.
+ */
+export function requestErrorMessage(error:unknown):string{
+  if(error instanceof z.ZodError){
+    const issue=error.issues[0];
+    if(String(issue?.path[0]??"")==="messages"&&issue?.code==="too_big")
+      return "История этого диалога слишком длинная для одного запуска: сервер принимает не более "+MAX_REQUEST_MESSAGES+" сообщений. Начните новый диалог или продолжите работу в новом чате.";
+    return "Запрос агента не прошёл проверку: "+error.issues.map(item=>(item.path.join(".")||"запрос")+" — "+item.message).join("; ");
+  }
+  return error instanceof Error?error.message:String(error);
+}
 
 // Mirrors the HTTP CORS rule in index.ts: in development the browser origin varies
 // (localhost, LAN IP, hosted preview domain), so any origin is accepted unless
@@ -99,7 +121,7 @@ export async function registerAgentWebSocket(app:FastifyInstance,runtime=new Age
           onQueued:waiting=>safeSend({type:"run.queued",queued:waiting,limit:runQueueStats().limit}),
         });
       }catch(error){
-        const message = error instanceof Error ? error.message : String(error);
+        const message = requestErrorMessage(error);
         const statusCode = error && typeof error === "object" && "statusCode" in error ? (error as {statusCode?:unknown}).statusCode : undefined;
         const isQuota = statusCode === 429;
         const isStorage = error instanceof Error && error.name === "StorageLimitError";
