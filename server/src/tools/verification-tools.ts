@@ -1,3 +1,5 @@
+import { previewAppAnswers } from "../preview/app-http.js";
+import { unreachablePreviewDiagnosis } from "../preview/preview-address.js";
 import { getPreview } from "../preview/preview-store.js";
 import { previewStatus } from "../preview-manager.js";
 import { registerTool } from "../tool-registry.js";
@@ -148,12 +150,22 @@ registerTool({
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      // «fetch failed» без причины агент не может исправить: он трижды повторяет проверку и
+      // запуск падает на лимите попыток. Поэтому тот же запрос делается внутри контейнера, и
+      // разница между «приложение живо, но недоступно снаружи» и «приложение не поднялось»
+      // попадает в результат проверки как действие, а не как текст ошибки.
+      const appAnswersInside = current.mode === "container" ? await previewAppAnswers(current).catch(() => false) : false;
+      const diagnosis = unreachablePreviewDiagnosis({ message, port: current.port, appAnswersInside });
       return {
         ok: false,
         stage: "http",
-        reason: `Unable to reach Preview: ${message}`,
-        nextAction:
-          "Inspect Preview startup/runtime diagnostics, fix the project, restart Preview if needed, then run project.verify again.",
+        path,
+        reason: diagnosis.reason,
+        hint: diagnosis.hint,
+        preview: { host: current.host, port: current.port, mode: current.mode, appAnswersInside },
+        nextAction: appAnswersInside
+          ? "Restart Preview (preview.stop, then preview.start) so the platform forwards the app's port, then run project.verify again."
+          : "Read the Preview logs (preview.logs), fix the dev command or the project, restart Preview, then run project.verify again.",
       };
     } finally {
       clearTimeout(timeout);

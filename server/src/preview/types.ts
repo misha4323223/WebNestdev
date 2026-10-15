@@ -9,7 +9,13 @@ export const PREVIEW_LABEL="webnestdev.preview";
  */
 export type PreviewMode="container"|"static";
 /** `lastUsedAt` is the last real use (status, logs, proxied request): the idle sweeper reads it. */
-export type PreviewState={mode:PreviewMode;containerId:string;port:number;host:string;projectId:string;startedAt:number;lastUsedAt:number};
+/**
+ * `port` — адрес, по которому приложение доступно серверу: он может отличаться от порта самой
+ * команды (приложение выбрало своё) и от порта внутри контейнера (когда поднят проброс).
+ * `settled` — этот адрес уже подтверждён запросом; до подтверждения статус доводит его заново
+ * (см. preview/preview-address.ts).
+ */
+export type PreviewState={mode:PreviewMode;containerId:string;port:number;host:string;projectId:string;startedAt:number;lastUsedAt:number;settled?:boolean};
 /** What the panel and the agent see: a running preview always carries its address. */
 export type PreviewStatus={running:false}|{running:true;ready:boolean;port:number;host:string;containerId:string;startedAt:number;mode?:PreviewMode;hint?:string};
 export type DockerExecResult={code:number;stdout:string;stderr:string};

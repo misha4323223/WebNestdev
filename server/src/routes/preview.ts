@@ -4,7 +4,7 @@ import { requireProjectUser } from "../auth/auth.js";
 import { getSandbox } from "../sandbox-manager.js";
 import { startPreview,stopPreview,previewStatus,previewLogs } from "../preview-manager.js";
 import { canRewritePreviewBody,previewProxyBase,rewritePreviewBody } from "../preview/preview-rewrite.js";
-import { touchPreview as touchPreviewStore } from "../preview/preview-store.js";
+import { touchPreview as touchPreviewStore, unsettlePreview } from "../preview/preview-store.js";
 
 /**
  * The routes take their collaborators as a parameter (the same way the agent WebSocket takes
@@ -118,6 +118,10 @@ export async function registerPreviewRoutes(app:FastifyInstance,deps:PreviewRout
       const body=rewritePreviewBody(await upstream.text(),previewProxyBase(projectId),contentType);
       return new Response(body,{status:upstream.status,headers});
     }catch(error){
+      // Прокси — первый, кто видит, что подтверждённый адрес перестал работать (dev-сервер
+      // перезапустился на другом порту после правки конфига): подтверждение снимается, и
+      // следующая проверка статуса сводит адрес заново.
+      unsettlePreview(projectId);
       throw new Error("Прокси предпросмотра не сработал: "+(error instanceof Error?error.message:String(error)));
     }
   }

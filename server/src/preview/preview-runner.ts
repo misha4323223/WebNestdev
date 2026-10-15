@@ -1,7 +1,9 @@
 import type { SandboxConfig } from "../sandbox-manager.js";
 import { workspaceMountSource } from "../sandbox/config.js";
+import { previewAppAnswers } from "./app-http.js";
 import { dockerExec } from "./docker-exec.js";
 import { previewNetwork } from "./preview-network.js";
+import { settlePreviewAddress } from "./preview-address.js";
 import { resolvePreviewCommand } from "./preview-command.js";
 import { setPreview } from "./preview-store.js";
 import { PREVIEW_APP_PORT, PREVIEW_LABEL, type PreviewState } from "./types.js";
@@ -49,10 +51,15 @@ export async function startPreviewContainer(config:SandboxConfig){
   const state:PreviewState={mode:"container",containerId,projectId:config.projectId,host,port:PREVIEW_APP_PORT,startedAt:now,lastUsedAt:now};
   setPreview(state);
   const ready=await waitForApp(state);
+  // Приложение решает, где слушать: оно могло не принять флаги запуска (тогда порт берётся из
+  // /proc/net/tcp) или слушать только петлю контейнера (тогда поднимается проброс), иначе
+  // предпросмотр выглядел бы работающим, а панель, агент и Chromium не доходили бы до него.
+  const settled=await settlePreviewAddress(state,{appAnswers:ready});
+  setPreview(settled);
   // A dev server that has not answered yet is not a failure: npm may still be installing
   // or Vite may still be compiling. The state stays, the diagnostics come along, and the
   // next status check turns ready into the real answer.
-  return {...state,running:true as const,ready,...(ready?{}:{logs:await recentPreviewLogs(containerId)})};
+  return {...settled,running:true as const,ready,...(ready?{}:{logs:await recentPreviewLogs(containerId)})};
 }
 
 async function containerAddress(containerId:string){
@@ -73,17 +80,6 @@ async function waitForApp(state:PreviewState){
     await new Promise(resolve=>setTimeout(resolve,READY_DELAY_MS));
   }
   return false;
-}
-
-/**
- * Probes the app from inside its own container, where it listens on the app port. Reading
- * the answer here keeps the readiness check independent of how the server reaches the
- * container from the outside.
- */
-export async function previewAppAnswers(state:PreviewState){
-  const probe=`fetch('http://127.0.0.1:${state.port}').then(r=>process.exit(r.status<500?0:1)).catch(()=>process.exit(1))`;
-  const result=await dockerExec(["exec",state.containerId,"node","-e",probe],8000).catch(()=>null);
-  return Boolean(result&&result.code===0);
 }
 
 export async function recentPreviewLogs(containerId:string){

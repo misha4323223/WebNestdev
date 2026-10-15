@@ -2,8 +2,10 @@ import type { SandboxConfig } from "./sandbox-manager.js";
 import { getProject } from "./project-store.js";
 import { dockerExec } from "./preview/docker-exec.js";
 import { decideRuntimePreviewStart, liveRuntimePreviews } from "./preview/preview-limiter.js";
-import { getPreview, removePreview, touchPreview } from "./preview/preview-store.js";
-import { previewAppAnswers, recentPreviewLogs, startPreviewContainer } from "./preview/preview-runner.js";
+import { previewAppAnswers } from "./preview/app-http.js";
+import { settlePreviewAddress } from "./preview/preview-address.js";
+import { getPreview, removePreview, setPreview, touchPreview } from "./preview/preview-store.js";
+import { recentPreviewLogs, startPreviewContainer } from "./preview/preview-runner.js";
 import { previewModeSetting, startStaticPreview, staticAppAnswers, staticPreviewLogs, stopStaticPreview } from "./preview/static-preview.js";
 import { PREVIEW_LABEL, type PreviewStatus } from "./preview/types.js";
 
@@ -153,13 +155,19 @@ export async function previewStatus(projectId: string): Promise<PreviewStatus> {
   // and `ready` says whether the app answers yet. Dropping the state on a slow first start
   // used to lose the container and leave it running with nothing left to stop it.
   const ready = await previewAppAnswers(current);
+  // Приложение отвечает внутри контейнера, но не по адресу контейнера (обычно слушает только
+  // петлю, а иногда — свой порт вместо запрошенного): адрес доводится до рабочего здесь же,
+  // потому что статус читают и панель, и прокси, и агент. Медленный первый старт поэтому
+  // лечится сам, без перезапуска предпросмотра вручную.
+  const settled = ready ? await settlePreviewAddress(current, { appAnswers: true }) : current;
+  if (settled !== current) setPreview(settled);
 
   return {
     running: true,
     ready,
     mode: "container",
-    port: current.port,
-    host: current.host,
+    port: settled.port,
+    host: settled.host,
     containerId: current.containerId,
     startedAt: current.startedAt,
     ...(ready
