@@ -1,4 +1,4 @@
-import { ExternalLink, Monitor, RefreshCw, ScrollText, Square, Terminal } from "lucide-react";
+import { ExternalLink, Monitor, RefreshCw, ScrollText, Square, Terminal, X } from "lucide-react";
 import { useCallback,useEffect,useState } from "react";
 import { getPreviewLogs,getPreviewStatus,startPreview,stopPreview,touchPreview } from "../../lib/project-api";
 import type { PreviewState } from "../../lib/types";
@@ -13,7 +13,7 @@ type Face="preview"|"logs";
  */
 function previewUrl(projectId:string){return "/api/projects/"+encodeURIComponent(projectId)+"/preview/open/";}
 
-export function PreviewPanel({projectId,reloadToken=0}:{projectId:string;reloadToken?:number}){
+export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunningChange}:{projectId:string;reloadToken?:number;open?:boolean;onClose?:()=>void;onRunningChange?:(running:boolean)=>void}){
   const [preview,setPreview]=useState<PreviewState>({running:false});
   const [face,setFace]=useState<Face>("preview");
   const [logs,setLogs]=useState("");
@@ -55,6 +55,17 @@ export function PreviewPanel({projectId,reloadToken=0}:{projectId:string;reloadT
     return ()=>clearInterval(timer);
   },[face,loadLogs]);
 
+  // On a phone the panel is a drawer, and every other overlay here closes on Escape.
+  useEffect(()=>{
+    if(!open)return;
+    const onKey=(event:KeyboardEvent)=>{if(event.key==="Escape")onClose?.()};
+    window.addEventListener("keydown",onKey);
+    return ()=>window.removeEventListener("keydown",onKey);
+  },[open,onClose]);
+
+  // Whether the preview is live is shown on the top-bar button that opens this drawer.
+  useEffect(()=>{onRunningChange?.(Boolean(preview.running))},[preview.running,onRunningChange]);
+
   async function start(){
     setError("");
     try{setPreview(await startPreview(projectId))}
@@ -66,7 +77,12 @@ export function PreviewPanel({projectId,reloadToken=0}:{projectId:string;reloadT
     catch(e){setError(e instanceof Error?e.message:"Не удалось остановить preview")}
   }
 
-  return <aside className="preview">
+  return <>
+  {/* Затемнение и панель — одна выезжающая поверх рабочей области пара: на широком экране
+      и то, и другое скрыто, панель остаётся обычной колонкой справа. */}
+  <div className={"preview-backdrop"+(open?" open":"")} onClick={onClose} aria-hidden="true"/>
+  <aside id="preview-panel" className={"preview"+(open?" open":"")}>
+    <div className="preview-grabber" aria-hidden="true"><span/></div>
     <div className="preview-head">
       <div><span className="eyebrow">ПРЕДПРОСМОТР</span><strong>{face==="preview"?"Рабочая область":"Логи запуска"}</strong></div>
       <div className="preview-actions">
@@ -81,6 +97,7 @@ export function PreviewPanel({projectId,reloadToken=0}:{projectId:string;reloadT
               {preview.running&&<a className="icon-button" href={previewUrl(projectId)} target="_blank" rel="noreferrer" title="Открыть"><ExternalLink size={14}/></a>}
             </>
           : <button className="icon-button" onClick={()=>void loadLogs()} disabled={loadingLogs} title="Обновить логи"><RefreshCw size={14}/></button>}
+        <button className="icon-button preview-close" onClick={onClose} title="Скрыть панель" aria-label="Скрыть панель"><X size={15}/></button>
       </div>
     </div>
     {error&&<div className="preview-error">{error}</div>}
@@ -105,5 +122,6 @@ export function PreviewPanel({projectId,reloadToken=0}:{projectId:string;reloadT
         </div>
       </div>
     </div>
-  </aside>;
+  </aside>
+  </>;
 }

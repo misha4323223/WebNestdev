@@ -1,15 +1,27 @@
-import { chmod,mkdir } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import { getProject } from "../project-store.js";
 import { buildSandboxConfig,sandboxRootPath } from "./config.js";
+import { openDirForSandbox,openTreeForSandbox } from "./permissions.js";
 import type { SandboxConfig } from "./sandbox-types.js";
 
 /**
- * Command and preview containers run as uid 1000 while the server writes the project as
- * root, so the project directory is opened to every writer once: without it the containers
- * can read the agent's files but not install packages or rebuild the app inside them.
+ * Command and preview containers run as uid 1000 while the server writes the project as root, so
+ * the project directory is opened to every writer once: without it the containers can read the
+ * agent's files but not install packages or rebuild the app inside them.
+ *
+ * The root alone is not enough — a project with subdirectories (server/, packages/) keeps its
+ * files inside those, and a root-owned 755 directory is where a build stops with EPERM. So the
+ * existing tree is opened too, once per project per process; every later write by the server
+ * reopens what it created (see tools/filesystem-tools.ts).
  */
-async function openToSandboxUser(root:string){
-  try{await chmod(root,0o777)}catch(error){console.error(`[sandbox] не удалось выставить права на ${root}`,error)}
+const opened=new Map<string,Promise<void>>();
+
+function openToSandboxUser(root:string){
+  const pending=opened.get(root);
+  if(pending)return pending;
+  const run=openDirForSandbox(root).then(()=>openTreeForSandbox(root));
+  opened.set(root,run);
+  return run;
 }
 
 export async function getSandbox(projectId:string,userId?:string):Promise<SandboxConfig>{

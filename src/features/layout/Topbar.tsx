@@ -1,11 +1,11 @@
 import { useEffect,useState } from "react";
-import { CreditCard,Menu,Plus } from "lucide-react";
+import { CreditCard,Menu,Monitor,Plus } from "lucide-react";
 import { logout } from "../../lib/auth-api";
 import { WebNestLogo } from "../../components/WebNestLogo";
 import { getBilling } from "../../lib/billing-api";
 import { chosenPlanId, isPendingChoice, planName, usePlanChoice } from "../../lib/plan-choice";
 
-export function Topbar({projectName,onMenu,onNewProject,onHome,onPlan}:{projectName:string;onMenu:()=>void;onNewProject:()=>void;onHome:()=>void;onPlan:()=>void}){
+export function Topbar({projectName,onMenu,onNewProject,onHome,onPlan,previewOpen,previewRunning,onPreviewToggle}:{projectName:string;onMenu:()=>void;onNewProject:()=>void;onHome:()=>void;onPlan:()=>void;previewOpen:boolean;previewRunning:boolean;onPreviewToggle:()=>void}){
   const [plan,setPlan]=useState<{name:string;demo:boolean;chosen:string|null}|null>(null);
   const planChoice=usePlanChoice();
   // The workspace shows the active plan and the plan the user selected, so both are
@@ -23,6 +23,11 @@ export function Topbar({projectName,onMenu,onNewProject,onHome,onPlan}:{projectN
     <div className="topbar-project">{projectName}</div>
     {plan&&<button className="topbar-plan" onClick={onPlan} title={"Тариф: "+plan.name+(plan.demo?" · демо":"")+(plan.chosen?" · выбран "+plan.chosen:"")}><CreditCard size={12}/> {plan.name}{plan.demo?" · демо":""}{plan.chosen&&<span className="topbar-plan-next">→ {plan.chosen}</span>}</button>}
     <div className="topbar-actions">
+      {/* Only on a phone, where the preview is a drawer and needs a way in and out. */}
+      <button className={"icon-button preview-toggle"+(previewOpen?" active":"")} onClick={onPreviewToggle} aria-expanded={previewOpen} aria-controls="preview-panel" aria-label="Предпросмотр проекта" title="Предпросмотр проекта">
+        <Monitor size={16}/>
+        {previewRunning&&<span className="preview-toggle-dot" aria-hidden="true"/>}
+      </button>
       <button className="ghost-button" onClick={onNewProject}><Plus size={14}/> Новый проект</button>
       <button className="ghost-button" onClick={async()=>{await logout();window.location.reload()}}>Выйти</button>
     </div>

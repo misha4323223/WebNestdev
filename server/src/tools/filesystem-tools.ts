@@ -1,8 +1,18 @@
 import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { getSandbox, assertInsideSandbox } from "../sandbox-manager.js";
+import { openDirsForSandbox, openFileForSandbox } from "../sandbox/permissions.js";
 import { registerTool } from "../tool-registry.js";
 import { parseChangedSource } from "../qa/change-parser.js";
+
+/**
+ * Сервер пишет от root, а команды проекта выполняются в контейнере от uid 1000: созданные
+ * файл и каталоги сразу открываются на запись, иначе агент не сможет собрать проект рядом с ними.
+ */
+async function openCreated(sandboxRoot: string, filePath: string) {
+  await openDirsForSandbox(sandboxRoot, path.dirname(filePath));
+  await openFileForSandbox(filePath);
+}
 
 async function target(projectId: string, userId: string, relative: string) {
   const sandbox = await getSandbox(projectId, userId);
@@ -78,6 +88,7 @@ registerTool({
     const resolved = await target(context.projectId, context.userId, value.path);
     await mkdir(path.dirname(resolved.path), { recursive: true });
     await writeFile(resolved.path, value.content, "utf8");
+    await openCreated(resolved.sandbox.root, resolved.path);
     return {
       ok: true,
       path: value.path,
@@ -97,6 +108,7 @@ registerTool({
     const to = await target(context.projectId, context.userId, value.to);
     await mkdir(path.dirname(to.path), { recursive: true });
     await rename(from.path, to.path);
+    await openCreated(to.sandbox.root, to.path);
     return { ok: true, from: value.from, to: value.to };
   },
 });

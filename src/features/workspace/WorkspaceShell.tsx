@@ -12,6 +12,9 @@ export function WorkspaceShell({onHome}:{onHome:()=>void}){
   const [view,setView]=useState<WorkspaceView>("agent");
   const [settingsOpen,setSettingsOpen]=useState(false);
   const [deployOpen,setDeployOpen]=useState(false);
+  // On a phone the preview is a drawer that slides over the workspace, opened from the top bar.
+  const [previewOpen,setPreviewOpen]=useState(false);
+  const [previewRunning,setPreviewRunning]=useState(false);
   // Every finished run bumps this: the preview panel re-reads the status and reloads the
   // frame, so the app the agent just changed is what the user sees, without a restart.
   const [previewReload,setPreviewReload]=useState(0);
@@ -30,12 +33,13 @@ export function WorkspaceShell({onHome}:{onHome:()=>void}){
   if(!projectId||!conversationId)return <div className="app-loading">Рабочая область не создана.</div>;
 
   const createNewProject=()=>{localStorage.removeItem("webnestdev.projectId");localStorage.removeItem("webnestdev.conversationId");localStorage.removeItem("webnestdev.projectName");window.location.reload()};
-  const openDeploy=()=>{setSettingsOpen(false);setDeployOpen(true)};
-  const openSettings=()=>{setDeployOpen(false);setSettingsOpen(true)};
+  // The overlays replace the workspace, so the drawer is closed instead of floating above them.
+  const openDeploy=()=>{setSettingsOpen(false);setPreviewOpen(false);setDeployOpen(true)};
+  const openSettings=()=>{setDeployOpen(false);setPreviewOpen(false);setSettingsOpen(true)};
   // The model chip in the composer opens the settings overlay on the AI tab.
   const openModelSettings=()=>{try{localStorage.setItem("webnestdev.openProviderTab","1")}catch{};openSettings()};
 
-  return <LayoutShell projectName={projectName} view={view} onView={view=>{setSettingsOpen(false);setDeployOpen(false);setView(view)}} onNewProject={createNewProject} onDeploy={openDeploy} onSettings={openSettings} onHome={onHome}>
+  return <LayoutShell projectName={projectName} view={view} onView={view=>{setSettingsOpen(false);setDeployOpen(false);setView(view)}} onNewProject={createNewProject} onDeploy={openDeploy} onSettings={openSettings} onHome={onHome} previewOpen={previewOpen} previewRunning={previewRunning} onPreviewToggle={()=>setPreviewOpen(value=>!value)}>
     <main className="main">
       <div className="workspace-main">
         {(settingsOpen||deployOpen)?<div className="workspace-overlay-panel">
@@ -45,7 +49,7 @@ export function WorkspaceShell({onHome}:{onHome:()=>void}){
           </section>}
         </div>:<><WorkspaceNav view={view} onChange={setView}/><WorkspaceContent view={view} projectId={projectId} conversationId={conversationId} onOpenConversation={openConversation} onRunFinished={()=>setPreviewReload(value=>value+1)} onOpenModelSettings={openModelSettings} onOpenAccountSettings={openSettings}/></>}
       </div>
-      <PreviewPanel projectId={projectId} reloadToken={previewReload}/>
+      <PreviewPanel projectId={projectId} reloadToken={previewReload} open={previewOpen} onClose={()=>setPreviewOpen(false)} onRunningChange={setPreviewRunning}/>
     </main>
   </LayoutShell>;
 }
