@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { sandboxRootPath } from "../sandbox/config.js";
 import { isYdbEnabled, ydbQuery, getTable } from "../storage/ydb.js";
-import { limitsForPlan, type PlanId } from "./plans.js";
+import { FREE_PLAN, limitsForPlan, type PlanId } from "./plans.js";
 
 const root = process.env.WEBNESTDEV_DATA_DIR ?? path.resolve(".webnestdev");
 
@@ -153,16 +153,9 @@ export async function assertWithinStorageLimit(userId: string, plan: PlanId): Pr
   }
 }
 
-/** Resolves the user's active plan (demo_active pro/team or free) and asserts storage quota. */
+/** Asserts the storage quota of the account's plan — the free one while paid plans are not on sale. */
 export async function assertWithinCurrentPlan(userId: string): Promise<void> {
-  const { getSubscription } = await import("./account-store.js");
-  const subscription = await getSubscription(userId);
-  const active =
-    subscription.status === "demo_active" &&
-    subscription.expiresAt &&
-    Date.parse(subscription.expiresAt) > Date.now();
-  const plan: PlanId = active ? subscription.plan : "free";
-  await assertWithinStorageLimit(userId, plan);
+  await assertWithinStorageLimit(userId, FREE_PLAN);
 }
 
 /** Records a size change after a mutating tool. Cheap: one dir scan, cached briefly. */

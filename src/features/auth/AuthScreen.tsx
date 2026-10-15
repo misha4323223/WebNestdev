@@ -54,7 +54,7 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void })
 
   return <main className="auth-screen">
     <section className="auth-card">
-      <div className="brand auth-brand"><span className="brand-mark"><WebNestLogo size={16}/></span><span>WebNestdev</span><span className="version">WEB</span></div>
+      <div className="brand auth-brand"><span className="brand-mark"><WebNestLogo size={24} tone="light"/></span><span>WebNestdev</span><span className="version">WEB</span></div>
       <div className="auth-heading">
         <span className="eyebrow">АККАУНТ</span>
         <h1>{stage === "code" ? "Введите код из SMS" : "Вход по номеру телефона"}</h1>

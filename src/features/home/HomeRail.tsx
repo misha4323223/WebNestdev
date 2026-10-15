@@ -5,8 +5,8 @@ import { IntegrationsList } from "../integrations/IntegrationsList";
 import { ProjectRenameForm } from "./ProjectRename";
 import { type Project } from "../../lib/project-api";
 import { apiJson } from "../../lib/api";
-import { getBilling, subscriptionSummary, type BillingData, type PlanId } from "../../lib/billing-api";
-import { chosenPlanId, isPendingChoice, planName, upgradeLabel, usePlanChoice } from "../../lib/plan-choice";
+import { getBilling, paymentsPendingNotice, type BillingData, type PlanId } from "../../lib/billing-api";
+import { activePlanId, upgradeLabel, usePlanChoice } from "../../lib/plan-choice";
 import { readCachedPreferences, type UserPreferences } from "../../lib/preferences";
 
 export type RailSection = "integrations" | "projects" | "account" | "billing";
@@ -65,7 +65,7 @@ export function HomeRail(props: HomeRailProps) {
 
   return <aside className="home-rail">
     <div className="rail-brand">
-      <span className="rail-brand-mark"><WebNestLogo size={20}/></span>
+      <span className="rail-brand-mark"><WebNestLogo size={28} tone="light"/></span>
       <span className="rail-brand-name">WebNestdev</span>
     </div>
 
@@ -152,11 +152,10 @@ function RailAccount() {
 }
 
 function RailBilling({ billing, choice, error, onOpenPlans, onOpenSubscriptions }: { billing: BillingData | null; choice: PlanId | null; error: string; onOpenPlans: () => void; onOpenSubscriptions: () => void }) {
-  const plan = billing?.plans.find(item => item.id === billing.subscription.plan);
-  // The plan the user selected is the one that will be paid for, so it is written next
+  const plan = billing?.plans.find(item => item.id === activePlanId());
+  // The plan the user selected is what they want to move to, so it is written next
   // to the current plan here as well, not only inside the pricing screens.
-  const chosen = billing ? billing.plans.find(item => item.id === chosenPlanId(billing, choice)) : undefined;
-  const pending = billing ? isPendingChoice(billing, choice) : false;
+  const chosen = billing && choice ? billing.plans.find(item => item.id === choice) : undefined;
 
   return <section className="rail-section">
     <div className="rail-section-head"><span className="eyebrow">ОПЛАТА И ПОДПИСКА</span><strong>Текущий тариф</strong></div>
@@ -165,13 +164,13 @@ function RailBilling({ billing, choice, error, onOpenPlans, onOpenSubscriptions 
     {billing && <>
       <div className="rail-plan">
         <div><span>Тариф</span><strong>{plan?.name ?? "Бесплатный"}</strong></div>
-        <span className="demo-pill">{plan?.priceLabel ?? "0 ₽"}</span>
+        <span className="plan-pill">{plan?.priceLabel ?? "0 ₽"}</span>
       </div>
       {chosen && <div className="rail-chosen">
-        <span>{pending ? "Выбранный тариф · будет оплачен" : "Тариф оплачен (демо)"}</span>
-        <strong>{planName(billing, chosen.id)} · {chosen.priceLabel}</strong>
+        <span>Выбранный тариф · включим вместе с оплатой</span>
+        <strong>{chosen.name} · {chosen.priceLabel}</strong>
       </div>}
-      <p className="account-muted">{subscriptionSummary(billing.subscription)}</p>
+      <p className="account-muted">{paymentsPendingNotice}</p>
       <div className="rail-usage">
         <div><span>Запуски агента</span><strong>{billing.usage.agentRuns} / {billing.limits.agentRunsPerDay}</strong></div>
         <div className="usage-meter-track"><span style={{ width: `${Math.min(100, billing.usage.agentRuns / Math.max(1, billing.limits.agentRunsPerDay) * 100)}%` }}/></div>

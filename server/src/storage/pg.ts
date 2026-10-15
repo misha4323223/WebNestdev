@@ -102,7 +102,6 @@ const PK_BY_TABLE: Record<string, string[]> = {
   conversation_messages: ["conversation_id", "created_at", "message_id"],
   providers: ["project_id"],
   user_settings: ["user_id"],
-  subscriptions: ["user_id"],
   usage_events: ["user_id", "usage_date", "event_id"],
   usage_counters: ["user_id", "usage_date", "kind"],
   project_counters: ["user_id"],
@@ -114,7 +113,6 @@ const PK_BY_TABLE: Record<string, string[]> = {
   project_sizes: ["project_id"],
   user_storage: ["user_id"],
   phone_consents: ["consent_id"],
-  demo_claims: ["claim_key"],
 };
 
 /**
@@ -277,15 +275,6 @@ export async function initializeStorage(): Promise<void> {
       product_updates BOOLEAN NOT NULL DEFAULT true
     )`);
 
-    await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("subscriptions")} (
-      user_id TEXT NOT NULL PRIMARY KEY,
-      plan TEXT NOT NULL,
-      status TEXT NOT NULL,
-      started_at TEXT NOT NULL,
-      expires_at TEXT NOT NULL,
-      updated_at TEXT NOT NULL
-    )`);
-
     await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("usage_events")} (
       user_id TEXT NOT NULL,
       usage_date TEXT NOT NULL,
@@ -389,13 +378,6 @@ export async function initializeStorage(): Promise<void> {
       ip_hash TEXT NOT NULL
     )`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("phone_consents")}_phone ON ${tbl("phone_consents")} (phone, consented_at)`);
-
-    await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("demo_claims")} (
-      claim_key TEXT NOT NULL PRIMARY KEY,
-      user_id TEXT NOT NULL,
-      claimed_at TEXT NOT NULL
-    )`);
-    await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("demo_claims")}_user ON ${tbl("demo_claims")} (user_id)`);
 
     console.log("[pg] storage initialized: all tables ready");
   })().catch((error) => {

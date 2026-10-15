@@ -3,8 +3,7 @@ import { z } from "zod";
 import { requireUser } from "../auth/auth.js";
 import { createProjectWithinLimit, ProjectLimitError, getProject, createConversation, getConversation, listConversations, listProjects, deleteProject, renameProject } from "../project-store.js";
 import type { Conversation } from "../project-store.js";
-import { getSubscription } from "../account/account-store.js";
-import { limitsForPlan, type PlanId } from "../account/plans.js";
+import { FREE_PLAN, limitsForPlan, type PlanId } from "../account/plans.js";
 
 /** How many chats the picker shows. Older sessions stay stored and reachable by id. */
 const CONVERSATION_LIST_LIMIT = 50;
@@ -39,10 +38,6 @@ export function conversationSummaries(conversations:Conversation[],limit=CONVERS
   });
 }
 
-function planFor(subscription: Awaited<ReturnType<typeof getSubscription>>, now = Date.now()): PlanId {
-  return subscription.status === "demo_active" && subscription.expiresAt && Date.parse(subscription.expiresAt) > now ? subscription.plan : "free";
-}
-
 export async function registerProjectRoutes(app:FastifyInstance){
   app.get("/api/projects",async(request,reply)=>{const user=await requireUser(request,reply);if(!user)return;return {projects:await listProjects(user.id)};});
   app.get("/api/projects/:id",async(request,reply)=>{
@@ -55,8 +50,7 @@ export async function registerProjectRoutes(app:FastifyInstance){
   app.post("/api/projects",async(request,reply)=>{
     const user=await requireUser(request,reply); if(!user)return;
     const body=z.object({name:z.string().max(120).optional()}).parse(request.body);
-    const subscription=await getSubscription(user.id);
-    const plan=planFor(subscription);
+    const plan: PlanId = FREE_PLAN;
     const limit=limitsForPlan(plan).projects;
     try{
       return reply.code(201).send(await createProjectWithinLimit(body.name??"Новый проект",undefined,user.id,limit));

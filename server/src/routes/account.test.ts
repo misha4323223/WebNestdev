@@ -1,15 +1,21 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { PLAN_CATALOG } from "./account.js";
+import { FREE_PLAN, PLAN_CATALOG } from "./account.js";
 
-test("demo plan catalog has no real prices and has progressively higher quotas", () => {
+test("paid plans are marked as not on sale yet and quotas grow with the plan", () => {
   assert.equal(PLAN_CATALOG.free.priceLabel, "0 ₽");
-  assert.equal(PLAN_CATALOG.pro.priceLabel, "Демо");
-  assert.equal(PLAN_CATALOG.team.priceLabel, "Демо");
+  assert.equal(PLAN_CATALOG.pro.priceLabel, "Скоро");
+  assert.equal(PLAN_CATALOG.team.priceLabel, "Скоро");
   assert.ok(PLAN_CATALOG.free.limits.projects < PLAN_CATALOG.pro.limits.projects);
   assert.ok(PLAN_CATALOG.pro.limits.projects < PLAN_CATALOG.team.limits.projects);
   assert.ok(PLAN_CATALOG.free.limits.agentRunsPerDay < PLAN_CATALOG.pro.limits.agentRunsPerDay);
   assert.ok(PLAN_CATALOG.pro.limits.agentRunsPerDay < PLAN_CATALOG.team.limits.agentRunsPerDay);
+});
+
+/** Nothing user-visible may offer a demo plan again: the picker is a choice, not an entitlement. */
+test("the plan catalog promises no demo tariff", () => {
+  assert.ok(!JSON.stringify(PLAN_CATALOG).toLowerCase().includes("демо"), "the plan catalog still mentions a demo");
+  assert.equal(FREE_PLAN, "free");
 });
 
 test("every plan ships a tagline, an audience and detailed highlights for the subscription page", () => {

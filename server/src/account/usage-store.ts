@@ -1,9 +1,8 @@
 import { mkdir, readFile, writeFile, rename, unlink } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
-import { getSubscription } from "./account-store.js";
 import { isYdbEnabled, ydbQuery, getTable } from "../storage/ydb.js";
-import { limitsForPlan, type PlanId, type UsageKind, type UsageSnapshot } from "./plans.js";
+import { FREE_PLAN, limitsForPlan, type PlanId, type UsageKind, type UsageSnapshot } from "./plans.js";
 
 const root = process.env.WEBNESTDEV_DATA_DIR ?? path.resolve(".webnestdev");
 type UsageEvent = { id: string; userId: string; date: string; kind: UsageKind; createdAt: string };
@@ -102,11 +101,9 @@ export async function consumeUsage(userId: string, kind: UsageKind, plan: PlanId
   });
 }
 
+/** Charges the account's plan: paid plans are not on sale yet, so the free one is charged. */
 export async function consumeUsageForCurrentPlan(userId: string, kind: UsageKind, now = new Date()) {
-  const subscription = await getSubscription(userId);
-  const active = subscription.status === "demo_active" && subscription.expiresAt && Date.parse(subscription.expiresAt) > now.getTime();
-  const plan: PlanId = active ? subscription.plan : "free";
-  return consumeUsage(userId, kind, plan, now);
+  return consumeUsage(userId, kind, FREE_PLAN, now);
 }
 
 export type RunUsageInput = {

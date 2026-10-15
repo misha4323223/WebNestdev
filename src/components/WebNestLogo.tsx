@@ -5,9 +5,9 @@ import { useState } from "react";
  * built from docs/7277-removebg-preview.png) and falls back to the drawn woven-nest
  * mark if that file is missing, so an unbuilt asset never shows a broken image.
  *
- * The artwork is dark on a transparent background, so small surfaces place it on a light
- * plate (see .brand-mark and .rail-brand-mark in styles.css). On the dark home hero the
- * light variant is used instead, so no plate is needed there.
+ * Both assets are drawn on a transparent background, so nothing has to be placed behind them.
+ * `brand` is the dark artwork for light surfaces, `light` the light artwork for the dark chrome
+ * (top bar, home rail, auth screen) — the light variant is what those places use.
  */
 export function WebNestLogo({size=32,className,tone="brand"}:{size?:number;className?:string;tone?:"brand"|"light"}){
   const [missing,setMissing]=useState(false);

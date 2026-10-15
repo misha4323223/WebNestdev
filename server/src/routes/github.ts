@@ -6,8 +6,7 @@ import { getGitHubConnection, saveGitHubConnection, deleteGitHubConnection } fro
 import { createOAuthState, consumeOAuthState, originFromOAuthState } from "../github/github-oauth-state.js";
 import { getGitHubUser, getGitHubLoginFromToken, listGitHubRepositories, getGitHubRepository, getGitHubTree, getGitHubBlob } from "../github/github-api.js";
 import { createConversation, createProjectWithinLimit, ProjectLimitError } from "../project-store.js";
-import { getSubscription } from "../account/account-store.js";
-import { limitsForPlan, type PlanId } from "../account/plans.js";
+import { FREE_PLAN, limitsForPlan, type PlanId } from "../account/plans.js";
 import { getSandbox } from "../sandbox-manager.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -137,10 +136,7 @@ export async function registerGitHubRoutes(app: FastifyInstance) {
     const user=await requireUser(request,reply); if(!user)return;
     const body = z.object({ owner: z.string().min(1).max(100), repo: z.string().min(1).max(100) }).parse(request.body);
     const repository = await getGitHubRepository(user.id, body.owner, body.repo);
-    const subscription = await getSubscription(user.id);
-    const plan: PlanId = subscription.status === "demo_active" && subscription.expiresAt && Date.parse(subscription.expiresAt) > Date.now()
-      ? subscription.plan
-      : "free";
+    const plan: PlanId = FREE_PLAN;
     const limit = limitsForPlan(plan).projects;
     let project;
     try {

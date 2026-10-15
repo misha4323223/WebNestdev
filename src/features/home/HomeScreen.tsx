@@ -174,7 +174,7 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
           </div>}
 
           <section className="home-hero">
-            <span className="home-hero-mark"><WebNestLogo size={132} tone="light"/></span>
+            <span className="home-hero-mark"><WebNestLogo size={168} tone="light"/></span>
             <p>Опиши идею — WebNestdev поможет превратить её в рабочий проект.</p>
             <form className="home-composer" onSubmit={submit}>
               <div className="home-composer-top"><span className="home-composer-icon"><Code2 size={16}/></span><textarea value={idea} onChange={e=>setIdea(e.target.value)} placeholder="Что будем создавать?" rows={2} /></div>

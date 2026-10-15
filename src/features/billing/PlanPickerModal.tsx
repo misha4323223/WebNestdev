@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowRight, Check, RefreshCw, Sparkles, X } from "lucide-react";
-import { activateDemoPlan, getBilling, planDateLabel, subscriptionSummary, type BillingData, type PlanId } from "../../lib/billing-api";
-import { readPlanChoice, writePlanChoice } from "../../lib/plan-choice";
+import { getBilling, paymentsPendingNotice, type BillingData, type PlanId } from "../../lib/billing-api";
+import { activePlanId, planName, readPlanChoice, writePlanChoice } from "../../lib/plan-choice";
 
 /**
- * Plan picker shown as a modal over the home page. Everything here is demo:
- * the chosen plan is activated for 30 days and no payment is collected.
+ * Plan picker shown as a modal over the home page. Choosing a plan only records the choice:
+ * payment is not connected yet, so no plan is enabled and nothing is charged.
  */
 export function PlanPickerModal({ open, onClose, onOpenDetails, onChanged }: {
   open: boolean;
@@ -16,9 +16,7 @@ export function PlanPickerModal({ open, onClose, onOpenDetails, onChanged }: {
   const [billing, setBilling] = useState<BillingData | null>(null);
   const [selected, setSelected] = useState<PlanId | null>(null);
   const [loading, setLoading] = useState(false);
-  const [busyPlan, setBusyPlan] = useState("");
   const [error, setError] = useState("");
-  const [notice, setNotice] = useState("");
   // Callbacks are kept in refs so the open effect does not re-run on every render.
   const closeRef = useRef(onClose);
   const changedRef = useRef(onChanged);
@@ -28,8 +26,8 @@ export function PlanPickerModal({ open, onClose, onOpenDetails, onChanged }: {
   useEffect(() => {
     if (!open) return;
     let active = true;
-    // The stored choice is the plan that will be paid for, so the picker reopens on it.
-    setSelected(readPlanChoice()); setNotice(""); setError(""); setLoading(true);
+    // The stored choice is the plan the user wants to move to, so the picker reopens on it.
+    setSelected(readPlanChoice()); setError(""); setLoading(true);
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") closeRef.current(); };
@@ -45,31 +43,16 @@ export function PlanPickerModal({ open, onClose, onOpenDetails, onChanged }: {
     };
   }, [open]);
 
-  /** Selecting a plan remembers it everywhere; it is the plan that will be paid for. */
+  /** Selecting a plan remembers it everywhere: it is the plan the user wants to move to. */
   function choose(plan: PlanId | null) {
     setSelected(plan);
     writePlanChoice(plan);
-  }
-
-  async function activate(plan: "pro" | "team") {
-    setBusyPlan(plan); setError(""); setNotice("");
-    try {
-      const result = await activateDemoPlan(plan);
-      setBilling(await getBilling());
-      choose(plan);
-      setNotice(result.message ?? "Демо-тариф активирован.");
-      changedRef.current?.();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusyPlan("");
-    }
+    changedRef.current?.();
   }
 
   if (!open) return null;
 
-  const currentPlanId = billing?.subscription.plan;
-  const demoActive = billing?.subscription.status === "demo_active";
+  const current = activePlanId();
   const chosen = selected ? billing?.plans.find(plan => plan.id === selected) : undefined;
 
   return <div className="modal-backdrop" role="presentation" onMouseDown={() => closeRef.current()}>
@@ -83,48 +66,44 @@ export function PlanPickerModal({ open, onClose, onOpenDetails, onChanged }: {
       </header>
 
       <div className="modal-body">
-        <p className="modal-lead">Демо-режим: тариф включается на 30 дней без оплаты и банковской карты. Реальные списания отключены.</p>
+        <p className="modal-lead">{paymentsPendingNotice}</p>
 
         {loading && <div className="modal-state"><RefreshCw size={14} className="spin"/> Загружаем тарифы…</div>}
 
         {billing && <>
           <div className="subscription-current">
-            <div><span>Текущий тариф</span><strong>{billing.plans.find(plan => plan.id === billing.subscription.plan)?.name ?? "Бесплатный"}</strong></div>
-            <span className="demo-pill"><Sparkles size={12}/> {demoActive ? "Демо до " + planDateLabel(billing.subscription.expiresAt) : "Только демо"}</span>
+            <div><span>Текущий тариф</span><strong>{planName(billing, current)}</strong></div>
+            <span className="plan-pill"><Sparkles size={12}/> ОПЛАТА СКОРО</span>
           </div>
-          <p className="account-muted">{subscriptionSummary(billing.subscription)}{chosen ? " Выбран к оплате тариф «" + chosen.name + "» — " + chosen.priceLabel + "." : ""}</p>
+          <p className="account-muted">{chosen
+            ? "Выбран тариф «" + chosen.name + "» · " + chosen.priceLabel + ". Включим его, когда подключим оплату."
+            : "Тариф можно выбрать заранее: выбор сохранится и включится вместе с оплатой."}</p>
 
           <div className="plan-grid">
-            {billing.plans.map(plan => {
-              const active = plan.id === billing.subscription.plan && demoActive;
-              return <article key={plan.id} className={"plan-card" + (plan.id === billing.subscription.plan ? " selected" : "") + (selected === plan.id ? " chosen" : "")}>
-                <div className="plan-card-head">
-                  <div><strong>{plan.name}</strong><small>{plan.description}</small></div>
-                  <span>{plan.priceLabel}</span>
-                </div>
-                <ul>{plan.features.map(feature => <li key={feature}><Check size={12}/>{feature}</li>)}</ul>
-                {plan.id === "free"
-                  ? <span className="plan-current">{currentPlanId === "free" ? "Текущий тариф" : "Бесплатный тариф"}</span>
-                  : active
-                    ? <span className="plan-current">Активен (демо)</span>
-                    : <button className="plan-action" disabled={Boolean(busyPlan)} onClick={() => choose(plan.id as "pro" | "team")}>{selected === plan.id ? "Выбран · будет оплачен" : "Выбрать тариф"}</button>}
-              </article>;
-            })}
+            {billing.plans.map(plan => <article key={plan.id} className={"plan-card" + (plan.id === current ? " selected" : "") + (selected === plan.id ? " chosen" : "")}>
+              <div className="plan-card-head">
+                <div><strong>{plan.name}</strong><small>{plan.description}</small></div>
+                <span>{plan.priceLabel}</span>
+              </div>
+              <ul>{plan.features.map(feature => <li key={feature}><Check size={12}/>{feature}</li>)}</ul>
+              {plan.id === current
+                ? <span className="plan-current">Текущий тариф</span>
+                : <button className="plan-action" onClick={() => choose(plan.id)}>{selected === plan.id ? "Выбран · оплата скоро" : "Выбрать тариф"}</button>}
+            </article>)}
           </div>
 
           {chosen && <div className="plan-confirm">
-            <div><strong>Выбран тариф «{chosen.name}» · {chosen.priceLabel}</strong><span>Это тариф к оплате. Сейчас он включается демо-режимом на 30 дней, без платежей.</span></div>
+            <div><strong>Выбран тариф «{chosen.name}» · {chosen.priceLabel}</strong><span>Тариф включится вместе с оплатой — выбор уже сохранён.</span></div>
             <div className="plan-confirm-actions">
-              <button className="ghost-button" onClick={() => choose(null)} disabled={Boolean(busyPlan)}>Отмена</button>
-              <button className="plan-action" onClick={() => void activate(chosen.id as "pro" | "team")} disabled={Boolean(busyPlan)}>{busyPlan === chosen.id ? "Активируем…" : "Подтвердить"}</button>
+              <button className="ghost-button" onClick={() => choose(null)}>Убрать выбор</button>
+              <button className="plan-action" onClick={() => closeRef.current()}>Готово</button>
             </div>
           </div>}
 
-          <div className="billing-disclaimer">Демо-режим: платежи, банковские карты и реальные списания отключены. Тарифы пока демонстрационные.</div>
+          <div className="billing-disclaimer">Лимиты тарифов предварительные и могут измениться до запуска оплаты.</div>
         </>}
 
         {error && <div className="settings-error">{error}</div>}
-        {notice && <div className="settings-status">{notice}</div>}
       </div>
 
       <footer className="modal-foot">
