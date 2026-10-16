@@ -10,6 +10,8 @@ import type { SandboxConfig } from "../sandbox-manager.js";
 import { execFetchPreview } from "./exec-proxy.js";
 import { getPreview,removePreview,touchPreview } from "./preview-store.js";
 import { previewModeSetting,startStaticPreview,staticPreviewLogs,stopAllStaticPreviews,stopStaticPreview } from "./static-preview.js";
+import { previewHostTarget, previewPublicUrl } from "./preview-host.js";
+import { mintPreviewTicket, previewTicketTtlMs } from "./preview-ticket.js";
 
 const PROJECT_ID = "static-preview-test";
 const ENV_KEYS = ["PREVIEW_MODE", "PREVIEW_STATIC_DIR", "PREVIEW_STATIC_BUILD"];
@@ -130,6 +132,13 @@ test("the workspace proxy serves the static preview through the project's own UR
       previewStatus,
       previewLogs,
       touchPreview,
+      // Публичные адреса предпросмотра в этом тесте выключены: набор соучастников тот же, что в index.ts,
+      // а сами ответы проверяются в preview-host-server.test.ts и routes/preview.test.ts.
+      publicUrl: previewPublicUrl,
+      mintTicket: mintPreviewTicket,
+      ticketTtlMs: previewTicketTtlMs,
+      hostTarget: host => previewHostTarget(host)?.projectId ?? null,
+      projectExists: async projectId => projectId === PROJECT_ID,
     });
     await app.ready();
     const status = await app.inject({ method: "GET", url: "/api/projects/" + PROJECT_ID + "/preview/status" });

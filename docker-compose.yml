@@ -16,6 +16,33 @@ services:
       timeout: 3s
       retries: 10
 
+  #
+  # Фронт с HTTPS: панель на основном домене и публичные адреса предпросмотра
+  # (`<проект>.preview.домен`). Сертификаты для поддоменов предпросмотра выдаются по запросу
+  # (`on_demand` + endpoint /api/preview/tls-ask), а лежат они в томе `caddy-data`: без тома
+  # каждая выкатка заново запрашивала бы сертификаты и упиралась в лимиты Let's Encrypt.
+  # Домены задаются переменными; без них Caddy поднимется с `localhost` и никому не помешает.
+  #
+  caddy:
+    image: caddy:2.8-alpine
+    depends_on:
+      - webnestdev-server
+    environment:
+      WEBNESTDEV_SITE_DOMAIN: ${WEBNESTDEV_SITE_DOMAIN:-localhost}
+      PREVIEW_PUBLIC_DOMAIN: ${PREVIEW_PUBLIC_DOMAIN:-preview.localhost}
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks:
+      - webnestdev
+    restart: unless-stopped
+
   webnestdev-server:
     # Образ приходит из реестра при деплое (WEBNESTDEV_IMAGE задаёт GitHub Actions);
     # ключ build остаётся для локальной сборки через `docker compose build`.
@@ -111,6 +138,14 @@ services:
       PREVIEW_EXEC_MAX_QUEUE: ${PREVIEW_EXEC_MAX_QUEUE:-64}
       PREVIEW_EXEC_QUEUE_TIMEOUT_MS: ${PREVIEW_EXEC_QUEUE_TIMEOUT_MS:-60000}
       PREVIEW_EXEC_RETRY_MS: ${PREVIEW_EXEC_RETRY_MS:-60000}
+      # Публичный адрес предпросмотра: `<проект>.<домен>` отдаётся отдельным слушателем на
+      # PREVIEW_HOST_PORT (в него смотрит реверс-прокси, см. deploy/Caddyfile). Пустое значение —
+      # публичных адресов нет, и предпросмотр остаётся доступным только путём в панели.
+      PREVIEW_PUBLIC_DOMAIN: ${PREVIEW_PUBLIC_DOMAIN:-}
+      PREVIEW_HOST_PORT: ${PREVIEW_HOST_PORT:-8788}
+      PREVIEW_HOST_BIND: ${PREVIEW_HOST_BIND:-0.0.0.0}
+      # Сколько живёт билет на публичный адрес: столько может быть открыта вкладка предпросмотра.
+      PREVIEW_TICKET_TTL_MS: ${PREVIEW_TICKET_TTL_MS:-43200000}
       # Сколько диалогов с агентом этот хост ведёт одновременно. Прогон почти всё время ждёт
       # модель, поэтому дефолт 8: память ограничивают контейнеры, а не прогоны (см. ниже).
       AGENT_MAX_CONCURRENT_RUNS: ${AGENT_MAX_CONCURRENT_RUNS:-8}
@@ -138,6 +173,11 @@ services:
 volumes:
   webnestdev-data:
   postgres-data:
+  # Сертификаты и ключи Caddy. Именованный том, а не каталог внутри контейнера: без него каждая
+  # выкатка начиналась бы с пустого хранилища сертификатов, и выдача на поддомены предпросмотра
+  # упиралась бы в недельный лимит Let's Encrypt.
+  caddy-data:
+  caddy-config:
 
 networks:
   webnestdev:

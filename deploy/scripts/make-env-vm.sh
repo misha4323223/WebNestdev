@@ -58,7 +58,10 @@ chmod 700 "$SECRETS_DIR" 2>/dev/null || true
 # раньше при повторном запуске они исчезали: .env пересобирался целиком, вход по номеру
 # молча уходил в тестовый режим (код в логах вместо SMS), а адреса фронтенда подменялись
 # на localhost, с которым сервер в production отказывается стартовать. Теперь переносятся.
-CARRY_PATTERN='^(SMS_PROVIDER|SMS_SENDER|YANDEX_[A-Z0-9_]+|SMS_RU_API_ID|SMSC_[A-Z]+|EXOLVE_API_KEY|SMSAERO_[A-Z]+|WEBNESTDEV_SMS_TEST_MODE|WEBNESTDEV_DEMO_PHONE[A-Z_]*|WEBNESTDEV_ALLOWED_ORIGINS)='
+# Домены и адрес для Let's Encrypt тоже переносятся: иначе повторный запуск скрипта, который
+# собирает .env целиком, выключил бы публичные адреса предпросмотра (PREVIEW_PUBLIC_DOMAIN) и
+# оставил реверс-прокси без имени сайта — а это уже не «пересоздать .env», а «сайт не открывается».
+CARRY_PATTERN='^(SMS_PROVIDER|SMS_SENDER|YANDEX_[A-Z0-9_]+|SMS_RU_API_ID|SMSC_[A-Z]+|EXOLVE_API_KEY|SMSAERO_[A-Z]+|WEBNESTDEV_SMS_TEST_MODE|WEBNESTDEV_DEMO_PHONE[A-Z_]*|WEBNESTDEV_ALLOWED_ORIGINS|WEBNESTDEV_SITE_DOMAIN|PREVIEW_PUBLIC_DOMAIN|PREVIEW_TICKET_TTL_MS|ACME_EMAIL)='
 CARRY="$(grep -E "$CARRY_PATTERN" .env 2>/dev/null || true)"
 if [ -n "$CARRY" ]; then echo "SMS-ENV-REUSED"; fi
 # Адреса фронтенда: из прошлого .env или из PUBLIC_ORIGIN. localhost здесь нельзя — в production
@@ -73,6 +76,22 @@ else
   fi
 fi
 
+# Домены для реверс-прокси выводятся из того же адреса: https://nestdev.ru → панель на nestdev.ru,
+# предпросмотры проектов — на <проект>.preview.nestdev.ru. Публичные адреса включаются только
+# тогда, когда домен известен: если панель открывают по IP, поддоменов у неё нет, и дверь
+# предпросмотра должна остаться выключенной, а не подняться с чужим именем.
+ORIGIN_HOST=""
+case "${PUBLIC_ORIGIN:-}" in
+  http://*|https://*) ORIGIN_HOST=$(printf '%s' "$PUBLIC_ORIGIN" | sed -E 's#^[a-z][a-z0-9+.-]*://##; s#/.*$##; s#:[0-9]+$##') ;;
+esac
+if printf '%s' "$ORIGIN_HOST" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then ORIGIN_HOST=""; fi
+SITE_DOMAIN=""
+if ! printf '%s\n' "$CARRY" | grep -q '^WEBNESTDEV_SITE_DOMAIN='; then SITE_DOMAIN="$ORIGIN_HOST"; fi
+PREVIEW_DOMAIN=""
+if ! printf '%s\n' "$CARRY" | grep -q '^PREVIEW_PUBLIC_DOMAIN=' && [ -n "$ORIGIN_HOST" ]; then PREVIEW_DOMAIN="preview.$ORIGIN_HOST"; fi
+ACME=""
+if ! printf '%s\n' "$CARRY" | grep -q '^ACME_EMAIL=' && [ -n "$ORIGIN_HOST" ]; then ACME="admin@$ORIGIN_HOST"; fi
+
 {
   printf 'NODE_ENV=production\n'
   # WEBNESTDEV_STORAGE now accepts exactly two values: json and postgres. The old `ydb`
@@ -85,6 +104,10 @@ fi
   # Каталог секретов монтируется в контейнер, поэтому он записан и здесь, и в compose.
   printf 'WEBNESTDEV_SECRETS_DIR=%s\n' "$SECRETS_DIR"
   if [ -n "$ORIGINS" ]; then printf 'WEBNESTDEV_ALLOWED_ORIGINS=%s\n' "$ORIGINS"; fi
+  # Имена сайта и публичных предпросмотров: их читает и сервер, и реверс-прокси (см. deploy/Caddyfile).
+  if [ -n "$SITE_DOMAIN" ]; then printf 'WEBNESTDEV_SITE_DOMAIN=%s\n' "$SITE_DOMAIN"; fi
+  if [ -n "$PREVIEW_DOMAIN" ]; then printf 'PREVIEW_PUBLIC_DOMAIN=%s\n' "$PREVIEW_DOMAIN"; fi
+  if [ -n "$ACME" ]; then printf 'ACME_EMAIL=%s\n' "$ACME"; fi
   # Пароль базы: docker-compose.yml без него не поднимется (см. проверку выше).
   printf 'POSTGRES_PASSWORD=%s\n' "$PGPASS"
   # Перенесённые значения (ключи SMS, прошлые адреса фронтенда).
@@ -98,7 +121,10 @@ echo "SANDBOXDIR=$(grep '^SANDBOX_DIR=' .env | cut -d= -f2)"
 echo "PGPASS=$(grep -c '^POSTGRES_PASSWORD=.\+' .env)"
 echo "SMSKEYS=$(grep -cE "$CARRY_PATTERN" .env)"
 echo "SECRETSDIR=$SECRETS_DIR"
+echo "SITEDOMAIN=$(grep -c '^WEBNESTDEV_SITE_DOMAIN=' .env)"
+echo "PREVIEWDOMAIN=$(grep '^PREVIEW_PUBLIC_DOMAIN=' .env | cut -d= -f2- || true)"
 echo "ENV-READY"
+echo "Публичные предпросмотры (адреса <проект>.preview.<домен>) работают, если PREVIEW_PUBLIC_DOMAIN задан, а для домена предпросмотра есть подстановочная DNS-запись на этот сервер."
 echo "Если каталога секретов нет, создайте его от root: sudo mkdir -p $SECRETS_DIR && sudo chown $USER $SECRETS_DIR"
 echo "Ключ сервисного аккаунта Yandex Cloud положите в $SECRETS_DIR/yandex-sa-key.json (chmod 600) и добавьте в .env:"
 echo "  YANDEX_SA_KEY_FILE=$SECRETS_DIR/yandex-sa-key.json"

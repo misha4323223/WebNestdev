@@ -6,6 +6,7 @@ import { sandboxQueueStats } from "../sandbox/sandbox-limiter.js";
 import { browserQueueStats } from "../tools/browser-limiter.js";
 import { liveRuntimePreviews, liveStaticPreviews, runtimePreviewLimit } from "../preview/preview-limiter.js";
 import { previewAddresses } from "../preview/preview-store.js";
+import { previewPublicDomain } from "../preview/preview-host.js";
 import { execProxyQueueStats } from "../preview/exec-proxy.js";
 import { DEFAULT_CHARS_PER_TOKEN,contextBudgetTokens,contextMaxMessages } from "../agent/context-budget.js";
 import { sandboxHostRootDir,sandboxRootDir } from "../sandbox/config.js";
@@ -69,6 +70,9 @@ async function activity(){
       // адрес контейнера серверу недоступен, и без этих чисел «предпросмотр стал медленным»
       // выглядело бы как непонятное замедление, а не как исчерпанный предел (preview/exec-proxy.ts).
       exec: execProxyQueueStats(),
+      // Публичный домен предпросмотра: пусто — адресов `<проект>.<домен>` на этом хосте нет,
+      // и панель показывает приложение только своим путём (PREVIEW_PUBLIC_DOMAIN).
+      publicDomain: previewPublicDomain(),
     },
     // Сколько контекста уходит модели за один шаг: без этого числа отказ провайдера по размеру
     // промпта выглядит необъяснимым (agent/context-budget.ts).

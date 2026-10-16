@@ -22,6 +22,11 @@ export const getPreviewStatus=(projectId:string)=>apiJson<PreviewState>("/api/pr
 export const startPreview=(projectId:string)=>apiJson<PreviewState>("/api/projects/"+projectId+"/preview/start",{method:"POST"});
 export const stopPreview=(projectId:string)=>apiJson<{stopped:boolean}>("/api/projects/"+projectId+"/preview/stop",{method:"POST"});
 export const getPreviewLogs=(projectId:string)=>apiJson<{running:boolean;logs:string}>("/api/projects/"+projectId+"/preview/logs");
+/**
+ * Билет на публичный адрес предпросмотра: адрес открывается в отдельной вкладке без cookie панели,
+ * поэтому панель просит ссылку с билетом — она живёт ограниченное время и открывает один проект.
+ */
+export const requestPreviewTicket=(projectId:string)=>apiJson<{baseUrl:string;url:string;expiresAt:number;param:string}>("/api/projects/"+projectId+"/preview/ticket",{method:"POST"});
 /** Heartbeat: while the panel is open and visible the preview counts as used, so the idle sweeper leaves it running. */
 export const touchPreview=(projectId:string)=>apiJson<{ok:boolean}>("/api/projects/"+projectId+"/preview/touch",{method:"POST"});
 /**

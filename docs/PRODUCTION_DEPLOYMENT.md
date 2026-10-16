@@ -390,9 +390,49 @@ The `production` environment is created on the first run; add *Required reviewer
 
 What the VM needs before the first deploy: Docker with the Compose plugin, `DEPLOY_APP_DIR` containing `docker-compose.yml` and a filled `.env` (see [make-env-vm.sh](../deploy/scripts/make-env-vm.sh)), and `git` plus Node.js when using mode `source`. A private GHCR image needs a one-time `docker login ghcr.io` on the VM — the script prints the command and exits with code 3 when the pull fails. The deploy is considered successful only after `/api/ready` returns 200; otherwise the script prints `/api/health` (it answers even when readiness fails) and exits with code 1.
 
-## HTTPS
+## HTTPS and public preview addresses
 
-Terminate TLS at Caddy/nginx/another reverse proxy. Keep Fastify on the private HTTP port 8787. WebSocket traffic must be proxied for `/ws`.
+TLS terminates at a reverse proxy in front of Fastify; Fastify itself stays on the private HTTP port 8787, and a second listener (8788) serves public preview addresses. WebSocket traffic must be proxied for `/ws` — agent runs need it.
+
+The repository ships that proxy as a `caddy` service in [`docker-compose.yml`](../docker-compose.yml) with [`deploy/Caddyfile`](../deploy/Caddyfile). [`deploy/scripts/vm-deploy.sh`](../deploy/scripts/vm-deploy.sh) installs the Caddyfile next to the compose file — validated with `caddy validate` **before** it replaces the running one, because a broken config takes down the front door rather than the service behind it — and starts the service together with the server (`SYNC_COMPOSE=0` turns the sync off). Domains and the Let's Encrypt contact come from `.env`:
+
+| Variable | Meaning |
+| --- | --- |
+| `WEBNESTDEV_SITE_DOMAIN` | panel/API domain, e.g. `nestdev.ru` (compose default `localhost`) |
+| `PREVIEW_PUBLIC_DOMAIN` | preview domain, e.g. `preview.nestdev.ru`; empty disables public preview addresses everywhere |
+| `ACME_EMAIL` | address Let's Encrypt writes to when a certificate cannot be issued |
+| `PREVIEW_HOST_PORT` | port of the preview door inside the container (default `8788`) |
+| `PREVIEW_TICKET_TTL_MS` | how long a preview link stays valid (default 12 h) |
+
+[`make-env-vm.sh`](../deploy/scripts/make-env-vm.sh) derives them from the same `PUBLIC_ORIGIN` it already takes (`PUBLIC_ORIGIN=https://nestdev.ru` writes `WEBNESTDEV_SITE_DOMAIN=nestdev.ru`, `PREVIEW_PUBLIC_DOMAIN=preview.nestdev.ru` and `ACME_EMAIL=admin@nestdev.ru`) and carries them across a re-run. A panel reached by IP gets no preview domain: an address that exists only by accident is worse than no address.
+
+DNS: `A @` and `A www` point at the VM, plus a **wildcard** `A *.preview` to the same address. The wildcard is what makes every project's address resolve without a per-project DNS write, and it is also why the site block in `deploy/Caddyfile` is a wildcard address — Caddy matches exactly one label under that suffix, which is the same rule the server applies when it turns a hostname back into a project.
+
+### Previews on `<project>.preview.<domain>`
+
+Why it exists: the panel's proxy serves the app under `/api/projects/<id>/preview/open/…`, so the app does not live at the root and its root-absolute URLs (`/assets/…`, `/@vite/client`) have to be rewritten on the way out. On its own hostname the app *is* at the root, so absolute paths, service workers and live reload behave the way they do when the app runs normally, and the address can be opened in another tab.
+
+How it is put together:
+
+- **The address is derived, not stored.** The host label is the project id, so `<projectId>.<PREVIEW_PUBLIC_DOMAIN>` (36 characters, a valid DNS label) is stable across renames and unique without a new table; a deleted project's address answers 404. `PREVIEW_PUBLIC_DOMAIN` unset turns the whole feature off and nothing changes for the panel.
+- **The door is a separate listener in the server process** (`PREVIEW_HOST_PORT`, [`server/src/preview/preview-host-server.ts`](../server/src/preview/preview-host-server.ts)). It cannot be a route in the main Fastify app: on its hostname the user's app owns the whole path, `/api/…` included, and its live reload arrives on a WebSocket from an arbitrary path — a wildcard WebSocket route there would take the `/*` that serving the panel needs. Requests go through the same proxy core as the panel path ([`preview/preview-proxy.ts`](../server/src/preview/preview-proxy.ts): direct address first, `docker exec` second, `no-store`, the app's framing headers dropped) and the upgrade is relayed byte for byte, so the app negotiates WebSocket itself.
+- **Access is a ticket, not the session cookie.** The panel's session cookie is issued for the panel domain and is *not* sent to a subdomain, and widening it to the whole domain would be worse: the proxy passes request headers to the app, so the platform cookie would end up in the user's own code. Instead `POST /api/projects/:id/preview/ticket` mints a short-lived ticket bound to one project (encrypted with `WEBNESTDEV_ENCRYPTION_KEY`), the panel opens `https://<project>.<preview-domain>/?ticket=…`, and the door sets an `HttpOnly` cookie for that host and redirects to the clean URL so the app's own assets, `fetch` and WebSocket carry on without it. Platform cookies (`webnestdev_session`, `webnestdev_preview`) are stripped from everything forwarded to the app.
+- **The certificate is issued on demand, per project hostname.** A wildcard certificate would need DNS-01 against the registrar's API; per-hostname issuance needs only the `ask` endpoint. `on_demand_tls { ask http://webnestdev-server:8787/api/preview/tls-ask }` makes Caddy ask before every issuance, and the endpoint ([`server/src/routes/preview.ts`](../server/src/routes/preview.ts)) answers 200 only for the host of an existing project and 404 for everything else — without that check a wildcard DNS record would let anyone request a certificate for an invented name and burn the Let's Encrypt limit for the domain (50 certificates per registered domain per week). On-demand also means Caddy does **not** try to obtain the wildcard `*.preview.<domain>` certificate in the background, and the first handshake for `p1.preview.<domain>` is what asks for `p1.preview.<domain>` — the concrete name, solvable with HTTP-01/TLS-ALPN, which is why this works without DNS-01 ([automatic HTTPS](https://caddyserver.com/docs/automatic-https#on-demand-tls), [tls directive](https://caddyserver.com/docs/caddyfile/directives/tls)). Caddy's rate-limiting subdirectives (`interval`, `burst`) are deliberately not used: Caddy ≥2.9 rejects them, and the gate is the endpoint plus the certificate cache. Keep the image tag in `docker-compose.yml` and the Caddyfile in step — the deploy validates the file before installing it, and Caddy ≥2.9 would reject a file that still names those subdirectives.
+- **Certificates live in the `caddy-data` volume.** Without it every deploy would start from an empty certificate store and ask for a certificate per hostname all over again; the weekly limit is met by not asking twice, not by asking less often. Keep the volume: the Caddyfile is the file that is replaced on deploy, the volume is not.
+- A stopped preview answers 503 with the reason instead of an empty page, a running one whose container address the server cannot reach says so on the WebSocket (no live reload, the page still works), and a request without a ticket gets 401. When `PREVIEW_PUBLIC_DOMAIN` is unset the panel's own path-based preview keeps working exactly as before.
+
+Check it without a shell on the VM:
+
+```bash
+# адрес проекта знает панель; health отдаёт и сам домен: activity.previews.publicDomain
+curl -s localhost:8787/api/health | grep -o '"publicDomain":"[^"]*"'
+# 404 — имя не обслуживается, 200 — можно выдавать сертификат
+curl -s -o /dev/null -w '%{http_code}\n' 'http://127.0.0.1:8787/api/preview/tls-ask?domain=<project-id>.preview.nestdev.ru'
+# без билета адрес закрыт: 401, а не приложение
+curl -s -o /dev/null -w '%{http_code}\n' 'https://<project-id>.preview.nestdev.ru/'
+```
+
+The two numbers to watch when a preview address misbehaves: `/api/health` → `activity.previews.publicDomain` (is the domain configured at all) and `activity.previews.addresses` → `settled` (can the server reach the app it is being asked to serve).
 
 ## Health endpoints
 

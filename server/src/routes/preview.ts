@@ -3,44 +3,19 @@ import { z } from "zod";
 import { requireProjectUser } from "../auth/auth.js";
 import { getSandbox } from "../sandbox-manager.js";
 import { startPreview,stopPreview,previewStatus,previewLogs } from "../preview-manager.js";
-import { canRewritePreviewBody,previewProxyBase,rewritePreviewBody } from "../preview/preview-rewrite.js";
+import { previewProxyBase } from "../preview/preview-rewrite.js";
+import { proxyPreviewRequest, previewRequestBody, type PreviewDoor } from "../preview/preview-proxy.js";
 import { execFetchPreview, type ExecFetchResult } from "../preview/exec-proxy.js";
-import { applyNoStore } from "./cache-headers.js";
 import { setPreviewExecOnly, touchPreview as touchPreviewStore, unsettlePreview } from "../preview/preview-store.js";
+import { mintPreviewTicket, previewTicketTtlMs, previewTicketUrl, PREVIEW_TICKET_PARAM } from "../preview/preview-ticket.js";
+import { previewHostTarget, previewPublicUrl } from "../preview/preview-host.js";
+import { getProject } from "../project-store.js";
 
 /**
  * The routes take their collaborators as a parameter (the same way the agent WebSocket takes
  * its runtime), so the proxy can be exercised in tests without a Docker daemon and without
  * an authenticated session.
  */
-/**
- * Сколько ждать ответа приложения на проксированный запрос.
- *
- * Без ограничения подвисший запрос приложения держит кадр панели белым до общего таймаута запроса
- * (две минуты), и пользователь видит «ничего» вместо причины: именно так выглядит белый экран
- * предпросмотра. Бюджет в 30 с — это медленный первый рендер dev-сервера, а не «никогда»;
- * `PREVIEW_PROXY_TIMEOUT_MS` меняет его в обе стороны.
- */
-export function previewProxyTimeoutMs(){
-  const raw=Number(process.env.PREVIEW_PROXY_TIMEOUT_MS);
-  return Number.isFinite(raw)&&raw>=100?Math.floor(raw):30_000;
-}
-
-/**
- * Причина отказа словами. «Не ответил за N секунд» и «соединение отвергнуто» — разные диагнозы: в первом
- * случае приложение живо внутри контейнера, но недоступно снаружи (сеть/петля), во втором — на этом
- * порту никто не слушает (предпросмотр был поднят на другом порту или уже упал).
- */
-export function describeProxyFailure(error:unknown,host:string,port:number,timeoutMs:number){
-  const name=error instanceof Error?error.name:"";
-  const detail=error instanceof Error?error.message:String(error);
-  if(name==="TimeoutError"||name==="AbortError"){
-    const seconds=Math.max(1,Math.round(timeoutMs/1000));
-    return "адрес "+host+":"+port+" не ответил за "+seconds+" с: приложение запущено внутри контейнера, но снаружи недоступно. Обновите статус предпросмотра (платформа подключит контейнер к сети сервера или пробросит порт) и посмотрите логи предпросмотра";
-  }
-  return detail;
-}
-
 export type PreviewRouteDeps={
   /** Only truthiness matters: the real one returns the user or null (and sends the reply). */
   authorize:(request:unknown,reply:unknown,projectId:string)=>Promise<unknown>;
@@ -56,6 +31,16 @@ export type PreviewRouteDeps={
   previewLogs:typeof previewLogs;
   /** Last-use mark for the idle sweeper; only the panel's heartbeat calls it directly. */
   touchPreview:(projectId:string)=>boolean;
+  /**
+   * Публичный адрес предпросмотра (`<проект>.preview.nestdev.ru`) и билет к нему. Пустой адрес —
+   * публичные адреса на этом хосте выключены, и панель открывает приложение только путём.
+   */
+  publicUrl:(projectId:string)=>string;
+  mintTicket:(projectId:string)=>string;
+  ticketTtlMs:()=>number;
+  /** Имя хоста → проект: по нему реверс-прокси спрашивает, можно ли выдать сертификат. */
+  hostTarget:(host:string|undefined)=>string|null;
+  projectExists:(projectId:string)=>Promise<boolean>;
 };
 
 const defaultDeps:PreviewRouteDeps={
@@ -67,9 +52,21 @@ const defaultDeps:PreviewRouteDeps={
   previewStatus,
   previewLogs,
   touchPreview:touchPreviewStore,
+  publicUrl:previewPublicUrl,
+  mintTicket:mintPreviewTicket,
+  ticketTtlMs:previewTicketTtlMs,
+  hostTarget:host=>previewHostTarget(host)?.projectId??null,
+  projectExists:async projectId=>Boolean(await getProject(projectId)),
 };
 
 export async function registerPreviewRoutes(app:FastifyInstance,deps:PreviewRouteDeps=defaultDeps){
+  /** Общая дверь к приложению: и панель, и публичный адрес идут через неё (см. preview/preview-proxy.ts). */
+  const door:PreviewDoor={
+    previewStatus:deps.previewStatus,
+    execPreview:deps.execPreview,
+    unsettle:unsettlePreview,
+    setExecOnly:setPreviewExecOnly,
+  };
   app.post("/api/projects/:id/preview/start",async(request,reply)=>{
     const p=z.object({id:z.string().min(1)}).parse(request.params);
     if(!await deps.authorize(request,reply,p.id))return;
@@ -83,7 +80,36 @@ export async function registerPreviewRoutes(app:FastifyInstance,deps:PreviewRout
   app.get("/api/projects/:id/preview/status",async(request,reply)=>{
     const p=z.object({id:z.string().min(1)}).parse(request.params);
     if(!await deps.authorize(request,reply,p.id))return;
-    return previewReply(reply,()=>deps.previewStatus(p.id));
+    const url=deps.publicUrl(p.id);
+    return previewReply(reply,async()=>({...await deps.previewStatus(p.id),...(url?{publicUrl:url}:{})}));
+  });
+  /**
+   * Билет на публичный адрес. Панель просит его перед тем, как открыть предпросмотр в отдельной
+   * вкладке или в кадре: по адресу предпросмотра cookie сессии панели не отправляется, а cookie
+   * сессии на весь домен расширять нельзя — он уходил бы и в приложение пользователя.
+   */
+  app.post("/api/projects/:id/preview/ticket",async(request,reply)=>{
+    const p=z.object({id:z.string().min(1)}).parse(request.params);
+    if(!await deps.authorize(request,reply,p.id))return;
+    const baseUrl=deps.publicUrl(p.id);
+    if(!baseUrl)return reply.code(400).send({error:"Публичные адреса предпросмотра не настроены: задайте PREVIEW_PUBLIC_DOMAIN (docs/PRODUCTION_DEPLOYMENT.md)"});
+    const ticket=deps.mintTicket(p.id);
+    return reply.send({baseUrl,url:previewTicketUrl(baseUrl,ticket),expiresAt:Date.now()+deps.ticketTtlMs(),param:PREVIEW_TICKET_PARAM});
+  });
+  /**
+   * Ответ на вопрос реверс-прокси, можно ли выдать сертификат на это имя (Caddy: `on_demand_tls
+   * { ask … }`). 200 — имя принадлежит проекту на этом хосте, 404 — всё остальное, включая
+   * собственный домен предпросмотра и любой чужой поддомен. Без этой проверки подстановочная
+   * DNS-запись `*.preview…` позволяла бы любому запросить сертификат Let's Encrypt на
+   * произвольное имя, а лимит выдачи на домен исчерпывался бы чужими запросами.
+   */
+  app.get("/api/preview/tls-ask",async(request,reply)=>{
+    const parsed=z.object({domain:z.string().min(1).max(255)}).safeParse(request.query);
+    if(!parsed.success)return reply.code(400).send({error:"Не передан параметр domain"});
+    const projectId=deps.hostTarget(parsed.data.domain);
+    if(!projectId)return reply.code(404).send({error:"Этот адрес не обслуживает предпросмотр"});
+    if(!await deps.projectExists(projectId))return reply.code(404).send({error:"Проект не найден"});
+    return reply.send({allowed:true,host:parsed.data.domain});
   });
   app.get("/api/projects/:id/preview/logs",async(request,reply)=>{
     const p=z.object({id:z.string().min(1)}).parse(request.params);
@@ -115,7 +141,17 @@ export async function registerPreviewRoutes(app:FastifyInstance,deps:PreviewRout
     const p=z.object({id:z.string().min(1)}).parse(request.params);
     if(!await deps.authorize(request,reply,p.id))return;
     const params=request.params as {id:string;"*":string};
-    return previewReply(reply,()=>proxyPreview(request,p.id,params["*"]||""));
+    const incoming=new URL(request.raw.url??"/","http://webnestdev.local");
+    return previewReply(reply,()=>proxyPreviewRequest(door,{
+      projectId:p.id,
+      path:"/"+(params["*"]||"")+(incoming.search||""),
+      method:request.method,
+      headers:request.headers,
+      body:previewRequestBody(request),
+      // Приложение живёт не в корне этого адреса, поэтому его корневые ссылки переписываются
+      // на префикс прокси (см. preview/preview-rewrite.ts).
+      rewriteBase:previewProxyBase(p.id),
+    }));
   });
 
   /**
@@ -130,120 +166,4 @@ export async function registerPreviewRoutes(app:FastifyInstance,deps:PreviewRout
       return reply.code(400).send({error:error instanceof Error?error.message:String(error)});
     }
   }
-
-  /**
-   * The framed app is served from this origin, so its own root-absolute URLs (assets, HMR
-   * client, framework chunks) would ask WebNestdev instead of the app. Text bodies are
-   * rewritten onto the proxy prefix; anything binary goes through untouched. The app's own
-   * X-Frame-Options and CSP are dropped: our own header allows the frame, the app must not
-   * forbid it.
-   */
-  async function proxyPreview(request:PreviewProxyRequest,projectId:string,suffix:string){
-    const state=await deps.previewStatus(projectId);
-    if(!state.running)throw new Error("Предпросмотр не запущен");
-    const incoming=new URL(request.raw.url??"/","http://webnestdev.local");
-    const host=state.host||process.env.PREVIEW_PROXY_HOST||"127.0.0.1";
-    const path="/"+suffix+(incoming.search||"");
-    const timeoutMs=previewProxyTimeoutMs();
-    // Прямой путь первым: он отдаёт ответ потоком и работает с websocket живого HMR. Если адрес
-    // контейнера уже помечен недоступным (execOnly), попытка не повторяется — иначе каждый файл
-    // приложения платил бы за заведомо неудачное соединение.
-    let directError:unknown=null;
-    if(!state.viaExec){
-      try{
-        // Ограниченный запрос: иначе неотвечающее приложение висит до таймаута самого сервера, а панель
-        // всё это время показывает пустой белый кадр без причины (см. previewProxyTimeoutMs).
-        const upstream=await fetch("http://"+host+":"+state.port+path,{redirect:"manual",signal:AbortSignal.timeout(timeoutMs)});
-        const contentType=upstream.headers.get("content-type");
-        const headers=sanitizedPreviewHeaders(upstream.headers);
-        return !contentType||!canRewritePreviewBody(contentType)
-          ? new Response(Buffer.from(await upstream.arrayBuffer()),{status:upstream.status,headers})
-          : new Response(rewritePreviewBody(await upstream.text(),previewProxyBase(projectId),contentType),{status:upstream.status,headers});
-      }catch(error){directError=error}
-    }
-    // Вторая дверь: адрес контейнера серверу недоступен (Docker изолирует bridge-сети друг от друга),
-    // но приложение живо и отвечает внутри своего контейнера — тем же путём, каким платформа
-    // проверяет его готовность. Без этого живой предпросмотр оставался в панели белым кадром.
-    const viaExec=await deps.execPreview({
-      containerId:state.containerId,
-      port:state.port,
-      path,
-      method:request.method??"GET",
-      headers:forwardedPreviewHeaders(request.headers),
-      body:previewRequestBody(request),
-      timeoutMs,
-    }).catch(()=>null);
-    if(viaExec){
-      // Прямой адрес только что не ответил: подтверждение снимается, чтобы статус не показывал
-      // «settled» у адреса, до которого панель больше не доходит (подтвердит заново проверка).
-      unsettlePreview(projectId);
-      setPreviewExecOnly(projectId,true);
-      const headers=sanitizedPreviewHeaders(new Headers(viaExec.headers));
-      const contentType=viaExec.headers["content-type"]??null;
-      return !contentType||!canRewritePreviewBody(contentType)
-        // `Uint8Array.from` не только копирует: он даёт буфер, пригодный для тела ответа (Buffer из
-        // другого модуля шире, чем ожидает Response).
-        ? new Response(Uint8Array.from(viaExec.body),{status:viaExec.status,headers})
-        : new Response(rewritePreviewBody(viaExec.body.toString("utf8"),previewProxyBase(projectId),contentType),{status:viaExec.status,headers});
-    }
-    // Обе двери закрыты: подтверждение адреса снимается (прокси — первый, кто видит, что
-    // подтверждённый адрес перестал работать), и следующая проверка статуса сводит адрес заново.
-    unsettlePreview(projectId);
-    // Оба пути названы в одной строке: «fetch failed» без второй попытки не говорит, что делать,
-    // а она уже сделана — приложение не ответило ни по адресу контейнера, ни внутри него.
-    const reason=directError
-      ? describeProxyFailure(directError,host,state.port,timeoutMs)
-      : "адрес "+host+":"+state.port+" недоступен";
-    throw new Error("Прокси предпросмотра не сработал: "+reason+" — и внутри контейнера приложение тоже не ответило. Посмотрите логи предпросмотра (logs)");
-  }
-}
-
-type PreviewProxyRequest={
-  method?:string;
-  body?:unknown;
-  headers?:Record<string,string|string[]|undefined>;
-  raw:{url?:string};
-};
-
-/**
- * Служебные заголовки не пересылаются в обе стороны: соединение до приложения закрывается на
- * сервере, тело перекодируется, а кадровые запреты приложения убираются — их ставит сама платформа.
- */
-const HOP_BY_HOP_HEADERS=new Set(["host","connection","content-length","transfer-encoding","keep-alive","upgrade","te","trailer","accept-encoding","proxy-authorization","proxy-connection"]);
-
-function sanitizedPreviewHeaders(source:Headers){
-  const headers=new Headers(source);
-  for(const name of HOP_BY_HOP_HEADERS)headers.delete(name);
-  headers.delete("x-frame-options");
-  headers.delete("content-security-policy");
-  // Живой предпросмотр — это всегда последняя версия проекта: страница, перезагруженная в панели,
-  // обязана показать правки, а не копию из кэша браузера или посредника (`no-store` без валидаторов,
-  // см. cache-headers.ts). Плата — повторная загрузка файлов на каждый показ кадра: она осознанная,
-  // потому что цена ошибки — «в панели старая версия», а именно так это и выглядело.
-  return applyNoStore(headers);
-}
-
-/** Заголовки запроса панели, пригодные для повторения внутри контейнера. */
-export function forwardedPreviewHeaders(source:Record<string,string|string[]|undefined>|undefined){
-  const headers:Record<string,string>={};
-  for(const [name,value] of Object.entries(source??{})){
-    if(value===undefined||HOP_BY_HOP_HEADERS.has(name.toLowerCase()))continue;
-    headers[name]=Array.isArray(value)?value.join(", "):String(value);
-  }
-  return headers;
-}
-
-/**
- * Тело запроса для второй двери. Fastify уже разобрал то, что знает (JSON и текст), поэтому
- * разобранное значение возвращается обратно в байты: страница приложения получает тот же запрос,
- * что и по прямому пути.
- */
-export function previewRequestBody(request:{method?:string;body?:unknown}){
-  const method=(request.method??"GET").toUpperCase();
-  if(method==="GET"||method==="HEAD")return undefined;
-  const body=request.body;
-  if(body===undefined||body===null)return undefined;
-  if(Buffer.isBuffer(body))return body;
-  if(typeof body==="string")return Buffer.from(body);
-  return Buffer.from(JSON.stringify(body));
 }

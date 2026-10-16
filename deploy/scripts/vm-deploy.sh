@@ -14,8 +14,12 @@
 #                              Раньше выкатка готового образа не касалась compose-файла на ВМ,
 #                              и он молча оставался старым: сервер не получал SANDBOX_DIR, а
 #                              контейнеры проектов монтировали чужой путь (пустой /workspace).
-#   COMPOSE_B64=…              сам файл в base64 (его присылает workflow); без него берётся
-#                              COMPOSE_SRC — путь к локальной копии (self-hosted runner).
+#   CADDY_B64=…                Caddyfile в base64 (deploy/Caddyfile, его присылает workflow); без
+#                              него берётся CADDY_SRC. Файл проверяется `caddy validate` и только
+#                              потом подменяет тот, что лежит рядом с compose: сломанный конфиг
+#                              уронил бы HTTPS, то есть саму дверь к сервису.
+#   CADDY_SERVICE=caddy        сервис фронта в compose (поднимается вместе с сервером)
+#   CADDY_IMAGE=caddy:2.8-alpine  образ для проверки конфигурации
 #   MIGRATE_SANDBOXES=1        перенести файлы проектов из старого тома в SANDBOX_DIR,
 #                              если на хосте каталог пуст.
 #   SERVICE=webnestdev-server  сервис в compose
@@ -80,6 +84,11 @@ PRUNE_BUILD_CACHE="${PRUNE_BUILD_CACHE:-all}"
 SYNC_COMPOSE="${SYNC_COMPOSE:-1}"
 COMPOSE_B64="${COMPOSE_B64:-}"
 COMPOSE_SRC="${COMPOSE_SRC:-}"
+CADDY_B64="${CADDY_B64:-}"
+CADDY_SRC="${CADDY_SRC:-}"
+CADDY_SERVICE="${CADDY_SERVICE:-caddy}"
+CADDY_IMAGE="${CADDY_IMAGE:-caddy:2.8-alpine}"
+CADDY_FILE="${CADDY_FILE:-Caddyfile}"
 MIGRATE_SANDBOXES="${MIGRATE_SANDBOXES:-1}"
 VERIFY_VERSION="${VERIFY_VERSION:-1}"
 SMS_CHECK="${SMS_CHECK:-1}"
@@ -281,6 +290,76 @@ install_compose(){
   log "обновляю $COMPOSE_FILE из репозитория (прежний — $COMPOSE_FILE.bak)"
   cp "$APP_DIR/$COMPOSE_FILE" "$APP_DIR/$COMPOSE_FILE.bak" 2>/dev/null || true
   mv "$staged" "$APP_DIR/$COMPOSE_FILE"
+}
+
+#
+# Конфигурация фронта с сертификатами. Правится она вместе с остальными файлами развёртывания, но
+# в отличие от compose ошибка здесь видна не сразу: Caddy просто не поднимется (или будет отдавать
+# без TLS), а сервис за ним останется живым. Поэтому файл сначала проверяется (`caddy validate`),
+# и только прошедший проверку подменяет тот, что лежит на ВМ; не прошедший остаётся без изменений
+# и громко называет себя в логе.
+#
+install_caddyfile(){
+  if [ "$SYNC_COMPOSE" != "1" ]; then
+    log "Caddyfile не синхронизирую (SYNC_COMPOSE=0)"
+    return 0
+  fi
+  local staged="$APP_DIR/.$CADDY_FILE.synced"
+  if [ -n "$CADDY_B64" ]; then
+    if ! printf '%s' "$CADDY_B64" | base64 -d > "$staged" 2>/dev/null; then
+      log "присланный Caddyfile не распаковался — оставляю файл на ВМ"
+      rm -f "$staged"
+      return 1
+    fi
+  elif [ -n "$CADDY_SRC" ] && [ -f "$CADDY_SRC" ]; then
+    cp "$CADDY_SRC" "$staged"
+  else
+    log "Caddyfile не передан — оставляю файл на ВМ"
+    return 0
+  fi
+  if ! validate_caddyfile "$staged"; then
+    log "ПРИСЛАННЫЙ CADDYFILE НЕ ПРИНЯТ: он не проходит проверку (выше её вывод) — на ВМ остаётся прежний $CADDY_FILE, HTTPS работает на нём"
+    rm -f "$staged"
+    return 1
+  fi
+  if cmp -s "$staged" "$APP_DIR/$CADDY_FILE"; then
+    log "$CADDY_FILE уже совпадает с репозиторием"
+    rm -f "$staged"
+    return 0
+  fi
+  log "обновляю $CADDY_FILE из репозитория (прежний — $CADDY_FILE.bak)"
+  cp "$APP_DIR/$CADDY_FILE" "$APP_DIR/$CADDY_FILE.bak" 2>/dev/null || true
+  mv "$staged" "$APP_DIR/$CADDY_FILE"
+}
+
+validate_caddyfile(){
+  local file="$1"
+  if [ "$DRY_RUN" = "1" ]; then
+    log "dry-run: проверка Caddyfile пропущена"
+    return 0
+  fi
+  if ! docker image inspect "$CADDY_IMAGE" >/dev/null 2>&1; then
+    log "образ $CADDY_IMAGE ещё не скачан — скачиваю его только для проверки конфигурации"
+    if ! docker pull "$CADDY_IMAGE" >/dev/null 2>&1 </dev/null; then
+      log "образ $CADDY_IMAGE не скачался — проверку Caddyfile пропускаю"
+      return 0
+    fi
+  fi
+  # stdin из /dev/null: скрипт приходит по ssh на stdin, и команда, которая его читает, съедает
+  # остаток файла (см. комментарий у verify_sandbox).
+  docker run --rm -v "$file:/etc/caddy/Caddyfile:ro" "$CADDY_IMAGE" caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile </dev/null 2>&1 | sed 's/^/[deploy]   /'
+}
+
+#
+# Кого поднимать: сервер и, если файл сервисов его описывает, фронт с сертификатами. Список берётся
+# из самого compose, поэтому на ВМ со старым файлом (без caddy) выкатка ведёт себя как раньше.
+#
+services_to_start(){
+  local services="$SERVICE"
+  if docker compose -f "$COMPOSE_FILE" config --services 2>/dev/null | grep -qx "$CADDY_SERVICE"; then
+    services="$services $CADDY_SERVICE"
+  fi
+  printf '%s' "$services"
 }
 
 #
@@ -656,10 +735,12 @@ case "$MODE" in
     # Сначала файл сервисов, потом перенос файлов проектов, и только потом запуск: контейнеры
     # поднимаются уже с правильным каталогом песочниц.
     install_compose || log "выкатываю на compose, который лежит на ВМ"
+    # Конфигурация фронта — до запуска: Caddy читает её, поднимаясь вместе с сервисом.
+    install_caddyfile || log "оставляю Caddyfile, который лежит на ВМ"
     # Ключи и .env — до запуска: compose читает .env при подъёме сервиса.
     install_app_secrets
     migrate_sandboxes
-    run docker compose -f "$COMPOSE_FILE" up -d --no-build "$SERVICE"
+    run docker compose -f "$COMPOSE_FILE" up -d --no-build $(services_to_start)
     ;;
   source)
     log "обновляю репозиторий до origin/$GIT_BRANCH"
@@ -670,9 +751,17 @@ case "$MODE" in
     log "ставлю зависимости и собираю фронтенд с сервером"
     run npm ci
     run npm run build
+    # В режиме source Caddyfile лежит в самом чекауте, но если фронт запускают иначе, файла может
+    # и не быть: тогда проверяется и ставится тот, что пришёл вместе со скриптом.
+    install_caddyfile || true
     install_app_secrets
     log "перезапускаю сервис systemd: $SYSTEMD_UNIT"
     run sudo systemctl restart "$SYSTEMD_UNIT"
+    # Фронт с сертификатами — контейнер, а не systemd-юнит: в этом режиме его поднимает та же
+    # команда, что и в image-режиме, и только если файл сервисов его описывает.
+    if docker compose -f "$COMPOSE_FILE" config --services 2>/dev/null | grep -qx "$CADDY_SERVICE"; then
+      run docker compose -f "$COMPOSE_FILE" up -d --no-build "$CADDY_SERVICE"
+    fi
     ;;
   prune)
     log "режим prune: только уборка образов, сервис не трогаю"

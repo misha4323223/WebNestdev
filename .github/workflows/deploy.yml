@@ -3,10 +3,15 @@ name: deploy
 # Деплой на ВМ: GitHub Actions собирает Docker-образ, кладёт его в GHCR и выполняет
 # deploy/scripts/vm-deploy.sh на сервере (по SSH или локально на self-hosted runner).
 #
-# По умолчанию деплой запускается вручную кнопкой «Run workflow», чтобы каждый push в
-# main не уходил в прод во время разработки. Чтобы деплоить автоматически — раскомментируйте
-# блок push ниже. Подтверждение перед выкаткой включается без изменения файла:
-# Settings → Environments → production → Required reviewers.
+# Выкатка идёт в прод автоматически: push в main собирает образ, прогоняет тесты
+# (`npm test`), публикует образ в GHCR и раскатывает его на ВМ — блок `push` ниже включён,
+# а не «закомментирован на время разработки». То есть push в main = деплой прода.
+#
+# Ручной запуск кнопкой «Run workflow» нужен для всего остального и ничего не отменяет:
+# mode=image с тегом `image=…:sha-<12>` откатывает на прежнюю сборку, mode=prune убирает
+# старые образы с ВМ, mode=source собирает образ на самой ВМ из репозитория.
+# Подтверждение перед выкаткой включается без изменения файла:
+# Settings → Environments → production → Required reviewers (сейчас их нет).
 
 on:
   workflow_dispatch:
@@ -153,6 +158,10 @@ jobs:
           # Файл сервисов едет на ВМ вместе со скриптом: выкатка образа раньше не касалась
           # compose, и ВМ молча оставалась со старым — без SANDBOX_DIR и монтирования песочниц.
           COMPOSE_B64=$(base64 -w0 docker-compose.yml)
+          # Конфигурация фронта с HTTPS едет тем же способом, что и файл сервисов: иначе ВМ
+          # осталась бы с прежним Caddyfile, и правка публичных адресов предпросмотра
+          # требовала бы захода на сервер руками.
+          CADDY_B64=$(base64 -w0 deploy/Caddyfile)
           # Ключ передаётся отдельным потоком, а не аргументом команды: значение секрета в
           # командной строке было бы видно в списке процессов на обеих машинах.
           APP_KEY_FILE=""
@@ -170,7 +179,7 @@ jobs:
             -p "${DEPLOY_PORT:-22}" \
             -o BatchMode=yes -o StrictHostKeyChecking=yes \
             "$DEPLOY_USER@$DEPLOY_HOST" \
-            "MODE='$MODE' IMAGE_REF='$image' APP_DIR='$DEPLOY_APP_DIR' COMPOSE_B64='$COMPOSE_B64' APP_KEY_FILE='$APP_KEY_FILE' bash -s" \
+            "MODE='$MODE' IMAGE_REF='$image' APP_DIR='$DEPLOY_APP_DIR' COMPOSE_B64='$COMPOSE_B64' CADDY_B64='$CADDY_B64' APP_KEY_FILE='$APP_KEY_FILE' bash -s" \
             < deploy/scripts/vm-deploy.sh
 
       - name: Deploy on the VM (self-hosted runner)
@@ -194,5 +203,6 @@ jobs:
             printf '%s\n' "$YANDEX_SA_KEY_JSON" | tr -d '\r' > "$APP_KEY_FILE"
           fi
           MODE="$MODE" IMAGE_REF="$image" APP_DIR="$DEPLOY_APP_DIR" \
-            COMPOSE_SRC="$PWD/docker-compose.yml" APP_KEY_FILE="$APP_KEY_FILE" \
+            COMPOSE_SRC="$PWD/docker-compose.yml" CADDY_SRC="$PWD/deploy/Caddyfile" \
+            APP_KEY_FILE="$APP_KEY_FILE" \
             bash deploy/scripts/vm-deploy.sh

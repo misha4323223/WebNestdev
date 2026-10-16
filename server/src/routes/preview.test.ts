@@ -39,6 +39,12 @@ function depsFor(port: number, overrides: Partial<PreviewRouteDeps> = {}): Previ
     previewStatus: async () => status,
     previewLogs: async () => ({ running: true, logs: "" }),
     touchPreview: () => true,
+    // Публичные адреса предпросмотра выключены по умолчанию: тесты, которым они нужны, задают их сами.
+    publicUrl: () => "",
+    mintTicket: () => "",
+    ticketTtlMs: () => 60_000,
+    hostTarget: () => null,
+    projectExists: async () => false,
     ...overrides,
   };
 }
@@ -292,6 +298,91 @@ test("when neither the address nor the container answers, the failure is named a
     assert.equal(response.statusCode, 400);
     assert.match(response.body, /Прокси предпросмотра не сработал/);
     assert.match(response.body, /внутри контейнера приложение тоже не ответило/, response.body);
+  } finally {
+    await app.close();
+  }
+});
+
+/**
+ * Публичный адрес предпросмотра открывается в новой вкладке без cookie сессии панели, поэтому
+ * панель берёт билет на конкретный проект: без него адрес отвечает 401, а не отдаёт приложение
+ * первому, кто угадал имя.
+ */
+test("the ticket endpoint hands the panel a link to the project's public preview address", async () => {
+  const app = await appWith(depsFor(1, {
+    publicUrl: projectId => "https://" + projectId + ".preview.example",
+    mintTicket: projectId => "ticket-" + projectId,
+    ticketTtlMs: () => 3_600_000,
+  }));
+  try {
+    const response = await app.inject({ method: "POST", url: "/api/projects/p1/preview/ticket" });
+    assert.equal(response.statusCode, 200);
+    const body = response.json();
+    assert.equal(body.baseUrl, "https://p1.preview.example");
+    assert.equal(body.url, "https://p1.preview.example/?ticket=ticket-p1");
+    assert.equal(body.param, "ticket");
+    assert.ok(body.expiresAt > Date.now(), "билет должен быть со сроком в будущем");
+  } finally {
+    await app.close();
+  }
+});
+
+test("without a public preview domain the ticket endpoint names the missing variable", async () => {
+  const app = await appWith(depsFor(1));
+  try {
+    const response = await app.inject({ method: "POST", url: "/api/projects/p1/preview/ticket" });
+    assert.equal(response.statusCode, 400);
+    assert.match(response.body, /PREVIEW_PUBLIC_DOMAIN/);
+  } finally {
+    await app.close();
+  }
+});
+
+test("the status tells the panel which public address this project has", async () => {
+  const app = await appWith(depsFor(1, { publicUrl: projectId => "https://" + projectId + ".preview.example" }));
+  try {
+    const response = await app.inject({ method: "GET", url: "/api/projects/p1/preview/status" });
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().publicUrl, "https://p1.preview.example");
+  } finally {
+    await app.close();
+  }
+});
+
+/**
+ * Ответ реверс-прокси на вопрос «можно ли выдать сертификат на это имя». Проверка имени важнее
+ * самой выдачи: подстановочная DNS-запись домена предпросмотра указывает на эту ВМ, поэтому без
+ * неё сертификаты выдавались бы на любой придуманный поддомен и исчерпали бы лимит Let's Encrypt.
+ */
+test("the certificate question is answered yes only for an existing project's host", async () => {
+  const app = await appWith(depsFor(1, {
+    hostTarget: host => (host === "p1.preview.example" ? "p1" : null),
+    projectExists: async projectId => projectId === "p1",
+  }));
+  try {
+    const allowed = await app.inject({ method: "GET", url: "/api/preview/tls-ask?domain=p1.preview.example" });
+    assert.equal(allowed.statusCode, 200);
+    assert.deepEqual(allowed.json(), { allowed: true, host: "p1.preview.example" });
+
+    const unknown = await app.inject({ method: "GET", url: "/api/preview/tls-ask?domain=whatever.preview.example" });
+    assert.equal(unknown.statusCode, 404);
+
+    const missing = await app.inject({ method: "GET", url: "/api/preview/tls-ask" });
+    assert.equal(missing.statusCode, 400);
+  } finally {
+    await app.close();
+  }
+});
+
+test("a certificate is not issued for a host whose project no longer exists", async () => {
+  const app = await appWith(depsFor(1, {
+    hostTarget: host => (host === "gone.preview.example" ? "gone" : null),
+    projectExists: async () => false,
+  }));
+  try {
+    const response = await app.inject({ method: "GET", url: "/api/preview/tls-ask?domain=gone.preview.example" });
+    assert.equal(response.statusCode, 404);
+    assert.match(response.body, /Проект не найден/);
   } finally {
     await app.close();
   }

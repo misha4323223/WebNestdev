@@ -9,6 +9,7 @@ import { initializeStorage, closeStorage, describeStorage } from "./storage/ydb.
 import { reapOrphanPreviews } from "./preview-manager.js";
 import { startPreviewSweeper } from "./preview/idle-sweep.js";
 import { describePreviewMode } from "./preview/static-preview.js";
+import { describePreviewHostServer, startPreviewHostServer, stopPreviewHostServer } from "./preview/preview-host-server.js";
 import { describePreviewLimits } from "./preview/preview-limiter.js";
 import { describeRunLimiter } from "./agent/run-limiter.js";
 import { describeContextBudget } from "./agent/context-budget.js";
@@ -61,6 +62,10 @@ console.log("[storage] " + describeStorage());
 // Which preview mode this host runs is the first thing to check when memory or a project's
 // preview behaves unexpectedly (PREVIEW_MODE: auto | static | container).
 console.log("[preview] " + describePreviewMode() + "; " + describePreviewLimits());
+// Публичные адреса предпросмотра (`<проект>.preview.<домен>`): по какому адресу их отдаёт
+// реверс-прокси и поднята ли дверь. Без этой строки «предпросмотр работает только в панели»
+// выглядит как поведение по умолчанию, а не как незаданная переменная PREVIEW_PUBLIC_DOMAIN.
+console.log("[preview] " + describePreviewHostServer());
 // How many conversations this host runs in parallel (AGENT_MAX_CONCURRENT_RUNS) and how many
 // containers they may start at once (SANDBOX_MAX_CONCURRENT). The second line is the memory
 // one: a run is mostly waiting on the model, a container is what costs RAM.
@@ -89,7 +94,7 @@ if (demoEnabled) {
   app.log.info({ demoEmail: demo.email, created: demo.created }, "demo account ready");
 }
 
-app.addHook("onClose", async () => { await closeStorage(); });
+app.addHook("onClose", async () => { await stopPreviewHostServer(); await closeStorage(); });
 
 app.addHook("onSend", async (_request, reply) => {
   reply.header("X-Content-Type-Options", "nosniff");
@@ -153,6 +158,16 @@ void verifySandboxMount()
     else app.log.error("sandbox mount failed: " + line);
   })
   .catch(error => app.log.warn({ error: error instanceof Error ? error.message : error }, "sandbox mount check skipped"));
+// Публичный адрес предпросмотра отдаётся отдельным слушателем (см. preview/preview-host-server.ts):
+// приложение занимает на своём поддомене весь путь, включая `/api`, и живой WebSocket с него, а
+// подстановочный маршрут в этом же приложении занял бы `/*` у раздачи панели. Дверь поднимается
+// только при заданном PREVIEW_PUBLIC_DOMAIN; отказ не мешает серверу работать.
+void startPreviewHostServer()
+  .then(result => {
+    if (result.started) console.log("[preview] дверь публичных адресов слушает порт " + result.port);
+    else console.log("[preview] дверь публичных адресов не поднята: " + result.reason);
+  })
+  .catch(error => console.error("[preview] дверь публичных адресов не поднялась: " + (error instanceof Error ? error.message : error)));
 // A preview nobody uses is stopped after PREVIEW_IDLE_MS (five minutes by default): without
 // the sweep every project that was ever previewed would keep a dev server and its memory.
 startPreviewSweeper();

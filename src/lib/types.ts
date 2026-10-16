@@ -19,7 +19,9 @@ export type PreviewMode="container"|"static";
  * «готов, но недоступен» — это белый экран в панели, а не ожидание запуска. `viaExec` — третий
  * случай: адрес контейнера серверу недоступен, и приложение отдаётся панели через `docker exec`.
  */
-export type PreviewState={running:boolean;port?:number;ready?:boolean;settled?:boolean;viaExec?:boolean;mode?:PreviewMode;hint?:string;error?:string};
+export type PreviewState={running:boolean;port?:number;ready?:boolean;settled?:boolean;viaExec?:boolean;mode?:PreviewMode;hint?:string;error?:string;
+/** Публичный адрес предпросмотра (`https://<проект>.preview.домен`), когда он настроен на сервере. */
+publicUrl?:string};
 
 export type PlanItemStatus="pending"|"in_progress"|"done";
 export type PlanItem={title:string;status:PlanItemStatus;note?:string};

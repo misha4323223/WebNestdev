@@ -1,6 +1,6 @@
 import { ExternalLink, Monitor, RefreshCw, ScrollText, Square, Terminal, X } from "lucide-react";
 import { useCallback,useEffect,useState } from "react";
-import { getPreviewLogs,getPreviewStatus,startPreview,stopPreview,touchPreview } from "../../lib/project-api";
+import { getPreviewLogs,getPreviewStatus,requestPreviewTicket,startPreview,stopPreview,touchPreview } from "../../lib/project-api";
 import type { PreviewState } from "../../lib/types";
 
 type Face="preview"|"logs";
@@ -12,6 +12,14 @@ type Face="preview"|"logs";
  * перенаправляет вход без слэша на этот адрес.
  */
 function previewUrl(projectId:string){return "/api/projects/"+encodeURIComponent(projectId)+"/preview/open/";}
+
+/**
+ * Адрес для кадра и для кнопки «Открыть». Когда на сервере настроен публичный домен предпросмотра,
+ * приложение открывается по своему адресу (`<проект>.preview.домен`): там оно стоит в корне, поэтому
+ * его абсолютные ссылки и живая перезагрузка работают так же, как при обычном запуске, и ссылку
+ * можно отдать другому человеку. Путь в панели остаётся запасным.
+ */
+function previewAddress(projectId:string,publicTicket:string){return publicTicket||previewUrl(projectId);}
 
 export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunningChange}:{projectId:string;reloadToken?:number;open?:boolean;onClose?:()=>void;onRunningChange?:(running:boolean)=>void}){
   const [preview,setPreview]=useState<PreviewState>({running:false});
@@ -25,6 +33,9 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
   // «Обновить») грузит кадр заново. Раньше он загружался один раз и оставался тем, что прокси успел
   // отдать пустым во время старта: логи говорили «запущено», а в панели так и висела белая страница.
   const [frameToken,setFrameToken]=useState(0);
+  // Ссылка с билетом на публичный адрес. Билет выпускается на этот проект и на время: по адресу
+  // предпросмотра cookie сессии панели не отправляется (она выставляется для домена панели).
+  const [publicLink,setPublicLink]=useState("");
   const refresh=async()=>{
     setError("");
     try{
@@ -37,6 +48,18 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
   // Refreshed when the project changes and after every agent run: a preview the agent
   // started through preview.start shows up here without the user pressing anything.
   useEffect(()=>{void refresh()},[projectId,reloadToken]);
+
+  // Билет просится на каждый показ заново: он короткоживущий, а открытый кадр должен работать
+  // даже тогда, когда вкладка простояла дольше его срока. Отказ — не ошибка панели: приложение
+  // остаётся доступным по пути в панели, поэтому кадр просто берётся оттуда.
+  useEffect(()=>{
+    if(!preview.running||!preview.publicUrl){setPublicLink("");return}
+    let cancelled=false;
+    requestPreviewTicket(projectId)
+      .then(result=>{if(!cancelled)setPublicLink(result.url)})
+      .catch(()=>{if(!cancelled)setPublicLink("")});
+    return ()=>{cancelled=true};
+  },[projectId,preview.running,preview.publicUrl,reloadToken,frameToken]);
 
   const loadLogs=useCallback(async()=>{
     setLoadingLogs(true);setLogsError("");
@@ -106,7 +129,7 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
           ? <>
               {preview.running?<button className="icon-button" onClick={()=>void stop()} title="Остановить"><Square size={14}/></button>:<button className="icon-button" onClick={()=>void start()} title="Запустить"><Terminal size={14}/></button>}
               <button className="icon-button" onClick={()=>void refresh()} title="Обновить"><RefreshCw size={14}/></button>
-              {preview.running&&<a className="icon-button" href={previewUrl(projectId)} target="_blank" rel="noreferrer" title="Открыть"><ExternalLink size={14}/></a>}
+              {preview.running&&<a className="icon-button" href={previewAddress(projectId,publicLink)} target="_blank" rel="noreferrer" title="Открыть"><ExternalLink size={14}/></a>}
             </>
           : <button className="icon-button" onClick={()=>void loadLogs()} disabled={loadingLogs} title="Обновить логи"><RefreshCw size={14}/></button>}
         <button className="icon-button preview-close" onClick={onClose} title="Скрыть панель" aria-label="Скрыть панель"><X size={15}/></button>
@@ -119,11 +142,14 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
     {!error&&preview.running&&(preview.ready===false||preview.settled===false||preview.viaExec)&&<div className="preview-hint">{preview.hint??"Приложение ещё запускается…"}</div>}
     {/* Статический режим отдаёт собранную версию: обновления появляются после сборки, а не сами. */}
     {!error&&preview.running&&preview.mode==="static"&&<div className="preview-hint">Статическая сборка: показывается собранная версия приложения, горячей перезагрузки нет.</div>}
+    {/* Публичный адрес показывается, а не прячется в подсказке кнопки: это адрес, который видят
+        другие, и по нему приложение работает без переписывания ссылок. */}
+    {!error&&preview.running&&preview.publicUrl&&<div className="preview-hint">Публичный адрес: <a href={previewAddress(projectId,publicLink)} target="_blank" rel="noreferrer">{preview.publicUrl.replace(/^https?:\/\//,"")}</a></div>}
     <div className="preview-body">
       <div className={"preview-stage"+(face==="logs"?" flipped":"")}>
         <div className="preview-face preview-front">
           {preview.running
-            ? <iframe key={reloadToken+"-"+frameToken} className="preview-frame" title="Живой предпросмотр" src={previewUrl(projectId)}/>
+            ? <iframe key={reloadToken+"-"+frameToken+publicLink} className="preview-frame" title="Живой предпросмотр" src={previewAddress(projectId,publicLink)}/>
             : <div className="preview-empty"><div className="preview-icon"><Terminal size={20}/></div><strong>Предпросмотр проекта</strong><span>Запусти preview после создания файлов проекта.</span><button className="ghost-button" onClick={()=>void start()}>Запустить preview</button></div>}
         </div>
         <div className="preview-face preview-back">
