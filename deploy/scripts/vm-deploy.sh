@@ -297,13 +297,18 @@ migrate_sandboxes(){
 # самый дефект (сервер пишет в один каталог, контейнеры монтируют другой) замечает только агент —
 # и сообщает об этом как о «пропавших файлах». Расхождение путей делает деплой неуспешным.
 #
+# Скрипт приходит на ВМ по stdin (`ssh … bash -s < vm-deploy.sh`), и это надо помнить про
+# каждую команду внутри: та, что читает stdin, съедает остаток скрипта, а оболочка, дойдя до
+# конца файла, завершается молча и с кодом 0. Именно так выглядела выкатка, в которой после
+# «песочница видна контейнерам» не выполнялись ни проверка SMS, ни уборка старых образов —
+# и всё это при зелёном статусе в Actions. Поэтому stdin у таких команд берётся из /dev/null.
 verify_sandbox(){
   local output verdict
   if [ "$MODE" = "source" ]; then
     # В режиме source сервер запущен systemd прямо на хосте: обе стороны — один и тот же путь.
-    output=$(cd "$APP_DIR" && node server/dist/scripts/sandbox-selfcheck.js 2>&1 || true)
+    output=$(cd "$APP_DIR" && node server/dist/scripts/sandbox-selfcheck.js </dev/null 2>&1 || true)
   else
-    output=$(run docker compose exec -T "$SERVICE" node server/dist/scripts/sandbox-selfcheck.js 2>&1 || true)
+    output=$(run docker compose exec -T "$SERVICE" node server/dist/scripts/sandbox-selfcheck.js </dev/null 2>&1 || true)
   fi
   printf '%s\n' "$output" | sed 's/^/[deploy] /'
   verdict=$(printf '%s\n' "$output" | grep -o 'SANDBOX-MOUNT=[a-z]*' | tail -1 | cut -d= -f2 || true)
@@ -344,7 +349,7 @@ verify_sms(){
   fi
   # Ограничение по времени: проверка делает запрос в Yandex Cloud за свежим токеном, а выкатка
   # не должна ждать сеть.
-  output=$(timeout 40 docker compose exec -T "$SERVICE" node server/dist/scripts/sms-check.js 2>&1 || true)
+  output=$(timeout 40 docker compose exec -T "$SERVICE" node server/dist/scripts/sms-check.js </dev/null 2>&1 || true)
   printf '%s\n' "$output" | sed 's/^/[deploy] /'
   verdict=$(printf '%s\n' "$output" | grep -o 'SMS-CHECK=[a-z-]*' | tail -1 | cut -d= -f2 || true)
   case "$verdict" in

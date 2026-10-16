@@ -51,7 +51,11 @@ WebNestDev Fastify
   `/run/secrets`, `./secrets` and `./keys` — and `GET /api/health` reports `sms.ready` with
   `sms.keyFile` (the path it was actually read from) and a `sms.note` when that differs from
   the variable. `npm run sms:check --workspace=server` prints the same and answers
-  `SMS-CHECK=key-unreadable` instead of `configured` when no path opens.
+  `SMS-CHECK=key-unreadable` instead of `configured` when no path opens. The deploy runs that
+  check itself after every rollout (`verify_sms` in
+  [`deploy/scripts/vm-deploy.sh`](../deploy/scripts/vm-deploy.sh)) and prints the verdict as
+  `[deploy] SMS: …`, so a key path that cannot work is visible in the Actions log — without a
+  shell on the VM, and without waiting for the first user who cannot sign in.
 - With no provider the server stays in test mode and logs the code — safe for staging, not
   for real users. Keep `WEBNESTDEV_SMS_TEST_MODE` unset in production. Note the Yandex
   sender registration lead time (see [AUTH_PRODUCTION_PLAN.md](AUTH_PRODUCTION_PLAN.md)).
