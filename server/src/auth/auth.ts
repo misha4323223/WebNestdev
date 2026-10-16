@@ -28,13 +28,35 @@ export async function requireProjectUser(request:FastifyRequest, reply:any, proj
   }
   return user;
 }
-export async function attachSession(reply:any,userId:string){
+/**
+ * Флаг Secure у cookie сессии — ровно тогда, когда соединение действительно идёт по https.
+ *
+ * Раньше это решал NODE_ENV: в production флаг ставился всегда. На сервере, открытом по http
+ * (например `http://<адрес>:8787`), браузер такую cookie не сохраняет вовсе — код из SMS
+ * подходил, а вход «не запоминался», и экран снова просил код. Схема берётся у самого запроса:
+ * сначала `X-Forwarded-Proto` (так её сообщает TLS-прокси, см. docs/PRODUCTION_DEPLOYMENT.md),
+ * иначе — шифрование сокета. `WEBNESTDEV_COOKIE_SECURE` остаётся жёстким переопределением на
+ * случай нестандартной схемы.
+ */
+export function sessionCookieSecure(request?:FastifyRequest){
+  const configured = process.env.WEBNESTDEV_COOKIE_SECURE;
+  if (configured !== undefined) return configured === "true";
+  const forwarded = request?.headers["x-forwarded-proto"];
+  const value = Array.isArray(forwarded) ? forwarded[0] : forwarded;
+  if (value) return value.split(",")[0].trim().toLowerCase() === "https";
+  return request?.protocol === "https";
+}
+
+// Один раз на процесс, а не на каждый вход: по http cookie идёт без Secure, и это стоит
+// увидеть в логе сервера, а не выяснять по «вход не запоминается».
+let plainHttpWarned = false;
+
+export async function attachSession(reply:any,userId:string,request?:FastifyRequest){
   const session = await createSession(userId);
-  // secure: по умолчанию как в production; но если сервис крутится без TLS
-  // (прямой HTTP-адрес), флаг Secure делает cookie непригодной для браузера.
-  // WEBNESTDEV_COOKIE_SECURE=false явно включает http-режим cookie.
-  const secure = process.env.WEBNESTDEV_COOKIE_SECURE !== undefined
-    ? process.env.WEBNESTDEV_COOKIE_SECURE === "true"
-    : process.env.NODE_ENV === "production";
+  const secure = sessionCookieSecure(request);
+  if (!secure && process.env.NODE_ENV === "production" && !plainHttpWarned) {
+    plainHttpWarned = true;
+    console.warn("[auth] соединение по http: cookie сессии без флага Secure — поставьте TLS перед сервисом (docs/PRODUCTION_DEPLOYMENT.md)");
+  }
   reply.setCookie(SESSION_COOKIE, session.id, {httpOnly:true,sameSite:"lax",secure,path:"/",maxAge:60*60*24*30});
 }

@@ -64,7 +64,7 @@ export async function registerPhoneAuthRoutes(app: FastifyInstance) {
     // The demo number is let straight in: no code, no SMS, an ordinary session.
     if (isDemo) {
       const user = await ensurePhoneAccount(phone);
-      await attachSession(reply, user.id);
+      await attachSession(reply, user.id, request);
       return {
         sent: true,
         demo: true,
@@ -118,7 +118,7 @@ export async function registerPhoneAuthRoutes(app: FastifyInstance) {
     if (!checked.ok) return reply.code(401).send({ error: checked.error });
 
     const user = await ensurePhoneAccount(phone);
-    await attachSession(reply, user.id);
+    await attachSession(reply, user.id, request);
     return { user: { id: user.id, email: user.email, createdAt: user.createdAt } };
   });
 }

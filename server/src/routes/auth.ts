@@ -20,7 +20,7 @@ export async function registerAuthRoutes(app:FastifyInstance){
     const body = credentials.parse(request.body);
     try{
       const user = await createUser(body.email,body.password);
-      await attachSession(reply,user.id);
+      await attachSession(reply,user.id,request);
       return reply.code(201).send({user:{id:user.id,email:user.email,createdAt:user.createdAt}});
     }catch(error){
       if(error instanceof Error && error.message===EMAIL_TAKEN_MESSAGE) return reply.code(409).send({error:EMAIL_TAKEN_MESSAGE});
@@ -36,7 +36,7 @@ export async function registerAuthRoutes(app:FastifyInstance){
     const body = credentials.parse(request.body);
     const user = await verifyUser(body.email,body.password);
     if(!user) return reply.code(401).send({error:"Неверный email или пароль"});
-    await attachSession(reply,user.id);
+    await attachSession(reply,user.id,request);
     return {user:{id:user.id,email:user.email,createdAt:user.createdAt}};
   });
   app.post("/api/auth/logout", async (request,reply) => {

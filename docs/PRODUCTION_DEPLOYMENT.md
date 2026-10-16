@@ -204,9 +204,12 @@ The current bill decomposes exactly as: compute `base` 2 vCPU / 4 GB 2 566 ₽ +
    builds and project writes at the same time, and it happens before RAM runs out.
 2. **Swap** — 4 GB swap file, `vm.swappiness=10`, and `systemd-oomd`/`earlyoom`; without it one
    simultaneous install + build + Chromium ends in an OOM that kills the whole server.
-3. **TLS** — sessions use `secure` cookies by default in production (`WEBNESTDEV_COOKIE_SECURE`),
-   so terminate HTTPS (Caddy with Let's Encrypt is the shortest path) or logins silently fail.
-   Caddy also proxies WebSockets, which `/ws` and container-preview HMR need.
+3. **TLS** — the session cookie gets the `secure` flag only when the request actually arrives
+   over https (`X-Forwarded-Proto`, or the socket itself), so a service opened on `http://…:8787`
+   logs in but sends that cookie unencrypted; `WEBNESTDEV_COOKIE_SECURE` overrides the flag in
+   either direction. Terminate HTTPS (Caddy with Let's Encrypt is the shortest path) and make sure
+   the proxy forwards the scheme, or the cookie stops being `secure`. Caddy also proxies
+   WebSockets, which `/ws` and container-preview HMR need.
 4. **Limits** — `PREVIEW_MODE=auto`, `SANDBOX_MAX_CONCURRENT=2`, `SANDBOX_MEMORY=512m`,
    `AGENT_MAX_CONCURRENT_RUNS=8` (20-30 is fine on this box), `BROWSER_MAX_CONCURRENT=1`.
    Lower `TOOL_COMMAND_MAX_OUTPUT` (default 200 000 chars) — every command output is sent to the
