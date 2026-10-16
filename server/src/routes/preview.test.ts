@@ -106,6 +106,38 @@ test("binary responses pass through untouched and the query string is forwarded"
   }
 });
 
+/**
+ * Живой предпросмотр — это всегда последняя версия проекта. Кэш (браузера или посредника) показывал
+ * бы правки не сразу, а после правки конфига — вообще старый экран, поэтому обе двери отвечают
+ * `no-store` и без валидаторов: подтвердить старую копию нечем.
+ */
+test("the framed app is never taken from a cache, whichever door answered", async () => {
+  const stale = { etag: 'W/"stale"', "last-modified": "Wed, 01 Oct 2025 10:00:00 GMT", "cache-control": "public, max-age=600" };
+  const site = await upstream(() => ({ body: Buffer.from("<html><body>direct</body></html>"), headers: stale }));
+  const directApp = await appWith(depsFor(site.port));
+  const execApp = await appWith(depsFor(1, {
+    execPreview: async () => ({ status: 200, statusText: "OK", headers: { "content-type": "text/html; charset=utf-8", ...stale }, body: Buffer.from("<html><body>exec</body></html>"), truncated: false }),
+  }));
+  try {
+    const direct = await directApp.inject({ method: "GET", url: "/api/projects/p1/preview/open/" });
+    assert.equal(direct.statusCode, 200);
+    assert.equal(direct.headers["cache-control"], "no-store, no-cache, must-revalidate, max-age=0", direct.body);
+    assert.equal(direct.headers.etag, undefined);
+    assert.equal(direct.headers["last-modified"], undefined);
+
+    const throughExec = await execApp.inject({ method: "GET", url: "/api/projects/p1/preview/open/" });
+    assert.equal(throughExec.statusCode, 200);
+    assert.match(throughExec.body, /exec/);
+    assert.equal(throughExec.headers["cache-control"], "no-store, no-cache, must-revalidate, max-age=0");
+    assert.equal(throughExec.headers.etag, undefined);
+    assert.equal(throughExec.headers["last-modified"], undefined);
+  } finally {
+    await execApp.close();
+    await directApp.close();
+    await site.close();
+  }
+});
+
 test("the heartbeat marks the project as used and reports whether a preview is open", async () => {
   const touched: string[] = [];
   const app = await appWith(depsFor(1, { touchPreview: projectId => { touched.push(projectId); return true; } }));

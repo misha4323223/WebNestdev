@@ -1,6 +1,14 @@
 FROM node:22-bookworm-slim AS build
 WORKDIR /app
 
+# Номер сборки — не только в образе выполнения, но и в самом бандле: по нему открытая вкладка панели
+# понимает, что на сервере уже другая версия, и перезагружает себя вместе с ассетами новой сборки
+# (см. src/lib/app-build.ts). Vite подставляет в `import.meta.env` переменные с префиксом VITE_ из
+# окружения сборки, поэтому достаточно ENV — конфигурация Vite не трогается. Тот же ARG объявлен в
+# образе выполнения ниже: значения совпадают всегда, включая сборку без переданного SHA (unknown).
+ARG GIT_SHA=unknown
+ENV VITE_BUILD=${GIT_SHA}
+
 COPY package.json ./
 COPY server/package.json ./server/package.json
 RUN npm install

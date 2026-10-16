@@ -5,6 +5,7 @@ import { getSandbox } from "../sandbox-manager.js";
 import { startPreview,stopPreview,previewStatus,previewLogs } from "../preview-manager.js";
 import { canRewritePreviewBody,previewProxyBase,rewritePreviewBody } from "../preview/preview-rewrite.js";
 import { execFetchPreview, type ExecFetchResult } from "../preview/exec-proxy.js";
+import { applyNoStore } from "./cache-headers.js";
 import { setPreviewExecOnly, touchPreview as touchPreviewStore, unsettlePreview } from "../preview/preview-store.js";
 
 /**
@@ -215,7 +216,11 @@ function sanitizedPreviewHeaders(source:Headers){
   for(const name of HOP_BY_HOP_HEADERS)headers.delete(name);
   headers.delete("x-frame-options");
   headers.delete("content-security-policy");
-  return headers;
+  // Живой предпросмотр — это всегда последняя версия проекта: страница, перезагруженная в панели,
+  // обязана показать правки, а не копию из кэша браузера или посредника (`no-store` без валидаторов,
+  // см. cache-headers.ts). Плата — повторная загрузка файлов на каждый показ кадра: она осознанная,
+  // потому что цена ошибки — «в панели старая версия», а именно так это и выглядело.
+  return applyNoStore(headers);
 }
 
 /** Заголовки запроса панели, пригодные для повторения внутри контейнера. */

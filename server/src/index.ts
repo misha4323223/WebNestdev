@@ -3,9 +3,7 @@ import { ZodError } from "zod";
 import cors from "@fastify/cors";
 import cookie from "@fastify/cookie";
 import websocket from "@fastify/websocket";
-import fastifyStatic from "@fastify/static";
 import path from "node:path";
-import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { initializeStorage, closeStorage, describeStorage } from "./storage/ydb.js";
 import { reapOrphanPreviews } from "./preview-manager.js";
@@ -21,6 +19,7 @@ import { describeSandboxPaths } from "./sandbox/config.js";
 import { describeSandboxMount,verifySandboxMount } from "./sandbox/sandbox-check.js";
 import { ensureDataDir } from "./project-store.js";
 import { registerHealthRoutes } from "./routes/health.js";
+import { registerPanelFiles } from "./routes/panel-static.js";
 import { registerProjectRoutes } from "./routes/projects.js";
 import { registerPreviewRoutes } from "./routes/preview.js";
 import { registerToolRoutes } from "./routes/tools.js";
@@ -132,42 +131,10 @@ await registerYandexRoutes(app);
 await registerDatabaseRoutes(app);
 await registerAgentWebSocket(app);
 
+// Раздача собранной панели: документ никогда не кэшируется, файлы сборки — надолго. Правила и
+// причина такого распределения живут в одном месте и проверяются тестом (routes/panel-static.ts).
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../dist");
-if (fs.existsSync(rootDir)) {
-  await app.register(fastifyStatic, {
-    root: rootDir,
-    // Долго кэшировать можно только файлы сборки: у них хэш в имени, поэтому новая сборка
-    // приносит новые имена, а старые остаются валидными.
-    maxAge: "30d",
-    immutable: true,
-    /**
-     * Входной документ — исключение, и раньше именно он ломал выкатки: index.html отдавался
-     * с общим правилом «30 дней, immutable», а браузер хранит документ вместе со ссылками на
-     * ассеты той сборки, которую он получил. После обновления сервера такой браузер продолжал
-     * открывать старую версию приложения (и на телефоне, где очистить кэш заметно труднее) —
-     * до истечения месяца или до ручной очистки данных сайта. Теперь документ не кэшируется,
-     * поэтому перезагрузка всегда подтягивает свежую сборку; файлы без хэша в имени (иконки)
-     * можно хранить, но проверять при каждой загрузке.
-     */
-    setHeaders: (reply, filePath) => {
-      if (filePath.endsWith(".html")) {
-        reply.header("cache-control", "no-store, max-age=0");
-        return;
-      }
-      if (!filePath.includes(path.sep + "assets" + path.sep)) {
-        reply.header("cache-control", "no-cache");
-      }
-    },
-  });
-  app.setNotFoundHandler((request, reply) => {
-    const url = request.raw.url ?? "";
-    if (request.method === "GET" && !url.startsWith("/api")) {
-      // Тот же документ, что и по корню: без кэша, иначе браузер закрепит старую сборку.
-      return reply.header("cache-control", "no-store, max-age=0").sendFile("index.html", { maxAge: 0, immutable: false });
-    }
-    return reply.code(404).send({ error: "Not Found" });
-  });
-}
+await registerPanelFiles(app, rootDir);
 
 
 await app.listen({host:"0.0.0.0",port:Number(process.env.PORT??8787)});

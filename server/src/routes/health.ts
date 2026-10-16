@@ -110,6 +110,12 @@ export async function registerHealthRoutes(app:FastifyInstance){
     sms:await smsInfo(),
     activity:await activity(),
   }));
+  //
+  // Только номер сборки и ничего больше: открытая вкладка панели спрашивает его, чтобы понять,
+  // не устарела ли она после выкатки (см. src/lib/app-build.ts). Поэтому здесь нет ни Docker, ни
+  // базы, ни метрик — проверка идёт с каждой вкладки раз в пару минут и должна стоить почти ноль.
+  //
+  app.get("/api/version",async()=>({ok:true,build:buildId()}));
   app.get("/api/ready",async(_request,reply)=>{
     const dependencies=await dependencyStatus();
     // Расхождение путей песочницы — не временная неисправность хоста, а сломанная выкатка:
