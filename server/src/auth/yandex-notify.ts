@@ -166,6 +166,11 @@ const ERROR_HINTS: Record<string, string> = {
 
 function describeError(status: number, subCode: string | undefined, code: string | undefined, detail: string | undefined, credential: YandexNotifyCredentialKind | null) {
   if (subCode && ERROR_HINTS[subCode]) return ERROR_HINTS[subCode];
+  // Песочница приходит и без машинного SubCode — одной английской строкой
+  // «SMS Sandbox number not verified». Это тот случай, который видит человек у себя
+  // на экране входа, поэтому сообщение должно быть инструкцией, а не кодом ответа.
+  const haystack = [detail, subCode, code].filter(Boolean).join(" ");
+  if (/sandbox number not verified|number not verified/i.test(haystack)) return ERROR_HINTS.SMSSandboxNumberNotVerified;
   if (status === 401 || status === 403) {
     if (credential === "token") {
       return "Yandex Cloud отклонил IAM-токен: он живёт около 12 часов, поэтому SMS идут сразу после настройки и перестают приходить позже. Поставьте ключ сервисного аккаунта (YANDEX_SA_KEY или YANDEX_SA_KEY_FILE) вместо YANDEX_NOTIFY_IAM_TOKEN — сервер сам будет получать свежий токен.";

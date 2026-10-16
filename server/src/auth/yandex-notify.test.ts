@@ -210,6 +210,24 @@ test("a sandbox rejection is explained, not just passed through", async t => {
   );
 });
 
+test("the sandbox is explained even when it arrives without a subcode", async t => {
+  clearEnv();
+  process.env.YANDEX_NOTIFY_IAM_TOKEN = "t1.test-token";
+  t.after(clearEnv);
+
+  // Так это выглядит на живом канале с общим отправителем: HTTP 400 и английская строка
+  // без SubCode — ровно тот случай, который видит человек на экране входа.
+  await withFetch(
+    () => new Response(JSON.stringify({ ErrorResponse: { Error: { Code: "BadRequest", Message: "SMS Sandbox number not verified" } } }), { status: 400 }),
+    async () => {
+      const result = await sendYandexSms("+79990000000", "Код: 123456");
+      assert.equal(result.ok, false);
+      assert.match(result.ok ? "" : result.error, /песочниц/i);
+      assert.match(result.ok ? "" : result.error, /тестов/i);
+    },
+  );
+});
+
 test("a rejected authorization is reported as such", async t => {
   clearEnv();
   // Здесь авторизуемся ключом: у него нет срока жизни, поэтому отказ означает права
