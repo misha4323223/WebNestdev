@@ -11,6 +11,34 @@ import { touchPreview as touchPreviewStore, unsettlePreview } from "../preview/p
  * its runtime), so the proxy can be exercised in tests without a Docker daemon and without
  * an authenticated session.
  */
+/**
+ * Сколько ждать ответа приложения на проксированный запрос.
+ *
+ * Без ограничения подвисший запрос приложения держит кадр панели белым до общего таймаута запроса
+ * (две минуты), и пользователь видит «ничего» вместо причины: именно так выглядит белый экран
+ * предпросмотра. Бюджет в 30 с — это медленный первый рендер dev-сервера, а не «никогда»;
+ * `PREVIEW_PROXY_TIMEOUT_MS` меняет его в обе стороны.
+ */
+export function previewProxyTimeoutMs(){
+  const raw=Number(process.env.PREVIEW_PROXY_TIMEOUT_MS);
+  return Number.isFinite(raw)&&raw>=100?Math.floor(raw):30_000;
+}
+
+/**
+ * Причина отказа словами. «Не ответил за N секунд» и «соединение отвергнуто» — разные диагнозы: в первом
+ * случае приложение живо внутри контейнера, но недоступно снаружи (сеть/петля), во втором — на этом
+ * порту никто не слушает (предпросмотр был поднят на другом порту или уже упал).
+ */
+export function describeProxyFailure(error:unknown,host:string,port:number,timeoutMs:number){
+  const name=error instanceof Error?error.name:"";
+  const detail=error instanceof Error?error.message:String(error);
+  if(name==="TimeoutError"||name==="AbortError"){
+    const seconds=Math.max(1,Math.round(timeoutMs/1000));
+    return "адрес "+host+":"+port+" не ответил за "+seconds+" с: приложение запущено внутри контейнера, но снаружи недоступно. Обновите статус предпросмотра (платформа подключит контейнер к сети сервера или пробросит порт) и посмотрите логи предпросмотра";
+  }
+  return detail;
+}
+
 export type PreviewRouteDeps={
   /** Only truthiness matters: the real one returns the user or null (and sends the reply). */
   authorize:(request:unknown,reply:unknown,projectId:string)=>Promise<unknown>;
@@ -103,8 +131,11 @@ export async function registerPreviewRoutes(app:FastifyInstance,deps:PreviewRout
     const incoming=new URL(request.raw.url??"/","http://webnestdev.local");
     const host=state.host||process.env.PREVIEW_PROXY_HOST||"127.0.0.1";
     const target="http://"+host+":"+state.port+"/"+suffix+(incoming.search||"");
+    const timeoutMs=previewProxyTimeoutMs();
     try{
-      const upstream=await fetch(target,{redirect:"manual"});
+      // Ограниченный запрос: иначе неотвечающее приложение висит до таймаута самого сервера, а панель
+      // всё это время показывает пустой белый кадр без причины (см. previewProxyTimeoutMs).
+      const upstream=await fetch(target,{redirect:"manual",signal:AbortSignal.timeout(timeoutMs)});
       const headers=new Headers(upstream.headers);
       headers.delete("connection");
       headers.delete("content-encoding");
@@ -122,7 +153,7 @@ export async function registerPreviewRoutes(app:FastifyInstance,deps:PreviewRout
       // перезапустился на другом порту после правки конфига): подтверждение снимается, и
       // следующая проверка статуса сводит адрес заново.
       unsettlePreview(projectId);
-      throw new Error("Прокси предпросмотра не сработал: "+(error instanceof Error?error.message:String(error)));
+      throw new Error("Прокси предпросмотра не сработал: "+describeProxyFailure(error,host,state.port,timeoutMs));
     }
   }
 }

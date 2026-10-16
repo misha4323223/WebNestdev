@@ -16,6 +16,10 @@ export type PreviewMode="container"|"static";
  * (см. preview/preview-address.ts).
  */
 export type PreviewState={mode:PreviewMode;containerId:string;port:number;host:string;projectId:string;startedAt:number;lastUsedAt:number;settled?:boolean};
-/** What the panel and the agent see: a running preview always carries its address. */
-export type PreviewStatus={running:false}|{running:true;ready:boolean;port:number;host:string;containerId:string;startedAt:number;mode?:PreviewMode;hint?:string};
+/**
+ * What the panel and the agent see: a running preview always carries its address. `settled` — этот
+ * адрес подтверждён запросом самого сервера; без подтверждения панель, агент и Chromium до
+ * приложения не доходят, даже когда оно отвечает внутри контейнера (`ready`).
+ */
+export type PreviewStatus={running:false}|{running:true;ready:boolean;port:number;host:string;containerId:string;startedAt:number;mode?:PreviewMode;settled?:boolean;hint?:string};
 export type DockerExecResult={code:number;stdout:string;stderr:string};

@@ -27,6 +27,21 @@ export function unsettlePreview(projectId:string){
   return true;
 }
 
+/**
+ * Адреса живых предпросмотров для `/api/health`: режим, порт, подтверждён ли адрес запросом сервера
+ * и сколько предпросмотр уже живёт. Без этого поля «предпросмотр не работает» неотличимо от
+ * «предпросмотр не запущен», а `settled: false` у живого предпросмотра — точный признак того, что
+ * сервер до приложения не доходит (панель и Chromium тоже).
+ */
+export function previewAddresses(now=Date.now()){
+  return listPreviews().map(state=>({
+    mode:state.mode,
+    port:state.port,
+    settled:Boolean(state.settled),
+    ageSeconds:Math.max(0,Math.round((now-state.startedAt)/1000)),
+  }));
+}
+
 /** Marks a preview as used now; returns false when the project has no running preview. */
 export function touchPreview(projectId:string,now=Date.now()){
   const current=previews.get(projectId);

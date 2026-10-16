@@ -727,17 +727,6 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
         </div>;
       })}
 
-      {queue.length>0&&<div className="message-queue">
-        <div className="message-queue-head"><ListPlus size={13}/> В очереди: {queue.length}</div>
-        <ul>{queue.map(item=><li key={item.id}>
-          <div className="message-queue-text">
-            <span>{item.text}</span>
-            {item.attachments.length>0&&<small>{item.attachments.map(attachment=>attachment.name).join(", ")}</small>}
-          </div>
-          <button className="ghost-button message-queue-send" onClick={()=>sendQueuedNow(item.id)} title={running?"Прервать текущую задачу и отправить это сообщение":"Отправить это сообщение"}>Отправить сейчас</button>
-          <button className="icon-button" onClick={()=>removeQueued(item.id)} title="Убрать из очереди" aria-label="Убрать из очереди"><X size={13}/></button>
-        </li>)}</ul>
-      </div>}
     </div>
 
     {/* План и действия — у поля ввода: они относятся к тому, что происходит сейчас, и не должны
@@ -748,6 +737,21 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
         {(actions.length>0||running)&&<ActionsPanel actions={actions} running={running} progress={progress} collapsed={panels} onToggle={togglePanel}/>}
       </div>
       :null}
+
+    {/* Очередь — у поля ввода, а не в конце переписки: чат открывается с начала диалога, поэтому
+        сообщение, вставшее в очередь, оказывалось за пределами видимой области и появлялось на
+        экране только вместе с отправкой (то есть «через время»). Здесь оно видно сразу. */}
+    {queue.length>0&&<div className="message-queue message-queue-dock">
+      <div className="message-queue-head"><ListPlus size={13}/> В очереди: {queue.length}</div>
+      <ul>{queue.map(item=><li key={item.id}>
+        <div className="message-queue-text">
+          <span>{item.text}</span>
+          {item.attachments.length>0&&<small>{item.attachments.map(attachment=>attachment.name).join(", ")}</small>}
+        </div>
+        <button className="ghost-button message-queue-send" onClick={()=>sendQueuedNow(item.id)} title={running?"Прервать текущую задачу и отправить это сообщение":"Отправить это сообщение"}>Отправить сейчас</button>
+        <button className="icon-button" onClick={()=>removeQueued(item.id)} title="Убрать из очереди" aria-label="Убрать из очереди"><X size={13}/></button>
+      </li>)}</ul>
+    </div>}
 
     <div className="composer-wrap">
       {resume&&!running&&<div className="resume-bar" role="status">

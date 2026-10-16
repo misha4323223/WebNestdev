@@ -1,4 +1,4 @@
-import { createLimiter, positiveInt, type LimiterStats, type Slot } from "../concurrency.js";
+import { QueueAbortedError, createLimiter, positiveInt, type LimiterStats, type Slot } from "../concurrency.js";
 
 /**
  * How many conversations this server runs at the same time.
@@ -46,8 +46,30 @@ export class AccountBusyError extends Error {
   }
 }
 
+/**
+ * Сколько ждать освобождения места аккаунта, прежде чем отказать.
+ *
+ * Отказ был мгновенным, и это ломало обычный сценарий: сообщение из очереди отправляют кнопкой
+ * «Отправить сейчас» — панель закрывает сокет текущего запуска и сразу начинает новый. Сервер
+ * видит новый запрос раньше, чем отменённый прогон успевает освободить своё место (он отпускает
+ * его в `finally`, уже после того как клиент ушёл), и отвечает `RUN_ALREADY_ACTIVE` — то есть
+ * собственное сообщение пользователя посчитано вторым агентом. Такой же просвет есть между
+ * завершением прогона и следующей репликой из очереди. Небольшое ожидание закрывает его, а
+ * правило остаётся прежним: одновременно у аккаунта идёт ровно один запуск, второй ждёт, а не
+ * выполняется параллельно. `AGENT_ACCOUNT_WAIT_MS=0` возвращает немедленный отказ.
+ */
+export function accountWaitMs() {
+  const raw = process.env.AGENT_ACCOUNT_WAIT_MS?.trim();
+  if (!raw) return 5000;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : 5000;
+}
+
 /** Account id -> runs it holds right now. Kept here, next to the host-wide limit. */
 const runsByAccount = new Map<string, number>();
+
+/** Account id -> callbacks waiting for its place to free. */
+const accountWaiters = new Map<string, Set<(freed: boolean) => void>>();
 
 /** How many runs this account holds right now; the panel and the tests read it. */
 export function accountRunCount(userId: string) {
@@ -71,7 +93,44 @@ function takeAccountPlace(userId: string) {
     const left = accountRunCount(userId) - 1;
     if (left > 0) runsByAccount.set(userId, left);
     else runsByAccount.delete(userId);
+    if (left <= 0) releaseAccountWaiters(userId);
   };
+}
+
+/** Будит тех, кто ждёт место этого аккаунта: освободилось ровно сейчас. */
+function releaseAccountWaiters(userId: string) {
+  const waiters = accountWaiters.get(userId);
+  if (!waiters) return;
+  accountWaiters.delete(userId);
+  for (const wake of [...waiters]) wake(true);
+}
+
+/**
+ * Ждёт, пока аккаунт освободится: `true` — место свободно (или освободилось), `false` — время
+ * вышло или соединение закрылось. Ожидание ограничено и не занимает места ни в очереди хоста, ни
+ * в аккаунте, поэтому брошенная вкладка ничего не держит.
+ */
+function waitForAccountFree(userId: string, signal: AbortSignal, timeoutMs: number): Promise<boolean> {
+  if (accountRunCount(userId) === 0) return Promise.resolve(true);
+  if (timeoutMs <= 0 || signal.aborted) return Promise.resolve(false);
+  return new Promise<boolean>(resolve => {
+    let settled = false;
+    const waiters = accountWaiters.get(userId) ?? new Set<(freed: boolean) => void>();
+    accountWaiters.set(userId, waiters);
+    const finish = (freed: boolean) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal.removeEventListener("abort", onAbort);
+      waiters.delete(finish);
+      if (!waiters.size) accountWaiters.delete(userId);
+      resolve(freed && accountRunCount(userId) === 0);
+    };
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    const onAbort = () => finish(false);
+    signal.addEventListener("abort", onAbort, { once: true });
+    waiters.add(finish);
+  });
 }
 
 /**
@@ -85,7 +144,14 @@ function takeAccountPlace(userId: string) {
  */
 export async function runWithRunSlot<T>(work: () => Promise<T>, options: RunSlotOptions): Promise<T> {
   const userId = options.userId;
-  if (userId && accountRunCount(userId) >= 1) throw new AccountBusyError();
+  if (userId && accountRunCount(userId) >= 1) {
+    // Сначала ждём: отменённый или только что завершённый прогон отпускает место через несколько
+    // миллисекунд, и без этого ожидания собственное сообщение пользователя выглядело вторым агентом.
+    await waitForAccountFree(userId, options.signal, accountWaitMs());
+    // Соединение закрылось, пока мы ждали: запускать работу некому, и это не «аккаунт занят».
+    if (options.signal.aborted) throw new QueueAbortedError("Запуск");
+    if (accountRunCount(userId) >= 1) throw new AccountBusyError();
+  }
   // Taken before the wait, not after it: a queued request already belongs to the account, so its
   // second tab is refused right away instead of queueing behind itself for five minutes.
   const releaseAccount = userId ? takeAccountPlace(userId) : undefined;
@@ -110,7 +176,9 @@ export function runQueueStats(): LimiterStats {
 /** Printed once at startup: what this host will actually run in parallel. */
 export function describeRunLimiter() {
   const stats = runQueueStats();
+  const accountWait = accountWaitMs();
   return "параллельных запусков агента: " + stats.limit + ", очередь: " + stats.queueLimit +
     ", ожидание до " + Math.round(positiveInt(process.env.AGENT_QUEUE_TIMEOUT_MS, 300_000) / 1000) + " с" +
-    ", на аккаунт: 1 одновременно";
+    ", на аккаунт: 1 одновременно" +
+    (accountWait > 0 ? ", ожидание места аккаунта до " + Math.round(accountWait / 1000) + " с" : ", место аккаунта не ждём");
 }

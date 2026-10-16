@@ -143,6 +143,9 @@ export async function previewStatus(projectId: string): Promise<PreviewStatus> {
     return {
       running: true,
       ready,
+      // Готовность статического предпросмотра — это ответ на запрос самого сервера, поэтому
+      // подтверждённый адрес и готовность здесь одно и то же.
+      settled: ready,
       mode: "static",
       port: current.port,
       host: current.host,
@@ -151,6 +154,26 @@ export async function previewStatus(projectId: string): Promise<PreviewStatus> {
       ...(ready
         ? {}
         : { hint: "Статическая сборка не отвечает — запустите предпросмотр заново." }),
+    };
+  }
+
+  // Подтверждённый адрес не перепроверяется через контейнер на каждом чтении статуса. Прокси читает
+  // статус на КАЖДЫЙ файл приложения, а `docker exec` стоит сотни миллисекунд, поэтому каждая загрузка
+  // модуля через панель (в отличие от прямого адреса, которым пользуется Chromium) платила лишний
+  // раунд — а при десятках файлов это и есть «панель не показывает приложение». Живость
+  // подтверждённого адреса проверяет сам прокси настоящим запросом: отказ снимает подтверждение
+  // (unsettlePreview), и следующее чтение статуса проверяет контейнер как раньше.
+  if(current.settled){
+    touchPreview(projectId);
+    return {
+      running: true,
+      ready: true,
+      settled: true,
+      mode: "container",
+      port: current.port,
+      host: current.host,
+      containerId: current.containerId,
+      startedAt: current.startedAt,
     };
   }
 
@@ -178,19 +201,31 @@ export async function previewStatus(projectId: string): Promise<PreviewStatus> {
   // петлю, а иногда — свой порт вместо запрошенного): адрес доводится до рабочего здесь же,
   // потому что статус читают и панель, и прокси, и агент. Медленный первый старт поэтому
   // лечится сам, без перезапуска предпросмотра вручную.
-  const settled = ready ? await settlePreviewAddress(current, { appAnswers: true }) : current;
+  //
+  // Починка запускается и когда приложение ещё не ответило на порт из состояния: оно могло подняться
+  // позже и на своём порту (dev-скрипт, который не принял флаги запуска), а подтверждения у адреса
+  // всё ещё нет. Раньше шаг выполнялся только при `ready`, поэтому такой предпросмотр навсегда
+  // оставался с портом, на котором ничего не слушает: приложение живо, а панель показывает пустой кадр.
+  const settled = await settlePreviewAddress(current, { appAnswers: ready });
   if (settled !== current) setPreview(settled);
+  // Адрес подтверждён — значит до приложения доходит сам сервер, а вместе с ним панель, прокси и
+  // Chromium. Это отдельный факт от «приложение живо»: без него «предпросмотр запущен» и белый
+  // экран в панели приходилось разбирать по логам контейнера.
+  const confirmed = Boolean(settled.settled);
 
   return {
     running: true,
     ready,
+    settled: confirmed,
     mode: "container",
     port: settled.port,
     host: settled.host,
     containerId: current.containerId,
     startedAt: current.startedAt,
     ...(ready
-      ? {}
+      ? confirmed
+        ? {}
+        : { hint: "Приложение отвечает внутри контейнера, но недоступно по адресу контейнера: панель показывает пустой экран. Платформа подключает контейнер к сети сервера и пробрасывает порт приложения — обновите статус; если подсказка осталась, задайте PREVIEW_NETWORK." }
       : { hint: "Приложение ещё запускается: первый старт dev-сервера занимает несколько секунд." }),
   };
 }

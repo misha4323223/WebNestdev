@@ -5,6 +5,7 @@ import { runQueueStats } from "../agent/run-limiter.js";
 import { sandboxQueueStats } from "../sandbox/sandbox-limiter.js";
 import { browserQueueStats } from "../tools/browser-limiter.js";
 import { liveRuntimePreviews, liveStaticPreviews, runtimePreviewLimit } from "../preview/preview-limiter.js";
+import { previewAddresses } from "../preview/preview-store.js";
 import { DEFAULT_CHARS_PER_TOKEN,contextBudgetTokens,contextMaxMessages } from "../agent/context-budget.js";
 import { sandboxHostRootDir,sandboxRootDir } from "../sandbox/config.js";
 import { lastSandboxMountCheck } from "../sandbox/sandbox-check.js";
@@ -58,6 +59,11 @@ async function activity(){
       runtime: liveRuntimePreviews().length,
       runtimeLimit: runtimePreviewLimit(),
       static: liveStaticPreviews().length,
+      // Адреса живых предпросмотров: `settled` — этот адрес подтверждён запросом самого сервера,
+      // то есть приложение видно и панели, и Chromium. `settled: false` у работающего предпросмотра
+      // — это ответ на «предпросмотр запущен, а в панели белый экран», который иначе искали бы
+      // только на ВМ (см. preview/preview-address.ts).
+      addresses: previewAddresses(),
     },
     // Сколько контекста уходит модели за один шаг: без этого числа отказ провайдера по размеру
     // промпта выглядит необъяснимым (agent/context-budget.ts).

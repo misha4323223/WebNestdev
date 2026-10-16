@@ -13,8 +13,12 @@ export type AgentMode="planner"|"developer";
 export type FileEntry={name:string;type:"file"|"directory"};
 /** `static` serves the built app without a dev server, so there is no hot reload. */
 export type PreviewMode="container"|"static";
-/** `ready` is false while the dev server has not answered yet; `hint` explains that. */
-export type PreviewState={running:boolean;port?:number;ready?:boolean;mode?:PreviewMode;hint?:string;error?:string};
+/**
+ * `ready` — приложение ответило внутри контейнера, `settled` — тот же адрес ответил серверу (то
+ * есть панели и агенту); `hint` объясняет, чего именно не хватает. Разница видна пользователю:
+ * «готов, но недоступен» — это белый экран в панели, а не ожидание запуска.
+ */
+export type PreviewState={running:boolean;port?:number;ready?:boolean;settled?:boolean;mode?:PreviewMode;hint?:string;error?:string};
 
 export type PlanItemStatus="pending"|"in_progress"|"done";
 export type PlanItem={title:string;status:PlanItemStatus;note?:string};

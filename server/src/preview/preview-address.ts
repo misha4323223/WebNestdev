@@ -1,6 +1,7 @@
 import { fetchAppFromContainer, previewAppAnswers } from "./app-http.js";
 import { chooseAppPort, listListeningPorts } from "./app-port.js";
 import { chooseRelayPort, startContainerRelay } from "./app-relay.js";
+import { attachToServerNetworks as attachContainerToServerNetworks } from "./preview-network.js";
 import type { PreviewState } from "./types.js";
 
 /**
@@ -24,6 +25,8 @@ export type PreviewAddressDeps={
   appAnswers:(state:Pick<PreviewState,"containerId"|"port">)=>Promise<boolean>;
   usedPorts:(containerId:string)=>Promise<number[]>;
   startRelay:(input:{containerId:string;targetPort:number;listenPort:number})=>Promise<boolean>;
+  /** Подключает контейнер к сетям сервера и возвращает адрес, видимый с его стороны. */
+  attachToServerNetworks:(containerId:string)=>Promise<{host:string;connected:string[]}>;
 };
 
 const defaultDeps:PreviewAddressDeps={
@@ -31,7 +34,29 @@ const defaultDeps:PreviewAddressDeps={
   appAnswers:previewAppAnswers,
   usedPorts:listListeningPorts,
   startRelay:startContainerRelay,
+  attachToServerNetworks:containerId=>attachContainerToServerNetworks(containerId),
 };
+
+/** Сколько раз и с какой паузой перепроверять адрес после починки. */
+export const ADDRESS_CHECK_ATTEMPTS=6;
+export const ADDRESS_CHECK_DELAY_MS=400;
+export type AddressWait={attempts?:number;delayMs?:number};
+
+/**
+ * Ждёт, пока адрес начнёт отвечать. Нужно ровно там, где перед проверкой была починка: и
+ * `docker network connect`, и запущенный через `docker exec -d` проброс вступают в силу не
+ * мгновенно, а одна проверка сразу после них — это ложный вывод «не получилось» и состояние без
+ * подтверждённого адреса, из-за которого панель получает белый экран.
+ */
+async function waitForAddress(state:{host:string;port:number},deps:PreviewAddressDeps,wait:AddressWait={}){
+  const attempts=Math.max(1,wait.attempts??ADDRESS_CHECK_ATTEMPTS);
+  const delayMs=Math.max(0,wait.delayMs??ADDRESS_CHECK_DELAY_MS);
+  for(let attempt=0;attempt<attempts;attempt++){
+    if(await deps.addressAnswers(state))return true;
+    if(attempt<attempts-1&&delayMs>0)await new Promise(resolve=>setTimeout(resolve,delayMs));
+  }
+  return false;
+}
 
 /**
  * Доводит адрес предпросмотра до рабочего, потому что приложение решает, где слушать, а не
@@ -42,25 +67,37 @@ const defaultDeps:PreviewAddressDeps={
  * неподтверждённым — следующая проверка попробует снова, поэтому медленный первый старт
  * лечится сам.
  */
-export async function settlePreviewAddress(state:PreviewState,options:{deps?:PreviewAddressDeps;appAnswers?:boolean}={}):Promise<PreviewState>{
+export async function settlePreviewAddress(state:PreviewState,options:{deps?:PreviewAddressDeps;appAnswers?:boolean;wait?:AddressWait}={}):Promise<PreviewState>{
   if(state.mode!=="container"||state.settled)return state;
   const deps=options.deps??defaultDeps;
   if(await deps.addressAnswers(state))return {...state,settled:true};
 
   const ports=await deps.usedPorts(state.containerId);
   const appPort=chooseAppPort(ports,state.port);
-  const current=appPort&&appPort!==state.port?{...state,port:appPort}:state;
-  if(current!==state&&await deps.addressAnswers(current))return {...current,settled:true};
+  let current=appPort&&appPort!==state.port?{...state,port:appPort}:state;
+  // Порт проверяется и тогда, когда он не изменился: между двумя чтениями статуса мог встать
+  // проброс или подключиться нужная сеть, и тогда подтверждать больше нечего.
+  if(await deps.addressAnswers(current))return {...current,settled:true};
 
-  // Приложение, не отвечающее снаружи, но отвечающее внутри, лечится пробросом.
+  // Адрес молчит — сначала выясняется, живо ли приложение вообще: «не отвечает внутри» и «отвечает,
+  // но недоступно снаружи» лечатся по-разному (см. unreachablePreviewDiagnosis).
   const appIsUp=options.appAnswers??await deps.appAnswers(current);
   if(!appIsUp)return current;
 
+  // Первая починка — сеть: контейнер мог оказаться в сети, которую сервер не видит (Docker
+  // изолирует bridge-сети друг от друга, а `docker exec` внутрь работает в любом случае).
+  const attached=await deps.attachToServerNetworks(current.containerId).catch(()=>({host:"",connected:[]}));
+  if(attached.host&&attached.host!==current.host){
+    current={...current,host:attached.host};
+    if(await waitForAddress(current,deps,options.wait))return {...current,settled:true};
+  }
+
+  // Вторая — петля: приложение слушает только 127.0.0.1, и проброс поднимается внутрь контейнера.
   const listenPort=chooseRelayPort(ports,state.port);
   if(!listenPort)return current;
   if(!await deps.startRelay({containerId:current.containerId,targetPort:current.port,listenPort}))return current;
   const relayed={...current,port:listenPort};
-  return await deps.addressAnswers(relayed)?{...relayed,settled:true}:current;
+  return await waitForAddress(relayed,deps,options.wait)?{...relayed,settled:true}:current;
 }
 
 /**
@@ -72,7 +109,7 @@ export function unreachablePreviewDiagnosis(input:{message:string;port:number;ap
   return {
     reason:`Unable to reach Preview at port ${input.port}: ${input.message}`,
     hint:input.appAnswersInside
-      ? `Приложение отвечает внутри контейнера на порту ${input.port}, но не по адресу контейнера: обычно это значит, что dev-сервер слушает только localhost. Перезапустите предпросмотр (preview.stop, затем preview.start) — платформа сама пробросит порт приложения. Если после перезапуска адрес так и не отвечает, сервер и контейнер предпросмотра живут в разных сетях Docker (PREVIEW_NETWORK).`
+      ? `Приложение отвечает внутри контейнера на порту ${input.port}, но не по адресу контейнера: либо dev-сервер слушает только localhost, либо контейнер предпросмотра остался в сети, которой сервер не видит. Перезапустите предпросмотр (preview.stop, затем preview.start) — платформа сама пробросит порт приложения и подключит контейнер к сети сервера. Если адрес так и не отвечает, задайте сеть явно: PREVIEW_NETWORK (docs/PRODUCTION_DEPLOYMENT.md).`
       : `Приложение не отвечает и внутри контейнера на порту ${input.port}: dev-сервер не поднялся на этом порту. Посмотрите логи предпросмотра (preview.logs) и команду запуска в package.json.`,
   };
 }

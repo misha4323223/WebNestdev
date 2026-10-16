@@ -13,16 +13,20 @@ function state(overrides: Partial<PreviewState> = {}): PreviewState {
  * Приложение в тесте отвечает ровно по тем адресам, которые перечислены: так проверяется и «свой
  * порт», и «только петля контейнера», и «не поднялось вовсе».
  */
-function deps(options: { answers: (candidate: { host: string; port: number }) => boolean; ports?: number[]; appUp?: boolean; relay?: boolean }) {
-  const calls = { address: 0, ports: 0, relay: [] as Array<{ containerId: string; targetPort: number; listenPort: number }> };
+function deps(options: { answers: (candidate: { host: string; port: number }) => boolean; ports?: number[]; appUp?: boolean; relay?: boolean; attach?: { host: string; connected: string[] } }) {
+  const calls = { address: 0, ports: 0, attach: 0, relay: [] as Array<{ containerId: string; targetPort: number; listenPort: number }> };
   const value: PreviewAddressDeps = {
     addressAnswers: async candidate => { calls.address++; return options.answers(candidate); },
     appAnswers: async () => { calls.ports++; return options.appUp ?? true; },
     usedPorts: async () => options.ports ?? [],
     startRelay: async input => { calls.relay.push(input); return options.relay ?? true; },
+    attachToServerNetworks: async () => { calls.attach++; return options.attach ?? { host: "", connected: [] }; },
   };
   return { value, calls };
 }
+
+/** Ждать в тестах незачем: ожидание проверяется отдельно, здесь важны решения. */
+const noWait = { attempts: 1, delayMs: 0 };
 
 test("a reachable preview is confirmed once and never inspected again", async () => {
   const { value, calls } = deps({ answers: () => true });
@@ -64,10 +68,68 @@ test("the relay takes the free canonical port when the app sits on another loopb
     appAnswers: async () => true,
     usedPorts: async () => [5173],
     startRelay: async input => { relay.push(input); relayStarted = true; return true; },
+    attachToServerNetworks: async () => ({ host: "", connected: [] }),
   };
-  const settled = await settlePreviewAddress(state(), { deps: value, appAnswers: true });
+  const settled = await settlePreviewAddress(state(), { deps: value, appAnswers: true, wait: noWait });
   assert.deepEqual(relay, [{ containerId: "c1", targetPort: 5173, listenPort: 3000 }]);
   assert.equal(settled.port, 3000);
+  assert.equal(settled.settled, true);
+});
+
+/**
+ * Контейнер, оставшийся в сети, которой сервер не видит: приложение живо внутри, но адрес молчит.
+ * Починка — подключить контейнер к сети сервера и подтвердить новый адрес, а не искать петлю.
+ */
+test("a preview container in a foreign network is attached to the server's network and confirmed there", async () => {
+  const { value, calls } = deps({
+    answers: candidate => candidate.host === "172.18.0.5" && candidate.port === 3000,
+    ports: [3000],
+    appUp: true,
+    attach: { host: "172.18.0.5", connected: ["src_webnestdev"] },
+  });
+  const settled = await settlePreviewAddress(state(), { deps: value, appAnswers: true, wait: noWait });
+  assert.equal(settled.host, "172.18.0.5", "адрес берётся на сети сервера");
+  assert.equal(settled.settled, true);
+  assert.equal(calls.attach, 1);
+  assert.deepEqual(calls.relay, [], "проброс для этого не нужен");
+});
+
+/**
+ * Порт не изменился — но адрес всё равно проверяется: между двумя чтениями статуса мог встать
+ * проброс или подключиться нужная сеть. Без этой проверки состояние оставалось без подтверждённого
+ * адреса, а панель — с белым экраном при живом приложении.
+ */
+test("an unchanged port is still re-checked, so a repair made between two status reads is confirmed", async () => {
+  let calls = 0;
+  const { value } = deps({ answers: () => { calls++; return calls > 1; }, ports: [3000], appUp: true });
+  // Первая проверка (до чтения портов) молчит, вторая — отвечает по тому же адресу.
+  const settled = await settlePreviewAddress(state(), { deps: value, appAnswers: true, wait: noWait });
+  assert.equal(settled.settled, true);
+  assert.equal(settled.port, 3000);
+});
+
+/**
+ * Проброс поднимается через `docker exec -d` и слушает не сразу: одиночная проверка сразу после
+ * запуска объявляла починку неудачной, состояние оставалось неподтверждённым, и панель получала
+ * «Прокси предпросмотра не сработал: fetch failed». Теперь адрес перепроверяется с паузой.
+ */
+test("a relay that needs a moment to start listening is still confirmed", async () => {
+  let afterRelay = 0;
+  const relay: Array<{ containerId: string; targetPort: number; listenPort: number }> = [];
+  const value: PreviewAddressDeps = {
+    addressAnswers: async candidate => {
+      if (candidate.port !== 3001) return false;
+      afterRelay++;
+      return afterRelay > 2;
+    },
+    appAnswers: async () => true,
+    usedPorts: async () => [3000],
+    startRelay: async input => { relay.push(input); return true; },
+    attachToServerNetworks: async () => ({ host: "", connected: [] }),
+  };
+  const settled = await settlePreviewAddress(state(), { deps: value, appAnswers: true, wait: { attempts: 5, delayMs: 10 } });
+  assert.deepEqual(relay, [{ containerId: "c1", targetPort: 3000, listenPort: 3001 }]);
+  assert.equal(settled.port, 3001);
   assert.equal(settled.settled, true);
 });
 
@@ -79,14 +141,14 @@ test("nothing is repaired while the app is not up, and a failed repair stays unc
   assert.deepEqual(down.calls.relay, []);
 
   const failing = deps({ answers: () => false, ports: [3000], appUp: true, relay: false });
-  const unrepaired = await settlePreviewAddress(state(), { deps: failing.value });
+  const unrepaired = await settlePreviewAddress(state(), { deps: failing.value, wait: noWait });
   assert.equal(unrepaired.port, 3000);
   assert.equal(unrepaired.settled, undefined);
   assert.equal(failing.calls.relay.length, 1);
 
   // Проброс поднялся, но адрес всё равно молчит (например, сеть контейнеров не пересекается с сервером).
   const silent = deps({ answers: () => false, ports: [3000], appUp: true });
-  const stillBroken = await settlePreviewAddress(state(), { deps: silent.value });
+  const stillBroken = await settlePreviewAddress(state(), { deps: silent.value, wait: noWait });
   assert.equal(stillBroken.port, 3000);
   assert.equal(stillBroken.settled, undefined);
 });

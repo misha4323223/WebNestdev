@@ -133,6 +133,53 @@ test("the preview address without the trailing slash is redirected onto the cano
   }
 });
 
+/**
+ * Приложение приняло соединение и молчит. Раньше прокси ждал общего таймаута запроса, и панель всё это
+ * время показывала пустой белый кадр: пользователь видел «ничего». Теперь отказ ограничен бюджетом и
+ * назван словами — «не ответил за N с», а не «fetch failed».
+ */
+test("an app that accepts the connection but never answers is named as a timeout instead of a white frame", async () => {
+  const silent = createServer(() => {});
+  await new Promise<void>(resolve => silent.listen(0, "127.0.0.1", resolve));
+  const address = silent.address();
+  const port = typeof address === "object" && address ? address.port : 0;
+  const previous = process.env.PREVIEW_PROXY_TIMEOUT_MS;
+  process.env.PREVIEW_PROXY_TIMEOUT_MS = "150";
+  const app = await appWith(depsFor(port));
+  try {
+    const response = await app.inject({ method: "GET", url: "/api/projects/p1/preview/open/" });
+    assert.equal(response.statusCode, 400);
+    assert.match(response.body, /Прокси предпросмотра не сработал/);
+    assert.match(response.body, /не ответил за 1 с/, response.body);
+    assert.match(response.body, /снаружи недоступно/, response.body);
+  } finally {
+    if (previous === undefined) delete process.env.PREVIEW_PROXY_TIMEOUT_MS;
+    else process.env.PREVIEW_PROXY_TIMEOUT_MS = previous;
+    await app.close();
+    silent.closeAllConnections?.();
+    await new Promise<void>(resolve => silent.close(() => resolve()));
+  }
+});
+
+test("a refused connection keeps the plain reason, not a timeout sentence", async () => {
+  // На этом порту никто не слушает: это другой диагноз (порт/предпросмотр упал), и он не должен
+  // подменяться сообщением про сеть.
+  const probe = createServer(() => {});
+  await new Promise<void>(resolve => probe.listen(0, "127.0.0.1", resolve));
+  const address = probe.address();
+  const port = typeof address === "object" && address ? address.port : 0;
+  await new Promise<void>(resolve => probe.close(() => resolve()));
+  const app = await appWith(depsFor(port));
+  try {
+    const response = await app.inject({ method: "GET", url: "/api/projects/p1/preview/open/" });
+    assert.equal(response.statusCode, 400);
+    assert.match(response.body, /Прокси предпросмотра не сработал/);
+    assert.doesNotMatch(response.body, /не ответил за/, response.body);
+  } finally {
+    await app.close();
+  }
+});
+
 test("a stopped preview answers with an error instead of an empty page", async () => {
   const app = await appWith(depsFor(1, { previewStatus: async () => ({ running: false }) }));
   try {

@@ -13,6 +13,16 @@ function withLimit(limit: string) {
   };
 }
 
+/** Ожидание места аккаунта тоже читается из окружения: тест задаёт его явно. */
+function withAccountWait(ms: string) {
+  const previous = process.env.AGENT_ACCOUNT_WAIT_MS;
+  process.env.AGENT_ACCOUNT_WAIT_MS = ms;
+  return () => {
+    if (previous === undefined) delete process.env.AGENT_ACCOUNT_WAIT_MS;
+    else process.env.AGENT_ACCOUNT_WAIT_MS = previous;
+  };
+}
+
 function deferred() {
   let resolve!: () => void;
   const promise = new Promise<void>(done => { resolve = done; });
@@ -89,6 +99,8 @@ test("cancelling while queued frees the place for the next run", async () => {
 
 test("one account runs one agent at a time, even with a free place on the host", async () => {
   const restore = withLimit("4");
+  // Отказ проверяется без ожидания места: `0` — это документированный выключатель ожидания.
+  const restoreWait = withAccountWait("0");
   try {
     const holding = deferred();
     const first = runWithRunSlot(async () => { await holding.promise; }, { signal: signal(), userId: "аккаунт-1" });
@@ -110,6 +122,60 @@ test("one account runs one agent at a time, even with a free place on the host",
     assert.equal(await runWithRunSlot(async () => "ок", { signal: signal(), userId: "аккаунт-1" }), "ок");
   } finally {
     restore();
+    restoreWait();
+  }
+});
+
+/**
+ * «Отправить сейчас» из очереди: панель закрывает сокет текущего запуска и сразу начинает новый.
+ * Место освобождается через несколько миллисекунд после отмены, и запрос, пришедший в этот
+ * просвет, должен дождаться его, а не получить RUN_ALREADY_ACTIVE — иначе собственное сообщение
+ * пользователя считается вторым агентом.
+ */
+test("a run that arrives while the account is still unwinding waits for the place instead of being refused", async () => {
+  const restoreLimit = withLimit("4");
+  const restoreWait = withAccountWait("2000");
+  try {
+    const holding = deferred();
+    const first = runWithRunSlot(async () => { await holding.promise; }, { signal: signal(), userId: "аккаунт-1" });
+    await tick();
+
+    const second = runWithRunSlot(async () => "второе сообщение", { signal: signal(), userId: "аккаунт-1" });
+    // Отменённый прогон отпускает место уже после того, как новый запрос пришёл.
+    setTimeout(() => holding.resolve(), 40);
+    await first;
+
+    assert.equal(await second, "второе сообщение");
+    assert.equal(accountRunCount("аккаунт-1"), 0);
+  } finally {
+    restoreLimit();
+    restoreWait();
+  }
+});
+
+test("a place that never frees still ends with the refusal, and a closed connection starts nothing", async () => {
+  const restoreLimit = withLimit("4");
+  try {
+    const restoreWait = withAccountWait("40");
+    const holding = deferred();
+    const first = runWithRunSlot(async () => { await holding.promise; }, { signal: signal(), userId: "аккаунт-1" });
+    await tick();
+
+    const error = await runWithRunSlot(async () => "не должно выполниться", { signal: signal(), userId: "аккаунт-1" })
+      .then(() => null, (reason: unknown) => reason);
+    assert.ok(error instanceof AccountBusyError, "занятый аккаунт по-прежнему получает отказ");
+
+    const controller = new AbortController();
+    const cancelled = runWithRunSlot(async () => "не должно выполниться", { signal: controller.signal, userId: "аккаунт-1" });
+    controller.abort();
+    await assert.rejects(cancelled, err => err instanceof QueueAbortedError, "закрытое соединение не запускает работу");
+
+    restoreWait();
+    holding.resolve();
+    await first;
+    assert.equal(accountRunCount("аккаунт-1"), 0);
+  } finally {
+    restoreLimit();
   }
 });
 

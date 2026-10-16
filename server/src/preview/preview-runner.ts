@@ -2,7 +2,7 @@ import type { SandboxConfig } from "../sandbox-manager.js";
 import { workspaceMountSource } from "../sandbox/config.js";
 import { previewAppAnswers } from "./app-http.js";
 import { dockerExec } from "./docker-exec.js";
-import { previewNetwork } from "./preview-network.js";
+import { addressOnNetworks, firstContainerAddress, previewNetwork } from "./preview-network.js";
 import { settlePreviewAddress } from "./preview-address.js";
 import { resolvePreviewCommand } from "./preview-command.js";
 import { ensureProjectDependencies } from "./dependencies.js";
@@ -47,7 +47,9 @@ export async function startPreviewContainer(config:SandboxConfig){
   ]);
   if(result.code!==0)throw new Error(result.stderr||"Не удалось запустить контейнер предпросмотра");
   const containerId=result.stdout.trim();
-  const host=await containerAddress(containerId);
+  // Адрес берётся именно на той сети, куда контейнер поставлен: у контейнера может быть несколько
+  // интерфейсов, и адрес не с той сети серверу недоступен (см. preview-network.ts).
+  const host=(network?await addressOnNetworks(containerId,[network]):"")||await firstContainerAddress(containerId);
   if(!host){
     await dockerExec(["stop",containerId]);
     throw new Error("Адрес контейнера предпросмотра не назначен");
@@ -67,12 +69,6 @@ export async function startPreviewContainer(config:SandboxConfig){
   // Лог установки — единственное место, где видно, почему первый запуск занял минуту, а также
   // причина отказа, если dev-сервер так и не ответил.
   return {...settled,running:true as const,ready,...(ready?{}:{logs:[dependencies.log,await recentPreviewLogs(containerId)].filter(Boolean).join("\n\n")})};
-}
-
-async function containerAddress(containerId:string){
-  const result=await dockerExec(["inspect","-f","{{range .NetworkSettings.Networks}}{{.IPAddress}}\n{{end}}",containerId]);
-  if(result.code!==0)return "";
-  return result.stdout.split("\n").map(value=>value.trim()).filter(Boolean)[0]??"";
 }
 
 /** Bounded wait: the dev server answers in a second or two, a cold npm install takes longer. */
