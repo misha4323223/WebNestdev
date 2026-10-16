@@ -351,6 +351,33 @@ secrets_dir(){
 }
 
 #
+# Запись в каталог, которым владеет root. Такой каталог получается сам собой: источник
+# bind-mount создаёт docker, а не человек (см. docker-compose.yml), и выкатка от обычного
+# пользователя в него не пишет.
+#
+# Права на docker у этого пользователя уже есть — иначе выкатка не подняла бы контейнеры, —
+# поэтому файл записывает одноразовый контейнер того же образа: он работает от root. Так шаг
+# не требует ни sudo (он может спрашивать пароль, а спросить его в workflow некому), ни захода
+# на ВМ руками. Содержимое идёт потоком в stdin, поэтому в аргументах команды и в списке
+# процессов секрета нет.
+#
+install_key_as_root(){
+  local dir="$1" file="$2" image out
+  image="${IMAGE_REF:-}"
+  [ -n "$image" ] || image="$(running_image 2>/dev/null || true)"
+  [ -n "$image" ] || return 1
+  # Путь внутри контейнера произвольный: наружу он не выходит, важен только каталог на хосте.
+  if ! out=$(docker run --rm -i -v "$dir":/run/webnestdev-key --entrypoint sh "$image" \
+      -c 'umask 077; cat > "$1"' sh "/run/webnestdev-key/$(basename "$file")" < "$APP_KEY_FILE" 2>&1); then
+    log "запись одноразовым контейнером не удалась: $(printf '%s' "$out" | tail -1)"
+    return 1
+  fi
+  [ -s "$file" ] || return 1
+  log "каталог $dir принадлежит root — ключ записан одноразовым контейнером (без sudo и без захода на ВМ)"
+  return 0
+}
+
+#
 # Ключ сервисного аккаунта Yandex Cloud: файлом, а не переменной. Ключ многострочный, поле
 # секрета — нет, поэтому из GitHub он приезжает отдельным потоком (workflow кладёт его в
 # APP_KEY_FILE), а здесь оказывается в каталоге секретов под именем yandex-sa-key.json.
@@ -377,12 +404,13 @@ install_app_secrets(){
     return 0
   fi
   mkdir -p "$dir" 2>/dev/null || true
-  if [ ! -w "$dir" ]; then
-    log "каталог $dir недоступен для записи — ключ не установлен. Выполните один раз: sudo mkdir -p $dir && sudo chown $USER $dir"
-    return 0
-  fi
-  if ! install -m 600 "$APP_KEY_FILE" "$file" 2>/dev/null; then
-    log "не удалось записать $file — ключ не установлен"
+  if [ -w "$dir" ]; then
+    if ! install -m 600 "$APP_KEY_FILE" "$file" 2>/dev/null; then
+      log "не удалось записать $file — ключ не установлен"
+      return 0
+    fi
+  elif ! install_key_as_root "$dir" "$file"; then
+    log "каталог $dir недоступен для записи, и ключ не удалось записать одноразовым контейнером. Выполните один раз: sudo mkdir -p $dir && sudo chown $USER $dir"
     return 0
   fi
   rm -f "$APP_KEY_FILE"

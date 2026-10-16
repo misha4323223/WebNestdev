@@ -349,6 +349,8 @@ Repository secrets (Settings → Secrets and variables → Actions → **Secrets
 | `DEPLOY_KNOWN_HOSTS` | optional; without it the runner runs `ssh-keyscan` |
 | `YANDEX_SA_KEY_JSON` | optional; the whole service account key file. The deploy writes it to `/var/lib/webnestdev/secrets/yandex-sa-key.json` (mode 600), points `YANDEX_SA_KEY_FILE` at it and removes the temporary copy — SMS login stops depending on someone logging into the VM to place the file |
 
+If the secrets directory belongs to root — docker creates a bind-mount source that way — the deploy writes the key with a one-off container from the image it just pulled: the deploy user already has docker (without it the deploy could not start a container at all), and inside that container the write happens as root, so neither `sudo` (which may ask for a password that nobody can type in a workflow) nor a login to the VM is needed. The key keeps the documented path. Only when that container cannot write — no image at hand, docker refusing — does the deploy print the one command to run instead (`sudo mkdir -p /var/lib/webnestdev/secrets && sudo chown $USER /var/lib/webnestdev/secrets`) and leave the existing key untouched.
+
 Repository variables (same page → **Variables**):
 
 | Variable | Value |
