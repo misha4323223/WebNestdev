@@ -174,6 +174,12 @@ button,textarea{font:inherit}button{color:inherit}
 .auth-phone-actions .ghost-button{height:28px;border-color:#2b3139}
 .auth-form .auth-consent{display:flex;align-items:flex-start;gap:8px;color:#9da5af;font-size:10px;line-height:1.5;cursor:pointer}
 .auth-form .auth-consent input{height:auto;width:14px;min-width:14px;margin:2px 0 0;padding:0;accent-color:#e8eaed;cursor:pointer}
+/* Заметка о доставке кода: тестовый режим или отказ провайдера. Без неё «SMS не приходят»
+   выглядит одинаково и при сломанной настройке, и при чужой клавиатуре. */
+.auth-note{padding:9px;border:1px solid #3a3320;border-radius:6px;background:#191509;color:#d9c48d;font-size:10px;line-height:1.5}
+/* Какая сборка сейчас на сервере: по ней отличают устаревшую страницу из кеша браузера
+   от старой версии, которая действительно живёт в проде. */
+.auth-build{margin-top:22px;text-align:center;color:#5c636d;font-size:10px;letter-spacing:.04em}
 
 .home-screen{min-height:100vh;overflow:auto;background:#0b0d10;padding:0 28px;color:#e8eaed}
 .home-hero{width:min(860px,100%);margin:0 auto;padding:82px 0 54px;text-align:center}

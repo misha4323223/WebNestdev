@@ -53,6 +53,28 @@ test("status reports test mode when no Russian provider key is set", async t => 
   assert.equal(body.configured, false);
   assert.equal(body.testMode, true);
   assert.equal(body.providerLabel, "не подключён");
+  assert.equal(body.credentialKind, null);
+  // Экран входа показывает подсказку, иначе «SMS не приходят» нечем объяснить.
+  assert.match(body.hint, /SMS-провайдер не подключён/);
+});
+
+test("status tells a ready-made IAM token apart from a self-renewing key", async t => {
+  process.env.YANDEX_NOTIFY_IAM_TOKEN = "t1.ready-made";
+  t.after(() => { delete process.env.YANDEX_NOTIFY_IAM_TOKEN; });
+  const app = await buildApp();
+  t.after(async () => { await app.close(); });
+
+  const withToken = (await app.inject({ method: "GET", url: "/api/auth/phone/status" })).json();
+  assert.equal(withToken.provider, "yandex");
+  assert.equal(withToken.testMode, false);
+  assert.equal(withToken.credentialKind, "token");
+  assert.match(withToken.hint, /12 часов/);
+
+  process.env.YANDEX_SA_KEY = JSON.stringify({ id: "aje1", service_account_id: "aje2", private_key: "-----BEGIN PRIVATE KEY-----\nx\n-----END PRIVATE KEY-----\n" });
+  t.after(() => { delete process.env.YANDEX_SA_KEY; });
+  const withKey = (await app.inject({ method: "GET", url: "/api/auth/phone/status" })).json();
+  assert.equal(withKey.credentialKind, "key");
+  assert.doesNotMatch(withKey.hint, /12 часов/);
 });
 
 test("a Russian number gets a code and only that code opens a session", async t => {

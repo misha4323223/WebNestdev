@@ -17,6 +17,11 @@ FROM node:22-bookworm-slim AS production
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
+# Какая сборка внутри образа. Workflow передаёт сюда SHA коммита, и /api/health отдаёт
+# это значение — так выкатка (и человек) видят, действительно ли на ВМ новая версия,
+# а не старая, оставшаяся после неудачного деплоя.
+ARG GIT_SHA=unknown
+ENV WEBNESTDEV_BUILD=${GIT_SHA}
 
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates docker.io \

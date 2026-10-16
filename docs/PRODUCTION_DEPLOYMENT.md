@@ -29,14 +29,29 @@ WebNestDev Fastify
 - `YDB_CONNECTION_STRING=grpcs://...`
 - `YDB_TOKEN=...` when using an explicit access token, or YDB environment/metadata credentials in Yandex Cloud.
 - GitHub OAuth URLs must use HTTPS when OAuth credentials are enabled.
-- Phone login sends real SMS as soon as one Russian provider block is set. Yandex
-  Cloud Notification Service first (`YANDEX_NOTIFY_IAM_TOKEN` or `YANDEX_SA_KEY` +
-  `YANDEX_CLOUD_ID`), otherwise `SMS_RU_API_ID`, or `SMSC_LOGIN`+`SMSC_PASSWORD`, or
-  `EXOLVE_API_KEY`, or `SMSAERO_EMAIL`+`SMSAERO_API_KEY`; sender name via `SMS_SENDER`
-  or `YANDEX_SMS_SENDER`. With none set, the server stays in test mode and logs the
-  code — safe for staging, not for real users. Keep `WEBNESTDEV_SMS_TEST_MODE` unset in
-  production. Note the Yandex sender registration lead time (see
-  [AUTH_PRODUCTION_PLAN.md](AUTH_PRODUCTION_PLAN.md)).
+- Phone login sends real SMS as soon as one Russian provider block is set **and is passed
+  into the container**: Compose forwards only the variables named in `docker-compose.yml`,
+  so a key that sits in `.env` but is not listed there reaches nothing — the server stays
+  in test mode and only logs the code, which looks exactly like "SMS stopped arriving".
+  All the provider keys are passed through now; fill the one you use: Yandex Cloud
+  Notification Service (`YANDEX_SA_KEY` / `YANDEX_SA_KEY_FILE` + `YANDEX_CLOUD_ID`),
+  otherwise `SMS_RU_API_ID`, or `SMSC_LOGIN`+`SMSC_PASSWORD`, or `EXOLVE_API_KEY`, or
+  `SMSAERO_EMAIL`+`SMSAERO_API_KEY`; sender name via `SMS_SENDER` or `YANDEX_SMS_SENDER`.
+- **For Yandex, use the service account key, not a ready-made token.** An IAM token lives
+  about 12 hours: SMS work right after the setup and then every send fails with 401. The
+  key is exchanged for a fresh token by the server itself, and it wins even when a stale
+  `YANDEX_NOTIFY_IAM_TOKEN` is still set. Put the key file in `/var/lib/webnestdev/secrets`
+  (mounted read-only into the container) and set
+  `YANDEX_SA_KEY_FILE=/var/lib/webnestdev/secrets/yandex-sa-key.json`.
+- With no provider the server stays in test mode and logs the code — safe for staging, not
+  for real users. Keep `WEBNESTDEV_SMS_TEST_MODE` unset in production. Note the Yandex
+  sender registration lead time (see [AUTH_PRODUCTION_PLAN.md](AUTH_PRODUCTION_PLAN.md)).
+
+When SMS do not arrive, look in this order: `curl -s localhost:8787/api/health` → `sms`
+shows the provider that is actually active and whether it authenticates with a `key` or a
+`token`; the sign-in screen itself prints the reason it got from the server (test mode,
+sandbox number, expired token); and `docker compose logs webnestdev-server` has the
+provider's own refusal — every failed send is logged with its cause.
 
 The server intentionally fails fast in production when the allowed-origin list is missing or contains localhost.
 
@@ -293,7 +308,17 @@ Two modes:
 
 After the health check the deploy runs the sandbox self-check inside the server container and **fails (exit 4) on a path mismatch**: a deployment in which the agent writes files the sandbox terminal cannot see is not a successful deployment.
 
-Rollback: run the workflow again with mode `image` and `image=ghcr.io/<owner>/<repo>:sha-<12 символов коммита>` of the previous build (every tag is listed in the GHCR package page).
+**The deploy also verifies that the version it shipped is the version that is running.** Every image carries the commit SHA it was built from (`GET /api/health` → `build`), and the script compares both the running container's image and that `build` value with the tag it deployed. A mismatch — the container was not recreated, or the service came up on something else — **rolls the VM back to the previous image and fails the job** (exit 5; exit 1 when the new version never becomes ready). Before this, a failed deploy simply left whatever was already running, and the symptom surfaced days later as "the site shows the old version again" with nothing about it in any log. `VERIFY_VERSION=0` turns the check off.
+
+Which version is live right now, without a shell on the VM:
+
+```bash
+curl -s localhost:8787/api/health | sed -n 's/.*"build":"\([^"]*\)".*/\1/p'
+```
+
+The same number is printed as a small `версия <sha>` line at the bottom of the sign-in screen. If it is the new commit while the page still looks old, the page came from the browser cache — the document is served with `cache-control: no-store` for exactly that reason, but a browser that cached it under the older 30-day rule needs one hard reload (clear site data on a phone).
+
+Rollback by hand: run the workflow again with mode `image` and `image=ghcr.io/<owner>/<repo>:sha-<12 символов коммита>` of the previous build (every tag is listed in the GHCR package page). The previous image is still on the VM: cleanup runs only after a successful deploy, so a rollback never needs a rebuild.
 
 Repository secrets (Settings → Secrets and variables → Actions → **Secrets**):
 
@@ -337,5 +362,5 @@ Terminate TLS at Caddy/nginx/another reverse proxy. Keep Fastify on the private 
 
 ## Health endpoints
 
-- `GET /api/health` — liveness plus dependency state. `sandbox` carries the two sandbox directories (`sandboxDir`, `sandboxHostDir`) and the last mount check (`mount`), and `activity.disk.path` is the directory the projects actually live in — three fields that answer "why does the sandbox terminal look empty" without a shell on the VM.
+- `GET /api/health` — liveness plus dependency state. `sandbox` carries the two sandbox directories (`sandboxDir`, `sandboxHostDir`) and the last mount check (`mount`), and `activity.disk.path` is the directory the projects actually live in — three fields that answer "why does the sandbox terminal look empty" without a shell on the VM. `build` is the commit SHA the running image was built from (what the deploy verifies), and `sms` names the active SMS provider with whether it sends for real and how it authenticates (`credentialKind`: a self-renewing `key` or a `token` that expires).
 - `GET /api/ready` — readiness; returns HTTP 503 when required dependencies are unavailable, and also when the mount check reported `mismatch` — the one sandbox failure that does not heal on its own.

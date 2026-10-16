@@ -4,7 +4,7 @@ import { attachSession } from "../auth/auth.js";
 import { checkAuthRateLimit } from "../auth/auth-rate-limit.js";
 import { demoPhone, ensurePhoneAccount, formatPhone, normalizePhone, startPhoneLogin, verifyPhoneCode } from "../auth/phone-store.js";
 import { PHONE_CONSENT_REQUIRED_MESSAGE, recordPhoneConsent } from "../auth/phone-consent.js";
-import { sendLoginCode, smsConfig, smsConfigHint, smsProviderLabel } from "../auth/sms.js";
+import { sendLoginCode, smsConfig, smsConfigHint, smsProviderLabel, smsSummary } from "../auth/sms.js";
 
 const phoneInput = z.object({ phone: z.string().min(1).max(30), consent: z.boolean().optional() });
 const verifyInput = z.object({ phone: z.string().min(1).max(30), code: z.string().min(1).max(10) });
@@ -19,6 +19,7 @@ export async function registerPhoneAuthRoutes(app: FastifyInstance) {
   // anybody is authenticated. It exposes no credentials, only the provider's name.
   app.get("/api/auth/phone/status", async () => {
     const config = smsConfig();
+    const summary = smsSummary();
     const demo = demoPhone();
     return {
       provider: config.provider,
@@ -26,6 +27,10 @@ export async function registerPhoneAuthRoutes(app: FastifyInstance) {
       configured: Boolean(config.provider),
       testMode: config.test,
       sender: config.sender,
+      // «key» — ключ сервисного аккаунта (сервер сам получает свежий токен), «token» —
+      // готовый IAM-токен, который живёт около 12 часов. Не секрет, зато это первое,
+      // что нужно знать, когда SMS перестали приходить, а доступ к ВМ есть не всегда.
+      credentialKind: summary.credentialKind,
       hint: smsConfigHint(),
       // The demo number is shown on the sign-in screen so it can be used instead of SMS.
       ...(demo ? { demoPhone: formatPhone(demo) } : {}),
@@ -76,7 +81,10 @@ export async function registerPhoneAuthRoutes(app: FastifyInstance) {
 
     const delivery = await sendLoginCode(phone, started.code);
     if (!delivery.ok) {
-      return reply.code(502).send({ error: "Не удалось отправить SMS: " + (delivery.error ?? "провайдер отклонил запрос"), providerLabel: delivery.providerLabel });
+      // Отказ провайдера не решается повторной попыткой с того же экрана, поэтому
+      // ответ несёт и причину, и что настроить — иначе «SMS не приходят» остаётся
+      // необъяснимым и для пользователя, и для того, кто разбирается с сервером.
+      return reply.code(502).send({ error: "Не удалось отправить SMS: " + (delivery.error ?? "провайдер отклонил запрос"), providerLabel: delivery.providerLabel, hint: smsConfigHint() });
     }
     const config = smsConfig();
     return {

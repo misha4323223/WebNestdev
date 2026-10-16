@@ -23,6 +23,10 @@
 #   SYSTEMD_UNIT=webnestdev    юнит, который перезапускается в MODE=source
 #   HEALTH_URL=http://127.0.0.1:8787/api/ready
 #   HEALTH_TRIES=30            попыток по 2 секунды
+#   VERIFY_VERSION=0           не сверять живую сборку (/api/health → build) с выкаченным тегом.
+#                              По умолчанию сверяется: выкатка, которую не удалось подтвердить,
+#                              откатывается на предыдущий образ и завершается ошибкой (код 5),
+#                              а не оставляет на сервисе версию, о которой ничего не известно.
 #   KEEP_IMAGES=2              сколько версий образа оставлять на диске (текущая + одна на откат)
 #   IMAGE_REPO_PATTERN=webnestdev  какие репозитории чистить
 #   PRUNE_BUILD_CACHE=all|1|0  чистка кеша сборки: всё (по умолчанию), старше недели, не трогать.
@@ -50,6 +54,8 @@ SYNC_COMPOSE="${SYNC_COMPOSE:-1}"
 COMPOSE_B64="${COMPOSE_B64:-}"
 COMPOSE_SRC="${COMPOSE_SRC:-}"
 MIGRATE_SANDBOXES="${MIGRATE_SANDBOXES:-1}"
+VERIFY_VERSION="${VERIFY_VERSION:-1}"
+PREVIOUS_IMAGE=""
 
 log(){ printf '[deploy] %s\n' "$*"; }
 run(){ if [ "$DRY_RUN" = "1" ]; then log "dry-run: $*"; else "$@"; fi; }
@@ -136,6 +142,69 @@ wait_for_health(){
   log "диагностика $diagnostic:"
   curl -sS --max-time 5 "$diagnostic" 2>&1 | head -c 500 || true
   printf '\n'
+  return 1
+}
+
+#
+# Образ запущенного контейнера. Если compose почему-то не пересоздал контейнер, он остаётся
+# на прежнем образе, а /api/ready при этом отвечает «готов»: снаружи это выглядит как
+# «выкатка прошла успешно, а сайт показывает старую версию».
+#
+running_image(){
+  local cid
+  cid=$(docker compose -f "$COMPOSE_FILE" ps -q "$SERVICE" 2>/dev/null | head -1 || true)
+  [ -n "$cid" ] || return 0
+  docker inspect --format '{{.Config.Image}}' "$cid" 2>/dev/null || true
+}
+
+# Сборка, которая работает прямо сейчас: /api/health отдаёт build — SHA коммита, зашитый
+# в образ при сборке (см. server/Dockerfile).
+live_build(){
+  local body
+  body=$(curl -fsS --max-time 5 "$HEALTH_URL" 2>/dev/null) || return 0
+  printf '%s' "$body" | sed -n 's/.*"build":"\([^"]*\)".*/\1/p'
+}
+
+# SHA из тега выкатываемого образа: `sha-1a2b3c…`.
+image_sha(){ printf '%s' "$1" | sed -n 's/.*:sha-\([0-9a-fA-F]\{7,\}\)$/\1/p'; }
+
+# Выкатка считается состоявшейся только тогда, когда контейнер работает на выкаченном образе,
+# а сервис сообщает ту же сборку. Без этой проверки расхождение замечает только человек —
+# и уже как «на сайте снова старая версия», без следов в логе выкатки.
+verify_version(){
+  local expected_sha="$1" actual_image live
+  actual_image=$(running_image)
+  if [ -n "$IMAGE_REF" ] && [ "$actual_image" != "$IMAGE_REF" ]; then
+    log "ПРОВЕРКА ВЕРСИИ: контейнер работает на образе «${actual_image:-неизвестно}», а выкатывали $IMAGE_REF"
+    return 1
+  fi
+  if [ "$VERIFY_VERSION" != "1" ] || [ -z "$expected_sha" ]; then
+    log "ПРОВЕРКА ВЕРСИИ пропущена (VERIFY_VERSION=$VERIFY_VERSION, sha в теге: ${expected_sha:-нет})"
+    return 0
+  fi
+  live=$(live_build)
+  case "$live" in
+    "$expected_sha"*) log "ПРОВЕРКА ВЕРСИИ: на сервере работает выкаченная сборка $live" ; return 0 ;;
+    "") log "ПРОВЕРКА ВЕРСИИ: сервис не сообщил сборку — сверять нечем" ; return 0 ;;
+    *) log "ПРОВЕРКА ВЕРСИИ: на сервере сборка $live, а выкатывали $expected_sha" ; return 1 ;;
+  esac
+}
+
+# Неудачная выкатка не должна оставлять сервис на неподтверждённой версии: прежний образ ещё
+# на диске (уборка идёт только после успеха), поэтому возврат к нему — это одна команда, а не
+# повторная сборка. Именно этого не хватало: упавшая выкатка молча оставляла то, что было,
+# и «старая версия на сайте» не была видна ни в одном логе.
+rollback(){
+  local previous="$1"
+  [ -n "$previous" ] || { log "предыдущий образ неизвестен — откатываться не на что"; return 1; }
+  log "возвращаю предыдущий образ $previous"
+  export WEBNESTDEV_IMAGE="$previous"
+  run docker compose -f "$COMPOSE_FILE" up -d --no-build "$SERVICE"
+  if wait_for_health; then
+    log "откат вернул рабочую версию: $previous"
+    return 0
+  fi
+  log "откат не поднялся — смотрите docker compose logs $SERVICE на ВМ"
   return 1
 }
 
@@ -286,6 +355,9 @@ case "$MODE" in
     fi
     # Compose берёт образ из WEBNESTDEV_IMAGE, а --no-build запрещает собирать на месте.
     export WEBNESTDEV_IMAGE="$IMAGE_REF"
+    # Что работает до подмены — это то, куда можно вернуться, если новая версия не поднимется.
+    PREVIOUS_IMAGE=$(running_image)
+    [ -n "$PREVIOUS_IMAGE" ] && log "сейчас работает образ ${PREVIOUS_IMAGE}"
     # Сначала файл сервисов, потом перенос файлов проектов, и только потом запуск: контейнеры
     # поднимаются уже с правильным каталогом песочниц.
     install_compose || log "выкатываю на compose, который лежит на ВМ"
@@ -316,14 +388,33 @@ case "$MODE" in
     ;;
 esac
 
-wait_for_health
+# Сервис не поднялся: раньше это просто роняло скрипт, и на ВМ оставался (или висел
+# перезапусками) новый образ. В режиме image есть куда вернуться — возвращаемся и говорим об этом.
+if ! wait_for_health; then
+  if [ "$MODE" = "image" ] && [ "$DRY_RUN" != "1" ]; then
+    log "новая версия не поднялась — откатываюсь на предыдущую"
+    rollback "$PREVIOUS_IMAGE" || true
+  fi
+  log "выкатка не принята: сервис не отвечает на $HEALTH_URL"
+  exit 1
+fi
+# «Готов» ещё не значит «та версия»: контейнер мог остаться на прежнем образе, а сам сервис —
+# на прежней сборке. Такая выкатка не считается успешной, иначе расхождение обнаруживается
+# уже в браузере, как «на сайте снова старая версия».
+if [ "$MODE" = "image" ] && [ "$DRY_RUN" != "1" ]; then
+  if ! verify_version "$(image_sha "$IMAGE_REF")"; then
+    log "выкатка не подтвердилась: новая версия не стала рабочей"
+    rollback "$PREVIOUS_IMAGE" || true
+    exit 5
+  fi
+fi
 # Расхождение путей песочницы — не справка, а сломанная выкатка: агент пишет файлы, которых
 # не видит терминал. Такой деплой не считается успешным.
 if ! verify_sandbox; then
   log "выкатка не принята: песочница и контейнеры видят разные каталоги"
   exit 4
 fi
-log "деплой завершён"
+log "деплой завершён, живая сборка: $(live_build)"
 # Уборка после успешной выкатки, а не до неё: если сервис не поднялся, предыдущий образ
 # остаётся на месте и можно сразу откатиться на него без сборки.
 prune_images

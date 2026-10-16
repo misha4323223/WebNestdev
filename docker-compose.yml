@@ -49,6 +49,29 @@ services:
       AI_BASE_URL: ${AI_BASE_URL:-}
       AI_MODEL: ${AI_MODEL:-}
       AI_API_KEY: ${AI_API_KEY:-}
+      # Вход по номеру телефона. Compose передаёт в контейнер только перечисленные здесь
+      # переменные: ключи SMS-провайдера, лежавшие в .env, до сервера не доходили, вход по
+      # номеру молча переходил в тестовый режим (код только в логах), а выкатка ещё и
+      # затирала compose на ВМ вместе с ручными правками. Пустое значение безвредно —
+      # провайдер выбирается по наличию ключа; Yandex Cloud — первым.
+      SMS_PROVIDER: ${SMS_PROVIDER:-}
+      SMS_SENDER: ${SMS_SENDER:-}
+      YANDEX_NOTIFY_IAM_TOKEN: ${YANDEX_NOTIFY_IAM_TOKEN:-}
+      YANDEX_SA_KEY: ${YANDEX_SA_KEY:-}
+      YANDEX_SA_KEY_FILE: ${YANDEX_SA_KEY_FILE:-}
+      YANDEX_CLOUD_ID: ${YANDEX_CLOUD_ID:-}
+      YANDEX_FOLDER_ID: ${YANDEX_FOLDER_ID:-}
+      YANDEX_SMS_SENDER: ${YANDEX_SMS_SENDER:-}
+      YANDEX_NOTIFY_ENDPOINT: ${YANDEX_NOTIFY_ENDPOINT:-}
+      SMS_RU_API_ID: ${SMS_RU_API_ID:-}
+      SMSC_LOGIN: ${SMSC_LOGIN:-}
+      SMSC_PASSWORD: ${SMSC_PASSWORD:-}
+      EXOLVE_API_KEY: ${EXOLVE_API_KEY:-}
+      SMSAERO_EMAIL: ${SMSAERO_EMAIL:-}
+      SMSAERO_API_KEY: ${SMSAERO_API_KEY:-}
+      WEBNESTDEV_SMS_TEST_MODE: ${WEBNESTDEV_SMS_TEST_MODE:-}
+      WEBNESTDEV_DEMO_PHONE_ENABLED: ${WEBNESTDEV_DEMO_PHONE_ENABLED:-}
+      WEBNESTDEV_DEMO_PHONE: ${WEBNESTDEV_DEMO_PHONE:-}
       # Песочницы и предпросмотр монтируются в контейнеры проектов через `docker run -v`,
       # а этот путь разбирает демон на ХОСТЕ. Поэтому каталог обязан существовать на хосте и
       # в контейнере под одним и тем же абсолютным путём — иначе контейнеры видят пустой
@@ -83,6 +106,10 @@ services:
     volumes:
       - webnestdev-data:/app/.webnestdev
       - ${SANDBOX_DIR:-/var/lib/webnestdev/sandboxes}:${SANDBOX_DIR:-/var/lib/webnestdev/sandboxes}
+      # Ключ сервисного аккаунта Yandex Cloud лежит файлом: это JSON с переносами строк,
+      # в .env он неудобен и легко обрезается. Читается тем же путём внутри контейнера,
+      # поэтому YANDEX_SA_KEY_FILE=/var/lib/webnestdev/secrets/yandex-sa-key.json.
+      - ${WEBNESTDEV_SECRETS_DIR:-/var/lib/webnestdev/secrets}:/var/lib/webnestdev/secrets:ro
       - /var/run/docker.sock:/var/run/docker.sock
     networks:
       - webnestdev

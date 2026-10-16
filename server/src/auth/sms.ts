@@ -1,4 +1,4 @@
-import { sendYandexSms, yandexNotifyConfigured, yandexNotifyLabel } from "./yandex-notify.js";
+import { sendYandexSms, yandexNotifyConfigured, yandexNotifyCredentialKind, yandexNotifyLabel } from "./yandex-notify.js";
 
 /**
  * SMS delivery for phone login. Only Russian providers are supported, because that is
@@ -68,14 +68,38 @@ export function smsProviderLabel(provider: SmsProviderId | null) {
 
 /**
  * A short, honest note for the sign-in screen and logs: what the active provider can and
- * cannot do right now. Yandex Cloud Notification Service has real product limits here.
+ * cannot do right now. Yandex Cloud Notification Service has real product limits here,
+ * and a ready IAM token has a lifetime — both are the difference between "SMS stopped
+ * arriving" and a configuration that is simply wrong.
  */
 export function smsConfigHint() {
   const config = smsConfig();
   if (config.provider === "yandex") {
-    return "Yandex Cloud Notification Service: SMS уходят только на российские номера. Пока у канала общий отправитель, действует песочница — сообщения получают только подтверждённые тестовые номера.";
+    const notes = ["Yandex Cloud Notification Service: SMS уходят только на российские номера. Пока у канала общий отправитель, действует песочница — сообщения получают только подтверждённые тестовые номера."];
+    if (yandexNotifyCredentialKind() === "token") {
+      notes.push("Вход настроен на готовый IAM-токен (YANDEX_NOTIFY_IAM_TOKEN): он живёт около 12 часов, после чего SMS перестают уходить. Поставьте ключ сервисного аккаунта — YANDEX_SA_KEY или YANDEX_SA_KEY_FILE: сервер сам получит свежий токен.");
+    }
+    return notes.join(" ");
+  }
+  if (!config.provider) {
+    return "SMS-провайдер не подключён: код входа не отправляется, а только пишется в лог сервера. Задайте YANDEX_SA_KEY с YANDEX_CLOUD_ID, либо SMS_RU_API_ID, либо SMSC_LOGIN+SMSC_PASSWORD, либо EXOLVE_API_KEY, либо SMSAERO_EMAIL+SMSAERO_API_KEY.";
   }
   return undefined;
+}
+
+/**
+ * Secret-free summary of the active SMS path for `/api/health` and the operator's launch
+ * checklist: the provider's name, whether messages are really sent, and how the Yandex
+ * path authenticates (a self-renewing key or a token that expires).
+ */
+export function smsSummary() {
+  const config = smsConfig();
+  return {
+    provider: config.provider,
+    label: smsProviderLabel(config.provider),
+    testMode: config.test,
+    credentialKind: yandexNotifyCredentialKind(),
+  };
 }
 
 export type SmsResult = {
@@ -171,5 +195,13 @@ export async function sendLoginCode(phone: string, code: string): Promise<SmsRes
     console.warn("[WebNestDev] SMS test mode: login code for " + phone + " is " + code + " (configure YANDEX_NOTIFY_IAM_TOKEN or YANDEX_SA_KEY+YANDEX_CLOUD_ID, SMS_RU_API_ID, SMSC_LOGIN+SMSC_PASSWORD, EXOLVE_API_KEY or SMSAERO_EMAIL+SMSAERO_API_KEY to send real messages)");
     return { ok: true, provider: "test", providerLabel: smsProviderLabel(config.provider), test: true };
   }
-  return deliver(config.provider, phone, text, config.sender, false);
+  const result = await deliver(config.provider, phone, text, config.sender, false);
+  if (!result.ok) {
+    // Без этой строки неудачная отправка остаётся только ответом на запрос: человек
+    // видит «Не удалось отправить SMS», а в логах сервера нет ничего, и причину
+    // (песочница, истёкший токен, отказ провайдера) нечем объяснить.
+    // Смотреть: docker compose logs webnestdev-server
+    console.error("[WebNestDev] SMS не отправлено («" + result.providerLabel + "»), номер " + phone + ": " + (result.error ?? "провайдер отклонил запрос"));
+  }
+  return result;
 }

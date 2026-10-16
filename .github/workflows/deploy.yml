@@ -83,6 +83,10 @@ jobs:
           context: .
           file: server/Dockerfile
           push: true
+          # SHA попадает в образ: GET /api/health отдаёт его как build, и выкатка
+          # проверяет по нему, что на ВМ поднялась именно эта версия.
+          build-args: |
+            GIT_SHA=${{ github.sha }}
           tags: |
             ${{ env.IMAGE_NAME }}:latest
             ${{ steps.tag.outputs.image }}

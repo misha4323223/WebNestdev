@@ -4,7 +4,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { resetYandexNotifyCache, sendYandexSms, yandexNotifyConfigured } from "./yandex-notify.js";
+import { yandexNotifyCredentialKind, resetYandexNotifyCache, sendYandexSms, yandexNotifyConfigured } from "./yandex-notify.js";
 import { smsConfig, smsConfigHint, smsProviderLabel } from "./sms.js";
 
 /** An authorized key as the console issues one; RSA because the signing is PS256. */
@@ -130,6 +130,50 @@ test("a channel with a common sender is addressed by the reserved shared name", 
   );
 });
 
+test("a service account key wins over a leftover IAM token", async t => {
+  clearEnv();
+  // Так выглядит установка, которую чинили: токен вставлен когда-то и остался, а ключ
+  // добавили позже. Токен живёт 12 часов, поэтому ключ обязан побеждать.
+  process.env.YANDEX_NOTIFY_IAM_TOKEN = "t1.stale";
+  process.env.YANDEX_SA_KEY = AUTHORIZED_KEY;
+  t.after(clearEnv);
+
+  assert.equal(yandexNotifyCredentialKind(), "key");
+  assert.equal(smsConfig().test, false);
+
+  await withFetch(
+    url => url.includes("iam/v1/tokens")
+      ? new Response(JSON.stringify({ iamToken: "t1.fresh-from-key" }), { status: 200 })
+      : new Response(JSON.stringify({ ResponseMetadata: { RequestId: "r1" } }), { status: 200 }),
+    async captured => {
+      const result = await sendYandexSms("+79991234567", "Код: 123456");
+      assert.equal(result.ok, true, result.ok ? "" : result.error);
+      const headers = captured().init.headers as Record<string, string>;
+      assert.equal(headers.Authorization, "Bearer t1.fresh-from-key");
+    },
+  );
+});
+
+test("an expired ready-made token is explained as such, not as a generic refusal", async t => {
+  clearEnv();
+  process.env.YANDEX_NOTIFY_IAM_TOKEN = "t1.expired-by-time";
+  t.after(clearEnv);
+
+  assert.equal(yandexNotifyCredentialKind(), "token");
+  // Экран входа получает объяснение до отправки: замена токена на ключ — это настройка.
+  assert.match(smsConfigHint() ?? "", /12 часов/);
+
+  await withFetch(
+    () => new Response(JSON.stringify({}), { status: 401 }),
+    async () => {
+      const result = await sendYandexSms("+79991234567", "Код: 123456");
+      assert.equal(result.ok, false);
+      assert.match(result.ok ? "" : result.error, /12 часов/);
+      assert.match(result.ok ? "" : result.error, /YANDEX_SA_KEY/);
+    },
+  );
+});
+
 test("a sandbox rejection is explained, not just passed through", async t => {
   clearEnv();
   process.env.YANDEX_NOTIFY_IAM_TOKEN = "t1.test-token";
@@ -147,17 +191,22 @@ test("a sandbox rejection is explained, not just passed through", async t => {
   );
 });
 
-test("a rejected authorization token is reported as such", async t => {
+test("a rejected authorization is reported as such", async t => {
   clearEnv();
-  process.env.YANDEX_NOTIFY_IAM_TOKEN = "t1.expired";
+  // Здесь авторизуемся ключом: у него нет срока жизни, поэтому отказ означает права
+  // (роль editor на каталог), а не истёкший токен — сообщение говорит именно об этом.
+  process.env.YANDEX_SA_KEY = AUTHORIZED_KEY;
   t.after(clearEnv);
 
   await withFetch(
-    () => new Response(JSON.stringify({}), { status: 401 }),
+    url => url.includes("iam/v1/tokens")
+      ? new Response(JSON.stringify({ iamToken: "t1.fresh-from-key" }), { status: 200 })
+      : new Response(JSON.stringify({}), { status: 403 }),
     async () => {
       const result = await sendYandexSms("+79991234567", "Код: 123456");
       assert.equal(result.ok, false);
       assert.match(result.ok ? "" : result.error, /авторизац/i);
+      assert.match(result.ok ? "" : result.error, /editor/i);
     },
   );
 });

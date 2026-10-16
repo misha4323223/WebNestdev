@@ -1,4 +1,8 @@
 #!/bin/bash
+#
+# Готовит .env на ВМ: ключ шифрования, каталог данных, каталог песочниц, пароль базы,
+# адреса фронтенда. Ключи SMS-провайдера здесь не создаются, но переносятся из прошлого
+# .env — см. CARRY_PATTERN ниже: потерянные ключи выглядели как «SMS перестали приходить».
 set -e
 cd ~/webnestdev/src
 
@@ -43,6 +47,32 @@ else
   echo "PGPASS-CREATED"
 fi
 
+# Каталог для файлов-секретов: ключ сервисного аккаунта Yandex Cloud — это JSON с переносами
+# строк, и в .env (одна строка на переменную) он легко обрезается. Файл читается по тому же
+# пути внутри контейнера (см. docker-compose.yml).
+SECRETS_DIR="${WEBNESTDEV_SECRETS_DIR:-/var/lib/webnestdev/secrets}"
+mkdir -p "$SECRETS_DIR" 2>/dev/null || true
+chmod 700 "$SECRETS_DIR" 2>/dev/null || true
+
+# Ключи SMS-провайдера и адреса фронтенда этот скрипт не придумывает — их вводят руками, и
+# раньше при повторном запуске они исчезали: .env пересобирался целиком, вход по номеру
+# молча уходил в тестовый режим (код в логах вместо SMS), а адреса фронтенда подменялись
+# на localhost, с которым сервер в production отказывается стартовать. Теперь переносятся.
+CARRY_PATTERN='^(SMS_PROVIDER|SMS_SENDER|YANDEX_[A-Z0-9_]+|SMS_RU_API_ID|SMSC_[A-Z]+|EXOLVE_API_KEY|SMSAERO_[A-Z]+|WEBNESTDEV_SMS_TEST_MODE|WEBNESTDEV_DEMO_PHONE[A-Z_]*|WEBNESTDEV_ALLOWED_ORIGINS)='
+CARRY="$(grep -E "$CARRY_PATTERN" .env 2>/dev/null || true)"
+if [ -n "$CARRY" ]; then echo "SMS-ENV-REUSED"; fi
+# Адреса фронтенда: из прошлого .env или из PUBLIC_ORIGIN. localhost здесь нельзя — в production
+# сервер проверяет список и падает, если в нём есть localhost.
+if printf '%s\n' "$CARRY" | grep -q '^WEBNESTDEV_ALLOWED_ORIGINS='; then
+  ORIGINS=""
+else
+  ORIGINS="${PUBLIC_ORIGIN:-http://$(hostname -I 2>/dev/null | awk '{print $1}'):8787}"
+  if [ -z "$ORIGINS" ] || [ "$ORIGINS" = "http://:8787" ]; then
+    echo "не удалось определить адрес фронтенда: запустите PUBLIC_ORIGIN=https://ваш-домен $0" >&2
+    exit 1
+  fi
+fi
+
 {
   printf 'NODE_ENV=production\n'
   # WEBNESTDEV_STORAGE now accepts exactly two values: json and postgres. The old `ydb`
@@ -52,9 +82,13 @@ fi
   printf 'WEBNESTDEV_DATA_DIR=%s\n' "$DATA_DIR"
   printf 'SANDBOX_DIR=%s\n' "$SANDBOX_DIR"
   printf 'WEBNESTDEV_ENCRYPTION_KEY=%s\n' "$ENCKEY"
-  printf 'WEBNESTDEV_ALLOWED_ORIGINS=http://178.236.27.102:8787,http://localhost:8787\n'
+  # Каталог секретов монтируется в контейнер, поэтому он записан и здесь, и в compose.
+  printf 'WEBNESTDEV_SECRETS_DIR=%s\n' "$SECRETS_DIR"
+  if [ -n "$ORIGINS" ]; then printf 'WEBNESTDEV_ALLOWED_ORIGINS=%s\n' "$ORIGINS"; fi
   # Пароль базы: docker-compose.yml без него не поднимется (см. проверку выше).
   printf 'POSTGRES_PASSWORD=%s\n' "$PGPASS"
+  # Перенесённые значения (ключи SMS, прошлые адреса фронтенда).
+  if [ -n "$CARRY" ]; then printf '%s\n' "$CARRY"; fi
 } > .env
 chmod 600 .env
 echo "LINES=$(wc -l < .env)"
@@ -62,4 +96,11 @@ echo "ENCLEN=$(grep -c '^WEBNESTDEV_ENCRYPTION_KEY=[a-f0-9]\{64\}$' .env)"
 echo "DATADIR=$(grep '^WEBNESTDEV_DATA_DIR=' .env | cut -d= -f2)"
 echo "SANDBOXDIR=$(grep '^SANDBOX_DIR=' .env | cut -d= -f2)"
 echo "PGPASS=$(grep -c '^POSTGRES_PASSWORD=.\+' .env)"
+echo "SMSKEYS=$(grep -cE "$CARRY_PATTERN" .env)"
+echo "SECRETSDIR=$SECRETS_DIR"
 echo "ENV-READY"
+echo "Если каталога секретов нет, создайте его от root: sudo mkdir -p $SECRETS_DIR && sudo chown $USER $SECRETS_DIR"
+echo "Ключ сервисного аккаунта Yandex Cloud положите в $SECRETS_DIR/yandex-sa-key.json (chmod 600) и добавьте в .env:"
+echo "  YANDEX_SA_KEY_FILE=$SECRETS_DIR/yandex-sa-key.json"
+echo "  YANDEX_CLOUD_ID=<идентификатор облака>"
+echo "Готовый IAM-токен (YANDEX_NOTIFY_IAM_TOKEN) не используйте: он живёт около 12 часов, и SMS после этого перестают уходить."

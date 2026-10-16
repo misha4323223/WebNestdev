@@ -50,7 +50,7 @@ export function parseServiceAccountKey(secret: string): ServiceAccountKey {
  * not allow them. Both shapes are accepted here so a correct key does not fail on the
  * transport.
  */
-function parseAuthorizedKeyJson(secret: string): unknown {
+export function parseAuthorizedKeyJson(secret: string): unknown {
   const original = secret.trim();
   let candidate = original;
   // A quoted value arrives as a JSON string, so unwrapping can take a few rounds.

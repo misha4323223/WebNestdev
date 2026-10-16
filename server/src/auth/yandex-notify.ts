@@ -55,15 +55,22 @@ export type YandexNotifyConfig = {
  * YANDEX_SA_KEY is usually cut off at the first `{`. When a key file is configured as
  * well, it is the reliable source and takes over from an inline value that cannot be
  * parsed, instead of failing every send with a parse error.
+ *
+ * The key is preferred over a ready IAM token even when both are set, and that order is
+ * the point: an IAM token lives about 12 hours, so an installation that pasted one sends
+ * SMS fine for an evening and then fails every request with 401 — which is
+ * indistinguishable from "SMS stopped arriving". The key path mints a fresh token from
+ * the service account and caches it, so it heals itself; a leftover token variable must
+ * not win over it.
  */
 function credentialFromEnvironment(): Credential | null {
-  const token = firstEnv("YANDEX_NOTIFY_IAM_TOKEN");
-  if (token) return { kind: "token", token };
   const rawKey = firstEnv("YANDEX_SA_KEY");
   const keyFile = firstEnv("YANDEX_SA_KEY_FILE");
   if (rawKey && keyFile && !isUsableInlineKey(rawKey)) return { kind: "keyFile", file: keyFile };
   if (rawKey) return { kind: "rawKey", raw: rawKey };
   if (keyFile) return { kind: "keyFile", file: keyFile };
+  const token = firstEnv("YANDEX_NOTIFY_IAM_TOKEN");
+  if (token) return { kind: "token", token };
   return null;
 }
 
@@ -93,6 +100,19 @@ export function yandexNotifyConfigured() {
 
 export function yandexNotifyLabel() {
   return "Yandex Cloud Notification Service";
+}
+
+export type YandexNotifyCredentialKind = "key" | "token";
+
+/**
+ * How SMS is authenticated right now: a self-renewing key, or a ready token that expires.
+ * Reported by `GET /api/auth/phone/status` and `/api/health`, so an operator can tell the
+ * two apart without reading the server's environment.
+ */
+export function yandexNotifyCredentialKind(): YandexNotifyCredentialKind | null {
+  const credential = yandexNotifyConfig().credential;
+  if (!credential) return null;
+  return credential.kind === "token" ? "token" : "key";
 }
 
 let cachedToken: { token: string; expiresAt: number } | null = null;
@@ -144,10 +164,13 @@ const ERROR_HINTS: Record<string, string> = {
   InvalidMessageAttribute: "Yandex Cloud отклонил атрибуты сообщения.",
 };
 
-function describeError(status: number, subCode: string | undefined, code: string | undefined, detail: string | undefined) {
+function describeError(status: number, subCode: string | undefined, code: string | undefined, detail: string | undefined, credential: YandexNotifyCredentialKind | null) {
   if (subCode && ERROR_HINTS[subCode]) return ERROR_HINTS[subCode];
   if (status === 401 || status === 403) {
-    return "Yandex Cloud отклонил авторизацию: проверьте IAM-токен, ключ сервисного аккаунта и роль editor на каталог.";
+    if (credential === "token") {
+      return "Yandex Cloud отклонил IAM-токен: он живёт около 12 часов, поэтому SMS идут сразу после настройки и перестают приходить позже. Поставьте ключ сервисного аккаунта (YANDEX_SA_KEY или YANDEX_SA_KEY_FILE) вместо YANDEX_NOTIFY_IAM_TOKEN — сервер сам будет получать свежий токен.";
+    }
+    return "Yandex Cloud отклонил авторизацию: проверьте ключ сервисного аккаунта и роль editor на каталог.";
   }
   const suffix = detail ?? subCode ?? code;
   return "Yandex Cloud вернул HTTP " + status + (suffix ? ": " + suffix : "");
@@ -209,7 +232,8 @@ export async function sendYandexSms(phone: string, text: string): Promise<Yandex
   const data = (await response.json().catch(() => null)) as ErrorPayload | null;
   const error = data?.ErrorResponse?.Error;
   if (!response.ok || error) {
-    return { ok: false, error: describeError(response.status, error?.SubCode, error?.Code, error?.Message) };
+    const credential: YandexNotifyCredentialKind = config.credential.kind === "token" ? "token" : "key";
+    return { ok: false, error: describeError(response.status, error?.SubCode, error?.Code, error?.Message, credential) };
   }
   return { ok: true };
 }

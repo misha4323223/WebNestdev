@@ -9,6 +9,19 @@ import { DEFAULT_CHARS_PER_TOKEN,contextBudgetTokens,contextMaxMessages } from "
 import { sandboxHostRootDir,sandboxRootDir } from "../sandbox/config.js";
 import { lastSandboxMountCheck } from "../sandbox/sandbox-check.js";
 import { diskStatus, memoryStatus } from "../health/host-metrics.js";
+import { smsSummary } from "../auth/sms.js";
+
+/**
+ * Какая сборка работает на сервере. Значение запекается в образ при выкатке
+ * (WEBNESTDEV_BUILD передаёт workflow), и это единственный честный ответ на вопрос,
+ * который иначе превращается в догадки: та ли версия сейчас в проде, которую только
+ * что выкатили, или ВМ осталась на предыдущей. Браузер с закешированным документом
+ * тоже проверяется по этому числу — если оно новое, а вид старый, дело в кеше,
+ * а не в выкатке.
+ */
+function buildId() {
+  return process.env.WEBNESTDEV_BUILD?.trim() || "dev";
+}
 
 async function dependencyStatus(){
   const sandbox=await sandboxStatus();
@@ -60,7 +73,12 @@ export async function registerHealthRoutes(app:FastifyInstance){
   app.get("/api/health",async()=>({
     ok:true,
     service:"webnestdev-server",
+    build:buildId(),
     ...(await dependencyStatus()),
+    // Настроен ли вход по SMS на самом деле: провайдер по имени и способ аутентификации.
+    // Секретов здесь нет, зато «SMS перестали приходить» проверяется одной командой
+    // curl localhost:8787/api/health вместо чтения .env на ВМ.
+    sms:smsSummary(),
     activity:await activity(),
   }));
   app.get("/api/ready",async(_request,reply)=>{
@@ -68,7 +86,7 @@ export async function registerHealthRoutes(app:FastifyInstance){
     // Расхождение путей песочницы — не временная неисправность хоста, а сломанная выкатка:
     // агент пишет файлы, которых не видит терминал. Готовность обязана об этом сказать.
     const ok=dependencies.storage.ok && dependencies.sandbox.available && dependencies.sandbox.mount?.reason!=="mismatch";
-    return reply.code(ok?200:503).send({ok,service:"webnestdev-server",...dependencies,activity:await activity()});
+    return reply.code(ok?200:503).send({ok,service:"webnestdev-server",build:buildId(),...dependencies,sms:smsSummary(),activity:await activity()});
   });
   app.get("/api/sandbox/status",async()=>sandboxStatus());
 }

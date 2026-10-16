@@ -48,7 +48,7 @@ one with `SMS_PROVIDER`:
 
 | Provider | Variables | Notes |
 | --- | --- | --- |
-| **Yandex Cloud Notification Service** | `YANDEX_NOTIFY_IAM_TOKEN` **or** `YANDEX_SA_KEY`/`YANDEX_SA_KEY_FILE`, plus `YANDEX_CLOUD_ID` | Keeps everything inside Yandex Cloud; SNS-compatible API. Constraints below |
+| **Yandex Cloud Notification Service** | `YANDEX_SA_KEY`/`YANDEX_SA_KEY_FILE` (preferred) **or** `YANDEX_NOTIFY_IAM_TOKEN`, plus `YANDEX_CLOUD_ID` | Keeps everything inside Yandex Cloud; SNS-compatible API. Constraints below |
 | SMS.RU | `SMS_RU_API_ID` | Per-SMS pricing; has a test mode (`test=1`) |
 | SMSC.ru | `SMSC_LOGIN`, `SMSC_PASSWORD` | Per-SMS pricing, well-known in RU |
 | МТС Exolve | `EXOLVE_API_KEY` | Per-SMS pricing, MTS infrastructure |
@@ -71,7 +71,7 @@ Environment:
 
 | Variable | Meaning |
 | --- | --- |
-| `YANDEX_NOTIFY_IAM_TOKEN` | A ready IAM token (simplest; expires, so prefer the key in production) |
+| `YANDEX_NOTIFY_IAM_TOKEN` | A ready IAM token — simplest to paste and **expires in about 12 hours**. Prefer the key: the key is used even when a stale token is still set, and an expired token is now reported as exactly that, with the fix, instead of a generic refusal |
 | `YANDEX_SA_KEY` | Service account authorized key JSON (whole file contents) |
 | `YANDEX_SA_KEY_FILE` | Path to the authorized key JSON instead of inlining it |
 | `YANDEX_CLOUD_ID` | Cloud id — CNS needs it as `Account` when authenticating with an IAM token |
@@ -79,7 +79,18 @@ Environment:
 | `YANDEX_SMS_SENDER` | Text sender name; required only for an individual sender channel |
 | `YANDEX_NOTIFY_ENDPOINT` | Override the endpoint (default `https://notifications.yandexcloud.net/`) |
 
-The service account needs the `editor` role on the folder (the documented minimum).
+The service account needs the `editor` role on the folder (the documented minimum). Put the
+key file under `/var/lib/webnestdev/secrets` — `docker-compose.yml` mounts that directory
+into the container read-only, so `YANDEX_SA_KEY_FILE` can point at the file instead of the
+whole JSON being squeezed into one `.env` line. All the provider variables are listed in
+the compose file: Compose forwards only what is named there, and a key that stays in `.env`
+alone never reaches the server.
+
+What is actually configured is visible without a shell: `GET /api/auth/phone/status`
+returns the provider, `testMode` and `credentialKind` (`key` or `token`), and
+`GET /api/health` → `sms` repeats it for the operator. Failed sends are logged with the
+provider's own message, and the sign-in screen shows the same explanation to the person
+waiting for the code.
 
 **Two constraints come from CNS itself, and both are surfaced as readable errors rather
 than generic failures:**
