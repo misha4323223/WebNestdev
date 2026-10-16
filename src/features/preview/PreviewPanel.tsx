@@ -114,8 +114,9 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
     </div>
     {error&&<div className="preview-error">{error}</div>}
     {/* Подсказка нужна и тому, кто ждёт запуска (ready===false), и тому, у кого страница белая при
-        живом приложении (settled===false): это разные причины и разные исправления. */}
-    {!error&&preview.running&&(preview.ready===false||preview.settled===false)&&<div className="preview-hint">{preview.hint??"Приложение ещё запускается…"}</div>}
+        живом приложении (settled===false), и тому, у кого приложение отдаётся через docker exec
+        (viaExec): это разные причины и разные исправления. */}
+    {!error&&preview.running&&(preview.ready===false||preview.settled===false||preview.viaExec)&&<div className="preview-hint">{preview.hint??"Приложение ещё запускается…"}</div>}
     {/* Статический режим отдаёт собранную версию: обновления появляются после сборки, а не сами. */}
     {!error&&preview.running&&preview.mode==="static"&&<div className="preview-hint">Статическая сборка: показывается собранная версия приложения, горячей перезагрузки нет.</div>}
     <div className="preview-body">

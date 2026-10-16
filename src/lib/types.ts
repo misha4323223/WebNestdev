@@ -16,9 +16,10 @@ export type PreviewMode="container"|"static";
 /**
  * `ready` — приложение ответило внутри контейнера, `settled` — тот же адрес ответил серверу (то
  * есть панели и агенту); `hint` объясняет, чего именно не хватает. Разница видна пользователю:
- * «готов, но недоступен» — это белый экран в панели, а не ожидание запуска.
+ * «готов, но недоступен» — это белый экран в панели, а не ожидание запуска. `viaExec` — третий
+ * случай: адрес контейнера серверу недоступен, и приложение отдаётся панели через `docker exec`.
  */
-export type PreviewState={running:boolean;port?:number;ready?:boolean;settled?:boolean;mode?:PreviewMode;hint?:string;error?:string};
+export type PreviewState={running:boolean;port?:number;ready?:boolean;settled?:boolean;viaExec?:boolean;mode?:PreviewMode;hint?:string;error?:string};
 
 export type PlanItemStatus="pending"|"in_progress"|"done";
 export type PlanItem={title:string;status:PlanItemStatus;note?:string};

@@ -15,11 +15,19 @@ export type PreviewMode="container"|"static";
  * `settled` — этот адрес уже подтверждён запросом; до подтверждения статус доводит его заново
  * (см. preview/preview-address.ts).
  */
-export type PreviewState={mode:PreviewMode;containerId:string;port:number;host:string;projectId:string;startedAt:number;lastUsedAt:number;settled?:boolean};
+export type PreviewState={mode:PreviewMode;containerId:string;port:number;host:string;projectId:string;startedAt:number;lastUsedAt:number;settled?:boolean;/**
+ * Адрес контейнера недоступен серверу (Docker изолирует bridge-сети), и запросы панели идут внутрь
+ * контейнера через `docker exec` (см. preview/exec-proxy.ts). Снимается, когда адрес подтверждён
+ * заново: прямой путь быстрее и отдаёт поток.
+ */execOnly?:boolean;/**
+ * Когда прямой адрес проверялся в последний раз в деградировавшем режиме. Полная проверка — это
+ * `docker inspect`, запрос внутрь контейнера и попытки починить адрес, а статус читается на каждый
+ * файл приложения, поэтому повторяют её не чаще `PREVIEW_EXEC_RETRY_MS` (см. preview-manager.ts).
+ */execOnlyCheckedAt?:number};
 /**
  * What the panel and the agent see: a running preview always carries its address. `settled` — этот
  * адрес подтверждён запросом самого сервера; без подтверждения панель, агент и Chromium до
  * приложения не доходят, даже когда оно отвечает внутри контейнера (`ready`).
  */
-export type PreviewStatus={running:false}|{running:true;ready:boolean;port:number;host:string;containerId:string;startedAt:number;mode?:PreviewMode;settled?:boolean;hint?:string};
+export type PreviewStatus={running:false}|{running:true;ready:boolean;port:number;host:string;containerId:string;startedAt:number;mode?:PreviewMode;settled?:boolean;/** Приложение отдаётся панели через `docker exec`: адрес контейнера серверу недоступен. */viaExec?:boolean;hint?:string};
 export type DockerExecResult={code:number;stdout:string;stderr:string};

@@ -38,8 +38,26 @@ export function previewAddresses(now=Date.now()){
     mode:state.mode,
     port:state.port,
     settled:Boolean(state.settled),
+    // Предпросмотр виден панели, но не по адресу контейнера: `settled: false` без этого поля
+    // выглядит как «сервер до приложения не доходит», хотя кадр в панели не пустой.
+    viaExec:Boolean(state.execOnly),
+    execCheckedAt:state.execOnlyCheckedAt??null,
     ageSeconds:Math.max(0,Math.round((now-state.startedAt)/1000)),
   }));
+}
+
+/**
+ * Переключает предпросмотр на путь через `docker exec` (см. preview/exec-proxy.ts) и обратно.
+ * Ставится прокси, когда адрес контейнера не отвечает, а приложение внутри него живо; снимается,
+ * когда адрес подтверждён заново — тогда панель снова идёт прямым путём.
+ */
+export function setPreviewExecOnly(projectId:string,execOnly:boolean){
+  const current=previews.get(projectId);
+  if(!current||current.mode!=="container"||Boolean(current.execOnly)===execOnly)return false;
+  // Отметка времени — вместе с признаком: включивший его прокси только что убедился, что прямой
+  // адрес не отвечает, поэтому повторная проверка адреса отсчитывается от этого момента.
+  previews.set(projectId,{...current,execOnly,execOnlyCheckedAt:execOnly?Date.now():undefined});
+  return true;
 }
 
 /** Marks a preview as used now; returns false when the project has no running preview. */

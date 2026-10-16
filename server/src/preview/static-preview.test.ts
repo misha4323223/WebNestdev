@@ -7,6 +7,7 @@ import Fastify from "fastify";
 import { previewLogs,previewStatus,startPreview,stopPreview } from "../preview-manager.js";
 import { registerPreviewRoutes } from "../routes/preview.js";
 import type { SandboxConfig } from "../sandbox-manager.js";
+import { execFetchPreview } from "./exec-proxy.js";
 import { getPreview,removePreview,touchPreview } from "./preview-store.js";
 import { previewModeSetting,startStaticPreview,staticPreviewLogs,stopAllStaticPreviews,stopStaticPreview } from "./static-preview.js";
 
@@ -121,6 +122,9 @@ test("the workspace proxy serves the static preview through the project's own UR
     await registerPreviewRoutes(app, {
       authorize: async () => true,
       getSandbox: async () => config(root),
+      // Настоящая вторая дверь к приложению: у статического предпросмотра её не спрашивают,
+      // но набор соучастников — тот же, что в index.ts.
+      execPreview: execFetchPreview,
       startPreview,
       stopPreview,
       previewStatus,

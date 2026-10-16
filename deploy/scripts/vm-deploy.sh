@@ -40,6 +40,11 @@
 #                              одноразовый контейнер на сети предпросмотра и говорит, доходит ли
 #                              до него сервер (PREVIEW-NETWORK=ok|ok-after-connect|unreachable).
 #                              Отказ не отменяет выкатку — это состояние хоста, а не сборки.
+#   DOCKER_CHECK=0             не проверять Docker внутри контейнера сервера: есть ли команда docker
+#                              и доходит ли она до демона через смонтированный сокет
+#                              (DOCKER-CHECK=ok|no-cli|no-socket|failed). Без неё `spawn docker ENOENT`
+#                              в логе сервера виден только тому, кто зашёл на ВМ. Отказ не отменяет
+#                              выкатку — это настройка хоста, а не собранной версии.
 #   ENV_FILE=<путь>            файл переменных развёртывания, по умолчанию $APP_DIR/.env.
 #                              Вынесен в переменную, чтобы шаг установки ключей проверялся
 #                              на копии файла, не трогая настоящий .env.
@@ -72,6 +77,7 @@ MIGRATE_SANDBOXES="${MIGRATE_SANDBOXES:-1}"
 VERIFY_VERSION="${VERIFY_VERSION:-1}"
 SMS_CHECK="${SMS_CHECK:-1}"
 PREVIEW_CHECK="${PREVIEW_CHECK:-1}"
+DOCKER_CHECK="${DOCKER_CHECK:-1}"
 APP_KEY_FILE="${APP_KEY_FILE:-}"
 # Файл переменных развёртывания. Путь вынесен в переменную, чтобы шаг установки ключей можно
 # было проверить на копии файла, не трогая настоящий .env (и чтобы его видел тест скрипта).
@@ -379,6 +385,56 @@ verify_preview(){
 }
 
 #
+# Docker внутри контейнера сервера: командная строка и сокет демона. Это та деталь, без которой не
+# работает ни одна песочница и ни один предпросмотр: `spawn docker ENOENT` в логе сервера означает,
+# что контейнер поднят без docker CLI, а «Cannot connect to the Docker daemon» — что в него не
+# смонтирован /var/run/docker.sock. Снаружи и то и другое выглядит одинаково: «не поднимается
+# предпросмотр», «агент не может выполнить команду». Проверка печатает вердикт в лог выкатки,
+# чтобы причина читалась из Actions, а не искалась на ВМ; выкатку она не отменяет — это состояние
+# хоста (монтирование сокета), а не собранной версии.
+#
+verify_docker(){
+  local output verdict reason
+  if [ "$DOCKER_CHECK" != "1" ]; then
+    log "проверка Docker в контейнере пропущена (DOCKER_CHECK=0)"
+    return 0
+  fi
+  if [ "$MODE" = "source" ]; then
+    log "режим source: сервер запущен на хосте — docker берётся с самого хоста, проверку пропускаю"
+    return 0
+  fi
+  if [ "$DRY_RUN" = "1" ]; then
+    log "dry-run: проверка Docker в контейнере пропущена"
+    return 0
+  fi
+  # Формат "{{.Server.Version}}" отвечает демон, а не клиент: именно по нему видно, что сокет открыт.
+  output=$(timeout 60 docker compose exec -T "$SERVICE" sh -c '
+    if ! command -v docker >/dev/null 2>&1; then echo "DOCKER-CHECK=no-cli"; exit 0; fi
+    if version=$(docker version --format "{{.Server.Version}}" 2>&1); then echo "DOCKER-CHECK=ok $version"; exit 0; fi
+    case "$version" in
+      *"permission denied"*) echo "DOCKER-CHECK=no-socket permission denied" ;;
+      *"Cannot connect"*|*"docker.sock"*) echo "DOCKER-CHECK=no-socket демон недоступен" ;;
+      *) echo "DOCKER-CHECK=failed $version" ;;
+    esac
+  ' </dev/null 2>&1 || true)
+  verdict=$(printf '%s\n' "$output" | grep -o 'DOCKER-CHECK=[a-z-]*' | tail -1 | cut -d= -f2 || true)
+  reason=$(printf '%s\n' "$output" | grep -m1 'DOCKER-CHECK=' | cut -d' ' -f2- || true)
+  case "$verdict" in
+    ok) log "Docker доступен серверу (версия демона: ${reason:-не сообщена})" ; return 0 ;;
+    no-cli)
+      log "В КОНТЕЙНЕРЕ СЕРВЕРА НЕТ КОМАНДЫ docker: агент и предпросмотр не запустят ни одного контейнера (spawn docker ENOENT в логе сервера). Проверьте установку docker.io в server/Dockerfile и выкатите снова"
+      return 0
+      ;;
+    no-socket)
+      log "КОНТЕЙНЕР СЕРВЕРА НЕ ДОХОДИТ ДО ДЕМОНА DOCKER (${reason:-нет причины}): в него не смонтирован /var/run/docker.sock. Добавьте монтирование в $COMPOSE_FILE, как в репозитории, и выкатите снова"
+      return 0
+      ;;
+    failed) log "DOCKER НЕ РАБОТАЕТ ИЗ КОНТЕЙНЕРА СЕРВЕРА: ${reason:-причина не сообщена}" ; return 0 ;;
+    *) log "проверка Docker в контейнере не ответила — пропускаю" ; return 0 ;;
+  esac
+}
+
+#
 # Каталог секретов: тот же путь и внутри контейнера, потому что он смонтирован в него как есть
 # (см. docker-compose.yml и deploy/scripts/make-env-vm.sh). Переменная читается из окружения,
 # потом из .env — иначе путь разошёлся бы с монтированием.
@@ -606,6 +662,9 @@ if [ "$MODE" = "image" ] && [ "$DRY_RUN" != "1" ]; then
     exit 5
   fi
 fi
+# Docker внутри сервера — до проверки песочницы: она сама спрашивает контейнер, и без docker её
+# «docker недоступен» не отличалось бы от «не смонтирован сокет» (см. verify_docker).
+verify_docker
 # Расхождение путей песочницы — не справка, а сломанная выкатка: агент пишет файлы, которых
 # не видит терминал. Такой деплой не считается успешным.
 if ! verify_sandbox; then

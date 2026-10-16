@@ -6,6 +6,7 @@ import { sandboxQueueStats } from "../sandbox/sandbox-limiter.js";
 import { browserQueueStats } from "../tools/browser-limiter.js";
 import { liveRuntimePreviews, liveStaticPreviews, runtimePreviewLimit } from "../preview/preview-limiter.js";
 import { previewAddresses } from "../preview/preview-store.js";
+import { execProxyQueueStats } from "../preview/exec-proxy.js";
 import { DEFAULT_CHARS_PER_TOKEN,contextBudgetTokens,contextMaxMessages } from "../agent/context-budget.js";
 import { sandboxHostRootDir,sandboxRootDir } from "../sandbox/config.js";
 import { lastSandboxMountCheck } from "../sandbox/sandbox-check.js";
@@ -64,6 +65,10 @@ async function activity(){
       // — это ответ на «предпросмотр запущен, а в панели белый экран», который иначе искали бы
       // только на ВМ (см. preview/preview-address.ts).
       addresses: previewAddresses(),
+      // Очередь второй двери к приложению (`docker exec`): она включается только тогда, когда
+      // адрес контейнера серверу недоступен, и без этих чисел «предпросмотр стал медленным»
+      // выглядело бы как непонятное замедление, а не как исчерпанный предел (preview/exec-proxy.ts).
+      exec: execProxyQueueStats(),
     },
     // Сколько контекста уходит модели за один шаг: без этого числа отказ провайдера по размеру
     // промпта выглядит необъяснимым (agent/context-budget.ts).

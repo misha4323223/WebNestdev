@@ -23,8 +23,13 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 ARG GIT_SHA=unknown
 ENV WEBNESTDEV_BUILD=${GIT_SHA}
 
+# docker.io — командная строка docker внутри контейнера сервера: ею сервер запускает контейнеры
+# песочниц и предпросмотра и разговаривает с уже поднятыми через `docker exec`. Без неё в логе
+# сервера остаётся `spawn docker ENOENT`, а предпросмотр и команды агента не работают вовсе.
+# curl — чтобы дверь платформы можно было проверить изнутри контейнера, то есть там, где она
+# существует (`docker compose exec webnestdev-server curl -s localhost:8787/api/health`).
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates docker.io \
+  && apt-get install -y --no-install-recommends ca-certificates curl docker.io \
   && rm -rf /var/lib/apt/lists/*
 
 COPY --from=build /app/package.json ./package.json

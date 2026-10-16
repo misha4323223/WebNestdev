@@ -66,18 +66,21 @@ async function waitForAddress(state:{host:string;port:number},deps:PreviewAddres
  * дёргает контейнер на каждый свой вызов. Если починить адрес не удалось, он остаётся
  * неподтверждённым — следующая проверка попробует снова, поэтому медленный первый старт
  * лечится сам.
+ *
+ * Подтверждённый адрес снимает и пометку `execOnly` (панель отдаётся через `docker exec`):
+ * подтверждение означает, что до приложения доходит сам сервер, а прямой путь быстрее и отдаёт поток.
  */
 export async function settlePreviewAddress(state:PreviewState,options:{deps?:PreviewAddressDeps;appAnswers?:boolean;wait?:AddressWait}={}):Promise<PreviewState>{
   if(state.mode!=="container"||state.settled)return state;
   const deps=options.deps??defaultDeps;
-  if(await deps.addressAnswers(state))return {...state,settled:true};
+  if(await deps.addressAnswers(state))return {...state,settled:true,execOnly:false};
 
   const ports=await deps.usedPorts(state.containerId);
   const appPort=chooseAppPort(ports,state.port);
   let current=appPort&&appPort!==state.port?{...state,port:appPort}:state;
   // Порт проверяется и тогда, когда он не изменился: между двумя чтениями статуса мог встать
   // проброс или подключиться нужная сеть, и тогда подтверждать больше нечего.
-  if(await deps.addressAnswers(current))return {...current,settled:true};
+  if(await deps.addressAnswers(current))return {...current,settled:true,execOnly:false};
 
   // Адрес молчит — сначала выясняется, живо ли приложение вообще: «не отвечает внутри» и «отвечает,
   // но недоступно снаружи» лечатся по-разному (см. unreachablePreviewDiagnosis).
@@ -89,7 +92,7 @@ export async function settlePreviewAddress(state:PreviewState,options:{deps?:Pre
   const attached=await deps.attachToServerNetworks(current.containerId).catch(()=>({host:"",connected:[]}));
   if(attached.host&&attached.host!==current.host){
     current={...current,host:attached.host};
-    if(await waitForAddress(current,deps,options.wait))return {...current,settled:true};
+    if(await waitForAddress(current,deps,options.wait))return {...current,settled:true,execOnly:false};
   }
 
   // Вторая — петля: приложение слушает только 127.0.0.1, и проброс поднимается внутрь контейнера.
@@ -97,7 +100,7 @@ export async function settlePreviewAddress(state:PreviewState,options:{deps?:Pre
   if(!listenPort)return current;
   if(!await deps.startRelay({containerId:current.containerId,targetPort:current.port,listenPort}))return current;
   const relayed={...current,port:listenPort};
-  return await waitForAddress(relayed,deps,options.wait)?{...relayed,settled:true}:current;
+  return await waitForAddress(relayed,deps,options.wait)?{...relayed,settled:true,execOnly:false}:current;
 }
 
 /**

@@ -95,6 +95,22 @@ services:
       # в контейнере. container — прежнее поведение, static — без контейнера предпросмотра
       # вообще (см. docs/PRODUCTION_DEPLOYMENT.md).
       PREVIEW_MODE: ${PREVIEW_MODE:-auto}
+      # Остальные настройки предпросмотра — тоже здесь, и это не формальность: compose передаёт в
+      # контейнер ТОЛЬКО перечисленные переменные. Пока их тут не было, совет из документации
+      # «задайте PREVIEW_NETWORK в .env и выкатите снова» ничего не менял: значение оставалось в
+      # .env на хосте, сервер его не видел, и белый экран в панели выглядел неисправимым.
+      # По умолчанию — те же значения, что в коде (пустое PREVIEW_NETWORK = выбрать сеть самим).
+      PREVIEW_NETWORK: ${PREVIEW_NETWORK:-}
+      PREVIEW_IDLE_MS: ${PREVIEW_IDLE_MS:-300000}
+      PREVIEW_MAX_CONTAINERS: ${PREVIEW_MAX_CONTAINERS:-3}
+      PREVIEW_PROXY_TIMEOUT_MS: ${PREVIEW_PROXY_TIMEOUT_MS:-30000}
+      # Деградировавший режим (панель отдаётся через `docker exec`, см. preview/exec-proxy.ts):
+      # сколько запросов идёт внутрь контейнера одновременно, сколько ждёт и как часто повторять
+      # проверку недоступного адреса.
+      PREVIEW_EXEC_MAX_CONCURRENT: ${PREVIEW_EXEC_MAX_CONCURRENT:-4}
+      PREVIEW_EXEC_MAX_QUEUE: ${PREVIEW_EXEC_MAX_QUEUE:-64}
+      PREVIEW_EXEC_QUEUE_TIMEOUT_MS: ${PREVIEW_EXEC_QUEUE_TIMEOUT_MS:-60000}
+      PREVIEW_EXEC_RETRY_MS: ${PREVIEW_EXEC_RETRY_MS:-60000}
       # Сколько диалогов с агентом этот хост ведёт одновременно. Прогон почти всё время ждёт
       # модель, поэтому дефолт 8: память ограничивают контейнеры, а не прогоны (см. ниже).
       AGENT_MAX_CONCURRENT_RUNS: ${AGENT_MAX_CONCURRENT_RUNS:-8}

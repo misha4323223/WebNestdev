@@ -105,7 +105,9 @@ async function main() {
       process.exit(0);
     }
     console.log("[preview] ПРЕДПРОСМОТР НЕДОСТУПЕН СЕРВЕРУ: сеть " + (network || "по умолчанию") +
-      " сервер не видит. Задайте PREVIEW_NETWORK и перезапустите сервис (docs/PRODUCTION_DEPLOYMENT.md)");
+      " сервер не видит. Панель покажет приложение и так (через docker exec), но медленнее и без\n" +
+      "[preview] горячей перезагрузки. Чтобы вернуть прямой адрес, задайте PREVIEW_NETWORK в .env и\n" +
+      "[preview] выкатите снова (docs/PRODUCTION_DEPLOYMENT.md)");
     verdict("unreachable");
     process.exit(1);
   } finally {

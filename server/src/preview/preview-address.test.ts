@@ -133,6 +133,18 @@ test("a relay that needs a moment to start listening is still confirmed", async 
   assert.equal(settled.settled, true);
 });
 
+/**
+ * Деградировавший предпросмотр держится на `docker exec` только пока адрес контейнера не отвечает.
+ * Подтверждённый заново адрес снимает пометку, и панель возвращается на прямой, потоковый путь.
+ */
+test("a confirmed address clears the exec-only mark, so the direct path takes over again", async () => {
+  const { value } = deps({ answers: () => true });
+  // preview-manager снимает «подтверждён» перед проверкой — иначе она бы не выполнялась вообще.
+  const settled = await settlePreviewAddress(state({ execOnly: true, execOnlyCheckedAt: 1, settled: false }), { deps: value });
+  assert.equal(settled.settled, true);
+  assert.equal(settled.execOnly, false);
+});
+
 test("nothing is repaired while the app is not up, and a failed repair stays unconfirmed", async () => {
   const down = deps({ answers: () => false, ports: [], appUp: false });
   const untouched = await settlePreviewAddress(state(), { deps: down.value });

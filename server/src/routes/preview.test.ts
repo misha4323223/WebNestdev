@@ -31,6 +31,8 @@ function depsFor(port: number, overrides: Partial<PreviewRouteDeps> = {}): Previ
   const status: PreviewStatus = { running: true, ready: true, host: "127.0.0.1", port, containerId: "test", startedAt: 0 };
   return {
     authorize: async () => true,
+    // Без Docker: вторая дверь к приложению отвечает только там, где её подставил тест.
+    execPreview: async () => null,
     getSandbox: async () => { throw new Error("getSandbox не ожидается в этом тесте"); },
     startPreview: async () => status,
     stopPreview: async () => ({ stopped: true }),
@@ -175,6 +177,89 @@ test("a refused connection keeps the plain reason, not a timeout sentence", asyn
     assert.equal(response.statusCode, 400);
     assert.match(response.body, /Прокси предпросмотра не сработал/);
     assert.doesNotMatch(response.body, /не ответил за/, response.body);
+  } finally {
+    await app.close();
+  }
+});
+
+/**
+ * Адрес контейнера серверу недоступен — ровно так выглядит изоляция bridge-сетей: приложение живо
+ * внутри контейнера, а прямой запрос сервера отваливается. Раньше это был белый кадр в панели;
+ * теперь приложение отдаётся тем же путём, которым платформа спрашивает его о готовности.
+ */
+test("an unreachable container address is served through docker exec instead of a white frame", async () => {
+  const page = '<!doctype html><html><head><script type="module" src="/@vite/client"></script></head><body>exec</body></html>';
+  const calls: Array<{ path: string; method: string }> = [];
+  const app = await appWith(depsFor(1, {
+    execPreview: async input => {
+      calls.push({ path: input.path, method: input.method });
+      return { status: 200, statusText: "OK", headers: { "content-type": "text/html; charset=utf-8" }, body: Buffer.from(page), truncated: false };
+    },
+  }));
+  try {
+    const response = await app.inject({ method: "GET", url: "/api/projects/p1/preview/open/" });
+    assert.equal(response.statusCode, 200);
+    const base = previewProxyBase("p1");
+    // Тело приложения — то же, что отдал бы прямой путь: корневые ссылки переписаны на префикс прокси.
+    assert.ok(response.body.includes('src="' + base + '@vite/client"'), response.body);
+    assert.ok(response.body.includes("exec"), response.body);
+    assert.deepEqual(calls, [{ path: "/", method: "GET" }]);
+  } finally {
+    await app.close();
+  }
+});
+
+test("a preview already on the exec path does not try the address it knows is unreachable", async () => {
+  const site = await upstream(() => ({ body: Buffer.from("<html><body>direct</body></html>") }));
+  const app = await appWith(depsFor(site.port, {
+    previewStatus: async () => ({ running: true, ready: true, settled: false, viaExec: true, host: "127.0.0.1", port: site.port, containerId: "test", startedAt: 0 }),
+    execPreview: async () => ({ status: 200, statusText: "OK", headers: { "content-type": "text/html; charset=utf-8" }, body: Buffer.from("<html><body>exec</body></html>"), truncated: false }),
+  }));
+  try {
+    const response = await app.inject({ method: "GET", url: "/api/projects/p1/preview/open/" });
+    assert.equal(response.statusCode, 200);
+    assert.ok(response.body.includes("exec"), response.body);
+    // Прямой адрес не трогали: каждая заведомо неудачная попытка — это лишняя задержка на каждый файл.
+    assert.equal(site.hits.length, 0);
+  } finally {
+    await app.close();
+    await site.close();
+  }
+});
+
+test("the method, the body and the query reach the container through docker exec", async () => {
+  const seen: Array<{ method: string; path: string; body?: Buffer; cookie?: string }> = [];
+  const app = await appWith(depsFor(1, {
+    execPreview: async input => {
+      seen.push({ method: input.method, path: input.path, body: input.body, cookie: input.headers.cookie });
+      return { status: 201, statusText: "Created", headers: { "content-type": "application/json" }, body: Buffer.from('{"ok":true}'), truncated: false };
+    },
+  }));
+  try {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/projects/p1/preview/open/api/data?x=1",
+      payload: { a: 1 },
+      headers: { "content-type": "application/json", cookie: "session=1" },
+    });
+    assert.equal(response.statusCode, 201);
+    assert.equal(seen.length, 1);
+    assert.equal(seen[0].method, "POST");
+    assert.equal(seen[0].path, "/api/data?x=1");
+    assert.equal(seen[0].body?.toString("utf8"), '{"a":1}');
+    assert.equal(seen[0].cookie, "session=1");
+  } finally {
+    await app.close();
+  }
+});
+
+test("when neither the address nor the container answers, the failure is named as such", async () => {
+  const app = await appWith(depsFor(1));
+  try {
+    const response = await app.inject({ method: "GET", url: "/api/projects/p1/preview/open/" });
+    assert.equal(response.statusCode, 400);
+    assert.match(response.body, /Прокси предпросмотра не сработал/);
+    assert.match(response.body, /внутри контейнера приложение тоже не ответило/, response.body);
   } finally {
     await app.close();
   }
