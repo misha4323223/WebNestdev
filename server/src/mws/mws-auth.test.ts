@@ -22,7 +22,22 @@ const AUTHORIZED_KEY = JSON.stringify({
   algorithm: "ES256",
 });
 
-const ENV_NAMES = ["MWS_SA_KEY", "MWS_SA_KEY_FILE", "MWS_IAM_TOKEN", "MWS_IAM_HOST"];
+/**
+ * Каждое имя, которое читает mws-auth.ts, а не только «основные»: рекомендуемая форма
+ * ключа — две однострочные переменные (MWS_SA_KEY_ID + MWS_SA_PRIVATE_KEY), и если их не
+ * гасить, тесты видят ключ из окружения разработчика и падают на «без ключа доступ не
+ * предложен» именно там, где доступ настроен правильно.
+ */
+const ENV_NAMES = [
+  "MWS_SA_KEY",
+  "MWS_SA_KEY_FILE",
+  "MWS_SA_KEY_ID",
+  "MWS_SA_PRIVATE_KEY",
+  "MWS_SA_KEY_ALGORITHM",
+  "MWS_SA_KEY_EXPIRATION",
+  "MWS_IAM_TOKEN",
+  "MWS_IAM_HOST",
+];
 
 function clearEnv() {
   for (const name of ENV_NAMES) delete process.env[name];
