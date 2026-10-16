@@ -47,7 +47,11 @@ WebNestDev Fastify
   for real users. Keep `WEBNESTDEV_SMS_TEST_MODE` unset in production. Note the Yandex
   sender registration lead time (see [AUTH_PRODUCTION_PLAN.md](AUTH_PRODUCTION_PLAN.md)).
 
-When SMS do not arrive, look in this order: `curl -s localhost:8787/api/health` → `sms`
+When SMS do not arrive, look in this order: `npm run sms:check --workspace=server` — one command
+that names the active provider, the credential kind and (for Yandex) the channel state read from
+CNS without sending anything, so «канал в песочнице», «нет прав» и «ключ не дошёл до контейнера»
+различаются между собой; добавьте `-- --to <номер>`, чтобы отправить настоящее сообщение и
+увидеть отказ провайдера целиком. Дальше: `curl -s localhost:8787/api/health` → `sms`
 shows the provider that is actually active and whether it authenticates with a `key` or a
 `token`; the sign-in screen itself prints the reason it got from the server (test mode,
 sandbox number, expired token); and `docker compose logs webnestdev-server` has the

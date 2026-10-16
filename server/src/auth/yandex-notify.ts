@@ -178,6 +178,34 @@ function describeError(status: number, subCode: string | undefined, code: string
 
 export type YandexSmsResult = { ok: true } | { ok: false; error: string };
 
+/**
+ * Произвольный вызов CNS (Amazon SNS-совместимый Action) с тем же токеном, что и отправка:
+ * нужен для чтения состояния канала — что именно настроено в Yandex Cloud, не отправляя
+ * ни одного сообщения. Так «SMS не приходят» разделяется на «канал в песочнице»,
+ * «нет прав» и «отправитель не зарегистрирован» без доступа к консоли.
+ */
+export async function callYandexNotify(action: string, params: Record<string, string> = {}) {
+  const config = yandexNotifyConfig();
+  if (!config.credential) return { ok: false, status: 0, body: "Yandex Cloud Notification Service не настроен" };
+  let token: string;
+  try {
+    token = await resolveIamToken(config);
+  } catch (error) {
+    return { ok: false, status: 0, body: error instanceof Error ? error.message : String(error) };
+  }
+  const form = new URLSearchParams({ Action: action, ResponseFormat: "JSON", ...params });
+  try {
+    const response = await fetch(config.endpoint, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded; charset=utf-8", Authorization: "Bearer " + token },
+      body: form.toString(),
+    });
+    return { ok: response.ok, status: response.status, body: (await response.text()).slice(0, 1200) };
+  } catch (error) {
+    return { ok: false, status: 0, body: "Не удалось обратиться к Yandex Cloud: " + (error instanceof Error ? error.message : String(error)) };
+  }
+}
+
 type ErrorPayload = {
   ErrorResponse?: { Error?: { Code?: string; SubCode?: string; Message?: string } };
 };

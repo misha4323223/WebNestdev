@@ -4,7 +4,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { yandexNotifyCredentialKind, resetYandexNotifyCache, sendYandexSms, yandexNotifyConfigured } from "./yandex-notify.js";
+import { callYandexNotify, yandexNotifyCredentialKind, resetYandexNotifyCache, sendYandexSms, yandexNotifyConfigured } from "./yandex-notify.js";
 import { smsConfig, smsConfigHint, smsProviderLabel } from "./sms.js";
 
 /** An authorized key as the console issues one; RSA because the signing is PS256. */
@@ -126,6 +126,25 @@ test("a channel with a common sender is addressed by the reserved shared name", 
       // Every Yandex SMS needs a SenderID; without a registered one it is cns.shared.
       assert.equal(form.get("MessageAttributes.entry.1.Value.StringValue"), "cns.shared");
       assert.equal(form.has("Account"), false);
+    },
+  );
+});
+
+test("the channel state is read without sending anything", async t => {
+  clearEnv();
+  process.env.YANDEX_NOTIFY_IAM_TOKEN = "t1.test-token";
+  t.after(clearEnv);
+
+  await withFetch(
+    () => new Response(JSON.stringify({ attributes: { DefaultSenderID: "cns.shared" } }), { status: 200 }),
+    async captured => {
+      const result = await callYandexNotify("GetSMSAttributes");
+      assert.equal(result.ok, true);
+      const form = new URLSearchParams(String(captured().init.body));
+      // Ни PhoneNumber, ни Message: это чтение состояния канала, а не отправка.
+      assert.equal(form.get("Action"), "GetSMSAttributes");
+      assert.equal(form.has("PhoneNumber"), false);
+      assert.equal((captured().init.headers as Record<string, string>).Authorization, "Bearer t1.test-token");
     },
   );
 });
