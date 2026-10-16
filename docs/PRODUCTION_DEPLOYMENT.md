@@ -347,6 +347,7 @@ Repository secrets (Settings → Secrets and variables → Actions → **Secrets
 | `DEPLOY_SSH_KEY` | private key (the public one goes to `~/.ssh/authorized_keys`) |
 | `DEPLOY_PORT` | SSH port, optional, default 22 |
 | `DEPLOY_KNOWN_HOSTS` | optional; without it the runner runs `ssh-keyscan` |
+| `YANDEX_SA_KEY_JSON` | optional; the whole service account key file. The deploy writes it to `/var/lib/webnestdev/secrets/yandex-sa-key.json` (mode 600), points `YANDEX_SA_KEY_FILE` at it and removes the temporary copy — SMS login stops depending on someone logging into the VM to place the file |
 
 Repository variables (same page → **Variables**):
 
@@ -368,7 +369,7 @@ ssh-keyscan -H <DEPLOY_HOST>   # DEPLOY_KNOWN_HOSTS, optional
 
 `DEPLOY_HOST`, `DEPLOY_USER` and `DEPLOY_PORT` are the address, login and port you already use to reach the VM; `DEPLOY_KNOWN_HOSTS` is optional, without it the runner runs `ssh-keyscan` itself. With a self-hosted runner (`DEPLOY_RUNNER` set) the SSH secrets are not needed at all — the script runs on the VM itself. The `ci.yml` and `production-ci.yml` workflows need no secrets: `GITHUB_TOKEN` is issued automatically.
 
-Application secrets are **not** copied into GitHub. `WEBNESTDEV_ENCRYPTION_KEY`, OAuth client secrets, SMS keys and AI-provider keys belong to the server and stay only in the `.env` inside `DEPLOY_APP_DIR` on the VM: Compose reads them there, and the deploy workflow never sees them — it builds the image, runs the tests (they set the key they need themselves, no real secret required) and restarts the service. A second copy in Actions would add another place to leak and to rotate without giving the pipeline anything. The one GitHub-side credential the VM may need is a one-time `docker login ghcr.io` with a token that can `read:packages` — entered on the VM and kept there. Alternatively make the GHCR package public in the package settings, and no login is needed.
+Application secrets are **not** copied into GitHub, with one deliberate exception: the Yandex service account key may be set as the `YANDEX_SA_KEY_JSON` repository secret (see the table above). It is a multi-line file rather than a one-line value, and hand-placing it on the VM was exactly why SMS login kept failing (`YANDEX_SA_KEY_FILE=/app/yandex-sa-key.json` is a path inside the image). The deploy installs it and points the variable at the installed file; without the secret the step says so and changes nothing. Everything else — `WEBNESTDEV_ENCRYPTION_KEY`, OAuth client secrets, the other SMS keys and AI-provider keys — belongs to the server and stays only in the `.env` inside `DEPLOY_APP_DIR` on the VM: Compose reads them there, and the deploy workflow never sees them — it builds the image, runs the tests (they set the key they need themselves, no real secret required) and restarts the service. A second copy in Actions would add another place to leak and to rotate without giving the pipeline anything. The one GitHub-side credential the VM may need is a one-time `docker login ghcr.io` with a token that can `read:packages` — entered on the VM and kept there. Alternatively make the GHCR package public in the package settings, and no login is needed.
 
 The `production` environment is created on the first run; add *Required reviewers* there to make every deploy wait for an approval.
 

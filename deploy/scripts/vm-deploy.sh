@@ -36,6 +36,14 @@
 #   SMS_CHECK=0                не проверять состояние входа по SMS после выкатки. Проверка
 #                              печатает провайдера, способ аутентификации и путь, по которому
 #                              прочитан ключ сервисного аккаунта, — без отправки сообщений.
+#   ENV_FILE=<путь>            файл переменных развёртывания, по умолчанию $APP_DIR/.env.
+#                              Вынесен в переменную, чтобы шаг установки ключей проверялся
+#                              на копии файла, не трогая настоящий .env.
+#   APP_KEY_FILE=/tmp/…        файл с ключом сервисного аккаунта Yandex Cloud, уже переданный
+#                              на ВМ workflow'ом (секрет YANDEX_SA_KEY_JSON). Скрипт кладёт его
+#                              в каталог секретов — тот, что смонтирован в контейнер, — и
+#                              правит YANDEX_SA_KEY_FILE, если она указывает внутрь образа.
+#                              Так вход по SMS перестаёт зависеть от захода на ВМ руками.
 #
 # MODE=prune — только уборка образов, без выкатки и без перезапуска сервиса.
 set -euo pipefail
@@ -59,6 +67,10 @@ COMPOSE_SRC="${COMPOSE_SRC:-}"
 MIGRATE_SANDBOXES="${MIGRATE_SANDBOXES:-1}"
 VERIFY_VERSION="${VERIFY_VERSION:-1}"
 SMS_CHECK="${SMS_CHECK:-1}"
+APP_KEY_FILE="${APP_KEY_FILE:-}"
+# Файл переменных развёртывания. Путь вынесен в переменную, чтобы шаг установки ключей можно
+# было проверить на копии файла, не трогая настоящий .env (и чтобы его видел тест скрипта).
+ENV_FILE="${ENV_FILE:-$APP_DIR/.env}"
 PREVIOUS_IMAGE=""
 
 log(){ printf '[deploy] %s\n' "$*"; }
@@ -326,6 +338,74 @@ verify_sandbox(){
 }
 
 #
+# Каталог секретов: тот же путь и внутри контейнера, потому что он смонтирован в него как есть
+# (см. docker-compose.yml и deploy/scripts/make-env-vm.sh). Переменная читается из окружения,
+# потом из .env — иначе путь разошёлся бы с монтированием.
+#
+secrets_dir(){
+  local dir="${WEBNESTDEV_SECRETS_DIR:-}"
+  if [ -z "$dir" ] && [ -f "$ENV_FILE" ]; then
+    dir=$(grep -m1 '^WEBNESTDEV_SECRETS_DIR=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- || true)
+  fi
+  printf '%s' "${dir:-/var/lib/webnestdev/secrets}"
+}
+
+#
+# Ключ сервисного аккаунта Yandex Cloud: файлом, а не переменной. Ключ многострочный, поле
+# секрета — нет, поэтому из GitHub он приезжает отдельным потоком (workflow кладёт его в
+# APP_KEY_FILE), а здесь оказывается в каталоге секретов под именем yandex-sa-key.json.
+# Без этого шага вход по SMS работал только у того, кто один раз зашёл на ВМ руками и положил
+# файл сам: `YANDEX_SA_KEY_FILE=/app/yandex-sa-key.json` — это путь внутри образа, где ключа нет.
+#
+install_app_secrets(){
+  local dir file current
+  dir=$(secrets_dir)
+  file="$dir/yandex-sa-key.json"
+  if [ -z "$APP_KEY_FILE" ]; then
+    log "ключ Yandex Cloud не передан (секрет YANDEX_SA_KEY_JSON пуст) — оставляю то, что уже есть на ВМ"
+    return 0
+  fi
+  if [ ! -s "$APP_KEY_FILE" ]; then
+    log "переданный ключ пуст — оставляю прежний файл $file"
+    return 0
+  fi
+  # Проверяется форма: обрезанный при передаче JSON выглядит как файл, и его запись заменила бы
+  # рабочий ключ, который уже лежит на ВМ. Проверка дешёвая и без node — она выполняется и там,
+  # где node есть только внутри контейнера.
+  if ! grep -q '"private_key"\|"privateKey"' "$APP_KEY_FILE"; then
+    log "переданный файл не похож на ключ сервисного аккаунта (нет поля private_key) — не устанавливаю"
+    return 0
+  fi
+  mkdir -p "$dir" 2>/dev/null || true
+  if [ ! -w "$dir" ]; then
+    log "каталог $dir недоступен для записи — ключ не установлен. Выполните один раз: sudo mkdir -p $dir && sudo chown $USER $dir"
+    return 0
+  fi
+  if ! install -m 600 "$APP_KEY_FILE" "$file" 2>/dev/null; then
+    log "не удалось записать $file — ключ не установлен"
+    return 0
+  fi
+  rm -f "$APP_KEY_FILE"
+  log "ключ сервисного аккаунта Yandex Cloud установлен: $file (права 600)"
+  # Путь внутри контейнера тот же (каталог смонтирован по одному пути), поэтому в .env остаётся
+  # именно он. Переписывается только когда значение мешает: /app/… из образа ключа не видит.
+  [ -f "$ENV_FILE" ] || return 0
+  current=$(grep -m1 '^YANDEX_SA_KEY_FILE=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- || true)
+  if [ "$current" = "$file" ]; then
+    log "YANDEX_SA_KEY_FILE уже указывает на $file"
+    return 0
+  fi
+  cp "$ENV_FILE" "$ENV_FILE.bak" 2>/dev/null || true
+  if grep -q '^YANDEX_SA_KEY_FILE=' "$ENV_FILE"; then
+    sed -i "s|^YANDEX_SA_KEY_FILE=.*|YANDEX_SA_KEY_FILE=$file|" "$ENV_FILE"
+  else
+    printf 'YANDEX_SA_KEY_FILE=%s\n' "$file" >> "$ENV_FILE"
+  fi
+  log "YANDEX_SA_KEY_FILE=$file (прежнее значение: ${current:-не было}; копия прежнего файла — рядом, с суффиксом .bak)"
+  return 0
+}
+
+#
 # Состояние входа по SMS после выкатки. Это ровно тот случай, ради которого проверка здесь:
 # `YANDEX_SA_KEY_FILE=/app/yandex-sa-key.json` — путь **внутри образа**, файла там нет, и
 # `/api/health` честно говорит «ключ», пока вход по номеру не работает. Скрипт печатает
@@ -407,6 +487,8 @@ case "$MODE" in
     # Сначала файл сервисов, потом перенос файлов проектов, и только потом запуск: контейнеры
     # поднимаются уже с правильным каталогом песочниц.
     install_compose || log "выкатываю на compose, который лежит на ВМ"
+    # Ключи и .env — до запуска: compose читает .env при подъёме сервиса.
+    install_app_secrets
     migrate_sandboxes
     run docker compose -f "$COMPOSE_FILE" up -d --no-build "$SERVICE"
     ;;
@@ -419,6 +501,7 @@ case "$MODE" in
     log "ставлю зависимости и собираю фронтенд с сервером"
     run npm ci
     run npm run build
+    install_app_secrets
     log "перезапускаю сервис systemd: $SYSTEMD_UNIT"
     run sudo systemctl restart "$SYSTEMD_UNIT"
     ;;

@@ -133,6 +133,9 @@ jobs:
           MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'image' }}
           IMAGE_INPUT: ${{ inputs.image }}
           BUILT_IMAGE: ${{ needs.build.outputs.image }}
+          # Ключ сервисного аккаунта Yandex Cloud (файл JSON целиком). Необязательный: без него
+          # выкатка идёт как раньше, а SMS остаётся нерабочим и говорит об этом в логе.
+          YANDEX_SA_KEY_JSON: ${{ secrets.YANDEX_SA_KEY_JSON }}
         run: |
           set -euo pipefail
           # Чистим переменные от скрытых символов (CRLF из Windows при вставке секретов)
@@ -150,11 +153,24 @@ jobs:
           # Файл сервисов едет на ВМ вместе со скриптом: выкатка образа раньше не касалась
           # compose, и ВМ молча оставалась со старым — без SANDBOX_DIR и монтирования песочниц.
           COMPOSE_B64=$(base64 -w0 docker-compose.yml)
+          # Ключ передаётся отдельным потоком, а не аргументом команды: значение секрета в
+          # командной строке было бы видно в списке процессов на обеих машинах.
+          APP_KEY_FILE=""
+          if [ -n "${YANDEX_SA_KEY_JSON:-}" ]; then
+            APP_KEY_FILE="/tmp/.webnestdev-app-key.json"
+            # CRLF из Windows при вставке секрета ломает PEM внутри JSON: переводы строк там
+            # значимые, поэтому возврат каретки убирается до отправки.
+            printf '%s\n' "$YANDEX_SA_KEY_JSON" | tr -d '\r' | ssh -i "$HOME/.ssh/deploy_key" \
+              -p "${DEPLOY_PORT:-22}" \
+              -o BatchMode=yes -o StrictHostKeyChecking=yes \
+              "$DEPLOY_USER@$DEPLOY_HOST" \
+              "umask 077; cat > '$APP_KEY_FILE'"
+          fi
           ssh -i "$HOME/.ssh/deploy_key" \
             -p "${DEPLOY_PORT:-22}" \
             -o BatchMode=yes -o StrictHostKeyChecking=yes \
             "$DEPLOY_USER@$DEPLOY_HOST" \
-            "MODE='$MODE' IMAGE_REF='$image' APP_DIR='$DEPLOY_APP_DIR' COMPOSE_B64='$COMPOSE_B64' bash -s" \
+            "MODE='$MODE' IMAGE_REF='$image' APP_DIR='$DEPLOY_APP_DIR' COMPOSE_B64='$COMPOSE_B64' APP_KEY_FILE='$APP_KEY_FILE' bash -s" \
             < deploy/scripts/vm-deploy.sh
 
       - name: Deploy on the VM (self-hosted runner)
@@ -164,10 +180,19 @@ jobs:
           IMAGE_INPUT: ${{ inputs.image }}
           BUILT_IMAGE: ${{ needs.build.outputs.image }}
           DEPLOY_APP_DIR: ${{ vars.DEPLOY_APP_DIR }}
+          YANDEX_SA_KEY_JSON: ${{ secrets.YANDEX_SA_KEY_JSON }}
         run: |
           set -euo pipefail
           image="$IMAGE_INPUT"
           [ -n "$image" ] || image="$BUILT_IMAGE"
+          # На этом раннере скрипт запускается на самой ВМ, поэтому ключ кладётся во временный
+          # файл рядом, с правами только для владельца.
+          APP_KEY_FILE=""
+          if [ -n "${YANDEX_SA_KEY_JSON:-}" ]; then
+            APP_KEY_FILE=$(mktemp)
+            umask 077
+            printf '%s\n' "$YANDEX_SA_KEY_JSON" | tr -d '\r' > "$APP_KEY_FILE"
+          fi
           MODE="$MODE" IMAGE_REF="$image" APP_DIR="$DEPLOY_APP_DIR" \
-            COMPOSE_SRC="$PWD/docker-compose.yml" \
+            COMPOSE_SRC="$PWD/docker-compose.yml" APP_KEY_FILE="$APP_KEY_FILE" \
             bash deploy/scripts/vm-deploy.sh
