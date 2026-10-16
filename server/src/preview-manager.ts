@@ -19,6 +19,18 @@ export type { PreviewState, PreviewStatus } from "./preview/types.js";
  * it does not (no build script, a failing build, or an output without index.html).
  */
 export async function startPreview(config: SandboxConfig) {
+  try {
+    return await startPreviewWithFallback(config);
+  } catch (error) {
+    // Причина отказа раньше жила только в ответе панели и в сообщении агенту, а тот, кто смотрит
+    // логи контейнера сервера (`docker compose logs webnestdev-server`), видел один факт запуска
+    // и не мог отличить отсутствующие зависимости от недоступного Docker.
+    console.error("[preview] не удалось запустить предпросмотр: проект " + config.projectId + " — " + describeError(error));
+    throw error;
+  }
+}
+
+async function startPreviewWithFallback(config: SandboxConfig) {
   const setting = previewModeSetting();
   if (setting !== "container") {
     const result = await startStaticPreview(config);
@@ -26,9 +38,16 @@ export async function startPreview(config: SandboxConfig) {
     // A host that requires static previews must not silently start a container, so the reason
     // is the answer there; every other mode falls back and carries the reason as a hint.
     if (setting === "static") throw new Error(result.reason);
+    // Почему проект не удалось отдать статикой — тоже в лог: на маленькой ВМ поднятый контейнер
+    // предпросмотра иначе выглядит случайностью, а не следствием непригодной сборки.
+    console.log("[preview] проект " + config.projectId + ": статическая сборка не подошла (" + result.reason + ") — поднимаю dev-сервер");
     return startContainerPreview(config, result.reason);
   }
   return startContainerPreview(config);
+}
+
+function describeError(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /**

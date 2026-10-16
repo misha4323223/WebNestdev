@@ -4,7 +4,7 @@ import { attachSession } from "../auth/auth.js";
 import { checkAuthRateLimit } from "../auth/auth-rate-limit.js";
 import { demoPhone, ensurePhoneAccount, formatPhone, normalizePhone, startPhoneLogin, verifyPhoneCode } from "../auth/phone-store.js";
 import { PHONE_CONSENT_REQUIRED_MESSAGE, recordPhoneConsent } from "../auth/phone-consent.js";
-import { sendLoginCode, smsConfig, smsConfigHint, smsProviderLabel, smsSummary } from "../auth/sms.js";
+import { sendLoginCode, smsConfig, smsConfigHint, smsProviderLabel, smsReadiness, smsSummary } from "../auth/sms.js";
 
 const phoneInput = z.object({ phone: z.string().min(1).max(30), consent: z.boolean().optional() });
 const verifyInput = z.object({ phone: z.string().min(1).max(30), code: z.string().min(1).max(10) });
@@ -20,6 +20,7 @@ export async function registerPhoneAuthRoutes(app: FastifyInstance) {
   app.get("/api/auth/phone/status", async () => {
     const config = smsConfig();
     const summary = smsSummary();
+    const readiness = await smsReadiness();
     const demo = demoPhone();
     return {
       provider: config.provider,
@@ -31,7 +32,10 @@ export async function registerPhoneAuthRoutes(app: FastifyInstance) {
       // готовый IAM-токен, который живёт около 12 часов. Не секрет, зато это первое,
       // что нужно знать, когда SMS перестали приходить, а доступ к ВМ есть не всегда.
       credentialKind: summary.credentialKind,
-      hint: smsConfigHint(),
+      // Читается ли ключ на самом деле: «задан» и «работает» — разные вещи, и разница
+      // видна только здесь, до первой попытки отправки.
+      credentialReady: readiness.ready,
+      hint: [readiness.problem, smsConfigHint()].filter(Boolean).join(" ") || undefined,
       // The demo number is shown on the sign-in screen so it can be used instead of SMS.
       ...(demo ? { demoPhone: formatPhone(demo) } : {}),
     };

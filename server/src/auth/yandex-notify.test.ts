@@ -4,7 +4,7 @@ import { generateKeyPairSync } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { callYandexNotify, yandexNotifyCredentialKind, resetYandexNotifyCache, sendYandexSms, yandexNotifyConfigured } from "./yandex-notify.js";
+import { callYandexNotify, yandexNotifyCredentialKind, yandexNotifyCredentialStatus, resetYandexNotifyCache, sendYandexSms, yandexNotifyConfigured } from "./yandex-notify.js";
 import { smsConfig, smsConfigHint, smsProviderLabel } from "./sms.js";
 
 /** An authorized key as the console issues one; RSA because the signing is PS256. */
@@ -30,6 +30,8 @@ const CREDENTIAL_NAMES = [
   "SMSAERO_EMAIL",
   "SMSAERO_API_KEY",
   "WEBNESTDEV_SMS_TEST_MODE",
+  // Путь к каталогу секретов — один из тех, где ключ ищется, если указанный не открылся.
+  "WEBNESTDEV_SECRETS_DIR",
 ];
 
 function clearEnv() {
@@ -246,6 +248,74 @@ test("a rejected authorization is reported as such", async t => {
       assert.match(result.ok ? "" : result.error, /editor/i);
     },
   );
+});
+
+test("отсутствующий файл ключа назван до отправки, а не только при ней", async t => {
+  clearEnv();
+  // Ровно этот случай был в проде: YANDEX_SA_KEY_FILE=/app/yandex-sa-key.json — путь внутри
+  // образа, где файла нет. /api/health и экран входа говорили «ключ», а вход по номеру не
+  // работал вовсе.
+  process.env.YANDEX_SA_KEY_FILE = "/app/yandex-sa-key.json";
+  t.after(clearEnv);
+
+  const status = await yandexNotifyCredentialStatus();
+  assert.equal(status.kind, "key");
+  assert.equal(status.source, "file");
+  assert.equal(status.ready, false);
+  assert.match(status.problem ?? "", /\/app\/yandex-sa-key\.json/);
+  // Оба работающих способа починки — в самом сообщении: иначе оно только констатирует отказ.
+  assert.match(status.problem ?? "", /\/var\/lib\/webnestdev\/secrets/);
+  assert.match(status.problem ?? "", /YANDEX_SA_KEY/);
+
+  const result = await sendYandexSms("+79991234567", "Код: 123456");
+  assert.equal(result.ok, false);
+  assert.match(result.ok ? "" : result.error, /не найден/);
+});
+
+test("ключ, лежащий в смонтированном каталоге секретов, читается, хотя переменная указывает внутрь образа", async t => {
+  clearEnv();
+  const secrets = await mkdtemp(join(tmpdir(), "webnestdev-secrets-"));
+  await writeFile(join(secrets, "yandex-sa-key.json"), AUTHORIZED_KEY, "utf8");
+  process.env.WEBNESTDEV_SECRETS_DIR = secrets;
+  process.env.YANDEX_SA_KEY_FILE = "/app/yandex-sa-key.json";
+  t.after(async () => {
+    await rm(secrets, { recursive: true, force: true });
+    clearEnv();
+  });
+
+  const status = await yandexNotifyCredentialStatus();
+  assert.equal(status.ready, true);
+  assert.equal(status.file, join(secrets, "yandex-sa-key.json"));
+  assert.match(status.note ?? "", /YANDEX_SA_KEY_FILE/);
+
+  await withFetch(
+    url => url.includes("iam/v1/tokens")
+      ? new Response(JSON.stringify({ iamToken: "t1.from-secrets-dir" }), { status: 200 })
+      : new Response(JSON.stringify({ ResponseMetadata: { RequestId: "r1" }, PublishResult: { MessageId: "m1" } }), { status: 200 }),
+    async captured => {
+      const result = await sendYandexSms("+79991234567", "Код: 123456");
+      assert.equal(result.ok, true, result.ok ? "" : result.error);
+      const headers = captured().init.headers as Record<string, string>;
+      assert.equal(headers.Authorization, "Bearer t1.from-secrets-dir");
+    },
+  );
+});
+
+test("готовый файл ключа подтверждается проверкой без отправки", async t => {
+  clearEnv();
+  const directory = await mkdtemp(join(tmpdir(), "webnestdev-cns-key-"));
+  const file = join(directory, "key.json");
+  await writeFile(file, AUTHORIZED_KEY, "utf8");
+  process.env.YANDEX_SA_KEY_FILE = file;
+  t.after(async () => {
+    await rm(directory, { recursive: true, force: true });
+    clearEnv();
+  });
+
+  const status = await yandexNotifyCredentialStatus();
+  assert.equal(status.ready, true);
+  assert.equal(status.source, "file");
+  assert.equal(status.problem, undefined);
 });
 
 test("a malformed service account key fails loudly before any SMS is attempted", async t => {

@@ -6,6 +6,7 @@ import type { DockerCommandResult } from "../sandbox/docker/types.js";
 import type { SandboxConfig } from "../sandbox-manager.js";
 import { setPreview,touchPreview } from "./preview-store.js";
 import { indexFileExists,isStaticBuildFresh,planStaticPreview } from "./static-plan.js";
+import { ensureProjectDependencies } from "./dependencies.js";
 import type { PreviewStatus } from "./types.js";
 
 /**
@@ -86,9 +87,13 @@ export async function startStaticPreview(config:SandboxConfig):Promise<StaticSta
   let log="";
   let marker=previous?.builtAt??0;
   if(needsBuild){
+    // Зависимости — до сборки: у только что созданного проекта их нет, и `npm run build` падал
+    // бы на отсутствующем `vite`, а предпросмотр — сразу за ним (см. dependencies.ts).
+    const dependencies=await ensureProjectDependencies(config);
+    if(!dependencies.ok)return {ok:false,reason:dependencies.reason};
     const result=await runBuild(config);
     if(!("ok" in result))return {ok:false,reason:result.reason};
-    log=buildLog(result);
+    log=dependencies.log?dependencies.log+"\n"+buildLog(result):buildLog(result);
     marker=Date.now();
   }
   if(!await indexFileExists(plan.dir)){

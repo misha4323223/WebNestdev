@@ -12,7 +12,7 @@
  *
  * Последняя строка — машинный вердикт `SMS-CHECK=…`, как `MWS-ACCESS=…` у проверки МВС.
  */
-import { sendLoginCode, smsConfig, smsConfigHint, smsProviderLabel, smsSummary } from "../auth/sms.js";
+import { sendLoginCode, smsConfig, smsConfigHint, smsProviderLabel, smsReadiness, smsSummary } from "../auth/sms.js";
 import { callYandexNotify } from "../auth/yandex-notify.js";
 
 const flag = (name: string) => {
@@ -25,6 +25,16 @@ const summary = smsSummary();
 console.log("[sms] провайдер: " + smsProviderLabel(config.provider) + " (" + (config.provider ?? "не подключён") + "), отправитель: " + config.sender);
 console.log("[sms] тестовый режим: " + (config.test ? "да — сообщения не отправляются, код пишется в лог сервера" : "нет"));
 console.log("[sms] аутентификация: " + (summary.credentialKind === null ? "не нужна" : summary.credentialKind === "key" ? "ключ сервисного аккаунта (токен берётся сам)" : "готовый IAM-токен"));
+// Готовность до отправки: путь в YANDEX_SA_KEY_FILE существует **внутри контейнера**, и
+// `/app/…` из образа не читается. Печатается тот путь, по которому ключ действительно
+// прочитан (он может быть найден в смонтированном каталоге секретов), либо причины отказа.
+const readiness: { ready: boolean; keyFile?: string; note?: string; problem?: string } =
+  config.provider === "yandex" ? await smsReadiness() : { ready: true };
+if (config.provider === "yandex" && summary.credentialKind === "key") {
+  console.log("[sms] ключ сервисного аккаунта: " + (readiness.keyFile ? "прочитан из " + readiness.keyFile : "не найден"));
+}
+if (readiness.note) console.log("[sms] замечание: " + readiness.note);
+if (readiness.problem) console.log("[sms] проблема: " + readiness.problem);
 const hint = smsConfigHint();
 if (hint) console.log("[sms] ограничение провайдера: " + hint);
 
@@ -44,6 +54,11 @@ if (config.provider === "yandex") {
 const to = flag("--to")?.replace(/[\s()-]/g, "");
 if (!to) {
   console.log("[sms] отправка не проверялась: добавьте --to <номер>, чтобы отправить настоящее сообщение");
+  // «configured» — неправда, если ключ не читается: вход по номеру в таком виде не работает.
+  if (!readiness.ready) {
+    console.log("SMS-CHECK=key-unreadable");
+    process.exit(1);
+  }
   console.log("SMS-CHECK=" + (config.test ? "test-mode" : "configured"));
   process.exit(config.test ? 1 : 0);
 }

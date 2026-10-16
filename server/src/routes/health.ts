@@ -9,7 +9,7 @@ import { DEFAULT_CHARS_PER_TOKEN,contextBudgetTokens,contextMaxMessages } from "
 import { sandboxHostRootDir,sandboxRootDir } from "../sandbox/config.js";
 import { lastSandboxMountCheck } from "../sandbox/sandbox-check.js";
 import { diskStatus, memoryStatus } from "../health/host-metrics.js";
-import { smsSummary } from "../auth/sms.js";
+import { smsReadiness, smsSummary } from "../auth/sms.js";
 
 /**
  * Какая сборка работает на сервере. Значение запекается в образ при выкатке
@@ -69,6 +69,24 @@ async function activity(){
   };
 }
 
+/**
+ * Состояние SMS для /api/health: провайдер, тестовый режим, способ аутентификации и —
+ * главное — читается ли выбранный ключ. Без последнего «ключ задан» было неотличимо от
+ * «ключ не читается», и об этом узнавали только по отказу отправки.
+ */
+async function smsInfo(){
+  const readiness=await smsReadiness();
+  return {
+    ...smsSummary(),
+    ready:readiness.ready,
+    // Каким путём прочитан ключ сервисного аккаунта: /app/… в переменной и файл в каталоге
+    // секретов — разные вещи, и именно это различие решает, уходят SMS или нет.
+    ...(readiness.keyFile===undefined?{}:{keyFile:readiness.keyFile}),
+    ...(readiness.note===undefined?{}:{note:readiness.note}),
+    ...(readiness.problem===undefined?{}:{problem:readiness.problem}),
+  };
+}
+
 export async function registerHealthRoutes(app:FastifyInstance){
   app.get("/api/health",async()=>({
     ok:true,
@@ -78,7 +96,7 @@ export async function registerHealthRoutes(app:FastifyInstance){
     // Настроен ли вход по SMS на самом деле: провайдер по имени и способ аутентификации.
     // Секретов здесь нет, зато «SMS перестали приходить» проверяется одной командой
     // curl localhost:8787/api/health вместо чтения .env на ВМ.
-    sms:smsSummary(),
+    sms:await smsInfo(),
     activity:await activity(),
   }));
   app.get("/api/ready",async(_request,reply)=>{
@@ -86,7 +104,7 @@ export async function registerHealthRoutes(app:FastifyInstance){
     // Расхождение путей песочницы — не временная неисправность хоста, а сломанная выкатка:
     // агент пишет файлы, которых не видит терминал. Готовность обязана об этом сказать.
     const ok=dependencies.storage.ok && dependencies.sandbox.available && dependencies.sandbox.mount?.reason!=="mismatch";
-    return reply.code(ok?200:503).send({ok,service:"webnestdev-server",build:buildId(),...dependencies,sms:smsSummary(),activity:await activity()});
+    return reply.code(ok?200:503).send({ok,service:"webnestdev-server",build:buildId(),...dependencies,sms:await smsInfo(),activity:await activity()});
   });
   app.get("/api/sandbox/status",async()=>sandboxStatus());
 }

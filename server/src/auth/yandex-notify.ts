@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import path from "node:path";
 import { parseServiceAccountKey, signServiceAccountJwt } from "../yandex/yandex-api.js";
 
 /**
@@ -122,10 +123,85 @@ export function resetYandexNotifyCache() {
   cachedToken = null;
 }
 
+/**
+ * Где искать ключ, когда файл по указанному пути не открылся.
+ *
+ * Путь в переменной — это путь **внутри контейнера сервера**, и `/app/yandex-sa-key.json` —
+ * ровно то, чего в образе нет и быть не может: такую переменную пишут, ожидая, что ключ положат
+ * рядом с проектом и Docker его скопирует. Отказывать из-за одного пути неправильно: ключ уже
+ * может лежать в каталоге секретов, который compose монтирует в контейнер, или в обычном месте
+ * рядом с рабочей копией. Поэтому сначала проверяется указанный путь, а за ним — те, что есть.
+ */
+export function yandexKeyFileCandidates(configured: string) {
+  const names = [...new Set([path.basename(configured), "yandex-sa-key.json", "sa-key.json"])].filter(Boolean);
+  const directories = [
+    process.env.WEBNESTDEV_SECRETS_DIR?.trim(),
+    "/var/lib/webnestdev/secrets",
+    "/run/secrets",
+    path.join(process.cwd(), "secrets"),
+    path.join(process.cwd(), "keys"),
+  ].filter((directory): directory is string => Boolean(directory));
+  return [...new Set([configured, ...directories.flatMap(directory => names.map(name => path.join(directory, name)))])];
+}
+
+/** Ключ вместе с путём, по которому он нашёлся; null — если не открылся ни один путь. */
+export async function resolveYandexKeyFile(configured: string): Promise<{ file: string; content: string } | null> {
+  for (const file of yandexKeyFileCandidates(configured)) {
+    const content = await readFile(file, "utf8").catch(() => null);
+    if (content?.trim()) return { file, content };
+  }
+  return null;
+}
+
 async function readCredential(credential: Credential): Promise<string> {
   if (credential.kind === "rawKey") return credential.raw;
-  if (credential.kind === "keyFile") return readFile(credential.file, "utf8");
+  if (credential.kind === "keyFile") {
+    const found = await resolveYandexKeyFile(credential.file);
+    if (found) return found.content;
+    throw new Error(describeKeyFileProblem(credential.file));
+  }
   return credential.token;
+}
+
+/**
+ * Отказ называет и причину, и оба работающих способа починки, и все проверенные пути: голый
+ * `ENOENT: /app/yandex-sa-key.json` не говорит, что путь внутренний для контейнера, а на ВМ
+ * рядом с проектом файл при этом может лежать.
+ */
+function describeKeyFileProblem(file: string) {
+  return (
+    "Ключ сервисного аккаунта Yandex Cloud не найден: файла " + file + " внутри контейнера сервера нет. " +
+    "Путь в переменной — это путь внутри контейнера, поэтому `/app/…` не подойдёт: положите ключ в каталог, " +
+    "который уже смонтирован в контейнер (например /var/lib/webnestdev/secrets), и укажите его же: " +
+    "YANDEX_SA_KEY_FILE=/var/lib/webnestdev/secrets/yandex-sa-key.json (файл на хосте — тот же путь). " +
+    "Либо вставьте содержимое ключа одной строкой в YANDEX_SA_KEY и уберите YANDEX_SA_KEY_FILE. " +
+    "Проверенные пути: " + yandexKeyFileCandidates(file).join(", ")
+  );
+}
+
+export type YandexNotifyCredentialStatus = { kind: YandexNotifyCredentialKind | null; ready: boolean; source?: "inline" | "file"; /** Путь, по которому ключ действительно прочитан. */ file?: string; /** Найден не там, где указано: это стоит поправить в .env. */ note?: string; problem?: string };
+
+/**
+ * Готов ли выбранный способ аутентификации к работе — без отправки сообщения. Это нужно
+ * потому, что `/api/health` и экран входа раньше говорили просто «ключ», а первое же
+ * сообщение падало с ENOENT: разница между «ключ есть» и «ключ читается» не была видна.
+ */
+export async function yandexNotifyCredentialStatus(): Promise<YandexNotifyCredentialStatus> {
+  const credential = yandexNotifyConfig().credential;
+  if (!credential) return { kind: null, ready: false, problem: "Ключ сервисного аккаунта Yandex Cloud не задан: ни YANDEX_SA_KEY, ни YANDEX_SA_KEY_FILE, ни YANDEX_NOTIFY_IAM_TOKEN." };
+  if (credential.kind === "token") return { kind: "token", ready: true };
+  if (credential.kind === "rawKey") return { kind: "key", ready: true, source: "inline" };
+  const found = await resolveYandexKeyFile(credential.file);
+  if (!found) return { kind: "key", ready: false, source: "file", problem: describeKeyFileProblem(credential.file) };
+  return {
+    kind: "key",
+    ready: true,
+    source: "file",
+    file: found.file,
+    ...(found.file === credential.file
+      ? {}
+      : { note: "Ключ прочитан по пути " + found.file + ", хотя в YANDEX_SA_KEY_FILE указан " + credential.file + ": переменная смотрит внутрь образа, где файла нет. Пропишите найденный путь, чтобы это не зависело от порядка поиска." }),
+  };
 }
 
 async function resolveIamToken(config: YandexNotifyConfig): Promise<string> {

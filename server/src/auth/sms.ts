@@ -1,4 +1,4 @@
-import { sendYandexSms, yandexNotifyConfigured, yandexNotifyCredentialKind, yandexNotifyLabel } from "./yandex-notify.js";
+import { sendYandexSms, yandexNotifyConfigured, yandexNotifyCredentialKind, yandexNotifyCredentialStatus, yandexNotifyLabel } from "./yandex-notify.js";
 
 /**
  * SMS delivery for phone login. Only Russian providers are supported, because that is
@@ -85,6 +85,23 @@ export function smsConfigHint() {
     return "SMS-провайдер не подключён: код входа не отправляется, а только пишется в лог сервера. Задайте YANDEX_SA_KEY с YANDEX_CLOUD_ID, либо SMS_RU_API_ID, либо SMSC_LOGIN+SMSC_PASSWORD, либо EXOLVE_API_KEY, либо SMSAERO_EMAIL+SMSAERO_API_KEY.";
   }
   return undefined;
+}
+
+/**
+ * Готов ли выбранный способ аутентификации к работе — проверка, которая не отправляет
+ * сообщение. Выбранный ключ может быть не задан или указывать на отсутствующий файл, и тогда
+ * вход по номеру не работает вообще: раньше это выяснялось только на первой отправке
+ * (ENOENT в ответе), хотя /api/health и экран входа уже говорили «ключ».
+ */
+export async function smsReadiness(): Promise<{ ready: boolean; keyFile?: string; note?: string; problem?: string }> {
+  if (smsConfig().provider !== "yandex") return { ready: true };
+  const status = await yandexNotifyCredentialStatus();
+  return {
+    ready: status.ready,
+    ...(status.file === undefined ? {} : { keyFile: status.file }),
+    ...(status.note === undefined ? {} : { note: status.note }),
+    ...(status.problem === undefined ? {} : { problem: status.problem }),
+  };
 }
 
 /**

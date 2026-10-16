@@ -5,6 +5,7 @@ import { dockerExec } from "./docker-exec.js";
 import { previewNetwork } from "./preview-network.js";
 import { settlePreviewAddress } from "./preview-address.js";
 import { resolvePreviewCommand } from "./preview-command.js";
+import { ensureProjectDependencies } from "./dependencies.js";
 import { setPreview } from "./preview-store.js";
 import { PREVIEW_APP_PORT, PREVIEW_LABEL, type PreviewState } from "./types.js";
 
@@ -19,6 +20,10 @@ const READY_DELAY_MS=500;
  * public address and there is no host-port/container-port mix-up to reason about.
  */
 export async function startPreviewContainer(config:SandboxConfig){
+  // У проекта, только что созданного агентом, нет `node_modules`, и `npm run dev` в контейнере
+  // падал бы на отсутствующем `vite`: установка идёт здесь же, один раз, с сетью — как `npm.install`.
+  const dependencies=await ensureProjectDependencies(config);
+  if(!dependencies.ok)throw new Error(dependencies.reason);
   const command=await resolvePreviewCommand(config);
   const image=process.env.SANDBOX_IMAGE??"node:22-bookworm-slim";
   const network=await previewNetwork();
@@ -59,7 +64,9 @@ export async function startPreviewContainer(config:SandboxConfig){
   // A dev server that has not answered yet is not a failure: npm may still be installing
   // or Vite may still be compiling. The state stays, the diagnostics come along, and the
   // next status check turns ready into the real answer.
-  return {...settled,running:true as const,ready,...(ready?{}:{logs:await recentPreviewLogs(containerId)})};
+  // Лог установки — единственное место, где видно, почему первый запуск занял минуту, а также
+  // причина отказа, если dev-сервер так и не ответил.
+  return {...settled,running:true as const,ready,...(ready?{}:{logs:[dependencies.log,await recentPreviewLogs(containerId)].filter(Boolean).join("\n\n")})};
 }
 
 async function containerAddress(containerId:string){

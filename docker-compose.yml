@@ -63,6 +63,10 @@ services:
       YANDEX_FOLDER_ID: ${YANDEX_FOLDER_ID:-}
       YANDEX_SMS_SENDER: ${YANDEX_SMS_SENDER:-}
       YANDEX_NOTIFY_ENDPOINT: ${YANDEX_NOTIFY_ENDPOINT:-}
+      # Каталог секретов виден и серверу: в нём он ищет ключ сервисного аккаунта, когда путь из
+      # YANDEX_SA_KEY_FILE не открылся (например указывает внутрь образа — /app/yandex-sa-key.json).
+      # Значение совпадает с монтированием ниже, поэтому имя переменной здесь то же.
+      WEBNESTDEV_SECRETS_DIR: ${WEBNESTDEV_SECRETS_DIR:-/var/lib/webnestdev/secrets}
       SMS_RU_API_ID: ${SMS_RU_API_ID:-}
       SMSC_LOGIN: ${SMSC_LOGIN:-}
       SMSC_PASSWORD: ${SMSC_PASSWORD:-}
