@@ -148,15 +148,18 @@ jobs:
           # служебные значения), поэтому в настройках репозитория эти два ключа называются
           # GH_OAUTH_CLIENT_ID / GH_OAUTH_CLIENT_SECRET, а в .env попадают под обычными именами,
           # которые читает сервер.
-          GH_OAUTH_CLIENT_ID: ${{ secrets.GH_OAUTH_CLIENT_ID }}
-          GH_OAUTH_CLIENT_SECRET: ${{ secrets.GH_OAUTH_CLIENT_SECRET }}
+          GH_OAUTH_CLIENT_ID: ${{ secrets.GH_OAUTH_CLIENT_ID || vars.GH_OAUTH_CLIENT_ID }}
+          GH_OAUTH_CLIENT_SECRET: ${{ secrets.GH_OAUTH_CLIENT_SECRET || vars.GH_OAUTH_CLIENT_SECRET }}
           GH_CALLBACK_URL: ${{ vars.GH_CALLBACK_URL }}
           GH_FRONTEND_URL: ${{ vars.GH_FRONTEND_URL }}
           YANDEX_CLOUD_ID: ${{ secrets.YANDEX_CLOUD_ID }}
           YANDEX_FOLDER_ID: ${{ secrets.YANDEX_FOLDER_ID }}
           # Yandex ID OAuth. Префикс YANDEX_ GitHub разрешает (зарезервирован только GITHUB_).
-          YANDEX_CLIENT_ID: ${{ secrets.YANDEX_CLIENT_ID }}
-          YANDEX_CLIENT_SECRET: ${{ secrets.YANDEX_CLIENT_SECRET }}
+          # `secrets.X || vars.X`: GitHub не отличает «секрет не заведён» от «заведён пустым»,
+          # а ключ, сохранённый во вкладке Variables, приходил пустым — кнопка «Подключить»
+          # тогда отвечала «OAuth не настроен». Читаются оба места.
+          YANDEX_CLIENT_ID: ${{ secrets.YANDEX_CLIENT_ID || vars.YANDEX_CLIENT_ID }}
+          YANDEX_CLIENT_SECRET: ${{ secrets.YANDEX_CLIENT_SECRET || vars.YANDEX_CLIENT_SECRET }}
           YANDEX_CALLBACK_URL: ${{ vars.YANDEX_CALLBACK_URL }}
           YANDEX_FRONTEND_URL: ${{ vars.YANDEX_FRONTEND_URL }}
           YANDEX_OAUTH_SCOPE: ${{ vars.YANDEX_OAUTH_SCOPE }}
@@ -202,6 +205,13 @@ jobs:
           add_platform_env YANDEX_OAUTH_SCOPE "$YANDEX_OAUTH_SCOPE"
           add_platform_env WEBNESTDEV_ADMIN_EMAILS "$WEBNESTDEV_ADMIN_EMAILS"
           add_platform_env WEBNESTDEV_ADMIN_USER_IDS "$WEBNESTDEV_ADMIN_USER_IDS"
+          # Итог по OAuth-ключам — только «есть/нет», без значений. Раньше пустой ключ был
+          # виден только по маскированному дампу окружения выше, и «вставлено, но не работает»
+          # приходилось разгадывать: здесь причина видна одной строкой.
+          has() { [ -n "${1:-}" ] && echo есть || echo нет; }
+          echo "[deploy] OAuth GitHub: client_id=$(has "${GH_OAUTH_CLIENT_ID:-}"), secret=$(has "${GH_OAUTH_CLIENT_SECRET:-}")"
+          echo "[deploy] OAuth Яндекс ID: client_id=$(has "${YANDEX_CLIENT_ID:-}"), secret=$(has "${YANDEX_CLIENT_SECRET:-}")"
+          echo "[deploy] Yandex ID redirect_uri: ${YANDEX_CALLBACK_URL:-https://<домен панели>/api/yandex/callback}"
           if [ -s "$PLATFORM_ENV_LOCAL" ]; then
             PLATFORM_ENV_FILE="/tmp/.webnestdev-platform.env"
             tr -d '\r' < "$PLATFORM_ENV_LOCAL" | ssh -i "$HOME/.ssh/deploy_key" \
@@ -243,15 +253,18 @@ jobs:
           # служебные значения), поэтому в настройках репозитория эти два ключа называются
           # GH_OAUTH_CLIENT_ID / GH_OAUTH_CLIENT_SECRET, а в .env попадают под обычными именами,
           # которые читает сервер.
-          GH_OAUTH_CLIENT_ID: ${{ secrets.GH_OAUTH_CLIENT_ID }}
-          GH_OAUTH_CLIENT_SECRET: ${{ secrets.GH_OAUTH_CLIENT_SECRET }}
+          GH_OAUTH_CLIENT_ID: ${{ secrets.GH_OAUTH_CLIENT_ID || vars.GH_OAUTH_CLIENT_ID }}
+          GH_OAUTH_CLIENT_SECRET: ${{ secrets.GH_OAUTH_CLIENT_SECRET || vars.GH_OAUTH_CLIENT_SECRET }}
           GH_CALLBACK_URL: ${{ vars.GH_CALLBACK_URL }}
           GH_FRONTEND_URL: ${{ vars.GH_FRONTEND_URL }}
           YANDEX_CLOUD_ID: ${{ secrets.YANDEX_CLOUD_ID }}
           YANDEX_FOLDER_ID: ${{ secrets.YANDEX_FOLDER_ID }}
           # Yandex ID OAuth. Префикс YANDEX_ GitHub разрешает (зарезервирован только GITHUB_).
-          YANDEX_CLIENT_ID: ${{ secrets.YANDEX_CLIENT_ID }}
-          YANDEX_CLIENT_SECRET: ${{ secrets.YANDEX_CLIENT_SECRET }}
+          # `secrets.X || vars.X`: GitHub не отличает «секрет не заведён» от «заведён пустым»,
+          # а ключ, сохранённый во вкладке Variables, приходил пустым — кнопка «Подключить»
+          # тогда отвечала «OAuth не настроен». Читаются оба места.
+          YANDEX_CLIENT_ID: ${{ secrets.YANDEX_CLIENT_ID || vars.YANDEX_CLIENT_ID }}
+          YANDEX_CLIENT_SECRET: ${{ secrets.YANDEX_CLIENT_SECRET || vars.YANDEX_CLIENT_SECRET }}
           YANDEX_CALLBACK_URL: ${{ vars.YANDEX_CALLBACK_URL }}
           YANDEX_FRONTEND_URL: ${{ vars.YANDEX_FRONTEND_URL }}
           YANDEX_OAUTH_SCOPE: ${{ vars.YANDEX_OAUTH_SCOPE }}
