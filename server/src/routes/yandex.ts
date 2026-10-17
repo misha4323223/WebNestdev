@@ -5,20 +5,30 @@ import { createOAuthState, consumeOAuthState, originFromOAuthState } from "../gi
 import { getYandexConnection, saveYandexConnection, deleteYandexConnection } from "../yandex/yandex-connection-store.js";
 import { fetchYandexLogin, saveVerifiedYandexCredential, yandexStatus } from "../yandex/yandex-api.js";
 import { resolveOAuthFlow, redirectToApp, type OAuthFlowOptions } from "../oauth/oauth-flow.js";
+import { getPlatformEnv } from "../platform/platform-env.js";
 
-const clientId = process.env.YANDEX_CLIENT_ID;
-const clientSecret = process.env.YANDEX_CLIENT_SECRET;
-const configuredCallbackUrl = process.env.YANDEX_CALLBACK_URL;
-const configuredFrontendUrl = process.env.YANDEX_FRONTEND_URL;
 /**
- * Yandex Cloud issues IAM access through roles, not through scopes, so this scope is only
- * part of the app registration. The key/token path below is the one that actually grants
- * the agent access: Yandex Cloud stopped accepting new Yandex ID OAuth tokens, so the
- * card recommends a service account authorized key.
+ * Ключи Yandex ID читаются на каждый запрос через getPlatformEnv: их можно поставить в
+ * панели «Ключи сервера», и подключение заработает без перезапуска. Пустое значение
+ * означает «не задано» — compose передаёт незаданную переменную пустой строкой.
+ *
+ * Yandex Cloud выдаёт доступ через роли, а не через scope, поэтому oauthScope — только часть
+ * регистрации приложения. Ключ сервисного аккаунта ниже всё равно остаётся основным путём:
+ * Yandex Cloud перестал принимать новые OAuth-токены Yandex ID.
  */
-const oauthScope = process.env.YANDEX_OAUTH_SCOPE ?? "cloud-api";
+export function yandexOAuthConfig() {
+  const read = (name: string) => getPlatformEnv(name)?.trim() || undefined;
+  return {
+    clientId: read("YANDEX_CLIENT_ID"),
+    clientSecret: read("YANDEX_CLIENT_SECRET"),
+    configuredCallbackUrl: read("YANDEX_CALLBACK_URL"),
+    configuredFrontendUrl: read("YANDEX_FRONTEND_URL"),
+    scope: read("YANDEX_OAUTH_SCOPE") ?? "cloud-api",
+  };
+}
 
 function resolveFlow(request: Parameters<typeof resolveOAuthFlow>[0], requestedOrigin?: string) {
+  const { configuredCallbackUrl, configuredFrontendUrl } = yandexOAuthConfig();
   const options: OAuthFlowOptions = { callbackPath: "/api/yandex/callback", configuredCallbackUrl, configuredFrontendUrl, requestedOrigin };
   return resolveOAuthFlow(request, options);
 }
@@ -33,7 +43,8 @@ export async function registerYandexRoutes(app: FastifyInstance) {
     const query = z.object({ origin: z.string().max(500).optional() }).parse(request.query);
     const flow = resolveFlow(request, query.origin);
     const status = await yandexStatus(user.id);
-    return { ...status, configured: Boolean(clientId && clientSecret), callbackUrl: flow.callbackUrl, scope: oauthScope };
+    const { clientId, clientSecret, scope } = yandexOAuthConfig();
+    return { ...status, configured: Boolean(clientId && clientSecret), callbackUrl: flow.callbackUrl, scope };
   });
 
   /** The key/token form: verified against Yandex Cloud before it is stored. */
@@ -68,13 +79,14 @@ export async function registerYandexRoutes(app: FastifyInstance) {
     const user = await requireUser(request, reply); if (!user) return;
     const query = z.object({ origin: z.string().max(500).optional() }).parse(request.query);
     const flow = resolveFlow(request, query.origin);
+    const { clientId, clientSecret, scope } = yandexOAuthConfig();
     if (!clientId || !clientSecret) return redirect(reply, flow.frontendUrl, "not_configured");
     const state = await createOAuthState(user.id, flow.origin);
     const url = new URL("https://oauth.yandex.com/authorize");
     url.searchParams.set("response_type", "code");
     url.searchParams.set("client_id", clientId);
     url.searchParams.set("redirect_uri", flow.callbackUrl);
-    url.searchParams.set("scope", oauthScope);
+    url.searchParams.set("scope", scope);
     url.searchParams.set("state", state);
     return reply.redirect(url.toString());
   });
@@ -89,6 +101,7 @@ export async function registerYandexRoutes(app: FastifyInstance) {
     const flow = resolveFlow(request, originFromOAuthState(query.state) ?? undefined);
     if (query.error) return redirect(reply, flow.frontendUrl, "denied");
     if (!query.code) return redirect(reply, flow.frontendUrl, "error");
+    const { clientId, clientSecret } = yandexOAuthConfig();
     if (!clientId || !clientSecret) return redirect(reply, flow.frontendUrl, "not_configured");
     const oauthUserId = await consumeOAuthState(query.state);
     if (!oauthUserId || oauthUserId !== user.id) return redirect(reply, flow.frontendUrl, "state_expired");

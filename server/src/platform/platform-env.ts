@@ -33,6 +33,11 @@ export const PLATFORM_ENV_CATALOG: PlatformEnvEntry[] = [
   { name: "GITHUB_CALLBACK_URL", group: "github", label: "Callback URL", hint: "Необязательно: пустое поле — адрес берётся из домена панели (https://<домен>/api/github/callback).", kind: "url" },
   { name: "GITHUB_FRONTEND_URL", group: "github", label: "Адрес возврата", hint: "Необязательно: куда вернуть браузер после авторизации (по умолчанию — корень панели).", kind: "url" },
 
+  { name: "YANDEX_CLIENT_ID", group: "yandex", label: "Yandex ID Client ID", hint: "Приложение в oauth.yandex.ru. Нужен для входа через Яндекс; ключ сервисного аккаунта работает и без него.", kind: "value" },
+  { name: "YANDEX_CLIENT_SECRET", group: "yandex", label: "Yandex ID Client secret", hint: "Там же, в настройках приложения Yandex ID.", kind: "secret" },
+  { name: "YANDEX_CALLBACK_URL", group: "yandex", label: "Redirect URI", hint: "Необязательно: по умолчанию https://<домен>/api/yandex/callback. Должен совпадать с Redirect URI в приложении Yandex ID.", kind: "url" },
+  { name: "YANDEX_FRONTEND_URL", group: "yandex", label: "Адрес возврата", hint: "Необязательно: куда вернуть браузер после входа (по умолчанию — корень панели).", kind: "url" },
+  { name: "YANDEX_OAUTH_SCOPE", group: "yandex", label: "OAuth scope", hint: "Необязательно: по умолчанию cloud-api.", kind: "value" },
   { name: "YANDEX_CLOUD_ID", group: "yandex", label: "Cloud ID", hint: "b1g… из консоли Yandex Cloud — идентификатор облака.", kind: "value" },
   { name: "YANDEX_FOLDER_ID", group: "yandex", label: "Folder ID", hint: "b1g… каталога, в котором создан сервисный аккаунт Notification Service.", kind: "value" },
   { name: "YANDEX_SA_KEY", group: "yandex", label: "Ключ сервисного аккаунта (JSON)", hint: "Вставьте файл authorized key целиком. Многострочный JSON и скопированная одной строкой форма с \\n принимаются одинаково.", kind: "json-key" },

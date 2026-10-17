@@ -119,6 +119,8 @@ test("сохранённые в панели ключи сразу видны ч
       PLATFORM_AI_BASE_URL: "https://ai.example/v1",
       PLATFORM_AI_MODEL: "model-x",
       PLATFORM_AI_API_KEY: "ai-key",
+      YANDEX_CLIENT_ID: "yandex-client-id",
+      YANDEX_CLIENT_SECRET: "yandex-client-secret",
     });
 
     const { yandexNotifyConfig, yandexNotifyCredentialKind } = await import("../auth/yandex-notify.js");
@@ -141,6 +143,14 @@ test("сохранённые в панели ключи сразу видны ч
     assert.equal(ai?.model, "model-x");
     assert.equal(ai?.token, "ai-key");
     assert.ok(ai?.provider);
+
+    // Yandex ID читает те же ключи, что вводит панель, — иначе подключение по кнопке
+    // оставалось бы «не настроенным» даже после сохранения ключей в панели.
+    const { yandexOAuthConfig } = await import("../routes/yandex.js");
+    const oauth = yandexOAuthConfig();
+    assert.equal(oauth.clientId, "yandex-client-id");
+    assert.equal(oauth.clientSecret, "yandex-client-secret");
+    assert.equal(oauth.scope, "cloud-api");
   });
 });
 
