@@ -28,9 +28,11 @@ services:
     depends_on:
       - webnestdev-server
     environment:
-      WEBNESTDEV_SITE_DOMAIN: ${WEBNESTDEV_SITE_DOMAIN:-localhost}
-      PREVIEW_PUBLIC_DOMAIN: ${PREVIEW_PUBLIC_DOMAIN:-preview.localhost}
-      ACME_EMAIL: ${ACME_EMAIL:-}
+      # Дефолт — домен этого продакшена: без строки в .env caddy слушает localhost и наружу
+      # не смотрит (HTTPS не работает). .env на ВМ может переопределить.
+      WEBNESTDEV_SITE_DOMAIN: ${WEBNESTDEV_SITE_DOMAIN:-nestdev.ru}
+      PREVIEW_PUBLIC_DOMAIN: ${PREVIEW_PUBLIC_DOMAIN:-preview.nestdev.ru}
+      ACME_EMAIL: ${ACME_EMAIL:-admin@nestdev.ru}
     ports:
       - "80:80"
       - "443:443"
