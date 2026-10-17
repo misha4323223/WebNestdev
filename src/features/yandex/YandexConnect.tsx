@@ -49,6 +49,9 @@ export function YandexConnect({surface="home"}:{surface?:ConnectorSurface}){
   const [saving,setSaving]=useState(false);
   const [notice,setNotice]=useState<string|null>(null);
   const [error,setError]=useState<string|null>(null);
+  // Адрес возврата показывается рядом с кнопкой: Яндекс сверяет redirect_uri с полем
+  // Callback URL посимвольно, и при расхождении отвечает «redirect_uri does not match».
+  const [copied,setCopied]=useState(false);
   const watchRef=useRef<number|null>(null);
 
   const stopWatching=useCallback(()=>{
@@ -91,6 +94,14 @@ export function YandexConnect({surface="home"}:{surface?:ConnectorSurface}){
     window.addEventListener("message",onMessage);
     return ()=>window.removeEventListener("message",onMessage);
   },[loadStatus,stopWatching]);
+
+  async function copyRedirect(value:string){
+    try{
+      await navigator.clipboard.writeText(value);
+      setCopied(true);
+      window.setTimeout(()=>setCopied(false),1600);
+    }catch{setCopied(false)}
+  }
 
   function connect(){
     setError(null);setNotice(null);
@@ -182,6 +193,12 @@ export function YandexConnect({surface="home"}:{surface?:ConnectorSurface}){
           : "Подключите аккаунт Яндекс ID кнопкой или вставьте сервисный ключ — после этого агент сможет читать ресурсы аккаунта."}
       </p>
 
+      {!connected&&info?.configured&&info.callbackUrl&&<div className="connector-redirect">
+        <span>Redirect URI для приложения на oauth.yandex.ru должен быть ровно такой:</span>
+        <code>{info.callbackUrl}</code>
+        <button className="ghost-button" onClick={()=>void copyRedirect(info.callbackUrl!)}>{copied?"Скопировано":"Скопировать"}</button>
+      </div>}
+
       {connected&&<label className="connector-write">
         <span>
           <strong>Разрешить агенту изменять ресурсы</strong>
@@ -211,6 +228,7 @@ export function YandexConnect({surface="home"}:{surface?:ConnectorSurface}){
       {hintOpen&&<div className="connector-hint">
         <strong><ShieldCheck size={13}/> Как подключить аккаунт</strong>
         <p><em>Кнопкой «Подключить»</em> — откроется страница Яндекс ID. Работает, если на сервере заданы <code>YANDEX_CLIENT_ID</code> и <code>YANDEX_CLIENT_SECRET</code> (приложение создаётся на <code>oauth.yandex.ru/client/new</code>).</p>
+        <p><em>Redirect URI</em> — в приложении на oauth.yandex.ru поле Callback URL должно совпадать с адресом выше посимвольно: та же схема (https), тот же домен и путь <code>/api/yandex/callback</code>. При расхождении Яндекс останавливает вход страницей «redirect_uri does not match the Callback URL defined for the client» — ключи при этом верные, править нужно адрес.</p>
         <p><em>Ключом сервисного аккаунта (рекомендуется)</em> — в консоли Yandex Cloud: «Сервисные аккаунты» → создать аккаунт → выдать роли <code>viewer</code> на облако и нужные роли на каталог → «Создать новый ключ» → «Создать авторизованный ключ» → скачается JSON. Вставьте этот JSON целиком.</p>
         <p><em>IAM-токеном</em> — команда <code>yc iam create-token</code> или кнопка «Получить IAM-токен» в консоли. Токен живёт 12 часов.</p>
         <p className="connector-warning"><TriangleAlert size={12}/> Изменения ресурсов выполняются только при включённом переключателе выше: агент спрашивает разрешение, а сервер отклоняет запросы на запись без него.</p>

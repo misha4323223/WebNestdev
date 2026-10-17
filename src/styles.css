@@ -454,6 +454,10 @@ button,textarea{font:inherit}button{color:inherit}
 /* Connector details: key form, write consent and the shared "how to get the keys" box */
 .connector-text{margin:0;color:#828a95;font-size:10.5px;line-height:1.6}
 .connector-meta-line{color:#79818c;font-size:9.5px}
+/* Адрес возврата, который сервер отправит в Яндекс: его копируют в поле Callback URL приложения. */
+.connector-redirect{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding:8px 9px;border:1px solid #2a3138;border-radius:6px;background:#0e1116;color:#8b939e;font-size:10px;line-height:1.5}
+.connector-redirect code{font:600 10px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:#c6ccd4;background:#141a20;border:1px solid #1f262e;border-radius:4px;padding:1px 4px;overflow-wrap:anywhere;user-select:all}
+.connector-redirect button{margin-left:auto}
 .connector-actions-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .connector-actions-row .ghost-button{height:28px;border-color:#2b3139}
 .connector-key{display:grid;gap:8px;padding:10px;border:1px solid #262c34;border-radius:8px;background:#0b0e12}
