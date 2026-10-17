@@ -38,14 +38,26 @@ export type OAuthFlowOptions = {
   requestedOrigin?: string;
 };
 
+/**
+ * Явно заданные адреса важнее вычисленных, но **пустая строка — это не адрес**. Compose передаёт
+ * в контейнер каждую перечисленную переменную, поэтому незаданный `GITHUB_CALLBACK_URL`
+ * приходит как `""`, а не отсутствует. Раньше такое значение побеждало вычисленный адрес: в
+ * GitHub уходил `redirect_uri=` (пустой), а все отказы возвращали в `?github=…` без пути —
+ * кнопка «Подключить» завершалась «ссылка авторизации устарела».
+ */
+function explicitUrl(value?: string) {
+  const text = value?.trim();
+  return text ? text : undefined;
+}
+
 /** Explicit env URLs win, so a pinned deployment keeps working exactly as before. */
 export function resolveOAuthFlow(request: FastifyRequest, options: OAuthFlowOptions) {
   const requested = options.requestedOrigin && isAllowedOrigin(options.requestedOrigin) ? new URL(options.requestedOrigin).origin : null;
   const origin = requested ?? originFromRequest(request) ?? "http://localhost:" + (process.env.PORT ?? 8787);
   return {
     origin,
-    callbackUrl: options.configuredCallbackUrl ?? origin + options.callbackPath,
-    frontendUrl: options.configuredFrontendUrl ?? origin + "/",
+    callbackUrl: explicitUrl(options.configuredCallbackUrl) ?? origin + options.callbackPath,
+    frontendUrl: explicitUrl(options.configuredFrontendUrl) ?? origin + "/",
   };
 }
 

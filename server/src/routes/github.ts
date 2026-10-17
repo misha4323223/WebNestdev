@@ -20,12 +20,14 @@ const oauthScope = "repo";
  * сразу, без перезапуска сервиса. Переменные окружения остаются запасным источником, поэтому
  * выкладка, где ключи заданы в .env, ведёт себя как раньше.
  */
+/** Пустая переменная окружения — это «не задано», а не адрес и не ключ. */
 function githubOAuthConfig() {
+  const read = (name: string) => getPlatformEnv(name)?.trim() || undefined;
   return {
-    clientId: getPlatformEnv("GITHUB_CLIENT_ID")?.trim(),
-    clientSecret: getPlatformEnv("GITHUB_CLIENT_SECRET")?.trim(),
-    configuredCallbackUrl: getPlatformEnv("GITHUB_CALLBACK_URL")?.trim(),
-    configuredFrontendUrl: getPlatformEnv("GITHUB_FRONTEND_URL")?.trim(),
+    clientId: read("GITHUB_CLIENT_ID"),
+    clientSecret: read("GITHUB_CLIENT_SECRET"),
+    configuredCallbackUrl: read("GITHUB_CALLBACK_URL"),
+    configuredFrontendUrl: read("GITHUB_FRONTEND_URL"),
   };
 }
 
