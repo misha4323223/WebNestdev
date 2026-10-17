@@ -1,6 +1,14 @@
 *{box-sizing:border-box}
 :root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#e8eaed;background:#0b0d10;font-synthesis:none;text-rendering:optimizeLegibility}
 body{margin:0;min-width:320px;background:#0b0d10}
+/* Полосы прокрутки в цвет интерфейса: системная белая полоса в тёмной панели
+   выглядит как чужая деталь, особенно в переписке с агентом. */
+*{scrollbar-width:thin;scrollbar-color:#2b333d transparent}
+*::-webkit-scrollbar{width:9px;height:9px}
+*::-webkit-scrollbar-track{background:transparent}
+*::-webkit-scrollbar-thumb{background:#252c35;border:2px solid transparent;background-clip:padding-box;border-radius:999px}
+*::-webkit-scrollbar-thumb:hover{background:#333c47;border:2px solid transparent;background-clip:padding-box}
+*::-webkit-scrollbar-corner{background:transparent}
 button,textarea{font:inherit}button{color:inherit}
 .app-shell{height:100dvh;min-height:100dvh;display:flex;flex-direction:column;overflow:hidden}
 /* Главная и рабочая область живут в дереве одновременно, а показывается одна из них: скрытая
@@ -27,7 +35,36 @@ button,textarea{font:inherit}button{color:inherit}
 .mode-toggle.planner{border-color:#3d3a22;background:#15140a;color:#d7bd79}
 .mode-toggle.planner:hover{border-color:#514c2c;color:#e8d59a}
 .mode-toggle.planner>svg:last-child{color:#8d7f4c}
-.messages{flex:1;min-height:0;overflow:auto;padding:22px 7%;scrollbar-width:thin}.message-row{display:flex;gap:10px;margin:0 auto 22px;max-width:760px}.message-avatar{flex:none;width:27px;height:27px;border-radius:6px;background:#191d23;color:#9ca3ad;display:grid;place-items:center;font-size:9px}.assistant .message-avatar{background:#e8ebef;color:#171a1e}.message-content{min-width:0}.message-role{font-size:10px;font-weight:650;color:#858c96;margin:1px 0 6px}.message-text{font-size:13px;line-height:1.65;color:#d5d8dd;white-space:pre-wrap}.user .message-text{color:#f0f1f3}
+.messages{flex:1;min-height:0;overflow:auto;padding:22px 7%;scrollbar-width:thin}.message-row{display:flex;gap:10px;margin:0 auto 22px;max-width:760px}.message-avatar{flex:none;width:27px;height:27px;border-radius:6px;background:#191d23;color:#9ca3ad;display:grid;place-items:center;font-size:9px}.assistant .message-avatar{background:#e8ebef;color:#171a1e}.message-content{min-width:0}.message-role{font-size:10px;font-weight:650;color:#858c96;margin:1px 0 6px}.message-text{font-size:13px;line-height:1.65;color:#d5d8dd;white-space:pre-wrap;overflow-wrap:anywhere}.user .message-text{color:#f0f1f3}
+/*
+ * Ответ агента — не одна строка текста, а документ: заголовки, списки, таблицы и код.
+ * Отсюда нормальные вертикальные ритмы и «технологичный» моноширинный шрифт для кода:
+ * иначе markdown-разметка модели выглядела как случайные звёздочки в сплошном абзаце.
+ */
+.message-text.markdown{white-space:normal;font-size:14px;line-height:1.74;color:#d7dbe1;letter-spacing:.002em;font-feature-settings:"cv02","cv03","cv04","cv11"}
+.message-text.markdown>:first-child{margin-top:0}
+.message-text.markdown>:last-child{margin-bottom:0}
+.message-text.markdown p{margin:0 0 10px}
+.message-text.markdown h1,.message-text.markdown h2,.message-text.markdown h3,.message-text.markdown h4{margin:18px 0 8px;color:#f0f3f7;font-weight:650;line-height:1.35;letter-spacing:-.01em}
+.message-text.markdown h1{font-size:18px}.message-text.markdown h2{font-size:16px}.message-text.markdown h3{font-size:14px}.message-text.markdown h4{font-size:13px;color:#c3cbd5}
+.message-text.markdown ul,.message-text.markdown ol{margin:0 0 10px;padding-left:20px}
+.message-text.markdown li{margin:3px 0}
+.message-text.markdown li>p{margin:0}
+.message-text.markdown strong{color:#eef2f6;font-weight:650}
+.message-text.markdown em{color:#c8cfd8}
+.message-text.markdown a{color:#7fc7a1;text-decoration:none;border-bottom:1px solid rgba(127,199,161,.35)}
+.message-text.markdown a:hover{color:#a5e0bf;border-color:#7fc7a1}
+.message-text.markdown code{padding:1px 5px;border:1px solid #262d36;border-radius:5px;background:#171c23;color:#cfd6df;font:12px/1.5 ui-monospace,"SF Mono","JetBrains Mono",SFMono-Regular,Menlo,"Cascadia Code",monospace}
+.message-text.markdown pre{margin:0 0 12px;padding:10px 12px;border:1px solid #232a33;border-radius:9px;background:#0c1015;overflow:auto}
+.message-text.markdown pre code{padding:0;border:0;background:transparent;color:#c8d1db;font-size:11.5px;line-height:1.6}
+.message-text.markdown blockquote{margin:0 0 12px;padding:2px 0 2px 12px;border-left:2px solid #2f6f52;color:#a9b3bf}
+.message-text.markdown hr{margin:16px 0;border:0;border-top:1px solid #232a33}
+.message-text.markdown table{width:100%;border-collapse:collapse;font-size:12px}
+.md-table{margin:0 0 12px;border:1px solid #232a33;border-radius:9px;overflow-x:auto}
+.message-text.markdown th{padding:7px 10px;background:#141922;color:#9fa9b5;font-size:10.5px;font-weight:650;letter-spacing:.04em;text-transform:uppercase;text-align:left;white-space:nowrap}
+.message-text.markdown td{padding:7px 10px;border-top:1px solid #1c222b;vertical-align:top;font-variant-numeric:tabular-nums}
+.message-text.markdown tbody tr:nth-child(even) td{background:#0f1319}
+.message-text.markdown input[type=checkbox]{margin:0 6px 0 0;accent-color:#4f8f6b;vertical-align:-1px}
 .composer-wrap{flex:none;padding:0 7% 18px}.composer{max-width:760px;margin:auto;border:1px solid #30353d;background:#111419;border-radius:9px;box-shadow:0 8px 30px rgba(0,0,0,.18)}textarea{display:block;width:100%;resize:none;outline:none;border:0;background:transparent;color:#e8eaed;padding:12px 13px 4px;font-size:12px;line-height:1.5}textarea::placeholder{color:#626a75}.composer-footer{min-height:39px;padding:0 7px 2px 13px;display:flex;align-items:center;justify-content:space-between;gap:10px;color:#5f6670;font-size:9px}
 .composer-tools{display:flex;align-items:center;gap:7px;min-width:0}
 .composer-model{display:flex;align-items:center;gap:5px;min-width:0;max-width:210px;height:29px;padding:0 9px;border:1px solid #282d34;border-radius:8px;background:#0d1013;color:#9aa2ad;font-size:10px;cursor:pointer}
@@ -87,30 +124,24 @@ button,textarea{font:inherit}button{color:inherit}
 .run-panel-body{border-top:1px solid #1d2229;max-height:220px;overflow:auto;scrollbar-width:thin}
 .run-panel-body ul{list-style:none;margin:0;padding:0}
 /*
- * Размышление модели — над её ответом: контейнер, который можно свернуть одним нажатием, с шагом,
- * контекстом и временем в шапке. Пока модель думает, шапка подписана «Размышляю…» и даже в свёрнутом
- * виде показывает последнюю строку мыслей, а развёрнутый блок — окно с самим потоком мыслей.
+ * Размышление модели — над её ответом: слово «Размышляю…» в цвете темы и стрелка «развернуть».
+ * Ни пилюли, ни рамки, ни служебных чисел: развёрнутый блок показывает сам поток мыслей тонким
+ * «рельсом» слева, а свёрнутая строка только говорит, что модель думает. Пока скажет — пульсирует.
  */
-.thinking{margin:0 0 8px;border:1px solid #232a34;border-radius:10px;background:linear-gradient(180deg,#111721,#0e1116 72%);overflow:hidden}
-.thinking-live{border-color:#2b3a4e;box-shadow:0 10px 26px -22px rgba(120,168,224,.55)}
-.thinking-head{display:flex;align-items:center;gap:7px;width:100%;padding:6px 10px;border:0;background:transparent;color:#8b939e;font-size:10.5px;cursor:pointer;text-align:left}
-.thinking-head:hover{background:#141a23}
-.thinking-badge{flex:none;width:19px;height:19px;display:grid;place-items:center;border:1px solid #27303b;border-radius:999px;background:#151b24;color:#8d97a3}
-.thinking-live .thinking-badge{border-color:#31506f;background:radial-gradient(circle at 32% 30%,rgba(120,168,224,.3),rgba(120,168,224,.05));color:#bcd3ec}
-.thinking-title{flex:none;font-weight:600;color:#98a2ae}
-.thinking-live .thinking-title{color:#cfdcea}
-/* Свёрнутый блок не молчит: в шапке живёт последняя мысль модели, обрезанная по левому краю. */
-.thinking-preview{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#6d7784;font:400 10px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;mask-image:linear-gradient(90deg,#000 76%,transparent);-webkit-mask-image:linear-gradient(90deg,#000 76%,transparent)}
-.thinking-meta{margin-left:auto;flex:none;color:#6d7681;font-variant-numeric:tabular-nums}
-.thinking-toggle{flex:none;display:grid;place-items:center;color:#6d7681}
-.thinking-body{border-top:1px solid #1c232c;max-height:260px;overflow:auto;scrollbar-width:thin;background:radial-gradient(120% 80% at 0 0,rgba(120,168,224,.05),transparent 62%),#0d1015}
-.thinking-text{position:relative;white-space:pre-wrap;overflow-wrap:anywhere;padding:10px 12px 12px 20px;color:#98a1ac;font:400 11px/1.72 ui-monospace,SFMono-Regular,Menlo,monospace}
-/* Тонкая линия слева — «рельс» потока мыслей: она связывает строки в одно размышление. */
-.thinking-text::before{content:"";position:absolute;left:9px;top:12px;bottom:12px;width:1px;background:linear-gradient(180deg,rgba(120,168,224,.5),rgba(120,168,224,0))}
+.thinking{margin:0 0 10px}
+.thinking-head{display:inline-flex;align-items:center;gap:6px;max-width:100%;padding:1px 3px 1px 0;border:0;background:transparent;color:#a8c4b4;font-size:11.5px;font-weight:600;letter-spacing:.01em;cursor:pointer;text-align:left}
+.thinking-head:hover{color:#cbe0d3}
+.thinking-title{font-weight:600}
+.thinking-live .thinking-title{color:#b6d2c1;animation:thinking-breathe 2.4s ease-in-out infinite}
+.thinking-toggle{display:grid;place-items:center;color:#6f8578;transition:transform .18s ease}
+.thinking-open .thinking-toggle{transform:rotate(180deg)}
+.thinking-body{margin:8px 0 2px;border-left:1px solid #2a3a31;max-height:260px;overflow:auto;scrollbar-width:thin}
+.thinking-text{position:relative;white-space:pre-wrap;overflow-wrap:anywhere;padding:2px 2px 4px 12px;color:#98a1ac;font:400 11px/1.72 ui-monospace,SFMono-Regular,Menlo,monospace}
 .thinking-cursor{display:inline-block;width:6px;height:11px;margin-left:2px;vertical-align:-1px;background:#7ea6d4;animation:thinking-blink 1s steps(2,start) infinite}
 @keyframes thinking-blink{50%{opacity:0}}
-/* Пока модель не прислала ни строчки размышления, вместо окна — строка о том, что ответ готовится. */
-.thinking-waiting{display:flex;align-items:center;gap:7px;margin:0 0 8px;padding:6px 10px;border:1px solid #232a34;border-radius:10px;background:#0f1216;color:#8b939e;font-size:10.5px}
+@keyframes thinking-breathe{0%,100%{opacity:.72}50%{opacity:1}}
+/* Пока модель не прислала ни строчки размышления, видно только слово: разворачивать пока нечего. */
+.thinking-waiting{display:flex;align-items:center;margin:0 0 10px;color:#a8c4b4;font-size:11.5px;font-weight:600}
 .agent-plan-bar{height:3px;background:#1a1f26}
 .agent-plan-bar span{display:block;height:100%;background:linear-gradient(90deg,#3d6a4d,#6aa37c);transition:width .25s ease}
 
@@ -574,6 +605,23 @@ button,textarea{font:inherit}button{color:inherit}
 .sessions-modal{width:min(560px,100%)}
 .sessions-modal .modal-body{align-content:start;gap:8px}
 .sessions-modal .modal-foot{flex-wrap:wrap}
+/*
+ * Запрос ключа: узкое окно, которое читается сверху вниз — причина, имя переменной и файл, поле
+ * ввода и предупреждение. Значение показывается только звёздочками: поле не хранит текст после
+ * отправки, а в переписку оно не попадает вообще.
+ */
+.secret-modal{width:min(520px,100%)}
+.secret-modal .modal-body{align-content:start;gap:12px}
+.secret-target{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px 11px;border:1px solid #262e36;border-radius:9px;background:#12161c}
+.secret-variable{display:inline-flex;align-items:center;gap:6px;color:#e8ecf1;font:600 12px/1 ui-monospace,"SF Mono","JetBrains Mono",SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}
+.secret-variable svg{flex:none;color:#8fae9c}
+.secret-file{margin-left:auto;color:#7f8792;font:11px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace}
+.secret-field{display:grid;gap:6px}
+.secret-field>span{color:#8b939e;font-size:10.5px}
+.secret-field input{height:36px;padding:0 11px;border:1px solid #2b323b;border-radius:8px;background:#0d1013;color:#e8eaed;font:12px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace}
+.secret-field input:focus{outline:none;border-color:#3f6b53;box-shadow:0 0 0 3px rgba(79,143,107,.16)}
+.secret-note{display:flex;gap:7px;margin:0;color:#7f8792;font-size:10.5px;line-height:1.6}
+.secret-note svg{flex:none;margin-top:2px;color:#6f9c81}
 .session-list{list-style:none;margin:0;padding:0;display:grid;gap:7px}
 .session-item{width:100%;display:grid;gap:4px;padding:10px 12px;border:1px solid #22282f;border-radius:9px;background:#101318;color:inherit;text-align:left;cursor:pointer}
 .session-item:hover{border-color:#363d46;background:#14171c}
@@ -666,3 +714,39 @@ button,textarea{font:inherit}button{color:inherit}
 .preview-logs-error{margin:0;border-radius:0;border-width:0 0 1px}
 .preview-logs-actions{padding:10px 12px;border-top:1px solid #1b2027;background:#0d1014}
 .preview-logs-actions .ghost-button{border-color:#2b3139}
+
+/* Ключи сервера: панель администратора. Источник значения (панель / .env / не задан) виден
+   рядом с именем ключа — это и есть ответ на «почему ключ в .env, а панель его не показывает». */
+.platform-keys .settings-body{gap:13px}
+.platform-muted{margin:0;color:#78808a;font-size:10.5px;line-height:1.55}
+.platform-guide{display:flex;gap:8px;align-items:flex-start;padding:10px;border:1px solid #3a3324;border-radius:6px;background:#1a1710;color:#c9b384;font-size:10.5px;line-height:1.55}
+.platform-guide svg{flex:none;margin-top:1px}
+.platform-drop{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 12px;border:1px dashed #2d343d;border-radius:8px;background:#0d1014;transition:border-color .15s,background .15s}
+.platform-drop.dragging,.platform-drop:hover{border-color:#3f6b53;background:#0f1512}
+.platform-drop>div{display:grid;grid-template-columns:auto 1fr;gap:2px 8px;align-items:center;color:#9aa2ac;font-size:10.5px;line-height:1.45}
+.platform-drop>div svg{grid-row:span 2}
+.platform-drop>div strong{color:#d5d8dd;font-size:11px;font-weight:600}
+.platform-drop>div span{grid-column:2}
+.platform-env-text{width:100%;min-height:64px;border:1px solid #2a3038;border-radius:8px;background:#0b0d10;color:#dce0e5;padding:8px 10px;font:11px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;resize:vertical;box-sizing:border-box}
+.platform-env-text:focus{outline:none;border-color:#3f6b53;box-shadow:0 0 0 3px rgba(79,143,107,.16)}
+.platform-group{display:grid;gap:11px;padding-top:14px;border-top:1px solid #20242a}
+.platform-group-head{display:grid;gap:3px}
+.platform-group-head strong{color:#d5d8dd;font-size:11.5px}
+.platform-group-head span{color:#79818b;font-size:10px;line-height:1.5}
+.platform-key{display:grid;gap:5px}
+.platform-key-label{display:flex;align-items:center;gap:7px;flex-wrap:wrap;color:#c9cdd3;font-size:11px}
+.platform-key-label code{color:#8b93a0;font:10px/1 ui-monospace,SFMono-Regular,Menlo,monospace;padding:2px 5px;border:1px solid #262c34;border-radius:4px;background:#14181d}
+.platform-source{font-size:9px;letter-spacing:.02em;padding:2px 6px;border-radius:999px;border:1px solid #2a3038;color:#8b93a0;background:#14181d}
+.platform-source.panel{border-color:#2d4a39;color:#8fc7a2;background:#11201a}
+.platform-source.environment{border-color:#3f3a2b;color:#c6b487;background:#1a1710}
+.platform-source.none{color:#79818b}
+.platform-hint{color:#6f7781;font-size:10px;line-height:1.45}
+.platform-result{display:flex;gap:7px;align-items:flex-start;padding:9px 10px;border:1px solid #26352d;border-radius:6px;background:#101a14;color:#93b59e;font-size:10.5px;line-height:1.5;overflow-wrap:anywhere}
+.platform-result svg{flex:none;margin-top:1px}
+.platform-keys .settings-error{padding:9px 10px;border:1px solid #4a3030;border-radius:6px;background:#1b1212;color:#d99b9b;font-size:10.5px;line-height:1.5;overflow-wrap:anywhere}
+.platform-secret-row{display:flex;gap:6px;align-items:flex-start}
+.platform-secret-row .secret-field{flex:1;min-width:0}
+.platform-reveal{flex:none;height:36px;border-color:#2b323b}
+.platform-keys .model-row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.platform-counter{color:#6f7781;font-size:10px;align-self:center}
+@media(max-width:650px){.platform-drop{flex-direction:column;align-items:flex-start}}

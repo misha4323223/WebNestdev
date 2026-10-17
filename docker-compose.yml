@@ -78,6 +78,18 @@ services:
       AI_BASE_URL: ${AI_BASE_URL:-}
       AI_MODEL: ${AI_MODEL:-}
       AI_API_KEY: ${AI_API_KEY:-}
+      # Модель платформы: то, чем пользуются проекты без своего провайдера. Значения из .env —
+      # запасной источник; те же ключи, введённые в панели «Ключи сервера», читаются из DATA_DIR
+      # и переживают выкатку (см. server/src/platform/platform-env.ts).
+      PLATFORM_AI_PROVIDER: ${PLATFORM_AI_PROVIDER:-}
+      PLATFORM_AI_BASE_URL: ${PLATFORM_AI_BASE_URL:-}
+      PLATFORM_AI_MODEL: ${PLATFORM_AI_MODEL:-}
+      PLATFORM_AI_API_KEY: ${PLATFORM_AI_API_KEY:-}
+      # Кто может менять ключи платформы. Только из окружения и намеренно не из панели: иначе
+      # доступ к ключам сервиса можно было бы расширить изнутри панели. Пусто — панель закрыта
+      # и объясняет, как назначить администратора.
+      WEBNESTDEV_ADMIN_EMAILS: ${WEBNESTDEV_ADMIN_EMAILS:-}
+      WEBNESTDEV_ADMIN_USER_IDS: ${WEBNESTDEV_ADMIN_USER_IDS:-}
       # Вход по номеру телефона. Compose передаёт в контейнер только перечисленные здесь
       # переменные: ключи SMS-провайдера, лежавшие в .env, до сервера не доходили, вход по
       # номеру молча переходил в тестовый режим (код только в логах), а выкатка ещё и

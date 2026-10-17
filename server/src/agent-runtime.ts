@@ -19,8 +19,15 @@ import { parseChangedSource, type ParsedChange } from "./qa/change-parser.js";
  */
 const MUTATING_TOOLS=new Set(["fs.write","fs.rename","fs.delete","terminal.exec","npm.install","database.env"]);
 const MAX_CONSECUTIVE_VERIFY_FAILURES=3;
-/** Git bookkeeping changes the repository, not the code, so it is not verified. */
-const PLANNER_FORBIDDEN_TOOLS=new Set(["git.add","git.commit"]);
+/**
+ * Git bookkeeping changes the repository, not the code, so it is not verified.
+ *
+ * `secrets.request` пишет файл окружения проекта, а планировщик не меняет проект вообще: там ключ
+ * спрашивают в режиме разработчика. В наборы, запускающие проверку, инструмент не входит по другой
+ * причине: сохранённый ключ сам по себе не требует сборки и прогона приложения — проверкой займётся
+ * тот шаг, который начнёт использовать его в коде.
+ */
+const PLANNER_FORBIDDEN_TOOLS=new Set(["git.add","git.commit","secrets.request"]);
 
 /**
  * Planner mode still has to read the project, so plain inspection commands are allowed

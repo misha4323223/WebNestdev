@@ -21,6 +21,12 @@ export type AgentEvent=
    * `attempt` — какая попытка идёт, `waitSeconds` — сколько агент подождёт перед ней.
    */
   | {type:"run.retrying";runId:string;attempt:number;attempts:number;waitSeconds:number;code?:string}
+  /**
+   * Инструмент `secrets.request` просит пользователя ввести ключ в модальном окне. Событие несёт
+   * только имя переменной, файл и причину — само значение идёт другим путём: HTTP-запросом в
+   * `/api/projects/:id/secrets`, прямо в песочницу проекта, и модели не возвращается никогда.
+   */
+  | {type:"secret.requested";runId:string;requestId:string;variable:string;purpose:string;file:string;expiresAt:number}
   | {type:"run.completed";runId:string}
   /** `code` is a machine-readable reason (CONTEXT_OVERFLOW, AUTH, RATE_LIMIT) for the panel. */
   | {type:"run.failed";runId:string;error:string;code?:string};
@@ -40,6 +46,11 @@ export type AgentMode="planner"|"developer";
  * starts before anything is stored.
  */
 export type AgentRunRequest={projectId:string;conversationId?:string;messages:ChatMessage[];history?:ChatMessage[];model?:string;mode?:AgentMode;resume?:{reason?:string};userId:string};
-export type ToolContext={projectId:string;runId:string;userId:string};
+/**
+ * `emit` и `signal` нужны инструментам, которые работают не сами по себе, а вместе с пользователем:
+ * `secrets.request` показывает модальное окно через поток запуска и ждёт ответа, а остановка запуска
+ * должна закрыть это ожидание, а не оставить инструмент висеть.
+ */
+export type ToolContext={projectId:string;runId:string;userId:string;emit?:(event:AgentEvent)=>void;signal?:AbortSignal};
 export type ToolHandler=(input:unknown,context:ToolContext)=>Promise<unknown>;
 export type ToolDefinition={name:string;description:string;execute?:ToolHandler;async?:ToolHandler;/** Optional JSON Schema sent to the provider so the model knows the exact input shape. */parameters?:Record<string,unknown>};

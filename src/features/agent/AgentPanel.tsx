@@ -1,14 +1,33 @@
-import { useCallback,useEffect,useRef,useState } from "react";
-import { AlertTriangle,ArrowLeftRight,ClipboardList,Code2,Cpu,FileText,Image as ImageIcon,ListPlus,MessagesSquare,Paperclip,Play,Plus,RotateCcw,Send,Sparkles,Square,X } from "lucide-react";
+import { useCallback,useEffect,useRef,useState,type MouseEvent as ReactMouseEvent } from "react";
+import Markdown,{type Components } from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { AlertTriangle,ArrowLeftRight,ClipboardList,Code2,Cpu,FileText,Image as ImageIcon,KeyRound,ListPlus,MessagesSquare,Paperclip,Play,Plus,RotateCcw,Send,ShieldCheck,Sparkles,Square,X } from "lucide-react";
 import { createAgentSocket } from "../../lib/agent-socket";
 import { apiJson } from "../../lib/api";
-import { createConversation,getConversation,listConversations,uploadProjectFile,type ConversationSummary } from "../../lib/project-api";
+import { cancelProjectSecret,createConversation,getConversation,listConversations,submitProjectSecret,uploadProjectFile,type ConversationSummary } from "../../lib/project-api";
 import { NestLoader } from "../../components/NestLoader";
 import { ActionsPanel,MessageThinking,PlanPanel,actionTarget,deriveActions,readPlan,writePlan,type PanelId,type PanelState } from "./agent-activity";
 import type { AgentAction,AgentMode,ChatMessage,PlanState } from "../../lib/types";
 
 const modeKey="webnestdev.agentMode";
 const panelsKey="webnestdev.runPanels";
+/**
+ * Ответ агента — markdown: заголовки, списки, таблицы и блоки кода. Таблица оборачивается
+ * в прокручиваемый контейнер, иначе широкая таблица растягивает всю переписку, а ссылка
+ * из ответа открывается в новой вкладке, не уводя из рабочей области.
+ */
+const markdownComponents:Components={
+  table:({node,...props})=>{void node;return <div className="md-table"><table {...props}/></div>},
+};
+function openMarkdownLink(event:ReactMouseEvent<HTMLDivElement>){
+  const anchor=(event.target as HTMLElement).closest("a");
+  const href=anchor?.getAttribute("href");
+  // Только внешние ссылки уходят в новую вкладку: якоря и относительные пути должны работать
+  // как обычно, а `javascript:`-адрес сюда не попадает вовсе.
+  if(!href||!anchor||!/^https?:/i.test(href))return;
+  event.preventDefault();
+  window.open(href,"_blank","noopener,noreferrer");
+}
 
 /**
  * The three run windows collapse and remember their state. They live in their own
@@ -64,6 +83,11 @@ function readStoredMode():AgentMode{
   try{return localStorage.getItem(modeKey)==="planner"?"planner":"developer"}catch{return "developer"}
 }
 
+/**
+ * Запрос ключа, пришедший событием запуска. Значение здесь не хранится — его вводит пользователь
+ * в модальном окне, и оно уходит на сервер отдельным запросом.
+ */
+type SecretPrompt={requestId:string;variable:string;purpose:string;file:string};
 type Attachment={id:string;name:string;path:string;bytes:number;image:boolean};
 type QueuedMessage={id:string;text:string;attachments:Attachment[]};
 /**
@@ -151,9 +175,14 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
   const [actions,setActions]=useState<AgentAction[]>([]);
   const [panels,setPanels]=useState<PanelState>(readPanelState);
   const [progress,setProgress]=useState<{step:number;maxSteps:number;tokens?:number;budget?:number}|null>(null);
-  // When the current run started: the thinking container of the answer shows the elapsed time, so a
-  // model that streams no reasoning does not look like a hang.
-  const [runStartedAt,setRunStartedAt]=useState<number|null>(null);
+  /**
+   * Запрос ключа от агента. Само значение живёт только в этом состоянии до отправки и уходит прямо
+   * в песочницу проекта: оно не попадает ни в переписку, ни в события, ни в ответы модели.
+   */
+  const [secretPrompt,setSecretPrompt]=useState<SecretPrompt|null>(null);
+  const [secretValue,setSecretValue]=useState("");
+  const [secretBusy,setSecretBusy]=useState(false);
+  const [secretError,setSecretError]=useState("");
   const [quotaNotice,setQuotaNotice]=useState<"storage"|"daily"|null>(null);
   // The project's saved chats. The list comes from the server, so a chat is something
   // the user can return to from another device, not just from this browser.
@@ -295,6 +324,18 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
     setNotice("");
   }
 
+  /**
+   * Окно ключа закрывается вместе со своим запуском, чатом или отменой: запрос, переживший запуск,
+   * отправлял бы значение в пустоту (`delivered:false` на сервере). Введённое значение очищается
+   * всегда — в поле оно не хранится.
+   */
+  function clearSecretPrompt(){
+    setSecretPrompt(null);
+    setSecretValue("");
+    setSecretError("");
+    setSecretBusy(false);
+  }
+
   useEffect(()=>()=>cancelAutoResume(),[]);
 
   /** A cancelled or aborted run leaves rows spinning, so they are settled as failed. */
@@ -315,6 +356,8 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
     autoResumeRef.current=0;setReconnect(null);setResume(null);closedByUsRef.current=true;
     actionsRef.current=[];setActions([]);setProgress(null);
     setPlan(readPlan(conversationId));
+    // Запрос ключа принадлежит запуску в этом чате: при открытии другого окно устаревает.
+    clearSecretPrompt();
     void getConversation(conversationId).then(conversation=>{
       if(cancelled)return;
       // The whole stored history comes back: answers, the thinking that now sits above each of them
@@ -394,7 +437,6 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
     if(!resuming)setReconnect(null);
     updateActions(()=>[]);
     setProgress(null);
-    setRunStartedAt(Date.now());
     completedRef.current=false;
 
     /**
@@ -457,6 +499,12 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
         updateActions(current=>current.map(action=>action.id===id?{...action,status:failed?"failed":"done",durationMs:Date.now()-action.startedAt}:action));
       }
       if(event.type==="plan.updated"&&event.plan)updatePlan(event.plan);
+      if(event.type==="secret.requested"&&event.requestId&&event.variable){
+        // Агент просит ключ: окно показывает только имя переменной, файл и причину; значение
+        // вводит пользователь, и в переписку оно не попадает.
+        setSecretPrompt({requestId:event.requestId,variable:event.variable,purpose:event.purpose??"",file:event.file??".env.local"});
+        setSecretValue("");setSecretError("");
+      }
       if(event.type==="run.completed"){completedRef.current=true;endRun(socket,{drain:true});onChanged();void loadSessions()}
       if(event.type==="run.failed"){
         // A run that died on the context limit has a different fix than a failed tool call, so the
@@ -533,7 +581,7 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
           // Сокет мёртв, поэтому ссылка освобождается сразу: следующая попытка создаст новый.
           socketRef.current=null;
           setRunning(false);
-          setRunStartedAt(null);
+          clearSecretPrompt();
           settleActions();
           return;
         }
@@ -555,7 +603,8 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
     if(socket&&socketRef.current===socket)socketRef.current=null;
     if(socket)try{socket.close()}catch{}
     setRunning(false);
-    setRunStartedAt(null);
+    // Запуск кончился — окно ключа закрывается вместе с ним: запрос всё равно уже неактуален.
+    clearSecretPrompt();
     setReconnect(null);
     settleActions();
     setResume(options.resume??null);
@@ -581,7 +630,7 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
     socketRef.current=null;
     if(socket)try{socket.close()}catch{}
     setRunning(false);
-    setRunStartedAt(null);
+    clearSecretPrompt();
     setReconnect(null);
     settleActions();
     setResume(options.resume===false?null:{reason:"пользователь остановил запуск вручную",label:"Запуск остановлен вами — агент продолжит с того же места."});
@@ -636,6 +685,35 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
   function removeQueued(id:string){
     queueRef.current=queueRef.current.filter(entry=>entry.id!==id);
     setQueue(queueRef.current);
+  }
+
+  /**
+   * Значение ключа уходит отдельным запросом прямо в песочницу проекта: агент получает только
+   * подтверждение. Поэтому оно не появляется ни в переписке, ни в событиях запуска.
+   */
+  async function saveSecret(){
+    const prompt=secretPrompt;
+    if(!prompt||secretBusy||!secretValue.trim())return;
+    const value=secretValue;
+    setSecretBusy(true);setSecretError("");
+    try{
+      await submitProjectSecret(projectId,prompt.requestId,value);
+      setSecretPrompt(null);
+      setNotice("Ключ сохранён в "+prompt.file+" — агент продолжает работу, не видя значения.");
+    }catch(error){
+      setSecretError(error instanceof Error?error.message:"Не удалось сохранить ключ");
+    }finally{
+      // Значение не остаётся в поле даже после ошибки: повторный ввод дешевле утечки.
+      setSecretValue("");setSecretBusy(false);
+    }
+  }
+
+  /** Отмена: агент получает отказ и продолжает без ключа, а не ждёт до таймаута. */
+  async function cancelSecret(){
+    const prompt=secretPrompt;
+    if(!prompt)return;
+    clearSecretPrompt();
+    try{await cancelProjectSecret(projectId,prompt.requestId)}catch{}
   }
 
   /** Another chat of the same project: the panel loads its stored turns on switch. */
@@ -721,8 +799,12 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
           <div className="message-content">
             <div className="message-role">{m.role==="assistant"?"WebNestdev":"Вы"}</div>
             {/* Размышление — над ответом, в своём контейнере, который можно свернуть и развернуть. */}
-            {m.role==="assistant"&&(m.reasoning||live)&&<MessageThinking text={m.reasoning??""} running={live} progress={progress} startedAt={runStartedAt}/>}
-            <div className="message-text">{m.content || (running ? <NestLoader size={34} label="WebNestdev выполняет задачу" /> : "")}</div>
+            {m.role==="assistant"&&(m.reasoning||live)&&<MessageThinking text={m.reasoning??""} running={live}/>}
+            {m.role==="assistant"
+              ? <div className="message-text markdown" onClick={openMarkdownLink}>{m.content
+                  ? <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{m.content}</Markdown>
+                  : running ? <NestLoader size={34} label="WebNestdev выполняет задачу" /> : ""}</div>
+              : <div className="message-text">{m.content}</div>}
           </div>
         </div>;
       })}
@@ -795,6 +877,42 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
       </div>
       {notice&&<div className="composer-notice">{notice}</div>}
     </div>
+
+    {secretPrompt&&<div className="modal-backdrop" role="presentation" onMouseDown={()=>void cancelSecret()}>
+      <section className="modal secret-modal" role="dialog" aria-modal="true" aria-label="Агент запрашивает ключ" onMouseDown={event=>event.stopPropagation()}>
+        <header className="modal-head">
+          <div><span className="eyebrow">КЛЮЧ ДОСТУПА</span><h2>Нужен ваш ключ</h2></div>
+          <button className="icon-button" onClick={()=>void cancelSecret()} aria-label="Отменить запрос"><X size={16}/></button>
+        </header>
+        <div className="modal-body">
+          <p className="modal-lead">{secretPrompt.purpose||"Агент просит ключ, чтобы продолжить работу над задачей."}</p>
+          <div className="secret-target">
+            <span className="secret-variable"><KeyRound size={13}/> {secretPrompt.variable}</span>
+            <span className="secret-file">→ {secretPrompt.file}</span>
+          </div>
+          <label className="secret-field">
+            <span>Значение ключа</span>
+            <input
+              type="password"
+              autoFocus
+              autoComplete="new-password"
+              spellCheck={false}
+              value={secretValue}
+              onChange={event=>setSecretValue(event.target.value)}
+              onKeyDown={event=>{if(event.key==="Enter"){event.preventDefault();void saveSecret()}if(event.key==="Escape")void cancelSecret()}}
+              placeholder="Вставьте значение — в чате оно не появится"
+              aria-label={secretPrompt.variable}
+            />
+          </label>
+          <p className="secret-note"><ShieldCheck size={12}/> Значение видит только сервер: оно сразу записывается в файл проекта, а агент получает подтверждение без самого ключа. В переписку, ответы модели и историю запуска оно не попадает.</p>
+          {secretError&&<div className="connector-notice">{secretError}</div>}
+        </div>
+        <footer className="modal-foot">
+          <button className="ghost-button" onClick={()=>void cancelSecret()} disabled={secretBusy}>Отмена</button>
+          <button className="send-button" onClick={()=>void saveSecret()} disabled={secretBusy||!secretValue.trim()}>{secretBusy?"Сохраняем…":"Сохранить и продолжить"}</button>
+        </footer>
+      </section>
+    </div>}
 
     {quotaNotice&&<div className="modal-backdrop" role="presentation" onMouseDown={()=>setQuotaNotice(null)}>
       <section className="modal quota-modal" role="dialog" aria-modal="true" aria-label="Лимит тарифа достигнут" onMouseDown={event=>event.stopPropagation()}>

@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Activity,
-  Brain,
   ChevronDown,
   ChevronRight,
   CircleAlert,
@@ -13,6 +12,7 @@ import {
   FolderTree,
   GitBranch,
   Globe,
+  KeyRound,
   ListChecks,
   LoaderCircle,
   MonitorCheck,
@@ -53,6 +53,7 @@ const TOOL_ICONS: Record<string, ActionDescriptor> = {
   "browser.runtime": { icon: MonitorCheck, label: "Проверяет в Chromium" },
   "browser.scenario": { icon: MousePointerClick, label: "Прогоняет сценарий пользователя" },
   "plan.update": { icon: ListChecks, label: "Обновляет план задач" },
+  "secrets.request": { icon: KeyRound, label: "Запрашивает ключ" },
 };
 
 const PREFIX_ICONS: Array<[string, ActionDescriptor]> = [
@@ -84,7 +85,7 @@ export function actionTarget(name: string, input: unknown): string {
     const list = (packages ?? []).map(text).filter(Boolean);
     if (list.length) return list.join(", ");
   }
-  for (const key of ["command", "path", "url", "query", "message", "branch", "name", "title"]) {
+  for (const key of ["command", "path", "url", "query", "message", "branch", "name", "title", "variable"]) {
     const candidate = text(value[key]);
     if (candidate) return candidate;
   }
@@ -266,61 +267,21 @@ export function ActionsPanel({ actions, running, progress, collapsed, onToggle }
 }
 
 /**
- * Seconds since the run started, ticked once a second. The panel used to show one frozen sentence
- * while the model worked, which read as a hang; the elapsed time is what makes it visibly alive even
- * for models that stream no reasoning at all.
- */
-function useElapsedSeconds(since: number | null | undefined) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!since) return;
-    const timer = setInterval(() => setNow(Date.now()), 1000);
-    return () => clearInterval(timer);
-  }, [since]);
-  return since ? Math.max(0, Math.round((now - since) / 1000)) : null;
-}
-
-function formatTokens(value: number) {
-  return value >= 1000 ? Math.round(value / 1000) + "K" : String(value);
-}
-
-/**
- * Последняя содержательная строка размышления — то, что видно в свёрнутом контейнере. Читая только
- * её, пользователь видит, что модель действительно думает над его задачей, а не ждёт ответа.
- */
-function lastThoughtLine(text: string) {
-  const lines = text.split("\n").map(line => line.trim()).filter(Boolean);
-  const last = lines.at(-1) ?? "";
-  return last.length > 160 ? "…" + last.slice(-160) : last;
-}
-
-/** Объём размышления — единственное, что можно сказать о свёрнутом готовом блоке. */
-function thoughtSize(text: string) {
-  const chars = text.trim().length;
-  return chars >= 1000 ? (Math.round(chars / 100) / 10).toLocaleString("ru-RU") + " тыс. символов" : chars + " символов";
-}
-
-/**
- * The chain of thought of one answer, shown **above** it — the model thinks first and writes after,
- * and the thinking is the container the user can fold away rather than a separate window far from the
- * text it explains.
+ * The chain of thought of one answer, shown **above** it — the model thinks first and writes after, so
+ * the thinking sits where the answer will appear rather than in a separate window far from the text it
+ * explains — and one click folds it away.
  *
- * While the run is working the container is open, so the user sees the reasoning where the answer
- * will appear, with the step, the context size and the elapsed time next to it. The user's own choice
- * is stronger than that default: once the block was folded or unfolded by hand, it stays the way the
- * user left it. Folded it is not silent: the header keeps showing the **last line** of the thought
- * stream, so hiding the window means "give me space", not "stop showing me that it works".
+ * Строка размышления не спорит с ответом за внимание: это одно слово «Размышляю…» в цвете темы и
+ * стрелка «развернуть». Ни пилюли, ни рамки, ни служебных чисел — развернув, пользователь читает сам
+ * поток мыслей; свёрнутая строка лишь говорит, что модель думает.
  *
- * A model that sends no reasoning at all (most non-reasoning gateways) gets no empty window with a
- * promise in it — only a live line saying that the answer is being prepared, with the same step,
- * context and time. The window itself appears at the moment the model really says something.
+ * Пока модель не прислала ни строчки размышления, остаётся та же надпись без стрелки: разворачивать
+ * нечего. Выбор пользователя сильнее умолчания: если блок свернули руками, он таким и останется.
  */
-export function MessageThinking({ text, running, progress, startedAt }: {
+export function MessageThinking({ text, running }: {
   text: string;
   /** The answer this block belongs to is being written right now. */
   running?: boolean;
-  progress?: { step: number; maxSteps: number; tokens?: number; budget?: number } | null;
-  startedAt?: number | null;
 }) {
   const [open, setOpen] = useState(Boolean(running));
   const [chosen, setChosen] = useState(false);
@@ -332,32 +293,16 @@ export function MessageThinking({ text, running, progress, startedAt }: {
     if (!box || !running) return;
     box.scrollTop = box.scrollHeight;
   }, [text, running]);
-  const elapsed = useElapsedSeconds(running ? startedAt : null);
   const said = Boolean(text.trim());
-  // Шаг, размер контекста и время — это признаки живого запуска: у сохранённого ответа они значили бы
-  // чужой прогресс, поэтому строка собирается только пока блок работает.
-  const detail = !running ? "" : [
-    progress ? "шаг " + progress.step + " из " + progress.maxSteps : "",
-    progress?.tokens ? "контекст " + formatTokens(progress.tokens) + (progress.budget ? " / " + formatTokens(progress.budget) : "") : "",
-    elapsed !== null ? elapsed + " с" : "",
-  ].filter(Boolean).join(" · ");
   // Ни строчки размышления — не повод для пустого окна с обещанием: пока модель молчит, видно только
-  // то, что запуск идёт, а окно размышлений появляется в тот момент, когда модель что-то прислала.
-  if (!said && running) return <div className="thinking-waiting" role="status">
-    <LoaderCircle size={12} className="agent-spin"/>
-    <span>Готовит ответ…</span>
-    {detail && <span className="thinking-meta">{detail}</span>}
-  </div>;
+  // слово, которое само пульсирует, пока идёт работа. Разворачивать нечего, поэтому без стрелки.
+  if (!said && running) return <div className="thinking-waiting" role="status"><span className="thinking-title">Размышляю…</span></div>;
   // A finished turn without thinking says nothing: an empty folded row would only be noise.
   if (!said) return null;
-  const meta = running ? detail : thoughtSize(text);
   return <div className={"thinking" + (open ? " thinking-open" : "") + (running ? " thinking-live" : "")}>
     <button type="button" className="thinking-head" title={open ? "Свернуть размышления" : "Развернуть размышления"} onClick={() => { setChosen(true); setOpen(value => !value); }} aria-expanded={open}>
-      <span className="thinking-badge">{running ? <LoaderCircle size={12} className="agent-spin"/> : <Brain size={12}/>}</span>
       <span className="thinking-title">{running ? "Размышляю…" : "Размышления"}</span>
-      {!open && <span className="thinking-preview">{lastThoughtLine(text)}</span>}
-      {meta && <span className="thinking-meta">{meta}</span>}
-      <span className="thinking-toggle">{open ? <ChevronDown size={12}/> : <ChevronRight size={12}/>}</span>
+      <span className="thinking-toggle"><ChevronDown size={12}/></span>
     </button>
     {open && <div className="thinking-body" ref={bodyRef}>
       <div className="thinking-text">{text}{running && <span className="thinking-cursor" aria-hidden="true"/>}</div>

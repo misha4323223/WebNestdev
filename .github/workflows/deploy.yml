@@ -141,6 +141,21 @@ jobs:
           # Ключ сервисного аккаунта Yandex Cloud (файл JSON целиком). Необязательный: без него
           # выкатка идёт как раньше, а SMS остаётся нерабочим и говорит об этом в логе.
           YANDEX_SA_KEY_JSON: ${{ secrets.YANDEX_SA_KEY_JSON }}
+          # Те же ключи можно ввести в панели «Ключи сервера» — тогда здесь ничего не нужно.
+          # Значения отсюда — запасной источник для чистой ВМ: они попадают в .env, а панель
+          # остаётся важнее (её значения лежат в DATA_DIR и переживают выкатку).
+          # GitHub запрещает секреты и переменные с префиксом GITHUB_ (он зарезервирован под
+          # служебные значения), поэтому в настройках репозитория эти два ключа называются
+          # GH_OAUTH_CLIENT_ID / GH_OAUTH_CLIENT_SECRET, а в .env попадают под обычными именами,
+          # которые читает сервер.
+          GH_OAUTH_CLIENT_ID: ${{ secrets.GH_OAUTH_CLIENT_ID }}
+          GH_OAUTH_CLIENT_SECRET: ${{ secrets.GH_OAUTH_CLIENT_SECRET }}
+          GH_CALLBACK_URL: ${{ vars.GH_CALLBACK_URL }}
+          GH_FRONTEND_URL: ${{ vars.GH_FRONTEND_URL }}
+          YANDEX_CLOUD_ID: ${{ secrets.YANDEX_CLOUD_ID }}
+          YANDEX_FOLDER_ID: ${{ secrets.YANDEX_FOLDER_ID }}
+          WEBNESTDEV_ADMIN_EMAILS: ${{ secrets.WEBNESTDEV_ADMIN_EMAILS }}
+          WEBNESTDEV_ADMIN_USER_IDS: ${{ secrets.WEBNESTDEV_ADMIN_USER_IDS }}
         run: |
           set -euo pipefail
           # Чистим переменные от скрытых символов (CRLF из Windows при вставке секретов)
@@ -162,6 +177,29 @@ jobs:
           # осталась бы с прежним Caddyfile, и правка публичных адресов предпросмотра
           # требовала бы захода на сервер руками.
           CADDY_B64=$(base64 -w0 deploy/Caddyfile)
+          # Ключи платформы и админ панели — тем же способом: файл, а не аргумент команды.
+          # Пустое значение не передаётся вовсе: незаведённый секрет не должен стирать
+          # настройку, которую уже сделали на ВМ.
+          PLATFORM_ENV_FILE=""
+          PLATFORM_ENV_LOCAL=$(mktemp)
+          add_platform_env() { [ -n "${2:-}" ] && printf '%s=%s\n' "$1" "$2" >> "$PLATFORM_ENV_LOCAL" || true; }
+          add_platform_env GITHUB_CLIENT_ID "$GH_OAUTH_CLIENT_ID"
+          add_platform_env GITHUB_CLIENT_SECRET "$GH_OAUTH_CLIENT_SECRET"
+          add_platform_env GITHUB_CALLBACK_URL "$GH_CALLBACK_URL"
+          add_platform_env GITHUB_FRONTEND_URL "$GH_FRONTEND_URL"
+          add_platform_env YANDEX_CLOUD_ID "$YANDEX_CLOUD_ID"
+          add_platform_env YANDEX_FOLDER_ID "$YANDEX_FOLDER_ID"
+          add_platform_env WEBNESTDEV_ADMIN_EMAILS "$WEBNESTDEV_ADMIN_EMAILS"
+          add_platform_env WEBNESTDEV_ADMIN_USER_IDS "$WEBNESTDEV_ADMIN_USER_IDS"
+          if [ -s "$PLATFORM_ENV_LOCAL" ]; then
+            PLATFORM_ENV_FILE="/tmp/.webnestdev-platform.env"
+            tr -d '\r' < "$PLATFORM_ENV_LOCAL" | ssh -i "$HOME/.ssh/deploy_key" \
+              -p "${DEPLOY_PORT:-22}" \
+              -o BatchMode=yes -o StrictHostKeyChecking=yes \
+              "$DEPLOY_USER@$DEPLOY_HOST" \
+              "umask 077; cat > '$PLATFORM_ENV_FILE'"
+          fi
+          rm -f "$PLATFORM_ENV_LOCAL"
           # Ключ передаётся отдельным потоком, а не аргументом команды: значение секрета в
           # командной строке было бы видно в списке процессов на обеих машинах.
           APP_KEY_FILE=""
@@ -179,7 +217,7 @@ jobs:
             -p "${DEPLOY_PORT:-22}" \
             -o BatchMode=yes -o StrictHostKeyChecking=yes \
             "$DEPLOY_USER@$DEPLOY_HOST" \
-            "MODE='$MODE' IMAGE_REF='$image' APP_DIR='$DEPLOY_APP_DIR' COMPOSE_B64='$COMPOSE_B64' CADDY_B64='$CADDY_B64' APP_KEY_FILE='$APP_KEY_FILE' bash -s" \
+            "MODE='$MODE' IMAGE_REF='$image' APP_DIR='$DEPLOY_APP_DIR' COMPOSE_B64='$COMPOSE_B64' CADDY_B64='$CADDY_B64' APP_KEY_FILE='$APP_KEY_FILE' PLATFORM_ENV_FILE='$PLATFORM_ENV_FILE' bash -s" \
             < deploy/scripts/vm-deploy.sh
 
       - name: Deploy on the VM (self-hosted runner)
@@ -190,10 +228,33 @@ jobs:
           BUILT_IMAGE: ${{ needs.build.outputs.image }}
           DEPLOY_APP_DIR: ${{ vars.DEPLOY_APP_DIR }}
           YANDEX_SA_KEY_JSON: ${{ secrets.YANDEX_SA_KEY_JSON }}
+          # GitHub запрещает секреты и переменные с префиксом GITHUB_ (он зарезервирован под
+          # служебные значения), поэтому в настройках репозитория эти два ключа называются
+          # GH_OAUTH_CLIENT_ID / GH_OAUTH_CLIENT_SECRET, а в .env попадают под обычными именами,
+          # которые читает сервер.
+          GH_OAUTH_CLIENT_ID: ${{ secrets.GH_OAUTH_CLIENT_ID }}
+          GH_OAUTH_CLIENT_SECRET: ${{ secrets.GH_OAUTH_CLIENT_SECRET }}
+          GH_CALLBACK_URL: ${{ vars.GH_CALLBACK_URL }}
+          GH_FRONTEND_URL: ${{ vars.GH_FRONTEND_URL }}
+          YANDEX_CLOUD_ID: ${{ secrets.YANDEX_CLOUD_ID }}
+          YANDEX_FOLDER_ID: ${{ secrets.YANDEX_FOLDER_ID }}
+          WEBNESTDEV_ADMIN_EMAILS: ${{ secrets.WEBNESTDEV_ADMIN_EMAILS }}
+          WEBNESTDEV_ADMIN_USER_IDS: ${{ secrets.WEBNESTDEV_ADMIN_USER_IDS }}
         run: |
           set -euo pipefail
           image="$IMAGE_INPUT"
           [ -n "$image" ] || image="$BUILT_IMAGE"
+          # Ключи платформы и админ панели — в отдельном файле с правами только для владельца.
+          PLATFORM_ENV_FILE=$(mktemp)
+          add_platform_env() { [ -n "${2:-}" ] && printf '%s=%s\n' "$1" "$2" >> "$PLATFORM_ENV_FILE" || true; }
+          add_platform_env GITHUB_CLIENT_ID "$GH_OAUTH_CLIENT_ID"
+          add_platform_env GITHUB_CLIENT_SECRET "$GH_OAUTH_CLIENT_SECRET"
+          add_platform_env GITHUB_CALLBACK_URL "$GH_CALLBACK_URL"
+          add_platform_env GITHUB_FRONTEND_URL "$GH_FRONTEND_URL"
+          add_platform_env YANDEX_CLOUD_ID "$YANDEX_CLOUD_ID"
+          add_platform_env YANDEX_FOLDER_ID "$YANDEX_FOLDER_ID"
+          add_platform_env WEBNESTDEV_ADMIN_EMAILS "$WEBNESTDEV_ADMIN_EMAILS"
+          add_platform_env WEBNESTDEV_ADMIN_USER_IDS "$WEBNESTDEV_ADMIN_USER_IDS"
           # На этом раннере скрипт запускается на самой ВМ, поэтому ключ кладётся во временный
           # файл рядом, с правами только для владельца.
           APP_KEY_FILE=""
@@ -204,5 +265,5 @@ jobs:
           fi
           MODE="$MODE" IMAGE_REF="$image" APP_DIR="$DEPLOY_APP_DIR" \
             COMPOSE_SRC="$PWD/docker-compose.yml" CADDY_SRC="$PWD/deploy/Caddyfile" \
-            APP_KEY_FILE="$APP_KEY_FILE" \
+            APP_KEY_FILE="$APP_KEY_FILE" PLATFORM_ENV_FILE="$PLATFORM_ENV_FILE" \
             bash deploy/scripts/vm-deploy.sh

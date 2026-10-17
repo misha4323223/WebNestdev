@@ -64,6 +64,12 @@
 #                              в каталог секретов — тот, что смонтирован в контейнер, — и
 #                              правит YANDEX_SA_KEY_FILE, если она указывает внутрь образа.
 #                              Так вход по SMS перестаёт зависеть от захода на ВМ руками.
+#   PLATFORM_ENV_FILE=/tmp/…   файл с парами KEY=VALUE из секретов и переменных репозитория
+#                              (GITHUB_*, YANDEX_CLOUD_ID/FOLDER_ID, WEBNESTDEV_ADMIN_*).
+#                              Строки, которые уже есть в .env, заменяются, новые добавляются;
+#                              пустое значение ничего не трогает. Ключи, введённые в панели
+#                              «Ключи сервера», всё равно важнее — они лежат в DATA_DIR и
+#                              переживают выкатку.
 #
 # MODE=prune — только уборка образов, без выкатки и без перезапуска сервиса.
 set -euo pipefail
@@ -96,6 +102,7 @@ PREVIEW_CHECK="${PREVIEW_CHECK:-1}"
 DOCKER_CHECK="${DOCKER_CHECK:-1}"
 PANEL_CHECK="${PANEL_CHECK:-1}"
 APP_KEY_FILE="${APP_KEY_FILE:-}"
+PLATFORM_ENV_FILE="${PLATFORM_ENV_FILE:-}"
 # Метка контейнера-пробы в проверке предпросмотра (совпадает с PREVIEW_LABEL="webnestdev.preview"
 # в server/src/preview/types.ts). Нужна, чтобы убирать пробы прошлых выкаток, не трогая предпросмотры
 # пользователей.
@@ -682,6 +689,50 @@ install_key_as_root(){
 # Без этого шага вход по SMS работал только у того, кто один раз зашёл на ВМ руками и положил
 # файл сам: `YANDEX_SA_KEY_FILE=/app/yandex-sa-key.json` — это путь внутри образа, где ключа нет.
 #
+apply_platform_env(){
+  local staged line name value current applied=0
+  if [ -z "$PLATFORM_ENV_FILE" ] || [ ! -s "$PLATFORM_ENV_FILE" ]; then
+    log "ключи платформы из выкатки не переданы — .env на ВМ не меняю"
+    if [ -n "$PLATFORM_ENV_FILE" ]; then rm -f "$PLATFORM_ENV_FILE"; fi
+    return 0
+  fi
+  if [ ! -f "$ENV_FILE" ]; then
+    log "$ENV_FILE нет — ключи выкатки не применены"
+    rm -f "$PLATFORM_ENV_FILE"
+    return 0
+  fi
+  staged="$ENV_FILE.platform.new"
+  cp "$ENV_FILE" "$staged"
+  # Строки разбираются по одной: кривая строка (например секрет, вставленный с переносом)
+  # пропускается с объяснением, а не ломает весь .env.
+  while IFS= read -r line || [ -n "$line" ]; do
+    line=$(printf '%s' "$line" | tr -d '\r')
+    printf '%s' "$line" | grep -Eq '^[A-Z_][A-Z0-9_]*=.+$' || continue
+    name=${line%%=*}
+    value=${line#*=}
+    current=$(grep -m1 "^${name}=" "$staged" 2>/dev/null | cut -d= -f2- || true)
+    if [ "$current" = "$value" ]; then
+      log "${name} уже совпадает — не меняю"
+      continue
+    fi
+    grep -v "^${name}=" "$staged" > "$staged.tmp" || true
+    printf '%s=%s\n' "$name" "$value" >> "$staged.tmp"
+    mv "$staged.tmp" "$staged"
+    applied=$((applied + 1))
+    log "$name перезаписан из выкатки (прежнее значение: ${current:+было})"
+  done < "$PLATFORM_ENV_FILE"
+  if [ "$applied" = "0" ]; then
+    log "в переданном наборе нечего менять"
+    rm -f "$staged"
+  else
+    cp "$ENV_FILE" "$ENV_FILE.bak" 2>/dev/null || true
+    mv "$staged" "$ENV_FILE"
+    chmod 600 "$ENV_FILE" 2>/dev/null || true
+    log "ключей платформы применено из выкатки: $applied"
+  fi
+  rm -f "$PLATFORM_ENV_FILE"
+}
+
 install_app_secrets(){
   local dir file current
   dir=$(secrets_dir)
@@ -816,6 +867,7 @@ case "$MODE" in
     # Конфигурация фронта — до запуска: Caddy читает её, поднимаясь вместе с сервисом.
     install_caddyfile || log "оставляю Caddyfile, который лежит на ВМ"
     # Ключи и .env — до запуска: compose читает .env при подъёме сервиса.
+    apply_platform_env
     install_app_secrets
     migrate_sandboxes
     run docker compose -f "$COMPOSE_FILE" up -d --no-build $(services_to_start)
@@ -832,6 +884,7 @@ case "$MODE" in
     # В режиме source Caddyfile лежит в самом чекауте, но если фронт запускают иначе, файла может
     # и не быть: тогда проверяется и ставится тот, что пришёл вместе со скриптом.
     install_caddyfile || true
+    apply_platform_env
     install_app_secrets
     log "перезапускаю сервис systemd: $SYSTEMD_UNIT"
     run sudo systemctl restart "$SYSTEMD_UNIT"

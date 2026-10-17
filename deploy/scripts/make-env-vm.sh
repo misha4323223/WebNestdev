@@ -61,7 +61,11 @@ chmod 700 "$SECRETS_DIR" 2>/dev/null || true
 # Домены и адрес для Let's Encrypt тоже переносятся: иначе повторный запуск скрипта, который
 # собирает .env целиком, выключил бы публичные адреса предпросмотра (PREVIEW_PUBLIC_DOMAIN) и
 # оставил реверс-прокси без имени сайта — а это уже не «пересоздать .env», а «сайт не открывается».
-CARRY_PATTERN='^(SMS_PROVIDER|SMS_SENDER|YANDEX_[A-Z0-9_]+|SMS_RU_API_ID|SMSC_[A-Z]+|EXOLVE_API_KEY|SMSAERO_[A-Z]+|WEBNESTDEV_SMS_TEST_MODE|WEBNESTDEV_DEMO_PHONE[A-Z_]*|WEBNESTDEV_ALLOWED_ORIGINS|WEBNESTDEV_SITE_DOMAIN|PREVIEW_PUBLIC_DOMAIN|PREVIEW_TICKET_TTL_MS|ACME_EMAIL)='
+# GITHUB_* и PLATFORM_AI_* — те же ключи, которые можно ввести в панели: если их задали в .env
+# (руками или через secrets в выкатке), пересборка файла не должна их терять. Админы панели
+# переносятся обязательно: без WEBNESTDEV_ADMIN_EMAILS редактор ключей закрыт, и потеря строки
+# выглядела бы как «панель ключей сломалась».
+CARRY_PATTERN='^(SMS_PROVIDER|SMS_SENDER|YANDEX_[A-Z0-9_]+|SMS_RU_API_ID|SMSC_[A-Z]+|EXOLVE_API_KEY|SMSAERO_[A-Z]+|WEBNESTDEV_SMS_TEST_MODE|WEBNESTDEV_DEMO_PHONE[A-Z_]*|WEBNESTDEV_ALLOWED_ORIGINS|WEBNESTDEV_SITE_DOMAIN|PREVIEW_PUBLIC_DOMAIN|PREVIEW_TICKET_TTL_MS|ACME_EMAIL|GITHUB_[A-Z_]+|PLATFORM_AI_[A-Z_]+|WEBNESTDEV_ADMIN_[A-Z_]+)='
 CARRY="$(grep -E "$CARRY_PATTERN" .env 2>/dev/null || true)"
 if [ -n "$CARRY" ]; then echo "SMS-ENV-REUSED"; fi
 # Адреса фронтенда: из прошлого .env или из PUBLIC_ORIGIN. localhost здесь нельзя — в production
@@ -126,6 +130,8 @@ echo "PREVIEWDOMAIN=$(grep '^PREVIEW_PUBLIC_DOMAIN=' .env | cut -d= -f2- || true
 echo "ENV-READY"
 echo "Публичные предпросмотры (адреса <проект>.preview.<домен>) работают, если PREVIEW_PUBLIC_DOMAIN задан, а для домена предпросмотра есть подстановочная DNS-запись на этот сервер."
 echo "Если каталога секретов нет, создайте его от root: sudo mkdir -p $SECRETS_DIR && sudo chown $USER $SECRETS_DIR"
+echo "Ключи GitHub OAuth, Yandex Cloud, SMS и модели платформы можно не править на ВМ: войдите администратором и откройте Настройки → «Ключи сервера». Значения хранятся зашифрованными в $DATA_DIR/platform."
+echo "Администратор панели задаётся только здесь: WEBNESTDEV_ADMIN_EMAILS=ваш@адрес (список через запятую) в .env."
 echo "Ключ сервисного аккаунта Yandex Cloud положите в $SECRETS_DIR/yandex-sa-key.json (chmod 600) и добавьте в .env:"
 echo "  YANDEX_SA_KEY_FILE=$SECRETS_DIR/yandex-sa-key.json"
 echo "  YANDEX_CLOUD_ID=<идентификатор облака>"

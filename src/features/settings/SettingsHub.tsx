@@ -1,11 +1,12 @@
 import { useEffect, useState } from "react";
-import { Plug, SlidersHorizontal, Sparkles } from "lucide-react";
+import { KeyRound, Plug, SlidersHorizontal, Sparkles } from "lucide-react";
 import { SettingsPanel } from "./SettingsPanel";
 import { AccountSettingsPanel } from "./AccountSettingsPanel";
 import { IntegrationsPanel } from "./IntegrationsPanel";
+import { PlatformKeysPanel } from "./PlatformKeysPanel";
 
 export function SettingsHub({ projectId, projectName }: { projectId: string; projectName: string }) {
-  const [tab, setTab] = useState<"account" | "provider" | "integrations">("account");
+  const [tab, setTab] = useState<"account" | "provider" | "integrations" | "platform">("account");
   // Set when the app returns from the GitHub authorization page, or when the composer
   // asks for the model tab. Read in an effect because state initializers run twice
   // under StrictMode.
@@ -23,6 +24,7 @@ export function SettingsHub({ projectId, projectName }: { projectId: string; pro
     { id: "account" as const, label: "Аккаунт и тариф", icon: SlidersHorizontal },
     { id: "provider" as const, label: "AI-провайдер", icon: Sparkles },
     { id: "integrations" as const, label: "Интеграции", icon: Plug },
+    { id: "platform" as const, label: "Ключи сервера", icon: KeyRound },
   ];
   return <div className="settings-hub">
     <nav className="settings-hub-tabs">
@@ -31,5 +33,6 @@ export function SettingsHub({ projectId, projectName }: { projectId: string; pro
     {tab === "account" && <AccountSettingsPanel/>}
     {tab === "provider" && <SettingsPanel projectId={projectId} projectName={projectName} onClose={() => setTab("account")}/>}
     {tab === "integrations" && <IntegrationsPanel/>}
+    {tab === "platform" && <PlatformKeysPanel/>}
   </div>;
 }

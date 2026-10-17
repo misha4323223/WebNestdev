@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { parseServiceAccountKey, signServiceAccountJwt } from "../yandex/yandex-api.js";
+import { getPlatformEnv } from "../platform/platform-env.js";
 
 /**
  * SMS delivery through Yandex Cloud Notification Service (CNS).
@@ -31,9 +32,13 @@ const IAM_TOKEN_URL = "https://iam.api.cloud.yandex.net/iam/v1/tokens";
  */
 const SHARED_SENDER = "cns.shared";
 
+/**
+ * Ключи читаются через getPlatformEnv: значение, введённое в панели «Ключи сервера», побеждает
+ * переменную окружения, поэтому ключ, поставленный в панели, включает SMS без перезапуска.
+ */
 function firstEnv(...names: string[]) {
   for (const name of names) {
-    const value = process.env[name]?.trim();
+    const value = getPlatformEnv(name)?.trim();
     if (value) return value;
   }
   return undefined;

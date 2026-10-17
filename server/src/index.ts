@@ -30,9 +30,12 @@ import { registerProviderRoutes } from "./routes/providers.js";
 import { registerGitHubRoutes } from "./routes/github.js";
 import { registerYandexRoutes } from "./routes/yandex.js";
 import { registerDatabaseRoutes } from "./routes/database.js";
+import { registerSecretRoutes } from "./routes/secrets.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerPhoneAuthRoutes } from "./routes/phone-auth.js";
 import { registerAccountRoutes } from "./routes/account.js";
+import { registerPlatformRoutes } from "./routes/platform.js";
+import { loadPlatformEnv } from "./platform/platform-env.js";
 import { ensureDemoUser } from "./auth/auth-store.js";
 import "./tools/project-tools.js";
 import "./tools/filesystem-tools.js";
@@ -44,6 +47,7 @@ import "./tools/verification-tools.js";
 import "./tools/plan-tools.js";
 import "./tools/yandex-tools.js";
 import "./tools/database-tools.js";
+import "./tools/secret-tools.js";
 
 assertEncryptionConfigured();
 
@@ -56,6 +60,9 @@ if (production && allowedOrigins.some(origin => /^https?:\/\/localhost(?::\d+)?$
   throw new Error("В production в WEBNESTDEV_ALLOWED_ORIGINS нельзя указывать localhost");
 }
 await ensureDataDir();
+// Ключи платформы (GitHub OAuth, Yandex Cloud, SMS, модель платформы), введённые в панели,
+// читаются один раз при старте: файл шифрован тем же ключом, что и секреты проектов.
+await loadPlatformEnv();
 // The live backend is printed once at startup: it is the first thing to check when an
 // account, a conversation or an integration seems to have disappeared.
 console.log("[storage] " + describeStorage());
@@ -134,6 +141,8 @@ await registerProviderRoutes(app);
 await registerGitHubRoutes(app);
 await registerYandexRoutes(app);
 await registerDatabaseRoutes(app);
+await registerSecretRoutes(app);
+await registerPlatformRoutes(app);
 await registerAgentWebSocket(app);
 
 // Раздача собранной панели: документ никогда не кэшируется, файлы сборки — надолго. Правила и

@@ -1,4 +1,5 @@
 import { sendYandexSms, yandexNotifyConfigured, yandexNotifyCredentialKind, yandexNotifyCredentialStatus, yandexNotifyLabel } from "./yandex-notify.js";
+import { getPlatformEnv } from "../platform/platform-env.js";
 
 /**
  * SMS delivery for phone login. Only Russian providers are supported, because that is
@@ -28,14 +29,14 @@ const DEFAULT_SENDER = "WebNestdev";
 
 function firstEnv(...names: string[]) {
   for (const name of names) {
-    const value = process.env[name]?.trim();
+    const value = getPlatformEnv(name)?.trim();
     if (value) return value;
   }
   return undefined;
 }
 
 export function smsTestMode() {
-  const value = process.env.WEBNESTDEV_SMS_TEST_MODE?.trim().toLowerCase();
+  const value = getPlatformEnv("WEBNESTDEV_SMS_TEST_MODE")?.trim().toLowerCase();
   return value === "1" || value === "true" || value === "yes";
 }
 

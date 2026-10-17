@@ -1,8 +1,10 @@
+import { getPlatformEnv } from "../platform/platform-env.js";
+
 export type PlatformProviderConfig={provider:string;baseUrl:string;model:string;token?:string};
 
 function firstEnv(...names:string[]){
   for(const name of names){
-    const value=process.env[name]?.trim();
+    const value=getPlatformEnv(name)?.trim();
     if(value)return value;
   }
   return undefined;
@@ -12,6 +14,9 @@ function firstEnv(...names:string[]){
  * Default AI access for projects that have no provider of their own.
  * PLATFORM_AI_* is the canonical configuration; the legacy AI_* names
  * from .env.example keep working as aliases.
+ *
+ * Значения читаются через getPlatformEnv, поэтому ключ модели платформы можно
+ * поставить в панели «Ключи сервера» — без правки .env и перезапуска.
  */
 export function getPlatformProviderConfig():PlatformProviderConfig|null{
   const baseUrl=firstEnv("PLATFORM_AI_BASE_URL","AI_BASE_URL");

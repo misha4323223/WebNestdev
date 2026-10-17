@@ -8,20 +8,33 @@ import { getGitHubUser, getGitHubLoginFromToken, listGitHubRepositories, getGitH
 import { createConversation, createProjectWithinLimit, ProjectLimitError } from "../project-store.js";
 import { FREE_PLAN, limitsForPlan, type PlanId } from "../account/plans.js";
 import { getSandbox } from "../sandbox-manager.js";
+import { getPlatformEnv } from "../platform/platform-env.js";
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-const clientId = process.env.GITHUB_CLIENT_ID;
-const clientSecret = process.env.GITHUB_CLIENT_SECRET;
-const configuredCallbackUrl = process.env.GITHUB_CALLBACK_URL;
-const configuredFrontendUrl = process.env.GITHUB_FRONTEND_URL;
 const oauthScope = "repo";
+
+/**
+ * OAuth-приложение GitHub читается на каждый запрос, а не один раз при старте: ключи можно
+ * поставить в панели «Ключи сервера» (platform/platform-env.ts), и вход должен заработать
+ * сразу, без перезапуска сервиса. Переменные окружения остаются запасным источником, поэтому
+ * выкладка, где ключи заданы в .env, ведёт себя как раньше.
+ */
+function githubOAuthConfig() {
+  return {
+    clientId: getPlatformEnv("GITHUB_CLIENT_ID")?.trim(),
+    clientSecret: getPlatformEnv("GITHUB_CLIENT_SECRET")?.trim(),
+    configuredCallbackUrl: getPlatformEnv("GITHUB_CALLBACK_URL")?.trim(),
+    configuredFrontendUrl: getPlatformEnv("GITHUB_FRONTEND_URL")?.trim(),
+  };
+}
 
 /**
  * The shared OAuth flow policy (allowed origins, callback URL, return to the app) lives
  * in oauth/oauth-flow.ts so GitHub and Yandex behave identically.
  */
 function resolveFlow(request: Parameters<typeof resolveOAuthFlow>[0], requestedOrigin?: string) {
+  const { configuredCallbackUrl, configuredFrontendUrl } = githubOAuthConfig();
   const options: OAuthFlowOptions = { callbackPath: "/api/github/callback", configuredCallbackUrl, configuredFrontendUrl, requestedOrigin };
   return resolveOAuthFlow(request, options);
 }
@@ -30,18 +43,19 @@ function redirect(reply: { redirect: (url: string) => unknown }, frontendUrl: st
   return redirectToApp(reply, frontendUrl, "github", status);
 }
 
-if (process.env.NODE_ENV === "production" && clientId && clientSecret) {
-  if ((configuredCallbackUrl && !/^https:\/\//i.test(configuredCallbackUrl)) || (configuredFrontendUrl && !/^https:\/\//i.test(configuredFrontendUrl))) {
-    throw new Error("В production GitHub OAuth требует HTTPS-адреса callback и фронтенда");
-  }
-}
-
 export async function registerGitHubRoutes(app: FastifyInstance) {
+  const startup = githubOAuthConfig();
+  if (process.env.NODE_ENV === "production" && startup.clientId && startup.clientSecret) {
+    if ((startup.configuredCallbackUrl && !/^https:\/\//i.test(startup.configuredCallbackUrl)) || (startup.configuredFrontendUrl && !/^https:\/\//i.test(startup.configuredFrontendUrl))) {
+      throw new Error("В production GitHub OAuth требует HTTPS-адреса callback и фронтенда");
+    }
+  }
   app.get("/api/github/status", async (request,reply) => {
     const user=await requireUser(request,reply); if(!user)return;
     const query=z.object({origin:z.string().max(500).optional()}).parse(request.query);
     const flow=resolveFlow(request,query.origin);
     const connection = await getGitHubConnection(user.id);
+    const { clientId, clientSecret } = githubOAuthConfig();
     return {
       connected: Boolean(connection),
       githubLogin: connection?.githubLogin ?? null,
@@ -55,6 +69,7 @@ export async function registerGitHubRoutes(app: FastifyInstance) {
     const user=await requireUser(request,reply); if(!user)return;
     const query=z.object({origin:z.string().max(500).optional()}).parse(request.query);
     const flow=resolveFlow(request,query.origin);
+    const { clientId, clientSecret } = githubOAuthConfig();
     if (!clientId || !clientSecret) return redirect(reply, flow.frontendUrl, "not_configured");
     const state = await createOAuthState(user.id, flow.origin);
     const url = new URL("https://github.com/login/oauth/authorize");
@@ -77,6 +92,7 @@ export async function registerGitHubRoutes(app: FastifyInstance) {
     const flow = resolveFlow(request, originFromOAuthState(query.state) ?? undefined);
     if (query.error) return redirect(reply, flow.frontendUrl, "denied");
     if (!query.code) return redirect(reply, flow.frontendUrl, "error");
+    const { clientId, clientSecret } = githubOAuthConfig();
     if (!clientId || !clientSecret) return redirect(reply, flow.frontendUrl, "not_configured");
     const oauthUserId = await consumeOAuthState(query.state);
     if (!oauthUserId || oauthUserId !== user.id) return redirect(reply, flow.frontendUrl, "state_expired");

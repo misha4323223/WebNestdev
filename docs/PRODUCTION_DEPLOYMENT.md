@@ -72,6 +72,56 @@ provider's own refusal — every failed send is logged with its cause.
 
 The server intentionally fails fast in production when the allowed-origin list is missing or contains localhost.
 
+## Ключи сервера: панель вместо правки .env
+
+Ключи самого сервиса — GitHub OAuth (`GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`), Yandex Cloud
+(`YANDEX_CLOUD_ID`, `YANDEX_FOLDER_ID`, `YANDEX_SA_KEY`), ключи SMS-провайдеров и модель платформы
+(`PLATFORM_AI_*`) — вводятся в панели: **Настройки → Ключи сервера**. Это ответ на вопрос «как
+прокинуть ключи на продакшен»: заходить на ВМ и править `.env` больше не нужно, и перезапуск тоже.
+
+- Значения лежат в `WEBNESTDEV_DATA_DIR/platform/env.json` — вне каталога кода, поэтому
+  переживают выкатку (каталог кода заменяется, `DATA_DIR` — нет) — и зашифрованы тем же ключом
+  `WEBNESTDEV_ENCRYPTION_KEY`, что и подключения интеграций. В браузер значения не возвращаются:
+  список показывает форму (`sk-…f3a2`, `строк: 23`) и источник (панель / `.env` / не задан).
+- Ключ из панели важнее переменной окружения и читается на каждый запрос, поэтому вход через
+  GitHub и отправка SMS начинают работать сразу после сохранения. Пустое поле возвращает ключ к
+  значению из `.env` — «как было», без правки файла на ВМ.
+- **Кому открыта панель.** Только администратору, которого называют в окружении:
+  `WEBNESTDEV_ADMIN_EMAILS=you@example.com` (через запятую) или `WEBNESTDEV_ADMIN_USER_IDS=…`.
+  Это значение читается только из окружения и намеренно не хранится в панели: редактор ключей,
+  который сам себе выдаёт доступ, — не замок. Пока список пуст, вкладка показывает это и
+  подсказывает переменную, вместо того чтобы открыть ключи первому зарегистрированному аккаунту.
+  В выкатке адрес администратора передаётся секретом `WEBNESTDEV_ADMIN_EMAILS` (workflow кладёт
+  его в `.env` на ВМ и переносит при пересборке `.env`).
+- **Загрузка `.env` и вставка полем.** Панель принимает и отдельные поля, и целый файл (или
+  перетаскиванием, или вставкой текста). Понимаются `export`, комментарии, одинарные и двойные
+  кавычки, CRLF из Windows, значение в кавычках на нескольких строках, JSON authorized key,
+  склеенный в одну строку с литеральными `\n`, и JSON, куда при копировании попали настоящие
+  переносы строк внутри `private_key` — такой ключ чинится при сохранении и хранится уже
+  каноническим JSON. Плохая строка не отменяет остальные: ответ перечисляет, что сохранено, что
+  возвращено к `.env` и что пропущено с причиной (`NODE_ENV — изменяется при выкладке`).
+- **GitHub OAuth.** Callback в настройках OAuth-приложения:
+  `https://<домен панели>/api/github/callback`; `GITHUB_FRONTEND_URL` — `https://<домен панели>/`.
+  `GITHUB_CALLBACK_URL` и `GITHUB_FRONTEND_URL` можно не задавать: адрес выводится из домена, на
+  котором открыта панель. Ротация секрета — «Generate a new client secret» на GitHub, вставить
+  новое значение в панель; старый секрет перестаёт работать сразу после этого.
+- **Yandex Cloud.** `YANDEX_CLOUD_ID=b1g…` и `YANDEX_FOLDER_ID=b1g…` — поля панели. Ключ
+  сервисного аккаунта вставляется в `YANDEX_SA_KEY` файлом authorized key целиком (многострочным —
+  поле это выдерживает) либо указывается путь внутри контейнера в `YANDEX_SA_KEY_FILE`
+  (`/var/lib/webnestdev/secrets/yandex-sa-key.json`). Ключ предпочтительнее готового IAM-токена:
+  токен живёт около 12 часов, ключ сервер обменивает на свежий сам.
+- **Если ключи заданы в GitHub Secrets.** GitHub **не даёт создать секрет или переменную с
+  префиксом `GITHUB_`** — он зарезервирован под служебные значения (`GITHUB_TOKEN` и другие), и
+  поле имени просто не сохраняется. Поэтому в настройках репозитория ключи GitHub OAuth
+  называются `GH_OAUTH_CLIENT_ID` и `GH_OAUTH_CLIENT_SECRET` (секреты), `GH_CALLBACK_URL` и
+  `GH_FRONTEND_URL` (переменные) — workflow сам записывает их в `.env` как `GITHUB_CLIENT_ID`,
+  `GITHUB_CLIENT_SECRET`, `GITHUB_CALLBACK_URL`, `GITHUB_FRONTEND_URL`. Вместе с ними workflow
+  передаёт `YANDEX_CLOUD_ID`, `YANDEX_FOLDER_ID`, `WEBNESTDEV_ADMIN_EMAILS`,
+  `WEBNESTDEV_ADMIN_USER_IDS` в `.env` на ВМ
+  (`PLATFORM_ENV_FILE` в [`deploy/scripts/vm-deploy.sh`](../deploy/scripts/vm-deploy.sh)); пустой
+  секрет ничего не стирает. Это удобно для чистой ВМ, но не обязательно: те же значения,
+  введённые в панели, важнее и переживают любую выкатку.
+
 ## YDB
 
 The server creates its required row tables on startup with `CREATE TABLE IF NOT EXISTS`. Persistent application metadata is stored in YDB; the local filesystem remains for the sandbox workspace itself.

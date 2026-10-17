@@ -1,4 +1,5 @@
 import { apiJson } from "./api";
+import { rememberScreen } from "./screen";
 import type { ChatMessage, FileEntry, PlanState, PreviewState } from "./types";
 
 export type Project={id:string;name:string;createdAt:string;updatedAt:string};
@@ -38,7 +39,20 @@ export function openImportedProject(projectId:string,conversationId:string){
   localStorage.setItem("webnestdev.conversationId",conversationId);
   localStorage.removeItem("webnestdev.projectName");
   localStorage.setItem("webnestdev.openWorkspace","1");
+  // Импорт открывает рабочую область и после следующей перезагрузки тоже: иначе F5 снова
+  // выбрасывал на главную, хотя openWorkspace — одноразовый флаг и после монтирования стирается.
+  rememberScreen("workspace");
   window.location.reload();
 }
+
+/**
+ * Значение ключа, введённое в модальном окне. Оно идёт прямо в песочницу проекта и возвращается
+ * только подтверждением: ни в переписку, ни в события запуска, ни в ответы модели оно не попадает.
+ */
+export const submitProjectSecret=(projectId:string,requestId:string,value:string)=>apiJson<{ok:boolean;variable:string;file:string}>
+  ("/api/projects/"+projectId+"/secrets",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({requestId,value})});
+/** Отмена запроса: агент получает отказ и продолжает без ключа, а не ждёт таймаута. */
+export const cancelProjectSecret=(projectId:string,requestId:string)=>apiJson<{cancelled:boolean}>
+  ("/api/projects/"+projectId+"/secrets/"+encodeURIComponent(requestId)+"/cancel",{method:"POST"});
 
 export const runProjectTerminal=(projectId:string,command:string,cwd?:string)=>apiJson<{ok:boolean;stdout:string;stderr:string}>("/api/projects/"+projectId+"/terminal",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({command,cwd})});

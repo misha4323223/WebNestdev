@@ -34,7 +34,9 @@ export async function executeTool(call:ProviderToolCall,context:AgentContext){
   if(storagePreCheckTools.has(call.name)){
     await assertWithinCurrentPlan(context.request.userId);
   }
-  const result=await handler(call.arguments,{projectId:context.request.projectId,runId:context.runId,userId:context.request.userId});
+  // Разговоры с пользователем (модальное окно секретов) идут через тот же поток событий запуска,
+  // а остановка запуска передаётся внутрь инструмента, чтобы ожидание закрылось вместе с ним.
+  const result=await handler(call.arguments,{projectId:context.request.projectId,runId:context.runId,userId:context.request.userId,emit:context.emit,...(context.signal?{signal:context.signal}:{})});
   if(storagePostRecordTools.has(call.name)){
     await recordStorageMutation(context.request.projectId, context.request.userId, {
       heavy: heavyStorageMutationTools.has(call.name),

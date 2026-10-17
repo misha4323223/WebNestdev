@@ -262,7 +262,7 @@ With `json`, set `WEBNESTDEV_DATA_DIR` to a path outside the source tree: the de
 The message composer has one button that shows the current mode and switches it on click, and the choice is sent with every run. The same row shows the model the project will run on — the project provider model, or the platform default — and opens the AI provider settings when pressed:
 
 - **Разработчик (developer)** — the full agent: it writes files, runs the terminal, starts the Preview and verifies the result.
-- **Планировщик (planner)** — read-only: the agent studies the project and publishes a plan with `plan.update` without changing anything. Enforcement lives on the server, not in the prompt: the runtime refuses `fs.write`, `fs.rename`, `fs.delete`, `npm.install`, `database.env`, `git.add`, `git.commit` and mutating `yandex.request` calls, and `terminal.exec` only runs a single inspection command (`ls`, `cat`, `grep`, `find`, `git status|log|diff|branch`, `npm ls`). Anything chained, piped, redirecting output, installing packages or running a script is refused, so the planner can read a project but can never write to one. The policy is covered by `server/src/agent/planner-policy.test.ts`.
+- **Планировщик (planner)** — read-only: the agent studies the project and publishes a plan with `plan.update` without changing anything. Enforcement lives on the server, not in the prompt: the runtime refuses `fs.write`, `fs.rename`, `fs.delete`, `npm.install`, `database.env`, `secrets.request`, `git.add`, `git.commit` and mutating `yandex.request` calls, and `terminal.exec` only runs a single inspection command (`ls`, `cat`, `grep`, `find`, `git status|log|diff|branch`, `npm ls`). Anything chained, piped, redirecting output, installing packages or running a script is refused, so the planner can read a project but can never write to one. The policy is covered by `server/src/agent/planner-policy.test.ts`.
 
 ## Project database
 
@@ -271,9 +271,13 @@ Every project keeps its data in a database of the user's own, so nothing depends
 The user has two ways to connect it, and both end in the same place:
 
 1. paste the connection string into the card (Settings → Integrations → База данных), or
-2. tell the agent in chat — the agent asks for the connection string, explains where to create the database on a Russian provider, and stores it the same way.
+2. tell the agent which provider you want — it explains where to create the database and asks for the string through the secrets modal window (never in chat), which writes it into the project's env file.
 
 After that the agent uses two tools: `database.status` reports the engine, host, port and database name (never the password), and `database.env` merges `DATABASE_URL` (plus `MONGODB_URI`, `REDIS_URL` or `YDB_CONNECTION_STRING` where the engine expects it) into the project's `.env.local`, leaving every other line untouched. The card can also run a TCP reachability check from the API host — it answers "this address is reachable", which is honest about not being a login test.
+
+## Secrets
+
+A key never travels through the chat. When a task needs a credential, the agent calls `secrets.request` with the environment variable name, a one-line purpose and the env file (`.env.local` by default). The run publishes a `secret.requested` event, the panel opens a modal window, and the value the user pastes is `POST`ed to `/api/projects/:id/secrets` — straight into the project's env file inside the sandbox. The tool receives only a confirmation, so the value never reaches the model, the conversation, the tool result or the event stream; `server/src/routes/secrets.test.ts` asserts exactly that. The window expires after five minutes (`SECRET_REQUEST_TIMEOUT_MS`) or when the run stops, and the user can cancel: the agent is then told to continue without the key and never to ask for it in chat. Keys are written into the env file only — `.env`, `.env.local`, `.env.development`, `.env.production`, `.env.test` or `.env.staging` — and a multi-line value (a PEM key) is stored as one quoted line so the file stays valid for dotenv/Vite. Covered by `server/src/secrets/pending-secrets.test.ts`, `server/src/secrets/env-value.test.ts`, `server/src/tools/secret-tools.test.ts` and `server/src/routes/secrets.test.ts`.
 
 ## GitHub integration
 

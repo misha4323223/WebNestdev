@@ -8,6 +8,7 @@ import { NestLoader } from "../../components/NestLoader";
 import { ProjectRenameForm } from "./ProjectRename";
 import { PlanPickerModal } from "../billing/PlanPickerModal";
 import { SubscriptionPage } from "../billing/SubscriptionPage";
+import { conversationMemoryKey } from "../workspace/useWorkspace";
 
 const templates = [
   { name: "Лендинг", icon: Globe, prompt: "Создай современный лендинг для продукта" },
@@ -72,7 +73,12 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
   function open(project:Project){
     localStorage.setItem("webnestdev.projectId",project.id);
     localStorage.setItem("webnestdev.projectName",project.name);
-    localStorage.removeItem("webnestdev.conversationId");
+    // Возврат в проект открывает тот чат, в котором человек был, а не создаёт новый.
+    // Если проект ещё ни разу не открывался в этом браузере, идентификатор не подставляется —
+    // рабочая область выберет последний чат с перепиской сама (useWorkspace).
+    const remembered=localStorage.getItem(conversationMemoryKey(project.id));
+    if(remembered)localStorage.setItem("webnestdev.conversationId",remembered);
+    else localStorage.removeItem("webnestdev.conversationId");
     onOpenWorkspace(project.id);
   }
 

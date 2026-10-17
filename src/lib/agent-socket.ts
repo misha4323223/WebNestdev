@@ -23,6 +23,15 @@ export type AgentSocketEvent={
   attempt?:number;
   attempts?:number;
   waitSeconds?:number;
+  /**
+   * Set on secret.requested: the agent asks for a key. The event carries only the variable name, the
+   * target file and the reason — the value is typed by the user and posted straight to the server.
+   */
+  requestId?:string;
+  variable?:string;
+  purpose?:string;
+  file?:string;
+  expiresAt?:number;
 };
 
 export function createAgentSocket(onEvent:(event:AgentSocketEvent)=>void,onError:()=>void){
