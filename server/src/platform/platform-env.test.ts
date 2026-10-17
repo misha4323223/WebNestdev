@@ -150,7 +150,12 @@ test("сохранённые в панели ключи сразу видны ч
     const oauth = yandexOAuthConfig();
     assert.equal(oauth.clientId, "yandex-client-id");
     assert.equal(oauth.clientSecret, "yandex-client-secret");
-    assert.equal(oauth.scope, "cloud-api");
+    // По умолчанию scope не запрашивается: права берутся из настроек приложения, а запрос
+    // невыданного права (cloud-api есть уже не в каждом приложении) Яндекс отклоняет.
+    assert.equal(oauth.scope, undefined);
+    // Явно заданный scope возвращается как есть — панель может сузить набор прав.
+    await platform.savePlatformEnv({ YANDEX_OAUTH_SCOPE: "login:info" });
+    assert.equal(yandexOAuthConfig().scope, "login:info");
   });
 });
 

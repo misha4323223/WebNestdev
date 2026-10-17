@@ -23,7 +23,10 @@ export function yandexOAuthConfig() {
     clientSecret: read("YANDEX_CLIENT_SECRET"),
     configuredCallbackUrl: read("YANDEX_CALLBACK_URL"),
     configuredFrontendUrl: read("YANDEX_FRONTEND_URL"),
-    scope: read("YANDEX_OAUTH_SCOPE") ?? "cloud-api",
+    // Права запрашиваются только явно: в списке «Доступ к данным» приложения `cloud-api` уже
+    // не у всех есть, а запрос невыданного права Яндекс отклоняет страницей ошибки до согласия.
+    // Пусто — параметр scope не отправляется вовсе, и действуют права самого приложения.
+    scope: read("YANDEX_OAUTH_SCOPE"),
   };
 }
 
@@ -86,7 +89,9 @@ export async function registerYandexRoutes(app: FastifyInstance) {
     url.searchParams.set("response_type", "code");
     url.searchParams.set("client_id", clientId);
     url.searchParams.set("redirect_uri", flow.callbackUrl);
-    url.searchParams.set("scope", scope);
+    // Без scope Яндекс выдаёт токен с правами, отмеченными в приложении: так подключение
+    // работает и с набором, отличным от cloud-api.
+    if (scope) url.searchParams.set("scope", scope);
     url.searchParams.set("state", state);
     return reply.redirect(url.toString());
   });
