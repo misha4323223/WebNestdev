@@ -96,6 +96,10 @@ PREVIEW_CHECK="${PREVIEW_CHECK:-1}"
 DOCKER_CHECK="${DOCKER_CHECK:-1}"
 PANEL_CHECK="${PANEL_CHECK:-1}"
 APP_KEY_FILE="${APP_KEY_FILE:-}"
+# Метка контейнера-пробы в проверке предпросмотра (совпадает с PREVIEW_LABEL="webnestdev.preview"
+# в server/src/preview/types.ts). Нужна, чтобы убирать пробы прошлых выкаток, не трогая предпросмотры
+# пользователей.
+PREVIEW_CHECK_LABEL="${PREVIEW_CHECK_LABEL:-webnestdev.preview=selfcheck}"
 # Файл переменных развёртывания. Путь вынесен в переменную, чтобы шаг установки ключей можно
 # было проверить на копии файла, не трогая настоящий .env (и чтобы его видел тест скрипта).
 ENV_FILE="${ENV_FILE:-$APP_DIR/.env}"
@@ -280,11 +284,42 @@ rollback(){
   export WEBNESTDEV_IMAGE="$previous"
   run docker compose -f "$COMPOSE_FILE" up -d --no-build "$SERVICE"
   if wait_for_health; then
+    # Откат — тоже рабочая версия: закрепляем её в .env, иначе после перезагрузки compose
+    # поднимет то, что там записано (или локальный образ по умолчанию).
+    pin_image "$previous"
     log "откат вернул рабочую версию: $previous"
     return 0
   fi
   log "откат не поднялся — смотрите docker compose logs $SERVICE на ВМ"
   return 1
+}
+
+#
+# Образ, которым живёт сервис, записывается в .env развёртывания.
+#
+# compose описывает сервис как `image: ${WEBNESTDEV_IMAGE:-webnestdev:production}` с секцией
+# `build:`. Выкатка подставляет WEBNESTDEV_IMAGE только в своём окружении, а в .env его не было —
+# и после любой перезагрузки (restart-политика, `docker compose up` руками) compose брал локальный
+# образ по умолчанию, собранный неизвестно когда. Именно так 17 октября ВМ поднялась на сборке
+# четырёхдневной давности, хотя выкатка была успешной. Здесь значение закрепляется: перезапуск
+# поднимает ровно ту версию, которую выкатили (или на которую откатились).
+#
+pin_image(){
+  local image="$1" current
+  [ -n "$image" ] || return 0
+  [ -f "$ENV_FILE" ] || { log "образ ${image} не закреплён: ${ENV_FILE} нет"; return 0; }
+  current=$(grep -m1 '^WEBNESTDEV_IMAGE=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- || true)
+  if [ "$current" = "$image" ]; then
+    log "WEBNESTDEV_IMAGE уже закреплён: $image"
+    return 0
+  fi
+  cp "$ENV_FILE" "$ENV_FILE.bak" 2>/dev/null || true
+  if grep -q '^WEBNESTDEV_IMAGE=' "$ENV_FILE"; then
+    sed -i "s|^WEBNESTDEV_IMAGE=.*|WEBNESTDEV_IMAGE=$image|" "$ENV_FILE"
+  else
+    printf 'WEBNESTDEV_IMAGE=%s\n' "$image" >> "$ENV_FILE"
+  fi
+  log "WEBNESTDEV_IMAGE=$image (прежнее: ${current:-не было}) — после перезагрузки поднимется эта сборка"
 }
 
 #
@@ -491,6 +526,14 @@ verify_preview(){
   if [ "$DRY_RUN" = "1" ]; then
     log "dry-run: проверка предпросмотра пропущена"
     return 0
+  fi
+  # Приборка проб прошлых выкаток: прежняя версия preview-selfcheck выходила через process.exit()
+  # внутри try, и `finally` с удалением не выполнялся — контейнер-проба жил дальше и занимал
+  # память хоста. Убираются только контейнеры с меткой пробы, предпросмотры пользователей — нет.
+  stale=$(docker ps -aq --filter "label=$PREVIEW_CHECK_LABEL" 2>/dev/null || true)
+  if [ -n "$stale" ]; then
+    printf '%s\n' "$stale" | xargs -r docker rm -f >/dev/null 2>&1 || true
+    log "убраны контейнеры-пробы прошлых выкаток: $(printf '%s\n' "$stale" | grep -c .)"
   fi
   # Ограничение по времени: проба стартует контейнер и ждёт его ответа.
   output=$(timeout 120 docker compose exec -T "$SERVICE" node server/dist/scripts/preview-selfcheck.js </dev/null 2>&1 || true)
@@ -829,6 +872,8 @@ if [ "$MODE" = "image" ] && [ "$DRY_RUN" != "1" ]; then
     rollback "$PREVIOUS_IMAGE" || true
     exit 5
   fi
+  # Подтверждённая версия закрепляется в .env: перезагрузка ВМ не должна поднимать другой образ.
+  pin_image "$IMAGE_REF"
 fi
 # Docker внутри сервера — до проверки песочницы: она сама спрашивает контейнер, и без docker её
 # «docker недоступен» не отличалось бы от «не смонтирован сокет» (см. verify_docker).

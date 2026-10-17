@@ -19,6 +19,11 @@
  *
  * Код возврата: 0 — путь работает, 1 — не работает. Последняя строка `PREVIEW-NETWORK=…` —
  * машинный вердикт для deploy-скрипта.
+ *
+ * Уборка — часть контракта: проба живёт в контейнере, и `process.exit()` внутри проверки
+ * пропускает `finally` (Node не разворачивает стек), поэтому раньше контейнер оставался
+ * запущенным после каждой выкатки. Здесь проверка только возвращает код, а удаление и выход
+ * идут в одном месте — после него.
  */
 import { dockerExec } from "../preview/docker-exec.js";
 import { addressOnNetworks, attachToServerNetworks, firstContainerAddress, previewNetwork, serverNetworks } from "../preview/preview-network.js";
@@ -72,47 +77,57 @@ async function main() {
     verdict(/pull access denied|no such image|manifest unknown|not found|unauthorized/i.test(detail) ? "image" : "unreachable");
     process.exit(1);
   }
+
   const containerId = started.stdout.trim();
+  let code = 1;
   try {
-    // Проба поднимается внутри контейнера: это тот же вопрос, что задаёт платформа (`ready`).
-    let inside = false;
-    for (let attempt = 0; attempt < 15 && !inside; attempt++) {
-      const response = await dockerExec(["exec", containerId, "node", "-e", INSIDE_SCRIPT], 10_000).catch(() => null);
-      inside = Boolean(response && response.code === 0);
-      if (!inside) await new Promise(resolve => setTimeout(resolve, 300));
-    }
-    if (!inside) {
-      console.log("[preview] проба не отвечает и внутри контейнера: образ " + IMAGE + " не запускает node, либо " + PREVIEW_APP_PORT + " занят");
-      verdict("unreachable");
-      process.exit(1);
-    }
-
-    const address = network ? await addressOnNetworks(containerId, [network]) : await firstContainerAddress(containerId);
-    if (await reachable(address)) {
-      console.log("[preview] сервер доходит до контейнера по адресу " + address + ":" + PREVIEW_APP_PORT);
-      verdict("ok");
-      process.exit(0);
-    }
-    console.log("[preview] адрес " + (address || "(не назначен)") + ":" + PREVIEW_APP_PORT + " серверу не отвечает — подключаю контейнер к сети сервера");
-
-    // Та же починка, что платформа делает при запуске предпросмотра: контейнер подключается к
-    // сети сервера, и адрес берётся уже с неё.
-    const attached = await attachToServerNetworks(containerId);
-    const repaired = attached.host || address;
-    if (await reachable(repaired)) {
-      console.log("[preview] после подключения к " + attached.connected.join(", ") + " адрес " + repaired + " отвечает: платформа починит предпросмотр сама");
-      verdict("ok-after-connect");
-      process.exit(0);
-    }
-    console.log("[preview] ПРЕДПРОСМОТР НЕДОСТУПЕН СЕРВЕРУ: сеть " + (network || "по умолчанию") +
-      " сервер не видит. Панель покажет приложение и так (через docker exec), но медленнее и без\n" +
-      "[preview] горячей перезагрузки. Чтобы вернуть прямой адрес, задайте PREVIEW_NETWORK в .env и\n" +
-      "[preview] выкатите снова (docs/PRODUCTION_DEPLOYMENT.md)");
-    verdict("unreachable");
-    process.exit(1);
+    code = await probeContainer(containerId, network);
   } finally {
-    await dockerExec(["rm", "-f", containerId], 20_000).catch(() => null);
+    // Проба — контейнер на хосте: он должен исчезнуть при любом исходе, включая ошибку выше.
+    const removed = await dockerExec(["rm", "-f", containerId], 20_000).catch(() => null);
+    if (!removed || removed.code !== 0) console.log("[preview] контейнер-проба " + containerId + " не удалился — удалите его вручную (docker rm -f)");
   }
+  process.exit(code);
+}
+
+/** Возвращает код выхода проверки; контейнер удаляет вызывающий, в одном месте. */
+async function probeContainer(containerId: string, network: string | null): Promise<number> {
+  // Проба поднимается внутри контейнера: это тот же вопрос, что задаёт платформа (`ready`).
+  let inside = false;
+  for (let attempt = 0; attempt < 15 && !inside; attempt++) {
+    const response = await dockerExec(["exec", containerId, "node", "-e", INSIDE_SCRIPT], 10_000).catch(() => null);
+    inside = Boolean(response && response.code === 0);
+    if (!inside) await new Promise(resolve => setTimeout(resolve, 300));
+  }
+  if (!inside) {
+    console.log("[preview] проба не отвечает и внутри контейнера: образ " + IMAGE + " не запускает node, либо " + PREVIEW_APP_PORT + " занят");
+    verdict("unreachable");
+    return 1;
+  }
+
+  const address = network ? await addressOnNetworks(containerId, [network]) : await firstContainerAddress(containerId);
+  if (await reachable(address)) {
+    console.log("[preview] сервер доходит до контейнера по адресу " + address + ":" + PREVIEW_APP_PORT);
+    verdict("ok");
+    return 0;
+  }
+  console.log("[preview] адрес " + (address || "(не назначен)") + ":" + PREVIEW_APP_PORT + " серверу не отвечает — подключаю контейнер к сети сервера");
+
+  // Та же починка, что платформа делает при запуске предпросмотра: контейнер подключается к
+  // сети сервера, и адрес берётся уже с неё.
+  const attached = await attachToServerNetworks(containerId);
+  const repaired = attached.host || address;
+  if (await reachable(repaired)) {
+    console.log("[preview] после подключения к " + attached.connected.join(", ") + " адрес " + repaired + " отвечает: платформа починит предпросмотр сама");
+    verdict("ok-after-connect");
+    return 0;
+  }
+  console.log("[preview] ПРЕДПРОСМОТР НЕДОСТУПЕН СЕРВЕРУ: сеть " + (network || "по умолчанию") +
+    " сервер не видит. Панель покажет приложение и так (через docker exec), но медленнее и без\n" +
+    "[preview] горячей перезагрузки. Чтобы вернуть прямой адрес, задайте PREVIEW_NETWORK в .env и\n" +
+    "[preview] выкатите снова (docs/PRODUCTION_DEPLOYMENT.md)");
+  verdict("unreachable");
+  return 1;
 }
 
 /** Ответила ли проба по этому адресу; ошибка называется в логе, а не превращается в «нет». */
