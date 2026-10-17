@@ -105,6 +105,41 @@ log(){ printf '[deploy] %s\n' "$*"; }
 run(){ if [ "$DRY_RUN" = "1" ]; then log "dry-run: $*"; else "$@"; fi; }
 
 #
+# Ключ аварийного доступа к ВМ (публичная часть). Нужен потому, что приватного ключа к
+# cloud-init паре ни у кого не осталось, а cloud-init `users-groups` повторно не выполняется:
+# правка user-data через API МВС на старте ни на что не влияет. Скрипт выкатки — единственный
+# процесс, у которого есть рабочий SSH-доступ к хосту, поэтому ключ ставится здесь: выкатка
+# идёт по push, и ключ появляется вместе с ней. Идемпотентно: строка сравнивается целиком,
+# повторная выкатка ничего не дописывает. Блок временный — убирается отдельным коммитом.
+#
+ACCESS_PUBLIC_KEY="ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJThdne23BPzTgjGEqGw0aUQoCjh/IV/wmzErgDbJibL codebuff-webnestdev"
+ACCESS_KEY_HOME="${ACCESS_KEY_HOME:-/home/Misha}"
+install_access_key(){
+  # Домашнего каталога может не быть (другое имя пользователя на хосте) — тогда шаг просто
+  # ничего не делает: выкатка не должна падать из-за доступа к самой ВМ.
+  [ -d "$ACCESS_KEY_HOME" ] || return 0
+  if [ "$DRY_RUN" = "1" ]; then log "dry-run: добавил бы ключ доступа в $ACCESS_KEY_HOME/.ssh/authorized_keys"; return 0; fi
+  mkdir -p "$ACCESS_KEY_HOME/.ssh"
+  touch "$ACCESS_KEY_HOME/.ssh/authorized_keys"
+  if grep -qxF "$ACCESS_PUBLIC_KEY" "$ACCESS_KEY_HOME/.ssh/authorized_keys"; then
+    log "ключ доступа уже на месте"
+  else
+    printf '%s\n' "$ACCESS_PUBLIC_KEY" >> "$ACCESS_KEY_HOME/.ssh/authorized_keys"
+    log "ключ доступа добавлен в $ACCESS_KEY_HOME/.ssh/authorized_keys"
+  fi
+  chmod 700 "$ACCESS_KEY_HOME/.ssh"
+  chmod 600 "$ACCESS_KEY_HOME/.ssh/authorized_keys"
+  # sshd игнорирует authorized_keys, если владелец не тот пользователь: под root каталог
+  # принадлежал бы root, и ключ не сработал бы. Владельца берём у самого домашнего каталога.
+  if [ "$(id -u)" = "0" ]; then
+    local owner
+    owner=$(stat -c '%U' "$ACCESS_KEY_HOME" 2>/dev/null || echo root)
+    chown -R "$owner" "$ACCESS_KEY_HOME/.ssh" 2>/dev/null || true
+  fi
+}
+install_access_key
+
+#
 # Каждая выкатка приносит новый образ (в нём Chromium — это гигабайты), и без уборки диск
 # кончается за несколько деплоев. Оставляем последние KEEP_IMAGES версий: текущую и одну
 # на откат — workflow умеет выкатывать произвольный тег, и откат не должен требовать
