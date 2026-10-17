@@ -131,7 +131,12 @@ services:
       # По умолчанию — те же значения, что в коде (пустое PREVIEW_NETWORK = выбрать сеть самим).
       PREVIEW_NETWORK: ${PREVIEW_NETWORK:-}
       PREVIEW_IDLE_MS: ${PREVIEW_IDLE_MS:-300000}
-      PREVIEW_MAX_CONTAINERS: ${PREVIEW_MAX_CONTAINERS:-3}
+      # Сколько контейнерных предпросмотров держит один аккаунт. 1 — правило продукта: второй
+      # предпросмотр того же человека останавливает его же прежний. 0 — без ограничения.
+      PREVIEW_MAX_PER_USER: ${PREVIEW_MAX_PER_USER:-1}
+      # Необязательный предохранитель на весь хост (сумма по всем аккаунтам). По умолчанию выключен:
+      # места считаются на аккаунт, а не на машину. Тесному хосту стоит задать число, например 4.
+      PREVIEW_MAX_CONTAINERS: ${PREVIEW_MAX_CONTAINERS:-0}
       PREVIEW_PROXY_TIMEOUT_MS: ${PREVIEW_PROXY_TIMEOUT_MS:-30000}
       # Деградировавший режим (панель отдаётся через `docker exec`, см. preview/exec-proxy.ts):
       # сколько запросов идёт внутрь контейнера одновременно, сколько ждёт и как часто повторять

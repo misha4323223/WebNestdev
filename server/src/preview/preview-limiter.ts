@@ -2,22 +2,37 @@ import { listPreviews } from "./preview-store.js";
 import type { PreviewState } from "./types.js";
 
 /**
- * How many *live* runtime previews this host keeps at once.
+ * Сколько контейнерных предпросмотров держит один аккаунт.
  *
- * This is the opposite bound to the static preview: a static preview is a listener in this
- * process (~0.5 MB measured), while a container dev server holds a few hundred megabytes for as
- * long as it runs. A count, not a queue: a preview that cannot start is answered with a reason
- * the user can act on, because a queued preview would mean an empty iframe that looks broken.
+ * Правило продукта: **один**. Второй предпросмотр того же пользователя останавливает его же
+ * прежний — так счёт за память понятен каждому, а два проекта одного человека не борются за
+ * хост. Статический предпросмотр (слушатель в процессе сервера, ~0.5 МБ) этот лимит не занимает:
+ * он не контейнер и памяти почти не стоит.
  *
- * `PREVIEW_MAX_CONTAINERS=0` removes the cap — the same escape hatch the idle sweep has.
+ * `PREVIEW_MAX_PER_USER=0` снимает ограничение — тот же приём, что у `PREVIEW_IDLE_MS=0`.
+ */
+export function perUserPreviewLimit() {
+  const raw = process.env.PREVIEW_MAX_PER_USER?.trim();
+  if (!raw) return 1;
+  const parsed = Number(raw);
+  // Здесь `0` — значение, а не опечатка: «без ограничения».
+  if (!Number.isFinite(parsed) || parsed < 0) return 1;
+  return Math.floor(parsed);
+}
+
+/**
+ * Необязательный предохранитель на весь хост: сколько контейнерных предпросмотров живёт
+ * одновременно у всех пользователей вместе.
+ *
+ * По умолчанию его нет (`0`): счёт ведётся на аккаунт, а не на машину, иначе сто пользователей
+ * делят три места. Предохранитель остаётся доступным для тесного хоста — `PREVIEW_MAX_CONTAINERS=4`
+ * ограничивает сумму, не меняя правило «один на аккаунт».
  */
 export function runtimePreviewLimit() {
   const raw = process.env.PREVIEW_MAX_CONTAINERS?.trim();
-  if (!raw) return 3;
+  if (!raw) return 0;
   const parsed = Number(raw);
-  // Deliberately not `positiveInt`: here `0` is a value, not a mistake — it means "no cap",
-  // the same escape hatch `PREVIEW_IDLE_MS=0` opens for the sweeper.
-  if (!Number.isFinite(parsed) || parsed < 0) return 3;
+  if (!Number.isFinite(parsed) || parsed < 0) return 0;
   return Math.floor(parsed);
 }
 
@@ -35,36 +50,41 @@ export type LiveRuntimePreview = { projectId: string; userId?: string; lastUsedA
 export type RuntimeStartDecision = { ok: true; stopProjectId?: string } | { ok: false; reason: string };
 
 /**
- * Whether one more runtime preview fits. Three answers, in this order:
+ * Whether one more runtime preview fits. The account rule comes first, the host brake second:
  *
- * - there is room — start it;
- * - the host is full, but the oldest live preview belongs to *this* user — stop that one and
- *   start the new one: their own two projects should not fight over the host, and stopping their
- *   idle preview is what they would do themselves;
- * - the host is full and every other preview belongs to someone else — refuse, naming the limit,
- *   instead of stopping a stranger's running app behind their back.
+ * - у пользователя уже есть свой предпросмотр (и лимит на аккаунт = 1) — останавливаем его же
+ *   самый старый и запускаем новый: это то, что человек сделал бы сам, и его второй проект не
+ *   получает отказ из-за его же первого;
+ * - предпросмотр без известного владельца чужому не приписывается и не останавливается;
+ * - если хост ограничен (`PREVIEW_MAX_CONTAINERS` > 0) и места нет — отказ с причиной, а не
+ *   остановка чужого приложения за спиной.
  */
 export function decideRuntimePreviewStart(input: {
   live: LiveRuntimePreview[];
   projectId: string;
   userId: string;
+  /** Лимит на аккаунт; по умолчанию `perUserPreviewLimit()`. */
+  perUser?: number;
+  /** Предохранитель хоста; по умолчанию `runtimePreviewLimit()` (0 — без предохранителя). */
   limit?: number;
 }): RuntimeStartDecision {
-  const limit = input.limit ?? runtimePreviewLimit();
+  const perUser = input.perUser ?? perUserPreviewLimit();
+  const hostLimit = input.limit ?? runtimePreviewLimit();
   const others = input.live.filter(preview => preview.projectId !== input.projectId);
-  if (limit <= 0) return { ok: true };
-  if (others.length < limit) return { ok: true };
-  // Only a preview with a known owner can be this user's: an unknown owner is never stopped on
-  // someone else's behalf, and a request without an owner cannot claim anything.
+  // Только предпросмотр с известным владельцем может быть «своим»: запрос без владельца ничего
+  // не присваивает, а чужое приложение не останавливается ни при каких условиях.
   const own = (input.userId ? others.filter(preview => preview.userId === input.userId) : [])
     .sort((a, b) => a.lastUsedAt - b.lastUsedAt);
-  if (own.length) return { ok: true, stopProjectId: own[0].projectId };
-  return {
-    ok: false,
-    reason:
-      "На этом хосте одновременно работают " + limit + " серверных предпросмотров (PREVIEW_MAX_CONTAINERS): " +
-      "остановите предпросмотр другого проекта или поднимите лимит. Готовые статические проекты этот лимит не занимают.",
-  };
+  if (perUser > 0 && own.length >= perUser) return { ok: true, stopProjectId: own[0].projectId };
+  if (hostLimit > 0 && others.length >= hostLimit) {
+    return {
+      ok: false,
+      reason:
+        "На этом хосте одновременно работают " + hostLimit + " серверных предпросмотров (PREVIEW_MAX_CONTAINERS): " +
+        "остановите предпросмотр другого проекта или поднимите лимит. Готовые статические проекты этот лимит не занимают.",
+    };
+  }
+  return { ok: true };
 }
 
 /**
@@ -72,6 +92,10 @@ export function decideRuntimePreviewStart(input: {
  * preview mode. The idle timeout is logged by the sweeper, which owns that number.
  */
 export function describePreviewLimits() {
-  const limit = runtimePreviewLimit();
-  return "серверных предпросмотров одновременно: " + (limit > 0 ? limit : "без ограничения");
+  const perUser = perUserPreviewLimit();
+  const host = runtimePreviewLimit();
+  return (
+    "предпросмотров на аккаунт: " + (perUser > 0 ? perUser : "без ограничения") +
+    "; одновременно на хосте: " + (host > 0 ? host : "без ограничения")
+  );
 }

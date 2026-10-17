@@ -1,78 +1,131 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { decideRuntimePreviewStart, describePreviewLimits, runtimePreviewLimit } from "./preview-limiter.js";
+import {
+  decideRuntimePreviewStart,
+  describePreviewLimits,
+  perUserPreviewLimit,
+  runtimePreviewLimit,
+} from "./preview-limiter.js";
 
 const live = (projectId: string, userId: string, lastUsedAt: number) => ({ projectId, userId, lastUsedAt });
 
-test("a host with room starts another runtime preview", () => {
-  const decision = decideRuntimePreviewStart({
-    live: [live("a", "user-1", 100)],
-    projectId: "b",
-    userId: "user-2",
-    limit: 3,
-  });
-  assert.deepEqual(decision, { ok: true });
-});
+/** Сохранить окружение вокруг теста: переменные лимитов читаются функциями, а не аргументами. */
+function withEnv(values: Record<string, string | undefined>, run: () => void) {
+  const saved = new Map<string, string | undefined>();
+  for (const [name, value] of Object.entries(values)) {
+    saved.set(name, process.env[name]);
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
+  try {
+    run();
+  } finally {
+    for (const [name, value] of saved) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+}
 
-test("the host's own project never counts against the limit: restarting is not a new preview", () => {
+test("один аккаунт держит один контейнерный предпросмотр: второй останавливает свой же первый", () => {
   const decision = decideRuntimePreviewStart({
-    live: [live("a", "user-1", 100), live("a", "user-1", 100), live("a", "user-1", 100)],
-    projectId: "a",
+    live: [live("old", "user-1", 100), live("other", "user-2", 900)],
+    projectId: "new",
     userId: "user-1",
-    limit: 3,
-  });
-  assert.deepEqual(decision, { ok: true });
-});
-
-test("at the cap, the user's own oldest preview is stopped instead of refusing them", () => {
-  const decision = decideRuntimePreviewStart({
-    live: [live("old", "user-1", 100), live("new", "user-1", 900), live("other", "user-2", 950)],
-    projectId: "third",
-    userId: "user-1",
-    limit: 3,
   });
   assert.deepEqual(decision, { ok: true, stopProjectId: "old" });
 });
 
-test("at the cap with only other people's previews, the answer is a reason, not a silent stop", () => {
+test("предпросмотр другого пользователя не мешает и не останавливается", () => {
   const decision = decideRuntimePreviewStart({
-    live: [live("a", "user-1", 100), live("b", "user-2", 200), live("c", "user-3", 300)],
+    live: [live("a", "user-1", 100), live("b", "user-2", 200)],
+    projectId: "c",
+    userId: "user-3",
+  });
+  assert.deepEqual(decision, { ok: true });
+});
+
+test("перезапуск своего же проекта не считается новым предпросмотром", () => {
+  const decision = decideRuntimePreviewStart({
+    live: [live("a", "user-1", 100), live("a", "user-1", 100)],
+    projectId: "a",
+    userId: "user-1",
+  });
+  assert.deepEqual(decision, { ok: true });
+});
+
+test("лимит на аккаунт больше одного: третий предпросмотр останавливает самый старый", () => {
+  const decision = decideRuntimePreviewStart({
+    live: [live("first", "user-1", 100), live("second", "user-1", 500)],
+    projectId: "third",
+    userId: "user-1",
+    perUser: 2,
+  });
+  assert.deepEqual(decision, { ok: true, stopProjectId: "first" });
+});
+
+test("лимит на аккаунт 0 снимает ограничение", () => {
+  const decision = decideRuntimePreviewStart({
+    live: [live("a", "user-1", 100), live("b", "user-1", 200)],
+    projectId: "c",
+    userId: "user-1",
+    perUser: 0,
+  });
+  assert.deepEqual(decision, { ok: true });
+});
+
+test("предохранитель хоста выключен по умолчанию: чужие предпросмотры не дают отказа", () => {
+  const decision = decideRuntimePreviewStart({
+    live: [live("a", "user-1", 1), live("b", "user-2", 2), live("c", "user-3", 3), live("d", "user-4", 4)],
+    projectId: "new",
+    userId: "user-5",
+  });
+  assert.deepEqual(decision, { ok: true });
+});
+
+test("заданный предохранитель хоста отвечает причиной, а не остановкой чужого приложения", () => {
+  const decision = decideRuntimePreviewStart({
+    live: [live("a", "user-1", 100), live("b", "user-2", 200)],
     projectId: "d",
     userId: "user-4",
-    limit: 3,
+    limit: 2,
   });
   assert.equal(decision.ok, false);
   if (decision.ok) return;
   assert.match(decision.reason, /PREVIEW_MAX_CONTAINERS/);
-  assert.match(decision.reason, /3 серверных предпросмотров/);
+  assert.match(decision.reason, /2 серверных предпросмотров/);
 });
 
-test("a preview without an owner is never stopped on someone else's behalf", () => {
+test("предпросмотр без владельца никогда не останавливается за чужой счёт", () => {
   const decision = decideRuntimePreviewStart({
-    live: [live("a", "user-1", 100), live("b", "user-2", 200), live("orphan", "", 300)],
+    live: [live("orphan", "", 100), live("b", "user-2", 200)],
     projectId: "d",
     userId: "",
-    limit: 3,
   });
-  assert.equal(decision.ok, false, "пустой userId не считается «своим» превью");
+  assert.deepEqual(decision, { ok: true }, "пустой userId ничего не присваивает");
 });
 
-test("a limit of zero means no cap, and the default is three", () => {
-  assert.deepEqual(
-    decideRuntimePreviewStart({ live: [live("a", "user-1", 1), live("b", "user-2", 2)], projectId: "c", userId: "user-3", limit: 0 }),
-    { ok: true },
-  );
-  const previous = process.env.PREVIEW_MAX_CONTAINERS;
-  try {
-    delete process.env.PREVIEW_MAX_CONTAINERS;
-    assert.equal(runtimePreviewLimit(), 3);
-    assert.match(describePreviewLimits(), /серверных предпросмотров одновременно: 3/);
-    process.env.PREVIEW_MAX_CONTAINERS = "1";
-    assert.equal(runtimePreviewLimit(), 1);
-    process.env.PREVIEW_MAX_CONTAINERS = "0";
-    assert.match(describePreviewLimits(), /без ограничения/);
-  } finally {
-    if (previous === undefined) delete process.env.PREVIEW_MAX_CONTAINERS;
-    else process.env.PREVIEW_MAX_CONTAINERS = previous;
-  }
+test("окружение: по умолчанию один предпросмотр на аккаунт и никакого лимита хоста", () => {
+  withEnv({ PREVIEW_MAX_PER_USER: undefined, PREVIEW_MAX_CONTAINERS: undefined }, () => {
+    assert.equal(perUserPreviewLimit(), 1);
+    assert.equal(runtimePreviewLimit(), 0);
+    assert.equal(describePreviewLimits(), "предпросмотров на аккаунт: 1; одновременно на хосте: без ограничения");
+  });
+});
+
+test("окружение: PREVIEW_MAX_PER_USER и PREVIEW_MAX_CONTAINERS читаются и понимают 0", () => {
+  withEnv({ PREVIEW_MAX_PER_USER: "2", PREVIEW_MAX_CONTAINERS: "4" }, () => {
+    assert.equal(perUserPreviewLimit(), 2);
+    assert.equal(runtimePreviewLimit(), 4);
+    assert.equal(describePreviewLimits(), "предпросмотров на аккаунт: 2; одновременно на хосте: 4");
+  });
+  withEnv({ PREVIEW_MAX_PER_USER: "0", PREVIEW_MAX_CONTAINERS: "0" }, () => {
+    assert.equal(perUserPreviewLimit(), 0);
+    assert.equal(runtimePreviewLimit(), 0);
+    assert.equal(describePreviewLimits(), "предпросмотров на аккаунт: без ограничения; одновременно на хосте: без ограничения");
+  });
+  withEnv({ PREVIEW_MAX_PER_USER: "мусор", PREVIEW_MAX_CONTAINERS: "-1" }, () => {
+    assert.equal(perUserPreviewLimit(), 1, "нечитаемое значение возвращает правило по умолчанию");
+    assert.equal(runtimePreviewLimit(), 0);
+  });
 });

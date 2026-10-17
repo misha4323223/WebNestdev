@@ -163,8 +163,11 @@ is built once and served from the server process (measured: ~0.5 MB per preview,
 recognised *before* anything is built, so no container is spent on a build that cannot produce a
 static preview (`server/src/preview/project-kind.ts` decides from structure, dependencies and
 commands — `package.json` alone proves nothing, and a user's `Dockerfile` is never executed).
-Runtime previews are the only counted kind (`PREVIEW_MAX_CONTAINERS`, default 3), because they
-hold memory while they run; an idle preview is stopped after five minutes without use.
+Runtime previews are the only counted kind, and the count is **per account**: one container preview
+at a time (`PREVIEW_MAX_PER_USER`, default 1, `0` disables it), so a second preview of the same user
+stops that user's older one instead of refusing them, and other users are not affected. The host-wide
+brake (`PREVIEW_MAX_CONTAINERS`) is off by default and can be set on a small machine to cap the sum.
+An idle preview is stopped after five minutes without use.
 
 ## CI
 

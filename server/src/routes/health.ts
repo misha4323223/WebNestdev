@@ -4,7 +4,7 @@ import { isYdbEnabled, ydbQuery } from "../storage/ydb.js";
 import { runQueueStats } from "../agent/run-limiter.js";
 import { sandboxQueueStats } from "../sandbox/sandbox-limiter.js";
 import { browserQueueStats } from "../tools/browser-limiter.js";
-import { liveRuntimePreviews, liveStaticPreviews, runtimePreviewLimit } from "../preview/preview-limiter.js";
+import { liveRuntimePreviews, liveStaticPreviews, perUserPreviewLimit, runtimePreviewLimit } from "../preview/preview-limiter.js";
 import { previewAddresses } from "../preview/preview-store.js";
 import { previewPublicDomain } from "../preview/preview-host.js";
 import { execProxyQueueStats } from "../preview/exec-proxy.js";
@@ -59,6 +59,9 @@ async function activity(){
     browser: browserQueueStats(),
     previews: {
       runtime: liveRuntimePreviews().length,
+      // Сколько контейнерных предпросмотров разрешено одному аккаунту: это правило продукта.
+      runtimePerUser: perUserPreviewLimit(),
+      // Предохранитель на весь хост; 0 — не задан (см. preview/preview-limiter.ts).
       runtimeLimit: runtimePreviewLimit(),
       static: liveStaticPreviews().length,
       // Адреса живых предпросмотров: `settled` — этот адрес подтверждён запросом самого сервера,
