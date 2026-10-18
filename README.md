@@ -296,7 +296,7 @@ The callback must be reachable by the browser, and in production the app host ha
 
 ## Yandex Cloud integration
 
-The Yandex Cloud card works like the GitHub one — press "Подключить" and the authorization window reports back on its own — and it additionally accepts a credential the user pastes, which is the path that always works:
+The Yandex Cloud card stays folded to a single button. **Подключить** opens the Yandex Cloud console in a new tab and unfolds a three-step guide with the key field, because a service-account authorized key is the only credential Yandex Cloud still accepts for a new integration: Yandex ID OAuth tokens stopped working for Cloud on 1 June 2026, so a GitHub-like "sign in and allow" flow cannot grant Cloud access. The card accepts three forms of the credential:
 
 - **Authorized key of a service account (recommended)** — Yandex Cloud console → "Сервисные аккаунты" → create an account → grant `viewer` on the cloud plus the roles the agent needs on the folder → "Создать новый ключ" → "Создать авторизованный ключ" → download the JSON and paste it. The server signs a PS256 JWT with it and exchanges that for an IAM token (`iam.api.cloud.yandex.net/iam/v1/tokens`).
 - **IAM token** (`t1.…`) — from `yc iam create-token` or the console button; it lives about 12 hours.
@@ -310,9 +310,63 @@ Server environment:
 
 1. Register an OAuth app at `https://oauth.yandex.ru/client/new` with the Yandex Cloud API scope and the callback `https://<app-host>/api/yandex/callback`.
 2. Provide `YANDEX_CLIENT_ID` and `YANDEX_CLIENT_SECRET` (`YANDEX_CALLBACK_URL`, `YANDEX_FRONTEND_URL` and `YANDEX_OAUTH_SCOPE` override the defaults; the scope defaults to `cloud-api`).
-3. Without those values the button explains that OAuth is not configured and opens the key form instead — the pasted-credential path does not need an OAuth app at all.
+3. The key path does not need an OAuth app at all, so these values are only used by the sign-in flow; the connector card opens the console and the key form regardless.
 
 See docs/AUTH_PRODUCTION_PLAN.md for the staged rollout. Credential encryption, legacy-token migration, and key rotation are documented in docs/SECRET_ENCRYPTION.md.
+
+## Other Russian clouds
+
+Next to Yandex Cloud, the integrations tab lists the clouds that can be connected with a key in the same folded shape — one button, then a three-step guide and the field (`src/features/integrations/cloud/`):
+
+- **Timeweb Cloud** — a permanent API token, verified with `GET https://api.timeweb.cloud/api/v1/servers`.
+- **Cloud.ru** — `Key ID` + `Key Secret` of a service account, verified by exchanging them for a token at `https://iam.api.cloud.ru/api/v1/auth/token`.
+- **MWS (МТС)** — the `key.json` authorized key, verified by reading projects through the existing `server/src/mws/mws-auth.ts`.
+
+None of them offers a GitHub-like "sign in and allow" flow for cloud resources (checked against their documentation in October 2026): every one of them authenticates a service account or a personal API token. So the connector does the honest thing instead — opens the provider's console, explains where the key is created, and stores it only after the provider accepts it (`server/src/cloud/verify.ts`). Credentials are encrypted like every other secret and are never returned to the browser. The provider catalog is `server/src/cloud/providers.ts` on the server and `src/features/integrations/cloud/catalog.ts` in the panel; adding a cloud means adding an entry to both and a verify function.
+
+The agent reaches those clouds through two tools: `cloud.status` (which clouds are connected, with the account each key belongs to — never the key itself) and `cloud.request` (an authenticated call to the provider's API). `cloud.request` accepts only `GET` and `HEAD`; a request that would create or delete a resource is refused with an explanation, so a user's key cannot change anything without a separate consent switch that does not exist yet. The host is locked per provider (`api.timeweb.cloud`, `*.cloud.ru`, `*.mwsapis.ru`), so a typo in a path cannot send the key elsewhere (`server/src/cloud/api.ts`, covered by `api.test.ts`).
+
+## Domains
+
+The agent can answer "is this name free?" without any account: `domain.check` (`server/src/domains/`) reads public registry data and returns `available`, `taken` or `unknown` per name, accepts Cyrillic names and full URLs, and never registers, renews, transfers or touches DNS. Two sources are used:
+
+- **`.ru`, `.su`, `.рф`** — WHOIS of the TCI registry (`whois.tcinet.ru`, port 43), because these zones publish no RDAP at all. A registered name answers with a `domain:` line, a free one with `No entries found`.
+- **every other zone** — RDAP through the `rdap.org` bootstrap, which follows the redirect into the zone's registry.
+
+Two details keep the answer honest instead of merely plausible. The bootstrap answers `404` both for a free name and for a zone it does not serve (`.ru`, `.de`, …), so a `404` whose body says `No RDAP service is available` is reported as `unknown`, not as a free domain. And `rdap.org` refuses the default `User-Agent` of Node's `fetch` with `403`, so the client identifies itself. Anything unexpected — a timeout, `429`, an unfamiliar WHOIS format — becomes `unknown`, never `available`, because a wrong "free" makes the agent send the user to buy a taken domain.
+
+Registration stays the user's action, and that is a deliberate product decision, not a missing feature: no Russian registrar offers an OAuth-style "connect your account" flow for third parties. Beget's API authenticates with a login plus a separate API password on every request, and REG.RU's API additionally requires the caller's IP to be allow-listed in the account's security settings. The agent therefore checks names for free, and the user buys the domain in their own registrar panel.
+
+### Registrar connectors
+
+The integrations tab also lists three registrar cabinets under **«Домены»** (`src/features/integrations/domains/`), in the same folded shape as the clouds — one button, a three-step guide and the fields:
+
+- **REG.RU** — the account login plus the main or the alternative API password; read through `POST https://api.reg.ru/api/regru2/domain/get_list`. The cabinet must allow API access and the server's IP; when REG.RU answers `ACCESS_DENIED_FROM_IP`, the error names the server's own external address, so the user knows exactly which IP to add in **«Безопасность» → «Ограничения доступа»** (`regRuAccessHint` in `server/src/domains/registrar-api.ts`).
+- **Beget** — the account login plus the separate API password set in the panel's **«API»** section; read through `https://api.beget.com/api/domain/getList`.
+- **Timeweb Cloud** — the same API token as its cloud card, read through `GET https://api.timeweb.cloud/api/v1/domains`.
+
+A cabinet is stored only after the registrar accepts the credential and returns the domain list — the same rule as the clouds (`server/src/domains/verify.ts`). Secrets are encrypted like every other secret, live in the `domain_connections` table (or the JSON fallback) and never travel back to the browser. Reading is the whole feature: nothing in these cards registers, renews, transfers or edits DNS, and each card says so. The agent reaches the cabinets through `domain.list` (read-only, one registrar or all connected), which is how it can answer "which domains do I already own?" — the catalog is `server/src/domains/providers.ts` on the server and `src/features/integrations/domains/catalog.ts` in the panel, so adding a registrar means an entry in both plus a branch in `registrar-api.ts`.
+
+## Services that connect with a key
+
+Below the clouds and the registrars, **«Интеграции» → «Сервисы»** lists the Russian services a generated app most often needs — 20 of them, in six groups (`src/features/integrations/services/`):
+
+- **Файлы (S3)** — Selectel, VK Cloud, Yandex Object Storage, Timeweb Cloud, Cloud.ru.
+- **Почта** — NotiSend, Sendsay, RuSender, Unisender.
+- **Оплата** — ЮKassa, CloudPayments, Robokassa, Т-Банк Эквайринг.
+- **AI** — GigaChat, Yandex AI Studio.
+- **Карты** — Yandex Maps API, 2GIS.
+- **CRM** — RetailCRM, Битрикс24 (входящий вебхук), amoCRM.
+
+Everything is Russian by design; the foreign providers (Stripe, Resend, SendGrid, OpenAI, Google Maps, HubSpot…) are deliberately absent and stay for a later round. The card is the same folded one as the clouds: one button, a three-step guide, the fields, and the console link. A key is stored **only after the provider accepted it**, and what was checked is written on the card itself. Two providers have no safe read-only request at all — Robokassa and Т-Банк: any call that would verify the credentials is already a payment operation, so those cards say plainly that they store without verification (`verification: "store"` in `server/src/services/catalog.ts`) instead of pretending. Unisender is offered with a note that its licensor is registered in Cyprus, because the product promise is "Russian services" and that detail matters.
+
+Verification is one request per provider, chosen so that it never creates or charges anything: listing S3 buckets, reading an account, exchanging the GigaChat key for a short-lived token and reading the model list, searching a 2GIS region, `credentials` in RetailCRM, `user.current` in Битрикс24. The S3 signature is implemented in the repository (`server/src/services/s3.ts`) rather than pulled from an SDK, and it was checked against an independent implementation — the access key is never trusted to "look right". GigaChat lives behind the Russian trusted CA, which Node does not ship, so the public chain is kept in `server/certs/` and passed to those two requests only (`server/src/services/russian-ca.ts`); the server image copies the files in explicitly, because `tsc` does not. Nothing extends trust globally.
+
+Stored credentials are encrypted with the same key as every other secret, live in the `service_connections` table (or the JSON fallback), and never travel back to the browser: the list endpoint returns only `connected`, the account the key belongs to and the env variable names. Key rotation covers the new folders and tables (`scripts/rotate-encryption-key.mjs`, `JSON_TARGETS` includes the keyed maps `cloud/`, `domains/`, `services/`).
+
+The agent uses three tools (`server/src/tools/service-tools.ts`): `service.status` (what is connected, with the account — never the key), `service.env` and `service.secrets`. `service.env` copies a connected service's variables into the project's encrypted secret store, so the generated app reads `process.env.S3_ACCESS_KEY_ID`, `process.env.YOOKASSA_SHOP_ID`, `process.env.GIGACHAT_AUTH_KEY` and so on at run time — the values never enter the model's context or the tool result, only the names do. That is what makes "подключите оплату" a card the user fills once instead of a key pasted into the chat.
+
+Adding a service means an entry in `server/src/services/catalog.ts` (fields, env names, defaults, `derive`) and in `src/features/integrations/services/catalog.ts` (name, colour, steps), plus a branch in `verify.ts` when a safe check exists. The two catalogs are kept in step by hand — ids, field keys, `optional`, `secret` and names — because a field the panel demands that the server does not read is a broken card.
 
 ## Changes and rollback
 

@@ -13,6 +13,11 @@ export const JSON_TARGETS = [
   { folder: "github", fields: ["accessToken"] },
   { folder: "yandex", fields: ["secret"] },
   { folder: "database", fields: ["password", "url"] },
+  // Подключения из «Интеграций»: облака, регистраторы домена и сервисы с ключом лежат в одном
+  // файле пользователя картой `провайдер → { secret, account, … }` — отсюда `keyed`.
+  { folder: "cloud", fields: ["secret"], keyed: true },
+  { folder: "domains", fields: ["secret"], keyed: true },
+  { folder: "services", fields: ["secret"], keyed: true },
   // Один payload на проект: внутри JSON-объект `файл → переменная → значение`.
   { folder: "project-secrets", fields: ["payload"] },
 ] as const;
@@ -26,6 +31,13 @@ async function readdirSafe(dir: string) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw error;
   }
+}
+
+/** Записи карты `ключ → объект`: значения-объекты перешифровываются на месте. */
+function nestedRecords(value: Record<string, unknown>): Array<Record<string, unknown>> {
+  return Object.values(value).filter(
+    (entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === "object" && !Array.isArray(entry),
+  );
 }
 
 /** Плейнтекст (старые установки) тоже проходит через ротацию и уходит на диск шифротекстом. */
@@ -55,12 +67,15 @@ export async function rotateJsonStore(
       const file = path.join(dir, name);
       const value = JSON.parse(await readFile(file, "utf8")) as Record<string, unknown>;
       let touched = false;
-      for (const field of target.fields) {
-        const next = rewrap(value[field], oldKey, newKey);
-        if (next === null) continue;
-        value[field] = next;
-        touched = true;
-        fields++;
+      const records = "keyed" in target && target.keyed ? nestedRecords(value) : [value];
+      for (const record of records) {
+        for (const field of target.fields) {
+          const next = rewrap(record[field], oldKey, newKey);
+          if (next === null) continue;
+          record[field] = next;
+          touched = true;
+          fields++;
+        }
       }
       if (touched) {
         changes.push({ file, value });

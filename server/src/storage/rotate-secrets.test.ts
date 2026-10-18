@@ -16,12 +16,18 @@ async function fixture() {
   await mkdir(path.join(root, "github"), { recursive: true });
   await mkdir(path.join(root, "yandex"), { recursive: true });
   await mkdir(path.join(root, "database"), { recursive: true });
+  await mkdir(path.join(root, "cloud"), { recursive: true });
+  await mkdir(path.join(root, "domains"), { recursive: true });
+  await mkdir(path.join(root, "services"), { recursive: true });
   await mkdir(path.join(root, "project-secrets"), { recursive: true });
   await mkdir(path.join(root, "platform"), { recursive: true });
   await writeFile(path.join(root, "providers", "p1.json"), JSON.stringify({ provider: "openai", token: seal("provider-secret") }));
   await writeFile(path.join(root, "github", "u1.json"), JSON.stringify({ id: "g1", userId: "u1", accessToken: seal("github-secret") }));
   await writeFile(path.join(root, "yandex", "u1.json"), JSON.stringify({ userId: "u1", id: "y1", kind: "key", secret: seal("yandex-secret") }));
   await writeFile(path.join(root, "database", "u1.json"), JSON.stringify({ userId: "u1", id: "d1", password: seal("db-password"), url: seal("postgres://u:p@h/db") }));
+  await writeFile(path.join(root, "cloud", "u1.json"), JSON.stringify({ yandex: { secret: seal("cloud-secret"), account: "folder", createdAt: "2026-01-01", updatedAt: "2026-01-01" } }));
+  await writeFile(path.join(root, "domains", "u1.json"), JSON.stringify({ regru: { secret: seal("registrar-secret"), account: "regru-user", createdAt: "2026-01-01", updatedAt: "2026-01-01" } }));
+  await writeFile(path.join(root, "services", "u1.json"), JSON.stringify({ notisend: { secret: seal("service-secret"), account: "notisend", createdAt: "2026-01-01", updatedAt: "2026-01-01" } }));
   await writeFile(path.join(root, "project-secrets", "p1.json"), JSON.stringify({ version: 1, payload: seal('{".env.local":{"TOKEN":"project-secret"}}') }));
   // Старая установка: ключ платформы лежал открытым текстом.
   await writeFile(path.join(root, "platform", "env.json"), JSON.stringify({ version: 1, values: { GITHUB_CLIENT_SECRET: { value: "legacy-panel-plain", preview: "", updatedAt: "2026-01-01" } } }));
@@ -32,8 +38,8 @@ test("ротация перешифровывает все файловые хр
   const root = await fixture();
   try {
     const result = await rotateJsonStore(root, OLD, NEW);
-    assert.deepEqual(result.files.sort(), ["database/u1.json", "github/u1.json", "platform/env.json", "project-secrets/p1.json", "providers/p1.json", "yandex/u1.json"]);
-    assert.equal(result.fields, 7);
+    assert.deepEqual(result.files.sort(), ["cloud/u1.json", "database/u1.json", "domains/u1.json", "github/u1.json", "platform/env.json", "project-secrets/p1.json", "providers/p1.json", "services/u1.json", "yandex/u1.json"]);
+    assert.equal(result.fields, 10);
 
     const read = async (file: string) => JSON.parse(await readFile(path.join(root, file), "utf8"));
     const provider = await read("providers/p1.json");
@@ -46,6 +52,14 @@ test("ротация перешифровывает все файловые хр
     const database = await read("database/u1.json");
     assert.equal(decryptSecretWith(database.password, NEW), "db-password");
     assert.equal(decryptSecretWith(database.url, NEW), "postgres://u:p@h/db");
+    const cloud = await read("cloud/u1.json");
+    assert.equal(decryptSecretWith(cloud.yandex.secret, NEW), "cloud-secret");
+    assert.throws(() => decryptSecretWith(cloud.yandex.secret, OLD));
+    const domains = await read("domains/u1.json");
+    assert.equal(decryptSecretWith(domains.regru.secret, NEW), "registrar-secret");
+    const services = await read("services/u1.json");
+    assert.equal(decryptSecretWith(services.notisend.secret, NEW), "service-secret");
+    assert.throws(() => decryptSecretWith(services.notisend.secret, OLD));
     const projectSecrets = await read("project-secrets/p1.json");
     assert.equal(decryptSecretWith(projectSecrets.payload, NEW), '{".env.local":{"TOKEN":"project-secret"}}');
     assert.throws(() => decryptSecretWith(projectSecrets.payload, OLD));

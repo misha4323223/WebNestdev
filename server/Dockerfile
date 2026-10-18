@@ -18,6 +18,10 @@ COPY src ./src
 COPY public ./public
 COPY server/tsconfig.json ./server/tsconfig.json
 COPY server/src ./server/src
+# Сертификаты российского доверенного УЦ читаются из файлов рядом с кодом (server/certs).
+# tsc их не копирует, поэтому в сборку и в образ они попадают отдельно: без них GigaChat
+# и другие сервисы на этом УЦ падают на проверке TLS.
+COPY server/certs ./server/certs
 
 RUN npm run build
 
@@ -45,6 +49,7 @@ COPY --from=build /app/server/package.json ./server/package.json
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/server/dist ./server/dist
+COPY --from=build /app/server/certs ./server/certs
 
 RUN npx playwright install --with-deps chromium
 

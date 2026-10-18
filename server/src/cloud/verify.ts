@@ -1,0 +1,76 @@
+import { mwsKeySummary, mwsRequest } from "../mws/mws-auth.js";
+import type { CloudProviderId } from "./providers.js";
+
+/**
+ * Проверка ключа у каждого облака — свой запрос, потому что своей у них только авторизация.
+ * Общее правило: ключ сохраняется лишь после того, как провайдер его принял, а сообщение об
+ * отказе содержит статус и начало ответа — иначе пользователь не поймёт, что не так.
+ */
+
+const TIMEOUT_MS = 15_000;
+const MAX_DETAIL = 300;
+
+async function call(url: string, init: RequestInit) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (error) {
+    throw new Error("Нет ответа от API: " + (error instanceof Error ? error.message : String(error)));
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function detail(text: string) {
+  return text.replace(/\s+/g, " ").trim().slice(0, MAX_DETAIL);
+}
+
+/** Timeweb Cloud: постоянный токен из личного кабинета, проверяется чтением серверов. */
+async function verifyTimeweb(fields: Record<string, string>) {
+  const response = await call("https://api.timeweb.cloud/api/v1/servers", {
+    headers: { Authorization: "Bearer " + fields.token, Accept: "application/json" },
+  });
+  const text = await response.text();
+  if (!response.ok) throw new Error("Timeweb Cloud отклонил токен (HTTP " + response.status + "): " + detail(text));
+  return { account: "Timeweb Cloud" };
+}
+
+/** Cloud.ru: Key ID + Key Secret обмениваются на токен (живёт час). */
+async function verifyCloudRu(fields: Record<string, string>) {
+  const response = await call("https://iam.api.cloud.ru/api/v1/auth/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ keyId: fields.keyId, secret: fields.secret }),
+  });
+  const text = await response.text();
+  if (!response.ok) throw new Error("Cloud.ru не принял ключ (HTTP " + response.status + "): " + detail(text));
+  let token = "";
+  try {
+    const parsed = JSON.parse(text) as { access_token?: string };
+    token = parsed.access_token ?? "";
+  } catch {
+    /* ответ не JSON — ниже это и есть ошибка */
+  }
+  if (!token) throw new Error("Cloud.ru вернул ответ без токена: " + detail(text));
+  return { account: "Cloud.ru" };
+}
+
+/** MWS: авторизованный ключ подписывает JWT, из него получается IAM-токен и список проектов. */
+async function verifyMws(fields: Record<string, string>) {
+  let summary: ReturnType<typeof mwsKeySummary>;
+  try {
+    summary = mwsKeySummary(fields.key);
+  } catch (error) {
+    throw new Error(error instanceof Error ? error.message : "Ключ MWS не разобран");
+  }
+  const response = await mwsRequest({ host: "api.mwsapis.ru", path: "/rm/v3/projects" }, { key: fields.key });
+  if (!response.ok) throw new Error("MWS отклонил ключ (HTTP " + response.status + "): " + detail(JSON.stringify(response.body)));
+  return { account: summary.project || "MWS" };
+}
+
+export async function verifyCloudCredential(id: CloudProviderId, fields: Record<string, string>) {
+  if (id === "timeweb") return verifyTimeweb(fields);
+  if (id === "cloudru") return verifyCloudRu(fields);
+  return verifyMws(fields);
+}

@@ -7,8 +7,9 @@ import { Pool } from "pg";
  * скрипт отчитывался «0 файлов», ключ менялся, и все подключения переставали читаться.
  *
  * Теперь обрабатываются оба бэкенда и все места, где лежит шифротекст:
- *   • файлы providers/github/yandex/database/project-secrets;
- *   • таблицы providers, github_connections, yandex_connections, database_connections, project_secrets;
+ *   • файлы providers/github/yandex/database/cloud/domains/services/project-secrets;
+ *   • таблицы providers, github_connections, yandex_connections, database_connections, project_secrets,
+ *     cloud_connections, domain_connections, service_connections;
  *   • ключи платформы (platform/env.json) — их читает сервер до инициализации хранилища.
  *
  * Сначала собираются все расшифрованные значения, и только потом что-то пишется: ошибка
@@ -55,6 +56,10 @@ const PG_TARGETS = [
   { table: "github_connections", key: "user_id", fields: ["access_token"] },
   { table: "yandex_connections", key: "user_id", fields: ["secret"] },
   { table: "database_connections", key: "user_id", fields: ["password", "url"] },
+  // Ключи из «Интеграций»: облака, регистраторы домена, сервисы.
+  { table: "cloud_connections", key: "user_id", fields: ["secret"] },
+  { table: "domain_connections", key: "user_id", fields: ["secret"] },
+  { table: "service_connections", key: "user_id", fields: ["secret"] },
   { table: "project_secrets", key: "project_id", fields: ["payload"] },
 ];
 

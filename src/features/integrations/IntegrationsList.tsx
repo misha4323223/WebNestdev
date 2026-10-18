@@ -1,6 +1,9 @@
 import { GitBranch } from "lucide-react";
 import { GitHubConnect, type ConnectorSurface } from "../github/GitHubConnect";
 import { YandexConnect } from "../yandex/YandexConnect";
+import { CloudConnectors } from "./cloud/CloudConnectors";
+import { DomainConnectors } from "./domains/DomainConnectors";
+import { ServiceConnectors } from "./services/ServiceConnectors";
 import { DatabaseConnect } from "../database/DatabaseConnect";
 import { ConnectorCard } from "./ConnectorCard";
 
@@ -14,7 +17,10 @@ export function IntegrationsList({surface="home",onImported}:{surface?:Connector
   return <div className="connectors">
     <DatabaseConnect surface={surface}/>
     <GitHubConnect surface={surface} onImported={onImported}/>
-    <YandexConnect surface={surface}/>
+    <YandexConnect/>
+    <CloudConnectors/>
+    <DomainConnectors/>
+    <ServiceConnectors/>
     <ConnectorCard name="GitLab" icon={<GitBranch size={18}/>} status="disconnected" soon/>
   </div>;
 }

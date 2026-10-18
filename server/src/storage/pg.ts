@@ -125,6 +125,9 @@ const PK_BY_TABLE: Record<string, string[]> = {
   github_connections: ["user_id"],
   database_connections: ["user_id"],
   yandex_connections: ["user_id"],
+  cloud_connections: ["user_id", "provider"],
+  domain_connections: ["user_id", "provider"],
+  service_connections: ["user_id", "service"],
   project_sizes: ["project_id"],
   user_storage: ["user_id"],
   phone_consents: ["consent_id"],
@@ -380,6 +383,36 @@ export async function initializeStorage(): Promise<void> {
       allow_writes BOOLEAN NOT NULL DEFAULT false,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
+    )`);
+
+    await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("cloud_connections")} (
+      user_id TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      secret TEXT NOT NULL,
+      account TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, provider)
+    )`);
+
+    await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("service_connections")} (
+      user_id TEXT NOT NULL,
+      service TEXT NOT NULL,
+      secret TEXT NOT NULL,
+      account TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, service)
+    )`);
+
+    await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("domain_connections")} (
+      user_id TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      secret TEXT NOT NULL,
+      account TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, provider)
     )`);
 
     await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("project_sizes")} (
