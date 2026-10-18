@@ -9,6 +9,10 @@ import type { CloudProviderId } from "./providers.js";
  * Подключённое облако пользователя. Ключ лежит только в зашифрованном виде — так же, как
  * ключи Yandex Cloud и GitHub; наружу (в браузер и модели) он не возвращается никогда.
  * Файловое хранилище — запасной путь для локальной разработки, как у остальных сторов.
+ *
+ * `allowWrites` — решение пользователя, а не догадка платформы: ключ облака почти всегда
+ * открывает и чтение, и изменение ресурсов, поэтому при подключении карточка прямо говорит об
+ * этом, разрешение включено по умолчанию и выключается переключателем в той же карточке.
  */
 export type CloudConnection = {
   userId: string;
@@ -16,6 +20,8 @@ export type CloudConnection = {
   /** JSON с полями провайдера (token / keyId+secret / key). */
   secret: string;
   account: string;
+  /** Разрешены ли агенту создание, изменение и удаление ресурсов этого облака. */
+  allowWrites: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -50,8 +56,8 @@ async function writeAllFiles(userId: string, value: FileShape) {
   }
 }
 
-function decode(record: Omit<CloudConnection, "userId" | "provider">) {
-  return isEncryptedSecret(record.secret) ? decryptSecret(record.secret) : record.secret;
+function decode(secret: string) {
+  return isEncryptedSecret(secret) ? decryptSecret(secret) : secret;
 }
 
 export async function saveCloudConnection(connection: CloudConnection) {
@@ -59,28 +65,31 @@ export async function saveCloudConnection(connection: CloudConnection) {
   if (isYdbEnabled()) {
     await ydbQuery()`
       UPSERT INTO ${ydbQuery().identifier(getTable("cloud_connections"))}
-        (user_id,provider,secret,account,created_at,updated_at)
-      VALUES (${stored.userId},${stored.provider},${stored.secret},${stored.account},${stored.createdAt},${stored.updatedAt})
+        (user_id,provider,secret,account,allow_writes,created_at,updated_at)
+      VALUES (${stored.userId},${stored.provider},${stored.secret},${stored.account},${stored.allowWrites},${stored.createdAt},${stored.updatedAt})
     `;
     return;
   }
   const all = await readAllFiles(connection.userId);
-  all[connection.provider] = { secret: stored.secret, account: stored.account, createdAt: stored.createdAt, updatedAt: stored.updatedAt };
+  all[connection.provider] = { secret: stored.secret, account: stored.account, allowWrites: stored.allowWrites, createdAt: stored.createdAt, updatedAt: stored.updatedAt };
   await writeAllFiles(connection.userId, all);
 }
 
 export async function listCloudConnections(userId: string): Promise<CloudConnection[]> {
   if (isYdbEnabled()) {
-    const [rows] = await ydbQuery()<Array<{ provider: string; secret: string; account: string; created_at: string; updated_at: string }>>`
-      SELECT provider,secret,account,created_at,updated_at
+    const [rows] = await ydbQuery()<Array<{ provider: string; secret: string; account: string; allow_writes: boolean; created_at: string; updated_at: string }>>`
+      SELECT provider,secret,account,allow_writes,created_at,updated_at
       FROM ${ydbQuery().identifier(getTable("cloud_connections"))}
       WHERE user_id = ${userId}
     `;
     return (rows ?? []).map(row => ({
       userId,
       provider: row.provider as CloudProviderId,
-      secret: decode({ secret: row.secret, account: row.account, createdAt: row.created_at, updatedAt: row.updated_at }),
+      secret: decode(row.secret),
       account: row.account,
+      // Строка, созданная до появления колонки, читается как «изменения разрешены»: именно так
+      // ведёт себя новая карточка, а значит поведение не меняется молча в другую сторону.
+      allowWrites: row.allow_writes === undefined || row.allow_writes === null ? true : Boolean(row.allow_writes),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }));
@@ -89,8 +98,9 @@ export async function listCloudConnections(userId: string): Promise<CloudConnect
   return Object.entries(all).map(([provider, record]) => ({
     userId,
     provider: provider as CloudProviderId,
-    secret: decode(record),
+    secret: decode(record.secret),
     account: record.account,
+    allowWrites: record.allowWrites ?? true,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
   }));

@@ -7,6 +7,7 @@ const cloudru = findCloudProvider("cloudru")!;
 test("a provider is looked up by the id the route receives", () => {
   assert.equal(findCloudProvider("timeweb")?.name, "Timeweb Cloud");
   assert.equal(findCloudProvider("mws")?.name, "MWS (МТС)");
+  assert.equal(findCloudProvider("regru")?.name, "REG.RU Облако");
   assert.equal(findCloudProvider("aws"), undefined);
 });
 
@@ -14,7 +15,7 @@ test("every provider declares the fields its verification reads", () => {
   for (const provider of CLOUD_PROVIDERS) {
     assert.ok(provider.fields.length > 0, provider.id + " без полей");
     assert.ok(provider.steps.length >= 2, provider.id + " без шагов для консоли");
-    assert.match(provider.consoleUrl, /^https:\/\//);
+    assert.match(provider.keyUrl, /^https:\/\//);
     assert.match(provider.docsUrl, /^https:\/\//);
   }
 });

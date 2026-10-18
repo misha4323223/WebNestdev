@@ -390,10 +390,14 @@ export async function initializeStorage(): Promise<void> {
       provider TEXT NOT NULL,
       secret TEXT NOT NULL,
       account TEXT NOT NULL,
+      allow_writes BOOLEAN NOT NULL DEFAULT true,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       PRIMARY KEY (user_id, provider)
     )`);
+    // Таблицы, созданные до появления разрешения на изменения, дополняются здесь: CREATE TABLE
+    // IF NOT EXISTS оставил бы их без колонки и запись подключения падала бы на живом сервере.
+    await pool.query(`ALTER TABLE ${tbl("cloud_connections")} ADD COLUMN IF NOT EXISTS allow_writes BOOLEAN NOT NULL DEFAULT true`);
 
     await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("service_connections")} (
       user_id TEXT NOT NULL,

@@ -69,8 +69,37 @@ async function verifyMws(fields: Record<string, string>) {
   return { account: summary.project || "MWS" };
 }
 
+/** Разбор ответа `/v1/reglets`: подпись карточки говорит, сколько серверов видно. */
+export function parseRegruServers(payload: unknown): string {
+  const root = payload as { reglets?: unknown } | null;
+  if (!root || !Array.isArray(root.reglets)) {
+    throw new Error("REG.RU Облако вернуло ответ без списка серверов: " + detail(JSON.stringify(payload)));
+  }
+  return "REG.RU Облако · серверов: " + root.reglets.length;
+}
+
+/**
+ * REG.RU Облако (документация CloudVPS): постоянный API-ключ из настроек окружения,
+ * авторизация — `Authorization: Bearer`, проверка — чтение серверов `GET /v1/reglets`.
+ */
+async function verifyRegru(fields: Record<string, string>) {
+  const response = await call("https://api.cloudvps.reg.ru/v1/reglets", {
+    headers: { Authorization: "Bearer " + fields.token, Accept: "application/json" },
+  });
+  const text = await response.text();
+  if (!response.ok) throw new Error("REG.RU Облако отклонило ключ (HTTP " + response.status + "): " + detail(text));
+  let payload: unknown;
+  try {
+    payload = JSON.parse(text) as unknown;
+  } catch {
+    throw new Error("REG.RU Облако вернуло не JSON: " + detail(text));
+  }
+  return { account: parseRegruServers(payload) };
+}
+
 export async function verifyCloudCredential(id: CloudProviderId, fields: Record<string, string>) {
   if (id === "timeweb") return verifyTimeweb(fields);
   if (id === "cloudru") return verifyCloudRu(fields);
+  if (id === "regru") return verifyRegru(fields);
   return verifyMws(fields);
 }

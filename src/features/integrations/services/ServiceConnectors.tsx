@@ -61,7 +61,6 @@ export function ServiceConnectors() {
             state={states[service.id]}
             onChanged={next => setStates(current => ({ ...current, [service.id]: next }))}
             endpoint="/api/services"
-            consoleLabel="Где взять ключ"
             verificationNote={status?.verificationNote}
             fineprint={checking
               ? "Ключ проверяется до сохранения, шифруется на сервере и не возвращается в браузер. "

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { cloudRequestTarget } from "./api.js";
+import { assertWritesAllowed, cloudRequestTarget, needsWriteConsent } from "./api.js";
 
 test("timeweb requests are limited to its versioned API prefix", () => {
   const target = cloudRequestTarget("timeweb", { path: "/api/v1/servers" });
@@ -8,9 +8,21 @@ test("timeweb requests are limited to its versioned API prefix", () => {
   assert.throws(() => cloudRequestTarget("timeweb", { path: "/v1/servers" }), /api\/v1/);
 });
 
-test("writes are refused before any credential is used", () => {
-  assert.throws(() => cloudRequestTarget("timeweb", { method: "POST", path: "/api/v1/servers" }), /только чтение/);
-  assert.throws(() => cloudRequestTarget("mws", { method: "DELETE", path: "/rm/v3/projects" }), /только чтение/);
+test("methods the provider can answer are accepted, unknown ones are not", () => {
+  assert.equal(cloudRequestTarget("timeweb", { method: "POST", path: "/api/v1/servers" }).method, "POST");
+  assert.equal(cloudRequestTarget("mws", { method: "DELETE", path: "/rm/v3/projects" }).method, "DELETE");
+  assert.throws(() => cloudRequestTarget("timeweb", { method: "TRACE", path: "/api/v1/servers" }), /не поддерживается/);
+});
+
+test("changes need the user's permission, reads never do", () => {
+  assert.equal(needsWriteConsent("GET"), false);
+  assert.equal(needsWriteConsent("head"), false);
+  assert.equal(needsWriteConsent("POST"), true);
+  assert.equal(needsWriteConsent("DELETE"), true);
+  assert.doesNotThrow(() => assertWritesAllowed("GET", false));
+  assert.doesNotThrow(() => assertWritesAllowed("POST", true));
+  assert.throws(() => assertWritesAllowed("POST", false), /Разрешить агенту изменять ресурсы/);
+  assert.throws(() => assertWritesAllowed("delete", false), /выключены/);
 });
 
 test("only provider hosts are accepted", () => {
@@ -19,6 +31,15 @@ test("only provider hosts are accepted", () => {
   assert.equal(cloudRequestTarget("cloudru", { path: "/v3/projects" }).host, "api.cloud.ru");
   assert.equal(cloudRequestTarget("cloudru", { path: "/v3/projects", host: "vm.api.cloud.ru" }).url, "https://vm.api.cloud.ru/v3/projects");
   assert.throws(() => cloudRequestTarget("cloudru", { path: "/v3/projects", host: "cloud.ru.evil.example" }), /cloud\.ru/);
+});
+
+test("reg.ru cloud keeps its own host and the /v1 prefix", () => {
+  const target = cloudRequestTarget("regru", { path: "/v1/reglets" });
+  assert.equal(target.url, "https://api.cloudvps.reg.ru/v1/reglets");
+  assert.equal(target.host, "api.cloudvps.reg.ru");
+  assert.throws(() => cloudRequestTarget("regru", { path: "/reglets" }), /\/v1\//);
+  assert.throws(() => cloudRequestTarget("regru", { path: "/v1/reglets", host: "evil.example" }), /api\.cloudvps\.reg\.ru/);
+  assert.equal(cloudRequestTarget("regru", { method: "POST", path: "/v1/reglets" }).url, "https://api.cloudvps.reg.ru/v1/reglets");
 });
 
 test("traversal and relative paths are rejected", () => {

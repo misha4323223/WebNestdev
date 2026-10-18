@@ -11,7 +11,7 @@ Replit и доступности российских API. Ниже — что �
 |---|---|---|
 | Репозитории | GitHub (импорт, коммиты, отправка), GitLab — «скоро» | `server/src/github/`, `src/features/github/` |
 | База данных проекта | Yandex Managed PostgreSQL, Yandex Serverless YDB, VK Cloud, Selectel, Timeweb, Cloud.ru, свой сервер | `server/src/database/`, `src/features/database/` |
-| Облака пользователя | Yandex Cloud (ключ + OAuth-вход), Timeweb Cloud, Cloud.ru, MWS | `server/src/cloud/`, `src/features/integrations/cloud/` |
+| Облака пользователя | Yandex Cloud (ключ + OAuth-вход), Timeweb Cloud, Cloud.ru, MWS, REG.RU Облако | `server/src/cloud/`, `src/features/integrations/cloud/` |
 | Домены | Проверка занятости (`domain.check`) и кабинеты REG.RU / Beget / Timeweb Cloud (`domain.list`) | `server/src/domains/` |
 | Сервисы с ключом | 20 российских сервисов: файлы (S3), почта, оплата, AI, карты, CRM — с проверкой ключа и переносом переменных в проект | `server/src/services/`, `src/features/integrations/services/` |
 | Вход | Email + пароль, телефон (Yandex Notify, SMS.RU, SMSC, Exolve, SMS Aero), Yandex ID | `server/src/auth/`, `src/features/auth/` |

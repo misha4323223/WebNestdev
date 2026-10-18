@@ -120,13 +120,17 @@ async function timewebDomains(fields: Record<string, string>): Promise<Registrar
 }
 
 /**
- * REG.RU принимает запросы только с IP, добавленных в настройках безопасности. Сообщение
+ * REG.RU принимает запросы только с IP, добавленных в список разрешённых. Сообщение
  * «Access to API from this IP denied» без подсказки ничего не говорит пользователю, поэтому
  * к нему добавляется найденный IP сервера: именно его нужно разрешить в кабинете.
+ *
+ * Раздел называется «Настройки API» (в нём же «Диапазоны IP-адресов») — так его называют в
+ * справке REG.RU. Прежняя подсказка отправляла людей во вкладку «Безопасность», которой в
+ * кабинете нет: такой текст дороже молчания, поэтому здесь только существующий раздел.
  */
 export function regRuAccessHint(message: string, serverIp: string | null) {
   if (!message.includes("ACCESS_DENIED_FROM_IP")) return message;
-  const where = " Разрешите IP сервера в REG.RU: «Безопасность» → «Ограничения доступа» → IP-адреса для API.";
+  const where = " Разрешите IP сервера в REG.RU: «Настройки API» → «Диапазоны IP-адресов» → «Добавить IP».";
   return message + where + (serverIp ? " IP сервера: " + serverIp + "." : "");
 }
 

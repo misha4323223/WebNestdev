@@ -3,9 +3,14 @@ import type { CloudProviderId } from "./providers.js";
 import { mwsRequest } from "../mws/mws-auth.js";
 
 /**
- * Запросы к API подключённых облаков от имени пользователя. Пока только чтение: изменение
- * ресурсов — отдельное согласие, как переключатель записей у Yandex Cloud, и до него здесь
- * просто нет пути (любой метод кроме GET/HEAD отклоняется).
+ * Запросы к API подключённых облаков от имени пользователя — и чтение, и изменения.
+ *
+ * Ключ облака почти всегда открывает оба направления, поэтому запрета «только чтение» здесь нет:
+ * есть решение пользователя. Изменения включены на подключении (карточка говорит об этом
+ * прямо), выключаются переключателем в карточке и проверяются перед каждым мутирующим запросом
+ * (`assertWritesAllowed`). Вторая половина договора — на стороне агента: он выполняет создание,
+ * изменение и удаление только по явной просьбе пользователя, а не по своей инициативе
+ * (см. описание инструмента `cloud.request` и системный промпт).
  *
  * Каждый провайдер разрешает только свои хосты: ключ пользователя не должен уйти на чужой
  * адрес из-за опечатки в пути, а пути ограничены API-префиксом сервиса.
@@ -14,14 +19,32 @@ import { mwsRequest } from "../mws/mws-auth.js";
 const TIMEOUT_MS = 20_000;
 const MAX_BODY_CHARS = 8000;
 const READ_METHODS = new Set(["GET", "HEAD"]);
+const WRITE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 
-export type CloudApiRequest = { method?: string; path: string; host?: string };
+export type CloudApiRequest = { method?: string; path: string; host?: string; body?: unknown };
+
+/** Читающий запрос или меняющий ресурсы — только по методу, без догадок о пути. */
+export function needsWriteConsent(method: string) {
+  return !READ_METHODS.has(method.toUpperCase());
+}
+
+/**
+ * Гейт изменений. Отдельной функцией, а не проверкой внутри запроса, потому что это правило,
+ * а не сеть: оно проверяется тестом без ключа и без облака.
+ */
+export function assertWritesAllowed(method: string, allowWrites: boolean) {
+  if (needsWriteConsent(method) && !allowWrites) {
+    throw new Error(
+      "Изменения этого облака выключены: включите «Разрешить агенту изменять ресурсы» в карточке облака (Настройки → Интеграции → Облака) или попросите пользователя включить переключатель.",
+    );
+  }
+}
 
 /** Разбор и проверка адреса запроса — без сети, поэтому проверяется тестом. */
 export function cloudRequestTarget(provider: CloudProviderId, request: CloudApiRequest) {
   const method = (request.method ?? "GET").toUpperCase();
-  if (!READ_METHODS.has(method)) {
-    throw new Error("Пока доступно только чтение: " + method + " к облаку запрещён. Изменения ресурсов появятся вместе с переключателем разрешений.");
+  if (!READ_METHODS.has(method) && !WRITE_METHODS.has(method)) {
+    throw new Error("Метод " + method + " не поддерживается: разрешены GET, HEAD, POST, PUT, PATCH и DELETE.");
   }
   const path = request.path.trim();
   if (!path.startsWith("/") || path.includes("..")) throw new Error("Некорректный путь запроса: " + path);
@@ -33,6 +56,12 @@ export function cloudRequestTarget(provider: CloudProviderId, request: CloudApiR
   if (provider === "cloudru") {
     const host = request.host?.trim() || "api.cloud.ru";
     if (host !== "cloud.ru" && !host.endsWith(".cloud.ru")) throw new Error("Cloud.ru: разрешены только хосты *.cloud.ru, получен " + host);
+    return { method, url: "https://" + host + path, host };
+  }
+  if (provider === "regru") {
+    const host = request.host?.trim() || "api.cloudvps.reg.ru";
+    if (host !== "api.cloudvps.reg.ru") throw new Error("REG.RU Облако: разрешён только хост api.cloudvps.reg.ru, получен " + host);
+    if (!path.startsWith("/v1/")) throw new Error("REG.RU Облако: путь должен начинаться с /v1/");
     return { method, url: "https://" + host + path, host };
   }
   const host = request.host?.trim() || "api.mwsapis.ru";
@@ -77,21 +106,28 @@ export async function cloudFetch(userId: string, provider: CloudProviderId, requ
   const target = cloudRequestTarget(provider, request);
   const connection = await getCloudConnection(userId, provider);
   if (!connection) throw new Error("Облако не подключено: попросите пользователя подключить " + provider + " в разделе «Интеграции».");
+  assertWritesAllowed(target.method, connection.allowWrites);
   const fields = fieldsOf(connection);
 
   if (provider === "mws") {
-    const result = await mwsRequest({ method: target.method, host: target.host, path: request.path }, { key: fields.key });
+    const result = await mwsRequest({ method: target.method, host: target.host, path: request.path, body: request.body }, { key: fields.key });
     return { ...result, provider };
   }
 
   const headers: Record<string, string> = { Accept: "application/json" };
-  if (provider === "timeweb") headers.Authorization = "Bearer " + fields.token;
+  if (provider === "timeweb" || provider === "regru") headers.Authorization = "Bearer " + fields.token;
   else headers.Authorization = "Bearer " + await cloudRuToken(userId, fields.keyId, fields.secret);
+  if (request.body !== undefined) headers["Content-Type"] = "application/json";
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
   try {
-    const response = await fetch(target.url, { method: target.method, headers, signal: controller.signal });
+    const response = await fetch(target.url, {
+      method: target.method,
+      headers,
+      ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
+      signal: controller.signal,
+    });
     const text = await response.text();
     let body: unknown = text.slice(0, MAX_BODY_CHARS);
     try { body = text ? JSON.parse(text) : null; } catch { /* не JSON — отдаём текстом */ }

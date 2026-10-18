@@ -3,7 +3,9 @@
  * поля и шаги должны совпадать, иначе форма отправит не то, что сервер ждёт.
  *
  * Доступ выдаётся в кабинете регистратора, а не по кнопке OAuth, поэтому у каждой карточки
- * есть ссылка на кабинет и шаги, где создать пароль для API или токен.
+ * есть ссылка `keyUrl` — на страницу, где включается API и выдаётся пароль или токен, — и шаги
+ * с теми названиями разделов, которые кабинет показывает сейчас. Раздел, которого в кабинете
+ * нет, — это баг: пользователь ищет вкладку и не находит.
  */
 
 export type DomainRegistrarId = "regru" | "beget" | "timeweb";
@@ -19,7 +21,8 @@ export type RegistrarField = {
 export type DomainRegistrarInfo = {
   id: DomainRegistrarId;
   name: string;
-  consoleUrl: string;
+  /** Страница выдачи пароля/токена для API — ссылка «Где взять ключ» ведёт ровно туда. */
+  keyUrl: string;
   docsUrl: string;
   tagline: string;
   fields: RegistrarField[];
@@ -32,16 +35,16 @@ export const DOMAIN_REGISTRARS: DomainRegistrarInfo[] = [
   {
     id: "regru",
     name: "REG.RU",
-    consoleUrl: "https://www.reg.ru/user/account/",
-    docsUrl: "https://help.reg.ru/support/partneram/reg-api/kakiye-ogranicheniya-yest-pri-rabote-s-reg-api",
+    keyUrl: "https://help.reg.ru/support/partneram/reg-api/kakiye-ogranicheniya-yest-pri-rabote-s-reg-api",
+    docsUrl: "https://help.reg.ru/support/partneram/reg-api/chto-takoye-reg-api-i-kto-mozhet-ispolzovat-reg-api",
     tagline: "Крупнейший регистратор .ru",
     fields: [
       { key: "username", label: "Логин REG.RU", placeholder: "логин личного кабинета" },
       { key: "password", label: "Пароль или API-пароль", placeholder: "пароль из личного кабинета", secret: true },
     ],
     steps: [
-      "Кабинет REG.RU → «Безопасность» → ограничения доступа: включите API и добавьте IP сервера.",
-      "Задайте альтернативный пароль для API (основной тоже подходит).",
+      "Кабинет REG.RU → «Настройки API» → «Диапазоны IP-адресов» → «Добавить IP»: без этого REG.RU отклоняет запросы с сервера.",
+      "Пароль — основной или альтернативный пароль API из настроек аккаунта.",
       "Вставьте логин и пароль — проверим чтением доменов.",
     ],
     color: "#1f6feb",
@@ -50,7 +53,7 @@ export const DOMAIN_REGISTRARS: DomainRegistrarInfo[] = [
   {
     id: "beget",
     name: "Beget",
-    consoleUrl: "https://cp.beget.com/",
+    keyUrl: "https://beget.com/ru/kb/manual/nastrojki-akkaunta",
     docsUrl: "https://beget.com/ru/kb/api/obshhij-princzip-raboty-s-api",
     tagline: "Домены и хостинг",
     fields: [
@@ -58,7 +61,7 @@ export const DOMAIN_REGISTRARS: DomainRegistrarInfo[] = [
       { key: "passwd", label: "API-пароль", placeholder: "отдельный пароль для API", secret: true },
     ],
     steps: [
-      "Панель Beget → раздел «API»: включите доступ и задайте API-пароль.",
+      "Панель Beget → «Настройки аккаунта» → «Ограничение доступа» → «Beget API»: установите новый пароль для API.",
       "Скопируйте логин аккаунта и этот пароль.",
       "Вставьте их сюда — проверим чтением доменов.",
     ],
@@ -68,15 +71,15 @@ export const DOMAIN_REGISTRARS: DomainRegistrarInfo[] = [
   {
     id: "timeweb",
     name: "Timeweb Cloud",
-    consoleUrl: "https://timeweb.cloud/",
+    keyUrl: "https://timeweb.cloud/docs/account-management/token",
     docsUrl: "https://timeweb.cloud/tools/api-docs",
     tagline: "Домены, серверы и базы",
     fields: [
       { key: "token", label: "API-токен", placeholder: "токен из раздела «API и Terraform»", secret: true },
     ],
     steps: [
-      "Личный кабинет Timeweb Cloud → «API и Terraform».",
-      "Создайте токен и скопируйте его.",
+      "Кабинет Timeweb Cloud → вкладка «API и Terraform» → «Добавить токен».",
+      "«Выпустить» — токен показывается один раз, сохраните его.",
       "Вставьте токен — проверим чтением доменов.",
     ],
     color: "#0b6bff",

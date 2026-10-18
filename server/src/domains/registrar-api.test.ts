@@ -37,7 +37,11 @@ test("reg.ru success and error shapes", () => {
 test("the reg.ru ip refusal names the server address to allow", () => {
   const denied = "REG.RU отклонил доступ: Access to API from this IP denied (код ACCESS_DENIED_FROM_IP)";
   const hinted = regRuAccessHint(denied, "203.0.113.7");
-  assert.match(hinted, /«Безопасность»/);
+  // Подсказка называет раздел, который есть в кабинете сейчас. Придуманная вкладка («Безопасность»)
+  // отправляла пользователя искать её и не находить — этот тест её не пропускает.
+  assert.match(hinted, /«Настройки API»/);
+  assert.match(hinted, /«Диапазоны IP-адресов»/);
+  assert.doesNotMatch(hinted, /Безопасность/);
   assert.match(hinted, /203\.0\.113\.7/);
   assert.equal(regRuAccessHint("REG.RU отклонил доступ: Invalid password", "203.0.113.7"), "REG.RU отклонил доступ: Invalid password");
 });

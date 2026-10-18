@@ -7,7 +7,7 @@
  * описание: что спросить у пользователя и куда его отправить.
  */
 
-export type CloudProviderId = "timeweb" | "cloudru" | "mws";
+export type CloudProviderId = "timeweb" | "cloudru" | "mws" | "regru";
 
 export type CloudField = {
   key: string;
@@ -24,8 +24,12 @@ export type CloudField = {
 export type CloudProvider = {
   id: CloudProviderId;
   name: string;
-  /** Куда ведёт кнопка «Открыть консоль». */
-  consoleUrl: string;
+  /**
+   * Куда ведёт кнопка «Где взять ключ»: страница выдачи ключа, а не главная облака. У консоли
+   * нет постоянной ссылки на раздел сервисного аккаунта, поэтому ведём на инструкцию
+   * провайдера именно про создание ключа, а шаги называют разделы консоли по именам.
+   */
+  keyUrl: string;
   /** Документация провайдера по ключам. */
   docsUrl: string;
   fields: CloudField[];
@@ -39,40 +43,52 @@ export const CLOUD_PROVIDERS: CloudProvider[] = [
   {
     id: "timeweb",
     name: "Timeweb Cloud",
-    consoleUrl: "https://timeweb.cloud/",
+    keyUrl: "https://timeweb.cloud/docs/account-management/token",
     docsUrl: "https://timeweb.cloud/tools/api-docs",
     fields: [TOKEN_FIELD],
     steps: [
-      "Откройте личный кабинет Timeweb Cloud.",
-      "Раздел «API и Terraform» → создайте токен.",
+      "Откройте личный кабинет Timeweb Cloud → вкладка «API и Terraform» → «Добавить токен».",
+      "«Выпустить» — токен показывается один раз.",
       "Вставьте токен ниже — доступ только на чтение проверяется запросом к серверам.",
     ],
   },
   {
     id: "cloudru",
     name: "Cloud.ru",
-    consoleUrl: "https://console.cloud.ru/",
+    keyUrl: "https://cloud.ru/docs/console_api/ug/topics/guides__service_accounts_key-create",
     docsUrl: "https://cloud.ru/docs/console_api/ug/topics/guides__auth_api",
     fields: [
       { key: "keyId", label: "Key ID", placeholder: "идентификатор ключа сервисного аккаунта" },
       { key: "secret", label: "Key Secret", placeholder: "секрет ключа", secret: true },
     ],
     steps: [
-      "Откройте консоль Cloud.ru → «Пользователи» → «Сервисные аккаунты».",
-      "Создайте аккаунт и его ключ доступа (Key ID и Key Secret).",
+      "Консоль Cloud.ru → выберите проект → «Пользователи» → «Сервисные аккаунты».",
+      "Откройте аккаунт → «Учетные данные доступа» → «Ключи доступа» → «Создать ключ» (Key ID и Key Secret).",
       "Вставьте обе части ниже — платформа обменяет их на токен и проверит доступ.",
     ],
   },
   {
     id: "mws",
     name: "MWS (МТС)",
-    consoleUrl: "https://mws.ru/",
+    keyUrl: "https://mws.ru/docs/cloud-platform/iam/general/keys-auth-create.html",
     docsUrl: "https://mws.ru/docs/cloud-platform/iam/general/sa-get-access-token.html",
     fields: [{ key: "key", label: "Авторизованный ключ", placeholder: '{"keyId":"…","privateKey":"…"} — файл key.json целиком', multiline: true, secret: true }],
     steps: [
-      "Откройте консоль MWS → сервисные аккаунты.",
-      "Создайте авторизованный ключ и скачайте key.json.",
+      "Консоль MWS → выберите проект → IAM → «Сервисные аккаунты» → откройте аккаунт.",
+      "«Ключи доступа» → «Создать» → «Авторизованный ключ»: скачайте key.json.",
       "Вставьте файл целиком: платформа обменяет его на IAM-токен и прочитает проекты.",
+    ],
+  },
+  {
+    id: "regru",
+    name: "REG.RU Облако",
+    keyUrl: "https://reg.cloud/support/cloud/oblachnyye-servery/rabota-s-serverom/api-dlya-oblachnykh-serverov",
+    docsUrl: "https://developers.cloudvps.reg.ru/",
+    fields: [{ key: "token", label: "API-ключ облака", placeholder: "ключ из «Настройки» → «Настройки окружения»", secret: true }],
+    steps: [
+      "Кабинет cloud.reg.ru → «Настройки» → «Настройки окружения»: там лежит API-ключ.",
+      "Ключ создаётся автоматически — скопируйте его (там же его можно сменить). Он открывает все операции сервиса облачных серверов, поэтому храните его как пароль.",
+      "Вставьте ключ ниже — проверим чтением списка серверов.",
     ],
   },
 ];
