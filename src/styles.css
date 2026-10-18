@@ -976,3 +976,17 @@ button,textarea{font:inherit}button{color:inherit}
 .question-hint{margin-left:auto;color:#68707a;font-size:9.5px}
 .question-foot .send-button{width:auto;height:28px;padding:0 12px;font-size:10.5px}
 @media(max-width:650px){.question-options{grid-template-columns:1fr}.question-foot{gap:6px}.question-hint{margin-left:0;flex:1 1 100%;order:3}.question-foot .send-button{flex:1 1 100%;height:32px;justify-content:center}}@media(prefers-reduced-motion:reduce){.question-sheet{animation:none}}
+/* Закладки переписки: полоска меток у правого края чата, рядом со скроллом. */
+.messages-wrap{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
+.chat-bookmarks{position:absolute;top:10px;bottom:10px;right:9px;width:14px;pointer-events:none}
+.chat-bookmark{position:absolute;right:1px;transform:translateY(-50%);width:14px;height:12px;padding:0;border:0;background:transparent;cursor:pointer;pointer-events:auto;display:flex;align-items:center;justify-content:flex-end;outline:none}
+.chat-bookmark i{display:block;width:5px;height:2px;border-radius:1px;background:#4a5663;transition:width .14s ease,background .14s ease,transform .14s ease}
+.chat-bookmark:hover i,.chat-bookmark:focus-visible i{width:10px;background:#9fb6c8;transform:translateX(-1px)}
+.chat-bookmark.is-active i{width:9px;background:#7fa8c4}
+.chat-bookmark.is-active:hover i{background:#cfe0ec}
+.chat-bookmark:focus-visible{outline:1px solid #3f5d78;outline-offset:1px;border-radius:2px}
+.chat-bookmark-tip{position:absolute;right:18px;top:50%;transform:translateY(-50%);width:230px;max-height:108px;overflow:hidden;padding:8px 10px;border:1px solid #2d3945;border-radius:8px;background:#11161c;box-shadow:0 14px 30px rgba(0,0,0,.45);color:#c7d3de;font-size:10.5px;line-height:1.45;text-align:left;white-space:normal;pointer-events:none}
+.chat-bookmark-tip strong{display:block;margin-bottom:3px;color:#7f93a5;font-size:9px;font-weight:600;letter-spacing:.08em;text-transform:uppercase}
+.message-row.is-jumped .message-content{border-color:#3f5d78;box-shadow:0 0 0 3px rgba(96,148,190,.16)}
+.message-content{transition:border-color .3s ease,box-shadow .3s ease}
+@media(max-width:650px){.chat-bookmarks{display:none}}

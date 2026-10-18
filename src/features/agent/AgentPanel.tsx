@@ -9,6 +9,7 @@ import { NestLoader } from "../../components/NestLoader";
 import { ActionsPanel,MessageThinking,PlanPanel,actionTarget,deriveActions,readPlan,writePlan,type PanelId,type PanelState } from "./agent-activity";
 import type { AgentAction,AgentMode,ChatMessage,PlanState,ReasoningEffort } from "../../lib/types";
 import { QuestionSheet,type AgentQuestion } from "./QuestionSheet";
+import { ChatBookmarks } from "./ChatBookmarks";
 import { takeAgentStart } from "../../lib/agent-start";
 
 const modeKey="webnestdev.agentMode";
@@ -249,6 +250,9 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
    */
   const pinnedToEndRef=useRef(false);
   const autoResumeTimerRef=useRef<number|null>(null);
+  /** Показанный запрос, к которому сейчас ведёт закладка: строка подсвечивается на пару секунд. */
+  const [jumpedIndex,setJumpedIndex]=useState<number|null>(null);
+  const jumpTimerRef=useRef<number|null>(null);
   // Queued messages start runs from socket callbacks, so the mode is read from a ref.
   const modeRef=useRef<AgentMode>(mode);
   const reasoningRef=useRef<ReasoningEffort>(reasoning);
@@ -303,6 +307,23 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
   function scrollMessagesToTop(){
     const box=messagesBoxRef.current;
     if(box)box.scrollTop=0;
+  }
+
+  /**
+   * Переход к запросу из закладки. Строка ставится к верхнему краю переписки и подсвечивается на
+   * пару секунд: иначе после плавной прокрутки не видно, что нашлось. Автопрокрутка при этом
+   * отключается, иначе следующий ответ агента увёл бы чат обратно вниз.
+   */
+  function jumpToMessage(index:number){
+    const box=messagesBoxRef.current;
+    if(!box)return;
+    const row=box.querySelector<HTMLElement>('[data-message-index="'+index+'"]');
+    if(!row)return;
+    pinnedToEndRef.current=false;
+    box.scrollTo({top:box.scrollTop+row.getBoundingClientRect().top-box.getBoundingClientRect().top-12,behavior:"smooth"});
+    setJumpedIndex(index);
+    if(jumpTimerRef.current)window.clearTimeout(jumpTimerRef.current);
+    jumpTimerRef.current=window.setTimeout(()=>setJumpedIndex(null),1600);
   }
 
   /**
@@ -386,7 +407,7 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
     setQuestionBusy(false);
   }
 
-  useEffect(()=>()=>cancelAutoResume(),[]);
+  useEffect(()=>()=>{cancelAutoResume();if(jumpTimerRef.current)window.clearTimeout(jumpTimerRef.current)},[]);
 
   /** A cancelled or aborted run leaves rows spinning, so they are settled as failed. */
   function settleActions(){
@@ -901,6 +922,8 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
   // Tool results are part of the stored history but not of the transcript; the action
   // list is built from them instead.
   const visibleMessages=messages.filter(message=>message.role!=="tool");
+  // Закладки переписки — это запросы пользователя: один запрос, одна метка у края чата.
+  const bookmarks=visibleMessages.flatMap((message,index)=>message.role==="user"?[{index,text:message.content}]:[]);
 
   return <section className="chat">
     <div className="chat-header">
@@ -911,11 +934,14 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
       </button>
     </div>
 
+    {/* Переписка и её закладки. Полоска закладок — рядом со скроллом, а не в нём: у каждой метки
+        своя точка в переписке, и она должна оставаться на месте при прокрутке. */}
+    <div className="messages-wrap">
     <div className="messages" ref={messagesBoxRef} onScroll={trackMessagesScroll}>
       {visibleMessages.map((m,i)=>{
         // Ответ, который модель пишет прямо сейчас: над ним идёт её размышление.
         const live=running&&i===visibleMessages.length-1;
-        return <div className={"message-row "+m.role} key={i}>
+        return <div className={"message-row "+m.role+(jumpedIndex===i?" is-jumped":"")} key={i} data-message-index={i}>
           <div className="message-avatar">{m.role==="assistant"?<Sparkles size={14}/>:"Вы"}</div>
           <div className="message-content">
             <div className="message-role">{m.role==="assistant"?"WebNestdev":"Вы"}</div>
@@ -930,6 +956,12 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
         </div>;
       })}
 
+    </div>
+    <ChatBookmarks
+      containerRef={messagesBoxRef}
+      items={bookmarks}
+      onJump={jumpToMessage}
+    />
     </div>
 
     {/* План и действия — у поля ввода: они относятся к тому, что происходит сейчас, и не должны
