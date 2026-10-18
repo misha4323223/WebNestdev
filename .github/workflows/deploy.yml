@@ -9,7 +9,8 @@ name: deploy
 #
 # Ручной запуск кнопкой «Run workflow» нужен для всего остального и ничего не отменяет:
 # mode=image с тегом `image=…:sha-<12>` откатывает на прежнюю сборку, mode=prune убирает
-# старые образы с ВМ, mode=source собирает образ на самой ВМ из репозитория.
+# старые образы с ВМ, mode=cleanup обнуляет логи контейнеров на ВМ (диск, а не версию),
+# mode=source собирает образ на самой ВМ из репозитория.
 # Подтверждение перед выкаткой включается без изменения файла:
 # Settings → Environments → production → Required reviewers (сейчас их нет).
 
@@ -17,9 +18,9 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "image — готовый образ из реестра, source — сборка на ВМ из репозитория, prune — только уборка старых образов"
+        description: "image — готовый образ из реестра, source — сборка на ВМ из репозитория, cleanup — только обнулить логи контейнеров на ВМ, prune — только уборка старых образов"
         type: choice
-        options: ["image", "source", "prune"]
+        options: ["image", "source", "cleanup", "prune"]
         default: "image"
       image:
         description: "Тег образа для выкатки или отката, например sha-1a2b3c4d5e6f (по умолчанию — сборка этого запуска)"

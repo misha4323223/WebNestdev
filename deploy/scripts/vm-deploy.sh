@@ -7,6 +7,8 @@
 #
 # Переменные окружения (все необязательные, кроме IMAGE_REF для MODE=image):
 #   MODE=image|source          что доставлять: готовый образ или сборку из репозитория
+#        cleanup                только обнулить логи контейнеров на ВМ (диск, а не версия)
+#        prune                  только убрать старые образы и кеш сборки
 #   IMAGE_REF=ghcr.io/…        образ для MODE=image
 #   APP_DIR=~/webnestdev/src   каталог развёртывания (docker-compose.yml и .env)
 #   COMPOSE_FILE=docker-compose.yml
@@ -213,6 +215,61 @@ prune_images(){
   fi
   after=$(docker system df --format '{{.Size}}' 2>/dev/null | tr '\n' ' ' || true)
   log "docker system df: было [$before], стало [$after]"
+}
+
+# «Логи выкатки» на ВМ — это json-логи контейнеров, а не файлы деплоя: скрипт ничего не пишет
+# в файлы. В compose драйвер логирования не задан, поэтому docker пишет их без ограничения
+# размера, и сервис, проживший неделю с агентом и песочницами, оставляет гигабайты в
+# /var/lib/docker/containers — место кончается раньше, чем образы, а pull падает с «no space
+# left on device». Файл обнуляется, а не удаляется: docker держит его открытым, и `rm`
+# освободил бы место только после перезапуска контейнера, а truncate работает сразу и
+# работающему сервису не мешает (новые строки дописываются с начала файла).
+cleanup_logs(){
+  local before after freed=0 size path id ids
+  before=$(df -Pk / | awk 'NR==2{print $4}')
+  ids=""
+  if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
+    if [ -f "$COMPOSE_FILE" ]; then
+      ids=$(docker compose -f "$COMPOSE_FILE" ps -q 2>/dev/null | tr '\n' ' ' || true)
+    fi
+    [ -n "$ids" ] || ids=$(docker ps -q 2>/dev/null | tr '\n' ' ' || true)
+  else
+    log "docker не отвечает — контейнерные логи не вижу, обнуляю только файлы /var/log"
+  fi
+  log "логи: контейнеров найдено $(printf '%s' "$ids" | wc -w | tr -d ' ')"
+  for id in $ids; do
+    path=$(docker inspect --format '{{.LogPath}}' "$id" 2>/dev/null) || continue
+    [ -n "$path" ] && [ -f "$path" ] || continue
+    size=$(stat -c %s "$path" 2>/dev/null || echo 0)
+    if [ "$DRY_RUN" = "1" ]; then
+      log "dry-run: обнулил бы $path (${size} байт)"
+      continue
+    fi
+    if truncate -s 0 "$path" 2>/dev/null || sudo truncate -s 0 "$path" 2>/dev/null; then
+      log "обнулён $path: ${size} байт"
+      freed=$((freed + size))
+    else
+      log "не смог обнулить $path — оставляю"
+    fi
+  done
+  # Свои файлы деплой не пишет, но на ВМ могли остаться логи прежних запусков (cron-уборка).
+  for path in /var/log/webnestdev*.log; do
+    [ -f "$path" ] || continue
+    size=$(stat -c %s "$path" 2>/dev/null || echo 0)
+    [ "$size" -gt 0 ] || continue
+    if [ "$DRY_RUN" = "1" ]; then
+      log "dry-run: обнулил бы $path (${size} байт)"
+      continue
+    fi
+    if truncate -s 0 "$path" 2>/dev/null || sudo truncate -s 0 "$path" 2>/dev/null; then
+      log "обнулён $path: ${size} байт"
+      freed=$((freed + size))
+    else
+      log "не смог обнулить $path — оставляю"
+    fi
+  done
+  after=$(df -Pk / | awk 'NR==2{print $4}')
+  log "логи выкатки очищены: освобождено $((freed / 1024 / 1024)) МБ; свободно на / было $((before / 1024)) МБ, стало $((after / 1024)) МБ"
 }
 
 # /api/ready проверяет и хранилище, и доступность Docker для песочниц: деплой считается
@@ -829,7 +886,7 @@ if [ ! -d "$APP_DIR" ]; then
 fi
 
 log "режим: $MODE$( [ "$DRY_RUN" = "1" ] && echo " (dry-run)" )"
-[ "$MODE" = "prune" ] || { log "деплой в $APP_DIR"; cd "$APP_DIR"; }
+case "$MODE" in prune|cleanup) ;; *) log "деплой в $APP_DIR"; cd "$APP_DIR" ;; esac
 if [ -f "$COMPOSE_FILE" ]; then
   log "изменённые файлы в $APP_DIR: $(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
 fi
@@ -894,6 +951,12 @@ case "$MODE" in
       run docker compose -f "$COMPOSE_FILE" up -d --no-build "$CADDY_SERVICE"
     fi
     ;;
+  cleanup)
+    log "режим cleanup: обнуляю логи контейнеров, сервис не перезапускаю"
+    cleanup_logs
+    log "уборка логов завершена"
+    exit 0
+    ;;
   prune)
     log "режим prune: только уборка образов, сервис не трогаю"
     prune_images
@@ -901,7 +964,7 @@ case "$MODE" in
     exit 0
     ;;
   *)
-    log "неизвестный MODE=$MODE (ожидается image, source или prune)"
+    log "неизвестный MODE=$MODE (ожидается image, source, cleanup или prune)"
     exit 2
     ;;
 esac
