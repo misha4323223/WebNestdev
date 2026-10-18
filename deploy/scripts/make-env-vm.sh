@@ -17,6 +17,17 @@ else
   echo "ENV-KEY-CREATED"
 fi
 
+# Соль журнала секретов не должна меняться между выкатками: иначе один и тот же IP
+# выглядит как разные источники. Отдельная от ключа шифрования — по рекомендации
+# docs/SECRET_ENCRYPTION.md.
+if [ -f .env ] && grep -q '^WEBNESTDEV_AUDIT_SALT=.\+' .env; then
+  AUDITSALT=$(grep '^WEBNESTDEV_AUDIT_SALT=' .env | head -1 | cut -d= -f2-)
+  echo "AUDIT-SALT-REUSED"
+else
+  AUDITSALT=$(openssl rand -hex 32)
+  echo "AUDIT-SALT-CREATED"
+fi
+
 # Accounts, projects and conversations live here. The path is outside the source tree on
 # purpose: a redeploy replaces the code directory, and data kept inside it disappears.
 DATA_DIR="$HOME/webnestdev/data"
@@ -105,6 +116,7 @@ if ! printf '%s\n' "$CARRY" | grep -q '^ACME_EMAIL=' && [ -n "$ORIGIN_HOST" ]; t
   printf 'WEBNESTDEV_DATA_DIR=%s\n' "$DATA_DIR"
   printf 'SANDBOX_DIR=%s\n' "$SANDBOX_DIR"
   printf 'WEBNESTDEV_ENCRYPTION_KEY=%s\n' "$ENCKEY"
+  printf 'WEBNESTDEV_AUDIT_SALT=%s\n' "$AUDITSALT"
   # Каталог секретов монтируется в контейнер, поэтому он записан и здесь, и в compose.
   printf 'WEBNESTDEV_SECRETS_DIR=%s\n' "$SECRETS_DIR"
   if [ -n "$ORIGINS" ]; then printf 'WEBNESTDEV_ALLOWED_ORIGINS=%s\n' "$ORIGINS"; fi

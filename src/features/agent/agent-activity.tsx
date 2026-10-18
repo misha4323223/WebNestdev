@@ -85,7 +85,9 @@ export function actionTarget(name: string, input: unknown): string {
     const list = (packages ?? []).map(text).filter(Boolean);
     if (list.length) return list.join(", ");
   }
-  for (const key of ["command", "path", "url", "query", "message", "branch", "name", "title", "variable"]) {
+  // `question` — строка инструмента question.ask: в списке действий видно, о чём агент спросил,
+  // а не безымянный набор ключей.
+  for (const key of ["command", "path", "url", "query", "question", "message", "branch", "name", "title", "variable"]) {
     const candidate = text(value[key]);
     if (candidate) return candidate;
   }

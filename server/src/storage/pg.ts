@@ -29,6 +29,20 @@ export function isYdbEnabled(): boolean {
 }
 
 /**
+ * Проверка до старта сервера. Неизвестное значение `WEBNESTDEV_STORAGE` (например старый
+ * `ydb`) раньше лишь печаталось в лог: сервер продолжал работать и писал JSON-файлы, а
+ * оператор считал, что данные в базе. Ошибка на старте лучше тихой подмены хранилища.
+ */
+export function assertStorageConfigured(configured: string = mode, connection: string | undefined = connectionString): void {
+  if (configured !== "json" && configured !== "postgres") {
+    throw new Error(`WEBNESTDEV_STORAGE="${configured}" is not a known backend: use "json" or "postgres"`);
+  }
+  if (configured === "postgres" && !connection) {
+    throw new Error("DATABASE_URL is required when WEBNESTDEV_STORAGE=postgres");
+  }
+}
+
+/**
  * Which backend is actually live, for the startup line. A wrong WEBNESTDEV_STORAGE —
  * the old `ydb` value, for example — used to fail silently: the server kept running and
  * wrote JSON files while the operator believed the data was in a database. The returned
@@ -114,6 +128,8 @@ const PK_BY_TABLE: Record<string, string[]> = {
   project_sizes: ["project_id"],
   user_storage: ["user_id"],
   phone_consents: ["consent_id"],
+  project_secrets: ["project_id"],
+  secret_audit: ["id"],
 };
 
 /**
@@ -390,6 +406,28 @@ export async function initializeStorage(): Promise<void> {
       ip_hash TEXT NOT NULL
     )`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("phone_consents")}_phone ON ${tbl("phone_consents")} (phone, consented_at)`);
+
+    // Каноническое хранилище секретов проекта: один зашифрованный payload на проект.
+    // В рабочей области пользователя `.env.local` не лежит — он монтируется в предпросмотр
+    // из временного файла и удаляется вместе с ним.
+    await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("project_secrets")} (
+      project_id TEXT NOT NULL PRIMARY KEY,
+      payload TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`);
+
+    // Журнал операций с секретами: только имена и метаданные, значения сюда не попадают.
+    await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("secret_audit")} (
+      id TEXT NOT NULL PRIMARY KEY,
+      project_id TEXT NOT NULL,
+      user_id TEXT NOT NULL,
+      action TEXT NOT NULL,
+      names_json TEXT NOT NULL DEFAULT '[]',
+      file TEXT NOT NULL DEFAULT '',
+      ip_hash TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    )`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("secret_audit")}_project ON ${tbl("secret_audit")} (project_id, created_at)`);
 
     console.log("[pg] storage initialized: all tables ready");
   })().catch((error) => {

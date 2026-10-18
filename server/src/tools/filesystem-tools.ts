@@ -1,9 +1,10 @@
-import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { getSandbox, assertInsideSandbox } from "../sandbox-manager.js";
+import { getSandbox } from "../sandbox-manager.js";
+import { deleteInside, listInside, readFileInside, renameInside, writeFileInside } from "../sandbox/path-guard.js";
 import { openDirsForSandbox, openFileForSandbox } from "../sandbox/permissions.js";
 import { registerTool } from "../tool-registry.js";
 import { parseChangedSource } from "../qa/change-parser.js";
+import { assertNotSecretProjectPath, isSecretProjectPath } from "../secrets/secret-paths.js";
 
 /**
  * Сервер пишет от root, а команды проекта выполняются в контейнере от uid 1000: созданные
@@ -12,15 +13,6 @@ import { parseChangedSource } from "../qa/change-parser.js";
 async function openCreated(sandboxRoot: string, filePath: string) {
   await openDirsForSandbox(sandboxRoot, path.dirname(filePath));
   await openFileForSandbox(filePath);
-}
-
-async function target(projectId: string, userId: string, relative: string) {
-  const sandbox = await getSandbox(projectId, userId);
-  const safePath = assertInsideSandbox(
-    sandbox.root,
-    path.join(sandbox.root, relative || "."),
-  );
-  return { sandbox, path: safePath };
 }
 
 /** Сколько читается за один вызов и сколько вообще разрешено вернуть. */
@@ -33,12 +25,15 @@ registerTool({
   parameters: { type: "object", additionalProperties: false, properties: { path: { type: "string", description: "Каталог внутри проекта; по умолчанию корень проекта" } } },
   execute: async (input, context) => {
     const value = input as { path?: string };
-    const { path: targetPath } = await target(context.projectId, context.userId, value.path ?? ".");
-    const entries = await readdir(targetPath, { withFileTypes: true });
-    return entries.map((entry) => ({
-      name: entry.name,
-      type: entry.isDirectory() ? "directory" : "file",
-    }));
+    const sandbox = await getSandbox(context.projectId, context.userId);
+    const entries = await listInside(sandbox.root, path.join(sandbox.root, value.path ?? "."));
+    // Имя секретного файла тоже скрыто: агент не должен даже выбирать его как цель чтения.
+    return entries
+      .filter((entry) => !isSecretProjectPath(entry.name))
+      .map((entry) => ({
+        name: entry.name,
+        type: entry.isDirectory() ? "directory" : "file",
+      }));
   },
 });
 
@@ -58,8 +53,9 @@ registerTool({
   execute: async (input, context) => {
     const value = input as { path?: string; offset?: number; limit?: number };
     if (!value.path) throw new Error("не указан путь");
-    const resolved = await target(context.projectId, context.userId, value.path);
-    const content = await readFile(resolved.path, "utf8");
+    assertNotSecretProjectPath(value.path, "читать");
+    const sandbox = await getSandbox(context.projectId, context.userId);
+    const content = await readFileInside(sandbox.root, path.join(sandbox.root, value.path));
     // Окно, а не весь файл: неограниченное чтение — то, из-за чего запуск упирался в лимит модели.
     const offset = Math.max(0, Math.floor(Number(value.offset) || 0));
     const limit = Math.min(READ_MAX_CHARS, Math.max(1, Math.floor(Number(value.limit) || READ_WINDOW_CHARS)));
@@ -85,10 +81,10 @@ registerTool({
     if (!value.path || typeof value.content !== "string") {
       throw new Error("нужны путь и содержимое файла");
     }
-    const resolved = await target(context.projectId, context.userId, value.path);
-    await mkdir(path.dirname(resolved.path), { recursive: true });
-    await writeFile(resolved.path, value.content, "utf8");
-    await openCreated(resolved.sandbox.root, resolved.path);
+    assertNotSecretProjectPath(value.path, "перезаписать");
+    const sandbox = await getSandbox(context.projectId, context.userId);
+    const written = await writeFileInside(sandbox.root, path.join(sandbox.root, value.path), value.content);
+    await openCreated(sandbox.root, written);
     return {
       ok: true,
       path: value.path,
@@ -104,11 +100,11 @@ registerTool({
   execute: async (input, context) => {
     const value = input as { from?: string; to?: string };
     if (!value.from || !value.to) throw new Error("нужны пути from и to");
-    const from = await target(context.projectId, context.userId, value.from);
-    const to = await target(context.projectId, context.userId, value.to);
-    await mkdir(path.dirname(to.path), { recursive: true });
-    await rename(from.path, to.path);
-    await openCreated(to.sandbox.root, to.path);
+    assertNotSecretProjectPath(value.from, "переименовать");
+    assertNotSecretProjectPath(value.to, "переименовать в");
+    const sandbox = await getSandbox(context.projectId, context.userId);
+    await renameInside(sandbox.root, path.join(sandbox.root, value.from), path.join(sandbox.root, value.to));
+    await openCreated(sandbox.root, path.join(sandbox.root, value.to));
     return { ok: true, from: value.from, to: value.to };
   },
 });
@@ -122,15 +118,18 @@ registerTool({
     if (!value.path || value.path === ".") {
       throw new Error("Отказано: нельзя удалить корень песочницы");
     }
-    const resolved = await target(context.projectId, context.userId, value.path);
+    assertNotSecretProjectPath(value.path, "удалить");
+    const sandbox = await getSandbox(context.projectId, context.userId);
+    const candidate = path.join(sandbox.root, value.path);
     let removedChanges: ReturnType<typeof parseChangedSource>["changes"] = [];
     try {
-      const source = await readFile(resolved.path, "utf8");
+      const source = await readFileInside(sandbox.root, candidate);
       removedChanges = parseChangedSource(value.path, source).changes.map(change => ({ ...change, action: "removed" as const }));
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    } catch {
+      // Каталог, двоичный файл или ссылка: источник для «удалённых изменений» не нужен,
+      // само удаление ниже решает, что произойдёт.
     }
-    await rm(resolved.path, { recursive: true, force: true });
+    await deleteInside(sandbox.root, candidate);
     return { ok: true, path: value.path, removedChanges };
   },
 });

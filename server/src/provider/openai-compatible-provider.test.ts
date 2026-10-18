@@ -87,9 +87,9 @@ function stubFetch(handler:FetchHandler){
   return {captured,restore:()=>{globalThis.fetch=original}};
 }
 
-async function collect(provider:OpenAICompatibleProvider,model:string){
+async function collect(provider:OpenAICompatibleProvider,model:string,options?:{reasoning?:"low"|"medium"|"high"}){
   const chunks:ProviderChunk[]=[];
-  for await(const chunk of provider.stream([{role:"user",content:"привет"}],model))chunks.push(chunk);
+  for await(const chunk of provider.stream([{role:"user",content:"привет"}],model,undefined,undefined,options))chunks.push(chunk);
   return chunks;
 }
 
@@ -104,6 +104,17 @@ test("размышление просят у модели и показываю�
     assert.equal(stub.captured[0].body.reasoning_effort,"medium");
     assert.deepEqual(chunks.filter(chunk=>chunk.type==="reasoning"),[{type:"reasoning",text:"сначала посмотрю файлы"}]);
     assert.deepEqual(chunks.filter(chunk=>chunk.type==="text"),[{type:"text",text:"Готово"}]);
+  }finally{stub.restore()}
+});
+
+test("глубина размышления выбирается для конкретного запуска",{skip:REASONING_DISABLED},async()=>{
+  const stub=stubFetch(()=>streamResponse([{choices:[{delta:{content:"Ответ"}}]}]));
+  try{
+    const provider=new OpenAICompatibleProvider("https://gateway-depth.example/v1");
+    await collect(provider,"depth-model",{reasoning:"high"});
+    assert.equal(stub.captured[0].body.reasoning_effort,"high","выбор пользователя важнее настройки сервера");
+    await collect(provider,"depth-model",{reasoning:"low"});
+    assert.equal(stub.captured[1].body.reasoning_effort,"low","глубина меняется от запуска к запуску");
   }finally{stub.restore()}
 });
 

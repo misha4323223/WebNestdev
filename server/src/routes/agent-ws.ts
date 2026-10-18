@@ -25,7 +25,7 @@ const messageSchema=z.discriminatedUnion("role",[
 export const MAX_REQUEST_MESSAGES=1000;
 // `resume` — продолжение прерванного запуска: сообщения приходят как обычно, а рантайм добавляет
 // модели системную заметку о том, что это продолжение и на каком шаге остановился план.
-export const runSchema=z.object({projectId:z.string().min(1).max(200),conversationId:z.string().max(200).optional(),messages:z.array(messageSchema).min(1).max(MAX_REQUEST_MESSAGES),model:z.string().max(200).optional(),mode:z.enum(["planner","developer"]).optional(),resume:z.object({reason:z.string().max(300).optional()}).optional()});
+export const runSchema=z.object({projectId:z.string().min(1).max(200),conversationId:z.string().max(200).optional(),messages:z.array(messageSchema).min(1).max(MAX_REQUEST_MESSAGES),model:z.string().max(200).optional(),mode:z.enum(["planner","developer"]).optional(),reasoning:z.enum(["low","medium","high"]).optional(),resume:z.object({reason:z.string().max(300).optional()}).optional()});
 
 /**
  * Как часто работающий запуск говорит в сокет «жив».

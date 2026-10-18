@@ -10,6 +10,8 @@ export type ChatMessage={
 };
 /** "planner" only studies the project and publishes a plan; "developer" applies changes. */
 export type AgentMode="planner"|"developer";
+/** How deeply the model is asked to reason before answering. */
+export type ReasoningEffort="low"|"medium"|"high";
 export type FileEntry={name:string;type:"file"|"directory"};
 /** `static` serves the built app without a dev server, so there is no hot reload. */
 export type PreviewMode="container"|"static";

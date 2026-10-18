@@ -1,3 +1,4 @@
+import os from "node:os";
 import { listPreviews } from "./preview-store.js";
 import type { PreviewState } from "./types.js";
 
@@ -21,19 +22,25 @@ export function perUserPreviewLimit() {
 }
 
 /**
- * Необязательный предохранитель на весь хост: сколько контейнерных предпросмотров живёт
- * одновременно у всех пользователей вместе.
+ * Предохранитель на весь хост: сколько контейнерных предпросмотров живёт одновременно у всех
+ * пользователей вместе.
  *
- * По умолчанию его нет (`0`): счёт ведётся на аккаунт, а не на машину, иначе сто пользователей
- * делят три места. Предохранитель остаётся доступным для тесного хоста — `PREVIEW_MAX_CONTAINERS=4`
- * ограничивает сумму, не меняя правило «один на аккаунт».
+ * Без него правило «один на аккаунт» ничего не гарантирует хосту: сто аккаунтов — это сто
+ * dev-серверов, и память кончается раньше, чем кто-то успевает это заметить. По умолчанию
+ * потолок выводится из памяти машины (примерно по 1 ГБ на предпросмотр, не больше 8), потому что
+ * он обязан быть, а подбирать число вручную на каждой ВМ никто не станет. Явное значение
+ * `PREVIEW_MAX_CONTAINERS` важнее; `0` снимает ограничение полностью.
  */
 export function runtimePreviewLimit() {
   const raw = process.env.PREVIEW_MAX_CONTAINERS?.trim();
-  if (!raw) return 0;
-  const parsed = Number(raw);
-  if (!Number.isFinite(parsed) || parsed < 0) return 0;
-  return Math.floor(parsed);
+  if (raw === "0") return 0;
+  if (raw) {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed > 0) return Math.floor(parsed);
+  }
+  // totalmem() — память хоста: контейнер сервера не видит cgroup-лимит, но и хост-потолок
+  // остаётся полезным ориентиром. Один предпросмотр по умолчанию просит 1 ГБ.
+  return Math.max(1, Math.min(8, Math.floor(os.totalmem() / 1024 / 1024 / 1024)));
 }
 
 /** Live runtime previews right now, cheapest source of truth for the cap and for /api/health. */

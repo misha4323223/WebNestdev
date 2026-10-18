@@ -166,7 +166,7 @@ commands — `package.json` alone proves nothing, and a user's `Dockerfile` is n
 Runtime previews are the only counted kind, and the count is **per account**: one container preview
 at a time (`PREVIEW_MAX_PER_USER`, default 1, `0` disables it), so a second preview of the same user
 stops that user's older one instead of refusing them, and other users are not affected. The host-wide
-brake (`PREVIEW_MAX_CONTAINERS`) is off by default and can be set on a small machine to cap the sum.
+brake (`PREVIEW_MAX_CONTAINERS`) is derived from host memory by default (about one 1 GB preview per GB, at most 8); set an explicit number to override it, or `0` to remove it.
 An idle preview is stopped after five minutes without use.
 
 ## CI
@@ -242,7 +242,8 @@ Two windows that collapse and remember their state — **План задач** a
 The chain of thought is asked for rather than hoped for, and it is asked for in every request: the
 gateways publish `reasoning_content`/`reasoning`/`reasoning_details` (and a few more names) **only**
 when the request carries `reasoning_effort`, so `WEBNESTDEV_AI_REASONING` (default `medium`, `off`
-to stop asking, `low`/`high` for the depth) is sent with every step. A gateway that does not know
+to stop asking, `low`/`high` for the depth) is sent with every step unless the composer's
+**Лёгкое / Среднее / Глубокое** choice overrides it for that run. A gateway that does not know
 the field answers `400`/`422` to the first attempt, so the provider repeats the very same request
 without it and remembers the address for the rest of the process — the run never ends over a field
 nobody asked for. Folded, the container is not silent: its header keeps the **last line** of the
@@ -253,7 +254,7 @@ The agent is instructed to think and answer **in Russian first**, switching to a
 
 ## Storage: where the data actually lives
 
-`WEBNESTDEV_STORAGE` accepts exactly two backends: `json` (files) and `postgres`. Anything else — including the old `ydb` value — is not a backend any more, and the server now says so on startup (`[storage] …`) instead of silently writing somewhere else. In production the variable defaults to `postgres` when it is unset, and `DATABASE_URL` is then required.
+`WEBNESTDEV_STORAGE` accepts exactly two backends: `json` (files) and `postgres`. Anything else — including the old `ydb` value — is not a backend any more, and startup fails with a configuration error instead of silently writing somewhere else. In production the variable defaults to `postgres` when it is unset, and `DATABASE_URL` is then required.
 
 With `json`, set `WEBNESTDEV_DATA_DIR` to a path outside the source tree: the default is `.webnestdev` inside the working directory, so a redeploy that replaces the code directory takes accounts, projects, conversations and connected integrations with it. `deploy/scripts/make-env-vm.sh` writes such a directory (`~/webnestdev/data`) and reuses the existing `WEBNESTDEV_ENCRYPTION_KEY`, because a new key makes every secret encrypted earlier unreadable.
 
@@ -262,7 +263,9 @@ With `json`, set `WEBNESTDEV_DATA_DIR` to a path outside the source tree: the de
 The message composer has one button that shows the current mode and switches it on click, and the choice is sent with every run. The same row shows the model the project will run on — the project provider model, or the platform default — and opens the AI provider settings when pressed:
 
 - **Разработчик (developer)** — the full agent: it writes files, runs the terminal, starts the Preview and verifies the result.
-- **Планировщик (planner)** — read-only: the agent studies the project and publishes a plan with `plan.update` without changing anything. Enforcement lives on the server, not in the prompt: the runtime refuses `fs.write`, `fs.rename`, `fs.delete`, `npm.install`, `database.env`, `secrets.request`, `git.add`, `git.commit` and mutating `yandex.request` calls, and `terminal.exec` only runs a single inspection command (`ls`, `cat`, `grep`, `find`, `git status|log|diff|branch`, `npm ls`). Anything chained, piped, redirecting output, installing packages or running a script is refused, so the planner can read a project but can never write to one. The policy is covered by `server/src/agent/planner-policy.test.ts`.
+- **Планировщик (planner)** — read-only: the agent studies the project and publishes a plan with `plan.update` without changing anything. Enforcement lives on the server, not in the prompt: the runtime refuses `fs.write`, `fs.rename`, `fs.delete`, `npm.install`, `database.env`, `secrets.request`, `git.add`, `git.commit`, `preview.start`, `preview.stop` and mutating `yandex.request` calls, and `terminal.exec` only runs a single inspection command (`ls`, `cat`, `grep`, `find`, `git status|log|diff|branch`, `npm ls`). Anything chained, piped, redirecting output, installing packages or running a script is refused, so the planner can read a project but can never write to one. The policy is covered by `server/src/agent/planner-policy.test.ts`.
+
+A quick-start template and a GitHub import both start in **Планировщик** instead of writing immediately: the agent asks up to two genuinely important clarifying questions, then publishes the full plan. The **Утвердить и начать разработку** button next to the plan is the command that switches the same run to developer mode and sends the approved steps as the task. Importing a repository first asks what to do with it — analysis only, prepare to run it, find errors, or a custom instruction — and that answer becomes the planner task. The composer also has **Лёгкое / Среднее / Глубокое** reasoning depth; the choice is stored per browser and sent with every run as `reasoning_effort`, overriding the server default (`WEBNESTDEV_AI_REASONING=off` still disables the request entirely).
 
 ## Project database
 
@@ -271,13 +274,13 @@ Every project keeps its data in a database of the user's own, so nothing depends
 The user has two ways to connect it, and both end in the same place:
 
 1. paste the connection string into the card (Settings → Integrations → База данных), or
-2. tell the agent which provider you want — it explains where to create the database and asks for the string through the secrets modal window (never in chat), which writes it into the project's env file.
+2. tell the agent which provider you want — it explains where to create the database and asks for the string through the secrets modal window (never in chat), which stores it encrypted for the project.
 
-After that the agent uses two tools: `database.status` reports the engine, host, port and database name (never the password), and `database.env` merges `DATABASE_URL` (plus `MONGODB_URI`, `REDIS_URL` or `YDB_CONNECTION_STRING` where the engine expects it) into the project's `.env.local`, leaving every other line untouched. The card can also run a TCP reachability check from the API host — it answers "this address is reachable", which is honest about not being a login test.
+After that the agent uses two tools: `database.status` reports the engine, host, port and database name (never the password), and `database.env` merges `DATABASE_URL` (plus `MONGODB_URI`, `REDIS_URL` or `YDB_CONNECTION_STRING` where the engine expects it) into the project's encrypted secret store for `.env.local`, leaving every other variable untouched. The card can also run a TCP reachability check from the API host — it answers "this address is reachable", which is honest about not being a login test.
 
 ## Secrets
 
-A key never travels through the chat. When a task needs a credential, the agent calls `secrets.request` with the environment variable name, a one-line purpose and the env file (`.env.local` by default). The run publishes a `secret.requested` event, the panel opens a modal window, and the value the user pastes is `POST`ed to `/api/projects/:id/secrets` — straight into the project's env file inside the sandbox. The tool receives only a confirmation, so the value never reaches the model, the conversation, the tool result or the event stream; `server/src/routes/secrets.test.ts` asserts exactly that. The window expires after five minutes (`SECRET_REQUEST_TIMEOUT_MS`) or when the run stops, and the user can cancel: the agent is then told to continue without the key and never to ask for it in chat. Keys are written into the env file only — `.env`, `.env.local`, `.env.development`, `.env.production`, `.env.test` or `.env.staging` — and a multi-line value (a PEM key) is stored as one quoted line so the file stays valid for dotenv/Vite. Covered by `server/src/secrets/pending-secrets.test.ts`, `server/src/secrets/env-value.test.ts`, `server/src/tools/secret-tools.test.ts` and `server/src/routes/secrets.test.ts`.
+A key never travels through the chat. When a task needs a credential, the agent calls `secrets.request` with the environment variable name, a one-line purpose and the env file (`.env.local` by default). The run publishes a `secret.requested` event, the panel opens a modal window, and the value the user pastes is `POST`ed to `/api/projects/:id/secrets` — into the project's encrypted secret store, never into the workspace. The tool receives only a confirmation, so the value never reaches the model, the conversation, the tool result or the event stream; `server/src/routes/secrets.test.ts` asserts exactly that. The window expires after five minutes (`SECRET_REQUEST_TIMEOUT_MS`) or when the run stops, and the user can cancel: the agent is then told to continue without the key and never to ask for it in chat. The same store backs the **Секреты проекта** tab: variables can be added, imported from a `.env` file, replaced and deleted, but never read back. A file may be `.env` or any `.env.<environment>` variant that is not a template (`.env`, `.env.local`, `.env.production`, `.env.production.local`, …); templates such as `.env.example` stay visible to the agent. A multi-line value (a PEM key) is kept as one value and quoted so the generated file stays valid for dotenv/Vite. Covered by `server/src/secrets/pending-secrets.test.ts`, `server/src/secrets/env-value.test.ts`, `server/src/tools/secret-tools.test.ts`, `server/src/routes/secrets.test.ts` and `server/src/routes/project-secrets.test.ts`.
 
 ## GitHub integration
 
@@ -310,3 +313,17 @@ Server environment:
 3. Without those values the button explains that OAuth is not configured and opens the key form instead — the pasted-credential path does not need an OAuth app at all.
 
 See docs/AUTH_PRODUCTION_PLAN.md for the staged rollout. Credential encryption, legacy-token migration, and key rotation are documented in docs/SECRET_ENCRYPTION.md.
+
+## Changes and rollback
+
+Every finished developer run that changed files becomes a checkpoint: a regular git commit in the project's sandbox directory (`server/src/changes/git-repo.ts` uses `isomorphic-git`, so no `git` binary is required in either image). The commit is created only after the automatic build, preview and browser verification passed, so history holds states that were actually checked, not every intermediate edit.
+
+A checkpoint stays local. **The agent never pushes on its own**: sending commits to a repository is a change to shared code, so it happens only when the user presses **Отправить на GitHub** in the **Изменения** tab, after they have seen the result. `createRepositoryForProject` is the one path that creates a repository and sends the initial state, and it too runs from that tab on an explicit click. An imported repository starts from its real GitHub commit — the import fetches the remote branch without touching the files — so the first task produces an ordinary fast-forward commit instead of an unrelated history. A failed or unavailable push never loses work: the commit stays in the project and the panel says why it was not sent, with the same button to retry.
+
+The **Изменения** tab lists the checkpoints with their files, opens the commit on GitHub, and restores any earlier one. Rollback restores the file tree of that commit and commits the result on top; it never rewrites history, so it needs no force-push and cannot drop other people's commits — and it stays local until the user sends it.
+
+What never enters history: `node_modules`, build output (`dist`, `build`, `.next`, …), caches, environment files and files above `CHANGES_MAX_FILE_BYTES` (12 MB by default). These rules live in `.git/info/exclude` and in `ignoredPath`, so a project's own `.gitignore` keeps working unchanged. `CHANGES_PUSH_TIMEOUT_MS` (20 s) bounds a push so the panel does not wait on an unreachable GitHub; a timeout is reported as "not sent" while the checkpoint stays local.
+
+## Questions from the agent
+
+When the user's decision changes what to build — layout, content, stack, which of two approaches — the model calls `question.ask` instead of guessing. The question opens as a sheet above the message box (`src/features/agent/QuestionSheet.tsx`), with ready-made options, multi-select when several answers make sense, and always the possibility to write a custom answer. The run stops and waits; the answer travels over `/api/projects/:id/questions/:requestId/answer`, not through the agent socket, the same way a secret does, and the server accepts only the labels the question actually offered. Skipping (or the five-minute timeout, `QUESTION_TIMEOUT_MS`) returns "no answer" to the tool, and its description tells the model to pick a sensible default and say which one, never to repeat the question in chat.

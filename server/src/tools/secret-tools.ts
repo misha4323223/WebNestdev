@@ -3,8 +3,9 @@ import { registerTool } from "../tool-registry.js";
 import { requestSecret } from "../secrets/pending-secrets.js";
 
 /**
- * Секрет попадает только в файл окружения проекта: запись в другое место означала бы, что модель
- * выбирает цель для чужого значения. Список ровно тот, который читают dev-сервер, сборка и хостинг.
+ * Секрет попадает только в хранилище секретов проекта и оттуда — в файл окружения при запуске:
+ * запись в другое место означала бы, что модель выбирает цель для чужого значения. Список ровно
+ * тот, который читают dev-сервер, сборка и хостинг.
  */
 const ENV_FILE = /^\.env(\.(local|development|production|test|staging))?$/;
 const VARIABLE = /^[A-Z][A-Z0-9_]{1,63}$/;
@@ -19,9 +20,9 @@ registerTool({
   name: "secrets.request",
   description:
     "Ask the user for a secret — an API key, access token, webhook secret or password — through a secure modal window on their screen. " +
-    "The user pastes the value there; the server writes it into the project's env file and returns only a confirmation, so the value is never " +
+    "The user pastes the value there; the server stores it encrypted for the project and returns only a confirmation, so the value is never " +
     "shown to you and must never be requested in chat. Call this whenever a task needs a credential you do not have: input " +
-    "{variable: the environment variable name in UPPER_SNAKE_CASE, purpose: one short line explaining what it is for, file: the env file to write, " +
+    "{variable: the environment variable name in UPPER_SNAKE_CASE, purpose: one short line explaining what it is for, file: the env file the app will see, " +
     "'.env.local' by default}. After it returns ok:true, read the key in the project code from process.env.<VARIABLE>. " +
     "If the user cancels, do not ask again in chat: continue without the key or say exactly what stays blocked.",
   parameters: {
@@ -53,7 +54,8 @@ registerTool({
       ...(context.signal ? { signal: context.signal } : {}),
     });
 
-    // Модальное окно открывает панель по этому событию; значение пойдёт прямо в песочницу.
+    // Модальное окно открывает панель по этому событию; значение пойдёт в зашифрованное
+    // хранилище проекта, а не в чат и не в результат инструмента.
     context.emit?.({
       type: "secret.requested",
       runId: context.runId,
@@ -72,8 +74,9 @@ registerTool({
         variable: resolution.variable,
         file: resolution.file,
         note:
-          "Значение сохранено в " + resolution.file + " и доступно приложению как process.env." + resolution.variable + ". " +
-          "Ты его не видишь: не спрашивай значение и не печатай его. Используй переменную в коде и не коммить файл.",
+          "Значение сохранено в зашифрованном хранилище проекта и будет доступно приложению как process.env." + resolution.variable +
+          " (при запуске — в файле " + resolution.file + "). Ты его не видишь: не спрашивай значение и не печатай его. " +
+          "Используй переменную в коде и не коммить env-файлы.",
       };
     }
     if ("cancelled" in resolution) {

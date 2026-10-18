@@ -24,9 +24,14 @@ function openToSandboxUser(root:string){
   return run;
 }
 
-export async function getSandbox(projectId:string,userId?:string):Promise<SandboxConfig>{
+/**
+ * Песочница выдаётся только владельцу проекта. `userId` обязателен: необязательный параметр
+ * означал, что любой новый маршрут, забывший его передать, получал чужой каталог без проверки.
+ * Права проверяются и в маршруте (`requireProjectUser`), и здесь — на случай будущих вызовов.
+ */
+export async function getSandbox(projectId:string,userId:string):Promise<SandboxConfig>{
   const project=await getProject(projectId);
-  if(!project || (userId && project.userId!==userId))throw new Error("Проект не найден");
+  if(!project || project.userId!==userId)throw new Error("Проект не найден");
   const root=sandboxRootPath(projectId);
   await mkdir(root,{recursive:true});
   await openToSandboxUser(root);

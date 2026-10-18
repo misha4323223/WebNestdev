@@ -190,6 +190,27 @@ export async function deleteProject(projectId:string,userId:string):Promise<bool
 }
 
 /**
+ * Привязывает проект к репозиторию GitHub. Так проект, созданный в приложении, получает
+ * место, куда «Изменения» отправляют коммиты.
+ */
+export async function linkProjectGithub(projectId:string,userId:string,github:GitHubRepositoryRef):Promise<Project|null>{
+  const project=await getProject(projectId);
+  if(!project||project.userId!==userId)return null;
+  const updated:Project={...project,github,updatedAt:new Date().toISOString()};
+  if(isYdbEnabled()){
+    await ydbQuery()`
+      UPDATE ${ydbQuery().identifier(getTable("projects"))}
+      SET github_json=${JSON.stringify(github)},updated_at=${updated.updatedAt}
+      WHERE id=${projectId}
+    `;
+    return updated;
+  }
+  await mkdir(path.join(root,"projects"),{recursive:true});
+  await writeFile(path.join(root,"projects",projectId+".json"),JSON.stringify(updated,null,2));
+  return updated;
+}
+
+/**
  * Renames a project and bumps its updated time. Returns null when the project is
  * missing or belongs to another account.
  */

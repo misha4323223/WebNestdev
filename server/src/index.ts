@@ -5,7 +5,7 @@ import cookie from "@fastify/cookie";
 import websocket from "@fastify/websocket";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { initializeStorage, closeStorage, describeStorage } from "./storage/ydb.js";
+import { initializeStorage, closeStorage, describeStorage, assertStorageConfigured } from "./storage/ydb.js";
 import { reapOrphanPreviews } from "./preview-manager.js";
 import { startPreviewSweeper } from "./preview/idle-sweep.js";
 import { describePreviewMode } from "./preview/static-preview.js";
@@ -19,6 +19,7 @@ import { assertEncryptionConfigured } from "./storage/secret-crypto.js";
 import { describeSandboxPaths } from "./sandbox/config.js";
 import { describeSandboxMount,verifySandboxMount } from "./sandbox/sandbox-check.js";
 import { ensureDataDir } from "./project-store.js";
+import { clearAllPreviewSecrets } from "./secrets/preview-secrets.js";
 import { registerHealthRoutes } from "./routes/health.js";
 import { registerPanelFiles } from "./routes/panel-static.js";
 import { registerProjectRoutes } from "./routes/projects.js";
@@ -31,6 +32,8 @@ import { registerGitHubRoutes } from "./routes/github.js";
 import { registerYandexRoutes } from "./routes/yandex.js";
 import { registerDatabaseRoutes } from "./routes/database.js";
 import { registerSecretRoutes } from "./routes/secrets.js";
+import { registerQuestionRoutes } from "./routes/questions.js";
+import { registerChangesRoutes } from "./routes/changes.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerPhoneAuthRoutes } from "./routes/phone-auth.js";
 import { registerAccountRoutes } from "./routes/account.js";
@@ -48,7 +51,11 @@ import "./tools/plan-tools.js";
 import "./tools/yandex-tools.js";
 import "./tools/database-tools.js";
 import "./tools/secret-tools.js";
+import "./tools/question-tools.js";
 
+// Неизвестный бэкенд или postgres без DATABASE_URL — ошибка конфигурации, а не повод молча
+// работать на JSON-файлах: иначе данные «теряются» при первом же переезде.
+assertStorageConfigured();
 assertEncryptionConfigured();
 
 const app=Fastify({logger:true,bodyLimit:2_000_000,requestTimeout:120_000});
@@ -60,6 +67,11 @@ if (production && allowedOrigins.some(origin => /^https?:\/\/localhost(?::\d+)?$
   throw new Error("В production в WEBNESTDEV_ALLOWED_ORIGINS нельзя указывать localhost");
 }
 await ensureDataDir();
+// Временные env-файлы предпросмотра — открытый текст на диске. После падения процесса они
+// остаются в каталоге песочниц; старт обязан их убрать, пока не поднялся ни один предпросмотр.
+// На общем Docker-хосте с несколькими репликами `PREVIEW_REAP_ON_START=0` выключает и это:
+// иначе старт одной реплики удалял бы файлы предпросмотров, которые ведёт другая.
+if (process.env.PREVIEW_REAP_ON_START !== "0") await clearAllPreviewSecrets();
 // Ключи платформы (GitHub OAuth, Yandex Cloud, SMS, модель платформы), введённые в панели,
 // читаются один раз при старте: файл шифрован тем же ключом, что и секреты проектов.
 await loadPlatformEnv();
@@ -142,6 +154,8 @@ await registerGitHubRoutes(app);
 await registerYandexRoutes(app);
 await registerDatabaseRoutes(app);
 await registerSecretRoutes(app);
+await registerQuestionRoutes(app);
+await registerChangesRoutes(app);
 await registerPlatformRoutes(app);
 await registerAgentWebSocket(app);
 

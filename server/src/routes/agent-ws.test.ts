@@ -40,6 +40,12 @@ test("a conversation past a hundred messages still starts", () => {
   assert.equal(runSchema.parse({ projectId: "p1", messages }).messages.length, 150);
 });
 
+test("reasoning depth is validated and passed to the run", () => {
+  const messages = [{ role: "user" as const, content: "сделай страницу" }];
+  assert.equal(runSchema.parse({ projectId: "p1", messages, reasoning: "high" }).reasoning, "high");
+  assert.equal(runSchema.safeParse({ projectId: "p1", messages, reasoning: "very-deep" }).success, false);
+});
+
 test("the too-long error reaches the panel as an ordinary sentence", () => {
   const messages = Array.from({ length: MAX_REQUEST_MESSAGES + 1 }, () => ({ role: "user" as const, content: "x" }));
   const result = runSchema.safeParse({ projectId: "p1", messages });

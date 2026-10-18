@@ -68,8 +68,8 @@ function depsFor(port: number, overrides: Partial<PreviewHostDeps> = {}): Previe
   };
 }
 
-async function doorWith(deps: PreviewHostDeps) {
-  const door = createPreviewHostServer(deps);
+async function doorWith(deps: PreviewHostDeps, limits?: { maxConnections: number; maxUpgrades: number; upgradeTimeoutMs: number }) {
+  const door = createPreviewHostServer(deps, limits);
   await new Promise<void>(resolve => door.server.listen(0, "127.0.0.1", resolve));
   const address = door.server.address();
   const port = typeof address === "object" && address ? address.port : 0;
@@ -229,6 +229,66 @@ test("обновление соединения до WebSocket передаёт�
     assert.equal(echo, "echo:ping");
   } finally {
     client.destroy();
+    await door.close();
+    await new Promise<void>(resolve => site.close(() => resolve()));
+  }
+});
+
+test("билет не уходит в приложение в строке WebSocket-запроса", async () => {
+  const received: string[] = [];
+  const site = createTcpServer(socket => {
+    socket.on("data", chunk => {
+      received.push(chunk.toString("utf8"));
+      if (received.length === 1) socket.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n");
+    });
+  });
+  await new Promise<void>(resolve => site.listen(0, "127.0.0.1", resolve));
+  const address = site.address();
+  const sitePort = typeof address === "object" && address ? address.port : 0;
+  const door = await doorWith(depsFor(sitePort));
+  const client = connect(door.port, "127.0.0.1");
+  try {
+    await new Promise<void>(resolve => client.on("connect", resolve));
+    client.write(
+      "GET /hmr?ticket=ticket:" + PROJECT + "&tab=1 HTTP/1.1\r\n" +
+      "Host: " + PROJECT + "." + DOMAIN + "\r\n" +
+      "Upgrade: websocket\r\nConnection: Upgrade\r\n" +
+      "Sec-WebSocket-Key: abc\r\nSec-WebSocket-Version: 13\r\n" +
+      "Cookie: " + PREVIEW_TICKET_COOKIE + "=ticket:" + PROJECT + "\r\n\r\n",
+    );
+    const handshake = await read(client);
+    assert.match(handshake, /101 Switching Protocols/);
+    assert.match(received[0] ?? "", /^GET \/hmr\?tab=1 HTTP\/1\.1\r\n/, "билет вырезан, остальные параметры на месте");
+    assert.doesNotMatch(received[0] ?? "", /ticket=/);
+  } finally {
+    client.destroy();
+    await door.close();
+    await new Promise<void>(resolve => site.close(() => resolve()));
+  }
+});
+
+test("число одновременных WebSocket-соединений ограничено", async () => {
+  const site = createTcpServer(socket => {
+    socket.on("data", () => socket.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n"));
+  });
+  await new Promise<void>(resolve => site.listen(0, "127.0.0.1", resolve));
+  const address = site.address();
+  const sitePort = typeof address === "object" && address ? address.port : 0;
+  const door = await doorWith(depsFor(sitePort), { maxConnections: 16, maxUpgrades: 1, upgradeTimeoutMs: 2000 });
+  const first = connect(door.port, "127.0.0.1");
+  let second: ReturnType<typeof connect> | null = null;
+  try {
+    await new Promise<void>(resolve => first.on("connect", resolve));
+    first.write("GET /hmr HTTP/1.1\r\nHost: " + PROJECT + "." + DOMAIN + "\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nCookie: " + PREVIEW_TICKET_COOKIE + "=ticket:" + PROJECT + "\r\n\r\n");
+    assert.match(await read(first), /101 Switching Protocols/);
+
+    second = connect(door.port, "127.0.0.1");
+    await new Promise<void>(resolve => second?.once("connect", resolve));
+    second.write("GET /hmr HTTP/1.1\r\nHost: " + PROJECT + "." + DOMAIN + "\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nCookie: " + PREVIEW_TICKET_COOKIE + "=ticket:" + PROJECT + "\r\n\r\n");
+    assert.match(await read(second), /503 Service Unavailable/);
+  } finally {
+    first.destroy();
+    second?.destroy();
     await door.close();
     await new Promise<void>(resolve => site.close(() => resolve()));
   }

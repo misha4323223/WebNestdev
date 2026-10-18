@@ -1,4 +1,5 @@
-import { getSandbox, assertInsideSandbox } from "../sandbox-manager.js";
+import { getSandbox } from "../sandbox-manager.js";
+import { resolveInsideSandbox } from "../sandbox/path-guard.js";
 import { runInSandbox } from "../sandbox-worker.js";
 import { registerTool } from "../tool-registry.js";
 
@@ -35,11 +36,10 @@ registerTool({
     if (refusal) return refusal;
 
     const sandbox = await getSandbox(context.projectId, context.userId);
-    const cwd = assertInsideSandbox(
-      sandbox.root,
-      sandbox.root + "/" + (value.cwd ?? ""),
-    );
-    return runInSandbox(sandbox, command, cwd);
+    // Рабочий каталог — реальный путь: ссылка внутри проекта не должна уводить команду из него.
+    const cwd = await resolveInsideSandbox(sandbox.root, sandbox.root + "/" + (value.cwd ?? ""));
+    // Команда агента не должна прочитать `.env.local`: файл виден по пути, но пуст.
+    return runInSandbox(sandbox, command, cwd, { signal: context.signal, maskSecretEnvFiles: true });
   },
 });
 
@@ -50,10 +50,8 @@ registerTool({
   execute: async (input, context) => {
     const value = input as { cwd?: string };
     const sandbox = await getSandbox(context.projectId, context.userId);
-    const cwd = assertInsideSandbox(
-      sandbox.root,
-      sandbox.root + "/" + (value.cwd ?? ""),
-    );
-    return runInSandbox(sandbox, "npm install --no-audit --no-fund", cwd, { network: "bridge" });
+    const cwd = await resolveInsideSandbox(sandbox.root, sandbox.root + "/" + (value.cwd ?? ""));
+    // `npm install` выполняет lifecycle-скрипты проекта; они тоже не должны видеть секреты.
+    return runInSandbox(sandbox, "npm install --no-audit --no-fund", cwd, { network: "bridge", signal: context.signal, maskSecretEnvFiles: true });
   },
 });

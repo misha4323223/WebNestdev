@@ -132,12 +132,29 @@ export async function loadPlatformEnv() {
   let parsed: StoreFile;
   try { parsed = JSON.parse(raw) as StoreFile; }
   catch { console.error("[platform] хранилище ключей повреждено — значения панели не применены"); return; }
+  let migrated = false;
+  let decryptFailed = false;
   for (const [name, entry] of Object.entries(parsed.values ?? {})) {
     if (!entry?.value) continue;
+    const encrypted = isEncryptedSecret(entry.value);
     try {
-      overrides.set(name, { value: isEncryptedSecret(entry.value) ? decryptSecret(entry.value) : entry.value, preview: entry.preview ?? "", updatedAt: entry.updatedAt ?? "" });
+      overrides.set(name, { value: encrypted ? decryptSecret(entry.value) : entry.value, preview: entry.preview ?? "", updatedAt: entry.updatedAt ?? "" });
+      // Старое хранилище писало значения открытым текстом. Оставлять их так до следующей
+      // записи нельзя: файл бэкапится, и ротация ключа их уже не увидит.
+      if (!encrypted) migrated = true;
     } catch (error) {
+      decryptFailed = true;
       console.error("[platform] ключ " + name + " не расшифрован (изменился WEBNESTDEV_ENCRYPTION_KEY?) — используется значение окружения:", error instanceof Error ? error.message : error);
+    }
+  }
+  // Перезапись при хотя бы одной ошибке расшифровки потеряла бы запись, которую не удалось
+  // прочитать: файл остаётся как есть, пока ключ не вернут.
+  if (migrated && !decryptFailed) {
+    try {
+      await writeStore(overrides);
+      console.log("[platform] открытые значения панели перешифрованы");
+    } catch (error) {
+      console.error("[platform] не удалось перешифровать значения панели:", error instanceof Error ? error.message : error);
     }
   }
   if (overrides.size) console.log("[platform] ключей из панели: " + overrides.size + " (" + [...overrides.keys()].sort().join(", ") + ")");

@@ -42,6 +42,23 @@ export async function getGitHubLoginFromToken(token:string){
 }
 export async function getGitHubUser(userId:string){return githubFetch(userId,"/user")}
 export async function listGitHubRepositories(userId:string){return githubFetch(userId,"/user/repos?sort=updated&per_page=100")}
+/**
+ * Создаёт новый репозиторий для проекта, у которого его ещё нет. Без этого кнопка
+ * «отправить на GitHub» в «Изменениях» работала бы только для импортированных проектов.
+ */
+export async function createGitHubRepository(userId:string,input:{name:string;private?:boolean;description?:string}){
+  try{
+    return await githubFetch(userId,"/user/repos",{
+      method:"POST",
+      headers:{"content-type":"application/json"},
+      body:JSON.stringify({name:input.name,private:input.private??true,auto_init:false,...(input.description?{description:input.description}:{})}),
+    });
+  }catch(error){
+    const message=error instanceof Error?error.message:String(error);
+    if(message.includes(" 422"))throw new Error("GitHub не создал репозиторий «"+input.name+"»: такое имя уже занято или недопустимо — укажите другое");
+    throw error;
+  }
+}
 export async function getGitHubRepository(userId:string,owner:string,repo:string){return githubFetch(userId,"/repos/"+encodeURIComponent(owner)+"/"+encodeURIComponent(repo))}
 export async function getGitHubTree(userId:string,owner:string,repo:string,branch:string){return githubFetch(userId,"/repos/"+encodeURIComponent(owner)+"/"+encodeURIComponent(repo)+"/git/trees/"+encodeURIComponent(branch)+"?recursive=1")}
 export async function getGitHubBlob(userId:string,owner:string,repo:string,shaOrPath:string){return githubFetch(userId,"/repos/"+encodeURIComponent(owner)+"/"+encodeURIComponent(repo)+"/contents/"+shaOrPath.split("/").map(encodeURIComponent).join("/"))}

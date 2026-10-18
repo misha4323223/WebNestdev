@@ -63,23 +63,44 @@ export function isEncryptedSecret(value: unknown): value is string { return type
 
 export function assertEncryptionConfigured(): void { if (process.env.NODE_ENV === "production") encryptionKey(); }
 
-export function encryptSecret(value: string): string {
+function seal(value: string, key: Buffer): string {
   if (!value || isEncryptedSecret(value)) return value;
   const iv = randomBytes(12);
-  const cipher = createCipheriv("aes-256-gcm", encryptionKey(), iv);
+  const cipher = createCipheriv("aes-256-gcm", key, iv);
   const encrypted = Buffer.concat([cipher.update(value, "utf8"), cipher.final()]);
   const tag = cipher.getAuthTag();
   return PREFIX + [iv, tag, encrypted].map(part => part.toString("base64url")).join(":");
 }
 
-/** Legacy plaintext values remain readable during migration; new writes are encrypted. */
-export function decryptSecret(value: string): string {
+function open(value: string, key: Buffer): string {
   if (!value || !isEncryptedSecret(value)) return value;
   const parts = value.slice(PREFIX.length).split(":");
   if (parts.length !== 3) throw new Error("Invalid encrypted secret format");
   const [iv, tag, encrypted] = parts.map(part => Buffer.from(part, "base64url"));
   if (iv.length !== 12 || tag.length !== 16) throw new Error("Invalid encrypted secret payload");
-  const decipher = createDecipheriv("aes-256-gcm", encryptionKey(), iv);
+  const decipher = createDecipheriv("aes-256-gcm", key, iv);
   decipher.setAuthTag(tag);
   return Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf8");
+}
+
+export function encryptSecret(value: string): string {
+  return seal(value, encryptionKey());
+}
+
+/** Legacy plaintext values remain readable during migration; new writes are encrypted. */
+export function decryptSecret(value: string): string {
+  return open(value, encryptionKey());
+}
+
+/**
+ * Ротация ключа: обе операции принимают ключ явно, поэтому скрипт не подменяет
+ * `process.env` между вызовами и не может перешифровать часть файлов не тем ключом.
+ * Плейнтекст возвращается как есть — так миграция старых записей тоже проходит через ротацию.
+ */
+export function encryptSecretWith(value: string, rawKey: string): string {
+  return seal(value, decodeKey(rawKey));
+}
+
+export function decryptSecretWith(value: string, rawKey: string): string {
+  return open(value, decodeKey(rawKey));
 }

@@ -5,6 +5,16 @@ import type { FileEntry } from "../../lib/types";
 
 type TreeEntry=FileEntry&{path:string};
 
+/**
+ * The server hides `.env.local` and its variants already; this second check keeps the panel honest
+ * if an older server or a cached response is in front of it. `.env.example` and other templates are
+ * documentation, not secrets, so they stay visible.
+ */
+function isSecretEnvName(name:string){
+  if(name!==".env"&&!name.startsWith(".env."))return false;
+  return !/\.(example|sample|template)$/.test(name);
+}
+
 export function FilePanel({projectId}:{projectId:string}){
   const [currentPath,setCurrentPath]=useState(".");
   const [files,setFiles]=useState<TreeEntry[]>([]);
@@ -16,7 +26,9 @@ export function FilePanel({projectId}:{projectId:string}){
     try{
       const data=await listProjectFiles(projectId,path);
       setCurrentPath(data.path||path);
-      setFiles(data.files.map(file=>({...file,path:path==="."?file.name:path+"/"+file.name})));
+      setFiles(data.files
+        .filter(file=>!isSecretEnvName(file.name))
+        .map(file=>({...file,path:path==="."?file.name:path+"/"+file.name})));
       setSelected(null);
     }finally{setLoading(false)}
   }

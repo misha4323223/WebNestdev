@@ -9,8 +9,9 @@ import { createConversation, createProjectWithinLimit, ProjectLimitError } from 
 import { FREE_PLAN, limitsForPlan, type PlanId } from "../account/plans.js";
 import { getSandbox } from "../sandbox-manager.js";
 import { getPlatformEnv } from "../platform/platform-env.js";
-import { mkdir, writeFile } from "node:fs/promises";
+import { initRepo } from "../changes/git-repo.js";
 import path from "node:path";
+import { writeFileInside } from "../sandbox/path-guard.js";
 
 const oauthScope = "repo";
 
@@ -178,10 +179,23 @@ export async function registerGitHubRoutes(app: FastifyInstance) {
     for (const entry of files) {
       const blob = await getGitHubBlob(user.id, repository.owner.login, repository.name, entry.path);
       if (blob.encoding !== "base64") continue;
-      const target = path.join(sandbox.root, entry.path);
-      if (!target.startsWith(sandbox.root + path.sep)) throw new Error("Небезопасный путь в репозитории");
-      await mkdir(path.dirname(target), { recursive: true });
-      await writeFile(target, Buffer.from(blob.content.replace(/\n/g, ""), "base64"));
+      // Путь пришёл из GitHub-дерева: `..` и ссылки отсекает та же запись, что и у агента.
+      await writeFileInside(sandbox.root, path.join(sandbox.root, entry.path), Buffer.from(blob.content.replace(/\n/g, ""), "base64"));
+    }
+    // История импортированного проекта начинается с коммита GitHub, а не с пустого места:
+    // первая же задача получает родителем настоящий коммит репозитория, поэтому отправка —
+    // fast-forward. Отказ загрузки истории не отменяет импорт: вкладка «Изменения» честно
+    // скажет об этом, а локальная история начнётся с первого коммита задачи.
+    try {
+      const connection = await getGitHubConnection(user.id);
+      const history = await initRepo(sandbox.root, {
+        branch: repository.default_branch,
+        remoteUrl: repository.html_url,
+        token: connection?.accessToken ?? null,
+      });
+      if (history.warning) console.warn("[changes] " + repository.full_name + ": " + history.warning);
+    } catch (error) {
+      console.error("[changes] не удалось создать историю импортированного проекта", error);
     }
     const conversation = await createConversation(project.id, "GitHub: " + repository.full_name);
     return reply.code(201).send({ project, conversation, importedFiles: files.length });

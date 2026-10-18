@@ -15,6 +15,9 @@ export function WorkspaceShell({onHome,onAgentState}:{onHome:()=>void;onAgentSta
   const [agentRunning,setAgentRunning]=useState(false);
   const reportAgentState=useCallback((running:boolean)=>setAgentRunning(running),[]);
   const [settingsOpen,setSettingsOpen]=useState(false);
+  // Incremented when the sidebar asks for a specific settings tab while the overlay is already
+  // open: the hub reads its one-shot tab flag on mount, so it has to be remounted to react.
+  const [settingsKey,setSettingsKey]=useState(0);
   const [deployOpen,setDeployOpen]=useState(false);
   // On a phone the preview is a drawer that slides over the workspace, opened from the top bar.
   const [previewOpen,setPreviewOpen]=useState(false);
@@ -44,18 +47,24 @@ export function WorkspaceShell({onHome,onAgentState}:{onHome:()=>void;onAgentSta
   // The overlays replace the workspace, so the drawer is closed instead of floating above them.
   const openDeploy=()=>{setSettingsOpen(false);setPreviewOpen(false);setDeployOpen(true)};
   const openSettings=()=>{setDeployOpen(false);setPreviewOpen(false);setSettingsOpen(true)};
+  // The sidebar opens the same settings overlay, but on the project secrets tab.
+  const openSecrets=()=>{
+    try{localStorage.setItem("webnestdev.openSecretsTab","1")}catch{}
+    if(settingsOpen)setSettingsKey(value=>value+1);
+    else openSettings();
+  };
   // The model chip in the composer opens the settings overlay on the AI tab.
   const openModelSettings=()=>{try{localStorage.setItem("webnestdev.openProviderTab","1")}catch{};openSettings()};
 
-  return <LayoutShell projectName={projectName} view={view} onView={view=>{setSettingsOpen(false);setDeployOpen(false);setView(view)}} onNewProject={createNewProject} onDeploy={openDeploy} onSettings={openSettings} onHome={onHome} previewOpen={previewOpen} previewRunning={previewRunning} onPreviewToggle={()=>setPreviewOpen(value=>!value)}>
+  return <LayoutShell projectName={projectName} view={view} onView={view=>{setSettingsOpen(false);setDeployOpen(false);setView(view)}} onNewProject={createNewProject} onDeploy={openDeploy} onSettings={openSettings} onSecrets={openSecrets} onHome={onHome} previewOpen={previewOpen} previewRunning={previewRunning} onPreviewToggle={()=>setPreviewOpen(value=>!value)}>
     <main className="main">
       <div className="workspace-main">
         {(settingsOpen||deployOpen)?<div className="workspace-overlay-panel">
-          {settingsOpen?<SettingsHub projectId={projectId} projectName={projectName}/>:<section className="settings-panel">
+          {settingsOpen?<SettingsHub key={settingsKey} projectId={projectId} projectName={projectName}/>:<section className="settings-panel">
             <div className="panel-title"><div><span className="eyebrow">ПУБЛИКАЦИЯ</span><strong>Публикация проекта</strong></div><button className="ghost-button" onClick={()=>setDeployOpen(false)}>Закрыть</button></div>
             <div className="settings-body"><p>Модуль публикации подключим к выбранному облаку, когда настроим окружение.</p><button className="send-button" onClick={()=>setDeployOpen(false)}>Понятно</button></div>
           </section>}
-        </div>:<><WorkspaceNav view={view} onChange={setView}/><WorkspaceContent view={view} projectId={projectId} conversationId={conversationId} onOpenConversation={openConversation} onRunFinished={()=>setPreviewReload(value=>value+1)} onOpenModelSettings={openModelSettings} onOpenAccountSettings={openSettings} onRunningChange={reportAgentState}/></>}
+        </div>:<><WorkspaceNav view={view} onChange={setView}/><WorkspaceContent view={view} projectId={projectId} projectName={projectName} conversationId={conversationId} onOpenConversation={openConversation} onRunFinished={()=>setPreviewReload(value=>value+1)} onOpenModelSettings={openModelSettings} onOpenAccountSettings={openSettings} onRunningChange={reportAgentState} onOpenChanges={()=>{setSettingsOpen(false);setDeployOpen(false);setView("changes")}}/></>}
       </div>
       <PreviewPanel projectId={projectId} reloadToken={previewReload} open={previewOpen} onClose={()=>setPreviewOpen(false)} onRunningChange={setPreviewRunning}/>
     </main>

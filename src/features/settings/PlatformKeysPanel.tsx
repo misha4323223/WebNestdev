@@ -112,7 +112,7 @@ export function PlatformKeysPanel() {
       <div className="panel-title"><div><span className="eyebrow">КЛЮЧИ СЕРВЕРА</span><strong>Доступ только администратору</strong></div></div>
       <div className="settings-body">
         <div className="settings-status platform-guide"><ShieldAlert size={15}/><span>{state?.guide ?? "Редактор ключей открыт только администратору платформы."}</span></div>
-        <p className="platform-muted">Ключи проектов и подключения вашего аккаунта настраиваются в разделах «Интеграции» и «AI-провайдер» — они доступны всегда.</p>
+        <p className="platform-muted">Переменные окружения вашего проекта — в разделе «Секреты проекта». Подключения аккаунта — в «Интеграциях» и «AI-провайдере»; они доступны всегда.</p>
       </div>
     </section>;
   }

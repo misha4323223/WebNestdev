@@ -24,10 +24,10 @@ WebNestDev Fastify
 ## Required production environment
 
 - `NODE_ENV=production`
-- `WEBNESTDEV_STORAGE=ydb`
+- `WEBNESTDEV_STORAGE=postgres` (or explicitly `json` for a single-VM install that keeps files in `WEBNESTDEV_DATA_DIR`)
 - `WEBNESTDEV_ALLOWED_ORIGINS=https://your-domain.example`
-- `YDB_CONNECTION_STRING=grpcs://...`
-- `YDB_TOKEN=...` when using an explicit access token, or YDB environment/metadata credentials in Yandex Cloud.
+- `DATABASE_URL=postgres://...` when `WEBNESTDEV_STORAGE=postgres`
+- An unknown `WEBNESTDEV_STORAGE` value (including the old `ydb`) now stops startup instead of silently writing JSON files.
 - GitHub OAuth URLs must use HTTPS when OAuth credentials are enabled.
 - Phone login sends real SMS as soon as one Russian provider block is set **and is passed
   into the container**: Compose forwards only the variables named in `docker-compose.yml`,
@@ -122,18 +122,17 @@ The server intentionally fails fast in production when the allowed-origin list i
   секрет ничего не стирает. Это удобно для чистой ВМ, но не обязательно: те же значения,
   введённые в панели, важнее и переживают любую выкатку.
 
-## YDB
+## PostgreSQL
 
-The server creates its required row tables on startup with `CREATE TABLE IF NOT EXISTS`. Persistent application metadata is stored in YDB; the local filesystem remains for the sandbox workspace itself.
+The server creates its required tables on startup with `CREATE TABLE IF NOT EXISTS`. Persistent application metadata is stored in PostgreSQL; the local filesystem remains for the sandbox workspace itself.
 
-For an existing installation that still has JSON metadata, run:
+For an existing installation that still has JSON metadata, run from `server/` with `WEBNESTDEV_STORAGE=postgres` and `DATABASE_URL` set:
 
 ```bash
-cd server
-WEBNESTDEV_STORAGE=ydb npm run migrate:json-to-ydb
+npm run migrate:json-to-ydb
 ```
 
-The migration is idempotent and uses UPSERTs.
+The migration is idempotent and uses UPSERTs. It covers users, sessions, projects, conversations, providers, GitHub, Yandex, database connections, encrypted project secrets and the secret audit journal; platform keys stay in `platform/env.json` and are used by both backends.
 
 ## Docker
 
@@ -161,7 +160,7 @@ An installation that predates the host path keeps its project files in the `webn
 - A preview is stopped after five minutes without use (`PREVIEW_IDLE_MS`, `0` disables the sweep; `PREVIEW_SWEEP_MS` sets how often it runs). Use means: a status or logs read, a proxied request, or the open panel's heartbeat — a closed tab stops sending it, and the container is freed. A project with a run in flight is never swept.
 - The cheapest tier comes first and is decided by the project itself, not by a flag: a project whose files are already servable (`index.html` and no build script) is **served as is, with no build and no container**, and files present in `dist`/`build`/`out` are served the same way. A project with a build script is built once and served from `dist`; a project that answers HTTP itself (express, fastify, Nest, Next in server mode, FastAPI) is recognised as such *before* anything is built, so no container is spent on a build that cannot produce a static preview. The decision and its evidence live in `server/src/preview/project-kind.ts` (structure, dependencies and commands together — `package.json` alone proves nothing).
 - **A user's `Dockerfile` is never executed.** `docker build` runs its steps as root without the memory, PID and network limits that `docker run` applies, so it is not the same trust level as the rest of the platform; the file is reported as evidence and the project is served by our own image. An isolated builder is a separate product, not a flag.
-- A runtime preview is the one kind that is counted, and it is counted **per account**: `PREVIEW_MAX_PER_USER` (default `1`, `0` disables it). A user's second container preview stops *that user's* oldest one — two projects of one person do not fight over the host, and nobody waits for a slot. Another user's running app is never stopped behind their back. `PREVIEW_MAX_CONTAINERS` is an optional brake on the **host total** (`0`, the default, means no cap): on a small machine set it to a number you can afford, e.g. `4`. Static previews are not counted: a listener costs ~0.5 MB.
+- A runtime preview is the one kind that is counted, and it is counted **per account**: `PREVIEW_MAX_PER_USER` (default `1`, `0` disables it). A user's second container preview stops *that user's* oldest one — two projects of one person do not fight over the host, and nobody waits for a slot. Another user's running app is never stopped behind their back. `PREVIEW_MAX_CONTAINERS` is a brake on the **host total**: by default it is derived from host memory (about one 1 GB preview per GB, at most `8`), an explicit number overrides it, and `0` removes the cap. Static previews are not counted: a listener costs ~0.5 MB.
 - `GET /api/health` reports what the host is doing right now — the three queues (runs, sandbox containers, Chromium) with `active`/`queued`/`limit`, live previews per kind, disk usage of the sandbox directory and RSS/swap. These are the four numbers from the launch checklist, and the point of them is that a queue nobody can see is indistinguishable from a hang.
 - The preview container is not published on the host. It joins the server's Docker network and is reached at its own container address on port 3000, so a user's app never appears on the VM's public address. `PREVIEW_NETWORK` pins another network; `PREVIEW_REAP_ON_START=0` skips stopping preview containers left over from a previous server run (set it when several replicas share one Docker host).
 - **That network is found, checked and repaired, not assumed.** Docker isolates bridge networks from each other, so a preview container left in the network by default is invisible to a server that runs in its own container — while `docker exec` into it still works. That combination is the one that looks like a platform fault from the panel: the preview reports itself running and ready, everything the agent asks about the address fails with `fetch failed`, and the framed app is a white screen. The server therefore resolves its own networks from three sources (`PREVIEW_NETWORK`, the container's hostname, and matching its own IP addresses inside `docker network inspect` when a compose file sets a custom `hostname:`), starts the preview on them, and — when the app answers inside the container but not at the container address — **connects the running preview container to the server's network** (`docker network connect`) and confirms the new address. Only then does it fall back to the TCP relay for an app bound to `127.0.0.1`. The status the panel sees carries `settled`: the address was confirmed by a request from the server itself, which is the same door the panel iframe and Chromium use.

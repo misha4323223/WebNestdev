@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -104,6 +104,46 @@ test("сохранение шифрует значения, маскирует �
       const after = platform.platformEnvStatus().find(entry => entry.name === "GITHUB_CLIENT_SECRET");
       assert.equal(after?.source, "environment");
     } finally { delete process.env.GITHUB_CLIENT_SECRET; }
+  });
+});
+
+test("открытые значения панели перешифровываются при загрузке", async () => {
+  await withRoot(async root => {
+    await mkdir(path.join(root, "platform"), { recursive: true });
+    const file = path.join(root, "platform", "env.json");
+    await writeFile(file, JSON.stringify({ version: 1, values: { GITHUB_CLIENT_SECRET: { value: "legacy-plain", preview: "lega…lain", updatedAt: "2026-01-01T00:00:00.000Z" } } }));
+
+    const platform = await import("./platform-env.js");
+    await platform.loadPlatformEnv();
+    assert.equal(platform.getPlatformEnv("GITHUB_CLIENT_SECRET"), "legacy-plain");
+
+    const raw = await readFile(file, "utf8");
+    assert.equal(raw.includes("legacy-plain"), false, "плейнтекст не должен остаться в файле");
+    assert.match(raw, /enc:v1:/);
+
+    // Повторная загрузка читает уже шифротекст тем же ключом.
+    await platform.loadPlatformEnv();
+    assert.equal(platform.getPlatformEnv("GITHUB_CLIENT_SECRET"), "legacy-plain");
+  });
+});
+
+test("ошибка расшифровки одного ключа не стирает его из файла при миграции", async () => {
+  await withRoot(async root => {
+    const crypto = await import("../storage/secret-crypto.js");
+    const foreign = crypto.encryptSecretWith("foreign-secret", "c".repeat(64));
+    await mkdir(path.join(root, "platform"), { recursive: true });
+    const file = path.join(root, "platform", "env.json");
+    await writeFile(file, JSON.stringify({ version: 1, values: {
+      BROKEN: { value: foreign, preview: "", updatedAt: "2026-01-01" },
+      GITHUB_CLIENT_SECRET: { value: "legacy-plain", preview: "", updatedAt: "2026-01-01" },
+    } }));
+    const before = await readFile(file, "utf8");
+
+    const platform = await import("./platform-env.js");
+    await platform.loadPlatformEnv();
+
+    assert.equal(platform.getPlatformEnv("GITHUB_CLIENT_SECRET"), "legacy-plain");
+    assert.equal(await readFile(file, "utf8"), before, "файл не перезаписывается, пока есть нерасшифрованная запись");
   });
 });
 

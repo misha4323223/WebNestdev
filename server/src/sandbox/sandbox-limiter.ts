@@ -39,8 +39,8 @@ export function describeSandboxLimiter() {
  * failure and on a timeout (the release lives in `finally`, because a leaked place would stop
  * the host from ever running another command).
  */
-export async function withSandboxSlot<T>(work: () => Promise<T>): Promise<T> {
-  const slot: Slot = await limiter.acquire();
+export async function withSandboxSlot<T>(work: () => Promise<T>, signal?: AbortSignal): Promise<T> {
+  const slot: Slot = await limiter.acquire(signal);
   try {
     return await work();
   } finally {

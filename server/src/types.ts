@@ -24,9 +24,22 @@ export type AgentEvent=
   /**
    * Инструмент `secrets.request` просит пользователя ввести ключ в модальном окне. Событие несёт
    * только имя переменной, файл и причину — само значение идёт другим путём: HTTP-запросом в
-   * `/api/projects/:id/secrets`, прямо в песочницу проекта, и модели не возвращается никогда.
+   * `/api/projects/:id/secrets`, в зашифрованное хранилище проекта, и модели не возвращается никогда.
    */
   | {type:"secret.requested";runId:string;requestId:string;variable:string;purpose:string;file:string;expiresAt:number}
+  /**
+   * Инструмент `question.ask` спрашивает пользователя о выборе. Окно с вариантами выезжает над
+   * полем ввода, запуск ждёт ответа, а сам ответ приходит маршрутом
+   * `/api/projects/:id/questions/:requestId/answer` — то есть тем же путём, что и запрос ключа:
+   * разговор с человеком не мешается с потоком задачи.
+   */
+  | {type:"question.asked";runId:string;requestId:string;question:string;options:Array<{label:string;description?:string}>;multiSelect:boolean;allowCustom:boolean;expiresAt:number}
+  /**
+   * Задача закончилась и её изменения записаны в историю проекта. Событие приходит до
+   * `run.completed`, чтобы панель успела показать новую точку, пока соединение ещё открыто.
+   * `pushed` здесь всегда false: отправка на GitHub — решение пользователя, а не агента.
+   */
+  | {type:"changes.created";runId:string;checkpoint:{sha:string;shortSha:string;subject:string;filesChanged:number};branch:string;pushed:boolean;pushError?:string}
   | {type:"run.completed";runId:string}
   /** `code` is a machine-readable reason (CONTEXT_OVERFLOW, AUTH, RATE_LIMIT) for the panel. */
   | {type:"run.failed";runId:string;error:string;code?:string};
@@ -35,6 +48,11 @@ export type AgentEvent=
  * "developer" is the full agent that writes code and verifies the result.
  */
 export type AgentMode="planner"|"developer";
+/**
+ * How much deliberate thinking the provider is asked for: `low` answers fast, `medium` balances
+ * speed and depth, `high` spends the most reasoning on hard tasks.
+ */
+export type ReasoningEffort="low"|"medium"|"high";
 /**
  * `resume` marks a run that continues an interrupted one: the history arrives as usual, but the
  * runtime tells the model that this is a continuation and where the plan stopped.
@@ -45,7 +63,7 @@ export type AgentMode="planner"|"developer";
  * re-uploading the whole conversation on every run. `messages` stays the fallback for a run that
  * starts before anything is stored.
  */
-export type AgentRunRequest={projectId:string;conversationId?:string;messages:ChatMessage[];history?:ChatMessage[];model?:string;mode?:AgentMode;resume?:{reason?:string};userId:string};
+export type AgentRunRequest={projectId:string;conversationId?:string;messages:ChatMessage[];history?:ChatMessage[];model?:string;mode?:AgentMode;reasoning?:ReasoningEffort;resume?:{reason?:string};userId:string};
 /**
  * `emit` и `signal` нужны инструментам, которые работают не сами по себе, а вместе с пользователем:
  * `secrets.request` показывает модальное окно через поток запуска и ждёт ответа, а остановка запуска

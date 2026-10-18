@@ -31,6 +31,31 @@ const DEFAULT_PORT = 8788;
 /** Сколько тела запроса принимает эта дверь: столько же, сколько разбирает основной сервер. */
 const MAX_BODY_BYTES = 2_000_000;
 
+/**
+ * Потолки двери. Публичный адрес смотрит в интернет, а держать соединение до приложения — это
+ * память и файловые дескрипторы сервера: без потолка сотня открытых вкладок с HMR выедает их
+ * у всех проектов сразу. Значения — на весь слушатель, а не на проект: цель — не дать одному
+ * клиенту занять сервер, а не считать честную квоту.
+ */
+export type PreviewHostLimits = {
+  maxConnections: number;
+  maxUpgrades: number;
+  upgradeTimeoutMs: number;
+};
+
+function positiveInt(raw: string | undefined, fallback: number) {
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+}
+
+export function previewHostLimits(): PreviewHostLimits {
+  return {
+    maxConnections: positiveInt(process.env.PREVIEW_HOST_MAX_CONNECTIONS, 256),
+    maxUpgrades: positiveInt(process.env.PREVIEW_HOST_MAX_UPGRADES, 64),
+    upgradeTimeoutMs: positiveInt(process.env.PREVIEW_HOST_UPGRADE_TIMEOUT_MS, 10_000),
+  };
+}
+
 export function previewHostPort(): number {
   const raw = Number(process.env.PREVIEW_HOST_PORT);
   return Number.isFinite(raw) && raw > 0 && raw < 65_536 ? Math.floor(raw) : DEFAULT_PORT;
@@ -193,7 +218,7 @@ export type PreviewHostServer = {
  * Слушатель публичных адресов. Создаётся отдельно от запуска, чтобы тест мог поднять его на
  * свободном порту с подставленными соучастниками.
  */
-export function createPreviewHostServer(deps: PreviewHostDeps = defaultDeps): PreviewHostServer {
+export function createPreviewHostServer(deps: PreviewHostDeps = defaultDeps, limits: PreviewHostLimits = previewHostLimits()): PreviewHostServer {
   const door: PreviewDoor = {
     previewStatus: deps.previewStatus,
     execPreview: deps.execPreview,
@@ -201,6 +226,7 @@ export function createPreviewHostServer(deps: PreviewHostDeps = defaultDeps): Pr
     setExecOnly: deps.setExecOnly,
   };
 
+  let upgrades = 0;
   const server = createServer((request, response) => {
     // Обработчик асинхронный, а обещание никто не ждёт: любое исключение внутри стало бы
     // unhandled rejection, то есть упавшим сервером от одного запроса. Поэтому всё, что не
@@ -211,6 +237,11 @@ export function createPreviewHostServer(deps: PreviewHostDeps = defaultDeps): Pr
       else response.end();
     });
   });
+  // Соединения без запроса и медленные заголовки — самый дешёвый способ занять сокеты.
+  server.maxConnections = limits.maxConnections;
+  server.headersTimeout = 15_000;
+  server.requestTimeout = 60_000;
+  server.keepAliveTimeout = 5_000;
 
   async function handleRequest(request: IncomingMessage, response: ServerResponse) {
     const target = deps.target(request.headers.host);
@@ -273,6 +304,10 @@ export function createPreviewHostServer(deps: PreviewHostDeps = defaultDeps): Pr
   });
 
   async function handleUpgrade(request: IncomingMessage, socket: Socket, head: Buffer) {
+    if (upgrades >= limits.maxUpgrades) {
+      refuseUpgrade(socket, 503, "Слишком много открытых соединений предпросмотра: закройте лишние вкладки.");
+      return;
+    }
     const target = deps.target(request.headers.host);
     if (!target) {
       refuseUpgrade(socket, 404, "Not Found");
@@ -284,6 +319,11 @@ export function createPreviewHostServer(deps: PreviewHostDeps = defaultDeps): Pr
       refuseUpgrade(socket, access.status, access.message);
       return;
     }
+    // Билет — вход платформы, а не параметр приложения: в WebSocket-адрес он не передаётся
+    // (там он попал бы в логи приложения и в referrer его собственных запросов).
+    const cleanUrl = new URL(url.toString());
+    cleanUrl.searchParams.delete(PREVIEW_TICKET_PARAM);
+    const upstreamPath = cleanUrl.pathname + cleanUrl.search;
     const state = await deps.previewStatus(target.projectId).catch(() => ({ running: false }) as PreviewStatus);
     if (!state.running) {
       refuseUpgrade(socket, 503, "Предпросмотр не запущен: запустите его в панели проекта.");
@@ -295,17 +335,32 @@ export function createPreviewHostServer(deps: PreviewHostDeps = defaultDeps): Pr
       refuseUpgrade(socket, 503, "Адрес приложения недоступен серверу (Docker изолирует сети): живая перезагрузка недоступна, страница работает без неё.");
       return;
     }
+    upgrades++;
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      upgrades--;
+    };
     const upstream = connect(state.port, state.host);
-    const fail = () => refuseUpgrade(socket, 502, "Приложение не приняло соединение.");
+    // Приложение может не ответить вовсе (зависший dev-сервер): без таймаута сокет и счётчик
+    // оставались бы занятыми навсегда.
+    upstream.setTimeout(limits.upgradeTimeoutMs, () => upstream.destroy(new Error("таймаут соединения с приложением")));
+    const fail = () => {
+      release();
+      refuseUpgrade(socket, 502, "Приложение не приняло соединение.");
+    };
     upstream.once("error", fail);
     upstream.once("connect", () => {
+      upstream.setTimeout(0);
       upstream.removeListener("error", fail);
-      upstream.write(upgradeRequestLine(request));
+      upstream.write(upgradeRequestLine(request, upstreamPath));
       if (head?.length) upstream.write(head);
       socket.pipe(upstream);
       upstream.pipe(socket);
     });
     const close = () => {
+      release();
       upstream.destroy();
     };
     socket.once("close", close);
@@ -331,8 +386,8 @@ export function createPreviewHostServer(deps: PreviewHostDeps = defaultDeps): Pr
  * Исходный запрос апгрейда, собранный обратно из разобранных заголовков. Заголовки проходят тот же
  * фильтр, что и у обычных запросов: cookie платформы (сессия панели и билет) в приложение не уходит.
  */
-function upgradeRequestLine(request: IncomingMessage) {
-  const lines = [request.method + " " + (request.url ?? "/") + " HTTP/1.1"];
+function upgradeRequestLine(request: IncomingMessage, path = request.url ?? "/") {
+  const lines = [request.method + " " + path + " HTTP/1.1"];
   for (const [name, value] of Object.entries(forwardableHeaders(request.headers))) {
     if (value === undefined) continue;
     // `host` остаётся именем предпросмотра: приложение получает тот адрес, по которому к нему

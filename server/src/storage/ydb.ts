@@ -9,4 +9,5 @@ export {
   initializeStorage,
   closeStorage,
   describeStorage,
+  assertStorageConfigured,
 } from "./pg.js";

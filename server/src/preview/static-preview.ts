@@ -158,7 +158,9 @@ function statusFor(run:StaticRun):PreviewStatus{
 
 async function runBuild(config:SandboxConfig):Promise<DockerCommandResult|{reason:string}>{
   try{
-    return await runInSandbox(config,BUILD_COMMAND,config.root);
+    // Сборке нужны те же env-файлы, что и dev-серверу: они монтируются из зашифрованного
+    // хранилища только на время команды и удаляются сразу после неё.
+    return await runInSandbox(config,BUILD_COMMAND,config.root,{injectSecretEnvFile:true});
   }catch(error){
     return {reason:"сборка не запустилась: "+(error instanceof Error?error.message:String(error))};
   }

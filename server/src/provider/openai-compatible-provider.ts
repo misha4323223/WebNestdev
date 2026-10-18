@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import type { ChatMessage } from "../types.js";
 import { lines } from "./stream-lines.js";
 import { ProviderHttpError,parseRetryAfterHeader } from "./provider-errors.js";
-import type { Provider,ProviderChunk,ProviderToolCall } from "./provider-types.js";
+import type { Provider,ProviderChunk,ProviderStreamOptions,ProviderToolCall } from "./provider-types.js";
+import type { ReasoningEffort } from "../types.js";
 
 function chatCompletionsUrl(baseUrl:string){
   const base=baseUrl.trim().replace(/\/+$/,"");
@@ -66,12 +67,24 @@ export function reasoningDelta(delta:unknown):string{
  * Шлюзы отдают цепочку рассуждений только по просьбе: один и тот же адрес без `reasoning_effort`
  * присылает ответ и молчит о мыслях, а с ним — стримит их отдельным полем. Поэтому просим
  * по умолчанию; WEBNESTDEV_AI_REASONING=off выключает просьбу целиком, low/medium/high задают
- * глубину. Шлюз, который такого поля не знает, отказывает с 400 — тогда запуск не ломается, а
- * повторяется без него (см. ниже), и адрес запоминается, чтобы не платить двумя запросами за шаг.
+ * глубину по умолчанию. Пользователь может выбрать глубину для конкретного запуска: `reasoning`
+ * в запросе агента важнее настройки сервера. Шлюз, который такого поля не знает, отказывает с 400 —
+ * тогда запуск не ломается, а повторяется без него (см. ниже), и адрес с глубиной запоминается,
+ * чтобы не платить двумя запросами за шаг.
  */
 const REASONING_REQUEST=(process.env.WEBNESTDEV_AI_REASONING??"medium").trim().toLowerCase();
-const REASONING_EFFORT=["low","medium","high"].includes(REASONING_REQUEST)?REASONING_REQUEST:null;
+/** `off` is an administrator decision: no request and no client choice re-enables it. */
+const REASONING_ENABLED=!/^(off|0|false|no)$/i.test(REASONING_REQUEST);
+const DEFAULT_REASONING_EFFORT:ReasoningEffort|null=["low","medium","high"].includes(REASONING_REQUEST)
+  ?REASONING_REQUEST as ReasoningEffort
+  :null;
 const reasoningRejected=new Set<string>();
+
+/** Depth chosen for this run, or the server default when the client did not choose one. */
+function reasoningEffort(options?:ProviderStreamOptions):ReasoningEffort|null{
+  if(!REASONING_ENABLED)return null;
+  return options?.reasoning??DEFAULT_REASONING_EFFORT;
+}
 
 /**
  * A gateway that keeps its chain of thought under an undocumented field is diagnosed from the stream
@@ -108,7 +121,7 @@ export function toWireMessages(messages:ChatMessage[]):WireMessage[]{
 export class OpenAICompatibleProvider implements Provider{
   constructor(private base:string,private key?:string){}
 
-  async *stream(messages:ChatMessage[],model:string,tools?:unknown[],signal?:AbortSignal):AsyncGenerator<ProviderChunk>{
+  async *stream(messages:ChatMessage[],model:string,tools?:unknown[],signal?:AbortSignal,options?:ProviderStreamOptions):AsyncGenerator<ProviderChunk>{
     const targetUrl=chatCompletionsUrl(this.base);
     // Для прокси: шлём только суффикс (без домена), target идёт в X-AI-Proxy-Target.
     // Если base оканчивается на /v1 — суффикс /chat/completions, иначе /v1/chat/completions.
@@ -137,15 +150,17 @@ export class OpenAICompatibleProvider implements Provider{
         },
         body:JSON.stringify(body)
       });
-    const payload=(withReasoning:boolean)=>({model,messages:wire,tools,stream:true,...(withReasoning&&REASONING_EFFORT?{reasoning_effort:REASONING_EFFORT}:{})});
+    const effort=reasoningEffort(options);
+    const rejectionKey=normBase+":"+(effort??"off");
+    const payload=(withReasoning:boolean)=>({model,messages:wire,tools,stream:true,...(withReasoning&&effort?{reasoning_effort:effort}:{})});
     // Мысли нужны пользователю, но не настолько, чтобы сломать запуск: шлюз, отвечающий на просьбу
     // о рассуждении отказом формы (400/422), получает тот же запрос без неё — и запоминается, чтобы
     // следующие шаги запуска не платили за это двумя запросами каждый.
-    const askReasoning=Boolean(REASONING_EFFORT)&&!reasoningRejected.has(normBase);
+    const askReasoning=Boolean(effort)&&!reasoningRejected.has(rejectionKey);
     let response=await send(payload(askReasoning));
     if(!response.ok&&askReasoning&&(response.status===400||response.status===422)){
       try{await response.body?.cancel()}catch{}
-      reasoningRejected.add(normBase);
+      reasoningRejected.add(rejectionKey);
       response=await send(payload(false));
     }
     if(!response.ok){

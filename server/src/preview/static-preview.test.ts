@@ -122,7 +122,7 @@ test("the workspace proxy serves the static preview through the project's own UR
     assert.equal((await startStaticPreview(config(root))).ok, true);
     // The real routes with the real preview functions: this is the iframe's URL, not the port.
     await registerPreviewRoutes(app, {
-      authorize: async () => true,
+      authorize: async () => ({ id: "test-user" }),
       getSandbox: async () => config(root),
       // Настоящая вторая дверь к приложению: у статического предпросмотра её не спрашивают,
       // но набор соучастников — тот же, что в index.ts.

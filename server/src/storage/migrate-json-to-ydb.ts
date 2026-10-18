@@ -18,9 +18,13 @@ type Project={id:string;name:string;createdAt:string;updatedAt:string;github?:un
 type Conversation={id:string;projectId:string;title:string;messages:ChatMessage[];createdAt:string;updatedAt:string};
 type Provider={provider:string;baseUrl:string;model:string;token?:string};
 type GitHub={id:string;userId:string;accessToken:string;githubLogin?:string;createdAt:string};
+type Yandex={userId:string;id:string;kind:string;secret:string;folderId?:string;cloudId?:string;account?:string;allowWrites:boolean;createdAt:string;updatedAt:string};
+type Database={userId:string;id:string;provider:string;scheme:string;host:string;port:number;database:string;username:string;password:string;url:string;ssl:boolean;createdAt:string;updatedAt:string};
+type ProjectSecrets={version:number;payload:string};
+type SecretAudit={id:string;projectId:string;userId:string;action:string;names:string[];file:string;ipHash:string;createdAt:string};
 
 async function main(){
-  if(!isYdbEnabled()) throw new Error("Run with WEBNESTDEV_STORAGE=ydb");
+  if(!isYdbEnabled()) throw new Error("Run with WEBNESTDEV_STORAGE=postgres and DATABASE_URL");
   await initializeStorage();
   const sql=ydbQuery();
 
@@ -59,6 +63,30 @@ async function main(){
     }
   }
 
+  // Секреты проектов — такой же зашифрованный payload, как подключения. Без этого шага
+  // переезд на PostgreSQL оставил бы их в JSON-файлах, а сервер искал бы их в таблице.
+  for(const name of await files(path.join(root,"project-secrets"))){
+    const s=json<ProjectSecrets>(await readFile(path.join(root,"project-secrets",name),"utf8"));
+    if(!s.payload) continue;
+    await sql`UPSERT INTO ${sql.identifier(getTable("project_secrets"))}
+      (project_id,payload,updated_at)
+      VALUES (${name.slice(0,-5)},${encryptSecret(s.payload)},${new Date().toISOString()})
+    `;
+  }
+
+  // Журнал аудита — JSONL, а не один JSON: каждая строка переносится отдельно.
+  try{
+    const raw=await readFile(path.join(root,"secret-audit.jsonl"),"utf8");
+    for(const line of raw.split("\n")){
+      if(!line.trim()) continue;
+      const entry=json<SecretAudit>(line);
+      await sql`UPSERT INTO ${sql.identifier(getTable("secret_audit"))}
+        (id,project_id,user_id,action,names_json,file,ip_hash,created_at)
+        VALUES (${entry.id},${entry.projectId},${entry.userId},${entry.action},${JSON.stringify(entry.names ?? [])},${entry.file ?? ""},${entry.ipHash ?? ""},${entry.createdAt})
+      `;
+    }
+  }catch{}
+
   for(const name of await files(path.join(root,"providers"))){
     const p=json<Provider>(await readFile(path.join(root,"providers",name),"utf8"));
     await sql`UPSERT INTO ${sql.identifier(getTable("providers"))} (project_id,provider,base_url,model,token) VALUES (${name.slice(0,-5)},${p.provider},${p.baseUrl},${p.model},${p.token ? encryptSecret(p.token) : ""})`;
@@ -69,7 +97,21 @@ async function main(){
     await sql`UPSERT INTO ${sql.identifier(getTable("github_connections"))} (user_id,id,access_token,github_login,created_at) VALUES (${g.userId},${g.id},${encryptSecret(g.accessToken)},${g.githubLogin ?? ""},${g.createdAt})`;
   }
 
-  console.log("JSON → YDB migration completed");
+  for(const name of await files(path.join(root,"yandex"))){
+    const y=json<Yandex>(await readFile(path.join(root,"yandex",name),"utf8"));
+    await sql`UPSERT INTO ${sql.identifier(getTable("yandex_connections"))}
+      (user_id,id,kind,secret,folder_id,cloud_id,account,allow_writes,created_at,updated_at)
+      VALUES (${y.userId},${y.id},${y.kind},${encryptSecret(y.secret)},${y.folderId ?? ""},${y.cloudId ?? ""},${y.account ?? ""},${y.allowWrites},${y.createdAt},${y.updatedAt})`;
+  }
+
+  for(const name of await files(path.join(root,"database"))){
+    const d=json<Database>(await readFile(path.join(root,"database",name),"utf8"));
+    await sql`UPSERT INTO ${sql.identifier(getTable("database_connections"))}
+      (user_id,id,provider,scheme,host,port,database_name,username,password,url,ssl,created_at,updated_at)
+      VALUES (${d.userId},${d.id},${d.provider},${d.scheme},${d.host},${d.port},${d.database},${d.username},${encryptSecret(d.password)},${encryptSecret(d.url)},${d.ssl},${d.createdAt},${d.updatedAt})`;
+  }
+
+  console.log("JSON → PostgreSQL migration completed");
   await closeStorage();
 }
 main().catch(async error=>{console.error(error);await closeStorage().catch(()=>undefined);process.exitCode=1;});

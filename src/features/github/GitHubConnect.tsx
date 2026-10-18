@@ -1,7 +1,8 @@
 import { useCallback,useEffect,useRef,useState } from "react";
-import { KeyRound, UploadCloud } from "lucide-react";
+import { Bug, KeyRound, Play, Search, UploadCloud, X } from "lucide-react";
 import { GitHubMark } from "../../components/GitHubMark";
 import { openImportedProject } from "../../lib/project-api";
+import { queueAgentStart } from "../../lib/agent-start";
 import { ConnectorCard,type ConnectorStatus } from "../integrations/ConnectorCard";
 
 type Repository = { id:number; name:string; full_name:string; private:boolean; default_branch:string; owner:{login:string} };
@@ -9,6 +10,28 @@ type GitHubStatus = { connected?:boolean; githubLogin?:string|null; configured?:
 
 /** The surface that started the flow, so a full-page return reopens the same place. */
 export type ConnectorSurface = "home" | "workspace";
+
+/**
+ * Что сделать с импортированным репозиторием. Импорт не бросает агента сразу в правки: выбранный
+ * вариант становится задачей планировщика, а разработка начинается только после подтверждения плана.
+ */
+type RepoIntent="analysis"|"run"|"errors"|"custom";
+const repoIntents:Array<{id:RepoIntent;label:string;description:string;icon:typeof Search}>=[
+  {id:"analysis",label:"Только анализ",description:"Изучить стек, архитектуру, качество кода и риски — без изменений",icon:Search},
+  {id:"run",label:"Запустить проект",description:"Разобраться с зависимостями и окружением и подготовить запуск",icon:Play},
+  {id:"errors",label:"Выявить ошибки",description:"Проверить сборку, типы, тесты и найти проблемы с исправлениями",icon:Bug},
+];
+
+function repoKickoff(repository:Repository,intent:RepoIntent,custom:string){
+  const task=intent==="custom"
+    ?"Что сделать с проектом: "+custom.trim()
+    :intent==="analysis"
+      ?"Сделай только анализ: определи стек, структуру, точки входа, качество кода, зависимости, риски и что стоит улучшить. Ничего не меняй."
+      :intent==="run"
+        ?"Подготовь проект к запуску: разберись с пакетным менеджером, зависимостями, переменными окружения и командой запуска. Проверь, чего не хватает, и предложи точный порядок действий."
+        :"Найди ошибки: проверь сборку, типы, тесты, конфигурацию, обработку ошибок и потенциальные проблемы. Для каждой проблемы укажи причину и предлагаемое исправление.";
+  return `Импортирован репозиторий GitHub: ${repository.full_name} (ветка ${repository.default_branch}).\n\n${task}\n\nСначала работай в режиме планировщика и не меняй файлы. Изучи проект, задай через question.ask не больше двух уточняющих вопросов, если без них нельзя выбрать правильный путь. Затем собери полный пошаговый план через plan.update и перечисли, что пользователю нужно подтвердить перед началом работы.`;
+}
 
 const notices: Record<string,string> = {
   connected: "GitHub подключён. Репозитории можно импортировать.",
@@ -37,6 +60,9 @@ export function GitHubConnect({surface="home",onImported=openImportedProject}:{s
   const [busy,setBusy]=useState(false);
   const [loadingRepos,setLoadingRepos]=useState(false);
   const [importing,setImporting]=useState(false);
+  const [intentOpen,setIntentOpen]=useState(false);
+  const [intent,setIntent]=useState<RepoIntent>("analysis");
+  const [customIntent,setCustomIntent]=useState("");
   const [notice,setNotice]=useState<string|null>(null);
   const [error,setError]=useState<string|null>(null);
   const [callbackUrl,setCallbackUrl]=useState<string|null>(null);
@@ -183,11 +209,16 @@ export function GitHubConnect({surface="home",onImported=openImportedProject}:{s
 
   async function importRepository(){
     if(!selected)return;
+    if(intent==="custom"&&!customIntent.trim()){setError("Опишите, что сделать с проектом");return}
     setImporting(true);setError(null);
     try{
       const response=await fetch("/api/github/import",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({owner:selected.owner.login,repo:selected.name})});
       const data=await response.json() as { error?:string; project?:{id:string}; conversation?:{id:string} };
       if(!response.ok||!data.project||!data.conversation)throw new Error(data.error??"Не удалось импортировать репозиторий");
+      // Импорт открывает рабочую область с уже поставленной задачей планировщику: человек сразу
+      // видит уточняющие вопросы и план, а не пустой чат.
+      queueAgentStart(data.conversation.id,{prompt:repoKickoff(selected,intent,customIntent),title:"Импорт: "+selected.full_name});
+      setIntentOpen(false);
       onImported(data.project.id,data.conversation.id);
     }catch(e){setError(e instanceof Error?e.message:"Ошибка импорта")}
     finally{setImporting(false)}
@@ -195,7 +226,8 @@ export function GitHubConnect({surface="home",onImported=openImportedProject}:{s
 
   const appOrigin=window.location.origin;
 
-  return <ConnectorCard
+  return <>
+    <ConnectorCard
     name="GitHub"
     icon={<GitHubMark size={18}/>}
     status={status}
@@ -255,9 +287,41 @@ export function GitHubConnect({surface="home",onImported=openImportedProject}:{s
         </div>
         <div className="connector-repo-actions">
           <button className="ghost-button" onClick={()=>void loadRepositories()} disabled={loadingRepos}>Обновить</button>
-          <button className="connector-action connector-connect" onClick={()=>void importRepository()} disabled={!selected||importing}><UploadCloud size={13}/> {importing?"Импортируем…":"Импортировать"}</button>
+          <button className="connector-action connector-connect" onClick={()=>{setIntent("analysis");setCustomIntent("");setIntentOpen(true)}} disabled={!selected||importing}><UploadCloud size={13}/> {importing?"Импортируем…":"Импортировать"}</button>
         </div>
       </>}
     </div>}
-  </ConnectorCard>;
+  </ConnectorCard>
+
+    {intentOpen&&selected&&<div className="modal-backdrop" role="presentation" onMouseDown={()=>{if(!importing)setIntentOpen(false)}}>
+      <section className="modal repo-intent-modal" role="dialog" aria-modal="true" aria-label="Что сделать с импортированным репозиторием" onMouseDown={event=>event.stopPropagation()}>
+        <header className="modal-head">
+          <div><span className="eyebrow">ИМПОРТ РЕПОЗИТОРИЯ</span><h2>Что сделать с проектом?</h2></div>
+          <button className="icon-button" onClick={()=>setIntentOpen(false)} disabled={importing} aria-label="Закрыть"><X size={16}/></button>
+        </header>
+        <div className="modal-body">
+          <p className="modal-lead">{selected.full_name}. Агент начнёт в режиме планировщика: изучит проект, задаст уточняющие вопросы и покажет план. Разработка стартует только после вашего подтверждения.</p>
+          <div className="repo-intent-grid">
+            {repoIntents.map(item=>{const Icon=item.icon;return <button key={item.id} type="button" className={"repo-intent-option"+(intent===item.id?" selected":"")} onClick={()=>setIntent(item.id)} disabled={importing}>
+              <span className="repo-intent-icon"><Icon size={16}/></span>
+              <span><strong>{item.label}</strong><small>{item.description}</small></span>
+            </button>})}
+            <button type="button" className={"repo-intent-option"+(intent==="custom"?" selected":"")} onClick={()=>setIntent("custom")} disabled={importing}>
+              <span className="repo-intent-icon"><UploadCloud size={16}/></span>
+              <span><strong>Свой ответ</strong><small>Опишите задачу своими словами</small></span>
+            </button>
+          </div>
+          {intent==="custom"&&<label className="repo-intent-custom">
+            <span>Что сделать с проектом</span>
+            <textarea value={customIntent} onChange={event=>setCustomIntent(event.target.value)} rows={3} placeholder="Например: переделать главную страницу под новую айдентику и добавить тёмную тему" disabled={importing}/>
+          </label>}
+          {error&&<div className="connector-notice">{error}</div>}
+        </div>
+        <footer className="modal-foot">
+          <button className="ghost-button" onClick={()=>setIntentOpen(false)} disabled={importing}>Отмена</button>
+          <button className="send-button" onClick={()=>void importRepository()} disabled={importing||(intent==="custom"&&!customIntent.trim())}><UploadCloud size={13}/> {importing?"Импортируем…":"Импортировать и спланировать"}</button>
+        </footer>
+      </section>
+    </div>}
+  </>;
 }

@@ -60,6 +60,8 @@ services:
       PORT: 8787
       WEBNESTDEV_STORAGE: postgres
       WEBNESTDEV_ENCRYPTION_KEY: ${WEBNESTDEV_ENCRYPTION_KEY:?Set a 32-byte base64 or 64-character hex encryption key}
+      # Отдельная соль для хеша IP в журнале секретов; пусто — используется ключ шифрования.
+      WEBNESTDEV_AUDIT_SALT: ${WEBNESTDEV_AUDIT_SALT:-}
       WEBNESTDEV_ALLOWED_ORIGINS: ${WEBNESTDEV_ALLOWED_ORIGINS:?Set the public frontend origin(s), comma-separated}
       DATABASE_URL: postgres://${POSTGRES_USER:-webnestdev}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-webnestdev}
       # Yandex Cloud OAuth (optional)

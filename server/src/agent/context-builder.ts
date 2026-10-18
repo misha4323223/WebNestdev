@@ -1,8 +1,10 @@
-import { readFile, readdir, stat } from "node:fs/promises";
+import { lstat, readdir } from "node:fs/promises";
 import path from "node:path";
 import { getSandbox } from "../sandbox-manager.js";
+import { readFileInside } from "../sandbox/path-guard.js";
 import type { Project } from "../project-store.js";
 import { runInSandbox } from "../sandbox-worker.js";
+import { isSecretProjectPath } from "../secrets/secret-paths.js";
 
 const MAX_TREE_ENTRIES = 500;
 const MAX_TREE_CHARS = 9000;
@@ -22,15 +24,19 @@ async function collectTree(root: string): Promise<TreeEntry[]> {
 
     for (const entry of entries) {
       if (result.length >= MAX_TREE_ENTRIES || ignored.has(entry.name)) continue;
+      // Секреты не должны появляться в контексте даже как имя файла.
+      if (isSecretProjectPath(entry.name)) continue;
+      // Ссылка может вести наружу: в опись проекта она не попадает, а читать её запрещено.
+      if (entry.isSymbolicLink()) continue;
       const childRelative = relative ? path.posix.join(relative, entry.name) : entry.name;
       const child = path.join(current, entry.name);
 
       if (entry.isDirectory()) {
         result.push({ path: childRelative + "/", type: "directory" });
         await walk(child, childRelative, depth + 1);
-      } else {
+      } else if (entry.isFile()) {
         let size: number | undefined;
-        try { size = (await stat(child)).size; } catch {}
+        try { size = (await lstat(child)).size; } catch {}
         result.push({ path: childRelative, type: "file", size });
       }
     }
@@ -75,20 +81,20 @@ export async function buildProjectContext(project: Project, userId: string): Pro
   let packageText = "package.json: not found";
   try {
     packageText = "package.json:\n" + packageSummary(
-      await readFile(path.join(sandbox.root, "package.json"), "utf8"),
+      await readFileInside(sandbox.root, path.join(sandbox.root, "package.json")),
     );
   } catch {}
 
   let gitStatus = "unavailable";
   try {
     gitStatus = String(
-      await runInSandbox(sandbox, "git status --short --branch", sandbox.root),
+      await runInSandbox(sandbox, "git status --short --branch", sandbox.root, { maskSecretEnvFiles: true }),
     ).slice(0, 3000);
   } catch {}
 
   const configPattern = /(^|\/)(package\.json|tsconfig[^/]*\.json|vite\.config\.[^/]+|next\.config\.[^/]+|nuxt\.config\.[^/]+|astro\.config\.[^/]+|webpack\.config\.[^/]+|docker-compose[^/]*|Dockerfile|\.env\.example)$/;
   const keyConfigs = tree
-    .filter(entry => configPattern.test(entry.path))
+    .filter(entry => configPattern.test(entry.path) && !isSecretProjectPath(entry.path))
     .map(entry => entry.path)
     .slice(0, 80);
 

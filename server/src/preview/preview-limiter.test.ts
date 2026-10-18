@@ -41,6 +41,7 @@ test("предпросмотр другого пользователя не ме
     live: [live("a", "user-1", 100), live("b", "user-2", 200)],
     projectId: "c",
     userId: "user-3",
+    limit: 0,
   });
   assert.deepEqual(decision, { ok: true });
 });
@@ -70,15 +71,17 @@ test("лимит на аккаунт 0 снимает ограничение", (
     projectId: "c",
     userId: "user-1",
     perUser: 0,
+    limit: 0,
   });
   assert.deepEqual(decision, { ok: true });
 });
 
-test("предохранитель хоста выключен по умолчанию: чужие предпросмотры не дают отказа", () => {
+test("явный 0 снимает предохранитель хоста: чужие предпросмотры не дают отказа", () => {
   const decision = decideRuntimePreviewStart({
     live: [live("a", "user-1", 1), live("b", "user-2", 2), live("c", "user-3", 3), live("d", "user-4", 4)],
     projectId: "new",
     userId: "user-5",
+    limit: 0,
   });
   assert.deepEqual(decision, { ok: true });
 });
@@ -101,15 +104,16 @@ test("предпросмотр без владельца никогда не о�
     live: [live("orphan", "", 100), live("b", "user-2", 200)],
     projectId: "d",
     userId: "",
+    limit: 0,
   });
   assert.deepEqual(decision, { ok: true }, "пустой userId ничего не присваивает");
 });
 
-test("окружение: по умолчанию один предпросмотр на аккаунт и никакого лимита хоста", () => {
+test("окружение: по умолчанию один предпросмотр на аккаунт и потолок хоста по памяти", () => {
   withEnv({ PREVIEW_MAX_PER_USER: undefined, PREVIEW_MAX_CONTAINERS: undefined }, () => {
     assert.equal(perUserPreviewLimit(), 1);
-    assert.equal(runtimePreviewLimit(), 0);
-    assert.equal(describePreviewLimits(), "предпросмотров на аккаунт: 1; одновременно на хосте: без ограничения");
+    assert.ok(runtimePreviewLimit() >= 1, "потолок хоста обязан быть конечным");
+    assert.match(describePreviewLimits(), /одновременно на хосте: \d+/);
   });
 });
 
@@ -126,6 +130,6 @@ test("окружение: PREVIEW_MAX_PER_USER и PREVIEW_MAX_CONTAINERS чит�
   });
   withEnv({ PREVIEW_MAX_PER_USER: "мусор", PREVIEW_MAX_CONTAINERS: "-1" }, () => {
     assert.equal(perUserPreviewLimit(), 1, "нечитаемое значение возвращает правило по умолчанию");
-    assert.equal(runtimePreviewLimit(), 0);
+    assert.ok(runtimePreviewLimit() >= 1, "нечитаемое значение возвращает потолок по памяти, а не снимает его");
   });
 });

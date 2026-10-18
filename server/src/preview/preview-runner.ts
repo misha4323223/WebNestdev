@@ -8,6 +8,7 @@ import { resolvePreviewCommand } from "./preview-command.js";
 import { ensureProjectDependencies } from "./dependencies.js";
 import { setPreview } from "./preview-store.js";
 import { PREVIEW_APP_PORT, PREVIEW_LABEL, type PreviewState } from "./types.js";
+import { previewSecretMounts } from "../secrets/preview-secrets.js";
 
 const READY_ATTEMPTS=30;
 const READY_DELAY_MS=500;
@@ -27,41 +28,64 @@ export async function startPreviewContainer(config:SandboxConfig){
   const command=await resolvePreviewCommand(config);
   const image=process.env.SANDBOX_IMAGE??"node:22-bookworm-slim";
   const network=await previewNetwork();
-  const result=await dockerExec([
-    "run","-d","--rm","--init",
-    "--cpus",String(config.cpuLimit),
-    "--memory",String(config.memoryMb)+"m",
-    "--pids-limit","128",
-    "--read-only",
-    "--tmpfs","/tmp:rw,nosuid,size=256m",
-    "--user","1000:1000",
-    ...(network?["--network",network]:[]),
-    // The label is how a restarted server finds previews it no longer knows about.
-    "--label",PREVIEW_LABEL+"="+config.projectId,
-    // Путь хоста, а не сервера: docker разбирает его до контейнера (см. sandbox/config.ts).
-    "-v",workspaceMountSource(config)+":/workspace",
-    "-w","/workspace",
-    "-e","HOME=/tmp",
-    "-e","CI=1",
-    image,"/bin/sh","-lc",command,
-  ]);
-  if(result.code!==0)throw new Error(result.stderr||"Не удалось запустить контейнер предпросмотра");
+  // Секреты приходят из зашифрованного хранилища как read-only файлы поверх `/workspace`.
+  // В рабочей области их нет: агент и файловый API не видят ни значения, ни файла.
+  const secrets=await previewSecretMounts(config);
+  let result;
+  try {
+    result=await dockerExec([
+      "run","-d","--rm","--init",
+      "--cpus",String(config.cpuLimit),
+      "--memory",String(config.memoryMb)+"m",
+      "--pids-limit","128",
+      "--read-only",
+      "--tmpfs","/tmp:rw,nosuid,size=256m",
+      "--user","1000:1000",
+      ...(network?["--network",network]:[]),
+      // The label is how a restarted server finds previews it no longer knows about.
+      "--label",PREVIEW_LABEL+"="+config.projectId,
+      // Путь хоста, а не сервера: docker разбирает его до контейнера (см. sandbox/config.ts).
+      "-v",workspaceMountSource(config)+":/workspace",
+      ...secrets.mounts,
+      "-w","/workspace",
+      "-e","HOME=/tmp",
+      "-e","CI=1",
+      image,"/bin/sh","-lc",command,
+    ]);
+  } catch (error) {
+    await secrets.cleanup();
+    throw error;
+  }
+  if(result.code!==0){
+    await secrets.cleanup();
+    throw new Error(result.stderr||"Не удалось запустить контейнер предпросмотра");
+  }
   const containerId=result.stdout.trim();
   // Адрес берётся именно на той сети, куда контейнер поставлен: у контейнера может быть несколько
   // интерфейсов, и адрес не с той сети серверу недоступен (см. preview-network.ts).
   const host=(network?await addressOnNetworks(containerId,[network]):"")||await firstContainerAddress(containerId);
   if(!host){
     await dockerExec(["stop",containerId]);
+    await secrets.cleanup();
     throw new Error("Адрес контейнера предпросмотра не назначен");
   }
   const now=Date.now();
   const state:PreviewState={mode:"container",containerId,projectId:config.projectId,host,port:PREVIEW_APP_PORT,startedAt:now,lastUsedAt:now};
   setPreview(state);
-  const ready=await waitForApp(state);
-  // Приложение решает, где слушать: оно могло не принять флаги запуска (тогда порт берётся из
-  // /proc/net/tcp) или слушать только петлю контейнера (тогда поднимается проброс), иначе
-  // предпросмотр выглядел бы работающим, а панель, агент и Chromium не доходили бы до него.
-  const settled=await settlePreviewAddress(state,{appAnswers:ready});
+  let ready:boolean;
+  let settled:PreviewState;
+  try{
+    ready=await waitForApp(state);
+    // Приложение решает, где слушать: оно могло не принять флаги запуска (тогда порт берётся из
+    // /proc/net/tcp) или слушать только петлю контейнера (тогда поднимается проброс), иначе
+    // предпросмотр выглядел бы работающим, а панель, агент и Chromium не доходили бы до него.
+    settled=await settlePreviewAddress(state,{appAnswers:ready});
+  }catch(error){
+    // Неудачный запуск не должен оставлять открытый env-файл на хосте.
+    await dockerExec(["stop",containerId]).catch(()=>undefined);
+    await secrets.cleanup();
+    throw error;
+  }
   setPreview(settled);
   // A dev server that has not answered yet is not a failure: npm may still be installing
   // or Vite may still be compiling. The state stays, the diagnostics come along, and the

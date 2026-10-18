@@ -3,6 +3,8 @@ import { z } from "zod";
 import { requireUser } from "../auth/auth.js";
 import { isPlatformAdmin, platformAdminGuide, platformAdminsConfigured } from "../platform/admin.js";
 import { describeUnappliedName, parseEnvFileContent, platformEnvStatus, savePlatformEnv, type PlatformEnvStatus } from "../platform/platform-env.js";
+import { isSameOriginRequest, sameOriginRefusal } from "../security/same-origin.js";
+import { applyNoStoreToReply } from "./cache-headers.js";
 
 export type PlatformRouteDeps = {
   authorize: (request: FastifyRequest, reply: FastifyReply) => Promise<{ id: string; email: string } | null>;
@@ -39,10 +41,19 @@ const saveSchema = z.object({
  * читается только из окружения (platform/admin.ts). Значения шифруются и никогда не возвращаются
  * в браузер: статус показывает форму («sk-…f3a2», «строк: 23»), а не сам ключ.
  */
+function guardPlatformRequest(request: FastifyRequest, reply: FastifyReply): boolean {
+  applyNoStoreToReply(reply);
+  if (!isSameOriginRequest(request)) {
+    void reply.code(403).send({ error: sameOriginRefusal() });
+    return false;
+  }
+  return true;
+}
 export async function registerPlatformRoutes(app: FastifyInstance, overrides: Partial<PlatformRouteDeps> = {}) {
   const deps: PlatformRouteDeps = { ...defaultDeps, ...overrides };
 
   app.get("/api/platform/keys", async (request, reply) => {
+    if (!guardPlatformRequest(request, reply)) return;
     const user = await deps.authorize(request, reply); if (!user) return;
     if (!deps.isAdmin(user)) {
       return { admin: false, adminsConfigured: deps.adminsConfigured(), guide: deps.guide() };
@@ -51,6 +62,7 @@ export async function registerPlatformRoutes(app: FastifyInstance, overrides: Pa
   });
 
   app.post("/api/platform/keys", async (request, reply) => {
+    if (!guardPlatformRequest(request, reply)) return;
     const user = await deps.authorize(request, reply); if (!user) return;
     if (!deps.isAdmin(user)) return reply.code(403).send({ error: "Ключи платформы может менять только администратор", guide: deps.guide() });
     const parsed = saveSchema.safeParse(request.body ?? {});

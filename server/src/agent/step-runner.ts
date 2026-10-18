@@ -17,7 +17,7 @@ export async function runAgentStep(provider:Provider,messages:ChatMessage[],mode
   /** Whether any of this step reached the panel already. */
   let streamed=false;
   try{
-    for await(const chunk of provider.stream(messages,model,getToolDefinitions(),context.signal)){
+    for await(const chunk of provider.stream(messages,model,getToolDefinitions(),context.signal,{reasoning:context.request.reasoning})){
       if(context.signal?.aborted)throw new Error("Запуск агента отменён");
       if(chunk.type==="text"){text+=chunk.text;streamed=true;context.emit({type:"message.delta",runId:context.runId,delta:chunk.text});}
       else if(chunk.type==="reasoning"){reasoning+=chunk.text;streamed=true;context.emit({type:"reasoning.delta",runId:context.runId,delta:chunk.text});}

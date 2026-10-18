@@ -30,7 +30,7 @@ async function upstream(handler: (url: string, contentType: string, body: Buffer
 function depsFor(port: number, overrides: Partial<PreviewRouteDeps> = {}): PreviewRouteDeps {
   const status: PreviewStatus = { running: true, ready: true, host: "127.0.0.1", port, containerId: "test", startedAt: 0 };
   return {
-    authorize: async () => true,
+    authorize: async () => ({ id: "test-user" }),
     // Без Docker: вторая дверь к приложению отвечает только там, где её подставил тест.
     execPreview: async () => null,
     getSandbox: async () => { throw new Error("getSandbox не ожидается в этом тесте"); },

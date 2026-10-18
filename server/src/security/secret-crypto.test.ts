@@ -40,6 +40,20 @@ test("provider and GitHub tokens are encrypted at rest and legacy tokens migrate
   }
 });
 
+test("перешифровка с явными ключами читает старым и не читает новым", async () => {
+  const crypto = await import("./secret-crypto.js");
+  const oldKey = "a".repeat(64);
+  const newKey = "b".repeat(64);
+  const oldCiphertext = crypto.encryptSecretWith("rotate-me", oldKey);
+  assert.equal(crypto.decryptSecretWith(oldCiphertext, oldKey), "rotate-me");
+  assert.throws(() => crypto.decryptSecretWith(oldCiphertext, newKey));
+  const newCiphertext = crypto.encryptSecretWith(crypto.decryptSecretWith(oldCiphertext, oldKey), newKey);
+  assert.equal(crypto.decryptSecretWith(newCiphertext, newKey), "rotate-me");
+  assert.throws(() => crypto.decryptSecretWith(newCiphertext, oldKey));
+  assert.equal(crypto.encryptSecretWith("plain-legacy", newKey).startsWith("enc:v1:"), true);
+  assert.equal(crypto.decryptSecretWith("plain-legacy", newKey), "plain-legacy");
+});
+
 test("authenticated encryption rejects tampering and invalid key configuration", async () => {
   process.env.WEBNESTDEV_ENCRYPTION_KEY = "0123456789abcdef".repeat(4);
   const crypto = await import("./secret-crypto.js");

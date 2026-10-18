@@ -1,6 +1,8 @@
-import { readFile, readdir, stat } from "node:fs/promises";
+import { lstat, readdir } from "node:fs/promises";
 import path from "node:path";
 import { getSandbox } from "../sandbox-manager.js";
+import { readFileInside } from "../sandbox/path-guard.js";
+import { isSecretProjectPath } from "../secrets/secret-paths.js";
 
 const MAX_FILES = 12;
 const MAX_FILE_CHARS = 12000;
@@ -35,12 +37,17 @@ async function collectFiles(root: string, current: string, relative: string, res
   try { entries = await readdir(current, { withFileTypes: true }); } catch { return; }
   for (const entry of entries) {
     if (IGNORED.has(entry.name)) continue;
+    // Секретный env-файл не попадает в контекст даже по имени: модель не должна просить его
+    // содержимое и не должна получать его случайно вместе с исходниками.
+    if (isSecretProjectPath(entry.name)) continue;
     const child = path.join(current, entry.name);
     const childRelative = relative ? path.posix.join(relative, entry.name) : entry.name;
+    // Символическая ссылка может вести в другой проект или в /etc: в контекст она не попадает.
+    if (entry.isSymbolicLink()) continue;
     if (entry.isDirectory()) await collectFiles(root, child, childRelative, result);
-    else {
+    else if (entry.isFile()) {
       try {
-        const info = await stat(child);
+        const info = await lstat(child);
         if (info.size <= 200_000) result.push(childRelative);
       } catch {}
     }
@@ -67,7 +74,7 @@ export async function retrieveRelevantFiles(
   for (const item of ranked) {
     if (item.score <= 0 && sections.length >= 4) break;
     try {
-      const content = await readFile(path.join(sandbox.root, item.file), "utf8");
+      const content = await readFileInside(sandbox.root, path.join(sandbox.root, item.file));
       const remaining = MAX_TOTAL_CHARS - total;
       if (remaining <= 0) break;
       const snippet = content.length > Math.min(MAX_FILE_CHARS, remaining)

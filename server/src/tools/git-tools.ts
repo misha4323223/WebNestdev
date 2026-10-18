@@ -1,17 +1,64 @@
 import { getSandbox, assertInsideSandbox } from "../sandbox-manager.js";
 import { runInSandbox } from "../sandbox-worker.js";
 import { registerTool } from "../tool-registry.js";
+import { isSecretProjectPath } from "../secrets/secret-paths.js";
+import { findSecretEnvFiles } from "../sandbox/secret-mask.js";
 
-async function git(context: { projectId: string; userId: string }, command: string) {
+async function git(
+  context: { projectId: string; userId: string; signal?: AbortSignal },
+  command: string,
+  options: { maskSecretEnvFiles?: boolean } = {},
+) {
   const sandbox = await getSandbox(context.projectId, context.userId);
-  return runInSandbox(sandbox, "git " + command, sandbox.root);
+  return runInSandbox(sandbox, "git " + command, sandbox.root, {
+    signal: context.signal,
+    ...options,
+  });
+}
+
+/**
+ * `git diff` читает содержимое отслеживаемых файлов. Если `.env.local` когда-то попал в
+ * репозиторий, маска рабочего файла не поможет: diff покажет старую версию из индекса. Поэтому
+ * блоки diff с секретным путём выбрасываются из вывода целиком, а не редактируются.
+ */
+export function redactSecretEnvDiff(output: string) {
+  return output
+    .split(/(?=^diff --git )/m)
+    .filter((block) => {
+      if (!block.startsWith("diff --git ")) return true;
+      const header = block.split("\n", 1)[0];
+      const separator = header.lastIndexOf(" b/");
+      if (separator < 0) return true;
+      const target = header.slice(separator + 3).replace(/^"|"$/g, "");
+      return !isSecretProjectPath(target);
+    })
+    .join("");
+}
+
+/** Git pathspec для исключения секретного файла из `git add`, даже если путь пришёл из `.`. */
+export function secretPathspecExclusions(paths: string[]) {
+  return paths.map((projectPath) => ":(exclude,literal)" + projectPath);
+}
+
+/** Строки `git status` с секретным путём не нужны агенту даже как имя файла. */
+export function filterSecretStatus(output: string) {
+  return output
+    .split("\n")
+    .filter((line) => {
+      if (!line.trim() || line.startsWith("##")) return true;
+      const value = line.slice(2).trim();
+      const target = value.includes(" -> ") ? value.split(" -> ").pop() ?? value : value;
+      return !isSecretProjectPath(target.replace(/^"|"$/g, ""));
+    })
+    .join("\n");
 }
 
 registerTool({
   name: "git.status",
   description: "Show Git working tree status for the project.",
   execute: async (_input, context) => {
-    return git(context, "status --short --branch");
+    const result = await git(context, "status --short --branch", { maskSecretEnvFiles: true });
+    return { ...result, stdout: filterSecretStatus(result.stdout) };
   },
 });
 
@@ -19,7 +66,10 @@ registerTool({
   name: "git.diff",
   description: "Show unstaged Git diff for the project.",
   execute: async (_input, context) => {
-    return git(context, "diff --no-ext-diff");
+    // Здесь маска не используется: у отслеживаемого `.env.local` она превратила бы diff в
+    // удаление всех строк, то есть выдала бы секрет. Вывод фильтруется по путям.
+    const result = await git(context, "diff --no-ext-diff");
+    return { ...result, stdout: redactSecretEnvDiff(result.stdout) };
   },
 });
 
@@ -27,7 +77,7 @@ registerTool({
   name: "git.log",
   description: "Show recent Git commits.",
   execute: async (_input, context) => {
-    return git(context, "log --oneline -20");
+    return git(context, "log --oneline -20", { maskSecretEnvFiles: true });
   },
 });
 
@@ -35,7 +85,7 @@ registerTool({
   name: "git.branch",
   description: "List local Git branches.",
   execute: async (_input, context) => {
-    return git(context, "branch --list");
+    return git(context, "branch --list", { maskSecretEnvFiles: true });
   },
 });
 
@@ -53,11 +103,22 @@ registerTool({
         pathJoin(sandbox.root, projectPath),
       ).slice(sandbox.root.length + 1),
     );
-    const quoted = safe
+    const secret = safe.find((projectPath) => isSecretProjectPath(projectPath));
+    if (secret) {
+      throw new Error(
+        "Файл " + secret + " содержит секреты проекта и не добавляется в git. " +
+        "Добавьте его в .gitignore (или .git/info/exclude), а в репозиторий коммитьте .env.example.",
+      );
+    }
+    // `git add .` не должен захватить пустые placeholder-файлы, которые предпросмотр
+    // оставляет под read-only mount. Исключения строятся по реальному дереву, поэтому
+    // `.env.example` остаётся обычным файлом, а все варианты окружения — вне индекса.
+    const exclusions = secretPathspecExclusions(await findSecretEnvFiles(sandbox.root));
+    const quoted = [...safe, ...exclusions]
       .map((projectPath) => "'" + projectPath.replaceAll("'", "'\\''") + "'")
       .join(" ");
 
-    return runInSandbox(sandbox, "git add -- " + quoted, sandbox.root);
+    return runInSandbox(sandbox, "git add -- " + quoted, sandbox.root, { signal: context.signal, maskSecretEnvFiles: true });
   },
 });
 
@@ -70,11 +131,35 @@ registerTool({
     if (!message) throw new Error("не указано сообщение коммита");
 
     const sandbox = await getSandbox(context.projectId, context.userId);
+    // Проверка индекса до коммита: `git.add` секрет уже не примет, но файл мог оказаться в
+    // индексе раньше (импортированный репозиторий, ручная команда). Коммит с ним — это утечка
+    // в историю, из которой значение уже не убрать одним удалением файла.
+    const staged = await runInSandbox(
+      sandbox,
+      "git diff --cached --name-only --diff-filter=ACMR",
+      sandbox.root,
+      { signal: context.signal, maskSecretEnvFiles: true },
+    );
+    if (staged.ok) {
+      const secret = staged.stdout
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .find((projectPath) => isSecretProjectPath(projectPath));
+      if (secret) {
+        throw new Error(
+          "В индексе git лежит секретный файл " + secret + ". Уберите его из индекса " +
+          "(`git reset HEAD -- " + secret + "`), проверьте .gitignore и повторите коммит.",
+        );
+      }
+    }
+
     const quoted = message.replaceAll("'", "'\\''");
     return runInSandbox(
       sandbox,
       "git commit -m '" + quoted + "'",
       sandbox.root,
+      { signal: context.signal, maskSecretEnvFiles: true },
     );
   },
 });

@@ -3,7 +3,31 @@ import { rememberScreen } from "./screen";
 import type { ChatMessage, FileEntry, PlanState, PreviewState } from "./types";
 
 export type Project={id:string;name:string;createdAt:string;updatedAt:string};
+/** Одна точка истории проекта: коммит, к которому можно вернуться. */
+export type ChangeCheckpoint={
+  sha:string;
+  shortSha:string;
+  subject:string;
+  message:string;
+  kind:"task"|"rollback"|"imported";
+  createdAt:string;
+  runId?:string;
+  conversationId?:string;
+  revertedTo?:string;
+  files:Array<{path:string;status:"added"|"modified"|"deleted"}>;
+  filesChanged:number;
+  pushed:boolean;
+  url?:string;
+};
+export type ProjectChanges={
+  initialized:boolean;
+  repository:{connected:boolean;branch:string;remoteUrl:string|null;lastPushAt:string|null;lastPushError:string|null};
+  checkpoints:ChangeCheckpoint[];
+};
 export type Conversation={id:string;projectId:string;title:string;messages:ChatMessage[];plan?:PlanState|null;createdAt:string;updatedAt:string};
+/** Переменная окружения проекта: значение намеренно не приходит — только его форма. */
+export type ProjectSecret={name:string;preview:string;file:string};
+export type ProjectSecrets={file:string;variables:ProjectSecret[]};
 /** A row of the chat list: enough to recognise the session without loading its messages. */
 export type ConversationSummary={id:string;projectId:string;title:string;label:string;preview:string;messageCount:number;createdAt:string;updatedAt:string};
 
@@ -19,6 +43,15 @@ export const listProjectFiles=(projectId:string,path=".")=>apiJson<{path:string;
 export const getProjectFile=(projectId:string,path:string)=>apiJson<{path:string;content:string}>("/api/projects/"+projectId+"/file?path="+encodeURIComponent(path));
 /** Stores a chat attachment inside the project so the agent can use it. */
 export const uploadProjectFile=(projectId:string,file:{name:string;data:string})=>apiJson<{name:string;path:string;bytes:number}>("/api/projects/"+projectId+"/upload",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(file)});
+/** История задач проекта: каждая точка — проверенное состояние, к которому можно вернуться. */
+export const getProjectChanges=(projectId:string)=>apiJson<ProjectChanges>("/api/projects/"+projectId+"/changes");
+/**
+ * Откат создаёт новую точку, а не переписывает историю. На GitHub ничего не уходит: отправку
+ * пользователь запускает сам кнопкой — агент коммиты не пушит.
+ */
+export const rollbackProjectChanges=(projectId:string,sha:string)=>apiJson<{checkpoint:ChangeCheckpoint;branch:string;pushed:boolean;overview:ProjectChanges}>("/api/projects/"+projectId+"/changes/"+encodeURIComponent(sha)+"/rollback",{method:"POST"});
+/** Отправка на GitHub по кнопке — единственный путь, которым коммиты попадают в ветку. */
+export const pushProjectChanges=(projectId:string)=>apiJson<{pushed:boolean;branch:string;at:string}>("/api/projects/"+projectId+"/changes/push",{method:"POST"});
 export const getPreviewStatus=(projectId:string)=>apiJson<PreviewState>("/api/projects/"+projectId+"/preview/status");
 export const startPreview=(projectId:string)=>apiJson<PreviewState>("/api/projects/"+projectId+"/preview/start",{method:"POST"});
 export const stopPreview=(projectId:string)=>apiJson<{stopped:boolean}>("/api/projects/"+projectId+"/preview/stop",{method:"POST"});
@@ -46,13 +79,32 @@ export function openImportedProject(projectId:string,conversationId:string){
 }
 
 /**
+ * Секреты проекта: пользователь сам добавляет пары KEY=value, сервер хранит их зашифрованными
+ * вне рабочей области и монтирует в предпросмотр как `.env.local`. Значения не возвращаются в
+ * браузер — в списке только имя, форма и файл сохранённого значения.
+ */
+export const listProjectSecrets=(projectId:string)=>apiJson<ProjectSecrets>("/api/projects/"+projectId+"/secrets");
+export const saveProjectSecrets=(projectId:string,variables:Record<string,string>,file?:string)=>apiJson<ProjectSecrets>(
+  "/api/projects/"+projectId+"/secrets",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify({variables,...(file?{file}:{})})});
+export const importProjectSecrets=(projectId:string,env:string,file?:string)=>apiJson<ProjectSecrets>(
+  "/api/projects/"+projectId+"/secrets",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify({env,...(file?{file}:{})})});
+export const deleteProjectSecret=(projectId:string,name:string,file?:string)=>apiJson<ProjectSecrets&{deleted:boolean}>(
+  "/api/projects/"+projectId+"/secrets/"+encodeURIComponent(name)+(file?"?file="+encodeURIComponent(file):""),{method:"DELETE"});
+
+/**
  * Значение ключа, введённое в модальном окне. Оно идёт прямо в песочницу проекта и возвращается
  * только подтверждением: ни в переписку, ни в события запуска, ни в ответы модели оно не попадает.
  */
 export const submitProjectSecret=(projectId:string,requestId:string,value:string)=>apiJson<{ok:boolean;variable:string;file:string}>
-  ("/api/projects/"+projectId+"/secrets",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({requestId,value})});
-/** Отмена запроса: агент получает отказ и продолжает без ключа, а не ждёт таймаута. */
-export const cancelProjectSecret=(projectId:string,requestId:string)=>apiJson<{cancelled:boolean}>
-  ("/api/projects/"+projectId+"/secrets/"+encodeURIComponent(requestId)+"/cancel",{method:"POST"});
+  ("/api/projects/"+projectId+"/secrets",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({requestId,value})});/** Отмена запроса: агент получает отказ и продолжает без ключа, а не ждёт таймаута. */
+export const cancelProjectSecret=(projectId:string,requestId:string)=>apiJson<{cancelled:boolean}>(
+  "/api/projects/"+projectId+"/secrets/"+encodeURIComponent(requestId)+"/cancel",{method:"POST"});
+
+/** Ответ на вопрос агента: выбранные варианты и, если пользователь написал сам, свой текст. */
+export const answerProjectQuestion=(projectId:string,requestId:string,answer:{selected:string[];custom?:string})=>apiJson<{ok:boolean;selected:string[];custom?:string;delivered:boolean}>(
+  "/api/projects/"+projectId+"/questions/"+encodeURIComponent(requestId)+"/answer",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(answer)});
+/** Пропуск вопроса: агент выбирает разумный вариант сам, а не ждёт таймаута. */
+export const skipProjectQuestion=(projectId:string,requestId:string)=>apiJson<{cancelled:boolean}>(
+  "/api/projects/"+projectId+"/questions/"+encodeURIComponent(requestId)+"/skip",{method:"POST"});
 
 export const runProjectTerminal=(projectId:string,command:string,cwd?:string)=>apiJson<{ok:boolean;stdout:string;stderr:string}>("/api/projects/"+projectId+"/terminal",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({command,cwd})});

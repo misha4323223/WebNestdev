@@ -12,6 +12,7 @@ import { contextBudgetTokens,contextMaxMessages,boundToolOutput,DEFAULT_CHARS_PE
 import { planQaScenario } from "./qa/scenario-planner.js";
 import { analyzeChangedFiles } from "./qa/diff-analyzer.js";
 import { parseChangedSource, type ParsedChange } from "./qa/change-parser.js";
+import { finalizeRunChanges } from "./changes/changes-service.js";
 
 /**
  * Tools that change the project and therefore trigger the automatic verification cycle.
@@ -22,12 +23,12 @@ const MAX_CONSECUTIVE_VERIFY_FAILURES=3;
 /**
  * Git bookkeeping changes the repository, not the code, so it is not verified.
  *
- * `secrets.request` пишет файл окружения проекта, а планировщик не меняет проект вообще: там ключ
+ * `secrets.request` сохраняет секрет проекта, а планировщик не меняет проект вообще: там ключ
  * спрашивают в режиме разработчика. В наборы, запускающие проверку, инструмент не входит по другой
  * причине: сохранённый ключ сам по себе не требует сборки и прогона приложения — проверкой займётся
  * тот шаг, который начнёт использовать его в коде.
  */
-const PLANNER_FORBIDDEN_TOOLS=new Set(["git.add","git.commit","secrets.request"]);
+const PLANNER_FORBIDDEN_TOOLS=new Set(["git.add","git.commit","secrets.request","preview.start","preview.stop"]);
 
 /**
  * Planner mode still has to read the project, so plain inspection commands are allowed
@@ -213,6 +214,25 @@ export class AgentRuntime {
           const text=result.text||"Модель не вернула ответ.";
           if(!result.text)emit({type:"message.delta",runId,delta:text});
           await persist([{role:"assistant",content:text,...(result.reasoning?{reasoning:result.reasoning}:{})}]);
+          // Изменения записываются в историю проекта только теперь: сборка, предпросмотр и
+          // браузерная проверка уже прошли, то есть в точку попадает проверенное состояние.
+          // Точка остаётся локальной: отправку на GitHub пользователь запускает сам, агент
+          // не делает пуш по своей инициативе. Отказ git не отменяет выполненную задачу —
+          // он логируется, а задача завершается как обычно.
+          if(mode==="developer"){
+            try{
+              const title=task.split("\n").find(line=>line.trim())?.trim()??"";
+              const changes=await finalizeRunChanges({
+                projectId:request.projectId,userId:request.userId,runId,
+                ...(request.conversationId?{conversationId:request.conversationId}:{}),
+                title:title.slice(0,140)||"Изменения проекта",
+              });
+              if(changes)emit({
+                type:"changes.created",runId,branch:changes.branch,pushed:false,
+                checkpoint:{sha:changes.checkpoint.sha,shortSha:changes.checkpoint.shortSha,subject:changes.checkpoint.subject,filesChanged:changes.checkpoint.filesChanged},
+              });
+            }catch(error){console.error("Failed to record the run checkpoint",error);}
+          }
           emit({type:"run.completed",runId}); return;
         }
 
@@ -231,7 +251,7 @@ export class AgentRuntime {
           emit({type:"tool.started",runId,toolCallId:call.id,name:call.name,input:call.arguments});
           // Planner mode is read-only by construction, not just by instruction.
           if(mode==="planner"&&changesSomething(call.name,call.arguments)){
-            const refusal={error:"Режим «Планировщик»: изменения отключены. Разрешены только чтение файлов, команды из списка только-для-чтения (без перенаправлений, установки пакетов и git add/commit) и GET/HEAD-запросы. Опишите этот шаг в плане и продолжите изучение проекта.",mode:"planner"};
+            const refusal={error:"Режим «Планировщик»: изменения и запуск отключены. Разрешены только чтение файлов, команды из списка только-для-чтения (без перенаправлений, установки пакетов и git add/commit) и GET/HEAD-запросы. Опишите этот шаг в плане и продолжите изучение проекта.",mode:"planner"};
             await finishTool(call,refusal);
             messages.push({role:"tool",content:JSON.stringify(refusal),tool_call_id:call.id});
             continue;

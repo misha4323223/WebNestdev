@@ -9,6 +9,7 @@ import { ProjectRenameForm } from "./ProjectRename";
 import { PlanPickerModal } from "../billing/PlanPickerModal";
 import { SubscriptionPage } from "../billing/SubscriptionPage";
 import { conversationMemoryKey } from "../workspace/useWorkspace";
+import { queueAgentStart } from "../../lib/agent-start";
 
 const templates = [
   { name: "Лендинг", icon: Globe, prompt: "Создай современный лендинг для продукта" },
@@ -16,6 +17,14 @@ const templates = [
   { name: "Интернет-магазин", icon: ShoppingBag, prompt: "Создай интернет-магазин с каталогом и корзиной" },
   { name: "Дашборд", icon: LayoutDashboard, prompt: "Создай современный аналитический дашборд" },
 ];
+
+/**
+ * Шаблон не сразу пишет код: агент открывается планировщиком, уточняет детали и показывает план.
+ * Кнопка подтверждения в панели затем переводит его в режим разработчика.
+ */
+function templateKickoff(template:typeof templates[number]){
+  return `Быстрый старт по шаблону «${template.name}».\n\nЗадача: ${template.prompt}.\n\nСначала работай в режиме планировщика: не меняй файлы. Изучи, что уже есть в проекте (для нового проекта это пусто), задай через question.ask не больше двух действительно важных уточняющих вопросов (например, для кого продукт, какие разделы и данные нужны, какой стиль), если ответов нет в проекте. Затем собери полный пошаговый план через plan.update: структура, страницы и компоненты, данные и состояния, визуальный стиль, проверка результата. В конце кратко перечисли допущения и то, что пользователю нужно подтвердить перед началом разработки.`;
+}
 
 const activeProjectKey = "webnestdev.projectId";
 /** Черновик идеи на главной: страница открывается с нуля, а написанное должно остаться. */
@@ -119,13 +128,15 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
 
   /** Creates the project and opens it. Failures (for example a reached project
    *  limit) are reported instead of the button appearing to do nothing. Возвращает признак
-   *  успеха: по нему отправившая идею форма убирает свой черновик. */
-  async function start(name:string):Promise<boolean>{
+   *  успеха: по нему отправившая идею форма убирает свой черновик. Если передан `plannerPrompt`,
+   *  рабочая область сразу запустит агента в режиме планирования. */
+  async function start(name:string,options:{plannerPrompt?:string;title?:string}={}):Promise<boolean>{
     setBusy(true);
     setError("");
     try{
       const project=await createProject(name);
       const conversation=await createConversation(project.id);
+      if(options.plannerPrompt)queueAgentStart(conversation.id,{prompt:options.plannerPrompt,...(options.title?{title:options.title}:{})});
       localStorage.setItem("webnestdev.projectId",project.id);
       localStorage.setItem("webnestdev.projectName",project.name);
       localStorage.setItem("webnestdev.conversationId",conversation.id);
@@ -192,7 +203,7 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
 
           <section className="home-section">
             <div className="home-section-head"><div><span className="eyebrow">БЫСТРЫЙ СТАРТ</span><h2>Начать с шаблона</h2></div></div>
-            <div className="template-grid">{templates.map(template=>{const Icon=template.icon;return <button key={template.name} className="template-card" onClick={()=>void start(template.name)}><span className="template-icon"><Icon size={16}/></span><span><strong>{template.name}</strong><small>{template.prompt}</small></span><ArrowRight size={14}/></button>})}</div>
+            <div className="template-grid">{templates.map(template=>{const Icon=template.icon;return <button key={template.name} className="template-card" onClick={()=>void start(template.name,{plannerPrompt:templateKickoff(template),title:"Быстрый старт: "+template.name})} title="Агент начнёт с плана и уточняющих вопросов"><span className="template-icon"><Icon size={16}/></span><span><strong>{template.name}</strong><small>{template.prompt}</small></span><ArrowRight size={14}/></button>})}</div>
           </section>
 
           {projects.length>0&&<section className="home-section">

@@ -8,6 +8,7 @@ import { getPreview, removePreview, setPreview, touchPreview } from "./preview/p
 import { recentPreviewLogs, startPreviewContainer } from "./preview/preview-runner.js";
 import { previewModeSetting, startStaticPreview, staticAppAnswers, staticPreviewLogs, stopStaticPreview } from "./preview/static-preview.js";
 import { PREVIEW_LABEL, type PreviewStatus } from "./preview/types.js";
+import { clearPreviewSecrets } from "./secrets/preview-secrets.js";
 
 export type { PreviewState, PreviewStatus } from "./preview/types.js";
 
@@ -103,14 +104,20 @@ async function startContainerPreview(config: SandboxConfig, staticReason?: strin
 
 export async function stopPreview(projectId: string) {
   const current = getPreview(projectId);
-  if (!current) return { stopped: false };
+  if (!current) {
+    // Остановка могла прийти после падения запуска: временный env-файл всё равно убираем.
+    await clearPreviewSecrets(projectId);
+    return { stopped: false };
+  }
   if (current.mode === "static") {
     await stopStaticPreview(projectId);
     removePreview(projectId);
+    await clearPreviewSecrets(projectId);
     return { stopped: true };
   }
   await dockerExec(["stop", current.containerId]);
   removePreview(projectId);
+  await clearPreviewSecrets(projectId);
   return { stopped: true };
 }
 

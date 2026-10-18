@@ -32,6 +32,22 @@ export type AgentSocketEvent={
   purpose?:string;
   file?:string;
   expiresAt?:number;
+  /**
+   * Set on question.asked: the agent needs a decision and the panel opens the question window over
+   * the message box. The answer is posted separately, so the run keeps waiting here.
+   */
+  question?:string;
+  options?:Array<{label:string;description?:string}>;
+  multiSelect?:boolean;
+  allowCustom?:boolean;
+  /**
+   * Set on changes.created: the finished task was written to the project's history.
+   * `pushed` is false because only the user sends commits to GitHub.
+   */
+  checkpoint?:{sha:string;shortSha:string;subject:string;filesChanged:number};
+  branch?:string;
+  pushed?:boolean;
+  pushError?:string;
 };
 
 export function createAgentSocket(onEvent:(event:AgentSocketEvent)=>void,onError:()=>void){

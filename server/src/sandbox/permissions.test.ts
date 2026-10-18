@@ -1,9 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chmod, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdir, mkdtemp, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { openDirsForSandbox, openFileForSandbox, openTreeForSandbox } from "./permissions.js";
+import { isSecretEnvFile, openDirsForSandbox, openFileForSandbox, openTreeForSandbox } from "./permissions.js";
+
+/**
+ * Владельца можно сменить только от root. Локально и в CI сервер запущен обычным
+ * пользователем, и тогда права остаются прежними (777/666), иначе контейнер не смог бы писать.
+ */
+const CAN_OWN = process.getuid?.() === 0;
+const DIR = CAN_OWN ? "775" : "777";
+const FILE = CAN_OWN ? "664" : "666";
+const SECRET = CAN_OWN ? "600" : "644";
 
 /** Проект пишет сервер от root: каталог 755, файл 644 — именно так выглядит песочница на диске. */
 async function seedFile(file: string, mode = 0o644) {
@@ -49,9 +58,9 @@ test("обход дерева открывает подкаталоги и фа�
 
     await openTreeForSandbox(root);
 
-    assert.equal(await mode(path.join(root, "server")), "777");
-    assert.equal(await mode(path.join(root, "server", "src")), "777");
-    assert.equal(await mode(source), "666", "файл должен перезаписываться из контейнера");
+    assert.equal(await mode(path.join(root, "server")), DIR);
+    assert.equal(await mode(path.join(root, "server", "src")), DIR);
+    assert.equal(await mode(source), FILE, "файл должен перезаписываться из контейнера");
   });
 });
 
@@ -76,10 +85,10 @@ test("новый файл открывает свой каталог и всех
 
     await openDirsForSandbox(root, nested);
 
-    assert.equal(await mode(root), "777");
-    assert.equal(await mode(path.join(root, "apps")), "777");
-    assert.equal(await mode(path.join(root, "apps", "web")), "777");
-    assert.equal(await mode(nested), "777");
+    assert.equal(await mode(root), DIR);
+    assert.equal(await mode(path.join(root, "apps")), DIR);
+    assert.equal(await mode(path.join(root, "apps", "web")), DIR);
+    assert.equal(await mode(nested), DIR);
   });
 });
 
@@ -87,4 +96,72 @@ test("открытие отсутствующего файла не роняет
   await withRoot(async root => {
     await openFileForSandbox(path.join(root, "нет-такого-файла.ts"));
   });
+});
+
+test("файлы окружения закрыты, шаблоны — обычные файлы", () => {
+  for (const name of [".env", ".env.local", ".env.production.local"]) {
+    assert.equal(isSecretEnvFile(name), true, name);
+  }
+  for (const name of [".env.example", ".env.sample", ".env.template", ".envrc", "env.local"]) {
+    assert.equal(isSecretEnvFile(name), false, name);
+  }
+});
+
+test("права .env не открываются для остальных пользователей хоста", async () => {
+  await withRoot(async root => {
+    const secret = path.join(root, ".env.local");
+    const example = path.join(root, ".env.example");
+    await seedFile(secret);
+    await seedFile(example);
+
+    await openFileForSandbox(secret);
+    await openFileForSandbox(example);
+
+    assert.equal(await mode(secret), SECRET, "ключи не должны быть доступны на запись/чтение всем");
+    assert.equal(await mode(example), FILE, "шаблон без секретов остаётся обычным файлом");
+    if (CAN_OWN) assert.equal((await stat(secret)).uid, 1000, "контейнер читает файл как владелец");
+  });
+});
+
+test("chmod не идёт по символической ссылке и не меняет чужой файл", async () => {
+  const base = await mkdtemp(path.join(os.tmpdir(), "webnestdev-perms-link-"));
+  const root = path.join(base, "project");
+  try {
+    await mkdir(root, { recursive: true });
+    const target = path.join(base, "victim.txt");
+    await writeFile(target, "VICTIM", "utf8");
+    await chmod(target, 0o640);
+    const link = path.join(root, "leak.txt");
+    await symlink(target, link);
+
+    await openFileForSandbox(link);
+
+    assert.equal((await lstat(target)).mode & 0o777, 0o640, "цель ссылки не должна меняться");
+    assert.equal((await lstat(link)).isSymbolicLink(), true, "ссылка остаётся ссылкой");
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test("обход дерева не заходит в символические ссылки", async () => {
+  const base = await mkdtemp(path.join(os.tmpdir(), "webnestdev-perms-tree-"));
+  const root = path.join(base, "project");
+  try {
+    await mkdir(root, { recursive: true });
+    const outside = path.join(base, "outside");
+    const nested = path.join(outside, "nested");
+    await mkdir(nested, { recursive: true });
+    const file = path.join(nested, "file.txt");
+    await writeFile(file, "OUTSIDE", "utf8");
+    await chmod(nested, 0o700);
+    await chmod(file, 0o600);
+    await symlink(outside, path.join(root, "leak-dir"));
+
+    await openTreeForSandbox(root);
+
+    assert.equal(await mode(nested), "700");
+    assert.equal(await mode(file), "600");
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
 });

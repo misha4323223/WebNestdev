@@ -1,6 +1,6 @@
 import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
-import { runInSandbox, type CommandResult } from "../sandbox-worker.js";
+import { runInSandbox, type CommandResult, type SandboxRunOptions } from "../sandbox-worker.js";
 import type { SandboxConfig } from "../sandbox-manager.js";
 
 /**
@@ -66,14 +66,16 @@ export type DependencyInstallResult = { ok: true; installed: boolean; log: strin
  */
 export async function ensureProjectDependencies(
   config: SandboxConfig,
-  run: (config: SandboxConfig, command: string, cwd: string, options: { network?: "none" | "bridge" }) => Promise<CommandResult> = runInSandbox,
+  run: (config: SandboxConfig, command: string, cwd: string, options: SandboxRunOptions) => Promise<CommandResult> = runInSandbox,
 ): Promise<DependencyInstallResult> {
   const missing = await missingDependencies(config.root).catch(() => null);
   if (missing === null || missing.length === 0) return { ok: true, installed: false, log: "" };
 
   let result: CommandResult;
   try {
-    result = await run(config, INSTALL_COMMAND, config.root, { network: "bridge" });
+    // Lifecycle-скрипты проекта могут читать env; предпросмотр получает канонические секреты,
+    // но только на время установки — файл удаляется сразу после команды.
+    result = await run(config, INSTALL_COMMAND, config.root, { network: "bridge", injectSecretEnvFile: true });
   } catch (error) {
     return { ok: false, reason: "не удалось установить зависимости: " + (error instanceof Error ? error.message : String(error)) };
   }

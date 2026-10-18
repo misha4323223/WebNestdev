@@ -17,14 +17,14 @@ import { getProject } from "../project-store.js";
  * an authenticated session.
  */
 export type PreviewRouteDeps={
-  /** Only truthiness matters: the real one returns the user or null (and sends the reply). */
-  authorize:(request:unknown,reply:unknown,projectId:string)=>Promise<unknown>;
+  /** Возвращает владельца проекта (и при отказе сам отправляет ответ) — его id нужен песочнице. */
+  authorize:(request:unknown,reply:unknown,projectId:string)=>Promise<{id:string}|null>;
   /**
    * Вторая дверь к приложению — запрос изнутри его контейнера (`docker exec`). Взята как
    * параметр, как и остальные соучастники: путь прокси проверяется тестом без Docker.
    */
   execPreview:(input:{containerId:string;port:number;path:string;method:string;headers:Record<string,string>;body?:Buffer;timeoutMs:number})=>Promise<ExecFetchResult|null>;
-  getSandbox:(projectId:string)=>Promise<Parameters<typeof startPreview>[0]>;
+  getSandbox:(projectId:string,userId:string)=>Promise<Parameters<typeof startPreview>[0]>;
   startPreview:typeof startPreview;
   stopPreview:typeof stopPreview;
   previewStatus:typeof previewStatus;
@@ -69,8 +69,9 @@ export async function registerPreviewRoutes(app:FastifyInstance,deps:PreviewRout
   };
   app.post("/api/projects/:id/preview/start",async(request,reply)=>{
     const p=z.object({id:z.string().min(1)}).parse(request.params);
-    if(!await deps.authorize(request,reply,p.id))return;
-    return previewReply(reply,async()=>deps.startPreview(await deps.getSandbox(p.id)));
+    const user=await deps.authorize(request,reply,p.id);
+    if(!user)return;
+    return previewReply(reply,async()=>deps.startPreview(await deps.getSandbox(p.id,user.id)));
   });
   app.post("/api/projects/:id/preview/stop",async(request,reply)=>{
     const p=z.object({id:z.string().min(1)}).parse(request.params);

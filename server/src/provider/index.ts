@@ -1,7 +1,7 @@
 import type { Provider } from "./provider-types.js";
 import { OpenAICompatibleProvider } from "./openai-compatible-provider.js";
 
-export type { Provider,ProviderChunk,ProviderToolCall } from "./provider-types.js";
+export type { Provider,ProviderChunk,ProviderStreamOptions,ProviderToolCall } from "./provider-types.js";
 
 export type ProviderConfig = {
   provider: string;
