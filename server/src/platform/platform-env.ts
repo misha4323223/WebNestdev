@@ -37,7 +37,7 @@ export const PLATFORM_ENV_CATALOG: PlatformEnvEntry[] = [
   { name: "YANDEX_CLIENT_SECRET", group: "yandex", label: "Yandex ID Client secret", hint: "Там же, в настройках приложения Yandex ID.", kind: "secret" },
   { name: "YANDEX_CALLBACK_URL", group: "yandex", label: "Redirect URI", hint: "Необязательно: по умолчанию https://<домен>/api/yandex/callback. Должен совпадать с Redirect URI в приложении Yandex ID.", kind: "url" },
   { name: "YANDEX_FRONTEND_URL", group: "yandex", label: "Адрес возврата", hint: "Необязательно: куда вернуть браузер после входа (по умолчанию — корень панели).", kind: "url" },
-  { name: "YANDEX_OAUTH_SCOPE", group: "yandex", label: "OAuth scope", hint: "Необязательно. Пусто — Яндекс выдаёт права, отмеченные в приложении («Доступ к данным»); это рабочий вариант по умолчанию. Указывайте, только чтобы сузить набор, например login:info.", kind: "value" },
+  { name: "YANDEX_OAUTH_SCOPE", group: "yandex", label: "OAuth scope", hint: "Необязательно и только для подключения Yandex Cloud. Вход через Яндекс ID не отправляет scope: он получает права, отмеченные в приложении («Доступ к данным»).", kind: "value" },
   { name: "YANDEX_CLOUD_ID", group: "yandex", label: "Cloud ID", hint: "b1g… из консоли Yandex Cloud — идентификатор облака.", kind: "value" },
   { name: "YANDEX_FOLDER_ID", group: "yandex", label: "Folder ID", hint: "b1g… каталога, в котором создан сервисный аккаунт Notification Service.", kind: "value" },
   { name: "YANDEX_SA_KEY", group: "yandex", label: "Ключ сервисного аккаунта (JSON)", hint: "Вставьте файл authorized key целиком. Многострочный JSON и скопированная одной строкой форма с \\n принимаются одинаково.", kind: "json-key" },

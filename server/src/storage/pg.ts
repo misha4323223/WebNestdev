@@ -96,6 +96,7 @@ function buildSql(strings: TemplateStringsArray, values: unknown[]): { sql: stri
 const PK_BY_TABLE: Record<string, string[]> = {
   users: ["id"],
   phone_accounts: ["phone"],
+  yandex_accounts: ["yandex_id"],
   sessions: ["id"],
   projects: ["id"],
   conversations: ["id"],
@@ -212,6 +213,17 @@ export async function initializeStorage(): Promise<void> {
       created_at TEXT NOT NULL
     )`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("phone_accounts")}_user ON ${tbl("phone_accounts")} (user_id)`);
+
+    // Yandex ID sign-in keeps an identity link, not an OAuth token: the token is used
+    // once to read the profile and is never stored.
+    await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("yandex_accounts")} (
+      yandex_id TEXT NOT NULL PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      login TEXT NOT NULL,
+      email TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    )`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("yandex_accounts")}_user ON ${tbl("yandex_accounts")} (user_id)`);
 
     await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("sessions")} (
       id TEXT NOT NULL PRIMARY KEY,

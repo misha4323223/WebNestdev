@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireUser } from "../auth/auth.js";
+import { findYandexIdentityByUserId } from "../auth/yandex-account-store.js";
 import { getUserPreferences, saveUserPreferences, type UserPreferences } from "../account/account-store.js";
 import { FREE_PLAN, PLAN_CATALOG, limitsForPlan } from "../account/plans.js";
 import { getCostSnapshot, getUsageSnapshot } from "../account/usage-store.js";
@@ -17,7 +18,16 @@ const preferencesSchema = z.object({
 export async function registerAccountRoutes(app: FastifyInstance) {
   app.get("/api/account/settings", async (request, reply) => {
     const user = await requireUser(request, reply); if (!user) return;
-    return { user: { id: user.id, email: user.email, createdAt: user.createdAt }, preferences: await getUserPreferences(user.id) };
+    const yandex = await findYandexIdentityByUserId(user.id);
+    return {
+      user: {
+        id: user.id,
+        email: user.email,
+        createdAt: user.createdAt,
+        ...(yandex ? { yandex: { login: yandex.login, email: yandex.email ?? null } } : {}),
+      },
+      preferences: await getUserPreferences(user.id),
+    };
   });
   app.put("/api/account/settings", async (request, reply) => {
     const user = await requireUser(request, reply); if (!user) return;

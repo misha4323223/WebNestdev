@@ -21,7 +21,7 @@ const notices: Record<string,string> = {
   not_configured: "OAuth Яндекс ID не настроен на сервере (YANDEX_CLIENT_ID и YANDEX_CLIENT_SECRET). Подключите аккаунт ключом — форма ниже работает всегда.",
   state_expired: "Ссылка авторизации устарела. Начните подключение заново.",
   token_error: "Яндекс не выдал токен доступа. Попробуйте подключиться ещё раз.",
-  cloud_error: "Токен Яндекс ID получен, но Yandex Cloud его не принял. Создайте сервисный аккаунт с ролями и вставьте его authorized key ниже.",
+  cloud_error: "Токен Яндекс ID получен, но Yandex Cloud его не принимает: с 1 июня 2026 новые OAuth-токены Яндекс ID не годятся для Cloud. Создайте сервисный аккаунт с ролями и вставьте его authorized key ниже.",
   error: "Не удалось завершить подключение Yandex Cloud.",
 };
 
@@ -190,7 +190,7 @@ export function YandexConnect({surface="home"}:{surface?:ConnectorSurface}){
       <p className="connector-text">
         {connected
           ? "Агент читает облака, каталоги, виртуальные машины, диски, бакеты и функции этого аккаунта."
-          : "Подключите аккаунт Яндекс ID кнопкой или вставьте сервисный ключ — после этого агент сможет читать ресурсы аккаунта."}
+          : "Подключите сервисный аккаунт ключом — он даёт доступ к ресурсам Yandex Cloud. Вход через Яндекс ID — это вход в WebNestdev, а не доступ к Cloud."}
       </p>
 
       {!connected&&info?.configured&&info.callbackUrl&&<div className="connector-redirect">
@@ -227,7 +227,7 @@ export function YandexConnect({surface="home"}:{surface?:ConnectorSurface}){
 
       {hintOpen&&<div className="connector-hint">
         <strong><ShieldCheck size={13}/> Как подключить аккаунт</strong>
-        <p><em>Кнопкой «Подключить»</em> — откроется страница Яндекс ID. Работает, если на сервере заданы <code>YANDEX_CLIENT_ID</code> и <code>YANDEX_CLIENT_SECRET</code> (приложение создаётся на <code>oauth.yandex.ru/client/new</code>).</p>
+        <p><em>Кнопкой «Подключить»</em> — откроется страница Яндекс ID. Это работает только со старыми OAuth-токенами Cloud: с 1 июня 2026 Yandex Cloud не принимает новые токены Яндекс ID. Для нового подключения используйте сервисный ключ ниже.</p>
         <p><em>Redirect URI</em> — в приложении на oauth.yandex.ru поле Callback URL должно совпадать с адресом выше посимвольно: та же схема (https), тот же домен и путь <code>/api/yandex/callback</code>. При расхождении Яндекс останавливает вход страницей «redirect_uri does not match the Callback URL defined for the client» — ключи при этом верные, править нужно адрес.</p>
         <p><em>Права в приложении</em> — на шаге «Доступ к данным» должно быть отмечено хотя бы одно право, например «Доступ к логину, имени и фамилии, полу» (<code>login:info</code>). Если не отмечено ничего, Яндекс отвечает страницей «Could not determine list of requested permissions · invalid_scope»: он не знает, что именно разрешать.</p>
         <p><em>Ключом сервисного аккаунта (рекомендуется)</em> — в консоли Yandex Cloud: «Сервисные аккаунты» → создать аккаунт → выдать роли <code>viewer</code> на облако и нужные роли на каталог → «Создать новый ключ» → «Создать авторизованный ключ» → скачается JSON. Вставьте этот JSON целиком.</p>

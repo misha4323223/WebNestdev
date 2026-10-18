@@ -28,10 +28,11 @@
 
 ## Phone login (Russian numbers)
 
-The sign-in screen offers three methods: e-mail + password, e-mail registration, and
-**sign-in by phone number**, which sends a one-time code by SMS. Only Russian numbers
-are accepted (`8XXXXXXXXXX`, `7XXXXXXXXXX` and the bare 10 digits all normalise to
-`+7XXXXXXXXXX`); anything else is rejected before a code exists.
+The sign-in screen offers **Yandex ID** (see below) and **sign-in by phone number**,
+which sends a one-time code by SMS. The e-mail/password endpoints still exist for API
+clients, but the screen is built around these two passwordless methods. Only Russian
+numbers are accepted (`8XXXXXXXXXX`, `7XXXXXXXXXX` and the bare 10 digits all normalise
+to `+7XXXXXXXXXX`); anything else is rejected before a code exists.
 
 Internally a phone account is a normal user record: the number maps to a synthetic
 e-mail (`79991234567@phone.webnestdev.local`) and a random password nobody knows, so
@@ -109,8 +110,8 @@ promotional.
 
 ### Demo number (sign-in without SMS)
 
-The sign-in screen is phone-only, and a **demo number** lets the flow be used before an SMS
-provider exists. It defaults to `+7 999 000-00-00` and is let straight in — no code, no
+The phone form sits on the sign-in screen next to Yandex ID, and a **demo number** lets the
+phone flow be used before an SMS provider exists. It defaults to `+7 999 000-00-00` and is let straight in — no code, no
 SMS, an ordinary session. It follows the same convention as the demo e-mail account:
 enabled outside production, opt-in in production via `WEBNESTDEV_DEMO_PHONE_ENABLED=1`,
 and off with `WEBNESTDEV_DEMO_PHONE_ENABLED=0`. The number is configurable with
@@ -126,21 +127,64 @@ the API response as `devCode`, so the whole flow can be tested before the SMS ac
 exists. `GET /api/auth/phone/status` reports the active provider and whether the server
 is in test mode.
 
-### Why not VK ID / Yandex ID / Госуслуги
+## Yandex ID sign-in
+
+The sign-in screen now offers **«Войти через Яндекс ID»** next to the phone-code form.
+It is a separate OAuth flow on the server (`/api/auth/yandex/start` and the shared
+`/api/yandex/callback`), and it creates or opens an ordinary WebNestdev account:
+
+- The Yandex profile id is stored in `yandex_accounts` (PostgreSQL) or
+  `auth/yandex-accounts.json` (local JSON). **The Yandex access token is never stored** —
+  it is used once to read the profile and discarded.
+- Every Yandex identity gets its own local account with a synthetic address
+  (`yandex-…@yandex-id.webnestdev.local`). The Yandex `default_email` is stored with the
+  identity and shown in the profile, but it **does not merge accounts**: e-mail/password
+  registration never verifies the address, so linking by e-mail would let whoever
+  pre-registered a victim's address take over the account when the victim signs in with
+  Yandex. Explicit account linking (phone + Yandex) is a separate future flow.
+- The callback path is the same `/api/yandex/callback` the Cloud connector already uses,
+  so an existing Yandex app registration keeps working. The two flows are told apart by
+  a short-lived `webnestdev_yandex_login` cookie: sign-in is public, the connector still
+  requires a session and its own server-side state.
+- No `scope` is sent for sign-in. Yandex then grants the permissions enabled in the app
+  (at minimum **«Доступ к логину, имени и фамилии, полу» / `login:info`**). Adding
+  `login:email` is what makes the real e-mail available.
+
+Requires `YANDEX_CLIENT_ID` and `YANDEX_CLIENT_SECRET` (the same pair as the Cloud
+connector). The redirect URI in the Yandex app must be exactly the callback shown by
+`GET /api/auth/yandex/status` or the Yandex Cloud card.
+
+### Yandex ID is not Yandex Cloud access
+
+The same Yandex app is used for two different jobs, and they must not be confused:
+
+| Goal | What it uses | What it gives |
+| --- | --- | --- |
+| Sign in to WebNestdev | Yandex ID OAuth (`login:info`, optional `login:email`) | Identity only: id, login, optional e-mail |
+| Let the agent read the user's cloud | Service account authorized key, IAM token, or a pre-cutoff Cloud OAuth token stored by the Cloud connector | Yandex Cloud IAM roles and API access |
+
+Since **1 June 2026 Yandex Cloud no longer accepts newly issued Yandex ID OAuth tokens**
+for IAM exchange; tokens issued before that date keep working until they expire. A token
+obtained just to sign a user into the site therefore cannot be reused as Cloud access.
+The connector's `cloud_error` is exactly this case. For a user who needs their own Cloud
+resources, use a service account key with explicit roles (the connector's main path), a
+Cloud identity federation for an organisation, or a refresh token issued by the Cloud
+OAuth flow. The sign-in button never silently turns into cloud access.
+
+### Why not VK ID / Госуслуги
 
 These are identity providers, not SMS gateways, and they change what the user has to do:
 
 - **VK ID** — free OAuth/SDK, supports phone-login inside the VK flow, but the user must
   log in *through VK*, not by typing a code we send. Good as an extra button, not as a
   standalone phone-code login.
-- **Yandex ID** — same story: a free OAuth app, but the phone verification is Yandex's.
 - **ЕСИА / Госуслуги** — available only to government bodies and registered organisations
   with an agreement, not to ordinary developers, so it is not an option here.
 - **Telegram / MAX / Sber ID** — usable as additional identity buttons, subject to the
   same "login through their flow" caveat.
 
-If one of those "login with VK/Yandex" buttons is wanted later it is an additive OAuth
-flow; the current SMS-code login stays the passwordless phone option.
+Yandex ID is now implemented as such an additional button; the SMS-code login stays the
+passwordless phone option.
 
 ## Phase 5 — Security hardening
 - CSRF protection where required by the final cookie architecture.
@@ -152,9 +196,11 @@ flow; the current SMS-code login stays the passwordless phone option.
 ## Current milestone
 
 Phase 1 is implemented locally, plus passwordless **phone login for Russian numbers**
-(see above). The flow is intentionally production-like at the user-flow level while
-remaining independent of Yandex Cloud. Phone login runs in test mode until one of the
-SMS provider blocks is filled in; the e-mail/password flow needs no external service.
+and **Yandex ID sign-in** (see above). Both open the same kind of local user: a Yandex
+sign-in needs no SMS, and a phone sign-in needs no Yandex app. This is independent of
+Yandex Cloud access — see the table above. Phone login runs in test mode until one of
+the SMS provider blocks is filled in; Yandex ID needs only `YANDEX_CLIENT_ID` and
+`YANDEX_CLIENT_SECRET`; the e-mail/password flow needs no external service.
 
 Phone login is covered by tests:
 
@@ -166,3 +212,9 @@ Phone login is covered by tests:
 - `server/src/auth/yandex-notify.test.ts` — provider selection, the SNS-compatible
   `Publish` request (endpoint, bearer token, `Account`, SMS attributes), and the
   readable errors for sandbox/region/authorization failures.
+- `server/src/auth/yandex-account-store.test.ts` — one Yandex identity maps to one local
+  user, a Yandex e-mail never merges into a pre-registered local account, and a profile
+  without e-mail still gets a readable synthetic address.
+- `server/src/routes/yandex-auth.test.ts` — the public start redirect, the state cookie,
+  the mocked token/profile exchange, the session cookie, `state_expired`, and the
+  `not_configured` return.

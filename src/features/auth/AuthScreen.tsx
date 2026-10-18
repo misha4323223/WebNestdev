@@ -1,9 +1,26 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { startPhoneLogin, verifyPhoneLogin } from "../../lib/auth-api";
+import { getYandexAuthStatus, startPhoneLogin, verifyPhoneLogin, type YandexAuthStatus } from "../../lib/auth-api";
 import { getHealth } from "../../lib/health-api";
 import { WebNestLogo } from "../../components/WebNestLogo";
 
 const RESEND_SECONDS = 45;
+
+/**
+ * What the Yandex callback puts in `?yandex_login=…`. A successful return never shows
+ * this screen (the session already exists), so every text here is a failure with a
+ * next step: "не удалось" without a reason is exactly what makes an OAuth setup hard.
+ */
+const yandexNotices: Record<string, string> = {
+  // Reaching this screen with `ok` means the session cookie did not stick, otherwise
+  // AuthGate would already be showing the app.
+  ok: "Яндекс подтвердил вход, но сессия не сохранилась. Разрешите cookie для сайта и попробуйте ещё раз.",
+  denied: "Вы отменили вход через Яндекс ID.",
+  not_configured: "Вход через Яндекс ID не настроен: добавьте YANDEX_CLIENT_ID и YANDEX_CLIENT_SECRET в «Ключи сервера».",
+  state_expired: "Ссылка входа через Яндекс ID устарела. Нажмите кнопку ещё раз.",
+  token_error: "Яндекс не выдал токен входа. Попробуйте ещё раз.",
+  profile_error: "Яндекс ID не отдал профиль. В приложении на oauth.yandex.ru должно быть включено право «Доступ к логину, имени и фамилии, полу» (login:info).",
+  error: "Не удалось завершить вход через Яндекс ID.",
+};
 
 export function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void }) {
   const [phone, setPhone] = useState("");
@@ -15,6 +32,9 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void })
   // Что сервер говорит о доставке кода: тестовый режим или отсутствие провайдера. Без этой
   // строки «SMS не приходят» на экране выглядит одинаково при любой причине.
   const [notice, setNotice] = useState("");
+  // Яндекс ID — отдельный вход: его состояние и ошибки не должны смешиваться с SMS.
+  const [yandex, setYandex] = useState<YandexAuthStatus | null>(null);
+  const [yandexNotice, setYandexNotice] = useState("");
   // Номер сборки, которая работает на сервере: по нему видно, что страница не взята из кеша.
   const [build, setBuild] = useState("");
   const [busy, setBusy] = useState(false);
@@ -29,8 +49,27 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void })
   useEffect(() => {
     let alive = true;
     void getHealth().then(health => { if (alive) setBuild(health.build); }).catch(() => {});
+    void getYandexAuthStatus().then(status => { if (alive) setYandex(status); }).catch(() => {});
     return () => { alive = false; };
   }, []);
+
+  // Read the OAuth result in an effect: a state initializer runs twice under StrictMode.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const status = params.get("yandex_login");
+    if (!status) return;
+    params.delete("yandex_login");
+    const query = params.toString();
+    window.history.replaceState(null, "", window.location.pathname + (query ? "?" + query : ""));
+    setYandexNotice(yandexNotices[status] ?? yandexNotices.error);
+  }, []);
+
+  function signInWithYandex() {
+    setError("");
+    setYandexNotice("");
+    const path = yandex?.loginPath ?? "/api/auth/yandex/start";
+    window.location.href = path + "?origin=" + encodeURIComponent(window.location.origin);
+  }
 
   async function requestCode(event?: FormEvent) {
     event?.preventDefault();
@@ -65,14 +104,28 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void })
     }
   }
 
+  const yandexUnavailable = yandex?.configured === false;
+
   return <main className="auth-screen">
     <section className="auth-card">
       <div className="brand auth-brand"><span className="brand-mark"><WebNestLogo size={24} tone="light"/></span><span>WebNestdev</span><span className="version">WEB</span></div>
       <div className="auth-heading">
         <span className="eyebrow">АККАУНТ</span>
-        <h1>{stage === "code" ? "Введите код из SMS" : "Вход по номеру телефона"}</h1>
-        {stage === "code" && <p>Код отправлен на {phone}</p>}
+        <h1>{stage === "code" ? "Введите код из SMS" : "Вход в аккаунт"}</h1>
+        {stage === "code"
+          ? <p>Код отправлен на {phone}</p>
+          : <p>Войдите через Яндекс ID или получите код по SMS — выберите удобный способ.</p>}
       </div>
+
+      {stage === "number" && <>
+        <button type="button" className="auth-yandex" onClick={signInWithYandex} disabled={yandexUnavailable}>
+          <span className="auth-yandex-mark" aria-hidden="true">Я</span>
+          Войти через Яндекс ID
+        </button>
+        {yandexUnavailable && <div className="auth-yandex-hint">Сервер не видит ключи приложения Яндекс ID. Вход по SMS работает без них.</div>}
+        {yandexNotice && <div className="auth-error auth-yandex-error">{yandexNotice}</div>}
+        <div className="auth-divider">или по номеру телефона</div>
+      </>}
 
       {stage === "number" && <form onSubmit={requestCode} className="auth-form">
         <label><span>Номер телефона</span><input type="tel" inputMode="tel" value={phone} onChange={event => setPhone(event.target.value)} placeholder="+7 999 123-45-67" autoComplete="tel" required /></label>

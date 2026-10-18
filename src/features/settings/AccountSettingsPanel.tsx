@@ -6,7 +6,7 @@ import { activePlanId, usePlanChoice, writePlanChoice } from "../../lib/plan-cho
 import { Check, CreditCard, Settings2, ShieldCheck, UserRound } from "lucide-react";
 
 type Preferences = UserPreferences;
-type AccountData = { user: { id: string; email: string; createdAt: string }; preferences: Preferences };
+type AccountData = { user: { id: string; email: string; createdAt: string; yandex?: { login: string; email: string | null } }; preferences: Preferences };
 
 const initialPreferences: Preferences = { language: "ru", compactMode: false, emailNotifications: true, productUpdates: false };
 const tokenLabel = (value: number) => value.toLocaleString("ru-RU");
@@ -59,7 +59,9 @@ export function AccountSettingsPanel() {
         <div className="account-settings-content">
           {section === "account" && <div className="account-section">
             <span className="eyebrow">ПРОФИЛЬ</span><h3>Профиль</h3><p className="account-muted">Основная информация вашего аккаунта WebNestdev.</p>
-            <label>Email<input value={account?.user.email ?? ""} readOnly/></label>
+            {account?.user.yandex && <label>Вход через Яндекс ID<input value={"@" + account.user.yandex.login} readOnly/></label>}
+            {account?.user.yandex?.email && <label>Email Яндекс ID<input value={account.user.yandex.email ?? ""} readOnly/></label>}
+            <label>{account?.user.yandex ? "Служебный адрес аккаунта" : "Email"}<input value={account?.user.email ?? ""} readOnly/></label>
             <label>ID аккаунта<input value={account?.user.id ?? ""} readOnly/></label>
             <label>Дата регистрации<input value={dateLabel(account?.user.createdAt ?? null)} readOnly/></label>
             <div className="account-note"><ShieldCheck size={14}/> Данные аккаунта доступны только после авторизации.</div>

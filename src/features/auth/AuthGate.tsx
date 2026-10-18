@@ -52,6 +52,16 @@ export function AuthGate(){
   const refresh=()=>{setState("loading");void getAuth().then(result=>{setState(result.authenticated?"authenticated":"guest");if(result.authenticated)void refreshPreferences();}).catch(()=>setState("guest"));};
   useEffect(()=>{refresh()},[]);
   useEffect(()=>{localStorage.removeItem("webnestdev.openWorkspace")},[]);
+  // A successful Yandex sign-in never mounts AuthScreen, so its query parameter is
+  // cleaned here; a failed one is left for the sign-in screen to explain and remove.
+  useEffect(()=>{
+    if(state!=="authenticated")return;
+    const params=new URLSearchParams(window.location.search);
+    if(params.get("yandex_login")!=="ok")return;
+    params.delete("yandex_login");
+    const query=params.toString();
+    window.history.replaceState(null,"",window.location.pathname+(query?"?"+query:""));
+  },[state]);
   // An OAuth callback returns with ?<provider>=<status>: drop the query from the
   // address bar and send the user back to the integrations list that started it.
   useEffect(()=>{

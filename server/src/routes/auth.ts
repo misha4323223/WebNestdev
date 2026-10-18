@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { attachSession, getCurrentUser, SESSION_COOKIE } from "../auth/auth.js";
 import { createUser, deleteSession, verifyUser, EMAIL_TAKEN_MESSAGE } from "../auth/auth-store.js";
+import { findYandexIdentityByUserId } from "../auth/yandex-account-store.js";
 import { checkAuthRateLimit } from "../auth/auth-rate-limit.js";
 
 const credentials = z.object({email:z.string().email().max(200),password:z.string().min(8).max(200)});
@@ -9,7 +10,19 @@ const credentials = z.object({email:z.string().email().max(200),password:z.strin
 export async function registerAuthRoutes(app:FastifyInstance){
   app.get("/api/auth/me", async request => {
     const user = await getCurrentUser(request);
-    return {authenticated:Boolean(user),user:user?{id:user.id,email:user.email,createdAt:user.createdAt}:null};
+    if (!user) return {authenticated:false,user:null};
+    // Which identity opened the account is shown in the profile: a Yandex ID sign-in
+    // has no password, and the synthetic address must not look like a real e-mail.
+    const yandex = await findYandexIdentityByUserId(user.id);
+    return {
+      authenticated:true,
+      user:{
+        id:user.id,
+        email:user.email,
+        createdAt:user.createdAt,
+        ...(yandex ? {yandex:{login:yandex.login,email:yandex.email??null}} : {}),
+      },
+    };
   });
   app.post("/api/auth/register", async (request,reply) => {
     const rateLimit = checkAuthRateLimit(request.ip, "register");
