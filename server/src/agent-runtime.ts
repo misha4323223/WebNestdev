@@ -19,7 +19,6 @@ import { finalizeRunChanges } from "./changes/changes-service.js";
  * `database.env` writes the project's connection string, so it belongs here too.
  */
 const MUTATING_TOOLS=new Set(["fs.write","fs.rename","fs.delete","terminal.exec","npm.install","database.env"]);
-const MAX_CONSECUTIVE_VERIFY_FAILURES=3;
 /**
  * Git bookkeeping changes the repository, not the code, so it is not verified.
  *
@@ -64,11 +63,29 @@ export function changesSomething(name:string,input:unknown){
   return method.toUpperCase()!=="GET"&&method.toUpperCase()!=="HEAD";
 }
 
-import { commandSucceeded, routeFromMutation, shouldRunBrowserRuntime } from "./agent/verification-policy.js";
+import { commandSucceeded,countVerificationFailure,MAX_VERIFICATION_ATTEMPTS,routeFromMutation,shouldRunBrowserRuntime,verificationBuildCommand,verificationFailureSummary } from "./agent/verification-policy.js";
 import { getPlatformProviderConfig } from "./provider/platform-provider.js";
+import { getSandbox } from "./sandbox-manager.js";
+import { readBuildScript } from "./preview/static-plan.js";
 import { recordRunUsage } from "./account/usage-store.js";
 import { beginRun,endRun } from "./agent/active-runs.js";
 
+
+/**
+ * Сборка проекта — только если он её объявил. Статическая страница без `package.json` не имеет
+ * скрипта сборки, и `npm run build` в ней падает с `ENOENT …/package.json`: это не дефект проекта,
+ * а проверка, которая спрашивает не о том. Раньше такие падения считались отказом проверки и
+ * останавливали запуск на третьем файле статического сайта.
+ */
+async function projectBuildCommand(projectId:string,userId:string){
+  try{
+    const config=await getSandbox(projectId,userId);
+    return verificationBuildCommand(await readBuildScript(config.root));
+  }catch{
+    // Тип проекта неизвестен — ведём себя как раньше, а не пропускаем сборку молча.
+    return "npm run build";
+  }
+}
 
 export class AgentRuntime {
   async run(request:AgentRunRequest,emit:EventSink,signal?:AbortSignal){
@@ -114,6 +131,7 @@ export class AgentRuntime {
       let budget:StepBudget={budgetTokens:contextBudgetTokens(),charsPerToken:DEFAULT_CHARS_PER_TOKEN,maxMessages:contextMaxMessages()};
       let consecutiveVerifyFailures=0;
       let consecutiveScenarioFailures=0;
+      let lastVerificationFailure="";
       let verificationPending=false;
       let scenarioPending=false;
       // The plan is what the user watches during a long run, so it is tracked per run.
@@ -141,13 +159,14 @@ export class AgentRuntime {
       };
 
       const runVerification=async (browserRuntime:boolean,routes:string[])=>{
+        const buildCommand=await projectBuildCommand(request.projectId,request.userId);
         const verifyCalls=[
-          {id:randomUUID(),name:"terminal.exec",arguments:{command:"npm run build"}},
+          ...(buildCommand?[{id:randomUUID(),name:"terminal.exec",arguments:{command:buildCommand}}]:[]),
           {id:randomUUID(),name:"preview.start",arguments:{}},
           {id:randomUUID(),name:"project.verify",arguments:{path:routes[0]??"/"}},
           ...(browserRuntime?routes.map(path=>({id:randomUUID(),name:"browser.runtime",arguments:{path}})):[]),
         ];
-        const qa={build:false,preview:false,ssr:false,browser:browserRuntime?false:true};
+        const qa={build:!buildCommand,preview:false,ssr:false,browser:browserRuntime?false:true};
         for(const verifyCall of verifyCalls){
           if(signal?.aborted)throw new Error("Запуск агента отменён");
           emit({type:"tool.started",runId,toolCallId:verifyCall.id,name:verifyCall.name,input:verifyCall.arguments});
@@ -157,29 +176,42 @@ export class AgentRuntime {
             messages.push({role:"tool",content:boundToolOutput(verifyCall.name,output),tool_call_id:verifyCall.id});
             if(verifyCall.name==="terminal.exec"){
               qa.build=commandSucceeded(output);
-              if(!qa.build)return false;
+              if(!qa.build){
+                lastVerificationFailure=verificationFailureSummary(output)||lastVerificationFailure;
+                return false;
+              }
             }
             if(verifyCall.name==="preview.start"){
               qa.preview=Boolean((output as {running?:boolean;ok?:boolean}).running??(output as {ok?:boolean}).ok);
-              if(!qa.preview)return false;
+              if(!qa.preview){
+                lastVerificationFailure=verificationFailureSummary(output)||lastVerificationFailure;
+                return false;
+              }
             }
             if(verifyCall.name==="project.verify"){
               qa.ssr=Boolean((output as {ok?:boolean}).ok);
-              if(!qa.ssr)return false;
+              if(!qa.ssr){
+                lastVerificationFailure=verificationFailureSummary(output)||lastVerificationFailure;
+                return false;
+              }
             }
             if(verifyCall.name==="browser.runtime"){
               qa.browser=Boolean((output as {ok?:boolean}).ok);
-              if(!qa.browser)return false;
+              if(!qa.browser){
+                lastVerificationFailure=verificationFailureSummary(output)||lastVerificationFailure;
+                return false;
+              }
             }
           }catch(error){
             const message=error instanceof Error?error.message:String(error);
             const output={ok:false,error:message};
+            lastVerificationFailure=message;
             await finishTool(verifyCall,output);
             messages.push({role:"tool",content:boundToolOutput(verifyCall.name,output),tool_call_id:verifyCall.id});
             return false;
           }
         }
-        messages.push({role:"system",content:"QA VERIFICATION PASSED: BUILD=PASS, PREVIEW=PASS, SSR=PASS"+(browserRuntime?", BROWSER=PASS":"")});
+        messages.push({role:"system",content:"QA VERIFICATION PASSED: BUILD="+(buildCommand?"PASS":"SKIPPED (the project declares no build script)")+", PREVIEW=PASS, SSR=PASS"+(browserRuntime?", BROWSER=PASS":"")});
         return true;
       };
 
@@ -199,8 +231,14 @@ export class AgentRuntime {
 
         if(!result.calls.length){
           if(verificationPending||scenarioPending){
-            if(consecutiveVerifyFailures>=MAX_CONSECUTIVE_VERIFY_FAILURES){
-              throw new Error("Проверка не прошла несколько раз подряд — достигнут предел попыток проверки");
+            // Модель объявила задачу готовой, а проверка не прошла — вот это и есть неудачная попытка.
+            if(verificationPending)consecutiveVerifyFailures=countVerificationFailure(consecutiveVerifyFailures,"finish");
+            if(scenarioPending)consecutiveScenarioFailures=countVerificationFailure(consecutiveScenarioFailures,"finish");
+            if(verificationPending&&consecutiveVerifyFailures>=MAX_VERIFICATION_ATTEMPTS){
+              throw new Error("Проверка не прошла несколько раз подряд — достигнут предел попыток проверки"+(lastVerificationFailure?": "+lastVerificationFailure:""));
+            }
+            if(scenarioPending&&consecutiveScenarioFailures>=MAX_VERIFICATION_ATTEMPTS){
+              throw new Error("Сценарий проверки в браузере не прошёл несколько раз подряд — достигнут предел попыток");
             }
             messages.push({
               role:"system",
@@ -283,7 +321,7 @@ export class AgentRuntime {
               }else{
                 scenarioPending=true;
                 consecutiveScenarioFailures++;
-                if(consecutiveScenarioFailures>=MAX_CONSECUTIVE_VERIFY_FAILURES){
+                if(consecutiveScenarioFailures>=MAX_VERIFICATION_ATTEMPTS){
                   throw new Error("Сценарий проверки в браузере не прошёл несколько раз подряд — достигнут предел попыток");
                 }
               }
@@ -295,7 +333,8 @@ export class AgentRuntime {
                 consecutiveVerifyFailures=0;
               }else{
                 verificationPending=true;
-                consecutiveVerifyFailures++;
+                lastVerificationFailure=verificationFailureSummary(output)||lastVerificationFailure;
+                consecutiveVerifyFailures=countVerificationFailure(consecutiveVerifyFailures,"tool");
               }
             }
 
@@ -346,7 +385,7 @@ export class AgentRuntime {
                   scenarioPending=true;
                   consecutiveScenarioFailures++;
                   messages.push({role:"system",content:"AUTOMATIC BROWSER QA FAILED. Inspect the scenario diagnostics and failure screenshot, fix the smallest necessary issue, then repeat verification. Do not finish while Browser QA is pending."});
-                  if(consecutiveScenarioFailures>=MAX_CONSECUTIVE_VERIFY_FAILURES) throw new Error("Сценарий проверки в браузере не прошёл несколько раз подряд — достигнут предел попыток");
+                  if(consecutiveScenarioFailures>=MAX_VERIFICATION_ATTEMPTS) throw new Error("Сценарий проверки в браузере не прошёл несколько раз подряд — достигнут предел попыток");
                 }
               }catch(error){
                 const message=error instanceof Error?error.message:String(error);
@@ -354,17 +393,15 @@ export class AgentRuntime {
                 consecutiveScenarioFailures++;
                 await finishTool(scenarioCall,{ok:false,error:message});
                 messages.push({role:"tool",content:JSON.stringify({ok:false,error:message}),tool_call_id:scenarioCall.id});
-                if(consecutiveScenarioFailures>=MAX_CONSECUTIVE_VERIFY_FAILURES) throw new Error("Сценарий проверки в браузере не прошёл несколько раз подряд — достигнут предел попыток");
+                if(consecutiveScenarioFailures>=MAX_VERIFICATION_ATTEMPTS) throw new Error("Сценарий проверки в браузере не прошёл несколько раз подряд — достигнут предел попыток");
               }
             }else{
               scenarioPending=false;
             }
           }else{
-            consecutiveVerifyFailures++;
+            // Диагностика, а не отказ: модель ещё не видела её и продолжает собирать проект.
+            consecutiveVerifyFailures=countVerificationFailure(consecutiveVerifyFailures,"auto");
             verificationPending=true;
-            if(consecutiveVerifyFailures>=MAX_CONSECUTIVE_VERIFY_FAILURES){
-              throw new Error("Проверка не прошла несколько раз подряд — достигнут предел попыток проверки");
-            }
           }
         }
 
