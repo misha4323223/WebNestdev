@@ -1,5 +1,6 @@
 import { useCallback,useEffect,useState } from "react";
-import { Cloud,KeyRound } from "lucide-react";
+import { KeyRound } from "lucide-react";
+import { BrandMark } from "../../components/BrandLogo";
 import { ConnectorCard,type ConnectorStatus } from "../integrations/ConnectorCard";
 
 type YandexStatus = {
@@ -122,7 +123,7 @@ export function YandexConnect(){
 
   return <ConnectorCard
     name="Yandex Cloud"
-    icon={<Cloud size={18}/>}
+    icon={<BrandMark brand="yandex-cloud" size={18}/>}
     status={status}
     account={account}
     busy={busy}

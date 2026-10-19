@@ -1,6 +1,7 @@
 import { useCallback,useEffect,useState } from "react";
 import { Database, KeyRound, ShieldCheck, TriangleAlert } from "lucide-react";
 import { ConnectorCard,type ConnectorStatus } from "../integrations/ConnectorCard";
+import { BrandMark,type BrandId } from "../../components/BrandLogo";
 import type { ConnectorSurface } from "../github/GitHubConnect";
 
 type DatabaseStatus = {
@@ -31,6 +32,8 @@ type Provider = {
   steps:string[];
   consoleUrl:string;
   consoleLabel:string;
+  /** Логотип провайдера в чипе выбора; у своего сервера его нет. */
+  logo?:BrandId;
 };
 
 /**
@@ -39,7 +42,7 @@ type Provider = {
  */
 const providers:Provider[]=[
   {
-    id:"yandex-postgresql",name:"Yandex Cloud · Managed PostgreSQL",short:"Yandex · PostgreSQL",engine:"PostgreSQL",scheme:"postgres",
+    id:"yandex-postgresql",logo:"yandex-cloud",name:"Yandex Cloud · Managed PostgreSQL",short:"Yandex · PostgreSQL",engine:"PostgreSQL",scheme:"postgres",
     summary:"Кластер PostgreSQL, управляемый Яндексом: бэкапы, реплики и обновления — на стороне облака.",
     steps:[
       "Откройте консоль console.yandex.cloud, выберите каталог и раздел «Managed PostgreSQL».",
@@ -50,7 +53,7 @@ const providers:Provider[]=[
     consoleUrl:"https://console.yandex.cloud",consoleLabel:"Открыть консоль Yandex Cloud",
   },
   {
-    id:"yandex-ydb",name:"Yandex Cloud · Serverless YDB",short:"Yandex · YDB",engine:"YDB",scheme:"grpcs",
+    id:"yandex-ydb",logo:"yandex-cloud",name:"Yandex Cloud · Serverless YDB",short:"Yandex · YDB",engine:"YDB",scheme:"grpcs",
     summary:"Бессерверная база Yandex: платите за запросы, отдельный сервер поднимать не нужно.",
     steps:[
       "В консоли console.yandex.cloud откройте «YDB» → «Создать базу данных» и выберите тип Serverless.",
@@ -60,7 +63,7 @@ const providers:Provider[]=[
     consoleUrl:"https://console.yandex.cloud",consoleLabel:"Открыть консоль Yandex Cloud",
   },
   {
-    id:"vk-cloud",name:"VK Cloud",short:"VK Cloud",engine:"PostgreSQL",scheme:"postgres",
+    id:"vk-cloud",logo:"vk",name:"VK Cloud",short:"VK Cloud",engine:"PostgreSQL",scheme:"postgres",
     summary:"Облако VK (бывший Mail.ru Cloud Solutions): базы в российских дата-центрах.",
     steps:[
       "Откройте mcs.mail.ru и создайте проект, если его ещё нет.",
@@ -70,7 +73,7 @@ const providers:Provider[]=[
     consoleUrl:"https://mcs.mail.ru",consoleLabel:"Открыть VK Cloud",
   },
   {
-    id:"selectel",name:"Selectel · Managed Databases",short:"Selectel",engine:"PostgreSQL",scheme:"postgres",
+    id:"selectel",logo:"selectel",name:"Selectel · Managed Databases",short:"Selectel",engine:"PostgreSQL",scheme:"postgres",
     summary:"Облачные базы Selectel с выделенными кластерами и бэкапами.",
     steps:[
       "Войдите в my.selectel.ru и откройте «Облачные базы данных».",
@@ -80,7 +83,7 @@ const providers:Provider[]=[
     consoleUrl:"https://my.selectel.ru",consoleLabel:"Открыть Selectel",
   },
   {
-    id:"timeweb",name:"Timeweb Cloud · Базы данных",short:"Timeweb Cloud",engine:"PostgreSQL",scheme:"postgres",
+    id:"timeweb",logo:"timeweb",name:"Timeweb Cloud · Базы данных",short:"Timeweb Cloud",engine:"PostgreSQL",scheme:"postgres",
     summary:"Простые управляемые базы Timeweb Cloud: быстрый старт, почасовая оплата.",
     steps:[
       "В панели timeweb.cloud откройте «Базы данных» → «Создать базу».",
@@ -90,7 +93,7 @@ const providers:Provider[]=[
     consoleUrl:"https://timeweb.cloud/my",consoleLabel:"Открыть Timeweb Cloud",
   },
   {
-    id:"cloud-ru",name:"Cloud.ru · Managed PostgreSQL",short:"Cloud.ru",engine:"PostgreSQL",scheme:"postgres",
+    id:"cloud-ru",logo:"cloudru",name:"Cloud.ru · Managed PostgreSQL",short:"Cloud.ru",engine:"PostgreSQL",scheme:"postgres",
     summary:"Облако Cloud.ru (Сбер): Managed PostgreSQL в российских зонах.",
     steps:[
       "Войдите в console.cloud.ru и выберите проект.",
@@ -242,7 +245,7 @@ export function DatabaseConnect({surface="home"}:{surface?:ConnectorSurface}){
       {hintOpen&&<div className="connector-hint">
         <strong><ShieldCheck size={13}/> Как создать базу на российском сервисе</strong>
         <div className="connector-actions-row">
-          {providers.map(item=><button key={item.id} className={"ghost-button connector-toggle"+(item.id===provider?" active":"")} onClick={()=>{setProvider(item.id);setFields(current=>({...current,scheme:item.scheme}));setNotice(null);setError(null)}}>{item.short}</button>)}
+          {providers.map(item=><button key={item.id} className={"ghost-button connector-toggle"+(item.id===provider?" active":"")} onClick={()=>{setProvider(item.id);setFields(current=>({...current,scheme:item.scheme}));setNotice(null);setError(null)}}>{item.logo&&<BrandMark brand={item.logo} size={14}/>}{item.short}</button>)}
         </div>
         <p><em>{active.name}</em> — {active.summary}</p>
         {active.steps.map(step=><p key={step}>{step}</p>)}

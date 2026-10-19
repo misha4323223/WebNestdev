@@ -10,6 +10,8 @@
  * пользователь ищет вкладку, которой нет.
  */
 
+import type { BrandId } from "../../../components/BrandLogo";
+
 export type ServiceCategoryId = "storage" | "email" | "payments" | "ai" | "maps" | "crm";
 
 export type ServiceCategory = {
@@ -46,14 +48,14 @@ export type ServiceInfo = {
   docsUrl: string;
   steps: string[];
   fields: ServiceField[];
-  /** Фирменный цвет и монограмма плитки. */
-  color: string;
-  mark: string;
+  /** Официальный логотип сервиса. */
+  logo: BrandId;
 };
 
 export const SERVICES: ServiceInfo[] = [
   {
     id: "selectel-storage",
+    logo: "selectel",
     name: "Selectel",
     category: "storage",
     tagline: "Объектное хранилище Selectel",
@@ -70,11 +72,10 @@ export const SERVICES: ServiceInfo[] = [
       { key: "endpoint", label: "Endpoint (необязательно)", placeholder: "по умолчанию s3.storage.selcloud.ru", optional: true },
       { key: "region", label: "Регион (необязательно)", placeholder: "по умолчанию ru-1", optional: true },
     ],
-    color: "#1d4ed8",
-    mark: "S",
   },
   {
     id: "vk-storage",
+    logo: "vk",
     name: "VK Cloud",
     category: "storage",
     tagline: "Объектное хранилище VK Cloud",
@@ -91,11 +92,10 @@ export const SERVICES: ServiceInfo[] = [
       { key: "endpoint", label: "Endpoint (необязательно)", placeholder: "по умолчанию hb.ru-msk.vkcloud-storage.ru", optional: true },
       { key: "region", label: "Регион (необязательно)", placeholder: "по умолчанию ru-msk", optional: true },
     ],
-    color: "#0077ff",
-    mark: "VK",
   },
   {
     id: "yandex-storage",
+    logo: "yandex-cloud",
     name: "Yandex Object Storage",
     category: "storage",
     tagline: "Хранилище Yandex Cloud",
@@ -112,11 +112,10 @@ export const SERVICES: ServiceInfo[] = [
       { key: "endpoint", label: "Endpoint (необязательно)", placeholder: "по умолчанию storage.yandexcloud.net", optional: true },
       { key: "region", label: "Регион (необязательно)", placeholder: "по умолчанию ru-central1", optional: true },
     ],
-    color: "#fc3f1d",
-    mark: "Y",
   },
   {
     id: "timeweb-storage",
+    logo: "timeweb",
     name: "Timeweb Cloud S3",
     category: "storage",
     tagline: "Хранилище Timeweb Cloud",
@@ -133,11 +132,10 @@ export const SERVICES: ServiceInfo[] = [
       { key: "endpoint", label: "Endpoint (необязательно)", placeholder: "по умолчанию s3.twcstorage.ru", optional: true },
       { key: "region", label: "Регион (необязательно)", placeholder: "по умолчанию ru-1", optional: true },
     ],
-    color: "#0b6bff",
-    mark: "T",
   },
   {
     id: "cloudru-storage",
+    logo: "cloudru",
     name: "Cloud.ru",
     category: "storage",
     tagline: "Object Storage Cloud.ru",
@@ -155,11 +153,10 @@ export const SERVICES: ServiceInfo[] = [
       { key: "endpoint", label: "Endpoint (необязательно)", placeholder: "по умолчанию s3.cloud.ru", optional: true },
       { key: "region", label: "Регион (необязательно)", placeholder: "по умолчанию ru-central-1", optional: true },
     ],
-    color: "#1f4fd8",
-    mark: "C",
   },
   {
     id: "notisend",
+    logo: "notisend",
     name: "NotiSend",
     category: "email",
     tagline: "Письма и рассылки, серверы в РФ",
@@ -171,11 +168,10 @@ export const SERVICES: ServiceInfo[] = [
       "Вставьте ключ — проверим чтением списка шаблонов.",
     ],
     fields: [{ key: "apiKey", label: "API-ключ", placeholder: "ключ из кабинета NotiSend", secret: true }],
-    color: "#00a3ff",
-    mark: "N",
   },
   {
     id: "sendsay",
+    logo: "sendsay",
     name: "Sendsay",
     category: "email",
     tagline: "Российский сервис рассылок",
@@ -190,11 +186,10 @@ export const SERVICES: ServiceInfo[] = [
       { key: "account", label: "Код аккаунта", placeholder: "обычно совпадает с логином" },
       { key: "apiKey", label: "API-ключ", placeholder: "ключ пользователя API", secret: true },
     ],
-    color: "#ff5c35",
-    mark: "S",
   },
   {
     id: "rusender",
+    logo: "rusender",
     name: "RuSender",
     category: "email",
     tagline: "Письма через API и SMTP",
@@ -206,11 +201,10 @@ export const SERVICES: ServiceInfo[] = [
       "Вставьте токен (rs_ck_v1_…) — проверим чтением списка ключей отправки.",
     ],
     fields: [{ key: "apiKey", label: "API-токен", placeholder: "rs_ck_v1_…", secret: true }],
-    color: "#e8543f",
-    mark: "R",
   },
   {
     id: "unisender",
+    logo: "unisender",
     name: "Unisender",
     category: "email",
     tagline: "Самый известный сервис рассылок (лицензиар на Кипре)",
@@ -222,11 +216,10 @@ export const SERVICES: ServiceInfo[] = [
       "Вставьте ключ — проверим чтением списка адресов.",
     ],
     fields: [{ key: "apiKey", label: "API-ключ", placeholder: "ключ из кабинета Unisender", secret: true }],
-    color: "#8b5cf6",
-    mark: "U",
   },
   {
     id: "yookassa",
+    logo: "yookassa",
     name: "ЮKassa",
     category: "payments",
     tagline: "Приём платежей (Сбер)",
@@ -241,11 +234,10 @@ export const SERVICES: ServiceInfo[] = [
       { key: "shopId", label: "Shop ID", placeholder: "идентификатор магазина" },
       { key: "secretKey", label: "Секретный ключ", placeholder: "secret_key", secret: true },
     ],
-    color: "#0f52ba",
-    mark: "Ю",
   },
   {
     id: "cloudpayments",
+    logo: "cloudpayments",
     name: "CloudPayments",
     category: "payments",
     tagline: "Интернет-эквайринг Т-Банка",
@@ -260,11 +252,10 @@ export const SERVICES: ServiceInfo[] = [
       { key: "publicId", label: "Public ID", placeholder: "pk_…" },
       { key: "apiSecret", label: "API Secret", placeholder: "секрет API", secret: true },
     ],
-    color: "#1a73e8",
-    mark: "CP",
   },
   {
     id: "robokassa",
+    logo: "robokassa",
     name: "Robokassa",
     category: "payments",
     tagline: "Приём платежей, принимает самозанятых",
@@ -280,11 +271,10 @@ export const SERVICES: ServiceInfo[] = [
       { key: "password1", label: "Password #1", placeholder: "пароль №1", secret: true },
       { key: "password2", label: "Password #2", placeholder: "пароль №2", secret: true },
     ],
-    color: "#ef6c00",
-    mark: "R",
   },
   {
     id: "tbank-payments",
+    logo: "tbank",
     name: "Т-Банк Эквайринг",
     category: "payments",
     tagline: "Интернет-эквайринг Т-Банка",
@@ -299,11 +289,10 @@ export const SERVICES: ServiceInfo[] = [
       { key: "terminalKey", label: "TerminalKey", placeholder: "ключ терминала" },
       { key: "password", label: "Password", placeholder: "пароль терминала", secret: true },
     ],
-    color: "#ffdd2d",
-    mark: "Т",
   },
   {
     id: "gigachat",
+    logo: "gigachat",
     name: "GigaChat",
     category: "ai",
     tagline: "Модель Сбера",
@@ -318,11 +307,10 @@ export const SERVICES: ServiceInfo[] = [
       { key: "authKey", label: "Авторизационный ключ", placeholder: "Base64 Client ID:Client Secret", secret: true },
       { key: "scope", label: "Scope (необязательно)", placeholder: "по умолчанию GIGACHAT_API_PERS", optional: true },
     ],
-    color: "#21a038",
-    mark: "G",
   },
   {
     id: "yandex-ai",
+    logo: "yandex-cloud",
     name: "Yandex AI Studio",
     category: "ai",
     tagline: "Модели Yandex Cloud",
@@ -337,11 +325,10 @@ export const SERVICES: ServiceInfo[] = [
       { key: "apiKey", label: "API-ключ", placeholder: "AQVN…", secret: true },
       { key: "folderId", label: "Folder ID", placeholder: "идентификатор каталога" },
     ],
-    color: "#fc3f1d",
-    mark: "YA",
   },
   {
     id: "yandex-maps",
+    logo: "yandex",
     name: "Yandex Maps API",
     category: "maps",
     tagline: "Карты и геокодер Яндекса",
@@ -353,11 +340,10 @@ export const SERVICES: ServiceInfo[] = [
       "Вставьте ключ — проверим запросом «Москва» к геокодеру.",
     ],
     fields: [{ key: "apiKey", label: "API-ключ", placeholder: "ключ геокодера", secret: true }],
-    color: "#fc3f1d",
-    mark: "YM",
   },
   {
     id: "2gis",
+    logo: "2gis",
     name: "2GIS",
     category: "maps",
     tagline: "Карты и справочник 2GIS",
@@ -369,11 +355,10 @@ export const SERVICES: ServiceInfo[] = [
       "Вставьте ключ — проверим поиском региона.",
     ],
     fields: [{ key: "apiKey", label: "API-ключ", placeholder: "ключ 2GIS", secret: true }],
-    color: "#00b956",
-    mark: "2G",
   },
   {
     id: "retailcrm",
+    logo: "retailcrm",
     name: "RetailCRM",
     category: "crm",
     tagline: "CRM для интернет-магазинов",
@@ -388,11 +373,10 @@ export const SERVICES: ServiceInfo[] = [
       { key: "accountUrl", label: "Адрес аккаунта", placeholder: "https://ваш-аккаунт.retailcrm.ru" },
       { key: "apiKey", label: "Ключ API", placeholder: "ключ из кабинета", secret: true },
     ],
-    color: "#2b6cb0",
-    mark: "RC",
   },
   {
     id: "bitrix24",
+    logo: "bitrix24",
     name: "Битрикс24",
     category: "crm",
     tagline: "CRM через входящий вебхук",
@@ -404,11 +388,10 @@ export const SERVICES: ServiceInfo[] = [
       "Вставьте ссылку — проверим методом user.current.",
     ],
     fields: [{ key: "webhookUrl", label: "Ссылка вебхука", placeholder: "https://портал.bitrix24.ru/rest/1/…/", secret: true }],
-    color: "#2fc7f7",
-    mark: "Б24",
   },
   {
     id: "amocrm",
+    logo: "amocrm",
     name: "amoCRM",
     category: "crm",
     tagline: "CRM с долгосрочным токеном",
@@ -423,7 +406,5 @@ export const SERVICES: ServiceInfo[] = [
       { key: "host", label: "Адрес аккаунта", placeholder: "https://ваш-домен.amocrm.ru" },
       { key: "token", label: "Долгосрочный токен", placeholder: "токен интеграции", secret: true },
     ],
-    color: "#339dc7",
-    mark: "A",
   },
 ];

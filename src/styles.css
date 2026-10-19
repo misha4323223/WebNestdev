@@ -24,17 +24,48 @@ button,textarea{font:inherit}button{color:inherit}
 .topbar-plan{height:24px;display:flex;align-items:center;gap:6px;border:1px solid #2b3139;border-radius:999px;background:#141821;color:#b9c0c9;font-size:10px;padding:0 9px;cursor:pointer;white-space:nowrap}
 .topbar-plan:hover{border-color:#3a424c;color:#e8eaed}
 .icon-button,.ghost-button{border:1px solid transparent;background:transparent;border-radius:6px;display:flex;align-items:center;gap:6px;cursor:pointer}.icon-button{width:30px;height:30px;justify-content:center}.ghost-button{height:30px;padding:0 9px;font-size:11px;color:#aeb4bd}.icon-button:hover,.ghost-button:hover{background:#171a20;border-color:#282d34}
-.workspace{flex:1;min-height:0;display:flex}.sidebar{width:210px;flex:none;border-right:1px solid #20242a;background:#0d0f13;display:flex;flex-direction:column;padding:10px 8px}.sidebar-head{display:flex;gap:5px}.new-project{width:100%;height:31px;border:1px solid #2c3239;background:#171a1f;border-radius:6px;display:flex;align-items:center;justify-content:center;gap:6px;font-size:11px;cursor:pointer}.new-project:hover{background:#1c2026}
+.workspace{flex:1;min-height:0;display:flex}.sidebar{width:210px;flex:none;border-right:1px solid #20242a;background:#0d0f13;display:flex;flex-direction:column;padding:10px 8px}
+/* Настройки и публикация занимают всю ширину: колонка слева закрывается, а вернуться
+   можно кнопкой «К работе» внутри самих настроек. На телефоне шторка и так выезжает поверх. */
+@media(min-width:651px){.app-shell.sidebar-hidden .sidebar{display:none}}.sidebar-head{display:flex;gap:5px}.new-project{width:100%;height:31px;border:1px solid #2c3239;background:#171a1f;border-radius:6px;display:flex;align-items:center;justify-content:center;gap:6px;font-size:11px;cursor:pointer}.new-project:hover{background:#1c2026}
 .sidebar-section{padding:15px 4px 0}.section-label,.eyebrow,.sponsor-label{font-size:9px;letter-spacing:.09em;color:#69717c;font-weight:700}.section-label{padding:0 6px 7px}.nav-item{width:100%;height:30px;border:0;background:transparent;color:#969da7;border-radius:5px;text-align:left;padding:0 8px;display:flex;align-items:center;gap:8px;font-size:11px;cursor:pointer}.nav-item:hover,.nav-item.active{background:#171a1f;color:#e7e9ec}.project-row{height:30px;display:flex;align-items:center;gap:8px;padding:0 8px;color:#b6bbc3;font-size:11px}.status-dot{width:6px;height:6px;border-radius:50%;background:#6b747e;display:inline-block}.sidebar-footer{margin-top:auto;padding:10px 4px}.sponsor-label{padding:0 5px 7px}.sponsor-card{border:1px solid #252a31;background:#14171c;border-radius:7px;padding:8px;display:flex;align-items:center;gap:8px}.sponsor-logo{width:26px;height:26px;border-radius:5px;background:#232830;display:grid;place-items:center;font-size:9px;font-weight:700}.sponsor-card strong,.sponsor-card span{display:block}.sponsor-card strong{font-size:10px}.sponsor-card span{font-size:9px;color:#707782;margin-top:2px}
-.main{flex:1;min-width:0;min-height:0;display:flex;overflow:hidden}.chat{min-width:0;min-height:0;flex:1;display:flex;flex-direction:column;max-width:none;overflow:hidden}.chat-header{height:65px;border-bottom:1px solid #20242a;padding:13px 20px;display:flex;align-items:center;justify-content:space-between}.chat-header h1{margin:2px 0 0;font-size:16px;font-weight:600}
-/* Mode and model live in the composer, next to the attach button. */
-.mode-toggle{display:flex;align-items:center;gap:6px;height:29px;padding:0 9px;border:1px solid #282d34;border-radius:8px;background:#0d1013;color:#aeb4bd;font-size:10px;cursor:pointer;white-space:nowrap;flex:none}
-.mode-toggle:hover{border-color:#3a424c;color:#e8eaed}
-.mode-toggle>svg:last-child{color:#5f6670;flex:none}
-/* Planner is read-only, so it reads as a caution state rather than another action. */
-.mode-toggle.planner{border-color:#3d3a22;background:#15140a;color:#d7bd79}
-.mode-toggle.planner:hover{border-color:#514c2c;color:#e8d59a}
-.mode-toggle.planner>svg:last-child{color:#8d7f4c}
+.main{flex:1;min-width:0;min-height:0;display:flex;overflow:hidden}.chat{min-width:0;min-height:0;flex:1;display:flex;flex-direction:column;max-width:none;overflow:hidden}
+/* Режим и размышление — одна настройка запуска, поэтому и один компактный контрол:
+   кнопка показывает роль, меню рядом переключает роль и глубину. */
+.agent-mode{position:relative;flex:none}
+.agent-mode-trigger{display:flex;align-items:center;gap:5px;height:29px;padding:0 8px;border:1px solid #282d34;border-radius:8px;background:#0d1013;color:#aeb4bd;font-size:10px;cursor:pointer;white-space:nowrap}
+.agent-mode-trigger:hover,.agent-mode-trigger.open{border-color:#3a424c;background:#11151a;color:#e8eaed}
+.agent-mode-trigger>svg:first-child{flex:none;color:#8d95a0}
+.agent-mode-label{font-weight:600}
+.agent-mode-dot,.agent-mode-depth{color:#7d858f}
+.agent-mode-caret{flex:none;color:#5f6670;transition:transform .16s ease}
+.agent-mode-trigger.open .agent-mode-caret{transform:rotate(180deg)}
+/* Планировщик ничего не меняет в файлах — это осторожное состояние, а не действие. */
+.agent-mode-trigger.planner{border-color:#3d3a22;background:#15140a;color:#d7bd79}
+.agent-mode-trigger.planner>svg:first-child{color:#c9a34d}
+.agent-mode-trigger.planner .agent-mode-dot,.agent-mode-trigger.planner .agent-mode-depth{color:#9c8b52}
+.agent-mode-trigger.planner:hover,.agent-mode-trigger.planner.open{border-color:#514c2c;background:#191708;color:#e8d59a}
+/* Меню открывается вверх: панель ввода стоит у нижнего края экрана. */
+.agent-mode-menu{position:absolute;left:0;bottom:calc(100% + 8px);z-index:30;width:280px;padding:10px;border:1px solid #2b3139;border-radius:10px;background:#0e1216;box-shadow:0 18px 44px rgba(0,0,0,.55);display:grid;gap:8px}
+.agent-mode-head{display:flex;align-items:center;gap:5px;color:#69717c}
+.agent-mode-head .eyebrow{font-size:9px}
+.agent-mode-head.with-icon{margin-top:2px;padding-top:8px;border-top:1px solid #1d232b}
+.agent-mode-head.with-icon svg{color:#69717c}
+.agent-mode-options{display:grid;gap:3px}
+.agent-mode-option{display:flex;align-items:flex-start;gap:8px;width:100%;padding:7px 8px;border:1px solid transparent;border-radius:7px;background:transparent;color:#aeb4bd;text-align:left;cursor:pointer}
+.agent-mode-option:hover{background:#151a20;color:#e8eaed}
+.agent-mode-option.active{border-color:#2c3a33;background:#111914;color:#e8eaed}
+.agent-mode-option-icon{flex:none;width:22px;height:22px;border-radius:6px;background:#1a1f26;color:#9aa2ad;display:grid;place-items:center}
+.agent-mode-option.active .agent-mode-option-icon{background:#1d3327;color:#8fdcb0}
+.agent-mode-option-text{min-width:0;display:grid;gap:1px}
+.agent-mode-option-text strong{font-size:11px;font-weight:600;line-height:1.4}
+.agent-mode-option-text small{font-size:9.5px;line-height:1.45;color:#7c848f}
+.agent-mode-check{flex:none;margin-left:auto;margin-top:2px;color:#7fc7a1}
+.agent-mode-depths{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}
+.agent-mode-depths button{height:26px;padding:0 4px;border:1px solid #262c34;border-radius:6px;background:#0b0f13;color:#8d95a0;font-size:9.5px;cursor:pointer}
+.agent-mode-depths button:hover{border-color:#333b45;color:#d6dbe2}
+.agent-mode-depths button.active{border-color:#2f5c46;background:#12211a;color:#9fe0bd}
+.agent-mode-note{margin:0;color:#6f7783;font-size:9.5px;line-height:1.45}
 .messages{flex:1;min-height:0;overflow:auto;padding:22px 7%;scrollbar-width:thin}.message-row{display:flex;gap:10px;margin:0 auto 18px;max-width:760px;align-items:flex-start}
 /* Агент слева, пользователь справа: разные стороны, разные пузыри, сразу видно, кто говорит. */
 .message-row.user{flex-direction:row-reverse}
@@ -83,12 +114,7 @@ button,textarea{font:inherit}button{color:inherit}
 .composer-model:hover{border-color:#3a424c;color:#e8eaed}
 .composer-model>svg{flex:none;color:#8d95a0}
 .composer-model-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-/* Глубина размышления: компактный выбор рядом с режимом и моделью. */
-.composer-reasoning{cursor:default;max-width:112px}
-.composer-reasoning select{border:0;outline:none;background:transparent;color:#aeb4bd;font:inherit;font-size:10px;cursor:pointer;max-width:82px;color-scheme:dark}
-.composer-reasoning select:focus-visible{color:#e8eaed}
 .composer-hint{padding:5px 13px 9px;color:#5f6670;font-size:9px;line-height:1.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-@media(max-width:650px){.composer-reasoning{max-width:92px;padding:0 7px}.composer-reasoning select{max-width:64px}}
 .composer-buttons{display:flex;align-items:center;gap:5px;flex:none}
 .stop-button{background:#2a2f37;color:#e8eaed}
 .stop-button:hover{background:#343a44}
@@ -216,8 +242,14 @@ button,textarea{font:inherit}button{color:inherit}
   .preview-backdrop.open{opacity:1;pointer-events:auto}
 }
 @media(prefers-reduced-motion:reduce){.preview,.preview-backdrop{transition:none}}
-@media(max-width:650px){.topbar{gap:8px}.brand{min-width:0}.topbar-project,.topbar-actions .ghost-button{display:none}.mobile-only{display:flex}.sidebar{position:absolute;z-index:10;top:48px;bottom:0;left:-210px;transition:left .18s ease;box-shadow:12px 0 30px rgba(0,0,0,.35)}.sidebar.open{left:0}.messages,.composer-wrap{padding-left:14px;padding-right:14px}.chat-header{padding:12px 14px}.chat-header h1{font-size:15px}.composer-model{max-width:132px}.mode-toggle{padding:0 7px;gap:5px}.chat-status-bottom{max-height:32%;padding-bottom:8px}}
-.workspace-shell{display:flex;flex:1;min-width:0}.workspace-main{min-width:0;min-height:0;flex:1;display:flex;flex-direction:column}.workspace-view{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column}.workspace-view[hidden]{display:none}.workspace-tabs{height:40px;flex:none;display:flex;align-items:center;gap:3px;padding:0 12px;border-bottom:1px solid #20242a;background:#0e1014}.workspace-tabs button{height:28px;border:0;background:transparent;color:#747c87;border-radius:5px;padding:0 9px;display:flex;align-items:center;gap:6px;font-size:10px;cursor:pointer}.workspace-tabs button:hover,.workspace-tabs button.active{background:#181b21;color:#e8eaed}.panel,.files-panel{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden}.panel-title{min-height:54px;padding:10px 15px;border-bottom:1px solid #20242a;display:flex;align-items:center;justify-content:space-between;color:#c5c9cf;font-size:11px}.panel-title strong{display:block;margin-top:3px;font-size:12px}.files-panel .panel-title{justify-content:space-between}.file-browser{flex:1;min-height:0;display:flex}.file-tree{width:270px;flex:none;border-right:1px solid #20242a;overflow:auto;padding:7px}.file-item{width:100%;min-height:30px;border:0;background:transparent;color:#aeb4bd;border-radius:5px;padding:0 7px;display:flex;align-items:center;gap:7px;text-align:left;font-size:11px;cursor:pointer}.file-item:hover,.file-item.selected{background:#171a20;color:#e8eaed}.file-parent{color:#727a85}.file-empty{padding:18px 8px;color:#626a75;font-size:10px}.file-editor{flex:1;min-width:0;overflow:auto;background:#0b0d10}.editor-head{height:34px;border-bottom:1px solid #20242a;padding:0 12px;display:flex;align-items:center;color:#7f8792;font-size:10px}.file-editor pre{margin:0;padding:14px;font:11px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;color:#cdd1d7;white-space:pre-wrap}.file-placeholder{height:100%;display:grid;place-content:center;justify-items:center;gap:8px;color:#626a75;font-size:10px}.terminal-input{margin:15px;width:calc(100% - 30px);min-height:90px;border:1px solid #292f37;border-radius:7px;background:#111419;padding:10px}.terminal-output{flex:1;min-height:100px;margin:0 15px 15px;padding:12px;border:1px solid #20242a;border-radius:7px;background:#090b0e;overflow:auto;color:#b9c0c9;font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap}
+@media(max-width:650px){.topbar{gap:8px}.brand{min-width:0}.topbar-project,.topbar-actions .ghost-button{display:none}.mobile-only{display:flex}.sidebar{position:absolute;z-index:10;top:48px;bottom:0;left:-210px;transition:left .18s ease;box-shadow:12px 0 30px rgba(0,0,0,.35)}.sidebar.open{left:0}.messages,.composer-wrap{padding-left:14px;padding-right:14px}.composer-model{max-width:132px}.agent-mode-trigger{padding:0 7px;gap:4px}
+/* На узком экране кнопка остаётся короткой, а глубина размышления видна в меню. */
+.agent-mode-dot,.agent-mode-depth{display:none}
+.agent-mode-menu{width:min(288px,calc(100vw - 28px))}
+.chat-status-bottom{max-height:32%;padding-bottom:8px}}
+.workspace-shell{display:flex;flex:1;min-width:0}.workspace-main{min-width:0;min-height:0;flex:1;display:flex;flex-direction:column}.workspace-view{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column}.workspace-view[hidden]{display:none}.workspace-tabs{height:40px;flex:none;display:flex;align-items:center;gap:3px;padding:0 12px;border-bottom:1px solid #20242a;background:#0e1014;overflow-x:auto;scrollbar-width:none}.workspace-tabs::-webkit-scrollbar{display:none}.workspace-tabs button{height:28px;border:0;background:transparent;color:#747c87;border-radius:5px;padding:0 9px;display:flex;align-items:center;gap:6px;font-size:10px;cursor:pointer}.workspace-tabs button:hover,.workspace-tabs button.active{background:#181b21;color:#e8eaed}.workspace-tabs .workspace-tabs-chats{margin-left:auto;flex:none;color:#8b939e}.workspace-tabs .workspace-tabs-chats:hover{color:#e8eaed}
+@media(max-width:650px){.workspace-tabs .workspace-tabs-chats{padding:0 8px}.workspace-tabs .workspace-tabs-chats span{display:none}}
+.panel,.files-panel{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden}.panel-title{min-height:54px;padding:10px 15px;border-bottom:1px solid #20242a;display:flex;align-items:center;justify-content:space-between;color:#c5c9cf;font-size:11px}.panel-title strong{display:block;margin-top:3px;font-size:12px}.files-panel .panel-title{justify-content:space-between}.file-browser{flex:1;min-height:0;display:flex}.file-tree{width:270px;flex:none;border-right:1px solid #20242a;overflow:auto;padding:7px}.file-item{width:100%;min-height:30px;border:0;background:transparent;color:#aeb4bd;border-radius:5px;padding:0 7px;display:flex;align-items:center;gap:7px;text-align:left;font-size:11px;cursor:pointer}.file-item:hover,.file-item.selected{background:#171a20;color:#e8eaed}.file-parent{color:#727a85}.file-empty{padding:18px 8px;color:#626a75;font-size:10px}.file-editor{flex:1;min-width:0;overflow:auto;background:#0b0d10}.editor-head{height:34px;border-bottom:1px solid #20242a;padding:0 12px;display:flex;align-items:center;color:#7f8792;font-size:10px}.file-editor pre{margin:0;padding:14px;font:11px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;color:#cdd1d7;white-space:pre-wrap}.file-placeholder{height:100%;display:grid;place-content:center;justify-items:center;gap:8px;color:#626a75;font-size:10px}.terminal-input{margin:15px;width:calc(100% - 30px);min-height:90px;border:1px solid #292f37;border-radius:7px;background:#111419;padding:10px}.terminal-output{flex:1;min-height:100px;margin:0 15px 15px;padding:12px;border:1px solid #20242a;border-radius:7px;background:#090b0e;overflow:auto;color:#b9c0c9;font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap}
 .app-loading{height:100%;min-height:240px;display:grid;place-content:center;justify-items:center;gap:9px;color:#8a929d;font-size:11px;text-align:center;padding:24px}.app-loading strong{font-size:13px;color:#d5d8dd}.app-loading span{max-width:460px;line-height:1.5}.workspace-overlay-panel{flex:1;min-width:0;min-height:0;overflow:auto}.settings-panel{max-width:720px;margin:20px auto;border:1px solid #242a31;background:#111419;border-radius:9px;overflow:hidden}.settings-body{padding:18px;display:grid;gap:14px;color:#969da7;font-size:11px}.settings-body label{display:grid;gap:6px;color:#777f89}.settings-body label span{color:#d0d4da}.settings-body select,.settings-body input,.terminal-controls input{height:32px;border:1px solid #2a3038;border-radius:6px;background:#0b0d10;color:#dce0e5;padding:0 9px;outline:none}.settings-save{width:max-content;padding:0 12px}.terminal-controls{display:flex;gap:8px;margin:15px}.terminal-controls input{flex:1}.preview-frame{flex:1;width:100%;border:0;background:#fff}.preview-actions{display:flex;gap:3px}.preview-error{margin:10px 12px;padding:9px;border:1px solid #4a3030;border-radius:6px;background:#1b1212;color:#d99b9b;font-size:10px}
 .preview-hint{margin:10px 12px;padding:9px;border:1px solid #3a3427;border-radius:6px;background:#171408;color:#cdb171;font-size:10px}
 .github-popover{position:absolute;right:12px;top:43px;width:min(560px,calc(100vw - 24px));max-height:calc(100vh - 58px);overflow:auto;background:#111419;border:1px solid #2a3038;border-radius:9px;box-shadow:0 18px 50px rgba(0,0,0,.45)}
@@ -345,7 +377,12 @@ button,textarea{font:inherit}button{color:inherit}
 /* The overlay panel is the single scroll container; the hub grows inside it, so the
    subscription section scrolls instead of running off the screen. */
 .settings-hub{min-height:100%;display:flex;flex-direction:column;padding:0 18px 24px}
-.settings-hub-tabs{height:42px;flex:none;display:flex;gap:5px;align-items:center;overflow-x:auto;scrollbar-width:none;border-bottom:1px solid #20242a;margin:0 -18px 18px;padding:0 18px}
+/* Полоса настроек: прокручиваемые разделы слева, выход «К работе» справа. Она закреплена
+   сверху, потому что боковая колонка здесь скрыта и другой дороги назад нет. */
+.settings-hub-bar{position:sticky;top:0;z-index:3;display:flex;align-items:center;gap:8px;margin:0 -18px 18px;padding:0 18px;background:#0b0d10;border-bottom:1px solid #20242a}
+.settings-hub-back{flex:none;display:flex;align-items:center;gap:5px;height:27px;padding:0 10px;border:1px solid #2a3038;border-radius:6px;background:#11151a;color:#aeb4bd;font-size:10px;cursor:pointer;white-space:nowrap}
+.settings-hub-back:hover{border-color:#3a424c;background:#171a20;color:#e8eaed}
+.settings-hub-tabs{height:42px;flex:1;min-width:0;display:flex;gap:5px;align-items:center;overflow-x:auto;scrollbar-width:none;margin:0;padding:0}
 .settings-hub-tabs::-webkit-scrollbar{display:none}
 .settings-hub-tabs button{flex:none}
 .settings-hub-tabs button{height:29px;display:flex;align-items:center;gap:7px;border:1px solid transparent;border-radius:6px;padding:0 10px;background:transparent;color:#8d95a0;font-size:11px;cursor:pointer}
@@ -403,7 +440,8 @@ button,textarea{font:inherit}button{color:inherit}
 .plan-action:hover{background:#fff}.plan-action:disabled{opacity:.5;cursor:default}
 .billing-disclaimer{margin:16px 0 0;padding:10px;border:1px solid #2d2c26;border-radius:6px;background:#17150f;color:#b9ab82;font-size:10px;line-height:1.6}
 .account-feedback{margin:0 18px 18px}
-@media(max-width:850px){.account-settings-layout{grid-template-columns:1fr}.account-settings-nav{border-right:0;border-bottom:1px solid #22272e;flex-direction:row;overflow-x:auto}.account-settings-nav button{white-space:nowrap}.account-settings-content{padding:16px}.plan-grid{grid-template-columns:1fr}.plan-card ul{margin:12px 0}.settings-hub{padding-left:10px;padding-right:10px}.settings-hub-tabs{margin-left:-10px;margin-right:-10px;padding:0 10px}}
+@media(max-width:850px){.account-settings-layout{grid-template-columns:1fr}.account-settings-nav{border-right:0;border-bottom:1px solid #22272e;flex-direction:row;overflow-x:auto}.account-settings-nav button{white-space:nowrap}.account-settings-content{padding:16px}.plan-grid{grid-template-columns:1fr}.plan-card ul{margin:12px 0}.settings-hub{padding-left:10px;padding-right:10px}.settings-hub-bar{margin-left:-10px;margin-right:-10px;padding:0 10px}.settings-hub-back{padding:0 8px}}
+@media(max-width:420px){.settings-hub-back span{display:none}.settings-hub-back{width:27px;justify-content:center;padding:0}}
 
 /* Preferences, plan selection and integrations */
 /* The open button fills the whole tile: inside the card grid it must span both
@@ -460,6 +498,14 @@ button,textarea{font:inherit}button{color:inherit}
 .connector{display:grid;gap:9px;min-width:0;padding:11px;border:1px solid #20242a;border-radius:9px;background:#0d1014}
 .connector-head{display:flex;align-items:center;gap:9px;min-width:0;flex-wrap:wrap}
 .connector-icon{width:32px;height:32px;flex:none;display:grid;place-items:center;border:1px solid #2b3139;border-radius:8px;background:#14171c;color:#dfe3e8}
+.brand-logo{flex:none;display:inline-flex;align-items:center;justify-content:center;border:1px solid #2b3139;border-radius:8px;background:#f4f6f8;overflow:hidden}
+.brand-logo.on-dark{background:#14171c}
+.brand-logo.is-mark{padding:4px}
+.brand-logo.is-wordmark{min-width:32px;padding:0 7px}
+.brand-logo img{display:block;flex:none;max-width:100%;max-height:100%;object-fit:contain}
+.brand-logo.is-mark img{width:100%;height:100%}
+.brand-logo.is-wordmark img{width:auto;height:18px;max-width:94px}
+.brand-mark{display:block;flex:none;object-fit:contain}
 .connector-meta{flex:1;min-width:0;display:grid;gap:3px}
 .connector-meta strong{font-size:11.5px;font-weight:600;color:#e4e7eb;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
 .connector-state{display:flex;align-items:center;gap:5px;min-width:0;flex-wrap:wrap;color:#78808b;font-size:9.5px}
@@ -670,8 +716,6 @@ button,textarea{font:inherit}button{color:inherit}
 .quota-modal .modal-foot{flex-wrap:wrap}
 
 /* Project chats (the saved sessions of the open project) */
-.chat-sessions-button{display:flex;align-items:center;gap:6px;height:30px;padding:0 11px;border:1px solid #282d34;border-radius:8px;background:#0d1013;color:#aeb4bd;font-size:10px;cursor:pointer;white-space:nowrap;flex:none}
-.chat-sessions-button:hover{border-color:#3a424c;color:#e8eaed}
 .sessions-modal{width:min(560px,100%)}
 .sessions-modal .modal-body{align-content:start;gap:8px}
 .sessions-modal .modal-foot{flex-wrap:wrap}
@@ -701,7 +745,6 @@ button,textarea{font:inherit}button{color:inherit}
 .session-item-head small{flex:none;color:#6d7580;font-size:9.5px}
 .session-item-preview{color:#828a95;font-size:10.5px;line-height:1.45;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .session-item-meta{color:#5f6670;font-size:9.5px;letter-spacing:.02em}
-@media(max-width:650px){.chat-sessions-button span{display:none}}
 
 /* Detailed subscriptions page */
 /* Detailed subscriptions page */

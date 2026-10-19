@@ -5,6 +5,7 @@ import { SettingsHub } from "../settings/SettingsHub";
 import { useWorkspace } from "./useWorkspace";
 import { WorkspaceNav,type WorkspaceView } from "./WorkspaceNav";
 import { WorkspaceContent } from "./WorkspaceContent";
+import { ChatSessionsModal, useChatSessions } from "../agent/ChatSessions";
 import { NestLoader } from "../../components/NestLoader";
 
 export function WorkspaceShell({onHome,onAgentState}:{onHome:()=>void;onAgentState?:(state:{running:boolean;projectName:string}|null)=>void}){
@@ -15,6 +16,10 @@ export function WorkspaceShell({onHome,onAgentState}:{onHome:()=>void;onAgentSta
   const [agentRunning,setAgentRunning]=useState(false);
   const reportAgentState=useCallback((running:boolean)=>setAgentRunning(running),[]);
   const [settingsOpen,setSettingsOpen]=useState(false);
+  // Список чатов принадлежит рабочей области: кнопка в строке вкладок открывает его
+  // и из «Агента», и из «Файлов», а не только из шапки чата.
+  const [sessionsOpen,setSessionsOpen]=useState(false);
+  const {sessions,sessionsError,reload:sessionsReload}=useChatSessions(projectId,conversationId);
   // Incremented when the sidebar asks for a specific settings tab while the overlay is already
   // open: the hub reads its one-shot tab flag on mount, so it has to be remounted to react.
   const [settingsKey,setSettingsKey]=useState(0);
@@ -56,17 +61,27 @@ export function WorkspaceShell({onHome,onAgentState}:{onHome:()=>void;onAgentSta
   // The model chip in the composer opens the settings overlay on the AI tab.
   const openModelSettings=()=>{try{localStorage.setItem("webnestdev.openProviderTab","1")}catch{};openSettings()};
 
-  return <LayoutShell projectName={projectName} view={view} onView={view=>{setSettingsOpen(false);setDeployOpen(false);setView(view)}} onNewProject={createNewProject} onDeploy={openDeploy} onSettings={openSettings} onSecrets={openSecrets} onHome={onHome} previewOpen={previewOpen} previewRunning={previewRunning} onPreviewToggle={()=>setPreviewOpen(value=>!value)}>
+  return <LayoutShell projectName={projectName} view={view} onView={view=>{setSettingsOpen(false);setDeployOpen(false);setView(view)}} onNewProject={createNewProject} onDeploy={openDeploy} onSettings={openSettings} onSecrets={openSecrets} onHome={onHome} previewOpen={previewOpen} previewRunning={previewRunning} onPreviewToggle={()=>setPreviewOpen(value=>!value)} sidebarHidden={settingsOpen||deployOpen}>
     <main className="main">
       <div className="workspace-main">
         {(settingsOpen||deployOpen)?<div className="workspace-overlay-panel">
-          {settingsOpen?<SettingsHub key={settingsKey} projectId={projectId} projectName={projectName}/>:<section className="settings-panel">
+          {settingsOpen?<SettingsHub key={settingsKey} projectId={projectId} projectName={projectName} onClose={()=>setSettingsOpen(false)}/>:<section className="settings-panel">
             <div className="panel-title"><div><span className="eyebrow">ПУБЛИКАЦИЯ</span><strong>Публикация проекта</strong></div><button className="ghost-button" onClick={()=>setDeployOpen(false)}>Закрыть</button></div>
             <div className="settings-body"><p>Модуль публикации подключим к выбранному облаку, когда настроим окружение.</p><button className="send-button" onClick={()=>setDeployOpen(false)}>Понятно</button></div>
           </section>}
-        </div>:<><WorkspaceNav view={view} onChange={setView}/><WorkspaceContent view={view} projectId={projectId} projectName={projectName} conversationId={conversationId} onOpenConversation={openConversation} onRunFinished={()=>setPreviewReload(value=>value+1)} onOpenModelSettings={openModelSettings} onOpenAccountSettings={openSettings} onRunningChange={reportAgentState} onOpenChanges={()=>{setSettingsOpen(false);setDeployOpen(false);setView("changes")}}/></>}
+        </div>:<><WorkspaceNav view={view} onChange={setView} onSessions={()=>setSessionsOpen(true)} sessionCount={sessions?.length}/><WorkspaceContent view={view} projectId={projectId} projectName={projectName} conversationId={conversationId} onRunFinished={()=>{setPreviewReload(value=>value+1);void sessionsReload()}} onOpenModelSettings={openModelSettings} onOpenAccountSettings={openSettings} onRunningChange={reportAgentState} onOpenChanges={()=>{setSettingsOpen(false);setDeployOpen(false);setView("changes")}}/></>}
       </div>
       <PreviewPanel projectId={projectId} reloadToken={previewReload} open={previewOpen} onClose={()=>setPreviewOpen(false)} onRunningChange={setPreviewRunning}/>
+      <ChatSessionsModal
+        open={sessionsOpen}
+        projectId={projectId}
+        conversationId={conversationId}
+        sessions={sessions}
+        sessionsError={sessionsError}
+        reload={sessionsReload}
+        onClose={()=>setSessionsOpen(false)}
+        onOpenConversation={openConversation}
+      />
     </main>
   </LayoutShell>;
 }

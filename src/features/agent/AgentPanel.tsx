@@ -1,14 +1,15 @@
-import { useCallback,useEffect,useRef,useState,type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect,useRef,useState,type MouseEvent as ReactMouseEvent } from "react";
 import Markdown,{type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { AlertTriangle,ArrowLeftRight,Brain,ClipboardList,Code2,Cpu,FileText,History,Image as ImageIcon,KeyRound,ListPlus,MessagesSquare,Paperclip,Play,Plus,RotateCcw,Send,ShieldCheck,Sparkles,Square,X } from "lucide-react";
+import { AlertTriangle,Cpu,FileText,History,Image as ImageIcon,KeyRound,ListPlus,Paperclip,Play,RotateCcw,Send,ShieldCheck,Sparkles,Square,X } from "lucide-react";
 import { createAgentSocket } from "../../lib/agent-socket";
 import { apiJson } from "../../lib/api";
-import { answerProjectQuestion,cancelProjectSecret,createConversation,getConversation,listConversations,skipProjectQuestion,submitProjectSecret,uploadProjectFile,type ConversationSummary } from "../../lib/project-api";
+import { answerProjectQuestion,cancelProjectSecret,getConversation,skipProjectQuestion,submitProjectSecret,uploadProjectFile } from "../../lib/project-api";
 import { NestLoader } from "../../components/NestLoader";
 import { ActionsPanel,MessageThinking,PlanPanel,actionTarget,deriveActions,readPlan,writePlan,type PanelId,type PanelState } from "./agent-activity";
 import type { AgentAction,AgentMode,ChatMessage,PlanState,ReasoningEffort } from "../../lib/types";
 import { QuestionSheet,type AgentQuestion } from "./QuestionSheet";
+import { AgentModeControl } from "./AgentModeControl";
 import { ChatBookmarks } from "./ChatBookmarks";
 import { takeAgentStart } from "../../lib/agent-start";
 
@@ -87,16 +88,6 @@ function readStoredMode():AgentMode{
   try{return localStorage.getItem(modeKey)==="planner"?"planner":"developer"}catch{return "developer"}
 }
 
-/**
- * Глубина размышления — это не «ум», а сколько модель думает перед ответом. Лёгкое быстрее и
- * дешевле, глубокое — для сложных задач, где цена ошибки выше цены ожидания.
- */
-const reasoningLabels:Record<ReasoningEffort,string>={low:"Лёгкое",medium:"Среднее",high:"Глубокое"};
-const reasoningTitles:Record<ReasoningEffort,string>={
-  low:"Лёгкое размышление: быстрый ответ для простых задач",
-  medium:"Среднее размышление: баланс скорости и качества",
-  high:"Глубокое размышление: максимум проработки для сложных задач",
-};
 function readStoredReasoning():ReasoningEffort{
   try{
     const value=localStorage.getItem(reasoningKey);
@@ -137,15 +128,6 @@ function formatBytes(bytes:number){
   return (bytes/1024/1024).toFixed(1)+" МБ";
 }
 
-/** A chat row says when it was last touched, not a full timestamp. */
-function formatSessionTime(value:string){
-  const date=new Date(value);
-  if(Number.isNaN(date.getTime()))return "";
-  const today=new Date();
-  if(date.toDateString()===today.toDateString())return date.toLocaleTimeString("ru-RU",{hour:"2-digit",minute:"2-digit"});
-  return date.toLocaleDateString("ru-RU",{day:"numeric",month:"short"});
-}
-
 function readAsBase64(file:File){
   return new Promise<string>((resolve,reject)=>{
     const reader=new FileReader();
@@ -179,7 +161,7 @@ function interruptedRun(messages:ChatMessage[]):{reason:string;label:string}|nul
   return {reason:"предыдущий запуск был прерван и не завершён",label:"Прошлый запуск прервался — агент продолжит с того же места."};
 }
 
-export function AgentPanel({projectId,conversationId,onOpenConversation,onChanged,onOpenModelSettings,onOpenAccountSettings,onRunningChange,onOpenChanges}:{projectId:string;conversationId:string;onOpenConversation:(id:string)=>void;onChanged:()=>void;onOpenModelSettings?:()=>void;onOpenAccountSettings?:()=>void;onRunningChange?:(running:boolean)=>void;onOpenChanges?:()=>void}){
+export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettings,onOpenAccountSettings,onRunningChange,onOpenChanges}:{projectId:string;conversationId:string;onChanged:()=>void;onOpenModelSettings?:()=>void;onOpenAccountSettings?:()=>void;onRunningChange?:(running:boolean)=>void;onOpenChanges?:()=>void}){
   const [messages,setMessages]=useState<ChatMessage[]>([]);
   const [prompt,setPrompt]=useState<string>(()=>readDraft(conversationId));
   const [running,setRunning]=useState(false);
@@ -218,10 +200,6 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
   const [quotaNotice,setQuotaNotice]=useState<"storage"|"daily"|null>(null);
   // The project's saved chats. The list comes from the server, so a chat is something
   // the user can return to from another device, not just from this browser.
-  const [sessionsOpen,setSessionsOpen]=useState(false);
-  const [sessions,setSessions]=useState<ConversationSummary[]|null>(null);
-  const [sessionsError,setSessionsError]=useState("");
-  const [sessionBusy,setSessionBusy]=useState(false);
   // Остановленный запуск — не потеря задачи: история и план уже на сервере, поэтому панель
   // держит кнопку «Продолжить», пока пользователь не продолжит или не отправит новое сообщение.
   const [resume,setResume]=useState<{reason:string;label:string}|null>(null);
@@ -467,19 +445,6 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
     startRun({text:pending.prompt,attachments:[]});
   },[loaded,conversationId,running]);
 
-  const loadSessions=useCallback(async()=>{
-    try{
-      setSessionsError("");
-      setSessions((await listConversations(projectId)).conversations);
-    }catch(error){
-      setSessionsError(error instanceof Error?error.message:"Не удалось загрузить список чатов");
-    }
-  },[projectId]);
-
-  // Loaded for the header counter and refreshed when the open chat changes, so the list
-  // and the counter stay honest after a run, a switch or a reload.
-  useEffect(()=>{void loadSessions()},[loadSessions,conversationId]);
-
   // The model is a project setting, so the composer reads it instead of assuming one;
   // it shows the same model the runtime picks: the project one, or the platform default.
   useEffect(()=>{
@@ -607,7 +572,7 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
         // Задача записана в историю проекта. Отправка на GitHub — только по кнопке пользователя.
         setChangesNotice({shortSha:event.checkpoint.shortSha});
       }
-      if(event.type==="run.completed"){completedRef.current=true;endRun(socket,{drain:true});onChanged();void loadSessions()}
+      if(event.type==="run.completed"){completedRef.current=true;endRun(socket,{drain:true});onChanged()}
       if(event.type==="run.failed"){
         // A run that died on the context limit has a different fix than a failed tool call, so the
         // panel says which one it is instead of leaving the user with the provider's wording.
@@ -858,28 +823,6 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
     try{await skipProjectQuestion(projectId,prompt.requestId)}catch{}
   }
 
-  /** Another chat of the same project: the panel loads its stored turns on switch. */
-  function openSession(id:string){
-    setSessionsOpen(false);
-    if(id!==conversationId)onOpenConversation(id);
-  }
-
-  /** A finished thread can be left as it is: a project keeps several chats side by side. */
-  async function startSession(){
-    setSessionBusy(true);
-    setSessionsError("");
-    try{
-      const created=await createConversation(projectId);
-      setSessionsOpen(false);
-      onOpenConversation(created.id);
-      void loadSessions();
-    }catch(error){
-      setSessionsError(error instanceof Error?error.message:"Не удалось создать сессию");
-    }finally{
-      setSessionBusy(false);
-    }
-  }
-
   async function pickFiles(files:FileList|null){
     if(!files?.length)return;
     setNotice("");
@@ -907,10 +850,6 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
 
   // Gateway model ids carry a folder prefix (gpt://<folder>/<model>), so the chip shows
   // the model itself and the tooltip keeps the full id.
-  const modeLabel=mode==="planner"?"Планировщик":"Разработчик";
-  const modeTitle=mode==="planner"
-    ?"Сейчас планировщик: агент изучает проект и составляет план, не меняя файлы. Нажмите, чтобы включить режим разработчика."
-    :"Сейчас разработчик: агент пишет код, запускает проверки и меняет проект. Нажмите, чтобы включить режим планировщика.";
   const modelName=modelInfo?modelInfo.model.split("/").pop()||"Модель не настроена":"Определяем модель…";
   const modelDetails=[modelInfo?.provider,modelInfo?.model].filter(Boolean).join(" · ");
   const modelTitle=!modelInfo
@@ -926,14 +865,6 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
   const bookmarks=visibleMessages.flatMap((message,index)=>message.role==="user"?[{index,text:message.content}]:[]);
 
   return <section className="chat">
-    <div className="chat-header">
-      <div><div className="eyebrow">АГЕНТ</div><h1>Что создаём?</h1></div>
-      <button type="button" className="chat-sessions-button" onClick={()=>{setSessionsOpen(true);void loadSessions()}} title="Сохранённые чаты проекта — вернуться к любому" aria-label="Чаты проекта">
-        <MessagesSquare size={14}/>
-        <span>Чаты{sessions&&sessions.length>1?" · "+sessions.length:""}</span>
-      </button>
-    </div>
-
     {/* Переписка и её закладки. Полоска закладок — рядом со скроллом, а не в нём: у каждой метки
         своя точка в переписке, и она должна оставаться на месте при прокрутке. */}
     <div className="messages-wrap">
@@ -1023,20 +954,8 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
           <div className="composer-tools">
             <button className="icon-button" onClick={()=>fileRef.current?.click()} disabled={!loaded||uploading} title="Прикрепить файл или изображение" aria-label="Прикрепить файл или изображение"><Paperclip size={14}/></button>
             <input ref={fileRef} type="file" multiple hidden onChange={e=>void pickFiles(e.target.files)}/>
-            {/* One button, one click: it shows the mode a run will use and switches it. */}
-            <button type="button" className={"mode-toggle"+(mode==="planner"?" planner":"")} data-mode={mode} onClick={()=>chooseMode(mode==="planner"?"developer":"planner")} title={modeTitle} aria-label={modeLabel+". Переключить режим агента"}>
-              {mode==="planner"?<ClipboardList size={12}/>:<Code2 size={12}/>}
-              <span>{modeLabel}</span>
-              <ArrowLeftRight size={11}/>
-            </button>
-            <label className="composer-model composer-reasoning" title={reasoningTitles[reasoning]}>
-              <Brain size={12}/>
-              <select value={reasoning} onChange={event=>chooseReasoning(event.target.value as ReasoningEffort)} aria-label="Глубина размышления агента">
-                <option value="low">Лёгкое</option>
-                <option value="medium">Среднее</option>
-                <option value="high">Глубокое</option>
-              </select>
-            </label>
+            {/* Режим и глубина размышления — один компактный контрол рядом с полем ввода. */}
+            <AgentModeControl mode={mode} reasoning={reasoning} onMode={chooseMode} onReasoning={chooseReasoning}/>
             <button type="button" className="composer-model" onClick={()=>onOpenModelSettings?.()} title={modelTitle} aria-label={"Модель: "+modelName+". Открыть настройки AI-провайдера"}>
               <Cpu size={12}/>
               <span className="composer-model-name">{modelName}</span>
@@ -1047,7 +966,7 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
             <button className="send-button" disabled={!loaded||!prompt.trim()} onClick={send} title={running?"В очередь":"Отправить"} aria-label={running?"В очередь":"Отправить"}>{running?<ListPlus size={15}/>:<Send size={15}/>}</button>
           </div>
         </div>
-        <div className="composer-hint">{uploading?"Загружаем файлы…":running?"Агент работает — сообщение встанет в очередь":mode==="planner"?"Планировщик только изучает проект и готовит план — файлы не меняются":"Размышление: "+reasoningLabels[reasoning].toLowerCase()+" · Enter — отправить · Shift + Enter — новая строка"}</div>
+        {(uploading||running||mode==="planner")&&<div className="composer-hint">{uploading?"Загружаем файлы…":running?"Агент работает — сообщение встанет в очередь":"Планировщик только изучает проект и готовит план — файлы не меняются"}</div>}
       </div>
       {changesNotice&&<button type="button" className="changes-toast" onClick={()=>onOpenChanges?.()} disabled={!onOpenChanges} title={onOpenChanges?"Открыть историю изменений проекта":undefined}>
         <History size={14}/>
@@ -1111,31 +1030,6 @@ export function AgentPanel({projectId,conversationId,onOpenConversation,onChange
         <footer className="modal-foot">
           <button className="ghost-button" onClick={()=>setQuotaNotice(null)}>Понятно</button>
           <button className="send-button" onClick={()=>{setQuotaNotice(null);onOpenAccountSettings?.()}}>Обновить тариф</button>
-        </footer>
-      </section>
-    </div>}
-
-    {sessionsOpen&&<div className="modal-backdrop" role="presentation" onMouseDown={()=>setSessionsOpen(false)}>
-      <section className="modal sessions-modal" role="dialog" aria-modal="true" aria-label="Чаты проекта" onMouseDown={event=>event.stopPropagation()}>
-        <header className="modal-head">
-          <div><span className="eyebrow">ИСТОРИЯ</span><h2>Чаты проекта</h2></div>
-          <button className="icon-button" onClick={()=>setSessionsOpen(false)} aria-label="Закрыть"><X size={16}/></button>
-        </header>
-        <div className="modal-body">
-          {sessionsError?<div className="modal-state">{sessionsError}</div>
-            :sessions===null?<div className="modal-state"><NestLoader size={26}/><span>Загружаем историю…</span></div>
-            :sessions.length===0?<div className="modal-state">В проекте ещё нет сохранённых чатов.</div>
-            :<ul className="session-list">{sessions.map(session=><li key={session.id}>
-              <button className={"session-item"+(session.id===conversationId?" active":"")} onClick={()=>openSession(session.id)} title={session.label}>
-                <span className="session-item-head"><strong>{session.label}</strong><small>{formatSessionTime(session.updatedAt)}</small></span>
-                {session.preview&&<span className="session-item-preview">{session.preview}</span>}
-                <span className="session-item-meta">{session.messageCount} сообщ.{session.id===conversationId?" · открыт сейчас":""}</span>
-              </button>
-            </li>)}</ul>}
-        </div>
-        <footer className="modal-foot">
-          <p className="modal-lead">Чаты хранятся на сервере: история проекта открывается с любого устройства и переживает перезагрузку.</p>
-          <button className="send-button" onClick={()=>void startSession()} disabled={sessionBusy}><Plus size={14}/> Новая сессия</button>
         </footer>
       </section>
     </div>}

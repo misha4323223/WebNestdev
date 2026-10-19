@@ -8,6 +8,8 @@
  * ключа, а шаги называют разделы консоли по именам.
  */
 
+import type { BrandId } from "../../../components/BrandLogo";
+
 export type CloudProviderId = "timeweb" | "cloudru" | "mws" | "regru";
 
 export type CloudProviderField = {
@@ -28,14 +30,14 @@ export type CloudProviderInfo = {
   tagline: string;
   fields: CloudProviderField[];
   steps: string[];
-  /** Фирменный цвет и монограмма для плитки, пока нет официального файла логотипа. */
-  color: string;
-  mark: string;
+  /** Официальный логотип сервиса. */
+  logo: BrandId;
 };
 
 export const CLOUD_PROVIDERS: CloudProviderInfo[] = [
   {
     id: "timeweb",
+    logo: "timeweb",
     name: "Timeweb Cloud",
     keyUrl: "https://timeweb.cloud/docs/account-management/token",
     docsUrl: "https://timeweb.cloud/tools/api-docs",
@@ -46,11 +48,10 @@ export const CLOUD_PROVIDERS: CloudProviderInfo[] = [
       "«Выпустить» — токен показывается один раз, сохраните его.",
       "Вставьте сюда — проверим чтением серверов.",
     ],
-    color: "#0b6bff",
-    mark: "T",
   },
   {
     id: "cloudru",
+    logo: "cloudru",
     name: "Cloud.ru",
     keyUrl: "https://cloud.ru/docs/console_api/ug/topics/guides__service_accounts_key-create",
     docsUrl: "https://cloud.ru/docs/console_api/ug/topics/guides__auth_api",
@@ -64,11 +65,10 @@ export const CLOUD_PROVIDERS: CloudProviderInfo[] = [
       "Откройте аккаунт → «Учетные данные доступа» → «Ключи доступа» → «Создать ключ».",
       "Вставьте Key ID и Secret — проверим обменом на токен.",
     ],
-    color: "#1f4fd8",
-    mark: "C",
   },
   {
     id: "mws",
+    logo: "mts",
     name: "MWS (МТС)",
     keyUrl: "https://mws.ru/docs/cloud-platform/iam/general/keys-auth-create.html",
     docsUrl: "https://mws.ru/docs/cloud-platform/iam/general/sa-get-access-token.html",
@@ -79,11 +79,10 @@ export const CLOUD_PROVIDERS: CloudProviderInfo[] = [
       "«Ключи доступа» → «Создать» → «Авторизованный ключ»: скачайте key.json.",
       "Вставьте файл целиком — проверим чтением проектов.",
     ],
-    color: "#e30611",
-    mark: "МТС",
   },
   {
     id: "regru",
+    logo: "regru",
     name: "REG.RU Облако",
     keyUrl: "https://reg.cloud/support/cloud/oblachnyye-servery/rabota-s-serverom/api-dlya-oblachnykh-serverov",
     docsUrl: "https://developers.cloudvps.reg.ru/",
@@ -94,7 +93,5 @@ export const CLOUD_PROVIDERS: CloudProviderInfo[] = [
       "Ключ создаётся автоматически — скопируйте его; он открывает все операции облачных серверов.",
       "Вставьте сюда — проверим чтением списка серверов.",
     ],
-    color: "#1f6feb",
-    mark: "R",
   },
 ];

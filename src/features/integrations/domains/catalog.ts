@@ -8,6 +8,8 @@
  * нет, — это баг: пользователь ищет вкладку и не находит.
  */
 
+import type { BrandId } from "../../../components/BrandLogo";
+
 export type DomainRegistrarId = "regru" | "beget" | "timeweb";
 
 export type RegistrarField = {
@@ -27,13 +29,14 @@ export type DomainRegistrarInfo = {
   tagline: string;
   fields: RegistrarField[];
   steps: string[];
-  color: string;
-  mark: string;
+  /** Официальный логотип регистратора. */
+  logo: BrandId;
 };
 
 export const DOMAIN_REGISTRARS: DomainRegistrarInfo[] = [
   {
     id: "regru",
+    logo: "regru",
     name: "REG.RU",
     keyUrl: "https://help.reg.ru/support/partneram/reg-api/kakiye-ogranicheniya-yest-pri-rabote-s-reg-api",
     docsUrl: "https://help.reg.ru/support/partneram/reg-api/chto-takoye-reg-api-i-kto-mozhet-ispolzovat-reg-api",
@@ -47,11 +50,10 @@ export const DOMAIN_REGISTRARS: DomainRegistrarInfo[] = [
       "Пароль — основной или альтернативный пароль API из настроек аккаунта.",
       "Вставьте логин и пароль — проверим чтением доменов.",
     ],
-    color: "#1f6feb",
-    mark: "R",
   },
   {
     id: "beget",
+    logo: "beget",
     name: "Beget",
     keyUrl: "https://beget.com/ru/kb/manual/nastrojki-akkaunta",
     docsUrl: "https://beget.com/ru/kb/api/obshhij-princzip-raboty-s-api",
@@ -65,11 +67,10 @@ export const DOMAIN_REGISTRARS: DomainRegistrarInfo[] = [
       "Скопируйте логин аккаунта и этот пароль.",
       "Вставьте их сюда — проверим чтением доменов.",
     ],
-    color: "#f5a623",
-    mark: "B",
   },
   {
     id: "timeweb",
+    logo: "timeweb",
     name: "Timeweb Cloud",
     keyUrl: "https://timeweb.cloud/docs/account-management/token",
     docsUrl: "https://timeweb.cloud/tools/api-docs",
@@ -82,7 +83,5 @@ export const DOMAIN_REGISTRARS: DomainRegistrarInfo[] = [
       "«Выпустить» — токен показывается один раз, сохраните его.",
       "Вставьте токен — проверим чтением доменов.",
     ],
-    color: "#0b6bff",
-    mark: "T",
   },
 ];

@@ -1,12 +1,12 @@
 import { useEffect, useState } from "react";
-import { KeyRound, Plug, Server, SlidersHorizontal, Sparkles } from "lucide-react";
+import { ArrowLeft, KeyRound, Plug, Server, SlidersHorizontal, Sparkles } from "lucide-react";
 import { SettingsPanel } from "./SettingsPanel";
 import { AccountSettingsPanel } from "./AccountSettingsPanel";
 import { IntegrationsPanel } from "./IntegrationsPanel";
 import { PlatformKeysPanel } from "./PlatformKeysPanel";
 import { ProjectSecretsPanel } from "./ProjectSecretsPanel";
 
-export function SettingsHub({ projectId, projectName }: { projectId: string; projectName: string }) {
+export function SettingsHub({ projectId, projectName, onClose }: { projectId: string; projectName: string; onClose?: () => void }) {
   const [tab, setTab] = useState<"account" | "secrets" | "provider" | "integrations" | "platform">("account");
   // Set when the app returns from the GitHub authorization page, or when the composer
   // asks for the model tab. Read in an effect because state initializers run twice
@@ -34,9 +34,15 @@ export function SettingsHub({ projectId, projectName }: { projectId: string; pro
     { id: "platform" as const, label: "Ключи сервера", icon: Server },
   ];
   return <div className="settings-hub">
-    <nav className="settings-hub-tabs">
-      {tabs.map(item => { const Icon = item.icon; return <button key={item.id} className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)}><Icon size={14}/> {item.label}</button>; })}
-    </nav>
+    {/* Боковая колонка в настройках скрыта — значит, нужен явный путь обратно к работе. */}
+    <div className="settings-hub-bar">
+      <nav className="settings-hub-tabs" aria-label="Разделы настроек">
+        {tabs.map(item => { const Icon = item.icon; return <button key={item.id} className={tab === item.id ? "active" : ""} onClick={() => setTab(item.id)}><Icon size={14}/> {item.label}</button>; })}
+      </nav>
+      {onClose && <button className="settings-hub-back" onClick={onClose} title="Вернуться к работе над проектом">
+        <ArrowLeft size={13}/> <span>К работе</span>
+      </button>}
+    </div>
     {tab === "account" && <AccountSettingsPanel/>}
     {tab === "secrets" && <ProjectSecretsPanel projectId={projectId} projectName={projectName}/>}
     {tab === "provider" && <SettingsPanel projectId={projectId} projectName={projectName} onClose={() => setTab("account")}/>}

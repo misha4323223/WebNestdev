@@ -1,4 +1,4 @@
-import { GitBranch } from "lucide-react";
+import { BrandMark } from "../../components/BrandLogo";
 import { GitHubConnect, type ConnectorSurface } from "../github/GitHubConnect";
 import { YandexConnect } from "../yandex/YandexConnect";
 import { CloudConnectors } from "./cloud/CloudConnectors";
@@ -21,6 +21,6 @@ export function IntegrationsList({surface="home",onImported}:{surface?:Connector
     <CloudConnectors/>
     <DomainConnectors/>
     <ServiceConnectors/>
-    <ConnectorCard name="GitLab" icon={<GitBranch size={18}/>} status="disconnected" soon/>
+    <ConnectorCard name="GitLab" icon={<BrandMark brand="gitlab" size={18}/>} status="disconnected" soon/>
   </div>;
 }

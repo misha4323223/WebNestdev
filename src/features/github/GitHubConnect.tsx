@@ -1,6 +1,6 @@
 import { useCallback,useEffect,useRef,useState } from "react";
 import { Bug, KeyRound, Play, Search, UploadCloud, X } from "lucide-react";
-import { GitHubMark } from "../../components/GitHubMark";
+import { BrandMark } from "../../components/BrandLogo";
 import { openImportedProject } from "../../lib/project-api";
 import { queueAgentStart } from "../../lib/agent-start";
 import { ConnectorCard,type ConnectorStatus } from "../integrations/ConnectorCard";
@@ -229,7 +229,7 @@ export function GitHubConnect({surface="home",onImported=openImportedProject}:{s
   return <>
     <ConnectorCard
     name="GitHub"
-    icon={<GitHubMark size={18}/>}
+    icon={<BrandMark brand="github" variant="light" size={18}/>}
     status={status}
     account={login}
     busy={busy}

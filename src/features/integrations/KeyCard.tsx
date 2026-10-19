@@ -1,5 +1,6 @@
 import { useState, type ReactNode } from "react";
 import { ExternalLink, KeyRound } from "lucide-react";
+import { BrandLogo, type BrandId } from "../../components/BrandLogo";
 
 export type KeyProviderField = {
   key: string;
@@ -30,8 +31,8 @@ export type KeyProviderInfo = {
   tagline: string;
   fields: KeyProviderField[];
   steps: string[];
-  color: string;
-  mark: string;
+  /** Официальный логотип сервиса — единственное, что показывает заголовок карточки. */
+  logo: BrandId;
 };
 
 export type KeyConnectionState = {
@@ -116,7 +117,7 @@ export function KeyCard({ provider, state, onChanged, endpoint, keyLabel = "Гд
 
   return <article className={"connector key-card" + (connected ? " is-connected" : "")}>
     <div className="connector-head">
-      <span className="connector-icon provider-mark" style={{ background: provider.color }} aria-hidden="true">{provider.mark}</span>
+      <BrandLogo brand={provider.logo} size={32} />
       <div className="connector-meta">
         <strong>{provider.name}</strong>
         <span className="connector-state">{connected ? <><span className="connector-dot"/>{state?.account ? "Подключено · " + state.account : "Подключено"}</> : provider.tagline}</span>
