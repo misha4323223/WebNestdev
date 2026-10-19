@@ -180,7 +180,11 @@ export function GitHubConnect({surface="home",onImported=openImportedProject}:{s
     stopWatching();
     setBusy(true);setError(null);
     try{
-      await fetch("/api/github/disconnect",{method:"POST"});
+      const response=await fetch("/api/github/disconnect",{method:"POST"});
+      if(!response.ok){
+        const data=await response.json().catch(()=>({})) as {error?:string};
+        throw new Error(data.error??"GitHub не подтвердил отключение");
+      }
       setLogin(null);setRepositories([]);setSelected(null);setReposOpen(false);setNotice(null);
       // Re-read the status so a server without OAuth credentials reports that
       // instead of offering a connect button that cannot work.

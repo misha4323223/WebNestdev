@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { getYandexAuthStatus, startPhoneLogin, verifyPhoneLogin, type YandexAuthStatus } from "../../lib/auth-api";
 import { getHealth } from "../../lib/health-api";
 import { WebNestLogo } from "../../components/WebNestLogo";
+import { openCookieSettings } from "../legal/CookieConsent";
 
 const RESEND_SECONDS = 45;
 
@@ -15,7 +16,7 @@ const yandexNotices: Record<string, string> = {
   // AuthGate would already be showing the app.
   ok: "Яндекс подтвердил вход, но сессия не сохранилась. Разрешите cookie для сайта и попробуйте ещё раз.",
   denied: "Вы отменили вход через Яндекс ID.",
-  not_configured: "Вход через Яндекс ID не настроен: добавьте YANDEX_CLIENT_ID и YANDEX_CLIENT_SECRET в «Ключи сервера».",
+  not_configured: "Вход через Яндекс ID временно недоступен. Используйте вход по SMS.",
   state_expired: "Ссылка входа через Яндекс ID устарела. Нажмите кнопку ещё раз.",
   token_error: "Яндекс не выдал токен входа. Попробуйте ещё раз.",
   profile_error: "Яндекс ID не отдал профиль. В приложении на oauth.yandex.ru должно быть включено право «Доступ к логину, имени и фамилии, полу» (login:info).",
@@ -108,7 +109,7 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void })
 
   return <main className="auth-screen">
     <section className="auth-card">
-      <div className="brand auth-brand"><span className="brand-mark"><WebNestLogo size={24} tone="light"/></span><span>WebNestdev</span><span className="version">WEB</span></div>
+      <div className="brand auth-brand"><span className="brand-mark"><WebNestLogo size={24} tone="light"/></span><span>WebNestdev</span></div>
       <div className="auth-heading">
         <span className="eyebrow">АККАУНТ</span>
         <h1>{stage === "code" ? "Введите код из SMS" : "Вход в аккаунт"}</h1>
@@ -148,6 +149,7 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void })
         </div>
       </form>}
 
+      <div className="auth-legal"><button type="button" className="ghost-button" onClick={openCookieSettings}>Cookie-настройки</button></div>
       {build && build !== "dev" && <div className="auth-build">версия {build.slice(0, 7)}</div>}
     </section>
   </main>;

@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from "react";
 import {
   Activity,
+  Check,
   ChevronDown,
   ChevronRight,
   CircleAlert,
   CircleCheck,
   CircleDashed,
+  Copy,
   FileSymlink,
   FileText,
   FolderOpen,
@@ -28,6 +30,7 @@ import {
   Wrench,
 } from "lucide-react";
 import type { AgentAction, ChatMessage, PlanState } from "../../lib/types";
+import { commandLines, diffLines, fileLines, previewToText, readLines, textLines, type CodePreview } from "./agent-diff";
 
 type IconComponent = typeof Globe;
 type ActionDescriptor = { icon: IconComponent; label: string };
@@ -102,10 +105,14 @@ export function actionTarget(name: string, input: unknown): string {
  * browser tab that watched the run.
  */
 export function deriveActions(messages: ChatMessage[]): AgentAction[] {
-  const results = new Map<string, { failed: boolean }>();
+  const results = new Map<string, { failed: boolean; output: unknown }>();
   for (const message of messages) {
-    if (message.role !== "assistant" || !message.tool_call_id) continue;
-    results.set(message.tool_call_id, { failed: hasError(message.content) });
+    // A tool result is its own `tool` turn, keyed by the call it answers. Reading it from an
+    // assistant turn left every restored action without a result — and therefore without the
+    // content or the diff its expanded row is supposed to show.
+    if (message.role !== "tool" || !message.tool_call_id) continue;
+    const parsed = parseToolResult(message.content);
+    results.set(message.tool_call_id, { failed: hasError(parsed), output: parsed });
   }
   const actions: AgentAction[] = [];
   for (const message of messages) {
@@ -113,6 +120,9 @@ export function deriveActions(messages: ChatMessage[]): AgentAction[] {
     for (const call of message.tool_calls) {
       if (call.name === "plan.update") continue;
       const result = results.get(call.id);
+      const before = call.name === "fs.write" || call.name === "fs.delete"
+        ? knownFileContent(actions, filePathOf(call.arguments))
+        : undefined;
       actions.push({
         id: call.id,
         name: call.name,
@@ -120,22 +130,72 @@ export function deriveActions(messages: ChatMessage[]): AgentAction[] {
         // A call without a stored result was interrupted: it is not reported as done.
         status: !result ? "running" : result.failed ? "failed" : "done",
         startedAt: 0,
+        input: call.arguments,
+        ...(result ? { output: result.output } : {}),
+        ...(before !== undefined ? { before } : {}),
       });
     }
   }
   return actions;
 }
 
-/** A tool result is a JSON payload; an `error` key means the call itself failed. */
-function hasError(content: string): boolean {
+function parseToolResult(content: string): unknown {
   try {
-    const parsed = JSON.parse(content) as { error?: unknown; ok?: unknown };
-    if (parsed && typeof parsed === "object" && "error" in parsed && parsed.error) return true;
-    if (parsed && typeof parsed === "object" && parsed.ok === false) return true;
-    return false;
+    return JSON.parse(content) as unknown;
   } catch {
-    return false;
+    return content;
   }
+}
+
+/** A tool result is a JSON payload; an `error` key means the call itself failed. */
+function hasError(parsed: unknown): boolean {
+  if (!parsed || typeof parsed !== "object") return false;
+  const value = parsed as { error?: unknown; ok?: unknown };
+  if ("error" in value && value.error) return true;
+  return value.ok === false;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value) ? value as Record<string, unknown> : {};
+}
+
+function stringValue(value: unknown) {
+  return typeof value === "string" ? value : "";
+}
+
+function filePathOf(input: unknown) {
+  return stringValue(asRecord(input).path).replace(/^\.\//, "");
+}
+
+/**
+ * The last full content of a file from earlier actions. A read window that starts at zero
+ * and is not truncated is complete; a write carries the full new file.
+ */
+export function knownFileContent(actions: AgentAction[], path: string): string | undefined {
+  const normalized = path.replace(/^\.\//, "");
+  if (!normalized) return undefined;
+  for (let index = actions.length - 1; index >= 0; index--) {
+    const action = actions[index];
+    if (action.status === "failed" || filePathOf(action.input) !== normalized) continue;
+    if (action.name === "fs.write") {
+      const content = asRecord(action.input).content;
+      if (typeof content === "string") return content;
+    }
+    if (action.name === "fs.read") {
+      const output = asRecord(action.output);
+      if (output.offset === 0 && output.truncated === false && typeof output.content === "string") return output.content;
+    }
+    // A later deletion means the file did not exist when the current action started: the
+    // next write creates it again, so its previous content is known to be empty.
+    if (action.name === "fs.delete") return "";
+  }
+  return undefined;
+}
+
+/** Content the action is about to replace or remove, when an earlier action read it. */
+export function contentBefore(actions: AgentAction[], name: string, input: unknown): string | undefined {
+  if (name !== "fs.write" && name !== "fs.delete") return undefined;
+  return knownFileContent(actions, filePathOf(input));
 }
 
 /**
@@ -226,11 +286,209 @@ export function PlanPanel({ plan, collapsed, onToggle }: { plan: PlanState } & P
   </RunPanel>;
 }
 
+type ActionDetailData = {
+  title: string;
+  note?: string;
+  preview?: CodePreview;
+  copyText?: string;
+  empty?: string;
+};
+
+function prettyValue(value: unknown) {
+  if (typeof value === "string") return value;
+  if (value === undefined) return "";
+  try {
+    return JSON.stringify(value, null, 2) ?? String(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function changeNote(added: number, removed: number) {
+  if (!added && !removed) return "Содержимое не изменилось";
+  return "+" + added + " · −" + removed;
+}
+
+/** What the expanded row shows: a read window, a line diff, a command result or a call payload. */
+function actionDetail(action: AgentAction): ActionDetailData {
+  const input = asRecord(action.input);
+  const output = asRecord(action.output);
+  const error = stringValue(output.error);
+  if (error) return {
+    title: "Ошибка инструмента",
+    note: error,
+    preview: textLines(error, "error"),
+    copyText: error,
+  };
+
+  if (action.name === "fs.read") {
+    const content = stringValue(output.content);
+    if (!content) return {
+      title: "Чтение файла",
+      note: action.status === "running" ? "Ждём содержимое…" : "Файл пуст",
+      empty: action.status === "running" ? "Агент ещё читает этот файл." : "Файл не содержит текста.",
+    };
+    const offset = typeof output.offset === "number" ? output.offset : 0;
+    const total = typeof output.totalChars === "number" ? output.totalChars : content.length;
+    return {
+      title: "Содержимое файла",
+      note: "окно с " + offset.toLocaleString("ru-RU") + " · " + total.toLocaleString("ru-RU") + " символов",
+      preview: readLines(content),
+      copyText: content,
+    };
+  }
+
+  if (action.name === "fs.write") {
+    const content = stringValue(input.content);
+    if (typeof action.before === "string") {
+      const diff = diffLines(action.before, content);
+      return {
+        title: "Изменения файла",
+        note: changeNote(diff.added, diff.removed),
+        preview: diff,
+        copyText: previewToText(diff),
+        empty: "Содержимое файла не изменилось.",
+      };
+    }
+    return {
+      title: "Новая версия файла",
+      note: "предыдущая версия не загружена — показан весь файл",
+      preview: fileLines(content, "add"),
+      copyText: content,
+    };
+  }
+
+  if (action.name === "fs.delete") {
+    if (typeof action.before === "string") {
+      if (!action.before) return {
+        title: "Удалённое содержимое",
+        note: "файл был пуст",
+        empty: "Файл был пуст.",
+      };
+      const preview = fileLines(action.before, "remove");
+      return {
+        title: "Удалённое содержимое",
+        note: "−" + preview.removed + " строк",
+        preview,
+        copyText: action.before,
+      };
+    }
+    return {
+      title: "Файл удалён",
+      note: "содержимое до удаления не загружено",
+      empty: "Агент удалил файл, но не читал его содержимое в этом диалоге.",
+    };
+  }
+
+  if (action.name === "fs.rename") {
+    const from = stringValue(input.from);
+    const to = stringValue(input.to);
+    return {
+      title: "Переименование",
+      note: from && to ? from + " → " + to : undefined,
+      empty: from && to ? "Путь файла изменён без изменения содержимого." : "Путь не указан.",
+    };
+  }
+
+  if (action.name === "terminal.exec" || action.name === "npm.install") {
+    const command = stringValue(input.command) || "npm install";
+    const stdout = stringValue(output.stdout);
+    const stderr = stringValue(output.stderr);
+    if (action.output === undefined) return {
+      title: "Команда",
+      note: command,
+      empty: "Ждём завершения команды…",
+      copyText: command,
+    };
+    const exit = typeof output.exitCode === "number" ? output.exitCode : null;
+    return {
+      title: "Команда",
+      note: [command, exit !== null ? "код " + exit : ""].filter(Boolean).join(" · "),
+      preview: commandLines(stdout, stderr),
+      copyText: [stdout, stderr].filter(Boolean).join("\n"),
+      empty: "Команда завершилась без вывода.",
+    };
+  }
+
+  if (action.name === "fs.list" && Array.isArray(action.output)) {
+    const text = action.output.map(item => {
+      const entry = asRecord(item);
+      const name = stringValue(entry.name);
+      return (entry.type === "directory" ? "📁 " : "📄 ") + name;
+    }).join("\n");
+    return { title: "Содержимое каталога", note: action.output.length + " элементов", preview: textLines(text), copyText: text };
+  }
+
+  const payload = action.output !== undefined ? action.output : action.input;
+  const text = prettyValue(payload);
+  return {
+    title: action.output !== undefined ? "Результат вызова" : "Параметры вызова",
+    note: action.status === "running" ? "Ждём результат…" : undefined,
+    preview: text ? textLines(text) : undefined,
+    copyText: text || undefined,
+    empty: "У этого действия нет текстового результата.",
+  };
+}
+
+async function copyToClipboard(text: string) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {}
+  try {
+    const area = document.createElement("textarea");
+    area.value = text;
+    area.style.position = "fixed";
+    area.style.opacity = "0";
+    document.body.appendChild(area);
+    area.select();
+    const copied = document.execCommand("copy");
+    area.remove();
+    return copied;
+  } catch {
+    return false;
+  }
+}
+
+function ActionDetailView({ action }: { action: AgentAction }) {
+  const detail = actionDetail(action);
+  const [copied, setCopied] = useState(false);
+  useEffect(() => { setCopied(false); }, [action.id]);
+  useEffect(() => {
+    if (!copied) return;
+    const timer = window.setTimeout(() => setCopied(false), 1600);
+    return () => window.clearTimeout(timer);
+  }, [copied]);
+  const lines = detail.preview?.lines.slice(0, 400) ?? [];
+  const hidden = detail.preview ? Math.max(0, detail.preview.total - lines.length) : 0;
+  return <div className="action-detail">
+    <div className="action-detail-head">
+      <div className="action-detail-title">
+        <strong>{detail.title}</strong>
+        {detail.note && <span title={detail.note}>{detail.note}</span>}
+      </div>
+      {detail.copyText && <button type="button" className="action-copy" onClick={() => { void copyToClipboard(detail.copyText ?? "").then(ok => { if (ok) setCopied(true); }); }} title="Копировать содержимое">
+        {copied ? <Check size={12}/> : <Copy size={12}/>}{copied ? "Скопировано" : "Копировать"}
+      </button>}
+    </div>
+    {detail.preview && lines.length > 0 && <div className="action-code" role="region" aria-label={detail.title}>
+      {lines.map((line, index) => <div key={line.line + ":" + index} className={"code-line code-" + line.kind}>
+        <span className="code-no">{line.line}</span>
+        <span className="code-sign">{line.sign}</span>
+        <code>{line.text || " "}</code>
+      </div>)}
+      {hidden > 0 && <div className="action-code-more">Показаны первые {lines.length} из {detail.preview.total} строк</div>}
+    </div>}
+    {detail.empty && (!detail.preview || lines.length === 0) && <p className="action-detail-empty">{detail.empty}</p>}
+  </div>;
+}
+
 export function ActionsPanel({ actions, running, progress, collapsed, onToggle }: {
   actions: AgentAction[];
   running: boolean;
   progress: { step: number; maxSteps: number } | null;
 } & PanelToggles) {
+  const [openId, setOpenId] = useState<string | null>(null);
   const failed = actions.filter(action => action.status === "failed").length;
   const status = <span className="run-panel-state">
     {running
@@ -250,18 +508,24 @@ export function ActionsPanel({ actions, running, progress, collapsed, onToggle }
     <ul>
       {actions.map(action => {
         const { icon: Icon, label } = describeAction(action.name);
-        return <li key={action.id} className={"action-row action-" + action.status}>
-          <span className="action-icon"><Icon size={13}/></span>
-          <span className="action-label">{label}</span>
-          {action.target && <code className="action-target" title={action.target}>{action.target}</code>}
-          <span className="action-status">
-            {action.status === "running"
-              ? <LoaderCircle size={12} className="agent-spin"/>
-              : action.status === "failed"
-                ? <CircleAlert size={12}/>
-                : <CircleCheck size={12}/>}
-            {action.status !== "running" && typeof action.durationMs === "number" && <small>{(action.durationMs / 1000).toFixed(1)} с</small>}
-          </span>
+        const open = openId === action.id;
+        const detailId = "action-detail-" + action.id;
+        return <li key={action.id} className={"action-row action-" + action.status + (open ? " action-open" : "")}>
+          <button type="button" className="action-summary" onClick={() => setOpenId(open ? null : action.id)} aria-expanded={open} aria-controls={detailId}>
+            <span className="action-chevron">{open ? <ChevronDown size={12}/> : <ChevronRight size={12}/>}</span>
+            <span className="action-icon"><Icon size={13}/></span>
+            <span className="action-label">{label}</span>
+            {action.target && <code className="action-target" title={action.target}>{action.target}</code>}
+            <span className="action-status">
+              {action.status === "running"
+                ? <LoaderCircle size={12} className="agent-spin"/>
+                : action.status === "failed"
+                  ? <CircleAlert size={12}/>
+                  : <CircleCheck size={12}/>}
+              {action.status !== "running" && typeof action.durationMs === "number" && <small>{(action.durationMs / 1000).toFixed(1)} с</small>}
+            </span>
+          </button>
+          {open && <div id={detailId}><ActionDetailView action={action}/></div>}
         </li>;
       })}
     </ul>

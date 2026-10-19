@@ -85,7 +85,11 @@ export function YandexConnect(){
   async function disconnect(){
     setBusy(true);setError(null);
     try{
-      await fetch("/api/yandex/disconnect",{method:"POST"});
+      const response=await fetch("/api/yandex/disconnect",{method:"POST"});
+      if(!response.ok){
+        const data=await response.json().catch(()=>({})) as YandexStatus;
+        throw new Error(data.error??"Yandex Cloud не подтвердил отключение");
+      }
       setSecret("");setNotice(null);setOpen(false);
       await loadStatus(true);
     }catch(e){setError(e instanceof Error?e.message:"Не удалось отключить Yandex Cloud")}

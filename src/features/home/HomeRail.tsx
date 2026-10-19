@@ -6,7 +6,7 @@ import { ProjectRenameForm } from "./ProjectRename";
 import { type Project } from "../../lib/project-api";
 import { apiJson } from "../../lib/api";
 import { getBilling, paymentsPendingNotice, type BillingData, type PlanId } from "../../lib/billing-api";
-import { activePlanId, upgradeLabel, usePlanChoice } from "../../lib/plan-choice";
+import { activePlanId, chosenPlanId, isPendingChoice, planName, usePlanChoice } from "../../lib/plan-choice";
 import { readCachedPreferences, type UserPreferences } from "../../lib/preferences";
 
 export type RailSection = "integrations" | "projects" | "account" | "billing";
@@ -114,7 +114,15 @@ export function HomeRail(props: HomeRailProps) {
 
     <div className="rail-foot">
       <button className="rail-upsell" onClick={onOpenPlans} title="Открыть выбор тарифа">
-        <Sparkles size={13}/> <span>{upgradeLabel(billing, planChoice)}</span> <ArrowRight size={12}/>
+        <span className="rail-upsell-icon"><Sparkles size={14}/></span>
+        <span className="rail-upsell-copy">
+          <small>Подписка</small>
+          <span className="rail-upsell-line">
+            <strong>{planName(billing, activePlanId())}</strong>
+            {isPendingChoice(planChoice) && <><span className="rail-upsell-arrow" aria-hidden="true">→</span><em>{planName(billing, chosenPlanId(planChoice))}</em></>}
+          </span>
+        </span>
+        <ArrowRight size={13} className="rail-upsell-go"/>
       </button>
       <button className="rail-exit" onClick={onExit}><LogOut size={14}/> Выйти</button>
     </div>

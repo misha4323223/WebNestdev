@@ -1,5 +1,6 @@
 import { useEffect } from "react";
 import { AuthGate } from "./features/auth/AuthGate";
+import { CookieConsent } from "./features/legal/CookieConsent";
 import { watchForNewBuild } from "./lib/app-build";
 import { loadCachedPreferences } from "./lib/preferences";
 
@@ -10,6 +11,6 @@ export function App(){
     // иначе она остаётся на документе и ассетах прошлой версии (см. lib/app-build.ts).
     return watchForNewBuild();
   },[]);
-  return <div className="app"><AuthGate/></div>;
+  return <div className="app"><AuthGate/><CookieConsent/></div>;
 }
 export default App;

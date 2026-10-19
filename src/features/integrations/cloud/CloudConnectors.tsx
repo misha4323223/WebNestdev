@@ -62,7 +62,6 @@ export function CloudConnectors() {
   }
 
   return <div className="cloud-list">
-    <div className="connectors-label">ОБЛАКА</div>
     {error && <div className="connector-notice">{error}</div>}
     {CLOUD_PROVIDERS.map(provider => <CloudCard
       key={provider.id}

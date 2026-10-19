@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Brain, Check, ChevronDown, ClipboardList, Code2 } from "lucide-react";
+import { Brain, Check, ChevronDown, ClipboardList, Code2, SlidersHorizontal } from "lucide-react";
 import type { AgentMode, ReasoningEffort } from "../../lib/types";
 
 /**
@@ -50,7 +50,6 @@ export function AgentModeControl({ mode, reasoning, onMode, onReasoning }: {
   }, [open]);
 
   const modeLabel = mode === "planner" ? "Планировщик" : "Разработчик";
-  const ModeIcon = mode === "planner" ? ClipboardList : Code2;
 
   return <div className="agent-mode" ref={boxRef}>
     <button
@@ -59,10 +58,10 @@ export function AgentModeControl({ mode, reasoning, onMode, onReasoning }: {
       onClick={() => setOpen(value => !value)}
       aria-expanded={open}
       aria-haspopup="dialog"
-      title={modeLabel + " · размышление " + reasoningLabels[reasoning].toLowerCase() + ". Открыть настройки запуска."}
+      title={"Режимы агента · сейчас: " + modeLabel + ", размышление " + reasoningLabels[reasoning].toLowerCase() + ". Открыть настройки запуска."}
     >
-      <ModeIcon size={12}/>
-      <span className="agent-mode-label">{modeLabel}</span>
+      <SlidersHorizontal size={12}/>
+      <span className="agent-mode-label">Режимы</span>
       <span className="agent-mode-dot" aria-hidden="true">·</span>
       <span className="agent-mode-depth">{reasoningLabels[reasoning]}</span>
       <ChevronDown size={12} className="agent-mode-caret"/>

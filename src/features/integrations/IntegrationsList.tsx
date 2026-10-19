@@ -1,3 +1,5 @@
+import type { ReactNode } from "react";
+import { Cloud, Code2, Database, Globe, Layers } from "lucide-react";
 import { BrandMark } from "../../components/BrandLogo";
 import { GitHubConnect, type ConnectorSurface } from "../github/GitHubConnect";
 import { YandexConnect } from "../yandex/YandexConnect";
@@ -8,19 +10,51 @@ import { DatabaseConnect } from "../database/DatabaseConnect";
 import { ConnectorCard } from "./ConnectorCard";
 
 /**
- * The integrations catalog: every service is one card with a connect button and a
- * status indicator. GitHub, Yandex Cloud and the project database are live; the
- * remaining services are reserved slots that already use the same shape, so wiring
- * one up only means giving it a real status.
+ * Одна категория каталога: заголовок с иконкой, короткое пояснение и карточки.
+ *
+ * Категории нужны, чтобы облака, базы, код и сервисы не сваливались в один список:
+ * пользователь ищет «где база» или «где GitHub», а не листает все подряд. Заголовок
+ * отделён линией и приглушён, поэтому он ведёт взгляд, но не спорит с карточками.
+ */
+function ConnectorSection({ icon, title, note, children }: { icon: ReactNode; title: string; note: string; children: ReactNode }) {
+  return <section className="connector-section">
+    <div className="connector-section-head">
+      <span className="connector-section-icon">{icon}</span>
+      <h3 className="connector-section-title">{title}</h3>
+      <span className="connector-section-rule"/>
+    </div>
+    <p className="connector-section-note">{note}</p>
+    {children}
+  </section>;
+}
+
+/**
+ * Каталог интеграций: каждая категория — свой заголовок, внутри — карточки одного вида.
+ * Yandex Cloud стоит вместе с остальными облаками, база данных — в «Базах», GitHub и
+ * GitLab — в «Коде», чтобы ни один коннектор не висел над списком без объяснения.
  */
 export function IntegrationsList({surface="home",onImported}:{surface?:ConnectorSurface;onImported?:(projectId:string,conversationId:string)=>void}){
   return <div className="connectors">
-    <DatabaseConnect surface={surface}/>
-    <GitHubConnect surface={surface} onImported={onImported}/>
-    <YandexConnect/>
-    <CloudConnectors/>
-    <DomainConnectors/>
-    <ServiceConnectors/>
-    <ConnectorCard name="GitLab" icon={<BrandMark brand="gitlab" size={18}/>} status="disconnected" soon/>
+    <ConnectorSection icon={<Database size={12}/>} title="Базы данных" note="Хранилище проекта: PostgreSQL, MySQL, MongoDB, Redis и Yandex YDB.">
+      <DatabaseConnect surface={surface}/>
+    </ConnectorSection>
+
+    <ConnectorSection icon={<Code2 size={12}/>} title="Код и репозитории" note="Импорт проекта из GitHub или GitLab и работа агента с репозиторием.">
+      <GitHubConnect surface={surface} onImported={onImported}/>
+      <ConnectorCard name="GitLab" icon={<BrandMark brand="gitlab" size={18}/>} status="disconnected" soon/>
+    </ConnectorSection>
+
+    <ConnectorSection icon={<Cloud size={12}/>} title="Облака" note="Виртуальные машины, диски, бакеты и базы российских провайдеров.">
+      <YandexConnect/>
+      <CloudConnectors/>
+    </ConnectorSection>
+
+    <ConnectorSection icon={<Globe size={12}/>} title="Домены" note="Регистраторы, где платформа читает домены и DNS-записи по API-ключу.">
+      <DomainConnectors/>
+    </ConnectorSection>
+
+    <ConnectorSection icon={<Layers size={12}/>} title="Сервисы" note="Почта, оплата, AI, карты, CRM и файлы — ключом из кабинета провайдера.">
+      <ServiceConnectors/>
+    </ConnectorSection>
   </div>;
 }

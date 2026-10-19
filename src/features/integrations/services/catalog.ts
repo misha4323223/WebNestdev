@@ -350,7 +350,7 @@ export const SERVICES: ServiceInfo[] = [
     keyUrl: "https://platform.2gis.ru/ru/keys",
     docsUrl: "https://docs.2gis.com/en/api/search/regions/overview",
     steps: [
-      "Platform Manager 2GIS → «Ключи API» → «Создать API-ключ» (для подписки; демо-ключ выдаётся на главной).",
+      "Platform Manager 2GIS → «Ключи API» → «Создать API-ключ» (бесплатный пробный ключ выдаётся на главной).",
       "Скопируйте ключ.",
       "Вставьте ключ — проверим поиском региона.",
     ],

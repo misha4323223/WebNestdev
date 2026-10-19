@@ -83,12 +83,15 @@ export function AuthGate(){
     const returnTo=localStorage.getItem(provider.returnFlag);
     localStorage.removeItem(provider.returnFlag);
     localStorage.setItem(provider.noticeFlag,status);
-    localStorage.setItem("webnestdev.openIntegrations","1");
     if(returnTo==="workspace"){
+      // Отдельный ключ для вкладки: `openIntegrations` читает ещё и главная, которая
+      // смонтирована даже позади рабочей области, и съедала бы флаг до SettingsHub.
       localStorage.setItem("webnestdev.openSettings","1");
+      localStorage.setItem("webnestdev.openSettingsTab","integrations");
       openWorkspace(localStorage.getItem("webnestdev.projectId")??"");
       return;
     }
+    localStorage.setItem("webnestdev.openIntegrations","1");
     goHome();
   },[goHome]);
   if(state==="loading") return <div className="app-loading"><NestLoader size={58} label="Проверяем сессию"/><strong>Проверяем сессию…</strong><span>Подготавливаем ваше рабочее пространство</span></div>;

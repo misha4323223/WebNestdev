@@ -38,6 +38,8 @@ export type KeyProviderInfo = {
 export type KeyConnectionState = {
   connected: boolean;
   account: string | null;
+  /** Ответ облака после сохранения: иначе карточка покажет старое разрешение на изменения. */
+  allowWrites?: boolean;
 };
 
 /**
@@ -87,11 +89,17 @@ export function KeyCard({ provider, state, onChanged, endpoint, keyLabel = "Гд
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ fields, ...(allowWrites === undefined ? {} : { allowWrites }) }),
       });
-      const data = await response.json() as { error?: string; account?: string | null };
+      const data = await response.json() as { error?: string; account?: string | null; allowWrites?: boolean };
       if (!response.ok) throw new Error(data.error ?? "Сервис отклонил доступ");
       setFields({});
       setOpen(false);
-      onChanged({ connected: true, account: data.account ?? null });
+      // Разрешение на изменения возвращается вместе с подключением: без него только что
+      // сохранённое «выключено» выглядело бы включённым до перезагрузки страницы.
+      onChanged({
+        connected: true,
+        account: data.account ?? null,
+        ...(typeof data.allowWrites === "boolean" ? { allowWrites: data.allowWrites } : {}),
+      });
     } catch (e) {
       setError(e instanceof Error ? e.message : "Не удалось сохранить доступ");
     } finally {
@@ -103,7 +111,13 @@ export function KeyCard({ provider, state, onChanged, endpoint, keyLabel = "Гд
     setBusy(true);
     setError(null);
     try {
-      await fetch(endpoint + "/" + provider.id + "/disconnect", { method: "POST" });
+      const response = await fetch(endpoint + "/" + provider.id + "/disconnect", { method: "POST" });
+      // Без этой проверки ответ 500 выглядел бы как успешное отключение: карточка гасла бы,
+      // хотя ключ остался на сервере.
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({})) as { error?: string };
+        throw new Error(data.error ?? "Сервис не подтвердил отключение");
+      }
       setOpen(false);
       onChanged({ connected: false, account: null });
     } catch (e) {

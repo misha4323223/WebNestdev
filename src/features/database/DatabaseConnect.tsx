@@ -182,7 +182,11 @@ export function DatabaseConnect({surface="home"}:{surface?:ConnectorSurface}){
   async function disconnect(){
     setBusy(true);setError(null);setNotice(null);setCheck(null);
     try{
-      await fetch("/api/database/disconnect",{method:"POST",credentials:"include"});
+      const response=await fetch("/api/database/disconnect",{method:"POST",credentials:"include"});
+      if(!response.ok){
+        const data=await response.json().catch(()=>({})) as DatabaseStatus;
+        throw new Error(data.error??"Сервер не подтвердил отключение");
+      }
       setFormOpen(false);setHintOpen(false);
       await loadStatus(true);
     }catch(e){setError(e instanceof Error?e.message:"Не удалось отключить базу данных")}

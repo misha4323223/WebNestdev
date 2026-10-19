@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { ChatMessage } from "../types.js";
-import { buildInitialMessages, insertSystemNotice, storedHistory } from "./message-builder.js";
+import { PLANNER_MODE_PROMPT, SYSTEM_PROMPT, buildInitialMessages, insertSystemNotice, storedHistory } from "./message-builder.js";
 
 /**
  * The stored chat is the model's memory of a run, so what it hands to a provider has to be exactly
@@ -85,4 +85,20 @@ test("история из хранилища идёт после системн�
   assert.equal(built[1].content, "контекст проекта");
   assert.equal(built[2].content, "задача");
   assert.ok(!built.some(message => message.content === "старый системный текст"), "системные сообщения истории не переносятся");
+});
+
+/** Русский — язык размышления по умолчанию, но запрос на другом языке не должен ломаться. */
+test("the agent reasons in Russian by default", () => {
+  assert.match(SYSTEM_PROMPT, /reason in Russian by default/i);
+  assert.match(SYSTEM_PROMPT, /write the answer in Russian/i);
+});
+
+test("an English request still gets English reasoning and answer", () => {
+  assert.match(SYSTEM_PROMPT, /English request gets English reasoning and an English answer/i);
+  assert.doesNotMatch(SYSTEM_PROMPT, /When the user writes in another language, answer in that language\./);
+});
+
+test("planner mode follows the language of the request", () => {
+  assert.match(PLANNER_MODE_PROMPT, /in the user's language/i);
+  assert.match(PLANNER_MODE_PROMPT, /Russian by default/i);
 });

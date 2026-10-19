@@ -1,5 +1,5 @@
 import { useEffect,useState } from "react";
-import { CreditCard,Menu,Monitor,Plus } from "lucide-react";
+import { CreditCard,Menu,Monitor,Plus,Sparkles } from "lucide-react";
 import { logout } from "../../lib/auth-api";
 import { WebNestLogo } from "../../components/WebNestLogo";
 import { getBilling } from "../../lib/billing-api";
@@ -19,9 +19,16 @@ export function Topbar({projectName,onMenu,onNewProject,onHome,onPlan,previewOpe
   },[planChoice]);
   return <header className="topbar">
     <button className="icon-button mobile-only" onClick={onMenu} aria-label="Открыть меню"><Menu size={16}/></button>
-    <button className="brand brand-home" onClick={onHome} title="На главную"><span className="brand-mark"><WebNestLogo size={22} tone="light"/></span><span>WebNestdev</span><span className="version">WEB</span></button>
+    <button className="brand brand-home" onClick={onHome} title="На главную"><span className="brand-mark"><WebNestLogo size={22} tone="light"/></span><span>WebNestdev</span></button>
     <div className="topbar-project">{projectName}</div>
-    {plan&&<button className="topbar-plan" onClick={onPlan} title={"Тариф: "+plan.name+(plan.chosen?" · выбран "+plan.chosen:"")}><CreditCard size={12}/> {plan.name}{plan.chosen&&<span className="topbar-plan-next">→ {plan.chosen}</span>}</button>}
+    {plan&&<button className={"topbar-plan"+(plan.chosen?" topbar-plan-upgrade":"")} onClick={onPlan} title={"Тариф: "+plan.name+(plan.chosen?" · выбран "+plan.chosen:"")}>
+      <span className="topbar-plan-icon"><CreditCard size={12}/></span>
+      <span className="topbar-plan-name">{plan.name}</span>
+      {plan.chosen&&<>
+        <span className="topbar-plan-arrow" aria-hidden="true">→</span>
+        <span className="topbar-plan-next"><Sparkles size={10}/>{plan.chosen}</span>
+      </>}
+    </button>}
     <div className="topbar-actions">
       {/* Only on a phone, where the preview is a drawer and needs a way in and out. */}
       <button className={"icon-button preview-toggle"+(previewOpen?" active":"")} onClick={onPreviewToggle} aria-expanded={previewOpen} aria-controls="preview-panel" aria-label="Предпросмотр проекта" title="Предпросмотр проекта">

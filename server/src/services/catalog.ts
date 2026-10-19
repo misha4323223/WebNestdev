@@ -427,7 +427,7 @@ export const SERVICES: ServiceDefinition[] = [
     keyUrl: "https://platform.2gis.ru/ru/keys",
     docsUrl: "https://docs.2gis.com/en/api/search/regions/overview",
     steps: [
-      "Platform Manager 2GIS → «Ключи API» → «Создать API-ключ» (для пробы есть бесплатный demo-ключ).",
+      "Platform Manager 2GIS → «Ключи API» → «Создать API-ключ» (для пробы есть бесплатный пробный ключ).",
       "Скопируйте ключ.",
       "Вставьте ключ — проверим поиском региона.",
     ],
@@ -447,7 +447,7 @@ export const SERVICES: ServiceDefinition[] = [
     docsUrl: "https://help.retailcrm.pro/Developers/ApiRules",
     steps: [
       "Ваш аккаунт RetailCRM → «Администрирование» → «Интеграции».",
-      "В списке ключей → «Добавить»: скопируйте адрес аккаунта (вида https://demo.retailcrm.ru) и ключ API.",
+      "В списке ключей → «Добавить»: скопируйте адрес аккаунта (вида https://ваш-аккаунт.retailcrm.ru) и ключ API.",
       "Вставьте оба поля — проверим методом credentials.",
     ],
     fields: [

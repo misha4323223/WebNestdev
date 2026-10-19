@@ -6,7 +6,7 @@ import { createAgentSocket } from "../../lib/agent-socket";
 import { apiJson } from "../../lib/api";
 import { answerProjectQuestion,cancelProjectSecret,getConversation,skipProjectQuestion,submitProjectSecret,uploadProjectFile } from "../../lib/project-api";
 import { NestLoader } from "../../components/NestLoader";
-import { ActionsPanel,MessageThinking,PlanPanel,actionTarget,deriveActions,readPlan,writePlan,type PanelId,type PanelState } from "./agent-activity";
+import { ActionsPanel,MessageThinking,PlanPanel,actionTarget,contentBefore,deriveActions,readPlan,writePlan,type PanelId,type PanelState } from "./agent-activity";
 import type { AgentAction,AgentMode,ChatMessage,PlanState,ReasoningEffort } from "../../lib/types";
 import { QuestionSheet,type AgentQuestion } from "./QuestionSheet";
 import { AgentModeControl } from "./AgentModeControl";
@@ -545,13 +545,16 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
         const name=event.name;
         const id=event.toolCallId??nextId();
         // Publishing the plan already updates the plan card, so it is not repeated here.
-        if(name!=="plan.update")updateActions(current=>[...current,{id,name,target:actionTarget(name,event.input).slice(0,160),status:"running",startedAt:Date.now()}]);
+        if(name!=="plan.update")updateActions(current=>{
+          const before=contentBefore(current,name,event.input);
+          return [...current,{id,name,target:actionTarget(name,event.input).slice(0,160),status:"running",startedAt:Date.now(),input:event.input,...(before!==undefined?{before}:{})}];
+        });
       }
       if(event.type==="tool.finished"&&event.name){
         const id=event.toolCallId??"";
-        const output=event.output as {error?:unknown}|null;
-        const failed=Boolean(output&&typeof output==="object"&&"error" in output&&output.error);
-        updateActions(current=>current.map(action=>action.id===id?{...action,status:failed?"failed":"done",durationMs:Date.now()-action.startedAt}:action));
+        const output=event.output as {error?:unknown;ok?:unknown}|null;
+        const failed=Boolean(output&&typeof output==="object"&&(("error" in output&&output.error)||output.ok===false));
+        updateActions(current=>current.map(action=>action.id===id?{...action,status:failed?"failed":"done",durationMs:Date.now()-action.startedAt,output:event.output}:action));
       }
       if(event.type==="plan.updated"&&event.plan)updatePlan(event.plan);
       if(event.type==="secret.requested"&&event.requestId&&event.variable){

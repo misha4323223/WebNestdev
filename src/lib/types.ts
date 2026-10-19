@@ -30,4 +30,20 @@ export type PlanItem={title:string;status:PlanItemStatus;note?:string};
 /** The task plan the agent publishes with plan.update and the user watches live. */
 export type PlanState={items:PlanItem[];updatedAt:string};
 /** One tool call shown in the activity feed of a run. */
-export type AgentAction={id:string;name:string;target:string;status:"running"|"done"|"failed";startedAt:number;durationMs?:number};
+export type AgentAction={
+  id:string;
+  name:string;
+  target:string;
+  status:"running"|"done"|"failed";
+  startedAt:number;
+  durationMs?:number;
+  /** The arguments the model sent, kept for the expandable action details. */
+  input?:unknown;
+  /** The tool result, or undefined while the call is still running. */
+  output?:unknown;
+  /**
+   * Full previous file content when it is known from an earlier read or write.
+   * An empty string means the file was known to be empty; undefined means unknown.
+   */
+  before?:string;
+};

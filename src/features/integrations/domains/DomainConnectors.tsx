@@ -33,7 +33,6 @@ export function DomainConnectors() {
   }, []);
 
   return <div className="cloud-list">
-    <div className="connectors-label">ДОМЕНЫ</div>
     {error && <div className="connector-notice">{error}</div>}
     {DOMAIN_REGISTRARS.map(registrar => <KeyCard
       key={registrar.id}

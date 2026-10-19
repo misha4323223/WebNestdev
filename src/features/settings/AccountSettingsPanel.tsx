@@ -3,6 +3,7 @@ import { apiJson } from "../../lib/api";
 import { applyPreferences, type UserPreferences } from "../../lib/preferences";
 import { dateLabel, getBilling, moneyLabel, paymentsPendingNotice, type BillingData } from "../../lib/billing-api";
 import { activePlanId, usePlanChoice, writePlanChoice } from "../../lib/plan-choice";
+import { openCookieSettings } from "../legal/CookieConsent";
 import { Check, CreditCard, Settings2, ShieldCheck, UserRound } from "lucide-react";
 
 type Preferences = UserPreferences;
@@ -64,7 +65,7 @@ export function AccountSettingsPanel() {
             <label>{account?.user.yandex ? "Служебный адрес аккаунта" : "Email"}<input value={account?.user.email ?? ""} readOnly/></label>
             <label>ID аккаунта<input value={account?.user.id ?? ""} readOnly/></label>
             <label>Дата регистрации<input value={dateLabel(account?.user.createdAt ?? null)} readOnly/></label>
-            <div className="account-note"><ShieldCheck size={14}/> Данные аккаунта доступны только после авторизации.</div>
+            <div className="account-note"><ShieldCheck size={14}/> {account?.user.yandex ? "Профиль подтверждён через Яндекс ID — данные видны только вам." : "Данные профиля защищены и видны только вам."}</div>
           </div>}
           {section === "preferences" && <div className="account-section">
             <span className="eyebrow">ПРЕДПОЧТЕНИЯ</span><h3>Предпочтения</h3><p className="account-muted">Параметры сохраняются на сервере и привязаны к вашему аккаунту. Компактный режим применяется сразу.</p>
@@ -72,7 +73,10 @@ export function AccountSettingsPanel() {
             <label className="account-toggle"><span><strong>Компактный режим</strong><small>Меньше отступов в рабочих панелях — включается мгновенно</small></span><span className="switch"><input type="checkbox" checked={preferences.compactMode} onChange={e => { const next = { ...preferences, compactMode: e.target.checked }; setPreferences(next); applyPreferences(next); }}/><span className="switch-track"><span className="switch-thumb"/></span></span></label>
             <label className="account-toggle is-soon"><span><strong>Email-уведомления<span className="soon-pill">скоро</span></strong><small>Писем пока не отправляем: подключим вместе с почтовым сервисом</small></span><span className="switch"><input type="checkbox" checked={preferences.emailNotifications} disabled onChange={() => {}}/><span className="switch-track"><span className="switch-thumb"/></span></span></label>
             <label className="account-toggle is-soon"><span><strong>Новости продукта<span className="soon-pill">скоро</span></strong><small>Рассылка обновлений WebNestdev — тоже после подключения почты</small></span><span className="switch"><input type="checkbox" checked={preferences.productUpdates} disabled onChange={() => {}}/><span className="switch-track"><span className="switch-thumb"/></span></span></label>
-            <button className="send-button account-save" disabled={saving} onClick={() => void savePreferences()}>{saving ? "Сохраняем…" : "Сохранить настройки"}</button>
+            <div className="account-pref-actions">
+              <button type="button" className="ghost-button" onClick={openCookieSettings}>Cookie-настройки</button>
+              <button className="send-button account-save" disabled={saving} onClick={() => void savePreferences()}>{saving ? "Сохраняем…" : "Сохранить настройки"}</button>
+            </div>
           </div>}
           {section === "subscription" && <div className="account-section">
             <span className="eyebrow">ПОДПИСКА</span><h3>Тариф и подписка</h3>
