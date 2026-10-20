@@ -164,8 +164,13 @@ install_access_key
 prune_images(){
   local keep="$KEEP_IMAGES"
   case "$keep" in ''|*[!0-9]*) keep=2;; esac
-  local before after doomed
+  local before after doomed active
   before=$(docker system df --format '{{.Size}}' 2>/dev/null | tr '\n' ' ' || true)
+  # Репозитории, которые сейчас действительно работают. Образы из остальных (схема выкатки,
+  # которой больше нет: сборка на ВМ, ручной `webnestdev:production`) не нужны ни для запуска,
+  # ни для откката, но проходили мимо правила «2 последних»: в своём репозитории такой образ
+  # один, счёт не доходил до лимита — и 2 ГБ лежали на диске неделями.
+  active=$(docker ps --format '{{.Image}}' 2>/dev/null | sed 's/[:@].*//' | sort -u || true)
   # Один образ может быть с двумя тегами (latest и sha-…): в листинге это две строки с одним
   # ID, и без дедупликации он съел бы два места из «двух последних».
   # `|| true` — как и у строки выше: уборка вызывается и из ветки отказа выкатки, а падать там
@@ -178,7 +183,15 @@ prune_images(){
         { print $3 "\t" $1 "\t" $2 }
       ' \
     | sort -r \
-    | awk -F'\t' -v keep="$keep" '{ count[$3]++ ; if (count[$3] > keep) print $2 }' || true)
+    | awk -F'\t' -v keep="$keep" -v active="$active" '
+        {
+          inuse = 0
+          total = split(active, repos, "\n")
+          for (i = 1; i <= total; i++) if (repos[i] == $3) inuse = 1
+          if (!inuse) { print $2; next }
+          count[$3]++
+          if (count[$3] > keep) print $2
+        }' || true)
   log "чищу старые образы: оставляю $keep последних для репозиториев со «$IMAGE_REPO_PATTERN»"
   if [ -z "$doomed" ]; then
     log "лишних образов нет"
