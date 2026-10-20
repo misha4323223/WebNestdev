@@ -4,7 +4,9 @@ import { previewProxyBase } from "../preview/preview-rewrite.js";
 import { createSession, deleteSession } from "../auth/auth-store.js";
 import { SESSION_COOKIE } from "../auth/auth.js";
 import { registerTool } from "../tool-registry.js";
+import { getSandbox } from "../sandbox/sandbox-service.js";
 import { withBrowserSlot } from "./browser-limiter.js";
+import { layoutSummary, readLayout, saveScreenshot, type LayoutAudit, type SavedScreenshot } from "./screenshot-file.js";
 
 const MAX_BODY = 200_000;
 const MAX_DIAGNOSTIC_ITEMS = 100;
@@ -361,13 +363,21 @@ type DoorEvidence = {
   pageErrors: string[];
   failures: string[];
   background: string[];
+  /** Вёрстка и PNG: проверка отрисовки не должна оставаться словами «страница не пустая». */
+  layout?: LayoutAudit;
+  screenshot?: SavedScreenshot;
 };
 
 /**
  * Одна дверь к приложению: адрес контейнера и адрес прокси платформы — два разных пути к одному
  * проекту. Кука нужна только второй двери: прокси пускает лишь владельца проекта.
  */
-async function loadDoor(browser: Browser, url: string, cookie?: { name: string; value: string }): Promise<DoorEvidence> {
+async function loadDoor(
+  browser: Browser,
+  url: string,
+  cookie?: { name: string; value: string },
+  capture?: { root: string; projectId: string; label: string },
+): Promise<DoorEvidence> {
   const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
   // Кука ставится на весь источник: приложение внутри кадра ходит и в свой /api.
   if (cookie) await context.addCookies([{ name: cookie.name, value: cookie.value, url: new URL(url).origin }]);
@@ -406,6 +416,20 @@ async function loadDoor(browser: Browser, url: string, cookie?: { name: string; 
     const html = await page.content();
     clearTimeout(runtimeDeadline);
 
+    // Снимок и сводка вёрстки — по желанию: без владельца проекта сохранять PNG некуда, и
+    // проверка не должна падать из-за того, что картинку не удалось записать.
+    let layout: LayoutAudit | undefined;
+    let screenshot: SavedScreenshot | undefined;
+    if (capture) {
+      try {
+        layout = await readLayout(page);
+        screenshot = await saveScreenshot(page, { ...capture, fullPage: false });
+      } catch {
+        layout = undefined;
+        screenshot = undefined;
+      }
+    }
+
     const consoleErrors = consoleMessages.filter(item => item.type === "error").map(item => ({ text: item.text, url: item.url ?? "" }));
     const judged = classifyRuntimeFailures({
       pageErrors,
@@ -428,6 +452,8 @@ async function loadDoor(browser: Browser, url: string, cookie?: { name: string; 
       pageErrors,
       failures: judged.failures,
       background: judged.background,
+      layout,
+      screenshot,
     };
   } finally {
     await context.close().catch(() => undefined);
@@ -503,10 +529,17 @@ async function inspectRuntimePage(projectId: string, path: string, userId?: stri
   const current = getPreview(projectId);
   if (!current) throw new Error("Состояние предпросмотра недоступно — предпросмотр не запущен");
 
+  // Куда положить PNG: служебная папка проекта. Владельца нет — проверка идёт без снимка.
+  const sandbox = userId ? await getSandbox(projectId, userId).catch(() => null) : null;
   const browser = await chromium.launch({ headless: true, executablePath: process.env.WEBNESTDEV_BROWSER_EXECUTABLE || undefined });
   let door: DoorEvidence;
   try {
-    door = await loadDoor(browser, `http://${current.host}:${current.port}${path}`);
+    door = await loadDoor(
+      browser,
+      `http://${current.host}:${current.port}${path}`,
+      undefined,
+      sandbox ? { root: sandbox.root, projectId, label: "runtime" } : undefined,
+    );
   } finally {
     await browser.close();
   }
@@ -528,6 +561,10 @@ async function inspectRuntimePage(projectId: string, path: string, userId?: stri
     httpErrors: door.httpErrors,
     pageErrors: door.pageErrors,
     background: door.background,
+    /** PNG проверки: путь внутри проекта и адрес, по которому его открывает человек. */
+    screenshot: door.screenshot ?? null,
+    /** Вёрстка числами: что вылезло за экран, что обрезано, какие картинки не загрузились. */
+    layout: door.layout ?? null,
     htmlBytes: door.htmlBytes,
     /** Та же страница, но дверью панели: только она показывает, что видит пользователь в iframe. */
     panelDoor: panel.checked
@@ -538,6 +575,7 @@ async function inspectRuntimePage(projectId: string, path: string, userId?: stri
       ? "Рендеринг прошёл: страница отрисовала содержимое, ошибок страницы, консоли и сети нет."
       : "Проверка рендеринга не прошла: " + briefList(failures) +
         (door.background.length ? " Фоновые ответы (" + briefList(door.background) + ") — не поломка: страница без авторизации отвечает 401, и чинить их не нужно." : "")) +
+      (door.layout ? " " + layoutSummary(door.layout) : "") +
       (rendered.styles.noStyles ? " На странице нет ни одного правила CSS: если проект и должен быть без стилей, это нормально, иначе стили не подключены и экран выглядит белым." : "") +
       (sameBothWays ? " Прямо из контейнера приложение отвечает нормально — значит пользователь видит пустой или неоформленный экран из-за прокси панели, а не из-за самого приложения." : "") +
       (panel.checked ? "" : " Через прокси панели проверить не удалось: " + (panel.reason ?? "неизвестная причина") + "."),
@@ -709,7 +747,7 @@ registerTool({
 registerTool({
   name: "browser.runtime",
   description:
-    "Open the Preview in a real headless Chromium browser, execute client-side JavaScript, and report what the page actually rendered: visible text, its size, blank screen, and whether styles applied (declared vs loaded stylesheets, CSS rules in effect, body background/color, `unstyled`). Console errors, failed network requests, HTTP 5xx and the document status come with it. Both doors are checked and returned: `url`/`rendered` is the container address the app itself answers on, `panelDoor` is the same page loaded through the platform's own preview proxy — the door the panel's iframe uses, so a page that only breaks for the user is reported too. Background 4xx from the app's own API calls and aborted requests are listed separately as `background` and are not failures; a 4xx for a .css or .js file is a failure, because without it the page is white. Use this after browser.open or project.verify when runtime behavior matters.",
+    "Open the Preview in a real headless Chromium browser, execute client-side JavaScript, and report what the page actually rendered: visible text, its size, blank screen, and whether styles applied (declared vs loaded stylesheets, CSS rules in effect, body background/color, `unstyled`). A PNG of the checked page is saved inside the project and returned as `screenshot` (path + url — open it with browser.screenshot or the file panel), and `layout` lists layout defects by CSS selector: page wider than the viewport, elements beyond the screen edge, broken images, clipped text. Console errors, failed network requests, HTTP 5xx and the document status come with it. Both doors are checked and returned: `url`/`rendered` is the container address the app itself answers on, `panelDoor` is the same page loaded through the platform's own preview proxy — the door the panel's iframe uses, so a page that only breaks for the user is reported too. Background 4xx from the app's own API calls and aborted requests are listed separately as `background` and are not failures; a 4xx for a .css or .js file is a failure, because without it the page is white. Use this after browser.open or project.verify when runtime behavior matters.",
   parameters: { type: "object", additionalProperties: false, properties: { path: { type: "string", description: "Маршрут предпросмотра, например / или /about; по умолчанию /" } } },
   execute: async (input, context) => withBrowserSlot(() => inspectRuntimePage(context.projectId, getPath(input), context.userId)),
 });

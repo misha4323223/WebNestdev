@@ -19,7 +19,7 @@ the picker only records a wish.
 ## Enforcement and usage
 - Project creation checks the authenticated user's current plan and project count.
 - Agent runs consume one daily unit at the authenticated WebSocket run boundary.
-- `browser.runtime` and `browser.scenario` consume one daily browser-check unit each, including checks invoked automatically after agent changes.
+- `browser.runtime`, `browser.scenario` and `browser.screenshot` consume one daily browser-check unit each, including checks invoked automatically after agent changes.
 - `GET /api/billing` returns the plan catalog, the limits of the account's plan, the UTC-day usage counters, the account's storage usage and the model cost snapshot. The settings screen shows usage.
 - Usage is stored as append-only daily events plus per-user/day/kind counters in YDB. Counter updates and usage-event inserts are committed in one serializable read-write transaction; retryable transaction conflicts are retried by the YDB query SDK.
 - YDB project creation reserves a per-user project counter and inserts the project in one serializable transaction. Existing projects are counted when the per-user counter is first initialized.

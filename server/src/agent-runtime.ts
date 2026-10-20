@@ -3,6 +3,7 @@ import type { AgentRunRequest,ChatMessage,PlanState } from "./types.js";
 import { createProvider } from "./provider.js";
 import { appendConversationMessages,getConversationPlan,getProject,getProjectProvider,saveConversationPlan } from "./project-store.js";
 import { buildInitialMessages,insertSystemNotice,resumeNotice,storedHistory,webSearchNotice } from "./agent/message-builder.js";
+import { NOTES_PREFIX,notesNotice,readNoteLines } from "./agent/notes.js";
 import { buildProjectContext } from "./agent/context-builder.js";
 import { retrieveRelevantFiles } from "./agent/context-retrieval.js";
 import { executeTool } from "./agent/tool-executor.js";
@@ -115,6 +116,13 @@ export class AgentRuntime {
       // заметки, а инструменты проверяют тот же флаг сами (web-tools.ts). Выключенный поиск —
       // не повод выдумывать факты, а повод попросить пользователя включить кнопку.
       messages=insertSystemNotice(messages,webSearchNotice(request.webSearch===true));
+      // Заметка о согласованном — отдельным системным сообщением. Обрезка контекста системные
+      // сообщения не выбрасывает и не сокращает, поэтому «какой вариант мы выбрали» остаётся
+      // в промпте даже тогда, когда вся история вокруг уже свёрнута в срез.
+      let noteLines:string[]=[];
+      try{ noteLines=await readNoteLines(request.projectId,request.userId,request.conversationId); }
+      catch(error){ console.error("Failed to read the project notes",error); }
+      messages=insertSystemNotice(messages,notesNotice(noteLines));
       if(request.resume){
         // Возобновление: история — это память о сделанном, сохранённый план — закладка. Без заметки
         // модель с большой историей часто начинает задачу заново или переспрашивает пользователя.
@@ -304,6 +312,17 @@ export class AgentRuntime {
             await finishTool(call,output);
             // Ограниченный вывод: журнал сборки читается один раз, а в истории остаётся до конца запуска.
             messages.push({role:"tool",content:boundToolOutput(call.name,output),tool_call_id:call.id});
+
+            // Решение записано — заметка в промпте обновляется сразу, на этом же шаге: следующая
+            // модель должна уже видеть новую договорённость, не дожидаясь следующего запуска.
+            if(call.name==="note.remember"){
+              const stored=(output as {notes?:unknown}).notes;
+              if(Array.isArray(stored)&&stored.every(item=>typeof item==="string")){
+                noteLines=stored as string[];
+                const index=messages.findIndex(message=>message.role==="system"&&message.content.startsWith(NOTES_PREFIX));
+                if(index>=0)messages[index]={role:"system",content:notesNotice(noteLines)};
+              }
+            }
 
             if(call.name==="plan.update"){
               const plan=(output as {plan?:PlanState}).plan;

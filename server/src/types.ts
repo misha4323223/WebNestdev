@@ -73,6 +73,10 @@ export type AgentRunRequest={projectId:string;conversationId?:string;messages:Ch
  * `secrets.request` показывает модальное окно через поток запуска и ждёт ответа, а остановка запуска
  * должна закрыть это ожидание, а не оставить инструмент висеть.
  */
-export type ToolContext={projectId:string;runId:string;userId:string;emit?:(event:AgentEvent)=>void;signal?:AbortSignal;/** `web.search`/`web.read` разрешены только когда пользователь включил поиск в панели ввода. */webSearchEnabled?:boolean};
+/**
+ * `conversationId` нужен инструментам, которые пишут в разговор, а не в проект: заметки решений
+ * принадлежат чату, а не проекту (в разных чатах одного проекта договариваются о разном).
+ */
+export type ToolContext={projectId:string;runId:string;userId:string;conversationId?:string;emit?:(event:AgentEvent)=>void;signal?:AbortSignal;/** `web.search`/`web.read` разрешены только когда пользователь включил поиск в панели ввода. */webSearchEnabled?:boolean};
 export type ToolHandler=(input:unknown,context:ToolContext)=>Promise<unknown>;
 export type ToolDefinition={name:string;description:string;execute?:ToolHandler;async?:ToolHandler;/** Optional JSON Schema sent to the provider so the model knows the exact input shape. */parameters?:Record<string,unknown>};

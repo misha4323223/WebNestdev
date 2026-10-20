@@ -44,8 +44,11 @@ export const DEFAULT_MAX_MESSAGES = 80;
 export const MIN_MAX_MESSAGES = 8;
 /** Room kept for the leading system block and the note that explains a cut. */
 const COUNT_HEADROOM = 5;
-/** The digest note cannot grow past this, however many messages it stands for. */
-const CUT_NOTE_CHARS = 2400;
+/**
+ * Верхний предел заметки о сокращённой истории. Разделы внутри ограничены своими квотами, а это —
+ * страховка: заметка уезжает в каждый следующий запрос, поэтому она не имеет права расти бесконечно.
+ */
+export const CUT_NOTE_CHARS = 3400;
 /** A user message may carry a pasted file; its own cap keeps that from eating the whole budget. */
 const USER_MESSAGE_CHARS = 4000;
 const USER_MESSAGE_TAIL_CHARS = 1000;
@@ -238,6 +241,13 @@ function digestHead(content: string, limit: number) {
   return text.length > limit ? text.slice(0, limit) + "…" : text;
 }
 
+/** Начало и конец одной строкой: итог решения обычно в хвосте, а тема — в голове. */
+function digestEdges(content: string, head: number, tail: number) {
+  const text = content.replace(/\s+/g, " ").trim();
+  if (text.length <= head + tail) return text;
+  return text.slice(0, head) + " … " + text.slice(-tail);
+}
+
 /**
  * What the part of the history that left the window is worth to the model.
  *
@@ -248,9 +258,23 @@ function digestHead(content: string, limit: number) {
  */
 type CutCollector = { requests: string[]; answers: string[]; actions: string[]; toolResults: number };
 
-const DIGEST_REQUEST_CHARS = 300;
-const DIGEST_ANSWER_CHARS = 300;
+/**
+ * Просьба пользователя — это требование, а не пересказ: она хранится почти целиком (до 1200 знаков)
+ * и режется по краям, только если длиннее. Договорённости живут в словах пользователя («тёмная
+ * палитра, шрифт Inter, второй вариант отвергнут»), а не в пересказе агента.
+ */
+const DIGEST_REQUEST_CHARS = 1200;
+/**
+ * У ответа агента важен и заход, и итог: «Итого: берём вариант B» стоит последним абзацем, поэтому
+ * срез берёт голову и хвост, а не только начало, как раньше.
+ */
+const DIGEST_ANSWER_HEAD_CHARS = 150;
+const DIGEST_ANSWER_TAIL_CHARS = 150;
 const DIGEST_ACTION_CHARS = 90;
+/** Квоты разделов: они делят одну заметку, а не конкурируют за неё. */
+const DIGEST_REQUESTS_QUOTA = 1500;
+const DIGEST_ANSWERS_QUOTA = 900;
+const DIGEST_ACTIONS_QUOTA = 500;
 const DIGEST_MAX_REQUESTS = 12;
 const DIGEST_MAX_ANSWERS = 12;
 const DIGEST_MAX_ACTIONS = 20;
@@ -268,7 +292,7 @@ export function toolCallTarget(input: unknown) {
 
 function collectCut(collector: CutCollector, message: ChatMessage) {
   if (message.role === "user") {
-    collector.requests.push(digestHead(message.content, DIGEST_REQUEST_CHARS));
+    collector.requests.push(digestEdges(message.content, DIGEST_REQUEST_CHARS - 300, 300));
     return;
   }
   if (message.role === "tool") {
@@ -278,7 +302,7 @@ function collectCut(collector: CutCollector, message: ChatMessage) {
   if (message.role !== "assistant") return;
   // An answer that carries calls has no conclusion of its own; one without calls is exactly the
   // conclusion the cut would otherwise lose.
-  if (message.content.trim()) collector.answers.push(digestHead(message.content, DIGEST_ANSWER_CHARS));
+  if (message.content.trim()) collector.answers.push(digestEdges(message.content, DIGEST_ANSWER_HEAD_CHARS, DIGEST_ANSWER_TAIL_CHARS));
   for (const call of message.tool_calls ?? []) {
     const target = toolCallTarget(call.arguments);
     collector.actions.push(target ? call.name + " " + target : call.name);
@@ -301,12 +325,35 @@ function requestDigest(requests: string[]) {
   return [requests[0], ...newest(requests.slice(1), DIGEST_MAX_REQUESTS - 1)];
 }
 
+/**
+ * Сколько записей раздела влезает в его квоту. Самое новое важнее старого, но первый запрос
+ * диалога остаётся всегда: без него продолжение отвечает на последнюю реплику в пустоте.
+ */
+function fitSection(entries: string[], quota: number, keepFirst: boolean): string[] {
+  if (!entries.length) return [];
+  if (entries.join(" ").length <= quota) return entries;
+  const first = keepFirst ? entries[0] : undefined;
+  const rest = keepFirst ? entries.slice(1) : entries;
+  const kept: string[] = [];
+  let used = first ? first.length + 1 : 0;
+  for (let index = rest.length - 1; index >= 0; index--) {
+    const cost = rest[index].length + 1;
+    if (used + cost > quota) break;
+    kept.unshift(rest[index]);
+    used += cost;
+  }
+  return first ? [first, ...kept] : kept;
+}
+
 function cutNote(collector: CutCollector, dropped: number) {
   const parts = ["ранние шаги сокращены до лимита контекста: выброшено сообщений — " + dropped];
-  const requests = requestDigest(collector.requests);
-  const answers = newest(collector.answers, DIGEST_MAX_ANSWERS);
-  const actions = [...new Set(newest(collector.actions, DIGEST_MAX_ACTIONS))];
+  const requests = fitSection(requestDigest(collector.requests), DIGEST_REQUESTS_QUOTA, true);
+  const answers = fitSection(newest(collector.answers, DIGEST_MAX_ANSWERS), DIGEST_ANSWERS_QUOTA, false);
+  const actions = fitSection([...new Set(newest(collector.actions, DIGEST_MAX_ACTIONS))], DIGEST_ACTIONS_QUOTA, false);
   if (requests.length) parts.push("пользователь уже просил: " + requests.map(item => "«" + item + "»").join(" "));
+  // Честно про потери: если часть старых просьб не поместилась, модель это знает, а не считает срез полным.
+  const skipped = collector.requests.length - requests.length;
+  if (skipped > 0) parts.push("ещё " + skipped + " более ранних просьб не поместились в срез — если факта нет в проекте, прочитай файлы, а не переспрашивай");
   if (answers.length) parts.push("агент уже отвечал: " + answers.map(item => "«" + item + "»").join(" "));
   if (actions.length) parts.push("уже сделано с проектом: " + actions.join(", "));
   if (collector.toolResults) parts.push("вывод инструментов выброшен (" + collector.toolResults + " результатов) — читай файлы и запускай команды заново, если он нужен");

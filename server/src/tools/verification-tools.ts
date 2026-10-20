@@ -1,7 +1,11 @@
+import { readdir,readFile,stat } from "node:fs/promises";
+import path from "node:path";
 import { previewAppAnswers } from "../preview/app-http.js";
 import { unreachablePreviewDiagnosis } from "../preview/preview-address.js";
 import { getPreview } from "../preview/preview-store.js";
 import { previewStatus } from "../preview-manager.js";
+import { analyzeForms } from "../qa/form-signal.js";
+import { getSandbox } from "../sandbox/sandbox-service.js";
 import { registerTool } from "../tool-registry.js";
 
 const MAX_BODY = 20_000;
@@ -50,6 +54,49 @@ async function checkReferencedAssets(host: string, port: number, route: string, 
     }
   }
   return results;
+}
+
+/** Файлы, в которых может жить форма: разметка и скрипты рядом с ней. */
+const FORM_SCAN_EXTENSIONS = /\.(html?|js|mjs|cjs|jsx|tsx|vue|svelte)$/i;
+const FORM_SCAN_MAX_FILES = 80;
+const FORM_SCAN_MAX_BYTES = 200_000;
+const FORM_SCAN_SKIP = new Set(["node_modules", ".git", ".webnestdev", "dist", "build", "coverage", ".next", ".cache", "uploads"]);
+
+/**
+ * Просмотр исходников проекта нужен только для сигнала о форме: сам ответ страницы о том, куда
+ * уходит заявка, ничего не говорит. Чтение ограничено по глубине и числу файлов: проверка не должна
+ * стоить как обход всего репозитория.
+ */
+async function collectFormSources(root: string) {
+  const sources: Array<{ path: string; text: string }> = [];
+  async function walk(relative: string, depth: number) {
+    if (sources.length >= FORM_SCAN_MAX_FILES || depth > 3) return;
+    let entries;
+    try {
+      entries = await readdir(path.join(root, relative), { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      if (sources.length >= FORM_SCAN_MAX_FILES) return;
+      if (entry.name.startsWith(".")) continue;
+      const next = relative ? relative + "/" + entry.name : entry.name;
+      if (entry.isDirectory()) {
+        if (!FORM_SCAN_SKIP.has(entry.name)) await walk(next, depth + 1);
+        continue;
+      }
+      if (!FORM_SCAN_EXTENSIONS.test(entry.name)) continue;
+      try {
+        const info = await stat(path.join(root, next));
+        if (info.size > FORM_SCAN_MAX_BYTES) continue;
+        sources.push({ path: next, text: await readFile(path.join(root, next), "utf8") });
+      } catch {
+        // Файл исчез между readdir и чтением — не повод валить проверку.
+      }
+    }
+  }
+  await walk("", 0);
+  return sources;
 }
 
 registerTool({
@@ -131,6 +178,12 @@ registerTool({
       };
       const ok = Object.values(checks).every(Boolean);
 
+      // Форма, которая никуда не отправляет данные, проходит все проверки выше: страница цела,
+      // ассеты на месте, консоль молчит. Отдельный просмотр исходников называет её имитацией —
+      // иначе о том, что заявки не приходят, узнаёт только владелец сайта.
+      const sandbox = context.userId ? await getSandbox(context.projectId, context.userId).catch(() => null) : null;
+      const forms = sandbox ? analyzeForms(await collectFormSources(sandbox.root).catch(() => [])) : null;
+
       return {
         ok,
         stage: "http",
@@ -140,13 +193,19 @@ registerTool({
         contentType,
         checks,
         assets: { checked: assets.length, failed: brokenAssets },
+        /** Форма и её приёмник: `simulated: true` — заявки никуда не приходят. */
+        forms,
+        warnings: forms?.simulated ? [forms.note] : [],
         body,
         truncated: body.length >= MAX_BODY,
-        nextAction: ok
+        nextAction: (ok
           ? "Verification passed. Preview returned a non-empty HTML document for the requested route, its referenced assets resolve, and no common server-rendered error signals were found."
           : brokenAssets.length
             ? "Verification failed: the page references files Preview does not serve (" + brokenAssets.map((asset) => asset.ref + " → " + asset.status).join(", ") + "). Create or rename those files, or fix the links in the HTML, then run project.verify again."
-            : "Verification failed for the requested route. Inspect the failed checks, HTTP response, or error signals, fix the project, then verify again.",
+            : "Verification failed for the requested route. Inspect the failed checks, HTTP response, or error signals, fix the project, then verify again.") +
+          (forms?.simulated
+            ? " Отдельно: " + forms.note + " Скажите об этом пользователю в ответе и не называйте форму рабочей, пока не подключён приёмник."
+            : ""),
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

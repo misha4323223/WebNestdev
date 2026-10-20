@@ -28,7 +28,9 @@ export async function executeTool(call:ProviderToolCall,context:AgentContext){
   }
   const handler=tool.execute??tool.async;
   if(!handler)throw new Error("У инструмента нет обработчика: "+call.name);
-  if(call.name==="browser.runtime"||call.name==="browser.scenario"){
+  // Снимок — такая же браузерная проверка, как runtime и сценарий: она запускает Chromium и
+  // расходует ту же дневную единицу, иначе лимит обходится одним вызовом browser.screenshot.
+  if(call.name==="browser.runtime"||call.name==="browser.scenario"||call.name==="browser.screenshot"){
     await consumeUsageForCurrentPlan(context.request.userId,"browserChecks");
   }
   if(storagePreCheckTools.has(call.name)){
@@ -38,7 +40,7 @@ export async function executeTool(call:ProviderToolCall,context:AgentContext){
   // а остановка запуска передаётся внутрь инструмента, чтобы ожидание закрылось вместе с ним.
   // Поиск в интернете разрешён только при включённом переключателе в панели ввода: флаг читается
   // здесь, поэтому его видят и web.search, и web.read, и ни один из них не обходит решение человека.
-  const result=await handler(call.arguments,{projectId:context.request.projectId,runId:context.runId,userId:context.request.userId,emit:context.emit,webSearchEnabled:context.request.webSearch===true,...(context.signal?{signal:context.signal}:{})});
+  const result=await handler(call.arguments,{projectId:context.request.projectId,runId:context.runId,userId:context.request.userId,...(context.request.conversationId?{conversationId:context.request.conversationId}:{}),emit:context.emit,webSearchEnabled:context.request.webSearch===true,...(context.signal?{signal:context.signal}:{})});
   if(storagePostRecordTools.has(call.name)){
     await recordStorageMutation(context.request.projectId, context.request.userId, {
       heavy: heavyStorageMutationTools.has(call.name),

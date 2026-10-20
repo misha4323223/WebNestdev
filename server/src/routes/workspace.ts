@@ -16,6 +16,8 @@ const MAX_DIRECTORY_ENTRIES=Number(process.env.WORKSPACE_MAX_DIRECTORY_ENTRIES??
 // the decoded ceiling stays well below it.
 const MAX_UPLOAD_BYTES=Number(process.env.WORKSPACE_MAX_UPLOAD_BYTES??1_200_000);
 const UPLOAD_FOLDER="uploads";
+/** Папка снимков проверок: единственное, что отдаёт маршрут `/screenshot`. */
+const SCREENSHOT_PREFIX=".webnestdev/screenshots/";
 
 export async function registerWorkspaceRoutes(app:FastifyInstance){
   app.get("/api/projects/:id/files",async(request,reply)=>{
@@ -70,6 +72,24 @@ export async function registerWorkspaceRoutes(app:FastifyInstance){
     const relative=UPLOAD_FOLDER+"/"+Date.now().toString(36)+"-"+base;
     await writeFileInside(sandbox.root,path.join(sandbox.root,relative),bytes);
     return {name:base,path:relative,bytes:bytes.length};
+  });
+
+  /**
+   * Снимок проверки: PNG лежит в служебной папке проекта (`.webnestdev/screenshots/`, она вне
+   * истории), а открывается по этому адресу — человек видит ту же картинку, что снял инструмент.
+   * Маршрут отдаёт только эту папку: иначе он стал бы способом прочитать любой файл мимо просмотра.
+   */
+  app.get("/api/projects/:id/screenshot",async(request,reply)=>{
+    const p=z.object({id:z.string().min(1)}).parse(request.params);
+    const user=await requireProjectUser(request,reply,p.id);
+    if(!user)return;
+    const q=z.object({path:z.string().min(1).max(500)}).parse(request.query);
+    if(!q.path.startsWith(SCREENSHOT_PREFIX))return reply.code(400).send({error:"Этот маршрут отдаёт только снимки проверок"});
+    const sandbox=await getSandbox(p.id,user.id);
+    const file=await assertRegularFile(sandbox.root,path.join(sandbox.root,q.path));
+    const png=await readFile(file);
+    applyNoStoreToReply(reply);
+    return reply.type("image/png").send(png);
   });
 
   app.post("/api/projects/:id/terminal",async(request,reply)=>{

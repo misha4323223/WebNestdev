@@ -1,4 +1,4 @@
-import { useEffect,useRef,useState,type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect,useRef,useState,type DragEvent as ReactDragEvent,type MouseEvent as ReactMouseEvent } from "react";
 import Markdown,{type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { AlertTriangle,Cpu,Eye,EyeOff,FileText,History,Image as ImageIcon,KeyRound,ListPlus,Paperclip,Play,RotateCcw,Send,ShieldCheck,Sparkles,Square,X } from "lucide-react";
@@ -139,7 +139,7 @@ function formatBytes(bytes:number){
   return (bytes/1024/1024).toFixed(1)+" МБ";
 }
 
-function readAsBase64(file:File){
+function readAsBase64(file:Blob){
   return new Promise<string>((resolve,reject)=>{
     const reader=new FileReader();
     reader.onerror=()=>reject(new Error("Не удалось прочитать файл"));
@@ -149,6 +149,50 @@ function readAsBase64(file:File){
     };
     reader.readAsDataURL(file);
   });
+}
+
+/**
+ * Длинная сторона, до которой уменьшается фото перед загрузкой. 1800 px хватает и на весь экран
+ * ретины, и на карточку галереи, а вес снимка с телефона падает с 5 МБ до 300–600 КБ — иначе
+ * пачка реальных работ упиралась в лимит запроса и до проекта не доезжала.
+ */
+const IMAGE_MAX_EDGE=1800;
+const IMAGE_QUALITY=0.82;
+/** Мелкие картинки не трогаются: перекодирование только испортило бы их. */
+const IMAGE_COMPRESS_ABOVE=600_000;
+
+function webpName(name:string){
+  const dot=name.lastIndexOf(".");
+  return (dot>0?name.slice(0,dot):name)+".webp";
+}
+
+/**
+ * Фото с телефона перед отправкой уменьшается и перекодируется в WebP (прозрачность сохраняется).
+ * Оригинал уходит без изменений, если он уже лёгкий, это SVG/GIF/HEIC (их canvas не читает) или
+ * браузер не смог его разобрать: загрузка не должна ломаться из-за сжатия.
+ */
+async function shrinkImage(file:File):Promise<{blob:Blob;name:string;compressed:boolean}>{
+  const plain={blob:file as Blob,name:file.name,compressed:false};
+  if(!/^image\/(jpeg|png|webp)$/.test(file.type))return plain;
+  if(file.size<=IMAGE_COMPRESS_ABOVE)return plain;
+  let bitmap:ImageBitmap|null=null;
+  try{
+    bitmap=await createImageBitmap(file);
+    const scale=Math.min(1,IMAGE_MAX_EDGE/Math.max(bitmap.width,bitmap.height));
+    const canvas=document.createElement("canvas");
+    canvas.width=Math.max(1,Math.round(bitmap.width*scale));
+    canvas.height=Math.max(1,Math.round(bitmap.height*scale));
+    const context=canvas.getContext("2d");
+    if(!context)return plain;
+    context.drawImage(bitmap,0,0,canvas.width,canvas.height);
+    const blob=await new Promise<Blob|null>(resolve=>canvas.toBlob(resolve,"image/webp",IMAGE_QUALITY));
+    if(!blob||blob.size>=file.size)return plain;
+    return {blob,name:webpName(file.name),compressed:true};
+  }catch{
+    return plain;
+  }finally{
+    bitmap?.close();
+  }
 }
 
 /** The agent reads text, so attachments are announced by the path they were stored at. */
@@ -179,6 +223,9 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   const [loaded,setLoaded]=useState(false);
   const [queue,setQueue]=useState<QueuedMessage[]>([]);
   const [attachments,setAttachments]=useState<Attachment[]>([]);
+  // Файлы можно не только выбрать кнопкой, но и перетащить в поле ввода: это первый путь,
+  // которым люди кидают фотографии в проект.
+  const [dragActive,setDragActive]=useState(false);
   const [uploading,setUploading]=useState(false);
   const [notice,setNotice]=useState("");
   // Итог задачи в истории проекта: точка, к которой можно вернуться. На GitHub она уходит
@@ -856,24 +903,41 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     setNotice("");
     setUploading(true);
     const uploaded:Attachment[]=[];
-    const errors:string[]=[];
+    const messages:string[]=[];
+    let compressed=0;
     try{
       for(const file of Array.from(files)){
-        if(file.size>MAX_UPLOAD_BYTES){errors.push(file.name+": больше "+formatBytes(MAX_UPLOAD_BYTES));continue}
         try{
-          const data=await readAsBase64(file);
-          const result=await uploadProjectFile(projectId,{name:file.name,data});
-          uploaded.push({id:result.path,name:result.name,path:result.path,bytes:result.bytes,image:file.type.startsWith("image/")||/\.(png|jpe?g|gif|webp|svg|avif|bmp|ico)$/i.test(file.name)});
+          const prepared=await shrinkImage(file);
+          if(prepared.blob.size>MAX_UPLOAD_BYTES){
+            messages.push(file.name+": больше "+formatBytes(MAX_UPLOAD_BYTES)+" — уменьшите файл перед загрузкой");
+            continue;
+          }
+          const data=await readAsBase64(prepared.blob);
+          const result=await uploadProjectFile(projectId,{name:prepared.name,data});
+          if(prepared.compressed)compressed++;
+          uploaded.push({id:result.path,name:result.name,path:result.path,bytes:result.bytes,image:prepared.blob.type.startsWith("image/")||/\.(png|jpe?g|gif|webp|svg|avif|bmp|ico)$/i.test(result.name)});
         }catch(error){
-          errors.push(file.name+": "+(error instanceof Error?error.message:"не удалось загрузить"));
+          messages.push(file.name+": "+(error instanceof Error?error.message:"не удалось загрузить"));
         }
       }
       if(uploaded.length)setAttachments(current=>[...current,...uploaded]);
-      if(errors.length)setNotice(errors.join(" · "));
+      // О сжатии сообщаем: пользователь должен знать, почему файл в проекте называется .webp
+      // и весит меньше, чем снимок на диске.
+      if(compressed)messages.push("Фото уменьшены до "+IMAGE_MAX_EDGE+" px по длинной стороне — в проекте они легче, на вид те же");
+      if(messages.length)setNotice(messages.join(" · "));
     }finally{
       setUploading(false);
       if(fileRef.current)fileRef.current.value="";
     }
+  }
+
+  /** Перетаскивание в поле ввода: тот же путь, что и кнопка «Прикрепить». */
+  function dropFiles(event:ReactDragEvent){
+    event.preventDefault();
+    setDragActive(false);
+    if(!loaded||uploading)return;
+    void pickFiles(event.dataTransfer?.files??null);
   }
 
   // Gateway model ids carry a folder prefix (gpt://<folder>/<model>), so the chip shows
@@ -961,7 +1025,10 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
         <button className="send-button resume-button" onClick={continueRun} title="Продолжить прерванный запуск с того же шага" aria-label="Продолжить запуск"><Play size={13}/> Продолжить</button>
       </div>}
       {reconnect&&<div className="composer-notice reconnecting">Связь потеряна — переподключаюсь… попытка {reconnect.attempt}/{reconnect.max}</div>}
-      <div className="composer">
+      <div className={"composer"+(dragActive?" dropping":"")}
+        onDragOver={event=>{if(!event.dataTransfer?.types.includes("Files"))return;event.preventDefault();if(loaded&&!uploading)setDragActive(true)}}
+        onDragLeave={event=>{if(!event.currentTarget.contains(event.relatedTarget as Node|null))setDragActive(false)}}
+        onDrop={dropFiles}>
         <textarea disabled={!loaded} value={prompt} onChange={e=>setPrompt(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send()}}} placeholder={loaded?"Опишите проект или задачу...":"Загружаем сессию…"} rows={3}/>
 
         {attachments.length>0&&<div className="composer-attachments">
@@ -989,7 +1056,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
             <button className="send-button" disabled={!loaded||!prompt.trim()} onClick={send} title={running?"В очередь":"Отправить"} aria-label={running?"В очередь":"Отправить"}>{running?<ListPlus size={15}/>:<Send size={15}/>}</button>
           </div>
         </div>
-        {(uploading||running||mode==="planner")&&<div className="composer-hint">{uploading?"Загружаем файлы…":running?"Агент работает — сообщение встанет в очередь":"Планировщик только изучает проект и готовит план — файлы не меняются"}</div>}
+        {(dragActive||uploading||running||mode==="planner")&&<div className="composer-hint">{dragActive?"Отпустите файлы здесь — они появятся в папке uploads проекта":uploading?"Загружаем файлы…":running?"Агент работает — сообщение встанет в очередь":"Планировщик только изучает проект и готовит план — файлы не меняются"}</div>}
       </div>
       {changesNotice&&<button type="button" className="changes-toast" onClick={()=>onOpenChanges?.()} disabled={!onOpenChanges} title={onOpenChanges?"Открыть историю изменений проекта":undefined}>
         <History size={14}/>

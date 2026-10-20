@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import type { ChatMessage } from "../types.js";
 import {
+  CUT_NOTE_CHARS,
   ContextBudgetError,
   DEFAULT_MAX_MESSAGES,
   boundToolOutput,
@@ -152,9 +153,48 @@ test("вырезанное заменяется дайджестом: прось
   assert.match(note, /агент уже отвечал: «шаг /, "выводы агента остаются в дайджесте");
   assert.match(note, /уже сделано с проектом: fs\.write src\/Form/, "видно, что уже сделано с файлами");
   assert.match(note, /вывод инструментов выброшен/, "про выброшенный вывод сказано прямо");
-  assert.ok(note.length <= 2400, "заметка ограничена по размеру: " + note.length);
+  assert.ok(note.length <= CUT_NOTE_CHARS, "заметка ограничена по размеру: " + note.length);
   // Сама просьба пользователя не выбрасывается никогда — она дороже любого бюджета.
   assert.ok(trimmed.some(message => message.role === "user" && message.content === "сделай страницу с формой заявки"));
+});
+
+/**
+ * Согласованное обычно стоит последним абзацем ответа («Итого: берём вариант B»), а старый срез брал
+ * только начало. Поэтому от ответа остаются голова и хвост.
+ */
+test("срез ответа хранит его итог, а не только первую фразу", () => {
+  const messages: ChatMessage[] = [
+    { role: "system", content: "промпт" },
+    { role: "user", content: "сделай лендинг для фотографа" },
+  ];
+  for (let index = 0; index < 30; index++) {
+    messages.push({
+      role: "assistant",
+      content: "шаг " + index + ": разбираю макет " + "о".repeat(400) + " ИТОГО: договорились палитра #0E1A16 и шрифт Inter",
+      tool_calls: [{ id: "d" + index, name: "fs.write", arguments: { path: "page" + index + ".html", content: "x" } }],
+    });
+    messages.push({ role: "tool", content: "y".repeat(3000), tool_call_id: "d" + index });
+  }
+  const { messages: trimmed } = trimMessagesToBudget(messages, { budgetTokens: 3000, keepRecent: 4 });
+  const note = trimmed.find(message => message.role === "system" && message.content.includes("сокращены"))?.content ?? "";
+  assert.match(note, /ИТОГО: договорились палитра #0E1A16/, "итог ответа виден модели: " + note.slice(0, 400));
+  assert.ok(note.length <= CUT_NOTE_CHARS, "заметка не растёт без предела: " + note.length);
+});
+
+/**
+ * Просьбы делят заметку с выводами и действиями, а не забирают её целиком: один длинный запрос не
+ * должен вытеснить всё остальное, а первый запрос диалога остаётся всегда.
+ */
+test("длинные просьбы не вытесняют остальную часть среза и не теряют первую", () => {
+  const messages: ChatMessage[] = [{ role: "system", content: "промпт" }];
+  for (let index = 0; index < 30; index++) {
+    messages.push({ role: "user", content: "задача номер " + index + " — " + "требование ".repeat(80) });
+  }
+  const { messages: trimmed } = trimMessagesToBudget(messages, { budgetTokens: 1000000, maxMessages: 12 });
+  const note = trimmed.find(message => message.role === "system" && message.content.includes("сокращены"))?.content ?? "";
+  assert.match(note, /пользователь уже просил: «задача номер 0/, "первый запрос диалога не теряется");
+  assert.match(note, /не поместились в срез/, "о неполноте среза сказано прямо");
+  assert.ok(note.length <= CUT_NOTE_CHARS, "заметка не растёт без предела: " + note.length);
 });
 
 test("недостижимый предел сообщений — ошибка с числами, а не вечный отбор", () => {
