@@ -1,6 +1,6 @@
 import { getCloudConnection, type CloudConnection } from "./connections.js";
 import type { CloudProviderId } from "./providers.js";
-import { mwsRequest } from "../mws/mws-auth.js";
+import { mwsHostForPath, mwsRequest } from "../mws/mws-auth.js";
 
 /**
  * Запросы к API подключённых облаков от имени пользователя — и чтение, и изменения.
@@ -64,7 +64,13 @@ export function cloudRequestTarget(provider: CloudProviderId, request: CloudApiR
     if (!path.startsWith("/v1/")) throw new Error("REG.RU Облако: путь должен начинаться с /v1/");
     return { method, url: "https://" + host + path, host };
   }
-  const host = request.host?.trim() || "api.mwsapis.ru";
+  // `api.mwsapis.ru` — каталог эндпоинтов, а не шлюз: `/rm/v3/projects` на нём отвечает
+  // `404 No static resource`. Путь называет сервис, и хост берётся из каталога сервисов.
+  const requestedHost = request.host?.trim();
+  if (requestedHost === "api.mwsapis.ru") {
+    throw new Error("MWS: api.mwsapis.ru — каталог эндпоинтов, а не API-шлюз. Не передавайте host: он выводится из сервиса в пути (/rm → iam.mwsapis.ru, /compute → compute.mwsapis.ru).");
+  }
+  const host = requestedHost || mwsHostForPath(path);
   if (!/^[a-z0-9-]+\.mwsapis\.ru$/.test(host)) throw new Error("MWS: разрешены только хосты *.mwsapis.ru, получен " + host);
   return { method, url: "https://" + host + path, host };
 }

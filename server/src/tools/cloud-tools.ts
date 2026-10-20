@@ -58,7 +58,9 @@ registerTool({
     "Make an authenticated request to a connected cloud API, on behalf of the user — reads and changes. " +
     "Input: {provider:'timeweb'|'cloudru'|'mws'|'regru', method?:'GET'|'HEAD'|'POST'|'PUT'|'PATCH'|'DELETE', path:'/api/v1/...', host?, body?}. " +
     "Timeweb Cloud paths start with /api/v1/ (base https://api.timeweb.cloud); REG.RU Облако paths start with /v1/ " +
-    "(base https://api.cloudvps.reg.ru, only that host); MWS defaults to host api.mwsapis.ru; " +
+    "(base https://api.cloudvps.reg.ru, only that host); MWS: omit host — it is derived from the service in the path " +
+    "(/rm → iam.mwsapis.ru, /compute → compute.mwsapis.ru, /vpc → vpc.mwsapis.ru, /mpostgres → mpostgres.mwsapis.ru); " +
+    "api.mwsapis.ru is only the endpoint catalog, not an API gateway; " +
     "Cloud.ru defaults to api.cloud.ru and allows *.cloud.ru. Use it to look up servers, projects, buckets, DNS records or " +
     "anything else the provider's docs describe. CHANGES RULE: POST/PUT/PATCH/DELETE are executed only when the user " +
     "explicitly asked for that exact action in this conversation — never create, restart, resize or delete a resource on " +
@@ -70,7 +72,7 @@ registerTool({
     provider: { type: "string", enum: ["timeweb", "cloudru", "mws", "regru"] },
     method: { type: "string", enum: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"] },
     path: { type: "string", description: "Путь API провайдера, например /api/v1/servers" },
-    host: { type: "string", description: "Хост API, если он отличается от хоста по умолчанию" },
+    host: { type: "string", description: "Хост API, если он отличается от хоста сервиса (для MWS обычно не нужен: он выводится из пути, api.mwsapis.ru сюда не передаётся)" },
     body: { type: "object", description: "Тело запроса для POST/PUT/PATCH — JSON-объект из документации провайдера" },
   } },
   execute: async (input, context) => {

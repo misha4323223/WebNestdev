@@ -164,6 +164,13 @@ jobs:
           YANDEX_CALLBACK_URL: ${{ vars.YANDEX_CALLBACK_URL }}
           YANDEX_FRONTEND_URL: ${{ vars.YANDEX_FRONTEND_URL }}
           YANDEX_OAUTH_SCOPE: ${{ vars.YANDEX_OAUTH_SCOPE }}
+          # Веб-поиск агента. Ключ Yandex Search API — отдельный (сервисный аккаунт со scope
+          # yc.search-api.execute), это не тот ключ, что нужен SMS. Tavily — резерв платных
+          # тарифов. Пустые значения не передаются и ничего не стирают на ВМ.
+          WEB_SEARCH_PROVIDER: ${{ secrets.WEB_SEARCH_PROVIDER || vars.WEB_SEARCH_PROVIDER }}
+          YANDEX_SEARCH_API_KEY: ${{ secrets.YANDEX_SEARCH_API_KEY || vars.YANDEX_SEARCH_API_KEY }}
+          YANDEX_SEARCH_FOLDER_ID: ${{ secrets.YANDEX_SEARCH_FOLDER_ID || vars.YANDEX_SEARCH_FOLDER_ID }}
+          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY || vars.TAVILY_API_KEY }}
           WEBNESTDEV_ADMIN_EMAILS: ${{ secrets.WEBNESTDEV_ADMIN_EMAILS }}
           WEBNESTDEV_ADMIN_USER_IDS: ${{ secrets.WEBNESTDEV_ADMIN_USER_IDS }}
         run: |
@@ -204,6 +211,10 @@ jobs:
           add_platform_env YANDEX_CALLBACK_URL "$YANDEX_CALLBACK_URL"
           add_platform_env YANDEX_FRONTEND_URL "$YANDEX_FRONTEND_URL"
           add_platform_env YANDEX_OAUTH_SCOPE "$YANDEX_OAUTH_SCOPE"
+          add_platform_env WEB_SEARCH_PROVIDER "$WEB_SEARCH_PROVIDER"
+          add_platform_env YANDEX_SEARCH_API_KEY "$YANDEX_SEARCH_API_KEY"
+          add_platform_env YANDEX_SEARCH_FOLDER_ID "$YANDEX_SEARCH_FOLDER_ID"
+          add_platform_env TAVILY_API_KEY "$TAVILY_API_KEY"
           add_platform_env WEBNESTDEV_ADMIN_EMAILS "$WEBNESTDEV_ADMIN_EMAILS"
           add_platform_env WEBNESTDEV_ADMIN_USER_IDS "$WEBNESTDEV_ADMIN_USER_IDS"
           # Итог по OAuth-ключам — только «есть/нет», без значений. Раньше пустой ключ был
@@ -213,6 +224,7 @@ jobs:
           echo "[deploy] OAuth GitHub: client_id=$(has "${GH_OAUTH_CLIENT_ID:-}"), secret=$(has "${GH_OAUTH_CLIENT_SECRET:-}")"
           echo "[deploy] OAuth Яндекс ID: client_id=$(has "${YANDEX_CLIENT_ID:-}"), secret=$(has "${YANDEX_CLIENT_SECRET:-}")"
           echo "[deploy] Yandex ID redirect_uri: ${YANDEX_CALLBACK_URL:-https://<домен панели>/api/yandex/callback}"
+          echo "[deploy] Веб-поиск: Yandex Search API key=$(has "${YANDEX_SEARCH_API_KEY:-}"), folder=$(has "${YANDEX_SEARCH_FOLDER_ID:-}"), Tavily=$(has "${TAVILY_API_KEY:-}")"
           if [ -s "$PLATFORM_ENV_LOCAL" ]; then
             PLATFORM_ENV_FILE="/tmp/.webnestdev-platform.env"
             tr -d '\r' < "$PLATFORM_ENV_LOCAL" | ssh -i "$HOME/.ssh/deploy_key" \
@@ -269,6 +281,13 @@ jobs:
           YANDEX_CALLBACK_URL: ${{ vars.YANDEX_CALLBACK_URL }}
           YANDEX_FRONTEND_URL: ${{ vars.YANDEX_FRONTEND_URL }}
           YANDEX_OAUTH_SCOPE: ${{ vars.YANDEX_OAUTH_SCOPE }}
+          # Веб-поиск агента. Ключ Yandex Search API — отдельный (сервисный аккаунт со scope
+          # yc.search-api.execute), это не тот ключ, что нужен SMS. Tavily — резерв платных
+          # тарифов. Пустые значения не передаются и ничего не стирают на ВМ.
+          WEB_SEARCH_PROVIDER: ${{ secrets.WEB_SEARCH_PROVIDER || vars.WEB_SEARCH_PROVIDER }}
+          YANDEX_SEARCH_API_KEY: ${{ secrets.YANDEX_SEARCH_API_KEY || vars.YANDEX_SEARCH_API_KEY }}
+          YANDEX_SEARCH_FOLDER_ID: ${{ secrets.YANDEX_SEARCH_FOLDER_ID || vars.YANDEX_SEARCH_FOLDER_ID }}
+          TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY || vars.TAVILY_API_KEY }}
           WEBNESTDEV_ADMIN_EMAILS: ${{ secrets.WEBNESTDEV_ADMIN_EMAILS }}
           WEBNESTDEV_ADMIN_USER_IDS: ${{ secrets.WEBNESTDEV_ADMIN_USER_IDS }}
         run: |
@@ -289,6 +308,10 @@ jobs:
           add_platform_env YANDEX_CALLBACK_URL "$YANDEX_CALLBACK_URL"
           add_platform_env YANDEX_FRONTEND_URL "$YANDEX_FRONTEND_URL"
           add_platform_env YANDEX_OAUTH_SCOPE "$YANDEX_OAUTH_SCOPE"
+          add_platform_env WEB_SEARCH_PROVIDER "$WEB_SEARCH_PROVIDER"
+          add_platform_env YANDEX_SEARCH_API_KEY "$YANDEX_SEARCH_API_KEY"
+          add_platform_env YANDEX_SEARCH_FOLDER_ID "$YANDEX_SEARCH_FOLDER_ID"
+          add_platform_env TAVILY_API_KEY "$TAVILY_API_KEY"
           add_platform_env WEBNESTDEV_ADMIN_EMAILS "$WEBNESTDEV_ADMIN_EMAILS"
           add_platform_env WEBNESTDEV_ADMIN_USER_IDS "$WEBNESTDEV_ADMIN_USER_IDS"
           # На этом раннере скрипт запускается на самой ВМ, поэтому ключ кладётся во временный

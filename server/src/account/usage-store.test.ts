@@ -46,6 +46,20 @@ test("a run on the project's own provider does not spend the platform quota", as
   assert.equal((await getUsageSnapshot(userId)).agentRuns, 10);
 });
 
+test("the daily web search quota grows with the plan and is counted separately", async () => {
+  const userId = "quota-search-" + randomUUID();
+  for (let index = 0; index < 24; index++) await consumeUsage(userId, "webSearches", "free");
+  const snapshot = await consumeUsage(userId, "webSearches", "free");
+  assert.equal(snapshot.webSearches, 25);
+  assert.equal(snapshot.agentRuns, 0, "поиски не тратят квоту запусков");
+  await assert.rejects(
+    () => consumeUsage(userId, "webSearches", "free"),
+    (error: unknown) => error instanceof UsageLimitError && error.limit === 25 && error.kind === "webSearches",
+  );
+  // Платный тариф даёт больше поисков — граница берётся из каталога, а не из константы.
+  await assert.doesNotReject(() => consumeUsage(userId, "webSearches", "pro"));
+});
+
 test("concurrent reservations never exceed the daily quota", async () => {
   const userId = "quota-concurrency-" + randomUUID();
   const results = await Promise.allSettled(

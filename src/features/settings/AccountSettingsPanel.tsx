@@ -51,6 +51,7 @@ export function AccountSettingsPanel() {
   const usageRows = billing ? [
     { label: "Запуски агента", used: billing.usage.agentRuns, limit: billing.limits.agentRunsPerDay },
     { label: "Браузерные проверки", used: billing.usage.browserChecks, limit: billing.limits.browserChecksPerDay },
+    { label: "Поиски в интернете", used: billing.usage.webSearches, limit: billing.limits.webSearchesPerDay },
   ] : [];
   return <section className="account-settings settings-panel">
     <div className="panel-title"><div><span className="eyebrow">ЛИЧНЫЙ КАБИНЕТ</span><strong>Настройки аккаунта</strong></div></div>

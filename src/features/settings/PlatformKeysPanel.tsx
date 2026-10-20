@@ -11,7 +11,7 @@ import { apiJson } from "../../lib/api";
 type PlatformKeySource = "panel" | "environment" | "none";
 type PlatformKey = {
   name: string;
-  group: "github" | "yandex" | "sms" | "ai";
+  group: "github" | "yandex" | "sms" | "ai" | "search";
   label: string;
   hint: string;
   kind: "secret" | "json-key" | "value" | "url" | "path" | "flag";
@@ -27,6 +27,7 @@ const GROUP_TITLES: Record<PlatformKey["group"], { title: string; note: string }
   yandex: { title: "Yandex Cloud", note: "SMS входа по номеру и подключение облака. Ключ сервисного аккаунта принимается JSON-файлом целиком." },
   sms: { title: "SMS-провайдеры", note: "Достаточно одного провайдера: сервер выберет первый, у которого есть ключ." },
   ai: { title: "Модель платформы", note: "Модель по умолчанию для проектов без своего провайдера." },
+  search: { title: "Веб-поиск агента", note: "Бесплатный тариф ищет через DuckDuckGo без ключей. На платных тарифах основным провайдером работает Yandex Search API (ключ сервисного аккаунта со scope yc.search-api.execute и каталог с ролью search-api.webSearch.user), а Tavily — резервным." },
 };
 
 const SOURCE_LABEL: Record<PlatformKeySource, string> = {
@@ -117,7 +118,7 @@ export function PlatformKeysPanel() {
     </section>;
   }
 
-  const groups = ["github", "yandex", "sms", "ai"] as const;
+  const groups = ["github", "yandex", "sms", "ai", "search"] as const;
   const keys = state.keys ?? [];
 
   return <section className="settings-panel platform-keys">

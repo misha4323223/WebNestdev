@@ -15,6 +15,7 @@ import { describeRunLimiter } from "./agent/run-limiter.js";
 import { describeContextBudget } from "./agent/context-budget.js";
 import { describeProviderRetry } from "./provider/provider-retry.js";
 import { describeSandboxLimiter } from "./sandbox/sandbox-limiter.js";
+import { describeWebSearch } from "./web/search.js";
 import { assertEncryptionConfigured } from "./storage/secret-crypto.js";
 import { describeSandboxPaths } from "./sandbox/config.js";
 import { describeSandboxMount,verifySandboxMount } from "./sandbox/sandbox-check.js";
@@ -58,6 +59,7 @@ import "./tools/service-tools.js";
 import "./tools/database-tools.js";
 import "./tools/secret-tools.js";
 import "./tools/question-tools.js";
+import "./tools/web-tools.js";
 
 // Неизвестный бэкенд или postgres без DATABASE_URL — ошибка конфигурации, а не повод молча
 // работать на JSON-файлах: иначе данные «теряются» при первом же переезде.
@@ -102,6 +104,9 @@ console.log("[agent] " + describeContextBudget());
 // (provider-retry.ts). Без этой строки «агент вдруг думает дольше обычного» выглядит непонятно.
 console.log("[agent] " + describeProviderRetry());
 console.log("[sandbox] " + describeSandboxLimiter());
+// Кто отвечает за поиск в интернете и настроен ли платный провайдер: без этой строки «поиск
+// возвращает отказ» и «ключ Yandex не подхватился» выглядят одинаково.
+console.log("[web] " + describeWebSearch());
 // Каталог песочниц у сервера и у docker — разные вещи: контейнеры проектов монтируют путь,
 // который демон разбирает на хосте. Оба печатаются при старте, чтобы расхождение было видно
 // сразу, а не после того, как агент пожалуется на пустой терминал.

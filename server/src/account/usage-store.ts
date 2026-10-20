@@ -2,7 +2,24 @@ import { mkdir, readFile, writeFile, rename, unlink } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { isYdbEnabled, ydbQuery, getTable } from "../storage/ydb.js";
-import { FREE_PLAN, limitsForPlan, type PlanId, type UsageKind, type UsageSnapshot } from "./plans.js";
+import { accountPlanFor, FREE_PLAN, limitsForPlan, type PlanId, type UsageKind, type UsageSnapshot } from "./plans.js";
+
+/**
+ * Какая граница тарифа отвечает за каждый вид расхода. Таблица, а не тернарный оператор: новый вид
+ * расхода добавляется одной строкой, и забыть его в одной из ветвей невозможно.
+ */
+const LIMIT_KEY: Record<UsageKind, "agentRunsPerDay" | "browserChecksPerDay" | "webSearchesPerDay"> = {
+  agentRuns: "agentRunsPerDay",
+  browserChecks: "browserChecksPerDay",
+  webSearches: "webSearchesPerDay",
+};
+
+/** Что именно закончилось — эти фразы видит человек, когда лимит исчерпан. */
+const LIMIT_MESSAGE: Record<UsageKind, string> = {
+  agentRuns: "Достигнут дневной лимит запусков агента",
+  browserChecks: "Достигнут дневной лимит браузерных проверок",
+  webSearches: "Достигнут дневной лимит поисков в интернете",
+};
 
 const root = process.env.WEBNESTDEV_DATA_DIR ?? path.resolve(".webnestdev");
 type UsageEvent = { id: string; userId: string; date: string; kind: UsageKind; createdAt: string };
@@ -33,7 +50,7 @@ function utcDay(now = new Date()) { return now.toISOString().slice(0, 10); }
 export class UsageLimitError extends Error {
   readonly statusCode = 429;
   constructor(readonly kind: UsageKind, readonly limit: number, readonly used: number) {
-    super(kind === "agentRuns" ? "Достигнут дневной лимит запусков агента" : "Достигнут дневной лимит браузерных проверок");
+    super(LIMIT_MESSAGE[kind]);
     this.name = "UsageLimitError";
   }
 }
@@ -49,11 +66,17 @@ export async function getUsageSnapshot(userId: string, now = new Date()): Promis
       date,
       agentRuns: Number(rows.find(row => row.kind === "agentRuns")?.used ?? 0),
       browserChecks: Number(rows.find(row => row.kind === "browserChecks")?.used ?? 0),
+      webSearches: Number(rows.find(row => row.kind === "webSearches")?.used ?? 0),
     };
   }
   const events = await readJson<UsageEvent[]>(path.join(root, "account", "usage", date + ".json"), []);
   const own = events.filter(event => event.userId === userId && event.date === date);
-  return { date, agentRuns: own.filter(event => event.kind === "agentRuns").length, browserChecks: own.filter(event => event.kind === "browserChecks").length };
+  return {
+    date,
+    agentRuns: own.filter(event => event.kind === "agentRuns").length,
+    browserChecks: own.filter(event => event.kind === "browserChecks").length,
+    webSearches: own.filter(event => event.kind === "webSearches").length,
+  };
 }
 
 export async function consumeUsage(userId: string, kind: UsageKind, plan: PlanId, now = new Date()): Promise<UsageSnapshot> {
@@ -61,7 +84,7 @@ export async function consumeUsage(userId: string, kind: UsageKind, plan: PlanId
   // JSON mode shares a daily file, so serialize all writers. YDB mode serializes per account in this process.
   const lockKey = isYdbEnabled() ? userId + ":" + date : "json:" + date;
   return withLock(lockKey, async () => {
-    const limit = kind === "agentRuns" ? limitsForPlan(plan).agentRunsPerDay : limitsForPlan(plan).browserChecksPerDay;
+    const limit = limitsForPlan(plan)[LIMIT_KEY[kind]];
     const event: UsageEvent = { id: randomUUID(), userId, date, kind, createdAt: now.toISOString() };
     if (isYdbEnabled()) {
       // Serializable read-write transaction: competing reservations conflict on the same counter key.
@@ -91,19 +114,27 @@ export async function consumeUsage(userId: string, kind: UsageKind, plan: PlanId
       return getUsageSnapshot(userId, now);
     }
     const snapshot = await getUsageSnapshot(userId, now);
-    const used = kind === "agentRuns" ? snapshot.agentRuns : snapshot.browserChecks;
+    const used = snapshot[kind];
     if (used >= limit) throw new UsageLimitError(kind, limit, used);
     const file = path.join(root, "account", "usage", date + ".json");
     const events = await readJson<UsageEvent[]>(file, []);
     events.push(event);
     await writeJsonAtomic(file, events);
-    return { ...snapshot, [kind === "agentRuns" ? "agentRuns" : "browserChecks"]: used + 1 };
+    return { ...snapshot, [kind]: used + 1 };
   });
 }
 
 /** Charges the account's plan: paid plans are not on sale yet, so the free one is charged. */
 export async function consumeUsageForCurrentPlan(userId: string, kind: UsageKind, now = new Date()) {
   return consumeUsage(userId, kind, FREE_PLAN, now);
+}
+
+/**
+ * Списание по тарифу аккаунта, а не по бесплатному: этим пользуются места, где граница зависит от
+ * подписки (веб-поиск). Пока платные тарифы не продаются, результат тот же, что и выше.
+ */
+export async function consumeUsageForAccountPlan(userId: string, kind: UsageKind, now = new Date()) {
+  return consumeUsage(userId, kind, accountPlanFor(userId), now);
 }
 
 /**

@@ -13,7 +13,7 @@ import { parseAuthorizedKeyJson, parseServiceAccountKey } from "../yandex/yandex
  * a deployment that never opens the panel behaves exactly as before.
  */
 export type PlatformEnvKind = "secret" | "json-key" | "value" | "url" | "path" | "flag";
-export type PlatformEnvGroup = "github" | "yandex" | "sms" | "ai";
+export type PlatformEnvGroup = "github" | "yandex" | "sms" | "ai" | "search";
 
 export type PlatformEnvEntry = {
   name: string;
@@ -56,6 +56,11 @@ export const PLATFORM_ENV_CATALOG: PlatformEnvEntry[] = [
   { name: "SMSAERO_API_KEY", group: "sms", label: "SMS Aero API-ключ", hint: "Ключ из личного кабинета SMS Aero.", kind: "secret" },
   { name: "WEBNESTDEV_SMS_TEST_MODE", group: "sms", label: "Тестовый режим", hint: "1 — коды пишутся в лог сервера и не отправляются. Пусто или 0 — обычная отправка.", kind: "flag" },
 
+  { name: "WEB_SEARCH_PROVIDER", group: "search", label: "Провайдер поиска", hint: "Необязательно: auto (по тарифу), duckduckgo или yandex. По умолчанию бесплатный тариф ищет через DuckDuckGo, платные — через Yandex Search API.", kind: "value" },
+  { name: "YANDEX_SEARCH_API_KEY", group: "search", label: "Yandex Search API-ключ", hint: "API-ключ сервисного аккаунта со scope yc.search-api.execute. Нужен для поиска на платных тарифах.", kind: "secret" },
+  { name: "YANDEX_SEARCH_FOLDER_ID", group: "search", label: "Каталог Search API", hint: "b1g… каталога, где сервисному аккаунту выдана роль search-api.webSearch.user. Пустое значение — берётся YANDEX_FOLDER_ID.", kind: "value" },
+  { name: "TAVILY_API_KEY", group: "search", label: "Tavily API-ключ", hint: "Резервный провайдер платных тарифов: включается, если Yandex Search API не настроен или отказал. Бесплатно 1 000 кредитов в месяц.", kind: "secret" },
+
   { name: "PLATFORM_AI_BASE_URL", group: "ai", label: "AI Base URL", hint: "OpenAI-совместимый адрес модели платформы — то, чем пользуются проекты без своего провайдера.", kind: "url" },
   { name: "PLATFORM_AI_MODEL", group: "ai", label: "AI модель", hint: "Идентификатор модели для этого адреса.", kind: "value" },
   { name: "PLATFORM_AI_API_KEY", group: "ai", label: "AI ключ", hint: "Ключ провайдера модели платформы. Проекты со своим ключом его не используют.", kind: "secret" },
@@ -87,7 +92,7 @@ export type PlatformEnvStatus = {
 type StoredEntry = { value: string; preview: string; updatedAt: string };
 type StoreFile = { version: 1; values: Record<string, StoredEntry> };
 
-const GROUP_LABEL: Record<PlatformEnvGroup, string> = { github: "GitHub", yandex: "Yandex Cloud", sms: "SMS-провайдеры", ai: "AI-провайдер платформы" };
+const GROUP_LABEL: Record<PlatformEnvGroup, string> = { github: "GitHub", yandex: "Yandex Cloud", sms: "SMS-провайдеры", ai: "AI-провайдер платформы", search: "Веб-поиск агента" };
 
 export function platformEnvGroupLabel(group: PlatformEnvGroup) {
   return GROUP_LABEL[group];
@@ -214,6 +219,7 @@ export function validatePlatformValue(name: string, value: string): string | nul
   if (entry.kind === "url" && !/^https?:\/\/[^\s]+$/i.test(text)) return "Нужен адрес вида https://…";
   if (entry.kind === "path" && text.includes("\n")) return "Путь должен быть одной строкой";
   if (entry.kind === "flag" && !/^(0|1|true|false|yes|no|да|нет)$/i.test(text)) return "Допустимо: 1/0, true/false, yes/no";
+  if (name === "WEB_SEARCH_PROVIDER" && !/^(auto|duckduckgo|yandex)$/i.test(text)) return "Допустимо: auto, duckduckgo или yandex";
   return null;
 }
 

@@ -87,6 +87,14 @@ services:
       PLATFORM_AI_BASE_URL: ${PLATFORM_AI_BASE_URL:-}
       PLATFORM_AI_MODEL: ${PLATFORM_AI_MODEL:-}
       PLATFORM_AI_API_KEY: ${PLATFORM_AI_API_KEY:-}
+      # Веб-поиск агента. `auto` — провайдер по тарифу: бесплатный ищет через DuckDuckGo без ключей,
+      # платные — Yandex Search API, а Tavily страхует его как резерв. Перечислено явно, потому что
+      # Compose не передаёт в контейнер переменные, которых нет в этом списке: ключ, положенный в .env
+      # на ВМ, иначе просто не дошёл бы до сервера.
+      WEB_SEARCH_PROVIDER: ${WEB_SEARCH_PROVIDER:-auto}
+      YANDEX_SEARCH_API_KEY: ${YANDEX_SEARCH_API_KEY:-}
+      YANDEX_SEARCH_FOLDER_ID: ${YANDEX_SEARCH_FOLDER_ID:-}
+      TAVILY_API_KEY: ${TAVILY_API_KEY:-}
       # Кто может менять ключи платформы. Только из окружения и намеренно не из панели: иначе
       # доступ к ключам сервиса можно было бы расширить изнутри панели. Пусто — панель закрыта
       # и объясняет, как назначить администратора.

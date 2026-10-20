@@ -4,7 +4,7 @@ import { generateKeyPairSync, verify as verifySignature } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { mwsCredentialKind, mwsIamToken, mwsRequest, mwsSummary, parseMwsAuthorizedKey, resetMwsTokenCache, signMwsJwt } from "./mws-auth.js";
+import { mwsCredentialKind, mwsHostForPath, mwsIamToken, mwsRequest, mwsSummary, parseMwsAuthorizedKey, resetMwsTokenCache, signMwsJwt } from "./mws-auth.js";
 
 /**
  * Ключ МВС: как его пишет консоль — `keyId` вида
@@ -192,6 +192,15 @@ test("сервисный аккаунт без прав назван отдел�
   );
 });
 
+test("хост запроса выводится из сервиса в пути, а не из каталога api", () => {
+  assert.equal(mwsHostForPath("/rm/v3/projects"), "iam.mwsapis.ru");
+  assert.equal(mwsHostForPath("/iam/v1/serviceAccounts?project=p"), "iam.mwsapis.ru");
+  assert.equal(mwsHostForPath("/compute/v1/projects/p/virtualMachines"), "compute.mwsapis.ru");
+  assert.equal(mwsHostForPath("/mpostgres/v1/projects/p/clusters"), "mpostgres.mwsapis.ru");
+  assert.equal(mwsHostForPath("/queue/v1/projects/p/queues"), "queue-api.mwsapis.ru");
+  assert.throws(() => mwsHostForPath("/v3/projects"), /api\.mwsapis\.ru\/endpoint/);
+});
+
 test("готовый токен принимается без обмена и без ключа", async t => {
   clearEnv();
   process.env.MWS_IAM_TOKEN = "t1.ready";
@@ -203,7 +212,11 @@ test("готовый токен принимается без обмена и б
     async captured => {
       const result = await mwsRequest({ path: "/rm/v3/projects" });
       assert.equal(result.ok, true);
+      assert.equal(captured().url, "https://iam.mwsapis.ru/rm/v3/projects");
       assert.equal((captured().init.headers as Record<string, string>).Authorization, "Bearer t1.ready");
+
+      await mwsRequest({ path: "/compute/v1/projects/p/virtualMachines" });
+      assert.equal(captured().url, "https://compute.mwsapis.ru/compute/v1/projects/p/virtualMachines");
     },
   );
 });
@@ -243,5 +256,6 @@ test("запросы разрешены только к хостам МВС", as
   t.after(clearEnv);
 
   await assert.rejects(mwsRequest({ host: "example.com", path: "/steal" }), /mwsapis\.ru/);
+  await assert.rejects(mwsRequest({ host: "api.mwsapis.ru", path: "/rm/v3/projects" }), /каталог эндпоинтов/);
   await assert.rejects(mwsRequest({ path: "../secret" }), /путь/i);
 });

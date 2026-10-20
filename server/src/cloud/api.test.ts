@@ -26,7 +26,14 @@ test("changes need the user's permission, reads never do", () => {
 });
 
 test("only provider hosts are accepted", () => {
-  assert.equal(cloudRequestTarget("mws", { path: "/rm/v3/projects" }).host, "api.mwsapis.ru");
+  // `/rm` живёт на iam, а не на каталоге api: иначе живой API отвечает
+  // `404 No static resource rm/v3/projects`.
+  assert.equal(cloudRequestTarget("mws", { path: "/rm/v3/projects" }).host, "iam.mwsapis.ru");
+  assert.equal(cloudRequestTarget("mws", { path: "/compute/v1/projects/p/virtualMachines" }).host, "compute.mwsapis.ru");
+  assert.equal(cloudRequestTarget("mws", { path: "/vpc/v1/networks" }).host, "vpc.mwsapis.ru");
+  assert.equal(cloudRequestTarget("mws", { path: "/rm/v3/projects", host: "compute.mwsapis.ru" }).host, "compute.mwsapis.ru");
+  assert.throws(() => cloudRequestTarget("mws", { path: "/v3/projects" }), /endpoint/);
+  assert.throws(() => cloudRequestTarget("mws", { path: "/rm/v3/projects", host: "api.mwsapis.ru" }), /каталог эндпоинтов/);
   assert.throws(() => cloudRequestTarget("mws", { path: "/rm/v3/projects", host: "evil.example" }), /mwsapis/);
   assert.equal(cloudRequestTarget("cloudru", { path: "/v3/projects" }).host, "api.cloud.ru");
   assert.equal(cloudRequestTarget("cloudru", { path: "/v3/projects", host: "vm.api.cloud.ru" }).url, "https://vm.api.cloud.ru/v3/projects");

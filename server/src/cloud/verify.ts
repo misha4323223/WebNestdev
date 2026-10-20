@@ -26,6 +26,14 @@ function detail(text: string) {
   return text.replace(/\s+/g, " ").trim().slice(0, MAX_DETAIL);
 }
 
+/** В ответах МВС список лежит в `items`; пустой проект — это успех, а не отсутствие доступа. */
+function itemCount(payload: unknown) {
+  if (!payload || typeof payload !== "object") return 0;
+  const record = payload as Record<string, unknown>;
+  if (Array.isArray(record.items)) return record.items.length;
+  return 0;
+}
+
 /** Timeweb Cloud: постоянный токен из личного кабинета, проверяется чтением серверов. */
 async function verifyTimeweb(fields: Record<string, string>) {
   const response = await call("https://api.timeweb.cloud/api/v1/servers", {
@@ -56,7 +64,13 @@ async function verifyCloudRu(fields: Record<string, string>) {
   return { account: "Cloud.ru" };
 }
 
-/** MWS: авторизованный ключ подписывает JWT, из него получается IAM-токен и список проектов. */
+/**
+ * MWS: авторизованный ключ подписывает JWT, из него получается IAM-токен, и им читается
+ * проект из `keyId`. Список всех проектов (`/rm/v3/projects`) здесь не годится: он требует
+ * права `rm.project.list` на организацию, которого у сервисного аккаунта обычно нет, и
+ * отвечает `403`, хотя ключ полностью рабочий. Поэтому проверка идёт по конкретному
+ * проекту — так же, как `npm run mws:check`.
+ */
 async function verifyMws(fields: Record<string, string>) {
   let summary: ReturnType<typeof mwsKeySummary>;
   try {
@@ -64,9 +78,19 @@ async function verifyMws(fields: Record<string, string>) {
   } catch (error) {
     throw new Error(error instanceof Error ? error.message : "Ключ MWS не разобран");
   }
-  const response = await mwsRequest({ host: "api.mwsapis.ru", path: "/rm/v3/projects" }, { key: fields.key });
-  if (!response.ok) throw new Error("MWS отклонил ключ (HTTP " + response.status + "): " + detail(JSON.stringify(response.body)));
-  return { account: summary.project || "MWS" };
+  const project = summary.project;
+  const response = await mwsRequest(
+    { host: "compute.mwsapis.ru", path: "/compute/v1/projects/" + encodeURIComponent(project) + "/virtualMachines" },
+    { key: fields.key },
+  );
+  if (!response.ok) {
+    const reason = response.status === 403
+      ? "ключ действителен, но у сервисного аккаунта нет роли в проекте " + project
+      : "MWS не дал доступ к проекту " + project;
+    throw new Error(reason + " (HTTP " + response.status + "): " + detail(JSON.stringify(response.body)));
+  }
+  const machines = itemCount(response.body);
+  return { account: project + (machines === 0 ? "" : " · ВМ: " + machines) };
 }
 
 /** Разбор ответа `/v1/reglets`: подпись карточки говорит, сколько серверов видно. */

@@ -41,6 +41,53 @@ const HOST_PATTERN = /^[a-z0-9-]+\.mwsapis\.ru$/;
 /** keyId авторизованного ключа из консоли МВС. */
 const KEY_ID_PATTERN = /^projects\/([^/]+)\/serviceAccounts\/([^/]+)\/authorizedKeys\/([^/]+)$/;
 
+/**
+ * Хост сервиса по первому сегменту пути. `api.mwsapis.ru` — только каталог эндпоинтов:
+ * `/rm/v3/projects` на нём отвечает `404 No static resource`, потому что Resource Manager
+ * живёт на `iam.mwsapis.ru`. Поэтому путь сам называет сервис, и хост выводится из него,
+ * а явный `host` по-прежнему главнее.
+ */
+const SERVICE_HOSTS: Record<string, string> = {
+  auditlogs: "audit.mwsapis.ru",
+  billing: "billing.mwsapis.ru",
+  cdn: "cdn.mwsapis.ru",
+  certmanager: "certmanager.mwsapis.ru",
+  compute: "compute.mwsapis.ru",
+  gpt: "gpt.mwsapis.ru",
+  iam: "iam.mwsapis.ru",
+  kms: "kms.mwsapis.ru",
+  metastore: "metastore.mwsapis.ru",
+  mclickhouse: "mclickhouse.mwsapis.ru",
+  mk8s: "mk8s.mwsapis.ru",
+  mkafka: "mkafka.mwsapis.ru",
+  mmysql: "mmysql.mwsapis.ru",
+  monitoring: "monitoring.mwsapis.ru",
+  mpostgres: "mpostgres.mwsapis.ru",
+  mvalkey: "mvalkey.mwsapis.ru",
+  nlb: "vpc.mwsapis.ru",
+  queue: "queue-api.mwsapis.ru",
+  registry: "registry.mwsapis.ru",
+  rm: "iam.mwsapis.ru",
+  secretmanager: "secretmanager.mwsapis.ru",
+  serialconsole: "compute.mwsapis.ru",
+  spg: "spg-internal.mwsapis.ru",
+  storage: "storage.mwsapis.ru",
+  support: "support.mwsapis.ru",
+  vi: "vi.mwsapis.ru",
+  vpc: "vpc.mwsapis.ru",
+};
+
+export function mwsHostForPath(path: string) {
+  const service = path.split("?")[0].split("#")[0].split("/").filter(Boolean)[0]?.toLowerCase();
+  const host = service ? SERVICE_HOSTS[service] : undefined;
+  if (!host) {
+    throw new Error(
+      "MWS: не удалось определить сервис по пути " + path + ". Укажите host из https://api.mwsapis.ru/endpoint (например, compute.mwsapis.ru).",
+    );
+  }
+  return host;
+}
+
 function firstEnv(...names: string[]) {
   for (const name of names) {
     const value = process.env[name]?.trim();
@@ -414,9 +461,12 @@ export type MwsRequest = { method?: string; host?: string; path: string; body?: 
  * опечатки в пути или в подставленном хосте.
  */
 export async function mwsRequest(request: MwsRequest, credential?: MwsCredentialOverride) {
-  const host = request.host ?? DEFAULT_IAM_HOST;
-  if (!HOST_PATTERN.test(host)) throw new Error("Разрешены только API-хосты МТС Web Services (*.mwsapis.ru), получен " + host);
   if (!request.path.startsWith("/") || request.path.includes("..")) throw new Error("Некорректный путь запроса: " + request.path);
+  if (request.host === "api.mwsapis.ru") {
+    throw new Error("api.mwsapis.ru — каталог эндпоинтов, а не API-шлюз. Не передавайте host: он выводится из сервиса в пути (/rm → iam.mwsapis.ru, /compute → compute.mwsapis.ru).");
+  }
+  const host = request.host ?? mwsHostForPath(request.path);
+  if (!HOST_PATTERN.test(host)) throw new Error("Разрешены только API-хосты МТС Web Services (*.mwsapis.ru), получен " + host);
   const method = (request.method ?? "GET").toUpperCase();
   const token = await mwsIamToken(credential);
   const response = await fetch("https://" + host + request.path, {

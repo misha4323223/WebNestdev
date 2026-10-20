@@ -72,11 +72,11 @@ chmod 700 "$SECRETS_DIR" 2>/dev/null || true
 # Домены и адрес для Let's Encrypt тоже переносятся: иначе повторный запуск скрипта, который
 # собирает .env целиком, выключил бы публичные адреса предпросмотра (PREVIEW_PUBLIC_DOMAIN) и
 # оставил реверс-прокси без имени сайта — а это уже не «пересоздать .env», а «сайт не открывается».
-# GITHUB_* и PLATFORM_AI_* — те же ключи, которые можно ввести в панели: если их задали в .env
-# (руками или через secrets в выкатке), пересборка файла не должна их терять. Админы панели
-# переносятся обязательно: без WEBNESTDEV_ADMIN_EMAILS редактор ключей закрыт, и потеря строки
-# выглядела бы как «панель ключей сломалась».
-CARRY_PATTERN='^(SMS_PROVIDER|SMS_SENDER|YANDEX_[A-Z0-9_]+|SMS_RU_API_ID|SMSC_[A-Z]+|EXOLVE_API_KEY|SMSAERO_[A-Z]+|WEBNESTDEV_SMS_TEST_MODE|WEBNESTDEV_DEMO_PHONE[A-Z_]*|WEBNESTDEV_ALLOWED_ORIGINS|WEBNESTDEV_SITE_DOMAIN|PREVIEW_PUBLIC_DOMAIN|PREVIEW_TICKET_TTL_MS|ACME_EMAIL|GITHUB_[A-Z_]+|PLATFORM_AI_[A-Z_]+|WEBNESTDEV_ADMIN_[A-Z_]+)='
+# GITHUB_*, PLATFORM_AI_* и ключи веб-поиска — те же значения, которые можно ввести в панели: если
+# их задали в .env (руками или через secrets в выкатке), пересборка файла не должна их терять.
+# Админы панели переносятся обязательно: без WEBNESTDEV_ADMIN_EMAILS редактор ключей закрыт, и
+# потеря строки выглядела бы как «панель ключей сломалась».
+CARRY_PATTERN='^(SMS_PROVIDER|SMS_SENDER|YANDEX_[A-Z0-9_]+|SMS_RU_API_ID|SMSC_[A-Z]+|EXOLVE_API_KEY|SMSAERO_[A-Z]+|WEBNESTDEV_SMS_TEST_MODE|WEBNESTDEV_DEMO_PHONE[A-Z_]*|WEBNESTDEV_ALLOWED_ORIGINS|WEBNESTDEV_SITE_DOMAIN|PREVIEW_PUBLIC_DOMAIN|PREVIEW_TICKET_TTL_MS|ACME_EMAIL|GITHUB_[A-Z_]+|PLATFORM_AI_[A-Z_]+|WEBNESTDEV_ADMIN_[A-Z_]+|TAVILY_API_KEY|WEB_SEARCH_PROVIDER)='
 CARRY="$(grep -E "$CARRY_PATTERN" .env 2>/dev/null || true)"
 if [ -n "$CARRY" ]; then echo "SMS-ENV-REUSED"; fi
 # Адреса фронтенда: из прошлого .env или из PUBLIC_ORIGIN. localhost здесь нельзя — в production
@@ -148,3 +148,4 @@ echo "Ключ сервисного аккаунта Yandex Cloud положит
 echo "  YANDEX_SA_KEY_FILE=$SECRETS_DIR/yandex-sa-key.json"
 echo "  YANDEX_CLOUD_ID=<идентификатор облака>"
 echo "Готовый IAM-токен (YANDEX_NOTIFY_IAM_TOKEN) не используйте: он живёт около 12 часов, и SMS после этого перестают уходить."
+echo "Веб-поиск агента: бесплатный тариф ищет через DuckDuckGo без ключей; платным нужны YANDEX_SEARCH_API_KEY и YANDEX_SEARCH_FOLDER_ID, резерв — TAVILY_API_KEY. Их можно вставить в панели или задать секретами репозитория — выкатка сама допишет их в .env."
