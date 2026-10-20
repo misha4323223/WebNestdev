@@ -10,7 +10,8 @@ name: deploy
 # Ручной запуск кнопкой «Run workflow» нужен для всего остального и ничего не отменяет:
 # mode=image с тегом `image=…:sha-<12>` откатывает на прежнюю сборку, mode=prune убирает
 # старые образы с ВМ, mode=cleanup обнуляет логи контейнеров на ВМ (диск, а не версию),
-# mode=source собирает образ на самой ВМ из репозитория.
+# mode=logs печатает последние строки логов сервиса в лог выкатки, mode=source собирает
+# образ на самой ВМ из репозитория.
 # Подтверждение перед выкаткой включается без изменения файла:
 # Settings → Environments → production → Required reviewers (сейчас их нет).
 
@@ -18,10 +19,14 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "image — готовый образ из реестра, source — сборка на ВМ из репозитория, cleanup — только обнулить логи контейнеров на ВМ, prune — только уборка старых образов"
+        description: "image — готовый образ из реестра, source — сборка на ВМ из репозитория, logs — показать логи контейнера, cleanup — только обнулить логи, prune — только уборка старых образов"
         type: choice
-        options: ["image", "source", "cleanup", "prune"]
+        options: ["image", "source", "logs", "cleanup", "prune"]
         default: "image"
+      tail:
+        description: "Сколько последних строк логов контейнера печатать в mode=logs (по умолчанию 120)"
+        type: string
+        required: false
       image:
         description: "Тег образа для выкатки или отката, например sha-1a2b3c4d5e6f (по умолчанию — сборка этого запуска)"
         type: string
@@ -137,6 +142,7 @@ jobs:
           DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
           DEPLOY_APP_DIR: ${{ vars.DEPLOY_APP_DIR }}
           MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'image' }}
+          LOG_TAIL: ${{ inputs.tail }}
           IMAGE_INPUT: ${{ inputs.image }}
           BUILT_IMAGE: ${{ needs.build.outputs.image }}
           # Ключ сервисного аккаунта Yandex Cloud (файл JSON целиком). Необязательный: без него
@@ -251,13 +257,14 @@ jobs:
             -p "${DEPLOY_PORT:-22}" \
             -o BatchMode=yes -o StrictHostKeyChecking=yes \
             "$DEPLOY_USER@$DEPLOY_HOST" \
-            "MODE='$MODE' IMAGE_REF='$image' APP_DIR='$DEPLOY_APP_DIR' COMPOSE_B64='$COMPOSE_B64' CADDY_B64='$CADDY_B64' APP_KEY_FILE='$APP_KEY_FILE' PLATFORM_ENV_FILE='$PLATFORM_ENV_FILE' bash -s" \
+            "MODE='$MODE' IMAGE_REF='$image' APP_DIR='$DEPLOY_APP_DIR' COMPOSE_B64='$COMPOSE_B64' CADDY_B64='$CADDY_B64' APP_KEY_FILE='$APP_KEY_FILE' PLATFORM_ENV_FILE='$PLATFORM_ENV_FILE' LOG_TAIL='$LOG_TAIL' bash -s" \
             < deploy/scripts/vm-deploy.sh
 
       - name: Deploy on the VM (self-hosted runner)
         if: ${{ vars.DEPLOY_RUNNER != '' }}
         env:
           MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'image' }}
+          LOG_TAIL: ${{ inputs.tail }}
           IMAGE_INPUT: ${{ inputs.image }}
           BUILT_IMAGE: ${{ needs.build.outputs.image }}
           DEPLOY_APP_DIR: ${{ vars.DEPLOY_APP_DIR }}
@@ -323,6 +330,7 @@ jobs:
             printf '%s\n' "$YANDEX_SA_KEY_JSON" | tr -d '\r' > "$APP_KEY_FILE"
           fi
           MODE="$MODE" IMAGE_REF="$image" APP_DIR="$DEPLOY_APP_DIR" \
+            LOG_TAIL="$LOG_TAIL" \
             COMPOSE_SRC="$PWD/docker-compose.yml" CADDY_SRC="$PWD/deploy/Caddyfile" \
             APP_KEY_FILE="$APP_KEY_FILE" PLATFORM_ENV_FILE="$PLATFORM_ENV_FILE" \
             bash deploy/scripts/vm-deploy.sh

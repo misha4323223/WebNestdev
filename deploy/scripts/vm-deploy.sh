@@ -7,6 +7,7 @@
 #
 # Переменные окружения (все необязательные, кроме IMAGE_REF для MODE=image):
 #   MODE=image|source          что доставлять: готовый образ или сборку из репозитория
+#        logs                   только показать последние строки логов сервиса (без выкатки)
 #        cleanup                только обнулить логи контейнеров на ВМ (диск, а не версия)
 #        prune                  только убрать старые образы и кеш сборки
 #   IMAGE_REF=ghcr.io/…        образ для MODE=image
@@ -39,6 +40,7 @@
 #                              По умолчанию «всё», потому что эта ВМ никогда не собирает образы:
 #                              выкатка приходит готовым образом, а кеш занимал 15 ГБ.
 #   DRY_RUN=1                  показать шаги, ничего не меняя
+#   LOG_TAIL=120               сколько последних строк логов контейнера печатать в MODE=logs.
 #   SMS_CHECK=0                не проверять состояние входа по SMS после выкатки. Проверка
 #                              печатает провайдера, способ аутентификации и путь, по которому
 #                              прочитан ключ сервисного аккаунта, — без отправки сообщений.
@@ -270,6 +272,52 @@ cleanup_logs(){
   done
   after=$(df -Pk / | awk 'NR==2{print $4}')
   log "логи выкатки очищены: освобождено $((freed / 1024 / 1024)) МБ; свободно на / было $((before / 1024)) МБ, стало $((after / 1024)) МБ"
+}
+
+#
+# Значения секретов из .env вырезаются из любого текста, который уходит в лог Actions: строки
+# ошибок провайдеров иногда цитируют запрос целиком (`Authorization: Bearer …`, `Api-Key …`), а
+# лог выкатки читают и люди, и GitHub. Маскируются значения переменных, в имени которых есть
+# KEY/TOKEN/SECRET/PASSWORD (короче 12 символов — не секреты: `1`, `true`), плюс общие шаблоны.
+#
+mask_secrets(){
+  local line name value escaped args=()
+  if [ -f "$ENV_FILE" ]; then
+    while IFS= read -r line || [ -n "$line" ]; do
+      line=$(printf '%s' "$line" | tr -d '\r')
+      printf '%s' "$line" | grep -Eq '^[A-Z_][A-Z0-9_]*=' || continue
+      name=${line%%=*}
+      value=${line#*=}
+      [ "${#value}" -ge 12 ] || continue
+      printf '%s' "$name" | grep -Eqi 'KEY|TOKEN|SECRET|PASSWORD' || continue
+      escaped=$(printf '%s' "$value" | sed 's/[][\.*^$|&/\\]/\\&/g')
+      args+=(-e "s|$escaped|***|g")
+    done < "$ENV_FILE"
+  fi
+  args+=(-e 's|\(Authorization:[[:space:]]*Bearer[[:space:]]*\)[^"[:space:]]*|\1***|Ig' -e 's|\(Api-Key[[:space:]][[:space:]]*\)[^"[:space:]]*|\1***|Ig' -e 's|\(token=\)[^"&[:space:]]*|\1***|Ig')
+  sed "${args[@]}"
+}
+
+#
+# MODE=logs: последние строки логов сервиса печатаются в лог выкатки, чтобы «сервер пишет
+# [web] ключ есть или нет» и «SMS не уходит» читались из Actions, а не требовали захода на ВМ.
+# Сервис не перезапускается и ничего не меняет: это чтение.
+#
+dump_container_logs(){
+  local tail_lines out
+  tail_lines=${LOG_TAIL:-120}
+  case "$tail_lines" in ''|*[!0-9]*) tail_lines=120 ;; esac
+  if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+    log "docker не отвечает — логи контейнера не прочитать"
+    return 1
+  fi
+  out=$(docker compose -f "$COMPOSE_FILE" logs --no-color --tail "$tail_lines" "$SERVICE" 2>&1 || true)
+  if [ -z "$out" ]; then
+    log "логов нет: сервис $SERVICE ещё не запускался"
+    return 0
+  fi
+  printf '%s\n' "$out" | mask_secrets | sed 's/^/[container] /'
+  log "показаны последние $tail_lines строк логов $SERVICE"
 }
 
 # /api/ready проверяет и хранилище, и доступность Docker для песочниц: деплой считается
@@ -886,7 +934,11 @@ if [ ! -d "$APP_DIR" ]; then
 fi
 
 log "режим: $MODE$( [ "$DRY_RUN" = "1" ] && echo " (dry-run)" )"
-case "$MODE" in prune|cleanup) ;; *) log "деплой в $APP_DIR"; cd "$APP_DIR" ;; esac
+case "$MODE" in
+  prune|cleanup) ;;
+  logs) log "режим logs: читаю логи контейнера в $APP_DIR"; cd "$APP_DIR" ;;
+  *) log "деплой в $APP_DIR"; cd "$APP_DIR" ;;
+esac
 if [ -f "$COMPOSE_FILE" ]; then
   log "изменённые файлы в $APP_DIR: $(git status --porcelain 2>/dev/null | wc -l | tr -d ' ')"
 fi
@@ -951,6 +1003,11 @@ case "$MODE" in
       run docker compose -f "$COMPOSE_FILE" up -d --no-build "$CADDY_SERVICE"
     fi
     ;;
+  logs)
+    log "режим logs: показываю логи контейнера, сервис не перезапускаю"
+    dump_container_logs || exit 1
+    exit 0
+    ;;
   cleanup)
     log "режим cleanup: обнуляю логи контейнеров, сервис не перезапускаю"
     cleanup_logs
@@ -964,7 +1021,7 @@ case "$MODE" in
     exit 0
     ;;
   *)
-    log "неизвестный MODE=$MODE (ожидается image, source, cleanup или prune)"
+    log "неизвестный MODE=$MODE (ожидается image, source, logs, cleanup или prune)"
     exit 2
     ;;
 esac
