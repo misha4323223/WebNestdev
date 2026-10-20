@@ -1,5 +1,5 @@
 import { useEffect,useState } from "react";
-import { Bot,CreditCard,FolderGit2,History,Home,KeyRound,Settings,Sparkles,Terminal } from "lucide-react";
+import { Bot,CreditCard,Crown,FolderGit2,History,Home,KeyRound,Settings,Terminal } from "lucide-react";
 import type { WorkspaceView } from "../workspace/WorkspaceNav";
 import { SidebarBanner } from "./SidebarBanner";
 import { getBilling } from "../../lib/billing-api";
@@ -25,7 +25,7 @@ function SidebarPlan({onPlan}:{onPlan:()=>void}){
   return <button className={"sidebar-plan"+(plan.chosen?" sidebar-plan-upgrade":"")} onClick={onPlan} title={"Тариф: "+plan.name+(plan.chosen?" · выбран "+plan.chosen:"")}>
     <span className="sidebar-plan-icon"><CreditCard size={12}/></span>
     <span className="sidebar-plan-copy"><small>Тариф</small><strong>{plan.name}</strong></span>
-    {plan.chosen&&<span className="sidebar-plan-next"><Sparkles size={10}/>{plan.chosen}</span>}
+    {plan.chosen&&<span className="sidebar-plan-next"><Crown size={11}/>{plan.chosen}</span>}
   </button>;
 }
 
