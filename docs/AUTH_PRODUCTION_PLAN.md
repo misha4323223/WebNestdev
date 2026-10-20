@@ -131,7 +131,7 @@ is in test mode.
 
 The sign-in screen now offers **«Войти через Яндекс ID»** next to the phone-code form.
 It is a separate OAuth flow on the server (`/api/auth/yandex/start` and the shared
-`/api/yandex/callback`), and it creates or opens an ordinary WebNestdev account:
+`/api/yandex/callback`), and it creates or opens an ordinary NestDev account:
 
 - The Yandex profile id is stored in `yandex_accounts` (PostgreSQL) or
   `auth/yandex-accounts.json` (local JSON). **The Yandex access token is never stored** —
@@ -160,7 +160,7 @@ The same Yandex app is used for two different jobs, and they must not be confuse
 
 | Goal | What it uses | What it gives |
 | --- | --- | --- |
-| Sign in to WebNestdev | Yandex ID OAuth (`login:info`, optional `login:email`) | Identity only: id, login, optional e-mail |
+| Sign in to NestDev | Yandex ID OAuth (`login:info`, optional `login:email`) | Identity only: id, login, optional e-mail |
 | Let the agent read the user's cloud | Service account authorized key, IAM token, or a pre-cutoff Cloud OAuth token stored by the Cloud connector | Yandex Cloud IAM roles and API access |
 
 Since **1 June 2026 Yandex Cloud no longer accepts newly issued Yandex ID OAuth tokens**

@@ -5,7 +5,7 @@ import { IntegrationsList } from "../integrations/IntegrationsList";
 import { ProjectRenameForm } from "./ProjectRename";
 import { type Project } from "../../lib/project-api";
 import { apiJson } from "../../lib/api";
-import { getBilling, paymentsPendingNotice, type BillingData, type PlanId } from "../../lib/billing-api";
+import { balanceLabel, getBilling, moneyLabel, paymentNotice, type BillingData, type PlanId } from "../../lib/billing-api";
 import { activePlanId, chosenPlanId, isPendingChoice, planName, usePlanChoice } from "../../lib/plan-choice";
 import { readCachedPreferences, type UserPreferences } from "../../lib/preferences";
 
@@ -66,7 +66,7 @@ export function HomeRail(props: HomeRailProps) {
   return <aside className="home-rail">
     <div className="rail-brand">
       <span className="rail-brand-mark"><WebNestLogo size={28} tone="light"/></span>
-      <span className="rail-brand-name">WebNestdev</span>
+      <span className="rail-brand-name">NestDev</span>
     </div>
 
     <button className="rail-create" onClick={onNewProject}><Plus size={14}/> Создать проект</button>
@@ -118,8 +118,8 @@ export function HomeRail(props: HomeRailProps) {
         <span className="rail-upsell-copy">
           <small>Подписка</small>
           <span className="rail-upsell-line">
-            <strong>{planName(billing, activePlanId())}</strong>
-            {isPendingChoice(planChoice) && <><span className="rail-upsell-arrow" aria-hidden="true">→</span><em>{planName(billing, chosenPlanId(planChoice))}</em></>}
+            <strong>{planName(billing, activePlanId(billing))}</strong>
+            {isPendingChoice(planChoice, billing) && <><span className="rail-upsell-arrow" aria-hidden="true">→</span><em>{planName(billing, chosenPlanId(planChoice))}</em></>}
           </span>
         </span>
         <ArrowRight size={13} className="rail-upsell-go"/>
@@ -160,7 +160,12 @@ function RailAccount() {
 }
 
 function RailBilling({ billing, choice, error, onOpenPlans, onOpenSubscriptions }: { billing: BillingData | null; choice: PlanId | null; error: string; onOpenPlans: () => void; onOpenSubscriptions: () => void }) {
-  const plan = billing?.plans.find(item => item.id === activePlanId());
+  // Действующий тариф — с сервера; выбор пользователя только показывается рядом как пожелание.
+  const plan = billing?.plans.find(item => item.id === activePlanId(billing));
+  const subscription = billing?.subscription;
+  const paid = Boolean(subscription?.renewsAt) && (subscription?.plan ?? "free") !== "free";
+  const storageLimit = billing?.limits.storageBytes ?? 0;
+  const storageUsed = billing?.storage?.usedBytes ?? 0;
   // The plan the user selected is what they want to move to, so it is written next
   // to the current plan here as well, not only inside the pricing screens.
   const chosen = billing && choice ? billing.plans.find(item => item.id === choice) : undefined;
@@ -174,20 +179,34 @@ function RailBilling({ billing, choice, error, onOpenPlans, onOpenSubscriptions 
         <div><span>Тариф</span><strong>{plan?.name ?? "Бесплатный"}</strong></div>
         <span className="plan-pill">{plan?.priceLabel ?? "0 ₽"}</span>
       </div>
-      {chosen && <div className="rail-chosen">
+      <div className="rail-money">
+        <div><span>Баланс</span><strong>{balanceLabel(billing.balance)}</strong></div>
+        <div><span>Расходы сегодня</span><strong>{billing.cost.pricesConfigured ? moneyLabel(billing.cost.costEstimate, billing.cost.currency) : "—"}</strong></div>
+      </div>
+      {subscription?.renewsAt && <div className="rail-chosen">
+        <span>{paid ? (subscription.autoRenew ? "Подписка · автопродление" : "Подписка · без автопродления") : "Тариф"}</span>
+        <strong>{paid ? "до " + dateLabel(subscription.renewsAt) : "Бесплатный"}</strong>
+      </div>}
+      {chosen && !billing.paymentsEnabled && <div className="rail-chosen">
         <span>Выбранный тариф · включим вместе с оплатой</span>
         <strong>{chosen.name} · {chosen.priceLabel}</strong>
       </div>}
-      <p className="account-muted">{paymentsPendingNotice}</p>
+      <p className="account-muted">{paymentNotice(billing)}</p>
       <div className="rail-usage">
         <div><span>Запуски агента</span><strong>{billing.usage.agentRuns} / {billing.limits.agentRunsPerDay}</strong></div>
         <div className="usage-meter-track"><span style={{ width: `${Math.min(100, billing.usage.agentRuns / Math.max(1, billing.limits.agentRunsPerDay) * 100)}%` }}/></div>
         <div><span>Браузерные проверки</span><strong>{billing.usage.browserChecks} / {billing.limits.browserChecksPerDay}</strong></div>
         <div className="usage-meter-track"><span style={{ width: `${Math.min(100, billing.usage.browserChecks / Math.max(1, billing.limits.browserChecksPerDay) * 100)}%` }}/></div>
+        <div><span>Поиски в интернете</span><strong>{billing.usage.webSearches} / {billing.limits.webSearchesPerDay}</strong></div>
+        <div className="usage-meter-track"><span style={{ width: `${Math.min(100, billing.usage.webSearches / Math.max(1, billing.limits.webSearchesPerDay) * 100)}%` }}/></div>
+        {storageLimit > 0 && <>
+          <div><span>Хранилище</span><strong>{(storageUsed / 1024 / 1024).toFixed(1)} / {(storageLimit / 1024 / 1024 / 1024).toFixed(1)} ГБ</strong></div>
+          <div className="usage-meter-track"><span style={{ width: `${Math.min(100, storageUsed / storageLimit * 100)}%` }}/></div>
+        </>}
       </div>
       <p className="account-muted">Запуски считаются на встроенной модели платформы. Со своим AI-провайдером — без дневного лимита.</p>
       <div className="rail-plan-actions">
-        <button className="plan-action" onClick={onOpenPlans}>Сменить тариф</button>
+        <button className="plan-action" onClick={onOpenPlans}>{billing.paymentsEnabled ? (paid ? "Продлить подписку" : "Оплатить тариф") : "Сменить тариф"}</button>
         <button className="ghost-button" onClick={onOpenSubscriptions}>Подробнее о тарифах <ArrowRight size={12}/></button>
       </div>
     </>}

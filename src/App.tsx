@@ -1,6 +1,8 @@
 import { useEffect } from "react";
 import { AuthGate } from "./features/auth/AuthGate";
 import { CookieConsent } from "./features/legal/CookieConsent";
+import { LegalScreen } from "./features/legal/LegalScreen";
+import { isLegalPath } from "./lib/legal";
 import { watchForNewBuild } from "./lib/app-build";
 import { loadCachedPreferences } from "./lib/preferences";
 
@@ -11,6 +13,9 @@ export function App(){
     // иначе она остаётся на документе и ассетах прошлой версии (см. lib/app-build.ts).
     return watchForNewBuild();
   },[]);
-  return <div className="app"><AuthGate/><CookieConsent/></div>;
+  // Юридические страницы открываются без входа: их читают до регистрации и до оплаты, а
+  // платёжному сервису нужна прямая ссылка, не зависящая от сессии.
+  const legal = isLegalPath(window.location.pathname);
+  return <div className="app">{legal ? <LegalScreen/> : <AuthGate/>}<CookieConsent/></div>;
 }
 export default App;

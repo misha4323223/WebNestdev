@@ -45,7 +45,7 @@ export function WorkspaceShell({onHome,onAgentState}:{onHome:()=>void;onAgentSta
   },[]);
 
   if(loading)return <div className="app-loading"><NestLoader size={46} label="Подключаем рабочую область"/><span>Подключаем рабочую область…</span></div>;
-  if(error)return <div className="app-loading"><strong>WebNestdev API недоступен</strong><span>{error}</span><button className="ghost-button" onClick={()=>void retry()}>Повторить</button></div>;
+  if(error)return <div className="app-loading"><strong>NestDev API недоступен</strong><span>{error}</span><button className="ghost-button" onClick={()=>void retry()}>Повторить</button></div>;
   if(!projectId||!conversationId)return <div className="app-loading">Рабочая область не создана.</div>;
 
   const createNewProject=()=>{localStorage.removeItem("webnestdev.projectId");localStorage.removeItem("webnestdev.conversationId");localStorage.removeItem("webnestdev.projectName");window.location.reload()};

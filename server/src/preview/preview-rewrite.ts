@@ -1,6 +1,6 @@
 /**
  * A preview is proxied under /api/projects/<id>/preview/open/, so a root-absolute URL in
- * the served app (/assets/app.js, /@vite/client, /_next/static/...) asks the WebNestdev
+ * the served app (/assets/app.js, /@vite/client, /_next/static/...) asks the NestDev
  * origin instead of the app and the page breaks inside the frame. The rewrite maps exactly
  * those URLs to the proxy prefix: HTML attributes, CSS url()/@import and JavaScript module
  * specifiers. Application routing paths ("/about" in a router config) are left alone on

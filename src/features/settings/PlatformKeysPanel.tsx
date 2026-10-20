@@ -11,7 +11,7 @@ import { apiJson } from "../../lib/api";
 type PlatformKeySource = "panel" | "environment" | "none";
 type PlatformKey = {
   name: string;
-  group: "github" | "yandex" | "sms" | "ai" | "search";
+  group: "github" | "yandex" | "sms" | "ai" | "search" | "billing";
   label: string;
   hint: string;
   kind: "secret" | "json-key" | "value" | "url" | "path" | "flag";
@@ -28,6 +28,7 @@ const GROUP_TITLES: Record<PlatformKey["group"], { title: string; note: string }
   sms: { title: "SMS-провайдеры", note: "Достаточно одного провайдера: сервер выберет первый, у которого есть ключ." },
   ai: { title: "Модель платформы", note: "Модель по умолчанию для проектов без своего провайдера." },
   search: { title: "Веб-поиск агента", note: "Бесплатный тариф ищет через DuckDuckGo без ключей. На платных тарифах основным провайдером работает Yandex Search API (ключ сервисного аккаунта со scope yc.search-api.execute и каталог с ролью search-api.webSearch.user), а Tavily — резервным." },
+  billing: { title: "Оплата (Robokassa)", note: "Логин магазина и пароли №1 и №2 из «Технических настроек» Робокассы. ResultURL: <адрес панели>/api/billing/robokassa/result, SuccessURL: /api/billing/robokassa/success, FailURL: /api/billing/robokassa/fail. Цены можно менять здесь без выкатки." },
 };
 
 const SOURCE_LABEL: Record<PlatformKeySource, string> = {
@@ -118,7 +119,7 @@ export function PlatformKeysPanel() {
     </section>;
   }
 
-  const groups = ["github", "yandex", "sms", "ai", "search"] as const;
+  const groups = ["billing", "github", "yandex", "sms", "ai", "search"] as const;
   const keys = state.keys ?? [];
 
   return <section className="settings-panel platform-keys">

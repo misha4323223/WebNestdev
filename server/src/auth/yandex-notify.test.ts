@@ -83,13 +83,13 @@ test("Publish is sent as an SNS-compatible request with the IAM token", async t 
   clearEnv();
   process.env.YANDEX_NOTIFY_IAM_TOKEN = "t1.test-token";
   process.env.YANDEX_CLOUD_ID = "b1gcloud";
-  process.env.YANDEX_SMS_SENDER = "WebNestdev";
+  process.env.YANDEX_SMS_SENDER = "NestDev";
   t.after(clearEnv);
 
   await withFetch(
     () => new Response(JSON.stringify({ ResponseMetadata: { RequestId: "r1" }, PublishResult: { MessageId: "m1" } }), { status: 200 }),
     async captured => {
-      const result = await sendYandexSms("+79991234567", "Код входа в WebNestdev: 123456.");
+      const result = await sendYandexSms("+79991234567", "Код входа в NestDev: 123456.");
       assert.equal(result.ok, true);
       const { url, init } = captured();
       assert.equal(url, "https://notifications.yandexcloud.net/");
@@ -101,13 +101,13 @@ test("Publish is sent as an SNS-compatible request with the IAM token", async t 
       assert.equal(form.get("Action"), "Publish");
       assert.equal(form.get("ResponseFormat"), "JSON");
       assert.equal(form.get("PhoneNumber"), "+79991234567");
-      assert.equal(form.get("Message"), "Код входа в WebNestdev: 123456.");
+      assert.equal(form.get("Message"), "Код входа в NestDev: 123456.");
       assert.equal(form.get("Account"), "b1gcloud");
       // The SNS query encoding is what the service parses; the documented flat
       // `key`/`value` form is answered with "Invalid parameter 'SenderID'".
       assert.equal(form.get("MessageAttributes.entry.1.Name"), "AWS.SNS.SMS.SenderID");
       assert.equal(form.get("MessageAttributes.entry.1.Value.DataType"), "String");
-      assert.equal(form.get("MessageAttributes.entry.1.Value.StringValue"), "WebNestdev");
+      assert.equal(form.get("MessageAttributes.entry.1.Value.StringValue"), "NestDev");
       assert.equal(form.get("MessageAttributes.entry.2.Name"), "AWS.SNS.SMS.SMSType");
       assert.equal(form.get("MessageAttributes.entry.2.Value.DataType"), "String");
       assert.equal(form.get("MessageAttributes.entry.2.Value.StringValue"), "Transactional");

@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { Brain, Check, ChevronDown, ClipboardList, Code2, SlidersHorizontal } from "lucide-react";
+import { Brain, Check, ChevronDown, ClipboardList, Code2, Globe, SlidersHorizontal } from "lucide-react";
 import type { AgentMode, ReasoningEffort } from "../../lib/types";
 
 /**
- * Режим и глубина размышления — одна настройка запуска, поэтому и один контрол:
- * кнопка показывает, как агент отработает следующее сообщение, а меню рядом
- * переключает и роль, и глубину. Отдельная подсказка под полем ввода больше не нужна.
+ * Режим, глубина размышления и поиск в интернете — настройки одного запуска, поэтому и один
+ * контрол: кнопка показывает, как агент отработает следующее сообщение, а меню рядом переключает
+ * роль, глубину и разрешение выйти в сеть. Отдельная подсказка под полем ввода больше не нужна.
  */
 export const reasoningLabels: Record<ReasoningEffort, string> = { low: "Лёгкое", medium: "Среднее", high: "Глубокое" };
 
@@ -23,11 +23,13 @@ const reasoningHints: Record<ReasoningEffort, string> = {
 const modes: AgentMode[] = ["developer", "planner"];
 const depths: ReasoningEffort[] = ["low", "medium", "high"];
 
-export function AgentModeControl({ mode, reasoning, onMode, onReasoning }: {
+export function AgentModeControl({ mode, reasoning, webSearch, onMode, onReasoning, onWebSearch }: {
   mode: AgentMode;
   reasoning: ReasoningEffort;
+  webSearch: boolean;
   onMode: (mode: AgentMode) => void;
   onReasoning: (reasoning: ReasoningEffort) => void;
+  onWebSearch: (enabled: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
   const boxRef = useRef<HTMLDivElement | null>(null);
@@ -50,24 +52,27 @@ export function AgentModeControl({ mode, reasoning, onMode, onReasoning }: {
   }, [open]);
 
   const modeLabel = mode === "planner" ? "Планировщик" : "Разработчик";
+  const triggerTitle = "Режимы агента · сейчас: " + modeLabel + ", размышление " + reasoningLabels[reasoning].toLowerCase()
+    + (webSearch ? ", поиск в интернете включён" : "") + ". Открыть настройки запуска.";
 
   return <div className="agent-mode" ref={boxRef}>
     <button
       type="button"
-      className={"agent-mode-trigger" + (mode === "planner" ? " planner" : "") + (open ? " open" : "")}
+      className={"agent-mode-trigger" + (mode === "planner" ? " planner" : "") + (open ? " open" : "") + (webSearch ? " search-on" : "")}
       onClick={() => setOpen(value => !value)}
       aria-expanded={open}
       aria-haspopup="dialog"
-      title={"Режимы агента · сейчас: " + modeLabel + ", размышление " + reasoningLabels[reasoning].toLowerCase() + ". Открыть настройки запуска."}
+      title={triggerTitle}
     >
       <SlidersHorizontal size={12}/>
       <span className="agent-mode-label">Режимы</span>
       <span className="agent-mode-dot" aria-hidden="true">·</span>
       <span className="agent-mode-depth">{reasoningLabels[reasoning]}</span>
+      {webSearch && <Globe size={11} className="agent-mode-globe" aria-hidden="true"/>}
       <ChevronDown size={12} className="agent-mode-caret"/>
     </button>
 
-    {open && <div className="agent-mode-menu" role="dialog" aria-label="Режим и размышление агента">
+    {open && <div className="agent-mode-menu" role="dialog" aria-label="Режим, размышление и интернет">
       <div className="agent-mode-head"><span className="eyebrow">РЕЖИМ АГЕНТА</span></div>
       <div className="agent-mode-options">
         {modes.map(id => {
@@ -101,6 +106,23 @@ export function AgentModeControl({ mode, reasoning, onMode, onReasoning }: {
         >{reasoningLabels[id]}</button>)}
       </div>
       <p className="agent-mode-note">{reasoningHints[reasoning]}</p>
+
+      <div className="agent-mode-head with-icon"><Globe size={11}/> <span className="eyebrow">ИНТЕРНЕТ</span></div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={webSearch}
+        className={"agent-mode-switch" + (webSearch ? " active" : "")}
+        onClick={() => onWebSearch(!webSearch)}
+        title={webSearch ? "Поиск включён на этот запуск — нажмите, чтобы выключить" : "Разрешить агенту искать и открывать страницы"}
+      >
+        <span className="agent-mode-switch-icon"><Globe size={13}/></span>
+        <span className="agent-mode-switch-text">
+          <strong>Поиск в интернете</strong>
+          <small>{webSearch ? "Включён: ищет и открывает страницы" : "Выключен: только проект и память"}</small>
+        </span>
+        <span className="agent-mode-pill" aria-hidden="true"><span/></span>
+      </button>
     </div>}
   </div>;
 }

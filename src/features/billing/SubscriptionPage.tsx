@@ -1,13 +1,25 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, ArrowRight, Check, RefreshCw, ShieldCheck } from "lucide-react";
-import { getBilling, paymentsPendingNotice, type BillingData, type PlanLimits } from "../../lib/billing-api";
+import { ArrowLeft, ArrowRight, Check, CreditCard, RefreshCw, ShieldCheck } from "lucide-react";
+import {
+  balanceLabel,
+  dateLabel,
+  getBilling,
+  paymentNotice,
+  paymentStatusLabel,
+  rubLabel,
+  shortDayLabel,
+  startCheckout,
+  updateAutoRenew,
+  type BillingData,
+  type PlanLimits,
+} from "../../lib/billing-api";
 import { activePlanId, chosenPlanId, isPendingChoice, planName, usePlanChoice } from "../../lib/plan-choice";
 
 const faq = [
-  { question: "Как включить платный тариф?", answer: "Оплата ещё не подключена. Выберите тариф — он сохранится как ваш выбор, и мы включим его, как только появится оплата." },
-  { question: "Нужна ли банковская карта?", answer: "Нет. Карту не спрашивают и ничего не списывают: платежи появятся вместе с подключением оплаты." },
-  { question: "Что доступно сейчас?", answer: "Бесплатный тариф: 3 проекта, 10 запусков агента, 5 браузерных проверок и 25 поисков в интернете в день, 1 ГБ хранилища." },
-  { question: "Что будет с моим выбором?", answer: "Выбор запоминается на этом устройстве и виден в шапке, на главной и в настройках. Изменить его можно в любой момент." },
+  { question: "Как оплатить тариф?", answer: "Выберите тариф и нажмите «Оплатить» — откроется защищённая страница Робокассы. Карта РФ, СБП и другие способы доступны там же." },
+  { question: "Когда включится тариф?", answer: "Сразу после подтверждения платежа Робокассой. Если страница оплаты закрылась, вернитесь в личный кабинет: подписка уже будет активна." },
+  { question: "Что с продлением?", answer: "Подписка покупается на месяц. Автопродление включается в личном кабинете и работает, если платёжный сервис поддерживает периодические платежи; иначе тариф просто закончится в указанную дату. Отключить продление можно в любой момент." },
+  { question: "Нужен ли чек?", answer: "Да, чек самозанятого формируется в «Моём налоге» и приходит покупателю. Робокасса передаёт данные об оплате в ФНС, если в кабинете подключены «Робочеки СМЗ»." },
 ];
 
 function bytesLabel(value: number): string {
@@ -31,22 +43,42 @@ const limitRows: Array<{ label: string; key: keyof PlanLimits }> = [
 export function SubscriptionPage({ onBack, onOpenPicker }: { onBack: () => void; onOpenPicker: () => void }) {
   const [billing, setBilling] = useState<BillingData | null>(null);
   const [loading, setLoading] = useState(true);
+  const [paying, setPaying] = useState<string | null>(null);
+  const [savingRenew, setSavingRenew] = useState(false);
   const [error, setError] = useState("");
   // The plan the user selected is what they want to move to, so it is named here too.
   const planChoice = usePlanChoice();
 
-  useEffect(() => {
-    let active = true;
-    void getBilling()
-      .then(data => { if (active) setBilling(data); })
-      .catch(e => { if (active) setError(e instanceof Error ? e.message : String(e)); })
-      .finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
-  }, []);
+  async function load() {
+    setLoading(true); setError("");
+    try { setBilling(await getBilling()); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setLoading(false); }
+  }
+  useEffect(() => { void load(); }, []);
 
-  const currentPlanId = activePlanId();
+  // Действующий тариф — тот, что вернул сервер: выбор пользователя это пожелание, а не право.
+  const currentPlanId = activePlanId(billing);
   const chosenId = chosenPlanId(planChoice);
-  const chosenPending = isPendingChoice(planChoice);
+  const chosenPending = isPendingChoice(planChoice, billing);
+  const enabled = Boolean(billing?.paymentsEnabled);
+  const subscription = billing?.subscription;
+  const paid = currentPlanId !== "free" && Boolean(subscription?.renewsAt);
+
+  async function pay(plan: "pro" | "team") {
+    setPaying(plan); setError("");
+    try {
+      const checkout = await startCheckout(plan);
+      window.location.assign(checkout.paymentUrl);
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); setPaying(null); }
+  }
+
+  async function toggleRenew(autoRenew: boolean) {
+    setSavingRenew(true); setError("");
+    try { await updateAutoRenew(autoRenew); await load(); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setSavingRenew(false); }
+  }
 
   return <main className="subscription-page">
     <header className="subscription-top">
@@ -55,14 +87,35 @@ export function SubscriptionPage({ onBack, onOpenPicker }: { onBack: () => void;
     </header>
 
     <section className="subscription-hero">
-      <span className="eyebrow">ТАРИФЫ WEBNESTDEV</span>
+      <span className="eyebrow">ТАРИФЫ NESTDEV</span>
       <h1>Тарифы и подписка</h1>
-      <p>Три уровня доступа к агентной разработке: от знакомства до работы небольшой команды. {paymentsPendingNotice}</p>
+      <p>Три уровня доступа к агентной разработке: от знакомства до работы небольшой команды. {paymentNotice(billing)}</p>
       <div className="subscription-status">
         <div><span>Текущий тариф</span><strong>{billing?.plans.find(plan => plan.id === currentPlanId)?.name ?? "Бесплатный"}</strong></div>
-        <span className="plan-pill"><ShieldCheck size={12}/> ОПЛАТА СКОРО</span>
+        <div><span>{paid ? "Оплачено до" : "Баланс"}</span><strong>{paid ? dateLabel(subscription?.renewsAt ?? null) : balanceLabel(billing?.balance)}</strong></div>
+        <span className="plan-pill">
+          {enabled ? <><CreditCard size={12}/> ОПЛАТА КАРТОЙ И СБП</> : <><ShieldCheck size={12}/> ОПЛАТА СКОРО</>}
+        </span>
       </div>
-      {billing && chosenPending && <p className="account-muted subscription-status-text">{"Выбран тариф «" + planName(billing, chosenId) + "» — включим его вместе с оплатой."}</p>}
+      {paid && subscription && <div className="account-toggle subscription-renew">
+        <span>
+          <strong>Автопродление</strong>
+          <small>{subscription.autoRenew
+            ? "Включено: спишем " + rubLabel(subscription.amountRub) + " " + dateLabel(subscription.renewsAt) + ". Отключить можно в любой момент."
+            : "Выключено: тариф закончится " + dateLabel(subscription.renewsAt) + " и сменится на бесплатный."}</small>
+        </span>
+        <span className="switch">
+          <input
+            type="checkbox"
+            checked={subscription.autoRenew}
+            disabled={savingRenew || (!subscription.autoRenew && !subscription.recurringAvailable)}
+            onChange={event => void toggleRenew(event.target.checked)}
+          />
+          <span className="switch-track"><span className="switch-thumb"/></span>
+        </span>
+      </div>}
+      {paid && subscription && !subscription.recurringAvailable && !subscription.autoRenew && <p className="account-muted subscription-status-text">Автопродление станет доступно после подключения услуги «Периодические платежи» в Робокассе.</p>}
+      {billing && chosenPending && <p className="account-muted subscription-status-text">{"Выбран тариф «" + planName(billing, chosenId) + "»" + (enabled ? " — его можно оплатить ниже." : " — включим его вместе с оплатой.")}</p>}
     </section>
 
     {loading && <div className="modal-state"><RefreshCw size={14} className="spin"/> Загружаем тарифы…</div>}
@@ -75,21 +128,23 @@ export function SubscriptionPage({ onBack, onOpenPicker }: { onBack: () => void;
           const chosen = chosenPending && chosenId === plan.id;
           return <article key={plan.id} className={"subscription-plan" + (plan.recommended ? " recommended" : "") + (active ? " active" : "") + (chosen ? " chosen" : "")}>
             <div className="subscription-plan-head">
-              {chosen && <span className="plan-badge">Выбран · оплата скоро</span>}
+              {chosen && <span className="plan-badge">{enabled ? "Выбран" : "Выбран · оплата скоро"}</span>}
               {!chosen && plan.recommended && <span className="plan-badge">Популярный выбор</span>}
               <h2>{plan.name}</h2>
               <span className="plan-tagline">{plan.tagline}</span>
-              <div className="plan-price">{plan.priceLabel}<small>{plan.id === "free" ? "навсегда" : "оплата скоро"}</small></div>
+              <div className="plan-price">{plan.priceLabel}<small>{plan.id === "free" ? "навсегда" : (enabled ? "в месяц" : "оплата скоро")}</small></div>
             </div>
             <p className="plan-audience">{plan.audience}</p>
             <ul className="plan-feature-list">{plan.features.map(feature => <li key={feature}><Check size={13}/>{feature}</li>)}</ul>
             <ul className="plan-detail-list">{plan.details.map(detail => <li key={detail}>{detail}</li>)}</ul>
             <div className="subscription-plan-actions">
               {plan.id === "free"
-                ? <span className="plan-current">Текущий тариф</span>
-                : chosen
-                  ? <button className="plan-action" onClick={onOpenPicker}>Выбран · изменить</button>
-                  : <button className="plan-action" onClick={onOpenPicker}>Выбрать тариф</button>}
+                ? <span className="plan-current">{active ? "Текущий тариф" : "Входит всегда"}</span>
+                : !enabled
+                  ? <button className="plan-action" onClick={onOpenPicker}>{chosen ? "Выбран · изменить" : "Выбрать тариф"}</button>
+                  : <button className="plan-action" disabled={paying !== null} onClick={() => void pay(plan.id as "pro" | "team")}>
+                      {paying === plan.id ? <><RefreshCw size={12} className="spin"/> Открываем…</> : <>{active ? "Продлить" : "Оплатить"} {plan.priceLabel}</>}
+                    </button>}
             </div>
           </article>;
         })}
@@ -109,7 +164,7 @@ export function SubscriptionPage({ onBack, onOpenPicker }: { onBack: () => void;
               </tr>)}
               <tr>
                 <th scope="row">Цена</th>
-                {billing.plans.map(plan => <td key={plan.id} className={plan.id === currentPlanId ? "current" : ""}>{plan.priceLabel}</td>)}
+                {billing.plans.map(plan => <td key={plan.id} className={plan.id === currentPlanId ? "current" : ""}>{plan.priceLabel}{plan.id === "free" ? "" : " / мес"}</td>)}
               </tr>
             </tbody>
           </table>
@@ -136,6 +191,16 @@ export function SubscriptionPage({ onBack, onOpenPicker }: { onBack: () => void;
         </div>
         <p className="account-muted">Запуски считаются только для встроенной модели платформы. Подключите свой AI-провайдер в настройках проекта — запуски пойдут через ваш ключ и модель, и дневная квота к ним не применяется.</p>
       </section>
+
+      {Boolean(billing.payments?.length) && <section className="subscription-compare">
+        <div className="subscription-section-head"><span className="eyebrow">ПЛАТЕЖИ</span><h2>Последние платежи</h2></div>
+        <div className="billing-payments">
+          {(billing.payments ?? []).slice(0, 6).map(payment => <div className="billing-payment" key={payment.invId}>
+            <div><strong>{payment.planName} · {rubLabel(payment.amount)}</strong><small>Счёт №{payment.invId} · {shortDayLabel(payment.createdAt.slice(0, 10))}</small></div>
+            <span className={"billing-payment-status " + payment.status}>{paymentStatusLabel(payment.status)}</span>
+          </div>)}
+        </div>
+      </section>}
     </>}
 
     <section className="subscription-faq">
@@ -144,13 +209,30 @@ export function SubscriptionPage({ onBack, onOpenPicker }: { onBack: () => void;
     </section>
 
     <section className="subscription-cta">
-      <div><strong>Выберите тариф заранее</strong><span>Он сохранится и включится вместе с оплатой.</span></div>
+      <div><strong>{paid ? "Продлить подписку" : "Выберите тариф"}</strong><span>{enabled ? "Оплата картой или через СБП на странице Робокассы." : "Тариф сохранится и включится вместе с оплатой."}</span></div>
       <div className="subscription-cta-actions">
         <button className="ghost-button" onClick={onBack}>Вернуться на главную</button>
         <button className="send-button subscription-cta-button" onClick={onOpenPicker}>Выбрать тариф <ArrowRight size={13}/></button>
       </div>
     </section>
 
-    <p className="billing-disclaimer">{paymentsPendingNotice} Лимиты указаны предварительно и могут измениться до запуска оплаты.</p>
+    {/* Условия оплаты и возврата — рядом с тарифами, а не только в оферте: именно здесь
+        человек решает платить. */}
+    <section className="subscription-legal">
+      <div>
+        <span className="eyebrow">УСЛОВИЯ</span>
+        <h2>Оплата, возврат и документы</h2>
+        <p>Подписка оплачивается через Робокассу: картой или через СБП. Чек приходит на e-mail или телефон. Возврат за неиспользованный период — по заявлению на контактный e-mail в течение 10 календарных дней.</p>
+      </div>
+      <nav aria-label="Юридические документы">
+        <a href="/legal/offer" target="_blank" rel="noopener noreferrer">Публичная оферта <ArrowRight size={12}/></a>
+        <a href="/legal/payments" target="_blank" rel="noopener noreferrer">Оплата, подписка и возврат <ArrowRight size={12}/></a>
+        <a href="/legal/terms" target="_blank" rel="noopener noreferrer">Пользовательское соглашение <ArrowRight size={12}/></a>
+        <a href="/legal/privacy" target="_blank" rel="noopener noreferrer">Политика обработки данных <ArrowRight size={12}/></a>
+        <a href="/legal/contacts" target="_blank" rel="noopener noreferrer">Реквизиты и контакты <ArrowRight size={12}/></a>
+      </nav>
+    </section>
+
+    <p className="billing-disclaimer">{paymentNotice(billing)}</p>
   </main>;
 }

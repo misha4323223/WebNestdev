@@ -81,7 +81,7 @@ export function useWorkspace(){
         localStorage.setItem(conversationMemoryKey(project.id),conversation.id);
       }catch{}
     }catch(error){
-      console.error("WebNestdev workspace initialization failed",error);
+      console.error("NestDev workspace initialization failed",error);
       setError(error instanceof Error?error.message:String(error));
     }finally{
       setLoading(false);

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { consumeAgentRun, consumeUsage, getUsageSnapshot, UsageLimitError } from "./usage-store.js";
+import { consumeAgentRun, consumeUsage, getBillingHistory, getUsageSnapshot, UsageLimitError } from "./usage-store.js";
 
 test("daily agent quota blocks the next run and usage is isolated per account", async () => {
   const userId = "quota-test-" + randomUUID();
@@ -58,6 +58,30 @@ test("the daily web search quota grows with the plan and is counted separately",
   );
   // Платный тариф даёт больше поисков — граница берётся из каталога, а не из константы.
   await assert.doesNotReject(() => consumeUsage(userId, "webSearches", "pro"));
+});
+
+/**
+ * Вкладка биллинга читает недельную историю: пустые дни в ней обязаны остаться на месте, иначе
+ * график врал бы о перерывах, а подпись «сегодня» съезжала бы на вчера.
+ */
+test("billing history returns a zero-filled week with today's usage in the last day", async () => {
+  const userId = "billing-history-" + randomUUID();
+  await consumeUsage(userId, "agentRuns", "free");
+  await consumeUsage(userId, "webSearches", "free");
+  const history = await getBillingHistory(userId, 7);
+  assert.equal(history.days.length, 7);
+  const today = history.days[6];
+  assert.equal(today.date, new Date().toISOString().slice(0, 10));
+  assert.equal(today.agentRuns, 1);
+  assert.equal(today.webSearches, 1);
+  assert.equal(today.browserChecks, 0);
+  assert.deepEqual(
+    { runs: today.runs, prompt: today.promptTokens },
+    { runs: 0, prompt: 0 },
+    "без прогонов модели расходов за день нет",
+  );
+  const yesterday = history.days[5];
+  assert.equal(yesterday.agentRuns + yesterday.browserChecks + yesterday.webSearches, 0);
 });
 
 test("concurrent reservations never exceed the daily quota", async () => {

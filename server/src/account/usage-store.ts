@@ -2,7 +2,8 @@ import { mkdir, readFile, writeFile, rename, unlink } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { isYdbEnabled, ydbQuery, getTable } from "../storage/ydb.js";
-import { accountPlanFor, FREE_PLAN, limitsForPlan, type PlanId, type UsageKind, type UsageSnapshot } from "./plans.js";
+import { limitsForPlan, type PlanId, type UsageKind, type UsageSnapshot } from "./plans.js";
+import { accountPlanFor } from "../billing/store.js";
 
 /**
  * Какая граница тарифа отвечает за каждый вид расхода. Таблица, а не тернарный оператор: новый вид
@@ -124,17 +125,14 @@ export async function consumeUsage(userId: string, kind: UsageKind, plan: PlanId
   });
 }
 
-/** Charges the account's plan: paid plans are not on sale yet, so the free one is charged. */
+/** Списание по тарифу аккаунта: оплаченная подписка поднимает дневные лимиты сразу. */
 export async function consumeUsageForCurrentPlan(userId: string, kind: UsageKind, now = new Date()) {
-  return consumeUsage(userId, kind, FREE_PLAN, now);
+  return consumeUsage(userId, kind, await accountPlanFor(userId), now);
 }
 
-/**
- * Списание по тарифу аккаунта, а не по бесплатному: этим пользуются места, где граница зависит от
- * подписки (веб-поиск). Пока платные тарифы не продаются, результат тот же, что и выше.
- */
+/** То же самое под прежним именем: граница зависит от подписки, а не от константы. */
 export async function consumeUsageForAccountPlan(userId: string, kind: UsageKind, now = new Date()) {
-  return consumeUsage(userId, kind, accountPlanFor(userId), now);
+  return consumeUsage(userId, kind, await accountPlanFor(userId), now);
 }
 
 /**
@@ -145,7 +143,7 @@ export async function consumeUsageForAccountPlan(userId: string, kind: UsageKind
  */
 export async function consumeAgentRun(userId: string, options: { ownProvider: boolean }, now = new Date()) {
   if (options.ownProvider) return getUsageSnapshot(userId, now);
-  return consumeUsage(userId, "agentRuns", FREE_PLAN, now);
+  return consumeUsage(userId, "agentRuns", await accountPlanFor(userId), now);
 }
 
 export type RunUsageInput = {
@@ -190,7 +188,115 @@ export type CostSnapshot = {
   } | null;
 };
 
+/** Один день для вкладки биллинга: что потрачено и сколько это стоит. */
+export type BillingHistoryDay = {
+  date: string;
+  agentRuns: number;
+  browserChecks: number;
+  webSearches: number;
+  runs: number;
+  promptTokens: number;
+  completionTokens: number;
+  costEstimate: number | null;
+};
+
+export type BillingHistory = {
+  currency: string;
+  pricesConfigured: boolean;
+  /** Дни по возрастанию даты: так их рисует график, без переворота на клиенте. */
+  days: BillingHistoryDay[];
+};
+
 type PlatformPricing = { inputPerMillion: number; outputPerMillion: number; currency: string };
+
+function utcDaysBack(days: number, now = new Date()) {
+  const dates: string[] = [];
+  for (let index = days - 1; index >= 0; index--) {
+    dates.push(new Date(now.getTime() - index * 86_400_000).toISOString().slice(0, 10));
+  }
+  return dates;
+}
+
+/**
+ * История трат за последние дни — то, что человек видит на вкладке биллинга.
+ *
+ * Запуски, браузерные проверки и поиски живут в счётчиках, а токены и деньги — в `model_usage`,
+ * поэтому оба источника сводятся в один ряд по дню. Пустые дни остаются в списке: без них график
+ * врал бы о перерывах в работе, а подпись «сегодня» съезжала бы на вчера.
+ */
+export async function getBillingHistory(userId: string, days = 7, now = new Date()): Promise<BillingHistory> {
+  const dates = utcDaysBack(days, now);
+  const from = dates[0] ?? utcDay(now);
+  const to = dates[dates.length - 1] ?? utcDay(now);
+  const counters = new Map<string, { agentRuns: number; browserChecks: number; webSearches: number }>();
+  const usageByDay = new Map<string, { runs: number; promptTokens: number; completionTokens: number; costEstimate: number }>();
+  const pricing = platformPricing();
+
+  for (const date of dates) {
+    counters.set(date, { agentRuns: 0, browserChecks: 0, webSearches: 0 });
+    usageByDay.set(date, { runs: 0, promptTokens: 0, completionTokens: 0, costEstimate: 0 });
+  }
+
+  if (isYdbEnabled()) {
+    const [counterRows] = await ydbQuery()<Array<{usage_date: string; kind: string; used: number | string | bigint}>>`
+      SELECT usage_date, kind, used FROM ${ydbQuery().identifier(getTable("usage_counters"))}
+      WHERE user_id = ${userId} AND usage_date >= ${from} AND usage_date <= ${to}
+    `;
+    for (const row of counterRows) {
+      const day = counters.get(row.usage_date);
+      if (!day) continue;
+      const used = Number(row.used ?? 0);
+      if (row.kind === "agentRuns") day.agentRuns = used;
+      else if (row.kind === "browserChecks") day.browserChecks = used;
+      else if (row.kind === "webSearches") day.webSearches = used;
+    }
+
+    const [costRows] = await ydbQuery()<Array<{usage_date: string; prompt_tokens: number | string | bigint; completion_tokens: number | string | bigint}>>`
+      SELECT usage_date, prompt_tokens, completion_tokens FROM ${ydbQuery().identifier(getTable("model_usage"))}
+      WHERE user_id = ${userId} AND usage_date >= ${from} AND usage_date <= ${to}
+    `;
+    for (const row of costRows) {
+      const day = usageByDay.get(row.usage_date);
+      if (!day) continue;
+      const promptTokens = Number(row.prompt_tokens ?? 0);
+      const completionTokens = Number(row.completion_tokens ?? 0);
+      day.runs += 1;
+      day.promptTokens += promptTokens;
+      day.completionTokens += completionTokens;
+      day.costEstimate += costFor({ promptTokens, completionTokens }, pricing) ?? 0;
+    }
+  } else {
+    for (const date of dates) {
+      const events = await readJson<UsageEvent[]>(path.join(root, "account", "usage", date + ".json"), []);
+      const own = events.filter(event => event.userId === userId && event.date === date);
+      const day = counters.get(date)!;
+      day.agentRuns = own.filter(event => event.kind === "agentRuns").length;
+      day.browserChecks = own.filter(event => event.kind === "browserChecks").length;
+      day.webSearches = own.filter(event => event.kind === "webSearches").length;
+
+      const records = (await readJson<UsageCostRecord[]>(path.join(root, "account", "costs", date + ".json"), []))
+        .filter(record => record.userId === userId && record.date === date);
+      const spend = usageByDay.get(date)!;
+      for (const record of records) {
+        spend.runs += 1;
+        spend.promptTokens += record.promptTokens;
+        spend.completionTokens += record.completionTokens;
+        spend.costEstimate += costFor(record, pricing) ?? 0;
+      }
+    }
+  }
+
+  return {
+    currency: pricing?.currency ?? "USD",
+    pricesConfigured: Boolean(pricing),
+    days: dates.map(date => ({
+      date,
+      ...counters.get(date)!,
+      ...usageByDay.get(date)!,
+      costEstimate: pricing ? usageByDay.get(date)!.costEstimate : null,
+    })),
+  };
+}
 
 /** Optional pricing of the platform model, per 1M tokens. Returns null until configured. */
 export function platformPricing(): PlatformPricing | null {

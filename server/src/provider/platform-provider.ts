@@ -24,7 +24,7 @@ export function getPlatformProviderConfig():PlatformProviderConfig|null{
   if(!baseUrl||!model)return null;
   const token=firstEnv("PLATFORM_AI_API_KEY","AI_API_KEY");
   return {
-    provider:firstEnv("PLATFORM_AI_PROVIDER")??"Платформа WebNestdev",
+    provider:firstEnv("PLATFORM_AI_PROVIDER")??"Платформа NestDev",
     baseUrl,
     model,
     ...(token?{token}:{})

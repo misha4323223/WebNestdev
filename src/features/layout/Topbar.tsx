@@ -13,13 +13,13 @@ export function Topbar({projectName,onMenu,onNewProject,onHome,onPlan,previewOpe
   useEffect(()=>{
     let active=true;
     void getBilling()
-      .then(data=>{if(!active)return;const current=data.plans.find(item=>item.id===activePlanId());setPlan({name:current?.name??"Бесплатный",chosen:isPendingChoice(planChoice)?planName(data,chosenPlanId(planChoice)):null})})
+      .then(data=>{if(!active)return;const current=data.plans.find(item=>item.id===activePlanId(data));setPlan({name:current?.name??"Бесплатный",chosen:isPendingChoice(planChoice,data)?planName(data,chosenPlanId(planChoice)):null})})
       .catch(()=>{});
     return ()=>{active=false};
   },[planChoice]);
   return <header className="topbar">
     <button className="icon-button mobile-only" onClick={onMenu} aria-label="Открыть меню"><Menu size={16}/></button>
-    <button className="brand brand-home" onClick={onHome} title="На главную"><span className="brand-mark"><WebNestLogo size={22} tone="light"/></span><span>WebNestdev</span></button>
+    <button className="brand brand-home" onClick={onHome} title="На главную"><span className="brand-mark"><WebNestLogo size={22} tone="light"/></span><span>NestDev</span></button>
     <div className="topbar-project">{projectName}</div>
     {plan&&<button className={"topbar-plan"+(plan.chosen?" topbar-plan-upgrade":"")} onClick={onPlan} title={"Тариф: "+plan.name+(plan.chosen?" · выбран "+plan.chosen:"")}>
       <span className="topbar-plan-icon"><CreditCard size={12}/></span>

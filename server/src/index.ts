@@ -41,6 +41,9 @@ import { registerChangesRoutes } from "./routes/changes.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerPhoneAuthRoutes } from "./routes/phone-auth.js";
 import { registerAccountRoutes } from "./routes/account.js";
+import { registerBillingRoutes } from "./routes/billing.js";
+import { startBillingSweeper, stopBillingSweeper } from "./billing/recurring.js";
+import { describeBilling } from "./billing/robokassa.js";
 import { registerPlatformRoutes } from "./routes/platform.js";
 import { loadPlatformEnv } from "./platform/platform-env.js";
 import { ensureDemoUser } from "./auth/auth-store.js";
@@ -107,6 +110,9 @@ console.log("[sandbox] " + describeSandboxLimiter());
 // Кто отвечает за поиск в интернете и настроен ли платный провайдер: без этой строки «поиск
 // возвращает отказ» и «ключ Yandex не подхватился» выглядят одинаково.
 console.log("[web] " + describeWebSearch());
+// Настроена ли оплата и в каком режиме: без этой строки «кнопка оплаты не работает» и «ключи не
+// сохранились» выглядят одинаково.
+console.log("[billing] " + describeBilling());
 // Каталог песочниц у сервера и у docker — разные вещи: контейнеры проектов монтируют путь,
 // который демон разбирает на хосте. Оба печатаются при старте, чтобы расхождение было видно
 // сразу, а не после того, как агент пожалуется на пустой терминал.
@@ -124,7 +130,7 @@ if (demoEnabled) {
   app.log.info({ demoEmail: demo.email, created: demo.created }, "demo account ready");
 }
 
-app.addHook("onClose", async () => { await stopPreviewHostServer(); await closeStorage(); });
+app.addHook("onClose", async () => { stopBillingSweeper(); await stopPreviewHostServer(); await closeStorage(); });
 
 app.addHook("onSend", async (_request, reply) => {
   reply.header("X-Content-Type-Options", "nosniff");
@@ -156,6 +162,7 @@ await registerHealthRoutes(app);
 await registerAuthRoutes(app);
 await registerPhoneAuthRoutes(app);
 await registerAccountRoutes(app);
+await registerBillingRoutes(app);
 await registerProjectRoutes(app);
 await registerPreviewRoutes(app);
 await registerToolRoutes(app);
@@ -208,3 +215,6 @@ void startPreviewHostServer()
 // A preview nobody uses is stopped after PREVIEW_IDLE_MS (five minutes by default): without
 // the sweep every project that was ever previewed would keep a dev server and its memory.
 startPreviewSweeper();
+// Автопродление подписок: раз в час, и только когда в магазине включена услуга периодических
+// платежей. Без неё цикл не делает ни одного запроса к Робокассе.
+startBillingSweeper();

@@ -3,7 +3,8 @@ import { z } from "zod";
 import { requireUser } from "../auth/auth.js";
 import { createProjectWithinLimit, ProjectLimitError, getProject, createConversation, getConversation, listConversations, listProjects, deleteProject, renameProject } from "../project-store.js";
 import type { Conversation } from "../project-store.js";
-import { FREE_PLAN, limitsForPlan, type PlanId } from "../account/plans.js";
+import { limitsForPlan } from "../account/plans.js";
+import { accountPlanFor } from "../billing/store.js";
 
 /** How many chats the picker shows. Older sessions stay stored and reachable by id. */
 const CONVERSATION_LIST_LIMIT = 50;
@@ -50,7 +51,7 @@ export async function registerProjectRoutes(app:FastifyInstance){
   app.post("/api/projects",async(request,reply)=>{
     const user=await requireUser(request,reply); if(!user)return;
     const body=z.object({name:z.string().max(120).optional()}).parse(request.body);
-    const plan: PlanId = FREE_PLAN;
+    const plan = await accountPlanFor(user.id);
     const limit=limitsForPlan(plan).projects;
     try{
       return reply.code(201).send(await createProjectWithinLimit(body.name??"Новый проект",undefined,user.id,limit));

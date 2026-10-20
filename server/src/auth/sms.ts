@@ -25,7 +25,7 @@ export type SmsConfig = {
 };
 
 /** The sender name is registered at the provider; empty means the provider default. */
-const DEFAULT_SENDER = "WebNestdev";
+const DEFAULT_SENDER = "NestDev";
 
 function firstEnv(...names: string[]) {
   for (const name of names) {
@@ -208,7 +208,7 @@ async function deliver(provider: SmsProviderId, phone: string, text: string, sen
  */
 export async function sendLoginCode(phone: string, code: string): Promise<SmsResult> {
   const config = smsConfig();
-  const text = "Код входа в WebNestdev: " + code + ". Никому его не сообщайте.";
+  const text = "Код входа в NestDev: " + code + ". Никому его не сообщайте.";
   if (config.test || !config.provider) {
     console.warn("[WebNestDev] SMS test mode: login code for " + phone + " is " + code + " (configure YANDEX_NOTIFY_IAM_TOKEN or YANDEX_SA_KEY+YANDEX_CLOUD_ID, SMS_RU_API_ID, SMSC_LOGIN+SMSC_PASSWORD, EXOLVE_API_KEY or SMSAERO_EMAIL+SMSAERO_API_KEY to send real messages)");
     return { ok: true, provider: "test", providerLabel: smsProviderLabel(config.provider), test: true };

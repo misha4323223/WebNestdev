@@ -76,6 +76,9 @@ button,textarea{font:inherit}button{color:inherit}
 .agent-mode-dot,.agent-mode-depth{color:#7d858f}
 .agent-mode-caret{flex:none;color:#5f6670;transition:transform .16s ease}
 .agent-mode-trigger.open .agent-mode-caret{transform:rotate(180deg)}
+/* Включённый поиск виден одной иконкой в кнопке: подпись заняла бы место у поля ввода. */
+.agent-mode-globe{flex:none;color:#8fdcb0}
+.agent-mode-trigger.search-on{border-color:#2f5c46;background:#10201a}
 /* Планировщик ничего не меняет в файлах — это осторожное состояние, а не действие. */
 .agent-mode-trigger.planner{border-color:#3d3a22;background:#15140a;color:#d7bd79}
 .agent-mode-trigger.planner>svg:first-child{color:#c9a34d}
@@ -102,6 +105,19 @@ button,textarea{font:inherit}button{color:inherit}
 .agent-mode-depths button:hover{border-color:#333b45;color:#d6dbe2}
 .agent-mode-depths button.active{border-color:#2f5c46;background:#12211a;color:#9fe0bd}
 .agent-mode-note{margin:0;color:#6f7783;font-size:9.5px;line-height:1.45}
+/* Поиск в интернете живёт в том же меню: это разрешение на сеть, а не роль агента. */
+.agent-mode-switch{display:flex;align-items:center;gap:8px;width:100%;padding:7px 8px;border:1px solid #262c34;border-radius:7px;background:#0b0f13;color:#aeb4bd;text-align:left;cursor:pointer;transition:border-color .16s ease,background .16s ease,color .16s ease}
+.agent-mode-switch:hover{border-color:#333b45;color:#e8eaed}
+.agent-mode-switch.active{border-color:#2f5c46;background:#10201a;color:#e8eaed}
+.agent-mode-switch-icon{flex:none;width:22px;height:22px;border-radius:6px;background:#1a1f26;color:#9aa2ad;display:grid;place-items:center}
+.agent-mode-switch.active .agent-mode-switch-icon{background:#1d3327;color:#8fdcb0}
+.agent-mode-switch-text{min-width:0;display:grid;gap:1px}
+.agent-mode-switch-text strong{font-size:11px;font-weight:600;line-height:1.4}
+.agent-mode-switch-text small{font-size:9.5px;line-height:1.45;color:#7c848f}
+.agent-mode-pill{flex:none;margin-left:auto;width:26px;height:15px;padding:2px;border-radius:99px;background:#252b33;transition:background .16s ease}
+.agent-mode-pill>span{display:block;width:11px;height:11px;border-radius:99px;background:#7d858f;transition:transform .16s ease,background .16s ease}
+.agent-mode-switch.active .agent-mode-pill{background:#2f5c46}
+.agent-mode-switch.active .agent-mode-pill>span{transform:translateX(11px);background:#c2eccf}
 .messages{flex:1;min-height:0;overflow:auto;padding:22px 7%;scrollbar-width:thin}.message-row{display:flex;gap:10px;margin:0 auto 18px;max-width:760px;align-items:flex-start}
 /* Агент слева, пользователь справа: разные стороны, разные пузыри, сразу видно, кто говорит. */
 .message-row.user{flex-direction:row-reverse}
@@ -150,15 +166,6 @@ button,textarea{font:inherit}button{color:inherit}
 .composer-model:hover{border-color:#3a424c;color:#e8eaed}
 .composer-model>svg{flex:none;color:#8d95a0}
 .composer-model-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-/* Поиск в интернете — отдельная кнопка у поля ввода, по умолчанию выключена. Включённое состояние
-   читается цветом темы и не спорит с «Режимами»: там роль агента, здесь разрешение на сеть. */
-.composer-search{display:flex;align-items:center;gap:5px;height:29px;padding:0 9px;border:1px solid #282d34;border-radius:8px;background:#0d1013;color:#8d95a0;font-size:10px;cursor:pointer;white-space:nowrap;transition:border-color .16s ease,background .16s ease,color .16s ease}
-.composer-search:hover{border-color:#3a424c;background:#11151a;color:#e8eaed}
-.composer-search>svg{flex:none}
-.composer-search-label{font-weight:600;line-height:1}
-.composer-search.active{border-color:#2f5c46;background:#10201a;color:#9fe0bd}
-.composer-search.active>svg{color:#8fdcb0}
-.composer-search.active:hover{border-color:#3c7358;background:#12261d;color:#b6ebcd}
 .composer-hint{padding:5px 13px 9px;color:#5f6670;font-size:9px;line-height:1.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .composer-buttons{display:flex;align-items:center;gap:5px;flex:none}
 .stop-button{background:#2a2f37;color:#e8eaed}
@@ -319,9 +326,7 @@ button,textarea{font:inherit}button{color:inherit}
   .preview-backdrop.open{opacity:1;pointer-events:auto}
 }
 @media(prefers-reduced-motion:reduce){.preview,.preview-backdrop{transition:none}}
-@media(max-width:650px){.topbar{gap:8px}.brand{min-width:0}.topbar-project,.topbar-actions .ghost-button{display:none}.mobile-only{display:flex}.sidebar{position:absolute;z-index:10;top:48px;bottom:0;left:-210px;transition:left .18s ease;box-shadow:12px 0 30px rgba(0,0,0,.35)}.sidebar.open{left:0}.messages,.composer-wrap{padding-left:14px;padding-right:14px}.composer-model{max-width:132px}.agent-mode-trigger{padding:0 7px;gap:4px}.composer-search{padding:0 8px}
-/* На узком экране у кнопки поиска остаётся иконка: подпись занимала место у поля ввода. */
-.composer-search-label{display:none}
+@media(max-width:650px){.topbar{gap:8px}.brand{min-width:0}.topbar-project,.topbar-actions .ghost-button{display:none}.mobile-only{display:flex}.sidebar{position:absolute;z-index:10;top:48px;bottom:0;left:-210px;transition:left .18s ease;box-shadow:12px 0 30px rgba(0,0,0,.35)}.sidebar.open{left:0}.messages,.composer-wrap{padding-left:14px;padding-right:14px}.composer-model{max-width:132px}.agent-mode-trigger{padding:0 7px;gap:4px}
 /* На узком экране кнопка остаётся короткой, а глубина размышления видна в меню. */
 .agent-mode-dot,.agent-mode-depth{display:none}
 .agent-mode-menu{width:min(288px,calc(100vw - 28px))}
@@ -411,7 +416,7 @@ button,textarea{font:inherit}button{color:inherit}
  * «Быстрый старт» уезжал за экран; теперь четыре шаблона видны сразу. Технологичность — угловая
  * подсветка фона и стрелка в углу карточки, без чужих цветов: палитра остаётся той же тёмной.
  */
-@media(max-width:520px){.home-screen{padding:0 14px}.home-tabs{margin:0 -14px;padding:10px 14px}.home-hero{padding-top:34px}.home-hero-mark{margin-bottom:14px}.home-hero-mark img{width:104px;height:104px}.home-composer{margin-top:20px}.home-composer-bottom span{display:none}.home-section{margin-bottom:26px}.home-section-head{margin-bottom:9px}.recent-grid{grid-template-columns:1fr}.home-footer{flex-wrap:wrap}.home-footer span:nth-child(2){display:none}
+@media(max-width:520px){.home-payment{flex-direction:column;align-items:flex-start;gap:9px}.home-payment-actions{width:100%}.home-payment-actions .ghost-button,.home-payment-actions .send-button{flex:1 1 auto;justify-content:center}.home-screen{padding:0 14px}.home-tabs{margin:0 -14px;padding:10px 14px}.home-hero{padding-top:34px}.home-hero-mark{margin-bottom:14px}.home-hero-mark img{width:104px;height:104px}.home-composer{margin-top:20px}.home-composer-bottom span{display:none}.home-section{margin-bottom:26px}.home-section-head{margin-bottom:9px}.recent-grid{grid-template-columns:1fr}.home-footer{flex-wrap:wrap}.home-footer span:nth-child(2){display:none}
   .template-grid{grid-template-columns:repeat(2,1fr);gap:7px}
   /* Угловая подсветка — часть фона карточки, а не слой поверх текста: накладка ослабляла бы его. */
   .template-card{position:relative;min-height:0;padding:9px 10px;gap:7px;border-color:#242b34;background:radial-gradient(125% 95% at 100% 0,rgba(120,168,224,.11),transparent 58%),linear-gradient(170deg,#141922,#101317 62%)}
@@ -503,6 +508,52 @@ button,textarea{font:inherit}button{color:inherit}
 .usage-meter>div:first-child strong{color:#cbd0d8;font-variant-numeric:tabular-nums}
 .usage-meter-track{height:6px;overflow:hidden;border:1px solid #2c343e;border-radius:99px;background:#1b2128;box-shadow:inset 0 1px 2px rgba(0,0,0,.28)}
 .usage-meter-track span{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#5c7f68,#a7ceb3);box-shadow:0 0 8px rgba(120,180,140,.24);transition:width .24s ease}
+.usage-meter-left{display:block;margin-top:5px;color:#6f7782;font-size:9px}
+/* Биллинг: три карточки сверху и график недели — ответ на «сколько я потратил» без переходов. */
+.billing-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:14px 0 4px}
+.billing-card{min-width:0;display:grid;gap:3px;padding:11px 12px;border:1px solid #2a3038;border-radius:8px;background:#0d1014}
+.billing-card-top{display:flex;align-items:center;gap:5px;color:#7f8792;font-size:9.5px}
+.billing-card-top svg{flex:none;color:#8b93a0}
+.billing-card strong{color:#eef0f3;font-size:17px;font-weight:600;line-height:1.25;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.billing-card small{color:#747c87;font-size:9px;line-height:1.4}
+.billing-bars{display:grid;grid-template-columns:repeat(7,minmax(0,1fr));gap:6px;align-items:end}
+.billing-bar{min-width:0;display:grid;gap:5px;justify-items:center}
+.billing-bar-track{width:100%;height:52px;display:flex;align-items:flex-end;overflow:hidden;border-radius:4px;background:#0a0d11;box-shadow:inset 0 0 0 1px #1d232b}
+.billing-bar-stack{width:100%;height:100%;display:flex;flex-direction:column;justify-content:flex-end}
+.billing-seg{width:100%;flex:none;min-height:0}
+.billing-seg.runs{background:#7fc7a1}
+.billing-seg.checks{background:#6f90b3}
+.billing-seg.searches{background:#c9a34d}
+.billing-bar small{color:#6f7782;font-size:8.5px;white-space:nowrap}
+.billing-legend{display:flex;flex-wrap:wrap;gap:12px;color:#767e89;font-size:9px}
+.billing-legend span{display:flex;align-items:center;gap:5px}
+.billing-dot{width:6px;height:6px;border-radius:2px;display:inline-block}
+.billing-dot.runs{background:#7fc7a1}.billing-dot.checks{background:#6f90b3}.billing-dot.searches{background:#c9a34d}
+/* Платежи: строка на счёт — номер, тариф, сумма и состояние. Это история денег, а не трат модели. */
+.billing-payments{display:grid;gap:6px;margin:12px 0 4px}
+.billing-payment{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 11px;border:1px solid #232830;border-radius:7px;background:#0d1014}
+.billing-payment>div{min-width:0}
+.billing-payment strong{display:block;font-size:11px;color:#dde1e6;font-weight:550}
+.billing-payment small{display:block;margin-top:3px;color:#737c87;font-size:9.5px}
+.billing-payment-status{flex:none;padding:2px 7px;border:1px solid #2b3139;border-radius:99px;color:#8b93a0;font-size:9px;white-space:nowrap}
+.billing-payment-status.paid{border-color:#2d4a39;color:#8fc7a2;background:#11201a}
+.billing-payment-status.pending{border-color:#3f3a2b;color:#c6b487;background:#1a1710}
+.billing-payment-status.failed{border-color:#4a3030;color:#d99b9b;background:#1b1212}
+/* Возврат со страницы оплаты: баннер на главной, чтобы платёж не «терялся» между вкладками. */
+.home-payment{width:min(980px,100%);margin:22px auto 0;display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid #26352d;border-radius:10px;background:linear-gradient(180deg,#111913,#0f1216);color:#93b59e}
+.home-payment.fail{border-color:#4a3030;background:linear-gradient(180deg,#1a1313,#0f1216);color:#d99b9b}
+.home-payment>div:first-child{flex:1;min-width:0}
+.home-payment strong{display:block;font-size:12px;color:#e7ece8}
+.home-payment span{display:block;margin-top:3px;font-size:10px;line-height:1.5;color:#7f8a84}
+.home-payment.fail span{color:#b08e8e}
+.home-payment-actions{display:flex;gap:6px;flex:none}
+.home-payment-actions .send-button{width:auto;height:30px;padding:0 12px;font-size:10.5px}
+/* Автопродление на странице тарифов: отдельная строка под статусом подписки. */
+.subscription-renew{display:flex!important;margin:0 auto!important;max-width:880px;padding:11px 13px!important;border:1px solid #232830;border-radius:9px;background:#0e1014}
+.billing-empty{display:flex;align-items:flex-start;gap:9px;margin:14px 0 4px;padding:11px 12px;border:1px dashed #2b3139;border-radius:7px;background:#0c0f13;color:#7f8792;font-size:10px;line-height:1.5}
+.billing-empty svg{flex:none;margin-top:1px;color:#8b93a0}
+.billing-empty strong,.billing-empty span{display:block}
+.billing-empty strong{color:#c6cbd3;font-size:10.5px;font-weight:600;margin-bottom:2px}
 .plan-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:16px}
 .plan-card{min-width:0;display:flex;flex-direction:column;padding:12px;border:1px solid #2a3038;border-radius:8px;background:#0e1115}
 .plan-card.selected{border-color:#707987;box-shadow:inset 0 0 0 1px #424953}
@@ -519,7 +570,7 @@ button,textarea{font:inherit}button{color:inherit}
 .plan-action:hover{background:#fff}.plan-action:disabled{opacity:.5;cursor:default}
 .billing-disclaimer{margin:16px 0 0;padding:10px;border:1px solid #2d2c26;border-radius:6px;background:#17150f;color:#b9ab82;font-size:10px;line-height:1.6}
 .account-feedback{margin:0 18px 18px}
-@media(max-width:850px){.account-settings-layout{grid-template-columns:1fr}.account-settings-nav{border-right:0;border-bottom:1px solid #22272e;flex-direction:row;overflow-x:auto}.account-settings-nav button{white-space:nowrap}.account-settings-content{padding:16px}.plan-grid{grid-template-columns:1fr}.plan-card ul{margin:12px 0}.settings-hub{padding-left:10px;padding-right:10px}.settings-hub-bar{margin-left:-10px;margin-right:-10px;padding:0 10px}.settings-hub-back{padding:0 8px}}
+@media(max-width:850px){.billing-cards{grid-template-columns:1fr}.billing-bar-track{height:44px}.account-settings-layout{grid-template-columns:1fr}.account-settings-nav{border-right:0;border-bottom:1px solid #22272e;flex-direction:row;overflow-x:auto}.account-settings-nav button{white-space:nowrap}.account-settings-content{padding:16px}.plan-grid{grid-template-columns:1fr}.plan-card ul{margin:12px 0}.settings-hub{padding-left:10px;padding-right:10px}.settings-hub-bar{margin-left:-10px;margin-right:-10px;padding:0 10px}.settings-hub-back{padding:0 8px}}
 @media(max-width:420px){.settings-hub-back span{display:none}.settings-hub-back{width:27px;justify-content:center;padding:0}}
 
 /* Preferences, plan selection and integrations */
@@ -737,6 +788,10 @@ button,textarea{font:inherit}button{color:inherit}
 .rail-plan div span,.rail-plan div strong{display:block}
 .rail-plan div span{color:#818994;font-size:9.5px}
 .rail-plan div strong{margin-top:3px;font-size:14px;color:#eef0f3}
+.rail-money{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px}
+.rail-money>div{min-width:0;display:grid;gap:3px;padding:9px 10px;border:1px solid #2a3038;border-radius:7px;background:#0d1014}
+.rail-money span{color:#818994;font-size:9px}
+.rail-money strong{color:#eef0f3;font-size:12px;font-variant-numeric:tabular-nums;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .rail-usage{display:grid;gap:6px;padding:10px;border:1px solid #2a3038;border-radius:7px;background:#0d1014}
 .rail-usage>div:not(.usage-meter-track){display:flex;justify-content:space-between;gap:10px;color:#9ca4af;font-size:10px}
 .rail-usage>div:not(.usage-meter-track) strong{color:#cbd0d8;font-variant-numeric:tabular-nums}
@@ -1082,37 +1137,36 @@ button,textarea{font:inherit}button{color:inherit}
 .changes-toast-text small{color:#8fc7a2;font-size:9.5px;overflow-wrap:anywhere}
 .changes-toast-open{margin-left:auto;flex:none;font-size:9.5px;color:#8fbfa2;text-decoration:underline}
 @media(max-width:650px){.changes-repo{align-items:flex-start}.changes-scroll{padding:12px 10px 20px}.change-push{margin-left:0}.change-link{margin-left:0}.changes-connect{align-items:flex-start}.changes-connect-form{width:100%}.changes-connect-form input{flex:1;min-width:0}}
-/* Вопрос агента: окно выезжает сверху поля ввода и не уносит переписку. */
-@keyframes question-rise{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
-.question-sheet{max-width:760px;max-height:72vh;overflow:auto;scrollbar-width:thin;margin:0 auto 8px;padding:11px 12px 10px;border:1px solid #2c3a42;border-radius:10px;background:linear-gradient(180deg,#111820,#0d1116);box-shadow:0 10px 34px rgba(0,0,0,.3);animation:question-rise .22s ease-out}
-.question-head{display:flex;align-items:center;gap:8px}
-.question-badge{display:inline-flex;align-items:center;gap:6px;padding:2px 8px 2px 7px;border:1px solid #2f4a4f;border-radius:99px;background:#101c1f;color:#9ec6c9;font-size:9px;letter-spacing:.09em;text-transform:uppercase}
-.question-badge svg{flex:none}
-.question-close{margin-left:auto;width:26px;height:26px;color:#7f8792}
-.question-text{margin:9px 0 10px;color:#e8eaed;font-size:12.5px;line-height:1.55}
-.question-options{display:grid;grid-template-columns:repeat(auto-fit,minmax(186px,1fr));gap:6px;max-height:min(320px,42vh);overflow:auto;scrollbar-width:thin}
-.question-option{display:flex;align-items:flex-start;gap:8px;padding:8px 9px;border:1px solid #242c34;border-radius:8px;background:#12171d;color:#d5dae0;text-align:left;cursor:pointer;font-size:11px;line-height:1.45;transition:border-color .14s ease,background .14s ease}
-.question-option:hover{border-color:#3a4854;background:#151b22}
-.question-option.selected{border-color:#4f7a63;background:#12201a}
+/*
+ * Вопрос агента — модальное окно в том же техно-стиле, что и запрос ключа: агент уже остановился
+ * на этом шаге, поэтому окно стоит поверх рабочей области, а не едет вместе с перепиской.
+ * Варианты — крупными строками, свой ответ доступен всегда, а длинный текст переносится внутри
+ * окна (overflow-wrap), а не вылезает за его край на телефоне.
+ */
+.question-modal{width:min(600px,100%)}
+.question-text{margin:0;color:#eef1f4;font-size:clamp(12.5px,3.4vw,13.5px);line-height:1.58;overflow-wrap:anywhere}
+.question-options{display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:7px;max-height:min(340px,44vh);overflow:auto;scrollbar-width:thin}
+.question-option{min-width:0;display:flex;align-items:flex-start;gap:9px;padding:10px 11px;border:1px solid #262d34;border-radius:10px;background:rgba(18,23,29,.9);color:#d5dae0;text-align:left;cursor:pointer;font-size:11.5px;line-height:1.45;transition:border-color .14s ease,background .14s ease,transform .14s ease}
+.question-option:hover{border-color:#3d4a44;background:#151c1b;transform:translateY(-1px)}
+.question-option.selected{border-color:#568b6c;background:linear-gradient(180deg,#142019,#111a15);box-shadow:0 0 0 1px rgba(94,155,116,.18)}
 .question-option:disabled{cursor:not-allowed;opacity:.6}
-.question-mark{flex:none;width:16px;height:16px;margin-top:1px;display:grid;place-items:center;border:1px solid #3c4650;border-radius:5px;color:#0d1310}
+.question-option:disabled:hover{transform:none;border-color:#262d34;background:rgba(18,23,29,.9)}
+.question-mark{flex:none;width:17px;height:17px;margin-top:1px;display:grid;place-items:center;border:1px solid #3c4650;border-radius:5px;color:#0d1310}
 .question-options.multi .question-mark{border-radius:5px}
 .question-options:not(.multi) .question-mark{border-radius:50%}
 .question-option.selected .question-mark{border-color:#8fc7a2;background:#8fc7a2}
 .question-option-body{display:flex;flex-direction:column;gap:2px;min-width:0}
-.question-option-body strong{font-weight:600;color:#e8eaed}
-.question-option-body small{color:#89929d;font-size:10px;line-height:1.45}
-.question-custom{display:grid;gap:4px;margin-top:9px}
-.question-custom span{color:#7f8792;font-size:9px;letter-spacing:.09em;text-transform:uppercase}
-.question-custom input{height:32px;border:1px solid #262e36;border-radius:7px;background:#0c1014;color:#e8eaed;padding:0 9px;font-size:11px;outline:none}
-.question-custom input:focus{border-color:#4f7a63}
+.question-option-body strong{font-weight:600;color:#e8eaed;overflow-wrap:anywhere}
+.question-option-body small{color:#89929d;font-size:10.5px;line-height:1.45;overflow-wrap:anywhere}
+.question-custom{display:grid;gap:5px}
+.question-custom span{color:#8b9a92;font:700 8.5px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.16em;text-transform:uppercase}
+.question-custom input{min-width:0;height:36px;border:1px solid #2a3138;border-radius:9px;background:#0c1014;color:#e8eaed;padding:0 11px;font-size:11.5px;outline:none;transition:border-color .14s ease,box-shadow .14s ease}
+.question-custom input:focus{border-color:#4f7a63;box-shadow:0 0 0 3px rgba(79,143,107,.15)}
 .question-custom input::placeholder{color:#626a75}
-.question-sheet .connector-notice{margin-top:8px}
-.question-foot{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px}
-.question-foot .ghost-button{height:28px;font-size:10px;border-color:#252c34}
-.question-hint{margin-left:auto;color:#68707a;font-size:9.5px}
-.question-foot .send-button{width:auto;height:28px;padding:0 12px;font-size:10.5px}
-@media(max-width:650px){.question-options{grid-template-columns:1fr}.question-foot{gap:6px}.question-hint{margin-left:0;flex:1 1 100%;order:3}.question-foot .send-button{flex:1 1 100%;height:32px;justify-content:center}}@media(prefers-reduced-motion:reduce){.question-sheet{animation:none}}
+.question-meta{display:flex;align-items:flex-start;gap:6px;margin:0;color:#7d8a83;font-size:10px;line-height:1.5;overflow-wrap:anywhere}
+.question-meta svg{flex:none;margin-top:1px;color:#6f9c81}
+.question-modal .modal-foot .send-button{gap:6px}
+@media(max-width:650px){.question-options{grid-template-columns:1fr;max-height:min(46vh,320px)}.question-option{padding:9px 10px;font-size:11px}.question-option-body strong{font-size:11.5px}.question-option-body small{font-size:10px}}
 /* Закладки переписки: полоска меток у правого края чата, рядом со скроллом. */
 .messages-wrap{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
 .chat-bookmarks{position:absolute;top:10px;bottom:10px;right:9px;width:14px;pointer-events:none}
@@ -1255,3 +1309,282 @@ button,textarea{font:inherit}button{color:inherit}
   .cookie-modal-foot>.ghost-button{width:100%;justify-content:center}
 }
 @media(prefers-reduced-motion:reduce){.cookie-banner{animation:none}}
+
+/*
+ * Тёплые кромки. Холодный серо-синий контур на тёмном фоне собирает на себя взгляд сильнее,
+ * чем сам текст, поэтому панели «План задач», «Действия агента», ответ агента и таблицы в нём
+ * получили мягкий какао-оттенок: кромка видна, но не спорит с содержимым. Фон не меняется.
+ */
+:root{--line-warm:#2e2822;--line-warm-soft:#241f1a;--line-warm-strong:#3a3129}
+.messages{scrollbar-gutter:stable both-edges}
+.chat-status{scrollbar-gutter:stable both-edges}
+/* Аватар переехал в строку автора: карточка ответа занимает ту же ширину, что и панели,
+   поэтому левый и правый края колонки агента совпадают с «Планом задач» и «Действиями». */
+.message-row{display:block}
+.message-row.user{display:flex;flex-direction:row;justify-content:flex-end}
+.message-avatar{width:19px;height:19px;border-radius:5px;border:1px solid var(--line-warm);background:#15181c;color:#a3acb6}
+.message-role{display:flex;align-items:center;gap:6px;margin:0 0 7px;line-height:1}
+.message-row.user .message-role{justify-content:flex-end;text-align:right}
+.message-content{max-width:100%;border-color:var(--line-warm)}
+.message-row.user .message-content{max-width:min(84%,660px)}
+.run-panel{border-color:var(--line-warm)}
+.run-panel-body{border-top-color:var(--line-warm-soft)}
+.plan-item,.action-row{border-bottom-color:var(--line-warm-soft)}
+.md-table{border-color:var(--line-warm)}
+.message-text.markdown th{background:#161513}
+.message-text.markdown td{border-top-color:var(--line-warm-soft)}
+.message-text.markdown tbody tr:nth-child(even) td{background:#0e1216}
+.message-text.markdown code{border-color:var(--line-warm-soft)}
+.message-text.markdown pre{border-color:var(--line-warm-soft)}
+.message-text.markdown blockquote{border-left-color:#3f5f4c}
+
+/*
+ * Техно-окна агента (вопрос и ключ): тёмное стекло, тонкая мятная линия сверху, мелкая сетка
+ * на фоне и моноширинные подписи. Тот же стиль у обоих окон, чтобы запрос ключа не выглядел
+ * как другой продукт.
+ */
+.tech-backdrop{background:radial-gradient(120% 90% at 50% 0%,rgba(88,140,112,.11),transparent 62%),rgba(5,7,10,.72);backdrop-filter:blur(6px)}
+.tech-modal{position:relative;overflow:hidden;border:1px solid #2f3a34;border-radius:16px;background:linear-gradient(168deg,#101720 0%,#0d1116 52%,#0b0f13 100%);box-shadow:0 30px 80px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.05)}
+.tech-modal::before{content:"";position:absolute;inset:0;pointer-events:none;background-image:linear-gradient(rgba(255,255,255,.03) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.03) 1px,transparent 1px);background-size:22px 22px;mask-image:radial-gradient(120% 80% at 50% 0%,#000 15%,transparent 76%);-webkit-mask-image:radial-gradient(120% 80% at 50% 0%,#000 15%,transparent 76%)}
+.tech-modal::after{content:"";position:absolute;left:0;right:0;top:0;height:1px;pointer-events:none;background:linear-gradient(90deg,transparent,rgba(143,220,176,.6),transparent)}
+.tech-modal .modal-head{position:relative;padding:15px 16px;border-bottom:1px solid rgba(255,255,255,.055);background:rgba(255,255,255,.012)}
+.tech-modal-title{display:flex;align-items:center;gap:10px;min-width:0}
+.tech-modal-icon{flex:none;width:32px;height:32px;display:grid;place-items:center;border:1px solid rgba(143,220,176,.28);border-radius:9px;background:linear-gradient(150deg,rgba(95,170,123,.2),rgba(95,170,123,.04));color:#a9dcbb;box-shadow:inset 0 1px 0 rgba(255,255,255,.06)}
+.tech-modal-heading{min-width:0;display:grid;gap:3px}
+.tech-modal-heading .eyebrow{color:#7f9c8c;font:700 8.5px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.18em}
+.tech-modal .modal-head h2{margin:0;font-size:clamp(15px,3.8vw,17px);font-weight:600;line-height:1.2;letter-spacing:-.01em;overflow-wrap:anywhere}
+.tech-modal .modal-body{position:relative;padding:16px;gap:12px}
+.tech-modal .modal-lead{color:#93a09a;font-size:11.5px;line-height:1.6;overflow-wrap:anywhere}
+.tech-modal .modal-foot{position:relative;padding:12px 16px;gap:8px;flex-wrap:wrap;border-top:1px solid rgba(255,255,255,.055);background:rgba(8,11,14,.55)}
+.tech-modal .modal-foot .send-button{min-height:32px}
+
+/* Запрос ключа: цель запроса читается двумя чипами, значение — моноширинным полем с «глазиком». */
+.tech-modal.secret-modal{border-color:#33302a}
+.secret-modal .tech-modal-icon{border-color:rgba(217,189,124,.3);background:linear-gradient(150deg,rgba(217,189,124,.18),rgba(217,189,124,.03));color:#e0c88d}
+.secret-modal .tech-modal-heading .eyebrow{color:#a3926d}
+.secret-modal .tech-modal::after,.secret-modal.tech-modal::after{background:linear-gradient(90deg,transparent,rgba(217,189,124,.5),transparent)}
+.tech-modal .secret-target{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px 11px;border:1px solid #2f2a24;border-radius:9px;background:rgba(10,13,17,.7)}
+.tech-modal .secret-variable{font:600 12px/1.3 ui-monospace,"SF Mono","JetBrains Mono",SFMono-Regular,Menlo,monospace;color:#eef1f4;overflow-wrap:anywhere}
+.tech-modal .secret-file{flex:1 1 100%;margin-left:0;color:#8a929b;font:10.5px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}
+.tech-modal .secret-field{position:relative;display:grid;gap:6px}
+.tech-modal .secret-field input{padding-right:40px;height:38px;font-size:12px}
+.tech-modal .secret-field .secret-toggle{right:5px;width:28px;height:28px;color:#89919b}
+.tech-modal .secret-note{color:#8a9690;font-size:10.5px;line-height:1.6;overflow-wrap:anywhere}
+.tech-modal .secret-note code{font:600 10px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:#c6d8cb;background:#141d18;border:1px solid #263a2d;border-radius:4px;padding:1px 4px;overflow-wrap:anywhere}
+
+@media(max-width:650px){
+  /* На телефоне у переписки поля 14px, а у панелей запуска оставались 7% — из-за этого
+     «План задач» и «Действия агента» были уже карточки ответа. Теперь кромки совпадают. */
+  .chat-status,.chat-status-bottom{padding-left:14px;padding-right:14px}
+  .modal-backdrop{padding:10px}
+  .tech-modal{border-radius:14px;max-height:calc(100dvh - 20px)}
+  .tech-modal .modal-head{padding:12px 13px}
+  .tech-modal .modal-body{padding:13px;gap:11px}
+  .tech-modal .modal-foot{padding:11px 13px}
+  .tech-modal .modal-foot .ghost-button,.tech-modal .modal-foot .send-button{flex:1 1 auto;justify-content:center;min-width:0}
+  /* 16px в поле — иначе iOS увеличивает страницу при фокусе, и окно «уезжает» за экран. */
+  .question-custom input,.tech-modal .secret-field input{height:42px;font-size:16px}
+  .tech-modal .secret-variable{font-size:13px}
+}
+
+/*
+ * Ссылки на документы на рабочих поверхностях: подвал главной, низ входа, тарифы, личный кабинет.
+ * Один вид на всех — тонкая линия снизу при наведении, без ярких кнопок: это не призыв к действию,
+ * а справочная информация.
+ */
+.home-footer{flex-wrap:wrap;row-gap:8px}
+.home-footer-legal{display:flex;flex-wrap:wrap;justify-content:center;gap:4px 14px;min-width:0}
+.home-footer-legal a{color:#6f7883;text-decoration:none;border-bottom:1px solid transparent;transition:color .15s ease,border-color .15s ease}
+.home-footer-legal a:hover{color:#c9d1d9;border-bottom-color:#3c4650}
+.home-footer-note{color:#4c545e}
+.auth-consent-links{display:flex;flex-wrap:wrap;align-items:center;gap:5px;margin:-4px 0 2px;color:#5f6873;font-size:9.5px;line-height:1.5}
+.auth-consent-links a{color:#8fa79a;text-decoration:none;border-bottom:1px solid rgba(143,167,154,.3)}
+.auth-consent-links a:hover{color:#c6dfd2;border-bottom-color:#8fa79a}
+.auth-legal{flex-wrap:wrap;align-items:center;justify-content:center;gap:4px 12px}
+.auth-legal a{color:#6f7882;font-size:10px;text-decoration:none;border-bottom:1px solid transparent}
+.auth-legal a:hover{color:#d3dae2;border-bottom-color:#3c4650}
+.billing-disclaimer a{color:#d9c99c;text-decoration:none;border-bottom:1px solid rgba(217,201,156,.4)}
+.billing-disclaimer a:hover{color:#f0e2b8;border-bottom-color:#d9c99c}
+.subscription-legal{max-width:1180px;margin:26px auto 0;display:flex;align-items:flex-start;justify-content:space-between;gap:26px;padding:18px 20px;border:1px solid #272d34;border-radius:11px;background:#0e1116}
+.subscription-legal h2{margin:5px 0 7px;font-size:15px;font-weight:600;color:#eef1f4}
+.subscription-legal p{margin:0;max-width:560px;color:#8b949f;font-size:11px;line-height:1.65}
+.subscription-legal nav{flex:none;display:grid;gap:6px;min-width:220px}
+.subscription-legal nav a{display:flex;align-items:center;gap:6px;color:#a8b2bd;font-size:10.5px;text-decoration:none;border-bottom:1px solid transparent;transition:color .15s ease,border-color .15s ease}
+.subscription-legal nav a:hover{color:#e8eaed;border-bottom-color:#414a55}
+.subscription-legal nav a svg{flex:none;color:#6e7a86}
+.account-legal{margin-top:18px;padding-top:14px;border-top:1px solid #1f2429;display:grid;gap:8px}
+.account-legal>div{display:flex;flex-wrap:wrap;gap:6px 16px}
+.account-legal a{color:#9aa4af;font-size:11px;text-decoration:none;border-bottom:1px solid transparent}
+.account-legal a:hover{color:#e2e7ec;border-bottom-color:#414a55}
+.account-legal-note{margin-top:2px;font-size:10px;line-height:1.55}
+.account-legal-note a{color:#9fb6a8;text-decoration:none;border-bottom:1px solid rgba(159,182,168,.32)}
+.account-legal-note a:hover{color:#d2e4da;border-bottom-color:#9fb6a8}
+.cookie-title a{color:#a8c7b5;text-decoration:none;border-bottom:1px solid rgba(168,199,181,.34)}
+.cookie-title a:hover{color:#d5e8dd;border-bottom-color:#a8c7b5}
+.cookie-modal .modal-lead a{color:#a9c3b4;text-decoration:none;border-bottom:1px solid rgba(169,195,180,.34)}
+
+/*
+ * Юридические страницы: публичные адреса /legal и /legal/<документ>. Тёмная типографика в тон
+ * рабочей области, но без интерфейса приложения — документ должен читаться как документ и
+ * печататься целиком.
+ */
+.legal-shell{min-height:100dvh;display:flex;flex-direction:column;background:#0b0d10;color:#c6ccd4}
+.legal-top{position:sticky;top:0;z-index:20;height:56px;flex:none;display:flex;align-items:center;gap:12px;padding:0 22px;border-bottom:1px solid #1d2228;background:rgba(11,13,16,.92);backdrop-filter:blur(10px)}
+.legal-brand{display:flex;align-items:center;gap:8px;min-width:0;color:#eef1f4;text-decoration:none}
+.legal-brand .brand-mark{width:30px;height:30px;border-radius:8px}
+.legal-brand-name{font-size:13px;font-weight:650;letter-spacing:-.01em}
+.legal-brand-sep{color:#3f4750;font-size:12px}
+.legal-brand-section{color:#8d97a3;font-size:11px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.legal-top-actions{margin-left:auto;display:flex;align-items:center;gap:6px}
+.legal-top-actions .ghost-button{height:30px;border-color:#272d34;background:#11151a;color:#b6bec7;font-size:10.5px;text-decoration:none}
+.legal-top-actions .ghost-button:hover{border-color:#3a424c;background:#151a20;color:#eef1f4}
+.legal-main{flex:1;width:min(1180px,100%);margin:0 auto;padding:30px 22px 64px}
+.legal-hero{max-width:760px;margin:6px 0 34px}
+.legal-hero h1{margin:9px 0 12px;font-size:clamp(25px,4.4vw,36px);line-height:1.14;font-weight:650;letter-spacing:-.02em;color:#f2f5f8}
+.legal-hero p{margin:0;color:#8b95a1;font-size:13px;line-height:1.7;max-width:650px}
+.legal-groups{display:grid;gap:30px}
+.legal-group h2{margin:0 0 10px;font-size:11px;font-weight:650;letter-spacing:.12em;text-transform:uppercase;color:#7c8794}
+.legal-cards{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.legal-card{min-width:0;display:flex;align-items:flex-start;gap:11px;padding:14px 15px;border:1px solid #242a31;border-radius:11px;background:linear-gradient(160deg,#10151b,#0d1116);color:inherit;text-decoration:none;transition:border-color .16s ease,background .16s ease,transform .16s ease}
+.legal-card:hover{border-color:#3a4640;background:linear-gradient(160deg,#131a1c,#0f1317);transform:translateY(-1px)}
+.legal-card-icon{flex:none;width:30px;height:30px;display:grid;place-items:center;border:1px solid #2c3a33;border-radius:8px;background:#101b15;color:#9ec6ae}
+.legal-card-text{min-width:0;display:grid;gap:4px}
+.legal-card-text strong{color:#e8edf2;font-size:12.5px;font-weight:600;line-height:1.35;overflow-wrap:anywhere}
+.legal-card-text small{color:#828c98;font-size:10.5px;line-height:1.55;overflow-wrap:anywhere}
+.legal-card-arrow{flex:none;margin-left:auto;margin-top:2px;color:#4f5a66;transition:color .16s ease,transform .16s ease}
+.legal-card:hover .legal-card-arrow{color:#9ec6ae;transform:translate(1px,-1px)}
+.legal-summary{margin-top:34px;display:flex;align-items:flex-end;justify-content:space-between;gap:20px;padding:18px 20px;border:1px solid #262c33;border-radius:12px;background:#0e1216}
+.legal-summary h2{margin:6px 0 7px;font-size:14px;font-weight:600;color:#eef1f4}
+.legal-summary p{margin:0;color:#8b95a1;font-size:11.5px;line-height:1.65;max-width:620px}
+.legal-summary p a{color:#a9c3b4;text-decoration:none;border-bottom:1px solid rgba(169,195,180,.32)}
+.legal-summary-link{flex:none;display:inline-flex;align-items:center;gap:5px;color:#b6c4bc;font-size:11px;text-decoration:none;border-bottom:1px solid transparent}
+.legal-summary-link:hover{color:#e6f1eb;border-bottom-color:#4e6a5c}
+.legal-pending-note{margin:14px 0 0;color:#a08a63;font-size:10.5px;line-height:1.6}
+.legal-doc-layout{display:grid;grid-template-columns:minmax(0,1fr) 250px;gap:34px;align-items:start}
+.legal-doc{min-width:0}
+.legal-crumbs{display:flex;align-items:center;gap:7px;margin-bottom:16px;color:#6b7580;font-size:10.5px}
+.legal-crumbs a{color:#8b95a1;text-decoration:none}
+.legal-crumbs a:hover{color:#d6dde4}
+.legal-doc-head{max-width:720px}
+.legal-doc-head h1{margin:8px 0 12px;font-size:clamp(23px,4vw,32px);line-height:1.18;font-weight:650;letter-spacing:-.02em;color:#f2f5f8}
+.legal-doc-meta{display:flex;flex-wrap:wrap;gap:5px 8px;margin-bottom:14px}
+.legal-doc-meta span{padding:3px 8px;border:1px solid #262e35;border-radius:999px;background:#10151a;color:#7f8995;font-size:9.5px;line-height:1.4}
+.legal-doc-lead{margin:0;color:#99a3ae;font-size:12.5px;line-height:1.7}
+.legal-toc-mobile{display:none;margin:20px 0 0;border:1px solid #242b32;border-radius:10px;background:#0e1216;padding:10px 12px}
+.legal-toc-mobile summary{cursor:pointer;color:#b6bec7;font-size:11px;font-weight:600}
+.legal-toc-mobile ol{margin:9px 0 0;padding-left:18px;color:#8b95a1;font-size:11px;line-height:1.8}
+.legal-toc-mobile a{color:inherit;text-decoration:none}
+.legal-doc-body{max-width:760px;margin-top:26px}
+.legal-section{padding-top:20px;margin-top:20px;border-top:1px solid #1c2229}
+.legal-section:first-child{padding-top:0;margin-top:0;border-top:0}
+.legal-section h2{margin:0 0 10px;font-size:14px;font-weight:650;line-height:1.4;color:#eef1f4;scroll-margin-top:76px;overflow-wrap:anywhere}
+.legal-doc-body p{margin:0 0 10px;color:#b2bac4;font-size:12.5px;line-height:1.78;overflow-wrap:anywhere}
+.legal-doc-body ul{margin:0 0 12px;padding-left:18px;color:#b2bac4;font-size:12.5px;line-height:1.75}
+.legal-doc-body li{margin:0 0 5px;overflow-wrap:anywhere}
+.legal-doc-body li::marker{color:#5d6b62}
+.legal-note{margin:0 0 12px;padding:10px 12px;border-left:2px solid #3d5c4b;background:#0e1411;color:#9eada4;font-size:11.5px;line-height:1.7}
+.legal-table-wrap{margin:0 0 14px;border:1px solid #252c33;border-radius:10px;overflow-x:auto;scrollbar-width:thin}
+.legal-table-wrap table{width:100%;border-collapse:collapse;font-size:11px;line-height:1.55;min-width:520px}
+.legal-table-wrap th,.legal-table-wrap td{padding:8px 10px;text-align:left;vertical-align:top;border-bottom:1px solid #1d232a}
+.legal-table-wrap thead th{background:#12171d;color:#93a0ac;font-size:9.5px;font-weight:650;letter-spacing:.06em;text-transform:uppercase;white-space:nowrap}
+.legal-table-wrap tbody th{width:26%;color:#cdd5dd;font-weight:600}
+.legal-table-wrap tbody td{color:#9fa9b4}
+.legal-table-wrap tbody tr:last-child th,.legal-table-wrap tbody tr:last-child td{border-bottom:0}
+.legal-requisites{margin:0;border:1px solid #272d34;border-radius:11px;background:#0e1216;overflow:hidden}
+.legal-requisites dl{margin:0;display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
+.legal-requisites dl>div{min-width:0;padding:10px 12px;border-top:1px solid #1c2229;border-right:1px solid #1c2229}
+.legal-requisites dl>div:nth-child(1),.legal-requisites dl>div:nth-child(2){border-top:0}
+.legal-requisites dl>div:nth-child(even){border-right:0}
+.legal-requisites dt{margin:0 0 3px;color:#77828e;font-size:9px;letter-spacing:.09em;text-transform:uppercase}
+.legal-requisites dd{margin:0;color:#dfe5eb;font-size:11.5px;line-height:1.5;overflow-wrap:anywhere}
+.legal-requisites dd a{color:#a9c3b4;text-decoration:none;border-bottom:1px solid rgba(169,195,180,.32)}
+.legal-requisites dd a:hover{color:#d6e8dd;border-bottom-color:#a9c3b4}
+.legal-requisites dd a svg{vertical-align:-1px;margin-left:1px}
+.legal-mono{font:11.5px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.01em}
+.legal-muted{color:#8b95a1}
+.legal-pending{display:inline-block;padding:1px 6px;border:1px dashed #7c6238;border-radius:5px;background:#1a150d;color:#d8b877;font-size:10.5px;line-height:1.5}
+.legal-requisites-foot{display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;border-top:1px solid #1c2229;background:#0b0f13}
+.legal-requisites-foot span{display:inline-flex;align-items:center;gap:5px;color:#7f8b85;font-size:10px}
+.legal-requisites-foot span svg{color:#6f9c81}
+.legal-requisites-foot button{display:inline-flex;align-items:center;gap:5px;border:0;background:transparent;color:#8b95a1;font-size:10px;cursor:pointer;padding:0}
+.legal-requisites-foot button:hover{color:#d6dde4}
+.legal-doc-foot{margin-top:30px;display:flex;align-items:center;justify-content:space-between;gap:14px;padding:14px 16px;border:1px solid #262c33;border-radius:11px;background:#0e1216}
+.legal-doc-foot strong{display:block;color:#e6ebf0;font-size:11.5px;font-weight:600}
+.legal-doc-foot span{display:block;margin-top:3px;color:#828c98;font-size:10.5px;line-height:1.6}
+.legal-doc-foot span a{color:#a9c3b4;text-decoration:none;border-bottom:1px solid rgba(169,195,180,.32)}
+.legal-doc-foot .ghost-button{flex:none;height:30px;border-color:#2a3138;background:#11161b;font-size:10.5px}
+.legal-other{margin-top:26px;display:grid;gap:9px}
+.legal-other>div{display:flex;flex-wrap:wrap;gap:6px 14px}
+.legal-other a,.legal-other-cookie{color:#8b95a1;font-size:10.5px;text-decoration:none;border-bottom:1px solid transparent;background:transparent;border-left:0;border-right:0;border-top:0;padding:0;cursor:pointer}
+.legal-other a:hover,.legal-other-cookie:hover{color:#dfe5eb;border-bottom-color:#414a55}
+.legal-other-cookie{display:inline-flex;align-items:center;gap:4px}
+.legal-side{position:sticky;top:78px}
+.legal-side-inner{border:1px solid #1f252b;border-radius:11px;background:#0d1115;padding:13px 14px}
+.legal-side ol{margin:9px 0 0;padding:0;list-style:none;display:grid;gap:2px;max-height:min(58vh,520px);overflow:auto;scrollbar-width:thin}
+.legal-side li a{display:block;padding:4px 6px;border-radius:5px;color:#8b95a1;font-size:10.5px;line-height:1.45;text-decoration:none;overflow-wrap:anywhere}
+.legal-side li a:hover{background:#151a20;color:#e2e8ee}
+.legal-side-doc{margin-top:11px;padding-top:10px;border-top:1px solid #1c2229;display:grid;gap:3px}
+.legal-side-doc strong{color:#cdd5dd;font-size:10px;font-weight:600;line-height:1.4}
+.legal-side-doc span{color:#6b7580;font-size:9.5px}
+.legal-footer{flex:none;margin-top:auto;border-top:1px solid #1d2228;background:#0a0c0f;padding:20px 22px 18px}
+.legal-footer-main{width:min(1180px,100%);margin:0 auto;display:flex;align-items:flex-start;justify-content:space-between;gap:20px}
+.legal-footer-brand{display:flex;align-items:center;gap:9px}
+.legal-footer-brand .brand-mark{width:28px;height:28px;border-radius:8px}
+.legal-footer-brand strong{display:block;color:#dfe5eb;font-size:11.5px;font-weight:650}
+.legal-footer-brand span{display:block;margin-top:2px;color:#6b7580;font-size:9.5px}
+.legal-footer-links{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:5px 14px;max-width:640px}
+.legal-footer-links a,.legal-footer-cookie{color:#7f8995;font-size:10px;text-decoration:none;border-bottom:1px solid transparent;background:transparent;border-left:0;border-right:0;border-top:0;padding:0;cursor:pointer}
+.legal-footer-links a:hover,.legal-footer-cookie:hover{color:#d6dde4;border-bottom-color:#414a55}
+.legal-footer-cookie{display:inline-flex;align-items:center;gap:4px}
+.legal-footer-meta{width:min(1180px,100%);margin:14px auto 0;padding-top:12px;border-top:1px solid #161b20;display:flex;flex-wrap:wrap;gap:4px 16px;color:#5a636d;font-size:9.5px}
+
+@media(max-width:1000px){
+  .legal-doc-layout{grid-template-columns:minmax(0,1fr)}
+  .legal-side{display:none}
+  .legal-toc-mobile{display:block}
+  .subscription-legal{flex-direction:column;gap:14px}
+  .subscription-legal nav{width:100%;grid-template-columns:repeat(2,minmax(0,1fr))}
+}
+@media(max-width:720px){
+  .legal-top{height:52px;padding:0 14px}
+  .legal-brand-section{display:none}
+  .legal-brand-sep{display:none}
+  .legal-top-actions .legal-print span{display:none}
+  .legal-top-actions .ghost-button{padding:0 9px}
+  .legal-main{padding:22px 14px 44px}
+  .legal-cards{grid-template-columns:minmax(0,1fr)}
+  .legal-summary{flex-direction:column;align-items:flex-start;gap:12px;padding:15px}
+  .legal-doc-body p,.legal-doc-body ul{font-size:12.5px;line-height:1.75}
+  .legal-requisites dl{grid-template-columns:minmax(0,1fr)}
+  .legal-requisites dl>div{border-right:0}
+  .legal-requisites dl>div:nth-child(2){border-top:1px solid #1c2229}
+  .legal-doc-foot{flex-direction:column;align-items:flex-start;gap:12px}
+  .legal-doc-foot .ghost-button{width:100%;justify-content:center}
+  .home-footer{justify-content:center;text-align:center;margin-top:40px}
+  .home-footer-legal{justify-content:center;gap:6px 12px}
+  .account-legal>div{gap:6px 12px}
+}
+@media(max-width:430px){
+  .legal-top-actions .legal-back span{display:none}
+  .legal-hero h1{font-size:24px}
+  .legal-doc-head h1{font-size:22px}
+  .legal-doc-meta span{font-size:9px}
+  .subscription-legal nav{grid-template-columns:minmax(0,1fr)}
+  .legal-footer-main{flex-direction:column;align-items:flex-start}
+  .legal-footer-links{justify-content:flex-start}
+}
+
+/* Документ должен печататься целиком: без шапки, бокового меню и тёмного фона. */
+@media print{
+  .legal-top,.legal-footer,.legal-side,.legal-toc-mobile,.legal-doc-foot,.legal-other,.cookie-banner{display:none!important}
+  .legal-shell{background:#fff;color:#111}
+  .legal-main{width:auto;max-width:none;padding:0}
+  .legal-doc-head h1,.legal-section h2{color:#111}
+  .legal-doc-lead,.legal-doc-body p,.legal-doc-body ul,.legal-doc-body li{color:#222}
+  .legal-section{border-top-color:#ccc;page-break-inside:avoid}
+  .legal-requisites,.legal-table-wrap{border-color:#bbb;background:#fff}
+  .legal-requisites dt{color:#555}
+  .legal-requisites dd{color:#111}
+  .legal-table-wrap th,.legal-table-wrap td{color:#222;border-color:#ccc}
+  .legal-doc-layout{display:block}
+}

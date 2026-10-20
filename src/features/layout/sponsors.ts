@@ -12,7 +12,7 @@
 /** Сколько один слот висит на экране до перехода к следующему. */
 export const PARTNER_SLOT_MS = 10 * 60 * 1000;
 
-const PARTNER_CONTACT = "mailto:partner@nestdev.ru?subject=" + encodeURIComponent("Партнёрский слот в WebNestdev");
+const PARTNER_CONTACT = "mailto:partner@nestdev.ru?subject=" + encodeURIComponent("Партнёрский слот в NestDev");
 
 export type PartnerAccent = "mint" | "amber" | "sky";
 
@@ -59,7 +59,7 @@ export const PARTNER_SLOTS: PartnerSlot[] = [
     id: "cross",
     kind: "slot",
     logo: "03",
-    brand: "Партнёрам WebNestdev",
+    brand: "Партнёрам NestDev",
     tagline: "Кросс-промо, совместные запуски и подписка",
     cta: "Написать нам",
     href: PARTNER_CONTACT,

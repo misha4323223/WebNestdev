@@ -13,7 +13,7 @@ import { parseAuthorizedKeyJson, parseServiceAccountKey } from "../yandex/yandex
  * a deployment that never opens the panel behaves exactly as before.
  */
 export type PlatformEnvKind = "secret" | "json-key" | "value" | "url" | "path" | "flag";
-export type PlatformEnvGroup = "github" | "yandex" | "sms" | "ai" | "search";
+export type PlatformEnvGroup = "github" | "yandex" | "sms" | "ai" | "search" | "billing";
 
 export type PlatformEnvEntry = {
   name: string;
@@ -61,6 +61,16 @@ export const PLATFORM_ENV_CATALOG: PlatformEnvEntry[] = [
   { name: "YANDEX_SEARCH_FOLDER_ID", group: "search", label: "Каталог Search API", hint: "b1g… каталога, где сервисному аккаунту выдана роль search-api.webSearch.user. Пустое значение — берётся YANDEX_FOLDER_ID.", kind: "value" },
   { name: "TAVILY_API_KEY", group: "search", label: "Tavily API-ключ", hint: "Резервный провайдер платных тарифов: включается, если Yandex Search API не настроен или отказал. Бесплатно 1 000 кредитов в месяц.", kind: "secret" },
 
+  { name: "ROBOKASSA_LOGIN", group: "billing", label: "Логин магазина", hint: "Логин магазина из личного кабинета Робокассы (MerchantLogin), а не e-mail.", kind: "value" },
+  { name: "ROBOKASSA_PASSWORD_1", group: "billing", label: "Пароль №1", hint: "Личный кабинет → Технические настройки → пароль №1. Им подписывается создание платежа.", kind: "secret" },
+  { name: "ROBOKASSA_PASSWORD_2", group: "billing", label: "Пароль №2", hint: "Там же. Им подписывается уведомление ResultURL — без него оплата не засчитается.", kind: "secret" },
+  { name: "ROBOKASSA_HASH", group: "billing", label: "Алгоритм подписи", hint: "Должен совпадать с настройкой магазина: md5 (по умолчанию), sha256 и т. п.", kind: "value" },
+  { name: "ROBOKASSA_TEST_MODE", group: "billing", label: "Тестовый режим", hint: "1 — платёж идёт с IsTest=1 и тестовыми паролями магазина: деньги не списываются.", kind: "flag" },
+  { name: "ROBOKASSA_RECURRING", group: "billing", label: "Периодические платежи", hint: "1 — только после одобрения услуги «Периодические платежи» в Робокассе: включает автопродление.", kind: "flag" },
+  { name: "ROBOKASSA_RECEIPT", group: "billing", label: "Чеки через Робокассу", hint: "1 — отправлять Receipt JSON. Самозанятому обычно не нужно: чеки идут через «Робочеки СМЗ» в кабинете.", kind: "flag" },
+  { name: "ROBOKASSA_PRICE_PRO", group: "billing", label: "Цена тарифа «Про», ₽/мес", hint: "Необязательно: по умолчанию 990. Меняется без выкатки.", kind: "value" },
+  { name: "ROBOKASSA_PRICE_TEAM", group: "billing", label: "Цена тарифа «Команда», ₽/мес", hint: "Необязательно: по умолчанию 2 990.", kind: "value" },
+
   { name: "PLATFORM_AI_BASE_URL", group: "ai", label: "AI Base URL", hint: "OpenAI-совместимый адрес модели платформы — то, чем пользуются проекты без своего провайдера.", kind: "url" },
   { name: "PLATFORM_AI_MODEL", group: "ai", label: "AI модель", hint: "Идентификатор модели для этого адреса.", kind: "value" },
   { name: "PLATFORM_AI_API_KEY", group: "ai", label: "AI ключ", hint: "Ключ провайдера модели платформы. Проекты со своим ключом его не используют.", kind: "secret" },
@@ -92,7 +102,7 @@ export type PlatformEnvStatus = {
 type StoredEntry = { value: string; preview: string; updatedAt: string };
 type StoreFile = { version: 1; values: Record<string, StoredEntry> };
 
-const GROUP_LABEL: Record<PlatformEnvGroup, string> = { github: "GitHub", yandex: "Yandex Cloud", sms: "SMS-провайдеры", ai: "AI-провайдер платформы", search: "Веб-поиск агента" };
+const GROUP_LABEL: Record<PlatformEnvGroup, string> = { github: "GitHub", yandex: "Yandex Cloud", sms: "SMS-провайдеры", ai: "AI-провайдер платформы", search: "Веб-поиск агента", billing: "Оплата (Robokassa)" };
 
 export function platformEnvGroupLabel(group: PlatformEnvGroup) {
   return GROUP_LABEL[group];
@@ -220,6 +230,8 @@ export function validatePlatformValue(name: string, value: string): string | nul
   if (entry.kind === "path" && text.includes("\n")) return "Путь должен быть одной строкой";
   if (entry.kind === "flag" && !/^(0|1|true|false|yes|no|да|нет)$/i.test(text)) return "Допустимо: 1/0, true/false, yes/no";
   if (name === "WEB_SEARCH_PROVIDER" && !/^(auto|duckduckgo|yandex|tavily)$/i.test(text)) return "Допустимо: auto, duckduckgo, yandex или tavily";
+  if (name === "ROBOKASSA_HASH" && !/^(md5|sha1|sha256|sha384|sha512|ripemd160)$/i.test(text)) return "Допустимо: md5, sha1, sha256, sha384, sha512 или ripemd160";
+  if ((name === "ROBOKASSA_PRICE_PRO" || name === "ROBOKASSA_PRICE_TEAM") && !(Number(text.replace(",", ".")) > 0)) return "Нужна цена в рублях больше нуля";
   return null;
 }
 
@@ -234,6 +246,9 @@ export type SkippedValue = { name: string; message: string };
  * выглядело бы как молчаливая потеря ключей.
  */
 export async function savePlatformEnv(values: Record<string, string | undefined>) {
+  // Панель читает хранилище при старте сервера, а скрипт или тест может вызвать запись первым.
+  // Без загруженной карты `next` начался бы с пустой и стёр бы все ключи, которых нет в values.
+  if (!loaded) await loadPlatformEnv();
   const skipped: SkippedValue[] = [];
   const next = new Map(overrides);
   const saved: string[] = [];

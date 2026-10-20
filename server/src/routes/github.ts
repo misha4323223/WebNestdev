@@ -6,7 +6,8 @@ import { getGitHubConnection, saveGitHubConnection, deleteGitHubConnection } fro
 import { createOAuthState, consumeOAuthState, originFromOAuthState } from "../github/github-oauth-state.js";
 import { getGitHubUser, getGitHubLoginFromToken, listGitHubRepositories, getGitHubRepository, getGitHubTree, getGitHubBlob } from "../github/github-api.js";
 import { createConversation, createProjectWithinLimit, ProjectLimitError } from "../project-store.js";
-import { FREE_PLAN, limitsForPlan, type PlanId } from "../account/plans.js";
+import { limitsForPlan } from "../account/plans.js";
+import { accountPlanFor } from "../billing/store.js";
 import { getSandbox } from "../sandbox-manager.js";
 import { getPlatformEnv } from "../platform/platform-env.js";
 import { initRepo } from "../changes/git-repo.js";
@@ -155,7 +156,7 @@ export async function registerGitHubRoutes(app: FastifyInstance) {
     const user=await requireUser(request,reply); if(!user)return;
     const body = z.object({ owner: z.string().min(1).max(100), repo: z.string().min(1).max(100) }).parse(request.body);
     const repository = await getGitHubRepository(user.id, body.owner, body.repo);
-    const plan: PlanId = FREE_PLAN;
+    const plan = await accountPlanFor(user.id);
     const limit = limitsForPlan(plan).projects;
     let project;
     try {

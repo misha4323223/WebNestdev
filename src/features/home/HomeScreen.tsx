@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { ArrowRight, Code2, CreditCard, FolderGit2, Home, LayoutDashboard, LogOut, Pencil, Plug, ShoppingBag, GitBranch, Globe, Layers3, Trash2, UserRound } from "lucide-react";
+import { ArrowRight, Code2, CreditCard, FolderGit2, Home, LayoutDashboard, LogOut, Pencil, Plug, ShoppingBag, Globe, Layers3, Trash2, UserRound } from "lucide-react";
 import { createConversation, createProject, deleteProject, listProjects, renameProject, type Project } from "../../lib/project-api";
 import { logout } from "../../lib/auth-api";
 import { HomeRail, type RailSection } from "./HomeRail";
@@ -10,6 +10,7 @@ import { PlanPickerModal } from "../billing/PlanPickerModal";
 import { SubscriptionPage } from "../billing/SubscriptionPage";
 import { conversationMemoryKey } from "../workspace/useWorkspace";
 import { queueAgentStart } from "../../lib/agent-start";
+import { LEGAL_FOOTER_LINKS, legalDoc, legalPath } from "../../lib/legal";
 
 const templates = [
   { name: "Лендинг", icon: Globe, prompt: "Создай современный лендинг для продукта" },
@@ -24,6 +25,15 @@ const templates = [
  */
 function templateKickoff(template:typeof templates[number]){
   return `Быстрый старт по шаблону «${template.name}».\n\nЗадача: ${template.prompt}.\n\nСначала работай в режиме планировщика: не меняй файлы. Изучи, что уже есть в проекте (для нового проекта это пусто), задай через question.ask не больше двух действительно важных уточняющих вопросов (например, для кого продукт, какие разделы и данные нужны, какой стиль), если ответов нет в проекте. Затем собери полный пошаговый план через plan.update: структура, страницы и компоненты, данные и состояния, визуальный стиль, проверка результата. В конце кратко перечисли допущения и то, что пользователю нужно подтвердить перед началом разработки.`;
+}
+
+/**
+ * Идея с главной — это не только имя проекта. Агент открывается сразу в планировщике и сам
+ * спрашивает, что именно нужно, как при быстром старте по шаблону: иначе человек попадал в
+ * пустой чат и писал то же самое второй раз.
+ */
+function ideaKickoff(idea:string){
+  return `${idea.trim()}\n\nСначала работай в режиме планировщика: не меняй файлы. Это новый пустой проект, в нём пока ничего нет. Задай через question.ask не больше двух действительно важных уточняющих вопросов (для кого продукт, какие разделы и данные нужны, какой стиль и тон), если ответов нет в описании. Затем собери полный пошаговый план через plan.update: структура, страницы и компоненты, данные и состояния, визуальный стиль, проверка результата. В конце кратко перечисли допущения и то, что пользователю нужно подтвердить перед началом разработки.`;
 }
 
 const activeProjectKey = "webnestdev.projectId";
@@ -54,6 +64,8 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
   // а на ПК та же колонка остаётся рядом с главной страницей.
   const [tab,setTab]=useState<HomeTab>("home");
   const [section,setSection]=useState<RailSection>("integrations");
+  // Возврат со страницы оплаты: Робокасса переводит браузер сюда с отметкой в адресе.
+  const [paymentReturn,setPaymentReturn]=useState<"success"|"fail"|null>(null);
 
   const tabsRef = useRef<HTMLDivElement | null>(null);
 
@@ -74,6 +86,18 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
       else localStorage.removeItem(ideaDraftKey);
     }catch{}
   },[idea]);
+
+  useEffect(()=>{
+    const params=new URLSearchParams(window.location.search);
+    const status=params.get("payment");
+    if(status!=="success"&&status!=="fail")return;
+    setPaymentReturn(status);
+    // Успешная оплата открывает раздел подписки: там видно новый срок и платёж.
+    if(status==="success")pick("billing");
+    params.delete("payment");params.delete("inv");
+    const query=params.toString();
+    window.history.replaceState({},"",window.location.pathname+(query?"?"+query:""));
+  },[]);
 
   const reload=useCallback(async()=>{try{setProjects((await listProjects()).projects)}catch{}},[]);
   useEffect(()=>{void reload()},[reload]);
@@ -152,8 +176,10 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
     event.preventDefault();
     const value=idea.trim();
     if(!value||busy)return;
+    // Идея уходит агенту целиком: рабочая область открывается с уже начатым планировщиком,
+    // который задаёт уточняющие вопросы и показывает план, поэтому повторять идею в чате не нужно.
     // Черновик убирается только после того, как проект создан: иначе ошибка стирала бы идею.
-    if(await start(value.slice(0,80)))setIdea("");
+    if(await start(value.slice(0,80),{plannerPrompt:ideaKickoff(value),title:"Новая идея"}))setIdea("");
   }
 
   async function exit(){
@@ -192,12 +218,25 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
 
           <section className="home-hero">
             <span className="home-hero-mark"><WebNestLogo size={168} tone="light"/></span>
-            <p>Опиши идею — WebNestdev поможет превратить её в рабочий проект.</p>
+            <p>Опиши идею — NestDev поможет превратить её в рабочий проект.</p>
             <form className="home-composer" onSubmit={submit}>
               <div className="home-composer-top"><span className="home-composer-icon"><Code2 size={16}/></span><textarea value={idea} onChange={e=>setIdea(e.target.value)} placeholder="Что будем создавать?" rows={2} /></div>
-              <div className="home-composer-bottom"><span>Например: интернет-магазин одежды с каталогом и корзиной</span><button className="send-button home-submit" disabled={busy||!idea.trim()} aria-label="Создать проект"><ArrowRight size={15}/></button></div>
+              <div className="home-composer-bottom"><span>{busy?"Создаём проект и запускаем планировщика…":"Например: интернет-магазин одежды с каталогом и корзиной · агент уточнит детали и покажет план"}</span><button className="send-button home-submit" disabled={busy||!idea.trim()} aria-label="Создать проект и запустить агента"><ArrowRight size={15}/></button></div>
             </form>
           </section>
+
+          {paymentReturn&&<div className={"home-payment "+paymentReturn} role="status">
+            <div>
+              <strong>{paymentReturn==="success"?"Оплата принята":"Оплата не прошла"}</strong>
+              <span>{paymentReturn==="success"
+                ?"Робокасса подтверждает платёж отдельным запросом. Тариф включится автоматически — если он ещё прежний, обновите данные через минуту."
+                :"Деньги не списаны. Можно вернуться к тарифам и попробовать снова."}</span>
+            </div>
+            <div className="home-payment-actions">
+              <button className="ghost-button" onClick={()=>setPaymentReturn(null)}>Закрыть</button>
+              {paymentReturn==="success"&&<button className="send-button" onClick={()=>window.location.reload()}>Обновить</button>}
+            </div>
+          </div>}
 
           {error&&<div className="home-error">{error}</div>}
 
@@ -222,7 +261,15 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
             </div>)}</div>
           </section>}
 
-          <footer className="home-footer"><span>WebNestdev</span><span>Создавайте быстрее. Оставайтесь в контроле.</span><span><GitBranch size={12}/> GitHub</span></footer>
+          {/* Подвал — единственное место на главной, где документы видны без открытия меню.
+              Ссылки открываются в новой вкладке: черновик идеи и очередь запуска не теряются. */}
+          <footer className="home-footer">
+            <span>© {new Date().getFullYear()} NestDev</span>
+            <nav className="home-footer-legal" aria-label="Юридические документы">
+              {LEGAL_FOOTER_LINKS.map(id => <a key={id} href={legalPath(id)} target="_blank" rel="noopener noreferrer">{legalDoc(id).short}</a>)}
+            </nav>
+            <span className="home-footer-note">Создавайте быстрее. Оставайтесь в контроле.</span>
+          </footer>
         </div>
 
         <HomeRail

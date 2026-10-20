@@ -50,9 +50,12 @@ export function planName(billing: BillingData | null, plan: PlanId) {
   return billing?.plans.find(item => item.id === plan)?.name ?? fallbackNames[plan];
 }
 
-/** Тариф, на котором аккаунт работает сейчас: платные пока не продаются, значит бесплатный. */
-export function activePlanId(): PlanId {
-  return "free";
+/**
+ * Тариф, на котором аккаунт работает сейчас. Его называет сервер: локальный выбор — пожелание,
+ * а право даёт только оплаченная подписка.
+ */
+export function activePlanId(billing?: BillingData | null): PlanId {
+  return billing?.subscription?.plan ?? billing?.plan ?? "free";
 }
 
 /**
@@ -64,8 +67,8 @@ export function chosenPlanId(choice: PlanId | null = readPlanChoice()): PlanId {
 }
 
 /** True when the advertised plan is not the one the account already has. */
-export function isPendingChoice(choice: PlanId | null = readPlanChoice()) {
-  return chosenPlanId(choice) !== activePlanId();
+export function isPendingChoice(choice: PlanId | null = readPlanChoice(), billing?: BillingData | null) {
+  return chosenPlanId(choice) !== activePlanId(billing);
 }
 
 /** Label of the call to action that leads to the chosen plan. */

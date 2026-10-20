@@ -3,7 +3,9 @@ import { getYandexAuthStatus, startPhoneLogin, verifyPhoneLogin, type YandexAuth
 import { getHealth } from "../../lib/health-api";
 import { WebNestLogo } from "../../components/WebNestLogo";
 import { openCookieSettings } from "../legal/CookieConsent";
+import { legalPath } from "../../lib/legal";
 
+/** Правовые ссылки стоят до отправки кода: согласие даётся осознанно, а не после SMS. */
 const RESEND_SECONDS = 45;
 
 /**
@@ -109,7 +111,7 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void })
 
   return <main className="auth-screen">
     <section className="auth-card">
-      <div className="brand auth-brand"><span className="brand-mark"><WebNestLogo size={24} tone="light"/></span><span>WebNestdev</span></div>
+      <div className="brand auth-brand"><span className="brand-mark"><WebNestLogo size={24} tone="light"/></span><span>NestDev</span></div>
       <div className="auth-heading">
         <span className="eyebrow">АККАУНТ</span>
         <h1>{stage === "code" ? "Введите код из SMS" : "Вход в аккаунт"}</h1>
@@ -134,6 +136,12 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void })
           <input type="checkbox" checked={consent} onChange={event => { setConsent(event.target.checked); setError(""); }} />
           <span>Согласен на обработку номера телефона для входа по SMS</span>
         </label>
+        {/* Согласие даётся осознанно: текст согласия и политика открываются до отправки кода. */}
+        <div className="auth-consent-links">
+          <a href={legalPath("consent")} target="_blank" rel="noopener noreferrer">Согласие на обработку данных</a>
+          <span>·</span>
+          <a href={legalPath("privacy")} target="_blank" rel="noopener noreferrer">Политика конфиденциальности</a>
+        </div>
         {error && <div className="auth-error">{error}</div>}
         <button className="send-button auth-submit" disabled={busy || !phone.trim() || !consent}>{busy ? "Отправляем код…" : "Получить код"}</button>
       </form>}
@@ -149,7 +157,14 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void })
         </div>
       </form>}
 
-      <div className="auth-legal"><button type="button" className="ghost-button" onClick={openCookieSettings}>Cookie-настройки</button></div>
+      {/* Подвал входа: то, что человек вправе прочитать до регистрации. Ссылки открываются в
+          новой вкладке, чтобы введённый номер и код не потерялись. */}
+      <div className="auth-legal">
+        <a href={legalPath("offer")} target="_blank" rel="noopener noreferrer">Оферта</a>
+        <a href={legalPath("terms")} target="_blank" rel="noopener noreferrer">Соглашение</a>
+        <a href={legalPath("privacy")} target="_blank" rel="noopener noreferrer">Персональные данные</a>
+        <button type="button" className="ghost-button" onClick={openCookieSettings}>Cookie-настройки</button>
+      </div>
       {build && build !== "dev" && <div className="auth-build">версия {build.slice(0, 7)}</div>}
     </section>
   </main>;

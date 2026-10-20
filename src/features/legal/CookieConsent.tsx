@@ -2,6 +2,9 @@ import { useEffect, useState } from "react";
 import { BarChart3, Check, Cookie, ShieldCheck, SlidersHorizontal, X } from "lucide-react";
 
 /**
+ * В баннере и в окне настроек есть ссылки на политику cookie и политику данных: выбор делается
+ * с открытыми условиями, а не вслепую.
+ *
  * Согласие на cookie по умолчанию спрашивается один раз и запоминается на устройстве.
  * Обязательные cookie (сессия входа и защита запросов) работают всегда; аналитика и
  * функциональные настройки включаются только после явного выбора.
@@ -99,7 +102,7 @@ export function CookieConsent() {
         <span className="cookie-icon"><Cookie size={18}/></span>
         <div className="cookie-title">
           <strong>Cookie и приватность</strong>
-          <span>Необходимые cookie нужны для входа и защиты аккаунта. Аналитика и удобства — только с вашего согласия.</span>
+          <span>Необходимые cookie нужны для входа и защиты аккаунта. Аналитика и удобства — только с вашего согласия. Подробно — в <a href="/legal/cookies" target="_blank" rel="noopener noreferrer">Политике cookie</a> и <a href="/legal/privacy" target="_blank" rel="noopener noreferrer">Политике обработки данных</a>.</span>
         </div>
       </div>
       <div className="cookie-actions">
@@ -129,7 +132,7 @@ export function CookieConsent() {
         </header>
 
         <div className="modal-body cookie-modal-body">
-          <p className="modal-lead">Выберите, что можно хранить на этом устройстве. Обязательные cookie обеспечивают вход и безопасность; без них сервис не работает.</p>
+          <p className="modal-lead">Выберите, что можно хранить на этом устройстве. Обязательные cookie обеспечивают вход и безопасность; без них сервис не работает. Полный перечень — в <a href="/legal/cookies" target="_blank" rel="noopener noreferrer">Политике cookie</a>.</p>
 
           <div className="cookie-categories">
             <div className="cookie-category">
@@ -160,7 +163,7 @@ export function CookieConsent() {
             </label>
           </div>
 
-          <p className="cookie-modal-note">Необязательные cookie подключаются только после вашего выбора. Согласие можно изменить позже: «Настройки» → «Аккаунт и тариф» → «Предпочтения» → «Cookie-настройки».</p>
+          <p className="cookie-modal-note">Необязательные cookie подключаются только после вашего выбора. Согласие можно изменить позже: «Настройки» → «Аккаунт и тариф» → «Предпочтения» → «Cookie-настройки» или через ссылку в подвале юридических страниц.</p>
         </div>
 
         <footer className="modal-foot cookie-modal-foot">

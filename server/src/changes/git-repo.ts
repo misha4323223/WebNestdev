@@ -19,8 +19,8 @@ import type { Checkpoint, CheckpointFile, CheckpointFileStatus, CheckpointKind, 
  * где живут файлы, и один и тот же код обслуживает и `fs.write`, и `terminal.exec`.
  */
 
-export const GIT_AUTHOR = { name: "WebNestdev Agent", email: "agent@webnestdev.local" };
-export const PUSH_STATE_FILE = "webnestdev.json";
+export const GIT_AUTHOR = { name: "NestDev Agent", email: "agent@nestdev.local" };
+export const PUSH_STATE_FILE = "nestdev.json";
 
 /**
  * Что не попадает в историю проекта: зависимости, сборки, кеши и секреты. Правила пишутся
@@ -290,10 +290,10 @@ export type CreateCheckpointOptions = {
 function commitMessage(options: CreateCheckpointOptions) {
   const subject = options.subject.replace(/\s+/g, " ").trim().slice(0, 140) || "Изменения проекта";
   const trailers = [
-    "WebNestdev-Kind: " + options.kind,
-    options.runId ? "WebNestdev-Run: " + options.runId : "",
-    options.conversationId ? "WebNestdev-Conversation: " + options.conversationId : "",
-    options.revertedTo ? "WebNestdev-Reverted-To: " + options.revertedTo : "",
+    "NestDev-Kind: " + options.kind,
+    options.runId ? "NestDev-Run: " + options.runId : "",
+    options.conversationId ? "NestDev-Conversation: " + options.conversationId : "",
+    options.revertedTo ? "NestDev-Reverted-To: " + options.revertedTo : "",
   ].filter(Boolean);
   return subject + "\n\n" + trailers.join("\n") + "\n";
 }
@@ -447,7 +447,7 @@ export async function listCheckpoints(root: string, options: ListCheckpointsOpti
   const result: Checkpoint[] = [];
   for (const entry of entries) {
     const message = entry.commit.message;
-    const kind = (trailer(message, "WebNestdev-Kind") as CheckpointKind | undefined) ?? "imported";
+    const kind = (trailer(message, "NestDev-Kind") as CheckpointKind | undefined) ?? "imported";
     const changes = (entry.commit.changes ?? []).filter((change): change is [string | null, string | null, string] => Boolean(change[2]));
     const files = changes.map(([newOid, oldOid, filepath]) => ({ path: filepath as string, status: fileStatus(newOid, oldOid) }));
     let isPushed = false;
@@ -465,9 +465,9 @@ export async function listCheckpoints(root: string, options: ListCheckpointsOpti
       message,
       kind,
       createdAt: new Date(entry.commit.committer.timestamp * 1000).toISOString(),
-      ...(trailer(message, "WebNestdev-Run") ? { runId: trailer(message, "WebNestdev-Run") as string } : {}),
-      ...(trailer(message, "WebNestdev-Conversation") ? { conversationId: trailer(message, "WebNestdev-Conversation") as string } : {}),
-      ...(trailer(message, "WebNestdev-Reverted-To") ? { revertedTo: trailer(message, "WebNestdev-Reverted-To") as string } : {}),
+      ...(trailer(message, "NestDev-Run") ? { runId: trailer(message, "NestDev-Run") as string } : {}),
+      ...(trailer(message, "NestDev-Conversation") ? { conversationId: trailer(message, "NestDev-Conversation") as string } : {}),
+      ...(trailer(message, "NestDev-Reverted-To") ? { revertedTo: trailer(message, "NestDev-Reverted-To") as string } : {}),
       files: files.slice(0, 200),
       filesChanged: files.length,
       pushed: isPushed,

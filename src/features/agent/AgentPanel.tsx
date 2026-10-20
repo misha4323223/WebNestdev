@@ -1,7 +1,7 @@
 import { useEffect,useRef,useState,type MouseEvent as ReactMouseEvent } from "react";
 import Markdown,{type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { AlertTriangle,Cpu,FileText,History,Image as ImageIcon,KeyRound,ListPlus,Paperclip,Play,RotateCcw,Search,Send,ShieldCheck,Sparkles,Square,X } from "lucide-react";
+import { AlertTriangle,Cpu,Eye,EyeOff,FileText,History,Image as ImageIcon,KeyRound,ListPlus,Paperclip,Play,RotateCcw,Send,ShieldCheck,Sparkles,Square,X } from "lucide-react";
 import { createAgentSocket } from "../../lib/agent-socket";
 import { apiJson } from "../../lib/api";
 import { answerProjectQuestion,cancelProjectSecret,getConversation,skipProjectQuestion,submitProjectSecret,uploadProjectFile } from "../../lib/project-api";
@@ -17,10 +17,9 @@ const modeKey="webnestdev.agentMode";
 const reasoningKey="webnestdev.reasoning";
 const panelsKey="webnestdev.runPanels";
 /**
- * Поиск в интернете — отдельный переключатель у поля ввода, по умолчанию выключен. Он не входит
- * в «Режимы»: там настройка того, как агент работает, а здесь — разрешение выйти в сеть на этот
- * запуск. Сервер проверяет тот же флаг, поэтому выключенная кнопка означает именно «в интернет не
- * ходить», а не только смену подписи.
+ * Поиск в интернете — переключатель в меню «Режимы», рядом с глубиной размышления, по умолчанию
+ * выключен. Это разрешение выйти в сеть на этот запуск, а не режим работы, поэтому сервер проверяет
+ * тот же флаг: выключенный переключатель означает именно «в интернет не ходить».
  */
 const webSearchKey="webnestdev.webSearch";
 /**
@@ -203,6 +202,9 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   const [secretValue,setSecretValue]=useState("");
   const [secretBusy,setSecretBusy]=useState(false);
   const [secretError,setSecretError]=useState("");
+  // Показать значение можно только на время: окно закрывается — режим показа сбрасывается,
+  // чтобы следующий запрос не открывался с открытым ключом.
+  const [secretVisible,setSecretVisible]=useState(false);
   /**
    * Вопрос агента, который ждёт выбора. Окно живёт над полем ввода: варианты готовые, но всегда
    * можно написать свой. Запуск в это время стоит и продолжается сразу после ответа.
@@ -392,6 +394,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
    */
   function clearSecretPrompt(){
     setSecretPrompt(null);
+    setSecretVisible(false);
     setSecretValue("");
     setSecretError("");
     setSecretBusy(false);
@@ -437,7 +440,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       // The whole stored history comes back: answers, the thinking that now sits above each of them
       // and the tool results that say how each action ended.
       const persisted=Array.isArray(conversation.messages)?conversation.messages:[];
-      replaceMessages(persisted.length?persisted:[{role:"assistant",content:"Привет. Я WebNestdev — веб-агент для создания и развития проектов. Опиши, что нужно сделать."}]);
+      replaceMessages(persisted.length?persisted:[{role:"assistant",content:"Привет. Я NestDev — веб-агент для создания и развития проектов. Опиши, что нужно сделать."}]);
       actionsRef.current=deriveActions(persisted);
       setActions(actionsRef.current);
       // The plan is stored with the conversation; localStorage is only the fallback.
@@ -897,16 +900,20 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       {visibleMessages.map((m,i)=>{
         // Ответ, который модель пишет прямо сейчас: над ним идёт её размышление.
         const live=running&&i===visibleMessages.length-1;
+        // Аватар стоит в строке автора, а не отдельной колонкой: карточка ответа тогда занимает ту же
+        // ширину, что «План задач» и «Действия агента», поэтому левый и правый края совпадают.
         return <div className={"message-row "+m.role+(jumpedIndex===i?" is-jumped":"")} key={i} data-message-index={i}>
-          <div className="message-avatar">{m.role==="assistant"?<Sparkles size={14}/>:"Вы"}</div>
           <div className="message-content">
-            <div className="message-role">{m.role==="assistant"?"WebNestdev":"Вы"}</div>
+            <div className="message-role">
+              {m.role==="assistant"&&<span className="message-avatar" aria-hidden="true"><Sparkles size={11}/></span>}
+              <span>{m.role==="assistant"?"NestDev":"Вы"}</span>
+            </div>
             {/* Размышление — над ответом, в своём контейнере, который можно свернуть и развернуть. */}
             {m.role==="assistant"&&(m.reasoning||live)&&<MessageThinking text={m.reasoning??""} running={live}/>}
             {m.role==="assistant"
               ? <div className="message-text markdown" onClick={openMarkdownLink}>{m.content
                   ? <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{m.content}</Markdown>
-                  : running ? <NestLoader size={34} label="WebNestdev выполняет задачу" /> : ""}</div>
+                  : running ? <NestLoader size={34} label="NestDev выполняет задачу" /> : ""}</div>
               : <div className="message-text">{m.content}</div>}
           </div>
         </div>;
@@ -954,15 +961,6 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
         <button className="send-button resume-button" onClick={continueRun} title="Продолжить прерванный запуск с того же шага" aria-label="Продолжить запуск"><Play size={13}/> Продолжить</button>
       </div>}
       {reconnect&&<div className="composer-notice reconnecting">Связь потеряна — переподключаюсь… попытка {reconnect.attempt}/{reconnect.max}</div>}
-      {/* Вопрос выезжает сверху поля ввода: ответить можно там же, где человек и так пишет. */}
-      {questionPrompt&&<QuestionSheet
-        key={questionPrompt.requestId}
-        prompt={questionPrompt}
-        busy={questionBusy}
-        error={questionError}
-        onAnswer={answer=>void answerQuestion(answer)}
-        onSkip={()=>void skipQuestion()}
-      />}
       <div className="composer">
         <textarea disabled={!loaded} value={prompt} onChange={e=>setPrompt(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send()}}} placeholder={loaded?"Опишите проект или задачу...":"Загружаем сессию…"} rows={3}/>
 
@@ -979,22 +977,8 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
           <div className="composer-tools">
             <button className="icon-button" onClick={()=>fileRef.current?.click()} disabled={!loaded||uploading} title="Прикрепить файл или изображение" aria-label="Прикрепить файл или изображение"><Paperclip size={14}/></button>
             <input ref={fileRef} type="file" multiple hidden onChange={e=>void pickFiles(e.target.files)}/>
-            {/* Поиск в интернете — отдельная кнопка, выключенная по умолчанию: она разрешает сеть на запуск. */}
-            <button
-              type="button"
-              className={"composer-search"+(webSearch?" active":"")}
-              aria-pressed={webSearch}
-              onClick={()=>chooseWebSearch(!webSearch)}
-              title={webSearch
-                ?"Поиск в интернете включён: агент ищет и открывает страницы. Нажмите, чтобы выключить."
-                :"Поиск в интернете выключен. Включите, когда агенту нужна актуальная информация из интернета."}
-              aria-label={webSearch?"Поиск в интернете включён":"Поиск в интернете выключен"}
-            >
-              <Search size={14}/>
-              <span className="composer-search-label">Поиск</span>
-            </button>
-            {/* Режим и глубина размышления — один компактный контрол рядом с полем ввода. */}
-            <AgentModeControl mode={mode} reasoning={reasoning} onMode={chooseMode} onReasoning={chooseReasoning}/>
+            {/* Режим, глубина размышления и поиск в интернете — один компактный контрол. */}
+            <AgentModeControl mode={mode} reasoning={reasoning} webSearch={webSearch} onMode={chooseMode} onReasoning={chooseReasoning} onWebSearch={chooseWebSearch}/>
             <button type="button" className="composer-model" onClick={()=>onOpenModelSettings?.()} title={modelTitle} aria-label={"Модель: "+modelName+". Открыть настройки AI-провайдера"}>
               <Cpu size={12}/>
               <span className="composer-model-name">{modelName}</span>
@@ -1005,7 +989,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
             <button className="send-button" disabled={!loaded||!prompt.trim()} onClick={send} title={running?"В очередь":"Отправить"} aria-label={running?"В очередь":"Отправить"}>{running?<ListPlus size={15}/>:<Send size={15}/>}</button>
           </div>
         </div>
-        {(uploading||running||mode==="planner"||webSearch)&&<div className="composer-hint">{uploading?"Загружаем файлы…":running?"Агент работает — сообщение встанет в очередь":mode==="planner"?"Планировщик только изучает проект и готовит план — файлы не меняются":"Поиск в интернете включён — агент может искать и открывать страницы."}</div>}
+        {(uploading||running||mode==="planner")&&<div className="composer-hint">{uploading?"Загружаем файлы…":running?"Агент работает — сообщение встанет в очередь":"Планировщик только изучает проект и готовит план — файлы не меняются"}</div>}
       </div>
       {changesNotice&&<button type="button" className="changes-toast" onClick={()=>onOpenChanges?.()} disabled={!onOpenChanges} title={onOpenChanges?"Открыть историю изменений проекта":undefined}>
         <History size={14}/>
@@ -1018,10 +1002,27 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       {notice&&<div className="composer-notice">{notice}</div>}
     </div>
 
-    {secretPrompt&&<div className="modal-backdrop" role="presentation" onMouseDown={()=>void cancelSecret()}>
-      <section className="modal secret-modal" role="dialog" aria-modal="true" aria-label="Агент запрашивает ключ" onMouseDown={event=>event.stopPropagation()}>
+    {/* Вопрос агента — отдельное модальное окно: оно не спорит с перепиской и не зависит от того,
+        какая панель открыта, а на телефоне занимает экран целиком и прокручивается внутри себя. */}
+    {questionPrompt&&<QuestionSheet
+      key={questionPrompt.requestId}
+      prompt={questionPrompt}
+      busy={questionBusy}
+      error={questionError}
+      onAnswer={answer=>void answerQuestion(answer)}
+      onSkip={()=>void skipQuestion()}
+    />}
+
+    {secretPrompt&&<div className="modal-backdrop tech-backdrop" role="presentation" onMouseDown={()=>void cancelSecret()}>
+      <section className="modal tech-modal secret-modal" role="dialog" aria-modal="true" aria-labelledby="secret-modal-title" onMouseDown={event=>event.stopPropagation()}>
         <header className="modal-head">
-          <div><span className="eyebrow">КЛЮЧ ДОСТУПА</span><h2>Нужен ваш ключ</h2></div>
+          <div className="tech-modal-title">
+            <span className="tech-modal-icon" aria-hidden="true"><KeyRound size={15}/></span>
+            <div className="tech-modal-heading">
+              <span className="eyebrow">КЛЮЧ ДОСТУПА</span>
+              <h2 id="secret-modal-title">Нужен ваш ключ</h2>
+            </div>
+          </div>
           <button className="icon-button" onClick={()=>void cancelSecret()} aria-label="Отменить запрос"><X size={16}/></button>
         </header>
         <div className="modal-body">
@@ -1033,7 +1034,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
           <label className="secret-field">
             <span>Значение ключа</span>
             <input
-              type="password"
+              type={secretVisible?"text":"password"}
               autoFocus
               autoComplete="new-password"
               spellCheck={false}
@@ -1043,6 +1044,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
               placeholder="Вставьте значение — в чате оно не появится"
               aria-label={secretPrompt.variable}
             />
+            <button type="button" className="secret-toggle" onClick={()=>setSecretVisible(value=>!value)} title={secretVisible?"Скрыть значение":"Показать значение"} aria-label={secretVisible?"Скрыть значение":"Показать значение"} tabIndex={-1}>{secretVisible?<EyeOff size={14}/>:<Eye size={14}/>}</button>
           </label>
           <p className="secret-note"><ShieldCheck size={12}/> Значение видит только сервер: оно попадает в зашифрованное хранилище проекта, а приложение получает его при запуске как <code>process.env</code>. Агент получает подтверждение без самого ключа — в переписку, ответы модели и историю запуска значение не попадает.</p>
           {secretError&&<div className="connector-notice">{secretError}</div>}

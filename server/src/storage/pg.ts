@@ -133,6 +133,9 @@ const PK_BY_TABLE: Record<string, string[]> = {
   phone_consents: ["consent_id"],
   project_secrets: ["project_id"],
   secret_audit: ["id"],
+  billing_payments: ["inv_id"],
+  billing_subscriptions: ["user_id"],
+  billing_counters: ["id"],
 };
 
 /**
@@ -465,6 +468,43 @@ export async function initializeStorage(): Promise<void> {
       created_at TEXT NOT NULL
     )`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("secret_audit")}_project ON ${tbl("secret_audit")} (project_id, created_at)`);
+
+    // Оплата: счёт с номером Робокассы, подтверждение по ResultURL и действующая подписка.
+    // Номер счёта — целое, его же возвращает уведомление, поэтому PRIMARY KEY именно inv_id.
+    await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("billing_payments")} (
+      inv_id BIGINT NOT NULL PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      plan TEXT NOT NULL,
+      amount BIGINT NOT NULL,
+      status TEXT NOT NULL,
+      kind TEXT NOT NULL DEFAULT 'initial',
+      parent_inv_id BIGINT,
+      created_at TEXT NOT NULL,
+      paid_at TEXT,
+      attempts INTEGER NOT NULL DEFAULT 0
+    )`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("billing_payments")}_user ON ${tbl("billing_payments")} (user_id, created_at)`);
+
+    await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("billing_subscriptions")} (
+      user_id TEXT NOT NULL PRIMARY KEY,
+      plan TEXT NOT NULL,
+      status TEXT NOT NULL,
+      started_at TEXT NOT NULL,
+      renews_at TEXT NOT NULL,
+      auto_renew BOOLEAN NOT NULL DEFAULT false,
+      parent_inv_id BIGINT NOT NULL DEFAULT 0,
+      renewal_attempts INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL
+    )`);
+
+    // Сквозной счётчик номеров счетов: номер должен быть целым и уникальным на весь магазин.
+    await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("billing_counters")} (
+      id TEXT NOT NULL PRIMARY KEY,
+      value BIGINT NOT NULL DEFAULT 0
+    )`);
+
+    // Базы, созданные до появления счётчика попыток, дополняются здесь.
+    await pool.query(`ALTER TABLE ${tbl("billing_subscriptions")} ADD COLUMN IF NOT EXISTS renewal_attempts INTEGER NOT NULL DEFAULT 0`);
 
     console.log("[pg] storage initialized: all tables ready");
   })().catch((error) => {

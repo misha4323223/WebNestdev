@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowRight, Check, RefreshCw, Sparkles, X } from "lucide-react";
-import { getBilling, paymentsPendingNotice, type BillingData, type PlanId } from "../../lib/billing-api";
+import { ArrowRight, Check, CreditCard, RefreshCw, Sparkles, X } from "lucide-react";
+import { getBilling, paymentNotice, startCheckout, type BillingData, type PlanId } from "../../lib/billing-api";
 import { activePlanId, planName, readPlanChoice, writePlanChoice } from "../../lib/plan-choice";
 
 /**
- * Plan picker shown as a modal over the home page. Choosing a plan only records the choice:
- * payment is not connected yet, so no plan is enabled and nothing is charged.
+ * Ссылки на оферту и возврат показываются рядом с кнопкой оплаты — до перехода в платёжный сервис.
+ *
+ * Выбор тарифа. Когда приём денег настроен, кнопка платного тарифа открывает страницу Робокассы:
+ * тариф включает сервер по уведомлению об оплате, а не этот экран. Пока оплата не настроена,
+ * выбор остаётся пожеланием и сохраняется на устройстве.
  */
 export function PlanPickerModal({ open, onClose, onOpenDetails, onChanged }: {
   open: boolean;
@@ -16,6 +19,7 @@ export function PlanPickerModal({ open, onClose, onOpenDetails, onChanged }: {
   const [billing, setBilling] = useState<BillingData | null>(null);
   const [selected, setSelected] = useState<PlanId | null>(null);
   const [loading, setLoading] = useState(false);
+  const [paying, setPaying] = useState<PlanId | null>(null);
   const [error, setError] = useState("");
   // Callbacks are kept in refs so the open effect does not re-run on every render.
   const closeRef = useRef(onClose);
@@ -50,9 +54,24 @@ export function PlanPickerModal({ open, onClose, onOpenDetails, onChanged }: {
     changedRef.current?.();
   }
 
+  /** Счёт создаёт сервер; браузер только уходит на страницу оплаты, которую тот вернул. */
+  async function pay(plan: "pro" | "team") {
+    setPaying(plan); setError("");
+    try {
+      const checkout = await startCheckout(plan);
+      writePlanChoice(plan);
+      changedRef.current?.();
+      window.location.assign(checkout.paymentUrl);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setPaying(null);
+    }
+  }
+
   if (!open) return null;
 
-  const current = activePlanId();
+  const enabled = Boolean(billing?.paymentsEnabled);
+  const current = activePlanId(billing);
   const chosen = selected ? billing?.plans.find(plan => plan.id === selected) : undefined;
 
   return <div className="modal-backdrop" role="presentation" onMouseDown={() => closeRef.current()}>
@@ -66,21 +85,25 @@ export function PlanPickerModal({ open, onClose, onOpenDetails, onChanged }: {
       </header>
 
       <div className="modal-body">
-        <p className="modal-lead">{paymentsPendingNotice}</p>
+        <p className="modal-lead">{paymentNotice(billing)}</p>
 
         {loading && <div className="modal-state"><RefreshCw size={14} className="spin"/> Загружаем тарифы…</div>}
 
         {billing && <>
           <div className="subscription-current">
             <div><span>Текущий тариф</span><strong>{planName(billing, current)}</strong></div>
-            <span className="plan-pill"><Sparkles size={12}/> ОПЛАТА СКОРО</span>
+            <span className="plan-pill">
+              {enabled ? <><CreditCard size={12}/> ОПЛАТА КАРТОЙ И СБП</> : <><Sparkles size={12}/> ОПЛАТА СКОРО</>}
+            </span>
           </div>
-          <p className="account-muted">{chosen
-            ? "Выбран тариф «" + chosen.name + "» · " + chosen.priceLabel + ". Включим его, когда подключим оплату."
-            : "Тариф можно выбрать заранее: выбор сохранится и включится вместе с оплатой."}</p>
+          <p className="account-muted">{billing.subscription?.renewsAt
+            ? "Тариф действует до " + new Date(billing.subscription.renewsAt).toLocaleDateString("ru-RU", { day: "numeric", month: "long", year: "numeric" }) + ". Оплата продлевает срок от текущей даты окончания."
+            : chosen
+              ? "Выбран тариф «" + chosen.name + "» · " + chosen.priceLabel + ". " + (enabled ? "Оплатите его, чтобы включить." : "Включим его, когда подключим оплату.")
+              : (enabled ? "Оплата проходит на странице Робокассы; тариф включается сразу после подтверждения платежа." : "Тариф можно выбрать заранее: выбор сохранится и включится вместе с оплатой.")}</p>
 
           <div className="plan-grid">
-            {billing.plans.map(plan => <article key={plan.id} className={"plan-card" + (plan.id === current ? " selected" : "") + (selected === plan.id ? " chosen" : "")}>
+            {billing.plans.map(plan => <article key={plan.id} className={"plan-card" + (plan.id === current ? " selected" : "") + (selected === plan.id && plan.id !== current ? " chosen" : "")}>
               <div className="plan-card-head">
                 <div><strong>{plan.name}</strong><small>{plan.description}</small></div>
                 <span>{plan.priceLabel}</span>
@@ -88,11 +111,17 @@ export function PlanPickerModal({ open, onClose, onOpenDetails, onChanged }: {
               <ul>{plan.features.map(feature => <li key={feature}><Check size={12}/>{feature}</li>)}</ul>
               {plan.id === current
                 ? <span className="plan-current">Текущий тариф</span>
-                : <button className="plan-action" onClick={() => choose(plan.id)}>{selected === plan.id ? "Выбран · оплата скоро" : "Выбрать тариф"}</button>}
+                : plan.id === "free"
+                  ? <span className="plan-current">Входит всегда</span>
+                  : enabled
+                    ? <button className="plan-action" onClick={() => void pay(plan.id as "pro" | "team")} disabled={paying !== null}>
+                        {paying === plan.id ? <><RefreshCw size={12} className="spin"/> Открываем оплату…</> : <>Оплатить {plan.priceLabel} <ArrowRight size={12}/></>}
+                      </button>
+                    : <button className="plan-action" onClick={() => choose(plan.id)}>{selected === plan.id ? "Выбран · оплата скоро" : "Выбрать тариф"}</button>}
             </article>)}
           </div>
 
-          {chosen && <div className="plan-confirm">
+          {chosen && !enabled && <div className="plan-confirm">
             <div><strong>Выбран тариф «{chosen.name}» · {chosen.priceLabel}</strong><span>Тариф включится вместе с оплатой — выбор уже сохранён.</span></div>
             <div className="plan-confirm-actions">
               <button className="ghost-button" onClick={() => choose(null)}>Убрать выбор</button>
@@ -100,7 +129,13 @@ export function PlanPickerModal({ open, onClose, onOpenDetails, onChanged }: {
             </div>
           </div>}
 
-          <div className="billing-disclaimer">Лимиты тарифов предварительные и могут измениться до запуска оплаты.</div>
+          {/* Условия оплаты видны там, где человек нажимает «Оплатить»: до перехода в платёжный
+              сервис он принимает оферту и знает порядок возврата. */}
+          <div className="billing-disclaimer">
+            Оплата принимается картой и через СБП, чек приходит на e-mail или телефон. Нажимая «Оплатить», вы принимаете{" "}
+            <a href="/legal/offer" target="_blank" rel="noopener noreferrer">оферту</a> и{" "}
+            <a href="/legal/payments" target="_blank" rel="noopener noreferrer">условия оплаты и возврата</a>.
+          </div>
         </>}
 
         {error && <div className="settings-error">{error}</div>}

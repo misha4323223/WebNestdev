@@ -1,0 +1,182 @@
+import type { FastifyInstance, FastifyRequest } from "fastify";
+import { z } from "zod";
+import { requireUser } from "../auth/auth.js";
+import { PLAN_CATALOG, type PlanId } from "../account/plans.js";
+import { isSameOriginRequest, sameOriginRefusal } from "../security/same-origin.js";
+import {
+  buildPaymentUrl,
+  planPriceRub,
+  publicPlans,
+  resultSignatureBase,
+  robokassaConfig,
+  sameSignature,
+  signValue,
+} from "../billing/robokassa.js";
+import {
+  createPayment,
+  getPayment,
+  markPaymentPaid,
+  setAutoRenew,
+} from "../billing/store.js";
+
+/**
+ * Оплата подписки через Робокассу.
+ *
+ * Три двери, и у каждой своя роль:
+ *   POST /api/billing/checkout      — браузер просит счёт, сервер отдаёт ссылку на оплату;
+ *   POST /api/billing/robokassa/result — Робокасса подтверждает деньги (единственный источник правды);
+ *   GET  /api/billing/robokassa/success|fail — браузер возвращается на сайт после оплаты.
+ *
+ * Возврат в браузере ничего не включает: `SuccessURL` открывается и при отмене на стороне
+ * пользователя, поэтому тариф меняет только уведомление с верной подписью по паролю №2.
+ */
+
+const checkoutSchema = z.object({ plan: z.enum(["pro", "team"]) });
+const renewSchema = z.object({ autoRenew: z.boolean() });
+
+type FormBody = Record<string, string | undefined>;
+
+/**
+ * Защита от CSRF для действий с деньгами.
+ *
+ * В production панель и API живут на одном домене, поэтому проверка Origin обязательна. В
+ * разработке панель открыта на порту Vite и ходит в API через прокси: Origin (5173) и Host (8787)
+ * там разные по определению, и строгая проверка отвергала бы каждый платёж из локальной панели.
+ * Cookie сессии всё равно `SameSite=Lax`, так что межсайтовый POST её не получит.
+ */
+function crossSiteRefused(request: FastifyRequest) {
+  if (process.env.NODE_ENV !== "production") return false;
+  return !isSameOriginRequest(request);
+}
+
+function publicSiteUrl(request: FastifyRequest) {
+  const configured = (process.env.WEBNESTDEV_SITE_DOMAIN ?? "").trim().replace(/\/+$/, "");
+  if (configured) return /^https?:\/\//i.test(configured) ? configured : "https://" + configured;
+  const forwarded = request.headers["x-forwarded-proto"];
+  const proto = (Array.isArray(forwarded) ? forwarded[0] : forwarded)?.split(",")[0].trim().toLowerCase() || request.protocol || "http";
+  const host = (Array.isArray(request.headers["x-forwarded-host"]) ? request.headers["x-forwarded-host"][0] : request.headers["x-forwarded-host"]) || request.headers.host || "localhost:8787";
+  return proto + "://" + host;
+}
+
+/**
+ * Робокасса присылает уведомление формой (`application/x-www-form-urlencoded`), а Fastify по
+ * умолчанию понимает только JSON. Разбор добавляется здесь, а не новой зависимостью: это несколько
+ * строк стандартного `URLSearchParams`.
+ */
+function registerFormBody(app: FastifyInstance) {
+  if (app.hasContentTypeParser("application/x-www-form-urlencoded")) return;
+  app.addContentTypeParser("application/x-www-form-urlencoded", { parseAs: "string" }, (_request, body, done) => {
+    const text = typeof body === "string" ? body : body.toString("utf8");
+    try {
+      done(null, Object.fromEntries(new URLSearchParams(text)) as FormBody);
+    } catch (error) {
+      done(error as Error, undefined);
+    }
+  });
+}
+
+export async function registerBillingRoutes(app: FastifyInstance) {
+  registerFormBody(app);
+
+  /**
+   * Счёт на оплату тарифа. Сумма берётся из каталога (или из ключа ROBOKASSA_PRICE_*), а не из
+   * запроса: браузер не должен решать, сколько стоит подписка.
+   */
+  app.post("/api/billing/checkout", async (request, reply) => {
+    const user = await requireUser(request, reply); if (!user) return;
+    if (crossSiteRefused(request)) return reply.code(403).send({ error: sameOriginRefusal() });
+    const parsed = checkoutSchema.safeParse(request.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: "Выберите платный тариф: «Про» или «Команда»" });
+    const body = parsed.data;
+    const config = robokassaConfig();
+    if (!config.configured) {
+      return reply.code(503).send({ error: "Оплата ещё не настроена: администратору нужно добавить логин и пароли Робокассы в «Ключи сервера»." });
+    }
+    const amount = planPriceRub(body.plan);
+    if (!(amount > 0)) return reply.code(409).send({ error: "Для этого тарифа не задана цена" });
+    const payment = await createPayment({ userId: user.id, plan: body.plan, amount });
+    const plan = PLAN_CATALOG[body.plan];
+    const link = buildPaymentUrl({
+      config,
+      plan: body.plan,
+      planName: plan.name,
+      invId: payment.invId,
+      amount,
+      description: "Подписка NestDev «" + plan.name + "», 1 месяц",
+      email: user.email,
+    });
+    request.log.info({ invId: payment.invId, plan: body.plan, amount, test: config.testMode }, "billing: счёт создан");
+    return { invId: payment.invId, paymentUrl: link.url, amount, currency: "RUB", test: config.testMode };
+  });
+
+  /**
+   * Уведомление об успешной оплате. Порядок проверок важен: подпись, затем счёт, затем сумма.
+   * `OK{InvId}` — единственный ответ, после которого Робокасса считает платёж доставленным.
+   */
+  app.post("/api/billing/robokassa/result", async (request, reply) => {
+    reply.type("text/plain; charset=utf-8");
+    const config = robokassaConfig();
+    if (!config.configured) return reply.code(503).send("Payment is not configured");
+    const body = (request.body ?? {}) as FormBody;
+    const outSum = String(body.OutSum ?? "").trim();
+    const invId = Number(body.InvId);
+    const signature = String(body.SignatureValue ?? "");
+    if (!outSum || !Number.isInteger(invId) || invId <= 0) return reply.code(400).send("Invalid notification");
+
+    const expected = signValue(resultSignatureBase(outSum, invId, config.password2), config.hash);
+    if (!sameSignature(expected, signature)) {
+      request.log.warn({ invId }, "billing: уведомление с неверной подписью отклонено");
+      return reply.code(400).send("Invalid signature");
+    }
+
+    const payment = await getPayment(invId);
+    if (!payment) {
+      request.log.error({ invId }, "billing: уведомление о неизвестном счёте");
+      return reply.code(404).send("Unknown invoice");
+    }
+    // Сравнение сумм, а не строк: тестовый и боевой режимы печатают OutSum по-разному.
+    if (Math.abs(Number(outSum) - payment.amount) > 0.01) {
+      request.log.error({ invId, outSum, expected: payment.amount }, "billing: сумма уведомления не совпала со счётом");
+      return reply.code(400).send("Amount mismatch");
+    }
+
+    const result = await markPaymentPaid(invId, { autoRenew: config.recurring });
+    if (result?.alreadyPaid) request.log.info({ invId }, "billing: повторное уведомление, платёж уже закрыт");
+    else request.log.info({ invId, plan: payment.plan, userId: payment.userId, until: result?.subscription.renewsAt }, "billing: оплата подтверждена");
+    return "OK" + invId;
+  });
+
+  /**
+   * Возврат браузера. Это только редирект на панель с отметкой: тариф уже включён (или ещё нет)
+   * серверным уведомлением, и страница сама перечитает `/api/billing`.
+   */
+  app.get("/api/billing/robokassa/success", async (request, reply) => {
+    const inv = Number((request.query as FormBody | undefined)?.InvId);
+    const suffix = Number.isInteger(inv) && inv > 0 ? "&inv=" + inv : "";
+    return reply.redirect(publicSiteUrl(request) + "/?payment=success" + suffix);
+  });
+  app.get("/api/billing/robokassa/fail", async (request, reply) => {
+    const inv = Number((request.query as FormBody | undefined)?.InvId);
+    const suffix = Number.isInteger(inv) && inv > 0 ? "&inv=" + inv : "";
+    return reply.redirect(publicSiteUrl(request) + "/?payment=fail" + suffix);
+  });
+
+  /** Автопродление: выключается и включается человеком, а не платежом. */
+  app.post("/api/billing/subscription", async (request, reply) => {
+    const user = await requireUser(request, reply); if (!user) return;
+    if (crossSiteRefused(request)) return reply.code(403).send({ error: sameOriginRefusal() });
+    const body = renewSchema.parse(request.body ?? {});
+    const config = robokassaConfig();
+    if (body.autoRenew && !config.recurring) {
+      return reply.code(409).send({ error: "Автопродление станет доступно после подключения услуги «Периодические платежи» в Робокассе." });
+    }
+    const updated = await setAutoRenew(user.id, body.autoRenew);
+    if (!updated) return reply.code(404).send({ error: "Платной подписки нет — сначала оплатите тариф" });
+    return { subscription: updated };
+  });
+
+  /** Каталог с ценами: интерфейс не хранит суммы у себя. */
+  app.get("/api/billing/plans", async () => ({ plans: publicPlans() }));
+}
+
+export type { PlanId };

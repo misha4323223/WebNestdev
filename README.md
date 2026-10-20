@@ -1,6 +1,6 @@
-# WebNestdev
+# NestDev
 
-<img src="public/brand/nestdev-icon-180.png" alt="Логотип WebNestdev" width="96" height="96" />
+<img src="public/brand/nestdev-icon-180.png" alt="Логотип NestDev" width="96" height="96" />
 
 Web-native evolution of the NestDev agent architecture.
 
@@ -368,6 +368,18 @@ Stored credentials are encrypted with the same key as every other secret, live i
 The agent uses three tools (`server/src/tools/service-tools.ts`): `service.status` (what is connected, with the account — never the key), `service.env` and `service.secrets`. `service.env` copies a connected service's variables into the project's encrypted secret store, so the generated app reads `process.env.S3_ACCESS_KEY_ID`, `process.env.YOOKASSA_SHOP_ID`, `process.env.GIGACHAT_AUTH_KEY` and so on at run time — the values never enter the model's context or the tool result, only the names do. That is what makes "подключите оплату" a card the user fills once instead of a key pasted into the chat.
 
 Adding a service means an entry in `server/src/services/catalog.ts` (fields, env names, defaults, `derive`) and in `src/features/integrations/services/catalog.ts` (name, colour, steps), plus a branch in `verify.ts` when a safe check exists. The two catalogs are kept in step by hand — ids, field keys, `optional`, `secret` and names — because a field the panel demands that the server does not read is a broken card.
+
+## Subscriptions and payments
+
+Paid plans are sold through Robokassa: `POST /api/billing/checkout` creates a signed invoice,
+`POST /api/billing/robokassa/result` is the server-to-server notification that closes the payment and
+activates or extends the subscription, and `GET /api/billing` reports the plan, its end date, the
+auto-renew switch and the payment history. The plan a user has actually paid for is read by
+`accountPlanFor` (`server/src/billing/store.ts`) and therefore changes quotas, project and storage
+limits and the web-search provider at once. Auto-renew charges run hourly and only when the shop has
+the recurring-payments service enabled. Keys are entered in **Settings → Platform keys → Payment
+(Robokassa)** and stored encrypted; step-by-step cabinet setup (ResultURL, passwords, receipts for
+self-employed, test mode) is in [docs/ROBOKASSA.md](docs/ROBOKASSA.md).
 
 ## Changes and rollback
 

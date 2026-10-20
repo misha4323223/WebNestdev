@@ -183,7 +183,7 @@ export async function changesOverview(projectId: string, userId: string): Promis
     // уйти, если создание репозитория закончилось без отправки.
     checkpoints: checkpoints.map(checkpoint => withLink({
       ...checkpoint,
-      pushed: checkpoint.pushed || (!/^WebNestdev-Kind:/m.test(checkpoint.message) && Boolean(repository.remoteUrl)),
+      pushed: checkpoint.pushed || (!/^NestDev-Kind:/m.test(checkpoint.message) && Boolean(repository.remoteUrl)),
     }, repository)),
   };
 }

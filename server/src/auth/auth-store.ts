@@ -81,7 +81,7 @@ export async function createUser(email:string, password:string){
 export const DEMO_ACCOUNT = { email: "demo@webnestdev.local", password: "demo1234" };
 
 /**
- * Shared demo account: WebNestdev seeds it on startup so a fresh install can be
+ * Shared demo account: NestDev seeds it on startup so a fresh install can be
  * opened without registering. Disabled in production unless WEBNESTDEV_DEMO_USER=1;
  * credentials can be overridden with WEBNESTDEV_DEMO_EMAIL / WEBNESTDEV_DEMO_PASSWORD.
  */
