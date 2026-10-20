@@ -6,6 +6,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * настоящим координатам строк, а не «поровну»), при наведении показывает сам запрос, а клик
  * переносит переписку к нему.
  *
+ * Сама полоска — и есть прокрутка: системный бегунок в переписке спрятан, а перетаскивание вдоль
+ * меток двигает переписку, как ползунок. Клик по метке остаётся переходом к запросу, поэтому
+ * короткое нажатие и перетаскивание различаются по смещению пальца или курсора.
+ *
  * Почему это отдельный компонент, а не часть панели: ему нужен доступ к скролл-контейнеру
  * переписки и к списку запросов, но ничего больше. Панель владеет только прокруткой — она
  * делает её так же, как и остальные свои прокрутки, и подсвечивает найденное сообщение.
@@ -35,6 +39,13 @@ export function ChatBookmarks({ containerRef, items, onJump }: {
   // На телефоне рельса узкая, и полоски в настоящих координатах слипаются в одну. Там это точки —
   // по одной на запрос и поровну — поэтому «каждая точка = мой запрос» читается сразу, а не
   // превращается в пунктир из десятка соседних полосок.
+  // Перетаскивание полоски: moved — смещение больше порога, тогда отпускание не считается кликом
+  // по метке. Слушатели висят на window, а не на самой полоске: палец во время перетаскивания
+  // уходит за её пределы, а захват указателя отнял бы click у меток — по ним нужен переход.
+  const dragRef = useRef<{ moved: boolean; startY: number; top: number; height: number } | null>(null);
+  const suppressClickRef = useRef(false);
+  const detachRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => { detachRef.current?.(); }, []);
   const [compact, setCompact] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 650px)").matches);
   useEffect(() => {
     const query = window.matchMedia("(max-width: 650px)");
@@ -112,17 +123,59 @@ export function ChatBookmarks({ containerRef, items, onJump }: {
     return () => box.removeEventListener("scroll", onScroll);
   }, [containerRef, measure, scheduleMeasure]);
 
+  // Прокрутка полоской: доля от высоты рельсы — та же доля от прокручиваемой длины переписки.
+  const scrollToRatio = useCallback((ratio: number) => {
+    const box = containerRef.current;
+    if (!box) return;
+    const max = box.scrollHeight - box.clientHeight;
+    if (max <= 0) return;
+    box.scrollTop = Math.max(0, Math.min(1, ratio)) * max;
+  }, [containerRef]);
+
+  function railPointerDown(event: React.PointerEvent<HTMLDivElement>) {
+    if (event.button !== 0) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const drag = { moved: false, startY: event.clientY, top: rect.top, height: rect.height };
+    dragRef.current = drag;
+
+    const move = (e: PointerEvent) => {
+      // Порог в несколько пикселей: палец на телефоне всегда чуть смещается, и без него каждый
+      // клик по метке превращался бы в прокрутку.
+      if (!drag.moved && Math.abs(e.clientY - drag.startY) < 4) return;
+      drag.moved = true;
+      if (drag.height > 0) scrollToRatio((e.clientY - drag.top) / drag.height);
+    };
+    const end = () => {
+      detachRef.current?.();
+      dragRef.current = null;
+      if (!drag.moved) return;
+      suppressClickRef.current = true;
+      // Снять запрет после того, как браузер разошлёт click по метке под пальцем.
+      window.setTimeout(() => { suppressClickRef.current = false; }, 0);
+    };
+    detachRef.current = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", end);
+      window.removeEventListener("pointercancel", end);
+      detachRef.current = null;
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", end);
+    window.addEventListener("pointercancel", end);
+  }
+
   if (items.length < 2) return null;
 
   const textOf = (index: number) => itemsRef.current.find(item => item.index === index)?.text ?? "";
 
-  return <div className="chat-bookmarks" aria-label="Закладки переписки" role="navigation">
+  return <div className="chat-bookmarks" aria-label="Прокрутка и закладки переписки" role="navigation"
+    onPointerDown={railPointerDown}>
     {marks.map((mark, position) => <button
       key={mark.index}
       type="button"
       className={"chat-bookmark" + (activeIndex === mark.index ? " is-active" : "")}
       style={{ top: ((compact ? (position + 0.5) / marks.length : mark.ratio) * 100) + "%" }}
-      onClick={() => onJump(mark.index)}
+      onClick={() => { if (suppressClickRef.current) return; onJump(mark.index); }}
       onMouseEnter={() => { setHovered(mark.index); measure(); }}
       onMouseLeave={() => setHovered(current => (current === mark.index ? null : current))}
       onFocus={() => { setHovered(mark.index); measure(); }}

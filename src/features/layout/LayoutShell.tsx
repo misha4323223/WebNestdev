@@ -31,7 +31,7 @@ export function LayoutShell({children,projectName,view,onView,onSettings,onSecre
   },[sidebarOpen]);
 
   return <div className={"app-shell"+(sidebarHidden?" sidebar-hidden":"")}>
-    <Topbar projectName={projectName} onMenu={()=>setSidebarOpen(v=>!v)} onHome={onHome} onPlan={onSettings} previewOpen={previewOpen} previewRunning={previewRunning} onPreviewToggle={onPreviewToggle}/>
+    <Topbar projectName={projectName} onMenu={()=>setSidebarOpen(v=>!v)} onHome={onHome} previewOpen={previewOpen} previewRunning={previewRunning} onPreviewToggle={onPreviewToggle}/>
     <div className="workspace">
       <div className={"sidebar-backdrop"+(sidebarOpen?" open":"")} onClick={()=>setSidebarOpen(false)} aria-hidden="true"/>
       <Sidebar open={sidebarOpen} view={view} onView={v=>{onView(v);setSidebarOpen(false)}} projectName={projectName} onSettings={onSettings} onSecrets={()=>{onSecrets();setSidebarOpen(false)}} onHome={()=>{onHome();setSidebarOpen(false)}}/>
