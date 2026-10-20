@@ -1,5 +1,7 @@
 *{box-sizing:border-box}
-:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#e8eaed;background:#0b0d10;font-synthesis:none;text-rendering:optimizeLegibility}
+/* Один цвет окантовки на всю панель: переписка, поле ввода, план, действия, файлы и сайдбар
+   выглядят частями одной рамы, а не набором случайных блоков. */
+:root{--edge:#2a323b;--topbar-h:64px;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#e8eaed;background:#0b0d10;font-synthesis:none;text-rendering:optimizeLegibility}
 body{margin:0;min-width:320px;background:#0b0d10}
 /* Полосы прокрутки в цвет интерфейса: системная белая полоса в тёмной панели
    выглядит как чужая деталь, особенно в переписке с агентом. */
@@ -14,12 +16,15 @@ button,textarea{font:inherit}button{color:inherit}
 /* Главная и рабочая область живут в дереве одновременно, а показывается одна из них: скрытая
    рабочая область продолжает держать сокет запуска, поэтому уход на главную не останавливает агента. */
 .app-pane{min-height:100dvh}.app-pane[hidden]{display:none}
-.topbar{height:48px;flex:none;border-bottom:1px solid #20242a;background:#0e1014;display:flex;align-items:center;padding:0 12px;gap:18px;position:relative;z-index:20}
-.brand{display:flex;align-items:center;gap:8px;font-size:13px;font-weight:650;min-width:190px}
+.topbar{height:var(--topbar-h);flex:none;border-bottom:1px solid var(--edge);background:#0e1014;display:flex;align-items:center;padding:0 12px;gap:18px;position:relative;z-index:20}
+/* Знак стоит над подписью: логотип узнаётся раньше, чем читается название, поэтому название
+   мелкое и уходит под него. */
+.brand{display:flex;flex-direction:column;align-items:flex-start;gap:1px;min-width:0;font-weight:650;line-height:1}
+.brand-name{font-size:8px;font-weight:650;letter-spacing:.16em;text-transform:uppercase;color:#7c8591;padding-left:3px}
 /* The logo doubles as the way back to the home screen. */
 .brand-home{border:0;background:transparent;padding:0;cursor:pointer;color:inherit;text-align:left}
 /* Знак рисуется на прозрачном фоне, светлым вариантом: тёмная подложка вместо светлой плашки. */
-.brand-home:hover .brand-mark{background:#1a1f26}.brand-mark{width:34px;height:34px;border-radius:9px;background:transparent;color:#eef2f6;display:grid;place-items:center}.brand-mark img{display:block;object-fit:contain;filter:drop-shadow(0 2px 10px rgba(238,242,246,.14))}
+.brand-home:hover .brand-mark{background:#1a1f26}.brand-mark{width:46px;height:46px;border-radius:11px;background:transparent;color:#eef2f6;display:grid;place-items:center}.brand-mark img{display:block;object-fit:contain;filter:drop-shadow(0 2px 10px rgba(238,242,246,.14))}
 .topbar-project{display:flex;align-items:center;gap:7px;font-size:12px;color:#aeb4bd}.topbar-actions{margin-left:auto;display:flex;gap:6px}
 .topbar-plan{position:relative;height:28px;display:flex;align-items:center;gap:7px;border:1px solid #2e3742;border-radius:999px;background:linear-gradient(180deg,#171c23,#11161c);color:#c3cad3;font-size:10px;padding:0 5px 0 6px;cursor:pointer;white-space:nowrap;box-shadow:inset 0 1px 0 rgba(255,255,255,.04),0 1px 8px rgba(0,0,0,.18);transition:border-color .16s ease,background .16s ease,transform .16s ease}
 .topbar-plan:hover{border-color:#47525e;background:linear-gradient(180deg,#1b222a,#141a21);color:#eef1f4;transform:translateY(-1px)}
@@ -31,40 +36,18 @@ button,textarea{font:inherit}button{color:inherit}
 .topbar-plan-upgrade{border-color:#39473c;background:linear-gradient(180deg,#19231d,#111820)}
 .topbar-plan-upgrade:hover{border-color:#55715b}
 .icon-button,.ghost-button{border:1px solid transparent;background:transparent;border-radius:6px;display:flex;align-items:center;gap:6px;cursor:pointer}.icon-button{width:30px;height:30px;justify-content:center}.ghost-button{height:30px;padding:0 9px;font-size:11px;color:#aeb4bd}.icon-button:hover,.ghost-button:hover{background:#171a20;border-color:#282d34}
-.workspace{flex:1;min-height:0;display:flex}.sidebar{width:210px;flex:none;border-right:1px solid #20242a;background:#0d0f13;display:flex;flex-direction:column;padding:10px 8px;min-height:0;overflow-y:auto;overflow-x:hidden}
+.workspace{flex:1;min-height:0;display:flex}.sidebar{width:210px;flex:none;border-right:1px solid var(--edge);background:#0d0f13;display:flex;flex-direction:column;padding:10px 8px;min-height:0;overflow-y:auto;overflow-x:hidden}
+.sidebar-backdrop{display:none}
 /* Настройки и публикация занимают всю ширину: колонка слева закрывается, а вернуться
    можно кнопкой «К работе» внутри самих настроек. На телефоне шторка и так выезжает поверх. */
-@media(min-width:651px){.app-shell.sidebar-hidden .sidebar{display:none}}.sidebar-head{display:flex;gap:5px}.new-project{width:100%;height:31px;border:1px solid #2c3239;background:#171a1f;border-radius:6px;display:flex;align-items:center;justify-content:center;gap:6px;font-size:11px;cursor:pointer}.new-project:hover{background:#1c2026}
+@media(min-width:651px){.app-shell.sidebar-hidden .sidebar{display:none}}
 .sidebar-section{padding:15px 4px 0}.section-label,.eyebrow{font-size:9px;letter-spacing:.09em;color:#69717c;font-weight:700}.section-label{padding:0 6px 7px}.nav-item{width:100%;height:30px;border:0;background:transparent;color:#969da7;border-radius:5px;text-align:left;padding:0 8px;display:flex;align-items:center;gap:8px;font-size:11px;cursor:pointer}.nav-item:hover,.nav-item.active{background:#171a1f;color:#e7e9ec}.project-row{height:30px;display:flex;align-items:center;gap:8px;padding:0 8px;color:#b6bbc3;font-size:11px}.status-dot{width:6px;height:6px;border-radius:50%;background:#6b747e;display:inline-block}.sidebar-footer{margin-top:auto;padding:10px 4px}
-/* Партнёрский слот: компактная технологичная карточка внизу сайдбара. Она меняется раз в 10
-   минут, а тонкая полоса внизу отсчитывает время до следующего слота; акцент задаётся слотом
-   через `data-accent`, поэтому новые партнёры не требуют новых стилей. */
-.partner{--partner:#8fd3ad;--partner-soft:rgba(112,190,150,.14);--partner-line:rgba(112,190,150,.34);margin:0 0 8px;display:grid;gap:6px}
-.partner[data-accent="mint"]{--partner:#8fd3ad;--partner-soft:rgba(112,190,150,.14);--partner-line:rgba(112,190,150,.34)}
-.partner[data-accent="amber"]{--partner:#d9bd7c;--partner-soft:rgba(217,189,124,.13);--partner-line:rgba(217,189,124,.32)}
-.partner[data-accent="sky"]{--partner:#8fbcd8;--partner-soft:rgba(143,188,216,.13);--partner-line:rgba(143,188,216,.32)}
-.partner-head{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:0 1px;color:#69717c;font-size:8.5px;font-weight:700;letter-spacing:.1em}
-.partner-eyebrow{display:inline-flex;align-items:center;gap:4px;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.partner-eyebrow svg{flex:none;color:var(--partner)}
-.partner-count{flex:none;color:#59616c;font-variant-numeric:tabular-nums;letter-spacing:.04em}
-.partner-card{position:relative;display:flex;align-items:flex-start;gap:8px;padding:9px 9px 12px;border:1px solid #242b34;border-radius:9px;background:linear-gradient(155deg,#121821,#0d1116);color:#cfd5dd;text-decoration:none;overflow:hidden;transition:border-color .18s ease,background .18s ease}
-.partner-card:hover{border-color:#33404d;background:linear-gradient(155deg,#151d27,#0f141a)}
-.partner-card::before{content:"";position:absolute;inset:0;pointer-events:none;background-image:linear-gradient(rgba(255,255,255,.028) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.028) 1px,transparent 1px);background-size:11px 11px;opacity:.6}
-.partner-logo{position:relative;flex:none;width:26px;height:26px;border-radius:7px;border:1px solid var(--partner-line);background:var(--partner-soft);color:var(--partner);display:grid;place-items:center;font:700 9.5px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.02em}
-.partner-text{position:relative;min-width:0;display:grid;gap:2px}
-.partner-text strong{color:#e7eaef;font-size:10.5px;font-weight:650;line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.partner-text span{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;color:#828b97;font-size:9px;line-height:1.4}
-.partner-arrow{position:relative;flex:none;margin-left:auto;color:#55606d;transition:color .18s ease,transform .18s ease}
-.partner-card:hover .partner-arrow{color:var(--partner);transform:translate(1px,-1px)}
-.partner-timer{position:absolute;left:0;right:0;bottom:0;height:2px;background:var(--partner);opacity:.5;transform-origin:left center;animation-name:partner-timer;animation-timing-function:linear;animation-fill-mode:forwards}
-@keyframes partner-timer{from{transform:scaleX(1)}to{transform:scaleX(0)}}
-.partner-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 2px}
-.partner-cta{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#7c8794;font-size:9px;font-weight:600}
-.partner-dots{flex:none;display:flex;align-items:center;gap:4px}
-.partner-dots button{width:5px;height:5px;padding:0;border:0;border-radius:999px;background:#2b333d;cursor:pointer;transition:background .16s ease,width .16s ease}
-.partner-dots button:hover{background:#4a5663}
-.partner-dots button.active{width:13px;background:var(--partner)}
-@media(prefers-reduced-motion:reduce){.partner-timer{animation:none;opacity:.18}}
+/* Баннер внизу сайдбара — графика, а не объявление: ни счётчиков, ни приглашений, ни кнопки.
+   Место рассчитано на будущую строку логотипов сервисов, поэтому оно не привязано к одному
+   партнёру и не меняется по таймеру. */
+.sidebar-banner{position:relative;margin:0 0 8px;border:1px solid var(--edge);border-radius:10px;overflow:hidden;background:linear-gradient(160deg,#111821,#0b0f14);box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
+.sidebar-banner svg{display:block;width:100%;height:auto}
+.sidebar-banner::after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(180deg,transparent 58%,rgba(11,13,16,.78))}
 .main{flex:1;min-width:0;min-height:0;display:flex;overflow:hidden}.chat{min-width:0;min-height:0;flex:1;display:flex;flex-direction:column;max-width:none;overflow:hidden}
 /* Режим и размышление — одна настройка запуска, поэтому и один компактный контрол:
    кнопка показывает роль, меню рядом переключает роль и глубину. */
@@ -124,7 +107,7 @@ button,textarea{font:inherit}button{color:inherit}
 .message-avatar{flex:none;width:27px;height:27px;border-radius:7px;background:#191d23;color:#9ca3ad;display:grid;place-items:center;font-size:9px}
 .assistant .message-avatar{background:#e8ebef;color:#171a1e}
 .user .message-avatar{background:#22303f;color:#c9d8e6;border:1px solid #2d3d4e}
-.message-content{min-width:0;max-width:min(660px,88%);padding:10px 13px;border:1px solid #1d242c;border-radius:14px;background:#0f1319}
+.message-content{min-width:0;max-width:min(660px,88%);padding:10px 13px;border:1px solid var(--edge);border-radius:14px;background:#0f1319}
 .message-row.assistant .message-content{border-bottom-left-radius:5px}
 .message-row.user .message-content{background:#17222e;border-color:#293747;border-bottom-right-radius:5px;box-shadow:0 1px 0 rgba(0,0,0,.25)}
 .message-role{font-size:10px;font-weight:650;color:#858c96;margin:0 0 6px}
@@ -160,7 +143,9 @@ button,textarea{font:inherit}button{color:inherit}
 .message-text.markdown td{padding:7px 10px;border-top:1px solid #1c222b;vertical-align:top;font-variant-numeric:tabular-nums}
 .message-text.markdown tbody tr:nth-child(even) td{background:#0f1319}
 .message-text.markdown input[type=checkbox]{margin:0 6px 0 0;accent-color:#4f8f6b;vertical-align:-1px}
-.composer-wrap{flex:none;padding:0 7% 18px}.composer{max-width:760px;margin:auto;border:1px solid #30353d;background:#111419;border-radius:9px;box-shadow:0 8px 30px rgba(0,0,0,.18)}textarea{display:block;width:100%;resize:none;outline:none;border:0;background:transparent;color:#e8eaed;padding:12px 13px 4px;font-size:12px;line-height:1.5}textarea::placeholder{color:#626a75}.composer-footer{min-height:39px;padding:0 7px 2px 13px;display:flex;align-items:center;justify-content:space-between;gap:10px;color:#5f6670;font-size:9px}
+.composer-wrap{flex:none;padding:0 7% 18px}.composer{max-width:760px;margin:auto;border:1px solid var(--edge);background:#0f1319;border-radius:10px;box-shadow:0 8px 30px rgba(0,0,0,.18)}textarea{display:block;width:100%;resize:none;outline:none;border:0;background:transparent;color:#e8eaed;padding:12px 13px 4px;font-size:12px;line-height:1.5}textarea::placeholder{color:#626a75}.composer-footer{min-height:39px;padding:0 7px 2px 13px;display:flex;align-items:center;justify-content:space-between;gap:10px;color:#5f6670;font-size:9px}
+.composer.dropping{border-color:#3f6f57;background:#0f1512;box-shadow:0 0 0 1px #2f5744 inset}
+.composer.dropping textarea{pointer-events:none}
 .composer-tools{display:flex;align-items:center;gap:7px;min-width:0}
 .composer-model{display:flex;align-items:center;gap:5px;min-width:0;max-width:210px;height:29px;padding:0 9px;border:1px solid #282d34;border-radius:8px;background:#0d1013;color:#9aa2ad;font-size:10px;cursor:pointer}
 .composer-model:hover{border-color:#3a424c;color:#e8eaed}
@@ -206,10 +191,10 @@ button,textarea{font:inherit}button{color:inherit}
 /* The task plan the agent publishes and the actions of the current run */
 /* The run windows (plan, actions) sit next to the composer: each collapses and scrolls on its own,
    so a long run never pushes the chat down, and what is happening right now stays next to the input. */
-.chat-status{flex:none;max-height:46%;overflow:auto;padding:10px 7% 2px;border-bottom:1px solid #1a1f26;background:#0d1014;scrollbar-width:thin}
-.chat-status-bottom{max-height:38%;padding:2px 7% 10px;border-top:1px solid #1a1f26;border-bottom:0}
+.chat-status{flex:none;max-height:46%;overflow:auto;padding:10px 7% 2px;border-bottom:1px solid var(--edge);background:#0d1014;scrollbar-width:thin}
+.chat-status-bottom{max-height:38%;padding:2px 7% 10px;border-top:1px solid var(--edge);border-bottom:0}
 .chat-status-bottom .run-panel:last-child{margin-bottom:0}
-.run-panel{max-width:760px;margin:0 auto 10px;border:1px solid #262c34;border-radius:10px;background:#0f1216;overflow:hidden}
+.run-panel{max-width:760px;margin:0 auto 10px;border:1px solid var(--edge);border-radius:10px;background:#0f1216;overflow:hidden}
 /* Шапка панели — одна строка: статус и счётчики не переносятся по словам, а заголовок укорачивается
    многоточием. Иначе на телефоне «с ошибкой» разваливалось на две строки и панель росла в высоту. */
 .run-panel-head{width:100%;min-width:0;display:flex;flex-wrap:nowrap;align-items:center;gap:7px;padding:8px 12px;border:0;background:transparent;color:#9aa2ad;font-size:10px;cursor:pointer;text-align:left}
@@ -307,7 +292,7 @@ button,textarea{font:inherit}button{color:inherit}
 @keyframes agent-spin{to{transform:rotate(360deg)}}
 .message-queue-send{flex:none;height:27px;padding:0 10px;border-color:#333b45;background:#171b21;color:#dfe3e8}
 .message-queue-send:hover{border-color:#414b56;background:#1c2128;color:#fff}.send-button{width:26px;height:26px;border:0;border-radius:6px;background:#e7e9ec;color:#101216;display:flex;align-items:center;justify-content:center;gap:6px;cursor:pointer}.send-button:hover{background:#fff}.send-button:disabled{opacity:.45;cursor:not-allowed}
-.preview{width:390px;flex:none;border-left:1px solid #20242a;background:#0d0f13;display:flex;flex-direction:column}.preview-head{height:65px;border-bottom:1px solid #20242a;padding:13px 15px;display:flex;align-items:center;justify-content:space-between}.preview-head strong{display:block;font-size:12px;margin-top:3px}.preview-status{font-size:9px;color:#707782;display:flex;align-items:center;gap:6px}.preview-empty{margin:auto;text-align:center;display:flex;flex-direction:column;align-items:center;gap:7px;color:#777f89;max-width:210px}.preview-empty strong{font-size:11px;color:#aeb4bd}.preview-empty span{font-size:10px;line-height:1.5}.preview-icon{width:40px;height:40px;border:1px solid #292e36;background:#14171c;border-radius:9px;display:grid;place-items:center;margin-bottom:4px}
+.preview{width:390px;flex:none;border-left:1px solid var(--edge);background:#0d0f13;display:flex;flex-direction:column}.preview-head{height:65px;border-bottom:1px solid var(--edge);padding:13px 15px;display:flex;align-items:center;justify-content:space-between}.preview-head strong{display:block;font-size:12px;margin-top:3px}.preview-status{font-size:9px;color:#707782;display:flex;align-items:center;gap:6px}.preview-empty{margin:auto;text-align:center;display:flex;flex-direction:column;align-items:center;gap:7px;color:#777f89;max-width:210px}.preview-empty strong{font-size:11px;color:#aeb4bd}.preview-empty span{font-size:10px;line-height:1.5}.preview-icon{width:40px;height:40px;border:1px solid #292e36;background:#14171c;border-radius:9px;display:grid;place-items:center;margin-bottom:4px}
 .mobile-only{display:none}
 /* Правая панель на телефоне — тот же предпросмотр, но выезжает поверх рабочей области.
    Кнопка в шапке открывает и закрывает его, затемнение и Escape тоже закрывают. */
@@ -319,21 +304,26 @@ button,textarea{font:inherit}button{color:inherit}
 .preview-close{display:none}
 .preview-backdrop{display:none}
 @media(max-width:900px){.chat{max-width:none}.sidebar{width:190px}
-  .preview{position:fixed;top:48px;right:0;bottom:0;z-index:40;width:min(420px,92vw);border-left:1px solid #262c34;box-shadow:-28px 0 70px rgba(0,0,0,.55);transform:translate3d(103%,0,0);visibility:hidden;transition:transform .3s cubic-bezier(.22,.8,.24,1),visibility .3s}
+  .preview{position:fixed;top:var(--topbar-h);right:0;bottom:0;z-index:40;width:min(420px,92vw);border-left:1px solid var(--edge);box-shadow:-28px 0 70px rgba(0,0,0,.55);transform:translate3d(103%,0,0);visibility:hidden;transition:transform .3s cubic-bezier(.22,.8,.24,1),visibility .3s}
   .preview.open{transform:none;visibility:visible}
   .preview-grabber,.preview-close,.preview-toggle{display:flex}
-  .preview-backdrop{display:block;position:fixed;top:48px;right:0;bottom:0;left:0;z-index:39;background:rgba(5,7,10,.62);backdrop-filter:blur(2px);opacity:0;pointer-events:none;transition:opacity .3s ease}
+  .preview-backdrop{display:block;position:fixed;top:var(--topbar-h);right:0;bottom:0;left:0;z-index:39;background:rgba(5,7,10,.62);backdrop-filter:blur(2px);opacity:0;pointer-events:none;transition:opacity .3s ease}
   .preview-backdrop.open{opacity:1;pointer-events:auto}
 }
-@media(prefers-reduced-motion:reduce){.preview,.preview-backdrop{transition:none}}
-@media(max-width:650px){.topbar{gap:8px}.brand{min-width:0}.topbar-project,.topbar-actions .ghost-button{display:none}.mobile-only{display:flex}.sidebar{position:absolute;z-index:10;top:48px;bottom:0;left:-210px;transition:left .18s ease;box-shadow:12px 0 30px rgba(0,0,0,.35)}.sidebar.open{left:0}.messages,.composer-wrap{padding-left:14px;padding-right:14px}.composer-model{max-width:132px}.agent-mode-trigger{padding:0 7px;gap:4px}
+@media(prefers-reduced-motion:reduce){.preview,.preview-backdrop,.sidebar,.sidebar-backdrop{transition:none}}
+@media(max-width:650px){.topbar{gap:8px}.brand{min-width:0}.topbar-project,.topbar-actions .ghost-button{display:none}.mobile-only{display:flex}.sidebar{position:absolute;z-index:10;top:var(--topbar-h);bottom:0;left:-220px;transition:left .18s ease;box-shadow:12px 0 30px rgba(0,0,0,.35)}.sidebar.open{left:0}
+/* Шторка закрывается тапом по любому месту вне сайдбара — для этого и подложка. */
+.sidebar-backdrop{display:block;position:fixed;top:var(--topbar-h);right:0;bottom:0;left:0;z-index:9;background:rgba(5,7,10,.55);backdrop-filter:blur(2px);opacity:0;pointer-events:none;transition:opacity .18s ease}
+.sidebar-backdrop.open{opacity:1;pointer-events:auto}.messages,.composer-wrap{padding-left:14px;padding-right:14px}.composer-model{max-width:132px}.agent-mode-trigger{padding:0 7px;gap:4px}
 /* На узком экране кнопка остаётся короткой, а глубина размышления видна в меню. */
 .agent-mode-dot,.agent-mode-depth{display:none}
 .agent-mode-menu{width:min(288px,calc(100vw - 28px))}
-.chat-status-bottom{max-height:32%;padding-bottom:8px}}
-.workspace-shell{display:flex;flex:1;min-width:0}.workspace-main{min-width:0;min-height:0;flex:1;display:flex;flex-direction:column}.workspace-view{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column}.workspace-view[hidden]{display:none}.workspace-tabs{height:40px;flex:none;display:flex;align-items:center;gap:3px;padding:0 12px;border-bottom:1px solid #20242a;background:#0e1014;overflow-x:auto;scrollbar-width:none}.workspace-tabs::-webkit-scrollbar{display:none}.workspace-tabs button{height:28px;border:0;background:transparent;color:#747c87;border-radius:5px;padding:0 9px;display:flex;align-items:center;gap:6px;font-size:10px;cursor:pointer}.workspace-tabs button:hover,.workspace-tabs button.active{background:#181b21;color:#e8eaed}.workspace-tabs .workspace-tabs-chats{margin-left:auto;flex:none;color:#8b939e}.workspace-tabs .workspace-tabs-chats:hover{color:#e8eaed}
+.chat-status-bottom{max-height:32%;padding-bottom:8px}
+/* Точки закладок живут у самого края: переписка отступает, чтобы не печатать под ними. */
+.messages{padding-right:26px}}
+.workspace-shell{display:flex;flex:1;min-width:0}.workspace-main{min-width:0;min-height:0;flex:1;display:flex;flex-direction:column}.workspace-view{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column}.workspace-view[hidden]{display:none}.workspace-tabs{height:40px;flex:none;display:flex;align-items:center;gap:3px;padding:0 12px;border-bottom:1px solid var(--edge);background:#0e1014;overflow-x:auto;scrollbar-width:none}.workspace-tabs::-webkit-scrollbar{display:none}.workspace-tabs button{height:28px;border:0;background:transparent;color:#747c87;border-radius:5px;padding:0 9px;display:flex;align-items:center;gap:6px;font-size:10px;cursor:pointer}.workspace-tabs button:hover,.workspace-tabs button.active{background:#181b21;color:#e8eaed}.workspace-tabs .workspace-tabs-chats{margin-left:auto;flex:none;color:#8b939e}.workspace-tabs .workspace-tabs-chats:hover{color:#e8eaed}
 @media(max-width:650px){.workspace-tabs .workspace-tabs-chats{padding:0 8px}.workspace-tabs .workspace-tabs-chats span{display:none}}
-.panel,.files-panel{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden}.panel-title{min-height:54px;padding:10px 15px;border-bottom:1px solid #20242a;display:flex;align-items:center;justify-content:space-between;color:#c5c9cf;font-size:11px}.panel-title strong{display:block;margin-top:3px;font-size:12px}.files-panel .panel-title{justify-content:space-between}.file-browser{flex:1;min-height:0;display:flex}.file-tree{width:270px;flex:none;border-right:1px solid #20242a;overflow:auto;padding:7px}.file-item{width:100%;min-height:30px;border:0;background:transparent;color:#aeb4bd;border-radius:5px;padding:0 7px;display:flex;align-items:center;gap:7px;text-align:left;font-size:11px;cursor:pointer}.file-item:hover,.file-item.selected{background:#171a20;color:#e8eaed}.file-parent{color:#727a85}.file-empty{padding:18px 8px;color:#626a75;font-size:10px}.file-editor{flex:1;min-width:0;overflow:auto;background:#0b0d10}.editor-head{height:34px;border-bottom:1px solid #20242a;padding:0 12px;display:flex;align-items:center;color:#7f8792;font-size:10px}.file-editor pre{margin:0;padding:14px;font:11px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;color:#cdd1d7;white-space:pre-wrap}.file-placeholder{height:100%;display:grid;place-content:center;justify-items:center;gap:8px;color:#626a75;font-size:10px}.terminal-input{margin:15px;width:calc(100% - 30px);min-height:90px;border:1px solid #292f37;border-radius:7px;background:#111419;padding:10px}.terminal-output{flex:1;min-height:100px;margin:0 15px 15px;padding:12px;border:1px solid #20242a;border-radius:7px;background:#090b0e;overflow:auto;color:#b9c0c9;font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap}
+.panel,.files-panel{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden}.panel-title{min-height:54px;padding:10px 15px;border-bottom:1px solid var(--edge);display:flex;align-items:center;justify-content:space-between;color:#c5c9cf;font-size:11px}.panel-title strong{display:block;margin-top:3px;font-size:12px}.files-panel .panel-title{justify-content:space-between}.file-browser{flex:1;min-height:0;display:flex}.file-tree{width:270px;flex:none;border-right:1px solid #20242a;overflow:auto;padding:7px}.file-item{width:100%;min-height:30px;border:0;background:transparent;color:#aeb4bd;border-radius:5px;padding:0 7px;display:flex;align-items:center;gap:7px;text-align:left;font-size:11px;cursor:pointer}.file-item:hover,.file-item.selected{background:#171a20;color:#e8eaed}.file-parent{color:#727a85}.file-empty{padding:18px 8px;color:#626a75;font-size:10px}.file-editor{flex:1;min-width:0;overflow:auto;background:#0b0d10}.editor-head{height:34px;border-bottom:1px solid #20242a;padding:0 12px;display:flex;align-items:center;color:#7f8792;font-size:10px}.file-editor pre{margin:0;padding:14px;font:11px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;color:#cdd1d7;white-space:pre-wrap}.file-placeholder{height:100%;display:grid;place-content:center;justify-items:center;gap:8px;color:#626a75;font-size:10px}.terminal-input{margin:15px;width:calc(100% - 30px);min-height:90px;border:1px solid #292f37;border-radius:7px;background:#111419;padding:10px}.terminal-output{flex:1;min-height:100px;margin:0 15px 15px;padding:12px;border:1px solid #20242a;border-radius:7px;background:#090b0e;overflow:auto;color:#b9c0c9;font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap}
 .app-loading{height:100%;min-height:240px;display:grid;place-content:center;justify-items:center;gap:9px;color:#8a929d;font-size:11px;text-align:center;padding:24px}.app-loading strong{font-size:13px;color:#d5d8dd}.app-loading span{max-width:460px;line-height:1.5}.workspace-overlay-panel{flex:1;min-width:0;min-height:0;overflow:auto}.settings-panel{max-width:720px;margin:20px auto;border:1px solid #242a31;background:#111419;border-radius:9px;overflow:hidden}.settings-body{padding:18px;display:grid;gap:14px;color:#969da7;font-size:11px}.settings-body label{display:grid;gap:6px;color:#777f89}.settings-body label span{color:#d0d4da}.settings-body select,.settings-body input,.terminal-controls input{height:32px;border:1px solid #2a3038;border-radius:6px;background:#0b0d10;color:#dce0e5;padding:0 9px;outline:none}.settings-save{width:max-content;padding:0 12px}.terminal-controls{display:flex;gap:8px;margin:15px}.terminal-controls input{flex:1}.preview-frame{flex:1;width:100%;border:0;background:#fff}.preview-actions{display:flex;gap:3px}.preview-error{margin:10px 12px;padding:9px;border:1px solid #4a3030;border-radius:6px;background:#1b1212;color:#d99b9b;font-size:10px}
 .preview-hint{margin:10px 12px;padding:9px;border:1px solid #3a3427;border-radius:6px;background:#171408;color:#cdb171;font-size:10px}
 .github-popover{position:absolute;right:12px;top:43px;width:min(560px,calc(100vw - 24px));max-height:calc(100vh - 58px);overflow:auto;background:#111419;border:1px solid #2a3038;border-radius:9px;box-shadow:0 18px 50px rgba(0,0,0,.45)}
@@ -1180,7 +1170,16 @@ button,textarea{font:inherit}button{color:inherit}
 .chat-bookmark-tip strong{display:block;margin-bottom:3px;color:#7f93a5;font-size:9px;font-weight:600;letter-spacing:.08em;text-transform:uppercase}
 .message-row.is-jumped .message-content{border-color:#3f5d78;box-shadow:0 0 0 3px rgba(96,148,190,.16)}
 .message-content{transition:border-color .3s ease,box-shadow .3s ease}
-@media(max-width:650px){.chat-bookmarks{display:none}}
+/* На телефоне закладки — точки, по одной на запрос, а не полоски: узкая рельса превращала
+   близкие сообщения в один пунктир. */
+@media(max-width:650px){
+  .chat-bookmarks{display:block;top:14px;bottom:14px;right:5px;width:18px}
+  .chat-bookmark{right:3px;width:18px;height:18px;justify-content:center}
+  .chat-bookmark i{width:6px;height:6px;border-radius:50%}
+  .chat-bookmark:hover i,.chat-bookmark:focus-visible i{width:6px;height:6px;transform:none;background:#9fb6c8}
+  .chat-bookmark.is-active i{width:6px;height:6px;background:#cfe0ec;box-shadow:0 0 0 3px rgba(127,168,196,.16)}
+  .chat-bookmark-tip{display:none}
+}
 
 /* Compact phone layout: the plan chip, the run details and the usage meters keep their alignment
    instead of squeezing the text and the progress bars into the same row. */

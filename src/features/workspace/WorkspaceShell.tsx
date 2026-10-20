@@ -23,7 +23,7 @@ export function WorkspaceShell({onHome,onAgentState}:{onHome:()=>void;onAgentSta
   // Incremented when the sidebar asks for a specific settings tab while the overlay is already
   // open: the hub reads its one-shot tab flag on mount, so it has to be remounted to react.
   const [settingsKey,setSettingsKey]=useState(0);
-  const [deployOpen,setDeployOpen]=useState(false);
+
   // On a phone the preview is a drawer that slides over the workspace, opened from the top bar.
   const [previewOpen,setPreviewOpen]=useState(false);
   const [previewRunning,setPreviewRunning]=useState(false);
@@ -40,7 +40,6 @@ export function WorkspaceShell({onHome,onAgentState}:{onHome:()=>void;onAgentSta
   useEffect(()=>{
     if(!localStorage.getItem("webnestdev.openSettings"))return;
     localStorage.removeItem("webnestdev.openSettings");
-    setDeployOpen(false);
     setSettingsOpen(true);
   },[]);
 
@@ -48,10 +47,8 @@ export function WorkspaceShell({onHome,onAgentState}:{onHome:()=>void;onAgentSta
   if(error)return <div className="app-loading"><strong>NestDev API недоступен</strong><span>{error}</span><button className="ghost-button" onClick={()=>void retry()}>Повторить</button></div>;
   if(!projectId||!conversationId)return <div className="app-loading">Рабочая область не создана.</div>;
 
-  const createNewProject=()=>{localStorage.removeItem("webnestdev.projectId");localStorage.removeItem("webnestdev.conversationId");localStorage.removeItem("webnestdev.projectName");window.location.reload()};
-  // The overlays replace the workspace, so the drawer is closed instead of floating above them.
-  const openDeploy=()=>{setSettingsOpen(false);setPreviewOpen(false);setDeployOpen(true)};
-  const openSettings=()=>{setDeployOpen(false);setPreviewOpen(false);setSettingsOpen(true)};
+  // Облатка заменяет рабочую область, поэтому шторка закрывается, а не висит поверх неё.
+  const openSettings=()=>{setPreviewOpen(false);setSettingsOpen(true)};
   // The sidebar opens the same settings overlay, but on the project secrets tab.
   const openSecrets=()=>{
     try{localStorage.setItem("webnestdev.openSecretsTab","1")}catch{}
@@ -61,15 +58,12 @@ export function WorkspaceShell({onHome,onAgentState}:{onHome:()=>void;onAgentSta
   // The model chip in the composer opens the settings overlay on the AI tab.
   const openModelSettings=()=>{try{localStorage.setItem("webnestdev.openProviderTab","1")}catch{};openSettings()};
 
-  return <LayoutShell projectName={projectName} view={view} onView={view=>{setSettingsOpen(false);setDeployOpen(false);setView(view)}} onNewProject={createNewProject} onDeploy={openDeploy} onSettings={openSettings} onSecrets={openSecrets} onHome={onHome} previewOpen={previewOpen} previewRunning={previewRunning} onPreviewToggle={()=>setPreviewOpen(value=>!value)} sidebarHidden={settingsOpen||deployOpen}>
+  return <LayoutShell projectName={projectName} view={view} onView={view=>{setSettingsOpen(false);setView(view)}} onSettings={openSettings} onSecrets={openSecrets} onHome={onHome} previewOpen={previewOpen} previewRunning={previewRunning} onPreviewToggle={()=>setPreviewOpen(value=>!value)} sidebarHidden={settingsOpen}>
     <main className="main">
       <div className="workspace-main">
-        {(settingsOpen||deployOpen)?<div className="workspace-overlay-panel">
-          {settingsOpen?<SettingsHub key={settingsKey} projectId={projectId} projectName={projectName} onClose={()=>setSettingsOpen(false)}/>:<section className="settings-panel">
-            <div className="panel-title"><div><span className="eyebrow">ПУБЛИКАЦИЯ</span><strong>Публикация проекта</strong></div><button className="ghost-button" onClick={()=>setDeployOpen(false)}>Закрыть</button></div>
-            <div className="settings-body"><p>Модуль публикации подключим к выбранному облаку, когда настроим окружение.</p><button className="send-button" onClick={()=>setDeployOpen(false)}>Понятно</button></div>
-          </section>}
-        </div>:<><WorkspaceNav view={view} onChange={setView} onSessions={()=>setSessionsOpen(true)} sessionCount={sessions?.length}/><WorkspaceContent view={view} projectId={projectId} projectName={projectName} conversationId={conversationId} onRunFinished={()=>{setPreviewReload(value=>value+1);void sessionsReload()}} onOpenModelSettings={openModelSettings} onOpenAccountSettings={openSettings} onRunningChange={reportAgentState} onOpenChanges={()=>{setSettingsOpen(false);setDeployOpen(false);setView("changes")}}/></>}
+        {settingsOpen?<div className="workspace-overlay-panel">
+          <SettingsHub key={settingsKey} projectId={projectId} projectName={projectName} onClose={()=>setSettingsOpen(false)}/>
+        </div>:<><WorkspaceNav view={view} onChange={setView} onSessions={()=>setSessionsOpen(true)} sessionCount={sessions?.length}/><WorkspaceContent view={view} projectId={projectId} projectName={projectName} conversationId={conversationId} onRunFinished={()=>{setPreviewReload(value=>value+1);void sessionsReload()}} onOpenModelSettings={openModelSettings} onOpenAccountSettings={openSettings} onRunningChange={reportAgentState} onOpenChanges={()=>{setSettingsOpen(false);setView("changes")}}/></>}
       </div>
       <PreviewPanel projectId={projectId} reloadToken={previewReload} open={previewOpen} onClose={()=>setPreviewOpen(false)} onRunningChange={setPreviewRunning}/>
       <ChatSessionsModal

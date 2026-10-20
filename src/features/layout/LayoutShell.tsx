@@ -4,16 +4,37 @@ import { Sidebar } from "./Sidebar";
 import { Topbar } from "./Topbar";
 import type { WorkspaceView } from "../workspace/WorkspaceNav";
 
-/** `sidebarHidden` убирает колонку там, где она мешает содержимому: настройки и публикация
- *  занимают всю ширину, а телефонная шторка закрывается, чтобы не лежать поверх них. */
-export function LayoutShell({children,projectName,view,onView,onNewProject,onDeploy,onSettings,onSecrets,onHome,previewOpen,previewRunning,onPreviewToggle,sidebarHidden}:{children:ReactNode;projectName:string;view:WorkspaceView;onView:(view:WorkspaceView)=>void;onNewProject:()=>void;onDeploy:()=>void;onSettings:()=>void;onSecrets:()=>void;onHome:()=>void;previewOpen:boolean;previewRunning:boolean;onPreviewToggle:()=>void;sidebarHidden?:boolean}){
+/** `sidebarHidden` убирает колонку там, где она мешает содержимому: настройки занимают всю
+ *  ширину, а телефонная шторка закрывается, чтобы не лежать поверх них. */
+export function LayoutShell({children,projectName,view,onView,onSettings,onSecrets,onHome,previewOpen,previewRunning,onPreviewToggle,sidebarHidden}:{children:ReactNode;projectName:string;view:WorkspaceView;onView:(view:WorkspaceView)=>void;onSettings:()=>void;onSecrets:()=>void;onHome:()=>void;previewOpen:boolean;previewRunning:boolean;onPreviewToggle:()=>void;sidebarHidden?:boolean}){
   const [sidebarOpen,setSidebarOpen]=useState(false);
   // Ушли в настройки — шторка на телефоне закрывается вместе с переходом.
   useEffect(()=>{if(sidebarHidden)setSidebarOpen(false)},[sidebarHidden]);
+
+  // Шторка закрывается нажатием в любом месте вне её — по переписке, по панели предпросмотра,
+  // по самой подложке — и по Escape. Раньше единственным способом убрать её была та же кнопка
+  // меню в шапке: на телефоне она оказывалась под пальцем уже после перехода.
+  useEffect(()=>{
+    if(!sidebarOpen)return;
+    const onPointer=(event:PointerEvent)=>{
+      const target=event.target instanceof Element?event.target:null;
+      if(target?.closest(".sidebar")||target?.closest(".menu-toggle"))return;
+      setSidebarOpen(false);
+    };
+    const onKey=(event:KeyboardEvent)=>{if(event.key==="Escape")setSidebarOpen(false)};
+    document.addEventListener("pointerdown",onPointer,true);
+    window.addEventListener("keydown",onKey);
+    return ()=>{
+      document.removeEventListener("pointerdown",onPointer,true);
+      window.removeEventListener("keydown",onKey);
+    };
+  },[sidebarOpen]);
+
   return <div className={"app-shell"+(sidebarHidden?" sidebar-hidden":"")}>
-    <Topbar projectName={projectName} onMenu={()=>setSidebarOpen(v=>!v)} onNewProject={onNewProject} onHome={onHome} onPlan={onSettings} previewOpen={previewOpen} previewRunning={previewRunning} onPreviewToggle={onPreviewToggle}/>
+    <Topbar projectName={projectName} onMenu={()=>setSidebarOpen(v=>!v)} onHome={onHome} onPlan={onSettings} previewOpen={previewOpen} previewRunning={previewRunning} onPreviewToggle={onPreviewToggle}/>
     <div className="workspace">
-      <Sidebar open={sidebarOpen} view={view} onView={v=>{onView(v);setSidebarOpen(false)}} projectName={projectName} onNewProject={onNewProject} onDeploy={onDeploy} onSettings={onSettings} onSecrets={()=>{onSecrets();setSidebarOpen(false)}} onHome={()=>{onHome();setSidebarOpen(false)}}/>
+      <div className={"sidebar-backdrop"+(sidebarOpen?" open":"")} onClick={()=>setSidebarOpen(false)} aria-hidden="true"/>
+      <Sidebar open={sidebarOpen} view={view} onView={v=>{onView(v);setSidebarOpen(false)}} projectName={projectName} onSettings={onSettings} onSecrets={()=>{onSecrets();setSidebarOpen(false)}} onHome={()=>{onHome();setSidebarOpen(false)}}/>
       {children}
     </div>
   </div>;

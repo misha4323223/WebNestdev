@@ -32,6 +32,17 @@ export function ChatBookmarks({ containerRef, items, onJump }: {
   const [marks, setMarks] = useState<Array<{ index: number; ratio: number; top: number }>>([]);
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const [hovered, setHovered] = useState<number | null>(null);
+  // На телефоне рельса узкая, и полоски в настоящих координатах слипаются в одну. Там это точки —
+  // по одной на запрос и поровну — поэтому «каждая точка = мой запрос» читается сразу, а не
+  // превращается в пунктир из десятка соседних полосок.
+  const [compact, setCompact] = useState(() => typeof window !== "undefined" && window.matchMedia("(max-width: 650px)").matches);
+  useEffect(() => {
+    const query = window.matchMedia("(max-width: 650px)");
+    const onChange = () => setCompact(query.matches);
+    onChange();
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  }, []);
   // Список и высота контента меняются на каждом кадре стрима, поэтому измерения читаются из
   // ref-ов: эффекты не должны переподписываться из-за нового массива на каждый рендер.
   const itemsRef = useRef(items);
@@ -106,11 +117,11 @@ export function ChatBookmarks({ containerRef, items, onJump }: {
   const textOf = (index: number) => itemsRef.current.find(item => item.index === index)?.text ?? "";
 
   return <div className="chat-bookmarks" aria-label="Закладки переписки" role="navigation">
-    {marks.map(mark => <button
+    {marks.map((mark, position) => <button
       key={mark.index}
       type="button"
       className={"chat-bookmark" + (activeIndex === mark.index ? " is-active" : "")}
-      style={{ top: (mark.ratio * 100) + "%" }}
+      style={{ top: ((compact ? (position + 0.5) / marks.length : mark.ratio) * 100) + "%" }}
       onClick={() => onJump(mark.index)}
       onMouseEnter={() => { setHovered(mark.index); measure(); }}
       onMouseLeave={() => setHovered(current => (current === mark.index ? null : current))}
@@ -119,7 +130,7 @@ export function ChatBookmarks({ containerRef, items, onJump }: {
       aria-label={"Перейти к запросу: " + preview(textOf(mark.index))}
     >
       <i aria-hidden="true"/>
-      {hovered === mark.index && <span className="chat-bookmark-tip" role="tooltip">
+      {hovered === mark.index && !compact && <span className="chat-bookmark-tip" role="tooltip">
         <strong>Ваш запрос</strong>
         {preview(textOf(mark.index))}
       </span>}
