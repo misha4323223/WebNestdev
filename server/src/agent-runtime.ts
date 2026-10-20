@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { AgentRunRequest,ChatMessage,PlanState } from "./types.js";
 import { createProvider } from "./provider.js";
 import { appendConversationMessages,getConversationPlan,getProject,getProjectProvider,saveConversationPlan } from "./project-store.js";
-import { buildInitialMessages,insertSystemNotice,resumeNotice,storedHistory } from "./agent/message-builder.js";
+import { buildInitialMessages,insertSystemNotice,resumeNotice,storedHistory,webSearchNotice } from "./agent/message-builder.js";
 import { buildProjectContext } from "./agent/context-builder.js";
 import { retrieveRelevantFiles } from "./agent/context-retrieval.js";
 import { executeTool } from "./agent/tool-executor.js";
@@ -111,6 +111,10 @@ export class AgentRuntime {
       const relevantFiles=await retrieveRelevantFiles(request.projectId,request.userId,task);
       const mode=request.mode==="planner"?"planner":"developer";
       let messages:ChatMessage[]=buildInitialMessages(history,projectContext+"\n\nTASK-RELEVANT SOURCE FILES\n"+relevantFiles,mode);
+      // Переключатель поиска в интернете живёт в панели ввода, поэтому модель узнаёт о нём из
+      // заметки, а инструменты проверяют тот же флаг сами (web-tools.ts). Выключенный поиск —
+      // не повод выдумывать факты, а повод попросить пользователя включить кнопку.
+      messages=insertSystemNotice(messages,webSearchNotice(request.webSearch===true));
       if(request.resume){
         // Возобновление: история — это память о сделанном, сохранённый план — закладка. Без заметки
         // модель с большой историей часто начинает задачу заново или переспрашивает пользователя.

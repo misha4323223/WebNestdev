@@ -10,14 +10,16 @@ import { WebSearchError, type WebResult, type WebSearchProvider, type WebSearchR
  * Слой поиска: кто отвечает, в каком порядке, сколько запросов идёт одновременно, что кэшируется и
  * как отказ провайдера превращается в понятный ответ.
  *
- * Разделение по тарифу — правило продукта:
+ * Разделение по тарифу — правило продукта, а не настройка:
  * - бесплатный тариф: только DuckDuckGo. Это режим «попробовать»: бесплатно, без ключа, без гарантий
  *   (DuckDuckGo не публикует API и ограничивает серверные адреса — см. `duckduckgo.ts`);
  * - платные тарифы: Yandex Search API основным провайдером и Tavily резервным. Подписка не должна
  *   оставаться без поиска из-за одной неготовой интеграции, а бесплатный провайдер последней
  *   ступенью нужен, чтобы поиск не выключался целиком, если оба ключа ещё не заведены.
  *
- * `WEB_SEARCH_PROVIDER=auto|duckduckgo|yandex|tavily` переопределяет выбор на весь сервер.
+ * `WEB_SEARCH_PROVIDER=auto|duckduckgo|yandex|tavily` переопределяет выбор на весь сервер, но
+ * только внутри права тарифа: включённый на сервере `yandex` не даёт бесплатному аккаунту платную
+ * выдачу. Раньше давал — и бесплатный запуск со своим AI-провайдером уходил в Yandex Search API.
  */
 
 const DEFAULT_LIMIT = 8;
@@ -62,9 +64,19 @@ export function providerChain(plan: PlanId): { chain: WebSearchProvider[]; note?
   const yandex = Boolean(yandexSearchConfig());
   const tavily = Boolean(tavilyKey());
 
+  // Тариф — жёсткая граница: переопределение провайдера на сервере не может выдать бесплатному
+  // аккаунту платную выдачу. Это правило проверяется до всех остальных веток, потому что цена
+  // запроса Yandex платит платформа, а бесплатный тариф её не покрывает.
+  if (isFreePlan(plan)) {
+    const forced = override && override !== "duckduckgo"
+      ? "WEB_SEARCH_PROVIDER=" + override + " не применяется к бесплатному тарифу: его поиск всегда идёт через DuckDuckGo."
+      : undefined;
+    return { chain: ["duckduckgo"], ...(forced ? { note: forced } : {}) };
+  }
+
   if (override === "duckduckgo") return { chain: ["duckduckgo"] };
   if (override === "yandex") {
-    if (yandex) return { chain: isFreePlan(plan) ? ["yandex", "duckduckgo"] : ["yandex", ...(tavily ? ["tavily" as const] : []), "duckduckgo"] };
+    if (yandex) return { chain: ["yandex", ...(tavily ? ["tavily" as const] : []), "duckduckgo"] };
     return {
       chain: ["duckduckgo"],
       note: "WEB_SEARCH_PROVIDER=yandex задан, но Yandex Search API не настроен (нет ключа или каталога) — поиск идёт через DuckDuckGo.",
@@ -78,7 +90,6 @@ export function providerChain(plan: PlanId): { chain: WebSearchProvider[]; note?
     };
   }
 
-  if (isFreePlan(plan)) return { chain: ["duckduckgo"] };
   const chain: WebSearchProvider[] = [];
   if (yandex) chain.push("yandex");
   if (tavily) chain.push("tavily");
@@ -237,7 +248,9 @@ export function describeWebSearch(): string {
   const override = configuredProviderOverride();
   const yandex = yandexSearchConfig() ? "ключ есть" : "ключа нет";
   const tavily = tavilyKey() ? "ключ есть" : "ключа нет";
-  const mode = override ? "WEB_SEARCH_PROVIDER=" + override : "по тарифу (free → duckduckgo, платные → yandex → tavily)";
+  const mode = override
+    ? "WEB_SEARCH_PROVIDER=" + override + " (free всё равно duckduckgo)"
+    : "по тарифу (free → duckduckgo, платные → yandex → tavily)";
   const stats = webSearchQueueStats();
   return "веб-поиск: " + mode + "; Yandex Search API: " + yandex + "; Tavily: " + tavily + "; одновременно " + stats.limit + ", кэш " + Math.round(cacheTtlMs() / 1000) + " с";
 }

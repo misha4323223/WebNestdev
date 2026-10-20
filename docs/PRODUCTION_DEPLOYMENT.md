@@ -1,5 +1,9 @@
 # Production deployment
 
+## Where production runs
+
+The production VM and the Docker containers on it live in **MWS (МТС Web Services, `mws.ru`)**, not in Yandex Cloud. The VM runs Docker Compose, the `webnestdev-server` container, Postgres and the sandbox/preview containers started through the mounted Docker socket. Yandex Cloud is used only for optional integrations (Yandex Search API, Notification Service/SMS, Yandex ID sign-in) and for the object-storage keys a project may need — not for hosting. Keep this in mind when changing deploy scripts, firewall rules, disk or backup settings: they act on an MWS VM.
+
 ## Runtime topology
 
 ```
@@ -422,7 +426,7 @@ Repository variables (same page → **Variables**):
 | --- | --- |
 | `DEPLOY_APP_DIR` | deployment directory holding `docker-compose.yml` and `.env`, default `~/webnestdev/src` |
 | `DEPLOY_RUNNER` | self-hosted runner label; set it (and install the runner on the VM) when the VM has no inbound SSH |
-| `WEB_SEARCH_PROVIDER` | optional; `auto` (default — provider by plan), `duckduckgo`, `yandex` or `tavily` |
+| `WEB_SEARCH_PROVIDER` | optional; `auto` (default — provider by plan), `duckduckgo`, `yandex` or `tavily`. Never lifts a paid provider into the free plan: free accounts always search DuckDuckGo (`docs/WEB_SEARCH.md`) |
 
 Where the values come from — none of them is issued by a service, the only generated one is the key:
 

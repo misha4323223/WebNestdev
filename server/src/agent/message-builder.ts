@@ -83,6 +83,20 @@ export function resumeNotice(reason: string | undefined, plan: PlanState | undef
   return lines.join("\n");
 }
 
+/**
+ * Что модель знает о переключателе поиска до первого шага.
+ *
+ * Поиск в интернете — отдельная кнопка рядом с полем ввода, и по умолчанию она выключена. Без этой
+ * заметки модель либо вызывает `web.search` и тратит шаг на отказ, либо — что хуже — отвечает по
+ * памяти так, будто поиск был. Заметка говорит и то, и другое: выключенный поиск не повод выдумывать,
+ * а повод попросить человека включить кнопку.
+ */
+export function webSearchNotice(enabled: boolean): string {
+  return enabled
+    ? "WEB SEARCH IS ON. The user turned on the internet search switch next to the message box. Use web.search and web.read for facts that live outside the project. The provider is chosen by the server from the account plan, so never name a provider, a key or a plan in the answer, and keep the citations to the urls you actually read."
+    : "WEB SEARCH IS OFF. The user did not turn on the internet search switch next to the message box, and it is off by default. Do not call web.search or web.read, and never answer from memory as if a search had happened. If the task needs something from the internet — a library version or API, release notes, error messages from other projects, pricing, service documentation — stop and tell the user in one short sentence that internet search is off and they need to turn on the «Поиск» button next to the message box. Work that does not need the internet continues as usual.";
+}
+
 export function buildInitialMessages(messages: ChatMessage[], projectContext: string, mode: "planner" | "developer" = "developer"): ChatMessage[] {
   return [
     { role: "system", content: SYSTEM_PROMPT },

@@ -64,12 +64,31 @@ test("the environment can force one provider for the whole server", () => {
   });
   withEnv({ WEB_SEARCH_PROVIDER: "yandex" }, () => {
     // Ключа нет: принудительный Yandex не выбирается, иначе каждый запрос заканчивался бы отказом.
-    const forced = resolveProvider("free");
+    const forced = resolveProvider("pro");
     assert.equal(forced.provider, "duckduckgo");
     assert.match(forced.note ?? "", /WEB_SEARCH_PROVIDER=yandex/);
   });
   withEnv({ WEB_SEARCH_PROVIDER: "tavily" }, () => {
     assert.match(resolveProvider("pro").note ?? "", /TAVILY_API_KEY не настроен/);
+  });
+});
+
+/**
+ * Сервер с `WEB_SEARCH_PROVIDER=yandex` и полным набором ключей — обычная боевая настройка. Тариф
+ * обязан побеждать её: иначе бесплатный аккаунт со своим AI-провайдером получал платную выдачу, и
+ * платформа оплачивала Yandex Search API за пользователя, которому этот поиск не положен.
+ */
+test("a server-wide provider override never lifts a paid provider into the free plan", () => {
+  withEnv({ WEB_SEARCH_PROVIDER: "yandex", YANDEX_SEARCH_API_KEY: "Aq-test", YANDEX_SEARCH_FOLDER_ID: "b1gtest", TAVILY_API_KEY: "tvly-test" }, () => {
+    const free = providerChain("free");
+    assert.deepEqual(free.chain, ["duckduckgo"]);
+    assert.match(free.note ?? "", /не применяется к бесплатному тарифу/);
+    assert.equal(resolveProvider("free").provider, "duckduckgo");
+    assert.deepEqual(providerChain("pro").chain, ["yandex", "tavily", "duckduckgo"], "платный тариф по-прежнему получает Yandex");
+  });
+  withEnv({ WEB_SEARCH_PROVIDER: "tavily", YANDEX_SEARCH_API_KEY: "Aq-test", YANDEX_SEARCH_FOLDER_ID: "b1gtest", TAVILY_API_KEY: "tvly-test" }, () => {
+    assert.deepEqual(providerChain("free").chain, ["duckduckgo"]);
+    assert.deepEqual(providerChain("pro").chain, ["tavily", "duckduckgo"]);
   });
 });
 

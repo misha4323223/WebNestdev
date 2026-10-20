@@ -219,7 +219,7 @@ export function validatePlatformValue(name: string, value: string): string | nul
   if (entry.kind === "url" && !/^https?:\/\/[^\s]+$/i.test(text)) return "Нужен адрес вида https://…";
   if (entry.kind === "path" && text.includes("\n")) return "Путь должен быть одной строкой";
   if (entry.kind === "flag" && !/^(0|1|true|false|yes|no|да|нет)$/i.test(text)) return "Допустимо: 1/0, true/false, yes/no";
-  if (name === "WEB_SEARCH_PROVIDER" && !/^(auto|duckduckgo|yandex)$/i.test(text)) return "Допустимо: auto, duckduckgo или yandex";
+  if (name === "WEB_SEARCH_PROVIDER" && !/^(auto|duckduckgo|yandex|tavily)$/i.test(text)) return "Допустимо: auto, duckduckgo, yandex или tavily";
   return null;
 }
 

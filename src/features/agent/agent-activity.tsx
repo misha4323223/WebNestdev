@@ -19,10 +19,12 @@ import {
   LoaderCircle,
   MonitorCheck,
   MousePointerClick,
+  Newspaper,
   Package,
   PowerOff,
   Rocket,
   ScanSearch,
+  Search,
   ShieldCheck,
   Sparkles,
   SquareTerminal,
@@ -55,6 +57,10 @@ const TOOL_ICONS: Record<string, ActionDescriptor> = {
   "browser.inspect": { icon: ScanSearch, label: "Разбирает HTML" },
   "browser.runtime": { icon: MonitorCheck, label: "Проверяет в Chromium" },
   "browser.scenario": { icon: MousePointerClick, label: "Прогоняет сценарий пользователя" },
+  // Поиск и чтение страниц — тот же интернет, но разные действия: лупа и газета, как у остальных
+  // инструментов, чтобы в списке было видно, что агент искал, а что читал найденное.
+  "web.search": { icon: Search, label: "Ищет в интернете" },
+  "web.read": { icon: Newspaper, label: "Читает страницу" },
   "plan.update": { icon: ListChecks, label: "Обновляет план задач" },
   "secrets.request": { icon: KeyRound, label: "Запрашивает ключ" },
 };
@@ -64,6 +70,7 @@ const PREFIX_ICONS: Array<[string, ActionDescriptor]> = [
   ["browser.", { icon: Globe, label: "Проверяет в браузере" }],
   ["preview.", { icon: Rocket, label: "Управляет превью" }],
   ["project.", { icon: FolderOpen, label: "Работа с проектом" }],
+  ["web.", { icon: Search, label: "Работа с интернетом" }],
   ["fs.", { icon: FileText, label: "Работа с файлами" }],
 ];
 
@@ -483,6 +490,14 @@ function ActionDetailView({ action }: { action: AgentAction }) {
   </div>;
 }
 
+/** «1 действие / 2 действия / 5 действий»: счётчик в шапке читается как фраза, а не как число. */
+function actionCountLabel(count: number) {
+  const mod10 = count % 10;
+  const mod100 = count % 100;
+  const word = mod10 === 1 && mod100 !== 11 ? "действие" : mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14) ? "действия" : "действий";
+  return count + " " + word;
+}
+
 export function ActionsPanel({ actions, running, progress, collapsed, onToggle }: {
   actions: AgentAction[];
   running: boolean;
@@ -492,15 +507,17 @@ export function ActionsPanel({ actions, running, progress, collapsed, onToggle }
   const failed = actions.filter(action => action.status === "failed").length;
   const status = <span className="run-panel-state">
     {running
-      ? <><LoaderCircle size={12} className="agent-spin"/> выполняется{progress ? " · шаг " + progress.step + " из " + progress.maxSteps : ""}</>
+      ? <><LoaderCircle size={12} className="agent-spin"/> выполняется{progress ? " · шаг " + progress.step + "/" + progress.maxSteps : ""}</>
       : "завершено"}
-    {failed > 0 && <span className="run-panel-error"><CircleAlert size={12}/> с ошибкой: {failed}</span>}
+    {/* На телефоне шапка не должна разваливаться на строки: счётчик ошибок — иконка и число,
+        причина остаётся в подсказке. */}
+    {failed > 0 && <span className="run-panel-error" title={"Действий с ошибкой: " + failed} aria-label={"Действий с ошибкой: " + failed}><CircleAlert size={12}/>{failed}</span>}
   </span>;
   return <RunPanel
     id="actions"
     icon={<Activity size={13}/>}
     title="Действия агента"
-    meta={actions.length ? actions.length + " действий" : undefined}
+    meta={actions.length ? actionCountLabel(actions.length) : undefined}
     status={status}
     collapsed={collapsed}
     onToggle={onToggle}

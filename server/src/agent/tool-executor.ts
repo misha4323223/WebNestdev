@@ -36,7 +36,9 @@ export async function executeTool(call:ProviderToolCall,context:AgentContext){
   }
   // Разговоры с пользователем (модальное окно секретов) идут через тот же поток событий запуска,
   // а остановка запуска передаётся внутрь инструмента, чтобы ожидание закрылось вместе с ним.
-  const result=await handler(call.arguments,{projectId:context.request.projectId,runId:context.runId,userId:context.request.userId,emit:context.emit,...(context.signal?{signal:context.signal}:{})});
+  // Поиск в интернете разрешён только при включённом переключателе в панели ввода: флаг читается
+  // здесь, поэтому его видят и web.search, и web.read, и ни один из них не обходит решение человека.
+  const result=await handler(call.arguments,{projectId:context.request.projectId,runId:context.runId,userId:context.request.userId,emit:context.emit,webSearchEnabled:context.request.webSearch===true,...(context.signal?{signal:context.signal}:{})});
   if(storagePostRecordTools.has(call.name)){
     await recordStorageMutation(context.request.projectId, context.request.userId, {
       heavy: heavyStorageMutationTools.has(call.name),

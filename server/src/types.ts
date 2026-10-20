@@ -62,13 +62,17 @@ export type ReasoningEffort="low"|"medium"|"high";
  * reads, it carries the tool results of the previous runs, and it does not depend on the panel
  * re-uploading the whole conversation on every run. `messages` stays the fallback for a run that
  * starts before anything is stored.
+ *
+ * `webSearch` — переключатель в панели ввода: по умолчанию выключен, и без него `web.search` не
+ * ходит в сеть. Флаг приходит от клиента, потому что это решение пользователя на конкретный запуск,
+ * а не свойство аккаунта; тариф по-прежнему выбирает провайдера (`web/search.ts`).
  */
-export type AgentRunRequest={projectId:string;conversationId?:string;messages:ChatMessage[];history?:ChatMessage[];model?:string;mode?:AgentMode;reasoning?:ReasoningEffort;resume?:{reason?:string};userId:string};
+export type AgentRunRequest={projectId:string;conversationId?:string;messages:ChatMessage[];history?:ChatMessage[];model?:string;mode?:AgentMode;reasoning?:ReasoningEffort;webSearch?:boolean;resume?:{reason?:string};userId:string};
 /**
  * `emit` и `signal` нужны инструментам, которые работают не сами по себе, а вместе с пользователем:
  * `secrets.request` показывает модальное окно через поток запуска и ждёт ответа, а остановка запуска
  * должна закрыть это ожидание, а не оставить инструмент висеть.
  */
-export type ToolContext={projectId:string;runId:string;userId:string;emit?:(event:AgentEvent)=>void;signal?:AbortSignal};
+export type ToolContext={projectId:string;runId:string;userId:string;emit?:(event:AgentEvent)=>void;signal?:AbortSignal;/** `web.search`/`web.read` разрешены только когда пользователь включил поиск в панели ввода. */webSearchEnabled?:boolean};
 export type ToolHandler=(input:unknown,context:ToolContext)=>Promise<unknown>;
 export type ToolDefinition={name:string;description:string;execute?:ToolHandler;async?:ToolHandler;/** Optional JSON Schema sent to the provider so the model knows the exact input shape. */parameters?:Record<string,unknown>};

@@ -46,6 +46,17 @@ test("reasoning depth is validated and passed to the run", () => {
   assert.equal(runSchema.safeParse({ projectId: "p1", messages, reasoning: "very-deep" }).success, false);
 });
 
+/**
+ * Поиск в интернете — кнопка, выключенная по умолчанию. Старый клиент поля не присылает, и запуск
+ * от этого не падает: отсутствие флага означает «выключено», а не «как раньше».
+ */
+test("internet search is opt-in per run", () => {
+  const messages = [{ role: "user" as const, content: "найди документацию" }];
+  assert.equal(runSchema.parse({ projectId: "p1", messages }).webSearch, undefined);
+  assert.equal(runSchema.parse({ projectId: "p1", messages, webSearch: true }).webSearch, true);
+  assert.equal(runSchema.safeParse({ projectId: "p1", messages, webSearch: "yes" }).success, false);
+});
+
 test("the too-long error reaches the panel as an ordinary sentence", () => {
   const messages = Array.from({ length: MAX_REQUEST_MESSAGES + 1 }, () => ({ role: "user" as const, content: "x" }));
   const result = runSchema.safeParse({ projectId: "p1", messages });

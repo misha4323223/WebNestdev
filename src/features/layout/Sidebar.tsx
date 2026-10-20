@@ -1,5 +1,6 @@
-import { Bot,FolderGit2,History,Home,KeyRound,LayoutDashboard,Plus,Settings,Sparkles,Terminal } from "lucide-react";
+import { Bot,FolderGit2,History,Home,KeyRound,LayoutDashboard,Plus,Settings,Terminal } from "lucide-react";
 import type { WorkspaceView } from "../workspace/WorkspaceNav";
+import { PartnerCard } from "./PartnerCard";
 
 export function Sidebar({open,view,onView,projectName,onNewProject,onDeploy,onSettings,onSecrets,onHome}:{open:boolean;view:WorkspaceView;onView:(view:WorkspaceView)=>void;projectName:string;onNewProject:()=>void;onDeploy:()=>void;onSettings:()=>void;onSecrets:()=>void;onHome:()=>void}){
   return <aside className={"sidebar"+(open?" open":"")}>
@@ -15,8 +16,7 @@ export function Sidebar({open,view,onView,projectName,onNewProject,onDeploy,onSe
     </div>
     <div className="sidebar-section"><div className="section-label">ПРОЕКТ</div><div className="project-row"><span className="status-dot"/>{projectName}</div></div>
     <div className="sidebar-footer">
-      <div className="sponsor-label">ПРИ ПОДДЕРЖКЕ</div>
-      <div className="sponsor-card"><div className="sponsor-logo"><Sparkles size={13}/></div><div><strong>WebNestdev Sponsor</strong><span>Поддержка бесплатного режима</span></div></div>
+      <PartnerCard/>
       <button className="nav-item" onClick={onSettings}><Settings size={14}/> Настройки</button>
     </div>
   </aside>;

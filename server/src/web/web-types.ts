@@ -26,9 +26,11 @@ export type WebResult = {
  *   что материала в интернете нет;
  * - `not_configured` — у платформы нет ключа провайдера (для Yandex Search API);
  * - `quota` — дневной лимит поисков аккаунта исчерпан;
+ * - `disabled` — пользователь не включил поиск в интернете в панели ввода: сеть не запрашивалась
+ *   вовсе, и агент должен попросить включить кнопку, а не отвечать по памяти;
  * - `unavailable` — сеть, таймаут, 5xx или неожидаемый ответ.
  */
-export type WebSearchErrorCode = "blocked" | "not_configured" | "quota" | "unavailable";
+export type WebSearchErrorCode = "blocked" | "not_configured" | "quota" | "disabled" | "unavailable";
 
 export class WebSearchError extends Error {
   constructor(

@@ -1,7 +1,7 @@
 import { useEffect,useRef,useState,type MouseEvent as ReactMouseEvent } from "react";
 import Markdown,{type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { AlertTriangle,Cpu,FileText,History,Image as ImageIcon,KeyRound,ListPlus,Paperclip,Play,RotateCcw,Send,ShieldCheck,Sparkles,Square,X } from "lucide-react";
+import { AlertTriangle,Cpu,FileText,History,Image as ImageIcon,KeyRound,ListPlus,Paperclip,Play,RotateCcw,Search,Send,ShieldCheck,Sparkles,Square,X } from "lucide-react";
 import { createAgentSocket } from "../../lib/agent-socket";
 import { apiJson } from "../../lib/api";
 import { answerProjectQuestion,cancelProjectSecret,getConversation,skipProjectQuestion,submitProjectSecret,uploadProjectFile } from "../../lib/project-api";
@@ -16,6 +16,13 @@ import { takeAgentStart } from "../../lib/agent-start";
 const modeKey="webnestdev.agentMode";
 const reasoningKey="webnestdev.reasoning";
 const panelsKey="webnestdev.runPanels";
+/**
+ * Поиск в интернете — отдельный переключатель у поля ввода, по умолчанию выключен. Он не входит
+ * в «Режимы»: там настройка того, как агент работает, а здесь — разрешение выйти в сеть на этот
+ * запуск. Сервер проверяет тот же флаг, поэтому выключенная кнопка означает именно «в интернет не
+ * ходить», а не только смену подписи.
+ */
+const webSearchKey="webnestdev.webSearch";
 /**
  * Ответ агента — markdown: заголовки, списки, таблицы и блоки кода. Таблица оборачивается
  * в прокручиваемый контейнер, иначе широкая таблица растягивает всю переписку, а ссылка
@@ -93,6 +100,11 @@ function readStoredReasoning():ReasoningEffort{
     const value=localStorage.getItem(reasoningKey);
     return value==="low"||value==="high"?value:"medium";
   }catch{return "medium"}
+}
+
+/** По умолчанию поиск выключен: в сеть агент идёт только когда человек сам включил кнопку. */
+function readStoredWebSearch(){
+  try{return localStorage.getItem(webSearchKey)==="on"}catch{return false}
 }
 
 /**
@@ -177,6 +189,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   // agent works, so they live here next to the messages.
   const [mode,setMode]=useState<AgentMode>(readStoredMode);
   const [reasoning,setReasoning]=useState<ReasoningEffort>(readStoredReasoning);
+  const [webSearch,setWebSearch]=useState<boolean>(readStoredWebSearch);
   const [modelInfo,setModelInfo]=useState<ModelInfo|null>(null);
   const [plan,setPlan]=useState<PlanState|null>(()=>readPlan(conversationId));
   const [actions,setActions]=useState<AgentAction[]>([]);
@@ -234,6 +247,8 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   // Queued messages start runs from socket callbacks, so the mode is read from a ref.
   const modeRef=useRef<AgentMode>(mode);
   const reasoningRef=useRef<ReasoningEffort>(reasoning);
+  // Очередь и переподключение запускают запуск из колбеков сокета, поэтому флаг читается из ref.
+  const webSearchRef=useRef<boolean>(webSearch);
   /** A queued template/import start is consumed once per conversation, never twice. */
   const pendingStartRef=useRef<string|null>(null);
   const fileRef=useRef<HTMLInputElement|null>(null);
@@ -343,6 +358,13 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     reasoningRef.current=next;
     setReasoning(next);
     try{localStorage.setItem(reasoningKey,next)}catch{}
+  }
+
+  /** Кнопка поиска: включает и выключает выход агента в интернет на следующие запуски. */
+  function chooseWebSearch(next:boolean){
+    webSearchRef.current=next;
+    setWebSearch(next);
+    try{localStorage.setItem(webSearchKey,next?"on":"off")}catch{}
   }
 
   /** Stores the plan per conversation so a panel remount keeps showing it. */
@@ -610,7 +632,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       socket.addEventListener("open",()=>{
         opened=true;
         setReconnect(null);
-        socket.send(JSON.stringify({type:"agent.run",request:{projectId,conversationId,messages:history,mode:modeRef.current,reasoning:reasoningRef.current,...(resuming?{resume:{reason:options.resumeReason}}:{})}}));
+        socket.send(JSON.stringify({type:"agent.run",request:{projectId,conversationId,messages:history,mode:modeRef.current,reasoning:reasoningRef.current,webSearch:webSearchRef.current,...(resuming?{resume:{reason:options.resumeReason}}:{})}}));
       },{once:true});
 
       /**
@@ -957,6 +979,20 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
           <div className="composer-tools">
             <button className="icon-button" onClick={()=>fileRef.current?.click()} disabled={!loaded||uploading} title="Прикрепить файл или изображение" aria-label="Прикрепить файл или изображение"><Paperclip size={14}/></button>
             <input ref={fileRef} type="file" multiple hidden onChange={e=>void pickFiles(e.target.files)}/>
+            {/* Поиск в интернете — отдельная кнопка, выключенная по умолчанию: она разрешает сеть на запуск. */}
+            <button
+              type="button"
+              className={"composer-search"+(webSearch?" active":"")}
+              aria-pressed={webSearch}
+              onClick={()=>chooseWebSearch(!webSearch)}
+              title={webSearch
+                ?"Поиск в интернете включён: агент ищет и открывает страницы. Нажмите, чтобы выключить."
+                :"Поиск в интернете выключен. Включите, когда агенту нужна актуальная информация из интернета."}
+              aria-label={webSearch?"Поиск в интернете включён":"Поиск в интернете выключен"}
+            >
+              <Search size={14}/>
+              <span className="composer-search-label">Поиск</span>
+            </button>
             {/* Режим и глубина размышления — один компактный контрол рядом с полем ввода. */}
             <AgentModeControl mode={mode} reasoning={reasoning} onMode={chooseMode} onReasoning={chooseReasoning}/>
             <button type="button" className="composer-model" onClick={()=>onOpenModelSettings?.()} title={modelTitle} aria-label={"Модель: "+modelName+". Открыть настройки AI-провайдера"}>
@@ -969,7 +1005,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
             <button className="send-button" disabled={!loaded||!prompt.trim()} onClick={send} title={running?"В очередь":"Отправить"} aria-label={running?"В очередь":"Отправить"}>{running?<ListPlus size={15}/>:<Send size={15}/>}</button>
           </div>
         </div>
-        {(uploading||running||mode==="planner")&&<div className="composer-hint">{uploading?"Загружаем файлы…":running?"Агент работает — сообщение встанет в очередь":"Планировщик только изучает проект и готовит план — файлы не меняются"}</div>}
+        {(uploading||running||mode==="planner"||webSearch)&&<div className="composer-hint">{uploading?"Загружаем файлы…":running?"Агент работает — сообщение встанет в очередь":mode==="planner"?"Планировщик только изучает проект и готовит план — файлы не меняются":"Поиск в интернете включён — агент может искать и открывать страницы."}</div>}
       </div>
       {changesNotice&&<button type="button" className="changes-toast" onClick={()=>onOpenChanges?.()} disabled={!onOpenChanges} title={onOpenChanges?"Открыть историю изменений проекта":undefined}>
         <History size={14}/>

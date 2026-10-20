@@ -31,11 +31,40 @@ button,textarea{font:inherit}button{color:inherit}
 .topbar-plan-upgrade{border-color:#39473c;background:linear-gradient(180deg,#19231d,#111820)}
 .topbar-plan-upgrade:hover{border-color:#55715b}
 .icon-button,.ghost-button{border:1px solid transparent;background:transparent;border-radius:6px;display:flex;align-items:center;gap:6px;cursor:pointer}.icon-button{width:30px;height:30px;justify-content:center}.ghost-button{height:30px;padding:0 9px;font-size:11px;color:#aeb4bd}.icon-button:hover,.ghost-button:hover{background:#171a20;border-color:#282d34}
-.workspace{flex:1;min-height:0;display:flex}.sidebar{width:210px;flex:none;border-right:1px solid #20242a;background:#0d0f13;display:flex;flex-direction:column;padding:10px 8px}
+.workspace{flex:1;min-height:0;display:flex}.sidebar{width:210px;flex:none;border-right:1px solid #20242a;background:#0d0f13;display:flex;flex-direction:column;padding:10px 8px;min-height:0;overflow-y:auto;overflow-x:hidden}
 /* Настройки и публикация занимают всю ширину: колонка слева закрывается, а вернуться
    можно кнопкой «К работе» внутри самих настроек. На телефоне шторка и так выезжает поверх. */
 @media(min-width:651px){.app-shell.sidebar-hidden .sidebar{display:none}}.sidebar-head{display:flex;gap:5px}.new-project{width:100%;height:31px;border:1px solid #2c3239;background:#171a1f;border-radius:6px;display:flex;align-items:center;justify-content:center;gap:6px;font-size:11px;cursor:pointer}.new-project:hover{background:#1c2026}
-.sidebar-section{padding:15px 4px 0}.section-label,.eyebrow,.sponsor-label{font-size:9px;letter-spacing:.09em;color:#69717c;font-weight:700}.section-label{padding:0 6px 7px}.nav-item{width:100%;height:30px;border:0;background:transparent;color:#969da7;border-radius:5px;text-align:left;padding:0 8px;display:flex;align-items:center;gap:8px;font-size:11px;cursor:pointer}.nav-item:hover,.nav-item.active{background:#171a1f;color:#e7e9ec}.project-row{height:30px;display:flex;align-items:center;gap:8px;padding:0 8px;color:#b6bbc3;font-size:11px}.status-dot{width:6px;height:6px;border-radius:50%;background:#6b747e;display:inline-block}.sidebar-footer{margin-top:auto;padding:10px 4px}.sponsor-label{padding:0 5px 7px}.sponsor-card{border:1px solid #252a31;background:#14171c;border-radius:7px;padding:8px;display:flex;align-items:center;gap:8px}.sponsor-logo{width:26px;height:26px;border-radius:5px;background:#232830;display:grid;place-items:center;font-size:9px;font-weight:700}.sponsor-card strong,.sponsor-card span{display:block}.sponsor-card strong{font-size:10px}.sponsor-card span{font-size:9px;color:#707782;margin-top:2px}
+.sidebar-section{padding:15px 4px 0}.section-label,.eyebrow{font-size:9px;letter-spacing:.09em;color:#69717c;font-weight:700}.section-label{padding:0 6px 7px}.nav-item{width:100%;height:30px;border:0;background:transparent;color:#969da7;border-radius:5px;text-align:left;padding:0 8px;display:flex;align-items:center;gap:8px;font-size:11px;cursor:pointer}.nav-item:hover,.nav-item.active{background:#171a1f;color:#e7e9ec}.project-row{height:30px;display:flex;align-items:center;gap:8px;padding:0 8px;color:#b6bbc3;font-size:11px}.status-dot{width:6px;height:6px;border-radius:50%;background:#6b747e;display:inline-block}.sidebar-footer{margin-top:auto;padding:10px 4px}
+/* Партнёрский слот: компактная технологичная карточка внизу сайдбара. Она меняется раз в 10
+   минут, а тонкая полоса внизу отсчитывает время до следующего слота; акцент задаётся слотом
+   через `data-accent`, поэтому новые партнёры не требуют новых стилей. */
+.partner{--partner:#8fd3ad;--partner-soft:rgba(112,190,150,.14);--partner-line:rgba(112,190,150,.34);margin:0 0 8px;display:grid;gap:6px}
+.partner[data-accent="mint"]{--partner:#8fd3ad;--partner-soft:rgba(112,190,150,.14);--partner-line:rgba(112,190,150,.34)}
+.partner[data-accent="amber"]{--partner:#d9bd7c;--partner-soft:rgba(217,189,124,.13);--partner-line:rgba(217,189,124,.32)}
+.partner[data-accent="sky"]{--partner:#8fbcd8;--partner-soft:rgba(143,188,216,.13);--partner-line:rgba(143,188,216,.32)}
+.partner-head{display:flex;align-items:center;justify-content:space-between;gap:6px;padding:0 1px;color:#69717c;font-size:8.5px;font-weight:700;letter-spacing:.1em}
+.partner-eyebrow{display:inline-flex;align-items:center;gap:4px;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.partner-eyebrow svg{flex:none;color:var(--partner)}
+.partner-count{flex:none;color:#59616c;font-variant-numeric:tabular-nums;letter-spacing:.04em}
+.partner-card{position:relative;display:flex;align-items:flex-start;gap:8px;padding:9px 9px 12px;border:1px solid #242b34;border-radius:9px;background:linear-gradient(155deg,#121821,#0d1116);color:#cfd5dd;text-decoration:none;overflow:hidden;transition:border-color .18s ease,background .18s ease}
+.partner-card:hover{border-color:#33404d;background:linear-gradient(155deg,#151d27,#0f141a)}
+.partner-card::before{content:"";position:absolute;inset:0;pointer-events:none;background-image:linear-gradient(rgba(255,255,255,.028) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.028) 1px,transparent 1px);background-size:11px 11px;opacity:.6}
+.partner-logo{position:relative;flex:none;width:26px;height:26px;border-radius:7px;border:1px solid var(--partner-line);background:var(--partner-soft);color:var(--partner);display:grid;place-items:center;font:700 9.5px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.02em}
+.partner-text{position:relative;min-width:0;display:grid;gap:2px}
+.partner-text strong{color:#e7eaef;font-size:10.5px;font-weight:650;line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.partner-text span{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;color:#828b97;font-size:9px;line-height:1.4}
+.partner-arrow{position:relative;flex:none;margin-left:auto;color:#55606d;transition:color .18s ease,transform .18s ease}
+.partner-card:hover .partner-arrow{color:var(--partner);transform:translate(1px,-1px)}
+.partner-timer{position:absolute;left:0;right:0;bottom:0;height:2px;background:var(--partner);opacity:.5;transform-origin:left center;animation-name:partner-timer;animation-timing-function:linear;animation-fill-mode:forwards}
+@keyframes partner-timer{from{transform:scaleX(1)}to{transform:scaleX(0)}}
+.partner-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:0 2px}
+.partner-cta{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#7c8794;font-size:9px;font-weight:600}
+.partner-dots{flex:none;display:flex;align-items:center;gap:4px}
+.partner-dots button{width:5px;height:5px;padding:0;border:0;border-radius:999px;background:#2b333d;cursor:pointer;transition:background .16s ease,width .16s ease}
+.partner-dots button:hover{background:#4a5663}
+.partner-dots button.active{width:13px;background:var(--partner)}
+@media(prefers-reduced-motion:reduce){.partner-timer{animation:none;opacity:.18}}
 .main{flex:1;min-width:0;min-height:0;display:flex;overflow:hidden}.chat{min-width:0;min-height:0;flex:1;display:flex;flex-direction:column;max-width:none;overflow:hidden}
 /* Режим и размышление — одна настройка запуска, поэтому и один компактный контрол:
    кнопка показывает роль, меню рядом переключает роль и глубину. */
@@ -121,6 +150,15 @@ button,textarea{font:inherit}button{color:inherit}
 .composer-model:hover{border-color:#3a424c;color:#e8eaed}
 .composer-model>svg{flex:none;color:#8d95a0}
 .composer-model-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* Поиск в интернете — отдельная кнопка у поля ввода, по умолчанию выключена. Включённое состояние
+   читается цветом темы и не спорит с «Режимами»: там роль агента, здесь разрешение на сеть. */
+.composer-search{display:flex;align-items:center;gap:5px;height:29px;padding:0 9px;border:1px solid #282d34;border-radius:8px;background:#0d1013;color:#8d95a0;font-size:10px;cursor:pointer;white-space:nowrap;transition:border-color .16s ease,background .16s ease,color .16s ease}
+.composer-search:hover{border-color:#3a424c;background:#11151a;color:#e8eaed}
+.composer-search>svg{flex:none}
+.composer-search-label{font-weight:600;line-height:1}
+.composer-search.active{border-color:#2f5c46;background:#10201a;color:#9fe0bd}
+.composer-search.active>svg{color:#8fdcb0}
+.composer-search.active:hover{border-color:#3c7358;background:#12261d;color:#b6ebcd}
 .composer-hint{padding:5px 13px 9px;color:#5f6670;font-size:9px;line-height:1.5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .composer-buttons{display:flex;align-items:center;gap:5px;flex:none}
 .stop-button{background:#2a2f37;color:#e8eaed}
@@ -165,12 +203,14 @@ button,textarea{font:inherit}button{color:inherit}
 .chat-status-bottom{max-height:38%;padding:2px 7% 10px;border-top:1px solid #1a1f26;border-bottom:0}
 .chat-status-bottom .run-panel:last-child{margin-bottom:0}
 .run-panel{max-width:760px;margin:0 auto 10px;border:1px solid #262c34;border-radius:10px;background:#0f1216;overflow:hidden}
-.run-panel-head{width:100%;display:flex;align-items:center;gap:7px;padding:8px 12px;border:0;background:transparent;color:#9aa2ad;font-size:10px;cursor:pointer;text-align:left}
+/* Шапка панели — одна строка: статус и счётчики не переносятся по словам, а заголовок укорачивается
+   многоточием. Иначе на телефоне «с ошибкой» разваливалось на две строки и панель росла в высоту. */
+.run-panel-head{width:100%;min-width:0;display:flex;flex-wrap:nowrap;align-items:center;gap:7px;padding:8px 12px;border:0;background:transparent;color:#9aa2ad;font-size:10px;cursor:pointer;text-align:left}
 .run-panel-head:hover{background:#12171d}
-.run-panel-head strong{color:#dfe3e8;font-size:10.5px;font-weight:650}
-.run-panel-meta{margin-left:auto;color:#7f8792}
-.run-panel-state{display:inline-flex;align-items:center;gap:6px;color:#7f8792}
-.run-panel-error{display:inline-flex;align-items:center;gap:4px;color:#c96f6f}
+.run-panel-head strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#dfe3e8;font-size:10.5px;font-weight:650}
+.run-panel-meta{flex:none;white-space:nowrap;margin-left:auto;color:#7f8792}
+.run-panel-state{flex:none;display:inline-flex;align-items:center;gap:6px;white-space:nowrap;color:#7f8792}
+.run-panel-error{flex:none;display:inline-flex;align-items:center;gap:4px;white-space:nowrap;color:#c96f6f}
 .run-panel-body{border-top:1px solid #1d2229;max-height:220px;overflow:auto;scrollbar-width:thin}
 .run-panel-actions .run-panel-body{max-height:min(48vh,460px)}
 .run-panel-body ul{list-style:none;margin:0;padding:0}
@@ -279,7 +319,9 @@ button,textarea{font:inherit}button{color:inherit}
   .preview-backdrop.open{opacity:1;pointer-events:auto}
 }
 @media(prefers-reduced-motion:reduce){.preview,.preview-backdrop{transition:none}}
-@media(max-width:650px){.topbar{gap:8px}.brand{min-width:0}.topbar-project,.topbar-actions .ghost-button{display:none}.mobile-only{display:flex}.sidebar{position:absolute;z-index:10;top:48px;bottom:0;left:-210px;transition:left .18s ease;box-shadow:12px 0 30px rgba(0,0,0,.35)}.sidebar.open{left:0}.messages,.composer-wrap{padding-left:14px;padding-right:14px}.composer-model{max-width:132px}.agent-mode-trigger{padding:0 7px;gap:4px}
+@media(max-width:650px){.topbar{gap:8px}.brand{min-width:0}.topbar-project,.topbar-actions .ghost-button{display:none}.mobile-only{display:flex}.sidebar{position:absolute;z-index:10;top:48px;bottom:0;left:-210px;transition:left .18s ease;box-shadow:12px 0 30px rgba(0,0,0,.35)}.sidebar.open{left:0}.messages,.composer-wrap{padding-left:14px;padding-right:14px}.composer-model{max-width:132px}.agent-mode-trigger{padding:0 7px;gap:4px}.composer-search{padding:0 8px}
+/* На узком экране у кнопки поиска остаётся иконка: подпись занимала место у поля ввода. */
+.composer-search-label{display:none}
 /* На узком экране кнопка остаётся короткой, а глубина размышления видна в меню. */
 .agent-mode-dot,.agent-mode-depth{display:none}
 .agent-mode-menu{width:min(288px,calc(100vw - 28px))}
@@ -1098,6 +1140,12 @@ button,textarea{font:inherit}button{color:inherit}
   .topbar-plan-next{height:19px;padding:0 6px;font-size:9.5px;gap:2px}
   .topbar-actions{gap:4px}
   .run-panel-actions .run-panel-body{max-height:min(42vh,360px)}
+  /* Мобильная шапка действия: мельче шрифт, счётчик «N действий» убран, ошибка — иконка и число. */
+  .run-panel-head{padding:7px 10px;gap:5px;font-size:9px}
+  .run-panel-head strong{font-size:9.5px}
+  .run-panel-meta{display:none}
+  .run-panel-state{gap:5px;font-size:9px}
+  .run-panel-error{gap:3px}
   .chat-status-bottom{max-height:46%}
   .action-summary{gap:6px;padding:8px 10px 8px 7px}
   .action-label{font-size:10.5px}
