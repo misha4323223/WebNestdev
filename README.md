@@ -66,8 +66,8 @@ with the host's RAM; and `BROWSER_MAX_CONCURRENT` (default one) controls Chromiu
 request that arrives while a limit is reached waits in a bounded queue instead of failing, the
 panel shows it waiting, and the daily run quota is consumed only once the run actually starts.
 All limits are logged at startup (`[agent] …`, `[sandbox] …`). See
-docs/PRODUCTION_DEPLOYMENT.md for the queue settings, the scaling path and what a small host
-costs in Russia.
+docs/PRODUCTION_DEPLOYMENT.md for the queue settings and what a small host costs in Russia, and
+[docs/SCALING_PLAN.md](docs/SCALING_PLAN.md) for the engineering path from one VM to 500+ users.
 
 ### Which runs the daily quota counts
 
