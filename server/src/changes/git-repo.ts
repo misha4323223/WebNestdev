@@ -159,6 +159,109 @@ export async function currentBranch(root: string, fallback: string) {
 }
 
 /**
+ * Ветка проекта в списке выбора. `remote` — ветка есть и на GitHub, `pushed` — локальный
+ * HEAD совпадает с последней отправленной точкой. Оба флага нужны, чтобы шапка честно
+ * показывала, куда уйдёт кнопка «Отправить» и что ещё не отправлено.
+ */
+export type BranchInfo = { name: string; current: boolean; remote: boolean; pushed: boolean };
+
+export async function listBranches(root: string, fallback: string): Promise<{ current: string; branches: BranchInfo[] }> {
+  const current = await currentBranch(root, fallback);
+  const local = await git.listBranches({ fs, dir: root }).catch(() => [] as string[]);
+  // Список удалённых веток читается из локальных ссылок, которые оставил fetch: так меню
+  // открывается без сети, а неизвестные ветки всё равно можно выбрать — switchBranch
+  // заберёт их из GitHub по имени.
+  const remote = await git.listBranches({ fs, dir: root, remote: "origin" }).catch(() => [] as string[]);
+  const remoteSet = new Set(remote.filter(name => name !== "HEAD"));
+  const names = [...new Set([...local, ...remoteSet])].sort((a, b) => a.localeCompare(b));
+  const branches: BranchInfo[] = [];
+  for (const name of names) {
+    const inLocal = local.includes(name);
+    branches.push({
+      name,
+      current: inLocal && name === current,
+      remote: remoteSet.has(name),
+      pushed: inLocal ? await branchPushed(root, name) : false,
+    });
+  }
+  return { current, branches };
+}
+
+/** Совпадает ли локальная ветка с последней отправленной точкой. */
+async function branchPushed(root: string, branch: string) {
+  try {
+    const head = await git.resolveRef({ fs, dir: root, ref: "refs/heads/" + branch });
+    const pushed = await git.resolveRef({ fs, dir: root, ref: "refs/webnestdev/pushed/" + branch });
+    return head === pushed;
+  } catch {
+    return false;
+  }
+}
+
+export type BranchSwitchOutcome = { switched: boolean; branch: string; error?: string };
+
+/**
+ * Переключение ветки проекта. Незакоммиченные правки не переносятся: переключение либо
+ * сохраняет их как точку истории, либо отказывает. Молча стереть работу агента нельзя, а
+ * переносить её в другую ветку без спроса — тоже.
+ */
+export async function switchBranch(root: string, options: { branch: string; token: string | null }): Promise<BranchSwitchOutcome> {
+  const branch = options.branch.trim();
+  if (!branch) return { switched: false, branch, error: "Не указана ветка" };
+  if (!/^[A-Za-z0-9._\/-]+$/.test(branch) || branch.startsWith("-") || branch.includes("..")) {
+    return { switched: false, branch, error: "Недопустимое имя ветки" };
+  }
+  if (!await hasCommits(root)) return { switched: false, branch, error: "В проекте ещё нет истории изменений" };
+  const dirty = await scanChanges(root);
+  if (dirty.changed.length) {
+    return {
+      switched: false,
+      branch,
+      error: "В проекте есть несохранённые правки. Дождитесь конца задачи или создайте точку, затем переключите ветку.",
+    };
+  }
+  try {
+    const local = await git.listBranches({ fs, dir: root }).catch(() => [] as string[]);
+    if (local.includes(branch)) {
+      await git.checkout({ fs, dir: root, ref: branch, force: true });
+    } else {
+      if (!options.token) {
+        return { switched: false, branch, error: "Ветки " + branch + " нет в проекте: чтобы забрать её из GitHub, подключите GitHub." };
+      }
+      const fetched = await git.fetch({
+        fs,
+        http,
+        dir: root,
+        remote: "origin",
+        ref: branch,
+        singleBranch: true,
+        depth: 1,
+        onAuth: () => ({ username: "x-access-token", password: options.token as string }),
+      });
+      if (!fetched.fetchHead) return { switched: false, branch, error: "GitHub не вернул ветку " + branch };
+      const previous = await treeFiles(root, "HEAD").catch(() => new Map<string, string>());
+      const target = await treeFiles(root, fetched.fetchHead);
+      for (const [filepath, oid] of target) {
+        if (previous.get(filepath) === oid) continue;
+        const { blob } = await git.readBlob({ fs, dir: root, oid });
+        await writeWorktreeFile(root, filepath, blob);
+      }
+      for (const filepath of previous.keys()) {
+        if (target.has(filepath)) continue;
+        await deleteInside(root, path.join(root, filepath));
+      }
+      await git.writeRef({ fs, dir: root, ref: "refs/heads/" + branch, value: fetched.fetchHead, force: true });
+      await git.writeRef({ fs, dir: root, ref: "refs/remotes/origin/" + branch, value: fetched.fetchHead, force: true });
+    }
+    await git.writeRef({ fs, dir: root, ref: "HEAD", value: "refs/heads/" + branch, force: true, symbolic: true });
+    await stageWorkdir(root);
+    return { switched: true, branch };
+  } catch (error) {
+    return { switched: false, branch, error: "Не удалось переключить ветку: " + describe(error) };
+  }
+}
+
+/**
  * Содержимое рабочего дерева: путь → хеш блоба. Хешируются все файлы, кроме служебных.
  *
  * `git.statusMatrix` здесь не годится: его кеш сравнивает mtime с точностью до секунды и размер,

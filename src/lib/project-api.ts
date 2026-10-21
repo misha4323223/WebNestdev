@@ -55,6 +55,16 @@ export const rollbackProjectChanges=(projectId:string,sha:string)=>apiJson<{chec
  * если в проекте есть неотправленные точки, сервер честно откажет вместо перезаписи работы.
  */
 export const pullProjectChanges=(projectId:string)=>apiJson<{pulled:boolean;branch:string;at:string;sha?:string;changed?:number;error?:string;overview:ProjectChanges}>("/api/projects/"+projectId+"/changes/pull",{method:"POST"});
+/**
+ * Ветки проекта для выбора в шапке. `pushed` — локальная ветка совпадает с последней
+ * отправленной точкой; `remote` — ветка уже есть на GitHub.
+ */
+export type RepositoryBranch={name:string;current:boolean;remote:boolean;pushed:boolean};
+export type ProjectBranches={initialized:boolean;current:string;branches:RepositoryBranch[]};
+export const listProjectBranches=(projectId:string)=>apiJson<ProjectBranches>("/api/projects/"+projectId+"/changes/branches");
+/** Переключение ветки: следующая отправка уйдёт в выбранную ветку. */
+export const switchProjectBranch=(projectId:string,branch:string)=>apiJson<{switched:boolean;branch:string;error?:string;overview:ProjectChanges}>(
+  "/api/projects/"+projectId+"/changes/branches/switch",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({branch})});
 /** Отправка на GitHub по кнопке — единственный путь, которым коммиты попадают в ветку. */
 export const pushProjectChanges=(projectId:string)=>apiJson<{pushed:boolean;branch:string;at:string}>("/api/projects/"+projectId+"/changes/push",{method:"POST"});
 export const getPreviewStatus=(projectId:string)=>apiJson<PreviewState>("/api/projects/"+projectId+"/preview/status");

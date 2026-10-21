@@ -68,7 +68,7 @@ export function WorkspaceShell({onHome,onAgentState}:{onHome:()=>void;onAgentSta
   // иначе «Изменения» монтировались бы под ней и клик выглядел бы как пустой.
   const openChanges=()=>{setSettingsOpen(false);setPreviewOpen(false);setView("changes")};
 
-  return <LayoutShell projectId={projectId} projectName={projectName} view={view} onView={view=>{setSettingsOpen(false);setView(view)}} onSettings={openSettings} onSecrets={openSecrets} onHome={onHome} onOpenChanges={openChanges} agentRunning={agentRunning} previewOpen={previewOpen} previewRunning={previewRunning} onPreviewToggle={()=>setPreviewOpen(value=>!value)} sidebarHidden={settingsOpen}>
+  return <LayoutShell projectId={projectId} projectName={projectName} view={view} onView={view=>{setSettingsOpen(false);setView(view)}} onSettings={openSettings} onSecrets={openSecrets} onHome={onHome} onOpenChanges={openChanges} agentRunning={agentRunning} previewOpen={previewOpen} previewRunning={previewRunning} onPreviewToggle={()=>setPreviewOpen(value=>!value)} onRepositoryChanged={()=>setPreviewReload(value=>value+1)} sidebarHidden={settingsOpen}>
     <main className="main">
       <div className="workspace-main">
         {settingsOpen?<div className="workspace-overlay-panel">

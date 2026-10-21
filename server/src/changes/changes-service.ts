@@ -2,6 +2,7 @@ import { getGitHubConnection } from "../github/github-connection-store.js";
 import { createGitHubRepository } from "../github/github-api.js";
 import { getProject, linkProjectGithub } from "../project-store.js";
 import { getSandbox } from "../sandbox-manager.js";
+import { recordStorageMutation } from "../account/storage-quota.js";
 import type { SandboxConfig } from "../sandbox-manager.js";
 import {
   addRemote,
@@ -10,11 +11,13 @@ import {
   hasCommits,
   hasRepo,
   initRepo,
+  listBranches,
   listCheckpoints,
   pullBranch,
   pushBranch,
   readPushState,
   restoreCheckpoint,
+  switchBranch,
 } from "./git-repo.js";
 import type { Checkpoint, ChangesOverview } from "./types.js";
 
@@ -295,6 +298,39 @@ export async function pullFromGithub(projectId: string, userId: string) {
     const branch = await currentBranch(repository.sandbox.root, repository.branch);
     const token = await tokenFor(userId);
     const outcome = await pullBranch(repository.sandbox.root, { branch, token });
+    // Выгрузка из GitHub добавляет файлы мимо агента: размер проекта нужно пересчитать,
+    // иначе квота узнает о них только на ночной сверке.
+    if (outcome.pulled) {
+      await recordStorageMutation(projectId, userId, { heavy: true })
+        .catch(error => console.warn("[storage] не удалось обновить размер после выгрузки", error));
+    }
+    return { ...outcome, overview: await changesOverview(projectId, userId) };
+  });
+}
+
+/**
+ * Ветки проекта для меню в шапке: локальные и те, что уже известны с GitHub. До первого
+ * коммита веток нет, поэтому ответ говорит `initialized: false`, а не ошибкой.
+ */
+export async function listProjectBranches(projectId: string, userId: string) {
+  const repository = await repositoryFor(projectId, userId);
+  if (!await hasRepo(repository.sandbox.root)) {
+    return { initialized: false, current: repository.branch, branches: [] };
+  }
+  const listed = await listBranches(repository.sandbox.root, repository.branch);
+  return { initialized: true, ...listed };
+}
+
+/**
+ * Переключение ветки — выбор, в какую ветку уйдёт следующая отправка. Файлы проекта берутся из
+ * выбранной ветки, поэтому открытый предпросмотр перечитывается вызывающей стороной.
+ */
+export async function switchProjectBranch(projectId: string, userId: string, branch: string) {
+  return withProjectLock(projectId, async () => {
+    const repository = await repositoryFor(projectId, userId);
+    if (!await hasRepo(repository.sandbox.root)) throw new Error("В проекте ещё нет истории изменений");
+    const token = repository.remoteUrl ? await tokenFor(userId) : null;
+    const outcome = await switchBranch(repository.sandbox.root, { branch, token });
     return { ...outcome, overview: await changesOverview(projectId, userId) };
   });
 }
