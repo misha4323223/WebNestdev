@@ -5,7 +5,7 @@ import { findYandexIdentityByUserId } from "../auth/yandex-account-store.js";
 import { getUserPreferences, saveUserPreferences, type UserPreferences } from "../account/account-store.js";
 import { FREE_PLAN, PLAN_CATALOG, balanceFor, limitsForPlan, subscriptionFor, type BillingSubscription } from "../account/plans.js";
 import { getBillingHistory, getCostSnapshot, getUsageSnapshot } from "../account/usage-store.js";
-import { getStorageSnapshot } from "../account/storage-quota.js";
+import { getStorageOverview, refreshUserStorage } from "../account/storage-quota.js";
 import { accountPlanFor, getSubscriptionRecord, isSubscriptionLive, listPayments } from "../billing/store.js";
 import { planPriceLabel, planPriceRub, publicPlans, robokassaConfig } from "../billing/robokassa.js";
 
@@ -82,8 +82,38 @@ export async function registerAccountRoutes(app: FastifyInstance) {
       })),
       usage: await getUsageSnapshot(user.id),
       history: await getBillingHistory(user.id, 7),
-      storage: await getStorageSnapshot(user.id, plan),
+      storage: await getStorageOverview(user.id, plan),
       cost: await getCostSnapshot(user.id),
     };
+  });
+
+  /**
+   * Ручной пересчёт хранилища: после удаления файлов или `node_modules` число в настройках
+   * должно уменьшиться сразу, а не ждать ночной сверки. Кнопка в интерфейсе вызывает этот
+   * маршрут, поэтому у него свой короткий кулдаун: обход каталога не должен запускаться
+   * десятком нажатий подряд.
+   */
+  const storageRefreshCooldown = new Map<string, number>();
+  const STORAGE_REFRESH_COOLDOWN_MS = 60_000;
+  app.post("/api/account/storage/refresh", async (request, reply) => {
+    const user = await requireUser(request, reply); if (!user) return;
+    const now = Date.now();
+    const last = storageRefreshCooldown.get(user.id) ?? 0;
+    const retryAfter = Math.ceil((STORAGE_REFRESH_COOLDOWN_MS - (now - last)) / 1000);
+    if (retryAfter > 0) {
+      return reply.code(429).send({
+        error: "Размер хранилища пересчитывался только что: попробуйте через " + retryAfter + " с.",
+        retryAfter,
+      });
+    }
+    storageRefreshCooldown.set(user.id, now);
+    try {
+      const refreshed = await refreshUserStorage(user.id);
+      const plan = await accountPlanFor(user.id);
+      return { ...refreshed, storage: await getStorageOverview(user.id, plan) };
+    } catch (error) {
+      storageRefreshCooldown.delete(user.id);
+      throw error;
+    }
   });
 }

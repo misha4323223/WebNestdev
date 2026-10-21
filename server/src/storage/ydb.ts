@@ -10,4 +10,5 @@ export {
   closeStorage,
   describeStorage,
   assertStorageConfigured,
+  withAdvisoryLock,
 } from "./pg.js";

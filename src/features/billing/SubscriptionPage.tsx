@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ArrowLeft, ArrowRight, Check, CreditCard, RefreshCw, ShieldCheck } from "lucide-react";
 import {
   balanceLabel,
+  bytesLabel,
   dateLabel,
   getBilling,
   paymentNotice,
@@ -22,19 +23,13 @@ const faq = [
   { question: "Нужен ли чек?", answer: "Да, чек самозанятого формируется в «Моём налоге» и приходит покупателю. Робокасса передаёт данные об оплате в ФНС, если в кабинете подключены «Робочеки СМЗ»." },
 ];
 
-function bytesLabel(value: number): string {
-  if (value < 1024) return value + " Б";
-  if (value < 1024 * 1024) return Math.round(value / 1024) + " КБ";
-  if (value < 1024 * 1024 * 1024) return (value / 1024 / 1024).toFixed(1) + " МБ";
-  return (value / 1024 / 1024 / 1024).toFixed(1) + " ГБ";
-}
-
 const limitRows: Array<{ label: string; key: keyof PlanLimits }> = [
   { label: "Проектов одновременно", key: "projects" },
   { label: "Запусков агента в день", key: "agentRunsPerDay" },
   { label: "Браузерных проверок в день", key: "browserChecksPerDay" },
-  { label: "Поисков в интернете в день", key: "webSearchesPerDay" },
 ];
+// Квоту поиска в интернете в сравнении тарифов не показываем: для человека это инструмент внутри
+// запуска агента, а не отдельная шкала. Дневной лимит остаётся на сервере как защита от перерасхода.
 
 /**
  * Separate page with the full description of every plan. It is a full-screen
@@ -181,10 +176,14 @@ export function SubscriptionPage({ onBack, onOpenPicker }: { onBack: () => void;
             const storageLimit = billing.limits.storageBytes ?? 0;
             const storageUsed = billing.storage?.usedBytes ?? 0;
             if (storageLimit <= 0) return null;
+            const state = billing.storage?.state ?? (storageUsed >= storageLimit ? "full" : storageUsed >= storageLimit * 0.8 ? "warning" : "ok");
             return (
-              <div className="usage-meter">
+              <div className={"usage-meter" + (state === "ok" ? "" : " is-" + state)}>
                 <div><span>Хранилище аккаунта</span><strong>{bytesLabel(storageUsed)} из {bytesLabel(storageLimit)}</strong></div>
                 <div className="usage-meter-track"><span style={{ width: `${Math.min(100, (storageUsed / storageLimit) * 100)}%` }} /></div>
+                {state !== "ok" && <small className={"usage-meter-left " + state}>{state === "full"
+                  ? "Лимит исчерпан: запись файлов агентом приостановлена"
+                  : "Осталось " + bytesLabel(Math.max(0, storageLimit - storageUsed))}</small>}
               </div>
             );
           })()}

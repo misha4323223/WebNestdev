@@ -177,6 +177,18 @@ jobs:
           YANDEX_SEARCH_API_KEY: ${{ secrets.YANDEX_SEARCH_API_KEY || vars.YANDEX_SEARCH_API_KEY }}
           YANDEX_SEARCH_FOLDER_ID: ${{ secrets.YANDEX_SEARCH_FOLDER_ID || vars.YANDEX_SEARCH_FOLDER_ID }}
           TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY || vars.TAVILY_API_KEY }}
+          # Холодный ярус проектов: S3-совместимый бакет МТС Web Services (docs/STORAGE.md).
+          # Адрес, бакет и регион — не секреты, их можно завести в Variables; ключи — только
+          # в Secrets. Пустые значения не передаются: незаведённый ключ не стирает настройку ВМ.
+          PLATFORM_S3_ENDPOINT: ${{ secrets.PLATFORM_S3_ENDPOINT || vars.PLATFORM_S3_ENDPOINT }}
+          PLATFORM_S3_BUCKET: ${{ secrets.PLATFORM_S3_BUCKET || vars.PLATFORM_S3_BUCKET }}
+          PLATFORM_S3_REGION: ${{ secrets.PLATFORM_S3_REGION || vars.PLATFORM_S3_REGION }}
+          PLATFORM_S3_PREFIX: ${{ secrets.PLATFORM_S3_PREFIX || vars.PLATFORM_S3_PREFIX }}
+          PLATFORM_S3_ACCESS_KEY_ID: ${{ secrets.PLATFORM_S3_ACCESS_KEY_ID }}
+          PLATFORM_S3_SECRET_ACCESS_KEY: ${{ secrets.PLATFORM_S3_SECRET_ACCESS_KEY }}
+          # 1 включает уборку простаивающих проектов в бакет; 0/пусто — проекты остаются на диске.
+          PROJECT_ARCHIVE_ENABLED: ${{ secrets.PROJECT_ARCHIVE_ENABLED || vars.PROJECT_ARCHIVE_ENABLED }}
+          PROJECT_ARCHIVE_IDLE_DAYS: ${{ secrets.PROJECT_ARCHIVE_IDLE_DAYS || vars.PROJECT_ARCHIVE_IDLE_DAYS }}
           WEBNESTDEV_ADMIN_EMAILS: ${{ secrets.WEBNESTDEV_ADMIN_EMAILS }}
           WEBNESTDEV_ADMIN_USER_IDS: ${{ secrets.WEBNESTDEV_ADMIN_USER_IDS }}
         run: |
@@ -221,6 +233,14 @@ jobs:
           add_platform_env YANDEX_SEARCH_API_KEY "$YANDEX_SEARCH_API_KEY"
           add_platform_env YANDEX_SEARCH_FOLDER_ID "$YANDEX_SEARCH_FOLDER_ID"
           add_platform_env TAVILY_API_KEY "$TAVILY_API_KEY"
+          add_platform_env PLATFORM_S3_ENDPOINT "$PLATFORM_S3_ENDPOINT"
+          add_platform_env PLATFORM_S3_BUCKET "$PLATFORM_S3_BUCKET"
+          add_platform_env PLATFORM_S3_REGION "$PLATFORM_S3_REGION"
+          add_platform_env PLATFORM_S3_PREFIX "$PLATFORM_S3_PREFIX"
+          add_platform_env PLATFORM_S3_ACCESS_KEY_ID "$PLATFORM_S3_ACCESS_KEY_ID"
+          add_platform_env PLATFORM_S3_SECRET_ACCESS_KEY "$PLATFORM_S3_SECRET_ACCESS_KEY"
+          add_platform_env PROJECT_ARCHIVE_ENABLED "$PROJECT_ARCHIVE_ENABLED"
+          add_platform_env PROJECT_ARCHIVE_IDLE_DAYS "$PROJECT_ARCHIVE_IDLE_DAYS"
           add_platform_env WEBNESTDEV_ADMIN_EMAILS "$WEBNESTDEV_ADMIN_EMAILS"
           add_platform_env WEBNESTDEV_ADMIN_USER_IDS "$WEBNESTDEV_ADMIN_USER_IDS"
           # Итог по OAuth-ключам — только «есть/нет», без значений. Раньше пустой ключ был
@@ -231,6 +251,7 @@ jobs:
           echo "[deploy] OAuth Яндекс ID: client_id=$(has "${YANDEX_CLIENT_ID:-}"), secret=$(has "${YANDEX_CLIENT_SECRET:-}")"
           echo "[deploy] Yandex ID redirect_uri: ${YANDEX_CALLBACK_URL:-https://<домен панели>/api/yandex/callback}"
           echo "[deploy] Веб-поиск: Yandex Search API key=$(has "${YANDEX_SEARCH_API_KEY:-}"), folder=$(has "${YANDEX_SEARCH_FOLDER_ID:-}"), Tavily=$(has "${TAVILY_API_KEY:-}")"
+          echo "[deploy] Холодный ярус: endpoint=$(has "${PLATFORM_S3_ENDPOINT:-}"), бакет=${PLATFORM_S3_BUCKET:-—}, ключ=$(has "${PLATFORM_S3_ACCESS_KEY_ID:-}"), включён=${PROJECT_ARCHIVE_ENABLED:-0}"
           if [ -s "$PLATFORM_ENV_LOCAL" ]; then
             PLATFORM_ENV_FILE="/tmp/.webnestdev-platform.env"
             tr -d '\r' < "$PLATFORM_ENV_LOCAL" | ssh -i "$HOME/.ssh/deploy_key" \
@@ -295,6 +316,15 @@ jobs:
           YANDEX_SEARCH_API_KEY: ${{ secrets.YANDEX_SEARCH_API_KEY || vars.YANDEX_SEARCH_API_KEY }}
           YANDEX_SEARCH_FOLDER_ID: ${{ secrets.YANDEX_SEARCH_FOLDER_ID || vars.YANDEX_SEARCH_FOLDER_ID }}
           TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY || vars.TAVILY_API_KEY }}
+          # Холодный ярус проектов: тот же набор, что и в SSH-выкатке (docs/STORAGE.md).
+          PLATFORM_S3_ENDPOINT: ${{ secrets.PLATFORM_S3_ENDPOINT || vars.PLATFORM_S3_ENDPOINT }}
+          PLATFORM_S3_BUCKET: ${{ secrets.PLATFORM_S3_BUCKET || vars.PLATFORM_S3_BUCKET }}
+          PLATFORM_S3_REGION: ${{ secrets.PLATFORM_S3_REGION || vars.PLATFORM_S3_REGION }}
+          PLATFORM_S3_PREFIX: ${{ secrets.PLATFORM_S3_PREFIX || vars.PLATFORM_S3_PREFIX }}
+          PLATFORM_S3_ACCESS_KEY_ID: ${{ secrets.PLATFORM_S3_ACCESS_KEY_ID }}
+          PLATFORM_S3_SECRET_ACCESS_KEY: ${{ secrets.PLATFORM_S3_SECRET_ACCESS_KEY }}
+          PROJECT_ARCHIVE_ENABLED: ${{ secrets.PROJECT_ARCHIVE_ENABLED || vars.PROJECT_ARCHIVE_ENABLED }}
+          PROJECT_ARCHIVE_IDLE_DAYS: ${{ secrets.PROJECT_ARCHIVE_IDLE_DAYS || vars.PROJECT_ARCHIVE_IDLE_DAYS }}
           WEBNESTDEV_ADMIN_EMAILS: ${{ secrets.WEBNESTDEV_ADMIN_EMAILS }}
           WEBNESTDEV_ADMIN_USER_IDS: ${{ secrets.WEBNESTDEV_ADMIN_USER_IDS }}
         run: |
@@ -319,6 +349,14 @@ jobs:
           add_platform_env YANDEX_SEARCH_API_KEY "$YANDEX_SEARCH_API_KEY"
           add_platform_env YANDEX_SEARCH_FOLDER_ID "$YANDEX_SEARCH_FOLDER_ID"
           add_platform_env TAVILY_API_KEY "$TAVILY_API_KEY"
+          add_platform_env PLATFORM_S3_ENDPOINT "$PLATFORM_S3_ENDPOINT"
+          add_platform_env PLATFORM_S3_BUCKET "$PLATFORM_S3_BUCKET"
+          add_platform_env PLATFORM_S3_REGION "$PLATFORM_S3_REGION"
+          add_platform_env PLATFORM_S3_PREFIX "$PLATFORM_S3_PREFIX"
+          add_platform_env PLATFORM_S3_ACCESS_KEY_ID "$PLATFORM_S3_ACCESS_KEY_ID"
+          add_platform_env PLATFORM_S3_SECRET_ACCESS_KEY "$PLATFORM_S3_SECRET_ACCESS_KEY"
+          add_platform_env PROJECT_ARCHIVE_ENABLED "$PROJECT_ARCHIVE_ENABLED"
+          add_platform_env PROJECT_ARCHIVE_IDLE_DAYS "$PROJECT_ARCHIVE_IDLE_DAYS"
           add_platform_env WEBNESTDEV_ADMIN_EMAILS "$WEBNESTDEV_ADMIN_EMAILS"
           add_platform_env WEBNESTDEV_ADMIN_USER_IDS "$WEBNESTDEV_ADMIN_USER_IDS"
           # На этом раннере скрипт запускается на самой ВМ, поэтому ключ кладётся во временный

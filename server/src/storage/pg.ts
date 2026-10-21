@@ -207,6 +207,34 @@ export function ydbQuery(): YdbQueryTag {
   return createTaggedQuery((sql, params) => pool!.query(sql, params));
 }
 
+/**
+ * Advisory-лок PostgreSQL на всё время обхода. Нужен там, где работу делает только одна
+ * реплика: сверка размеров хранилища иначе запускалась бы на каждой и одновременно, а две
+ * сверки одного каталога бессмысленно тратят диск и дают разные числа в ответе.
+ *
+ * Возвращает null, если лок уже занят другой репликой (или база не инициализирована) —
+ * это не ошибка, а «работу уже делает кто-то другой». Лок висит на выделенном соединении и
+ * снимается в finally, поэтому падение обхода не оставляет его навсегда.
+ */
+export async function withAdvisoryLock<T>(name: string, action: () => Promise<T>): Promise<T | null> {
+  if (!pool) return null;
+  const client = await pool.connect();
+  try {
+    const result = await client.query<{ locked: boolean }>(
+      "SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS locked",
+      [name],
+    );
+    if (!result.rows[0]?.locked) return null;
+    try {
+      return await action();
+    } finally {
+      await client.query("SELECT pg_advisory_unlock(hashtextextended($1, 0))", [name]).catch(() => undefined);
+    }
+  } finally {
+    client.release();
+  }
+}
+
 // ─── Инициализация ────────────────────────────────────────────────────────────
 
 export async function initializeStorage(): Promise<void> {

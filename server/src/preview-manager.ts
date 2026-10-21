@@ -9,6 +9,7 @@ import { recentPreviewLogs, startPreviewContainer } from "./preview/preview-runn
 import { previewModeSetting, startStaticPreview, staticAppAnswers, staticPreviewLogs, stopStaticPreview } from "./preview/static-preview.js";
 import { PREVIEW_LABEL, type PreviewStatus } from "./preview/types.js";
 import { clearPreviewSecrets } from "./secrets/preview-secrets.js";
+import { recordStorageMutation } from "./account/storage-quota.js";
 
 export type { PreviewState, PreviewStatus } from "./preview/types.js";
 
@@ -23,11 +24,28 @@ export async function startPreview(config: SandboxConfig) {
   try {
     return await startPreviewWithFallback(config);
   } catch (error) {
+
     // Причина отказа раньше жила только в ответе панели и в сообщении агенту, а тот, кто смотрит
     // логи контейнера сервера (`docker compose logs webnestdev-server`), видел один факт запуска
     // и не мог отличить отсутствующие зависимости от недоступного Docker.
     console.error("[preview] не удалось запустить предпросмотр: проект " + config.projectId + " — " + describeError(error));
     throw error;
+  } finally {
+    // Запуск предпросмотра — это ещё и запись: он ставит зависимости и собирает `dist`.
+    // Счётчик квоты обязан увидеть это сразу, иначе пользователь видит старый размер, хотя
+    // `node_modules` уже лежит на диске. Замер идёт в фоне и не задерживает ответ панели.
+    void recordPreviewSize(config.projectId);
+  }
+}
+
+async function recordPreviewSize(projectId: string) {
+  try {
+    const project = await getProject(projectId);
+    // force: установка и сборка могли занять минуты, а кеш замера живёт 15 секунд — иначе
+    // после предпросмотра остался бы размер, снятый до `npm install`.
+    if (project) await recordStorageMutation(projectId, project.userId, { heavy: true });
+  } catch (error) {
+    console.warn("[storage] не удалось обновить размер после предпросмотра: " + describeError(error));
   }
 }
 

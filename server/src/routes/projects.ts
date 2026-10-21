@@ -5,6 +5,10 @@ import { createProjectWithinLimit, ProjectLimitError, getProject, createConversa
 import type { Conversation } from "../project-store.js";
 import { limitsForPlan } from "../account/plans.js";
 import { accountPlanFor } from "../billing/store.js";
+import { forgetProjectStorage } from "../account/storage-quota.js";
+import { archiveProject, deleteProjectArchive, projectArchiveInfo, restoreProject } from "../storage/project-archive.js";
+import { isRunActive } from "../agent/active-runs.js";
+import { getPreview } from "../preview/preview-store.js";
 
 /** How many chats the picker shows. Older sessions stay stored and reachable by id. */
 const CONVERSATION_LIST_LIMIT = 50;
@@ -46,7 +50,7 @@ export async function registerProjectRoutes(app:FastifyInstance){
     const p=z.object({id:z.string().min(1)}).parse(request.params);
     const project=await getProject(p.id);
     if(!project||project.userId!==user.id)return reply.code(404).send({error:"Проект не найден"});
-    return project;
+    return {...project,archived:Boolean(await projectArchiveInfo(p.id))};
   });
   app.post("/api/projects",async(request,reply)=>{
     const user=await requireUser(request,reply); if(!user)return;
@@ -72,7 +76,55 @@ export async function registerProjectRoutes(app:FastifyInstance){
     const user=await requireUser(request,reply); if(!user)return;
     const p=z.object({id:z.string().min(1)}).parse(request.params);
     if(!await deleteProject(p.id,user.id))return reply.code(404).send({error:"Проект не найден"});
+    // Размер удалённого проекта больше не существует: без этого квота помнила бы его
+    // навсегда, а список проектов показывал бы место, которого нет. Проект уже удалён,
+    // поэтому сбой учёта не должен превращать успешное удаление в ошибку.
+    await forgetProjectStorage(p.id,user.id)
+      .catch(error=>console.warn("[storage] не удалось очистить размер удалённого проекта",error));
+    // Архив в бакете пережил бы удаление проекта и оплачивался бы дальше.
+    await deleteProjectArchive(p.id,user.id)
+      .catch(error=>console.warn("[storage] не удалось удалить архив проекта из хранилища",error));
     return {deleted:true};
+  });
+  /**
+   * Холодный ярус: рабочая папка уезжает в объектное хранилище и освобождает диск ВМ. Открытие
+   * проекта возвращает её само (`getSandbox`), поэтому эта пара ручек нужна панели и оператору,
+   * а не обычному пути пользователя.
+   */
+  app.post("/api/projects/:id/archive",async(request,reply)=>{
+    const user=await requireUser(request,reply); if(!user)return;
+    const p=z.object({id:z.string().min(1)}).parse(request.params);
+    const project=await getProject(p.id);
+    if(!project||project.userId!==user.id)return reply.code(404).send({error:"Проект не найден"});
+    if(isRunActive(p.id))return reply.code(409).send({error:"Агент ещё работает в проекте — дождитесь окончания запуска",code:"PROJECT_BUSY"});
+    if(getPreview(p.id))return reply.code(409).send({error:"Остановите предпросмотр: он держит файлы проекта открытыми",code:"PREVIEW_RUNNING"});
+    try{
+      const result=await archiveProject(p.id,user.id);
+      return {archived:true,bytes:result.bytes,alreadyArchived:result.alreadyArchived};
+    }catch(error){
+      const message=error instanceof Error?error.message:String(error);
+      return reply.code(400).send({error:message,code:"ARCHIVE_FAILED"});
+    }
+  });
+  app.post("/api/projects/:id/restore",async(request,reply)=>{
+    const user=await requireUser(request,reply); if(!user)return;
+    const p=z.object({id:z.string().min(1)}).parse(request.params);
+    const project=await getProject(p.id);
+    if(!project||project.userId!==user.id)return reply.code(404).send({error:"Проект не найден"});
+    try{
+      return {archived:false,restored:await restoreProject(p.id,user.id)};
+    }catch(error){
+      const message=error instanceof Error?error.message:String(error);
+      return reply.code(502).send({error:message,code:"RESTORE_FAILED"});
+    }
+  });
+  app.get("/api/projects/:id/archive",async(request,reply)=>{
+    const user=await requireUser(request,reply); if(!user)return;
+    const p=z.object({id:z.string().min(1)}).parse(request.params);
+    const project=await getProject(p.id);
+    if(!project||project.userId!==user.id)return reply.code(404).send({error:"Проект не найден"});
+    const record=await projectArchiveInfo(p.id);
+    return {archived:Boolean(record),bytes:record?.bytes??0,archivedAt:record?.archivedAt??null};
   });
   app.get("/api/projects/:id/conversations",async(request,reply)=>{
     const user=await requireUser(request,reply); if(!user)return;

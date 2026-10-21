@@ -8,6 +8,7 @@ import { getGitHubUser, getGitHubLoginFromToken, listGitHubRepositories, getGitH
 import { createConversation, createProjectWithinLimit, ProjectLimitError } from "../project-store.js";
 import { limitsForPlan } from "../account/plans.js";
 import { accountPlanFor } from "../billing/store.js";
+import { recordStorageMutation } from "../account/storage-quota.js";
 import { getSandbox } from "../sandbox-manager.js";
 import { getPlatformEnv } from "../platform/platform-env.js";
 import { initRepo } from "../changes/git-repo.js";
@@ -198,6 +199,10 @@ export async function registerGitHubRoutes(app: FastifyInstance) {
     } catch (error) {
       console.error("[changes] не удалось создать историю импортированного проекта", error);
     }
+    // Импорт — самая крупная запись в проект: зависимости, история и файлы появляются здесь,
+    // а счётчик размера должен увидеть их сразу, а не после первой задачи агента.
+    await recordStorageMutation(project.id, user.id, { heavy: true })
+      .catch(error => console.warn("[storage] не удалось обновить размер после импорта", error));
     const conversation = await createConversation(project.id, "GitHub: " + repository.full_name);
     return reply.code(201).send({ project, conversation, importedFiles: files.length });
   });

@@ -17,7 +17,16 @@ export type Plan = {
   details: string[];
 };
 export type Usage = { date: string; agentRuns: number; browserChecks: number; webSearches: number };
-export type Storage = { usedBytes: number; limitBytes: number };
+/** Состояние квоты считает сервер: пороги 80% и 100% должны совпадать на всех экранах. */
+export type StorageState = "ok" | "warning" | "full";
+export type StorageProject = { id: string; name: string; sizeBytes: number; measuredAt: string | null };
+export type Storage = {
+  usedBytes: number;
+  limitBytes: number;
+  state?: StorageState;
+  measuredAt?: string | null;
+  projects?: StorageProject[];
+};
 export type CostRun = { model: string; promptTokens: number; completionTokens: number; exact: boolean; costEstimate: number | null; createdAt: string };
 export type Cost = {
   date: string;
@@ -88,6 +97,23 @@ export type BillingData = {
 export type Checkout = { invId: number; paymentUrl: string; amount: number; currency: string; test: boolean };
 
 export const getBilling = () => apiJson<BillingData>("/api/billing");
+
+/**
+ * Ручной пересчёт размера хранилища. Нужен после удаления файлов или `node_modules`:
+ * ночная сверка обновит число только завтра, а человек ждёт ответа сразу.
+ */
+export const refreshStorage = () => apiJson<{ projects: number; measured: number; storage: Storage }>(
+  "/api/account/storage/refresh", { method: "POST" });
+
+/** Единый формат байтов для квоты: настройки, колонка и страница подписки должны читать одно и то же. */
+export function bytesLabel(value: number): string {
+  // Целые гигабайты и мегабайты печатаются без «.0»: лимит тарифа читается как «700 МБ», а не «700.0 МБ».
+  const size = (amount: number) => amount.toFixed(1).replace(/\.0$/, "");
+  if (value < 1024) return value + " Б";
+  if (value < 1024 * 1024) return Math.round(value / 1024) + " КБ";
+  if (value < 1024 * 1024 * 1024) return size(value / 1024 / 1024) + " МБ";
+  return size(value / 1024 / 1024 / 1024) + " ГБ";
+}
 
 /** Счёт на оплату: сумму и ссылку на Робокассу считает сервер. */
 export const startCheckout = (plan: "pro" | "team") => apiJson<Checkout>("/api/billing/checkout", {

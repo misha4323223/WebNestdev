@@ -42,7 +42,11 @@ import { registerAuthRoutes } from "./routes/auth.js";
 import { registerPhoneAuthRoutes } from "./routes/phone-auth.js";
 import { registerAccountRoutes } from "./routes/account.js";
 import { registerBillingRoutes } from "./routes/billing.js";
+import { registerSupportRoutes } from "./routes/support.js";
 import { startBillingSweeper, stopBillingSweeper } from "./billing/recurring.js";
+import { startStorageReconcileScheduler } from "./account/storage-scheduler.js";
+import { describeObjectStore } from "./storage/object-store.js";
+import { startProjectArchiveScheduler } from "./storage/archive-scheduler.js";
 import { describeBilling } from "./billing/robokassa.js";
 import { registerPlatformRoutes } from "./routes/platform.js";
 import { loadPlatformEnv } from "./platform/platform-env.js";
@@ -92,6 +96,9 @@ await loadPlatformEnv();
 // The live backend is printed once at startup: it is the first thing to check when an
 // account, a conversation or an integration seems to have disappeared.
 console.log("[storage] " + describeStorage());
+// Холодный ярус проектов: настроен ли бакет и включена ли архивация. Без этой строки «диск
+// кончается, а архивов нет» выглядит как поломка, хотя причина — незаданные PLATFORM_S3_*.
+console.log("[storage] " + describeObjectStore());
 // Which preview mode this host runs is the first thing to check when memory or a project's
 // preview behaves unexpectedly (PREVIEW_MODE: auto | static | container).
 console.log("[preview] " + describePreviewMode() + "; " + describePreviewLimits());
@@ -123,9 +130,15 @@ console.log("[sandbox] " + describeSandboxPaths());
 // База инициализируется в фоне: DDL на «холодной» серверлесс-базе занимает 30–60 с.
 // Если дождаться её здесь, app.listen() так и не выполнится (порт 8787 не поднимется,
 // а healthcheck и клиенты не дождутся ответа). HTTP стартует сразу; DDL отрабатывает в фоне.
-initializeStorage().catch((err) => {
-  console.error("[storage] init failed (background):", err?.message ?? err);
-});
+// Сверка размеров хранилища стартует после инициализации базы: она читает проекты и пишет
+// размеры, а не поднимает сервер. Первый проход отложен, чтобы не спорить с контейнерами,
+// которые поднимаются сразу после деплоя; дальше — раз в сутки (см. storage-scheduler.ts).
+let stopStorageReconcile: (() => void) | null = null;
+initializeStorage()
+  .then(() => { stopStorageReconcile = startStorageReconcileScheduler(); })
+  .catch((err) => {
+    console.error("[storage] init failed (background):", err?.message ?? err);
+  });
 
 const demoEnabled = process.env.WEBNESTDEV_DEMO_USER ? process.env.WEBNESTDEV_DEMO_USER !== "0" : !production;
 if (demoEnabled) {
@@ -133,7 +146,7 @@ if (demoEnabled) {
   app.log.info({ demoEmail: demo.email, created: demo.created }, "demo account ready");
 }
 
-app.addHook("onClose", async () => { stopBillingSweeper(); await stopPreviewHostServer(); await closeStorage(); });
+app.addHook("onClose", async () => { stopBillingSweeper(); stopStorageReconcile?.(); await stopPreviewHostServer(); await closeStorage(); });
 
 app.addHook("onSend", async (_request, reply) => {
   reply.header("X-Content-Type-Options", "nosniff");
@@ -166,6 +179,7 @@ await registerAuthRoutes(app);
 await registerPhoneAuthRoutes(app);
 await registerAccountRoutes(app);
 await registerBillingRoutes(app);
+await registerSupportRoutes(app);
 await registerProjectRoutes(app);
 await registerPreviewRoutes(app);
 await registerToolRoutes(app);
@@ -218,6 +232,8 @@ void startPreviewHostServer()
 // A preview nobody uses is stopped after PREVIEW_IDLE_MS (five minutes by default): without
 // the sweep every project that was ever previewed would keep a dev server and its memory.
 startPreviewSweeper();
+// Давно не открытые проекты уезжают в бакет и освобождают диск (PROJECT_ARCHIVE_ENABLED=1).
+startProjectArchiveScheduler();
 // Автопродление подписок: раз в час, и только когда в магазине включена услуга периодических
 // платежей. Без неё цикл не делает ни одного запроса к Робокассе.
 startBillingSweeper();

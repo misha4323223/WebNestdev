@@ -3,11 +3,13 @@ import { apiJson } from "../../lib/api";
 import { applyPreferences, type UserPreferences } from "../../lib/preferences";
 import {
   balanceLabel,
+  bytesLabel,
   dateLabel,
   getBilling,
   moneyLabel,
   paymentNotice,
   paymentStatusLabel,
+  refreshStorage,
   rubLabel,
   shortDayLabel,
   startCheckout,
@@ -38,6 +40,7 @@ export function AccountSettingsPanel() {
   const planChoice = usePlanChoice();
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [refreshingStorage, setRefreshingStorage] = useState(false);
 
   async function reload() {
     setLoading(true); setError("");
@@ -83,17 +86,45 @@ export function AccountSettingsPanel() {
   const paymentsEnabled = Boolean(billing?.paymentsEnabled);
   const paid = currentPlanId !== "free" && Boolean(subscription?.renewsAt);
   const chosenPlan = planChoice && billing ? billing.plans.find(plan => plan.id === planChoice) : undefined;
+  // Поиск в интернете — инструмент внутри запуска агента, а не отдельная шкала расхода: его
+  // дневная квота остаётся на сервере, но в интерфейсе не показывается.
   const usageRows = billing ? [
     { label: "Запуски агента", used: billing.usage.agentRuns, limit: billing.limits.agentRunsPerDay },
     { label: "Браузерные проверки", used: billing.usage.browserChecks, limit: billing.limits.browserChecksPerDay },
-    { label: "Поиски в интернете", used: billing.usage.webSearches, limit: billing.limits.webSearchesPerDay },
   ] : [];
   const storageLimit = billing?.limits.storageBytes ?? 0;
   const storageUsed = billing?.storage?.usedBytes ?? 0;
+  const storage = billing?.storage;
+  // Порог считает сервер; локальная копия нужна только для старых ответов без `state`.
+  const storageState = storage?.state ?? (storageLimit > 0
+    ? (storageUsed >= storageLimit ? "full" : storageUsed >= storageLimit * 0.8 ? "warning" : "ok")
+    : "ok");
+  const storagePercent = storageLimit > 0 ? Math.min(100, Math.round(storageUsed / storageLimit * 100)) : 0;
+  const storageProjects = storage?.projects ?? [];
+  // В карточке видны самые крупные проекты: список из пятидесяти строк читать никто не будет,
+  // а полный размер по каждому всё равно приходит с сервера.
+  const visibleStorageProjects = storageProjects.slice(0, 6);
+  const storageMeasuredAt = storage?.measuredAt
+    ? new Date(storage.measuredAt).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })
+    : "";
+  const refreshStorageSize = async () => {
+    setRefreshingStorage(true);
+    setError("");
+    setNotice("");
+    try {
+      const result = await refreshStorage();
+      setBilling(current => current ? { ...current, storage: result.storage } : current);
+      setNotice("Размер хранилища пересчитан: " + bytesLabel(result.storage.usedBytes));
+    } catch (refreshError) {
+      setError(refreshError instanceof Error ? refreshError.message : String(refreshError));
+    } finally {
+      setRefreshingStorage(false);
+    }
+  };
   const tokensToday = billing ? billing.cost.promptTokens + billing.cost.completionTokens : 0;
   const historyDays = billing?.history?.days ?? [];
   // Высота столбика — вся активность дня; шкала общая, иначе график сравнивал бы дни между собой нечестно.
-  const historyMax = Math.max(1, ...historyDays.map(day => day.agentRuns + day.browserChecks + day.webSearches));
+  const historyMax = Math.max(1, ...historyDays.map(day => day.agentRuns + day.browserChecks));
   const weekSpend = historyDays.reduce((sum, day) => sum + (day.costEstimate ?? 0), 0);
   const payments = billing?.payments ?? [];
   return <section className="account-settings settings-panel">
@@ -172,14 +203,36 @@ export function AccountSettingsPanel() {
               <strong>{chosenPlan.name} · {chosenPlan.priceLabel}</strong>
             </div>}
             <div className="usage-meter-list"><div className="usage-meter-title"><strong>Использование за сегодня</strong><small>Сброс по UTC · {billing?.usage.date ?? ""}</small></div>{usageRows.map(row => <div className="usage-meter" key={row.label}><div><span>{row.label}</span><strong>{row.used} / {row.limit}</strong></div><div className="usage-meter-track"><span style={{ width: `${Math.min(100, row.used / Math.max(1, row.limit) * 100)}%` }}/></div><small className="usage-meter-left">{Math.max(0, row.limit - row.used)} осталось</small></div>)}</div>
-            {storageLimit > 0 && <div className="usage-meter-list"><div className="usage-meter-title"><strong>Хранилище аккаунта</strong><small>{billing ? (storageUsed / 1024 / 1024).toFixed(1) + " МБ из " + (storageLimit / 1024 / 1024 / 1024).toFixed(1) + " ГБ" : ""}</small></div><div className="usage-meter-track"><span style={{ width: `${Math.min(100, storageUsed / storageLimit * 100)}%` }}/></div></div>}
+            {storageLimit > 0 && <div className={"usage-meter-list storage-card " + storageState}>
+              <div className="usage-meter-title"><strong>Хранилище аккаунта</strong><small>{bytesLabel(storageUsed)} из {bytesLabel(storageLimit)} · {storagePercent}%</small></div>
+              <div className={"usage-meter-track storage-track " + storageState} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={storagePercent} aria-label="Хранилище аккаунта"><span style={{ width: `${storagePercent}%` }}/></div>
+              {storageState !== "ok" && <p className={"storage-note " + storageState}>{storageState === "full"
+                ? "Лимит исчерпан: агент не сможет писать файлы, пока место не освободится. Удалите файлы проекта или смените тариф."
+                : "Осталось " + bytesLabel(Math.max(0, storageLimit - storageUsed)) + ". Освободите место или смените тариф, чтобы агент не остановился на середине задачи."}</p>}
+              <div className="storage-projects">
+                <div className="storage-projects-head">
+                  <strong>Проекты</strong>
+                  <button type="button" className="ghost-button storage-refresh" onClick={() => void refreshStorageSize()} disabled={refreshingStorage}>
+                    <RefreshCw size={11} className={refreshingStorage ? "spin" : ""}/> {refreshingStorage ? "Считаем…" : "Пересчитать"}
+                  </button>
+                </div>
+                {visibleStorageProjects.length > 0
+                  ? visibleStorageProjects.map(project => <div className="storage-project" key={project.id}>
+                      <span className="storage-project-name" title={project.name}>{project.name}</span>
+                      <span className="storage-project-size">{bytesLabel(project.sizeBytes)}</span>
+                      <span className="storage-project-share" title="Доля квоты аккаунта">{storageLimit > 0 ? Math.round(project.sizeBytes / storageLimit * 100) : 0}%</span>
+                    </div>)
+                  : <p className="storage-empty">Проектов пока нет — размер появится после первого файла.</p>}
+                {storageProjects.length > visibleStorageProjects.length && <p className="storage-empty">и ещё {storageProjects.length - visibleStorageProjects.length} проектов</p>}
+              </div>
+              <p className="storage-hint">В размер входят все файлы проекта, включая зависимости и сборки.{storageMeasuredAt ? " Обновлено " + storageMeasuredAt + "." : ""} Сверка повторяется раз в сутки.</p>
+            </div>}
             <p className="account-muted">Лимит запусков относится к встроенной модели платформы. Со своим AI-провайдером в проекте запуски идут через ваш ключ и модель — без дневной квоты.</p>
             <div className="usage-meter-list"><div className="usage-meter-title"><strong>Последние 7 дней</strong><small>{billing?.cost.pricesConfigured ? moneyLabel(weekSpend, billing.cost.currency) + " за неделю" : "цены модели не заданы"}</small></div>
               <div className="billing-bars">{historyDays.map(day => {
-                return <div className="billing-bar" key={day.date} title={shortDayLabel(day.date) + ": " + day.agentRuns + " запусков, " + day.browserChecks + " проверок, " + day.webSearches + " поисков" + (day.costEstimate != null ? ", " + moneyLabel(day.costEstimate, billing?.cost.currency ?? "USD") : "")}>
+                return <div className="billing-bar" key={day.date} title={shortDayLabel(day.date) + ": " + day.agentRuns + " запусков, " + day.browserChecks + " проверок" + (day.costEstimate != null ? ", " + moneyLabel(day.costEstimate, billing?.cost.currency ?? "USD") : "")}>
                   <span className="billing-bar-track">
                     <span className="billing-bar-stack">
-                      <span className="billing-seg searches" style={{ height: `${day.webSearches / historyMax * 100}%` }}/>
                       <span className="billing-seg checks" style={{ height: `${day.browserChecks / historyMax * 100}%` }}/>
                       <span className="billing-seg runs" style={{ height: `${day.agentRuns / historyMax * 100}%` }}/>
                     </span>
@@ -187,7 +240,7 @@ export function AccountSettingsPanel() {
                   <small>{shortDayLabel(day.date)}</small>
                 </div>;
               })}</div>
-              <div className="billing-legend"><span><i className="billing-dot runs"/>запуски</span><span><i className="billing-dot checks"/>проверки</span><span><i className="billing-dot searches"/>поиски</span></div>
+              <div className="billing-legend"><span><i className="billing-dot runs"/>запуски</span><span><i className="billing-dot checks"/>проверки</span></div>
             </div>
             {billing?.cost.lastRun && <div className="usage-meter-list"><div className="usage-meter-title"><strong>Последний прогон</strong><small>{billing.cost.pricesConfigured ? (billing.cost.exact ? "по данным провайдера" : "оценка по объёму") : "цены не заданы"}</small></div><div className="usage-meter"><div><span>Модель</span><strong>{billing.cost.lastRun.model}</strong></div></div><div className="usage-meter"><div><span>Токены</span><strong>{tokenLabel(billing.cost.lastRun.promptTokens)} вход / {tokenLabel(billing.cost.lastRun.completionTokens)} выход</strong></div></div><div className="usage-meter"><div><span>Стоимость</span><strong>{moneyLabel(billing.cost.lastRun.costEstimate, billing.cost.currency)}</strong></div></div></div>}
 

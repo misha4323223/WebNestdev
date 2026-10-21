@@ -4,9 +4,14 @@ There is no payment provider yet: no card collection, charge, invoice or webhook
 Until one is connected, plans cannot be bought and the free plan is the only plan an account runs on.
 
 ## Plans
-- Free — 3 projects, 10 agent runs/day, 5 browser checks/day, 1 GB storage. This is the plan every account uses.
+- Free — 3 projects, 10 agent runs/day, 5 browser checks/day, 700 MB storage. This is the plan every account uses.
 - Pro — 15 projects, 100 agent runs/day, 50 browser checks/day, 10 GB storage.
 - Team — 50 projects, 500 agent runs/day, 250 browser checks/day, 50 GB storage.
+
+Storage is one quota per account, shared by every project, not a per-project allowance. The
+per-plan number is the ceiling the whole account can use; `node_modules` and build output count.
+The free plan's 700 MB is stored as 734,003,200 bytes (700 MiB) so the UI, which divides by 1024,
+shows exactly «700 МБ».
 
 Pro and Team are described on the pricing screens with the price «Скоро». They are not purchasable:
 the picker only records a wish.
@@ -20,7 +25,8 @@ the picker only records a wish.
 - Project creation checks the authenticated user's current plan and project count.
 - Agent runs consume one daily unit at the authenticated WebSocket run boundary.
 - `browser.runtime`, `browser.scenario` and `browser.screenshot` consume one daily browser-check unit each, including checks invoked automatically after agent changes.
-- `GET /api/billing` returns the plan catalog, the limits of the account's plan, the UTC-day usage counters, the account's storage usage and the model cost snapshot. The settings screen shows usage.
+- `GET /api/billing` returns the plan catalog, the limits of the account's plan, the UTC-day usage counters, the account's storage usage and the model cost snapshot. The settings screen shows usage, the per-project storage breakdown and the 80%/100% state.
+- Storage sizes are reconciled after startup and once a day (one replica at a time), and the account can refresh them from settings. The schedule, thresholds and known gaps are in [STORAGE.md](STORAGE.md).
 - Usage is stored as append-only daily events plus per-user/day/kind counters in YDB. Counter updates and usage-event inserts are committed in one serializable read-write transaction; retryable transaction conflicts are retried by the YDB query SDK.
 - YDB project creation reserves a per-user project counter and inserts the project in one serializable transaction. Existing projects are counted when the per-user counter is first initialized.
 - JSON mode serializes quota writes and project creation only within one server process. Do not use JSON storage on multiple replicas or shared deployments; use YDB for multi-instance operation.

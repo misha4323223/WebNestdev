@@ -9,6 +9,7 @@ import { runInSandbox } from "../sandbox-worker.js";
 import { dockerMissing } from "../sandbox/docker/unavailable.js";
 import { isSecretProjectPath, secretEnvRefusal } from "../secrets/secret-paths.js";
 import { applyNoStoreToReply } from "./cache-headers.js";
+import { recordStorageMutation } from "../account/storage-quota.js";
 
 const MAX_FILE_BYTES=Number(process.env.WORKSPACE_MAX_FILE_BYTES??2_000_000);
 const MAX_DIRECTORY_ENTRIES=Number(process.env.WORKSPACE_MAX_DIRECTORY_ENTRIES??2_000);
@@ -71,6 +72,9 @@ export async function registerWorkspaceRoutes(app:FastifyInstance){
     const sandbox=await getSandbox(p.id,user.id);
     const relative=UPLOAD_FOLDER+"/"+Date.now().toString(36)+"-"+base;
     await writeFileInside(sandbox.root,path.join(sandbox.root,relative),bytes);
+    // Загрузка — это запись в проект: без пересчёта квота не видела её до следующей задачи
+    // агента, и место в настройках оставалось старым. Ошибка учёта не отменяет загрузку.
+    await recordStorageMutation(p.id,user.id).catch(error=>console.warn("[storage] не удалось обновить размер после загрузки",error));
     return {name:base,path:relative,bytes:bytes.length};
   });
 

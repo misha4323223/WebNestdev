@@ -73,6 +73,34 @@ export async function listProjects(userId:string){
   return result.sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt));
 }
 
+/**
+ * Все проекты без содержимого — только владение. Нужно сверке хранилища: она обходит диск и
+ * должна знать, какому аккаунту принадлежит каталог, не загружая диалоги и секреты проектов.
+ */
+export type ProjectOwner = { id:string; name:string; userId:string; updatedAt:string };
+
+export async function listProjectOwners():Promise<ProjectOwner[]>{
+  if(isYdbEnabled()){
+    const [rows]=await ydbQuery()<Array<{id:string;name:string;user_id:string;updated_at:string}>>`
+      SELECT id,name,user_id,updated_at
+      FROM ${ydbQuery().identifier(getTable("projects"))}
+    `;
+    return rows.map(row=>({id:row.id,name:row.name,userId:row.user_id,updatedAt:row.updated_at}));
+  }
+  const result:ProjectOwner[]=[];
+  try{
+    for(const name of await readdir(path.join(root,"projects"))){
+      if(!name.endsWith(".json"))continue;
+      try{
+        const project=JSON.parse(await readFile(path.join(root,"projects",name),"utf8")) as Project;
+        if(!project?.id||!project.userId)continue;
+        result.push({id:project.id,name:project.name,userId:project.userId,updatedAt:project.updatedAt});
+      }catch{}
+    }
+  }catch{}
+  return result;
+}
+
 function newProject(name:string,github:GitHubRepositoryRef|undefined,userId:string):Project{
   const now=new Date().toISOString();
   return {id:randomUUID(),name:name.trim()||"Новый проект",github,userId,createdAt:now,updatedAt:now};

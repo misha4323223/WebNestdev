@@ -15,6 +15,13 @@ test("paid plans carry a monthly price and quotas grow with the plan", () => {
   assert.ok(PLAN_CATALOG.pro.limits.agentRunsPerDay < PLAN_CATALOG.team.limits.agentRunsPerDay);
 });
 
+/** 700 MiB, not 700 000 000 bytes: the billing formatter divides by 1024 and must print «700 МБ». */
+test("the free plan gives 700 MB of account storage", () => {
+  assert.equal(PLAN_CATALOG.free.limits.storageBytes, 700 * 1024 * 1024);
+  assert.ok(PLAN_CATALOG.free.features.includes("700 МБ хранилища"));
+  assert.ok(PLAN_CATALOG.free.details.some(detail => detail.includes("на все проекты")), "квота подписана как общая на аккаунт");
+});
+
 /** Nothing user-visible may offer a demo plan again: the picker is a choice, not an entitlement. */
 test("the plan catalog promises no demo tariff", () => {
   assert.ok(!JSON.stringify(PLAN_CATALOG).toLowerCase().includes("демо"), "the plan catalog still mentions a demo");

@@ -379,6 +379,14 @@ Object storage is **not** a substitute for this: a bucket cannot hold `node_modu
 (no POSIX semantics, no locks), so it is for Postgres dumps and cold archives of idle projects,
 not for the working disk.
 
+That cold tier is implemented: with `PLATFORM_S3_*` set and `PROJECT_ARCHIVE_ENABLED=1`, projects
+without writes for `PROJECT_ARCHIVE_IDLE_DAYS` (14 by default) are packed into
+`<prefix>/projects/<userId>/<projectId>/workspace.tar.gz`, verified by size, and removed from the
+VM disk. The next access downloads and unpacks them automatically, so the panel and the agent see a
+normal directory. On the numbers above this is what lets one 30 GB disk serve more than 20–40
+projects: only projects in active use occupy it. Setup, variables and the API are in
+[STORAGE.md](STORAGE.md#object-storage-cold-tier).
+
 ## GitHub Actions deployment
 
 [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) builds the image, pushes it to GHCR (`ghcr.io/<owner>/<repo>`) and then runs [`deploy/scripts/vm-deploy.sh`](../deploy/scripts/vm-deploy.sh) **on the server** — over SSH, or locally when the job runs on a self-hosted runner installed on the VM itself.
@@ -417,6 +425,8 @@ Repository secrets (Settings → Secrets and variables → Actions → **Secrets
 | `YANDEX_SEARCH_API_KEY` | optional; API key of the service account with the `yc.search-api.execute` scope. This is the web search of paid plans (Yandex Search API v2), not the SMS key |
 | `YANDEX_SEARCH_FOLDER_ID` | optional; the folder where that account has the `search-api.webSearch.user` role. Empty — the server falls back to `YANDEX_FOLDER_ID` |
 | `TAVILY_API_KEY` | optional; reserve web search provider for paid plans, used when Yandex Search API is not configured or refused |
+| `PLATFORM_S3_ACCESS_KEY_ID` | optional; HMAC access key of the platform's own bucket (cold tier, `docs/STORAGE.md`). Together with the secret key it lets the server archive idle projects to S3 and restore them on first access; without the pair nothing changes and projects stay on the VM disk |
+| `PLATFORM_S3_SECRET_ACCESS_KEY` | optional; HMAC secret for the access key above. Shown once by the provider when the key is created |
 
 If the secrets directory belongs to root — docker creates a bind-mount source that way — the deploy writes the key with a one-off container from the image it just pulled: the deploy user already has docker (without it the deploy could not start a container at all), and inside that container the write happens as root, so neither `sudo` (which may ask for a password that nobody can type in a workflow) nor a login to the VM is needed. The key keeps the documented path. Only when that container cannot write — no image at hand, docker refusing — does the deploy print the one command to run instead (`sudo mkdir -p /var/lib/webnestdev/secrets && sudo chown $USER /var/lib/webnestdev/secrets`) and leave the existing key untouched.
 
@@ -427,6 +437,12 @@ Repository variables (same page → **Variables**):
 | `DEPLOY_APP_DIR` | deployment directory holding `docker-compose.yml` and `.env`, default `~/webnestdev/src` |
 | `DEPLOY_RUNNER` | self-hosted runner label; set it (and install the runner on the VM) when the VM has no inbound SSH |
 | `WEB_SEARCH_PROVIDER` | optional; `auto` (default — provider by plan), `duckduckgo`, `yandex` or `tavily`. Never lifts a paid provider into the free plan: free accounts always search DuckDuckGo (`docs/WEB_SEARCH.md`) |
+| `PLATFORM_S3_ENDPOINT` | optional; S3 service address only, for MTS Web Services `https://storage.mwsapis.ru` |
+| `PLATFORM_S3_BUCKET` | optional; bucket name, for example `webnest` |
+| `PLATFORM_S3_REGION` | optional; signing region, `ru-central1` for MTS Web Services |
+| `PLATFORM_S3_PREFIX` | optional; key prefix inside the bucket, `webnestdev` by default |
+| `PROJECT_ARCHIVE_ENABLED` | optional; `1` turns the idle-project sweeper on. Without it the keys are accepted but nothing is archived |
+| `PROJECT_ARCHIVE_IDLE_DAYS` | optional; days without writes before a project is packed to the bucket, 14 by default |
 
 Where the values come from — none of them is issued by a service, the only generated one is the key:
 
@@ -441,7 +457,7 @@ ssh-keyscan -H <DEPLOY_HOST>   # DEPLOY_KNOWN_HOSTS, optional
 
 `DEPLOY_HOST`, `DEPLOY_USER` and `DEPLOY_PORT` are the address, login and port you already use to reach the VM; `DEPLOY_KNOWN_HOSTS` is optional, without it the runner runs `ssh-keyscan` itself. With a self-hosted runner (`DEPLOY_RUNNER` set) the SSH secrets are not needed at all — the script runs on the VM itself. The `ci.yml` and `production-ci.yml` workflows need no secrets: `GITHUB_TOKEN` is issued automatically.
 
-Application secrets are **not** copied into GitHub, with two deliberate exceptions: the Yandex service account key may be set as the `YANDEX_SA_KEY_JSON` repository secret, and the web-search keys (`YANDEX_SEARCH_API_KEY`, `YANDEX_SEARCH_FOLDER_ID`, `TAVILY_API_KEY`) may be set as repository secrets — the deploy writes them into `.env` on the VM, where Compose passes them to the server. The service account key is a multi-line file rather than a one-line value, and hand-placing it on the VM was exactly why SMS login kept failing (`YANDEX_SA_KEY_FILE=/app/yandex-sa-key.json` is a path inside the image). The deploy installs it and points the variable at the installed file; without the secret the step says so and changes nothing. Everything else — `WEBNESTDEV_ENCRYPTION_KEY`, OAuth client secrets, the other SMS keys and AI-provider keys — belongs to the server and stays only in the `.env` inside `DEPLOY_APP_DIR` on the VM: Compose reads them there, and the deploy workflow never sees them — it builds the image, runs the tests (they set the key they need themselves, no real secret required) and restarts the service. A second copy in Actions would add another place to leak and to rotate without giving the pipeline anything. The one GitHub-side credential the VM may need is a one-time `docker login ghcr.io` with a token that can `read:packages` — entered on the VM and kept there. Alternatively make the GHCR package public in the package settings, and no login is needed.
+Application secrets are **not** copied into GitHub, with three deliberate exceptions: the Yandex service account key may be set as the `YANDEX_SA_KEY_JSON` repository secret, the web-search keys (`YANDEX_SEARCH_API_KEY`, `YANDEX_SEARCH_FOLDER_ID`, `TAVILY_API_KEY`) may be set as repository secrets, and the cold-tier bucket pair (`PLATFORM_S3_ACCESS_KEY_ID`, `PLATFORM_S3_SECRET_ACCESS_KEY`, plus the endpoint/bucket/region variables) may be set the same way — the deploy writes them into `.env` on the VM, where Compose passes them to the server. The service account key is a multi-line file rather than a one-line value, and hand-placing it on the VM was exactly why SMS login kept failing (`YANDEX_SA_KEY_FILE=/app/yandex-sa-key.json` is a path inside the image). The deploy installs it and points the variable at the installed file; without the secret the step says so and changes nothing. Everything else — `WEBNESTDEV_ENCRYPTION_KEY`, OAuth client secrets, the other SMS keys and AI-provider keys — belongs to the server and stays only in the `.env` inside `DEPLOY_APP_DIR` on the VM: Compose reads them there, and the deploy workflow never sees them — it builds the image, runs the tests (they set the key they need themselves, no real secret required) and restarts the service. A second copy in Actions would add another place to leak and to rotate without giving the pipeline anything. The one GitHub-side credential the VM may need is a one-time `docker login ghcr.io` with a token that can `read:packages` — entered on the VM and kept there. Alternatively make the GHCR package public in the package settings, and no login is needed.
 
 The `production` environment is created on the first run; add *Required reviewers* there to make every deploy wait for an approval.
 
