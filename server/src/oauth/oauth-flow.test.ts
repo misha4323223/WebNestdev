@@ -46,6 +46,19 @@ test("заданные адреса важнее вычисленных, про�
   });
 });
 
+test("битый state без origin возвращает на сайт, а не на localhost", () => {
+  withOrigin(() => {
+    // Ни Origin, ни Referer: так выглядит переход из GitHub с испорченным state.
+    const flow = resolveOAuthFlow(request, {
+      callbackPath: "/api/github/callback",
+      configuredCallbackUrl: "",
+      configuredFrontendUrl: "",
+    });
+    assert.equal(flow.frontendUrl, "https://nestdev.ru/");
+    assert.equal(flow.callbackUrl, "https://nestdev.ru/api/github/callback");
+  });
+});
+
 test("отказ возвращает в приложение, а не в пустой адрес", () => {
   withOrigin(() => {
     const flow = resolveOAuthFlow(request, {

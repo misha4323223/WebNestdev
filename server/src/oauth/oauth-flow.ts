@@ -50,10 +50,23 @@ function explicitUrl(value?: string) {
   return text ? text : undefined;
 }
 
+/**
+ * Адрес возврата, когда его неоткуда вычислить: подделанный state без закодированного origin
+ * и заголовков браузера раньше уводил в `http://localhost:8787` — в проде это тупик вместо
+ * страницы с сообщением об ошибке. Первый разрешённый origin — это сам сайт.
+ */
+function fallbackOrigin() {
+  const allowed = (process.env.WEBNESTDEV_ALLOWED_ORIGINS ?? "").split(",").map(value => value.trim()).filter(Boolean);
+  for (const value of allowed) {
+    try { return new URL(value).origin; } catch {}
+  }
+  return "http://localhost:" + (process.env.PORT ?? 8787);
+}
+
 /** Explicit env URLs win, so a pinned deployment keeps working exactly as before. */
 export function resolveOAuthFlow(request: FastifyRequest, options: OAuthFlowOptions) {
   const requested = options.requestedOrigin && isAllowedOrigin(options.requestedOrigin) ? new URL(options.requestedOrigin).origin : null;
-  const origin = requested ?? originFromRequest(request) ?? "http://localhost:" + (process.env.PORT ?? 8787);
+  const origin = requested ?? originFromRequest(request) ?? fallbackOrigin();
   return {
     origin,
     callbackUrl: explicitUrl(options.configuredCallbackUrl) ?? origin + options.callbackPath,
