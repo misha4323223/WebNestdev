@@ -67,6 +67,29 @@ button,textarea{font:inherit}button{color:inherit}
 .sidebar-plan-copy strong{color:#e2e8e4;font-size:11.5px;font-weight:650;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sidebar-plan-next{flex:none;display:inline-flex;align-items:center;gap:3px;color:#a8d8b8;font-size:10px;font-weight:700;white-space:nowrap}
 .sidebar-plan-upgrade{border-color:#3c5a47}
+/* Хранилище в колонке: строка появляется только на 80% и 100%, чтобы не занимать место
+   в спокойном состоянии. Цвет — состояние, а не украшение: янтарный и красный читаются сразу. */
+.sidebar-storage{display:flex;align-items:center;gap:6px;width:100%;min-height:26px;margin:0 0 8px;padding:4px 8px;border:1px solid #4a3a26;border-radius:7px;background:#1d1812;color:#d9b98a;font-size:10px;text-align:left;cursor:pointer}
+.sidebar-storage:hover{border-color:#6a5134;background:#241d14}
+.sidebar-storage span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.sidebar-storage small{flex:none;font-size:9px;color:#a08863;font-variant-numeric:tabular-nums}
+.sidebar-storage svg{flex:none}
+.sidebar-storage.full{border-color:#4a2f2b;background:#1d1413;color:#e3a79c}
+.sidebar-storage.full:hover{border-color:#6a3c36;background:#241816}
+.sidebar-storage.full small{color:#a3736b}
+/* Бесплатные шаги: тонкая полоска между тарифом и витриной. На телефоне остаётся такой же
+   миниатюрной — две подписи и 4 px шкалы. */
+.sidebar-steps{margin:0 0 8px;padding:7px 8px 8px;border:1px solid var(--line-warm);border-radius:9px;background:linear-gradient(180deg,#101519,#0c1013)}
+.sidebar-steps-head{display:flex;align-items:baseline;justify-content:space-between;gap:6px;margin-bottom:5px}
+.sidebar-steps-head span{font-size:8px;font-weight:700;letter-spacing:.09em;text-transform:uppercase;color:#6f7d74;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sidebar-steps-head strong{flex:none;font-size:10px;font-weight:650;font-variant-numeric:tabular-nums;color:#c3cdc7}
+.sidebar-steps-track{height:4px;overflow:hidden;border-radius:99px;background:#1a2127;box-shadow:inset 0 1px 2px rgba(0,0,0,.3)}
+.sidebar-steps-track>span{display:block;height:100%;border-radius:99px;transition:width .24s ease}
+.sidebar-steps.calm .sidebar-steps-track>span{background:linear-gradient(90deg,#41785b,#8fd3ad);box-shadow:0 0 6px rgba(143,211,173,.32)}
+.sidebar-steps.warn .sidebar-steps-track>span{background:linear-gradient(90deg,#9a7134,#dfb069);box-shadow:0 0 6px rgba(223,176,105,.3)}
+.sidebar-steps.warn .sidebar-steps-head strong{color:#dcc08c}
+.sidebar-steps.danger .sidebar-steps-track>span{background:linear-gradient(90deg,#9c4f4f,#e08a8a);box-shadow:0 0 6px rgba(224,138,138,.32)}
+.sidebar-steps.danger .sidebar-steps-head strong{color:#e2a1a1}
 .main{flex:1;min-width:0;min-height:0;display:flex;overflow:hidden}.chat{min-width:0;min-height:0;flex:1;display:flex;flex-direction:column;max-width:none;overflow:hidden}
 /* Режим и размышление — одна настройка запуска, поэтому и один компактный контрол:
    кнопка показывает роль, меню рядом переключает роль и глубину. */
@@ -537,6 +560,29 @@ button,textarea{font:inherit}button{color:inherit}
 .usage-meter-track{height:6px;overflow:hidden;border:1px solid #2c343e;border-radius:99px;background:#1b2128;box-shadow:inset 0 1px 2px rgba(0,0,0,.28)}
 .usage-meter-track span{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#5c7f68,#a7ceb3);box-shadow:0 0 8px rgba(120,180,140,.24);transition:width .24s ease}
 .usage-meter-left{display:block;margin-top:5px;color:#6f7782;font-size:9px}
+/* Квота хранилища: шкала меняет цвет на 80% и 100%. Пороги приходят с сервера, поэтому
+   одинаковы в настройках, на странице подписки и в колонке рабочей области. */
+.usage-meter.is-warning .usage-meter-track span{background:linear-gradient(90deg,#8a6a3d,#d9a066);box-shadow:0 0 8px rgba(217,160,102,.28)}
+.usage-meter.is-full .usage-meter-track span{background:linear-gradient(90deg,#7d3f37,#dd8a7c);box-shadow:0 0 8px rgba(221,138,124,.3)}
+.usage-meter-left.warning{color:#d9a066}
+.usage-meter-left.full{color:#e0948a}
+.storage-card.warning{border-color:#4a3a26}
+.storage-card.full{border-color:#4a2f2b}
+.storage-track.warning span{background:linear-gradient(90deg,#8a6a3d,#d9a066);box-shadow:0 0 8px rgba(217,160,102,.28)}
+.storage-track.full span{background:linear-gradient(90deg,#7d3f37,#dd8a7c);box-shadow:0 0 8px rgba(221,138,124,.3)}
+.storage-note{margin:8px 0 0;font-size:9.5px;line-height:1.5}
+.storage-note.warning{color:#d9b98a}
+.storage-note.full{color:#e3a79c}
+.storage-projects{display:grid;gap:4px;margin-top:10px;padding-top:10px;border-top:1px solid #232a32}
+.storage-projects-head{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:2px}
+.storage-projects-head strong{color:#cbd0d8;font-size:10px;font-weight:600}
+.storage-refresh{display:inline-flex;align-items:center;gap:4px;height:22px;padding:0 7px;font-size:9.5px}
+.storage-project{display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;align-items:center;min-height:20px;font-size:10px;color:#9aa3ae}
+.storage-project-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#b7bfc8}
+.storage-project-size{font-variant-numeric:tabular-nums;color:#cbd0d8}
+.storage-project-share{width:34px;text-align:right;font-variant-numeric:tabular-nums;color:#6f7883}
+.storage-empty{margin:2px 0 0;font-size:9.5px;line-height:1.5;color:#6f7883}
+.storage-hint{margin:8px 0 0;font-size:9px;line-height:1.5;color:#6f7883}
 /* Биллинг: три карточки сверху и график недели — ответ на «сколько я потратил» без переходов. */
 .billing-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:14px 0 4px}
 .billing-card{min-width:0;display:grid;gap:3px;padding:11px 12px;border:1px solid #2a3038;border-radius:8px;background:#0d1014}
@@ -1284,6 +1330,10 @@ button,textarea{font:inherit}button{color:inherit}
 @media(max-width:390px){
   .sidebar-plan{padding:5px 6px;gap:6px}
   .sidebar-plan-copy strong{font-size:10.5px}
+  .sidebar-steps{padding:6px 7px 7px;margin-bottom:7px}
+  .sidebar-steps-head{margin-bottom:4px}
+  .sidebar-steps-head span{font-size:7.5px;letter-spacing:.07em}
+  .sidebar-steps-track{height:3px}
 }
 
 /* Cookie-согласие: тёмное стекло с тонкой зелёной кромкой, чтобы баннер читался как
@@ -1646,12 +1696,33 @@ button,textarea{font:inherit}button{color:inherit}
 .topbar-chip:hover svg{color:#a9b3be}
 .topbar-chip-text{max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .topbar-chip-count{font-variant-numeric:tabular-nums;font-weight:650;color:#c2cbd4}
-/* Разделитель «·» перед знаком GitHub и сам знак: подключённый репозиторий читается светлым,
-   неподключённый остаётся приглушённым, но всё равно виден — это приглашение подключить. */
-.topbar-chip-sep{width:2px;height:2px;flex:none;border-radius:50%;background:#4a525c}
-.topbar-chip-github{display:flex;flex:none;color:#dfe5eb;margin-left:1px}
-.topbar-chip-github.is-off{color:#5c646e}
+/* Ветка — кнопка, а не подпись: отправка уходит в текущую ветку, поэтому имя ветки
+   раскрывает список веток проекта, и выбор сразу переключает рабочую область. */
+.topbar-branch{position:relative;flex:none}
+.topbar-branch-button{display:flex;align-items:center;gap:5px;height:26px;max-width:190px;padding:0 7px;border:1px solid var(--line-warm-strong);border-radius:6px;background:#12161b;color:#c3ccd5;font-size:10.5px;cursor:pointer;transition:border-color .16s ease,background .16s ease,color .16s ease}
+.topbar-branch-button:hover,.topbar-branch-button[aria-expanded="true"]{border-color:#3c4c41;background:#18211c;color:#eef2f5}
+.topbar-branch-button svg{flex:none;color:#8f99a4}
+.topbar-branch-button:hover svg,.topbar-branch-button[aria-expanded="true"] svg{color:#a9d5b8}
+.topbar-branch-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;letter-spacing:-.01em}
+.topbar-branch-button .topbar-branch-caret{color:#6f7883}
+.topbar-branch-dot{width:5px;height:5px;flex:none;border-radius:50%;background:#d3a86a;box-shadow:0 0 0 2px rgba(211,168,106,.16)}
 .topbar-chip-dot{width:5px;height:5px;border-radius:50%;background:#d3a86a;box-shadow:0 0 0 2px rgba(211,168,106,.16)}
+/* Список веток — та же пластина, что у меню аккаунта, но с прокруткой: веток бывает много,
+   и меню не должно упираться в нижний край экрана. */
+.topbar-menu-branch{min-width:238px;max-width:290px}
+.topbar-branch-list{display:grid;gap:1px;max-height:min(46vh,290px);overflow:auto;padding:1px}
+.topbar-branch-item{display:flex;align-items:center;gap:7px;width:100%;height:29px;padding:0 8px;border:0;border-radius:6px;background:transparent;color:#b9c1ca;font-size:11.5px;text-align:left;cursor:pointer;transition:background .12s ease,color .12s ease}
+.topbar-branch-item:hover{background:#181f26;color:#eef2f5}
+.topbar-branch-item:disabled{opacity:.55;cursor:default}
+.topbar-branch-item svg{flex:none;color:#6f7883}
+.topbar-branch-item.is-current{background:#16211b;color:#cfe8d8}
+.topbar-branch-item.is-current svg{color:#8fdcb0}
+.topbar-branch-item-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.topbar-branch-tag{flex:none;padding:2px 4px;border:1px solid #2e3d34;border-radius:4px;color:#7f9c8c;font:700 8px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.08em}
+.topbar-branch-check{color:#8fdcb0!important}
+.topbar-branch-synced{flex:none;width:5px;height:5px;border-radius:50%;background:#4d7a60;box-shadow:0 0 0 2px rgba(77,122,96,.16)}
+.topbar-branch-empty{display:block;padding:7px 8px 9px;color:#6f7883;font-size:10.5px;line-height:1.5}
+.topbar-branch-error{margin:3px 6px 6px;padding:6px 7px;border:1px solid #4a3330;border-radius:6px;background:#201614;color:#e8b9b0;font-size:10.5px;line-height:1.45}
 .topbar-divider{width:1px;height:18px;flex:none;margin:0 2px;background:var(--line-warm)}
 /* Меню проекта и аккаунта: та же тёмная пластина с тонкой мятной линией, что у окон агента. */
 .topbar-menu{position:absolute;z-index:40;top:calc(100% + 8px);left:0;min-width:240px;padding:6px;border:1px solid var(--line-warm);border-radius:10px;background:linear-gradient(168deg,#131a21,#0d1116 72%);box-shadow:0 24px 54px rgba(0,0,0,.58),inset 0 1px 0 rgba(255,255,255,.05);animation:topbar-menu-in .13s ease both}
@@ -1680,7 +1751,10 @@ button,textarea{font:inherit}button{color:inherit}
    а действия справа остаются — иначе «Секреты» и «Настройки» стали бы недостижимы. */
 @media(max-width:650px){
   .topbar-trail .topbar-sep,.topbar-trail .topbar-chip{display:none}
-  .topbar-crumb{max-width:min(38vw,156px)}
+  /* Ветка остаётся в шапке и на телефоне — это единственный способ выбрать, куда отправлять. */
+  .topbar-branch-button{max-width:min(30vw,110px)}
+  .topbar-branch-name{max-width:64px}
+  .topbar-crumb{max-width:min(28vw,120px)}
   .topbar-divider{display:none}
   .topbar-actions{gap:2px}
   .topbar-menu-account{right:-2px}
@@ -1692,10 +1766,25 @@ button,textarea{font:inherit}button{color:inherit}
  * масштабом, поэтому приложение видит ровно ту ширину, что на телефоне и планшете.
  */
 .preview{border-left-color:var(--line-warm);background:#0c0e12}
-.preview-head{border-bottom-color:var(--line-warm);background:linear-gradient(180deg,#12161c,#0e1116)}
-.preview-head .eyebrow{color:#7f9c8c;font:700 8.5px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.16em}
-.preview-head strong{color:#e6ebf0}
-.preview-actions{gap:4px}
+/* Шапка — две строки: название не сжимается в ноль под кнопками. В узкой шторке на телефоне
+   одного ряда не хватает, и подпись «Рабочая область» раньше просто исчезала под кнопками. */
+.preview-head{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"title close" "actions actions";align-items:center;gap:7px 10px;height:auto;min-height:0;padding:10px 12px 11px;border-bottom:1px solid var(--line-warm);background:linear-gradient(180deg,#12161c,#0e1116)}
+.preview-title{grid-area:title;min-width:0}
+.preview-head .eyebrow{display:block;color:#7f9c8c;font:700 8.5px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.16em}
+.preview-head strong{display:block;margin-top:3px;font-size:12.5px;line-height:1.2;color:#e6ebf0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.preview-close{grid-area:close}
+.preview-actions{grid-area:actions;display:flex;align-items:center;justify-content:flex-end;gap:4px;min-width:0}
+/* Вкладки прижимаются к левому краю, управление предпросмотром — к правому. */
+.preview-actions .preview-flip{margin-right:auto}
+/* Публичный адрес — строка в цветах сайта: спокойная мшистая подложка и акцентная ссылка
+   вместо жёлтой плашки предупреждения. */
+.preview-share{flex:none;display:flex;align-items:center;gap:8px;padding:6px 12px;border-bottom:1px solid var(--line-warm-soft);background:#0d1114}
+.preview-share-label{flex:none;color:#6d7f74;font:700 8.5px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.1em;text-transform:uppercase}
+.preview-share-link{display:flex;align-items:center;gap:5px;min-width:0;margin-left:auto;color:#a9d5b8;text-decoration:none;font:10.5px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace}
+.preview-share-link span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.preview-share-link:hover{color:#c8e8d2;text-decoration:underline}
+.preview-share-copy{flex:none;width:22px;height:22px;display:grid;place-items:center;border:1px solid transparent;border-radius:5px;background:transparent;color:#7f8f85;cursor:pointer}
+.preview-share-copy:hover{background:#182019;border-color:#2b3a30;color:#c8e8d2}
 .preview-flip{border-color:var(--line-warm);background:#0b0e12;box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
 .preview-flip button.active{background:#1a2027;color:#eef2f5;box-shadow:inset 0 0 0 1px var(--line-warm-strong)}
 .preview .icon-button{color:#97a0aa}
@@ -1708,13 +1797,17 @@ button,textarea{font:inherit}button{color:inherit}
 .preview-devices-size{color:#6d7681;font-size:9px;letter-spacing:.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 /* Холст с мелкой сеткой: вокруг устройства видно, что это сцена проверки, а не белая страница. */
 .preview-canvas{flex:1;min-height:0;display:grid;place-items:center;padding:12px;overflow:hidden;background-color:#0a0c0f;background-image:linear-gradient(rgba(255,255,255,.028) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.028) 1px,transparent 1px);background-size:22px 22px}
-.preview-canvas>.preview-frame{width:100%;height:100%;border-radius:8px;border:1px solid var(--line-warm);background:#fff;box-shadow:0 16px 40px rgba(0,0,0,.45)}
-.preview-device{flex:none;overflow:hidden;border:1px solid var(--line-warm-strong);background:#15191e;box-shadow:0 18px 44px rgba(0,0,0,.5),inset 0 0 0 1px rgba(255,255,255,.04);transform-origin:center center}
+/* Обёртка занимает ровно видимый размер кадра. Иначе неумасштабированный макет (ладонь 834 px)
+   растягивал холст, центрирование считалось по нему, и кадр уезжал за правый нижний край. */
+.preview-device-fit{position:relative;flex:none;border-radius:8px}
+.preview-device{position:absolute;top:0;left:0;overflow:hidden;border:1px solid var(--line-warm-strong);background:#15191e;box-shadow:0 18px 44px rgba(0,0,0,.5),inset 0 0 0 1px rgba(255,255,255,.04);transform-origin:top left}
 .preview-device .preview-frame{display:block;width:100%;height:100%;border:0;border-radius:0;background:#fff}
 .preview-device.phone{border-radius:30px;padding:6px}
 .preview-device.phone .preview-frame{border-radius:24px}
 .preview-device.tablet{border-radius:18px;padding:7px}
 .preview-device.tablet .preview-frame{border-radius:11px}
+.preview-device.desktop{border-radius:10px;padding:5px}
+.preview-device.desktop .preview-frame{border-radius:5px}
 .preview-empty{color:#8a929d}
 .preview-empty strong{color:#dfe5ea}
 .preview-empty .ghost-button{border-color:var(--line-warm);color:#cfd6dd}
@@ -1797,3 +1890,77 @@ button,textarea{font:inherit}button{color:inherit}
 
 
 
+
+/*
+ * Поддержка: тихая кнопка в колонке и диалог, собранный из двух частей — что случилось и
+ * насколько это важно. Нижний блок повторяет поле ввода агента: описание, скриншот и отправка
+ * в одной рамке. Цвет шкалы важности — тот же мятный/янтарный/красный, что у предупреждений.
+ */
+.support-entry{display:flex;align-items:center;gap:8px;width:100%;height:28px;margin:0 0 7px;padding:0 7px;border:1px solid transparent;border-radius:7px;background:transparent;color:#8f98a2;font-size:10.5px;text-align:left;cursor:pointer;transition:border-color .16s ease,background .16s ease,color .16s ease}
+.support-entry:hover{background:#14181d;border-color:var(--line-warm-strong);color:#dfe5ea}
+.support-entry-icon{flex:none;width:20px;height:20px;display:grid;place-items:center;border:1px solid #2b3a31;border-radius:6px;background:#131d18;color:#a9d5b8;transition:border-color .16s ease,color .16s ease}
+.support-entry:hover .support-entry-icon{border-color:#3d5a49;color:#c6e6cf}
+.support-entry-rail{height:32px;margin:0;padding:0 11px;font-size:11px}
+.support-entry-composer{width:28px;height:28px;margin:0;padding:0;justify-content:center;border-radius:7px;flex:none;color:#98a1ab}
+.support-entry-composer .support-entry-icon{width:24px;height:24px;border:0;background:transparent;color:inherit}
+.support-entry-composer:hover{background:#171a20;border-color:var(--line-warm-strong);color:#e8eaed}
+.support-modal{width:min(560px,100%)}
+.support-body{gap:13px;align-content:start}
+.support-cats{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.support-cat{display:flex;align-items:center;gap:9px;min-width:0;padding:8px 10px;border:1px solid #262c34;border-radius:9px;background:#10141a;color:#8f98a2;text-align:left;cursor:pointer;transition:border-color .16s ease,background .16s ease,color .16s ease}
+.support-cat:hover{border-color:#333c46;color:#dfe5ea}
+.support-cat.active{border-color:#3a5a47;background:linear-gradient(150deg,#16241c,#101820);color:#e6efe9;box-shadow:inset 0 0 0 1px rgba(143,211,173,.08)}
+.support-cat-icon{flex:none;width:27px;height:27px;display:grid;place-items:center;border:1px solid #2c343e;border-radius:7px;background:#141a20;color:#9aa4ae}
+.support-cat.active .support-cat-icon{border-color:#3d5a49;background:#15241b;color:#a9d5b8}
+.support-cat>span:last-child{display:grid;gap:1px;min-width:0}
+.support-cat strong{font-size:11px;font-weight:650;color:inherit}
+.support-cat small{font-size:9px;color:#6f7883;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.support-severity{padding:9px 11px 10px;border:1px solid #262c34;border-radius:9px;background:#0d1115;color:#8fd3ad}
+.support-severity.mid{color:#dfb069}
+.support-severity.high{color:#e08a8a}
+.support-severity-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.support-severity-head span{font:700 8.5px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.12em;color:#6f7d74}
+.support-severity-head strong{font-size:10.5px;font-weight:650;color:#cfd7d2;font-variant-numeric:tabular-nums}
+.support-severity input[type="range"]{display:block;width:100%;height:20px;margin:5px 0 1px;padding:0;background:transparent;appearance:none;-webkit-appearance:none;cursor:pointer}
+.support-severity input[type="range"]::-webkit-slider-runnable-track{height:6px;border-radius:99px;background:linear-gradient(90deg,currentColor 0 var(--fill),#1b2128 var(--fill) 100%);box-shadow:inset 0 1px 2px rgba(0,0,0,.35)}
+.support-severity input[type="range"]::-moz-range-track{height:6px;border-radius:99px;background:linear-gradient(90deg,currentColor 0 var(--fill),#1b2128 var(--fill) 100%)}
+.support-severity input[type="range"]::-webkit-slider-thumb{appearance:none;-webkit-appearance:none;width:15px;height:15px;margin-top:-4.5px;border-radius:50%;border:2px solid #0f1216;background:#eef2f0;box-shadow:0 0 0 3px rgba(255,255,255,.06),0 2px 6px rgba(0,0,0,.45)}
+.support-severity input[type="range"]::-moz-range-thumb{width:15px;height:15px;border-radius:50%;border:2px solid #0f1216;background:#eef2f0;box-shadow:0 0 0 3px rgba(255,255,255,.06)}
+.support-severity input[type="range"]:focus-visible{outline:2px solid #4a7159;outline-offset:4px;border-radius:99px}
+.support-severity-scale{display:flex;justify-content:space-between;gap:8px;margin-top:2px;color:#5f6873;font-size:8.5px}
+.support-fields{display:grid;gap:10px}
+.support-field{display:grid;gap:5px;color:#aab3bd;font-size:10px}
+.support-field>span{display:flex;align-items:baseline;gap:6px;color:#c3cbd3;font-size:10.5px;font-weight:600}
+.support-field>span i{color:#5f6873;font-size:8.5px;font-style:normal;font-weight:500}
+.support-field textarea{width:100%;min-height:52px;padding:8px 10px;border:1px solid #262c34;border-radius:8px;background:#0b0e12;color:#dde2e7;font-family:inherit;font-size:11.5px;line-height:1.55;resize:vertical;outline:none;transition:border-color .16s ease}
+.support-field textarea::placeholder{color:#5c6570}
+.support-field textarea:focus{border-color:#3d5a49;box-shadow:0 0 0 3px rgba(143,211,173,.07)}
+.support-field small{color:#646d78;font-size:9px;line-height:1.4}
+.support-error{margin:0;padding:8px 10px;font-size:10px}
+.support-compose{padding:8px 9px 7px;border:1px solid #2a323b;border-radius:10px;background:#0f1319;transition:border-color .16s ease,background .16s ease}
+.support-compose.dragging{border-color:#4a7159;background:#101a14}
+.support-compose>textarea{display:block;width:100%;min-height:60px;max-height:200px;padding:4px 3px 6px;border:0;background:transparent;color:#e4e8ec;font-family:inherit;font-size:11.5px;line-height:1.6;resize:none;outline:none}
+.support-compose>textarea::placeholder{color:#5e6772}
+.support-shot{display:flex;align-items:center;gap:9px;margin-bottom:7px;padding:5px;border:1px solid #263029;border-radius:8px;background:#0c1210}
+.support-shot img{width:48px;height:34px;object-fit:cover;border:1px solid #2a3830;border-radius:5px;background:#0a0d0b}
+.support-shot-copy{flex:1;min-width:0;display:grid;gap:1px}
+.support-shot-copy strong{font-size:10.5px;font-weight:600;color:#d7ded9;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.support-shot-copy small{font-size:9px;color:#6f7d74}
+.support-compose-foot{display:flex;align-items:center;gap:6px;min-width:0}
+.support-attach{width:26px;height:26px;flex:none;color:#8b949e}
+.support-compose-hint{flex:1;min-width:0;color:#626b76;font-size:9px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.support-send{flex:none;width:28px;height:28px}
+.support-send:disabled{opacity:.55}
+.support-success{place-items:center;justify-items:center;text-align:center;gap:8px;padding:28px 18px}
+.support-success-icon{width:46px;height:46px;display:grid;place-items:center;border:1px solid #3d5a49;border-radius:50%;background:radial-gradient(circle at 30% 25%,#1b2f23,#0f1712);color:#a9d5b8;box-shadow:0 0 0 6px rgba(143,211,173,.05)}
+.support-success strong{font-size:13px;color:#e6ece7}
+.support-success p{margin:0;max-width:320px;color:#8a949d;font-size:11px;line-height:1.6}
+.support-success .send-button{width:auto;height:32px;padding:0 14px;gap:6px;margin-top:4px}
+@media(max-width:650px){
+  .support-modal{width:100%;max-height:calc(100dvh - 20px);border-radius:12px}
+  .support-body{gap:11px;padding:12px}
+  .support-cat{padding:7px 8px;gap:7px}
+  .support-cat small{display:none}
+  .support-field textarea{font-size:12px}
+  .support-compose-hint{font-size:8.5px}
+}

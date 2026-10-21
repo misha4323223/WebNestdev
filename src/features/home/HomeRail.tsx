@@ -8,6 +8,7 @@ import { apiJson } from "../../lib/api";
 import { balanceLabel, getBilling, moneyLabel, paymentNotice, type BillingData, type PlanId } from "../../lib/billing-api";
 import { activePlanId, chosenPlanId, isPendingChoice, planName, usePlanChoice } from "../../lib/plan-choice";
 import { readCachedPreferences, type UserPreferences } from "../../lib/preferences";
+import { SupportButton } from "../support/SupportDialog";
 
 export type RailSection = "integrations" | "projects" | "account" | "billing";
 
@@ -124,6 +125,8 @@ export function HomeRail(props: HomeRailProps) {
         </span>
         <ArrowRight size={13} className="rail-upsell-go"/>
       </button>
+      {/* Поддержка рядом с выходом: это действие аккаунта, а не раздела проекта. */}
+      <SupportButton variant="rail"/>
       <button className="rail-exit" onClick={onExit}><LogOut size={14}/> Выйти</button>
     </div>
   </aside>;
@@ -197,8 +200,6 @@ function RailBilling({ billing, choice, error, onOpenPlans, onOpenSubscriptions 
         <div className="usage-meter-track"><span style={{ width: `${Math.min(100, billing.usage.agentRuns / Math.max(1, billing.limits.agentRunsPerDay) * 100)}%` }}/></div>
         <div><span>Браузерные проверки</span><strong>{billing.usage.browserChecks} / {billing.limits.browserChecksPerDay}</strong></div>
         <div className="usage-meter-track"><span style={{ width: `${Math.min(100, billing.usage.browserChecks / Math.max(1, billing.limits.browserChecksPerDay) * 100)}%` }}/></div>
-        <div><span>Поиски в интернете</span><strong>{billing.usage.webSearches} / {billing.limits.webSearchesPerDay}</strong></div>
-        <div className="usage-meter-track"><span style={{ width: `${Math.min(100, billing.usage.webSearches / Math.max(1, billing.limits.webSearchesPerDay) * 100)}%` }}/></div>
         {storageLimit > 0 && <>
           <div><span>Хранилище</span><strong>{(storageUsed / 1024 / 1024).toFixed(1)} / {(storageLimit / 1024 / 1024 / 1024).toFixed(1)} ГБ</strong></div>
           <div className="usage-meter-track"><span style={{ width: `${Math.min(100, storageUsed / storageLimit * 100)}%` }}/></div>

@@ -11,6 +11,7 @@ import type { AgentAction,AgentMode,ChatMessage,PlanState,ReasoningEffort } from
 import { QuestionSheet,type AgentQuestion } from "./QuestionSheet";
 import { AgentModeControl } from "./AgentModeControl";
 import { ChatBookmarks } from "./ChatBookmarks";
+import { SupportButton } from "../support/SupportDialog";
 import { takeAgentStart } from "../../lib/agent-start";
 
 const modeKey="webnestdev.agentMode";
@@ -1108,6 +1109,8 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
             </button>
           </div>
           <div className="composer-buttons">
+            {/* Поддержка стоит рядом с отправкой — там, где человек уже пишет, и её не нужно искать в меню. */}
+            <SupportButton variant="composer" projectId={projectId}/>
             {running&&<button className="send-button stop-button" onClick={stop} title="Остановить" aria-label="Остановить"><Square size={14}/></button>}
             <button className="send-button" disabled={!loaded||!prompt.trim()} onClick={send} title={running?"В очередь":"Отправить"} aria-label={running?"В очередь":"Отправить"}>{running?<ListPlus size={15}/>:<Send size={15}/>}</button>
           </div>
@@ -1193,7 +1196,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
         <div className="modal-body">
           <div className="quota-modal-icon"><AlertTriangle size={18}/></div>
           <p className="modal-lead">{quotaNotice==="storage"
-            ?"Лимит хранилища вашего тарифа достигнут: агент больше не может писать файлы в проект. Освободите место или обновите тариф — лимиты: Бесплатный 1 ГБ, Про 10 ГБ, Команда 50 ГБ."
+            ?"Лимит хранилища вашего тарифа достигнут: агент больше не может писать файлы в проект. Освободите место или обновите тариф — лимиты: Бесплатный 700 МБ, Про 10 ГБ, Команда 50 ГБ."
             :"Дневная квота запусков агента исчерпана. Новые запуски станут доступны после сброса по UTC или при обновлении тарифа. Лимит относится только к встроенной модели платформы: подключите свой AI-провайдер в настройках проекта — запуски пойдут через ваш ключ и модель, без дневной квоты."}</p>
         </div>
         <footer className="modal-foot">
