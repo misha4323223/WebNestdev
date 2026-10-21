@@ -119,7 +119,7 @@ Configuration (`PLATFORM_S3_*` — the platform's own bucket, **not** a user's k
 | `PLATFORM_S3_PREFIX` | no | key prefix, `webnestdev` by default |
 | `PLATFORM_S3_ALLOW_HTTP` | no | `1` allows `http://` — only for a local MinIO |
 | `PROJECT_ARCHIVE_ENABLED` | no | `1` turns the idle-project sweeper on; off by default |
-| `PROJECT_ARCHIVE_IDLE_MINUTES` | no | minutes without writes before archiving, `60` by default |
+| `PROJECT_ARCHIVE_IDLE_MINUTES` | no | minutes without writes before archiving, `360` (six hours) by default |
 | `PROJECT_ARCHIVE_IDLE_DAYS` | no | legacy alternative (days); ignored when minutes are set |
 | `PROJECT_ARCHIVE_START_DELAY_MS` | no | delay before the first sweep, 5 minutes by default |
 | `PROJECT_ARCHIVE_SWEEP_INTERVAL_MS` | no | interval between sweeps, 10 minutes by default |
@@ -143,7 +143,7 @@ Manual control and API:
 - `POST /api/projects/:id/restore` — download and unpack without waiting for the next access.
 - `GET /api/projects/:id/archive` — `{ archived, bytes, archivedAt }`.
 - `PROJECT_ARCHIVE_ENABLED=1` adds a sweeper: projects whose last recorded write is older than
-  `PROJECT_ARCHIVE_IDLE_MINUTES` (one hour by default), with no active run and no live preview, are
+  `PROJECT_ARCHIVE_IDLE_MINUTES` (six hours by default), with no active run and no live preview, are
   archived in the background. The idle time comes from `project_sizes.last_write_at`, which every
   mutation refreshes; the daily reconcile only moves `updated_at` (the measurement time), so it no
   longer resets the idle clock. Rows created before that column existed fall back to `updated_at`,

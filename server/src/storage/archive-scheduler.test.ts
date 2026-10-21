@@ -24,9 +24,9 @@ function withEnv(values: { minutes?: string; days?: string }, action: () => void
   }
 }
 
-test("по умолчанию проект уходит в бакет после часа простоя", () => {
+test("по умолчанию проект уходит в бакет после шести часов простоя", () => {
   withEnv({}, () => {
-    assert.equal(projectArchiveIdleMs(), 60 * 60 * 1000);
+    assert.equal(projectArchiveIdleMs(), 6 * 60 * 60 * 1000);
   });
 });
 

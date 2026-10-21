@@ -386,7 +386,7 @@ Object storage is **not** a substitute for this: a bucket cannot hold `node_modu
 not for the working disk.
 
 That cold tier is implemented: with `PLATFORM_S3_*` set and `PROJECT_ARCHIVE_ENABLED=1`, projects
-without writes for `PROJECT_ARCHIVE_IDLE_MINUTES` (60 by default) are packed into
+without writes for `PROJECT_ARCHIVE_IDLE_MINUTES` (six hours by default) are packed into
 `<prefix>/projects/<userId>/<projectId>/workspace.tar.gz`, verified by size, and removed from the
 VM disk. The next access downloads and unpacks them automatically, so the panel and the agent see a
 normal directory. On the numbers above this is what lets one 30 GB disk serve more than 20–40
@@ -448,7 +448,7 @@ Repository variables (same page → **Variables**):
 | `PLATFORM_S3_REGION` | optional; signing region, `ru-central1` for MTS Web Services |
 | `PLATFORM_S3_PREFIX` | optional; key prefix inside the bucket, `webnestdev` by default |
 | `PROJECT_ARCHIVE_ENABLED` | optional; `1` turns the idle-project sweeper on. Without it the keys are accepted but nothing is archived |
-| `PROJECT_ARCHIVE_IDLE_MINUTES` | optional; minutes without writes before a project is packed to the bucket, 60 by default |
+| `PROJECT_ARCHIVE_IDLE_MINUTES` | optional; minutes without writes before a project is packed to the bucket, 360 (six hours) by default |
 | `PROJECT_ARCHIVE_IDLE_DAYS` | optional legacy form in days; ignored when the minutes key is set |
 
 Where the values come from — none of them is issued by a service, the only generated one is the key:
