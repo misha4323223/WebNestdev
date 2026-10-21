@@ -189,7 +189,9 @@ jobs:
           PLATFORM_S3_SECRET_ACCESS_KEY: ${{ secrets.PLATFORM_S3_SECRET_ACCESS_KEY }}
           # 1 включает уборку простаивающих проектов в бакет; 0/пусто — проекты остаются на диске.
           PROJECT_ARCHIVE_ENABLED: ${{ secrets.PROJECT_ARCHIVE_ENABLED || vars.PROJECT_ARCHIVE_ENABLED }}
-          PROJECT_ARCHIVE_IDLE_DAYS: ${{ secrets.PROJECT_ARCHIVE_IDLE_DAYS || vars.PROJECT_ARCHIVE_IDLE_DAYS }}
+          # Минуты простоя до переезда в бакет. Дни остаются поддерживаемым старым ключом,
+          # но новый ключ важнее (см. server/src/storage/archive-scheduler.ts).
+          PROJECT_ARCHIVE_IDLE_MINUTES: ${{ secrets.PROJECT_ARCHIVE_IDLE_MINUTES || vars.PROJECT_ARCHIVE_IDLE_MINUTES }}
           WEBNESTDEV_ADMIN_EMAILS: ${{ secrets.WEBNESTDEV_ADMIN_EMAILS }}
           WEBNESTDEV_ADMIN_USER_IDS: ${{ secrets.WEBNESTDEV_ADMIN_USER_IDS }}
         run: |
@@ -241,7 +243,7 @@ jobs:
           add_platform_env PLATFORM_S3_ACCESS_KEY_ID "$PLATFORM_S3_ACCESS_KEY_ID"
           add_platform_env PLATFORM_S3_SECRET_ACCESS_KEY "$PLATFORM_S3_SECRET_ACCESS_KEY"
           add_platform_env PROJECT_ARCHIVE_ENABLED "$PROJECT_ARCHIVE_ENABLED"
-          add_platform_env PROJECT_ARCHIVE_IDLE_DAYS "$PROJECT_ARCHIVE_IDLE_DAYS"
+          add_platform_env PROJECT_ARCHIVE_IDLE_MINUTES "$PROJECT_ARCHIVE_IDLE_MINUTES"
           add_platform_env WEBNESTDEV_ADMIN_EMAILS "$WEBNESTDEV_ADMIN_EMAILS"
           add_platform_env WEBNESTDEV_ADMIN_USER_IDS "$WEBNESTDEV_ADMIN_USER_IDS"
           # Итог по OAuth-ключам — только «есть/нет», без значений. Раньше пустой ключ был
@@ -325,7 +327,9 @@ jobs:
           PLATFORM_S3_ACCESS_KEY_ID: ${{ secrets.PLATFORM_S3_ACCESS_KEY_ID }}
           PLATFORM_S3_SECRET_ACCESS_KEY: ${{ secrets.PLATFORM_S3_SECRET_ACCESS_KEY }}
           PROJECT_ARCHIVE_ENABLED: ${{ secrets.PROJECT_ARCHIVE_ENABLED || vars.PROJECT_ARCHIVE_ENABLED }}
-          PROJECT_ARCHIVE_IDLE_DAYS: ${{ secrets.PROJECT_ARCHIVE_IDLE_DAYS || vars.PROJECT_ARCHIVE_IDLE_DAYS }}
+          # Минуты простоя до переезда в бакет. Дни остаются поддерживаемым старым ключом,
+          # но новый ключ важнее (см. server/src/storage/archive-scheduler.ts).
+          PROJECT_ARCHIVE_IDLE_MINUTES: ${{ secrets.PROJECT_ARCHIVE_IDLE_MINUTES || vars.PROJECT_ARCHIVE_IDLE_MINUTES }}
           WEBNESTDEV_ADMIN_EMAILS: ${{ secrets.WEBNESTDEV_ADMIN_EMAILS }}
           WEBNESTDEV_ADMIN_USER_IDS: ${{ secrets.WEBNESTDEV_ADMIN_USER_IDS }}
         run: |
@@ -357,7 +361,7 @@ jobs:
           add_platform_env PLATFORM_S3_ACCESS_KEY_ID "$PLATFORM_S3_ACCESS_KEY_ID"
           add_platform_env PLATFORM_S3_SECRET_ACCESS_KEY "$PLATFORM_S3_SECRET_ACCESS_KEY"
           add_platform_env PROJECT_ARCHIVE_ENABLED "$PROJECT_ARCHIVE_ENABLED"
-          add_platform_env PROJECT_ARCHIVE_IDLE_DAYS "$PROJECT_ARCHIVE_IDLE_DAYS"
+          add_platform_env PROJECT_ARCHIVE_IDLE_MINUTES "$PROJECT_ARCHIVE_IDLE_MINUTES"
           add_platform_env WEBNESTDEV_ADMIN_EMAILS "$WEBNESTDEV_ADMIN_EMAILS"
           add_platform_env WEBNESTDEV_ADMIN_USER_IDS "$WEBNESTDEV_ADMIN_USER_IDS"
           # На этом раннере скрипт запускается на самой ВМ, поэтому ключ кладётся во временный

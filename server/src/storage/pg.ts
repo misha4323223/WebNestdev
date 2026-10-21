@@ -454,8 +454,13 @@ export async function initializeStorage(): Promise<void> {
       project_id TEXT NOT NULL PRIMARY KEY,
       user_id TEXT NOT NULL,
       size_bytes BIGINT NOT NULL DEFAULT 0,
-      updated_at TEXT NOT NULL
+      updated_at TEXT NOT NULL,
+      last_write_at TEXT
     )`);
+    // Таблица, созданная до появления холодного яруса, приходит без этой колонки: CREATE TABLE
+    // IF NOT EXISTS её не добавит. NULL допустим — читатели берут `last_write_at ?? updated_at`,
+    // а первая же сверка заполняет поле, не сдвигая его вперёд.
+    await pool.query(`ALTER TABLE ${tbl("project_sizes")} ADD COLUMN IF NOT EXISTS last_write_at TEXT`);
 
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("project_sizes")}_user ON ${tbl("project_sizes")} (user_id)`);
 

@@ -10,7 +10,14 @@ import { readArchiveRecord } from "../storage/project-archive-state.js";
 
 const root = process.env.WEBNESTDEV_DATA_DIR ?? path.resolve(".webnestdev");
 
-type StoredProjectSize = { userId: string; sizeBytes: number; updatedAt: string };
+/**
+ * `updatedAt` — когда размер последний раз мерили, `lastWriteAt` — когда в проект последний раз
+ * писали. Это разные вещи: ежедневная сверка обновляет первое, но не имеет права сдвигать второе,
+ * иначе проект с двухнедельным простоем выглядит «только что изменённым» и в бакет не уезжает.
+ * `lastWriteAt` может быть null у строк, созданных до появления поля: читатели берут
+ * `lastWriteAt ?? updatedAt`.
+ */
+type StoredProjectSize = { userId: string; sizeBytes: number; updatedAt: string; lastWriteAt: string | null };
 type StorageSize = {
   projectSizes: Record<string, StoredProjectSize>;
   users: Record<string, { usedBytes: number; updatedAt: string }>;
@@ -176,24 +183,29 @@ export async function readProjectSizes(userId?: string): Promise<Map<string, Sto
     const sql = ydbQuery();
     const table = sql.identifier(getTable("project_sizes"));
     const [rows] = userId
-      ? await sql<Array<{ project_id: string; user_id: string; size_bytes: number | string | bigint; updated_at: string }>>`
-          SELECT project_id, user_id, size_bytes, updated_at
+      ? await sql<Array<{ project_id: string; user_id: string; size_bytes: number | string | bigint; updated_at: string; last_write_at: string | null }>>`
+          SELECT project_id, user_id, size_bytes, updated_at, last_write_at
           FROM ${table}
           WHERE user_id = ${userId}
         `
-      : await sql<Array<{ project_id: string; user_id: string; size_bytes: number | string | bigint; updated_at: string }>>`
-          SELECT project_id, user_id, size_bytes, updated_at
+      : await sql<Array<{ project_id: string; user_id: string; size_bytes: number | string | bigint; updated_at: string; last_write_at: string | null }>>`
+          SELECT project_id, user_id, size_bytes, updated_at, last_write_at
           FROM ${table}
         `;
     for (const row of rows) {
-      sizes.set(row.project_id, { userId: row.user_id, sizeBytes: Number(row.size_bytes), updatedAt: row.updated_at });
+      sizes.set(row.project_id, {
+        userId: row.user_id,
+        sizeBytes: Number(row.size_bytes),
+        updatedAt: row.updated_at,
+        lastWriteAt: row.last_write_at ?? null,
+      });
     }
     return sizes;
   }
   const data = await readJsonStorage();
   for (const [projectId, item] of Object.entries(data.projectSizes)) {
     if (userId && item.userId !== userId) continue;
-    sizes.set(projectId, item);
+    sizes.set(projectId, { ...item, lastWriteAt: item.lastWriteAt ?? null });
   }
   return sizes;
 }
@@ -201,17 +213,20 @@ export async function readProjectSizes(userId?: string): Promise<Map<string, Sto
 async function readProjectSize(projectId: string): Promise<StoredProjectSize | null> {
   if (isYdbEnabled()) {
     const sql = ydbQuery();
-    const [rows] = await sql<Array<{ user_id: string; size_bytes: number | string | bigint; updated_at: string }>>`
-      SELECT user_id, size_bytes, updated_at
+    const [rows] = await sql<Array<{ user_id: string; size_bytes: number | string | bigint; updated_at: string; last_write_at: string | null }>>`
+      SELECT user_id, size_bytes, updated_at, last_write_at
       FROM ${sql.identifier(getTable("project_sizes"))}
       WHERE project_id = ${projectId}
       LIMIT 1
     `;
     const row = rows[0];
-    return row ? { userId: row.user_id, sizeBytes: Number(row.size_bytes), updatedAt: row.updated_at } : null;
+    return row
+      ? { userId: row.user_id, sizeBytes: Number(row.size_bytes), updatedAt: row.updated_at, lastWriteAt: row.last_write_at ?? null }
+      : null;
   }
   const data = await readJsonStorage();
-  return data.projectSizes[projectId] ?? null;
+  const item = data.projectSizes[projectId];
+  return item ? { ...item, lastWriteAt: item.lastWriteAt ?? null } : null;
 }
 
 async function readUserStorage(userId: string): Promise<{ usedBytes: number; updatedAt: string } | null> {
@@ -230,19 +245,31 @@ async function readUserStorage(userId: string): Promise<{ usedBytes: number; upd
   return data.users[userId] ?? null;
 }
 
-async function writeProjectSize(projectId: string, userId: string, sizeBytes: number, updatedAt: string, recomputeUser = true) {
+/**
+ * `lastWriteAt` — время последней записи в проект. Вызывающий обязан передать его явно:
+ * мутация ставит «сейчас», а замер (сверка, кнопка «Пересчитать») сохраняет прежнее значение,
+ * иначе каждый обход диска обнулял бы таймер простоя и холодный ярус никогда бы не сработал.
+ */
+async function writeProjectSize(
+  projectId: string,
+  userId: string,
+  sizeBytes: number,
+  updatedAt: string,
+  recomputeUser = true,
+  lastWriteAt: string = updatedAt,
+) {
   if (isYdbEnabled()) {
     const sql = ydbQuery();
     await sql`
-      UPSERT INTO ${sql.identifier(getTable("project_sizes"))} (project_id, user_id, size_bytes, updated_at)
-      VALUES (${projectId}, ${userId}, ${sizeBytes}, ${updatedAt})
+      UPSERT INTO ${sql.identifier(getTable("project_sizes"))} (project_id, user_id, size_bytes, updated_at, last_write_at)
+      VALUES (${projectId}, ${userId}, ${sizeBytes}, ${updatedAt}, ${lastWriteAt})
     `;
     if (recomputeUser) await recomputeUserStorage(userId, updatedAt);
     return;
   }
   await withJsonWriteLock(async () => {
     const data = await readJsonStorage();
-    data.projectSizes[projectId] = { userId, sizeBytes, updatedAt };
+    data.projectSizes[projectId] = { userId, sizeBytes, updatedAt, lastWriteAt };
     if (recomputeUser) data.users[userId] = { usedBytes: sumUserProjectSizes(data, userId), updatedAt };
     await writeJsonStorage(data);
   });
@@ -416,9 +443,18 @@ export async function refreshUserStorage(userId: string): Promise<{ projects: nu
   let measured = 0;
   for (const project of projects) {
     await withProjectLock(project.id, async () => {
+      const previous = await readProjectSize(project.id);
       const sizeBytes = await measureProjectSize(project.id);
       sizeCache.set(project.id, { at: Date.now(), size: sizeBytes });
-      await writeProjectSize(project.id, userId, sizeBytes, new Date().toISOString(), false);
+      // «Пересчитать» — это замер, а не запись в проект: таймер простоя не сдвигается.
+      await writeProjectSize(
+        project.id,
+        userId,
+        sizeBytes,
+        new Date().toISOString(),
+        false,
+        previous?.lastWriteAt ?? previous?.updatedAt ?? new Date().toISOString(),
+      );
       measured++;
     });
   }
@@ -482,11 +518,22 @@ async function runReconcile(reason: string, staleMs: number, startedAt: number):
     }
     const didMeasure = await withProjectLock(project.id, async () => {
       // Замер идёт секунды: если за это время агент записал свежий размер, старый замер его не затрёт.
-      const before = (await readProjectSize(project.id))?.updatedAt ?? current?.updatedAt ?? null;
+      const previous = await readProjectSize(project.id);
+      const before = previous?.updatedAt ?? current?.updatedAt ?? null;
       const sizeBytes = await measureProjectSize(project.id);
       const after = (await readProjectSize(project.id))?.updatedAt ?? null;
       if (before !== after) return false;
-      await writeProjectSize(project.id, project.userId, sizeBytes, new Date().toISOString(), false);
+      const measuredAt = new Date().toISOString();
+      // Сверка меняет только время замера. Время последней записи остаётся прежним — именно по
+      // нему холодный ярус решает, что проект простаивает (раньше сверка сбрасывала его каждый день).
+      await writeProjectSize(
+        project.id,
+        project.userId,
+        sizeBytes,
+        measuredAt,
+        false,
+        previous?.lastWriteAt ?? previous?.updatedAt ?? measuredAt,
+      );
       return true;
     });
     if (didMeasure) measured++;

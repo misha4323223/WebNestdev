@@ -54,6 +54,19 @@ export function lastProjectAccess(projectId: string): number {
   return lastAccess.get(projectId) ?? 0;
 }
 
+/**
+ * Дождаться уже идущей архивации или распаковки этого проекта.
+ *
+ * С обходом раз в десять минут окно «сверка уже начала упаковку, а пользователь как раз открыл
+ * проект» стало реальным: без этой проверки `ensureProjectWorkspace` прочитал бы ещё не созданную
+ * отметку и вернул пустой каталог вместо ожидания. Ждём ровно одну операцию — быстрый путь
+ * (отметки нет, очередь пуста) остаётся одним чтением файла.
+ */
+export async function waitForProjectArchive(projectId: string): Promise<void> {
+  const pending = locks.get(projectId);
+  if (pending) await pending.catch(() => undefined);
+}
+
 async function withArchiveLock<T>(projectId: string, action: () => Promise<T>): Promise<T> {
   const previous = locks.get(projectId) ?? Promise.resolve();
   let release!: () => void;
@@ -178,6 +191,9 @@ export async function ensureProjectWorkspace(
   userId: string,
   options: { store?: ObjectStore } = {},
 ): Promise<boolean> {
+  // Упаковка могла начаться за миг до этого запроса: сначала даём ей закончиться, иначе отметка
+  // архива ещё не видна и проект выглядит пустым.
+  await waitForProjectArchive(projectId);
   const record = await readArchiveRecord(projectId);
   if (!record) return false;
   if (record.userId !== userId) throw new Error("Проект не найден");

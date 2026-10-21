@@ -350,10 +350,11 @@ preview built by the panel is a short sandbox command, not a run.
 
 Every deploy pulls a new image, and the server image contains Chromium — that is gigabytes per
 version. Left alone, a 30 GB disk fills after a handful of deploys, and a full disk takes down
-Postgres, builds and project writes at once. So the deploy script keeps the **two** newest images
-of the deployment repository (`KEEP_IMAGES`, default `2`: the running one plus one to roll back to)
-and removes the rest *after* the health check passes — a failed deploy keeps the previous image in
-place so the rollback target is still there.
+Postgres, builds and project writes at once. So the deploy script keeps only the **running** image
+of the deployment repository (`KEEP_IMAGES`, default `1`) and removes the rest *after* the health
+check passes. The spare copy is not worth its gigabytes: the image is already in GHCR, and a manual
+rollback begins with `docker pull`. A failed deploy still keeps the previous image in place, because
+pruning runs only after a successful health check — that rollback stays instant.
 
 - **Automatic:** every image deploy prunes old versions; nothing to schedule.
 - **Automatic, when the disk is already full:** a `docker pull` that fails is answered with the same
@@ -364,8 +365,13 @@ place so the rollback target is still there.
 - **By hand, without SSH:** Actions → **deploy** → *Run workflow* → `mode=prune`. It only cleans
   images and never touches the running service.
 - **On a timer (optional):** the same logic is reachable from the VM if the repository is checked
-  out there — `MODE=prune KEEP_IMAGES=2 bash deploy/scripts/vm-deploy.sh`, so a cron line
+  out there — `MODE=prune bash deploy/scripts/vm-deploy.sh`, so a cron line
   `0 4 * * 0 MODE=prune bash /path/to/vm-deploy.sh >> /var/log/webnestdev-prune.log 2>&1` is enough.
+  `KEEP_IMAGES=2` brings the second copy back if a fast offline rollback matters more than disk.
+- **The image itself is kept small:** the runtime stage installs production dependencies only
+  (`npm ci --omit=dev`), the browser is `chromium-headless-shell` rather than the full Chromium (the
+  server launches it headless everywhere, which saves ~390 MB), and `docker` is the 43 MB static
+  client instead of the 282 MB `docker.io` package with containerd and runc inside it.
 - Other repositories (`postgres`, `node:22-bookworm-slim`) are deliberately **not** touched: they are
   small, and deleting them only means re-pulling them later. `IMAGE_REPO_PATTERN` changes which
   repositories are cleaned.
@@ -380,7 +386,7 @@ Object storage is **not** a substitute for this: a bucket cannot hold `node_modu
 not for the working disk.
 
 That cold tier is implemented: with `PLATFORM_S3_*` set and `PROJECT_ARCHIVE_ENABLED=1`, projects
-without writes for `PROJECT_ARCHIVE_IDLE_DAYS` (14 by default) are packed into
+without writes for `PROJECT_ARCHIVE_IDLE_MINUTES` (60 by default) are packed into
 `<prefix>/projects/<userId>/<projectId>/workspace.tar.gz`, verified by size, and removed from the
 VM disk. The next access downloads and unpacks them automatically, so the panel and the agent see a
 normal directory. On the numbers above this is what lets one 30 GB disk serve more than 20–40
@@ -442,7 +448,8 @@ Repository variables (same page → **Variables**):
 | `PLATFORM_S3_REGION` | optional; signing region, `ru-central1` for MTS Web Services |
 | `PLATFORM_S3_PREFIX` | optional; key prefix inside the bucket, `webnestdev` by default |
 | `PROJECT_ARCHIVE_ENABLED` | optional; `1` turns the idle-project sweeper on. Without it the keys are accepted but nothing is archived |
-| `PROJECT_ARCHIVE_IDLE_DAYS` | optional; days without writes before a project is packed to the bucket, 14 by default |
+| `PROJECT_ARCHIVE_IDLE_MINUTES` | optional; minutes without writes before a project is packed to the bucket, 60 by default |
+| `PROJECT_ARCHIVE_IDLE_DAYS` | optional legacy form in days; ignored when the minutes key is set |
 
 Where the values come from — none of them is issued by a service, the only generated one is the key:
 

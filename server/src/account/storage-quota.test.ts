@@ -101,6 +101,28 @@ test("forgetting a project clears its size and the account total", async () => {
   assert.equal((await quota.getStorageOverview(userId, "free")).projects.length, 0);
 });
 
+test("the daily reconcile moves the measurement time but not the last write time", async () => {
+  const userId = "user-" + randomUUID();
+  const id = "project-" + randomUUID();
+  await seedProject({ id, userId, name: "Спящий", bytes: 1_200 });
+  await quota.refreshProjectSize(id, userId, { force: true });
+  const written = (await quota.readProjectSizes(userId)).get(id);
+  assert.ok(written?.lastWriteAt, "запись в проект должна поставить время последней записи");
+
+  // Сверка идёт в следующую миллисекунду: время замера обязано сдвинуться, а время записи — нет.
+  await new Promise(resolve => setTimeout(resolve, 10));
+  await quota.reconcileStorage({ reason: "test" });
+  const measured = (await quota.readProjectSizes(userId)).get(id);
+  assert.equal(measured?.lastWriteAt, written?.lastWriteAt, "сверка не должна обнулять таймер простоя");
+  assert.notEqual(measured?.updatedAt, written?.updatedAt, "время замера должно обновиться");
+
+  // Настоящая запись снова сдвигает таймер — иначе проект никогда бы не уснул после пробуждения.
+  await new Promise(resolve => setTimeout(resolve, 10));
+  await quota.refreshProjectSize(id, userId, { force: true });
+  const touched = (await quota.readProjectSizes(userId)).get(id);
+  assert.notEqual(touched?.lastWriteAt, written?.lastWriteAt, "запись в проект должна сдвигать таймер");
+});
+
 test("manual refresh measures only the account's projects and cleanups deleted rows", async () => {
   const userId = "user-" + randomUUID();
   const kept = "project-" + randomUUID();

@@ -14,14 +14,18 @@ import { archiveProject, lastProjectAccess, projectArchiveInfo } from "./project
  * скачивает архив), и включать её без явного решения оператора нельзя. Диск освобождается
  * только когда `PROJECT_ARCHIVE_ENABLED=1` и настроены `PLATFORM_S3_*`.
  *
- * «Давно» считается по времени последней записи в проект (`project_sizes.updated_at`): этот
- * счётчик обновляется после работы агента, загрузки файла, импорта и предпросмотра. Проект без
- * замера не трогаем — иначе под архивацию попал бы только что созданный.
+ * «Давно» считается по времени последней записи в проект (`project_sizes.last_write_at`): этот
+ * счётчик обновляется после работы агента, загрузки файла, импорта и предпросмотра. Время замера
+ * (`updated_at`) для этого не годится: ежедневная сверка обновляет его у всех проектов, и таймер
+ * простоя обнулялся бы каждые сутки. Проект без замера не трогаем — иначе под архивацию попал
+ * бы только что созданный.
  */
 
 const DEFAULT_START_DELAY_MS = 5 * 60 * 1000;
-const DEFAULT_INTERVAL_MS = 6 * 60 * 60 * 1000;
-const DEFAULT_IDLE_DAYS = 14;
+// Минуты, а не дни: проект может «уснуть» уже через час после того, как его закрыли, и тогда
+// обход должен случаться чаще, иначе час простоя превращается в семь.
+const DEFAULT_INTERVAL_MS = 10 * 60 * 1000;
+const DEFAULT_IDLE_MINUTES = 60;
 // Час после последнего открытия: счётчик размера растёт только на запись, а чтение файлов
 // (панель, терминал) в нём не видно — без этого запаса архив мог уехать из-под открытой вкладки.
 const DEFAULT_ACCESS_GUARD_MS = 60 * 60 * 1000;
@@ -37,6 +41,26 @@ function envNumber(name: string, fallback: number): number {
   return Number.isFinite(value) && value >= 0 ? value : fallback;
 }
 
+function optionalNumber(name: string): number | null {
+  const raw = process.env[name]?.trim();
+  if (!raw) return null;
+  const value = Number(raw);
+  return Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+/**
+ * Порог простоя в миллисекундах. `PROJECT_ARCHIVE_IDLE_MINUTES` — основной ключ (по умолчанию
+ * 60 минут), `PROJECT_ARCHIVE_IDLE_DAYS` — старый, сохранён для уже настроенных установок.
+ * Минуты важнее дней: иначе значение из старого .env (14 дней) молча перебивало бы новое.
+ */
+export function projectArchiveIdleMs(): number {
+  const minutes = optionalNumber("PROJECT_ARCHIVE_IDLE_MINUTES");
+  if (minutes !== null) return Math.max(1, minutes) * 60_000;
+  const days = optionalNumber("PROJECT_ARCHIVE_IDLE_DAYS");
+  if (days !== null) return Math.max(1, Math.round(days * 1440)) * 60_000;
+  return DEFAULT_IDLE_MINUTES * 60_000;
+}
+
 export type ArchiveSweepResult = {
   candidates: number;
   archived: number;
@@ -44,10 +68,10 @@ export type ArchiveSweepResult = {
   failed: number;
 };
 
-export async function sweepIdleProjects(idleDays = envNumber("PROJECT_ARCHIVE_IDLE_DAYS", DEFAULT_IDLE_DAYS)): Promise<ArchiveSweepResult> {
+export async function sweepIdleProjects(idleMs = projectArchiveIdleMs()): Promise<ArchiveSweepResult> {
   const result: ArchiveSweepResult = { candidates: 0, archived: 0, skipped: 0, failed: 0 };
   if (!objectStoreConfigFromEnv()) return result;
-  const idleMs = Math.max(1, idleDays) * 24 * 60 * 60 * 1000;
+  idleMs = Math.max(60_000, idleMs);
   const accessGuardMs = envNumber("PROJECT_ARCHIVE_ACCESS_GUARD_MS", DEFAULT_ACCESS_GUARD_MS);
   const [projects, sizes] = await Promise.all([listProjectOwners(), readProjectSizes()]);
   for (const project of projects) {
@@ -56,7 +80,10 @@ export async function sweepIdleProjects(idleDays = envNumber("PROJECT_ARCHIVE_ID
       result.skipped++;
       continue;
     }
-    if (Date.now() - Date.parse(measured.updatedAt) < idleMs) {
+    // `lastWriteAt` может быть null у строк, созданных до появления поля: тогда годится время
+    // замера — оно всё равно не позже первой записи.
+    const lastWrite = measured.lastWriteAt ?? measured.updatedAt;
+    if (Date.now() - Date.parse(lastWrite) < idleMs) {
       result.skipped++;
       continue;
     }
@@ -114,15 +141,18 @@ export function startProjectArchiveScheduler(): () => void {
     return () => { started = false; };
   }
 
-  const idleDays = envNumber("PROJECT_ARCHIVE_IDLE_DAYS", DEFAULT_IDLE_DAYS);
+  const idleMs = projectArchiveIdleMs();
   const startDelayMs = envNumber("PROJECT_ARCHIVE_START_DELAY_MS", DEFAULT_START_DELAY_MS);
   const intervalMs = Math.max(MIN_INTERVAL_MS, envNumber("PROJECT_ARCHIVE_SWEEP_INTERVAL_MS", DEFAULT_INTERVAL_MS));
+  const idleLabel = idleMs % 3_600_000 === 0
+    ? Math.round(idleMs / 3_600_000) + " ч"
+    : Math.round(idleMs / 60_000) + " мин";
 
   const run = async (reason: string) => {
     if (running) return;
     running = true;
     try {
-      const result = await sweepIdleProjects(idleDays);
+      const result = await sweepIdleProjects(idleMs);
       console.log(
         "[storage] холодный ярус (" + reason + "): освобождено " + result.archived + " проектов, " +
         "пропущено " + result.skipped + ", ошибок " + result.failed,
@@ -139,8 +169,8 @@ export function startProjectArchiveScheduler(): () => void {
   const timer = setInterval(() => void run("schedule"), intervalMs);
   timer.unref();
   console.log(
-    "[storage] холодный ярус: проекты без изменений " + idleDays + " дн. переносятся в бакет; " +
-    "первый проход через " + Math.round(startDelayMs / 1000) + " с, далее раз в " + Math.round(intervalMs / 3_600_000) + " ч",
+    "[storage] холодный ярус: проекты без изменений " + idleLabel + " переносятся в бакет; " +
+    "первый проход через " + Math.round(startDelayMs / 1000) + " с, далее раз в " + Math.round(intervalMs / 60_000) + " мин",
   );
   return () => {
     clearTimeout(startupTimer);

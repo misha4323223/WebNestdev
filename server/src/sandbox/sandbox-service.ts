@@ -34,11 +34,12 @@ export async function getSandbox(projectId:string,userId:string):Promise<Sandbox
   const project=await getProject(projectId);
   if(!project || project.userId!==userId)throw new Error("Проект не найден");
   const root=sandboxRootPath(projectId);
+  // Отметка для фоновой архивации ставится до восстановления: пока проект скачивается из бакета,
+  // планировщик не должен решить, что он всё ещё простаивает, и начать упаковку заново.
+  noteProjectAccess(projectId);
   // Проект может лежать в объектном хранилище (холодный ярус): панель, агент и предпросмотр
   // работают с обычной папкой, поэтому первый доступ возвращает её на диск.
   await ensureProjectWorkspace(projectId,userId);
-  // Отметка для фоновой архивации: открытый проект не должен уехать в бакет под руками.
-  noteProjectAccess(projectId);
   await mkdir(root,{recursive:true});
   await openToSandboxUser(root);
   return buildSandboxConfig(projectId,root);

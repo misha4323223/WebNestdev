@@ -119,9 +119,10 @@ Configuration (`PLATFORM_S3_*` — the platform's own bucket, **not** a user's k
 | `PLATFORM_S3_PREFIX` | no | key prefix, `webnestdev` by default |
 | `PLATFORM_S3_ALLOW_HTTP` | no | `1` allows `http://` — only for a local MinIO |
 | `PROJECT_ARCHIVE_ENABLED` | no | `1` turns the idle-project sweeper on; off by default |
-| `PROJECT_ARCHIVE_IDLE_DAYS` | no | days without writes before archiving, `14` by default |
+| `PROJECT_ARCHIVE_IDLE_MINUTES` | no | minutes without writes before archiving, `60` by default |
+| `PROJECT_ARCHIVE_IDLE_DAYS` | no | legacy alternative (days); ignored when minutes are set |
 | `PROJECT_ARCHIVE_START_DELAY_MS` | no | delay before the first sweep, 5 minutes by default |
-| `PROJECT_ARCHIVE_SWEEP_INTERVAL_MS` | no | interval between sweeps, 6 hours by default |
+| `PROJECT_ARCHIVE_SWEEP_INTERVAL_MS` | no | interval between sweeps, 10 minutes by default |
 | `PROJECT_ARCHIVE_ACCESS_GUARD_MS` | no | skip a project opened in this process less than an hour ago |
 | `PROJECT_ARCHIVE_TAR_TIMEOUT_MS` | no | `tar` timeout, 10 minutes by default |
 
@@ -142,10 +143,13 @@ Manual control and API:
 - `POST /api/projects/:id/restore` — download and unpack without waiting for the next access.
 - `GET /api/projects/:id/archive` — `{ archived, bytes, archivedAt }`.
 - `PROJECT_ARCHIVE_ENABLED=1` adds a sweeper: projects whose last recorded write is older than
-  `PROJECT_ARCHIVE_IDLE_DAYS`, with no active run and no live preview, are archived in the
-  background. The idle time comes from `project_sizes.updated_at`, which every mutation refreshes;
-  the sweeper also skips anything with an active agent run, a live preview, or a project opened in
-  this process within `PROJECT_ARCHIVE_ACCESS_GUARD_MS` (reads do not update `project_sizes`).
+  `PROJECT_ARCHIVE_IDLE_MINUTES` (one hour by default), with no active run and no live preview, are
+  archived in the background. The idle time comes from `project_sizes.last_write_at`, which every
+  mutation refreshes; the daily reconcile only moves `updated_at` (the measurement time), so it no
+  longer resets the idle clock. Rows created before that column existed fall back to `updated_at`,
+  and the first reconcile fills `last_write_at` without moving it forward. The sweeper also skips
+  anything with an active agent run, a live preview, or a project opened in this process within
+  `PROJECT_ARCHIVE_ACCESS_GUARD_MS` (reads do not update `project_sizes`).
 
 Known gaps: the marker is local to the host, like the sandbox directory itself; a host that loses
 its `WEBNESTDEV_DATA_DIR` will not restore archives automatically. The access guard is per process,

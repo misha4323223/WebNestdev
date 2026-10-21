@@ -97,12 +97,13 @@ services:
       PLATFORM_S3_PREFIX: ${PLATFORM_S3_PREFIX:-}
       PLATFORM_S3_ACCESS_KEY_ID: ${PLATFORM_S3_ACCESS_KEY_ID:-}
       PLATFORM_S3_SECRET_ACCESS_KEY: ${PLATFORM_S3_SECRET_ACCESS_KEY:-}
-      # 0 — проекты остаются на диске; 1 — простой дольше PROJECT_ARCHIVE_IDLE_DAYS дней
+      # 0 — проекты остаются на диске; 1 — простой дольше PROJECT_ARCHIVE_IDLE_MINUTES минут
       # уезжает в бакет и освобождает диск ВМ. Включается осознанно: первое открытие проекта
-      # после простоя сначала скачивает архив.
+      # после простоя сначала скачивает архив. Обход раз в 10 минут, чтобы «час простоя»
+      # действительно означал час, а не «час плюс до шести часов ожидания обхода».
       PROJECT_ARCHIVE_ENABLED: ${PROJECT_ARCHIVE_ENABLED:-0}
-      PROJECT_ARCHIVE_IDLE_DAYS: ${PROJECT_ARCHIVE_IDLE_DAYS:-14}
-      PROJECT_ARCHIVE_SWEEP_INTERVAL_MS: ${PROJECT_ARCHIVE_SWEEP_INTERVAL_MS:-21600000}
+      PROJECT_ARCHIVE_IDLE_MINUTES: ${PROJECT_ARCHIVE_IDLE_MINUTES:-60}
+      PROJECT_ARCHIVE_SWEEP_INTERVAL_MS: ${PROJECT_ARCHIVE_SWEEP_INTERVAL_MS:-600000}
       # Веб-поиск агента. `auto` — провайдер по тарифу: бесплатный ищет через DuckDuckGo без ключей,
       # платные — Yandex Search API, а Tavily страхует его как резерв. Перечислено явно, потому что
       # Compose не передаёт в контейнер переменные, которых нет в этом списке: ключ, положенный в .env
