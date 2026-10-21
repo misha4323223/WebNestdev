@@ -9,7 +9,7 @@ WORKDIR /app
 ARG GIT_SHA=unknown
 ENV VITE_BUILD=${GIT_SHA}
 
-COPY package.json ./
+COPY package.json package-lock.json ./
 COPY server/package.json ./server/package.json
 RUN npm install
 
@@ -18,12 +18,21 @@ COPY src ./src
 COPY public ./public
 COPY server/tsconfig.json ./server/tsconfig.json
 COPY server/src ./server/src
-# Сертификаты российского доверенного УЦ читаются из файлов рядом с кодом (server/certs).
-# tsc их не копирует, поэтому в сборку и в образ они попадают отдельно: без них GigaChat
+# Сертификаты российского доверенного УЦ читаются из файлов рядом с кодом (server/certs). tsc их
+# не копирует, поэтому в сборку и в образ они попадают отдельно: без них GigaChat
 # и другие сервисы на этом УЦ падают на проверке TLS.
 COPY server/certs ./server/certs
 
 RUN npm run build
+
+# Только production-зависимости. В образ не должны попадать vite, typescript, tsx и React:
+# фронт уже собран в `dist`, сервер работает из `server/dist`, а каждый мегабайт здесь
+# умножается на число хранимых версий образа.
+FROM node:22-bookworm-slim AS deps
+WORKDIR /app
+COPY package.json package-lock.json ./
+COPY server/package.json ./server/package.json
+RUN npm ci --omit=dev
 
 FROM node:22-bookworm-slim AS production
 WORKDIR /app
@@ -35,23 +44,28 @@ ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 ARG GIT_SHA=unknown
 ENV WEBNESTDEV_BUILD=${GIT_SHA}
 
-# docker.io — командная строка docker внутри контейнера сервера: ею сервер запускает контейнеры
-# песочниц и предпросмотра и разговаривает с уже поднятыми через `docker exec`. Без неё в логе
-# сервера остаётся `spawn docker ENOENT`, а предпросмотр и команды агента не работают вовсе.
-# curl — чтобы дверь платформы можно было проверить изнутри контейнера, то есть там, где она
-# существует (`docker compose exec webnestdev-server curl -s localhost:8787/api/health`).
+# curl — чтобы дверь платформы можно было проверить изнутри контейнера, то есть там, где
+# она существует (`docker compose exec webnestdev-server curl -s localhost:8787/api/health`).
+# `docker` — только клиент: он говорит с демоном хоста через смонтированный сокет. Статический
+# бинарник из официального `-cli` образа весит 43 МБ, тогда как пакет `docker.io` тянул 282 МБ
+# вместе с containerd, runc и iptables, которые внутри этого контейнера никогда не запускаются.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates curl docker.io \
+  && apt-get install -y --no-install-recommends ca-certificates curl \
   && rm -rf /var/lib/apt/lists/*
+
+COPY --from=docker:29.9-cli /usr/local/bin/docker /usr/local/bin/docker
 
 COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/server/package.json ./server/package.json
-COPY --from=build /app/node_modules ./node_modules
+COPY --from=deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/server/dist ./server/dist
 COPY --from=build /app/server/certs ./server/certs
 
-RUN npx playwright install --with-deps chromium
+# Браузер нужен только headless: сервер нигде не открывает окно (все запуски —
+# `chromium.launch({ headless: true })`), поэтому полный Chromium (393 МБ) не ставится —
+# хватает headless-shell (261 МБ). Системные библиотеки для него ставит `--with-deps`.
+RUN npx playwright install --with-deps --only-shell chromium
 
 EXPOSE 8787
 CMD ["node","server/dist/index.js"]
