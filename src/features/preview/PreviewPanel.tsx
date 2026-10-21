@@ -1,4 +1,4 @@
-import { ExternalLink, Monitor, RefreshCw, ScrollText, Smartphone, Square, Tablet, Terminal, X } from "lucide-react";
+import { Check, Copy, ExternalLink, Monitor, RefreshCw, ScrollText, Smartphone, Square, Tablet, Terminal, X } from "lucide-react";
 import { useCallback,useEffect,useRef,useState } from "react";
 import { getPreviewLogs,getPreviewStatus,requestPreviewTicket,startPreview,stopPreview,touchPreview } from "../../lib/project-api";
 import type { PreviewState } from "../../lib/types";
@@ -11,7 +11,7 @@ type Face="preview"|"logs";
  */
 type Device="desktop"|"tablet"|"phone";
 const DEVICES:Record<Device,{label:string;width:number;height:number}> = {
-  desktop:{label:"Десктоп",width:0,height:0},
+  desktop:{label:"Десктоп",width:1280,height:800},
   tablet:{label:"Планшет",width:834,height:1112},
   phone:{label:"Телефон",width:390,height:844},
 };
@@ -62,10 +62,15 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
   },[face,preview.running,device]);
 
   const spec=DEVICES[device];
-  const fit=spec.width&&canvas.width>0
-    ?Math.min(1,(canvas.width-24)/spec.width,(canvas.height-24)/spec.height)
-    :1;
-  const deviceStyle=spec.width?{width:spec.width,height:spec.height,transform:"scale("+fit+")"}:undefined;
+  // ResizeObserver отдаёт content-box, то есть холст без внутренних отступов, поэтому масштаб
+  // считается прямо по нему. Кадр только уменьшается (не больше 1) и всегда целиком помещается
+  // в холст: раньше он сохранял неумасштабированный размер в раскладке, вылезал за край и
+  // обрезался — отсюда «телефон где-то внизу и сбоку».
+  const fit=canvas.width>0&&canvas.height>0?Math.min(1,canvas.width/spec.width,canvas.height/spec.height):0;
+  const deviceStyle={width:spec.width,height:spec.height,transform:"scale("+fit+")"};
+  // Обёртка занимает ровно видимый размер кадра, поэтому центрирование и обрезка считаются по
+  // нему, а не по его неумасштабированному макету.
+  const fitStyle={width:Math.max(1,Math.round(spec.width*fit)),height:Math.max(1,Math.round(spec.height*fit))};
 
   // Номер загрузки кадра: каждый свежий статус (открытие проекта, конец прогона агента, кнопка
   // «Обновить») грузит кадр заново. Раньше он загружался один раз и оставался тем, что прокси успел
@@ -74,6 +79,17 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
   // Ссылка с билетом на публичный адрес. Билет выпускается на этот проект и на время: по адресу
   // предпросмотра cookie сессии панели не отправляется (она выставляется для домена панели).
   const [publicLink,setPublicLink]=useState("");
+  // Адрес показывается рядом с кнопкой копирования: ссылку отдают другому человеку, поэтому
+  // копировать её должно быть можно в один тап, а не выделять текст мышью.
+  const [copied,setCopied]=useState(false);
+  async function copyPublicLink(){
+    const url=new URL(previewAddress(projectId,publicLink),window.location.origin).href;
+    try{
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      window.setTimeout(()=>setCopied(false),1600);
+    }catch{setError("Скопируйте адрес вручную: "+url)}
+  }
   const refresh=async()=>{
     setError("");
     try{
@@ -156,8 +172,15 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
   <div className={"preview-backdrop"+(open?" open":"")} onClick={onClose} aria-hidden="true"/>
   <aside id="preview-panel" className={"preview"+(open?" open":"")}>
     <div className="preview-grabber" aria-hidden="true"><span/></div>
+    {/* Заголовок и действия стоят двумя строками: в узкой шторке подпись «Рабочая область»
+        раньше сжималась в ноль и кнопки наезжали на неё. Первая строка — что открыто и крестик,
+        вторая — вкладки и управление предпросмотром. */}
     <div className="preview-head">
-      <div><span className="eyebrow">ПРЕДПРОСМОТР</span><strong>{face==="preview"?"Рабочая область":"Логи запуска"}</strong></div>
+      <div className="preview-title">
+        <span className="eyebrow">ПРЕДПРОСМОТР</span>
+        <strong>{face==="preview"?"Рабочая область":"Логи запуска"}</strong>
+      </div>
+      <button className="icon-button preview-close" onClick={onClose} title="Скрыть панель" aria-label="Скрыть панель"><X size={15}/></button>
       <div className="preview-actions">
         <div className="preview-flip" role="tablist" aria-label="Переключить превью и логи">
           <button role="tab" aria-selected={face==="preview"} className={face==="preview"?"active":""} onClick={()=>setFace("preview")}><Monitor size={13}/> Превью</button>
@@ -170,7 +193,6 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
               {preview.running&&<a className="icon-button" href={previewAddress(projectId,publicLink)} target="_blank" rel="noreferrer" title="Открыть"><ExternalLink size={14}/></a>}
             </>
           : <button className="icon-button" onClick={()=>void loadLogs()} disabled={loadingLogs} title="Обновить логи"><RefreshCw size={14}/></button>}
-        <button className="icon-button preview-close" onClick={onClose} title="Скрыть панель" aria-label="Скрыть панель"><X size={15}/></button>
       </div>
     </div>
     {error&&<div className="preview-error">{error}</div>}
@@ -178,11 +200,18 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
         живом приложении (settled===false), и тому, у кого приложение отдаётся через docker exec
         (viaExec): это разные причины и разные исправления. */}
     {!error&&preview.running&&(preview.ready===false||preview.settled===false||preview.viaExec)&&<div className="preview-hint">{preview.hint??"Приложение ещё запускается…"}</div>}
-    {/* Статический режим отдаёт собранную версию: обновления появляются после сборки, а не сами. */}
-    {!error&&preview.running&&preview.mode==="static"&&<div className="preview-hint">Статическая сборка: показывается собранная версия приложения, горячей перезагрузки нет.</div>}
     {/* Публичный адрес показывается, а не прячется в подсказке кнопки: это адрес, который видят
         другие, и по нему приложение работает без переписывания ссылок. */}
-    {!error&&preview.running&&preview.publicUrl&&<div className="preview-hint">Публичный адрес: <a href={previewAddress(projectId,publicLink)} target="_blank" rel="noreferrer">{preview.publicUrl.replace(/^https?:\/\//,"")}</a></div>}
+    {!error&&preview.running&&preview.publicUrl&&<div className="preview-share">
+      <span className="preview-share-label">Публичный адрес</span>
+      <a className="preview-share-link" href={previewAddress(projectId,publicLink)} target="_blank" rel="noreferrer">
+        <ExternalLink size={11}/>
+        <span>{preview.publicUrl.replace(/^https?:\/\//,"")}</span>
+      </a>
+      <button className="preview-share-copy" onClick={()=>void copyPublicLink()} title={copied?"Скопировано":"Скопировать адрес"} aria-label="Скопировать адрес">
+        {copied?<Check size={12}/>:<Copy size={12}/>}
+      </button>
+    </div>}
     {/* Панель устройств: ширина кадра — настоящая ширина устройства, поэтому медиазапросы
         приложения срабатывают так же, как на телефоне и планшете, а не по ширине колонки. */}
     {face==="preview"&&<div className="preview-devices" role="group" aria-label="Устройство предпросмотра">
@@ -192,18 +221,21 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
           return <button key={id} className={"preview-device-btn"+(device===id?" active":"")} onClick={()=>setDevice(id)} aria-pressed={device===id} title={DEVICES[id].label} aria-label={DEVICES[id].label}><Icon size={14}/></button>;
         })}
       </div>
-      <span className="preview-devices-size">{spec.label} · {spec.width?spec.width+" px":"во всю ширину"}</span>
+      <span className="preview-devices-size">{spec.label} · {spec.width} px{fit>0&&fit<1?" · "+Math.round(fit*100)+"%":""}</span>
     </div>}
     <div className="preview-body">
       <div className={"preview-stage"+(face==="logs"?" flipped":"")}>
         <div className="preview-face preview-front">
           {preview.running
             ? <div className="preview-canvas" ref={canvasRef}>
-                {spec.width
-                  ? <div className={"preview-device "+device} style={deviceStyle}>
-                      <iframe key={reloadToken+"-"+frameToken+publicLink+"-"+device} className="preview-frame" title="Живой предпросмотр" src={previewAddress(projectId,publicLink)}/>
-                    </div>
-                  : <iframe key={reloadToken+"-"+frameToken+publicLink+"-"+device} className="preview-frame" title="Живой предпросмотр" src={previewAddress(projectId,publicLink)}/>}
+                {/* Кадр рисуется в настоящей ширине устройства, поэтому медиазапросы приложения
+                    срабатывают как на телефоне, планшете и десктопе. Обёртка равна видимому
+                    размеру, а сам кадр уменьшается масштабом из левого верхнего угла. */}
+                {fit>0&&<div className="preview-device-fit" style={fitStyle}>
+                  <div className={"preview-device "+device} style={deviceStyle}>
+                    <iframe key={reloadToken+"-"+frameToken+publicLink+"-"+device} className="preview-frame" title="Живой предпросмотр" src={previewAddress(projectId,publicLink)}/>
+                  </div>
+                </div>}
               </div>
             : <div className="preview-empty"><div className="preview-icon"><Terminal size={20}/></div><strong>Предпросмотр проекта</strong><span>Запустите preview после создания файлов проекта — и проверьте его сразу под телефон и планшет.</span><button className="ghost-button" onClick={()=>void start()}>Запустить preview</button></div>}
         </div>
