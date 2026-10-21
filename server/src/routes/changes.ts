@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireProjectUser } from "../auth/auth.js";
-import { changesOverview, createRepositoryForProject, pushCurrentBranch, rollbackToCheckpoint } from "../changes/changes-service.js";
+import { changesOverview, createRepositoryForProject, pullFromGithub, pushCurrentBranch, rollbackToCheckpoint } from "../changes/changes-service.js";
 
 /**
  * «Изменения» проекта: история коммитов, откат к точке и повторная отправка на GitHub.
@@ -42,6 +42,21 @@ export async function registerChangesRoutes(app: FastifyInstance) {
         return reply.code(502).send({ error: outcome.error ?? "Не удалось отправить изменения на GitHub", branch: outcome.branch });
       }
       return { pushed: true, branch: outcome.branch, at: outcome.at };
+    } catch (error) {
+      return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  /**
+   * Выгрузка из GitHub — обратное действие к отправке. Ответ 200 и при отказе fast-forward:
+   * это не сбой сервера, а объяснение, почему выгрузка не стала перезаписывать работу.
+   */
+  app.post("/api/projects/:id/changes/pull", async (request, reply) => {
+    const params = z.object({ id: z.string().min(1) }).parse(request.params);
+    const user = await requireProjectUser(request, reply, params.id);
+    if (!user) return;
+    try {
+      return await pullFromGithub(params.id, user.id);
     } catch (error) {
       return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
     }

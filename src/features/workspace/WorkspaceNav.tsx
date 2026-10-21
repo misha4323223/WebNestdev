@@ -1,8 +1,13 @@
-import { Bot,FolderGit2,History,MessagesSquare,Terminal } from "lucide-react";
+import { ArrowDownToLine,Bot,FolderGit2,History,MessagesSquare,Terminal } from "lucide-react";
 
 export type WorkspaceView="agent"|"files"|"changes"|"terminal";
 
-export function WorkspaceNav({view,onChange,onSessions,sessionCount}:{view:WorkspaceView;onChange:(view:WorkspaceView)=>void;onSessions:()=>void;sessionCount?:number}){
+/**
+ * Строка вкладок рабочей области. Кнопка «вниз» живёт здесь же: переписка открывается с начала
+ * диалога, и вернуться к последнему сообщению нужно из того места, где видно вкладки, а не искать
+ * точку у края чата. Показывается только когда ниже есть непрочитанное.
+ */
+export function WorkspaceNav({view,onChange,onSessions,sessionCount,onScrollBottom,showScroll,writing}:{view:WorkspaceView;onChange:(view:WorkspaceView)=>void;onSessions:()=>void;sessionCount?:number;onScrollBottom?:()=>void;showScroll?:boolean;writing?:boolean}){
   return <nav className="workspace-tabs">
     <button className={view==="agent"?"active":""} onClick={()=>onChange("agent")}><Bot size={15}/> Агент</button>
     <button className={view==="files"?"active":""} onClick={()=>onChange("files")}><FolderGit2 size={15}/> Файлы</button>
@@ -13,5 +18,11 @@ export function WorkspaceNav({view,onChange,onSessions,sessionCount}:{view:Works
       <MessagesSquare size={14}/>
       <span>Чаты{sessionCount&&sessionCount>1?" · "+sessionCount:""}</span>
     </button>
+    {/* Мгновенный переход к концу переписки: без плавной прокрутки, одним нажатием. */}
+    {showScroll&&onScrollBottom&&<button className={"workspace-tabs-scroll"+(writing?" is-live":"")} onClick={onScrollBottom} title="Мгновенно прокрутить переписку вниз" aria-label="Прокрутить переписку вниз">
+      <ArrowDownToLine size={14}/>
+      <span>Вниз</span>
+      {writing&&<i className="workspace-tabs-scroll-dot" aria-hidden="true"/>}
+    </button>}
   </nav>;
 }

@@ -4,6 +4,7 @@ import {
   Check,
   ChevronDown,
   ChevronRight,
+  ChevronUp,
   CircleAlert,
   CircleCheck,
   CircleDashed,
@@ -498,38 +499,44 @@ function actionCountLabel(count: number) {
   return count + " " + word;
 }
 
-export function ActionsPanel({ actions, running, progress, collapsed, onToggle }: {
+/**
+ * Действия агента — док под полем ввода, а не панель над ним: это статус текущей работы, и он
+ * должен стоять там, где уже находится рука. Разворачивается вверх, поверх переписки, и
+ * закрывается нажатием в любом месте вне дока — не только своей стрелкой.
+ */
+export function ActionsDock({ actions, running, progress, open, onOpenChange }: {
   actions: AgentAction[];
   running: boolean;
   progress: { step: number; maxSteps: number } | null;
-} & PanelToggles) {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
   const [openId, setOpenId] = useState<string | null>(null);
+  const listRef = useRef<HTMLUListElement | null>(null);
   const failed = actions.filter(action => action.status === "failed").length;
-  const status = <span className="run-panel-state">
-    {running
-      ? <><LoaderCircle size={12} className="agent-spin"/> выполняется{progress ? " · шаг " + progress.step + "/" + progress.maxSteps : ""}</>
-      : "завершено"}
-    {/* На телефоне шапка не должна разваливаться на строки: счётчик ошибок — иконка и число,
-        причина остаётся в подсказке. */}
-    {failed > 0 && <span className="run-panel-error" title={"Действий с ошибкой: " + failed} aria-label={"Действий с ошибкой: " + failed}><CircleAlert size={12}/>{failed}</span>}
-  </span>;
-  return <RunPanel
-    id="actions"
-    icon={<Activity size={13}/>}
-    title="Действия агента"
-    meta={actions.length ? actionCountLabel(actions.length) : undefined}
-    status={status}
-    collapsed={collapsed}
-    onToggle={onToggle}
-  >
-    <ul>
+  // Открытый список держится у последнего действия: агент пишет сверху вниз, и новое должно быть
+  // видно без ручной прокрутки.
+  useEffect(() => {
+    if (!open) return;
+    const box = listRef.current;
+    if (box) box.scrollTop = box.scrollHeight;
+  }, [open, actions.length]);
+
+  return <>
+    {open && <div className="actions-popover" id="agent-actions-popover" role="region" aria-label="Действия агента">
+      <div className="actions-popover-head">
+        <span className="eyebrow">ДЕЙСТВИЯ АГЕНТА</span>
+        <span className="actions-popover-count">{actions.length ? actionCountLabel(actions.length) : "пока пусто"}</span>
+        <button type="button" className="icon-button" onClick={() => onOpenChange(false)} title="Свернуть" aria-label="Свернуть действия"><ChevronDown size={14}/></button>
+      </div>
+      <ul className="actions-popover-list" ref={listRef}>
       {actions.map(action => {
         const { icon: Icon, label } = describeAction(action.name);
-        const open = openId === action.id;
+        const expanded = openId === action.id;
         const detailId = "action-detail-" + action.id;
-        return <li key={action.id} className={"action-row action-" + action.status + (open ? " action-open" : "")}>
-          <button type="button" className="action-summary" onClick={() => setOpenId(open ? null : action.id)} aria-expanded={open} aria-controls={detailId}>
-            <span className="action-chevron">{open ? <ChevronDown size={12}/> : <ChevronRight size={12}/>}</span>
+        return <li key={action.id} className={"action-row action-" + action.status + (expanded ? " action-open" : "")}>
+          <button type="button" className="action-summary" onClick={() => setOpenId(expanded ? null : action.id)} aria-expanded={expanded} aria-controls={detailId}>
+            <span className="action-chevron">{expanded ? <ChevronDown size={12}/> : <ChevronRight size={12}/>}</span>
             <span className="action-icon"><Icon size={13}/></span>
             <span className="action-label">{label}</span>
             {action.target && <code className="action-target" title={action.target}>{action.target}</code>}
@@ -542,11 +549,24 @@ export function ActionsPanel({ actions, running, progress, collapsed, onToggle }
               {action.status !== "running" && typeof action.durationMs === "number" && <small>{(action.durationMs / 1000).toFixed(1)} с</small>}
             </span>
           </button>
-          {open && <div id={detailId}><ActionDetailView action={action}/></div>}
+          {expanded && <div id={detailId}><ActionDetailView action={action}/></div>}
         </li>;
       })}
-    </ul>
-  </RunPanel>;
+      </ul>
+    </div>}
+    <button type="button" className={"actions-dock-trigger" + (open ? " open" : "")} onClick={() => onOpenChange(!open)} aria-expanded={open} aria-controls="agent-actions-popover" title={open ? "Свернуть действия агента" : "Развернуть действия агента"}>
+      <Activity size={13} className={running ? "actions-dock-live" : ""}/>
+      <strong>Действия агента</strong>
+      {actions.length > 0 && <span className="actions-dock-meta">{actionCountLabel(actions.length)}</span>}
+      <span className="actions-dock-state">
+        {running
+          ? <><LoaderCircle size={12} className="agent-spin"/>выполняется{progress ? " · шаг " + progress.step + "/" + progress.maxSteps : ""}</>
+          : "завершено"}
+      </span>
+      {failed > 0 && <span className="actions-dock-error" title={"Действий с ошибкой: " + failed} aria-label={"Действий с ошибкой: " + failed}><CircleAlert size={12}/>{failed}</span>}
+      <ChevronUp size={13} className="actions-dock-chevron"/>
+    </button>
+  </>;
 }
 
 /**

@@ -97,9 +97,11 @@ export async function registerWorkspaceRoutes(app:FastifyInstance){
     const user=await requireProjectUser(request,reply,p.id);
     if(!user)return;
     const body=z.object({command:z.string().min(1).max(20000),cwd:z.string().max(2000).optional()}).parse(request.body);
-    const sandbox=await getSandbox(p.id,user.id);
-    const cwd=await resolveInsideSandbox(sandbox.root,path.join(sandbox.root,body.cwd??"."));
     try{
+      const sandbox=await getSandbox(p.id,user.id);
+      // Рабочая папка проверяется в том же try: `cd` в несуществующую папку — это ответ для
+      // пользователя («такой папки нет»), а не «Внутренняя ошибка сервера».
+      const cwd=await resolveInsideSandbox(sandbox.root,path.join(sandbox.root,body.cwd??"."));
       // Терминал панели — тоже команда: `.env.local` в нём виден по пути, но пуст.
       return await runInSandbox(sandbox,body.command,cwd,{maskSecretEnvFiles:true});
     }catch(error){
@@ -109,7 +111,8 @@ export async function registerWorkspaceRoutes(app:FastifyInstance){
       const message=error instanceof Error?error.message:String(error);
       const carried=(error as {statusCode?:unknown}).statusCode;
       const status=typeof carried==="number"&&carried>=400&&carried<600?carried:dockerMissing(error)?503:400;
-      return reply.code(status).send({error:message});
+      const missingFolder=(error as NodeJS.ErrnoException).code==="ENOENT"&&!dockerMissing(error);
+      return reply.code(status).send({error:missingFolder?"Папки «"+(body.cwd??".")+"» нет в проекте — проверьте путь.":message});
     }
   });
 }

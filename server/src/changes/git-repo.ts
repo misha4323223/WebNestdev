@@ -380,6 +380,79 @@ export async function pushBranch(root: string, options: PushOptions): Promise<Pu
   }
 }
 
+export type PullOutcome = { pulled: boolean; branch: string; at: string; sha?: string; changed?: number; error?: string };
+
+/**
+ * Выгрузка из GitHub — это fast-forward, а не слияние: панель забирает то, что уже лежит в ветке.
+ * Если в проекте есть точки, которых нет на GitHub, выгрузка отказала бы: молча перезаписать
+ * работу агента нельзя. Поэтому операция разрешена только когда локальная ветка стоит ровно на
+ * последней отправленной точке (или история только начинается).
+ *
+ * Файлы берутся из полученного коммита, а не из рабочего дерева: так выгрузка приносит именно
+ * состояние GitHub, включая удалённые там файлы.
+ */
+export async function pullBranch(root: string, options: { branch: string; token: string | null }): Promise<PullOutcome> {
+  const at = new Date().toISOString();
+  if (!options.token) return { pulled: false, branch: options.branch, at, error: "GitHub не подключён: выгружать нечем" };
+  try {
+    const remotes = await git.listRemotes({ fs, dir: root }).catch(() => []);
+    if (!remotes.some(remote => remote.remote === "origin")) {
+      return { pulled: false, branch: options.branch, at, error: "У проекта нет GitHub-репозитория" };
+    }
+    const localHead = await git.resolveRef({ fs, dir: root, ref: "HEAD" }).catch(() => null);
+    const pushedHead = await git.resolveRef({ fs, dir: root, ref: "refs/webnestdev/pushed/" + options.branch }).catch(() => null);
+    const fetched = await git.fetch({
+      fs,
+      http,
+      dir: root,
+      remote: "origin",
+      ref: options.branch,
+      singleBranch: true,
+      depth: 1,
+      onAuth: () => ({ username: "x-access-token", password: options.token as string }),
+    });
+    const remoteHead = fetched.fetchHead;
+    if (!remoteHead) return { pulled: false, branch: options.branch, at, error: "GitHub не вернул ветку " + options.branch };
+    if (localHead && localHead !== pushedHead) {
+      return { pulled: false, branch: options.branch, at, error: "В проекте есть точки, которых нет на GitHub. Сначала отправьте их — выгрузка перезаписала бы эту работу." };
+    }
+    if (localHead === remoteHead) {
+      await writePushState(root, { branch: options.branch, lastPushAt: at, lastPushError: undefined });
+      return { pulled: true, branch: options.branch, at, sha: remoteHead, changed: 0 };
+    }
+    const previous = localHead ? await treeFiles(root, "HEAD").catch(() => new Map<string, string>()) : new Map<string, string>();
+    const target = await treeFiles(root, remoteHead);
+    let changed = 0;
+    for (const [filepath, oid] of target) {
+      if (previous.get(filepath) === oid) continue;
+      const { blob } = await git.readBlob({ fs, dir: root, oid });
+      await writeWorktreeFile(root, filepath, blob);
+      changed++;
+    }
+    for (const filepath of previous.keys()) {
+      if (target.has(filepath)) continue;
+      await deleteInside(root, path.join(root, filepath));
+      changed++;
+    }
+    await git.writeRef({ fs, dir: root, ref: "refs/heads/" + options.branch, value: remoteHead, force: true });
+    await git.writeRef({ fs, dir: root, ref: "HEAD", value: "refs/heads/" + options.branch, force: true, symbolic: true });
+    await git.writeRef({ fs, dir: root, ref: "refs/webnestdev/pushed/" + options.branch, value: remoteHead, force: true });
+    await stageWorkdir(root);
+    await writePushState(root, { branch: options.branch, lastPushAt: at, lastPushError: undefined });
+    return { pulled: true, branch: options.branch, at, sha: remoteHead, changed };
+  } catch (error) {
+    return { pulled: false, branch: options.branch, at, error: pullErrorText(error) };
+  }
+}
+
+/** Отказы GitHub при выгрузке: пользователю нужен следующий шаг, а не текст HTTP-ошибки. */
+export function pullErrorText(error: unknown) {
+  const text = describe(error);
+  if (/401|403|auth|credential|permission/i.test(text)) return "GitHub не пустил в репозиторий: проверьте подключение и права токена.";
+  if (/404|not found/i.test(text)) return "Репозиторий не найден: возможно, он переименован или удалён.";
+  return "Не удалось выгрузить изменения из GitHub: " + text;
+}
+
 /**
  * Отказы git-сервера приходят техническим текстом; в панели нужен ответ, по которому
  * понятно, что делать (нет прав, ветка ушла вперёд, истёк токен).

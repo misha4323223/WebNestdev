@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { AlertTriangle, CloudOff, CloudUpload, ExternalLink, FileCode, GitBranch, History, RefreshCw, RotateCcw } from "lucide-react";
-import { getProjectChanges, pushProjectChanges, rollbackProjectChanges, type ChangeCheckpoint, type ProjectChanges } from "../../lib/project-api";
+import { AlertTriangle, CloudDownload, CloudOff, CloudUpload, ExternalLink, FileCode, GitBranch, History, RefreshCw, RotateCcw } from "lucide-react";
+import { getProjectChanges, pullProjectChanges, pushProjectChanges, rollbackProjectChanges, type ChangeCheckpoint, type ProjectChanges } from "../../lib/project-api";
 import { apiUrl } from "../../lib/api";
 import { createProjectRepository, getGitHubStatus } from "../../lib/github-api";
 
@@ -54,7 +54,7 @@ export function ChangesPanel({ projectId, projectName, onRolledBack }: { project
   const [data, setData] = useState<ProjectChanges | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [busy, setBusy] = useState<"" | "push" | "rollback" | "repository">("");
+  const [busy, setBusy] = useState<"" | "push" | "pull" | "rollback" | "repository">("");
   // Репозиторий создаётся из «Изменений»: это то место, куда отправляются коммиты, и без
   // репозитория проект, созданный в приложении, не может отправить ничего.
   const [gitHub, setGitHub] = useState<{ connected: boolean } | null>(null);
@@ -106,6 +106,34 @@ export function ChangesPanel({ projectId, projectName, onRolledBack }: { project
       await load();
     } catch (pushError) {
       setNotice({ kind: "warn", text: pushError instanceof Error ? pushError.message : String(pushError) });
+    } finally {
+      setBusy("");
+    }
+  };
+
+  /**
+   * Выгрузка из GitHub. Отказ fast-forward — не ошибка панели, а ответ: в проекте есть точки,
+   * которых нет на GitHub, и перезаписывать их нельзя. Показывается тем же уведомлением.
+   */
+  const pull = async () => {
+    setBusy("pull");
+    setNotice(null);
+    try {
+      const result = await pullProjectChanges(projectId);
+      setData(result.overview);
+      if (!result.pulled) {
+        setNotice({ kind: "warn", text: result.error ?? "Не удалось выгрузить изменения из GitHub." });
+        return;
+      }
+      setNotice({
+        kind: "ok",
+        text: result.changed
+          ? "Выгружено из ветки " + result.branch + " на GitHub: обновлено " + filesLabel(result.changed) + "."
+          : "Проект уже совпадает с веткой " + result.branch + " на GitHub — выгружать нечего.",
+      });
+      onRolledBack?.();
+    } catch (pullError) {
+      setNotice({ kind: "warn", text: pullError instanceof Error ? pullError.message : String(pullError) });
     } finally {
       setBusy("");
     }
@@ -172,8 +200,11 @@ export function ChangesPanel({ projectId, projectName, onRolledBack }: { project
     <div className="panel-title">
       <div><span className="eyebrow">ИСТОРИЯ</span><strong>Изменения проекта</strong></div>
       <div className="changes-actions">
-        {repository?.connected && checkpoints.length > 0 && <button className="ghost-button" onClick={() => void push()} disabled={Boolean(busy)} title="Отправить текущую ветку на GitHub">
-          <CloudUpload size={14}/> {busy === "push" ? "Отправляем…" : "Отправить на GitHub"}
+        {repository?.connected && <button className="ghost-button changes-sync" onClick={() => void pull()} disabled={Boolean(busy)} title="Забрать ветку из GitHub в проект">
+          <CloudDownload size={14}/> {busy === "pull" ? "Выгружаем…" : <><span className="changes-label-full">Выгрузить из GitHub</span><span className="changes-label-short">Выгрузить</span></>}
+        </button>}
+        {repository?.connected && checkpoints.length > 0 && <button className="ghost-button changes-sync" onClick={() => void push()} disabled={Boolean(busy)} title="Отправить текущую ветку на GitHub">
+          <CloudUpload size={14}/> {busy === "push" ? "Отправляем…" : <><span className="changes-label-full">Отправить на GitHub</span><span className="changes-label-short">Отправить</span></>}
         </button>}
         <button className="ghost-button" onClick={() => void load()} disabled={loading}><RefreshCw size={14}/> Обновить</button>
       </div>

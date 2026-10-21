@@ -16,6 +16,12 @@ export function WorkspaceShell({onHome,onAgentState}:{onHome:()=>void;onAgentSta
   const [agentRunning,setAgentRunning]=useState(false);
   const reportAgentState=useCallback((running:boolean)=>setAgentRunning(running),[]);
   const [settingsOpen,setSettingsOpen]=useState(false);
+  // Переписка живёт в AgentPanel, а кнопка «вниз» — в строке вкладок: сигнал идёт вверх числом,
+  // а панель сообщает наверх, осталось ли что-то ниже видимой области.
+  const [scrollSignal,setScrollSignal]=useState(0);
+  const [chatAtEnd,setChatAtEnd]=useState(true);
+  const scrollChatToBottom=useCallback(()=>setScrollSignal(value=>value+1),[]);
+  const reportChatEnd=useCallback((atEnd:boolean)=>setChatAtEnd(atEnd),[]);
   // Список чатов принадлежит рабочей области: кнопка в строке вкладок открывает его
   // и из «Агента», и из «Файлов», а не только из шапки чата.
   const [sessionsOpen,setSessionsOpen]=useState(false);
@@ -58,12 +64,16 @@ export function WorkspaceShell({onHome,onAgentState}:{onHome:()=>void;onAgentSta
   // The model chip in the composer opens the settings overlay on the AI tab.
   const openModelSettings=()=>{try{localStorage.setItem("webnestdev.openProviderTab","1")}catch{};openSettings()};
 
-  return <LayoutShell projectName={projectName} view={view} onView={view=>{setSettingsOpen(false);setView(view)}} onSettings={openSettings} onSecrets={openSecrets} onHome={onHome} previewOpen={previewOpen} previewRunning={previewRunning} onPreviewToggle={()=>setPreviewOpen(value=>!value)} sidebarHidden={settingsOpen}>
+  // Ветка и история в шапке открывают тот же раздел, поэтому сначала закрывается облатка настроек:
+  // иначе «Изменения» монтировались бы под ней и клик выглядел бы как пустой.
+  const openChanges=()=>{setSettingsOpen(false);setPreviewOpen(false);setView("changes")};
+
+  return <LayoutShell projectId={projectId} projectName={projectName} view={view} onView={view=>{setSettingsOpen(false);setView(view)}} onSettings={openSettings} onSecrets={openSecrets} onHome={onHome} onOpenChanges={openChanges} agentRunning={agentRunning} previewOpen={previewOpen} previewRunning={previewRunning} onPreviewToggle={()=>setPreviewOpen(value=>!value)} sidebarHidden={settingsOpen}>
     <main className="main">
       <div className="workspace-main">
         {settingsOpen?<div className="workspace-overlay-panel">
           <SettingsHub key={settingsKey} projectId={projectId} projectName={projectName} onClose={()=>setSettingsOpen(false)}/>
-        </div>:<><WorkspaceNav view={view} onChange={setView} onSessions={()=>setSessionsOpen(true)} sessionCount={sessions?.length}/><WorkspaceContent view={view} projectId={projectId} projectName={projectName} conversationId={conversationId} onRunFinished={()=>{setPreviewReload(value=>value+1);void sessionsReload()}} onOpenModelSettings={openModelSettings} onOpenAccountSettings={openSettings} onRunningChange={reportAgentState} onOpenChanges={()=>{setSettingsOpen(false);setView("changes")}}/></>}
+        </div>:<><WorkspaceNav view={view} onChange={setView} onSessions={()=>setSessionsOpen(true)} sessionCount={sessions?.length} onScrollBottom={scrollChatToBottom} showScroll={view==="agent"&&!chatAtEnd} writing={view==="agent"&&!chatAtEnd&&agentRunning}/><WorkspaceContent view={view} projectId={projectId} projectName={projectName} conversationId={conversationId} onRunFinished={()=>{setPreviewReload(value=>value+1);void sessionsReload()}} onOpenModelSettings={openModelSettings} onOpenAccountSettings={openSettings} onRunningChange={reportAgentState} onOpenChanges={()=>{setSettingsOpen(false);setView("changes")}} scrollSignal={scrollSignal} onChatEndChange={reportChatEnd}/></>}
       </div>
       <PreviewPanel projectId={projectId} reloadToken={previewReload} open={previewOpen} onClose={()=>setPreviewOpen(false)} onRunningChange={setPreviewRunning}/>
       <ChatSessionsModal

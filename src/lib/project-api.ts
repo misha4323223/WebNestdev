@@ -50,6 +50,11 @@ export const getProjectChanges=(projectId:string)=>apiJson<ProjectChanges>("/api
  * пользователь запускает сам кнопкой — агент коммиты не пушит.
  */
 export const rollbackProjectChanges=(projectId:string,sha:string)=>apiJson<{checkpoint:ChangeCheckpoint;branch:string;pushed:boolean;overview:ProjectChanges}>("/api/projects/"+projectId+"/changes/"+encodeURIComponent(sha)+"/rollback",{method:"POST"});
+/**
+ * Выгрузка из GitHub: забирает ветку в проект, когда отправлять было нечего. Fast-forward:
+ * если в проекте есть неотправленные точки, сервер честно откажет вместо перезаписи работы.
+ */
+export const pullProjectChanges=(projectId:string)=>apiJson<{pulled:boolean;branch:string;at:string;sha?:string;changed?:number;error?:string;overview:ProjectChanges}>("/api/projects/"+projectId+"/changes/pull",{method:"POST"});
 /** Отправка на GitHub по кнопке — единственный путь, которым коммиты попадают в ветку. */
 export const pushProjectChanges=(projectId:string)=>apiJson<{pushed:boolean;branch:string;at:string}>("/api/projects/"+projectId+"/changes/push",{method:"POST"});
 export const getPreviewStatus=(projectId:string)=>apiJson<PreviewState>("/api/projects/"+projectId+"/preview/status");

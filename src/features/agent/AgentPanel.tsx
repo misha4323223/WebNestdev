@@ -6,7 +6,7 @@ import { createAgentSocket } from "../../lib/agent-socket";
 import { apiJson } from "../../lib/api";
 import { answerProjectQuestion,cancelProjectSecret,getConversation,skipProjectQuestion,submitProjectSecret,uploadProjectFile } from "../../lib/project-api";
 import { NestLoader } from "../../components/NestLoader";
-import { ActionsPanel,MessageThinking,PlanPanel,actionTarget,contentBefore,deriveActions,readPlan,writePlan,type PanelId,type PanelState } from "./agent-activity";
+import { ActionsDock,MessageThinking,PlanPanel,actionTarget,contentBefore,deriveActions,readPlan,writePlan,type PanelId,type PanelState } from "./agent-activity";
 import type { AgentAction,AgentMode,ChatMessage,PlanState,ReasoningEffort } from "../../lib/types";
 import { QuestionSheet,type AgentQuestion } from "./QuestionSheet";
 import { AgentModeControl } from "./AgentModeControl";
@@ -216,7 +216,7 @@ function interruptedRun(messages:ChatMessage[]):{reason:string;label:string}|nul
   return {reason:"предыдущий запуск был прерван и не завершён",label:"Прошлый запуск прервался — агент продолжит с того же места."};
 }
 
-export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettings,onOpenAccountSettings,onRunningChange,onOpenChanges}:{projectId:string;conversationId:string;onChanged:()=>void;onOpenModelSettings?:()=>void;onOpenAccountSettings?:()=>void;onRunningChange?:(running:boolean)=>void;onOpenChanges?:()=>void}){
+export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettings,onOpenAccountSettings,onRunningChange,onOpenChanges,scrollSignal,onChatEndChange}:{projectId:string;conversationId:string;onChanged:()=>void;onOpenModelSettings?:()=>void;onOpenAccountSettings?:()=>void;onRunningChange?:(running:boolean)=>void;onOpenChanges?:()=>void;scrollSignal?:number;onChatEndChange?:(atEnd:boolean)=>void}){
   const [messages,setMessages]=useState<ChatMessage[]>([]);
   const [prompt,setPrompt]=useState<string>(()=>readDraft(conversationId));
   const [running,setRunning]=useState(false);
@@ -240,6 +240,10 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   const [plan,setPlan]=useState<PlanState|null>(()=>readPlan(conversationId));
   const [actions,setActions]=useState<AgentAction[]>([]);
   const [panels,setPanels]=useState<PanelState>(readPanelState);
+  // Действия живут в доке под полем ввода: открытость — его собственное состояние, а не
+  // запомненное свёрнутое состояние панели.
+  const [actionsOpen,setActionsOpen]=useState(false);
+  const actionsDockRef=useRef<HTMLDivElement|null>(null);
   const [progress,setProgress]=useState<{step:number;maxSteps:number;tokens?:number;budget?:number}|null>(null);
   /**
    * Запрос ключа от агента. Само значение живёт только в этом состоянии до отправки и уходит прямо
@@ -289,6 +293,12 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
    * утащил бы список вниз, и проект снова открывался бы с конца чата.
    */
   const pinnedToEndRef=useRef(false);
+  /**
+   * Кнопка «вниз» в строке вкладок должна знать, осталось ли что-то ниже: колбэк хранится в ref,
+   * чтобы измерение не переподписывало обработчик прокрутки на каждом рендере родителя.
+   */
+  const chatEndRef=useRef(onChatEndChange);
+  chatEndRef.current=onChatEndChange;
   const autoResumeTimerRef=useRef<number|null>(null);
   /** Показанный запрос, к которому сейчас ведёт закладка: строка подсвечивается на пару секунд. */
   const [jumpedIndex,setJumpedIndex]=useState<number|null>(null);
@@ -343,7 +353,34 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     const box=messagesBoxRef.current;
     if(!box)return;
     pinnedToEndRef.current=box.scrollHeight-box.scrollTop-box.clientHeight<120;
+    chatEndRef.current?.(pinnedToEndRef.current);
   }
+
+  /**
+   * Мгновенный переход к концу переписки из строки вкладок: без плавной прокрутки, сразу к
+   * последнему сообщению, и автопрокрутка снова включается — дальше ответы идут в поле зрения.
+   */
+  useEffect(()=>{
+    if(!scrollSignal)return;
+    const box=messagesBoxRef.current;
+    if(!box)return;
+    pinnedToEndRef.current=true;
+    box.scrollTop=box.scrollHeight;
+    setJumpedIndex(null);
+    chatEndRef.current?.(true);
+  },[scrollSignal]);
+
+  // Открытая переписка стоит на самом начале и не выделяет прокрутку, поэтому положение
+  // измеряется после загрузки: иначе кнопка «вниз» не появилась бы над длинной историей.
+  useEffect(()=>{
+    if(!loaded)return;
+    const timer=window.setTimeout(()=>{
+      const box=messagesBoxRef.current;
+      if(!box)return;
+      chatEndRef.current?.(box.scrollHeight-box.scrollTop-box.clientHeight<120);
+    },0);
+    return ()=>window.clearTimeout(timer);
+  },[loaded,conversationId]);
 
   /** Прокрутка к началу: у открытого проекта первым видно самое раннее сообщение переписки. */
   function scrollMessagesToTop(){
@@ -362,6 +399,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     const row=box.querySelector<HTMLElement>('[data-message-index="'+index+'"]');
     if(!row)return;
     pinnedToEndRef.current=false;
+    chatEndRef.current?.(false);
     box.scrollTo({top:box.scrollTop+row.getBoundingClientRect().top-box.getBoundingClientRect().top-12,behavior:"smooth"});
     setJumpedIndex(index);
     if(jumpTimerRef.current)window.clearTimeout(jumpTimerRef.current);
@@ -377,6 +415,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     const box=messagesBoxRef.current;
     if(!box||!pinnedToEndRef.current)return;
     box.scrollTop=box.scrollHeight;
+    chatEndRef.current?.(true);
   },[messages,loaded]);
 
   function replaceMessages(next:ChatMessage[]){
@@ -388,6 +427,24 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     actionsRef.current=updater(actionsRef.current);
     setActions(actionsRef.current);
   }
+
+  // Док действий закрывается нажатием в любом месте вне него и по Escape: развёрнутый список —
+  // это поповер, а не панель, которую нужно убирать только стрелкой.
+  useEffect(()=>{
+    if(!actionsOpen)return;
+    const onPointer=(event:PointerEvent)=>{
+      const target=event.target instanceof Element?event.target:null;
+      if(target&&actionsDockRef.current?.contains(target))return;
+      setActionsOpen(false);
+    };
+    const onKey=(event:KeyboardEvent)=>{if(event.key==="Escape")setActionsOpen(false)};
+    document.addEventListener("pointerdown",onPointer,true);
+    window.addEventListener("keydown",onKey);
+    return ()=>{
+      document.removeEventListener("pointerdown",onPointer,true);
+      window.removeEventListener("keydown",onKey);
+    };
+  },[actionsOpen]);
 
   function togglePanel(id:PanelId){
     setPanels(current=>{
@@ -993,14 +1050,13 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
 
     {/* План и действия — у поля ввода: они относятся к тому, что происходит сейчас, и не должны
         уезжать вверх вместе с длинной перепиской. */}
-    {(plan&&plan.items.length>0)||actions.length>0||running
+    {plan&&plan.items.length>0
       ?<div className="chat-status chat-status-bottom">
-        {plan&&plan.items.length>0&&<PlanPanel plan={plan} collapsed={panels} onToggle={togglePanel}/>}
-        {mode==="planner"&&plan&&plan.items.length>0&&!running&&<div className="plan-approve">
+        <PlanPanel plan={plan} collapsed={panels} onToggle={togglePanel}/>
+        {mode==="planner"&&!running&&<div className="plan-approve">
           <div><strong>План готов к подтверждению</strong><span>Кнопка переключит агента в режим разработчика и запустит выполнение этого плана.</span></div>
           <button className="send-button" onClick={approvePlan}><Play size={13}/> Утвердить и начать разработку</button>
         </div>}
-        {(actions.length>0||running)&&<ActionsPanel actions={actions} running={running} progress={progress} collapsed={panels} onToggle={togglePanel}/>}
       </div>
       :null}
 
@@ -1058,6 +1114,11 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
         </div>
         {(dragActive||uploading||running||mode==="planner")&&<div className="composer-hint">{dragActive?"Отпустите файлы здесь — они появятся в папке uploads проекта":uploading?"Загружаем файлы…":running?"Агент работает — сообщение встанет в очередь":"Планировщик только изучает проект и готовит план — файлы не меняются"}</div>}
       </div>
+      {/* Док действий — под полем ввода: это statusbar текущей работы. Развёрнутый список
+          поднимается вверх, поверх переписки. */}
+      {(actions.length>0||running)&&<div className="actions-dock" ref={actionsDockRef}>
+        <ActionsDock actions={actions} running={running} progress={progress} open={actionsOpen} onOpenChange={setActionsOpen}/>
+      </div>}
       {changesNotice&&<button type="button" className="changes-toast" onClick={()=>onOpenChanges?.()} disabled={!onOpenChanges} title={onOpenChanges?"Открыть историю изменений проекта":undefined}>
         <History size={14}/>
         <span className="changes-toast-text">

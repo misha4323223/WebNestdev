@@ -1,9 +1,21 @@
-import { ExternalLink, Monitor, RefreshCw, ScrollText, Square, Terminal, X } from "lucide-react";
-import { useCallback,useEffect,useState } from "react";
+import { ExternalLink, Monitor, RefreshCw, ScrollText, Smartphone, Square, Tablet, Terminal, X } from "lucide-react";
+import { useCallback,useEffect,useRef,useState } from "react";
 import { getPreviewLogs,getPreviewStatus,requestPreviewTicket,startPreview,stopPreview,touchPreview } from "../../lib/project-api";
 import type { PreviewState } from "../../lib/types";
 
 type Face="preview"|"logs";
+/**
+ * Устройство, под которое проверяется вёрстка. Кадр рисуется в настоящей ширине устройства
+ * (телефон 390, планшет 834) и уменьшается масштабом — тогда медиазапросы приложения видят
+ * ровно ту ширину, как на настоящем экране, а не ширину колонки предпросмотра.
+ */
+type Device="desktop"|"tablet"|"phone";
+const DEVICES:Record<Device,{label:string;width:number;height:number}> = {
+  desktop:{label:"Десктоп",width:0,height:0},
+  tablet:{label:"Планшет",width:834,height:1112},
+  phone:{label:"Телефон",width:390,height:844},
+};
+const deviceKey="webnestdev.previewDevice";
 
 /**
  * Адрес живого превью. Слэш в конце обязателен: без него относительные ссылки приложения
@@ -28,6 +40,32 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
   const [error,setError]=useState("");
   const [logsError,setLogsError]=useState("");
   const [loadingLogs,setLoadingLogs]=useState(false);
+  // Выбор устройства переживает закрытие панели: обычно его ставят один раз под проверку вёрстки.
+  const [device,setDevice]=useState<Device>(()=>{try{const stored=localStorage.getItem(deviceKey);return stored==="tablet"||stored==="phone"?stored:"desktop"}catch{return "desktop"}});
+  const canvasRef=useRef<HTMLDivElement|null>(null);
+  const [canvas,setCanvas]=useState({width:0,height:0});
+
+  useEffect(()=>{try{localStorage.setItem(deviceKey,device)}catch{}},[device]);
+
+  // Кадр в ширине устройства больше колонки предпросмотра, поэтому он уменьшается масштабом.
+  // Размер холста меряется, а не берётся из окна: панель на телефоне занимает почти весь экран,
+  // на десктопе это узкая колонка справа, и масштаб у них разный.
+  useEffect(()=>{
+    const element=canvasRef.current;
+    if(!element)return;
+    const observer=new ResizeObserver(entries=>{
+      const box=entries[0]?.contentRect;
+      if(box)setCanvas({width:box.width,height:box.height});
+    });
+    observer.observe(element);
+    return ()=>observer.disconnect();
+  },[face,preview.running,device]);
+
+  const spec=DEVICES[device];
+  const fit=spec.width&&canvas.width>0
+    ?Math.min(1,(canvas.width-24)/spec.width,(canvas.height-24)/spec.height)
+    :1;
+  const deviceStyle=spec.width?{width:spec.width,height:spec.height,transform:"scale("+fit+")"}:undefined;
 
   // Номер загрузки кадра: каждый свежий статус (открытие проекта, конец прогона агента, кнопка
   // «Обновить») грузит кадр заново. Раньше он загружался один раз и оставался тем, что прокси успел
@@ -145,12 +183,29 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
     {/* Публичный адрес показывается, а не прячется в подсказке кнопки: это адрес, который видят
         другие, и по нему приложение работает без переписывания ссылок. */}
     {!error&&preview.running&&preview.publicUrl&&<div className="preview-hint">Публичный адрес: <a href={previewAddress(projectId,publicLink)} target="_blank" rel="noreferrer">{preview.publicUrl.replace(/^https?:\/\//,"")}</a></div>}
+    {/* Панель устройств: ширина кадра — настоящая ширина устройства, поэтому медиазапросы
+        приложения срабатывают так же, как на телефоне и планшете, а не по ширине колонки. */}
+    {face==="preview"&&<div className="preview-devices" role="group" aria-label="Устройство предпросмотра">
+      <div className="preview-devices-group">
+        {(["desktop","tablet","phone"] as Device[]).map(id=>{
+          const Icon=id==="desktop"?Monitor:id==="tablet"?Tablet:Smartphone;
+          return <button key={id} className={"preview-device-btn"+(device===id?" active":"")} onClick={()=>setDevice(id)} aria-pressed={device===id} title={DEVICES[id].label} aria-label={DEVICES[id].label}><Icon size={14}/></button>;
+        })}
+      </div>
+      <span className="preview-devices-size">{spec.label} · {spec.width?spec.width+" px":"во всю ширину"}</span>
+    </div>}
     <div className="preview-body">
       <div className={"preview-stage"+(face==="logs"?" flipped":"")}>
         <div className="preview-face preview-front">
           {preview.running
-            ? <iframe key={reloadToken+"-"+frameToken+publicLink} className="preview-frame" title="Живой предпросмотр" src={previewAddress(projectId,publicLink)}/>
-            : <div className="preview-empty"><div className="preview-icon"><Terminal size={20}/></div><strong>Предпросмотр проекта</strong><span>Запусти preview после создания файлов проекта.</span><button className="ghost-button" onClick={()=>void start()}>Запустить preview</button></div>}
+            ? <div className="preview-canvas" ref={canvasRef}>
+                {spec.width
+                  ? <div className={"preview-device "+device} style={deviceStyle}>
+                      <iframe key={reloadToken+"-"+frameToken+publicLink+"-"+device} className="preview-frame" title="Живой предпросмотр" src={previewAddress(projectId,publicLink)}/>
+                    </div>
+                  : <iframe key={reloadToken+"-"+frameToken+publicLink+"-"+device} className="preview-frame" title="Живой предпросмотр" src={previewAddress(projectId,publicLink)}/>}
+              </div>
+            : <div className="preview-empty"><div className="preview-icon"><Terminal size={20}/></div><strong>Предпросмотр проекта</strong><span>Запустите preview после создания файлов проекта — и проверьте его сразу под телефон и планшет.</span><button className="ghost-button" onClick={()=>void start()}>Запустить preview</button></div>}
         </div>
         <div className="preview-face preview-back">
           <div className="preview-logs-head">

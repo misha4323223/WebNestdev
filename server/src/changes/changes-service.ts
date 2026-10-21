@@ -11,6 +11,7 @@ import {
   hasRepo,
   initRepo,
   listCheckpoints,
+  pullBranch,
   pushBranch,
   readPushState,
   restoreCheckpoint,
@@ -278,6 +279,23 @@ export async function createRepositoryForProject(projectId: string, userId: stri
       ...(outcome.error ? { pushError: outcome.error } : {}),
       overview: await changesOverview(projectId, userId),
     };
+  });
+}
+
+/**
+ * Выгрузка из GitHub: забирает ветку в проект, когда отправлять было нечего. Панель показывает
+ * результат и обновлённую историю — выгруженные коммиты становятся точками, к которым можно
+ * вернуться, как и своим.
+ */
+export async function pullFromGithub(projectId: string, userId: string) {
+  return withProjectLock(projectId, async () => {
+    const repository = await repositoryFor(projectId, userId);
+    if (!repository.remoteUrl) throw new Error("У проекта нет GitHub-репозитория");
+    await ensureRepo(repository, userId);
+    const branch = await currentBranch(repository.sandbox.root, repository.branch);
+    const token = await tokenFor(userId);
+    const outcome = await pullBranch(repository.sandbox.root, { branch, token });
+    return { ...outcome, overview: await changesOverview(projectId, userId) };
   });
 }
 

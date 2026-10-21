@@ -16,17 +16,30 @@ button,textarea{font:inherit}button{color:inherit}
 /* Главная и рабочая область живут в дереве одновременно, а показывается одна из них: скрытая
    рабочая область продолжает держать сокет запуска, поэтому уход на главную не останавливает агента. */
 .app-pane{min-height:100dvh}.app-pane[hidden]{display:none}
-.topbar{height:var(--topbar-h);flex:none;border-bottom:1px solid var(--edge);background:#0e1014;display:flex;align-items:center;padding:0 12px;gap:18px;position:relative;z-index:20}
+/* Нижняя кромка шапки — тот же какао-токен, что у строки вкладок под ней: раньше линия под логотипом
+   оставалась холодной, и из двух соседних полос менялась только нижняя. */
+.topbar{height:var(--topbar-h);flex:none;border-bottom:1px solid var(--line-warm);background:#0e1014;display:flex;align-items:center;padding:0 12px;gap:18px;position:relative;z-index:20}
 /* Знак стоит над подписью: логотип узнаётся раньше, чем читается название, поэтому название
    мелкое и уходит под него. */
 .brand{display:flex;flex-direction:column;align-items:flex-start;gap:1px;min-width:0;font-weight:650;line-height:1}
-.brand-name{font-size:8px;font-weight:650;letter-spacing:.16em;text-transform:uppercase;color:#ffffff;padding-left:3px}
+/* В шапке название стоит строго по центру знака: в колонке оно смещалось влево на 3px и на телефоне
+   налезало на логотип — знак там уменьшается до 30px, а картинка оставалась 44px. */
+.topbar .brand{align-items:center;gap:4px}
+.brand-name{font-size:8px;font-weight:650;letter-spacing:.16em;text-transform:uppercase;color:#ffffff}
 /* The logo doubles as the way back to the home screen. */
 .brand-home{border:0;background:transparent;padding:0;cursor:pointer;color:inherit;text-align:left}
 /* Знак рисуется на прозрачном фоне, светлым вариантом: тёмная подложка вместо светлой плашки. */
-.brand-home:hover .brand-mark{background:#1a1f26}.brand-mark{width:46px;height:46px;border-radius:11px;background:transparent;color:#eef2f6;display:grid;place-items:center}.brand-mark img{display:block;object-fit:contain;filter:drop-shadow(0 2px 10px rgba(238,242,246,.14))}
-.topbar-project{display:flex;align-items:center;gap:7px;font-size:12px;color:#aeb4bd}.topbar-actions{margin-left:auto;display:flex;gap:6px}
-.icon-button,.ghost-button{border:1px solid transparent;background:transparent;border-radius:6px;display:flex;align-items:center;gap:6px;cursor:pointer}.icon-button{width:30px;height:30px;justify-content:center}.ghost-button{height:30px;padding:0 9px;font-size:11px;color:#aeb4bd}.icon-button:hover,.ghost-button:hover{background:#171a20;border-color:#282d34}
+.brand-home:hover .brand-mark{background:#1a1f26}.brand-mark{width:46px;height:46px;border-radius:11px;background:transparent;color:#eef2f6;display:grid;place-items:center}
+/* Знак стоит по центру плашки. Ниже .brand-mark переопределяется на display:block для логотипов
+   интеграций, и в окне входа картинка прилипала к левому верхнему углу плашки. */
+.brand .brand-mark{display:grid;place-items:center}
+.brand-mark img{display:block;object-fit:contain;filter:drop-shadow(0 2px 10px rgba(238,242,246,.14))}
+/* Заполнение плашки и обрезка прозрачного поля — только для знака в шапке рабочей области: там
+   на телефоне плашка 30px, а снимок по атрибутам 44px вылезал за неё на 14px. В окне входа и на
+   юридических страницах картинка остаётся своего размера и стоит по центру плашки. */
+.topbar .brand-mark img{width:100%;height:100%;clip-path:inset(11% 0 11% 0)}
+.topbar-actions{margin-left:auto;display:flex;align-items:center;gap:6px}
+.icon-button,.ghost-button{border:1px solid transparent;background:transparent;border-radius:6px;display:flex;align-items:center;gap:6px;cursor:pointer}.icon-button{width:30px;height:30px;justify-content:center}.ghost-button{height:30px;padding:0 9px;font-size:11px;color:#aeb4bd}.icon-button:hover,.ghost-button:hover{background:#171a20;border-color:var(--line-warm-strong)}
 /* Колонка и рамка поля ввода — тёплая кромка, как у «Плана задач» и «Действий агента»: это
    части одной рамы рабочей области, а не холодный серый контур рядом с ними. */
 .workspace{flex:1;min-height:0;display:flex}.sidebar{width:210px;flex:none;border-right:1px solid var(--line-warm);background:#0d0f13;display:flex;flex-direction:column;padding:10px 8px;min-height:0;overflow-y:auto;overflow-x:hidden}
@@ -319,7 +332,7 @@ button,textarea{font:inherit}button{color:inherit}
   .preview-backdrop.open{opacity:1;pointer-events:auto}
 }
 @media(prefers-reduced-motion:reduce){.preview,.preview-backdrop,.sidebar,.sidebar-backdrop{transition:none}}
-@media(max-width:650px){.topbar{gap:8px}.brand{min-width:0}.topbar-project,.topbar-actions .ghost-button{display:none}.mobile-only{display:flex}.sidebar{position:absolute;z-index:10;top:var(--topbar-h);bottom:0;left:-220px;transition:left .18s ease;box-shadow:12px 0 30px rgba(0,0,0,.35)}.sidebar.open{left:0}
+@media(max-width:650px){.topbar{gap:8px}.brand{min-width:0}.mobile-only{display:flex}.sidebar{position:absolute;z-index:10;top:var(--topbar-h);bottom:0;left:-220px;transition:left .18s ease;box-shadow:12px 0 30px rgba(0,0,0,.35)}.sidebar.open{left:0}
 /* Шторка закрывается тапом по любому месту вне сайдбара — для этого и подложка. */
 .sidebar-backdrop{display:block;position:fixed;top:var(--topbar-h);right:0;bottom:0;left:0;z-index:9;background:rgba(5,7,10,.55);backdrop-filter:blur(2px);opacity:0;pointer-events:none;transition:opacity .18s ease}
 .sidebar-backdrop.open{opacity:1;pointer-events:auto}.messages,.composer-wrap{padding-left:14px;padding-right:14px}.composer-model{max-width:132px}.agent-mode-trigger{padding:0 7px;gap:4px}
@@ -329,10 +342,27 @@ button,textarea{font:inherit}button{color:inherit}
 .chat-status-bottom{max-height:32%;padding-bottom:8px}
 /* Точки закладок живут у самого края: переписка отступает, чтобы не печатать под ними. */
 .messages{padding-right:26px}}
-.workspace-shell{display:flex;flex:1;min-width:0}.workspace-main{min-width:0;min-height:0;flex:1;display:flex;flex-direction:column}.workspace-view{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column}.workspace-view[hidden]{display:none}.workspace-tabs{height:40px;flex:none;display:flex;align-items:center;gap:3px;padding:0 12px;border-bottom:1px solid var(--edge);background:#0e1014;overflow-x:auto;scrollbar-width:none}.workspace-tabs::-webkit-scrollbar{display:none}.workspace-tabs button{height:28px;border:0;background:transparent;color:#747c87;border-radius:5px;padding:0 9px;display:flex;align-items:center;gap:6px;font-size:10px;cursor:pointer}.workspace-tabs button:hover,.workspace-tabs button.active{background:#181b21;color:#e8eaed}.workspace-tabs .workspace-tabs-chats{margin-left:auto;flex:none;color:#8b939e}.workspace-tabs .workspace-tabs-chats:hover{color:#e8eaed}
-@media(max-width:650px){.workspace-tabs .workspace-tabs-chats{padding:0 8px}.workspace-tabs .workspace-tabs-chats span{display:none}}
-.panel,.files-panel{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden}.panel-title{min-height:54px;padding:10px 15px;border-bottom:1px solid var(--edge);display:flex;align-items:center;justify-content:space-between;color:#c5c9cf;font-size:11px}.panel-title strong{display:block;margin-top:3px;font-size:12px}.files-panel .panel-title{justify-content:space-between}.file-browser{flex:1;min-height:0;display:flex}.file-tree{width:270px;flex:none;border-right:1px solid #20242a;overflow:auto;padding:7px}.file-item{width:100%;min-height:30px;border:0;background:transparent;color:#aeb4bd;border-radius:5px;padding:0 7px;display:flex;align-items:center;gap:7px;text-align:left;font-size:11px;cursor:pointer}.file-item:hover,.file-item.selected{background:#171a20;color:#e8eaed}.file-parent{color:#727a85}.file-empty{padding:18px 8px;color:#626a75;font-size:10px}.file-editor{flex:1;min-width:0;overflow:auto;background:#0b0d10}.editor-head{height:34px;border-bottom:1px solid #20242a;padding:0 12px;display:flex;align-items:center;color:#7f8792;font-size:10px}.file-editor pre{margin:0;padding:14px;font:11px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;color:#cdd1d7;white-space:pre-wrap}.file-placeholder{height:100%;display:grid;place-content:center;justify-items:center;gap:8px;color:#626a75;font-size:10px}.terminal-input{margin:15px;width:calc(100% - 30px);min-height:90px;border:1px solid #292f37;border-radius:7px;background:#111419;padding:10px}.terminal-output{flex:1;min-height:100px;margin:0 15px 15px;padding:12px;border:1px solid #20242a;border-radius:7px;background:#090b0e;overflow:auto;color:#b9c0c9;font:11px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap}
-.app-loading{height:100%;min-height:240px;display:grid;place-content:center;justify-items:center;gap:9px;color:#8a929d;font-size:11px;text-align:center;padding:24px}.app-loading strong{font-size:13px;color:#d5d8dd}.app-loading span{max-width:460px;line-height:1.5}.workspace-overlay-panel{flex:1;min-width:0;min-height:0;overflow:auto}.settings-panel{max-width:720px;margin:20px auto;border:1px solid #242a31;background:#111419;border-radius:9px;overflow:hidden}.settings-body{padding:18px;display:grid;gap:14px;color:#969da7;font-size:11px}.settings-body label{display:grid;gap:6px;color:#777f89}.settings-body label span{color:#d0d4da}.settings-body select,.settings-body input,.terminal-controls input{height:32px;border:1px solid #2a3038;border-radius:6px;background:#0b0d10;color:#dce0e5;padding:0 9px;outline:none}.settings-save{width:max-content;padding:0 12px}.terminal-controls{display:flex;gap:8px;margin:15px}.terminal-controls input{flex:1}.preview-frame{flex:1;width:100%;border:0;background:#fff}.preview-actions{display:flex;gap:3px}.preview-error{margin:10px 12px;padding:9px;border:1px solid #4a3030;border-radius:6px;background:#1b1212;color:#d99b9b;font-size:10px}
+.workspace-shell{display:flex;flex:1;min-width:0}.workspace-main{min-width:0;min-height:0;flex:1;display:flex;flex-direction:column}.workspace-view{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column}.workspace-view[hidden]{display:none}/* Кромка строки вкладок — тот же какао-токен, что у сайдбара, поля ввода и панелей: во вкладках
+   оставался холодный серый контур, и шапка рабочей области выбивалась из общей рамы. */
+.workspace-tabs{height:40px;flex:none;display:flex;align-items:center;gap:3px;padding:0 12px;border-bottom:1px solid var(--line-warm);background:#0e1014;overflow-x:auto;scrollbar-width:none}.workspace-tabs::-webkit-scrollbar{display:none}.workspace-tabs button{height:28px;border:0;background:transparent;color:#747c87;border-radius:5px;padding:0 9px;display:flex;align-items:center;gap:6px;font-size:10px;cursor:pointer}.workspace-tabs button:hover,.workspace-tabs button.active{background:#181b21;color:#e8eaed}.workspace-tabs .workspace-tabs-chats{margin-left:auto;flex:none;color:#8b939e}.workspace-tabs .workspace-tabs-chats:hover{color:#e8eaed}
+/* Кнопка «вниз»: размер, радиус и цвет как у вкладок, но с какао-кромкой — она часть этой же
+   строки, а не отдельный элемент поверх чата. Мятная точка появляется только тогда, когда агент
+   пишет что-то ниже видимой области. */
+.workspace-tabs .workspace-tabs-scroll{position:relative;flex:none;gap:5px;margin-left:4px;border:1px solid var(--line-warm);color:#9aa3ad;background:linear-gradient(180deg,#151a20,#111519);box-shadow:inset 0 1px 0 rgba(255,255,255,.04);animation:tabs-scroll-in .16s ease both}
+.workspace-tabs .workspace-tabs-scroll:hover{background:#1a2027;border-color:var(--line-warm-strong);color:#f0f3f6}
+.workspace-tabs .workspace-tabs-scroll:active{transform:translateY(1px)}
+.workspace-tabs .workspace-tabs-scroll.is-live{color:#d9e7de;border-color:#3d4a3f}
+.workspace-tabs-scroll-dot{width:5px;height:5px;border-radius:50%;background:#8fdcb0;animation:tabs-scroll-dot 1.7s ease-out infinite}
+@keyframes tabs-scroll-in{from{opacity:0;transform:translateY(-4px)}}
+@keyframes tabs-scroll-dot{0%{box-shadow:0 0 0 0 rgba(143,220,176,.45)}70%{box-shadow:0 0 0 5px rgba(143,220,176,0)}100%{box-shadow:0 0 0 0 rgba(143,220,176,0)}}
+@media(prefers-reduced-motion:reduce){.workspace-tabs .workspace-tabs-scroll,.workspace-tabs-scroll-dot{animation:none}}
+/* На телефоне шапка должна вмещать все вкладки вместе с кнопкой «вниз»: без уменьшенных отступов
+   строка вылезала за край и последняя вкладка прятались под кнопкой. */
+@media(max-width:650px){.workspace-tabs{gap:2px;padding:0 8px}.workspace-tabs button{padding:0 6px;gap:5px}.workspace-tabs .workspace-tabs-chats{padding:0 6px}.workspace-tabs .workspace-tabs-chats span{display:none}/* На телефоне строки вкладок не хватает по ширине, и кнопка уезжала за правый край вместе
+   с прокруткой. Sticky держит её на месте у края, а тень скрывает уезжающие под неё вкладки. */
+  .workspace-tabs .workspace-tabs-scroll{position:sticky;right:0;z-index:2;width:28px;padding:0;justify-content:center;margin-left:6px;box-shadow:-10px 0 10px #0e1014,inset 0 1px 0 rgba(255,255,255,.04)}.workspace-tabs .workspace-tabs-scroll span{display:none}.workspace-tabs-scroll-dot{position:absolute;top:3px;right:3px;width:5px;height:5px}}
+.panel,.files-panel{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden}.panel-title{min-height:54px;padding:10px 15px;border-bottom:1px solid var(--edge);display:flex;align-items:center;justify-content:space-between;color:#c5c9cf;font-size:11px}.panel-title strong{display:block;margin-top:3px;font-size:12px}.files-panel .panel-title{justify-content:space-between}.file-browser{flex:1;min-height:0;display:flex}.file-tree{width:270px;flex:none;border-right:1px solid #20242a;overflow:auto;padding:7px}.file-item{width:100%;min-height:30px;border:0;background:transparent;color:#aeb4bd;border-radius:5px;padding:0 7px;display:flex;align-items:center;gap:7px;text-align:left;font-size:11px;cursor:pointer}.file-item:hover,.file-item.selected{background:#171a20;color:#e8eaed}.file-parent{color:#727a85}.file-empty{padding:18px 8px;color:#626a75;font-size:10px}.file-editor{flex:1;min-width:0;overflow:auto;background:#0b0d10}.editor-head{height:34px;border-bottom:1px solid #20242a;padding:0 12px;display:flex;align-items:center;color:#7f8792;font-size:10px}.file-editor pre{margin:0;padding:14px;font:11px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;color:#cdd1d7;white-space:pre-wrap}.file-placeholder{height:100%;display:grid;place-content:center;justify-items:center;gap:8px;color:#626a75;font-size:10px}
+.app-loading{height:100%;min-height:240px;display:grid;place-content:center;justify-items:center;gap:9px;color:#8a929d;font-size:11px;text-align:center;padding:24px}.app-loading strong{font-size:13px;color:#d5d8dd}.app-loading span{max-width:460px;line-height:1.5}.workspace-overlay-panel{flex:1;min-width:0;min-height:0;overflow:auto}.settings-panel{max-width:720px;margin:20px auto;border:1px solid #242a31;background:#111419;border-radius:9px;overflow:hidden}.settings-body{padding:18px;display:grid;gap:14px;color:#969da7;font-size:11px}.settings-body label{display:grid;gap:6px;color:#777f89}.settings-body label span{color:#d0d4da}.settings-body select,.settings-body input{height:32px;border:1px solid #2a3038;border-radius:6px;background:#0b0d10;color:#dce0e5;padding:0 9px;outline:none}.settings-save{width:max-content;padding:0 12px}.preview-frame{flex:1;width:100%;border:0;background:#fff}.preview-actions{display:flex;gap:3px}.preview-error{margin:10px 12px;padding:9px;border:1px solid #4a3030;border-radius:6px;background:#1b1212;color:#d99b9b;font-size:10px}
 .preview-hint{margin:10px 12px;padding:9px;border:1px solid #3a3427;border-radius:6px;background:#171408;color:#cdb171;font-size:10px}
 .github-popover{position:absolute;right:12px;top:43px;width:min(560px,calc(100vw - 24px));max-height:calc(100vh - 58px);overflow:auto;background:#111419;border:1px solid #2a3038;border-radius:9px;box-shadow:0 18px 50px rgba(0,0,0,.45)}
 .github-login{font-size:10px;color:#747c87}.github-repositories{max-height:360px;overflow:auto;padding:8px 0}.github-repository{width:100%;border:1px solid transparent;background:transparent;border-radius:7px;padding:9px;text-align:left;cursor:pointer;display:block}.github-repository:hover,.github-repository.selected{background:#181b21;border-color:#2d333b}.github-repository strong,.github-repository small{display:block}.github-repository strong{font-size:11px;color:#dfe2e6}.github-repository small{margin-top:3px;font-size:9px;color:#737b86}@media(max-width:650px){.file-browser{display:block;overflow:auto}.file-tree{width:100%;max-height:42%;border-right:0;border-bottom:1px solid #20242a}.file-editor{height:58%}.github-popover{right:6px;width:calc(100vw - 12px)}}
@@ -1596,3 +1626,174 @@ button,textarea{font:inherit}button{color:inherit}
   .legal-table-wrap th,.legal-table-wrap td{color:#222;border-color:#ccc}
   .legal-doc-layout{display:block}
 }
+
+/*
+ * Проект-бар в шапке: путь «знак → проект → ветка → история», как полоса навигации в IDE.
+ * Капсулы собраны из того же материала, что кнопка «Вниз» и вкладки: тёплая кромка, тёмное
+ * стекло, мятная точка только там, где есть живое состояние (идёт запуск агента).
+ */
+.topbar-trail{display:flex;align-items:center;gap:6px;min-width:0}
+/* Название проекта — подпись, а не кнопка: выбор проекта живёт на главной, а здесь важно,
+   над чем идёт работа. Точка перед именем показывает, что агент прямо сейчас работает. */
+.topbar-crumb{display:flex;align-items:center;gap:7px;min-width:0;max-width:280px;font-size:12px;color:#e2e7ec}
+.topbar-project-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;letter-spacing:-.01em}
+.topbar-dot{flex:none;width:6px;height:6px;border-radius:50%;background:#5b6570}
+.topbar-dot.is-live{background:#8fdcb0;box-shadow:0 0 0 3px rgba(143,220,176,.13);animation:topbar-dot 2s ease-out infinite}
+.topbar-sep{color:#3d444d;font-size:12px;line-height:1;padding:0 1px;user-select:none}
+.topbar-chip{display:flex;align-items:center;gap:5px;height:26px;padding:0 8px;border:1px solid var(--line-warm);border-radius:6px;background:linear-gradient(180deg,#151a20,#111519);color:#98a1ab;font-size:10.5px;cursor:pointer;box-shadow:inset 0 1px 0 rgba(255,255,255,.04);transition:border-color .16s ease,background .16s ease,color .16s ease}
+.topbar-chip:hover{background:#1a2027;border-color:var(--line-warm-strong);color:#e8eaed}
+.topbar-chip svg{flex:none;color:#7f8994}
+.topbar-chip:hover svg{color:#a9b3be}
+.topbar-chip-text{max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.topbar-chip-count{font-variant-numeric:tabular-nums;font-weight:650;color:#c2cbd4}
+/* Разделитель «·» перед знаком GitHub и сам знак: подключённый репозиторий читается светлым,
+   неподключённый остаётся приглушённым, но всё равно виден — это приглашение подключить. */
+.topbar-chip-sep{width:2px;height:2px;flex:none;border-radius:50%;background:#4a525c}
+.topbar-chip-github{display:flex;flex:none;color:#dfe5eb;margin-left:1px}
+.topbar-chip-github.is-off{color:#5c646e}
+.topbar-chip-dot{width:5px;height:5px;border-radius:50%;background:#d3a86a;box-shadow:0 0 0 2px rgba(211,168,106,.16)}
+.topbar-divider{width:1px;height:18px;flex:none;margin:0 2px;background:var(--line-warm)}
+/* Меню проекта и аккаунта: та же тёмная пластина с тонкой мятной линией, что у окон агента. */
+.topbar-menu{position:absolute;z-index:40;top:calc(100% + 8px);left:0;min-width:240px;padding:6px;border:1px solid var(--line-warm);border-radius:10px;background:linear-gradient(168deg,#131a21,#0d1116 72%);box-shadow:0 24px 54px rgba(0,0,0,.58),inset 0 1px 0 rgba(255,255,255,.05);animation:topbar-menu-in .13s ease both}
+.topbar-menu::before{content:"";position:absolute;left:10px;right:10px;top:0;height:1px;background:linear-gradient(90deg,transparent,rgba(143,220,176,.45),transparent)}
+.topbar-menu-label{display:block;padding:4px 8px 6px;font:700 8.5px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.16em;color:#7f9c8c}
+.topbar-menu-item{display:flex;align-items:center;gap:8px;width:100%;height:30px;padding:0 8px;border:0;border-radius:6px;background:transparent;color:#b9c1ca;font-size:11.5px;text-align:left;cursor:pointer;transition:background .12s ease,color .12s ease}
+.topbar-menu-item:hover{background:#181f26;color:#eef2f5}
+.topbar-menu-item svg{flex:none;color:#6f7883}
+.topbar-menu-item.danger:hover{background:#241a19;color:#f2c9c2}
+.topbar-menu-item.danger:hover svg{color:#d99b91}
+.topbar-menu-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.topbar-menu-foot{margin-top:5px;padding-top:5px;border-top:1px solid var(--line-warm-soft)}
+.topbar-menu-account{left:auto;right:0;min-width:252px}
+.topbar-account{position:relative}
+.topbar-avatar{width:30px;height:30px;display:grid;place-items:center;border:1px solid #34443b;border-radius:8px;background:linear-gradient(150deg,#1b2a22,#121a20);color:#a9d5b8;font-size:11px;font-weight:700;line-height:1;cursor:pointer;box-shadow:inset 0 1px 0 rgba(255,255,255,.05);transition:border-color .16s ease,background .16s ease}
+.topbar-avatar:hover,.topbar-avatar.open{border-color:#526d5a;background:linear-gradient(150deg,#1f3128,#141d24)}
+.topbar-account-head{display:flex;align-items:center;gap:9px;padding:7px 8px 10px;margin-bottom:5px;border-bottom:1px solid var(--line-warm-soft)}
+.topbar-account-mark{flex:none;width:28px;height:28px;display:grid;place-items:center;border:1px solid #34443b;border-radius:8px;background:#15241b;color:#a9d5b8;font-size:11px;font-weight:700}
+.topbar-account-head div{min-width:0;display:grid;gap:2px}
+.topbar-account-head strong{color:#e4eae6;font-size:11.5px;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.topbar-account-head small{color:#6f7883;font-size:9.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+@keyframes topbar-menu-in{from{opacity:0;transform:translateY(-4px)}}
+@keyframes topbar-dot{0%{box-shadow:0 0 0 0 rgba(143,220,176,.34)}70%{box-shadow:0 0 0 5px rgba(143,220,176,0)}100%{box-shadow:0 0 0 0 rgba(143,220,176,0)}}
+@media(prefers-reduced-motion:reduce){.topbar-menu,.topbar-dot.is-live{animation:none}}
+/* На телефоне путь сокращается до самого проекта: ветка и история открываются вкладкой «Изменения»,
+   а действия справа остаются — иначе «Секреты» и «Настройки» стали бы недостижимы. */
+@media(max-width:650px){
+  .topbar-trail .topbar-sep,.topbar-trail .topbar-chip{display:none}
+  .topbar-crumb{max-width:min(38vw,156px)}
+  .topbar-divider{display:none}
+  .topbar-actions{gap:2px}
+  .topbar-menu-account{right:-2px}
+}
+
+/*
+ * Превью — та же рама, что у рабочей области: тёплая кромка, тёмное стекло в шапке, мятный
+ * акцент на выбранном устройстве. Кадр ставится в настоящую ширину устройства и уменьшается
+ * масштабом, поэтому приложение видит ровно ту ширину, что на телефоне и планшете.
+ */
+.preview{border-left-color:var(--line-warm);background:#0c0e12}
+.preview-head{border-bottom-color:var(--line-warm);background:linear-gradient(180deg,#12161c,#0e1116)}
+.preview-head .eyebrow{color:#7f9c8c;font:700 8.5px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.16em}
+.preview-head strong{color:#e6ebf0}
+.preview-actions{gap:4px}
+.preview-flip{border-color:var(--line-warm);background:#0b0e12;box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
+.preview-flip button.active{background:#1a2027;color:#eef2f5;box-shadow:inset 0 0 0 1px var(--line-warm-strong)}
+.preview .icon-button{color:#97a0aa}
+.preview .icon-button:hover{background:#1a2027;border-color:var(--line-warm-strong);color:#e8eaed}
+.preview-devices{flex:none;display:flex;align-items:center;justify-content:space-between;gap:8px;padding:7px 12px;border-bottom:1px solid var(--line-warm-soft);background:#0e1116}
+.preview-devices-group{display:flex;align-items:center;gap:2px;padding:2px;border:1px solid var(--line-warm);border-radius:7px;background:#0b0e12}
+.preview-device-btn{width:27px;height:22px;display:grid;place-items:center;border:0;border-radius:5px;background:transparent;color:#79828d;cursor:pointer;transition:color .14s ease,background .14s ease}
+.preview-device-btn:hover{color:#dbe2e9}
+.preview-device-btn.active{background:#182019;color:#a9d5b8;box-shadow:inset 0 0 0 1px #34443b}
+.preview-devices-size{color:#6d7681;font-size:9px;letter-spacing:.02em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* Холст с мелкой сеткой: вокруг устройства видно, что это сцена проверки, а не белая страница. */
+.preview-canvas{flex:1;min-height:0;display:grid;place-items:center;padding:12px;overflow:hidden;background-color:#0a0c0f;background-image:linear-gradient(rgba(255,255,255,.028) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.028) 1px,transparent 1px);background-size:22px 22px}
+.preview-canvas>.preview-frame{width:100%;height:100%;border-radius:8px;border:1px solid var(--line-warm);background:#fff;box-shadow:0 16px 40px rgba(0,0,0,.45)}
+.preview-device{flex:none;overflow:hidden;border:1px solid var(--line-warm-strong);background:#15191e;box-shadow:0 18px 44px rgba(0,0,0,.5),inset 0 0 0 1px rgba(255,255,255,.04);transform-origin:center center}
+.preview-device .preview-frame{display:block;width:100%;height:100%;border:0;border-radius:0;background:#fff}
+.preview-device.phone{border-radius:30px;padding:6px}
+.preview-device.phone .preview-frame{border-radius:24px}
+.preview-device.tablet{border-radius:18px;padding:7px}
+.preview-device.tablet .preview-frame{border-radius:11px}
+.preview-empty{color:#8a929d}
+.preview-empty strong{color:#dfe5ea}
+.preview-empty .ghost-button{border-color:var(--line-warm);color:#cfd6dd}
+.preview-icon{border-color:var(--line-warm);background:linear-gradient(150deg,#1b2a22,#121a20);color:#a9d5b8}
+.preview-back{background:#090b0e}
+.preview-error{border-color:#4a3030}
+@media(max-width:900px){.preview{border-left-color:var(--line-warm)}}
+
+/*
+ * Консоль проекта — не форма с полями, а терминал: приглашение внизу, вывод сверху, рабочая папка
+ * видна в шапке. Папка выбирается командой `cd`, а не полем ввода, поэтому терминал работает
+ * сразу после открытия проекта.
+ */
+.terminal-panel{background:#0b0d10}
+.terminal-head-actions{display:flex;align-items:center;gap:8px;flex:none}
+.terminal-path{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 8px;border:1px solid var(--line-warm);border-radius:6px;background:#0e1216;color:#a9b3bd;font:10px/1 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap}
+.terminal-screen{flex:1;min-height:0;display:flex;flex-direction:column;margin:12px 14px 14px;border:1px solid var(--line-warm);border-radius:9px;background:#080a0d;overflow:hidden;box-shadow:inset 0 1px 0 rgba(255,255,255,.02);cursor:text}
+.terminal-log{flex:1;min-height:0;overflow:auto;padding:12px 13px;font:11.5px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace}
+.terminal-empty{display:grid;gap:6px;max-width:430px;color:#7f8792}
+.terminal-empty strong{color:#c9d2db;font-size:11.5px}
+.terminal-empty span{font-size:10.5px;line-height:1.6}
+.terminal-empty code{padding:1px 4px;border:1px solid var(--line-warm-soft);border-radius:4px;background:#0f1318;color:#a9d5b8}
+.terminal-entry{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
+.terminal-entry.command{color:#e2e9f0}
+.terminal-entry.output{color:#b9c2cc}
+.terminal-entry.error{color:#e0a49b}
+.terminal-entry.note{color:#8fa596}
+.terminal-progress{display:flex;align-items:center;gap:6px;margin-top:4px;color:#9aa3ad;font-size:10.5px}
+.terminal-prompt-row{flex:none;display:flex;align-items:center;gap:8px;padding:8px 11px;border-top:1px solid var(--line-warm-soft);background:#0c1014}
+.terminal-prompt{flex:none;font:11.5px/1 ui-monospace,SFMono-Regular,Menlo,monospace;color:#8f9aa5;white-space:nowrap}
+.terminal-prompt b{color:#a9d5b8;font-weight:650}
+.terminal-prompt i{color:#5f7f6c;font-style:normal;padding-left:3px}
+.terminal-command{flex:1;min-width:0;height:26px;padding:0;border:0;outline:none;background:transparent;color:#e8eef4;font:12px/1 ui-monospace,SFMono-Regular,Menlo,monospace}
+.terminal-command::placeholder{color:#4f5862}
+.terminal-run{flex:none;width:26px;height:26px;display:grid;place-items:center;border:1px solid var(--line-warm);border-radius:6px;background:linear-gradient(180deg,#151a20,#111519);color:#c8d2dc;cursor:pointer}
+.terminal-run:hover:not(:disabled){background:#1a2027;border-color:var(--line-warm-strong);color:#fff}
+.terminal-run:disabled{opacity:.4;cursor:default}
+@media(max-width:650px){.terminal-screen{margin:10px}.terminal-log{font-size:11px}.terminal-head-actions .ghost-button span{display:none}}
+
+/*
+ * Док «Действия агента» под полем ввода: свёрнутый — строка статуса высотой с чип, развёрнутый —
+ * поповер, который поднимается вверх поверх переписки. Поэтому он и живёт внизу: раскрытие не
+ * сдвигает ни сообщения, ни поле ввода. Закрывается кликом вне и Escape, стрелка — лишь один из
+ * способов.
+ */
+.actions-dock{position:relative;max-width:760px;margin:8px auto 0}
+.actions-dock-trigger{width:100%;height:28px;display:flex;align-items:center;gap:7px;padding:0 10px;border:1px solid var(--line-warm);border-radius:7px;background:linear-gradient(180deg,#12161b,#0e1116);color:#98a1ab;font-size:10px;text-align:left;cursor:pointer;box-shadow:inset 0 1px 0 rgba(255,255,255,.03);transition:background .16s ease,border-color .16s ease,color .16s ease}
+.actions-dock-trigger:hover,.actions-dock-trigger.open{background:#171d24;border-color:var(--line-warm-strong);color:#e8eaed}
+.actions-dock-trigger strong{color:#dfe5eb;font-size:10.5px;font-weight:650;white-space:nowrap}
+.actions-dock-trigger svg{flex:none}
+.actions-dock-meta{color:#7f8994;white-space:nowrap}
+.actions-dock-state{margin-left:auto;min-width:0;display:flex;align-items:center;gap:5px;color:#8f9aa5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.actions-dock-error{display:flex;align-items:center;gap:4px;color:#c98d84;white-space:nowrap}
+.actions-dock-live{color:#8fdcb0}
+.actions-dock-chevron{color:#6f7883;transition:transform .16s ease}
+.actions-dock-trigger.open .actions-dock-chevron{transform:rotate(180deg)}
+.actions-popover{position:absolute;left:0;right:0;bottom:calc(100% + 8px);z-index:30;display:flex;flex-direction:column;max-height:min(52vh,440px);border:1px solid var(--line-warm);border-radius:10px;background:linear-gradient(168deg,#121820,#0c0f13 60%);box-shadow:0 26px 60px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.05);overflow:hidden;animation:actions-pop .14s ease both}
+.actions-popover::before{content:"";position:absolute;left:10px;right:10px;top:0;height:1px;background:linear-gradient(90deg,transparent,rgba(143,220,176,.45),transparent)}
+.actions-popover-head{flex:none;display:flex;align-items:center;gap:8px;padding:8px 10px 9px;border-bottom:1px solid var(--line-warm-soft)}
+.actions-popover-head .eyebrow{color:#7f9c8c;font:700 8.5px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.16em}
+.actions-popover-count{color:#7f8994;font-size:9.5px;white-space:nowrap}
+.actions-popover-head .icon-button{width:24px;height:24px;margin-left:auto;color:#8b939e}
+.actions-popover-list{flex:1;min-height:0;margin:0;padding:2px 0;overflow:auto;list-style:none;scrollbar-width:thin}
+.actions-popover .action-summary{padding:7px 10px}
+@keyframes actions-pop{from{opacity:0;transform:translateY(6px)}}
+@media(prefers-reduced-motion:reduce){.actions-popover{animation:none}}
+@media(max-width:650px){.actions-dock{margin-top:6px}.actions-dock-trigger{height:30px;padding:0 8px;gap:6px}.actions-dock-trigger strong{font-size:10px}}
+@media(max-width:430px){.actions-dock-meta{display:none}}
+/* На телефоне две кнопки GitHub не помещаются рядом с заголовком «Изменений»: они переезжают
+   на свою строку целиком, а не сжимают название до пары букв. */
+/* Короткие подписи кнопок GitHub: на телефоне полные названия переносятся на вторую строку
+   и шапка «Изменений» съедает четверть экрана. Подсказка с полным текстом остаётся в title. */
+.changes-label-short{display:none}
+@media(max-width:650px){
+  .changes-panel .panel-title{flex-wrap:wrap;row-gap:8px}
+  .changes-panel .changes-actions{width:100%;justify-content:flex-start}
+  .changes-label-full{display:none}
+  .changes-label-short{display:inline}
+}
+
+
+
