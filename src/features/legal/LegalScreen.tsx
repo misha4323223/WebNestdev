@@ -107,7 +107,7 @@ export function LegalScreen() {
 
 function LegalHub({ linkProps }: { linkProps: (to: string) => { href: string; onClick: (event: MouseEvent<HTMLAnchorElement>) => void } }) {
   const groups = useMemo(() => {
-    const order = ["Договор", "Данные", "Оплата", "Сведения"] as const;
+    const order = ["Договор", "Данные", "Оплата", "Согласия", "Сведения"] as const;
     return order
       .map(group => ({ group, docs: LEGAL_DOCS.filter(doc => doc.group === group) }))
       .filter(entry => entry.docs.length > 0);
@@ -242,16 +242,12 @@ function LegalBlockView({ block, onCookieSettings }: { block: LegalBlock; onCook
 
 function Requisites({ onCookieSettings }: { onCookieSettings: () => void }) {
   const fullName = requisite(SELLER.fullName, REQUISITE_HINTS.fullName);
-  const city = requisite(SELLER.city, REQUISITE_HINTS.city);
-  const ogrnip = requisite(SELLER.ogrnip, REQUISITE_HINTS.ogrnip);
 
   return <div className="legal-requisites">
     <dl>
       <div><dt>Исполнитель</dt><dd>{SELLER.status}</dd></div>
       <div><dt>ФИО</dt><dd>{fullName.pending ? <Pending text={fullName.text}/> : fullName.text}</dd></div>
       <div><dt>ИНН</dt><dd className="legal-mono">{SELLER.inn}</dd></div>
-      <div><dt>ОГРНИП</dt><dd>{ogrnip.pending ? <span className="legal-muted">не применяется для НПД</span> : <span className="legal-mono">{ogrnip.text}</span>}</dd></div>
-      <div><dt>Город</dt><dd>{city.pending ? <Pending text={city.text}/> : city.text}</dd></div>
       <div><dt>Электронная почта</dt><dd><a href={"mailto:" + SELLER.email}>{SELLER.email}</a></dd></div>
       <div><dt>Телефон</dt><dd><a href={"tel:" + SELLER.phoneHref}>{SELLER.phone}</a></dd></div>
       <div><dt>Часы поддержки</dt><dd>{SELLER.supportHours}</dd></div>
