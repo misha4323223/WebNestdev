@@ -298,12 +298,16 @@ cleanup_logs(){
 # сервис не перезапускает.
 #
 disk_report(){
-  local sandbox_dir total
+  local sandbox_dir total sudo_cmd=""
+  # Каталоги Docker и containerd закрыты для обычного пользователя: без sudo `du` по ним
+  # молча возвращает пустоту, отчёт выглядит полным, а самой крупной строки в нём нет.
+  if sudo -n true 2>/dev/null; then sudo_cmd="sudo -n"; fi
   log "диск: считаю, что занимает место (только чтение, ничего не меняю)"
-  df -h / /var/lib/docker 2>/dev/null | sed 's/^/[disk] /' || true
+  df -h / 2>/dev/null | sed 's/^/[disk] /' || true
+  [ -n "$sudo_cmd" ] || log "sudo без пароля недоступен — каталоги Docker могут быть не видны"
 
   log "каталоги верхнего уровня на / (по убыванию):"
-  timeout 180 du -xsh /* 2>/dev/null | sort -h | tail -12 | sed 's/^/[disk] /' || true
+  timeout 180 $sudo_cmd du -xsh /* 2>/dev/null | sort -h | tail -12 | sed 's/^/[disk] /' || true
 
   if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
     log "docker не отвечает — docker-часть отчёта пропущена"
@@ -314,9 +318,22 @@ disk_report(){
     # или webnestdev-data — это гигабайты, а не «docker вообще».
     log "docker system df -v (по томам и образам):"
     docker system df -v 2>&1 | head -60 | sed 's/^/[disk] /' || true
-    log "каталоги демона:"
-    timeout 180 du -sh /var/lib/docker/overlay2 /var/lib/docker/volumes \
-      /var/lib/docker/containers /var/lib/docker/buildkit 2>/dev/null \
+    # Слои образов лежат не обязательно в /var/lib/docker: на этой ВМ Docker работает через
+    # containerd, и все 5 ГБ образов — в /var/lib/containerd. Один список без второго
+    # показывал бы «105 МБ на образы» и уводил бы от настоящей причины.
+    # `-x` обязателен: /var/lib/docker/rootfs/overlayfs/<id> — это смонтированные корни
+    # работающих контейнеров, то есть те же слои образа ещё раз. Без -x один и тот же образ
+    # считается дважды (105 МБ занимаемого превращаются в «2.2 ГБ»).
+    # Итог и его состав считаются отдельными вызовами: `du` не считает путь дважды, поэтому
+    # каталог, перечисленный после своих подкаталогов, показал бы только неучтённый остаток.
+    log "каталоги демона (итого):"
+    timeout 180 $sudo_cmd du -shx /var/lib/docker /var/lib/containerd 2>/dev/null \
+      | sort -h | sed 's/^/[disk] /' || true
+    log "внутри (слои образов и writable-слои контейнеров):"
+    timeout 180 $sudo_cmd du -shx \
+      /var/lib/containerd/io.containerd.content.v1.content \
+      /var/lib/containerd/io.containerd.snapshotter.v1.overlayfs \
+      /var/lib/docker/volumes /var/lib/docker/containers 2>/dev/null \
       | sort -h | sed 's/^/[disk] /' || true
     log "образы на диске:"
     docker images --format '{{.Repository}}:{{.Tag}}\t{{.Size}}\t{{.CreatedSince}}' 2>/dev/null \
@@ -338,9 +355,10 @@ disk_report(){
   fi
 
   log "каталог развёртывания $APP_DIR:"
-  timeout 120 du -sh "$APP_DIR" 2>/dev/null | sed 's/^/[disk] /' || true
+  timeout 120 du -shx "$APP_DIR" 2>/dev/null | sed 's/^/[disk] /' || true
   log "журнал системы: $(journalctl --disk-usage 2>/dev/null || echo 'неизвестно')"
-  timeout 60 du -sh /var/log 2>/dev/null | sed 's/^/[disk] /' || true
+  timeout 60 $sudo_cmd du -sh /var/log /var/cache /swapfile 2>/dev/null \
+    | sort -h | sed 's/^/[disk] /' || true
   log "готово: отчёт ничего не менял"
 }
 
