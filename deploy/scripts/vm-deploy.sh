@@ -10,6 +10,7 @@
 #        logs                   только показать последние строки логов сервиса (без выкатки)
 #        cleanup                только обнулить логи контейнеров на ВМ (диск, а не версия)
 #        prune                  только убрать старые образы и кеш сборки
+#        disk                   только показать, что занимает место на диске (чтение, без уборки)
 #   IMAGE_REF=ghcr.io/…        образ для MODE=image
 #   APP_DIR=~/webnestdev/src   каталог развёртывания (docker-compose.yml и .env)
 #   COMPOSE_FILE=docker-compose.yml
@@ -286,6 +287,61 @@ cleanup_logs(){
   done
   after=$(df -Pk / | awk 'NR==2{print $4}')
   log "логи выкатки очищены: освобождено $((freed / 1024 / 1024)) МБ; свободно на / было $((before / 1024)) МБ, стало $((after / 1024)) МБ"
+}
+
+#
+# MODE=disk: что именно занимает место на диске. Вопрос «на / занято 15 ГБ, где они» одним
+# `df` не отвечается: на этой ВМ почти всё место — это Docker (слои образов с Chromium,
+# записываемые слои контейнеров, json-логи без лимита размера, кеш сборки) и каталог песочниц,
+# где каждый проект несёт свой node_modules. Отчёт печатает эти слои по отдельности, чтобы
+# уборка (prune / cleanup) была решением, а не догадкой. Только чтение: ничего не удаляет,
+# сервис не перезапускает.
+#
+disk_report(){
+  local sandbox_dir total
+  log "диск: считаю, что занимает место (только чтение, ничего не меняю)"
+  df -h / /var/lib/docker 2>/dev/null | sed 's/^/[disk] /' || true
+
+  log "каталоги верхнего уровня на / (по убыванию):"
+  timeout 180 du -xsh /* 2>/dev/null | sort -h | tail -12 | sed 's/^/[disk] /' || true
+
+  if ! command -v docker >/dev/null 2>&1 || ! docker info >/dev/null 2>&1; then
+    log "docker не отвечает — docker-часть отчёта пропущена"
+  else
+    log "docker system df (образы / контейнеры / тома / кеш сборки):"
+    docker system df 2>&1 | sed 's/^/[disk] /' || true
+    # -v показывает каждый том и каждый образ отдельно: именно здесь видно, что postgres-data
+    # или webnestdev-data — это гигабайты, а не «docker вообще».
+    log "docker system df -v (по томам и образам):"
+    docker system df -v 2>&1 | head -60 | sed 's/^/[disk] /' || true
+    log "каталоги демона:"
+    timeout 180 du -sh /var/lib/docker/overlay2 /var/lib/docker/volumes \
+      /var/lib/docker/containers /var/lib/docker/buildkit 2>/dev/null \
+      | sort -h | sed 's/^/[disk] /' || true
+    log "образы на диске:"
+    docker images --format '{{.Repository}}:{{.Tag}}\t{{.Size}}\t{{.CreatedSince}}' 2>/dev/null \
+      | head -20 | sed 's/^/[disk] /' || true
+  fi
+
+  # Путь песочниц читается из того же .env, что читает compose ($SANDBOX_DIR): считать по
+  # догадке «/var/lib/webnestdev/sandboxes» значило бы показать пустой каталог на ВМ, где
+  # каталог задан иначе.
+  sandbox_dir=$(grep -m1 '^SANDBOX_DIR=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- || true)
+  sandbox_dir=${sandbox_dir:-/var/lib/webnestdev/sandboxes}
+  if [ -d "$sandbox_dir" ]; then
+    total=$(timeout 180 du -sh "$sandbox_dir" 2>/dev/null | cut -f1 || true)
+    log "песочницы $sandbox_dir: всего ${total:-неизвестно}, каталогов проектов $(find "$sandbox_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')"
+    log "крупнейшие проекты (каталог = id проекта):"
+    timeout 180 du -sh "$sandbox_dir"/*/ 2>/dev/null | sort -h | tail -12 | sed 's/^/[disk] /' || true
+  else
+    log "каталога песочниц нет: $sandbox_dir"
+  fi
+
+  log "каталог развёртывания $APP_DIR:"
+  timeout 120 du -sh "$APP_DIR" 2>/dev/null | sed 's/^/[disk] /' || true
+  log "журнал системы: $(journalctl --disk-usage 2>/dev/null || echo 'неизвестно')"
+  timeout 60 du -sh /var/log 2>/dev/null | sed 's/^/[disk] /' || true
+  log "готово: отчёт ничего не менял"
 }
 
 #
@@ -940,8 +996,8 @@ verify_sms(){
 }
 
 if [ ! -d "$APP_DIR" ]; then
-  if [ "$MODE" = "prune" ]; then
-    log "каталог развёртывания не найден ($APP_DIR), но для уборки образов он не нужен"
+  if [ "$MODE" = "prune" ] || [ "$MODE" = "disk" ]; then
+    log "каталог развёртывания не найден ($APP_DIR), но для этого режима он не нужен"
   else
     log "каталог развёртывания не найден: $APP_DIR"
     exit 2
@@ -950,7 +1006,7 @@ fi
 
 log "режим: $MODE$( [ "$DRY_RUN" = "1" ] && echo " (dry-run)" )"
 case "$MODE" in
-  prune|cleanup) ;;
+  prune|cleanup|disk) ;;
   logs) log "режим logs: читаю логи контейнера в $APP_DIR"; cd "$APP_DIR" ;;
   *) log "деплой в $APP_DIR"; cd "$APP_DIR" ;;
 esac
@@ -1035,8 +1091,14 @@ case "$MODE" in
     log "уборка завершена"
     exit 0
     ;;
+  disk)
+    log "режим disk: показываю, чем занят диск, сервис не трогаю"
+    cd "$APP_DIR" 2>/dev/null || true
+    disk_report
+    exit 0
+    ;;
   *)
-    log "неизвестный MODE=$MODE (ожидается image, source, logs, cleanup или prune)"
+    log "неизвестный MODE=$MODE (ожидается image, source, logs, cleanup, prune или disk)"
     exit 2
     ;;
 esac

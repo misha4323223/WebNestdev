@@ -11,7 +11,8 @@ name: deploy
 # mode=image с тегом `image=…:sha-<12>` откатывает на прежнюю сборку, mode=prune убирает
 # старые образы с ВМ, mode=cleanup обнуляет логи контейнеров на ВМ (диск, а не версию),
 # mode=logs печатает последние строки логов сервиса в лог выкатки, mode=source собирает
-# образ на самой ВМ из репозитория.
+# образ на самой ВМ из репозитория, mode=disk показывает, чем занят диск (Docker, тома,
+# песочницы, логи) — без уборки и без перезапуска сервиса.
 # Подтверждение перед выкаткой включается без изменения файла:
 # Settings → Environments → production → Required reviewers (сейчас их нет).
 
@@ -19,9 +20,9 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "image — готовый образ из реестра, source — сборка на ВМ из репозитория, logs — показать логи контейнера, cleanup — только обнулить логи, prune — только уборка старых образов"
+        description: "image — готовый образ из реестра, source — сборка на ВМ из репозитория, logs — показать логи контейнера, cleanup — только обнулить логи, prune — только уборка старых образов, disk — показать, что занимает место на диске"
         type: choice
-        options: ["image", "source", "logs", "cleanup", "prune"]
+        options: ["image", "source", "logs", "cleanup", "prune", "disk"]
         default: "image"
       tail:
         description: "Сколько последних строк логов контейнера печатать в mode=logs (по умолчанию 120)"
