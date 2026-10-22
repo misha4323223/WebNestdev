@@ -122,11 +122,14 @@ registerTool({
 registerTool({
   name: "git.pull",
   description:
-    "Pull the project's connected repository branch into the workspace (fast-forward only: refuses when local commits were not pushed yet).",
-  execute: async (_input, context) => {
-    const outcome = await pullFromGithub(context.projectId, context.userId);
+    "Pull the project's connected repository branch into the workspace. Refuses when local commits were not pushed yet unless input {discardLocal:true} — only after the user explicitly agrees to drop them; they are kept under refs/webnestdev/rescue/*.",
+  execute: async (input, context) => {
+    // Перезапись локальных точек — только по явному согласию человека: без флага выгрузка
+    // отказывается, как и раньше.
+    const discardLocal = (input as { discardLocal?: unknown } | null)?.discardLocal === true;
+    const outcome = await pullFromGithub(context.projectId, context.userId, { discardLocal });
     if (!outcome.pulled) throw new Error(outcome.error ?? "Не удалось выгрузить изменения из репозитория");
-    return { ok: true, branch: outcome.branch, sha: outcome.sha ?? null, changed: outcome.changed ?? 0 };
+    return { ok: true, branch: outcome.branch, sha: outcome.sha ?? null, changed: outcome.changed ?? 0, discardedLocal: discardLocal };
   },
 });
 

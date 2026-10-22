@@ -519,6 +519,20 @@ export async function pushBranch(root: string, options: PushOptions): Promise<Pu
 export type PullOutcome = { pulled: boolean; branch: string; at: string; sha?: string; changed?: number; error?: string };
 
 /**
+ * Отказ в выгрузке: локальная ветка ушла вперёд последней отправленной точки. Перезаписать её
+ * можно только по явному решению пользователя — `discardLocal`. Такая выгрузка не теряет
+ * коммиты: перед переездом ветки они сохраняются отдельной ссылкой (см. rescueRef).
+ */
+export function pullRefused(localHead: string | null, pushedHead: string | null, discardLocal = false) {
+  return Boolean(localHead && localHead !== pushedHead && !discardLocal);
+}
+
+/** Ссылка, под которой остаются локальные коммиты после выгрузки с перезаписью. */
+export function rescueRef(sha: string) {
+  return "refs/webnestdev/rescue/" + sha.slice(0, 12);
+}
+
+/**
  * Выгрузка из GitHub — это fast-forward, а не слияние: панель забирает то, что уже лежит в ветке.
  * Если в проекте есть точки, которых нет на GitHub, выгрузка отказала бы: молча перезаписать
  * работу агента нельзя. Поэтому операция разрешена только когда локальная ветка стоит ровно на
@@ -527,7 +541,7 @@ export type PullOutcome = { pulled: boolean; branch: string; at: string; sha?: s
  * Файлы берутся из полученного коммита, а не из рабочего дерева: так выгрузка приносит именно
  * состояние GitHub, включая удалённые там файлы.
  */
-export async function pullBranch(root: string, options: { branch: string; token: string | null; username?: string }): Promise<PullOutcome> {
+export async function pullBranch(root: string, options: { branch: string; token: string | null; username?: string; discardLocal?: boolean }): Promise<PullOutcome> {
   const at = new Date().toISOString();
   if (!options.token) return { pulled: false, branch: options.branch, at, error: "Репозиторий не подключён: выгружать нечем" };
   try {
@@ -552,8 +566,13 @@ export async function pullBranch(root: string, options: { branch: string; token:
     });
     const remoteHead = fetched.fetchHead;
     if (!remoteHead) return { pulled: false, branch: options.branch, at, error: "Репозиторий не вернул ветку " + options.branch };
-    if (localHead && localHead !== pushedHead) {
-      return { pulled: false, branch: options.branch, at, error: "В проекте есть точки, которых нет в удалённом репозитории. Сначала отправьте их — выгрузка перезаписала бы эту работу." };
+    if (pullRefused(localHead, pushedHead, options.discardLocal)) {
+      return { pulled: false, branch: options.branch, at, error: "В проекте есть точки, которых нет в удалённом репозитории. Сначала отправьте их — выгрузка перезаписала бы эту работу. Перезапись по явному решению (discardLocal) сохраняет локальные коммиты под ссылкой " + rescueRef(localHead as string) + "." };
+    }
+    if (localHead && localHead !== pushedHead && options.discardLocal) {
+      // Пользователь разрешил перезапись: ветка переедет на удалённый HEAD, но локальные коммиты
+      // остаются в репозитории под отдельной ссылкой — их можно вернуть, а не искать в объектах.
+      await git.writeRef({ fs, dir: root, ref: rescueRef(localHead), value: localHead, force: true }).catch(() => undefined);
     }
     if (localHead === remoteHead) {
       await writePushState(root, { branch: options.branch, lastPushAt: at, lastPushError: undefined });

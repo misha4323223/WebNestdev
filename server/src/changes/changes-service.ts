@@ -316,14 +316,19 @@ export async function createRepositoryForProject(projectId: string, userId: stri
  * результат и обновлённую историю — выгруженные коммиты становятся точками, к которым можно
  * вернуться, как и своим.
  */
-export async function pullFromGithub(projectId: string, userId: string) {
+export async function pullFromGithub(projectId: string, userId: string, options: { discardLocal?: boolean } = {}) {
   return withProjectLock(projectId, async () => {
     const repository = await repositoryFor(projectId, userId);
     if (!repository.remoteUrl) throw new Error("У проекта нет подключённого репозитория");
     await ensureRepo(repository, userId);
     const branch = await currentBranch(repository.sandbox.root, repository.branch);
     const token = await tokenFor(userId, repository.provider);
-    const outcome = await pullBranch(repository.sandbox.root, { branch, token, username: repository.username });
+    const outcome = await pullBranch(repository.sandbox.root, {
+      branch,
+      token,
+      username: repository.username,
+      ...(options.discardLocal ? { discardLocal: true } : {}),
+    });
     // Выгрузка из GitHub добавляет файлы мимо агента: размер проекта нужно пересчитать,
     // иначе квота узнает о них только на ночной сверке.
     if (outcome.pulled) {
