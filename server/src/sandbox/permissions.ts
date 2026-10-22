@@ -55,13 +55,17 @@ async function own(target: string) {
   }
 }
 
-async function open(target: string, mode: number, fallback: number) {
+async function open(target: string, mode: number, fallback: number, keepExec = false) {
   try {
     const info = await lstat(target);
     // chmod по ссылке меняет права её цели, а не ссылки: цель может быть чужим файлом.
     if (info.isSymbolicLink()) return;
     const owned = await own(target);
-    await chmod(target, owned ? mode : fallback);
+    // Бит исполнения сохраняется: обход повторяется перед каждой командой контейнера, а скрипт,
+    // которому агент выставил `chmod +x`, без этого перестал бы запускаться после первой же
+    // команды (`. ./scripts/deploy.sh`).
+    const exec = keepExec ? info.mode & 0o111 : 0;
+    await chmod(target, (owned ? mode : fallback) | exec);
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
       console.error(`[sandbox] не удалось выставить права на ${target}`, error);
@@ -76,9 +80,10 @@ export function openDirForSandbox(dir: string) {
 
 /** Файл, записанный сервером: контейнер должен уметь его перезаписать. */
 export function openFileForSandbox(file: string) {
+  // У файла окружения бит исполнения не нужен и только расширял бы права: ключи — всегда 600.
   return isSecretEnvFile(path.basename(file))
     ? open(file, SECRET_MODE, SECRET_FALLBACK)
-    : open(file, FILE_MODE, FILE_FALLBACK);
+    : open(file, FILE_MODE, FILE_FALLBACK, true);
 }
 
 /** Каталог, в который сервер положил файл, и все его родители до корня песочницы включительно. */
@@ -176,6 +181,11 @@ export async function clearRootOwnedBuildCaches(root: string) {
  * Разовое открытие уже существующего дерева: проект, собранный до этого исправления (или
  * скопированный в песочницу), лежит root:root с 644, и агент не может в нём собрать ничего.
  * node_modules и .git пропускаются: у node_modules владелец — контейнер, у .git — отдельный обход.
+ *
+ * Вызывается не только при первом доступе, но и перед каждой командой контейнера
+ * (openProjectForSandbox): каталог может создать любой путь сервера — клон репозитория,
+ * распаковка архива, переключение ветки, — и `npm run build` упирается в EACCES уже после того,
+ * как агент потратил шаги на поиск причины.
  */
 export async function openTreeForSandbox(root: string, limit = TREE_LIMIT) {
   const stack = [path.resolve(root)];
@@ -189,7 +199,12 @@ export async function openTreeForSandbox(root: string, limit = TREE_LIMIT) {
       const full = path.join(current, entry.name);
       if (entry.isSymbolicLink()) continue;
       if (entry.isDirectory()) {
-        if (SKIP_DIRS.has(entry.name)) continue;
+        // Содержимое node_modules обходить дорого и незачем, но сам каталог открывается: если
+        // его создала установка от root, контейнер не добавит и не заменит в нём ни один пакет.
+        if (SKIP_DIRS.has(entry.name)) {
+          if (entry.name === "node_modules") await openDirForSandbox(full);
+          continue;
+        }
         await openDirForSandbox(full);
         stack.push(full);
         continue;
@@ -197,4 +212,15 @@ export async function openTreeForSandbox(root: string, limit = TREE_LIMIT) {
       if (entry.isFile()) await openFileForSandbox(full);
     }
   }
+}
+
+/**
+ * Всё, что нужно контейнеру перед командой: корень, дерево проекта и (если есть) `.git`. Один
+ * вызов на команду — единственное место, где права проверяются заново, поэтому проект остаётся
+ * собираемым, кто бы ни создал каталоги до этого.
+ */
+export async function openProjectForSandbox(root: string) {
+  await openDirForSandbox(root);
+  await openTreeForSandbox(root);
+  await openGitForSandbox(root);
 }

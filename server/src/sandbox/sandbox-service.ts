@@ -43,8 +43,11 @@ export async function getSandbox(projectId:string,userId:string):Promise<Sandbox
   noteProjectAccess(projectId);
   // Проект может лежать в объектном хранилище (холодный ярус): панель, агент и предпросмотр
   // работают с обычной папкой, поэтому первый доступ возвращает её на диск.
-  await ensureProjectWorkspace(projectId,userId);
+  const restored=await ensureProjectWorkspace(projectId,userId);
   await mkdir(root,{recursive:true});
+  // Распаковка пишет от root уже после того, как дерево было открыто в этом процессе: без
+  // сброса пометки обход не повторился бы, и восстановленный проект остался бы root:root 755.
+  if(restored)opened.delete(root);
   await openToSandboxUser(root);
   // `.git` сервер пишет сам от root после каждого коммита и выгрузки, поэтому открывается не один
   // раз при первом доступе, а перед каждым обращением: иначе `git add`/`git commit` в контейнере

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { chmod, lstat, mkdir, mkdtemp, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { clearRootOwnedBuildCaches, isSecretEnvFile, openDirsForSandbox, openFileForSandbox, openGitForSandbox, openTreeForSandbox } from "./permissions.js";
+import { clearRootOwnedBuildCaches, isSecretEnvFile, openDirsForSandbox, openFileForSandbox, openGitForSandbox, openProjectForSandbox, openTreeForSandbox } from "./permissions.js";
 
 /**
  * Владельца можно сменить только от root. Локально и в CI сервер запущен обычным
@@ -75,6 +75,50 @@ test("обход дерева не трогает node_modules и .git: это �
 
     assert.equal(await mode(dependency), "644", "обход зависимостей не нужен и стоит дорого");
     assert.equal(await mode(gitHead), "644", "для .git есть отдельный обход, он вызывается явно");
+  });
+});
+
+test("каталог node_modules открывается сам, без обхода пакетов", async () => {
+  await withRoot(async root => {
+    const dependencies = path.join(root, "node_modules");
+    const packageDir = path.join(dependencies, "left-pad");
+    await seedFile(path.join(packageDir, "index.js"));
+    await seedDirs(root, packageDir);
+
+    await openTreeForSandbox(root);
+
+    assert.equal(await mode(dependencies), DIR, "иначе npm install падает на EACCES в созданном от root каталоге");
+    assert.equal(await mode(packageDir), "755", "пакеты внутри не обходятся: это дорого и незачем");
+  });
+});
+
+/**
+ * Именно этот путь спасает `npm run build`: команда контейнера запускается в каталоге, который
+ * сервер мог создать от root (клон, распаковка архива, переключение ветки).
+ */
+test("перед командой контейнера открываются корень и подкаталоги проекта", async () => {
+  await withRoot(async root => {
+    const app = path.join(root, "server");
+    await seedFile(path.join(app, "package.json"));
+    await seedDirs(root, app);
+
+    await openProjectForSandbox(root);
+
+    assert.equal(await mode(root), DIR);
+    assert.equal(await mode(app), DIR, "без записи в server/ сборка не создаст server/dist");
+    assert.equal(await mode(path.join(app, "package.json")), FILE);
+  });
+});
+
+test("обход не снимает бит исполнения со скриптов проекта", async () => {
+  await withRoot(async root => {
+    const script = path.join(root, "scripts", "deploy.sh");
+    await seedFile(script);
+    await chmod(script, 0o755);
+
+    await openProjectForSandbox(root);
+
+    assert.ok(((await stat(script)).mode & 0o100) !== 0, "chmod +x агента должен переживать обход перед командой");
   });
 });
 

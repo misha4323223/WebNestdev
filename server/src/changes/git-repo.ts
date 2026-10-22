@@ -4,7 +4,7 @@ import { lstat, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promis
 import path from "node:path";
 import git from "isomorphic-git";
 import http from "isomorphic-git/http/node";
-import { openDirsForSandbox, openFileForSandbox } from "../sandbox/permissions.js";
+import { openDirsForSandbox, openFileForSandbox, openTreeForSandbox } from "../sandbox/permissions.js";
 import { deleteInside, writeFileInside } from "../sandbox/path-guard.js";
 import type { Checkpoint, CheckpointFile, CheckpointFileStatus, CheckpointKind, PushState } from "./types.js";
 
@@ -173,6 +173,9 @@ export async function cloneRepository(root: string, options: {
   // Служебные исключения ставим и здесь: клон чужого проекта не должен притащить в нашу
   // историю .env и node_modules при первой же отправке.
   await writeExcludes(root);
+  // Клон пишет всё дерево от root: без этого обхода `npm run build` в контейнере падает на
+  // EACCES, хотя dev-сервер читает те же файлы без записи и работает.
+  await openTreeForSandbox(root);
 }
 
 /** Адрес GitHub в конфигурации проекта: нужен, когда репозиторий создан уже после импорта. */
@@ -256,6 +259,8 @@ export async function switchBranch(root: string, options: { branch: string; toke
     const local = await git.listBranches({ fs, dir: root }).catch(() => [] as string[]);
     if (local.includes(branch)) {
       await git.checkout({ fs, dir: root, ref: branch, force: true });
+      // checkout переписывает рабочее дерево от root, как и клон.
+      await openTreeForSandbox(root);
     } else {
       if (!options.token) {
         return { switched: false, branch, error: "Ветки " + branch + " нет в проекте: чтобы забрать её из репозитория, подключите GitHub или GitLab." };

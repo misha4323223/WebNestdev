@@ -1,5 +1,6 @@
 import { runDockerSandbox, type DockerCommandResult } from "./docker-sandbox.js";
 import { withSandboxSlot } from "./sandbox/sandbox-limiter.js";
+import { openProjectForSandbox } from "./sandbox/permissions.js";
 import type { SandboxConfig } from "./sandbox-manager.js";
 import { previewSecretMounts } from "./secrets/preview-secrets.js";
 export type CommandResult = DockerCommandResult;
@@ -26,6 +27,11 @@ export type SandboxRunOptions = {
  * while the limit is reached waits for a place instead of starting another container.
  */
 export async function runInSandbox(config:SandboxConfig,command:string,cwd:string,options:SandboxRunOptions={}):Promise<CommandResult>{
+  // Каталог проекта перед командой открывается контейнеру заново: его мог создать от root
+  // любой путь сервера (клон, распаковка архива, переключение ветки), а `npm run build`
+  // создаёт `dist` рядом с файлами — и получает EACCES задолго до первой ошибки сборки.
+  // Обход пропускает node_modules и .git, поэтому для обычного проекта это единицы миллисекунд.
+  await openProjectForSandbox(config.root);
   // Ждать в очереди тоже надо с сигналом: иначе остановленный запуск ещё минуту держал бы
   // место, а потом всё равно стартовал контейнер ради немедленной отмены.
   if (!options.injectSecretEnvFile) {
