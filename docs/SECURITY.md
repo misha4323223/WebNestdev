@@ -86,9 +86,11 @@ POST без тела (запуск/остановка предпросмотра
 
 **Стало.**
 
-- `docker-compose.yml`: три сети — `webnestdev` (Caddy и сервер, фиксированная подсеть),
-  `webnestdev-db` (`internal: true`, только postgres и сервер), `webnestdev-preview` (сервер и
-  контейнеры предпросмотра).
+- `docker-compose.yml`: три сети. `webnestdev` остаётся сетью базы и сервера и намеренно не
+  меняется — иначе Compose пересоздавал бы живую сеть, к которой подключены запущенные
+  предпросмотры, и выкатка падала бы. Добавлены `webnestdev-panel` (Caddy и сервер, фиксированная
+  подсеть для доверия `X-Forwarded-For`) и `webnestdev-preview` (сервер и контейнеры
+  предпросмотра).
 - `PREVIEW_NETWORK` по умолчанию `webnestdev-preview`.
 - `server/src/preview/preview-network.ts`: выбор сети предпросмотра никогда не берёт сеть с
   суффиксом `db`; `attachToServerNetworks` подключает контейнер только к сети предпросмотра, а не
@@ -126,7 +128,9 @@ POST без тела (запуск/остановка предпросмотра
 
 ### Операционные изменения выкатки
 
-- Первый деплой пересоздаст Docker-сети: `webnestdev`, `webnestdev-db`, `webnestdev-preview`.
+- Первый деплой создаст две новые сети — `webnestdev-panel` и `webnestdev-preview`. Существующая
+  `webnestdev` не пересоздаётся: в ней остаются postgres и сервер, а уже запущенные предпросмотры
+  доживают до перезапуска сервера (он останавливает их при старте) и дальше стартуют в новой сети.
 - Если подсеть `172.30.0.0/24` занята на хосте, задайте согласованно
   `WEBNESTDEV_NETWORK_SUBNET`, `WEBNESTDEV_CADDY_IP` и `WEBNESTDEV_TRUSTED_PROXIES`.
 - Вне compose (без Caddy в Docker) `WEBNESTDEV_TRUSTED_PROXIES` нужно задать адресом своего
