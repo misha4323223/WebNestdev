@@ -37,8 +37,9 @@ const noticeFlag = "webnestdev.yandexNotice";
 
 /**
  * The Yandex Cloud card stays folded until it is needed: one button in the header, everything
- * else behind it. Pressing it opens the console in a new tab and unfolds the three console steps
- * plus the key field — the only path that still grants Cloud access.
+ * else behind it. Pressing it opens the console in a new tab and unfolds the key field — the only
+ * path that still grants Cloud access. Пошаговых подсказок в карточке нет: путь к ключу
+ * объясняет сама консоль по кнопке «Открыть консоль».
  */
 export function YandexConnect(){
   const [status,setStatus]=useState<ConnectorStatus>("loading");
@@ -142,15 +143,8 @@ export function YandexConnect(){
     </>}
   >
     <div className="connector-body">
-      {connected&&<p className="connector-text">Агент видит облака, каталоги, виртуальные машины, диски, бакеты и функции этого аккаунта.</p>}
-
       {connected&&<label className="connector-write">
-        <span>
-          <strong>Разрешить агенту изменять ресурсы</strong>
-          <small>{info?.allowWrites
-            ? "Включено: агент создаёт, меняет и удаляет ресурсы по вашей команде."
-            : "Выключено: агент только читает."}</small>
-        </span>
+        <strong>Разрешить агенту изменять ресурсы</strong>
         <span className="switch"><input type="checkbox" checked={Boolean(info?.allowWrites)} disabled={busy} onChange={event=>void setWrites(event.target.checked)}/><span className="switch-track"><span className="switch-thumb"/></span></span>
       </label>}
 
@@ -160,12 +154,6 @@ export function YandexConnect(){
       </div>}
 
       {open&&<div className="connector-key">
-        {!connected&&<ol className="connector-steps">
-          <li>В консоли Yandex Cloud откройте <strong>Сервисные аккаунты</strong> и создайте аккаунт.</li>
-          <li>Выдайте роли: <code>viewer</code> на облако и нужные роли на каталог.</li>
-          <li><strong>Создать новый ключ</strong> → <strong>Создать авторизованный ключ</strong>. Скачается JSON — вставьте его ниже целиком.</li>
-        </ol>}
-
         <label>
           <span><KeyRound size={12}/> Ключ сервисного аккаунта</span>
           <textarea rows={4} value={secret} onChange={event=>setSecret(event.target.value)} placeholder='{"id":"…","service_account_id":"…","private_key":"-----BEGIN PRIVATE KEY-----…"}'/>
