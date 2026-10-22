@@ -103,7 +103,8 @@ export async function buildProjectContext(project: Project, userId: string): Pro
     "Project: " + project.name,
     "Project ID: " + project.id,
     project.github
-      ? (project.github.provider === "gitlab" ? "GitLab: " : "GitHub: ") + project.github.fullName + " (default branch: " + project.github.defaultBranch + ")"
+      ? ({ github: "GitHub", gitlab: "GitLab", gitverse: "GitVerse", sourcecraft: "SourceCraft" }[project.github.provider ?? "github"] ?? "GitHub")
+        + ": " + project.github.fullName + " (default branch: " + project.github.defaultBranch + ")"
       : "GitHub: not connected",
     "",
     "Key configuration files:",

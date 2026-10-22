@@ -97,7 +97,7 @@ export function ChangesPanel({ projectId, projectName, onRolledBack }: { project
   const currentSha = checkpoints[0]?.sha;
   const repository = data?.repository;
   // Проект помнит, откуда он импортирован: GitLab-репозиторий не должен называться GitHub.
-  const providerName = repository?.provider === "gitlab" ? "GitLab" : "GitHub";
+  const providerName = repository?.provider === "gitlab" ? "GitLab" : repository?.provider === "gitverse" ? "GitVerse" : repository?.provider === "sourcecraft" ? "SourceCraft" : "GitHub";
 
   const push = async () => {
     setBusy("push");

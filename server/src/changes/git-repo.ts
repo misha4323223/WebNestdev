@@ -145,6 +145,34 @@ function describe(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
+/**
+ * Импорт клоном — для провайдеров, у которых API не отдаёт файлы (SourceCraft). Клон приносит
+ * и файлы, и историю, поэтому первая же задача станет коммитом поверх настоящей ветки.
+ * Токен передаётся в `onAuth`, а не в URL: адрес с секретом попал бы в `.git/config`.
+ */
+export async function cloneRepository(root: string, options: {
+  url: string;
+  branch: string;
+  token: string | null;
+  username?: string;
+}) {
+  if (!options.url) throw new Error("У репозитория нет адреса для git");
+  await mkdir(root, { recursive: true });
+  await git.clone({
+    fs,
+    http,
+    dir: root,
+    url: options.url,
+    ref: options.branch || undefined,
+    singleBranch: true,
+    depth: 1,
+    ...(options.token ? { onAuth: () => ({ username: options.username ?? "oauth2", password: options.token as string }) } : {}),
+  });
+  // Служебные исключения ставим и здесь: клон чужого проекта не должен притащить в нашу
+  // историю .env и node_modules при первой же отправке.
+  await writeExcludes(root);
+}
+
 /** Адрес GitHub в конфигурации проекта: нужен, когда репозиторий создан уже после импорта. */
 export async function addRemote(root: string, url: string) {
   await git.addRemote({ fs, dir: root, remote: "origin", url, force: true });

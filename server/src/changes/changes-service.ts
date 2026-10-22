@@ -1,7 +1,8 @@
 import { getGitHubConnection } from "../github/github-connection-store.js";
 import { getGitLabConnection } from "../gitlab/gitlab-connection-store.js";
+import { repoToken } from "../repos/tokens.js";
 import { createGitHubRepository } from "../github/github-api.js";
-import { getProject, linkProjectGithub } from "../project-store.js";
+import { getProject, linkProjectGithub, type RepositoryProvider } from "../project-store.js";
 import { getSandbox } from "../sandbox-manager.js";
 import { recordStorageMutation } from "../account/storage-quota.js";
 import type { SandboxConfig } from "../sandbox-manager.js";
@@ -47,45 +48,51 @@ async function withProjectLock<T>(projectId: string, action: () => Promise<T>): 
 type Repository = {
   sandbox: SandboxConfig;
   branch: string;
-  provider: "github" | "gitlab";
+  provider: RepositoryProvider;
   username: string;
   remoteUrl: string | null;
   commitUrl?: (sha: string) => string;
 };
+
+/** Старые проекты без поля provider — это GitHub; остальные провайдеры появились позже. */
+function providerOf(value?: string): RepositoryProvider {
+  return value === "gitlab" || value === "gitverse" || value === "sourcecraft" ? value : "github";
+}
 
 async function repositoryFor(projectId: string, userId: string): Promise<Repository> {
   const project = await getProject(projectId);
   if (!project || project.userId !== userId) throw new Error("Проект не найден");
   const sandbox = await getSandbox(projectId, userId);
   const repository = project.github;
-  const provider = repository?.provider === "gitlab" ? "gitlab" : "github";
+  const provider = providerOf(repository?.provider);
   const branch = repository?.defaultBranch?.trim() || "main";
   const remoteUrl = repository
-    ? repository.cloneUrl || (provider === "gitlab"
-      ? repository.url.replace(/\/\.git$|\.git$/, "") + ".git"
-      : repository.url || "https://github.com/" + repository.fullName)
+    ? repository.cloneUrl || (provider === "github"
+      ? repository.url || "https://github.com/" + repository.fullName
+      : repository.url.replace(/\/\.git$|\.git$/, "") + ".git")
     : null;
   return {
     sandbox,
     branch,
     provider,
-    username: provider === "gitlab" ? "oauth2" : "x-access-token",
+    // GitHub ждёт x-access-token, GitLab/GitVerse/SourceCraft — oauth2 с токеном в пароле.
+    username: provider === "github" ? "x-access-token" : "oauth2",
     remoteUrl,
     ...(repository?.fullName ? {
-      commitUrl: provider === "gitlab"
-        ? (sha: string) => repository.url.replace(/\/$/, "") + "/-/commit/" + sha
-        : (sha: string) => "https://github.com/" + repository.fullName + "/commit/" + sha,
+      commitUrl: (sha: string) => provider === "github"
+        ? "https://github.com/" + repository.fullName + "/commit/" + sha
+        : repository.url.replace(/\/$/, "") + (provider === "gitlab" ? "/-/commit/" : "/commit/") + sha,
     } : {}),
   };
 }
 
-async function tokenFor(userId: string, provider: "github" | "gitlab" = "github") {
+async function tokenFor(userId: string, provider: RepositoryProvider = "github") {
   try {
-    return provider === "gitlab"
-      ? (await getGitLabConnection(userId))?.accessToken ?? null
-      : (await getGitHubConnection(userId))?.accessToken ?? null;
+    if (provider === "github") return (await getGitHubConnection(userId))?.accessToken ?? null;
+    if (provider === "gitlab") return (await getGitLabConnection(userId))?.accessToken ?? null;
+    return await repoToken(userId, provider);
   } catch (error) {
-    console.error("[changes] не удалось прочитать подключение " + (provider === "gitlab" ? "GitLab" : "GitHub"), error);
+    console.error("[changes] не удалось прочитать подключение " + provider, error);
     return null;
   }
 }

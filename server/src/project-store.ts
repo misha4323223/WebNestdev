@@ -6,7 +6,7 @@ import type { ChatMessage, PlanState } from "./types.js";
 import { isYdbEnabled, ydbQuery, getTable } from "./storage/ydb.js";
 import { decryptSecret, encryptSecret, isEncryptedSecret } from "./storage/secret-crypto.js";
 
-export type RepositoryProvider = "github" | "gitlab";
+export type RepositoryProvider = "github" | "gitlab" | "gitverse" | "sourcecraft";
 export type GitHubRepositoryRef = {
   /** Старые записи без поля — это GitHub; GitLab появился позже. */
   provider?: RepositoryProvider;

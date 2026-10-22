@@ -12,6 +12,9 @@ export const JSON_TARGETS = [
   { folder: "providers", fields: ["token"] },
   { folder: "github", fields: ["accessToken"] },
   { folder: "gitlab", fields: ["accessToken"] },
+  // Хостинги кода на токене: GitVerse и SourceCraft. У GitVerse бывает refreshToken.
+  { folder: "repos/gitverse", fields: ["accessToken", "refreshToken"] },
+  { folder: "repos/sourcecraft", fields: ["accessToken"] },
   { folder: "yandex", fields: ["secret"] },
   { folder: "database", fields: ["password", "url"] },
   // Подключения из «Интеграций»: облака, регистраторы домена и сервисы с ключом лежат в одном

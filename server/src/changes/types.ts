@@ -37,7 +37,7 @@ export type ChangesOverview = {
   initialized: boolean;
   repository: {
     /** Куда уходят коммиты; старые проекты без поля — GitHub. */
-    provider?: "github" | "gitlab";
+    provider?: "github" | "gitlab" | "gitverse" | "sourcecraft";
     connected: boolean;
     branch: string;
     remoteUrl: string | null;

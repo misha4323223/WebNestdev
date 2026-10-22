@@ -310,9 +310,15 @@ The GitLab card works the same way: OAuth in a separate window, or a personal ac
 
 Imported GitLab projects keep their remote: the **Изменения** tab can push commits back and pull the branch, with the GitLab token used only on the server. On the free plan an import is limited to 100 MB (`FREE_REPOSITORY_IMPORT_BYTES` in `server/src/account/plans.ts`); larger repositories are rejected before a project is created, and paid plans have no such per-repository limit.
 
+## GitVerse and SourceCraft
+
+Both cards live in **Код и репозитории** and connect with a personal token; GitVerse also supports OAuth. GitVerse is GitHub-shaped: repositories are listed from `https://api.gitverse.ru/user/repos`, imported through `/contents`, and a GitVerse token created in **Settings → Token Management** must allow the repository (read and write). OAuth is GitVerse-specific: register an application under **Settings → Applications** with the redirect URI `<app-host>/api/gitverse/callback` and scopes `read:user read:repository write:repository`, then provide `GITVERSE_CLIENT_ID` and `GITVERSE_CLIENT_SECRET`. GitVerse requires PKCE for every client, so the server generates `code_verifier`/`code_challenge` itself and refreshes the one-hour access token with the stored `refresh_token`.
+
+SourceCraft has no documented endpoint for reading a file's contents, so its import is a shallow `git clone` with the token used only in git authentication (never in the remote URL), and the same token pushes commits back. Its personal tokens are created under **Home → Access → Personal access tokens** and must grant a repository role that can read and write. OAuth applications are not documented by SourceCraft, so the card offers the token only.
+
 ## Yandex Cloud integration
 
-The Yandex Cloud card stays folded to a single button. **Подключить** opens the Yandex Cloud console in a new tab and unfolds a three-step guide with the key field, because a service-account authorized key is the only credential Yandex Cloud still accepts for a new integration: Yandex ID OAuth tokens stopped working for Cloud on 1 June 2026, so a GitHub-like "sign in and allow" flow cannot grant Cloud access. The card accepts three forms of the credential:
+The Yandex Cloud card stays folded to a single button. **Подключить** opens the Yandex Cloud console in a new tab and unfolds the key field, because a service-account authorized key is the only credential Yandex Cloud still accepts for a new integration: Yandex ID OAuth tokens stopped working for Cloud on 1 June 2026, so a GitHub-like "sign in and allow" flow cannot grant Cloud access. The card accepts three forms of the credential:
 
 - **Authorized key of a service account (recommended)** — Yandex Cloud console → "Сервисные аккаунты" → create an account → grant `viewer` on the cloud plus the roles the agent needs on the folder → "Создать новый ключ" → "Создать авторизованный ключ" → download the JSON and paste it. The server signs a PS256 JWT with it and exchanges that for an IAM token (`iam.api.cloud.yandex.net/iam/v1/tokens`).
 - **IAM token** (`t1.…`) — from `yc iam create-token` or the console button; it lives about 12 hours.

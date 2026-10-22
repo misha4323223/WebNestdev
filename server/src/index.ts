@@ -31,6 +31,8 @@ import { registerAgentWebSocket } from "./routes/agent-ws.js";
 import { registerProviderRoutes } from "./routes/providers.js";
 import { registerGitHubRoutes } from "./routes/github.js";
 import { registerGitLabRoutes } from "./routes/gitlab.js";
+import { registerRepoRoutes } from "./repos/routes.js";
+import { REPO_PROVIDERS } from "./repos/index.js";
 import { registerYandexRoutes } from "./routes/yandex.js";
 import { registerDatabaseRoutes } from "./routes/database.js";
 import { registerCloudRoutes } from "./routes/cloud.js";
@@ -190,6 +192,8 @@ await registerWorkspaceRoutes(app);
 await registerProviderRoutes(app);
 await registerGitHubRoutes(app);
 await registerGitLabRoutes(app);
+// GitVerse и SourceCraft: один и тот же набор маршрутов, разные адаптеры (/api/gitverse, /api/sourcecraft).
+for (const provider of REPO_PROVIDERS) await registerRepoRoutes(app, provider);
 await registerYandexRoutes(app);
 await registerDatabaseRoutes(app);
 await registerCloudRoutes(app);

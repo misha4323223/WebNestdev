@@ -21,7 +21,7 @@ export type ChangeCheckpoint={
 };
 export type ProjectChanges={
   initialized:boolean;
-  repository:{provider?:"github"|"gitlab";connected:boolean;branch:string;remoteUrl:string|null;lastPushAt:string|null;lastPushError:string|null};
+  repository:{provider?:"github"|"gitlab"|"gitverse"|"sourcecraft";connected:boolean;branch:string;remoteUrl:string|null;lastPushAt:string|null;lastPushError:string|null};
   checkpoints:ChangeCheckpoint[];
 };
 export type Conversation={id:string;projectId:string;title:string;messages:ChatMessage[];plan?:PlanState|null;createdAt:string;updatedAt:string};

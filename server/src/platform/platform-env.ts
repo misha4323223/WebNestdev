@@ -13,7 +13,7 @@ import { parseAuthorizedKeyJson, parseServiceAccountKey } from "../yandex/yandex
  * a deployment that never opens the panel behaves exactly as before.
  */
 export type PlatformEnvKind = "secret" | "json-key" | "value" | "url" | "path" | "flag";
-export type PlatformEnvGroup = "github" | "gitlab" | "yandex" | "sms" | "ai" | "search" | "billing";
+export type PlatformEnvGroup = "github" | "gitlab" | "gitverse" | "yandex" | "sms" | "ai" | "search" | "billing";
 
 export type PlatformEnvEntry = {
   name: string;
@@ -38,6 +38,9 @@ export const PLATFORM_ENV_CATALOG: PlatformEnvEntry[] = [
   { name: "GITLAB_BASE_URL", group: "gitlab", label: "Адрес GitLab", hint: "Необязательно: https://gitlab.com по умолчанию. Для своего сервера укажите его адрес, например https://git.company.ru.", kind: "url" },
   { name: "GITLAB_CALLBACK_URL", group: "gitlab", label: "Callback URL", hint: "Необязательно: пустое поле — адрес берётся из домена панели (https://<домен>/api/gitlab/callback).", kind: "url" },
   { name: "GITLAB_FRONTEND_URL", group: "gitlab", label: "Адрес возврата", hint: "Необязательно: куда вернуть браузер после авторизации (по умолчанию — корень панели).", kind: "url" },
+
+  { name: "GITVERSE_CLIENT_ID", group: "gitverse", label: "Client ID", hint: "GitVerse → Настройки профиля → Приложения → ваше приложение. OAuth в GitVerse работает только с PKCE — сервер делает это сам.", kind: "value" },
+  { name: "GITVERSE_CLIENT_SECRET", group: "gitverse", label: "Client secret", hint: "Там же. GitVerse показывает секрет один раз — скопируйте сразу.", kind: "secret" },
 
   { name: "YANDEX_CLIENT_ID", group: "yandex", label: "Yandex ID Client ID", hint: "Приложение в oauth.yandex.ru. Нужен для входа через Яндекс; ключ сервисного аккаунта работает и без него.", kind: "value" },
   { name: "YANDEX_CLIENT_SECRET", group: "yandex", label: "Yandex ID Client secret", hint: "Там же, в настройках приложения Yandex ID.", kind: "secret" },

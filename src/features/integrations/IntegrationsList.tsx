@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { Cloud, Code2, Database, Globe, Layers } from "lucide-react";
 import { GitHubConnect, type ConnectorSurface } from "../github/GitHubConnect";
 import { GitLabConnect } from "../gitlab/GitLabConnect";
+import { RepoConnect } from "../repos/RepoConnect";
 import { YandexConnect } from "../yandex/YandexConnect";
 import { CloudConnectors } from "./cloud/CloudConnectors";
 import { DomainConnectors } from "./domains/DomainConnectors";
@@ -38,9 +39,11 @@ export function IntegrationsList({surface="home",onImported}:{surface?:Connector
       <DatabaseConnect surface={surface}/>
     </ConnectorSection>
 
-    <ConnectorSection icon={<Code2 size={12}/>} title="Код и репозитории" note="Импорт проекта из GitHub или GitLab и работа агента с репозиторием.">
+    <ConnectorSection icon={<Code2 size={12}/>} title="Код и репозитории" note="Импорт проекта из GitHub, GitLab, GitVerse или SourceCraft и работа агента с репозиторием.">
       <GitHubConnect surface={surface} onImported={onImported}/>
       <GitLabConnect surface={surface} onImported={onImported}/>
+      <RepoConnect provider="gitverse" surface={surface} onImported={onImported}/>
+      <RepoConnect provider="sourcecraft" surface={surface} onImported={onImported}/>
     </ConnectorSection>
 
     <ConnectorSection icon={<Cloud size={12}/>} title="Облака" note="Виртуальные машины, диски, бакеты и базы российских провайдеров.">

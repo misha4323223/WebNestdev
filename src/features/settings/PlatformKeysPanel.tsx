@@ -11,7 +11,7 @@ import { apiJson } from "../../lib/api";
 type PlatformKeySource = "panel" | "environment" | "none";
 type PlatformKey = {
   name: string;
-  group: "github" | "gitlab" | "yandex" | "sms" | "ai" | "search" | "billing";
+  group: "github" | "gitlab" | "gitverse" | "yandex" | "sms" | "ai" | "search" | "billing";
   label: string;
   hint: string;
   kind: "secret" | "json-key" | "value" | "url" | "path" | "flag";
@@ -25,6 +25,7 @@ type SaveResponse = { saved: string[]; cleared: string[]; skipped: Array<{ name:
 const GROUP_TITLES: Record<PlatformKey["group"], { title: string; note: string }> = {
   github: { title: "GitHub OAuth", note: "Вход через GitHub и импорт репозиториев. Callback: <адрес панели>/api/github/callback. В GitHub Secrets имя не может начинаться с GITHUB_ — там используйте GH_OAUTH_CLIENT_ID и GH_OAUTH_CLIENT_SECRET, а сюда вставьте значения напрямую." },
   gitlab: { title: "GitLab OAuth", note: "Импорт репозиториев из gitlab.com или своего GitLab. Callback: <адрес панели>/api/gitlab/callback. Приложение создаётся в аватаре → Edit profile → Access → Applications (прямая ссылка: https://gitlab.com/-/user_settings/applications) с правами read_api, read_repository и write_repository; личный токен работает и без OAuth-приложения." },
+  gitverse: { title: "GitVerse OAuth", note: "Импорт и отправка коммитов в GitVerse. Callback: <адрес панели>/api/gitverse/callback. Приложение создаётся в Настройках профиля → Приложения, права read:user, read:repository и write:repository; GitVerse требует PKCE — сервер добавляет code_challenge сам. Личный токен тоже работает." },
   yandex: { title: "Yandex Cloud", note: "SMS входа по номеру и подключение облака. Ключ сервисного аккаунта принимается JSON-файлом целиком." },
   sms: { title: "SMS-провайдеры", note: "Достаточно одного провайдера: сервер выберет первый, у которого есть ключ." },
   ai: { title: "Модель платформы", note: "Модель по умолчанию для проектов без своего провайдера." },

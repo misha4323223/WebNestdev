@@ -125,6 +125,7 @@ const PK_BY_TABLE: Record<string, string[]> = {
   oauth_states: ["state"],
   github_connections: ["user_id"],
   gitlab_connections: ["user_id"],
+  repo_connections: ["user_id", "provider"],
   database_connections: ["user_id"],
   yandex_connections: ["user_id"],
   cloud_connections: ["user_id", "provider"],
@@ -409,6 +410,21 @@ export async function initializeStorage(): Promise<void> {
       gitlab_login TEXT NOT NULL,
       base_url TEXT NOT NULL DEFAULT 'https://gitlab.com',
       created_at TEXT NOT NULL
+    )`);
+
+    // GitVerse и SourceCraft: один токен на пользователя и провайдера. expires_at и
+    // refresh_token нужны OAuth-подключению GitVerse — его access token живёт час.
+    await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("repo_connections")} (
+      user_id TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      id TEXT NOT NULL,
+      access_token TEXT NOT NULL,
+      refresh_token TEXT NOT NULL DEFAULT '',
+      expires_at TEXT NOT NULL DEFAULT '',
+      login TEXT NOT NULL DEFAULT '',
+      base_url TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, provider)
     )`);
 
     await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("database_connections")} (
