@@ -105,7 +105,7 @@ if ! printf '%s\n' "$CARRY" | grep -q '^WEBNESTDEV_SITE_DOMAIN='; then SITE_DOMA
 PREVIEW_DOMAIN=""
 if ! printf '%s\n' "$CARRY" | grep -q '^PREVIEW_PUBLIC_DOMAIN=' && [ -n "$ORIGIN_HOST" ]; then PREVIEW_DOMAIN="preview.$ORIGIN_HOST"; fi
 ACME=""
-if ! printf '%s\n' "$CARRY" | grep -q '^ACME_EMAIL=' && [ -n "$ORIGIN_HOST" ]; then ACME="admin@$ORIGIN_HOST"; fi
+if ! printf '%s\n' "$CARRY" | grep -q '^ACME_EMAIL='; then ACME="nestdev@mail.ru"; fi
 
 {
   printf 'NODE_ENV=production\n'

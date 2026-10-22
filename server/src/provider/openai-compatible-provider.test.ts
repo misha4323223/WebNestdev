@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { OpenAICompatibleProvider, reasoningDelta, toWireMessages } from "./openai-compatible-provider.js";
+import { OpenAICompatibleProvider, reasoningDelta, reasoningSupport, resetReasoningProbes, toWireMessages } from "./openai-compatible-provider.js";
 import type { ProviderChunk } from "./provider-types.js";
 import type { ChatMessage } from "../types.js";
 
@@ -116,6 +116,36 @@ test("глубина размышления выбирается для конк
     await collect(provider,"depth-model",{reasoning:"low"});
     assert.equal(stub.captured[1].body.reasoning_effort,"low","глубина меняется от запуска к запуску");
   }finally{stub.restore()}
+});
+
+// Индикатор в настройках провайдера не может спросить шлюз напрямую: о поддержке глубины известно
+// только по фактическим ответам. Поэтому проверяется, что наблюдения различают три разных случая —
+// пришедшие рассуждения, принятое но проигнорированное поле и отказ формы.
+test("индикатор глубины различает рассуждения, молчание и отказ",{skip:REASONING_DISABLED},async()=>{
+  resetReasoningProbes();
+
+  const reasoningBase="https://gateway-probe-reasoning.example/v1";
+  let stub=stubFetch(()=>streamResponse([{choices:[{delta:{reasoning_content:"шаг"}}]}]));
+  try{await collect(new OpenAICompatibleProvider(reasoningBase),"probe-reasoning")}finally{stub.restore()}
+  assert.equal(reasoningSupport(reasoningBase,"probe-reasoning").status,"confirmed");
+
+  const silentBase="https://gateway-probe-silent.example/v1";
+  stub=stubFetch(()=>streamResponse([{choices:[{delta:{content:"Ответ"}}]}]));
+  try{await collect(new OpenAICompatibleProvider(silentBase),"probe-silent")}finally{stub.restore()}
+  const silent=reasoningSupport(silentBase,"probe-silent");
+  assert.equal(silent.status,"silent","принятое поле без рассуждений — не подтверждённая поддержка");
+  assert.equal(silent.effort,"medium");
+  assert.ok(silent.checkedAt);
+
+  const strictBase="https://gateway-probe-strict.example/v1";
+  stub=stubFetch((_request,index)=>index===0
+    ? new Response("unknown field reasoning_effort",{status:422})
+    : streamResponse([{choices:[{delta:{content:"Ответ"}}]}]));
+  try{await collect(new OpenAICompatibleProvider(strictBase),"probe-strict")}finally{stub.restore()}
+  assert.equal(reasoningSupport(strictBase,"probe-strict").status,"rejected");
+  // Отказ помнится по модели: соседняя модель того же шлюза не считается неподдерживающей.
+  assert.equal(reasoningSupport(strictBase,"probe-other").status,"unknown");
+  assert.equal(reasoningSupport("https://gateway-probe-untested.example/v1","probe-untested").status,"unknown");
 });
 
 test("шлюз, не знающий reasoning_effort, получает повтор без просьбы и запоминается",{skip:REASONING_DISABLED},async()=>{

@@ -13,7 +13,7 @@ Replit и доступности российских API. Ниже — что �
 | База данных проекта | Yandex Managed PostgreSQL, Yandex Serverless YDB, VK Cloud, Selectel, Timeweb, Cloud.ru, свой сервер | `server/src/database/`, `src/features/database/` |
 | Облака пользователя | Yandex Cloud (ключ + OAuth-вход), Timeweb Cloud, Cloud.ru, MWS, REG.RU Облако | `server/src/cloud/`, `src/features/integrations/cloud/` |
 | Домены | Проверка занятости (`domain.check`) и кабинеты REG.RU / Beget / Timeweb Cloud (`domain.list`) | `server/src/domains/` |
-| Сервисы с ключом | 20 российских сервисов: файлы (S3), почта, оплата, AI, карты, CRM — с проверкой ключа и переносом переменных в проект | `server/src/services/`, `src/features/integrations/services/` |
+| Сервисы с ключом | 21 российский сервис: файлы (S3), почта, оплата, AI, карты, CRM — с проверкой ключа и переносом переменных в проект | `server/src/services/`, `src/features/integrations/services/` |
 | Вход | Email + пароль, телефон (Yandex Notify, SMS.RU, SMSC, Exolve, SMS Aero), Yandex ID | `server/src/auth/`, `src/features/auth/` |
 | AI агента | Платформенный провайдер (`PLATFORM_AI_*`) + свой ключ | `docs/PLATFORM_AI.md` |
 | Секреты | Зашифрованное хранилище + модалка `secrets.request` для ключей в проект | `server/src/secrets/` |
@@ -49,7 +49,7 @@ Replit и доступности российских API. Ниже — что �
 
 ### P1 — то, что чаще всего нужно в сгенерированных приложениях
 
-Сделано: S3 (5 провайдеров), почта (NotiSend, Sendsay, RuSender, Unisender), AI (GigaChat,
+Сделано: S3 (5 провайдеров), почта (NotiSend, Sendsay, RuSender, Unisender, Yandex Cloud Postbox), AI (GigaChat,
 Yandex AI Studio). Не сделано: Yandex Metrika — нужен OAuth-вход, отдельный этап.
 
 | Сервис | Зачем | Как подключается | Примечание |
@@ -92,7 +92,7 @@ WebSocket/Socket.IO на инфраструктуре пользователя).
 | Категория Replit | Российский аналог для нас | Статус |
 |---|---|---|
 | Payments (Stripe, RevenueCat) | ЮKassa → Robokassa / Т-Банк / CloudPayments | Сделано (Robokassa и Т-Банк без проверки ключа) |
-| Communication (Resend, SendGrid, Twilio) | Unisender/Sendsay + SMS.RU/SMSC/Exolve | Сделано (4 email-провайдера) |
+| Communication (Resend, SendGrid, Twilio) | Unisender/Sendsay + SMS.RU/SMSC/Exolve | Сделано (5 email-провайдеров) |
 | Cloud storage (Dropbox, Box) | S3 у Selectel / VK / Yandex / Timeweb / Cloud.ru | Сделано (5 провайдеров) |
 | AI (OpenAI, ElevenLabs) | GigaChat, Yandex AI Studio | Сделано |
 | Data & analytics (BigQuery, Amplitude) | Yandex Metrika, AppMetrica | Отложено (нужен OAuth) |
@@ -107,7 +107,7 @@ WebSocket/Socket.IO на инфраструктуре пользователя).
 `services/` проходит по этому списку; зарубежных карточек в нём нет.
 
 - **Файлы (S3)**: Selectel, VK Cloud, Yandex Object Storage, Timeweb, Cloud.ru — все российские. Сам протокол S3 придуман Amazon, но это формат, а не провайдер; при желании тот же код работает и с зарубежным хранилищем пользователя.
-- **Почта**: NotiSend — российский, серверы в РФ; Sendsay — позиционирует себя полностью российским; RuSender — российский; **Unisender** работает в РФ и самый известный, но его лицензиар зарегистрирован на Кипре — в интерфейсе это стоит указывать честно.
+- **Почта**: NotiSend — российский, серверы в РФ; Sendsay — позиционирует себя полностью российским; RuSender — российский; Yandex Cloud Postbox — сервис Яндекса в Yandex Cloud; **Unisender** работает в РФ и самый известный, но его лицензиар зарегистрирован на Кипре — в интерфейсе это стоит указывать честно.
 - **Оплата**: ЮKassa (Сбер), Robokassa (принимает самозанятых), Т-Банк, CloudPayments (100% у Т-Банка) — все российские.
 - **AI**: GigaChat (Сбер) и Yandex AI Studio — российские. Отдельно: собственный агент платформы сейчас работает через зарубежный OpenAI-совместимый роутер (`ai-proxy/`, `PLATFORM_AI_*`) — это про ключ владельца, а не про интеграции пользователей.
 - **Карты**: Yandex Maps, 2GIS — российские.

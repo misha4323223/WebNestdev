@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowRight, CreditCard, FolderGit2, LogOut, Pencil, Plug, Plus, Sparkles, Trash2, UserRound } from "lucide-react";
-import { WebNestLogo } from "../../components/WebNestLogo";
+import { ArrowRight, CreditCard, FolderGit2, LogOut, Pencil, Plug, Sparkles, Trash2, UserRound } from "lucide-react";
 import { IntegrationsList } from "../integrations/IntegrationsList";
 import { ProjectRenameForm } from "./ProjectRename";
 import { type Project } from "../../lib/project-api";
@@ -23,7 +22,6 @@ export type HomeRailProps = {
   onOpen: (project: Project) => void;
   onRename: (project: Project, name: string) => Promise<boolean>;
   onDelete: (project: Project) => void;
-  onNewProject: () => void;
   onOpenPlans: () => void;
   onOpenSubscriptions: () => void;
   onExit: () => void;
@@ -41,7 +39,7 @@ function dateLabel(value: string) {
 }
 
 export function HomeRail(props: HomeRailProps) {
-  const { projects, activeProjectId, section, onSection, onOpen, onRename, onDelete, onNewProject, onOpenPlans, onOpenSubscriptions, onExit } = props;
+  const { projects, activeProjectId, section, onSection, onOpen, onRename, onDelete, onOpenPlans, onOpenSubscriptions, onExit } = props;
   const [renaming, setRenaming] = useState("");
   // One billing request for the rail: the billing section and the footer call to action
   // both show the plan the user actually has (or would get next).
@@ -67,13 +65,6 @@ export function HomeRail(props: HomeRailProps) {
   }, []);
 
   return <aside className="home-rail">
-    <div className="rail-brand">
-      <span className="rail-brand-mark"><WebNestLogo size={28} tone="light"/></span>
-      <span className="rail-brand-name">NestDev</span>
-    </div>
-
-    <button className="rail-create" onClick={onNewProject}><Plus size={14}/> Создать проект</button>
-
     <nav className="rail-nav" aria-label="Разделы аккаунта">
       {nav.map(item => {
         const Icon = item.icon;
@@ -92,7 +83,7 @@ export function HomeRail(props: HomeRailProps) {
       {section === "projects" && <section className="rail-section">
         <div className="rail-section-head"><span className="eyebrow">ПРОЕКТЫ</span><strong>Все проекты · {projects.length}</strong></div>
         {projects.length === 0
-          ? <p className="account-muted">Проектов пока нет. Нажмите «Создать проект» вверху — он появится здесь.</p>
+          ? <p className="account-muted">Проектов пока нет. Опишите идею на главной — проект появится здесь.</p>
           : <ul className="rail-projects">{projects.map(project => <li key={project.id} className={project.id === activeProjectId ? "active" : ""}>
               {renaming === project.id
                 ? <ProjectRenameForm initial={project.name} onSubmit={name => { void onRename(project, name).then(saved => { if (saved) setRenaming(""); }); }} onCancel={() => setRenaming("")}/>

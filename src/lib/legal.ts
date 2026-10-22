@@ -49,7 +49,7 @@ export const SELLER = {
   inn: "711612442203",
   ogrnip: "",
   city: "",
-  email: "pimashin2015@gmail.com",
+  email: "nestdev@mail.ru",
   phone: "+7 953 181-41-36",
   phoneHref: "+79531814136",
   supportHours: "Пн–Пт, 10:00–19:00 (МСК)",

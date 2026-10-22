@@ -42,6 +42,24 @@ test("Cloud.ru склеивает access key из тенанта и ключа",
   assert.equal(variables.S3_REGION, "ru-central-1");
 });
 
+test("Postbox отдаёт SMTP-переменные и проверяет ключ без отправки письма", async () => {
+  const postbox = findService("yandex-postbox");
+  assert.ok(postbox);
+  const fields = resolveServiceFields(postbox, { apiKeyId: "key-id", apiKeySecret: "secret" });
+  const variables = serviceEnvValues(postbox, fields);
+  assert.equal(variables.POSTBOX_SMTP_HOST, "postbox.cloud.yandex.net");
+  assert.equal(variables.POSTBOX_SMTP_PORT, "465");
+  assert.equal(variables.POSTBOX_SMTP_USER, "key-id");
+  assert.equal(variables.POSTBOX_SMTP_PASSWORD, "secret");
+
+  let checked = "";
+  const result = await verifyServiceCredential(postbox, fields, {
+    postboxSmtp: async (username, password) => { checked = username + ":" + password; },
+  });
+  assert.equal(checked, "key-id:secret");
+  assert.match(result.account, /Postbox/);
+});
+
 test("адреса аккаунтов пускаются только публичные и по https", () => {
   assert.equal(assertPublicHttpsUrl("https://shop.retailcrm.ru/", "Адрес"), "https://shop.retailcrm.ru");
   assert.throws(() => assertPublicHttpsUrl("http://shop.retailcrm.ru", "Адрес"), /https/);

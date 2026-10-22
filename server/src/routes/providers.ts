@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { getProjectProvider, getProject, saveProjectProvider, removeProjectProvider, type ProjectProviderConfig } from "../project-store.js";
 import { getPlatformProviderConfig } from "../provider/platform-provider.js";
+import { reasoningSupport } from "../provider/openai-compatible-provider.js";
 import { createProvider } from "../provider.js";
 import { requireProjectUser, requireUser } from "../auth/auth.js";
 
@@ -18,8 +19,12 @@ export async function registerProviderRoutes(app: FastifyInstance) {
     const platformDefault = platform
       ? { available: true, providerName: platform.provider, model: platform.model }
       : { available: false, providerName: "", model: "" };
-    if (!config) return { configured: false, provider: "", baseUrl: "", model: "", hasToken: false, platformDefault };
-    return { configured: true, provider: config.provider, baseUrl: config.baseUrl, model: config.model, hasToken: Boolean(config.token), platformDefault };
+    // Индикатор глубины размышления строится для той модели, которая реально отработает запуск:
+    // своей у проекта или платформенной по умолчанию. null — провайдера нет вовсе.
+    const effective = config ?? platform;
+    const reasoning = effective ? reasoningSupport(effective.baseUrl, effective.model) : null;
+    if (!config) return { configured: false, provider: "", baseUrl: "", model: "", hasToken: false, platformDefault, reasoning };
+    return { configured: true, provider: config.provider, baseUrl: config.baseUrl, model: config.model, hasToken: Boolean(config.token), platformDefault, reasoning };
   });
   app.put("/api/projects/:projectId/provider", async (request, reply) => {
     const { projectId } = request.params as { projectId: string };
@@ -95,11 +100,14 @@ export async function registerProviderRoutes(app: FastifyInstance) {
         else if (chunk.type === "tool_call") toolCalls.push({ name: chunk.call.name, arguments: chunk.call.arguments });
         else if (chunk.type === "usage") usage = { promptTokens: chunk.promptTokens, completionTokens: chunk.completionTokens };
       }
-      return { ok: true, source, provider: effective.provider, model: effective.model, latencyMs: Date.now() - started, tools: toolCalls.length > 0, toolCalls, text: text.slice(0, 400), usage };
+      // Проверка — самое удобное место узнать про глубину: она уже сходила в шлюз с просьбой
+      // о рассуждении, поэтому индикатор в настройках обновляется сразу, без первого запуска.
+      const reasoning = reasoningSupport(effective.baseUrl, effective.model);
+      return { ok: true, source, provider: effective.provider, model: effective.model, latencyMs: Date.now() - started, tools: toolCalls.length > 0, toolCalls, text: text.slice(0, 400), usage, reasoning };
     } catch (error) {
       const raw = error instanceof Error ? error.message : String(error);
       const message = /abort/i.test(raw) ? "Провайдер не ответил за 20 секунд" : raw;
-      return reply.code(502).send({ ok: false, source, provider: effective.provider, model: effective.model, latencyMs: Date.now() - started, error: message });
+      return reply.code(502).send({ ok: false, source, provider: effective.provider, model: effective.model, latencyMs: Date.now() - started, error: message, reasoning: reasoningSupport(effective.baseUrl, effective.model) });
     } finally {
       clearTimeout(timer);
     }

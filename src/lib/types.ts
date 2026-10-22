@@ -12,6 +12,12 @@ export type ChatMessage={
 export type AgentMode="planner"|"developer";
 /** How deeply the model is asked to reason before answering. */
 export type ReasoningEffort="low"|"medium"|"high";
+/**
+ * Что сервер знает о поддержке `reasoning_effort` у выбранной модели: `confirmed` — рассуждения
+ * пришли, `silent` — поле принято, но мыслей нет (обычная чат-модель его игнорирует), `rejected` —
+ * шлюз отказал формой и запрос уходит без поля. `enabled=false` — глубину выключил администратор.
+ */
+export type ReasoningSupport={enabled:boolean;effort:ReasoningEffort|null;status:"confirmed"|"silent"|"rejected"|"unknown";checkedAt:string|null};
 export type FileEntry={name:string;type:"file"|"directory"};
 /** `static` serves the built app without a dev server, so there is no hot reload. */
 export type PreviewMode="container"|"static";

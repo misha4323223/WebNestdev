@@ -140,7 +140,7 @@ export function KeyCard({ provider, state, onChanged, endpoint, keyLabel = "Гд
         aria-expanded={open}
         aria-label={(connected ? "Доступ к " : "Подключить ") + provider.name}
       >
-        <BrandLogo brand={provider.logo} size={32} />
+        <BrandLogo brand={provider.logo} />
         <span className="connector-meta">
           <strong>{provider.name}</strong>
           <span className="connector-state">{connected ? <><span className="connector-dot"/>{state?.account ? "Подключено · " + state.account : "Подключено"}</> : provider.tagline}</span>

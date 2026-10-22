@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import { Check, Plus, RefreshCw } from "lucide-react";
+import { BrandLogo, type BrandId } from "../../components/BrandLogo";
 
 /**
  * Connection state of one service, as reported by the server.
@@ -12,7 +13,9 @@ export type ConnectorStatus = "loading" | "connected" | "disconnected" | "unavai
 
 export type ConnectorCardProps = {
   name: string;
-  icon: ReactNode;
+  /** Официальный логотип сервиса. Без него рисуется иконка в плитке того же размера. */
+  logo?: BrandId;
+  icon?: ReactNode;
   status: ConnectorStatus;
   /** Account name shown next to the green indicator, for example a GitHub login. */
   account?: string | null;
@@ -37,7 +40,10 @@ export type ConnectorCardProps = {
  * а подключённая карточка не ведёт по клику в отключение — это разрушительное действие
  * остаётся отдельной кнопкой, и заголовок становится обычной подписью.
  */
-export function ConnectorCard({name,icon,status,account,soon,busy,onConnect,onDisconnect,onRefresh,note,children}:ConnectorCardProps){
+export function ConnectorCard({name,logo,icon,status,account,soon,busy,onConnect,onDisconnect,onRefresh,note,children}:ConnectorCardProps){
+  // Плитка одна на все карточки: логотип бренда или иконка в том же прямоугольнике, иначе
+  // квадратные знаки и длинные словесные логотипы делали строки разной высоты и ширины.
+  const mark = logo ? <BrandLogo brand={logo}/> : <span className="brand-logo is-glyph">{icon}</span>;
   const state = soon ? <span className="connector-state">Интеграция в разработке</span>
     : status==="loading" ? <span className="connector-state">Проверяем подключение…</span>
     : status==="connected" ? <span className="connector-state ok"><span className="connector-dot"/>{account?"Подключено · @"+account:"Подключено"}</span>
@@ -49,14 +55,14 @@ export function ConnectorCard({name,icon,status,account,soon,busy,onConnect,onDi
     <div className="connector-head">
       {connectable
         ? <button type="button" className="connector-identity" onClick={onConnect} disabled={busy} title={"Подключить "+name} aria-label={"Подключить "+name}>
-            <span className="connector-icon">{icon}</span>
+            {mark}
             <span className="connector-meta"><strong>{name}</strong>{state}</span>
             {/* Действие живёт в самом логотипе-карточке: отдельной кнопки «Подключить» больше
                 нет, поэтому клик по всей строке и кружок справа — одно и то же действие. */}
             <span className="connector-socket" aria-hidden="true">{busy?<RefreshCw size={13} className="spin"/>:<Plus size={14}/>}</span>
           </button>
         : <div className="connector-identity connector-identity-static">
-            <span className="connector-icon">{icon}</span>
+            {mark}
             <span className="connector-meta"><strong>{name}</strong>{state}</span>
             {status==="connected"&&<span className="connector-socket is-on" aria-hidden="true"><Check size={13}/></span>}
           </div>}

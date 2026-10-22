@@ -38,7 +38,7 @@ export const DOMAIN_REGISTRARS: DomainRegistrarInfo[] = [
     name: "REG.RU",
     keyUrl: "https://help.reg.ru/support/partneram/reg-api/kakiye-ogranicheniya-yest-pri-rabote-s-reg-api",
     docsUrl: "https://help.reg.ru/support/partneram/reg-api/chto-takoye-reg-api-i-kto-mozhet-ispolzovat-reg-api",
-    tagline: "Крупнейший регистратор .ru",
+    tagline: "Регистратор доменов",
     fields: [
       { key: "username", label: "Логин REG.RU", placeholder: "логин личного кабинета" },
       { key: "password", label: "Пароль или API-пароль", placeholder: "пароль из личного кабинета", secret: true },
@@ -50,7 +50,7 @@ export const DOMAIN_REGISTRARS: DomainRegistrarInfo[] = [
     name: "Beget",
     keyUrl: "https://beget.com/ru/kb/manual/nastrojki-akkaunta",
     docsUrl: "https://beget.com/ru/kb/api/obshhij-princzip-raboty-s-api",
-    tagline: "Домены и хостинг",
+    tagline: "Регистратор доменов",
     fields: [
       { key: "login", label: "Логин Beget", placeholder: "логин аккаунта" },
       { key: "passwd", label: "API-пароль", placeholder: "отдельный пароль для API", secret: true },
@@ -62,7 +62,7 @@ export const DOMAIN_REGISTRARS: DomainRegistrarInfo[] = [
     name: "Timeweb Cloud",
     keyUrl: "https://timeweb.cloud/docs/account-management/token",
     docsUrl: "https://timeweb.cloud/tools/api-docs",
-    tagline: "Домены, серверы и базы",
+    tagline: "Регистратор доменов",
     fields: [
       { key: "token", label: "API-токен", placeholder: "токен из раздела «API и Terraform»", secret: true },
     ],

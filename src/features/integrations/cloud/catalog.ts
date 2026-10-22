@@ -50,7 +50,7 @@ export const CLOUD_PROVIDERS: CloudProviderInfo[] = [
     name: "Cloud.ru",
     keyUrl: "https://cloud.ru/docs/console_api/ug/topics/guides__service_accounts_key-create",
     docsUrl: "https://cloud.ru/docs/console_api/ug/topics/guides__auth_api",
-    tagline: "Бывш. SberCloud",
+    tagline: "Облачная платформа",
     fields: [
       { key: "keyId", label: "Key ID", placeholder: "идентификатор ключа" },
       { key: "secret", label: "Key Secret", placeholder: "секрет ключа", secret: true },
@@ -62,7 +62,7 @@ export const CLOUD_PROVIDERS: CloudProviderInfo[] = [
     name: "MWS (МТС)",
     keyUrl: "https://mws.ru/docs/cloud-platform/iam/general/keys-auth-create.html",
     docsUrl: "https://mws.ru/docs/cloud-platform/iam/general/sa-get-access-token.html",
-    tagline: "Облако МТС",
+    tagline: "Облачная платформа",
     fields: [{ key: "key", label: "Авторизованный ключ", placeholder: "содержимое key.json целиком", multiline: true, secret: true }],
   },
   {
@@ -71,7 +71,7 @@ export const CLOUD_PROVIDERS: CloudProviderInfo[] = [
     name: "REG.RU Облако",
     keyUrl: "https://reg.cloud/support/cloud/oblachnyye-servery/rabota-s-serverom/api-dlya-oblachnykh-serverov",
     docsUrl: "https://developers.cloudvps.reg.ru/",
-    tagline: "Облачные серверы REG.RU",
+    tagline: "Облачные серверы",
     fields: [{ key: "token", label: "API-ключ облака", placeholder: "ключ из «Настройки» → «Настройки окружения»", secret: true }],
   },
 ];

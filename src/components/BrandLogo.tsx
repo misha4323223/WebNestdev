@@ -3,14 +3,17 @@
  * `public/brand/logos` и отдаются как есть — в отличие от буквенных монограмм, логотип
  * узнаётся до чтения названия, а бренд не перекрашивается в цвет темы.
  *
- * Плитка у знаков квадратная, у словесных логотипов — по ширине надписи: иначе «NotiSend»
- * или «ЮKassa» пришлось бы сжимать до нечитаемых 32 пикселей. Фон у всех светлый, потому
- * что большинство логотипов тёмные, а на тёмной панели они исчезают.
+ * Плитка у всех одна: квадратный знак и длинный словесный логотип занимают одинаковое
+ * место, поэтому карточки не «пляшут» по ширине. Словесный логотип вписывается в ту же
+ * плитку целиком — он уменьшается, а не обрезается и не растягивает строку. Фон у всех
+ * светлый, потому что большинство логотипов тёмные, а на тёмной панели они исчезают.
  */
 
 export type BrandId =
   | "github"
   | "gitlab"
+  | "gitverse"
+  | "sourcecraft"
   | "yandex"
   | "yandex-cloud"
   | "vk"
@@ -37,7 +40,7 @@ export type BrandId =
 type BrandSpec = {
   /** Путь внутри `public`: Vite копирует его в сборку без хэша в имени. */
   src: string;
-  /** Квадратный знак или словесный логотип — от этого зависит форма плитки. */
+  /** Квадратный знак или словесный логотип — от этого зависит, как знак вписан в плитку. */
   shape?: "mark" | "wordmark";
   /** Светлый логотип (белая надпись) виден только на тёмной плитке. */
   tone?: "dark";
@@ -46,6 +49,8 @@ type BrandSpec = {
 const BRAND_LOGOS: Record<BrandId, BrandSpec> = {
   github: { src: "/brand/logos/github.svg" },
   gitlab: { src: "/brand/logos/gitlab.svg" },
+  gitverse: { src: "/brand/logos/gitverse.png" },
+  sourcecraft: { src: "/brand/logos/sourcecraft.svg" },
   yandex: { src: "/brand/logos/yandex-wordmark.svg", shape: "wordmark" },
   "yandex-cloud": { src: "/brand/logos/yandex-cloud.svg" },
   vk: { src: "/brand/logos/vk.svg" },
@@ -70,13 +75,15 @@ const BRAND_LOGOS: Record<BrandId, BrandSpec> = {
   amocrm: { src: "/brand/logos/amocrm.png" },
 };
 
-/** Плитка с логотипом для заголовка карточки интеграции. */
-export function BrandLogo({ brand, size = 32, className }: { brand: BrandId; size?: number; className?: string }) {
+/**
+ * Плитка с логотипом для заголовка карточки интеграции. Размер задаёт стиль, а не вызывающий
+ * код: это единственный способ, чтобы «GitHub» и «Robokassa» занимали одинаковое место.
+ */
+export function BrandLogo({ brand, className }: { brand: BrandId; className?: string }) {
   const spec = BRAND_LOGOS[brand];
   const shape = spec.shape ?? "mark";
   return <span
     className={"brand-logo is-" + shape + (spec.tone === "dark" ? " on-dark" : "") + (className ? " " + className : "")}
-    style={shape === "mark" ? { width: size, height: size } : { height: size }}
     aria-hidden="true"
   >
     <img src={spec.src} alt="" loading="lazy" decoding="async" draggable={false} />

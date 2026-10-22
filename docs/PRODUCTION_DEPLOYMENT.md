@@ -484,7 +484,7 @@ The repository ships that proxy as a `caddy` service in [`docker-compose.yml`](.
 | `PREVIEW_HOST_PORT` | port of the preview door inside the container (default `8788`) |
 | `PREVIEW_TICKET_TTL_MS` | how long a preview link stays valid (default 12 h) |
 
-[`make-env-vm.sh`](../deploy/scripts/make-env-vm.sh) derives them from the same `PUBLIC_ORIGIN` it already takes (`PUBLIC_ORIGIN=https://nestdev.ru` writes `WEBNESTDEV_SITE_DOMAIN=nestdev.ru`, `PREVIEW_PUBLIC_DOMAIN=preview.nestdev.ru` and `ACME_EMAIL=admin@nestdev.ru`) and carries them across a re-run. A panel reached by IP gets no preview domain: an address that exists only by accident is worse than no address.
+[`make-env-vm.sh`](../deploy/scripts/make-env-vm.sh) derives them from the same `PUBLIC_ORIGIN` it already takes (`PUBLIC_ORIGIN=https://nestdev.ru` writes `WEBNESTDEV_SITE_DOMAIN=nestdev.ru`, `PREVIEW_PUBLIC_DOMAIN=preview.nestdev.ru` and `ACME_EMAIL=nestdev@mail.ru`) and carries them across a re-run. A panel reached by IP gets no preview domain: an address that exists only by accident is worse than no address.
 
 DNS: `A @` and `A www` point at the VM, plus a **wildcard** `A *.preview` to the same address. The wildcard is what makes every project's address resolve without a per-project DNS write, and it is also why the site block in `deploy/Caddyfile` is a wildcard address — Caddy matches exactly one label under that suffix, which is the same rule the server applies when it turns a hostname back into a project.
 

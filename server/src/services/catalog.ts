@@ -271,6 +271,35 @@ export const SERVICES: ServiceDefinition[] = [
     verificationNote: "Проверяем методом getLists — он только читает список адресов.",
   },
 
+  {
+    id: "yandex-postbox",
+    name: "Yandex Cloud Postbox",
+    category: "email",
+    tagline: "Транзакционные письма Yandex Cloud",
+    keyUrl: "https://yandex.cloud/ru/docs/postbox/operations/send-email",
+    docsUrl: "https://yandex.cloud/ru/docs/postbox/",
+    steps: [
+      "Консоль Yandex Cloud → каталог с адресом Postbox → «Сервисные аккаунты»: аккаунт с ролью postbox.sender.",
+      "В сервисном аккаунте → «Создать новый ключ» → «Создать API-ключ»: область действия yc.postbox.send. Секрет показывается один раз.",
+      "Вставьте идентификатор и секрет ключа — проверим входом по SMTP, письмо не отправляется.",
+    ],
+    fields: [
+      { key: "apiKeyId", label: "Идентификатор API-ключа", placeholder: "идентификатор ключа сервисного аккаунта" },
+      { key: "apiKeySecret", label: "Секретная часть ключа", placeholder: "секрет API-ключа", secret: true },
+    ],
+    // SMTP-координаты Postbox постоянны: API-ключ — это логин и пароль SMTP, а адрес
+    // отправителя проверяется в кабинете, поэтому в форме его нет.
+    defaults: { host: "postbox.cloud.yandex.net", port: "465" },
+    env: [
+      { name: "POSTBOX_SMTP_HOST", field: "host" },
+      { name: "POSTBOX_SMTP_PORT", field: "port" },
+      { name: "POSTBOX_SMTP_USER", field: "apiKeyId" },
+      { name: "POSTBOX_SMTP_PASSWORD", field: "apiKeySecret" },
+    ],
+    verification: "check",
+    verificationNote: "Проверяем авторизацией по SMTP на postbox.cloud.yandex.net:465 — письмо не отправляется, квота не расходуется.",
+  },
+
   // ── Оплата ────────────────────────────────────────────────────────────────
   {
     id: "yookassa",

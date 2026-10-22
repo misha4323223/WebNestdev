@@ -7,7 +7,7 @@ import { apiJson } from "../../lib/api";
 import { answerProjectQuestion,cancelProjectSecret,getConversation,skipProjectQuestion,submitProjectSecret,uploadProjectFile } from "../../lib/project-api";
 import { NestLoader } from "../../components/NestLoader";
 import { ActionsDock,MessageThinking,PlanPanel,actionTarget,contentBefore,deriveActions,readPlan,writePlan,type PanelId,type PanelState } from "./agent-activity";
-import type { AgentAction,AgentMode,ChatMessage,PlanState,ReasoningEffort } from "../../lib/types";
+import type { AgentAction,AgentMode,ChatMessage,PlanState,ReasoningEffort,ReasoningSupport } from "../../lib/types";
 import { QuestionSheet,type AgentQuestion } from "./QuestionSheet";
 import { AgentModeControl } from "./AgentModeControl";
 import { ChatBookmarks } from "./ChatBookmarks";
@@ -128,7 +128,7 @@ const MAX_AUTO_RESUME=2;
 const RETRY_NOTICE_CLEAR_EVENTS=new Set(["message.delta","reasoning.delta","tool.started","tool.finished","plan.updated","run.completed","run.failed","error"]);
 
 /** The provider state the composer reads to show the model a run will use. */
-type ProviderStatus={configured:boolean;provider:string;model:string;platformDefault?:{available:boolean;providerName:string;model:string}|null};
+type ProviderStatus={configured:boolean;provider:string;model:string;platformDefault?:{available:boolean;providerName:string;model:string}|null;reasoning?:ReasoningSupport|null};
 type ModelInfo={model:string;provider:string;source:"project"|"platform"|"none"|"unknown"};
 
 const MAX_UPLOAD_BYTES=1_200_000;
@@ -239,6 +239,9 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   const [reasoning,setReasoning]=useState<ReasoningEffort>(readStoredReasoning);
   const [webSearch,setWebSearch]=useState<boolean>(readStoredWebSearch);
   const [modelInfo,setModelInfo]=useState<ModelInfo|null>(null);
+  // Поддержка глубины размышления у выбранной модели: если шлюз её не принимает, выбор глубины
+  // не показывается — переключатель, который ничего не меняет, хуже его отсутствия.
+  const [reasoningSupport,setReasoningSupport]=useState<ReasoningSupport|null>(null);
   const [plan,setPlan]=useState<PlanState|null>(()=>readPlan(conversationId));
   const [actions,setActions]=useState<AgentAction[]>([]);
   const [panels,setPanels]=useState<PanelState>(readPanelState);
@@ -583,12 +586,23 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     setModelInfo(null);
     void apiJson<ProviderStatus>(`/api/projects/${encodeURIComponent(projectId)}/provider`).then(status=>{
       if(cancelled)return;
+      setReasoningSupport(status.reasoning??null);
       if(status.configured)setModelInfo({model:status.model,provider:status.provider,source:"project"});
       else if(status.platformDefault?.available)setModelInfo({model:status.platformDefault.model,provider:status.platformDefault.providerName,source:"platform"});
       else setModelInfo({model:"",provider:"",source:"none"});
     }).catch(()=>{if(!cancelled)setModelInfo({model:"",provider:"",source:"unknown"})});
     return()=>{cancelled=true};
   },[projectId]);
+
+  /**
+   * Перечитывает наблюдение о глубине размышления. Запуск — тоже проверка: если шлюз отклонил
+   * `reasoning_effort`, выбор глубины должен исчезнуть сразу, а не после перезагрузки панели.
+   */
+  function refreshReasoningSupport(){
+    void apiJson<ProviderStatus>(`/api/projects/${encodeURIComponent(projectId)}/provider`)
+      .then(status=>setReasoningSupport(status.reasoning??null))
+      .catch(()=>{});
+  }
 
   /**
    * Запуск задачи. `resumeReason` означает продолжение прерванного запуска: сообщение пользователя не
@@ -706,7 +720,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
         // Задача записана в историю проекта. Отправка на GitHub — только по кнопке пользователя.
         setChangesNotice({shortSha:event.checkpoint.shortSha});
       }
-      if(event.type==="run.completed"){completedRef.current=true;endRun(socket,{drain:true});onChanged()}
+      if(event.type==="run.completed"){completedRef.current=true;endRun(socket,{drain:true});onChanged();refreshReasoningSupport()}
       if(event.type==="run.failed"){
         // A run that died on the context limit has a different fix than a failed tool call, so the
         // panel says which one it is instead of leaving the user with the provider's wording.
@@ -1110,7 +1124,15 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
             <button className="icon-button" onClick={()=>fileRef.current?.click()} disabled={!loaded||uploading} title="Прикрепить файл или изображение" aria-label="Прикрепить файл или изображение"><Paperclip size={14}/></button>
             <input ref={fileRef} type="file" multiple hidden onChange={e=>void pickFiles(e.target.files)}/>
             {/* Режим, глубина размышления и поиск в интернете — один компактный контрол. */}
-            <AgentModeControl mode={mode} reasoning={reasoning} webSearch={webSearch} onMode={chooseMode} onReasoning={chooseReasoning} onWebSearch={chooseWebSearch}/>
+            <AgentModeControl
+              mode={mode}
+              reasoning={reasoning}
+              webSearch={webSearch}
+              reasoningAvailable={!reasoningSupport||(reasoningSupport.enabled&&reasoningSupport.status!=="rejected")}
+              onMode={chooseMode}
+              onReasoning={chooseReasoning}
+              onWebSearch={chooseWebSearch}
+            />
             <button type="button" className="composer-model" onClick={()=>onOpenModelSettings?.()} title={modelTitle} aria-label={"Модель: "+modelName+". Открыть настройки AI-провайдера"}>
               <Cpu size={12}/>
               <span className="composer-model-name">{modelName}</span>

@@ -32,7 +32,7 @@ services:
       # не смотрит (HTTPS не работает). .env на ВМ может переопределить.
       WEBNESTDEV_SITE_DOMAIN: ${WEBNESTDEV_SITE_DOMAIN:-nestdev.ru}
       PREVIEW_PUBLIC_DOMAIN: ${PREVIEW_PUBLIC_DOMAIN:-preview.nestdev.ru}
-      ACME_EMAIL: ${ACME_EMAIL:-admin@nestdev.ru}
+      ACME_EMAIL: ${ACME_EMAIL:-nestdev@mail.ru}
     ports:
       - "80:80"
       - "443:443"
@@ -81,6 +81,10 @@ services:
       GITLAB_BASE_URL: ${GITLAB_BASE_URL:-}
       GITLAB_CALLBACK_URL: ${GITLAB_CALLBACK_URL:-}
       GITLAB_FRONTEND_URL: ${GITLAB_FRONTEND_URL:-}
+      # GitVerse OAuth (optional; PKCE делает сервер). Без этих двух строк ключи, положенные
+      # в .env на ВМ, до сервера не доходили бы: compose передаёт только перечисленное.
+      GITVERSE_CLIENT_ID: ${GITVERSE_CLIENT_ID:-}
+      GITVERSE_CLIENT_SECRET: ${GITVERSE_CLIENT_SECRET:-}
       # AI Provider (optional)
       AI_PROVIDER: ${AI_PROVIDER:-}
       AI_BASE_URL: ${AI_BASE_URL:-}

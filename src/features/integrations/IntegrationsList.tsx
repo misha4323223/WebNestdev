@@ -35,7 +35,7 @@ function ConnectorSection({ icon, title, note, children }: { icon: ReactNode; ti
  */
 export function IntegrationsList({surface="home",onImported}:{surface?:ConnectorSurface;onImported?:(projectId:string,conversationId:string)=>void}){
   return <div className="connectors">
-    <ConnectorSection icon={<Database size={12}/>} title="Базы данных" note="Хранилище проекта: PostgreSQL, MySQL, MongoDB, Redis и Yandex YDB.">
+    <ConnectorSection icon={<Database size={12}/>} title="Базы данных" note="Своя база для проекта — PostgreSQL, MySQL, MongoDB, Redis и Yandex YDB.">
       <DatabaseConnect surface={surface}/>
     </ConnectorSection>
 
@@ -46,16 +46,16 @@ export function IntegrationsList({surface="home",onImported}:{surface?:Connector
       <RepoConnect provider="sourcecraft" surface={surface} onImported={onImported}/>
     </ConnectorSection>
 
-    <ConnectorSection icon={<Cloud size={12}/>} title="Облака" note="Виртуальные машины, диски, бакеты и базы российских провайдеров.">
+    <ConnectorSection icon={<Cloud size={12}/>} title="Облака" note="Виртуальные машины, диски, бакеты и базы.">
       <YandexConnect/>
       <CloudConnectors/>
     </ConnectorSection>
 
-    <ConnectorSection icon={<Globe size={12}/>} title="Домены" note="Регистраторы, где платформа читает домены и DNS-записи по API-ключу.">
+    <ConnectorSection icon={<Globe size={12}/>} title="Домены" note="Регистраторы доменов с доступом по API-ключу.">
       <DomainConnectors/>
     </ConnectorSection>
 
-    <ConnectorSection icon={<Layers size={12}/>} title="Сервисы" note="Почта, оплата, AI, карты, CRM и файлы — ключом из кабинета провайдера.">
+    <ConnectorSection icon={<Layers size={12}/>} title="Сервисы" note="Почта, оплата, AI, карты, CRM и файлы.">
       <ServiceConnectors/>
     </ConnectorSection>
   </div>;

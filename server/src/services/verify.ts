@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { checkPostboxSmtp } from "./postbox.js";
 import { listS3Buckets } from "./s3.js";
 import { describeTlsError, httpsJson, russianTrustedCa } from "./russian-ca.js";
 import type { ServiceDefinition } from "./catalog.js";
@@ -16,7 +17,11 @@ const MAX_DETAIL = 300;
 
 type FetchLike = typeof fetch;
 
-export type ServiceVerifyDeps = { fetch?: FetchLike };
+export type ServiceVerifyDeps = {
+  fetch?: FetchLike;
+  /** Подменяет SMTP-разговор Postbox: тесты проверяют логику без сети. */
+  postboxSmtp?: (username: string, password: string) => Promise<void>;
+};
 
 function detail(text: string) {
   return text.replace(/\s+/g, " ").trim().slice(0, MAX_DETAIL);
@@ -226,6 +231,11 @@ async function verifyUnisender(fields: Record<string, string>, deps: ServiceVeri
   return parseUnisender(payload);
 }
 
+async function verifyPostbox(fields: Record<string, string>, deps: ServiceVerifyDeps) {
+  await (deps.postboxSmtp ?? checkPostboxSmtp)(fields.apiKeyId, fields.apiKeySecret);
+  return "Yandex Cloud Postbox · SMTP";
+}
+
 async function verifyYookassa(fields: Record<string, string>, deps: ServiceVerifyDeps) {
   const basic = Buffer.from(fields.shopId + ":" + fields.secretKey, "utf8").toString("base64");
   const response = await request("https://api.yookassa.ru/v3/me", {
@@ -366,6 +376,7 @@ export async function verifyServiceCredential(
     case "sendsay": return { account: await verifySendsay(fields, deps) };
     case "rusender": return { account: await verifyRusender(fields, deps) };
     case "unisender": return { account: await verifyUnisender(fields, deps) };
+    case "yandex-postbox": return { account: await verifyPostbox(fields, deps) };
     case "yookassa": return { account: await verifyYookassa(fields, deps) };
     case "cloudpayments": return { account: await verifyCloudpayments(fields, deps) };
     case "gigachat": return { account: await verifyGigachat(fields, deps) };

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Code2, KeyRound, UploadCloud } from "lucide-react";
+import { ExternalLink, KeyRound, UploadCloud } from "lucide-react";
+import type { BrandId } from "../../components/BrandLogo";
 import { openImportedProject } from "../../lib/project-api";
 import { queueAgentStart } from "../../lib/agent-start";
 import { ConnectorCard, type ConnectorStatus } from "../integrations/ConnectorCard";
@@ -33,26 +34,25 @@ type Status = {
 const PROVIDERS: Record<RepoProviderId, {
   name: string;
   api: string;
+  /** Страница, где пользователь создаёт токен: ссылка «Где взять токен». */
   tokenUrl: string;
-  tokenLabel: string;
   oauth: boolean;
-  tokenHint: string;
+  /** Официальный знак хостинга в плитке карточки. */
+  logo: BrandId;
 }> = {
   gitverse: {
     name: "GitVerse",
+    logo: "gitverse",
     api: "/api/gitverse",
     tokenUrl: "https://gitverse.ru/user/settings/tokens",
-    tokenLabel: "Создать токен GitVerse",
     oauth: true,
-    tokenHint: "Токен: Настройки профиля → Токены, с доступом к репозиториям (чтение и запись).",
   },
   sourcecraft: {
     name: "SourceCraft",
+    logo: "sourcecraft",
     api: "/api/sourcecraft",
     tokenUrl: "https://sourcecraft.dev/portal/docs/en/sourcecraft/security/pat",
-    tokenLabel: "Где взять токен",
     oauth: false,
-    tokenHint: "Токен: Главная → Доступ → Персональные токены. Роль должна разрешать чтение и запись репозитория.",
   },
 };
 
@@ -100,7 +100,15 @@ export function RepoConnect({ provider, surface = "home", onImported = openImpor
 
   const loadStatus = useCallback(async (quiet = false): Promise<ConnectorStatus> => {
     try {
-      const data = await fetch(config.api + "/status?origin=" + encodeURIComponent(window.location.origin)).then(response => response.json()) as Status;
+      const response = await fetch(config.api + "/status?origin=" + encodeURIComponent(window.location.origin));
+      const data = await response.json() as Status;
+      if (!response.ok) {
+        // 404 — сервер ещё не знает этот маршрут (старая выкатка). Голое «Not Found» в карточке
+        // ничего не объясняло, поэтому показываем причину, а не текст ответа Fastify.
+        throw new Error(response.status === 404
+          ? "Сервер не поддерживает этот хостинг — нужна выкатка новой версии"
+          : data.error ?? config.name + " ответил кодом " + response.status);
+      }
       if (data.error) throw new Error(data.error);
       const next: ConnectorStatus = data.connected ? "connected" : data.configured === false ? "unavailable" : "disconnected";
       setStatus(next);
@@ -108,6 +116,9 @@ export function RepoConnect({ provider, surface = "home", onImported = openImpor
       setConfigured(data.configured !== false);
       return next;
     } catch (e) {
+      // Ошибка запроса не должна оставлять карточку в «Проверяем подключение…» навсегда:
+      // возвращаем её в обычное состояние с понятным сообщением.
+      setStatus("disconnected");
       if (!quiet) setError(e instanceof Error ? e.message : "Не удалось получить состояние " + config.name);
       return "disconnected";
     }
@@ -212,7 +223,7 @@ export function RepoConnect({ provider, surface = "home", onImported = openImpor
 
   return <ConnectorCard
     name={config.name}
-    icon={<Code2 size={18}/>}
+    logo={config.logo}
     status={status}
     account={login}
     busy={busy}
@@ -229,7 +240,7 @@ export function RepoConnect({ provider, surface = "home", onImported = openImpor
       {status !== "connected" && <>
         <div className="connector-actions-row">
           <button className="ghost-button connector-toggle" onClick={() => setTokenOpen(open => !open)}>{tokenOpen ? "Скрыть поле токена" : "Ввести токен"}</button>
-          <a className="connector-link" href={config.tokenUrl} target="_blank" rel="noreferrer">{config.tokenLabel}</a>
+          <a className="ghost-button" href={config.tokenUrl} target="_blank" rel="noreferrer">Где взять токен <ExternalLink size={11}/></a>
         </div>
         {tokenOpen && <div className="connector-key">
           <label>
@@ -238,8 +249,8 @@ export function RepoConnect({ provider, surface = "home", onImported = openImpor
           </label>
           <div className="connector-actions-row">
             <button className="connector-action connector-connect" onClick={() => void saveToken()} disabled={!token.trim() || savingToken}>{savingToken ? "Проверяем токен…" : "Сохранить токен"}</button>
-            <span className="connector-meta-line">{config.tokenHint} Токен шифруется на сервере и больше не показывается.</span>
           </div>
+          <p className="connector-fineprint">Токен проверяется до сохранения, шифруется на сервере и не возвращается в браузер.</p>
         </div>}
       </>}
 

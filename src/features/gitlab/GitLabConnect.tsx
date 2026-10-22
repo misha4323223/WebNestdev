@@ -1,6 +1,5 @@
 import { useCallback,useEffect,useRef,useState } from "react";
 import { Bug, KeyRound, Play, Search, UploadCloud, X } from "lucide-react";
-import { BrandMark } from "../../components/BrandLogo";
 import { openImportedProject } from "../../lib/project-api";
 import { queueAgentStart } from "../../lib/agent-start";
 import { ConnectorCard,type ConnectorStatus } from "../integrations/ConnectorCard";
@@ -224,7 +223,7 @@ export function GitLabConnect({surface="home",onImported=openImportedProject}:{s
   return <>
     <ConnectorCard
     name="GitLab"
-    icon={<BrandMark brand="gitlab" size={18}/>}
+    logo="gitlab"
     status={status}
     account={login}
     busy={busy}

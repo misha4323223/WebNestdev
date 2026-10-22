@@ -69,8 +69,8 @@ export function reasoningDelta(delta:unknown):string{
  * по умолчанию; WEBNESTDEV_AI_REASONING=off выключает просьбу целиком, low/medium/high задают
  * глубину по умолчанию. Пользователь может выбрать глубину для конкретного запуска: `reasoning`
  * в запросе агента важнее настройки сервера. Шлюз, который такого поля не знает, отказывает с 400 —
- * тогда запуск не ломается, а повторяется без него (см. ниже), и адрес с глубиной запоминается,
- * чтобы не платить двумя запросами за шаг.
+ * тогда запуск не ломается, а повторяется без него (см. ниже), и пара «адрес + модель»
+ * запоминается, чтобы не платить двумя запросами за шаг.
  */
 const REASONING_REQUEST=(process.env.WEBNESTDEV_AI_REASONING??"medium").trim().toLowerCase();
 /** `off` is an administrator decision: no request and no client choice re-enables it. */
@@ -78,7 +78,51 @@ const REASONING_ENABLED=!/^(off|0|false|no)$/i.test(REASONING_REQUEST);
 const DEFAULT_REASONING_EFFORT:ReasoningEffort|null=["low","medium","high"].includes(REASONING_REQUEST)
   ?REASONING_REQUEST as ReasoningEffort
   :null;
-const reasoningRejected=new Set<string>();
+/**
+ * Что уже известно о глубине размышления у пары «адрес шлюза + модель». Одна и та же точка входа
+ * обслуживает разные модели, и поле `reasoning_effort` принимают не все: поэтому память ведётся по
+ * модели, а не по адресу — отказ одной модели не должен выключать глубину для соседней.
+ *
+ * Наблюдений два, и они не одно и то же: шлюз может принять поле и всё равно не прислать цепочку
+ * рассуждений (обычная чат-модель его игнорирует). Отсюда четыре состояния в `reasoningSupport`.
+ */
+type ReasoningProbe={accepted:boolean|null;streamed:boolean;checkedAt:number};
+const reasoningProbes=new Map<string,ReasoningProbe>();
+
+/**
+ * `confirmed` — рассуждения пришли; `silent` — поле принято, но мыслей в ответе нет;
+ * `rejected` — шлюз отказал формой (400/422) и запрос повторяется без поля; `unknown` — ещё не
+ * проверяли. `enabled=false` — глубину выключил администратор (`WEBNESTDEV_AI_REASONING=off`).
+ */
+export type ReasoningSupportStatus="confirmed"|"silent"|"rejected"|"unknown";
+export type ReasoningSupport={enabled:boolean;effort:ReasoningEffort|null;status:ReasoningSupportStatus;checkedAt:string|null};
+
+function probeKey(baseUrl:string,model:string){
+  return baseUrl.trim().replace(/\/+$/,"")+"|"+model.trim();
+}
+
+function recordProbe(key:string,patch:{accepted?:boolean;streamed?:boolean}){
+  const current=reasoningProbes.get(key)??{accepted:null,streamed:false,checkedAt:Date.now()};
+  reasoningProbes.set(key,{
+    accepted:patch.accepted??current.accepted,
+    streamed:patch.streamed??current.streamed,
+    checkedAt:Date.now()
+  });
+}
+
+/** Поддержка глубины для конкретной модели: по ней настройки провайдера рисуют индикатор. */
+export function reasoningSupport(baseUrl:string,model:string):ReasoningSupport{
+  const probe=reasoningProbes.get(probeKey(baseUrl,model));
+  const status:ReasoningSupportStatus=!REASONING_ENABLED||!probe
+    ?"unknown"
+    :probe.accepted===false?"rejected"
+    :probe.streamed?"confirmed"
+    :"silent";
+  return {enabled:REASONING_ENABLED,effort:DEFAULT_REASONING_EFFORT,status,checkedAt:probe?new Date(probe.checkedAt).toISOString():null};
+}
+
+/** Тестам нужна чистая память: отказ или успех одного прогона не должен влиять на следующий. */
+export function resetReasoningProbes(){reasoningProbes.clear();}
 
 /** Depth chosen for this run, or the server default when the client did not choose one. */
 function reasoningEffort(options?:ProviderStreamOptions):ReasoningEffort|null{
@@ -151,18 +195,23 @@ export class OpenAICompatibleProvider implements Provider{
         body:JSON.stringify(body)
       });
     const effort=reasoningEffort(options);
-    const rejectionKey=normBase+":"+(effort??"off");
+    const key=probeKey(normBase,model);
     const payload=(withReasoning:boolean)=>({model,messages:wire,tools,stream:true,...(withReasoning&&effort?{reasoning_effort:effort}:{})});
     // Мысли нужны пользователю, но не настолько, чтобы сломать запуск: шлюз, отвечающий на просьбу
     // о рассуждении отказом формы (400/422), получает тот же запрос без неё — и запоминается, чтобы
     // следующие шаги запуска не платили за это двумя запросами каждый.
-    const askReasoning=Boolean(effort)&&!reasoningRejected.has(rejectionKey);
-    let response=await send(payload(askReasoning));
-    if(!response.ok&&askReasoning&&(response.status===400||response.status===422)){
+    const askReasoning=Boolean(effort)&&reasoningProbes.get(key)?.accepted!==false;
+    let withReasoning=askReasoning;
+    let response=await send(payload(withReasoning));
+    if(!response.ok&&withReasoning&&(response.status===400||response.status===422)){
       try{await response.body?.cancel()}catch{}
-      reasoningRejected.add(rejectionKey);
+      recordProbe(key,{accepted:false});
+      withReasoning=false;
       response=await send(payload(false));
     }
+    // Принятое поле — тоже наблюдение: по нему индикатор в настройках отличает «шлюз понимает
+    // глубину» от «ещё не проверяли». Отсутствие рассуждений в ответе сохраняет статус `silent`.
+    if(response.ok&&withReasoning)recordProbe(key,{accepted:true});
     if(!response.ok){
       const detail=await response.text().catch(()=>"");
       // Типизированная ошибка: переполнение контекста рантайм умеет лечить повтором с меньшим
@@ -221,6 +270,7 @@ export class OpenAICompatibleProvider implements Provider{
         pending.set(index,existing);
       }
     }
+    if(sawReasoning)recordProbe(key,{streamed:true});
     for(const call of pending.values()){
       delete (call as any).__raw;
       yield {type:"tool_call",call};

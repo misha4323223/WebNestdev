@@ -1,7 +1,8 @@
 import { useCallback,useEffect,useState } from "react";
-import { Database, KeyRound, ShieldCheck, TriangleAlert } from "lucide-react";
-import { ConnectorCard,type ConnectorStatus } from "../integrations/ConnectorCard";
-import { BrandMark,type BrandId } from "../../components/BrandLogo";
+import { Database, KeyRound, Minus, Plus, ShieldCheck, TriangleAlert } from "lucide-react";
+import { BrandLogo, BrandMark,type BrandId } from "../../components/BrandLogo";
+import { Select } from "../../components/Select";
+import type { ConnectorStatus } from "../integrations/ConnectorCard";
 import type { ConnectorSurface } from "../github/GitHubConnect";
 
 type DatabaseStatus = {
@@ -43,7 +44,7 @@ type Provider = {
 const providers:Provider[]=[
   {
     id:"yandex-postgresql",logo:"yandex-cloud",name:"Yandex Cloud · Managed PostgreSQL",short:"Yandex · PostgreSQL",engine:"PostgreSQL",scheme:"postgres",
-    summary:"Кластер PostgreSQL, управляемый Яндексом: бэкапы, реплики и обновления — на стороне облака.",
+    summary:"Управляемый PostgreSQL с бэкапами и репликами.",
     steps:[
       "Откройте консоль console.yandex.cloud, выберите каталог и раздел «Managed PostgreSQL».",
       "«Создать кластер»: класс хоста, зона, сеть и пароль пользователя (по умолчанию user1). Дождитесь статуса «Работает».",
@@ -54,7 +55,7 @@ const providers:Provider[]=[
   },
   {
     id:"yandex-ydb",logo:"yandex-cloud",name:"Yandex Cloud · Serverless YDB",short:"Yandex · YDB",engine:"YDB",scheme:"grpcs",
-    summary:"Бессерверная база Yandex: платите за запросы, отдельный сервер поднимать не нужно.",
+    summary:"Бессерверная база данных с оплатой за запросы.",
     steps:[
       "В консоли console.yandex.cloud откройте «YDB» → «Создать базу данных» и выберите тип Serverless.",
       "После создания нажмите «Подключиться» и скопируйте эндпоинт вида grpcs://ydb.serverless.yandexcloud.net:2135/ru-central1/<идентификатор>.",
@@ -64,7 +65,7 @@ const providers:Provider[]=[
   },
   {
     id:"vk-cloud",logo:"vk",name:"VK Cloud",short:"VK Cloud",engine:"PostgreSQL",scheme:"postgres",
-    summary:"Облако VK (бывший Mail.ru Cloud Solutions): базы в российских дата-центрах.",
+    summary:"Управляемые базы данных в облаке VK.",
     steps:[
       "Откройте mcs.mail.ru и создайте проект, если его ещё нет.",
       "«Базы данных» → «Создать базу» → PostgreSQL (или MySQL), укажите имя базы и пароль.",
@@ -74,7 +75,7 @@ const providers:Provider[]=[
   },
   {
     id:"selectel",logo:"selectel",name:"Selectel · Managed Databases",short:"Selectel",engine:"PostgreSQL",scheme:"postgres",
-    summary:"Облачные базы Selectel с выделенными кластерами и бэкапами.",
+    summary:"Управляемые базы данных с бэкапами.",
     steps:[
       "Войдите в my.selectel.ru и откройте «Облачные базы данных».",
       "Создайте кластер PostgreSQL, задайте пользователя и имя базы.",
@@ -84,7 +85,7 @@ const providers:Provider[]=[
   },
   {
     id:"timeweb",logo:"timeweb",name:"Timeweb Cloud · Базы данных",short:"Timeweb Cloud",engine:"PostgreSQL",scheme:"postgres",
-    summary:"Простые управляемые базы Timeweb Cloud: быстрый старт, почасовая оплата.",
+    summary:"Управляемые базы данных с почасовой оплатой.",
     steps:[
       "В панели timeweb.cloud откройте «Базы данных» → «Создать базу».",
       "Выберите PostgreSQL, зону и пароль, дождитесь создания.",
@@ -94,7 +95,7 @@ const providers:Provider[]=[
   },
   {
     id:"cloud-ru",logo:"cloudru",name:"Cloud.ru · Managed PostgreSQL",short:"Cloud.ru",engine:"PostgreSQL",scheme:"postgres",
-    summary:"Облако Cloud.ru (Сбер): Managed PostgreSQL в российских зонах.",
+    summary:"Managed PostgreSQL в облаке Cloud.ru.",
     steps:[
       "Войдите в console.cloud.ru и выберите проект.",
       "«Базы данных» → «PostgreSQL» → «Создать»: укажите класс, зону, пароль и имя базы.",
@@ -104,7 +105,7 @@ const providers:Provider[]=[
   },
   {
     id:"custom",name:"Свой сервер или другой провайдер",short:"Свой сервер",engine:"PostgreSQL",scheme:"postgres",
-    summary:"Собственный сервер, VPS с PostgreSQL/MySQL/MongoDB/Redis или любой другой хостинг.",
+    summary:"Свой сервер или другой провайдер.",
     steps:[
       "Создайте базу на своём сервере (например, PostgreSQL в Docker: docker run -d -p 5432:5432 -e POSTGRES_PASSWORD=… postgres).",
       "Возьмите строку подключения: postgresql://пользователь:пароль@хост:5432/база.",
@@ -114,10 +115,35 @@ const providers:Provider[]=[
   },
 ];
 
+/** Движки, которые агент умеет готовить: подпись в списке — то же имя, что в подсказке провайдера. */
+const DATABASE_SCHEMES=[
+  { value: "postgres", label: "PostgreSQL" },
+  { value: "mysql", label: "MySQL / MariaDB" },
+  { value: "mongodb", label: "MongoDB" },
+  { value: "redis", label: "Redis" },
+  { value: "grpcs", label: "Yandex YDB" },
+];
+
+/** Знак провайдера для плитки карточки; у своего сервера логотипа нет. */
+const providerBrand:Record<ProviderId,BrandId|null>={
+  "yandex-postgresql":"yandex-cloud",
+  "yandex-ydb":"yandex-cloud",
+  "vk-cloud":"vk",
+  selectel:"selectel",
+  timeweb:"timeweb",
+  "cloud-ru":"cloudru",
+  custom:null,
+};
+
+function isProviderId(value:unknown):value is ProviderId{
+  return typeof value==="string"&&value in providerBrand;
+}
+
 /**
- * The database the project keeps its data in. The card does not require a specific
- * service: it takes the connection string any provider shows, stores it encrypted, and
- * the agent then writes it into the project's environment.
+ * Своя база проекта — необязательное подключение, как и остальные сервисы: карточка
+ * принимает строку подключения любого провайдера, хранит её в шифрованном виде, а агент
+ * по просьбе переносит её в секреты проекта. Проекту без своей базы эта карточка ничего
+ * не навязывает.
  */
 export function DatabaseConnect({surface="home"}:{surface?:ConnectorSurface}){
   const [status,setStatus]=useState<ConnectorStatus>("loading");
@@ -173,7 +199,7 @@ export function DatabaseConnect({surface="home"}:{surface?:ConnectorSurface}){
       if(!response.ok)throw new Error(data.error??"Не удалось сохранить подключение");
       setUrl("");setFields({scheme:"postgres",host:"",port:"",database:"",username:"",password:""});
       setFormOpen(false);
-      setNotice("Строка подключения сохранена в шифрованном виде. Скажите агенту в чате, что база подключена — он запишет её в проект.");
+      setNotice("Строка подключения сохранена в шифрованном виде.");
       await loadStatus(true);
     }catch(e){setError(e instanceof Error?e.message:"Не удалось сохранить подключение")}
     finally{setBusy(false)}
@@ -214,37 +240,44 @@ export function DatabaseConnect({surface="home"}:{surface?:ConnectorSurface}){
   const engineLabel=info?.engine??info?.scheme??"";
   const metaLine=[engineLabel,activeProvider&&!activeProvider.short.includes(engineLabel)?activeProvider.short:null,info?.ssl?"TLS":null,info?.maskedUrl||null].filter(Boolean).join(" · ");
 
-  return <ConnectorCard
-    name="База данных"
-    icon={<Database size={18}/>}
-    status={status}
-    busy={busy}
-    busyLabel="Сохраняем…"
-    onConnect={()=>openForm()}
-    onDisconnect={()=>void disconnect()}
-    onRefresh={()=>void loadStatus()}
-    note={<>
-      {notice&&<div className="connector-notice ok">{notice}</div>}
-      {error&&<div className="connector-notice">{error}</div>}
-      {check&&<div className="connector-notice ok">{check}</div>}
-      {connected&&<span className="connector-meta-line">{metaLine}</span>}
-    </>}
-  >
-    <div className="connector-body">
-      <p className="connector-text">
-        {connected
-          ? "Данные проекта хранятся в этой базе. Агент запишет строку подключения в зашифрованное хранилище секретов проекта по вашей просьбе."
-          : "Чтобы проект сохранял данные между сессиями, подключите базу: нажмите на карточку с логотипом базы и вставьте строку подключения. Подойдёт любая — рекомендуем российские: Yandex Cloud, VK Cloud, Selectel, Timeweb Cloud, Cloud.ru."}
-      </p>
+  // Логотип выбирается по провайдеру: подключённая база показывает его знак, а пока базы нет —
+  // иконку в такой же плитке. Так карточка выглядит как остальные сервисы, без отдельной формы
+  // и абзаца инструкции на виду.
+  const brand=providerBrand[formOpen?provider:(isProviderId(info?.provider)?info.provider:"custom")]??null;
 
-      {/* Not connected: the header button opens this same form, so the row stays short. */}
-      <div className="connector-actions-row">
-        {connected&&<>
-          <button className="ghost-button" onClick={()=>void checkConnection()} disabled={busy}>Проверить связь</button>
-          <button className="ghost-button" onClick={()=>openForm()}>Заменить</button>
-        </>}
-        <button className="ghost-button" onClick={()=>setHintOpen(open=>!open)}>{hintOpen?"Скрыть инструкцию":"Где взять базу"}</button>
-      </div>
+  return <article className={"connector key-card"+(connected?" is-connected":"")}>
+    <div className="connector-head">
+      <button
+        type="button"
+        className="connector-identity"
+        onClick={()=>{setFormOpen(open=>!open);setError(null)}}
+        disabled={busy}
+        aria-expanded={formOpen}
+        aria-label={connected?"Настроить базу данных":"Подключить базу данных"}
+      >
+        {brand?<BrandLogo brand={brand}/>:<span className="brand-logo is-glyph"><Database size={22}/></span>}
+        <span className="connector-meta">
+          <strong>База данных</strong>
+          <span className={"connector-state"+(connected?" ok":"")}>
+            {connected?<><span className="connector-dot"/>{metaLine}</>:"PostgreSQL, MySQL, MongoDB, Redis и YDB — по строке подключения"}
+          </span>
+        </span>
+        <span className={"connector-socket"+(connected?" is-on":"")+(formOpen?" is-open":"")} aria-hidden="true">
+          {formOpen?<Minus size={14}/>:<Plus size={14}/>}
+        </span>
+      </button>
+      {connected&&<button className="ghost-button connector-action" onClick={()=>void disconnect()} disabled={busy}>Отключить</button>}
+    </div>
+
+    {connected&&!formOpen&&<div className="connector-actions-row">
+      <button className="ghost-button" onClick={()=>void checkConnection()} disabled={busy}>Проверить связь</button>
+      <button className="ghost-button" onClick={()=>openForm()}>Заменить</button>
+      <button className="ghost-button" onClick={()=>setHintOpen(open=>!open)}>{hintOpen?"Скрыть инструкцию":"Где взять базу"}</button>
+    </div>}
+
+    {notice&&<div className="connector-notice ok">{notice}</div>}
+    {error&&<div className="connector-notice">{error}</div>}
+    {check&&<div className="connector-notice ok">{check}</div>}
 
       {hintOpen&&<div className="connector-hint">
         <strong><ShieldCheck size={13}/> Как создать базу на российском сервисе</strong>
@@ -260,9 +293,23 @@ export function DatabaseConnect({surface="home"}:{surface?:ConnectorSurface}){
       {formOpen&&<div className="connector-key">
         <label>
           <span><Database size={12}/> Провайдер</span>
-          <select value={provider} onChange={event=>{const next=event.target.value as ProviderId;setProvider(next);const item=providers.find(entry=>entry.id===next);if(item)setFields(current=>({...current,scheme:item.scheme}))}}>
-            {providers.map(item=><option key={item.id} value={item.id}>{item.name}</option>)}
-          </select>
+          <Select
+            value={provider}
+            ariaLabel="Провайдер базы данных"
+            options={providers.map(item=>({
+              value:item.id,
+              label:item.name,
+              note:item.short,
+              icon:item.logo?<BrandMark brand={item.logo} size={16}/>:<Database size={15}/>,
+            }))}
+            onChange={next=>{
+              const id=next as ProviderId;
+              setProvider(id);
+              const item=providers.find(entry=>entry.id===id);
+              if(item)setFields(current=>({...current,scheme:item.scheme}));
+              setNotice(null);setError(null);
+            }}
+          />
         </label>
 
         {!fieldsOpen&&<label>
@@ -272,13 +319,7 @@ export function DatabaseConnect({surface="home"}:{surface?:ConnectorSurface}){
 
         {fieldsOpen&&<div className="connector-grid">
           <label><span>Тип базы</span>
-            <select value={fields.scheme} onChange={event=>setFields({...fields,scheme:event.target.value})}>
-              <option value="postgres">PostgreSQL</option>
-              <option value="mysql">MySQL / MariaDB</option>
-              <option value="mongodb">MongoDB</option>
-              <option value="redis">Redis</option>
-              <option value="grpcs">Yandex YDB</option>
-            </select>
+            <Select value={fields.scheme} ariaLabel="Тип базы данных" options={DATABASE_SCHEMES} onChange={scheme=>setFields({...fields,scheme})}/>
           </label>
           <label><span>Хост</span><input value={fields.host} onChange={event=>setFields({...fields,host:event.target.value})} placeholder="rc1a-abc.mdb.yandexcloud.net"/></label>
           <label><span>Порт</span><input value={fields.port} onChange={event=>setFields({...fields,port:event.target.value})} placeholder="6432" inputMode="numeric"/></label>
@@ -291,10 +332,10 @@ export function DatabaseConnect({surface="home"}:{surface?:ConnectorSurface}){
           <button className="connector-action connector-connect" onClick={()=>void save()} disabled={busy||(!fieldsOpen&&!url.trim())}>{busy?"Сохраняем…":"Сохранить подключение"}</button>
           <button className="ghost-button" onClick={()=>setFieldsOpen(open=>!open)}>{fieldsOpen?"Вставить строкой":"Вставить полями"}</button>
           <label className="connector-ssl"><input type="checkbox" checked={ssl} onChange={event=>setSsl(event.target.checked)}/> TLS/SSL</label>
+          <button className="ghost-button" onClick={()=>setHintOpen(open=>!open)}>{hintOpen?"Скрыть инструкцию":"Где взять базу"}</button>
           <button className="ghost-button" onClick={()=>{setFormOpen(false);setError(null)}}>{connected?"Отмена":"Свернуть"}</button>
         </div>
         <span className="connector-meta-line">Строка подключения шифруется на сервере и никогда не возвращается в браузер и не попадает в ответы агента.</span>
       </div>}
-    </div>
-  </ConnectorCard>;
+  </article>;
 }

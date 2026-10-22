@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
-import { Eye, EyeOff } from "lucide-react";
+import { Brain, Eye, EyeOff } from "lucide-react";
 import { apiJson } from "../../lib/api";
+import { Select } from "../../components/Select";
+import type { ReasoningSupport } from "../../lib/types";
 
 type ProviderConfig={provider:string;baseUrl:string;token:string;model:string};
 type ModelItem={id:string;name?:string};
@@ -11,7 +13,7 @@ type ModelItem={id:string;name?:string};
  */
 type StoredProviderConfig={provider:string;baseUrl:string;model:string;token?:string};
 type PlatformDefault={available:boolean;providerName:string;model:string};
-type TestResult={ok:boolean;source?:string;provider?:string;model?:string;latencyMs?:number;tools?:boolean;text?:string;error?:string;usage?:{promptTokens:number;completionTokens:number}|null};
+type TestResult={ok:boolean;source?:string;provider?:string;model?:string;latencyMs?:number;tools?:boolean;text?:string;error?:string;usage?:{promptTokens:number;completionTokens:number}|null;reasoning?:ReasoningSupport|null};
 
 const providerStorageKey=(projectId:string)=>`webnestdev.provider.config.${projectId}`;
 const modelsStorageKey=(projectId:string)=>`webnestdev.provider.models.${projectId}`;
@@ -29,6 +31,9 @@ export function SettingsPanel({projectId,projectName,onClose}:{projectId:string;
   const [configured,setConfigured]=useState(false);
   const [removing,setRemoving]=useState(false);
   const [platformDefault,setPlatformDefault]=useState<PlatformDefault|null>(null);
+  // Поддержка глубины размышления: сервер знает её по фактическим ответам шлюза, поэтому панель
+  // не угадывает по названию модели, а показывает наблюдение.
+  const [reasoning,setReasoning]=useState<ReasoningSupport|null>(null);
   // Ключ показывается по «глазику»: по умолчанию он скрыт звёздочками.
   const [showToken,setShowToken]=useState(false);
 
@@ -52,7 +57,7 @@ export function SettingsPanel({projectId,projectName,onClose}:{projectId:string;
     }
 
     try{
-      const data=await apiJson<{configured:boolean;provider:string;baseUrl:string;model:string;hasToken:boolean;platformDefault?:PlatformDefault}>(`/api/projects/${encodeURIComponent(projectId)}/provider`);
+      const data=await apiJson<{configured:boolean;provider:string;baseUrl:string;model:string;hasToken:boolean;platformDefault?:PlatformDefault;reasoning?:ReasoningSupport|null}>(`/api/projects/${encodeURIComponent(projectId)}/provider`);
       const next={provider:data.provider,baseUrl:data.baseUrl,model:data.model};
       // Ключ полем не перетирается: на сервере он есть (`hasToken`), а в поле остаётся копия
       // из этого браузера, чтобы после перезагрузки ключ был виден, а не только упомянут.
@@ -60,6 +65,7 @@ export function SettingsPanel({projectId,projectName,onClose}:{projectId:string;
       setHasToken(data.hasToken);
       setConfigured(data.configured);
       setPlatformDefault(data.platformDefault??null);
+      setReasoning(data.reasoning??null);
       localStorage.setItem(providerStorageKey(projectId),JSON.stringify(next));
     }catch(e){
       if(!cachedConfig)setError(e instanceof Error?e.message:String(e));
@@ -128,6 +134,8 @@ export function SettingsPanel({projectId,projectName,onClose}:{projectId:string;
     setTesting(true);setError("");setStatus("");
     try{
       const data=await apiJson<TestResult>("/api/providers/test",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(projectId?{projectId}:{})});
+      // Проверка связи — это и есть проба глубины: ответ шлюза обновляет индикатор под моделью.
+      if(data.reasoning)setReasoning(data.reasoning);
       if(data.ok&&data.tools){
         const usage=data.usage?` · токены: ${data.usage.promptTokens} in / ${data.usage.completionTokens} out`:"";
         setStatus(`Подключение работает: ${data.provider} · ${data.model} · ${data.latencyMs} мс · вызов инструментов поддержан${usage}`);
@@ -174,12 +182,17 @@ export function SettingsPanel({projectId,projectName,onClose}:{projectId:string;
         <button type="button" className="secret-toggle" onClick={()=>setShowToken(value=>!value)} title={showToken?"Скрыть ключ":"Показать ключ"} aria-label={showToken?"Скрыть API-ключ":"Показать API-ключ"} aria-pressed={showToken}>{showToken?<EyeOff size={14}/>:<Eye size={14}/>}</button>
       </div></label>
       <div className="model-row">
-        <label>Модель<select value={config.model} onChange={e=>updateConfig({...config,model:e.target.value})} disabled={loadingModels||models.length===0}>
-          {!models.length&&<option value="">Сначала загрузите модели</option>}
-          {models.map(item=><option key={item.id} value={item.id}>{item.name??item.id}</option>)}
-        </select></label>
+        <label>Модель<Select
+          value={config.model}
+          ariaLabel="Модель"
+          placeholder="Сначала загрузите модели"
+          disabled={loadingModels||models.length===0}
+          options={models.map(item=>({value:item.id,label:item.name??item.id}))}
+          onChange={model=>updateConfig({...config,model})}
+        /></label>
         <button className="ghost-button" onClick={()=>void loadModels()} disabled={loadingModels||!config.baseUrl.trim()}>{loadingModels?"Загрузка…":"Загрузить модели"}</button>
       </div>
+      <ReasoningIndicator support={reasoning}/>
       {status&&<div className="settings-status">{status}</div>}
       {error&&<div className="settings-error">{error}</div>}
       <div className="model-row">
@@ -189,4 +202,31 @@ export function SettingsPanel({projectId,projectName,onClose}:{projectId:string;
       </div>
     </div>
   </section>;
+}
+
+/**
+ * Индикатор поддержки глубины размышления. Статус берётся из фактических ответов шлюза, а не из
+ * названия модели: поле `reasoning_effort` поддерживают не все, и молчащий переключатель хуже
+ * честного «не проверено». Наблюдение живёт на сервере и запоминается по адресу и модели.
+ */
+const REASONING_STATUS:Record<ReasoningSupport["status"],{title:string;note:string;tone:"on"|"warn"|"off"|"idle"}>={
+  confirmed:{title:"Глубина размышления работает",note:"Модель присылает цепочку рассуждений — «Лёгкое / Среднее / Глубокое» действительно меняет объём работы над ответом.",tone:"on"},
+  silent:{title:"Модель принимает поле, но не рассуждает",note:"Шлюз не отклонил reasoning_effort, но цепочка рассуждений не пришла: обычные чат-модели это поле игнорируют, и переключатель глубины на них ничего не меняет.",tone:"warn"},
+  rejected:{title:"Модель не поддерживает глубину размышления",note:"Шлюз отклонил reasoning_effort, и запросы повторяются без него. Выбор глубины скрыт в панели агента — это экономит запрос и ничего не обещает.",tone:"off"},
+  unknown:{title:"Поддержка глубины ещё не проверена",note:"Статус появится после «Проверить подключение» или первого запуска: сервер смотрит на ответ шлюза, а не на название модели.",tone:"idle"},
+};
+
+function ReasoningIndicator({support}:{support:ReasoningSupport|null}){
+  if(!support)return null;
+  const view=!support.enabled
+    ? {title:"Глубина размышления выключена на сервере",note:"WEBNESTDEV_AI_REASONING=off: поле не отправляется, а выбор глубины скрыт в панели агента.",tone:"off" as const}
+    : REASONING_STATUS[support.status];
+  return <div className={"reasoning-status "+view.tone} role="status">
+    <span className="reasoning-status-icon"><Brain size={13}/></span>
+    <div>
+      <strong>{view.title}</strong>
+      <span>{view.note}</span>
+      {support.enabled&&support.checkedAt&&support.status!=="unknown"&&<small>Проверено {new Date(support.checkedAt).toLocaleString("ru-RU",{day:"numeric",month:"long",hour:"2-digit",minute:"2-digit"})}</small>}
+    </div>
+  </div>;
 }

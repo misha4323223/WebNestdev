@@ -267,7 +267,6 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
           onOpen={open}
           onRename={rename}
           onDelete={project=>void remove(project)}
-          onNewProject={()=>void start("Новый проект")}
           onOpenPlans={openPlans}
           onOpenSubscriptions={()=>setPage("subscription")}
           onExit={()=>void exit()}
