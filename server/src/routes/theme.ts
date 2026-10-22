@@ -1,102 +1,120 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import path from "node:path";
 import { requireProjectUser } from "../auth/auth.js";
 import { getSandbox } from "../sandbox-manager.js";
 import { writeFileInside } from "../sandbox/path-guard.js";
 import { applyNoStoreToReply } from "./cache-headers.js";
-import { THEME_FILE, THEME_FIELDS, parseTheme, patchTheme, themeFile } from "../design/theme.js";
-import { findThemeFile, usesThemeTokens, type FoundTheme } from "../design/theme-file.js";
+import { readPalette, normalizePaletteValue, patchPaletteValue, readPaletteFile, type Palette, type PaletteKind } from "../design/palette.js";
+import { FONT_OPTIONS } from "../design/theme.js";
 import { refreshStaticPreview } from "../preview/static-preview.js";
 
 /**
- * Тема проекта для панели предпросмотра.
+ * Палитра проекта для панели предпросмотра.
  *
- * Панель меняет палитру без модели: значения пишутся в файл темы, который проект уже
- * использует, поэтому правка доезжает и в предпросмотр, и в собранный сайт. Файл определяется
- * по контракту из `design/theme.ts`, значение каждого токена проверяется там же — сюда
- * приходит уже безопасный текст.
+ * Панель показывает и правит переменные, которые проект объявил сам, — где бы они ни лежали:
+ * у проекта по контракту это `theme.css` с `--color-…`, у проекта постарше — свои `--bg`/`--ink`
+ * в `styles.css`. Раньше панель знала только контракт и вместо настоящих цветов показывала
+ * значения по умолчанию: человек видел «совсем другую» палитру, а правка писала переменную,
+ * которую страница не читает. Значение каждого токена проверяется по его виду (`design/palette.ts`),
+ * сюда приходит уже безопасный текст.
  */
 
-function themeReply(found: FoundTheme | null, used = false, created = false) {
+function themeReply(palette: Palette) {
   return {
-    present: Boolean(found),
-    file: found?.file ?? null,
-    tokens: found ? parseTheme(found.css) : {},
-    fields: THEME_FIELDS,
-    /** Читают ли стили и разметка проекта переменные темы: без этого палитра ничего не перекрасит. */
-    used,
-    /** Файл только что создан этим запросом — панель говорит это словами, а не догадкой. */
-    created,
+    present: palette.tokens.length > 0,
+    /** Файл темы по контракту, если он есть: панель называет его в подписи. */
+    file: palette.themeFile ?? palette.tokens[0]?.file ?? null,
+    themeFile: palette.themeFile,
+    tokens: Object.fromEntries(palette.tokens.map(token => [token.variable, token.value])),
+    /** Строки панели: подпись, вид, значение, файл и читает ли страница эту переменную. */
+    fields: palette.tokens.map(token => ({
+      ...token,
+      // Готовые шрифтовые пары — из того же списка, что у агента: панель не придумывает свои.
+      ...(token.kind === "font" ? { options: FONT_OPTIONS.map(option => ({ value: option.value, label: option.label })) } : {}),
+    })),
+    /** Читается ли палитра страницей хотя бы одной переменной. */
+    used: palette.tokens.some(token => token.used),
   };
 }
 
-export async function registerThemeRoutes(app: FastifyInstance) {
+/**
+ * Зависимости маршрутов: тест подставляет свой каталог проекта и свой способ авторизации, а
+ * прод берёт настоящие (докер-песочница, сессия аккаунта, пересборка предпросмотра).
+ */
+export type ThemeRouteDeps = {
+  authorize: (request: FastifyRequest, reply: FastifyReply, projectId: string) => Promise<{ id: string } | null>;
+  getSandbox: (projectId: string, userId: string) => Promise<{ root: string }>;
+  refreshPreview: (projectId: string) => Promise<boolean>;
+};
+
+const defaultDeps: ThemeRouteDeps = {
+  authorize: requireProjectUser,
+  getSandbox: (projectId, userId) => getSandbox(projectId, userId),
+  refreshPreview: refreshStaticPreview,
+};
+
+export async function registerThemeRoutes(app: FastifyInstance, deps: ThemeRouteDeps = defaultDeps) {
   app.get("/api/projects/:id/theme", async (request, reply) => {
     const p = z.object({ id: z.string().min(1) }).parse(request.params);
-    const user = await requireProjectUser(request, reply, p.id);
+    const user = await deps.authorize(request, reply, p.id);
     if (!user) return;
     applyNoStoreToReply(reply);
-    const sandbox = await getSandbox(p.id, user.id);
-    const found = await findThemeFile(sandbox.root);
-    return themeReply(found, found ? await usesThemeTokens(sandbox.root) : false);
+    const sandbox = await deps.getSandbox(p.id, user.id);
+    return themeReply(await readPalette(sandbox.root));
   });
 
   /**
-   * Создание файла темы. Панель вызывает это сама, когда открывают «Палитру» у проекта без
-   * `theme.css`: без файла панели нечего править, а отправлять человека к агенту за одной
-   * таблицей значений — лишний прогон модели. Существующий файл не перезаписывается никогда:
-   * ответ отдаёт текущую тему, поэтому нажатие не может стереть чужие правки.
-   */
-  app.post("/api/projects/:id/theme", async (request, reply) => {
-    const p = z.object({ id: z.string().min(1) }).parse(request.params);
-    const user = await requireProjectUser(request, reply, p.id);
-    if (!user) return;
-    const sandbox = await getSandbox(p.id, user.id);
-    const existing = await findThemeFile(sandbox.root);
-    if (existing) {
-      applyNoStoreToReply(reply);
-      return themeReply(existing, await usesThemeTokens(sandbox.root));
-    }
-    await writeFileInside(sandbox.root, path.join(sandbox.root, THEME_FILE), themeFile());
-    // Статический предпросмотр отдаёт сборку: новый файл попадёт в неё только после пересборки,
-    // иначе добавленный токен не появится на странице до перезапуска предпросмотра.
-    await refreshStaticPreview(p.id).catch(error => console.warn("[theme] предпросмотр не пересобран", error));
-    const created = await findThemeFile(sandbox.root);
-    applyNoStoreToReply(reply);
-    return themeReply(created, created ? await usesThemeTokens(sandbox.root) : false, true);
-  });
-
-  /**
-   * Запись палитры. Отказ, когда файла темы нет, — честный ответ, а не создание пустого файла:
-   * переменные, которые никто не использует, ничего не перекрасят, и «сохранилось» было бы
-   * ложью. Такой проект получает в панели кнопку «Создать палитру» (см. POST выше).
+   * Запись палитры. Правится ровно объявление переменной в том файле, где она объявлена: файл
+   * темы у проекта по контракту, `styles.css` у проекта со своими токенами. Переменную, которой
+   * в проекте нет, записать нельзя — панель показывает только объявленное, поэтому такая запись
+   * означала бы, что файл изменился между чтением и сохранением.
+   *
+   * После записи статический предпросмотр пересобирается: он отдаёт готовую сборку, и без новой
+   * сборки сохранённый цвет не появится ни в кадре, ни по публичному адресу. Ждём её до ответа,
+   * потому что панель перезагружает кадр сразу после ответа. Сбой пересборки запись не отменяет:
+   * палитра сохранена, а предпросмотр честно останется без неё.
    */
   app.put("/api/projects/:id/theme", async (request, reply) => {
     const p = z.object({ id: z.string().min(1) }).parse(request.params);
-    const user = await requireProjectUser(request, reply, p.id);
+    const user = await deps.authorize(request, reply, p.id);
     if (!user) return;
-    const body = z.object({ tokens: z.record(z.string().min(1).max(60), z.string().min(1).max(300)) }).parse(request.body);
-    const sandbox = await getSandbox(p.id, user.id);
-    const found = await findThemeFile(sandbox.root);
-    if (!found) {
-      return reply.code(409).send({
-        error: "В проекте нет файла темы (theme.css) — откройте «Палитру» ещё раз, файл создастся сам.",
-      });
+    const body = z.object({ tokens: z.record(z.string().min(1).max(80), z.string().min(1).max(300)) }).parse(request.body);
+    const sandbox = await deps.getSandbox(p.id, user.id);
+    const palette = await readPalette(sandbox.root);
+    const known = new Map(palette.tokens.map(token => [token.variable, token]));
+
+    const updates: Array<{ variable: string; value: string; file: string; kind: PaletteKind }> = [];
+    for (const [variable, value] of Object.entries(body.tokens)) {
+      const token = known.get(variable);
+      if (!token) {
+        return reply.code(409).send({
+          error: "В проекте нет переменной " + variable + " — палитра изменилась, откройте её ещё раз.",
+        });
+      }
+      try {
+        updates.push({ variable, value: normalizePaletteValue(token.kind, value), file: token.file, kind: token.kind });
+      } catch (error) {
+        return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+      }
     }
-    let css: string;
-    try {
-      css = patchTheme(found.css, body.tokens);
-    } catch (error) {
-      return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+
+    // Правки группируются по файлам: перечитать и записать файл один раз дешевле, чем по разу
+    // на переменную, и так же безопаснее — между чтениями файл не меняется нами же.
+    const byFile = new Map<string, typeof updates>();
+    for (const update of updates) {
+      const list = byFile.get(update.file) ?? [];
+      list.push(update);
+      byFile.set(update.file, list);
     }
-    await writeFileInside(sandbox.root, path.join(sandbox.root, found.file), css);
-    // Статический предпросмотр отдаёт готовую сборку: без новой сборки сохранённый цвет не
-    // появится ни в кадре, ни по публичному адресу. Ждём её здесь, до ответа, потому что панель
-    // перезагружает кадр сразу после ответа — и должна застать уже новый CSS. Сбой пересборки не
-    // отменяет запись файла: палитра сохранена, а предпросмотр честно останется без неё.
-    await refreshStaticPreview(p.id).catch(error => console.warn("[theme] предпросмотр не пересобран", error));
+    for (const [file, list] of byFile) {
+      let css = await readPaletteFile(sandbox.root, file);
+      for (const update of list) css = patchPaletteValue(css, update.variable, update.kind, update.value);
+      await writeFileInside(sandbox.root, path.join(sandbox.root, file), css);
+    }
+
+    await deps.refreshPreview(p.id).catch(error => console.warn("[theme] предпросмотр не пересобран", error));
     applyNoStoreToReply(reply);
-    return themeReply({ file: found.file, css }, await usesThemeTokens(sandbox.root));
+    return themeReply(await readPalette(sandbox.root));
   });
 }

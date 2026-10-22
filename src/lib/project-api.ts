@@ -70,8 +70,9 @@ export const switchProjectBranch=(projectId:string,branch:string)=>apiJson<{swit
 /** Отправка на GitHub по кнопке — единственный путь, которым коммиты попадают в ветку. */
 export const pushProjectChanges=(projectId:string)=>apiJson<{pushed:boolean;branch:string;at:string}>("/api/projects/"+projectId+"/changes/push",{method:"POST"});
 /**
- * Тема проекта: те же токены, которые правит панель «Тема» в предпросмотре и читает агент.
- * `fields` приходит с сервера — подписи, допустимые значения и порядок описаны один раз.
+ * Палитра проекта: переменные, которые он объявил сам (контрактные `--color-…` у нового проекта,
+ * свои `--bg`/`--ink` у проекта постарше). `fields` приходит с сервера — подписи, допустимые
+ * значения, порядок, файл каждой переменной и читает ли её страница.
  */
 export type ThemeField={
   variable:string;
@@ -79,15 +80,17 @@ export type ThemeField={
   kind:"color"|"font"|"radius";
   value:string;
   options?:Array<{value:string;label:string}>;
+  /** Файл проекта, где переменная объявлена: туда же уходит правка. */
+  file?:string;
+  /** Читает ли страница переменную через `var(--…)`. */
+  used?:boolean;
 };
 /**
- * `used` — читают ли стили и разметка проекта переменные темы. Без этого палитра молча
+ * `used` — читается ли палитра страницей хотя бы одной переменной. Без этого палитра молча
  * «сохраняется» и ничего не перекрашивает, а причина видна только в коде проекта.
  */
-export type ProjectTheme={present:boolean;file:string|null;tokens:Record<string,string>;fields:ThemeField[];used:boolean;created?:boolean};
+export type ProjectTheme={present:boolean;file:string|null;themeFile?:string|null;tokens:Record<string,string>;fields:ThemeField[];used:boolean};
 export const getProjectTheme=(projectId:string)=>apiJson<ProjectTheme>("/api/projects/"+projectId+"/theme");
-/** Создаёт theme.css с набором по умолчанию, если файла ещё нет; существующий не трогает. */
-export const createProjectTheme=(projectId:string)=>apiJson<ProjectTheme>("/api/projects/"+projectId+"/theme",{method:"POST"});
 export const saveProjectTheme=(projectId:string,tokens:Record<string,string>)=>apiJson<ProjectTheme>("/api/projects/"+projectId+"/theme",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify({tokens})});
 
 export const getPreviewStatus=(projectId:string)=>apiJson<PreviewState>("/api/projects/"+projectId+"/preview/status");

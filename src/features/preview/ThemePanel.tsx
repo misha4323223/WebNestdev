@@ -1,24 +1,25 @@
 import { Check, Loader2, Palette, Pipette, Sparkles, TriangleAlert, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { createProjectTheme, getProjectTheme, saveProjectTheme, type ProjectTheme, type ThemeField } from "../../lib/project-api";
+import { getProjectTheme, saveProjectTheme, type ProjectTheme, type ThemeField } from "../../lib/project-api";
 import { composeAgentPrompt, THEME_SETUP_PROMPT } from "../../lib/agent-compose";
 
 /**
- * Тема проекта: палитра, шрифтовая пара и скругление.
+ * Палитра проекта: цвета, шрифты и скругление — те переменные, которые проект объявил сам.
  *
- * Панель правит ровно те переменные, которые читает агент (см. server/src/design/theme.ts),
- * поэтому цвет, выбранный здесь мышкой, попадает и в предпросмотр, и в собранный сайт — без
- * запроса к модели и без расхода лимита.
+ * Панель показывает настоящую палитру страницы, а не значения по умолчанию: у проекта по
+ * контракту это `--color-…` из `theme.css`, у проекта постарше — свои `--bg`/`--ink` из
+ * `styles.css`. Правка уходит в тот файл, где переменная объявлена, поэтому цвет появляется в
+ * предпросмотре без запроса к модели.
  *
- * Файла темы может не быть: у проекта, собранного до появления палитры, его просто нет. Тогда
- * панель создаёт `theme.css` сама, с полоской хода работы, — отправлять человека к агенту за
- * одной таблицей значений незачем. Если же файл есть, а стили проекта его переменные не читают,
- * панель говорит это прямо: иначе «нажимаю — ничего не происходит» выглядит поломкой панели.
+ * Если переменных нет или страница их не читает, панель говорит это прямо и предлагает
+ * перевести стили на переменные: «нажимаю — ничего не происходит» иначе выглядит поломкой панели.
  */
 
 /** `EyeDropper` есть не во всех браузерах, поэтому в типах его нет: объявление локальное. */
 type EyeDropperConstructor = new () => { open: () => Promise<{ sRGBHex: string }> };
 const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
+/** Больше этого скругление не задаётся — тот же предел, что проверяет сервер. */
+const MAX_RADIUS = 40;
 
 /** Нативное поле цвета понимает только полный hex: `#abc` расширяется в `#aabbcc`. */
 function expandHex(value: string) {
@@ -26,9 +27,6 @@ function expandHex(value: string) {
   if (value.length === 7) return value.toLowerCase();
   return ("#" + value.slice(1).split("").map(char => char + char).join("")).toLowerCase();
 }
-
-/** Шаги создания файла темы: проценты показывают ход работы, а не выдуманное время. */
-const CREATE_STEPS = { start: 12, file: 45, read: 70, preview: 92, done: 100 } as const;
 
 function ColorRow({ field, value, onChange, eyedropper }: {
   field: ThemeField;
@@ -60,12 +58,12 @@ function ColorRow({ field, value, onChange, eyedropper }: {
     }
   }
 
-  return <div className="theme-color-row">
+  return <div className={"theme-color-row" + (field.used === false ? " unused" : "")}>
     <label className="theme-color-chip" style={{ background: expandHex(value) }} title={field.label}>
       <input type="color" value={expandHex(value)} onChange={event => onChange(event.target.value.toLowerCase())} aria-label={field.label}/>
     </label>
     <div className="theme-color-meta">
-      <span>{field.label}</span>
+      <span>{field.label}{field.used === false && <em className="theme-unused-mark">не используется</em>}</span>
       <input className={"theme-color-hex" + (HEX.test(text.trim()) ? "" : " invalid")} value={text} spellCheck={false} autoComplete="off" onChange={event => commit(event.target.value)} aria-label={field.label + ": значение"}/>
     </div>
     {eyedropper && <button type="button" className={"theme-pick" + (picking ? " active" : "")} onClick={() => void pick()} title="Взять цвет с экрана" aria-label={"Взять цвет с экрана: " + field.label}>
@@ -85,11 +83,7 @@ export function ThemePanel({ projectId, onClose, onApplied }: {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
-  const [progress, setProgress] = useState<{ percent: number; label: string } | null>(null);
   const savedTimer = useRef<number | null>(null);
-  // StrictMode в разработке монтирует компонент дважды: без этого флага файл темы создавался бы
-  // двумя параллельными запросами (сервер идемпотентен, но полоска хода мигала бы дважды).
-  const creating = useRef(false);
 
   const eyedropper = useMemo<EyeDropperConstructor | undefined>(() => {
     const api = (window as unknown as { EyeDropper?: EyeDropperConstructor }).EyeDropper;
@@ -99,55 +93,27 @@ export function ThemePanel({ projectId, onClose, onApplied }: {
   function apply(next: ProjectTheme) {
     setTheme(next);
     setDraft(next.fields.reduce<Record<string, string>>((values, field) => {
-      values[field.variable] = next.tokens[field.variable] ?? field.value;
+      values[field.variable] = field.value;
       return values;
     }, {}));
-  }
-
-  /**
-   * Создание файла темы. Это единственный шаг, который видит полоску хода: он ходит на сервер,
-   * а после записи сервер ещё и пересобирает статический предпросмотр, поэтому пауза заметна.
-   */
-  async function create() {
-    if (creating.current) return;
-    creating.current = true;
-    setError("");
-    setProgress({ percent: CREATE_STEPS.start, label: "Создаём файл темы…" });
-    try {
-      const next = await createProjectTheme(projectId);
-      setProgress({ percent: CREATE_STEPS.file, label: "Читаем палитру проекта…" });
-      apply(next);
-      setProgress({ percent: CREATE_STEPS.preview, label: "Обновляем предпросмотр…" });
-      onApplied();
-      setProgress({ percent: CREATE_STEPS.done, label: "Палитра готова" });
-      window.setTimeout(() => setProgress(null), 700);
-    } catch (failure) {
-      setProgress(null);
-      setError(failure instanceof Error ? failure.message : "Не удалось создать файл темы");
-    } finally {
-      creating.current = false;
-    }
   }
 
   async function load() {
     setError("");
     try {
-      const next = await getProjectTheme(projectId);
-      if (next.present) {
-        apply(next);
-        return;
-      }
-      // Файла нет — панель заводит его сама, вместо пустого экрана и похода к агенту.
-      await create();
+      apply(await getProjectTheme(projectId));
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : "Не удалось прочитать тему проекта");
+      setError(failure instanceof Error ? failure.message : "Не удалось прочитать палитру проекта");
     }
   }
 
   useEffect(() => { void load() }, [projectId]);
   useEffect(() => () => { if (savedTimer.current) window.clearTimeout(savedTimer.current) }, []);
 
-  const dirty = Boolean(theme?.present) && theme!.fields.some(field => draft[field.variable] !== (theme!.tokens[field.variable] ?? field.value));
+  const dirty = Boolean(theme?.present) && theme!.fields.some(field => (draft[field.variable] ?? field.value) !== field.value);
+  /** Есть объявления, но страница их не читает: сохранение ничего не перекрасит. */
+  const unused = Boolean(theme?.present) && theme!.used === false;
+  const unusedCount = theme?.present ? theme!.fields.filter(field => field.used === false).length : 0;
 
   function set(variable: string, value: string) {
     setDraft(current => ({ ...current, [variable]: value }));
@@ -166,7 +132,7 @@ export function ThemePanel({ projectId, onClose, onApplied }: {
       if (savedTimer.current) window.clearTimeout(savedTimer.current);
       savedTimer.current = window.setTimeout(() => setSaved(false), 1800);
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : "Не удалось сохранить тему");
+      setError(failure instanceof Error ? failure.message : "Не удалось сохранить палитру");
     } finally {
       setBusy(false);
     }
@@ -175,7 +141,7 @@ export function ThemePanel({ projectId, onClose, onApplied }: {
   function reset() {
     if (!theme) return;
     setDraft(theme.fields.reduce<Record<string, string>>((values, field) => {
-      values[field.variable] = theme.tokens[field.variable] ?? field.value;
+      values[field.variable] = field.value;
       return values;
     }, {}));
     setSaved(false);
@@ -189,8 +155,8 @@ export function ThemePanel({ projectId, onClose, onApplied }: {
   const colors = theme?.fields.filter(field => field.kind === "color") ?? [];
   const fonts = theme?.fields.filter(field => field.kind === "font") ?? [];
   const radius = theme?.fields.find(field => field.kind === "radius");
-  // Файл есть, но страница читает свои цвета напрямую: палитра сохранится и ничего не изменит.
-  const unused = Boolean(theme?.present) && theme!.used === false;
+  // Файлы палитры: их может быть несколько, если проект объявил свои переменные в styles.css.
+  const files = Array.from(new Set(theme?.fields.map(field => field.file).filter(Boolean) as string[]));
 
   return <section className="theme-sheet" aria-label="Тема проекта">
     <div className="theme-head">
@@ -202,23 +168,19 @@ export function ThemePanel({ projectId, onClose, onApplied }: {
     </div>
 
     <div className="theme-body">
-      {progress && <div className="theme-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.percent} aria-label={progress.label}>
-        <div className="theme-progress-track"><div className="theme-progress-fill" style={{ width: progress.percent + "%" }}/></div>
-        <div className="theme-progress-meta"><span>{progress.label}</span><b>{progress.percent}%</b></div>
-      </div>}
-
-      {!theme && !error && !progress && <div className="theme-loading"><Loader2 size={16} className="spin"/> Загружаем тему проекта…</div>}
+      {!theme && !error && <div className="theme-loading"><Loader2 size={16} className="spin"/> Загружаем палитру проекта…</div>}
       {error && <div className="theme-error">{error}</div>}
 
-      {!theme && !progress && error && <div className="theme-empty">
+      {theme && !theme.present && <div className="theme-empty">
         <div className="theme-empty-icon"><Palette size={20}/></div>
-        <strong>Не удалось подготовить файл темы</strong>
+        <strong>В проекте нет переменных палитры</strong>
         <p>
-          Палитра живёт в файле <code>theme.css</code>: его переменные используют компоненты.
-          Повторите попытку — файл создаётся одним запросом, без участия модели.
+          Панель меняет только значения переменных (<code>var(--…)</code>). Если цвета вписаны в
+          стили напрямую, править здесь нечего — и сохранение ничего бы не перекрасило. Агент
+          переведёт цвета, шрифты и скругления на переменные и подключит файл темы.
         </p>
-        <button className="theme-action theme-empty-action" onClick={() => void create()}>
-          <Palette size={14}/> Создать палитру
+        <button className="theme-action theme-empty-action" onClick={askAgent}>
+          <Sparkles size={14}/> Перевести цвета на тему
         </button>
       </div>}
 
@@ -226,11 +188,11 @@ export function ThemePanel({ projectId, onClose, onApplied }: {
         {unused && <div className="theme-warning" role="status">
           <TriangleAlert size={14}/>
           <div>
-            <strong>Страница не использует переменные темы</strong>
+            <strong>Страница не читает переменные палитры</strong>
             <span>
-              Файл <code>{theme.file}</code> есть, но стили проекта берут цвета напрямую, поэтому смена
-              палитры их не перекрасит. Перевести цвета на <code>var(--color-…)</code> может агент —
-              это правка файлов, а не запись токена.
+              Переменные объявлены, но в стилях и разметке нет <code>var(--…)</code>: смена палитры
+              их не перекрасит. Агент заменит вписанные напрямую цвета на переменные — это правка
+              файлов, а не запись значения.
             </span>
             <button className="ghost-button theme-warning-action" onClick={askAgent}>
               <Sparkles size={13}/> Перевести цвета на тему
@@ -238,7 +200,11 @@ export function ThemePanel({ projectId, onClose, onApplied }: {
           </div>
         </div>}
 
-        <div className="theme-group">
+        {!unused && unusedCount > 0 && <p className="theme-hint">
+          Страница не читает {unusedCount === 1 ? "одну переменную" : unusedCount + " переменных"} из списка — они помечены.
+        </p>}
+
+        {colors.length > 0 && <div className="theme-group">
           <div className="theme-group-head">
             <span>Цвета</span>
             {eyedropper && <small>пипетка берёт цвет с экрана</small>}
@@ -250,35 +216,46 @@ export function ThemePanel({ projectId, onClose, onApplied }: {
             onChange={next => set(field.variable, next)}
             eyedropper={eyedropper}
           />)}
-        </div>
+        </div>}
 
-        <div className="theme-group">
+        {fonts.length > 0 && <div className="theme-group">
           <div className="theme-group-head"><span>Шрифты</span></div>
-          {fonts.map(field => <label className="theme-font-row" key={field.variable}>
-            <span>{field.label}</span>
-            <select value={draft[field.variable] ?? field.value} onChange={event => set(field.variable, event.target.value)}>
-              {(field.options ?? []).map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
-            </select>
-          </label>)}
-        </div>
+          {fonts.map(field => {
+            const value = draft[field.variable] ?? field.value;
+            const options = field.options ?? [];
+            // У проекта может быть свой стек, которого нет в готовых парах: без этой строки
+            // список показал бы чужой шрифт, а «Сохранить» записал бы его в файл.
+            const own = options.some(option => option.value === value) ? [] : [{ value, label: "Свой стек (текущий)" }];
+            return <label className="theme-font-row" key={field.variable}>
+              <span>{field.label}{field.used === false && <em className="theme-unused-mark">не используется</em>}</span>
+              <select value={value} onChange={event => set(field.variable, event.target.value)}>
+                {[...options, ...own].map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+            </label>;
+          })}
+        </div>}
 
         {radius && <div className="theme-group">
-          <div className="theme-group-head"><span>{radius.label}</span><small>{Number.parseInt(draft[radius.variable] ?? radius.value, 10) || 0} px</small></div>
+          <div className="theme-group-head">
+            <span>{radius.label}{radius.used === false && <em className="theme-unused-mark">не используется</em>}</span>
+            <small>{Number.parseInt(draft[radius.variable] ?? radius.value, 10) || 0} px</small>
+          </div>
           <input
             className="theme-range"
             type="range"
             min={0}
-            max={32}
+            max={MAX_RADIUS}
             step={1}
-            value={Number.parseInt(draft[radius.variable] ?? radius.value, 10) || 0}
+            value={Math.min(MAX_RADIUS, Number.parseInt(draft[radius.variable] ?? radius.value, 10) || 0)}
             onChange={event => set(radius.variable, event.target.value + "px")}
             aria-label={radius.label}
           />
         </div>}
 
         <p className="theme-note">
-          Файл темы: <code>{theme.file}</code>. Те же значения доступны агенту — он не перекрашивает
-          страницу мимо токенов.
+          Значения живут в {files.length > 1 ? "файлах" : "файле"}{" "}
+          {files.map((file, index) => <span key={file}>{index > 0 ? ", " : ""}<code>{file}</code></span>)}.
+          Панель меняет только объявления переменных, остальные правила файла не трогает.
         </p>
       </>}
     </div>

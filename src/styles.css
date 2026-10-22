@@ -2348,12 +2348,10 @@ button,textarea{font:inherit}button{color:inherit}
 .theme-empty-retry{height:26px;padding:0 6px;font-size:10px;color:#7f8893}
 .theme-loading{display:flex;align-items:center;gap:8px;padding:16px 2px;color:#8b939e;font-size:11px}
 .theme-error{padding:9px 10px;border:1px solid #4a3030;border-radius:7px;background:#1b1212;color:#d99b9b;font-size:10.5px;line-height:1.5}
-/* Полоска хода: создание файла темы и пересборка предпросмотра занимают заметное время. */
-.theme-progress{display:grid;gap:7px;padding:10px 11px;border:1px solid var(--line-warm);border-radius:8px;background:#101419}
-.theme-progress-track{position:relative;height:5px;border-radius:3px;background:#1b2229;overflow:hidden}
-.theme-progress-fill{height:100%;border-radius:3px;background:linear-gradient(90deg,#6fbf8b,#a9d5b8);transition:width .3s ease}
-.theme-progress-meta{display:flex;align-items:baseline;justify-content:space-between;gap:8px;color:#8b939e;font-size:10px}
-.theme-progress-meta b{color:#b6dcc2;font-size:10px;font-weight:600;font-variant-numeric:tabular-nums}
+/* Переменная объявлена, но страница её не читает: строка остаётся правимой, но это видно. */
+.theme-unused-mark{margin-left:6px;padding:1px 5px;border-radius:4px;background:#221c12;color:#c8a878;font-size:9px;font-style:normal;font-weight:400;letter-spacing:.02em}
+.theme-color-row.unused .theme-color-meta>span{color:#9a8d7a}
+.theme-hint{margin:0;color:#8b7757;font-size:9.5px;line-height:1.6}
 /* Честное предупреждение: файл темы есть, но страница его переменные не читает. */
 .theme-warning{display:flex;align-items:flex-start;gap:8px;padding:10px 11px;border:1px solid #4a3f2a;border-radius:8px;background:#191510;color:#d9c09b}
 .theme-warning>svg{flex:none;margin-top:1px;color:#d3ad72}
