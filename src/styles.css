@@ -788,22 +788,21 @@ button,textarea{font:inherit}button{color:inherit}
 .connector-actions-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .connector-actions-row .ghost-button{height:28px;border-color:#2b3139}
 .connector-key{display:grid;gap:8px;padding:10px;border:1px solid #262c34;border-radius:8px;background:#0b0e12}
-.connector-key label{display:grid;gap:6px;color:#9ba2ac;font-size:10px}
-.connector-key label>span{display:flex;align-items:center;gap:6px;color:#dfe3e8;font-size:10.5px}
+/* Поля ввода — «label-столбик», а переключатель разрешения — отдельная строка (.connector-write),
+   поэтому правило колонки его не трогает: иначе подпись и тумблер вставали друг под другом. */
+.connector-key label:not(.connector-write){display:grid;gap:6px;color:#9ba2ac;font-size:10px}
+.connector-key label:not(.connector-write)>span{display:flex;align-items:center;gap:6px;color:#dfe3e8;font-size:10.5px}
 .connector-key textarea{min-height:78px;border:1px solid #2a3038;border-radius:7px;background:#0b0d10;padding:9px;font:10.5px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;color:#dce0e5}
-.connector-write{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:10px;border:1px solid #262c34;border-radius:8px;background:#0b0e12}
-.connector-write>span:first-child{display:grid;gap:4px;min-width:0}
-.connector-write strong{color:#d6dae0;font-size:11px;font-weight:550}
-.connector-write small{color:#737c87;font-size:9.5px;line-height:1.5}
+/* Разрешение на изменения — одна строка: подпись и переключатель напротив неё.
+   Пояснений под подписью нет: раскрытая карточка и так объясняет, что за доступ даёт ключ. */
+.connector-write{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:8px 10px;border:1px solid #262c34;border-radius:8px;background:#0b0e12}
+.connector-write strong{min-width:0;color:#d6dae0;font-size:10.5px;font-weight:550;line-height:1.35}
 .connector-hint{display:grid;gap:8px;margin-top:10px;padding:12px;border:1px dashed #31373f;border-radius:8px;background:#0e1116;color:#8b939e;font-size:10px;line-height:1.6}
 .connector-hint strong{display:flex;align-items:center;gap:6px;color:#dfe3e8;font-size:11px}
 .connector-hint p{margin:0}
 .connector-hint em{color:#b6bcc4;font-style:normal}
 .connector-hint code,.connector-text code,.connector-meta-line code{font:600 10px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:#c6ccd4;background:#141a20;border:1px solid #1f262e;border-radius:4px;padding:1px 4px;overflow-wrap:anywhere}
 .connector-warning{display:flex;align-items:flex-start;gap:6px;color:#d7bd79}
-.connector-steps{margin:0;padding-left:16px;display:grid;gap:5px;color:#8b939e;font-size:10px;line-height:1.6}
-.connector-steps strong{color:#cfd4da;font-weight:550}
-.connector-steps code{font:600 10px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;color:#c6ccd4;background:#141a20;border:1px solid #1f262e;border-radius:4px;padding:1px 4px}
 .connector-hint a,.connector-fineprint a{color:#a9c3d8;text-decoration:none;border-bottom:1px dashed #3d4a57}
 .connector-fineprint{margin:0;color:#6f7782;font-size:9.5px;line-height:1.6}
 /* Облачные коннекторы: колонка карточек, у каждой свой фирменный цвет плитки. */
@@ -1314,6 +1313,7 @@ button,textarea{font:inherit}button{color:inherit}
   .chat-bookmark i{width:6px;height:6px;border-radius:50%}
   .chat-bookmark:hover i,.chat-bookmark:focus-visible i{width:6px;height:6px;transform:none;background:#9fb6c8}
   .chat-bookmark.is-active i{width:6px;height:6px;background:#cfe0ec;box-shadow:0 0 0 3px rgba(127,168,196,.16)}
+  .chat-bookmark.is-member.is-active i{width:6px;height:6px;background:var(--camo);box-shadow:0 0 0 3px var(--camo-glow)}
   .chat-bookmark-tip{display:none}
 }
 /* Группа запросов: вместо десятка соседних полосок — одна круглая точка светлого каму.
@@ -1325,6 +1325,14 @@ button,textarea{font:inherit}button{color:inherit}
 .chat-bookmark.is-group:focus-visible{outline-color:var(--camo-line-strong)}
 .chat-bookmark-tip em{display:block;margin-top:5px;color:#8b9b91;font-size:9px;font-style:normal;line-height:1.45}
 @media(max-width:650px){.chat-bookmark.is-group i,.chat-bookmark.is-group:hover i,.chat-bookmark.is-group:focus-visible i,.chat-bookmark.is-group.is-active i{width:9px;height:9px}}
+/* Раскрытая группа: большая точка исчезла, вместо неё — её запросы, каждый на своём месте.
+   Метки чуть зеленее обычных: видно, что это содержимое той самой мятной точки, а не весь чат. */
+.chat-bookmark.is-member{animation:chat-bookmark-open .16s ease-out}
+.chat-bookmark.is-member i{background:#57705f}
+.chat-bookmark.is-member:hover i,.chat-bookmark.is-member:focus-visible i{background:#b6d2c0}
+.chat-bookmark.is-member.is-active i{background:var(--camo);box-shadow:0 0 0 2px var(--camo-glow)}
+@keyframes chat-bookmark-open{from{opacity:0}to{opacity:1}}
+@media(prefers-reduced-motion:reduce){.chat-bookmark.is-member{animation:none}}
 
 /* Compact phone layout: the plan chip, the run details and the usage meters keep their alignment
    instead of squeezing the text and the progress bars into the same row. */
@@ -2047,48 +2055,53 @@ button,textarea{font:inherit}button{color:inherit}
  * одним касанием, а сообщение — обычное текстовое поле, а не отдельный шаг. Окно намеренно
  * короче страницы тарифов: здесь не выбирают план, а говорят спасибо.
  */
-.donate-modal{width:min(560px,100%)}
+/* Окно доната — в светлом каму: те же окантовки, что у подписки и блоков главной, и та же
+   мягкая тень с переходом, только цвет берётся из общего акцента (--camo), а не из локальной
+   зелени. Светлая не заливка, а сам акцент: фон остаётся тёмным, как у остальных окон. */
+.donate-modal{width:min(560px,100%);border-color:var(--camo-line);background:radial-gradient(130% 100% at 50% -30%,rgba(169,213,184,.10),transparent 62%),#0f1216;box-shadow:0 28px 80px rgba(0,0,0,.55),0 0 0 1px rgba(169,213,184,.05),0 24px 64px -34px rgba(169,213,184,.4);transition:border-color .2s ease,box-shadow .2s ease}
+.donate-modal:hover{border-color:var(--camo-line-strong);box-shadow:0 28px 80px rgba(0,0,0,.55),0 0 0 1px rgba(169,213,184,.08),0 26px 70px -30px rgba(169,213,184,.5)}
 .donate-body{gap:13px;align-content:start}
-.donate-hero{display:flex;align-items:flex-start;gap:11px;padding:12px 13px;border:1px solid #263a2d;border-radius:11px;background:radial-gradient(120% 150% at 0% 0%,rgba(143,211,173,.11),transparent 62%),#0f1418}
-.donate-hero-icon{flex:none;width:30px;height:30px;display:grid;place-items:center;border:1px solid #3a5a47;border-radius:9px;background:#142219;color:#b7e3c4;box-shadow:0 0 0 4px rgba(143,211,173,.05)}
-.donate-hero p{margin:0;color:#98a69d;font-size:11px;line-height:1.62}
+.donate-hero{display:flex;align-items:flex-start;gap:11px;padding:12px 13px;border:1px solid var(--camo-line);border-radius:11px;background:radial-gradient(120% 150% at 0% 0%,var(--camo-glow),transparent 62%),#0f1418;transition:border-color .2s ease,box-shadow .2s ease}
+.donate-hero:hover{border-color:var(--camo-line-strong);box-shadow:0 12px 30px -20px rgba(169,213,184,.45)}
+.donate-hero-icon{flex:none;width:30px;height:30px;display:grid;place-items:center;border:1px solid var(--camo-line-strong);border-radius:9px;background:rgba(169,213,184,.07);color:var(--camo);box-shadow:0 0 0 4px var(--camo-glow);transition:border-color .2s ease,box-shadow .2s ease}
+.donate-hero p{margin:0;color:#9dab9f;font-size:11px;line-height:1.62}
 .donate-fields{display:grid;gap:8px}
 .donate-label{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
-.donate-label span{color:#d8e2db;font-size:10.5px;font-weight:600}
+.donate-label span{color:#dcebe0;font-size:10.5px;font-weight:600}
 .donate-label small{color:#6b7a71;font-size:9px}
 .donate-amounts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
-.donate-amount{height:38px;padding:0 6px;border:1px solid #29322d;border-radius:9px;background:#0e1317;color:#c8d2cc;font:600 11.5px/1 ui-monospace,SFMono-Regular,Menlo,monospace;cursor:pointer;transition:border-color .15s ease,background .15s ease,color .15s ease,transform .15s ease}
-.donate-amount:hover{border-color:#3d5547;color:#e9f0eb;transform:translateY(-1px)}
-.donate-amount.active{border-color:#6fae86;background:linear-gradient(160deg,#18281f,#101a15);color:#e4f3e8;box-shadow:inset 0 0 0 1px rgba(169,213,184,.22),0 6px 16px rgba(0,0,0,.22)}
+.donate-amount{height:38px;padding:0 6px;border:1px solid #2a352f;border-radius:9px;background:#0e1317;color:#c8d2cc;font:600 11.5px/1 ui-monospace,SFMono-Regular,Menlo,monospace;cursor:pointer;transition:border-color .15s ease,background .15s ease,color .15s ease,box-shadow .15s ease,transform .15s ease}
+.donate-amount:hover{border-color:var(--camo-line-strong);color:#eaf6ee;transform:translateY(-1px);box-shadow:0 8px 20px -14px rgba(169,213,184,.5)}
+.donate-amount.active{border-color:var(--camo);background:linear-gradient(160deg,rgba(169,213,184,.16),rgba(169,213,184,.04));color:#eef8f1;box-shadow:inset 0 0 0 1px var(--camo-line),0 6px 16px rgba(0,0,0,.22),0 0 18px -8px rgba(169,213,184,.45)}
 .donate-custom{display:grid;gap:5px}
 .donate-custom>span{color:#8b9a92;font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase}
-.donate-custom-field{display:flex;align-items:center;height:38px;border:1px solid #29322d;border-radius:9px;background:#0b0e12;overflow:hidden;transition:border-color .15s ease,box-shadow .15s ease}
-.donate-custom-field:focus-within{border-color:#4d7d60;box-shadow:0 0 0 3px rgba(143,211,173,.08)}
+.donate-custom-field{display:flex;align-items:center;height:38px;border:1px solid #2a352f;border-radius:9px;background:#0b0e12;overflow:hidden;transition:border-color .15s ease,box-shadow .15s ease}
+.donate-custom-field:focus-within{border-color:var(--camo-line-strong);box-shadow:0 0 0 3px var(--camo-glow)}
 .donate-custom-field input{flex:1;min-width:0;height:100%;padding:0 11px;border:0;background:transparent;color:#e8efea;font-size:12px;outline:none}
 .donate-custom-field input::placeholder{color:#5d6964}
 .donate-custom-field>span{padding:0 11px;color:#7f8f85;font-size:11px;border-left:1px solid #232b27}
 .donate-custom-hint{color:#c0a06a;font-size:9px;line-height:1.4}
 .donate-message{display:grid;gap:6px}
-.donate-message>span{display:flex;align-items:baseline;gap:6px;color:#d8e2db;font-size:10.5px;font-weight:600}
+.donate-message>span{display:flex;align-items:baseline;gap:6px;color:#dcebe0;font-size:10.5px;font-weight:600}
 .donate-message>span i{color:#66746d;font-size:8.5px;font-style:normal;font-weight:500}
-.donate-message textarea{width:100%;min-height:82px;padding:9px 10px;border:1px solid #29322d;border-radius:9px;background:#0b0e12;color:#e3e9e5;font-family:inherit;font-size:11.5px;line-height:1.6;resize:vertical;outline:none;transition:border-color .15s ease,box-shadow .15s ease}
+.donate-message textarea{width:100%;min-height:82px;padding:9px 10px;border:1px solid #2a352f;border-radius:9px;background:#0b0e12;color:#e3e9e5;font-family:inherit;font-size:11.5px;line-height:1.6;resize:vertical;outline:none;transition:border-color .15s ease,box-shadow .15s ease}
 .donate-message textarea::placeholder{color:#5d6964}
-.donate-message textarea:focus{border-color:#4d7d60;box-shadow:0 0 0 3px rgba(143,211,173,.08)}
+.donate-message textarea:focus{border-color:var(--camo-line-strong);box-shadow:0 0 0 3px var(--camo-glow)}
 .donate-message small{display:flex;align-items:baseline;justify-content:space-between;gap:8px;color:#66736c;font-size:9px;line-height:1.45}
 .donate-message small b{color:#6f7f76;font-weight:500;font-variant-numeric:tabular-nums;white-space:nowrap}
 .donate-error{margin:0;padding:8px 10px;font-size:10px}
-.donate-submit{display:flex;align-items:center;justify-content:center;gap:7px;width:100%;height:42px;border:1px solid #9fd6b4;border-radius:10px;background:linear-gradient(180deg,#c8ecd4,#9ed6b1);color:#0a130d;font-size:12px;font-weight:650;letter-spacing:-.01em;cursor:pointer;transition:filter .15s ease,transform .15s ease,box-shadow .15s ease}
-.donate-submit:hover:not(:disabled){filter:brightness(1.04);transform:translateY(-1px);box-shadow:0 10px 24px rgba(143,211,173,.16)}
+.donate-submit{display:flex;align-items:center;justify-content:center;gap:7px;width:100%;height:42px;border:1px solid var(--camo);border-radius:10px;background:linear-gradient(180deg,#d5f0de,var(--camo));color:#0a130d;font-size:12px;font-weight:650;letter-spacing:-.01em;cursor:pointer;transition:filter .15s ease,transform .15s ease,box-shadow .15s ease}
+.donate-submit:hover:not(:disabled){filter:brightness(1.04);transform:translateY(-1px);box-shadow:0 10px 26px -10px rgba(169,213,184,.55)}
 .donate-submit:disabled{opacity:.55;cursor:not-allowed}
 .donate-fineprint{margin:0;color:#626f68;font-size:9px;line-height:1.5;text-align:center}
 .donate-foot{justify-content:space-between}
 .donate-foot>span{display:flex;align-items:center;gap:6px;color:#6f7d74;font-size:9.5px}
-.donate-foot>span svg{flex:none;color:#7fae91}
+.donate-foot>span svg{flex:none;color:var(--camo)}
 .donate-success{place-items:center;justify-items:center;text-align:center;gap:8px;padding:28px 18px}
-.donate-success-icon{width:48px;height:48px;display:grid;place-items:center;border:1px solid #3d6a51;border-radius:50%;background:radial-gradient(circle at 30% 25%,#1c3325,#0f1712);color:#c3ebcd;box-shadow:0 0 0 7px rgba(143,211,173,.05)}
+.donate-success-icon{width:48px;height:48px;display:grid;place-items:center;border:1px solid var(--camo-line-strong);border-radius:50%;background:radial-gradient(circle at 30% 25%,rgba(169,213,184,.18),rgba(169,213,184,.03));color:#dcf4e3;box-shadow:0 0 0 7px var(--camo-glow)}
 .donate-success strong{font-size:13.5px;color:#e9f0eb}
 .donate-success p{margin:0;max-width:340px;color:#8d9b93;font-size:11px;line-height:1.6}
-.donate-success-note{max-width:340px;padding:8px 10px;border:1px solid #29322d;border-radius:8px;background:#0d1210;color:#a9c3b1 !important;font-style:italic;overflow-wrap:anywhere}
+.donate-success-note{max-width:340px;padding:8px 10px;border:1px solid var(--camo-line);border-radius:8px;background:rgba(169,213,184,.05);color:#b3cdbb !important;font-style:italic;overflow-wrap:anywhere}
 .donate-success .send-button{width:auto;height:32px;padding:0 14px;gap:6px;margin-top:4px}
 @media(max-width:650px){
   .donate-modal{width:100%;max-height:calc(100dvh - 20px);border-radius:12px}

@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from "react";
+import { useState } from "react";
 import { ChevronDown, ExternalLink, KeyRound, Minus, Plus } from "lucide-react";
 import { BrandLogo, type BrandId } from "../../components/BrandLogo";
 
@@ -30,7 +30,6 @@ export type KeyProviderInfo = {
   docsUrl: string;
   tagline: string;
   fields: KeyProviderField[];
-  steps: string[];
   /** Официальный логотип сервиса — единственное, что показывает заголовок карточки. */
   logo: BrandId;
 };
@@ -43,23 +42,22 @@ export type KeyConnectionState = {
 };
 
 /**
- * Одна карточка подключения. В свёрнутом виде — только название и кнопка: инструкция,
- * поля и ссылки живут в раскрывающейся части, поэтому список остаётся списком, а не
- * простынёй текста.
+ * Одна карточка подключения. В свёрнутом виде — только название и кнопка: поля и ссылки живут
+ * в раскрывающейся части, поэтому список остаётся списком, а не простынёй текста.
+ *
+ * Подсказок «где нажать в кабинете» и «что мы проверим» в карточке нет намеренно: путь к ключу
+ * объясняет страница по кнопке «Где взять ключ», а проверка видна по самому действию. Поэтому
+ * раскрытая карточка — это сначала поля ключа, потом переключатель разрешения, потом действие.
  */
-export function KeyCard({ provider, state, onChanged, endpoint, keyLabel = "Где взять ключ", verificationNote, fineprint, accessNotice, writes }: {
+export function KeyCard({ provider, state, onChanged, endpoint, keyLabel = "Где взять ключ", fineprint, writes }: {
   provider: KeyProviderInfo;
   state: KeyConnectionState | undefined;
   onChanged: (next: KeyConnectionState) => void;
   /** Префикс API, к которому относится карточка, например /api/cloud. */
   endpoint: string;
   keyLabel?: string;
-  /** Что именно проверяется при сохранении (или почему проверки нет). */
-  verificationNote?: string;
   /** Подпись вместо стандартной — для сервисов без проверки ключа. */
   fineprint?: string;
-  /** Что пользователь даёт подключением: показывается до сохранения ключа, а не после. */
-  accessNotice?: ReactNode;
   /**
    * Разрешение на изменения. Если передано, у карточки есть переключатель: до подключения —
    * черновик (включён), после — состояние с сервера. Так пользователь решает про доступ до
@@ -162,42 +160,26 @@ export function KeyCard({ provider, state, onChanged, endpoint, keyLabel = "Гд
     </div>}
 
     {connected && writes && <label className="connector-write">
-      <span>
-        <strong>Разрешить агенту изменять ресурсы</strong>
-        <small>{writes.allowed
-          ? "Включено: агент создаёт, меняет и удаляет ресурсы по вашей команде."
-          : "Выключено: агент только читает."}</small>
-      </span>
+      <strong>Разрешить агенту изменять ресурсы</strong>
       <span className="switch"><input type="checkbox" checked={writes.allowed} disabled={busy || writes.busy} onChange={event => writes.onToggle(event.target.checked)}/><span className="switch-track"><span className="switch-thumb"/></span></span>
     </label>}
 
     {error && <div className="connector-notice">{error}</div>}
 
     {open && <div className="connector-key">
-      {!connected && accessNotice && <div className="connector-hint">{accessNotice}</div>}
-
-      {!connected && writes && <label className="connector-write">
-        <span>
-          <strong>Разрешить агенту изменять ресурсы</strong>
-          <small>{writesDraft
-            ? "Включено: агент создаёт, меняет и удаляет ресурсы по вашей команде."
-            : "Выключено: агент только читает."}</small>
-        </span>
-        <span className="switch"><input type="checkbox" checked={writesDraft} disabled={busy} onChange={event => setWritesDraft(event.target.checked)}/><span className="switch-track"><span className="switch-thumb"/></span></span>
-      </label>}
-
-      {!connected && <ol className="connector-steps">
-        {provider.steps.map(step => <li key={step}>{step}</li>)}
-      </ol>}
-
-      {verificationNote && <p className="connector-fineprint">{verificationNote}</p>}
-
+      {/* Сначала то, что заполняют, — поля ключа. Разрешение спрашивается после: человек уже
+          понимает, какой доступ даёт ключ, и не читает абзац перед вводом. */}
       {provider.fields.map(field => <label key={field.key}>
         <span><KeyRound size={12}/> {field.label}</span>
         {field.multiline
           ? <textarea rows={4} value={fields[field.key] ?? ""} placeholder={field.placeholder} onChange={event => setField(field.key, event.target.value)}/>
           : <input type={field.secret ? "password" : "text"} value={fields[field.key] ?? ""} placeholder={field.placeholder} autoComplete="off" spellCheck={false} onChange={event => setField(field.key, event.target.value)}/>}
       </label>)}
+
+      {!connected && writes && <label className="connector-write">
+        <strong>Разрешить агенту изменять ресурсы</strong>
+        <span className="switch"><input type="checkbox" checked={writesDraft} disabled={busy} onChange={event => setWritesDraft(event.target.checked)}/><span className="switch-track"><span className="switch-thumb"/></span></span>
+      </label>}
 
       <div className="connector-actions-row">
         <button className="connector-action connector-connect" onClick={() => void save()} disabled={!ready || busy}>{busy ? "Проверяем доступ…" : "Сохранить"}</button>

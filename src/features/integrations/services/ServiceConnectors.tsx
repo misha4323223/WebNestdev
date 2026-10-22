@@ -9,7 +9,6 @@ type ServiceStatus = {
   connected: boolean;
   account: string | null;
   verification: "check" | "store";
-  verificationNote: string;
   env: string[];
 };
 
@@ -61,7 +60,6 @@ export function ServiceConnectors() {
             state={states[service.id]}
             onChanged={next => setStates(current => ({ ...current, [service.id]: next }))}
             endpoint="/api/services"
-            verificationNote={status?.verificationNote}
             fineprint={checking
               ? "Ключ проверяется до сохранения, шифруется на сервере и не возвращается в браузер. "
               : "Проверка недоступна: ключи шифруются на сервере и не возвращаются в браузер. "}

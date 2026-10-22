@@ -7,6 +7,14 @@ import { useCallback, useEffect, useRef, useState } from "react";
  * переносит переписку к нему. В долгом чате метки собираются в группы по десять: иначе они
  * сливаются в сплошной пунктир (см. buildGroups).
  *
+ * Группа — матрёшка, а не ярлык «перейти к первому». Пока группа закрыта, на рельсе одна
+ * большая мятная точка; клик по ней раскрывает группу — точка исчезает, а на её месте встают
+ * десять обычных меток, каждая на позиции своего запроса. Раскрывается и без клика: группа,
+ * в которой сейчас читают, открывается сама, чтобы на рельсе было видно место внутри десятка.
+ * Уход (прокрутка дальше, курсор с рельсы, переход по метке) собирает её обратно: на рельсе
+ * снова одна большая точка. На телефоне поведение то же — тап раскрывает, тап по метке ведёт
+ * к запросу.
+ *
  * Сама полоска — и есть прокрутка: системный бегунок в переписке спрятан, а перетаскивание вдоль
  * меток двигает переписку, как ползунок. Клик по метке остаётся переходом к запросу, поэтому
  * короткое нажатие и перетаскивание различаются по смещению пальца или курсора.
@@ -32,18 +40,19 @@ function preview(text: string) {
 }
 
 type Mark = { index: number; ratio: number; top: number };
-type RailGroup = { key: string; members: Mark[]; ratio: number };
+type RailGroup = { key: string; start: number; members: Mark[]; ratio: number };
 
 /**
  * Метки рельсы. Пока запросов немного — один запрос, одна метка, как раньше. Но в долгом чате
  * сорок запросов превращали полоску в сплошной пунктир, где уже не видно ни позиции, ни смысла:
  * поэтому каждые десять соседних запросов собираются в одну точку светлого каму. Такая точка
- * сразу отличается от одиночной, а клик по ней ведёт к первому запросу группы.
+ * отличается от одиночной и раскрывается в свои запросы (см. компонент).
  */
 function buildGroups(marks: Mark[], compact: boolean): RailGroup[] {
   if (marks.length <= GROUP_SIZE) {
     return marks.map((mark, position) => ({
       key: String(mark.index),
+      start: position,
       members: [mark],
       ratio: compact ? (position + 0.5) / marks.length : mark.ratio,
     }));
@@ -55,7 +64,7 @@ function buildGroups(marks: Mark[], compact: boolean): RailGroup[] {
     const ratio = compact
       ? (start + members.length / 2) / marks.length
       : (members[0].ratio + members[members.length - 1].ratio) / 2;
-    groups.push({ key: "g" + start, members, ratio });
+    groups.push({ key: "g" + start, start, members, ratio });
   }
   return groups;
 }
@@ -68,6 +77,12 @@ export function ChatBookmarks({ containerRef, items, onJump }: {
 }) {
   const [marks, setMarks] = useState<Mark[]>([]);
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  // Раскрытая кликом группа. Живёт до первого ухода: прокрутки, курсора с рельсы или перехода
+  // по метке — дальше раскрытием снова владеет позиция чтения.
+  const [expanded, setExpanded] = useState<string | null>(null);
+  // Раскрытие по позиции включается только после настоящей прокрутки: при открытии чата
+  // рельса показывает те самые большие точки, а не одну уже раскрытую.
+  const [scrolled, setScrolled] = useState(false);
   // Подсказка привязана к точке рельсы, а не к сообщению: у группы запросов одна точка.
   const [hovered, setHovered] = useState<string | null>(null);
   // На телефоне рельса узкая, и полоски в настоящих координатах слипаются в одну. Там это точки,
@@ -76,6 +91,10 @@ export function ChatBookmarks({ containerRef, items, onJump }: {
   // Перетаскивание полоски: moved — смещение больше порога, тогда отпускание не считается кликом
   // по метке. Слушатели висят на window, а не на самой полоске: палец во время перетаскивания
   // уходит за её пределы, а захват указателя отнял бы click у меток — по ним нужен переход.
+  const railRef = useRef<HTMLDivElement>(null);
+  // Высота рельсы в пикселях: по ней раскрытая группа считает, сколько места у неё на одну
+  // метку. Без этого в узком окне десять кнопок ложились друг на друга и тап попадал в соседнюю.
+  const [railHeight, setRailHeight] = useState(0);
   const dragRef = useRef<{ moved: boolean; startY: number; top: number; height: number } | null>(null);
   const suppressClickRef = useRef(false);
   const detachRef = useRef<(() => void) | null>(null);
@@ -103,6 +122,11 @@ export function ChatBookmarks({ containerRef, items, onJump }: {
     if (!box) return;
     const height = box.scrollHeight;
     heightRef.current = height;
+    const rail = railRef.current;
+    if (rail) {
+      const measured = rail.getBoundingClientRect().height;
+      setRailHeight(current => Math.abs(current - measured) < 0.5 ? current : measured);
+    }
     // Верх контента в координатах страницы: так позиция строки не зависит от того, кто
     // оказался offsetParent у сообщения.
     const contentTop = box.getBoundingClientRect().top - box.scrollTop;
@@ -146,15 +170,19 @@ export function ChatBookmarks({ containerRef, items, onJump }: {
     if (!box) return;
     const onScroll = () => {
       if (box.scrollHeight !== heightRef.current) scheduleMeasure();
+      // Прокрутка — это уход от группы, раскрытой кликом: дальше раскрытием владеет позиция чтения.
+      setExpanded(null);
       // Метка текущего чтения — последняя, чей запрос уже выше середины видимой части.
       const anchor = box.scrollTop + box.clientHeight * 0.4;
       let current: number | null = null;
       for (const mark of marksRef.current) if (mark.top <= anchor) current = mark.index;
       setActiveIndex(current);
     };
-    box.addEventListener("scroll", onScroll, { passive: true });
+    const onUserScroll = () => { onScroll(); setScrolled(true); };
+    box.addEventListener("scroll", onUserScroll, { passive: true });
+    // Первый замер — не прокрутка: он только расставляет активную метку.
     onScroll();
-    return () => box.removeEventListener("scroll", onScroll);
+    return () => box.removeEventListener("scroll", onUserScroll);
   }, [containerRef, measure, scheduleMeasure]);
 
   // Прокрутка полоской: доля от высоты рельсы — та же доля от прокручиваемой длины переписки.
@@ -202,11 +230,62 @@ export function ChatBookmarks({ containerRef, items, onJump }: {
 
   const textOf = (index: number) => itemsRef.current.find(item => item.index === index)?.text ?? "";
   const groups = buildGroups(marks, compact);
+  // Группа, в которой сейчас читают: она раскрыта и без клика, чтобы на рельсе было видно место
+  // внутри десятка. Клик важнее позиции, пока не случился уход.
+  const activeGroup = !scrolled || activeIndex === null
+    ? null
+    : groups.find(group => group.members.length > 1 && group.members.some(member => member.index === activeIndex)) ?? null;
+  const clickedGroup = expanded ? groups.find(group => group.key === expanded && group.members.length > 1) ?? null : null;
+  const openKey = (clickedGroup ?? activeGroup)?.key ?? null;
 
-  return <div className="chat-bookmarks" aria-label="Прокрутка и закладки переписки" role="navigation"
-    onPointerDown={railPointerDown}>
+  /** Метки раскрытой группы: та же группа, но каждый запрос — своей меткой. */
+  const renderMembers = (group: RailGroup) => {
+    // Самый тесный промежуток в группе: по нему ограничивается зона нажатия, чтобы метки
+    // не перекрывали друг друга и тап всегда попадал в ту, по которой попали.
+    const gaps = group.members.slice(1).map((member, position) => member.ratio - group.members[position].ratio).filter(gap => gap > 0);
+    const gapRatio = compact ? 1 / Math.max(1, marks.length) : (gaps.length ? Math.min(...gaps) : 0);
+    const hit = railHeight > 0 && gapRatio > 0
+      ? Math.max(6, Math.min(compact ? 18 : 12, gapRatio * railHeight - 1))
+      : undefined;
+    return group.members.map((member, position) => {
+      const ratio = compact ? (group.start + position + 0.5) / marks.length : member.ratio;
+      const key = "m" + member.index;
+      const active = member.index === activeIndex;
+      return <button
+        key={key}
+        type="button"
+        className={"chat-bookmark is-member" + (active ? " is-active" : "")}
+        style={{ top: (ratio * 100) + "%", height: hit }}
+        onClick={() => {
+          if (suppressClickRef.current) return;
+          // Переход — это уход из группы: после него рельса снова собирается в большие точки.
+          setExpanded(null);
+          onJump(member.index);
+        }}
+        onMouseEnter={() => { setHovered(key); measure(); }}
+        onMouseLeave={() => setHovered(current => (current === key ? null : current))}
+        onFocus={() => { setHovered(key); measure(); }}
+        onBlur={() => setHovered(null)}
+        aria-label={"Перейти к запросу: " + preview(textOf(member.index))}
+      >
+        <i aria-hidden="true"/>
+        {hovered === key && !compact && <span className="chat-bookmark-tip" role="tooltip">
+          <strong>Ваш запрос</strong>
+          {preview(textOf(member.index))}
+        </span>}
+      </button>;
+    });
+  };
+
+  return <div className="chat-bookmarks" ref={railRef} aria-label="Прокрутка и закладки переписки" role="navigation"
+    onPointerDown={railPointerDown}
+    // Курсор ушёл с рельсы — раскрытая кликом группа собирается обратно. На телефоне «уход»
+    // наступает прокруткой, поэтому исчезновение пальца здесь ничего не закрывает.
+    onPointerLeave={event => { if (event.pointerType !== "touch") setExpanded(null); }}
+  >
     {groups.map(group => {
-      // Точка — это один запрос или группа из десяти: ведёт она всегда к первому в группе.
+      if (openKey === group.key) return renderMembers(group);
+      // Точка — это один запрос или группа из десяти: группа раскрывается, одиночная ведёт к себе.
       const lead = group.members[0];
       const grouped = group.members.length > 1;
       const active = group.members.some(member => member.index === activeIndex);
@@ -215,20 +294,25 @@ export function ChatBookmarks({ containerRef, items, onJump }: {
         type="button"
         className={"chat-bookmark" + (active ? " is-active" : "") + (grouped ? " is-group" : "")}
         style={{ top: (group.ratio * 100) + "%" }}
-        onClick={() => { if (suppressClickRef.current) return; onJump(lead.index); }}
+        onClick={() => {
+          if (suppressClickRef.current) return;
+          if (grouped) { setExpanded(group.key); return; }
+          setExpanded(null);
+          onJump(lead.index);
+        }}
         onMouseEnter={() => { setHovered(group.key); measure(); }}
         onMouseLeave={() => setHovered(current => (current === group.key ? null : current))}
         onFocus={() => { setHovered(group.key); measure(); }}
         onBlur={() => setHovered(null)}
         aria-label={grouped
-          ? "Перейти к группе из " + group.members.length + " запросов, первый: " + preview(textOf(lead.index))
+          ? "Раскрыть группу из " + group.members.length + " запросов, первый: " + preview(textOf(lead.index))
           : "Перейти к запросу: " + preview(textOf(lead.index))}
       >
         <i aria-hidden="true"/>
         {hovered === group.key && !compact && <span className="chat-bookmark-tip" role="tooltip">
           <strong>{grouped ? "Группа · " + group.members.length + " запросов" : "Ваш запрос"}</strong>
           {preview(textOf(lead.index))}
-          {grouped && <em>Нажмите, чтобы перейти к первому запросу группы</em>}
+          {grouped && <em>Нажмите, чтобы раскрыть группу</em>}
         </span>}
       </button>;
     })}
