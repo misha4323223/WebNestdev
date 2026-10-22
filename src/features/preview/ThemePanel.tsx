@@ -1,6 +1,6 @@
 import { Check, Loader2, Palette, Pipette, Sparkles, TriangleAlert, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getProjectTheme, saveProjectTheme, type ProjectTheme, type ThemeField } from "../../lib/project-api";
+import { createProjectTheme, getProjectTheme, saveProjectTheme, type ProjectTheme, type ThemeField } from "../../lib/project-api";
 import { composeAgentPrompt, THEME_SETUP_PROMPT } from "../../lib/agent-compose";
 
 /**
@@ -83,7 +83,12 @@ export function ThemePanel({ projectId, onClose, onApplied }: {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
+  /** Шаги создания палитры: проценты показывают ход работы, а не выдуманное время. */
+  const [progress, setProgress] = useState<{ percent: number; label: string } | null>(null);
   const savedTimer = useRef<number | null>(null);
+  // StrictMode в разработке монтирует компонент дважды: без этого флага стили проекта
+  // переписывались бы двумя параллельными запросами.
+  const creating = useRef(false);
 
   const eyedropper = useMemo<EyeDropperConstructor | undefined>(() => {
     const api = (window as unknown as { EyeDropper?: EyeDropperConstructor }).EyeDropper;
@@ -98,10 +103,55 @@ export function ThemePanel({ projectId, onClose, onApplied }: {
     }, {}));
   }
 
+  /**
+   * Создание палитры. Панель делает это сама, когда переменных в проекте нет: собрать токены из
+   * фактических цветов страницы и перевести совпавшие значения на `var()` — механическая работа,
+   * ради которой не нужен прогон модели. Пока запрос идёт, полоска медленно движется к 80%:
+   * на сервере это чтение стилей, перезапись файлов и пересборка предпросмотра.
+   */
+  async function create(fallback: ProjectTheme) {
+    if (creating.current) return;
+    creating.current = true;
+    setError("");
+    setProgress({ percent: 8, label: "Собираем палитру из цветов страницы…" });
+    const creep = window.setInterval(() => {
+      setProgress(current => current && current.percent < 80
+        ? { percent: Math.min(80, current.percent + 4), label: current.label }
+        : current);
+    }, 220);
+    try {
+      const next = await createProjectTheme(projectId);
+      setProgress({ percent: 92, label: "Обновляем предпросмотр…" });
+      apply(next);
+      if (next.present) {
+        onApplied();
+        setProgress({ percent: 100, label: "Палитра готова" });
+        window.setTimeout(() => setProgress(null), 600);
+      } else {
+        setProgress(null);
+        setError(next.reason ?? "В стилях проекта не нашлось цветов для палитры");
+      }
+    } catch (failure) {
+      // Сервер отказал — показываем пустое состояние с объяснением, а не вечную загрузку.
+      apply(fallback);
+      setProgress(null);
+      setError(failure instanceof Error ? failure.message : "Не удалось создать палитру");
+    } finally {
+      window.clearInterval(creep);
+      creating.current = false;
+    }
+  }
+
   async function load() {
     setError("");
     try {
-      apply(await getProjectTheme(projectId));
+      const next = await getProjectTheme(projectId);
+      if (next.present) {
+        apply(next);
+        return;
+      }
+      // Переменных нет — панель заводит тему сама, вместо пустого экрана и похода к агенту.
+      await create(next);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "Не удалось прочитать палитру проекта");
     }
@@ -168,20 +218,27 @@ export function ThemePanel({ projectId, onClose, onApplied }: {
     </div>
 
     <div className="theme-body">
-      {!theme && !error && <div className="theme-loading"><Loader2 size={16} className="spin"/> Загружаем палитру проекта…</div>}
+      {progress && <div className="theme-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.percent} aria-label={progress.label}>
+        <div className="theme-progress-track"><div className="theme-progress-fill" style={{ width: progress.percent + "%" }}/></div>
+        <div className="theme-progress-meta"><span>{progress.label}</span><b>{progress.percent}%</b></div>
+      </div>}
+      {!theme && !error && !progress && <div className="theme-loading"><Loader2 size={16} className="spin"/> Загружаем палитру проекта…</div>}
       {error && <div className="theme-error">{error}</div>}
 
-      {theme && !theme.present && <div className="theme-empty">
+      {theme && !theme.present && !progress && <div className="theme-empty">
         <div className="theme-empty-icon"><Palette size={20}/></div>
-        <strong>В проекте нет переменных палитры</strong>
+        <strong>В стилях не нашлось цветов для палитры</strong>
         <p>
-          Панель меняет только значения переменных (<code>var(--…)</code>). Если цвета вписаны в
-          стили напрямую, править здесь нечего — и сохранение ничего бы не перекрасило. Агент
+          Панель уже попробовала собрать палитру из цветов страницы: в CSS и блоках
+          <code> &lt;style&gt; </code> их нет — цвета заданы классами или inline-стилями. Агент
           переведёт цвета, шрифты и скругления на переменные и подключит файл темы.
         </p>
-        <button className="theme-action theme-empty-action" onClick={askAgent}>
-          <Sparkles size={14}/> Перевести цвета на тему
-        </button>
+        <div className="theme-empty-actions">
+          <button className="ghost-button theme-empty-retry" onClick={() => void create(theme)}>Попробовать снова</button>
+          <button className="theme-action theme-empty-action" onClick={askAgent}>
+            <Sparkles size={14}/> Перевести цвета на тему
+          </button>
+        </div>
       </div>}
 
       {theme?.present && <>

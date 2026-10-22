@@ -43,7 +43,12 @@ export type Palette = {
 const SCAN_EXTENSIONS = new Set([".css", ".html", ".htm", ".js", ".jsx", ".ts", ".tsx", ".vue", ".svelte"]);
 /** Зависимости, сборки и служебные папки: там чужой CSS, и палитры проекта в нём нет. */
 const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build", "out", ".next", ".output", ".cache", "coverage", ".vite"]);
-const MAX_FILES = 300;
+/**
+ * Сколько файлов вообще читается. Импортированный репозиторий с сервером и десятком папок
+ * легко переваливает за сотни файлов, и палитра в его стилях просто не попадала в окно сканера:
+ * панель честно говорила «переменных нет» про проект, где они есть.
+ */
+const MAX_FILES = 800;
 const MAX_FILE_BYTES = 200_000;
 
 /**
@@ -191,20 +196,25 @@ function kindOf(variable: string, raw: string): { kind: PaletteKind; value: stri
   return hex ? { kind: "color", value: hex } : null;
 }
 
-type ScannedFile = { file: string; text: string; css: boolean };
+export type ScannedFile = { file: string; text: string; css: boolean };
 
-async function readProjectFiles(root: string): Promise<ScannedFile[]> {
+/**
+ * Файлы проекта, где может жить палитра. Обход в ширину: при потолке файлов первыми читаются
+ * стили верхнего уровня (`src/`, `styles/`), а не глубокая папка сервера, иначе у монорепозитория
+ * палитра снова окажется «пустой».
+ */
+export async function scanProjectFiles(root: string): Promise<ScannedFile[]> {
   const files: ScannedFile[] = [];
-  const stack = [root];
-  while (stack.length && files.length < MAX_FILES) {
-    const dir = stack.pop() as string;
+  const queue = [root];
+  for (let index = 0; index < queue.length && files.length < MAX_FILES; index++) {
+    const dir = queue[index];
     const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
     for (const entry of entries) {
       if (files.length >= MAX_FILES) break;
       if (entry.name.startsWith(".") || SKIP_DIRS.has(entry.name)) continue;
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
-        stack.push(full);
+        queue.push(full);
         continue;
       }
       const extension = path.extname(entry.name).toLowerCase();
@@ -236,7 +246,7 @@ function referencedVariables(files: ScannedFile[]) {
  * (медиазапрос, вариант темы): панель правит то объявление, которое реально попадает в страницу.
  */
 export async function readPalette(root: string): Promise<Palette> {
-  const files = await readProjectFiles(root);
+  const files = await scanProjectFiles(root);
   const themeFile = findContractTheme(files);
   // Файл темы мог появиться без подключения (например, его создала панель у проекта, где цвета
   // вписаны в styles.css). Неподключённый файл в каскаде не участвует, поэтому его значения не

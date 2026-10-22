@@ -6,6 +6,7 @@ import { getSandbox } from "../sandbox-manager.js";
 import { writeFileInside } from "../sandbox/path-guard.js";
 import { applyNoStoreToReply } from "./cache-headers.js";
 import { readPalette, normalizePaletteValue, patchPaletteValue, readPaletteFile, type Palette, type PaletteKind } from "../design/palette.js";
+import { createProjectPalette } from "../design/palette-create.js";
 import { FONT_OPTIONS } from "../design/theme.js";
 import { refreshStaticPreview } from "../preview/static-preview.js";
 
@@ -62,6 +63,30 @@ export async function registerThemeRoutes(app: FastifyInstance, deps: ThemeRoute
     applyNoStoreToReply(reply);
     const sandbox = await deps.getSandbox(p.id, user.id);
     return themeReply(await readPalette(sandbox.root));
+  });
+
+  /**
+   * Создание палитры для проекта, где цвета вписаны в стили напрямую. Панель вызывает это сама
+   * при открытии «Палитры»: собирает токены из фактических цветов страницы, пишет `theme.css` и
+   * заменяет совпавшие литералы на `var(--color-…)`. Без этого шага человек видел пустой экран
+   * и тратил шаг агента на одну и ту же механическую правку.
+   *
+   * Ответ 200 и при отказе: «создавать не из чего» — не сбой сервера, а объяснение, которое
+   * панель показывает вместе с кнопкой агента. Уже существующая палитра не перезаписывается.
+   */
+  app.post("/api/projects/:id/theme", async (request, reply) => {
+    const p = z.object({ id: z.string().min(1) }).parse(request.params);
+    const user = await deps.authorize(request, reply, p.id);
+    if (!user) return;
+    const sandbox = await deps.getSandbox(p.id, user.id);
+    const outcome = await createProjectPalette(sandbox.root);
+    if (outcome.created) {
+      // Переписанные стили и новый файл темы попадают в статический предпросмотр только после
+      // пересборки — ждём её до ответа, как и при сохранении палитры.
+      await deps.refreshPreview(p.id).catch(error => console.warn("[theme] предпросмотр не пересобран", error));
+    }
+    applyNoStoreToReply(reply);
+    return { ...themeReply(await readPalette(sandbox.root)), created: outcome.created, ...(outcome.reason ? { reason: outcome.reason } : {}) };
   });
 
   /**

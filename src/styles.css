@@ -2346,6 +2346,13 @@ button,textarea{font:inherit}button{color:inherit}
 .theme-empty code{font:10px ui-monospace,SFMono-Regular,Menlo,monospace;color:#b6c2cb}
 .theme-empty-action{margin-top:3px}
 .theme-empty-retry{height:26px;padding:0 6px;font-size:10px;color:#7f8893}
+.theme-empty-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+/* Полоска хода: сборка палитры и пересборка предпросмотра занимают заметное время. */
+.theme-progress{display:grid;gap:7px;padding:10px 11px;border:1px solid var(--line-warm);border-radius:8px;background:#101419}
+.theme-progress-track{position:relative;height:5px;border-radius:3px;background:#1b2229;overflow:hidden}
+.theme-progress-fill{height:100%;border-radius:3px;background:linear-gradient(90deg,#6fbf8b,#a9d5b8);transition:width .3s ease}
+.theme-progress-meta{display:flex;align-items:baseline;justify-content:space-between;gap:8px;color:#8b939e;font-size:10px}
+.theme-progress-meta b{color:#b6dcc2;font-size:10px;font-weight:600;font-variant-numeric:tabular-nums}
 .theme-loading{display:flex;align-items:center;gap:8px;padding:16px 2px;color:#8b939e;font-size:11px}
 .theme-error{padding:9px 10px;border:1px solid #4a3030;border-radius:7px;background:#1b1212;color:#d99b9b;font-size:10.5px;line-height:1.5}
 /* Переменная объявлена, но страница её не читает: строка остаётся правимой, но это видно. */

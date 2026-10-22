@@ -143,7 +143,43 @@ test("PUT refuses a variable the project does not declare", async () => {
   assert.match(response.json().error, /--color-text/);
 });
 
-test("PUT refuses a value that would break out of the declaration", async () => {
+test("POST creates a palette from hardcoded colours and rebuilds the preview", async () => {
+  const root = await project({
+    "index.html": "<!doctype html><html><head><link rel=\"stylesheet\" href=\"styles.css\"></head><body><a class=\"btn\">x</a></body></html>",
+    "styles.css": "body{background:#fafafa;color:#202020}.btn{background:#2f6f4f;color:#ffffff}\n",
+  });
+  const { app, refreshed } = await appFor(root);
+  const response = await app.inject({ method: "POST", url: "/api/projects/p1/theme" });
+  assert.equal(response.statusCode, 200);
+  const body = response.json();
+  assert.equal(body.created, true);
+  assert.equal(body.present, true);
+  assert.equal(body.tokens["--color-bg"], "#fafafa");
+  assert.equal(body.tokens["--color-accent"], "#2f6f4f");
+  assert.deepEqual(refreshed, ["p1"], "предпросмотр пересобирается до ответа");
+  assert.match(await readFile(path.join(root, "styles.css"), "utf8"), /background:var\(--color-bg\)/);
+
+  // Созданная панелью тема правится так же, как любая другая: правка уходит в theme.css,
+  // а стили продолжают читать токен.
+  const saved = await app.inject({ method: "PUT", url: "/api/projects/p1/theme", payload: { tokens: { "--color-bg": "#101010" } } });
+  assert.equal(saved.statusCode, 200);
+  assert.equal(saved.json().tokens["--color-bg"], "#101010");
+  assert.match(await readFile(path.join(root, "theme.css"), "utf8"), /--color-bg:#101010;/);
+});
+
+test("POST never rewrites a project that already declares a palette", async () => {
+  const root = await project(OWN_PALETTE);
+  const { app, refreshed } = await appFor(root);
+  const before = await readFile(path.join(root, "styles.css"), "utf8");
+  const response = await app.inject({ method: "POST", url: "/api/projects/p1/theme" });
+  const body = response.json();
+  assert.equal(body.created, false);
+  assert.equal(body.tokens["--bg"], "#f7f3ec");
+  assert.equal(await readFile(path.join(root, "styles.css"), "utf8"), before);
+  assert.deepEqual(refreshed, []);
+});
+
+test("POST refuses a value that would break out of the declaration", async () => {
   const root = await project(OWN_PALETTE);
   const { app } = await appFor(root);
   const response = await app.inject({

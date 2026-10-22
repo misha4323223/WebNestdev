@@ -91,6 +91,13 @@ export type ThemeField={
  */
 export type ProjectTheme={present:boolean;file:string|null;themeFile?:string|null;tokens:Record<string,string>;fields:ThemeField[];used:boolean};
 export const getProjectTheme=(projectId:string)=>apiJson<ProjectTheme>("/api/projects/"+projectId+"/theme");
+/**
+ * Создание палитры для проекта, где цвета вписаны в стили напрямую: сервер собирает токены из
+ * фактических цветов страницы и заменяет совпавшие литералы на `var(--color-…)`. Панель зовёт
+ * это сама при открытии; `reason` объясняет отказ, когда цветов в стилях не нашлось.
+ */
+export const createProjectTheme=(projectId:string)=>apiJson<ProjectTheme&{created:boolean;reason?:string}>(
+  "/api/projects/"+projectId+"/theme",{method:"POST"});
 export const saveProjectTheme=(projectId:string,tokens:Record<string,string>)=>apiJson<ProjectTheme>("/api/projects/"+projectId+"/theme",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify({tokens})});
 
 export const getPreviewStatus=(projectId:string)=>apiJson<PreviewState>("/api/projects/"+projectId+"/preview/status");
