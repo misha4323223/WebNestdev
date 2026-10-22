@@ -154,7 +154,14 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
 
   const loadLogs=useCallback(async()=>{
     setLoadingLogs(true);setLogsError("");
-    try{setLogs((await getPreviewLogs(projectId)).logs)}
+    try{
+      const result=await getPreviewLogs(projectId);
+      setLogs(result.logs);
+      // Логи читаются каждые четыре секунды, а статус — только при открытии проекта и после прогона
+      // агента. Контейнер, который к этому моменту завершился или исчез, иначе оставлял панель
+      // «запущенной»: кнопка «Остановить» вместо «Запустить», пустой кадр и ошибка запуска.
+      if(!result.running)setPreview({running:false});
+    }
     catch(e){setLogsError(e instanceof Error?e.message:"Не удалось получить логи")}
     finally{setLoadingLogs(false)}
   },[projectId]);

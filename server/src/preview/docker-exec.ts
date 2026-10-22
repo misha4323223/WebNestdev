@@ -2,6 +2,16 @@ import { spawn } from "node:child_process";
 import { dockerUnavailableMessage } from "../sandbox/docker/unavailable.js";
 import type { DockerExecResult } from "./types.js";
 
+/**
+ * Контейнера, о котором помнит сервер, больше нет: его удалили извне, хост перезапустил Docker или
+ * (пока предпросмотр запускался с `--rm`) его унёс сам Docker после выхода процесса. Ответ Docker
+ * приходит по-английски (`Error response from daemon: No such container: <id>`) и не должен ни
+ * попадать пользователю как текст ошибки запуска, ни оседать в логах приложения.
+ */
+export function missingContainer(result: DockerExecResult) {
+  return result.code !== 0 && /no such container|no such object/i.test(result.stderr);
+}
+
 export function dockerExec(args:string[],timeoutMs=15000):Promise<DockerExecResult>{
   return new Promise((resolve,reject)=>{
     const process=spawn("docker",args,{stdio:["ignore","pipe","pipe"],windowsHide:true});

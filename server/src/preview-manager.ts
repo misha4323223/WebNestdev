@@ -5,7 +5,7 @@ import { decideRuntimePreviewStart, liveRuntimePreviews } from "./preview/previe
 import { previewAppAnswers } from "./preview/app-http.js";
 import { settlePreviewAddress } from "./preview/preview-address.js";
 import { getPreview, removePreview, setPreview, touchPreview } from "./preview/preview-store.js";
-import { recentPreviewLogs, startPreviewContainer } from "./preview/preview-runner.js";
+import { startPreviewContainer, previewLogsOf, removePreviewContainer } from "./preview/preview-runner.js";
 import { previewModeSetting, startStaticPreview, staticAppAnswers, staticPreviewLogs, stopStaticPreview } from "./preview/static-preview.js";
 import { PREVIEW_LABEL, type PreviewStatus } from "./preview/types.js";
 import { clearPreviewSecrets } from "./secrets/preview-secrets.js";
@@ -133,7 +133,7 @@ export async function stopPreview(projectId: string) {
     await clearPreviewSecrets(projectId);
     return { stopped: true };
   }
-  await dockerExec(["stop", current.containerId]);
+  await removePreviewContainer(current.containerId);
   removePreview(projectId);
   await clearPreviewSecrets(projectId);
   return { stopped: true };
@@ -153,10 +153,18 @@ export async function previewLogs(projectId: string) {
     return { running: true, logs: staticPreviewLogs(projectId) };
   }
 
-  const logs = await recentPreviewLogs(current.containerId);
+  const result = await previewLogsOf(current.containerId);
+  // Логи читает панель каждые четыре секунды, и у контейнера, который убрали извне, она видела
+  // вместо вывода приложения ответ Docker «No such container». Такой предпросмотр уже не запущен:
+  // состояние снимается здесь же, и следующий запуск поднимает новый контейнер.
+  if (result.missing) {
+    removePreview(projectId);
+    await clearPreviewSecrets(projectId);
+    return { running: false, logs: "" };
+  }
   // Somebody is reading the logs, so the preview is in use.
   touchPreview(projectId);
-  return { running: true, logs };
+  return { running: true, logs: result.logs };
 }
 
 /**
@@ -168,9 +176,11 @@ export async function previewLogs(projectId: string) {
  */
 export async function reapOrphanPreviews() {
   if (process.env.PREVIEW_REAP_ON_START === "0") return { stopped: 0 };
-  const listed = await dockerExec(["ps", "-q", "--filter", "label=" + PREVIEW_LABEL]);
+  // Все контейнеры с меткой, а не только работающие: предпросмотр запускается без `--rm`, и
+  // упавший остаётся остановленным — на диске он тоже никому не нужен.
+  const listed = await dockerExec(["ps", "-aq", "--filter", "label=" + PREVIEW_LABEL]);
   const ids = listed.stdout.split("\n").map(value => value.trim()).filter(Boolean);
-  for (const id of ids) await dockerExec(["stop", id], 30000);
+  for (const id of ids) await removePreviewContainer(id);
   return { stopped: ids.length };
 }
 
@@ -254,6 +264,9 @@ export async function previewStatus(projectId: string): Promise<PreviewStatus> {
 
   if (inspect.code !== 0 || inspect.stdout.trim() !== "true") {
     removePreview(projectId);
+    // Контейнер мог не исчезнуть, а завершиться: без `--rm` он остаётся на хосте, и убрать его
+    // больше некому — следующий запуск создал бы рядом новый.
+    await removePreviewContainer(current.containerId);
     return { running: false };
   }
 

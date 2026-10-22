@@ -1,7 +1,7 @@
 import type { SandboxConfig } from "../sandbox-manager.js";
-import { workspaceMountSource } from "../sandbox/config.js";
+import { sandboxImage, workspaceMountSource } from "../sandbox/config.js";
 import { previewAppAnswers } from "./app-http.js";
-import { dockerExec } from "./docker-exec.js";
+import { dockerExec, missingContainer } from "./docker-exec.js";
 import { addressOnNetworks, firstContainerAddress, previewNetwork } from "./preview-network.js";
 import { settlePreviewAddress } from "./preview-address.js";
 import { resolvePreviewCommand } from "./preview-command.js";
@@ -19,6 +19,12 @@ const READY_DELAY_MS=500;
  * published on the host at all — the server talks to the container directly and the
  * container joins the server's Docker network — so a user's app never appears on the VM's
  * public address and there is no host-port/container-port mix-up to reason about.
+ *
+ * Контейнер запускается без `--rm`: с ним упавший dev-сервер исчезал раньше, чем сервер успевал
+ * прочитать его вывод, и причину отказа (ошибка в скрипте запуска, OOM, занятый порт) заменить было
+ * нечем — вместо неё человек видел `Error response from daemon: No such container: <id>`. Теперь
+ * упавший контейнер остаётся остановленным, пока его не уберут остановка, следующий запуск или
+ * проверка статуса.
  */
 export async function startPreviewContainer(config:SandboxConfig){
   // У проекта, только что созданного агентом, нет `node_modules`, и `npm run dev` в контейнере
@@ -26,7 +32,7 @@ export async function startPreviewContainer(config:SandboxConfig){
   const dependencies=await ensureProjectDependencies(config);
   if(!dependencies.ok)throw new Error(dependencies.reason);
   const command=await resolvePreviewCommand(config);
-  const image=process.env.SANDBOX_IMAGE??"node:22-bookworm-slim";
+  const image=sandboxImage();
   const network=await previewNetwork();
   // Секреты приходят из зашифрованного хранилища как read-only файлы поверх `/workspace`.
   // В рабочей области их нет: агент и файловый API не видят ни значения, ни файла.
@@ -34,7 +40,7 @@ export async function startPreviewContainer(config:SandboxConfig){
   let result;
   try {
     result=await dockerExec([
-      "run","-d","--rm","--init",
+      "run","-d","--init",
       "--cpus",String(config.cpuLimit),
       "--memory",String(config.memoryMb)+"m",
       "--pids-limit","128",
@@ -69,7 +75,7 @@ export async function startPreviewContainer(config:SandboxConfig){
   // интерфейсов, и адрес не с той сети серверу недоступен (см. preview-network.ts).
   const host=(network?await addressOnNetworks(containerId,[network]):"")||await firstContainerAddress(containerId);
   if(!host){
-    await dockerExec(["stop",containerId]);
+    await removePreviewContainer(containerId);
     await secrets.cleanup();
     throw new Error("Адрес контейнера предпросмотра не назначен");
   }
@@ -85,8 +91,9 @@ export async function startPreviewContainer(config:SandboxConfig){
     // предпросмотр выглядел бы работающим, а панель, агент и Chromium не доходили бы до него.
     settled=await settlePreviewAddress(state,{appAnswers:ready});
   }catch(error){
-    // Неудачный запуск не должен оставлять открытый env-файл на хосте.
-    await dockerExec(["stop",containerId]).catch(()=>undefined);
+    // Неудачный запуск не должен оставлять ни открытый env-файл на хосте, ни контейнер: без `--rm`
+    // он остался бы остановленным и занимал место до следующей уборки.
+    await removePreviewContainer(containerId);
     await secrets.cleanup();
     throw error;
   }
@@ -102,10 +109,20 @@ export async function startPreviewContainer(config:SandboxConfig){
 /** Bounded wait: the dev server answers in a second or two, a cold npm install takes longer. */
 async function waitForApp(state:PreviewState){
   for(let attempt=0;attempt<READY_ATTEMPTS;attempt++){
-    const running=await dockerExec(["inspect","-f","{{.State.Running}}",state.containerId]);
-    if(running.code!==0||running.stdout.trim()!=="true"){
+    // Код выхода читается вместе с признаком работы: упавший процесс объясняет отказ точнее, чем
+    // отсутствие ответа на порту.
+    const inspect=await dockerExec(["inspect","-f","{{.State.Running}} {{.State.ExitCode}}",state.containerId]);
+    const [isRunning,exitCode]=inspect.stdout.trim().split(/\s+/);
+    if(inspect.code!==0){
+      if(missingContainer(inspect))throw new Error(containerVanishedMessage(state.containerId));
+      throw new Error(inspect.stderr.trim()||"Не удалось проверить контейнер предпросмотра");
+    }
+    if(isRunning!=="true"){
+      // Причина отказа — это вывод самого dev-сервера: без `--rm` контейнер остаётся, и `docker logs`
+      // возвращает текст настоящей ошибки (не установлены зависимости, занят порт, синтаксис).
       const logs=await recentPreviewLogs(state.containerId);
-      throw new Error(logs||"Процесс предпросмотра завершился при запуске");
+      if(logs)throw new Error(logs);
+      throw new Error("Процесс предпросмотра завершился при запуске"+(exitCode&&exitCode!=="0"?" (код выхода "+exitCode+")":"")+": вывода нет, проверьте команду запуска в package.json.");
     }
     if(await previewAppAnswers(state))return true;
     await new Promise(resolve=>setTimeout(resolve,READY_DELAY_MS));
@@ -113,7 +130,35 @@ async function waitForApp(state:PreviewState){
   return false;
 }
 
-export async function recentPreviewLogs(containerId:string){
-  const result=await dockerExec(["logs","--tail","120",containerId]);
-  return [result.stdout,result.stderr].map(value=>value.replace(/\r/g,"").trim()).filter(Boolean).join("\n");
+/**
+ * Сообщение вместо английского ответа Docker. Контейнер без `--rm` так исчезнуть не может сам, значит
+ * его убрали извне (уборка на хосте, `docker system prune`, перенос на другую машину).
+ */
+export function containerVanishedMessage(containerId:string){
+  return "Контейнер предпросмотра исчез во время запуска: Docker больше не знает контейнер "+containerId.slice(0,12)+
+    ". Запустите предпросмотр ещё раз — если это повторяется, проверьте на хосте `docker events` и свободное место на диске.";
+}
+
+/**
+ * Вывод контейнера вместе с ответом «контейнера уже нет»: вызывающий по нему снимает состояние
+ * предпросмотра, а не показывает пользователю текст ошибки Docker.
+ */
+export async function previewLogsOf(containerId:string,docker:typeof dockerExec=dockerExec):Promise<{logs:string;missing:boolean}>{
+  const result=await docker(["logs","--tail","120",containerId]);
+  if(missingContainer(result))return {logs:"",missing:true};
+  const logs=[result.stdout,result.stderr].map(value=>value.replace(/\r/g,"").trim()).filter(Boolean).join("\n");
+  return {logs,missing:false};
+}
+
+export async function recentPreviewLogs(containerId:string,docker:typeof dockerExec=dockerExec){
+  return (await previewLogsOf(containerId,docker)).logs;
+}
+
+/**
+ * Убирает контейнер предпросмотра с хоста. Ответ не проверяется: контейнера могло уже не быть, а
+ * остановка предпросмотра не должна из-за этого падать.
+ */
+export async function removePreviewContainer(containerId:string){
+  const result=await dockerExec(["rm","-f",containerId]).catch(()=>null);
+  return Boolean(result&&result.code===0);
 }
