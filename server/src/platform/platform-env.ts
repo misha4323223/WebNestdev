@@ -111,7 +111,7 @@ export type PlatformEnvStatus = {
 type StoredEntry = { value: string; preview: string; updatedAt: string };
 type StoreFile = { version: 1; values: Record<string, StoredEntry> };
 
-const GROUP_LABEL: Record<PlatformEnvGroup, string> = { github: "GitHub", gitlab: "GitLab", yandex: "Yandex Cloud", sms: "SMS-провайдеры", ai: "AI-провайдер платформы", search: "Веб-поиск агента", billing: "Оплата (Robokassa)" };
+const GROUP_LABEL: Record<PlatformEnvGroup, string> = { github: "GitHub", gitlab: "GitLab", gitverse: "GitVerse", yandex: "Yandex Cloud", sms: "SMS-провайдеры", ai: "AI-провайдер платформы", search: "Веб-поиск агента", billing: "Оплата (Robokassa)" };
 
 export function platformEnvGroupLabel(group: PlatformEnvGroup) {
   return GROUP_LABEL[group];
