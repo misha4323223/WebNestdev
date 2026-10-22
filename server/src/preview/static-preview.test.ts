@@ -9,7 +9,7 @@ import { registerPreviewRoutes } from "../routes/preview.js";
 import type { SandboxConfig } from "../sandbox-manager.js";
 import { execFetchPreview } from "./exec-proxy.js";
 import { getPreview,removePreview,touchPreview } from "./preview-store.js";
-import { previewModeSetting,startStaticPreview,staticPreviewLogs,stopAllStaticPreviews,stopStaticPreview } from "./static-preview.js";
+import { previewModeSetting,refreshStaticPreview,startStaticPreview,staticPreviewLogs,stopAllStaticPreviews,stopStaticPreview } from "./static-preview.js";
 import { previewHostTarget, previewPublicUrl } from "./preview-host.js";
 import { mintPreviewTicket, previewTicketTtlMs } from "./preview-ticket.js";
 
@@ -231,6 +231,30 @@ test("PREVIEW_STATIC_BUILD=never refuses instead of building a missing output", 
     assert.equal(started.ok, false);
     if (started.ok) return;
     assert.match(started.reason, /index\.html/);
+  } finally {
+    restore();
+    await cleanup(root);
+  }
+});
+
+test("a theme edit does not restart a preview that is served from disk", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "webnestdev-instant-theme-"));
+  const restore = env({ PREVIEW_MODE: "auto", PREVIEW_STATIC_BUILD: undefined, PREVIEW_STATIC_DIR: undefined });
+  try {
+    await writeFile(path.join(root, "index.html"), "<!doctype html><html><body>старая палитра</body></html>");
+    const started = await startStaticPreview(config(root));
+    assert.equal(started.ok, true);
+    if (!started.ok || !started.status.running) return;
+    // Правка — это то, что делает панель «Тема»: файл пишется, панель перезагружает кадр.
+    await writeFile(path.join(root, "index.html"), "<!doctype html><html><body>новая палитра</body></html>");
+    // Готовая статика читается с диска, поэтому пересборка не нужна и порт не меняется.
+    assert.equal(await refreshStaticPreview(PROJECT_ID), false);
+    const page = await fetch("http://127.0.0.1:" + started.status.port + "/");
+    assert.match(await page.text(), /новая палитра/);
+    // Предпросмотра нет — пересобирать нечего, и это не ошибка.
+    await stopStaticPreview(PROJECT_ID);
+    assert.equal(await refreshStaticPreview(PROJECT_ID), false);
+    assert.equal(await refreshStaticPreview("no-such-project"), false);
   } finally {
     restore();
     await cleanup(root);

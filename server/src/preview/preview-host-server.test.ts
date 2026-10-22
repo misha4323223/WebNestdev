@@ -4,6 +4,7 @@ import { createServer, request as httpRequest, type Server } from "node:http";
 import { connect, createServer as createTcpServer } from "node:net";
 import { createPreviewHostServer, describePreviewHostServer, previewAccess, requestCookies, forwardableHeaders, startPreviewHostServer, stopPreviewHostServer, type PreviewHostDeps } from "./preview-host-server.js";
 import { previewHostTarget } from "./preview-host.js";
+import { PICK_BRIDGE_PATH, PICK_BRIDGE_TAG, PICK_COMMAND } from "./pick-bridge.js";
 import { mintPreviewTicket, previewTicketProject, PREVIEW_TICKET_COOKIE } from "./preview-ticket.js";
 import type { PreviewStatus } from "./types.js";
 
@@ -147,6 +148,52 @@ test("cookie платформы в приложение не уходит, а п
   } finally {
     await door.close();
     await site.close();
+  }
+});
+
+test("страница приложения получает мост выбора элемента, а сам мост отдаёт платформа", async () => {
+  const site = await upstream();
+  const door = await doorWith(depsFor(site.port));
+  try {
+    const page = await ask(door.port, "/", { cookie: PREVIEW_TICKET_COOKIE + "=ticket:" + PROJECT });
+    assert.equal(page.status, 200);
+    // Мост — единственный способ дать панели выбор элемента на чужом origin.
+    assert.ok(page.body.includes(PICK_BRIDGE_TAG), page.body);
+    // Документ приложения при этом не переписан: ссылки остаются какими были.
+    assert.match(page.body, /src="\/@vite\/client"/);
+    assert.equal(page.headers["content-length"], undefined, "длина тела пересчитана после вставки");
+
+    // Скрипт отдаётся самим слушателем: приложение о таком пути ничего не знает и не должно.
+    const hitsBefore = site.hits.length;
+    const script = await ask(door.port, PICK_BRIDGE_PATH, { cookie: PREVIEW_TICKET_COOKIE + "=ticket:" + PROJECT });
+    assert.equal(script.status, 200);
+    assert.match(String(script.headers["content-type"]), /application\/javascript/);
+    assert.ok(script.body.includes(PICK_COMMAND), "скрипт отдаётся целиком");
+    assert.equal(site.hits.length, hitsBefore, "запрос моста не доходит до приложения");
+  } finally {
+    await door.close();
+    await site.close();
+  }
+});
+
+test("не-HTML ответы не переписываются", async () => {
+  const json: Upstream = await (async () => {
+    const server = createServer((request, response) => {
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify({ ok: true, path: request.url }));
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const address = server.address();
+    return { server, port: typeof address === "object" && address ? address.port : 0, hits: [], cookies: [], close: () => new Promise<void>(resolve => server.close(() => resolve())) };
+  })();
+  const door = await doorWith(depsFor(json.port));
+  try {
+    const response = await ask(door.port, "/api/client", { cookie: PREVIEW_TICKET_COOKIE + "=ticket:" + PROJECT });
+    assert.equal(response.status, 200);
+    assert.deepEqual(JSON.parse(response.body), { ok: true, path: "/api/client" });
+  } finally {
+    await door.close();
+    await json.close();
   }
 });
 

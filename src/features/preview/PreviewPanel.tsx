@@ -1,11 +1,12 @@
 import { Check, Copy, ExternalLink, Monitor, MousePointerClick, Palette, RefreshCw, ScrollText, Smartphone, Square, Tablet, Terminal, X, ZoomIn, ZoomOut } from "lucide-react";
-import { useCallback,useEffect,useRef,useState } from "react";
+import { useCallback,useEffect,useMemo,useRef,useState } from "react";
 import { getPreviewLogs,getPreviewStatus,requestPreviewTicket,startPreview,stopPreview,touchPreview } from "../../lib/project-api";
 import type { PreviewState } from "../../lib/types";
 import { composeAgentDraft } from "../../lib/agent-compose";
 import { elementPickPrompt, type PickedElement } from "../../lib/element-pick";
 import { ThemePanel } from "./ThemePanel";
 import { useElementPicker } from "./use-element-picker";
+import { useRemoteElementPicker } from "./use-remote-picker";
 
 type Face="preview"|"logs";
 /**
@@ -114,8 +115,10 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
   // Адрес показывается рядом с кнопкой копирования: ссылку отдают другому человеку, поэтому
   // копировать её должно быть можно в один тап, а не выделять текст мышью.
   const [copied,setCopied]=useState(false);
-  // Кадр на своём домене читается из панели, на публичном адресе — нет: там выбор элемента выключен.
+  // Кадр на своём домене читается из панели напрямую, на публичном адресе — через мост выбора
+  // элемента (postMessage): политика одного origin не даёт панели читать чужой документ.
   const crossOrigin=crossOriginAddress(previewAddress(projectId,publicLink));
+  const previewOrigin=useMemo(()=>{try{return new URL(previewAddress(projectId,publicLink),window.location.origin).origin}catch{return ""}},[projectId,publicLink]);
   async function copyPublicLink(){
     const url=new URL(previewAddress(projectId,publicLink),window.location.origin).href;
     try{
@@ -222,6 +225,14 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
     onPick:element=>{setPicking(false);setPicked(element)},
     onCancel:()=>setPicking(false),
   });
+  // Публичный адрес: подсветку и клик делает мост внутри приложения, панель присылает команду.
+  useRemoteElementPicker({
+    frame:frameEl,
+    active:picking&&preview.running&&face==="preview"&&crossOrigin,
+    targetOrigin:previewOrigin,
+    onPick:element=>{setPicking(false);setPicked(element)},
+    onCancel:()=>setPicking(false),
+  });
   // Кадр остановили или ушли в логи — выбранного элемента больше нет на экране.
   useEffect(()=>{
     if(!preview.running||face!=="preview"){setPicking(false);setPicked(null)}
@@ -249,7 +260,7 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
         </div>
         {face==="preview"
           ? <>
-              {preview.running&&<button className={"icon-button preview-pick-btn"+(picking?" active":"")} onClick={()=>{setPicked(null);setPicking(value=>!value);setThemeOpen(false)}} disabled={crossOrigin} aria-pressed={picking} title={crossOrigin?"Выбор элемента доступен в предпросмотре внутри панели":"Выбрать элемент для правки"} aria-label="Выбрать элемент"><MousePointerClick size={14}/></button>}
+              {preview.running&&<button className={"icon-button preview-pick-btn"+(picking?" active":"")} onClick={()=>{setPicked(null);setPicking(value=>!value);setThemeOpen(false)}} aria-pressed={picking} title={crossOrigin?"Выбрать элемент в приложении (публичный адрес панель не читает — работает через мост)":"Выбрать элемент для правки"} aria-label="Выбрать элемент"><MousePointerClick size={14}/></button>}
               {preview.running?<button className="icon-button" onClick={()=>void stop()} title="Остановить"><Square size={14}/></button>:<button className="icon-button" onClick={()=>void start()} title="Запустить"><Terminal size={14}/></button>}
               <button className="icon-button" onClick={()=>void refresh()} title="Обновить"><RefreshCw size={14}/></button>
               {preview.running&&<a className="icon-button" href={previewAddress(projectId,publicLink)} target="_blank" rel="noreferrer" title="Открыть"><ExternalLink size={14}/></a>}

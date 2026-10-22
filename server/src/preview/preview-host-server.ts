@@ -6,6 +6,7 @@ import { execFetchPreview, type ExecFetchResult } from "./exec-proxy.js";
 import { previewHostTarget, previewPublicDomain, previewPublicUrl } from "./preview-host.js";
 import { proxyPreviewRequest, withoutPlatformCookies, type PreviewDoor } from "./preview-proxy.js";
 import { PREVIEW_TICKET_COOKIE, PREVIEW_TICKET_PARAM, previewTicketProject, previewTicketTtlMs } from "./preview-ticket.js";
+import { PICK_BRIDGE_PATH, canInjectPickBridge, injectPickBridge, pickBridgeResponse } from "./pick-bridge.js";
 import { setPreviewExecOnly, unsettlePreview } from "./preview-store.js";
 import { sessionCookieSecure } from "../auth/auth.js";
 import type { PreviewStatus } from "./types.js";
@@ -204,7 +205,18 @@ async function writeProxyResponse(response: ServerResponse, upstream: Response) 
   // cookie с куском другой внутри: массив значений сохраняет обе.
   const cookies = upstream.headers.getSetCookie?.() ?? [];
   if (cookies.length) headers["set-cookie"] = cookies;
-  const body = Buffer.from(await upstream.arrayBuffer());
+  let body = Buffer.from(await upstream.arrayBuffer());
+  // Мост выбора элемента: доступ к документу приложения у панели есть только здесь, потому что
+  // страница живёт на своём домене. Скрипт ничего не делает без команды панели (см. pick-bridge.ts).
+  if (canInjectPickBridge(upstream.headers.get("content-type"), upstream.headers.get("content-encoding"))) {
+    const html = body.toString("utf8");
+    const injected = injectPickBridge(html);
+    if (injected !== html) {
+      body = Buffer.from(injected, "utf8");
+      // Длина изменилась: старый `content-length` обрезал бы документ на клиенте.
+      delete headers["content-length"];
+    }
+  }
   response.writeHead(upstream.status, headers);
   response.end(body);
 }
@@ -270,6 +282,14 @@ export function createPreviewHostServer(deps: PreviewHostDeps = defaultDeps, lim
     }
     if (!(await deps.getProject(target.projectId))) {
       sendMessage(request, response, 404, "Проект не найден — возможно, он удалён.");
+      return;
+    }
+    // Скрипт моста выбора элемента отдаёт сам слушатель, а не приложение: это ресурс платформы,
+    // и он нужен даже приложению, которое не отдаёт статику вообще.
+    if (url.pathname === PICK_BRIDGE_PATH) {
+      const script = pickBridgeResponse();
+      response.writeHead(200, script.headers);
+      response.end(script.body);
       return;
     }
     const body = request.method === "GET" || request.method === "HEAD" ? undefined : await readBody(request);

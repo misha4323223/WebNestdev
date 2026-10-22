@@ -80,8 +80,14 @@ export type ThemeField={
   value:string;
   options?:Array<{value:string;label:string}>;
 };
-export type ProjectTheme={present:boolean;file:string|null;tokens:Record<string,string>;fields:ThemeField[]};
+/**
+ * `used` — читают ли стили и разметка проекта переменные темы. Без этого палитра молча
+ * «сохраняется» и ничего не перекрашивает, а причина видна только в коде проекта.
+ */
+export type ProjectTheme={present:boolean;file:string|null;tokens:Record<string,string>;fields:ThemeField[];used:boolean;created?:boolean};
 export const getProjectTheme=(projectId:string)=>apiJson<ProjectTheme>("/api/projects/"+projectId+"/theme");
+/** Создаёт theme.css с набором по умолчанию, если файла ещё нет; существующий не трогает. */
+export const createProjectTheme=(projectId:string)=>apiJson<ProjectTheme>("/api/projects/"+projectId+"/theme",{method:"POST"});
 export const saveProjectTheme=(projectId:string,tokens:Record<string,string>)=>apiJson<ProjectTheme>("/api/projects/"+projectId+"/theme",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify({tokens})});
 
 export const getPreviewStatus=(projectId:string)=>apiJson<PreviewState>("/api/projects/"+projectId+"/preview/status");

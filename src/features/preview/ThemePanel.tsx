@@ -1,6 +1,6 @@
-import { Check, Loader2, Palette, Pipette, Sparkles, X } from "lucide-react";
+import { Check, Loader2, Palette, Pipette, Sparkles, TriangleAlert, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { getProjectTheme, saveProjectTheme, type ProjectTheme, type ThemeField } from "../../lib/project-api";
+import { createProjectTheme, getProjectTheme, saveProjectTheme, type ProjectTheme, type ThemeField } from "../../lib/project-api";
 import { composeAgentPrompt, THEME_SETUP_PROMPT } from "../../lib/agent-compose";
 
 /**
@@ -8,8 +8,12 @@ import { composeAgentPrompt, THEME_SETUP_PROMPT } from "../../lib/agent-compose"
  *
  * Панель правит ровно те переменные, которые читает агент (см. server/src/design/theme.ts),
  * поэтому цвет, выбранный здесь мышкой, попадает и в предпросмотр, и в собранный сайт — без
- * запроса к модели и без расхода лимита. Если файла темы в проекте нет, честно предлагается
- * одна кнопка: собрать тему агентом (это правка файлов, а не запись одного токена).
+ * запроса к модели и без расхода лимита.
+ *
+ * Файла темы может не быть: у проекта, собранного до появления палитры, его просто нет. Тогда
+ * панель создаёт `theme.css` сама, с полоской хода работы, — отправлять человека к агенту за
+ * одной таблицей значений незачем. Если же файл есть, а стили проекта его переменные не читают,
+ * панель говорит это прямо: иначе «нажимаю — ничего не происходит» выглядит поломкой панели.
  */
 
 /** `EyeDropper` есть не во всех браузерах, поэтому в типах его нет: объявление локальное. */
@@ -22,6 +26,9 @@ function expandHex(value: string) {
   if (value.length === 7) return value.toLowerCase();
   return ("#" + value.slice(1).split("").map(char => char + char).join("")).toLowerCase();
 }
+
+/** Шаги создания файла темы: проценты показывают ход работы, а не выдуманное время. */
+const CREATE_STEPS = { start: 12, file: 45, read: 70, preview: 92, done: 100 } as const;
 
 function ColorRow({ field, value, onChange, eyedropper }: {
   field: ThemeField;
@@ -78,22 +85,60 @@ export function ThemePanel({ projectId, onClose, onApplied }: {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [progress, setProgress] = useState<{ percent: number; label: string } | null>(null);
   const savedTimer = useRef<number | null>(null);
+  // StrictMode в разработке монтирует компонент дважды: без этого флага файл темы создавался бы
+  // двумя параллельными запросами (сервер идемпотентен, но полоска хода мигала бы дважды).
+  const creating = useRef(false);
 
   const eyedropper = useMemo<EyeDropperConstructor | undefined>(() => {
     const api = (window as unknown as { EyeDropper?: EyeDropperConstructor }).EyeDropper;
     return typeof api === "function" ? api : undefined;
   }, []);
 
+  function apply(next: ProjectTheme) {
+    setTheme(next);
+    setDraft(next.fields.reduce<Record<string, string>>((values, field) => {
+      values[field.variable] = next.tokens[field.variable] ?? field.value;
+      return values;
+    }, {}));
+  }
+
+  /**
+   * Создание файла темы. Это единственный шаг, который видит полоску хода: он ходит на сервер,
+   * а после записи сервер ещё и пересобирает статический предпросмотр, поэтому пауза заметна.
+   */
+  async function create() {
+    if (creating.current) return;
+    creating.current = true;
+    setError("");
+    setProgress({ percent: CREATE_STEPS.start, label: "Создаём файл темы…" });
+    try {
+      const next = await createProjectTheme(projectId);
+      setProgress({ percent: CREATE_STEPS.file, label: "Читаем палитру проекта…" });
+      apply(next);
+      setProgress({ percent: CREATE_STEPS.preview, label: "Обновляем предпросмотр…" });
+      onApplied();
+      setProgress({ percent: CREATE_STEPS.done, label: "Палитра готова" });
+      window.setTimeout(() => setProgress(null), 700);
+    } catch (failure) {
+      setProgress(null);
+      setError(failure instanceof Error ? failure.message : "Не удалось создать файл темы");
+    } finally {
+      creating.current = false;
+    }
+  }
+
   async function load() {
     setError("");
     try {
       const next = await getProjectTheme(projectId);
-      setTheme(next);
-      setDraft(next.fields.reduce<Record<string, string>>((values, field) => {
-        values[field.variable] = next.tokens[field.variable] ?? field.value;
-        return values;
-      }, {}));
+      if (next.present) {
+        apply(next);
+        return;
+      }
+      // Файла нет — панель заводит его сама, вместо пустого экрана и похода к агенту.
+      await create();
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : "Не удалось прочитать тему проекта");
     }
@@ -115,7 +160,7 @@ export function ThemePanel({ projectId, onClose, onApplied }: {
     setError("");
     try {
       const next = await saveProjectTheme(projectId, draft);
-      setTheme(next);
+      apply(next);
       setSaved(true);
       onApplied();
       if (savedTimer.current) window.clearTimeout(savedTimer.current);
@@ -144,6 +189,8 @@ export function ThemePanel({ projectId, onClose, onApplied }: {
   const colors = theme?.fields.filter(field => field.kind === "color") ?? [];
   const fonts = theme?.fields.filter(field => field.kind === "font") ?? [];
   const radius = theme?.fields.find(field => field.kind === "radius");
+  // Файл есть, но страница читает свои цвета напрямую: палитра сохранится и ничего не изменит.
+  const unused = Boolean(theme?.present) && theme!.used === false;
 
   return <section className="theme-sheet" aria-label="Тема проекта">
     <div className="theme-head">
@@ -155,24 +202,42 @@ export function ThemePanel({ projectId, onClose, onApplied }: {
     </div>
 
     <div className="theme-body">
-      {!theme && !error && <div className="theme-loading"><Loader2 size={16} className="spin"/> Загружаем тему проекта…</div>}
+      {progress && <div className="theme-progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progress.percent} aria-label={progress.label}>
+        <div className="theme-progress-track"><div className="theme-progress-fill" style={{ width: progress.percent + "%" }}/></div>
+        <div className="theme-progress-meta"><span>{progress.label}</span><b>{progress.percent}%</b></div>
+      </div>}
+
+      {!theme && !error && !progress && <div className="theme-loading"><Loader2 size={16} className="spin"/> Загружаем тему проекта…</div>}
       {error && <div className="theme-error">{error}</div>}
 
-      {theme && !theme.present && <div className="theme-empty">
+      {!theme && !progress && error && <div className="theme-empty">
         <div className="theme-empty-icon"><Palette size={20}/></div>
-        <strong>В проекте ещё нет темы</strong>
+        <strong>Не удалось подготовить файл темы</strong>
         <p>
           Палитра живёт в файле <code>theme.css</code>: его переменные используют компоненты.
-          Собрать файл и перевести на него текущие цвета может агент — после этого палитра
-          ниже будет менять страницу мгновенно, без запросов к модели.
+          Повторите попытку — файл создаётся одним запросом, без участия модели.
         </p>
-        <button className="theme-action theme-empty-action" onClick={askAgent}>
-          <Sparkles size={14}/> Собрать тему агентом
+        <button className="theme-action theme-empty-action" onClick={() => void create()}>
+          <Palette size={14}/> Создать палитру
         </button>
-        <button className="ghost-button theme-empty-retry" onClick={() => void load()}>Проверить снова</button>
       </div>}
 
       {theme?.present && <>
+        {unused && <div className="theme-warning" role="status">
+          <TriangleAlert size={14}/>
+          <div>
+            <strong>Страница не использует переменные темы</strong>
+            <span>
+              Файл <code>{theme.file}</code> есть, но стили проекта берут цвета напрямую, поэтому смена
+              палитры их не перекрасит. Перевести цвета на <code>var(--color-…)</code> может агент —
+              это правка файлов, а не запись токена.
+            </span>
+            <button className="ghost-button theme-warning-action" onClick={askAgent}>
+              <Sparkles size={13}/> Перевести цвета на тему
+            </button>
+          </div>
+        </div>}
+
         <div className="theme-group">
           <div className="theme-group-head">
             <span>Цвета</span>

@@ -4,7 +4,7 @@ import path from "node:path";
 import { runInSandbox } from "../sandbox-worker.js";
 import type { DockerCommandResult } from "../sandbox/docker/types.js";
 import type { SandboxConfig } from "../sandbox-manager.js";
-import { setPreview,touchPreview } from "./preview-store.js";
+import { removePreview,setPreview,touchPreview } from "./preview-store.js";
 import { indexFileExists,isStaticBuildFresh,planStaticPreview } from "./static-plan.js";
 import { ensureProjectDependencies } from "./dependencies.js";
 import type { PreviewStatus } from "./types.js";
@@ -53,7 +53,7 @@ export function describePreviewMode(){
   return "auto (статическая сборка, иначе dev-сервер)";
 }
 
-type StaticRun={server:FastifyInstance;dir:string;port:number;log:string;builtAt:number;startedAt:number;/** Files served as they are: nothing was built, so nothing has to be rebuilt. */instant:boolean};
+type StaticRun={server:FastifyInstance;dir:string;port:number;log:string;builtAt:number;startedAt:number;/** Files served as they are: nothing was built, so nothing has to be rebuilt. */instant:boolean;/** Конфиг, которым этот предпросмотр поднят: пересборка поднимает тот же каталог заново. */config:SandboxConfig};
 
 const runs=new Map<string,StaticRun>();
 
@@ -101,7 +101,7 @@ export async function startStaticPreview(config:SandboxConfig):Promise<StaticSta
   }
 
   const listener=await listenStatic(plan.dir);
-  const run:StaticRun={server:listener.app,dir:plan.dir,port:listener.port,log,builtAt:marker,startedAt:Date.now(),instant:!plan.build};
+  const run:StaticRun={server:listener.app,dir:plan.dir,port:listener.port,log,builtAt:marker,startedAt:Date.now(),instant:!plan.build,config};
   runs.set(config.projectId,run);
   setPreview({mode:"static",containerId:"",host:STATIC_HOST,port:run.port,projectId:config.projectId,startedAt:run.startedAt,lastUsedAt:run.startedAt});
   return {ok:true,status:statusFor(run)};
@@ -117,6 +117,25 @@ export async function stopStaticPreview(projectId:string){
   run.server.server.closeIdleConnections?.();
   run.server.server.closeAllConnections?.();
   await closing;
+}
+
+/**
+ * Пересборка статического предпросмотра после правки файлов проекта.
+ *
+ * Палитра из панели правит `theme.css` и ждёт, что цвет появится сразу: у сайта, который
+ * отдаётся из каталога сборки, правка исходников сама по себе не видна — нужен новый билд.
+ * Готовая статика (без скрипта сборки) читается с диска и пересборки не требует, а контейнерный
+ * предпросмотр не трогается: у него свой dev-сервер с горячей перезагрузкой.
+ *
+ * Возвращает `false`, когда пересобирать было нечего. Неудачная пересборка снимает состояние
+ * предпросмотра: кадр, ведущий на закрытый порт, хуже честного «предпросмотр не запущен».
+ */
+export async function refreshStaticPreview(projectId:string):Promise<boolean>{
+  const run=runs.get(projectId);
+  if(!run||run.instant)return false;
+  const result=await startStaticPreview(run.config);
+  if(!result.ok)removePreview(projectId);
+  return result.ok;
 }
 
 /** Used by tests to clean up every listener this process started. */
