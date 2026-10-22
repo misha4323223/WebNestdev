@@ -5,7 +5,7 @@ import { mkdir,mkdtemp,rm,writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { hostPathFor,sandboxRootPath,workspaceMountSource } from "./config.js";
-import { MOUNT_MARKER_FILE,checkSandboxMount,classifyDockerFailure,countFiles,describeSandboxMount,markerMatches,type SandboxMountCheck } from "./sandbox-check.js";
+import { MOUNT_MARKER_FILE,checkSandboxGit,checkSandboxMount,classifyDockerFailure,countFiles,describeSandboxGit,describeSandboxMount,markerMatches,type SandboxMountCheck } from "./sandbox-check.js";
 
 const check=(overrides:Partial<SandboxMountCheck>={}):SandboxMountCheck=>({
   ok:true,
@@ -83,6 +83,30 @@ test("две одновременные проверки пишут разные
   const second=`${MOUNT_MARKER_FILE}-${randomUUID()}`;
   assert.notEqual(first,second);
   assert.match(first,new RegExp("^"+MOUNT_MARKER_FILE.replace(/\./g,"\\.")));
+});
+
+test("git в образе проверяется запуском git, а не надеждой", async () => {
+  const calls:string[][]=[];
+  const result=await checkSandboxGit({image:"node:22-bookworm"},{
+    run:async args=>{calls.push(args);return {code:0,stdout:"git version 2.39.5\n",stderr:""}},
+  });
+  assert.deepEqual(result,{ok:true,version:"git version 2.39.5",reason:"ok"});
+  // Контейнер одноразовый и без сети: проверка не должна ничего оставлять после себя.
+  assert.deepEqual(calls[0].slice(0,9),["run","--rm","--pull=never","--network","none","--user","1000:1000","node:22-bookworm","git"]);
+  assert.deepEqual(calls[0].slice(9),["--version"]);
+});
+
+test("образ без git отличается от отсутствующего образа", async () => {
+  const missing=await checkSandboxGit({},{
+    run:async()=>({code:127,stdout:"",stderr:"/bin/sh: 1: git: not found\n"}),
+  });
+  assert.equal(missing.ok,false);
+  assert.equal(missing.reason,"missing");
+  assert.match(describeSandboxGit(missing),/НЕТ GIT/);
+  const image=await checkSandboxGit({},{
+    run:async()=>({code:125,stdout:"",stderr:"Unable to find image 'node:22-bookworm' locally\nNo such image: node:22-bookworm"}),
+  });
+  assert.equal(image.reason,"image");
 });
 
 test("недоступный для записи каталог песочницы не доходит до docker", async () => {

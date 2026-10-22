@@ -117,6 +117,45 @@ export async function countFiles(dir:string,max=5000){
   return total;
 }
 
+export type SandboxGitCheck={ok:boolean;version:string|null;reason:"ok"|"missing"|"image"|"docker";detail?:string};
+
+/**
+ * Есть ли git в образе песочницы. Инструменты агента (`git.status`, `git.diff`, `git.log`,
+ * `git.add`, `git.commit`) выполняют `git` внутри контейнера, а образ выбирается через
+ * `SANDBOX_IMAGE` и может быть собран без него — тогда «Работа с Git» отвечает
+ * `git: not found` (код 127), а сборка выглядит сломанной. Проверка такая же дешёвая, как у
+ * монтирования (один контейнер на `git --version`), и отвечает на вопрос фактом, а не надеждой.
+ */
+export async function checkSandboxGit(
+  options:{image?:string;timeoutMs?:number}={},
+  deps:{run?:typeof dockerRun}={},
+):Promise<SandboxGitCheck>{
+  const image=options.image??sandboxImage();
+  const timeoutMs=options.timeoutMs??20000;
+  const run=deps.run??dockerRun;
+  const result=await run(["run","--rm","--pull=never","--network","none","--user","1000:1000",image,"git","--version"],timeoutMs).catch(()=>null);
+  if(!result)return {ok:false,version:null,reason:"docker"};
+  if(result.code===0){
+    const version=result.stdout.trim().split("\n").filter(Boolean).pop()??null;
+    return version?{ok:true,version,reason:"ok"}:{ok:false,version:null,reason:"missing",detail:result.stderr.trim()};
+  }
+  const detail=[result.stdout,result.stderr].map(value=>value.trim()).filter(Boolean).join("\n");
+  return {
+    ok:false,
+    version:null,
+    reason:/no such image|unable to find image/i.test(result.stderr)?"image":"missing",
+    detail,
+  };
+}
+
+/** Строка для selfcheck, лога запуска и выкатки: версия git или что именно не так. */
+export function describeSandboxGit(result:SandboxGitCheck){
+  if(result.ok)return `git в образе песочницы: ${result.version}`;
+  if(result.reason==="image")return `образ песочницы недоступен для проверки git: ${result.detail??"docker его не нашёл"}`;
+  if(result.reason==="docker")return "Docker недоступен — наличие git в образе не проверить";
+  return `В ОБРАЗЕ ПЕСОЧНИЦЫ НЕТ GIT: инструменты «Работа с Git» не смогут работать. Задайте SANDBOX_IMAGE с git (node:22-bookworm) — ${result.detail??"git --version завершился с ошибкой"}`;
+}
+
 /** The last result, so `/api/health` can answer for free instead of repeating the round trip. */
 let lastCheck:SandboxMountCheck|null=null;
 export function rememberSandboxMountCheck(result:SandboxMountCheck){lastCheck=result;return result}

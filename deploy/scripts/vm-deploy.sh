@@ -629,12 +629,15 @@ install_caddyfile(){
 # `docker run` под таймаутом инструмента, и медленная загрузка выглядела бы как зависшая команда.
 # Отказ не валит выкатку: следующая команда скачает образ сама, проверка просто скажет «image».
 ensure_sandbox_image(){
-  local image="${SANDBOX_IMAGE:-node:22-bookworm}"
+  local image="${SANDBOX_IMAGE:-node:22-bookworm}" output
   if [ "$DRY_RUN" = "1" ]; then log "dry-run: docker pull $image"; return 0; fi
   if docker image inspect "$image" >/dev/null 2>&1; then return 0; fi
   log "скачиваю образ песочницы $image (git и компилятор для npm install) — разовая загрузка"
-  if ! docker pull "$image" >/dev/null 2>&1 </dev/null; then
-    log "образ $image не скачался — его скачает первая команда агента, либо проверьте доступ к реестру"
+  # Причина отказа нужна в логе: без неё «не скачался» неотличимо от лимита Docker Hub,
+  # недоступного реестра и нехватки места. Хвост вывода — последние строки.
+  if ! output=$(docker pull "$image" 2>&1 </dev/null); then
+    log "образ $image не скачался — его скачает первая команда агента, либо проверьте доступ к реестру:"
+    printf '%s\n' "$output" | tail -3 | sed 's/^/[deploy]   /'
   fi
 }
 
@@ -719,8 +722,7 @@ migrate_sandboxes(){
 # «песочница видна контейнерам» не выполнялись ни проверка SMS, ни уборка старых образов —
 # и всё это при зелёном статусе в Actions. Поэтому stdin у таких команд берётся из /dev/null.
 verify_sandbox(){
-  local output verdict
-  ensure_sandbox_image
+  local output verdict git_verdict
   if [ "$MODE" = "source" ]; then
     # В режиме source сервер запущен systemd прямо на хосте: обе стороны — один и тот же путь.
     output=$(cd "$APP_DIR" && node server/dist/scripts/sandbox-selfcheck.js </dev/null 2>&1 || true)
@@ -728,6 +730,16 @@ verify_sandbox(){
     output=$(run docker compose exec -T "$SERVICE" node server/dist/scripts/sandbox-selfcheck.js </dev/null 2>&1 || true)
   fi
   printf '%s\n' "$output" | sed 's/^/[deploy] /'
+  # Отсутствие git в образе не мешает песочнице работать как каталогу, но инструменты
+  # «Работа с Git» у агента без него не работают — это видно в логе отдельной громкой строкой.
+  git_verdict=$(printf '%s\n' "$output" | grep -o 'SANDBOX-GIT=[a-z]*' | tail -1 | cut -d= -f2 || true)
+  case "$git_verdict" in
+    ok) log "git в образе песочницы есть" ;;
+    missing) log "ПЕСОЧНИЦА БЕЗ GIT: «Работа с Git» у агента не заработает. Задайте SANDBOX_IMAGE с git (node:22-bookworm) и выкатите снова" ;;
+    image) log "образ песочницы на ВМ отсутствует — наличие git не проверено (команды агента скачают его при первом запуске)" ;;
+    "") ;;
+    *) log "наличие git в образе песочницы не определилось ($git_verdict)" ;;
+  esac
   verdict=$(printf '%s\n' "$output" | grep -o 'SANDBOX-MOUNT=[a-z]*' | tail -1 | cut -d= -f2 || true)
   case "$verdict" in
     ok) log "песочница видна контейнерам" ; return 0 ;;
@@ -1105,6 +1117,9 @@ case "$MODE" in
     apply_platform_env
     install_app_secrets
     migrate_sandboxes
+    # Образ песочницы скачивается до запуска сервера: проверка монтирования на старте идёт с
+    # `--pull=never`, и без образа /api/health показывал бы «image» до следующего перезапуска.
+    ensure_sandbox_image
     run docker compose -f "$COMPOSE_FILE" up -d --no-build $(services_to_start)
     ;;
   source)
@@ -1121,6 +1136,7 @@ case "$MODE" in
     install_caddyfile || true
     apply_platform_env
     install_app_secrets
+    ensure_sandbox_image
     log "перезапускаю сервис systemd: $SYSTEMD_UNIT"
     run sudo systemctl restart "$SYSTEMD_UNIT"
     # Фронт с сертификатами — контейнер, а не systemd-юнит: в этом режиме его поднимает та же
@@ -1144,6 +1160,7 @@ case "$MODE" in
     PRUNE_PROTECT_IMAGE="$IMAGE_REF" prune_images
     unset PRUNE_PROTECT_IMAGE
     [ -n "$IMAGE_REF" ] && export WEBNESTDEV_IMAGE="$IMAGE_REF"
+    ensure_sandbox_image
     # --force-recreate, а не простой up: контейнер мог зависнуть в перезапусках, и тогда compose
     # счёл бы его «уже поднятым» и не тронул. Конфигурацию берём ту, что лежит на ВМ: ремонт не
     # приносит новых файлов.
