@@ -49,7 +49,7 @@ services:
     # живой ВМ с уже запущенными контейнерами предпросмотра.
     networks:
       webnestdev-panel:
-        ipv4_address: ${WEBNESTDEV_CADDY_IP:-172.30.0.10}
+        ipv4_address: ${WEBNESTDEV_CADDY_IP:-10.77.0.10}
     restart: unless-stopped
 
   webnestdev-server:
@@ -72,7 +72,7 @@ services:
       WEBNESTDEV_ALLOWED_ORIGINS: ${WEBNESTDEV_ALLOWED_ORIGINS:?Set the public frontend origin(s), comma-separated}
       # Кому доверять X-Forwarded-For. Адрес Caddy задан статически выше; контейнер предпросмотра
       # в эту сеть не входит, поэтому подменить адрес клиента он не может.
-      WEBNESTDEV_TRUSTED_PROXIES: ${WEBNESTDEV_TRUSTED_PROXIES:-172.30.0.10}
+      WEBNESTDEV_TRUSTED_PROXIES: ${WEBNESTDEV_TRUSTED_PROXIES:-10.77.0.10}
       DATABASE_URL: postgres://${POSTGRES_USER:-webnestdev}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-webnestdev}
       # Yandex Cloud OAuth (optional)
       YANDEX_CLIENT_ID: ${YANDEX_CLIENT_ID:-}
@@ -255,11 +255,13 @@ networks:
   webnestdev:
   # Панель и Caddy: новая сеть с фиксированной подсетью. От адреса Caddy зависит доверие
   # X-Forwarded-For; при смене подсети задайте WEBNESTDEV_CADDY_IP и
-  # WEBNESTDEV_TRUSTED_PROXIES согласованно.
+  # WEBNESTDEV_TRUSTED_PROXIES согласованно. Подсеть 10.77.0.0/24 выбрана вне диапазона, который
+  # Docker обычно раздаёт автоматически; если она занята на хосте, Docker ответит «pool overlaps» —
+  # тогда задайте свои три значения.
   webnestdev-panel:
     ipam:
       config:
-        - subnet: ${WEBNESTDEV_NETWORK_SUBNET:-172.30.0.0/24}
+        - subnet: ${WEBNESTDEV_NETWORK_SUBNET:-10.77.0.0/24}
   # Предпросмотры пользовательских проектов: egress в интернет нужен dev-серверу, а базы и
   # Caddy в этой сети нет.
   webnestdev-preview:
