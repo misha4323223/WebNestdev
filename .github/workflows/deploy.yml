@@ -20,9 +20,9 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "image — готовый образ из реестра, source — сборка на ВМ из репозитория, logs — показать логи контейнера, cleanup — только обнулить логи, prune — только уборка старых образов, disk — показать, что занимает место на диске"
+        description: "image — готовый образ из реестра, source — сборка на ВМ из репозитория, repair — починить запущенный сервис без смены версии, logs — показать логи контейнера, cleanup — только обнулить логи, prune — только уборка старых образов, disk — показать, что занимает место на диске"
         type: choice
-        options: ["image", "source", "logs", "cleanup", "prune", "disk"]
+        options: ["image", "source", "repair", "logs", "cleanup", "prune", "disk"]
         default: "image"
       tail:
         description: "Сколько последних строк логов контейнера печатать в mode=logs (по умолчанию 120)"

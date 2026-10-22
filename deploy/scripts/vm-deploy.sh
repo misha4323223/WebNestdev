@@ -11,6 +11,8 @@
 #        cleanup                только обнулить логи контейнеров на ВМ (диск, а не версия)
 #        prune                  только убрать старые образы и кеш сборки
 #        disk                   только показать, что занимает место на диске (чтение, без уборки)
+#        repair                 починить запущенный сервис, не меняя версию: уборка образов и
+#                               пересоздание контейнеров из закреплённого в .env WEBNESTDEV_IMAGE
 #   IMAGE_REF=ghcr.io/…        образ для MODE=image
 #   APP_DIR=~/webnestdev/src   каталог развёртывания (docker-compose.yml и .env)
 #   COMPOSE_FILE=docker-compose.yml
@@ -79,6 +81,8 @@
 #                              переживают выкатку.
 #
 # MODE=prune — только уборка образов, без выкатки и без перезапуска сервиса.
+# MODE=repair — уборка и пересоздание контейнеров из закреплённого образа: лечит хост, на котором
+# правильная версия перестала отвечать, и не требует ни новой сборки, ни правок на ВМ.
 set -euo pipefail
 
 MODE="${MODE:-image}"
@@ -168,21 +172,35 @@ install_access_key
 prune_images(){
   local keep="$KEEP_IMAGES"
   case "$keep" in ''|*[!0-9]*) keep=1;; esac
-  local before after doomed active
+  local before after doomed active protected="" protected_id=""
   before=$(docker system df --format '{{.Size}}' 2>/dev/null | tr '\n' ' ' || true)
   # Репозитории, которые сейчас действительно работают. Образы из остальных (схема выкатки,
   # которой больше нет: сборка на ВМ, ручной `webnestdev:production`) не нужны ни для запуска,
   # ни для откката, но проходили мимо правила «2 последних»: в своём репозитории такой образ
   # один, счёт не доходил до лимита — и 2 ГБ лежали на диске неделями.
   active=$(docker ps --format '{{.Image}}' 2>/dev/null | sed 's/[:@].*//' | sort -u || true)
+  # Образ, которым сервис должен подняться после уборки, защищён, даже если его контейнер сейчас
+  # не работает: MODE=repair чинит именно такой хост, и удалить версию перед её же подъёмом
+  # значило бы пойти за ней в GHCR — а там её может не быть (локальная сборка) или не быть места.
+  if [ -n "${PRUNE_PROTECT_IMAGE:-}" ]; then
+    protected=$(docker inspect --format '{{index .RepoTags 0}}' "$PRUNE_PROTECT_IMAGE" 2>/dev/null | sed 's/[:@].*//' || true)
+    # ID берётся тем же форматом, что и в списке ниже ({{.ID}}): полный sha из inspect
+    # с коротким ID из списка не совпал бы, и защита молча не сработала бы.
+    protected_id=$(docker images --format '{{.ID}}' "$PRUNE_PROTECT_IMAGE" 2>/dev/null | head -1 || true)
+    if [ -n "$protected" ]; then
+      active=$(printf '%s\n%s\n' "$active" "$protected" | sed '/^$/d' | sort -u)
+      log "образ ${PRUNE_PROTECT_IMAGE} не удаляется: им поднимется сервис"
+    fi
+  fi
   # Один образ может быть с двумя тегами (latest и sha-…): в листинге это две строки с одним
   # ID, и без дедупликации он съел бы два места из «двух последних».
   # `|| true` — как и у строки выше: уборка вызывается и из ветки отказа выкатки, а падать там
   # она не должна. Без docker (или с ним не отвечающим) список просто оказывается пустым, и
   # выкатка продолжает свою работу и показывает свою причину.
   doomed=$(docker images --format '{{.ID}}\t{{.Repository}}\t{{.CreatedAt}}' 2>/dev/null \
-    | awk -F'\t' -v pattern="$IMAGE_REPO_PATTERN" '
+    | awk -F'\t' -v pattern="$IMAGE_REPO_PATTERN" -v protect_id="$protected_id" '
         index($2, pattern) == 0 { next }
+        protect_id != "" && $1 == protect_id { next }
         seen[$1]++ { next }
         { print $3 "\t" $1 "\t" $2 }
       ' \
@@ -1028,6 +1046,7 @@ fi
 log "режим: $MODE$( [ "$DRY_RUN" = "1" ] && echo " (dry-run)" )"
 case "$MODE" in
   prune|cleanup|disk) ;;
+  repair) log "режим repair: чиню запущенный сервис, версию не меняю"; cd "$APP_DIR" ;;
   logs) log "режим logs: читаю логи контейнера в $APP_DIR"; cd "$APP_DIR" ;;
   *) log "деплой в $APP_DIR"; cd "$APP_DIR" ;;
 esac
@@ -1095,6 +1114,26 @@ case "$MODE" in
       run docker compose -f "$COMPOSE_FILE" up -d --no-build "$CADDY_SERVICE"
     fi
     ;;
+  repair)
+    # Ремонт — не выкатка: ни образа, ни исходников здесь не появляется. Лечится хост, на котором
+    # версия уже правильная, а сервис не отвечает (забитый диск, контейнер в цикле перезапусков,
+    # разъехавшийся после ручных правок compose). Поэтому сначала уборка — она же освобождает
+    # место для пересоздания, — и только потом подъём.
+    #
+    # Версия берётся из .env (WEBNESTDEV_IMAGE, его пишет pin_image), а не назначается: ремонт не
+    # должен подменять сборку, иначе «починили» означало бы «выкатили неизвестно что».
+    if [ -z "$IMAGE_REF" ]; then
+      IMAGE_REF=$(grep -m1 '^WEBNESTDEV_IMAGE=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- || true)
+    fi
+    log "ремонт: версия остаётся ${IMAGE_REF:-той, что записана в compose}, пересоздаю контейнеры"
+    PRUNE_PROTECT_IMAGE="$IMAGE_REF" prune_images
+    unset PRUNE_PROTECT_IMAGE
+    [ -n "$IMAGE_REF" ] && export WEBNESTDEV_IMAGE="$IMAGE_REF"
+    # --force-recreate, а не простой up: контейнер мог зависнуть в перезапусках, и тогда compose
+    # счёл бы его «уже поднятым» и не тронул. Конфигурацию берём ту, что лежит на ВМ: ремонт не
+    # приносит новых файлов.
+    run docker compose -f "$COMPOSE_FILE" up -d --no-build --force-recreate $(services_to_start)
+    ;;
   logs)
     log "режим logs: показываю логи контейнера, сервис не перезапускаю"
     dump_container_logs || exit 1
@@ -1119,7 +1158,7 @@ case "$MODE" in
     exit 0
     ;;
   *)
-    log "неизвестный MODE=$MODE (ожидается image, source, logs, cleanup, prune или disk)"
+    log "неизвестный MODE=$MODE (ожидается image, source, repair, logs, cleanup, prune или disk)"
     exit 2
     ;;
 esac
@@ -1145,6 +1184,11 @@ if [ "$MODE" = "image" ] && [ "$DRY_RUN" != "1" ]; then
   fi
   # Подтверждённая версия закрепляется в .env: перезагрузка ВМ не должна поднимать другой образ.
   pin_image "$IMAGE_REF"
+fi
+# В ремонте версия не меняется, откатываться не на что — но если после пересоздания сервис
+# отвечает не закреплённой сборкой, это единственный след, и молчать о нём нельзя.
+if [ "$MODE" = "repair" ] && [ "$DRY_RUN" != "1" ]; then
+  verify_version "$(image_sha "$IMAGE_REF")" || log "ремонт: сервис поднялся, но не на закреплённой сборке — проверьте WEBNESTDEV_IMAGE в $ENV_FILE"
 fi
 # Docker внутри сервера — до проверки песочницы: она сама спрашивает контейнер, и без docker её
 # «docker недоступен» не отличалось бы от «не смонтирован сокет» (см. verify_docker).
@@ -1172,5 +1216,6 @@ if [ "$MODE" = "image" ] && [ "$DRY_RUN" != "1" ]; then
 fi
 log "деплой завершён, живая сборка: $(live_build)"
 # Уборка после успешной выкатки, а не до неё: если сервис не поднялся, предыдущий образ
-# остаётся на месте и можно сразу откатиться на него без сборки.
-prune_images
+# остаётся на месте и можно сразу откатиться на него без сборки. Работающий образ защищён и
+# здесь: иначе `DRY_RUN=1` обещал бы удалить версию, которую сам же только что поднял.
+PRUNE_PROTECT_IMAGE="$IMAGE_REF" prune_images

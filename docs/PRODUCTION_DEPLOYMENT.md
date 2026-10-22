@@ -364,10 +364,18 @@ pruning runs only after a successful health check — that rollback stays instan
   VM. The retry only runs on a failed pull, so a healthy deploy never pays for it.
 - **By hand, without SSH:** Actions → **deploy** → *Run workflow* → `mode=prune`. It only cleans
   images and never touches the running service.
+- **When the service is down but the version is right:** `mode=repair`. It runs the same cleanup
+  (which also frees the space a recreate needs) and then re-creates the containers from the image
+  pinned in `.env` (`WEBNESTDEV_IMAGE`), with `--force-recreate` so a container stuck in a restart
+  loop is replaced rather than considered already up. It never pulls or changes the version, and
+  the health, Docker, sandbox and panel checks run afterwards exactly as in a normal deploy. This
+  is the one-command answer to the full-disk / restart-loop dead end that otherwise needs SSH.
 - **On a timer (optional):** the same logic is reachable from the VM if the repository is checked
   out there — `MODE=prune bash deploy/scripts/vm-deploy.sh`, so a cron line
   `0 4 * * 0 MODE=prune bash /path/to/vm-deploy.sh >> /var/log/webnestdev-prune.log 2>&1` is enough.
   `KEEP_IMAGES=2` brings the second copy back if a fast offline rollback matters more than disk.
+  The same applies to `MODE=repair`, which prunes first and then brings the service back up.
+
 - **The image itself is kept small:** the runtime stage installs production dependencies only
   (`npm ci --omit=dev`), the browser is `chromium-headless-shell` rather than the full Chromium (the
   server launches it headless everywhere, which saves ~390 MB), and `docker` is the 43 MB static
