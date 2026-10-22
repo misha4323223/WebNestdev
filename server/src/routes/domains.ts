@@ -1,4 +1,5 @@
 import type { FastifyInstance } from "fastify";
+import { z } from "zod";
 import { requireUser } from "../auth/auth.js";
 import { deleteDomainConnection, getDomainConnection, listDomainConnections, saveDomainConnection } from "../domains/connections.js";
 import { DOMAIN_REGISTRARS, findDomainRegistrar, readRegistrarFields } from "../domains/providers.js";
@@ -6,8 +7,14 @@ import { verifyRegistrarCredential } from "../domains/verify.js";
 
 /**
  * Коннекторы регистраторов доменов. Пароль или токен проверяется до сохранения: подключённым
- * считается только кабинет, который ответил списком доменов. Регистрация и оплата не
- * выполняются — платформа читает кабинет, но ничего в нём не меняет.
+ * считается только кабинет, который ответил списком доменов.
+ *
+ * Разрешение на изменения приходит от пользователя вместе с подключением (`allowWrites`, по
+ * умолчанию включено — карточка говорит об этом до нажатия «Сохранить») и меняется маршрутом
+ * `/api/domains/:provider/writes`. Без него агент читает кабинет, но не меняет DNS — так
+ * пароль, выданный для проверки домена, не становится молча правом переписать зону. Покупка,
+ * продление и перенос остаются действиями человека: для них у регистраторов нет безопасного
+ * «разреши и забудь», а деньги агент не тратит.
  */
 
 function messageOf(error: unknown) {
@@ -33,6 +40,7 @@ export async function registerDomainRoutes(app: FastifyInstance) {
           name: registrar.name,
           connected: Boolean(connection),
           account: connection?.account ?? null,
+          allowWrites: connection?.allowWrites ?? true,
           updatedAt: connection?.updatedAt ?? null,
         };
       }),
@@ -46,8 +54,11 @@ export async function registerDomainRoutes(app: FastifyInstance) {
     if (!registrar) return reply.code(404).send({ error: "Неизвестный регистратор" });
 
     let fields: Record<string, string>;
+    let allowWrites: boolean | undefined;
     try {
-      fields = readRegistrarFields(registrar, (request.body as { fields?: unknown } | null)?.fields);
+      const body = z.object({ fields: z.unknown(), allowWrites: z.boolean().optional() }).parse(request.body ?? {});
+      fields = readRegistrarFields(registrar, body.fields);
+      allowWrites = body.allowWrites;
     } catch (error) {
       return reply.code(400).send({ error: messageOf(error) });
     }
@@ -61,11 +72,14 @@ export async function registerDomainRoutes(app: FastifyInstance) {
 
     const existing = await getDomainConnection(user.id, registrar.id);
     const now = new Date().toISOString();
+    // Новое подключение разрешает изменения: карточка предупредила об этом до сохранения ключа.
+    const writes = allowWrites ?? existing?.allowWrites ?? true;
     await saveDomainConnection({
       userId: user.id,
       provider: registrar.id,
       secret: JSON.stringify(fields),
       account: verified.account,
+      allowWrites: writes,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
     });
@@ -74,9 +88,25 @@ export async function registerDomainRoutes(app: FastifyInstance) {
       name: registrar.name,
       connected: true,
       account: verified.account,
+      allowWrites: writes,
       domains: verified.domains,
       updatedAt: now,
     };
+  });
+
+  /** Изменения — решение пользователя: переключатель в карточке меняет только это поле. */
+  app.post("/api/domains/:provider/writes", async (request, reply) => {
+    const user = await requireUser(request, reply);
+    if (!user) return;
+    const registrar = registrarFrom(request.params);
+    if (!registrar) return reply.code(404).send({ error: "Неизвестный регистратор" });
+    const parsed = z.object({ allowWrites: z.boolean() }).safeParse(request.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: "Ожидалось поле allowWrites: true или false" });
+    const connection = await getDomainConnection(user.id, registrar.id);
+    if (!connection) return reply.code(400).send({ error: registrar.name + " не подключён" });
+    const now = new Date().toISOString();
+    await saveDomainConnection({ ...connection, allowWrites: parsed.data.allowWrites, updatedAt: now });
+    return { id: registrar.id, name: registrar.name, connected: true, account: connection.account, allowWrites: parsed.data.allowWrites, updatedAt: now };
   });
 
   app.post("/api/domains/:provider/disconnect", async (request, reply) => {
@@ -85,6 +115,6 @@ export async function registerDomainRoutes(app: FastifyInstance) {
     const registrar = registrarFrom(request.params);
     if (!registrar) return reply.code(404).send({ error: "Неизвестный регистратор" });
     await deleteDomainConnection(user.id, registrar.id);
-    return { id: registrar.id, name: registrar.name, connected: false, account: null };
+    return { id: registrar.id, name: registrar.name, connected: false, account: null, allowWrites: true };
   });
 }

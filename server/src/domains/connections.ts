@@ -9,6 +9,10 @@ import type { DomainRegistrarId } from "./providers.js";
  * Подключённый кабинет регистратора. Пароль или токен лежит только в зашифрованном виде —
  * так же, как ключи облаков; наружу он не возвращается никогда. Файловое хранилище —
  * запасной путь для локальной разработки, как у остальных сторов.
+ *
+ * `allowWrites` — решение пользователя, а не догадка платформы: пароль кабинета открывает и
+ * DNS, поэтому карточка спрашивает об этом до сохранения ключа, разрешение включено по
+ * умолчанию и выключается тем же переключателем, что у облаков.
  */
 export type DomainConnection = {
   userId: string;
@@ -16,6 +20,8 @@ export type DomainConnection = {
   /** JSON с полями регистратора (username+password / login+passwd / token). */
   secret: string;
   account: string;
+  /** Разрешены ли агенту изменения в кабинете: DNS-записи и настройки зоны. */
+  allowWrites: boolean;
   createdAt: string;
   updatedAt: string;
 };
@@ -50,8 +56,8 @@ async function writeAllFiles(userId: string, value: FileShape) {
   }
 }
 
-function decode(record: Omit<DomainConnection, "userId" | "provider">) {
-  return isEncryptedSecret(record.secret) ? decryptSecret(record.secret) : record.secret;
+function decode(secret: string) {
+  return isEncryptedSecret(secret) ? decryptSecret(secret) : secret;
 }
 
 export async function saveDomainConnection(connection: DomainConnection) {
@@ -59,28 +65,31 @@ export async function saveDomainConnection(connection: DomainConnection) {
   if (isYdbEnabled()) {
     await ydbQuery()`
       UPSERT INTO ${ydbQuery().identifier(getTable("domain_connections"))}
-        (user_id,provider,secret,account,created_at,updated_at)
-      VALUES (${stored.userId},${stored.provider},${stored.secret},${stored.account},${stored.createdAt},${stored.updatedAt})
+        (user_id,provider,secret,account,allow_writes,created_at,updated_at)
+      VALUES (${stored.userId},${stored.provider},${stored.secret},${stored.account},${stored.allowWrites},${stored.createdAt},${stored.updatedAt})
     `;
     return;
   }
   const all = await readAllFiles(connection.userId);
-  all[connection.provider] = { secret: stored.secret, account: stored.account, createdAt: stored.createdAt, updatedAt: stored.updatedAt };
+  all[connection.provider] = { secret: stored.secret, account: stored.account, allowWrites: stored.allowWrites, createdAt: stored.createdAt, updatedAt: stored.updatedAt };
   await writeAllFiles(connection.userId, all);
 }
 
 export async function listDomainConnections(userId: string): Promise<DomainConnection[]> {
   if (isYdbEnabled()) {
-    const [rows] = await ydbQuery()<Array<{ provider: string; secret: string; account: string; created_at: string; updated_at: string }>>`
-      SELECT provider,secret,account,created_at,updated_at
+    const [rows] = await ydbQuery()<Array<{ provider: string; secret: string; account: string; allow_writes: boolean; created_at: string; updated_at: string }>>`
+      SELECT provider,secret,account,allow_writes,created_at,updated_at
       FROM ${ydbQuery().identifier(getTable("domain_connections"))}
       WHERE user_id = ${userId}
     `;
     return (rows ?? []).map(row => ({
       userId,
       provider: row.provider as DomainRegistrarId,
-      secret: decode({ secret: row.secret, account: row.account, createdAt: row.created_at, updatedAt: row.updated_at }),
+      secret: decode(row.secret),
       account: row.account,
+      // Строка, созданная до появления колонки, читается как «изменения разрешены»: именно так
+      // ведёт себя новая карточка, и поведение не меняется молча в другую сторону.
+      allowWrites: row.allow_writes === undefined || row.allow_writes === null ? true : Boolean(row.allow_writes),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }));
@@ -89,8 +98,9 @@ export async function listDomainConnections(userId: string): Promise<DomainConne
   return Object.entries(all).map(([provider, record]) => ({
     userId,
     provider: provider as DomainRegistrarId,
-    secret: decode(record),
+    secret: decode(record.secret),
     account: record.account,
+    allowWrites: record.allowWrites ?? true,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
   }));

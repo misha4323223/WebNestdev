@@ -485,10 +485,14 @@ export async function initializeStorage(): Promise<void> {
       provider TEXT NOT NULL,
       secret TEXT NOT NULL,
       account TEXT NOT NULL,
+      allow_writes BOOLEAN NOT NULL DEFAULT true,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       PRIMARY KEY (user_id, provider)
     )`);
+    // Кабинет, подключённый до появления разрешения на изменения, приходит без колонки:
+    // CREATE TABLE IF NOT EXISTS её не добавит, а запись соединения упадёт на живом сервере.
+    await pool.query(`ALTER TABLE ${tbl("domain_connections")} ADD COLUMN IF NOT EXISTS allow_writes BOOLEAN NOT NULL DEFAULT true`);
 
     await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("project_sizes")} (
       project_id TEXT NOT NULL PRIMARY KEY,

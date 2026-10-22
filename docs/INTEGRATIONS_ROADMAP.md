@@ -12,7 +12,7 @@ Replit и доступности российских API. Ниже — что �
 | Репозитории | GitHub и GitLab (импорт, коммиты, отправка; на бесплатном тарифе импорт до 100 МБ) | `server/src/github/`, `server/src/gitlab/`, `src/features/github/`, `src/features/gitlab/` |
 | База данных проекта | Yandex Managed PostgreSQL, Yandex Serverless YDB, VK Cloud, Selectel, Timeweb, Cloud.ru, свой сервер | `server/src/database/`, `src/features/database/` |
 | Облака пользователя | Yandex Cloud (ключ + OAuth-вход), Timeweb Cloud, Cloud.ru, MWS, REG.RU Облако | `server/src/cloud/`, `src/features/integrations/cloud/` |
-| Домены | Проверка занятости (`domain.check`) и кабинеты REG.RU / Beget / Timeweb Cloud (`domain.list`) | `server/src/domains/` |
+| Домены | Проверка занятости (`domain.check`), кабинеты REG.RU / Beget / Timeweb Cloud (`domain.list`) и настройка DNS агентом с разрешения пользователя (`domain.request`, переключатель в карточке) | `server/src/domains/`, `server/src/tools/domain-tools.ts` |
 | Сервисы с ключом | 21 российский сервис: файлы (S3), почта, оплата, AI, карты, CRM — с проверкой ключа и переносом переменных в проект | `server/src/services/`, `src/features/integrations/services/` |
 | Вход | Email + пароль, телефон (Yandex Notify, SMS.RU, SMSC, Exolve, SMS Aero), Yandex ID | `server/src/auth/`, `src/features/auth/` |
 | AI агента | Платформенный провайдер (`PLATFORM_AI_*`) + свой ключ | `docs/PLATFORM_AI.md` |

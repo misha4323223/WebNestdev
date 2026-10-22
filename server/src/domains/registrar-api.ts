@@ -187,6 +187,144 @@ async function regRuDomains(fields: Record<string, string>): Promise<RegistrarLi
   }
 }
 
+export type RegistrarMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
+
+/**
+ * Запрос к API регистратора. `path` — то, что называет документация провайдера: у REG.RU и
+ * Beget это команда вида `zone/get_resource_records` / `dns/getData`, у Timeweb Cloud —
+ * обычный путь REST вида `/api/v1/domains/example.ru/dns-records`.
+ */
+export type RegistrarCall = {
+  method?: RegistrarMethod;
+  path: string;
+  /** Параметры команды: у REG.RU и Beget уходят строкой `input_data`, у Timeweb — телом JSON. */
+  input?: unknown;
+  query?: Record<string, string>;
+};
+
+export type RegistrarCallResult = {
+  ok: boolean;
+  status: number;
+  registrar: DomainRegistrarId;
+  path: string;
+  body: unknown;
+  /** Что делать с отказом, если причина известна (например, IP не разрешён в кабинете). */
+  hint?: string;
+};
+
+const API_BASE: Record<DomainRegistrarId, string> = {
+  regru: "https://api.reg.ru/api/regru2/",
+  beget: "https://api.beget.com/api/",
+  timeweb: "https://api.timeweb.cloud",
+};
+
+const COMMAND = /^[a-z0-9_]+\/[a-z0-9_]+$/i;
+const MAX_INPUT_BYTES = 20_000;
+
+/**
+ * Чтение или изменение. У REG.RU и Beget команда сама говорит об этом своим именем
+ * (`get_list`, `add_alias`, `changeRecords`), у Timeweb — HTTP-методом. Неизвестное имя
+ * считается изменением: ошибиться в сторону отказа безопаснее, чем в сторону записи.
+ */
+export function isReadOnlyRegistrarCall(provider: DomainRegistrarId, call: RegistrarCall) {
+  if (provider === "timeweb") return !call.method || call.method === "GET";
+  return /(?:^|\/)(get|list|nop|check|status)(?:$|[_A-Z])/.test(call.path);
+}
+
+function commandPath(path: string) {
+  const trimmed = path.trim().replace(/^\/+/, "");
+  if (!COMMAND.test(trimmed)) throw new Error("Команда регистратора задаётся как «раздел/метод», например zone/get_resource_records");
+  return trimmed;
+}
+
+function restPath(path: string) {
+  const trimmed = path.trim();
+  if (!trimmed.startsWith("/") || trimmed.startsWith("//") || trimmed.includes("..")) {
+    throw new Error("Путь API Timeweb Cloud начинается с «/» и не содержит «..», например /api/v1/domains/example.ru/dns-records");
+  }
+  return trimmed;
+}
+
+function inputJson(input: unknown) {
+  if (input === undefined) return "{}";
+  if (typeof input === "string") return input;
+  const text = JSON.stringify(input);
+  if (text.length > MAX_INPUT_BYTES) throw new Error("Параметры запроса слишком большие");
+  return text;
+}
+
+/**
+ * Запрос к API подключённого регистратора тем же ключом, что уже сохранён. Разрешение на
+ * изменения проверяется в инструменте агента (`domain.request`), а не здесь: этот слой ничего
+ * не решает про права, он только разговаривает с API провайдера.
+ */
+export async function registrarRequest(
+  id: DomainRegistrarId,
+  fields: Record<string, string>,
+  call: RegistrarCall,
+): Promise<RegistrarCallResult> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  try {
+    if (id === "timeweb") {
+      const url = new URL(API_BASE.timeweb + restPath(call.path));
+      for (const [key, value] of Object.entries(call.query ?? {})) url.searchParams.set(key, value);
+      const method = call.method ?? "GET";
+      const response = await fetch(url.toString(), {
+        method,
+        headers: {
+          Authorization: "Bearer " + fields.token,
+          Accept: "application/json",
+          ...(call.input === undefined ? {} : { "Content-Type": "application/json" }),
+        },
+        ...(call.input === undefined || method === "GET" ? {} : { body: inputJson(call.input) }),
+        signal: controller.signal,
+      });
+      return finish(response, id, call.path);
+    }
+
+    // REG.RU и Beget принимают одну и ту же форму: логин, пароль и JSON-строка параметров.
+    const path = commandPath(call.path);
+    const form = new URLSearchParams({
+      ...(id === "regru" ? { username: fields.username, password: fields.password } : { login: fields.login, passwd: fields.passwd }),
+      input_format: "json",
+      output_format: "json",
+      ...(id === "regru" ? { io_encoding: "utf8" } : {}),
+      input_data: inputJson(call.input),
+    });
+    const response = await fetch(API_BASE[id] + path, {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" },
+      body: form.toString(),
+      signal: controller.signal,
+    });
+    return finish(response, id, path);
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") throw new Error("Нет ответа от регистратора: превышено время ожидания");
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/**
+ * Ответ как есть: агент должен видеть настоящий код и тело, чтобы объяснить отказ, а не
+ * догадываться о нём. `ok` — не только HTTP-код: регистраторы отвечают 200 и на ошибку.
+ */
+async function finish(response: Response, registrar: DomainRegistrarId, path: string): Promise<RegistrarCallResult> {
+  const text = await response.text();
+  let body: unknown = text;
+  try { body = text ? JSON.parse(text) : null; } catch { /* ответ не JSON — отдаётся текстом */ }
+  const record = (body && typeof body === "object" ? body : {}) as { result?: unknown; status?: unknown; error_code?: unknown };
+  const failed = !response.ok
+    || (typeof record.result === "string" && record.result !== "success")
+    || (typeof record.status === "string" && record.status !== "success");
+  const hint = record.error_code === "ACCESS_DENIED_FROM_IP"
+    ? "Разрешите IP сервера в REG.RU: «Настройки API» → «Диапазоны IP-адресов» → «Добавить IP»."
+    : undefined;
+  return { ok: !failed, status: response.status, registrar, path, body, ...(hint ? { hint } : {}) };
+}
+
 /** Список доменов в кабинете подключённого регистратора — без единого изменения. */
 export async function listRegistrarDomains(id: DomainRegistrarId, fields: Record<string, string>): Promise<RegistrarListResult> {
   if (id === "beget") return begetDomains(fields);
