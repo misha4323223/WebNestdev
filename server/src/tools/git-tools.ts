@@ -1,6 +1,7 @@
 import { getSandbox, assertInsideSandbox } from "../sandbox-manager.js";
 import { runInSandbox } from "../sandbox-worker.js";
 import { pullFromGithub } from "../changes/changes-service.js";
+import { GIT_AUTHOR } from "../changes/git-repo.js";
 import { registerTool } from "../tool-registry.js";
 import { isSecretProjectPath } from "../secrets/secret-paths.js";
 import { findSecretEnvFiles } from "../sandbox/secret-mask.js";
@@ -195,9 +196,13 @@ registerTool({
     }
 
     const quoted = message.replaceAll("'", "'\\''");
+    // У репозитория проекта нет `user.name`/`user.email`: коммиты платформы ставятся с явным
+    // автором через isomorphic-git, а CLI без него отвечает «Author identity unknown». Тот же
+    // автор, что у контрольных точек, — только для коммита агента, настройки проекта не трогаются.
+    const identity = "-c user.name='" + GIT_AUTHOR.name + "' -c user.email='" + GIT_AUTHOR.email + "'";
     return assertGitAvailable(await runInSandbox(
       sandbox,
-      "git commit -m '" + quoted + "'",
+      "git " + identity + " commit -m '" + quoted + "'",
       sandbox.root,
       { signal: context.signal, maskSecretEnvFiles: true },
     ));

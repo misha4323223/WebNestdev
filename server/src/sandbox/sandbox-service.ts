@@ -2,7 +2,7 @@ import { mkdir } from "node:fs/promises";
 import { getProject } from "../project-store.js";
 import { ensureProjectWorkspace, noteProjectAccess } from "../storage/project-archive.js";
 import { buildSandboxConfig,sandboxRootPath } from "./config.js";
-import { openDirForSandbox,openTreeForSandbox } from "./permissions.js";
+import { clearRootOwnedBuildCaches,openDirForSandbox,openGitForSandbox,openTreeForSandbox } from "./permissions.js";
 import type { SandboxConfig } from "./sandbox-types.js";
 
 /**
@@ -20,7 +20,11 @@ const opened=new Map<string,Promise<void>>();
 function openToSandboxUser(root:string){
   const pending=opened.get(root);
   if(pending)return pending;
-  const run=openDirForSandbox(root).then(()=>openTreeForSandbox(root));
+  const run=openDirForSandbox(root)
+    .then(()=>openTreeForSandbox(root))
+    // Кеши Vite под node_modules обход дерева пропускает, а именно там старая сборка от root
+    // оставляла каталог, в который контейнер уже не мог писать.
+    .then(()=>clearRootOwnedBuildCaches(root).then(()=>undefined));
   opened.set(root,run);
   return run;
 }
@@ -42,5 +46,9 @@ export async function getSandbox(projectId:string,userId:string):Promise<Sandbox
   await ensureProjectWorkspace(projectId,userId);
   await mkdir(root,{recursive:true});
   await openToSandboxUser(root);
+  // `.git` сервер пишет сам от root после каждого коммита и выгрузки, поэтому открывается не один
+  // раз при первом доступе, а перед каждым обращением: иначе `git add`/`git commit` в контейнере
+  // снова упираются в `.git/index: Permission denied`.
+  await openGitForSandbox(root);
   return buildSandboxConfig(projectId,root);
 }

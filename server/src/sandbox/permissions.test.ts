@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { chmod, lstat, mkdir, mkdtemp, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { isSecretEnvFile, openDirsForSandbox, openFileForSandbox, openTreeForSandbox } from "./permissions.js";
+import { clearRootOwnedBuildCaches, isSecretEnvFile, openDirsForSandbox, openFileForSandbox, openGitForSandbox, openTreeForSandbox } from "./permissions.js";
 
 /**
  * Владельца можно сменить только от root. Локально и в CI сервер запущен обычным
@@ -64,7 +64,7 @@ test("обход дерева открывает подкаталоги и фа�
   });
 });
 
-test("обход не трогает node_modules и .git: их наполняет сам контейнер", async () => {
+test("обход дерева не трогает node_modules и .git: это отдельные обходы", async () => {
   await withRoot(async root => {
     const dependency = path.join(root, "node_modules", "left-pad", "index.js");
     const gitHead = path.join(root, ".git", "HEAD");
@@ -74,7 +74,60 @@ test("обход не трогает node_modules и .git: их наполняе
     await openTreeForSandbox(root);
 
     assert.equal(await mode(dependency), "644", "обход зависимостей не нужен и стоит дорого");
-    assert.equal(await mode(gitHead), "644");
+    assert.equal(await mode(gitHead), "644", "для .git есть отдельный обход, он вызывается явно");
+  });
+});
+
+test("каталог .git открывается контейнеру отдельно от дерева проекта", async () => {
+  await withRoot(async root => {
+    const gitDir = path.join(root, ".git");
+    const objects = path.join(gitDir, "objects");
+    const fanout = path.join(objects, "ab");
+    const head = path.join(gitDir, "HEAD");
+    const index = path.join(gitDir, "index");
+    const object = path.join(fanout, "cdef");
+    await seedFile(head);
+    await seedFile(index);
+    await seedFile(object);
+    await chmod(gitDir, 0o755);
+    await chmod(objects, 0o755);
+    await chmod(fanout, 0o755);
+
+    assert.equal(await openGitForSandbox(root), true);
+
+    assert.equal(await mode(gitDir), DIR, "без записи в .git git add/commit падает");
+    assert.equal(await mode(objects), DIR);
+    assert.equal(await mode(fanout), DIR);
+    // Файлы не переписываются на 664: достаточно бита записи владельца, а бит x у хуков не теряется.
+    for (const file of [head, index, object]) {
+      assert.ok(((await stat(file)).mode & 0o200) !== 0, file + " должен быть доступен на запись");
+    }
+    if (CAN_OWN) assert.equal((await stat(head)).uid, 1000, "репозиторий принадлежит uid контейнера");
+  });
+});
+
+test("без .git открытие ничего не делает", async () => {
+  await withRoot(async root => {
+    assert.equal(await openGitForSandbox(root), false);
+  });
+});
+
+test("кеш Vite, созданный не контейнером, удаляется — Vite пересоздаст его сам", async () => {
+  await withRoot(async root => {
+    const temp = path.join(root, "node_modules", ".vite-temp");
+    await seedFile(path.join(temp, "vite.config.ts.timestamp-1.mjs"));
+    const before = await stat(temp);
+
+    const removed = await clearRootOwnedBuildCaches(root);
+
+    if (before.uid === 1000) {
+      // Кеш уже контейнера: удалять его незачем, Vite им пользуется.
+      assert.equal(removed, 0);
+      assert.ok((await stat(temp)).isDirectory());
+    } else {
+      assert.equal(removed, 1);
+      await assert.rejects(stat(temp));
+    }
   });
 });
 

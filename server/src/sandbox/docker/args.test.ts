@@ -25,6 +25,22 @@ test("контейнер команды запускается без capabiliti
   assert.ok(args.includes("--user") && args[args.indexOf("--user") + 1] === "1000:1000", args.join(" "));
 });
 
+test("git в контейнере не спотыкается о владельца репозитория", () => {
+  const config = { projectId: "p1", root: "/root/p1", memoryMb: 256, cpuLimit: 1, timeoutMs: 1000 };
+  const args = dockerRunArgs(config, config.root, options, "git status --short", "none");
+  const env: Record<string, string> = {};
+  for (let index = 0; index < args.length; index++) {
+    if (args[index] === "-e" && typeof args[index + 1] === "string") {
+      const [key, ...value] = (args[index + 1] as string).split("=");
+      env[key] = value.join("=");
+      index++;
+    }
+  }
+  assert.equal(env.GIT_CONFIG_COUNT, "1");
+  assert.equal(env.GIT_CONFIG_KEY_0, "safe.directory");
+  assert.equal(env.GIT_CONFIG_VALUE_0, "*");
+});
+
 test("секретный файл монтируется после рабочей области, поверх своего пути", () => {
   const config = {
     projectId: "p1",
