@@ -74,7 +74,11 @@ async function main() {
   if (started.code !== 0) {
     const detail = (started.stderr || "").trim().slice(-400);
     console.log("[preview] контейнер-проба не запустился: " + detail);
-    verdict(/pull access denied|no such image|manifest unknown|not found|unauthorized/i.test(detail) ? "image" : "unreachable");
+    // Отсутствующая сеть тоже отвечает «not found», и вердикт `image` отправлял искать причину
+    // в образе, хотя запуск упал на сети (ровно так имя `webnestdev-preview` вместо
+    // `src_webnestdev-preview` выглядело как проблема образа). Сеть проверяется первой.
+    const missingNetwork = /network .*not found/i.test(detail);
+    verdict(missingNetwork ? "unreachable" : /pull access denied|no such image|manifest unknown|not found|unauthorized/i.test(detail) ? "image" : "unreachable");
     process.exit(1);
   }
 
