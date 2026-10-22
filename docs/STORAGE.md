@@ -22,7 +22,7 @@ them is a separate product decision and is not implemented.
 
 | Event | Updates the size |
 |---|---|
-| `fs.write`, `fs.delete`, `fs.rename`, `terminal.exec`, `npm.install`, `git.add`, `git.commit` | yes, after the tool runs |
+| `fs.write`, `fs.delete`, `fs.rename`, `terminal.exec`, `npm.install`, `git.add`, `git.commit`, `git.pull` | yes, after the tool runs (a pull only when it changed files) |
 | File upload from the panel | yes, after the file is written |
 | GitHub import | yes, after files and history are written |
 | `pull` from GitHub | yes, when the pull changed files |

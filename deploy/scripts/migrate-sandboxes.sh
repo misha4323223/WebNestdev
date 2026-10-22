@@ -21,6 +21,6 @@ fi
 mkdir -p "$SANDBOX_DIR"
 echo "переношу $VOLUME -> $SANDBOX_DIR"
 # Образ берётся тот же, что уже есть для песочниц, чтобы не тянуть лишний в ВМ.
-docker run --rm -v "$VOLUME:/from:ro" -v "$SANDBOX_DIR:/to" "${SANDBOX_IMAGE:-node:22-bookworm-slim}" \
+docker run --rm -v "$VOLUME:/from:ro" -v "$SANDBOX_DIR:/to" "${SANDBOX_IMAGE:-node:22-bookworm}" \
   sh -c 'if [ -d /from/sandboxes ]; then cp -a /from/sandboxes/. /to/; echo "файлов: $(find /to -type f | wc -l)"; else echo "в томе нет каталога sandboxes"; fi'
 echo "готово: $SANDBOX_DIR"

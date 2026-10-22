@@ -13,10 +13,12 @@ import type { Checkpoint, CheckpointFile, CheckpointFileStatus, CheckpointKind, 
  * хранилище снимков: историю видно, её можно забрать на GitHub, и откат — это тоже коммит.
  *
  * Git здесь работает в процессе сервера (isomorphic-git), а не в контейнере песочницы.
- * Причины две: образ песочницы запускается с `--read-only` и без сети по умолчанию, а
- * `git` в minimal-образе может отсутствовать вовсе. Файлы проекта сервер и так читает и
- * пишет сам (см. импорт репозитория и инструменты файлов), поэтому git-слой работает там же,
- * где живут файлы, и один и тот же код обслуживает и `fs.write`, и `terminal.exec`.
+ * Причины две: контейнер запускается с `--read-only` и без сети по умолчанию, а образ
+ * песочницы выбирается через `SANDBOX_IMAGE` и может быть собран без git (стандартный образ
+ * платформы git содержит — он нужен инструментам агента, см. sandbox/config.ts). Поэтому
+ * история проекта не зависит от содержимого образа: файлы сервер и так читает и пишет сам
+ * (импорт репозитория, инструменты файлов), и один и тот же код обслуживает и `fs.write`,
+ * и `terminal.exec`.
  */
 
 export const GIT_AUTHOR = { name: "NestDev Agent", email: "agent@nestdev.local" };
@@ -543,7 +545,10 @@ export async function pullBranch(root: string, options: { branch: string; token:
       ref: options.branch,
       singleBranch: true,
       depth: 1,
-      onAuth: () => ({ username: "x-access-token", password: options.token as string }),
+      // `oauth2` для GitLab/GitVerse/SourceCraft и `x-access-token` для GitHub — то же имя, что у
+      // pushBranch: с жёстко вписанным GitHub-именем выгрузка с остальных провайдеров получала 401
+      // и выглядела как «токен не принят».
+      onAuth: () => ({ username: options.username ?? "x-access-token", password: options.token as string }),
     });
     const remoteHead = fetched.fetchHead;
     if (!remoteHead) return { pulled: false, branch: options.branch, at, error: "Репозиторий не вернул ветку " + options.branch };

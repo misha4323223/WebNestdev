@@ -173,7 +173,10 @@ services:
       # монтированием ниже, сервер отдаст контейнерам правильный путь вместо угадывания.
       WEBNESTDEV_SANDBOX_HOST_DIR: ${SANDBOX_DIR:-/var/lib/webnestdev/sandboxes}
       SANDBOX_MODE: docker
-      SANDBOX_IMAGE: node:22-bookworm-slim
+      # Полный образ, а не slim: в slim нет git, и «Работа с Git» у агента отвечала
+      # `/bin/sh: 1: git: not found`. Здесь есть git, make и компилятор — ставится и нативный
+      # npm install. Свой образ (в том числе slim с git внутри) задаётся этим же значением.
+      SANDBOX_IMAGE: node:22-bookworm
       SANDBOX_MEMORY: 1g
       SANDBOX_CPUS: 1
       SANDBOX_PIDS_LIMIT: 128

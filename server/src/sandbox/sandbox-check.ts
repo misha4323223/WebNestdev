@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { sandboxHostRootDir,sandboxRootDir } from "./config.js";
+import { sandboxHostRootDir,sandboxImage,sandboxRootDir } from "./config.js";
 
 /**
  * Prefix of the marker file the check writes and a container reads back through the mounted
@@ -58,7 +58,7 @@ function dockerRun(args:string[],timeoutMs:number){
 export async function checkSandboxMount(options:{serverDir?:string;hostDir?:string;image?:string;timeoutMs?:number}={}):Promise<SandboxMountCheck>{
   const serverDir=options.serverDir??sandboxRootDir();
   const hostDir=options.hostDir??sandboxHostRootDir();
-  const image=options.image??process.env.SANDBOX_IMAGE??"node:22-bookworm-slim";
+  const image=options.image??sandboxImage();
   const timeoutMs=options.timeoutMs??30000;
   const token=randomUUID();
   const markerName=`${MOUNT_MARKER_FILE}-${token}`;
@@ -102,7 +102,7 @@ export async function checkSandboxMount(options:{serverDir?:string;hostDir?:stri
 export async function sandboxFileCounts(options:{serverDir?:string;hostDir?:string;image?:string;timeoutMs?:number}={}){
   const serverDir=options.serverDir??sandboxRootDir();
   const hostDir=options.hostDir??sandboxHostRootDir();
-  const image=options.image??process.env.SANDBOX_IMAGE??"node:22-bookworm-slim";
+  const image=options.image??sandboxImage();
   const timeoutMs=options.timeoutMs??30000;
   const container=await dockerRun(["run","--rm","--pull=never","--network","none","--user","1000:1000","-v",hostDir+":/workspace","-w","/workspace",image,"/bin/sh","-lc","find /workspace -type f 2>/dev/null | wc -l"],timeoutMs).catch(()=>null);
   const parsed=container&&container.code===0?Number(container.stdout.trim()):NaN;

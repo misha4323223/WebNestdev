@@ -28,7 +28,7 @@ const MUTATING_TOOLS=new Set(["fs.write","fs.rename","fs.delete","terminal.exec"
  * причине: сохранённый ключ сам по себе не требует сборки и прогона приложения — проверкой займётся
  * тот шаг, который начнёт использовать его в коде.
  */
-const PLANNER_FORBIDDEN_TOOLS=new Set(["git.add","git.commit","secrets.request","preview.start","preview.stop"]);
+const PLANNER_FORBIDDEN_TOOLS=new Set(["git.add","git.commit","git.pull","secrets.request","preview.start","preview.stop"]);
 
 /**
  * Planner mode still has to read the project, so plain inspection commands are allowed
@@ -36,7 +36,7 @@ const PLANNER_FORBIDDEN_TOOLS=new Set(["git.add","git.commit","secrets.request",
  * one command, one answer, with no room for a write hidden behind a pipe.
  */
 const READ_ONLY_COMMANDS=new Set(["ls","cat","head","tail","wc","find","grep","rg","tree","pwd","file","stat","du","df","which","whereis","echo","jq","diff","sort","uniq","cut","basename","dirname","realpath","sed","awk","git","npm","node","tsc","eslint","prettier"]);
-const WRITE_MARKERS=[">","tee ","sed -i","perl -i","--in-place","--write","--fix","rm ","rmdir ","mv ","cp ","mkdir ","touch ","truncate ","chmod ","chown ","ln ","dd ","patch ","git add","git commit","git push","git checkout","git switch","git restore","git reset","git clean","git stash","git merge","git rebase","git rm","git mv","npm i ","npm install","npm ci","npm run","npm exec","yarn add","pnpm add","bun add","bun run","pip install","python -c","node -e","node --eval","curl ","wget ","ssh ","scp ","sudo ","kill ","systemctl ","docker "];
+const WRITE_MARKERS=[">","tee ","sed -i","perl -i","--in-place","--write","--fix","rm ","rmdir ","mv ","cp ","mkdir ","touch ","truncate ","chmod ","chown ","ln ","dd ","patch ","git add","git commit","git push","git pull","git fetch","git clone","git checkout","git switch","git restore","git reset","git clean","git stash","git merge","git rebase","git rm","git mv","npm i ","npm install","npm ci","npm run","npm exec","yarn add","pnpm add","bun add","bun run","pip install","python -c","node -e","node --eval","curl ","wget ","ssh ","scp ","sudo ","kill ","systemctl ","docker "];
 
 function isReadOnlyCommand(command:string){
   const value=command.trim();

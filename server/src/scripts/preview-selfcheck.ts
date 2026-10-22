@@ -26,10 +26,11 @@
  * идут в одном месте — после него.
  */
 import { dockerExec } from "../preview/docker-exec.js";
+import { sandboxImage } from "../sandbox/config.js";
 import { addressOnNetworks, attachToServerNetworks, firstContainerAddress, previewNetwork, serverNetworks } from "../preview/preview-network.js";
 import { PREVIEW_APP_PORT, PREVIEW_LABEL } from "../preview/types.js";
 
-const IMAGE = process.env.SANDBOX_IMAGE ?? "node:22-bookworm-slim";
+const IMAGE = sandboxImage();
 /** Ответ, который отдаёт проба: он же подтверждает, что отвечает именно она. */
 const PROBE_MARKER = "webnestdev-preview-probe";
 /** Тот же порт, что у настоящего предпросмотра (PREVIEW_APP_PORT). */

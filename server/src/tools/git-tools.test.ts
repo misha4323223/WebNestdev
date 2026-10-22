@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { filterSecretStatus, redactSecretEnvDiff, secretPathspecExclusions } from "./git-tools.js";
+import { filterSecretStatus, gitBinaryMissing, redactSecretEnvDiff, secretPathspecExclusions } from "./git-tools.js";
 
 test("diff секретного файла выбрасывается целиком, а обычный остаётся", () => {
   const output = [
@@ -53,4 +53,17 @@ test("статус не показывает секретные пути, вкл
   assert.match(filtered, /src\/app\.ts/);
   assert.match(filtered, /\.env\.example/);
   assert.doesNotMatch(filtered, /\.env\.local|apps\/web\/\.env|\.env\.production/);
+});
+
+test("ответ оболочки «git: not found» распознаётся как отсутствие git в образе", () => {
+  // Ровно то, что вернул контейнер песочницы: код 127 и сообщение оболочки вместо состояния репозитория.
+  assert.equal(
+    gitBinaryMissing({ ok: false, exitCode: 127, stderr: "/bin/sh: 1: git: not found\n" }),
+    true,
+  );
+  assert.equal(
+    gitBinaryMissing({ ok: false, exitCode: 1, stderr: "fatal: not a git repository (or any of the parent directories): .git" }),
+    false,
+  );
+  assert.equal(gitBinaryMissing({ ok: true, exitCode: 0, stderr: "" }), false);
 });

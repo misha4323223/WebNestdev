@@ -624,6 +624,20 @@ install_caddyfile(){
   mv "$staged" "$APP_DIR/$CADDY_FILE"
 }
 
+# Образ песочницы теперь полный (в slim нет git, а он нужен инструментам агента) и весит около
+# гигабайта. Скачиваем его на выкатке, а не в первой команде агента: там образ тянется внутри
+# `docker run` под таймаутом инструмента, и медленная загрузка выглядела бы как зависшая команда.
+# Отказ не валит выкатку: следующая команда скачает образ сама, проверка просто скажет «image».
+ensure_sandbox_image(){
+  local image="${SANDBOX_IMAGE:-node:22-bookworm}"
+  if [ "$DRY_RUN" = "1" ]; then log "dry-run: docker pull $image"; return 0; fi
+  if docker image inspect "$image" >/dev/null 2>&1; then return 0; fi
+  log "скачиваю образ песочницы $image (git и компилятор для npm install) — разовая загрузка"
+  if ! docker pull "$image" >/dev/null 2>&1 </dev/null; then
+    log "образ $image не скачался — его скачает первая команда агента, либо проверьте доступ к реестру"
+  fi
+}
+
 validate_caddyfile(){
   local file="$1"
   if [ "$DRY_RUN" = "1" ]; then
@@ -688,7 +702,7 @@ migrate_sandboxes(){
   log "переношу файлы проектов из тома $volume в $dir"
   # Перенос не должен ронять выкатку: если копирование не удалось, каталог остаётся пустым и
   # следующая выкатка повторит попытку (условие — «каталог пуст»).
-  if ! docker run --rm --network none -v "$volume:/from:ro" -v "$dir:/to" "${SANDBOX_IMAGE:-node:22-bookworm-slim}" \
+  if ! docker run --rm --network none -v "$volume:/from:ro" -v "$dir:/to" "${SANDBOX_IMAGE:-node:22-bookworm}" \
     sh -c 'if [ -d /from/sandboxes ]; then cp -a /from/sandboxes/. /to/ 2>/dev/null || true; echo "файлов: $(find /to -type f 2>/dev/null | wc -l)"; else echo "в томе нет каталога sandboxes"; fi'; then
     log "перенос файлов проектов не удался — повторю при следующей выкатке"
   fi
@@ -706,6 +720,7 @@ migrate_sandboxes(){
 # и всё это при зелёном статусе в Actions. Поэтому stdin у таких команд берётся из /dev/null.
 verify_sandbox(){
   local output verdict
+  ensure_sandbox_image
   if [ "$MODE" = "source" ]; then
     # В режиме source сервер запущен systemd прямо на хосте: обе стороны — один и тот же путь.
     output=$(cd "$APP_DIR" && node server/dist/scripts/sandbox-selfcheck.js </dev/null 2>&1 || true)

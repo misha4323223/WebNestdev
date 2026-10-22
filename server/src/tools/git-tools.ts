@@ -1,8 +1,31 @@
 import { getSandbox, assertInsideSandbox } from "../sandbox-manager.js";
 import { runInSandbox } from "../sandbox-worker.js";
+import { pullFromGithub } from "../changes/changes-service.js";
 import { registerTool } from "../tool-registry.js";
 import { isSecretProjectPath } from "../secrets/secret-paths.js";
 import { findSecretEnvFiles } from "../sandbox/secret-mask.js";
+
+/**
+ * Отсутствие git в образе песочницы — не состояние репозитория, а ответ оболочки
+ * (`/bin/sh: 1: git: not found`, код 127). Возвращать его агенту как результат `git status` значит
+ * отправить его искать причину в проекте, поэтому такой ответ превращается в шаг, который можно
+ * сделать: имя переменной и образ, в котором git есть.
+ */
+export function gitBinaryMissing(result: { ok: boolean; exitCode: number | null; stderr: string }) {
+  if (result.ok) return false;
+  return /git: (not found|command not found)/i.test(result.stderr)
+    || (result.exitCode === 127 && /\bgit\b/i.test(result.stderr));
+}
+
+export const GIT_MISSING_MESSAGE =
+  "В образе песочницы нет git: SANDBOX_IMAGE указывает на сборку без него. Задайте образ с git " +
+  "(например SANDBOX_IMAGE=node:22-bookworm в docker-compose.yml) и перезапустите контейнер сервера. " +
+  "История проекта при этом цела — панель «Изменения» работает с ней отдельно от контейнера.";
+
+function assertGitAvailable<T extends { ok: boolean; exitCode: number | null; stderr: string }>(result: T): T {
+  if (gitBinaryMissing(result)) throw new Error(GIT_MISSING_MESSAGE);
+  return result;
+}
 
 async function git(
   context: { projectId: string; userId: string; signal?: AbortSignal },
@@ -10,10 +33,10 @@ async function git(
   options: { maskSecretEnvFiles?: boolean } = {},
 ) {
   const sandbox = await getSandbox(context.projectId, context.userId);
-  return runInSandbox(sandbox, "git " + command, sandbox.root, {
+  return assertGitAvailable(await runInSandbox(sandbox, "git " + command, sandbox.root, {
     signal: context.signal,
     ...options,
-  });
+  }));
 }
 
 /**
@@ -89,6 +112,23 @@ registerTool({
   },
 });
 
+/**
+ * Выгрузка идёт не из песочницы: у контейнера нет ни сети (`SANDBOX_NETWORK=none`), ни токена,
+ * поэтому `git pull` в терминале агента не мог дойти до репозитория в принципе. Здесь работает тот
+ * же путь, что у кнопки «Выгрузить» в панели «Изменения»: isomorphic-git в процессе сервера, с
+ * токеном подключения и проверкой fast-forward — работа агента без отправки не перезаписывается.
+ */
+registerTool({
+  name: "git.pull",
+  description:
+    "Pull the project's connected repository branch into the workspace (fast-forward only: refuses when local commits were not pushed yet).",
+  execute: async (_input, context) => {
+    const outcome = await pullFromGithub(context.projectId, context.userId);
+    if (!outcome.pulled) throw new Error(outcome.error ?? "Не удалось выгрузить изменения из репозитория");
+    return { ok: true, branch: outcome.branch, sha: outcome.sha ?? null, changed: outcome.changed ?? 0 };
+  },
+});
+
 registerTool({
   name: "git.add",
   description: "Stage project paths. Input: {paths:string[]}.",
@@ -118,7 +158,7 @@ registerTool({
       .map((projectPath) => "'" + projectPath.replaceAll("'", "'\\''") + "'")
       .join(" ");
 
-    return runInSandbox(sandbox, "git add -- " + quoted, sandbox.root, { signal: context.signal, maskSecretEnvFiles: true });
+    return assertGitAvailable(await runInSandbox(sandbox, "git add -- " + quoted, sandbox.root, { signal: context.signal, maskSecretEnvFiles: true }));
   },
 });
 
@@ -155,12 +195,12 @@ registerTool({
     }
 
     const quoted = message.replaceAll("'", "'\\''");
-    return runInSandbox(
+    return assertGitAvailable(await runInSandbox(
       sandbox,
       "git commit -m '" + quoted + "'",
       sandbox.root,
       { signal: context.signal, maskSecretEnvFiles: true },
-    );
+    ));
   },
 });
 

@@ -1,6 +1,25 @@
 import path from "node:path";
 import type { SandboxConfig } from "./sandbox-types.js";
 
+/**
+ * Образ, в котором выполняются команды агента, `npm install` и контейнер предпросмотра.
+ *
+ * Это не `-slim`, и причина одна: инструментам агента нужен `git`, а в slim-варианте его нет —
+ * `git status` отвечал `/bin/sh: 1: git: not found` (код 127), и «Работа с Git» выглядела сломанной,
+ * хотя платформа умеет работать с историей проекта. Полный образ Node собран на buildpack-deps: там
+ * есть git, make и компилятор, поэтому ставится и нативный `npm install`, и зависимость из git-URL.
+ *
+ * Значение живёт в одном месте: раньше `node:22-bookworm-slim` был вписан отдельно в песочницу,
+ * предпросмотр, проверки и compose, и достаточно было поправить одно место, чтобы они разошлись.
+ * Свой образ (в том числе slim с git) задаётся через `SANDBOX_IMAGE`.
+ */
+export const DEFAULT_SANDBOX_IMAGE="node:22-bookworm";
+
+/** Образ песочницы из окружения; пустая строка — это «не задано», а не имя образа. */
+export function sandboxImage(){
+  return process.env.SANDBOX_IMAGE?.trim()||DEFAULT_SANDBOX_IMAGE;
+}
+
 const sandboxRoot=path.resolve(process.env.WEBNESTDEV_SANDBOX_DIR??".webnestdev/sandboxes");
 
 /**

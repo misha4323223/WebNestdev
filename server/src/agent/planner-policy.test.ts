@@ -4,7 +4,7 @@ import { changesSomething } from "../agent-runtime.js";
 
 /** Planner mode must be read-only by construction, not only by instruction. */
 test("every tool that writes is refused in planner mode", () => {
-  for (const name of ["fs.write", "fs.rename", "fs.delete", "npm.install", "git.add", "git.commit", "database.env", "secrets.request", "preview.start", "preview.stop"]) {
+  for (const name of ["fs.write", "fs.rename", "fs.delete", "npm.install", "git.add", "git.commit", "git.pull", "database.env", "secrets.request", "preview.start", "preview.stop"]) {
     assert.equal(changesSomething(name, {}), true, name + " must be refused");
   }
 });
@@ -27,6 +27,8 @@ test("terminal.exec is allowed only for inspection commands", () => {
     "cat a.ts | tee b.ts",
     "git commit -m wip",
     "git add -A",
+    "git pull",
+    "git fetch origin",
     "cat src/index.ts && rm src/index.ts",
     "mv src/a.ts src/b.ts",
     "python -c 'open(\"a\",\"w\")'",
