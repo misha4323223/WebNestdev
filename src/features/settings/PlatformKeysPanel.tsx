@@ -11,7 +11,7 @@ import { apiJson } from "../../lib/api";
 type PlatformKeySource = "panel" | "environment" | "none";
 type PlatformKey = {
   name: string;
-  group: "github" | "gitlab" | "gitverse" | "yandex" | "sms" | "ai" | "search" | "billing";
+  group: "github" | "gitlab" | "gitverse" | "yandex" | "sms" | "ai" | "search" | "billing" | "support";
   label: string;
   hint: string;
   kind: "secret" | "json-key" | "value" | "url" | "path" | "flag";
@@ -30,6 +30,7 @@ const GROUP_TITLES: Record<PlatformKey["group"], { title: string; note: string }
   sms: { title: "SMS-провайдеры", note: "Достаточно одного провайдера: сервер выберет первый, у которого есть ключ." },
   ai: { title: "Модель платформы", note: "Модель по умолчанию для проектов без своего провайдера." },
   search: { title: "Веб-поиск агента", note: "Тариф «Старт» ищет через DuckDuckGo без ключей. На платных тарифах основным провайдером работает Yandex Search API (ключ сервисного аккаунта со scope yc.search-api.execute и каталог с ролью search-api.webSearch.user), а Tavily — резервным." },
+  support: { title: "Поддержка", note: "Обращения из кнопки «Поддержка» сохраняются на сервере и читаются админкой платформы. Ключ API открывает их только на чтение для внешнего приложения (десктопного или мобильного): GET /api/support/tickets с заголовком Authorization: Bearer <ключ>. Почта необязательна: подойдёт SMTP обычной почты (smtp.yandex.ru, smtp.mail.ru, smtp.gmail.com — порт 465 и пароль приложения), ответ уходит автору обращения по Reply-To." },
   billing: { title: "Оплата (Robokassa)", note: "Логин магазина и пароли №1 и №2 из «Технических настроек» Робокассы. ResultURL: <адрес панели>/api/billing/robokassa/result, SuccessURL: /api/billing/robokassa/success, FailURL: /api/billing/robokassa/fail. Цены можно менять здесь без выкатки." },
 };
 
@@ -121,7 +122,7 @@ export function PlatformKeysPanel() {
     </section>;
   }
 
-  const groups = ["billing", "github", "gitlab", "yandex", "sms", "ai", "search"] as const;
+  const groups = ["support", "billing", "github", "gitlab", "yandex", "sms", "ai", "search"] as const;
   const keys = state.keys ?? [];
 
   return <section className="settings-panel platform-keys">

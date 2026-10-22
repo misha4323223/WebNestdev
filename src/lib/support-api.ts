@@ -15,8 +15,20 @@ export type SupportTicketInput = {
   screenshot: string;
 };
 
+/**
+ * `notified` — письмо ушло на почту поддержки, `mailConfigured` — почта на сервере вообще настроена.
+ * Окно по этим двум полям говорит правду: обещать «ответим на почту», когда письмо не ушло, нельзя.
+ */
+export type SupportTicketResult = {
+  ok: true;
+  id: string;
+  createdAt: string;
+  notified: boolean;
+  mailConfigured: boolean;
+};
+
 export const sendSupportTicket = (input: SupportTicketInput) =>
-  apiJson<{ ok: true; id: string; createdAt: string }>("/api/support", {
+  apiJson<SupportTicketResult>("/api/support", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),

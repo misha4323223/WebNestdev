@@ -69,6 +69,21 @@ export const switchProjectBranch=(projectId:string,branch:string)=>apiJson<{swit
   "/api/projects/"+projectId+"/changes/branches/switch",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({branch})});
 /** Отправка на GitHub по кнопке — единственный путь, которым коммиты попадают в ветку. */
 export const pushProjectChanges=(projectId:string)=>apiJson<{pushed:boolean;branch:string;at:string}>("/api/projects/"+projectId+"/changes/push",{method:"POST"});
+/**
+ * Тема проекта: те же токены, которые правит панель «Тема» в предпросмотре и читает агент.
+ * `fields` приходит с сервера — подписи, допустимые значения и порядок описаны один раз.
+ */
+export type ThemeField={
+  variable:string;
+  label:string;
+  kind:"color"|"font"|"radius";
+  value:string;
+  options?:Array<{value:string;label:string}>;
+};
+export type ProjectTheme={present:boolean;file:string|null;tokens:Record<string,string>;fields:ThemeField[]};
+export const getProjectTheme=(projectId:string)=>apiJson<ProjectTheme>("/api/projects/"+projectId+"/theme");
+export const saveProjectTheme=(projectId:string,tokens:Record<string,string>)=>apiJson<ProjectTheme>("/api/projects/"+projectId+"/theme",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify({tokens})});
+
 export const getPreviewStatus=(projectId:string)=>apiJson<PreviewState>("/api/projects/"+projectId+"/preview/status");
 export const startPreview=(projectId:string)=>apiJson<PreviewState>("/api/projects/"+projectId+"/preview/start",{method:"POST"});
 export const stopPreview=(projectId:string)=>apiJson<{stopped:boolean}>("/api/projects/"+projectId+"/preview/stop",{method:"POST"});

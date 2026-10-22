@@ -25,6 +25,9 @@ export type PublicMessage = {
 };
 
 const plannerTail = /\s*Сначала работай в режиме планировщика[\s\S]*$/;
+// Задачу «собрать тему» запускает кнопка панели «Тема», а не пользователь: в переписке ей хватает
+// одной строки, хотя модели уходит весь текст с шагами (см. lib/agent-compose.ts).
+const themeSetup = /^Собери тему проекта/;
 const onboardingContext = /\s*Контекст из знакомства при входе\.[\s\S]*?(?=\s*(?:Сначала работай в режиме планировщика|$))/;
 const attachmentTail = /\s*Эти файлы уже лежат в проекте, используй их по путям:[\s\S]*$/;
 
@@ -35,6 +38,7 @@ export function publicUserMessage(raw: string): PublicMessage {
   if (repository) return { text: "Импорт репозитория " + repository[1], internal: true };
   const template = /^Быстрый старт по шаблону «([^»]+)»/.exec(text);
   if (template) return { text: "Быстрый старт: шаблон «" + template[1] + "»", internal: true };
+  if (themeSetup.test(text)) return { text: "Собрать тему проекта", internal: true };
   const visible = text
     .replace(plannerTail, "")
     .replace(onboardingContext, "")

@@ -416,3 +416,13 @@ What never enters history: `node_modules`, build output (`dist`, `build`, `.next
 ## Questions from the agent
 
 When the user's decision changes what to build — layout, content, stack, which of two approaches — the model calls `question.ask` instead of guessing. The question opens as a sheet above the message box (`src/features/agent/QuestionSheet.tsx`), with ready-made options, multi-select when several answers make sense, and always the possibility to write a custom answer. The run stops and waits; the answer travels over `/api/projects/:id/questions/:requestId/answer`, not through the agent socket, the same way a secret does, and the server accepts only the labels the question actually offered. Skipping (or the five-minute timeout, `QUESTION_TIMEOUT_MS`) returns "no answer" to the tool, and its description tells the model to pick a sensible default and say which one, never to repeat the question in chat.
+
+## Support tickets
+
+The **Поддержка** button stores a ticket on the server (`server/src/support/support-store.ts`): category, severity, description, steps, page, project, user agent and a mandatory screenshot (PNG/JPEG/WebP, signature-checked, 4 MB). The platform admin reads the list at `GET /api/support/tickets` and the image at `GET /api/support/tickets/:id/screenshot` with their session; the web panel has no separate screen for it yet. Email delivery (`SUPPORT_SMTP_*`) is optional and only a notification — the ticket exists whether or not the message went out, and the dialog says which of the two happened.
+
+A separate desktop or mobile admin app has no panel cookie, so it reads the same two endpoints with a read-only key instead: set `SUPPORT_API_KEY` in **Settings → Platform keys → Поддержка** (at least 16 characters, applied without a restart) and send it as `Authorization: Bearer <key>` or `X-Support-Key: <key>`. The key only reads: creating a ticket still requires a signed-in user, and an invalid or too short key falls back to the session check. Comparison is a constant-time SHA-256 match (`server/src/support/support-api-key.ts`), and both endpoints answer `401` without a key or session, `403` for a signed-in non-admin.
+
+## Security
+
+The audit, its statuses and the stage-by-stage work log live in [docs/SECURITY.md](docs/SECURITY.md). Stage 1 closed four P0 findings: real client IP behind Caddy with per-account login throttling, a global same-origin guard for mutating requests, a dedicated Docker network for previews (so project code cannot reach PostgreSQL), and the panel-origin preview — production without `PREVIEW_PUBLIC_DOMAIN` now answers 503 on the path preview instead of running project code with the panel's session. Containers also run with `--cap-drop=ALL` and `no-new-privileges`.

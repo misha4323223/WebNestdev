@@ -76,7 +76,6 @@ export function GitLabConnect({surface="home",onImported=openImportedProject}:{s
   const [copied,setCopied]=useState(false);
   const [token,setToken]=useState("");
   const [tokenBaseUrl,setTokenBaseUrl]=useState("");
-  const [tokenOpen,setTokenOpen]=useState(surface==="workspace");
   const [savingToken,setSavingToken]=useState(false);
   const [oauthHintOpen,setOauthHintOpen]=useState(false);
   const watchRef=useRef<number|null>(null);
@@ -145,7 +144,7 @@ export function GitLabConnect({surface="home",onImported=openImportedProject}:{s
 
   function connect(){
     setError(null);setNotice(null);
-    if(status==="unavailable"){setNotice("not_configured");setTokenOpen(true);return;}
+    if(status==="unavailable"){setNotice("not_configured");return;}
     const url="/api/gitlab/connect?origin="+encodeURIComponent(window.location.origin);
     const popup=window.open(url,connectorWindowName,"width=620,height=760,left=140,top=90");
     if(!popup||popup.closed){
@@ -193,7 +192,7 @@ export function GitLabConnect({surface="home",onImported=openImportedProject}:{s
       });
       const data=await response.json() as GitLabStatus;
       if(!response.ok)throw new Error(data.error??"GitLab не принял токен");
-      setToken("");setTokenOpen(false);setNotice("connected");
+      setToken("");setNotice("connected");
       await loadStatus(true);
     }catch(e){setError(e instanceof Error?e.message:"Не удалось сохранить токен")}
     finally{setSavingToken(false)}
@@ -218,7 +217,6 @@ export function GitLabConnect({surface="home",onImported=openImportedProject}:{s
   // Прямые ссылки важны на телефоне: в мобильном GitLab боковое меню профиля свёрнуто,
   // и найти «Applications» или «Personal access tokens» через навигацию почти невозможно.
   const applicationsLink=baseUrl+"/-/user_settings/applications";
-  const tokenLink=baseUrl+"/-/user_settings/personal_access_tokens?name=WebNestDev&scopes=read_api,read_repository,write_repository";
 
   return <>
     <ConnectorCard
@@ -247,15 +245,7 @@ export function GitLabConnect({surface="home",onImported=openImportedProject}:{s
     </>}
   >
     {status!=="connected"&&<div className="connector-body">
-      <p className="connector-text">Два способа подключения: окно авторизации GitLab (нужны <code>GITLAB_CLIENT_ID</code> и <code>GITLAB_CLIENT_SECRET</code> на сервере) или личный токен — он работает сразу и без настройки сервера.</p>
-      <div className="connector-actions-row">
-        <button className="ghost-button connector-toggle" onClick={()=>setTokenOpen(open=>!open)}>{tokenOpen?"Скрыть поле токена":"Ввести токен"}</button>
-        <a className="connector-link" href={applicationsLink} target="_blank" rel="noreferrer">Открыть Applications</a>
-        <a className="connector-link" href={tokenLink} target="_blank" rel="noreferrer">Создать токен на GitLab</a>
-        {status==="unavailable"&&<button className="ghost-button" onClick={()=>setOauthHintOpen(open=>!open)}>{oauthHintOpen?"Скрыть инструкцию OAuth":"Настроить OAuth-приложение"}</button>}
-      </div>
-
-      {tokenOpen&&<div className="connector-key">
+      <div className="connector-key">
         <label>
           <span><KeyRound size={12}/> Личный токен GitLab</span>
           <input type="password" autoComplete="new-password" value={token} onChange={event=>setToken(event.target.value)} placeholder="glpat-…"/>
@@ -266,9 +256,10 @@ export function GitLabConnect({surface="home",onImported=openImportedProject}:{s
         </label>
         <div className="connector-actions-row">
           <button className="connector-action connector-connect" onClick={()=>void saveToken()} disabled={!token.trim()||savingToken}>{savingToken?"Проверяем токен…":"Сохранить токен"}</button>
-          <span className="connector-meta-line">Права: <code>read_api</code>, <code>read_repository</code> и <code>write_repository</code> для отправки коммитов. Для своего GitLab оставьте адрес пустым или укажите его. Токен шифруется на сервере и больше не показывается.</span>
+          {status==="unavailable"&&<button className="ghost-button" onClick={()=>setOauthHintOpen(open=>!open)}>{oauthHintOpen?"Скрыть инструкцию OAuth":"Настроить OAuth-приложение"}</button>}
         </div>
-      </div>}
+        <p className="connector-fineprint">Права: <code>read_api</code>, <code>read_repository</code> и <code>write_repository</code> для отправки коммитов. Токен шифруется на сервере и больше не показывается.</p>
+      </div>
     </div>}
 
     {status==="connected"&&<div className="connector-body">

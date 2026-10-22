@@ -72,6 +72,8 @@ export function SupportDialog({ open, onClose, projectId }: { open: boolean; onC
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
+  // Чем закончилась доставка письма: обещать «ответим на почту», когда почта не настроена, нельзя.
+  const [delivery, setDelivery] = useState<{ notified: boolean; configured: boolean } | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
@@ -107,6 +109,7 @@ export function SupportDialog({ open, onClose, projectId }: { open: boolean; onC
       setContext("");
       setScreenshot(null);
       setError("");
+      setDelivery(null);
     }
     closeRef.current();
   }
@@ -130,7 +133,7 @@ export function SupportDialog({ open, onClose, projectId }: { open: boolean; onC
     setError("");
     try {
       const storedProject = projectId || (() => { try { return localStorage.getItem("webnestdev.projectId") ?? undefined; } catch { return undefined; } })();
-      await sendSupportTicket({
+      const result = await sendSupportTicket({
         category,
         severity,
         description: text,
@@ -140,6 +143,7 @@ export function SupportDialog({ open, onClose, projectId }: { open: boolean; onC
         projectId: storedProject,
         screenshot: screenshot.dataUrl,
       });
+      setDelivery({ notified: Boolean(result.notified), configured: Boolean(result.mailConfigured) });
       setSent(true);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Не удалось отправить обращение");
@@ -172,11 +176,15 @@ export function SupportDialog({ open, onClose, projectId }: { open: boolean; onC
         ? <div className="modal-body support-success">
             <span className="support-success-icon"><Check size={20}/></span>
             <strong>Спасибо — мы всё получили</strong>
-            <p>Скриншот, описание и шаги сохранены. Ответ придёт на почту аккаунта.</p>
+            <p>{delivery?.notified
+              ? "Письмо с обращением ушло на почту поддержки. Ответ придёт на почту аккаунта."
+              : delivery?.configured
+                ? "Обращение сохранено, но письмо поддержке не ушло: почтовый сервер отказал. Обращение осталось на сервере — проверьте настройки почты."
+                : "Обращение сохранено на сервере. Почта поддержки ещё не настроена — добавьте SMTP-ключи в «Настройки» → «Ключи сервера», и следующие обращения будут приходить письмом."}</p>
             <button type="button" className="send-button" onClick={close}><Check size={13}/> Готово</button>
           </div>
         : <div className="modal-body support-body">
-            <p className="modal-lead">Опишите проблему или идею — ответим на почту аккаунта. Скриншот помогает быстрее понять, что случилось.</p>
+            <p className="modal-lead">Опишите проблему или идею — обращение уйдёт команде поддержки. Скриншот помогает быстрее понять, что случилось.</p>
 
             <div className="support-cats" role="group" aria-label="Тип обращения">
               <button type="button" className={"support-cat" + (category === "bug" ? " active" : "")} aria-pressed={category === "bug"} onClick={() => setCategory("bug")}>

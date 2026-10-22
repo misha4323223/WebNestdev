@@ -13,6 +13,7 @@ import { AgentModeControl } from "./AgentModeControl";
 import { ChatBookmarks } from "./ChatBookmarks";
 import { SupportButton } from "../support/SupportDialog";
 import { takeAgentStart } from "../../lib/agent-start";
+import { AGENT_COMPOSE_EVENT,AGENT_DRAFT_EVENT } from "../../lib/agent-compose";
 import { publicUserMessage } from "../../lib/agent-kickoff";
 
 const modeKey="webnestdev.agentMode";
@@ -579,6 +580,57 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     startRun({text:pending.prompt,attachments:[]});
   },[loaded,conversationId,running]);
 
+  /**
+   * Задача из другой панели — сейчас это кнопка «Собрать тему» в предпросмотре. Очередь и запуск
+   * те же, что у кнопки отправки: пока агент работает, сообщение встаёт в очередь и не теряется.
+   * Обработчик держится в ref: событие не должно переподписываться на каждый рендер панели.
+   */
+  const composeRef=useRef<(text:string)=>void>(()=>{});
+  composeRef.current=text=>{
+    const item:QueuedMessage={id:nextId(),text,attachments:[]};
+    if(running){queueRef.current=[...queueRef.current,item];setQueue(queueRef.current);return}
+    chooseMode("developer");
+    startRun(item);
+  };
+  useEffect(()=>{
+    const onCompose=(event:Event)=>{
+      const detail=(event as CustomEvent<{prompt?:unknown}>).detail;
+      const text=typeof detail?.prompt==="string"?detail.prompt.trim():"";
+      if(text)composeRef.current(text);
+    };
+    window.addEventListener(AGENT_COMPOSE_EVENT,onCompose);
+    return ()=>window.removeEventListener(AGENT_COMPOSE_EVENT,onCompose);
+  },[]);
+
+  /**
+   * Описание элемента из предпросмотра кладётся в поле ввода, а не отправляется: просьбу
+   * («крупнее», «в акцентный цвет») человек дописывает сам. Курсор ставится в конец — сразу после
+   * «Что сделать:».
+   */
+  const promptBoxRef=useRef<HTMLTextAreaElement|null>(null);
+  const draftRef=useRef<(text:string)=>void>(()=>{});
+  draftRef.current=text=>{
+    setPrompt(current=>{
+      const existing=current.trim();
+      return existing?existing+"\n\n"+text:text;
+    });
+    window.requestAnimationFrame(()=>{
+      const box=promptBoxRef.current;
+      if(!box)return;
+      box.focus();
+      box.selectionStart=box.selectionEnd=box.value.length;
+    });
+  };
+  useEffect(()=>{
+    const onDraft=(event:Event)=>{
+      const detail=(event as CustomEvent<{draft?:unknown}>).detail;
+      const text=typeof detail?.draft==="string"?detail.draft.trim():"";
+      if(text)draftRef.current(text);
+    };
+    window.addEventListener(AGENT_DRAFT_EVENT,onDraft);
+    return ()=>window.removeEventListener(AGENT_DRAFT_EVENT,onDraft);
+  },[]);
+
   // The model is a project setting, so the composer reads it instead of assuming one;
   // it shows the same model the runtime picks: the project one, or the platform default.
   useEffect(()=>{
@@ -1090,7 +1142,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       <div className="message-queue-head"><ListPlus size={13}/> В очереди: {queue.length}</div>
       <ul>{queue.map(item=><li key={item.id}>
         <div className="message-queue-text">
-          <span>{item.text}</span>
+          <span>{shownUserMessage(item.text).text}</span>
           {item.attachments.length>0&&<small>{item.attachments.map(attachment=>attachment.name).join(", ")}</small>}
         </div>
         <button className="ghost-button message-queue-send" onClick={()=>sendQueuedNow(item.id)} title={running?"Прервать текущую задачу и отправить это сообщение":"Отправить это сообщение"}>Отправить сейчас</button>
@@ -1108,7 +1160,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
         onDragOver={event=>{if(!event.dataTransfer?.types.includes("Files"))return;event.preventDefault();if(loaded&&!uploading)setDragActive(true)}}
         onDragLeave={event=>{if(!event.currentTarget.contains(event.relatedTarget as Node|null))setDragActive(false)}}
         onDrop={dropFiles}>
-        <textarea disabled={!loaded} value={prompt} onChange={e=>setPrompt(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send()}}} placeholder={loaded?"Опишите проект или задачу...":"Загружаем сессию…"} rows={3}/>
+        <textarea ref={promptBoxRef} disabled={!loaded} value={prompt} onChange={e=>setPrompt(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send()}}} placeholder={loaded?"Опишите проект или задачу...":"Загружаем сессию…"} rows={3}/>
 
         {attachments.length>0&&<div className="composer-attachments">
           {attachments.map(attachment=><span className="attachment-chip" key={attachment.id}>

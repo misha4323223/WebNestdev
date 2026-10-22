@@ -38,6 +38,10 @@ export async function startPreviewContainer(config:SandboxConfig){
       "--cpus",String(config.cpuLimit),
       "--memory",String(config.memoryMb)+"m",
       "--pids-limit","128",
+      // Предпросмотр — тоже пользовательский код: capabilities и setuid ему не нужны, а
+      // отсутствие обоих флагов делало контейнер более мягкой целью, чем контейнер команд.
+      "--cap-drop","ALL",
+      "--security-opt","no-new-privileges:true",
       "--read-only",
       "--tmpfs","/tmp:rw,nosuid,size=256m",
       "--user","1000:1000",

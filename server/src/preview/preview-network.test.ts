@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { attachToServerNetworks } from "./preview-network.js";
+import { attachToServerNetworks, preferPreviewNetwork } from "./preview-network.js";
 
 /**
  * Контейнер предпросмотра мог остаться в сети, которой сервер не видит (Docker изолирует bridge-сети
@@ -62,4 +62,23 @@ test("a refused connect does not claim the network was joined", async () => {
     addressOnNetworks: async () => "",
   });
   assert.deepEqual(result, { host: "", connected: [] });
+});
+
+/**
+ * Сеть базы отделена от сети предпросмотра именно для того, чтобы код проекта не дошёл до
+ * postgres. Выбор сети не должен отменять это одним неверным именем.
+ */
+test("сеть с preview в имени побеждает остальные", () => {
+  assert.equal(preferPreviewNetwork(["webnestdev", "webnestdev-preview", "webnestdev-db"]), "webnestdev-preview");
+  assert.equal(preferPreviewNetwork(["webnestdev-preview"]), "webnestdev-preview");
+});
+
+test("сеть базы не выбирается никогда", () => {
+  assert.equal(preferPreviewNetwork(["webnestdev-db"]), "");
+  assert.notEqual(preferPreviewNetwork(["webnestdev", "webnestdev-db"]), "webnestdev-db");
+  assert.equal(preferPreviewNetwork(["webnestdev"]), "webnestdev");
+});
+
+test("пустой список — нет сети, а не сеть по умолчанию", () => {
+  assert.equal(preferPreviewNetwork([]), "");
 });

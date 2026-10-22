@@ -48,7 +48,7 @@ export async function registerPhoneAuthRoutes(app: FastifyInstance) {
 
     const demo = demoPhone();
     const isDemo = demo !== null && phone === demo;
-    const rateLimit = checkAuthRateLimit(request.ip, isDemo ? "phoneDemo" : "phone");
+    const rateLimit = checkAuthRateLimit(request.ip, isDemo ? "phoneDemo" : "phone", phone);
     if (!rateLimit.allowed) {
       reply.header("Retry-After", String(rateLimit.retryAfter));
       return reply.code(429).send({ error: "Слишком много запросов кода. Попробуйте позже." });
@@ -105,14 +105,16 @@ export async function registerPhoneAuthRoutes(app: FastifyInstance) {
   });
 
   app.post("/api/auth/phone/verify", async (request, reply) => {
-    const rateLimit = checkAuthRateLimit(request.ip, "phoneVerify");
+    const body = verifyInput.parse(request.body ?? {});
+    const phone = normalizePhone(body.phone);
+    if (!phone) return reply.code(400).send({ error: "Введите российский номер телефона" });
+    // Лимит по номеру: код всё равно ограничен попытками в phone-store, но без счётчика на
+    // аккаунт перебор с разных адресов шёл бы свободно.
+    const rateLimit = checkAuthRateLimit(request.ip, "phoneVerify", phone);
     if (!rateLimit.allowed) {
       reply.header("Retry-After", String(rateLimit.retryAfter));
       return reply.code(429).send({ error: "Слишком много попыток. Попробуйте позже." });
     }
-    const body = verifyInput.parse(request.body ?? {});
-    const phone = normalizePhone(body.phone);
-    if (!phone) return reply.code(400).send({ error: "Введите российский номер телефона" });
 
     const checked = verifyPhoneCode(phone, body.code);
     if (!checked.ok) return reply.code(401).send({ error: checked.error });

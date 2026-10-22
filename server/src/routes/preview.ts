@@ -59,6 +59,23 @@ const defaultDeps:PreviewRouteDeps={
   projectExists:async projectId=>Boolean(await getProject(projectId)),
 };
 
+/**
+ * Почему путь в панели закрыт без публичного адреса.
+ *
+ * Код проекта — это пользовательский код (и код, который пишет модель). Если отдавать его по
+ * `/api/projects/<id>/preview/open/`, он выполняется на том же origin, что и панель: получает доступ
+ * к её DOM, cookie сессии и API от имени вошедшего человека. Публичный поддомен — единственная
+ * внятная граница, поэтому в production без `PREVIEW_PUBLIC_DOMAIN` путь закрывается, а не работает
+ * «как раньше». В разработке (localhost) путь остаётся: там панель и API и так на одной машине.
+ */
+function previewPathClosed(deps:PreviewRouteDeps,projectId:string){
+  return process.env.NODE_ENV === "production" && !deps.publicUrl(projectId);
+}
+
+const PREVIEW_PATH_CLOSED_MESSAGE =
+  "Предпросмотр по адресу панели выключен: код проекта не должен выполняться на одном origin с панелью. " +
+  "Задайте PREVIEW_PUBLIC_DOMAIN (например preview.example.ru) и откройте предпросмотр по публичному адресу.";
+
 export async function registerPreviewRoutes(app:FastifyInstance,deps:PreviewRouteDeps=defaultDeps){
   /** Общая дверь к приложению: и панель, и публичный адрес идут через неё (см. preview/preview-proxy.ts). */
   const door:PreviewDoor={
@@ -131,6 +148,7 @@ export async function registerPreviewRoutes(app:FastifyInstance,deps:PreviewRout
   app.get("/api/projects/:id/preview/open",async(request,reply)=>{
     const p=z.object({id:z.string().min(1)}).parse(request.params);
     if(!await deps.authorize(request,reply,p.id))return;
+    if(previewPathClosed(deps,p.id))return reply.code(503).send({error:PREVIEW_PATH_CLOSED_MESSAGE});
     return reply.code(302).redirect(previewProxyBase(p.id));
   });
   // Все методы, а не только GET: приложение внутри кадра шлёт и POST (свой API, `fetch`), и такие
@@ -141,6 +159,7 @@ export async function registerPreviewRoutes(app:FastifyInstance,deps:PreviewRout
   app.all("/api/projects/:id/preview/open/*",async(request,reply)=>{
     const p=z.object({id:z.string().min(1)}).parse(request.params);
     if(!await deps.authorize(request,reply,p.id))return;
+    if(previewPathClosed(deps,p.id))return reply.code(503).send({error:PREVIEW_PATH_CLOSED_MESSAGE});
     const params=request.params as {id:string;"*":string};
     const incoming=new URL(request.raw.url??"/","http://webnestdev.local");
     return previewReply(reply,()=>proxyPreviewRequest(door,{

@@ -1,4 +1,4 @@
-import type { FastifyRequest } from "fastify";
+import type { FastifyInstance, FastifyRequest } from "fastify";
 
 /**
  * Защита от CSRF для маршрутов, которые меняют секреты.
@@ -29,6 +29,16 @@ function normalizeOrigin(value: string) {
   }
 }
 
+/** Loopback-источники в разработке: Vite проксирует /api и меняет Host, но не Origin. */
+function isLoopbackOrigin(value: string) {
+  try {
+    const host = new URL(value).hostname.replace(/^\[|\]$/g, "").toLowerCase();
+    return host === "localhost" || host === "127.0.0.1" || host === "::1" || host.endsWith(".localhost");
+  } catch {
+    return false;
+  }
+}
+
 function configuredOrigins() {
   return (process.env.WEBNESTDEV_ALLOWED_ORIGINS ?? "")
     .split(",")
@@ -46,6 +56,9 @@ export function isSameOriginRequest(request: FastifyRequest): boolean {
   if (firstHeader(request.headers["sec-fetch-site"]).toLowerCase() === "cross-site") return false;
 
   const normalized = normalizeOrigin(origin);
+  // В разработке панель открыта на Vite (5173), а API слушает 8787: `changeOrigin` подменяет Host,
+  // поэтому строгое сравнение с Host ломало бы каждое сохранение. Production правило не ослабляет.
+  if (process.env.NODE_ENV !== "production" && isLoopbackOrigin(origin)) return true;
   const allowed = configuredOrigins();
   if (allowed.length) return allowed.includes(normalized);
 
@@ -61,4 +74,35 @@ export function isSameOriginRequest(request: FastifyRequest): boolean {
 /** Единый отказ: не подсказываем, какой именно источник «почти подошёл». */
 export function sameOriginRefusal() {
   return "Запрос с чужого источника отклонён";
+}
+
+/** Методы, которые не меняют состояние: для них проверка источника не нужна. */
+const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
+/**
+ * Маршруты, куда приходит не браузер, а платежный сервис. У них нет `Origin`, но некоторые
+ * посредники его дописывают; подпись уведомления проверяется отдельно, так что CSRF здесь не
+ * применим.
+ */
+export const CROSS_SITE_WEBHOOKS = [/^\/api\/billing\/robokassa\/result$/];
+
+/**
+ * Один хук на всё приложение: любой небезопасный запрос к `/api` с чужим `Origin` отклоняется.
+ *
+ * Раньше проверка стояла только на маршрутах секретов, ключей платформы и оплаты. Остальные
+ * изменяющие ручки оставались открытыми для того же сайта: приложение пользователя живёт на
+ * поддомене предпросмотра, а `SameSite=Lax` отличает только «сайт», поэтому cookie панели в таком
+ * запросе отправляется. POST без тела (запуск/остановка предпросмотра, отключение GitHub) браузер
+ * отправляет без preflight, то есть без CORS-барьера.
+ */
+export async function registerSameOriginGuard(app: FastifyInstance) {
+  app.addHook("onRequest", async (request, reply) => {
+    if (SAFE_METHODS.has(request.method)) return;
+    const path = (request.raw.url ?? request.url ?? "").split("?")[0];
+    if (!path.startsWith("/api/")) return;
+    if (CROSS_SITE_WEBHOOKS.some(allowed => allowed.test(path))) return;
+    if (isSameOriginRequest(request)) return;
+    request.log.warn({ origin: request.headers.origin, path }, "cross-site request refused");
+    return reply.code(403).send({ error: sameOriginRefusal() });
+  });
 }

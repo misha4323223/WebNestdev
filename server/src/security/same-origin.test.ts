@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import Fastify from "fastify";
 import type { FastifyRequest } from "fastify";
-import { isSameOriginRequest } from "./same-origin.js";
+import { isSameOriginRequest, registerSameOriginGuard } from "./same-origin.js";
 
 function request(headers: Record<string, string>, protocol = "http"): FastifyRequest {
   return {
@@ -67,5 +68,48 @@ test("настроенный список источников побеждае�
   } finally {
     if (previous === undefined) delete process.env.WEBNESTDEV_ALLOWED_ORIGINS;
     else process.env.WEBNESTDEV_ALLOWED_ORIGINS = previous;
+  }
+});
+
+/**
+ * Один хук закрывает все изменяющие ручки, а не три файла маршрутов. Проверяются обе стороны:
+ * чужой источник получает 403, а серверный вызов без Origin и вебхук оплаты продолжают работать.
+ */
+test("глобальный хук отклоняет чужой Origin на изменяющем запросе", async () => {
+  const previousEnv = process.env.NODE_ENV;
+  const previousOrigins = process.env.WEBNESTDEV_ALLOWED_ORIGINS;
+  process.env.NODE_ENV = "production";
+  process.env.WEBNESTDEV_ALLOWED_ORIGINS = "https://panel.example.com";
+  const app = Fastify();
+  try {
+    await registerSameOriginGuard(app);
+    app.post("/api/projects/:id/preview/start", async () => ({ ok: true }));
+    app.post("/api/billing/robokassa/result", async () => "OK");
+    app.get("/api/projects", async () => ({ projects: [] }));
+    await app.ready();
+
+    const evil = await app.inject({ method: "POST", url: "/api/projects/p1/preview/start", headers: { origin: "https://evil.example" } });
+    assert.equal(evil.statusCode, 403, evil.body);
+
+    const own = await app.inject({ method: "POST", url: "/api/projects/p1/preview/start", headers: { origin: "https://panel.example.com" } });
+    assert.equal(own.statusCode, 200, own.body);
+
+    // Серверный вызов без Origin (инструменты, curl, внутренние задачи) не блокируется.
+    const server = await app.inject({ method: "POST", url: "/api/projects/p1/preview/start" });
+    assert.equal(server.statusCode, 200, server.body);
+
+    // Вебхук оплаты подписан и приходит от сервиса: его Origin не проверяется.
+    const webhook = await app.inject({ method: "POST", url: "/api/billing/robokassa/result", headers: { origin: "https://robokassa.example" } });
+    assert.equal(webhook.statusCode, 200, webhook.body);
+
+    // GET ничего не меняет.
+    const read = await app.inject({ method: "GET", url: "/api/projects", headers: { origin: "https://evil.example" } });
+    assert.equal(read.statusCode, 200, read.body);
+  } finally {
+    await app.close();
+    if (previousEnv === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previousEnv;
+    if (previousOrigins === undefined) delete process.env.WEBNESTDEV_ALLOWED_ORIGINS;
+    else process.env.WEBNESTDEV_ALLOWED_ORIGINS = previousOrigins;
   }
 });

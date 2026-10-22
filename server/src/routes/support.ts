@@ -1,8 +1,10 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { requireUser } from "../auth/auth.js";
 import { isPlatformAdmin } from "../platform/admin.js";
 import { createSupportTicket, listSupportTickets, readSupportScreenshot } from "../support/support-store.js";
+import { sendSupportMail, supportMailSettings } from "../support/support-mail.js";
+import { supportKeyAuthorized } from "../support/support-api-key.js";
 
 /**
  * Обращение в поддержку: категория, важность, описание, шаги воспроизведения и обязательный
@@ -43,6 +45,21 @@ function allowTicket(userId: string) {
   return 0;
 }
 
+/**
+ * Кто читает обращения. Две двери: администратор платформы в браузере (cookie сессии) и внешняя
+ * админка — десктопное или мобильное приложение — по ключу `Authorization: Bearer` или
+ * `X-Support-Key`. Ключ даёт только чтение: создание обращения по-прежнему требует входа.
+ */
+async function allowTicketRead(request: FastifyRequest, reply: FastifyReply) {
+  if (supportKeyAuthorized(request.headers)) return true;
+  const user = await requireUser(request, reply); if (!user) return false;
+  if (!isPlatformAdmin(user)) {
+    await reply.code(403).send({ error: "Раздел доступен только администратору платформы" });
+    return false;
+  }
+  return true;
+}
+
 export async function registerSupportRoutes(app: FastifyInstance) {
   app.post("/api/support", { bodyLimit: 8_000_000 }, async (request, reply) => {
     const user = await requireUser(request, reply); if (!user) return;
@@ -67,24 +84,53 @@ export async function registerSupportRoutes(app: FastifyInstance) {
         screenshot: body.screenshot,
       });
       request.log.info({ supportTicket: ticket.id, category: body.category, severity: body.severity }, "support ticket created");
-      return reply.code(201).send({ ok: true, id: ticket.id, createdAt: ticket.createdAt });
+      // Письмо — отдельный шаг: тикет уже сохранён, и отказ почты не должен выглядеть как
+      // «обращение не отправлено». Состояние доставки возвращается в ответе, чтобы окно сказало
+      // правду: «ушло на почту» или «сохранено, почта не настроена».
+      const settings = supportMailSettings();
+      let notified = false;
+      if (settings) {
+        try {
+          const shot = await readSupportScreenshot(ticket.id);
+          await sendSupportMail(settings, {
+            id: ticket.id,
+            category: body.category,
+            severity: body.severity,
+            email: user.email,
+            description: body.description,
+            createdAt: ticket.createdAt,
+            ...(body.steps ? { steps: body.steps } : {}),
+            ...(body.context ? { context: body.context } : {}),
+            ...(body.page ? { page: body.page } : {}),
+            ...(body.projectId ? { projectId: body.projectId } : {}),
+          }, shot);
+          notified = true;
+        } catch (error) {
+          request.log.error(
+            { supportTicket: ticket.id, error: error instanceof Error ? error.message : error },
+            "support mail not delivered",
+          );
+        }
+      }
+      return reply.code(201).send({ ok: true, id: ticket.id, createdAt: ticket.createdAt, notified, mailConfigured: Boolean(settings) });
     } catch (error) {
       // Отказ по картинке — это ошибка ввода, а не сбой сервера: человек должен увидеть, что не так.
       return reply.code(400).send({ error: error instanceof Error ? error.message : "Не удалось отправить обращение" });
     }
   });
 
-  /** Список обращений для администратора платформы: без картинок, только их размер. */
+  /**
+   * Список обращений: без картинок, только их размер. Свежие первыми. Отвечает и администратору
+   * платформы, и внешней админке по ключу.
+   */
   app.get("/api/support/tickets", async (request, reply) => {
-    const user = await requireUser(request, reply); if (!user) return;
-    if (!isPlatformAdmin(user)) return reply.code(403).send({ error: "Раздел доступен только администратору платформы" });
+    if (!(await allowTicketRead(request, reply))) return;
     const query = z.object({ limit: z.coerce.number().int().min(1).max(200).optional() }).parse(request.query);
     return { tickets: await listSupportTickets(query.limit ?? 50) };
   });
 
   app.get("/api/support/tickets/:id/screenshot", async (request, reply) => {
-    const user = await requireUser(request, reply); if (!user) return;
-    if (!isPlatformAdmin(user)) return reply.code(403).send({ error: "Раздел доступен только администратору платформы" });
+    if (!(await allowTicketRead(request, reply))) return;
     const params = z.object({ id: z.string().min(8).max(64) }).parse(request.params);
     const screenshot = await readSupportScreenshot(params.id);
     if (!screenshot) return reply.code(404).send({ error: "Скриншот не найден" });

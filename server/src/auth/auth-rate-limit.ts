@@ -3,6 +3,29 @@ type Bucket = { count: number; resetAt: number };
 const buckets = new Map<string, Bucket>();
 const WINDOW_MS = 15 * 60 * 1000;
 
+export type AuthAction = "login" | "register" | "phone" | "phoneVerify" | "phoneDemo";
+
+/** Попытки с одного адреса: грубая защита, не зависящая от того, какой аккаунт перебирают. */
+const IP_LIMITS: Record<AuthAction, number> = {
+  login: 12,
+  register: 6,
+  phone: 10,
+  phoneVerify: 30,
+  phoneDemo: 60,
+};
+
+/**
+ * Попытки по одному аккаунту. Без этого распределённый перебор с разных адресов не встречал бы
+ * сопротивления, а один общий счётчик на IP позволял бы блокировать вход всем сразу.
+ */
+const SUBJECT_LIMITS: Record<AuthAction, number> = {
+  login: 8,
+  register: 4,
+  phone: 4,
+  phoneVerify: 15,
+  phoneDemo: 60,
+};
+
 function allow(key: string, limit: number) {
   const now = Date.now();
   const current = buckets.get(key);
@@ -26,13 +49,27 @@ function allow(key: string, limit: number) {
   return { allowed: true, retryAfter: 0 };
 }
 
-export function checkAuthRateLimit(ip: string, action: "login" | "register" | "phone" | "phoneVerify" | "phoneDemo") {
-  // Phone codes are also limited per number inside phone-store: this is the per-IP guard.
-  // The demo number is rate limited too, just generously, so local testing is not blocked.
-  const limit = action === "login" ? 12 : action === "phone" ? 10 : action === "phoneVerify" ? 30 : action === "phoneDemo" ? 60 : 6;
-  const result = allow(action + ":" + ip, limit);
-  if (!result.allowed) {
-    return { allowed: false as const, retryAfter: result.retryAfter };
+/**
+ * Обе двери проверяются всегда: адрес и аккаунт. `subject` — нормализованный email или телефон;
+ * он необязателен, потому что запрос без валидного тела ещё не знает, кого перебирают, и тогда
+ * работает только счётчик адреса.
+ */
+export function checkAuthRateLimit(ip: string, action: AuthAction, subject?: string) {
+  // Коды SMS дополнительно ограничены по номеру внутри phone-store (сколько отправок и попыток),
+  // а здесь — счётчики адреса и аккаунта: они отвечают на «кто и кого перебирает».
+  const byIp = allow("ip:" + action + ":" + (ip || "unknown"), IP_LIMITS[action]);
+  if (!byIp.allowed) return { allowed: false as const, retryAfter: byIp.retryAfter };
+
+  const normalized = subject?.trim().toLowerCase();
+  if (normalized) {
+    const limit = SUBJECT_LIMITS[action];
+    const bySubject = allow("subject:" + action + ":" + normalized, limit);
+    if (!bySubject.allowed) return { allowed: false as const, retryAfter: bySubject.retryAfter };
   }
   return { allowed: true as const };
+}
+
+/** Тесты начинают с чистых счётчиков: карта живёт вместе с процессом. */
+export function clearAuthRateLimits() {
+  buckets.clear();
 }

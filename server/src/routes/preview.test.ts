@@ -399,3 +399,26 @@ test("a stopped preview answers with an error instead of an empty page", async (
     await app.close();
   }
 });
+
+/**
+ * В production код проекта не должен отдаваться с origin панели: он получил бы доступ к API и DOM
+ * от имени вошедшего. Публичный поддомен — единственная граница, поэтому без него путь закрыт (503),
+ * показывая, какую переменную задать. В разработке (см. остальные тесты) путь продолжает работать.
+ */
+test("в production без публичного домена путь предпросмотра в панели закрыт", async () => {
+  const previous = process.env.NODE_ENV;
+  process.env.NODE_ENV = "production";
+  const app = await appWith(depsFor(1));
+  try {
+    const response = await app.inject({ method: "GET", url: "/api/projects/p1/preview/open/" });
+    assert.equal(response.statusCode, 503);
+    assert.match(response.body, /PREVIEW_PUBLIC_DOMAIN/);
+
+    const entrance = await app.inject({ method: "GET", url: "/api/projects/p1/preview/open" });
+    assert.equal(entrance.statusCode, 503);
+  } finally {
+    await app.close();
+    if (previous === undefined) delete process.env.NODE_ENV;
+    else process.env.NODE_ENV = previous;
+  }
+});

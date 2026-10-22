@@ -36,12 +36,14 @@ export async function registerAuthRoutes(app:FastifyInstance){
     };
   });
   app.post("/api/auth/register", async (request,reply) => {
-    const rateLimit = checkAuthRateLimit(request.ip, "register");
+    const body = credentials.parse(request.body);
+    // Лимит считается и по адресу, и по адресу почты: иначе перебор с разных IP не встречал бы
+    // сопротивления, а один счётчик на всех позволял бы блокировать регистрацию целиком.
+    const rateLimit = checkAuthRateLimit(request.ip, "register", body.email);
     if (!rateLimit.allowed) {
       reply.header("Retry-After", String(rateLimit.retryAfter));
       return reply.code(429).send({error:"Слишком много попыток регистрации. Попробуйте позже."});
     }
-    const body = credentials.parse(request.body);
     try{
       const user = await createUser(body.email,body.password);
       await attachSession(reply,user.id,request);
@@ -52,12 +54,12 @@ export async function registerAuthRoutes(app:FastifyInstance){
     }
   });
   app.post("/api/auth/login", async (request,reply) => {
-    const rateLimit = checkAuthRateLimit(request.ip, "login");
+    const body = credentials.parse(request.body);
+    const rateLimit = checkAuthRateLimit(request.ip, "login", body.email);
     if (!rateLimit.allowed) {
       reply.header("Retry-After", String(rateLimit.retryAfter));
       return reply.code(429).send({error:"Слишком много попыток входа. Попробуйте позже."});
     }
-    const body = credentials.parse(request.body);
     const user = await verifyUser(body.email,body.password);
     if(!user) return reply.code(401).send({error:"Неверный email или пароль"});
     await attachSession(reply,user.id,request);

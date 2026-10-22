@@ -8,5 +8,8 @@ export function dockerRunArgs(config:SandboxConfig,cwd:string,options:DockerSand
   // процессе. Когда песочницы лежат на хосте, оба пути совпадают, и это ничего не меняет.
   // extraMounts идут после рабочего каталога: маска секретного файла должна перекрыть
   // настоящий `.env.local`, а не быть перекрытой общей папкой проекта.
-  return ["run","--rm","--init",...(name?["--name",name]:[]),"--network",network,"--cpus",options.cpus,"--memory",options.memory,"--pids-limit",options.pids,"--read-only","--tmpfs","/tmp:rw,nosuid,size=256m","--user","1000:1000","-v",workspaceMountSource(config)+":/workspace",...extraMounts,"-w","/workspace"+suffix,"-e","HOME=/tmp","-e","WEBNESTDEV_PROJECT_ID="+config.projectId,"-e","CI=1",options.image,"/bin/sh","-lc",command];
+  // `--cap-drop ALL` и `no-new-privileges` — страховка поверх uid 1000: контейнеру не нужны ни
+  // capabilities, ни setuid-бинарники, а команда приходит из модели. `--read-only` уже не даёт
+  // писать в корень образа, но без сброса capabilities остаются пути повышения прав внутри него.
+  return ["run","--rm","--init",...(name?["--name",name]:[]),"--network",network,"--cap-drop","ALL","--security-opt","no-new-privileges:true","--cpus",options.cpus,"--memory",options.memory,"--pids-limit",options.pids,"--read-only","--tmpfs","/tmp:rw,nosuid,size=256m","--user","1000:1000","-v",workspaceMountSource(config)+":/workspace",...extraMounts,"-w","/workspace"+suffix,"-e","HOME=/tmp","-e","WEBNESTDEV_PROJECT_ID="+config.projectId,"-e","CI=1",options.image,"/bin/sh","-lc",command];
 }

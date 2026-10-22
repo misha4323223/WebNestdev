@@ -13,7 +13,7 @@ import { parseAuthorizedKeyJson, parseServiceAccountKey } from "../yandex/yandex
  * a deployment that never opens the panel behaves exactly as before.
  */
 export type PlatformEnvKind = "secret" | "json-key" | "value" | "url" | "path" | "flag";
-export type PlatformEnvGroup = "github" | "gitlab" | "gitverse" | "yandex" | "sms" | "ai" | "search" | "billing";
+export type PlatformEnvGroup = "github" | "gitlab" | "gitverse" | "yandex" | "sms" | "ai" | "search" | "billing" | "support";
 
 export type PlatformEnvEntry = {
   name: string;
@@ -83,6 +83,19 @@ export const PLATFORM_ENV_CATALOG: PlatformEnvEntry[] = [
   { name: "PLATFORM_AI_BASE_URL", group: "ai", label: "AI Base URL", hint: "OpenAI-совместимый адрес модели платформы — то, чем пользуются проекты без своего провайдера.", kind: "url" },
   { name: "PLATFORM_AI_MODEL", group: "ai", label: "AI модель", hint: "Идентификатор модели для этого адреса.", kind: "value" },
   { name: "PLATFORM_AI_API_KEY", group: "ai", label: "AI ключ", hint: "Ключ провайдера модели платформы. Проекты со своим ключом его не используют.", kind: "secret" },
+
+  // Поддержка: обращения из кнопки «Поддержка» сохраняются на сервере, читаются в админке
+  // платформы и — по ключу API — во внешней админке (десктопное и мобильное приложение).
+  // Почта необязательна: с SMTP обычной почты (Яндекс, Mail.ru, Gmail) сервер входит в твой ящик
+  // и шлёт письмо на него же, без отдельного сервиса. Без почтовых ключей обращения остаются
+  // на сервере и в API.
+  { name: "SUPPORT_API_KEY", group: "support", label: "Ключ API для админки", hint: "Ключ только для чтения: внешнее приложение забирает обращения запросом GET /api/support/tickets с заголовком Authorization: Bearer <ключ> или X-Support-Key: <ключ>. Скриншот — GET /api/support/tickets/<id>/screenshot. Создать обращение по ключу нельзя. Не короче 16 символов.", kind: "secret" },
+  { name: "SUPPORT_EMAIL_TO", group: "support", label: "Куда присылать обращения", hint: "Адрес ящика поддержки, например support@example.ru. На него придет письмо с обращением.", kind: "value" },
+  { name: "SUPPORT_EMAIL_FROM", group: "support", label: "Адрес отправителя", hint: "Необязательно: по умолчанию совпадает с логином SMTP. У Яндекса и Mail.ru это должен быть тот же ящик.", kind: "value" },
+  { name: "SUPPORT_SMTP_HOST", group: "support", label: "SMTP-сервер", hint: "Например smtp.yandex.ru, smtp.mail.ru или smtp.gmail.com — смотри в настройках почты («SMTP»).", kind: "value" },
+  { name: "SUPPORT_SMTP_PORT", group: "support", label: "Порт SMTP", hint: "Необязательно: по умолчанию 465 (шифрование сразу). Порт 587 с STARTTLS не поддерживается.", kind: "value" },
+  { name: "SUPPORT_SMTP_USER", group: "support", label: "Логин SMTP", hint: "Обычно полный адрес ящика.", kind: "value" },
+  { name: "SUPPORT_SMTP_PASSWORD", group: "support", label: "Пароль SMTP", hint: "Пароль приложения, а не пароль от почты: Яндекс — «Безопасность» → «Пароли приложений», Mail.ru — «Пароли для внешних приложений», Gmail — «Пароли приложений» (нужна 2FA).", kind: "secret" },
 ];
 
 /** Names the deployment owns: they are read before the app starts or by compose, so the panel cannot apply them. */
@@ -111,7 +124,7 @@ export type PlatformEnvStatus = {
 type StoredEntry = { value: string; preview: string; updatedAt: string };
 type StoreFile = { version: 1; values: Record<string, StoredEntry> };
 
-const GROUP_LABEL: Record<PlatformEnvGroup, string> = { github: "GitHub", gitlab: "GitLab", gitverse: "GitVerse", yandex: "Yandex Cloud", sms: "SMS-провайдеры", ai: "AI-провайдер платформы", search: "Веб-поиск агента", billing: "Оплата (Robokassa)" };
+const GROUP_LABEL: Record<PlatformEnvGroup, string> = { github: "GitHub", gitlab: "GitLab", gitverse: "GitVerse", yandex: "Yandex Cloud", sms: "SMS-провайдеры", ai: "AI-провайдер платформы", search: "Веб-поиск агента", billing: "Оплата (Robokassa)", support: "Поддержка" };
 
 export function platformEnvGroupLabel(group: PlatformEnvGroup) {
   return GROUP_LABEL[group];

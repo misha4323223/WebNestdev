@@ -12,6 +12,19 @@ const options: DockerSandboxOptions = {
   maxOutput: 200_000,
 };
 
+/**
+ * Команда приходит из модели, поэтому контейнер не должен уметь повышать права: без сброса
+ * capabilities и `no-new-privileges` uid 1000 остаётся единственной защитой, а её мало.
+ */
+test("контейнер команды запускается без capabilities и без повышения прав", () => {
+  const config = { projectId: "p1", root: "/root/p1", memoryMb: 256, cpuLimit: 1, timeoutMs: 1000 };
+  const args = dockerRunArgs(config, config.root, options, "npm test", "none");
+  assert.ok(args.includes("--cap-drop") && args[args.indexOf("--cap-drop") + 1] === "ALL", args.join(" "));
+  assert.ok(args.includes("no-new-privileges:true"), args.join(" "));
+  assert.ok(args.includes("--read-only"), args.join(" "));
+  assert.ok(args.includes("--user") && args[args.indexOf("--user") + 1] === "1000:1000", args.join(" "));
+});
+
 test("секретный файл монтируется после рабочей области, поверх своего пути", () => {
   const config = {
     projectId: "p1",

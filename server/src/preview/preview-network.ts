@@ -77,9 +77,37 @@ export async function serverNetworks():Promise<string[]>{
   return networksByOwnAddress();
 }
 
-/** Сеть, на которой запускается контейнер предпросмотра; пусто — сети сервера нет. */
+/** Сеть базы платформы: предпросмотр к ней подключать нельзя. */
+function isDatabaseNetwork(name:string){
+  return /(^|[-_])db$/i.test(name);
+}
+
+/**
+ * Сеть предпросмотра выбирается осознанно: сначала явно заданная, затем сеть с «preview» в имени,
+ * и только потом первая попавшаяся — но никогда сеть базы. Иначе `docker network connect` вернул бы
+ * пользовательскому коду доступ к postgres, ради изоляции от которого сеть и разделена.
+ */
+export function preferPreviewNetwork(names:string[]){
+  const safe=names.filter(name=>!isDatabaseNetwork(name));
+  return safe.find(name=>/(^|[-_])preview$/i.test(name))??safe[0]??"";
+}
+
+/** Сеть, на которой запускается контейнер предпросмотра; пусто — подходящей сети нет. */
 export async function previewNetwork(){
-  return (await serverNetworks())[0]??"";
+  return preferPreviewNetwork(await serverNetworks());
+}
+
+/**
+ * Сети, к которым подключается уже запущенный контейнер предпросмотра. Отдельно от `serverNetworks`:
+ * сервер стоит и в сети базы, а подключать туда контейнер пользователя нельзя ни при каких
+ * обстоятельствах.
+ */
+export async function previewAttachNetworks(){
+  const configured=process.env.PREVIEW_NETWORK?.trim();
+  if(configured)return [configured];
+  const networks=await serverNetworks();
+  const preferred=preferPreviewNetwork(networks);
+  return preferred?[preferred]:[];
 }
 
 export async function containerNetworks(containerId:string){
@@ -138,7 +166,7 @@ export type AttachResult={host:string;connected:string[]};
  * connect` не нужны, а чтение адреса нужно ровно затем, чтобы проверять именно доступную сторону.
  */
 export async function attachToServerNetworks(containerId:string,deps:AttachDeps={}):Promise<AttachResult>{
-  const networks=await (deps.networks??serverNetworks)();
+  const networks=await (deps.networks??previewAttachNetworks)();
   if(!networks.length)return {host:"",connected:[]};
   const readNetworks=deps.containerNetworks??containerNetworks;
   const connect=deps.connect??connectNetwork;

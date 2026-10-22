@@ -17,6 +17,8 @@ import { describeProviderRetry } from "./provider/provider-retry.js";
 import { describeSandboxLimiter } from "./sandbox/sandbox-limiter.js";
 import { describeWebSearch } from "./web/search.js";
 import { assertEncryptionConfigured } from "./storage/secret-crypto.js";
+import { describeTrustProxy, trustProxyOption } from "./security/client-ip.js";
+import { registerSameOriginGuard } from "./security/same-origin.js";
 import { describeSandboxPaths } from "./sandbox/config.js";
 import { describeSandboxMount,verifySandboxMount } from "./sandbox/sandbox-check.js";
 import { ensureDataDir } from "./project-store.js";
@@ -27,6 +29,7 @@ import { registerProjectRoutes } from "./routes/projects.js";
 import { registerPreviewRoutes } from "./routes/preview.js";
 import { registerToolRoutes } from "./routes/tools.js";
 import { registerWorkspaceRoutes } from "./routes/workspace.js";
+import { registerThemeRoutes } from "./routes/theme.js";
 import { registerAgentWebSocket } from "./routes/agent-ws.js";
 import { registerProviderRoutes } from "./routes/providers.js";
 import { registerGitHubRoutes } from "./routes/github.js";
@@ -74,13 +77,18 @@ import "./tools/database-tools.js";
 import "./tools/secret-tools.js";
 import "./tools/question-tools.js";
 import "./tools/web-tools.js";
+import "./tools/design-tools.js";
 
 // Неизвестный бэкенд или postgres без DATABASE_URL — ошибка конфигурации, а не повод молча
 // работать на JSON-файлах: иначе данные «теряются» при первом же переезде.
 assertStorageConfigured();
 assertEncryptionConfigured();
 
-const app=Fastify({logger:true,bodyLimit:2_000_000,requestTimeout:120_000});
+// Адрес клиента: порт приложения наружу не публикуется, поэтому без доверия к Caddy все клиенты
+// выглядели бы одним адресом и делили один счётчик попыток входа. Список прокси — из окружения,
+// по умолчанию только loopback (см. security/client-ip.ts).
+const app=Fastify({logger:true,bodyLimit:2_000_000,requestTimeout:120_000,trustProxy:trustProxyOption()});
+console.log("[security] " + describeTrustProxy());
 const production = process.env.NODE_ENV === "production";
 const configuredOrigins = process.env.WEBNESTDEV_ALLOWED_ORIGINS;
 if (production && !configuredOrigins) throw new Error("В production обязательна переменная WEBNESTDEV_ALLOWED_ORIGINS");
@@ -177,6 +185,11 @@ app.setErrorHandler((error, request, reply) => {
 await app.register(cors,{origin: production || configuredOrigins ? allowedOrigins : true, credentials:true});
 await app.register(cookie);
 await app.register(websocket);
+// CSRF: изменяющий запрос с чужого источника отклоняется. `SameSite=Lax` не помогает, когда
+// приложение пользователя открыто на поддомене предпросмотра — это тот же сайт. Запросы без
+// `Origin` (серверные вызовы, вебхуки оплаты) пропускаются: подделать cookie межсайтовая
+// страница всё равно не может (см. security/same-origin.ts).
+await registerSameOriginGuard(app);
 
 await registerHealthRoutes(app);
 await registerAuthRoutes(app);
@@ -189,6 +202,7 @@ await registerProjectRoutes(app);
 await registerPreviewRoutes(app);
 await registerToolRoutes(app);
 await registerWorkspaceRoutes(app);
+await registerThemeRoutes(app);
 await registerProviderRoutes(app);
 await registerGitHubRoutes(app);
 await registerGitLabRoutes(app);

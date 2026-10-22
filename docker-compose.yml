@@ -7,8 +7,11 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     volumes:
       - postgres-data:/var/lib/postgresql/data
+    # База видна только серверу: предпросмотры пользователей живут в отдельной сети и до
+    # postgres:5432 не доходят. Раньше все три сервиса стояли в одной сети, и код проекта мог
+    # обратиться к базе платформы (см. docs/SECURITY.md).
     networks:
-      - webnestdev
+      - webnestdev-db
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-webnestdev} -d ${POSTGRES_DB:-webnestdev}"]
@@ -41,8 +44,11 @@ services:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy-data:/data
       - caddy-config:/config
+    # Фиксированный адрес нужен, чтобы сервер доверял X-Forwarded-For только этому прокси:
+    # иначе все клиенты выглядели бы одним адресом, а подменить его мог бы кто угодно внутри сети.
     networks:
-      - webnestdev
+      webnestdev:
+        ipv4_address: ${WEBNESTDEV_CADDY_IP:-172.30.0.10}
     restart: unless-stopped
 
   webnestdev-server:
@@ -63,6 +69,9 @@ services:
       # Отдельная соль для хеша IP в журнале секретов; пусто — используется ключ шифрования.
       WEBNESTDEV_AUDIT_SALT: ${WEBNESTDEV_AUDIT_SALT:-}
       WEBNESTDEV_ALLOWED_ORIGINS: ${WEBNESTDEV_ALLOWED_ORIGINS:?Set the public frontend origin(s), comma-separated}
+      # Кому доверять X-Forwarded-For. Адрес Caddy задан статически выше; контейнер предпросмотра
+      # в эту сеть не входит, поэтому подменить адрес клиента он не может.
+      WEBNESTDEV_TRUSTED_PROXIES: ${WEBNESTDEV_TRUSTED_PROXIES:-172.30.0.10}
       DATABASE_URL: postgres://${POSTGRES_USER:-webnestdev}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-webnestdev}
       # Yandex Cloud OAuth (optional)
       YANDEX_CLIENT_ID: ${YANDEX_CLIENT_ID:-}
@@ -177,8 +186,9 @@ services:
       # контейнер ТОЛЬКО перечисленные переменные. Пока их тут не было, совет из документации
       # «задайте PREVIEW_NETWORK в .env и выкатите снова» ничего не менял: значение оставалось в
       # .env на хосте, сервер его не видел, и белый экран в панели выглядел неисправимым.
-      # По умолчанию — те же значения, что в коде (пустое PREVIEW_NETWORK = выбрать сеть самим).
-      PREVIEW_NETWORK: ${PREVIEW_NETWORK:-}
+      # По умолчанию — выделенная сеть предпросмотров: она нужна серверу, чтобы дойти до
+      # контейнера, но в ней нет базы. Пустое значение оставляет выбор сети самому серверу.
+      PREVIEW_NETWORK: ${PREVIEW_NETWORK:-webnestdev-preview}
       PREVIEW_IDLE_MS: ${PREVIEW_IDLE_MS:-300000}
       # Сколько контейнерных предпросмотров держит один аккаунт. 1 — правило продукта: второй
       # предпросмотр того же человека останавливает его же прежний. 0 — без ограничения.
@@ -222,8 +232,11 @@ services:
       # поэтому YANDEX_SA_KEY_FILE=/var/lib/webnestdev/secrets/yandex-sa-key.json.
       - ${WEBNESTDEV_SECRETS_DIR:-/var/lib/webnestdev/secrets}:/var/lib/webnestdev/secrets:ro
       - /var/run/docker.sock:/var/run/docker.sock
+    # Сервер стоит в трёх сетях: панель (Caddy), база (только он) и сеть предпросмотров.
     networks:
       - webnestdev
+      - webnestdev-db
+      - webnestdev-preview
     restart: unless-stopped
 
 volumes:
@@ -236,4 +249,16 @@ volumes:
   caddy-config:
 
 networks:
+  # Панель и Caddy. Подсеть фиксирована, потому что от неё зависит адрес, которому сервер
+  # доверяет X-Forwarded-For; при смене подсети задайте WEBNESTDEV_CADDY_IP и
+  # WEBNESTDEV_TRUSTED_PROXIES согласованно.
   webnestdev:
+    ipam:
+      config:
+        - subnet: ${WEBNESTDEV_NETWORK_SUBNET:-172.30.0.0/24}
+  # База: internal — у postgres нет выхода наружу, он виден только серверу.
+  webnestdev-db:
+    internal: true
+  # Предпросмотры пользовательских проектов: egress в интернет нужен dev-серверу, а базы и
+  # Caddy в этой сети нет.
+  webnestdev-preview:
