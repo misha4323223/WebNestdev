@@ -1,7 +1,7 @@
 *{box-sizing:border-box}
 /* Один цвет окантовки на всю панель: переписка, поле ввода, план, действия, файлы и сайдбар
    выглядят частями одной рамы, а не набором случайных блоков. */
-:root{--edge:#2a323b;--topbar-h:64px;font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#e8eaed;background:#0b0d10;font-synthesis:none;text-rendering:optimizeLegibility}
+:root{--edge:#2a323b;--topbar-h:64px;/* Светлый каму — тот же мшистый акцент, что у подписки и баннера: им помечается группа запросов на рельсе переписки и окантовка блоков главной. */--camo:#a9d5b8;--camo-line:rgba(169,213,184,.32);--camo-line-strong:rgba(169,213,184,.6);--camo-glow:rgba(169,213,184,.16);font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#e8eaed;background:#0b0d10;font-synthesis:none;text-rendering:optimizeLegibility}
 body{margin:0;min-width:320px;background:#0b0d10}
 /* Полосы прокрутки в цвет интерфейса: системная белая полоса в тёмной панели
    выглядит как чужая деталь, особенно в переписке с агентом. */
@@ -51,13 +51,21 @@ button,textarea{font:inherit}button{color:inherit}
 /* Баннер внизу сайдбара — графика, а не объявление: ни счётчиков, ни приглашений, ни кнопки.
    Место рассчитано на будущую строку логотипов сервисов, поэтому оно не привязано к одному
    партнёру и не меняется по таймеру. */
-.sidebar-banner{position:relative;margin:0 0 8px;border:1px solid var(--line-warm);border-radius:10px;overflow:hidden;background:linear-gradient(160deg,#111821,#0b0f14);box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
-.sidebar-banner-art{position:relative;display:block}
-.sidebar-banner svg{display:block;width:100%;height:auto}
-.sidebar-banner-art::after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(180deg,transparent 56%,rgba(11,13,16,.94))}
+.sidebar-banner{position:relative;display:block;width:100%;aspect-ratio:300/128;min-height:116px;margin:0 0 8px;padding:0;border:1px solid var(--line-warm);border-radius:11px;overflow:hidden;background:linear-gradient(160deg,#111821,#0b0f14);box-shadow:inset 0 1px 0 rgba(255,255,255,.04);cursor:pointer;text-align:left;font:inherit;transition:border-color .18s ease,box-shadow .18s ease,transform .18s ease}
+.sidebar-banner:hover{border-color:#3a5a46;box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 10px 26px rgba(0,0,0,.32),0 0 0 1px rgba(143,211,173,.08);transform:translateY(-1px)}
+.sidebar-banner:focus-visible{outline:2px solid #3c5c47;outline-offset:3px}
+.sidebar-banner-art{position:absolute;inset:0;display:block;overflow:hidden}
+.sidebar-banner svg{display:block;width:100%;height:100%;transition:transform .4s cubic-bezier(.2,.8,.2,1)}
+.sidebar-banner:hover svg{transform:scale(1.04)}
+.sidebar-banner-art::after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(180deg,rgba(11,13,16,0) 30%,rgba(11,13,16,.82) 68%,#0b0f14)}
 /* Подпись под картинкой: одна строка, без пояснений — владелец попросил только её. */
-.sidebar-banner-copy{display:grid;padding:1px 10px 10px}
-.sidebar-banner-copy span{font-size:10.5px;font-weight:600;line-height:1.35;color:#c9d2cd}
+.sidebar-banner-copy{position:absolute;inset:auto 0 0;display:grid;gap:3px;padding:0 11px 10px}
+.sidebar-banner-kicker{display:flex;align-items:center;gap:5px;color:#8fc7a2;font:700 7.5px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.14em;text-transform:uppercase}
+.sidebar-banner-copy strong{font-size:12.5px;font-weight:600;line-height:1.25;letter-spacing:-.01em;color:#eef2ef}
+.sidebar-banner-copy small{display:flex;align-items:center;gap:4px;color:#9fb0a7;font-size:9.5px;font-weight:500;transition:color .16s ease}
+.sidebar-banner:hover .sidebar-banner-copy small{color:#d7ece0}
+.sidebar-banner:hover .sidebar-banner-copy small svg{transform:translate(1px,-1px)}
+.sidebar-banner-copy small svg{transition:transform .16s ease}
 /* Тариф над витриной: тот же тёплый тёмно-зелёный, что и у подписки на главной. */
 .sidebar-plan{display:flex;align-items:center;gap:8px;width:100%;min-height:44px;padding:6px 8px;margin:0 0 8px;border:1px solid #34443b;border-radius:9px;background:linear-gradient(135deg,#18231d,#111820 68%);color:#a9b4bf;font-size:10.5px;text-align:left;cursor:pointer;box-shadow:inset 0 1px 0 rgba(255,255,255,.035);transition:border-color .16s ease,background .16s ease}
 .sidebar-plan:hover{border-color:#526d5a;background:linear-gradient(135deg,#1c2a22,#141d24 68%)}
@@ -708,9 +716,35 @@ button,textarea{font:inherit}button{color:inherit}
 .connector-section-note{margin:-3px 0 0 30px;color:#737c87;font-size:9.5px;line-height:1.5}
 @media(max-width:420px){.connector-section-note{margin-left:0}}
 .integrations-mark{width:38px;height:38px;flex:none;display:grid;place-items:center;border:1px solid #2b3139;border-radius:9px;background:#14171c;color:#c3cad3}
-.connector{display:grid;gap:9px;min-width:0;padding:11px;border:1px solid #20242a;border-radius:9px;background:#0d1014}
-.connector-head{display:flex;align-items:center;gap:9px;min-width:0;flex-wrap:wrap}
-.connector-icon{width:32px;height:32px;flex:none;display:grid;place-items:center;border:1px solid #2b3139;border-radius:8px;background:#14171c;color:#dfe3e8}
+/*
+ * Карточка интеграции — один технологичный слот, а не строка с отдельной кнопкой.
+ * Логотип, название и кружок действия — одна кликабельная поверхность: белой капсулы
+ * «Подключить» больше нет, взгляд сразу читает бренд, а нажимать можно в любое место строки.
+ * Кружок — не вторая кнопка, а индикатор того, что откроется: плюс для подключения, шеврон
+ * для доступа, галочка у уже подключённого сервиса.
+ */
+.connector{position:relative;display:grid;gap:10px;min-width:0;padding:10px;border:1px solid #20262c;border-radius:12px;background:radial-gradient(130% 120% at 0% 0%,rgba(143,211,173,.075),transparent 55%),linear-gradient(180deg,#0f1318,#0b0e12);box-shadow:inset 0 1px 0 rgba(255,255,255,.035),0 1px 0 rgba(0,0,0,.25);transition:border-color .18s ease,box-shadow .18s ease}
+.connector:hover{border-color:#2b3a32;box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 10px 26px rgba(0,0,0,.28),0 0 0 1px rgba(143,211,173,.05)}
+.connector.is-connected,.connector.key-card.is-connected{border-color:#26362d}
+.connector-head{display:flex;align-items:center;gap:8px;min-width:0;flex-wrap:wrap}
+.connector-identity{display:flex;align-items:center;gap:10px;flex:1 1 160px;min-width:0;padding:2px;border:0;border-radius:9px;background:transparent;color:inherit;font:inherit;text-align:left;cursor:pointer}
+.connector-identity:disabled{cursor:default;opacity:.75}
+.connector-identity:focus-visible{outline:2px solid #3c5c47;outline-offset:3px}
+.connector-identity-static{cursor:default}
+.connector-identity .connector-icon,.connector-identity>.brand-logo{flex:none}
+.connector-identity>.brand-logo{border-radius:10px;box-shadow:0 6px 16px rgba(0,0,0,.32)}
+.connector-identity .connector-meta{flex:1}
+.connector-identity:hover .connector-meta strong{color:#fff}
+.connector-identity:hover .connector-icon{border-color:#466350;box-shadow:inset 0 1px 0 rgba(255,255,255,.09),0 0 0 1px rgba(143,211,173,.12),0 8px 20px rgba(0,0,0,.4)}
+.connector-icon{width:36px;height:36px;flex:none;display:grid;place-items:center;border:1px solid #2c3832;border-radius:11px;background:radial-gradient(circle at 32% 22%,#1c2620,#11161a 72%);color:#dfe3e8;box-shadow:inset 0 1px 0 rgba(255,255,255,.07),0 6px 16px rgba(0,0,0,.32);transition:border-color .18s ease,box-shadow .18s ease}
+/* Встроенное действие: кружок живёт внутри строки и меняет состояние вместе с карточкой. */
+.connector-socket{flex:none;width:29px;height:29px;display:grid;place-items:center;border:1px solid #2f3d35;border-radius:50%;background:radial-gradient(circle at 35% 28%,rgba(143,211,173,.18),rgba(143,211,173,.03) 72%);color:#a6dabb;transition:background .18s ease,color .18s ease,border-color .18s ease,box-shadow .18s ease,transform .18s ease}
+.connector-identity:hover .connector-socket{background:#a8e0bc;border-color:#c3ecd1;color:#0a100c;box-shadow:0 0 0 4px rgba(143,211,173,.1),0 0 18px rgba(143,211,173,.3);transform:scale(1.05)}
+.connector-socket.is-on{border-color:#3d6a51;color:#a9dcb9;background:radial-gradient(circle at 35% 28%,rgba(95,158,116,.22),rgba(95,158,116,.05) 72%)}
+.connector-socket.is-on:hover{background:rgba(95,158,116,.2);border-color:#4d7d60;color:#c9ecce;box-shadow:0 0 0 4px rgba(95,158,116,.1)}
+.connector-caret{color:inherit;transition:transform .18s ease}
+.connector-socket.is-open .connector-caret,.connector-identity[aria-expanded="true"] .connector-caret{transform:rotate(180deg)}
+@media(max-width:420px){.connector-identity{gap:8px}.connector-identity .brand-logo.is-mark{width:32px!important;height:32px!important}.connector-identity .brand-logo.is-wordmark{height:32px!important}.connector-socket{width:27px;height:27px}}
 .brand-logo{flex:none;display:inline-flex;align-items:center;justify-content:center;border:1px solid #2b3139;border-radius:8px;background:#f4f6f8;overflow:hidden}
 .brand-logo.on-dark{background:#14171c}
 .brand-logo.is-mark{padding:4px}
@@ -964,7 +998,8 @@ button,textarea{font:inherit}button{color:inherit}
 .secret-note{display:flex;gap:7px;margin:0;color:#7f8792;font-size:10.5px;line-height:1.6}
 .secret-note svg{flex:none;margin-top:2px;color:#6f9c81}
 .session-list{list-style:none;margin:0;padding:0;display:grid;gap:7px}
-.session-item{width:100%;display:grid;gap:4px;padding:10px 12px;border:1px solid #22282f;border-radius:9px;background:#101318;color:inherit;text-align:left;cursor:pointer}
+.session-row{position:relative;min-width:0}
+.session-item{width:100%;display:grid;gap:4px;padding:10px 40px 10px 12px;border:1px solid #22282f;border-radius:9px;background:#101318;color:inherit;text-align:left;cursor:pointer}
 .session-item:hover{border-color:#363d46;background:#14171c}
 .session-item.active{border-color:#3d4b5c;background:#141a21}
 .session-item-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
@@ -972,6 +1007,16 @@ button,textarea{font:inherit}button{color:inherit}
 .session-item-head small{flex:none;color:#6d7580;font-size:9.5px}
 .session-item-preview{color:#828a95;font-size:10.5px;line-height:1.45;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .session-item-meta{color:#5f6670;font-size:9.5px;letter-spacing:.02em}
+/* Удаление чата — отдельная кнопка строки, а не вложенная в кнопку открытия: вложенные
+   кнопки нельзя, и клик по корзине не должен заодно открывать удаляемый чат. На ПК она
+   появляется при наведении, на телефоне видна всегда. */
+.session-delete{position:absolute;top:7px;right:7px;width:28px;height:28px;display:grid;place-items:center;border:1px solid #2b3139;border-radius:6px;background:#14171c;color:#8b939e;cursor:pointer;opacity:0;transition:opacity .15s ease,color .15s ease,border-color .15s ease,background .15s ease}
+.session-row:hover .session-delete,.session-row:focus-within .session-delete{opacity:1}
+.session-delete:hover{border-color:#4a3030;background:#1b1212;color:#d99b9b}
+.session-delete:disabled{opacity:.5;cursor:default}
+.session-error{padding:8px 10px;border:1px solid #4a3030;border-radius:7px;background:#1b1212;color:#d99b9b;font-size:10.5px;line-height:1.45}
+@media(hover:none){.session-delete{opacity:1}}
+@media(max-width:650px){.session-delete{opacity:1;width:30px;height:30px}.session-item{padding-right:44px}}
 
 /* Detailed subscriptions page */
 /* Detailed subscriptions page */
@@ -1271,6 +1316,15 @@ button,textarea{font:inherit}button{color:inherit}
   .chat-bookmark.is-active i{width:6px;height:6px;background:#cfe0ec;box-shadow:0 0 0 3px rgba(127,168,196,.16)}
   .chat-bookmark-tip{display:none}
 }
+/* Группа запросов: вместо десятка соседних полосок — одна круглая точка светлого каму.
+   Она нарочно другого цвета и формы: видно, что это не один запрос, а пачка. */
+.chat-bookmark.is-group{height:16px}
+.chat-bookmark.is-group i{width:9px;height:9px;border-radius:50%;background:var(--camo);box-shadow:0 0 0 3px var(--camo-glow)}
+.chat-bookmark.is-group:hover i,.chat-bookmark.is-group:focus-visible i{width:9px;height:9px;transform:none;background:#cbe8d4;box-shadow:0 0 0 4px rgba(169,213,184,.24)}
+.chat-bookmark.is-group.is-active i{width:9px;height:9px;background:#d9eddf;box-shadow:0 0 0 4px rgba(169,213,184,.28)}
+.chat-bookmark.is-group:focus-visible{outline-color:var(--camo-line-strong)}
+.chat-bookmark-tip em{display:block;margin-top:5px;color:#8b9b91;font-size:9px;font-style:normal;line-height:1.45}
+@media(max-width:650px){.chat-bookmark.is-group i,.chat-bookmark.is-group:hover i,.chat-bookmark.is-group:focus-visible i,.chat-bookmark.is-group.is-active i{width:9px;height:9px}}
 
 /* Compact phone layout: the plan chip, the run details and the usage meters keep their alignment
    instead of squeezing the text and the progress bars into the same row. */
@@ -1682,11 +1736,28 @@ button,textarea{font:inherit}button{color:inherit}
  * Капсулы собраны из того же материала, что кнопка «Вниз» и вкладки: тёплая кромка, тёмное
  * стекло, мятная точка только там, где есть живое состояние (идёт запуск агента).
  */
-.topbar-trail{display:flex;align-items:center;gap:6px;min-width:0}
-/* Название проекта — подпись, а не кнопка: выбор проекта живёт на главной, а здесь важно,
-   над чем идёт работа. Точка перед именем показывает, что агент прямо сейчас работает. */
-.topbar-crumb{display:flex;align-items:center;gap:7px;min-width:0;max-width:280px;font-size:12px;color:#e2e7ec}
-.topbar-project-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;letter-spacing:-.01em}
+.topbar-trail{position:relative;display:flex;align-items:center;gap:6px;min-width:0}
+/* Название проекта — кнопка: его можно переименовать прямо здесь, не уходя на главную.
+   Точка перед именем показывает, что агент прямо сейчас работает. */
+.topbar-crumb{display:flex;align-items:center;gap:7px;min-width:0;max-width:280px;padding:3px 5px;margin-left:-5px;border:0;border-radius:6px;background:transparent;font-size:12px;color:#e2e7ec;font-family:inherit;text-align:left;cursor:pointer;transition:background .15s ease,color .15s ease}
+.topbar-crumb:hover{background:#171b21;color:#fff}
+.topbar-crumb:focus-visible{outline:2px solid #3c4c41;outline-offset:1px}
+.topbar-project-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;letter-spacing:-.01em}
+.topbar-crumb-pencil{flex:none;color:#6f7883;opacity:0;transition:opacity .15s ease,color .15s ease}
+.topbar-crumb:hover .topbar-crumb-pencil,.topbar-crumb:focus-visible .topbar-crumb-pencil{opacity:1;color:#a9d5b8}
+/* Форма переименования занимает место подписи: Enter сохраняет, Escape отменяет.
+   На время ввода ветка и чипы пути убираются, чтобы поле не сжималось на телефоне. */
+.topbar-trail[data-renaming] .topbar-sep,.topbar-trail[data-renaming] .topbar-chip{display:none}
+.topbar-trail[data-renaming]{flex:1;min-width:0}
+.topbar-trail[data-renaming] .topbar-rename{flex:1;max-width:420px}
+.topbar-rename{min-width:0;max-width:320px}
+.topbar-rename .project-rename{grid-column:auto;flex-direction:row;align-items:center;gap:5px}
+.topbar-rename .project-rename input{height:26px;font-size:11.5px;padding:0 8px}
+.topbar-rename .project-rename-actions{gap:4px}
+.topbar-rename .project-rename-actions .icon-button{width:26px;height:26px}
+.topbar-rename-error{position:absolute;z-index:41;top:calc(100% + 7px);left:0;max-width:320px;padding:6px 8px;border:1px solid #4a3030;border-radius:6px;background:#1b1212;color:#d99b9b;font-size:10px;line-height:1.45;box-shadow:0 12px 28px rgba(0,0,0,.45)}
+@media(hover:none){.topbar-crumb-pencil{opacity:.7}}
+@media(max-width:650px){.topbar-rename{max-width:min(64vw,220px)}.topbar-trail[data-renaming] .topbar-rename{max-width:none}.topbar-rename .project-rename input{font-size:10.5px}.topbar-rename-error{max-width:min(72vw,260px)}}
 .topbar-dot{flex:none;width:6px;height:6px;border-radius:50%;background:#5b6570}
 .topbar-dot.is-live{background:#8fdcb0;box-shadow:0 0 0 3px rgba(143,220,176,.13);animation:topbar-dot 2s ease-out infinite}
 .topbar-sep{color:#3d444d;font-size:12px;line-height:1;padding:0 1px;user-select:none}
@@ -1709,7 +1780,9 @@ button,textarea{font:inherit}button{color:inherit}
 .topbar-chip-dot{width:5px;height:5px;border-radius:50%;background:#d3a86a;box-shadow:0 0 0 2px rgba(211,168,106,.16)}
 /* Список веток — та же пластина, что у меню аккаунта, но с прокруткой: веток бывает много,
    и меню не должно упираться в нижний край экрана. */
-.topbar-menu-branch{min-width:238px;max-width:290px}
+/* Меню ветки раскрывается влево от кнопки: она стоит у правого края, и список, привязанный
+   к левому краю кнопки, уходил бы за экран на телефоне. */
+.topbar-menu-branch{left:auto;right:0;min-width:238px;max-width:min(290px,calc(100vw - 24px))}
 .topbar-branch-list{display:grid;gap:1px;max-height:min(46vh,290px);overflow:auto;padding:1px}
 .topbar-branch-item{display:flex;align-items:center;gap:7px;width:100%;height:29px;padding:0 8px;border:0;border-radius:6px;background:transparent;color:#b9c1ca;font-size:11.5px;text-align:left;cursor:pointer;transition:background .12s ease,color .12s ease}
 .topbar-branch-item:hover{background:#181f26;color:#eef2f5}
@@ -1751,13 +1824,21 @@ button,textarea{font:inherit}button{color:inherit}
    а действия справа остаются — иначе «Секреты» и «Настройки» стали бы недостижимы. */
 @media(max-width:650px){
   .topbar-trail .topbar-sep,.topbar-trail .topbar-chip{display:none}
-  /* Ветка остаётся в шапке и на телефоне — это единственный способ выбрать, куда отправлять. */
-  .topbar-branch-button{max-width:min(30vw,110px)}
-  .topbar-branch-name{max-width:64px}
-  .topbar-crumb{max-width:min(28vw,120px)}
+  /* Ветка остаётся в шапке и на телефоне — это единственный способ выбрать, куда отправлять.
+     Она стоит рядом с предпросмотром, поэтому имя проекта занимает всё место слева до действий. */
+  .topbar-trail{flex:1;min-width:0}
+  .topbar-branch-button{max-width:min(26vw,96px)}
+  .topbar-branch-name{max-width:56px}
+  /* Карандаш на телефоне не нужен: имя и так переименовывается нажатием, а его место
+     отдаётся самому названию проекта. */
+  .topbar-crumb{flex:1;max-width:none;gap:5px;padding:3px 4px}
+  .topbar-crumb-pencil{display:none}
   .topbar-divider{display:none}
   .topbar-actions{gap:2px}
   .topbar-menu-account{right:-2px}
+  /* Список веток на телефоне — от края до края под шапкой: кнопка стоит у правого края,
+     и абсолютное меню привязывалось к ней и уходило за экран. */
+  .topbar-menu-branch{position:fixed;top:calc(var(--topbar-h) + 6px);left:10px;right:10px;width:auto;min-width:0;max-width:none}
 }
 
 /*
@@ -1826,10 +1907,6 @@ button,textarea{font:inherit}button{color:inherit}
 .terminal-path{display:inline-flex;align-items:center;gap:5px;height:24px;padding:0 8px;border:1px solid var(--line-warm);border-radius:6px;background:#0e1216;color:#a9b3bd;font:10px/1 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap}
 .terminal-screen{flex:1;min-height:0;display:flex;flex-direction:column;margin:12px 14px 14px;border:1px solid var(--line-warm);border-radius:9px;background:#080a0d;overflow:hidden;box-shadow:inset 0 1px 0 rgba(255,255,255,.02);cursor:text}
 .terminal-log{flex:1;min-height:0;overflow:auto;padding:12px 13px;font:11.5px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace}
-.terminal-empty{display:grid;gap:6px;max-width:430px;color:#7f8792}
-.terminal-empty strong{color:#c9d2db;font-size:11.5px}
-.terminal-empty span{font-size:10.5px;line-height:1.6}
-.terminal-empty code{padding:1px 4px;border:1px solid var(--line-warm-soft);border-radius:4px;background:#0f1318;color:#a9d5b8}
 .terminal-entry{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
 .terminal-entry.command{color:#e2e9f0}
 .terminal-entry.output{color:#b9c2cc}
@@ -1964,3 +2041,164 @@ button,textarea{font:inherit}button{color:inherit}
   .support-field textarea{font-size:12px}
   .support-compose-hint{font-size:8.5px}
 }
+
+/*
+ * Добровольная поддержка проекта: тёплый мятный акцент вместо белых кнопок, сумма выбирается
+ * одним касанием, а сообщение — обычное текстовое поле, а не отдельный шаг. Окно намеренно
+ * короче страницы тарифов: здесь не выбирают план, а говорят спасибо.
+ */
+.donate-modal{width:min(560px,100%)}
+.donate-body{gap:13px;align-content:start}
+.donate-hero{display:flex;align-items:flex-start;gap:11px;padding:12px 13px;border:1px solid #263a2d;border-radius:11px;background:radial-gradient(120% 150% at 0% 0%,rgba(143,211,173,.11),transparent 62%),#0f1418}
+.donate-hero-icon{flex:none;width:30px;height:30px;display:grid;place-items:center;border:1px solid #3a5a47;border-radius:9px;background:#142219;color:#b7e3c4;box-shadow:0 0 0 4px rgba(143,211,173,.05)}
+.donate-hero p{margin:0;color:#98a69d;font-size:11px;line-height:1.62}
+.donate-fields{display:grid;gap:8px}
+.donate-label{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.donate-label span{color:#d8e2db;font-size:10.5px;font-weight:600}
+.donate-label small{color:#6b7a71;font-size:9px}
+.donate-amounts{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:6px}
+.donate-amount{height:38px;padding:0 6px;border:1px solid #29322d;border-radius:9px;background:#0e1317;color:#c8d2cc;font:600 11.5px/1 ui-monospace,SFMono-Regular,Menlo,monospace;cursor:pointer;transition:border-color .15s ease,background .15s ease,color .15s ease,transform .15s ease}
+.donate-amount:hover{border-color:#3d5547;color:#e9f0eb;transform:translateY(-1px)}
+.donate-amount.active{border-color:#6fae86;background:linear-gradient(160deg,#18281f,#101a15);color:#e4f3e8;box-shadow:inset 0 0 0 1px rgba(169,213,184,.22),0 6px 16px rgba(0,0,0,.22)}
+.donate-custom{display:grid;gap:5px}
+.donate-custom>span{color:#8b9a92;font-size:9px;font-weight:700;letter-spacing:.1em;text-transform:uppercase}
+.donate-custom-field{display:flex;align-items:center;height:38px;border:1px solid #29322d;border-radius:9px;background:#0b0e12;overflow:hidden;transition:border-color .15s ease,box-shadow .15s ease}
+.donate-custom-field:focus-within{border-color:#4d7d60;box-shadow:0 0 0 3px rgba(143,211,173,.08)}
+.donate-custom-field input{flex:1;min-width:0;height:100%;padding:0 11px;border:0;background:transparent;color:#e8efea;font-size:12px;outline:none}
+.donate-custom-field input::placeholder{color:#5d6964}
+.donate-custom-field>span{padding:0 11px;color:#7f8f85;font-size:11px;border-left:1px solid #232b27}
+.donate-custom-hint{color:#c0a06a;font-size:9px;line-height:1.4}
+.donate-message{display:grid;gap:6px}
+.donate-message>span{display:flex;align-items:baseline;gap:6px;color:#d8e2db;font-size:10.5px;font-weight:600}
+.donate-message>span i{color:#66746d;font-size:8.5px;font-style:normal;font-weight:500}
+.donate-message textarea{width:100%;min-height:82px;padding:9px 10px;border:1px solid #29322d;border-radius:9px;background:#0b0e12;color:#e3e9e5;font-family:inherit;font-size:11.5px;line-height:1.6;resize:vertical;outline:none;transition:border-color .15s ease,box-shadow .15s ease}
+.donate-message textarea::placeholder{color:#5d6964}
+.donate-message textarea:focus{border-color:#4d7d60;box-shadow:0 0 0 3px rgba(143,211,173,.08)}
+.donate-message small{display:flex;align-items:baseline;justify-content:space-between;gap:8px;color:#66736c;font-size:9px;line-height:1.45}
+.donate-message small b{color:#6f7f76;font-weight:500;font-variant-numeric:tabular-nums;white-space:nowrap}
+.donate-error{margin:0;padding:8px 10px;font-size:10px}
+.donate-submit{display:flex;align-items:center;justify-content:center;gap:7px;width:100%;height:42px;border:1px solid #9fd6b4;border-radius:10px;background:linear-gradient(180deg,#c8ecd4,#9ed6b1);color:#0a130d;font-size:12px;font-weight:650;letter-spacing:-.01em;cursor:pointer;transition:filter .15s ease,transform .15s ease,box-shadow .15s ease}
+.donate-submit:hover:not(:disabled){filter:brightness(1.04);transform:translateY(-1px);box-shadow:0 10px 24px rgba(143,211,173,.16)}
+.donate-submit:disabled{opacity:.55;cursor:not-allowed}
+.donate-fineprint{margin:0;color:#626f68;font-size:9px;line-height:1.5;text-align:center}
+.donate-foot{justify-content:space-between}
+.donate-foot>span{display:flex;align-items:center;gap:6px;color:#6f7d74;font-size:9.5px}
+.donate-foot>span svg{flex:none;color:#7fae91}
+.donate-success{place-items:center;justify-items:center;text-align:center;gap:8px;padding:28px 18px}
+.donate-success-icon{width:48px;height:48px;display:grid;place-items:center;border:1px solid #3d6a51;border-radius:50%;background:radial-gradient(circle at 30% 25%,#1c3325,#0f1712);color:#c3ebcd;box-shadow:0 0 0 7px rgba(143,211,173,.05)}
+.donate-success strong{font-size:13.5px;color:#e9f0eb}
+.donate-success p{margin:0;max-width:340px;color:#8d9b93;font-size:11px;line-height:1.6}
+.donate-success-note{max-width:340px;padding:8px 10px;border:1px solid #29322d;border-radius:8px;background:#0d1210;color:#a9c3b1 !important;font-style:italic;overflow-wrap:anywhere}
+.donate-success .send-button{width:auto;height:32px;padding:0 14px;gap:6px;margin-top:4px}
+@media(max-width:650px){
+  .donate-modal{width:100%;max-height:calc(100dvh - 20px);border-radius:12px}
+  .donate-body{gap:11px;padding:13px}
+  .donate-amounts{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .donate-submit{height:40px;font-size:11.5px}
+}
+
+/* Главная: окантовка светлого каму.
+   На главной много блоков, полей и кнопок, и у каждой рамки был свой холодный серый.
+   Один тёплый мшистый тон на все нейтральные кромки собирает страницу в целое и совпадает
+   с цветом группы запросов на рельсе переписки. Статусные блоки — запуск агента, оплата,
+   ошибка — остаются в своих цветах: их кромка несёт смысл, а не оформление. */
+.home-screen .home-composer,
+.home-screen .home-composer-icon,
+.home-screen .template-card,
+.home-screen .template-icon,
+.home-screen .recent-card,
+.home-screen .recent-thumb,
+.home-screen .recent-tools button,
+.home-screen .project-rename input,
+.home-screen .project-rename-actions .icon-button,
+.home-screen .home-tab.active,
+.home-screen .home-tab-exit,
+.home-screen .rail-nav,
+.home-screen .rail-content,
+.home-screen .rail-nav-item.active,
+.home-screen .rail-project-icon,
+.home-screen .rail-project-tools .icon-button,
+.home-screen .rail-plan,
+.home-screen .rail-money>div,
+.home-screen .rail-usage,
+.home-screen .rail-chosen,
+.home-screen .rail-create,
+.home-screen .connector,
+.home-screen .connector-key input,
+.home-screen .connector-key select,
+.home-screen .connector-hint{border-color:var(--camo-line)}
+.home-screen .home-composer:focus-within,
+.home-screen .template-card:hover,
+.home-screen .recent-card:hover,
+.home-screen .recent-tools button:hover,
+.home-screen .project-rename input:focus,
+.home-screen .rail-create:hover,
+.home-screen .rail-projects li:hover,
+.home-screen .rail-projects li.active,
+.home-screen .rail-exit:hover,
+.home-screen .connector-key input:focus,
+.home-screen .connector-key select:focus{border-color:var(--camo-line-strong)}
+.home-screen .home-tab:hover{border-color:var(--camo-line)}
+.home-screen .home-tabs{border-bottom-color:var(--camo-line)}
+.home-screen .home-footer{border-top-color:var(--camo-line)}
+
+/* Знакомство после входа: один вопрос на экран, крупные варианты, полоса шагов.
+   Карточка держится в пределах окна, а длинный список вопросов прокручивается внутри:
+   на телефоне шесть вариантов не должны уводить кнопку «Далее» за экран. */
+.onboarding{position:fixed;inset:0;z-index:75;display:flex;align-items:center;justify-content:center;padding:20px;overflow:auto;background:radial-gradient(120% 85% at 50% -10%,rgba(169,213,184,.12),transparent 62%),rgba(8,10,13,.94);backdrop-filter:blur(6px);animation:onboarding-fade .2s ease both}
+@keyframes onboarding-fade{from{opacity:0}to{opacity:1}}
+.onboarding-card{width:min(660px,100%);max-height:calc(100dvh - 40px);display:flex;flex-direction:column;gap:15px;padding:20px 22px 18px;border:1px solid var(--camo-line);border-radius:16px;background:linear-gradient(178deg,#10161a,#0b0e12 72%);box-shadow:0 36px 90px rgba(0,0,0,.62),inset 0 1px 0 rgba(255,255,255,.045);animation:onboarding-card-in .24s cubic-bezier(.2,.8,.2,1) both}
+@keyframes onboarding-card-in{from{opacity:0;transform:translateY(10px) scale(.99)}to{opacity:1;transform:none}}
+.onboarding-head{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.onboarding-brand{display:flex;align-items:center;gap:8px;font-size:12px;font-weight:650;letter-spacing:-.01em;color:#eef2f0}
+.onboarding-brand-mark{width:26px;height:26px;display:grid;place-items:center;border:1px solid var(--camo-line);border-radius:8px;background:#121a16}
+.onboarding-skip{color:#8b9a90;font-size:10.5px}
+.onboarding-skip:hover{color:#e8efea;border-color:var(--camo-line-strong);background:#121a16}
+.onboarding-progress{display:flex;gap:5px}
+.onboarding-step{flex:1;height:3px;border-radius:2px;background:#1d2622;transition:background .2s ease,box-shadow .2s ease}
+.onboarding-step.is-done{background:rgba(169,213,184,.5)}
+.onboarding-step.is-current{background:var(--camo);box-shadow:0 0 0 1px rgba(169,213,184,.22)}
+.onboarding-body{display:grid;gap:9px;min-height:0;overflow:auto;padding-right:2px}
+.onboarding-body h1{margin:2px 0 0;font-size:21px;font-weight:650;letter-spacing:-.02em;color:#f1f4f2}
+.onboarding-body>p{margin:0;max-width:480px;color:#828e88;font-size:11.5px;line-height:1.6}
+.onboarding-options{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;margin-top:4px}
+.onboarding-option{display:flex;align-items:flex-start;gap:9px;padding:10px 11px;border:1px solid var(--camo-line);border-radius:10px;background:#0e1417;color:#dbe2dd;text-align:left;cursor:pointer;transition:border-color .15s ease,background .15s ease,transform .15s ease}
+.onboarding-option:hover{background:#121b17;border-color:var(--camo-line-strong);transform:translateY(-1px)}
+.onboarding-option.is-selected{border-color:var(--camo);background:linear-gradient(160deg,#15211a,#101815);box-shadow:inset 0 0 0 1px rgba(169,213,184,.18),0 8px 22px rgba(0,0,0,.22)}
+.onboarding-option-icon{flex:none;width:28px;height:28px;display:grid;place-items:center;border:1px solid var(--camo-line);border-radius:8px;background:#111a16;color:#b6d2be}
+.onboarding-option.is-selected .onboarding-option-icon{border-color:var(--camo-line-strong);background:#16241b;color:#d7ecdd}
+.onboarding-option-text{min-width:0;display:grid;gap:3px}
+.onboarding-option-text strong{font-size:11.5px;font-weight:600;line-height:1.35}
+.onboarding-option-text small{color:#7c8a82;font-size:9.5px;line-height:1.45}
+.onboarding-option.is-selected .onboarding-option-text small{color:#94a89b}
+.onboarding-field{display:grid;gap:6px;margin-top:2px}
+.onboarding-field>span{color:#8b939d;font-size:9px;font-weight:700;letter-spacing:.09em;text-transform:uppercase}
+.onboarding-field input,.onboarding-field textarea{padding:10px 11px;border:1px solid var(--camo-line);border-radius:9px;background:#0b0e12;color:#e9edef;font-size:12px;line-height:1.55;outline:none;transition:border-color .15s ease,box-shadow .15s ease}
+.onboarding-field textarea{min-height:78px;resize:vertical}
+.onboarding-field input:focus,.onboarding-field textarea:focus{border-color:var(--camo-line-strong);box-shadow:0 0 0 3px rgba(169,213,184,.12)}
+.onboarding-summary{display:flex;flex-wrap:wrap;gap:6px}
+.onboarding-summary span{padding:4px 9px;border:1px solid var(--camo-line);border-radius:99px;background:#121a16;color:#a9c3b1;font-size:9.5px;line-height:1.4}
+.onboarding-error{margin-top:2px}
+.onboarding-foot{display:flex;align-items:center;justify-content:space-between;gap:10px;padding-top:2px}
+.onboarding-foot-note{color:#6e7a72;font-size:10px}
+.onboarding-next{width:auto;height:36px;padding:0 15px;gap:7px;border-radius:9px;font-size:11.5px}
+@media(max-width:650px){
+  .onboarding{padding:12px;align-items:flex-start}
+  .onboarding-card{max-height:calc(100dvh - 24px);padding:16px 15px 14px;border-radius:13px}
+  .onboarding-options{grid-template-columns:1fr;max-height:min(48vh,340px);overflow:auto}
+  .onboarding-body h1{font-size:18px}
+  .onboarding-next{height:34px}
+}
+
+/* Первый экран знакомства: имя и почта для связи. Поля и флажки в одной рамке с остальной
+   карточкой — каму-кромка и здесь, чтобы экран читался как часть того же знакомства. */
+.onboarding-head-note{color:#7f8c84;font-size:10px}
+.onboarding-fields{display:grid;gap:10px;margin-top:2px}
+.onboarding-checks{display:grid;gap:7px;margin-top:4px}
+.onboarding-check{display:flex;align-items:flex-start;gap:9px;padding:9px 10px;border:1px solid var(--camo-line);border-radius:9px;background:#0d1215;color:#b9c5bd;cursor:pointer;transition:border-color .15s ease,background .15s ease}
+.onboarding-check:hover{border-color:var(--camo-line-strong);background:#101816}
+.onboarding-check.is-on{border-color:var(--camo-line-strong);background:#101a15}
+.onboarding-check input{flex:none;width:13px;height:13px;margin:2px 0 0;accent-color:var(--camo);cursor:pointer}
+.onboarding-check>span{display:grid;gap:2px;min-width:0}
+.onboarding-check strong{font-size:11px;font-weight:600;line-height:1.4;color:#dde7e0}
+.onboarding-check small{font-size:9.5px;line-height:1.45;color:#7f8c84}

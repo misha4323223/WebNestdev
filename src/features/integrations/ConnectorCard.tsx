@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { RefreshCw } from "lucide-react";
+import { Check, Plus, RefreshCw } from "lucide-react";
 
 /**
  * Connection state of one service, as reported by the server.
@@ -30,21 +30,36 @@ export type ConnectorCardProps = {
 /**
  * One service in the integrations list. Every connector renders through this card
  * so adding a service keeps the same shape: an icon, the service name and one
- * button that opens the provider's authorization page. The state only appears
- * when there is something to report — a linked account, a server that still
- * needs OAuth credentials, or work in progress.
+ * control that opens the provider's authorization page.
+ *
+ * Логотип, название и кружок действия — одна кнопка, а не строка с отдельной капсулой
+ * «Подключить»: нажимать можно в любое место карточки. Кружок показывает, что произойдёт,
+ * а подключённая карточка не ведёт по клику в отключение — это разрушительное действие
+ * остаётся отдельной кнопкой, и заголовок становится обычной подписью.
  */
-export function ConnectorCard({name,icon,status,account,soon,busy,busyLabel,onConnect,onDisconnect,onRefresh,note,children}:ConnectorCardProps){
+export function ConnectorCard({name,icon,status,account,soon,busy,onConnect,onDisconnect,onRefresh,note,children}:ConnectorCardProps){
   const state = soon ? <span className="connector-state">Интеграция в разработке</span>
     : status==="loading" ? <span className="connector-state">Проверяем подключение…</span>
     : status==="connected" ? <span className="connector-state ok"><span className="connector-dot"/>{account?"Подключено · @"+account:"Подключено"}</span>
     : status==="unavailable" ? <span className="connector-state">Не настроено на сервере</span>
     : null;
+  const connectable = !soon && status !== "connected" && Boolean(onConnect);
 
   return <article className={"connector connector-"+status+(soon?" is-soon":"")}>
     <div className="connector-head">
-      <span className="connector-icon">{icon}</span>
-      <div className="connector-meta"><strong>{name}</strong>{state}</div>
+      {connectable
+        ? <button type="button" className="connector-identity" onClick={onConnect} disabled={busy} title={"Подключить "+name} aria-label={"Подключить "+name}>
+            <span className="connector-icon">{icon}</span>
+            <span className="connector-meta"><strong>{name}</strong>{state}</span>
+            {/* Действие живёт в самом логотипе-карточке: отдельной кнопки «Подключить» больше
+                нет, поэтому клик по всей строке и кружок справа — одно и то же действие. */}
+            <span className="connector-socket" aria-hidden="true">{busy?<RefreshCw size={13} className="spin"/>:<Plus size={14}/>}</span>
+          </button>
+        : <div className="connector-identity connector-identity-static">
+            <span className="connector-icon">{icon}</span>
+            <span className="connector-meta"><strong>{name}</strong>{state}</span>
+            {status==="connected"&&<span className="connector-socket is-on" aria-hidden="true"><Check size={13}/></span>}
+          </div>}
       {soon
         ? <span className="soon-pill">скоро</span>
         : status==="connected"
@@ -52,7 +67,7 @@ export function ConnectorCard({name,icon,status,account,soon,busy,busyLabel,onCo
               {onRefresh&&<button className="icon-button" onClick={onRefresh} disabled={busy} title="Обновить состояние"><RefreshCw size={13}/></button>}
               <button className="ghost-button connector-action" onClick={onDisconnect} disabled={busy}>Отключить</button>
             </div>
-          : <button className="connector-action connector-connect" onClick={onConnect} disabled={busy}>{busy?busyLabel??"Подключаем…":"Подключить"}</button>}
+          : null}
     </div>
     {note}
     {children}

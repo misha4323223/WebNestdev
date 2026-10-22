@@ -92,7 +92,7 @@ export class AgentRuntime {
   async run(request:AgentRunRequest,emit:EventSink,signal?:AbortSignal){
     const runId=randomUUID(); emit({type:"run.started",runId});
     // The idle sweeper must not stop this project's preview while the run is still working.
-    beginRun(request.projectId);
+    beginRun(request.projectId,request.conversationId);
     const usageTotals={promptTokens:0,completionTokens:0,estimated:false};
     let usageModel="";
     try{
@@ -448,7 +448,7 @@ export class AgentRuntime {
       emit({type:"run.failed",runId,error:error instanceof Error?error.message:String(error),...(code?{code}:{})});
     }
     finally{
-      endRun(request.projectId);
+      endRun(request.projectId,request.conversationId);
       if(usageModel&&usageTotals.promptTokens+usageTotals.completionTokens>0){
         try{
           await recordRunUsage(request.userId,{runId,projectId:request.projectId,conversationId:request.conversationId,model:usageModel,promptTokens:usageTotals.promptTokens,completionTokens:usageTotals.completionTokens,estimated:usageTotals.estimated});

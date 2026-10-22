@@ -304,6 +304,12 @@ The integrations list connects services one button at a time: the connect button
 
 The callback must be reachable by the browser, and in production the app host has to be listed in `WEBNESTDEV_ALLOWED_ORIGINS` — the OAuth flow only returns to an origin from that list.
 
+## GitLab integration
+
+The GitLab card works the same way: OAuth in a separate window, or a personal access token when no OAuth application is configured. To register the OAuth application, open GitLab → avatar → **Edit profile** → **Access → Applications** (`https://gitlab.com/-/user_settings/applications`, or `https://<your-gitlab>/-/user_settings/applications` for a self-hosted instance), add the redirect URI `<app-host>/api/gitlab/callback`, enable `read_api`, `read_repository` and `write_repository` (the last one is for pushing commits), and keep **Confidential** on. Then provide `GITLAB_CLIENT_ID` and `GITLAB_CLIENT_SECRET`; `GITLAB_BASE_URL` points the connector at a self-hosted GitLab, and `GITLAB_CALLBACK_URL` / `GITLAB_FRONTEND_URL` override the derived addresses. A personal token needs the same scopes and works without an OAuth application.
+
+Imported GitLab projects keep their remote: the **Изменения** tab can push commits back and pull the branch, with the GitLab token used only on the server. On the free plan an import is limited to 100 MB (`FREE_REPOSITORY_IMPORT_BYTES` in `server/src/account/plans.ts`); larger repositories are rejected before a project is created, and paid plans have no such per-repository limit.
+
 ## Yandex Cloud integration
 
 The Yandex Cloud card stays folded to a single button. **Подключить** opens the Yandex Cloud console in a new tab and unfolds a three-step guide with the key field, because a service-account authorized key is the only credential Yandex Cloud still accepts for a new integration: Yandex ID OAuth tokens stopped working for Cloud on 1 June 2026, so a GitHub-like "sign in and allow" flow cannot grant Cloud access. The card accepts three forms of the credential:

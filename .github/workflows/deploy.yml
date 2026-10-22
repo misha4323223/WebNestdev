@@ -160,6 +160,13 @@ jobs:
           GH_OAUTH_CLIENT_SECRET: ${{ secrets.GH_OAUTH_CLIENT_SECRET || vars.GH_OAUTH_CLIENT_SECRET }}
           GH_CALLBACK_URL: ${{ vars.GH_CALLBACK_URL }}
           GH_FRONTEND_URL: ${{ vars.GH_FRONTEND_URL }}
+          # GitLab OAuth. Имена GITLAB_* GitHub не резервирует, поэтому секреты называются так же,
+          # как переменные сервера; пустые значения ничего не стирают на ВМ.
+          GITLAB_CLIENT_ID: ${{ secrets.GITLAB_CLIENT_ID || vars.GITLAB_CLIENT_ID }}
+          GITLAB_CLIENT_SECRET: ${{ secrets.GITLAB_CLIENT_SECRET || vars.GITLAB_CLIENT_SECRET }}
+          GITLAB_BASE_URL: ${{ vars.GITLAB_BASE_URL }}
+          GITLAB_CALLBACK_URL: ${{ vars.GITLAB_CALLBACK_URL }}
+          GITLAB_FRONTEND_URL: ${{ vars.GITLAB_FRONTEND_URL }}
           YANDEX_CLOUD_ID: ${{ secrets.YANDEX_CLOUD_ID }}
           YANDEX_FOLDER_ID: ${{ secrets.YANDEX_FOLDER_ID }}
           # Yandex ID OAuth. Префикс YANDEX_ GitHub разрешает (зарезервирован только GITHUB_).
@@ -225,6 +232,11 @@ jobs:
           add_platform_env GITHUB_CLIENT_SECRET "$GH_OAUTH_CLIENT_SECRET"
           add_platform_env GITHUB_CALLBACK_URL "$GH_CALLBACK_URL"
           add_platform_env GITHUB_FRONTEND_URL "$GH_FRONTEND_URL"
+          add_platform_env GITLAB_CLIENT_ID "$GITLAB_CLIENT_ID"
+          add_platform_env GITLAB_CLIENT_SECRET "$GITLAB_CLIENT_SECRET"
+          add_platform_env GITLAB_BASE_URL "$GITLAB_BASE_URL"
+          add_platform_env GITLAB_CALLBACK_URL "$GITLAB_CALLBACK_URL"
+          add_platform_env GITLAB_FRONTEND_URL "$GITLAB_FRONTEND_URL"
           add_platform_env YANDEX_CLOUD_ID "$YANDEX_CLOUD_ID"
           add_platform_env YANDEX_FOLDER_ID "$YANDEX_FOLDER_ID"
           add_platform_env YANDEX_CLIENT_ID "$YANDEX_CLIENT_ID"
@@ -251,6 +263,7 @@ jobs:
           # приходилось разгадывать: здесь причина видна одной строкой.
           has() { [ -n "${1:-}" ] && echo есть || echo нет; }
           echo "[deploy] OAuth GitHub: client_id=$(has "${GH_OAUTH_CLIENT_ID:-}"), secret=$(has "${GH_OAUTH_CLIENT_SECRET:-}")"
+          echo "[deploy] OAuth GitLab: client_id=$(has "${GITLAB_CLIENT_ID:-}"), secret=$(has "${GITLAB_CLIENT_SECRET:-}")"
           echo "[deploy] OAuth Яндекс ID: client_id=$(has "${YANDEX_CLIENT_ID:-}"), secret=$(has "${YANDEX_CLIENT_SECRET:-}")"
           echo "[deploy] Yandex ID redirect_uri: ${YANDEX_CALLBACK_URL:-https://<домен панели>/api/yandex/callback}"
           echo "[deploy] Веб-поиск: Yandex Search API key=$(has "${YANDEX_SEARCH_API_KEY:-}"), folder=$(has "${YANDEX_SEARCH_FOLDER_ID:-}"), Tavily=$(has "${TAVILY_API_KEY:-}")"
@@ -301,6 +314,13 @@ jobs:
           GH_OAUTH_CLIENT_SECRET: ${{ secrets.GH_OAUTH_CLIENT_SECRET || vars.GH_OAUTH_CLIENT_SECRET }}
           GH_CALLBACK_URL: ${{ vars.GH_CALLBACK_URL }}
           GH_FRONTEND_URL: ${{ vars.GH_FRONTEND_URL }}
+          # GitLab OAuth. Имена GITLAB_* GitHub не резервирует, поэтому секреты называются так же,
+          # как переменные сервера; пустые значения ничего не стирают на ВМ.
+          GITLAB_CLIENT_ID: ${{ secrets.GITLAB_CLIENT_ID || vars.GITLAB_CLIENT_ID }}
+          GITLAB_CLIENT_SECRET: ${{ secrets.GITLAB_CLIENT_SECRET || vars.GITLAB_CLIENT_SECRET }}
+          GITLAB_BASE_URL: ${{ vars.GITLAB_BASE_URL }}
+          GITLAB_CALLBACK_URL: ${{ vars.GITLAB_CALLBACK_URL }}
+          GITLAB_FRONTEND_URL: ${{ vars.GITLAB_FRONTEND_URL }}
           YANDEX_CLOUD_ID: ${{ secrets.YANDEX_CLOUD_ID }}
           YANDEX_FOLDER_ID: ${{ secrets.YANDEX_FOLDER_ID }}
           # Yandex ID OAuth. Префикс YANDEX_ GitHub разрешает (зарезервирован только GITHUB_).
@@ -343,6 +363,11 @@ jobs:
           add_platform_env GITHUB_CLIENT_SECRET "$GH_OAUTH_CLIENT_SECRET"
           add_platform_env GITHUB_CALLBACK_URL "$GH_CALLBACK_URL"
           add_platform_env GITHUB_FRONTEND_URL "$GH_FRONTEND_URL"
+          add_platform_env GITLAB_CLIENT_ID "$GITLAB_CLIENT_ID"
+          add_platform_env GITLAB_CLIENT_SECRET "$GITLAB_CLIENT_SECRET"
+          add_platform_env GITLAB_BASE_URL "$GITLAB_BASE_URL"
+          add_platform_env GITLAB_CALLBACK_URL "$GITLAB_CALLBACK_URL"
+          add_platform_env GITLAB_FRONTEND_URL "$GITLAB_FRONTEND_URL"
           add_platform_env YANDEX_CLOUD_ID "$YANDEX_CLOUD_ID"
           add_platform_env YANDEX_FOLDER_ID "$YANDEX_FOLDER_ID"
           add_platform_env YANDEX_CLIENT_ID "$YANDEX_CLIENT_ID"

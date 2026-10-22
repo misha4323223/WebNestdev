@@ -18,6 +18,7 @@ import {
   markPaymentPaid,
   setAutoRenew,
 } from "../billing/store.js";
+import { getDonationByInvoice, markDonationPaid } from "../support/donation-store.js";
 
 /**
  * Оплата подписки через Робокассу.
@@ -86,7 +87,7 @@ export async function registerBillingRoutes(app: FastifyInstance) {
     const user = await requireUser(request, reply); if (!user) return;
     if (crossSiteRefused(request)) return reply.code(403).send({ error: sameOriginRefusal() });
     const parsed = checkoutSchema.safeParse(request.body ?? {});
-    if (!parsed.success) return reply.code(400).send({ error: "Выберите платный тариф: «Про» или «Команда»" });
+    if (!parsed.success) return reply.code(400).send({ error: "Выберите платный тариф: «Плюс» или «Премиум»" });
     const body = parsed.data;
     const config = robokassaConfig();
     if (!config.configured) {
@@ -129,16 +130,28 @@ export async function registerBillingRoutes(app: FastifyInstance) {
       return reply.code(400).send("Invalid signature");
     }
 
-    const payment = await getPayment(invId);
-    if (!payment) {
+    // Один и тот же ResultURL принимает и подписки, и добровольные донаты: счёт ищется в обоих
+    // хранилищах, иначе оплата поддержки выглядела бы как уведомление о неизвестном счёте.
+    const donation = await getDonationByInvoice(invId);
+    const payment = donation ? null : await getPayment(invId);
+    if (!donation && !payment) {
       request.log.error({ invId }, "billing: уведомление о неизвестном счёте");
       return reply.code(404).send("Unknown invoice");
     }
     // Сравнение сумм, а не строк: тестовый и боевой режимы печатают OutSum по-разному.
-    if (Math.abs(Number(outSum) - payment.amount) > 0.01) {
-      request.log.error({ invId, outSum, expected: payment.amount }, "billing: сумма уведомления не совпала со счётом");
+    const expectedAmount = donation ? donation.amount : payment!.amount;
+    if (Math.abs(Number(outSum) - expectedAmount) > 0.01) {
+      request.log.error({ invId, outSum, expected: expectedAmount }, "billing: сумма уведомления не совпала со счётом");
       return reply.code(400).send("Amount mismatch");
     }
+    if (donation) {
+      await markDonationPaid(invId);
+      request.log.info({ invId, userId: donation.userId, amount: donation.amount }, "donation paid");
+      return "OK" + invId;
+    }
+    // Ветка выше уже вернула ответ для доната, значит здесь счёт подписки. Проверка нужна
+    // только для типов: без неё TypeScript не знает, что payment найден проверкой выше.
+    if (!payment) return reply.code(404).send("Unknown invoice");
 
     const result = await markPaymentPaid(invId, { autoRenew: config.recurring });
     if (result?.alreadyPaid) request.log.info({ invId }, "billing: повторное уведомление, платёж уже закрыт");

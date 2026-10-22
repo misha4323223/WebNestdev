@@ -21,7 +21,7 @@ function resolveCwd(parent:string,input:string){
 }
 
 /**
- * Консоль проекта. Папку выбирать не нужно: терминал открывается в корне проекта, как в Replit —
+ * Терминал проекта. Папку выбирать не нужно: терминал открывается в корне проекта, как в Replit —
  * набрал команду и она выполнилась. Приглашение показывает, где ты находишься; `cd` меняет
  * рабочую папку для следующих команд (каждая команда на сервере — отдельный процесс, поэтому
  * папка запоминается здесь, а не в оболочке). История команд — стрелками вверх и вниз.
@@ -104,7 +104,7 @@ export function TerminalPanel({projectId}:{projectId:string}){
 
   return <section className="panel terminal-panel">
     <div className="panel-title">
-      <div><span className="eyebrow">ТЕРМИНАЛ</span><strong>Консоль проекта</strong></div>
+      <div><strong>Терминал</strong></div>
       <div className="terminal-head-actions">
         <span className="terminal-path" title="Рабочая папка команд"><FolderGit2 size={12}/>{promptPath(cwd)}</span>
         <button className="ghost-button" onClick={()=>setEntries([])} title="Очистить вывод"><Trash2 size={13}/> Очистить</button>
@@ -113,10 +113,6 @@ export function TerminalPanel({projectId}:{projectId:string}){
 
     <div className="terminal-screen" onMouseDown={()=>inputRef.current?.focus()}>
       <div className="terminal-log" ref={logRef} role="log" aria-live="polite">
-        {entries.length===0&&!running&&<div className="terminal-empty">
-          <strong>Консоль проекта</strong>
-          <span>Команды выполняются в корне проекта — папку выбирать не нужно. Начните с <code>ls</code> или <code>npm install</code>.</span>
-        </div>}
         {entries.map(entry=><pre key={entry.id} className={"terminal-entry "+entry.kind}>{entry.text}</pre>)}
         {running&&<div className="terminal-progress"><LoaderCircle size={13} className="agent-spin"/> выполняю…</div>}
       </div>
@@ -132,7 +128,7 @@ export function TerminalPanel({projectId}:{projectId:string}){
           spellCheck={false}
           autoComplete="off"
           autoCapitalize="off"
-          aria-label="Команда для консоли проекта"
+          aria-label="Команда для терминала"
         />
         <button className="terminal-run" type="submit" disabled={running||!command.trim()} title="Выполнить" aria-label="Выполнить"><CornerDownLeft size={14}/></button>
       </form>

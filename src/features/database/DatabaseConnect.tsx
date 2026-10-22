@@ -234,7 +234,7 @@ export function DatabaseConnect({surface="home"}:{surface?:ConnectorSurface}){
       <p className="connector-text">
         {connected
           ? "Данные проекта хранятся в этой базе. Агент запишет строку подключения в зашифрованное хранилище секретов проекта по вашей просьбе."
-          : "Чтобы проект сохранял данные между сессиями, подключите базу: вставьте строку подключения ниже или откройте форму кнопкой «Подключить». Подойдёт любая — рекомендуем российские: Yandex Cloud, VK Cloud, Selectel, Timeweb Cloud, Cloud.ru."}
+          : "Чтобы проект сохранял данные между сессиями, подключите базу: нажмите на карточку с логотипом базы и вставьте строку подключения. Подойдёт любая — рекомендуем российские: Yandex Cloud, VK Cloud, Selectel, Timeweb Cloud, Cloud.ru."}
       </p>
 
       {/* Not connected: the header button opens this same form, so the row stays short. */}

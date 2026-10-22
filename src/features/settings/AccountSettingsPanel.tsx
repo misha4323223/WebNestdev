@@ -17,11 +17,17 @@ import {
   type BillingData,
 } from "../../lib/billing-api";
 import { activePlanId, usePlanChoice, writePlanChoice } from "../../lib/plan-choice";
+import { contactEmailOf } from "../../lib/account-contact";
+import type { OnboardingProfile } from "../../lib/onboarding";
 import { openCookieSettings } from "../legal/CookieConsent";
 import { Check, CreditCard, Receipt, RefreshCw, Settings2, ShieldCheck, UserRound, Wallet } from "lucide-react";
 
 type Preferences = UserPreferences;
-type AccountData = { user: { id: string; email: string; createdAt: string; yandex?: { login: string; email: string | null } }; preferences: Preferences };
+type AccountData = {
+  user: { id: string; email: string; phone?: string; createdAt: string; yandex?: { login: string; email: string | null } };
+  profile: OnboardingProfile | null;
+  preferences: Preferences;
+};
 
 const initialPreferences: Preferences = { language: "ru", compactMode: false, emailNotifications: true, productUpdates: false };
 const tokenLabel = (value: number) => value.toLocaleString("ru-RU");
@@ -127,6 +133,15 @@ export function AccountSettingsPanel() {
   const historyMax = Math.max(1, ...historyDays.map(day => day.agentRuns + day.browserChecks));
   const weekSpend = historyDays.reduce((sum, day) => sum + (day.costEstimate ?? 0), 0);
   const payments = billing?.payments ?? [];
+  const profile = account?.profile ?? null;
+  // Телефон и почта — разные строки: служебный адрес …@phone.webnestdev.local не показывается,
+  // почта берётся из контактов знакомства (или настоящего адреса входа / Яндекс ID).
+  const accountPhone = account?.user.phone ?? "";
+  const contactEmail = contactEmailOf({
+    profileEmail: profile?.email,
+    accountEmail: account?.user.email,
+    yandexEmail: account?.user.yandex?.email,
+  });
   return <section className="account-settings settings-panel">
     <div className="panel-title"><div><span className="eyebrow">ЛИЧНЫЙ КАБИНЕТ</span><strong>Настройки аккаунта</strong></div></div>
     {loading ? <div className="settings-body">Загружаем настройки аккаунта…</div> : <>
@@ -135,9 +150,10 @@ export function AccountSettingsPanel() {
         <div className="account-settings-content">
           {section === "account" && <div className="account-section">
             <span className="eyebrow">ПРОФИЛЬ</span><h3>Профиль</h3><p className="account-muted">Основная информация вашего аккаунта NestDev.</p>
+            <label>Имя<input value={profile?.name ?? ""} placeholder="Не указано" readOnly/></label>
+            <label>Email для связи<input value={contactEmail} placeholder="Не указан" readOnly/></label>
+            {accountPhone && <label>Телефон<input value={accountPhone} readOnly/></label>}
             {account?.user.yandex && <label>Вход через Яндекс ID<input value={"@" + account.user.yandex.login} readOnly/></label>}
-            {account?.user.yandex?.email && <label>Email Яндекс ID<input value={account.user.yandex.email ?? ""} readOnly/></label>}
-            <label>{account?.user.yandex ? "Служебный адрес аккаунта" : "Email"}<input value={account?.user.email ?? ""} readOnly/></label>
             <label>ID аккаунта<input value={account?.user.id ?? ""} readOnly/></label>
             <label>Дата регистрации<input value={dateLabel(account?.user.createdAt ?? null)} readOnly/></label>
             <div className="account-note"><ShieldCheck size={14}/> {account?.user.yandex ? "Профиль подтверждён через Яндекс ID — данные видны только вам." : "Данные профиля защищены и видны только вам."}</div>
@@ -172,8 +188,8 @@ export function AccountSettingsPanel() {
             <div className="billing-cards">
               <article className="billing-card">
                 <span className="billing-card-top"><CreditCard size={12}/> Тариф</span>
-                <strong>{subscription?.planName ?? activePlan?.name ?? "Бесплатный"}</strong>
-                <small>{paid ? "Действует до " + dateLabel(subscription?.renewsAt ?? null) : "Бесплатный тариф действует бессрочно"}</small>
+                <strong>{subscription?.planName ?? activePlan?.name ?? "Старт"}</strong>
+                <small>{paid ? "Действует до " + dateLabel(subscription?.renewsAt ?? null) : "Тариф «Старт» действует бессрочно"}</small>
               </article>
               <article className="billing-card">
                 <span className="billing-card-top"><Wallet size={12}/> {paid ? "Автопродление" : "Баланс"}</span>

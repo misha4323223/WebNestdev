@@ -86,7 +86,7 @@ export function SubscriptionPage({ onBack, onOpenPicker }: { onBack: () => void;
       <h1>Тарифы и подписка</h1>
       <p>Три уровня доступа к агентной разработке: от знакомства до работы небольшой команды. {paymentNotice(billing)}</p>
       <div className="subscription-status">
-        <div><span>Текущий тариф</span><strong>{billing?.plans.find(plan => plan.id === currentPlanId)?.name ?? "Бесплатный"}</strong></div>
+        <div><span>Текущий тариф</span><strong>{billing?.plans.find(plan => plan.id === currentPlanId)?.name ?? "Старт"}</strong></div>
         <div><span>{paid ? "Оплачено до" : "Баланс"}</span><strong>{paid ? dateLabel(subscription?.renewsAt ?? null) : balanceLabel(billing?.balance)}</strong></div>
         <span className="plan-pill">
           {enabled ? <><CreditCard size={12}/> ОПЛАТА КАРТОЙ И СБП</> : <><ShieldCheck size={12}/> ОПЛАТА СКОРО</>}

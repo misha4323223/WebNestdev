@@ -1,13 +1,12 @@
 import type { ReactNode } from "react";
 import { Cloud, Code2, Database, Globe, Layers } from "lucide-react";
-import { BrandMark } from "../../components/BrandLogo";
 import { GitHubConnect, type ConnectorSurface } from "../github/GitHubConnect";
+import { GitLabConnect } from "../gitlab/GitLabConnect";
 import { YandexConnect } from "../yandex/YandexConnect";
 import { CloudConnectors } from "./cloud/CloudConnectors";
 import { DomainConnectors } from "./domains/DomainConnectors";
 import { ServiceConnectors } from "./services/ServiceConnectors";
 import { DatabaseConnect } from "../database/DatabaseConnect";
-import { ConnectorCard } from "./ConnectorCard";
 
 /**
  * Одна категория каталога: заголовок с иконкой, короткое пояснение и карточки.
@@ -41,7 +40,7 @@ export function IntegrationsList({surface="home",onImported}:{surface?:Connector
 
     <ConnectorSection icon={<Code2 size={12}/>} title="Код и репозитории" note="Импорт проекта из GitHub или GitLab и работа агента с репозиторием.">
       <GitHubConnect surface={surface} onImported={onImported}/>
-      <ConnectorCard name="GitLab" icon={<BrandMark brand="gitlab" size={18}/>} status="disconnected" soon/>
+      <GitLabConnect surface={surface} onImported={onImported}/>
     </ConnectorSection>
 
     <ConnectorSection icon={<Cloud size={12}/>} title="Облака" note="Виртуальные машины, диски, бакеты и базы российских провайдеров.">

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { ArrowRight, Code2, CreditCard, FolderGit2, Home, LayoutDashboard, LogOut, Pencil, Plug, ShoppingBag, Globe, Layers3, Trash2, UserRound } from "lucide-react";
-import { createConversation, createProject, deleteProject, listProjects, renameProject, type Project } from "../../lib/project-api";
+import { deleteProject, listProjects, renameProject, type Project } from "../../lib/project-api";
 import { logout } from "../../lib/auth-api";
 import { HomeRail, type RailSection } from "./HomeRail";
 import { WebNestLogo } from "../../components/WebNestLogo";
@@ -9,8 +9,9 @@ import { ProjectRenameForm } from "./ProjectRename";
 import { PlanPickerModal } from "../billing/PlanPickerModal";
 import { SubscriptionPage } from "../billing/SubscriptionPage";
 import { conversationMemoryKey } from "../workspace/useWorkspace";
-import { queueAgentStart } from "../../lib/agent-start";
 import { LEGAL_FOOTER_LINKS, legalDoc, legalPath } from "../../lib/legal";
+import { ideaKickoff } from "../../lib/agent-kickoff";
+import { startProjectWithAgent } from "../../lib/start-project";
 
 const templates = [
   { name: "Лендинг", icon: Globe, prompt: "Создай современный лендинг для продукта" },
@@ -25,15 +26,6 @@ const templates = [
  */
 function templateKickoff(template:typeof templates[number]){
   return `Быстрый старт по шаблону «${template.name}».\n\nЗадача: ${template.prompt}.\n\nСначала работай в режиме планировщика: не меняй файлы. Изучи, что уже есть в проекте (для нового проекта это пусто), задай через question.ask не больше двух действительно важных уточняющих вопросов (например, для кого продукт, какие разделы и данные нужны, какой стиль), если ответов нет в проекте. Затем собери полный пошаговый план через plan.update: структура, страницы и компоненты, данные и состояния, визуальный стиль, проверка результата. В конце кратко перечисли допущения и то, что пользователю нужно подтвердить перед началом разработки.`;
-}
-
-/**
- * Идея с главной — это не только имя проекта. Агент открывается сразу в планировщике и сам
- * спрашивает, что именно нужно, как при быстром старте по шаблону: иначе человек попадал в
- * пустой чат и писал то же самое второй раз.
- */
-function ideaKickoff(idea:string){
-  return `${idea.trim()}\n\nСначала работай в режиме планировщика: не меняй файлы. Это новый пустой проект, в нём пока ничего нет. Задай через question.ask не больше двух действительно важных уточняющих вопросов (для кого продукт, какие разделы и данные нужны, какой стиль и тон), если ответов нет в описании. Затем собери полный пошаговый план через plan.update: структура, страницы и компоненты, данные и состояния, визуальный стиль, проверка результата. В конце кратко перечисли допущения и то, что пользователю нужно подтвердить перед началом разработки.`;
 }
 
 const activeProjectKey = "webnestdev.projectId";
@@ -158,12 +150,7 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
     setBusy(true);
     setError("");
     try{
-      const project=await createProject(name);
-      const conversation=await createConversation(project.id);
-      if(options.plannerPrompt)queueAgentStart(conversation.id,{prompt:options.plannerPrompt,...(options.title?{title:options.title}:{})});
-      localStorage.setItem("webnestdev.projectId",project.id);
-      localStorage.setItem("webnestdev.projectName",project.name);
-      localStorage.setItem("webnestdev.conversationId",conversation.id);
+      const project=await startProjectWithAgent({name,...options});
       onOpenWorkspace(project.id);
       return true;
     }catch(e){

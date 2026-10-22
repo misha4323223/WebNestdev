@@ -61,7 +61,7 @@ test("signature comparison ignores hex case but rejects a different digest", () 
 });
 
 test("the payment link carries the signed amount, invoice and test flag", () => {
-  const link = buildPaymentUrl({ config: { ...config, testMode: true }, plan: "pro", planName: "Про", invId: 100001, amount: 990, description: "Подписка NestDev «Про», 1 месяц", email: "user@example.com" });
+  const link = buildPaymentUrl({ config: { ...config, testMode: true }, plan: "pro", planName: "Плюс", invId: 100001, amount: 990, description: "Подписка NestDev «Плюс», 1 месяц", email: "user@example.com" });
   const url = new URL(link.url);
   assert.equal(url.origin + url.pathname, "https://auth.robokassa.ru/Merchant/Index.aspx");
   assert.equal(url.searchParams.get("MerchantLogin"), "nestdev");
@@ -73,24 +73,43 @@ test("the payment link carries the signed amount, invoice and test flag", () => 
 });
 
 test("the recurring flag marks the first payment of a series", () => {
-  const link = buildPaymentUrl({ config: { ...config, recurring: true }, plan: "team", planName: "Команда", invId: 7, amount: 2990, description: "Подписка" });
+  const link = buildPaymentUrl({ config: { ...config, recurring: true }, plan: "team", planName: "Премиум", invId: 7, amount: 2990, description: "Подписка" });
   assert.equal(new URL(link.url).searchParams.get("Recurring"), "true");
 });
 
 test("a receipt is a service for a month with no VAT and the encoded value is signed", () => {
-  const receipt = buildReceipt({ planName: "Про", amount: 990 });
+  const receipt = buildReceipt({ planName: "Плюс", amount: 990 });
   const parsed = JSON.parse(receipt) as { items: Array<Record<string, unknown>> };
   assert.equal(parsed.items.length, 1);
   assert.equal(parsed.items[0].sum, 990);
   assert.equal(parsed.items[0].quantity, 1);
   assert.equal(parsed.items[0].tax, "none");
   assert.equal(parsed.items[0].payment_object, "service");
-  assert.ok(String(parsed.items[0].name).includes("Про"));
+  assert.ok(String(parsed.items[0].name).includes("Плюс"));
 
-  const link = buildPaymentUrl({ config: { ...config, receipt: true }, plan: "pro", planName: "Про", invId: 9, amount: 990, description: "Подписка" });
+  const link = buildPaymentUrl({ config: { ...config, receipt: true }, plan: "pro", planName: "Плюс", invId: 9, amount: 990, description: "Подписка" });
   const encoded = encodeReceipt(receipt);
   assert.equal(new URL(link.url).searchParams.get("Receipt"), encoded);
   assert.equal(new URL(link.url).searchParams.get("SignatureValue"), signValue("nestdev:990.00:9:" + encoded + ":pass1", "md5"));
+});
+
+test("a donation is a one-off payment with its own receipt item", () => {
+  const link = buildPaymentUrl({
+    config: { ...config, recurring: true, receipt: true },
+    plan: "free",
+    planName: "Поддержка проекта",
+    invId: 42,
+    amount: 499,
+    description: "Добровольная поддержка проекта NestDev",
+    kind: "donation",
+  });
+  const url = new URL(link.url);
+  // Флаг серии списал бы донат повторно: у добровольного взноса его быть не должно.
+  assert.equal(url.searchParams.get("Recurring"), null);
+  const receipt = JSON.parse(decodeURIComponent(url.searchParams.get("Receipt") ?? "{}")) as { items: Array<Record<string, unknown>> };
+  assert.ok(String(receipt.items[0].name).includes("Добровольная поддержка"));
+  assert.ok(!String(receipt.items[0].name).includes("мес"));
+  assert.equal(receipt.items[0].sum, 499);
 });
 
 test("prices come from the catalog and can be changed by a key without a deploy", () => {

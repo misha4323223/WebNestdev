@@ -2,7 +2,9 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireUser } from "../auth/auth.js";
 import { findYandexIdentityByUserId } from "../auth/yandex-account-store.js";
+import { findPhoneByUserId, formatPhone } from "../auth/phone-store.js";
 import { getUserPreferences, saveUserPreferences, type UserPreferences } from "../account/account-store.js";
+import { getUserProfile, saveUserProfile } from "../account/profile-store.js";
 import { FREE_PLAN, PLAN_CATALOG, balanceFor, limitsForPlan, subscriptionFor, type BillingSubscription } from "../account/plans.js";
 import { getBillingHistory, getCostSnapshot, getUsageSnapshot } from "../account/usage-store.js";
 import { getStorageOverview, refreshUserStorage } from "../account/storage-quota.js";
@@ -16,18 +18,38 @@ const preferencesSchema = z.object({
   emailNotifications: z.boolean(),
   productUpdates: z.boolean(),
 });
+/**
+ * Первый экран знакомства. Имя и почта обязательны: по ним отвечают человеку, поэтому пустая
+ * строка или адрес без домена отклоняются сервером, а не только кнопкой в интерфейсе.
+ * Согласия на письма — необязательные флажки.
+ */
+const onboardingSchema = z.object({
+  name: z.string().trim().min(2, "Имя слишком короткое").max(80, "Имя слишком длинное"),
+  email: z.string().trim().email("Некорректный email").max(200),
+  newsletter: z.boolean().default(false),
+  productUpdates: z.boolean().default(false),
+});
 
 export async function registerAccountRoutes(app: FastifyInstance) {
   app.get("/api/account/settings", async (request, reply) => {
     const user = await requireUser(request, reply); if (!user) return;
-    const yandex = await findYandexIdentityByUserId(user.id);
+    const [yandex, phone, profile] = await Promise.all([
+      findYandexIdentityByUserId(user.id),
+      findPhoneByUserId(user.id),
+      getUserProfile(user.id),
+    ]);
     return {
       user: {
         id: user.id,
         email: user.email,
         createdAt: user.createdAt,
+        // У входа по телефону адрес служебный (…@phone.webnestdev.local): номер показывается
+        // отдельно, а почта берётся из контактов знакомства.
+        ...(phone ? { phone: formatPhone(phone) } : {}),
         ...(yandex ? { yandex: { login: yandex.login, email: yandex.email ?? null } } : {}),
       },
+      // Имя и почта для связи, которые аккаунт оставил при знакомстве. null — ещё не оставил.
+      profile,
       preferences: await getUserPreferences(user.id),
     };
   });
@@ -35,6 +57,16 @@ export async function registerAccountRoutes(app: FastifyInstance) {
     const user = await requireUser(request, reply); if (!user) return;
     const preferences = preferencesSchema.parse(request.body) as UserPreferences;
     return { preferences: await saveUserPreferences(user.id, preferences) };
+  });
+  /** Контакты знакомства: null означает, что аккаунт их ещё не оставлял. */
+  app.get("/api/account/onboarding", async (request, reply) => {
+    const user = await requireUser(request, reply); if (!user) return;
+    return { profile: await getUserProfile(user.id) };
+  });
+  app.post("/api/account/onboarding", async (request, reply) => {
+    const user = await requireUser(request, reply); if (!user) return;
+    const body = onboardingSchema.parse(request.body);
+    return { profile: await saveUserProfile(user.id, body) };
   });
   app.get("/api/billing", async (request, reply) => {
     const user = await requireUser(request, reply); if (!user) return;

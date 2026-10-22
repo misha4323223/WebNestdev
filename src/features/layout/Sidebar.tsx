@@ -37,7 +37,7 @@ function SidebarPlan({onPlan}:{onPlan:()=>void}){
         if(!active)return;
         const current=data.plans.find(item=>item.id===activePlanId(data));
         setPlan({
-          name:current?.name??"Бесплатный",
+          name:current?.name??"Старт",
           chosen:isPendingChoice(planChoice,data)?planName(data,chosenPlanId(planChoice)):null,
           planId:activePlanId(data),
           used:data.usage.agentRuns,

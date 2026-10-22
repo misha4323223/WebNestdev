@@ -21,7 +21,7 @@ export type ChangeCheckpoint={
 };
 export type ProjectChanges={
   initialized:boolean;
-  repository:{connected:boolean;branch:string;remoteUrl:string|null;lastPushAt:string|null;lastPushError:string|null};
+  repository:{provider?:"github"|"gitlab";connected:boolean;branch:string;remoteUrl:string|null;lastPushAt:string|null;lastPushError:string|null};
   checkpoints:ChangeCheckpoint[];
 };
 export type Conversation={id:string;projectId:string;title:string;messages:ChatMessage[];plan?:PlanState|null;createdAt:string;updatedAt:string};
@@ -36,6 +36,8 @@ export const createProject=(name="Новый проект")=>apiJson<Project>("/
 export const renameProject=(projectId:string,name:string)=>apiJson<Project>("/api/projects/"+projectId,{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify({name})});
 export const deleteProject=(projectId:string)=>apiJson<{deleted:boolean}>("/api/projects/"+projectId,{method:"DELETE"});
 export const createConversation=(projectId:string,title="Новая сессия")=>apiJson<Conversation>("/api/projects/"+projectId+"/conversations",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({title})});
+/** Deletes one saved chat; the project and its other chats stay. */
+export const deleteConversation=(conversationId:string)=>apiJson<{deleted:boolean}>("/api/conversations/"+conversationId,{method:"DELETE"});
 export const getConversation=(conversationId:string)=>apiJson<Conversation>("/api/conversations/"+conversationId);
 /** The project's saved chats, newest first — the ones the user can return to. */
 export const listConversations=(projectId:string)=>apiJson<{conversations:ConversationSummary[]}>("/api/projects/"+projectId+"/conversations");

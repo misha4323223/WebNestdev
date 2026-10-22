@@ -125,13 +125,18 @@ export function sameSignature(expected: string, received: string) {
 
 /**
  * Чек для фискализации. Позиция — подписка на месяц; НПД не платит НДС, поэтому `tax: "none"`.
+ * У добровольного доната позиция другая: это не подписка и не период, поэтому в названии нет
+ * ни месяца, ни тарифа — иначе чек обещал бы человеку услугу, которой он не покупал.
  * Название позиции — до 128 символов, как требует документация Робокассы.
  */
-export function buildReceipt(input: { planName: string; amount: number; months?: number }) {
+export function buildReceipt(input: { planName: string; amount: number; months?: number; kind?: "subscription" | "donation" }) {
   const months = input.months ?? 1;
+  const name = input.kind === "donation"
+    ? "Добровольная поддержка проекта NestDev"
+    : "Подписка NestDev «" + input.planName + "», " + months + " мес.";
   return JSON.stringify({
     items: [{
-      name: ("Подписка NestDev «" + input.planName + "», " + months + " мес.").slice(0, 128),
+      name: name.slice(0, 128),
       quantity: 1,
       sum: input.amount,
       payment_method: "full_payment",
@@ -154,6 +159,8 @@ export type PaymentLinkInput = {
   amount: number;
   description: string;
   email?: string;
+  /** Донат отличается только позицией чека: подписки и периода у него нет. */
+  kind?: "subscription" | "donation";
 };
 
 /**
@@ -166,7 +173,7 @@ export type PaymentLinkInput = {
 export function buildPaymentUrl(input: PaymentLinkInput) {
   const config = input.config;
   const outSum = formatAmount(input.amount);
-  const receipt = config.receipt ? encodeReceipt(buildReceipt({ planName: input.planName, amount: input.amount })) : undefined;
+  const receipt = config.receipt ? encodeReceipt(buildReceipt({ planName: input.planName, amount: input.amount, ...(input.kind ? { kind: input.kind } : {}) })) : undefined;
   const signature = signValue(paymentSignatureBase({
     login: config.login,
     outSum,
@@ -186,7 +193,9 @@ export function buildPaymentUrl(input: PaymentLinkInput) {
   ];
   if (input.email) params.push(["Email", input.email]);
   if (config.testMode) params.push(["IsTest", "1"]);
-  if (config.recurring) params.push(["Recurring", "true"]);
+  // Донат не подписка: флаг периодических платежей превратил бы разовую поддержку в серию
+  // списаний, поэтому он ставится только для тарифов.
+  if (config.recurring && input.kind !== "donation") params.push(["Recurring", "true"]);
   if (receipt) params.push(["Receipt", receipt]);
 
   // Receipt кодируется второй раз, как в справочных примерах Робокассы: на проводе лежит уже

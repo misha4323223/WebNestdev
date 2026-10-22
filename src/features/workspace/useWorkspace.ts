@@ -1,5 +1,5 @@
 import { useCallback,useEffect,useState } from "react";
-import { createConversation,createProject,listConversations } from "../../lib/project-api";
+import { createConversation,createProject,listConversations,renameProject } from "../../lib/project-api";
 
 const projectKey="webnestdev.projectId";
 const conversationKey="webnestdev.conversationId";
@@ -49,6 +49,18 @@ export function useWorkspace(){
     }catch{}
   },[]);
 
+  /**
+   * Название проекта меняется из шапки рабочей области и сразу обновляет подпись: имя хранится
+   * и на сервере, и в браузере, поэтому оба места пишутся одним действием. Подпись на главной
+   * перечитает список проектов сама, когда человек туда вернётся.
+   */
+  const renameCurrentProject=useCallback(async(name:string)=>{
+    const updated=await renameProject(projectId,name);
+    setProjectName(updated.name);
+    try{localStorage.setItem(projectNameKey,updated.name)}catch{}
+    return updated;
+  },[projectId]);
+
   const initialize=useCallback(async()=>{
     // Заглушка загрузки нужна только тогда, когда показать ещё нечего: сохранённый чат
     // открывается сразу, а список чатов лишь уточняет выбор без мигания экрана.
@@ -94,5 +106,5 @@ export function useWorkspace(){
     void initialize();
   },[initialize]);
 
-  return {projectId,conversationId,projectName,loading,error,retry:initialize,openConversation};
+  return {projectId,conversationId,projectName,loading,error,retry:initialize,openConversation,renameCurrentProject};
 }

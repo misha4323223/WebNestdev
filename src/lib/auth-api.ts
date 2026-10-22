@@ -1,7 +1,9 @@
 import { apiJson } from "./api";
+import type { OnboardingProfile } from "./onboarding";
 
-export type AuthUser={id:string;email:string;createdAt:string;yandex?:{login:string;email:string|null}};
-export type AuthState={authenticated:boolean;user:AuthUser|null};
+export type AuthUser={id:string;email:string;phone?:string;createdAt:string;yandex?:{login:string;email:string|null}};
+/** Контакты знакомства приходят вместе с сессией: null — аккаунт их ещё не оставлял. */
+export type AuthState={authenticated:boolean;user:AuthUser|null;onboarding?:{profile:OnboardingProfile|null}};
 export type YandexAuthStatus={configured:boolean;callbackUrl:string;loginPath:string};
 
 export type PhoneStatus={provider:string|null;providerLabel:string;configured:boolean;testMode:boolean;sender:string;hint?:string;demoPhone?:string};

@@ -6,7 +6,7 @@ import { getGitHubConnection, saveGitHubConnection, deleteGitHubConnection } fro
 import { createOAuthState, consumeOAuthState, originFromOAuthState } from "../github/github-oauth-state.js";
 import { getGitHubUser, getGitHubLoginFromToken, listGitHubRepositories, getGitHubRepository, getGitHubTree, getGitHubBlob } from "../github/github-api.js";
 import { createConversation, createProjectWithinLimit, ProjectLimitError } from "../project-store.js";
-import { limitsForPlan } from "../account/plans.js";
+import { limitsForPlan, repositoryImportLimitFor, repositorySizeLabel } from "../account/plans.js";
 import { accountPlanFor } from "../billing/store.js";
 import { recordStorageMutation } from "../account/storage-quota.js";
 import { getSandbox } from "../sandbox-manager.js";
@@ -156,12 +156,33 @@ export async function registerGitHubRoutes(app: FastifyInstance) {
   app.post("/api/github/import", async (request, reply) => {
     const user=await requireUser(request,reply); if(!user)return;
     const body = z.object({ owner: z.string().min(1).max(100), repo: z.string().min(1).max(100) }).parse(request.body);
-    const repository = await getGitHubRepository(user.id, body.owner, body.repo);
+    const repository = await getGitHubRepository(user.id, body.owner, body.repo) as {
+      name: string;
+      full_name: string;
+      default_branch: string;
+      html_url: string;
+      size?: number;
+      owner: { login: string };
+    };
     const plan = await accountPlanFor(user.id);
+    // GitHub отдаёт размер в килобайтах. Проверка стоит до создания проекта: иначе отказ
+    // оставлял бы пустой проект в списке и занимал место в лимите бесплатного тарифа.
+    const repositoryLimit = repositoryImportLimitFor(plan);
+    const sizeBytes = Number(repository.size ?? 0) * 1024;
+    if (repositoryLimit !== null && sizeBytes > repositoryLimit) {
+      return reply.code(403).send({
+        error: "Репозиторий занимает " + repositorySizeLabel(sizeBytes) + ", а на бесплатном тарифе импорт ограничен " + repositorySizeLabel(repositoryLimit) + ". Оформите платный тариф или импортируйте проект меньше " + repositorySizeLabel(repositoryLimit) + ".",
+        code: "REPOSITORY_TOO_LARGE",
+        sizeBytes,
+        limitBytes: repositoryLimit,
+        plan,
+      });
+    }
     const limit = limitsForPlan(plan).projects;
     let project;
     try {
       project = await createProjectWithinLimit(repository.name, {
+        provider: "github",
         owner: repository.owner.login,
         name: repository.name,
         fullName: repository.full_name,
@@ -194,6 +215,7 @@ export async function registerGitHubRoutes(app: FastifyInstance) {
         branch: repository.default_branch,
         remoteUrl: repository.html_url,
         token: connection?.accessToken ?? null,
+        username: "x-access-token",
       });
       if (history.warning) console.warn("[changes] " + repository.full_name + ": " + history.warning);
     } catch (error) {

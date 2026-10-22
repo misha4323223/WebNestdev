@@ -6,6 +6,10 @@ import { AuthScreen } from "./AuthScreen";
 import { NestLoader } from "../../components/NestLoader";
 import { WorkspaceShell } from "../workspace/WorkspaceShell";
 import { HomeScreen } from "../home/HomeScreen";
+import { OnboardingFlow } from "../onboarding/OnboardingFlow";
+import { ideaKickoff } from "../../lib/agent-kickoff";
+import { onboardingBrief, type OnboardingAnswers } from "../../lib/onboarding";
+import { startProjectWithAgent } from "../../lib/start-project";
 
 /**
  * Every connector that authorizes in its own window returns through one query
@@ -14,6 +18,7 @@ import { HomeScreen } from "../home/HomeScreen";
  */
 const oauthReturns = [
   { param: "github", message: "webnestdev.github", windowName: "webnestdev-github", returnFlag: "webnestdev.githubReturn", noticeFlag: "webnestdev.githubNotice" },
+  { param: "gitlab", message: "webnestdev.gitlab", windowName: "webnestdev-gitlab", returnFlag: "webnestdev.gitlabReturn", noticeFlag: "webnestdev.gitlabNotice" },
   { param: "yandex", message: "webnestdev.yandex", windowName: "webnestdev-yandex", returnFlag: "webnestdev.yandexReturn", noticeFlag: "webnestdev.yandexNotice" },
 ] as const;
 
@@ -41,6 +46,14 @@ export function AuthGate(){
   const [workspaceProject,setWorkspaceProject]=useState<string|null>(()=>restoreScreen()==="workspace"?localStorage.getItem("webnestdev.projectId")??"":null);
   // Идёт ли запуск прямо сейчас: главная показывает это, пока пользователь вне проекта.
   const [agentRun,setAgentRun]=useState<{running:boolean;projectName:string}|null>(null);
+  /**
+   * Знакомство поверх обеих поверхностей: аккаунт, который после входа сразу попадает в свой
+   * проект, тоже должен увидеть первый экран. Внутри главной он был бы скрыт вместе с её панелью.
+   */
+  const [onboardingOpen,setOnboardingOpen]=useState(false);
+  const [onboardingEmail,setOnboardingEmail]=useState("");
+  // Главная пересоздаётся после знакомства: проект, созданный им, должен попасть в список сразу.
+  const [homeVersion,setHomeVersion]=useState(0);
   const reportAgentState=useCallback((next:{running:boolean;projectName:string}|null)=>setAgentRun(next),[]);
   const openWorkspace=useCallback((projectId:string)=>{
     setWorkspaceProject(projectId);setHome(false);rememberScreen("workspace");
@@ -49,7 +62,19 @@ export function AuthGate(){
   const goHome=useCallback(()=>{setHome(true);rememberScreen("home")},[]);
   // Account preferences are fetched only after the session is confirmed: the caller is a guest
   // on this screen often enough that asking first would answer 401 in the browser console.
-  const refresh=()=>{setState("loading");void getAuth().then(result=>{setState(result.authenticated?"authenticated":"guest");if(result.authenticated)void refreshPreferences();}).catch(()=>setState("guest"));};
+  const refresh=()=>{
+    setState("loading");
+    void getAuth().then(result=>{
+      setState(result.authenticated?"authenticated":"guest");
+      if(!result.authenticated){setOnboardingOpen(false);return;}
+      // Контакты приходят вместе с сессией, поэтому первый экран не мигает главной: он либо
+      // нужен аккаунту, либо нет. Проверка серверная — так его увидят и те, кто вошёл до
+      // появления знакомства, и на любом устройстве, а не только в одном браузере.
+      setOnboardingEmail(result.user?.email??"");
+      setOnboardingOpen(!result.onboarding?.profile);
+      void refreshPreferences();
+    }).catch(()=>{setState("guest");setOnboardingOpen(false);});
+  };
   useEffect(()=>{refresh()},[]);
   useEffect(()=>{localStorage.removeItem("webnestdev.openWorkspace")},[]);
   // A successful Yandex sign-in never mounts AuthScreen, so its query parameter is
@@ -94,16 +119,29 @@ export function AuthGate(){
     localStorage.setItem("webnestdev.openIntegrations","1");
     goHome();
   },[goHome]);
+  /** Контакты знакомства к этому моменту уже сохранены на сервере; здесь создаётся проект. */
+  async function startFromOnboarding(answers:OnboardingAnswers){
+    const project=await startProjectWithAgent({
+      name:answers.projectName.trim().slice(0,80)||"Новый проект",
+      plannerPrompt:ideaKickoff(answers.idea,onboardingBrief(answers)),
+      title:"Новый проект",
+    });
+    setOnboardingOpen(false);
+    setHomeVersion(version=>version+1);
+    openWorkspace(project.id);
+  }
+
   if(state==="loading") return <div className="app-loading"><NestLoader size={58} label="Проверяем сессию"/><strong>Проверяем сессию…</strong><span>Подготавливаем ваше рабочее пространство</span></div>;
   if(state==="guest") return <AuthScreen onAuthenticated={refresh}/>;
   // Обе поверхности живут в дереве одновременно, а показывается одна: скрытая рабочая область
   // продолжает держать сокет запуска, поэтому агент не останавливается на главной.
   return <>
     <div className="app-pane" hidden={!home}>
-      <HomeScreen onOpenWorkspace={openWorkspace} activeRun={agentRun?.running?{projectId:workspaceProject??"",projectName:agentRun.projectName}:null}/>
+      <HomeScreen key={homeVersion} onOpenWorkspace={openWorkspace} activeRun={agentRun?.running?{projectId:workspaceProject??"",projectName:agentRun.projectName}:null}/>
     </div>
     {workspaceProject!==null&&<div className="app-pane" hidden={home}>{
       <WorkspaceShell key={workspaceProject} onHome={goHome} onAgentState={reportAgentState}/>
     }</div>}
+    {onboardingOpen&&<OnboardingFlow accountEmail={onboardingEmail} onStart={startFromOnboarding} onSkip={()=>setOnboardingOpen(false)}/>}
   </>;
 }

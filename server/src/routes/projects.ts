@@ -1,13 +1,13 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireUser } from "../auth/auth.js";
-import { createProjectWithinLimit, ProjectLimitError, getProject, createConversation, getConversation, listConversations, listProjects, deleteProject, renameProject } from "../project-store.js";
+import { createProjectWithinLimit, ProjectLimitError, getProject, createConversation, getConversation, listConversations, listProjects, deleteProject, deleteConversation, renameProject } from "../project-store.js";
 import type { Conversation } from "../project-store.js";
 import { limitsForPlan } from "../account/plans.js";
 import { accountPlanFor } from "../billing/store.js";
 import { forgetProjectStorage } from "../account/storage-quota.js";
 import { archiveProject, deleteProjectArchive, projectArchiveInfo, restoreProject } from "../storage/project-archive.js";
-import { isRunActive } from "../agent/active-runs.js";
+import { isConversationRunning, isRunActive } from "../agent/active-runs.js";
 import { getPreview } from "../preview/preview-store.js";
 
 /** How many chats the picker shows. Older sessions stay stored and reachable by id. */
@@ -140,6 +140,19 @@ export async function registerProjectRoutes(app:FastifyInstance){
     const project=await getProject(p.id);
     if(!project||project.userId!==user.id)return reply.code(404).send({error:"Проект не найден"});
     return reply.code(201).send(await createConversation(p.id,body.title));
+  });
+  app.delete("/api/conversations/:id",async(request,reply)=>{
+    const user=await requireUser(request,reply); if(!user)return;
+    const p=z.object({id:z.string().min(1)}).parse(request.params);
+    const conversation=await getConversation(p.id);
+    if(!conversation)return reply.code(404).send({error:"Сессия не найдена"});
+    const project=await getProject(conversation.projectId);
+    if(!project||project.userId!==user.id)return reply.code(404).send({error:"Сессия не найдена"});
+    // Удалить чат, в который агент прямо сейчас пишет, значит выдернуть сессию из-под запуска.
+    // Остальные чаты проекта удаляются свободно — блокируется именно этот, а не весь проект.
+    if(isConversationRunning(p.id))return reply.code(409).send({error:"Агент ещё работает в этом чате — дождитесь окончания запуска",code:"CONVERSATION_BUSY"});
+    if(!await deleteConversation(p.id))return reply.code(404).send({error:"Сессия не найдена"});
+    return {deleted:true};
   });
   app.get("/api/conversations/:id",async(request,reply)=>{
     const user=await requireUser(request,reply); if(!user)return;

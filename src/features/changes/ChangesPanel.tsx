@@ -96,13 +96,15 @@ export function ChangesPanel({ projectId, projectName, onRolledBack }: { project
   const checkpoints = data?.checkpoints ?? [];
   const currentSha = checkpoints[0]?.sha;
   const repository = data?.repository;
+  // Проект помнит, откуда он импортирован: GitLab-репозиторий не должен называться GitHub.
+  const providerName = repository?.provider === "gitlab" ? "GitLab" : "GitHub";
 
   const push = async () => {
     setBusy("push");
     setNotice(null);
     try {
       const result = await pushProjectChanges(projectId);
-      setNotice({ kind: "ok", text: "Изменения отправлены в " + result.branch + " на GitHub." });
+      setNotice({ kind: "ok", text: "Изменения отправлены в " + result.branch + " на " + providerName + "." });
       await load();
     } catch (pushError) {
       setNotice({ kind: "warn", text: pushError instanceof Error ? pushError.message : String(pushError) });
@@ -122,14 +124,14 @@ export function ChangesPanel({ projectId, projectName, onRolledBack }: { project
       const result = await pullProjectChanges(projectId);
       setData(result.overview);
       if (!result.pulled) {
-        setNotice({ kind: "warn", text: result.error ?? "Не удалось выгрузить изменения из GitHub." });
+        setNotice({ kind: "warn", text: result.error ?? "Не удалось выгрузить изменения из " + providerName + "." });
         return;
       }
       setNotice({
         kind: "ok",
         text: result.changed
-          ? "Выгружено из ветки " + result.branch + " на GitHub: обновлено " + filesLabel(result.changed) + "."
-          : "Проект уже совпадает с веткой " + result.branch + " на GitHub — выгружать нечего.",
+          ? "Выгружено из ветки " + result.branch + " на " + providerName + ": обновлено " + filesLabel(result.changed) + "."
+          : "Проект уже совпадает с веткой " + result.branch + " на " + providerName + " — выгружать нечего.",
       });
       onRolledBack?.();
     } catch (pullError) {
@@ -172,8 +174,8 @@ export function ChangesPanel({ projectId, projectName, onRolledBack }: { project
       setNotice({
         kind: "ok",
         text: repository?.connected
-          ? "Проект возвращён к " + checkpoint.shortSha + ". Отправьте точку на GitHub кнопкой, когда убедитесь в результате."
-          : "Проект возвращён к " + checkpoint.shortSha + ". История осталась в проекте — GitHub не подключён.",
+          ? "Проект возвращён к " + checkpoint.shortSha + ". Отправьте точку на " + providerName + " кнопкой, когда убедитесь в результате."
+          : "Проект возвращён к " + checkpoint.shortSha + ". История осталась в проекте — " + providerName + " не подключён.",
       });
       setData(result.overview);
       onRolledBack?.();
@@ -200,11 +202,11 @@ export function ChangesPanel({ projectId, projectName, onRolledBack }: { project
     <div className="panel-title">
       <div><span className="eyebrow">ИСТОРИЯ</span><strong>Изменения проекта</strong></div>
       <div className="changes-actions">
-        {repository?.connected && <button className="ghost-button changes-sync" onClick={() => void pull()} disabled={Boolean(busy)} title="Забрать ветку из GitHub в проект">
-          <CloudDownload size={14}/> {busy === "pull" ? "Выгружаем…" : <><span className="changes-label-full">Выгрузить из GitHub</span><span className="changes-label-short">Выгрузить</span></>}
+        {repository?.connected && <button className="ghost-button changes-sync" onClick={() => void pull()} disabled={Boolean(busy)} title={"Забрать ветку из " + providerName + " в проект"}>
+          <CloudDownload size={14}/> {busy === "pull" ? "Выгружаем…" : <><span className="changes-label-full">Выгрузить из {providerName}</span><span className="changes-label-short">Выгрузить</span></>}
         </button>}
-        {repository?.connected && checkpoints.length > 0 && <button className="ghost-button changes-sync" onClick={() => void push()} disabled={Boolean(busy)} title="Отправить текущую ветку на GitHub">
-          <CloudUpload size={14}/> {busy === "push" ? "Отправляем…" : <><span className="changes-label-full">Отправить на GitHub</span><span className="changes-label-short">Отправить</span></>}
+        {repository?.connected && checkpoints.length > 0 && <button className="ghost-button changes-sync" onClick={() => void push()} disabled={Boolean(busy)} title={"Отправить текущую ветку на " + providerName}>
+          <CloudUpload size={14}/> {busy === "push" ? "Отправляем…" : <><span className="changes-label-full">Отправить на {providerName}</span><span className="changes-label-short">Отправить</span></>}
         </button>}
         <button className="ghost-button" onClick={() => void load()} disabled={loading}><RefreshCw size={14}/> Обновить</button>
       </div>
@@ -216,7 +218,7 @@ export function ChangesPanel({ projectId, projectName, onRolledBack }: { project
           <GitBranch size={14}/>
           <span className="changes-branch">{repository?.branch ?? "main"}</span>
           {repository?.remoteUrl
-            ? <a className="changes-repo-link" href={repository.remoteUrl.replace(/\.git$/, "")} target="_blank" rel="noreferrer">{repository.remoteUrl.replace(/^https:\/\/github\.com\//, "").replace(/\.git$/, "")}</a>
+            ? <a className="changes-repo-link" href={repository.remoteUrl.replace(/\.git$/, "")} target="_blank" rel="noreferrer">{repository.remoteUrl.replace(/^https?:\/\//, "").replace(/\.git$/, "")}</a>
             : <span className="changes-repo-hint">репозиторий не подключён — история хранится в проекте</span>}
         </div>
         <div className="changes-repo-state">
@@ -268,7 +270,7 @@ export function ChangesPanel({ projectId, projectName, onRolledBack }: { project
                 <span className={"change-kind " + checkpoint.kind}>{kindLabel[checkpoint.kind]}</span>
                 {isCurrent && <span className="change-kind current">сейчас</span>}
                 {checkpoint.pushed
-                  ? <span className="change-push ok" title="Изменение есть в ветке на GitHub"><CloudUpload size={11}/> в GitHub</span>
+                  ? <span className="change-push ok" title={"Изменение есть в ветке на " + providerName}><CloudUpload size={11}/> в {providerName}</span>
                   : repository?.connected
                     ? <span className="change-push pending" title="Это изменение ещё не отправлено"><CloudOff size={11}/> не отправлено</span>
                     : null}
@@ -301,7 +303,7 @@ export function ChangesPanel({ projectId, projectName, onRolledBack }: { project
                 {checkpoint.url && <a className="change-link" href={checkpoint.url} target="_blank" rel="noreferrer">коммит <ExternalLink size={11}/></a>}
               </div>
               {confirming === checkpoint.sha && <div className="change-confirm-hint">
-                <AlertTriangle size={12}/> Текущая версия сохранится в истории: откат создаёт новую точку. На GitHub она уйдёт только по кнопке «Отправить на GitHub».
+                <AlertTriangle size={12}/> Текущая версия сохранится в истории: откат создаёт новую точку. На {providerName} она уйдёт только по кнопке «Отправить на {providerName}».
               </div>}
             </div>
           </li>;

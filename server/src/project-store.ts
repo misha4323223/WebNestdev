@@ -1,17 +1,22 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, writeFile, readdir, rename, rm, unlink } from "node:fs/promises";
+import { mkdir, readFile, writeFile, readdir, rename, rm, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 import { sandboxRootPath } from "./sandbox/config.js";
 import type { ChatMessage, PlanState } from "./types.js";
 import { isYdbEnabled, ydbQuery, getTable } from "./storage/ydb.js";
 import { decryptSecret, encryptSecret, isEncryptedSecret } from "./storage/secret-crypto.js";
 
+export type RepositoryProvider = "github" | "gitlab";
 export type GitHubRepositoryRef = {
+  /** Старые записи без поля — это GitHub; GitLab появился позже. */
+  provider?: RepositoryProvider;
   owner: string;
   name: string;
   fullName: string;
   defaultBranch: string;
   url: string;
+  /** Адрес для git clone/push, когда он отличается от ссылки в браузере (GitLab). */
+  cloneUrl?: string;
 };
 
 export type Project = {
@@ -454,6 +459,34 @@ export async function listConversations(projectId:string){
     }
   }catch{}
   return result.sort((a,b)=>b.updatedAt.localeCompare(a.updatedAt));
+}
+
+/**
+ * Deletes one saved chat with its messages. The project stays: a chat is a working session,
+ * not the project itself. Returns false when the chat is already gone, so the route can answer
+ * 404 instead of claiming a deletion that did not happen.
+ */
+export async function deleteConversation(id:string):Promise<boolean>{
+  if(isYdbEnabled()){
+    const [rows]=await ydbQuery()<Array<{id:string}>>`
+      SELECT id
+      FROM ${ydbQuery().identifier(getTable("conversations"))}
+      WHERE id = ${id}
+      LIMIT 1
+    `;
+    if(!rows?.[0])return false;
+    await ydbQuery().transaction({idempotent:true},async tx=>{
+      await tx`DELETE FROM ${ydbQuery().identifier(getTable("conversation_messages"))} WHERE conversation_id=${id}`;
+      await tx`DELETE FROM ${ydbQuery().identifier(getTable("conversations"))} WHERE id=${id}`;
+    });
+    return true;
+  }
+  const file=path.join(await conversationsDir(),id+".json");
+  try{
+    if(!(await stat(file)).isFile())return false;
+  }catch{return false}
+  await rm(file,{force:true});
+  return true;
 }
 
 /**

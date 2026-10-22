@@ -100,6 +100,13 @@ async function nextInvId(): Promise<number> {
   });
 }
 
+/**
+ * Номер для любого счёта Робокассы. Донат — не подписка, но живёт в том же магазине и в том же
+ * диапазоне номеров, поэтому берёт номер из общего счётчика: два счётчика рано или поздно выдали
+ * бы один и тот же InvId, и уведомление об оплате попало бы не в тот платёж.
+ */
+export const allocateInvoiceId = nextInvId;
+
 export async function createPayment(input: {
   userId: string;
   plan: PlanId;

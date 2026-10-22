@@ -11,6 +11,7 @@ import { decryptSecretWith, encryptSecretWith } from "./secret-crypto.js";
 export const JSON_TARGETS = [
   { folder: "providers", fields: ["token"] },
   { folder: "github", fields: ["accessToken"] },
+  { folder: "gitlab", fields: ["accessToken"] },
   { folder: "yandex", fields: ["secret"] },
   { folder: "database", fields: ["password", "url"] },
   // Подключения из «Интеграций»: облака, регистраторы домена и сервисы с ключом лежат в одном

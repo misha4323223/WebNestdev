@@ -117,12 +117,14 @@ const PK_BY_TABLE: Record<string, string[]> = {
   conversation_messages: ["conversation_id", "created_at", "message_id"],
   providers: ["project_id"],
   user_settings: ["user_id"],
+  user_profiles: ["user_id"],
   usage_events: ["user_id", "usage_date", "event_id"],
   usage_counters: ["user_id", "usage_date", "kind"],
   project_counters: ["user_id"],
   model_usage: ["user_id", "usage_date", "run_id"],
   oauth_states: ["state"],
   github_connections: ["user_id"],
+  gitlab_connections: ["user_id"],
   database_connections: ["user_id"],
   yandex_connections: ["user_id"],
   cloud_connections: ["user_id", "provider"],
@@ -337,6 +339,19 @@ export async function initializeStorage(): Promise<void> {
       product_updates BOOLEAN NOT NULL DEFAULT true
     )`);
 
+    // Контакты из знакомства при входе: имя, почта для связи и согласия на письма.
+    // Отдельная таблица, а не колонки user_settings: знакомство заполняется один раз
+    // и его наличие — признак, что аккаунт уже оставил данные.
+    await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("user_profiles")} (
+      user_id TEXT NOT NULL PRIMARY KEY,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL,
+      newsletter BOOLEAN NOT NULL DEFAULT false,
+      product_updates BOOLEAN NOT NULL DEFAULT false,
+      completed_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`);
+
     await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("usage_events")} (
       user_id TEXT NOT NULL,
       usage_date TEXT NOT NULL,
@@ -384,6 +399,15 @@ export async function initializeStorage(): Promise<void> {
       id TEXT NOT NULL,
       access_token TEXT NOT NULL,
       github_login TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    )`);
+
+    await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("gitlab_connections")} (
+      user_id TEXT NOT NULL PRIMARY KEY,
+      id TEXT NOT NULL,
+      access_token TEXT NOT NULL,
+      gitlab_login TEXT NOT NULL,
+      base_url TEXT NOT NULL DEFAULT 'https://gitlab.com',
       created_at TEXT NOT NULL
     )`);
 

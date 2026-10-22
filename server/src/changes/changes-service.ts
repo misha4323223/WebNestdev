@@ -1,4 +1,5 @@
 import { getGitHubConnection } from "../github/github-connection-store.js";
+import { getGitLabConnection } from "../gitlab/gitlab-connection-store.js";
 import { createGitHubRepository } from "../github/github-api.js";
 import { getProject, linkProjectGithub } from "../project-store.js";
 import { getSandbox } from "../sandbox-manager.js";
@@ -46,6 +47,8 @@ async function withProjectLock<T>(projectId: string, action: () => Promise<T>): 
 type Repository = {
   sandbox: SandboxConfig;
   branch: string;
+  provider: "github" | "gitlab";
+  username: string;
   remoteUrl: string | null;
   commitUrl?: (sha: string) => string;
 };
@@ -54,22 +57,35 @@ async function repositoryFor(projectId: string, userId: string): Promise<Reposit
   const project = await getProject(projectId);
   if (!project || project.userId !== userId) throw new Error("Проект не найден");
   const sandbox = await getSandbox(projectId, userId);
-  const github = project.github;
-  const branch = github?.defaultBranch?.trim() || "main";
-  const remoteUrl = github ? (github.url || "https://github.com/" + github.fullName) : null;
+  const repository = project.github;
+  const provider = repository?.provider === "gitlab" ? "gitlab" : "github";
+  const branch = repository?.defaultBranch?.trim() || "main";
+  const remoteUrl = repository
+    ? repository.cloneUrl || (provider === "gitlab"
+      ? repository.url.replace(/\/\.git$|\.git$/, "") + ".git"
+      : repository.url || "https://github.com/" + repository.fullName)
+    : null;
   return {
     sandbox,
     branch,
+    provider,
+    username: provider === "gitlab" ? "oauth2" : "x-access-token",
     remoteUrl,
-    ...(github?.fullName ? { commitUrl: (sha: string) => "https://github.com/" + github.fullName + "/commit/" + sha } : {}),
+    ...(repository?.fullName ? {
+      commitUrl: provider === "gitlab"
+        ? (sha: string) => repository.url.replace(/\/$/, "") + "/-/commit/" + sha
+        : (sha: string) => "https://github.com/" + repository.fullName + "/commit/" + sha,
+    } : {}),
   };
 }
 
-async function tokenFor(userId: string) {
+async function tokenFor(userId: string, provider: "github" | "gitlab" = "github") {
   try {
-    return (await getGitHubConnection(userId))?.accessToken ?? null;
+    return provider === "gitlab"
+      ? (await getGitLabConnection(userId))?.accessToken ?? null
+      : (await getGitHubConnection(userId))?.accessToken ?? null;
   } catch (error) {
-    console.error("[changes] не удалось прочитать подключение GitHub", error);
+    console.error("[changes] не удалось прочитать подключение " + (provider === "gitlab" ? "GitLab" : "GitHub"), error);
     return null;
   }
 }
@@ -82,11 +98,12 @@ async function ensureRepo(repository: Repository, userId: string) {
   if (await hasRepo(root) && (!repository.remoteUrl || await hasCommits(root))) {
     return { warning: undefined as string | undefined };
   }
-  const token = repository.remoteUrl ? await tokenFor(userId) : null;
+  const token = repository.remoteUrl ? await tokenFor(userId, repository.provider) : null;
   const result = await initRepo(root, {
     branch: repository.branch,
     remoteUrl: repository.remoteUrl,
     token,
+    username: repository.username,
   });
   if (result.warning) console.warn("[changes] проект " + repository.sandbox.projectId + ": " + result.warning);
   return { warning: result.warning };
@@ -94,20 +111,20 @@ async function ensureRepo(repository: Repository, userId: string) {
 
 /** Отправка ограничена по времени: панель не должна ждать недоступный GitHub минутами. */
 async function pushWithTimeout(repository: Repository, userId: string) {
-  const token = repository.remoteUrl ? await tokenFor(userId) : null;
+  const token = repository.remoteUrl ? await tokenFor(userId, repository.provider) : null;
   const branch = await currentBranch(repository.sandbox.root, repository.branch);
   const configuredTimeout = Number(process.env.CHANGES_PUSH_TIMEOUT_MS ?? 20_000);
   const timeoutMs = Number.isFinite(configuredTimeout) && configuredTimeout > 0 ? configuredTimeout : 20_000;
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
-      pushBranch(repository.sandbox.root, { branch, token }),
+      pushBranch(repository.sandbox.root, { branch, token, username: repository.username }),
       new Promise<{ pushed: boolean; branch: string; at: string; error: string }>(resolve => {
         timer = setTimeout(() => resolve({
           pushed: false,
           branch,
           at: new Date().toISOString(),
-          error: "GitHub не ответил за отведённое время: изменения сохранены в проекте, отправьте их позже.",
+          error: "Репозиторий не ответил за отведённое время: изменения сохранены в проекте, отправьте их позже.",
         }), timeoutMs);
       }),
     ]);
@@ -159,6 +176,7 @@ export async function changesOverview(projectId: string, userId: string): Promis
     return {
       initialized: false,
       repository: {
+        provider: repository.provider,
         connected: Boolean(repository.remoteUrl),
         branch: repository.branch,
         remoteUrl: repository.remoteUrl,
@@ -176,6 +194,7 @@ export async function changesOverview(projectId: string, userId: string): Promis
   return {
     initialized: true,
     repository: {
+      provider: repository.provider,
       connected: Boolean(repository.remoteUrl),
       branch,
       remoteUrl: repository.remoteUrl,
@@ -293,11 +312,11 @@ export async function createRepositoryForProject(projectId: string, userId: stri
 export async function pullFromGithub(projectId: string, userId: string) {
   return withProjectLock(projectId, async () => {
     const repository = await repositoryFor(projectId, userId);
-    if (!repository.remoteUrl) throw new Error("У проекта нет GitHub-репозитория");
+    if (!repository.remoteUrl) throw new Error("У проекта нет подключённого репозитория");
     await ensureRepo(repository, userId);
     const branch = await currentBranch(repository.sandbox.root, repository.branch);
-    const token = await tokenFor(userId);
-    const outcome = await pullBranch(repository.sandbox.root, { branch, token });
+    const token = await tokenFor(userId, repository.provider);
+    const outcome = await pullBranch(repository.sandbox.root, { branch, token, username: repository.username });
     // Выгрузка из GitHub добавляет файлы мимо агента: размер проекта нужно пересчитать,
     // иначе квота узнает о них только на ночной сверке.
     if (outcome.pulled) {
@@ -329,8 +348,8 @@ export async function switchProjectBranch(projectId: string, userId: string, bra
   return withProjectLock(projectId, async () => {
     const repository = await repositoryFor(projectId, userId);
     if (!await hasRepo(repository.sandbox.root)) throw new Error("В проекте ещё нет истории изменений");
-    const token = repository.remoteUrl ? await tokenFor(userId) : null;
-    const outcome = await switchBranch(repository.sandbox.root, { branch, token });
+    const token = repository.remoteUrl ? await tokenFor(userId, repository.provider) : null;
+    const outcome = await switchBranch(repository.sandbox.root, { branch, token, username: repository.username });
     return { ...outcome, overview: await changesOverview(projectId, userId) };
   });
 }
@@ -339,7 +358,7 @@ export async function switchProjectBranch(projectId: string, userId: string, bra
 export async function pushCurrentBranch(projectId: string, userId: string) {
   return withProjectLock(projectId, async () => {
     const repository = await repositoryFor(projectId, userId);
-    if (!repository.remoteUrl) throw new Error("У проекта нет GitHub-репозитория");
+    if (!repository.remoteUrl) throw new Error("У проекта нет подключённого репозитория");
     if (!await hasRepo(repository.sandbox.root)) throw new Error("В проекте ещё нет истории изменений");
     const outcome = await pushWithTimeout(repository, userId);
     return outcome;

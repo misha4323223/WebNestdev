@@ -304,7 +304,7 @@ export function GitHubConnect({surface="home",onImported=openImportedProject}:{s
           <button className="icon-button" onClick={()=>setIntentOpen(false)} disabled={importing} aria-label="Закрыть"><X size={16}/></button>
         </header>
         <div className="modal-body">
-          <p className="modal-lead">{selected.full_name}. Агент начнёт в режиме планировщика: изучит проект, задаст уточняющие вопросы и покажет план. Разработка стартует только после вашего подтверждения.</p>
+          <p className="modal-lead">{selected.full_name}. Агент начнёт в режиме планировщика: изучит проект, задаст уточняющие вопросы и покажет план. Разработка стартует только после вашего подтверждения. На бесплатном тарифе импорт ограничен 100 МБ.</p>
           <div className="repo-intent-grid">
             {repoIntents.map(item=>{const Icon=item.icon;return <button key={item.id} type="button" className={"repo-intent-option"+(intent===item.id?" selected":"")} onClick={()=>setIntent(item.id)} disabled={importing}>
               <span className="repo-intent-icon"><Icon size={16}/></span>

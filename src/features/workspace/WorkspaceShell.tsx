@@ -9,7 +9,7 @@ import { ChatSessionsModal, useChatSessions } from "../agent/ChatSessions";
 import { NestLoader } from "../../components/NestLoader";
 
 export function WorkspaceShell({onHome,onAgentState}:{onHome:()=>void;onAgentState?:(state:{running:boolean;projectName:string}|null)=>void}){
-  const {projectId,conversationId,projectName,loading,error,retry,openConversation}=useWorkspace();
+  const {projectId,conversationId,projectName,loading,error,retry,openConversation,renameCurrentProject}=useWorkspace();
   const [view,setView]=useState<WorkspaceView>("agent");
   // Рабочая область остаётся смонтированной, когда пользователь уходит на главную, поэтому
   // запуск продолжается; состояние поднимается наверх, чтобы главная сказала, над чем идёт работа.
@@ -68,7 +68,7 @@ export function WorkspaceShell({onHome,onAgentState}:{onHome:()=>void;onAgentSta
   // иначе «Изменения» монтировались бы под ней и клик выглядел бы как пустой.
   const openChanges=()=>{setSettingsOpen(false);setPreviewOpen(false);setView("changes")};
 
-  return <LayoutShell projectId={projectId} projectName={projectName} view={view} onView={view=>{setSettingsOpen(false);setView(view)}} onSettings={openSettings} onSecrets={openSecrets} onHome={onHome} onOpenChanges={openChanges} agentRunning={agentRunning} previewOpen={previewOpen} previewRunning={previewRunning} onPreviewToggle={()=>setPreviewOpen(value=>!value)} onRepositoryChanged={()=>setPreviewReload(value=>value+1)} sidebarHidden={settingsOpen}>
+  return <LayoutShell projectId={projectId} projectName={projectName} onRenameProject={renameCurrentProject} view={view} onView={view=>{setSettingsOpen(false);setView(view)}} onSettings={openSettings} onSecrets={openSecrets} onHome={onHome} onOpenChanges={openChanges} agentRunning={agentRunning} previewOpen={previewOpen} previewRunning={previewRunning} onPreviewToggle={()=>setPreviewOpen(value=>!value)} onRepositoryChanged={()=>setPreviewReload(value=>value+1)} sidebarHidden={settingsOpen}>
     <main className="main">
       <div className="workspace-main">
         {settingsOpen?<div className="workspace-overlay-panel">

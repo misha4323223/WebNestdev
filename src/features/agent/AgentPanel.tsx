@@ -13,6 +13,7 @@ import { AgentModeControl } from "./AgentModeControl";
 import { ChatBookmarks } from "./ChatBookmarks";
 import { SupportButton } from "../support/SupportDialog";
 import { takeAgentStart } from "../../lib/agent-start";
+import { publicUserMessage } from "../../lib/agent-kickoff";
 
 const modeKey="webnestdev.agentMode";
 const reasoningKey="webnestdev.reasoning";
@@ -1011,8 +1012,15 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   // Tool results are part of the stored history but not of the transcript; the action
   // list is built from them instead.
   const visibleMessages=messages.filter(message=>message.role!=="tool");
-  // Закладки переписки — это запросы пользователя: один запрос, одна метка у края чата.
-  const bookmarks=visibleMessages.flatMap((message,index)=>message.role==="user"?[{index,text:message.content}]:[]);
+  // Служебный автозапуск (шаблон, импорт, знакомство) остаётся в истории для модели, но человек
+  // видит только смысл — идею проекта или короткую подпись. В закладки такие сообщения не идут:
+  // это не запросы пользователя, и метка на каждый автозапуск только путала бы навигацию.
+  const shownUserMessage=(content:string)=>publicUserMessage(content);
+  const bookmarks=visibleMessages.flatMap((message,index)=>{
+    if(message.role!=="user")return [];
+    const shown=shownUserMessage(message.content);
+    return shown.internal?[]:[{index,text:shown.text}];
+  });
 
   return <section className="chat">
     {/* Переписка и её закладки. Полоска закладок — рядом со скроллом, а не в нём: у каждой метки
@@ -1036,7 +1044,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
               ? <div className="message-text markdown" onClick={openMarkdownLink}>{m.content
                   ? <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{m.content}</Markdown>
                   : running ? <NestLoader size={34} label="NestDev выполняет задачу" /> : ""}</div>
-              : <div className="message-text">{m.content}</div>}
+              : <div className="message-text">{shownUserMessage(m.content).text}</div>}
           </div>
         </div>;
       })}
@@ -1196,7 +1204,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
         <div className="modal-body">
           <div className="quota-modal-icon"><AlertTriangle size={18}/></div>
           <p className="modal-lead">{quotaNotice==="storage"
-            ?"Лимит хранилища вашего тарифа достигнут: агент больше не может писать файлы в проект. Освободите место или обновите тариф — лимиты: Бесплатный 700 МБ, Про 10 ГБ, Команда 50 ГБ."
+            ?"Лимит хранилища вашего тарифа достигнут: агент больше не может писать файлы в проект. Освободите место или обновите тариф — лимиты: Старт 700 МБ, Плюс 10 ГБ, Премиум 50 ГБ."
             :"Дневная квота запусков агента исчерпана. Новые запуски станут доступны после сброса по UTC или при обновлении тарифа. Лимит относится только к встроенной модели платформы: подключите свой AI-провайдер в настройках проекта — запуски пойдут через ваш ключ и модель, без дневной квоты."}</p>
         </div>
         <footer className="modal-foot">

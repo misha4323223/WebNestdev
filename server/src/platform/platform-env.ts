@@ -13,7 +13,7 @@ import { parseAuthorizedKeyJson, parseServiceAccountKey } from "../yandex/yandex
  * a deployment that never opens the panel behaves exactly as before.
  */
 export type PlatformEnvKind = "secret" | "json-key" | "value" | "url" | "path" | "flag";
-export type PlatformEnvGroup = "github" | "yandex" | "sms" | "ai" | "search" | "billing";
+export type PlatformEnvGroup = "github" | "gitlab" | "yandex" | "sms" | "ai" | "search" | "billing";
 
 export type PlatformEnvEntry = {
   name: string;
@@ -32,6 +32,12 @@ export const PLATFORM_ENV_CATALOG: PlatformEnvEntry[] = [
   { name: "GITHUB_CLIENT_SECRET", group: "github", label: "Client Secret", hint: "Там же: «Generate a new client secret». Старый после этого перестаёт работать.", kind: "secret" },
   { name: "GITHUB_CALLBACK_URL", group: "github", label: "Callback URL", hint: "Необязательно: пустое поле — адрес берётся из домена панели (https://<домен>/api/github/callback).", kind: "url" },
   { name: "GITHUB_FRONTEND_URL", group: "github", label: "Адрес возврата", hint: "Необязательно: куда вернуть браузер после авторизации (по умолчанию — корень панели).", kind: "url" },
+
+  { name: "GITLAB_CLIENT_ID", group: "gitlab", label: "Application ID", hint: "GitLab → аватар → Edit profile → Access → Applications → ваше приложение. Прямая ссылка: https://gitlab.com/-/user_settings/applications.", kind: "value" },
+  { name: "GITLAB_CLIENT_SECRET", group: "gitlab", label: "Secret", hint: "Там же, в приложении. GitLab показывает Secret один раз — скопируйте сразу.", kind: "secret" },
+  { name: "GITLAB_BASE_URL", group: "gitlab", label: "Адрес GitLab", hint: "Необязательно: https://gitlab.com по умолчанию. Для своего сервера укажите его адрес, например https://git.company.ru.", kind: "url" },
+  { name: "GITLAB_CALLBACK_URL", group: "gitlab", label: "Callback URL", hint: "Необязательно: пустое поле — адрес берётся из домена панели (https://<домен>/api/gitlab/callback).", kind: "url" },
+  { name: "GITLAB_FRONTEND_URL", group: "gitlab", label: "Адрес возврата", hint: "Необязательно: куда вернуть браузер после авторизации (по умолчанию — корень панели).", kind: "url" },
 
   { name: "YANDEX_CLIENT_ID", group: "yandex", label: "Yandex ID Client ID", hint: "Приложение в oauth.yandex.ru. Нужен для входа через Яндекс; ключ сервисного аккаунта работает и без него.", kind: "value" },
   { name: "YANDEX_CLIENT_SECRET", group: "yandex", label: "Yandex ID Client secret", hint: "Там же, в настройках приложения Yandex ID.", kind: "secret" },
@@ -68,8 +74,8 @@ export const PLATFORM_ENV_CATALOG: PlatformEnvEntry[] = [
   { name: "ROBOKASSA_TEST_MODE", group: "billing", label: "Тестовый режим", hint: "1 — платёж идёт с IsTest=1 и тестовыми паролями магазина: деньги не списываются.", kind: "flag" },
   { name: "ROBOKASSA_RECURRING", group: "billing", label: "Периодические платежи", hint: "1 — только после одобрения услуги «Периодические платежи» в Робокассе: включает автопродление.", kind: "flag" },
   { name: "ROBOKASSA_RECEIPT", group: "billing", label: "Чеки через Робокассу", hint: "1 — отправлять Receipt JSON. Самозанятому обычно не нужно: чеки идут через «Робочеки СМЗ» в кабинете.", kind: "flag" },
-  { name: "ROBOKASSA_PRICE_PRO", group: "billing", label: "Цена тарифа «Про», ₽/мес", hint: "Необязательно: по умолчанию 990. Меняется без выкатки.", kind: "value" },
-  { name: "ROBOKASSA_PRICE_TEAM", group: "billing", label: "Цена тарифа «Команда», ₽/мес", hint: "Необязательно: по умолчанию 2 990.", kind: "value" },
+  { name: "ROBOKASSA_PRICE_PRO", group: "billing", label: "Цена тарифа «Плюс», ₽/мес", hint: "Необязательно: по умолчанию 990. Меняется без выкатки.", kind: "value" },
+  { name: "ROBOKASSA_PRICE_TEAM", group: "billing", label: "Цена тарифа «Премиум», ₽/мес", hint: "Необязательно: по умолчанию 2 990.", kind: "value" },
 
   { name: "PLATFORM_AI_BASE_URL", group: "ai", label: "AI Base URL", hint: "OpenAI-совместимый адрес модели платформы — то, чем пользуются проекты без своего провайдера.", kind: "url" },
   { name: "PLATFORM_AI_MODEL", group: "ai", label: "AI модель", hint: "Идентификатор модели для этого адреса.", kind: "value" },
@@ -102,7 +108,7 @@ export type PlatformEnvStatus = {
 type StoredEntry = { value: string; preview: string; updatedAt: string };
 type StoreFile = { version: 1; values: Record<string, StoredEntry> };
 
-const GROUP_LABEL: Record<PlatformEnvGroup, string> = { github: "GitHub", yandex: "Yandex Cloud", sms: "SMS-провайдеры", ai: "AI-провайдер платформы", search: "Веб-поиск агента", billing: "Оплата (Robokassa)" };
+const GROUP_LABEL: Record<PlatformEnvGroup, string> = { github: "GitHub", gitlab: "GitLab", yandex: "Yandex Cloud", sms: "SMS-провайдеры", ai: "AI-провайдер платформы", search: "Веб-поиск агента", billing: "Оплата (Robokassa)" };
 
 export function platformEnvGroupLabel(group: PlatformEnvGroup) {
   return GROUP_LABEL[group];

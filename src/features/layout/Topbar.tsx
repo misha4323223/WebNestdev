@@ -1,23 +1,34 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, GitBranch, History, KeyRound, LogOut, Monitor, PanelLeftClose, PanelLeftOpen, Settings, UserRound } from "lucide-react";
-import { getAuth, logout } from "../../lib/auth-api";
+import { Check, ChevronDown, GitBranch, History, KeyRound, LogOut, Monitor, PanelLeftClose, PanelLeftOpen, Pencil, Settings, UserRound } from "lucide-react";
+import { getAuth, logout, type AuthState } from "../../lib/auth-api";
+import { contactEmailOf } from "../../lib/account-contact";
 import { WebNestLogo } from "../../components/WebNestLogo";
 import { GitHubMark } from "../../components/GitHubMark";
 import { getProjectChanges, listProjectBranches, switchProjectBranch, type ProjectBranches, type ProjectChanges } from "../../lib/project-api";
 import { getGitHubStatus } from "../../lib/github-api";
+import { ProjectRenameForm } from "../home/ProjectRename";
 
 /**
- * Подпись аккаунта в меню. Вход чаще всего по номеру телефона, и служебный адрес вида
- * 79990000000@phone.local в меню читался бы как техническая строка — номер показывается
- * привычными группами, а обычный email остаётся как есть.
+ * Подпись аккаунта в меню: имя из знакомства, а второй строкой — почта для связи или телефон.
+ * Служебный адрес входа (79990000000@phone.webnestdev.local) не показывается: номер выводится
+ * привычными группами, почта берётся из контактов или настоящего адреса аккаунта.
  */
-function accountLabel(email:string){
-  if(!email)return {name:"Аккаунт",detail:"вход выполнен"};
-  const [local,domain]=email.split("@");
-  if(domain&&domain.startsWith("phone.")&&/^\d{11}$/.test(local)){
-    return {name:"+"+local[0]+" "+local.slice(1,4)+" "+local.slice(4,7)+"-"+local.slice(7,9)+"-"+local.slice(9,11),detail:"вход по номеру телефона"};
-  }
-  return {name:local,detail:email};
+function accountLabel(state:AuthState|null){
+  const profile=state?.onboarding?.profile;
+  const email=contactEmailOf({
+    profileEmail:profile?.email,
+    accountEmail:state?.user?.email,
+    yandexEmail:state?.user?.yandex?.email,
+  });
+  const raw=state?.user?.email?.trim()??"";
+  const [local,domain]=raw.split("@");
+  const phone=state?.user?.phone?.trim()
+    ||(domain&&domain.startsWith("phone.")&&/^\d{11}$/.test(local)
+      ?"+"+local[0]+" "+local.slice(1,4)+" "+local.slice(4,7)+"-"+local.slice(7,9)+"-"+local.slice(9,11)
+      :"");
+  const name=profile?.name?.trim()||phone||(email?email.split("@")[0]:"");
+  if(!name)return {name:"Аккаунт",detail:"вход выполнен"};
+  return {name,detail:email||phone||"вход выполнен"};
 }
 
 /** «1 точка», «2 точки», «5 точек» — счётчик истории в чипе читается по-русски. */
@@ -31,7 +42,7 @@ function pointsLabel(count: number) {
 
 /**
  * Шапка рабочей области — полоса пути, как в IDE: знак ведёт на главную, дальше название
- * проекта, ветка, число сохранённых точек и статус GitHub справа — действия.
+ * проекта, число сохранённых точек и статус GitHub; ветка стоит у действий, рядом с предпросмотром.
  *
  * Ветка — это кнопка, а не подпись: отправка уходит в текущую ветку, поэтому клик по ней
  * раскрывает список веток проекта, и выбор сразу переключает проект. Раньше здесь стоял
@@ -40,15 +51,17 @@ function pointsLabel(count: number) {
  * Кнопка колонки слева — PanelLeft, а не «бургер»: панель выезжает сбоку, а не раскрывается
  * списком, и иконка должна говорить об этом же.
  */
-export function Topbar({projectId,projectName,running,sidebarOpen,onMenu,onHome,onOpenChanges,onSettings,onSecrets,previewOpen,previewRunning,onPreviewToggle,onRepositoryChanged}:{projectId:string;projectName:string;running:boolean;sidebarOpen:boolean;onMenu:()=>void;onHome:()=>void;onOpenChanges:()=>void;onSettings:()=>void;onSecrets:()=>void;previewOpen:boolean;previewRunning:boolean;onPreviewToggle:()=>void;onRepositoryChanged?:()=>void}){
+export function Topbar({projectId,projectName,onRenameProject,running,sidebarOpen,onMenu,onHome,onOpenChanges,onSettings,onSecrets,previewOpen,previewRunning,onPreviewToggle,onRepositoryChanged}:{projectId:string;projectName:string;onRenameProject:(name:string)=>Promise<unknown>;running:boolean;sidebarOpen:boolean;onMenu:()=>void;onHome:()=>void;onOpenChanges:()=>void;onSettings:()=>void;onSecrets:()=>void;previewOpen:boolean;previewRunning:boolean;onPreviewToggle:()=>void;onRepositoryChanged?:()=>void}){
   const [accountMenu,setAccountMenu]=useState(false);
+  const [renaming,setRenaming]=useState(false);
+  const [renameError,setRenameError]=useState("");
   const [branchMenu,setBranchMenu]=useState(false);
   const [branches,setBranches]=useState<ProjectBranches|null>(null);
   const [branchBusy,setBranchBusy]=useState("");
   const [branchError,setBranchError]=useState("");
   const [changes,setChanges]=useState<ProjectChanges|null>(null);
   const [githubConnected,setGithubConnected]=useState(false);
-  const [email,setEmail]=useState("");
+  const [auth,setAuth]=useState<AuthState|null>(null);
   const barRef=useRef<HTMLElement|null>(null);
   const branchRef=useRef<HTMLDivElement|null>(null);
 
@@ -82,7 +95,7 @@ export function Topbar({projectId,projectName,running,sidebarOpen,onMenu,onHome,
 
   useEffect(()=>{
     let active=true;
-    void getAuth().then(state=>{if(active)setEmail(state.user?.yandex?.email||state.user?.email||"")}).catch(()=>{});
+    void getAuth().then(state=>{if(active)setAuth(state)}).catch(()=>{});
     return ()=>{active=false}
   },[]);
 
@@ -159,6 +172,17 @@ export function Topbar({projectId,projectName,running,sidebarOpen,onMenu,onHome,
     }
   };
 
+  /** Enter сохраняет, Escape отменяет; ошибка остаётся у формы, чтобы название не потерялось. */
+  const submitRename=async(name:string)=>{
+    setRenameError("");
+    try{
+      await onRenameProject(name);
+      setRenaming(false);
+    }catch(error){
+      setRenameError(error instanceof Error?error.message:"Не удалось переименовать проект");
+    }
+  };
+
   const repository=changes?.repository;
   const branch=repository?.branch||"main";
   const points=changes?.checkpoints.length??0;
@@ -167,7 +191,7 @@ export function Topbar({projectId,projectName,running,sidebarOpen,onMenu,onHome,
   // проекта, иначе шапка обещала бы отправку, которой некуда идти.
   const repoConnected=Boolean(repository?.connected);
   const unpushed=repoConnected?(changes?.checkpoints??[]).filter(item=>!item.pushed).length:0;
-  const account=accountLabel(email);
+  const account=accountLabel(auth);
   const repoTitle="GitHub"+(!repoConnected
     ?(githubConnected?" подключён, репозиторий проекта ещё не создан":" не подключён — подключить в «Изменениях»")
     :(unpushed>0?" · не отправлено: "+pointsLabel(unpushed):" · репозиторий проекта"));
@@ -182,13 +206,33 @@ export function Topbar({projectId,projectName,running,sidebarOpen,onMenu,onHome,
       <span className="brand-name">NestDev</span>
     </button>
 
-    <div className="topbar-trail">
-      <span className="topbar-crumb" title={"Проект: "+projectName}>
-        <span className={"topbar-dot"+(running?" is-live":"")} aria-hidden="true"/>
-        <span className="topbar-project-name">{projectName}</span>
-      </span>
+    <div className="topbar-trail" data-renaming={renaming?"true":undefined}>
+      {renaming
+        ? <div className="topbar-rename"><ProjectRenameForm initial={projectName} onSubmit={name=>void submitRename(name)} onCancel={()=>{setRenaming(false);setRenameError("")}}/></div>
+        : <button className="topbar-crumb" onClick={()=>{setRenaming(true);setRenameError("")}} title="Переименовать проект" aria-label={"Переименовать проект «"+projectName+"»"}>
+            <span className={"topbar-dot"+(running?" is-live":"")} aria-hidden="true"/>
+            <span className="topbar-project-name">{projectName}</span>
+            <Pencil size={11} className="topbar-crumb-pencil" aria-hidden="true"/>
+          </button>}
+      {renameError&&<span className="topbar-rename-error" role="alert">{renameError}</span>}
+      <span className="topbar-sep" aria-hidden="true">›</span>
+      <button className="topbar-chip topbar-github-chip" onClick={onOpenChanges} title={repoTitle+" — открыть «Изменения»"} aria-label="GitHub и отправка изменений">
+        <GitHubMark size={12}/>
+        <span className="topbar-chip-text">GitHub</span>
+        {unpushed>0&&<i className="topbar-chip-dot" aria-hidden="true"/>}
+      </button>
+      {/* Ноль не показывается: пустая история — это отсутствие новости, а не новость. */}
+      {points>0&&<button className="topbar-chip" onClick={onOpenChanges} title={"История изменений: "+pointsLabel(points)+" — открыть «Изменения»"}>
+        <History size={12}/>
+        <span className="topbar-chip-count">{points}</span>
+      </button>}
+    </div>
+
+    <div className="topbar-actions">
       {/* Ветка называется прямо в шапке: клик открывает список веток проекта, и выбор сразу
-          переключает рабочую область — следующая отправка уйдёт уже в выбранную ветку. */}
+          переключает рабочую область — следующая отправка уйдёт уже в выбранную ветку.
+          Стоит у действий, рядом с предпросмотром: на телефоне путь не делит с ней ширину,
+          и имя проекта получает всё место до правого края. */}
       <div className="topbar-branch" ref={branchRef}>
         <button className="topbar-branch-button" onClick={toggleBranch} aria-haspopup="menu" aria-expanded={branchMenu} aria-controls="topbar-branch-menu" title={branchTitle} aria-label={"Ветка "+branch+": выбрать другую"}>
           <GitBranch size={12}/>
@@ -226,20 +270,6 @@ export function Topbar({projectId,projectName,running,sidebarOpen,onMenu,onHome,
           </div>
         </div>}
       </div>
-      <span className="topbar-sep" aria-hidden="true">›</span>
-      <button className="topbar-chip topbar-github-chip" onClick={onOpenChanges} title={repoTitle+" — открыть «Изменения»"} aria-label="GitHub и отправка изменений">
-        <GitHubMark size={12}/>
-        <span className="topbar-chip-text">GitHub</span>
-        {unpushed>0&&<i className="topbar-chip-dot" aria-hidden="true"/>}
-      </button>
-      {/* Ноль не показывается: пустая история — это отсутствие новости, а не новость. */}
-      {points>0&&<button className="topbar-chip" onClick={onOpenChanges} title={"История изменений: "+pointsLabel(points)+" — открыть «Изменения»"}>
-        <History size={12}/>
-        <span className="topbar-chip-count">{points}</span>
-      </button>}
-    </div>
-
-    <div className="topbar-actions">
       {/* Only on a phone, where the preview is a drawer and needs a way in and out. */}
       <button className={"icon-button preview-toggle"+(previewOpen?" active":"")} onClick={onPreviewToggle} aria-expanded={previewOpen} aria-controls="preview-panel" aria-label="Предпросмотр проекта" title="Предпросмотр проекта">
         <Monitor size={16}/>

@@ -3,6 +3,8 @@ import { z } from "zod";
 import { attachSession, getCurrentUser, SESSION_COOKIE } from "../auth/auth.js";
 import { createUser, deleteSession, verifyUser, EMAIL_TAKEN_MESSAGE } from "../auth/auth-store.js";
 import { findYandexIdentityByUserId } from "../auth/yandex-account-store.js";
+import { findPhoneByUserId, formatPhone } from "../auth/phone-store.js";
+import { getUserProfile } from "../account/profile-store.js";
 import { checkAuthRateLimit } from "../auth/auth-rate-limit.js";
 
 const credentials = z.object({email:z.string().email().max(200),password:z.string().min(8).max(200)});
@@ -10,18 +12,27 @@ const credentials = z.object({email:z.string().email().max(200),password:z.strin
 export async function registerAuthRoutes(app:FastifyInstance){
   app.get("/api/auth/me", async request => {
     const user = await getCurrentUser(request);
-    if (!user) return {authenticated:false,user:null};
+    if (!user) return {authenticated:false,user:null,onboarding:{profile:null}};
     // Which identity opened the account is shown in the profile: a Yandex ID sign-in
     // has no password, and the synthetic address must not look like a real e-mail.
-    const yandex = await findYandexIdentityByUserId(user.id);
+    const [yandex, phone] = await Promise.all([
+      findYandexIdentityByUserId(user.id),
+      findPhoneByUserId(user.id),
+    ]);
     return {
       authenticated:true,
       user:{
         id:user.id,
         email:user.email,
         createdAt:user.createdAt,
+        // Телефон отдельно от почты: в служебном адресе …@phone.webnestdev.local
+        // он иначе выглядел бы как непонятный email.
+        ...(phone ? {phone:formatPhone(phone)} : {}),
         ...(yandex ? {yandex:{login:yandex.login,email:yandex.email??null}} : {}),
       },
+      // Контакты знакомства приходят вместе с сессией: по ним интерфейс решает, показывать
+      // ли первый экран. Отдельный запрос означал бы мигание главной перед знакомством.
+      onboarding:{profile:await getUserProfile(user.id)},
     };
   });
   app.post("/api/auth/register", async (request,reply) => {

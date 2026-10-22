@@ -8,6 +8,8 @@ import { apiJson } from "../../lib/api";
 import { balanceLabel, getBilling, moneyLabel, paymentNotice, type BillingData, type PlanId } from "../../lib/billing-api";
 import { activePlanId, chosenPlanId, isPendingChoice, planName, usePlanChoice } from "../../lib/plan-choice";
 import { readCachedPreferences, type UserPreferences } from "../../lib/preferences";
+import { contactEmailOf } from "../../lib/account-contact";
+import type { OnboardingProfile } from "../../lib/onboarding";
 import { SupportButton } from "../support/SupportDialog";
 
 export type RailSection = "integrations" | "projects" | "account" | "billing";
@@ -132,7 +134,11 @@ export function HomeRail(props: HomeRailProps) {
   </aside>;
 }
 
-type AccountData = { user: { id: string; email: string; createdAt: string }; preferences: UserPreferences };
+type AccountData = {
+  user: { id: string; email: string; phone?: string; createdAt: string; yandex?: { login: string; email: string | null } };
+  profile: OnboardingProfile | null;
+  preferences: UserPreferences;
+};
 
 function RailAccount() {
   const [account, setAccount] = useState<AccountData | null>(null);
@@ -147,13 +153,24 @@ function RailAccount() {
   }, []);
 
   const preferences = account?.preferences ?? readCachedPreferences();
+  const profile = account?.profile ?? null;
+  // Служебные адреса входа (…@phone.webnestdev.local) сюда не попадают: телефон и почта
+  // показываются отдельными строками, почта — из контактов знакомства.
+  const email = contactEmailOf({
+    profileEmail: profile?.email,
+    accountEmail: account?.user.email,
+    yandexEmail: account?.user.yandex?.email,
+  });
+  const phone = account?.user.phone ?? "";
 
   return <section className="rail-section">
     <div className="rail-section-head"><span className="eyebrow">АККАУНТ</span><strong>Профиль</strong></div>
     {error && <div className="settings-error">{error}</div>}
     {!account && !error && <div className="modal-state">Загружаем профиль…</div>}
     {account && <div className="rail-fields">
-      <div><span>Email</span><strong title={account.user.email}>{account.user.email}</strong></div>
+      <div><span>Имя</span><strong title={profile?.name || undefined}>{profile?.name || "Не указано"}</strong></div>
+      <div><span>Email</span><strong title={email || undefined}>{email || "Не указан"}</strong></div>
+      {phone && <div><span>Телефон</span><strong title={phone}>{phone}</strong></div>}
       <div><span>Дата регистрации</span><strong>{dateLabel(account.user.createdAt)}</strong></div>
       <div><span>Язык интерфейса</span><strong>{preferences.language === "ru" ? "Русский" : "English"}</strong></div>
       <div><span>Компактный режим</span><strong>{preferences.compactMode ? "Включён" : "Выключен"}</strong></div>
@@ -179,7 +196,7 @@ function RailBilling({ billing, choice, error, onOpenPlans, onOpenSubscriptions 
     {!billing && !error && <div className="modal-state">Загружаем тариф…</div>}
     {billing && <>
       <div className="rail-plan">
-        <div><span>Тариф</span><strong>{plan?.name ?? "Бесплатный"}</strong></div>
+        <div><span>Тариф</span><strong>{plan?.name ?? "Старт"}</strong></div>
         <span className="plan-pill">{plan?.priceLabel ?? "0 ₽"}</span>
       </div>
       <div className="rail-money">
@@ -188,7 +205,7 @@ function RailBilling({ billing, choice, error, onOpenPlans, onOpenSubscriptions 
       </div>
       {subscription?.renewsAt && <div className="rail-chosen">
         <span>{paid ? (subscription.autoRenew ? "Подписка · автопродление" : "Подписка · без автопродления") : "Тариф"}</span>
-        <strong>{paid ? "до " + dateLabel(subscription.renewsAt) : "Бесплатный"}</strong>
+        <strong>{paid ? "до " + dateLabel(subscription.renewsAt) : "Старт"}</strong>
       </div>}
       {chosen && !billing.paymentsEnabled && <div className="rail-chosen">
         <span>Выбранный тариф · включим вместе с оплатой</span>

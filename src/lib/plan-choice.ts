@@ -44,7 +44,7 @@ export function usePlanChoice() {
   return choice;
 }
 
-const fallbackNames: Record<PlanId, string> = { free: "Бесплатный", pro: "Про", team: "Команда" };
+const fallbackNames: Record<PlanId, string> = { free: "Старт", pro: "Плюс", team: "Премиум" };
 
 export function planName(billing: BillingData | null, plan: PlanId) {
   return billing?.plans.find(item => item.id === plan)?.name ?? fallbackNames[plan];

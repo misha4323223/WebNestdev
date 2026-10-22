@@ -91,6 +91,8 @@ export type InitOptions = {
   branch: string;
   remoteUrl?: string | null;
   token?: string | null;
+  /** GitHub ждёт `x-access-token`, GitLab — `oauth2`; остальные принимают любое имя. */
+  username?: string;
 };
 
 /**
@@ -113,9 +115,9 @@ export async function initRepo(root: string, options: InitOptions): Promise<{ ad
       ref: options.branch,
       singleBranch: true,
       depth: 1,
-      ...(options.token ? { onAuth: () => ({ username: "x-access-token", password: options.token as string }) } : {}),
+      ...(options.token ? { onAuth: () => ({ username: options.username ?? "x-access-token", password: options.token as string }) } : {}),
     });
-    if (!fetched.fetchHead) return { adopted: false, warning: "GitHub не вернул ветку " + options.branch };
+    if (!fetched.fetchHead) return { adopted: false, warning: "Репозиторий не вернул ветку " + options.branch };
     await git.writeRef({ fs, dir: root, ref: "refs/heads/" + options.branch, value: fetched.fetchHead, force: true });
     await git.writeRef({ fs, dir: root, ref: "HEAD", value: "refs/heads/" + options.branch, force: true, symbolic: true });
     // Импорт пропускает файлы, которые GitHub отдаёт без base64 (крупные бинарники).
@@ -135,7 +137,7 @@ export async function initRepo(root: string, options: InitOptions): Promise<{ ad
     await stageWorkdir(root);
     return { adopted: true };
   } catch (error) {
-    return { adopted: false, warning: "не удалось загрузить историю GitHub: " + describe(error) };
+    return { adopted: false, warning: "не удалось загрузить историю репозитория: " + describe(error) };
   }
 }
 
@@ -205,7 +207,7 @@ export type BranchSwitchOutcome = { switched: boolean; branch: string; error?: s
  * сохраняет их как точку истории, либо отказывает. Молча стереть работу агента нельзя, а
  * переносить её в другую ветку без спроса — тоже.
  */
-export async function switchBranch(root: string, options: { branch: string; token: string | null }): Promise<BranchSwitchOutcome> {
+export async function switchBranch(root: string, options: { branch: string; token: string | null; username?: string }): Promise<BranchSwitchOutcome> {
   const branch = options.branch.trim();
   if (!branch) return { switched: false, branch, error: "Не указана ветка" };
   if (!/^[A-Za-z0-9._\/-]+$/.test(branch) || branch.startsWith("-") || branch.includes("..")) {
@@ -226,7 +228,7 @@ export async function switchBranch(root: string, options: { branch: string; toke
       await git.checkout({ fs, dir: root, ref: branch, force: true });
     } else {
       if (!options.token) {
-        return { switched: false, branch, error: "Ветки " + branch + " нет в проекте: чтобы забрать её из GitHub, подключите GitHub." };
+        return { switched: false, branch, error: "Ветки " + branch + " нет в проекте: чтобы забрать её из репозитория, подключите GitHub или GitLab." };
       }
       const fetched = await git.fetch({
         fs,
@@ -236,9 +238,9 @@ export async function switchBranch(root: string, options: { branch: string; toke
         ref: branch,
         singleBranch: true,
         depth: 1,
-        onAuth: () => ({ username: "x-access-token", password: options.token as string }),
+        onAuth: () => ({ username: options.username ?? "x-access-token", password: options.token as string }),
       });
-      if (!fetched.fetchHead) return { switched: false, branch, error: "GitHub не вернул ветку " + branch };
+      if (!fetched.fetchHead) return { switched: false, branch, error: "Репозиторий не вернул ветку " + branch };
       const previous = await treeFiles(root, "HEAD").catch(() => new Map<string, string>());
       const target = await treeFiles(root, fetched.fetchHead);
       for (const [filepath, oid] of target) {
@@ -434,6 +436,7 @@ export type PushOptions = {
   branch: string;
   token?: string | null;
   force?: boolean;
+  username?: string;
 };
 
 export type PushOutcome = { pushed: boolean; branch: string; at: string; error?: string };
@@ -445,14 +448,14 @@ export type PushOutcome = { pushed: boolean; branch: string; at: string; error?:
 export async function pushBranch(root: string, options: PushOptions): Promise<PushOutcome> {
   const at = new Date().toISOString();
   if (!options.token) {
-    const outcome: PushOutcome = { pushed: false, branch: options.branch, at, error: "GitHub не подключён: отправлять нечем" };
+    const outcome: PushOutcome = { pushed: false, branch: options.branch, at, error: "Репозиторий не подключён: отправлять нечем" };
     await writePushState(root, { branch: options.branch, lastPushAt: undefined, lastPushError: outcome.error });
     return outcome;
   }
   try {
     const remotes = await git.listRemotes({ fs, dir: root }).catch(() => []);
     if (!remotes.some(remote => remote.remote === "origin")) {
-      const outcome: PushOutcome = { pushed: false, branch: options.branch, at, error: "У проекта нет GitHub-репозитория" };
+      const outcome: PushOutcome = { pushed: false, branch: options.branch, at, error: "У проекта нет подключённого репозитория" };
       await writePushState(root, { branch: options.branch, lastPushError: outcome.error });
       return outcome;
     }
@@ -463,11 +466,11 @@ export async function pushBranch(root: string, options: PushOptions): Promise<Pu
       remote: "origin",
       ref: options.branch,
       force: Boolean(options.force),
-      onAuth: () => ({ username: "x-access-token", password: options.token as string }),
+      onAuth: () => ({ username: options.username ?? "x-access-token", password: options.token as string }),
     });
     const ref = result.refs?.["refs/heads/" + options.branch] ?? Object.values(result.refs ?? {})[0];
     if (!result.ok || (ref && !ref.ok)) {
-      const reason = ref?.error || result.error || "GitHub отклонил отправку";
+      const reason = ref?.error || result.error || "Репозиторий отклонил отправку";
       const outcome: PushOutcome = { pushed: false, branch: options.branch, at, error: reason };
       await writePushState(root, { branch: options.branch, lastPushError: reason });
       return outcome;
@@ -494,13 +497,13 @@ export type PullOutcome = { pulled: boolean; branch: string; at: string; sha?: s
  * Файлы берутся из полученного коммита, а не из рабочего дерева: так выгрузка приносит именно
  * состояние GitHub, включая удалённые там файлы.
  */
-export async function pullBranch(root: string, options: { branch: string; token: string | null }): Promise<PullOutcome> {
+export async function pullBranch(root: string, options: { branch: string; token: string | null; username?: string }): Promise<PullOutcome> {
   const at = new Date().toISOString();
-  if (!options.token) return { pulled: false, branch: options.branch, at, error: "GitHub не подключён: выгружать нечем" };
+  if (!options.token) return { pulled: false, branch: options.branch, at, error: "Репозиторий не подключён: выгружать нечем" };
   try {
     const remotes = await git.listRemotes({ fs, dir: root }).catch(() => []);
     if (!remotes.some(remote => remote.remote === "origin")) {
-      return { pulled: false, branch: options.branch, at, error: "У проекта нет GitHub-репозитория" };
+      return { pulled: false, branch: options.branch, at, error: "У проекта нет подключённого репозитория" };
     }
     const localHead = await git.resolveRef({ fs, dir: root, ref: "HEAD" }).catch(() => null);
     const pushedHead = await git.resolveRef({ fs, dir: root, ref: "refs/webnestdev/pushed/" + options.branch }).catch(() => null);
@@ -515,9 +518,9 @@ export async function pullBranch(root: string, options: { branch: string; token:
       onAuth: () => ({ username: "x-access-token", password: options.token as string }),
     });
     const remoteHead = fetched.fetchHead;
-    if (!remoteHead) return { pulled: false, branch: options.branch, at, error: "GitHub не вернул ветку " + options.branch };
+    if (!remoteHead) return { pulled: false, branch: options.branch, at, error: "Репозиторий не вернул ветку " + options.branch };
     if (localHead && localHead !== pushedHead) {
-      return { pulled: false, branch: options.branch, at, error: "В проекте есть точки, которых нет на GitHub. Сначала отправьте их — выгрузка перезаписала бы эту работу." };
+      return { pulled: false, branch: options.branch, at, error: "В проекте есть точки, которых нет в удалённом репозитории. Сначала отправьте их — выгрузка перезаписала бы эту работу." };
     }
     if (localHead === remoteHead) {
       await writePushState(root, { branch: options.branch, lastPushAt: at, lastPushError: undefined });
@@ -551,9 +554,9 @@ export async function pullBranch(root: string, options: { branch: string; token:
 /** Отказы GitHub при выгрузке: пользователю нужен следующий шаг, а не текст HTTP-ошибки. */
 export function pullErrorText(error: unknown) {
   const text = describe(error);
-  if (/401|403|auth|credential|permission/i.test(text)) return "GitHub не пустил в репозиторий: проверьте подключение и права токена.";
+  if (/401|403|auth|credential|permission/i.test(text)) return "Удалённый репозиторий не принял доступ: проверьте подключение и права токена.";
   if (/404|not found/i.test(text)) return "Репозиторий не найден: возможно, он переименован или удалён.";
-  return "Не удалось выгрузить изменения из GitHub: " + text;
+  return "Не удалось выгрузить изменения из репозитория: " + text;
 }
 
 /**
@@ -563,12 +566,12 @@ export function pullErrorText(error: unknown) {
 export function pushErrorText(error: unknown, branch: string) {
   const message = describe(error);
   if (/not a simple fast-forward|notFastForward|non-fast-forward|fetch first/i.test(message)) {
-    return "Ветка " + branch + " на GitHub ушла вперёд: отправка отклонена, чтобы не потерять чужие коммиты. Создайте откат ещё раз или отправьте изменения из терминала.";
+    return "Ветка " + branch + " в удалённом репозитории ушла вперёд: отправка отклонена, чтобы не потерять чужие коммиты. Создайте откат ещё раз или отправьте изменения из терминала.";
   }
-  if (/401|Unauthorized|bad credentials/i.test(message)) return "GitHub не принял токен: переподключите GitHub в настройках.";
+  if (/401|Unauthorized|bad credentials/i.test(message)) return "Репозиторий не принял токен: переподключите GitHub или GitLab в настройках.";
   if (/403|Forbidden|permission/i.test(message)) return "У токена нет прав на запись в этот репозиторий.";
   if (/ENOTFOUND|EAI_AGAIN|ETIMEDOUT|ECONNREFUSED|fetch failed|network/i.test(message)) {
-    return "Сервер не смог связаться с GitHub: изменения сохранены локально, отправьте их позже.";
+    return "Сервер не смог связаться с репозиторием: изменения сохранены локально, отправьте их позже.";
   }
   return message;
 }

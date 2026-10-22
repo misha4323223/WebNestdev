@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { ExternalLink, KeyRound } from "lucide-react";
+import { ChevronDown, ExternalLink, KeyRound, Minus, Plus } from "lucide-react";
 import { BrandLogo, type BrandId } from "../../components/BrandLogo";
 
 export type KeyProviderField = {
@@ -131,14 +131,29 @@ export function KeyCard({ provider, state, onChanged, endpoint, keyLabel = "Гд
 
   return <article className={"connector key-card" + (connected ? " is-connected" : "")}>
     <div className="connector-head">
-      <BrandLogo brand={provider.logo} size={32} />
-      <div className="connector-meta">
-        <strong>{provider.name}</strong>
-        <span className="connector-state">{connected ? <><span className="connector-dot"/>{state?.account ? "Подключено · " + state.account : "Подключено"}</> : provider.tagline}</span>
-      </div>
-      {connected
-        ? <button className="ghost-button connector-action" onClick={() => void disconnect()} disabled={busy}>Отключить</button>
-        : <button className="connector-action connector-connect" onClick={() => setOpen(value => !value)} disabled={busy}>{open ? "Скрыть" : "Подключить"}</button>}
+      {/* Логотип и название — одна кнопка: она делает то же, что раньше делала кнопка
+          «Подключить» справа. У подключённой карточки клик раскрывает замену доступа, а
+          «Отключить» остаётся отдельной кнопкой, чтобы случайный клик не снял доступ. */}
+      <button
+        type="button"
+        className="connector-identity"
+        onClick={() => setOpen(value => !value)}
+        disabled={busy}
+        aria-expanded={open}
+        aria-label={(connected ? "Доступ к " : "Подключить ") + provider.name}
+      >
+        <BrandLogo brand={provider.logo} size={32} />
+        <span className="connector-meta">
+          <strong>{provider.name}</strong>
+          <span className="connector-state">{connected ? <><span className="connector-dot"/>{state?.account ? "Подключено · " + state.account : "Подключено"}</> : provider.tagline}</span>
+        </span>
+        {/* Кружок — не отдельная кнопка, а часть той же строки: он показывает, что произойдёт
+            по нажатию (плюс раскрывает подключение, шеврон — доступ к настройкам). */}
+        <span className={"connector-socket" + (connected ? " is-on" : "") + (open ? " is-open" : "")} aria-hidden="true">
+          {connected ? <ChevronDown size={14} className="connector-caret"/> : open ? <Minus size={14}/> : <Plus size={14}/>}
+        </span>
+      </button>
+      {connected && <button className="ghost-button connector-action" onClick={() => void disconnect()} disabled={busy}>Отключить</button>}
     </div>
 
     {connected && <div className="connector-actions-row">

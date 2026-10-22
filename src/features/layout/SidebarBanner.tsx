@@ -1,16 +1,19 @@
+import { useState } from "react";
+import { ArrowUpRight, HeartHandshake } from "lucide-react";
+import { DonateDialog } from "../support/DonateDialog";
+
 /**
- * Баннер внизу сайдбара.
+ * Баннер внизу сайдбара — вход в поддержку проекта, а не витрина рекламы.
  *
- * Это витрина, а не реклама: ни счётчиков «01/03», ни кнопки. Место рассчитано на будущую строку
- * логотипов сервисов и брендов — пока в нём живёт технологичная картинка: сетка, орбиты и узлы,
- * тот же язык, что у тёмной панели вокруг.
- *
- * Подпись обязательна: без неё картинка читалась как случайное изображение. По просьбе владельца
- * подпись — ровно одна строка и без пояснений: «место под вашу рекламу».
+ * Вся карточка — одна кнопка: картинка, подпись и стрелка ведут к окну доната. Техно-язык
+ * (сетка, орбиты, узлы) остался, но теперь у него есть смысл и действие, а не место под чужой
+ * логотип.
  */
 export function SidebarBanner() {
-  return <div className="sidebar-banner">
-    <div className="sidebar-banner-art">
+  const [open, setOpen] = useState(false);
+  return <>
+  <button type="button" className="sidebar-banner" onClick={() => setOpen(true)} aria-haspopup="dialog" title="Поддержать проект">
+    <span className="sidebar-banner-art" aria-hidden="true">
       <svg viewBox="0 0 300 108" preserveAspectRatio="xMidYMid slice" role="presentation" aria-hidden="true">
         <defs>
           <linearGradient id="sidebar-banner-line" x1="0" y1="0" x2="1" y2="1">
@@ -60,9 +63,13 @@ export function SidebarBanner() {
         <circle cx="255" cy="70" r="1.9" fill="#6fb6c9"/>
         <circle cx="219" cy="92" r="1.6" fill="#8fd3ad" opacity="0.8"/>
       </svg>
-    </div>
-    <div className="sidebar-banner-copy">
-      <span>Место под вашу рекламу</span>
-    </div>
-  </div>;
+    </span>
+    <span className="sidebar-banner-copy">
+      <span className="sidebar-banner-kicker"><HeartHandshake size={11}/> Проект растёт благодаря вам</span>
+      <strong>Ваша помощь проекту</strong>
+      <small>Поддержать <ArrowUpRight size={11}/></small>
+    </span>
+  </button>
+  <DonateDialog open={open} onClose={() => setOpen(false)}/>
+  </>;
 }

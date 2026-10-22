@@ -36,6 +36,8 @@ export type ChangesOverview = {
   /** Есть ли в проекте созданная нами история. Пока её нет, откатывать нечего. */
   initialized: boolean;
   repository: {
+    /** Куда уходят коммиты; старые проекты без поля — GitHub. */
+    provider?: "github" | "gitlab";
     connected: boolean;
     branch: string;
     remoteUrl: string | null;

@@ -11,7 +11,7 @@ process.env.NODE_ENV = "test";
 delete process.env.WEBNESTDEV_STORAGE;
 delete process.env.DATABASE_URL;
 
-const { appendConversationMessages, createConversation, createProject, getConversation, saveConversationPlan } = await import("../project-store.js");
+const { appendConversationMessages, createConversation, createProject, deleteConversation, getConversation, listConversations, saveConversationPlan } = await import("../project-store.js");
 
 after(async () => { await rm(dataDir, { recursive: true, force: true }); });
 
@@ -66,6 +66,22 @@ test("appending to a conversation keeps the stored plan", async () => {
   const stored = await getConversation(conversation.id);
   assert.equal(stored?.plan?.items[0]?.title, "Шаг");
   assert.equal(stored?.messages.at(-1)?.content, "Продолжаю.");
+});
+
+test("deleting a chat removes only that chat and its messages", async () => {
+  const project = await createProject("delete-chat", undefined, "user-1");
+  const keep = await createConversation(project.id);
+  const remove = await createConversation(project.id);
+  await appendConversationMessages(keep.id, [{ role: "user", content: "останься" }]);
+  await appendConversationMessages(remove.id, [{ role: "user", content: "удали меня" }]);
+
+  assert.equal(await deleteConversation(remove.id), true);
+  assert.equal(await getConversation(remove.id), null);
+  assert.equal((await getConversation(keep.id))?.messages[0]?.content, "останься");
+  assert.deepEqual((await listConversations(project.id)).map(item => item.id), [keep.id]);
+
+  // A second delete reports that there is nothing left instead of pretending to succeed.
+  assert.equal(await deleteConversation(remove.id), false);
 });
 
 test("a long tool result is stored in a readable, bounded form", async () => {

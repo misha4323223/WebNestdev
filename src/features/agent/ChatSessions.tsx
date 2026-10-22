@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState } from "react";
-import { Plus, X } from "lucide-react";
-import { createConversation, listConversations, type ConversationSummary } from "../../lib/project-api";
+import { Plus, Trash2, X } from "lucide-react";
+import { createConversation, deleteConversation, listConversations, type ConversationSummary } from "../../lib/project-api";
 import { NestLoader } from "../../components/NestLoader";
+import { conversationMemoryKey } from "../workspace/useWorkspace";
+import { publicUserMessage } from "../../lib/agent-kickoff";
 
 /**
  * Чаты проекта — не часть одного запуска, а навигация рабочей области: список живёт
@@ -47,6 +49,7 @@ export function ChatSessionsModal({ open, projectId, conversationId, sessions, s
   onOpenConversation: (id: string) => void;
 }) {
   const [busy, setBusy] = useState(false);
+  const [deleting, setDeleting] = useState("");
   const [error, setError] = useState("");
 
   useEffect(() => { if (open) setError(""); }, [open]);
@@ -73,6 +76,47 @@ export function ChatSessionsModal({ open, projectId, conversationId, sessions, s
     }
   }
 
+  /**
+   * Удаление чата не трогает проект: файлы, настройки и остальные переписки остаются. Если
+   * удалён открытый чат, рабочая область переходит к следующему, а когда других нет — сразу
+   * создаёт новый, иначе панель осталась бы с идентификатором несуществующей сессии.
+   */
+  async function removeSession(session: ConversationSummary) {
+    if (deleting) return;
+    const label = session.label || session.title || "этот чат";
+    if (!window.confirm(`Удалить чат «${label}»?\n\nПереписка и план этого чата будут удалены. Файлы проекта и остальные чаты останутся. Это действие нельзя отменить.`)) return;
+    setDeleting(session.id);
+    setError("");
+    try {
+      await deleteConversation(session.id);
+      const remaining = (sessions ?? []).filter(item => item.id !== session.id);
+      try {
+        localStorage.removeItem("webnestdev.pendingStart." + session.id);
+        if (session.id === conversationId) {
+          localStorage.removeItem("webnestdev.conversationId");
+          localStorage.removeItem(conversationMemoryKey(projectId));
+        }
+      } catch {}
+      if (session.id === conversationId) {
+        if (remaining[0]) {
+          onOpenConversation(remaining[0].id);
+          onClose();
+        } else {
+          const created = await createConversation(projectId);
+          onOpenConversation(created.id);
+          onClose();
+        }
+      }
+      await reload();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось удалить чат");
+    } finally {
+      setDeleting("");
+    }
+  }
+
+  const notice = error || sessionsError;
+
   return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
     <section className="modal sessions-modal" role="dialog" aria-modal="true" aria-label="Чаты проекта" onMouseDown={event => event.stopPropagation()}>
       <header className="modal-head">
@@ -80,16 +124,33 @@ export function ChatSessionsModal({ open, projectId, conversationId, sessions, s
         <button className="icon-button" onClick={onClose} aria-label="Закрыть"><X size={16}/></button>
       </header>
       <div className="modal-body">
-        {sessionsError || error ? <div className="modal-state">{sessionsError || error}</div>
-          : sessions === null ? <div className="modal-state"><NestLoader size={26}/><span>Загружаем историю…</span></div>
+        {notice && <div className="session-error" role="alert">{notice}</div>}
+        {sessions === null
+          ? sessionsError ? null : <div className="modal-state"><NestLoader size={26}/><span>Загружаем историю…</span></div>
           : sessions.length === 0 ? <div className="modal-state">В проекте ещё нет сохранённых чатов.</div>
-          : <ul className="session-list">{sessions.map(session => <li key={session.id}>
-            <button className={"session-item" + (session.id === conversationId ? " active" : "")} onClick={() => openSession(session.id)} title={session.label}>
-              <span className="session-item-head"><strong>{session.label}</strong><small>{formatSessionTime(session.updatedAt)}</small></span>
-              {session.preview && <span className="session-item-preview">{session.preview}</span>}
-              <span className="session-item-meta">{session.messageCount} сообщ.{session.id === conversationId ? " · открыт сейчас" : ""}</span>
-            </button>
-          </li>)}</ul>}
+          : <ul className="session-list">{sessions.map(session => {
+            // Название и превью чата приходят из сохранённых сообщений, а первое из них бывает
+            // автозапуском с инструкциями агенту. Человеку показывается тот же очищенный текст,
+            // что и в переписке: промт не должен всплывать даже в списке чатов.
+            const label = publicUserMessage(session.label || session.title).text;
+            const preview = session.preview ? publicUserMessage(session.preview).text : "";
+            return <li key={session.id} className="session-row">
+              <button className={"session-item" + (session.id === conversationId ? " active" : "")} onClick={() => openSession(session.id)} title={label}>
+                <span className="session-item-head"><strong>{label}</strong><small>{formatSessionTime(session.updatedAt)}</small></span>
+                {preview && <span className="session-item-preview">{preview}</span>}
+                <span className="session-item-meta">{session.messageCount} сообщ.{session.id === conversationId ? " · открыт сейчас" : ""}</span>
+              </button>
+              <button
+                className="session-delete"
+                onClick={() => void removeSession(session)}
+                disabled={Boolean(deleting)}
+                title="Удалить чат"
+                aria-label={"Удалить чат «" + label + "»"}
+              >
+                {deleting === session.id ? <NestLoader size={16}/> : <Trash2 size={13}/>}
+              </button>
+            </li>;
+          })}</ul>}
       </div>
       <footer className="modal-foot">
         <p className="modal-lead">Чаты хранятся на сервере: история проекта открывается с любого устройства и переживает перезагрузку.</p>

@@ -54,6 +54,7 @@ function rewrap(value) {
 const PG_TARGETS = [
   { table: "providers", key: "project_id", fields: ["token"] },
   { table: "github_connections", key: "user_id", fields: ["access_token"] },
+  { table: "gitlab_connections", key: "user_id", fields: ["access_token"] },
   { table: "yandex_connections", key: "user_id", fields: ["secret"] },
   { table: "database_connections", key: "user_id", fields: ["password", "url"] },
   // Ключи из «Интеграций»: облака, регистраторы домена, сервисы.
