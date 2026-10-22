@@ -34,6 +34,40 @@ test("reg.ru success and error shapes", () => {
   );
 });
 
+test("reg.ru service/get_list answer is read from answer.services", () => {
+  // Ответ `service/get_list` с `servtype:"domain"`: так его возвращает REG.API 2 (поля — как в
+  // примере официального клиента). Раньше разбирался только `answer.domains`, и рабочий ответ
+  // выглядел бы как пустой список доменов.
+  const domains = parseRegRuDomains({
+    charset: "utf-8",
+    result: "success",
+    answer: {
+      services: [
+        { dname: "NestDev.RU", servtype: "domain", state: "A", expiration_date: "2027-04-01" },
+        { dname: "webnest.ru", servtype: "domain", state: "A", expiration_date: "2026-12-31" },
+        { dname: "hosting-123", servtype: "hosting", state: "A", expiration_date: "2026-01-01" },
+      ],
+    },
+  });
+  assert.deepEqual(domains, [
+    { name: "nestdev.ru", expiresAt: "2027-04-01" },
+    { name: "webnest.ru", expiresAt: "2026-12-31" },
+  ]);
+});
+
+test("reg.ru command failure is reported as it came from the API", () => {
+  // Именно этот ответ пришёл на `domain/get_list`: команды с таким именем в REG.API нет.
+  assert.throws(
+    () => parseRegRuDomains({
+      charset: "utf-8",
+      result: "error",
+      error_code: "NO_SUCH_COMMAND",
+      error_text: "Command domain/get_list not found",
+    }),
+    /Command domain\/get_list not found.*NO_SUCH_COMMAND/,
+  );
+});
+
 test("the reg.ru ip refusal names the server address to allow", () => {
   const denied = "REG.RU отклонил доступ: Access to API from this IP denied (код ACCESS_DENIED_FROM_IP)";
   const hinted = regRuAccessHint(denied, "203.0.113.7");
