@@ -229,9 +229,9 @@ export function ThemePanel({ projectId, onClose, onApplied }: {
         <div className="theme-empty-icon"><Palette size={20}/></div>
         <strong>В стилях не нашлось цветов для палитры</strong>
         <p>
-          Панель уже попробовала собрать палитру из цветов страницы: в CSS и блоках
-          <code> &lt;style&gt; </code> их нет — цвета заданы классами или inline-стилями. Агент
-          переведёт цвета, шрифты и скругления на переменные и подключит файл темы.
+          Панель уже проверила CSS, inline-стили и классы Tailwind: цветов для палитры там нет —
+          они собраны в коде или приходят из картинок. Агент переведёт цвета, шрифты и скругления
+          на переменные и подключит файл темы.
         </p>
         <div className="theme-empty-actions">
           <button className="ghost-button theme-empty-retry" onClick={() => void create(theme)}>Попробовать снова</button>

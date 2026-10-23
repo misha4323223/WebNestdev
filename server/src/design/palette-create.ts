@@ -1,6 +1,7 @@
 import path from "node:path";
 import { readFileInside, writeFileInside } from "../sandbox/path-guard.js";
 import { colorToHex, readPalette, scanProjectFiles, type ScannedFile } from "./palette.js";
+import { tailwindColor } from "./tailwind-colors.js";
 import { THEME_FIELDS, THEME_FILE } from "./theme.js";
 
 /**
@@ -13,11 +14,15 @@ import { THEME_FIELDS, THEME_FILE } from "./theme.js";
  * совпали со значениями токенов, на `var(--color-…)`.
  *
  * Что здесь важно:
- * - меняются только значения цветовых свойств (`background*`, `color`, `border*`, `outline*`,
- *   `fill`, `stroke`), только в CSS и блоках `<style>` — не в JS/TSX и не в атрибутах: там
- *   замена строки может сломать код, а не покрасить страницу;
- * - каждый переписанный файл получает подключение `theme.css` (CSS — `@import`, HTML — `<link>`),
- *   поэтому переменные определены и на отдельной странице, которая грузит этот файл без главного;
+ * - меняются только цвета в цветовых свойствах (`background*`, `color`, `border*`, `outline*`,
+ *   `fill`, `stroke`), в inline-стилях (`style="…"` и `style={{ … }}`) и в утилитах Tailwind
+ *   (`bg-slate-900`, `text-[#fff]`). Меняется сам цвет, а не строка целиком: остальной класс,
+ *   объявление и код вокруг остаются как были;
+ * - Tailwind-классы переписываются только в проекте, где Tailwind действительно подключён:
+ *   иначе `bg-white` может быть своим классом из рукописного CSS;
+ * - каждый переписанный файл получает подключение `theme.css` (CSS — `@import`, HTML — `<link>`,
+ *   JSX/TSX — `import`), поэтому переменные определены и на отдельной странице, которая грузит
+ *   этот файл без главного;
  * - комментарии и `url(...)` не трогаются: hex внутри data-URI — это не цвет проекта;
  * - значения пишутся через path-guard: они попадают в файлы, которые исполняет браузер.
  */
@@ -40,8 +45,28 @@ const DECLARATION = /([-\w]+)\s*:\s*([^;{}]+)/g;
 const COLOR = /#[0-9a-fA-F]{3,8}\b|(?:rgba?|hsla?)\([^)]*\)/g;
 /** Блок `<style>` в разметке: только его содержимое и переписывается. */
 const STYLE_BLOCK = /<style[^>]*>([\s\S]*?)<\/style>/gi;
+/** Файлы разметки, где цвета живут в классах и inline-стилях. */
+const MARKUP_FILE = /\.(html?|htm|jsx|tsx)$/i;
+/** `style="…"` в разметке и в JSX: тот же список объявлений, что и в CSS. */
+const STYLE_ATTRIBUTE = /\bstyle\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
+/** `style={{ … }}`: в JSX стили заданы объектом, ключи — CSS-свойства в camelCase. */
+const STYLE_OBJECT = /\bstyle\s*=\s*\{\{([\s\S]*?)\}\}/g;
+/** Пара `ключ: "значение"` внутри объекта стилей. */
+const OBJECT_ENTRY = /([A-Za-z_$][\w$]*)\s*:\s*(?:"([^"]*)"|'([^']*)'|`([^`]*)`)/g;
+/** `class="…"`, `className="…"` и шаблон в фигурных скобках. */
+const CLASS_ATTRIBUTE = /\bclass(?:Name)?\s*=\s*(?:"([^"]*)"|'([^']*)'|`([^`]*)`)/g;
+/** Утилита Tailwind, которая красит: `bg-slate-900`, `text-[#fff]`, `border-white`. */
+const COLOR_UTILITY = /^(bg|text|border(?:-[trblxyse])?|ring(?:-\d+)?|outline(?:-\d+)?|divide(?:-[xy])?|fill|stroke|decoration|placeholder)-(.+)$/;
 
-type Literal = { file: string; start: number; length: number; hex: string; family: Family };
+type Literal = {
+  file: string;
+  start: number;
+  length: number;
+  hex: string;
+  family: Family;
+  /** `class` — вместо имени цвета пишется `[var(--…)]`: в Tailwind цвет задан утилитой. */
+  wrap?: "class";
+};
 
 /**
  * Тот же текст, но комментарии и `url(...)` заменены пробелами. Длина сохраняется, поэтому
@@ -57,7 +82,9 @@ function familyOf(property: string): Family | null {
   const name = property.toLowerCase();
   if (name === "background" || name === "background-color" || name === "background-image") return "background";
   if (name === "color") return "text";
-  if (name === "border" || name.startsWith("border-") || name === "outline" || name.startsWith("outline-") || name === "box-shadow" || name === "text-shadow") return "border";
+  // Тени не в счёт: цвет тени — это оттенок глубины, а не палитра проекта. В Tailwind-проекте
+  // `boxShadow: "0 1px 2px #020617"` иначе забирал себе токен границ.
+  if (name === "border" || name.startsWith("border-") || name === "outline" || name.startsWith("outline-")) return "border";
   if (name === "fill" || name === "stroke") return "other";
   return null;
 }
@@ -75,26 +102,157 @@ function styleRanges(file: ScannedFile): Array<[number, number]> {
   return ranges;
 }
 
-function literalsOf(files: ScannedFile[]) {
-  const literals: Literal[] = [];
-  for (const file of files) {
-    const masked = mask(file.text);
-    for (const [start, end] of styleRanges(file)) {
-      if (end <= start) continue;
-      for (const declaration of masked.slice(start, end).matchAll(DECLARATION)) {
-        const property = declaration[1];
-        if (property.startsWith("--")) continue;
-        const family = familyOf(property);
-        if (!family) continue;
-        const value = declaration[2];
-        const valueStart = start + (declaration.index ?? 0) + declaration[0].length - value.length;
-        for (const color of value.matchAll(COLOR)) {
-          const hex = colorToHex(color[0]);
-          if (!hex) continue;
-          literals.push({ file: file.file, start: valueStart + (color.index ?? 0), length: color[0].length, hex, family });
-        }
+/**
+ * Цвета в объявлениях диапазона: CSS-файл, блок `<style>` или значение атрибута `style`.
+ * Маска приходит снаружи — её смещения совпадают со смещениями в самом файле.
+ */
+function declarationsIn(file: string, masked: string, start: number, end: number) {
+  const found: Literal[] = [];
+  if (end <= start) return found;
+  for (const declaration of masked.slice(start, end).matchAll(DECLARATION)) {
+    const property = declaration[1];
+    if (property.startsWith("--")) continue;
+    const family = familyOf(property);
+    if (!family) continue;
+    const value = declaration[2];
+    const valueStart = start + (declaration.index ?? 0) + declaration[0].length - value.length;
+    for (const color of value.matchAll(COLOR)) {
+      const hex = colorToHex(color[0]);
+      if (!hex) continue;
+      found.push({ file, start: valueStart + (color.index ?? 0), length: color[0].length, hex, family });
+    }
+  }
+  return found;
+}
+
+/** Смещение содержимого атрибута в файле: поиск идёт после `=`, а не с имени атрибута. */
+function contentStart(match: RegExpExecArray, content: string) {
+  return (match.index ?? 0) + match[0].indexOf(content, match[0].indexOf("="));
+}
+
+/**
+ * Inline-стили разметки: `style="color:#fff"` в HTML и `style={{ color: "#fff" }}` в JSX.
+ * Здесь цвет часто единственное место, где он вообще записан: классы берут его из утилит.
+ */
+function inlineStylesIn(file: string, masked: string) {
+  const found: Literal[] = [];
+  for (const attribute of masked.matchAll(STYLE_ATTRIBUTE)) {
+    const content = attribute[1] ?? attribute[2] ?? "";
+    if (!content) continue;
+    const start = contentStart(attribute, content);
+    found.push(...declarationsIn(file, masked, start, start + content.length));
+  }
+  for (const attribute of masked.matchAll(STYLE_OBJECT)) {
+    const body = attribute[1] ?? "";
+    if (!body) continue;
+    const start = contentStart(attribute, body);
+    for (const entry of body.matchAll(OBJECT_ENTRY)) {
+      // `backgroundColor` — это CSS-свойство `background-color`: семейство берётся по нему же.
+      const family = familyOf(entry[1].replace(/[A-Z]/g, char => "-" + char.toLowerCase()));
+      if (!family) continue;
+      const value = entry[2] ?? entry[3] ?? entry[4] ?? "";
+      // Перед значением стоит кавычка: её позиция и есть `конец вхождения − длина значения − 1`.
+      const valueStart = start + (entry.index ?? 0) + entry[0].length - value.length - 1;
+      for (const color of value.matchAll(COLOR)) {
+        const hex = colorToHex(color[0]);
+        if (!hex) continue;
+        found.push({ file, start: valueStart + (color.index ?? 0), length: color[0].length, hex, family });
       }
     }
+  }
+  return found;
+}
+
+/** Варианты Tailwind (`dark:hover:`) — не цвет: утилита начинается после последнего `:`. */
+function stripVariants(token: string) {
+  let depth = 0;
+  let cut = -1;
+  for (let index = 0; index < token.length; index++) {
+    const char = token[index];
+    if (char === "[" || char === "(") depth++;
+    else if (char === "]" || char === ")") depth--;
+    else if (char === ":" && depth === 0) cut = index;
+  }
+  return cut === -1 ? { utility: token, offset: 0 } : { utility: token.slice(cut + 1), offset: cut + 1 };
+}
+
+/**
+ * Цвет и модификатор прозрачности (`/80`) в хвосте утилиты. С прозрачностью класс не трогается:
+ * `bg-[var(--color-surface)]/80` Tailwind понимает не так, как `bg-slate-900/80`, и заголовок
+ * потерял бы фон. Цвет с прозрачностью остаётся литералом, пока его не приведёт агент.
+ */
+function splitAlpha(rest: string) {
+  let depth = 0;
+  for (let index = rest.length - 1; index >= 0; index--) {
+    const char = rest[index];
+    if (char === "]" || char === ")") depth++;
+    else if (char === "[" || char === "(") depth--;
+    else if (char === "/" && depth === 0) return { color: rest.slice(0, index), alpha: rest.slice(index) };
+  }
+  return { color: rest, alpha: "" };
+}
+
+/** Семейство по префиксу утилиты: фон не должен подменять цвет текста. */
+function utilityFamily(prefix: string): Family | null {
+  if (prefix === "bg") return "background";
+  if (prefix === "text" || prefix === "decoration" || prefix === "placeholder") return "text";
+  if (/^(border|ring|outline|divide)/.test(prefix)) return "border";
+  if (prefix === "fill" || prefix === "stroke") return "other";
+  return null;
+}
+
+/** Цвета в классах Tailwind: `bg-slate-900`, `text-[#0b0d10]/80`, `border-white`. */
+function classColorsIn(file: string, masked: string) {
+  const found: Literal[] = [];
+  for (const attribute of masked.matchAll(CLASS_ATTRIBUTE)) {
+    const content = attribute[1] ?? attribute[2] ?? attribute[3] ?? "";
+    if (!content) continue;
+    const start = contentStart(attribute, content);
+    for (const token of content.matchAll(/\S+/g)) {
+      const { utility, offset } = stripVariants(token[0]);
+      const match = COLOR_UTILITY.exec(utility);
+      if (!match) continue;
+      const family = utilityFamily(match[1]);
+      if (!family) continue;
+      const { color, alpha } = splitAlpha(match[2]);
+      if (alpha) continue;
+      const colorStart = start + (token.index ?? 0) + offset + match[1].length + 1;
+      if (color.startsWith("[") && color.endsWith("]")) {
+        // Произвольное значение: `bg-[#0b0d10]` — цвет записан прямо в квадратных скобках.
+        const inner = color.slice(1, -1);
+        const hex = colorToHex(inner);
+        if (!hex) continue;
+        found.push({ file, start: colorStart + 1, length: inner.length, hex, family });
+        continue;
+      }
+      const hex = tailwindColor(color);
+      if (!hex) continue;
+      found.push({ file, start: colorStart, length: color.length, hex, family, wrap: "class" });
+    }
+  }
+  return found;
+}
+
+/**
+ * Подключён ли в проекте Tailwind. Проверка нужна перед переписыванием классов: класс `bg-white`
+ * у проекта без Tailwind может быть своим правилом в CSS, и `bg-[var(--color-bg)]` его не заменит.
+ */
+function tailwindProject(files: ScannedFile[]) {
+  return files.some(file =>
+    /(^|\/)tailwind\.config\.(?:c|m)?[jt]s$/.test(file.file) ||
+    /@tailwind\s|@import\s+["']tailwindcss|tailwindcss\//.test(file.text),
+  );
+}
+
+function literalsOf(files: ScannedFile[]) {
+  const literals: Literal[] = [];
+  const withTailwind = tailwindProject(files);
+  for (const file of files) {
+    const masked = mask(file.text);
+    for (const [start, end] of styleRanges(file)) literals.push(...declarationsIn(file.file, masked, start, end));
+    if (!MARKUP_FILE.test(file.file)) continue;
+    literals.push(...inlineStylesIn(file.file, masked));
+    if (withTailwind) literals.push(...classColorsIn(file.file, masked));
   }
   return literals;
 }
@@ -198,7 +356,22 @@ function linkTheme(html: string, relative: string) {
 
 function connect(file: string, content: string) {
   const relative = relativeThemePath(file);
-  return /\.(html?|htm)$/i.test(file) ? linkTheme(content, relative) : importTheme(content, relative);
+  if (/\.(html?|htm)$/i.test(file)) return linkTheme(content, relative);
+  if (/\.(m?[jt]sx?)$/i.test(file)) return importModuleTheme(content, relative);
+  return importTheme(content, relative);
+}
+
+/**
+ * Подключение темы из JSX/TSX: `import "./theme.css"` в файле, где переписаны цвета. Один и тот
+ * же модуль сборщик подключает один раз, поэтому импорт в соседнем компоненте ничего не дублирует.
+ * Директива `"use client"` остаётся первой строкой — иначе она перестаёт работать.
+ */
+function importModuleTheme(code: string, relative: string) {
+  if (/theme\.css/.test(code)) return code;
+  const line = 'import "' + relative + '";';
+  const directive = /^(\s*["'][^"'\n]+["'];?\s*\n)/.exec(code);
+  if (directive) return directive[0] + line + "\n" + code.slice(directive[0].length);
+  return line + "\n" + code;
 }
 
 /**
@@ -223,8 +396,14 @@ export function planPalette(files: ScannedFile[]): PalettePlan | null {
   // Второй фон — это карточки и панели, почти всегда нейтральный. Яркий второй фон — скорее
   // кнопка, то есть акцент: если взять его поверхностью, акцент в палитре вообще не появится,
   // а кнопки начнут красть цвет у карточек.
+  // Поверхностью второй фон является, если он почти нейтрален или просто близок к фону по
+  // светлоте — как карточка `bg-slate-900` на тёмном `bg-slate-950`. Яркий и далёкий от фона
+  // второй фон остаётся акцентом: у монохромного проекта иначе не из чего собрать палитру.
   const surfaceCandidate = second(backgrounds, bg);
-  const surface = surfaceCandidate && saturation(surfaceCandidate) <= 0.25 ? surfaceCandidate : mix(bg, text, 0.06);
+  const near = surfaceCandidate ? Math.abs(luminance(surfaceCandidate) - luminance(bg)) : 1;
+  const surface = surfaceCandidate && (saturation(surfaceCandidate) <= 0.25 || near <= 0.1)
+    ? surfaceCandidate
+    : mix(bg, text, 0.06);
   const border = top(borders) ?? mix(bg, text, 0.16);
 
   // Акцент выбирается раньше «второстепенного текста»: если у проекта один яркий цвет, он
@@ -263,12 +442,12 @@ export function planPalette(files: ScannedFile[]): PalettePlan | null {
     other: [["--color-accent", accent]],
   };
 
-  const byFile = new Map<string, Array<{ start: number; length: number; variable: string }>>();
+  const byFile = new Map<string, Array<{ start: number; length: number; variable: string; wrap?: "class" }>>();
   for (const literal of literals) {
     const variable = allowed[literal.family].find(([, hex]) => hex === literal.hex)?.[0];
     if (!variable) continue;
     const list = byFile.get(literal.file) ?? [];
-    list.push({ start: literal.start, length: literal.length, variable });
+    list.push({ start: literal.start, length: literal.length, variable, wrap: literal.wrap });
     byFile.set(literal.file, list);
   }
   if (!byFile.size) return null;
@@ -287,7 +466,8 @@ export function planPalette(files: ScannedFile[]): PalettePlan | null {
     // Замены идут с конца: смещение ранних литералов не съезжает.
     let content = source;
     for (const replacement of [...replacements].sort((left, right) => right.start - left.start)) {
-      content = content.slice(0, replacement.start) + "var(" + replacement.variable + ")" + content.slice(replacement.start + replacement.length);
+      const value = "var(" + replacement.variable + ")";
+      content = content.slice(0, replacement.start) + (replacement.wrap === "class" ? "[" + value + "]" : value) + content.slice(replacement.start + replacement.length);
     }
     rewritten.push({ file, content: connect(file, content) });
   }
@@ -345,7 +525,9 @@ async function createPalette(root: string): Promise<CreatePaletteResult> {
   if (!plan) {
     return {
       created: false,
-      reason: "В стилях проекта не нашлось цветов, которые можно перевести на переменные: цвета заданы классами или inline-стилями. Перевести их на тему сможет агент.",
+      reason:
+        "В стилях проекта не нашлось цветов, которые можно перевести на переменные: цветов нет ни в CSS, " +
+        "ни в inline-стилях, ни в классах Tailwind. Перевести их на тему сможет агент.",
     };
   }
 

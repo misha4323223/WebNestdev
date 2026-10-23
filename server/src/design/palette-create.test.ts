@@ -97,11 +97,11 @@ test("палитра из блока <style> подключится ссылко
   assert.equal(palette.tokens.some(token => token.used), true);
 });
 
-test("если цветов в стилях нет, причина возвращается, а файлы не пишутся", async () => {
+test("если цветов нет ни в стилях, ни в классах, причина возвращается, а файлы не пишутся", async () => {
   const root = await project({
-    "index.html": "<!doctype html><html><body><div class=\"bg-white text-slate-900\">x</div></body></html>",
-    "app.css": ".bg-white{background:var(--tw-white)}",
-    "App.tsx": "export const App = () => <div style={{ background: \"#fff\" }} />;",
+    "index.html": "<!doctype html><html><body><div class=\"row\">x</div></body></html>",
+    "app.css": ".row{display:flex;gap:8px}",
+    "App.tsx": "export const App = () => <div style={{ padding: 8 }} />;",
   });
   const outcome = await createProjectPalette(root);
   assert.equal(outcome.created, false);
@@ -109,10 +109,58 @@ test("если цветов в стилях нет, причина возвра�
   await assert.rejects(stat(path.join(root, "theme.css")));
 });
 
-test("план перевода не берёт цвета из inline-стилей разметки", async () => {
+test("цвета из inline-стилей разметки попадают в палитру и переводятся на var()", async () => {
   const root = await project({
-    "index.html": "<!doctype html><html><body><div style=\"background:#ff0000;color:#00ff00\">x</div></body></html>",
+    "index.html": [
+      "<!doctype html><html><head></head><body>",
+      '<div style="background:#f7f3ec;color:#221c15">x</div>',
+      '<a style="background:#2f6f4f;color:#ffffff">y</a>',
+      "</body></html>",
+    ].join("\n"),
+  });
+  const outcome = await createProjectPalette(root);
+  assert.equal(outcome.created, true);
+
+  const html = await readFile(path.join(root, "index.html"), "utf8");
+  assert.match(html, /<link rel="stylesheet" href="\.\/theme\.css">/);
+  assert.match(html, /style="background:var\(--color-bg\);color:var\(--color-text\)"/);
+  assert.match(html, /style="background:var\(--color-accent\);color:#ffffff"/, "цвет кнопки становится акцентом");
+  assert.match(await readFile(path.join(root, "theme.css"), "utf8"), /--color-bg:#f7f3ec;/);
+});
+
+test("проект на Tailwind: цвета из классов и inline-стилей JSX переходят на тему", async () => {
+  const root = await project({
+    "src/index.css": "@tailwind base;\n@tailwind components;\n@tailwind utilities;\n",
+    "src/App.tsx": [
+      '"use client";',
+      "export function App(){",
+      '  return <main className="bg-slate-950 text-slate-100">',
+      '    <button className="bg-emerald-500 text-white hover:bg-emerald-400" style={{ borderColor: "#1e293b" }}>ok</button>',
+      "  </main>;",
+      "}",
+    ].join("\n"),
+  });
+  const outcome = await createProjectPalette(root);
+  assert.equal(outcome.created, true);
+
+  const tsx = await readFile(path.join(root, "src/App.tsx"), "utf8");
+  assert.match(tsx, /^"use client";\nimport "\.\.\/theme\.css";/, "директива остаётся первой строкой, тема подключается импортом");
+  assert.match(tsx, /className="bg-\[var\(--color-bg\)\] text-\[var\(--color-text\)\]"/);
+  assert.match(tsx, /bg-\[var\(--color-accent\)\] text-\[var\(--color-muted\)\] hover:bg-emerald-400/, "свой вариант без токена не трогается");
+  assert.match(tsx, /style=\{\{ borderColor: "var\(--color-border\)" \}\}/);
+
+  const theme = await readFile(path.join(root, "theme.css"), "utf8");
+  assert.match(theme, /--color-bg:#020617;/, "слейт-950 из класса становится фоном");
+  assert.match(theme, /--color-accent:#10b981;/, "единственный яркий цвет становится акцентом");
+});
+
+test("классы не переписываются там, где Tailwind не подключён", async () => {
+  const root = await project({
+    "index.html": '<!doctype html><html><body><div class="bg-white">x</div></body></html>',
+    "styles.css": ".bg-white{background:#ffffff}\nbody{background:#f7f3ec;color:#221c15}",
   });
   const files = await scanProjectFiles(root);
-  assert.equal(planPalette(files), null);
+  const plan = planPalette(files);
+  assert.ok(plan);
+  assert.equal(plan.files.some(file => file.file === "index.html"), false, "свой класс bg-white из рукописного CSS не превращается в утилиту Tailwind");
 });
