@@ -269,7 +269,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   const [questionPrompt,setQuestionPrompt]=useState<AgentQuestion|null>(null);
   const [questionBusy,setQuestionBusy]=useState(false);
   const [questionError,setQuestionError]=useState("");
-  const [quotaNotice,setQuotaNotice]=useState<"storage"|"daily"|null>(null);
+  const [quotaNotice,setQuotaNotice]=useState<"storage"|"daily"|"tokens"|null>(null);
   // The project's saved chats. The list comes from the server, so a chat is something
   // the user can return to from another device, not just from this browser.
   // Остановленный запуск — не потеря задачи: история и план уже на сервере, поэтому панель
@@ -787,17 +787,19 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
         const errorMsg = event.error ?? "соединение потеряно";
         const isStorageLimit = event.code === "STORAGE_LIMIT_REACHED";
         const isDailyQuota = event.code === "DAILY_QUOTA_EXCEEDED";
+        // Пул токенов тарифа: сброс не сегодня, а с первого числа месяца, поэтому подсказка другая.
+        const isTokenBudget = event.code === "TOKEN_BUDGET_EXHAUSTED";
         // The server is at its parallel-run limit: the queue was full or the wait ran out.
         const isBusy = event.code === "SERVER_BUSY";
         // One account runs one agent at a time, so a second tab or project is turned away.
         const isAccountBusy = event.code === "RUN_ALREADY_ACTIVE";
-        const quotaKind = isStorageLimit ? "storage" : isDailyQuota ? "daily" : null;
-        updateMessages(current=>[...current,{role:"assistant",content:(quotaKind==="storage"?"Достигнут лимит хранилища вашего тарифа. ":quotaKind==="daily"?"Дневной лимит запусков агента исчерпан. ":isAccountBusy?"Агент уже работает в этом аккаунте. ":isBusy?"Сервер занят. ":"Ошибка: ")+errorMsg}]);
+        const quotaKind = isStorageLimit ? "storage" : isTokenBudget ? "tokens" : isDailyQuota ? "daily" : null;
+        updateMessages(current=>[...current,{role:"assistant",content:(quotaKind==="storage"?"Достигнут лимит хранилища вашего тарифа. ":quotaKind==="tokens"?"Месячный пул токенов тарифа исчерпан. ":quotaKind==="daily"?"Дневной лимит запусков агента исчерпан. ":isAccountBusy?"Агент уже работает в этом аккаунте. ":isBusy?"Сервер занят. ":"Ошибка: ")+errorMsg}]);
         if(quotaKind)setQuotaNotice(quotaKind);
         // Тариф и очередь аккаунта требуют не «Продолжить», а действия с тарифом или ожидания: у этих
         // отказов запуск даже не начался, и кнопка продолжения только запутала бы.
         const resumable=!quotaKind&&!isAccountBusy;
-        endRun(socket,{drain:false,notice:quotaKind==="storage"?"Хранилище заполнено — обновите тариф":quotaKind==="daily"?"Дневной лимит исчерпан":isAccountBusy?"Агент уже работает в этом аккаунте — дождитесь завершения или остановите его":isBusy?"Сервер занят — повторите запуск позже":"Запуск остановлен",...(resumable?{resume:{reason:"запуск был отклонён сервером: "+errorMsg.slice(0,160),label:"Запуск остановлен — агент продолжит с того же места."}}:{})});
+        endRun(socket,{drain:false,notice:quotaKind==="storage"?"Хранилище заполнено — обновите тариф":quotaKind==="tokens"?"Пул токенов на месяц исчерпан":quotaKind==="daily"?"Дневной лимит исчерпан":isAccountBusy?"Агент уже работает в этом аккаунте — дождитесь завершения или остановите его":isBusy?"Сервер занят — повторите запуск позже":"Запуск остановлен",...(resumable?{resume:{reason:"запуск был отклонён сервером: "+errorMsg.slice(0,160),label:"Запуск остановлен — агент продолжит с того же места."}}:{})});
       }
     },()=>drop());
       socketRef.current=socket;
@@ -1272,13 +1274,15 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     {quotaNotice&&<div className="modal-backdrop" role="presentation" onMouseDown={()=>setQuotaNotice(null)}>
       <section className="modal quota-modal" role="dialog" aria-modal="true" aria-label="Лимит тарифа достигнут" onMouseDown={event=>event.stopPropagation()}>
         <header className="modal-head">
-          <div><span className="eyebrow">ЛИМИТ ТАРИФА</span><h2>{quotaNotice==="storage"?"Хранилище заполнено":"Дневной лимит исчерпан"}</h2></div>
+          <div><span className="eyebrow">ЛИМИТ ТАРИФА</span><h2>{quotaNotice==="storage"?"Хранилище заполнено":quotaNotice==="tokens"?"Пул токенов исчерпан":"Дневной лимит исчерпан"}</h2></div>
           <button className="icon-button" onClick={()=>setQuotaNotice(null)} aria-label="Закрыть"><X size={16}/></button>
         </header>
         <div className="modal-body">
           <div className="quota-modal-icon"><AlertTriangle size={18}/></div>
           <p className="modal-lead">{quotaNotice==="storage"
             ?"Лимит хранилища вашего тарифа достигнут: агент больше не может писать файлы в проект. Освободите место или обновите тариф — лимиты: Старт 700 МБ, Плюс 10 ГБ, Премиум 50 ГБ."
+            :quotaNotice==="tokens"
+            ?"Месячный пул токенов встроенной модели израсходован: он считается по фактическому расходу и возобновится первого числа следующего месяца. Точный расход виден на странице тарифов. Подключите свой AI-провайдер в настройках проекта — такие запуски идут через ваш ключ и не тратят пул платформы."
             :"Дневная квота запусков агента исчерпана. Новые запуски станут доступны после сброса по UTC или при обновлении тарифа. Лимит относится только к встроенной модели платформы: подключите свой AI-провайдер в настройках проекта — запуски пойдут через ваш ключ и модель, без дневной квоты."}</p>
         </div>
         <footer className="modal-foot">

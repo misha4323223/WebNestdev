@@ -4,6 +4,8 @@ import { requireUser } from "../auth/auth.js";
 import { deleteCloudConnection, getCloudConnection, listCloudConnections, saveCloudConnection } from "../cloud/connections.js";
 import { CLOUD_PROVIDERS, findCloudProvider, readCloudFields } from "../cloud/providers.js";
 import { verifyCloudCredential } from "../cloud/verify.js";
+import { assertIntegrationSlot } from "../account/integration-limits.js";
+import { accountPlanFor } from "../billing/store.js";
 
 /**
  * Облачные коннекторы. Ключ проверяется до сохранения: подключённым считается только то
@@ -60,6 +62,19 @@ export async function registerCloudRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: messageOf(error) });
     }
 
+    // Место на тарифе проверяется до пробного запроса: лимит — причина отказа, а не ключ.
+    const existing = await getCloudConnection(user.id, provider.id);
+    try {
+      assertIntegrationSlot({
+        plan: await accountPlanFor(user.id),
+        kind: "cloud",
+        used: (await listCloudConnections(user.id)).length,
+        replacing: Boolean(existing),
+      });
+    } catch (error) {
+      return reply.code(403).send({ error: messageOf(error) });
+    }
+
     let verified: { account: string };
     try {
       verified = await verifyCloudCredential(provider.id, fields);
@@ -67,7 +82,6 @@ export async function registerCloudRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: messageOf(error) });
     }
 
-    const existing = await getCloudConnection(user.id, provider.id);
     const now = new Date().toISOString();
     // Новое подключение разрешает изменения: карточка предупредила об этом до сохранения ключа.
     const writes = allowWrites ?? existing?.allowWrites ?? true;

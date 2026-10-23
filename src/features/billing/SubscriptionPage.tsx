@@ -10,6 +10,7 @@ import {
   rubLabel,
   shortDayLabel,
   startCheckout,
+  tokensLabel,
   updateAutoRenew,
   type BillingData,
   type PlanLimits,
@@ -158,6 +159,12 @@ export function SubscriptionPage({ onBack, onOpenPicker }: { onBack: () => void;
                 {billing.plans.map(plan => <td key={plan.id} className={plan.id === currentPlanId ? "current" : ""}>{plan.limits[row.key]}</td>)}
               </tr>)}
               <tr>
+                <th scope="row">Токенов агента в месяц</th>
+                {billing.plans.map(plan => <td key={plan.id} className={plan.id === currentPlanId ? "current" : ""}>
+                  {plan.limits.agentTokensPerMonth ? tokensLabel(plan.limits.agentTokensPerMonth) : "по дневному лимиту"}
+                </td>)}
+              </tr>
+              <tr>
                 <th scope="row">Цена</th>
                 {billing.plans.map(plan => <td key={plan.id} className={plan.id === currentPlanId ? "current" : ""}>{plan.priceLabel}{plan.id === "free" ? "" : " / мес"}</td>)}
               </tr>
@@ -172,6 +179,22 @@ export function SubscriptionPage({ onBack, onOpenPicker }: { onBack: () => void;
           <div className="usage-meter-title"><strong>Текущий день</strong><small>Сброс по UTC · {billing.usage.date}</small></div>
           <div className="usage-meter"><div><span>Запуски агента</span><strong>{billing.usage.agentRuns} / {billing.limits.agentRunsPerDay}</strong></div><div className="usage-meter-track"><span style={{ width: `${Math.min(100, billing.usage.agentRuns / Math.max(1, billing.limits.agentRunsPerDay) * 100)}%` }}/></div></div>
           <div className="usage-meter"><div><span>Браузерные проверки</span><strong>{billing.usage.browserChecks} / {billing.limits.browserChecksPerDay}</strong></div><div className="usage-meter-track"><span style={{ width: `${Math.min(100, billing.usage.browserChecks / Math.max(1, billing.limits.browserChecksPerDay) * 100)}%` }}/></div></div>
+          {/* Пул токенов — основной лимит платного тарифа и месячный, а не дневной: он живёт
+              отдельной шкалой, иначе его сброс путают с полуночью по UTC. */}
+          {(() => {
+            const budget = billing.tokens;
+            if (!budget || budget.limit <= 0) return null;
+            const state = budget.remaining <= 0 ? "full" : budget.used >= budget.limit * 0.8 ? "warning" : "ok";
+            return (
+              <div className={"usage-meter" + (state === "ok" ? "" : " is-" + state)}>
+                <div><span>Токены агента в месяц</span><strong>{tokensLabel(budget.used)} из {tokensLabel(budget.limit)}</strong></div>
+                <div className="usage-meter-track"><span style={{ width: `${Math.min(100, (budget.used / budget.limit) * 100)}%` }} /></div>
+                <small className={"usage-meter-left" + (state === "ok" ? "" : " " + state)}>{state === "full"
+                  ? "Пул исчерпан: встроенная модель недоступна до 1-го числа"
+                  : "Осталось " + tokensLabel(budget.remaining) + " · сброс 1-го числа"}</small>
+              </div>
+            );
+          })()}
           {(() => {
             const storageLimit = billing.limits.storageBytes ?? 0;
             const storageUsed = billing.storage?.usedBytes ?? 0;
@@ -188,7 +211,7 @@ export function SubscriptionPage({ onBack, onOpenPicker }: { onBack: () => void;
             );
           })()}
         </div>
-        <p className="account-muted">Запуски считаются только для встроенной модели платформы. Подключите свой AI-провайдер в настройках проекта — запуски пойдут через ваш ключ и модель, и дневная квота к ним не применяется.</p>
+        <p className="account-muted">Запуски и токены считаются только для встроенной модели платформы. Подключите свой AI-провайдер в настройках проекта — запуски пойдут через ваш ключ и модель, и ни дневная квота, ни пул токенов к ним не применяются.</p>
       </section>
 
       {Boolean(billing.payments?.length) && <section className="subscription-compare">

@@ -135,15 +135,87 @@ export async function consumeUsageForAccountPlan(userId: string, kind: UsageKind
   return consumeUsage(userId, kind, await accountPlanFor(userId), now);
 }
 
+/** Месяц и его прошедшие дни: по ним суммируется расход токенов. */
+function monthWindow(now = new Date()) {
+  const today = utcDay(now);
+  const month = today.slice(0, 7);
+  const days: string[] = [];
+  for (let day = 1; day <= Number(today.slice(8, 10)); day++) {
+    days.push(month + "-" + String(day).padStart(2, "0"));
+  }
+  return { month, first: month + "-01", today, days };
+}
+
 /**
- * Запуск агента. Дневной лимит заведён на встроенную модель платформы: она отвечает за счёт
- * платформы, поэтому её запуски считаются и ограничиваются. Проект со своим AI-провайдером тратит
- * свои токены и свой ключ, поэтому его запуски не считаются и не блокируются — вместо ошибки
- * возвращается текущий снимок использования, чтобы панель показала те же цифры, что и раньше.
+ * Сколько токенов встроенной модели аккаунт потратил с начала календарного месяца (UTC).
+ *
+ * Считается по `model_usage`, а не по отдельному счётчику: источник правды у расхода один, и
+ * ручная правка счётчика не смогла бы с ним разойтись. В журнал попадают только запуски
+ * встроенной модели платформы (`agent-runtime.ts`), поэтому пул не тратится на ключ пользователя.
+ * В YDB это один запрос по диапазону дат, в файловом режиме — чтение дней месяца (их не больше 31).
+ */
+async function monthlyTokensUsed(userId: string, now = new Date()): Promise<{ month: string; used: number }> {
+  const { month, first, today, days } = monthWindow(now);
+  if (isYdbEnabled()) {
+    const [rows] = await ydbQuery()<Array<{ prompt_tokens: number | string | bigint; completion_tokens: number | string | bigint }>>`
+      SELECT prompt_tokens, completion_tokens FROM ${ydbQuery().identifier(getTable("model_usage"))}
+      WHERE user_id = ${userId} AND usage_date >= ${first} AND usage_date <= ${today}
+    `;
+    return {
+      month,
+      used: rows.reduce((sum, row) => sum + Number(row.prompt_tokens ?? 0) + Number(row.completion_tokens ?? 0), 0),
+    };
+  }
+  let used = 0;
+  for (const date of days) {
+    const records = await readJson<UsageCostRecord[]>(path.join(root, "account", "costs", date + ".json"), []);
+    for (const record of records) {
+      if (record.userId !== userId) continue;
+      used += record.promptTokens + record.completionTokens;
+    }
+  }
+  return { month, used };
+}
+
+/**
+ * Пул токенов тарифа на текущий месяц. `limit: 0` — пула нет (бесплатный тариф живёт дневным
+ * лимитом запусков), поэтому `remaining` тоже 0 и интерфейс шкалу не рисует.
+ */
+export type TokenBudget = { month: string; used: number; limit: number; remaining: number };
+
+export async function getTokenBudget(userId: string, plan: PlanId, now = new Date()): Promise<TokenBudget> {
+  const { month, used } = await monthlyTokensUsed(userId, now);
+  const limit = limitsForPlan(plan).agentTokensPerMonth;
+  return { month, used, limit, remaining: limit > 0 ? Math.max(0, limit - used) : 0 };
+}
+
+/** Отказ по пулу токенов: отдельный код, чтобы панель сказала «пул исчерпан», а не «дневной лимит». */
+export class TokenBudgetError extends Error {
+  readonly statusCode = 429;
+  readonly code = "TOKEN_BUDGET_EXHAUSTED";
+
+  constructor(readonly used: number, readonly limit: number) {
+    super("Месячный пул токенов тарифа исчерпан");
+    this.name = "TokenBudgetError";
+  }
+}
+
+/**
+ * Запуск агента. На бесплатном тарифе считаются запуски встроенной модели: она отвечает за счёт
+ * платформы. На платном — сначала проверяется месячный пул токенов, а дневной лимит остаётся
+ * предохранителем от циклов. Проект со своим AI-провайдером тратит свои токены и свой ключ,
+ * поэтому его запуски не считаются и не блокируются — вместо ошибки возвращается текущий снимок
+ * использования, чтобы панель показала те же цифры, что и раньше.
  */
 export async function consumeAgentRun(userId: string, options: { ownProvider: boolean }, now = new Date()) {
   if (options.ownProvider) return getUsageSnapshot(userId, now);
-  return consumeUsage(userId, "agentRuns", await accountPlanFor(userId), now);
+  const plan = await accountPlanFor(userId);
+  const pool = limitsForPlan(plan).agentTokensPerMonth;
+  if (pool > 0) {
+    const { used } = await monthlyTokensUsed(userId, now);
+    if (used >= pool) throw new TokenBudgetError(used, pool);
+  }
+  return consumeUsage(userId, "agentRuns", plan, now);
 }
 
 export type RunUsageInput = {

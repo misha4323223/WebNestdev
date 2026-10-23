@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { FREE_PLAN, PLAN_CATALOG } from "./account.js";
-import { balanceFor, subscriptionFor } from "../account/plans.js";
+import { balanceFor, integrationLimitFor, subscriptionFor, tokenPoolFor } from "../account/plans.js";
+import { assertIntegrationSlot, IntegrationLimitError } from "../account/integration-limits.js";
 
 test("paid plans carry a monthly price and quotas grow with the plan", () => {
   assert.equal(PLAN_CATALOG.free.priceLabel, "0 ₽");
@@ -42,6 +43,36 @@ test("the billing account reports an active free plan and an empty balance until
   assert.equal(subscription.autoRenew, false);
   assert.equal(subscription.amountRub, 0);
   assert.deepEqual(balanceFor(), { amount: 0, currency: "RUB", paymentsConnected: false });
+});
+
+/**
+ * Пул токенов — то, что человек покупает на платном тарифе: он растёт вместе с ценой, а на
+ * бесплатном его нет вовсе (там работает дневной лимит запусков). Это проверяется отдельно,
+ * потому что ноль в каталоге означает «пула нет», а не «пул нулевой».
+ */
+test("the monthly token pool is a paid-plan benefit and grows with the plan", () => {
+  assert.equal(tokenPoolFor("free"), 0, "бесплатный тариф живёт дневным лимитом запусков");
+  assert.ok(tokenPoolFor("pro") > 0 && tokenPoolFor("team") > tokenPoolFor("pro"));
+  assert.ok(PLAN_CATALOG.pro.features.some(feature => feature.includes("токенов")));
+  assert.ok(PLAN_CATALOG.team.details.some(detail => detail.includes("токенов")));
+  // Пул — не бесконечность и не «безлимит»: в описании сказано, по какому факту он считается.
+  assert.ok(PLAN_CATALOG.pro.details.some(detail => detail.includes("фактический расход")));
+});
+
+/**
+ * Интеграции на бесплатном тарифе ограничены по числу, на платных — нет. Уже подключённое
+ * остаётся рабочим при смене тарифа: `replacing` и `used` внутри лимита проходят всегда.
+ */
+test("integration slots are a free-plan limit and never disconnect what already works", () => {
+  assert.equal(integrationLimitFor("free", "cloud"), 1);
+  assert.equal(integrationLimitFor("pro", "cloud"), null);
+  assert.doesNotThrow(() => assertIntegrationSlot({ plan: "free", kind: "cloud", used: 0, replacing: false }));
+  assert.throws(
+    () => assertIntegrationSlot({ plan: "free", kind: "cloud", used: 1, replacing: false }),
+    (error: unknown) => error instanceof IntegrationLimitError && error.statusCode === 403 && error.message.includes("«Старт»"),
+  );
+  assert.doesNotThrow(() => assertIntegrationSlot({ plan: "free", kind: "cloud", used: 1, replacing: true }));
+  assert.doesNotThrow(() => assertIntegrationSlot({ plan: "pro", kind: "cloud", used: 9, replacing: false }));
 });
 
 test("every plan ships a tagline, an audience and detailed highlights for the subscription page", () => {

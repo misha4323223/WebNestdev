@@ -161,12 +161,15 @@ export async function registerAgentWebSocket(app:FastifyInstance,runtime=new Age
         const statusCode = error && typeof error === "object" && "statusCode" in error ? (error as {statusCode?:unknown}).statusCode : undefined;
         const isQuota = statusCode === 429;
         const isStorage = error instanceof Error && error.name === "StorageLimitError";
+        // Пул токенов закончился — это не дневная квота: панель должна предложить тариф или
+        // свой ключ, а не ждать сброса по UTC.
+        const isTokenBudget = error instanceof Error && error.name === "TokenBudgetError";
         // 503 is the limiter: the queue is full at this moment, or the wait ran out.
         const isBusy = statusCode === 503;
         // Anything that carries its own code ("this account is already running an agent") is
         // passed straight through, so the panel can say what happened instead of "Ошибка".
         const ownCode = error && typeof error === "object" && "code" in error && typeof (error as {code?:unknown}).code === "string" ? (error as {code:string}).code : undefined;
-        const quotaCode = isStorage ? "STORAGE_LIMIT_REACHED" : "DAILY_QUOTA_EXCEEDED";
+        const quotaCode = isStorage ? "STORAGE_LIMIT_REACHED" : isTokenBudget ? "TOKEN_BUDGET_EXHAUSTED" : "DAILY_QUOTA_EXCEEDED";
         safeSend({type:"error",error:message,...(isQuota?{code:quotaCode}:isBusy?{code:"SERVER_BUSY"}:ownCode?{code:ownCode}:{})});
       }
       finally{controller=null;running=false;}

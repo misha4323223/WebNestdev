@@ -4,6 +4,8 @@ import { requireUser } from "../auth/auth.js";
 import { deleteDomainConnection, getDomainConnection, listDomainConnections, saveDomainConnection } from "../domains/connections.js";
 import { DOMAIN_REGISTRARS, findDomainRegistrar, readRegistrarFields } from "../domains/providers.js";
 import { verifyRegistrarCredential } from "../domains/verify.js";
+import { assertIntegrationSlot } from "../account/integration-limits.js";
+import { accountPlanFor } from "../billing/store.js";
 
 /**
  * Коннекторы регистраторов доменов. Пароль или токен проверяется до сохранения: подключённым
@@ -63,6 +65,19 @@ export async function registerDomainRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: messageOf(error) });
     }
 
+    // Место на тарифе проверяется до пробного запроса: лимит — причина отказа, а не пароль.
+    const existing = await getDomainConnection(user.id, registrar.id);
+    try {
+      assertIntegrationSlot({
+        plan: await accountPlanFor(user.id),
+        kind: "domains",
+        used: (await listDomainConnections(user.id)).length,
+        replacing: Boolean(existing),
+      });
+    } catch (error) {
+      return reply.code(403).send({ error: messageOf(error) });
+    }
+
     let verified: { account: string; domains: number };
     try {
       verified = await verifyRegistrarCredential(registrar.id, fields);
@@ -70,7 +85,6 @@ export async function registerDomainRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: messageOf(error) });
     }
 
-    const existing = await getDomainConnection(user.id, registrar.id);
     const now = new Date().toISOString();
     // Новое подключение разрешает изменения: карточка предупредила об этом до сохранения ключа.
     const writes = allowWrites ?? existing?.allowWrites ?? true;

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { consumeAgentRun, consumeUsage, getBillingHistory, getUsageSnapshot, UsageLimitError } from "./usage-store.js";
+import { consumeAgentRun, consumeUsage, getBillingHistory, getTokenBudget, getUsageSnapshot, recordRunUsage, UsageLimitError } from "./usage-store.js";
 
 test("daily agent quota blocks the next run and usage is isolated per account", async () => {
   const userId = "quota-test-" + randomUUID();
@@ -44,6 +44,31 @@ test("a run on the project's own provider does not spend the platform quota", as
   // И даже с исчерпанной квотой платформы свой провайдер продолжает работать.
   await assert.doesNotReject(() => consumeAgentRun(userId, { ownProvider: true }));
   assert.equal((await getUsageSnapshot(userId)).agentRuns, 10);
+});
+
+/**
+ * Пул токенов читается из фактического расхода модели (`model_usage`), поэтому отдельного
+ * счётчика нет и расхождение невозможно. На бесплатном тарифе пула нет: `limit: 0`, шкалу не рисуем.
+ */
+test("the monthly token budget reads real model usage, and the free plan has no pool", async () => {
+  const userId = "token-pool-" + randomUUID();
+  const empty = await getTokenBudget(userId, "free");
+  assert.equal(empty.limit, 0, "на бесплатном тарифе пула нет");
+  assert.equal(empty.remaining, 0);
+  assert.match(empty.month, /^\d{4}-\d{2}$/);
+
+  await recordRunUsage(userId, {
+    runId: randomUUID(),
+    projectId: "token-pool-project",
+    model: "test-model",
+    promptTokens: 400,
+    completionTokens: 600,
+    estimated: false,
+  });
+  const paid = await getTokenBudget(userId, "pro");
+  assert.equal(paid.used, 1000, "пул считает и промпт, и ответ модели");
+  assert.equal(paid.remaining, paid.limit - 1000);
+  assert.equal(paid.month, empty.month);
 });
 
 test("the daily web search quota grows with the plan and is counted separately", async () => {

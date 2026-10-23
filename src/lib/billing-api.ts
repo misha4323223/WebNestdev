@@ -1,7 +1,15 @@
 import { apiJson } from "./api";
 
 export type PlanId = "free" | "pro" | "team";
-export type PlanLimits = { projects: number; agentRunsPerDay: number; browserChecksPerDay: number; webSearchesPerDay: number; storageBytes?: number };
+export type PlanLimits = {
+  projects: number;
+  agentRunsPerDay: number;
+  browserChecksPerDay: number;
+  webSearchesPerDay: number;
+  storageBytes?: number;
+  /** Пул токенов встроенной модели на месяц; 0 или отсутствие — пула нет, работает дневной лимит. */
+  agentTokensPerMonth?: number;
+};
 export type Plan = {
   id: PlanId;
   name: string;
@@ -17,6 +25,8 @@ export type Plan = {
   details: string[];
 };
 export type Usage = { date: string; agentRuns: number; browserChecks: number; webSearches: number };
+/** Расход месячного пула: `limit: 0` — у тарифа пула нет, шкала не рисуется. */
+export type TokenBudget = { month: string; used: number; limit: number; remaining: number };
 /** Состояние квоты считает сервер: пороги 80% и 100% должны совпадать на всех экранах. */
 export type StorageState = "ok" | "warning" | "full";
 export type StorageProject = { id: string; name: string; sizeBytes: number; measuredAt: string | null };
@@ -86,6 +96,7 @@ export type BillingData = {
   plan?: PlanId;
   limits: PlanLimits;
   usage: Usage;
+  tokens?: TokenBudget;
   storage?: Storage;
   cost: Cost;
   subscription?: Subscription;
@@ -138,6 +149,16 @@ export const paymentsPendingNotice = "Оплата ещё не подключе�
 export const paymentNotice = (billing: BillingData | null | undefined) => billing?.paymentsEnabled
   ? "Оплата картой РФ или через СБП на защищённой странице Робокассы. Тариф включается сразу после подтверждения платежа."
   : paymentsPendingNotice;
+
+/** Токены в человеческом виде: «50 млн», а не «50000000» — так их читают в сравнении тарифов. */
+export function tokensLabel(value: number): string {
+  if (value >= 1_000_000) {
+    const millions = value / 1_000_000;
+    return (Number.isInteger(millions) ? String(millions) : millions.toFixed(1).replace(".", ",")) + " млн";
+  }
+  if (value >= 1_000) return Math.round(value / 1_000) + " тыс.";
+  return String(value);
+}
 
 export const dateLabel = (value: string | null) => value ? new Date(value).toLocaleDateString("ru-RU", { day: "numeric", month: "long", year: "numeric" }) : "—";
 export const moneyLabel = (value: number | null, currency: string) => value == null ? "—" : (value < 0.01 ? value.toFixed(4) : value.toFixed(2)) + " " + currency;

@@ -405,6 +405,16 @@ the recurring-payments service enabled. Keys are entered in **Settings → Platf
 (Robokassa)** and stored encrypted; step-by-step cabinet setup (ResultURL, passwords, receipts for
 self-employed, test mode) is in [docs/ROBOKASSA.md](docs/ROBOKASSA.md).
 
+A paid plan sells a **monthly pool of model tokens** (50 млн on «Плюс», 250 млн on «Премиум»),
+counted from the `model_usage` rows the provider actually reported rather than from button presses:
+`getTokenBudget` sums the current UTC month, `consumeAgentRun` refuses a run with
+`TOKEN_BUDGET_EXHAUSTED` once the pool is spent, and the subscription page shows the same number as
+a monthly meter. The daily run limit stays as the anti-loop guard, and a project with its own AI
+provider spends neither the pool nor a daily run. The free plan has no pool (`limit: 0`) and keeps its 10 daily runs. Free
+accounts also have integration slots — 1 cloud, 1 registrar, 3 services — enforced by
+`server/src/account/integration-limits.ts` before a credential is verified; existing connections are
+never disconnected by a downgrade. See [docs/PLANS_AND_LIMITS.md](docs/PLANS_AND_LIMITS.md).
+
 ## Changes and rollback
 
 Every finished developer run that changed files becomes a checkpoint: a regular git commit in the project's sandbox directory (`server/src/changes/git-repo.ts` uses `isomorphic-git`, so no `git` binary is required in either image). The commit is created only after the automatic build, preview and browser verification passed, so history holds states that were actually checked, not every intermediate edit.

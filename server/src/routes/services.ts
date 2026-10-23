@@ -3,6 +3,8 @@ import { requireUser } from "../auth/auth.js";
 import { SERVICE_CATEGORIES, SERVICES, findService, resolveServiceFields } from "../services/catalog.js";
 import { deleteServiceConnection, getServiceConnection, listServiceConnections, saveServiceConnection } from "../services/connections.js";
 import { verifyServiceCredential } from "../services/verify.js";
+import { assertIntegrationSlot } from "../account/integration-limits.js";
+import { accountPlanFor } from "../billing/store.js";
 
 /**
  * Сервисы с ключом: файлы, почта, оплата, AI, карты, CRM. Ключ проверяется до сохранения везде,
@@ -57,6 +59,20 @@ export async function registerServiceRoutes(app: FastifyInstance) {
       return reply.code(400).send({ error: messageOf(error) });
     }
 
+    // Место в тарифе проверяется до пробного запроса к провайдеру: при достигнутом лимите
+    // незачем ходить в чужой API и незачем показывать «ключ неверный» вместо причины.
+    const existing = await getServiceConnection(user.id, service.id);
+    try {
+      assertIntegrationSlot({
+        plan: await accountPlanFor(user.id),
+        kind: "services",
+        used: (await listServiceConnections(user.id)).length,
+        replacing: Boolean(existing),
+      });
+    } catch (error) {
+      return reply.code(403).send({ error: messageOf(error) });
+    }
+
     let account = "Сохранено без проверки";
     if (service.verification === "check") {
       try {
@@ -66,7 +82,6 @@ export async function registerServiceRoutes(app: FastifyInstance) {
       }
     }
 
-    const existing = await getServiceConnection(user.id, service.id);
     const now = new Date().toISOString();
     await saveServiceConnection({
       userId: user.id,

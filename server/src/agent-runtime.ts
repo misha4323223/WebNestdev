@@ -95,10 +95,16 @@ export class AgentRuntime {
     beginRun(request.projectId,request.conversationId);
     const usageTotals={promptTokens:0,completionTokens:0,estimated:false};
     let usageModel="";
+    // Токены в `model_usage` — это расход платформы: из них считается месячный пул тарифа и
+    // стоимость для владельца. Запуск на ключе пользователя платформа не оплачивает, поэтому
+    // в этот журнал не попадает — иначе пул списывался бы за чужие токены.
+    let platformModel=false;
     try{
       const project=await getProject(request.projectId);
       if(!project||project.userId!==request.userId)throw new Error("Проект не найден");
       const config=await getProjectProvider(request.projectId);
+      // Свой провайдер проекта — значит токены платит пользователь, а не платформа.
+      platformModel=!config;
       const platformConfig=getPlatformProviderConfig();
       const provider=createProvider(config??platformConfig??undefined);
       const projectContext=await buildProjectContext(project,request.userId);
@@ -449,7 +455,7 @@ export class AgentRuntime {
     }
     finally{
       endRun(request.projectId,request.conversationId);
-      if(usageModel&&usageTotals.promptTokens+usageTotals.completionTokens>0){
+      if(platformModel&&usageModel&&usageTotals.promptTokens+usageTotals.completionTokens>0){
         try{
           await recordRunUsage(request.userId,{runId,projectId:request.projectId,conversationId:request.conversationId,model:usageModel,promptTokens:usageTotals.promptTokens,completionTokens:usageTotals.completionTokens,estimated:usageTotals.estimated});
         }catch(error){console.error("Failed to record run usage",error);}
