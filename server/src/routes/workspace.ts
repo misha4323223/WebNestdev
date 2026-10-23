@@ -1,13 +1,18 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { readdir,readFile,stat } from "node:fs/promises";
+import { Readable } from "node:stream";
 import path from "node:path";
 import { requireProjectUser } from "../auth/auth.js";
 import { getSandbox } from "../sandbox-manager.js";
 import { assertRegularFile,resolveInsideSandbox,writeFileInside } from "../sandbox/path-guard.js";
+import { openDirsForSandbox,openFileForSandbox } from "../sandbox/permissions.js";
 import { runInSandbox } from "../sandbox-worker.js";
 import { dockerMissing } from "../sandbox/docker/unavailable.js";
 import { isSecretProjectPath, secretEnvRefusal } from "../secrets/secret-paths.js";
+import { getProject } from "../project-store.js";
+import { archiveFolderName,zipProject } from "../storage/zip.js";
+import { refreshStaticPreview } from "../preview/static-preview.js";
 import { applyNoStoreToReply } from "./cache-headers.js";
 import { recordStorageMutation } from "../account/storage-quota.js";
 
@@ -16,7 +21,19 @@ const MAX_DIRECTORY_ENTRIES=Number(process.env.WORKSPACE_MAX_DIRECTORY_ENTRIES??
 // Uploads arrive as base64 inside a JSON body, and the API body limit is 2 MB, so
 // the decoded ceiling stays well below it.
 const MAX_UPLOAD_BYTES=Number(process.env.WORKSPACE_MAX_UPLOAD_BYTES??1_200_000);
+/** Сколько текста редактор панели сохраняет за один раз; тело запроса целиком — до 2 МБ. */
+const MAX_EDIT_BYTES=1_000_000;
 const UPLOAD_FOLDER="uploads";
+/**
+ * Служебные папки, которые редактор не трогает: в `.git` лежит история проекта, и запись туда
+ * руками ломает репозиторий, а `node_modules` — чужие пакеты, а не исходники.
+ */
+const LOCKED_PATH=/(^|\/)(\.git|node_modules)(\/|$)/;
+
+/** Двоичный файл: в нём есть нулевой байт, и текстовый редактор испортит его при сохранении. */
+function looksBinary(bytes:Buffer){
+  return bytes.subarray(0,8000).includes(0);
+}
 /** Папка снимков проверок: единственное, что отдаёт маршрут `/screenshot`. */
 const SCREENSHOT_PREFIX=".webnestdev/screenshots/";
 
@@ -52,7 +69,75 @@ export async function registerWorkspaceRoutes(app:FastifyInstance){
     const file=await assertRegularFile(sandbox.root,path.join(sandbox.root,q.path));
     const info=await stat(file);
     if(info.size>MAX_FILE_BYTES)throw new Error("Файл слишком большой, чтобы открыть его в рабочей области");
-    return {path:q.path,content:await readFile(file,"utf8")};
+    const bytes=await readFile(file);
+    // Двоичный файл панель показывает как «не редактируется», а не как мусор из символов:
+    // правка такого файла текстом — это испорченная картинка, а не сохранение.
+    if(looksBinary(bytes))return {path:q.path,content:"",binary:true};
+    return {path:q.path,content:bytes.toString("utf8")};
+  });
+
+  /**
+   * Прямое редактирование: панель «Файлы» сохраняет текст в файл проекта без участия модели.
+   * Правка уходит в то же место, где лежит файл: агент видит её в следующем запуске, предпросмотр —
+   * сразу (dev-сервер подхватывает сам, статическая сборка пересобирается).
+   *
+   * Секретные env-файлы и служебные папки закрыты: значения секретов правятся только в разделе
+   * «Секреты», а `.git` — это история, а не исходники.
+   */
+  app.put("/api/projects/:id/file",async(request,reply)=>{
+    const p=z.object({id:z.string().min(1)}).parse(request.params);
+    const user=await requireProjectUser(request,reply,p.id);
+    if(!user)return;
+    const body=z.object({path:z.string().min(1).max(2000),content:z.string().max(MAX_EDIT_BYTES)}).parse(request.body);
+    // Сообщение — для человека в панели, а не для агента: значения секретов правятся только в
+    // разделе «Секреты», а описывает переменные безопасный шаблон `.env.example`.
+    if(isSecretProjectPath(body.path))return reply.code(403).send({error:"Файл «"+body.path+"» содержит секреты проекта: значения меняются в разделе «Секреты», а переменные без значений описывает .env.example."});
+    if(LOCKED_PATH.test(body.path))return reply.code(400).send({error:"Служебную папку «"+body.path.split("/").find(part=>part===".git"||part==="node_modules")+"» нельзя редактировать вручную"});
+    const sandbox=await getSandbox(p.id,user.id);
+
+    let current:Buffer;
+    try{
+      const file=await assertRegularFile(sandbox.root,path.join(sandbox.root,body.path));
+      current=await readFile(file);
+    }catch(error){
+      // Файл могли удалить агентом или откатом, пока панель была открыта: это ответ для человека,
+      // а не «Внутренняя ошибка сервера».
+      const message=error instanceof Error?error.message:String(error);
+      const missing=(error as NodeJS.ErrnoException).code==="ENOENT";
+      return reply.code(missing?404:400).send({error:missing?"Файла «"+body.path+"» больше нет в проекте — обновите список.":message});
+    }
+    if(looksBinary(current))return reply.code(400).send({error:"Двоичный файл нельзя править как текст"});
+
+    const written=await writeFileInside(sandbox.root,path.join(sandbox.root,body.path),body.content);
+    // Сервер пишет от root, а команды проекта идут от uid 1000: без этого файл после правки
+    // стал бы недоступен сборщику и предпросмотру.
+    await openDirsForSandbox(sandbox.root,path.dirname(written));
+    await openFileForSandbox(written);
+    await recordStorageMutation(p.id,user.id).catch(error=>console.warn("[storage] не удалось обновить размер после правки",error));
+    await refreshStaticPreview(p.id).catch(error=>console.warn("[preview] предпросмотр не пересобран",error));
+    applyNoStoreToReply(reply);
+    return {path:body.path,content:body.content,bytes:Buffer.byteLength(body.content)};
+  });
+
+  /**
+   * Выгрузка проекта архивом. Поток, а не буфер в памяти: архив с картинками и шрифтами
+   * весит десятки мегабайт, и собирать его целиком ради одного скачивания незачем.
+   * Зависимости и `.git` в архив не попадают — это не исходники проекта.
+   */
+  app.get("/api/projects/:id/export",async(request,reply)=>{
+    const p=z.object({id:z.string().min(1)}).parse(request.params);
+    const user=await requireProjectUser(request,reply,p.id);
+    if(!user)return;
+    const sandbox=await getSandbox(p.id,user.id);
+    const project=await getProject(p.id).catch(()=>null);
+    const folder=archiveFolderName(project?.name??"project");
+    const file=folder+".zip";
+    const ascii=folder.replace(/[^\x20-\x7e]/g,"_")+".zip";
+    applyNoStoreToReply(reply);
+    reply.header("content-type","application/zip");
+    // `filename*` — UTF-8 имя: без него русское название проекта превращалось в «_.zip».
+    reply.header("content-disposition", `attachment; filename="${ascii}"; filename*=UTF-8''${encodeURIComponent(file)}`);
+    return reply.send(Readable.from(zipProject(sandbox.root,folder)));
   });
 
   /**

@@ -1,4 +1,4 @@
-import { apiJson } from "./api";
+import { apiJson, apiUrl } from "./api";
 import { rememberScreen } from "./screen";
 import type { ChatMessage, FileEntry, PlanState, PreviewState } from "./types";
 
@@ -42,7 +42,43 @@ export const getConversation=(conversationId:string)=>apiJson<Conversation>("/ap
 /** The project's saved chats, newest first — the ones the user can return to. */
 export const listConversations=(projectId:string)=>apiJson<{conversations:ConversationSummary[]}>("/api/projects/"+projectId+"/conversations");
 export const listProjectFiles=(projectId:string,path=".")=>apiJson<{path:string;files:FileEntry[]}>("/api/projects/"+projectId+"/files?path="+encodeURIComponent(path));
-export const getProjectFile=(projectId:string,path:string)=>apiJson<{path:string;content:string}>("/api/projects/"+projectId+"/file?path="+encodeURIComponent(path));
+/**
+ * `binary` — файл не текст: панель показывает «не редактируется», а не портит картинку
+ * сохранением строки поверх байтов.
+ */
+export type ProjectFile={path:string;content:string;binary?:boolean};
+export const getProjectFile=(projectId:string,path:string)=>apiJson<ProjectFile>("/api/projects/"+projectId+"/file?path="+encodeURIComponent(path));
+/** Прямое редактирование файла из панели: правка уходит в проект без запуска агента. */
+export const saveProjectFile=(projectId:string,path:string,content:string)=>apiJson<{path:string;content:string;bytes:number}>(
+  "/api/projects/"+projectId+"/file",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify({path,content})});
+/**
+ * Выгрузка проекта архивом. Скачивание идёт через `fetch`, а не ссылкой: так ошибка сервера
+ * (нет прав, проект в архиве) показывается в панели, а не белой страницей вместо приложения.
+ */
+export async function downloadProjectZip(projectId:string,projectName:string){
+  let response:Response;
+  try{
+    response=await fetch(apiUrl("/api/projects/"+projectId+"/export"),{credentials:"include"});
+  }catch(error){
+    throw new Error("Не удалось подключиться к NestDev API: "+(error instanceof Error?error.message:String(error)));
+  }
+  if(!response.ok){
+    const data=await response.json().catch(()=>null) as {error?:string}|null;
+    throw new Error(data?.error??("HTTP "+response.status));
+  }
+  const blob=await response.blob();
+  const url=URL.createObjectURL(blob);
+  const link=document.createElement("a");
+  const name=(projectName||"project").replace(/[\\/:*?"<>|]+/g,"-").trim()||"project";
+  link.href=url;
+  link.download=name+".zip";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  // URL живёт до следующей вкладки: отзывать его сразу после click() в Safari нельзя —
+  // скачивание отменялось на пустом месте.
+  window.setTimeout(()=>URL.revokeObjectURL(url),10000);
+}
 /** Stores a chat attachment inside the project so the agent can use it. */
 export const uploadProjectFile=(projectId:string,file:{name:string;data:string})=>apiJson<{name:string;path:string;bytes:number}>("/api/projects/"+projectId+"/upload",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(file)});
 /** История задач проекта: каждая точка — проверенное состояние, к которому можно вернуться. */
