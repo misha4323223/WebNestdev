@@ -1,6 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { getYandexAuthStatus, startPhoneLogin, verifyPhoneLogin, type YandexAuthStatus } from "../../lib/auth-api";
-import { getHealth } from "../../lib/health-api";
 import { WebNestLogo } from "../../components/WebNestLogo";
 import { openCookieSettings } from "../legal/CookieConsent";
 import { legalPath } from "../../lib/legal";
@@ -38,8 +37,6 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void })
   // Яндекс ID — отдельный вход: его состояние и ошибки не должны смешиваться с SMS.
   const [yandex, setYandex] = useState<YandexAuthStatus | null>(null);
   const [yandexNotice, setYandexNotice] = useState("");
-  // Номер сборки, которая работает на сервере: по нему видно, что страница не взята из кеша.
-  const [build, setBuild] = useState("");
   const [busy, setBusy] = useState(false);
   const [seconds, setSeconds] = useState(0);
 
@@ -51,7 +48,6 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void })
 
   useEffect(() => {
     let alive = true;
-    void getHealth().then(health => { if (alive) setBuild(health.build); }).catch(() => {});
     void getYandexAuthStatus().then(status => { if (alive) setYandex(status); }).catch(() => {});
     return () => { alive = false; };
   }, []);
@@ -117,7 +113,7 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void })
         <h1>{stage === "code" ? "Введите код из SMS" : "Вход в аккаунт"}</h1>
         {stage === "code"
           ? <p>Код отправлен на {phone}</p>
-          : <p>Войдите через Яндекс ID или получите код по SMS — выберите удобный способ.</p>}
+          : <p>Проекты сохраняются в вашем аккаунте.</p>}
       </div>
 
       {stage === "number" && <>
@@ -125,13 +121,13 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void })
           <span className="auth-yandex-mark" aria-hidden="true">Я</span>
           Войти через Яндекс ID
         </button>
-        {yandexUnavailable && <div className="auth-yandex-hint">Сервер не видит ключи приложения Яндекс ID. Вход по SMS работает без них.</div>}
+        {yandexUnavailable && <div className="auth-yandex-hint">Яндекс ID сейчас недоступен — войдите по SMS.</div>}
         {yandexNotice && <div className="auth-error auth-yandex-error">{yandexNotice}</div>}
         <div className="auth-divider">или по номеру телефона</div>
       </>}
 
       {stage === "number" && <form onSubmit={requestCode} className="auth-form">
-        <label><span>Номер телефона</span><input type="tel" inputMode="tel" value={phone} onChange={event => setPhone(event.target.value)} placeholder="+7 999 123-45-67" autoComplete="tel" required /></label>
+        <label><span>Номер телефона</span><input type="tel" inputMode="tel" value={phone} onChange={event => setPhone(event.target.value)} placeholder="+7 999 123-45-67" autoComplete="tel" title="Номер для входа по SMS" required /></label>
         <label className="auth-consent">
           <input type="checkbox" checked={consent} onChange={event => { setConsent(event.target.checked); setError(""); }} />
           <span>Согласен на обработку номера телефона для входа по SMS</span>
@@ -147,7 +143,7 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void })
       </form>}
 
       {stage === "code" && <form onSubmit={submitCode} className="auth-form">
-        <label><span>Код из SMS</span><input type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={event => setCode(event.target.value.replace(/\D/g, ""))} placeholder="123456" required /></label>
+        <label><span>Код из SMS</span><input type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={event => setCode(event.target.value.replace(/\D/g, ""))} placeholder="123456" title="Код из SMS" required /></label>
         {notice && <div className="auth-note">{notice}</div>}
         {error && <div className="auth-error">{error}</div>}
         <button className="send-button auth-submit" disabled={busy || code.length < 4}>{busy ? "Проверяем…" : "Войти"}</button>
@@ -165,7 +161,6 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void })
         <a href={legalPath("privacy")} target="_blank" rel="noopener noreferrer">Персональные данные</a>
         <button type="button" className="ghost-button" onClick={openCookieSettings}>Cookie-настройки</button>
       </div>
-      {build && build !== "dev" && <div className="auth-build">версия {build.slice(0, 7)}</div>}
     </section>
   </main>;
 }

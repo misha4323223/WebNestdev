@@ -121,7 +121,7 @@ export function ChatSessionsModal({ open, projectId, conversationId, sessions, s
     <section className="modal sessions-modal" role="dialog" aria-modal="true" aria-label="Чаты проекта" onMouseDown={event => event.stopPropagation()}>
       <header className="modal-head">
         <div><span className="eyebrow">ИСТОРИЯ</span><h2>Чаты проекта</h2></div>
-        <button className="icon-button" onClick={onClose} aria-label="Закрыть"><X size={16}/></button>
+        <button className="icon-button" onClick={onClose} aria-label="Закрыть" title="Закрыть"><X size={16}/></button>
       </header>
       <div className="modal-body">
         {notice && <div className="session-error" role="alert">{notice}</div>}

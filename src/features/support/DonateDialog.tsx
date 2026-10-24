@@ -71,7 +71,7 @@ export function DonateDialog({ open, onClose }: { open: boolean; onClose: () => 
           <span className="eyebrow">ПОДДЕРЖКА ПРОЕКТА</span>
           <h2 id="donate-title">{result ? "Спасибо, что вы рядом" : "Ваша помощь проекту"}</h2>
         </div>
-        <button type="button" className="icon-button" onClick={close} aria-label="Закрыть"><X size={16}/></button>
+        <button type="button" className="icon-button" onClick={close} aria-label="Закрыть" title="Закрыть"><X size={16}/></button>
       </header>
 
       {result

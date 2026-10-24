@@ -2,6 +2,7 @@ import { Check, Loader2, Palette, Pipette, Sparkles, TriangleAlert, X } from "lu
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createProjectTheme, getProjectTheme, saveProjectTheme, type ProjectTheme, type ThemeField } from "../../lib/project-api";
 import { composeAgentPrompt, THEME_SETUP_PROMPT } from "../../lib/agent-compose";
+import { Hint } from "../../components/Hint";
 
 /**
  * Палитра проекта: цвета, шрифты и скругление — те переменные, которые проект объявил сам.
@@ -212,7 +213,10 @@ export function ThemePanel({ projectId, onClose, onApplied }: {
     <div className="theme-head">
       <div className="theme-title">
         <span className="eyebrow">ТЕМА</span>
-        <strong>Палитра и шрифты</strong>
+        <div className="theme-title-line">
+          <strong>Палитра и шрифты</strong>
+          <Hint label="Зачем тема">Цвета и шрифты проекта.</Hint>
+        </div>
       </div>
       <button className="icon-button" onClick={onClose} title="Закрыть" aria-label="Закрыть тему"><X size={15}/></button>
     </div>
@@ -228,11 +232,7 @@ export function ThemePanel({ projectId, onClose, onApplied }: {
       {theme && !theme.present && !progress && <div className="theme-empty">
         <div className="theme-empty-icon"><Palette size={20}/></div>
         <strong>В стилях не нашлось цветов для палитры</strong>
-        <p>
-          Панель уже проверила CSS, inline-стили и классы Tailwind: цветов для палитры там нет —
-          они собраны в коде или приходят из картинок. Агент переведёт цвета, шрифты и скругления
-          на переменные и подключит файл темы.
-        </p>
+        <p>Цвета заданы в коде или картинках. Агент переведёт их на переменные темы.</p>
         <div className="theme-empty-actions">
           <button className="ghost-button theme-empty-retry" onClick={() => void create(theme)}>Попробовать снова</button>
           <button className="theme-action theme-empty-action" onClick={askAgent}>
@@ -246,11 +246,7 @@ export function ThemePanel({ projectId, onClose, onApplied }: {
           <TriangleAlert size={14}/>
           <div>
             <strong>Страница не читает переменные палитры</strong>
-            <span>
-              Переменные объявлены, но в стилях и разметке нет <code>var(--…)</code>: смена палитры
-              их не перекрасит. Агент заменит вписанные напрямую цвета на переменные — это правка
-              файлов, а не запись значения.
-            </span>
+            <span>Переменные есть, но стили их не используют. Агент заменит вписанные цвета на <code>var(--…)</code>.</span>
             <button className="ghost-button theme-warning-action" onClick={askAgent}>
               <Sparkles size={13}/> Перевести цвета на тему
             </button>

@@ -3,7 +3,7 @@
  * удачного запуска в песочнице создаётся коммит, который можно открыть и к которому можно
  * вернуться. Типы здесь — общий язык сервера и панели.
  */
-export type CheckpointKind = "task" | "rollback" | "imported";
+export type CheckpointKind = "task" | "rollback" | "imported" | "manual";
 
 export type CheckpointFileStatus = "added" | "modified" | "deleted";
 
@@ -31,6 +31,23 @@ export type Checkpoint = {
 };
 
 export type PushState = { branch: string; lastPushAt?: string; lastPushError?: string };
+
+/** Рабочее дерево: то, что ещё не стало точкой истории. */
+export type WorktreeState = {
+  initialized: boolean;
+  branch: string;
+  files: CheckpointFile[];
+};
+
+/** Diff одного файла для Git-панели. */
+export type FileDiff = {
+  path: string;
+  status: CheckpointFileStatus;
+  /** Unified diff; пустой, когда файл двоичный или слишком большой. */
+  patch: string;
+  binary?: boolean;
+  truncated?: boolean;
+};
 
 export type ChangesOverview = {
   /** Есть ли в проекте созданная нами история. Пока её нет, откатывать нечего. */

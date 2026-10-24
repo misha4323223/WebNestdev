@@ -284,7 +284,7 @@ export function GitLabConnect({surface="home",onImported=openImportedProject}:{s
       <section className="modal repo-intent-modal" role="dialog" aria-modal="true" aria-label="Что сделать с импортированным репозиторием" onMouseDown={event=>event.stopPropagation()}>
         <header className="modal-head">
           <div><span className="eyebrow">ИМПОРТ РЕПОЗИТОРИЯ</span><h2>Что сделать с проектом?</h2></div>
-          <button className="icon-button" onClick={()=>setIntentOpen(false)} disabled={importing} aria-label="Закрыть"><X size={16}/></button>
+          <button className="icon-button" onClick={()=>setIntentOpen(false)} disabled={importing} aria-label="Закрыть" title="Закрыть"><X size={16}/></button>
         </header>
         <div className="modal-body">
           <p className="modal-lead">{selected.path_with_namespace}. Агент начнёт в режиме планировщика: изучит проект, задаст уточняющие вопросы и покажет план. Разработка стартует только после вашего подтверждения. На бесплатном тарифе импорт ограничен 100 МБ.</p>

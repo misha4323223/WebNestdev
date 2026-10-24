@@ -154,6 +154,64 @@ test("проект на Tailwind: цвета из классов и inline-ст�
   assert.match(theme, /--color-accent:#10b981;/, "единственный яркий цвет становится акцентом");
 });
 
+test("статика из public/: тема лежит рядом со страницей и реально отдаётся сервером", async () => {
+  const root = await project({
+    "public/index.html": "<!doctype html><html><head><link rel=\"stylesheet\" href=\"styles.css\"></head><body><h1>x</h1></body></html>",
+    "public/styles.css": "body{background:#f7f3ec;color:#221c15}\n.btn{background:#2f6f4f;color:#ffffff}",
+  });
+  const outcome = await createProjectPalette(root);
+  assert.equal(outcome.created, true);
+  await assert.rejects(stat(path.join(root, "theme.css")));
+
+  const css = await readFile(path.join(root, "public/styles.css"), "utf8");
+  assert.match(css, /^@import "\.\/theme\.css";/);
+  assert.match(await readFile(path.join(root, "public/theme.css"), "utf8"), /--color-bg:#f7f3ec;/);
+
+  const palette = await readPalette(root);
+  assert.equal(palette.tokens.find(token => token.variable === "--color-bg")?.file, "public/theme.css");
+});
+
+test("серверный HTML-шаблон: палитра из <style> в .js без импорта CSS", async () => {
+  const server = [
+    'import express from "express";',
+    "const app = express();",
+    "const page = `<!doctype html><html><head><style>",
+    "body{background:#0f172a;color:#e2e8f0}",
+    ".card{background:#1e293b;border:1px solid #334155}",
+    ".btn{background:#22c55e;color:#ffffff}",
+    "</style></head><body><h1>Привет</h1></body></html>`;",
+    'app.get("/", (_req,res)=>res.send(page));',
+  ].join("\n");
+  const root = await project({ "server.js": server });
+  const outcome = await createProjectPalette(root);
+  assert.equal(outcome.created, true);
+
+  const code = await readFile(path.join(root, "server.js"), "utf8");
+  assert.doesNotMatch(code, /import "\.\/theme\.css"/, "в серверный JS нельзя импортировать CSS");
+  assert.match(code, /:root\{/, "переменные объявлены в самом шаблоне");
+  assert.match(code, /--color-bg:#0f172a;/);
+  assert.match(code, /body\{background:var\(--color-bg\);color:var\(--color-text\)\}/);
+  assert.match(code, /\.btn\{background:var\(--color-accent\);/);
+  await assert.rejects(stat(path.join(root, "theme.css")), "отдельный theme.css не нужен");
+
+  const palette = await readPalette(root);
+  assert.ok(palette.tokens.length >= 3, "панель видит палитру из серверного шаблона");
+  assert.ok(palette.tokens.every(token => token.used), "все токены читаются через var(--…)");
+  assert.equal(palette.tokens.find(token => token.variable === "--color-bg")?.file, "server.js");
+});
+
+test("серверная страница в обычной строке не ломается переводами строк", async () => {
+  const root = await project({
+    "server.js": "const page = '<!doctype html><html><head><style>body{background:#0f172a;color:#e2e8f0}</style></head><body>x</body></html>';\nmodule.exports = page;\n",
+  });
+  const outcome = await createProjectPalette(root);
+  assert.equal(outcome.created, true);
+  const code = await readFile(path.join(root, "server.js"), "utf8");
+  assert.equal(code.split("\n")[0].includes(":root{"), true, "блок темы остался в той же строке");
+  assert.equal(code.trimEnd().split("\n").length, 2, "переводов строк внутри строки не добавилось");
+  assert.match(code, /background:var\(--color-bg\)/);
+});
+
 test("классы не переписываются там, где Tailwind не подключён", async () => {
   const root = await project({
     "index.html": '<!doctype html><html><body><div class="bg-white">x</div></body></html>',

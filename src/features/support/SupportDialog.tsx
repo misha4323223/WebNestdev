@@ -169,7 +169,7 @@ export function SupportDialog({ open, onClose, projectId }: { open: boolean; onC
           <span className="eyebrow">ПОДДЕРЖКА</span>
           <h2 id="support-title">{sent ? "Обращение отправлено" : category === "bug" ? "Сообщить о проблеме" : "Предложить идею"}</h2>
         </div>
-        <button type="button" className="icon-button" onClick={close} aria-label="Закрыть"><X size={16}/></button>
+        <button type="button" className="icon-button" onClick={close} aria-label="Закрыть" title="Закрыть"><X size={16}/></button>
       </header>
 
       {sent

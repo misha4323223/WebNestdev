@@ -1131,7 +1131,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       ?<div className="chat-status chat-status-bottom">
         <PlanPanel plan={plan} collapsed={panels} onToggle={togglePanel}/>
         {mode==="planner"&&!running&&<div className="plan-approve">
-          <div><strong>План готов к подтверждению</strong><span>Кнопка переключит агента в режим разработчика и запустит выполнение этого плана.</span></div>
+          <div><strong>План готов к подтверждению</strong><span>Запустит план в режиме разработчика.</span></div>
           <button className="send-button" onClick={approvePlan}><Play size={13}/> Утвердить и начать разработку</button>
         </div>}
       </div>
@@ -1210,7 +1210,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
         <History size={14}/>
         <span className="changes-toast-text">
           <strong>Изменения сохранены · {changesNotice.shortSha}</strong>
-          <small>локальная точка истории — отправьте на GitHub кнопкой в «Изменениях»</small>
+          <small>не отправлено — откройте «Изменения»</small>
         </span>
         {onOpenChanges&&<span className="changes-toast-open">Открыть</span>}
       </button>}
@@ -1238,7 +1238,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
               <h2 id="secret-modal-title">Нужен ваш ключ</h2>
             </div>
           </div>
-          <button className="icon-button" onClick={()=>void cancelSecret()} aria-label="Отменить запрос"><X size={16}/></button>
+          <button className="icon-button" onClick={()=>void cancelSecret()} aria-label="Отменить запрос" title="Отменить запрос"><X size={16}/></button>
         </header>
         <div className="modal-body">
           <p className="modal-lead">{secretPrompt.purpose||"Агент просит ключ, чтобы продолжить работу над задачей."}</p>
@@ -1275,7 +1275,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       <section className="modal quota-modal" role="dialog" aria-modal="true" aria-label="Лимит тарифа достигнут" onMouseDown={event=>event.stopPropagation()}>
         <header className="modal-head">
           <div><span className="eyebrow">ЛИМИТ ТАРИФА</span><h2>{quotaNotice==="storage"?"Хранилище заполнено":quotaNotice==="tokens"?"Пул токенов исчерпан":"Дневной лимит исчерпан"}</h2></div>
-          <button className="icon-button" onClick={()=>setQuotaNotice(null)} aria-label="Закрыть"><X size={16}/></button>
+          <button className="icon-button" onClick={()=>setQuotaNotice(null)} aria-label="Закрыть" title="Закрыть"><X size={16}/></button>
         </header>
         <div className="modal-body">
           <div className="quota-modal-icon"><AlertTriangle size={18}/></div>

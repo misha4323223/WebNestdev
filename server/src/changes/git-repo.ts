@@ -5,8 +5,9 @@ import path from "node:path";
 import git from "isomorphic-git";
 import http from "isomorphic-git/http/node";
 import { openDirsForSandbox, openFileForSandbox, openTreeForSandbox } from "../sandbox/permissions.js";
-import { deleteInside, writeFileInside } from "../sandbox/path-guard.js";
-import type { Checkpoint, CheckpointFile, CheckpointFileStatus, CheckpointKind, PushState } from "./types.js";
+import { deleteInside, readFileInside, writeFileInside } from "../sandbox/path-guard.js";
+import { unifiedPatch } from "./diff.js";
+import type { Checkpoint, CheckpointFile, CheckpointFileStatus, CheckpointKind, FileDiff, PushState } from "./types.js";
 
 /**
  * Контрольные точки проекта — это обычные git-коммиты в каталоге проекта, а не отдельное
@@ -465,6 +466,146 @@ export async function createCheckpoint(root: string, options: CreateCheckpointOp
     filesChanged: files.length,
     pushed: false,
   };
+}
+
+/** Файл больше этого в панель не читается: diff — подсказка, а не просмотрщик гигабайтов. */
+const MAX_DIFF_BYTES = 2_000_000;
+
+/** null — двоичный файл: строки такого файла сравнивать бессмысленно. */
+function blobText(bytes: Uint8Array): string | null {
+  const buffer = Buffer.from(bytes);
+  return buffer.subarray(0, 8000).includes(0) ? null : buffer.toString("utf8");
+}
+
+/** Содержимое изменённого файла в рабочем дереве; отсутствующий файл — это удаление. */
+async function worktreeText(root: string, filepath: string): Promise<{ text: string; binary?: boolean; truncated?: boolean }> {
+  const full = path.join(root, filepath);
+  const info = await stat(full).catch(() => null);
+  if (!info) return { text: "" };
+  if (!info.isFile() || info.size > MAX_DIFF_BYTES) return { text: "", truncated: true };
+  const text = await readFileInside(root, full).catch(error => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return "";
+    throw error;
+  });
+  if (text.includes("\u0000")) return { text: "", binary: true };
+  return { text };
+}
+
+/** Diff рабочего дерева по файлу — то, что панель показывает до коммита. */
+export async function worktreeDiff(root: string, filepath: string): Promise<FileDiff> {
+  const scan = await scanChanges(root);
+  const file = scan.changed.find(item => item.path === filepath);
+  if (!file) throw new Error("Файл не изменён: возможно, он уже вошёл в историю.");
+  let before = "";
+  const oldOid = scan.head.get(filepath);
+  if (oldOid) {
+    const { blob } = await git.readBlob({ fs, dir: root, oid: oldOid });
+    const text = blobText(blob);
+    if (text === null) return { path: filepath, status: file.status, patch: "", binary: true };
+    before = text;
+  }
+  if (file.status === "deleted") {
+    const { patch, truncated } = unifiedPatch(filepath, before, "");
+    return { path: filepath, status: file.status, patch, ...(truncated ? { truncated: true } : {}) };
+  }
+  const after = await worktreeText(root, filepath);
+  if (after.binary) return { path: filepath, status: file.status, patch: "", binary: true };
+  if (after.truncated) return { path: filepath, status: file.status, patch: "", truncated: true };
+  const { patch, truncated } = unifiedPatch(filepath, before, after.text);
+  return { path: filepath, status: file.status, patch, ...(truncated ? { truncated: true } : {}) };
+}
+
+/** Diff файла в готовом коммите: панель истории показывает тот же вид, что и рабочие правки. */
+export async function checkpointDiff(root: string, sha: string, filepath: string): Promise<FileDiff> {
+  if (!/^[0-9a-f]{40}$/i.test(sha)) throw new Error("Неверный идентификатор коммита");
+  const commit = await git.readCommit({ fs, dir: root, oid: sha });
+  const parent = commit.commit.parent[0] ?? null;
+  const [beforeTree, afterTree] = await Promise.all([
+    parent ? treeFiles(root, parent) : Promise.resolve(new Map<string, string>()),
+    treeFiles(root, sha),
+  ]);
+  const oldOid = beforeTree.get(filepath);
+  const newOid = afterTree.get(filepath);
+  if (!oldOid && !newOid) throw new Error("В этом коммите нет файла «" + filepath + "»");
+  const status: CheckpointFileStatus = !oldOid ? "added" : !newOid ? "deleted" : "modified";
+  const read = async (oid: string | undefined) => {
+    if (!oid) return "";
+    const { blob } = await git.readBlob({ fs, dir: root, oid });
+    const text = blobText(blob);
+    if (text === null) throw new Error("Двоичный файл: diff для него не строится");
+    return text;
+  };
+  const [before, after] = await Promise.all([read(oldOid), read(newOid)]);
+  const { patch, truncated } = unifiedPatch(filepath, before, after);
+  return { path: filepath, status, patch, ...(truncated ? { truncated: true } : {}) };
+}
+
+/**
+ * Ручной коммит из Git-панели. В отличие от точки после задачи, сюда приходит выбор файлов:
+ * человек может закоммитить одну правку из десяти. Индекс перед этим приводится к HEAD, иначе
+ * `git.commit` забрал бы и то, что осталось в нём от прошлых операций.
+ */
+export async function createManualCheckpoint(root: string, options: {
+  branch: string;
+  subject: string;
+  paths?: string[];
+}): Promise<Checkpoint | null> {
+  const scan = await scanChanges(root);
+  const wanted = options.paths?.length ? new Set(options.paths) : null;
+  const selected = wanted ? scan.changed.filter(file => wanted.has(file.path)) : scan.changed;
+  if (!selected.length) return null;
+
+  // Приводится к HEAD не только рабочее дерево, но и индекс: в нём могли остаться файлы,
+  // которых уже нет среди изменений (кто-то застейджил правку и вернул файл). Иначе коммит
+  // забрал бы невыбранную работу из индекса.
+  const stagedBefore = await stagedChanges(root).catch(() => [] as CheckpointFile[]);
+  const resetPaths = new Set([...scan.changed.map(file => file.path), ...stagedBefore.map(file => file.path)]);
+  if (await hasCommits(root)) {
+    for (const filepath of resetPaths) {
+      await git.resetIndex({ fs, dir: root, filepath, ref: "HEAD" }).catch(() => undefined);
+    }
+  } else {
+    for (const filepath of resetPaths) await git.remove({ fs, dir: root, filepath }).catch(() => undefined);
+  }
+
+  for (const file of selected) {
+    if (file.status === "deleted") await git.remove({ fs, dir: root, filepath: file.path });
+    else await git.add({ fs, dir: root, filepath: file.path });
+  }
+  const files = await stagedChanges(root);
+  if (!files.length) return null;
+  const message = commitMessage({ branch: options.branch, subject: options.subject, kind: "manual" });
+  const sha = await git.commit({ fs, dir: root, message, author: GIT_AUTHOR, committer: GIT_AUTHOR });
+  return {
+    sha,
+    shortSha: sha.slice(0, 7),
+    subject: message.split("\n")[0],
+    message,
+    kind: "manual",
+    createdAt: new Date().toISOString(),
+    files: files.slice(0, 200),
+    filesChanged: files.length,
+    pushed: false,
+  };
+}
+
+/** Создание ветки от текущего HEAD: рабочее дерево не меняется, меняется только HEAD. */
+export async function createBranch(root: string, name: string): Promise<{ created: boolean; branch: string; error?: string }> {
+  const branch = name.trim();
+  if (!/^[A-Za-z0-9._\/-]+$/.test(branch) || branch.startsWith("-") || branch.includes("..")) {
+    return { created: false, branch, error: "Недопустимое имя ветки" };
+  }
+  if (!await hasCommits(root)) return { created: false, branch, error: "Сначала создайте хотя бы одну точку истории" };
+  const local = await git.listBranches({ fs, dir: root }).catch(() => [] as string[]);
+  if (local.includes(branch)) return { created: false, branch, error: "Ветка «" + branch + "» уже есть в проекте" };
+  try {
+    const head = await git.resolveRef({ fs, dir: root, ref: "HEAD" });
+    await git.branch({ fs, dir: root, ref: branch, object: head });
+    await git.writeRef({ fs, dir: root, ref: "HEAD", value: "refs/heads/" + branch, force: true, symbolic: true });
+    return { created: true, branch };
+  } catch (error) {
+    return { created: false, branch, error: "Не удалось создать ветку: " + describe(error) };
+  }
 }
 
 export type PushOptions = {

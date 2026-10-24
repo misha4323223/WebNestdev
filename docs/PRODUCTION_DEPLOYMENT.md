@@ -423,7 +423,7 @@ Which version is live right now, without a shell on the VM:
 curl -s localhost:8787/api/health | sed -n 's/.*"build":"\([^"]*\)".*/\1/p'
 ```
 
-The same number is printed as a small `версия <sha>` line at the bottom of the sign-in screen. If it is the new commit while the page still looks old, the page came from the browser cache — the document is served with `cache-control: no-store` for exactly that reason, but a browser that cached it under the older 30-day rule needs one hard reload (clear site data on a phone).
+The same number is available from `GET /api/health`. If it is the new commit while the page still looks old, the page came from the browser cache — the document is served with `cache-control: no-store` for exactly that reason, but a browser that cached it under the older 30-day rule needs one hard reload (clear site data on a phone).
 
 Rollback by hand: run the workflow again with mode `image` and `image=ghcr.io/<owner>/<repo>:sha-<12 символов коммита>` of the previous build (every tag is listed in the GHCR package page). The previous image is still on the VM: cleanup runs only after a successful deploy, so a rollback never needs a rebuild.
 

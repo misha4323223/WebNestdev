@@ -278,7 +278,7 @@ export function Topbar({projectId,projectName,onRenameProject,running,sidebarOpe
       <span className="topbar-divider" aria-hidden="true"/>
       <button className="icon-button" onClick={onSecrets} title="Секреты проекта" aria-label="Секреты проекта"><KeyRound size={15}/></button>
       <div className="topbar-account">
-        <button className={"topbar-avatar"+(accountMenu?" open":"")} onClick={toggleAccount} aria-haspopup="menu" aria-expanded={accountMenu} aria-controls="topbar-account-menu" aria-label="Аккаунт и выход" title={account.detail}>
+        <button className={"topbar-avatar"+(accountMenu?" open":"")} onClick={toggleAccount} aria-haspopup="menu" aria-expanded={accountMenu} aria-controls="topbar-account-menu" aria-label="Аккаунт и выход" title={"Аккаунт: "+account.name+" — настройки и выход"}>
           <UserRound size={15}/>
         </button>
         {accountMenu&&<div className="topbar-menu topbar-menu-account" id="topbar-account-menu" role="menu" aria-label="Аккаунт">

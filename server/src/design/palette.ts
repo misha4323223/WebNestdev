@@ -40,7 +40,7 @@ export type Palette = {
 };
 
 /** Где ищутся объявления палитры: стили, разметка и компоненты. */
-const SCAN_EXTENSIONS = new Set([".css", ".html", ".htm", ".js", ".jsx", ".ts", ".tsx", ".vue", ".svelte"]);
+const SCAN_EXTENSIONS = new Set([".css", ".html", ".htm", ".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts", ".vue", ".svelte"]);
 /** Зависимости, сборки и служебные папки: там чужой CSS, и палитры проекта в нём нет. */
 const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build", "out", ".next", ".output", ".cache", "coverage", ".vite"]);
 /**
@@ -198,6 +198,28 @@ function kindOf(variable: string, raw: string): { kind: PaletteKind; value: stri
 
 export type ScannedFile = { file: string; text: string; css: boolean };
 
+/** Блок `<style>` в разметке и в серверных шаблонах: только его содержимое — это CSS. */
+const STYLE_BLOCK = /<style[^>]*>([\s\S]*?)<\/style>/gi;
+/** Скрипты, внутри которых может лежать HTML-строка (серверный рендер). */
+const SCRIPT_FILE = /\.(js|mjs|cjs|ts|mts|cts|jsx|tsx)$/i;
+
+/**
+ * Где в файле вообще могут быть объявления переменных. CSS — весь файл, разметка и шаблоны —
+ * весь файл (там объявления бывают и в `style="…"`), а скрипт — только блоки `<style>`.
+ * Без последнего правила палитра серверного проекта, который отдаёт HTML строкой, была пустой:
+ * объявления лежали в `<style>` внутри `.js`, а сканер смотрел только CSS и разметку.
+ */
+function declarationRanges(file: ScannedFile): Array<[number, number]> {
+  if (file.css || /\.(html?|htm|vue|svelte)$/i.test(file.file)) return [[0, file.text.length]];
+  if (!SCRIPT_FILE.test(file.file)) return [];
+  const ranges: Array<[number, number]> = [];
+  for (const match of file.text.matchAll(STYLE_BLOCK)) {
+    const at = match.index ?? 0;
+    ranges.push([at + match[0].indexOf(">") + 1, at + match[0].lastIndexOf("</style>")]);
+  }
+  return ranges;
+}
+
 /**
  * Файлы проекта, где может жить палитра. Обход в ширину: при потолке файлов первыми читаются
  * стили верхнего уровня (`src/`, `styles/`), а не глубокая папка сервера, иначе у монорепозитория
@@ -262,22 +284,23 @@ export async function readPalette(root: string): Promise<Palette> {
   const byVariable = new Map<string, Decl[]>();
   const order: string[] = [];
   for (const entry of ordered) {
-    if (!entry.css && !/\.(html?|vue|svelte)$/i.test(entry.file)) continue;
     // Неподключённый файл темы не участвует в каскаде — его значения не палитра проекта, и
     // показывать их рядом с настоящими значит снова давать «совсем другие цвета».
     if (entry.file === themeFile && !themeImported) continue;
-    for (const match of entry.text.matchAll(DECLARATION)) {
-      const variable = "--" + match[1];
-      if (match[1].startsWith("tw-")) continue;
-      const parsed = kindOf(variable, match[2]);
-      if (!parsed) continue;
-      const existing = byVariable.get(variable);
-      const decl: Decl = { variable, kind: parsed.kind, value: parsed.value, file: entry.file };
-      if (!existing) {
-        byVariable.set(variable, [decl]);
-        order.push(variable);
-      } else {
-        existing.push(decl);
+    for (const [start, end] of declarationRanges(entry)) {
+      for (const match of entry.text.slice(start, end).matchAll(DECLARATION)) {
+        const variable = "--" + match[1];
+        if (match[1].startsWith("tw-")) continue;
+        const parsed = kindOf(variable, match[2]);
+        if (!parsed) continue;
+        const existing = byVariable.get(variable);
+        const decl: Decl = { variable, kind: parsed.kind, value: parsed.value, file: entry.file };
+        if (!existing) {
+          byVariable.set(variable, [decl]);
+          order.push(variable);
+        } else {
+          existing.push(decl);
+        }
       }
     }
   }

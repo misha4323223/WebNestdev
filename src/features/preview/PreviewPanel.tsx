@@ -4,6 +4,7 @@ import { getPreviewLogs,getPreviewStatus,requestPreviewTicket,startPreview,stopP
 import type { PreviewState } from "../../lib/types";
 import { composeAgentDraft } from "../../lib/agent-compose";
 import { elementPickPrompt, type PickedElement } from "../../lib/element-pick";
+import { Hint } from "../../components/Hint";
 import { ThemePanel } from "./ThemePanel";
 import { useElementPicker } from "./use-element-picker";
 import { useRemoteElementPicker } from "./use-remote-picker";
@@ -134,7 +135,7 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
       setPreview(next);
       // Приложение могло подняться уже после того, как кадр загрузился: со новым статусом он берётся заново.
       if(next.running)setFrameToken(value=>value+1);
-    }catch(e){setError(e instanceof Error?e.message:"Не удалось получить статус preview")}
+    }catch(e){setError(e instanceof Error?e.message:"Не удалось получить статус предпросмотра")}
   };
   // Refreshed when the project changes and after every agent run: a preview the agent
   // started through preview.start shows up here without the user pressing anything.
@@ -207,12 +208,12 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
   async function start(){
     setError("");
     try{setPreview(await startPreview(projectId))}
-    catch(e){setError(e instanceof Error?e.message:"Не удалось запустить preview")}
+    catch(e){setError(e instanceof Error?e.message:"Не удалось запустить предпросмотр")}
   }
   async function stop(){
     setError("");
     try{await stopPreview(projectId);setPreview({running:false})}
-    catch(e){setError(e instanceof Error?e.message:"Не удалось остановить preview")}
+    catch(e){setError(e instanceof Error?e.message:"Не удалось остановить предпросмотр")}
   }
 
   // Описание элемента уходит в поле ввода агента, а не отправляется: что именно сделать —
@@ -257,7 +258,10 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
     <div className="preview-head">
       <div className="preview-title">
         <span className="eyebrow">ПРЕДПРОСМОТР</span>
-        <strong>{face==="preview"?"Рабочая область":"Логи запуска"}</strong>
+        <div className="preview-title-line">
+          <strong>{face==="preview"?"Рабочая область":"Логи запуска"}</strong>
+          <Hint label="Зачем предпросмотр">Так сайт увидят посетители.</Hint>
+        </div>
       </div>
       <button className="icon-button preview-close" onClick={onClose} title="Скрыть панель" aria-label="Скрыть панель"><X size={15}/></button>
       <div className="preview-actions">
@@ -284,6 +288,7 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
         другие, и по нему приложение работает без переписывания ссылок. */}
     {!error&&preview.running&&preview.publicUrl&&<div className="preview-share">
       <span className="preview-share-label">Публичный адрес</span>
+      <Hint label="Публичный адрес">Ссылка, которую можно отправить другому человеку.</Hint>
       <a className="preview-share-link" href={previewAddress(projectId,publicLink)} target="_blank" rel="noreferrer">
         <ExternalLink size={11}/>
         <span>{preview.publicUrl.replace(/^https?:\/\//,"")}</span>
@@ -341,7 +346,7 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
                   <iframe key={reloadToken+"-"+frameToken+publicLink+"-"+device} ref={frameRef} className="preview-frame" title="Живой предпросмотр" src={previewAddress(projectId,publicLink)}/>
                 </div>}
               </div>
-            : <div className="preview-empty"><div className="preview-icon"><Terminal size={20}/></div><strong>Предпросмотр проекта</strong><span>Запустите preview после создания файлов проекта — и проверьте его сразу под телефон и планшет.</span><button className="ghost-button" onClick={()=>void start()}>Запустить preview</button></div>}
+            : <div className="preview-empty"><div className="preview-icon"><Terminal size={20}/></div><strong>Предпросмотр проекта</strong><span>Посмотрите, как выглядит ваш сайт.</span><button className="ghost-button" onClick={()=>void start()}>Запустить предпросмотр</button></div>}
         </div>
         <div className="preview-face preview-back">
           <div className="preview-logs-head">
@@ -350,7 +355,7 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
           </div>
           {logsError&&<div className="preview-error preview-logs-error">{logsError}</div>}
           <pre className="preview-logs">{logs||(preview.running?"Пока нет вывода. Логи появятся, когда приложение что-нибудь напишет.":"Запустите предпросмотр, чтобы увидеть логи запуска.")}</pre>
-          {!preview.running&&<div className="preview-logs-actions"><button className="ghost-button" onClick={()=>void start()}>Запустить preview</button></div>}
+          {!preview.running&&<div className="preview-logs-actions"><button className="ghost-button" onClick={()=>void start()}>Запустить предпросмотр</button></div>}
         </div>
       </div>
     </div>

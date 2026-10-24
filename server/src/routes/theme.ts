@@ -9,6 +9,8 @@ import { readPalette, normalizePaletteValue, patchPaletteValue, readPaletteFile,
 import { createProjectPalette } from "../design/palette-create.js";
 import { FONT_OPTIONS } from "../design/theme.js";
 import { refreshStaticPreview } from "../preview/static-preview.js";
+import { getPreview } from "../preview/preview-store.js";
+import { startPreview, stopPreview } from "../preview-manager.js";
 
 /**
  * Палитра проекта для панели предпросмотра.
@@ -47,12 +49,33 @@ export type ThemeRouteDeps = {
   authorize: (request: FastifyRequest, reply: FastifyReply, projectId: string) => Promise<{ id: string } | null>;
   getSandbox: (projectId: string, userId: string) => Promise<{ root: string }>;
   refreshPreview: (projectId: string) => Promise<boolean>;
+  /**
+   * Перезапуск живого dev-сервера, если палитра живёт в серверном JS. У такого проекта HTML
+   * собран в памяти процесса: запись файла сама по себе не появится на странице, в отличие
+   * от CSS с горячей перезагрузкой. Для статики и Vite ничего не делает.
+   */
+  restartPreview?: (projectId: string, userId: string) => Promise<boolean>;
 };
+
+/** Файл палитры — серверный скрипт, а не стиль: его правку видит только новый процесс. */
+function liveScriptPalette(palette: Palette) {
+  return palette.tokens.some(token => /\.(m?[jt]s|cjs)$/i.test(token.file));
+}
+
+async function restartServerPreview(projectId: string, userId: string) {
+  const state = getPreview(projectId);
+  if (!state || state.mode !== "container") return false;
+  const config = await getSandbox(projectId, userId);
+  await stopPreview(projectId);
+  await startPreview(config);
+  return true;
+}
 
 const defaultDeps: ThemeRouteDeps = {
   authorize: requireProjectUser,
   getSandbox: (projectId, userId) => getSandbox(projectId, userId),
   refreshPreview: refreshStaticPreview,
+  restartPreview: restartServerPreview,
 };
 
 export async function registerThemeRoutes(app: FastifyInstance, deps: ThemeRouteDeps = defaultDeps) {
@@ -80,13 +103,20 @@ export async function registerThemeRoutes(app: FastifyInstance, deps: ThemeRoute
     if (!user) return;
     const sandbox = await deps.getSandbox(p.id, user.id);
     const outcome = await createProjectPalette(sandbox.root);
+    const palette = await readPalette(sandbox.root);
     if (outcome.created) {
       // Переписанные стили и новый файл темы попадают в статический предпросмотр только после
       // пересборки — ждём её до ответа, как и при сохранении палитры.
       await deps.refreshPreview(p.id).catch(error => console.warn("[theme] предпросмотр не пересобран", error));
+      // У серверного проекта палитра объявлена в его же JS: старый процесс держит HTML в
+      // памяти, поэтому без перезапуска новая палитра не появилась бы в кадре.
+      if (liveScriptPalette(palette)) {
+        try { await deps.restartPreview?.(p.id, user.id); }
+        catch (error) { console.warn("[theme] предпросмотр не перезапущен", error); }
+      }
     }
     applyNoStoreToReply(reply);
-    return { ...themeReply(await readPalette(sandbox.root)), created: outcome.created, ...(outcome.reason ? { reason: outcome.reason } : {}) };
+    return { ...themeReply(palette), created: outcome.created, ...(outcome.reason ? { reason: outcome.reason } : {}) };
   });
 
   /**
@@ -139,6 +169,12 @@ export async function registerThemeRoutes(app: FastifyInstance, deps: ThemeRoute
     }
 
     await deps.refreshPreview(p.id).catch(error => console.warn("[theme] предпросмотр не пересобран", error));
+    // Серверный HTML собирается процессом: чтобы новый цвет появился на странице, а не только
+    // в файле, живой dev-сервер перезапускается. Статику и Vite это не касается.
+    if (updates.some(update => /\.(m?[jt]s|cjs)$/i.test(update.file))) {
+      try { await deps.restartPreview?.(p.id, user.id); }
+      catch (error) { console.warn("[theme] предпросмотр не перезапущен", error); }
+    }
     applyNoStoreToReply(reply);
     return themeReply(await readPalette(sandbox.root));
   });

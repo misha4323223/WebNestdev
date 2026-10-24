@@ -5,6 +5,7 @@ import { LegalScreen } from "./features/legal/LegalScreen";
 import { isLegalPath } from "./lib/legal";
 import { watchForNewBuild } from "./lib/app-build";
 import { loadCachedPreferences } from "./lib/preferences";
+import { TooltipLayer } from "./components/Hint";
 
 export function App(){
   useEffect(()=>{
@@ -16,6 +17,6 @@ export function App(){
   // Юридические страницы открываются без входа: их читают до регистрации и до оплаты, а
   // платёжному сервису нужна прямая ссылка, не зависящая от сессии.
   const legal = isLegalPath(window.location.pathname);
-  return <div className="app">{legal ? <LegalScreen/> : <AuthGate/>}<CookieConsent/></div>;
+  return <div className="app">{legal ? <LegalScreen/> : <AuthGate/>}<CookieConsent/><TooltipLayer/></div>;
 }
 export default App;

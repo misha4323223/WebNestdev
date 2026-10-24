@@ -3,12 +3,16 @@ import { z } from "zod";
 import { requireProjectUser } from "../auth/auth.js";
 import {
   changesOverview,
+  commitWorktreeChanges,
+  createProjectBranch,
   createRepositoryForProject,
+  diffForProject,
   listProjectBranches,
   pullFromGithub,
   pushCurrentBranch,
   rollbackToCheckpoint,
   switchProjectBranch,
+  worktreeState,
 } from "../changes/changes-service.js";
 
 /**
@@ -88,6 +92,63 @@ export async function registerChangesRoutes(app: FastifyInstance) {
     if (!user) return;
     try {
       return await pullFromGithub(params.id, user.id);
+    } catch (error) {
+      return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  /** Рабочие изменения: то, что ещё не стало точкой истории, для Git-панели. */
+  app.get("/api/projects/:id/changes/worktree", async (request, reply) => {
+    const params = z.object({ id: z.string().min(1) }).parse(request.params);
+    const user = await requireProjectUser(request, reply, params.id);
+    if (!user) return;
+    return worktreeState(params.id, user.id);
+  });
+
+  /** Diff одного файла: из рабочего дерева или из коммита истории. */
+  app.get("/api/projects/:id/changes/diff", async (request, reply) => {
+    const params = z.object({ id: z.string().min(1) }).parse(request.params);
+    const user = await requireProjectUser(request, reply, params.id);
+    if (!user) return;
+    const query = z.object({
+      path: z.string().min(1).max(2000),
+      sha: z.string().min(40).max(40).optional(),
+    }).parse(request.query);
+    try {
+      return await diffForProject(params.id, user.id, query.path, query.sha);
+    } catch (error) {
+      return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  /**
+   * Ручной коммит из Git-панели. Пользователь выбирает файлы и пишет сообщение; отправка —
+   * только если он сам попросил её флагом `push`.
+   */
+  app.post("/api/projects/:id/changes/commit", async (request, reply) => {
+    const params = z.object({ id: z.string().min(1) }).parse(request.params);
+    const user = await requireProjectUser(request, reply, params.id);
+    if (!user) return;
+    const body = z.object({
+      message: z.string().min(1).max(500),
+      paths: z.array(z.string().min(1).max(2000)).max(500).optional(),
+      push: z.boolean().optional(),
+    }).parse(request.body ?? {});
+    try {
+      return await commitWorktreeChanges(params.id, user.id, body);
+    } catch (error) {
+      return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+    }
+  });
+
+  /** Новая ветка от текущего HEAD: имя проверяется в git-repo, здесь только форма запроса. */
+  app.post("/api/projects/:id/changes/branches", async (request, reply) => {
+    const params = z.object({ id: z.string().min(1) }).parse(request.params);
+    const user = await requireProjectUser(request, reply, params.id);
+    if (!user) return;
+    const body = z.object({ name: z.string().min(1).max(120) }).parse(request.body ?? {});
+    try {
+      return await createProjectBranch(params.id, user.id, body.name);
     } catch (error) {
       return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
     }

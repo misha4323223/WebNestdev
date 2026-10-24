@@ -208,7 +208,7 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
             <p>Опиши идею — NestDev поможет превратить её в рабочий проект.</p>
             <form className="home-composer" onSubmit={submit}>
               <div className="home-composer-top"><span className="home-composer-icon"><Code2 size={16}/></span><textarea value={idea} onChange={e=>setIdea(e.target.value)} placeholder="Что будем создавать?" rows={2} /></div>
-              <div className="home-composer-bottom"><span>{busy?"Создаём проект и запускаем планировщика…":"Например: интернет-магазин одежды с каталогом и корзиной · агент уточнит детали и покажет план"}</span><button className="send-button home-submit" disabled={busy||!idea.trim()} aria-label="Создать проект и запустить агента"><ArrowRight size={15}/></button></div>
+              <div className="home-composer-bottom"><span>{busy?"Создаём проект и запускаем планировщика…":"Опиши идею — агент уточнит детали."}</span><button className="send-button home-submit" disabled={busy||!idea.trim()} aria-label="Создать проект и запустить агента"><ArrowRight size={15}/></button></div>
             </form>
           </section>
 
@@ -216,7 +216,7 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
             <div>
               <strong>{paymentReturn==="success"?"Оплата принята":"Оплата не прошла"}</strong>
               <span>{paymentReturn==="success"
-                ?"Робокасса подтверждает платёж отдельным запросом. Тариф включится автоматически — если он ещё прежний, обновите данные через минуту."
+                ?"Тариф включится автоматически. Если он ещё прежний, обновите через минуту."
                 :"Деньги не списаны. Можно вернуться к тарифам и попробовать снова."}</span>
             </div>
             <div className="home-payment-actions">

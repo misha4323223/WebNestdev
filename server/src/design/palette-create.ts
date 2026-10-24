@@ -32,7 +32,18 @@ type Family = "background" | "text" | "border" | "other";
 export type PalettePlan = {
   /** Шесть цветовых токенов контракта — ровно те, что показывает панель. */
   tokens: Record<string, string>;
+  /**
+   * Файл `theme.css`, если палитра живёт в нём. Пустая строка — у серверного проекта:
+   * там переменные объявляются прямо в `<style>` его HTML-шаблона, и отдельный файл темы
+   * пришлось бы ещё подключить к странице (а Node не умеет импортировать CSS).
+   */
   themeCss: string;
+  /**
+   * Куда писать файл темы. Обычно корень проекта, но у статики из `public/` — рядом с её
+   * `index.html`: сервер раздаёт `public/` как корень, и `theme.css` из корня проекта до
+   * страницы просто не доходил бы.
+   */
+  themeFile: string;
   /** Перезаписанные файлы проекта (содержимое целиком). */
   files: Array<{ file: string; content: string }>;
 };
@@ -47,6 +58,13 @@ const COLOR = /#[0-9a-fA-F]{3,8}\b|(?:rgba?|hsla?)\([^)]*\)/g;
 const STYLE_BLOCK = /<style[^>]*>([\s\S]*?)<\/style>/gi;
 /** Файлы разметки, где цвета живут в классах и inline-стилях. */
 const MARKUP_FILE = /\.(html?|htm|jsx|tsx)$/i;
+/**
+ * Серверные скрипты: HTML в них — обычная строка шаблона, но цвета в ней такие же настоящие.
+ * Раньше такие файлы не сканировались на inline-стили, и палитра проекта с бэкендом
+ * оказывалась пустой при живых цветах в коде.
+ */
+const SCRIPT_TEMPLATE = /\.(js|mjs|cjs|ts|mts|cts)$/i;
+const HTML_MARKUP = /<style[\s>]|<\/head>|<body[\s>]|<html[\s>]|<!doctype/i;
 /** `style="…"` в разметке и в JSX: тот же список объявлений, что и в CSS. */
 const STYLE_ATTRIBUTE = /\bstyle\s*=\s*(?:"([^"]*)"|'([^']*)')/g;
 /** `style={{ … }}`: в JSX стили заданы объектом, ключи — CSS-свойства в camelCase. */
@@ -89,10 +107,10 @@ function familyOf(property: string): Family | null {
   return null;
 }
 
-/** Границы блоков, где вообще имеет смысл искать объявления: весь CSS или `<style>` разметки. */
+/** Границы блоков, где вообще имеет смысл искать объявления: CSS или `<style>` разметки. */
 function styleRanges(file: ScannedFile): Array<[number, number]> {
   if (file.css) return [[0, file.text.length]];
-  if (!/\.(html?|htm)$/i.test(file.file)) return [];
+  if (!/\.(html?|htm)$/i.test(file.file) && !SCRIPT_TEMPLATE.test(file.file)) return [];
   const ranges: Array<[number, number]> = [];
   for (const match of file.text.matchAll(STYLE_BLOCK)) {
     const at = match.index ?? 0;
@@ -250,7 +268,7 @@ function literalsOf(files: ScannedFile[]) {
   for (const file of files) {
     const masked = mask(file.text);
     for (const [start, end] of styleRanges(file)) literals.push(...declarationsIn(file.file, masked, start, end));
-    if (!MARKUP_FILE.test(file.file)) continue;
+    if (!MARKUP_FILE.test(file.file) && !SCRIPT_TEMPLATE.test(file.file)) continue;
     literals.push(...inlineStylesIn(file.file, masked));
     if (withTailwind) literals.push(...classColorsIn(file.file, masked));
   }
@@ -330,8 +348,8 @@ function tally(literals: Literal[], family: Family) {
 }
 
 /** Путь к файлу темы относительно переписанного файла; всегда начинается с `.`. */
-export function relativeThemePath(file: string) {
-  const relative = path.posix.relative(path.posix.dirname(file), THEME_FILE);
+export function relativeThemePath(file: string, themeFile = THEME_FILE) {
+  const relative = path.posix.relative(path.posix.dirname(file), themeFile);
   return relative.startsWith(".") ? relative : "./" + relative;
 }
 
@@ -354,11 +372,56 @@ function linkTheme(html: string, relative: string) {
   return tag + "\n" + html;
 }
 
-function connect(file: string, content: string) {
-  const relative = relativeThemePath(file);
+function connect(file: string, content: string, themeFile: string) {
+  const relative = relativeThemePath(file, themeFile);
   if (/\.(html?|htm)$/i.test(file)) return linkTheme(content, relative);
   if (/\.(m?[jt]sx?)$/i.test(file)) return importModuleTheme(content, relative);
   return importTheme(content, relative);
+}
+
+/**
+ * HTML, который сервер отдаёт строкой: шаблон, а не модуль. Импортировать в такой файл CSS
+ * нельзя — Node не умеет этого и просто упадёт при запуске. Поэтому переменные объявляются
+ * прямо в `<style>` того же шаблона: страница получает их без отдельного файла и без сборщика.
+ */
+function isServerTemplate(file: string, text: string) {
+  return SCRIPT_TEMPLATE.test(file) && HTML_MARKUP.test(text);
+}
+
+/** Куда вставить `:root`: в первый блок `<style>`, иначе перед `</head>` или `<body>`. */
+function canInlineTheme(text: string) {
+  return /<style[\s>]/i.test(text) || /<\/head>/i.test(text) || /<body[\s>]/i.test(text);
+}
+
+/**
+ * Где будет жить `theme.css`. Если страница лежит в `public/`, туда же кладётся и тема:
+ * сервер раздаёт эту папку как корень, а файл из корня проекта браузер не получит.
+ */
+function chooseThemeFile(files: ScannedFile[], rewritten: string[]) {
+  if (files.some(file => file.file === "index.html")) return THEME_FILE;
+  const page = files.find(file => /(^|\/)index\.html?$/i.test(file.file));
+  if (page && !page.file.startsWith("src/")) {
+    const dir = path.posix.dirname(page.file);
+    if (dir !== "." && rewritten.every(file => file.startsWith(dir + "/"))) return dir + "/theme.css";
+  }
+  return THEME_FILE;
+}
+
+function inlineTheme(code: string, root: string) {
+  // Никаких переводов строк: HTML может лежать в обычной строке `'…'`/`"…"`, а не только в
+  // шаблонной. Перевод строки внутри такой строки сломал бы JavaScript сервера.
+  const style = /<style[^>]*>/i.exec(code);
+  if (style) {
+    const close = code.indexOf("</style>", style.index + style[0].length);
+    // Объявление в конце блока — последнее, поэтому оно выигрывает у прежних значений
+    // `:root` выше по тексту, но остальные правила шаблона не трогает.
+    if (close !== -1) return code.slice(0, close) + root + code.slice(close);
+  }
+  const head = /<\/head>/i.exec(code);
+  if (head) return code.slice(0, head.index) + "<style>" + root + "</style>" + code.slice(head.index);
+  const body = /<body[\s>]/i.exec(code);
+  if (body) return code.slice(0, body.index) + "<style>" + root + "</style>" + code.slice(body.index);
+  return code;
 }
 
 /**
@@ -452,36 +515,50 @@ export function planPalette(files: ScannedFile[]): PalettePlan | null {
   }
   if (!byFile.size) return null;
 
+  const sources = new Map(files.map(file => [file.file, file.text]));
+  const entries = [...byFile.entries()].filter(([file]) => sources.has(file));
+  // Серверный шаблон и обычный модуль — два разных способа подключить тему, и смешивать их
+  // в одном проекте нельзя: переменные окажутся в двух местах и панель будет править одно из них.
+  // Если в проекте есть стили или компоненты, палитра живёт в `theme.css`; если только
+  // серверный HTML, переменные объявляются в его `<style>`.
+  const server = entries.filter(([file]) => isServerTemplate(file, sources.get(file) as string))
+    .filter(([file]) => canInlineTheme(sources.get(file) as string));
+  const client = entries.filter(([file]) => !SCRIPT_TEMPLATE.test(file));
+  const inline = client.length === 0 && server.length > 0;
+  const active = inline ? server : client;
+  if (!active.length) return null;
+
   // В тему попадают только токены, которые действительно встречаются в стилях: производный
   // цвет, которого никто не использует, — лишняя строка в панели, а не палитра проекта.
   const used = new Set<string>();
-  for (const list of byFile.values()) for (const replacement of list) used.add(replacement.variable);
+  for (const [, list] of active) for (const replacement of list) used.add(replacement.variable);
   const colorFields = THEME_FIELDS.filter(field => field.kind === "color" && used.has(field.variable));
+  const declarations = colorFields.map(field => field.variable + ":" + tokens[field.variable] + ";");
+  // В серверный шаблон блок идёт одной строкой (см. inlineTheme), в theme.css — читаемыми строками.
+  const root = inline ? ":root{" + declarations.join("") + "}" : ":root{\n" + declarations.map(line => "  " + line).join("\n") + "\n}";
+  const themeFile = inline ? "" : chooseThemeFile(files, active.map(([file]) => file));
 
-  const sources = new Map(files.map(file => [file.file, file.text]));
   const rewritten: Array<{ file: string; content: string }> = [];
-  for (const [file, replacements] of byFile) {
-    const source = sources.get(file);
-    if (!source) continue;
+  for (const [file, replacements] of active) {
+    const source = sources.get(file) as string;
     // Замены идут с конца: смещение ранних литералов не съезжает.
     let content = source;
     for (const replacement of [...replacements].sort((left, right) => right.start - left.start)) {
       const value = "var(" + replacement.variable + ")";
       content = content.slice(0, replacement.start) + (replacement.wrap === "class" ? "[" + value + "]" : value) + content.slice(replacement.start + replacement.length);
     }
-    rewritten.push({ file, content: connect(file, content) });
+    rewritten.push({ file, content: inline ? inlineTheme(content, root) : connect(file, content, themeFile) });
   }
   if (!rewritten.length) return null;
 
   return {
     tokens: Object.fromEntries(colorFields.map(field => [field.variable, tokens[field.variable]])),
-    themeCss: [
+    themeCss: inline ? "" : [
       "/* Палитра проекта: собрана панелью «Тема» из цветов страницы. */",
-      ":root{",
-      ...colorFields.map(field => "  " + field.variable + ":" + tokens[field.variable] + ";"),
-      "}",
+      root,
       "",
     ].join("\n"),
+    themeFile,
     files: rewritten,
   };
 }
@@ -527,11 +604,14 @@ async function createPalette(root: string): Promise<CreatePaletteResult> {
       created: false,
       reason:
         "В стилях проекта не нашлось цветов, которые можно перевести на переменные: цветов нет ни в CSS, " +
-        "ни в inline-стилях, ни в классах Tailwind. Перевести их на тему сможет агент.",
+        "ни в inline-стилях, ни в HTML-шаблонах (включая серверные), ни в классах Tailwind. " +
+        "Перевести их на тему сможет агент.",
     };
   }
 
-  await writeFileInside(root, path.join(root, THEME_FILE), plan.themeCss);
+  // Файл темы пишется только когда он есть в плане: у серверного проекта переменные живут
+  // в его же HTML-шаблоне, и отдельный `theme.css` никто бы не подключил.
+  if (plan.themeCss) await writeFileInside(root, path.join(root, plan.themeFile), plan.themeCss);
   for (const file of plan.files) await writeFileInside(root, path.join(root, file.file), file.content);
   return { created: true };
 }

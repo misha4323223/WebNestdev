@@ -392,7 +392,10 @@ button,textarea{font:inherit}button{color:inherit}
 @media(max-width:650px){.workspace-tabs{gap:2px;padding:0 8px}.workspace-tabs button{padding:0 6px;gap:5px}.workspace-tabs .workspace-tabs-chats{padding:0 6px}.workspace-tabs .workspace-tabs-chats span{display:none}/* На телефоне строки вкладок не хватает по ширине, и кнопка уезжала за правый край вместе
    с прокруткой. Sticky держит её на месте у края, а тень скрывает уезжающие под неё вкладки. */
   .workspace-tabs .workspace-tabs-scroll{position:sticky;right:0;z-index:2;width:28px;padding:0;justify-content:center;margin-left:6px;box-shadow:-10px 0 10px #0e1014,inset 0 1px 0 rgba(255,255,255,.04)}.workspace-tabs .workspace-tabs-scroll span{display:none}.workspace-tabs-scroll-dot{position:absolute;top:3px;right:3px;width:5px;height:5px}}
-.panel,.files-panel{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden}.panel-title{min-height:54px;padding:10px 15px;border-bottom:1px solid var(--edge);display:flex;align-items:center;justify-content:space-between;color:#c5c9cf;font-size:11px}.panel-title strong{display:block;margin-top:3px;font-size:12px}.files-panel .panel-title{justify-content:space-between}.file-browser{flex:1;min-height:0;display:flex}.file-tree{width:270px;flex:none;border-right:1px solid #20242a;overflow:auto;padding:7px}.file-item{width:100%;min-height:30px;border:0;background:transparent;color:#aeb4bd;border-radius:5px;padding:0 7px;display:flex;align-items:center;gap:7px;text-align:left;font-size:11px;cursor:pointer}.file-item:hover,.file-item.selected{background:#171a20;color:#e8eaed}.file-parent{color:#727a85}.file-empty{padding:18px 8px;color:#626a75;font-size:10px}.file-editor{flex:1;min-width:0;overflow:auto;background:#0b0d10}.editor-head{height:34px;border-bottom:1px solid #20242a;padding:0 12px;display:flex;align-items:center;color:#7f8792;font-size:10px}.file-editor pre{margin:0;padding:14px;font:11px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;color:#cdd1d7;white-space:pre-wrap}.file-placeholder{height:100%;display:grid;place-content:center;justify-items:center;gap:8px;color:#626a75;font-size:10px}
+.panel,.files-panel{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden}.panel-title{min-height:54px;padding:10px 15px;border-bottom:1px solid var(--edge);display:flex;align-items:center;justify-content:space-between;color:#c5c9cf;font-size:11px}.panel-title strong{display:block;margin-top:3px;font-size:12px}
+.panel-title-strong{display:flex;align-items:center;gap:4px;min-width:0;margin-top:3px}
+.panel-title-strong strong{margin-top:0;min-width:0}
+.panel-title-strong .hint{margin-left:0}.files-panel .panel-title{justify-content:space-between}.file-browser{flex:1;min-height:0;display:flex}.file-tree{width:270px;flex:none;border-right:1px solid #20242a;overflow:auto;padding:7px}.file-item{width:100%;min-height:30px;border:0;background:transparent;color:#aeb4bd;border-radius:5px;padding:0 7px;display:flex;align-items:center;gap:7px;text-align:left;font-size:11px;cursor:pointer}.file-item:hover,.file-item.selected{background:#171a20;color:#e8eaed}.file-parent{color:#727a85}.file-empty{padding:18px 8px;color:#626a75;font-size:10px}.file-editor{flex:1;min-width:0;overflow:auto;background:#0b0d10}.editor-head{height:34px;border-bottom:1px solid #20242a;padding:0 12px;display:flex;align-items:center;color:#7f8792;font-size:10px}.file-editor pre{margin:0;padding:14px;font:11px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;color:#cdd1d7;white-space:pre-wrap}.file-placeholder{height:100%;display:grid;place-content:center;justify-items:center;gap:8px;color:#626a75;font-size:10px}
 .app-loading{height:100%;min-height:240px;display:grid;place-content:center;justify-items:center;gap:9px;color:#8a929d;font-size:11px;text-align:center;padding:24px}.app-loading strong{font-size:13px;color:#d5d8dd}.app-loading span{max-width:460px;line-height:1.5}.workspace-overlay-panel{flex:1;min-width:0;min-height:0;overflow:auto}.settings-panel{max-width:720px;margin:20px auto;border:1px solid #242a31;background:#111419;border-radius:9px;overflow:hidden}.settings-body{padding:18px;display:grid;gap:14px;color:#969da7;font-size:11px}.settings-body label{display:grid;gap:6px;color:#777f89}.settings-body label span{color:#d0d4da}.settings-body select,.settings-body input{height:32px;border:1px solid #2a3038;border-radius:6px;background:#0b0d10;color:#dce0e5;padding:0 9px;outline:none}.settings-save{width:max-content;padding:0 12px}.preview-frame{flex:1;width:100%;border:0;background:#fff}.preview-actions{display:flex;gap:3px}.preview-error{margin:10px 12px;padding:9px;border:1px solid #4a3030;border-radius:6px;background:#1b1212;color:#d99b9b;font-size:10px}
 .preview-hint{margin:10px 12px;padding:9px;border:1px solid #3a3427;border-radius:6px;background:#171408;color:#cdb171;font-size:10px}
 .github-popover{position:absolute;right:12px;top:43px;width:min(560px,calc(100vw - 24px));max-height:calc(100vh - 58px);overflow:auto;background:#111419;border:1px solid #2a3038;border-radius:9px;box-shadow:0 18px 50px rgba(0,0,0,.45)}
@@ -416,9 +419,6 @@ button,textarea{font:inherit}button{color:inherit}
 /* Заметка о доставке кода: тестовый режим или отказ провайдера. Без неё «SMS не приходят»
    выглядит одинаково и при сломанной настройке, и при чужой клавиатуре. */
 .auth-note{padding:9px;border:1px solid #3a3320;border-radius:6px;background:#191509;color:#d9c48d;font-size:10px;line-height:1.5}
-/* Какая сборка сейчас на сервере: по ней отличают устаревшую страницу из кеша браузера
-   от старой версии, которая действительно живёт в проде. */
-.auth-build{margin-top:22px;text-align:center;color:#5c636d;font-size:10px;letter-spacing:.04em}
 
 .home-screen{min-height:100vh;overflow:auto;background:#0b0d10;padding:0 28px;color:#e8eaed}
 .home-hero{width:min(860px,100%);margin:0 auto;padding:82px 0 54px;text-align:center}
@@ -1270,6 +1270,7 @@ button,textarea{font:inherit}button{color:inherit}
 .change-dot.task{background:#5f9e74;box-shadow:0 0 0 1px #3f6b53}
 .change-dot.rollback{background:#c0a35f;box-shadow:0 0 0 1px #6b5a35}
 .change-dot.imported{background:#4b5563;box-shadow:0 0 0 1px #3a424c}
+.change-dot.manual{background:#5b8fb9;box-shadow:0 0 0 1px #3b6080}
 .change-item.current .change-dot{box-shadow:0 0 0 1px #5f9e74,0 0 0 4px rgba(95,158,116,.16)}
 .change-body{flex:1;min-width:0;border:1px solid #20242a;border-radius:8px;background:#111419;padding:10px 12px}
 .change-item.current .change-body{border-color:#2b3f33;background:#121916}
@@ -1278,6 +1279,7 @@ button,textarea{font:inherit}button{color:inherit}
 .change-kind{flex:none;font-size:9px;letter-spacing:.03em;padding:2px 6px;border-radius:999px;border:1px solid #2a3038;color:#8b93a0;background:#14181d}
 .change-kind.task{border-color:#2d4a39;color:#8fc7a2;background:#11201a}
 .change-kind.rollback{border-color:#3f3a2b;color:#c6b487;background:#1a1710}
+.change-kind.manual{border-color:#2e4356;color:#9cc3df;background:#101a22}
 .change-kind.current{border-color:#3f6b53;color:#d7ece0;background:#17251d}
 .change-push{margin-left:auto;display:inline-flex;align-items:center;gap:4px;font-size:9.5px;color:#8b93a0;flex:none}
 .change-push.ok{color:#8fc7a2}
@@ -1910,6 +1912,9 @@ button,textarea{font:inherit}button{color:inherit}
    одного ряда не хватает, и подпись «Рабочая область» раньше просто исчезала под кнопками. */
 .preview-head{display:grid;grid-template-columns:minmax(0,1fr) auto;grid-template-areas:"title close" "actions actions";align-items:center;gap:7px 10px;height:auto;min-height:0;padding:10px 12px 11px;border-bottom:1px solid var(--line-warm);background:linear-gradient(180deg,#12161c,#0e1116)}
 .preview-title{grid-area:title;min-width:0}
+.preview-title-line{display:flex;align-items:center;gap:4px;min-width:0;margin-top:3px}
+.preview-title-line strong{margin-top:0;min-width:0}
+.preview-title-line .hint{margin-left:0}
 .preview-head .eyebrow{display:block;color:#7f9c8c;font:700 8.5px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.16em}
 .preview-head strong{display:block;margin-top:3px;font-size:12.5px;line-height:1.2;color:#e6ebf0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .preview-close{grid-area:close}
@@ -2306,6 +2311,8 @@ button,textarea{font:inherit}button{color:inherit}
 @keyframes theme-sheet-in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 .theme-head{flex:none;display:flex;align-items:center;justify-content:space-between;gap:10px;padding:11px 12px;border-bottom:1px solid var(--line-warm-soft);background:#0e1116}
 .theme-title{display:grid;gap:2px;min-width:0}
+.theme-title-line{display:flex;align-items:center;gap:4px;min-width:0}
+.theme-title-line .hint{margin-left:0}
 .theme-title strong{font-size:12px;color:#e8edf1}
 .theme-body{flex:1;min-height:0;overflow:auto;display:grid;gap:14px;align-content:start;padding:12px;scrollbar-width:thin;overscroll-behavior:contain}
 .theme-group{display:grid;gap:7px}
@@ -2384,3 +2391,125 @@ button,textarea{font:inherit}button{color:inherit}
 .editor-save:disabled{opacity:.45;cursor:default}
 .file-source{flex:1;min-height:160px;width:100%;box-sizing:border-box;border:0;outline:0;resize:none;padding:14px;background:#0b0d10;color:#cdd1d7;font:11px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;tab-size:2}
 .file-source:focus-visible{box-shadow:inset 0 0 0 1px #2b3139}
+
+/* Редактор должен выглядеть редактором: фильтр, номера строк, режим и строка состояния. */
+.file-filter{display:flex;align-items:center;gap:6px;margin:0 0 6px;padding:0 7px;height:28px;border:1px solid #232830;border-radius:6px;background:#0b0d10;color:#626a75}
+.file-filter:focus-within{border-color:#3a4a40;color:#8fbfa2}
+.file-filter input{flex:1;min-width:0;border:0;outline:0;background:transparent;color:#d7dbe0;font-size:10.5px}
+.file-filter input::placeholder{color:#5d6570}
+.file-edit-mark{opacity:.35;flex:none;margin-left:auto}
+.file-item:hover .file-edit-mark,.file-item.selected .file-edit-mark{opacity:.8;color:#8fbfa2}
+.file-dirty-dot{flex:none;width:6px;height:6px;border-radius:50%;background:#c9a86a;box-shadow:0 0 0 2px rgba(201,168,106,.14)}
+.editor-mode{display:inline-flex;align-items:center;gap:4px;flex:none;color:#8fbfa2;font-size:9.5px;letter-spacing:.04em;text-transform:uppercase}
+.editor-path{color:#d7dbe0;font-size:10.5px;min-width:0;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.editor-back{display:none;flex:none;align-items:center;justify-content:center;width:24px;height:24px;border:1px solid #2a3038;border-radius:5px;background:#14181d;color:#aeb4bd;cursor:pointer;padding:0}
+.editor-back:hover{background:#1b2027;color:#e8eaed}
+.editor-revert{height:23px!important;font-size:9.5px!important;padding:0 8px!important}
+.file-editor-body{flex:1;min-height:0;display:flex;overflow:hidden}
+.file-gutter{flex:none;min-width:42px;overflow:hidden;padding:14px 8px;text-align:right;font:11px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;color:#4d5561;background:#0b0d10;border-right:1px solid #171b21;user-select:none;box-sizing:border-box}
+.file-gutter span{display:block;height:17.6px}
+.file-editor-body .file-source{padding-left:12px}
+.file-statusbar{flex:none;height:25px;display:flex;align-items:center;gap:12px;padding:0 12px;border-top:1px solid #171b21;background:#0d1014;color:#626a75;font-size:9.5px;white-space:nowrap;overflow:hidden}
+.file-status-note{margin-left:auto;overflow:hidden;text-overflow:ellipsis}
+.file-placeholder strong{color:#c5c9cf;font-size:11.5px}
+.file-placeholder span{max-width:330px;text-align:center;line-height:1.55}
+/* Git-панель: ветка, рабочие изменения с выбором файлов, коммит и история. */
+.git-panel .changes-scroll{padding-top:12px}
+.git-repo{align-items:center}
+.git-branch{position:relative}
+.git-branch>summary{list-style:none;display:flex;align-items:center;gap:6px;cursor:pointer;color:#98a0aa}
+.git-branch>summary::-webkit-details-marker{display:none}
+.git-branch>summary:hover .changes-branch{border-color:#3d4a40;color:#c8ebd4}
+.git-branch-menu{position:absolute;z-index:40;top:calc(100% + 7px);left:0;width:250px;max-width:calc(100vw - 44px);padding:6px;border:1px solid #2a3038;border-radius:8px;background:#11151a;box-shadow:0 18px 40px rgba(0,0,0,.55);display:grid;gap:2px}
+.git-branch-menu-head{padding:3px 6px 5px;color:#6f7781;font-size:9px;letter-spacing:.06em;text-transform:uppercase}
+.git-branch-item{display:flex;align-items:center;gap:7px;width:100%;border:0;background:transparent;color:#b6bcc5;font:10.5px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;padding:6px 7px;border-radius:5px;cursor:pointer;text-align:left}
+.git-branch-item span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.git-branch-item:hover{background:#181d24;color:#e8eaed}
+.git-branch-item.current{background:#152019;color:#b7dcc5}
+.git-branch-item:disabled{opacity:.5;cursor:default}
+.git-branch-empty{padding:6px;color:#626a75;font-size:10px}
+.git-branch-new{display:flex;gap:4px;margin-top:5px;padding-top:6px;border-top:1px solid #20252c}
+.git-branch-new input{flex:1;min-width:0;height:26px;border:1px solid #2a3038;border-radius:5px;background:#0b0d10;color:#dce0e5;padding:0 7px;font-size:10px;outline:none}
+.git-branch-new input:focus{border-color:#3f6b53}
+.git-branch-new button{flex:none;width:26px;height:26px;display:grid;place-content:center;border:1px solid #2f5a43;border-radius:5px;background:#152019;color:#a9d9b9;cursor:pointer;padding:0}
+.git-branch-new button:disabled{opacity:.4;cursor:default}
+.git-chevron-right{transform:rotate(-90deg);transition:transform .12s ease}
+.git-card{border:1px solid #20242a;border-radius:9px;background:#0e1115;margin-bottom:14px;overflow:hidden}
+.git-card-head{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 11px;border-bottom:1px solid #1c2127;background:#11151a}
+.git-card-title{display:flex;align-items:center;gap:6px;color:#cdd2d8;font-size:11px}
+.git-card-title svg{color:#8fbfa2}
+.git-card-title b{font:10px ui-monospace,SFMono-Regular,Menlo,monospace;padding:1px 6px;border:1px solid #2a3038;border-radius:999px;background:#14181d;color:#aeb4bd}
+.git-card-tools{display:flex;align-items:center;gap:9px}
+.git-card-hint{color:#626a75;font-size:9.5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.git-link-button{border:0;background:none;color:#8fbfa2;font-size:9.5px;cursor:pointer;padding:0;text-decoration:underline}
+.git-link-button:hover{color:#c8ebd4}
+.git-clean{display:flex;align-items:center;gap:7px;padding:14px 12px;color:#7f9c89;font-size:10.5px}
+.git-clean svg{flex:none;color:#5f9e74}
+.git-change-list{list-style:none;margin:0;padding:5px 6px;display:grid;gap:1px;max-height:300px;overflow:auto}
+.git-change{display:grid;grid-template-columns:auto 1fr auto;column-gap:8px;align-items:center;padding:2px 5px;border-radius:6px}
+.git-change:hover{background:#12161b}
+.git-check{display:flex;align-items:center;gap:7px;cursor:pointer}
+.git-check input{width:12px;height:12px;accent-color:#5f9e74;cursor:pointer;margin:0}
+.git-status{width:13px;text-align:center;font-weight:700;font-size:11px;line-height:1}
+.git-status.added,.git-status-text.added{color:#7fc48f}
+.git-status.modified,.git-status-text.modified{color:#c6b487}
+.git-status.deleted,.git-status-text.deleted{color:#d99b9b}
+.git-change-path{display:flex;align-items:center;gap:8px;min-width:0;border:0;background:none;color:#b6bcc5;font:10.5px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;cursor:pointer;padding:3px 0;text-align:left}
+.git-change-path>span:first-child{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.git-change-path:hover{color:#eef0f3}
+.git-status-text{margin-left:auto;flex:none;font:9px/1 ui-sans-serif,system-ui,sans-serif;opacity:.85}
+.git-diff-toggle{width:22px;height:22px;display:grid;place-content:center;border:0;border-radius:4px;background:transparent;color:#6f7781;cursor:pointer;padding:0}
+.git-diff-toggle:hover{background:#1a1f26;color:#c5c9cf}
+.git-diff-wrap{grid-column:1/-1}
+.git-diff{margin:0 0 4px;padding:7px 0;border:1px solid #1d2229;border-radius:6px;background:#080a0d;max-height:360px;overflow:auto;font:10px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;color:#aeb4bd;white-space:pre;tab-size:2}
+.git-diff span{display:block;padding:0 9px;min-height:15px}
+.git-diff .add{background:#0f2018;color:#a9d9b9}
+.git-diff .del{background:#241416;color:#e3a3a3}
+.git-diff .hunk{background:#11181e;color:#8fbfa2;margin:4px 0;padding:2px 9px}
+.git-diff .meta{color:#6f7781}
+.git-diff .ctx{color:#9aa3ae}
+.git-diff-state{padding:9px 11px;margin-bottom:4px;border:1px solid #1d2229;border-radius:6px;background:#0b0d10;color:#7f8792;font-size:10px;display:flex;align-items:center;gap:6px}
+.git-diff-state.warn{color:#d99b9b;border-color:#4a3030;background:#1b1212}
+.git-commit{padding:9px 11px 11px;border-top:1px solid #1c2127;background:#0d1014}
+.git-commit textarea{width:100%;box-sizing:border-box;min-height:52px;max-height:140px;resize:vertical;border:1px solid #2a3038;border-radius:6px;background:#0b0d10;color:#e2e5e9;padding:8px 9px;font:11px/1.5 ui-sans-serif,system-ui,sans-serif;outline:none}
+.git-commit textarea:focus{border-color:#3f6b53;box-shadow:0 0 0 3px rgba(79,143,107,.14)}
+.git-commit textarea::placeholder{color:#5d6570}
+.git-commit-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:7px}
+.git-push-choice{display:inline-flex;align-items:center;gap:5px;color:#98a0aa;font-size:10px;cursor:pointer}
+.git-push-choice input{accent-color:#5f9e74;margin:0}
+.git-push-choice.disabled{opacity:.45;cursor:default}
+.git-selected{margin-left:auto;color:#6f7781;font-size:9.5px}
+.git-commit-btn{height:28px;padding:0 12px;border:1px solid #3d7a58;border-radius:6px;background:#1d3a2b;color:#d7ece0;font-size:10.5px;cursor:pointer;display:inline-flex;align-items:center;gap:5px}
+.git-commit-btn:hover:not(:disabled){background:#244a36;border-color:#4b9168}
+.git-commit-btn:disabled{opacity:.42;cursor:default}
+.git-history-card .changes-list{padding:10px 10px 0}
+.git-history-files{padding:6px 5px!important}
+.git-history-file{display:grid}
+.git-history-file-button{width:100%;border:0;background:none;border-radius:4px;padding:2px 4px;cursor:pointer;text-align:left}
+.git-history-file-button:hover{background:#151a20}
+.git-history-file-button .change-file-path{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.git-history-file-button svg{flex:none;color:#6f7781}
+.git-history-file .git-diff-wrap{margin:3px 0 5px}
+
+/* Маленький знак «?» и общая подсказка сайта: системные title-плашки заменяются
+   тёмной капсулой в палитре тёмно-зелёного акцента. */
+.hint{display:inline-flex;align-items:center;vertical-align:middle;margin-left:5px;flex:none}
+.hint-trigger{width:15px;height:15px;border:1px solid #3b433c;border-radius:50%;background:#151a18;color:#8d9a90;display:inline-grid;place-items:center;padding:0;cursor:help;transition:border-color .16s ease,background .16s ease,color .16s ease,transform .16s ease}
+.hint-trigger:hover,.hint-trigger.open,.hint-trigger:focus-visible{border-color:#5d7d67;background:#1a2620;color:#cbe4d3;outline:none;transform:translateY(-1px)}
+.hint-trigger svg{display:block}
+.tooltip-bubble{position:fixed;z-index:140;max-width:min(300px,calc(100vw - 16px));padding:8px 10px;border:1px solid #3a453c;border-radius:8px;background:linear-gradient(180deg,#161d1a,#101412);color:#dfe8e1;font-size:10.5px;line-height:1.55;letter-spacing:.005em;box-shadow:0 12px 32px rgba(0,0,0,.48),inset 0 1px 0 rgba(255,255,255,.04);pointer-events:none;animation:tooltip-in .12s ease both}
+.tooltip-bubble code{padding:1px 4px;border-radius:4px;background:#0c100e;color:#b9dcc4;font-size:9.5px}
+@keyframes tooltip-in{from{opacity:0;transform:translateY(2px)}to{opacity:1;transform:translateY(0)}}
+@media(prefers-reduced-motion:reduce){.tooltip-bubble{animation:none}.hint-trigger{transition:none}}
+
+@media(max-width:650px){
+  .file-browser.editing{display:flex;flex-direction:column;overflow:hidden}
+  .file-browser.editing .file-tree{display:none}
+  .file-browser.editing .file-editor{flex:1;height:auto}
+  .editor-back{display:inline-flex}
+  .editor-mode{display:none}
+  .file-status-note{display:none}
+  .file-gutter{min-width:36px;padding:10px 6px}
+  .file-editor-body .file-source{padding:10px 10px 10px 8px}
+  .file-statusbar{padding:0 10px}
+}

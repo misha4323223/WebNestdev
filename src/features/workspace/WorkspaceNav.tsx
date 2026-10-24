@@ -1,4 +1,4 @@
-import { ArrowDownToLine,Bot,FolderGit2,History,MessagesSquare,Terminal } from "lucide-react";
+import { ArrowDownToLine,Bot,FolderGit2,GitBranch,MessagesSquare,Terminal } from "lucide-react";
 
 export type WorkspaceView="agent"|"files"|"changes"|"terminal";
 
@@ -9,10 +9,10 @@ export type WorkspaceView="agent"|"files"|"changes"|"terminal";
  */
 export function WorkspaceNav({view,onChange,onSessions,sessionCount,onScrollBottom,showScroll,writing}:{view:WorkspaceView;onChange:(view:WorkspaceView)=>void;onSessions:()=>void;sessionCount?:number;onScrollBottom?:()=>void;showScroll?:boolean;writing?:boolean}){
   return <nav className="workspace-tabs">
-    <button className={view==="agent"?"active":""} onClick={()=>onChange("agent")}><Bot size={15}/> Агент</button>
-    <button className={view==="files"?"active":""} onClick={()=>onChange("files")}><FolderGit2 size={15}/> Файлы</button>
-    <button className={view==="changes"?"active":""} onClick={()=>onChange("changes")}><History size={15}/> Изменения</button>
-    <button className={view==="terminal"?"active":""} onClick={()=>onChange("terminal")}><Terminal size={15}/> Терминал</button>
+    <button className={view==="agent"?"active":""} onClick={()=>onChange("agent")} title="Чат с агентом"><Bot size={15}/> Агент</button>
+    <button className={view==="files"?"active":""} onClick={()=>onChange("files")} title="Файлы проекта и редактор"><FolderGit2 size={15}/> Файлы</button>
+    <button className={view==="changes"?"active":""} onClick={()=>onChange("changes")} title="Git: рабочие изменения, коммиты, ветки и история"><GitBranch size={15}/> Git</button>
+    <button className={view==="terminal"?"active":""} onClick={()=>onChange("terminal")} title="Команды в папке проекта"><Terminal size={15}/> Терминал</button>
     {/* История переписки — рядом с вкладками, а не отдельной шапкой над чатом. */}
     <button className="workspace-tabs-chats" onClick={onSessions} title="Сохранённые чаты проекта — вернуться к любому" aria-label="Чаты проекта">
       <MessagesSquare size={14}/>

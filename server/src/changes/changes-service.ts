@@ -8,7 +8,10 @@ import { recordStorageMutation } from "../account/storage-quota.js";
 import type { SandboxConfig } from "../sandbox-manager.js";
 import {
   addRemote,
+  checkpointDiff,
+  createBranch,
   createCheckpoint,
+  createManualCheckpoint,
   currentBranch,
   hasCommits,
   hasRepo,
@@ -19,9 +22,12 @@ import {
   pushBranch,
   readPushState,
   restoreCheckpoint,
+  scanChanges,
   switchBranch,
+  worktreeDiff,
 } from "./git-repo.js";
-import type { Checkpoint, ChangesOverview } from "./types.js";
+import { isSecretProjectPath } from "../secrets/secret-paths.js";
+import type { Checkpoint, ChangesOverview, FileDiff, WorktreeState } from "./types.js";
 
 /**
  * Один проект — одна очередь git-операций. Запуск агента, откат и повторная отправка могут
@@ -374,5 +380,96 @@ export async function pushCurrentBranch(projectId: string, userId: string) {
     if (!await hasRepo(repository.sandbox.root)) throw new Error("В проекте ещё нет истории изменений");
     const outcome = await pushWithTimeout(repository, userId);
     return outcome;
+  });
+}
+
+/**
+ * Рабочие изменения для Git-панели: всё, что ещё не стало точкой истории. Это тот же скан,
+ * которым пользуется задача агента, поэтому панель и история видят одни и те же файлы.
+ */
+export async function worktreeState(projectId: string, userId: string): Promise<WorktreeState> {
+  const repository = await repositoryFor(projectId, userId);
+  if (!await hasRepo(repository.sandbox.root)) {
+    return { initialized: false, branch: repository.branch, files: [] };
+  }
+  const branch = await currentBranch(repository.sandbox.root, repository.branch);
+  const scan = await scanChanges(repository.sandbox.root);
+  return {
+    initialized: true,
+    branch,
+    // Секретные env-файлы не показываются даже именем: значения правятся только в «Секретах».
+    files: scan.changed.filter(file => !isSecretProjectPath(file.path)),
+  };
+}
+
+/** Путь из браузера не должен выходить за проект и не должен открывать секреты. */
+function checkDiffPath(value: string) {
+  const filepath = value.trim();
+  if (!filepath || filepath.startsWith("/") || filepath.split("/").includes("..") || /\.git(\/|$)/.test(filepath)) {
+    throw new Error("Недопустимый путь файла");
+  }
+  if (isSecretProjectPath(filepath)) throw new Error("Файл содержит секреты проекта: его diff не показывается");
+  return filepath;
+}
+
+/** Diff файла: из рабочего дерева или из выбранного коммита истории. */
+export async function diffForProject(projectId: string, userId: string, filepath: string, sha?: string): Promise<FileDiff> {
+  const safePath = checkDiffPath(filepath);
+  const repository = await repositoryFor(projectId, userId);
+  if (!await hasRepo(repository.sandbox.root)) throw new Error("В проекте ещё нет истории изменений");
+  return sha
+    ? checkpointDiff(repository.sandbox.root, sha, safePath)
+    : worktreeDiff(repository.sandbox.root, safePath);
+}
+
+/**
+ * Ручной коммит из Git-панели: пользователь сам выбирает файлы, пишет сообщение и решает,
+ * отправлять ли результат. Пуш — только по флагу из формы, никогда не сам.
+ */
+export async function commitWorktreeChanges(projectId: string, userId: string, options: {
+  message: string;
+  paths?: string[];
+  push?: boolean;
+}) {
+  return withProjectLock(projectId, async () => {
+    const repository = await repositoryFor(projectId, userId);
+    if (!await hasRepo(repository.sandbox.root)) throw new Error("В проекте ещё нет истории изменений");
+    await ensureRepo(repository, userId);
+    const branch = await currentBranch(repository.sandbox.root, repository.branch);
+    const message = options.message.trim();
+    if (!message) throw new Error("Напишите сообщение коммита: по нему правку найдут в истории");
+    const paths = options.paths?.filter(Boolean).map(checkDiffPath);
+    const checkpoint = await createManualCheckpoint(repository.sandbox.root, {
+      branch,
+      subject: message,
+      ...(paths?.length ? { paths } : {}),
+    });
+    if (!checkpoint) throw new Error("Нет изменений для коммита: выбранные файлы уже в истории или не изменены");
+    let pushed = false;
+    let pushError: string | undefined;
+    if (options.push && repository.remoteUrl) {
+      const outcome = await pushWithTimeout(repository, userId);
+      pushed = outcome.pushed;
+      pushError = outcome.error;
+    }
+    return {
+      checkpoint: withLink(checkpoint, repository),
+      branch,
+      pushed,
+      ...(pushError ? { pushError } : {}),
+      overview: await changesOverview(projectId, userId),
+    };
+  });
+}
+
+/** Новая ветка от текущего HEAD: удобно начать эксперимент, не трогая main. */
+export async function createProjectBranch(projectId: string, userId: string, name: string) {
+  return withProjectLock(projectId, async () => {
+    const repository = await repositoryFor(projectId, userId);
+    if (!await hasRepo(repository.sandbox.root)) throw new Error("В проекте ещё нет истории изменений");
+    await ensureRepo(repository, userId);
+    const outcome = await createBranch(repository.sandbox.root, name);
+    if (!outcome.created) throw new Error(outcome.error ?? "Не удалось создать ветку");
+    return { created: true, branch: outcome.branch, overview: await changesOverview(projectId, userId) };
   });
 }

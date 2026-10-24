@@ -16,7 +16,7 @@ async function project(files: Record<string, string>) {
   return root;
 }
 
-async function appFor(root: string, refreshed: string[] = []) {
+async function appFor(root: string, refreshed: string[] = [], restarted: string[] = []) {
   const deps: ThemeRouteDeps = {
     authorize: async () => ({ id: "user-1" }),
     getSandbox: async () => ({ root }),
@@ -24,11 +24,15 @@ async function appFor(root: string, refreshed: string[] = []) {
       refreshed.push(projectId);
       return true;
     },
+    restartPreview: async projectId => {
+      restarted.push(projectId);
+      return true;
+    },
   };
   const app = Fastify();
   await registerThemeRoutes(app, deps);
   await app.ready();
-  return { app, refreshed };
+  return { app, refreshed, restarted };
 }
 
 const OWN_PALETTE = {
@@ -84,6 +88,21 @@ test("PUT writes into the file where the variable is declared", async () => {
   assert.match(css, /--bg:#f7f3ec;/);
   assert.match(css, /body\{background:var\(--bg\);color:var\(--ink\)\}/);
   assert.deepEqual(refreshed, ["p1"]);
+});
+
+test("PUT палитры в серверном JS перезапускает живой предпросмотр", async () => {
+  const root = await project({
+    "server.js": "const page = `<html><head><style>:root{--color-bg:#0f172a;--color-text:#e2e8f0}body{background:var(--color-bg);color:var(--color-text)}</style></head><body>x</body></html>`;\nmodule.exports = page;\n",
+  });
+  const { app, restarted } = await appFor(root);
+  const response = await app.inject({
+    method: "PUT",
+    url: "/api/projects/p1/theme",
+    payload: { tokens: { "--color-bg": "#111111" } },
+  });
+  assert.equal(response.statusCode, 200);
+  assert.match(await readFile(path.join(root, "server.js"), "utf8"), /--color-bg:#111111;/);
+  assert.deepEqual(restarted, ["p1"], "без нового процесса старый HTML остался бы в памяти");
 });
 
 test("GET shows the project's own colours, not the unloaded theme.css defaults", async () => {

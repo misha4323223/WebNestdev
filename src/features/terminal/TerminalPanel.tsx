@@ -129,6 +129,7 @@ export function TerminalPanel({projectId}:{projectId:string}){
           autoComplete="off"
           autoCapitalize="off"
           aria-label="Команда для терминала"
+          title="Команда выполнится в папке проекта"
         />
         <button className="terminal-run" type="submit" disabled={running||!command.trim()} title="Выполнить" aria-label="Выполнить"><CornerDownLeft size={14}/></button>
       </form>

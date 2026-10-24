@@ -112,14 +112,14 @@ export function QuestionSheet({prompt,busy,error,onAnswer,onSkip}:{
               if(value.trim()&&!prompt.multiSelect)setSelected([]);
             }}
             onKeyDown={event=>{if(event.key==="Enter"){event.preventDefault();submit()}}}
-            placeholder="Напишите ответ, если ни один вариант не подходит"
+            placeholder="Свой ответ"
             aria-label="Свой ответ"
           />
         </label>}
 
         {error&&<div className="connector-notice">{error}</div>}
 
-        <p className="question-meta"><Sparkles size={12}/><span>Ответ вернётся в тот же запуск — агент продолжит с этого шага без остановки.</span></p>
+        <p className="question-meta"><Sparkles size={12}/><span>Агент продолжит с этого шага.</span></p>
       </div>
 
       <footer className="modal-foot">

@@ -128,7 +128,7 @@ export function CookieConsent() {
               <h2>Настройки cookie</h2>
             </div>
           </div>
-          <button type="button" className="icon-button" onClick={() => setOpen(false)} aria-label="Закрыть"><X size={16}/></button>
+          <button type="button" className="icon-button" onClick={() => setOpen(false)} aria-label="Закрыть" title="Закрыть"><X size={16}/></button>
         </header>
 
         <div className="modal-body cookie-modal-body">

@@ -81,7 +81,7 @@ export function PlanPickerModal({ open, onClose, onOpenDetails, onChanged }: {
           <span className="eyebrow">ПОДПИСКА</span>
           <h2>Выберите тариф</h2>
         </div>
-        <button className="icon-button" onClick={() => closeRef.current()} aria-label="Закрыть"><X size={16}/></button>
+        <button className="icon-button" onClick={() => closeRef.current()} aria-label="Закрыть" title="Закрыть"><X size={16}/></button>
       </header>
 
       <div className="modal-body">

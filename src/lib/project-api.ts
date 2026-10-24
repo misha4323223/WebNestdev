@@ -9,7 +9,7 @@ export type ChangeCheckpoint={
   shortSha:string;
   subject:string;
   message:string;
-  kind:"task"|"rollback"|"imported";
+  kind:"task"|"rollback"|"imported"|"manual";
   createdAt:string;
   runId?:string;
   conversationId?:string;
@@ -100,6 +100,24 @@ export const pullProjectChanges=(projectId:string)=>apiJson<{pulled:boolean;bran
 export type RepositoryBranch={name:string;current:boolean;remote:boolean;pushed:boolean};
 export type ProjectBranches={initialized:boolean;current:string;branches:RepositoryBranch[]};
 export const listProjectBranches=(projectId:string)=>apiJson<ProjectBranches>("/api/projects/"+projectId+"/changes/branches");
+/** Рабочие изменения: то, что ещё не стало точкой истории. */
+export type WorktreeFile={path:string;status:"added"|"modified"|"deleted"};
+export type ProjectWorktree={initialized:boolean;branch:string;files:WorktreeFile[]};
+export type ProjectFileDiff={path:string;status:"added"|"modified"|"deleted";patch:string;binary?:boolean;truncated?:boolean};
+export const getProjectWorktree=(projectId:string)=>apiJson<ProjectWorktree>("/api/projects/"+projectId+"/changes/worktree");
+/** Diff файла — из рабочего дерева или из коммита истории. */
+export const getProjectDiff=(projectId:string,path:string,sha?:string)=>apiJson<ProjectFileDiff>(
+  "/api/projects/"+projectId+"/changes/diff?path="+encodeURIComponent(path)+(sha?"&sha="+encodeURIComponent(sha):""));
+/**
+ * Ручной коммит из Git-панели: выбранные файлы и сообщение. `push` — единственный путь, которым
+ * этот коммит попадает в репозиторий, и включает его только пользователь.
+ */
+export const commitProjectWorktree=(projectId:string,body:{message:string;paths?:string[];push?:boolean})=>apiJson<{
+  checkpoint:ChangeCheckpoint;branch:string;pushed:boolean;pushError?:string;overview:ProjectChanges;
+}>("/api/projects/"+projectId+"/changes/commit",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
+/** Новая ветка от текущего HEAD: рабочее дерево не меняется. */
+export const createProjectBranch=(projectId:string,name:string)=>apiJson<{created:boolean;branch:string;overview:ProjectChanges}>(
+  "/api/projects/"+projectId+"/changes/branches",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({name})});
 /** Переключение ветки: следующая отправка уйдёт в выбранную ветку. */
 export const switchProjectBranch=(projectId:string,branch:string)=>apiJson<{switched:boolean;branch:string;error?:string;overview:ProjectChanges}>(
   "/api/projects/"+projectId+"/changes/branches/switch",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({branch})});
