@@ -1,5 +1,6 @@
 import { constants, createSign, randomUUID } from "node:crypto";
 import { getYandexConnection, saveYandexConnection, type YandexConnection, type YandexCredentialKind } from "./yandex-connection-store.js";
+import { assertNoBillingChange } from "../security/billing-guard.js";
 
 const IAM_HOST = "iam.api.cloud.yandex.net";
 const IAM_TOKEN_URL = "https://" + IAM_HOST + "/iam/v1/tokens";
@@ -195,6 +196,7 @@ export async function yandexFetch(userId: string, request: YandexRequest) {
   const connection = await getYandexConnection(userId);
   if (!connection) throw new Error("Yandex Cloud не подключён");
   const method = (request.method ?? "GET").toUpperCase();
+  assertNoBillingChange(method, request.path);
   const mutating = method !== "GET" && method !== "HEAD";
   if (mutating && !connection.allowWrites) {
     throw new Error("Изменения в Yandex Cloud выключены: включите «Разрешить агенту изменять ресурсы» в интеграции Yandex Cloud");

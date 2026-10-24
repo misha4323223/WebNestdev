@@ -231,6 +231,37 @@ export function isReadOnlyRegistrarCall(provider: DomainRegistrarId, call: Regis
   return /(?:^|\/)(get|list|nop|check|status)(?:$|[_A-Z])/.test(call.path);
 }
 
+const FORBIDDEN_REG_RU_COMMAND = /(^|\/)(domain\/(register|renew|prolong|transfer|delete|change_owner|change_deleting)|service\/(renew|prolong|delete)|(make|create)_payment|refund|payment\/)/i;
+const BILLING_PATH = /(^|\/)(billing|payments?|invoices?|tariffs?|subscription|balance)(\/|$)/i;
+
+/**
+ * Покупка, продление, перенос и удаление домена, платёжные и биллинговые вызовы запрещены
+ * всегда — даже когда кабинет разрешает изменения. Разрешение на изменения означает «настрой
+ * DNS и ресурсы проекта», а не «трать деньги владельца и распоряжайся его собственностью»:
+ * такое действие человек делает сам в кабинете провайдера.
+ *
+ * Удаление отдельной DNS-записи запретом не считается: без него нельзя заменить A-запись
+ * при переезде. Проверка стоит в инструменте (`domain.request`) до сетевого вызова, поэтому
+ * запрещённая команда не уходит регистратору вообще.
+ */
+export function forbiddenRegistrarAction(provider: DomainRegistrarId, call: RegistrarCall): string | null {
+  const path = call.path.trim().toLowerCase();
+  if (provider !== "timeweb") {
+    if (!FORBIDDEN_REG_RU_COMMAND.test(path)) return null;
+    return "Покупка, продление, перенос и удаление домена, а также платежи выполняются только человеком в кабинете регистратора — агент этого не делает даже с разрешением на изменения. Здесь доступны только DNS-записи.";
+  }
+  // У Timeweb Cloud покупка — это POST /api/v1/domains, а DNS-записи живут в /dns-records.
+  if (path.includes("/dns-records")) return null;
+  const method = (call.method ?? "GET").toUpperCase();
+  const domainName = /\/api\/v1\/domains\/[^/]+(\/|$)/.test(path);
+  const forbidden = BILLING_PATH.test(path)
+    || (domainName && /\/(renew|prolong|transfer|delete|pay)(\/|$)/.test(path))
+    || (domainName && method === "DELETE")
+    || (/\/api\/v1\/domains\/?$/.test(path) && method !== "GET");
+  if (!forbidden) return null;
+  return "Покупка, продление, перенос и удаление домена, а также платежи выполняются только человеком в кабинете Timeweb Cloud — агент этого не делает даже с разрешением на изменения. Здесь доступны только DNS-записи.";
+}
+
 function commandPath(path: string) {
   const trimmed = path.trim().replace(/^\/+/, "");
   if (!COMMAND.test(trimmed)) throw new Error("Команда регистратора задаётся как «раздел/метод», например zone/get_resource_records");

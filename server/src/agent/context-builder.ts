@@ -5,6 +5,7 @@ import { readFileInside } from "../sandbox/path-guard.js";
 import type { Project } from "../project-store.js";
 import { runInSandbox } from "../sandbox-worker.js";
 import { isSecretProjectPath } from "../secrets/secret-paths.js";
+import { deployPlanNotice, readDeployPlan } from "../deploy/deploy-plan.js";
 
 const MAX_TREE_ENTRIES = 500;
 const MAX_TREE_CHARS = 9000;
@@ -98,6 +99,18 @@ export async function buildProjectContext(project: Project, userId: string): Pro
     .map(entry => entry.path)
     .slice(0, 80);
 
+  // План развёртывания — наоборот, включается: это закладка, ради которой файл и существует.
+  // Сводка ограничена, а завершённый план занимает одну строку, поэтому старый деплой не
+  // вытесняет из контекста текущую задачу.
+  let deployNotice = "";
+  try {
+    deployNotice = deployPlanNotice(await readDeployPlan(sandbox.root));
+  } catch (error) {
+    console.error("Failed to read the deployment plan", error);
+  }
+
+  // TASKS.md намеренно не включается в контекст: список может быть длинным, а нужен редко.
+  // Агент читает его сам через fs.read, когда запрос касается задач (правило — в SYSTEM_PROMPT).
   return [
     "PROJECT CONTEXT",
     "Project: " + project.name,
@@ -109,6 +122,7 @@ export async function buildProjectContext(project: Project, userId: string): Pro
     "",
     "Key configuration files:",
     keyConfigs.length ? keyConfigs.map(file => "- " + file).join("\n") : "- none detected",
+    ...(deployNotice ? ["", deployNotice] : []),
     "",
     packageText,
     "",

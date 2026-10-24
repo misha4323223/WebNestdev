@@ -1,6 +1,7 @@
 import { getCloudConnection, type CloudConnection } from "./connections.js";
 import type { CloudProviderId } from "./providers.js";
 import { mwsHostForPath, mwsRequest } from "../mws/mws-auth.js";
+import { assertNoBillingChange } from "../security/billing-guard.js";
 
 /**
  * Запросы к API подключённых облаков от имени пользователя — и чтение, и изменения.
@@ -110,6 +111,7 @@ async function cloudRuToken(userId: string, keyId: string, secret: string) {
 /** Один авторизованный запрос к подключённому облаку. */
 export async function cloudFetch(userId: string, provider: CloudProviderId, request: CloudApiRequest) {
   const target = cloudRequestTarget(provider, request);
+  assertNoBillingChange(target.method, request.path);
   const connection = await getCloudConnection(userId, provider);
   if (!connection) throw new Error("Облако не подключено: попросите пользователя подключить " + provider + " в разделе «Интеграции».");
   assertWritesAllowed(target.method, connection.allowWrites);

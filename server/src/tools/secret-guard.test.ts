@@ -23,6 +23,7 @@ await mkdir(projectRoot, { recursive: true });
 await writeFile(path.join(projectRoot, ".env.local"), "SECRET_VALUE=do-not-leak\n");
 await writeFile(path.join(projectRoot, ".env.example"), "PUBLIC_VALUE=\n");
 await writeFile(path.join(projectRoot, "src.ts"), "export const ok = true;\n");
+await writeFile(path.join(projectRoot, "TASKS.md"), "# Задачи проекта\n\n- [ ] Задача, которая не должна попасть в контекст\n");
 await mkdir(path.join(projectRoot, "apps", "web"), { recursive: true });
 await writeFile(path.join(projectRoot, "apps", "web", ".env.production"), "NESTED=do-not-leak\n");
 
@@ -77,4 +78,10 @@ test("контекст агента не содержит секретный ф�
   assert.doesNotMatch(full, /do-not-leak|SECRET_VALUE|NESTED/);
   assert.match(full, /\.env\.example/);
   assert.match(full, /src\.ts/);
+});
+
+test("контекст не тянет TASKS.md целиком: задачи читаются по запросу", async () => {
+  const full = await buildProjectContext(project, "u1");
+  assert.match(full, /TASKS\.md/, "имя файла видно в дереве проекта");
+  assert.doesNotMatch(full, /Задача, которая не должна попасть в контекст/);
 });

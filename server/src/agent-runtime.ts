@@ -28,7 +28,7 @@ const MUTATING_TOOLS=new Set(["fs.write","fs.rename","fs.delete","terminal.exec"
  * причине: сохранённый ключ сам по себе не требует сборки и прогона приложения — проверкой займётся
  * тот шаг, который начнёт использовать его в коде.
  */
-const PLANNER_FORBIDDEN_TOOLS=new Set(["git.add","git.commit","git.pull","secrets.request","preview.start","preview.stop"]);
+const PLANNER_FORBIDDEN_TOOLS=new Set(["git.add","git.commit","git.pull","secrets.request","access.request","deploy.plan","preview.start","preview.stop"]);
 
 /**
  * Planner mode still has to read the project, so plain inspection commands are allowed

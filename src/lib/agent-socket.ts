@@ -33,6 +33,19 @@ export type AgentSocketEvent={
   file?:string;
   expiresAt?:number;
   /**
+   * Set on access.requested: the agent needs provider credentials and the chat shows the fields of
+   * that provider's cabinet. Values are posted straight to the server, never carried by the event.
+   */
+  kind?:"cloud"|"domain"|"service"|"database"|"yandex";
+  provider?:string;
+  fields?:Array<{key:string;label:string;placeholder:string;secret?:boolean;multiline?:boolean;optional?:boolean}>;
+  steps?:string[];
+  keyUrl?:string;
+  docsUrl?:string;
+  verificationNote?:string;
+  writes?:boolean;
+  defaultAllowWrites?:boolean;
+  /**
    * Set on question.asked: the agent needs a decision and the panel opens the question window over
    * the message box. The answer is posted separately, so the run keeps waiting here.
    */

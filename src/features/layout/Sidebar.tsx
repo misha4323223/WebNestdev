@@ -1,5 +1,5 @@
 import { useEffect,useState } from "react";
-import { Bot,CreditCard,Crown,FolderGit2,HardDrive,History,Home,Terminal } from "lucide-react";
+import { Bot,CreditCard,Crown,FolderGit2,HardDrive,History,Home,ListTodo,Terminal } from "lucide-react";
 import type { WorkspaceView } from "../workspace/WorkspaceNav";
 import { SidebarBanner } from "./SidebarBanner";
 import { bytesLabel, getBilling } from "../../lib/billing-api";
@@ -89,6 +89,7 @@ export function Sidebar({open,view,onView,onPlan,onHome}:{open:boolean;view:Work
     <div className="sidebar-section"><button className="nav-item" onClick={onHome}><Home size={14}/> На главную</button></div>
     <div className="sidebar-section"><div className="section-label">РАБОЧАЯ ОБЛАСТЬ</div>
       <button className={"nav-item "+(view==="agent"?"active":"")} onClick={()=>onView("agent")} title="Чат с агентом"><Bot size={14}/> Агент</button>
+      <button className={"nav-item "+(view==="tasks"?"active":"")} onClick={()=>onView("tasks")} title="Задачи проекта: список дел, который агент читает по запросу"><ListTodo size={14}/> Задачи</button>
       <button className={"nav-item "+(view==="files"?"active":"")} onClick={()=>onView("files")} title="Файлы проекта и редактор"><FolderGit2 size={14}/> Файлы</button>
       <button className={"nav-item "+(view==="changes"?"active":"")} onClick={()=>onView("changes")} title="История версий и отправка на GitHub"><History size={14}/> Изменения</button>
       <button className={"nav-item "+(view==="terminal"?"active":"")} onClick={()=>onView("terminal")} title="Команды в папке проекта"><Terminal size={14}/> Терминал</button>

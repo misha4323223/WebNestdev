@@ -6,6 +6,8 @@ import { useWorkspace } from "./useWorkspace";
 import { WorkspaceNav,type WorkspaceView } from "./WorkspaceNav";
 import { WorkspaceContent } from "./WorkspaceContent";
 import { ChatSessionsModal, useChatSessions } from "../agent/ChatSessions";
+import { DeploymentWizard } from "../deployment/DeploymentWizard";
+import { composeAgentPrompt } from "../../lib/agent-compose";
 import { NestLoader } from "../../components/NestLoader";
 
 export function WorkspaceShell({onHome,onAgentState}:{onHome:()=>void;onAgentState?:(state:{running:boolean;projectName:string}|null)=>void}){
@@ -16,6 +18,9 @@ export function WorkspaceShell({onHome,onAgentState}:{onHome:()=>void;onAgentSta
   const [agentRunning,setAgentRunning]=useState(false);
   const reportAgentState=useCallback((running:boolean)=>setAgentRunning(running),[]);
   const [settingsOpen,setSettingsOpen]=useState(false);
+  // Квиз развёртывания — отдельное окно поверх рабочей области: собрав параметры, оно
+  // закрывается и передаёт агенту готовый бриф, а не оставляет пользователя в форме.
+  const [deployOpen,setDeployOpen]=useState(false);
   // Переписка живёт в AgentPanel, а кнопка «вниз» — в строке вкладок: сигнал идёт вверх числом,
   // а панель сообщает наверх, осталось ли что-то ниже видимой области.
   const [scrollSignal,setScrollSignal]=useState(0);
@@ -36,6 +41,9 @@ export function WorkspaceShell({onHome,onAgentState}:{onHome:()=>void;onAgentSta
   // Every finished run bumps this: the preview panel re-reads the status and reloads the
   // frame, so the app the agent just changed is what the user sees, without a restart.
   const [previewReload,setPreviewReload]=useState(0);
+  // Каждый законченный запуск может переписать TASKS.md: вкладка задач перечитывает файл,
+  // когда её откроют, и не показывает список прошлого хода.
+  const [taskReload,setTaskReload]=useState(0);
 
   useEffect(()=>{onAgentState?.(agentRunning?{running:true,projectName}:null)},[agentRunning,projectName,onAgentState]);
   // Пока рабочая область жива, главная не имеет своего запуска: уходя, она снимает свой статус.
@@ -73,9 +81,14 @@ export function WorkspaceShell({onHome,onAgentState}:{onHome:()=>void;onAgentSta
       <div className="workspace-main">
         {settingsOpen?<div className="workspace-overlay-panel">
           <SettingsHub key={settingsKey} projectId={projectId} projectName={projectName} onClose={()=>setSettingsOpen(false)}/>
-        </div>:<><WorkspaceNav view={view} onChange={setView} onSessions={()=>setSessionsOpen(true)} sessionCount={sessions?.length} onScrollBottom={scrollChatToBottom} showScroll={view==="agent"&&!chatAtEnd} writing={view==="agent"&&!chatAtEnd&&agentRunning}/><WorkspaceContent view={view} projectId={projectId} projectName={projectName} conversationId={conversationId} onRunFinished={()=>{setPreviewReload(value=>value+1);void sessionsReload()}} onFileSaved={()=>setPreviewReload(value=>value+1)} onOpenModelSettings={openModelSettings} onOpenAccountSettings={openSettings} onRunningChange={reportAgentState} onOpenChanges={()=>{setSettingsOpen(false);setView("changes")}} scrollSignal={scrollSignal} onChatEndChange={reportChatEnd}/></>}
+        </div>:<><WorkspaceNav view={view} onChange={setView} onSessions={()=>setSessionsOpen(true)} sessionCount={sessions?.length} onScrollBottom={scrollChatToBottom} showScroll={view==="agent"&&!chatAtEnd} writing={view==="agent"&&!chatAtEnd&&agentRunning} onDeploy={()=>setDeployOpen(true)}/><WorkspaceContent view={view} projectId={projectId} projectName={projectName} conversationId={conversationId} onRunFinished={()=>{setPreviewReload(value=>value+1);setTaskReload(value=>value+1);void sessionsReload()}} onFileSaved={()=>setPreviewReload(value=>value+1)} taskReload={taskReload} onOpenModelSettings={openModelSettings} onOpenAccountSettings={openSettings} onRunningChange={reportAgentState} onOpenChanges={()=>{setSettingsOpen(false);setView("changes")}} scrollSignal={scrollSignal} onChatEndChange={reportChatEnd}/></>}
       </div>
       <PreviewPanel projectId={projectId} reloadToken={previewReload} open={previewOpen} onClose={()=>setPreviewOpen(false)} onRunningChange={setPreviewRunning}/>
+      {deployOpen&&<DeploymentWizard
+        projectId={projectId}
+        onClose={()=>setDeployOpen(false)}
+        onStarted={brief=>{setDeployOpen(false);setSettingsOpen(false);setPreviewOpen(false);setView("agent");composeAgentPrompt(brief)}}
+      />}
       <ChatSessionsModal
         open={sessionsOpen}
         projectId={projectId}

@@ -1,10 +1,11 @@
 import { useEffect,useRef,useState,type DragEvent as ReactDragEvent,type MouseEvent as ReactMouseEvent } from "react";
 import Markdown,{type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { AlertTriangle,Cpu,Eye,EyeOff,FileText,History,Image as ImageIcon,KeyRound,ListPlus,Paperclip,Play,RotateCcw,Send,ShieldCheck,Sparkles,Square,X } from "lucide-react";
+import { AlertTriangle,Check,Copy,Cpu,Eye,EyeOff,ExternalLink,FileText,History,Image as ImageIcon,KeyRound,ListPlus,Paperclip,Play,RotateCcw,Send,ShieldCheck,Sparkles,Square,X } from "lucide-react";
 import { createAgentSocket } from "../../lib/agent-socket";
 import { apiJson } from "../../lib/api";
-import { answerProjectQuestion,cancelProjectSecret,getConversation,skipProjectQuestion,submitProjectSecret,uploadProjectFile } from "../../lib/project-api";
+import { addProjectTasks,answerProjectQuestion,cancelProjectSecret,getConversation,skipProjectQuestion,submitProjectSecret,uploadProjectFile } from "../../lib/project-api";
+import { cancelProjectAccess,submitProjectAccess } from "../../lib/deployment-api";
 import { NestLoader } from "../../components/NestLoader";
 import { ActionsDock,MessageThinking,PlanPanel,actionTarget,contentBefore,deriveActions,readPlan,writePlan,type PanelId,type PanelState } from "./agent-activity";
 import type { AgentAction,AgentMode,ChatMessage,PlanState,ReasoningEffort,ReasoningSupport } from "../../lib/types";
@@ -15,6 +16,8 @@ import { SupportButton } from "../support/SupportDialog";
 import { takeAgentStart } from "../../lib/agent-start";
 import { AGENT_COMPOSE_EVENT,AGENT_DRAFT_EVENT } from "../../lib/agent-compose";
 import { publicUserMessage } from "../../lib/agent-kickoff";
+import { copyText } from "../../lib/clipboard";
+import { parseTaskList } from "../../lib/task-parse";
 
 const modeKey="webnestdev.agentMode";
 const reasoningKey="webnestdev.reasoning";
@@ -114,6 +117,24 @@ function readStoredWebSearch(){
  * в модальном окне, и оно уходит на сервер отдельным запросом.
  */
 type SecretPrompt={requestId:string;variable:string;purpose:string;file:string};
+/**
+ * Доступ к провайдеру — не один ключ, а набор полей кабинета. Значения живут только в этом
+ * состоянии до отправки; в переписку и события запуска они не попадают.
+ */
+type AccessPrompt={
+  requestId:string;
+  kind:"cloud"|"domain"|"service"|"database"|"yandex";
+  provider:string;
+  name:string;
+  purpose:string;
+  fields:Array<{key:string;label:string;placeholder:string;secret?:boolean;multiline?:boolean;optional?:boolean}>;
+  steps:string[];
+  keyUrl?:string;
+  docsUrl?:string;
+  verificationNote:string;
+  writes:boolean;
+  defaultAllowWrites:boolean;
+};
 type Attachment={id:string;name:string;path:string;bytes:number;image:boolean};
 type QueuedMessage={id:string;text:string;attachments:Attachment[]};
 /**
@@ -231,6 +252,11 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   const [dragActive,setDragActive]=useState(false);
   const [uploading,setUploading]=useState(false);
   const [notice,setNotice]=useState("");
+  // Действия под ответом агента: копирование и отправка списка в TASKS.md. Состояние
+  // привязано к номеру сообщения, чтобы нажатие не подсвечивало чужие ответы.
+  const [copiedMessage,setCopiedMessage]=useState<number|null>(null);
+  const [tasksMessage,setTasksMessage]=useState<number|null>(null);
+  const copiedMessageTimer=useRef<number|null>(null);
   // Итог задачи в истории проекта: точка, к которой можно вернуться. На GitHub она уходит
   // только по кнопке в «Изменениях», поэтому здесь нет ни статуса отправки, ни ошибки.
   const [changesNotice,setChangesNotice]=useState<{shortSha:string}|null>(null);
@@ -259,6 +285,13 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   const [secretValue,setSecretValue]=useState("");
   const [secretBusy,setSecretBusy]=useState(false);
   const [secretError,setSecretError]=useState("");
+  /** Доступ к облаку, регистратору, сервису или базе — карточка с полями того же кабинета. */
+  const [accessPrompt,setAccessPrompt]=useState<AccessPrompt|null>(null);
+  const [accessValues,setAccessValues]=useState<Record<string,string>>({});
+  const [accessVisible,setAccessVisible]=useState<Record<string,boolean>>({});
+  const [accessWrites,setAccessWrites]=useState(true);
+  const [accessBusy,setAccessBusy]=useState(false);
+  const [accessError,setAccessError]=useState("");
   // Показать значение можно только на время: окно закрывается — режим показа сбрасывается,
   // чтобы следующий запрос не открывался с открытым ключом.
   const [secretVisible,setSecretVisible]=useState(false);
@@ -510,6 +543,15 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     setSecretBusy(false);
   }
 
+  /** Карточка доступа закрывается вместе с запуском; значения не остаются в состоянии. */
+  function clearAccessPrompt(){
+    setAccessPrompt(null);
+    setAccessValues({});
+    setAccessVisible({});
+    setAccessError("");
+    setAccessBusy(false);
+  }
+
   /**
    * Окно вопроса закрывается вместе со своим запуском: ответ, отправленный в закрытое окно, всё
    * равно некому прочитать, а висящий вопрос над полем выглядит как будто агент ещё ждёт.
@@ -520,7 +562,11 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     setQuestionBusy(false);
   }
 
-  useEffect(()=>()=>{cancelAutoResume();if(jumpTimerRef.current)window.clearTimeout(jumpTimerRef.current)},[]);
+  useEffect(()=>()=>{
+    cancelAutoResume();
+    if(jumpTimerRef.current)window.clearTimeout(jumpTimerRef.current);
+    if(copiedMessageTimer.current)window.clearTimeout(copiedMessageTimer.current);
+  },[]);
 
   /** A cancelled or aborted run leaves rows spinning, so they are settled as failed. */
   function settleActions(){
@@ -544,6 +590,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     setPlan(readPlan(conversationId));
     // Запрос ключа и вопрос принадлежат запуску в этом чате: при открытии другого окна устаревают.
     clearSecretPrompt();
+    clearAccessPrompt();
     clearQuestionPrompt();
     void getConversation(conversationId).then(conversation=>{
       if(cancelled)return;
@@ -755,10 +802,30 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       }
       if(event.type==="plan.updated"&&event.plan)updatePlan(event.plan);
       if(event.type==="secret.requested"&&event.requestId&&event.variable){
-        // Агент просит ключ: окно показывает только имя переменной, файл и причину; значение
-        // вводит пользователь, и в переписку оно не попадает.
+        // Агент просит ключ: карточка в чате показывает только имя переменной, файл и причину;
+        // значение вводит пользователь, и в переписку оно не попадает.
         setSecretPrompt({requestId:event.requestId,variable:event.variable,purpose:event.purpose??"",file:event.file??".env.local"});
         setSecretValue("");setSecretError("");
+      }
+      if(event.type==="access.requested"&&event.requestId&&event.name&&event.fields?.length){
+        // Поля провайдера — в чате, а не в модальном окне поверх переписки: человек видит,
+        // какой шаг ждёт, и после сохранения агент продолжает сам.
+        setAccessPrompt({
+          requestId:event.requestId,
+          kind:event.kind??"cloud",
+          provider:event.provider??"",
+          name:event.name,
+          purpose:event.purpose??"Агент просит доступ, чтобы продолжить развёртывание.",
+          fields:event.fields,
+          steps:event.steps??[],
+          ...(event.keyUrl?{keyUrl:event.keyUrl}:{}),
+          ...(event.docsUrl?{docsUrl:event.docsUrl}:{}),
+          verificationNote:event.verificationNote??"",
+          writes:Boolean(event.writes),
+          defaultAllowWrites:event.defaultAllowWrites!==false,
+        });
+        setAccessValues({});setAccessVisible({});setAccessError("");setAccessBusy(false);
+        setAccessWrites(event.defaultAllowWrites!==false);
       }
       if(event.type==="question.asked"&&event.requestId&&event.question&&event.options?.length){
         // Агент спрашивает о выборе: окно выезжает над полем ввода, а запуск стоит и ждёт ответа.
@@ -851,6 +918,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
           socketRef.current=null;
           setRunning(false);
           clearSecretPrompt();
+          clearAccessPrompt();
           clearQuestionPrompt();
           settleActions();
           return;
@@ -873,8 +941,9 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     if(socket&&socketRef.current===socket)socketRef.current=null;
     if(socket)try{socket.close()}catch{}
     setRunning(false);
-    // Запуск кончился — окна ключа и вопроса закрываются вместе с ним: запросы уже неактуальны.
+    // Запуск кончился — окна ключа, доступа и вопроса закрываются вместе с ним: запросы уже неактуальны.
     clearSecretPrompt();
+    clearAccessPrompt();
     clearQuestionPrompt();
     setReconnect(null);
     settleActions();
@@ -902,6 +971,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     if(socket)try{socket.close()}catch{}
     setRunning(false);
     clearSecretPrompt();
+    clearAccessPrompt();
     clearQuestionPrompt();
     setReconnect(null);
     settleActions();
@@ -1001,6 +1071,39 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   }
 
   /**
+   * Доступ уходит на сервер тем же путём, что и карточка интеграции: поля проверяются у
+   * провайдера, сохраняются зашифрованными, а агенту возвращается только подтверждение.
+   * Ошибка проверки оставляет карточку открытой — человек исправит поле, не начиная заново.
+   */
+  async function saveAccess(){
+    const prompt=accessPrompt;
+    if(!prompt||accessBusy)return;
+    const missing=prompt.fields.find(field=>!field.optional&&!accessValues[field.key]?.trim());
+    if(missing){setAccessError("Заполните поле «"+missing.label+"»");return;}
+    setAccessBusy(true);setAccessError("");
+    try{
+      const values=Object.fromEntries(prompt.fields.map(field=>[field.key,(accessValues[field.key]??"").trim()]));
+      const saved=await submitProjectAccess(projectId,prompt.requestId,values,prompt.writes?accessWrites:undefined);
+      setAccessPrompt(null);
+      setAccessValues({});
+      setAccessVisible({});
+      setNotice(saved.delivered
+        ?"Доступ к "+prompt.name+" сохранён — агент продолжает работу."
+        :"Доступ к "+prompt.name+" сохранён, но запуск уже завершился. Нажмите «Продолжить», чтобы агент пошёл дальше.");
+    }catch(error){
+      setAccessError(error instanceof Error?error.message:"Не удалось сохранить доступ");
+    }finally{setAccessBusy(false)}
+  }
+
+  /** Отказ от доступа: агент узнаёт сразу и продолжает с тем, что уже есть. */
+  async function cancelAccess(){
+    const prompt=accessPrompt;
+    if(!prompt)return;
+    clearAccessPrompt();
+    try{await cancelProjectAccess(projectId,prompt.requestId)}catch{}
+  }
+
+  /**
    * Ответ на вопрос агента уходит отдельным запросом: запуск уже открыт и ждёт ровно этот ответ,
    * поэтому окно закрывается только после подтверждения сервера, а ошибка остаётся в окне.
    */
@@ -1090,6 +1193,45 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     return shown.internal?[]:[{index,text:shown.text}];
   });
 
+  /** Копирование готового ответа: текст целиком, без обрезания по видимой области. */
+  async function copyAnswer(index:number,content:string){
+    const ok=await copyText(content);
+    if(!ok){
+      setNotice("Не удалось скопировать ответ — выделите текст вручную.");
+      return;
+    }
+    setNotice("");
+    setCopiedMessage(index);
+    if(copiedMessageTimer.current)window.clearTimeout(copiedMessageTimer.current);
+    copiedMessageTimer.current=window.setTimeout(()=>setCopiedMessage(null),1800);
+  }
+
+  /**
+   * «В задачи» берёт из ответа только список дел: вступления, код и таблицы остаются в переписке.
+   * Сервер сам отбрасывает дубли, поэтому повторное нажатие не плодит строки в TASKS.md.
+   */
+  async function answerToTasks(index:number,content:string){
+    if(tasksMessage!==null)return;
+    const items=parseTaskList(content);
+    if(!items.length){
+      setNotice("В этом ответе нет списка задач — добавьте пункт вручную во вкладке «Задачи».");
+      return;
+    }
+    setTasksMessage(index);
+    try{
+      const result=await addProjectTasks(projectId,{items});
+      const added=result.added;
+      const word=added%10===1&&added%100!==11?"задача":added%10>=2&&added%10<=4&&(added%100<12||added%100>14)?"задачи":"задач";
+      setNotice(added
+        ?"Добавлено "+added+" "+word+" в TASKS.md"+(result.skipped?" · уже было: "+result.skipped:"")
+        :"Эти задачи уже есть в TASKS.md.");
+    }catch(error){
+      setNotice("Не удалось добавить задачи: "+(error instanceof Error?error.message:String(error)));
+    }finally{
+      setTasksMessage(null);
+    }
+  }
+
   return <section className="chat">
     {/* Переписка и её закладки. Полоска закладок — рядом со скроллом, а не в нём: у каждой метки
         своя точка в переписке, и она должна оставаться на месте при прокрутке. */}
@@ -1113,6 +1255,16 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
                   ? <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{m.content}</Markdown>
                   : running ? <NestLoader size={34} label="NestDev выполняет задачу" /> : ""}</div>
               : <div className="message-text">{shownUserMessage(m.content).text}</div>}
+            {m.role==="assistant"&&m.content&&!live&&<div className="message-actions">
+              <button className="message-action" onClick={()=>void copyAnswer(i,m.content)} title="Скопировать ответ целиком">
+                {copiedMessage===i?<Check size={12}/>:<Copy size={12}/>}
+                <span>{copiedMessage===i?"Скопировано":"Копировать"}</span>
+              </button>
+              <button className="message-action" onClick={()=>void answerToTasks(i,m.content)} disabled={tasksMessage!==null} title="Добавить список из ответа в TASKS.md — агент прочитает его по запросу">
+                <ListPlus size={12}/>
+                <span>{tasksMessage===i?"Добавляю…":"В задачи"}</span>
+              </button>
+            </div>}
           </div>
         </div>;
       })}
@@ -1124,6 +1276,104 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       onJump={jumpToMessage}
     />
     </div>
+
+    {/* Ключ и доступ — прямо в переписке, над полем ввода: агент остановился на этом шаге,
+        и человек должен видеть, что именно он ждёт. Значения отсюда уходят только на сервер. */}
+    {secretPrompt&&<section className="chat-credential" role="group" aria-labelledby="chat-secret-title">
+      <header className="chat-credential-head">
+        <span className="chat-credential-icon"><KeyRound size={15}/></span>
+        <div className="chat-credential-title">
+          <span className="eyebrow">КЛЮЧ ДЛЯ ПРОЕКТА</span>
+          <strong id="chat-secret-title">{secretPrompt.variable}</strong>
+        </div>
+        <button type="button" className="icon-button" onClick={()=>void cancelSecret()} title="Отменить запрос" aria-label="Отменить запрос"><X size={14}/></button>
+      </header>
+      <p className="chat-credential-lead">{secretPrompt.purpose||"Агент просит ключ, чтобы продолжить работу над задачей."}</p>
+      <div className="chat-credential-target"><KeyRound size={12}/><code>{secretPrompt.variable}</code><span>→ {secretPrompt.file}</span></div>
+      <label className="secret-field">
+        <span>Значение ключа</span>
+        <input
+          type={secretVisible?"text":"password"}
+          autoFocus
+          autoComplete="new-password"
+          spellCheck={false}
+          value={secretValue}
+          onChange={event=>setSecretValue(event.target.value)}
+          onKeyDown={event=>{if(event.key==="Enter"){event.preventDefault();void saveSecret()}if(event.key==="Escape")void cancelSecret()}}
+          placeholder="Вставьте значение — в чате оно не появится"
+          aria-label={secretPrompt.variable}
+        />
+        <button type="button" className="secret-toggle" onClick={()=>setSecretVisible(value=>!value)} title={secretVisible?"Скрыть значение":"Показать значение"} aria-label={secretVisible?"Скрыть значение":"Показать значение"} tabIndex={-1}>{secretVisible?<EyeOff size={14}/>:<Eye size={14}/>}</button>
+      </label>
+      <p className="chat-credential-note"><ShieldCheck size={12}/><span>Значение попадает в зашифрованное хранилище проекта, а приложение получает его как <code>process.env</code>. Агент увидит только подтверждение.</span></p>
+      {secretError&&<div className="connector-notice">{secretError}</div>}
+      <footer className="chat-credential-actions">
+        <span className="chat-credential-wait"><Sparkles size={11}/> Агент ждёт и продолжит сам</span>
+        <button type="button" className="ghost-button" onClick={()=>void cancelSecret()} disabled={secretBusy}>Пропустить</button>
+        <button type="button" className="send-button chat-credential-save" onClick={()=>void saveSecret()} disabled={secretBusy||!secretValue.trim()}>{secretBusy?"Сохраняем…":"Сохранить и продолжить"}</button>
+      </footer>
+    </section>}
+
+    {accessPrompt&&<section className="chat-credential access-card" role="group" aria-labelledby="chat-access-title">
+      <header className="chat-credential-head">
+        <span className="chat-credential-icon access"><KeyRound size={15}/></span>
+        <div className="chat-credential-title">
+          <span className="eyebrow">ДОСТУП К ПРОВАЙДЕРУ</span>
+          <strong id="chat-access-title">{accessPrompt.name}</strong>
+        </div>
+        <button type="button" className="icon-button" onClick={()=>void cancelAccess()} title="Отменить запрос" aria-label="Отменить запрос"><X size={14}/></button>
+      </header>
+      <p className="chat-credential-lead">{accessPrompt.purpose}</p>
+      {accessPrompt.steps.length>0&&<ol className="access-steps">
+        {accessPrompt.steps.map((step,index)=><li key={index}>{step}</li>)}
+      </ol>}
+      {(accessPrompt.keyUrl||accessPrompt.docsUrl)&&<div className="access-links">
+        {accessPrompt.keyUrl&&<a href={accessPrompt.keyUrl} target="_blank" rel="noreferrer">Где взять ключ <ExternalLink size={10}/></a>}
+        {accessPrompt.docsUrl&&<a href={accessPrompt.docsUrl} target="_blank" rel="noreferrer">Документация <ExternalLink size={10}/></a>}
+      </div>}
+      <div className="access-fields">
+        {accessPrompt.fields.map(field=>{
+          const secret=Boolean(field.secret);
+          const visible=Boolean(accessVisible[field.key]);
+          return <label className="access-field" key={field.key}>
+            <span>{field.label}{field.optional&&<small>необязательно</small>}</span>
+            {field.multiline
+              ? <textarea
+                  rows={4}
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={accessValues[field.key]??""}
+                  onChange={event=>setAccessValues(current=>({...current,[field.key]:event.target.value}))}
+                  placeholder={field.placeholder}
+                  aria-label={field.label}
+                />
+              : <span className="access-input-wrap">
+                  <input
+                    type={secret&&!visible?"password":"text"}
+                    autoComplete="off"
+                    spellCheck={false}
+                    value={accessValues[field.key]??""}
+                    onChange={event=>setAccessValues(current=>({...current,[field.key]:event.target.value}))}
+                    placeholder={field.placeholder}
+                    aria-label={field.label}
+                  />
+                  {secret&&<button type="button" className="secret-toggle" onClick={()=>setAccessVisible(current=>({...current,[field.key]:!current[field.key]}))} title={visible?"Скрыть значение":"Показать значение"} aria-label={visible?"Скрыть значение":"Показать значение"} tabIndex={-1}>{visible?<EyeOff size={14}/>:<Eye size={14}/>}</button>}
+                </span>}
+          </label>;
+        })}
+      </div>
+      {accessPrompt.writes&&<label className="access-writes">
+        <input type="checkbox" checked={accessWrites} onChange={event=>setAccessWrites(event.target.checked)}/>
+        <span><strong>Разрешить агенту изменять ресурсы</strong><small>Создание, настройка и удаление — только в рамках развёртывания и по явной просьбе.</small></span>
+      </label>}
+      <p className="chat-credential-note"><ShieldCheck size={12}/><span>{accessPrompt.verificationNote||"Поля сохраняются в зашифрованном хранилище интеграций и не возвращаются агенту."}</span></p>
+      {accessError&&<div className="connector-notice">{accessError}</div>}
+      <footer className="chat-credential-actions">
+        <span className="chat-credential-wait"><Sparkles size={11}/> Агент ждёт и продолжит сам</span>
+        <button type="button" className="ghost-button" onClick={()=>void cancelAccess()} disabled={accessBusy}>Отмена</button>
+        <button type="button" className="send-button chat-credential-save" onClick={()=>void saveAccess()} disabled={accessBusy}>{accessBusy?"Проверяем…":"Сохранить и продолжить"}</button>
+      </footer>
+    </section>}
 
     {/* План и действия — у поля ввода: они относятся к тому, что происходит сейчас, и не должны
         уезжать вверх вместе с длинной перепиской. */}
@@ -1228,48 +1478,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       onSkip={()=>void skipQuestion()}
     />}
 
-    {secretPrompt&&<div className="modal-backdrop tech-backdrop" role="presentation" onMouseDown={()=>void cancelSecret()}>
-      <section className="modal tech-modal secret-modal" role="dialog" aria-modal="true" aria-labelledby="secret-modal-title" onMouseDown={event=>event.stopPropagation()}>
-        <header className="modal-head">
-          <div className="tech-modal-title">
-            <span className="tech-modal-icon" aria-hidden="true"><KeyRound size={15}/></span>
-            <div className="tech-modal-heading">
-              <span className="eyebrow">КЛЮЧ ДОСТУПА</span>
-              <h2 id="secret-modal-title">Нужен ваш ключ</h2>
-            </div>
-          </div>
-          <button className="icon-button" onClick={()=>void cancelSecret()} aria-label="Отменить запрос" title="Отменить запрос"><X size={16}/></button>
-        </header>
-        <div className="modal-body">
-          <p className="modal-lead">{secretPrompt.purpose||"Агент просит ключ, чтобы продолжить работу над задачей."}</p>
-          <div className="secret-target">
-            <span className="secret-variable"><KeyRound size={13}/> {secretPrompt.variable}</span>
-            <span className="secret-file">→ {secretPrompt.file}</span>
-          </div>
-          <label className="secret-field">
-            <span>Значение ключа</span>
-            <input
-              type={secretVisible?"text":"password"}
-              autoFocus
-              autoComplete="new-password"
-              spellCheck={false}
-              value={secretValue}
-              onChange={event=>setSecretValue(event.target.value)}
-              onKeyDown={event=>{if(event.key==="Enter"){event.preventDefault();void saveSecret()}if(event.key==="Escape")void cancelSecret()}}
-              placeholder="Вставьте значение — в чате оно не появится"
-              aria-label={secretPrompt.variable}
-            />
-            <button type="button" className="secret-toggle" onClick={()=>setSecretVisible(value=>!value)} title={secretVisible?"Скрыть значение":"Показать значение"} aria-label={secretVisible?"Скрыть значение":"Показать значение"} tabIndex={-1}>{secretVisible?<EyeOff size={14}/>:<Eye size={14}/>}</button>
-          </label>
-          <p className="secret-note"><ShieldCheck size={12}/> Значение видит только сервер: оно попадает в зашифрованное хранилище проекта, а приложение получает его при запуске как <code>process.env</code>. Агент получает подтверждение без самого ключа — в переписку, ответы модели и историю запуска значение не попадает.</p>
-          {secretError&&<div className="connector-notice">{secretError}</div>}
-        </div>
-        <footer className="modal-foot">
-          <button className="ghost-button" onClick={()=>void cancelSecret()} disabled={secretBusy}>Отмена</button>
-          <button className="send-button" onClick={()=>void saveSecret()} disabled={secretBusy||!secretValue.trim()}>{secretBusy?"Сохраняем…":"Сохранить и продолжить"}</button>
-        </footer>
-      </section>
-    </div>}
+
 
     {quotaNotice&&<div className="modal-backdrop" role="presentation" onMouseDown={()=>setQuotaNotice(null)}>
       <section className="modal quota-modal" role="dialog" aria-modal="true" aria-label="Лимит тарифа достигнут" onMouseDown={event=>event.stopPropagation()}>

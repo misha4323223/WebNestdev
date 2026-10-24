@@ -2,7 +2,7 @@ import { z } from "zod";
 import { registerTool } from "../tool-registry.js";
 import { checkDomain } from "../domains/rdap.js";
 import { listDomainConnections } from "../domains/connections.js";
-import { isReadOnlyRegistrarCall, listRegistrarDomains, registrarRequest } from "../domains/registrar-api.js";
+import { forbiddenRegistrarAction, isReadOnlyRegistrarCall, listRegistrarDomains, registrarRequest } from "../domains/registrar-api.js";
 import { DOMAIN_REGISTRARS } from "../domains/providers.js";
 
 /**
@@ -184,6 +184,12 @@ registerTool({
         blocked: "not_connected",
         hint: name + " не подключён. Попросите пользователя открыть «Интеграции» → «Домены» и вставить доступ к кабинету.",
       };
+    }
+    // Деньги и собственность — жёсткий запрет, а не «спросить разрешение»: даже включённые
+    // изменения в кабинете не дают агенту права покупать, продлевать или удалять домен.
+    const forbidden = forbiddenRegistrarAction(connection.provider, call);
+    if (forbidden) {
+      return { ok: false, registrar: call.registrar, path: call.path, blocked: "forbidden", hint: forbidden };
     }
     const readOnly = isReadOnlyRegistrarCall(connection.provider, call);
     // Гейт стоит до запроса: без разрешения пользователя кабинет только читается, и агент

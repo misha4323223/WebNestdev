@@ -13,6 +13,7 @@ const storagePostRecordTools = new Set([
   "npm.install",
   "git.add",
   "git.commit",
+  "deploy.plan",
 ]);
 const heavyStorageMutationTools = new Set(["terminal.exec", "npm.install"]);
 

@@ -28,6 +28,13 @@ export type AgentEvent=
    */
   | {type:"secret.requested";runId:string;requestId:string;variable:string;purpose:string;file:string;expiresAt:number}
   /**
+   * Инструмент `access.request` просит доступ к провайдеру. Карточка в чате показывает поля
+   * кабинета (не значения), шаги и документацию; ответ сохраняется в хранилище интеграций и
+   * возвращает модели только подтверждение аккаунта. `writes` — поддерживает ли провайдер
+   * изменения, `defaultAllowWrites` — что стоит в переключателе разрешения.
+   */
+  | {type:"access.requested";runId:string;requestId:string;kind:"cloud"|"domain"|"service"|"database"|"yandex";provider:string;name:string;purpose:string;fields:Array<{key:string;label:string;placeholder:string;secret?:boolean;multiline?:boolean;optional?:boolean}>;steps:string[];keyUrl?:string;docsUrl?:string;verificationNote:string;writes:boolean;defaultAllowWrites:boolean;expiresAt:number}
+  /**
    * Инструмент `question.ask` спрашивает пользователя о выборе. Окно с вариантами выезжает над
    * полем ввода, запуск ждёт ответа, а сам ответ приходит маршрутом
    * `/api/projects/:id/questions/:requestId/answer` — то есть тем же путём, что и запрос ключа:

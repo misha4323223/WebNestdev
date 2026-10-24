@@ -81,6 +81,34 @@ export async function downloadProjectZip(projectId:string,projectName:string){
 }
 /** Stores a chat attachment inside the project so the agent can use it. */
 export const uploadProjectFile=(projectId:string,file:{name:string;data:string})=>apiJson<{name:string;path:string;bytes:number}>("/api/projects/"+projectId+"/upload",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(file)});
+/** Одна задача проекта из TASKS.md: `line` — строка файла, по ней панель меняет пункт. */
+export type ProjectTask={
+  line:number;
+  title:string;
+  done:boolean;
+  section:string|null;
+  depth:number;
+};
+/** `revision` — хеш TASKS.md: устаревшая панель получает конфликт, а не затирает правку агента. */
+export type ProjectTasks={
+  file:string;
+  exists:boolean;
+  revision:string;
+  markdown:string;
+  tasks:ProjectTask[];
+  total:number;
+  done:number;
+};
+export type ProjectTaskInput={title:string;section?:string;done?:boolean};
+export const getProjectTasks=(projectId:string)=>apiJson<ProjectTasks>("/api/projects/"+projectId+"/tasks");
+/** Добавляет пункты; сервер сам пропускает дубли и возвращает, сколько добавил и сколько уже было. */
+export const addProjectTasks=(projectId:string,body:{items:ProjectTaskInput[];section?:string;revision?:string})=>apiJson<ProjectTasks&{added:number;skipped:number}>(
+  "/api/projects/"+projectId+"/tasks",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(body)});
+export const toggleProjectTask=(projectId:string,body:{line:number;done:boolean;revision:string})=>apiJson<ProjectTasks>(
+  "/api/projects/"+projectId+"/tasks",{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify({op:"toggle",...body})});
+export const removeProjectTask=(projectId:string,body:{line:number;revision:string})=>apiJson<ProjectTasks>(
+  "/api/projects/"+projectId+"/tasks",{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify({op:"remove",...body})});
+
 /** История задач проекта: каждая точка — проверенное состояние, к которому можно вернуться. */
 export const getProjectChanges=(projectId:string)=>apiJson<ProjectChanges>("/api/projects/"+projectId+"/changes");
 /**

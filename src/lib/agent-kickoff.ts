@@ -33,6 +33,8 @@ const attachmentTail = /\s*Эти файлы уже лежат в проекте
 
 export function publicUserMessage(raw: string): PublicMessage {
   const text = raw.trim();
+  if (/^Разверни проект по квизу\./.test(text)) return { text: "Развернуть проект по выбранным параметрам", internal: false };
+  if (/^Продолжи развёртывание по квизу\./.test(text)) return { text: "Продолжить развёртывание", internal: false };
   if (/^План утверждён\./.test(text)) return { text: "План утверждён — начинаю разработку", internal: true };
   const repository = /^Импортирован репозиторий GitHub:\s*([^\s(]+)/.exec(text);
   if (repository) return { text: "Импорт репозитория " + repository[1], internal: true };

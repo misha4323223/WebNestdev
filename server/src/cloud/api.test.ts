@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { assertWritesAllowed, cloudRequestTarget, needsWriteConsent } from "./api.js";
+import { assertNoBillingChange, isBillingPath } from "../security/billing-guard.js";
 
 test("timeweb requests are limited to its versioned API prefix", () => {
   const target = cloudRequestTarget("timeweb", { path: "/api/v1/servers" });
@@ -23,6 +24,16 @@ test("changes need the user's permission, reads never do", () => {
   assert.doesNotThrow(() => assertWritesAllowed("POST", true));
   assert.throws(() => assertWritesAllowed("POST", false), /Разрешить агенту изменять ресурсы/);
   assert.throws(() => assertWritesAllowed("delete", false), /выключены/);
+});
+
+test("биллинг и тарифы читаются, но меняются только человеком", () => {
+  assert.equal(isBillingPath("/api/v1/billing/accounts"), true);
+  assert.equal(isBillingPath("/api/v1/payments"), true);
+  assert.equal(isBillingPath("/api/v1/servers"), false);
+  assert.doesNotThrow(() => assertNoBillingChange("GET", "/api/v1/billing/accounts"));
+  assert.doesNotThrow(() => assertNoBillingChange("POST", "/api/v1/servers"));
+  assert.throws(() => assertNoBillingChange("PATCH", "/api/v1/billing/accounts"), /только человеком/);
+  assert.throws(() => assertNoBillingChange("POST", "/api/v1/payments"), /только человеком/);
 });
 
 test("only provider hosts are accepted", () => {
