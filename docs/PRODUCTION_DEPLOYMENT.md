@@ -281,7 +281,9 @@ The current bill decomposes exactly as: compute `base` 2 vCPU / 4 GB 2 566 ₽ +
    model, so this number is a *bill*, not a comfort setting.
 5. **Secrets** — `WEBNESTDEV_ENCRYPTION_KEY`, `WEBNESTDEV_ALLOWED_ORIGINS`, `POSTGRES_PASSWORD`,
    `DATABASE_URL`, and the AI provider (`PLATFORM_AI_BASE_URL` / `PLATFORM_AI_MODEL` /
-   `PLATFORM_AI_API_KEY`). Secrets live in the environment, never in the repository.
+   `PLATFORM_AI_API_KEY`; for the free plan also `PLATFORM_AI_FREE_BASE_URL` /
+   `PLATFORM_AI_FREE_MODEL` / `PLATFORM_AI_FREE_KEY_1..3`). Secrets live in the environment,
+   never in the repository.
 6. **Hygiene (cron)** — weekly `docker system prune -af --filter until=168h`, weekly removal of
    `node_modules` in projects untouched for a month, and a nightly `pg_dump` to Object Storage
    (cold class, 1.26 ₽/GB·month). MWS disk backups are incremental and manual only (3.456 ₽/GB·month).

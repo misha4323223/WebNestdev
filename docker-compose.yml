@@ -106,6 +106,14 @@ services:
       PLATFORM_AI_BASE_URL: ${PLATFORM_AI_BASE_URL:-}
       PLATFORM_AI_MODEL: ${PLATFORM_AI_MODEL:-}
       PLATFORM_AI_API_KEY: ${PLATFORM_AI_API_KEY:-}
+      # Бесплатная модель тарифа «Старт»: до трёх ключей из разных аккаунтов. Compose передаёт
+      # в контейнер только перечисленные переменные, поэтому без этого блока ключи из .env
+      # на ВМ до сервера не доходили бы (так уже было с SMS и холодным ярусом).
+      PLATFORM_AI_FREE_BASE_URL: ${PLATFORM_AI_FREE_BASE_URL:-}
+      PLATFORM_AI_FREE_MODEL: ${PLATFORM_AI_FREE_MODEL:-}
+      PLATFORM_AI_FREE_KEY_1: ${PLATFORM_AI_FREE_KEY_1:-}
+      PLATFORM_AI_FREE_KEY_2: ${PLATFORM_AI_FREE_KEY_2:-}
+      PLATFORM_AI_FREE_KEY_3: ${PLATFORM_AI_FREE_KEY_3:-}
       # Холодный ярус проектов: архив рабочей папки в S3-совместимом бакете (docs/STORAGE.md).
       # Compose передаёт в контейнер только перечисленные переменные, поэтому без этого блока
       # ключи, положенные в .env на ВМ, до сервера не доходили бы — как это уже случилось
