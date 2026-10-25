@@ -216,6 +216,8 @@ export type SandboxJobTail = {
   matchedLines: number;
   truncated: boolean;
   note: string;
+  /** Отказ из-за выключенной сети — с объяснением, что делать вместо этого. */
+  hint?: string;
   error?: string;
   missing?: boolean;
 };

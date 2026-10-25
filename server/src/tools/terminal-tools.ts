@@ -2,6 +2,7 @@ import { getSandbox } from "../sandbox-manager.js";
 import { resolveInsideSandbox } from "../sandbox/path-guard.js";
 import { runInSandbox } from "../sandbox-worker.js";
 import { listSandboxJobs, startSandboxJob, stopSandboxJob, tailSandboxJob } from "../sandbox/jobs.js";
+import { commandNeedsNetwork, isPackageInstall, networkHint, networkHintForLogs, NO_NETWORK_HINT, PACKAGE_INSTALL_HINT } from "../sandbox/network-hint.js";
 import { registerTool } from "../tool-registry.js";
 
 /**
@@ -30,7 +31,8 @@ registerTool({
   name: "terminal.exec",
   description:
     "Execute a development command in the project's sandbox and wait for it. Input: {command:string,cwd?:string,timeoutMs?:number}. " +
-    "Network is disabled by default. Docker and docker-compose are not available and are refused: the platform serves the Preview itself. " +
+    "Outbound network is OFF: package installation and downloads (`npm install`, `npx`, `curl`, `git fetch`) fail or wait until the timeout — that is the sandbox, not a project defect; install dependencies with npm.install and start the app with preview.start. " +
+    "Docker and docker-compose are not available and are refused: the platform serves the Preview itself. " +
     "Expo/EAS commands also need the network and the Expo token: do not run `npx eas` here — use expo.status/expo.setup/expo.build/expo.build_status. " +
     "timeoutMs extends the default limit up to 30 minutes for a build or a test suite, but the step still waits for the command: for anything that may run longer than a few minutes, start it with terminal.start and read its output with terminal.tail instead.",
   parameters: { type: "object", additionalProperties: false, required: ["command"], properties: { command: { type: "string", description: "Одна команда оболочки, например `npm run build`" }, cwd: { type: "string", description: "Рабочий каталог внутри проекта; по умолчанию корень проекта" }, timeoutMs: { type: "number", description: "Предел выполнения в миллисекундах, от 1000 до 1800000; по умолчанию лимит песочницы" } } },
@@ -49,11 +51,24 @@ registerTool({
     // Рабочий каталог — реальный путь: ссылка внутри проекта не должна уводить команду из него.
     const cwd = await resolveInsideSandbox(sandbox.root, sandbox.root + "/" + (value.cwd ?? ""));
     // Команда агента не должна прочитать `.env.local`: файл виден по пути, но пуст.
-    return runInSandbox(sandbox, command, cwd, {
-      signal: context.signal,
-      maskSecretEnvFiles: true,
-      ...(requestedTimeout === undefined ? {} : { timeoutMs: requestedTimeout }),
-    });
+    let result: Awaited<ReturnType<typeof runInSandbox>>;
+    try {
+      result = await runInSandbox(sandbox, command, cwd, {
+        signal: context.signal,
+        maskSecretEnvFiles: true,
+        ...(requestedTimeout === undefined ? {} : { timeoutMs: requestedTimeout }),
+      });
+    } catch (error) {
+      // Главный симптом выключенной сети — не отказ, а исчерпанный таймаут: установка «висит».
+      // Без объяснения агент повторяет её и тратит ещё один срок.
+      const hint = isPackageInstall(command) ? PACKAGE_INSTALL_HINT : commandNeedsNetwork(command) ? NO_NETWORK_HINT : undefined;
+      if (!hint) throw error;
+      throw new Error((error instanceof Error ? error.message : String(error)) + "\n\n" + hint);
+    }
+    // Сеть в этом контейнере выключена. Отказ из-за неё выглядит как зависшая установка,
+    // поэтому причина называется в самом результате — вместе с инструментом, которым её решают.
+    const hint = networkHint(command, result);
+    return hint ? { ...result, hint } : result;
   },
 });
 
@@ -65,6 +80,7 @@ registerTool({
     "Start a long-running development command in the project's sandbox in the background and return a jobId immediately. Input: {command:string,cwd?:string}. " +
     "Use it for a build, a test suite or a dev task that may take many minutes, instead of blocking a step with terminal.exec. " +
     "The command runs in the same isolated container (no network, no Docker, secret env files masked) and does not survive a server restart. " +
+    "There is no outbound network in a background job either: it is for builds and tests that need no downloads, while packages must be installed first with npm.install. " +
     "Read its output with terminal.tail {jobId}; stop it with terminal.stop. At most two jobs per project and four per host run at once.",
   parameters: { type: "object", additionalProperties: false, required: ["command"], properties: {
     command: { type: "string", description: "Одна команда оболочки, например `npm test`" },
@@ -78,7 +94,10 @@ registerTool({
     if (refusal) return refusal;
     const sandbox = await getSandbox(context.projectId, context.userId);
     const cwd = await resolveInsideSandbox(sandbox.root, sandbox.root + "/" + (typeof value.cwd === "string" ? value.cwd : ""));
-    return startSandboxJob(sandbox, context.userId, command, cwd, context.signal);
+    const started = await startSandboxJob(sandbox, context.userId, command, cwd, context.signal);
+    // Установка в фоне не начнётся вовсе: сеть у задания та же, что у терминала. Сказать об этом
+    // сразу дешевле, чем ждать пустой лог и повторять запуск.
+    return isPackageInstall(command) ? { ...started, hint: PACKAGE_INSTALL_HINT } : started;
   },
 });
 
@@ -99,7 +118,10 @@ registerTool({
     await getSandbox(context.projectId, context.userId);
     const lines = typeof value.lines === "number" && Number.isFinite(value.lines) ? value.lines : 120;
     const grep = typeof value.grep === "string" ? value.grep.trim().slice(0, 200) : "";
-    return tailSandboxJob(context.projectId, context.userId, jobId, lines, grep);
+    const tail = await tailSandboxJob(context.projectId, context.userId, jobId, lines, grep);
+    // Задание выполняется без сети: если в логе видно ENOTFOUND/EAI_AGAIN, это не ошибка проекта.
+    const hint = networkHintForLogs(tail.logs);
+    return hint ? { ...tail, hint } : tail;
   },
 });
 
@@ -136,7 +158,7 @@ registerTool({
 
 registerTool({
   name: "npm.install",
-  description: "Install the project's npm dependencies in the sandbox. This is the only tool that enables outbound network access for package installation. Input: {cwd?:string}. Use only when package.json exists.",
+  description: "Install the project's npm dependencies in the sandbox. This is the only tool that enables outbound network access for package installation. Input: {cwd?:string}. Use only when package.json exists. Use it whenever an `npm install` in the terminal failed or timed out with ENOTFOUND/EAI_AGAIN, and before preview.start on a project without node_modules.",
   parameters: { type: "object", additionalProperties: false, properties: { cwd: { type: "string", description: "Каталог с package.json внутри проекта; по умолчанию корень проекта" } } },
   execute: async (input, context) => {
     const value = input as { cwd?: string };
