@@ -1,7 +1,7 @@
 import { useEffect,useRef,useState,type DragEvent as ReactDragEvent,type MouseEvent as ReactMouseEvent } from "react";
 import Markdown,{type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { AlertTriangle,Check,Copy,Cpu,Eye,EyeOff,ExternalLink,FileText,History,Image as ImageIcon,KeyRound,ListPlus,Paperclip,Play,RotateCcw,Send,ShieldCheck,Sparkles,Square,X } from "lucide-react";
+import { AlertTriangle,ArrowDownToLine,Check,Copy,Cpu,Eye,EyeOff,ExternalLink,FileText,History,Image as ImageIcon,KeyRound,ListPlus,Paperclip,Play,RotateCcw,Send,ShieldCheck,Sparkles,Square,X } from "lucide-react";
 import { createAgentSocket } from "../../lib/agent-socket";
 import { apiJson } from "../../lib/api";
 import { addProjectTasks,answerProjectQuestion,cancelProjectSecret,getConversation,listPendingProjectSecrets,skipProjectQuestion,submitProjectSecret,uploadProjectFile,type PendingProjectSecret } from "../../lib/project-api";
@@ -261,7 +261,7 @@ function interruptedSecretRequest(messages:ChatMessage[]):{variable:string;file:
   return null;
 }
 
-export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettings,onOpenAccountSettings,onRunningChange,onOpenChanges,scrollSignal,onChatEndChange}:{projectId:string;conversationId:string;onChanged:()=>void;onOpenModelSettings?:()=>void;onOpenAccountSettings?:()=>void;onRunningChange?:(running:boolean)=>void;onOpenChanges?:()=>void;scrollSignal?:number;onChatEndChange?:(atEnd:boolean)=>void}){
+export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettings,onOpenAccountSettings,onRunningChange,onOpenChanges,scrollSignal,onChatEndChange,onScrollBottom,showScroll,writing}:{projectId:string;conversationId:string;onChanged:()=>void;onOpenModelSettings?:()=>void;onOpenAccountSettings?:()=>void;onRunningChange?:(running:boolean)=>void;onOpenChanges?:()=>void;scrollSignal?:number;onChatEndChange?:(atEnd:boolean)=>void;onScrollBottom?:()=>void;showScroll?:boolean;writing?:boolean}){
   const [messages,setMessages]=useState<ChatMessage[]>([]);
   const [prompt,setPrompt]=useState<string>(()=>readDraft(conversationId));
   const [running,setRunning]=useState(false);
@@ -422,7 +422,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   }
 
   /**
-   * Мгновенный переход к концу переписки из строки вкладок: без плавной прокрутки, сразу к
+   * Мгновенный переход к концу переписки из-под правой рельсы: без плавной прокрутки, сразу к
    * последнему сообщению, и автопрокрутка снова включается — дальше ответы идут в поле зрения.
    */
   useEffect(()=>{
@@ -629,7 +629,9 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       // The whole stored history comes back: answers, the thinking that now sits above each of them
       // and the tool results that say how each action ended.
       const persisted=Array.isArray(conversation.messages)?conversation.messages:[];
-      replaceMessages(persisted.length?persisted:[{role:"assistant",content:"Привет. Я NestDev — веб-агент для создания и развития проектов. Опиши, что нужно сделать."}]);
+      // Пустой чат остаётся пустым: задача начинается на главной или с шаблона, и
+      // приветственная реплика над полем ввода только занимала место.
+      replaceMessages(persisted);
       actionsRef.current=deriveActions(persisted);
       setActions(actionsRef.current);
       // The plan is stored with the conversation; localStorage is only the fallback.
@@ -878,7 +880,9 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
         // Агент спрашивает о выборе: окно выезжает над полем ввода, а запуск стоит и ждёт ответа.
         setQuestionPrompt({
           requestId:event.requestId,question:event.question,options:event.options,
-          multiSelect:Boolean(event.multiSelect),allowCustom:event.allowCustom!==false,
+          multiSelect:Boolean(event.multiSelect),
+          ...(event.maxSelections===undefined?{}:{maxSelections:event.maxSelections}),
+          allowCustom:event.allowCustom!==false,
         });
         setQuestionError("");setQuestionBusy(false);
       }
@@ -1248,9 +1252,9 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   // the model itself and the tooltip keeps the full id.
   // На бесплатном тарифе модель платформы — это цепочка бесплатной модели и её резерва.
   // Конкретное имя здесь показывать нельзя: от шага к шагу оно может меняться, а для человека
-  // это одна «Free model».
+  // это один агент NestDev.
   const freeModel=modelInfo?.source==="platform"&&modelInfo.freeModel===true;
-  const modelName=freeModel?"Free model":modelInfo?modelInfo.model.split("/").pop()||"Модель не настроена":"Определяем модель…";
+  const modelName=freeModel?"NestDev":modelInfo?modelInfo.model.split("/").pop()||"Модель не настроена":"Определяем модель…";
   const modelDetails=freeModel?"":[modelInfo?.provider,modelInfo?.model].filter(Boolean).join(" · ");
   const modelTitle=freeModel
     ?"Модель бесплатного тарифа. Чтобы выбрать модель, подключите свой AI-провайдер."
@@ -1354,6 +1358,12 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       items={bookmarks}
       onJump={jumpToMessage}
     />
+    {/* Мгновенный возврат к концу переписки. Стоит внизу правой рельсы, по той же вертикали,
+        что и её точки: не занимает место в строке вкладок и не перекрывает текст. */}
+    {showScroll&&onScrollBottom&&<button type="button" className={"chat-scroll-bottom"+(writing?" is-live":"")} onClick={onScrollBottom} title="Мгновенно прокрутить переписку вниз" aria-label="Прокрутить переписку вниз">
+      <ArrowDownToLine size={14}/>
+      {writing&&<i className="chat-scroll-bottom-dot" aria-hidden="true"/>}
+    </button>}
     </div>
 
     {/* Ключ и доступ — прямо в переписке, над полем ввода: агент остановился на этом шаге,

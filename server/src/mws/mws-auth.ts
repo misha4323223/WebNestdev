@@ -42,6 +42,14 @@ const HOST_PATTERN = /^[a-z0-9-]+\.mwsapis\.ru$/;
 const KEY_ID_PATTERN = /^projects\/([^/]+)\/serviceAccounts\/([^/]+)\/authorizedKeys\/([^/]+)$/;
 
 /**
+ * Сервисы MWS и их хосты — для каталога в `cloud.request` и подсказки на 404. Путь называет
+ * сервис, поэтому без этого списка агент угадывает между `virtualMachines` и `instances`.
+ */
+export function mwsServiceCatalog() {
+  return Object.entries(SERVICE_HOSTS).map(([prefix, host]) => ({ prefix: "/" + prefix, host }));
+}
+
+/**
  * Хост сервиса по первому сегменту пути. `api.mwsapis.ru` — только каталог эндпоинтов:
  * `/rm/v3/projects` на нём отвечает `404 No static resource`, потому что Resource Manager
  * живёт на `iam.mwsapis.ru`. Поэтому путь сам называет сервис, и хост выводится из него,

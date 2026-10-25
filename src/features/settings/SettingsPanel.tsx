@@ -217,23 +217,22 @@ export function SettingsPanel({projectId,projectName,onClose}:{projectId:string;
  * честного «не проверено». Наблюдение живёт на сервере и запоминается по адресу и модели.
  */
 const REASONING_STATUS:Record<ReasoningSupport["status"],{title:string;note:string;tone:"on"|"warn"|"off"|"idle"}>={
-  confirmed:{title:"Глубина размышления работает",note:"Модель присылает цепочку рассуждений — «Лёгкое / Среднее / Глубокое» действительно меняет объём работы над ответом.",tone:"on"},
-  silent:{title:"Модель принимает поле, но не рассуждает",note:"Шлюз не отклонил reasoning_effort, но цепочка рассуждений не пришла: обычные чат-модели это поле игнорируют, и переключатель глубины на них ничего не меняет.",tone:"warn"},
-  rejected:{title:"Модель не поддерживает глубину размышления",note:"Шлюз отклонил reasoning_effort, и запросы повторяются без него. Выбор глубины скрыт в панели агента — это экономит запрос и ничего не обещает.",tone:"off"},
-  unknown:{title:"Поддержка глубины ещё не проверена",note:"Статус появится после «Проверить подключение» или первого запуска: сервер смотрит на ответ шлюза, а не на название модели.",tone:"idle"},
+  confirmed:{title:"Глубина размышления работает",note:"Модель присылает рассуждения — выбор глубины меняет ответ.",tone:"on"},
+  silent:{title:"Глубина не влияет на ответ",note:"Модель принимает параметр, но не рассуждает.",tone:"warn"},
+  rejected:{title:"Глубина не поддерживается",note:"Запросы идут без параметра, выбор глубины скрыт.",tone:"off"},
+  unknown:{title:"Глубина не проверена",note:"Проверится при подключении.",tone:"idle"},
 };
 
 function ReasoningIndicator({support}:{support:ReasoningSupport|null}){
   if(!support)return null;
   const view=!support.enabled
-    ? {title:"Глубина размышления выключена на сервере",note:"WEBNESTDEV_AI_REASONING=off: поле не отправляется, а выбор глубины скрыт в панели агента.",tone:"off" as const}
+    ? {title:"Глубина отключена",note:"Выключено настройкой сервера.",tone:"off" as const}
     : REASONING_STATUS[support.status];
   return <div className={"reasoning-status "+view.tone} role="status">
     <span className="reasoning-status-icon"><Brain size={13}/></span>
     <div>
       <strong>{view.title}</strong>
       <span>{view.note}</span>
-      {support.enabled&&support.checkedAt&&support.status!=="unknown"&&<small>Проверено {new Date(support.checkedAt).toLocaleString("ru-RU",{day:"numeric",month:"long",hour:"2-digit",minute:"2-digit"})}</small>}
     </div>
   </div>;
 }

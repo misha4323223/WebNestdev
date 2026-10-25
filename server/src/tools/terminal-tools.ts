@@ -1,6 +1,7 @@
 import { getSandbox } from "../sandbox-manager.js";
 import { resolveInsideSandbox } from "../sandbox/path-guard.js";
 import { runInSandbox } from "../sandbox-worker.js";
+import { listSandboxJobs, startSandboxJob, stopSandboxJob, tailSandboxJob } from "../sandbox/jobs.js";
 import { registerTool } from "../tool-registry.js";
 
 /**
@@ -9,6 +10,8 @@ import { registerTool } from "../tool-registry.js";
  * отказ отдаётся сразу и с объяснением, что использовать вместо неё.
  */
 const CONTAINER_COMMANDS=new Set(["docker","docker-compose","podman","nerdctl","buildah"]);
+/** Долгая команда в одном шаге: от секунды до получаса. */
+const MAX_COMMAND_TIMEOUT_MS=30*60_000;
 
 export function containerCommandRefusal(command:string):{ok:false;exitCode:number;signal:null;stdout:string;stderr:string;truncated:false}|null{
   const first=command.trim().split(/\s+/)[0].replace(/^.*\//,"");
@@ -25,21 +28,109 @@ export function containerCommandRefusal(command:string):{ok:false;exitCode:numbe
 
 registerTool({
   name: "terminal.exec",
-  description: "Execute a development command in the project's sandbox. Input: {command:string,cwd?:string}. Network is disabled by default. Docker and docker-compose are not available and are refused: the platform serves the Preview itself.",
-  parameters: { type: "object", additionalProperties: false, required: ["command"], properties: { command: { type: "string", description: "Одна команда оболочки, например `npm run build`" }, cwd: { type: "string", description: "Рабочий каталог внутри проекта; по умолчанию корень проекта" } } },
+  description:
+    "Execute a development command in the project's sandbox and wait for it. Input: {command:string,cwd?:string,timeoutMs?:number}. " +
+    "Network is disabled by default. Docker and docker-compose are not available and are refused: the platform serves the Preview itself. " +
+    "Expo/EAS commands also need the network and the Expo token: do not run `npx eas` here — use expo.status/expo.setup/expo.build/expo.build_status. " +
+    "timeoutMs extends the default limit up to 30 minutes for a build or a test suite, but the step still waits for the command: for anything that may run longer than a few minutes, start it with terminal.start and read its output with terminal.tail instead.",
+  parameters: { type: "object", additionalProperties: false, required: ["command"], properties: { command: { type: "string", description: "Одна команда оболочки, например `npm run build`" }, cwd: { type: "string", description: "Рабочий каталог внутри проекта; по умолчанию корень проекта" }, timeoutMs: { type: "number", description: "Предел выполнения в миллисекундах, от 1000 до 1800000; по умолчанию лимит песочницы" } } },
   execute: async (input, context) => {
-    const value = input as { command?: string; cwd?: string };
+    const value = input as { command?: string; cwd?: string; timeoutMs?: number };
     const command = value.command?.trim();
     if (!command) throw new Error("не указана команда");
 
     const refusal = containerCommandRefusal(command);
     if (refusal) return refusal;
 
+    const requestedTimeout = typeof value.timeoutMs === "number" && Number.isFinite(value.timeoutMs)
+      ? Math.min(MAX_COMMAND_TIMEOUT_MS, Math.max(1_000, Math.round(value.timeoutMs)))
+      : undefined;
     const sandbox = await getSandbox(context.projectId, context.userId);
     // Рабочий каталог — реальный путь: ссылка внутри проекта не должна уводить команду из него.
     const cwd = await resolveInsideSandbox(sandbox.root, sandbox.root + "/" + (value.cwd ?? ""));
     // Команда агента не должна прочитать `.env.local`: файл виден по пути, но пуст.
-    return runInSandbox(sandbox, command, cwd, { signal: context.signal, maskSecretEnvFiles: true });
+    return runInSandbox(sandbox, command, cwd, {
+      signal: context.signal,
+      maskSecretEnvFiles: true,
+      ...(requestedTimeout === undefined ? {} : { timeoutMs: requestedTimeout }),
+    });
+  },
+});
+
+const JOB_NO_ARGUMENTS = { type: "object", additionalProperties: false, properties: {} };
+
+registerTool({
+  name: "terminal.start",
+  description:
+    "Start a long-running development command in the project's sandbox in the background and return a jobId immediately. Input: {command:string,cwd?:string}. " +
+    "Use it for a build, a test suite or a dev task that may take many minutes, instead of blocking a step with terminal.exec. " +
+    "The command runs in the same isolated container (no network, no Docker, secret env files masked) and does not survive a server restart. " +
+    "Read its output with terminal.tail {jobId}; stop it with terminal.stop. At most two jobs per project and four per host run at once.",
+  parameters: { type: "object", additionalProperties: false, required: ["command"], properties: {
+    command: { type: "string", description: "Одна команда оболочки, например `npm test`" },
+    cwd: { type: "string", description: "Рабочий каталог внутри проекта; по умолчанию корень проекта" },
+  } },
+  execute: async (input, context) => {
+    const value = (input ?? {}) as { command?: unknown; cwd?: unknown };
+    const command = typeof value.command === "string" ? value.command.trim() : "";
+    if (!command) throw new Error("не указана команда");
+    const refusal = containerCommandRefusal(command);
+    if (refusal) return refusal;
+    const sandbox = await getSandbox(context.projectId, context.userId);
+    const cwd = await resolveInsideSandbox(sandbox.root, sandbox.root + "/" + (typeof value.cwd === "string" ? value.cwd : ""));
+    return startSandboxJob(sandbox, context.userId, command, cwd, context.signal);
+  },
+});
+
+registerTool({
+  name: "terminal.tail",
+  description:
+    "Read the tail of a job started with terminal.start. Input: {jobId:string,lines?:number (1–400, default 120),grep?:string (case-insensitive filter)}. " +
+    "Returns running/done, the exit code when finished, and the last lines of stdout+stderr. A finished job is read once: repeat it after terminal.start, not after terminal.tail.",
+  parameters: { type: "object", additionalProperties: false, required: ["jobId"], properties: {
+    jobId: { type: "string", description: "Идентификатор из terminal.start" },
+    lines: { type: "number", description: "Сколько последних строк вернуть: от 1 до 400, по умолчанию 120" },
+    grep: { type: "string", description: "Оставить только строки, содержащие это слово (без учёта регистра)" },
+  } },
+  execute: async (input, context) => {
+    const value = (input ?? {}) as { jobId?: unknown; lines?: unknown; grep?: unknown };
+    const jobId = typeof value.jobId === "string" ? value.jobId.trim() : "";
+    if (!jobId) throw new Error("не указан jobId");
+    await getSandbox(context.projectId, context.userId);
+    const lines = typeof value.lines === "number" && Number.isFinite(value.lines) ? value.lines : 120;
+    const grep = typeof value.grep === "string" ? value.grep.trim().slice(0, 200) : "";
+    return tailSandboxJob(context.projectId, context.userId, jobId, lines, grep);
+  },
+});
+
+registerTool({
+  name: "terminal.stop",
+  description: "Stop a job started with terminal.start and remove its container. Input: {jobId:string}.",
+  parameters: { type: "object", additionalProperties: false, required: ["jobId"], properties: {
+    jobId: { type: "string", description: "Идентификатор из terminal.start" },
+  } },
+  execute: async (input, context) => {
+    const value = (input ?? {}) as { jobId?: unknown };
+    const jobId = typeof value.jobId === "string" ? value.jobId.trim() : "";
+    if (!jobId) throw new Error("не указан jobId");
+    await getSandbox(context.projectId, context.userId);
+    return stopSandboxJob(context.projectId, context.userId, jobId);
+  },
+});
+
+registerTool({
+  name: "terminal.jobs",
+  description: "List the long-running jobs of this project that were started with terminal.start and are still registered.",
+  parameters: JOB_NO_ARGUMENTS,
+  execute: async (_input, context) => {
+    await getSandbox(context.projectId, context.userId);
+    const running = listSandboxJobs(context.projectId);
+    return {
+      jobs: running,
+      note: running.length
+        ? "Это задания текущего процесса сервера. Вывод читается через terminal.tail, остановка — terminal.stop."
+        : "Долгих заданий нет. Запустить одно можно через terminal.start.",
+    };
   },
 });
 

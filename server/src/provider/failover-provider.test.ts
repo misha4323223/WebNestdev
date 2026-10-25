@@ -45,6 +45,20 @@ test("первый ключ ответил — остальные не трог�
   assert.deepEqual(chunks,[{type:"text",text:"ответ k1"},{type:"done"}]);
 });
 
+test("успешный ответ называет ключ, который ответил",async()=>{
+  const calls:string[]=[];
+  const logs:string[]=[];
+  const provider=new FailoverProvider([endpoint("k1"),endpoint("k2")],{
+    state:createFailoverState(),
+    now:()=>1_000,
+    log:message=>logs.push(message),
+    create:providerFor(calls,answer),
+  });
+  await collect(provider);
+  assert.deepEqual(calls,["k1"]);
+  assert.ok(logs.some(message=>/^\[provider\] k1 ответил за 0 мс$/.test(message)),JSON.stringify(logs));
+});
+
 test("429 переключает на следующий ключ и запоминает рабочий",async()=>{
   let now=1_000;
   const calls:string[]=[];

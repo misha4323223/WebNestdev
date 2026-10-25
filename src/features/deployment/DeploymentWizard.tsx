@@ -168,7 +168,7 @@ export function DeploymentWizard({ projectId, onClose, onStarted }: {
   const [ignorePlan, setIgnorePlan] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   // Развилка появляется до сводки: пользователь сначала выбирает, где живёт проект.
-  // Наш хостинг пока только помечен статусом «Скоро» и никуда не ведёт.
+  // Хостинг проекта пока только помечен статусом «Скоро» и никуда не ведёт.
   const [target, setTarget] = useState<"external" | null>(null);
 
   useEffect(() => {
@@ -211,7 +211,7 @@ export function DeploymentWizard({ projectId, onClose, onStarted }: {
   const databaseStep = Boolean(architecture === "server" || (options?.needs.database && architecture !== "static" && architecture !== "unknown"));
 
   const steps = useMemo<StepId[]>(() => {
-    // Пока не выбраны внешние облака, дальше развилки не пускаем: наш хостинг
+    // Пока не выбраны внешние облака, дальше развилки не пускаем: хостинг проекта
     // ещё не подключён и остаётся только статусом в первой карточке.
     if (target !== "external" || !options) return ["target"];
     if (architecture === "unknown") return ["target", "project"];
@@ -367,14 +367,15 @@ export function DeploymentWizard({ projectId, onClose, onStarted }: {
           </div>
 
           <div className="deploy-targets" aria-label="Где размещаем проект">
-            <div className="deploy-target is-soon" aria-label="Наш хостинг — скоро">
+            <div className="deploy-target is-soon" aria-label="Хостинг проекта — скоро">
               <span className="deploy-target-head">
-                <span className="deploy-target-icon"><Server size={17}/></span>
-                <span className="deploy-target-badge soon">СКОРО</span>
+                <span className="deploy-target-icon"><Server size={18}/></span>
+                <span className="deploy-target-badge soon"><Sparkles size={9}/> СКОРО</span>
               </span>
-              <span className="deploy-target-kicker">NESTDEV</span>
-              <strong>Наш хостинг</strong>
-              <span className="deploy-target-copy">Статические сайты на нашем сервере.</span>
+              <span className="deploy-target-kicker">NESTDEV CLOUD</span>
+              <strong>Хостинг проекта</strong>
+              <span className="deploy-target-copy">Развернуть проект прямо в NestDev: контейнеры, домены и HTTPS — без внешнего облака.</span>
+              <span className="deploy-target-soon-note"><span className="deploy-target-soon-dot" aria-hidden="true"/>Готовим запуск. Пока выберите внешнее облако →</span>
             </div>
 
             <button
@@ -397,7 +398,6 @@ export function DeploymentWizard({ projectId, onClose, onStarted }: {
               <strong>Внешние облака</strong>
               <span className="deploy-target-copy">Проект размещается в вашем облаке.</span>
               <span className="deploy-target-list">
-                <span><Check size={11}/> Статика, API и функции</span>
                 <span><Check size={11}/> Контейнеры и виртуальные машины</span>
                 <span><Globe2 size={11}/> Свой домен и DNS</span>
               </span>

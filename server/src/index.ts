@@ -16,10 +16,12 @@ import { describeContextBudget } from "./agent/context-budget.js";
 import { describeProviderRetry } from "./provider/provider-retry.js";
 import { describeFreeModelRoute } from "./provider/free-model.js";
 import { describeSandboxLimiter } from "./sandbox/sandbox-limiter.js";
+import { cleanupSandboxJobs } from "./sandbox/jobs.js";
 import { describeWebSearch } from "./web/search.js";
 import { assertEncryptionConfigured } from "./storage/secret-crypto.js";
 import { describeTrustProxy, trustProxyOption } from "./security/client-ip.js";
 import { registerSameOriginGuard } from "./security/same-origin.js";
+import { registerSecurityHeaders } from "./security/headers.js";
 import { describeSandboxPaths } from "./sandbox/config.js";
 import { describeSandboxMount,verifySandboxMount } from "./sandbox/sandbox-check.js";
 import { ensureDataDir } from "./project-store.js";
@@ -77,8 +79,10 @@ import "./tools/yandex-tools.js";
 import "./tools/cloud-tools.js";
 import "./tools/domain-tools.js";
 import "./tools/service-tools.js";
+import "./tools/expo-tools.js";
 import "./tools/database-tools.js";
 import "./tools/deploy-tools.js";
+import "./tools/deploy-check.js";
 import "./tools/access-tools.js";
 import "./tools/secret-tools.js";
 import "./tools/question-tools.js";
@@ -169,14 +173,7 @@ if (demoEnabled) {
 
 app.addHook("onClose", async () => { stopBillingSweeper(); stopStorageReconcile?.(); await stopPreviewHostServer(); await closeStorage(); });
 
-app.addHook("onSend", async (_request, reply) => {
-  reply.header("X-Content-Type-Options", "nosniff");
-  // SAMEORIGIN, not DENY: the live preview of a user's project is framed by our own
-  // workspace, and DENY made the browser refuse to render it.
-  reply.header("X-Frame-Options", "SAMEORIGIN");
-  reply.header("Referrer-Policy", "strict-origin-when-cross-origin");
-  reply.header("Permissions-Policy", "camera=(), microphone=(), geolocation=()");
-});
+await registerSecurityHeaders(app);
 
 app.setErrorHandler((error, request, reply) => {
   if (error instanceof ZodError) {
@@ -243,6 +240,11 @@ await app.listen({host:"0.0.0.0",port:Number(process.env.PORT??8787)});
 void reapOrphanPreviews()
   .then(result => { if (result.stopped) app.log.info({ stopped: result.stopped }, "stopped orphan preview containers"); })
   .catch(error => app.log.warn({ error: error instanceof Error ? error.message : error }, "preview reap skipped"));
+// Долгие задания принадлежат контейнерам, а не процессу: после перезапуска прочитать их уже
+// никто не сможет, поэтому они снимаются на старте — как и контейнеры предпросмотра.
+void cleanupSandboxJobs()
+  .then(result => { if (result.removed) app.log.info({ removed: result.removed }, "removed orphan sandbox jobs"); })
+  .catch(error => app.log.warn({ error: error instanceof Error ? error.message : error }, "sandbox job reap skipped"));
 // Песочница проверяется один раз после старта: маркер в каталоге песочниц и `cat` его из
 // контейнера. Это единственный способ узнать, что контейнеры видят те же файлы, что и агент;
 // результат остаётся в /api/health (`sandbox.mount`), а расхождение ещё и понижает /api/ready.

@@ -319,7 +319,8 @@ test("the ticket endpoint hands the panel a link to the project's public preview
     assert.equal(response.statusCode, 200);
     const body = response.json();
     assert.equal(body.baseUrl, "https://p1.preview.example");
-    assert.equal(body.url, "https://p1.preview.example/?ticket=ticket-p1");
+    // Билет — во фрагменте: строка запроса не попадает ни в логи, ни в `Referer`.
+    assert.equal(body.url, "https://p1.preview.example/#ticket=ticket-p1");
     assert.equal(body.param, "ticket");
     assert.ok(body.expiresAt > Date.now(), "билет должен быть со сроком в будущем");
   } finally {

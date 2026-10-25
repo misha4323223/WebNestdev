@@ -1,6 +1,7 @@
 import path from "node:path";
 import { getSandbox } from "../sandbox-manager.js";
-import { deleteInside, listInside, readFileInside, renameInside, writeFileInside } from "../sandbox/path-guard.js";
+import { deleteInside, listInside, readFileBytesInside, readFileInside, renameInside, writeFileInside } from "../sandbox/path-guard.js";
+import { looksBinary } from "../sandbox/binary.js";
 import { openDirsForSandbox, openFileForSandbox } from "../sandbox/permissions.js";
 import { registerTool } from "../tool-registry.js";
 import { parseChangedSource } from "../qa/change-parser.js";
@@ -39,7 +40,7 @@ registerTool({
 
 registerTool({
   name: "fs.read",
-  description: "Read a UTF-8 text file, or one window of a large one. Input: {path:string,offset?:number,limit?:number}. Large files come back in windows with `nextOffset` — read the next window instead of assuming the file ends here.",
+  description: "Read a UTF-8 text file, or one window of a large one. Input: {path:string,offset?:number,limit?:number}. Large files come back in windows with `nextOffset` — read the next window instead of assuming the file ends here. Binary files (images, fonts, archives) return {binary:true,bytes} instead of text — do not try to read them as source.",
   parameters: {
     type: "object",
     additionalProperties: false,
@@ -55,7 +56,18 @@ registerTool({
     if (!value.path) throw new Error("не указан путь");
     assertNotSecretProjectPath(value.path, "читать");
     const sandbox = await getSandbox(context.projectId, context.userId);
-    const content = await readFileInside(sandbox.root, path.join(sandbox.root, value.path));
+    const bytes = await readFileBytesInside(sandbox.root, path.join(sandbox.root, value.path));
+    // Двоичный файл не отдаётся как текст: иначе PNG или шрифт занимает контекст символами
+    // замены и ничего не объясняет. Факт «это не текст» и размер — уже полезный ответ.
+    if (looksBinary(bytes)) {
+      return {
+        path: value.path,
+        binary: true,
+        bytes: bytes.length,
+        hint: "Это двоичный файл (изображение, шрифт, архив и т.п.) — как текст он не читается. Откройте его в панели «Файлы» или проверьте через file/identify в terminal.exec.",
+      };
+    }
+    const content = bytes.toString("utf8");
     // Окно, а не весь файл: неограниченное чтение — то, из-за чего запуск упирался в лимит модели.
     const offset = Math.max(0, Math.floor(Number(value.offset) || 0));
     const limit = Math.min(READ_MAX_CHARS, Math.max(1, Math.floor(Number(value.limit) || READ_WINDOW_CHARS)));

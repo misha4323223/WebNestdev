@@ -35,7 +35,8 @@ export type BrandId =
   | "2gis"
   | "retailcrm"
   | "bitrix24"
-  | "amocrm";
+  | "amocrm"
+  | "expo";
 
 type BrandSpec = {
   /** Путь внутри `public`: Vite копирует его в сборку без хэша в имени. */
@@ -73,6 +74,7 @@ const BRAND_LOGOS: Record<BrandId, BrandSpec> = {
   retailcrm: { src: "/brand/logos/retailcrm.svg", shape: "wordmark" },
   bitrix24: { src: "/brand/logos/bitrix24.svg", shape: "wordmark" },
   amocrm: { src: "/brand/logos/amocrm.png" },
+  expo: { src: "/brand/logos/expo.svg" },
 };
 
 /**

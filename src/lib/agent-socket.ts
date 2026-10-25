@@ -50,8 +50,9 @@ export type AgentSocketEvent={
    * the message box. The answer is posted separately, so the run keeps waiting here.
    */
   question?:string;
-  options?:Array<{label:string;description?:string}>;
+  options?:Array<{label:string;description?:string;imageUrl?:string}>;
   multiSelect?:boolean;
+  maxSelections?:number;
   allowCustom?:boolean;
   /**
    * Set on changes.created: the finished task was written to the project's history.

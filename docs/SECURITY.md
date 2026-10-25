@@ -11,7 +11,7 @@
 - ⬜ **открыто** — не начато;
 - ⏸ **отложено** — есть причина и условие возврата.
 
-Дата аудита: 2026-10-22. Зависимости проверены `npm audit --omit=dev` (prod: 0 уязвимостей на
+Дата аудита: 2026-10-25. Зависимости проверены `npm audit` (0 уязвимостей, включая dev, на
 момент аудита); это состояние на дату, а не гарантия.
 
 ---
@@ -29,7 +29,7 @@
 | Разграничение владения | Почти все проектные ручки проверяют `project.userId === user.id`; инструменты агента получают `userId` в контексте | `server/src/routes/*`, `server/src/tools/*` |
 | Ошибки оплаты | Подпись ResultURL проверяется до поиска счёта и суммы, сравнение постоянное по времени | `server/src/routes/billing.ts`, `server/src/billing/robokassa.ts` |
 | OAuth | `state` одноразовый, с TTL, привязан к пользователю | `server/src/github/github-oauth-state.ts` |
-| Предпросмотр | Билет шифрован, привязан к проекту, с TTL; cookie панели приложению не передаётся | `server/src/preview/preview-ticket.ts`, `server/src/preview/preview-proxy.ts` |
+| Предпросмотр | Билет шифрован, привязан к проекту, с TTL и передаётся во фрагменте адреса (не в query); cookie панели приложению не передаётся | `server/src/preview/preview-ticket.ts`, `server/src/preview/preview-proxy.ts` |
 | SSRF в `web.read` | Запрет частных адресов, портов, логина в URL, ручные редиректы | `server/src/web/read-url.ts` |
 | XSS | Нет `dangerouslySetInnerHTML`; markdown рендерится `react-markdown` (экранирует) | `src/features/agent/AgentPanel.tsx` |
 | Зависимости | Lock-файлы в репозитории, `npm audit` чистый на дату аудита | `package-lock.json` |
@@ -138,6 +138,61 @@ POST без тела (запуск/остановка предпросмотра
 
 ---
 
+## 2.1. Закрыто в этапе 2 (2026-10-25)
+
+### ✅ 2.1. Зависимости и CI
+
+`fastify` обновлён до 5.12.7, `zod` — до 4.6.7 (закрыты header-validation bypass и
+memory-exhaustion при валидации коллекций). Транзитивный `fast-uri` закреплён через `overrides`:
+3.1.9 для ajv 8 и 4.2.3 для fast-json-stringify/@fastify/ajv-compiler. `npm audit` — 0
+уязвимостей. CI и production-CI выполняют `npm audit --omit=dev --audit-level=high`, поэтому
+следующая известная уязвимость в runtime-зависимостях не пройдёт молча.
+
+### ✅ 2.2. Node.js 26
+
+Сервер и оба Docker-образа (`Dockerfile`, `server/Dockerfile`) собираются на `node:26`,
+GitHub Actions — на Node 26; `engines` требует не ниже Node 24 (действующий LTS). Образ
+песочницы намеренно оставлен на `node:22-bookworm`: это среда пользовательских проектов, и её
+версия меняется отдельно. Сборка проверена `tsc`; образ не собирался в этом окружении.
+
+### ✅ 2.3. API не публикуется в обход Caddy
+
+`docker-compose.yml` публиковал `8787:8787` на все интерфейсы хоста, хотя `client-ip.ts` и
+документация исходили из того, что порт закрыт. Теперь — `127.0.0.1:8787:8787`: health-check
+и диагностика на ВМ работают, а внешний запрос может попасть в API только через HTTPS-Caddy с
+Origin-проверкой и `Secure`-cookie.
+
+### ✅ 2.4. Заголовки безопасности
+
+`server/src/security/headers.ts` — единый `onSend`-хук: CSP в production (`script-src 'self'`,
+`frame-ancestors 'none'`, явные `img`/`connect`/`frame`-источники), HSTS только на ответах,
+пришедших по https, `X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`,
+`Permissions-Policy`. Ответы `/api/*` без собственного правила получают полный `no-store`
+(с удалением `etag`/`last-modified`). CSP не включается в development, чтобы не ломать HMR Vite.
+Тест: `server/src/security/headers.test.ts`.
+
+### ✅ 2.4b. Билет предпросмотра без строки запроса
+
+Билет больше не приходит как `?ticket=…`: он лежит во фрагменте (`#ticket=…`), а фрагмент браузер
+на сервер не отправляет, поэтому билет не попадает в журналы Caddy и сервера, в историю браузера
+и в `Referer` запросов самого приложения. Первый переход по адресу предпросмотра без cookie
+получает платформенную страницу-дверь (`no-store`, CSP с нонсом на каждый ответ): она читает
+билет из `location.hash`, отправляет его JSON-ом на `/__nest/preview/session` того же origin и
+получает `HttpOnly`-cookie; страница сразу заменяет адрес на чистый, поэтому приложение никогда
+не видит билет. Обмен принимает только same-origin JSON — форма с чужого сайта его не пройдёт.
+Приём билета из строки запроса и из WebSocket-адреса удалён: старая ссылка не открывает ничего.
+Тесты: `server/src/preview/preview-ticket.test.ts`, `server/src/preview/preview-host-server.test.ts`,
+`server/src/routes/preview.test.ts`.
+
+### ✅ 2.5. Публичный health не показывает внутреннее устройство
+
+`/api/health` и `/api/ready` отдают полные поля (пути песочниц, очереди, адреса предпросмотров,
+диск/RSS) только запросу с loopback — health-check контейнера или `docker compose exec`. Через
+Caddy остаются `ok`, `service`, `build` и `sms`; `/api/ready` — только статус и сборка. Деплой
+продолжает работать: он проверяет HTTP-код и `build`.
+
+---
+
 ## 3. Открытые пункты
 
 ### P0
@@ -148,6 +203,7 @@ POST без тела (запуск/остановка предпросмотра
 | 2 | Предпросмотр в сети PostgreSQL | ✅ 1.3 |
 | 3 | CSRF на маршрутах вне трёх файлов | ✅ 1.2 |
 | 4 | Предпросмотр выполняется на origin панели | ✅ 1.5 (fail closed) |
+| 5 | Порт API 8787 опубликован на все интерфейсы в обход Caddy | ✅ 2.3 |
 
 ### P1
 
@@ -155,20 +211,20 @@ POST без тела (запуск/остановка предпросмотра
 |---|---|---|---|
 | 5 | Сервер в контейнере работает root, смонтирован `docker.sock` → RCE в сервере = root на хосте | `server/Dockerfile`, `docker-compose.yml` | ⬜ Этап 2.1 |
 | 6 | Сессии 30 дней, нет idle-таймаута, отзыва, смены/сброса пароля | `server/src/auth/*` | ⬜ Этап 2.2 |
-| 7 | Нет HSTS и CSP; из заголовков только XCTO, XFO, Referrer-Policy, Permissions-Policy | `server/src/index.ts`, `deploy/Caddyfile` | ⬜ Этап 2.3 |
-| 8 | Билет предпросмотра в query-строке живёт 12 часов и попадает в логи | `server/src/preview/preview-ticket.ts` | ⬜ Этап 2.4 |
+| 7 | Нет HSTS и CSP; из заголовков только XCTO, XFO, Referrer-Policy, Permissions-Policy | `server/src/index.ts`, `deploy/Caddyfile` | ✅ 2.4 |
+| 8 | Билет предпросмотра в query-строке живёт 12 часов и попадает в логи | `server/src/preview/preview-ticket.ts` | ✅ 2.4b |
 | 9 | `web.read`: DNS проверяется до запроса, `fetch` резолвит имя заново (rebinding) | `server/src/web/read-url.ts` | ⬜ Этап 3.1 |
 | 10 | Ключ API поддержки: полный доступ к PII, без лимита, срока и аудита чтения | `server/src/support/support-api-key.ts` | ⬜ Этап 2.5 |
 | 11 | Нет аудита изменений ключей платформы, удаления проектов, неудачных входов | `server/src/routes/platform.ts`, `projects.ts` | ⬜ Этап 2.6 |
 | 12 | Нет проверки пароля по утечкам, пароль от 8 символов, нет счётчика на аккаунт по паролю (только по попыткам) | `server/src/routes/auth.ts` | ⬜ Этап 2.6 |
 | 13 | Регистрация сообщает, что email занят; email не подтверждается | `server/src/auth/auth-store.ts` | ⬜ Этап 3.4 |
-| 14 | Публичные `/api/health` (абсолютные пути) и `/api/tools` | `server/src/routes/health.ts`, `tools.ts` | ⬜ Этап 3.4 |
+| 14 | Публичные `/api/health` (абсолютные пути) и `/api/tools` | `server/src/routes/health.ts`, `tools.ts` | 🟡 2.5: health закрыт, `/api/tools` остаётся публичным списком имён |
 
 ### P2
 
 | # | Проблема | Статус |
 |---|---|---|
-| 15 | Нет Dependabot/renovate, `npm audit`/secret-scanning/SAST в CI | ⬜ Этап 3.2 |
+| 15 | Нет Dependabot/renovate, `npm audit`/secret-scanning/SAST в CI | 🟡 2.1: `npm audit` в CI есть, автоматических обновлений и SAST нет |
 | 16 | Нет 2FA для администратора платформы | ⬜ Этап 3.3 |
 | 17 | Демо-аккаунт/демо-номер включаются флагом в production (пароль по умолчанию известен) | ⬜ Этап 3.3 |
 | 18 | JSON-хранилища пользователей/сессий пишутся без атомарной замены (локальный режим) | ⬜ Этап 3.6 |
@@ -213,6 +269,12 @@ cd server && node --import tsx --test \
 | 2026-10-22 | 1.5 | Fail closed для предпросмотра на origin панели без публичного домена |
 | 2026-10-22 | 1.3a | Выкатка: подсеть 172.30 оказалась занята на ВМ, сеть панели не создалась. Подсеть заменена на 10.77.0.0/24; рабочая сеть `webnestdev` больше не меняется |
 | 2026-10-22 | 1.6 | Домены: переключатель «Разрешить агенту изменять ресурсы» у кабинетов регистраторов (`allow_writes` в `domain_connections`), гейт в `domain.request` — без разрешения любые не-чтение-команды отклоняются до запроса к API; чтение всегда разрешено. Покупка, продление и перенос агенту недоступны |
+| 2026-10-25 | 2.1 | `fastify` 5.12.7, `zod` 4.6.7, overrides для `fast-uri`; `npm audit` 0; аудит production-зависимостей в CI |
+| 2026-10-25 | 2.2 | Node.js 26 в Docker-образах и CI; `engines` ≥24; песочница остаётся на Node 22 |
+| 2026-10-25 | 2.3 | API-порт опубликован только на loopback; внешний доступ — через Caddy |
+| 2026-10-25 | 2.4 | CSP/HSTS и единые заголовки безопасности; `no-store` для API |
+| 2026-10-25 | 2.4b | Билет предпросмотра — во фрагменте адреса; страница-дверь и same-origin обмен на `HttpOnly`-cookie |
+| 2026-10-25 | 2.5 | Публичный health отдаёт только сборку, статус и SMS; подробности — с loopback |
 
 ---
 

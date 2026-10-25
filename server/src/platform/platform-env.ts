@@ -76,7 +76,7 @@ export const PLATFORM_ENV_CATALOG: PlatformEnvEntry[] = [
   { name: "ROBOKASSA_HASH", group: "billing", label: "Алгоритм подписи", hint: "Должен совпадать с настройкой магазина: md5 (по умолчанию), sha256 и т. п.", kind: "value" },
   { name: "ROBOKASSA_TEST_MODE", group: "billing", label: "Тестовый режим", hint: "1 — платёж идёт с IsTest=1 и тестовыми паролями магазина: деньги не списываются.", kind: "flag" },
   { name: "ROBOKASSA_RECURRING", group: "billing", label: "Периодические платежи", hint: "1 — только после одобрения услуги «Периодические платежи» в Робокассе: включает автопродление.", kind: "flag" },
-  { name: "ROBOKASSA_RECEIPT", group: "billing", label: "Чеки через Робокассу", hint: "1 — отправлять Receipt JSON. Самозанятому обычно не нужно: чеки идут через «Робочеки СМЗ» в кабинете.", kind: "flag" },
+  { name: "ROBOKASSA_RECEIPT", group: "billing", label: "Receipt JSON", hint: "1 — отправлять Receipt JSON в платёжный сервис. Обычно не требуется.", kind: "flag" },
   { name: "ROBOKASSA_PRICE_PRO", group: "billing", label: "Цена тарифа «Плюс», ₽/мес", hint: "Необязательно: по умолчанию 990. Меняется без выкатки.", kind: "value" },
   { name: "ROBOKASSA_PRICE_TEAM", group: "billing", label: "Цена тарифа «Премиум», ₽/мес", hint: "Необязательно: по умолчанию 2 990.", kind: "value" },
 

@@ -94,6 +94,53 @@ export async function registerServiceRoutes(app: FastifyInstance) {
     return { id: service.id, name: service.name, connected: true, account, verification: service.verification, updatedAt: now };
   });
 
+  /**
+   * Перечитать живую подпись сервиса (сколько списков, какой магазин, чей аккаунт). У сервисов
+   * без безопасной читающей проверки обновлять нечего — карточка так и говорит, а не делает вид,
+   * что данные свежие.
+   */
+  app.post("/api/services/:service/refresh", async (request, reply) => {
+    const user = await requireUser(request, reply);
+    if (!user) return;
+    const service = serviceFrom(request.params);
+    if (!service) return reply.code(404).send({ error: "Неизвестный сервис" });
+    const connection = await getServiceConnection(user.id, service.id);
+    if (!connection) return reply.code(400).send({ error: service.name + " не подключён" });
+    if (service.verification !== "check") {
+      return {
+        id: service.id,
+        name: service.name,
+        connected: true,
+        account: connection.account,
+        verification: service.verification,
+        updatedAt: connection.updatedAt,
+        note: "Этот ключ сохраняется без проверки: у сервиса нет безопасного читающего запроса. Значение не менялось.",
+      };
+    }
+    let fields: Record<string, string>;
+    try {
+      fields = JSON.parse(connection.secret) as Record<string, string>;
+    } catch {
+      return reply.code(500).send({ error: "Сохранённый ключ повреждён: подключите сервис заново" });
+    }
+    let account: string;
+    try {
+      account = (await verifyServiceCredential(service, fields)).account;
+    } catch (error) {
+      return reply.code(400).send({ error: messageOf(error) });
+    }
+    const now = new Date().toISOString();
+    await saveServiceConnection({ ...connection, account, updatedAt: now });
+    return {
+      id: service.id,
+      name: service.name,
+      connected: true,
+      account,
+      verification: service.verification,
+      updatedAt: now,
+    };
+  });
+
   app.post("/api/services/:service/disconnect", async (request, reply) => {
     const user = await requireUser(request, reply);
     if (!user) return;

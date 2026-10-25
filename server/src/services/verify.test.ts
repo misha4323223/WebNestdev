@@ -7,6 +7,7 @@ import {
   parseAmocrm,
   parseBitrix,
   parseCloudpayments,
+  parseExpo,
   parseGeocoder,
   parseGigachatToken,
   parseRetailcrm,
@@ -99,6 +100,10 @@ test("разбор ответов провайдеров: успех и отка
 
   assert.equal(parseAmocrm({ id: 5, subdomain: "shop" }), "amoCRM · shop");
   assert.throws(() => parseAmocrm({ message: "Unauthorized" }), /без аккаунта/);
+
+  assert.match(parseExpo({ data: { meActor: { __typename: "UserActor", username: "nestdev" } } }), /nestdev/);
+  assert.throws(() => parseExpo({ errors: [{ message: "Unauthorized" }] }), /отклонил токен/);
+  assert.throws(() => parseExpo({ data: { meActor: null } }), /не подтвердил токен/);
 });
 
 test("проверка сервиса использует подставленный fetch", async () => {

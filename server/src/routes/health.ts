@@ -13,6 +13,8 @@ import { sandboxHostRootDir,sandboxRootDir } from "../sandbox/config.js";
 import { lastSandboxMountCheck } from "../sandbox/sandbox-check.js";
 import { diskStatus, memoryStatus } from "../health/host-metrics.js";
 import { smsReadiness, smsSummary } from "../auth/sms.js";
+import { normalizeAddress } from "../security/client-ip.js";
+import type { FastifyRequest } from "fastify";
 
 /**
  * Какая сборка работает на сервере. Значение запекается в образ при выкатке
@@ -105,29 +107,48 @@ async function smsInfo(){
   };
 }
 
+/**
+ * Подробности health нужны оператору и health-check на самой ВМ, а не посетителю сайта.
+ * Публичный ответ через Caddy не должен показывать абсолютные пути песочниц, очереди и
+ * адреса предпросмотров: это карта внутреннего устройства. Считаем запрос внутренним, только
+ * если он пришёл напрямую на loopback (health-check контейнера или `docker compose exec`).
+ */
+function isInternalHealthRequest(request:FastifyRequest){
+  const address=normalizeAddress(request.raw.socket.remoteAddress);
+  return address==="127.0.0.1"||address==="::1";
+}
+
 export async function registerHealthRoutes(app:FastifyInstance){
-  app.get("/api/health",async()=>({
-    ok:true,
-    service:"webnestdev-server",
-    build:buildId(),
-    ...(await dependencyStatus()),
-    // Настроен ли вход по SMS на самом деле: провайдер по имени и способ аутентификации.
-    // Секретов здесь нет, зато «SMS перестали приходить» проверяется одной командой
-    // curl localhost:8787/api/health вместо чтения .env на ВМ.
-    sms:await smsInfo(),
-    activity:await activity(),
-  }));
+  app.get("/api/health",async request=>{
+    if(!isInternalHealthRequest(request)){
+      return {ok:true,service:"webnestdev-server",build:buildId(),sms:await smsInfo()};
+    }
+    return {
+      ok:true,
+      service:"webnestdev-server",
+      build:buildId(),
+      ...(await dependencyStatus()),
+      // Настроен ли вход по SMS на самом деле: провайдер по имени и способ аутентификации.
+      // Секретов здесь нет, зато «SMS перестали приходить» проверяется одной командой
+      // curl localhost:8787/api/health вместо чтения .env на ВМ.
+      sms:await smsInfo(),
+      activity:await activity(),
+    };
+  });
   //
   // Только номер сборки и ничего больше: открытая вкладка панели спрашивает его, чтобы понять,
   // не устарела ли она после выкатки (см. src/lib/app-build.ts). Поэтому здесь нет ни Docker, ни
   // базы, ни метрик — проверка идёт с каждой вкладки раз в пару минут и должна стоить почти ноль.
   //
   app.get("/api/version",async()=>({ok:true,build:buildId()}));
-  app.get("/api/ready",async(_request,reply)=>{
+  app.get("/api/ready",async(request,reply)=>{
     const dependencies=await dependencyStatus();
     // Расхождение путей песочницы — не временная неисправность хоста, а сломанная выкатка:
     // агент пишет файлы, которых не видит терминал. Готовность обязана об этом сказать.
     const ok=dependencies.storage.ok && dependencies.sandbox.available && dependencies.sandbox.mount?.reason!=="mismatch";
+    if(!isInternalHealthRequest(request)){
+      return reply.code(ok?200:503).send({ok,service:"webnestdev-server",build:buildId()});
+    }
     return reply.code(ok?200:503).send({ok,service:"webnestdev-server",build:buildId(),...dependencies,sms:await smsInfo(),activity:await activity()});
   });
   app.get("/api/sandbox/status",async()=>sandboxStatus());

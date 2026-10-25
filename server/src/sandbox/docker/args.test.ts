@@ -41,6 +41,18 @@ test("git в контейнере не спотыкается о владель�
   assert.equal(env.GIT_CONFIG_VALUE_0, "*");
 });
 
+test("долгое задание запускается отсоединённым, без --rm и с метками для уборки", () => {
+  const config = { projectId: "p1", root: "/root/p1", memoryMb: 256, cpuLimit: 1, timeoutMs: 1000 };
+  const args = dockerRunArgs(config, config.root, options, "npm test", "none", "wnd-job-p1-1", [], {
+    detached: true,
+    labels: { "webnestdev.job": "1", "webnestdev.project": "p1" },
+  });
+  assert.ok(args.includes("-d") && !args.includes("--rm"), args.join(" "));
+  const labels = args.flatMap((value, index) => value === "--label" ? [args[index + 1]] : []);
+  assert.ok(labels.includes("webnestdev.job=1"), args.join(" "));
+  assert.ok(labels.includes("webnestdev.project=p1"), args.join(" "));
+});
+
 test("секретный файл монтируется после рабочей области, поверх своего пути", () => {
   const config = {
     projectId: "p1",

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { registerTool } from "../tool-registry.js";
 import { cloudFetch } from "../cloud/api.js";
+import { cloudDocsUrl, cloudNotFoundHint, cloudServiceCatalog } from "../cloud/catalog.js";
 import { listCloudConnections } from "../cloud/connections.js";
 import { CLOUD_PROVIDERS } from "../cloud/providers.js";
 
@@ -77,6 +78,42 @@ registerTool({
   } },
   execute: async (input, context) => {
     const request = requestSchema.parse(input);
-    return cloudFetch(context.userId, request.provider, request);
+    const result = await cloudFetch(context.userId, request.provider, request);
+    // 404 — самая дорогая ошибка в облачном API: путь существует не там или называется иначе.
+    // Вместо повторной догадки сразу отдаём каталог сервисов и ссылку на документацию.
+    if ("status" in result && result.status === 404) {
+      return { ...result, ...cloudNotFoundHint(request.provider, request.path) };
+    }
+    return result;
+  },
+});
+
+registerTool({
+  name: "cloud.catalog",
+  description:
+    "List known API paths of the connected clouds before guessing: service prefix, host for MWS, an example path and the provider documentation URL. " +
+    "Input: {provider?:'timeweb'|'cloudru'|'mws'|'regru'} — without it, all providers are returned. " +
+    "Use it when cloud.request returns 404, when a resource name is not obvious (MWS virtualMachines, not instances), or before constructing a path from memory. " +
+    "The catalog is a starting point, not a full API reference: the docs link is part of the answer.",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      provider: { type: "string", enum: ["timeweb", "cloudru", "mws", "regru"], description: "Облако; без него — все" },
+    },
+  },
+  execute: async (input) => {
+    const value = (input ?? {}) as { provider?: unknown };
+    const provider = value.provider === "timeweb" || value.provider === "cloudru" || value.provider === "mws" || value.provider === "regru"
+      ? value.provider
+      : undefined;
+    const services = cloudServiceCatalog(provider);
+    return {
+      services,
+      ...(provider ? { docsUrl: cloudDocsUrl(provider) } : {}),
+      note: provider
+        ? "Это известные сервисы и примеры путей. Полный список — в документации по ссылке docsUrl."
+        : "Провайдер не указан: возвращены каталоги всех облаков. Уточните provider, чтобы получить ссылку на документацию.",
+    };
   },
 });

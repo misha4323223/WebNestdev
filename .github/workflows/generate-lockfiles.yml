@@ -19,7 +19,7 @@ jobs:
           ref: ${{ github.ref_name }}
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          node-version: 26
       - name: Generate lockfile only for an uninitialized branch
         run: |
           if [ ! -f package-lock.json ]; then

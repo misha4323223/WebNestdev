@@ -1,5 +1,5 @@
 import { useEffect,useState } from "react";
-import { Bot,CreditCard,Crown,FolderGit2,HardDrive,History,Home,ListTodo,Terminal } from "lucide-react";
+import { ArrowUpRight,Bot,CreditCard,FolderGit2,HardDrive,History,Home,ListTodo,Terminal } from "lucide-react";
 import type { WorkspaceView } from "../workspace/WorkspaceNav";
 import { SidebarBanner } from "./SidebarBanner";
 import { bytesLabel, getBilling } from "../../lib/billing-api";
@@ -12,16 +12,21 @@ import { activePlanId, chosenPlanId, isPendingChoice, planName, usePlanChoice } 
 type SidebarPlanInfo={name:string;chosen:string|null;planId:string;used:number;limit:number;storageUsed:number;storageLimit:number};
 
 /**
- * Полоска бесплатных шагов. Шаги — это запуски агента на встроенной модели, поэтому именно они,
- * а не отдельные инструменты внутри запуска, показывают, сколько бесплатного осталось.
- * Цвет — состояние, а не украшение: спокойный зелёный, оранжевый на половине и красный к концу.
+ * Бесплатный лимит в колонке. Считать «шаги» человеку неудобно: внутри одного запуска агент делает
+ * много шагов, а ограничение — дневные запуски на встроенной модели. Поэтому показывается доля
+ * израсходованного: 4 из 10 — это 40 %, без токенов и без арифметики в голове.
+ * Цвет шкалы — не украшение: к концу лимита он плавно уходит от хаки к красному.
  */
-function freeStepsState(used:number,limit:number){
-  if(limit<=0)return "calm";
-  const ratio=used/limit;
-  if(ratio>=0.8)return "danger";
-  if(ratio>=0.5)return "warn";
-  return "calm";
+function stepsAccent(ratio:number){
+  const t=Math.max(0,Math.min(1,ratio));
+  // 0–60 %: хаки → янтарь, 60–100 %: янтарь → красный.
+  const stops:[number,[number,number,number]][] = [[0,[202,184,152]],[0.6,[223,176,105]],[1,[224,100,92]]];
+  const upper=t<=0.6?1:2;
+  const [fromAt,from]=stops[upper-1];
+  const [toAt,to]=stops[upper];
+  const k=Math.max(0,Math.min(1,(t-fromAt)/Math.max(0.0001,toAt-fromAt)));
+  // Шестнадцатеричный формат: к нему можно дописать альфу для тени (`…55`).
+  return "#"+from.map((value,index)=>Math.round(value+(to[index]-value)*k).toString(16).padStart(2,"0")).join("");
 }
 
 function SidebarPlan({onPlan}:{onPlan:()=>void}){
@@ -53,7 +58,9 @@ function SidebarPlan({onPlan}:{onPlan:()=>void}){
   },[planChoice]);
   if(!plan)return null;
   const free=plan.planId==="free"&&plan.limit>0;
-  const state=freeStepsState(plan.used,plan.limit);
+  const ratio=free?Math.max(0,Math.min(1,plan.used/plan.limit)):0;
+  const percent=Math.round(ratio*100);
+  const accent=stepsAccent(ratio);
   const left=Math.max(0,plan.limit-plan.used);
   // Хранилище показывается только когда оно близко к концу: в спокойном состоянии это
   // лишняя строка, а на 80% и 100% — новость, которую нельзя пропустить.
@@ -63,12 +70,12 @@ function SidebarPlan({onPlan}:{onPlan:()=>void}){
     <button className={"sidebar-plan"+(plan.chosen?" sidebar-plan-upgrade":"")} onClick={onPlan} title={"Тариф: "+plan.name+(plan.chosen?" · выбран "+plan.chosen:"")}>
       <span className="sidebar-plan-icon"><CreditCard size={12}/></span>
       <span className="sidebar-plan-copy"><small>Тариф</small><strong>{plan.name}</strong></span>
-      {plan.chosen&&<span className="sidebar-plan-next"><Crown size={11}/>{plan.chosen}</span>}
+      {plan.chosen&&<span className="sidebar-plan-next"><ArrowUpRight size={11}/>{plan.chosen}</span>}
     </button>
-    {free&&<div className={"sidebar-steps "+state} title={left>0?"Осталось "+left+" бесплатных запусков агента сегодня":"Бесплатные запуски на сегодня закончились"}>
-      <div className="sidebar-steps-head"><span>Бесплатные шаги</span><strong>{plan.used} / {plan.limit}</strong></div>
-      <div className="sidebar-steps-track" role="progressbar" aria-valuemin={0} aria-valuemax={plan.limit} aria-valuenow={plan.used} aria-label="Бесплатные шаги агента">
-        <span style={{width:Math.max(4,Math.min(100,plan.used/Math.max(1,plan.limit)*100))+"%"}}/>
+    {free&&<div className="sidebar-steps" title={left>0?"Использовано "+plan.used+" из "+plan.limit+" бесплатных запусков агента · осталось "+left:"Бесплатные запуски агента на сегодня закончились"}>
+      <div className="sidebar-steps-head"><span>Бесплатные запуски</span><strong style={{color:accent}}>{percent}%</strong></div>
+      <div className="sidebar-steps-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} aria-valuetext={percent+"%"} aria-label="Использование бесплатных запусков агента">
+        <span style={{width:percent+"%",background:"linear-gradient(90deg,#876832,"+accent+")",boxShadow:percent>0?"0 0 6px "+accent+"55":"none"}}/>
       </div>
     </div>}
     {storageState&&<button className={"sidebar-storage "+storageState} onClick={onPlan} title={storageState==="full"?"Лимит хранилища исчерпан — агент не может писать файлы":"Занято "+bytesLabel(plan.storageUsed)+" из "+bytesLabel(plan.storageLimit)+" — откройте тариф и хранилище"}>

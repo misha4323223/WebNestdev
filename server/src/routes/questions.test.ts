@@ -88,6 +88,26 @@ test("в вопросе с одним ответом нельзя выбрать
   }
 });
 
+test("в мультивыборе нельзя превысить maxSelections", async () => {
+  const three = [{ label: "A" }, { label: "B" }, { label: "C" }];
+  const { question, answer } = askUser({ ...base, options: three, multiSelect: true, maxSelections: 2 });
+  const app = await appWith();
+  try {
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/projects/p1/questions/" + question.id + "/answer",
+      payload: { selected: ["A", "B", "C"] },
+    });
+    assert.equal(response.statusCode, 400);
+    assert.match(response.body, /не больше 2/);
+    assert.ok(findPendingQuestion(question.id), "отказ не должен закрывать вопрос");
+  } finally {
+    await app.inject({ method: "POST", url: "/api/projects/p1/questions/" + question.id + "/skip" });
+    await answer;
+    await app.close();
+  }
+});
+
 test("свой ответ не принимается, если вопрос его не предлагает", async () => {
   const { question, answer } = askUser({ ...base, allowCustom: false });
   const app = await appWith();

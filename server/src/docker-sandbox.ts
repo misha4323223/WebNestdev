@@ -42,7 +42,7 @@ export async function runDockerSandbox(config: SandboxConfig, command: string, c
   // Маски идут последними: если одна и та же точка появится в extraMounts, пустой read-only
   // файл должен победить. Сейчас эти режимы не пересекаются, но порядок сохраняет гарантию.
   const extraMounts = [...(runOptions.extraMounts ?? []), ...masks];
-  const args = dockerRunArgs(config, cwd, options, command, runOptions.network ?? options.network, name, extraMounts);
+  const args = dockerRunArgs(config, cwd, options, command, runOptions.network ?? options.network, name, extraMounts, {}, runOptions.env ?? {});
   return new Promise((resolve, reject) => {
     const child = spawn("docker", args, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
     let stdout = "", stderr = "", truncated = false;
@@ -78,10 +78,13 @@ export async function runDockerSandbox(config: SandboxConfig, command: string, c
       detach();
       reject(error);
     };
+    // Долгая сборка или тесты — не повод обрывать команду на двух минутах. Верхняя граница
+    // остаётся у платформы, а вызывающий может попросить больше только в этих пределах.
+    const timeoutMs = Math.min(30 * 60_000, Math.max(1_000, runOptions.timeoutMs ?? config.timeoutMs));
     const timer = setTimeout(() => {
       stop();
-      fail(new Error("Превышено время выполнения команды в песочнице"));
-    }, config.timeoutMs);
+      fail(new Error("Превышено время выполнения команды в песочнице: " + Math.round(timeoutMs / 1000) + " с"));
+    }, timeoutMs);
     const onAbort = () => {
       stop();
       fail(Object.assign(new Error("Запуск агента отменён"), { name: "AbortError" }));

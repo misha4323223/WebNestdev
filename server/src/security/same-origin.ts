@@ -53,7 +53,13 @@ export function isSameOriginRequest(request: FastifyRequest): boolean {
   if (origin === "null") return false;
 
   // Современные браузеры присылают это вместе с Origin; значение надёжнее, чем разбор адреса.
-  if (firstHeader(request.headers["sec-fetch-site"]).toLowerCase() === "cross-site") return false;
+  const fetchSite = firstHeader(request.headers["sec-fetch-site"]).toLowerCase();
+  if (fetchSite === "cross-site") return false;
+  // Браузер уже подтвердил, что страница и запрос — один origin. Это важно за прокси,
+  // который меняет Host (Vite в разработке: панель на 5173, API на 8787): сравнивать Origin
+  // с внутренним Host бессмысленно, а Sec-Fetch-Site браузер подделать не даёт.
+  // `same-site` сюда не входит: соседний поддомен — другой origin и так не доверяется.
+  if (fetchSite === "same-origin") return true;
 
   const normalized = normalizeOrigin(origin);
   // В разработке панель открыта на Vite (5173), а API слушает 8787: `changeOrigin` подменяет Host,

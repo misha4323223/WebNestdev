@@ -22,6 +22,7 @@ type StatusResponse = { services?: ServiceStatus[] };
 export function ServiceConnectors() {
   const [statuses, setStatuses] = useState<Record<string, ServiceStatus>>({});
   const [states, setStates] = useState<Record<string, KeyConnectionState>>({});
+  const [refreshBusy, setRefreshBusy] = useState<string | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -43,6 +44,24 @@ export function ServiceConnectors() {
     return () => { active = false; };
   }, []);
 
+  async function refresh(id: string) {
+    setRefreshBusy(id);
+    setError("");
+    try {
+      const response = await fetch("/api/services/" + id + "/refresh", { method: "POST" });
+      const data = await response.json() as { error?: string; account?: string | null };
+      if (!response.ok) throw new Error(data.error ?? "Не удалось обновить данные");
+      setStates(current => ({
+        ...current,
+        [id]: { ...(current[id] ?? { connected: true }), connected: true, account: data.account ?? null },
+      }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось обновить данные");
+    } finally {
+      setRefreshBusy(null);
+    }
+  }
+
   return <div className="cloud-list">
     {error && <div className="connector-notice">{error}</div>}
     {SERVICE_CATEGORIES.map(category => {
@@ -63,6 +82,7 @@ export function ServiceConnectors() {
             fineprint={checking
               ? "Ключ проверяется до сохранения, шифруется на сервере и не возвращается в браузер. "
               : "Проверка недоступна: ключи шифруются на сервере и не возвращаются в браузер. "}
+            {...(checking && status?.connected ? { onRefresh: () => void refresh(service.id), refreshing: refreshBusy === service.id } : {})}
           />;
         })}
       </div>;

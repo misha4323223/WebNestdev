@@ -42,7 +42,7 @@ export type AgentEvent=
    * `/api/projects/:id/questions/:requestId/answer` — то есть тем же путём, что и запрос ключа:
    * разговор с человеком не мешается с потоком задачи.
    */
-  | {type:"question.asked";runId:string;requestId:string;question:string;options:Array<{label:string;description?:string}>;multiSelect:boolean;allowCustom:boolean;expiresAt:number}
+  | {type:"question.asked";runId:string;requestId:string;question:string;options:Array<{label:string;description?:string;imageUrl?:string}>;multiSelect:boolean;maxSelections?:number;allowCustom:boolean;expiresAt:number}
   /**
    * Задача закончилась и её изменения записаны в историю проекта. Событие приходит до
    * `run.completed`, чтобы панель успела показать новую точку, пока соединение ещё открыто.

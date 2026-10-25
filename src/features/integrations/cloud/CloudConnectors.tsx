@@ -20,6 +20,7 @@ type WritesResponse = { error?: string; allowWrites?: boolean };
 export function CloudConnectors() {
   const [states, setStates] = useState<Record<string, CloudConnectionState>>({});
   const [writesBusy, setWritesBusy] = useState<string | null>(null);
+  const [refreshBusy, setRefreshBusy] = useState<string | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -37,6 +38,24 @@ export function CloudConnectors() {
       .catch(() => { if (active) setError("Не удалось получить состояние облаков"); });
     return () => { active = false; };
   }, []);
+
+  async function refresh(id: string) {
+    setRefreshBusy(id);
+    setError("");
+    try {
+      const response = await fetch("/api/cloud/" + id + "/refresh", { method: "POST" });
+      const data = await response.json() as { error?: string; account?: string | null };
+      if (!response.ok) throw new Error(data.error ?? "Не удалось обновить данные");
+      setStates(current => ({
+        ...current,
+        [id]: { ...(current[id] ?? { connected: true, allowWrites: true }), connected: true, account: data.account ?? null },
+      }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось обновить данные");
+    } finally {
+      setRefreshBusy(null);
+    }
+  }
 
   async function toggleWrites(id: string, allowWrites: boolean) {
     setWritesBusy(id);
@@ -73,6 +92,8 @@ export function CloudConnectors() {
       }))}
       onToggleWrites={allowed => void toggleWrites(provider.id, allowed)}
       writesBusy={writesBusy === provider.id}
+      onRefresh={() => void refresh(provider.id)}
+      refreshing={refreshBusy === provider.id}
     />)}
   </div>;
 }

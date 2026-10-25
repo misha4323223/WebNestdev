@@ -300,7 +300,16 @@ type ActionDetailData = {
   preview?: CodePreview;
   copyText?: string;
   empty?: string;
+  /** PNG проверки: тот же адрес, по которому снимок открывает панель «Файлы». */
+  imageUrl?: string;
 };
+
+/** Снимок из результата browser.screenshot / browser.runtime: только собственный маршрут снимков. */
+function screenshotUrlOf(output: Record<string, unknown> | null) {
+  const screenshot = asRecord(output?.screenshot);
+  const url = stringValue(screenshot?.url);
+  return url.startsWith("/api/projects/") ? url : "";
+}
 
 function prettyValue(value: unknown) {
   if (typeof value === "string") return value;
@@ -429,12 +438,14 @@ function actionDetail(action: AgentAction): ActionDetailData {
 
   const payload = action.output !== undefined ? action.output : action.input;
   const text = prettyValue(payload);
+  const imageUrl = screenshotUrlOf(output);
   return {
     title: action.output !== undefined ? "Результат вызова" : "Параметры вызова",
-    note: action.status === "running" ? "Ждём результат…" : undefined,
+    note: action.status === "running" ? "Ждём результат…" : imageUrl ? "Снимок страницы" : undefined,
     preview: text ? textLines(text) : undefined,
     copyText: text || undefined,
     empty: "У этого действия нет текстового результата.",
+    ...(imageUrl ? { imageUrl } : {}),
   };
 }
 
@@ -479,6 +490,9 @@ function ActionDetailView({ action }: { action: AgentAction }) {
         {copied ? <Check size={12}/> : <Copy size={12}/>}{copied ? "Скопировано" : "Копировать"}
       </button>}
     </div>
+    {detail.imageUrl && <a className="action-screenshot" href={detail.imageUrl} target="_blank" rel="noreferrer" title="Открыть снимок в новой вкладке">
+      <img src={detail.imageUrl} alt="Снимок страницы, сделанный агентом" loading="lazy"/>
+    </a>}
     {detail.preview && lines.length > 0 && <div className="action-code" role="region" aria-label={detail.title}>
       {lines.map((line, index) => <div key={line.line + ":" + index} className={"code-line code-" + line.kind}>
         <span className="code-no">{line.line}</span>
@@ -534,12 +548,16 @@ export function ActionsDock({ actions, running, progress, open, onOpenChange }: 
         const { icon: Icon, label } = describeAction(action.name);
         const expanded = openId === action.id;
         const detailId = "action-detail-" + action.id;
+        // Снимок виден в самой строке действия: человек не должен раскрывать вызов, чтобы
+        // посмотреть, как выглядит страница после проверки.
+        const thumbUrl = screenshotUrlOf(asRecord(action.output));
         return <li key={action.id} className={"action-row action-" + action.status + (expanded ? " action-open" : "")}>
           <button type="button" className="action-summary" onClick={() => setOpenId(expanded ? null : action.id)} aria-expanded={expanded} aria-controls={detailId}>
             <span className="action-chevron">{expanded ? <ChevronDown size={12}/> : <ChevronRight size={12}/>}</span>
             <span className="action-icon"><Icon size={13}/></span>
             <span className="action-label">{label}</span>
             {action.target && <code className="action-target" title={action.target}>{action.target}</code>}
+            {thumbUrl && <img className="action-thumb" src={thumbUrl} alt="Снимок страницы" loading="lazy"/>}
             <span className="action-status">
               {action.status === "running"
                 ? <LoaderCircle size={12} className="agent-spin"/>

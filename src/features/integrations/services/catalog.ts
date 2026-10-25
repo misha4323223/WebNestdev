@@ -11,7 +11,7 @@
 
 import type { BrandId } from "../../../components/BrandLogo";
 
-export type ServiceCategoryId = "storage" | "email" | "payments" | "ai" | "maps" | "crm";
+export type ServiceCategoryId = "storage" | "email" | "payments" | "ai" | "maps" | "crm" | "mobile";
 
 export type ServiceCategory = {
   id: ServiceCategoryId;
@@ -26,6 +26,7 @@ export const SERVICE_CATEGORIES: ServiceCategory[] = [
   { id: "ai", name: "AI", note: "Модели внутри приложения: чат, генерация текста" },
   { id: "maps", name: "Карты", note: "Адреса, доставка, карта точек на странице" },
   { id: "crm", name: "CRM", note: "Заявки с формы сайта уходят менеджеру" },
+  { id: "mobile", name: "Мобильные приложения", note: "Сборки Android и iOS через EAS Build" },
 ];
 
 export type ServiceField = {
@@ -317,5 +318,15 @@ export const SERVICES: ServiceInfo[] = [
       { key: "host", label: "Адрес аккаунта", placeholder: "https://ваш-домен.amocrm.ru" },
       { key: "token", label: "Долгосрочный токен", placeholder: "токен интеграции", secret: true },
     ],
+  },
+  {
+    id: "expo",
+    logo: "expo",
+    name: "Expo / EAS Build",
+    category: "mobile",
+    tagline: "Облачные сборки Android и iOS",
+    keyUrl: "https://expo.dev/settings/access-tokens",
+    docsUrl: "https://docs.expo.dev/build/setup/",
+    fields: [{ key: "token", label: "Expo access token", placeholder: "токен из настроек expo.dev", secret: true }],
   },
 ];

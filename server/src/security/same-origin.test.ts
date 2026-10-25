@@ -53,6 +53,30 @@ test("Sec-Fetch-Site: cross-site отклоняется даже при совп
   );
 });
 
+/**
+ * Vite-прокси в разработке меняет Host на localhost:8787, хотя страница и API для браузера
+ * остаются на одном публичном origin. Без этой проверки любой POST из hosted-предпросмотра
+ * получал 403 «чужой источник».
+ */
+test("same-origin за прокси с подменённым Host проходит, same-site — нет", () => {
+  assert.equal(
+    isSameOriginRequest(request({
+      host: "localhost:8787",
+      origin: "https://5173-example.e2b.app",
+      "sec-fetch-site": "same-origin",
+    })),
+    true,
+  );
+  assert.equal(
+    isSameOriginRequest(request({
+      host: "localhost:8787",
+      origin: "https://preview.example.com",
+      "sec-fetch-site": "same-site",
+    })),
+    false,
+  );
+});
+
 test("настроенный список источников побеждает Host", () => {
   const previous = process.env.WEBNESTDEV_ALLOWED_ORIGINS;
   process.env.WEBNESTDEV_ALLOWED_ORIGINS = "https://panel.example.com";

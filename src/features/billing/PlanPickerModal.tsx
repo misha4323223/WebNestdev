@@ -4,9 +4,10 @@ import { getBilling, paymentNotice, startCheckout, type BillingData, type PlanId
 import { activePlanId, planName, readPlanChoice, writePlanChoice } from "../../lib/plan-choice";
 
 /**
- * Ссылки на оферту и возврат показываются рядом с кнопкой оплаты — до перехода в платёжный сервис.
+ * Ссылки на оферту и условия оплаты показываются рядом с кнопкой оплаты — до перехода на
+ * страницу оплаты.
  *
- * Выбор тарифа. Когда приём денег настроен, кнопка платного тарифа открывает страницу Робокассы:
+ * Выбор тарифа. Когда приём денег настроен, кнопка платного тарифа открывает страницу оплаты:
  * тариф включает сервер по уведомлению об оплате, а не этот экран. Пока оплата не настроена,
  * выбор остаётся пожеланием и сохраняется на устройстве.
  */
@@ -100,7 +101,7 @@ export function PlanPickerModal({ open, onClose, onOpenDetails, onChanged }: {
             ? "Тариф действует до " + new Date(billing.subscription.renewsAt).toLocaleDateString("ru-RU", { day: "numeric", month: "long", year: "numeric" }) + ". Оплата продлевает срок от текущей даты окончания."
             : chosen
               ? "Выбран тариф «" + chosen.name + "» · " + chosen.priceLabel + ". " + (enabled ? "Оплатите его, чтобы включить." : "Включим его, когда подключим оплату.")
-              : (enabled ? "Оплата проходит на странице Робокассы; тариф включается сразу после подтверждения платежа." : "Тариф можно выбрать заранее: выбор сохранится и включится вместе с оплатой.")}</p>
+              : (enabled ? "Оплата проходит на защищённой странице; тариф включается сразу после подтверждения платежа." : "Тариф можно выбрать заранее: выбор сохранится и включится вместе с оплатой.")}</p>
 
           <div className="plan-grid">
             {billing.plans.map(plan => <article key={plan.id} className={"plan-card" + (plan.id === current ? " selected" : "") + (selected === plan.id && plan.id !== current ? " chosen" : "")}>
@@ -129,12 +130,12 @@ export function PlanPickerModal({ open, onClose, onOpenDetails, onChanged }: {
             </div>
           </div>}
 
-          {/* Условия оплаты видны там, где человек нажимает «Оплатить»: до перехода в платёжный
-              сервис он принимает оферту и знает порядок возврата. */}
+          {/* Условия оплаты видны там, где человек нажимает «Оплатить»: до перехода на
+              страницу оплаты он принимает оферту и знает условия. */}
           <div className="billing-disclaimer">
-            Оплата принимается картой и через СБП, чек приходит на e-mail или телефон. Нажимая «Оплатить», вы принимаете{" "}
+            Оплата принимается картой и через СБП. Нажимая «Оплатить», вы принимаете{" "}
             <a href="/legal/offer" target="_blank" rel="noopener noreferrer">оферту</a> и{" "}
-            <a href="/legal/payments" target="_blank" rel="noopener noreferrer">условия оплаты и возврата</a>.
+            <a href="/legal/payments" target="_blank" rel="noopener noreferrer">условия оплаты</a>.
           </div>
         </>}
 

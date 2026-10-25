@@ -11,8 +11,9 @@ import { Check, CornerDownLeft, HelpCircle, Sparkles, X } from "lucide-react";
 export type AgentQuestion={
   requestId:string;
   question:string;
-  options:Array<{label:string;description?:string}>;
+  options:Array<{label:string;description?:string;imageUrl?:string}>;
   multiSelect:boolean;
+  maxSelections?:number;
   allowCustom:boolean;
 };
 
@@ -25,10 +26,18 @@ export function QuestionSheet({prompt,busy,error,onAnswer,onSkip}:{
 }){
   const [selected,setSelected]=useState<string[]>([]);
   const [custom,setCustom]=useState("");
+  const limit=prompt.multiSelect?Math.max(1,Math.min(prompt.maxSelections??prompt.options.length,prompt.options.length)):1;
+  const atLimit=prompt.multiSelect&&selected.length>=limit;
 
   function toggle(label:string){
     if(prompt.multiSelect){
-      setSelected(current=>current.includes(label)?current.filter(item=>item!==label):[...current,label]);
+      setSelected(current=>{
+        if(current.includes(label))return current.filter(item=>item!==label);
+        // Лимит проверяется и здесь, и на сервере: кнопка блокируется, но клавиатурный выбор
+        // или устаревшее окно не должны отправить больше вариантов, чем разрешено.
+        if(current.length>=limit)return current;
+        return [...current,label];
+      });
       return;
     }
     // Один вариант — и свой ответ тоже: выбранным остаётся ровно один.
@@ -87,16 +96,19 @@ export function QuestionSheet({prompt,busy,error,onAnswer,onSkip}:{
               role={prompt.multiSelect?"checkbox":"radio"}
               aria-checked={active}
               onClick={()=>toggle(option.label)}
-              disabled={busy}
+              disabled={busy||(!active&&atLimit)}
             >
               <span className="question-mark" aria-hidden="true">{active?<Check size={12}/>:null}</span>
               <span className="question-option-body">
+                {option.imageUrl&&<img className="question-option-image" src={option.imageUrl} alt="" loading="lazy"/>}
                 <strong>{option.label}</strong>
                 {option.description&&<small>{option.description}</small>}
               </span>
             </button>;
           })}
         </div>
+
+        {prompt.multiSelect&&limit<prompt.options.length&&<p className="question-limit">Можно выбрать до {limit} вариантов.</p>}
 
         {prompt.allowCustom&&<label className="question-custom">
           <span>Свой вариант</span>

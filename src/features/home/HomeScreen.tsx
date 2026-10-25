@@ -55,8 +55,9 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
   // Вкладка телефона и раздел колонки: выбор раздела на телефоне показывает его сразу,
   // а на ПК та же колонка остаётся рядом с главной страницей.
   const [tab,setTab]=useState<HomeTab>("home");
-  const [section,setSection]=useState<RailSection>("integrations");
-  // Возврат со страницы оплаты: Робокасса переводит браузер сюда с отметкой в адресе.
+  // Все категории колонки свёрнуты при открытии: человек сначала видит оглавление, а не его раздел.
+  const [section,setSection]=useState<RailSection|null>(null);
+  // Возврат со страницы оплаты: платёжная система переводит браузер сюда с отметкой в адресе.
   const [paymentReturn,setPaymentReturn]=useState<"success"|"fail"|null>(null);
 
   const tabsRef = useRef<HTMLDivElement | null>(null);
@@ -64,6 +65,14 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
   function pick(next:HomeTab){
     setTab(next);
     if(next!=="home")setSection(next);
+  }
+
+  /** Категория колонки — переключатель: повторное нажатие сворачивает её обратно. */
+  function toggleSection(next:RailSection){
+    const closing=section===next;
+    setSection(closing?null:next);
+    // На телефоне колонки нет, но вкладка должна оставаться согласованной с разделом.
+    setTab(closing?"home":next);
   }
 
   // Строка вкладок на телефоне прокручивается: выбранный раздел подъезжает в видимую часть.
@@ -263,7 +272,7 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
           projects={projects}
           activeProjectId={activeProjectId}
           section={section}
-          onSection={pick}
+          onSection={toggleSection}
           onOpen={open}
           onRename={rename}
           onDelete={project=>void remove(project)}

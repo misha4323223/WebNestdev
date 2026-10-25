@@ -99,9 +99,40 @@ registerTool({
 
 registerTool({
   name: "git.log",
-  description: "Show recent Git commits.",
-  execute: async (_input, context) => {
-    return git(context, "log --oneline -20", { maskSecretEnvFiles: true });
+  description:
+    "Show recent Git commits. Input: {limit?:number (1–100, default 20), query?:string}. " +
+    "With a query, the newest 200 commits are scanned and only subjects containing the phrase are returned (case-insensitive, literal — not a regex)." +
+    " Use it to find when a file, feature or fix was committed instead of reading the whole history.",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      limit: { type: "number", description: "Сколько коммитов вернуть: от 1 до 100, по умолчанию 20" },
+      query: { type: "string", description: "Слово или фраза в заголовке коммита; поиск без учёта регистра" },
+    },
+  },
+  execute: async (input, context) => {
+    const value = (input ?? {}) as { limit?: unknown; query?: unknown };
+    const requested = typeof value.limit === "number" && Number.isFinite(value.limit) ? value.limit : 20;
+    const limit = Math.max(1, Math.min(100, Math.floor(requested)));
+    const query = typeof value.query === "string" ? value.query.trim().slice(0, 120) : "";
+    // Поиск идёт по уже полученному выводу, а не через `--grep`: фраза из чата не должна стать
+    // регулярным выражением и не должна ломать оболочку кавычками.
+    if (!query) return git(context, "log --oneline -" + limit, { maskSecretEnvFiles: true });
+    const scanLimit = 200;
+    const result = await git(context, "log --oneline -" + scanLimit, { maskSecretEnvFiles: true });
+    const lines = result.stdout.split("\n").filter(line => line.trim());
+    const matches = lines
+      .filter(line => line.toLowerCase().includes(query.toLowerCase()))
+      .slice(0, limit);
+    return {
+      ...result,
+      stdout: matches.join("\n"),
+      query,
+      matched: matches.length,
+      scanned: lines.length,
+      ...(matches.length ? {} : { hint: "Среди последних " + lines.length + " коммитов нет такого заголовка: попробуйте короче или без query." }),
+    };
   },
 });
 

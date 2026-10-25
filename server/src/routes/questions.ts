@@ -68,6 +68,9 @@ export async function registerQuestionRoutes(app: FastifyInstance, overrides: Pa
     const unknown = selected.find(label => !allowed.has(label));
     if (unknown) return reply.code(400).send({ error: "Такого варианта в вопросе нет: " + unknown });
     if (!pending.multiSelect && selected.length > 1) return reply.code(400).send({ error: "В этом вопросе можно выбрать только один вариант" });
+    if (pending.multiSelect && pending.maxSelections !== undefined && selected.length > pending.maxSelections) {
+      return reply.code(400).send({ error: "В этом вопросе можно выбрать не больше " + pending.maxSelections + " вариантов" });
+    }
     if (custom && !pending.allowCustom) return reply.code(400).send({ error: "Свой ответ в этом вопросе не предусмотрен" });
     // Свой текст, совпавший с вариантом, — это тот же вариант, а не второй ответ.
     const customText = custom && !allowed.has(custom) ? custom : "";

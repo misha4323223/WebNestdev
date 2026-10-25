@@ -123,6 +123,39 @@ export async function registerDomainRoutes(app: FastifyInstance) {
     return { id: registrar.id, name: registrar.name, connected: true, account: connection.account, allowWrites: parsed.data.allowWrites, updatedAt: now };
   });
 
+  /** Перечитать список доменов: карточка показывает не цифру на момент подключения, а текущую. */
+  app.post("/api/domains/:provider/refresh", async (request, reply) => {
+    const user = await requireUser(request, reply);
+    if (!user) return;
+    const registrar = registrarFrom(request.params);
+    if (!registrar) return reply.code(404).send({ error: "Неизвестный регистратор" });
+    const connection = await getDomainConnection(user.id, registrar.id);
+    if (!connection) return reply.code(400).send({ error: registrar.name + " не подключён" });
+    let fields: Record<string, string>;
+    try {
+      fields = JSON.parse(connection.secret) as Record<string, string>;
+    } catch {
+      return reply.code(500).send({ error: "Сохранённый пароль повреждён: подключите регистратора заново" });
+    }
+    let verified: { account: string; domains: number };
+    try {
+      verified = await verifyRegistrarCredential(registrar.id, fields);
+    } catch (error) {
+      return reply.code(400).send({ error: messageOf(error) });
+    }
+    const now = new Date().toISOString();
+    await saveDomainConnection({ ...connection, account: verified.account, updatedAt: now });
+    return {
+      id: registrar.id,
+      name: registrar.name,
+      connected: true,
+      account: verified.account,
+      allowWrites: connection.allowWrites,
+      domains: verified.domains,
+      updatedAt: now,
+    };
+  });
+
   app.post("/api/domains/:provider/disconnect", async (request, reply) => {
     const user = await requireUser(request, reply);
     if (!user) return;

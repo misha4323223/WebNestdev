@@ -174,6 +174,22 @@ export function parseBitrix(payload: unknown): string {
   return "Битрикс24 · пользователь " + String(id) + name;
 }
 
+/**
+ * Expo GraphQL отвечает на токен объектом meActor. Пользователь может быть User, SSOUser
+ * или Robot — имя берём там, где оно есть, а для проверки достаточно самого аккаунта.
+ */
+export function parseExpo(payload: unknown): string {
+  const root = payload as { data?: { meActor?: { __typename?: unknown; username?: unknown; email?: unknown; firstName?: unknown; displayName?: unknown } | null }; errors?: Array<{ message?: unknown }> } | null;
+  if (root && Array.isArray(root.errors) && root.errors.length) {
+    const message = root.errors.map(item => typeof item?.message === "string" ? item.message : "").filter(Boolean).join("; ");
+    throw new Error("Expo отклонил токен: " + detail(message || "неизвестная ошибка API"));
+  }
+  const actor = root?.data?.meActor;
+  if (!actor || typeof actor !== "object") throw new Error("Expo не подтвердил токен: API не вернул аккаунт");
+  const name = [actor.username, actor.displayName, actor.email, actor.firstName].find(value => typeof value === "string" && value) as string | undefined;
+  return "Expo · " + (name || actor.__typename || "аккаунт");
+}
+
 /** amoCRM: /api/v4/account отдаёт сведения об аккаунте. */
 export function parseAmocrm(payload: unknown): string {
   const root = payload as { id?: unknown; name?: unknown; subdomain?: unknown } | null;
@@ -347,6 +363,20 @@ async function verifyBitrix24(fields: Record<string, string>, deps: ServiceVerif
   return parseBitrix(payload);
 }
 
+async function verifyExpo(fields: Record<string, string>, deps: ServiceVerifyDeps) {
+  const response = await request("https://api.expo.dev/graphql", {
+    method: "POST",
+    headers: { Authorization: "Bearer " + fields.token, "Content-Type": "application/json", Accept: "application/json" },
+    body: JSON.stringify({
+      // Только поля базового Actor: их схема гарантирует и для User, и для SSOUser, и для Robot.
+      query: "query CurrentUser { meActor { __typename id displayName firstName } }",
+    }),
+  }, "Expo", deps);
+  const payload = asJson(response.text, "Expo");
+  if (!response.ok) throw fail("Expo", response.status, response.text);
+  return parseExpo(payload);
+}
+
 async function verifyAmocrm(fields: Record<string, string>, deps: ServiceVerifyDeps) {
   const host = assertPublicHttpsUrl(fields.host, "Адрес аккаунта amoCRM");
   const response = await request(host + "/api/v4/account", {
@@ -386,6 +416,7 @@ export async function verifyServiceCredential(
     case "retailcrm": return { account: await verifyRetailcrm(fields, deps) };
     case "bitrix24": return { account: await verifyBitrix24(fields, deps) };
     case "amocrm": return { account: await verifyAmocrm(fields, deps) };
+    case "expo": return { account: await verifyExpo(fields, deps) };
     default:
       throw new Error("Для сервиса " + service.id + " нет проверки — сообщите об этом разработчику");
   }

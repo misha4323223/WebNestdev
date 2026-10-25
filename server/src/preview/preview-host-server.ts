@@ -1,3 +1,4 @@
+import { randomBytes } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { connect, type Socket } from "node:net";
 import { getProject } from "../project-store.js";
@@ -5,7 +6,7 @@ import { previewStatus } from "../preview-manager.js";
 import { execFetchPreview, type ExecFetchResult } from "./exec-proxy.js";
 import { previewHostTarget, previewPublicDomain, previewPublicUrl } from "./preview-host.js";
 import { proxyPreviewRequest, withoutPlatformCookies, type PreviewDoor } from "./preview-proxy.js";
-import { PREVIEW_TICKET_COOKIE, PREVIEW_TICKET_PARAM, previewTicketProject, previewTicketTtlMs } from "./preview-ticket.js";
+import { PREVIEW_SESSION_PATH, PREVIEW_TICKET_COOKIE, PREVIEW_TICKET_PARAM, previewTicketProject, previewTicketTtlMs } from "./preview-ticket.js";
 import { PICK_BRIDGE_PATH, canInjectPickBridge, injectPickBridge, pickBridgeResponse } from "./pick-bridge.js";
 import { setPreviewExecOnly, unsettlePreview } from "./preview-store.js";
 import { sessionCookieSecure } from "../auth/auth.js";
@@ -31,6 +32,8 @@ import type { FastifyRequest } from "fastify";
 const DEFAULT_PORT = 8788;
 /** Сколько тела запроса принимает эта дверь: столько же, сколько разбирает основной сервер. */
 const MAX_BODY_BYTES = 2_000_000;
+/** Тело обмена билета — это один JSON с билетом: всё, что больше, читать незачем. */
+const MAX_SESSION_BODY_BYTES = 8_192;
 
 /**
  * Потолки двери. Публичный адрес смотрит в интернет, а держать соединение до приложения — это
@@ -91,9 +94,10 @@ const defaultDeps: PreviewHostDeps = {
   secureCookie: request => sessionCookieSecure(request as unknown as FastifyRequest),
 };
 
-type Access =
-  | { ok: true; ticket?: string; redirectTo?: string }
-  | { ok: false; status: number; message: string };
+type Access = { ok: true } | { ok: false; status: number; message: string };
+
+export const PREVIEW_ACCESS_MESSAGE =
+  "Доступ к предпросмотру закрыт: откройте его из панели проекта — ссылка действует ограниченное время.";
 
 /** Cookie запроса как карта: у двери предпросмотра нет разборщика cookie основного сервера. */
 export function requestCookies(header: string | undefined): Record<string, string> {
@@ -116,29 +120,22 @@ export function requestCookies(header: string | undefined): Record<string, strin
 }
 
 /**
- * Доступ к предпросмотру проекта: тикет в строке запроса (первый вход) или cookie, которую он же
- * и поставил. Cookie сессии панели здесь не принимается и в приложение не передаётся — она
- * выставляется для домена панели, а расширять её до всего домена нельзя: прокси отдаёт приложению
- * заголовки запроса, то есть cookie платформы попал бы в код пользователя.
+ * Доступ к предпросмотру проекта: только cookie, которую поставил обмен билета (см. обмен в
+ * handleRequest). Билет в строке запроса не принимается: строка запроса попадает в журналы и в
+ * `Referer`, а билет — это ключ ко всему предпросмотру. Cookie сессии панели здесь не принимается
+ * и в приложение не передаётся — она выставляется для домена панели, а расширять её до всего
+ * домена нельзя: прокси отдаёт приложению заголовки запроса, то есть cookie платформы попал бы в
+ * код пользователя.
  */
 export function previewAccess(input: {
-  url: URL;
   cookies: Record<string, string>;
   projectId: string;
   ticketProject: (ticket: string | undefined | null, now?: number) => string;
   now?: number;
 }): Access {
-  const fromQuery = input.url.searchParams.get(PREVIEW_TICKET_PARAM) ?? undefined;
-  if (fromQuery && input.ticketProject(fromQuery, input.now) === input.projectId) {
-    // Тикет убирается из адреса сразу: приложение не должно видеть чужой параметр в своём URL, а
-    // cookie остаётся у браузера, поэтому следующие запросы (файлы, fetch, WebSocket) уже проходят.
-    const clean = new URL(input.url.toString());
-    clean.searchParams.delete(PREVIEW_TICKET_PARAM);
-    return { ok: true, ticket: fromQuery, redirectTo: clean.pathname + clean.search };
-  }
   const fromCookie = input.cookies[PREVIEW_TICKET_COOKIE];
   if (fromCookie && input.ticketProject(fromCookie, input.now) === input.projectId) return { ok: true };
-  return { ok: false, status: 401, message: "Доступ к предпросмотру закрыт: откройте его из панели проекта — ссылка действует ограниченное время." };
+  return { ok: false, status: 401, message: PREVIEW_ACCESS_MESSAGE };
 }
 
 /**
@@ -182,16 +179,124 @@ function sendMessage(request: IncomingMessage, response: ServerResponse, status:
   response.end(body);
 }
 
-async function readBody(request: IncomingMessage) {
+/**
+ * Страница-дверь: единственное, что отдаётся по адресу предпросмотра без cookie.
+ *
+ * Билет приходит во фрагменте (`#ticket=…`), а фрагмент серверу не виден — поэтому его читает этот
+ * скрипт и сам же меняет на HttpOnly-cookie запросом на тот же origin. Так билет не оказывается в
+ * строке запроса, а значит и в журналах, истории и `Referer`, но продолжает открывать предпросмотр
+ * в кадре и в новой вкладке.
+ *
+ * Скрипт и стили — с нонсом на каждый ответ: у страницы нет других ресурсов, а инлайн-скрипты в
+ * ней не должны выполниться, даже если в адрес попадёт что-то похожее на разметку.
+ */
+function gatePage(nonce: string) {
+  return "<!doctype html><html lang=\"ru\"><head><meta charset=\"utf-8\">" +
+    "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">" +
+    "<meta name=\"robots\" content=\"noindex,nofollow\"><title>Предпросмотр</title>" +
+    "<style nonce=\"" + nonce + "\">html,body{margin:0;height:100%}body{display:grid;place-items:center;background:#0b0f14;color:#e8eef6;font:16px/1.5 system-ui,sans-serif}" +
+    "main{max-width:32rem;padding:1.5rem;text-align:center}h1{margin:0 0 .75rem;font-size:1.15rem;font-weight:600}p{margin:0;color:#9fb0c3}</style></head>" +
+    "<body><main><h1>Предпросмотр</h1><p id=\"note\">Проверяем ссылку…</p></main>" +
+    "<script nonce=\"" + nonce + "\">(function(){" +
+    "var note=document.getElementById('note');" +
+    "var denied='Ссылка не подошла: она истекла или выпущена для другого проекта. Откройте предпросмотр из панели проекта.';" +
+    "var ticket='';" +
+    "try{ticket=new URLSearchParams(location.hash.slice(1)).get('" + PREVIEW_TICKET_PARAM + "')||''}catch(e){}" +
+    "if(!ticket){note.textContent='Доступ к предпросмотру закрыт: откройте его из панели проекта — ссылка действует ограниченное время.';return}" +
+    "fetch('" + PREVIEW_SESSION_PATH + "',{method:'POST',credentials:'same-origin',headers:{'content-type':'application/json'},body:JSON.stringify({ticket:ticket})})" +
+    ".then(function(response){if(response.status!==204)throw new Error('denied');location.replace(location.pathname+location.search)})" +
+    ".catch(function(){note.textContent=denied});" +
+    "})();</script></body></html>";
+}
+
+function sendGate(response: ServerResponse) {
+  const nonce = randomBytes(16).toString("base64");
+  const body = Buffer.from(gatePage(nonce));
+  response.writeHead(200, {
+    "content-type": "text/html; charset=utf-8",
+    "cache-control": "no-store",
+    "referrer-policy": "no-referrer",
+    "x-content-type-options": "nosniff",
+    "content-security-policy": "default-src 'none'; style-src 'nonce-" + nonce + "'; script-src 'nonce-" + nonce + "'; connect-src 'self'; base-uri 'none'; form-action 'none'",
+    "content-length": String(body.length),
+  });
+  response.end(body);
+}
+
+/**
+ * Это переход по ссылке (кадр или новая вкладка), а не запрос ресурса? Так решается, что отдать
+ * без cookie: страницу-дверь или обычный отказ. `Sec-Fetch-Dest` присылают все актуальные браузеры,
+ * поэтому `Accept` используется только как запасной признак.
+ */
+function isDocumentNavigation(request: IncomingMessage) {
+  if (request.method !== "GET") return false;
+  const destination = String(request.headers["sec-fetch-dest"] ?? "");
+  if (destination) return destination === "document" || destination === "iframe" || destination === "frame";
+  const accept = String(request.headers.accept ?? "");
+  return !accept.includes("application/json") && (accept.includes("text/html") || accept === "");
+}
+
+/** Cookie доступа: HttpOnly, чтобы её не прочитал код приложения, и SameSite=Lax — одна и та же площадка. */
+function accessCookie(request: IncomingMessage, ticket: string, secure: boolean) {
+  return [
+    PREVIEW_TICKET_COOKIE + "=" + encodeURIComponent(ticket),
+    "Path=/",
+    "HttpOnly",
+    "SameSite=Lax",
+    "Max-Age=" + Math.floor(previewTicketTtlMs() / 1000),
+    ...(secure ? ["Secure"] : []),
+  ].join("; ");
+}
+
+async function readBody(request: IncomingMessage, limit = MAX_BODY_BYTES) {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of request) {
     const bytes = chunk as Buffer;
     size += bytes.length;
-    if (size > MAX_BODY_BYTES) return null;
+    if (size > limit) return null;
     chunks.push(bytes);
   }
   return Buffer.concat(chunks);
+}
+
+/**
+ * Обмен билета на cookie доступа.
+ *
+ * Принимается только с самой страницы-двери: браузер помечает такой запрос как `Sec-Fetch-Site:
+ * same-origin`, а тело обязано быть JSON. Форма с чужого сайта не может поставить этот заголовок
+ * и этот тип содержимого без предварительного CORS-запроса, на который дверь не отвечает, поэтому
+ * поставить cookie от чужого имени через эту точку нельзя.
+ */
+async function exchangeTicket(deps: PreviewHostDeps, request: IncomingMessage, response: ServerResponse, projectId: string) {
+  const site = String(request.headers["sec-fetch-site"] ?? "");
+  if (site && site !== "same-origin") {
+    sendMessage(request, response, 403, "Билет принимается только со страницы самого предпросмотра.");
+    return;
+  }
+  if (!String(request.headers["content-type"] ?? "").includes("application/json")) {
+    sendMessage(request, response, 415, "Билет принимается только как JSON.");
+    return;
+  }
+  const body = await readBody(request, MAX_SESSION_BODY_BYTES);
+  if (body === null) {
+    sendMessage(request, response, 413, "Запрос больше предела, который принимает предпросмотр.");
+    return;
+  }
+  let ticket = "";
+  try {
+    const parsed = JSON.parse(body.toString("utf8")) as { ticket?: unknown };
+    if (typeof parsed?.ticket === "string") ticket = parsed.ticket;
+  } catch {
+    ticket = "";
+  }
+  // Билет другого проекта не обменивается: проверка та же, что и при чтении cookie.
+  if (!ticket || deps.ticketProject(ticket) !== projectId) {
+    sendMessage(request, response, 401, PREVIEW_ACCESS_MESSAGE);
+    return;
+  }
+  response.writeHead(204, { "set-cookie": accessCookie(request, ticket, deps.secureCookie(request)), "cache-control": "no-store" });
+  response.end();
 }
 
 /** Ответ прокси-ядра как ответ этого слушателя: статус, заголовки (включая несколько Set-Cookie), тело. */
@@ -262,22 +367,25 @@ export function createPreviewHostServer(deps: PreviewHostDeps = defaultDeps, lim
       return;
     }
     const url = new URL(request.url ?? "/", "http://preview.local");
-    const access = previewAccess({ url, cookies: requestCookies(request.headers.cookie), projectId: target.projectId, ticketProject: deps.ticketProject });
-    if (!access.ok) {
-      sendMessage(request, response, access.status, access.message);
+    // Обмен билета стоит до проверки доступа: билет и есть то, чего у браузера ещё нет.
+    if (url.pathname === PREVIEW_SESSION_PATH) {
+      if (request.method !== "POST") {
+        sendMessage(request, response, 405, "Здесь принимается только POST с билетом.");
+        return;
+      }
+      if (!(await deps.getProject(target.projectId))) {
+        sendMessage(request, response, 404, "Проект не найден — возможно, он удалён.");
+        return;
+      }
+      await exchangeTicket(deps, request, response, target.projectId);
       return;
     }
-    if (access.ticket && access.redirectTo) {
-      const cookie = [
-        PREVIEW_TICKET_COOKIE + "=" + encodeURIComponent(access.ticket),
-        "Path=/",
-        "HttpOnly",
-        "SameSite=Lax",
-        "Max-Age=" + Math.floor(previewTicketTtlMs() / 1000),
-        ...(deps.secureCookie(request) ? ["Secure"] : []),
-      ].join("; ");
-      response.writeHead(302, { location: access.redirectTo, "set-cookie": cookie, "cache-control": "no-store" });
-      response.end();
+    const access = previewAccess({ cookies: requestCookies(request.headers.cookie), projectId: target.projectId, ticketProject: deps.ticketProject });
+    if (!access.ok) {
+      // Переход по ссылке — в кадре или в новой вкладке — получает страницу-дверь: она возьмёт билет
+      // из фрагмента и обменяет его на cookie. Запрос ресурса по-прежнему получает отказ.
+      if (isDocumentNavigation(request)) sendGate(response);
+      else sendMessage(request, response, access.status, access.message);
       return;
     }
     if (!(await deps.getProject(target.projectId))) {
@@ -334,16 +442,14 @@ export function createPreviewHostServer(deps: PreviewHostDeps = defaultDeps, lim
       return;
     }
     const url = new URL(request.url ?? "/", "http://preview.local");
-    const access = previewAccess({ url, cookies: requestCookies(request.headers.cookie), projectId: target.projectId, ticketProject: deps.ticketProject });
+    const access = previewAccess({ cookies: requestCookies(request.headers.cookie), projectId: target.projectId, ticketProject: deps.ticketProject });
     if (!access.ok) {
       refuseUpgrade(socket, access.status, access.message);
       return;
     }
-    // Билет — вход платформы, а не параметр приложения: в WebSocket-адрес он не передаётся
-    // (там он попал бы в логи приложения и в referrer его собственных запросов).
-    const cleanUrl = new URL(url.toString());
-    cleanUrl.searchParams.delete(PREVIEW_TICKET_PARAM);
-    const upstreamPath = cleanUrl.pathname + cleanUrl.search;
+    // Доступ даёт cookie, а не адрес, поэтому путь уходит приложению как есть: его собственные
+    // query-параметры — его дело, платформа их больше не трогает.
+    const upstreamPath = url.pathname + url.search;
     const state = await deps.previewStatus(target.projectId).catch(() => ({ running: false }) as PreviewStatus);
     if (!state.running) {
       refuseUpgrade(socket, 503, "Предпросмотр не запущен: запустите его в панели проекта.");

@@ -18,10 +18,9 @@ import {
 import { activePlanId, chosenPlanId, isPendingChoice, planName, usePlanChoice } from "../../lib/plan-choice";
 
 const faq = [
-  { question: "Как оплатить тариф?", answer: "Выберите тариф и нажмите «Оплатить» — откроется защищённая страница Робокассы. Карта РФ, СБП и другие способы доступны там же." },
-  { question: "Когда включится тариф?", answer: "Сразу после подтверждения платежа Робокассой. Если страница оплаты закрылась, вернитесь в личный кабинет: подписка уже будет активна." },
-  { question: "Что с продлением?", answer: "Подписка покупается на месяц. Автопродление включается в личном кабинете и работает, если платёжный сервис поддерживает периодические платежи; иначе тариф просто закончится в указанную дату. Отключить продление можно в любой момент." },
-  { question: "Нужен ли чек?", answer: "Да, чек самозанятого формируется в «Моём налоге» и приходит покупателю. Робокасса передаёт данные об оплате в ФНС, если в кабинете подключены «Робочеки СМЗ»." },
+  { question: "Как оплатить тариф?", answer: "Выберите тариф и нажмите «Оплатить» — откроется защищённая страница оплаты. Доступны карта РФ, СБП и другие способы." },
+  { question: "Когда включится тариф?", answer: "Сразу после подтверждения оплаты. Если страница оплаты закрылась, вернитесь в личный кабинет: подписка уже будет активна." },
+  { question: "Что с продлением?", answer: "Подписка действует месяц. Автопродление включается в личном кабинете, отключить его можно в любой момент." },
 ];
 
 const limitRows: Array<{ label: string; key: keyof PlanLimits }> = [
@@ -110,7 +109,6 @@ export function SubscriptionPage({ onBack, onOpenPicker }: { onBack: () => void;
           <span className="switch-track"><span className="switch-thumb"/></span>
         </span>
       </div>}
-      {paid && subscription && !subscription.recurringAvailable && !subscription.autoRenew && <p className="account-muted subscription-status-text">Автопродление станет доступно после подключения услуги «Периодические платежи» в Робокассе.</p>}
       {billing && chosenPending && <p className="account-muted subscription-status-text">{"Выбран тариф «" + planName(billing, chosenId) + "»" + (enabled ? " — его можно оплатить ниже." : " — включим его вместе с оплатой.")}</p>}
     </section>
 
@@ -231,20 +229,20 @@ export function SubscriptionPage({ onBack, onOpenPicker }: { onBack: () => void;
     </section>
 
     <section className="subscription-cta">
-      <div><strong>{paid ? "Продлить подписку" : "Выберите тариф"}</strong><span>{enabled ? "Оплата картой или через СБП на странице Робокассы." : "Тариф сохранится и включится вместе с оплатой."}</span></div>
+      <div><strong>{paid ? "Продлить подписку" : "Выберите тариф"}</strong><span>{enabled ? "Оплата картой или через СБП на защищённой странице оплаты." : "Тариф сохранится и включится вместе с оплатой."}</span></div>
       <div className="subscription-cta-actions">
         <button className="ghost-button" onClick={onBack}>Вернуться на главную</button>
         <button className="send-button subscription-cta-button" onClick={onOpenPicker}>Выбрать тариф <ArrowRight size={13}/></button>
       </div>
     </section>
 
-    {/* Условия оплаты и возврата — рядом с тарифами, а не только в оферте: именно здесь
-        человек решает платить. */}
+    {/* Условия оплаты — рядом с тарифами, а не только в оферте: именно здесь человек
+        решает платить. */}
     <section className="subscription-legal">
       <div>
         <span className="eyebrow">УСЛОВИЯ</span>
-        <h2>Оплата, возврат и документы</h2>
-        <p>Подписка оплачивается через Робокассу: картой или через СБП. Чек приходит на e-mail или телефон. Возврат за неиспользованный период — по заявлению на контактный e-mail в течение 10 календарных дней.</p>
+        <h2>Оплата и документы</h2>
+        <p>Карта РФ, СБП и другие способы — на защищённой странице оплаты. Подписка действует месяц; продление можно включить или отключить в личном кабинете.</p>
       </div>
       <nav aria-label="Юридические документы">
         <a href="/legal/offer" target="_blank" rel="noopener noreferrer">Публичная оферта <ArrowRight size={12}/></a>

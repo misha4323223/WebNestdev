@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { consumeUsage } from "../account/usage-store.js";
-import { clearWebSearchCache, providerChain, providerForPlan, resolveProvider, searchWeb } from "./search.js";
+import { clearWebSearchCache, localeForQuery, providerChain, providerForPlan, resolveProvider, searchWeb } from "./search.js";
 
 const MANAGED = ["WEB_SEARCH_PROVIDER", "YANDEX_SEARCH_API_KEY", "YANDEX_SEARCH_FOLDER_ID", "TAVILY_API_KEY"] as const;
 
@@ -20,6 +20,21 @@ function withEnv<T>(values: Partial<Record<(typeof MANAGED)[number], string>>, r
     }
   }
 }
+
+test("the query script chooses the regional results", () => {
+  const previous = process.env.WEB_SEARCH_REGION;
+  try {
+    delete process.env.WEB_SEARCH_REGION;
+    assert.deepEqual(localeForQuery("как настроить fastify"), { region: "ru-ru", searchType: "SEARCH_TYPE_RU" });
+    assert.deepEqual(localeForQuery("fastify hooks documentation"), { region: "us-en", searchType: "SEARCH_TYPE_COM" });
+    assert.deepEqual(localeForQuery("yandex search api"), { region: "us-en", searchType: "SEARCH_TYPE_COM" });
+    process.env.WEB_SEARCH_REGION = "kz-ru";
+    assert.equal(localeForQuery("документация").region, "kz-ru", "явный регион сервера важнее скрипта");
+  } finally {
+    if (previous === undefined) delete process.env.WEB_SEARCH_REGION;
+    else process.env.WEB_SEARCH_REGION = previous;
+  }
+});
 
 test("the free plan searches DuckDuckGo, paid plans search Yandex", () => {
   assert.equal(providerForPlan("free"), "duckduckgo");

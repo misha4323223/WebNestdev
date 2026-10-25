@@ -17,7 +17,7 @@ const envSchema = z.object({ service: z.string().trim().min(1).max(80) });
 registerTool({
   name: "service.status",
   description:
-    "List the external services the user connected in «Интеграции» → «Сервисы» (файлы/S3, почта, оплата, AI, карты, CRM) " +
+    "List the external services the user connected in «Интеграции» → «Сервисы» (файлы/S3, почта, оплата, AI, карты, CRM, сборки Expo/EAS) " +
     "with the account each key belongs to and the environment variable names the service provides. " +
     "Call it before writing code that needs storage, email, payments, AI or maps, and when the user asks what is already connected. " +
     "It never returns the credential itself.",

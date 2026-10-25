@@ -4,7 +4,9 @@ import {
   NOTES_MAX_CHARS,
   NOTES_MAX_LINES,
   NOTES_PREFIX,
+  findNoteLines,
   formatNoteLine,
+  normalizeNoteTags,
   notesFile,
   notesNotice,
   trimNoteLines,
@@ -50,4 +52,27 @@ test("модель видит и пустую заметку, и заполне�
   assert.match(filled, /палитра #0E1A16/);
   assert.match(filled, /не переспрашивай/, "согласованное не переспрашивают");
   assert.match(filled, /потому что|Новое решение/, "новая договорённость тоже записывается");
+});
+
+test("теги приводятся к одному виду и не дублируются", () => {
+  assert.deepEqual(normalizeNoteTags(["#UI", "auth", "UI", " deploy ", "плохой тег!"]), ["ui", "auth", "deploy"]);
+  assert.deepEqual(normalizeNoteTags("ui, auth deploy"), ["ui", "auth", "deploy"]);
+  assert.deepEqual(normalizeNoteTags(["a", "b", "c", "d", "e", "f"]), ["a", "b", "c", "d", "e"]);
+});
+
+test("строка заметки сохраняет тип и метки", () => {
+  assert.equal(formatNoteLine("decision", "  тёмная палитра  ", ["ui"]), "- [решено] тёмная палитра · #ui");
+  assert.equal(formatNoteLine("fact", "шрифт Inter"), "- [факт] шрифт Inter");
+});
+
+test("поиск по тексту и точной метке возвращает свежие совпадения", () => {
+  const lines = [
+    "- [решено] палитра тёмная · #ui",
+    "- [факт] шрифт Inter · #ui #type",
+    "- [решено] авторизация через телефон · #auth",
+  ];
+  assert.deepEqual(findNoteLines(lines, "палитра").lines, [lines[0]]);
+  assert.deepEqual(findNoteLines(lines, "", "ui").lines, [lines[0], lines[1]]);
+  assert.deepEqual(findNoteLines(lines, "", "uix").lines, [], "метка не совпадает по префиксу");
+  assert.deepEqual(findNoteLines(lines, "inter", "ui", 1).lines, [lines[1]]);
 });

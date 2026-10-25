@@ -4,39 +4,30 @@ import Fastify from "fastify";
 import { registerHealthRoutes } from "./health.js";
 
 /**
- * По этому ответу открытая вкладка панели понимает, что устарела (см. src/lib/app-build.ts), поэтому
- * он обязан быть дешёвым: ни Docker, ни базы, ни метрик — одна строка с номером сборки. Проверка
- * идёт с каждой вкладки регулярно, и всё лишнее здесь платилось бы на каждом её открытии.
+ * Публичный health не должен быть картой внутреннего устройства: пути песочниц, очереди и
+ * адреса предпросмотров остаются только для запроса с loopback. Заодно проверяется, что
+ * `build` — по-прежнему в обоих ответах: на нём держится сверка выкатки.
  */
-test("the version endpoint answers with the build id alone", async () => {
-  const previous = process.env.WEBNESTDEV_BUILD;
-  process.env.WEBNESTDEV_BUILD = "sha-probe";
+test("health отдаёт подробности только loopback-запросу", async () => {
   const app = Fastify();
   try {
     await registerHealthRoutes(app);
     await app.ready();
-    const response = await app.inject({ method: "GET", url: "/api/version" });
-    assert.equal(response.statusCode, 200);
-    assert.deepEqual(response.json(), { ok: true, build: "sha-probe" });
-  } finally {
-    if (previous === undefined) delete process.env.WEBNESTDEV_BUILD;
-    else process.env.WEBNESTDEV_BUILD = previous;
-    await app.close();
-  }
-});
 
-test("a build without a baked-in sha still answers, so the check only compares strings", async () => {
-  const previous = process.env.WEBNESTDEV_BUILD;
-  delete process.env.WEBNESTDEV_BUILD;
-  const app = Fastify();
-  try {
-    await registerHealthRoutes(app);
-    await app.ready();
-    const response = await app.inject({ method: "GET", url: "/api/version" });
-    assert.equal(response.statusCode, 200);
-    assert.equal(response.json().build, "dev");
+    const external = await app.inject({ method: "GET", url: "/api/health", remoteAddress: "203.0.113.10" });
+    assert.equal(external.statusCode, 200, external.body);
+    const publicBody = external.json() as Record<string, unknown>;
+    assert.equal(typeof publicBody.build, "string");
+    assert.equal(publicBody.sandbox, undefined);
+    assert.equal(publicBody.activity, undefined);
+
+    const internal = await app.inject({ method: "GET", url: "/api/health", remoteAddress: "127.0.0.1" });
+    assert.equal(internal.statusCode, 200, internal.body);
+    const internalBody = internal.json() as Record<string, unknown>;
+    assert.equal(typeof internalBody.build, "string");
+    assert.ok(internalBody.sandbox, "loopback-ответ содержит состояние песочницы");
+    assert.ok(internalBody.activity, "loopback-ответ содержит метрики хоста");
   } finally {
-    if (previous !== undefined) process.env.WEBNESTDEV_BUILD = previous;
     await app.close();
   }
 });

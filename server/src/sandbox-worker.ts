@@ -6,7 +6,14 @@ import { previewSecretMounts } from "./secrets/preview-secrets.js";
 export type CommandResult = DockerCommandResult;
 export type SandboxRunOptions = {
   network?: "none"|"bridge";
+  /**
+   * Переменные только для этого контейнера. Так токен интеграции попадает в процесс EAS,
+   * не оказываясь ни в файле проекта, ни в команде оболочки.
+   */
+  env?: Record<string,string>;
   signal?: AbortSignal;
+  /** Предел времени одной команды; по умолчанию `config.timeoutMs`. Ограничен сверху в docker-sandbox. */
+  timeoutMs?: number;
   /**
    * Заменить секретные env-файлы пустыми read-only файлами внутри контейнера. Включается для
    * команд агента и сборки, но не для предпросмотра: приложению ключи нужны.

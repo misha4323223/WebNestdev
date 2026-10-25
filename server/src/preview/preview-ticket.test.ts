@@ -57,7 +57,10 @@ test("срок жизни билета настраивается перемен
   withEnv({ [TTL_KEY]: undefined }, () => assert.equal(previewTicketTtlMs(), 12 * 60 * 60 * 1000));
 });
 
-test("ссылка с билетом — это адрес предпросмотра плюс параметр", () => {
+test("ссылка с билетом кладёт его во фрагмент, а не в строку запроса", () => {
   const url = previewTicketUrl("https://p1.preview.nestdev.ru", "enc:v1:a:b:c");
-  assert.equal(url, "https://p1.preview.nestdev.ru/?ticket=enc%3Av1%3Aa%3Ab%3Ac");
+  // Фрагмент не уходит на сервер и не попадает в журналы и `Referer` — поэтому именно он.
+  assert.equal(url, "https://p1.preview.nestdev.ru/#ticket=enc%3Av1%3Aa%3Ab%3Ac");
+  assert.equal(new URL(url).search, "");
+  assert.equal(new URL(url).searchParams.get("ticket"), null);
 });

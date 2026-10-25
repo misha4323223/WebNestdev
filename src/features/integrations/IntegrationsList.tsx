@@ -55,7 +55,7 @@ export function IntegrationsList({surface="home",onImported}:{surface?:Connector
       <DomainConnectors/>
     </ConnectorSection>
 
-    <ConnectorSection icon={<Layers size={12}/>} title="Сервисы" note="Почта, оплата, AI, карты, CRM и файлы.">
+    <ConnectorSection icon={<Layers size={12}/>} title="Сервисы" note="Почта, оплата, AI, карты, CRM, файлы и сборки мобильных приложений.">
       <ServiceConnectors/>
     </ConnectorSection>
   </div>;

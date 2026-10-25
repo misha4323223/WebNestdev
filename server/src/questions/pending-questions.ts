@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
-/** Один вариант ответа: короткая подпись и необязательное пояснение под ней. */
-export type QuestionOption = { label: string; description?: string };
+/** Один вариант ответа: короткая подпись, необязательное пояснение и необязательный макет. */
+export type QuestionOption = { label: string; description?: string; imageUrl?: string };
 
 /**
  * Что получает ожидающий инструмент. Выбор пользователя — это подписи вариантов, а не индексы:
@@ -20,6 +20,8 @@ export type PendingQuestion = {
   question: string;
   options: QuestionOption[];
   multiSelect: boolean;
+  /** Сколько вариантов можно выбрать при multiSelect; без поля — все. */
+  maxSelections?: number;
   allowCustom: boolean;
   createdAt: number;
   expiresAt: number;
@@ -51,6 +53,7 @@ export function askUser(input: {
   question: string;
   options: QuestionOption[];
   multiSelect: boolean;
+  maxSelections?: number;
   allowCustom: boolean;
   signal?: AbortSignal;
   timeoutMs?: number;
@@ -86,6 +89,7 @@ export function askUser(input: {
       question: input.question,
       options: input.options,
       multiSelect: input.multiSelect,
+      ...(input.maxSelections === undefined ? {} : { maxSelections: input.maxSelections }),
       allowCustom: input.allowCustom,
       createdAt,
       expiresAt,
@@ -101,6 +105,7 @@ export function askUser(input: {
       question: input.question,
       options: input.options,
       multiSelect: input.multiSelect,
+      ...(input.maxSelections === undefined ? {} : { maxSelections: input.maxSelections }),
       allowCustom: input.allowCustom,
       createdAt,
       expiresAt,
@@ -120,6 +125,7 @@ export function findPendingQuestion(id: string): PendingQuestion | null {
     question: entry.question,
     options: entry.options,
     multiSelect: entry.multiSelect,
+    ...(entry.maxSelections === undefined ? {} : { maxSelections: entry.maxSelections }),
     allowCustom: entry.allowCustom,
     createdAt: entry.createdAt,
     expiresAt: entry.expiresAt,

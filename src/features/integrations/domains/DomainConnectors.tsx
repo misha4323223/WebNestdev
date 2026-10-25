@@ -20,6 +20,7 @@ type WritesResponse = { error?: string; allowWrites?: boolean };
 export function DomainConnectors() {
   const [states, setStates] = useState<Record<string, KeyConnectionState>>({});
   const [writesBusy, setWritesBusy] = useState<string | null>(null);
+  const [refreshBusy, setRefreshBusy] = useState<string | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
@@ -37,6 +38,24 @@ export function DomainConnectors() {
       .catch(() => { if (active) setError("Не удалось получить состояние регистраторов"); });
     return () => { active = false; };
   }, []);
+
+  async function refresh(id: string) {
+    setRefreshBusy(id);
+    setError("");
+    try {
+      const response = await fetch("/api/domains/" + id + "/refresh", { method: "POST" });
+      const data = await response.json() as { error?: string; account?: string | null };
+      if (!response.ok) throw new Error(data.error ?? "Не удалось обновить данные");
+      setStates(current => ({
+        ...current,
+        [id]: { ...(current[id] ?? { connected: true, allowWrites: true }), connected: true, account: data.account ?? null },
+      }));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось обновить данные");
+    } finally {
+      setRefreshBusy(null);
+    }
+  }
 
   async function toggleWrites(id: string, allowWrites: boolean) {
     setWritesBusy(id);
@@ -74,6 +93,8 @@ export function DomainConnectors() {
         busy: writesBusy === registrar.id,
         onToggle: allowed => void toggleWrites(registrar.id, allowed),
       }}
+      onRefresh={() => void refresh(registrar.id)}
+      refreshing={refreshBusy === registrar.id}
     />)}
     <p className="connector-fineprint">
       С включённым разрешением агент настраивает DNS (A-записи на сервер, TXT-подтверждения) в

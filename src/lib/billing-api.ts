@@ -126,14 +126,14 @@ export function bytesLabel(value: number): string {
   return size(value / 1024 / 1024 / 1024) + " ГБ";
 }
 
-/** Счёт на оплату: сумму и ссылку на Робокассу считает сервер. */
+/** Счёт на оплату: сумму и ссылку на платёжную страницу считает сервер. */
 export const startCheckout = (plan: "pro" | "team") => apiJson<Checkout>("/api/billing/checkout", {
   method: "POST",
   headers: { "content-type": "application/json" },
   body: JSON.stringify({ plan }),
 });
 
-/** Автопродление: сервер откажет, если в магазине не подключена услуга периодических платежей. */
+/** Автопродление: сервер сам проверяет, доступно ли оно для подписки. */
 export const updateAutoRenew = (autoRenew: boolean) => apiJson<{ subscription: Subscription }>("/api/billing/subscription", {
   method: "POST",
   headers: { "content-type": "application/json" },
@@ -141,13 +141,13 @@ export const updateAutoRenew = (autoRenew: boolean) => apiJson<{ subscription: S
 });
 
 /**
- * Оплата пока не настроена на сервере: логина и паролей Робокассы нет. Это единственный случай,
- * когда выбранный тариф остаётся пожеланием — строка объясняет состояние одинаково на всех экранах.
+ * Оплата пока не подключена. Это единственный случай, когда выбранный тариф остаётся пожеланием —
+ * строка объясняет состояние одинаково на всех экранах и не показывает внутреннюю настройку сервера.
  */
-export const paymentsPendingNotice = "Оплата ещё не подключена: администратору нужно добавить ключи Робокассы. Сейчас работает бесплатный тариф.";
+export const paymentsPendingNotice = "Оплата скоро: сейчас доступен бесплатный тариф.";
 
 export const paymentNotice = (billing: BillingData | null | undefined) => billing?.paymentsEnabled
-  ? "Оплата картой РФ или через СБП на защищённой странице Робокассы. Тариф включается сразу после подтверждения платежа."
+  ? "Оплата картой или через СБП на защищённой странице оплаты. Тариф включается сразу после подтверждения платежа."
   : paymentsPendingNotice;
 
 /** Токены в человеческом виде: «50 млн», а не «50000000» — так их читают в сравнении тарифов. */

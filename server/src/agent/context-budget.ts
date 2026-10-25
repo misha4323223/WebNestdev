@@ -70,6 +70,10 @@ const TOOL_OUTPUT_CHARS: Record<string, number> = {
   "browser.runtime": 6000,
   "browser.scenario": 8000,
   "git.diff": 8000,
+  // Явный запрос логов и истории: модель сама попросила этот кусок, и обрезать его до общего
+  // минимума — значит заставить её повторять тот же вызов.
+  "preview.logs": 12000,
+  "chat.history": 12000,
 };
 const DEFAULT_TOOL_OUTPUT_CHARS = 4000;
 

@@ -7,7 +7,7 @@ const PICKING_CLASS = "__nest-picking";
 const STYLE_ID = "__nest-pick-style";
 
 const PICKER_CSS =
-  "." + HOVER_CLASS + "{outline:2px solid #8fdcb0 !important;outline-offset:2px !important;cursor:crosshair !important}" +
+  "." + HOVER_CLASS + "{outline:2px solid #cfbc9c !important;outline-offset:2px !important;cursor:crosshair !important}" +
   "." + PICKING_CLASS + ",." + PICKING_CLASS + " *{cursor:crosshair !important}";
 
 /**

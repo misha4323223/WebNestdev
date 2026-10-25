@@ -23,6 +23,8 @@ type HistoryResult = {
   returned?: number;
   truncated?: boolean;
   turns?: Array<{ role: string; text: string }>;
+  tools?: Array<{ name: string; arguments: string; result: string }>;
+  toolsMatched?: number;
   note?: string;
   error?: string;
 };
@@ -36,6 +38,9 @@ test("chat.history ищет по всей сохранённой перепис�
     messages.push({ role: "assistant", content: "шаг " + index + ": правлю секцию", tool_calls: [{ id: "h" + index, name: "fs.write", arguments: { path: "page" + index + ".html", content: "x" } }] });
     messages.push({ role: "tool", content: "ok", tool_call_id: "h" + index });
   }
+  // Отдельная проверка: результат сборки уже был в переписке, но выпал из видимого контекста.
+  messages.push({ role: "assistant", content: "Собираю проект", tool_calls: [{ id: "build", name: "terminal.exec", arguments: { command: "npm run build" } }] });
+  messages.push({ role: "tool", content: JSON.stringify({ ok: true, exitCode: 0, stdout: "vite v8 built in 1.7s", stderr: "" }), tool_call_id: "build" });
   messages.push({ role: "user", content: "Согласовали палитру #0E1A16 и шрифт Inter, тёмный герой отклонён" });
   messages.push({ role: "assistant", content: "Понял: палитра #0E1A16, шрифт Inter. Итог зафиксирован." });
   await appendConversationMessages(conversation.id, messages);
@@ -61,6 +66,15 @@ test("chat.history ищет по всей сохранённой перепис�
   assert.equal(none.ok, true);
   assert.equal(none.returned, 0);
   assert.match(none.note ?? "", /нет реплик/);
+
+  // По умолчанию выводы инструментов не отдаются, но с tools:true их можно найти по слову.
+  assert.equal(found.tools, undefined);
+  const toolHistory = (await tool.execute({ query: "built in 1.7s", tools: true }, context)) as HistoryResult;
+  assert.equal(toolHistory.ok, true, toolHistory.error ?? "");
+  assert.equal(toolHistory.toolsMatched, 1);
+  assert.equal(toolHistory.tools?.[0]?.name, "terminal.exec");
+  assert.match(toolHistory.tools?.[0]?.result ?? "", /built in 1\.7s/);
+  assert.match(toolHistory.tools?.[0]?.arguments ?? "", /npm run build/);
 
   const otherProject = await createProject("Чужой", undefined, "u-other");
   const foreign = (await tool.execute({}, { projectId: otherProject.id, runId: "r", userId: "u-other", conversationId: conversation.id })) as HistoryResult;

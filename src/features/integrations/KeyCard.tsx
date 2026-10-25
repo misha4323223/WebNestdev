@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronDown, ExternalLink, KeyRound, Minus, Plus } from "lucide-react";
+import { ChevronDown, ExternalLink, KeyRound, Minus, Plus, RefreshCw } from "lucide-react";
 import { BrandLogo, type BrandId } from "../../components/BrandLogo";
 
 export type KeyProviderField = {
@@ -49,7 +49,7 @@ export type KeyConnectionState = {
  * объясняет страница по кнопке «Где взять ключ», а проверка видна по самому действию. Поэтому
  * раскрытая карточка — это сначала поля ключа, потом переключатель разрешения, потом действие.
  */
-export function KeyCard({ provider, state, onChanged, endpoint, keyLabel = "Где взять ключ", fineprint, writes }: {
+export function KeyCard({ provider, state, onChanged, endpoint, keyLabel = "Где взять ключ", fineprint, writes, onRefresh, refreshing }: {
   provider: KeyProviderInfo;
   state: KeyConnectionState | undefined;
   onChanged: (next: KeyConnectionState) => void;
@@ -64,6 +64,9 @@ export function KeyCard({ provider, state, onChanged, endpoint, keyLabel = "Гд
    * того, как ключ сохранён, а не узнаёт о нём потом.
    */
   writes?: { allowed: boolean; busy?: boolean; onToggle: (allowed: boolean) => void };
+  /** Перечитать живую подпись (число серверов, домены, аккаунт), не меняя ключ. */
+  onRefresh?: () => void;
+  refreshing?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [fields, setFields] = useState<Record<string, string>>({});
@@ -156,6 +159,9 @@ export function KeyCard({ provider, state, onChanged, endpoint, keyLabel = "Гд
 
     {connected && <div className="connector-actions-row">
       <button className="ghost-button" onClick={() => setOpen(value => !value)}>{open ? "Скрыть доступ" : "Заменить доступ"}</button>
+      {onRefresh && <button className="ghost-button" onClick={onRefresh} disabled={busy || refreshing} title="Перечитать данные из кабинета">
+        <RefreshCw size={11} className={refreshing ? "spin" : undefined}/>{refreshing ? "Обновляем…" : "Обновить данные"}
+      </button>}
       <a className="ghost-button" href={provider.keyUrl} target="_blank" rel="noreferrer">{keyLabel} <ExternalLink size={11}/></a>
     </div>}
 

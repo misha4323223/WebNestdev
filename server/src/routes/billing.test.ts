@@ -169,7 +169,8 @@ test("auto-renew cannot be promised before the shop enables recurring payments",
       const { cookie } = await signedInUser();
       const response = await app.inject({ method: "POST", url: "/api/billing/subscription", headers: { cookie }, payload: { autoRenew: true } });
       assert.equal(response.statusCode, 409);
-      assert.match(response.body, /Периодические платежи/);
+      // Текст для человека: услугу включает менеджер магазина, поэтому обещать автопродление нельзя.
+      assert.match(response.body, /Автопродление сейчас недоступно/);
     } finally { await app.close(); }
   });
 });

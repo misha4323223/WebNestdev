@@ -91,7 +91,7 @@ export async function registerBillingRoutes(app: FastifyInstance) {
     const body = parsed.data;
     const config = robokassaConfig();
     if (!config.configured) {
-      return reply.code(503).send({ error: "Оплата ещё не настроена: администратору нужно добавить логин и пароли Робокассы в «Ключи сервера»." });
+      return reply.code(503).send({ error: "Оплата пока не подключена. Попробуйте позже." });
     }
     const amount = planPriceRub(body.plan);
     if (!(amount > 0)) return reply.code(409).send({ error: "Для этого тарифа не задана цена" });
@@ -181,7 +181,7 @@ export async function registerBillingRoutes(app: FastifyInstance) {
     const body = renewSchema.parse(request.body ?? {});
     const config = robokassaConfig();
     if (body.autoRenew && !config.recurring) {
-      return reply.code(409).send({ error: "Автопродление станет доступно после подключения услуги «Периодические платежи» в Робокассе." });
+      return reply.code(409).send({ error: "Автопродление сейчас недоступно. Продлить подписку можно вручную после окончания оплаченного периода." });
     }
     const updated = await setAutoRenew(user.id, body.autoRenew);
     if (!updated) return reply.code(404).send({ error: "Платной подписки нет — сначала оплатите тариф" });

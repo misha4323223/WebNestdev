@@ -114,17 +114,22 @@ export async function assertRegularFile(root: string, candidate: string) {
   return resolved;
 }
 
-/** Текст из файла проекта; символическая ссылка не раскрывается. */
-export async function readFileInside(root: string, candidate: string) {
+/** Байты файла проекта; символическая ссылка не раскрывается. */
+export async function readFileBytesInside(root: string, candidate: string) {
   const safeRoot = await realpath(root);
   const target = await resolveInsideSandbox(root, candidate);
   const handle = await open(target, READ_FLAGS);
   try {
     await assertHandleInside(handle, safeRoot);
-    return await handle.readFile("utf8");
+    return await handle.readFile();
   } finally {
     await handle.close();
   }
+}
+
+/** Текст из файла проекта; символическая ссылка не раскрывается. */
+export async function readFileInside(root: string, candidate: string) {
+  return (await readFileBytesInside(root, candidate)).toString("utf8");
 }
 
 /** Запись файла проекта: родители создаются внутри проверенной цепочки, ссылки отвергаются. */

@@ -23,6 +23,28 @@ import { WebSearchError, type WebResult, type WebSearchProvider, type WebSearchR
  */
 
 const DEFAULT_LIMIT = 8;
+
+export type SearchLocale = {
+  /** Регион выдачи для DuckDuckGo (`kl`), например `ru-ru`. */
+  region: string;
+  /** Тип выдачи Yandex Search API. */
+  searchType: "SEARCH_TYPE_RU" | "SEARCH_TYPE_COM" | "SEARCH_TYPE_TR";
+};
+
+/**
+ * Язык выдачи по самому запросу. Раньше все запросы уходили в одну региональную выдачу, и
+ * русскоязычная тема возвращала англоязычные страницы (или наоборот). Модель формулирует запрос
+ * на языке источников, поэтому скрипт запроса — достаточный сигнал; явный `WEB_SEARCH_REGION`
+ * по-прежнему важнее и позволяет закрепить регион на сервере.
+ */
+export function localeForQuery(query: string): SearchLocale {
+  const cyrillic = (query.match(/[А-Яа-яЁё]/g) ?? []).length;
+  const configured = (process.env.WEB_SEARCH_REGION ?? "").trim();
+  if (cyrillic >= 2) return { region: configured || "ru-ru", searchType: "SEARCH_TYPE_RU" };
+  if (/[\u0600-\u06FF]/.test(query)) return { region: configured || "tr-tr", searchType: "SEARCH_TYPE_TR" };
+  return { region: configured || "us-en", searchType: "SEARCH_TYPE_COM" };
+}
+
 /** Одинаковые запросы внутри одного запуска повторяются часто: кэш экономит и квоту, и время. */
 const cacheTtlMs = () => positiveInt(process.env.WEB_SEARCH_CACHE_TTL_MS, 600_000);
 const cacheSize = () => positiveInt(process.env.WEB_SEARCH_CACHE_SIZE, 200);
@@ -111,10 +133,11 @@ export function resolveProvider(plan: PlanId): { provider: WebSearchProvider; no
 type CacheEntry = { expiresAt: number; provider: WebSearchProvider; results: WebResult[] };
 const cache = new Map<string, CacheEntry>();
 
-function cacheKey(plan: PlanId, query: string, limit: number) {
+function cacheKey(plan: PlanId, query: string, limit: number, locale: SearchLocale) {
   // Ключ включает класс тарифа: бесплатный запрос не должен получать из кэша ответ платного
-  // провайдера (и наоборот) — иначе ответ приписывался бы не тому источнику.
-  return (isFreePlan(plan) ? "free" : "paid") + "|" + limit + "|" + query.toLowerCase().replace(/\s+/g, " ");
+  // провайдера (и наоборот) — иначе ответ приписывался бы не тому источнику. Регион тоже входит
+  // в ключ: смена WEB_SEARCH_REGION не должна отдавать старую выдачу.
+  return (isFreePlan(plan) ? "free" : "paid") + "|" + limit + "|" + locale.region + "|" + query.toLowerCase().replace(/\s+/g, " ");
 }
 
 function readCache(key: string): CacheEntry | null {
@@ -159,12 +182,12 @@ function failure(provider: WebSearchProvider, query: string, error: unknown, not
   return { ok: false, provider, query, results: [], code, error: message, ...(note ? { note } : {}) };
 }
 
-async function runProvider(provider: WebSearchProvider, query: string, limit: number, signal?: AbortSignal): Promise<WebResult[]> {
+async function runProvider(provider: WebSearchProvider, query: string, limit: number, locale: SearchLocale, signal?: AbortSignal): Promise<WebResult[]> {
   const slot: Slot = await searchLimiter.acquire(signal);
   try {
-    if (provider === "yandex") return await searchYandex(query, { limit, ...(signal ? { signal } : {}) });
+    if (provider === "yandex") return await searchYandex(query, { limit, searchType: locale.searchType, ...(signal ? { signal } : {}) });
     if (provider === "tavily") return await searchTavily(query, { limit, ...(signal ? { signal } : {}) });
-    return await searchDuckDuckGo(query, { limit, ...(signal ? { signal } : {}) });
+    return await searchDuckDuckGo(query, { limit, region: locale.region, ...(signal ? { signal } : {}) });
   } finally {
     slot.release();
   }
@@ -184,7 +207,8 @@ export async function searchWeb(input: WebSearchInput): Promise<WebSearchRespons
   if (!query) return { ok: false, provider: "duckduckgo", query, results: [], code: "unavailable", error: "Пустой поисковый запрос" };
 
   const { chain, note } = providerChain(input.plan);
-  const key = cacheKey(input.plan, query, limit);
+  const locale = localeForQuery(query);
+  const key = cacheKey(input.plan, query, limit, locale);
   const cached = readCache(key);
   if (cached) return { ok: true, provider: cached.provider, query, results: cached.results, cached: true, ...(note ? { note } : {}) };
 
@@ -215,7 +239,7 @@ export async function searchWeb(input: WebSearchInput): Promise<WebSearchRespons
   for (const provider of chain) {
     if (input.signal?.aborted) break;
     try {
-      const results = await runProvider(provider, query, limit, input.signal);
+      const results = await runProvider(provider, query, limit, locale, input.signal);
       writeCache(key, provider, results);
       await charge();
       const reasons = failures.map(item => item.provider + ": " + (item.error instanceof Error ? item.error.message : String(item.error)));

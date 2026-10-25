@@ -57,7 +57,7 @@ export function Hint({children,label="Что это"}:{children:ReactNode;label?
       onPointerLeave={event=>{if(event.pointerType==="mouse")setOpen(false)}}
       onFocus={event=>{if(event.currentTarget.matches(":focus-visible"))setOpen(true)}}
       onBlur={()=>setOpen(false)}
-      onClick={event=>{event.preventDefault();event.stopPropagation();setOpen(true)}}
+      onClick={event=>{event.preventDefault();event.stopPropagation();setOpen(value=>!value)}}
     >
       <Info size={11} aria-hidden="true"/>
     </button>

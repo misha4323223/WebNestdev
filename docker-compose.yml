@@ -237,8 +237,11 @@ services:
       SANDBOX_MAX_QUEUE: ${SANDBOX_MAX_QUEUE:-32}
       SANDBOX_QUEUE_TIMEOUT_MS: ${SANDBOX_QUEUE_TIMEOUT_MS:-180000}
       BROWSER_MAX_CONCURRENT: ${BROWSER_MAX_CONCURRENT:-1}
+    # Наружу смотрит только Caddy (80/443). Порт приложения нужен лишь для health-check и
+    # диагностики на самой ВМ: публикация на 0.0.0.0 обходила HTTPS, Origin-проверку и
+    # отдавала API по http любому, кто дотянется до адреса хоста.
     ports:
-      - "8787:8787"
+      - "127.0.0.1:8787:8787"
     volumes:
       - webnestdev-data:/app/.webnestdev
       - ${SANDBOX_DIR:-/var/lib/webnestdev/sandboxes}:${SANDBOX_DIR:-/var/lib/webnestdev/sandboxes}

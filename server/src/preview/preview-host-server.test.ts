@@ -5,7 +5,7 @@ import { connect, createServer as createTcpServer } from "node:net";
 import { createPreviewHostServer, describePreviewHostServer, previewAccess, requestCookies, forwardableHeaders, startPreviewHostServer, stopPreviewHostServer, type PreviewHostDeps } from "./preview-host-server.js";
 import { previewHostTarget } from "./preview-host.js";
 import { PICK_BRIDGE_PATH, PICK_BRIDGE_TAG, PICK_COMMAND } from "./pick-bridge.js";
-import { mintPreviewTicket, previewTicketProject, PREVIEW_TICKET_COOKIE } from "./preview-ticket.js";
+import { mintPreviewTicket, previewTicketProject, PREVIEW_SESSION_PATH, PREVIEW_TICKET_COOKIE } from "./preview-ticket.js";
 import type { PreviewStatus } from "./types.js";
 
 /**
@@ -90,17 +90,45 @@ function ask(port: number, path: string, headers: Record<string, string> = {}, t
   });
 }
 
-test("без билета адрес предпросмотра закрыт", async () => {
+/** POST к двери — так страница-дверь обменивает билет на cookie. */
+function post(port: number, path: string, body: string, headers: Record<string, string> = {}) {
+  return new Promise<{ status: number; headers: Record<string, string | string[] | undefined>; body: string }>((resolve, reject) => {
+    const request = httpRequest(
+      {
+        host: "127.0.0.1",
+        port,
+        path,
+        method: "POST",
+        timeout: 2000,
+        headers: { host: PROJECT + "." + DOMAIN, "content-type": "application/json", "content-length": Buffer.byteLength(body), ...headers },
+      },
+      response => {
+        const chunks: Buffer[] = [];
+        response.on("data", chunk => chunks.push(chunk as Buffer));
+        response.on("end", () => resolve({ status: response.statusCode ?? 0, headers: response.headers, body: Buffer.concat(chunks).toString("utf8") }));
+      },
+    );
+    request.on("error", reject);
+    request.end(body);
+  });
+}
+
+test("без билета приложение не отдаётся, а переход по ссылке получает страницу-дверь", async () => {
   const site = await upstream();
   const door = await doorWith(depsFor(site.port));
   try {
-    const denied = await ask(door.port, "/", { accept: "application/json" });
+    // Запрос ресурса (fetch, скрипт, картинка) — отказ с причиной, а не страница приложения.
+    const denied = await ask(door.port, "/api/data", { accept: "application/json", "sec-fetch-dest": "empty" });
     assert.equal(denied.status, 401);
     assert.match(denied.body, /панели проекта/);
-    // Панель открывает адрес в кадре и в новой вкладке, поэтому страница отказа читаема и глазами.
-    const page = await ask(door.port, "/");
-    assert.equal(page.status, 401);
+    // Переход по ссылке — в кадре или в новой вкладке — получает дверь: билет у неё во фрагменте
+    // адреса, а фрагмент сервер не видит, поэтому его читает и меняет сама страница.
+    const page = await ask(door.port, "/", { "sec-fetch-dest": "document" });
+    assert.equal(page.status, 200);
     assert.match(String(page.headers["content-type"]), /text\/html/);
+    assert.match(page.body, /location\.hash/);
+    assert.match(String(page.headers["content-security-policy"]), /script-src 'nonce-/);
+    assert.equal(page.headers["cache-control"], "no-store");
     assert.equal(site.hits.length, 0, "приложение не должно отвечать тому, кто не предъявил билет");
   } finally {
     await door.close();
@@ -108,18 +136,70 @@ test("без билета адрес предпросмотра закрыт", a
   }
 });
 
-test("билет в строке запроса превращается в cookie и убирается из адреса", async () => {
+test("билет из фрагмента меняется на HttpOnly-cookie и до приложения не доходит", async () => {
   const site = await upstream();
   const door = await doorWith(depsFor(site.port));
   try {
-    const response = await ask(door.port, "/?ticket=ticket:" + PROJECT + "&tab=1");
-    assert.equal(response.status, 302);
-    assert.equal(response.headers.location, "/?tab=1");
-    const cookie = String(response.headers["set-cookie"]);
+    const page = await ask(door.port, "/", { "sec-fetch-dest": "document" });
+    assert.equal(page.status, 200);
+    // Отдана дверь, а не приложение: документ проекта без cookie не уходит вовсе.
+    assert.doesNotMatch(page.body, /<body>приложение<\/body>/);
+    assert.match(page.body, new RegExp(PREVIEW_SESSION_PATH.replace(/\//g, "\\/")));
+
+    const exchange = await post(door.port, PREVIEW_SESSION_PATH, JSON.stringify({ ticket: "ticket:" + PROJECT }));
+    assert.equal(exchange.status, 204);
+    assert.equal(exchange.body, "");
+    const cookie = String(exchange.headers["set-cookie"]);
     assert.match(cookie, new RegExp(PREVIEW_TICKET_COOKIE + "="));
     assert.match(cookie, /HttpOnly/);
     assert.match(cookie, /SameSite=Lax/);
-    assert.equal(site.hits.length, 0, "первый запрос только ставит cookie, приложение его не видит");
+    assert.equal(site.hits.length, 0, "обмен билета до приложения не доходит");
+
+    const app = await ask(door.port, "/?tab=1", { cookie: PREVIEW_TICKET_COOKIE + "=ticket:" + PROJECT, "sec-fetch-dest": "document" });
+    assert.equal(app.status, 200);
+    assert.equal(site.hits.at(-1), "/?tab=1");
+  } finally {
+    await door.close();
+    await site.close();
+  }
+});
+
+test("обмен билета не принимает чужой проект, чужой origin и не-JSON", async () => {
+  const site = await upstream();
+  const door = await doorWith(depsFor(site.port));
+  try {
+    const other = await post(door.port, PREVIEW_SESSION_PATH, JSON.stringify({ ticket: "ticket:another-project" }));
+    assert.equal(other.status, 401);
+    assert.equal(other.headers["set-cookie"], undefined);
+
+    const crossSite = await post(door.port, PREVIEW_SESSION_PATH, JSON.stringify({ ticket: "ticket:" + PROJECT }), { "sec-fetch-site": "cross-site" });
+    assert.equal(crossSite.status, 403);
+    assert.equal(crossSite.headers["set-cookie"], undefined);
+
+    const form = await post(door.port, PREVIEW_SESSION_PATH, "ticket=ticket:" + PROJECT, { "content-type": "application/x-www-form-urlencoded" });
+    assert.equal(form.status, 415);
+    assert.equal(form.headers["set-cookie"], undefined);
+
+    assert.equal((await post(door.port, PREVIEW_SESSION_PATH, "{")).status, 401);
+    assert.equal(site.hits.length, 0);
+  } finally {
+    await door.close();
+    await site.close();
+  }
+});
+
+/**
+ * Билет в строке запроса больше не принимается: старая ссылка (из истории, из чужого лога) не
+ * должна открывать предпросмотр — только фрагмент, который получает cookie через обмен.
+ */
+test("старая ссылка с билетом в query больше не открывает предпросмотр", async () => {
+  const site = await upstream();
+  const door = await doorWith(depsFor(site.port));
+  try {
+    const page = await ask(door.port, "/?ticket=ticket:" + PROJECT, { "sec-fetch-dest": "document" });
+    assert.equal(page.status, 200);
+    assert.match(page.body, /location\.hash/);
+    assert.equal(site.hits.length, 0);
   } finally {
     await door.close();
     await site.close();
@@ -281,7 +361,7 @@ test("обновление соединения до WebSocket передаёт�
   }
 });
 
-test("билет не уходит в приложение в строке WebSocket-запроса", async () => {
+test("query-параметры WebSocket-запроса принадлежат приложению и не вырезаются", async () => {
   const received: string[] = [];
   const site = createTcpServer(socket => {
     socket.on("data", chunk => {
@@ -297,7 +377,7 @@ test("билет не уходит в приложение в строке WebSo
   try {
     await new Promise<void>(resolve => client.on("connect", resolve));
     client.write(
-      "GET /hmr?ticket=ticket:" + PROJECT + "&tab=1 HTTP/1.1\r\n" +
+      "GET /hmr?tab=1&mode=app HTTP/1.1\r\n" +
       "Host: " + PROJECT + "." + DOMAIN + "\r\n" +
       "Upgrade: websocket\r\nConnection: Upgrade\r\n" +
       "Sec-WebSocket-Key: abc\r\nSec-WebSocket-Version: 13\r\n" +
@@ -305,8 +385,34 @@ test("билет не уходит в приложение в строке WebSo
     );
     const handshake = await read(client);
     assert.match(handshake, /101 Switching Protocols/);
-    assert.match(received[0] ?? "", /^GET \/hmr\?tab=1 HTTP\/1\.1\r\n/, "билет вырезан, остальные параметры на месте");
-    assert.doesNotMatch(received[0] ?? "", /ticket=/);
+    // Доступ теперь даёт cookie, поэтому путь уходит приложению как есть: его параметры — его дело.
+    assert.match(received[0] ?? "", /^GET \/hmr\?tab=1&mode=app HTTP\/1\.1\r\n/);
+  } finally {
+    client.destroy();
+    await door.close();
+    await new Promise<void>(resolve => site.close(() => resolve()));
+  }
+});
+
+/** Билет в строке запроса не даёт доступа ни к странице, ни к WebSocket. */
+test("билет в строке WebSocket-запроса больше не даёт доступа", async () => {
+  const received: string[] = [];
+  const site = createTcpServer(socket => socket.on("data", chunk => received.push(chunk.toString("utf8"))));
+  await new Promise<void>(resolve => site.listen(0, "127.0.0.1", resolve));
+  const address = site.address();
+  const sitePort = typeof address === "object" && address ? address.port : 0;
+  const door = await doorWith(depsFor(sitePort));
+  const client = connect(door.port, "127.0.0.1");
+  try {
+    await new Promise<void>(resolve => client.on("connect", resolve));
+    client.write(
+      "GET /hmr?ticket=ticket:" + PROJECT + " HTTP/1.1\r\n" +
+      "Host: " + PROJECT + "." + DOMAIN + "\r\n" +
+      "Upgrade: websocket\r\nConnection: Upgrade\r\n" +
+      "Sec-WebSocket-Key: abc\r\nSec-WebSocket-Version: 13\r\n\r\n",
+    );
+    assert.match(await read(client), /401 Unauthorized/);
+    assert.equal(received.length, 0, "приложение не должно увидеть соединение без билета");
   } finally {
     client.destroy();
     await door.close();
@@ -403,15 +509,13 @@ test("битая последовательность в cookie не роняе�
   }
 });
 
-test("доступ даётся только билету своего проекта", () => {
-  const url = new URL("https://p1.preview.nestdev.ru/?ticket=good");
-  assert.deepEqual(
-    previewAccess({ url, cookies: {}, projectId: "p1", ticketProject: ticket => (ticket === "good" ? "p1" : "") }),
-    { ok: true, ticket: "good", redirectTo: "/" },
-  );
-  // Билет другого проекта: чужой предпросмотр не открывается даже валидным билетом.
-  assert.equal(previewAccess({ url, cookies: {}, projectId: "p2", ticketProject: () => "p1" }).ok, false);
-  assert.equal(previewAccess({ url: new URL("https://p1.preview.nestdev.ru/"), cookies: { [PREVIEW_TICKET_COOKIE]: "bad" }, projectId: "p1", ticketProject: () => "" }).ok, false);
+test("доступ даётся только cookie своего проекта", () => {
+  const ticketProject = (ticket: string | undefined | null) => (ticket === "good" ? "p1" : "");
+  assert.deepEqual(previewAccess({ cookies: { [PREVIEW_TICKET_COOKIE]: "good" }, projectId: "p1", ticketProject }), { ok: true });
+  // Билет другого проекта — в cookie — чужой предпросмотр не открывает.
+  assert.equal(previewAccess({ cookies: { [PREVIEW_TICKET_COOKIE]: "good" }, projectId: "p2", ticketProject }).ok, false);
+  assert.equal(previewAccess({ cookies: { [PREVIEW_TICKET_COOKIE]: "bad" }, projectId: "p1", ticketProject }).ok, false);
+  assert.equal(previewAccess({ cookies: {}, projectId: "p1", ticketProject }).ok, false);
 });
 
 /**

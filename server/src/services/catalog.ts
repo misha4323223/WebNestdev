@@ -11,7 +11,7 @@
  * (см. docs/INTEGRATIONS_ROADMAP.md).
  */
 
-export type ServiceCategoryId = "storage" | "email" | "payments" | "ai" | "maps" | "crm";
+export type ServiceCategoryId = "storage" | "email" | "payments" | "ai" | "maps" | "crm" | "mobile";
 
 export type ServiceCategory = {
   id: ServiceCategoryId;
@@ -26,6 +26,7 @@ export const SERVICE_CATEGORIES: ServiceCategory[] = [
   { id: "ai", name: "AI", note: "Модели внутри приложения: чат, генерация текста" },
   { id: "maps", name: "Карты", note: "Адреса, доставка, карта точек на странице" },
   { id: "crm", name: "CRM", note: "Заявки с формы сайта уходят менеджеру" },
+  { id: "mobile", name: "Мобильные приложения", note: "Сборки Android и iOS через EAS Build" },
 ];
 
 export type ServiceField = {
@@ -523,6 +524,26 @@ export const SERVICES: ServiceDefinition[] = [
     env: [{ name: "AMOCRM_HOST", field: "host" }, { name: "AMOCRM_ACCESS_TOKEN", field: "token" }],
     verification: "check",
     verificationNote: "Проверяем чтением сведений об аккаунте — сделки и контакты не трогаем.",
+  },
+
+  // ── Мобильные приложения ──────────────────────────────────────────────────
+  {
+    id: "expo",
+    name: "Expo / EAS",
+    category: "mobile",
+    tagline: "Сборки Android и iOS через EAS Build",
+    keyUrl: "https://expo.dev/settings/access-tokens",
+    docsUrl: "https://docs.expo.dev/build/setup/",
+    steps: [
+      "Откройте expo.dev → настройки аккаунта → Access tokens → Create token.",
+      "Скопируйте токен: он показывается один раз и даёт агенту доступ к вашим проектам Expo.",
+      "Вставьте токен здесь — проверим его запросом к Expo и сохраним в зашифрованном хранилище.",
+    ],
+    fields: [{ key: "token", label: "Expo access token", placeholder: "токен из настроек expo.dev", secret: true }],
+    // Токен нужен только инструментам сборки: в код приложения он не попадает.
+    env: [],
+    verification: "check",
+    verificationNote: "Проверяем текущим пользователем Expo. Ключи подписи приложения остаются в EAS и агенту не показываются.",
   },
 ];
 

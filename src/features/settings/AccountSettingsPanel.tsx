@@ -195,7 +195,7 @@ export function AccountSettingsPanel() {
                 <span className="billing-card-top"><Wallet size={12}/> {paid ? "Автопродление" : "Баланс"}</span>
                 <strong>{paid ? (subscription?.autoRenew ? "Включено" : "Выключено") : balanceLabel(billing?.balance)}</strong>
                 <small>{paid
-                  ? subscription?.autoRenew ? "Спишем " + rubLabel(subscription.amountRub) + " " + dateLabel(subscription.renewsAt) : subscription?.recurringAvailable ? "Можно включить в любой момент" : "Услуга периодических платежей не подключена"
+                  ? subscription?.autoRenew ? "Спишем " + rubLabel(subscription.amountRub) + " " + dateLabel(subscription.renewsAt) : subscription?.recurringAvailable ? "Можно включить в любой момент" : "Продлить можно вручную после окончания"
                   : "Пополнение не нужно: оплачивается подписка"}</small>
               </article>
               <article className="billing-card">
@@ -281,7 +281,7 @@ export function AccountSettingsPanel() {
                       {paying === plan.id ? <><RefreshCw size={12} className="spin"/> Открываем…</> : <>{plan.id === currentPlanId ? "Продлить" : "Оплатить"} {plan.priceLabel}</>}
                     </button>}
             </article>)}</div>
-            <p className="billing-disclaimer">Оплата принимается картой РФ и через СБП. Чек самозанятого приходит через «Мой налог».</p>
+            <p className="billing-disclaimer">Оплата принимается картой РФ и через СБП.</p>
           </div>}
         </div>
       </div>

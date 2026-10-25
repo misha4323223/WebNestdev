@@ -28,6 +28,25 @@ export const NOTE_MAX_CHARS = 400;
 
 export type NoteKind = "decision" | "rejected" | "open" | "fact";
 
+/** Теги — короткие метки вроде `ui`, `auth`, `deploy`; больше пяти на запись не нужно. */
+export const NOTE_MAX_TAGS = 5;
+export const NOTE_MAX_TAG_CHARS = 24;
+
+/** Приводит теги к одному виду: без `#`, в нижнем регистре, без пустых и повторов. */
+export function normalizeNoteTags(value: unknown): string[] {
+  const raw = Array.isArray(value) ? value : typeof value === "string" ? value.split(/[,\s]+/) : [];
+  const tags: string[] = [];
+  for (const item of raw) {
+    if (typeof item !== "string") continue;
+    const tag = item.trim().replace(/^#+/, "").toLowerCase();
+    if (!tag || tag.length > NOTE_MAX_TAG_CHARS) continue;
+    if (!/^[a-zа-яё0-9_-]+$/i.test(tag)) continue;
+    if (!tags.includes(tag)) tags.push(tag);
+    if (tags.length >= NOTE_MAX_TAGS) break;
+  }
+  return tags;
+}
+
 const KIND_LABEL: Record<NoteKind, string> = {
   decision: "решено",
   rejected: "отклонено",
@@ -40,8 +59,10 @@ export function isNoteKind(value: unknown): value is NoteKind {
 }
 
 /** Одна строка заметки: тип решения виден до текста, поэтому срез читается без пояснений. */
-export function formatNoteLine(kind: NoteKind, text: string) {
-  return "- [" + KIND_LABEL[kind] + "] " + text.replace(/\s+/g, " ").trim().slice(0, NOTE_MAX_CHARS);
+export function formatNoteLine(kind: NoteKind, text: string, tags: string[] = []) {
+  const body = text.replace(/\s+/g, " ").trim().slice(0, NOTE_MAX_CHARS);
+  const suffix = tags.length ? " · " + tags.map(tag => "#" + tag).join(" ") : "";
+  return "- [" + KIND_LABEL[kind] + "] " + body + suffix;
 }
 
 /**
@@ -58,6 +79,26 @@ function parseLines(raw: string): string[] {
     .split("\n")
     .map(line => line.trim())
     .filter(line => line.startsWith("- ["));
+}
+
+/**
+ * Поиск по заметкам. Список читается целиком, но при тридцати записях модель ищет факт, а не
+ * перечитывает всё: `query` ищет по тексту, `tag` — по точной метке (`#ui`, не `#uix`).
+ * Возвращаются самые свежие совпадения: старые вытесняются так же, как в самом файле.
+ */
+export function findNoteLines(lines: string[], query = "", tag = "", limit = 10) {
+  const needle = query.replace(/\s+/g, " ").trim().toLowerCase();
+  const wantedTag = normalizeNoteTags(tag)[0] ?? "";
+  const matched = lines.filter(line => {
+    if (needle && !line.toLowerCase().includes(needle)) return false;
+    if (!wantedTag) return true;
+    // Разбиение на токены вместо регулярного выражения: тег из запроса не становится
+    // шаблоном, а `#ui` не совпадает с `#uix`.
+    const tokens = line.toLowerCase().split(/[^a-zа-яё0-9_#-]+/);
+    return tokens.includes("#" + wantedTag);
+  });
+  const keep = Math.min(Math.max(1, Math.floor(limit)), NOTES_MAX_LINES);
+  return { lines: matched.slice(Math.max(0, matched.length - keep)), matched: matched.length };
 }
 
 /** Последние строки — то, что ещё живо; старые вытесняются по числу и по размеру файла. */

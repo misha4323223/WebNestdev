@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowRight, CreditCard, FolderGit2, LogOut, Pencil, Plug, Sparkles, Trash2, UserRound } from "lucide-react";
+import { ArrowRight, CreditCard, FolderGit2, LogOut, Pencil, Plug, Trash2, UserRound } from "lucide-react";
 import { IntegrationsList } from "../integrations/IntegrationsList";
 import { ProjectRenameForm } from "./ProjectRename";
 import { type Project } from "../../lib/project-api";
@@ -16,8 +16,9 @@ export type RailSection = "integrations" | "projects" | "account" | "billing";
 export type HomeRailProps = {
   projects: Project[];
   activeProjectId: string | null;
-  /** Раздел колонки: на ПК переключается здесь, на телефоне — вкладками над главной. */
-  section: RailSection;
+  /** Раздел колонки: на ПК переключается здесь, на телефоне — вкладками над главной.
+   *  `null` — все категории свёрнуты, видно только оглавление. */
+  section: RailSection | null;
   onSection: (section: RailSection) => void;
   onOpen: (project: Project) => void;
   onRename: (project: Project, name: string) => Promise<boolean>;
@@ -68,13 +69,13 @@ export function HomeRail(props: HomeRailProps) {
     <nav className="rail-nav" aria-label="Разделы аккаунта">
       {nav.map(item => {
         const Icon = item.icon;
-        return <button key={item.id} className={"rail-nav-item" + (section === item.id ? " active" : "")} onClick={() => { onSection(item.id); setRenaming(""); }}>
+        return <button key={item.id} className={"rail-nav-item" + (section === item.id ? " active" : "")} aria-expanded={section === item.id} title={section === item.id ? "Свернуть раздел" : "Открыть раздел"} onClick={() => { onSection(item.id); setRenaming(""); }}>
           <Icon size={14}/> <span>{item.label}</span><ArrowRight size={12} className="rail-nav-chevron"/>
         </button>;
       })}
     </nav>
 
-    <div className="rail-content">
+    {section && <div className="rail-content">
       {section === "integrations" && <section className="rail-section">
         <div className="rail-section-head"><span className="eyebrow">ИНТЕГРАЦИИ</span><strong>Подключения</strong></div>
         <IntegrationsList surface="home"/>
@@ -104,11 +105,11 @@ export function HomeRail(props: HomeRailProps) {
       {section === "account" && <RailAccount/>}
 
       {section === "billing" && <RailBilling billing={billing} choice={planChoice} error={billingError} onOpenPlans={onOpenPlans} onOpenSubscriptions={onOpenSubscriptions}/>}
-    </div>
+    </div>}
 
     <div className="rail-foot">
       <button className="rail-upsell" onClick={onOpenPlans} title="Открыть выбор тарифа">
-        <span className="rail-upsell-icon"><Sparkles size={14}/></span>
+        <span className="rail-upsell-icon"><CreditCard size={14}/></span>
         <span className="rail-upsell-copy">
           <small>Подписка</small>
           <span className="rail-upsell-line">

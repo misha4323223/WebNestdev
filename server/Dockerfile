@@ -1,4 +1,4 @@
-FROM node:22-bookworm-slim AS build
+FROM node:26-bookworm-slim AS build
 WORKDIR /app
 
 # Номер сборки — не только в образе выполнения, но и в самом бандле: по нему открытая вкладка панели
@@ -11,7 +11,7 @@ ENV VITE_BUILD=${GIT_SHA}
 
 COPY package.json package-lock.json ./
 COPY server/package.json ./server/package.json
-RUN npm install
+RUN npm ci
 
 COPY tsconfig.json tsconfig.app.json tsconfig.node.json vite.config.ts index.html ./
 COPY src ./src
@@ -28,13 +28,13 @@ RUN npm run build
 # Только production-зависимости. В образ не должны попадать vite, typescript, tsx и React:
 # фронт уже собран в `dist`, сервер работает из `server/dist`, а каждый мегабайт здесь
 # умножается на число хранимых версий образа.
-FROM node:22-bookworm-slim AS deps
+FROM node:26-bookworm-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY server/package.json ./server/package.json
 RUN npm ci --omit=dev
 
-FROM node:22-bookworm-slim AS production
+FROM node:26-bookworm-slim AS production
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright

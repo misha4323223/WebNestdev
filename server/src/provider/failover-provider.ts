@@ -177,9 +177,14 @@ export class FailoverProvider implements Provider {
       if (this.isCooling(endpoint)) continue;
 
       let emitted = false;
+      const startedAt = this.now();
       try {
         const provider = this.create(endpoint);
         for await (const chunk of provider.stream(messages, endpoint.model, tools, signal, options)) {
+          // Строка на первый байт ответа: по ней в логе видно, какой ключ или резерв
+          // действительно ответил, а не только кто отказал. Ключ в сообщение не попадает —
+          // только подпись вида «Agnes AI #2» и время до первого чанка.
+          if (!emitted) this.log("[provider] " + endpoint.label + " ответил за " + Math.max(0, this.now() - startedAt) + " мс");
           emitted = true;
           yield chunk;
         }

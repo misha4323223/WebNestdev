@@ -1,14 +1,14 @@
-FROM node:22-bookworm-slim AS build
+FROM node:26-bookworm-slim AS build
 
 WORKDIR /app
-COPY package.json ./
+COPY package.json package-lock.json ./
 COPY server/package.json ./server/package.json
-RUN npm install
+RUN npm ci
 
 COPY . .
 RUN npm run build
 
-FROM node:22-bookworm-slim AS runtime
+FROM node:26-bookworm-slim AS runtime
 
 ENV NODE_ENV=production
 ENV PORT=8787

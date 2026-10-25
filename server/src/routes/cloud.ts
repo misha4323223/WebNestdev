@@ -112,6 +112,35 @@ export async function registerCloudRoutes(app: FastifyInstance) {
     return { id: provider.id, name: provider.name, connected: true, account: connection.account, allowWrites: parsed.data.allowWrites, updatedAt: now };
   });
 
+  /**
+   * Перечитать живое состояние карточки: сколько машин, проектов или доменов видно сейчас.
+   * Ключ остаётся прежним, обновляется только подпись — иначе карточка показывает цифры на
+   * момент подключения и врёт после первого же удаления ресурса.
+   */
+  app.post("/api/cloud/:provider/refresh", async (request, reply) => {
+    const user = await requireUser(request, reply);
+    if (!user) return;
+    const provider = providerFrom(request.params);
+    if (!provider) return reply.code(404).send({ error: "Неизвестное облако" });
+    const connection = await getCloudConnection(user.id, provider.id);
+    if (!connection) return reply.code(400).send({ error: provider.name + " не подключён" });
+    let fields: Record<string, string>;
+    try {
+      fields = JSON.parse(connection.secret) as Record<string, string>;
+    } catch {
+      return reply.code(500).send({ error: "Сохранённый ключ повреждён: подключите облако заново" });
+    }
+    let verified: { account: string };
+    try {
+      verified = await verifyCloudCredential(provider.id, fields);
+    } catch (error) {
+      return reply.code(400).send({ error: messageOf(error) });
+    }
+    const now = new Date().toISOString();
+    await saveCloudConnection({ ...connection, account: verified.account, updatedAt: now });
+    return { id: provider.id, name: provider.name, connected: true, account: verified.account, allowWrites: connection.allowWrites, updatedAt: now };
+  });
+
   app.post("/api/cloud/:provider/disconnect", async (request, reply) => {
     const user = await requireUser(request, reply);
     if (!user) return;
