@@ -13,7 +13,7 @@ async function files(dir:string){
 }
 
 type User={id:string;email:string;passwordHash:string;createdAt:string};
-type Session={id:string;userId:string;expiresAt:string};
+type Session={id:string;userId:string;expiresAt:string;lastSeenAt?:string};
 type Project={id:string;name:string;createdAt:string;updatedAt:string;github?:unknown;userId:string};
 type Conversation={id:string;projectId:string;title:string;messages:ChatMessage[];createdAt:string;updatedAt:string};
 type Provider={provider:string;baseUrl:string;model:string;token?:string};
@@ -40,7 +40,8 @@ async function main(){
   try{
     const sessions=json<Session[]>(await readFile(sessionsFile,"utf8"));
     for(const s of sessions){
-      await sql`UPSERT INTO ${sql.identifier(getTable("sessions"))} (id,user_id,expires_at) VALUES (${s.id},${s.userId},${s.expiresAt})`;
+      // Старые файлы не знают отметки активности: пустая строка читается как «отметки нет».
+      await sql`UPSERT INTO ${sql.identifier(getTable("sessions"))} (id,user_id,expires_at,last_seen_at) VALUES (${s.id},${s.userId},${s.expiresAt},${s.lastSeenAt ?? ""})`;
     }
   }catch{}
 

@@ -1,5 +1,5 @@
 import type { FastifyRequest } from "fastify";
-import { createSession, getSession, getUser } from "./auth-store.js";
+import { createSession, getSession, getUser, sessionTtlMs } from "./auth-store.js";
 import { getProject, type Project } from "../project-store.js";
 
 export const SESSION_COOKIE = "webnestdev_session";
@@ -58,5 +58,7 @@ export async function attachSession(reply:any,userId:string,request?:FastifyRequ
     plainHttpWarned = true;
     console.warn("[auth] соединение по http: cookie сессии без флага Secure — поставьте TLS перед сервисом (docs/PRODUCTION_DEPLOYMENT.md)");
   }
-  reply.setCookie(SESSION_COOKIE, session.id, {httpOnly:true,sameSite:"lax",secure,path:"/",maxAge:60*60*24*30});
+  // Cookie живёт ровно столько же, сколько разрешён абсолютный срок сессии: idle-таймаут
+  // проверяет сервер по отметке активности, а не браузер по сроку cookie.
+  reply.setCookie(SESSION_COOKIE, session.id, {httpOnly:true,sameSite:"lax",secure,path:"/",maxAge:Math.max(1,Math.floor(sessionTtlMs()/1000))});
 }

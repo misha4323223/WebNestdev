@@ -281,9 +281,14 @@ export async function initializeStorage(): Promise<void> {
     await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("sessions")} (
       id TEXT NOT NULL PRIMARY KEY,
       user_id TEXT NOT NULL,
-      expires_at TEXT NOT NULL
+      expires_at TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL DEFAULT ''
     )`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("sessions")}_user ON ${tbl("sessions")} (user_id)`);
+    // Таблица, созданная до появления idle-таймаута, приходит без этой колонки: CREATE TABLE
+    // IF NOT EXISTS её не добавит, а обновление отметки упадёт на живом сервере. Пустое
+    // значение читается как «отметки ещё нет» — такая сессия получает полный idle-срок.
+    await pool.query(`ALTER TABLE ${tbl("sessions")} ADD COLUMN IF NOT EXISTS last_seen_at TEXT NOT NULL DEFAULT ''`);
 
     await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("projects")} (
       id TEXT NOT NULL PRIMARY KEY,

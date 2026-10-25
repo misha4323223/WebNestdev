@@ -12,7 +12,33 @@ const sessionsFile = path.join(usersDir, "sessions.json");
 
 export type User = { id:string; email:string; passwordHash:string; createdAt:string };
 export const EMAIL_TAKEN_MESSAGE = "Этот email уже зарегистрирован";
-type Session = { id:string; userId:string; expiresAt:string };
+
+/**
+ * Сессия. `expiresAt` — абсолютный срок, `lastSeenAt` — когда ею пользовались в последний раз.
+ *
+ * Без второй отметки украденная cookie жила бы ровно 30 дней, даже если владелец за это время
+ * ни разу не открыл панель. Поэтому у сессии два предела: «бездействие» и «возраст», и оба
+ * проверяются при каждом обращении (см. `getSession`).
+ */
+export type Session = { id:string; userId:string; expiresAt:string; lastSeenAt:string };
+/** Запись старого формата: до появления idle-таймаута отметки активности не было. */
+type StoredSession = Omit<Session,"lastSeenAt"> & { lastSeenAt?:string };
+
+/** Абсолютный срок сессии: 30 дней по умолчанию (было зашито числом в коде и в cookie). */
+const DEFAULT_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+/** Бездействие: 7 дней по умолчанию — но никогда дольше абсолютного срока. */
+const DEFAULT_IDLE_TTL_MS = 7 * 24 * 60 * 60 * 1000;
+/** Отметка «сессия использовалась» пишется не чаще раза в минуту, а не на каждый запрос. */
+export const SESSION_TOUCH_INTERVAL_MS = 60_000;
+
+function positiveMs(raw:string|undefined, fallback:number){
+  const value = Number(raw);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
+}
+/** Сколько живёт сессия всего (абсолютный срок); значение для cookie берётся отсюда же. */
+export function sessionTtlMs(){ return positiveMs(process.env.SESSION_TTL_MS, DEFAULT_SESSION_TTL_MS); }
+/** Сколько сессия может простоять без единого запроса; больше абсолютного срока не бывает. */
+export function sessionIdleTtlMs(){ return Math.min(sessionTtlMs(), positiveMs(process.env.SESSION_IDLE_TTL_MS, DEFAULT_IDLE_TTL_MS)); }
 
 async function readJson<T>(file:string, fallback:T):Promise<T>{
   try { return JSON.parse(await readFile(file, "utf8")) as T; } catch { return fallback; }
@@ -109,47 +135,92 @@ export async function verifyUser(email:string,password:string){
   return expected.length === derived.length && timingSafeEqual(expected, derived) ? user : null;
 }
 
-export async function createSession(userId:string){
-  const session:Session = {id:randomBytes(32).toString("hex"), userId, expiresAt:new Date(Date.now()+1000*60*60*24*30).toISOString()};
+/**
+ * `now` — только для тестов: иначе сроки проверялись бы ожиданием в несколько дней.
+ */
+export async function createSession(userId:string, now=Date.now()){
+  const session:Session = {
+    id:randomBytes(32).toString("hex"),
+    userId,
+    expiresAt:new Date(now+sessionTtlMs()).toISOString(),
+    lastSeenAt:new Date(now).toISOString(),
+  };
   if(isYdbEnabled()){
     await ydbQuery()`
       INSERT INTO ${ydbQuery().identifier(getTable("sessions"))}
-        (id,user_id,expires_at)
-      VALUES (${session.id},${session.userId},${session.expiresAt})
+        (id,user_id,expires_at,last_seen_at)
+      VALUES (${session.id},${session.userId},${session.expiresAt},${session.lastSeenAt})
     `;
     return session;
   }
-  const sessions = await readJson<Session[]>(sessionsFile, []);
+  const sessions = await readJson<StoredSession[]>(sessionsFile, []);
   sessions.push(session);
   await writeJson(sessionsFile, sessions);
   return session;
 }
 
-export async function getSession(sessionId:string){
+/**
+ * Общая проверка срока для обеих веток хранилища.
+ *
+ * - Абсолютный срок истёк — сессия удаляется.
+ * - Бездействие дольше `SESSION_IDLE_TTL_MS` — тоже удаляется.
+ * - Записи без отметки (всё, что было до миграции) получают полный idle-срок от первого
+ *   запроса: иначе выкатка оборвала бы все входы сразу, а не «через неделю бездействия».
+ * - Отметка обновляется не на каждый запрос, а раз в `SESSION_TOUCH_INTERVAL_MS`.
+ */
+async function checkSession(session:Session, now:number):Promise<Session|null>{
+  if(Date.parse(session.expiresAt)<=now){
+    await deleteSession(session.id);
+    return null;
+  }
+  const stored = Date.parse(session.lastSeenAt);
+  const lastSeen = Number.isFinite(stored) ? stored : 0;
+  if(lastSeen>0 && lastSeen+sessionIdleTtlMs()<=now){
+    await deleteSession(session.id);
+    return null;
+  }
+  if(!lastSeen || now-lastSeen>=SESSION_TOUCH_INTERVAL_MS){
+    await touchSession(session.id, now);
+    return {...session, lastSeenAt:new Date(now).toISOString()};
+  }
+  return session;
+}
+
+export async function getSession(sessionId:string, now=Date.now()){
   if(isYdbEnabled()){
-    const [rows]=await ydbQuery()<Array<{id:string;user_id:string;expires_at:string}>>`
-      SELECT id,user_id,expires_at
+    const [rows]=await ydbQuery()<Array<{id:string;user_id:string;expires_at:string;last_seen_at?:string}>>`
+      SELECT id,user_id,expires_at,last_seen_at
       FROM ${ydbQuery().identifier(getTable("sessions"))}
       WHERE id = ${sessionId}
       LIMIT 1
     `;
     const row=rows?.[0];
     if(!row)return null;
-    const session:Session={id:row.id,userId:row.user_id,expiresAt:row.expires_at};
-    if(Date.parse(session.expiresAt)<=Date.now()){
-      await deleteSession(session.id);
-      return null;
-    }
-    return session;
+    const session:Session={id:row.id,userId:row.user_id,expiresAt:row.expires_at,lastSeenAt:row.last_seen_at??""};
+    return await checkSession(session, now);
   }
-  const sessions = await readJson<Session[]>(sessionsFile, []);
+  const sessions = await readJson<StoredSession[]>(sessionsFile, []);
   const session = sessions.find(item => item.id === sessionId);
   if(!session) return null;
-  if(Date.parse(session.expiresAt) <= Date.now()){
-    await writeJson(sessionsFile, sessions.filter(item => item.id !== sessionId));
-    return null;
+  return await checkSession({...session,lastSeenAt:session.lastSeenAt??""}, now);
+}
+
+/** Отметка активности. Отдельная функция: её вызывают проверка срока и, при желании, другие входы. */
+async function touchSession(sessionId:string, now=Date.now()){
+  const stamp = new Date(now).toISOString();
+  if(isYdbEnabled()){
+    await ydbQuery()`
+      UPDATE ${ydbQuery().identifier(getTable("sessions"))}
+      SET last_seen_at = ${stamp}
+      WHERE id = ${sessionId}
+    `;
+    return;
   }
-  return session;
+  const sessions = await readJson<StoredSession[]>(sessionsFile, []);
+  const index = sessions.findIndex(item => item.id === sessionId);
+  if(index<0) return;
+  sessions[index] = {...sessions[index], lastSeenAt:stamp};
+  await writeJson(sessionsFile, sessions);
 }
 
 export async function deleteSession(sessionId:string){
@@ -157,6 +228,25 @@ export async function deleteSession(sessionId:string){
     await ydbQuery()`DELETE FROM ${ydbQuery().identifier(getTable("sessions"))} WHERE id = ${sessionId}`;
     return;
   }
-  const sessions = await readJson<Session[]>(sessionsFile, []);
+  const sessions = await readJson<StoredSession[]>(sessionsFile, []);
   await writeJson(sessionsFile, sessions.filter(item => item.id !== sessionId));
+}
+
+/**
+ * Отзыв всех сессий пользователя — «выйти на всех устройствах» и завершение угнанного входа.
+ * Возвращает число отозванных, чтобы ответ говорил, что именно произошло.
+ */
+export async function deleteUserSessions(userId:string):Promise<number>{
+  if(isYdbEnabled()){
+    const [rows]=await ydbQuery()<Array<{id:string}>>`
+      DELETE FROM ${ydbQuery().identifier(getTable("sessions"))}
+      WHERE user_id = ${userId}
+      RETURNING id
+    `;
+    return rows?.length ?? 0;
+  }
+  const sessions = await readJson<StoredSession[]>(sessionsFile, []);
+  const kept = sessions.filter(item => item.userId !== userId);
+  await writeJson(sessionsFile, kept);
+  return sessions.length-kept.length;
 }

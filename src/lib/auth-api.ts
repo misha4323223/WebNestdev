@@ -17,3 +17,5 @@ export const verifyPhoneLogin=(phone:string,code:string)=>apiJson<{user:AuthUser
 export const register=(email:string,password:string)=>apiJson<{user:AuthUser}>("/api/auth/register",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({email,password})});
 export const login=(email:string,password:string)=>apiJson<{user:AuthUser}>("/api/auth/login",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({email,password})});
 export const logout=()=>apiJson<{ok:boolean}>("/api/auth/logout",{method:"POST"});
+/** Отзывает все входы аккаунта, включая текущий: после ответа сессии на этом устройстве тоже нет. */
+export const logoutAll=()=>apiJson<{ok:boolean;revoked:number}>("/api/auth/logout-all",{method:"POST"});

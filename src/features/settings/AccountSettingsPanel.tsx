@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { apiJson } from "../../lib/api";
+import { logoutAll } from "../../lib/auth-api";
 import { applyPreferences, type UserPreferences } from "../../lib/preferences";
 import {
   balanceLabel,
@@ -20,7 +21,7 @@ import { activePlanId, usePlanChoice, writePlanChoice } from "../../lib/plan-cho
 import { contactEmailOf } from "../../lib/account-contact";
 import type { OnboardingProfile } from "../../lib/onboarding";
 import { openCookieSettings } from "../legal/CookieConsent";
-import { Check, CreditCard, Receipt, RefreshCw, Settings2, ShieldCheck, UserRound, Wallet } from "lucide-react";
+import { Check, CreditCard, LogOut, Receipt, RefreshCw, Settings2, ShieldCheck, UserRound, Wallet } from "lucide-react";
 
 type Preferences = UserPreferences;
 type AccountData = {
@@ -33,7 +34,7 @@ const initialPreferences: Preferences = { language: "ru", compactMode: false, em
 const tokenLabel = (value: number) => value.toLocaleString("ru-RU");
 
 export function AccountSettingsPanel() {
-  const [section, setSection] = useState<"account" | "preferences" | "subscription">("account");
+  const [section, setSection] = useState<"account" | "preferences" | "security" | "subscription">("account");
   const [account, setAccount] = useState<AccountData | null>(null);
   const [preferences, setPreferences] = useState<UserPreferences>(initialPreferences);
   const [billing, setBilling] = useState<BillingData | null>(null);
@@ -47,6 +48,7 @@ export function AccountSettingsPanel() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [refreshingStorage, setRefreshingStorage] = useState(false);
+  const [signingOutEverywhere, setSigningOutEverywhere] = useState(false);
 
   async function reload() {
     setLoading(true); setError("");
@@ -75,6 +77,22 @@ export function AccountSettingsPanel() {
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); setPaying(null); }
   }
 
+  /**
+   * Отзыв всех сессий. После ответа текущая cookie уже недействительна, поэтому остаётся
+   * только перезагрузить страницу: панель сама покажет экран входа.
+   */
+  async function signOutEverywhere() {
+    setSigningOutEverywhere(true); setError(""); setNotice("");
+    try {
+      await logoutAll();
+      setNotice("Все входы завершены. Открываем экран входа…");
+      window.setTimeout(() => window.location.reload(), 500);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+      setSigningOutEverywhere(false);
+    }
+  }
+
   async function toggleRenew(autoRenew: boolean) {
     setSavingRenew(true); setError(""); setNotice("");
     try {
@@ -85,7 +103,7 @@ export function AccountSettingsPanel() {
     finally { setSavingRenew(false); }
   }
 
-  const nav = [{ id: "account", label: "Аккаунт", icon: UserRound }, { id: "preferences", label: "Предпочтения", icon: Settings2 }, { id: "subscription", label: "Тариф и подписка", icon: CreditCard }] as const;
+  const nav = [{ id: "account", label: "Аккаунт", icon: UserRound }, { id: "security", label: "Безопасность", icon: ShieldCheck }, { id: "preferences", label: "Предпочтения", icon: Settings2 }, { id: "subscription", label: "Тариф и подписка", icon: CreditCard }] as const;
   const currentPlanId = activePlanId(billing);
   const activePlan = billing?.plans.find(plan => plan.id === currentPlanId);
   const subscription = billing?.subscription;
@@ -169,6 +187,17 @@ export function AccountSettingsPanel() {
                 <a href="/legal/contacts" target="_blank" rel="noopener noreferrer">Реквизиты и контакты</a>
               </div>
             </div>
+          </div>}
+          {section === "security" && <div className="account-section">
+            <span className="eyebrow">БЕЗОПАСНОСТЬ</span><h3>Сессии и входы</h3>
+            <p className="account-muted">Вход открывает сессию в браузере. Она завершается после долгого бездействия и по абсолютному сроку — сервер проверяет это при каждом запросе.</p>
+            <div className="account-note"><ShieldCheck size={14}/> Если вы входили на чужом устройстве или потеряли доступ к нему, завершите все сессии сразу.</div>
+            <div className="account-pref-actions">
+              <button type="button" className="ghost-button" disabled={signingOutEverywhere} onClick={() => void signOutEverywhere()}>
+                <LogOut size={13}/> {signingOutEverywhere ? "Завершаем…" : "Выйти на всех устройствах"}
+              </button>
+            </div>
+            <p className="account-muted account-legal-note">Кнопка завершает все входы аккаунта, включая этот. Понадобится войти заново.</p>
           </div>}
           {section === "preferences" && <div className="account-section">
             <span className="eyebrow">ПРЕДПОЧТЕНИЯ</span><h3>Предпочтения</h3><p className="account-muted">Параметры сохраняются на сервере и привязаны к вашему аккаунту. Компактный режим применяется сразу.</p>

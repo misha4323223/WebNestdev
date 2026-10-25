@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { attachSession, getCurrentUser, SESSION_COOKIE } from "../auth/auth.js";
-import { createUser, deleteSession, verifyUser, EMAIL_TAKEN_MESSAGE } from "../auth/auth-store.js";
+import { attachSession, getCurrentUser, requireUser, SESSION_COOKIE } from "../auth/auth.js";
+import { createUser, deleteSession, deleteUserSessions, verifyUser, EMAIL_TAKEN_MESSAGE } from "../auth/auth-store.js";
 import { findYandexIdentityByUserId } from "../auth/yandex-account-store.js";
 import { findPhoneByUserId, formatPhone } from "../auth/phone-store.js";
 import { getUserProfile } from "../account/profile-store.js";
@@ -70,5 +70,17 @@ export async function registerAuthRoutes(app:FastifyInstance){
     if(sessionId) await deleteSession(sessionId);
     reply.clearCookie(SESSION_COOKIE,{path:"/"});
     return {ok:true};
+  });
+  /**
+   * «Выйти на всех устройствах»: один ряд в `sessions` на вход, поэтому отзыв — это удаление
+   * всех сессий пользователя. Текущая тоже удаляется: иначе кнопка оставляла бы открытой ту
+   * вкладку, с которой её нажали, и «вышли везде» было бы неправдой.
+   */
+  app.post("/api/auth/logout-all", async (request,reply) => {
+    const user = await requireUser(request, reply);
+    if(!user) return;
+    const revoked = await deleteUserSessions(user.id);
+    reply.clearCookie(SESSION_COOKIE,{path:"/"});
+    return {ok:true,revoked};
   });
 }
