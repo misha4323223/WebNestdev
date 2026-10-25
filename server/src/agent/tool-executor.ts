@@ -4,18 +4,20 @@ import type { AgentContext } from "./types.js";
 import { consumeUsageForCurrentPlan } from "../account/usage-store.js";
 import { assertWithinCurrentPlan, recordStorageMutation } from "../account/storage-quota.js";
 
-const storagePreCheckTools = new Set(["fs.write", "terminal.exec", "npm.install"]);
+const storagePreCheckTools = new Set(["fs.write", "terminal.exec", "npm.install", "pip.install", "net.download"]);
 const storagePostRecordTools = new Set([
   "fs.write",
   "fs.delete",
   "fs.rename",
   "terminal.exec",
   "npm.install",
+  "pip.install",
+  "net.download",
   "git.add",
   "git.commit",
   "deploy.plan",
 ]);
-const heavyStorageMutationTools = new Set(["terminal.exec", "npm.install"]);
+const heavyStorageMutationTools = new Set(["terminal.exec", "npm.install", "pip.install", "net.download"]);
 
 export async function executeTool(call:ProviderToolCall,context:AgentContext){
   const tool=getTool(call.name);

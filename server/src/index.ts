@@ -51,6 +51,7 @@ import { registerQuestionRoutes } from "./routes/questions.js";
 import { registerChangesRoutes } from "./routes/changes.js";
 import { registerTasksRoutes } from "./routes/tasks.js";
 import { registerAuthRoutes } from "./routes/auth.js";
+import { registerAdminRoutes } from "./routes/admin.js";
 import { registerPhoneAuthRoutes } from "./routes/phone-auth.js";
 import { registerAccountRoutes } from "./routes/account.js";
 import { registerBillingRoutes } from "./routes/billing.js";
@@ -64,6 +65,7 @@ import { describeBilling } from "./billing/robokassa.js";
 import { registerPlatformRoutes } from "./routes/platform.js";
 import { loadPlatformEnv } from "./platform/platform-env.js";
 import { ensureDemoUser } from "./auth/auth-store.js";
+import { ensureBootstrapAdmin } from "./admin/bootstrap.js";
 import "./tools/project-tools.js";
 import "./tools/filesystem-tools.js";
 import "./tools/terminal-tools.js";
@@ -87,6 +89,8 @@ import "./tools/access-tools.js";
 import "./tools/secret-tools.js";
 import "./tools/question-tools.js";
 import "./tools/web-tools.js";
+import "./tools/net-tools.js";
+import "./tools/python-tools.js";
 import "./tools/design-tools.js";
 
 // Неизвестный бэкенд или postgres без DATABASE_URL — ошибка конфигурации, а не повод молча
@@ -103,6 +107,13 @@ const production = process.env.NODE_ENV === "production";
 const configuredOrigins = process.env.WEBNESTDEV_ALLOWED_ORIGINS;
 if (production && !configuredOrigins) throw new Error("В production обязательна переменная WEBNESTDEV_ALLOWED_ORIGINS");
 const allowedOrigins = (configuredOrigins ?? "").split(",").map(value => value.trim()).filter(Boolean);
+// Админ-приложение живёт на своём источнике, поэтому его адрес добавляется отдельным списком.
+// Маршруты /api/admin/* не читают cookie (вход по Bearer-токену), так что расширение CORS не даёт
+// чужой странице приложить пользовательский вход и не отдаёт ей данные панели.
+const adminOrigins = (process.env.WEBNESTDEV_ADMIN_ORIGINS ?? "").split(",").map(value => value.trim()).filter(Boolean);
+for (const origin of adminOrigins) {
+  if (!allowedOrigins.includes(origin)) allowedOrigins.push(origin);
+}
 if (production && allowedOrigins.some(origin => /^https?:\/\/localhost(?::\d+)?$/i.test(origin))) {
   throw new Error("В production в WEBNESTDEV_ALLOWED_ORIGINS нельзя указывать localhost");
 }
@@ -160,7 +171,21 @@ console.log("[sandbox] " + describeSandboxPaths());
 // которые поднимаются сразу после деплоя; дальше — раз в сутки (см. storage-scheduler.ts).
 let stopStorageReconcile: (() => void) | null = null;
 initializeStorage()
-  .then(() => { stopStorageReconcile = startStorageReconcileScheduler(); })
+  .then(async () => {
+    stopStorageReconcile = startStorageReconcileScheduler();
+    // Первый администратор из окружения — путь для ВМ, где нет удобного терминала
+    // (docs/ADMIN_API.md). Существующая запись не меняется; пароль в лог не попадает.
+    // Ошибка здесь не должна выглядеть как «хранилище не поднялось»: база уже готова.
+    try {
+      const bootstrap = await ensureBootstrapAdmin();
+      if (bootstrap.status === "created") app.log.info({ email: bootstrap.email }, "admin account created from environment");
+      else if (bootstrap.status === "skipped" && process.env.ADMIN_BOOTSTRAP_EMAIL) {
+        app.log.warn({ reason: bootstrap.reason }, "admin bootstrap skipped");
+      }
+    } catch (error) {
+      app.log.error({ error: error instanceof Error ? error.message : error }, "admin bootstrap failed");
+    }
+  })
   .catch((err) => {
     console.error("[storage] init failed (background):", err?.message ?? err);
   });
@@ -199,6 +224,9 @@ await registerSameOriginGuard(app);
 
 await registerHealthRoutes(app);
 await registerAuthRoutes(app);
+// Вход администратора платформы: отдельные аккаунты, пароль + TOTP, сессия по Bearer-токену
+// (docs/ADMIN_API.md). Ставится рядом с пользовательским входом, но не делит с ним ни записи, ни сессии.
+await registerAdminRoutes(app);
 await registerPhoneAuthRoutes(app);
 await registerAccountRoutes(app);
 await registerBillingRoutes(app);

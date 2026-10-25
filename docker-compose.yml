@@ -144,6 +144,18 @@ services:
       # и объясняет, как назначить администратора.
       WEBNESTDEV_ADMIN_EMAILS: ${WEBNESTDEV_ADMIN_EMAILS:-}
       WEBNESTDEV_ADMIN_USER_IDS: ${WEBNESTDEV_ADMIN_USER_IDS:-}
+      # Вход администратора через API для отдельного приложения админки (docs/ADMIN_API.md):
+      # свои аккаунты, пароль + TOTP, сессия по Bearer-токену. Список адресов ниже — это CORS:
+      # только эти источники может позвать браузерная админка с другого домена.
+      WEBNESTDEV_ADMIN_ORIGINS: ${WEBNESTDEV_ADMIN_ORIGINS:-}
+      ADMIN_TOTP_ISSUER: ${ADMIN_TOTP_ISSUER:-NestDev}
+      ADMIN_SESSION_TTL_MS: ${ADMIN_SESSION_TTL_MS:-}
+      ADMIN_SESSION_IDLE_TTL_MS: ${ADMIN_SESSION_IDLE_TTL_MS:-}
+      ADMIN_CHALLENGE_TTL_MS: ${ADMIN_CHALLENGE_TTL_MS:-}
+      # Первый администратор без терминала на ВМ: если записи ещё нет, сервер создаст её при
+      # старте. Существующая не меняется, TOTP всё равно потребуется при первом входе.
+      ADMIN_BOOTSTRAP_EMAIL: ${ADMIN_BOOTSTRAP_EMAIL:-}
+      ADMIN_BOOTSTRAP_PASSWORD: ${ADMIN_BOOTSTRAP_PASSWORD:-}
       # Вход по номеру телефона. Compose передаёт в контейнер только перечисленные здесь
       # переменные: ключи SMS-провайдера, лежавшие в .env, до сервера не доходили, вход по
       # номеру молча переходил в тестовый режим (код только в логах), а выкатка ещё и

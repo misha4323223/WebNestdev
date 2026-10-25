@@ -102,5 +102,7 @@ export function shouldRunBrowserRuntime(name: string, args: Record<string, unkno
     const command = typeof args.command === "string" ? args.command : "";
     return /(^|\s)(npm\s+(run|install)|pnpm\s+(run|install)|yarn\s+(run|install)|vite|next|react|webpack|tsc)\b/i.test(command);
   }
-  return name === "npm.install";
+  // Установка зависимостей меняет то, что увидит браузер, поэтому проверка runtime нужна и для
+  // Python-пакетов: приложение на Python вполне может быть точкой входа предпросмотра.
+  return name === "npm.install" || name === "pip.install";
 }

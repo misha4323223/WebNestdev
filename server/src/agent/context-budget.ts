@@ -67,6 +67,11 @@ const TOOL_OUTPUT_CHARS: Record<string, number> = {
   "fs.read": 24000,
   "terminal.exec": 6000,
   "npm.install": 6000,
+  "pip.install": 6000,
+  // Ответ API — то, ради чего сделан вызов; обрезать его до общего минимума значит заставить
+  // повторять запрос. Скачивание файла отдаёт путь и размер, ему хватает и меньшего.
+  "net.request": 12000,
+  "net.download": 1500,
   "browser.runtime": 6000,
   "browser.scenario": 8000,
   "git.diff": 8000,

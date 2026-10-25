@@ -19,7 +19,7 @@ import { finalizeRunChanges } from "./changes/changes-service.js";
  * Tools that change the project and therefore trigger the automatic verification cycle.
  * `database.env` writes the project's connection string, so it belongs here too.
  */
-const MUTATING_TOOLS=new Set(["fs.write","fs.rename","fs.delete","terminal.exec","npm.install","database.env"]);
+const MUTATING_TOOLS=new Set(["fs.write","fs.rename","fs.delete","terminal.exec","npm.install","pip.install","net.download","database.env"]);
 /**
  * Git bookkeeping changes the repository, not the code, so it is not verified.
  *
@@ -58,7 +58,9 @@ export function changesSomething(name:string,input:unknown){
     return typeof command!=="string"||!isReadOnlyCommand(command);
   }
   if(MUTATING_TOOLS.has(name)||PLANNER_FORBIDDEN_TOOLS.has(name))return true;
-  if(name!=="yandex.request")return false;
+  // Внешний запрос — чтение только для GET/HEAD: POST к чужому API меняет состояние вне проекта,
+  // а планировщик обещал ничего не менять.
+  if(name!=="yandex.request"&&name!=="net.request")return false;
   const method=(input as {method?:unknown}|null)?.method;
   if(typeof method!=="string")return false;
   return method.toUpperCase()!=="GET"&&method.toUpperCase()!=="HEAD";

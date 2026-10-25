@@ -93,6 +93,16 @@ const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 export const CROSS_SITE_WEBHOOKS = [/^\/api\/billing\/robokassa\/result$/];
 
 /**
+ * Маршруты, которые аутентифицируются только заголовком `Authorization: Bearer`.
+ *
+ * Cookie они не читают и не ставят, поэтому чужой сайт не может приложить вход к своему запросу:
+ * CSRF здесь нечем — подделать заголовок браузер межсайтовой странице не даёт без CORS-preflight,
+ * а preflight проходит только для источников из `WEBNESTDEV_ADMIN_ORIGINS`. Именно поэтому префикс
+ * исключён из Origin-guard: браузерная админка живёт на своём источнике, а не на домене панели.
+ */
+export const TOKEN_ONLY_API = [/^\/api\/admin\//];
+
+/**
  * Один хук на всё приложение: любой небезопасный запрос к `/api` с чужим `Origin` отклоняется.
  *
  * Раньше проверка стояла только на маршрутах секретов, ключей платформы и оплаты. Остальные
@@ -107,6 +117,7 @@ export async function registerSameOriginGuard(app: FastifyInstance) {
     const path = (request.raw.url ?? request.url ?? "").split("?")[0];
     if (!path.startsWith("/api/")) return;
     if (CROSS_SITE_WEBHOOKS.some(allowed => allowed.test(path))) return;
+    if (TOKEN_ONLY_API.some(allowed => allowed.test(path))) return;
     if (isSameOriginRequest(request)) return;
     request.log.warn({ origin: request.headers.origin, path }, "cross-site request refused");
     return reply.code(403).send({ error: sameOriginRefusal() });

@@ -4,7 +4,7 @@ import { changesSomething } from "../agent-runtime.js";
 
 /** Planner mode must be read-only by construction, not only by instruction. */
 test("every tool that writes is refused in planner mode", () => {
-  for (const name of ["fs.write", "fs.rename", "fs.delete", "npm.install", "git.add", "git.commit", "git.pull", "database.env", "secrets.request", "preview.start", "preview.stop"]) {
+  for (const name of ["fs.write", "fs.rename", "fs.delete", "npm.install", "pip.install", "net.download", "git.add", "git.commit", "git.pull", "database.env", "secrets.request", "preview.start", "preview.stop"]) {
     assert.equal(changesSomething(name, {}), true, name + " must be refused");
   }
 });
@@ -35,6 +35,14 @@ test("terminal.exec is allowed only for inspection commands", () => {
     "curl https://example.com",
   ]) {
     assert.equal(changesSomething("terminal.exec", { command }), true, command + " must be refused");
+  }
+});
+
+test("net.request may read an API but not change it in planner mode", () => {
+  assert.equal(changesSomething("net.request", { method: "GET", url: "https://example.com" }), false);
+  assert.equal(changesSomething("net.request", { method: "HEAD", url: "https://example.com" }), false);
+  for (const method of ["POST", "PUT", "PATCH", "DELETE"]) {
+    assert.equal(changesSomething("net.request", { method, url: "https://example.com" }), true, method + " must be refused");
   }
 });
 

@@ -9,6 +9,7 @@ import {
   CircleCheck,
   CircleDashed,
   Copy,
+  Download,
   FileSymlink,
   FileText,
   FolderOpen,
@@ -26,6 +27,7 @@ import {
   Rocket,
   ScanSearch,
   Search,
+  Send,
   ShieldCheck,
   Sparkles,
   SquareTerminal,
@@ -51,6 +53,9 @@ const TOOL_ICONS: Record<string, ActionDescriptor> = {
   "fs.delete": { icon: Trash2, label: "Удаляет файл" },
   "terminal.exec": { icon: SquareTerminal, label: "Команда в терминале" },
   "npm.install": { icon: Package, label: "Ставит зависимости" },
+  "pip.install": { icon: Package, label: "Ставит Python-зависимости" },
+  "net.request": { icon: Send, label: "Запрашивает внешний API" },
+  "net.download": { icon: Download, label: "Скачивает файл" },
   "preview.start": { icon: Rocket, label: "Запускает превью" },
   "preview.stop": { icon: PowerOff, label: "Останавливает превью" },
   "project.verify": { icon: ShieldCheck, label: "Проверяет доступность" },
@@ -72,6 +77,7 @@ const PREFIX_ICONS: Array<[string, ActionDescriptor]> = [
   ["preview.", { icon: Rocket, label: "Управляет превью" }],
   ["project.", { icon: FolderOpen, label: "Работа с проектом" }],
   ["web.", { icon: Search, label: "Работа с интернетом" }],
+  ["net.", { icon: Globe, label: "Работа с внешним API" }],
   ["fs.", { icon: FileText, label: "Работа с файлами" }],
 ];
 

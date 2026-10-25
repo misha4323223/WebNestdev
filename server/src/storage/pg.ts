@@ -290,6 +290,30 @@ export async function initializeStorage(): Promise<void> {
     // значение читается как «отметки ещё нет» — такая сессия получает полный idle-срок.
     await pool.query(`ALTER TABLE ${tbl("sessions")} ADD COLUMN IF NOT EXISTS last_seen_at TEXT NOT NULL DEFAULT ''`);
 
+    // Администраторы платформы — отдельные аккаунты, не пользователи панели (см. admin/admin-store.ts).
+    // Пароль — scrypt, TOTP-секрет — зашифрованный, коды восстановления — только хешами.
+    await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("admin_users")} (
+      id TEXT NOT NULL PRIMARY KEY,
+      email TEXT NOT NULL UNIQUE,
+      password_hash TEXT NOT NULL,
+      totp_secret TEXT NOT NULL DEFAULT '',
+      totp_enabled_at TEXT NOT NULL DEFAULT '',
+      recovery_hashes TEXT NOT NULL DEFAULT '[]',
+      last_totp_step TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`);
+
+    // Сессии админ-приложения: id — sha256 токена, поэтому копия базы не даёт войти.
+    await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("admin_sessions")} (
+      id TEXT NOT NULL PRIMARY KEY,
+      admin_id TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      expires_at TEXT NOT NULL,
+      last_seen_at TEXT NOT NULL
+    )`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("admin_sessions")}_admin ON ${tbl("admin_sessions")} (admin_id)`);
+
     await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("projects")} (
       id TEXT NOT NULL PRIMARY KEY,
       name TEXT NOT NULL,

@@ -20,6 +20,27 @@ test("docker-compose and a path-qualified binary are refused too", () => {
   assert.ok(containerCommandRefusal("/usr/bin/docker ps"));
 });
 
+test("a system package manager is refused with the honest reason and an alternative", () => {
+  for (const command of ["apt-get install -y ffmpeg", "sudo apt update", "apk add libpq", "dnf install git"]) {
+    const refusal = containerCommandRefusal(command);
+    assert.ok(refusal, command + " должен быть отклонён");
+    assert.match(refusal.stderr, /Системные пакеты/);
+    assert.match(refusal.stderr, /pip\.install/);
+    assert.match(refusal.stderr, /Dockerfile/);
+  }
+});
+
+test("an arbitrary git clone is refused: repositories are connected through the panel", () => {
+  for (const command of ["git clone https://github.com/other/repo", "git -C . clone https://example.com/x.git"]) {
+    const refusal = containerCommandRefusal(command);
+    assert.ok(refusal, command + " должен быть отклонён");
+    assert.match(refusal.stderr, /подключите репозиторий через панель/i);
+  }
+  // Обычный git-статус и уже подключённый репозиторий не задеты.
+  assert.equal(containerCommandRefusal("git status"), null);
+  assert.equal(containerCommandRefusal("git pull --ff-only"), null);
+});
+
 test("an ordinary project command is not refused", () => {
   assert.equal(containerCommandRefusal("npm run build"), null);
   assert.equal(containerCommandRefusal("node -e \"console.log(1)\""), null);

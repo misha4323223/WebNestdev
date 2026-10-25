@@ -17,15 +17,15 @@ const NETWORK_FAILURE =
   /\b(?:ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ENETUNREACH|EHOSTUNREACH|ETIMEDOUT|ERR_SOCKET_TIMEOUT)\b|getaddrinfo|Temporary failure in name resolution|Could not resolve host|Failed to fetch|socket hang up|request to .* failed/i;
 
 export const PACKAGE_INSTALL_HINT =
-  "Сеть в терминале выключена по умолчанию, поэтому `npm install` здесь не скачивает пакеты " +
+  "Сеть в терминале выключена по умолчанию, поэтому `npm install` / `pip install` здесь не скачивают пакеты " +
   "(ENOTFOUND / EAI_AGAIN / таймаут). Это ограничение песочницы, а не ошибка проекта. " +
-  "Установите зависимости через npm.install — это единственный инструмент с исходящим доступом; " +
-  "preview.start тоже ставит их сам перед сборкой.";
+  "Node-зависимости ставит npm.install, Python-зависимости — pip.install; preview.start тоже ставит npm-зависимости сам перед сборкой.";
 
 export const NO_NETWORK_HINT =
   "Похоже, команде нужен интернет, а у терминала исходящая сеть выключена по умолчанию " +
-  "(контейнер запускается с `--network none`). Это не ошибка проекта: пакеты ставит npm.install, " +
-  "приложение запускает preview.start, а внешние запросы проверяются уже в работающем предпросмотре.";
+  "(контейнер запускается с `--network none`). Это не ошибка проекта: внешний API вызывается через net.request, " +
+  "файл по ссылке скачивается через net.download, пакеты ставят npm.install и pip.install, " +
+  "а приложение запускает preview.start.";
 
 /** Ставит ли команда пакеты: для неё подсказка конкретнее, чем «нужен интернет». */
 export function isPackageInstall(command: string) {

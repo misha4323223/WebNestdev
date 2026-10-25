@@ -32,7 +32,7 @@ const SECRET_FALLBACK = 0o644;
  * `.git` пропускается здесь не потому, что контейнер его наполняет, а потому что его наполняет
  * **сервер** (isomorphic-git от root) — у него отдельный обход, см. openGitForSandbox.
  */
-const SKIP_DIRS = new Set(["node_modules", ".git", ".cache", ".vite", ".turbo"]);
+const SKIP_DIRS = new Set(["node_modules", ".git", ".cache", ".vite", ".turbo", ".python"]);
 /** Потолок разового обхода: большое дерево лечится частично, но не тормозит первый вызов. */
 const TREE_LIMIT = 20000;
 

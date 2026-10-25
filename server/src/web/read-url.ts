@@ -261,8 +261,15 @@ async function readCapped(stream: Readable, limit: number, keep: "head" | "tail"
   return { body, oversized };
 }
 
-export type PageResponse = { status: number; headers: IncomingHttpHeaders; body: string; oversized: boolean };
-export type TransportOptions = { maxBytes?: number; keep?: "head" | "tail" };
+export type PageResponse = { status: number; headers: IncomingHttpHeaders; body: string; bytes: Buffer; oversized: boolean };
+export type TransportOptions = {
+  maxBytes?: number;
+  keep?: "head" | "tail";
+  /** Метод и тело нужны инструментам API: `web.read` оставляет GET без тела. */
+  method?: string;
+  headers?: Record<string, string>;
+  body?: string | Buffer;
+};
 
 /**
  * Один запрос страницы по уже проверенному адресу.
@@ -282,7 +289,7 @@ export async function requestPage(url: URL, addresses: string[], signal: AbortSi
     const request = send(
       url,
       {
-        method: "GET",
+        method: (options.method ?? "GET").toUpperCase(),
         lookup: pinnedLookup(addresses),
         // Семейство выбирает сам `lookup`, а не второй проход DNS с перебором адресов.
         autoSelectFamily: false,
@@ -296,6 +303,7 @@ export async function requestPage(url: URL, addresses: string[], signal: AbortSi
           // Без сжатия: `fetch` сам разбирал gzip, а здесь распаковка — отдельный шаг, и лишний
           // повод для него не нужен. Если сервер сожмёт всё равно — `decodeBody` разберёт.
           "accept-encoding": "identity",
+          ...(options.headers ?? {}),
         },
         signal,
       } as RequestOptions,
@@ -305,11 +313,11 @@ export async function requestPage(url: URL, addresses: string[], signal: AbortSi
           const headers = response.headers;
           if (status >= 300 && status < 400) {
             response.resume();
-            resolve({ status, headers, body: "", oversized: false });
+            resolve({ status, headers, body: "", bytes: Buffer.alloc(0), oversized: false });
             return;
           }
           readCapped(decodeBody(response, headers["content-encoding"]), limit, keep).then(
-            ({ body, oversized }) => resolve({ status, headers, body: body.toString("utf8"), oversized }),
+            ({ body, oversized }) => resolve({ status, headers, body: body.toString("utf8"), bytes: body, oversized }),
             reject,
           );
         } catch (error) {
@@ -318,7 +326,7 @@ export async function requestPage(url: URL, addresses: string[], signal: AbortSi
       },
     );
     request.on("error", reject);
-    request.end();
+    request.end(options.body);
   });
 }
 

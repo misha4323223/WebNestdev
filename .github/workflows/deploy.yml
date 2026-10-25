@@ -216,6 +216,11 @@ jobs:
           PROJECT_ARCHIVE_IDLE_MINUTES: ${{ secrets.PROJECT_ARCHIVE_IDLE_MINUTES || vars.PROJECT_ARCHIVE_IDLE_MINUTES }}
           WEBNESTDEV_ADMIN_EMAILS: ${{ secrets.WEBNESTDEV_ADMIN_EMAILS }}
           WEBNESTDEV_ADMIN_USER_IDS: ${{ secrets.WEBNESTDEV_ADMIN_USER_IDS }}
+          # Первый администратор админ-приложения (docs/ADMIN_API.md). Сервер создаёт запись при
+          # старте, если такого адреса ещё нет, и не трогает существующую. Пароль — только Secret:
+          # он попадает в .env на ВМ, где и так лежат ключ шифрования и пароль базы.
+          ADMIN_BOOTSTRAP_EMAIL: ${{ secrets.ADMIN_BOOTSTRAP_EMAIL }}
+          ADMIN_BOOTSTRAP_PASSWORD: ${{ secrets.ADMIN_BOOTSTRAP_PASSWORD }}
         run: |
           set -euo pipefail
           # Чистим переменные от скрытых символов (CRLF из Windows при вставке секретов)
@@ -284,6 +289,8 @@ jobs:
           add_platform_env PROJECT_ARCHIVE_IDLE_MINUTES "$PROJECT_ARCHIVE_IDLE_MINUTES"
           add_platform_env WEBNESTDEV_ADMIN_EMAILS "$WEBNESTDEV_ADMIN_EMAILS"
           add_platform_env WEBNESTDEV_ADMIN_USER_IDS "$WEBNESTDEV_ADMIN_USER_IDS"
+          add_platform_env ADMIN_BOOTSTRAP_EMAIL "$ADMIN_BOOTSTRAP_EMAIL"
+          add_platform_env ADMIN_BOOTSTRAP_PASSWORD "$ADMIN_BOOTSTRAP_PASSWORD"
           # Итог по OAuth-ключам — только «есть/нет», без значений. Раньше пустой ключ был
           # виден только по маскированному дампу окружения выше, и «вставлено, но не работает»
           # приходилось разгадывать: здесь причина видна одной строкой.
@@ -394,6 +401,11 @@ jobs:
           PROJECT_ARCHIVE_IDLE_MINUTES: ${{ secrets.PROJECT_ARCHIVE_IDLE_MINUTES || vars.PROJECT_ARCHIVE_IDLE_MINUTES }}
           WEBNESTDEV_ADMIN_EMAILS: ${{ secrets.WEBNESTDEV_ADMIN_EMAILS }}
           WEBNESTDEV_ADMIN_USER_IDS: ${{ secrets.WEBNESTDEV_ADMIN_USER_IDS }}
+          # Первый администратор админ-приложения (docs/ADMIN_API.md). Сервер создаёт запись при
+          # старте, если такого адреса ещё нет, и не трогает существующую. Пароль — только Secret:
+          # он попадает в .env на ВМ, где и так лежат ключ шифрования и пароль базы.
+          ADMIN_BOOTSTRAP_EMAIL: ${{ secrets.ADMIN_BOOTSTRAP_EMAIL }}
+          ADMIN_BOOTSTRAP_PASSWORD: ${{ secrets.ADMIN_BOOTSTRAP_PASSWORD }}
         run: |
           set -euo pipefail
           image="$IMAGE_INPUT"
@@ -442,6 +454,8 @@ jobs:
           add_platform_env PROJECT_ARCHIVE_IDLE_MINUTES "$PROJECT_ARCHIVE_IDLE_MINUTES"
           add_platform_env WEBNESTDEV_ADMIN_EMAILS "$WEBNESTDEV_ADMIN_EMAILS"
           add_platform_env WEBNESTDEV_ADMIN_USER_IDS "$WEBNESTDEV_ADMIN_USER_IDS"
+          add_platform_env ADMIN_BOOTSTRAP_EMAIL "$ADMIN_BOOTSTRAP_EMAIL"
+          add_platform_env ADMIN_BOOTSTRAP_PASSWORD "$ADMIN_BOOTSTRAP_PASSWORD"
           # На этом раннере скрипт запускается на самой ВМ, поэтому ключ кладётся во временный
           # файл рядом, с правами только для владельца.
           APP_KEY_FILE=""

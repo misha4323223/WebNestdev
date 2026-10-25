@@ -11,11 +11,60 @@ import { registerTool } from "../tool-registry.js";
  * отказ отдаётся сразу и с объяснением, что использовать вместо неё.
  */
 const CONTAINER_COMMANDS=new Set(["docker","docker-compose","podman","nerdctl","buildah"]);
+/**
+ * Системные пакеты в контейнер проекта не ставятся: он работает от uid 1000, корень файловой
+ * системы read-only, а установленное исчезнет вместе с контейнером. Отказ сразу с причиной дешевле
+ * пяти минут ожидания и повторных попыток агента.
+ */
+const SYSTEM_PACKAGE_COMMANDS=new Set(["apt","apt-get","aptitude","apk","yum","dnf","pacman","zypper"]);
 /** Долгая команда в одном шаге: от секунды до получаса. */
 const MAX_COMMAND_TIMEOUT_MS=30*60_000;
 
+function commandTokens(command:string){
+  // `sudo apt install` — тот же apt, только заведомо без root; отказ должен это узнавать.
+  const tokens=command.trim().split(/\s+/);
+  while(tokens.length&&/^(sudo|env|command|time|nice)$/.test(tokens[0])) tokens.shift();
+  return tokens;
+}
+
+function commandHead(command:string){
+  const tokens=commandTokens(command);
+  return (tokens[0]??"").replace(/^.*\//,"");
+}
+
+/**
+ * Произвольный клон остаётся запрещён: репозиторий подключается через панель, и токен выдаёт
+ * платформа. Без сети `git clone` всё равно не сработает, но отказ должен назвать правильный путь,
+ * а не оставить агента ждать таймаут.
+ */
+function gitCloneRefusal(command:string){
+  const tokens=commandTokens(command);
+  if(tokens[0]?.replace(/^.*\//,"")!=="git")return null;
+  if(!tokens.slice(1,4).includes("clone"))return null;
+  return {
+    ok:false as const,
+    exitCode:1,
+    signal:null,
+    stdout:"",
+    stderr:"Произвольный git clone в песочнице запрещён: подключите репозиторий через панель (GitHub, GitLab, GitVerse и другие поддерживаемые сервисы), и платформа склонирует его сама с нужным токеном. Клонировать чужой URL вручную нельзя — это правило платформы, а не ошибка проекта. Уже подключённый репозиторий обновляется инструментом git.pull.",
+    truncated:false as const,
+  };
+}
+
 export function containerCommandRefusal(command:string):{ok:false;exitCode:number;signal:null;stdout:string;stderr:string;truncated:false}|null{
-  const first=command.trim().split(/\s+/)[0].replace(/^.*\//,"");
+  const first=commandHead(command);
+  const clone=gitCloneRefusal(command);
+  if(clone)return clone;
+  if(SYSTEM_PACKAGE_COMMANDS.has(first)){
+    return {
+      ok:false,
+      exitCode:127,
+      signal:null,
+      stdout:"",
+      stderr:"Системные пакеты (apt/apk/yum) в песочнице не устанавливаются: контейнер работает от uid 1000, корень файловой системы только для чтения, и установленное исчезнет вместе с контейнером. Это ограничение образа, а не проекта. Python-зависимости ставятся в проект через pip.install (в .python), Node-зависимости — через npm.install. Если нужен системный пакет (например, libpq или ffmpeg), его добавляют в Dockerfile образа платформы — скажите об этом пользователю, а не имитируйте установку.",
+      truncated:false,
+    };
+  }
   if(!CONTAINER_COMMANDS.has(first))return null;
   return {
     ok:false,
@@ -31,8 +80,8 @@ registerTool({
   name: "terminal.exec",
   description:
     "Execute a development command in the project's sandbox and wait for it. Input: {command:string,cwd?:string,timeoutMs?:number}. " +
-    "Outbound network is OFF: package installation and downloads (`npm install`, `npx`, `curl`, `git fetch`) fail or wait until the timeout — that is the sandbox, not a project defect; install dependencies with npm.install and start the app with preview.start. " +
-    "Docker and docker-compose are not available and are refused: the platform serves the Preview itself. " +
+    "Outbound network is OFF: package installation and downloads (`npm install`, `npx`, `curl`, `git fetch`) fail or wait until the timeout — that is the sandbox, not a project defect; install Node dependencies with npm.install, Python dependencies with pip.install, call an external API with net.request, download a file into the project with net.download, and start the app with preview.start. " +
+    "Docker and docker-compose are not available and are refused: the platform serves the Preview itself. System packages (apt/apk/yum) are refused too: they need a custom image. " +
     "Expo/EAS commands also need the network and the Expo token: do not run `npx eas` here — use expo.status/expo.setup/expo.build/expo.build_status. " +
     "timeoutMs extends the default limit up to 30 minutes for a build or a test suite, but the step still waits for the command: for anything that may run longer than a few minutes, start it with terminal.start and read its output with terminal.tail instead.",
   parameters: { type: "object", additionalProperties: false, required: ["command"], properties: { command: { type: "string", description: "Одна команда оболочки, например `npm run build`" }, cwd: { type: "string", description: "Рабочий каталог внутри проекта; по умолчанию корень проекта" }, timeoutMs: { type: "number", description: "Предел выполнения в миллисекундах, от 1000 до 1800000; по умолчанию лимит песочницы" } } },

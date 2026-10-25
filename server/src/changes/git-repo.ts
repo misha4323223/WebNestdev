@@ -32,7 +32,7 @@ export const PUSH_STATE_FILE = "nestdev.json";
  */
 const IGNORED_DIRS = new Set([
   ".git", "node_modules", "bower_components", "dist", "build", ".next", ".nuxt", ".output",
-  ".cache", ".parcel-cache", ".turbo", ".vite", ".venv", "venv", "env", "__pycache__",
+  ".cache", ".parcel-cache", ".turbo", ".vite", ".venv", "venv", "env", "__pycache__", ".python",
   "coverage", ".nyc_output", ".webnestdev", ".idea", ".vscode", "target",
 ]);
 const IGNORED_FILE = /^(\.DS_Store|Thumbs\.db|npm-debug\.log|yarn-error\.log|\.env(\..+)?)$/;
@@ -69,7 +69,7 @@ export async function hasCommits(root: string) {
 const EXCLUDE_HEADER = "# webnestdev: служебные файлы проекта не попадают в историю";
 const EXCLUDE_RULES = [
   "node_modules/", "bower_components/", "dist/", "build/", ".next/", ".nuxt/", ".output/",
-  ".cache/", ".parcel-cache/", ".turbo/", ".vite/", ".venv/", "venv/", "__pycache__/",
+  ".cache/", ".parcel-cache/", ".turbo/", ".vite/", ".venv/", "venv/", "__pycache__/", ".python/",
   "coverage/", ".nyc_output/", ".webnestdev/",
   ".env", ".env.*", "!.env.example", "!.env.sample", "!.env.template",
   ".DS_Store", "Thumbs.db", "*.log",
