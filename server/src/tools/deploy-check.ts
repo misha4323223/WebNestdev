@@ -1,6 +1,6 @@
 import { checkServerIdentity, connect as tlsConnect, type PeerCertificate } from "node:tls";
 import { isIP } from "node:net";
-import { assertPublicUrl, WebReadError } from "../web/read-url.js";
+import { assertPublicUrl, requestPage, WebReadError } from "../web/read-url.js";
 import { registerTool } from "../tool-registry.js";
 
 /**
@@ -19,7 +19,6 @@ import { registerTool } from "../tool-registry.js";
 const HTTP_TIMEOUT_MS = 10_000;
 const TLS_TIMEOUT_MS = 8_000;
 const MAX_REDIRECTS = 4;
-const USER_AGENT = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 
 export type TlsInfo = {
   ok: boolean;
@@ -153,13 +152,10 @@ async function fetchChain(start: URL) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
     try {
-      const response = await fetch(current, {
-        method: "GET",
-        redirect: "manual",
-        headers: { "user-agent": USER_AGENT, accept: "text/html,application/xhtml+xml;q=0.9,*/*;q=0.5" },
-        signal: controller.signal,
-      });
-      const rawLocation = response.headers.get("location");
+      // Тот же транспорт, что у `web.read`: соединение идёт на проверенный адрес, а не на имя,
+      // иначе проверка резолва здесь ничего не значила бы (DNS rebinding).
+      const response = await requestPage(current, checked.addresses, controller.signal, { maxBytes: 0 });
+      const rawLocation = response.headers.location ?? null;
       const location = rawLocation ? new URL(rawLocation, current).href : null;
       hops.push({ url: current.href, status: response.status, location });
       if (response.status >= 300 && response.status < 400 && location) {
@@ -172,7 +168,7 @@ async function fetchChain(start: URL) {
         finalUrl: current,
         status: response.status,
         secure,
-        hsts: response.headers.get("strict-transport-security"),
+        hsts: response.headers["strict-transport-security"] ?? null,
       };
     } finally {
       clearTimeout(timer);

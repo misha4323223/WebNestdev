@@ -4,7 +4,7 @@ import type { SandboxConfig } from "../sandbox-manager.js";
 import { resolveInsideSandbox } from "../sandbox/path-guard.js";
 import { runInSandbox, type SandboxRunOptions } from "../sandbox-worker.js";
 import { getServiceConnection } from "../services/connections.js";
-import { assertPublicUrl } from "../web/read-url.js";
+import { assertPublicUrl, requestPage } from "../web/read-url.js";
 
 /**
  * EAS Build — единственная часть Expo, которая может работать из платформы: сборка идёт на
@@ -318,14 +318,14 @@ export async function readBuildLog(url: string, maxChars = MAX_LOG_CHARS) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 20_000);
   try {
-    const response = await fetch(checked.url, {
-      headers: { accept: "text/plain,text/*;q=0.9,*/*;q=0.1" },
-      signal: controller.signal,
-      // Redirect после проверки адреса мог бы увести запрос во внутреннюю сеть.
-      redirect: "error",
-    });
-    if (!response.ok) return { ok: false, status: response.status, text: "", truncated: false, error: "Лог ответил HTTP " + response.status };
-    const full = stripAnsi(await response.text());
+    // Тот же транспорт, что у `web.read`: соединение идёт на проверенный адрес, поэтому подмена
+    // DNS между проверкой и запросом не работает, а редирект не уводит во внутреннюю сеть — его
+    // здесь не проходят вовсе, а показывают как статус ответа.
+    const response = await requestPage(checked.url, checked.addresses, controller.signal, { maxBytes: 2_000_000, keep: "tail" });
+    if (response.status < 200 || response.status >= 300) {
+      return { ok: false, status: response.status, text: "", truncated: false, error: "Лог ответил HTTP " + response.status };
+    }
+    const full = stripAnsi(response.body);
     const limit = Math.max(1000, Math.min(MAX_LOG_CHARS, maxChars));
     const truncated = full.length > limit;
     return {
