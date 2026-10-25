@@ -8,7 +8,7 @@ process.env.WEBNESTDEV_STORAGE = "json";
 process.env.WEBNESTDEV_DATA_DIR = await mkdtemp(path.join(tmpdir(), "nestdev-domain-tool-"));
 
 const { saveDomainConnection } = await import("../domains/connections.js");
-await import("./domain-tools.js");
+const { domainNamesFrom, domainRegistrarId, domainRegistrarPath } = await import("./domain-tools.js");
 const { getTool } = await import("../tool-registry.js");
 
 const now = "2026-10-22T00:00:00.000Z";
@@ -19,6 +19,30 @@ function request(input: unknown) {
   assert.ok(tool, "инструмент domain.request должен быть зарегистрирован");
   return tool.execute!(input as Record<string, unknown>, context);
 }
+
+test("domain.check принимает имена в естественных формах, чтобы модель не повторяла вызов", () => {
+  assert.deepEqual(domainNamesFrom({ names: ["example.ru", "example.com"] }), ["example.ru", "example.com"]);
+  assert.deepEqual(domainNamesFrom({ domains: "example.ru, example.com" }), ["example.ru", "example.com"]);
+  assert.deepEqual(domainNamesFrom({ domain: "example.ru" }), ["example.ru"]);
+  assert.deepEqual(domainNamesFrom("example.ru\nexample.com"), ["example.ru", "example.com"]);
+  assert.throws(() => domainNamesFrom({}), /Укажите домены/);
+});
+
+test("название регистратора и путь нормализуются до строгой проверки", () => {
+  assert.equal(domainRegistrarId("REG.RU"), "regru");
+  assert.equal(domainRegistrarId("timeweb cloud"), "timeweb");
+  assert.equal(domainRegistrarId("yandex"), null);
+  assert.equal(domainRegistrarPath("timeweb", "api/v1/domains/example.ru/dns-records"), "/api/v1/domains/example.ru/dns-records");
+  assert.equal(domainRegistrarPath("regru", "/zone/get_resource_records/"), "zone/get_resource_records");
+  assert.equal(domainRegistrarPath("timeweb", "https://api.timeweb.cloud/api/v1/domains"), "");
+});
+
+test("неизвестный регистратор объясняется подсказкой, а не ошибкой валидации", async () => {
+  const result = await request({ registrar: "yandex", path: "/api/v1/domains/example.ru/dns-records" }) as { ok: boolean; blocked?: string; hint?: string };
+  assert.equal(result.ok, false);
+  assert.equal(result.blocked, "unsupported_registrar");
+  assert.match(result.hint ?? "", /domain\.check/);
+});
 
 test("a change is refused before any network call when the user disabled changes", async () => {
   await saveDomainConnection({

@@ -6,6 +6,7 @@ import { getCurrentUser } from "../auth/auth.js";
 import { getProject,getConversation,appendConversationMessages,getProjectProvider } from "../project-store.js";
 import type { ChatMessage } from "../types.js";
 import { consumeAgentRun } from "../account/usage-store.js";
+import { accountPlanFor } from "../billing/store.js";
 import { runQueueStats,runWithRunSlot } from "../agent/run-limiter.js";
 import { positiveInt } from "../concurrency.js";
 
@@ -121,6 +122,9 @@ export async function registerAgentWebSocket(app:FastifyInstance,runtime=new Age
         // Свой AI-провайдер проекта: запуски идут за счёт пользователя, поэтому дневной лимит
         // встроенной модели к ним не применяется (см. consumeAgentRun).
         const ownProvider=Boolean(await getProjectProvider(project.id));
+        // Тариф решает, какую модель брать для запуска платформы: бесплатную с резервом или
+        // платформенную. Свой провайдер проекта не зависит от тарифа, поэтому его не читаем.
+        const plan=ownProvider?undefined:await accountPlanFor(user.id);
         // Одно чтение сессии отвечает на два вопроса: какие из присланных сообщений новые, и какая
         // история на самом деле была у разговора. Второе важнее: модель получает её, а не копию из
         // браузера, поэтому в контекст попадают результаты инструментов прошлых запусков — и запуск
@@ -147,7 +151,7 @@ export async function registerAgentWebSocket(app:FastifyInstance,runtime=new Age
           await runWithRunSlot(async()=>{
             const usage = await consumeAgentRun(user.id,{ownProvider});
             safeSend({type:"usage.updated",usage});
-            await runtime.run({...parsed,userId:user.id,...(history?{history}:{})},event=>safeSend(event),runController.signal);
+            await runtime.run({...parsed,userId:user.id,...(plan?{plan}:{}),...(history?{history}:{})},event=>safeSend(event),runController.signal);
           },{
             signal:runController.signal,
             userId:user.id,

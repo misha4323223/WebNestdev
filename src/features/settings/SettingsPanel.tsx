@@ -12,8 +12,8 @@ type ModelItem={id:string;name?:string};
  * пустым, хотя ключ сохранён.
  */
 type StoredProviderConfig={provider:string;baseUrl:string;model:string;token?:string};
-type PlatformDefault={available:boolean;providerName:string;model:string};
-type TestResult={ok:boolean;source?:string;provider?:string;model?:string;latencyMs?:number;tools?:boolean;text?:string;error?:string;usage?:{promptTokens:number;completionTokens:number}|null;reasoning?:ReasoningSupport|null};
+type PlatformDefault={available:boolean;providerName:string;model:string;freeModel?:boolean};
+type TestResult={ok:boolean;source?:string;provider?:string;model?:string;freeModel?:boolean;latencyMs?:number;tools?:boolean;text?:string;error?:string;usage?:{promptTokens:number;completionTokens:number}|null;reasoning?:ReasoningSupport|null};
 
 const providerStorageKey=(projectId:string)=>`webnestdev.provider.config.${projectId}`;
 const modelsStorageKey=(projectId:string)=>`webnestdev.provider.models.${projectId}`;
@@ -138,9 +138,12 @@ export function SettingsPanel({projectId,projectName,onClose}:{projectId:string;
       if(data.reasoning)setReasoning(data.reasoning);
       if(data.ok&&data.tools){
         const usage=data.usage?` · токены: ${data.usage.promptTokens} in / ${data.usage.completionTokens} out`:"";
-        setStatus(`Подключение работает: ${data.provider} · ${data.model} · ${data.latencyMs} мс · вызов инструментов поддержан${usage}`);
+        const target=data.freeModel?"бесплатная модель тарифа":`${data.provider} · ${data.model}`;
+        setStatus(`Подключение работает: ${target} · ${data.latencyMs} мс · вызов инструментов поддержан${usage}`);
       }else if(data.ok){
-        setError(`Модель отвечает (${data.provider} · ${data.model}), но вызов инструментов не подтверждён — агент не сможет выполнять задачи.`);
+        setError(data.freeModel
+          ? "Бесплатная модель отвечает, но вызов инструментов не подтверждён — агент не сможет выполнять задачи."
+          : `Модель отвечает (${data.provider} · ${data.model}), но вызов инструментов не подтверждён — агент не сможет выполнять задачи.`);
       }else{
         setError(data.error??"Проверка не удалась");
       }
@@ -160,7 +163,9 @@ export function SettingsPanel({projectId,projectName,onClose}:{projectId:string;
       setModels([]);
       setHasToken(false);
       setConfigured(false);
-      setStatus("Возвращаемся к встроенному ИИ платформы"+(platformDefault?.providerName?" · "+platformDefault.providerName+" · "+platformDefault.model:""));
+      setStatus("Возвращаемся к встроенному ИИ платформы"+(platformDefault?.freeModel
+        ?" · бесплатная модель тарифа"
+        :platformDefault?.providerName?" · "+platformDefault.providerName+" · "+platformDefault.model:""));
     }catch(e){setError(e instanceof Error?e.message:String(e))}
     finally{setRemoving(false)}
   }
@@ -171,7 +176,9 @@ export function SettingsPanel({projectId,projectName,onClose}:{projectId:string;
     <div className="panel-title"><div><span className="eyebrow">AI-ПРОВАЙДЕР</span><strong>Настройки модели</strong></div><button className="ghost-button" onClick={onClose}>Закрыть</button></div>
     <div className="settings-body">
       <label>Проект<span>{projectName}</span></label>
-      {!configured&&platformDefault?.available&&<div className="settings-status">По умолчанию используется модель платформы: {platformDefault.providerName} · {platformDefault.model}. Свой провайдер ниже — опция.</div>}
+      {!configured&&platformDefault?.available&&<div className="settings-status">{platformDefault.freeModel
+        ? "По умолчанию используется бесплатная модель тарифа. Свой провайдер ниже — опция."
+        : <>По умолчанию используется модель платформы: {platformDefault.providerName} · {platformDefault.model}. Свой провайдер ниже — опция.</>}</div>}
       <div className="settings-status">{configured
         ? "Этот проект работает через ваш ключ и модель: запуски агента идут за ваш счёт и дневным лимитом платформы не ограничены."
         : "Свой AI-провайдер — это ваш ключ и ваша модель. Запуски агента идут за ваш счёт, поэтому дневной лимит платформы (запуски на встроенной модели) к ним не применяется."}</div>

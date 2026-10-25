@@ -18,7 +18,7 @@ import { THEME_FIELDS, THEME_FILES } from "./theme.js";
  * поломкой панели, хотя дело в том, что стиль берёт цвет напрямую.
  */
 
-export type PaletteKind = "color" | "font" | "radius";
+export type PaletteKind = "color" | "font" | "radius" | "length" | "weight" | "number";
 
 export type PaletteToken = {
   variable: string;
@@ -179,10 +179,26 @@ function isFontStack(raw: string) {
   return text.length > 0 && text.length <= 200 && !/[;{}<>]/.test(text) && !/url\(|@import|expression/i.test(text);
 }
 
+/**
+ * Значения размеров и типографики. Панель правит только те переменные, в имени которых
+ * действительно сказано, что это размер: иначе `--z-index: 10` или `--duration: 200ms`
+ * превратились бы в ползунок и человек менял бы не то, что видит.
+ */
+const LENGTH_VALUE = /^-?(?:\d+|\d*\.\d+)(?:px|rem|em|%|vw|vh|vmin|vmax|ch)$/i;
+const LENGTH_NAME = /(space|spacing|gap|pad|margin|inset|width|height|size|font|heading|text|container|section|radius|round|corner|border|letter|icon|blur)/i;
+const WEIGHT_NAME = /(font-weight|weight)/i;
+const WEIGHT_VALUE = /^(?:100|200|300|400|500|600|700|800|900|normal|bold|bolder|lighter)$/i;
+const NUMBER_NAME = /(leading|line-height|scale|ratio)/i;
+const NUMBER_VALUE = /^-?(?:\d+|\d*\.\d+)$/;
+
 function kindOf(variable: string, raw: string): { kind: PaletteKind; value: string } | null {
   if (isAlias(raw)) return null;
   const text = raw.trim();
-  if (/^--font[\w-]*$/i.test(variable)) {
+  const name = variable.toLowerCase();
+  // `--font-size` и `--font-weight` — не шрифтовой стек, а размер и насыщенность. Раньше
+  // проверка `^--font` забирала их себе и панель показывала «шрифт 16px» вместо ползунка.
+  if (/^--fonts?(?:-|$)/i.test(variable) && !/(size|weight|height|line|spacing|scale)/i.test(variable)) {
+    if (LENGTH_VALUE.test(text)) return { kind: "length", value: text.toLowerCase() };
     return isFontStack(text) ? { kind: "font", value: text } : null;
   }
   const radius = /^(\d{1,3})px$/.exec(text);
@@ -190,10 +206,15 @@ function kindOf(variable: string, raw: string): { kind: PaletteKind; value: stri
     // Скруглением считается либо контрактное имя, либо имя, которое об этом прямо говорит:
     // иначе любой `--gap: 12px` занял бы ползунок.
     if (/^--radius/i.test(variable) || /radius|round|corner/i.test(variable)) return { kind: "radius", value: text };
-    return null;
   }
   const hex = colorToHex(text);
-  return hex ? { kind: "color", value: hex } : null;
+  if (hex) return { kind: "color", value: hex };
+
+  if (WEIGHT_NAME.test(name) && WEIGHT_VALUE.test(text)) return { kind: "weight", value: text.toLowerCase() };
+  if (NUMBER_NAME.test(name) && NUMBER_VALUE.test(text)) return { kind: "number", value: text };
+  // Ноль без единицы — обычное значение отступа; ползунок показывает его как 0 px.
+  if (LENGTH_NAME.test(name) && (LENGTH_VALUE.test(text) || text === "0")) return { kind: "length", value: text.toLowerCase() };
+  return null;
 }
 
 export type ScannedFile = { file: string; text: string; css: boolean };
@@ -361,6 +382,24 @@ export function normalizePaletteValue(kind: PaletteKind, value: unknown): string
   }
   if (kind === "font") {
     if (!isFontStack(text)) throw new Error("Шрифт должен быть стеком шрифтов без ссылок и служебных символов");
+    return text;
+  }
+  if (kind === "length") {
+    if ((!LENGTH_VALUE.test(text) && text !== "0") || text.length > 20) {
+      throw new Error("Размер задаётся числом с единицей: px, rem, em, %, vw, vh, vmin, vmax или ch");
+    }
+    const numeric = Number.parseFloat(text);
+    if (!Number.isFinite(numeric) || Math.abs(numeric) > 4000) throw new Error("Размер выходит за допустимые пределы");
+    return text.toLowerCase();
+  }
+  if (kind === "weight") {
+    if (!WEIGHT_VALUE.test(text)) throw new Error("Насыщенность задаётся числом от 100 до 900 или normal/bold");
+    return text.toLowerCase();
+  }
+  if (kind === "number") {
+    if (!NUMBER_VALUE.test(text) || text.length > 12) throw new Error("Значение задаётся числом без единиц");
+    const numeric = Number.parseFloat(text);
+    if (!Number.isFinite(numeric) || Math.abs(numeric) > 100) throw new Error("Значение выходит за допустимые пределы");
     return text;
   }
   const radius = /^(\d{1,2})px$/.exec(text);

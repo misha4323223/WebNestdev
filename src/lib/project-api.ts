@@ -159,7 +159,7 @@ export const pushProjectChanges=(projectId:string)=>apiJson<{pushed:boolean;bran
 export type ThemeField={
   variable:string;
   label:string;
-  kind:"color"|"font"|"radius";
+  kind:"color"|"font"|"radius"|"length"|"weight"|"number";
   value:string;
   options?:Array<{value:string;label:string}>;
   /** Файл проекта, где переменная объявлена: туда же уходит правка. */
@@ -222,10 +222,18 @@ export const deleteProjectSecret=(projectId:string,name:string,file?:string)=>ap
   "/api/projects/"+projectId+"/secrets/"+encodeURIComponent(name)+(file?"?file="+encodeURIComponent(file):""),{method:"DELETE"});
 
 /**
+ * Незакрытый запрос ключа: окно возвращается в чат после перезагрузки. Значения здесь нет —
+ * `waiting:false` означает, что запуск уже остановлен и после сохранения нужно нажать «Продолжить».
+ */
+export type PendingProjectSecret={id:string;variable:string;purpose:string;file:string;createdAt:number;expiresAt:number;waiting:boolean};
+export const listPendingProjectSecrets=(projectId:string,conversationId:string)=>apiJson<{requests:PendingProjectSecret[]}>(
+  "/api/projects/"+projectId+"/secrets/pending?conversationId="+encodeURIComponent(conversationId));
+
+/**
  * Значение ключа, введённое в модальном окне. Оно идёт прямо в песочницу проекта и возвращается
  * только подтверждением: ни в переписку, ни в события запуска, ни в ответы модели оно не попадает.
  */
-export const submitProjectSecret=(projectId:string,requestId:string,value:string)=>apiJson<{ok:boolean;variable:string;file:string}>
+export const submitProjectSecret=(projectId:string,requestId:string,value:string)=>apiJson<{ok:boolean;variable:string;file:string;delivered:boolean}>
   ("/api/projects/"+projectId+"/secrets",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({requestId,value})});/** Отмена запроса: агент получает отказ и продолжает без ключа, а не ждёт таймаута. */
 export const cancelProjectSecret=(projectId:string,requestId:string)=>apiJson<{cancelled:boolean}>(
   "/api/projects/"+projectId+"/secrets/"+encodeURIComponent(requestId)+"/cancel",{method:"POST"});

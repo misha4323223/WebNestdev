@@ -130,6 +130,46 @@ test("GET shows the project's own colours, not the unloaded theme.css defaults",
   assert.match(await readFile(path.join(root, "theme.css"), "utf8"), /--color-bg:#0b0d10;/);
 });
 
+test("GET и PUT показывают размеры, отступы и насыщенность, а не только цвета", async () => {
+  const root = await project({
+    "index.html": "<link rel=\"stylesheet\" href=\"theme.css\"><div class=\"wrap\">x</div>",
+    "theme.css": [
+      ":root{",
+      "  --color-bg:#ffffff;",
+      "  --font-size:18px;",
+      "  --font-weight:500;",
+      "  --line-height:1.6;",
+      "  --space:24px;",
+      "  --container:1120px;",
+      "  --radius:12px;",
+      "}",
+      "body{font-size:var(--font-size);font-weight:var(--font-weight);line-height:var(--line-height);background:var(--color-bg)}",
+      ".wrap{max-width:var(--container);padding:var(--space);border-radius:var(--radius)}",
+    ].join("\n"),
+  });
+  const { app } = await appFor(root);
+  const body = (await app.inject({ method: "GET", url: "/api/projects/p1/theme" })).json();
+  const byName = Object.fromEntries(body.fields.map((field: { variable: string; kind: string }) => [field.variable, field.kind]));
+  assert.equal(byName["--font-size"], "length", "--font-size — размер, а не шрифтовой стек");
+  assert.equal(byName["--font-weight"], "weight");
+  assert.equal(byName["--line-height"], "number");
+  assert.equal(byName["--space"], "length");
+  assert.equal(byName["--container"], "length");
+  assert.equal(byName["--radius"], "radius");
+
+  const saved = await app.inject({
+    method: "PUT",
+    url: "/api/projects/p1/theme",
+    payload: { tokens: { "--font-size": "20px", "--space": "32px", "--font-weight": "700", "--line-height": "1.4" } },
+  });
+  assert.equal(saved.statusCode, 200);
+  const css = await readFile(path.join(root, "theme.css"), "utf8");
+  assert.match(css, /--font-size:20px;/);
+  assert.match(css, /--space:32px;/);
+  assert.match(css, /--font-weight:700;/);
+  assert.match(css, /--line-height:1.4;/);
+});
+
 test("PUT writes fonts and radii too, and groups edits by file", async () => {
   const root = await project({
     "index.html": "<link rel=\"stylesheet\" href=\"theme.css\"><link rel=\"stylesheet\" href=\"styles.css\">",

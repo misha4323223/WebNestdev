@@ -83,6 +83,43 @@ test("многострочный ключ хранится как значени
   } finally { await app.close(); }
 });
 
+test("окно ключа переживает обрыв запуска: значение сохраняется, но запуск надо продолжить", async () => {
+  const projectId = nextProjectId();
+  const root = await tempRoot("");
+  const controller = new AbortController();
+  const { request, answer } = requestSecret({
+    projectId, userId: "u1", variable: "TOKEN", purpose: "Доступ к API", file: ".env.local", conversationId: "c1",
+    signal: controller.signal,
+  });
+  // Перезагрузка вкладки закрывает сокет, а значит — и запуск, который ждал ключ.
+  controller.abort();
+  await answer;
+  const app = await appWith(root, projectId);
+  try {
+    const pending = await app.inject({ method: "GET", url: "/api/projects/" + projectId + "/secrets/pending?conversationId=c1" });
+    assert.equal(pending.statusCode, 200);
+    const requests = pending.json().requests;
+    assert.equal(requests.length, 1);
+    assert.equal(requests[0].variable, "TOKEN");
+    assert.equal(requests[0].file, ".env.local");
+    assert.equal(requests[0].waiting, false);
+    assert.ok(!JSON.stringify(requests).includes("secret-value"));
+
+    const response = await app.inject({
+      method: "POST",
+      url: "/api/projects/" + projectId + "/secrets",
+      payload: { requestId: request.id, value: "secret-value" },
+    });
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.json(), { ok: true, variable: "TOKEN", file: ".env.local", delivered: false });
+    assert.deepEqual(await loadStoredSecretValues(projectId), { ".env.local": { TOKEN: "secret-value" } });
+
+    // Сохранённое окно больше не висит в чате.
+    const after = await app.inject({ method: "GET", url: "/api/projects/" + projectId + "/secrets/pending?conversationId=c1" });
+    assert.deepEqual(after.json().requests, []);
+  } finally { await app.close(); }
+});
+
 test("устаревшее окно ничего не пишет и не отдаёт значение обратно", async () => {
   const projectId = nextProjectId();
   const root = await tempRoot("KEEP=1\n");

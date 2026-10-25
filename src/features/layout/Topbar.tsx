@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, GitBranch, History, KeyRound, LogOut, Monitor, PanelLeftClose, PanelLeftOpen, Pencil, Settings, UserRound } from "lucide-react";
+import { Check, ChevronDown, GitBranch, History, KeyRound, LogOut, Monitor, PanelLeftClose, PanelLeftOpen, Pencil, Rocket, Settings, UserRound } from "lucide-react";
 import { getAuth, logout, type AuthState } from "../../lib/auth-api";
 import { contactEmailOf } from "../../lib/account-contact";
 import { WebNestLogo } from "../../components/WebNestLogo";
@@ -51,7 +51,7 @@ function pointsLabel(count: number) {
  * Кнопка колонки слева — PanelLeft, а не «бургер»: панель выезжает сбоку, а не раскрывается
  * списком, и иконка должна говорить об этом же.
  */
-export function Topbar({projectId,projectName,onRenameProject,running,sidebarOpen,onMenu,onHome,onOpenChanges,onSettings,onSecrets,previewOpen,previewRunning,onPreviewToggle,onRepositoryChanged}:{projectId:string;projectName:string;onRenameProject:(name:string)=>Promise<unknown>;running:boolean;sidebarOpen:boolean;onMenu:()=>void;onHome:()=>void;onOpenChanges:()=>void;onSettings:()=>void;onSecrets:()=>void;previewOpen:boolean;previewRunning:boolean;onPreviewToggle:()=>void;onRepositoryChanged?:()=>void}){
+export function Topbar({projectId,projectName,onRenameProject,running,sidebarOpen,onMenu,onHome,onOpenChanges,onSettings,onSecrets,onDeploy,previewOpen,previewRunning,onPreviewToggle,onRepositoryChanged}:{projectId:string;projectName:string;onRenameProject:(name:string)=>Promise<unknown>;running:boolean;sidebarOpen:boolean;onMenu:()=>void;onHome:()=>void;onOpenChanges:()=>void;onSettings:()=>void;onSecrets:()=>void;onDeploy:()=>void;previewOpen:boolean;previewRunning:boolean;onPreviewToggle:()=>void;onRepositoryChanged?:()=>void}){
   const [accountMenu,setAccountMenu]=useState(false);
   const [renaming,setRenaming]=useState(false);
   const [renameError,setRenameError]=useState("");
@@ -276,7 +276,9 @@ export function Topbar({projectId,projectName,onRenameProject,running,sidebarOpe
         {previewRunning&&<span className="preview-toggle-dot" aria-hidden="true"/>}
       </button>
       <span className="topbar-divider" aria-hidden="true"/>
-      <button className="icon-button" onClick={onSecrets} title="Секреты проекта" aria-label="Секреты проекта"><KeyRound size={15}/></button>
+      {/* Развёртывание — главное действие в шапке: квиз открывается поверх рабочей области.
+          Ключи переехали в строку вкладок, где у них есть подпись. */}
+      <button className="icon-button topbar-deploy" onClick={onDeploy} title="Развернуть проект: собрать параметры и передать агенту" aria-label="Развернуть проект"><Rocket size={15}/></button>
       <div className="topbar-account">
         <button className={"topbar-avatar"+(accountMenu?" open":"")} onClick={toggleAccount} aria-haspopup="menu" aria-expanded={accountMenu} aria-controls="topbar-account-menu" aria-label="Аккаунт и выход" title={"Аккаунт: "+account.name+" — настройки и выход"}>
           <UserRound size={15}/>

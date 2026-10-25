@@ -66,6 +66,7 @@ export function changesSomething(name:string,input:unknown){
 
 import { commandSucceeded,countVerificationFailure,MAX_VERIFICATION_ATTEMPTS,routeFromMutation,shouldRunBrowserRuntime,verificationBuildCommand,verificationFailureSummary } from "./agent/verification-policy.js";
 import { getPlatformProviderConfig } from "./provider/platform-provider.js";
+import { createFreeModelRoute } from "./provider/free-model.js";
 import { getSandbox } from "./sandbox-manager.js";
 import { readBuildScript } from "./preview/static-plan.js";
 import { recordRunUsage } from "./account/usage-store.js";
@@ -106,7 +107,10 @@ export class AgentRuntime {
       // Свой провайдер проекта — значит токены платит пользователь, а не платформа.
       platformModel=!config;
       const platformConfig=getPlatformProviderConfig();
-      const provider=createProvider(config??platformConfig??undefined);
+      // Бесплатный тариф без своего ключа идёт через бесплатную модель с резервом на платформенную.
+      // Платные тарифы и проекты со своим провайдером сюда не попадают — у них всё как раньше.
+      const freeRoute=!config&&request.plan==="free"?createFreeModelRoute():null;
+      const provider=freeRoute?.provider??createProvider(config??platformConfig??undefined);
       const projectContext=await buildProjectContext(project,request.userId);
       // История — это сохранённый разговор, а не копия из браузера: в ней лежат результаты
       // инструментов, она не растёт от длины переписки в панели и не расходится с тем, что
@@ -139,9 +143,10 @@ export class AgentRuntime {
         }
         messages=insertSystemNotice(messages,resumeNotice(request.resume.reason,plan));
       }
-      const model=request.model??config?.model??(config?undefined:platformConfig?.model);
+      const model=freeRoute?.model??request.model??config?.model??(config?undefined:platformConfig?.model);
       if(!model)throw new Error("Модель AI не настроена");
-      usageModel=model;
+      // Имя модели бесплатного тарифа не уходит в журнал расхода: в интерфейсе его тоже нет.
+      usageModel=freeRoute?"free-model":model;
       const maxSteps=Math.min(50,Math.max(1,Number(process.env.AGENT_MAX_STEPS??20)));
       // Контекст ограничен на каждом шаге, а не только в начале запуска: сообщения добавляются
       // по ходу (выводы инструментов, проверки), а модель получает их целиком. Как именно шаг

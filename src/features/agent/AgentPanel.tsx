@@ -4,7 +4,7 @@ import remarkGfm from "remark-gfm";
 import { AlertTriangle,Check,Copy,Cpu,Eye,EyeOff,ExternalLink,FileText,History,Image as ImageIcon,KeyRound,ListPlus,Paperclip,Play,RotateCcw,Send,ShieldCheck,Sparkles,Square,X } from "lucide-react";
 import { createAgentSocket } from "../../lib/agent-socket";
 import { apiJson } from "../../lib/api";
-import { addProjectTasks,answerProjectQuestion,cancelProjectSecret,getConversation,skipProjectQuestion,submitProjectSecret,uploadProjectFile } from "../../lib/project-api";
+import { addProjectTasks,answerProjectQuestion,cancelProjectSecret,getConversation,listPendingProjectSecrets,skipProjectQuestion,submitProjectSecret,uploadProjectFile,type PendingProjectSecret } from "../../lib/project-api";
 import { cancelProjectAccess,submitProjectAccess } from "../../lib/deployment-api";
 import { NestLoader } from "../../components/NestLoader";
 import { ActionsDock,MessageThinking,PlanPanel,actionTarget,contentBefore,deriveActions,readPlan,writePlan,type PanelId,type PanelState } from "./agent-activity";
@@ -116,7 +116,7 @@ function readStoredWebSearch(){
  * Запрос ключа, пришедший событием запуска. Значение здесь не хранится — его вводит пользователь
  * в модальном окне, и оно уходит на сервер отдельным запросом.
  */
-type SecretPrompt={requestId:string;variable:string;purpose:string;file:string};
+type SecretPrompt={requestId:string;variable:string;purpose:string;file:string;/** Окно вернулось после перезагрузки: запуск уже остановлен, но ключ ещё можно сохранить. */recovered?:boolean};
 /**
  * Доступ к провайдеру — не один ключ, а набор полей кабинета. Значения живут только в этом
  * состоянии до отправки; в переписку и события запуска они не попадают.
@@ -150,8 +150,8 @@ const MAX_AUTO_RESUME=2;
 const RETRY_NOTICE_CLEAR_EVENTS=new Set(["message.delta","reasoning.delta","tool.started","tool.finished","plan.updated","run.completed","run.failed","error"]);
 
 /** The provider state the composer reads to show the model a run will use. */
-type ProviderStatus={configured:boolean;provider:string;model:string;platformDefault?:{available:boolean;providerName:string;model:string}|null;reasoning?:ReasoningSupport|null};
-type ModelInfo={model:string;provider:string;source:"project"|"platform"|"none"|"unknown"};
+type ProviderStatus={configured:boolean;provider:string;model:string;platformDefault?:{available:boolean;providerName:string;model:string;freeModel?:boolean}|null;reasoning?:ReasoningSupport|null};
+type ModelInfo={model:string;provider:string;source:"project"|"platform"|"none"|"unknown";freeModel?:boolean};
 
 const MAX_UPLOAD_BYTES=1_200_000;
 
@@ -240,6 +240,27 @@ function interruptedRun(messages:ChatMessage[]):{reason:string;label:string}|nul
   return {reason:"предыдущий запуск был прерван и не завершён",label:"Прошлый запуск прервался — агент продолжит с того же места."};
 }
 
+/**
+ * Последний ход оборвался на запросе ключа. Сервер хранит такие запросы отдельно, но даже если
+ * окно не восстановилось (перезапуск сервера, старая вкладка), при продолжении агенту нужно
+ * сказать, какой ключ он просил: из истории вызов без результата вычищается как незавершённый.
+ */
+function interruptedSecretRequest(messages:ChatMessage[]):{variable:string;file:string}|null{
+  // Результат мог сохраниться для другого вызова из того же хода: ищем именно неотвеченный
+  // secrets.request, а не просто последнюю реплику.
+  const answered=new Set(messages.flatMap(message=>message.role==="tool"?[message.tool_call_id]:[]));
+  for(let index=messages.length-1;index>=0;index--){
+    const message=messages[index];
+    if(message.role!=="assistant")continue;
+    const call=message.tool_calls?.find(item=>item.name==="secrets.request"&&!answered.has(item.id));
+    if(!call)continue;
+    const input=call.arguments as {variable?:unknown;file?:unknown};
+    if(typeof input?.variable!=="string")continue;
+    return {variable:input.variable,file:typeof input.file==="string"?input.file:".env.local"};
+  }
+  return null;
+}
+
 export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettings,onOpenAccountSettings,onRunningChange,onOpenChanges,scrollSignal,onChatEndChange}:{projectId:string;conversationId:string;onChanged:()=>void;onOpenModelSettings?:()=>void;onOpenAccountSettings?:()=>void;onRunningChange?:(running:boolean)=>void;onOpenChanges?:()=>void;scrollSignal?:number;onChatEndChange?:(atEnd:boolean)=>void}){
   const [messages,setMessages]=useState<ChatMessage[]>([]);
   const [prompt,setPrompt]=useState<string>(()=>readDraft(conversationId));
@@ -323,6 +344,11 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
    * первого признака настоящей работы: пока агент ждёт лимит, панель не должна выглядеть как ошибка.
    */
   const retryNoticeRef=useRef(false);
+  /**
+   * Что стало с окном ключа, восстановленным после перезагрузки: его сохранили или пропустили.
+   * Кнопка «Продолжить» передаёт это модели, чтобы она не запрашивала тот же ключ снова.
+   */
+  const recoveredSecretRef=useRef<{variable:string;file:string;status:"saved"|"skipped"}|null>(null);
   // Список сообщений: открытие проекта начинается с самого верха переписки, а не с её конца, и
   // ответ работающего агента остаётся в поле зрения, пока пользователь у нижнего края.
   const messagesBoxRef=useRef<HTMLDivElement|null>(null);
@@ -531,9 +557,9 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   }
 
   /**
-   * Окно ключа закрывается вместе со своим запуском, чатом или отменой: запрос, переживший запуск,
-   * отправлял бы значение в пустоту (`delivered:false` на сервере). Введённое значение очищается
-   * всегда — в поле оно не хранится.
+   * Окно ключа закрывается при смене чата или отмене. Запрос, переживший перезагрузку, не
+   * теряется: сервер отдаёт его при открытии чата, а значение можно сохранить и продолжить.
+   * Введённое значение очищается всегда — в поле оно не хранится.
    */
   function clearSecretPrompt(){
     setSecretPrompt(null);
@@ -589,10 +615,16 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     actionsRef.current=[];setActions([]);setProgress(null);
     setPlan(readPlan(conversationId));
     // Запрос ключа и вопрос принадлежат запуску в этом чате: при открытии другого окна устаревают.
+    recoveredSecretRef.current=null;
     clearSecretPrompt();
     clearAccessPrompt();
     clearQuestionPrompt();
-    void getConversation(conversationId).then(conversation=>{
+    void Promise.all([
+      getConversation(conversationId),
+      // Запрос ключа мог остаться от запуска, прерванного перезагрузкой: сервер отдаёт его ещё
+      // некоторое время, чтобы поле исчезало не вместе со страницей, а только после ответа.
+      listPendingProjectSecrets(projectId,conversationId).catch(()=>({requests:[] as PendingProjectSecret[]})),
+    ]).then(([conversation,pendingSecrets])=>{
       if(cancelled)return;
       // The whole stored history comes back: answers, the thinking that now sits above each of them
       // and the tool results that say how each action ended.
@@ -602,8 +634,22 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       setActions(actionsRef.current);
       // The plan is stored with the conversation; localStorage is only the fallback.
       setPlan(conversation.plan??readPlan(conversationId));
+      // Окно ключа возвращается в тот же чат: значение не потеряно, и его можно сохранить.
+      const recoveredSecret=pendingSecrets.requests[0];
+      if(recoveredSecret){
+        setSecretPrompt({
+          requestId:recoveredSecret.id,
+          variable:recoveredSecret.variable,
+          purpose:recoveredSecret.purpose,
+          file:recoveredSecret.file,
+          recovered:!recoveredSecret.waiting,
+        });
+        setSecretValue("");setSecretError("");
+      }
       // Диалог, в котором запуск не дошёл до ответа, открывается сразу с кнопкой «Продолжить».
-      setResume(interruptedRun(persisted));
+      setResume(recoveredSecret&&!recoveredSecret.waiting
+        ? {reason:"запрос ключа остался без ответа после перезагрузки",label:"Ключ запрошен до перезагрузки — сохраните его и продолжите запуск."}
+        : interruptedRun(persisted));
       setLoaded(true);
     }).catch(()=>{
       if(cancelled)return;
@@ -611,7 +657,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       setLoaded(true);
     });
     return()=>{cancelled=true;socketRef.current?.close();socketRef.current=null};
-  },[conversationId]);
+  },[conversationId,projectId]);
 
   /**
    * Шаблон и импорт GitHub ставят задачу до открытия рабочей области. Здесь она забирается один раз:
@@ -687,7 +733,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       if(cancelled)return;
       setReasoningSupport(status.reasoning??null);
       if(status.configured)setModelInfo({model:status.model,provider:status.provider,source:"project"});
-      else if(status.platformDefault?.available)setModelInfo({model:status.platformDefault.model,provider:status.platformDefault.providerName,source:"platform"});
+      else if(status.platformDefault?.available)setModelInfo({model:status.platformDefault.model,provider:status.platformDefault.providerName,source:"platform",freeModel:status.platformDefault.freeModel===true});
       else setModelInfo({model:"",provider:"",source:"none"});
     }).catch(()=>{if(!cancelled)setModelInfo({model:"",provider:"",source:"unknown"})});
     return()=>{cancelled=true};
@@ -804,6 +850,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       if(event.type==="secret.requested"&&event.requestId&&event.variable){
         // Агент просит ключ: карточка в чате показывает только имя переменной, файл и причину;
         // значение вводит пользователь, и в переписку оно не попадает.
+        recoveredSecretRef.current=null;
         setSecretPrompt({requestId:event.requestId,variable:event.variable,purpose:event.purpose??"",file:event.file??".env.local"});
         setSecretValue("");setSecretError("");
       }
@@ -993,7 +1040,22 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   /** Продолжение прерванного запуска: без нового сообщения и с пометкой для модели. */
   function continueRun(){
     if(running||!resume)return;
-    startRun(null,{resumeReason:resume.reason});
+    // Окно ключа от прерванного запуска могло остаться без ответа. Если человек нажал
+    // «Продолжить», не сохранив значение, модель должна запросить ключ снова: из истории
+    // незавершённый вызов инструмента вычищается как не имеющий результата.
+    const recovered=recoveredSecretRef.current;
+    const secret=secretPrompt??interruptedSecretRequest(messagesRef.current);
+    // Причина сервера ограничена 300 символами, а имя переменной и файл уже занимают место.
+    // Продолжение и так помечено сервером как resume, поэтому в этом случае говорит только ключ.
+    const reason=recovered
+      ? (recovered.status==="saved"
+        ? "ключ "+recovered.variable+" уже сохранён пользователем в "+recovered.file+": используй process.env и не запрашивай его снова"
+        : "ключ "+recovered.variable+" пропущен пользователем: не запрашивай его снова и продолжи без него")
+      : secret
+        ? "ключ "+secret.variable+" так и не сохранён: запроси его снова через secrets.request"
+        : resume.reason;
+    startRun(null,{resumeReason:reason});
+    recoveredSecretRef.current=null;
   }
 
   /** Остановка другим сообщением: кнопка продолжения относилась бы к уже заменённому запуску. */
@@ -1051,9 +1113,17 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     const value=secretValue;
     setSecretBusy(true);setSecretError("");
     try{
-      await submitProjectSecret(projectId,prompt.requestId,value);
-      setSecretPrompt(null);
-      setNotice("Ключ сохранён в "+prompt.file+" — агент продолжает работу, не видя значения.");
+      const result=await submitProjectSecret(projectId,prompt.requestId,value);
+      clearSecretPrompt();
+      if(result.delivered===false){
+        // Запуск, который ждал ключ, уже остановлен перезагрузкой: значение сохранено, но
+        // продолжить его должен человек кнопкой — сама панель новый запуск не начинает.
+        recoveredSecretRef.current={variable:prompt.variable,file:prompt.file,status:"saved"};
+        setResume({reason:"ключ сохранён после перезагрузки",label:"Ключ сохранён — продолжите запуск."});
+        setNotice("Ключ сохранён в "+prompt.file+". Запуск, который ждал ключ, уже остановлен — нажмите «Продолжить».");
+      }else{
+        setNotice("Ключ сохранён в "+prompt.file+" — агент продолжает работу, не видя значения.");
+      }
     }catch(error){
       setSecretError(error instanceof Error?error.message:"Не удалось сохранить ключ");
     }finally{
@@ -1067,6 +1137,10 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     const prompt=secretPrompt;
     if(!prompt)return;
     clearSecretPrompt();
+    if(prompt.recovered){
+      recoveredSecretRef.current={variable:prompt.variable,file:prompt.file,status:"skipped"};
+      setResume({reason:"запрос ключа закрыт после перезагрузки",label:"Запрос ключа закрыт — можно продолжить запуск."});
+    }
     try{await cancelProjectSecret(projectId,prompt.requestId)}catch{}
   }
 
@@ -1172,13 +1246,19 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
 
   // Gateway model ids carry a folder prefix (gpt://<folder>/<model>), so the chip shows
   // the model itself and the tooltip keeps the full id.
-  const modelName=modelInfo?modelInfo.model.split("/").pop()||"Модель не настроена":"Определяем модель…";
-  const modelDetails=[modelInfo?.provider,modelInfo?.model].filter(Boolean).join(" · ");
-  const modelTitle=!modelInfo
-    ?"Выбранная модель появится здесь"
-    :modelInfo.model
-      ?(modelInfo.source==="platform"?"Модель платформы":"Модель проекта")+": "+modelDetails+". Нажмите, чтобы открыть настройки AI-провайдера."
-      :"AI-провайдер не настроен. Нажмите, чтобы указать Base URL и модель.";
+  // На бесплатном тарифе модель платформы — это цепочка бесплатной модели и её резерва.
+  // Конкретное имя здесь показывать нельзя: от шага к шагу оно может меняться, а для человека
+  // это одна «Free model».
+  const freeModel=modelInfo?.source==="platform"&&modelInfo.freeModel===true;
+  const modelName=freeModel?"Free model":modelInfo?modelInfo.model.split("/").pop()||"Модель не настроена":"Определяем модель…";
+  const modelDetails=freeModel?"":[modelInfo?.provider,modelInfo?.model].filter(Boolean).join(" · ");
+  const modelTitle=freeModel
+    ?"Модель бесплатного тарифа. Чтобы выбрать модель, подключите свой AI-провайдер."
+    :!modelInfo
+      ?"Выбранная модель появится здесь"
+      :modelInfo.model
+        ?(modelInfo.source==="platform"?"Модель платформы":"Модель проекта")+": "+modelDetails+". Нажмите, чтобы открыть настройки AI-провайдера."
+        :"AI-провайдер не настроен. Нажмите, чтобы указать Base URL и модель.";
 
   // Tool results are part of the stored history but not of the transcript; the action
   // list is built from them instead.
@@ -1240,14 +1320,13 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       {visibleMessages.map((m,i)=>{
         // Ответ, который модель пишет прямо сейчас: над ним идёт её размышление.
         const live=running&&i===visibleMessages.length-1;
-        // Аватар стоит в строке автора, а не отдельной колонкой: карточка ответа тогда занимает ту же
-        // ширину, что «План задач» и «Действия агента», поэтому левый и правый края совпадают.
+        // Карточка ответа занимает ту же ширину, что «План задач» и «Действия агента»,
+        // поэтому левый и правый края совпадают.
         return <div className={"message-row "+m.role+(jumpedIndex===i?" is-jumped":"")} key={i} data-message-index={i}>
           <div className="message-content">
-            <div className="message-role">
-              {m.role==="assistant"&&<span className="message-avatar" aria-hidden="true"><Sparkles size={11}/></span>}
-              <span>{m.role==="assistant"?"NestDev":"Вы"}</span>
-            </div>
+            {/* Подпись автора осталась только у пользователя: над ответом агента ни имя, ни
+                значок не нужны — карточка и так читается как ответ. */}
+            {m.role==="user"&&<div className="message-role"><span>Вы</span></div>}
             {/* Размышление — над ответом, в своём контейнере, который можно свернуть и развернуть. */}
             {m.role==="assistant"&&(m.reasoning||live)&&<MessageThinking text={m.reasoning??""} running={live}/>}
             {m.role==="assistant"
@@ -1308,9 +1387,9 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       <p className="chat-credential-note"><ShieldCheck size={12}/><span>Значение попадает в зашифрованное хранилище проекта, а приложение получает его как <code>process.env</code>. Агент увидит только подтверждение.</span></p>
       {secretError&&<div className="connector-notice">{secretError}</div>}
       <footer className="chat-credential-actions">
-        <span className="chat-credential-wait"><Sparkles size={11}/> Агент ждёт и продолжит сам</span>
+        <span className="chat-credential-wait"><Sparkles size={11}/> {secretPrompt.recovered?"Запуск остановлен — сохраните ключ и нажмите «Продолжить»":"Агент ждёт и продолжит сам"}</span>
         <button type="button" className="ghost-button" onClick={()=>void cancelSecret()} disabled={secretBusy}>Пропустить</button>
-        <button type="button" className="send-button chat-credential-save" onClick={()=>void saveSecret()} disabled={secretBusy||!secretValue.trim()}>{secretBusy?"Сохраняем…":"Сохранить и продолжить"}</button>
+        <button type="button" className="send-button chat-credential-save" onClick={()=>void saveSecret()} disabled={secretBusy||!secretValue.trim()}>{secretBusy?"Сохраняем…":secretPrompt.recovered?"Сохранить ключ":"Сохранить и продолжить"}</button>
       </footer>
     </section>}
 
@@ -1437,7 +1516,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
               onReasoning={chooseReasoning}
               onWebSearch={chooseWebSearch}
             />
-            <button type="button" className="composer-model" onClick={()=>onOpenModelSettings?.()} title={modelTitle} aria-label={"Модель: "+modelName+". Открыть настройки AI-провайдера"}>
+            <button type="button" className="composer-model" onClick={()=>onOpenModelSettings?.()} title={modelTitle} aria-label={freeModel?"Модель бесплатного тарифа. Открыть настройки AI-провайдера":"Модель: "+modelName+". Открыть настройки AI-провайдера"}>
               <Cpu size={12}/>
               <span className="composer-model-name">{modelName}</span>
             </button>

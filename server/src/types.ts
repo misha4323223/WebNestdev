@@ -1,3 +1,5 @@
+import type { PlanId } from "./account/plans.js";
+
 export type Role="user"|"assistant"|"system"|"tool";
 export type ChatMessage=
   | {role:"user"|"system";content:string}
@@ -73,8 +75,11 @@ export type ReasoningEffort="low"|"medium"|"high";
  * `webSearch` — переключатель в панели ввода: по умолчанию выключен, и без него `web.search` не
  * ходит в сеть. Флаг приходит от клиента, потому что это решение пользователя на конкретный запуск,
  * а не свойство аккаунта; тариф по-прежнему выбирает провайдера (`web/search.ts`).
+ *
+ * `plan` ставит сервер, а не клиент: на бесплатном тарифе он выбирает бесплатную модель с
+ * резервом на платформенную, а на платных оставляет платформенную по умолчанию.
  */
-export type AgentRunRequest={projectId:string;conversationId?:string;messages:ChatMessage[];history?:ChatMessage[];model?:string;mode?:AgentMode;reasoning?:ReasoningEffort;webSearch?:boolean;resume?:{reason?:string};userId:string};
+export type AgentRunRequest={projectId:string;conversationId?:string;messages:ChatMessage[];history?:ChatMessage[];model?:string;mode?:AgentMode;reasoning?:ReasoningEffort;webSearch?:boolean;resume?:{reason?:string};plan?:PlanId;userId:string};
 /**
  * `emit` и `signal` нужны инструментам, которые работают не сами по себе, а вместе с пользователем:
  * `secrets.request` показывает модальное окно через поток запуска и ждёт ответа, а остановка запуска

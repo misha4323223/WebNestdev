@@ -106,12 +106,12 @@ export async function registerDeploymentRoutes(app: FastifyInstance, deps: Deplo
       }),
       database,
       describeDatabase: [
-        { id: "yandex-postgresql", name: "Yandex Cloud Managed PostgreSQL", note: "Кластер PostgreSQL в вашем каталоге Yandex Cloud." },
-        { id: "yandex-ydb", name: "Yandex Cloud Serverless YDB", note: "Без сервера, оплата за запросы." },
-        { id: "timeweb", name: "Timeweb Cloud", note: "PostgreSQL или MySQL в панели Timeweb." },
-        { id: "vk", name: "VK Cloud", note: "Managed PostgreSQL или MySQL." },
-        { id: "selectel", name: "Selectel", note: "Managed базы в облаке Selectel." },
-        { id: "cloudru", name: "Cloud.ru", note: "Managed PostgreSQL в консоли Cloud.ru." },
+        { id: "yandex-postgresql", name: "PostgreSQL в Yandex Cloud", note: "Кластер в вашем облаке." },
+        { id: "yandex-ydb", name: "YDB в Yandex Cloud", note: "Оплата за запросы." },
+        { id: "timeweb", name: "Timeweb Cloud", note: "PostgreSQL или MySQL." },
+        { id: "vk", name: "VK Cloud", note: "PostgreSQL или MySQL." },
+        { id: "selectel", name: "Selectel", note: "PostgreSQL или MySQL." },
+        { id: "cloudru", name: "Cloud.ru", note: "PostgreSQL или MySQL." },
         { id: "custom", name: "Другая база", note: "Строка подключения из любого кабинета." },
       ],
       services: SERVICES.filter(service => neededCategories.has(service.category)).map(service => {
@@ -130,8 +130,8 @@ export async function registerDeploymentRoutes(app: FastifyInstance, deps: Deplo
         };
       }),
       smsSupported: false,
-      plan: plan
-        ? { exists: plan.exists, total: plan.total, done: plan.done, complete: plan.complete, current: plan.current?.title ?? null }
+      plan: plan && plan.exists && plan.total > 0
+        ? { exists: true, total: plan.total, done: plan.done, complete: plan.complete, current: plan.current?.title ?? null }
         : { exists: false, total: 0, done: 0, complete: false, current: null },
     };
   });

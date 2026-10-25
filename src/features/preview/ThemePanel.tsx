@@ -1,19 +1,20 @@
-import { Check, Loader2, Palette, Pipette, Sparkles, TriangleAlert, X } from "lucide-react";
+import { Check, Loader2, Palette, Pipette, SlidersHorizontal, Sparkles, TriangleAlert, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createProjectTheme, getProjectTheme, saveProjectTheme, type ProjectTheme, type ThemeField } from "../../lib/project-api";
 import { composeAgentPrompt, THEME_SETUP_PROMPT } from "../../lib/agent-compose";
 import { Hint } from "../../components/Hint";
 
 /**
- * Палитра проекта: цвета, шрифты и скругление — те переменные, которые проект объявил сам.
+ * Палитра проекта: цвета, шрифты, скругление и размеры — те переменные, которые проект объявил сам.
  *
  * Панель показывает настоящую палитру страницы, а не значения по умолчанию: у проекта по
  * контракту это `--color-…` из `theme.css`, у проекта постарше — свои `--bg`/`--ink` из
  * `styles.css`. Правка уходит в тот файл, где переменная объявлена, поэтому цвет появляется в
  * предпросмотре без запроса к модели.
  *
- * Если переменных нет или страница их не читает, панель говорит это прямо и предлагает
- * перевести стили на переменные: «нажимаю — ничего не происходит» иначе выглядит поломкой панели.
+ * Вкладка «Конструктор» — это не отдельный редактор исходников: она применяет готовые образы
+ * к уже найденным цветам и даёт руками подвинуть размеры и отступы, которые проект объявил
+ * переменными. Ничего не пересчитывается на сервере сверх одной записи файла.
  */
 
 /** `EyeDropper` есть не во всех браузерах, поэтому в типах его нет: объявление локальное. */
@@ -21,12 +22,62 @@ type EyeDropperConstructor = new () => { open: () => Promise<{ sRGBHex: string }
 const HEX = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
 /** Больше этого скругление не задаётся — тот же предел, что проверяет сервер. */
 const MAX_RADIUS = 40;
+const SIZE = /^(-?\d+(?:\.\d+)?)(px|rem|em|%|vw|vh|vmin|vmax|ch)?$/i;
 
-/** Нативное поле цвета понимает только полный hex: `#abc` расширяется в `#aabbcc`. */
+type Tab = "theme" | "constructor";
+type PresetRole = "bg" | "surface" | "text" | "muted" | "accent" | "border";
+type PalettePreset = { id: string; label: string; colors: Record<PresetRole, string> };
+
+/**
+ * Готовые образы. Это не «темы со своим CSS»: панель раскладывает цвета по ролям уже найденных
+ * переменных, поэтому образ работает и у проекта с контрактными `--color-…`, и у старого с
+ * `--bg`/`--ink`. Незнакомые роли не трогаются — лучше не перекрасить, чем перекрасить не то.
+ */
+const PRESETS: PalettePreset[] = [
+  { id: "dark", label: "Тёмная", colors: { bg: "#0b0d10", surface: "#14181d", text: "#eef0f3", muted: "#8b939e", accent: "#6fbf8b", border: "#242a31" } },
+  { id: "light", label: "Светлая", colors: { bg: "#f7f6f2", surface: "#ffffff", text: "#1b1f24", muted: "#6b7280", accent: "#2f7a55", border: "#e2e0d9" } },
+  { id: "warm", label: "Тёплая", colors: { bg: "#fbf5ec", surface: "#fffaf2", text: "#2a2118", muted: "#7c6a58", accent: "#b5643c", border: "#e8d8c4" } },
+  { id: "nature", label: "Природная", colors: { bg: "#f1f5ef", surface: "#ffffff", text: "#1f2a22", muted: "#63756a", accent: "#3f7d58", border: "#d7e2d8" } },
+  { id: "sea", label: "Морская", colors: { bg: "#f2f7fa", surface: "#ffffff", text: "#102a36", muted: "#5d7480", accent: "#1f7a8c", border: "#d3e2e9" } },
+  { id: "graphite", label: "Графит", colors: { bg: "#17191c", surface: "#202328", text: "#f0f1f3", muted: "#9aa0a8", accent: "#c9a227", border: "#2f343a" } },
+];
+
+/** Нативная поле цвета понимает только полный hex: `#abc` расширяется в `#aabbcc`. */
 function expandHex(value: string) {
   if (!HEX.test(value)) return "#000000";
   if (value.length === 7) return value.toLowerCase();
   return ("#" + value.slice(1).split("").map(char => char + char).join("")).toLowerCase();
+}
+
+/**
+ * Роль цвета по имени переменной. Контрактные имена точные, остальные — по словам в имени:
+ * `--card-bg` — поверхность, `--line` — граница, `--ink` — текст. Если роль не угадана,
+ * образ эту переменную не трогает.
+ */
+function colorRole(variable: string): PresetRole | null {
+  const name = variable.toLowerCase();
+  const exact: Record<string, PresetRole> = {
+    "--color-bg": "bg",
+    "--color-surface": "surface",
+    "--color-text": "text",
+    "--color-muted": "muted",
+    "--color-accent": "accent",
+    "--color-border": "border",
+  };
+  if (exact[name]) return exact[name];
+  if (/muted|subtle|secondary|dim|hint|caption/.test(name)) return "muted";
+  if (/surface|card|panel|elev|sheet|paper/.test(name)) return "surface";
+  if (/border|line|divider|stroke|outline|rule/.test(name)) return "border";
+  if (/accent|brand|primary|action|link|highlight/.test(name)) return "accent";
+  if (/(^|[-_])(bg|background|page|base|canvas)([-_]|$)/.test(name)) return "bg";
+  if (/(text|ink|fg|foreground|copy)/.test(name)) return "text";
+  return null;
+}
+
+function sizeParts(value: string) {
+  const match = SIZE.exec(value.trim());
+  if (!match) return null;
+  return { number: Number(match[1]), unit: match[2] ?? "px" };
 }
 
 function ColorRow({ field, value, onChange, eyedropper }: {
@@ -73,6 +124,57 @@ function ColorRow({ field, value, onChange, eyedropper }: {
   </div>;
 }
 
+/** Ползунок размера: единица сохраняется, меняется только число. */
+function LengthRow({ field, value, onChange }: { field: ThemeField; value: string; onChange: (next: string) => void }) {
+  const parts = sizeParts(value) ?? { number: 0, unit: "px" };
+  const unit = parts.unit;
+  const numeric = parts.number;
+  // Потолок подстраивается под текущее значение: у `--gap: 24px` не нужен ползунок до 1600.
+  const max = unit === "%" ? Math.max(100, Math.ceil(Math.abs(numeric))) : unit === "px"
+    ? Math.max(40, Math.min(1600, Math.ceil(Math.abs(numeric) * 2 / 10) * 10))
+    : Math.max(2, Math.ceil(Math.abs(numeric) * 2 * 10) / 10);
+  const min = numeric < 0 ? -max : 0;
+  function update(next: number) {
+    if (!Number.isFinite(next)) return;
+    onChange(String(next) + unit);
+  }
+  return <div className={"theme-size-row" + (field.used === false ? " unused" : "")}>
+    <div className="theme-size-head">
+      <span>{field.label}{field.used === false && <em className="theme-unused-mark">не используется</em>}</span>
+      <span className="theme-size-value">
+        <input type="number" value={numeric} min={-4000} max={4000} step={unit === "px" ? 1 : 0.05} onChange={event => update(Number(event.target.value))} aria-label={field.label + ": значение"}/>
+        <em>{unit}</em>
+      </span>
+    </div>
+    <input className="theme-range theme-size-range" type="range" min={min} max={max} step={unit === "px" ? 1 : 0.05} value={Math.min(max, Math.max(min, numeric))} onChange={event => update(Number(event.target.value))} aria-label={field.label}/>
+  </div>;
+}
+
+function WeightRow({ field, value, onChange }: { field: ThemeField; value: string; onChange: (next: string) => void }) {
+  const options = ["100", "200", "300", "400", "500", "600", "700", "800", "900"];
+  const own = options.includes(value) ? [] : [value];
+  return <label className={"theme-size-row" + (field.used === false ? " unused" : "")}>
+    <span className="theme-size-head">{field.label}{field.used === false && <em className="theme-unused-mark">не используется</em>}</span>
+    <select className="theme-size-select" value={value} onChange={event => onChange(event.target.value)}>
+      {[...options, ...own].map(option => <option key={option} value={option}>{option}</option>)}
+    </select>
+  </label>;
+}
+
+function NumberRow({ field, value, onChange }: { field: ThemeField; value: string; onChange: (next: string) => void }) {
+  const numeric = Number(value);
+  const safe = Number.isFinite(numeric) ? numeric : 1;
+  return <div className={"theme-size-row" + (field.used === false ? " unused" : "")}>
+    <div className="theme-size-head">
+      <span>{field.label}{field.used === false && <em className="theme-unused-mark">не используется</em>}</span>
+      <span className="theme-size-value">
+        <input type="number" value={value} min={-100} max={100} step={0.05} onChange={event => onChange(event.target.value)} aria-label={field.label + ": значение"}/>
+      </span>
+    </div>
+    <input className="theme-range theme-size-range" type="range" min={0} max={8} step={0.05} value={Math.min(8, Math.max(0, safe))} onChange={event => onChange(event.target.value)} aria-label={field.label}/>
+  </div>;
+}
+
 export function ThemePanel({ projectId, onClose, onApplied }: {
   projectId: string;
   onClose: () => void;
@@ -81,6 +183,7 @@ export function ThemePanel({ projectId, onClose, onApplied }: {
 }) {
   const [theme, setTheme] = useState<ProjectTheme | null>(null);
   const [draft, setDraft] = useState<Record<string, string>>({});
+  const [tab, setTab] = useState<Tab>("theme");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -171,6 +274,30 @@ export function ThemePanel({ projectId, onClose, onApplied }: {
     setSaved(false);
   }
 
+  /**
+   * Готовый образ правит только черновик: человек видит новые цвета в полях и сам решает,
+   * сохранять их. Так один клик не пересобирает предпросмотр и не тратит запрос впустую.
+   */
+  function applyPreset(preset: PalettePreset) {
+    if (!theme) return;
+    const next = { ...draft };
+    let matched = 0;
+    for (const field of theme.fields) {
+      if (field.kind !== "color") continue;
+      const role = colorRole(field.variable);
+      if (!role) continue;
+      next[field.variable] = preset.colors[role];
+      matched++;
+    }
+    if (!matched) {
+      setError("Не удалось определить роли цветов в этом проекте — поправьте их вручную во вкладке «Тема».");
+      return;
+    }
+    setError("");
+    setDraft(next);
+    setSaved(false);
+  }
+
   async function save() {
     if (!theme?.present || busy) return;
     setBusy(true);
@@ -206,19 +333,31 @@ export function ThemePanel({ projectId, onClose, onApplied }: {
   const colors = theme?.fields.filter(field => field.kind === "color") ?? [];
   const fonts = theme?.fields.filter(field => field.kind === "font") ?? [];
   const radius = theme?.fields.find(field => field.kind === "radius");
+  const lengths = theme?.fields.filter(field => field.kind === "length") ?? [];
+  const weights = theme?.fields.filter(field => field.kind === "weight") ?? [];
+  const numbers = theme?.fields.filter(field => field.kind === "number") ?? [];
   // Файлы палитры: их может быть несколько, если проект объявил свои переменные в styles.css.
   const files = Array.from(new Set(theme?.fields.map(field => field.file).filter(Boolean) as string[]));
 
-  return <section className="theme-sheet" aria-label="Тема проекта">
+  return <section className="theme-sheet" aria-label="Конструктор стиля">
     <div className="theme-head">
       <div className="theme-title">
-        <span className="eyebrow">ТЕМА</span>
+        <span className="eyebrow">СТИЛЬ</span>
         <div className="theme-title-line">
-          <strong>Палитра и шрифты</strong>
-          <Hint label="Зачем тема">Цвета и шрифты проекта.</Hint>
+          <strong>Конструктор</strong>
+          <Hint label="Что здесь">Цвета, шрифты, размеры и отступы проекта.</Hint>
         </div>
       </div>
-      <button className="icon-button" onClick={onClose} title="Закрыть" aria-label="Закрыть тему"><X size={15}/></button>
+      <button className="icon-button" onClick={onClose} title="Закрыть" aria-label="Закрыть стиль"><X size={15}/></button>
+    </div>
+
+    <div className="theme-tabs" role="tablist" aria-label="Разделы конструктора">
+      <button role="tab" aria-selected={tab === "theme"} className={"theme-tab" + (tab === "theme" ? " active" : "")} onClick={() => setTab("theme")}>
+        <Palette size={12}/> Тема
+      </button>
+      <button role="tab" aria-selected={tab === "constructor"} className={"theme-tab" + (tab === "constructor" ? " active" : "")} onClick={() => setTab("constructor")}>
+        <SlidersHorizontal size={12}/> Конструктор
+      </button>
     </div>
 
     <div className="theme-body">
@@ -241,7 +380,7 @@ export function ThemePanel({ projectId, onClose, onApplied }: {
         </div>
       </div>}
 
-      {theme?.present && <>
+      {theme?.present && tab === "theme" && <>
         {unused && <div className="theme-warning" role="status">
           <TriangleAlert size={14}/>
           <div>
@@ -310,6 +449,46 @@ export function ThemePanel({ projectId, onClose, onApplied }: {
           {files.map((file, index) => <span key={file}>{index > 0 ? ", " : ""}<code>{file}</code></span>)}.
           Панель меняет только объявления переменных, остальные правила файла не трогает.
         </p>
+      </>}
+
+      {theme?.present && tab === "constructor" && <>
+        {colors.length > 0 && <div className="theme-group">
+          <div className="theme-group-head">
+            <span>Готовые образы</span>
+            <small>применяются к найденным цветам</small>
+          </div>
+          <div className="theme-presets">
+            {PRESETS.map(preset => <button
+              key={preset.id}
+              type="button"
+              className="theme-preset"
+              onClick={() => applyPreset(preset)}
+              title={"Применить образ «" + preset.label + "»"}
+            >
+              <span className="theme-preset-swatch" style={{ background: "linear-gradient(135deg, " + preset.colors.bg + " 0 34%, " + preset.colors.accent + " 34% 67%, " + preset.colors.text + " 67%)" }}/>
+              <span>{preset.label}</span>
+            </button>)}
+          </div>
+          <p className="theme-hint">Образ меняет только черновик — проверьте цвета и нажмите «Сохранить».</p>
+        </div>}
+
+        {(lengths.length > 0 || weights.length > 0 || numbers.length > 0) && <div className="theme-group">
+          <div className="theme-group-head"><span>Размеры и отступы</span><small>переменные проекта</small></div>
+          {lengths.map(field => <LengthRow key={field.variable} field={field} value={draft[field.variable] ?? field.value} onChange={next => set(field.variable, next)}/>)}
+          {weights.map(field => <WeightRow key={field.variable} field={field} value={draft[field.variable] ?? field.value} onChange={next => set(field.variable, next)}/>)}
+          {numbers.map(field => <NumberRow key={field.variable} field={field} value={draft[field.variable] ?? field.value} onChange={next => set(field.variable, next)}/>)}
+        </div>}
+
+        {lengths.length === 0 && weights.length === 0 && numbers.length === 0 && <div className="theme-empty">
+          <div className="theme-empty-icon"><SlidersHorizontal size={20}/></div>
+          <strong>Размеры заданы не переменными</strong>
+          <p>В проекте нет переменных отступов и размеров, которые можно подвинуть ползунком. Цвета и шрифты доступны во вкладке «Тема», а точечную правку блока можно отправить агенту через выбор элемента.</p>
+          <button className="theme-action theme-empty-action" onClick={() => { setTab("theme") }}>
+            <Palette size={14}/> Открыть тему
+          </button>
+        </div>}
+
+        {unused && <p className="theme-hint">Страница не читает переменные — сначала переведите стили на тему, иначе правки не появятся в предпросмотре.</p>}
       </>}
     </div>
 

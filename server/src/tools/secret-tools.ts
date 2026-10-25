@@ -51,6 +51,7 @@ registerTool({
       variable: parsed.variable,
       purpose,
       file,
+      ...(context.conversationId ? { conversationId: context.conversationId } : {}),
       ...(context.signal ? { signal: context.signal } : {}),
     });
 

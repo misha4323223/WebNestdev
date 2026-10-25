@@ -3,7 +3,14 @@ import { z } from "zod";
 import { requireUser } from "../auth/auth.js";
 import { getProject } from "../project-store.js";
 import { getSandbox } from "../sandbox-manager.js";
-import { findSecretRequest, resolveSecretRequest, type SecretRequest, type SecretResolution } from "../secrets/pending-secrets.js";
+import {
+  findSecretRequest,
+  listSecretRequests,
+  resolveSecretRequest,
+  type AvailableSecretRequest,
+  type SecretRequest,
+  type SecretResolution,
+} from "../secrets/pending-secrets.js";
 import { parseEnvFileContent } from "../platform/platform-env.js";
 import { hashAuditIp, recordSecretAudit } from "../secrets/secret-audit.js";
 import { isSameOriginRequest, sameOriginRefusal } from "../security/same-origin.js";
@@ -39,6 +46,7 @@ const saveProjectSecretsSchema = z.object({
   message: "Пустой запрос: нет ни переменных, ни файла .env",
 });
 const deleteQuerySchema = z.object({ file: secretFileSchema });
+const pendingQuerySchema = z.object({ conversationId: z.string().min(1).max(200).optional() });
 
 /**
  * Everything the route touches lives behind these dependencies, so the test can drive the whole path
@@ -50,6 +58,7 @@ export type SecretRouteDeps = {
   getProject: (id: string) => Promise<{ id: string; userId: string } | null>;
   getSandboxRoot: (projectId: string, userId: string) => Promise<string>;
   findRequest: (id: string) => SecretRequest | null;
+  listRequests: (filter: { projectId: string; userId: string; conversationId?: string }) => AvailableSecretRequest[];
   resolveRequest: (id: string, resolution: SecretResolution) => boolean;
   writeSecret: (projectId: string, root: string, file: string, variable: string, value: string) => Promise<ProjectSecret[]>;
   listSecrets: (projectId: string, root: string) => Promise<ProjectSecret[]>;
@@ -66,6 +75,7 @@ const defaultDeps: SecretRouteDeps = {
   },
   getSandboxRoot: async (projectId, userId) => (await getSandbox(projectId, userId)).root,
   findRequest: findSecretRequest,
+  listRequests: listSecretRequests,
   resolveRequest: resolveSecretRequest,
   writeSecret: writeProjectSecret,
   listSecrets: listProjectSecrets,
@@ -127,6 +137,35 @@ export async function registerSecretRoutes(app: FastifyInstance, overrides: Part
     if (!project || project.userId !== user.id) return projectNotFound(reply);
     const root = await deps.getSandboxRoot(project.id, user.id);
     return { file: PROJECT_SECRETS_FILE, variables: await deps.listSecrets(project.id, root) };
+  });
+
+  /**
+   * Незакрытые окна ключей: после перезагрузки панель спрашивает их и возвращает карточку в чат.
+   * Отдаются только метаданные — значения сервер до сохранения не знает. Запрос привязан к чату,
+   * поэтому окно из одной переписки не всплывает в другой.
+   */
+  app.get("/api/projects/:id/secrets/pending", async (request, reply) => {
+    if (!guardSecretRequest(request, reply)) return;
+    const user = await deps.authorize(request, reply); if (!user) return;
+    const { id } = paramsSchema.parse(request.params);
+    const { conversationId } = pendingQuerySchema.parse(request.query ?? {});
+    const project = await deps.getProject(id);
+    if (!project || project.userId !== user.id) return projectNotFound(reply);
+    return {
+      requests: deps.listRequests({
+        projectId: project.id,
+        userId: user.id,
+        ...(conversationId ? { conversationId } : {}),
+      }).map(item => ({
+        id: item.id,
+        variable: item.variable,
+        purpose: item.purpose,
+        file: item.file,
+        createdAt: item.createdAt,
+        expiresAt: item.expiresAt,
+        waiting: item.waiting,
+      })),
+    };
   });
 
   /** Добавление, замена и массовый импорт .env. Значение пишется в хранилище и не возвращается. */

@@ -14,6 +14,7 @@ import { describePreviewLimits } from "./preview/preview-limiter.js";
 import { describeRunLimiter } from "./agent/run-limiter.js";
 import { describeContextBudget } from "./agent/context-budget.js";
 import { describeProviderRetry } from "./provider/provider-retry.js";
+import { describeFreeModelRoute } from "./provider/free-model.js";
 import { describeSandboxLimiter } from "./sandbox/sandbox-limiter.js";
 import { describeWebSearch } from "./web/search.js";
 import { assertEncryptionConfigured } from "./storage/secret-crypto.js";
@@ -133,6 +134,9 @@ console.log("[agent] " + describeContextBudget());
 // Что делает отказ провайдера по лимиту частоты: шаг ждёт и повторяется, а запуск продолжается
 // (provider-retry.ts). Без этой строки «агент вдруг думает дольше обычного» выглядит непонятно.
 console.log("[agent] " + describeProviderRetry());
+// Какая модель обслуживает бесплатный тариф и есть ли у неё резерв: без этой строки «на старте
+// отвечает не то, что ожидали» выглядит как случайность, а не как незаданный PLATFORM_AI_FREE_*.
+console.log("[agent] " + describeFreeModelRoute());
 console.log("[sandbox] " + describeSandboxLimiter());
 // Кто отвечает за поиск в интернете и настроен ли платный провайдер: без этой строки «поиск
 // возвращает отказ» и «ключ Yandex не подхватился» выглядят одинаково.

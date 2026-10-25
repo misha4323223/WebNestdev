@@ -2,9 +2,11 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { getProjectProvider, getProject, saveProjectProvider, removeProjectProvider, type ProjectProviderConfig } from "../project-store.js";
 import { getPlatformProviderConfig } from "../provider/platform-provider.js";
+import { createFreeModelRoute,getFreeModelConfig } from "../provider/free-model.js";
 import { reasoningSupport } from "../provider/openai-compatible-provider.js";
 import { createProvider } from "../provider.js";
 import { requireProjectUser, requireUser } from "../auth/auth.js";
+import { accountPlanFor } from "../billing/store.js";
 
 type ModelsRequest = { baseUrl?: string; token?: string; };
 function normalizeBaseUrl(value: string) { return value.trim().replace(/\/+$/, ""); }
@@ -13,15 +15,24 @@ function modelUrl(baseUrl: string) { const root = normalizeBaseUrl(baseUrl); if 
 export async function registerProviderRoutes(app: FastifyInstance) {
   app.get("/api/projects/:projectId/provider", async (request,reply) => {
     const { projectId } = request.params as { projectId: string };
-    if(!await requireProjectUser(request,reply,projectId))return;
+    const user = await requireProjectUser(request,reply,projectId);
+    if(!user)return;
     const config = await getProjectProvider(projectId);
+    const plan = await accountPlanFor(user.id);
+    // На бесплатном тарифе платформенная модель — это бесплатная цепочка (или её резерв).
+    // Имя такой модели не показываем: оно может меняться от шага к шагу и не является
+    // настройкой проекта. Свой провайдер проекта виден как обычно — его выбирал сам человек.
+    const freePlan = plan === "free";
+    const free = freePlan ? getFreeModelConfig() : null;
     const platform = getPlatformProviderConfig();
-    const platformDefault = platform
-      ? { available: true, providerName: platform.provider, model: platform.model }
-      : { available: false, providerName: "", model: "" };
+    const platformDefault = freePlan
+      ? { available: Boolean(free || platform), providerName: "", model: "", freeModel: true }
+      : platform
+        ? { available: true, providerName: platform.provider, model: platform.model }
+        : { available: false, providerName: "", model: "" };
     // Индикатор глубины размышления строится для той модели, которая реально отработает запуск:
-    // своей у проекта или платформенной по умолчанию. null — провайдера нет вовсе.
-    const effective = config ?? platform;
+    // своей у проекта, бесплатной на «Старте» или платформенной по умолчанию. null — провайдера нет.
+    const effective = config ?? free ?? platform;
     const reasoning = effective ? reasoningSupport(effective.baseUrl, effective.model) : null;
     if (!config) return { configured: false, provider: "", baseUrl: "", model: "", hasToken: false, platformDefault, reasoning };
     return { configured: true, provider: config.provider, baseUrl: config.baseUrl, model: config.model, hasToken: Boolean(config.token), platformDefault, reasoning };
@@ -41,13 +52,19 @@ export async function registerProviderRoutes(app: FastifyInstance) {
   });
   app.delete("/api/projects/:projectId/provider", async (request, reply) => {
     const { projectId } = request.params as { projectId: string };
-    if(!await requireProjectUser(request,reply,projectId))return;
+    const user = await requireProjectUser(request,reply,projectId);
+    if(!user)return;
     await removeProjectProvider(projectId);
+    const plan = await accountPlanFor(user.id);
+    const freePlan = plan === "free";
+    const free = freePlan ? getFreeModelConfig() : null;
     const platform = getPlatformProviderConfig();
     return {
       configured:false,
       removed:true,
-      platformDefault: platform ? { available:true, providerName:platform.provider, model:platform.model } : { available:false, providerName:"", model:"" }
+      platformDefault: freePlan
+        ? { available:Boolean(free || platform), providerName:"", model:"", freeModel:true }
+        : platform ? { available:true, providerName:platform.provider, model:platform.model } : { available:false, providerName:"", model:"" }
     };
   });
   app.post("/api/providers/models", async (request, reply) => {
@@ -83,31 +100,41 @@ export async function registerProviderRoutes(app: FastifyInstance) {
       if (!await requireProjectUser(request, reply, body.projectId)) return;
       projectConfig = await getProjectProvider(body.projectId);
     }
+    const plan = await accountPlanFor(user.id);
+    // Бесплатный тариф без своего провайдера проверяет ту же цепочку, которая реально работает:
+    // сначала Agnes, затем резерв. Имя модели в ответе не показываем — см. GET выше.
+    const freeModel = !projectConfig && plan === "free";
+    const freeRoute = freeModel ? createFreeModelRoute() : null;
     const platformConfig = getPlatformProviderConfig();
-    const effective = projectConfig ?? platformConfig;
+    const effective = projectConfig ?? (freeRoute ? null : platformConfig);
     const source = projectConfig ? "project" : "platform";
-    if (!effective) return reply.code(400).send({ ok: false, error: "Провайдер не настроен: заполните настройки проекта или задайте PLATFORM_AI_* в окружении." });
+    if (!effective && !freeRoute) return reply.code(400).send({ ok: false, error: "Провайдер не настроен: заполните настройки проекта или задайте PLATFORM_AI_* в окружении." });
+    const provider = freeRoute ? freeRoute.provider : createProvider(effective!);
+    const model = freeRoute ? freeRoute.model : effective!.model;
+    const presented = freeModel
+      ? { provider: "Free model", model: "", freeModel: true }
+      : { provider: effective!.provider, model: effective!.model };
+    const reasoningTarget = freeRoute ?? effective;
     const started = Date.now();
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 20_000);
     let text = ""; const toolCalls: Array<{ name: string; arguments: Record<string, unknown> }> = [];
     let usage: { promptTokens: number; completionTokens: number } | null = null;
     try {
-      const provider = createProvider(effective);
       const tools = [{ type: "function", function: { name: "ping", description: "Проверочный инструмент. Вызови его с аргументом value=\"ok\".", parameters: { type: "object", properties: { value: { type: "string" } }, additionalProperties: true } } }];
-      for await (const chunk of provider.stream([{ role: "user", content: "Проверка связи: вызови инструмент ping с аргументом value=\"ok\"." }], effective.model, tools, controller.signal)) {
+      for await (const chunk of provider.stream([{ role: "user", content: "Проверка связи: вызови инструмент ping с аргументом value=\"ok\"." }], model, tools, controller.signal)) {
         if (chunk.type === "text") text += chunk.text;
         else if (chunk.type === "tool_call") toolCalls.push({ name: chunk.call.name, arguments: chunk.call.arguments });
         else if (chunk.type === "usage") usage = { promptTokens: chunk.promptTokens, completionTokens: chunk.completionTokens };
       }
       // Проверка — самое удобное место узнать про глубину: она уже сходила в шлюз с просьбой
       // о рассуждении, поэтому индикатор в настройках обновляется сразу, без первого запуска.
-      const reasoning = reasoningSupport(effective.baseUrl, effective.model);
-      return { ok: true, source, provider: effective.provider, model: effective.model, latencyMs: Date.now() - started, tools: toolCalls.length > 0, toolCalls, text: text.slice(0, 400), usage, reasoning };
+      const reasoning = reasoningTarget ? reasoningSupport(reasoningTarget.baseUrl, reasoningTarget.model) : null;
+      return { ok: true, source, ...presented, latencyMs: Date.now() - started, tools: toolCalls.length > 0, toolCalls, text: text.slice(0, 400), usage, reasoning };
     } catch (error) {
       const raw = error instanceof Error ? error.message : String(error);
       const message = /abort/i.test(raw) ? "Провайдер не ответил за 20 секунд" : raw;
-      return reply.code(502).send({ ok: false, source, provider: effective.provider, model: effective.model, latencyMs: Date.now() - started, error: message, reasoning: reasoningSupport(effective.baseUrl, effective.model) });
+      return reply.code(502).send({ ok: false, source, ...presented, latencyMs: Date.now() - started, error: message, ...(reasoningTarget ? { reasoning: reasoningSupport(reasoningTarget.baseUrl, reasoningTarget.model) } : {}) });
     } finally {
       clearTimeout(timer);
     }

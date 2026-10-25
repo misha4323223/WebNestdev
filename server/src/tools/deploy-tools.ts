@@ -142,17 +142,21 @@ registerTool({
   description:
     "Read the durable deployment plan from `" + DEPLOY_PLAN_FILE + "`: goal, target, chosen services, every step with its status, progress, the current step and what is blocked. " +
     "Call it first when the user asks to deploy, publish or continue a deployment; on a new chat; after a reload or an interrupted run; and before creating or reusing any deployment resource. " +
-    "If the file does not exist, say so and build the plan with deploy.plan before touching the provider. " +
+    "Exception: on a fresh start, when the request says there is no plan yet, do not call it — build the plan with deploy.plan first. " +
+    "If the file does not exist or has no steps, build the plan with deploy.plan before touching the provider. " +
     "A step marked done means the resource already exists — reuse it instead of creating a second one.",
   parameters: { type: "object", additionalProperties: false, properties: {} },
   execute: async (_input, context) => {
     const sandbox = await getSandbox(context.projectId, context.userId);
     const plan = await readDeployPlan(sandbox.root);
-    if (!plan.exists) {
+    if (!plan.exists || plan.total === 0) {
       return {
         exists: false,
+        ...(plan.exists ? { empty: true } : {}),
         file: DEPLOY_PLAN_FILE,
-        hint: "Плана развёртывания пока нет. Если пользователь просит развернуть проект, сначала составь полный план через deploy.plan, затем создавай ресурсы.",
+        hint: plan.exists
+          ? "Файл deploy_project.md существует, но шагов в нём нет. Это ещё не план: не продолжай его, а сразу составь полный план через deploy.plan, затем создавай ресурсы."
+          : "Плана развёртывания пока нет. Если пользователь просит развернуть проект, сначала составь полный план через deploy.plan, затем создавай ресурсы.",
       };
     }
     return {

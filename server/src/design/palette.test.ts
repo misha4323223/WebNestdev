@@ -45,6 +45,37 @@ test("readPalette keeps the contract labels and order for a theme.css project", 
   assert.ok(palette.tokens.every(token => token.used));
 });
 
+test("readPalette exposes sizes and typography as editable tokens, not as fonts", async () => {
+  const root = await project({
+    "index.html": "<link rel=\"stylesheet\" href=\"theme.css\">",
+    "theme.css": [
+      ":root{",
+      "  --font-body:ui-sans-serif, system-ui, sans-serif;",
+      "  --font-size:18px;",
+      "  --font-weight:500;",
+      "  --line-height:1.6;",
+      "  --space:24px;",
+      "  --container:1120px;",
+      "  --border-width:1px;",
+      "  --z-index:10;",
+      "  --duration:200ms;",
+      "}",
+      "body{font-family:var(--font-body);font-size:var(--font-size);font-weight:var(--font-weight);line-height:var(--line-height)}",
+      ".wrap{padding:var(--space);max-width:var(--container);border-width:var(--border-width)}",
+    ].join("\n"),
+  });
+  const kinds = new Map((await readPalette(root)).tokens.map(token => [token.variable, token.kind]));
+  assert.equal(kinds.get("--font-body"), "font");
+  assert.equal(kinds.get("--font-size"), "length", "размер шрифта — не шрифтовой стек");
+  assert.equal(kinds.get("--font-weight"), "weight");
+  assert.equal(kinds.get("--line-height"), "number");
+  assert.equal(kinds.get("--space"), "length");
+  assert.equal(kinds.get("--container"), "length");
+  assert.equal(kinds.get("--border-width"), "length");
+  assert.equal(kinds.get("--z-index"), undefined, "z-index не должен становиться ползунком");
+  assert.equal(kinds.get("--duration"), undefined, "время анимации — не размер");
+});
+
 test("readPalette marks a declared variable the page never reads", async () => {
   const root = await project({
     "index.html": "<link rel=\"stylesheet\" href=\"theme.css\"><link rel=\"stylesheet\" href=\"styles.css\">",
@@ -152,4 +183,11 @@ test("normalizePaletteValue checks the value by the kind of the token", () => {
   assert.equal(normalizePaletteValue("radius", "8px"), "8px");
   assert.throws(() => normalizePaletteValue("font", "Arial; } body{display:none}"), /стеком/);
   assert.throws(() => normalizePaletteValue("font", "url(https://cdn.example/font.woff2)"), /стеком/);
+  assert.equal(normalizePaletteValue("length", "1.5REM"), "1.5rem");
+  assert.throws(() => normalizePaletteValue("length", "12"), /единицей/);
+  assert.throws(() => normalizePaletteValue("length", "99999px"), /пределы/);
+  assert.equal(normalizePaletteValue("weight", "700"), "700");
+  assert.throws(() => normalizePaletteValue("weight", "950"), /100 до 900/);
+  assert.equal(normalizePaletteValue("number", "1.6"), "1.6");
+  assert.throws(() => normalizePaletteValue("number", "1.6px"), /без единиц/);
 });

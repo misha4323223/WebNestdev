@@ -83,6 +83,11 @@ export const PLATFORM_ENV_CATALOG: PlatformEnvEntry[] = [
   { name: "PLATFORM_AI_BASE_URL", group: "ai", label: "AI Base URL", hint: "OpenAI-совместимый адрес модели платформы — то, чем пользуются проекты без своего провайдера.", kind: "url" },
   { name: "PLATFORM_AI_MODEL", group: "ai", label: "AI модель", hint: "Идентификатор модели для этого адреса.", kind: "value" },
   { name: "PLATFORM_AI_API_KEY", group: "ai", label: "AI ключ", hint: "Ключ провайдера модели платформы. Проекты со своим ключом его не используют.", kind: "secret" },
+  { name: "PLATFORM_AI_FREE_BASE_URL", group: "ai", label: "Free AI Base URL", hint: "Бесплатная модель тарифа «Старт», OpenAI-совместимый адрес. Пусто — бесплатный тариф работает на модели платформы выше.", kind: "url" },
+  { name: "PLATFORM_AI_FREE_MODEL", group: "ai", label: "Free AI модель", hint: "Идентификатор бесплатной модели, например agnes-2.5-flash.", kind: "value" },
+  { name: "PLATFORM_AI_FREE_KEY_1", group: "ai", label: "Free AI ключ 1", hint: "Первый ключ бесплатной модели; при отказе запуск переходит к следующему, затем к модели платформы.", kind: "secret" },
+  { name: "PLATFORM_AI_FREE_KEY_2", group: "ai", label: "Free AI ключ 2", hint: "Второй ключ бесплатной модели из другого аккаунта — резерв первого.", kind: "secret" },
+  { name: "PLATFORM_AI_FREE_KEY_3", group: "ai", label: "Free AI ключ 3", hint: "Третий ключ бесплатной модели из другого аккаунта — последний резерв перед моделью платформы.", kind: "secret" },
 
   // Поддержка: обращения из кнопки «Поддержка» сохраняются на сервере, читаются в админке
   // платформы и — по ключу API — во внешней админке (десктопное и мобильное приложение).

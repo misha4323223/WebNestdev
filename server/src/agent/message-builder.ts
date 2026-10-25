@@ -7,7 +7,7 @@ import type { ChatMessage,PlanState } from "../types.js";
  */
 export const DEPLOYMENT_RULES =
   " DEPLOYMENT HAS A DURABLE PLAN FILE: deploy_project.md in the project root is the bookmark for a deployment and survives a page reload, a new chat and context trimming, unlike plan.update. " +
-  "When the user asks to deploy, publish or continue a deployment, call deploy.status first. If the file does not exist, work out what the project actually is — a static site or an app with a server — decide only the services it really needs (hosting, domain, database, storage, email/SMS), and write the full ordered plan with deploy.plan BEFORE creating any resource. " +
+  "When the user asks to deploy, publish or continue a deployment, call deploy.status first — except on a fresh start when the request says there is no plan yet: then go straight to deploy.plan. If the file does not exist or has no steps, work out what the project actually is — a static site or an app with a server — decide only the services it really needs (hosting, domain, database, storage, email/SMS), and write the full ordered plan with deploy.plan BEFORE creating any resource. " +
   "After every step that is done and verified, call deploy.plan with the complete list and mark it done. " +
   "Never create a resource whose step is already done — reuse it and update the plan instead; a new chat, a reload or an interruption is exactly when this matters. " +
   "A step that needs the user — provider access, an application key, a payment, a phone confirmation, a manual action in a provider cabinet — is marked blocked, with the exact cabinet action and the provider docs URL in its note; continue with what can be done. " +

@@ -189,6 +189,17 @@ jobs:
           YANDEX_SEARCH_API_KEY: ${{ secrets.YANDEX_SEARCH_API_KEY || vars.YANDEX_SEARCH_API_KEY }}
           YANDEX_SEARCH_FOLDER_ID: ${{ secrets.YANDEX_SEARCH_FOLDER_ID || vars.YANDEX_SEARCH_FOLDER_ID }}
           TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY || vars.TAVILY_API_KEY }}
+          # AI платформы: платная модель — основная для подписок и резерв для бесплатного тарифа.
+          # Бесплатная цепочка (Agnes AI) — три ключа из разных аккаунтов, по порядку.
+          PLATFORM_AI_BASE_URL: ${{ secrets.PLATFORM_AI_BASE_URL || vars.PLATFORM_AI_BASE_URL }}
+          PLATFORM_AI_MODEL: ${{ secrets.PLATFORM_AI_MODEL || vars.PLATFORM_AI_MODEL }}
+          PLATFORM_AI_PROVIDER: ${{ secrets.PLATFORM_AI_PROVIDER || vars.PLATFORM_AI_PROVIDER }}
+          PLATFORM_AI_API_KEY: ${{ secrets.PLATFORM_AI_API_KEY }}
+          PLATFORM_AI_FREE_BASE_URL: ${{ secrets.PLATFORM_AI_FREE_BASE_URL || vars.PLATFORM_AI_FREE_BASE_URL }}
+          PLATFORM_AI_FREE_MODEL: ${{ secrets.PLATFORM_AI_FREE_MODEL || vars.PLATFORM_AI_FREE_MODEL }}
+          PLATFORM_AI_FREE_KEY_1: ${{ secrets.PLATFORM_AI_FREE_KEY_1 }}
+          PLATFORM_AI_FREE_KEY_2: ${{ secrets.PLATFORM_AI_FREE_KEY_2 }}
+          PLATFORM_AI_FREE_KEY_3: ${{ secrets.PLATFORM_AI_FREE_KEY_3 }}
           # Холодный ярус проектов: S3-совместимый бакет МТС Web Services (docs/STORAGE.md).
           # Адрес, бакет и регион — не секреты, их можно завести в Variables; ключи — только
           # в Secrets. Пустые значения не передаются: незаведённый ключ не стирает настройку ВМ.
@@ -254,6 +265,15 @@ jobs:
           add_platform_env YANDEX_SEARCH_API_KEY "$YANDEX_SEARCH_API_KEY"
           add_platform_env YANDEX_SEARCH_FOLDER_ID "$YANDEX_SEARCH_FOLDER_ID"
           add_platform_env TAVILY_API_KEY "$TAVILY_API_KEY"
+          add_platform_env PLATFORM_AI_BASE_URL "$PLATFORM_AI_BASE_URL"
+          add_platform_env PLATFORM_AI_MODEL "$PLATFORM_AI_MODEL"
+          add_platform_env PLATFORM_AI_PROVIDER "$PLATFORM_AI_PROVIDER"
+          add_platform_env PLATFORM_AI_API_KEY "$PLATFORM_AI_API_KEY"
+          add_platform_env PLATFORM_AI_FREE_BASE_URL "$PLATFORM_AI_FREE_BASE_URL"
+          add_platform_env PLATFORM_AI_FREE_MODEL "$PLATFORM_AI_FREE_MODEL"
+          add_platform_env PLATFORM_AI_FREE_KEY_1 "$PLATFORM_AI_FREE_KEY_1"
+          add_platform_env PLATFORM_AI_FREE_KEY_2 "$PLATFORM_AI_FREE_KEY_2"
+          add_platform_env PLATFORM_AI_FREE_KEY_3 "$PLATFORM_AI_FREE_KEY_3"
           add_platform_env PLATFORM_S3_ENDPOINT "$PLATFORM_S3_ENDPOINT"
           add_platform_env PLATFORM_S3_BUCKET "$PLATFORM_S3_BUCKET"
           add_platform_env PLATFORM_S3_REGION "$PLATFORM_S3_REGION"
@@ -350,6 +370,17 @@ jobs:
           YANDEX_SEARCH_API_KEY: ${{ secrets.YANDEX_SEARCH_API_KEY || vars.YANDEX_SEARCH_API_KEY }}
           YANDEX_SEARCH_FOLDER_ID: ${{ secrets.YANDEX_SEARCH_FOLDER_ID || vars.YANDEX_SEARCH_FOLDER_ID }}
           TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY || vars.TAVILY_API_KEY }}
+          # AI платформы: платная модель — основная для подписок и резерв для бесплатного тарифа.
+          # Бесплатная цепочка (Agnes AI) — три ключа из разных аккаунтов, по порядку.
+          PLATFORM_AI_BASE_URL: ${{ secrets.PLATFORM_AI_BASE_URL || vars.PLATFORM_AI_BASE_URL }}
+          PLATFORM_AI_MODEL: ${{ secrets.PLATFORM_AI_MODEL || vars.PLATFORM_AI_MODEL }}
+          PLATFORM_AI_PROVIDER: ${{ secrets.PLATFORM_AI_PROVIDER || vars.PLATFORM_AI_PROVIDER }}
+          PLATFORM_AI_API_KEY: ${{ secrets.PLATFORM_AI_API_KEY }}
+          PLATFORM_AI_FREE_BASE_URL: ${{ secrets.PLATFORM_AI_FREE_BASE_URL || vars.PLATFORM_AI_FREE_BASE_URL }}
+          PLATFORM_AI_FREE_MODEL: ${{ secrets.PLATFORM_AI_FREE_MODEL || vars.PLATFORM_AI_FREE_MODEL }}
+          PLATFORM_AI_FREE_KEY_1: ${{ secrets.PLATFORM_AI_FREE_KEY_1 }}
+          PLATFORM_AI_FREE_KEY_2: ${{ secrets.PLATFORM_AI_FREE_KEY_2 }}
+          PLATFORM_AI_FREE_KEY_3: ${{ secrets.PLATFORM_AI_FREE_KEY_3 }}
           # Холодный ярус проектов: тот же набор, что и в SSH-выкатке (docs/STORAGE.md).
           PLATFORM_S3_ENDPOINT: ${{ secrets.PLATFORM_S3_ENDPOINT || vars.PLATFORM_S3_ENDPOINT }}
           PLATFORM_S3_BUCKET: ${{ secrets.PLATFORM_S3_BUCKET || vars.PLATFORM_S3_BUCKET }}
@@ -392,6 +423,15 @@ jobs:
           add_platform_env YANDEX_SEARCH_API_KEY "$YANDEX_SEARCH_API_KEY"
           add_platform_env YANDEX_SEARCH_FOLDER_ID "$YANDEX_SEARCH_FOLDER_ID"
           add_platform_env TAVILY_API_KEY "$TAVILY_API_KEY"
+          add_platform_env PLATFORM_AI_BASE_URL "$PLATFORM_AI_BASE_URL"
+          add_platform_env PLATFORM_AI_MODEL "$PLATFORM_AI_MODEL"
+          add_platform_env PLATFORM_AI_PROVIDER "$PLATFORM_AI_PROVIDER"
+          add_platform_env PLATFORM_AI_API_KEY "$PLATFORM_AI_API_KEY"
+          add_platform_env PLATFORM_AI_FREE_BASE_URL "$PLATFORM_AI_FREE_BASE_URL"
+          add_platform_env PLATFORM_AI_FREE_MODEL "$PLATFORM_AI_FREE_MODEL"
+          add_platform_env PLATFORM_AI_FREE_KEY_1 "$PLATFORM_AI_FREE_KEY_1"
+          add_platform_env PLATFORM_AI_FREE_KEY_2 "$PLATFORM_AI_FREE_KEY_2"
+          add_platform_env PLATFORM_AI_FREE_KEY_3 "$PLATFORM_AI_FREE_KEY_3"
           add_platform_env PLATFORM_S3_ENDPOINT "$PLATFORM_S3_ENDPOINT"
           add_platform_env PLATFORM_S3_BUCKET "$PLATFORM_S3_BUCKET"
           add_platform_env PLATFORM_S3_REGION "$PLATFORM_S3_REGION"
