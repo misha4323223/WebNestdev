@@ -213,3 +213,26 @@ test("загрузка .env не теряет хорошие ключи из-з�
     assert.equal(platform.getPlatformEnv("GITHUB_CLIENT_ID"), "ok-id");
   });
 });
+
+test("запись другого процесса подхватывается, а не затирается", async () => {
+  await withRoot(async root => {
+    const platform = await import("./platform-env.js");
+    await platform.savePlatformEnv({ GITHUB_CLIENT_ID: "from-panel" });
+    assert.equal(platform.getPlatformEnv("GITHUB_CLIENT_ID"), "from-panel");
+
+    // Так же, как savePlatformEnv, второй процесс шифрует значение своим ключом и заменяет файл.
+    // Размер другой — отпечаток гарантированно изменится.
+    const { encryptSecret } = await import("../storage/secret-crypto.js");
+    await writeFile(path.join(root, "platform", "env.json"), JSON.stringify({ version: 1, values: {
+      GITHUB_CLIENT_ID: { value: encryptSecret("from-another-process"), preview: "from…cess", updatedAt: "2026-01-01" },
+    } }));
+
+    await platform.refreshPlatformEnv();
+    assert.equal(platform.getPlatformEnv("GITHUB_CLIENT_ID"), "from-another-process");
+
+    // Новая запись не должна стереть ключ, который успел записать другой процесс.
+    await platform.savePlatformEnv({ GITHUB_CLIENT_SECRET: "from-this-process" });
+    assert.equal(platform.getPlatformEnv("GITHUB_CLIENT_ID"), "from-another-process");
+    assert.equal(platform.getPlatformEnv("GITHUB_CLIENT_SECRET"), "from-this-process");
+  });
+});

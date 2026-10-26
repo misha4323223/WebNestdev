@@ -96,3 +96,20 @@ test("a key configured too short never opens the api", async () => {
     await close();
   }
 });
+
+test("ключ, сохранённый в панели, сразу открывает чтение", async () => {
+  const { app, close } = await appWith({});
+  const previousCryptoKey = process.env.WEBNESTDEV_ENCRYPTION_KEY;
+  process.env.WEBNESTDEV_ENCRYPTION_KEY = "0123456789abcdef".repeat(4);
+  try {
+    const { savePlatformEnv } = await import("../platform/platform-env.js");
+    await savePlatformEnv({ SUPPORT_API_KEY: KEY });
+    const response = await app.inject({ method: "GET", url: "/api/support/tickets", headers: { "x-support-key": KEY } });
+    assert.equal(response.statusCode, 200, response.body);
+    assert.deepEqual(response.json(), { tickets: [] });
+  } finally {
+    if (previousCryptoKey === undefined) delete process.env.WEBNESTDEV_ENCRYPTION_KEY;
+    else process.env.WEBNESTDEV_ENCRYPTION_KEY = previousCryptoKey;
+    await close();
+  }
+});

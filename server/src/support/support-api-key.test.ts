@@ -49,3 +49,13 @@ test("keys of different lengths still compare without leaking the length", () =>
   assert.equal(supportKeyMatches(null, "same-value"), false);
   assert.equal(supportKeyMatches("same-value", null), false);
 });
+
+test("перенос строки и невидимые символы в ключе не ломают сравнение", () => {
+  // Так выглядит ключ, скопированный из документа: zero-width разделитель посреди строки.
+  withKey("read-only-key-\u200B0123456789", () => {
+    assert.equal(supportApiKey(), "read-only-key-0123456789");
+    assert.ok(supportKeyAuthorized({ authorization: "Bearer read-only-key-0123456789" }));
+    // Клиент тоже может прислать ключ с переносом — для заголовка это не часть значения.
+    assert.ok(supportKeyAuthorized({ "x-support-key": "read-only-key-\n0123456789" }));
+  });
+});

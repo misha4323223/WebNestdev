@@ -1,10 +1,11 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
-import { requireUser } from "../auth/auth.js";
+import { getCurrentUser, requireUser } from "../auth/auth.js";
+import { bearerToken, getAdminSession } from "../admin/admin-store.js";
 import { isPlatformAdmin } from "../platform/admin.js";
 import { createSupportTicket, listSupportTickets, readSupportScreenshot } from "../support/support-store.js";
 import { sendSupportMail, supportMailSettings } from "../support/support-mail.js";
-import { supportKeyAuthorized } from "../support/support-api-key.js";
+import { supportApiKey, supportKeyAuthorizedCurrent, supportKeyFromHeaders, supportKeySource } from "../support/support-api-key.js";
 
 /**
  * Обращение в поддержку: категория, важность, описание, шаги воспроизведения и обязательный
@@ -46,13 +47,40 @@ function allowTicket(userId: string) {
 }
 
 /**
- * Кто читает обращения. Две двери: администратор платформы в браузере (cookie сессии) и внешняя
- * админка — десктопное или мобильное приложение — по ключу `Authorization: Bearer` или
- * `X-Support-Key`. Ключ даёт только чтение: создание обращения по-прежнему требует входа.
+ * Кто читает обращения. Три двери: администратор платформы в браузере (cookie сессии), внешняя
+ * админка по своей админ-сессии (`Authorization: Bearer`) и клиент по ключу чтения
+ * (`X-Support-Key` или `Authorization: Bearer`). Все три дают только чтение: создание обращения
+ * по-прежнему требует пользовательской сессии.
  */
 async function allowTicketRead(request: FastifyRequest, reply: FastifyReply) {
-  if (supportKeyAuthorized(request.headers)) return true;
-  const user = await requireUser(request, reply); if (!user) return false;
+  if (await supportKeyAuthorizedCurrent(request.headers)) return true;
+
+  // Админ-приложение уже вошло по паролю и TOTP. Его сессия — такая же дверь, как ключ:
+  // отдельный общий секрет не нужен, а срок и бездействие проверяются как в остальной админке.
+  // Cookie здесь не принимается — только Authorization, поэтому CSRF-барьер не ослабляется.
+  const adminToken = bearerToken(request.headers.authorization);
+  if (adminToken) {
+    try {
+      if (await getAdminSession(adminToken)) return true;
+    } catch (error) {
+      request.log.warn({ error: error instanceof Error ? error.message : error }, "admin session check failed for support read");
+    }
+  }
+
+  const providedKey = supportKeyFromHeaders(request.headers);
+  const user = await getCurrentUser(request);
+  if (!user) {
+    // Заголовок объясняет отказ без раскрытия значения: клиент видит, настроен ли ключ на этом
+    // процессе и совпал ли он, вместо одинакового 401 на все случаи.
+    reply.header("X-Support-Auth", providedKey ? (supportApiKey() ? "key-mismatch" : "key-not-configured") : "session-required");
+    request.log.info({
+      supportKey: providedKey ? (supportApiKey() ? "mismatch" : "not-configured") : "absent",
+      supportKeySource: supportKeySource(),
+      adminToken: adminToken ? "not-a-session" : "absent",
+    }, "support read refused");
+    await reply.code(401).send({ error: "Требуется вход в аккаунт" });
+    return false;
+  }
   if (!isPlatformAdmin(user)) {
     await reply.code(403).send({ error: "Раздел доступен только администратору платформы" });
     return false;

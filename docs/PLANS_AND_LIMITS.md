@@ -88,6 +88,16 @@ a subscription ended.
   to run against an actual configured YDB database before calling multi-replica quota enforcement
   production-verified.
 
+## Choosing a price from measured cost
+
+`GET /api/admin/stats/costs` and `/api/admin/stats/economics` (`docs/ADMIN_API.md`, разделы 7.2–7.4)
+turn `model_usage` and paid invoices into actual cost, revenue, margin and a suggested price per plan.
+The suggestion includes the model cost of the plan, a share of fixed infrastructure
+(`PLATFORM_INFRA_COST_PER_MONTH`) and the cost of the free plan divided between paying subscribers,
+then rounds up to 10 ₽ at the target margin (default 70 %). Model rates come from
+`PLATFORM_AI_MODEL_PRICES` (fallback: `PLATFORM_AI_PRICE_*`); the current plan price is read from the
+live `ROBOKASSA_PRICE_*` setting, so MRR matches what the shop actually charges.
+
 ## API
 
 - `GET /api/account/settings`, `PUT /api/account/settings`

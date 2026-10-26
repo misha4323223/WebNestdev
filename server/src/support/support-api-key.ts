@@ -1,5 +1,5 @@
 import { createHash, timingSafeEqual } from "node:crypto";
-import { getPlatformEnv } from "../platform/platform-env.js";
+import { getPlatformEnv, normalizeApiKeyValue, platformEnvSetByPanel, refreshPlatformEnv } from "../platform/platform-env.js";
 
 /**
  * Ключ только для чтения обращений — для отдельной админки (десктопное и мобильное приложение).
@@ -24,9 +24,32 @@ function first(value: string | string[] | undefined) {
 }
 
 export function supportApiKey(): string | null {
+  const value = getPlatformEnv(SUPPORT_API_KEY_ENV);
+  if (!value) return null;
+  // Пробелы и невидимые символы не делают ключ другим — они делают его нерабочим.
+  const key = normalizeApiKeyValue(value);
+  if (key.length < MIN_KEY_LENGTH) return null;
+  return key;
+}
+
+/** Откуда взято значение: панель важнее окружения, окружение — важнее «не задан». */
+export function supportKeySource(): "panel" | "environment" | "none" {
+  if (platformEnvSetByPanel(SUPPORT_API_KEY_ENV)) return "panel";
+  if (process.env[SUPPORT_API_KEY_ENV]?.trim()) return "environment";
+  return "none";
+}
+
+/**
+ * Состояние без самого значения: его достаточно, чтобы отличить «ключ не сохранён» от
+ * «ключ сохранён, но слишком короткий» и «панель пишет, а запрос идёт в другой процесс».
+ */
+export function supportKeyStatus() {
   const value = getPlatformEnv(SUPPORT_API_KEY_ENV)?.trim();
-  if (!value || value.length < MIN_KEY_LENGTH) return null;
-  return value;
+  return {
+    keySource: supportKeySource(),
+    keyConfigured: Boolean(value),
+    keyUsable: supportApiKey() !== null,
+  };
 }
 
 export function supportKeyFromHeaders(headers: SupportHeaders) {
@@ -43,12 +66,24 @@ export function supportKeyFromHeaders(headers: SupportHeaders) {
  */
 export function supportKeyMatches(provided: string | null, expected: string | null) {
   if (!provided || !expected) return false;
-  const left = createHash("sha256").update(provided, "utf8").digest();
-  const right = createHash("sha256").update(expected, "utf8").digest();
+  const leftValue = normalizeApiKeyValue(provided);
+  const rightValue = normalizeApiKeyValue(expected);
+  if (!leftValue || !rightValue) return false;
+  const left = createHash("sha256").update(leftValue, "utf8").digest();
+  const right = createHash("sha256").update(rightValue, "utf8").digest();
   return timingSafeEqual(left, right);
 }
 
 /** Верно, только если ключ настроен и присланный совпадает с ним. */
 export function supportKeyAuthorized(headers: SupportHeaders) {
   return supportKeyMatches(supportKeyFromHeaders(headers), supportApiKey());
+}
+
+/**
+ * Та же проверка, но перед ней память сверяется с файлом: так ключ, сохранённый в панели на
+ * другой реплике (или другим процессом), начинает работать без перезапуска и без ожидания.
+ */
+export async function supportKeyAuthorizedCurrent(headers: SupportHeaders) {
+  await refreshPlatformEnv();
+  return supportKeyAuthorized(headers);
 }

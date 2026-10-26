@@ -13,6 +13,7 @@ import { sandboxHostRootDir,sandboxRootDir } from "../sandbox/config.js";
 import { lastSandboxMountCheck } from "../sandbox/sandbox-check.js";
 import { diskStatus, memoryStatus } from "../health/host-metrics.js";
 import { smsReadiness, smsSummary } from "../auth/sms.js";
+import { supportKeyStatus } from "../support/support-api-key.js";
 import { normalizeAddress } from "../security/client-ip.js";
 import type { FastifyRequest } from "fastify";
 
@@ -120,8 +121,11 @@ function isInternalHealthRequest(request:FastifyRequest){
 
 export async function registerHealthRoutes(app:FastifyInstance){
   app.get("/api/health",async request=>{
+    // Настроен ли ключ чтения обращений и откуда он взят — без самого значения. Это отличает
+    // «ключ не сохранён» от «сохранён в панели, но запрос попал в процесс без него».
+    const support = supportKeyStatus();
     if(!isInternalHealthRequest(request)){
-      return {ok:true,service:"webnestdev-server",build:buildId(),sms:await smsInfo()};
+      return {ok:true,service:"webnestdev-server",build:buildId(),sms:await smsInfo(),support};
     }
     return {
       ok:true,
@@ -132,6 +136,7 @@ export async function registerHealthRoutes(app:FastifyInstance){
       // Секретов здесь нет, зато «SMS перестали приходить» проверяется одной командой
       // curl localhost:8787/api/health вместо чтения .env на ВМ.
       sms:await smsInfo(),
+      support,
       activity:await activity(),
     };
   });

@@ -114,6 +114,14 @@ services:
       PLATFORM_AI_FREE_KEY_1: ${PLATFORM_AI_FREE_KEY_1:-}
       PLATFORM_AI_FREE_KEY_2: ${PLATFORM_AI_FREE_KEY_2:-}
       PLATFORM_AI_FREE_KEY_3: ${PLATFORM_AI_FREE_KEY_3:-}
+      # Цены для денежной статистики админки (docs/ADMIN_API.md, раздел 7). Compose передаёт в
+      # контейнер только перечисленные переменные: без этих строк цены лежали бы в .env, а сервер
+      # их не видел. Пустые значения ничего не ломают — статистика просто не считает деньги.
+      PLATFORM_AI_PRICE_INPUT_PER_MILLION: ${PLATFORM_AI_PRICE_INPUT_PER_MILLION:-}
+      PLATFORM_AI_PRICE_OUTPUT_PER_MILLION: ${PLATFORM_AI_PRICE_OUTPUT_PER_MILLION:-}
+      PLATFORM_AI_PRICE_CURRENCY: ${PLATFORM_AI_PRICE_CURRENCY:-}
+      PLATFORM_AI_MODEL_PRICES: ${PLATFORM_AI_MODEL_PRICES:-}
+      PLATFORM_INFRA_COST_PER_MONTH: ${PLATFORM_INFRA_COST_PER_MONTH:-}
       # Холодный ярус проектов: архив рабочей папки в S3-совместимом бакете (docs/STORAGE.md).
       # Compose передаёт в контейнер только перечисленные переменные, поэтому без этого блока
       # ключи, положенные в .env на ВМ, до сервера не доходили бы — как это уже случилось
@@ -183,6 +191,17 @@ services:
       WEBNESTDEV_SMS_TEST_MODE: ${WEBNESTDEV_SMS_TEST_MODE:-}
       WEBNESTDEV_DEMO_PHONE_ENABLED: ${WEBNESTDEV_DEMO_PHONE_ENABLED:-}
       WEBNESTDEV_DEMO_PHONE: ${WEBNESTDEV_DEMO_PHONE:-}
+      # Поддержка: ключ чтения обращений для внешней админки и SMTP. Compose передаёт в
+      # контейнер только перечисленные переменные, поэтому без этих строк SUPPORT_* из .env
+      # на ВМ до сервера не доходили бы. Значение из панели «Ключи сервера» важнее значения
+      # здесь; пустая строка ничего не включает.
+      SUPPORT_API_KEY: ${SUPPORT_API_KEY:-}
+      SUPPORT_EMAIL_TO: ${SUPPORT_EMAIL_TO:-}
+      SUPPORT_EMAIL_FROM: ${SUPPORT_EMAIL_FROM:-}
+      SUPPORT_SMTP_HOST: ${SUPPORT_SMTP_HOST:-}
+      SUPPORT_SMTP_PORT: ${SUPPORT_SMTP_PORT:-}
+      SUPPORT_SMTP_USER: ${SUPPORT_SMTP_USER:-}
+      SUPPORT_SMTP_PASSWORD: ${SUPPORT_SMTP_PASSWORD:-}
       # Песочницы и предпросмотр монтируются в контейнеры проектов через `docker run -v`,
       # а этот путь разбирает демон на ХОСТЕ. Поэтому каталог обязан существовать на хосте и
       # в контейнере под одним и тем же абсолютным путём — иначе контейнеры видят пустой

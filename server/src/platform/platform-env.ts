@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { decryptSecret, encryptSecret, isEncryptedSecret } from "../storage/secret-crypto.js";
 import { parseAuthorizedKeyJson, parseServiceAccountKey } from "../yandex/yandex-api.js";
@@ -94,7 +94,7 @@ export const PLATFORM_ENV_CATALOG: PlatformEnvEntry[] = [
   // Почта необязательна: с SMTP обычной почты (Яндекс, Mail.ru, Gmail) сервер входит в твой ящик
   // и шлёт письмо на него же, без отдельного сервиса. Без почтовых ключей обращения остаются
   // на сервере и в API.
-  { name: "SUPPORT_API_KEY", group: "support", label: "Ключ API для админки", hint: "Ключ только для чтения: внешнее приложение забирает обращения запросом GET /api/support/tickets с заголовком Authorization: Bearer <ключ> или X-Support-Key: <ключ>. Скриншот — GET /api/support/tickets/<id>/screenshot. Создать обращение по ключу нельзя. Не короче 16 символов.", kind: "secret" },
+  { name: "SUPPORT_API_KEY", group: "support", label: "Ключ API для админки", hint: "Ключ только для чтения: внешнее приложение забирает обращения запросом GET /api/support/tickets с заголовком Authorization: Bearer <ключ> или X-Support-Key: <ключ>. Скриншот — GET /api/support/tickets/<id>/screenshot. Создать обращение по ключу нельзя. Не короче 16 символов; пробелы и невидимые символы убираются при сохранении.", kind: "secret" },
   { name: "SUPPORT_EMAIL_TO", group: "support", label: "Куда присылать обращения", hint: "Адрес ящика поддержки, например support@example.ru. На него придет письмо с обращением.", kind: "value" },
   { name: "SUPPORT_EMAIL_FROM", group: "support", label: "Адрес отправителя", hint: "Необязательно: по умолчанию совпадает с логином SMTP. У Яндекса и Mail.ru это должен быть тот же ящик.", kind: "value" },
   { name: "SUPPORT_SMTP_HOST", group: "support", label: "SMTP-сервер", hint: "Например smtp.yandex.ru, smtp.mail.ru или smtp.gmail.com — смотри в настройках почты («SMTP»).", kind: "value" },
@@ -137,9 +137,17 @@ export function platformEnvGroupLabel(group: PlatformEnvGroup) {
 
 let overrides = new Map<string, StoredEntry>();
 let loaded = false;
+// Отпечаток файла, который сейчас разобран в `overrides`. Нужен, чтобы процесс замечал
+// изменения, записанные другим процессом (несколько реплик, перезапуск рядом с живым).
+let storeStamp: string | null = null;
+let loadInFlight: Promise<void> | null = null;
 
 function storeFile() {
   return path.join(process.env.WEBNESTDEV_DATA_DIR ?? path.resolve(".webnestdev"), "platform", "env.json");
+}
+
+function fileStamp(info: { mtimeMs: number; size: number }) {
+  return info.mtimeMs.toFixed(3) + ":" + info.size;
 }
 
 function catalogEntry(name: string) {
@@ -162,15 +170,26 @@ export function platformEnvSetByPanel(name: string) {
 }
 
 /** Чтение шифрованного хранилища при старте. Ошибка ключа не роняет сервер: значения просто не применяются. */
-export async function loadPlatformEnv() {
+async function loadPlatformEnvFromDisk() {
   loaded = true;
   overrides = new Map();
+  const file = storeFile();
+  // Отпечаток снимается до чтения: если файл изменится между stat и readFile, следующий
+  // refresh увидит другой отпечаток и перечитает его. Обратный порядок оставил бы в памяти
+  // старое содержимое с новым отпечатком, и изменение потерялось бы до следующей записи.
+  let stamp: string | null = null;
+  try { stamp = fileStamp(await stat(file)); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") console.error("[platform] не удалось проверить хранилище ключей:", error);
+  }
   let raw: string;
-  try { raw = await readFile(storeFile(), "utf8"); }
+  try { raw = await readFile(file, "utf8"); }
   catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") console.error("[platform] не удалось прочитать хранилище ключей:", error);
+    storeStamp = stamp;
     return;
   }
+  storeStamp = stamp;
   let parsed: StoreFile;
   try { parsed = JSON.parse(raw) as StoreFile; }
   catch { console.error("[platform] хранилище ключей повреждено — значения панели не применены"); return; }
@@ -202,6 +221,35 @@ export async function loadPlatformEnv() {
   if (overrides.size) console.log("[platform] ключей из панели: " + overrides.size + " (" + [...overrides.keys()].sort().join(", ") + ")");
 }
 
+/** Один разбор файла на процесс: старт и параллельные проверки не читают его наперегонки. */
+export async function loadPlatformEnv() {
+  if (loadInFlight) return loadInFlight;
+  loadInFlight = loadPlatformEnvFromDisk().finally(() => { loadInFlight = null; });
+  return loadInFlight;
+}
+
+/**
+ * Перечитать хранилище, если его изменил другой процесс. `getPlatformEnv` намеренно остаётся
+ * синхронным (им пользуются и синхронные части), поэтому обновление памяти — отдельный шаг.
+ * Без него ключ, сохранённый в панели на одной реплике, не видел бы запрос, попавший на другую:
+ * `savePlatformEnv` обновляет карту только своего процесса.
+ */
+export async function refreshPlatformEnv() {
+  let info: { mtimeMs: number; size: number };
+  try { info = await stat(storeFile()); }
+  catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      // Файл исчез (например, пересоздан том): значения панели больше не действуют.
+      if (storeStamp !== null || overrides.size) await loadPlatformEnv();
+      return;
+    }
+    console.error("[platform] не удалось проверить хранилище ключей:", error);
+    return;
+  }
+  if (fileStamp(info) === storeStamp) return;
+  await loadPlatformEnv();
+}
+
 export function platformEnvLoaded() {
   return loaded;
 }
@@ -219,6 +267,8 @@ async function writeStore(entries: Map<string, StoredEntry>) {
   try {
     await writeFile(temp, JSON.stringify(payload, null, 2), { mode: 0o600 });
     await rename(temp, file);
+    // Свой же файл не должен перечитываться следующим refresh: отпечаток уже известен.
+    try { storeStamp = fileStamp(await stat(file)); } catch { storeStamp = null; }
   } catch (error) {
     try { await unlink(temp); } catch {}
     throw error;
@@ -243,12 +293,26 @@ export function normalizePastedValue(value: string) {
   return value.replace(/\r\n?/g, "\n").trim();
 }
 
+/**
+ * Ключ API приходит из буфера обмена вместе с невидимыми символами: переводом строки, пробелом,
+ * zero-width разделителем. В заголовке это не часть ключа, поэтому при сохранении и сравнении
+ * они убираются — иначе панель говорит «сохранено», а тот же ключ в запросе получает 401.
+ */
+export function normalizeApiKeyValue(value: string) {
+  // Кроме пробелов и переводов строк — мягкий перенос, word joiner, bidi-марки и другие
+  // невидимые разделители, которые приезжают вместе с текстом из документа или мессенджера.
+  return value.replace(/[\s\u00AD\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]+/g, "");
+}
+
 /** Проверка значения до записи: ошибка объясняет, что не так, вместо «сохранено, но не работает». */
 export function validatePlatformValue(name: string, value: string): string | null {
   const entry = catalogEntry(name);
   if (!entry) return "Неизвестный ключ: " + name;
   const text = normalizePastedValue(value);
   if (!text) return null;
+  if (name === "SUPPORT_API_KEY" && normalizeApiKeyValue(text).length < 16) {
+    return "Ключ API для админки должен быть не короче 16 символов (без пробелов и невидимых символов)";
+  }
   if (entry.kind === "json-key") {
     try { parseServiceAccountKey(text); }
     catch (error) { return error instanceof Error ? error.message : String(error); }
@@ -275,7 +339,10 @@ export type SkippedValue = { name: string; message: string };
 export async function savePlatformEnv(values: Record<string, string | undefined>) {
   // Панель читает хранилище при старте сервера, а скрипт или тест может вызвать запись первым.
   // Без загруженной карты `next` начался бы с пустой и стёр бы все ключи, которых нет в values.
+  // Если карта уже есть, сверяемся с файлом: его мог изменить другой процесс, и запись поверх
+  // устаревшей карты удалила бы чужие ключи.
   if (!loaded) await loadPlatformEnv();
+  else await refreshPlatformEnv();
   const skipped: SkippedValue[] = [];
   const next = new Map(overrides);
   const saved: string[] = [];
@@ -291,7 +358,12 @@ export async function savePlatformEnv(values: Record<string, string | undefined>
     }
     const problem = validatePlatformValue(name, value);
     if (problem) { skipped.push({ name, message: problem }); continue; }
-    next.set(name, { value: entry.kind === "json-key" ? canonicalKeyJson(value) : value, preview: previewOf(value), updatedAt: new Date().toISOString() });
+    // Ключ поддержки хранится и показывается уже очищенным: пробелы и невидимые символы
+    // не должны попадать ни в файл, ни в превью «nest…0-26».
+    const storedValue = name === "SUPPORT_API_KEY"
+      ? normalizeApiKeyValue(value)
+      : entry.kind === "json-key" ? canonicalKeyJson(value) : value;
+    next.set(name, { value: storedValue, preview: previewOf(storedValue), updatedAt: new Date().toISOString() });
     saved.push(name);
   }
   if (saved.length || cleared.length) {

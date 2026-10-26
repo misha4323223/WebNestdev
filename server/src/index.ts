@@ -53,6 +53,7 @@ import { registerTasksRoutes } from "./routes/tasks.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerAdminRoutes } from "./routes/admin.js";
 import { registerAdminAnalyticsRoutes } from "./routes/admin-analytics.js";
+import { registerAdminEconomicsRoutes } from "./routes/admin-economics.js";
 import { registerPhoneAuthRoutes } from "./routes/phone-auth.js";
 import { registerAccountRoutes } from "./routes/account.js";
 import { registerBillingRoutes } from "./routes/billing.js";
@@ -230,6 +231,8 @@ await registerAuthRoutes(app);
 await registerAdminRoutes(app);
 // Статистика для админ-приложения: только чтение, тот же Bearer-токен и та же дверь (docs/ADMIN_API.md).
 await registerAdminAnalyticsRoutes(app);
+// Деньги админки: расход по моделям, выручка, маржа и цена подписки (docs/ADMIN_API.md).
+await registerAdminEconomicsRoutes(app);
 await registerPhoneAuthRoutes(app);
 await registerAccountRoutes(app);
 await registerBillingRoutes(app);

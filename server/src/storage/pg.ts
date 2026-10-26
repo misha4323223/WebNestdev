@@ -595,6 +595,9 @@ export async function initializeStorage(): Promise<void> {
       attempts INTEGER NOT NULL DEFAULT 0
     )`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("billing_payments")}_user ON ${tbl("billing_payments")} (user_id, created_at)`);
+    // Денежная статистика админки (routes/admin-economics.ts) суммирует оплаты за период по
+    // paid_at. Без индекса каждый экран «Экономика» перебирал бы все платежи магазина.
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("billing_payments")}_paid ON ${tbl("billing_payments")} (paid_at)`);
 
     await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("billing_subscriptions")} (
       user_id TEXT NOT NULL PRIMARY KEY,

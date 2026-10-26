@@ -200,6 +200,13 @@ jobs:
           PLATFORM_AI_FREE_KEY_1: ${{ secrets.PLATFORM_AI_FREE_KEY_1 }}
           PLATFORM_AI_FREE_KEY_2: ${{ secrets.PLATFORM_AI_FREE_KEY_2 }}
           PLATFORM_AI_FREE_KEY_3: ${{ secrets.PLATFORM_AI_FREE_KEY_3 }}
+          # Цены для денежной статистики админки (docs/ADMIN_API.md, раздел 7). Общая ставка
+          # остаётся запасным вариантом; таблица по моделям точнее, когда моделей несколько.
+          PLATFORM_AI_PRICE_INPUT_PER_MILLION: ${{ secrets.PLATFORM_AI_PRICE_INPUT_PER_MILLION || vars.PLATFORM_AI_PRICE_INPUT_PER_MILLION }}
+          PLATFORM_AI_PRICE_OUTPUT_PER_MILLION: ${{ secrets.PLATFORM_AI_PRICE_OUTPUT_PER_MILLION || vars.PLATFORM_AI_PRICE_OUTPUT_PER_MILLION }}
+          PLATFORM_AI_PRICE_CURRENCY: ${{ secrets.PLATFORM_AI_PRICE_CURRENCY || vars.PLATFORM_AI_PRICE_CURRENCY }}
+          PLATFORM_AI_MODEL_PRICES: ${{ secrets.PLATFORM_AI_MODEL_PRICES || vars.PLATFORM_AI_MODEL_PRICES }}
+          PLATFORM_INFRA_COST_PER_MONTH: ${{ secrets.PLATFORM_INFRA_COST_PER_MONTH || vars.PLATFORM_INFRA_COST_PER_MONTH }}
           # Холодный ярус проектов: S3-совместимый бакет МТС Web Services (docs/STORAGE.md).
           # Адрес, бакет и регион — не секреты, их можно завести в Variables; ключи — только
           # в Secrets. Пустые значения не передаются: незаведённый ключ не стирает настройку ВМ.
@@ -221,6 +228,15 @@ jobs:
           # он попадает в .env на ВМ, где и так лежат ключ шифрования и пароль базы.
           ADMIN_BOOTSTRAP_EMAIL: ${{ secrets.ADMIN_BOOTSTRAP_EMAIL }}
           ADMIN_BOOTSTRAP_PASSWORD: ${{ secrets.ADMIN_BOOTSTRAP_PASSWORD }}
+          # Поддержка: ключ чтения обращений для внешней админки и SMTP. Пустые значения не
+          # передаются и не стирают уже настроенное на ВМ; значение из панели важнее.
+          SUPPORT_API_KEY: ${{ secrets.SUPPORT_API_KEY || vars.SUPPORT_API_KEY }}
+          SUPPORT_EMAIL_TO: ${{ secrets.SUPPORT_EMAIL_TO || vars.SUPPORT_EMAIL_TO }}
+          SUPPORT_EMAIL_FROM: ${{ secrets.SUPPORT_EMAIL_FROM || vars.SUPPORT_EMAIL_FROM }}
+          SUPPORT_SMTP_HOST: ${{ secrets.SUPPORT_SMTP_HOST || vars.SUPPORT_SMTP_HOST }}
+          SUPPORT_SMTP_PORT: ${{ secrets.SUPPORT_SMTP_PORT || vars.SUPPORT_SMTP_PORT }}
+          SUPPORT_SMTP_USER: ${{ secrets.SUPPORT_SMTP_USER || vars.SUPPORT_SMTP_USER }}
+          SUPPORT_SMTP_PASSWORD: ${{ secrets.SUPPORT_SMTP_PASSWORD }}
         run: |
           set -euo pipefail
           # Чистим переменные от скрытых символов (CRLF из Windows при вставке секретов)
@@ -279,6 +295,12 @@ jobs:
           add_platform_env PLATFORM_AI_FREE_KEY_1 "$PLATFORM_AI_FREE_KEY_1"
           add_platform_env PLATFORM_AI_FREE_KEY_2 "$PLATFORM_AI_FREE_KEY_2"
           add_platform_env PLATFORM_AI_FREE_KEY_3 "$PLATFORM_AI_FREE_KEY_3"
+          add_platform_env PLATFORM_AI_PRICE_INPUT_PER_MILLION "$PLATFORM_AI_PRICE_INPUT_PER_MILLION"
+          add_platform_env PLATFORM_AI_PRICE_OUTPUT_PER_MILLION "$PLATFORM_AI_PRICE_OUTPUT_PER_MILLION"
+          add_platform_env PLATFORM_AI_PRICE_CURRENCY "$PLATFORM_AI_PRICE_CURRENCY"
+          # JSON с переносами строк попал бы в .env только первой строкой: сжимаем в одну.
+          add_platform_env PLATFORM_AI_MODEL_PRICES "$(printf '%s' "${PLATFORM_AI_MODEL_PRICES:-}" | tr -d '\n\r')"
+          add_platform_env PLATFORM_INFRA_COST_PER_MONTH "$PLATFORM_INFRA_COST_PER_MONTH"
           add_platform_env PLATFORM_S3_ENDPOINT "$PLATFORM_S3_ENDPOINT"
           add_platform_env PLATFORM_S3_BUCKET "$PLATFORM_S3_BUCKET"
           add_platform_env PLATFORM_S3_REGION "$PLATFORM_S3_REGION"
@@ -291,6 +313,14 @@ jobs:
           add_platform_env WEBNESTDEV_ADMIN_USER_IDS "$WEBNESTDEV_ADMIN_USER_IDS"
           add_platform_env ADMIN_BOOTSTRAP_EMAIL "$ADMIN_BOOTSTRAP_EMAIL"
           add_platform_env ADMIN_BOOTSTRAP_PASSWORD "$ADMIN_BOOTSTRAP_PASSWORD"
+          add_platform_env SUPPORT_API_KEY "$SUPPORT_API_KEY"
+          add_platform_env SUPPORT_EMAIL_TO "$SUPPORT_EMAIL_TO"
+          add_platform_env SUPPORT_EMAIL_FROM "$SUPPORT_EMAIL_FROM"
+          add_platform_env SUPPORT_SMTP_HOST "$SUPPORT_SMTP_HOST"
+          add_platform_env SUPPORT_SMTP_PORT "$SUPPORT_SMTP_PORT"
+          add_platform_env SUPPORT_SMTP_USER "$SUPPORT_SMTP_USER"
+          # Пароль SMTP — только Secret: он попадает в .env на ВМ.
+          add_platform_env SUPPORT_SMTP_PASSWORD "$SUPPORT_SMTP_PASSWORD"
           # Итог по OAuth-ключам — только «есть/нет», без значений. Раньше пустой ключ был
           # виден только по маскированному дампу окружения выше, и «вставлено, но не работает»
           # приходилось разгадывать: здесь причина видна одной строкой.
@@ -302,6 +332,8 @@ jobs:
           echo "[deploy] Yandex ID redirect_uri: ${YANDEX_CALLBACK_URL:-https://<домен панели>/api/yandex/callback}"
           echo "[deploy] Веб-поиск: Yandex Search API key=$(has "${YANDEX_SEARCH_API_KEY:-}"), folder=$(has "${YANDEX_SEARCH_FOLDER_ID:-}"), Tavily=$(has "${TAVILY_API_KEY:-}")"
           echo "[deploy] Холодный ярус: endpoint=$(has "${PLATFORM_S3_ENDPOINT:-}"), бакет=${PLATFORM_S3_BUCKET:-—}, ключ=$(has "${PLATFORM_S3_ACCESS_KEY_ID:-}"), включён=${PROJECT_ARCHIVE_ENABLED:-0}"
+          echo "[deploy] Цены расхода: таблица моделей=$(has "${PLATFORM_AI_MODEL_PRICES:-}"), общая ставка=$(has "${PLATFORM_AI_PRICE_INPUT_PER_MILLION:-}"), инфраструктура=$(has "${PLATFORM_INFRA_COST_PER_MONTH:-}"), валюта=${PLATFORM_AI_PRICE_CURRENCY:-USD}"
+          echo "[deploy] Поддержка: ключ API=$(has "${SUPPORT_API_KEY:-}"), почта=${SUPPORT_EMAIL_TO:-—}, SMTP=$(has "${SUPPORT_SMTP_PASSWORD:-}")"
           if [ -s "$PLATFORM_ENV_LOCAL" ]; then
             PLATFORM_ENV_FILE="/tmp/.webnestdev-platform.env"
             tr -d '\r' < "$PLATFORM_ENV_LOCAL" | ssh -i "$HOME/.ssh/deploy_key" \
@@ -388,6 +420,12 @@ jobs:
           PLATFORM_AI_FREE_KEY_1: ${{ secrets.PLATFORM_AI_FREE_KEY_1 }}
           PLATFORM_AI_FREE_KEY_2: ${{ secrets.PLATFORM_AI_FREE_KEY_2 }}
           PLATFORM_AI_FREE_KEY_3: ${{ secrets.PLATFORM_AI_FREE_KEY_3 }}
+          # Цены для денежной статистики админки (docs/ADMIN_API.md, раздел 7).
+          PLATFORM_AI_PRICE_INPUT_PER_MILLION: ${{ secrets.PLATFORM_AI_PRICE_INPUT_PER_MILLION || vars.PLATFORM_AI_PRICE_INPUT_PER_MILLION }}
+          PLATFORM_AI_PRICE_OUTPUT_PER_MILLION: ${{ secrets.PLATFORM_AI_PRICE_OUTPUT_PER_MILLION || vars.PLATFORM_AI_PRICE_OUTPUT_PER_MILLION }}
+          PLATFORM_AI_PRICE_CURRENCY: ${{ secrets.PLATFORM_AI_PRICE_CURRENCY || vars.PLATFORM_AI_PRICE_CURRENCY }}
+          PLATFORM_AI_MODEL_PRICES: ${{ secrets.PLATFORM_AI_MODEL_PRICES || vars.PLATFORM_AI_MODEL_PRICES }}
+          PLATFORM_INFRA_COST_PER_MONTH: ${{ secrets.PLATFORM_INFRA_COST_PER_MONTH || vars.PLATFORM_INFRA_COST_PER_MONTH }}
           # Холодный ярус проектов: тот же набор, что и в SSH-выкатке (docs/STORAGE.md).
           PLATFORM_S3_ENDPOINT: ${{ secrets.PLATFORM_S3_ENDPOINT || vars.PLATFORM_S3_ENDPOINT }}
           PLATFORM_S3_BUCKET: ${{ secrets.PLATFORM_S3_BUCKET || vars.PLATFORM_S3_BUCKET }}
@@ -406,6 +444,15 @@ jobs:
           # он попадает в .env на ВМ, где и так лежат ключ шифрования и пароль базы.
           ADMIN_BOOTSTRAP_EMAIL: ${{ secrets.ADMIN_BOOTSTRAP_EMAIL }}
           ADMIN_BOOTSTRAP_PASSWORD: ${{ secrets.ADMIN_BOOTSTRAP_PASSWORD }}
+          # Поддержка: ключ чтения обращений для внешней админки и SMTP. Пустые значения не
+          # передаются и не стирают уже настроенное на ВМ; значение из панели важнее.
+          SUPPORT_API_KEY: ${{ secrets.SUPPORT_API_KEY || vars.SUPPORT_API_KEY }}
+          SUPPORT_EMAIL_TO: ${{ secrets.SUPPORT_EMAIL_TO || vars.SUPPORT_EMAIL_TO }}
+          SUPPORT_EMAIL_FROM: ${{ secrets.SUPPORT_EMAIL_FROM || vars.SUPPORT_EMAIL_FROM }}
+          SUPPORT_SMTP_HOST: ${{ secrets.SUPPORT_SMTP_HOST || vars.SUPPORT_SMTP_HOST }}
+          SUPPORT_SMTP_PORT: ${{ secrets.SUPPORT_SMTP_PORT || vars.SUPPORT_SMTP_PORT }}
+          SUPPORT_SMTP_USER: ${{ secrets.SUPPORT_SMTP_USER || vars.SUPPORT_SMTP_USER }}
+          SUPPORT_SMTP_PASSWORD: ${{ secrets.SUPPORT_SMTP_PASSWORD }}
         run: |
           set -euo pipefail
           image="$IMAGE_INPUT"
@@ -444,6 +491,12 @@ jobs:
           add_platform_env PLATFORM_AI_FREE_KEY_1 "$PLATFORM_AI_FREE_KEY_1"
           add_platform_env PLATFORM_AI_FREE_KEY_2 "$PLATFORM_AI_FREE_KEY_2"
           add_platform_env PLATFORM_AI_FREE_KEY_3 "$PLATFORM_AI_FREE_KEY_3"
+          add_platform_env PLATFORM_AI_PRICE_INPUT_PER_MILLION "$PLATFORM_AI_PRICE_INPUT_PER_MILLION"
+          add_platform_env PLATFORM_AI_PRICE_OUTPUT_PER_MILLION "$PLATFORM_AI_PRICE_OUTPUT_PER_MILLION"
+          add_platform_env PLATFORM_AI_PRICE_CURRENCY "$PLATFORM_AI_PRICE_CURRENCY"
+          # JSON с переносами строк попал бы в .env только первой строкой: сжимаем в одну.
+          add_platform_env PLATFORM_AI_MODEL_PRICES "$(printf '%s' "${PLATFORM_AI_MODEL_PRICES:-}" | tr -d '\n\r')"
+          add_platform_env PLATFORM_INFRA_COST_PER_MONTH "$PLATFORM_INFRA_COST_PER_MONTH"
           add_platform_env PLATFORM_S3_ENDPOINT "$PLATFORM_S3_ENDPOINT"
           add_platform_env PLATFORM_S3_BUCKET "$PLATFORM_S3_BUCKET"
           add_platform_env PLATFORM_S3_REGION "$PLATFORM_S3_REGION"
@@ -456,6 +509,14 @@ jobs:
           add_platform_env WEBNESTDEV_ADMIN_USER_IDS "$WEBNESTDEV_ADMIN_USER_IDS"
           add_platform_env ADMIN_BOOTSTRAP_EMAIL "$ADMIN_BOOTSTRAP_EMAIL"
           add_platform_env ADMIN_BOOTSTRAP_PASSWORD "$ADMIN_BOOTSTRAP_PASSWORD"
+          add_platform_env SUPPORT_API_KEY "$SUPPORT_API_KEY"
+          add_platform_env SUPPORT_EMAIL_TO "$SUPPORT_EMAIL_TO"
+          add_platform_env SUPPORT_EMAIL_FROM "$SUPPORT_EMAIL_FROM"
+          add_platform_env SUPPORT_SMTP_HOST "$SUPPORT_SMTP_HOST"
+          add_platform_env SUPPORT_SMTP_PORT "$SUPPORT_SMTP_PORT"
+          add_platform_env SUPPORT_SMTP_USER "$SUPPORT_SMTP_USER"
+          # Пароль SMTP — только Secret: он попадает в .env на ВМ.
+          add_platform_env SUPPORT_SMTP_PASSWORD "$SUPPORT_SMTP_PASSWORD"
           # На этом раннере скрипт запускается на самой ВМ, поэтому ключ кладётся во временный
           # файл рядом, с правами только для владельца.
           APP_KEY_FILE=""
