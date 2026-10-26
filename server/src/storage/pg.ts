@@ -417,6 +417,11 @@ export async function initializeStorage(): Promise<void> {
       created_at TEXT NOT NULL,
       PRIMARY KEY (user_id, usage_date, run_id)
     )`);
+    // Аналитика админки (routes/admin-analytics.ts) фильтрует расход по дню и группирует его по
+    // проекту. Без этих индексов обзор и список проектов превращаются в полный перебор при каждом
+    // открытии вкладки, а PK покрывает только одного пользователя.
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("model_usage")}_date ON ${tbl("model_usage")} (usage_date)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("model_usage")}_project ON ${tbl("model_usage")} (project_id, usage_date)`);
 
     await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("oauth_states")} (
       state TEXT NOT NULL PRIMARY KEY,

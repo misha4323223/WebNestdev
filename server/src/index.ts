@@ -52,6 +52,7 @@ import { registerChangesRoutes } from "./routes/changes.js";
 import { registerTasksRoutes } from "./routes/tasks.js";
 import { registerAuthRoutes } from "./routes/auth.js";
 import { registerAdminRoutes } from "./routes/admin.js";
+import { registerAdminAnalyticsRoutes } from "./routes/admin-analytics.js";
 import { registerPhoneAuthRoutes } from "./routes/phone-auth.js";
 import { registerAccountRoutes } from "./routes/account.js";
 import { registerBillingRoutes } from "./routes/billing.js";
@@ -227,6 +228,8 @@ await registerAuthRoutes(app);
 // Вход администратора платформы: отдельные аккаунты, пароль + TOTP, сессия по Bearer-токену
 // (docs/ADMIN_API.md). Ставится рядом с пользовательским входом, но не делит с ним ни записи, ни сессии.
 await registerAdminRoutes(app);
+// Статистика для админ-приложения: только чтение, тот же Bearer-токен и та же дверь (docs/ADMIN_API.md).
+await registerAdminAnalyticsRoutes(app);
 await registerPhoneAuthRoutes(app);
 await registerAccountRoutes(app);
 await registerBillingRoutes(app);

@@ -1,5 +1,7 @@
 # API администратора платформы
 
+Текущее состояние работ, доступы и следующая задача: [ADMIN_HANDOFF.md](ADMIN_HANDOFF.md).
+
 Вход в админку — отдельная дверь, не связанная ни с пользователями панели, ни с их сессиями.
 Админ-приложение обращается к API с `Authorization: Bearer <токен>`; cookie не используются вообще,
 поэтому браузер не может приложить вход к чужому запросу, а CORS открывается только для адресов из
@@ -157,6 +159,12 @@ curl -s https://panel.example.com/api/admin/2fa/verify -H 'content-type: applica
 | `GET /api/admin/me` | `Bearer` | кто вошёл и до какого времени |
 | `POST /api/admin/logout` | `Bearer` | закрыть текущий вход |
 | `POST /api/admin/logout-all` | `Bearer` | закрыть все входы администратора |
+| `GET /api/admin/stats/overview` | `Bearer` | обзор: люди, проекты, токены, запуски, модели |
+| `GET /api/admin/stats/series` | `Bearer` | ряд по дням (пустые дни — нулями) |
+| `GET /api/admin/stats/models` | `Bearer` | расход по моделям и доля каждой |
+| `GET /api/admin/users` | `Bearer` | пользователи: поиск, сортировка, страница |
+| `GET /api/admin/users/:id` | `Bearer` | карточка: проекты, модели, ряд за 30 дней |
+| `GET /api/admin/projects` | `Bearer` | проекты: поиск, владелец, расход |
 
 Ответы не кэшируются (`cache-control: no-store`). Ошибки: `401` — нет или истёк вход / не подошёл
 код, `403` — источник не разрешён, `429` — лимит попыток (заголовок `Retry-After`), `400` —
@@ -240,3 +248,37 @@ API рассчитан именно на нативные клиенты: вхо
 компьютере. Для личного телефона их разумно увеличить через `ADMIN_SESSION_TTL_MS` и
 `ADMIN_SESSION_IDLE_TTL_MS`, но не до бесконечности: токен живёт столько же, сколько доступ к
 платформе.
+
+## 7. Статистика
+
+Код: `server/src/routes/admin-analytics.ts`. Тесты: `server/src/routes/admin-analytics.test.ts`
+(границы периода и заполнение пустых дней).
+
+Все шесть маршрутов — только чтение, с тем же `Authorization: Bearer`, что и остальная админка, и
+с `cache-control: no-store`. Данные берутся из существующих таблиц; источник расхода —
+`model_usage`: в ней лежат модель, токены, проект и пользователь, поэтому «сколько потратил клиент»
+и «какая модель» не расходятся между собой. Новых таблиц нет, добавлены только индексы
+`model_usage (usage_date)` и `model_usage (project_id, usage_date)` — иначе обзор и список проектов
+перебирали бы таблицу целиком.
+
+| Маршрут | Параметры | Что отдаёт |
+|---|---|---|
+| `GET /api/admin/stats/overview` | `days` = 1…90 (7) | всего/новые пользователи и проекты, активные за период, токены (`prompt`, `completion`, `previousTotal`), запуски, среднее на запуск, число моделей |
+| `GET /api/admin/stats/series` | `days` = 1…90 (7) | ровно `days` точек, последняя — сегодня; пустые дни с нулями |
+| `GET /api/admin/stats/models` | `days` = 1…90 (7) | `runs`, `promptTokens`, `completionTokens`, `totalTokens`, `users`, `share` (0…1), по убыванию расхода |
+| `GET /api/admin/users` | `query`, `sort` (tokens/projects/created), `limit` 1…200, `offset`, `days` 0…365 (0 = всё время) | `total` — сколько подходит под фильтр, и страница пользователей с расходом, проектами, диалогами, `lastActiveAt` |
+| `GET /api/admin/users/:id` | — | карточка: проекты (до 100), `topModels` (share внутри расхода человека), ряд за 30 дней; `404`, если пользователя нет |
+| `GET /api/admin/projects` | `query` по названию/id/почте владельца, `limit`, `offset`, `days` | проекты с расходом, числом диалогов и временем последнего запуска |
+
+`previousTotal` равен `null`, когда в предыдущем окне такой же длины расхода не было: это не ноль,
+а отсутствие базы для сравнения. Числа приходят обычными `number` — `BIGINT` и `numeric` из
+Postgres приводятся на сервере, потому что node-postgres отдаёт их строками. Даты — ISO-строки.
+
+Статистика читает SQL, поэтому нужен `WEBNESTDEV_STORAGE=postgres` (production); на JSON-хранилище
+в разработке эти маршруты отвечают `500`. Проверка после выкатки:
+
+```bash
+TOKEN=…  # токен из /api/admin/2fa/verify
+curl -s -H "Authorization: Bearer $TOKEN" 'https://panel.example.com/api/admin/stats/overview?days=7'
+curl -s -H "Authorization: Bearer $TOKEN" 'https://panel.example.com/api/admin/users?limit=5'
+```

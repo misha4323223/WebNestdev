@@ -81,9 +81,13 @@ async function issueSession(admin: AdminUser) {
   return { token: session.token, expiresAt: session.expiresAt, admin: publicAdmin(admin) };
 }
 
-type AdminRequest = { admin: AdminUser; token: string; expiresAt: string };
+export type AdminRequest = { admin: AdminUser; token: string; expiresAt: string };
 
-async function requireAdmin(request: FastifyRequest, reply: FastifyReply): Promise<AdminRequest | null> {
+/**
+ * Проверка входа для остальных админ-маршрутов (статистика в admin-analytics.ts).
+ * Ответ 401 уже отправлен к этому моменту, поэтому вызывающий просто делает `return`.
+ */
+export async function requireAdmin(request: FastifyRequest, reply: FastifyReply): Promise<AdminRequest | null> {
   startReply(reply);
   const token = bearerToken(request.headers.authorization);
   if (!token) {
