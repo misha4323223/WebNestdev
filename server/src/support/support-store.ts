@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { PlanId } from "../account/plans.js";
 
@@ -188,4 +188,126 @@ export async function readSupportScreenshot(id: string) {
   try {
     return { buffer: await readFile(path.join(supportDir(), path.basename(ticket.screenshot.file))), mime: ticket.screenshot.mime };
   } catch { return null; }
+}
+
+export type SupportMessageAuthor = "admin" | "user";
+export type SupportMessageStatus = "sent" | "failed";
+
+/**
+ * Письмо в переписке обращения: ответ администратора человеку (а в будущем — и ответ человека).
+ *
+ * Хранится построчно (`<id>.messages.jsonl`) рядом с самим обращением. Дописывание не перезаписывает
+ * предыдущие ответы, а одна повреждённая строка теряет только себя: для истории переписки это
+ * важнее целостности одного файла. Неудачная отправка тоже записывается — иначе в диалоге не видно,
+ * что письмо не ушло, и следующий человек отправит его повторно.
+ */
+export type SupportTicketMessage = {
+  id: string;
+  ticketId: string;
+  author: SupportMessageAuthor;
+  /** Почта администратора, а не слово «admin»: по переписке видно, кто именно ответил. */
+  authorName: string;
+  subject: string;
+  body: string;
+  /** Куда ушло письмо; пусто — письмо не ушло. */
+  to: string;
+  status: SupportMessageStatus;
+  /** Причина отказа дословно: в переписке должно быть видно, что ответил Postbox. */
+  error: string;
+  messageId: string;
+  createdAt: string;
+};
+
+function messagesFileName(id: string) {
+  const safe = safeTicketId(id);
+  if (!safe) throw new Error("Некорректный идентификатор обращения");
+  return safe + ".messages.jsonl";
+}
+
+export async function addSupportMessage(
+  input: Omit<SupportTicketMessage, "id" | "createdAt"> & { createdAt?: string },
+): Promise<SupportTicketMessage> {
+  const message: SupportTicketMessage = {
+    ...input,
+    id: randomUUID(),
+    createdAt: input.createdAt ?? new Date().toISOString(),
+  };
+  const file = path.join(supportDir(), messagesFileName(input.ticketId));
+  await mkdir(path.dirname(file), { recursive: true });
+  await appendFile(file, JSON.stringify(message) + "\n", { encoding: "utf8", mode: 0o600 });
+  return message;
+}
+
+async function readMessages(file: string): Promise<SupportTicketMessage[]> {
+  let raw: string;
+  try {
+    raw = await readFile(file, "utf8");
+  } catch {
+    return [];
+  }
+  const messages: SupportTicketMessage[] = [];
+  for (const line of raw.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const message = JSON.parse(line) as SupportTicketMessage;
+      if (message?.id && message.createdAt && typeof message.body === "string") messages.push(message);
+    } catch {
+      // Повреждённая строка не должна скрывать остальную переписку.
+    }
+  }
+  return messages.sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+}
+
+/** Переписка одного обращения: старые письма первыми — в этом порядке её читает человек. */
+export async function listSupportMessages(ticketId: string): Promise<SupportTicketMessage[]> {
+  const safe = safeTicketId(ticketId);
+  return safe ? readMessages(path.join(supportDir(), safe + ".messages.jsonl")) : [];
+}
+
+/**
+ * Переписка для страницы списка: один проход по каталогу вместо чтения файла на каждый тикет.
+ * Для обращений без ответов возвращается пустой массив, а не отсутствующее поле: админке не нужно
+ * различать «переписки нет» и «поле не пришло».
+ */
+export async function supportMessagesFor(ticketIds: string[]): Promise<Map<string, SupportTicketMessage[]>> {
+  const wanted = new Set(ticketIds.filter(id => safeTicketId(id)));
+  const result = new Map<string, SupportTicketMessage[]>();
+  if (!wanted.size) return result;
+  let names: string[] = [];
+  try {
+    names = await readdir(supportDir());
+  } catch {
+    return result;
+  }
+  const suffix = ".messages.jsonl";
+  for (const name of names) {
+    if (!name.endsWith(suffix)) continue;
+    const id = name.slice(0, -suffix.length);
+    if (!wanted.has(id)) continue;
+    result.set(id, await readMessages(path.join(supportDir(), name)));
+  }
+  for (const id of wanted) if (!result.has(id)) result.set(id, []);
+  return result;
+}
+
+/**
+ * Сколько ответов поддержки ушло за сутки. Ответы считаются в тот же предел Postbox, что и
+ * рассылка: у сервиса одна квота на аккаунт, и «ответы отдельно от рассылки» закончились бы
+ * отказами 429 на живых людях.
+ */
+export async function countSupportMessagesSentSince(sinceIso: string): Promise<number> {
+  let names: string[] = [];
+  try {
+    names = await readdir(supportDir());
+  } catch {
+    return 0;
+  }
+  let total = 0;
+  for (const name of names) {
+    if (!name.endsWith(".messages.jsonl")) continue;
+    for (const message of await readMessages(path.join(supportDir(), name))) {
+      if (message.status === "sent" && message.createdAt >= sinceIso) total += 1;
+    }
+  }
+  return total;
 }

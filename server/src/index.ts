@@ -57,6 +57,7 @@ import { registerAdminAnalyticsRoutes } from "./routes/admin-analytics.js";
 import { registerAdminEconomicsRoutes } from "./routes/admin-economics.js";
 import { registerAdminAuditRoutes } from "./routes/admin-audit.js";
 import { registerAdminInfraRoutes } from "./routes/admin-infra.js";
+import { registerAdminPruneRoutes } from "./routes/admin-prune.js";
 import { registerAdminMailRoutes } from "./routes/admin-mail.js";
 import { registerUnsubscribeRoutes } from "./routes/unsubscribe.js";
 import { describePostbox, postboxStatus } from "./mail/postbox.js";
@@ -253,6 +254,8 @@ await registerAdminEconomicsRoutes(app);
 await registerAdminAuditRoutes(app);
 // Инфраструктура: диск, Docker, песочницы, бакеты и база. Только чтение и только админ-токен.
 await registerAdminInfraRoutes(app);
+// Безопасная очистка Docker: кэш сборки и висячие образы. Контейнеры и тома не трогает.
+await registerAdminPruneRoutes(app);
 // Рассылка через Postbox: сегменты, предпросмотр, тест, отправка и остановка (docs/MAIL.md).
 await registerAdminMailRoutes(app);
 // Отписка — публичная страница, а не /api: ссылка приходит в письме и открывается без сессии.

@@ -15,6 +15,8 @@ test("служебные адреса платформы в письмо не г
     "user@example.test",
     "user@mail.invalid",
     "user@localhost",
+    "user@nas.lan",
+    "user@server.home",
   ]) {
     const reason = unusableEmailReason(email);
     assert.ok(reason, "адрес " + email + " должен быть отброшен");

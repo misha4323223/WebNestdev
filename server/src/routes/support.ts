@@ -3,12 +3,25 @@ import { z } from "zod";
 import { getCurrentUser, requireUser } from "../auth/auth.js";
 import { bearerToken, getAdminSession } from "../admin/admin-store.js";
 import { isPlatformAdmin } from "../platform/admin.js";
-import { createSupportTicket, getSupportTicket, listSupportTickets, readSupportScreenshot, supportTicketsForUser, type SupportReporter } from "../support/support-store.js";
+import { requireAdmin } from "./admin.js";
+import {
+  addSupportMessage,
+  createSupportTicket,
+  getSupportTicket,
+  listSupportMessages,
+  listSupportTickets,
+  readSupportScreenshot,
+  supportMessagesFor,
+  supportTicketsForUser,
+  type SupportReporter,
+} from "../support/support-store.js";
 import { loadSupportUser, supportReporterFor, supportReporterFrom } from "../support/support-user.js";
 import { sendSupportMail, supportMailSettings } from "../support/support-mail.js";
+import { REPLY_MAX_CHARS, REPLY_MIN_CHARS, REPLY_SUBJECT_MAX_CHARS, sendSupportReply, supportReplyAddress, supportReplyQuota, supportReplySubject } from "../support/support-reply.js";
 import { supportApiKey, supportKeyAuthorizedCurrent, supportKeyFromHeaders, supportKeySource } from "../support/support-api-key.js";
 import { applyNoStoreToReply } from "./cache-headers.js";
-import { isServiceEmail } from "../mail/address.js";
+import { isServiceEmail, maskEmail } from "../mail/address.js";
+import { recordAudit } from "../security/audit-journal.js";
 
 /**
  * Вид адреса обращения. `internal` — служебный логин платформы (`79531814136@phone.webnestdev.local`,
@@ -205,13 +218,15 @@ export async function registerSupportRoutes(app: FastifyInstance) {
     }));
     // `contactEmail` и `emailKind` — рядом с `email`, а не только внутри снимка автора: у старых
     // тикетов снимка нет, а внешняя админка должна видеть одно и то же в обоих случаях.
-    return {
-      tickets: tickets.map(ticket => ({
-        ...ticket,
-        emailKind: emailKindOf(ticket.email),
-        contactEmail: ticket.reporter?.contactEmail ?? null,
-      })),
-    };
+    const listed = tickets.map(ticket => ({
+      ...ticket,
+      emailKind: emailKindOf(ticket.email),
+      contactEmail: ticket.reporter?.contactEmail ?? null,
+    }));
+    // Переписка едет вместе со списком и у обращений без ответов приходит пустым массивом:
+    // админке не нужно различать «ответов не было» и «поле не пришло».
+    const messages = await supportMessagesFor(listed.map(ticket => ticket.id));
+    return { tickets: listed.map(ticket => ({ ...ticket, messages: messages.get(ticket.id) ?? [] })) };
   });
 
   /**
@@ -245,8 +260,122 @@ export async function registerSupportRoutes(app: FastifyInstance) {
         contactEmail: ticket.reporter?.contactEmail ?? user?.contactEmail ?? null,
       },
       user,
+      messages: await listSupportMessages(ticket.id),
       history: await supportTicketsForUser(ticket.userId, 20),
     };
+  });
+
+  /**
+   * Ответ человеку письмом от имени платформы.
+   *
+   * Дверь здесь другая, чем у чтения: ключ поддержки и админ платформы в браузере обращения
+   * читают, но писем людям не отправляют. Письмо уходит только по сессии админ-приложения — той
+   * же, что открывает `/api/admin/*`.
+   */
+  app.post("/api/support/tickets/:id/reply", async (request, reply) => {
+    const admin = await requireAdmin(request, reply);
+    if (!admin) return;
+    applyNoStoreToReply(reply);
+
+    const params = z.object({ id: z.string().min(8).max(64) }).parse(request.params);
+    const payload = (request.body ?? {}) as { body?: unknown; subject?: unknown };
+    const text = typeof payload.body === "string" ? payload.body.trim() : "";
+    if (text.length < REPLY_MIN_CHARS) {
+      return reply.code(400).send({ error: "Текст ответа слишком короткий", code: "body_too_short" });
+    }
+    if (text.length > REPLY_MAX_CHARS) {
+      return reply.code(400).send({ error: "Текст ответа длиннее " + REPLY_MAX_CHARS + " символов", code: "body_too_long" });
+    }
+    const subject = typeof payload.subject === "string" ? payload.subject.trim().slice(0, REPLY_SUBJECT_MAX_CHARS) : "";
+
+    const ticket = await getSupportTicket(params.id);
+    if (!ticket) return reply.code(404).send({ error: "Обращение не найдено", code: "ticket_not_found" });
+
+    // Почта профиля важнее логина: логин может быть служебным (`…@phone.webnestdev.local`), и
+    // письмо по нему уйдёт отскоком. У обращений до появления снимка адрес берётся из живого
+    // профиля — снимка у них нет, но человек есть.
+    let contactEmail = ticket.reporter?.contactEmail ?? null;
+    if (!contactEmail) {
+      const live = await supportReporterFor(ticket.userId).catch(error => {
+        request.log.warn(
+          { supportTicket: ticket.id, error: error instanceof Error ? error.message : error },
+          "support reply contact lookup failed",
+        );
+        return null;
+      });
+      contactEmail = live?.contactEmail ?? null;
+    }
+    const to = supportReplyAddress([contactEmail, ticket.email]);
+    if (!to) {
+      return reply.code(400).send({
+        error: "У аккаунта нет почты, которую человек вводил сам: отвечать некуда",
+        code: "contact_email_missing",
+        email: ticket.email,
+      });
+    }
+
+    // Ответы и рассылка делят один суточный предел Postbox: без этой проверки письмо уходило бы
+    // в отказ 429 на стороне сервиса, и человек видел бы «ошибку сети» вместо причины.
+    const quota = await supportReplyQuota();
+    if (quota.remainingToday <= 0) {
+      return reply.code(429).send({
+        error: "Суточный предел писем выбран: " + quota.sentToday + " из " + quota.perDay + " за сутки, из них рассылкой " + quota.campaignSentToday + ". Ответ можно отправить, когда предел освободится",
+        code: "quota_exceeded",
+      });
+    }
+
+    const finalSubject = subject || supportReplySubject(ticket);
+    try {
+      const sent = await sendSupportReply({ to, subject: finalSubject, text });
+      const message = await addSupportMessage({
+        ticketId: ticket.id,
+        author: "admin",
+        authorName: admin.admin.email,
+        subject: finalSubject,
+        body: text,
+        to,
+        status: "sent",
+        error: "",
+        messageId: sent.messageId,
+      });
+      request.log.info({ supportTicket: ticket.id, to: maskEmail(to), messageId: sent.messageId }, "support reply sent");
+      await recordAudit({
+        action: "support.reply",
+        actorType: "admin",
+        actorId: admin.admin.id,
+        actorLabel: admin.admin.email,
+        target: ticket.id,
+        ip: request.ip,
+        details: { to, messageId: sent.messageId },
+      });
+      return { ok: true, to, messageId: sent.messageId, sentAt: message.createdAt };
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      // Неудачу тоже пишем в переписку: иначе в диалоге не видно, что письмо не ушло, и человек
+      // отправит его повторно, не зная причины.
+      await addSupportMessage({
+        ticketId: ticket.id,
+        author: "admin",
+        authorName: admin.admin.email,
+        subject: finalSubject,
+        body: text,
+        to,
+        status: "failed",
+        error: reason.slice(0, 500),
+        messageId: "",
+      });
+      request.log.error({ supportTicket: ticket.id, to: maskEmail(to), error: reason }, "support reply not delivered");
+      await recordAudit({
+        action: "support.reply.failed",
+        actorType: "admin",
+        actorId: admin.admin.id,
+        actorLabel: admin.admin.email,
+        target: ticket.id,
+        ip: request.ip,
+        details: { to, error: reason.slice(0, 300) },
+      });
+      return reply.code(502).send({ error: "Письмо не ушло: " + reason, code: "send_failed" });
+    }
   });
 
   app.get("/api/support/tickets/:id/screenshot", async (request, reply) => {

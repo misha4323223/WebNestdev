@@ -299,6 +299,11 @@ export type PostboxMessage = {
   subject: string;
   text: string;
   html?: string;
+  /**
+   * Адрес для ответа. Нужен письмам-ответам поддержки: письмо уходит от сервисного ящика, а
+   * человек, нажав «Ответить», должен попасть в поддержку, а не на адрес без ответа.
+   */
+  replyTo?: string;
 };
 
 export type PostboxSendResult = { messageId: string; status: number };
@@ -317,6 +322,7 @@ export async function sendPostboxEmail(message: PostboxMessage, deps: PostboxDep
   const body = JSON.stringify({
     FromEmailAddress: from,
     Destination: { ToAddresses: [message.to] },
+    ...(message.replyTo ? { ReplyToAddresses: [message.replyTo] } : {}),
     Content: {
       Simple: {
         Subject: { Data: message.subject, Charset: "UTF-8" },

@@ -79,6 +79,17 @@ export function textToHtml(text: string, unsubscribeUrl: string) {
   return paragraphs.map(block => "<p>" + block + "</p>").join("\n");
 }
 
+/**
+ * HTML-версия текста без отписки: абзацы, переносы и настоящие ссылки. Так собирается письмо-ответ
+ * поддержки — это ответ на обращение, а не рассылка, поэтому строки отписки в нём нет, а адрес,
+ * который администратор написал в тексте, должен открываться, а не оставаться текстом.
+ */
+export function textToHtmlLinks(text: string) {
+  // Знаки в конце фразы в ссылку не входят: адрес «https://nestdev.ru/docs.» должен вести на
+  // страницу, а не на «docs.» с точкой.
+  return textToHtml(text, "").replace(/https?:\/\/[^\s<]*[^\s<.,;:!?)]/g, url => '<a href="' + url + '">' + url + "</a>");
+}
+
 /** Строка-подпись с отпиской для текстовой версии. */
 export function unsubscribeFooter(url: string) {
   return "Отписаться от рассылки: " + url;

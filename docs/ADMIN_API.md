@@ -170,6 +170,8 @@ curl -s https://panel.example.com/api/admin/2fa/verify -H 'content-type: applica
 | `GET /api/admin/audit` | `Bearer` | журнал безопасности: входы, второй фактор, ключи, удаление проектов (раздел 9) |
 | `GET /api/admin/infra` | `Bearer` | снимок инфраструктуры: хост, диск, Docker, песочницы, бакеты, база (раздел 7.5) |
 | `GET /api/admin/sandboxes` | `Bearer` | песочницы списком: `state` = `cold` / `running` / `never` / `all`, `limit` 1…200 (раздел 7.5) |
+| `GET /api/admin/infra/prune` | `Bearer` | что освободит безопасная очистка Docker и что останется (раздел 7.6) |
+| `POST /api/admin/infra/prune` | `Bearer` | безопасная очистка Docker: тело `{confirm: true}`, не чаще раза в 30 секунд (раздел 7.6) |
 
 Ответы не кэшируются (`cache-control: no-store`). Ошибки: `401` — нет или истёк вход / не подошёл
 код, `403` — источник не разрешён, `429` — лимит попыток (заголовок `Retry-After`), `400` —
@@ -464,6 +466,60 @@ curl -s -H "Authorization: Bearer $TOKEN" 'https://panel.example.com/api/admin/s
 `disk` и `docker.available`; в `unavailable` не должно быть `sandboxes` и `docker`, если Docker
 работает. Если `buckets` пуст, а `PLATFORM_S3_*` заданы — смотреть причину в `unavailable`.
 
+### 7.6. Безопасная очистка Docker
+
+Код: `server/src/routes/admin-prune.ts`. Тесты: `server/src/routes/admin-prune.test.ts`.
+
+Кнопка «Безопасная очистка» удаляет ровно две категории: кэш сборки (`docker builder prune -a -f`)
+и висячие образы без тегов (`docker image prune -f`). Остановленные контейнеры — это песочницы
+проектов в холодном старте, а в томах может лежать состояние проекта, поэтому `container prune`,
+`volume prune` и `system prune -a` маршрут не выполняет и не принимает: тело разбирается строгой
+схемой и `{"scope":"volumes"}` отвечает `400`, а не «молча ничего не делает». По той же причине
+команды идут в Docker массивом аргументов (`execFile`, без шелла) — подставить свои аргументы через
+тело запроса нечем.
+
+| Маршрут | Параметры | Что отдаёт |
+|---|---|---|
+| `GET /api/admin/infra/prune` | — | `scope` (`builderCacheBytes`, `danglingImages`, `safeTotalBytes`), `keep` (`stoppedContainers`, `volumes`), `commands`, `canRun`; при отказе пробы ещё и `reason` |
+| `POST /api/admin/infra/prune` | тело `{confirm: true}` | `ok`, `freedBytes`, `beforeBytes`, `afterBytes`, `ranAt`, `details` — по строке на команду |
+
+`reclaimableBytes` из `GET /api/admin/infra` — это сумма **всех** строк `docker system df`, вместе с
+холодными песочницами и томами: показывать её как «мусор к удалению» нельзя. Поэтому безопасная
+часть считается отдельно — `builderCacheBytes` (то, что Docker вернёт из `Build Cache`) плюс
+`danglingImages.bytes`, итог в `safeTotalBytes`. `keep` — не цель очистки, а цена нажатия: сколько
+холодных песочниц и томов останется.
+
+Если не ответил `docker system df`, `docker image ls` или `docker ps`, приходит `canRun: false` и
+причина в `reason`, а приложение кнопку блокирует: неполная оценка не должна выглядеть кнопкой
+«удалить». Числа в этом ответе — нули, и выдают их за измерение именно `canRun: false` рядом, а не
+молчание.
+
+Ограничения: не чаще одного раза в 30 секунд (`429` с `Retry-After`), каждая команда под таймаутом
+60 секунд, набор команд не зависит от запроса. `freedBytes` — разница итогов `docker system df` до
+и после; если итог не разобран, берётся сумма «Total reclaimed space» из вывода команд, чтобы
+освобождённое место не показывалось нулём. Событие уходит в журнал безопасности действием
+`infra.docker.pruned` с `freedBytes`, `beforeBytes`, `afterBytes` и списком команд.
+
+Что проверить после выкатки:
+
+```bash
+TOKEN=…
+curl -s -H "Authorization: Bearer $TOKEN" 'https://panel.example.com/api/admin/infra/prune'
+# ожидаем scope.safeTotalBytes, keep.stoppedContainers и canRun: true
+
+docker ps -aq --filter status=exited | wc -l      # до
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"confirm":true}' 'https://panel.example.com/api/admin/infra/prune'
+docker ps -aq --filter status=exited | wc -l      # после — то же число
+
+curl -s -o /dev/null -w '%{http_code}\n' -X POST -H "Authorization: Bearer $TOKEN" \
+  -H 'content-type: application/json' -d '{"scope":"volumes"}' \
+  'https://panel.example.com/api/admin/infra/prune'   # ожидаем 400
+```
+
+Главная проверка — число остановленных контейнеров до и после совпадает, а `GET /api/admin/infra`
+после очистки показывает те же холодные проекты.
+
 ## 8. Обращения поддержки
 
 Создание обращения по ключу невозможно: его пишет только вошедший пользователь из кнопки
@@ -474,6 +530,7 @@ curl -s -H "Authorization: Bearer $TOKEN" 'https://panel.example.com/api/admin/s
 | `GET /api/support/tickets?limit=50` | список обращений без картинок, с профилем автора |
 | `GET /api/support/tickets/<id>` | одно обращение, живая карточка автора и его прошлые обращения |
 | `GET /api/support/tickets/<id>/screenshot` | скриншот обращения |
+| `POST /api/support/tickets/<id>/reply` | ответ человеку письмом от имени платформы (раздел 8.3) |
 
 ### 8.1. Что уже есть в каждом обращении
 
@@ -488,6 +545,10 @@ curl -s -H "Authorization: Bearer $TOKEN" 'https://panel.example.com/api/admin/s
   `contactEmail` — адрес, который человек указал сам. Поля стоят рядом с `email` и в списке, и в
   карточке: по `emailKind` админка решает, активна ли кнопка «Написать автору», а письмо при
   необходимости отправляется на `contactEmail`.
+- `messages` — переписка обращения: `author` (`admin` / `user`), `authorName` (почта того, кто
+  ответил), `subject`, `body`, `to` (куда ушло письмо), `status` (`sent` / `failed`), `error`,
+  `messageId`, `createdAt`. Пустой массив означает «ответов не было», а не «поле не пришло»: поле
+  есть и в списке, и в карточке. Неудачная отправка остаётся в переписке с причиной отказа.
 - У обращений, созданных до появления снимка, `reporter` дополняется при чтении списка. Если
   аккаунт уже удалён, остаются поля самого тикета.
 
@@ -555,6 +616,62 @@ curl -s -H "X-Support-Key: $SUPPORT_API_KEY" 'https://nestdev.ru/api/support/tic
   скрывает, «ключ не сохранён» это или «сохранён в другом процессе».
 - Если ключ сохранён в панели на одной реплике, а запрос попал на другую, сервер перечитывает
   `platform/env.json` по изменению файла — перезапуск не нужен.
+
+### 8.3. Ответ человеку письмом
+
+Ответ отправляется письмом от имени платформы через тот же транспорт, что у рассылки (REST v2
+Postbox): те же `POSTBOX_SENDER`, `POSTBOX_KEY_ID` / `POSTBOX_SECRET` (или ключ сервисного
+аккаунта) и тот же `PLATFORM_URL`. Второй раз настраивать нечего.
+
+**Дверь другая.** Ответить можно только сессией админ-приложения
+(`Authorization: Bearer <токен /api/admin/2fa/verify>`); ключ поддержки `SUPPORT_API_KEY`
+обращения читает, но писем людям не отправляет — это разные полномочия, и совмещать их в одном
+ключе значило бы отдать отправку писем любому, у кого есть ключ чтения.
+
+```bash
+TOKEN=…  # токен администратора
+curl -s -X POST https://nestdev.ru/api/support/tickets/<id>/reply \
+  -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"body":"Здравствуйте! Проверка ответа из админки."}'
+# → {"ok":true,"to":"chelovek@example.ru","messageId":"…","sentAt":"…"}
+```
+
+Тело: `body` (10–8 000 символов, обязательный) и необязательный `subject`; без `subject` тема —
+`Обращение <id>: ошибка|идея`.
+
+| Отказ | Код | Когда |
+|---:|---|---|
+| `400` | `body_too_short` | текст короче 10 символов |
+| `400` | `body_too_long` | текст длиннее 8 000 символов |
+| `400` | `contact_email_missing` | у аккаунта нет пригодной почты (только служебный логин) |
+| `401` | — | нет сессии админ-приложения |
+| `404` | `ticket_not_found` | обращения нет |
+| `429` | `quota_exceeded` | выбран суточный предел писем Postbox |
+| `502` | `send_failed` | Postbox отказал; причина — в тексте ошибки и в переписке |
+
+Куда уходит письмо: сначала `contactEmail` (почта, которую человек ввёл сам — из снимка обращения,
+а у старых обращений из живого профиля), потом `email` логина. Адрес проверяется на сервере теми же
+правилами, что и получатели рассылки: служебные зоны (`.local`, `.internal`, `.invalid`, `.test`,
+`.example`, `.localhost`, `.lan`, `.home`) и домены без точки отсекаются до отправки — письмо на них
+вернулось бы отскоком и съело квоту. Если пригодного адреса нет, маршрут честно отвечает
+`contact_email_missing` вместе с логином аккаунта, а не отправляет письмо в никуда.
+
+Две вещи, которых в письме нет: ссылки отписки (ответ на обращение — не рассылка, его ждут) и
+любых служебных заголовков. Есть `Reply-To` — адрес из ключа `SUPPORT_REPLY_TO` (по умолчанию
+`support@nestdev.ru`): если человек нажмёт «Ответить», письмо придёт в поддержку, а не на адрес
+отправителя без ответа.
+
+**Квота общая с рассылкой.** Ответы считаются в тот же суточный предел Postbox (по умолчанию
+200 писем за 24 часа), что и рассылка: это квота аккаунта, а не кампании. Иначе рассылка на 200
+адресов выбирала бы предел целиком, и следующие ответы людям падали бы с `429` уже на стороне
+сервиса. Когда предел выбран, маршрут отвечает `429 quota_exceeded` и говорит, сколько из суток
+занято рассылкой; ответ можно отправить, когда окно освободится.
+
+Отправленное (и неудачное) письмо дописывается в переписку обращения — файл
+`<id>.messages.jsonl` рядом с самим обращением — и отдаётся полем `messages` в списке и в карточке
+(раздел 8.1). События «отправлен ответ» и «ответ не ушёл» идут в журнал безопасности действиями
+`support.reply` / `support.reply.failed`: письмо живому человеку от имени платформы должно быть
+видно постфактум.
 
 ## 9. Рассылка по сегментам
 
@@ -723,6 +840,9 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `user.registered` | Зарегистрирован аккаунт |
 | `user.login.failed` | Неудачный вход пользователя |
 | `user.sessions.revoked` | Завершены все сеансы пользователя |
+| `infra.docker.pruned` | Очистка Docker |
+| `support.reply` | Отправлен ответ на обращение |
+| `support.reply.failed` | Ответ на обращение не ушёл |
 
 ### 10.4. Хранение
 

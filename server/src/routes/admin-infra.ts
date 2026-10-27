@@ -417,7 +417,12 @@ type SandboxInventory = {
   issues: InfraUnavailable[];
 };
 
-async function runDocker(args: string[], timeoutMs = DOCKER_TIMEOUT_MS): Promise<{ code: number; stdout: string; stderr: string } | null> {
+/**
+ * Единственный запуск docker: аргументы массивом, без шелла и без склейки строк. Экспортирован,
+ * потому что им пользуется и очистка (routes/admin-prune.ts): второй такой же запускатель
+ * разошёлся бы с этим в обработке отсутствующего Docker.
+ */
+export async function runDocker(args: string[], timeoutMs = DOCKER_TIMEOUT_MS): Promise<{ code: number; stdout: string; stderr: string } | null> {
   return new Promise(resolve => {
     execFile("docker", args, { timeout: timeoutMs, maxBuffer: 8 * 1024 * 1024 }, (error, stdout, stderr) => {
       if (error && (error as NodeJS.ErrnoException).code === "ENOENT") {

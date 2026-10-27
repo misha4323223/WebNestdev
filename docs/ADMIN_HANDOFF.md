@@ -297,10 +297,13 @@ Yandex Cloud и заводятся по таблице выше (пошагов�
 | `GET /api/admin/audit` | журнал безопасности для экрана «Безопасность» (только чтение) |
 | `GET /api/admin/infra` | снимок хоста: диск, Docker, песочницы, бакет и база (только чтение) |
 | `GET /api/admin/sandboxes` | песочницы списком: `state=cold|running|never|all`, `limit` 1…200 |
+| `GET /api/admin/infra/prune` | что освободит безопасная очистка Docker и что останется (только чтение) |
+| `POST /api/admin/infra/prune` | безопасная очистка: только кэш сборки и висячие образы, тело `{confirm: true}` |
 
 Детали, потоки и curl — `docs/ADMIN_API.md`. Статистика и её контракт — раздел 7 там же
 (`server/src/routes/admin-analytics.ts`); инфраструктура — раздел 7.5
-(`server/src/routes/admin-infra.ts`).
+(`server/src/routes/admin-infra.ts`); безопасная очистка Docker — раздел 7.6
+(`server/src/routes/admin-prune.ts`).
 
 - Аккаунты отдельные (`server/src/admin/*`), пароль — scrypt, TOTP-секрет зашифрован
   `WEBNESTDEV_ENCRYPTION_KEY`, recovery-коды — sha256, сессии — sha256 токена.
@@ -313,7 +316,8 @@ Yandex Cloud и заводятся по таблице выше (пошагов�
   (`node server/dist/scripts/admin-cli.js …` внутри контейнера `webnestdev-server`).
 
 Тесты: `server/src/admin/totp.test.ts` (векторы RFC 6238), `server/src/admin/bootstrap.test.ts`,
-`server/src/routes/admin.test.ts`. Последний полный прогон — **977 тестов, все проходят**.
+`server/src/routes/admin.test.ts`, `server/src/routes/admin-prune.test.ts`. Последний полный прогон —
+**1061 тест, все проходят**.
 
 ## Следующие шаги
 
@@ -360,3 +364,7 @@ docker compose exec webnestdev-server node server/dist/scripts/admin-cli.js list
 - Запросы статистики проверены типами и тестами на арифметику периода, но не выполнены на живом
   Postgres: в песочнице его нет. После выкатки открыть любой экран статистики в админке — это и есть
   первая настоящая проверка SQL.
+- Очистка Docker проверена с подставным Docker (настоящие `docker builder prune` в тестах не
+  запускаются — они убирали бы кэш машины, где идут тесты): на живой ВМ нужен один прогон
+  `GET /api/admin/infra/prune` и проверка, что число остановленных контейнеров до и после
+  `POST` совпадает (раздел 7.6 в `docs/ADMIN_API.md`).

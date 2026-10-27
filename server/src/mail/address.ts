@@ -9,7 +9,7 @@
  */
 
 /** Служебные домены и зоны, которые не могут принимать почту. */
-const SERVICE_DOMAINS = [".local", ".internal", ".invalid", ".test", ".example", ".localhost"];
+const SERVICE_DOMAINS = [".local", ".internal", ".invalid", ".test", ".example", ".localhost", ".lan", ".home"];
 
 /** Адрес без пробелов и запятых с непустыми частями: точную проверку домена делает вызывающий. */
 const EMAIL_PATTERN = /^[^@\s,]+@[^@\s,]+$/;
