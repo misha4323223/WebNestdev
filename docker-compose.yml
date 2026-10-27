@@ -208,6 +208,8 @@ services:
       SUPPORT_API_KEY: ${SUPPORT_API_KEY:-}
       SUPPORT_EMAIL_TO: ${SUPPORT_EMAIL_TO:-}
       SUPPORT_EMAIL_FROM: ${SUPPORT_EMAIL_FROM:-}
+      # Адрес в «Ответить» на письме поддержки (по умолчанию support@nestdev.ru).
+      SUPPORT_REPLY_TO: ${SUPPORT_REPLY_TO:-}
       SUPPORT_SMTP_HOST: ${SUPPORT_SMTP_HOST:-}
       SUPPORT_SMTP_PORT: ${SUPPORT_SMTP_PORT:-}
       SUPPORT_SMTP_USER: ${SUPPORT_SMTP_USER:-}
@@ -229,8 +231,16 @@ services:
       PLATFORM_URL: ${PLATFORM_URL:-}
       POSTBOX_ENDPOINT: ${POSTBOX_ENDPOINT:-}
       POSTBOX_IAM_TOKEN: ${POSTBOX_IAM_TOKEN:-}
+      # Пара POSTBOX_KEY_ID / POSTBOX_SECRET — ключ SMTP Postbox (логин и пароль): им уходят письма
+      # платформы и ответы поддержки, если MAIL_SMTP_* не заполнены. Для REST-рассылки нужен
+      # статический ключ доступа ниже: SigV4 API-ключом не подписывается, Postbox отвечает 403.
       POSTBOX_KEY_ID: ${POSTBOX_KEY_ID:-}
       POSTBOX_SECRET: ${POSTBOX_SECRET:-}
+      POSTBOX_STATIC_KEY_ID: ${POSTBOX_STATIC_KEY_ID:-}
+      POSTBOX_STATIC_SECRET: ${POSTBOX_STATIC_SECRET:-}
+      # Переопределение SMTP-адреса и порта Postbox (по умолчанию postbox.cloud.yandex.net:465).
+      POSTBOX_SMTP_HOST: ${POSTBOX_SMTP_HOST:-}
+      POSTBOX_SMTP_PORT: ${POSTBOX_SMTP_PORT:-}
       POSTBOX_SA_KEY: ${POSTBOX_SA_KEY:-}
       POSTBOX_SA_KEY_FILE: ${POSTBOX_SA_KEY_FILE:-}
       POSTBOX_DAILY_LIMIT: ${POSTBOX_DAILY_LIMIT:-}

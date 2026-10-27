@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
-import { buildMailMessage, mailConfigured, mailSettings, sendMail } from "./mailer.js";
+import { buildMailMessage, mailConfigured, mailSettings, mailSettingsSource, sendMail } from "./mailer.js";
 import type { MailSocket } from "./smtp.js";
 
 /** Поддельный SMTP: тот же разговор, что с Postbox, но без сети. */
@@ -40,7 +40,14 @@ const okReplies = [
   "221 2.0.0 Bye\r\n",
 ];
 
-const MANAGED = ["MAIL_SMTP_HOST", "MAIL_SMTP_PORT", "MAIL_SMTP_USER", "MAIL_SMTP_PASSWORD", "MAIL_FROM", "MAIL_FROM_NAME"] as const;
+/**
+ * Окружение чистится полностью: иначе POSTBOX_* из соседнего теста или из машины разработчика
+ * мог бы дать «настройки», которых не задавал этот тест.
+ */
+const MANAGED = [
+  "MAIL_SMTP_HOST", "MAIL_SMTP_PORT", "MAIL_SMTP_USER", "MAIL_SMTP_PASSWORD", "MAIL_FROM", "MAIL_FROM_NAME",
+  "POSTBOX_KEY_ID", "POSTBOX_SECRET", "POSTBOX_SENDER", "POSTBOX_FROM_NAME", "POSTBOX_SMTP_HOST", "POSTBOX_SMTP_PORT",
+] as const;
 
 /**
  * Настройки читаются из окружения, когда панель ничего не сохраняла: тест выставляет их сам.
@@ -90,6 +97,32 @@ test("ключи Postbox дают настройки, а порт по умол�
   await withEnv({ ...POSTBOX, MAIL_SMTP_PORT: "не порт" }, () => assert.equal(mailSettings()?.port, 465));
 });
 
+test("пара POSTBOX_KEY_ID / POSTBOX_SECRET даёт SMTP-настройки, а MAIL_SMTP важнее", async () => {
+  await withEnv(
+    { POSTBOX_KEY_ID: "aje-key", POSTBOX_SECRET: "aje-secret", POSTBOX_SENDER: "noreply@nestdev.ru", POSTBOX_FROM_NAME: "NestDev" },
+    () => {
+      // Хост и порт Postbox подставляются сами: в секретах выкатки есть только пара ключей и адрес.
+      const settings = mailSettings();
+      assert.equal(settings?.host, "postbox.cloud.yandex.net");
+      assert.equal(settings?.port, 465);
+      assert.equal(settings?.user, "aje-key", "логин SMTP — идентификатор API-ключа");
+      assert.equal(settings?.password, "aje-secret");
+      assert.equal(settings?.from, "noreply@nestdev.ru");
+      assert.equal(mailSettingsSource(), "POSTBOX_KEY");
+    },
+  );
+
+  // Явные ключи SMTP главнее запасной пары: две настройки в одном окружении не спорят.
+  await withEnv({ ...POSTBOX, POSTBOX_KEY_ID: "other", POSTBOX_SECRET: "other", POSTBOX_SENDER: "other@example.test" }, () => {
+    assert.equal(mailSettings()?.user, "aje1k2l3m4n5");
+    assert.equal(mailSettings()?.from, "noreply@nestdev.ru");
+    assert.equal(mailSettingsSource(), "MAIL_SMTP");
+  });
+
+  // Секрет без идентификатора (или наоборот) — не пара, и настройки не собираются.
+  await withEnv({ POSTBOX_KEY_ID: "aje-key", POSTBOX_SENDER: "noreply@nestdev.ru" }, () => assert.equal(mailSettings(), null));
+});
+
 test("письмо содержит закодированную тему, Reply-To и текст в base64", async () => {
   await withEnv(POSTBOX, () => {
     const settings = mailSettings()!;
@@ -113,7 +146,12 @@ test("письмо содержит закодированную тему, Reply
 test("письмо уходит тем же SMTP-разговором, что и остальная почта платформы", async () => {
   await withEnv(POSTBOX, async () => {
     const socket = new FakeSocket(okReplies);
-    await sendMail({ to: "client@example.com", subject: "Оплата принята", text: "Спасибо" }, { connect: () => socket });
+    const sent = await sendMail({ to: "client@example.com", subject: "Оплата принята", text: "Спасибо" }, { connect: () => socket });
+
+    // Идентификатор возвращается тот же, что стоит в заголовке: по нему ответ на обращение
+    // записывается в переписку, и расхождение сделало бы «отправлено» непроверяемым.
+    assert.match(sent.messageId, /^<[0-9a-f-]{36}@webnestdev>$/);
+    assert.match(socket.written[7], new RegExp("Message-ID: " + sent.messageId));
 
     assert.equal(socket.written[0], "EHLO webnestdev\r\n");
     assert.equal(Buffer.from(socket.written[2].trim(), "base64").toString(), "aje1k2l3m4n5");

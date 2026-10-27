@@ -3,6 +3,7 @@ import { getPlatformEnv } from "../platform/platform-env.js";
 import { mailSettings } from "../mail/mailer.js";
 import { encodedHeader, wrap76 } from "../mail/mime.js";
 import { smtpSend, type MailDeps, type MailSocket } from "../mail/smtp.js";
+import { recordMailFailure } from "../mail/mail-health.js";
 import type { SupportReporter } from "./support-store.js";
 
 /**
@@ -172,5 +173,10 @@ export function sendSupportMail(
   deps: SupportMailDeps = {},
 ): Promise<void> {
   const message = supportMailMessage(settings, ticket, screenshot);
-  return smtpSend(settings, { from: settings.from, to: settings.to }, message, deps);
+  // Отказ запоминается для /api/health: тикет сохраняется даже без письма, и снаружи «письмо не
+  // ушло» должно быть видно без чтения лога контейнера.
+  return smtpSend(settings, { from: settings.from, to: settings.to }, message, deps).catch(error => {
+    recordMailFailure("smtp", error);
+    throw error;
+  });
 }

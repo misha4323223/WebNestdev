@@ -1,54 +1,25 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
 /**
- * Ответ на обращение проверяется через настоящий HTTP-слой и настоящий транспорт: вместо Postbox
- * поднимается локальный сервер на 127.0.0.1, поэтому проверяются не «мы вызвали функцию», а само
- * письмо — куда оно ушло, с какой темой, с каким Reply-To и с какой ссылкой в HTML.
+ * Ответ на обращение проверяется через настоящий HTTP-слой, а сам транспорт подменяется: живой
+ * SMTP в CI недоступен, и проверять здесь надо всё, что стоит вокруг письма — выбор адреса,
+ * квоту, запись в переписку, журнал и отказ. Само письмо (отправитель, Reply-To, тема, текст)
+ * проверяется в `support/support-reply.test.ts` на поддельном SMTP-соединении.
  *
  * Так же проверяется главное обещание двери: ключ поддержки обращения читает, но писем людям не
  * отправляет, а ответы считаются в тот же суточный предел, что и рассылка.
  *
  * Переменные выставляются до импорта: тип хранилища и каталог данных читаются при загрузке
- * admin-store, а адрес Postbox — при каждом запросе (getPlatformEnv читает окружение живьём).
+ * admin-store, а суточный предел — при каждом запросе.
  */
 process.env.WEBNESTDEV_STORAGE = "json";
 process.env.WEBNESTDEV_DATA_DIR = await mkdtemp(path.join(tmpdir(), "support-reply-"));
-process.env.POSTBOX_SENDER = "noreply@nestdev.ru";
-process.env.POSTBOX_IAM_TOKEN = "test-iam-token";
 process.env.POSTBOX_DAILY_LIMIT = "200";
-process.env.POSTBOX_RATE_PER_SECOND = "1";
-process.env.PLATFORM_URL = "https://nestdev.ru";
 process.env.SUPPORT_API_KEY = "test-support-read-key-1234";
-
-type Outbound = { url: string; headers: NodeJS.Dict<string | string[]>; body: Record<string, unknown> };
-const outbound: Outbound[] = [];
-let answer = () => ({ status: 200, body: JSON.stringify({ MessageId: "msg-1" }) });
-
-const postbox = createServer((request, response) => {
-  const chunks: Buffer[] = [];
-  request.on("data", chunk => chunks.push(chunk as Buffer));
-  request.on("end", () => {
-    const raw = Buffer.concat(chunks).toString("utf8");
-    let body: Record<string, unknown> = {};
-    try {
-      body = JSON.parse(raw) as Record<string, unknown>;
-    } catch {
-      body = { raw };
-    }
-    outbound.push({ url: request.url ?? "", headers: request.headers, body });
-    const result = answer();
-    response.writeHead(result.status, { "content-type": "application/json" });
-    response.end(result.body);
-  });
-});
-await new Promise<void>(resolve => postbox.listen(0, "127.0.0.1", resolve));
-process.env.POSTBOX_ENDPOINT = "http://127.0.0.1:" + (postbox.address() as AddressInfo).port;
 
 const Fastify = (await import("fastify")).default;
 const { registerSupportRoutes } = await import("./support.js");
@@ -58,13 +29,22 @@ const { saveUserProfile } = await import("../account/profile-store.js");
 const { createSupportTicket, listSupportMessages } = await import("../support/support-store.js");
 const { listAudit } = await import("../security/audit-journal.js");
 
+type Sent = { to: string; subject: string; text: string };
+const sent: Sent[] = [];
+let answer: () => Promise<{ messageId: string }> = async () => ({ messageId: "msg-1" });
+
+const app = Fastify();
+await registerSupportRoutes(app, {
+  reply: input => {
+    sent.push(input);
+    return answer();
+  },
+});
+
 const EMAIL = "admin@example.test";
 const PASSWORD = "correct-horse-battery";
 const SUPPORT_KEY = process.env.SUPPORT_API_KEY ?? "";
 const PHONE_LOGIN = "79531814136@phone.webnestdev.local";
-
-const app = Fastify();
-await registerSupportRoutes(app);
 
 const admin = await createAdmin(EMAIL, PASSWORD);
 const session = await createAdminSession(admin.id);
@@ -122,7 +102,7 @@ test("ключ поддержки читает обращения, но писе
 
   const read = await app.inject({ method: "GET", url: "/api/support/tickets", headers: { "x-support-key": SUPPORT_KEY } });
   assert.equal(read.statusCode, 200, "тем же ключом обращения читаются");
-  assert.deepEqual(outbound, [], "до Postbox дело не дошло");
+  assert.deepEqual(sent, [], "до отправки дело не дошло");
 });
 
 test("короткий и длинный текст — ошибка ввода, а не попытка отправки", async () => {
@@ -134,14 +114,14 @@ test("короткий и длинный текст — ошибка ввода,
   assert.equal(long.statusCode, 400);
   assert.deepEqual(long.json(), { error: "Текст ответа длиннее 8000 символов", code: "body_too_long" });
 
-  assert.deepEqual(outbound, []);
+  assert.deepEqual(sent, []);
 });
 
 test("неизвестное обращение не отправляет письмо", async () => {
   const response = await reply("11111111-1111-1111-1111-111111111111", { body: "Здравствуйте! Есть ли такое обращение?" });
   assert.equal(response.statusCode, 404);
   assert.deepEqual(response.json(), { error: "Обращение не найдено", code: "ticket_not_found" });
-  assert.deepEqual(outbound, []);
+  assert.deepEqual(sent, []);
 });
 
 test("отвечать некуда: служебный логин без почты профиля", async () => {
@@ -152,10 +132,10 @@ test("отвечать некуда: служебный логин без поч
     code: "contact_email_missing",
     email: PHONE_LOGIN,
   });
-  assert.deepEqual(outbound, []);
+  assert.deepEqual(sent, []);
 });
 
-test("ответ уходит на почту профиля с Reply-To и ссылкой в HTML", async () => {
+test("ответ уходит на почту профиля с темой обращения и идентификатором письма", async () => {
   const response = await reply(ticket.id, {
     body: "Здравствуйте! Инструкция: https://nestdev.ru/docs.\n\nПроверка ответа из админки.",
   });
@@ -166,26 +146,12 @@ test("ответ уходит на почту профиля с Reply-To и сс
   assert.equal(body.messageId, "msg-1");
   assert.equal(typeof body.sentAt, "string");
 
-  assert.equal(outbound.length, 1);
-  assert.equal(outbound[0].url, "/v2/email/outbound-emails");
-  assert.ok(outbound[0].headers["x-yacloud-subjecttoken"], "ключ Postbox тот же, что у рассылки");
-  const sent = outbound[0].body as {
-    FromEmailAddress: string;
-    Destination: { ToAddresses: string[] };
-    ReplyToAddresses: string[];
-    Content: { Simple: { Subject: { Data: string }; Body: { Text: { Data: string }; Html: { Data: string } } } };
-  };
-  assert.equal(sent.FromEmailAddress, "noreply@nestdev.ru");
-  assert.deepEqual(sent.Destination.ToAddresses, ["ivan.petrov@yandex.ru"]);
-  assert.deepEqual(sent.ReplyToAddresses, ["support@nestdev.ru"], "ответ человека уходит в поддержку");
-  assert.equal(sent.Content.Simple.Subject.Data, "Обращение " + ticket.id + ": идея");
-  assert.match(sent.Content.Simple.Body.Text.Data, /Проверка ответа из админки/);
-  assert.match(
-    sent.Content.Simple.Body.Html.Data,
-    /<a href="https:\/\/nestdev\.ru\/docs">https:\/\/nestdev\.ru\/docs<\/a>/,
-    "адрес из текста становится ссылкой, а точка после него — нет",
-  );
-  assert.doesNotMatch(sent.Content.Simple.Body.Text.Data, /[Оо]тписаться/, "в ответе нет строки отписки: это не рассылка");
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].to, "ivan.petrov@yandex.ru");
+  assert.equal(sent[0].subject, "Обращение " + ticket.id + ": идея", "без своей темы — тема обращения");
+  assert.match(sent[0].text, /Проверка ответа из админки/);
+  assert.match(sent[0].text, /https:\/\/nestdev\.ru\/docs/);
+  assert.doesNotMatch(sent[0].text, /[Оо]тписаться/, "в ответе нет строки отписки: это не рассылка");
 
   const events = await listAudit({ action: "support.reply" });
   assert.equal(events.length, 1);
@@ -216,27 +182,30 @@ test("переписка видна в списке обращений и в к�
   assert.equal((card.json() as { messages: unknown[] }).messages.length, 1);
 });
 
-test("неудачная отправка попадает в переписку с причиной", async () => {
-  answer = () => ({ status: 500, body: JSON.stringify({ message: "внутренняя ошибка" }) });
+test("неудачная отправка попадает в переписку с причиной, а не теряется", async () => {
+  // Так выглядит отказ сервиса: текст ошибки важнее кода, и он должен остаться в переписке.
+  answer = async () => {
+    throw new Error("SMTP ответил 535 на шаге «password»");
+  };
 
   const response = await reply(ticket.id, { subject: "Про ваше обращение", body: "Здравствуйте! Второй ответ." });
   assert.equal(response.statusCode, 502);
   const body = response.json() as { error: string; code: string };
   assert.equal(body.code, "send_failed");
-  assert.match(body.error, /Postbox отказал \(500\)/);
+  assert.match(body.error, /535/);
 
   const messages = await listSupportMessages(ticket.id);
   assert.equal(messages.length, 2);
   assert.equal(messages[1].status, "failed");
   assert.equal(messages[1].subject, "Про ваше обращение", "своя тема сохраняется как есть");
-  assert.match(messages[1].error, /500/);
+  assert.match(messages[1].error, /535/);
   assert.equal(messages[1].messageId, "");
 
   const events = await listAudit({ action: "support.reply.failed" });
   assert.equal(events.length, 1);
   assert.equal(events[0].target, ticket.id);
 
-  answer = () => ({ status: 200, body: JSON.stringify({ MessageId: "msg-2" }) });
+  answer = async () => ({ messageId: "msg-2" });
 });
 
 test("ответы считаются в тот же суточный предел, что и рассылка", async () => {
@@ -244,18 +213,14 @@ test("ответы считаются в тот же суточный преде
   // Отказы в счёт не идут: в переписке есть и неудачная отправка, но она не занимает квоту.
   process.env.POSTBOX_DAILY_LIMIT = "1";
   try {
-    const attemptsBefore = outbound.length;
+    const attemptsBefore = sent.length;
     const response = await reply(ticket.id, { body: "Здравствуйте! Третий ответ." });
     assert.equal(response.statusCode, 429);
     const body = response.json() as { error: string; code: string };
     assert.equal(body.code, "quota_exceeded");
     assert.match(body.error, /1 из 1 за сутки/);
-    assert.equal(outbound.length, attemptsBefore, "сверх предела письмо не уходит");
+    assert.equal(sent.length, attemptsBefore, "сверх предела письмо не уходит");
   } finally {
     process.env.POSTBOX_DAILY_LIMIT = "200";
   }
-});
-
-test.after(() => {
-  postbox.close();
 });

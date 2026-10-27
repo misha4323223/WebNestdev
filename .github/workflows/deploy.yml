@@ -249,6 +249,8 @@ jobs:
           SUPPORT_API_KEY: ${{ secrets.SUPPORT_API_KEY || vars.SUPPORT_API_KEY }}
           SUPPORT_EMAIL_TO: ${{ secrets.SUPPORT_EMAIL_TO || vars.SUPPORT_EMAIL_TO }}
           SUPPORT_EMAIL_FROM: ${{ secrets.SUPPORT_EMAIL_FROM || vars.SUPPORT_EMAIL_FROM }}
+          # Адрес, который человек видит в «Ответить» на письме поддержки.
+          SUPPORT_REPLY_TO: ${{ secrets.SUPPORT_REPLY_TO || vars.SUPPORT_REPLY_TO }}
           SUPPORT_SMTP_HOST: ${{ secrets.SUPPORT_SMTP_HOST || vars.SUPPORT_SMTP_HOST }}
           SUPPORT_SMTP_PORT: ${{ secrets.SUPPORT_SMTP_PORT || vars.SUPPORT_SMTP_PORT }}
           SUPPORT_SMTP_USER: ${{ secrets.SUPPORT_SMTP_USER || vars.SUPPORT_SMTP_USER }}
@@ -268,8 +270,15 @@ jobs:
           PLATFORM_URL: ${{ secrets.PLATFORM_URL || vars.PLATFORM_URL }}
           POSTBOX_ENDPOINT: ${{ secrets.POSTBOX_ENDPOINT || vars.POSTBOX_ENDPOINT }}
           POSTBOX_IAM_TOKEN: ${{ secrets.POSTBOX_IAM_TOKEN }}
+          # Пара POSTBOX_KEY_ID / POSTBOX_SECRET — ключ SMTP Postbox (логин и пароль): им уходят
+          # письма платформы и ответы поддержки. Подписывать им REST-рассылки нельзя — Postbox
+          # отвечает 403 Forbidden, поэтому для рассылки есть отдельный статический ключ ниже.
           POSTBOX_KEY_ID: ${{ secrets.POSTBOX_KEY_ID || vars.POSTBOX_KEY_ID }}
           POSTBOX_SECRET: ${{ secrets.POSTBOX_SECRET }}
+          POSTBOX_STATIC_KEY_ID: ${{ secrets.POSTBOX_STATIC_KEY_ID || vars.POSTBOX_STATIC_KEY_ID }}
+          POSTBOX_STATIC_SECRET: ${{ secrets.POSTBOX_STATIC_SECRET }}
+          POSTBOX_SMTP_HOST: ${{ secrets.POSTBOX_SMTP_HOST || vars.POSTBOX_SMTP_HOST }}
+          POSTBOX_SMTP_PORT: ${{ secrets.POSTBOX_SMTP_PORT || vars.POSTBOX_SMTP_PORT }}
           POSTBOX_SA_KEY: ${{ secrets.POSTBOX_SA_KEY }}
           POSTBOX_SA_KEY_FILE: ${{ secrets.POSTBOX_SA_KEY_FILE || vars.POSTBOX_SA_KEY_FILE }}
           POSTBOX_DAILY_LIMIT: ${{ secrets.POSTBOX_DAILY_LIMIT || vars.POSTBOX_DAILY_LIMIT }}
@@ -363,6 +372,7 @@ jobs:
           add_platform_env SUPPORT_API_KEY "$SUPPORT_API_KEY"
           add_platform_env SUPPORT_EMAIL_TO "$SUPPORT_EMAIL_TO"
           add_platform_env SUPPORT_EMAIL_FROM "$SUPPORT_EMAIL_FROM"
+          add_platform_env SUPPORT_REPLY_TO "$SUPPORT_REPLY_TO"
           add_platform_env SUPPORT_SMTP_HOST "$SUPPORT_SMTP_HOST"
           add_platform_env SUPPORT_SMTP_PORT "$SUPPORT_SMTP_PORT"
           add_platform_env SUPPORT_SMTP_USER "$SUPPORT_SMTP_USER"
@@ -383,6 +393,11 @@ jobs:
           add_platform_env POSTBOX_IAM_TOKEN "$POSTBOX_IAM_TOKEN"
           add_platform_env POSTBOX_KEY_ID "$POSTBOX_KEY_ID"
           add_platform_env POSTBOX_SECRET "$POSTBOX_SECRET"
+          # Статический ключ доступа — только для REST-рассылки (SigV4).
+          add_platform_env POSTBOX_STATIC_KEY_ID "$POSTBOX_STATIC_KEY_ID"
+          add_platform_env POSTBOX_STATIC_SECRET "$POSTBOX_STATIC_SECRET"
+          add_platform_env POSTBOX_SMTP_HOST "$POSTBOX_SMTP_HOST"
+          add_platform_env POSTBOX_SMTP_PORT "$POSTBOX_SMTP_PORT"
           # JSON-ключ с переносами строк попал бы в .env только первой строкой: сжимаем в одну —
           # для JSON это тот же документ.
           add_platform_env POSTBOX_SA_KEY "$(printf '%s' "${POSTBOX_SA_KEY:-}" | tr -d '\n\r')"
@@ -538,6 +553,8 @@ jobs:
           SUPPORT_API_KEY: ${{ secrets.SUPPORT_API_KEY || vars.SUPPORT_API_KEY }}
           SUPPORT_EMAIL_TO: ${{ secrets.SUPPORT_EMAIL_TO || vars.SUPPORT_EMAIL_TO }}
           SUPPORT_EMAIL_FROM: ${{ secrets.SUPPORT_EMAIL_FROM || vars.SUPPORT_EMAIL_FROM }}
+          # Адрес, который человек видит в «Ответить» на письме поддержки.
+          SUPPORT_REPLY_TO: ${{ secrets.SUPPORT_REPLY_TO || vars.SUPPORT_REPLY_TO }}
           SUPPORT_SMTP_HOST: ${{ secrets.SUPPORT_SMTP_HOST || vars.SUPPORT_SMTP_HOST }}
           SUPPORT_SMTP_PORT: ${{ secrets.SUPPORT_SMTP_PORT || vars.SUPPORT_SMTP_PORT }}
           SUPPORT_SMTP_USER: ${{ secrets.SUPPORT_SMTP_USER || vars.SUPPORT_SMTP_USER }}
@@ -557,8 +574,15 @@ jobs:
           PLATFORM_URL: ${{ secrets.PLATFORM_URL || vars.PLATFORM_URL }}
           POSTBOX_ENDPOINT: ${{ secrets.POSTBOX_ENDPOINT || vars.POSTBOX_ENDPOINT }}
           POSTBOX_IAM_TOKEN: ${{ secrets.POSTBOX_IAM_TOKEN }}
+          # Пара POSTBOX_KEY_ID / POSTBOX_SECRET — ключ SMTP Postbox (логин и пароль): им уходят
+          # письма платформы и ответы поддержки. Подписывать им REST-рассылки нельзя — Postbox
+          # отвечает 403 Forbidden, поэтому для рассылки есть отдельный статический ключ ниже.
           POSTBOX_KEY_ID: ${{ secrets.POSTBOX_KEY_ID || vars.POSTBOX_KEY_ID }}
           POSTBOX_SECRET: ${{ secrets.POSTBOX_SECRET }}
+          POSTBOX_STATIC_KEY_ID: ${{ secrets.POSTBOX_STATIC_KEY_ID || vars.POSTBOX_STATIC_KEY_ID }}
+          POSTBOX_STATIC_SECRET: ${{ secrets.POSTBOX_STATIC_SECRET }}
+          POSTBOX_SMTP_HOST: ${{ secrets.POSTBOX_SMTP_HOST || vars.POSTBOX_SMTP_HOST }}
+          POSTBOX_SMTP_PORT: ${{ secrets.POSTBOX_SMTP_PORT || vars.POSTBOX_SMTP_PORT }}
           POSTBOX_SA_KEY: ${{ secrets.POSTBOX_SA_KEY }}
           POSTBOX_SA_KEY_FILE: ${{ secrets.POSTBOX_SA_KEY_FILE || vars.POSTBOX_SA_KEY_FILE }}
           POSTBOX_DAILY_LIMIT: ${{ secrets.POSTBOX_DAILY_LIMIT || vars.POSTBOX_DAILY_LIMIT }}
@@ -632,6 +656,7 @@ jobs:
           add_platform_env SUPPORT_API_KEY "$SUPPORT_API_KEY"
           add_platform_env SUPPORT_EMAIL_TO "$SUPPORT_EMAIL_TO"
           add_platform_env SUPPORT_EMAIL_FROM "$SUPPORT_EMAIL_FROM"
+          add_platform_env SUPPORT_REPLY_TO "$SUPPORT_REPLY_TO"
           add_platform_env SUPPORT_SMTP_HOST "$SUPPORT_SMTP_HOST"
           add_platform_env SUPPORT_SMTP_PORT "$SUPPORT_SMTP_PORT"
           add_platform_env SUPPORT_SMTP_USER "$SUPPORT_SMTP_USER"
@@ -652,6 +677,11 @@ jobs:
           add_platform_env POSTBOX_IAM_TOKEN "$POSTBOX_IAM_TOKEN"
           add_platform_env POSTBOX_KEY_ID "$POSTBOX_KEY_ID"
           add_platform_env POSTBOX_SECRET "$POSTBOX_SECRET"
+          # Статический ключ доступа — только для REST-рассылки (SigV4).
+          add_platform_env POSTBOX_STATIC_KEY_ID "$POSTBOX_STATIC_KEY_ID"
+          add_platform_env POSTBOX_STATIC_SECRET "$POSTBOX_STATIC_SECRET"
+          add_platform_env POSTBOX_SMTP_HOST "$POSTBOX_SMTP_HOST"
+          add_platform_env POSTBOX_SMTP_PORT "$POSTBOX_SMTP_PORT"
           # JSON-ключ с переносами строк попал бы в .env только первой строкой: сжимаем в одну —
           # для JSON это тот же документ.
           add_platform_env POSTBOX_SA_KEY "$(printf '%s' "${POSTBOX_SA_KEY:-}" | tr -d '\n\r')"

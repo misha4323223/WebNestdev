@@ -1,20 +1,23 @@
 import { unusableEmailReason } from "../mail/address.js";
 import { sentSince } from "../mail/mail-store.js";
-import { postboxConfig, sendPostboxEmail } from "../mail/postbox.js";
-import { textToHtmlLinks } from "../mail/render.js";
+import { sendMail } from "../mail/mailer.js";
+import type { MailDeps } from "../mail/smtp.js";
+import { postboxConfig } from "../mail/postbox.js";
 import { getPlatformEnv } from "../platform/platform-env.js";
 import { countSupportMessagesSentSince, type SupportCategory } from "./support-store.js";
 
 /**
  * Ответ человеку письмом от имени платформы.
  *
- * Транспорт — тот же, что у рассылки (`mail/postbox.ts`, REST API v2): у Postbox одна квота на
- * аккаунт, и ответы поддержки считаются в неё же. Считать их отдельно было бы удобнее в коде и
- * хуже на живых людях: рассылка на 200 адресов выбирает суточный предел целиком, и следующий
- * ответ человеку получал бы 429 от Postbox вместо письма.
+ * Транспорт — **SMTP платформы** (`mail/mailer.ts`), тот же, что у письма о новом обращении и у
+ * уведомлений об оплате. Раньше ответ шёл через REST рассылки, и это была ошибка не в тексте
+ * письма, а в выборе двери: пара `POSTBOX_KEY_ID` / `POSTBOX_SECRET` — это идентификатор и секрет
+ * API-ключа сервисного аккаунта (логин и пароль SMTP), а не статический ключ доступа, которым
+ * подписываются REST-запросы. Подпись таким ключом шлюз авторизации отвергает с `403 Forbidden` и
+ * пустым телом — то есть рассылка и ответ падали вместе, хотя ключ верный и домен подтверждён.
  *
- * Ключи второй раз настраивать не нужно: те же `POSTBOX_SENDER`, `POSTBOX_KEY_ID` / `POSTBOX_SECRET`
- * (или ключ сервисного аккаунта) и тот же `PLATFORM_URL`, что у рассылки.
+ * Квота осталась общей: у Postbox один суточный предел на аккаунт, и ответы считаются в него же
+ * (`supportReplyQuota`). Считать их отдельно было бы удобнее в коде и хуже на живых людях.
  *
  * Отличие от рассылки одно: у ответа нет ссылки отписки. Отписка закрывает рекламные письма, а
  * ответ на обращение — не реклама; человек сам его ждёт. Зато есть Reply-To: письмо уходит от
@@ -47,16 +50,25 @@ export function supportReplySubject(ticket: { id: string; category: SupportCateg
   return "Обращение " + ticket.id + ": " + (ticket.category === "bug" ? "ошибка" : "идея");
 }
 
-export type SupportReplySent = { messageId: string; status: number };
+export type SupportReplySent = { messageId: string };
 
-export async function sendSupportReply(input: { to: string; subject: string; text: string }): Promise<SupportReplySent> {
-  return sendPostboxEmail({
-    to: input.to,
-    subject: input.subject,
-    text: input.text,
-    html: textToHtmlLinks(input.text),
-    replyTo: supportReplyTo(),
-  });
+/**
+ * Отправка ответа. `deps` — подмена SMTP-соединения в тестах: живого Postbox в CI нет, а проверять
+ * нужно именно письмо (отправитель, Reply-To, тема, текст), а не факт вызова функции.
+ *
+ * Почта не настроена — отказ с именами переменных приходит из `sendMail`, а не общее «ошибка
+ * отправки»: человек в админке должен видеть, что именно заполнить. Своей проверки здесь нет
+ * намеренно — иначе отказ не попадал бы в `/api/health` (его записывает mailer).
+ */
+export async function sendSupportReply(
+  input: { to: string; subject: string; text: string },
+  deps: MailDeps = {},
+): Promise<SupportReplySent> {
+  const sent = await sendMail(
+    { to: input.to, subject: input.subject, text: input.text, replyTo: supportReplyTo() },
+    deps,
+  );
+  return { messageId: sent.messageId };
 }
 
 export type SupportReplyQuota = {

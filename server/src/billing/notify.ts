@@ -94,7 +94,11 @@ export function renewalNoticeLetter(input: { plan: PlanId; amount: number; renew
   return { subject: "Скоро спишем " + rubLabel(input.amount) + " за тариф «" + planName + "»", text: lines.join("\n") };
 }
 
-export type LetterSend = (input: MailInput) => Promise<void>;
+/**
+ * Отправка одного письма. Возвращаемое значение здесь не используется: биллингу важен факт отправки,
+ * а идентификатор письма нужен только переписке обращения (`mail/mailer.ts`).
+ */
+export type LetterSend = (input: MailInput) => Promise<unknown>;
 
 /** Письмо об оплате покупателю. `false` — отправлять некуда или нечего (нет пользователя/почты). */
 export async function notifyPaymentPaid(

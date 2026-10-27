@@ -2,6 +2,7 @@ import { createHash, createHmac } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { getPlatformEnv } from "../platform/platform-env.js";
 import { parseServiceAccountKey, signServiceAccountJwt } from "../yandex/yandex-api.js";
+import { recordMailFailure } from "./mail-health.js";
 
 /**
  * Отправка писем через Yandex Cloud Postbox по REST API v2.
@@ -15,10 +16,17 @@ import { parseServiceAccountKey, signServiceAccountJwt } from "../yandex/yandex-
  *
  * Аутентификация — любой из настроенных путей:
  *   POSTBOX_IAM_TOKEN — готовый токен (живёт около 12 часов);
- *   POSTBOX_KEY_ID + POSTBOX_SECRET — SigV4 со статическим ключом;
+ *   POSTBOX_STATIC_KEY_ID + POSTBOX_STATIC_SECRET — SigV4 со статическим ключом доступа;
  *   ключ сервисного аккаунта (POSTBOX_SA_KEY / POSTBOX_SA_KEY_FILE, а также YANDEX_SA_KEY /
  *     YANDEX_SA_KEY_FILE) — обменивается на IAM-токен и обновляется сам;
  *   метаданные ВМ — когда на ней привязан сервисный аккаунт с ролью `postbox.sender`.
+ *
+ * Чего здесь нет намеренно: пара `POSTBOX_KEY_ID` + `POSTBOX_SECRET`. Это идентификатор и секрет
+ * API-ключа сервисного аккаунта — ими входят в SMTP (`mail/mailer.ts`), и они **не** подписывают
+ * REST-запросы: SigV4 требует статический ключ доступа, а не API-ключ. Попытка подписать запрос
+ * таким ключом заканчивается `403 Forbidden` с пустым телом — отказом шлюза авторизации, а не
+ * ошибкой письма. Поэтому эти имена больше не принимаются как ключ рассылки, и администратор
+ * получает причину, а не 403.
  *
  * Ключи читаются через getPlatformEnv: значение, введённое в панели «Ключи сервера», побеждает
  * переменную окружения и начинает работать без перезапуска.
@@ -87,8 +95,10 @@ function credentialFromEnvironment(): PostboxAuth | null {
   const token = env("POSTBOX_IAM_TOKEN");
   if (token) return { kind: "iam", token, source: "POSTBOX_IAM_TOKEN" };
 
-  const keyId = env("POSTBOX_KEY_ID");
-  const secret = env("POSTBOX_SECRET");
+  // Только статический ключ доступа: POSTBOX_KEY_ID / POSTBOX_SECRET — это ключ SMTP, и SigV4 с ним
+  // не сходится (см. комментарий в начале файла).
+  const keyId = env("POSTBOX_STATIC_KEY_ID");
+  const secret = env("POSTBOX_STATIC_SECRET");
   if (keyId && secret) return { kind: "sigv4", keyId, secret };
 
   const rawKey = env("POSTBOX_SA_KEY");
@@ -166,16 +176,20 @@ export async function postboxStatus(config = postboxConfig(), deps: PostboxDeps 
       configured: true,
       config,
       authKind: config.auth.kind,
-      authSource: config.auth.kind === "sigv4" ? "POSTBOX_KEY_ID" : config.auth.kind === "metadata" ? "метаданные ВМ" : config.auth.source,
+      authSource: config.auth.kind === "sigv4" ? "POSTBOX_STATIC_KEY_ID" : config.auth.kind === "metadata" ? "метаданные ВМ" : config.auth.source,
     };
   }
   if (await metadataAvailable(deps, deps.now?.() ?? Date.now())) {
     return { configured: true, config: { ...config, auth: { kind: "metadata" } }, authKind: "metadata", authSource: "метаданные ВМ" };
   }
+  // Самая частая причина 403: в окружении лежит ключ SMTP и больше ничего. Причина важнее
+  // отсутствия настройки, поэтому она называется отдельно.
+  const smtpOnly = Boolean(env("POSTBOX_KEY_ID") && env("POSTBOX_SECRET"));
   return {
     configured: false,
-    reason:
-      "Нет ключа Postbox: задайте POSTBOX_IAM_TOKEN, либо POSTBOX_KEY_ID и POSTBOX_SECRET, либо ключ сервисного аккаунта с ролью postbox.sender.",
+    reason: smtpOnly
+      ? "POSTBOX_KEY_ID и POSTBOX_SECRET — ключ Postbox для SMTP: им нельзя подписывать REST-запросы рассылки, Postbox отвергает такую подпись с 403 Forbidden. Для рассылки задайте POSTBOX_IAM_TOKEN, либо POSTBOX_STATIC_KEY_ID и POSTBOX_STATIC_SECRET, либо ключ сервисного аккаунта с ролью postbox.sender. Письма платформы (поддержка, оплата) при этом работают по SMTP — и на этом ключе в том числе."
+      : "Нет ключа Postbox: задайте POSTBOX_IAM_TOKEN, либо POSTBOX_STATIC_KEY_ID и POSTBOX_STATIC_SECRET, либо ключ сервисного аккаунта с ролью postbox.sender.",
     config,
   };
 }
@@ -190,6 +204,41 @@ export function describePostbox(status: PostboxStatus) {
     ", ключ: " + auth + ", предел " + config.dailyLimit + " писем в сутки, " + config.perSecond + " в секунду" +
     (config.pricePer1000 === null ? ", цена за 1000 писем не задана" : ", " + config.pricePer1000 + " ₽ за 1000")
   );
+}
+
+/**
+ * Чем сервер подписывает письмо — для `/api/health`. Синхронно и без сети: health спрашивают
+ * каждые несколько секунд, и запрос в метаданные здесь был бы ожиданием неизвестно чего.
+ *
+ * `tokenAgeSeconds` отвечает на самый дорогой по времени разбор: «работало вчера, а сегодня 403».
+ * У токена из метаданных или из ключа сервисного аккаунта возраст виден по кешу; у готового
+ * токена из `POSTBOX_IAM_TOKEN` его не знает никто — там `null`, а не выдуманное число.
+ */
+export type PostboxCredentialSummary = {
+  kind: "iam-token-env" | "static-key" | "service-account-key" | "metadata" | "smtp-key" | "none";
+  source: string | null;
+  tokenAgeSeconds: number | null;
+};
+
+export function postboxCredentialSummary(now = Date.now()): PostboxCredentialSummary {
+  const config = postboxConfig();
+  const age = cachedIam ? Math.max(0, Math.round((now - cachedIam.issuedAt) / 1000)) : null;
+  if (config.auth?.kind === "iam") {
+    return { kind: "iam-token-env", source: config.auth.source, tokenAgeSeconds: null };
+  }
+  if (config.auth?.kind === "sigv4") {
+    return { kind: "static-key", source: "POSTBOX_STATIC_KEY_ID", tokenAgeSeconds: null };
+  }
+  if (config.auth?.kind === "serviceAccount" || config.auth?.kind === "serviceAccountFile") {
+    return { kind: "service-account-key", source: config.auth.source, tokenAgeSeconds: age };
+  }
+  if (metadataCache?.ok) {
+    return { kind: "metadata", source: "метаданные ВМ", tokenAgeSeconds: age };
+  }
+  if (env("POSTBOX_KEY_ID") && env("POSTBOX_SECRET")) {
+    return { kind: "smtp-key", source: "POSTBOX_KEY_ID", tokenAgeSeconds: null };
+  }
+  return { kind: "none", source: null, tokenAgeSeconds: null };
 }
 
 function sha256Hex(value: string) {
@@ -239,7 +288,7 @@ export function signPostboxRequest(input: {
   };
 }
 
-let cachedIam: { token: string; expiresAt: number } | null = null;
+let cachedIam: { token: string; issuedAt: number; expiresAt: number } | null = null;
 
 /** Тесты начинают с чистого кеша: токен и метаданные живут на процесс. */
 export function resetPostboxCache() {
@@ -270,7 +319,7 @@ async function iamToken(config: PostboxConfig, deps: PostboxDeps): Promise<strin
     if (!response.ok) throw new Error("Метаданные ВМ не выдали токен сервисного аккаунта: " + response.status);
     const parsed = (await response.json()) as { access_token?: string; expires_in?: number };
     if (!parsed.access_token) throw new Error("Метаданные ВМ ответили без access_token");
-    cachedIam = { token: parsed.access_token, expiresAt: now + Math.max(60, Number(parsed.expires_in ?? 3600)) * 1000 };
+    cachedIam = { token: parsed.access_token, issuedAt: now, expiresAt: now + Math.max(60, Number(parsed.expires_in ?? 3600)) * 1000 };
     return cachedIam.token;
   }
   if (config.auth?.kind !== "serviceAccount" && config.auth?.kind !== "serviceAccountFile") {
@@ -289,6 +338,7 @@ async function iamToken(config: PostboxConfig, deps: PostboxDeps): Promise<strin
   if (!parsed.iamToken) throw new Error("Yandex IAM не выдал токен");
   cachedIam = {
     token: parsed.iamToken,
+    issuedAt: now,
     expiresAt: parsed.expiresAt ? Date.parse(parsed.expiresAt) : now + 30 * 60 * 1000,
   };
   return cachedIam.token;
@@ -353,10 +403,21 @@ export async function sendPostboxEmail(message: PostboxMessage, deps: PostboxDep
     headers["X-YaCloud-SubjectToken"] = await iamToken(config, deps);
   }
 
-  const response = await deps.fetch(url, { method: "POST", headers, body, signal: AbortSignal.timeout(SEND_TIMEOUT_MS) });
+  let response: Response;
+  try {
+    response = await deps.fetch(url, { method: "POST", headers, body, signal: AbortSignal.timeout(SEND_TIMEOUT_MS) });
+  } catch (error) {
+    // Сеть и таймаут — тоже «письмо не ушло», и это должно быть видно в health, а не только в логе.
+    recordMailFailure("postbox-rest", error);
+    throw error;
+  }
   const text = await response.text();
   if (!response.ok) {
-    throw new Error("Postbox отказал (" + response.status + "): " + (text.replace(/\s+/g, " ").trim().slice(0, 300) || "пустой ответ"));
+    // Тело сохраняется как есть: 403 «Forbidden» без JSON — это отказ авторизации, а 400 с Code —
+    // проблема письма. Без тела эти две ситуации неотличимы.
+    const error = new Error("Postbox отказал (" + response.status + "): " + (text.replace(/\s+/g, " ").trim().slice(0, 300) || "пустой ответ"));
+    recordMailFailure("postbox-rest", error);
+    throw error;
   }
   let messageId = "";
   try {

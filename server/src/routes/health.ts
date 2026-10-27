@@ -14,6 +14,10 @@ import { lastSandboxMountCheck } from "../sandbox/sandbox-check.js";
 import { diskStatus, memoryStatus } from "../health/host-metrics.js";
 import { smsReadiness, smsSummary } from "../auth/sms.js";
 import { supportKeyStatus } from "../support/support-api-key.js";
+import { mailSettings, mailSettingsSource } from "../mail/mailer.js";
+import { postboxConfig, postboxCredentialSummary } from "../mail/postbox.js";
+import { lastMailFailure } from "../mail/mail-health.js";
+import { getPlatformEnv } from "../platform/platform-env.js";
 import { normalizeAddress } from "../security/client-ip.js";
 import type { FastifyRequest } from "fastify";
 
@@ -109,6 +113,39 @@ async function smsInfo(){
 }
 
 /**
+ * Состояние почты: чем подписывается письмо, откуда взят ключ и что сервис ответил в последний раз.
+ *
+ * Без этого блока разбор «ответ из админки не уходит» начинался с чтения `.env` на ВМ: снаружи
+ * неотличимы «ключ не задан», «ключ SMTP вместо ключа рассылки» и «сервис отказал». Токен возраста
+ * здесь нет там, где его не знает никто (готовый `POSTBOX_IAM_TOKEN`), — лучше `null`, чем число,
+ * которое ничего не значит.
+ */
+function mailInfo(){
+  const settings=mailSettings();
+  const source=mailSettingsSource();
+  const credential=postboxCredentialSummary();
+  const campaigns=postboxConfig();
+  const campaignsReady=Boolean(campaigns.auth)||credential.kind==="metadata";
+  return {
+    provider:"postbox" as const,
+    sender:settings?.from ?? (campaigns.sender || null),
+    // Чем реально уходят письма поддержки и оплаты: имена MAIL_SMTP_* или запасная пара POSTBOX_*.
+    credentialKind:source==="MAIL_SMTP" ? "smtp-credentials" : credential.kind,
+    credentialSource:source==="MAIL_SMTP" ? "MAIL_SMTP" : source ?? credential.source,
+    // Каталог, в котором создан сервисный аккаунт: его не хватает в разборе «403 от Postbox».
+    folderId:(getPlatformEnv("YANDEX_FOLDER_ID") ?? "").trim() || null,
+    tokenAgeSeconds:credential.tokenAgeSeconds,
+    ready:Boolean(settings),
+    campaigns:{
+      configured:campaignsReady,
+      credentialKind:credential.kind,
+      ...(campaignsReady?{}:{reason:"нет ключа рассылки: нужен POSTBOX_IAM_TOKEN, POSTBOX_STATIC_KEY_ID и POSTBOX_STATIC_SECRET или ключ сервисного аккаунта. POSTBOX_KEY_ID и POSTBOX_SECRET — ключ SMTP, для REST он не годится"}),
+    },
+    lastError:lastMailFailure(),
+  };
+}
+
+/**
  * Подробности health нужны оператору и health-check на самой ВМ, а не посетителю сайта.
  * Публичный ответ через Caddy не должен показывать абсолютные пути песочниц, очереди и
  * адреса предпросмотров: это карта внутреннего устройства. Считаем запрос внутренним, только
@@ -125,7 +162,7 @@ export async function registerHealthRoutes(app:FastifyInstance){
     // «ключ не сохранён» от «сохранён в панели, но запрос попал в процесс без него».
     const support = supportKeyStatus();
     if(!isInternalHealthRequest(request)){
-      return {ok:true,service:"webnestdev-server",build:buildId(),sms:await smsInfo(),support};
+      return {ok:true,service:"webnestdev-server",build:buildId(),sms:await smsInfo(),mail:mailInfo(),support};
     }
     return {
       ok:true,
@@ -136,6 +173,8 @@ export async function registerHealthRoutes(app:FastifyInstance){
       // Секретов здесь нет, зато «SMS перестали приходить» проверяется одной командой
       // curl localhost:8787/api/health вместо чтения .env на ВМ.
       sms:await smsInfo(),
+      // Почта: откуда ключ, чем подписывается письмо и что ответил сервис в последний раз.
+      mail:mailInfo(),
       support,
       activity:await activity(),
     };
