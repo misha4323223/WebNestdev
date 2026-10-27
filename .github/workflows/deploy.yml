@@ -113,7 +113,12 @@ jobs:
     # установленный на самой ВМ (нужно, если у неё нет доступного извне SSH).
     runs-on: ${{ vars.DEPLOY_RUNNER || 'ubuntu-latest' }}
     environment: production
-    timeout-minutes: 20
+    # Крайний срок джобы должен быть заметно больше времени скачивания образа: выкатка начинается
+    # с `docker pull` (в образе Chromium — это гигабайты), и на небыстром канале ВМ загрузка
+    # упиралась в этот предел — джоба убивалась молча, выкатки не было, а лог кончался на середине
+    # загрузки. Ограничивает скачивание сам скрипт (IMAGE_PULL_TIMEOUT, внятная причина в логе),
+    # а этот таймаут остаётся крайним сроком на всю выкатку.
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -256,6 +261,21 @@ jobs:
           MAIL_SMTP_PASSWORD: ${{ secrets.MAIL_SMTP_PASSWORD }}
           MAIL_FROM: ${{ secrets.MAIL_FROM || vars.MAIL_FROM }}
           MAIL_FROM_NAME: ${{ secrets.MAIL_FROM_NAME || vars.MAIL_FROM_NAME }}
+          # Рассылка по сегментам (REST API Postbox v2, docs/MAIL.md) — отдельно от SMTP выше:
+          # у очереди свои требования. Пустые значения ничего не стирают; панель важнее.
+          POSTBOX_SENDER: ${{ secrets.POSTBOX_SENDER || vars.POSTBOX_SENDER }}
+          POSTBOX_FROM_NAME: ${{ secrets.POSTBOX_FROM_NAME || vars.POSTBOX_FROM_NAME }}
+          PLATFORM_URL: ${{ secrets.PLATFORM_URL || vars.PLATFORM_URL }}
+          POSTBOX_ENDPOINT: ${{ secrets.POSTBOX_ENDPOINT || vars.POSTBOX_ENDPOINT }}
+          POSTBOX_IAM_TOKEN: ${{ secrets.POSTBOX_IAM_TOKEN }}
+          POSTBOX_KEY_ID: ${{ secrets.POSTBOX_KEY_ID || vars.POSTBOX_KEY_ID }}
+          POSTBOX_SECRET: ${{ secrets.POSTBOX_SECRET }}
+          POSTBOX_SA_KEY: ${{ secrets.POSTBOX_SA_KEY }}
+          POSTBOX_SA_KEY_FILE: ${{ secrets.POSTBOX_SA_KEY_FILE || vars.POSTBOX_SA_KEY_FILE }}
+          POSTBOX_DAILY_LIMIT: ${{ secrets.POSTBOX_DAILY_LIMIT || vars.POSTBOX_DAILY_LIMIT }}
+          POSTBOX_RATE_PER_SECOND: ${{ secrets.POSTBOX_RATE_PER_SECOND || vars.POSTBOX_RATE_PER_SECOND }}
+          POSTBOX_DKIM_SELECTORS: ${{ secrets.POSTBOX_DKIM_SELECTORS || vars.POSTBOX_DKIM_SELECTORS }}
+          POSTBOX_PRICE_PER_1000: ${{ secrets.POSTBOX_PRICE_PER_1000 || vars.POSTBOX_PRICE_PER_1000 }}
           BILLING_NOTICE_DAYS: ${{ secrets.BILLING_NOTICE_DAYS || vars.BILLING_NOTICE_DAYS }}
         run: |
           set -euo pipefail
@@ -355,6 +375,22 @@ jobs:
           add_platform_env MAIL_SMTP_PASSWORD "$MAIL_SMTP_PASSWORD"
           add_platform_env MAIL_FROM "$MAIL_FROM"
           add_platform_env MAIL_FROM_NAME "$MAIL_FROM_NAME"
+          add_platform_env POSTBOX_SENDER "$POSTBOX_SENDER"
+          add_platform_env POSTBOX_FROM_NAME "$POSTBOX_FROM_NAME"
+          add_platform_env PLATFORM_URL "$PLATFORM_URL"
+          add_platform_env POSTBOX_ENDPOINT "$POSTBOX_ENDPOINT"
+          # Токен и секрет — только Secret: они попадают в .env на ВМ, а не в лог.
+          add_platform_env POSTBOX_IAM_TOKEN "$POSTBOX_IAM_TOKEN"
+          add_platform_env POSTBOX_KEY_ID "$POSTBOX_KEY_ID"
+          add_platform_env POSTBOX_SECRET "$POSTBOX_SECRET"
+          # JSON-ключ с переносами строк попал бы в .env только первой строкой: сжимаем в одну —
+          # для JSON это тот же документ.
+          add_platform_env POSTBOX_SA_KEY "$(printf '%s' "${POSTBOX_SA_KEY:-}" | tr -d '\n\r')"
+          add_platform_env POSTBOX_SA_KEY_FILE "$POSTBOX_SA_KEY_FILE"
+          add_platform_env POSTBOX_DAILY_LIMIT "$POSTBOX_DAILY_LIMIT"
+          add_platform_env POSTBOX_RATE_PER_SECOND "$POSTBOX_RATE_PER_SECOND"
+          add_platform_env POSTBOX_DKIM_SELECTORS "$POSTBOX_DKIM_SELECTORS"
+          add_platform_env POSTBOX_PRICE_PER_1000 "$POSTBOX_PRICE_PER_1000"
           add_platform_env BILLING_NOTICE_DAYS "$BILLING_NOTICE_DAYS"
           # Итог по OAuth-ключам — только «есть/нет», без значений. Раньше пустой ключ был
           # виден только по маскированному дампу окружения выше, и «вставлено, но не работает»
@@ -370,6 +406,9 @@ jobs:
           echo "[deploy] Цены расхода: таблица моделей=$(has "${PLATFORM_AI_MODEL_PRICES:-}"), общая ставка=$(has "${PLATFORM_AI_PRICE_INPUT_PER_MILLION:-}"), инфраструктура=$(has "${PLATFORM_INFRA_COST_PER_MONTH:-}"), валюта=${PLATFORM_AI_PRICE_CURRENCY:-USD}"
           echo "[deploy] Поддержка: ключ API=$(has "${SUPPORT_API_KEY:-}"), почта=${SUPPORT_EMAIL_TO:-—}, SMTP=$(has "${SUPPORT_SMTP_PASSWORD:-}")"
           echo "[deploy] Почта платформы: сервер=$(has "${MAIL_SMTP_HOST:-}"), отправитель=${MAIL_FROM:-—}, пароль=$(has "${MAIL_SMTP_PASSWORD:-}")"
+          # Рассылка: «включена» не значит «домен подтверждён» — вторая половина строки отвечает
+          # на вопрос, почему письма уходят в спам, не заставляя лезть в консоль Postbox.
+          echo "[deploy] Рассылка: отправитель=${POSTBOX_SENDER:-—}, ключ=$(has "${POSTBOX_SA_KEY:-}${POSTBOX_IAM_TOKEN:-}${POSTBOX_SECRET:-}${POSTBOX_KEY_ID:-}"), DKIM-селекторы=${POSTBOX_DKIM_SELECTORS:-—}, предел=${POSTBOX_DAILY_LIMIT:-200}/сутки"
           # Генерация изображений: в логе видно, настроен ли инструмент и на какой модели. Значений
           # ключей здесь нет — только «есть/нет», как у остальных строк выше.
           echo "[deploy] Генерация изображений: адрес=$(has "${PLATFORM_IMAGE_BASE_URL:-}"), модель=${PLATFORM_IMAGE_MODEL:-—}, ключ=$(has "${PLATFORM_IMAGE_KEY_1:-}")"
@@ -511,6 +550,21 @@ jobs:
           MAIL_SMTP_PASSWORD: ${{ secrets.MAIL_SMTP_PASSWORD }}
           MAIL_FROM: ${{ secrets.MAIL_FROM || vars.MAIL_FROM }}
           MAIL_FROM_NAME: ${{ secrets.MAIL_FROM_NAME || vars.MAIL_FROM_NAME }}
+          # Рассылка по сегментам (REST API Postbox v2, docs/MAIL.md) — отдельно от SMTP выше:
+          # у очереди свои требования. Пустые значения ничего не стирают; панель важнее.
+          POSTBOX_SENDER: ${{ secrets.POSTBOX_SENDER || vars.POSTBOX_SENDER }}
+          POSTBOX_FROM_NAME: ${{ secrets.POSTBOX_FROM_NAME || vars.POSTBOX_FROM_NAME }}
+          PLATFORM_URL: ${{ secrets.PLATFORM_URL || vars.PLATFORM_URL }}
+          POSTBOX_ENDPOINT: ${{ secrets.POSTBOX_ENDPOINT || vars.POSTBOX_ENDPOINT }}
+          POSTBOX_IAM_TOKEN: ${{ secrets.POSTBOX_IAM_TOKEN }}
+          POSTBOX_KEY_ID: ${{ secrets.POSTBOX_KEY_ID || vars.POSTBOX_KEY_ID }}
+          POSTBOX_SECRET: ${{ secrets.POSTBOX_SECRET }}
+          POSTBOX_SA_KEY: ${{ secrets.POSTBOX_SA_KEY }}
+          POSTBOX_SA_KEY_FILE: ${{ secrets.POSTBOX_SA_KEY_FILE || vars.POSTBOX_SA_KEY_FILE }}
+          POSTBOX_DAILY_LIMIT: ${{ secrets.POSTBOX_DAILY_LIMIT || vars.POSTBOX_DAILY_LIMIT }}
+          POSTBOX_RATE_PER_SECOND: ${{ secrets.POSTBOX_RATE_PER_SECOND || vars.POSTBOX_RATE_PER_SECOND }}
+          POSTBOX_DKIM_SELECTORS: ${{ secrets.POSTBOX_DKIM_SELECTORS || vars.POSTBOX_DKIM_SELECTORS }}
+          POSTBOX_PRICE_PER_1000: ${{ secrets.POSTBOX_PRICE_PER_1000 || vars.POSTBOX_PRICE_PER_1000 }}
           BILLING_NOTICE_DAYS: ${{ secrets.BILLING_NOTICE_DAYS || vars.BILLING_NOTICE_DAYS }}
         run: |
           set -euo pipefail
@@ -590,6 +644,22 @@ jobs:
           add_platform_env MAIL_SMTP_PASSWORD "$MAIL_SMTP_PASSWORD"
           add_platform_env MAIL_FROM "$MAIL_FROM"
           add_platform_env MAIL_FROM_NAME "$MAIL_FROM_NAME"
+          add_platform_env POSTBOX_SENDER "$POSTBOX_SENDER"
+          add_platform_env POSTBOX_FROM_NAME "$POSTBOX_FROM_NAME"
+          add_platform_env PLATFORM_URL "$PLATFORM_URL"
+          add_platform_env POSTBOX_ENDPOINT "$POSTBOX_ENDPOINT"
+          # Токен и секрет — только Secret: они попадают в .env на ВМ, а не в лог.
+          add_platform_env POSTBOX_IAM_TOKEN "$POSTBOX_IAM_TOKEN"
+          add_platform_env POSTBOX_KEY_ID "$POSTBOX_KEY_ID"
+          add_platform_env POSTBOX_SECRET "$POSTBOX_SECRET"
+          # JSON-ключ с переносами строк попал бы в .env только первой строкой: сжимаем в одну —
+          # для JSON это тот же документ.
+          add_platform_env POSTBOX_SA_KEY "$(printf '%s' "${POSTBOX_SA_KEY:-}" | tr -d '\n\r')"
+          add_platform_env POSTBOX_SA_KEY_FILE "$POSTBOX_SA_KEY_FILE"
+          add_platform_env POSTBOX_DAILY_LIMIT "$POSTBOX_DAILY_LIMIT"
+          add_platform_env POSTBOX_RATE_PER_SECOND "$POSTBOX_RATE_PER_SECOND"
+          add_platform_env POSTBOX_DKIM_SELECTORS "$POSTBOX_DKIM_SELECTORS"
+          add_platform_env POSTBOX_PRICE_PER_1000 "$POSTBOX_PRICE_PER_1000"
           add_platform_env BILLING_NOTICE_DAYS "$BILLING_NOTICE_DAYS"
           # На этом раннере скрипт запускается на самой ВМ, поэтому ключ кладётся во временный
           # файл рядом, с правами только для владельца.

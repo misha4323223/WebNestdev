@@ -14,6 +14,13 @@
 #        repair                 починить запущенный сервис, не меняя версию: уборка образов и
 #                               пересоздание контейнеров из закреплённого в .env WEBNESTDEV_IMAGE
 #   IMAGE_REF=ghcr.io/…        образ для MODE=image
+#   IMAGE_PULL_TIMEOUT=1200    предел одной попытки скачивания образа, секунды (0 — без предела).
+#                              Своего предела у `docker pull` нет: оборванное соединение с реестром
+#                              оставляет команду ждать без ошибки до общего таймаута джобы, и в логе
+#                              не остаётся причины. Скачанные слои при этом лежат в хранилище Docker,
+#                              поэтому оборванная попытка не теряется: следующая докачивает недостающие.
+#   IMAGE_PULL_TRIES=2         сколько раз подряд пробовать скачивание (каждый раз со своим пределом)
+#                              до уборки образов и повторной серии попыток.
 #   APP_DIR=~/webnestdev/src   каталог развёртывания (docker-compose.yml и .env)
 #   COMPOSE_FILE=docker-compose.yml
 #   SYNC_COMPOSE=1             обновлять docker-compose.yml из репозитория при image-деплое.
@@ -96,6 +103,8 @@ HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8787/api/ready}"
 HEALTH_TRIES="${HEALTH_TRIES:-30}"
 DRY_RUN="${DRY_RUN:-0}"
 KEEP_IMAGES="${KEEP_IMAGES:-1}"
+IMAGE_PULL_TIMEOUT="${IMAGE_PULL_TIMEOUT:-1200}"
+IMAGE_PULL_TRIES="${IMAGE_PULL_TRIES:-2}"
 IMAGE_REPO_PATTERN="${IMAGE_REPO_PATTERN:-webnestdev}"
 PRUNE_BUILD_CACHE="${PRUNE_BUILD_CACHE:-all}"
 SYNC_COMPOSE="${SYNC_COMPOSE:-1}"
@@ -125,6 +134,49 @@ PREVIOUS_IMAGE=""
 
 log(){ printf '[deploy] %s\n' "$*"; }
 run(){ if [ "$DRY_RUN" = "1" ]; then log "dry-run: $*"; else "$@"; fi; }
+
+#
+# Скачивание образа для выкатки.
+#
+# Две вещи, из-за которых выкатка на этом шаге выглядела зависшей, не будучи сломанной:
+#
+# 1. Прогресс `docker pull` рисуется возвратом каретки, и в логе Actions такое обновление остаётся
+#    одной строкой, которая не меняется: последним, что видно, оказывается «Pulling fs layer».
+#    Медленная загрузка (образ с Chromium — это гигабайты) и оборвавшееся соединение выглядят
+#    одинаково. `--progress plain` печатает каждое обновление отдельной строкой, и по логу видно,
+#    что байты идут.
+# 2. Своего предела по времени у `docker pull` нет: повторы демона не спасают от сети, которая
+#    перестала отвечать, и команда ждёт до убийства всей джобы по её общему таймауту — без причины
+#    в логе. Здесь каждая попытка ограничена `IMAGE_PULL_TIMEOUT`, а обрыв по пределу печатает
+#    причину: «скачанные слои остались на диске» — это правда, хранилище Docker их сохраняет.
+#
+pull_image(){
+  local image="$1" attempt tries="${IMAGE_PULL_TRIES:-2}" seconds="${IMAGE_PULL_TIMEOUT:-1200}" code=0 limit=""
+  case "$tries" in ''|*[!0-9]*) tries=2 ;; esac
+  [ "$tries" -ge 1 ] || tries=1
+  case "$seconds" in ''|*[!0-9]*) seconds=1200 ;; esac
+  if [ "$seconds" -gt 0 ]; then
+    if [ "$seconds" -ge 60 ]; then limit="$((seconds / 60)) мин"; else limit="$seconds с"; fi
+  fi
+  for attempt in $(seq 1 "$tries"); do
+    if [ "$DRY_RUN" = "1" ]; then log "dry-run: docker pull $image"; return 0; fi
+    if [ -n "$limit" ]; then
+      log "скачиваю образ $image (попытка $attempt из $tries, предел $limit)"
+      timeout "$seconds" docker pull --progress plain "$image" </dev/null && return 0
+      code=$?
+    else
+      log "скачиваю образ $image (попытка $attempt из $tries, без предела по времени)"
+      docker pull --progress plain "$image" </dev/null && return 0
+      code=$?
+    fi
+    if [ "$code" = "124" ]; then
+      log "попытка $attempt: скачивание не закончилось за $limit и ошибки не сообщило — реестр перестал отдавать слой. Уже скачанные слои остаются на диске"
+    else
+      log "попытка $attempt: образ не скачался (код $code)"
+    fi
+  done
+  return 1
+}
 
 #
 # Ключ аварийного доступа к ВМ (публичная часть). Нужен потому, что приватного ключа к
@@ -629,15 +681,17 @@ install_caddyfile(){
 # `docker run` под таймаутом инструмента, и медленная загрузка выглядела бы как зависшая команда.
 # Отказ не валит выкатку: следующая команда скачает образ сама, проверка просто скажет «image».
 ensure_sandbox_image(){
-  local image="${SANDBOX_IMAGE:-node:22-bookworm}" output
+  local image="${SANDBOX_IMAGE:-node:22-bookworm}"
   if [ "$DRY_RUN" = "1" ]; then log "dry-run: docker pull $image"; return 0; fi
   if docker image inspect "$image" >/dev/null 2>&1; then return 0; fi
-  log "скачиваю образ песочницы $image (git и компилятор для npm install) — разовая загрузка"
-  # Причина отказа нужна в логе: без неё «не скачался» неотличимо от лимита Docker Hub,
-  # недоступного реестра и нехватки места. Хвост вывода — последние строки.
-  if ! output=$(docker pull "$image" 2>&1 </dev/null); then
-    log "образ $image не скачался — его скачает первая команда агента, либо проверьте доступ к реестру:"
-    printf '%s\n' "$output" | tail -3 | sed 's/^/[deploy]   /'
+  log "скачиваю образ песочницы $image (git и компилятор для npm install) — разовая загрузка, около гигабайта"
+  # Тот же приём, что и у образа выкатки, и по той же причине: этот образ тоже весит около гигабайта,
+  # а захваченный в переменную вывод означал бы, что лог показывает на время загрузки одну строку
+  # без движения. `--progress plain` печатает обновления отдельными строками, поэтому по логу
+  # видно, что байты идут; предел времени не даёт зависшему соединению тянуть джобу до её таймаута.
+  # Отказ по-прежнему не валит выкатку (см. выше), но теперь у него есть причина в логе.
+  if ! timeout "${IMAGE_PULL_TIMEOUT:-1200}" docker pull --progress plain "$image" </dev/null 2>&1; then
+    log "образ $image не скачался — его скачает первая команда агента, либо проверьте доступ к реестру"
   fi
 }
 
@@ -1087,18 +1141,17 @@ case "$MODE" in
       log "для MODE=image нужен IMAGE_REF"
       exit 2
     fi
-    log "скачиваю образ $IMAGE_REF"
-    if ! run docker pull "$IMAGE_REF"; then
+    if ! pull_image "$IMAGE_REF"; then
       # Уборка стоит после успешной выкатки (чтобы неудачный деплой оставлял образ для отката), но
       # из-за неё заполненный диск и был тупиком: слои образа (в нём Chromium — гигабайты) не
       # распаковываются с «no space left on device», pull падает, до уборки дело не доходит, и
       # каждая следующая выкатка падает так же — ВМ чинится только руками. Поэтому отказ на
-      # скачивании лечится уборкой и одной повторной попыткой; если и она не удалась, причина
+      # скачивании лечится уборкой и повторной серией попыток; если и она не удалась, причина
       # почти наверняка другая, и сообщение о входе в GHCR остаётся.
       log "образ не скачался — убираю старые образы и кеш сборки, затем пробую ещё раз"
       prune_images
-      if ! run docker pull "$IMAGE_REF"; then
-        log "образ не скачался и со второй попытки. У приватного образа GHCR нужен однократный вход на этой ВМ:"
+      if ! pull_image "$IMAGE_REF"; then
+        log "образ не скачался и после уборки: все попытки исчерпаны. У приватного образа GHCR нужен однократный вход на этой ВМ:"
         log "  docker login ghcr.io -u <логин GitHub> -p <токен с правом read:packages>"
         exit 3
       fi

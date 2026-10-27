@@ -92,6 +92,24 @@ export const PLATFORM_ENV_CATALOG: PlatformEnvEntry[] = [
   { name: "MAIL_FROM", group: "mail", label: "Адрес отправителя", hint: "Например noreply@nestdev.ru. Домен должен быть подтверждён в Postbox (DKIM), иначе письма отклоняются.", kind: "value" },
   { name: "MAIL_FROM_NAME", group: "mail", label: "Имя отправителя", hint: "Необязательно: как подписывать письма, например NestDev.", kind: "value" },
 
+  // Рассылка по сегментам идёт не по SMTP, а по REST API Postbox v2: у очереди свои требования —
+  // один получатель на письмо, идентификатор отправки в ответе, возможность остановиться на
+  // середине. Эти ключи нужны только для рассылки; письма об оплате и поддержке работают по SMTP
+  // выше. Настройка — docs/MAIL.md.
+  { name: "POSTBOX_SENDER", group: "mail", label: "Рассылка: адрес отправителя", hint: "Подтверждённый в Postbox адрес, например mail@nestdev.ru. На него ссылаются письма рассылки; домен должен быть подтверждён по DKIM.", kind: "value" },
+  { name: "POSTBOX_FROM_NAME", group: "mail", label: "Рассылка: имя отправителя", hint: "Необязательно: как подписывать рассылку, например NestDev.", kind: "value" },
+  { name: "PLATFORM_URL", group: "mail", label: "Адрес платформы", hint: "Например https://nestdev.ru. Нужен для абсолютной ссылки отписки: относительная ссылка в письме не работает.", kind: "url" },
+  { name: "POSTBOX_ENDPOINT", group: "mail", label: "Рассылка: endpoint", hint: "Необязательно: по умолчанию https://postbox.cloud.yandex.net. Меняется только если Yandex сменил адрес.", kind: "url" },
+  { name: "POSTBOX_IAM_TOKEN", group: "mail", label: "Рассылка: IAM-токен", hint: "Готовый токен сервисного аккаунта с ролью postbox.sender. Живёт около 12 часов: подходит для проверки, для постоянной работы — ключ сервисного аккаунта.", kind: "secret" },
+  { name: "POSTBOX_KEY_ID", group: "mail", label: "Рассылка: Key ID", hint: "Статический ключ доступа: идентификатор. Вместе с секретом запросы подписываются SigV4 — токен обновлять не нужно.", kind: "value" },
+  { name: "POSTBOX_SECRET", group: "mail", label: "Рассылка: секрет ключа", hint: "Секретная часть статического ключа доступа. В паре с Key ID подписывает запросы к Postbox.", kind: "secret" },
+  { name: "POSTBOX_SA_KEY", group: "mail", label: "Рассылка: ключ сервисного аккаунта (JSON)", hint: "Можно не задавать, если уже заполнен YANDEX_SA_KEY: сервер возьмёт тот же ключ, если у роли есть postbox.sender. Свой ключ надёжнее — роль рассылки отделяется от роли SMS.", kind: "json-key" },
+  { name: "POSTBOX_SA_KEY_FILE", group: "mail", label: "Рассылка: путь к файлу ключа", hint: "Альтернатива вставке: путь внутри контейнера, например /var/lib/webnestdev/secrets/postbox-sa-key.json.", kind: "path" },
+  { name: "POSTBOX_DAILY_LIMIT", group: "mail", label: "Рассылка: писем в сутки", hint: "Необязательно: по умолчанию 200 — начальная квота Postbox. После повышения квоты в консоли укажите новое значение: очередь считает предел по своей таблице и останавливается сама.", kind: "value" },
+  { name: "POSTBOX_RATE_PER_SECOND", group: "mail", label: "Рассылка: писем в секунду", hint: "Необязательно: по умолчанию 1 — начальная скорость Postbox. Больше ставить только после повышения квоты, иначе Postbox начнёт отвечать отказами.", kind: "value" },
+  { name: "POSTBOX_DKIM_SELECTORS", group: "mail", label: "Рассылка: селекторы DKIM", hint: "Необязательно: через запятую, например selector1,selector2. Точные имена видны на странице адреса в Postbox. Нужны, чтобы админка говорила «домен подтверждён» по настоящим DNS-записям, а не по факту заполненного адреса.", kind: "value" },
+  { name: "POSTBOX_PRICE_PER_1000", group: "mail", label: "Рассылка: цена за 1000 писем, ₽", hint: "Необязательно: цена Postbox в вашем тарифе. Без неё предпросмотр покажет получателей и отписки, но не стоимость.", kind: "value" },
+
   { name: "PLATFORM_AI_BASE_URL", group: "ai", label: "AI Base URL", hint: "OpenAI-совместимый адрес модели платформы — то, чем пользуются проекты без своего провайдера.", kind: "url" },
   { name: "PLATFORM_AI_MODEL", group: "ai", label: "AI модель", hint: "Идентификатор модели для этого адреса.", kind: "value" },
   { name: "PLATFORM_AI_API_KEY", group: "ai", label: "AI ключ", hint: "Ключ провайдера модели платформы. Проекты со своим ключом его не используют.", kind: "secret" },

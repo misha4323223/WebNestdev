@@ -483,6 +483,11 @@ curl -s -H "Authorization: Bearer $TOKEN" 'https://panel.example.com/api/admin/s
   кем человек был тогда, даже если тариф или профиль уже другие.
 - `ip` — адрес, с которого отправлено обращение; `userAgent`, `page`, `projectId`, `context` —
   как и раньше, помогают воспроизвести проблему.
+- `email` — адрес обращения, `emailKind` — `real` (логин и есть почта) или `internal`
+  (служебный идентификатор платформы, например `yandex-2260862792@yandex-id.webnestdev.local`),
+  `contactEmail` — адрес, который человек указал сам. Поля стоят рядом с `email` и в списке, и в
+  карточке: по `emailKind` админка решает, активна ли кнопка «Написать автору», а письмо при
+  необходимости отправляется на `contactEmail`.
 - У обращений, созданных до появления снимка, `reporter` дополняется при чтении списка. Если
   аккаунт уже удалён, остаются поля самого тикета.
 
@@ -551,13 +556,111 @@ curl -s -H "X-Support-Key: $SUPPORT_API_KEY" 'https://nestdev.ru/api/support/tic
 - Если ключ сохранён в панели на одной реплике, а запрос попал на другую, сервер перечитывает
   `platform/env.json` по изменению файла — перезапуск не нужен.
 
-## 9. Журнал безопасности
+## 9. Рассылка по сегментам
+
+Письма платформы (оплата, предупреждение о списании, тикет) уходят по SMTP, рассылка — по REST API
+Postbox v2: у очереди свои требования — один получатель на письмо, идентификатор отправки в ответе,
+остановка на середине. Настройка ключей — `docs/MAIL.md`, раздел 4.
+
+| Метод и путь | Что отдаёт |
+|---|---|
+| `GET /api/admin/mail/overview` | сегменты с числами, последние десять кампаний, квота, состояние домена, текущая очередь |
+| `POST /api/admin/mail/preview` | получатели, отброшенные адреса, три примера письма, цена — ничего не отправляет |
+| `POST /api/admin/mail/test` | тестовое письмо администратору |
+| `POST /api/admin/mail/send` | ставит кампанию в очередь |
+| `POST /api/admin/mail/campaigns/<id>/stop` | останавливает очередь |
+
+### 9.1. Overview
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" 'https://nestdev.ru/api/admin/mail/overview'
+```
+
+```json
+{
+  "generatedAt": "2026-10-27T09:00:00.000Z",
+  "configured": true,
+  "provider": "postbox",
+  "sender": "mail@nestdev.ru",
+  "fromName": "NestDev",
+  "auth": { "kind": "serviceAccount", "source": "POSTBOX_SA_KEY" },
+  "domainVerified": true,
+  "domain": { "domain": "nestdev.ru", "checked": true, "verified": true, "dkim": { "status": "ok", "selectors": [] }, "spf": { "status": "ok", "record": "v=spf1 include:spf.postbox.yandexcloud.net ~all" }, "dmarc": { "status": "ok", "record": "v=DMARC1;p=none" }, "hint": "" },
+  "quota": { "perDay": 200, "perSecond": 1, "sentToday": 12, "remainingToday": 188 },
+  "sentThisMonth": 412,
+  "freeThisMonth": 1588,
+  "pricePer1000": 20,
+  "segments": [{ "id": "active30", "label": "Активные за 30 дней", "description": "…", "recipients": 1127, "excluded": { "unsubscribed": 3, "bounced": 2, "invalid": 42, "duplicate": 0 } }],
+  "campaigns": [{ "id": "…", "subject": "…", "segmentId": "all", "segmentLabel": "Все аккаунты", "recipients": 1500, "sent": 400, "failed": 1, "skipped": 4, "status": "sending", "stopRequested": false, "error": "", "createdBy": "admin@nestdev.ru", "createdAt": "2026-10-27T08:00:00.000Z", "startedAt": "2026-10-27T08:00:01.000Z", "finishedAt": null }],
+  "lastSentAt": "2026-10-27T08:06:40.000Z",
+  "suppressions": { "total": 5, "recent": [{ "email": "…", "reason": "unsubscribed", "note": "ссылка из письма", "createdAt": "…" }] },
+  "queue": { "campaignId": "…", "subject": "…", "status": "sending", "stopRequested": false, "sent": 400, "failed": 1, "skipped": 4, "recipients": 1500 },
+  "warnings": []
+}
+```
+
+Без ключей отвечает `configured: false` и `reason` — а не пустыми списками: «почта ещё не
+подключена» и «в базе нет получателей» — разные вещи.
+
+### 9.2. Предпросмотр
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"segmentId":"active30","subject":"Новое в NestDev","body":"Здравствуйте, {{name}}!\n\nВаш тариф: {{plan}}."}' \
+  'https://nestdev.ru/api/admin/mail/preview'
+```
+
+Ответ: `recipients`, `excluded` (с разбором по причинам), `skipped` (первые адреса с причиной),
+`sample` (до трёх настоящих писем с раскрытыми тегами), `cost: { amount, currency, per1000,
+freeLeft, billable }`, `quota`, `footer` и `warnings`.
+
+### 9.3. Отправка и остановка
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"segmentId":"active30","subject":"Новое в NestDev","body":"…","confirm":1127}' \
+  'https://nestdev.ru/api/admin/mail/send'
+
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  'https://nestdev.ru/api/admin/mail/campaigns/<id>/stop'
+```
+
+`confirm` — число получателей из предпросмотра. Сервер пересчитывает сегмент сам и при расхождении
+отвечает `409 { "error": "Число получателей изменилось: 1131" }`: между предпросмотром и отправкой
+кто-то мог зарегистрироваться или отписаться, и это уже другой список людей. Кампания создаётся со
+статусом `queued`; очередь берёт её в течение секунды и пишет состояние каждого письма в
+`mail_recipients` — поэтому перезапуск сервера посреди рассылки ничего не теряет.
+
+`stop` не отзывает уже отправленные письма: остаток очереди помечается пропущенным, кампания
+получает статус `stopped` и время завершения.
+
+### 9.4. Что в письме
+
+Теги: `{{name}}`, `{{email}}`, `{{project}}`, `{{plan}}`, `{{unsubscribe}}`. Неизвестный тег
+остаётся как есть, а предпросмотр предупреждает о нём. Ссылка отписки дописывается автоматически,
+если автор письма не поставил тег сам; страница `/unsubscribe?t=<подпись>` пишет адрес в
+`mail_suppressions` — после этого его пропускают и следующие рассылки, включая текущую.
+
+Сегменты считаются по росписи аккаунтов: почта для письма — из знакомства, логин используется только
+как запасной вариант и отбрасывается, если он служебный.
+
+### 9.5. Проверка после выкатки
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" https://nestdev.ru/api/admin/mail/overview | jq '.configured, .domain.verified'
+```
+
+`true` в обоих полях означает, что ключ читается и домен подписан. `false` в первом — смотрите
+`reason` (чаще всего не задан `POSTBOX_SENDER` или нет роли `postbox.sender` у сервисного
+аккаунта); `false` во втором — `domain.hint` перечисляет, какой записи не хватает.
+
+## 10. Журнал безопасности
 
 Экран «Безопасность» в админке: что происходило со входом и платформой. Последние события сверху,
 только чтение и только по админ-токену (`server/src/security/audit-journal.ts`,
 `server/src/routes/admin-audit.ts`).
 
-### 9.1. Запрос
+### 10.1. Запрос
 
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" \
@@ -571,7 +674,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `actorId` | — | события одного администратора или пользователя |
 | `days` | 0 | окно в сутках назад; `0` — без ограничения по времени |
 
-### 9.2. Ответ
+### 10.2. Ответ
 
 ```json
 {
@@ -603,7 +706,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
   значение. Значений ключей, паролей, TOTP-секретов и кодов восстановления в журнале нет по
   построению — вызывающие передают имена, счётчики и причины.
 
-### 9.3. Каталог действий
+### 10.3. Каталог действий
 
 | Действие | Подпись |
 |---|---|
@@ -621,7 +724,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `user.login.failed` | Неудачный вход пользователя |
 | `user.sessions.revoked` | Завершены все сеансы пользователя |
 
-### 9.4. Хранение
+### 10.4. Хранение
 
 Локальный режим — `security-audit.jsonl` в `DATA_DIR` (0600); Postgres — таблица `security_audit`
 с индексами по `at` и `action, at`. Запись не отменяет само действие: сбой журнала не мешает входу

@@ -220,6 +220,23 @@ services:
       MAIL_SMTP_PASSWORD: ${MAIL_SMTP_PASSWORD:-}
       MAIL_FROM: ${MAIL_FROM:-}
       MAIL_FROM_NAME: ${MAIL_FROM_NAME:-}
+      # Рассылка по сегментам идёт не по SMTP, а по REST API Postbox v2 (см. docs/MAIL.md):
+      # у очереди свои требования — один получатель на письмо, идентификатор отправки в ответе,
+      # остановка на середине. Ключи ниже нужны только рассылке; без них она просто выключена,
+      # а письма об оплате и поддержке продолжают уходить через MAIL_SMTP_* выше.
+      POSTBOX_SENDER: ${POSTBOX_SENDER:-}
+      POSTBOX_FROM_NAME: ${POSTBOX_FROM_NAME:-}
+      PLATFORM_URL: ${PLATFORM_URL:-}
+      POSTBOX_ENDPOINT: ${POSTBOX_ENDPOINT:-}
+      POSTBOX_IAM_TOKEN: ${POSTBOX_IAM_TOKEN:-}
+      POSTBOX_KEY_ID: ${POSTBOX_KEY_ID:-}
+      POSTBOX_SECRET: ${POSTBOX_SECRET:-}
+      POSTBOX_SA_KEY: ${POSTBOX_SA_KEY:-}
+      POSTBOX_SA_KEY_FILE: ${POSTBOX_SA_KEY_FILE:-}
+      POSTBOX_DAILY_LIMIT: ${POSTBOX_DAILY_LIMIT:-}
+      POSTBOX_RATE_PER_SECOND: ${POSTBOX_RATE_PER_SECOND:-}
+      POSTBOX_DKIM_SELECTORS: ${POSTBOX_DKIM_SELECTORS:-}
+      POSTBOX_PRICE_PER_1000: ${POSTBOX_PRICE_PER_1000:-}
       BILLING_NOTICE_DAYS: ${BILLING_NOTICE_DAYS:-}
       # Песочницы и предпросмотр монтируются в контейнеры проектов через `docker run -v`,
       # а этот путь разбирает демон на ХОСТЕ. Поэтому каталог обязан существовать на хосте и

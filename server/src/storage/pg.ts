@@ -647,6 +647,55 @@ export async function initializeStorage(): Promise<void> {
     // `notice_at` пусто, поэтому первые списания по ним пройдут только после письма.
     await pool.query(`ALTER TABLE ${tbl("billing_subscriptions")} ADD COLUMN IF NOT EXISTS notice_at TEXT`);
 
+    // Рассылка: кампания, её получатели и список отписок.
+    //
+    // Получатели — отдельными строками, потому что очередь обязана пережить перезапуск сервера:
+    // рассылка на 1 500 адресов при пределе Postbox в одно письмо в секунду идёт почти полчаса,
+    // и выкатка посреди неё не должна ни терять письма, ни отправлять их дважды. Статус каждого
+    // письма и есть состояние очереди.
+    await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("mail_campaigns")} (
+      id TEXT NOT NULL PRIMARY KEY,
+      subject TEXT NOT NULL,
+      body TEXT NOT NULL,
+      segment_id TEXT NOT NULL,
+      segment_label TEXT NOT NULL,
+      recipients INTEGER NOT NULL DEFAULT 0,
+      sent INTEGER NOT NULL DEFAULT 0,
+      failed INTEGER NOT NULL DEFAULT 0,
+      skipped INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL,
+      stop_requested BOOLEAN NOT NULL DEFAULT false,
+      error TEXT NOT NULL DEFAULT '',
+      created_by TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      started_at TEXT,
+      finished_at TEXT
+    )`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("mail_campaigns")}_created ON ${tbl("mail_campaigns")} (created_at)`);
+
+    await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("mail_recipients")} (
+      campaign_id TEXT NOT NULL,
+      user_id TEXT NOT NULL DEFAULT '',
+      email TEXT NOT NULL,
+      name TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      message_id TEXT NOT NULL DEFAULT '',
+      error TEXT NOT NULL DEFAULT '',
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (campaign_id, email)
+    )`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("mail_recipients")}_queue ON ${tbl("mail_recipients")} (status, updated_at)`);
+
+    // Отписки: адрес из ссылки в письме. Нормализованный адрес — ключ, поэтому повторная
+    // отписка того же человека ничего не ломает.
+    await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("mail_suppressions")} (
+      email TEXT NOT NULL PRIMARY KEY,
+      reason TEXT NOT NULL,
+      note TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    )`);
+
     console.log("[pg] storage initialized: all tables ready");
   })().catch((error) => {
     initialization = null;

@@ -8,6 +8,17 @@ import { loadSupportUser, supportReporterFor, supportReporterFrom } from "../sup
 import { sendSupportMail, supportMailSettings } from "../support/support-mail.js";
 import { supportApiKey, supportKeyAuthorizedCurrent, supportKeyFromHeaders, supportKeySource } from "../support/support-api-key.js";
 import { applyNoStoreToReply } from "./cache-headers.js";
+import { isServiceEmail } from "../mail/address.js";
+
+/**
+ * Вид адреса обращения. `internal` — служебный логин платформы (`79531814136@phone.webnestdev.local`,
+ * `yandex-…@yandex-id.webnestdev.local`): он остаётся ключом хранилища, но письмо на него не отправить.
+ * Админка по этому полю решает, показывать ли кнопку «Написать автору», а по `contactEmail` —
+ * настоящий адрес человека.
+ */
+function emailKindOf(email: string) {
+  return isServiceEmail(email) ? "internal" : "real";
+}
 
 /**
  * Обращение в поддержку: категория, важность, описание, шаги воспроизведения и обязательный
@@ -192,7 +203,15 @@ export async function registerSupportRoutes(app: FastifyInstance) {
       const reporter = await pending;
       if (reporter) ticket.reporter = reporter;
     }));
-    return { tickets };
+    // `contactEmail` и `emailKind` — рядом с `email`, а не только внутри снимка автора: у старых
+    // тикетов снимка нет, а внешняя админка должна видеть одно и то же в обоих случаях.
+    return {
+      tickets: tickets.map(ticket => ({
+        ...ticket,
+        emailKind: emailKindOf(ticket.email),
+        contactEmail: ticket.reporter?.contactEmail ?? null,
+      })),
+    };
   });
 
   /**
@@ -220,7 +239,11 @@ export async function registerSupportRoutes(app: FastifyInstance) {
       );
     }
     return {
-      ticket,
+      ticket: {
+        ...ticket,
+        emailKind: emailKindOf(ticket.email),
+        contactEmail: ticket.reporter?.contactEmail ?? user?.contactEmail ?? null,
+      },
       user,
       history: await supportTicketsForUser(ticket.userId, 20),
     };

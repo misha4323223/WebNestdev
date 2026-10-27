@@ -57,6 +57,10 @@ import { registerAdminAnalyticsRoutes } from "./routes/admin-analytics.js";
 import { registerAdminEconomicsRoutes } from "./routes/admin-economics.js";
 import { registerAdminAuditRoutes } from "./routes/admin-audit.js";
 import { registerAdminInfraRoutes } from "./routes/admin-infra.js";
+import { registerAdminMailRoutes } from "./routes/admin-mail.js";
+import { registerUnsubscribeRoutes } from "./routes/unsubscribe.js";
+import { describePostbox, postboxStatus } from "./mail/postbox.js";
+import { startMailQueue, stopMailQueue } from "./mail/queue.js";
 import { registerPhoneAuthRoutes } from "./routes/phone-auth.js";
 import { registerAccountRoutes } from "./routes/account.js";
 import { registerBillingRoutes } from "./routes/billing.js";
@@ -168,6 +172,11 @@ console.log("[web] " + describeWebSearch());
 // Настроена ли оплата и в каком режиме: без этой строки «кнопка оплаты не работает» и «ключи не
 // сохранились» выглядят одинаково.
 console.log("[billing] " + describeBilling());
+// Настроена ли рассылка через Postbox и с какими пределами: проверка идёт в фоне, потому что
+// без ключа она ждёт метаданные ВМ, а старт сервера ждать этого не должен.
+void postboxStatus()
+  .then(status => console.log("[mail] " + describePostbox(status)))
+  .catch(error => console.warn("[mail] состояние рассылки не проверено: " + (error instanceof Error ? error.message : error)));
 // Каталог песочниц у сервера и у docker — разные вещи: контейнеры проектов монтируют путь,
 // который демон разбирает на хосте. Оба печатаются при старте, чтобы расхождение было видно
 // сразу, а не после того, как агент пожалуется на пустой терминал.
@@ -205,7 +214,7 @@ if (demoEnabled) {
   app.log.info({ demoEmail: demo.email, created: demo.created }, "demo account ready");
 }
 
-app.addHook("onClose", async () => { stopBillingSweeper(); stopStorageReconcile?.(); await stopPreviewHostServer(); await closeStorage(); });
+app.addHook("onClose", async () => { stopBillingSweeper(); stopMailQueue(); stopStorageReconcile?.(); await stopPreviewHostServer(); await closeStorage(); });
 
 await registerSecurityHeaders(app);
 
@@ -244,6 +253,10 @@ await registerAdminEconomicsRoutes(app);
 await registerAdminAuditRoutes(app);
 // Инфраструктура: диск, Docker, песочницы, бакеты и база. Только чтение и только админ-токен.
 await registerAdminInfraRoutes(app);
+// Рассылка через Postbox: сегменты, предпросмотр, тест, отправка и остановка (docs/MAIL.md).
+await registerAdminMailRoutes(app);
+// Отписка — публичная страница, а не /api: ссылка приходит в письме и открывается без сессии.
+await registerUnsubscribeRoutes(app);
 await registerPhoneAuthRoutes(app);
 await registerAccountRoutes(app);
 await registerBillingRoutes(app);
@@ -318,3 +331,6 @@ startProjectArchiveScheduler();
 // Автопродление подписок: раз в час, и только когда в магазине включена услуга периодических
 // платежей. Без неё цикл не делает ни одного запроса к Робокассе.
 startBillingSweeper();
+// Очередь рассылки: одно письмо в секунду, состояние в базе. После перезапуска она продолжает
+// незаконченные кампании с того письма, на котором остановилась.
+startMailQueue();
