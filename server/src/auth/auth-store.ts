@@ -79,6 +79,22 @@ export async function getUser(userId:string){
   return users.find(user => user.id === userId) ?? null;
 }
 
+/**
+ * Идентичности всех аккаунтов — только id и email, без хешей и сессий. Нужны админ-снимку
+ * инфраструктуры: в списке песочниц email стоит рядом с проектом, а не ищется запросом на строку.
+ */
+export async function listUserIdentities():Promise<Array<{id:string;email:string}>>{
+  if(isYdbEnabled()){
+    const [rows]=await ydbQuery()<Array<{id:string;email:string}>>`
+      SELECT id,email
+      FROM ${ydbQuery().identifier(getTable("users"))}
+    `;
+    return rows.map(row=>({id:row.id,email:row.email}));
+  }
+  const users=await readJson<User[]>(usersFile,[]);
+  return users.map(user=>({id:user.id,email:user.email}));
+}
+
 export async function createUser(email:string, password:string){
   const normalized = email.trim().toLowerCase();
   if(await findUserByEmail(normalized)) throw new Error(EMAIL_TAKEN_MESSAGE);

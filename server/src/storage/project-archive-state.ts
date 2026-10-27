@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 /**
@@ -52,6 +52,27 @@ export async function writeArchiveRecord(record: ProjectArchiveRecord) {
     await rm(temp, { force: true }).catch(() => undefined);
     throw error;
   }
+}
+
+/**
+ * Все отметки холодного яруса. Админке нужен не только счётчик, но и проект с датой и размером:
+ * по ним видно, какие проекты уже лежат в бакете и когда они туда уехали.
+ */
+export async function listArchiveRecords(): Promise<ProjectArchiveRecord[]> {
+  const names = await readdir(archiveStateDir()).catch(error => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [] as string[];
+    throw error;
+  });
+  const records: ProjectArchiveRecord[] = [];
+  for (const name of names) {
+    if (!name.endsWith(".json")) continue;
+    try {
+      records.push(JSON.parse(await readFile(path.join(archiveStateDir(), name), "utf8")) as ProjectArchiveRecord);
+    } catch {
+      // Повреждённая отметка — не повод ронять весь снимок: проект просто не попадёт в список.
+    }
+  }
+  return records;
 }
 
 export async function clearArchiveRecord(projectId: string) {

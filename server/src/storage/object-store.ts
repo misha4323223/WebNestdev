@@ -29,6 +29,13 @@ export type ObjectStoreConfig = {
   prefix: string;
 };
 
+export type BucketSummary = {
+  objects: number;
+  bytes: number;
+  /** Обход остановлен на пределе страниц: цифры точные только для просмотренных объектов. */
+  truncated: boolean;
+};
+
 export type ObjectStore = {
   readonly prefix: string;
   /** Загружает файл целиком и возвращает его размер. */
@@ -191,6 +198,101 @@ async function signedRequest(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Сколько объектов и байт лежит в бакете под нашим префиксом.
+ *
+ * Это отдельный запрос ListObjectsV2, а не обход через клиент объектов: клиент умеет читать и
+ * писать конкретный ключ, а для счётчика нужен список. Пагинация ограничена: админ-снимок не
+ * должен ходить по миллиону объектов и держать запрос минутами — если страниц больше предела,
+ * `truncated` честно говорит, что посчитано не всё.
+ */
+export async function summarizeBucket(
+  config: ObjectStoreConfig | null = objectStoreConfigFromEnv(),
+  deps: Deps = {},
+  options: { maxPages?: number; timeoutMs?: number } = {},
+): Promise<BucketSummary | null> {
+  if (!config) return null;
+  const { host, origin } = endpointParts(config.endpoint, envValue(process.env, "PLATFORM_S3_ALLOW_HTTP") === "1");
+  const maxPages = Math.max(1, Math.min(100, Math.floor(options.maxPages ?? 10)));
+  // Общий предел важен не меньше страниц: зависший бакет не должен держать админ-запрос минутами.
+  const deadline = Date.now() + Math.max(1_000, Math.min(120_000, options.timeoutMs ?? 30_000));
+  const path = "/" + awsEncode(config.bucket);
+  let token = "";
+  let objects = 0;
+  let bytes = 0;
+  let pages = 0;
+  let truncated = false;
+
+  do {
+    const query: Record<string, string> = {
+      "list-type": "2",
+      "max-keys": "1000",
+      prefix: config.prefix,
+    };
+    if (token) query["continuation-token"] = token;
+    const queryString = Object.entries(query)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, value]) => awsEncode(key) + "=" + awsEncode(value))
+      .join("&");
+    const date = amzDate();
+    const headers = { host, "x-amz-content-sha256": EMPTY_SHA256, "x-amz-date": date };
+    const signed = signAwsV4({
+      method: "GET",
+      path,
+      query,
+      headers,
+      payloadHash: EMPTY_SHA256,
+      amzDate: date,
+      region: config.region,
+      accessKey: config.accessKey,
+      secretKey: config.secretKey,
+    });
+
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) throw new Error("Обход бакета не уложился в отведённое время");
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), Math.min(READ_TIMEOUT_MS, remaining));
+    let response: Response;
+    try {
+      response = await (deps.fetch ?? fetch)(origin + path + "?" + queryString, {
+        method: "GET",
+        headers: { ...headers, Authorization: signed.authorization },
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        throw new Error("Объектное хранилище не ответило за отведённое время");
+      }
+      throw new Error("Нет ответа от объектного хранилища: " + (error instanceof Error ? error.message : String(error)));
+    } finally {
+      clearTimeout(timer);
+    }
+    // Тело читается только у успешного ответа: s3Error сам читает XML, и второй вызов вернул бы пустоту.
+    if (!response.ok) throw await s3Error(response, "посчитать");
+    const text = await response.text();
+
+    const objectPattern = /<Contents>([\s\S]*?)<\/Contents>/g;
+    let match: RegExpExecArray | null;
+    while ((match = objectPattern.exec(text)) !== null) {
+      const size = /<Size>(\d+)<\/Size>/.exec(match[1]);
+      objects++;
+      if (size) bytes += Number(size[1]);
+    }
+
+    truncated = /<IsTruncated>true<\/IsTruncated>/i.test(text);
+    const next = /<NextContinuationToken>([^<]+)<\/NextContinuationToken>/.exec(text);
+    token = truncated && next ? next[1].trim() : "";
+    pages++;
+    // Предел страниц — это не конец списка: так и помечаем, чтобы экран не выдавал часть за всё.
+    if (truncated && !token) break;
+    if (pages >= maxPages) break;
+  } while (token);
+
+  // Если S3 сказал «есть ещё», но не дал токен, данные всё равно неполные: нельзя выдавать
+  // часть за целое только потому, что предел страниц не был достигнут.
+  return { objects, bytes, truncated };
 }
 
 /**

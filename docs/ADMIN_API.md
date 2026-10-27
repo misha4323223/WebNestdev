@@ -168,6 +168,8 @@ curl -s https://panel.example.com/api/admin/2fa/verify -H 'content-type: applica
 | `GET /api/admin/users/:id` | `Bearer` | карточка: проекты, модели, ряд за 30 дней |
 | `GET /api/admin/projects` | `Bearer` | проекты: поиск, владелец, расход |
 | `GET /api/admin/audit` | `Bearer` | журнал безопасности: входы, второй фактор, ключи, удаление проектов (раздел 9) |
+| `GET /api/admin/infra` | `Bearer` | снимок инфраструктуры: хост, диск, Docker, песочницы, бакеты, база (раздел 7.5) |
+| `GET /api/admin/sandboxes` | `Bearer` | песочницы списком: `state` = `cold` / `running` / `never` / `all`, `limit` 1…200 (раздел 7.5) |
 
 Ответы не кэшируются (`cache-control: no-store`). Ошибки: `401` — нет или истёк вход / не подошёл
 код, `403` — источник не разрешён, `429` — лимит попыток (заголовок `Retry-After`), `400` —
@@ -182,6 +184,8 @@ curl -s https://panel.example.com/api/admin/2fa/verify -H 'content-type: applica
 | `ADMIN_SESSION_TTL_MS` | 8 часов | абсолютный срок админ-сессии |
 | `ADMIN_SESSION_IDLE_TTL_MS` | 30 минут | бездействие, после которого вход закрывается |
 | `ADMIN_CHALLENGE_TTL_MS` | 10 минут | сколько живёт пропуск между паролем и кодом |
+| `ADMIN_INFRA_CACHE_MS` | 20 000 | кэш снимка инфраструктуры; зажимается в 15–30 секунд |
+| `ADMIN_INFRA_BUCKET_MAX_PAGES` | 10 | сколько страниц ListObjectsV2 считать до `truncated: true` |
 
 Сессия админ-приложения короче пользовательской намеренно: админка даёт доступ ко всей платформе,
 и брошенная вкладка не должна оставаться входом на весь день. Токен хранится только как sha256 —
@@ -406,6 +410,59 @@ curl -s -H "Authorization: Bearer $TOKEN" 'https://panel.example.com/api/admin/u
 `warnings`, ненулевой `totals.modelCost`. В `economics`: `currencies.comparable: true`, заполненный
 `revenue.mrr` при наличии подписок и `priceGuidance` с `breakEvenPrice`. Если `priceGuidance` пуст
 при платных подписчиках — скорее всего не совпала валюта или не посчитана хотя бы одна модель.
+
+### 7.5. Инфраструктура: диск, Docker, песочницы, бакеты, база
+
+Код: `server/src/routes/admin-infra.ts`. Тесты: `server/src/routes/admin-infra.test.ts`,
+`server/src/storage/object-store.test.ts`. Оба маршрута — только чтение, `Bearer`-токен и
+`cache-control: no-store`; тяжёлые пробы кэшируются на 15–30 секунд.
+
+| Маршрут | Параметры | Что отдаёт |
+|---|---|---|
+| `GET /api/admin/infra` | — | снимок: `host`, `disk`, `docker`, `sandboxes`, `buckets`, `database`, `alerts`, `unavailable` |
+| `GET /api/admin/sandboxes` | `state` = `cold` (по умолчанию), `running`, `never`, `all`; `limit` 1…200 (50) | `total` — число подходящих до `limit`, `sandboxes` — страница, отсортированная по `lastActiveAt` |
+
+**Любая секция необязательна.** Если сервер не может что-то измерить, поле приходит `null` (или
+секция отсутствует), а в `unavailable` появляется `{section, reason}`. Ноль вместо «не знаю» здесь
+запрещён: админка должна отличать «на диске правда пусто» от «statfs не ответил».
+
+- `disk.pressure` — `ok` / `warn` (≥80%) / `danger` (≥90%) по худшему разделу, а не по среднему.
+  В `mounts` попадают `/`, `/var/lib/docker` и каталоги песочниц/данных, если они лежат на отдельных
+  файловых системах; одинаковые устройства не дублируются. `filesystem` берётся из `/proc/mounts`.
+- `docker.available: false` — Docker не установлен или недоступен; `containers`, `images` и
+  `reclaimableBytes` тогда не выдумываются. `dockerBytes`/`reclaimableBytes` считаются по
+  `docker system df`; если хоть одна строка не разобрана, сумма приходит `null`.
+- `sandboxes.running` — живой предпросмотр (контейнер или статическая раздача), `cold` — проект
+  известен, но не работает: рабочая папка на диске, архив в бакете или остановленный контейнер.
+  `neverStarted` — проекта нет ни на диске, ни в бакете. В этой платформе контейнер предпросмотра
+  удаляется при остановке, поэтому «холодный» не может означать только остановленный контейнер.
+  Если не прочитан хотя бы один из источников состояния (отметки архива, контейнеры, каталог
+  песочниц), раздел `sandboxes` не присылается вовсе, а `GET /api/admin/sandboxes` отвечает `503`:
+  частичные счётчики выглядели бы точными, хотя часть проектов попала бы не в ту категорию.
+- `sandboxes.coldStarts24h`, `averageStartMs`, `slowestStartMs` и `startMs` в списке пока `null`:
+  журнала холодных стартов нет. Когда он появится, менять контракт не придётся — поля уже есть.
+- `diskBytes` в списке — измеренный размер проекта (для архивного — размер архива, он же входит в
+  квоту аккаунта). Если замера ещё нет, приходит `null`, а `sandboxes.diskBytes` тоже становится
+  `null`: частичная сумма выдавала бы себя за полную. У проекта без файлов это честный `0`.
+- `buckets` — один настроенный бакет `PLATFORM_S3_*`. Объекты и байты считаются `ListObjectsV2` под
+  префиксом; на пределе страниц `truncated: true`, и цифры не выдаются за полные. `updatedAt` пока
+  `null`.
+- `database` — только для `WEBNESTDEV_STORAGE=postgres`: имя базы, размер, соединения и таблицы
+  (`rows` — оценка `pg_stat_user_tables.n_live_tup`, размеры точные). `lastBackupAt` — `null`, пока
+  нет журнала резервных копий. На JSON-хранилище секции нет, в `unavailable` — причина.
+- `alerts` — до пяти коротких фраз для баннера: диск, Docker, память, бакет, база.
+
+Что проверить после выкатки:
+
+```bash
+TOKEN=…
+curl -s -H "Authorization: Bearer $TOKEN" 'https://panel.example.com/api/admin/infra'
+curl -s -H "Authorization: Bearer $TOKEN" 'https://panel.example.com/api/admin/sandboxes?state=cold&limit=10'
+```
+
+В снимке должны быть `generatedAt`, `host.build` (та же сборка, что в `/api/version`), заполненный
+`disk` и `docker.available`; в `unavailable` не должно быть `sandboxes` и `docker`, если Docker
+работает. Если `buckets` пуст, а `PLATFORM_S3_*` заданы — смотреть причину в `unavailable`.
 
 ## 8. Обращения поддержки
 

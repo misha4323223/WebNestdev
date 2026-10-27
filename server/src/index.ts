@@ -56,6 +56,7 @@ import { registerAdminRoutes } from "./routes/admin.js";
 import { registerAdminAnalyticsRoutes } from "./routes/admin-analytics.js";
 import { registerAdminEconomicsRoutes } from "./routes/admin-economics.js";
 import { registerAdminAuditRoutes } from "./routes/admin-audit.js";
+import { registerAdminInfraRoutes } from "./routes/admin-infra.js";
 import { registerPhoneAuthRoutes } from "./routes/phone-auth.js";
 import { registerAccountRoutes } from "./routes/account.js";
 import { registerBillingRoutes } from "./routes/billing.js";
@@ -241,6 +242,8 @@ await registerAdminAnalyticsRoutes(app);
 await registerAdminEconomicsRoutes(app);
 // Журнал безопасности: входы, второй фактор, ключи платформы, удаление проектов.
 await registerAdminAuditRoutes(app);
+// Инфраструктура: диск, Docker, песочницы, бакеты и база. Только чтение и только админ-токен.
+await registerAdminInfraRoutes(app);
 await registerPhoneAuthRoutes(app);
 await registerAccountRoutes(app);
 await registerBillingRoutes(app);
