@@ -397,15 +397,22 @@ Adding a service means an entry in `server/src/services/catalog.ts` (fields, env
 
 ## Subscriptions and payments
 
-Paid plans are sold through Robokassa: `POST /api/billing/checkout` creates a signed invoice,
-`POST /api/billing/robokassa/result` is the server-to-server notification that closes the payment and
-activates or extends the subscription, and `GET /api/billing` reports the plan, its end date, the
-auto-renew switch and the payment history. The plan a user has actually paid for is read by
+Paid plans are sold through Robokassa: `POST /api/billing/checkout` creates a signed invoice, and the
+separate auto-renew consent it carries decides whether that invoice opens a recurring series or stays
+one-off; `POST /api/billing/robokassa/result` is the server-to-server notification that closes the
+payment and activates or extends the subscription, and `GET /api/billing` reports the plan, its end
+date, the auto-renew switch and the payment history. The plan a user has actually paid for is read by
 `accountPlanFor` (`server/src/billing/store.ts`) and therefore changes quotas, project and storage
-limits and the web-search provider at once. Auto-renew charges run hourly and only when the shop has
-the recurring-payments service enabled. Keys are entered in **Settings → Platform keys → Payment
-(Robokassa)** and stored encrypted; step-by-step cabinet setup (ResultURL, passwords, receipts for
-self-employed, test mode) is in [docs/ROBOKASSA.md](docs/ROBOKASSA.md).
+limits and the web-search provider at once. Auto-renew charges run hourly and only for subscriptions
+whose owner gave that consent, only when the shop has the recurring-payments service enabled, and
+only after the advance notice e-mail actually went out: without a sent notice there is no charge
+(376-ФЗ), and switching auto-renew on is refused until a reachable e-mail address is set and the
+platform mail service is configured. A paid invoice also produces a plain-text payment letter — the
+letter never decides anything, the `ResultURL` notification does. Mail keys live in **Settings →
+Platform keys → Почта (Yandex Cloud Postbox)** ([docs/MAIL.md](docs/MAIL.md)), and payment keys are
+entered in **Settings → Platform keys → Payment (Robokassa)** and stored encrypted;
+step-by-step cabinet setup (ResultURL, passwords, receipts for self-employed, test mode) is in
+[docs/ROBOKASSA.md](docs/ROBOKASSA.md).
 
 A paid plan sells a **monthly pool of model tokens** (50 млн on «Плюс», 250 млн on «Премиум»),
 counted from the `model_usage` rows the provider actually reported rather than from button presses:
@@ -433,7 +440,7 @@ When the user's decision changes what to build — layout, content, stack, which
 
 ## Support tickets
 
-The **Поддержка** button stores a ticket on the server (`server/src/support/support-store.ts`): category, severity, description, steps, page, project, user agent, IP and a mandatory screenshot (PNG/JPEG/WebP, signature-checked, 4 MB). Along with the ticket it stores a snapshot of the account — name and contact e-mail from onboarding, phone, sign-in methods, plan, account age, project count and last activity (`server/src/support/support-user.ts`). The platform admin reads the list at `GET /api/support/tickets`, one ticket with the live account card and its history at `GET /api/support/tickets/:id`, and the image at `GET /api/support/tickets/:id/screenshot`; the web panel has no separate screen for it yet. Email delivery (`SUPPORT_SMTP_*`) is optional and only a notification — the ticket exists whether or not the message went out, the letter now includes the same account details, and the dialog says which of the two happened.
+The **Поддержка** button stores a ticket on the server (`server/src/support/support-store.ts`): category, severity, description, steps, page, project, user agent, IP and a mandatory screenshot (PNG/JPEG/WebP, signature-checked, 4 MB). Along with the ticket it stores a snapshot of the account — name and contact e-mail from onboarding, phone, sign-in methods, plan, account age, project count and last activity (`server/src/support/support-user.ts`). The platform admin reads the list at `GET /api/support/tickets`, one ticket with the live account card and its history at `GET /api/support/tickets/:id`, and the image at `GET /api/support/tickets/:id/screenshot`; the web panel has no separate screen for it yet. Email delivery is optional and only a notification: the platform mail service (`MAIL_*`, Yandex Cloud Postbox — [docs/MAIL.md](docs/MAIL.md)) is preferred, the personal `SUPPORT_SMTP_*` keys keep working as a fallback, the letter includes the same account details, the ticket exists whether or not the message went out, and the dialog says which of the two happened.
 
 A separate desktop or mobile admin app has no panel cookie, so it reads the same endpoints with a read-only key instead: set `SUPPORT_API_KEY` in **Settings → Platform keys → Поддержка** (at least 16 characters, applied without a restart) and send it as `Authorization: Bearer <key>` or `X-Support-Key: <key>`. The key only reads: creating a ticket still requires a signed-in user, and an invalid or too short key falls back to the session check. Comparison is a constant-time SHA-256 match (`server/src/support/support-api-key.ts`), and every support endpoint answers `401` without a key or session, `403` for a signed-in non-admin.
 

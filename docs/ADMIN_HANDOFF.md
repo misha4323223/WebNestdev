@@ -120,7 +120,9 @@ exists» на них не появится.
   которых снимка ещё не было;
 - `GET /api/support/tickets/<id>` отдаёт сам тикет, **живую** карточку автора (подписка, последние
   проекты, дневной расход, месячный пул токенов) и до 20 прошлых обращений;
-- письмо поддержки (`SUPPORT_SMTP_*`) теперь тоже содержит имя, телефон, тариф и активность;
+- письмо поддержки теперь тоже содержит имя, телефон, тариф и активность: при настроенной почте
+  платформы (`MAIL_*`, Postbox) письма уходят от подтверждённого домена, личный `SUPPORT_SMTP_*`
+  остаётся запасным путём;
 - в тикете сохраняется IP отправителя.
 
 Код: `server/src/support/support-user.ts`, `server/src/routes/support.ts`,
@@ -239,9 +241,9 @@ Variables. Поэтому «повтор» между вкладками — н�
 
 | Где | Имена |
 |---|---|
-| **Только Secrets** — из Variables не доедут | `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_PORT`, `DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS`, `YANDEX_SA_KEY_JSON`, `YANDEX_CLOUD_ID`, `YANDEX_FOLDER_ID`, `PLATFORM_AI_API_KEY`, `PLATFORM_AI_FREE_KEY_1..3`, `PLATFORM_IMAGE_KEY_1..3`, `PLATFORM_S3_ACCESS_KEY_ID`, `PLATFORM_S3_SECRET_ACCESS_KEY`, `WEBNESTDEV_ADMIN_EMAILS`, `WEBNESTDEV_ADMIN_USER_IDS`, `ADMIN_BOOTSTRAP_EMAIL`, `ADMIN_BOOTSTRAP_PASSWORD`, `SUPPORT_SMTP_PASSWORD` |
+| **Только Secrets** — из Variables не доедут | `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_PORT`, `DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS`, `YANDEX_SA_KEY_JSON`, `YANDEX_CLOUD_ID`, `YANDEX_FOLDER_ID`, `PLATFORM_AI_API_KEY`, `PLATFORM_AI_FREE_KEY_1..3`, `PLATFORM_IMAGE_KEY_1..3`, `PLATFORM_S3_ACCESS_KEY_ID`, `PLATFORM_S3_SECRET_ACCESS_KEY`, `WEBNESTDEV_ADMIN_EMAILS`, `WEBNESTDEV_ADMIN_USER_IDS`, `ADMIN_BOOTSTRAP_EMAIL`, `ADMIN_BOOTSTRAP_PASSWORD`, `SUPPORT_SMTP_PASSWORD`, `MAIL_SMTP_PASSWORD` |
 | **Только Variables** | `DEPLOY_RUNNER`, `DEPLOY_APP_DIR`, `GH_CALLBACK_URL`, `GH_FRONTEND_URL`, `GITLAB_BASE_URL`, `GITLAB_CALLBACK_URL`, `GITLAB_FRONTEND_URL`, `YANDEX_CALLBACK_URL`, `YANDEX_FRONTEND_URL`, `YANDEX_OAUTH_SCOPE` |
-| **Любая из двух вкладок** (`secrets.X \|\| vars.X`) | `GH_OAUTH_CLIENT_ID`, `GH_OAUTH_CLIENT_SECRET`, `GITLAB_CLIENT_ID`, `GITLAB_CLIENT_SECRET`, `GITVERSE_CLIENT_ID`, `GITVERSE_CLIENT_SECRET`, `YANDEX_CLIENT_ID`, `YANDEX_CLIENT_SECRET`, `WEB_SEARCH_PROVIDER`, `YANDEX_SEARCH_API_KEY`, `YANDEX_SEARCH_FOLDER_ID`, `TAVILY_API_KEY`, `PLATFORM_AI_BASE_URL`, `PLATFORM_AI_MODEL`, `PLATFORM_AI_PROVIDER`, `PLATFORM_AI_FREE_BASE_URL`, `PLATFORM_AI_FREE_MODEL`, `PLATFORM_AI_FREE_PROVIDER`, `PLATFORM_IMAGE_BASE_URL`, `PLATFORM_IMAGE_MODEL`, `PLATFORM_IMAGE_PROVIDER`, `PLATFORM_AI_PRICE_INPUT_PER_MILLION`, `PLATFORM_AI_PRICE_OUTPUT_PER_MILLION`, `PLATFORM_AI_PRICE_CURRENCY`, `PLATFORM_AI_MODEL_PRICES`, `PLATFORM_INFRA_COST_PER_MONTH`, `PLATFORM_S3_ENDPOINT`, `PLATFORM_S3_BUCKET`, `PLATFORM_S3_REGION`, `PLATFORM_S3_PREFIX`, `PROJECT_ARCHIVE_ENABLED`, `PROJECT_ARCHIVE_IDLE_MINUTES`, `SUPPORT_API_KEY`, `SUPPORT_EMAIL_TO`, `SUPPORT_EMAIL_FROM`, `SUPPORT_SMTP_HOST`, `SUPPORT_SMTP_PORT`, `SUPPORT_SMTP_USER` |
+| **Любая из двух вкладок** (`secrets.X \|\| vars.X`) | `GH_OAUTH_CLIENT_ID`, `GH_OAUTH_CLIENT_SECRET`, `GITLAB_CLIENT_ID`, `GITLAB_CLIENT_SECRET`, `GITVERSE_CLIENT_ID`, `GITVERSE_CLIENT_SECRET`, `YANDEX_CLIENT_ID`, `YANDEX_CLIENT_SECRET`, `WEB_SEARCH_PROVIDER`, `YANDEX_SEARCH_API_KEY`, `YANDEX_SEARCH_FOLDER_ID`, `TAVILY_API_KEY`, `PLATFORM_AI_BASE_URL`, `PLATFORM_AI_MODEL`, `PLATFORM_AI_PROVIDER`, `PLATFORM_AI_FREE_BASE_URL`, `PLATFORM_AI_FREE_MODEL`, `PLATFORM_AI_FREE_PROVIDER`, `PLATFORM_IMAGE_BASE_URL`, `PLATFORM_IMAGE_MODEL`, `PLATFORM_IMAGE_PROVIDER`, `PLATFORM_AI_PRICE_INPUT_PER_MILLION`, `PLATFORM_AI_PRICE_OUTPUT_PER_MILLION`, `PLATFORM_AI_PRICE_CURRENCY`, `PLATFORM_AI_MODEL_PRICES`, `PLATFORM_INFRA_COST_PER_MONTH`, `PLATFORM_S3_ENDPOINT`, `PLATFORM_S3_BUCKET`, `PLATFORM_S3_REGION`, `PLATFORM_S3_PREFIX`, `PROJECT_ARCHIVE_ENABLED`, `PROJECT_ARCHIVE_IDLE_MINUTES`, `SUPPORT_API_KEY`, `SUPPORT_EMAIL_TO`, `SUPPORT_EMAIL_FROM`, `SUPPORT_SMTP_HOST`, `SUPPORT_SMTP_PORT`, `SUPPORT_SMTP_USER`, `MAIL_SMTP_HOST`, `MAIL_SMTP_PORT`, `MAIL_SMTP_USER`, `MAIL_FROM`, `MAIL_FROM_NAME`, `BILLING_NOTICE_DAYS` |
 
 Пароль администратора — значение секрета `ADMIN_BOOTSTRAP_PASSWORD` (Secret, не Variable);
 администратор `pimashin2015@gmail.com` уже создан и перезаписи не подлежит.
@@ -252,11 +254,13 @@ Variables. Поэтому «повтор» между вкладками — н�
 инфраструктура=нет, валюта=USD» и поддержка — «ключ API=нет, почта=—, SMTP=нет». То есть
 `PLATFORM_AI_MODEL_PRICES`, `PLATFORM_AI_PRICE_CURRENCY=RUB`, `PLATFORM_INFRA_COST_PER_MONTH`
 (и `SUPPORT_*`, если нужны письма поддержки) — то, что добавляется после; `PLATFORM_AI_PRICE_*`
-необязательны.
+необязательны. Почта платформы (`MAIL_*`, Postbox) появилась позже — её ключи берутся в кабинете
+Yandex Cloud и заводятся по таблице выше (пошагово — docs/MAIL.md).
 
 Как проверить, что значения доехали: переменные передаются на ВМ только выкаткой, поэтому после
 правок нужно запустить Actions → **deploy** → *Run workflow* (правки кода для этого не нужны) и
-посмотреть строки `[deploy] Цены расхода: …` и `[deploy] Поддержка: …` — в них только «есть/нет»,
+посмотреть строки `[deploy] Цены расхода: …`, `[deploy] Поддержка: …` и
+`[deploy] Почта платформы: сервер=…, отправитель=…, пароль=…` — в них только «есть/нет»,
 без самих значений. Строка `[deploy] Холодный ярус: …` уже показывает бакет и включённость.
 
 ## Где мы остановились

@@ -2,13 +2,14 @@ import { useCallback, useEffect, useState } from "react";
 import { LayoutShell } from "../layout/LayoutShell";
 import { PreviewPanel } from "../preview/PreviewPanel";
 import { SettingsHub } from "../settings/SettingsHub";
-import { useWorkspace } from "./useWorkspace";
+import { conversationMemoryKey, useWorkspace } from "./useWorkspace";
 import { WorkspaceNav,type WorkspaceView } from "./WorkspaceNav";
 import { WorkspaceContent } from "./WorkspaceContent";
-import { ChatSessionsModal, useChatSessions } from "../agent/ChatSessions";
+import { useChatSessions } from "../agent/ChatSessions";
 import { DeploymentWizard } from "../deployment/DeploymentWizard";
 import { composeAgentPrompt } from "../../lib/agent-compose";
 import { NestLoader } from "../../components/NestLoader";
+import { createConversation, deleteConversation, type ConversationSummary } from "../../lib/project-api";
 
 export function WorkspaceShell({onHome,onAgentState}:{onHome:()=>void;onAgentState?:(state:{running:boolean;projectName:string}|null)=>void}){
   const {projectId,conversationId,projectName,loading,error,retry,openConversation,renameCurrentProject}=useWorkspace();
@@ -27,10 +28,35 @@ export function WorkspaceShell({onHome,onAgentState}:{onHome:()=>void;onAgentSta
   const [chatAtEnd,setChatAtEnd]=useState(true);
   const scrollChatToBottom=useCallback(()=>setScrollSignal(value=>value+1),[]);
   const reportChatEnd=useCallback((atEnd:boolean)=>setChatAtEnd(atEnd),[]);
-  // Список чатов принадлежит рабочей области: кнопка в строке вкладок открывает его
-  // и из «Агента», и из «Файлов», а не только из шапки чата.
-  const [sessionsOpen,setSessionsOpen]=useState(false);
+  // Список чатов принадлежит рабочей области, а показывает его колонка слева: она видна и в
+  // «Агенте», и в «Файлах», поэтому вкладка остаётся там, где человек работает.
   const {sessions,sessionsError,reload:sessionsReload}=useChatSessions(projectId,conversationId);
+  /** Новый чат проекта: пустая сессия сразу открывается, колонка перечитывает список. */
+  const newChat=useCallback(async()=>{
+    const created=await createConversation(projectId);
+    openConversation(created.id);
+    await sessionsReload();
+  },[projectId,openConversation,sessionsReload]);
+  /**
+   * Удаление чата не трогает проект. Если удалён открытый чат, рабочая область переходит к
+   * следующему, а когда других нет — сразу создаёт новый, иначе панель осталась бы с
+   * идентификатором несуществующей сессии.
+   */
+  const deleteChat=useCallback(async(session:ConversationSummary)=>{
+    await deleteConversation(session.id);
+    try{
+      localStorage.removeItem("webnestdev.pendingStart."+session.id);
+      if(session.id===conversationId){
+        localStorage.removeItem("webnestdev.conversationId");
+        localStorage.removeItem(conversationMemoryKey(projectId));
+      }
+    }catch{}
+    if(session.id===conversationId){
+      const remaining=(sessions??[]).filter(item=>item.id!==session.id);
+      openConversation(remaining[0]?.id??(await createConversation(projectId)).id);
+    }
+    await sessionsReload();
+  },[conversationId,projectId,sessions,openConversation,sessionsReload]);
   // Incremented when the sidebar asks for a specific settings tab while the overlay is already
   // open: the hub reads its one-shot tab flag on mount, so it has to be remounted to react.
   const [settingsKey,setSettingsKey]=useState(0);
@@ -76,12 +102,12 @@ export function WorkspaceShell({onHome,onAgentState}:{onHome:()=>void;onAgentSta
   // иначе «Изменения» монтировались бы под ней и клик выглядел бы как пустой.
   const openChanges=()=>{setSettingsOpen(false);setPreviewOpen(false);setView("changes")};
 
-  return <LayoutShell projectId={projectId} projectName={projectName} onRenameProject={renameCurrentProject} view={view} onView={view=>{setSettingsOpen(false);setView(view)}} onSettings={openSettings} onSecrets={openSecrets} onDeploy={()=>setDeployOpen(true)} onHome={onHome} onOpenChanges={openChanges} agentRunning={agentRunning} previewOpen={previewOpen} previewRunning={previewRunning} onPreviewToggle={()=>setPreviewOpen(value=>!value)} onRepositoryChanged={()=>setPreviewReload(value=>value+1)} sidebarHidden={settingsOpen}>
+  return <LayoutShell projectId={projectId} projectName={projectName} onRenameProject={renameCurrentProject} onSettings={openSettings} onSecrets={openSecrets} onDeploy={()=>setDeployOpen(true)} onHome={onHome} onOpenChanges={openChanges} agentRunning={agentRunning} previewOpen={previewOpen} previewRunning={previewRunning} onPreviewToggle={()=>setPreviewOpen(value=>!value)} onRepositoryChanged={()=>setPreviewReload(value=>value+1)} sidebarHidden={settingsOpen} chats={{projectId,activeId:conversationId,sessions,error:sessionsError,onNew:newChat,onOpen:openConversation,onDelete:deleteChat}}>
     <main className="main">
       <div className="workspace-main">
         {settingsOpen?<div className="workspace-overlay-panel">
           <SettingsHub key={settingsKey} projectId={projectId} projectName={projectName} onClose={()=>setSettingsOpen(false)}/>
-        </div>:<><WorkspaceNav view={view} onChange={setView} onSessions={()=>setSessionsOpen(true)} sessionCount={sessions?.length} onSecrets={openSecrets}/><WorkspaceContent view={view} projectId={projectId} projectName={projectName} conversationId={conversationId} onRunFinished={()=>{setPreviewReload(value=>value+1);setTaskReload(value=>value+1);void sessionsReload()}} onFileSaved={()=>setPreviewReload(value=>value+1)} taskReload={taskReload} onOpenModelSettings={openModelSettings} onOpenAccountSettings={openSettings} onRunningChange={reportAgentState} onOpenChanges={()=>{setSettingsOpen(false);setView("changes")}} scrollSignal={scrollSignal} onChatEndChange={reportChatEnd} onScrollBottom={scrollChatToBottom} showScroll={view==="agent"&&!chatAtEnd} writing={view==="agent"&&!chatAtEnd&&agentRunning}/></>}
+        </div>:<><WorkspaceNav view={view} onChange={setView} onSecrets={openSecrets}/><WorkspaceContent view={view} projectId={projectId} projectName={projectName} conversationId={conversationId} onRunFinished={()=>{setPreviewReload(value=>value+1);setTaskReload(value=>value+1);void sessionsReload()}} onFileSaved={()=>setPreviewReload(value=>value+1)} taskReload={taskReload} onOpenModelSettings={openModelSettings} onOpenAccountSettings={openSettings} onRunningChange={reportAgentState} onOpenChanges={()=>{setSettingsOpen(false);setView("changes")}} scrollSignal={scrollSignal} onChatEndChange={reportChatEnd} onScrollBottom={scrollChatToBottom} showScroll={view==="agent"&&!chatAtEnd} writing={view==="agent"&&!chatAtEnd&&agentRunning}/></>}
       </div>
       <PreviewPanel projectId={projectId} reloadToken={previewReload} open={previewOpen} onClose={()=>setPreviewOpen(false)} onRunningChange={setPreviewRunning}/>
       {deployOpen&&<DeploymentWizard
@@ -89,16 +115,6 @@ export function WorkspaceShell({onHome,onAgentState}:{onHome:()=>void;onAgentSta
         onClose={()=>setDeployOpen(false)}
         onStarted={brief=>{setDeployOpen(false);setSettingsOpen(false);setPreviewOpen(false);setView("agent");composeAgentPrompt(brief)}}
       />}
-      <ChatSessionsModal
-        open={sessionsOpen}
-        projectId={projectId}
-        conversationId={conversationId}
-        sessions={sessions}
-        sessionsError={sessionsError}
-        reload={sessionsReload}
-        onClose={()=>setSessionsOpen(false)}
-        onOpenConversation={openConversation}
-      />
     </main>
   </LayoutShell>;
 }

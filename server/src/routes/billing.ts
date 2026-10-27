@@ -18,6 +18,7 @@ import {
   markPaymentPaid,
   setAutoRenew,
 } from "../billing/store.js";
+import { autoRenewRefusal, notifyPaymentPaid } from "../billing/notify.js";
 import { getDonationByInvoice, markDonationPaid } from "../support/donation-store.js";
 
 /**
@@ -32,7 +33,11 @@ import { getDonationByInvoice, markDonationPaid } from "../support/donation-stor
  * пользователя, поэтому тариф меняет только уведомление с верной подписью по паролю №2.
  */
 
-const checkoutSchema = z.object({ plan: z.enum(["pro", "team"]) });
+const checkoutSchema = z.object({
+  plan: z.enum(["pro", "team"]),
+  /** Отдельное согласие на автопродление; без него счёт разовый. */
+  autoRenew: z.boolean().optional(),
+});
 const renewSchema = z.object({ autoRenew: z.boolean() });
 
 type FormBody = Record<string, string | undefined>;
@@ -81,7 +86,8 @@ export async function registerBillingRoutes(app: FastifyInstance) {
 
   /**
    * Счёт на оплату тарифа. Сумма берётся из каталога (или из ключа ROBOKASSA_PRICE_*), а не из
-   * запроса: браузер не должен решать, сколько стоит подписка.
+   * запроса: браузер не должен решать, сколько стоит подписка. А вот согласие на автопродление
+   * приходит из запроса — это выбор человека, и без него счёт остаётся разовым.
    */
   app.post("/api/billing/checkout", async (request, reply) => {
     const user = await requireUser(request, reply); if (!user) return;
@@ -95,7 +101,18 @@ export async function registerBillingRoutes(app: FastifyInstance) {
     }
     const amount = planPriceRub(body.plan);
     if (!(amount > 0)) return reply.code(409).send({ error: "Для этого тарифа не задана цена" });
-    const payment = await createPayment({ userId: user.id, plan: body.plan, amount });
+    if (body.autoRenew) {
+      if (!config.recurring) {
+        return reply.code(409).send({ error: "Автопродление сейчас недоступно. Продлить подписку можно вручную после окончания оплаченного периода." });
+      }
+      // Предупреждение о списании — часть автопродления: без почты включить его нельзя.
+      const refusal = await autoRenewRefusal(user);
+      if (refusal) return reply.code(409).send({ error: refusal });
+    }
+    // Отметка на сайте решает две вещи: попадёт ли в платёж `Recurring=true` и включится ли
+    // продление у новой подписки. Магазин должен уметь периодические платежи, а согласие — быть.
+    const autoRenew = Boolean(body.autoRenew && config.recurring);
+    const payment = await createPayment({ userId: user.id, plan: body.plan, amount, autoRenew });
     const plan = PLAN_CATALOG[body.plan];
     const link = buildPaymentUrl({
       config,
@@ -105,6 +122,7 @@ export async function registerBillingRoutes(app: FastifyInstance) {
       amount,
       description: "Подписка NestDev «" + plan.name + "», 1 месяц",
       email: user.email,
+      recurring: autoRenew,
     });
     request.log.info({ invId: payment.invId, plan: body.plan, amount, test: config.testMode }, "billing: счёт создан");
     return { invId: payment.invId, paymentUrl: link.url, amount, currency: "RUB", test: config.testMode };
@@ -153,9 +171,25 @@ export async function registerBillingRoutes(app: FastifyInstance) {
     // только для типов: без неё TypeScript не знает, что payment найден проверкой выше.
     if (!payment) return reply.code(404).send("Unknown invoice");
 
-    const result = await markPaymentPaid(invId, { autoRenew: config.recurring });
+    const result = await markPaymentPaid(invId);
     if (result?.alreadyPaid) request.log.info({ invId }, "billing: повторное уведомление, платёж уже закрыт");
     else request.log.info({ invId, plan: payment.plan, userId: payment.userId, until: result?.subscription.renewsAt }, "billing: оплата подтверждена");
+    // Письмо об оплате — отдельный шаг после подтверждения денег: Робокасса ждёт `OK`, и отказ
+    // почты не должен менять ответ ей. Ошибка письма видна в логе, платёж уже закрыт.
+    if (result && !result.alreadyPaid) {
+      void notifyPaymentPaid({
+        userId: payment.userId,
+        plan: payment.plan,
+        amount: payment.amount,
+        invId,
+        renewsAt: result.subscription.renewsAt,
+        autoRenew: result.subscription.autoRenew,
+      }).then(sent => {
+        if (!sent) request.log.info({ invId, userId: payment.userId }, "billing: письмо об оплате не отправлено — у аккаунта нет почты");
+      }).catch(error => {
+        request.log.error({ invId }, "billing: письмо об оплате не ушло: " + (error instanceof Error ? error.message : String(error)));
+      });
+    }
     return "OK" + invId;
   });
 
@@ -180,8 +214,13 @@ export async function registerBillingRoutes(app: FastifyInstance) {
     if (crossSiteRefused(request)) return reply.code(403).send({ error: sameOriginRefusal() });
     const body = renewSchema.parse(request.body ?? {});
     const config = robokassaConfig();
-    if (body.autoRenew && !config.recurring) {
-      return reply.code(409).send({ error: "Автопродление сейчас недоступно. Продлить подписку можно вручную после окончания оплаченного периода." });
+    if (body.autoRenew) {
+      if (!config.recurring) {
+        return reply.code(409).send({ error: "Автопродление сейчас недоступно. Продлить подписку можно вручную после окончания оплаченного периода." });
+      }
+      // Тот же порядок, что в счёте: продление включается только там, где человека можно предупредить.
+      const refusal = await autoRenewRefusal(user);
+      if (refusal) return reply.code(409).send({ error: refusal });
     }
     const updated = await setAutoRenew(user.id, body.autoRenew);
     if (!updated) return reply.code(404).send({ error: "Платной подписки нет — сначала оплатите тариф" });

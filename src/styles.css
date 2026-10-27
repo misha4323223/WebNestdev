@@ -50,7 +50,7 @@ button,textarea{font:inherit}button{color:inherit}
 /* Настройки и публикация занимают всю ширину: колонка слева закрывается, а вернуться
    можно кнопкой «К работе» внутри самих настроек. На телефоне шторка и так выезжает поверх. */
 @media(min-width:651px){.app-shell.sidebar-hidden .sidebar{display:none}}
-.sidebar-section{padding:15px 4px 0}.section-label,.eyebrow{font-size:9px;letter-spacing:.09em;color:#69717c;font-weight:700}.section-label{padding:0 6px 7px}.nav-item{width:100%;height:30px;border:0;background:transparent;color:#969da7;border-radius:5px;text-align:left;padding:0 8px;display:flex;align-items:center;gap:8px;font-size:11px;cursor:pointer}.nav-item:hover,.nav-item.active{background:#171a1f;color:#e7e9ec}.project-row{height:30px;display:flex;align-items:center;gap:8px;padding:0 8px;color:#b6bbc3;font-size:11px}.status-dot{width:6px;height:6px;border-radius:50%;background:#6b747e;display:inline-block}.sidebar-footer{margin-top:auto;padding:10px 4px}
+.section-label,.eyebrow{font-size:9px;letter-spacing:.09em;color:#69717c;font-weight:700}.sidebar-footer{margin-top:auto;padding:10px 4px}
 /* Баннер внизу сайдбара — графика, а не объявление: ни счётчиков, ни приглашений, ни кнопки.
    Место рассчитано на будущую строку логотипов сервисов, поэтому оно не привязано к одному
    партнёру и не меняется по таймеру. */
@@ -96,6 +96,46 @@ button,textarea{font:inherit}button{color:inherit}
 .sidebar-steps-head strong{flex:none;font-size:10px;font-weight:650;font-variant-numeric:tabular-nums;color:#cbc9c5}
 .sidebar-steps-track{height:4px;overflow:hidden;border-radius:99px;background:#1a2127;box-shadow:inset 0 1px 2px rgba(0,0,0,.3)}
 .sidebar-steps-track>span{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#876832,#cab898);box-shadow:0 0 6px rgba(202,184,152,.32);transition:width .24s ease}
+/*
+ * Колонка проекта — чаты, как в чат-интерфейсах: «Новый чат» сверху, ниже закреплённые и
+ * остальные по датам, внизу тариф и баннер. Прокручивается только список: тариф и баннер
+ * остаются на месте, сколько бы чатов ни было.
+ * Действия над чатом появляются по наведению и занимают место времени: держать три кнопки
+ * в каждой строке постоянно — шум, а прятать их в отдельное меню — лишний клик.
+ */
+.sidebar.chats-sidebar{overflow:hidden;padding:8px 6px 6px}
+.chat-side-top{flex:none;padding:2px 2px 8px}
+.chat-side-new{width:100%;height:32px;display:flex;align-items:center;gap:7px;padding:0 9px;border:1px solid var(--line-warm);border-radius:8px;background:linear-gradient(180deg,#171b21,#101318);color:#e6e9ed;font-size:11.5px;font-weight:600;text-align:left;cursor:pointer;transition:border-color .16s ease,background .16s ease}
+.chat-side-new:hover{border-color:var(--line-warm-strong);background:linear-gradient(180deg,#1b2129,#12161b)}
+.chat-side-new svg{flex:none;color:#cab898}
+.chat-side-new:disabled{opacity:.65;cursor:default}
+.chat-side-scroll{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;padding:0 2px 6px}
+.chat-side-group{padding:9px 7px 4px;font-size:8.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#646c76}
+.chat-side-group-wrap:first-child .chat-side-group{padding-top:2px}
+.chat-side-row{--chat-row-bg:#151a20;position:relative;display:flex;align-items:center;border-radius:7px}
+.chat-side-row:hover{background:var(--chat-row-bg)}
+.chat-side-row.active{--chat-row-bg:#1a2028;background:#1a2028}
+.chat-side-open{flex:1;min-width:0;display:flex;align-items:center;gap:8px;height:29px;padding:0 8px;border:0;border-radius:7px;background:transparent;color:#acb4be;text-align:left;cursor:pointer}
+.chat-side-row.active .chat-side-open{color:#eef1f4}
+.chat-side-title{flex:1;min-width:0;display:flex;align-items:center;gap:5px;font-size:11.5px;line-height:1.2}
+.chat-side-mark{flex:none;color:#cab898}
+.chat-side-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.chat-side-row.active .chat-side-label{font-weight:600}
+.chat-side-time{flex:none;color:#5f6670;font-size:9px;font-variant-numeric:tabular-nums;transition:opacity .14s ease}
+.chat-side-tools{position:absolute;top:50%;right:3px;transform:translateY(-50%);display:flex;gap:1px;padding-left:10px;border-radius:0 7px 7px 0;background:linear-gradient(90deg,rgba(21,26,32,0),var(--chat-row-bg) 34%);opacity:0;pointer-events:none;transition:opacity .14s ease}
+.chat-side-row:hover .chat-side-tools,.chat-side-row:focus-within .chat-side-tools{opacity:1;pointer-events:auto}
+.chat-side-row:hover .chat-side-time,.chat-side-row:focus-within .chat-side-time{opacity:0}
+.chat-side-tool{width:22px;height:22px;display:grid;place-items:center;padding:0;border:0;border-radius:5px;background:transparent;color:#7d858f;cursor:pointer}
+.chat-side-tool:hover{background:#232a33;color:#e8eaed}
+.chat-side-tool.is-on{color:#cab898}
+.chat-side-tool.danger:hover{background:#2a1b1b;color:#d99b9b}
+.chat-side-state{display:grid;justify-items:center;gap:7px;padding:18px 10px;color:#6d7580;font-size:10.5px;line-height:1.5;text-align:center}
+.chat-side-error{margin:2px 4px 6px;padding:7px 9px;border:1px solid #4a3030;border-radius:7px;background:#1b1212;color:#d99b9b;font-size:10px;line-height:1.45}
+/* На тач-экране наведения нет: закрепление и удаление видны сразу, а время уступает им место. */
+@media(hover:none){
+  .chat-side-time{display:none}
+  .chat-side-tools{position:static;transform:none;padding-left:0;background:none;opacity:1;pointer-events:auto}
+}
 .main{flex:1;min-width:0;min-height:0;display:flex;overflow:hidden}.chat{min-width:0;min-height:0;flex:1;display:flex;flex-direction:column;max-width:none;overflow:hidden}
 /* Режим и размышление — одна настройка запуска, поэтому и один компактный контрол:
    кнопка показывает роль, меню рядом переключает роль и глубину. */
@@ -376,10 +416,10 @@ button,textarea{font:inherit}button{color:inherit}
 .messages{padding-right:26px}}
 .workspace-shell{display:flex;flex:1;min-width:0}.workspace-main{min-width:0;min-height:0;flex:1;display:flex;flex-direction:column}.workspace-view{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column}.workspace-view[hidden]{display:none}/* Кромка строки вкладок — тот же какао-токен, что у сайдбара, поля ввода и панелей: во вкладках
    оставался холодный серый контур, и шапка рабочей области выбивалась из общей рамы. */
-.workspace-tabs{height:40px;flex:none;display:flex;align-items:center;gap:3px;padding:0 12px;border-bottom:1px solid var(--line-warm);background:#0e1014;overflow-x:auto;scrollbar-width:none}.workspace-tabs::-webkit-scrollbar{display:none}.workspace-tabs button{height:28px;border:0;background:transparent;color:#747c87;border-radius:5px;padding:0 9px;display:flex;align-items:center;gap:6px;font-size:10px;cursor:pointer}.workspace-tabs button:hover,.workspace-tabs button.active{background:#181b21;color:#e8eaed}.workspace-tabs .workspace-tabs-chats{margin-left:auto;flex:none;color:#8b939e}.workspace-tabs .workspace-tabs-chats:hover{color:#e8eaed}
+.workspace-tabs{height:40px;flex:none;display:flex;align-items:center;gap:3px;padding:0 12px;border-bottom:1px solid var(--line-warm);background:#0e1014;overflow-x:auto;scrollbar-width:none}.workspace-tabs::-webkit-scrollbar{display:none}.workspace-tabs button{height:28px;border:0;background:transparent;color:#747c87;border-radius:5px;padding:0 9px;display:flex;align-items:center;gap:6px;font-size:10px;cursor:pointer}.workspace-tabs button:hover,.workspace-tabs button.active{background:#181b21;color:#e8eaed}
 @keyframes tabs-scroll-dot{0%{box-shadow:0 0 0 0 rgba(207,188,156,.45)}70%{box-shadow:0 0 0 5px rgba(207,188,156,0)}100%{box-shadow:0 0 0 0 rgba(207,188,156,0)}}
 /* Строка вкладок на телефоне: без уменьшенных отступов последняя вкладка уезжала за край. */
-@media(max-width:650px){.workspace-tabs{gap:2px;padding:0 8px}.workspace-tabs button{padding:0 6px;gap:5px}.workspace-tabs .workspace-tabs-chats{padding:0 6px}.workspace-tabs .workspace-tabs-chats span{display:none}}
+@media(max-width:650px){.workspace-tabs{gap:2px;padding:0 8px}.workspace-tabs button{padding:0 6px;gap:5px}}
 .panel,.files-panel{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden}.panel-title{min-height:54px;padding:10px 15px;border-bottom:1px solid var(--edge);display:flex;align-items:center;justify-content:space-between;color:#c5c9cf;font-size:11px}.panel-title strong{display:block;margin-top:3px;font-size:12px}
 .panel-title-strong{display:flex;align-items:center;gap:4px;min-width:0;margin-top:3px}
 .panel-title-strong strong{margin-top:0;min-width:0}
@@ -451,7 +491,10 @@ button,textarea{font:inherit}button{color:inherit}
 .recent-card{min-height:48px;border:1px solid var(--line-warm);background:#101318;border-radius:8px;padding:7px 9px;text-align:left;color:inherit;cursor:pointer;display:grid;grid-template-columns:minmax(0,1fr);align-items:center}
 .recent-thumb{width:26px;height:26px;border:1px solid var(--line-warm);background:#171a20;border-radius:6px;display:grid;place-items:center;color:#818995}
 .recent-card strong{font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.home-footer{width:min(980px,100%);margin:58px auto 22px;padding-top:14px;border-top:1px solid var(--line-warm-soft);color:#555d67;font-size:9px;display:flex;justify-content:space-between;gap:15px}.home-footer span:last-child{display:flex;align-items:center;gap:5px}
+.home-footer{width:min(980px,100%);margin:58px auto 22px;padding-top:14px;border-top:1px solid var(--line-warm-soft);color:#555d67;font-size:9px;display:flex;justify-content:space-between;gap:15px}.home-footer>span:last-child{display:flex;align-items:center;gap:5px}
+.home-footer-requisites{flex-basis:100%;display:flex;flex-wrap:wrap;align-items:center;gap:4px 12px;margin-top:2px;padding-top:10px;border-top:1px solid rgba(204,195,178,.12);color:#4f5761;font-size:9px;line-height:1.6}
+.home-footer-requisites a{color:#79828d;text-decoration:none;border-bottom:1px solid transparent;transition:color .15s,border-color .15s}
+.home-footer-requisites a:hover{color:#cdd5de;border-bottom-color:rgba(204,195,178,.4)}
 /* Разделы на телефоне — вкладки, как колонка рядом с ПК: видна одна панель за раз, а не всё подряд. */
 .home-tabs{display:none;align-items:center;gap:8px;position:sticky;top:0;z-index:6;margin:0 -28px;padding:10px 28px;background:rgba(11,13,16,.96);backdrop-filter:blur(6px);border-bottom:1px solid var(--line-warm-soft)}
 /* Пять разделов не влезают на узкий экран, поэтому строка прокручивается, а затухание справа
@@ -491,30 +534,66 @@ button,textarea{font:inherit}button{color:inherit}
 
 .nest-loader{--nest-size:42px;position:relative;display:inline-grid;width:var(--nest-size);height:var(--nest-size);place-items:center;flex:none;vertical-align:middle;isolation:isolate}
 .nest-loader svg{display:block;width:100%;height:100%;overflow:visible}
-.nest-loader__shadow{fill:rgba(0,0,0,.34);transform-box:fill-box;transform-origin:center;animation:nest-shadow 3.15s ease-in-out infinite}
-.nest-loader__eggs{opacity:0;transform-box:fill-box;transform-origin:center;animation:nest-eggs 3.15s cubic-bezier(.2,.7,.2,1) infinite}
-.nest-loader__strand{fill:none;stroke-width:2.35;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1;stroke-dashoffset:1;opacity:0;transform-box:fill-box;transform-origin:center;animation:nest-assemble 3.15s cubic-bezier(.2,.72,.22,1) infinite;animation-delay:var(--delay)}
-@keyframes nest-assemble{
-  0%,100%{transform:translate3d(var(--dx),var(--dy),0) rotate(var(--r)) scale(.76);opacity:0;stroke-dashoffset:1}
-  18%{opacity:.55}
-  38%,66%{transform:translate3d(0,0,0) rotate(0) scale(1);opacity:1;stroke-dashoffset:0}
-  82%{opacity:.72;stroke-dashoffset:0}
+/* Две фазы одного цикла: гнездо и знак кода живут на одной шкале (4.8 s) и встречаются в
+   кроссфейде. Гнездо сжимается, прутья укорачиваются, знак кода проявляется и прорисовывается;
+   при разборке знака всё идёт в обратном порядке и гнездо сплетается заново. Сборка гнезда
+   начинается в конце цикла (88%) и заканчивается в начале следующего (8%): иначе между
+   «знак исчез» и «гнездо появилось» оставалась бы видимая пустота. */
+.nest-loader__nest{transform-box:view-box;transform-origin:44px 35px;animation:nest-nest 4.8s cubic-bezier(.36,.66,.2,1) infinite}
+.nest-loader__code{transform-box:view-box;transform-origin:44px 34px;opacity:0;animation:nest-code 4.8s cubic-bezier(.32,.68,.22,1) infinite}
+.nest-loader__shadow{fill:rgba(0,0,0,.4);transform-box:fill-box;transform-origin:center;animation:nest-shadow 4.8s ease-in-out infinite}
+.nest-loader__strand{fill:none;stroke-width:2.35;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1;stroke-dashoffset:1;opacity:0;transform-box:fill-box;transform-origin:center;animation:nest-strand 4.8s cubic-bezier(.32,.68,.2,1) infinite;animation-delay:var(--delay)}
+.nest-loader__code-stroke{fill:none;stroke-width:3.4;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1;stroke-dashoffset:1;animation:nest-code-draw 4.8s cubic-bezier(.34,.68,.2,1) infinite;animation-delay:var(--delay,0s)}
+.nest-loader__glow{animation:nest-glow 4.8s ease-in-out infinite}
+@keyframes nest-strand{
+  0%{transform:translate3d(calc(var(--dx) * .45),calc(var(--dy) * .45),0) rotate(calc(var(--r) * .45)) scale(.9);opacity:.5;stroke-dashoffset:.55}
+  8%,42%{transform:translate3d(0,0,0) rotate(0) scale(1);opacity:1;stroke-dashoffset:0}
+  54%{transform:translate3d(0,0,0) rotate(0) scale(.84);opacity:.8;stroke-dashoffset:1}
+  88%{transform:translate3d(var(--dx),var(--dy),0) rotate(var(--r)) scale(.82);opacity:0;stroke-dashoffset:1}
+  100%{transform:translate3d(calc(var(--dx) * .45),calc(var(--dy) * .45),0) rotate(calc(var(--r) * .45)) scale(.9);opacity:.5;stroke-dashoffset:.55}
 }
-@keyframes nest-eggs{
-  0%,24%,100%{opacity:0;transform:translateY(3px) scale(.72)}
-  39%,66%{opacity:1;transform:translateY(0) scale(1)}
-  82%{opacity:.5;transform:translateY(1px) scale(.96)}
+@keyframes nest-nest{
+  0%,46%{opacity:1;transform:scale(1) rotate(0)}
+  56%{opacity:0;transform:scale(.44) rotate(10deg)}
+  86%{opacity:0;transform:scale(.86) rotate(-4deg)}
+  100%{opacity:1;transform:scale(1) rotate(0)}
+}
+@keyframes nest-code{
+  0%,42%{opacity:0;transform:scale(.84)}
+  52%{opacity:1;transform:scale(.97)}
+  58%{transform:scale(1)}
+  62%{transform:scale(1.02)}
+  78%{transform:scale(1)}
+  84%{opacity:1;transform:scale(1)}
+  92%{opacity:0;transform:scale(1.05)}
+  100%{opacity:0;transform:scale(.84)}
+}
+@keyframes nest-code-draw{
+  0%,44%{stroke-dashoffset:1}
+  58%{stroke-dashoffset:0}
+  84%{stroke-dashoffset:0}
+  92%{stroke-dashoffset:1}
+  100%{stroke-dashoffset:1}
+}
+@keyframes nest-glow{
+  0%,44%{opacity:0}
+  58%{opacity:1}
+  84%{opacity:.85}
+  92%{opacity:0}
+  100%{opacity:0}
 }
 @keyframes nest-shadow{
-  0%,100%{opacity:.12;transform:scaleX(.65)}
-  38%,66%{opacity:.34;transform:scaleX(1)}
-  82%{opacity:.22;transform:scaleX(.88)}
+  0%{opacity:.3;transform:scaleX(.94)}
+  8%,42%{opacity:.34;transform:scaleX(1)}
+  56%,86%{opacity:0;transform:scaleX(.6)}
+  100%{opacity:.3;transform:scaleX(.94)}
 }
 @media(prefers-reduced-motion:reduce){
-  .nest-loader__strand,.nest-loader__eggs,.nest-loader__shadow{animation:none}
+  .nest-loader__nest,.nest-loader__code,.nest-loader__strand,.nest-loader__code-stroke,.nest-loader__glow,.nest-loader__shadow{animation:none}
+  .nest-loader__nest{opacity:1;transform:none}
   .nest-loader__strand{transform:none;opacity:1;stroke-dashoffset:0}
-  .nest-loader__eggs{opacity:1;transform:none}
-  .nest-loader__shadow{opacity:.28;transform:none}
+  .nest-loader__shadow{opacity:.3;transform:scaleX(1)}
+  .nest-loader__code{display:none}
 }
 
 
@@ -653,6 +732,17 @@ button,textarea{font:inherit}button{color:inherit}
 .plan-action{min-height:30px;padding:0 8px;border:1px solid var(--line-warm-strong);border-radius:6px;background:#e5e8ec;color:#14171b;font-size:10px;font-weight:600;cursor:pointer}
 .plan-action:hover{background:#fff}.plan-action:disabled{opacity:.5;cursor:default}
 .billing-disclaimer{margin:16px 0 0;padding:10px;border:1px solid #2d2c26;border-radius:6px;background:#17150f;color:#b9ab82;font-size:10px;line-height:1.6}
+/* Согласия перед оплатой: два отдельных пункта — обработка данных и оферта с условиями
+   подписки. Галочки не проставлены заранее, кнопки оплаты без них не работают. */
+.checkout-consent{display:grid;gap:9px;margin:16px 0 0;padding:12px 14px;border:1px solid var(--line-warm);border-radius:9px;background:linear-gradient(180deg,#12161b,#0e1115)}
+.checkout-consent .eyebrow{color:#837a69}
+.checkout-consent-row{display:flex;align-items:flex-start;gap:9px;color:#a9b1bb;font-size:10.5px;line-height:1.6;cursor:pointer}
+.checkout-consent-row input{flex:none;width:14px;height:14px;margin:2px 0 0;accent-color:var(--camo);cursor:pointer}
+.checkout-consent-row a{color:#d9c99c;text-decoration:none;border-bottom:1px solid rgba(217,201,156,.4)}
+.checkout-consent-row a:hover{color:#f0e2b8;border-bottom-color:#d9c99c}
+.checkout-consent-note{color:#6d7580;font-size:9.5px;line-height:1.5}
+.subscription-plans .checkout-consent{grid-column:1/-1}
+@media(max-width:760px){.checkout-consent{padding:10px 11px}.checkout-consent-row{font-size:10px}}
 .account-feedback{margin:0 18px 18px}
 @media(max-width:850px){.billing-cards{grid-template-columns:1fr}.billing-bar-track{height:44px}.account-settings-layout{grid-template-columns:1fr}.account-settings-nav{border-right:0;border-bottom:1px solid var(--line-warm);flex-direction:row;overflow-x:auto}.account-settings-nav button{white-space:nowrap}.account-settings-content{padding:16px}.plan-grid{grid-template-columns:1fr}.plan-card ul{margin:12px 0}.settings-hub{padding-left:10px;padding-right:10px}.settings-hub-bar{margin-left:-10px;margin-right:-10px;padding:0 10px}.settings-hub-back{order:-1;padding:0 8px}}
 @media(max-width:420px){.settings-hub-back span{display:none}.settings-hub-back{width:27px;justify-content:center;padding:0}}
@@ -1777,7 +1867,9 @@ button,textarea{font:inherit}button{color:inherit}
 .legal-footer-links a,.legal-footer-cookie{color:#7f8995;font-size:10px;text-decoration:none;border-bottom:1px solid transparent;background:transparent;border-left:0;border-right:0;border-top:0;padding:0;cursor:pointer}
 .legal-footer-links a:hover,.legal-footer-cookie:hover{color:#d6dde4;border-bottom-color:var(--line-warm-strong)}
 .legal-footer-cookie{display:inline-flex;align-items:center;gap:4px}
-.legal-footer-meta{width:min(1180px,100%);margin:14px auto 0;padding-top:12px;border-top:1px solid var(--line-warm-soft);display:flex;flex-wrap:wrap;gap:4px 16px;color:#5a636d;font-size:9.5px}
+.legal-footer-meta{width:min(1180px,100%);margin:14px auto 0;padding-top:12px;border-top:1px solid var(--line-warm-soft);display:flex;flex-wrap:wrap;align-items:center;gap:4px 16px;color:#5a636d;font-size:9.5px}
+.legal-footer-meta a{color:#828b96;text-decoration:none;border-bottom:1px solid transparent;transition:color .15s,border-color .15s}
+.legal-footer-meta a:hover{color:#d3dae2;border-bottom-color:rgba(204,195,178,.4)}
 
 @media(max-width:1000px){
   .legal-doc-layout{grid-template-columns:minmax(0,1fr)}
@@ -2670,7 +2762,6 @@ button,textarea{font:inherit}button{color:inherit}
 
 /* Развёртывание: квиз и карточки доступа. Кнопка развёртывания теперь в шапке, а в строке
    вкладок на её месте — «Ключи»: подпись вместо значка, без цветного акцента — как обычная вкладка. */
-.workspace-tabs .workspace-tabs-chats{margin-left:0}
 .workspace-tabs .workspace-tabs-keys{margin-left:auto;flex:none}
 
 .deploy-wizard{width:min(860px,100%);overflow:hidden;padding:0;border-color:var(--line-warm);background:radial-gradient(120% 100% at 50% 0%,rgba(204,195,178,.055),transparent 58%),linear-gradient(168deg,#101720 0%,#0d1116 55%,#0b0f13 100%);box-shadow:0 30px 80px rgba(0,0,0,.55),0 0 0 1px rgba(204,195,178,.035),0 26px 70px -46px rgba(204,195,178,.45)}

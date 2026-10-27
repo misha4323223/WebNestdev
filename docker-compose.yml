@@ -212,6 +212,15 @@ services:
       SUPPORT_SMTP_PORT: ${SUPPORT_SMTP_PORT:-}
       SUPPORT_SMTP_USER: ${SUPPORT_SMTP_USER:-}
       SUPPORT_SMTP_PASSWORD: ${SUPPORT_SMTP_PASSWORD:-}
+      # Почта платформы (Yandex Cloud Postbox): письма об оплате, предупреждения о списании и
+      # поддержка. Значение из панели «Ключи сервера» важнее значения здесь.
+      MAIL_SMTP_HOST: ${MAIL_SMTP_HOST:-}
+      MAIL_SMTP_PORT: ${MAIL_SMTP_PORT:-}
+      MAIL_SMTP_USER: ${MAIL_SMTP_USER:-}
+      MAIL_SMTP_PASSWORD: ${MAIL_SMTP_PASSWORD:-}
+      MAIL_FROM: ${MAIL_FROM:-}
+      MAIL_FROM_NAME: ${MAIL_FROM_NAME:-}
+      BILLING_NOTICE_DAYS: ${BILLING_NOTICE_DAYS:-}
       # Песочницы и предпросмотр монтируются в контейнеры проектов через `docker run -v`,
       # а этот путь разбирает демон на ХОСТЕ. Поэтому каталог обязан существовать на хосте и
       # в контейнере под одним и тем же абсолютным путём — иначе контейнеры видят пустой

@@ -20,6 +20,7 @@ import {
 import { activePlanId, usePlanChoice, writePlanChoice } from "../../lib/plan-choice";
 import { contactEmailOf } from "../../lib/account-contact";
 import type { OnboardingProfile } from "../../lib/onboarding";
+import { CheckoutConsent, type CheckoutConsentState } from "../billing/CheckoutConsent";
 import { openCookieSettings } from "../legal/CookieConsent";
 import { Check, CreditCard, LogOut, Receipt, RefreshCw, Settings2, ShieldCheck, UserRound, Wallet } from "lucide-react";
 
@@ -49,6 +50,8 @@ export function AccountSettingsPanel() {
   const [notice, setNotice] = useState("");
   const [refreshingStorage, setRefreshingStorage] = useState(false);
   const [signingOutEverywhere, setSigningOutEverywhere] = useState(false);
+  // Те же отметки, что в окне тарифов: оплата с этой страницы идёт по общим правилам, а не в обход.
+  const [consent, setConsent] = useState<CheckoutConsentState>({ ready: false, autoRenew: false });
 
   async function reload() {
     setLoading(true); setError("");
@@ -70,9 +73,13 @@ export function AccountSettingsPanel() {
   }
 
   async function pay(plan: "pro" | "team") {
+    if (!consent.ready) {
+      setError("Отметьте согласие на обработку данных и принятие оферты — без этого оплата недоступна.");
+      return;
+    }
     setPaying(plan); setError(""); setNotice("");
     try {
-      const checkout = await startCheckout(plan);
+      const checkout = await startCheckout(plan, consent.autoRenew);
       window.location.assign(checkout.paymentUrl);
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); setPaying(null); }
   }
@@ -203,8 +210,8 @@ export function AccountSettingsPanel() {
             <span className="eyebrow">ПРЕДПОЧТЕНИЯ</span><h3>Предпочтения</h3><p className="account-muted">Параметры сохраняются на сервере и привязаны к вашему аккаунту. Компактный режим применяется сразу.</p>
             <div className="pref-row"><span className="pref-label">Язык интерфейса</span><span className="pref-value">Русский<span className="pref-tag">другие языки позже</span></span></div>
             <label className="account-toggle"><span><strong>Компактный режим</strong><small>Меньше отступов в рабочих панелях — включается мгновенно</small></span><span className="switch"><input type="checkbox" checked={preferences.compactMode} onChange={e => { const next = { ...preferences, compactMode: e.target.checked }; setPreferences(next); applyPreferences(next); }}/><span className="switch-track"><span className="switch-thumb"/></span></span></label>
-            <label className="account-toggle is-soon"><span><strong>Email-уведомления<span className="soon-pill">скоро</span></strong><small>Писем пока не отправляем: подключим вместе с почтовым сервисом</small></span><span className="switch"><input type="checkbox" checked={preferences.emailNotifications} disabled onChange={() => {}}/><span className="switch-track"><span className="switch-thumb"/></span></span></label>
-            <label className="account-toggle is-soon"><span><strong>Новости продукта<span className="soon-pill">скоро</span></strong><small>Рассылка обновлений NestDev — тоже после подключения почты</small></span><span className="switch"><input type="checkbox" checked={preferences.productUpdates} disabled onChange={() => {}}/><span className="switch-track"><span className="switch-thumb"/></span></span></label>
+            <label className="account-toggle is-soon"><span><strong>Email-уведомления<span className="soon-pill">скоро</span></strong><small>Служебные письма (оплата, продление) сервис отправляет сам; настройка рассылок появится позже</small></span><span className="switch"><input type="checkbox" checked={preferences.emailNotifications} disabled onChange={() => {}}/><span className="switch-track"><span className="switch-thumb"/></span></span></label>
+            <label className="account-toggle is-soon"><span><strong>Новости продукта<span className="soon-pill">скоро</span></strong><small>Рассылка обновлений NestDev — в работе</small></span><span className="switch"><input type="checkbox" checked={preferences.productUpdates} disabled onChange={() => {}}/><span className="switch-track"><span className="switch-thumb"/></span></span></label>
             <p className="account-muted account-legal-note">Рекламные письма отправляются только по отдельному согласию: <a href="/legal/marketing" target="_blank" rel="noopener noreferrer">согласие на рекламные сообщения</a>.</p>
             <div className="account-pref-actions">
               <button type="button" className="ghost-button" onClick={openCookieSettings}>Cookie-настройки</button>
@@ -299,6 +306,7 @@ export function AccountSettingsPanel() {
                 : <div className="billing-empty"><Receipt size={14}/><div><strong>Платежей пока нет</strong><span>{paymentsEnabled ? "Оплата тарифа появится здесь с номером счёта и датой." : "Оплата ещё не подключена — пополнения и списания появятся позже."}</span></div></div>}
             </div>
 
+            {paymentsEnabled && <CheckoutConsent recurring={Boolean(subscription?.recurringAvailable)} onChange={setConsent}/>}
             <div className="plan-grid">{billing?.plans.map(plan => <article key={plan.id} className={"plan-card" + (plan.id === currentPlanId ? " selected" : "") + (planChoice === plan.id && plan.id !== currentPlanId ? " chosen" : "")}>
               <div className="plan-card-head"><div><strong>{plan.name}</strong><small>{plan.description}</small></div><span>{plan.priceLabel}</span></div>
               <ul>{plan.features.map(feature => <li key={feature}><Check size={12}/>{feature}</li>)}</ul>
@@ -306,7 +314,7 @@ export function AccountSettingsPanel() {
                 ? <span className="plan-current">{plan.id === currentPlanId ? "Текущий тариф" : "Входит всегда"}</span>
                 : !paymentsEnabled
                   ? <button className="plan-action" onClick={() => writePlanChoice(plan.id)}>{planChoice === plan.id ? "Выбран · оплата скоро" : "Выбрать тариф"}</button>
-                  : <button className="plan-action" disabled={paying !== null} onClick={() => void pay(plan.id as "pro" | "team")}>
+                  : <button className="plan-action" disabled={paying !== null || !consent.ready} title={consent.ready ? undefined : "Отметьте согласия выше"} onClick={() => void pay(plan.id as "pro" | "team")}>
                       {paying === plan.id ? <><RefreshCw size={12} className="spin"/> Открываем…</> : <>{plan.id === currentPlanId ? "Продлить" : "Оплатить"} {plan.priceLabel}</>}
                     </button>}
             </article>)}</div>

@@ -161,6 +161,8 @@ export type PaymentLinkInput = {
   email?: string;
   /** Донат отличается только позицией чека: подписки и периода у него нет. */
   kind?: "subscription" | "donation";
+  /** Отдельное согласие человека на регулярные списания: с ним платёж становится первым в серии. */
+  recurring?: boolean;
 };
 
 /**
@@ -193,9 +195,9 @@ export function buildPaymentUrl(input: PaymentLinkInput) {
   ];
   if (input.email) params.push(["Email", input.email]);
   if (config.testMode) params.push(["IsTest", "1"]);
-  // Донат не подписка: флаг периодических платежей превратил бы разовую поддержку в серию
-  // списаний, поэтому он ставится только для тарифов.
-  if (config.recurring && input.kind !== "donation") params.push(["Recurring", "true"]);
+  // `Recurring=true` открывает серию списаний, поэтому ставится только для тарифов и только по
+  // отдельному согласию человека: без этой отметки платёж остаётся разовым (см. 376-ФЗ).
+  if (config.recurring && input.recurring && input.kind !== "donation") params.push(["Recurring", "true"]);
   if (receipt) params.push(["Receipt", receipt]);
 
   // Receipt кодируется второй раз, как в справочных примерах Робокассы: на проводе лежит уже

@@ -126,11 +126,14 @@ export function bytesLabel(value: number): string {
   return size(value / 1024 / 1024 / 1024) + " ГБ";
 }
 
-/** Счёт на оплату: сумму и ссылку на платёжную страницу считает сервер. */
-export const startCheckout = (plan: "pro" | "team") => apiJson<Checkout>("/api/billing/checkout", {
+/**
+ * Счёт на оплату: сумму и ссылку на платёжную страницу считает сервер, а `autoRenew` — отдельное
+ * согласие человека на регулярные списания; без него счёт разовый.
+ */
+export const startCheckout = (plan: "pro" | "team", autoRenew: boolean) => apiJson<Checkout>("/api/billing/checkout", {
   method: "POST",
   headers: { "content-type": "application/json" },
-  body: JSON.stringify({ plan }),
+  body: JSON.stringify({ plan, autoRenew }),
 });
 
 /** Автопродление: сервер сам проверяет, доступно ли оно для подписки. */

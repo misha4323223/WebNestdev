@@ -1,14 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { Plus, Trash2, X } from "lucide-react";
-import { createConversation, deleteConversation, listConversations, type ConversationSummary } from "../../lib/project-api";
-import { NestLoader } from "../../components/NestLoader";
-import { conversationMemoryKey } from "../workspace/useWorkspace";
-import { publicUserMessage } from "../../lib/agent-kickoff";
+import { listConversations, type ConversationSummary } from "../../lib/project-api";
 
 /**
- * Чаты проекта — не часть одного запуска, а навигация рабочей области: список живёт
- * рядом с вкладками, поэтому переписка открывается и из «Файлов», и из «Изменений».
- * Хук хранит список и счётчик для вкладок, модальное окно только показывает его.
+ * Чаты проекта — не часть одного запуска, а навигация рабочей области: список живёт в
+ * колонке слева, поэтому переписка открывается и из «Файлов», и из «Изменений».
+ * Хук хранит список; колонка только показывает его.
  */
 export function useChatSessions(projectId: string | null, conversationId: string | null) {
   const [sessions, setSessions] = useState<ConversationSummary[] | null>(null);
@@ -24,13 +20,14 @@ export function useChatSessions(projectId: string | null, conversationId: string
     }
   }, [projectId]);
 
-  // Список и счётчик честны после запуска, переключения чата и перезагрузки.
+  // Список честен после запуска, переключения чата и перезагрузки.
   useEffect(() => { void reload() }, [reload, conversationId]);
 
   return { sessions, sessionsError, reload };
 }
 
-function formatSessionTime(value: string) {
+/** Время строки чата: сегодня — часы, дальше — дата. */
+export function formatSessionTime(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "";
   const today = new Date();
@@ -38,124 +35,68 @@ function formatSessionTime(value: string) {
   return date.toLocaleDateString("ru-RU", { day: "numeric", month: "short" });
 }
 
-export function ChatSessionsModal({ open, projectId, conversationId, sessions, sessionsError, reload, onClose, onOpenConversation }: {
-  open: boolean;
-  projectId: string;
-  conversationId: string;
-  sessions: ConversationSummary[] | null;
-  sessionsError: string;
-  reload: () => Promise<void>;
-  onClose: () => void;
-  onOpenConversation: (id: string) => void;
-}) {
-  const [busy, setBusy] = useState(false);
-  const [deleting, setDeleting] = useState("");
-  const [error, setError] = useState("");
+export type ChatGroupId = "pinned" | "today" | "yesterday" | "week" | "older";
 
-  useEffect(() => { if (open) setError(""); }, [open]);
-  if (!open) return null;
+export const CHAT_GROUP_LABELS: Record<ChatGroupId, string> = {
+  pinned: "Закреплённые",
+  today: "Сегодня",
+  yesterday: "Вчера",
+  week: "Предыдущие 7 дней",
+  older: "Старше",
+};
 
-  function openSession(id: string) {
-    onClose();
-    if (id !== conversationId) onOpenConversation(id);
+const GROUP_ORDER: ChatGroupId[] = ["pinned", "today", "yesterday", "week", "older"];
+
+/**
+ * Группа по дате последнего сообщения. Считаются календарные дни, а не часы: чат, открытый
+ * вчера в 23:50, должен лежать во «Вчера», а не в «Сегодня» через десять минут.
+ */
+export function chatGroupOf(updatedAt: string): Exclude<ChatGroupId, "pinned"> {
+  const date = new Date(updatedAt);
+  if (Number.isNaN(date.getTime())) return "older";
+  const startOfDay = (value: Date) => new Date(value.getFullYear(), value.getMonth(), value.getDate()).getTime();
+  const days = Math.round((startOfDay(new Date()) - startOfDay(date)) / 86_400_000);
+  if (days <= 0) return "today";
+  if (days === 1) return "yesterday";
+  if (days <= 7) return "week";
+  return "older";
+}
+
+/**
+ * Раскладка списка: закреплённые сверху, дальше свежие по датам. Внутри группы порядок
+ * серверный (по времени последнего сообщения) — пересортировывать его незачем.
+ */
+export function groupChats(sessions: ConversationSummary[], pinned: string[]) {
+  const byId = new Map(sessions.map(session => [session.id, session]));
+  const buckets = new Map<ChatGroupId, ConversationSummary[]>();
+  const pinnedItems = pinned.map(id => byId.get(id)).filter((item): item is ConversationSummary => Boolean(item));
+  if (pinnedItems.length) buckets.set("pinned", pinnedItems);
+  for (const session of sessions) {
+    if (pinned.includes(session.id)) continue;
+    const id = chatGroupOf(session.updatedAt);
+    buckets.set(id, [...(buckets.get(id) ?? []), session]);
   }
+  return GROUP_ORDER
+    .filter(id => buckets.has(id))
+    .map(id => ({ id, items: buckets.get(id) ?? [] }));
+}
 
-  /** Завершённый чат остаётся как есть: у проекта может быть несколько переписок. */
-  async function startSession() {
-    setBusy(true);
-    setError("");
-    try {
-      const created = await createConversation(projectId);
-      onClose();
-      onOpenConversation(created.id);
-      void reload();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Не удалось создать сессию");
-    } finally {
-      setBusy(false);
-    }
+/**
+ * Закрепления — личная настройка браузера, а не свойство чата: они не влияют на работу агента
+ * и не меняют проект, поэтому хранятся рядом с темой и плотностью, а не в базе.
+ */
+const pinnedKey = (projectId: string) => "webnestdev.pinnedChats." + projectId;
+
+export function readPinnedChats(projectId: string): string[] {
+  try {
+    const raw = localStorage.getItem(pinnedKey(projectId));
+    const parsed: unknown = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+  } catch {
+    return [];
   }
+}
 
-  /**
-   * Удаление чата не трогает проект: файлы, настройки и остальные переписки остаются. Если
-   * удалён открытый чат, рабочая область переходит к следующему, а когда других нет — сразу
-   * создаёт новый, иначе панель осталась бы с идентификатором несуществующей сессии.
-   */
-  async function removeSession(session: ConversationSummary) {
-    if (deleting) return;
-    const label = session.label || session.title || "этот чат";
-    if (!window.confirm(`Удалить чат «${label}»?\n\nПереписка и план этого чата будут удалены. Файлы проекта и остальные чаты останутся. Это действие нельзя отменить.`)) return;
-    setDeleting(session.id);
-    setError("");
-    try {
-      await deleteConversation(session.id);
-      const remaining = (sessions ?? []).filter(item => item.id !== session.id);
-      try {
-        localStorage.removeItem("webnestdev.pendingStart." + session.id);
-        if (session.id === conversationId) {
-          localStorage.removeItem("webnestdev.conversationId");
-          localStorage.removeItem(conversationMemoryKey(projectId));
-        }
-      } catch {}
-      if (session.id === conversationId) {
-        if (remaining[0]) {
-          onOpenConversation(remaining[0].id);
-          onClose();
-        } else {
-          const created = await createConversation(projectId);
-          onOpenConversation(created.id);
-          onClose();
-        }
-      }
-      await reload();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Не удалось удалить чат");
-    } finally {
-      setDeleting("");
-    }
-  }
-
-  const notice = error || sessionsError;
-
-  return <div className="modal-backdrop" role="presentation" onMouseDown={onClose}>
-    <section className="modal sessions-modal" role="dialog" aria-modal="true" aria-label="Чаты проекта" onMouseDown={event => event.stopPropagation()}>
-      <header className="modal-head">
-        <div><span className="eyebrow">ИСТОРИЯ</span><h2>Чаты проекта</h2></div>
-        <button className="icon-button" onClick={onClose} aria-label="Закрыть" title="Закрыть"><X size={16}/></button>
-      </header>
-      <div className="modal-body">
-        {notice && <div className="session-error" role="alert">{notice}</div>}
-        {sessions === null
-          ? sessionsError ? null : <div className="modal-state"><NestLoader size={26}/><span>Загружаем историю…</span></div>
-          : sessions.length === 0 ? <div className="modal-state">В проекте ещё нет сохранённых чатов.</div>
-          : <ul className="session-list">{sessions.map(session => {
-            // Название и превью чата приходят из сохранённых сообщений, а первое из них бывает
-            // автозапуском с инструкциями агенту. Человеку показывается тот же очищенный текст,
-            // что и в переписке: промт не должен всплывать даже в списке чатов.
-            const label = publicUserMessage(session.label || session.title).text;
-            const preview = session.preview ? publicUserMessage(session.preview).text : "";
-            return <li key={session.id} className="session-row">
-              <button className={"session-item" + (session.id === conversationId ? " active" : "")} onClick={() => openSession(session.id)} title={label}>
-                <span className="session-item-head"><strong>{label}</strong><small>{formatSessionTime(session.updatedAt)}</small></span>
-                {preview && <span className="session-item-preview">{preview}</span>}
-                <span className="session-item-meta">{session.messageCount} сообщ.{session.id === conversationId ? " · открыт сейчас" : ""}</span>
-              </button>
-              <button
-                className="session-delete"
-                onClick={() => void removeSession(session)}
-                disabled={Boolean(deleting)}
-                title="Удалить чат"
-                aria-label={"Удалить чат «" + label + "»"}
-              >
-                {deleting === session.id ? <NestLoader size={16}/> : <Trash2 size={13}/>}
-              </button>
-            </li>;
-          })}</ul>}
-      </div>
-      <footer className="modal-foot">
-        <p className="modal-lead">Чаты хранятся на сервере: история проекта открывается с любого устройства и переживает перезагрузку.</p>
-        <button className="send-button" onClick={() => void startSession()} disabled={busy}><Plus size={14}/> Новая сессия</button>
-      </footer>
-    </section>
-  </div>;
+export function writePinnedChats(projectId: string, ids: string[]) {
+  try { localStorage.setItem(pinnedKey(projectId), JSON.stringify(ids)) } catch {}
 }

@@ -611,7 +611,8 @@ export async function initializeStorage(): Promise<void> {
       parent_inv_id BIGINT,
       created_at TEXT NOT NULL,
       paid_at TEXT,
-      attempts INTEGER NOT NULL DEFAULT 0
+      attempts INTEGER NOT NULL DEFAULT 0,
+      auto_renew BOOLEAN NOT NULL DEFAULT false
     )`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("billing_payments")}_user ON ${tbl("billing_payments")} (user_id, created_at)`);
     // Денежная статистика админки (routes/admin-economics.ts) суммирует оплаты за период по
@@ -626,6 +627,7 @@ export async function initializeStorage(): Promise<void> {
       renews_at TEXT NOT NULL,
       auto_renew BOOLEAN NOT NULL DEFAULT false,
       parent_inv_id BIGINT NOT NULL DEFAULT 0,
+      notice_at TEXT,
       renewal_attempts INTEGER NOT NULL DEFAULT 0,
       updated_at TEXT NOT NULL
     )`);
@@ -638,6 +640,12 @@ export async function initializeStorage(): Promise<void> {
 
     // Базы, созданные до появления счётчика попыток, дополняются здесь.
     await pool.query(`ALTER TABLE ${tbl("billing_subscriptions")} ADD COLUMN IF NOT EXISTS renewal_attempts INTEGER NOT NULL DEFAULT 0`);
+    // Счета, созданные до появления отдельного согласия на автопродление, дополняются здесь:
+    // у старых счетов согласия нет, поэтому продление по ним не включается.
+    await pool.query(`ALTER TABLE ${tbl("billing_payments")} ADD COLUMN IF NOT EXISTS auto_renew BOOLEAN NOT NULL DEFAULT false`);
+    // Подписки, созданные до появления письма-предупреждения о списании, дополняются здесь:
+    // `notice_at` пусто, поэтому первые списания по ним пройдут только после письма.
+    await pool.query(`ALTER TABLE ${tbl("billing_subscriptions")} ADD COLUMN IF NOT EXISTS notice_at TEXT`);
 
     console.log("[pg] storage initialized: all tables ready");
   })().catch((error) => {

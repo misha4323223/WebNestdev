@@ -1,13 +1,14 @@
-import { Bot,FolderGit2,GitBranch,ListTodo,MessagesSquare,Terminal } from "lucide-react";
+import { Bot,FolderGit2,GitBranch,ListTodo,Terminal } from "lucide-react";
 
 export type WorkspaceView="agent"|"tasks"|"files"|"changes"|"terminal";
 
 /**
  * Строка вкладок рабочей области. Кнопка «вниз» теперь живёт у нижнего края правой рельсы
  * переписки (см. AgentPanel): там она рядом с точками, которые и так показывают положение в чате,
- * и не занимает место в строке вкладок на телефоне.
+ * и не занимает место в строке вкладок на телефоне. Список чатов переехал в колонку слева,
+ * поэтому отдельной кнопки «Чаты» здесь больше нет.
  */
-export function WorkspaceNav({view,onChange,onSessions,sessionCount,onSecrets}:{view:WorkspaceView;onChange:(view:WorkspaceView)=>void;onSessions:()=>void;sessionCount?:number;onSecrets?:()=>void}){
+export function WorkspaceNav({view,onChange,onSecrets}:{view:WorkspaceView;onChange:(view:WorkspaceView)=>void;onSecrets?:()=>void}){
   return <nav className="workspace-tabs">
     <button className={view==="agent"?"active":""} onClick={()=>onChange("agent")} title="Чат с агентом"><Bot size={15}/> Агент</button>
     <button className={view==="tasks"?"active":""} onClick={()=>onChange("tasks")} title="Задачи проекта: список дел, который агент читает по запросу"><ListTodo size={15}/> Задачи</button>
@@ -16,10 +17,5 @@ export function WorkspaceNav({view,onChange,onSessions,sessionCount,onSecrets}:{
     <button className={view==="terminal"?"active":""} onClick={()=>onChange("terminal")} title="Команды в папке проекта"><Terminal size={15}/> Терминал</button>
     {/* Ключи — текстовая кнопка на месте ракеты: действие, а не раздел, и подпись понятнее значка. */}
     {onSecrets&&<button className="workspace-tabs-keys" onClick={onSecrets} title="Секреты проекта: ключи и переменные окружения" aria-label="Ключи проекта">Ключи</button>}
-    {/* История переписки — рядом с вкладками, а не отдельной шапкой над чатом. */}
-    <button className="workspace-tabs-chats" onClick={onSessions} title="Сохранённые чаты проекта — вернуться к любому" aria-label="Чаты проекта">
-      <MessagesSquare size={14}/>
-      <span>Чаты{sessionCount&&sessionCount>1?" · "+sessionCount:""}</span>
-    </button>
   </nav>;
 }

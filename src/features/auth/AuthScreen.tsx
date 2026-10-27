@@ -130,13 +130,13 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void })
         <label><span>Номер телефона</span><input type="tel" inputMode="tel" value={phone} onChange={event => setPhone(event.target.value)} placeholder="+7 999 123-45-67" autoComplete="tel" title="Номер для входа по SMS" required /></label>
         <label className="auth-consent">
           <input type="checkbox" checked={consent} onChange={event => { setConsent(event.target.checked); setError(""); }} />
-          <span>Согласен на обработку номера телефона для входа по SMS</span>
+          <span>Даю согласие на обработку номера телефона и технических данных для входа по SMS</span>
         </label>
         {/* Согласие даётся осознанно: текст согласия и политика открываются до отправки кода. */}
         <div className="auth-consent-links">
           <a href={legalPath("consent")} target="_blank" rel="noopener noreferrer">Согласие на обработку данных</a>
           <span>·</span>
-          <a href={legalPath("privacy")} target="_blank" rel="noopener noreferrer">Политика конфиденциальности</a>
+          <a href={legalPath("privacy")} target="_blank" rel="noopener noreferrer">Политика обработки данных</a>
         </div>
         {error && <div className="auth-error">{error}</div>}
         <button className="send-button auth-submit" disabled={busy || !phone.trim() || !consent}>{busy ? "Отправляем код…" : "Получить код"}</button>

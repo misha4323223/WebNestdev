@@ -9,7 +9,7 @@ import { ProjectRenameForm } from "./ProjectRename";
 import { PlanPickerModal } from "../billing/PlanPickerModal";
 import { SubscriptionPage } from "../billing/SubscriptionPage";
 import { conversationMemoryKey } from "../workspace/useWorkspace";
-import { LEGAL_FOOTER_LINKS, legalDoc, legalPath } from "../../lib/legal";
+import { LEGAL_FOOTER_LINKS, SELLER, legalDoc, legalPath } from "../../lib/legal";
 import { ideaKickoff } from "../../lib/agent-kickoff";
 import { startProjectWithAgent } from "../../lib/start-project";
 
@@ -265,6 +265,14 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
               {LEGAL_FOOTER_LINKS.map(id => <a key={id} href={legalPath(id)} target="_blank" rel="noopener noreferrer">{legalDoc(id).short}</a>)}
             </nav>
             <span className="home-footer-note">Создавайте быстрее. Оставайтесь в контроле.</span>
+            {/* Реквизиты продавца — в подвале, а не только на странице контактов: этого требует
+                модерация платёжного сервиса, и это же правило Закона о защите прав потребителей. */}
+            <div className="home-footer-requisites">
+              <span>{SELLER.status} {SELLER.fullName} · ИНН {SELLER.inn}{SELLER.city ? " · " + SELLER.city : ""}</span>
+              <a href={"mailto:" + SELLER.email}>{SELLER.email}</a>
+              <a href={"tel:" + SELLER.phoneHref}>{SELLER.phone}</a>
+              <a href={legalPath("contacts")}>Реквизиты и контакты</a>
+            </div>
           </footer>
         </div>
 

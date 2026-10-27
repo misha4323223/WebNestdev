@@ -6,6 +6,12 @@ type NestLoaderProps = {
   label?: string;
 };
 
+/**
+ * Прутья гнезда. Каждый — замкнутая дуга или перекладина; при сборке он прилетает из своей
+ * точки (`dx`, `dy`, `r`) и прорисовывается, при разборке уходит туда же. Прутья не несут
+ * смысла по отдельности — важна только их общая форма, поэтому смещения подобраны так, чтобы
+ * разлёт читался веером, а не кучей.
+ */
 const strands = [
   { d: "M14 29 C21 17 34 15 44 16 C56 16 68 20 74 29 C66 38 22 39 14 29Z", dx: -10, dy: -9, r: -16 },
   { d: "M17 27 C28 32 59 34 71 27", dx: 0, dy: -13, r: 7 },
@@ -21,6 +27,26 @@ const strands = [
   { d: "M24 25 C34 22 53 23 64 28", dx: -7, dy: -5, r: -8 },
 ];
 
+/**
+ * Знак кода внутри того же квадрата, что и гнездо: две угловые скобки и косая черта между
+ * ними. Толщина штриха чуть больше прута — иначе на 16–24 px знак расплывается в пятно.
+ */
+const codeStrokes = [
+  { d: "M33.5 26 L24 34 L33.5 42", delay: 0 },
+  { d: "M54.5 26 L64 34 L54.5 42", delay: 0 },
+  { d: "M39 46.5 L49 21.5", delay: 0.1 },
+];
+
+/**
+ * Загрузчик NestDev: гнездо сплетается из прутьев, затем разбирается и собирается в знак
+ * `</>`, после чего цикл повторяется. Яиц нет — вместо них вторая фаза, поэтому индикатор
+ * говорит не только «идёт работа», но и «работаем с кодом».
+ *
+ * Обе фигуры живут на одной временной шкале в одном `viewBox`, а превращение читается за счёт
+ * встречного масштаба: гнездо сжимается и гаснет, знак кода проявляется и прорисовывается
+ * штрихами. Ничего не переключается мгновенно — на стыке фаз есть кроссфейд, иначе на 16 px
+ * это выглядело бы как мигание.
+ */
 export function NestLoader({ size = 42, className = "", label }: NestLoaderProps) {
   const id = useId().replace(/:/g, "");
   return (
@@ -38,20 +64,21 @@ export function NestLoader({ size = 42, className = "", label }: NestLoaderProps
             <stop offset=".68" stopColor="#dfc18e" />
             <stop offset="1" stopColor="#8a6442" />
           </linearGradient>
-          <linearGradient id={`${id}-egg`} x1="0" y1="0" x2="1" y2="1">
-            <stop offset="0" stopColor="#fff4d8" />
-            <stop offset="1" stopColor="#c8b28b" />
+          <linearGradient id={`${id}-code`} x1="23" y1="20" x2="65" y2="48" gradientUnits="userSpaceOnUse">
+            <stop offset="0" stopColor="#f6eedb" />
+            <stop offset=".48" stopColor="#ddceb0" />
+            <stop offset="1" stopColor="#a68e69" />
           </linearGradient>
+          <radialGradient id={`${id}-glow`}>
+            <stop offset="0" stopColor="#e8d8b6" stopOpacity=".3" />
+            <stop offset=".55" stopColor="#e8d8b6" stopOpacity=".09" />
+            <stop offset="1" stopColor="#e8d8b6" stopOpacity="0" />
+          </radialGradient>
         </defs>
 
-        <ellipse className="nest-loader__shadow" cx="44" cy="54" rx="22" ry="3.4" />
+        <g className="nest-loader__nest">
+          <ellipse className="nest-loader__shadow" cx="44" cy="55" rx="22" ry="3.2" />
 
-        <g className="nest-loader__eggs">
-          <ellipse cx="40.5" cy="28.2" rx="4.1" ry="5.5" transform="rotate(-15 40.5 28.2)" fill={`url(#${id}-egg)`} />
-          <ellipse cx="48.3" cy="29.1" rx="3.8" ry="5.1" transform="rotate(13 48.3 29.1)" fill={`url(#${id}-egg)`} />
-        </g>
-
-        <g className="nest-loader__strands">
           {strands.map((strand, index) => (
             <path
               key={index}
@@ -59,12 +86,28 @@ export function NestLoader({ size = 42, className = "", label }: NestLoaderProps
               d={strand.d}
               pathLength="1"
               stroke={`url(#${id}-twig)`}
-              style={{
-                "--dx": `${strand.dx}px`,
-                "--dy": `${strand.dy}px`,
-                "--r": `${strand.r}deg`,
-                "--delay": `${index * -0.075}s`,
-              } as CSSProperties}
+              style={
+                {
+                  "--dx": `${strand.dx}px`,
+                  "--dy": `${strand.dy}px`,
+                  "--r": `${strand.r}deg`,
+                  "--delay": `${index * 0.04}s`,
+                } as CSSProperties
+              }
+            />
+          ))}
+        </g>
+
+        <g className="nest-loader__code">
+          <circle className="nest-loader__glow" cx="44" cy="34" r="29" fill={`url(#${id}-glow)`} />
+          {codeStrokes.map((stroke, index) => (
+            <path
+              key={index}
+              className="nest-loader__code-stroke"
+              d={stroke.d}
+              pathLength="1"
+              stroke={`url(#${id}-code)`}
+              style={{ "--delay": `${stroke.delay}s` } as CSSProperties}
             />
           ))}
         </g>

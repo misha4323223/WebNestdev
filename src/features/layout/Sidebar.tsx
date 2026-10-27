@@ -1,9 +1,12 @@
-import { useEffect,useState } from "react";
-import { ArrowUpRight,Bot,CreditCard,FolderGit2,HardDrive,History,Home,ListTodo,Terminal } from "lucide-react";
-import type { WorkspaceView } from "../workspace/WorkspaceNav";
+import { useEffect,useMemo,useState } from "react";
+import { ArrowUpRight,CreditCard,HardDrive,Pin,Plus,Trash2 } from "lucide-react";
 import { SidebarBanner } from "./SidebarBanner";
+import { NestLoader } from "../../components/NestLoader";
 import { bytesLabel, getBilling } from "../../lib/billing-api";
 import { activePlanId, chosenPlanId, isPendingChoice, planName, usePlanChoice } from "../../lib/plan-choice";
+import { CHAT_GROUP_LABELS, formatSessionTime, groupChats, readPinnedChats, writePinnedChats } from "../agent/ChatSessions";
+import { publicUserMessage } from "../../lib/agent-kickoff";
+import type { ConversationSummary } from "../../lib/project-api";
 
 /**
  * Тариф в колонке, над баннером. Раньше капсула стояла в шапке рядом с названием проекта и спорила
@@ -86,21 +89,124 @@ function SidebarPlan({onPlan}:{onPlan:()=>void}){
   </>;
 }
 
+/** Всё, что колонке нужно знать о чатах проекта: список и три действия над ним. */
+export type SidebarChats={
+  projectId:string;
+  activeId:string;
+  sessions:ConversationSummary[]|null;
+  error:string;
+  onNew:()=>Promise<void>;
+  onOpen:(id:string)=>void;
+  onDelete:(session:ConversationSummary)=>Promise<void>;
+};
+
 /**
- * Колонка рабочей области — только навигация. Название проекта, «Секреты» и «Настройки» переехали
- * в шапку: это не разделы работы, а проект, над которым идёт работа, и глобальные действия.
- * Освободившееся место отдано тарифу и витрине.
+ * Колонка рабочей области — чаты проекта, как в чат-интерфейсах: сверху «Новый чат», ниже
+ * закреплённые и остальные по датам, внизу тариф и баннер поддержки. Разделы (агент, файлы,
+ * Git, терминал) живут строкой вкладок над содержимым, поэтому здесь их нет: колонка отвечает
+ * только за то, какой чат открыт.
+ *
+ * Закрепление поднимает чат над датами: у долгой работы бывает один главный разговор, к
+ * которому возвращаются чаще остальных.
  */
-export function Sidebar({open,view,onView,onPlan,onHome}:{open:boolean;view:WorkspaceView;onView:(view:WorkspaceView)=>void;onPlan:()=>void;onHome:()=>void}){
-  return <aside id="workspace-sidebar" className={"sidebar"+(open?" open":"")}>
-    <div className="sidebar-section"><button className="nav-item" onClick={onHome}><Home size={14}/> На главную</button></div>
-    <div className="sidebar-section"><div className="section-label">РАБОЧАЯ ОБЛАСТЬ</div>
-      <button className={"nav-item "+(view==="agent"?"active":"")} onClick={()=>onView("agent")} title="Чат с агентом"><Bot size={14}/> Агент</button>
-      <button className={"nav-item "+(view==="tasks"?"active":"")} onClick={()=>onView("tasks")} title="Задачи проекта: список дел, который агент читает по запросу"><ListTodo size={14}/> Задачи</button>
-      <button className={"nav-item "+(view==="files"?"active":"")} onClick={()=>onView("files")} title="Файлы проекта и редактор"><FolderGit2 size={14}/> Файлы</button>
-      <button className={"nav-item "+(view==="changes"?"active":"")} onClick={()=>onView("changes")} title="История версий и отправка на GitHub"><History size={14}/> Изменения</button>
-      <button className={"nav-item "+(view==="terminal"?"active":"")} onClick={()=>onView("terminal")} title="Команды в папке проекта"><Terminal size={14}/> Терминал</button>
+export function Sidebar({open,chats,onPlan}:{open:boolean;chats:SidebarChats;onPlan:()=>void}){
+  const [pinned,setPinned]=useState<string[]>(()=>readPinnedChats(chats.projectId));
+  const [busy,setBusy]=useState(false);
+  const [deleting,setDeleting]=useState("");
+  const [actionError,setActionError]=useState("");
+  // Другой проект — другие закрепления: они хранятся по проекту, а не на всю учётную запись.
+  useEffect(()=>{setPinned(readPinnedChats(chats.projectId));setActionError("")},[chats.projectId]);
+
+  const groups=useMemo(()=>groupChats(chats.sessions??[],pinned),[chats.sessions,pinned]);
+
+  function togglePin(id:string){
+    const next=pinned.includes(id)?pinned.filter(item=>item!==id):[...pinned,id];
+    setPinned(next);
+    writePinnedChats(chats.projectId,next);
+  }
+
+  async function startChat(){
+    if(busy)return;
+    setBusy(true);
+    setActionError("");
+    try{await chats.onNew()}
+    catch(error){setActionError(error instanceof Error?error.message:"Не удалось создать чат")}
+    finally{setBusy(false)}
+  }
+
+  /**
+   * Удаление чата не трогает проект: файлы, настройки и остальные переписки остаются. Что
+   * открыть вместо удалённого, решает рабочая область — колонка только спрашивает подтверждение.
+   */
+  async function removeChat(session:ConversationSummary){
+    if(deleting)return;
+    const label=publicUserMessage(session.label||session.title).text;
+    if(!window.confirm(`Удалить чат «${label}»?\n\nПереписка и план этого чата будут удалены. Файлы проекта и остальные чаты останутся. Это действие нельзя отменить.`))return;
+    setDeleting(session.id);
+    setActionError("");
+    try{
+      await chats.onDelete(session);
+      if(pinned.includes(session.id)){
+        const next=pinned.filter(item=>item!==session.id);
+        setPinned(next);
+        writePinnedChats(chats.projectId,next);
+      }
+    }catch(error){
+      setActionError(error instanceof Error?error.message:"Не удалось удалить чат");
+    }finally{setDeleting("")}
+  }
+
+  const notice=actionError||chats.error;
+
+  return <aside id="workspace-sidebar" className={"sidebar chats-sidebar"+(open?" open":"")}>
+    <div className="chat-side-top">
+      <button className="chat-side-new" onClick={()=>void startChat()} disabled={busy} title="Новый чат в этом проекте">
+        {busy?<NestLoader size={14}/>:<Plus size={14}/>}
+        <span>Новый чат</span>
+      </button>
     </div>
+
+    <nav className="chat-side-scroll" aria-label="Чаты проекта">
+      {notice&&<div className="chat-side-error" role="alert">{notice}</div>}
+      {chats.sessions===null&&!chats.error&&<div className="chat-side-state"><NestLoader size={20}/><span>Загружаем чаты…</span></div>}
+      {chats.sessions?.length===0&&!notice&&<div className="chat-side-state">Чатов пока нет. Начните новый — он появится здесь.</div>}
+      {groups.map(group=><div className="chat-side-group-wrap" key={group.id}>
+        <div className="chat-side-group">{CHAT_GROUP_LABELS[group.id]}</div>
+        {group.items.map(session=>{
+          // Название приходит из сохранённых сообщений, а первое из них бывает автозапуском с
+          // инструкциями агенту. Человеку показывается тот же очищенный текст, что и в переписке.
+          const label=publicUserMessage(session.label||session.title).text;
+          const active=session.id===chats.activeId;
+          const isPinned=pinned.includes(session.id);
+          return <div key={session.id} className={"chat-side-row"+(active?" active":"")+(isPinned?" pinned":"")}>
+            <button className="chat-side-open" onClick={()=>chats.onOpen(session.id)} title={label} aria-current={active?true:undefined}>
+              <span className="chat-side-title">
+                {isPinned&&<Pin size={9} className="chat-side-mark"/>}
+                <span className="chat-side-label">{label}</span>
+              </span>
+              <span className="chat-side-time">{formatSessionTime(session.updatedAt)}</span>
+            </button>
+            <div className="chat-side-tools">
+              <button
+                className={"chat-side-tool"+(isPinned?" is-on":"")}
+                onClick={()=>togglePin(session.id)}
+                title={isPinned?"Открепить чат":"Закрепить чат наверху"}
+                aria-pressed={isPinned}
+                aria-label={(isPinned?"Открепить чат «":"Закрепить чат «")+label+"»"}
+              ><Pin size={11}/></button>
+              <button
+                className="chat-side-tool danger"
+                onClick={()=>void removeChat(session)}
+                disabled={Boolean(deleting)}
+                title="Удалить чат"
+                aria-label={"Удалить чат «"+label+"»"}
+              >{deleting===session.id?<NestLoader size={11}/>:<Trash2 size={11}/>}</button>
+            </div>
+          </div>;
+        })}
+      </div>)}
+    </nav>
+
     <div className="sidebar-footer">
       <SidebarPlan onPlan={onPlan}/>
       <SidebarBanner/>

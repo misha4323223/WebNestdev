@@ -144,7 +144,8 @@ test("the subject is encoded for UTF-8 and names the category and severity", () 
 });
 
 test("mail is not configured until all SMTP values are present", () => {
-  const names = ["SUPPORT_SMTP_HOST", "SUPPORT_SMTP_USER", "SUPPORT_SMTP_PASSWORD", "SUPPORT_EMAIL_TO", "SUPPORT_EMAIL_FROM", "SUPPORT_SMTP_PORT"];
+  // Ключи почты платформы тоже убираются: с ними письмо поддержки настроено и без SUPPORT_SMTP_*.
+  const names = ["SUPPORT_SMTP_HOST", "SUPPORT_SMTP_USER", "SUPPORT_SMTP_PASSWORD", "SUPPORT_EMAIL_TO", "SUPPORT_EMAIL_FROM", "SUPPORT_SMTP_PORT", "MAIL_SMTP_HOST", "MAIL_SMTP_USER", "MAIL_SMTP_PASSWORD", "MAIL_FROM", "MAIL_SMTP_PORT", "MAIL_FROM_NAME"];
   const saved = names.map(name => [name, process.env[name]] as const);
   for (const name of names) delete process.env[name];
   try {
@@ -157,6 +158,32 @@ test("mail is not configured until all SMTP values are present", () => {
     const configured = supportMailSettings();
     assert.equal(configured?.port, 465, "порт по умолчанию — шифрование сразу");
     assert.equal(configured?.from, "support@example.ru", "отправитель по умолчанию — логин SMTP");
+  } finally {
+    for (const [name, value] of saved) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+});
+
+test("почта платформы (Postbox) важнее личного SMTP, а получатель остаётся ящиком поддержки", () => {
+  const names = ["MAIL_SMTP_HOST", "MAIL_SMTP_USER", "MAIL_SMTP_PASSWORD", "MAIL_FROM", "MAIL_SMTP_PORT", "MAIL_FROM_NAME", "SUPPORT_SMTP_HOST", "SUPPORT_SMTP_USER", "SUPPORT_SMTP_PASSWORD", "SUPPORT_EMAIL_TO", "SUPPORT_EMAIL_FROM", "SUPPORT_SMTP_PORT"];
+  const saved = names.map(name => [name, process.env[name]] as const);
+  for (const name of names) delete process.env[name];
+  try {
+    process.env.SUPPORT_EMAIL_TO = "owner@example.ru";
+    process.env.SUPPORT_SMTP_HOST = "smtp.yandex.ru";
+    process.env.SUPPORT_SMTP_USER = "support@example.ru";
+    process.env.SUPPORT_SMTP_PASSWORD = "app-password";
+    process.env.MAIL_SMTP_HOST = "postbox.cloud.yandex.net";
+    process.env.MAIL_SMTP_USER = "key-id";
+    process.env.MAIL_SMTP_PASSWORD = "key-secret";
+    process.env.MAIL_FROM = "noreply@nestdev.ru";
+
+    const settings = supportMailSettings();
+    assert.equal(settings?.host, "postbox.cloud.yandex.net", "Postbox важнее личного ящика");
+    assert.equal(settings?.from, "noreply@nestdev.ru", "письма уходят от домена сервиса");
+    assert.equal(settings?.to, "owner@example.ru", "получатель — ящик поддержки");
   } finally {
     for (const [name, value] of saved) {
       if (value === undefined) delete process.env[name];

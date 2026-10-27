@@ -1,24 +1,28 @@
-import tls from "node:tls";
 import { randomUUID } from "node:crypto";
 import { getPlatformEnv } from "../platform/platform-env.js";
+import { mailSettings } from "../mail/mailer.js";
+import { encodedHeader, wrap76 } from "../mail/mime.js";
+import { smtpSend, type MailDeps, type MailSocket } from "../mail/smtp.js";
 import type { SupportReporter } from "./support-store.js";
 
 /**
  * Почта поддержки: обращение из кнопки «Поддержка» уходит письмом на ящик платформы.
  *
- * Отдельный сервис для этого не нужен: подходит SMTP обычной почты (Яндекс, Mail.ru, Gmail) —
- * сервер входит в ящик и отправляет письмо на него же. Ключи вводятся в «Ключи сервера» и
- * читаются через getPlatformEnv, поэтому включение почты не требует перезапуска.
+ * Ключи берутся в порядке важности: сначала почта платформы — группа «Почта (Yandex Cloud
+ * Postbox)», потом личный SMTP обычной почты (`SUPPORT_SMTP_*`: Яндекс, Mail.ru, Gmail). Так
+ * Postbox и есть основной путь: письма уходят от подтверждённого домена сервиса, а старые
+ * ключи отдельного ящика продолжают работать. Значения читаются через getPlatformEnv, поэтому
+ * включение почты не требует перезапуска.
  *
  * Reply-To указывает на автора обращения: ответ на письмо уходит пользователю напрямую, без
  * ручного копирования адреса из тикета.
  *
- * Поддерживается только шифрование сразу (порт 465): STARTTLS требует отдельного разговора, а
- * молчаливая отправка без шифрования отдала бы пароль приложения открытым текстом.
+ * Разговор по SMTP общий для всей платформы (mail/smtp.ts) и поддерживает только шифрование
+ * сразу (порт 465): STARTTLS требует отдельного шага, а молчаливая отправка без шифрования
+ * отдала бы пароль сервисного аккаунта открытым текстом.
  */
 
 const DEFAULT_PORT = 465;
-const TIMEOUT_MS = 20_000;
 
 export type SupportMailSettings = {
   host: string;
@@ -52,11 +56,18 @@ function env(name: string) {
 }
 
 export function supportMailSettings(): SupportMailSettings | null {
+  const to = env("SUPPORT_EMAIL_TO");
+  if (!to) return null;
+  // Почтовая служба платформы важнее личного SMTP: с Postbox письма уходят от подтверждённого
+  // домена сервиса и не зависят от пароля приложения в чужом ящике.
+  const platform = mailSettings();
+  if (platform) {
+    return { host: platform.host, port: platform.port, user: platform.user, password: platform.password, from: platform.from, to };
+  }
   const host = env("SUPPORT_SMTP_HOST");
   const user = env("SUPPORT_SMTP_USER");
   const password = env("SUPPORT_SMTP_PASSWORD");
-  const to = env("SUPPORT_EMAIL_TO");
-  if (!host || !user || !password || !to) return null;
+  if (!host || !user || !password) return null;
   const port = Number(env("SUPPORT_SMTP_PORT") ?? DEFAULT_PORT);
   return {
     host,
@@ -107,18 +118,6 @@ export function supportMailBody(ticket: SupportMailTicket) {
   return lines.join("\n");
 }
 
-/** Заголовок в UTF-8 по RFC 2047: русская тема иначе приходит как «=?UTF-8?» мусор. */
-function encodedHeader(value: string) {
-  const clean = value.replace(/[\r\n]+/g, " ").trim();
-  if (/^[\x20-\x7e]*$/.test(clean)) return clean;
-  return "=?UTF-8?B?" + Buffer.from(clean, "utf8").toString("base64") + "?=";
-}
-
-/** Длинная base64-строка без переводов строк превышает лимит SMTP в 998 байт на строку. */
-function wrap76(value: string) {
-  return value.replace(/(.{76})/g, "$1\r\n").replace(/\r\n$/, "");
-}
-
 export function supportMailMessage(
   settings: SupportMailSettings,
   ticket: SupportMailTicket,
@@ -157,29 +156,14 @@ export function supportMailMessage(
   return parts.join("\r\n");
 }
 
-/** Строка, начинающаяся с точки, в DATA означает «конец письма» — её нужно удвоить. */
-function dotStuffed(message: string) {
-  return message.split("\r\n").map(line => (line.startsWith(".") ? "." + line : line)).join("\r\n");
-}
-
-/** Только те методы, которые использует разговор: тест подменяет сокет целиком. */
-export type SupportMailSocket = {
-  write(data: string): unknown;
-  destroy(): void;
-  on(event: "data", listener: (chunk: Buffer | string) => void): unknown;
-  on(event: "error", listener: (error: Error) => void): unknown;
-  on(event: "close", listener: () => void): unknown;
-};
-
-export type SupportMailDeps = {
-  /** Подмена TLS-соединения в тестах: живого SMTP в CI нет. */
-  connect?: (options: { host: string; port: number; servername: string }) => SupportMailSocket;
-};
+/** Socket и deps — общие для всей платформы (mail/smtp.ts); псевдонимы сохраняют прежние имена. */
+export type SupportMailSocket = MailSocket;
+export type SupportMailDeps = MailDeps;
 
 /**
- * Разговор по SMTP короткий: приветствие, EHLO, AUTH LOGIN, MAIL FROM, RCPT TO, DATA, QUIT.
- * Любой отказ сервера превращается в понятную ошибку, чтобы её было видно в логе, а обращение
- * при этом осталось сохранённым на диске.
+ * Письмо поддержки уходит тем же SMTP-разговором, что и остальные письма платформы. Любой отказ
+ * сервера превращается в понятную ошибку, чтобы её было видно в логе, а обращение при этом
+ * осталось сохранённым на диске.
  */
 export function sendSupportMail(
   settings: SupportMailSettings,
@@ -188,100 +172,5 @@ export function sendSupportMail(
   deps: SupportMailDeps = {},
 ): Promise<void> {
   const message = supportMailMessage(settings, ticket, screenshot);
-  return new Promise((resolve, reject) => {
-    const socket: SupportMailSocket = deps.connect
-      ? deps.connect({ host: settings.host, port: settings.port, servername: settings.host })
-      : (tls.connect({ host: settings.host, port: settings.port, servername: settings.host }) as unknown as SupportMailSocket);
-    let buffer = "";
-    let settled = false;
-    let step: "greeting" | "ehlo" | "auth" | "user" | "password" | "from" | "to" | "data" | "message" = "greeting";
-    const timer = setTimeout(() => finish(new Error("SMTP не ответил за " + TIMEOUT_MS / 1000 + " секунд")), TIMEOUT_MS);
-
-    function finish(error?: Error) {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      socket.destroy();
-      if (error) reject(error);
-      else resolve();
-    }
-
-    function send(line: string) {
-      socket.write(line + "\r\n");
-    }
-
-    function refuse(code: number) {
-      finish(new Error("SMTP ответил " + code + " на шаге «" + step + "»"));
-    }
-
-    function handle(code: number) {
-      switch (step) {
-        case "greeting":
-          if (code !== 220) return refuse(code);
-          step = "ehlo";
-          send("EHLO webnestdev");
-          return;
-        case "ehlo":
-          if (code !== 250) return refuse(code);
-          step = "auth";
-          send("AUTH LOGIN");
-          return;
-        case "auth":
-          if (code !== 334) return refuse(code);
-          step = "user";
-          send(Buffer.from(settings.user, "utf8").toString("base64"));
-          return;
-        case "user":
-          if (code !== 334) return refuse(code);
-          step = "password";
-          send(Buffer.from(settings.password, "utf8").toString("base64"));
-          return;
-        case "password":
-          if (code !== 235) return refuse(code);
-          step = "from";
-          send("MAIL FROM:<" + settings.from + ">");
-          return;
-        case "from":
-          if (code !== 250) return refuse(code);
-          step = "to";
-          send("RCPT TO:<" + settings.to + ">");
-          return;
-        case "to":
-          if (code !== 250) return refuse(code);
-          step = "data";
-          send("DATA");
-          return;
-        case "data":
-          if (code !== 354) return refuse(code);
-          step = "message";
-          send(dotStuffed(message) + "\r\n.");
-          return;
-        case "message":
-          if (code !== 250) return refuse(code);
-          send("QUIT");
-          finish();
-          return;
-      }
-    }
-
-    socket.on("error", (error: Error) => finish(new Error("SMTP: " + error.message)));
-    socket.on("close", () => finish(new Error("SMTP закрыл соединение до конца отправки")));
-    socket.on("data", (chunk: Buffer | string) => {
-      buffer += chunk.toString();
-      let index = buffer.indexOf("\r\n");
-      while (index >= 0) {
-        const line = buffer.slice(0, index);
-        buffer = buffer.slice(index + 2);
-        index = buffer.indexOf("\r\n");
-        // Многострочный ответ EHLO: строки с дефисом — продолжение, решение принимает последняя.
-        if (line[3] === "-") continue;
-        if (!/^\d{3}/.test(line)) {
-          finish(new Error("SMTP вернул неожиданный ответ: " + (line.slice(0, 200) || "пустая строка")));
-          return;
-        }
-        handle(Number(line.slice(0, 3)));
-        if (settled) return;
-      }
-    });
-  });
+  return smtpSend(settings, { from: settings.from, to: settings.to }, message, deps);
 }

@@ -30,8 +30,8 @@ export const SITE = {
   domain: "nestdev.ru",
   url: "https://nestdev.ru",
   /** Редакция документов: одна дата на все страницы, чтобы не расходились версии. */
-  updated: "20 октября 2026 г.",
-  version: "1.0",
+  updated: "27 октября 2026 г.",
+  version: "2.0",
 };
 
 /**

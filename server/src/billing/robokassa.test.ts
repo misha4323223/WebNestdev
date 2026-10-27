@@ -72,9 +72,19 @@ test("the payment link carries the signed amount, invoice and test flag", () => 
   assert.equal(url.searchParams.get("SignatureValue"), signValue("nestdev:990.00:100001:pass1", "md5"));
 });
 
-test("the recurring flag marks the first payment of a series", () => {
-  const link = buildPaymentUrl({ config: { ...config, recurring: true }, plan: "team", planName: "Премиум", invId: 7, amount: 2990, description: "Подписка" });
-  assert.equal(new URL(link.url).searchParams.get("Recurring"), "true");
+test("the recurring flag marks the first payment of a series only with the customer's consent", () => {
+  const recurringUrl = (input: { recurring?: boolean }) => new URL(buildPaymentUrl({
+    config: { ...config, recurring: true },
+    plan: "team",
+    planName: "Премиум",
+    invId: 7,
+    amount: 2990,
+    description: "Подписка",
+    ...input,
+  }).url);
+  // Возможность продления и согласие человека — разные вещи: без отметки платёж разовый.
+  assert.equal(recurringUrl({}).searchParams.get("Recurring"), null);
+  assert.equal(recurringUrl({ recurring: true }).searchParams.get("Recurring"), "true");
 });
 
 test("a receipt is a service for a month with no VAT and the encoded value is signed", () => {

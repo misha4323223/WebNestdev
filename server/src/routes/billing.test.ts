@@ -162,6 +162,78 @@ test("the browser return only redirects to the panel and enables nothing by itse
   });
 });
 
+test("recurring charges are enabled only by the customer's separate consent", async () => {
+  await withShop(async () => {
+    process.env.ROBOKASSA_RECURRING = "1";
+    // Продление включает предупреждение о списании, поэтому почтовая служба должна быть настроена.
+    // Хост намеренно недоступен (127.0.0.1:1): письмо честно не уйдёт, а платёж от этого не страдает.
+    const mailNames = ["MAIL_SMTP_HOST", "MAIL_SMTP_PORT", "MAIL_SMTP_USER", "MAIL_SMTP_PASSWORD", "MAIL_FROM"] as const;
+    const mailSaved = mailNames.map(name => [name, process.env[name]] as const);
+    process.env.MAIL_SMTP_HOST = "127.0.0.1";
+    process.env.MAIL_SMTP_PORT = "1";
+    process.env.MAIL_SMTP_USER = "key-id";
+    process.env.MAIL_SMTP_PASSWORD = "key-secret";
+    process.env.MAIL_FROM = "noreply@nestdev.ru";
+    const app = await shopApp();
+    try {
+      // Согласие дано отдельной отметкой: она открывает серию списаний и включает продление.
+      const withConsent = await signedInUser();
+      const checkout = (await app.inject({
+        method: "POST", url: "/api/billing/checkout", headers: { cookie: withConsent.cookie },
+        payload: { plan: "pro", autoRenew: true },
+      })).json() as { invId: number; paymentUrl: string };
+      assert.equal(new URL(checkout.paymentUrl).searchParams.get("Recurring"), "true");
+      await app.inject({
+        method: "POST", url: "/api/billing/robokassa/result",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        payload: resultBody(checkout.invId, "990.00"),
+      });
+      assert.equal((await getSubscriptionRecord(withConsent.user.id))?.autoRenew, true);
+
+      // Тот же магазин, но человек согласие не отметил: счёт разовый и продление не включается.
+      const withoutConsent = await signedInUser();
+      const oneOff = (await app.inject({
+        method: "POST", url: "/api/billing/checkout", headers: { cookie: withoutConsent.cookie },
+        payload: { plan: "pro" },
+      })).json() as { invId: number; paymentUrl: string };
+      assert.equal(new URL(oneOff.paymentUrl).searchParams.get("Recurring"), null);
+      await app.inject({
+        method: "POST", url: "/api/billing/robokassa/result",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        payload: resultBody(oneOff.invId, "990.00"),
+      });
+      assert.equal((await getSubscriptionRecord(withoutConsent.user.id))?.autoRenew, false);
+    } finally {
+      await app.close();
+      for (const [name, value] of mailSaved) {
+        if (value === undefined) delete process.env[name];
+        else process.env[name] = value;
+      }
+    }
+  });
+});
+
+test("the cabinet cannot enable auto-renew without a mail service to warn the customer", async () => {
+  await withShop(async () => {
+    process.env.ROBOKASSA_RECURRING = "1";
+    const app = await shopApp();
+    try {
+      const { user, cookie } = await signedInUser();
+      // Сначала подписка: без неё включать нечего.
+      const checkout = (await app.inject({ method: "POST", url: "/api/billing/checkout", headers: { cookie }, payload: { plan: "pro" } })).json() as { invId: number };
+      await app.inject({
+        method: "POST", url: "/api/billing/robokassa/result",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        payload: resultBody(checkout.invId, "990.00"),
+      });
+      const response = await app.inject({ method: "POST", url: "/api/billing/subscription", headers: { cookie }, payload: { autoRenew: true } });
+      assert.equal(response.statusCode, 409);
+      assert.match(response.body, /почтовая служба платформы не настроена/);
+      assert.equal((await getSubscriptionRecord(user.id))?.autoRenew, false, "без письма продление не включается");
+    } finally { await app.close(); }
+  });
+});
+
 test("auto-renew cannot be promised before the shop enables recurring payments", async () => {
   await withShop(async () => {
     const app = await shopApp();

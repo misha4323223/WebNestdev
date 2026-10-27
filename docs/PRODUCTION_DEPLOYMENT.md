@@ -79,8 +79,9 @@ The server intentionally fails fast in production when the allowed-origin list i
 ## Ключи сервера: панель вместо правки .env
 
 Ключи самого сервиса — GitHub OAuth (`GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`), Yandex Cloud
-(`YANDEX_CLOUD_ID`, `YANDEX_FOLDER_ID`, `YANDEX_SA_KEY`), ключи SMS-провайдеров и модель платформы
-(`PLATFORM_AI_*`) — вводятся в панели: **Настройки → Ключи сервера**. Это ответ на вопрос «как
+(`YANDEX_CLOUD_ID`, `YANDEX_FOLDER_ID`, `YANDEX_SA_KEY`), ключи SMS-провайдеров, модель платформы
+(`PLATFORM_AI_*`), оплата (Robokassa) и почта платформы (`MAIL_*`, Yandex Cloud Postbox) — вводятся
+в панели: **Настройки → Ключи сервера**. Это ответ на вопрос «как
 прокинуть ключи на продакшен»: заходить на ВМ и править `.env` больше не нужно, и перезапуск тоже.
 
 - Значения лежат в `WEBNESTDEV_DATA_DIR/platform/env.json` — вне каталога кода, поэтому
@@ -112,8 +113,13 @@ The server intentionally fails fast in production when the allowed-origin list i
 - **Yandex Cloud.** `YANDEX_CLOUD_ID=b1g…` и `YANDEX_FOLDER_ID=b1g…` — поля панели. Ключ
   сервисного аккаунта вставляется в `YANDEX_SA_KEY` файлом authorized key целиком (многострочным —
   поле это выдерживает) либо указывается путь внутри контейнера в `YANDEX_SA_KEY_FILE`
-  (`/var/lib/webnestdev/secrets/yandex-sa-key.json`). Ключ предпочтительнее готового IAM-токена:
+  (`/var/lib/webnestdev/secrets/yandex-sa-key.json`).  Ключ предпочтительнее готового IAM-токена:
   токен живёт около 12 часов, ключ сервер обменивает на свежий сам.
+- **Почта платформы (Yandex Cloud Postbox).** Письма об оплате, предупреждение о списании и
+  обращения поддержки: сервисный аккаунт с ролью `postbox.sender`, API-ключ с областью
+  `yc.postbox.send` (идентификатор ключа — логин SMTP, секрет — пароль), адрес отправителя на
+  подтверждённом по DKIM домене. Пошаговая настройка — [MAIL.md](MAIL.md). Без почты
+  автопродление не включается: предупреждение о списании обязательно (376-ФЗ).
 - **Если ключи заданы в GitHub Secrets.** GitHub **не даёт создать секрет или переменную с
   префиксом `GITHUB_`** — он зарезервирован под служебные значения (`GITHUB_TOKEN` и другие), и
   поле имени просто не сохраняется. Поэтому в настройках репозитория ключи GitHub OAuth

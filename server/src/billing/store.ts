@@ -29,6 +29,11 @@ export type BillingPayment = {
   paidAt: string | null;
   /** Сколько раз пытались списать автопродление: после третьей неудачи подписка не продлевается. */
   attempts: number;
+  /**
+   * Отдельное согласие на автопродление, данное при оформлении счёта. Магазин лишь разрешает
+   * продление; сама подписка продлевается только по этой отметке (см. 376-ФЗ о подписках).
+   */
+  autoRenew: boolean;
 };
 
 export type SubscriptionRecord = {
@@ -40,6 +45,12 @@ export type SubscriptionRecord = {
   renewsAt: string;
   autoRenew: boolean;
   parentInvId: number;
+  /**
+   * Когда ушло письмо-предупреждение о списании для текущего периода. Без него свипер не
+   * списывает деньги (376-ФЗ требует сообщать о платежах заранее), поэтому `null` здесь — не
+   * «забыли», а «списывать пока нельзя».
+   */
+  noticeAt: string | null;
   /** Неудачные попытки автопродления подряд: после третьей подписка истекает. */
   renewalAttempts: number;
   updatedAt: string;
@@ -113,6 +124,8 @@ export async function createPayment(input: {
   amount: number;
   kind?: "initial" | "renewal";
   parentInvId?: number | null;
+  /** Согласие на автопродление: приходит от человека при оформлении счёта, по умолчанию его нет. */
+  autoRenew?: boolean;
 }): Promise<BillingPayment> {
   const payment: BillingPayment = {
     invId: await nextInvId(),
@@ -125,12 +138,13 @@ export async function createPayment(input: {
     createdAt: new Date().toISOString(),
     paidAt: null,
     attempts: 0,
+    autoRenew: input.autoRenew === true,
   };
   if (isYdbEnabled()) {
     await ydbQuery()`
       INSERT INTO ${ydbQuery().identifier(getTable("billing_payments"))}
-        (inv_id, user_id, plan, amount, status, kind, parent_inv_id, created_at, paid_at, attempts)
-      VALUES (${payment.invId}, ${payment.userId}, ${payment.plan}, ${payment.amount}, ${payment.status}, ${payment.kind}, ${payment.parentInvId}, ${payment.createdAt}, ${payment.paidAt}, ${payment.attempts})
+        (inv_id, user_id, plan, amount, status, kind, parent_inv_id, created_at, paid_at, attempts, auto_renew)
+      VALUES (${payment.invId}, ${payment.userId}, ${payment.plan}, ${payment.amount}, ${payment.status}, ${payment.kind}, ${payment.parentInvId}, ${payment.createdAt}, ${payment.paidAt}, ${payment.attempts}, ${payment.autoRenew})
     `;
     return payment;
   }
@@ -153,6 +167,7 @@ type PaymentRow = {
   created_at: string;
   paid_at: string | null;
   attempts: number | string | bigint | null;
+  auto_renew: boolean | null;
 };
 
 function paymentFromRow(row: PaymentRow): BillingPayment {
@@ -167,13 +182,14 @@ function paymentFromRow(row: PaymentRow): BillingPayment {
     createdAt: row.created_at,
     paidAt: row.paid_at || null,
     attempts: Number(row.attempts ?? 0),
+    autoRenew: Boolean(row.auto_renew),
   };
 }
 
 export async function getPayment(invId: number): Promise<BillingPayment | null> {
   if (isYdbEnabled()) {
     const [rows] = await ydbQuery()<PaymentRow[]>`
-      SELECT inv_id, user_id, plan, amount, status, kind, parent_inv_id, created_at, paid_at, attempts
+      SELECT inv_id, user_id, plan, amount, status, kind, parent_inv_id, created_at, paid_at, attempts, auto_renew
       FROM ${ydbQuery().identifier(getTable("billing_payments"))}
       WHERE inv_id = ${invId}
       LIMIT 1
@@ -187,7 +203,7 @@ export async function getPayment(invId: number): Promise<BillingPayment | null> 
 export async function listPayments(userId: string, limit = 20): Promise<BillingPayment[]> {
   if (isYdbEnabled()) {
     const [rows] = await ydbQuery()<PaymentRow[]>`
-      SELECT inv_id, user_id, plan, amount, status, kind, parent_inv_id, created_at, paid_at, attempts
+      SELECT inv_id, user_id, plan, amount, status, kind, parent_inv_id, created_at, paid_at, attempts, auto_renew
       FROM ${ydbQuery().identifier(getTable("billing_payments"))}
       WHERE user_id = ${userId}
       ORDER BY created_at DESC
@@ -224,6 +240,7 @@ type SubscriptionRow = {
   renews_at: string;
   auto_renew: boolean;
   parent_inv_id: number | string | bigint;
+  notice_at: string | null;
   renewal_attempts: number | string | bigint | null;
   updated_at: string;
 };
@@ -237,6 +254,7 @@ function subscriptionFromRow(row: SubscriptionRow): SubscriptionRecord {
     renewsAt: row.renews_at,
     autoRenew: Boolean(row.auto_renew),
     parentInvId: Number(row.parent_inv_id),
+    noticeAt: row.notice_at || null,
     renewalAttempts: Number(row.renewal_attempts ?? 0),
     updatedAt: row.updated_at,
   };
@@ -245,7 +263,7 @@ function subscriptionFromRow(row: SubscriptionRow): SubscriptionRecord {
 export async function getSubscriptionRecord(userId: string): Promise<SubscriptionRecord | null> {
   if (isYdbEnabled()) {
     const [rows] = await ydbQuery()<SubscriptionRow[]>`
-      SELECT user_id, plan, status, started_at, renews_at, auto_renew, parent_inv_id, renewal_attempts, updated_at
+      SELECT user_id, plan, status, started_at, renews_at, auto_renew, parent_inv_id, notice_at, renewal_attempts, updated_at
       FROM ${ydbQuery().identifier(getTable("billing_subscriptions"))}
       WHERE user_id = ${userId}
       LIMIT 1
@@ -260,8 +278,8 @@ async function saveSubscription(record: SubscriptionRecord) {
   if (isYdbEnabled()) {
     await ydbQuery()`
       UPSERT INTO ${ydbQuery().identifier(getTable("billing_subscriptions"))}
-        (user_id, plan, status, started_at, renews_at, auto_renew, parent_inv_id, renewal_attempts, updated_at)
-      VALUES (${record.userId}, ${record.plan}, ${record.status}, ${record.startedAt}, ${record.renewsAt}, ${record.autoRenew}, ${record.parentInvId}, ${record.renewalAttempts}, ${record.updatedAt})
+        (user_id, plan, status, started_at, renews_at, auto_renew, parent_inv_id, notice_at, renewal_attempts, updated_at)
+      VALUES (${record.userId}, ${record.plan}, ${record.status}, ${record.startedAt}, ${record.renewsAt}, ${record.autoRenew}, ${record.parentInvId}, ${record.noticeAt}, ${record.renewalAttempts}, ${record.updatedAt})
     `;
     return record;
   }
@@ -300,8 +318,11 @@ export const accountPlanFor = planForUser;
  * Уведомление об оплате подтверждено: платёж закрывается один раз (Робокасса повторяет
  * уведомление, пока не получит `OK{InvId}`), а подписка продлевается от текущего срока, поэтому
  * ранняя оплата не теряет уже оплаченные дни.
+ *
+ * Автопродление у новой подписки включается только по согласию, которое человек дал при
+ * оформлении счёта: настройка магазина разрешает продление, а не включает его.
  */
-export async function markPaymentPaid(invId: number, options: { autoRenew: boolean }, now = new Date()) {
+export async function markPaymentPaid(invId: number, now = new Date()) {
   const payment = await getPayment(invId);
   if (!payment) return null;
   if (payment.status === "paid") return { payment, alreadyPaid: true as const };
@@ -332,9 +353,13 @@ export async function markPaymentPaid(invId: number, options: { autoRenew: boole
     startedAt: live ? existing!.startedAt : now.toISOString(),
     renewsAt: addMonth(base).toISOString(),
     // Выбор человека важнее настройки сервера: подписку, у которой автопродление выключили, платёж
-    // не включает обратно. У новой подписки автопродление доступно, только если магазин умеет его.
-    autoRenew: live ? existing!.autoRenew : options.autoRenew,
+    // не включает обратно, а новая подписка продлевается только по согласию из счёта. Проверка
+    // строгая: у счетов, созданных до появления отметки, поля в хранилище просто нет.
+    autoRenew: live ? existing!.autoRenew : payment.autoRenew === true,
     parentInvId: payment.kind === "renewal" && existing ? existing.parentInvId : payment.invId,
+    // Новый оплаченный период — новое предупреждение: старый noticeAt из прошлого периода
+    // ничего не говорит о списании за следующий месяц.
+    noticeAt: null,
     renewalAttempts: 0,
     updatedAt: now.toISOString(),
   };
@@ -372,22 +397,55 @@ export async function setAutoRenew(userId: string, autoRenew: boolean, now = new
   });
 }
 
-/** Подписки, которые пора продлить: срок вышел, автопродление включено. */
+/**
+ * Подписки, которые пора продлить: срок вышел, автопродление включено — и человек предупреждён
+ * письмом (`notice_at`). Условие про предупреждение не украшение: без него платформа списывала
+ * бы деньги молча, а этого не разрешает 376-ФЗ.
+ */
 export async function listDueSubscriptions(now = new Date()): Promise<SubscriptionRecord[]> {
   const iso = now.toISOString();
   if (isYdbEnabled()) {
     const [rows] = await ydbQuery()<SubscriptionRow[]>`
-      SELECT user_id, plan, status, started_at, renews_at, auto_renew, parent_inv_id, renewal_attempts, updated_at
+      SELECT user_id, plan, status, started_at, renews_at, auto_renew, parent_inv_id, notice_at, renewal_attempts, updated_at
       FROM ${ydbQuery().identifier(getTable("billing_subscriptions"))}
-      WHERE auto_renew = true AND renews_at <= ${iso}
+      WHERE auto_renew = true AND notice_at IS NOT NULL AND renews_at <= ${iso}
       ORDER BY renews_at
     `;
     return rows.map(subscriptionFromRow).filter(record => record.plan !== FREE_PLAN);
   }
   const subscriptions = await readJson<Record<string, SubscriptionRecord>>(subscriptionsFile(), {});
   return Object.values(subscriptions)
-    .filter(record => record.autoRenew && record.plan !== FREE_PLAN && record.renewsAt <= iso)
+    .filter(record => record.autoRenew && record.plan !== FREE_PLAN && Boolean(record.noticeAt) && record.renewsAt <= iso)
     .sort((a, b) => a.renewsAt.localeCompare(b.renewsAt));
+}
+
+/**
+ * Подписки, которым скоро продление и о котором ещё не предупреждали: с них начинается цикл
+ * писем. Срок впереди (`renewsAt > now`), поэтому предупреждение всегда приходит до списания.
+ */
+export async function listSubscriptionsForNotice(now: Date, withinDays: number): Promise<SubscriptionRecord[]> {
+  const iso = now.toISOString();
+  const limit = new Date(now.getTime() + withinDays * 86_400_000).toISOString();
+  if (isYdbEnabled()) {
+    const [rows] = await ydbQuery()<SubscriptionRow[]>`
+      SELECT user_id, plan, status, started_at, renews_at, auto_renew, parent_inv_id, notice_at, renewal_attempts, updated_at
+      FROM ${ydbQuery().identifier(getTable("billing_subscriptions"))}
+      WHERE auto_renew = true AND notice_at IS NULL AND renews_at > ${iso} AND renews_at <= ${limit}
+      ORDER BY renews_at
+    `;
+    return rows.map(subscriptionFromRow).filter(record => record.plan !== FREE_PLAN);
+  }
+  const subscriptions = await readJson<Record<string, SubscriptionRecord>>(subscriptionsFile(), {});
+  return Object.values(subscriptions)
+    .filter(record => record.autoRenew && record.plan !== FREE_PLAN && !record.noticeAt && record.renewsAt > iso && record.renewsAt <= limit)
+    .sort((a, b) => a.renewsAt.localeCompare(b.renewsAt));
+}
+
+/** Отмечает, что письмо-предупреждение о списании ушло: только после этого подписка может списаться. */
+export async function markNoticeSent(userId: string, now = new Date()) {
+  const record = await getSubscriptionRecord(userId);
+  if (!record) return null;
+  return saveSubscription({ ...record, noticeAt: now.toISOString(), updatedAt: now.toISOString() });
 }
 
 /**

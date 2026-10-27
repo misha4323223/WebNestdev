@@ -248,6 +248,15 @@ jobs:
           SUPPORT_SMTP_PORT: ${{ secrets.SUPPORT_SMTP_PORT || vars.SUPPORT_SMTP_PORT }}
           SUPPORT_SMTP_USER: ${{ secrets.SUPPORT_SMTP_USER || vars.SUPPORT_SMTP_USER }}
           SUPPORT_SMTP_PASSWORD: ${{ secrets.SUPPORT_SMTP_PASSWORD }}
+          # Почта платформы (Yandex Cloud Postbox): письма об оплате, предупреждение о списании
+          # и обращения поддержки. Пустые значения ничего не стирают; значение из панели важнее.
+          MAIL_SMTP_HOST: ${{ secrets.MAIL_SMTP_HOST || vars.MAIL_SMTP_HOST }}
+          MAIL_SMTP_PORT: ${{ secrets.MAIL_SMTP_PORT || vars.MAIL_SMTP_PORT }}
+          MAIL_SMTP_USER: ${{ secrets.MAIL_SMTP_USER || vars.MAIL_SMTP_USER }}
+          MAIL_SMTP_PASSWORD: ${{ secrets.MAIL_SMTP_PASSWORD }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM || vars.MAIL_FROM }}
+          MAIL_FROM_NAME: ${{ secrets.MAIL_FROM_NAME || vars.MAIL_FROM_NAME }}
+          BILLING_NOTICE_DAYS: ${{ secrets.BILLING_NOTICE_DAYS || vars.BILLING_NOTICE_DAYS }}
         run: |
           set -euo pipefail
           # Чистим переменные от скрытых символов (CRLF из Windows при вставке секретов)
@@ -339,6 +348,14 @@ jobs:
           add_platform_env SUPPORT_SMTP_USER "$SUPPORT_SMTP_USER"
           # Пароль SMTP — только Secret: он попадает в .env на ВМ.
           add_platform_env SUPPORT_SMTP_PASSWORD "$SUPPORT_SMTP_PASSWORD"
+          add_platform_env MAIL_SMTP_HOST "$MAIL_SMTP_HOST"
+          add_platform_env MAIL_SMTP_PORT "$MAIL_SMTP_PORT"
+          add_platform_env MAIL_SMTP_USER "$MAIL_SMTP_USER"
+          # Пароль почты — только Secret: он попадает в .env на ВМ.
+          add_platform_env MAIL_SMTP_PASSWORD "$MAIL_SMTP_PASSWORD"
+          add_platform_env MAIL_FROM "$MAIL_FROM"
+          add_platform_env MAIL_FROM_NAME "$MAIL_FROM_NAME"
+          add_platform_env BILLING_NOTICE_DAYS "$BILLING_NOTICE_DAYS"
           # Итог по OAuth-ключам — только «есть/нет», без значений. Раньше пустой ключ был
           # виден только по маскированному дампу окружения выше, и «вставлено, но не работает»
           # приходилось разгадывать: здесь причина видна одной строкой.
@@ -352,6 +369,7 @@ jobs:
           echo "[deploy] Холодный ярус: endpoint=$(has "${PLATFORM_S3_ENDPOINT:-}"), бакет=${PLATFORM_S3_BUCKET:-—}, ключ=$(has "${PLATFORM_S3_ACCESS_KEY_ID:-}"), включён=${PROJECT_ARCHIVE_ENABLED:-0}"
           echo "[deploy] Цены расхода: таблица моделей=$(has "${PLATFORM_AI_MODEL_PRICES:-}"), общая ставка=$(has "${PLATFORM_AI_PRICE_INPUT_PER_MILLION:-}"), инфраструктура=$(has "${PLATFORM_INFRA_COST_PER_MONTH:-}"), валюта=${PLATFORM_AI_PRICE_CURRENCY:-USD}"
           echo "[deploy] Поддержка: ключ API=$(has "${SUPPORT_API_KEY:-}"), почта=${SUPPORT_EMAIL_TO:-—}, SMTP=$(has "${SUPPORT_SMTP_PASSWORD:-}")"
+          echo "[deploy] Почта платформы: сервер=$(has "${MAIL_SMTP_HOST:-}"), отправитель=${MAIL_FROM:-—}, пароль=$(has "${MAIL_SMTP_PASSWORD:-}")"
           # Генерация изображений: в логе видно, настроен ли инструмент и на какой модели. Значений
           # ключей здесь нет — только «есть/нет», как у остальных строк выше.
           echo "[deploy] Генерация изображений: адрес=$(has "${PLATFORM_IMAGE_BASE_URL:-}"), модель=${PLATFORM_IMAGE_MODEL:-—}, ключ=$(has "${PLATFORM_IMAGE_KEY_1:-}")"
@@ -485,6 +503,15 @@ jobs:
           SUPPORT_SMTP_PORT: ${{ secrets.SUPPORT_SMTP_PORT || vars.SUPPORT_SMTP_PORT }}
           SUPPORT_SMTP_USER: ${{ secrets.SUPPORT_SMTP_USER || vars.SUPPORT_SMTP_USER }}
           SUPPORT_SMTP_PASSWORD: ${{ secrets.SUPPORT_SMTP_PASSWORD }}
+          # Почта платформы (Yandex Cloud Postbox): письма об оплате, предупреждение о списании
+          # и обращения поддержки. Пустые значения ничего не стирают; значение из панели важнее.
+          MAIL_SMTP_HOST: ${{ secrets.MAIL_SMTP_HOST || vars.MAIL_SMTP_HOST }}
+          MAIL_SMTP_PORT: ${{ secrets.MAIL_SMTP_PORT || vars.MAIL_SMTP_PORT }}
+          MAIL_SMTP_USER: ${{ secrets.MAIL_SMTP_USER || vars.MAIL_SMTP_USER }}
+          MAIL_SMTP_PASSWORD: ${{ secrets.MAIL_SMTP_PASSWORD }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM || vars.MAIL_FROM }}
+          MAIL_FROM_NAME: ${{ secrets.MAIL_FROM_NAME || vars.MAIL_FROM_NAME }}
+          BILLING_NOTICE_DAYS: ${{ secrets.BILLING_NOTICE_DAYS || vars.BILLING_NOTICE_DAYS }}
         run: |
           set -euo pipefail
           image="$IMAGE_INPUT"
@@ -556,6 +583,14 @@ jobs:
           add_platform_env SUPPORT_SMTP_USER "$SUPPORT_SMTP_USER"
           # Пароль SMTP — только Secret: он попадает в .env на ВМ.
           add_platform_env SUPPORT_SMTP_PASSWORD "$SUPPORT_SMTP_PASSWORD"
+          add_platform_env MAIL_SMTP_HOST "$MAIL_SMTP_HOST"
+          add_platform_env MAIL_SMTP_PORT "$MAIL_SMTP_PORT"
+          add_platform_env MAIL_SMTP_USER "$MAIL_SMTP_USER"
+          # Пароль почты — только Secret: он попадает в .env на ВМ.
+          add_platform_env MAIL_SMTP_PASSWORD "$MAIL_SMTP_PASSWORD"
+          add_platform_env MAIL_FROM "$MAIL_FROM"
+          add_platform_env MAIL_FROM_NAME "$MAIL_FROM_NAME"
+          add_platform_env BILLING_NOTICE_DAYS "$BILLING_NOTICE_DAYS"
           # На этом раннере скрипт запускается на самой ВМ, поэтому ключ кладётся во временный
           # файл рядом, с правами только для владельца.
           APP_KEY_FILE=""

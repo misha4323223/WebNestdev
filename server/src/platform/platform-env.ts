@@ -13,7 +13,7 @@ import { parseAuthorizedKeyJson, parseServiceAccountKey } from "../yandex/yandex
  * a deployment that never opens the panel behaves exactly as before.
  */
 export type PlatformEnvKind = "secret" | "json-key" | "value" | "url" | "path" | "flag";
-export type PlatformEnvGroup = "github" | "gitlab" | "gitverse" | "yandex" | "sms" | "ai" | "search" | "billing" | "support";
+export type PlatformEnvGroup = "github" | "gitlab" | "gitverse" | "yandex" | "sms" | "ai" | "search" | "billing" | "mail" | "support";
 
 export type PlatformEnvEntry = {
   name: string;
@@ -79,6 +79,18 @@ export const PLATFORM_ENV_CATALOG: PlatformEnvEntry[] = [
   { name: "ROBOKASSA_RECEIPT", group: "billing", label: "Receipt JSON", hint: "1 — отправлять Receipt JSON в платёжный сервис. Обычно не требуется.", kind: "flag" },
   { name: "ROBOKASSA_PRICE_PRO", group: "billing", label: "Цена тарифа «Плюс», ₽/мес", hint: "Необязательно: по умолчанию 990. Меняется без выкатки.", kind: "value" },
   { name: "ROBOKASSA_PRICE_TEAM", group: "billing", label: "Цена тарифа «Премиум», ₽/мес", hint: "Необязательно: по умолчанию 2 990.", kind: "value" },
+  { name: "BILLING_NOTICE_DAYS", group: "billing", label: "Дней до письма о списании", hint: "Необязательно: за сколько дней до автопродления отправлять письмо-предупреждение. По умолчанию 3. Без отправленного письма списание не выполняется вовсе.", kind: "value" },
+
+  // Почта платформы: письма покупателям об оплате, предупреждения о списании и письма поддержки.
+  // Основной путь — Yandex Cloud Postbox: логин и пароль это API-ключ сервисного аккаунта, а
+  // отправка идёт от подтверждённого домена. Пошаговая настройка (роль postbox.sender, область
+  // yc.postbox.send, DKIM/SPF/DMARC, квоты) — docs/MAIL.md.
+  { name: "MAIL_SMTP_HOST", group: "mail", label: "SMTP-сервер", hint: "Yandex Cloud Postbox: postbox.cloud.yandex.net. Подходит любой SMTP с шифрованием сразу (порт 465).", kind: "value" },
+  { name: "MAIL_SMTP_PORT", group: "mail", label: "Порт SMTP", hint: "Необязательно: по умолчанию 465 (TLS сразу). У Postbox есть и 587, но платформа использует только 465.", kind: "value" },
+  { name: "MAIL_SMTP_USER", group: "mail", label: "Логин SMTP", hint: "Postbox: идентификатор API-ключа сервисного аккаунта (роль postbox.sender, область yc.postbox.send), а не адрес ящика.", kind: "value" },
+  { name: "MAIL_SMTP_PASSWORD", group: "mail", label: "Пароль SMTP", hint: "Postbox: секретная часть того же API-ключа. Обычная почта — пароль приложения, а не пароль от ящика.", kind: "secret" },
+  { name: "MAIL_FROM", group: "mail", label: "Адрес отправителя", hint: "Например noreply@nestdev.ru. Домен должен быть подтверждён в Postbox (DKIM), иначе письма отклоняются.", kind: "value" },
+  { name: "MAIL_FROM_NAME", group: "mail", label: "Имя отправителя", hint: "Необязательно: как подписывать письма, например NestDev.", kind: "value" },
 
   { name: "PLATFORM_AI_BASE_URL", group: "ai", label: "AI Base URL", hint: "OpenAI-совместимый адрес модели платформы — то, чем пользуются проекты без своего провайдера.", kind: "url" },
   { name: "PLATFORM_AI_MODEL", group: "ai", label: "AI модель", hint: "Идентификатор модели для этого адреса.", kind: "value" },
@@ -105,8 +117,8 @@ export const PLATFORM_ENV_CATALOG: PlatformEnvEntry[] = [
   // на сервере и в API.
   { name: "SUPPORT_API_KEY", group: "support", label: "Ключ API для админки", hint: "Ключ только для чтения: внешнее приложение забирает обращения запросом GET /api/support/tickets с заголовком Authorization: Bearer <ключ> или X-Support-Key: <ключ>. Скриншот — GET /api/support/tickets/<id>/screenshot. Создать обращение по ключу нельзя. Не короче 16 символов; пробелы и невидимые символы убираются при сохранении.", kind: "secret" },
   { name: "SUPPORT_EMAIL_TO", group: "support", label: "Куда присылать обращения", hint: "Адрес ящика поддержки, например support@example.ru. На него придет письмо с обращением.", kind: "value" },
-  { name: "SUPPORT_EMAIL_FROM", group: "support", label: "Адрес отправителя", hint: "Необязательно: по умолчанию совпадает с логином SMTP. У Яндекса и Mail.ru это должен быть тот же ящик.", kind: "value" },
-  { name: "SUPPORT_SMTP_HOST", group: "support", label: "SMTP-сервер", hint: "Например smtp.yandex.ru, smtp.mail.ru или smtp.gmail.com — смотри в настройках почты («SMTP»).", kind: "value" },
+  { name: "SUPPORT_EMAIL_FROM", group: "support", label: "Адрес отправителя", hint: "Необязательно: по умолчанию совпадает с логином SMTP. У Яндекса и Mail.ru это должен быть тот же ящик. Не нужен, если настроена почта платформы выше.", kind: "value" },
+  { name: "SUPPORT_SMTP_HOST", group: "support", label: "SMTP-сервер", hint: "Необязательно, если настроена почта платформы («Почта (Yandex Cloud Postbox)»): она важнее. Свой вариант — smtp.yandex.ru, smtp.mail.ru или smtp.gmail.com.", kind: "value" },
   { name: "SUPPORT_SMTP_PORT", group: "support", label: "Порт SMTP", hint: "Необязательно: по умолчанию 465 (шифрование сразу). Порт 587 с STARTTLS не поддерживается.", kind: "value" },
   { name: "SUPPORT_SMTP_USER", group: "support", label: "Логин SMTP", hint: "Обычно полный адрес ящика.", kind: "value" },
   { name: "SUPPORT_SMTP_PASSWORD", group: "support", label: "Пароль SMTP", hint: "Пароль приложения, а не пароль от почты: Яндекс — «Безопасность» → «Пароли приложений», Mail.ru — «Пароли для внешних приложений», Gmail — «Пароли приложений» (нужна 2FA).", kind: "secret" },
@@ -138,7 +150,7 @@ export type PlatformEnvStatus = {
 type StoredEntry = { value: string; preview: string; updatedAt: string };
 type StoreFile = { version: 1; values: Record<string, StoredEntry> };
 
-const GROUP_LABEL: Record<PlatformEnvGroup, string> = { github: "GitHub", gitlab: "GitLab", gitverse: "GitVerse", yandex: "Yandex Cloud", sms: "SMS-провайдеры", ai: "AI-провайдер платформы", search: "Веб-поиск агента", billing: "Оплата (Robokassa)", support: "Поддержка" };
+const GROUP_LABEL: Record<PlatformEnvGroup, string> = { github: "GitHub", gitlab: "GitLab", gitverse: "GitVerse", yandex: "Yandex Cloud", sms: "SMS-провайдеры", ai: "AI-провайдер платформы", search: "Веб-поиск агента", billing: "Оплата (Robokassa)", mail: "Почта (Yandex Cloud Postbox)", support: "Поддержка" };
 
 export function platformEnvGroupLabel(group: PlatformEnvGroup) {
   return GROUP_LABEL[group];

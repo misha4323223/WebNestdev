@@ -16,11 +16,12 @@ import {
   type PlanLimits,
 } from "../../lib/billing-api";
 import { activePlanId, chosenPlanId, isPendingChoice, planName, usePlanChoice } from "../../lib/plan-choice";
+import { CheckoutConsent, type CheckoutConsentState } from "./CheckoutConsent";
 
 const faq = [
   { question: "Как оплатить тариф?", answer: "Выберите тариф и нажмите «Оплатить» — откроется защищённая страница оплаты. Доступны карта РФ, СБП и другие способы." },
   { question: "Когда включится тариф?", answer: "Сразу после подтверждения оплаты. Если страница оплаты закрылась, вернитесь в личный кабинет: подписка уже будет активна." },
-  { question: "Что с продлением?", answer: "Подписка действует месяц. Автопродление включается в личном кабинете, отключить его можно в любой момент." },
+  { question: "Что с продлением?", answer: "Подписка действует месяц. Автопродление — по отдельному согласию: отметкой при оплате или переключателем в личном кабинете. Отключить можно в любой момент." },
 ];
 
 const limitRows: Array<{ label: string; key: keyof PlanLimits }> = [
@@ -41,6 +42,9 @@ export function SubscriptionPage({ onBack, onOpenPicker }: { onBack: () => void;
   const [paying, setPaying] = useState<string | null>(null);
   const [savingRenew, setSavingRenew] = useState(false);
   const [error, setError] = useState("");
+  // Без обоих обязательных согласий кнопки оплаты не работают: это условие оферты и требование
+  // Робокассы к подпискам, а не подсказка. Отдельная отметка автопродления оплату не блокирует.
+  const [consent, setConsent] = useState<CheckoutConsentState>({ ready: false, autoRenew: false });
   // The plan the user selected is what they want to move to, so it is named here too.
   const planChoice = usePlanChoice();
 
@@ -61,9 +65,13 @@ export function SubscriptionPage({ onBack, onOpenPicker }: { onBack: () => void;
   const paid = currentPlanId !== "free" && Boolean(subscription?.renewsAt);
 
   async function pay(plan: "pro" | "team") {
+    if (!consent.ready) {
+      setError("Отметьте согласие на обработку данных и принятие оферты — без этого оплата недоступна.");
+      return;
+    }
     setPaying(plan); setError("");
     try {
-      const checkout = await startCheckout(plan);
+      const checkout = await startCheckout(plan, consent.autoRenew);
       window.location.assign(checkout.paymentUrl);
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); setPaying(null); }
   }
@@ -117,6 +125,7 @@ export function SubscriptionPage({ onBack, onOpenPicker }: { onBack: () => void;
 
     {billing && <>
       <section className="subscription-plans">
+        <CheckoutConsent recurring={Boolean(billing.subscription?.recurringAvailable)} onChange={setConsent}/>
         {billing.plans.map(plan => {
           const active = plan.id === currentPlanId;
           const chosen = chosenPending && chosenId === plan.id;
@@ -136,7 +145,7 @@ export function SubscriptionPage({ onBack, onOpenPicker }: { onBack: () => void;
                 ? <span className="plan-current">{active ? "Текущий тариф" : "Входит всегда"}</span>
                 : !enabled
                   ? <button className="plan-action" onClick={onOpenPicker}>{chosen ? "Выбран · изменить" : "Выбрать тариф"}</button>
-                  : <button className="plan-action" disabled={paying !== null} onClick={() => void pay(plan.id as "pro" | "team")}>
+                  : <button className="plan-action" disabled={paying !== null || !consent.ready} title={consent.ready ? undefined : "Отметьте согласия выше"} onClick={() => void pay(plan.id as "pro" | "team")}>
                       {paying === plan.id ? <><RefreshCw size={12} className="spin"/> Открываем…</> : <>{active ? "Продлить" : "Оплатить"} {plan.priceLabel}</>}
                     </button>}
             </div>
@@ -242,7 +251,7 @@ export function SubscriptionPage({ onBack, onOpenPicker }: { onBack: () => void;
       <div>
         <span className="eyebrow">УСЛОВИЯ</span>
         <h2>Оплата и документы</h2>
-        <p>Карта РФ, СБП и другие способы — на защищённой странице оплаты. Подписка действует месяц; продление можно включить или отключить в личном кабинете.</p>
+        <p>Карта РФ, СБП и другие способы — на защищённой странице оплаты. Подписка действует месяц; автопродление включается только по вашему согласию и отключается в один шаг в личном кабинете.</p>
       </div>
       <nav aria-label="Юридические документы">
         <a href="/legal/offer" target="_blank" rel="noopener noreferrer">Публичная оферта <ArrowRight size={12}/></a>

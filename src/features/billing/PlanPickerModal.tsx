@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowRight, Check, CreditCard, RefreshCw, Sparkles, X } from "lucide-react";
 import { getBilling, paymentNotice, startCheckout, type BillingData, type PlanId } from "../../lib/billing-api";
+import { CheckoutConsent, type CheckoutConsentState } from "./CheckoutConsent";
 import { activePlanId, planName, readPlanChoice, writePlanChoice } from "../../lib/plan-choice";
 
 /**
@@ -22,6 +23,9 @@ export function PlanPickerModal({ open, onClose, onOpenDetails, onChanged }: {
   const [loading, setLoading] = useState(false);
   const [paying, setPaying] = useState<PlanId | null>(null);
   const [error, setError] = useState("");
+  // Согласия живут в этом же компоненте, а окно при закрытии не размонтируется —
+  // поэтому при открытии они сбрасываются вместе с формой (см. эффект ниже).
+  const [consent, setConsent] = useState<CheckoutConsentState>({ ready: false, autoRenew: false });
   // Callbacks are kept in refs so the open effect does not re-run on every render.
   const closeRef = useRef(onClose);
   const changedRef = useRef(onChanged);
@@ -32,7 +36,7 @@ export function PlanPickerModal({ open, onClose, onOpenDetails, onChanged }: {
     if (!open) return;
     let active = true;
     // The stored choice is the plan the user wants to move to, so the picker reopens on it.
-    setSelected(readPlanChoice()); setError(""); setLoading(true);
+    setSelected(readPlanChoice()); setError(""); setConsent({ ready: false, autoRenew: false }); setPaying(null); setLoading(true);
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") closeRef.current(); };
@@ -57,9 +61,13 @@ export function PlanPickerModal({ open, onClose, onOpenDetails, onChanged }: {
 
   /** Счёт создаёт сервер; браузер только уходит на страницу оплаты, которую тот вернул. */
   async function pay(plan: "pro" | "team") {
+    if (!consent.ready) {
+      setError("Отметьте согласие на обработку данных и принятие оферты — без этого оплата недоступна.");
+      return;
+    }
     setPaying(plan); setError("");
     try {
-      const checkout = await startCheckout(plan);
+      const checkout = await startCheckout(plan, consent.autoRenew);
       writePlanChoice(plan);
       changedRef.current?.();
       window.location.assign(checkout.paymentUrl);
@@ -115,7 +123,7 @@ export function PlanPickerModal({ open, onClose, onOpenDetails, onChanged }: {
                 : plan.id === "free"
                   ? <span className="plan-current">Входит всегда</span>
                   : enabled
-                    ? <button className="plan-action" onClick={() => void pay(plan.id as "pro" | "team")} disabled={paying !== null}>
+                    ? <button className="plan-action" onClick={() => void pay(plan.id as "pro" | "team")} disabled={paying !== null || !consent.ready} title={consent.ready ? undefined : "Отметьте согласия ниже"}>
                         {paying === plan.id ? <><RefreshCw size={12} className="spin"/> Открываем оплату…</> : <>Оплатить {plan.priceLabel} <ArrowRight size={12}/></>}
                       </button>
                     : <button className="plan-action" onClick={() => choose(plan.id)}>{selected === plan.id ? "Выбран · оплата скоро" : "Выбрать тариф"}</button>}
@@ -130,12 +138,13 @@ export function PlanPickerModal({ open, onClose, onOpenDetails, onChanged }: {
             </div>
           </div>}
 
-          {/* Условия оплаты видны там, где человек нажимает «Оплатить»: до перехода на
-              страницу оплаты он принимает оферту и знает условия. */}
+          {/* Согласия стоят там, где человек нажимает «Оплатить»: до перехода на страницу
+              оплаты он видит сумму, период и условия списаний и подтверждает их сам. */}
+          {enabled && <CheckoutConsent recurring={Boolean(billing.subscription?.recurringAvailable)} onChange={setConsent}/>}
+
           <div className="billing-disclaimer">
-            Оплата принимается картой и через СБП. Нажимая «Оплатить», вы принимаете{" "}
-            <a href="/legal/offer" target="_blank" rel="noopener noreferrer">оферту</a> и{" "}
-            <a href="/legal/payments" target="_blank" rel="noopener noreferrer">условия оплаты</a>.
+            Оплата принимается картой и через СБП на защищённой странице «Робокассы». Тариф включается
+            сразу после подтверждения платежа, чек НПД приходит на контакт из аккаунта.
           </div>
         </>}
 

@@ -5,9 +5,9 @@ import { DonateDialog } from "../support/DonateDialog";
 /**
  * Баннер внизу сайдбара — вход в поддержку проекта, а не витрина рекламы.
  *
- * Вся карточка — одна кнопка: картинка и подпись «Поддержать» ведут к окну доната. Техно-язык
- * (сетка, орбиты, узлы) остался, но теперь у него есть смысл и действие, а не место под чужой
- * логотип.
+ * Вся карточка — одна кнопка: картинка и подпись «Поддержать проект» ведут к окну доната.
+ * Техно-язык (сетка, орбиты, узлы) остался, но теперь у него есть смысл и действие, а не место
+ * под чужой логотип.
  */
 export function SidebarBanner() {
   const [open, setOpen] = useState(false);
@@ -65,7 +65,7 @@ export function SidebarBanner() {
       </svg>
     </span>
     <span className="sidebar-banner-copy">
-      <strong>Поддержать</strong>
+      <strong>Поддержать проект</strong>
     </span>
   </button>
   <DonateDialog open={open} onClose={() => setOpen(false)}/>
