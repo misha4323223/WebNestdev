@@ -29,6 +29,8 @@ const requestSchema = z.object({
   path: z.string().trim().min(1).max(300).optional(),
   size: z.string().trim().max(20).optional(),
   negativePrompt: z.string().trim().max(600).optional(),
+  /** Показать готовую картинку в переписке: так просят, когда рисуют для человека, а не для кода. */
+  show: z.boolean().optional(),
 });
 
 /** Ответ на ненастроенный сервер: агент называет пользователю переменные, а не рисует заглушку. */
@@ -63,6 +65,11 @@ export function withImageExtension(target: string, contentType: string) {
   return /\.(png|jpe?g|webp)$/i.test(target) ? target.replace(/\.(png|jpe?g|webp)$/i, extension) : target + extension;
 }
 
+/** Адрес картинки проекта: по нему её открывает и панель «Файлы», и карточка в чате. */
+export function imageAssetUrl(projectId: string, relative: string) {
+  return "/api/projects/" + encodeURIComponent(projectId) + "/asset?path=" + encodeURIComponent(relative);
+}
+
 /** Свободное имя: одинаковые описания не затирают друг друга, пока пользователь не назовёт путь сам. */
 export async function freeImageName(root: string, relative: string) {
   const exists = async (candidate: string) => Boolean(await lstat(path.join(root, candidate)).catch(() => null));
@@ -83,6 +90,8 @@ registerTool({
     "Input: {prompt, path?, size?, negativePrompt?}. The prompt decides everything: subject, style, framing, colours, mood — write it in the language of the request and in the shape of a caption, not as a command. " +
     "`size` is 'WxH' (for example 1024x1024) and is used only by models that accept it; `negativePrompt` is what must not appear. " +
     "Without `path` the file goes to public/images/<name>.<ext> and an existing file is never overwritten; with `path` that exact asset is replaced and the extension follows the real image format. " +
+    "`show` is about the conversation, not the project: pass show:true when the user asked you to draw a picture for them to look at — the platform then shows the finished image in the chat under your answer, so do not paste it into your reply and do not add any image markup. " +
+    "When you draw a picture as material for the project itself, omit `show` and just use the returned path in the code — nothing is shown in the chat in that case. " +
     "After a successful call, reference the returned path in the code like any other asset (a file under public/ is served from the site root) — never replace it with a placeholder service such as picsum.photos, placehold.co or an emoji. " +
     "The image costs the platform's own key, so the project needs no credentials; if the answer is not_configured, tell the user which PLATFORM_IMAGE_* variables are missing instead of drawing the picture another way. " +
     "Text inside the image is unreliable: for lettering use HTML/CSS over the picture.",
@@ -95,6 +104,7 @@ registerTool({
       path: { type: "string", description: "Куда положить файл внутри проекта, например public/images/hero.png. Без него — public/images/<имя по описанию>.<расширение>." },
       size: { type: "string", description: "Кадр в виде «1024x1024»; модели, которые его не принимают (Flux), рисуют фиксированный кадр." },
       negativePrompt: { type: "string", description: "Что не должно появиться на картинке (артефакты, лишний текст, люди); поддерживают не все модели." },
+      show: { type: "boolean", description: "true — пользователь просил нарисовать картинку и должен увидеть её в чате. Не указывайте, когда картинка нужна самому проекту." },
     },
   },
   execute: async (input, context) => {
@@ -130,18 +140,24 @@ registerTool({
       await openDirsForSandbox(sandbox.root, path.dirname(written));
       await openFileForSandbox(written);
       // В журнал — модель, файл и размер. Ни ключа, ни адреса сервиса, ни самого описания.
-      console.log("[image] " + config.model + " -> " + relative + " bytes=" + image.bytes.length + " project=" + context.projectId);
+      console.log("[image] " + config.model + " -> " + relative + " bytes=" + image.bytes.length + " project=" + context.projectId + (body.show ? " chat=yes" : ""));
       return {
         ok: true,
         path: relative,
+        url: imageAssetUrl(context.projectId, relative),
         bytes: image.bytes.length,
         contentType: image.contentType,
         model: config.model,
         provider: config.providerName,
+        // Признак для панели: картинку показывают в переписке. Он есть только когда о показе попросили.
+        ...(body.show ? { shownInChat: true } : {}),
         hint:
           "Файл лежит в проекте. Ссылайтесь на него как на обычный ассет" +
           (relative.startsWith("public/") ? " — из public/ он отдаётся с корня сайта: \"/" + relative.slice("public/".length) + "\"" : "") +
-          ". Не заменяйте его заглушкой из интернета и не вставляйте заново на каждом запуске: файл уже создан.",
+          ". Не заменяйте его заглушкой из интернета и не вставляйте заново на каждом запуске: файл уже создан." +
+          (body.show
+            ? " Картинку панель уже показала пользователю в чате — не вставляйте её в ответ разметкой, просто скажите одной фразой, что нарисовано и где лежит файл."
+            : ""),
       };
     } catch (error) {
       return {

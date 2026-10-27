@@ -384,6 +384,11 @@ button,textarea{font:inherit}button{color:inherit}
 .panel-title-strong{display:flex;align-items:center;gap:4px;min-width:0;margin-top:3px}
 .panel-title-strong strong{margin-top:0;min-width:0}
 .panel-title-strong .hint{margin-left:0}.files-panel .panel-title{justify-content:space-between}.file-browser{flex:1;min-height:0;display:flex}.file-tree{width:270px;flex:none;border-right:1px solid var(--line-warm-soft);overflow:auto;padding:7px}.file-item{width:100%;min-height:30px;border:0;background:transparent;color:#aeb4bd;border-radius:5px;padding:0 7px;display:flex;align-items:center;gap:7px;text-align:left;font-size:11px;cursor:pointer}.file-item:hover,.file-item.selected{background:#171a20;color:#e8eaed}.file-parent{color:#727a85}.file-empty{padding:18px 8px;color:#626a75;font-size:10px}.file-editor{flex:1;min-width:0;overflow:auto;background:#0b0d10}.editor-head{height:34px;border-bottom:1px solid var(--line-warm-soft);padding:0 12px;display:flex;align-items:center;color:#7f8792;font-size:10px}.file-editor pre{margin:0;padding:14px;font:11px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;color:#cdd1d7;white-space:pre-wrap}.file-placeholder{height:100%;display:grid;place-content:center;justify-items:center;gap:8px;color:#626a75;font-size:10px}
+/* Картинка в панели «Файлы»: её показывают, а не описывают как «двоичный файл». */
+.file-image{height:100%;min-height:180px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:16px}
+.file-image img{max-width:100%;max-height:calc(100vh - 260px);object-fit:contain;border:1px solid var(--line-warm);border-radius:8px;background:#080a0d}
+.file-image a{display:inline-flex;align-items:center;gap:6px;color:#b9a984;font-size:10px;text-decoration:none;border-bottom:1px solid rgba(196,172,130,.35);padding-bottom:2px}
+.file-image a:hover{color:#d2c7b3;border-color:#c4ac82}
 .app-loading{height:100%;min-height:240px;display:grid;place-content:center;justify-items:center;gap:9px;color:#8a929d;font-size:11px;text-align:center;padding:24px}.app-loading strong{font-size:13px;color:#d5d8dd}.app-loading span{max-width:460px;line-height:1.5}.workspace-overlay-panel{flex:1;min-width:0;min-height:0;overflow:auto}.settings-panel{max-width:720px;margin:20px auto;border:1px solid var(--line-warm);background:#111419;border-radius:9px;overflow:hidden}.settings-body{padding:18px;display:grid;gap:14px;color:#969da7;font-size:11px}.settings-body label{display:grid;gap:6px;color:#777f89}.settings-body label span{color:#d0d4da}.settings-body select,.settings-body input{height:32px;border:1px solid var(--line-warm);border-radius:6px;background:#0b0d10;color:#dce0e5;padding:0 9px;outline:none}.settings-save{width:max-content;padding:0 12px}.preview-frame{flex:1;width:100%;border:0;background:#fff}.preview-actions{display:flex;gap:3px}.preview-error{margin:10px 12px;padding:9px;border:1px solid #4a3030;border-radius:6px;background:#1b1212;color:#d99b9b;font-size:10px}
 .preview-hint{margin:10px 12px;padding:9px;border:1px solid #3a3427;border-radius:6px;background:#171408;color:#cdb171;font-size:10px}
 .github-popover{position:absolute;right:12px;top:43px;width:min(560px,calc(100vw - 24px));max-height:calc(100vh - 58px);overflow:auto;background:#111419;border:1px solid var(--line-warm);border-radius:9px;box-shadow:0 18px 50px rgba(0,0,0,.45)}
@@ -1561,6 +1566,18 @@ button,textarea{font:inherit}button{color:inherit}
 .message-text.markdown code{border-color:var(--line-warm-soft)}
 .message-text.markdown pre{border-color:var(--line-warm-soft)}
 .message-text.markdown blockquote{border-left-color:#6a5634}
+
+/*
+ * Картинка, нарисованная по просьбе пользователя: живёт в переписке рядом с ответом, а не
+ * только в дереве файлов. Щелчок открывает её в полном размере в новой вкладке.
+ */
+.message-images{display:flex;flex-wrap:wrap;gap:10px;margin:14px 0 0}
+.message-image{margin:0;max-width:100%;border:1px solid var(--line-warm);border-radius:10px;overflow:hidden;background:#0a0d10}
+.message-image a{display:block;line-height:0}
+.message-image img{display:block;width:auto;max-width:100%;max-height:420px;object-fit:contain}
+.message-image figcaption{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:6px 9px;border-top:1px solid var(--line-warm-soft);color:#7f8792;font:10px/1.4 ui-monospace,"SF Mono","JetBrains Mono",SFMono-Regular,Menlo,monospace}
+.message-image figcaption code{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#9ba6b2}
+.message-image figcaption span{flex:none;color:#8a7a5e}
 
 /*
  * Техно-окна агента (вопрос и ключ): тёмное стекло, тонкая хаки-линия сверху, мелкая сетка

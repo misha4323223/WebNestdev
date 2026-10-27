@@ -1,6 +1,6 @@
-import { ArrowLeft,Check,ChevronRight,Download,FileCode,Folder,FolderOpen,Loader2,Pencil,RefreshCw,Search } from "lucide-react";
+import { ArrowLeft,Check,ChevronRight,Download,ExternalLink,FileCode,Folder,FolderOpen,Loader2,Pencil,RefreshCw,Search } from "lucide-react";
 import { useEffect,useMemo,useRef,useState,type KeyboardEvent as ReactKeyboardEvent } from "react";
-import { downloadProjectZip,getProjectFile,listProjectFiles,saveProjectFile } from "../../lib/project-api";
+import { downloadProjectZip,getProjectFile,listProjectFiles,projectAssetUrl,saveProjectFile } from "../../lib/project-api";
 import type { FileEntry } from "../../lib/types";
 import { Hint } from "../../components/Hint";
 
@@ -19,6 +19,8 @@ function isSecretEnvName(name:string){
 
 /** Расширение, которое редактор открывает как текст: по нему видно, что файл вообще правится. */
 const TEXT_FILE=/\.(?:[cm]?[jt]sx?|json|css|scss|sass|less|html?|md|txt|svg|yml|yaml|toml|env|sql|sh|py|rb|go|rs|java|php)$/i;
+/** Растровая картинка: сервер отдаёт её маршрутом `/asset`, а панель показывает изображением. */
+const IMAGE_FILE=/\.(?:png|jpe?g|webp|gif|avif|bmp|ico)$/i;
 
 /** Имя без пути — для заголовка редактора: полный путь остаётся в подсказке. */
 function baseName(file:string){
@@ -215,7 +217,16 @@ export function FilePanel({projectId,projectName,onSaved}:{projectId:string;proj
             </div>}
           </div>
           {opened.binary
-            ? <div className="file-placeholder"><FileCode size={20}/><span>Двоичный файл: только просмотр.</span></div>
+            ? IMAGE_FILE.test(opened.path)
+              // Картинку агента (или загруженное фото) надо увидеть, а не прочитать как «двоичный
+              // файл»: панель показывает её сама и даёт открыть в новой вкладке.
+              ? <div className="file-image">
+                  <img src={projectAssetUrl(projectId,opened.path)} alt={baseName(opened.path)} loading="lazy"/>
+                  <a href={projectAssetUrl(projectId,opened.path)} target="_blank" rel="noreferrer" title="Открыть изображение в новой вкладке">
+                    <ExternalLink size={12}/> Открыть в новой вкладке
+                  </a>
+                </div>
+              : <div className="file-placeholder"><FileCode size={20}/><span>Двоичный файл: только просмотр.</span></div>
             : <>
                 <div className="file-editor-body">
                   {/* Номера строк — отдельная колонка: у textarea нет нумерации, а без неё

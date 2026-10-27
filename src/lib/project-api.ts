@@ -48,6 +48,11 @@ export const listProjectFiles=(projectId:string,path=".")=>apiJson<{path:string;
  */
 export type ProjectFile={path:string;content:string;binary?:boolean};
 export const getProjectFile=(projectId:string,path:string)=>apiJson<ProjectFile>("/api/projects/"+projectId+"/file?path="+encodeURIComponent(path));
+/**
+ * Адрес картинки проекта: панель «Файлы» показывает её как изображение, а чат — в карточке
+ * сгенерированной картинки. Маршрут отдаёт только растровые форматы.
+ */
+export const projectAssetUrl=(projectId:string,path:string)=>apiUrl("/api/projects/"+projectId+"/asset?path="+encodeURIComponent(path));
 /** Прямое редактирование файла из панели: правка уходит в проект без запуска агента. */
 export const saveProjectFile=(projectId:string,path:string,content:string)=>apiJson<{path:string;content:string;bytes:number}>(
   "/api/projects/"+projectId+"/file",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify({path,content})});

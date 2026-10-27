@@ -1,4 +1,4 @@
-import { useEffect,useRef,useState,type DragEvent as ReactDragEvent,type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect,useMemo,useRef,useState,type DragEvent as ReactDragEvent,type MouseEvent as ReactMouseEvent } from "react";
 import Markdown,{type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { AlertTriangle,ArrowDownToLine,Check,Copy,Cpu,Eye,EyeOff,ExternalLink,FileText,History,Image as ImageIcon,KeyRound,ListPlus,Paperclip,Play,RotateCcw,Send,ShieldCheck,Sparkles,Square,X } from "lucide-react";
@@ -7,7 +7,7 @@ import { apiJson } from "../../lib/api";
 import { addProjectTasks,answerProjectQuestion,cancelProjectSecret,getConversation,listPendingProjectSecrets,skipProjectQuestion,submitProjectSecret,uploadProjectFile,type PendingProjectSecret } from "../../lib/project-api";
 import { cancelProjectAccess,submitProjectAccess } from "../../lib/deployment-api";
 import { NestLoader } from "../../components/NestLoader";
-import { ActionsDock,MessageThinking,PlanPanel,actionTarget,contentBefore,deriveActions,readPlan,writePlan,type PanelId,type PanelState } from "./agent-activity";
+import { ActionsDock,MessageThinking,PlanPanel,actionTarget,chatImagesByMessage,contentBefore,deriveActions,readPlan,writePlan,type ChatImage,type PanelId,type PanelState } from "./agent-activity";
 import type { AgentAction,AgentMode,ChatMessage,PlanState,ReasoningEffort,ReasoningSupport } from "../../lib/types";
 import { QuestionSheet,type AgentQuestion } from "./QuestionSheet";
 import { AgentModeControl } from "./AgentModeControl";
@@ -292,6 +292,12 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   const [reasoningSupport,setReasoningSupport]=useState<ReasoningSupport|null>(null);
   const [plan,setPlan]=useState<PlanState|null>(()=>readPlan(conversationId));
   const [actions,setActions]=useState<AgentAction[]>([]);
+  /**
+   * Картинки, показанные в этом запуске: пока запуск идёт, результатов инструментов в списке
+   * сообщений ещё нет, а карточка должна появиться сразу. Привязаны к номеру ответа, поэтому
+   * остаются под ним и после завершения, а при открытии сохранённого чата их заменяет история.
+   */
+  const [liveImages,setLiveImages]=useState<Array<{messageIndex:number;image:ChatImage}>>([]);
   const [panels,setPanels]=useState<PanelState>(readPanelState);
   // Действия живут в доке под полем ввода: открытость — его собственное состояние, а не
   // запомненное свёрнутое состояние панели.
@@ -613,6 +619,8 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     cancelAutoResume();
     autoResumeRef.current=0;setReconnect(null);setResume(null);closedByUsRef.current=true;
     actionsRef.current=[];setActions([]);setProgress(null);
+    // Картинки прошлого разговора к новому не относятся: их место заняла загруженная история.
+    setLiveImages([]);
     setPlan(readPlan(conversationId));
     // Запрос ключа и вопрос принадлежат запуску в этом чате: при открытии другого окна устаревают.
     recoveredSecretRef.current=null;
@@ -847,6 +855,22 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
         const output=event.output as {error?:unknown;ok?:unknown}|null;
         const failed=Boolean(output&&typeof output==="object"&&(("error" in output&&output.error)||output.ok===false));
         updateActions(current=>current.map(action=>action.id===id?{...action,status:failed?"failed":"done",durationMs:Date.now()-action.startedAt,output:event.output}:action));
+        // Картинка, нарисованная по просьбе пользователя, видна сразу: результата инструмента
+        // в списке сообщений ещё нет — он появится только в сохранённой истории.
+        if(event.name==="image.generate"&&output&&typeof output==="object"){
+          const shown=output as Record<string,unknown>;
+          const url=typeof shown.url==="string"&&shown.url.startsWith("/api/projects/")?shown.url:"";
+          if(shown.shownInChat===true&&url){
+            // Номер в переписке считается без tool-сообщений: в загруженном чате они лежат в истории,
+            // но в списке видны только реплики.
+            const index=messagesRef.current.reduce((count,message)=>count+(message.role==="tool"?0:1),0)-1;
+            const last=messagesRef.current.at(-1);
+            const input=actionsRef.current.find(action=>action.id===id)?.input as {prompt?:unknown}|undefined;
+            if(last?.role==="assistant")setLiveImages(current=>current.some(item=>item.image.url===url)
+              ?current
+              :[...current,{messageIndex:index,image:{url,path:typeof shown.path==="string"?shown.path:"",prompt:typeof input?.prompt==="string"?input.prompt:""}}]);
+          }
+        }
       }
       if(event.type==="plan.updated"&&event.plan)updatePlan(event.plan);
       if(event.type==="secret.requested"&&event.requestId&&event.variable){
@@ -1267,6 +1291,9 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   // Tool results are part of the stored history but not of the transcript; the action
   // list is built from them instead.
   const visibleMessages=messages.filter(message=>message.role!=="tool");
+  // Картинки из сохранённой истории: их отмечает результат инструмента, поэтому после
+  // перезагрузки страницы они исчезают не вместе с состоянием запуска.
+  const chatImages=useMemo(()=>chatImagesByMessage(messages),[messages]);
   // Служебный автозапуск (шаблон, импорт, знакомство) остаётся в истории для модели, но человек
   // видит только смысл — идею проекта или короткую подпись. В закладки такие сообщения не идут:
   // это не запросы пользователя, и метка на каждый автозапуск только путала бы навигацию.
@@ -1324,6 +1351,10 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       {visibleMessages.map((m,i)=>{
         // Ответ, который модель пишет прямо сейчас: над ним идёт её размышление.
         const live=running&&i===visibleMessages.length-1;
+        // Картинки, которые агент показал в этом запуске, и картинки из сохранённой истории —
+        // один список без повторов: пока запуск идёт, результата инструмента в сообщениях ещё нет.
+        const images=[...(chatImages.get(m)??[]),...liveImages.filter(item=>item.messageIndex===i).map(item=>item.image)]
+          .filter((image,index,list)=>list.findIndex(other=>other.url===image.url)===index);
         // Карточка ответа занимает ту же ширину, что «План задач» и «Действия агента»,
         // поэтому левый и правый края совпадают.
         return <div className={"message-row "+m.role+(jumpedIndex===i?" is-jumped":"")} key={i} data-message-index={i}>
@@ -1338,6 +1369,19 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
                   ? <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{m.content}</Markdown>
                   : running ? <NestLoader size={34} label="NestDev выполняет задачу" /> : ""}</div>
               : <div className="message-text">{shownUserMessage(m.content).text}</div>}
+            {/* Нарисованная картинка — в самой переписке, а не только в списке действий:
+                человек просил её увидеть, а не найти файл в дереве проекта. */}
+            {images.length>0&&<div className="message-images">
+              {images.map(image=><figure className="message-image" key={image.url}>
+                <a href={image.url} target="_blank" rel="noreferrer" title="Открыть изображение в новой вкладке">
+                  <img src={image.url} alt={image.prompt||"Изображение, сгенерированное агентом"} loading="lazy"/>
+                </a>
+                <figcaption>
+                  <code title={image.path}>{image.path}</code>
+                  <span>открыть</span>
+                </figcaption>
+              </figure>)}
+            </div>}
             {m.role==="assistant"&&m.content&&!live&&<div className="message-actions">
               <button className="message-action" onClick={()=>void copyAnswer(i,m.content)} title="Скопировать ответ целиком">
                 {copiedMessage===i?<Check size={12}/>:<Copy size={12}/>}

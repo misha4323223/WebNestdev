@@ -36,6 +36,14 @@ function looksBinary(bytes:Buffer){
 }
 /** Папка снимков проверок: единственное, что отдаёт маршрут `/screenshot`. */
 const SCREENSHOT_PREFIX=".webnestdev/screenshots/";
+/**
+ * Растровые картинки проекта: их панель показывает как изображение, а маршрут `/asset` отдаёт
+ * браузеру. SVG в список не входит намеренно: он исполняет скрипты на домене сервиса.
+ */
+const IMAGE_TYPES:Record<string,string>={".png":"image/png",".jpg":"image/jpeg",".jpeg":"image/jpeg",".webp":"image/webp",".gif":"image/gif",".avif":"image/avif",".bmp":"image/bmp",".ico":"image/x-icon"};
+/** Картинку не читают целиком, чтобы открыть: у фотографии свой предел, выше — уже не просмотр. */
+const MAX_IMAGE_BYTES=Number(process.env.WORKSPACE_MAX_IMAGE_BYTES??12_000_000);
+const imageTypeOf=(file:string)=>IMAGE_TYPES[path.extname(file).toLowerCase()];
 
 export async function registerWorkspaceRoutes(app:FastifyInstance){
   app.get("/api/projects/:id/files",async(request,reply)=>{
@@ -66,6 +74,12 @@ export async function registerWorkspaceRoutes(app:FastifyInstance){
     // то же правило. 403, а не 404: файл существует, но этот маршрут его не отдаёт.
     if(isSecretProjectPath(q.path))return reply.code(403).send({error:secretEnvRefusal(q.path)});
     const sandbox=await getSandbox(p.id,user.id);
+    // Картинку панель показывает изображением, а не текстом: читать её целиком в JSON
+    // незачем, и предел текстового файла не должен мешать открыть фотографию.
+    if(imageTypeOf(q.path)){
+      await assertRegularFile(sandbox.root,path.join(sandbox.root,q.path));
+      return {path:q.path,content:"",binary:true};
+    }
     const file=await assertRegularFile(sandbox.root,path.join(sandbox.root,q.path));
     const info=await stat(file);
     if(info.size>MAX_FILE_BYTES)throw new Error("Файл слишком большой, чтобы открыть его в рабочей области");
@@ -161,6 +175,28 @@ export async function registerWorkspaceRoutes(app:FastifyInstance){
     // агента, и место в настройках оставалось старым. Ошибка учёта не отменяет загрузку.
     await recordStorageMutation(p.id,user.id).catch(error=>console.warn("[storage] не удалось обновить размер после загрузки",error));
     return {name:base,path:relative,bytes:bytes.length};
+  });
+
+  /**
+   * Картинка проекта для просмотра: по этому адресу её показывает панель «Файлы» и карточка
+   * изображения в чате. Отдаются только растровые форматы — SVG мог бы исполнить скрипт на
+   * домене сервиса, а текст у проекта уже есть в редакторе.
+   */
+  app.get("/api/projects/:id/asset",async(request,reply)=>{
+    const p=z.object({id:z.string().min(1)}).parse(request.params);
+    const user=await requireProjectUser(request,reply,p.id);
+    if(!user)return;
+    const q=z.object({path:z.string().min(1).max(2000)}).parse(request.query);
+    const type=imageTypeOf(q.path);
+    if(!type)return reply.code(415).send({error:"Этот маршрут отдаёт только изображения: PNG, JPEG, WebP, GIF, AVIF, BMP или ICO"});
+    if(isSecretProjectPath(q.path))return reply.code(403).send({error:secretEnvRefusal(q.path)});
+    const sandbox=await getSandbox(p.id,user.id);
+    const file=await assertRegularFile(sandbox.root,path.join(sandbox.root,q.path));
+    const info=await stat(file);
+    if(info.size>MAX_IMAGE_BYTES)throw new Error("Изображение слишком большое, чтобы открыть его в браузере");
+    const bytes=await readFile(file);
+    applyNoStoreToReply(reply);
+    return reply.type(type).send(bytes);
   });
 
   /**

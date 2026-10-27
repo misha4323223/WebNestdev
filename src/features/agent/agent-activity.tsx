@@ -163,6 +163,48 @@ function parseToolResult(content: string): unknown {
   }
 }
 
+/** Картинка, которую агент нарисовал по просьбе пользователя и показал в переписке. */
+export type ChatImage={url:string;path:string;prompt:string};
+
+/**
+ * Картинки, показанные в чате: инструмент `image.generate` получает их адрес и пометку
+ * `shownInChat`, и только тогда человек видит изображение под ответом. Источник — сохранённые
+ * результаты вызовов, поэтому картинка остаётся в истории и после перезагрузки, а не живёт
+ * только в событии текущего запуска. Картинки, нарисованные для самого проекта, сюда не попадают.
+ */
+export function chatImagesByMessage(messages: ChatMessage[]): Map<ChatMessage, ChatImage[]> {
+  const results = new Map<string, unknown>();
+  for (const message of messages) {
+    if (message.role !== "tool" || !message.tool_call_id) continue;
+    results.set(message.tool_call_id, parseToolResult(message.content));
+  }
+  const images = new Map<ChatMessage, ChatImage[]>();
+  /** Ход с вызовом инструмента часто без текста: картинка принадлежит следующему ответу модели. */
+  const answerAfter = (index: number) => {
+    for (let next = index + 1; next < messages.length; next++) {
+      const candidate = messages[next];
+      if (candidate.role === "user") break;
+      if (candidate.role === "assistant" && candidate.content.trim() && !candidate.tool_calls?.length) return next;
+    }
+    return index;
+  };
+  for (let index = 0; index < messages.length; index++) {
+    const message = messages[index];
+    if (message.role !== "assistant" || !message.tool_calls?.length) continue;
+    for (const call of message.tool_calls) {
+      if (call.name !== "image.generate") continue;
+      const output = asRecord(results.get(call.id));
+      const url = stringValue(output.url);
+      if (output.shownInChat !== true || !url.startsWith("/api/projects/")) continue;
+      const owner = messages[answerAfter(index)];
+      const shown = images.get(owner) ?? [];
+      shown.push({ url, path: stringValue(output.path), prompt: stringValue(asRecord(call.arguments).prompt) });
+      images.set(owner, shown);
+    }
+  }
+  return images;
+}
+
 /** A tool result is a JSON payload; an `error` key means the call itself failed. */
 function hasError(parsed: unknown): boolean {
   if (!parsed || typeof parsed !== "object") return false;
@@ -308,14 +350,21 @@ type ActionDetailData = {
   preview?: CodePreview;
   copyText?: string;
   empty?: string;
-  /** PNG проверки: тот же адрес, по которому снимок открывает панель «Файлы». */
+  /** PNG проверки или картинка проекта: тот же адрес, по которому снимок открывает панель «Файлы». */
   imageUrl?: string;
+  imageAlt?: string;
 };
 
 /** Снимок из результата browser.screenshot / browser.runtime: только собственный маршрут снимков. */
 function screenshotUrlOf(output: Record<string, unknown> | null) {
   const screenshot = asRecord(output?.screenshot);
   const url = stringValue(screenshot?.url);
+  return url.startsWith("/api/projects/") ? url : "";
+}
+
+/** Картинка из результата image.generate: адрес проекта, а не произвольный внешний. */
+function generatedImageUrlOf(output: Record<string, unknown> | null) {
+  const url = stringValue(output?.url);
   return url.startsWith("/api/projects/") ? url : "";
 }
 
@@ -435,6 +484,17 @@ function actionDetail(action: AgentAction): ActionDetailData {
     };
   }
 
+  if (action.name === "image.generate") {
+    const url = generatedImageUrlOf(output);
+    if (url) return {
+      title: "Изображение",
+      note: stringValue(output.path) || undefined,
+      imageUrl: url,
+      imageAlt: "Изображение, сгенерированное агентом",
+      copyText: stringValue(output.path) || undefined,
+    };
+  }
+
   if (action.name === "fs.list" && Array.isArray(action.output)) {
     const text = action.output.map(item => {
       const entry = asRecord(item);
@@ -499,7 +559,7 @@ function ActionDetailView({ action }: { action: AgentAction }) {
       </button>}
     </div>
     {detail.imageUrl && <a className="action-screenshot" href={detail.imageUrl} target="_blank" rel="noreferrer" title="Открыть снимок в новой вкладке">
-      <img src={detail.imageUrl} alt="Снимок страницы, сделанный агентом" loading="lazy"/>
+      <img src={detail.imageUrl} alt={detail.imageAlt ?? "Снимок страницы, сделанный агентом"} loading="lazy"/>
     </a>}
     {detail.preview && lines.length > 0 && <div className="action-code" role="region" aria-label={detail.title}>
       {lines.map((line, index) => <div key={line.line + ":" + index} className={"code-line code-" + line.kind}>
@@ -558,14 +618,14 @@ export function ActionsDock({ actions, running, progress, open, onOpenChange }: 
         const detailId = "action-detail-" + action.id;
         // Снимок виден в самой строке действия: человек не должен раскрывать вызов, чтобы
         // посмотреть, как выглядит страница после проверки.
-        const thumbUrl = screenshotUrlOf(asRecord(action.output));
+        const thumbUrl = screenshotUrlOf(asRecord(action.output)) || generatedImageUrlOf(asRecord(action.output));
         return <li key={action.id} className={"action-row action-" + action.status + (expanded ? " action-open" : "")}>
           <button type="button" className="action-summary" onClick={() => setOpenId(expanded ? null : action.id)} aria-expanded={expanded} aria-controls={detailId}>
             <span className="action-chevron">{expanded ? <ChevronDown size={12}/> : <ChevronRight size={12}/>}</span>
             <span className="action-icon"><Icon size={13}/></span>
             <span className="action-label">{label}</span>
             {action.target && <code className="action-target" title={action.target}>{action.target}</code>}
-            {thumbUrl && <img className="action-thumb" src={thumbUrl} alt="Снимок страницы" loading="lazy"/>}
+            {thumbUrl && <img className="action-thumb" src={thumbUrl} alt={action.name === "image.generate" ? "Сгенерированное изображение" : "Снимок страницы"} loading="lazy"/>}
             <span className="action-status">
               {action.status === "running"
                 ? <LoaderCircle size={12} className="agent-spin"/>
