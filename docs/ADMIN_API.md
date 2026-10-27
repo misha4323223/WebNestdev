@@ -172,6 +172,15 @@ curl -s https://panel.example.com/api/admin/2fa/verify -H 'content-type: applica
 | `GET /api/admin/sandboxes` | `Bearer` | песочницы списком: `state` = `cold` / `running` / `never` / `all`, `limit` 1…200 (раздел 7.5) |
 | `GET /api/admin/infra/prune` | `Bearer` | что освободит безопасная очистка Docker и что останется (раздел 7.6) |
 | `POST /api/admin/infra/prune` | `Bearer` | безопасная очистка Docker: тело `{confirm: true}`, не чаще раза в 30 секунд (раздел 7.6) |
+| `GET /api/admin/users/:id/restriction` | `Bearer` | заблокирован ли аккаунт и кем (раздел 7.7) |
+| `POST /api/admin/users/:id/sessions/revoke` | `Bearer` | завершить все сеансы аккаунта (раздел 7.7) |
+| `POST /api/admin/users/:id/block` | `Bearer` | заблокировать вход и отозвать сеансы (раздел 7.7) |
+| `POST /api/admin/users/:id/unblock` | `Bearer` | снять блокировку (раздел 7.7) |
+| `POST /api/admin/users/:id/plan` | `Bearer` | выдать тариф без оплаты или снять его (раздел 7.7) |
+| `POST /api/admin/users/:id/tokens` | `Bearer` | надбавка к месячному пулу токенов (раздел 7.7) |
+| `GET /api/admin/billing?days=&limit=` | `Bearer` | платежи, подписки, истекающие и калибровка пула (раздел 7.8) |
+| `GET /api/admin/projects/:id` | `Bearer` | карточка проекта: репозиторий, превью, переменные, выкатка (раздел 7.9) |
+| `GET /api/admin/support/stats` | `Bearer` | где болит: очередь, важность, давность (раздел 8.5) |
 
 Ответы не кэшируются (`cache-control: no-store`). Ошибки: `401` — нет или истёк вход / не подошёл
 код, `403` — источник не разрешён, `429` — лимит попыток (заголовок `Retry-After`), `400` —
@@ -520,6 +529,167 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST -H "Authorization: Bearer $TOKE
 Главная проверка — число остановленных контейнеров до и после совпадает, а `GET /api/admin/infra`
 после очистки показывает те же холодные проекты.
 
+### 7.7. Действия над аккаунтом
+
+До этих маршрутов админка только читала: проблему было видно, а сделать с ней ничего нельзя.
+Каждое действие отвечает на один вопрос и не делает заодно второе.
+
+| Метод и путь | Тело | Что меняется |
+|---|---|---|
+| `GET /api/admin/users/:id/restriction` | — | только чтение: `blocked` и `restriction` |
+| `POST /api/admin/users/:id/sessions/revoke` | `{confirm: true}` | все сессии аккаунта удалены, `blocked` не меняется |
+| `POST /api/admin/users/:id/block` | `{confirm: true, reason?}` | запись блокировки **и** отзыв всех сессий |
+| `POST /api/admin/users/:id/unblock` | `{confirm: true}` | блокировка снята, сессии не восстанавливаются |
+| `POST /api/admin/users/:id/plan` | `{confirm: true, plan, months?}` | подписка без оплаты; `plan: "free"` — снять |
+| `POST /api/admin/users/:id/tokens` | `{confirm: true, tokens}` | надбавка к пулу текущего месяца |
+
+Общие правила:
+
+- схема тела **строгая**: `confirm: true` обязателен, лишнее поле — `400` (запрос с `scope` или
+  чем-то похожим не «игнорируется», а отвергается);
+- цель обязана существовать — `404`, иначе админка правила бы записи несуществующих аккаунтов;
+- свой аккаунт заблокировать нельзя (`400`). Администраторы живут в отдельной таблице
+  (`admin_users`), поэтому проверка — страховка, а не единственная защита;
+- каждое действие пишет событие в журнал безопасности (`user.blocked`, `user.unblocked`,
+  `user.sessions.revoked.admin`, `user.plan.granted`, `user.tokens.granted`) вместе с id админа.
+
+**Блокировка** действует на всех четырёх входах (пароль, регистрация, телефон, Яндекс ID):
+`attachSession` не выдаёт сессию заблокированному, а `getCurrentUser` не пускает по уже выданной
+cookie. Человек видит `403` и причину, а не «ошибку сети». Данные и тариф при блокировке не
+меняются — действие обратимо.
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"confirm":true,"reason":"спам в поддержку"}' \
+  'https://nestdev.ru/api/admin/users/<id>/block'
+```
+
+```json
+{
+  "ok": true,
+  "blocked": {
+    "userId": "…",
+    "blockedAt": "2026-10-27T09:00:00.000Z",
+    "blockedBy": "…",
+    "blockedByLabel": "admin@example.test",
+    "reason": "спам в поддержку"
+  },
+  "revoked": 3
+}
+```
+
+**Тариф без оплаты** (`plan`) собирает запись по тем же правилам, что и настоящий платёж
+(продление от текущего срока), но с двумя отличиями: `autoRenew: false` — свипер не выставит
+счёт живому человеку, и `noticeAt: null` — письмо о списании не уходит. `months` от 1 до 12, по
+умолчанию 1. `plan: "free"` — истечение срока сейчас; если подписки нет, ответ `409`, а не «ок».
+
+```json
+{ "ok": true, "plan": "pro", "planName": "Плюс", "subscription": { "plan": "pro", "status": "active", "renewsAt": "2026-12-27T09:00:00.000Z", "autoRenew": false } }
+```
+
+**Токены** — надбавка к пулу, а не правка расхода: `model_usage` остаётся единственным источником
+правды, поэтому «выдали 5 млн» не искажает статистику. Сумма складывается с уже начисленным
+(`bonus` в ответе — итог месяца), на следующий месяц не переносится, на бесплатном тарифе
+(`agentTokensPerMonth: 0`) не расширяет ничего — это видно по `appliesToPool: false`.
+
+```json
+{ "ok": true, "month": "2026-10", "granted": 5000000, "bonus": 5000000, "appliesToPool": true, "budget": { "used": 1200000, "limit": 55000000, "bonus": 5000000, "remaining": 53800000 } }
+```
+
+Сброса второго фактора (`2fa/reset`) здесь нет намеренно: у пользователей панели TOTP нет
+вовсе — второй фактор есть только у администраторов, и перевыпуск их кодов уже описан в 2.3.
+
+### 7.8. Реестр платежей и подписок
+
+Данные магазина (`billing_payments`, `billing_subscriptions`) лежали в хранилище, но ни один
+маршрут их не отдавал: «кто истекает на этой неделе», «у кого автопродление упало дважды» и
+«сколько денег реально пришло» нельзя было узнать вообще.
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" 'https://nestdev.ru/api/admin/billing?days=30&limit=100'
+```
+
+```json
+{
+  "generatedAt": "2026-10-27T09:00:00.000Z",
+  "window": { "days": 30, "from": "…", "to": "…" },
+  "money": { "paidRub": 1980, "paidCount": 2, "initialPaid": 2, "renewalsPaid": 0,
+             "pendingRub": 990, "pendingCount": 1, "failedRub": 990, "failedCount": 1,
+             "renewalsRetried": 1 },
+  "payments": [
+    { "invId": 100001, "userId": "…", "email": "payer@example.test", "plan": "pro",
+      "planName": "Плюс", "amount": 990, "status": "paid", "kind": "initial",
+      "autoRenew": false, "attempts": 0, "createdAt": "…", "paidAt": "…" }
+  ],
+  "subscriptions": {
+    "total": 3, "live": 2, "canceled": 0,
+    "expiringSoon": [
+      { "userId": "…", "email": "…", "plan": "pro", "planName": "Плюс",
+        "renewsAt": "2026-10-28T09:00:00.000Z", "autoRenew": true, "status": "active", "daysLeft": 1 }
+    ],
+    "renewalFailures": [ { "userId": "…", "attempts": 1, "autoRenew": true, "status": "active" } ]
+  },
+  "pool": {
+    "month": "2026-10", "subscribers": 2, "medianTokens": 7500000, "p90Tokens": 15000000,
+    "averageTokens": 7500000, "fullPoolShare": 0, "nearPoolShare": 0,
+    "fullPoolCount": 0, "nearPoolCount": 0
+  }
+}
+```
+
+Правила чтения:
+
+- `money` считается по тому же окну, что и `payments`: «пришло 1 980 ₽» и список под ним
+  сходятся, иначе цифра и таблица рассказывают разное;
+- `pending` — счёт выставлен, уведомление не пришло; `failed` — отказ банка или три неудачи
+  автопродления, после третьей подписка истекает;
+- `expiringSoon` — действующие подписки со сроком в ближайшие 7 дней;
+- `renewalFailures` — у кого `renewalAttempts > 0`: один-два отказа ещё лечатся, третий закрывает
+  доступ;
+- **`pool` — калибровка тарифа.** `medianTokens` и `p90Tokens` считаются по действующим
+  подписчикам за календарный месяц из `model_usage`. `p90Tokens` — масштаб, а не решение:
+  столько токенов покрывает 90% подписчиков. `fullPoolShare` — доля тех, кто выбирает пул целиком
+  (`used >= agentTokensPerMonth`), `nearPoolShare` — от 90% пула. Высокая доля при низкой медиане
+  значит «тариф тесен», низкая доля при высокой медиане — «в пуле есть запас». Общий расход для
+  этого вопроса слишком грубый: он смешивает кабинет с тяжёлым пользователем.
+
+Ответ не кэшируется (`cache-control: no-store`): это живые деньги.
+
+### 7.9. Карточка проекта
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" 'https://nestdev.ru/api/admin/projects/<id>'
+```
+
+```json
+{
+  "project": { "id": "…", "name": "Магазин цветов", "createdAt": "…", "updatedAt": "…",
+               "repository": { "owner": "acme", "name": "shop", "fullName": "acme/shop",
+                               "defaultBranch": "main", "url": "https://github.com/acme/shop" } },
+  "owner": { "id": "…", "email": "owner@example.test", "createdAt": "…" },
+  "preview": { "running": true, "ready": true, "port": 3000, "host": "172.17.0.4",
+               "settled": true, "viaExec": false, "startedAt": 1761555600000,
+               "lastUsedAt": 1761559200000, "error": null },
+  "secrets": { "count": 2, "variables": [
+    { "name": "DATABASE_URL", "file": ".env.local", "preview": "скрыто · 1 строк" },
+    { "name": "API_TOKEN", "file": ".env.local", "preview": "скрыто · 1 строк" }
+  ] },
+  "deploy": { "file": "deploy_project.md", "exists": true, "target": { "kind": "server", "domain": "shop.example.com" },
+              "total": 6, "done": 4, "complete": false, "blocked": [], "updatedAt": "…" }
+}
+```
+
+Что важно знать:
+
+- **значений секретов в ответе нет** — только имя, файл и форма значения (`preview`): админке
+  нужно понять, какой переменной не хватает, а не прочитать ключ;
+- `preview.error` — причина, по которой живое превью не отвечает (`hint` менеджера); у выключенного
+  превью поля нет;
+- `deploy` — последний план выкатки из `deploy_project.md` в песочнице проекта. Отдельного
+  хранилища выкаток нет: план — единственная запись, которая переживает перезапуск, поэтому
+  «последний деплой» читается из него. Если файла нет, `exists: false`;
+- `repository: null` — проект без подключённого репозитория.
+
 ## 8. Обращения поддержки
 
 Создание обращения по ключу невозможно: его пишет только вошедший пользователь из кнопки
@@ -531,6 +701,7 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST -H "Authorization: Bearer $TOKE
 | `GET /api/support/tickets/<id>` | одно обращение, живая карточка автора и его прошлые обращения |
 | `GET /api/support/tickets/<id>/screenshot` | скриншот обращения |
 | `POST /api/support/tickets/<id>/reply` | ответ человеку письмом от имени платформы (раздел 8.3) |
+| `PATCH /api/support/tickets/<id>/status` | статус обращения: `open` / `in_progress` / `closed` (раздел 8.4) |
 
 ### 8.1. Что уже есть в каждом обращении
 
@@ -672,6 +843,48 @@ curl -s -X POST https://nestdev.ru/api/support/tickets/<id>/reply \
 (раздел 8.1). События «отправлен ответ» и «ответ не ушёл» идут в журнал безопасности действиями
 `support.reply` / `support.reply.failed`: письмо живому человеку от имени платформы должно быть
 видно постфактум.
+
+### 8.4. Статус обращения
+
+```bash
+curl -s -X PATCH https://nestdev.ru/api/support/tickets/<id>/status \
+  -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"status":"closed"}'
+# → {"ok":true,"id":"…","status":"closed"}
+```
+
+`status` — `open`, `in_progress` или `closed`. Дверь та же, что у ответа: только сессия
+админ-приложения (ключ чтения обращения читает, но состояние не меняет). Тело строгое: лишнее поле
+— `400`. Статус живёт в файле обращения, поэтому его видит и список, и карточка.
+
+У обращений, созданных до появления поля, статуса в файле нет: при чтении он читается как `open`,
+и старые тикеты не приходится переписывать. Статус — отдельное поле, а не вывод из факта ответа:
+человек может ответить сам («спасибо, помогло»), а закрывает тему поддержка. Смена статуса пишется
+в журнал действием `support.status`.
+
+### 8.5. Сводка: где болит
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" https://nestdev.ru/api/admin/support/stats
+```
+
+```json
+{
+  "generatedAt": "2026-10-27T09:00:00.000Z",
+  "total": 42,
+  "byStatus": { "open": 12, "inProgress": 5, "closed": 25 },
+  "byCategory": { "bug": 31, "idea": 11 },
+  "awaitingReply": 15,
+  "last7Days": 6,
+  "last30Days": 19,
+  "severity": { "1-3": 9, "4-6": 14, "7-8": 12, "9-10": 7 },
+  "oldestOpen": { "id": "…", "createdAt": "2026-10-21T08:00:00.000Z", "ageHours": 145 }
+}
+```
+
+`awaitingReply` считается по **отправленному** ответу: неудачная попытка (письмо не ушло) очередь
+не закрывает. `oldestOpen` — самое старое незакрытое обращение: это и есть «сколько человек ждёт».
+Счётчики берутся из тех же файлов, что и список, — отдельного хранилища метрик у поддержки нет.
 
 ## 9. Рассылка по сегментам
 
@@ -841,8 +1054,14 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `user.login.failed` | Неудачный вход пользователя |
 | `user.sessions.revoked` | Завершены все сеансы пользователя |
 | `infra.docker.pruned` | Очистка Docker |
+| `user.blocked` | Аккаунт заблокирован администратором |
+| `user.unblocked` | Блокировка аккаунта снята |
+| `user.sessions.revoked.admin` | Сеансы пользователя завершены администратором |
+| `user.plan.granted` | Тариф выдан без оплаты |
+| `user.tokens.granted` | Начислены токены |
 | `support.reply` | Отправлен ответ на обращение |
 | `support.reply.failed` | Ответ на обращение не ушёл |
+| `support.status` | Статус обращения изменён |
 
 ### 10.4. Хранение
 

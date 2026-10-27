@@ -4,6 +4,7 @@ import path from "node:path";
 import { isYdbEnabled, ydbQuery, getTable } from "../storage/ydb.js";
 import { limitsForPlan, type PlanId, type UsageKind, type UsageSnapshot } from "./plans.js";
 import { accountPlanFor } from "../billing/store.js";
+import { tokenBonusFor, tokenMonth } from "./token-bonus.js";
 
 /**
  * Какая граница тарифа отвечает за каждый вид расхода. Таблица, а не тернарный оператор: новый вид
@@ -180,13 +181,19 @@ async function monthlyTokensUsed(userId: string, now = new Date()): Promise<{ mo
 /**
  * Пул токенов тарифа на текущий месяц. `limit: 0` — пула нет (бесплатный тариф живёт дневным
  * лимитом запусков), поэтому `remaining` тоже 0 и интерфейс шкалу не рисует.
+ *
+ * `bonus` — токены, начисленные администратором на этот месяц (account/token-bonus.ts). В `limit`
+ * они уже входят, отдельным полем приходят только для того, чтобы шкала могла их назвать.
  */
-export type TokenBudget = { month: string; used: number; limit: number; remaining: number };
+export type TokenBudget = { month: string; used: number; limit: number; bonus: number; remaining: number };
 
 export async function getTokenBudget(userId: string, plan: PlanId, now = new Date()): Promise<TokenBudget> {
   const { month, used } = await monthlyTokensUsed(userId, now);
-  const limit = limitsForPlan(plan).agentTokensPerMonth;
-  return { month, used, limit, remaining: limit > 0 ? Math.max(0, limit - used) : 0 };
+  const planPool = limitsForPlan(plan).agentTokensPerMonth;
+  // Надбавка имеет смысл только там, где есть пул: на бесплатном тарифе действует дневной лимит.
+  const bonus = planPool > 0 ? await tokenBonusFor(userId, month) : 0;
+  const limit = planPool + bonus;
+  return { month, used, limit, bonus, remaining: limit > 0 ? Math.max(0, limit - used) : 0 };
 }
 
 /** Отказ по пулу токенов: отдельный код, чтобы панель сказала «пул исчерпан», а не «дневной лимит». */
@@ -210,8 +217,10 @@ export class TokenBudgetError extends Error {
 export async function consumeAgentRun(userId: string, options: { ownProvider: boolean }, now = new Date()) {
   if (options.ownProvider) return getUsageSnapshot(userId, now);
   const plan = await accountPlanFor(userId);
-  const pool = limitsForPlan(plan).agentTokensPerMonth;
-  if (pool > 0) {
+  const planPool = limitsForPlan(plan).agentTokensPerMonth;
+  if (planPool > 0) {
+    // Начисленные администратором токены расширяют пул на этот месяц, но не отменяют его.
+    const pool = planPool + await tokenBonusFor(userId, tokenMonth(now));
     const { used } = await monthlyTokensUsed(userId, now);
     if (used >= pool) throw new TokenBudgetError(used, pool);
   }

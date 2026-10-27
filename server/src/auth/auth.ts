@@ -1,6 +1,7 @@
 import type { FastifyRequest } from "fastify";
-import { createSession, getSession, getUser, sessionTtlMs } from "./auth-store.js";
+import { createSession, deleteSession, getSession, getUser, sessionTtlMs } from "./auth-store.js";
 import { getProject, type Project } from "../project-store.js";
+import { isBlocked } from "../account/restriction-store.js";
 
 export const SESSION_COOKIE = "webnestdev_session";
 
@@ -8,7 +9,17 @@ export async function getCurrentUser(request:FastifyRequest){
   const sessionId = request.cookies?.[SESSION_COOKIE];
   if(!sessionId) return null;
   const session = await getSession(sessionId);
-  return session ? getUser(session.userId) : null;
+  if(!session) return null;
+  const user = await getUser(session.userId);
+  if(!user) return null;
+  // Заблокированный аккаунт не проходит ни в один закрытый маршрут — даже если его сессия
+  // пережила блокировку (её отзывает само действие в админке). Сессию убираем сразу: иначе
+  // каждый следующий запрос снова читал бы блокировку.
+  if(await isBlocked(user.id)){
+    await deleteSession(sessionId);
+    return null;
+  }
+  return user;
 }
 export async function requireUser(request:FastifyRequest, reply:any){
   const user = await getCurrentUser(request);
@@ -51,7 +62,13 @@ export function sessionCookieSecure(request?:FastifyRequest){
 // увидеть в логе сервера, а не выяснять по «вход не запоминается».
 let plainHttpWarned = false;
 
+/**
+ * Выдаёт cookie сессии. `false` — аккаунт заблокирован: сессия не создаётся, и вызывающий маршрут
+ * отвечает 403. Проверка стоит здесь, а не в каждом входе, потому что входов четыре (пароль,
+ * регистрация, телефон, Яндекс ID), и забыть один значило бы оставить открытую дверь.
+ */
 export async function attachSession(reply:any,userId:string,request?:FastifyRequest){
+  if(await isBlocked(userId)) return false;
   const session = await createSession(userId);
   const secure = sessionCookieSecure(request);
   if (!secure && process.env.NODE_ENV === "production" && !plainHttpWarned) {
@@ -61,4 +78,5 @@ export async function attachSession(reply:any,userId:string,request?:FastifyRequ
   // Cookie живёт ровно столько же, сколько разрешён абсолютный срок сессии: idle-таймаут
   // проверяет сервер по отметке активности, а не браузер по сроку cookie.
   reply.setCookie(SESSION_COOKIE, session.id, {httpOnly:true,sameSite:"lax",secure,path:"/",maxAge:Math.max(1,Math.floor(sessionTtlMs()/1000))});
+  return true;
 }

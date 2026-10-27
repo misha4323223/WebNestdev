@@ -7,6 +7,7 @@ import { findPhoneByUserId, formatPhone } from "../auth/phone-store.js";
 import { getUserProfile } from "../account/profile-store.js";
 import { checkAuthRateLimit } from "../auth/auth-rate-limit.js";
 import { recordAudit } from "../security/audit-journal.js";
+import { ACCOUNT_BLOCKED_MESSAGE } from "../account/restriction-store.js";
 
 const credentials = z.object({email:z.string().email().max(200),password:z.string().min(8).max(200)});
 
@@ -89,7 +90,20 @@ export async function registerAuthRoutes(app:FastifyInstance){
       });
       return reply.code(401).send({error:"Неверный email или пароль"});
     }
-    await attachSession(reply,user.id,request);
+    // Пароль верный, но аккаунт заблокирован: это не «неверный пароль», и человек должен
+    // увидеть причину. В журнал попадает отдельная причина — по ней видно попытки входа.
+    if(!(await attachSession(reply,user.id,request))) {
+      await recordAudit({
+        action: "user.login.failed",
+        actorType: "system",
+        actorId: user.id,
+        actorLabel: user.email,
+        target: user.id,
+        ip: request.ip,
+        details: { reason: "blocked" },
+      });
+      return reply.code(403).send({error:ACCOUNT_BLOCKED_MESSAGE});
+    }
     return {user:{id:user.id,email:user.email,createdAt:user.createdAt}};
   });
   app.post("/api/auth/logout", async (request,reply) => {

@@ -22,6 +22,7 @@ const yandexNotices: Record<string, string> = {
   token_error: "Яндекс не выдал токен входа. Попробуйте ещё раз.",
   profile_error: "Яндекс ID не отдал профиль. В приложении на oauth.yandex.ru должно быть включено право «Доступ к логину, имени и фамилии, полу» (login:info).",
   error: "Не удалось завершить вход через Яндекс ID.",
+  blocked: "Аккаунт заблокирован администратором. Напишите в поддержку.",
 };
 
 export function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void }) {

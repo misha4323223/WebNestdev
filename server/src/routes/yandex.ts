@@ -165,7 +165,7 @@ export async function registerYandexRoutes(app: FastifyInstance) {
         const accessToken = await exchangeYandexCode(query.code, clientId, clientSecret);
         const profile = await fetchYandexProfile(accessToken);
         const user = await ensureYandexAccount(profile);
-        await attachSession(reply, user.id, request);
+        if (!(await attachSession(reply, user.id, request))) return redirect(reply, flow.frontendUrl, "blocked", "yandex_login");
         return redirect(reply, flow.frontendUrl, "ok", "yandex_login");
       } catch (error) {
         request.log.warn({ error: error instanceof Error ? error.message : error }, "yandex id sign-in failed");

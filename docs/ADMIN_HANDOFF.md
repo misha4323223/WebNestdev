@@ -299,11 +299,22 @@ Yandex Cloud и заводятся по таблице выше (пошагов�
 | `GET /api/admin/sandboxes` | песочницы списком: `state=cold|running|never|all`, `limit` 1…200 |
 | `GET /api/admin/infra/prune` | что освободит безопасная очистка Docker и что останется (только чтение) |
 | `POST /api/admin/infra/prune` | безопасная очистка: только кэш сборки и висячие образы, тело `{confirm: true}` |
+| `GET /api/admin/users/:id/restriction` | заблокирован ли аккаунт и кем (только чтение) |
+| `POST /api/admin/users/:id/sessions/revoke` | завершить все сеансы аккаунта, тело `{confirm: true}` |
+| `POST /api/admin/users/:id/block` | блокировка входа и отзыв сеансов, тело `{confirm: true, reason?}` |
+| `POST /api/admin/users/:id/unblock` | снять блокировку, тело `{confirm: true}` |
+| `POST /api/admin/users/:id/plan` | тариф без оплаты, тело `{confirm: true, plan, months?}` |
+| `POST /api/admin/users/:id/tokens` | надбавка к пулу текущего месяца, тело `{confirm: true, tokens}` |
+| `GET /api/admin/billing?days=&limit=` | платежи, подписки, истекающие, калибровка пула |
+| `GET /api/admin/projects/:id` | карточка проекта: репозиторий, превью, переменные, выкатка |
+| `PATCH /api/support/tickets/:id/status` | статус обращения; `GET /api/admin/support/stats` — очередь и важность |
 
 Детали, потоки и curl — `docs/ADMIN_API.md`. Статистика и её контракт — раздел 7 там же
 (`server/src/routes/admin-analytics.ts`); инфраструктура — раздел 7.5
 (`server/src/routes/admin-infra.ts`); безопасная очистка Docker — раздел 7.6
-(`server/src/routes/admin-prune.ts`).
+(`server/src/routes/admin-prune.ts`); действия над аккаунтом — 7.7 (`server/src/routes/admin-users.ts`);
+реестр платежей и калибровка пула — 7.8 (`server/src/routes/admin-billing.ts`); карточка проекта — 7.9
+(`server/src/routes/admin-projects.ts`).
 
 - Аккаунты отдельные (`server/src/admin/*`), пароль — scrypt, TOTP-секрет зашифрован
   `WEBNESTDEV_ENCRYPTION_KEY`, recovery-коды — sha256, сессии — sha256 токена.
@@ -316,8 +327,10 @@ Yandex Cloud и заводятся по таблице выше (пошагов�
   (`node server/dist/scripts/admin-cli.js …` внутри контейнера `webnestdev-server`).
 
 Тесты: `server/src/admin/totp.test.ts` (векторы RFC 6238), `server/src/admin/bootstrap.test.ts`,
-`server/src/routes/admin.test.ts`, `server/src/routes/admin-prune.test.ts`. Последний полный прогон —
-**1061 тест, все проходят**.
+`server/src/routes/admin.test.ts`, `server/src/routes/admin-prune.test.ts`,
+`server/src/routes/admin-users.test.ts`, `server/src/routes/admin-billing.test.ts`,
+`server/src/routes/admin-projects.test.ts`, `server/src/routes/support-status.test.ts`.
+Последний полный прогон — **1081 тест, все проходят**.
 
 ## Следующие шаги
 
@@ -329,11 +342,16 @@ Yandex Cloud и заводятся по таблице выше (пошагов�
 3. **Клиенты.** Expo: токен в `expo-secure-store`, QR из `otpauth` через `react-native-qrcode-svg`,
    только HTTPS. Electron: запросы из main-процесса, токен через `safeStorage`; `file://` в
    `WEBNESTDEV_ADMIN_ORIGINS` не работает — нужен `app://…` или main-процесс.
-4. **Следующая задача по приложению:** экран «Поддержка» — список обращений с профилем автора,
-   карточка тикета со скриншотом и прошлыми обращениями (раздел 8 в `docs/ADMIN_API.md`).
-   Бэкенд уже готов; админ-токен открывает и `/api/admin/*`, и чтение обращений. Ключи платформы
-   (`/api/platform/keys`) по-прежнему требуют пользовательскую сессию и `WEBNESTDEV_ADMIN_EMAILS`.
-   Если админка должна ими управлять — перевести их на админ-сессию.
+4. **Следующая задача по приложению:** экраны под новые маршруты — «Действия» в карточке
+   пользователя (раздел 7.7), «Деньги» с реестром платежей и шкалой пула (7.8), карточка проекта
+   (7.9), статус и сводка обращений (8.4–8.5). Бэкенд готов, контракты и curl — в
+   `docs/ADMIN_API.md`. Ключи платформы (`/api/platform/keys`) по-прежнему требуют
+   пользовательскую сессию и `WEBNESTDEV_ADMIN_EMAILS`: если админка должна ими управлять,
+   их надо перевести на админ-сессию.
+
+   Ещё нет на сервере: `GET /api/admin/deployments` — списка выкаток не существует ни в одном
+   хранилище (план лежит в `deploy_project.md` внутри песочницы, а история выкаток не пишется),
+   поэтому маршрут потребовал бы новой таблицы и записи в пайплайне, а не только чтения.
 5. **Из бэклога безопасности** (`docs/SECURITY.md`): Docker-брокер вместо `docker.sock` (P1 #5),
    аудит действий администратора (P1 #11) — сделан журналом `security_audit`; дальше политика
    паролей (#12), подтверждение email (#13) и лимит чтения ключа поддержки (#10).

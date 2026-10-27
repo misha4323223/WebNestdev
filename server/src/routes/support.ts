@@ -11,9 +11,11 @@ import {
   listSupportMessages,
   listSupportTickets,
   readSupportScreenshot,
+  setSupportTicketStatus,
   supportMessagesFor,
   supportTicketsForUser,
   type SupportReporter,
+  type SupportTicketStatus,
 } from "../support/support-store.js";
 import { loadSupportUser, supportReporterFor, supportReporterFrom } from "../support/support-user.js";
 import { sendSupportMail, supportMailSettings } from "../support/support-mail.js";
@@ -114,7 +116,17 @@ async function allowTicketRead(request: FastifyRequest, reply: FastifyReply) {
   return true;
 }
 
-export async function registerSupportRoutes(app: FastifyInstance) {
+/**
+ * Подмена транспорта ответа в тестах. Живого SMTP в CI нет, а проверять надо весь маршрут вокруг
+ * письма: выбор адреса, квоту, запись в переписку и отказ (см. routes/support-reply.test.ts).
+ * Само письмо — отправитель, Reply-To, тема, текст — проверяется в support/support-reply.test.ts.
+ */
+export type SupportRouteDeps = {
+  reply?: (input: { to: string; subject: string; text: string }) => Promise<{ messageId: string }>;
+};
+
+export async function registerSupportRoutes(app: FastifyInstance, deps: SupportRouteDeps = {}) {
+  const sendReply = deps.reply ?? sendSupportReply;
   app.post("/api/support", { bodyLimit: 8_000_000 }, async (request, reply) => {
     const user = await requireUser(request, reply); if (!user) return;
     const retryAfter = allowTicket(user.id);
@@ -326,7 +338,7 @@ export async function registerSupportRoutes(app: FastifyInstance) {
 
     const finalSubject = subject || supportReplySubject(ticket);
     try {
-      const sent = await sendSupportReply({ to, subject: finalSubject, text });
+      const sent = await sendReply({ to, subject: finalSubject, text });
       const message = await addSupportMessage({
         ticketId: ticket.id,
         author: "admin",
@@ -376,6 +388,83 @@ export async function registerSupportRoutes(app: FastifyInstance) {
       });
       return reply.code(502).send({ error: "Письмо не ушло: " + reason, code: "send_failed" });
     }
+  });
+
+  /**
+   * Статус обращения. Дверь та же, что у ответа: только сессия админ-приложения. Ключ чтения и
+   * админ платформы в браузере обращения читают, но не меняют их состояние.
+   *
+   * Статус отдельным полем, а не по факту ответа: человек может ответить сам («спасибо, помогло»),
+   * и закрыть тему должна поддержка, а не отправка письма.
+   */
+  app.patch("/api/support/tickets/:id/status", async (request, reply) => {
+    const admin = await requireAdmin(request, reply);
+    if (!admin) return;
+    applyNoStoreToReply(reply);
+
+    const params = z.object({ id: z.string().min(8).max(64) }).parse(request.params);
+    const body = z.object({ status: z.enum(["open", "in_progress", "closed"]) }).strict().safeParse(request.body ?? {});
+    if (!body.success) {
+      return reply.code(400).send({ error: "Нужен статус: open, in_progress или closed", code: "status_invalid" });
+    }
+
+    const ticket = await setSupportTicketStatus(params.id, body.data.status as SupportTicketStatus);
+    if (!ticket) return reply.code(404).send({ error: "Обращение не найдено", code: "ticket_not_found" });
+
+    await recordAudit({
+      action: "support.status",
+      actorType: "admin",
+      actorId: admin.admin.id,
+      actorLabel: admin.admin.email,
+      target: ticket.id,
+      ip: request.ip,
+      details: { status: ticket.status },
+    });
+    return { ok: true, id: ticket.id, status: ticket.status };
+  });
+
+  /**
+   * Где болит: сколько обращений ждут ответа и насколько они тяжёлые. Считается по тем же
+   * файлам, что и список, — отдельного хранилища метрик у поддержки нет и не нужно.
+   */
+  app.get("/api/admin/support/stats", async (request, reply) => {
+    const admin = await requireAdmin(request, reply);
+    if (!admin) return;
+    applyNoStoreToReply(reply);
+
+    const tickets = await listSupportTickets(200);
+    const messages = await supportMessagesFor(tickets.map(ticket => ticket.id));
+    const now = Date.now();
+    const dayMs = 86_400_000;
+    const within = (ticket: { createdAt: string }, days: number) => now - new Date(ticket.createdAt).getTime() <= days * dayMs;
+    const answered = (id: string) => (messages.get(id) ?? []).some(message => message.author === "admin" && message.status === "sent");
+    const severityBucket = (severity: number) => (severity >= 9 ? "9-10" : severity >= 7 ? "7-8" : severity >= 4 ? "4-6" : "1-3");
+
+    const buckets = { "1-3": 0, "4-6": 0, "7-8": 0, "9-10": 0 };
+    for (const ticket of tickets) buckets[severityBucket(ticket.severity)] += 1;
+
+    return {
+      generatedAt: new Date().toISOString(),
+      total: tickets.length,
+      byStatus: {
+        open: tickets.filter(ticket => ticket.status === "open").length,
+        inProgress: tickets.filter(ticket => ticket.status === "in_progress").length,
+        closed: tickets.filter(ticket => ticket.status === "closed").length,
+      },
+      byCategory: {
+        bug: tickets.filter(ticket => ticket.category === "bug").length,
+        idea: tickets.filter(ticket => ticket.category === "idea").length,
+      },
+      /** Обращение без отправленного ответа — это очередь поддержки, а не «идея на будущее». */
+      awaitingReply: tickets.filter(ticket => !answered(ticket.id)).length,
+      last7Days: tickets.filter(ticket => within(ticket, 7)).length,
+      last30Days: tickets.filter(ticket => within(ticket, 30)).length,
+      severity: buckets,
+      oldestOpen: (() => {
+        const open = tickets.filter(ticket => ticket.status !== "closed").sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
+        return open ? { id: open.id, createdAt: open.createdAt, ageHours: Math.max(0, Math.round((now - new Date(open.createdAt).getTime()) / 3_600_000)) } : null;
+      })(),
+    };
   });
 
   app.get("/api/support/tickets/:id/screenshot", async (request, reply) => {

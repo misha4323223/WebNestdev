@@ -35,6 +35,13 @@ export type SupportReporter = {
   lastActiveAt: string | null;
 };
 
+/**
+ * Состояние обращения. `open` — новое, `in_progress` — им занимаются, `closed` — ответ получен или
+ * тема закрыта. У обращений, созданных до появления поля, статуса в файле нет: при чтении он
+ * читается как `open`, поэтому старые тикеты не приходится переписывать.
+ */
+export type SupportTicketStatus = "open" | "in_progress" | "closed";
+
 export type SupportTicket = {
   id: string;
   userId: string;
@@ -53,11 +60,16 @@ export type SupportTicket = {
   ip?: string;
   /** У обращений до 2026-10-26 снимка нет; список дополняет их при чтении. */
   reporter?: SupportReporter;
+  /** В старых файлах поля нет — это читается как `open`. */
+  status?: SupportTicketStatus;
   createdAt: string;
   screenshot: SupportScreenshot;
 };
 
-export type SupportTicketSummary = Omit<SupportTicket, "screenshot"> & { screenshot: { mime: string; bytes: number } };
+export type SupportTicketSummary = Omit<SupportTicket, "screenshot" | "status"> & {
+  screenshot: { mime: string; bytes: number };
+  status: SupportTicketStatus;
+};
 
 /** Скриншот ограничен, чтобы обращение не превращалось в передачу мегабайтов через JSON. */
 export const SUPPORT_SCREENSHOT_MAX_BYTES = 4 * 1024 * 1024;
@@ -149,7 +161,21 @@ async function readAllSupportTickets(): Promise<SupportTicket[]> {
 }
 
 function ticketSummary({ screenshot, ...rest }: SupportTicket): SupportTicketSummary {
-  return { ...rest, screenshot: { mime: screenshot.mime, bytes: screenshot.bytes } };
+  return { ...rest, status: rest.status ?? "open", screenshot: { mime: screenshot.mime, bytes: screenshot.bytes } };
+}
+
+/**
+ * Меняет статус обращения. Файл перезаписывается целиком и атомарно: обращение одно, и
+ * параллельные чтения не должны увидеть половину записи. `null` — обращения нет.
+ */
+export async function setSupportTicketStatus(id: string, status: SupportTicketStatus): Promise<SupportTicketSummary | null> {
+  const safe = safeTicketId(id);
+  if (!safe) return null;
+  const ticket = await readTicket(safe);
+  if (!ticket) return null;
+  const updated: SupportTicket = { ...ticket, status };
+  await writeAtomic(path.join(supportDir(), safe + ".json"), JSON.stringify(updated, null, 2));
+  return ticketSummary(updated);
 }
 
 export async function listSupportTickets(limit = 50): Promise<SupportTicketSummary[]> {

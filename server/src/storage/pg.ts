@@ -290,6 +290,25 @@ export async function initializeStorage(): Promise<void> {
     // значение читается как «отметки ещё нет» — такая сессия получает полный idle-срок.
     await pool.query(`ALTER TABLE ${tbl("sessions")} ADD COLUMN IF NOT EXISTS last_seen_at TEXT NOT NULL DEFAULT ''`);
 
+    // Блокировка аккаунта администратором: отдельная строка, а не колонка users — иначе
+    // добавление поля означало бы ALTER TABLE в пути входа на живом сервере (account/restriction-store.ts).
+    await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("user_restrictions")} (
+      user_id TEXT NOT NULL PRIMARY KEY,
+      blocked_at TEXT NOT NULL,
+      blocked_by TEXT NOT NULL,
+      blocked_by_label TEXT NOT NULL,
+      reason TEXT NOT NULL
+    )`);
+
+    // Надбавка к месячному пулу токенов на аккаунт и месяц (account/token-bonus.ts).
+    await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("token_bonuses")} (
+      user_id TEXT NOT NULL,
+      month TEXT NOT NULL,
+      tokens BIGINT NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (user_id, month)
+    )`);
+
     // Администраторы платформы — отдельные аккаунты, не пользователи панели (см. admin/admin-store.ts).
     // Пароль — scrypt, TOTP-секрет — зашифрованный, коды восстановления — только хешами.
     await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("admin_users")} (

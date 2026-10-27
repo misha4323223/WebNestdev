@@ -59,6 +59,9 @@ import { registerAdminAuditRoutes } from "./routes/admin-audit.js";
 import { registerAdminInfraRoutes } from "./routes/admin-infra.js";
 import { registerAdminPruneRoutes } from "./routes/admin-prune.js";
 import { registerAdminMailRoutes } from "./routes/admin-mail.js";
+import { registerAdminUserActionRoutes } from "./routes/admin-users.js";
+import { registerAdminBillingRoutes } from "./routes/admin-billing.js";
+import { registerAdminProjectRoutes } from "./routes/admin-projects.js";
 import { registerUnsubscribeRoutes } from "./routes/unsubscribe.js";
 import { describePostbox, postboxStatus } from "./mail/postbox.js";
 import { startMailQueue, stopMailQueue } from "./mail/queue.js";
@@ -258,6 +261,13 @@ await registerAdminInfraRoutes(app);
 await registerAdminPruneRoutes(app);
 // Рассылка через Postbox: сегменты, предпросмотр, тест, отправка и остановка (docs/MAIL.md).
 await registerAdminMailRoutes(app);
+// Действия над аккаунтом: сеансы, блокировка, тариф без оплаты, надбавка к пулу токенов.
+// Каждое — с `confirm: true`, записью в журнал безопасности и запретом на свой аккаунт.
+await registerAdminUserActionRoutes(app);
+// Реестр платежей и подписок плюс калибровка пула: сколько токенов реально выбирают.
+await registerAdminBillingRoutes(app);
+// Карточка проекта: владелец, репозиторий, превью, переменные секретов, план выкатки.
+await registerAdminProjectRoutes(app);
 // Отписка — публичная страница, а не /api: ссылка приходит в письме и открывается без сессии.
 await registerUnsubscribeRoutes(app);
 await registerPhoneAuthRoutes(app);

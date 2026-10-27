@@ -218,6 +218,30 @@ export async function listPayments(userId: string, limit = 20): Promise<BillingP
     .slice(0, limit);
 }
 
+/**
+ * Все платежи за окно — для админского реестра. В отличие от `listPayments` (история одного
+ * аккаунта) здесь нужен срез по всей платформе: сколько денег пришло, что зависло в `pending` и
+ * у кого автопродление падало.
+ */
+export async function listAllPayments(options: { sinceIso: string; limit?: number }): Promise<BillingPayment[]> {
+  const limit = Math.max(1, Math.min(1000, Math.trunc(options.limit ?? 200)));
+  if (isYdbEnabled()) {
+    const [rows] = await ydbQuery()<PaymentRow[]>`
+      SELECT inv_id, user_id, plan, amount, status, kind, parent_inv_id, created_at, paid_at, attempts, auto_renew
+      FROM ${ydbQuery().identifier(getTable("billing_payments"))}
+      WHERE created_at >= ${options.sinceIso}
+      ORDER BY created_at DESC
+      LIMIT ${limit}
+    `;
+    return rows.map(paymentFromRow);
+  }
+  const payments = await readJson<BillingPayment[]>(paymentsFile(), []);
+  return payments
+    .filter(payment => payment.createdAt >= options.sinceIso)
+    .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+    .slice(0, limit);
+}
+
 /** Есть ли по аккаунту счёт этого вида, созданный после указанного времени (ждём уведомление). */
 export async function hasPendingPayment(userId: string, kind: "initial" | "renewal", sinceIso: string): Promise<boolean> {
   if (isYdbEnabled()) {
@@ -293,8 +317,13 @@ async function saveSubscription(record: SubscriptionRecord) {
 
 /** Прибавляет календарный месяц: подписка на месяц не должна «съезжать» на 30 дней. */
 export function addMonth(value: Date) {
+  return addMonths(value, 1);
+}
+
+/** Несколько календарных месяцев сразу — для выдачи тарифа на 3 или 12 месяцев. */
+function addMonths(value: Date, count: number) {
   const next = new Date(value);
-  next.setUTCMonth(next.getUTCMonth() + 1);
+  next.setUTCMonth(next.getUTCMonth() + count);
   return next;
 }
 
@@ -395,6 +424,77 @@ export async function setAutoRenew(userId: string, autoRenew: boolean, now = new
     status: autoRenew ? "active" : "canceled",
     updatedAt: now.toISOString(),
   });
+}
+
+/**
+ * Тариф без оплаты — действие администратора.
+ *
+ * Запись собирается по тем же правилам, что и после настоящего платежа (продление от текущего
+ * срока, а не «от сегодня»), но с двумя отличиями, которые важно сохранить: автопродление
+ * выключено, иначе свипер выставил бы счёт живому человеку, а `noticeAt` пуст — письмо о списании
+ * за выданный период не отправляется. Понижение до бесплатного — это истечение срока: `planForUser`
+ * читает его как free, и оплаченные дни не остаются.
+ */
+export async function grantSubscription(input: {
+  userId: string;
+  plan: PlanId;
+  months?: number;
+  now?: Date;
+}): Promise<SubscriptionRecord | null> {
+  const now = input.now ?? new Date();
+  const months = Math.max(1, Math.min(12, Math.trunc(input.months ?? 1)));
+  const existing = await getSubscriptionRecord(input.userId);
+
+  if (input.plan === FREE_PLAN) {
+    // Снимать нечего — аккаунт и так без подписки; null говорит «изменений нет».
+    if (!existing || !isSubscriptionLive(existing, now)) return null;
+    return saveSubscription({
+      ...existing,
+      plan: FREE_PLAN,
+      status: "expired",
+      renewsAt: now.toISOString(),
+      autoRenew: false,
+      updatedAt: now.toISOString(),
+    });
+  }
+
+  const samePlan = Boolean(existing && isSubscriptionLive(existing, now) && existing.plan === input.plan);
+  // Продление выданного тарифа считается от текущего срока, как и оплаченного: выдача не
+  // отнимает уже оплаченные или выданные дни.
+  const base = samePlan ? new Date(existing!.renewsAt) : now;
+  return saveSubscription({
+    userId: input.userId,
+    plan: input.plan,
+    status: "active",
+    startedAt: samePlan ? existing!.startedAt : now.toISOString(),
+    renewsAt: addMonths(base, months).toISOString(),
+    autoRenew: false,
+    parentInvId: samePlan ? existing!.parentInvId : 0,
+    noticeAt: null,
+    renewalAttempts: 0,
+    updatedAt: now.toISOString(),
+  });
+}
+
+/**
+ * Все подписки платформы — для реестра в админке и калибровки пула. Срок хранения не нужен:
+ * записей ровно столько, сколько платных аккаунтов, плюс истёкшие.
+ */
+export async function listSubscriptions(limit = 5000): Promise<SubscriptionRecord[]> {
+  const take = Math.max(1, Math.min(20_000, Math.trunc(limit)));
+  if (isYdbEnabled()) {
+    const [rows] = await ydbQuery()<SubscriptionRow[]>`
+      SELECT user_id, plan, status, started_at, renews_at, auto_renew, parent_inv_id, notice_at, renewal_attempts, updated_at
+      FROM ${ydbQuery().identifier(getTable("billing_subscriptions"))}
+      ORDER BY renews_at DESC
+      LIMIT ${take}
+    `;
+    return rows.map(subscriptionFromRow);
+  }
+  const subscriptions = await readJson<Record<string, SubscriptionRecord>>(subscriptionsFile(), {});
+  return Object.values(subscriptions)
+    .sort((a, b) => b.renewsAt.localeCompare(a.renewsAt))
+    .slice(0, take);
 }
 
 /**
