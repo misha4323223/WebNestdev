@@ -4,7 +4,7 @@ import { changesSomething } from "../agent-runtime.js";
 
 /** Planner mode must be read-only by construction, not only by instruction. */
 test("every tool that writes is refused in planner mode", () => {
-  for (const name of ["fs.write", "fs.rename", "fs.delete", "npm.install", "pip.install", "net.download", "git.add", "git.commit", "git.pull", "database.env", "secrets.request", "preview.start", "preview.stop"]) {
+  for (const name of ["fs.write", "fs.rename", "fs.delete", "npm.install", "pip.install", "net.download", "git.add", "git.commit", "git.pull", "database.env", "secrets.request", "preview.start", "preview.stop", "image.generate"]) {
     assert.equal(changesSomething(name, {}), true, name + " must be refused");
   }
 });

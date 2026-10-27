@@ -4,7 +4,7 @@ import type { AgentContext } from "./types.js";
 import { consumeUsageForCurrentPlan } from "../account/usage-store.js";
 import { assertWithinCurrentPlan, recordStorageMutation } from "../account/storage-quota.js";
 
-const storagePreCheckTools = new Set(["fs.write", "terminal.exec", "npm.install", "pip.install", "net.download"]);
+const storagePreCheckTools = new Set(["fs.write", "terminal.exec", "npm.install", "pip.install", "net.download", "image.generate"]);
 const storagePostRecordTools = new Set([
   "fs.write",
   "fs.delete",
@@ -13,6 +13,8 @@ const storagePostRecordTools = new Set([
   "npm.install",
   "pip.install",
   "net.download",
+  // Картинка весит сотни килобайт: без записи в учёт размер проекта после генерации не обновлялся.
+  "image.generate",
   "git.add",
   "git.commit",
   "deploy.plan",

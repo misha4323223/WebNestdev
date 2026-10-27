@@ -12,6 +12,7 @@ import {
   Download,
   FileSymlink,
   FileText,
+  ImagePlus,
   FolderOpen,
   FolderTree,
   GitBranch,
@@ -56,6 +57,7 @@ const TOOL_ICONS: Record<string, ActionDescriptor> = {
   "pip.install": { icon: Package, label: "Ставит Python-зависимости" },
   "net.request": { icon: Send, label: "Запрашивает внешний API" },
   "net.download": { icon: Download, label: "Скачивает файл" },
+  "image.generate": { icon: ImagePlus, label: "Рисует изображение" },
   "preview.start": { icon: Rocket, label: "Запускает превью" },
   "preview.stop": { icon: PowerOff, label: "Останавливает превью" },
   "project.verify": { icon: ShieldCheck, label: "Проверяет доступность" },
@@ -104,7 +106,7 @@ export function actionTarget(name: string, input: unknown): string {
   }
   // `question` — строка инструмента question.ask: в списке действий видно, о чём агент спросил,
   // а не безымянный набор ключей.
-  for (const key of ["command", "path", "url", "query", "question", "message", "branch", "name", "title", "variable"]) {
+  for (const key of ["command", "path", "url", "query", "prompt", "question", "message", "branch", "name", "title", "variable"]) {
     const candidate = text(value[key]);
     if (candidate) return candidate;
   }

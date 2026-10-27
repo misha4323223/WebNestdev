@@ -567,6 +567,25 @@ export async function initializeStorage(): Promise<void> {
       updated_at TEXT NOT NULL
     )`);
 
+    // Журнал безопасности платформы (server/src/security/audit-journal.ts): входы, второй фактор,
+    // ключи платформы и удаление проектов. Значений ключей и паролей здесь нет по построению.
+    await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("security_audit")} (
+      id TEXT NOT NULL PRIMARY KEY,
+      at TEXT NOT NULL,
+      action TEXT NOT NULL,
+      actor_type TEXT NOT NULL,
+      actor_id TEXT NOT NULL DEFAULT '',
+      actor_label TEXT NOT NULL DEFAULT '',
+      target TEXT NOT NULL DEFAULT '',
+      target_label TEXT NOT NULL DEFAULT '',
+      ip_hash TEXT NOT NULL DEFAULT '',
+      details_json TEXT NOT NULL DEFAULT '{}'
+    )`);
+    // Экран «Безопасность» в админке читает последние события и фильтрует по действию:
+    // без этих индексов каждый запрос был бы полным перебором журнала.
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("security_audit")}_at ON ${tbl("security_audit")} (at)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("security_audit")}_action ON ${tbl("security_audit")} (action, at)`);
+
     // Журнал операций с секретами: только имена и метаданные, значения сюда не попадают.
     await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("secret_audit")} (
       id TEXT NOT NULL PRIMARY KEY,

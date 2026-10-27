@@ -9,6 +9,7 @@ import { forgetProjectStorage } from "../account/storage-quota.js";
 import { archiveProject, deleteProjectArchive, projectArchiveInfo, restoreProject } from "../storage/project-archive.js";
 import { isConversationRunning, isRunActive } from "../agent/active-runs.js";
 import { getPreview } from "../preview/preview-store.js";
+import { recordAudit } from "../security/audit-journal.js";
 
 /** How many chats the picker shows. Older sessions stay stored and reachable by id. */
 const CONVERSATION_LIST_LIMIT = 50;
@@ -75,7 +76,18 @@ export async function registerProjectRoutes(app:FastifyInstance){
   app.delete("/api/projects/:id",async(request,reply)=>{
     const user=await requireUser(request,reply); if(!user)return;
     const p=z.object({id:z.string().min(1)}).parse(request.params);
+    // Имя нужно журналу после удаления: в записи останется и id, и человекочитаемое название.
+    const project=await getProject(p.id);
     if(!await deleteProject(p.id,user.id))return reply.code(404).send({error:"Проект не найден"});
+    await recordAudit({
+      action:"project.deleted",
+      actorType:"user",
+      actorId:user.id,
+      actorLabel:user.email,
+      target:p.id,
+      targetLabel:project?.name??"",
+      ip:request.ip,
+    });
     // Размер удалённого проекта больше не существует: без этого квота помнила бы его
     // навсегда, а список проектов показывал бы место, которого нет. Проект уже удалён,
     // поэтому сбой учёта не должен превращать успешное удаление в ошибку.

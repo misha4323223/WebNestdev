@@ -190,16 +190,27 @@ jobs:
           YANDEX_SEARCH_FOLDER_ID: ${{ secrets.YANDEX_SEARCH_FOLDER_ID || vars.YANDEX_SEARCH_FOLDER_ID }}
           TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY || vars.TAVILY_API_KEY }}
           # AI платформы: платная модель — основная для подписок и резерв для бесплатного тарифа.
-          # Бесплатная цепочка (Agnes AI) — три ключа из разных аккаунтов, по порядку.
+          # Бесплатная цепочка — до трёх ключей из разных аккаунтов, по порядку. Провайдер
+          # задаётся адресом и моделью: Agnes AI или Cloudflare Workers AI.
           PLATFORM_AI_BASE_URL: ${{ secrets.PLATFORM_AI_BASE_URL || vars.PLATFORM_AI_BASE_URL }}
           PLATFORM_AI_MODEL: ${{ secrets.PLATFORM_AI_MODEL || vars.PLATFORM_AI_MODEL }}
           PLATFORM_AI_PROVIDER: ${{ secrets.PLATFORM_AI_PROVIDER || vars.PLATFORM_AI_PROVIDER }}
           PLATFORM_AI_API_KEY: ${{ secrets.PLATFORM_AI_API_KEY }}
           PLATFORM_AI_FREE_BASE_URL: ${{ secrets.PLATFORM_AI_FREE_BASE_URL || vars.PLATFORM_AI_FREE_BASE_URL }}
           PLATFORM_AI_FREE_MODEL: ${{ secrets.PLATFORM_AI_FREE_MODEL || vars.PLATFORM_AI_FREE_MODEL }}
+          PLATFORM_AI_FREE_PROVIDER: ${{ secrets.PLATFORM_AI_FREE_PROVIDER || vars.PLATFORM_AI_FREE_PROVIDER }}
           PLATFORM_AI_FREE_KEY_1: ${{ secrets.PLATFORM_AI_FREE_KEY_1 }}
           PLATFORM_AI_FREE_KEY_2: ${{ secrets.PLATFORM_AI_FREE_KEY_2 }}
           PLATFORM_AI_FREE_KEY_3: ${{ secrets.PLATFORM_AI_FREE_KEY_3 }}
+          # Генерация изображений (инструмент image.generate). Свои имена, поэтому включение
+          # картинок не трогает ни один набор PLATFORM_AI_* выше: адрес, модель и имя сервиса —
+          # из любой вкладки, ключи — только Secrets.
+          PLATFORM_IMAGE_BASE_URL: ${{ secrets.PLATFORM_IMAGE_BASE_URL || vars.PLATFORM_IMAGE_BASE_URL }}
+          PLATFORM_IMAGE_MODEL: ${{ secrets.PLATFORM_IMAGE_MODEL || vars.PLATFORM_IMAGE_MODEL }}
+          PLATFORM_IMAGE_PROVIDER: ${{ secrets.PLATFORM_IMAGE_PROVIDER || vars.PLATFORM_IMAGE_PROVIDER }}
+          PLATFORM_IMAGE_KEY_1: ${{ secrets.PLATFORM_IMAGE_KEY_1 }}
+          PLATFORM_IMAGE_KEY_2: ${{ secrets.PLATFORM_IMAGE_KEY_2 }}
+          PLATFORM_IMAGE_KEY_3: ${{ secrets.PLATFORM_IMAGE_KEY_3 }}
           # Цены для денежной статистики админки (docs/ADMIN_API.md, раздел 7). Общая ставка
           # остаётся запасным вариантом; таблица по моделям точнее, когда моделей несколько.
           PLATFORM_AI_PRICE_INPUT_PER_MILLION: ${{ secrets.PLATFORM_AI_PRICE_INPUT_PER_MILLION || vars.PLATFORM_AI_PRICE_INPUT_PER_MILLION }}
@@ -292,9 +303,16 @@ jobs:
           add_platform_env PLATFORM_AI_API_KEY "$PLATFORM_AI_API_KEY"
           add_platform_env PLATFORM_AI_FREE_BASE_URL "$PLATFORM_AI_FREE_BASE_URL"
           add_platform_env PLATFORM_AI_FREE_MODEL "$PLATFORM_AI_FREE_MODEL"
+          add_platform_env PLATFORM_AI_FREE_PROVIDER "$PLATFORM_AI_FREE_PROVIDER"
           add_platform_env PLATFORM_AI_FREE_KEY_1 "$PLATFORM_AI_FREE_KEY_1"
           add_platform_env PLATFORM_AI_FREE_KEY_2 "$PLATFORM_AI_FREE_KEY_2"
           add_platform_env PLATFORM_AI_FREE_KEY_3 "$PLATFORM_AI_FREE_KEY_3"
+          add_platform_env PLATFORM_IMAGE_BASE_URL "$PLATFORM_IMAGE_BASE_URL"
+          add_platform_env PLATFORM_IMAGE_MODEL "$PLATFORM_IMAGE_MODEL"
+          add_platform_env PLATFORM_IMAGE_PROVIDER "$PLATFORM_IMAGE_PROVIDER"
+          add_platform_env PLATFORM_IMAGE_KEY_1 "$PLATFORM_IMAGE_KEY_1"
+          add_platform_env PLATFORM_IMAGE_KEY_2 "$PLATFORM_IMAGE_KEY_2"
+          add_platform_env PLATFORM_IMAGE_KEY_3 "$PLATFORM_IMAGE_KEY_3"
           add_platform_env PLATFORM_AI_PRICE_INPUT_PER_MILLION "$PLATFORM_AI_PRICE_INPUT_PER_MILLION"
           add_platform_env PLATFORM_AI_PRICE_OUTPUT_PER_MILLION "$PLATFORM_AI_PRICE_OUTPUT_PER_MILLION"
           add_platform_env PLATFORM_AI_PRICE_CURRENCY "$PLATFORM_AI_PRICE_CURRENCY"
@@ -334,6 +352,9 @@ jobs:
           echo "[deploy] Холодный ярус: endpoint=$(has "${PLATFORM_S3_ENDPOINT:-}"), бакет=${PLATFORM_S3_BUCKET:-—}, ключ=$(has "${PLATFORM_S3_ACCESS_KEY_ID:-}"), включён=${PROJECT_ARCHIVE_ENABLED:-0}"
           echo "[deploy] Цены расхода: таблица моделей=$(has "${PLATFORM_AI_MODEL_PRICES:-}"), общая ставка=$(has "${PLATFORM_AI_PRICE_INPUT_PER_MILLION:-}"), инфраструктура=$(has "${PLATFORM_INFRA_COST_PER_MONTH:-}"), валюта=${PLATFORM_AI_PRICE_CURRENCY:-USD}"
           echo "[deploy] Поддержка: ключ API=$(has "${SUPPORT_API_KEY:-}"), почта=${SUPPORT_EMAIL_TO:-—}, SMTP=$(has "${SUPPORT_SMTP_PASSWORD:-}")"
+          # Генерация изображений: в логе видно, настроен ли инструмент и на какой модели. Значений
+          # ключей здесь нет — только «есть/нет», как у остальных строк выше.
+          echo "[deploy] Генерация изображений: адрес=$(has "${PLATFORM_IMAGE_BASE_URL:-}"), модель=${PLATFORM_IMAGE_MODEL:-—}, ключ=$(has "${PLATFORM_IMAGE_KEY_1:-}")"
           if [ -s "$PLATFORM_ENV_LOCAL" ]; then
             PLATFORM_ENV_FILE="/tmp/.webnestdev-platform.env"
             tr -d '\r' < "$PLATFORM_ENV_LOCAL" | ssh -i "$HOME/.ssh/deploy_key" \
@@ -410,16 +431,27 @@ jobs:
           YANDEX_SEARCH_FOLDER_ID: ${{ secrets.YANDEX_SEARCH_FOLDER_ID || vars.YANDEX_SEARCH_FOLDER_ID }}
           TAVILY_API_KEY: ${{ secrets.TAVILY_API_KEY || vars.TAVILY_API_KEY }}
           # AI платформы: платная модель — основная для подписок и резерв для бесплатного тарифа.
-          # Бесплатная цепочка (Agnes AI) — три ключа из разных аккаунтов, по порядку.
+          # Бесплатная цепочка — до трёх ключей из разных аккаунтов, по порядку. Провайдер
+          # задаётся адресом и моделью: Agnes AI или Cloudflare Workers AI.
           PLATFORM_AI_BASE_URL: ${{ secrets.PLATFORM_AI_BASE_URL || vars.PLATFORM_AI_BASE_URL }}
           PLATFORM_AI_MODEL: ${{ secrets.PLATFORM_AI_MODEL || vars.PLATFORM_AI_MODEL }}
           PLATFORM_AI_PROVIDER: ${{ secrets.PLATFORM_AI_PROVIDER || vars.PLATFORM_AI_PROVIDER }}
           PLATFORM_AI_API_KEY: ${{ secrets.PLATFORM_AI_API_KEY }}
           PLATFORM_AI_FREE_BASE_URL: ${{ secrets.PLATFORM_AI_FREE_BASE_URL || vars.PLATFORM_AI_FREE_BASE_URL }}
           PLATFORM_AI_FREE_MODEL: ${{ secrets.PLATFORM_AI_FREE_MODEL || vars.PLATFORM_AI_FREE_MODEL }}
+          PLATFORM_AI_FREE_PROVIDER: ${{ secrets.PLATFORM_AI_FREE_PROVIDER || vars.PLATFORM_AI_FREE_PROVIDER }}
           PLATFORM_AI_FREE_KEY_1: ${{ secrets.PLATFORM_AI_FREE_KEY_1 }}
           PLATFORM_AI_FREE_KEY_2: ${{ secrets.PLATFORM_AI_FREE_KEY_2 }}
           PLATFORM_AI_FREE_KEY_3: ${{ secrets.PLATFORM_AI_FREE_KEY_3 }}
+          # Генерация изображений (инструмент image.generate). Свои имена, поэтому включение
+          # картинок не трогает ни один набор PLATFORM_AI_* выше: адрес, модель и имя сервиса —
+          # из любой вкладки, ключи — только Secrets.
+          PLATFORM_IMAGE_BASE_URL: ${{ secrets.PLATFORM_IMAGE_BASE_URL || vars.PLATFORM_IMAGE_BASE_URL }}
+          PLATFORM_IMAGE_MODEL: ${{ secrets.PLATFORM_IMAGE_MODEL || vars.PLATFORM_IMAGE_MODEL }}
+          PLATFORM_IMAGE_PROVIDER: ${{ secrets.PLATFORM_IMAGE_PROVIDER || vars.PLATFORM_IMAGE_PROVIDER }}
+          PLATFORM_IMAGE_KEY_1: ${{ secrets.PLATFORM_IMAGE_KEY_1 }}
+          PLATFORM_IMAGE_KEY_2: ${{ secrets.PLATFORM_IMAGE_KEY_2 }}
+          PLATFORM_IMAGE_KEY_3: ${{ secrets.PLATFORM_IMAGE_KEY_3 }}
           # Цены для денежной статистики админки (docs/ADMIN_API.md, раздел 7).
           PLATFORM_AI_PRICE_INPUT_PER_MILLION: ${{ secrets.PLATFORM_AI_PRICE_INPUT_PER_MILLION || vars.PLATFORM_AI_PRICE_INPUT_PER_MILLION }}
           PLATFORM_AI_PRICE_OUTPUT_PER_MILLION: ${{ secrets.PLATFORM_AI_PRICE_OUTPUT_PER_MILLION || vars.PLATFORM_AI_PRICE_OUTPUT_PER_MILLION }}
@@ -488,9 +520,16 @@ jobs:
           add_platform_env PLATFORM_AI_API_KEY "$PLATFORM_AI_API_KEY"
           add_platform_env PLATFORM_AI_FREE_BASE_URL "$PLATFORM_AI_FREE_BASE_URL"
           add_platform_env PLATFORM_AI_FREE_MODEL "$PLATFORM_AI_FREE_MODEL"
+          add_platform_env PLATFORM_AI_FREE_PROVIDER "$PLATFORM_AI_FREE_PROVIDER"
           add_platform_env PLATFORM_AI_FREE_KEY_1 "$PLATFORM_AI_FREE_KEY_1"
           add_platform_env PLATFORM_AI_FREE_KEY_2 "$PLATFORM_AI_FREE_KEY_2"
           add_platform_env PLATFORM_AI_FREE_KEY_3 "$PLATFORM_AI_FREE_KEY_3"
+          add_platform_env PLATFORM_IMAGE_BASE_URL "$PLATFORM_IMAGE_BASE_URL"
+          add_platform_env PLATFORM_IMAGE_MODEL "$PLATFORM_IMAGE_MODEL"
+          add_platform_env PLATFORM_IMAGE_PROVIDER "$PLATFORM_IMAGE_PROVIDER"
+          add_platform_env PLATFORM_IMAGE_KEY_1 "$PLATFORM_IMAGE_KEY_1"
+          add_platform_env PLATFORM_IMAGE_KEY_2 "$PLATFORM_IMAGE_KEY_2"
+          add_platform_env PLATFORM_IMAGE_KEY_3 "$PLATFORM_IMAGE_KEY_3"
           add_platform_env PLATFORM_AI_PRICE_INPUT_PER_MILLION "$PLATFORM_AI_PRICE_INPUT_PER_MILLION"
           add_platform_env PLATFORM_AI_PRICE_OUTPUT_PER_MILLION "$PLATFORM_AI_PRICE_OUTPUT_PER_MILLION"
           add_platform_env PLATFORM_AI_PRICE_CURRENCY "$PLATFORM_AI_PRICE_CURRENCY"

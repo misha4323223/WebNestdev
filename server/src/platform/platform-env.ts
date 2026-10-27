@@ -83,11 +83,20 @@ export const PLATFORM_ENV_CATALOG: PlatformEnvEntry[] = [
   { name: "PLATFORM_AI_BASE_URL", group: "ai", label: "AI Base URL", hint: "OpenAI-совместимый адрес модели платформы — то, чем пользуются проекты без своего провайдера.", kind: "url" },
   { name: "PLATFORM_AI_MODEL", group: "ai", label: "AI модель", hint: "Идентификатор модели для этого адреса.", kind: "value" },
   { name: "PLATFORM_AI_API_KEY", group: "ai", label: "AI ключ", hint: "Ключ провайдера модели платформы. Проекты со своим ключом его не используют.", kind: "secret" },
-  { name: "PLATFORM_AI_FREE_BASE_URL", group: "ai", label: "Free AI Base URL", hint: "Бесплатная модель тарифа «Старт», OpenAI-совместимый адрес. Пусто — бесплатный тариф работает на модели платформы выше.", kind: "url" },
-  { name: "PLATFORM_AI_FREE_MODEL", group: "ai", label: "Free AI модель", hint: "Идентификатор бесплатной модели, например agnes-2.5-flash.", kind: "value" },
+  { name: "PLATFORM_AI_FREE_BASE_URL", group: "ai", label: "Free AI Base URL", hint: "Бесплатная модель тарифа «Старт», OpenAI-совместимый адрес. Пусто — бесплатный тариф работает на модели платформы выше. Для Cloudflare Workers AI: https://api.cloudflare.com/client/v4/accounts/<Account ID>/ai/v1", kind: "url" },
+  { name: "PLATFORM_AI_FREE_MODEL", group: "ai", label: "Free AI модель", hint: "Идентификатор бесплатной модели, например agnes-2.5-flash или @cf/openai/gpt-oss-120b у Cloudflare.", kind: "value" },
+  { name: "PLATFORM_AI_FREE_PROVIDER", group: "ai", label: "Free AI провайдер", hint: "Необязательно: как называть бесплатную модель в логах и подсказках. По умолчанию Agnes AI; для Cloudflare Workers AI так и напишите.", kind: "value" },
   { name: "PLATFORM_AI_FREE_KEY_1", group: "ai", label: "Free AI ключ 1", hint: "Первый ключ бесплатной модели; при отказе запуск переходит к следующему, затем к модели платформы.", kind: "secret" },
   { name: "PLATFORM_AI_FREE_KEY_2", group: "ai", label: "Free AI ключ 2", hint: "Второй ключ бесплатной модели из другого аккаунта — резерв первого.", kind: "secret" },
   { name: "PLATFORM_AI_FREE_KEY_3", group: "ai", label: "Free AI ключ 3", hint: "Третий ключ бесплатной модели из другого аккаунта — последний резерв перед моделью платформы.", kind: "secret" },
+  // Генерация изображений для проектов: инструмент image.generate. Это не модель агента, а
+  // отдельный сервис картинок, поэтому и имена свои — включение не трогает ни один PLATFORM_AI_*.
+  { name: "PLATFORM_IMAGE_BASE_URL", group: "ai", label: "Картинки: Base URL", hint: "Адрес сервиса генерации изображений. Cloudflare Workers AI: https://api.cloudflare.com/client/v4/accounts/<Account ID>/ai/run — модель дописывается к адресу. OpenAI-совместимый сервис: адрес с /v1, к нему допишется /images/generations.", kind: "url" },
+  { name: "PLATFORM_IMAGE_MODEL", group: "ai", label: "Картинки: модель", hint: "Например @cf/black-forest-labs/flux-1-schnell (быстрая, до 8 шагов) или @cf/stabilityai/stable-diffusion-xl-base-1.0 (принимает размер и негативный промпт).", kind: "value" },
+  { name: "PLATFORM_IMAGE_PROVIDER", group: "ai", label: "Картинки: провайдер", hint: "Необязательно: имя сервиса в логах и подсказках. По умолчанию Cloudflare Workers AI.", kind: "value" },
+  { name: "PLATFORM_IMAGE_KEY_1", group: "ai", label: "Картинки: ключ 1", hint: "API-токен сервиса картинок (у Cloudflare — право Workers AI: Read). При отказе доступа или лимите запрос идёт к следующему ключу.", kind: "secret" },
+  { name: "PLATFORM_IMAGE_KEY_2", group: "ai", label: "Картинки: ключ 2", hint: "Второй ключ из другого аккаунта — резерв первого.", kind: "secret" },
+  { name: "PLATFORM_IMAGE_KEY_3", group: "ai", label: "Картинки: ключ 3", hint: "Третий ключ — последний резерв, дальше инструмент отвечает отказом.", kind: "secret" },
 
   // Поддержка: обращения из кнопки «Поддержка» сохраняются на сервере, читаются в админке
   // платформы и — по ключу API — во внешней админке (десктопное и мобильное приложение).

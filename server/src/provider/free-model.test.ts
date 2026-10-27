@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createFreeModelRoute,getFreeModelConfig } from "./free-model.js";
+import { createFreeModelRoute,describeFreeModelRoute,getFreeModelConfig } from "./free-model.js";
 
 const NAMES=[
-  "PLATFORM_AI_FREE_BASE_URL","PLATFORM_AI_FREE_MODEL","PLATFORM_AI_FREE_KEY_1","PLATFORM_AI_FREE_KEY_2","PLATFORM_AI_FREE_KEY_3",
+  "PLATFORM_AI_FREE_BASE_URL","PLATFORM_AI_FREE_MODEL","PLATFORM_AI_FREE_PROVIDER","PLATFORM_AI_FREE_KEY_1","PLATFORM_AI_FREE_KEY_2","PLATFORM_AI_FREE_KEY_3",
   "PLATFORM_AI_BASE_URL","PLATFORM_AI_MODEL","PLATFORM_AI_API_KEY","PLATFORM_AI_PROVIDER",
   "AI_BASE_URL","AI_MODEL","AI_API_KEY","AI_PROVIDER",
 ];
@@ -23,6 +23,19 @@ test("без адреса, модели и ключей бесплатная ц�
   assert.equal(config?.model,"agnes-2.5-flash");
   assert.deepEqual(config?.keys,["key-1"]);
   assert.equal(config?.fallback,null,"без PLATFORM_AI_* резерва нет");
+  clear();
+});
+
+test("имя бесплатного провайдера задаётся окружением, по умолчанию Agnes AI",()=>{
+  clear();
+  process.env.PLATFORM_AI_FREE_BASE_URL="https://apihub.agnes-ai.com/v1";
+  process.env.PLATFORM_AI_FREE_MODEL="agnes-2.5-flash";
+  process.env.PLATFORM_AI_FREE_KEY_1="key-1";
+  assert.equal(getFreeModelConfig()?.providerName,"Agnes AI");
+
+  process.env.PLATFORM_AI_FREE_PROVIDER="  Cloudflare Workers AI  ";
+  assert.equal(getFreeModelConfig()?.providerName,"Cloudflare Workers AI");
+  assert.equal(createFreeModelRoute()?.providerName,"Cloudflare Workers AI");
   clear();
 });
 

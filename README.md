@@ -16,6 +16,8 @@ The Electron NestDev project remains separate and is not modified.
 
 The web version uses an OpenAI-compatible API. Configure the provider with a Base URL, optional API key, and model. This supports hosted providers and compatible gateways without requiring a local model runtime.
 
+Projects that need pictures get them from the agent's `image.generate` tool, which is not a second chat model: the tool asks the platform's image service (Cloudflare Workers AI by default) for a picture, saves the file inside the project and hands the path back to the model so the code can use it as a normal asset. Its credentials are separate (`PLATFORM_IMAGE_BASE_URL`, `PLATFORM_IMAGE_MODEL`, `PLATFORM_IMAGE_KEY_1..3`), the request leaves from the API host and never from the project sandbox, and the destination is fixed by that configuration rather than chosen by the model — see `docs/PLATFORM_AI.md`.
+
 ## Security boundary
 
 Agent commands run through a Docker sandbox by default.
@@ -431,9 +433,9 @@ When the user's decision changes what to build — layout, content, stack, which
 
 ## Support tickets
 
-The **Поддержка** button stores a ticket on the server (`server/src/support/support-store.ts`): category, severity, description, steps, page, project, user agent and a mandatory screenshot (PNG/JPEG/WebP, signature-checked, 4 MB). The platform admin reads the list at `GET /api/support/tickets` and the image at `GET /api/support/tickets/:id/screenshot` with their session; the web panel has no separate screen for it yet. Email delivery (`SUPPORT_SMTP_*`) is optional and only a notification — the ticket exists whether or not the message went out, and the dialog says which of the two happened.
+The **Поддержка** button stores a ticket on the server (`server/src/support/support-store.ts`): category, severity, description, steps, page, project, user agent, IP and a mandatory screenshot (PNG/JPEG/WebP, signature-checked, 4 MB). Along with the ticket it stores a snapshot of the account — name and contact e-mail from onboarding, phone, sign-in methods, plan, account age, project count and last activity (`server/src/support/support-user.ts`). The platform admin reads the list at `GET /api/support/tickets`, one ticket with the live account card and its history at `GET /api/support/tickets/:id`, and the image at `GET /api/support/tickets/:id/screenshot`; the web panel has no separate screen for it yet. Email delivery (`SUPPORT_SMTP_*`) is optional and only a notification — the ticket exists whether or not the message went out, the letter now includes the same account details, and the dialog says which of the two happened.
 
-A separate desktop or mobile admin app has no panel cookie, so it reads the same two endpoints with a read-only key instead: set `SUPPORT_API_KEY` in **Settings → Platform keys → Поддержка** (at least 16 characters, applied without a restart) and send it as `Authorization: Bearer <key>` or `X-Support-Key: <key>`. The key only reads: creating a ticket still requires a signed-in user, and an invalid or too short key falls back to the session check. Comparison is a constant-time SHA-256 match (`server/src/support/support-api-key.ts`), and both endpoints answer `401` without a key or session, `403` for a signed-in non-admin.
+A separate desktop or mobile admin app has no panel cookie, so it reads the same endpoints with a read-only key instead: set `SUPPORT_API_KEY` in **Settings → Platform keys → Поддержка** (at least 16 characters, applied without a restart) and send it as `Authorization: Bearer <key>` or `X-Support-Key: <key>`. The key only reads: creating a ticket still requires a signed-in user, and an invalid or too short key falls back to the session check. Comparison is a constant-time SHA-256 match (`server/src/support/support-api-key.ts`), and every support endpoint answers `401` without a key or session, `403` for a signed-in non-admin.
 
 ## Admin API
 

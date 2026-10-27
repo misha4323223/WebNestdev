@@ -1,6 +1,7 @@
 import tls from "node:tls";
 import { randomUUID } from "node:crypto";
 import { getPlatformEnv } from "../platform/platform-env.js";
+import type { SupportReporter } from "./support-store.js";
 
 /**
  * Почта поддержки: обращение из кнопки «Поддержка» уходит письмом на ящик платформы.
@@ -40,6 +41,9 @@ export type SupportMailTicket = {
   context?: string;
   page?: string;
   projectId?: string;
+  ip?: string;
+  /** Снимок аккаунта: письмо должно отвечать «кто пишет» без открытия админки. */
+  reporter?: SupportReporter;
 };
 
 function env(name: string) {
@@ -79,6 +83,17 @@ export function supportMailBody(ticket: SupportMailTicket) {
     "Пользователь: " + ticket.email,
     "Получено: " + new Date(ticket.createdAt).toLocaleString("ru-RU"),
   ];
+  const reporter = ticket.reporter;
+  if (reporter) {
+    if (reporter.name) lines.push("Имя: " + reporter.name);
+    if (reporter.contactEmail && reporter.contactEmail !== ticket.email) lines.push("Почта для связи: " + reporter.contactEmail);
+    if (reporter.phone) lines.push("Телефон: " + reporter.phone);
+    lines.push("Тариф: " + reporter.planName);
+    lines.push("Аккаунт с: " + new Date(reporter.accountCreatedAt).toLocaleString("ru-RU"));
+    lines.push("Проектов: " + reporter.projects);
+    if (reporter.lastActiveAt) lines.push("Последняя активность: " + new Date(reporter.lastActiveAt).toLocaleString("ru-RU"));
+  }
+  if (ticket.ip) lines.push("IP: " + ticket.ip);
   if (ticket.projectId) lines.push("Проект: " + ticket.projectId);
   if (ticket.page) lines.push("Страница: " + ticket.page);
   lines.push("", "Описание", "--------", ticket.description);

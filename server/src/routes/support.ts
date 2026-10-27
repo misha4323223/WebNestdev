@@ -3,9 +3,11 @@ import { z } from "zod";
 import { getCurrentUser, requireUser } from "../auth/auth.js";
 import { bearerToken, getAdminSession } from "../admin/admin-store.js";
 import { isPlatformAdmin } from "../platform/admin.js";
-import { createSupportTicket, listSupportTickets, readSupportScreenshot } from "../support/support-store.js";
+import { createSupportTicket, getSupportTicket, listSupportTickets, readSupportScreenshot, supportTicketsForUser, type SupportReporter } from "../support/support-store.js";
+import { loadSupportUser, supportReporterFor, supportReporterFrom } from "../support/support-user.js";
 import { sendSupportMail, supportMailSettings } from "../support/support-mail.js";
 import { supportApiKey, supportKeyAuthorizedCurrent, supportKeyFromHeaders, supportKeySource } from "../support/support-api-key.js";
+import { applyNoStoreToReply } from "./cache-headers.js";
 
 /**
  * Обращение в поддержку: категория, важность, описание, шаги воспроизведения и обязательный
@@ -97,6 +99,18 @@ export async function registerSupportRoutes(app: FastifyInstance) {
       return reply.code(429).send({ error: "Слишком много обращений подряд — попробуйте через несколько минут" });
     }
     const body = ticketBody.parse(request.body);
+    applyNoStoreToReply(reply);
+    // Карточка автора — вспомогательная: если хранилище профиля недоступно, обращение всё равно
+    // должно сохраниться и попасть в админку.
+    let reporter: SupportReporter | undefined;
+    try {
+      reporter = await supportReporterFor(user.id) ?? undefined;
+    } catch (error) {
+      request.log.warn(
+        { error: error instanceof Error ? error.message : error },
+        "support reporter snapshot failed",
+      );
+    }
     try {
       const ticket = await createSupportTicket({
         userId: user.id,
@@ -109,6 +123,8 @@ export async function registerSupportRoutes(app: FastifyInstance) {
         page: body.page || undefined,
         projectId: body.projectId || undefined,
         userAgent: typeof request.headers["user-agent"] === "string" ? request.headers["user-agent"].slice(0, 300) : undefined,
+        ip: request.ip.slice(0, 100),
+        ...(reporter ? { reporter } : {}),
         screenshot: body.screenshot,
       });
       request.log.info({ supportTicket: ticket.id, category: body.category, severity: body.severity }, "support ticket created");
@@ -131,6 +147,8 @@ export async function registerSupportRoutes(app: FastifyInstance) {
             ...(body.context ? { context: body.context } : {}),
             ...(body.page ? { page: body.page } : {}),
             ...(body.projectId ? { projectId: body.projectId } : {}),
+            ip: request.ip.slice(0, 100),
+            ...(reporter ? { reporter } : {}),
           }, shot);
           notified = true;
         } catch (error) {
@@ -153,8 +171,59 @@ export async function registerSupportRoutes(app: FastifyInstance) {
    */
   app.get("/api/support/tickets", async (request, reply) => {
     if (!(await allowTicketRead(request, reply))) return;
+    applyNoStoreToReply(reply);
     const query = z.object({ limit: z.coerce.number().int().min(1).max(200).optional() }).parse(request.query);
-    return { tickets: await listSupportTickets(query.limit ?? 50) };
+    const tickets = await listSupportTickets(query.limit ?? 50);
+    // Обращения, созданные до появления снимка, дополняются при чтении. Один запрос на аккаунт,
+    // даже если у него несколько тикетов; ошибка карточки не скрывает само обращение.
+    const cache = new Map<string, Promise<SupportReporter | null>>();
+    await Promise.all(tickets.filter(ticket => !ticket.reporter).map(async ticket => {
+      let pending = cache.get(ticket.userId);
+      if (!pending) {
+        pending = supportReporterFor(ticket.userId).catch(error => {
+          request.log.warn(
+            { supportTicket: ticket.id, error: error instanceof Error ? error.message : error },
+            "support reporter lookup failed",
+          );
+          return null;
+        });
+        cache.set(ticket.userId, pending);
+      }
+      const reporter = await pending;
+      if (reporter) ticket.reporter = reporter;
+    }));
+    return { tickets };
+  });
+
+  /**
+   * Карточка одного обращения для админки: сам тикет, живая карточка автора и его прошлые
+   * обращения. Снимок в тикете отвечает «кем человек был тогда», `user` — «кем он является
+   * сейчас»; расхождение между ними часто и есть ответ на вопрос поддержки.
+   */
+  app.get("/api/support/tickets/:id", async (request, reply) => {
+    if (!(await allowTicketRead(request, reply))) return;
+    applyNoStoreToReply(reply);
+    const params = z.object({ id: z.string().min(8).max(64) }).parse(request.params);
+    const ticket = await getSupportTicket(params.id);
+    if (!ticket) return reply.code(404).send({ error: "Обращение не найдено" });
+
+    let user = null;
+    try {
+      user = await loadSupportUser(ticket.userId);
+      // У старых тикетов снимка нет: карточка на чтении уже собрана, не заставляем админку
+      // делать второй запрос ради тех же полей.
+      if (user && !ticket.reporter) ticket.reporter = supportReporterFrom(user);
+    } catch (error) {
+      request.log.warn(
+        { supportTicket: ticket.id, error: error instanceof Error ? error.message : error },
+        "support user card failed",
+      );
+    }
+    return {
+      ticket,
+      user,
+      history: await supportTicketsForUser(ticket.userId, 20),
+    };
   });
 
   app.get("/api/support/tickets/:id/screenshot", async (request, reply) => {

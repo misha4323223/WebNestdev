@@ -14,6 +14,7 @@ const {
   createSession,
   deleteUserSessions,
   getSession,
+  getUserLastSeenAt,
   sessionIdleTtlMs,
   sessionTtlMs,
 } = await import("./auth-store.js");
@@ -73,6 +74,17 @@ test("сессия старше месяца недействительна, д�
   await getSession(session.id, now + 29 * day);
   assert.equal(await getSession(session.id, now + 31 * day), null);
   assert.equal(storedSession(session.id), undefined);
+});
+
+test("последняя активность берётся по самой свежей сессии аккаунта", async () => {
+  const older = await createSession("user-seen", Date.now() - day);
+  const newer = await createSession("user-seen", Date.now());
+  const other = await createSession("user-other-seen");
+
+  assert.equal(await getUserLastSeenAt("user-seen"), newer.lastSeenAt);
+  assert.notEqual(await getUserLastSeenAt("user-seen"), older.lastSeenAt);
+  assert.equal(await getUserLastSeenAt("user-other-seen"), other.lastSeenAt);
+  assert.equal(await getUserLastSeenAt("user-without-sessions"), null);
 });
 
 test("deleteUserSessions отзывает все сессии пользователя и только их", async () => {

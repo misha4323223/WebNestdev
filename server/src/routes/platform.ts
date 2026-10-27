@@ -4,6 +4,7 @@ import { requireUser } from "../auth/auth.js";
 import { isPlatformAdmin, platformAdminGuide, platformAdminsConfigured } from "../platform/admin.js";
 import { describeUnappliedName, parseEnvFileContent, platformEnvStatus, savePlatformEnv, type PlatformEnvStatus } from "../platform/platform-env.js";
 import { isSameOriginRequest, sameOriginRefusal } from "../security/same-origin.js";
+import { recordAudit } from "../security/audit-journal.js";
 import { applyNoStoreToReply } from "./cache-headers.js";
 
 export type PlatformRouteDeps = {
@@ -15,6 +16,8 @@ export type PlatformRouteDeps = {
   parseEnv: typeof parseEnvFileContent;
   describeUnapplied: (name: string) => string;
   guide: () => string;
+  /** Журнал безопасности: имена изменённых ключей, но никогда их значения. */
+  audit: typeof recordAudit;
 };
 
 const defaultDeps: PlatformRouteDeps = {
@@ -26,6 +29,7 @@ const defaultDeps: PlatformRouteDeps = {
   parseEnv: parseEnvFileContent,
   describeUnapplied: describeUnappliedName,
   guide: platformAdminGuide,
+  audit: recordAudit,
 };
 
 const saveSchema = z.object({
@@ -93,6 +97,18 @@ export async function registerPlatformRoutes(app: FastifyInstance, overrides: Pa
     if (!result.saved.length && !result.cleared.length && allSkipped.length) {
       return reply.code(400).send({ error: allSkipped.map(item => item.name + " — " + item.message).join("; "), skipped: allSkipped, status: deps.status() });
     }
+    await deps.audit({
+      action: "platform.keys.updated",
+      actorType: "user",
+      actorId: user.id,
+      actorLabel: user.email,
+      ip: request.ip,
+      details: {
+        saved: result.saved.join(", "),
+        cleared: result.cleared.join(", "),
+        skipped: allSkipped.map(item => item.name).join(", "),
+      },
+    });
     return { saved: result.saved, cleared: result.cleared, skipped: allSkipped, status: deps.status() };
   });
 }

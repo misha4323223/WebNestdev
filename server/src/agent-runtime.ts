@@ -27,8 +27,11 @@ const MUTATING_TOOLS=new Set(["fs.write","fs.rename","fs.delete","terminal.exec"
  * спрашивают в режиме разработчика. В наборы, запускающие проверку, инструмент не входит по другой
  * причине: сохранённый ключ сам по себе не требует сборки и прогона приложения — проверкой займётся
  * тот шаг, который начнёт использовать его в коде.
+ *
+ * `image.generate` тоже не запускает проверку: картинка — готовый ассет, собирать из-за неё проект
+ * незачем. Но планировщику она запрещена: это запись в проект и расход ключа платформы.
  */
-const PLANNER_FORBIDDEN_TOOLS=new Set(["git.add","git.commit","git.pull","secrets.request","access.request","deploy.plan","preview.start","preview.stop"]);
+const PLANNER_FORBIDDEN_TOOLS=new Set(["git.add","git.commit","git.pull","secrets.request","access.request","deploy.plan","preview.start","preview.stop","image.generate"]);
 
 /**
  * Planner mode still has to read the project, so plain inspection commands are allowed

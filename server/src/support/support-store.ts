@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
+import type { PlanId } from "../account/plans.js";
 
 /**
  * Обращения в поддержку лежат рядом с остальными данными сервера: один JSON на тикет и файл
@@ -10,6 +11,29 @@ import path from "node:path";
 export type SupportCategory = "bug" | "idea";
 
 export type SupportScreenshot = { file: string; mime: string; bytes: number };
+
+/** Как аккаунт входил на платформу. Пароль у телефонного и Яндекс-входа случайный. */
+export type SupportSignIn = "password" | "phone" | "yandex";
+
+/**
+ * Снимок аккаунта на момент отправки обращения. Хранится вместе с тикетом, потому что через
+ * месяц поддержке важно видеть, кем человек был тогда: тариф и проекты могли измениться, а
+ * профиль — удалиться. Полная карточка на чтении собирается заново (support-user.ts).
+ */
+export type SupportReporter = {
+  id: string;
+  email: string;
+  name: string | null;
+  /** Почта для связи из знакомства; может отличаться от почты входа. */
+  contactEmail: string | null;
+  phone: string | null;
+  signIn: SupportSignIn[];
+  plan: PlanId;
+  planName: string;
+  accountCreatedAt: string;
+  projects: number;
+  lastActiveAt: string | null;
+};
 
 export type SupportTicket = {
   id: string;
@@ -25,6 +49,10 @@ export type SupportTicket = {
   page?: string;
   projectId?: string;
   userAgent?: string;
+  /** IP-адрес отправителя: нужен для разбора сетевых проблем и злоупотреблений. */
+  ip?: string;
+  /** У обращений до 2026-10-26 снимка нет; список дополняет их при чтении. */
+  reporter?: SupportReporter;
   createdAt: string;
   screenshot: SupportScreenshot;
 };
@@ -105,7 +133,7 @@ export async function createSupportTicket(input: Omit<SupportTicket, "id" | "cre
  * Свежие обращения первыми. Повреждённый файл не должен ломать список: он пропускается, как и
  * в остальных хранилищах на диске.
  */
-export async function listSupportTickets(limit = 50): Promise<SupportTicketSummary[]> {
+async function readAllSupportTickets(): Promise<SupportTicket[]> {
   const dir = supportDir();
   let names: string[] = [];
   try { names = await readdir(dir); } catch { return []; }
@@ -117,10 +145,33 @@ export async function listSupportTickets(limit = 50): Promise<SupportTicketSumma
       if (ticket?.id && ticket.category && ticket.createdAt) tickets.push(ticket);
     } catch {}
   }
+  return tickets.sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+}
+
+function ticketSummary({ screenshot, ...rest }: SupportTicket): SupportTicketSummary {
+  return { ...rest, screenshot: { mime: screenshot.mime, bytes: screenshot.bytes } };
+}
+
+export async function listSupportTickets(limit = 50): Promise<SupportTicketSummary[]> {
+  const tickets = await readAllSupportTickets();
   return tickets
-    .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
     .slice(0, Math.max(1, Math.min(200, limit)))
-    .map(({ screenshot, ...rest }) => ({ ...rest, screenshot: { mime: screenshot.mime, bytes: screenshot.bytes } }));
+    .map(ticketSummary);
+}
+
+/** Одно обращение: список отдаёт его целиком, скриншот читается отдельным запросом. */
+export async function getSupportTicket(id: string): Promise<SupportTicketSummary | null> {
+  const ticket = await readTicket(id);
+  return ticket ? ticketSummary(ticket) : null;
+}
+
+/** Все обращения одного аккаунта — контекст для админки: повторные жалобы и их давность. */
+export async function supportTicketsForUser(userId: string, limit = 20): Promise<{ total: number; tickets: SupportTicketSummary[] }> {
+  const own = (await readAllSupportTickets()).filter(ticket => ticket.userId === userId);
+  return {
+    total: own.length,
+    tickets: own.slice(0, Math.max(1, Math.min(200, limit))).map(ticketSummary),
+  };
 }
 
 async function readTicket(id: string) {

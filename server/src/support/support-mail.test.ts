@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import {
   sendSupportMail,
+  supportMailBody,
   supportMailMessage,
   supportMailSettings,
   supportMailSubject,
@@ -104,6 +105,32 @@ test("the letter carries the ticket, the author's address and the screenshot", a
   assert.match(message, /Content-Type: image\/png/);
   assert.ok(message.includes(png.toString("base64").slice(0, 24)), "скриншот приложен в base64");
   assert.ok(message.trimEnd().endsWith("."), "письмо закрыто точкой: иначе сервер ждёт продолжения");
+});
+
+test("the letter names the account behind the ticket", () => {
+  const body = supportMailBody({
+    ...ticket,
+    ip: "203.0.113.10",
+    reporter: {
+      id: "u1",
+      email: "client@example.com",
+      name: "Иван Петров",
+      contactEmail: "ivan@example.com",
+      phone: "+7 999 123-45-67",
+      signIn: ["phone"],
+      plan: "pro",
+      planName: "Плюс",
+      accountCreatedAt: "2026-01-02T03:04:05.000Z",
+      projects: 3,
+      lastActiveAt: "2026-10-25T18:00:00.000Z",
+    },
+  });
+  assert.match(body, /Имя: Иван Петров/);
+  assert.match(body, /Почта для связи: ivan@example\.com/);
+  assert.match(body, /Телефон: \+7 999 123-45-67/);
+  assert.match(body, /Тариф: Плюс/);
+  assert.match(body, /Проектов: 3/);
+  assert.match(body, /IP: 203\.0\.113\.10/);
 });
 
 test("the subject is encoded for UTF-8 and names the category and severity", () => {

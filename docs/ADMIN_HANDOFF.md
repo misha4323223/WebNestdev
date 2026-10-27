@@ -3,6 +3,135 @@
 Дата записи: **2026-10-25, ~19:40 UTC**. Это точка остановки, к которой можно вернуться
 в новой сессии: что уже работает, что осталось и где лежат доступы.
 
+## Точка остановки 2026-10-27: переменные вставлены в GitHub, отправка ещё не сделана
+
+Состояние на сейчас (проверено по `git log` и по списку прогонов Actions):
+
+- переменные `PLATFORM_IMAGE_*` в **Settings → Secrets and variables → Actions** заведены — это
+  сделал владелец репозитория;
+- на GitHub (ветка `main`) последняя версия — `f4ed448` (выкатка `40371284915`, 26 октября). В ней
+  **нет** новых имён: ни `deploy.yml` с `PLATFORM_IMAGE_*`, ни кода `image.generate`;
+- всё новое лежит локально непроведёнными изменениями (30+ файлов: инструмент и генерация картинок,
+  плюс прежняя работа — журнал безопасности, карточка пользователя в поддержке, деньги админки).
+
+**Что это значит:** пока изменения не отправлены в `main`, новых прогонов выкатки не будет, и
+вставленные переменные никто не прочитает. Отправка — кнопкой в панели «Изменения» (или скажи агенту
+«выгружай»): она делает коммит и push в `main`, после чего запускаются CI, `production-ci` и `deploy`.
+
+После выкатки проверить две строки: `[deploy] Генерация изображений: адрес=…, модель=…, ключ=…` в логе
+выкатки и `[image] генерация изображений: …` в логе сервера (`Actions → deploy → mode=logs`).
+Ключ `PLATFORM_IMAGE_KEY_1` читается **только из Secrets** — если он попал в Variables, в строке будет
+«ключ=нет». Адрес — обязательно с `/ai/run` на конце, а не `/ai/v1`. Своя проверка именами через
+`gh variable list` / `gh secret list` невозможна: у ключа Freebuff нет прав на чтение списка (HTTP 403).
+
+## Обновление 2026-10-27: генерация изображений для агента (инструмент `image.generate`)
+
+**Второй модели нет — решено окончательно.** Cloudflare в проекте нужен не как ещё один
+chat-провайдер, а как **инструмент**: агент по просьбе пользователя рисует картинку и кладёт файл
+в проект (обложка, фон, карточка товара, аватар), а код потом ссылается на этот ассет. Поэтому
+ранее добавленный второй бесплатный провайдер (`PLATFORM_AI_FREE_CF_*`) **откатан**: бесплатная
+цепочка прежняя — Agnes AI (`agnes-3.0-flash`), три ключа, резерв — Yandex Cloud AI Studio.
+
+Новые имена переменных — **`PLATFORM_IMAGE_*`**: отдельный набор, он не пересекается ни с
+`PLATFORM_AI_*`, ни с `PLATFORM_AI_FREE_*`, поэтому «A repository variable with this name already
+exists» на них не появится.
+
+| Имя | Где заводить в GitHub | Значение |
+|---|---|---|
+| `PLATFORM_IMAGE_BASE_URL` | Variables или Secrets | `https://api.cloudflare.com/client/v4/accounts/<Account ID>/ai/run` |
+| `PLATFORM_IMAGE_MODEL` | Variables или Secrets | `@cf/black-forest-labs/flux-1-schnell` (или `@cf/stabilityai/stable-diffusion-xl-base-1.0`) |
+| `PLATFORM_IMAGE_PROVIDER` | Variables или Secrets | `Cloudflare Workers AI` (необязательно) |
+| `PLATFORM_IMAGE_KEY_1..3` | **только Secrets** | API-токены Cloudflare с правом `Workers AI: Read` |
+
+Те же шесть имён есть в панели «Ключи сервера» (группа «AI»): там вводить проще, значение из панели
+важнее окружения и переживает выкатку — но тогда строка выкатки скажет «нет», и это не ошибка.
+
+Где правки: `server/src/provider/image-generation.ts` (адрес, тело запроса, разбор ответа, перебор
+ключей), `server/src/tools/image-tools.ts` (инструмент `image.generate`), тесты
+`image-generation.test.ts` и `image-tools.test.ts`, `server/src/index.ts` (регистрация и строка
+`[image] …` при старте), `server/src/agent-runtime.ts` (в планировщике инструмент запрещён),
+`server/src/agent/tool-executor.ts` (учёт места проекта), `server/src/platform/platform-env.ts`
+(каталог панели), `docker-compose.yml`, `.github/workflows/deploy.yml` (обе ветки выкатки плюс
+строка `[deploy] Генерация изображений: …`), `docs/PLATFORM_AI.md` (раздел «Генерация изображений
+для проектов»).
+
+Проверка после выкатки — в логе сервера (`Actions → deploy → mode=logs`):
+
+```
+[image] генерация изображений: Cloudflare Workers AI (@cf/black-forest-labs/flux-1-schnell), ключей 1
+```
+
+Нет строки или написано «PLATFORM_IMAGE_* не заданы» — значения не доехали: смотрите
+`[deploy] Генерация изображений` и панель «Ключи сервера». Сам инструмент проверяется запросом в
+чате: «нарисуй фотографию кота для главной» — агент вызовет `image.generate`, а в проекте появится
+файл `public/images/…`. Ключ Cloudflare нужно положить самому: в репозитории и в этом файле его нет
+и быть не должно.
+
+## Если понадобится: заменить бесплатную модель (Agnes остаётся по умолчанию)
+
+У бесплатной модели тарифа «Старт» остаётся Agnes AI, а имя провайдера в логах и подписях задаётся
+`PLATFORM_AI_FREE_PROVIDER` (по умолчанию `Agnes AI`). Если бесплатную модель когда-нибудь придётся сменить на другую OpenAI-совместимую, ей нужны вызов
+инструментов и контекст не меньше `AGENT_CONTEXT_TOKENS` (по умолчанию 120 000): значения
+`PLATFORM_AI_FREE_BASE_URL`, `PLATFORM_AI_FREE_MODEL` и ключи `PLATFORM_AI_FREE_KEY_1..3` в этом
+случае просто перезаписываются — отдельных имён не заводится. Шаги, лимиты и цены —
+`docs/PLATFORM_AI.md`, разделы «Бесплатный тариф» и «Подключение Cloudflare Workers AI».
+
+## Обновление 2026-10-26: второй бесплатный провайдер (Cloudflare) — откатан
+
+**Итог: второй провайдер из кода убран.** Cloudflare вошёл в проект инструментом генерации
+изображений (`PLATFORM_IMAGE_*`, см. выше), а второй набор для разговора (`PLATFORM_AI_FREE_CF_*`)
+удалён из `free-model.ts`, каталога панели, `docker-compose.yml` и выкатки: бесплатная цепочка
+снова одна — `PLATFORM_AI_FREE_*` (Agnes) с резервом на модель платформы. Если в `.env` на ВМ
+остались значения `PLATFORM_AI_FREE_CF_*`, они просто не используются — стирать их не обязательно.
+
+## Обновление 2026-10-26: обращения с карточкой пользователя
+
+Админка теперь получает не только текст обращения, но и подробности об авторе:
+
+- при отправке в тикет кладётся снимок аккаунта — имя и почта для связи, телефон, способы входа,
+  тариф, дата регистрации, число проектов и последняя активность;
+- `GET /api/support/tickets` отдаёт этот снимок в каждом тикете и дополняет старые обращения, у
+  которых снимка ещё не было;
+- `GET /api/support/tickets/<id>` отдаёт сам тикет, **живую** карточку автора (подписка, последние
+  проекты, дневной расход, месячный пул токенов) и до 20 прошлых обращений;
+- письмо поддержки (`SUPPORT_SMTP_*`) теперь тоже содержит имя, телефон, тариф и активность;
+- в тикете сохраняется IP отправителя.
+
+Код: `server/src/support/support-user.ts`, `server/src/routes/support.ts`,
+`server/src/support/support-store.ts`. Тесты: `support-user.test.ts`, `support-store.test.ts`,
+`support-mail.test.ts`, `routes/support-detail.test.ts`, `routes/support.test.ts`,
+`routes/support-admin.test.ts` — все проходят. Контракт и пример ответа — `docs/ADMIN_API.md`,
+раздел 8.
+
+**Что осталось на стороне приложения:** нарисовать в Expo/Electron экран «Поддержка»: список
+(`GET /api/support/tickets`), карточка (`GET /api/support/tickets/<id>`) со скриншотом через
+`Image` с заголовком `Authorization`, и блок «прошлые обращения». Отдельный ключ не нужен —
+подойдёт та же админ-сессия.
+
+## Обновление 2026-10-26: журнал безопасности (аудит P1 #11)
+
+Закрыт пункт бэклога безопасности «нет аудита изменений ключей платформы, удаления проектов,
+неудачных входов».
+
+- Новый журнал `server/src/security/audit-journal.ts`: отдельный от `secret-audit` (тот — про
+  секреты проекта, этот — про вход и платформу). Записи не меняются задним числом, лучший
+  вариант — JSONL `security-audit.jsonl` в `DATA_DIR`, в Postgres — таблица `security_audit`
+  с индексами по времени и действию.
+- Пишутся 13 событий: входы администратора (по паролю, успех, отказ, лимит попыток, код
+  восстановления) и второй фактор, перевыпуск кодов, «выйти везде», изменение ключей платформы,
+  удаление проекта, регистрация и неудачные входы пользователей, отзыв их сессий. Значений
+  ключей, паролей, TOTP-секретов и кодов восстановления в журнале нет по построению — только
+  имена, счётчики и причины; IP хранится хешем.
+- Чтение для админки: `GET /api/admin/audit?limit=&action=&actorId=&days=` — события, каталог
+  действий для фильтра и диапазон. Опечатка в имени действия даёт `400`, а не пустой список.
+  Контракт и таблицы — `docs/ADMIN_API.md`, раздел 9.
+- Код: `server/src/security/audit-journal.ts`, `server/src/routes/admin-audit.ts`,
+  запись — в `routes/admin.ts`, `auth.ts`, `platform.ts`, `projects.ts`. Тесты:
+  `security/audit-journal.test.ts`, `routes/admin-audit.test.ts` — проходят.
+
+**Что осталось на стороне приложения:** экран «Безопасность» — список событий с фильтром по
+действию из каталога `actions` ответа, без нового ключа: подойдёт админ-сессия.
+
 ## Обновление 2026-10-26: расходы и экономика подписки
 
 Добавлена денежная статистика — то, чего не хватало, чтобы выбирать цену подписки по
@@ -55,15 +184,66 @@
 `model_usage` они записаны как `free-model`. Для этого нужно писать фактический адрес модели, а не
 `free-model`, — отдельная задача; сейчас админка предупреждает об этой границе.
 
+## Обновление 2026-10-26: имена в GitHub — ничего переименовывать не нужно
+
+Короткий ответ на «надо поменять переменные, чтобы не повторялись»: **нет**. Имя переменной — это
+адрес, по которому выкатка её читает; переименование в настройках репозитория означает, что
+значение молча перестанет доезжать до ВМ (пустое значение выкатка просто пропускает и ничего не
+стирает).
+
+Что означают сообщения в окне **Settings → Secrets and variables → Actions**:
+
+- «Variable names may only contain alphanumeric characters … cannot start with GITHUB_ prefix» — это
+  постоянная подсказка окна про правила имени, а не жалоба на конкретное имя. `PLATFORM_AI_FREE_BASE_URL`,
+  например, полностью подходит: латинские буквы, цифры и `_`.
+- «A repository variable with this name already exists» — имя **уже заведено в этой же вкладке**.
+  Пересоздавать нечего: значение правится кнопкой на существующей строке. Имена сравниваются без
+  учёта регистра, поэтому `platform_ai_free_base_url` — то же самое имя.
+- В поле **Name** идёт только имя. Значение (`https://…`, JSON, текст) кладётся в поле **Value**:
+  `=`, `:`, `/`, точка, дефис, пробел и кириллица в имени запрещены.
+
+**Variables и Secrets — два разных списка, и одно и то же имя может лежать в обоих.** Выкатка почти
+всюду читает `secrets.X || vars.X`, то есть значение берётся из Secrets, а если его там нет — из
+Variables. Поэтому «повтор» между вкладками — не ошибка и не повод что-то менять. Единственное
+место, где имя в настройках GitHub вынужденно другое: `GITHUB_` зарезервирован, поэтому OAuth панели
+заводится как `GH_OAUTH_CLIENT_ID` / `GH_OAUTH_CLIENT_SECRET`, а в `.env` на ВМ попадает под
+обычными именами `GITHUB_CLIENT_ID` / `GITHUB_CLIENT_SECRET`.
+
+Где что заводить (по `.github/workflows/deploy.yml`):
+
+| Где | Имена |
+|---|---|
+| **Только Secrets** — из Variables не доедут | `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_PORT`, `DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS`, `YANDEX_SA_KEY_JSON`, `YANDEX_CLOUD_ID`, `YANDEX_FOLDER_ID`, `PLATFORM_AI_API_KEY`, `PLATFORM_AI_FREE_KEY_1..3`, `PLATFORM_IMAGE_KEY_1..3`, `PLATFORM_S3_ACCESS_KEY_ID`, `PLATFORM_S3_SECRET_ACCESS_KEY`, `WEBNESTDEV_ADMIN_EMAILS`, `WEBNESTDEV_ADMIN_USER_IDS`, `ADMIN_BOOTSTRAP_EMAIL`, `ADMIN_BOOTSTRAP_PASSWORD`, `SUPPORT_SMTP_PASSWORD` |
+| **Только Variables** | `DEPLOY_RUNNER`, `DEPLOY_APP_DIR`, `GH_CALLBACK_URL`, `GH_FRONTEND_URL`, `GITLAB_BASE_URL`, `GITLAB_CALLBACK_URL`, `GITLAB_FRONTEND_URL`, `YANDEX_CALLBACK_URL`, `YANDEX_FRONTEND_URL`, `YANDEX_OAUTH_SCOPE` |
+| **Любая из двух вкладок** (`secrets.X \|\| vars.X`) | `GH_OAUTH_CLIENT_ID`, `GH_OAUTH_CLIENT_SECRET`, `GITLAB_CLIENT_ID`, `GITLAB_CLIENT_SECRET`, `GITVERSE_CLIENT_ID`, `GITVERSE_CLIENT_SECRET`, `YANDEX_CLIENT_ID`, `YANDEX_CLIENT_SECRET`, `WEB_SEARCH_PROVIDER`, `YANDEX_SEARCH_API_KEY`, `YANDEX_SEARCH_FOLDER_ID`, `TAVILY_API_KEY`, `PLATFORM_AI_BASE_URL`, `PLATFORM_AI_MODEL`, `PLATFORM_AI_PROVIDER`, `PLATFORM_AI_FREE_BASE_URL`, `PLATFORM_AI_FREE_MODEL`, `PLATFORM_AI_FREE_PROVIDER`, `PLATFORM_IMAGE_BASE_URL`, `PLATFORM_IMAGE_MODEL`, `PLATFORM_IMAGE_PROVIDER`, `PLATFORM_AI_PRICE_INPUT_PER_MILLION`, `PLATFORM_AI_PRICE_OUTPUT_PER_MILLION`, `PLATFORM_AI_PRICE_CURRENCY`, `PLATFORM_AI_MODEL_PRICES`, `PLATFORM_INFRA_COST_PER_MONTH`, `PLATFORM_S3_ENDPOINT`, `PLATFORM_S3_BUCKET`, `PLATFORM_S3_REGION`, `PLATFORM_S3_PREFIX`, `PROJECT_ARCHIVE_ENABLED`, `PROJECT_ARCHIVE_IDLE_MINUTES`, `SUPPORT_API_KEY`, `SUPPORT_EMAIL_TO`, `SUPPORT_EMAIL_FROM`, `SUPPORT_SMTP_HOST`, `SUPPORT_SMTP_PORT`, `SUPPORT_SMTP_USER` |
+
+Пароль администратора — значение секрета `ADMIN_BOOTSTRAP_PASSWORD` (Secret, не Variable);
+администратор `pimashin2015@gmail.com` уже создан и перезаписи не подлежит.
+
+Что было заведено, а чего не было на момент последней выкатки: лог запуска `40371284915` (коммит
+`f4ed448`) показывает OAuth GitHub/GitLab/GitVerse/Яндекс — «есть», веб-поиск — «есть», холодный
+ярус — «есть» (бакет `webnest`, включён), а цены расхода — «таблица моделей=нет, общая ставка=нет,
+инфраструктура=нет, валюта=USD» и поддержка — «ключ API=нет, почта=—, SMTP=нет». То есть
+`PLATFORM_AI_MODEL_PRICES`, `PLATFORM_AI_PRICE_CURRENCY=RUB`, `PLATFORM_INFRA_COST_PER_MONTH`
+(и `SUPPORT_*`, если нужны письма поддержки) — то, что добавляется после; `PLATFORM_AI_PRICE_*`
+необязательны.
+
+Как проверить, что значения доехали: переменные передаются на ВМ только выкаткой, поэтому после
+правок нужно запустить Actions → **deploy** → *Run workflow* (правки кода для этого не нужны) и
+посмотреть строки `[deploy] Цены расхода: …` и `[deploy] Поддержка: …` — в них только «есть/нет»,
+без самих значений. Строка `[deploy] Холодный ярус: …` уже показывает бакет и включённость.
+
 ## Где мы остановились
 
-- Выкачено: коммит `66eecca`, запуск деплоя `40226033125`, живая сборка `66eeccab1e2f`.
-- Деплой зелёный: `PANEL-BUILD=ok`, версия на ВМ совпала, предпросмотр и SMS проверены.
+- Последняя выкатка: коммит `f4ed448`, запуск деплоя `40371284915` — зелёный (2026-10-26).
+- Перед ней: `5a920a0` / `40278805041` (статистика), `66eecca` / `40226033125` (вход с TOTP).
 - **Администратор создан** из окружения: `pimashin2015@gmail.com` (строка в логе сервера
   `admin account created from environment`).
 - **TOTP ещё не подключён.** Первый вход в приложении вернёт `stage: "enroll"` — это ожидаемо.
 - Пароль администратора — значение секрета `ADMIN_BOOTSTRAP_PASSWORD` в GitHub. В репозитории и в
   этом файле его нет.
+- **Бесплатная модель тарифа «Старт» — Agnes AI (три ключа) с резервом на Yandex; провайдера
+  решено не менять** (подробности и запасной вариант — в разделе про Cloudflare выше).
 
 ## Что готово в коде
 
@@ -79,6 +259,7 @@
 | `GET /api/admin/me` | кто вошёл и до какого времени |
 | `POST /api/admin/logout`, `/logout-all` | закрыть вход / все входы |
 | `GET /api/admin/stats/*`, `/api/admin/users`, `/api/admin/projects` | статистика для экранов админки (только чтение) |
+| `GET /api/admin/audit` | журнал безопасности для экрана «Безопасность» (только чтение) |
 
 Детали, потоки и curl — `docs/ADMIN_API.md`. Статистика и её контракт — раздел 7 там же
 (`server/src/routes/admin-analytics.ts`).
@@ -94,7 +275,7 @@
   (`node server/dist/scripts/admin-cli.js …` внутри контейнера `webnestdev-server`).
 
 Тесты: `server/src/admin/totp.test.ts` (векторы RFC 6238), `server/src/admin/bootstrap.test.ts`,
-`server/src/routes/admin.test.ts`. Последний полный прогон — **938 тестов, все проходят**.
+`server/src/routes/admin.test.ts`. Последний полный прогон — **977 тестов, все проходят**.
 
 ## Следующие шаги
 
@@ -106,12 +287,14 @@
 3. **Клиенты.** Expo: токен в `expo-secure-store`, QR из `otpauth` через `react-native-qrcode-svg`,
    только HTTPS. Electron: запросы из main-процесса, токен через `safeStorage`; `file://` в
    `WEBNESTDEV_ADMIN_ORIGINS` не работает — нужен `app://…` или main-процесс.
-4. **Следующая задача по бэкенду:** админ-токен открывает `/api/admin/*` и чтение обращений
-   поддержки (раздел 8 в `docs/ADMIN_API.md`). Ключи платформы (`/api/platform/keys`) по-прежнему
-   требуют пользовательскую сессию и `WEBNESTDEV_ADMIN_EMAILS`. Если админка должна ими управлять —
-   перевести их на админ-сессию.
+4. **Следующая задача по приложению:** экран «Поддержка» — список обращений с профилем автора,
+   карточка тикета со скриншотом и прошлыми обращениями (раздел 8 в `docs/ADMIN_API.md`).
+   Бэкенд уже готов; админ-токен открывает и `/api/admin/*`, и чтение обращений. Ключи платформы
+   (`/api/platform/keys`) по-прежнему требуют пользовательскую сессию и `WEBNESTDEV_ADMIN_EMAILS`.
+   Если админка должна ими управлять — перевести их на админ-сессию.
 5. **Из бэклога безопасности** (`docs/SECURITY.md`): Docker-брокер вместо `docker.sock` (P1 #5),
-   аудит действий администратора (P1 #11), политика паролей (#12), подтверждение email (#13).
+   аудит действий администратора (P1 #11) — сделан журналом `security_audit`; дальше политика
+   паролей (#12), подтверждение email (#13) и лимит чтения ключа поддержки (#10).
 
 ## Как проверить, что всё ещё так
 

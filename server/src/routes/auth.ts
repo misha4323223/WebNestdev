@@ -6,6 +6,7 @@ import { findYandexIdentityByUserId } from "../auth/yandex-account-store.js";
 import { findPhoneByUserId, formatPhone } from "../auth/phone-store.js";
 import { getUserProfile } from "../account/profile-store.js";
 import { checkAuthRateLimit } from "../auth/auth-rate-limit.js";
+import { recordAudit } from "../security/audit-journal.js";
 
 const credentials = z.object({email:z.string().email().max(200),password:z.string().min(8).max(200)});
 
@@ -47,6 +48,14 @@ export async function registerAuthRoutes(app:FastifyInstance){
     try{
       const user = await createUser(body.email,body.password);
       await attachSession(reply,user.id,request);
+      await recordAudit({
+        action: "user.registered",
+        actorType: "user",
+        actorId: user.id,
+        actorLabel: user.email,
+        target: user.id,
+        ip: request.ip,
+      });
       return reply.code(201).send({user:{id:user.id,email:user.email,createdAt:user.createdAt}});
     }catch(error){
       if(error instanceof Error && error.message===EMAIL_TAKEN_MESSAGE) return reply.code(409).send({error:EMAIL_TAKEN_MESSAGE});
@@ -57,11 +66,29 @@ export async function registerAuthRoutes(app:FastifyInstance){
     const body = credentials.parse(request.body);
     const rateLimit = checkAuthRateLimit(request.ip, "login", body.email);
     if (!rateLimit.allowed) {
+      await recordAudit({
+        action: "user.login.failed",
+        actorType: "system",
+        actorId: "",
+        actorLabel: body.email,
+        ip: request.ip,
+        details: { reason: "rate_limited" },
+      });
       reply.header("Retry-After", String(rateLimit.retryAfter));
       return reply.code(429).send({error:"Слишком много попыток входа. Попробуйте позже."});
     }
     const user = await verifyUser(body.email,body.password);
-    if(!user) return reply.code(401).send({error:"Неверный email или пароль"});
+    if(!user) {
+      await recordAudit({
+        action: "user.login.failed",
+        actorType: "system",
+        actorId: "",
+        actorLabel: body.email,
+        ip: request.ip,
+        details: { reason: "bad_password" },
+      });
+      return reply.code(401).send({error:"Неверный email или пароль"});
+    }
     await attachSession(reply,user.id,request);
     return {user:{id:user.id,email:user.email,createdAt:user.createdAt}};
   });
@@ -80,6 +107,14 @@ export async function registerAuthRoutes(app:FastifyInstance){
     const user = await requireUser(request, reply);
     if(!user) return;
     const revoked = await deleteUserSessions(user.id);
+    await recordAudit({
+      action: "user.sessions.revoked",
+      actorType: "user",
+      actorId: user.id,
+      actorLabel: user.email,
+      ip: request.ip,
+      details: { revoked },
+    });
     reply.clearCookie(SESSION_COOKIE,{path:"/"});
     return {ok:true,revoked};
   });

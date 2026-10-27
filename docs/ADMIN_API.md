@@ -167,6 +167,7 @@ curl -s https://panel.example.com/api/admin/2fa/verify -H 'content-type: applica
 | `GET /api/admin/users` | `Bearer` | пользователи: поиск, сортировка, страница |
 | `GET /api/admin/users/:id` | `Bearer` | карточка: проекты, модели, ряд за 30 дней |
 | `GET /api/admin/projects` | `Bearer` | проекты: поиск, владелец, расход |
+| `GET /api/admin/audit` | `Bearer` | журнал безопасности: входы, второй фактор, ключи, удаление проектов (раздел 9) |
 
 Ответы не кэшируются (`cache-control: no-store`). Ошибки: `401` — нет или истёк вход / не подошёл
 код, `403` — источник не разрешён, `429` — лимит попыток (заголовок `Retry-After`), `400` —
@@ -408,12 +409,63 @@ curl -s -H "Authorization: Bearer $TOKEN" 'https://panel.example.com/api/admin/u
 
 ## 8. Обращения поддержки
 
-Чтение — только две ручки; создание обращения по ключу невозможно.
+Создание обращения по ключу невозможно: его пишет только вошедший пользователь из кнопки
+«Поддержка». Админка читает обращения и получает подробную карточку автора.
 
 | Метод и путь | Что отдаёт |
 |---|---|
-| `GET /api/support/tickets?limit=50` | список обращений без картинок |
+| `GET /api/support/tickets?limit=50` | список обращений без картинок, с профилем автора |
+| `GET /api/support/tickets/<id>` | одно обращение, живая карточка автора и его прошлые обращения |
 | `GET /api/support/tickets/<id>/screenshot` | скриншот обращения |
+
+### 8.1. Что уже есть в каждом обращении
+
+- `reporter` — снимок аккаунта **на момент отправки**: `name`, `contactEmail`, `phone`,
+  `signIn` (`password` / `phone` / `yandex`), `plan`, `planName`, `accountCreatedAt`,
+  `projects` (число проектов) и `lastActiveAt`. Снимок не меняется задним числом: по нему видно,
+  кем человек был тогда, даже если тариф или профиль уже другие.
+- `ip` — адрес, с которого отправлено обращение; `userAgent`, `page`, `projectId`, `context` —
+  как и раньше, помогают воспроизвести проблему.
+- У обращений, созданных до появления снимка, `reporter` дополняется при чтении списка. Если
+  аккаунт уже удалён, остаются поля самого тикета.
+
+### 8.2. Карточка обращения
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  'https://nestdev.ru/api/support/tickets/<id>'
+```
+
+```json
+{
+  "ticket": { "id": "…", "category": "bug", "severity": 8, "reporter": { "…": "…" } },
+  "user": {
+    "id": "…",
+    "email": "client@example.com",
+    "name": "Иван Петров",
+    "contactEmail": "ivan@example.com",
+    "phone": "+7 999 123-45-67",
+    "signIn": ["phone", "password"],
+    "plan": "pro",
+    "planName": "Плюс",
+    "accountCreatedAt": "2026-01-02T03:04:05.000Z",
+    "projects": 3,
+    "lastActiveAt": "2026-10-26T09:30:00.000Z",
+    "yandexLogin": null,
+    "subscription": { "plan": "pro", "status": "active", "renewsAt": "2026-11-26T…", "autoRenew": true },
+    "recentProjects": [{ "id": "…", "name": "Магазин", "updatedAt": "2026-10-26T…" }],
+    "usage": { "date": "2026-10-26", "agentRuns": 2, "browserChecks": 0, "webSearches": 1 },
+    "tokens": { "month": "2026-10", "used": 125000, "limit": 50000000, "remaining": 49875000 }
+  },
+  "history": { "total": 2, "tickets": [{ "…": "…" }] }
+}
+```
+
+`user` — состояние на момент чтения, а не на момент отправки. `null` означает, что аккаунт
+удалён или карточка не собралась; само обращение при этом отдаётся полностью. `history` — до 20
+последних обращений того же аккаунта (включая текущее): повторные жалобы видно сразу, без
+отдельного запроса. Пароля, хешей, секретов и API-ключей в карточке нет; `tokens` — только
+расход модели за месяц.
 
 Две двери:
 
@@ -428,6 +480,7 @@ curl -s -H "Authorization: Bearer $TOKEN" 'https://panel.example.com/api/admin/u
 ```bash
 TOKEN=…  # токен администратора
 curl -s -H "Authorization: Bearer $TOKEN" 'https://nestdev.ru/api/support/tickets?limit=3'
+curl -s -H "Authorization: Bearer $TOKEN" 'https://nestdev.ru/api/support/tickets/<id>'
 curl -s -H "X-Support-Key: $SUPPORT_API_KEY" 'https://nestdev.ru/api/support/tickets?limit=3'
 ```
 
@@ -440,3 +493,79 @@ curl -s -H "X-Support-Key: $SUPPORT_API_KEY" 'https://nestdev.ru/api/support/tic
   скрывает, «ключ не сохранён» это или «сохранён в другом процессе».
 - Если ключ сохранён в панели на одной реплике, а запрос попал на другую, сервер перечитывает
   `platform/env.json` по изменению файла — перезапуск не нужен.
+
+## 9. Журнал безопасности
+
+Экран «Безопасность» в админке: что происходило со входом и платформой. Последние события сверху,
+только чтение и только по админ-токену (`server/src/security/audit-journal.ts`,
+`server/src/routes/admin-audit.ts`).
+
+### 9.1. Запрос
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  'https://nestdev.ru/api/admin/audit?limit=50&action=admin.login.failed&days=7'
+```
+
+| Параметр | По умолчанию | Смысл |
+|---|---|---|
+| `limit` | 100 | сколько событий вернуть, 1…500 |
+| `action` | — | фильтр по имени действия; неизвестное имя даёт `400` со списком известных, а не пустой ответ |
+| `actorId` | — | события одного администратора или пользователя |
+| `days` | 0 | окно в сутках назад; `0` — без ограничения по времени |
+
+### 9.2. Ответ
+
+```json
+{
+  "entries": [
+    {
+      "id": "…",
+      "at": "2026-10-26T17:40:12.345Z",
+      "action": "admin.login.failed",
+      "actorType": "system",
+      "actorId": "",
+      "actorLabel": "pimashin2015@gmail.com",
+      "target": "",
+      "targetLabel": "",
+      "ipHash": "…",
+      "details": { "reason": "bad_password" }
+    }
+  ],
+  "total": 1,
+  "range": { "days": 7, "limit": 50 },
+  "actions": [{ "action": "admin.login.failed", "label": "Неудачный вход администратора" }]
+}
+```
+
+- `entries` — события, `actions` — каталог для фильтра экрана (имя и подпись), его можно не
+  хардкодить в приложении.
+- `actorType`: `admin`, `user` или `system` (системные — отказы по лимиту попыток).
+- `ipHash` — хеш адреса, не адрес: сравнить два события можно, восстановить адрес — нет.
+- `details` — только строки, числа и булевы значения, не больше 12 ключей и 300 символов на
+  значение. Значений ключей, паролей, TOTP-секретов и кодов восстановления в журнале нет по
+  построению — вызывающие передают имена, счётчики и причины.
+
+### 9.3. Каталог действий
+
+| Действие | Подпись |
+|---|---|
+| `admin.login.failed` | Неудачный вход администратора |
+| `admin.login.password` | Пароль администратора принят |
+| `admin.login.success` | Вход администратора |
+| `admin.login.recovery` | Вход администратора по коду восстановления |
+| `admin.2fa.failed` | Неверный код второго фактора |
+| `admin.2fa.enabled` | Второй фактор подключён |
+| `admin.2fa.reissued` | Коды восстановления перевыпущены |
+| `admin.logout.all` | Завершены все сеансы администратора |
+| `platform.keys.updated` | Изменены ключи платформы |
+| `project.deleted` | Удалён проект |
+| `user.registered` | Зарегистрирован аккаунт |
+| `user.login.failed` | Неудачный вход пользователя |
+| `user.sessions.revoked` | Завершены все сеансы пользователя |
+
+### 9.4. Хранение
+
+Локальный режим — `security-audit.jsonl` в `DATA_DIR` (0600); Postgres — таблица `security_audit`
+с индексами по `at` и `action, at`. Запись не отменяет само действие: сбой журнала не мешает входу
+или сохранению ключей, но уходит в лог сервера строкой `[audit] не удалось записать событие…`.

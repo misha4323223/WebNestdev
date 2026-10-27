@@ -18,6 +18,7 @@ import {
 import { createAdminChallenge, dropAdminChallenge, readAdminChallenge, recordAdminChallengeFailure } from "../admin/challenges.js";
 import { generateRecoveryCodes, generateTotpSecret, hashRecoveryCode, matchTotp, otpauthUri, TOTP_DIGITS, TOTP_PERIOD_SECONDS } from "../admin/totp.js";
 import { applyNoStoreToReply } from "./cache-headers.js";
+import { recordAudit } from "../security/audit-journal.js";
 
 /**
  * Вход администратора платформы через API.
@@ -113,15 +114,43 @@ export async function registerAdminRoutes(app: FastifyInstance) {
     const body = loginSchema.parse(request.body);
     const limit = checkAuthRateLimit(request.ip, "adminLogin", body.email);
     if (!limit.allowed) {
+      // 429 — не просто отказ: серия таких ответов и есть картина перебора. Пишем её в журнал,
+      // но без пароля и без тела запроса.
+      await recordAudit({
+        action: "admin.login.failed",
+        actorType: "system",
+        actorId: "",
+        actorLabel: body.email,
+        ip: request.ip,
+        details: { reason: "rate_limited" },
+      });
       reply.header("Retry-After", String(limit.retryAfter));
       return reply.code(429).send({ error: "Слишком много попыток входа. Попробуйте позже." });
     }
     const admin = await verifyAdminPassword(body.email, body.password);
     // Один и тот же ответ для неизвестного email и неверного пароля: перечислять администраторов
     // по разнице текстов нельзя.
-    if (!admin) return reply.code(401).send({ error: "Неверный email или пароль" });
+    if (!admin) {
+      await recordAudit({
+        action: "admin.login.failed",
+        actorType: "system",
+        actorId: "",
+        actorLabel: body.email,
+        ip: request.ip,
+        details: { reason: "bad_password" },
+      });
+      return reply.code(401).send({ error: "Неверный email или пароль" });
+    }
 
     const stage = admin.totpEnabledAt ? "verify" : "enroll";
+    await recordAudit({
+      action: "admin.login.password",
+      actorType: "admin",
+      actorId: admin.id,
+      actorLabel: admin.email,
+      ip: request.ip,
+      details: { stage },
+    });
     const challenge = createAdminChallenge({ adminId: admin.id, stage });
     return {
       stage,
@@ -184,6 +213,14 @@ export async function registerAdminRoutes(app: FastifyInstance) {
 
     const match = matchTotp(state.secret, body.code);
     if (!match) {
+      await recordAudit({
+        action: "admin.2fa.failed",
+        actorType: "admin",
+        actorId: admin.id,
+        actorLabel: admin.email,
+        ip: request.ip,
+        details: { reason: "setup" },
+      });
       const attemptsLeft = recordAdminChallengeFailure(body.challenge);
       return reply.code(401).send({
         error: attemptsLeft ? "Код не подошёл. Осталось попыток: " + attemptsLeft : "Слишком много попыток — начните с пароля",
@@ -196,6 +233,14 @@ export async function registerAdminRoutes(app: FastifyInstance) {
       secret: state.secret,
       step: match.step,
       recoveryHashes: recoveryCodes.map(hashRecoveryCode),
+    });
+    await recordAudit({
+      action: "admin.2fa.enabled",
+      actorType: "admin",
+      actorId: admin.id,
+      actorLabel: admin.email,
+      ip: request.ip,
+      details: { recoveryCodeCount: recoveryCodes.length },
     });
     dropAdminChallenge(body.challenge);
     // Подключение фактора закрывает всё, что было открыто до него.
@@ -232,6 +277,14 @@ export async function registerAdminRoutes(app: FastifyInstance) {
     if (looksLikeTotp) {
       const match = matchTotp(admin.totpSecret, code, { afterStep: admin.lastTotpStep ?? undefined });
       if (!match) {
+        await recordAudit({
+          action: "admin.2fa.failed",
+          actorType: "admin",
+          actorId: admin.id,
+          actorLabel: admin.email,
+          ip: request.ip,
+          details: { reason: "totp" },
+        });
         const attemptsLeft = recordAdminChallengeFailure(body.challenge);
         return reply.code(401).send({
           error: attemptsLeft ? "Код не подошёл. Осталось попыток: " + attemptsLeft : "Слишком много попыток — начните с пароля",
@@ -239,18 +292,42 @@ export async function registerAdminRoutes(app: FastifyInstance) {
         });
       }
       await setAdminLastTotpStep(admin.id, match.step);
+      await recordAudit({
+        action: "admin.login.success",
+        actorType: "admin",
+        actorId: admin.id,
+        actorLabel: admin.email,
+        ip: request.ip,
+        details: { method: "totp" },
+      });
       dropAdminChallenge(body.challenge);
       return { ...(await issueSession(admin)), usedRecoveryCode: false };
     }
 
     const remaining = await consumeAdminRecoveryCode(admin.id, code);
     if (remaining === null) {
+      await recordAudit({
+        action: "admin.2fa.failed",
+        actorType: "admin",
+        actorId: admin.id,
+        actorLabel: admin.email,
+        ip: request.ip,
+        details: { reason: "recovery" },
+      });
       const attemptsLeft = recordAdminChallengeFailure(body.challenge);
       return reply.code(401).send({
         error: attemptsLeft ? "Код не подошёл. Осталось попыток: " + attemptsLeft : "Слишком много попыток — начните с пароля",
         attemptsLeft,
       });
     }
+    await recordAudit({
+      action: "admin.login.recovery",
+      actorType: "admin",
+      actorId: admin.id,
+      actorLabel: admin.email,
+      ip: request.ip,
+      details: { recoveryCodesLeft: remaining },
+    });
     dropAdminChallenge(body.challenge);
     return { ...(await issueSession(admin)), usedRecoveryCode: true, recoveryCodesLeft: remaining };
   });
@@ -288,6 +365,14 @@ export async function registerAdminRoutes(app: FastifyInstance) {
 
     const recoveryCodes = generateRecoveryCodes();
     await setAdminRecoveryHashes(auth.admin.id, recoveryCodes.map(hashRecoveryCode));
+    await recordAudit({
+      action: "admin.2fa.reissued",
+      actorType: "admin",
+      actorId: auth.admin.id,
+      actorLabel: auth.admin.email,
+      ip: request.ip,
+      details: { recoveryCodeCount: recoveryCodes.length },
+    });
     return { recoveryCodes, recoveryCodesLeft: recoveryCodes.length };
   });
 
@@ -303,6 +388,14 @@ export async function registerAdminRoutes(app: FastifyInstance) {
     const auth = await requireAdmin(request, reply);
     if (!auth) return;
     const revoked = await deleteAdminSessions(auth.admin.id);
+    await recordAudit({
+      action: "admin.logout.all",
+      actorType: "admin",
+      actorId: auth.admin.id,
+      actorLabel: auth.admin.email,
+      ip: request.ip,
+      details: { revoked },
+    });
     return { ok: true, revoked };
   });
 }

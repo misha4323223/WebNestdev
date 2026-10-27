@@ -111,9 +111,19 @@ services:
       # на ВМ до сервера не доходили бы (так уже было с SMS и холодным ярусом).
       PLATFORM_AI_FREE_BASE_URL: ${PLATFORM_AI_FREE_BASE_URL:-}
       PLATFORM_AI_FREE_MODEL: ${PLATFORM_AI_FREE_MODEL:-}
+      PLATFORM_AI_FREE_PROVIDER: ${PLATFORM_AI_FREE_PROVIDER:-}
       PLATFORM_AI_FREE_KEY_1: ${PLATFORM_AI_FREE_KEY_1:-}
       PLATFORM_AI_FREE_KEY_2: ${PLATFORM_AI_FREE_KEY_2:-}
       PLATFORM_AI_FREE_KEY_3: ${PLATFORM_AI_FREE_KEY_3:-}
+      # Генерация изображений (инструмент image.generate): свои имена, поэтому включение картинок
+      # не трогает ни один набор PLATFORM_AI_* выше. Без этих строк значения из .env на ВМ
+      # не доехали бы до сервера: compose передаёт в контейнер только перечисленные переменные.
+      PLATFORM_IMAGE_BASE_URL: ${PLATFORM_IMAGE_BASE_URL:-}
+      PLATFORM_IMAGE_MODEL: ${PLATFORM_IMAGE_MODEL:-}
+      PLATFORM_IMAGE_PROVIDER: ${PLATFORM_IMAGE_PROVIDER:-}
+      PLATFORM_IMAGE_KEY_1: ${PLATFORM_IMAGE_KEY_1:-}
+      PLATFORM_IMAGE_KEY_2: ${PLATFORM_IMAGE_KEY_2:-}
+      PLATFORM_IMAGE_KEY_3: ${PLATFORM_IMAGE_KEY_3:-}
       # Цены для денежной статистики админки (docs/ADMIN_API.md, раздел 7). Compose передаёт в
       # контейнер только перечисленные переменные: без этих строк цены лежали бы в .env, а сервер
       # их не видел. Пустые значения ничего не ломают — статистика просто не считает деньги.

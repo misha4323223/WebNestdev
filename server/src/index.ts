@@ -15,6 +15,7 @@ import { describeRunLimiter } from "./agent/run-limiter.js";
 import { describeContextBudget } from "./agent/context-budget.js";
 import { describeProviderRetry } from "./provider/provider-retry.js";
 import { describeFreeModelRoute } from "./provider/free-model.js";
+import { describeImageGeneration } from "./provider/image-generation.js";
 import { describeSandboxLimiter } from "./sandbox/sandbox-limiter.js";
 import { cleanupSandboxJobs } from "./sandbox/jobs.js";
 import { describeWebSearch } from "./web/search.js";
@@ -54,6 +55,7 @@ import { registerAuthRoutes } from "./routes/auth.js";
 import { registerAdminRoutes } from "./routes/admin.js";
 import { registerAdminAnalyticsRoutes } from "./routes/admin-analytics.js";
 import { registerAdminEconomicsRoutes } from "./routes/admin-economics.js";
+import { registerAdminAuditRoutes } from "./routes/admin-audit.js";
 import { registerPhoneAuthRoutes } from "./routes/phone-auth.js";
 import { registerAccountRoutes } from "./routes/account.js";
 import { registerBillingRoutes } from "./routes/billing.js";
@@ -94,6 +96,7 @@ import "./tools/web-tools.js";
 import "./tools/net-tools.js";
 import "./tools/python-tools.js";
 import "./tools/design-tools.js";
+import "./tools/image-tools.js";
 
 // Неизвестный бэкенд или postgres без DATABASE_URL — ошибка конфигурации, а не повод молча
 // работать на JSON-файлах: иначе данные «теряются» при первом же переезде.
@@ -154,6 +157,9 @@ console.log("[agent] " + describeProviderRetry());
 // Какая модель обслуживает бесплатный тариф и есть ли у неё резерв: без этой строки «на старте
 // отвечает не то, что ожидали» выглядит как случайность, а не как незаданный PLATFORM_AI_FREE_*.
 console.log("[agent] " + describeFreeModelRoute());
+// Готова ли генерация картинок для проектов (инструмент image.generate): без этой строки «агент
+// не смог нарисовать картинку» и «PLATFORM_IMAGE_* не заданы» выглядят одинаково.
+console.log("[image] " + describeImageGeneration());
 console.log("[sandbox] " + describeSandboxLimiter());
 // Кто отвечает за поиск в интернете и настроен ли платный провайдер: без этой строки «поиск
 // возвращает отказ» и «ключ Yandex не подхватился» выглядят одинаково.
@@ -233,6 +239,8 @@ await registerAdminRoutes(app);
 await registerAdminAnalyticsRoutes(app);
 // Деньги админки: расход по моделям, выручка, маржа и цена подписки (docs/ADMIN_API.md).
 await registerAdminEconomicsRoutes(app);
+// Журнал безопасности: входы, второй фактор, ключи платформы, удаление проектов.
+await registerAdminAuditRoutes(app);
 await registerPhoneAuthRoutes(app);
 await registerAccountRoutes(app);
 await registerBillingRoutes(app);

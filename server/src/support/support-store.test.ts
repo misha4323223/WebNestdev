@@ -7,7 +7,7 @@ import path from "node:path";
 // Каталог задаётся до первого вызова хранилища: путь читается лениво, поэтому тест не трогает
 // рабочие данные разработчика.
 process.env.WEBNESTDEV_DATA_DIR = await mkdtemp(path.join(tmpdir(), "wnd-support-"));
-const { createSupportTicket, listSupportTickets, readSupportScreenshot, SUPPORT_SCREENSHOT_MAX_BYTES } = await import("./support-store.js");
+const { createSupportTicket, getSupportTicket, listSupportTickets, readSupportScreenshot, supportTicketsForUser, SUPPORT_SCREENSHOT_MAX_BYTES } = await import("./support-store.js");
 
 /** 1×1 прозрачный PNG: достаточная сигнатура, чтобы проверка файла прошла. */
 const PNG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
@@ -23,6 +23,20 @@ const base = {
   page: "https://nestdev.ru/",
   projectId: "p1",
   userAgent: "test-agent",
+  ip: "203.0.113.10",
+  reporter: {
+    id: "u1",
+    email: "probe@example.com",
+    name: "Иван Петров",
+    contactEmail: "probe@example.com",
+    phone: "+7 999 123-45-67",
+    signIn: ["password" as const],
+    plan: "pro" as const,
+    planName: "Плюс",
+    accountCreatedAt: "2026-01-02T03:04:05.000Z",
+    projects: 2,
+    lastActiveAt: "2026-10-25T18:00:00.000Z",
+  },
   screenshot: PNG,
 };
 
@@ -34,12 +48,23 @@ test("обращение сохраняется вместе со скриншо
   assert.equal(ticket.category, "bug");
   assert.equal(ticket.severity, 7);
   assert.equal(ticket.description, base.description);
+  assert.equal(ticket.reporter?.name, "Иван Петров");
+  assert.equal(ticket.reporter?.planName, "Плюс");
+  assert.equal(ticket.ip, "203.0.113.10");
   assert.equal(ticket.screenshot.mime, "image/png");
   assert.ok(ticket.screenshot.bytes > 0);
   const screenshot = await readSupportScreenshot(id);
   assert.ok(screenshot);
   assert.equal(screenshot.mime, "image/png");
   assert.equal(screenshot.buffer.length, ticket.screenshot.bytes);
+
+  const single = await getSupportTicket(id);
+  assert.equal(single?.id, id);
+  assert.equal(single?.reporter?.name, "Иван Петров");
+  const history = await supportTicketsForUser("u1");
+  assert.ok(history.total >= 1);
+  assert.ok(history.tickets.some(item => item.id === id));
+  assert.deepEqual(await supportTicketsForUser("another-user"), { total: 0, tickets: [] });
 });
 
 test("свежие обращения идут первыми, а чужой идентификатор не открывает файл", async () => {

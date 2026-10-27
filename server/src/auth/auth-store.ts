@@ -223,6 +223,33 @@ async function touchSession(sessionId:string, now=Date.now()){
   await writeJson(sessionsFile, sessions);
 }
 
+/**
+ * Последняя активность аккаунта по его сессиям. Нужна админке поддержки: по одному взгляду
+ * видно, заходил ли человек недавно или пишет из старой вкладки. Пустые отметки старых сессий
+ * пропускаются — они ничего не говорят о времени.
+ */
+export async function getUserLastSeenAt(userId:string):Promise<string|null>{
+  if(isYdbEnabled()){
+    const [rows]=await ydbQuery()<Array<{last_seen:string|null}>>`
+      SELECT MAX(last_seen_at) AS last_seen
+      FROM ${ydbQuery().identifier(getTable("sessions"))}
+      WHERE user_id = ${userId} AND last_seen_at <> ''
+    `;
+    const value=rows?.[0]?.last_seen;
+    if(!value)return null;
+    const time=Date.parse(String(value));
+    return Number.isFinite(time) ? new Date(time).toISOString() : null;
+  }
+  const sessions = await readJson<StoredSession[]>(sessionsFile, []);
+  let latest = 0;
+  for(const session of sessions){
+    if(session.userId!==userId||!session.lastSeenAt)continue;
+    const time=Date.parse(session.lastSeenAt);
+    if(Number.isFinite(time)&&time>latest)latest=time;
+  }
+  return latest ? new Date(latest).toISOString() : null;
+}
+
 export async function deleteSession(sessionId:string){
   if(isYdbEnabled()){
     await ydbQuery()`DELETE FROM ${ydbQuery().identifier(getTable("sessions"))} WHERE id = ${sessionId}`;
