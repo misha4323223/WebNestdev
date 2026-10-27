@@ -129,9 +129,11 @@ function mailInfo(){
   return {
     provider:"postbox" as const,
     sender:settings?.from ?? (campaigns.sender || null),
-    // Чем реально уходят письма поддержки и оплаты: имена MAIL_SMTP_* или запасная пара POSTBOX_*.
-    credentialKind:source==="MAIL_SMTP" ? "smtp-credentials" : credential.kind,
-    credentialSource:source==="MAIL_SMTP" ? "MAIL_SMTP" : source ?? credential.source,
+    // Чем реально уходят письма поддержки и оплаты. Вид и источник описывают одно и то же:
+    // раньше здесь могли оказаться ключ писем и ключ рассылки вперемешку, и поле врало именно
+    // в том разборе, для которого сделано. Ключ рассылки — в `campaigns.credentialKind`.
+    credentialKind:source==="MAIL_SMTP" ? "smtp-credentials" : source==="POSTBOX_KEY" ? "smtp-key" : "none",
+    credentialSource:source ?? null,
     // Каталог, в котором создан сервисный аккаунт: его не хватает в разборе «403 от Postbox».
     folderId:(getPlatformEnv("YANDEX_FOLDER_ID") ?? "").trim() || null,
     tokenAgeSeconds:credential.tokenAgeSeconds,

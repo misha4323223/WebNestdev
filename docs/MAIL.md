@@ -200,7 +200,7 @@ curl -s https://nestdev.ru/api/health | jq .mail
   "provider": "postbox",
   "sender": "noreply@nestdev.ru",
   "credentialKind": "smtp-key",
-  "credentialSource": "POSTBOX_KEY_ID",
+  "credentialSource": "POSTBOX_KEY",
   "folderId": "b1g…",
   "tokenAgeSeconds": null,
   "ready": true,
@@ -211,9 +211,10 @@ curl -s https://nestdev.ru/api/health | jq .mail
 
 Что означает каждое поле:
 
-- `credentialKind` — чем реально уходит письмо: `smtp-credentials` (явные `MAIL_SMTP_*`),
-  `smtp-key` (`POSTBOX_KEY_ID` + `POSTBOX_SECRET`), для рассылки — `iam-token-env`, `static-key`,
-  `service-account-key` или `metadata`;
+- `credentialKind` / `credentialSource` — чем уходит письмо и откуда взяты имена:
+  `smtp-credentials` / `MAIL_SMTP` (явные `MAIL_SMTP_*`) или `smtp-key` / `POSTBOX_KEY`
+  (`POSTBOX_KEY_ID` + `POSTBOX_SECRET`). Ключ рассылки описан отдельно, в `campaigns.credentialKind`
+  (`iam-token-env`, `static-key`, `service-account-key` или `metadata`);
 - `ready: false` — почта не настроена вообще: ни `MAIL_SMTP_*`, ни пары `POSTBOX_KEY_ID` /
   `POSTBOX_SECRET`;
 - `campaigns.configured: false` с причиной — рассылка не сможет отправить ни одного письма;
