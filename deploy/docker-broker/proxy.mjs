@@ -37,11 +37,20 @@ export function createBrokerServer({ socketPath, upstreamPath, policy, log = con
   /** id exec-сессии → время создания. Разрешает `POST /exec/{id}/start` только для своих сессий. */
   const execs = new Map();
 
+  // Ошибка внутри обработчика не должна оставлять клиента ждать до таймаута: Docker CLI получает
+  // понятный ответ, а стек уходит в лог брокера — иначе такая поломка выглядит как «Docker завис».
   const server = http.createServer((request, response) => {
-    void handleRequest(request, response);
+    handleRequest(request, response).catch(error => {
+      log.error("[broker] внутренняя ошибка: " + (error?.stack ?? error));
+      sendError(response, 500, "Внутренняя ошибка Docker-брокера");
+    });
   });
   server.on("upgrade", (request, socket, head) => {
-    void handleUpgrade(request, socket, head);
+    handleUpgrade(request, socket, head).catch(error => {
+      log.error("[broker] внутренняя ошибка upgrade: " + (error?.stack ?? error));
+      writeRawError(socket, 500, "Внутренняя ошибка Docker-брокера");
+      socket.destroy();
+    });
   });
   // Сокеты нужны при остановке: `server.close()` ждёт соединений, а upgraded-сессии (exec и attach)
   // в него не входят — без явного закрытия контейнер брокера висел бы до SIGKILL.

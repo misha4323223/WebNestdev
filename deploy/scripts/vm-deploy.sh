@@ -469,7 +469,7 @@ mask_secrets(){
 # Сервис не перезапускается и ничего не меняет: это чтение.
 #
 dump_container_logs(){
-  local tail_lines out
+  local service=${1:-$SERVICE} tail_lines out
   tail_lines=${LOG_TAIL:-80}
   case "$tail_lines" in ''|*[!0-9]*) tail_lines=80 ;; esac
   [ "$tail_lines" -gt 0 ] || { log "логи контейнера не печатаю (LOG_TAIL=0)"; return 0; }
@@ -477,13 +477,13 @@ dump_container_logs(){
     log "docker не отвечает — логи контейнера не прочитать"
     return 1
   fi
-  out=$(docker compose -f "$COMPOSE_FILE" logs --no-color --tail "$tail_lines" "$SERVICE" 2>&1 || true)
+  out=$(docker compose -f "$COMPOSE_FILE" logs --no-color --tail "$tail_lines" "$service" 2>&1 || true)
   if [ -z "$out" ]; then
-    log "логов нет: сервис $SERVICE ещё не запускался"
+    log "логов нет: сервис $service ещё не запускался"
     return 0
   fi
   printf '%s\n' "$out" | mask_secrets | sed 's/^/[container] /'
-  log "показаны последние $tail_lines строк логов $SERVICE"
+  log "показаны последние $tail_lines строк логов $service"
 }
 
 # /api/ready проверяет и хранилище, и доступность Docker для песочниц: деплой считается
@@ -1232,6 +1232,7 @@ case "$MODE" in
   logs)
     log "режим logs: показываю логи контейнера, сервис не перезапускаю"
     dump_container_logs || exit 1
+    dump_container_logs docker-broker || true
     exit 0
     ;;
   cleanup)
@@ -1308,6 +1309,9 @@ verify_sms
 # секретов вырезаются (mask_secrets). Отказ чтения выкатку не отменяет и не роняет.
 if [ "$MODE" = "image" ] && [ "$DRY_RUN" != "1" ]; then
   dump_container_logs || true
+  # Лог брокера рядом с сервером: отказ политики и ошибки пересылки видны только здесь, а без
+  # них «предпросмотр не поднялся» снова требует захода на ВМ.
+  dump_container_logs docker-broker || true
 fi
 log "деплой завершён, живая сборка: $(live_build)"
 # Уборка после успешной выкатки, а не до неё: если сервис не поднялся, предыдущий образ
