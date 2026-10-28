@@ -45,7 +45,13 @@ export type SupportTicketStatus = "open" | "in_progress" | "closed";
 export type SupportTicket = {
   id: string;
   userId: string;
+  /** Логин аккаунта; может быть служебным адресом и не годится для ответа. */
   email: string;
+  /**
+   * Почта для ответа, которую человек указал в самой форме обращения. Важнее профиля: если он
+   * специально ввёл другой адрес, ответ должен уйти туда. У старых обращений поля нет.
+   */
+  contactEmail?: string;
   category: SupportCategory;
   /** 1 — мелочь, 10 — блокирует работу. */
   severity: number;

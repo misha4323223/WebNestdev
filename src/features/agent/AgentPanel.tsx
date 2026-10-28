@@ -6,7 +6,6 @@ import { createAgentSocket } from "../../lib/agent-socket";
 import { apiJson } from "../../lib/api";
 import { addProjectTasks,answerProjectQuestion,cancelProjectSecret,getConversation,listPendingProjectSecrets,skipProjectQuestion,submitProjectSecret,uploadProjectFile,type PendingProjectSecret } from "../../lib/project-api";
 import { cancelProjectAccess,submitProjectAccess } from "../../lib/deployment-api";
-import { NestLoader } from "../../components/NestLoader";
 import { ActionsDock,MessageThinking,PlanPanel,actionTarget,chatImagesByMessage,contentBefore,deriveActions,readPlan,writePlan,type ChatImage,type PanelId,type PanelState } from "./agent-activity";
 import type { AgentAction,AgentMode,ChatMessage,PlanState,ReasoningEffort,ReasoningSupport } from "../../lib/types";
 import { QuestionSheet,type AgentQuestion } from "./QuestionSheet";
@@ -1367,7 +1366,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
             {m.role==="assistant"
               ? <div className="message-text markdown" onClick={openMarkdownLink}>{m.content
                   ? <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{m.content}</Markdown>
-                  : running ? <NestLoader size={34} label="NestDev выполняет задачу" /> : ""}</div>
+                  : ""}</div>
               : <div className="message-text">{shownUserMessage(m.content).text}</div>}
             {/* Нарисованная картинка — в самой переписке, а не только в списке действий:
                 человек просил её увидеть, а не найти файл в дереве проекта. */}

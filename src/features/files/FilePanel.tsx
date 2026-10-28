@@ -1,4 +1,4 @@
-import { ArrowLeft,Check,ChevronRight,Download,ExternalLink,FileCode,Folder,FolderOpen,Loader2,Pencil,RefreshCw,Search } from "lucide-react";
+import { ArrowLeft,Check,ChevronRight,Download,ExternalLink,FileCode,Folder,Loader2,Pencil,RefreshCw,Search } from "lucide-react";
 import { useEffect,useMemo,useRef,useState,type KeyboardEvent as ReactKeyboardEvent } from "react";
 import { downloadProjectZip,getProjectFile,listProjectFiles,projectAssetUrl,saveProjectFile } from "../../lib/project-api";
 import type { FileEntry } from "../../lib/types";
@@ -185,7 +185,7 @@ export function FilePanel({projectId,projectName,onSaved}:{projectId:string;proj
       </div>
     </div>
     {error&&<div className="file-error" role="alert">{error}</div>}
-    <div className={"file-browser"+(mobileFocus?" editing":"")}>
+    <div className={"file-browser"+(opened?" has-file":" is-browsing")+(mobileFocus?" editing":"")}>
       <div className="file-tree">
         <label className="file-filter">
           <Search size={12}/>
@@ -202,7 +202,7 @@ export function FilePanel({projectId,projectName,onSaved}:{projectId:string;proj
         {!visibleFiles.length&&!loading&&<div className="file-empty">{filter?"Ничего не нашлось":"Папка пуста"}</div>}
       </div>
       <div className="file-editor">
-        {opened?<>
+        {opened&&<>
           <div className="editor-head">
             <button className="editor-back" onClick={leaveEditor} title="К списку файлов" aria-label="К списку файлов"><ArrowLeft size={13}/></button>
             <span className="editor-mode" title="Ctrl+S сохраняет"><Pencil size={11}/> Редактор</span>
@@ -261,11 +261,7 @@ export function FilePanel({projectId,projectName,onSaved}:{projectId:string;proj
                   <span className="file-status-note">Ctrl+S сохраняет.</span>
                 </div>
               </>}
-        </>:<div className="file-placeholder">
-          <FolderOpen size={20}/>
-          <strong>Выберите файл слева</strong>
-          <span>Можно править текст, сохранять через Ctrl+S.</span>
-        </div>}
+        </>}
       </div>
     </div>
   </section>;

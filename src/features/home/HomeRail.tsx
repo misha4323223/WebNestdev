@@ -10,6 +10,7 @@ import { readCachedPreferences, type UserPreferences } from "../../lib/preferenc
 import { contactEmailOf } from "../../lib/account-contact";
 import type { OnboardingProfile } from "../../lib/onboarding";
 import { SupportButton } from "../support/SupportDialog";
+import { NotificationsBell } from "../notifications/NotificationsBell";
 
 export type RailSection = "integrations" | "projects" | "account" | "billing";
 
@@ -74,6 +75,10 @@ export function HomeRail(props: HomeRailProps) {
         </button>;
       })}
     </nav>
+
+    {/* Колокольчик стоит между оглавлением и содержимым: на главной нет шапки, и без него
+        подарок администратора было бы видно только в рабочей области. */}
+    <NotificationsBell variant="rail"/>
 
     {section && <div className="rail-content">
       {section === "integrations" && <section className="rail-section">

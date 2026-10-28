@@ -3,6 +3,8 @@ import { z } from "zod";
 import { requireAdmin } from "./admin.js";
 import { applyNoStoreToReply } from "./cache-headers.js";
 import { getTable, ydbQuery } from "../storage/ydb.js";
+import { getUserProfile } from "../account/profile-store.js";
+import { accountPlanFor, getSubscriptionRecord, isSubscriptionLive } from "../billing/store.js";
 
 /**
  * Статистика платформы для админ-приложения: обзор, ряд по дням, модели, пользователи, проекты.
@@ -400,8 +402,18 @@ export async function registerAdminAnalyticsRoutes(app: FastifyInstance) {
     const usageTotal = num(usage.prompt) + num(usage.completion);
     const topModels = withShare(await modelStats("0000-01-01", params.id), usageTotal).slice(0, 5);
     const series = fillDays(await seriesFor(periodStart(30), params.id), 30, isoDate(new Date()));
+    // Контакты знакомства вместе с ответом «откуда узнали»: админке не нужен отдельный запрос,
+    // а источник — единственное поле профиля, которое она читает ради аналитики.
+    const profile = await getUserProfile(params.id).catch(() => null);
+    // Тариф и его срок — часть карточки: без них строка «Тариф» пустая, а выдача на день
+    // выглядит так же, как её отсутствие.
+    const plan = await accountPlanFor(params.id);
+    const subscription = await getSubscriptionRecord(params.id);
+    const planUntil = subscription && isSubscriptionLive(subscription) ? subscription.renewsAt : null;
 
     return {
+      plan,
+      planUntil,
       user: {
         id: String(found.id),
         email: String(found.email),
@@ -410,6 +422,17 @@ export async function registerAdminAnalyticsRoutes(app: FastifyInstance) {
         conversations: num(totals.conversations),
         tokens: { prompt: num(usage.prompt), completion: num(usage.completion), total: usageTotal },
         lastActiveAt: usage.last_usage ? String(usage.last_usage) : null,
+        plan,
+        planUntil,
+        profile: profile ? {
+          name: profile.name,
+          email: profile.email,
+          source: profile.source,
+          newsletter: profile.newsletter,
+          productUpdates: profile.productUpdates,
+          completedAt: profile.completedAt,
+          updatedAt: profile.updatedAt,
+        } : null,
       },
       projects: projectRows.map(row => ({
         id: String(row.id),

@@ -134,8 +134,11 @@ export function SubscriptionPage({ onBack, onOpenPicker }: { onBack: () => void;
               {chosen && <span className="plan-badge">{enabled ? "Выбран" : "Выбран · оплата скоро"}</span>}
               {!chosen && plan.recommended && <span className="plan-badge">Популярный выбор</span>}
               <h2>{plan.name}</h2>
-              <span className="plan-tagline">{plan.tagline}</span>
-              <div className="plan-price">{plan.priceLabel}<small>{plan.id === "free" ? "навсегда" : (enabled ? "в месяц" : "оплата скоро")}</small></div>
+              <span className="plan-tagline">{plan.description}</span>
+              <div className="plan-price">
+                {Boolean(plan.discountPercent)&&<s className="plan-price-old">{plan.basePriceLabel}</s>}
+                {plan.priceLabel}<small>{plan.id === "free" ? "навсегда" : (enabled ? "в месяц" : "оплата скоро")}</small>
+              </div>
             </div>
             <p className="plan-audience">{plan.audience}</p>
             <ul className="plan-feature-list">{plan.features.map(feature => <li key={feature}><Check size={13}/>{feature}</li>)}</ul>
@@ -173,7 +176,10 @@ export function SubscriptionPage({ onBack, onOpenPicker }: { onBack: () => void;
               </tr>
               <tr>
                 <th scope="row">Цена</th>
-                {billing.plans.map(plan => <td key={plan.id} className={plan.id === currentPlanId ? "current" : ""}>{plan.priceLabel}{plan.id === "free" ? "" : " / мес"}</td>)}
+                {billing.plans.map(plan => <td key={plan.id} className={plan.id === currentPlanId ? "current" : ""}>
+                  {Boolean(plan.discountPercent) && <s className="plan-price-old">{plan.basePriceLabel}</s>}
+                  {plan.priceLabel}{plan.id === "free" ? "" : " / мес"}
+                </td>)}
               </tr>
             </tbody>
           </table>

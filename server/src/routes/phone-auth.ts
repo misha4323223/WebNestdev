@@ -1,7 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { attachSession } from "../auth/auth.js";
-import { ACCOUNT_BLOCKED_MESSAGE } from "../account/restriction-store.js";
+import { blockedMessageFor, getRestriction } from "../account/restriction-store.js";
 import { checkAuthRateLimit } from "../auth/auth-rate-limit.js";
 import { demoPhone, ensurePhoneAccount, formatPhone, normalizePhone, startPhoneLogin, verifyPhoneCode } from "../auth/phone-store.js";
 import { PHONE_CONSENT_REQUIRED_MESSAGE, recordPhoneConsent } from "../auth/phone-consent.js";
@@ -65,7 +65,9 @@ export async function registerPhoneAuthRoutes(app: FastifyInstance) {
     // The demo number is let straight in: no code, no SMS, an ordinary session.
     if (isDemo) {
       const user = await ensurePhoneAccount(phone);
-      if (!(await attachSession(reply, user.id, request))) return reply.code(403).send({ error: ACCOUNT_BLOCKED_MESSAGE });
+      if (!(await attachSession(reply, user.id, request))) {
+        return reply.code(403).send({ error: blockedMessageFor(await getRestriction(user.id)) });
+      }
       return {
         sent: true,
         demo: true,
@@ -121,7 +123,9 @@ export async function registerPhoneAuthRoutes(app: FastifyInstance) {
     if (!checked.ok) return reply.code(401).send({ error: checked.error });
 
     const user = await ensurePhoneAccount(phone);
-    if (!(await attachSession(reply, user.id, request))) return reply.code(403).send({ error: ACCOUNT_BLOCKED_MESSAGE });
+    if (!(await attachSession(reply, user.id, request))) {
+      return reply.code(403).send({ error: blockedMessageFor(await getRestriction(user.id)) });
+    }
     return { user: { id: user.id, email: user.email, createdAt: user.createdAt } };
   });
 }

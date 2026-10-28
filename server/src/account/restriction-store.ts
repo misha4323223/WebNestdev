@@ -23,8 +23,19 @@ export type UserRestriction = {
   reason: string;
 };
 
-/** Одна фраза на все входы (пароль, телефон, Яндекс ID): человек видит причину, а не «ошибку сети». */
+/** Ответ на все входы, когда причина не записана или она служебная. */
 export const ACCOUNT_BLOCKED_MESSAGE = "Аккаунт заблокирован администратором. Напишите в поддержку.";
+
+/**
+ * Причина, которую администратор указал при блокировке, показывается человеку: он должен
+ * понимать, что произошло, а не видеть «ошибку сети». Пустая причина и стандартная подпись
+ * остаются общей фразой — показывать «Блокировка администратором» второй раз бессмысленно.
+ */
+export function blockedMessageFor(restriction: UserRestriction | null) {
+  const reason = (restriction?.reason ?? "").trim().replace(/[.?!]+$/, "").slice(0, 300);
+  if (!reason || reason === "Блокировка администратором") return ACCOUNT_BLOCKED_MESSAGE;
+  return "Аккаунт заблокирован администратором: " + reason + ". Напишите в поддержку.";
+}
 
 const root = process.env.WEBNESTDEV_DATA_DIR ?? path.resolve(".webnestdev");
 const restrictionsFile = () => path.join(root, "account", "restrictions.json");

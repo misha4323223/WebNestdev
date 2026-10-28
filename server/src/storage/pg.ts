@@ -309,6 +309,21 @@ export async function initializeStorage(): Promise<void> {
       PRIMARY KEY (user_id, month)
     )`);
 
+    // Уведомления аккаунта о действиях админки (account/notification-store.ts): подаренные
+    // токены и выданный тариф. `read_at` пуст, пока человек не открыл уведомление.
+    await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("user_notifications")} (
+      id TEXT NOT NULL PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      message TEXT NOT NULL,
+      tokens BIGINT,
+      plan TEXT,
+      plan_until TEXT,
+      created_at TEXT NOT NULL,
+      read_at TEXT
+    )`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("user_notifications")}_user ON ${tbl("user_notifications")} (user_id, created_at)`);
+
     // Администраторы платформы — отдельные аккаунты, не пользователи панели (см. admin/admin-store.ts).
     // Пароль — scrypt, TOTP-секрет — зашифрованный, коды восстановления — только хешами.
     await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("admin_users")} (
@@ -397,9 +412,12 @@ export async function initializeStorage(): Promise<void> {
       email TEXT NOT NULL,
       newsletter BOOLEAN NOT NULL DEFAULT false,
       product_updates BOOLEAN NOT NULL DEFAULT false,
+      source TEXT NOT NULL DEFAULT '',
       completed_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     )`);
+    // Профили, созданные до вопроса «откуда узнали», получают пустой источник.
+    await pool.query(`ALTER TABLE ${tbl("user_profiles")} ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT ''`);
 
     await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("usage_events")} (
       user_id TEXT NOT NULL,

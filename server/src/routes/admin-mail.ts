@@ -75,6 +75,7 @@ function excludedSummary(excluded: MailAudience["excluded"]) {
   if (excluded.invalid) parts.push("служебных и нерабочих адресов: " + excluded.invalid);
   if (excluded.unsubscribed) parts.push("отписавшихся: " + excluded.unsubscribed);
   if (excluded.bounced) parts.push("отскоков и жалоб: " + excluded.bounced);
+  if (excluded.noConsent) parts.push("без согласия на рекламу: " + excluded.noConsent);
   if (excluded.duplicate) parts.push("повторов адреса: " + excluded.duplicate);
   return parts.join(", ");
 }

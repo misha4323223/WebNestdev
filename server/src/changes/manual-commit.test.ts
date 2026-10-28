@@ -31,6 +31,8 @@ test("ручной коммит берёт только выбранные фа�
 
     const diff = await worktreeDiff(root, "index.html");
     assert.equal(diff.status, "modified");
+    assert.equal(diff.additions, 1);
+    assert.equal(diff.deletions, 0);
     assert.match(diff.patch, /^--- a\/index\.html/m);
     assert.match(diff.patch, /^\+<p>Новое<\/p>$/m);
     assert.match(diff.patch, /^ <h1>Старое<\/h1>$/m);
@@ -45,6 +47,8 @@ test("ручной коммит берёт только выбранные фа�
     assert.deepEqual(remaining.changed, [{ path: "notes.txt", status: "modified" }]);
 
     const committedDiff = await checkpointDiff(root, commit.sha, "index.html");
+    assert.equal(committedDiff.additions, 1);
+    assert.equal(committedDiff.deletions, 0);
     assert.match(committedDiff.patch, /^\+<p>Новое<\/p>$/m);
 
     const branch = await createBranch(root, "feature");

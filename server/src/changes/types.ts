@@ -7,7 +7,13 @@ export type CheckpointKind = "task" | "rollback" | "imported" | "manual";
 
 export type CheckpointFileStatus = "added" | "modified" | "deleted";
 
-export type CheckpointFile = { path: string; status: CheckpointFileStatus };
+export type CheckpointFile = {
+  path: string;
+  status: CheckpointFileStatus;
+  /** Сколько строк добавлено и удалено в файле — для списка ревью, как в VS Code. */
+  additions?: number;
+  deletions?: number;
+};
 
 export type Checkpoint = {
   /** Полный SHA коммита в песочнице: по нему делается откат. */
@@ -37,6 +43,9 @@ export type WorktreeState = {
   initialized: boolean;
   branch: string;
   files: CheckpointFile[];
+  /** Итог по рабочему дереву: одна строка „+N −M“ в заголовке ревью. */
+  additions?: number;
+  deletions?: number;
 };
 
 /** Diff одного файла для Git-панели. */
@@ -45,6 +54,9 @@ export type FileDiff = {
   status: CheckpointFileStatus;
   /** Unified diff; пустой, когда файл двоичный или слишком большой. */
   patch: string;
+  /** Подсчёт по строкам патча: интерфейс показывает его рядом с именем файла. */
+  additions: number;
+  deletions: number;
   binary?: boolean;
   truncated?: boolean;
 };

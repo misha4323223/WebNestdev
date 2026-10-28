@@ -179,6 +179,8 @@ curl -s https://panel.example.com/api/admin/2fa/verify -H 'content-type: applica
 | `POST /api/admin/users/:id/plan` | `Bearer` | выдать тариф без оплаты или снять его (раздел 7.7) |
 | `POST /api/admin/users/:id/tokens` | `Bearer` | надбавка к месячному пулу токенов (раздел 7.7) |
 | `GET /api/admin/billing?days=&limit=` | `Bearer` | платежи, подписки, истекающие и калибровка пула (раздел 7.8) |
+| `GET /api/admin/plans` | `Bearer` | тарифы: название, описание, базовая цена и скидка (раздел 7.10) |
+| `POST /api/admin/plans` | `Bearer` | изменить витрину и скидку; ответ уже содержит итоговую цену (раздел 7.10) |
 | `GET /api/admin/projects/:id` | `Bearer` | карточка проекта: репозиторий, превью, переменные, выкатка (раздел 7.9) |
 | `GET /api/admin/support/stats` | `Bearer` | где болит: очередь, важность, давность (раздел 8.5) |
 
@@ -288,7 +290,7 @@ API рассчитан именно на нативные клиенты: вхо
 | `GET /api/admin/stats/series` | `days` = 1…90 (7) | ровно `days` точек, последняя — сегодня; пустые дни с нулями |
 | `GET /api/admin/stats/models` | `days` = 1…90 (7) | `runs`, `promptTokens`, `completionTokens`, `totalTokens`, `users`, `share` (0…1), по убыванию расхода |
 | `GET /api/admin/users` | `query`, `sort` (tokens/projects/created), `limit` 1…200, `offset`, `days` 0…365 (0 = всё время) | `total` — сколько подходит под фильтр, и страница пользователей с расходом, проектами, диалогами, `lastActiveAt` |
-| `GET /api/admin/users/:id` | — | карточка: проекты (до 100), `topModels` (share внутри расхода человека), ряд за 30 дней; `404`, если пользователя нет |
+| `GET /api/admin/users/:id` | — | карточка: проекты (до 100), `topModels` (share внутри расхода человека), ряд за 30 дней, `profile` с именем, почтой, согласиями и полем `source` («откуда узнали»), тариф `plan` и срок `planUntil` (в корне и в `user`); `404`, если пользователя нет |
 | `GET /api/admin/projects` | `query` по названию/id/почте владельца, `limit`, `offset`, `days` | проекты с расходом, числом диалогов и временем последнего запуска |
 
 `previousTotal` равен `null`, когда в предыдущем окне такой же длины расхода не было: это не ноль,
@@ -540,8 +542,8 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST -H "Authorization: Bearer $TOKE
 | `POST /api/admin/users/:id/sessions/revoke` | `{confirm: true}` | все сессии аккаунта удалены, `blocked` не меняется |
 | `POST /api/admin/users/:id/block` | `{confirm: true, reason?}` | запись блокировки **и** отзыв всех сессий |
 | `POST /api/admin/users/:id/unblock` | `{confirm: true}` | блокировка снята, сессии не восстанавливаются |
-| `POST /api/admin/users/:id/plan` | `{confirm: true, plan, months?}` | подписка без оплаты; `plan: "free"` — снять |
-| `POST /api/admin/users/:id/tokens` | `{confirm: true, tokens}` | надбавка к пулу текущего месяца |
+| `POST /api/admin/users/:id/plan` | `{confirm: true, plan, months?, days?, notify?}` | подписка без оплаты; `plan: "free"` — снять |
+| `POST /api/admin/users/:id/tokens` | `{confirm: true, tokens, notify?}` | надбавка к пулу текущего месяца |
 
 Общие правила:
 
@@ -555,8 +557,9 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST -H "Authorization: Bearer $TOKE
 
 **Блокировка** действует на всех четырёх входах (пароль, регистрация, телефон, Яндекс ID):
 `attachSession` не выдаёт сессию заблокированному, а `getCurrentUser` не пускает по уже выданной
-cookie. Человек видит `403` и причину, а не «ошибку сети». Данные и тариф при блокировке не
-меняются — действие обратимо.
+cookie. При входе по паролю и телефону человек видит `403` и причину, которую администратор указал
+в `reason`, а не «ошибку сети»; у Яндекс ID остаётся общее сообщение о блокировке. Данные и тариф
+при блокировке не меняются — действие обратимо.
 
 ```bash
 curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
@@ -578,23 +581,46 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/
 }
 ```
 
-**Тариф без оплаты** (`plan`) собирает запись по тем же правилам, что и настоящий платёж
-(продление от текущего срока), но с двумя отличиями: `autoRenew: false` — свипер не выставит
-счёт живому человеку, и `noticeAt: null` — письмо о списании не уходит. `months` от 1 до 12, по
-умолчанию 1. `plan: "free"` — истечение срока сейчас; если подписки нет, ответ `409`, а не «ок».
+**Тариф без оплаты** (`plan`) собирает запись по тем же правилам, что и настоящий платёж:
+если подписка ещё действует, срок считается от текущего `planUntil`, а если её нет — от сегодня.
+Это верно и при продлении того же тарифа, и при переходе на другой: выдача не отнимает уже
+оплаченные дни. `months` от 1 до 12 (по умолчанию 1) или `days` от 1 до 366 — для короткой
+компенсации; передавать оба сразу нельзя (`400`).
+
+Отличия от платежа, которые важно сохранить: `autoRenew: false` — свипер не выставит счёт живому
+человеку, и `noticeAt: null` — письмо о списании не уходит. `plan: "free"` — истечение срока
+сейчас; если подписки нет, ответ `409`, а не «ок». В ответе всегда есть `planUntil` — по нему
+админка подтверждает, что срок действительно сдвинулся.
 
 ```json
-{ "ok": true, "plan": "pro", "planName": "Плюс", "subscription": { "plan": "pro", "status": "active", "renewsAt": "2026-12-27T09:00:00.000Z", "autoRenew": false } }
+{ "ok": true, "plan": "pro", "planName": "Плюс", "planUntil": "2026-11-28T09:00:00.000Z", "message": "Вам активировали «Плюс» на 1 месяц", "subscription": { "plan": "pro", "status": "active", "renewsAt": "2026-11-28T09:00:00.000Z", "autoRenew": false }, "notified": false }
 ```
 
 **Токены** — надбавка к пулу, а не правка расхода: `model_usage` остаётся единственным источником
 правды, поэтому «выдали 5 млн» не искажает статистику. Сумма складывается с уже начисленным
 (`bonus` в ответе — итог месяца), на следующий месяц не переносится, на бесплатном тарифе
-(`agentTokensPerMonth: 0`) не расширяет ничего — это видно по `appliesToPool: false`.
+(`agentTokensPerMonth: 0`) не расширяет ничего — это видно по `appliesToPool: false`. `tokens` в
+ответе — новый доступный остаток на месяц (`budget.remaining`), а `granted` — сумма этой выдачи;
+по ним админка показывает, что баланс действительно вырос.
 
 ```json
-{ "ok": true, "month": "2026-10", "granted": 5000000, "bonus": 5000000, "appliesToPool": true, "budget": { "used": 1200000, "limit": 55000000, "bonus": 5000000, "remaining": 53800000 } }
+{ "ok": true, "tokens": 53800000, "message": "Начислено 5 000 000 токенов", "month": "2026-10", "granted": 5000000, "bonus": 5000000, "appliesToPool": true, "budget": { "used": 1200000, "limit": 55000000, "bonus": 5000000, "remaining": 53800000 } }
 ```
+
+**Уведомления человека.** Оба маршрута принимают `notify: true`; тогда вместе с действием
+создаётся уведомление только этому аккаунту. Так баланс не меняется молча: в шапке сайта и в
+колонке главной появляется колокольчик со счётчиком. Человек читает их под своей сессией:
+
+| Метод и путь | Что возвращает |
+|---|---|
+| `GET /api/me/notifications` | `{notifications: [{id, kind, message, tokens, plan, planUntil, createdAt, readAt}], unread}`; `kind`: `gift` — токены, `plan` — тариф |
+| `POST /api/me/notifications/:id/read` | `{ok: true}`; чужое или неизвестное уведомление — `404` |
+| `POST /api/me/notifications/read-all` | `{ok: true, read: <сколько отмечено>}` |
+
+Пример уведомления о тарифе: `{"kind":"plan","message":"Вам активировали «Плюс» на 1 день","tokens":null,"plan":"pro","planUntil":"2026-10-29T09:00:00.000Z"}`.
+О подарке токенов: `{"kind":"gift","message":"Начислено 500 000 токенов","tokens":500000,"plan":null,"planUntil":null}`.
+Если `notify` не передан или равен `false`, действие проходит без уведомления, а `notified` в
+ответе равно `false`.
 
 Сброса второго фактора (`2fa/reset`) здесь нет намеренно: у пользователей панели TOTP нет
 вовсе — второй фактор есть только у администраторов, и перевыпуск их кодов уже описан в 2.3.
@@ -690,6 +716,33 @@ curl -s -H "Authorization: Bearer $TOKEN" 'https://nestdev.ru/api/admin/projects
   «последний деплой» читается из него. Если файла нет, `exists: false`;
 - `repository: null` — проект без подключённого репозитория.
 
+### 7.10. Тарифы и скидки
+
+Администратор меняет название, описание, базовую цену и скидку обоих платных тарифов. Скидка
+считается на сервере и применяется к счёту, чеку и следующему списанию; в ответе и на витрине
+рядом стоят зачёркнутая базовая цена и итоговая. Значения переживают выкатку: они лежат в
+зашифрованном хранилище рядом с ключами платформы, а не в `.env` контейнера.
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" 'https://nestdev.ru/api/admin/plans'
+```
+
+```json
+{
+  "plans": [
+    { "id": "pro", "name": "Плюс", "description": "Для регулярной разработки",
+      "priceRub": 990, "discountPercent": 0,
+      "priceLabel": "990 ₽", "basePriceLabel": "990 ₽" },
+    { "id": "team", "name": "Премиум", "description": "Для больших проектов",
+      "priceRub": 2990, "discountPercent": 0,
+      "priceLabel": "2 990 ₽", "basePriceLabel": "2 990 ₽" }
+  ]
+}
+```
+
+`POST` принимает оба тарифа целиком; `priceRub` — цена до скидки, `discountPercent` — целое
+число от 0 до 90. Ответ `{ saved: true, plans: [...] }` показывает то, что уже уйдёт в оплату.
+
 ## 8. Обращения поддержки
 
 Создание обращения по ключу невозможно: его пишет только вошедший пользователь из кнопки
@@ -713,9 +766,12 @@ curl -s -H "Authorization: Bearer $TOKEN" 'https://nestdev.ru/api/admin/projects
   как и раньше, помогают воспроизвести проблему.
 - `email` — адрес обращения, `emailKind` — `real` (логин и есть почта) или `internal`
   (служебный идентификатор платформы, например `yandex-2260862792@yandex-id.webnestdev.local`),
-  `contactEmail` — адрес, который человек указал сам. Поля стоят рядом с `email` и в списке, и в
-  карточке: по `emailKind` админка решает, активна ли кнопка «Написать автору», а письмо при
-  необходимости отправляется на `contactEmail`.
+  `contactEmail` — адрес, который человек указал в самой форме обращения. У новых обращений это
+  поле самого тикета, у старых его может не быть — тогда рядом стоит `reporter.contactEmail`.
+  Поля стоят рядом с `email` и в списке, и в карточке: по `emailKind` админка решает, активна ли
+  кнопка «Написать автору», а письмо при необходимости отправляется на `contactEmail`. Если в
+  профиле почты не было, адрес из формы сохраняется в профиль — следующее обращение подставит
+  его само; ошибка этой записи не отменяет уже сохранённое обращение.
 - `messages` — переписка обращения: `author` (`admin` / `user`), `authorName` (почта того, кто
   ответил), `subject`, `body`, `to` (куда ушло письмо), `status` (`sent` / `failed`), `error`,
   `messageId`, `createdAt`. Пустой массив означает «ответов не было», а не «поле не пришло»: поле
@@ -820,8 +876,10 @@ curl -s -X POST https://nestdev.ru/api/support/tickets/<id>/reply \
 | `429` | `quota_exceeded` | выбран суточный предел писем Postbox |
 | `502` | `send_failed` | Postbox отказал; причина — в тексте ошибки и в переписке |
 
-Куда уходит письмо: сначала `contactEmail` (почта, которую человек ввёл сам — из снимка обращения,
-а у старых обращений из живого профиля), потом `email` логина. Адрес проверяется на сервере теми же
+Куда уходит письмо: сначала `contactEmail` самого обращения (почта, которую человек ввёл в форме),
+потом `reporter.contactEmail` из профиля (у старых обращений — живой профиль), потом `email` логина.
+Письмо о новом обращении в поддержку тоже ставит `Reply-To` на почту из формы: ответ на него
+уходит автору, а не на служебный логин. Адрес проверяется на сервере теми же
 правилами, что и получатели рассылки: служебные зоны (`.local`, `.internal`, `.invalid`, `.test`,
 `.example`, `.localhost`, `.lan`, `.home`) и домены без точки отсекаются до отправки — письмо на них
 вернулось бы отскоком и съело квоту. Если пригодного адреса нет, маршрут честно отвечает
@@ -920,7 +978,7 @@ curl -s -H "Authorization: Bearer $TOKEN" 'https://nestdev.ru/api/admin/mail/ove
   "sentThisMonth": 412,
   "freeThisMonth": 1588,
   "pricePer1000": 20,
-  "segments": [{ "id": "active30", "label": "Активные за 30 дней", "description": "…", "recipients": 1127, "excluded": { "unsubscribed": 3, "bounced": 2, "invalid": 42, "duplicate": 0 } }],
+  "segments": [{ "id": "active30", "label": "Активные за 30 дней", "description": "…", "recipients": 1127, "excluded": { "unsubscribed": 3, "bounced": 2, "invalid": 42, "noConsent": 17, "duplicate": 0 } }],
   "campaigns": [{ "id": "…", "subject": "…", "segmentId": "all", "segmentLabel": "Все аккаунты", "recipients": 1500, "sent": 400, "failed": 1, "skipped": 4, "status": "sending", "stopRequested": false, "error": "", "createdBy": "admin@nestdev.ru", "createdAt": "2026-10-27T08:00:00.000Z", "startedAt": "2026-10-27T08:00:01.000Z", "finishedAt": null }],
   "lastSentAt": "2026-10-27T08:06:40.000Z",
   "suppressions": { "total": 5, "recent": [{ "email": "…", "reason": "unsubscribed", "note": "ссылка из письма", "createdAt": "…" }] },
@@ -940,9 +998,11 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/
   'https://nestdev.ru/api/admin/mail/preview'
 ```
 
-Ответ: `recipients`, `excluded` (с разбором по причинам), `skipped` (первые адреса с причиной),
-`sample` (до трёх настоящих писем с раскрытыми тегами), `cost: { amount, currency, per1000,
-freeLeft, billable }`, `quota`, `footer` и `warnings`.
+Ответ: `recipients`, `excluded` (с разбором по причинам; `noConsent` — адреса без согласия на
+рекламные письма), `skipped` (первые адреса с причиной), `sample` (до трёх настоящих писем с
+раскрытыми тегами), `cost: { amount, currency, per1000, freeLeft, billable }`, `quota`, `footer`
+и `warnings`. Согласие берётся из профиля (`productUpdates`): включить его можно в знакомстве или
+в настройках аккаунта, отозвать — там же.
 
 ### 9.3. Отправка и остановка
 

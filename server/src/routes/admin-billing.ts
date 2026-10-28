@@ -8,6 +8,7 @@ import { getTable, isYdbEnabled, ydbQuery } from "../storage/ydb.js";
 import { listAllPayments, listSubscriptions, isSubscriptionLive } from "../billing/store.js";
 import { listUserIdentities } from "../auth/auth-store.js";
 import { PLAN_CATALOG, FREE_PLAN, tokenPoolFor, type PlanId } from "../account/plans.js";
+import { planDisplayName } from "../billing/plan-settings.js";
 import { tokenMonth } from "../account/token-bonus.js";
 
 /**
@@ -138,7 +139,7 @@ export async function registerAdminBillingRoutes(app: FastifyInstance) {
         userId: record.userId,
         email: emails.get(record.userId) ?? null,
         plan: record.plan,
-        planName: PLAN_CATALOG[record.plan].name,
+        planName: planDisplayName(record.plan),
         renewsAt: record.renewsAt,
         autoRenew: record.autoRenew,
         status: record.status,
@@ -175,7 +176,7 @@ export async function registerAdminBillingRoutes(app: FastifyInstance) {
       payments: payments.map(payment => ({
         ...payment,
         email: emails.get(payment.userId) ?? null,
-        planName: PLAN_CATALOG[payment.plan as PlanId]?.name ?? payment.plan,
+        planName: PLAN_CATALOG[payment.plan as PlanId] ? planDisplayName(payment.plan as PlanId) : payment.plan,
       })),
       subscriptions: {
         total: subscriptions.length,

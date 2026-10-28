@@ -25,9 +25,10 @@ import {
   scanChanges,
   switchBranch,
   worktreeDiff,
+  worktreeDiffFromScan,
 } from "./git-repo.js";
 import { isSecretProjectPath } from "../secrets/secret-paths.js";
-import type { Checkpoint, ChangesOverview, FileDiff, WorktreeState } from "./types.js";
+import type { Checkpoint, CheckpointFile, ChangesOverview, FileDiff, WorktreeState } from "./types.js";
 
 /**
  * Один проект — одна очередь git-операций. Запуск агента, откат и повторная отправка могут
@@ -390,16 +391,34 @@ export async function pushCurrentBranch(projectId: string, userId: string) {
 export async function worktreeState(projectId: string, userId: string): Promise<WorktreeState> {
   const repository = await repositoryFor(projectId, userId);
   if (!await hasRepo(repository.sandbox.root)) {
-    return { initialized: false, branch: repository.branch, files: [] };
+    return { initialized: false, branch: repository.branch, files: [], additions: 0, deletions: 0 };
   }
   const branch = await currentBranch(repository.sandbox.root, repository.branch);
   const scan = await scanChanges(repository.sandbox.root);
-  return {
-    initialized: true,
-    branch,
-    // Секретные env-файлы не показываются даже именем: значения правятся только в «Секретах».
-    files: scan.changed.filter(file => !isSecretProjectPath(file.path)),
-  };
+  // Секретные env-файлы не показываются даже именем: значения правятся только в «Секретах».
+  const files: CheckpointFile[] = [];
+  let additions = 0;
+  let deletions = 0;
+  let countable = 0;
+  for (const file of scan.changed) {
+    if (isSecretProjectPath(file.path)) continue;
+    // Цифры нужны для ревью, но не ценой обхода сотен файлов: остальные показываются без них.
+    if (countable >= 100) { files.push(file); continue; }
+    countable += 1;
+    try {
+      // Один скан на все файлы: diff каждого файла не должен заново обходить рабочее дерево.
+      const diff = await worktreeDiffFromScan(repository.sandbox.root, file.path, scan);
+      // У двоичного или слишком большого файла цифр нет: «+0 −0» выглядело бы как пустая правка.
+      if (diff.binary || diff.truncated) { files.push(file); continue; }
+      files.push({ ...file, additions: diff.additions, deletions: diff.deletions });
+      additions += diff.additions;
+      deletions += diff.deletions;
+    } catch {
+      // Один нечитаемый файл не должен скрывать остальные изменения: показываем его без цифр.
+      files.push(file);
+    }
+  }
+  return { initialized: true, branch, files, additions, deletions };
 }
 
 /** Путь из браузера не должен выходить за проект и не должен открывать секреты. */

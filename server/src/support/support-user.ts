@@ -1,4 +1,5 @@
-import { PLAN_CATALOG, type PlanId } from "../account/plans.js";
+import type { PlanId } from "../account/plans.js";
+import { planDisplayName } from "../billing/plan-settings.js";
 import { getTokenBudget, getUsageSnapshot } from "../account/usage-store.js";
 import { getUserProfile, type OnboardingProfile } from "../account/profile-store.js";
 import { getUser, getUserLastSeenAt } from "../auth/auth-store.js";
@@ -126,11 +127,11 @@ function reporterFromBase(base: SupportUserBase): SupportReporter {
     id: base.id,
     email: base.email,
     name: base.profile?.name ?? null,
-    contactEmail: base.profile?.email ?? null,
+    contactEmail: base.profile?.email || null,
     phone: base.phone ? formatPhone(base.phone) : null,
     signIn,
     plan: base.plan,
-    planName: PLAN_CATALOG[base.plan].name,
+    planName: planDisplayName(base.plan),
     accountCreatedAt: base.accountCreatedAt,
     projects: base.projects.length,
     lastActiveAt: newest([base.lastSeenAt, base.projects[0]?.updatedAt]),
@@ -152,7 +153,7 @@ export async function loadSupportUser(userId: string): Promise<SupportUserDetail
   const subscription = base.record && isSubscriptionLive(base.record)
     ? {
         plan: base.record.plan,
-        planName: PLAN_CATALOG[base.record.plan].name,
+        planName: planDisplayName(base.record.plan),
         status: base.record.autoRenew ? "active" as const : "canceled" as const,
         startedAt: base.record.startedAt,
         renewsAt: base.record.renewsAt,

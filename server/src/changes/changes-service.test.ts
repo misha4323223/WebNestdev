@@ -17,7 +17,7 @@ test("история задач, откат и проверка владельц
   process.env.WEBNESTDEV_SANDBOX_DIR = path.join(root, "sandboxes");
   try {
     const { createProject } = await import("../project-store.js");
-    const { changesOverview, finalizeRunChanges, repositoryNameFromProject, rollbackToCheckpoint } = await import("./changes-service.js");
+    const { changesOverview, finalizeRunChanges, repositoryNameFromProject, rollbackToCheckpoint, worktreeState } = await import("./changes-service.js");
     // GitHub принимает только латиницу: имя репозитория строится из названия проекта.
     assert.equal(repositoryNameFromProject("Мой Магазин"), "moy-magazin");
     assert.equal(repositoryNameFromProject("   "), "webnestdev-project");
@@ -45,6 +45,13 @@ test("история задач, откат и проверка владельц
 
     await writeFile(path.join(sandbox, "index.html"), "<h1>Вторая версия</h1>\n");
     await writeFile(path.join(sandbox, "styles.css"), "body{margin:0}\n");
+    // Ревью до коммита: у каждого файла есть +/−, а у карточки — общий итог.
+    const review = await worktreeState(project.id, "user-changes");
+    assert.equal(review.files.length, 2);
+    assert.deepEqual(review.files.find(file => file.path === "index.html"), { path: "index.html", status: "modified", additions: 1, deletions: 1 });
+    assert.deepEqual(review.files.find(file => file.path === "styles.css"), { path: "styles.css", status: "added", additions: 1, deletions: 0 });
+    assert.equal(review.additions, 2);
+    assert.equal(review.deletions, 1);
     const second = await finalizeRunChanges({ projectId: project.id, userId: "user-changes", runId: "run-2", conversationId: "conv-1", title: "Перекрасить страницу" });
     assert.ok(second);
     assert.equal(second.checkpoint.filesChanged, 2);

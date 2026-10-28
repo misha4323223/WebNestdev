@@ -286,6 +286,18 @@ jobs:
           POSTBOX_DKIM_SELECTORS: ${{ secrets.POSTBOX_DKIM_SELECTORS || vars.POSTBOX_DKIM_SELECTORS }}
           POSTBOX_PRICE_PER_1000: ${{ secrets.POSTBOX_PRICE_PER_1000 || vars.POSTBOX_PRICE_PER_1000 }}
           BILLING_NOTICE_DAYS: ${{ secrets.BILLING_NOTICE_DAYS || vars.BILLING_NOTICE_DAYS }}
+          BILLING_SWEEP_MS: ${{ secrets.BILLING_SWEEP_MS || vars.BILLING_SWEEP_MS }}
+          # Робокасса: логин, пароли №1/№2 и алгоритм подписи. Пустые значения не стирают
+          # уже сохранённые на ВМ; после регистрации магазина ключи можно вставить и в панели.
+          ROBOKASSA_LOGIN: ${{ secrets.ROBOKASSA_LOGIN || vars.ROBOKASSA_LOGIN }}
+          ROBOKASSA_PASSWORD_1: ${{ secrets.ROBOKASSA_PASSWORD_1 }}
+          ROBOKASSA_PASSWORD_2: ${{ secrets.ROBOKASSA_PASSWORD_2 }}
+          ROBOKASSA_HASH: ${{ secrets.ROBOKASSA_HASH || vars.ROBOKASSA_HASH }}
+          ROBOKASSA_TEST_MODE: ${{ secrets.ROBOKASSA_TEST_MODE || vars.ROBOKASSA_TEST_MODE }}
+          ROBOKASSA_RECURRING: ${{ secrets.ROBOKASSA_RECURRING || vars.ROBOKASSA_RECURRING }}
+          ROBOKASSA_RECEIPT: ${{ secrets.ROBOKASSA_RECEIPT || vars.ROBOKASSA_RECEIPT }}
+          ROBOKASSA_PRICE_PRO: ${{ secrets.ROBOKASSA_PRICE_PRO || vars.ROBOKASSA_PRICE_PRO }}
+          ROBOKASSA_PRICE_TEAM: ${{ secrets.ROBOKASSA_PRICE_TEAM || vars.ROBOKASSA_PRICE_TEAM }}
         run: |
           set -euo pipefail
           # Чистим переменные от скрытых символов (CRLF из Windows при вставке секретов)
@@ -407,6 +419,17 @@ jobs:
           add_platform_env POSTBOX_DKIM_SELECTORS "$POSTBOX_DKIM_SELECTORS"
           add_platform_env POSTBOX_PRICE_PER_1000 "$POSTBOX_PRICE_PER_1000"
           add_platform_env BILLING_NOTICE_DAYS "$BILLING_NOTICE_DAYS"
+          add_platform_env BILLING_SWEEP_MS "$BILLING_SWEEP_MS"
+          # Ключи Робокассы — только Secret/переменные репозитория: в лог они не попадают.
+          add_platform_env ROBOKASSA_LOGIN "$ROBOKASSA_LOGIN"
+          add_platform_env ROBOKASSA_PASSWORD_1 "$ROBOKASSA_PASSWORD_1"
+          add_platform_env ROBOKASSA_PASSWORD_2 "$ROBOKASSA_PASSWORD_2"
+          add_platform_env ROBOKASSA_HASH "$ROBOKASSA_HASH"
+          add_platform_env ROBOKASSA_TEST_MODE "$ROBOKASSA_TEST_MODE"
+          add_platform_env ROBOKASSA_RECURRING "$ROBOKASSA_RECURRING"
+          add_platform_env ROBOKASSA_RECEIPT "$ROBOKASSA_RECEIPT"
+          add_platform_env ROBOKASSA_PRICE_PRO "$ROBOKASSA_PRICE_PRO"
+          add_platform_env ROBOKASSA_PRICE_TEAM "$ROBOKASSA_PRICE_TEAM"
           # Итог по OAuth-ключам — только «есть/нет», без значений. Раньше пустой ключ был
           # виден только по маскированному дампу окружения выше, и «вставлено, но не работает»
           # приходилось разгадывать: здесь причина видна одной строкой.
@@ -421,6 +444,7 @@ jobs:
           echo "[deploy] Цены расхода: таблица моделей=$(has "${PLATFORM_AI_MODEL_PRICES:-}"), общая ставка=$(has "${PLATFORM_AI_PRICE_INPUT_PER_MILLION:-}"), инфраструктура=$(has "${PLATFORM_INFRA_COST_PER_MONTH:-}"), валюта=${PLATFORM_AI_PRICE_CURRENCY:-USD}"
           echo "[deploy] Поддержка: ключ API=$(has "${SUPPORT_API_KEY:-}"), почта=${SUPPORT_EMAIL_TO:-—}, SMTP=$(has "${SUPPORT_SMTP_PASSWORD:-}")"
           echo "[deploy] Почта платформы: сервер=$(has "${MAIL_SMTP_HOST:-}"), отправитель=${MAIL_FROM:-—}, пароль=$(has "${MAIL_SMTP_PASSWORD:-}")"
+          echo "[deploy] Robokassa: логин=$(has "${ROBOKASSA_LOGIN:-}"), пароль №1=$(has "${ROBOKASSA_PASSWORD_1:-}"), пароль №2=$(has "${ROBOKASSA_PASSWORD_2:-}"), тест=${ROBOKASSA_TEST_MODE:-0}"
           # Рассылка: «включена» не значит «домен подтверждён» — вторая половина строки отвечает
           # на вопрос, почему письма уходят в спам, не заставляя лезть в консоль Postbox.
           echo "[deploy] Рассылка: отправитель=${POSTBOX_SENDER:-—}, ключ=$(has "${POSTBOX_SA_KEY:-}${POSTBOX_IAM_TOKEN:-}${POSTBOX_SECRET:-}${POSTBOX_KEY_ID:-}"), DKIM-селекторы=${POSTBOX_DKIM_SELECTORS:-—}, предел=${POSTBOX_DAILY_LIMIT:-200}/сутки"
@@ -590,6 +614,18 @@ jobs:
           POSTBOX_DKIM_SELECTORS: ${{ secrets.POSTBOX_DKIM_SELECTORS || vars.POSTBOX_DKIM_SELECTORS }}
           POSTBOX_PRICE_PER_1000: ${{ secrets.POSTBOX_PRICE_PER_1000 || vars.POSTBOX_PRICE_PER_1000 }}
           BILLING_NOTICE_DAYS: ${{ secrets.BILLING_NOTICE_DAYS || vars.BILLING_NOTICE_DAYS }}
+          BILLING_SWEEP_MS: ${{ secrets.BILLING_SWEEP_MS || vars.BILLING_SWEEP_MS }}
+          # Робокасса: логин, пароли №1/№2 и алгоритм подписи. Пустые значения не стирают
+          # уже сохранённые на ВМ; после регистрации магазина ключи можно вставить и в панели.
+          ROBOKASSA_LOGIN: ${{ secrets.ROBOKASSA_LOGIN || vars.ROBOKASSA_LOGIN }}
+          ROBOKASSA_PASSWORD_1: ${{ secrets.ROBOKASSA_PASSWORD_1 }}
+          ROBOKASSA_PASSWORD_2: ${{ secrets.ROBOKASSA_PASSWORD_2 }}
+          ROBOKASSA_HASH: ${{ secrets.ROBOKASSA_HASH || vars.ROBOKASSA_HASH }}
+          ROBOKASSA_TEST_MODE: ${{ secrets.ROBOKASSA_TEST_MODE || vars.ROBOKASSA_TEST_MODE }}
+          ROBOKASSA_RECURRING: ${{ secrets.ROBOKASSA_RECURRING || vars.ROBOKASSA_RECURRING }}
+          ROBOKASSA_RECEIPT: ${{ secrets.ROBOKASSA_RECEIPT || vars.ROBOKASSA_RECEIPT }}
+          ROBOKASSA_PRICE_PRO: ${{ secrets.ROBOKASSA_PRICE_PRO || vars.ROBOKASSA_PRICE_PRO }}
+          ROBOKASSA_PRICE_TEAM: ${{ secrets.ROBOKASSA_PRICE_TEAM || vars.ROBOKASSA_PRICE_TEAM }}
         run: |
           set -euo pipefail
           image="$IMAGE_INPUT"
@@ -691,6 +727,17 @@ jobs:
           add_platform_env POSTBOX_DKIM_SELECTORS "$POSTBOX_DKIM_SELECTORS"
           add_platform_env POSTBOX_PRICE_PER_1000 "$POSTBOX_PRICE_PER_1000"
           add_platform_env BILLING_NOTICE_DAYS "$BILLING_NOTICE_DAYS"
+          add_platform_env BILLING_SWEEP_MS "$BILLING_SWEEP_MS"
+          # Ключи Робокассы — только Secret/переменные репозитория: в лог они не попадают.
+          add_platform_env ROBOKASSA_LOGIN "$ROBOKASSA_LOGIN"
+          add_platform_env ROBOKASSA_PASSWORD_1 "$ROBOKASSA_PASSWORD_1"
+          add_platform_env ROBOKASSA_PASSWORD_2 "$ROBOKASSA_PASSWORD_2"
+          add_platform_env ROBOKASSA_HASH "$ROBOKASSA_HASH"
+          add_platform_env ROBOKASSA_TEST_MODE "$ROBOKASSA_TEST_MODE"
+          add_platform_env ROBOKASSA_RECURRING "$ROBOKASSA_RECURRING"
+          add_platform_env ROBOKASSA_RECEIPT "$ROBOKASSA_RECEIPT"
+          add_platform_env ROBOKASSA_PRICE_PRO "$ROBOKASSA_PRICE_PRO"
+          add_platform_env ROBOKASSA_PRICE_TEAM "$ROBOKASSA_PRICE_TEAM"
           # На этом раннере скрипт запускается на самой ВМ, поэтому ключ кладётся во временный
           # файл рядом, с правами только для владельца.
           APP_KEY_FILE=""

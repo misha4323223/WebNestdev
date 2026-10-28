@@ -224,3 +224,25 @@ test("ответы считаются в тот же суточный преде
     process.env.POSTBOX_DAILY_LIMIT = "200";
   }
 });
+
+test("почта из формы обращения важнее служебного логина", async () => {
+  const formTicket = await createSupportTicket({
+    userId: phone.id,
+    email: PHONE_LOGIN,
+    contactEmail: "answer@example.com",
+    category: "idea",
+    severity: 2,
+    description: "Хочу сохранять черновики обращения",
+    screenshot: SCREENSHOT,
+  });
+
+  const list = await app.inject({ method: "GET", url: "/api/support/tickets", headers: auth });
+  assert.equal(list.statusCode, 200);
+  const listed = (list.json() as { tickets: Array<{ id: string; contactEmail: string | null }> }).tickets.find(item => item.id === formTicket.id);
+  assert.equal(listed?.contactEmail, "answer@example.com", "админка видит почту из обращения, а не только логин");
+
+  const response = await reply(formTicket.id, { body: "Здравствуйте! Ответим на адрес из обращения." });
+  assert.equal(response.statusCode, 200);
+  assert.equal((response.json() as { to: string }).to, "answer@example.com");
+  assert.equal(sent.at(-1)?.to, "answer@example.com");
+});

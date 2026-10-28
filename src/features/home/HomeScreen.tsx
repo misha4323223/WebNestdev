@@ -12,6 +12,7 @@ import { conversationMemoryKey } from "../workspace/useWorkspace";
 import { LEGAL_FOOTER_LINKS, SELLER, legalDoc, legalPath } from "../../lib/legal";
 import { ideaKickoff } from "../../lib/agent-kickoff";
 import { startProjectWithAgent } from "../../lib/start-project";
+import { NotificationsBell } from "../notifications/NotificationsBell";
 
 const templates = [
   { name: "Лендинг", icon: Globe, prompt: "Создай современный лендинг для продукта" },
@@ -201,6 +202,8 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
               <Icon size={14}/> <span>{item.label}</span>
             </button>; })}
           </div>
+          {/* На телефоне колонки нет: колокольчик переезжает в строку вкладок, рядом с выходом. */}
+          <NotificationsBell variant="tab"/>
           <button className="home-tab-exit" onClick={() => void exit()} title="Выйти" aria-label="Выйти из аккаунта"><LogOut size={14}/></button>
         </nav>
 

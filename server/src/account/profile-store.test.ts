@@ -10,7 +10,7 @@ import path from "node:path";
  */
 const dir = await mkdtemp(path.join(tmpdir(), "nestdev-profile-"));
 process.env.WEBNESTDEV_DATA_DIR = dir;
-const { getUserProfile, saveUserProfile } = await import("./profile-store.js");
+const { getUserProfile, saveUserProfile, updateUserProfile } = await import("./profile-store.js");
 
 test("контакты знакомства сохраняются, обновляются и не смешиваются между аккаунтами", async () => {
   assert.equal(await getUserProfile("account-a"), null, "до знакомства профиля нет");
@@ -25,6 +25,7 @@ test("контакты знакомства сохраняются, обновл
   assert.equal(first.email, "anna@example.com", "почта хранится в нижнем регистре");
   assert.equal(first.newsletter, true);
   assert.equal(first.productUpdates, false);
+  assert.equal(first.source, "", "старый вызов без источника не выдумывает ответ");
 
   const reopened = await getUserProfile("account-a");
   assert.deepEqual(reopened, first, "профиль читается после записи");
@@ -34,10 +35,18 @@ test("контакты знакомства сохраняются, обновл
     email: "anna@example.com",
     newsletter: false,
     productUpdates: true,
+    source: "ВКонтакте",
   });
   assert.equal(second.completedAt, first.completedAt, "дата знакомства не сдвигается при правке");
   assert.equal(second.newsletter, false);
   assert.equal(second.productUpdates, true);
+  assert.equal(second.source, "ВКонтакте");
+
+  const toggled = await updateUserProfile("account-a", { productUpdates: false });
+  assert.equal(toggled?.productUpdates, false, "согласие отзывается одним полем");
+  assert.equal(toggled?.name, "Анна П.", "остальные контакты не переписываются");
+  assert.equal(toggled?.source, "ВКонтакте", "источник остаётся при смене согласия");
+  assert.equal(await updateUserProfile("account-b", { productUpdates: true }), null, "без знакомства менять нечего");
   assert.equal(await getUserProfile("account-b"), null, "у другого аккаунта своих данных нет");
 });
 

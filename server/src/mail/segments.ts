@@ -28,7 +28,7 @@ export const MAIL_SEGMENTS: MailSegment[] = [
   { id: "free", label: "На бесплатном тарифе", description: "Тариф Free, включая закончившиеся подписки" },
   { id: "inactive30", label: "Спящие 30 дней", description: "Последний вход был раньше 30 дней назад" },
   { id: "never", label: "Ни разу не входили", description: "Аккаунт есть, входа в панель не было" },
-  { id: "all", label: "Все аккаунты", description: "Все аккаунты платформы с пригодным адресом" },
+  { id: "all", label: "Все аккаунты", description: "Все аккаунты с пригодным адресом и согласием на рекламу" },
 ];
 
 export const MAIL_SEGMENT_IDS = MAIL_SEGMENTS.map(segment => segment.id);
@@ -73,12 +73,14 @@ async function rosterFromSql(): Promise<Array<Omit<MailRosterMember, "plan">>> {
     email: string;
     profile_email: string | null;
     name: string | null;
+    product_updates: boolean | null;
     last_seen: string | null;
   }>>`
     SELECT u.id AS id,
            u.email AS email,
            COALESCE(p.email, '') AS profile_email,
            COALESCE(p.name, '') AS name,
+           COALESCE(p.product_updates, FALSE) AS product_updates,
            COALESCE(s.last_seen, '') AS last_seen
     FROM ${users} u
     LEFT JOIN ${profiles} p ON p.user_id = u.id
@@ -97,6 +99,7 @@ async function rosterFromSql(): Promise<Array<Omit<MailRosterMember, "plan">>> {
     email: (row.profile_email || row.email || "").trim(),
     loginEmail: (row.email ?? "").trim(),
     name: (row.name ?? "").trim(),
+    productUpdates: Boolean(row.product_updates),
     lastActiveAt: row.last_seen ? new Date(Date.parse(String(row.last_seen))).toISOString() : null,
   }));
 }
@@ -114,6 +117,7 @@ async function rosterFromFiles(): Promise<Array<Omit<MailRosterMember, "plan">>>
       email: (profile?.email || identity.email || "").trim(),
       loginEmail: (identity.email ?? "").trim(),
       name: (profile?.name ?? "").trim(),
+      productUpdates: Boolean(profile?.productUpdates),
       lastActiveAt: lastSeen,
     });
   }

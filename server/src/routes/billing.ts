@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { requireUser } from "../auth/auth.js";
-import { PLAN_CATALOG, type PlanId } from "../account/plans.js";
+import type { PlanId } from "../account/plans.js";
 import { isSameOriginRequest, sameOriginRefusal } from "../security/same-origin.js";
 import {
   buildPaymentUrl,
@@ -12,13 +12,14 @@ import {
   sameSignature,
   signValue,
 } from "../billing/robokassa.js";
+import { planDisplayName } from "../billing/plan-settings.js";
 import {
   createPayment,
   getPayment,
   markPaymentPaid,
   setAutoRenew,
 } from "../billing/store.js";
-import { autoRenewRefusal, notifyPaymentPaid } from "../billing/notify.js";
+import { autoRenewRefusal, notifyPaymentPaid, reachableEmailFor } from "../billing/notify.js";
 import { getDonationByInvoice, markDonationPaid } from "../support/donation-store.js";
 
 /**
@@ -113,15 +114,18 @@ export async function registerBillingRoutes(app: FastifyInstance) {
     // продление у новой подписки. Магазин должен уметь периодические платежи, а согласие — быть.
     const autoRenew = Boolean(body.autoRenew && config.recurring);
     const payment = await createPayment({ userId: user.id, plan: body.plan, amount, autoRenew });
-    const plan = PLAN_CATALOG[body.plan];
+    const planName = planDisplayName(body.plan);
+    // Для входа по телефону адрес аккаунта служебный: Robokassa не должна отправлять чек на
+    // несуществующий ящик. Берём настоящую почту из контактов, а без неё поле не передаём.
+    const email = await reachableEmailFor(user);
     const link = buildPaymentUrl({
       config,
       plan: body.plan,
-      planName: plan.name,
+      planName,
       invId: payment.invId,
       amount,
-      description: "Подписка NestDev «" + plan.name + "», 1 месяц",
-      email: user.email,
+      description: "Подписка NestDev «" + planName + "», 1 месяц",
+      ...(email ? { email } : {}),
       recurring: autoRenew,
     });
     request.log.info({ invId: payment.invId, plan: body.plan, amount, test: config.testMode }, "billing: счёт создан");

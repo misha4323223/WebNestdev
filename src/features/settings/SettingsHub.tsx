@@ -1,14 +1,15 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, KeyRound, Plug, Server, SlidersHorizontal, Sparkles } from "lucide-react";
+import { ArrowLeft, KeyRound, Percent, Plug, Server, SlidersHorizontal, Sparkles } from "lucide-react";
 import { apiJson } from "../../lib/api";
 import { SettingsPanel } from "./SettingsPanel";
 import { AccountSettingsPanel } from "./AccountSettingsPanel";
 import { IntegrationsPanel } from "./IntegrationsPanel";
 import { PlatformKeysPanel } from "./PlatformKeysPanel";
+import { AdminPlansPanel } from "./AdminPlansPanel";
 import { ProjectSecretsPanel } from "./ProjectSecretsPanel";
 
 export function SettingsHub({ projectId, projectName, onClose }: { projectId: string; projectName: string; onClose?: () => void }) {
-  const [tab, setTab] = useState<"account" | "secrets" | "provider" | "integrations" | "platform">("account");
+  const [tab, setTab] = useState<"account" | "secrets" | "provider" | "integrations" | "plans" | "platform">("account");
   // Ключи сервера — внутренний инструмент платформы. Обычный пользователь не должен видеть
   // даже вкладку: сервер отвечает только флагом admin, поэтому и запрос здесь лёгкий.
   const [platformAdmin, setPlatformAdmin] = useState(false);
@@ -26,7 +27,7 @@ export function SettingsHub({ projectId, projectName, onClose }: { projectId: st
     // OAuth-возврат в рабочую область просит конкретную вкладку отдельным ключом:
     // `openIntegrations` принадлежит главной и к моменту монтирования хаба уже съеден ею.
     const requestedTab = localStorage.getItem("webnestdev.openSettingsTab");
-    if (requestedTab === "account" || requestedTab === "secrets" || requestedTab === "provider" || requestedTab === "integrations" || requestedTab === "platform") {
+    if (requestedTab === "account" || requestedTab === "secrets" || requestedTab === "provider" || requestedTab === "integrations" || requestedTab === "plans" || requestedTab === "platform") {
       localStorage.removeItem("webnestdev.openSettingsTab");
       setTab(requestedTab);
       return;
@@ -50,9 +51,12 @@ export function SettingsHub({ projectId, projectName, onClose }: { projectId: st
     { id: "secrets" as const, label: "Секреты проекта", icon: KeyRound },
     { id: "provider" as const, label: "AI-провайдер", icon: Sparkles },
     { id: "integrations" as const, label: "Интеграции", icon: Plug },
-    ...(platformAdmin ? [{ id: "platform" as const, label: "Ключи сервера", icon: Server }] : []),
+    ...(platformAdmin ? [
+      { id: "plans" as const, label: "Тарифы и скидки", icon: Percent },
+      { id: "platform" as const, label: "Ключи сервера", icon: Server },
+    ] : []),
   ];
-  const activeTab = tab === "platform" && !platformAdmin ? "account" : tab;
+  const activeTab = (tab === "platform" || tab === "plans") && !platformAdmin ? "account" : tab;
   return <div className="settings-hub">
     {/* Боковая колонка в настройках скрыта — значит, нужен явный путь обратно к работе. */}
     <div className="settings-hub-bar">
@@ -67,6 +71,7 @@ export function SettingsHub({ projectId, projectName, onClose }: { projectId: st
     {activeTab === "secrets" && <ProjectSecretsPanel projectId={projectId} projectName={projectName}/>}
     {activeTab === "provider" && <SettingsPanel projectId={projectId} projectName={projectName} onClose={() => setTab("account")}/>}
     {activeTab === "integrations" && <IntegrationsPanel/>}
+    {activeTab === "plans" && platformAdmin && <AdminPlansPanel/>}
     {activeTab === "platform" && platformAdmin && <PlatformKeysPanel/>}
   </div>;
 }

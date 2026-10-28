@@ -61,12 +61,14 @@ import { registerAdminPruneRoutes } from "./routes/admin-prune.js";
 import { registerAdminMailRoutes } from "./routes/admin-mail.js";
 import { registerAdminUserActionRoutes } from "./routes/admin-users.js";
 import { registerAdminBillingRoutes } from "./routes/admin-billing.js";
+import { registerAdminPlanRoutes } from "./routes/admin-plans.js";
 import { registerAdminProjectRoutes } from "./routes/admin-projects.js";
 import { registerUnsubscribeRoutes } from "./routes/unsubscribe.js";
 import { describePostbox, postboxStatus } from "./mail/postbox.js";
 import { startMailQueue, stopMailQueue } from "./mail/queue.js";
 import { registerPhoneAuthRoutes } from "./routes/phone-auth.js";
 import { registerAccountRoutes } from "./routes/account.js";
+import { registerNotificationRoutes } from "./routes/notifications.js";
 import { registerBillingRoutes } from "./routes/billing.js";
 import { registerSupportRoutes } from "./routes/support.js";
 import { registerDonationRoutes } from "./routes/donations.js";
@@ -76,6 +78,7 @@ import { describeObjectStore } from "./storage/object-store.js";
 import { startProjectArchiveScheduler } from "./storage/archive-scheduler.js";
 import { describeBilling } from "./billing/robokassa.js";
 import { registerPlatformRoutes } from "./routes/platform.js";
+import { registerPlatformPlanRoutes } from "./routes/platform-plans.js";
 import { loadPlatformEnv } from "./platform/platform-env.js";
 import { ensureDemoUser } from "./auth/auth-store.js";
 import { ensureBootstrapAdmin } from "./admin/bootstrap.js";
@@ -266,12 +269,16 @@ await registerAdminMailRoutes(app);
 await registerAdminUserActionRoutes(app);
 // Реестр платежей и подписок плюс калибровка пула: сколько токенов реально выбирают.
 await registerAdminBillingRoutes(app);
+// Витрина тарифов: название, описание, цена и скидка. Меняется и из панели, и из внешней админки.
+await registerAdminPlanRoutes(app);
 // Карточка проекта: владелец, репозиторий, превью, переменные секретов, план выкатки.
 await registerAdminProjectRoutes(app);
 // Отписка — публичная страница, а не /api: ссылка приходит в письме и открывается без сессии.
 await registerUnsubscribeRoutes(app);
 await registerPhoneAuthRoutes(app);
 await registerAccountRoutes(app);
+// Уведомления аккаунта: подаренные токены и выданный тариф. Пишет админка, читает человек.
+await registerNotificationRoutes(app);
 await registerBillingRoutes(app);
 await registerSupportRoutes(app);
 await registerDonationRoutes(app);
@@ -297,6 +304,7 @@ await registerQuestionRoutes(app);
 await registerChangesRoutes(app);
 await registerTasksRoutes(app);
 await registerPlatformRoutes(app);
+await registerPlatformPlanRoutes(app);
 await registerAgentWebSocket(app);
 
 // Раздача собранной панели: документ никогда не кэшируется, файлы сборки — надолго. Правила и

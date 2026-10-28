@@ -48,6 +48,8 @@ test("health отличает ключ SMTP от ключа рассылки и 
       assert.equal(mail.sender, "noreply@nestdev.ru");
       assert.equal(mail.credentialKind, "smtp-key", "пара POSTBOX_KEY_ID/SECRET — ключ SMTP, а не рассылки");
       assert.equal(mail.ready, true, "письма платформы на этом ключе работают");
+      assert.equal(mail.senderSource, "environment", "без записи в панели значение берётся из .env выкатки");
+      assert.equal(mail.senderIsAddress, true);
 
       const campaigns = mail.campaigns as { configured: boolean; reason?: string };
       assert.equal(campaigns.configured, false, "для REST нужен другой ключ — иначе Postbox ответит 403");
@@ -60,6 +62,14 @@ test("health отличает ключ SMTP от ключа рассылки и 
       assert.equal(mail.credentialKind, "smtp-credentials");
       assert.equal(mail.credentialSource, "MAIL_SMTP");
       assert.equal(mail.ready, true);
+    });
+
+    // Ровно тот разбор, из-за которого ответ из админки не уходил: в POSTBOX_SENDER лежит домен.
+    await withMailEnv({ POSTBOX_KEY_ID: "aje-key", POSTBOX_SECRET: "aje-secret", POSTBOX_SENDER: "nestdev.ru" }, async () => {
+      const response = await app.inject({ method: "GET", url: "/api/health", remoteAddress: "203.0.113.10" });
+      const mail = (response.json() as { mail: Record<string, unknown> }).mail;
+      assert.equal(mail.sender, "nestdev.ru");
+      assert.equal(mail.senderIsAddress, false, "домен вместо адреса — это будущий 550 на шаге from");
     });
 
     await withMailEnv({}, async () => {

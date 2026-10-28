@@ -1,25 +1,26 @@
 import { useState, type FormEvent } from "react";
 import {
   ArrowRight, BookOpen, Briefcase, Code2, Compass, GraduationCap, Heart,
-  LayoutDashboard, Layers3, Palette, Rocket, ShoppingBag, Smartphone, Sparkles, Users,
-  type LucideIcon,
+  LayoutDashboard, Layers3, Megaphone, MessageCircle, Palette, Rocket, Search, Send,
+  ShoppingBag, Smartphone, Sparkles, Users, type LucideIcon,
 } from "lucide-react";
 import { WebNestLogo } from "../../components/WebNestLogo";
 import { realAccountEmail } from "../../lib/account-contact";
-import { saveOnboardingProfile, type OnboardingAnswers } from "../../lib/onboarding";
+import { saveOnboardingProfile, saveOnboardingSource, type OnboardingAnswers } from "../../lib/onboarding";
 
 /**
- * Знакомство после входа: контакты для связи, четыре коротких вопроса и название проекта.
+ * Знакомство после входа: контакты для связи, пять коротких вопросов и название проекта.
  *
- * Первый экран собирает имя и почту — по ним отвечают человеку, а не только показывают продукт.
- * Согласия на письма стоят флажками и не обязательны. Дальше ответы сразу уходят агенту вместе
- * с идеей, поэтому он знает, кто перед ним, какой у человека опыт и что именно строить.
+ * Первый экран собирает имя и, по желанию, почту — на неё отвечают человеку. Согласия на письма
+ * стоят флажками и не обязательны; рекламное включается только явно и только при наличии почты.
+ * Дальше ответы сразу уходят агенту вместе с идеей, а источник знакомства сохраняется в профиле
+ * для аналитики — агенту он не нужен.
  *
  * Форма как у Replit: один вопрос на экран, крупные варианты, шаг назад. Пропустить можно только
  * после того, как контакты сохранены: иначе аккаунт остался бы без данных для обратной связи.
  */
 
-type AnswerKey = "role" | "level" | "build" | "goal";
+type AnswerKey = "role" | "level" | "build" | "goal" | "source";
 type Option = { label: string; note: string; icon: LucideIcon };
 type Question = { key: AnswerKey; eyebrow: string; title: string; hint: string; options: Option[] };
 
@@ -75,6 +76,22 @@ const questions: Question[] = [
       { label: "Личный проект", note: "Для себя и друзей", icon: Heart },
     ],
   },
+  {
+    key: "source",
+    eyebrow: "ОТКУДА ВЫ",
+    title: "Откуда вы о нас узнали?",
+    hint: "Это поможет рассказывать о NestDev там, где вас действительно много.",
+    options: [
+      { label: "ВКонтакте", note: "Пост, сообщество или реклама", icon: MessageCircle },
+      { label: "Telegram", note: "Канал, чат или реклама", icon: Send },
+      { label: "Одноклассники", note: "Сообщество или объявление", icon: Users },
+      { label: "Дзен", note: "Статья или рекомендация", icon: Compass },
+      { label: "Поиск в интернете", note: "Яндекс, Google или другой поиск", icon: Search },
+      { label: "Реклама", note: "Баннер или рекламное объявление", icon: Megaphone },
+      { label: "Совет друга", note: "Коллега или знакомый рассказал", icon: Heart },
+      { label: "Другое", note: "Хабр, конференция или что-то ещё", icon: Sparkles },
+    ],
+  },
 ];
 
 /** Идея подставляется в подсказку поля: пустой лист — плохой первый вопрос. */
@@ -115,7 +132,10 @@ export function OnboardingFlow({ accountEmail, onStart, onSkip }: {
   const finalStep = questions.length + 1;
   const question = step >= 1 && step <= questions.length ? questions[step - 1] : null;
   const onFinal = step === finalStep;
-  const canSaveContact = name.trim().length >= 2 && validEmail(email);
+  // Почта необязательна: аккаунт может быть привязан к телефону. Но если её начали вводить,
+  // адрес должен быть настоящим — иначе обещание «ответим на почту» станет ложным.
+  const canSaveContact = name.trim().length >= 2 && (!email.trim() || validEmail(email));
+  const canSubscribe = Boolean(email.trim());
 
   function choose(key: AnswerKey, label: string) {
     setAnswers(current => ({ ...current, [key]: label }));
@@ -128,7 +148,13 @@ export function OnboardingFlow({ accountEmail, onStart, onSkip }: {
     setBusy(true);
     setError("");
     try {
-      await saveOnboardingProfile({ name: name.trim(), email: email.trim(), newsletter, productUpdates });
+      await saveOnboardingProfile({
+        name: name.trim(),
+        email: email.trim(),
+        newsletter,
+        // Без почты рекламное согласие не имеет смысла: некуда отправлять.
+        productUpdates: productUpdates && canSubscribe,
+      });
       setProfileSaved(true);
       setStep(1);
     } catch (e) {
@@ -144,6 +170,8 @@ export function OnboardingFlow({ accountEmail, onStart, onSkip }: {
     setBusy(true);
     setError("");
     try {
+      // Источник сохраняется отдельно: он не нужен агенту, но нужен рассылке и аналитике.
+      await saveOnboardingSource(answers.source ?? "Другое");
       await onStart({
         role: answers.role ?? "Другое",
         level: answers.level ?? "Немного практики",
@@ -186,7 +214,7 @@ export function OnboardingFlow({ accountEmail, onStart, onSkip }: {
       {step === 0 && <div className="onboarding-body">
         <span className="eyebrow">ЗНАКОМСТВО</span>
         <h1>Давайте познакомимся</h1>
-        <p>Имя и почта нужны, чтобы ответить на ваше письмо и держать связь по проекту. Письма о новинках — по желанию, их можно выключить в любой момент.</p>
+        <p>Имя нужно, чтобы к вам обращаться. Почта — по желанию: на неё ответит поддержка, если вы к нам напишете. Рекламные письма — только по вашему согласию, и их можно отключить в любой момент.</p>
         <div className="onboarding-fields">
           <label className="onboarding-field">
             <span>Ваше имя</span>
@@ -195,10 +223,15 @@ export function OnboardingFlow({ accountEmail, onStart, onSkip }: {
               placeholder="Как к вам обращаться" />
           </label>
           <label className="onboarding-field">
-            <span>Email для связи</span>
+            <span>Email для связи · необязательно</span>
             <input type="email" value={email} maxLength={200} autoComplete="email" inputMode="email"
-              onChange={event => { setEmail(event.target.value); setError(""); }}
-              placeholder="you@example.com" />
+              onChange={event => {
+                const next = event.target.value;
+                setEmail(next);
+                if (!next.trim()) setProductUpdates(false);
+                setError("");
+              }}
+              placeholder="Можно не заполнять" />
           </label>
         </div>
         <div className="onboarding-checks">
@@ -206,9 +239,17 @@ export function OnboardingFlow({ accountEmail, onStart, onSkip }: {
             <input type="checkbox" checked={newsletter} onChange={event => setNewsletter(event.target.checked)} />
             <span><strong>Письма о работе сервиса</strong><small>Сбои, лимиты и важные изменения — только по делу.</small></span>
           </label>
-          <label className={"onboarding-check" + (productUpdates ? " is-on" : "")}>
-            <input type="checkbox" checked={productUpdates} onChange={event => setProductUpdates(event.target.checked)} />
-            <span><strong>Новости и обновления NestDev</strong><small>Новые возможности и идеи для проектов. Не обязательно.</small></span>
+          <label className={"onboarding-check" + (productUpdates ? " is-on" : "") + (canSubscribe ? "" : " is-disabled")}>
+            <input type="checkbox" checked={productUpdates} disabled={!canSubscribe}
+              onChange={event => setProductUpdates(event.target.checked)} />
+            <span>
+              <strong>Согласен(на) получать рекламные и информационные письма</strong>
+              <small>
+                {canSubscribe
+                  ? <>Новости, обновления, тарифы и акции. Отдельное согласие, не условие регистрации. <a href="/legal/marketing" target="_blank" rel="noopener noreferrer" onClick={event => event.stopPropagation()}>Условия согласия</a>.</>
+                  : "Укажите почту выше, если хотите получать новости и предложения."}
+              </small>
+            </span>
           </label>
         </div>
         {error && <div className="home-error onboarding-error">{error}</div>}

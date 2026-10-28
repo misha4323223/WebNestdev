@@ -4,12 +4,13 @@ import { requireUser } from "../auth/auth.js";
 import { findYandexIdentityByUserId } from "../auth/yandex-account-store.js";
 import { findPhoneByUserId, formatPhone } from "../auth/phone-store.js";
 import { getUserPreferences, saveUserPreferences, type UserPreferences } from "../account/account-store.js";
-import { getUserProfile, saveUserProfile } from "../account/profile-store.js";
+import { getUserProfile, saveUserProfile, updateUserProfile } from "../account/profile-store.js";
 import { FREE_PLAN, PLAN_CATALOG, balanceFor, limitsForPlan, subscriptionFor, type BillingSubscription } from "../account/plans.js";
 import { getBillingHistory, getCostSnapshot, getTokenBudget, getUsageSnapshot } from "../account/usage-store.js";
 import { getStorageOverview, refreshUserStorage } from "../account/storage-quota.js";
 import { accountPlanFor, getSubscriptionRecord, isSubscriptionLive, listPayments } from "../billing/store.js";
 import { planPriceLabel, planPriceRub, publicPlans, robokassaConfig } from "../billing/robokassa.js";
+import { planDisplayName } from "../billing/plan-settings.js";
 
 export { FREE_PLAN, PLAN_CATALOG } from "../account/plans.js";
 const preferencesSchema = z.object({
@@ -19,16 +20,38 @@ const preferencesSchema = z.object({
   productUpdates: z.boolean(),
 });
 /**
- * Первый экран знакомства. Имя и почта обязательны: по ним отвечают человеку, поэтому пустая
- * строка или адрес без домена отклоняются сервером, а не только кнопкой в интерфейсе.
- * Согласия на письма — необязательные флажки.
+ * Почта для связи. Пустая строка разрешена: аккаунт может войти по телефону и не хотеть
+ * оставлять адрес. Если адрес введён, он проверяется и здесь, а не только кнопкой в интерфейсе.
+ */
+const contactEmail = z.string().trim().max(200).refine(
+  value => value === "" || /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value),
+  "Некорректный email",
+);
+
+/**
+ * Первый экран знакомства. Имя обязательно, почта — нет. Согласия на письма — отдельные флажки;
+ * рекламное согласие (`productUpdates`) без адреса не имеет смысла, но сервер его не выдумывает.
  */
 const onboardingSchema = z.object({
   name: z.string().trim().min(2, "Имя слишком короткое").max(80, "Имя слишком длинное"),
-  email: z.string().trim().email("Некорректный email").max(200),
+  email: contactEmail.default(""),
   newsletter: z.boolean().default(false),
   productUpdates: z.boolean().default(false),
+  /** Откуда человек узнал о NestDev; вопрос задаётся после контактов. */
+  source: z.string().trim().max(80).optional(),
 });
+
+/**
+ * Точечная правка профиля: настройки меняют согласие, почту или имя по одному полю. Пустой
+ * запрос отклоняется, чтобы «сохранить» без изменений не переписывало дату правки.
+ */
+const profilePatchSchema = z.object({
+  name: z.string().trim().min(2, "Имя слишком короткое").max(80, "Имя слишком длинное").optional(),
+  email: contactEmail.optional(),
+  newsletter: z.boolean().optional(),
+  productUpdates: z.boolean().optional(),
+  source: z.string().trim().max(80).optional(),
+}).strict();
 
 export async function registerAccountRoutes(app: FastifyInstance) {
   app.get("/api/account/settings", async (request, reply) => {
@@ -63,10 +86,32 @@ export async function registerAccountRoutes(app: FastifyInstance) {
     const user = await requireUser(request, reply); if (!user) return;
     return { profile: await getUserProfile(user.id) };
   });
+  /** Лёгкий ответ для формы поддержки: какой адрес подставить в поле «Email для ответа». */
+  app.get("/api/account/contact", async (request, reply) => {
+    const user = await requireUser(request, reply); if (!user) return;
+    const profile = await getUserProfile(user.id);
+    return { email: profile?.email || "", loginEmail: user.email };
+  });
   app.post("/api/account/onboarding", async (request, reply) => {
     const user = await requireUser(request, reply); if (!user) return;
     const body = onboardingSchema.parse(request.body);
     return { profile: await saveUserProfile(user.id, body) };
+  });
+  /**
+   * Правка контактов и согласий после знакомства. Согласие на рекламу можно и дать, и отозвать:
+   * это одно и то же поле `productUpdates`, поэтому рассылка сразу видит новое решение.
+   */
+  app.patch("/api/account/profile", async (request, reply) => {
+    const user = await requireUser(request, reply); if (!user) return;
+    const body = profilePatchSchema.parse(request.body);
+    if (!Object.keys(body).length) {
+      return reply.code(400).send({ error: "Нет изменений для сохранения" });
+    }
+    const profile = await updateUserProfile(user.id, body);
+    if (!profile) {
+      return reply.code(404).send({ error: "Сначала пройдите знакомство: профиля ещё нет" });
+    }
+    return { profile };
   });
   app.get("/api/billing", async (request, reply) => {
     const user = await requireUser(request, reply); if (!user) return;
@@ -79,7 +124,7 @@ export async function registerAccountRoutes(app: FastifyInstance) {
     const subscription: BillingSubscription = live && record
       ? {
           plan: record.plan,
-          planName: PLAN_CATALOG[record.plan].name,
+          planName: planDisplayName(record.plan),
           priceLabel: planPriceLabel(record.plan),
           status: record.autoRenew ? "active" : "canceled",
           startedAt: record.startedAt,
@@ -104,7 +149,7 @@ export async function registerAccountRoutes(app: FastifyInstance) {
       payments: payments.map(payment => ({
         invId: payment.invId,
         plan: payment.plan,
-        planName: PLAN_CATALOG[payment.plan].name,
+        planName: planDisplayName(payment.plan),
         amount: payment.amount,
         currency: "RUB",
         status: payment.status,

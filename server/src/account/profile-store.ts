@@ -13,14 +13,22 @@ import { isYdbEnabled, ydbQuery, getTable } from "../storage/ydb.js";
  */
 export type OnboardingInput = {
   name: string;
+  /** Почта для связи; пустая строка — человек не захотел её оставлять. */
   email: string;
   /** Письма о работе сервиса: сбои, лимиты, важные изменения. */
   newsletter: boolean;
-  /** Новости и обновления продукта. */
+  /** Рекламные и информационные письма: без явного согласия рассылка не уходит. */
   productUpdates: boolean;
+  /** Откуда человек узнал о NestDev — ответ из знакомства. */
+  source?: string;
 };
 
-export type OnboardingProfile = OnboardingInput & {
+export type OnboardingProfile = {
+  name: string;
+  email: string;
+  newsletter: boolean;
+  productUpdates: boolean;
+  source: string;
   completedAt: string;
   updatedAt: string;
 };
@@ -45,9 +53,9 @@ export async function getUserProfile(userId: string): Promise<OnboardingProfile 
   if (isYdbEnabled()) {
     const [rows] = await ydbQuery()<Array<{
       name: string; email: string; newsletter: boolean; product_updates: boolean;
-      completed_at: string; updated_at: string;
+      source: string; completed_at: string; updated_at: string;
     }>>`
-      SELECT name,email,newsletter,product_updates,completed_at,updated_at
+      SELECT name,email,newsletter,product_updates,source,completed_at,updated_at
       FROM ${ydbQuery().identifier(getTable("user_profiles"))} WHERE user_id = ${userId} LIMIT 1
     `;
     const row = rows?.[0];
@@ -56,12 +64,14 @@ export async function getUserProfile(userId: string): Promise<OnboardingProfile 
       email: row.email,
       newsletter: Boolean(row.newsletter),
       productUpdates: Boolean(row.product_updates),
+      source: row.source ?? "",
       completedAt: row.completed_at,
       updatedAt: row.updated_at,
     } : null;
   }
   const all = await readJson<Record<string, OnboardingProfile>>(profilesFile, {});
-  return all[userId] ?? null;
+  const profile = all[userId];
+  return profile ? { ...profile, source: profile.source ?? "" } : null;
 }
 
 /**
@@ -77,14 +87,15 @@ export async function saveUserProfile(userId: string, input: OnboardingInput): P
     email: input.email.trim().toLowerCase(),
     newsletter: input.newsletter,
     productUpdates: input.productUpdates,
+    source: (input.source ?? existing?.source ?? "").trim().slice(0, 80),
     completedAt: existing?.completedAt ?? now,
     updatedAt: now,
   };
   if (isYdbEnabled()) {
     await ydbQuery()`
       UPSERT INTO ${ydbQuery().identifier(getTable("user_profiles"))}
-        (user_id,name,email,newsletter,product_updates,completed_at,updated_at)
-      VALUES (${userId},${profile.name},${profile.email},${profile.newsletter},${profile.productUpdates},${profile.completedAt},${profile.updatedAt})
+        (user_id,name,email,newsletter,product_updates,source,completed_at,updated_at)
+      VALUES (${userId},${profile.name},${profile.email},${profile.newsletter},${profile.productUpdates},${profile.source},${profile.completedAt},${profile.updatedAt})
     `;
     return profile;
   }
@@ -92,4 +103,23 @@ export async function saveUserProfile(userId: string, input: OnboardingInput): P
   all[userId] = profile;
   await writeJsonAtomic(profilesFile, all);
   return profile;
+}
+
+/**
+ * Правка уже сохранённого профиля: почта, имя и согласия меняются по одному полю, остальные
+ * остаются как были. `null` — знакомство ещё не пройдено, менять нечего.
+ */
+export async function updateUserProfile(
+  userId: string,
+  patch: Partial<Omit<OnboardingInput, "source">> & { source?: string },
+): Promise<OnboardingProfile | null> {
+  const existing = await getUserProfile(userId);
+  if (!existing) return null;
+  return saveUserProfile(userId, {
+    name: patch.name ?? existing.name,
+    email: patch.email ?? existing.email,
+    newsletter: patch.newsletter ?? existing.newsletter,
+    productUpdates: patch.productUpdates ?? existing.productUpdates,
+    source: patch.source ?? existing.source,
+  });
 }

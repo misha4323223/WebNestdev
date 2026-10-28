@@ -1,7 +1,8 @@
 import { getPlatformEnv } from "../platform/platform-env.js";
 import { getUser } from "../auth/auth-store.js";
 import { getUserProfile } from "../account/profile-store.js";
-import { PLAN_CATALOG, type PlanId } from "../account/plans.js";
+import type { PlanId } from "../account/plans.js";
+import { planDisplayName } from "./plan-settings.js";
 import { mailConfigured, sendMail, type MailInput } from "../mail/mailer.js";
 import { planPriceRub } from "./robokassa.js";
 import type { SubscriptionRecord } from "./store.js";
@@ -55,7 +56,7 @@ const dateLabel = (iso: string) => new Date(iso).toLocaleDateString("ru-RU", { d
 const rubLabel = (value: number) => value.toLocaleString("ru-RU") + " ₽";
 
 export function paymentPaidLetter(input: { plan: PlanId; amount: number; invId: number; renewsAt: string; autoRenew: boolean }) {
-  const planName = PLAN_CATALOG[input.plan].name;
+  const planName = planDisplayName(input.plan);
   const until = dateLabel(input.renewsAt);
   const lines = [
     "Оплата принята.",
@@ -75,7 +76,7 @@ export function paymentPaidLetter(input: { plan: PlanId; amount: number; invId: 
 }
 
 export function renewalNoticeLetter(input: { plan: PlanId; amount: number; renewsAt: string }) {
-  const planName = PLAN_CATALOG[input.plan].name;
+  const planName = planDisplayName(input.plan);
   const when = dateLabel(input.renewsAt);
   const lines = [
     "Скоро продление подписки NestDev — это письмо-предупреждение о списании.",

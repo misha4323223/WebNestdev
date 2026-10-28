@@ -100,7 +100,7 @@ test("preview считает получателей и ничего не отп�
     warnings: string[];
   };
   assert.equal(body.recipients, 1);
-  assert.deepEqual(body.excluded, { unsubscribed: 0, bounced: 0, invalid: 0, duplicate: 0 });
+  assert.deepEqual(body.excluded, { unsubscribed: 0, bounced: 0, invalid: 0, noConsent: 0, duplicate: 0 });
   assert.equal(body.sample[0].email, "client@nestdev.ru");
   assert.equal(body.sample[0].subject, "Иван, привет", "теги раскрываются в живом примере");
   assert.match(body.sample[0].body, /https:\/\/nestdev\.ru\/unsubscribe\?t=/);

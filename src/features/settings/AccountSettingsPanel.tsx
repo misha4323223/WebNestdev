@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { apiJson } from "../../lib/api";
 import { logoutAll } from "../../lib/auth-api";
 import { applyPreferences, type UserPreferences } from "../../lib/preferences";
@@ -19,7 +19,7 @@ import {
 } from "../../lib/billing-api";
 import { activePlanId, usePlanChoice, writePlanChoice } from "../../lib/plan-choice";
 import { contactEmailOf } from "../../lib/account-contact";
-import type { OnboardingProfile } from "../../lib/onboarding";
+import { updateOnboardingProfile, type OnboardingProfile } from "../../lib/onboarding";
 import { CheckoutConsent, type CheckoutConsentState } from "../billing/CheckoutConsent";
 import { openCookieSettings } from "../legal/CookieConsent";
 import { Check, CreditCard, LogOut, Receipt, RefreshCw, Settings2, ShieldCheck, UserRound, Wallet } from "lucide-react";
@@ -33,6 +33,108 @@ type AccountData = {
 
 const initialPreferences: Preferences = { language: "ru", compactMode: false, emailNotifications: true, productUpdates: false };
 const tokenLabel = (value: number) => value.toLocaleString("ru-RU");
+const validEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value.trim());
+
+/**
+ * Подписка на рассылку в настройках: пока человек не подписан — одна кнопка, по ней раскрываются
+ * почта, согласие и «Подписать». У подписанных на том же месте стоит «Отписаться», чтобы не искать
+ * отмену в другом разделе или только в письме.
+ */
+function NewsletterCard({ profile, knownEmail, onProfile }: {
+  profile: OnboardingProfile | null;
+  knownEmail: string;
+  onProfile: (profile: OnboardingProfile) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [email, setEmail] = useState("");
+  const [consent, setConsent] = useState(false);
+  const [busy, setBusy] = useState<"subscribe" | "unsubscribe" | null>(null);
+  const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
+  const subscribed = Boolean(profile?.productUpdates);
+  const address = profile?.email?.trim() || knownEmail;
+
+  function start() {
+    setEmail(address);
+    setConsent(false);
+    setError("");
+    setNotice("");
+    setOpen(true);
+  }
+
+  async function subscribe(event: FormEvent) {
+    event.preventDefault();
+    const value = email.trim();
+    if (!validEmail(value)) { setError("Проверьте адрес почты"); return; }
+    if (!consent) { setError("Отметьте согласие на рекламные письма"); return; }
+    setBusy("subscribe"); setError(""); setNotice("");
+    try {
+      onProfile(await updateOnboardingProfile({ email: value, productUpdates: true }));
+      setOpen(false);
+      setConsent(false);
+      setNotice("Готово: письма будут приходить на " + value + ".");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Не удалось подписаться");
+    } finally { setBusy(null); }
+  }
+
+  async function unsubscribe() {
+    setBusy("unsubscribe"); setError(""); setNotice("");
+    try {
+      onProfile(await updateOnboardingProfile({ productUpdates: false }));
+      setNotice("Вы отписаны: рекламные письма больше не придут.");
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Не удалось отписаться");
+    } finally { setBusy(null); }
+  }
+
+  return <div className="account-subscribe">
+    <div className="account-subscribe-head">
+      <div>
+        <strong>Рассылка NestDev</strong>
+        <small>Новости продукта, обновления, тарифы и акции. Рекламные письма приходят только по согласию.</small>
+      </div>
+      {subscribed
+        ? <span className="account-subscribe-state"><Check size={10}/> Вы подписаны</span>
+        : open
+          ? null
+          : <button type="button" className="send-button account-subscribe-open" disabled={!profile || busy !== null} onClick={start}>Подписаться</button>}
+    </div>
+
+    {subscribed
+      ? <div className="account-subscribe-actions">
+          <span className="account-subscribe-note">Письма приходят на {address || "указанную почту"}.</span>
+          <button type="button" className="ghost-button" disabled={busy !== null} onClick={() => void unsubscribe()}>
+            {busy === "unsubscribe" ? "Отписываем…" : "Отписаться"}
+          </button>
+          {!address && <span className="account-subscribe-error">В профиле нет почты — письма не смогут приходить. Укажите её в разделе «Аккаунт».</span>}
+        </div>
+      : open
+        ? <form className="account-subscribe-form" onSubmit={event => void subscribe(event)}>
+            <label className="account-subscribe-field">
+              <span>Email для рассылки</span>
+              <input type="email" value={email} maxLength={200} inputMode="email" autoComplete="email"
+                onChange={event => { setEmail(event.target.value); setError(""); }} placeholder="you@example.com" />
+            </label>
+            <label className="account-subscribe-check">
+              <input type="checkbox" checked={consent} onChange={event => { setConsent(event.target.checked); setError(""); }}/>
+              <span>Согласен(на) получать рекламные и информационные письма NestDev. Не условие регистрации, отозвать можно в любой момент. <a href="/legal/marketing" target="_blank" rel="noopener noreferrer" onClick={event => event.stopPropagation()}>Условия согласия</a>.</span>
+            </label>
+            {error && <div className="account-subscribe-error" role="alert">{error}</div>}
+            <div className="account-subscribe-actions">
+              <button type="submit" className="send-button account-subscribe-submit" disabled={busy !== null || !consent || !email.trim()}>
+                {busy === "subscribe" ? "Подписываем…" : "Подписать"}
+              </button>
+              <button type="button" className="ghost-button" disabled={busy !== null} onClick={() => { setOpen(false); setError(""); }}>Отмена</button>
+            </div>
+          </form>
+        : null}
+
+    {!profile && <p className="account-subscribe-note">Сначала закончите знакомство — почта и согласие сохраняются в профиле.</p>}
+    {subscribed && error && <div className="account-subscribe-error" role="alert">{error}</div>}
+    {notice && <p className="account-subscribe-note account-subscribe-done">{notice}</p>}
+  </div>;
+}
 
 export function AccountSettingsPanel() {
   const [section, setSection] = useState<"account" | "preferences" | "security" | "subscription">("account");
@@ -41,6 +143,9 @@ export function AccountSettingsPanel() {
   const [billing, setBilling] = useState<BillingData | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  // Контакты и согласие сохраняются отдельно от настроек интерфейса: это профиль, а не тема.
+  const [profileDraft, setProfileDraft] = useState({ name: "", email: "" });
+  const [savingProfile, setSavingProfile] = useState(false);
   const [paying, setPaying] = useState<string | null>(null);
   const [savingRenew, setSavingRenew] = useState(false);
   // The chosen plan is shared state: it is the plan the user wants to move to, so the
@@ -58,6 +163,13 @@ export function AccountSettingsPanel() {
     try {
       const [accountData, billingData] = await Promise.all([apiJson<AccountData>("/api/account/settings"), getBilling()]);
       setAccount(accountData); setPreferences(accountData.preferences); setBilling(billingData); applyPreferences(accountData.preferences);
+      setProfileDraft({
+        name: accountData.profile?.name ?? "",
+        email: accountData.profile?.email || contactEmailOf({
+          accountEmail: accountData.user.email,
+          yandexEmail: accountData.user.yandex?.email,
+        }),
+      });
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setLoading(false); }
   }
@@ -70,6 +182,27 @@ export function AccountSettingsPanel() {
       setPreferences(result.preferences); applyPreferences(result.preferences); setNotice("Настройки сохранены.");
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setSaving(false); }
+  }
+
+  /** Один источник правды после любой правки профиля: карточка настроек и черновик полей. */
+  function applyProfile(profile: OnboardingProfile) {
+    setAccount(current => current ? { ...current, profile } : current);
+    setProfileDraft({ name: profile.name, email: profile.email });
+  }
+
+  /** Имя и почта — те же поля, что в знакомстве; правка не сдвигает дату знакомства. */
+  async function saveProfile() {
+    if (!account?.profile) { setError("Профиль ещё не заполнен: закончите знакомство."); return; }
+    const name = profileDraft.name.trim();
+    const email = profileDraft.email.trim();
+    if (name.length < 2) { setError("Имя должно быть хотя бы из двух символов"); return; }
+    if (email && !validEmail(email)) { setError("Проверьте адрес почты"); return; }
+    setSavingProfile(true); setError(""); setNotice("");
+    try {
+      applyProfile(await updateOnboardingProfile({ name, email }));
+      setNotice("Контакты сохранены.");
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setSavingProfile(false); }
   }
 
   async function pay(plan: "pro" | "team") {
@@ -175,8 +308,12 @@ export function AccountSettingsPanel() {
         <div className="account-settings-content">
           {section === "account" && <div className="account-section">
             <span className="eyebrow">ПРОФИЛЬ</span><h3>Профиль</h3><p className="account-muted">Основная информация вашего аккаунта NestDev.</p>
-            <label>Имя<input value={profile?.name ?? ""} placeholder="Не указано" readOnly/></label>
-            <label>Email для связи<input value={contactEmail} placeholder="Не указан" readOnly/></label>
+            <label>Имя<input value={profileDraft.name} placeholder="Как к вам обращаться" maxLength={80} onChange={event => setProfileDraft(current => ({ ...current, name: event.target.value }))}/></label>
+            <label>Email для связи<input type="email" value={profileDraft.email} placeholder="Можно не заполнять" maxLength={200} inputMode="email" autoComplete="email" onChange={event => setProfileDraft(current => ({ ...current, email: event.target.value }))}/></label>
+            <div className="account-pref-actions account-profile-actions">
+              <button className="send-button account-save" disabled={savingProfile || !profile} onClick={() => void saveProfile()}>{savingProfile ? "Сохраняем…" : "Сохранить контакты"}</button>
+            </div>
+            {!profile && <p className="account-muted">Профиль ещё не заполнен — контакты появятся после знакомства.</p>}
             {accountPhone && <label>Телефон<input value={accountPhone} readOnly/></label>}
             {account?.user.yandex && <label>Вход через Яндекс ID<input value={"@" + account.user.yandex.login} readOnly/></label>}
             <label>ID аккаунта<input value={account?.user.id ?? ""} readOnly/></label>
@@ -210,9 +347,8 @@ export function AccountSettingsPanel() {
             <span className="eyebrow">ПРЕДПОЧТЕНИЯ</span><h3>Предпочтения</h3><p className="account-muted">Параметры сохраняются на сервере и привязаны к вашему аккаунту. Компактный режим применяется сразу.</p>
             <div className="pref-row"><span className="pref-label">Язык интерфейса</span><span className="pref-value">Русский<span className="pref-tag">другие языки позже</span></span></div>
             <label className="account-toggle"><span><strong>Компактный режим</strong><small>Меньше отступов в рабочих панелях — включается мгновенно</small></span><span className="switch"><input type="checkbox" checked={preferences.compactMode} onChange={e => { const next = { ...preferences, compactMode: e.target.checked }; setPreferences(next); applyPreferences(next); }}/><span className="switch-track"><span className="switch-thumb"/></span></span></label>
-            <label className="account-toggle is-soon"><span><strong>Email-уведомления<span className="soon-pill">скоро</span></strong><small>Служебные письма (оплата, продление) сервис отправляет сам; настройка рассылок появится позже</small></span><span className="switch"><input type="checkbox" checked={preferences.emailNotifications} disabled onChange={() => {}}/><span className="switch-track"><span className="switch-thumb"/></span></span></label>
-            <label className="account-toggle is-soon"><span><strong>Новости продукта<span className="soon-pill">скоро</span></strong><small>Рассылка обновлений NestDev — в работе</small></span><span className="switch"><input type="checkbox" checked={preferences.productUpdates} disabled onChange={() => {}}/><span className="switch-track"><span className="switch-thumb"/></span></span></label>
-            <p className="account-muted account-legal-note">Рекламные письма отправляются только по отдельному согласию: <a href="/legal/marketing" target="_blank" rel="noopener noreferrer">согласие на рекламные сообщения</a>.</p>
+            <NewsletterCard profile={profile} knownEmail={profileDraft.email || contactEmail} onProfile={applyProfile}/>
+            <p className="account-muted account-legal-note">Служебные письма (оплата, продление, ответ поддержки) приходят всегда. Рекламные — только по отдельному согласию: <a href="/legal/marketing" target="_blank" rel="noopener noreferrer">согласие на рекламные сообщения</a>.</p>
             <div className="account-pref-actions">
               <button type="button" className="ghost-button" onClick={openCookieSettings}>Cookie-настройки</button>
               <button className="send-button account-save" disabled={saving} onClick={() => void savePreferences()}>{saving ? "Сохраняем…" : "Сохранить настройки"}</button>
@@ -308,7 +444,7 @@ export function AccountSettingsPanel() {
 
             {paymentsEnabled && <CheckoutConsent recurring={Boolean(subscription?.recurringAvailable)} onChange={setConsent}/>}
             <div className="plan-grid">{billing?.plans.map(plan => <article key={plan.id} className={"plan-card" + (plan.id === currentPlanId ? " selected" : "") + (planChoice === plan.id && plan.id !== currentPlanId ? " chosen" : "")}>
-              <div className="plan-card-head"><div><strong>{plan.name}</strong><small>{plan.description}</small></div><span>{plan.priceLabel}</span></div>
+              <div className="plan-card-head"><div><strong>{plan.name}</strong><small>{plan.description}</small></div><span className="plan-card-price">{Boolean(plan.discountPercent)&&<s>{plan.basePriceLabel}</s>}<b>{plan.priceLabel}</b></span></div>
               <ul>{plan.features.map(feature => <li key={feature}><Check size={12}/>{feature}</li>)}</ul>
               {plan.id === "free"
                 ? <span className="plan-current">{plan.id === currentPlanId ? "Текущий тариф" : "Входит всегда"}</span>

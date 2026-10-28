@@ -29,6 +29,7 @@ export const AUDIT_ACTIONS = {
   "admin.2fa.reissued": "Коды восстановления перевыпущены",
   "admin.logout.all": "Завершены все сеансы администратора",
   "platform.keys.updated": "Изменены ключи платформы",
+  "billing.plans.updated": "Изменены тарифы и скидки",
   "project.deleted": "Удалён проект",
   "user.registered": "Зарегистрирован аккаунт",
   "user.login.failed": "Неудачный вход пользователя",

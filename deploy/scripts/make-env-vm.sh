@@ -74,9 +74,12 @@ chmod 700 "$SECRETS_DIR" 2>/dev/null || true
 # оставил реверс-прокси без имени сайта — а это уже не «пересоздать .env», а «сайт не открывается».
 # GITHUB_*, PLATFORM_AI_* и ключи веб-поиска — те же значения, которые можно ввести в панели: если
 # их задали в .env (руками или через secrets в выкатке), пересборка файла не должна их терять.
+# ROBOKASSA_* и BILLING_* переносятся отдельно: иначе повторный деплой молча выключил бы оплату.
+# MAIL_* и POSTBOX_* — по той же причине: без них не уходят письма об оплате и предупреждения
+# о списании, а автопродление отказывается включаться.
 # Админы панели переносятся обязательно: без WEBNESTDEV_ADMIN_EMAILS редактор ключей закрыт, и
 # потеря строки выглядела бы как «панель ключей сломалась».
-CARRY_PATTERN='^(SMS_PROVIDER|SMS_SENDER|YANDEX_[A-Z0-9_]+|SMS_RU_API_ID|SMSC_[A-Z]+|EXOLVE_API_KEY|SMSAERO_[A-Z]+|WEBNESTDEV_SMS_TEST_MODE|WEBNESTDEV_DEMO_PHONE[A-Z_]*|WEBNESTDEV_ALLOWED_ORIGINS|WEBNESTDEV_SITE_DOMAIN|PREVIEW_PUBLIC_DOMAIN|PREVIEW_TICKET_TTL_MS|ACME_EMAIL|GITHUB_[A-Z_]+|PLATFORM_AI_[A-Z0-9_]+|PLATFORM_S3_[A-Z0-9_]+|PROJECT_ARCHIVE_[A-Z0-9_]+|WEBNESTDEV_ADMIN_[A-Z_]+|ADMIN_[A-Z_]+|TAVILY_API_KEY|WEB_SEARCH_PROVIDER)='
+CARRY_PATTERN='^(SMS_PROVIDER|SMS_SENDER|YANDEX_[A-Z0-9_]+|SMS_RU_API_ID|SMSC_[A-Z]+|EXOLVE_API_KEY|SMSAERO_[A-Z]+|WEBNESTDEV_SMS_TEST_MODE|WEBNESTDEV_DEMO_PHONE[A-Z_]*|WEBNESTDEV_ALLOWED_ORIGINS|WEBNESTDEV_SITE_DOMAIN|PREVIEW_PUBLIC_DOMAIN|PREVIEW_TICKET_TTL_MS|ACME_EMAIL|GITHUB_[A-Z_]+|GITLAB_[A-Z_]+|GITVERSE_[A-Z_]+|PLATFORM_AI_[A-Z0-9_]+|PLATFORM_IMAGE_[A-Z0-9_]+|PLATFORM_S3_[A-Z0-9_]+|PLATFORM_INFRA_[A-Z0-9_]+|PROJECT_ARCHIVE_[A-Z0-9_]+|WEBNESTDEV_ADMIN_[A-Z_]+|ADMIN_[A-Z_]+|TAVILY_API_KEY|WEB_SEARCH_PROVIDER|ROBOKASSA_[A-Z0-9_]+|BILLING_[A-Z0-9_]+|MAIL_[A-Z0-9_]+|POSTBOX_[A-Z0-9_]+|SUPPORT_[A-Z0-9_]+)='
 CARRY="$(grep -E "$CARRY_PATTERN" .env 2>/dev/null || true)"
 if [ -n "$CARRY" ]; then echo "SMS-ENV-REUSED"; fi
 # Адреса фронтенда: из прошлого .env или из PUBLIC_ORIGIN. localhost здесь нельзя — в production

@@ -16,7 +16,8 @@ import type { SupportReporter } from "./support-store.js";
  * включение почты не требует перезапуска.
  *
  * Reply-To указывает на автора обращения: ответ на письмо уходит пользователю напрямую, без
- * ручного копирования адреса из тикета.
+ * ручного копирования адреса из тикета. Если человек указал почту в самой форме, она важнее
+ * логина: у входа по телефону логин служебный, и ответ по нему ушёл бы отскоком.
  *
  * Разговор по SMTP общий для всей платформы (mail/smtp.ts) и поддерживает только шифрование
  * сразу (порт 465): STARTTLS требует отдельного шага, а молчаливая отправка без шифрования
@@ -40,6 +41,8 @@ export type SupportMailTicket = {
   category: "bug" | "idea";
   severity: number;
   email: string;
+  /** Почта для ответа из формы обращения; важнее логина и профиля. */
+  contactEmail?: string;
   description: string;
   createdAt: string;
   steps?: string;
@@ -96,9 +99,10 @@ export function supportMailBody(ticket: SupportMailTicket) {
     "Получено: " + new Date(ticket.createdAt).toLocaleString("ru-RU"),
   ];
   const reporter = ticket.reporter;
+  const contactEmail = ticket.contactEmail || reporter?.contactEmail;
+  if (contactEmail && contactEmail !== ticket.email) lines.push("Почта для ответа: " + contactEmail);
   if (reporter) {
     if (reporter.name) lines.push("Имя: " + reporter.name);
-    if (reporter.contactEmail && reporter.contactEmail !== ticket.email) lines.push("Почта для связи: " + reporter.contactEmail);
     if (reporter.phone) lines.push("Телефон: " + reporter.phone);
     lines.push("Тариф: " + reporter.planName);
     lines.push("Аккаунт с: " + new Date(reporter.accountCreatedAt).toLocaleString("ru-RU"));
@@ -128,7 +132,7 @@ export function supportMailMessage(
   const parts = [
     "From: " + encodedHeader(settings.from),
     "To: " + encodedHeader(settings.to),
-    "Reply-To: " + encodedHeader(ticket.email),
+    "Reply-To: " + encodedHeader(ticket.contactEmail || ticket.email),
     "Subject: " + encodedHeader(supportMailSubject(ticket)),
     "Date: " + new Date(ticket.createdAt).toUTCString(),
     "Message-ID: <" + ticket.id + "@webnestdev>",

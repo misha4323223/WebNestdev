@@ -115,7 +115,10 @@ export function PlanPickerModal({ open, onClose, onOpenDetails, onChanged }: {
             {billing.plans.map(plan => <article key={plan.id} className={"plan-card" + (plan.id === current ? " selected" : "") + (selected === plan.id && plan.id !== current ? " chosen" : "")}>
               <div className="plan-card-head">
                 <div><strong>{plan.name}</strong><small>{plan.description}</small></div>
-                <span>{plan.priceLabel}</span>
+                <span className="plan-card-price">
+                  {Boolean(plan.discountPercent)&&<s>{plan.basePriceLabel}</s>}
+                  <b>{plan.priceLabel}</b>
+                </span>
               </div>
               <ul>{plan.features.map(feature => <li key={feature}><Check size={12}/>{feature}</li>)}</ul>
               {plan.id === current

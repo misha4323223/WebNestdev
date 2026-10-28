@@ -126,11 +126,36 @@ test("the letter names the account behind the ticket", () => {
     },
   });
   assert.match(body, /Имя: Иван Петров/);
-  assert.match(body, /Почта для связи: ivan@example\.com/);
+  assert.match(body, /Почта для ответа: ivan@example\.com/);
   assert.match(body, /Телефон: \+7 999 123-45-67/);
   assert.match(body, /Тариф: Плюс/);
   assert.match(body, /Проектов: 3/);
   assert.match(body, /IP: 203\.0\.113\.10/);
+});
+
+test("почта из формы обращения важнее логина и профиля", () => {
+  const formTicket: SupportMailTicket = { ...ticket, contactEmail: "answer@example.com" };
+  const message = supportMailMessage(settings, formTicket);
+  assert.match(message, /Reply-To: answer@example\.com/, "ответ уходит на адрес из формы");
+
+  const body = supportMailBody({
+    ...formTicket,
+    reporter: {
+      id: "u1",
+      email: "client@example.com",
+      name: "Иван Петров",
+      contactEmail: "profile@example.com",
+      phone: null,
+      signIn: ["password"],
+      plan: "free",
+      planName: "Старт",
+      accountCreatedAt: "2026-01-02T03:04:05.000Z",
+      projects: 0,
+      lastActiveAt: null,
+    },
+  });
+  assert.match(body, /Почта для ответа: answer@example\.com/);
+  assert.doesNotMatch(body, /profile@example\.com/, "две разные почты не путаются");
 });
 
 test("the subject is encoded for UTF-8 and names the category and severity", () => {

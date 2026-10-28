@@ -1,6 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { getPlatformEnv } from "../platform/platform-env.js";
 import { PLAN_CATALOG, type PlanId } from "../account/plans.js";
+import { planDisplayDescription, planDisplayName, planOverride, type PaidPlanId } from "./plan-settings.js";
 
 /**
  * Robokassa: денежная часть подписки.
@@ -69,28 +70,86 @@ export function formatAmount(amount: number) {
 }
 
 /**
- * Каждый тариф стоит фиксированную сумму в месяц. Цену можно поменять без выкатки — ключами
- * ROBOKASSA_PRICE_PRO / ROBOKASSA_PRICE_TEAM в панели; по умолчанию берётся значение каталога.
+ * Базовая цена до скидки. Сначала значение из админского раздела «Тарифы и скидки», затем
+ * прежний ключ ROBOKASSA_PRICE_* и только потом каталог. Так старые настройки продолжают
+ * работать, а новая форма не требует выкатки.
  */
-export function planPriceRub(plan: PlanId): number {
+export function planBasePriceRub(plan: PlanId): number {
   if (plan === "free") return 0;
+  const override = planOverride(plan).priceRub;
+  if (override && override > 0) return Math.round(override);
   const fallback = PLAN_CATALOG[plan].priceRub;
   const configured = Number((getPlatformEnv("ROBOKASSA_PRICE_" + plan.toUpperCase()) ?? "").trim().replace(",", "."));
   if (!Number.isFinite(configured) || configured <= 0) return fallback;
   return Math.round(configured);
 }
 
+/** Скидка на тариф в процентах: 0 — её нет, 90 — максимум, который принимает админка. */
+export function planDiscountPercent(plan: PlanId): number {
+  if (plan === "free") return 0;
+  const value = planOverride(plan).discountPercent;
+  return value && value > 0 ? value : 0;
+}
+
+/** Итоговая цена: именно она попадает в счёт, чек и витрину. */
+export function planPriceRub(plan: PlanId): number {
+  const base = planBasePriceRub(plan);
+  const discount = planDiscountPercent(plan);
+  if (!discount) return base;
+  return Math.max(1, Math.round(base * (100 - discount) / 100));
+}
+
+function amountLabel(amount: number) {
+  return amount.toLocaleString("ru-RU") + " ₽";
+}
+
 export function planPriceLabel(plan: PlanId) {
-  if (plan === "free") return "0 ₽";
-  return planPriceRub(plan).toLocaleString("ru-RU") + " ₽";
+  return amountLabel(planPriceRub(plan));
+}
+
+export function planBasePriceLabel(plan: PlanId) {
+  return amountLabel(planBasePriceRub(plan));
 }
 
 /** Каталог тарифов в том виде, в каком его видит интерфейс: цена приходит с сервера. */
 export function publicPlans() {
-  return Object.values(PLAN_CATALOG).map(plan => ({
-    ...plan,
-    priceRub: planPriceRub(plan.id),
-    priceLabel: planPriceLabel(plan.id),
+  return Object.values(PLAN_CATALOG).map(plan => {
+    const basePriceRub = planBasePriceRub(plan.id);
+    const discountPercent = planDiscountPercent(plan.id);
+    return {
+      ...plan,
+      name: planDisplayName(plan.id),
+      description: planDisplayDescription(plan.id),
+      priceRub: planPriceRub(plan.id),
+      priceLabel: planPriceLabel(plan.id),
+      basePriceRub,
+      basePriceLabel: planBasePriceLabel(plan.id),
+      discountPercent,
+    };
+  });
+}
+
+export type PlanAdminView = {
+  id: PaidPlanId;
+  name: string;
+  description: string;
+  /** Базовая цена для формы: скидка считается уже на сервере. */
+  priceRub: number;
+  discountPercent: number;
+  priceLabel: string;
+  basePriceLabel: string;
+};
+
+/** Данные для формы админки: только платные тарифы и базовая цена без скидки. */
+export function planAdminList(): PlanAdminView[] {
+  return publicPlans().filter(plan => plan.id !== "free").map(plan => ({
+    id: plan.id as PaidPlanId,
+    name: plan.name,
+    description: plan.description,
+    priceRub: plan.basePriceRub,
+    discountPercent: plan.discountPercent,
+    priceLabel: plan.priceLabel,
+    basePriceLabel: plan.basePriceLabel,
   }));
 }
 

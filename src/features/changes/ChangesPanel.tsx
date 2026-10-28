@@ -64,24 +64,77 @@ const statusLabel: Record<"added" | "modified" | "deleted", string> = {
   deleted: "удалён",
 };
 
-type DiffState = { loading: boolean; patch: string; error?: string; binary?: boolean; truncated?: boolean };
+type DiffState = { loading: boolean; patch: string; additions?: number; deletions?: number; error?: string; binary?: boolean; truncated?: boolean };
 
-/** Строки diff красятся по первому символу — сам патч приходит текстом и в HTML не вставляется. */
-function DiffView({ diff }: { diff: DiffState }) {
+type DiffRow = { tone: "add" | "del" | "ctx" | "hunk"; oldNo: string; newNo: string; text: string };
+
+/**
+ * Разбирает unified diff в строки для ревью. В отличие от простой раскраски, здесь считаются
+ * номера строк обеих версий и итог `+N/−M`; заголовки `---`/`+++` не показываются — имя файла
+ * уже стоит в шапке diff, и дублировать его в каждой строке незачем.
+ */
+function patchRows(patch: string): { rows: DiffRow[]; additions: number; deletions: number } {
+  const rows: DiffRow[] = [];
+  let oldNo = 0;
+  let newNo = 0;
+  let additions = 0;
+  let deletions = 0;
+  const lines = patch.endsWith("\n") ? patch.slice(0, -1).split("\n") : patch.split("\n");
+  for (const line of lines) {
+    if (line.startsWith("---") || line.startsWith("+++")) continue;
+    if (line.startsWith("@@")) {
+      const match = line.match(/^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/);
+      if (match) {
+        oldNo = Number(match[1]);
+        newNo = Number(match[2]);
+      }
+      rows.push({ tone: "hunk", oldNo: "", newNo: "", text: line });
+      continue;
+    }
+    if (line.startsWith("+")) {
+      rows.push({ tone: "add", oldNo: "", newNo: String(newNo++), text: line.slice(1) });
+      additions += 1;
+    } else if (line.startsWith("-")) {
+      rows.push({ tone: "del", oldNo: String(oldNo++), newNo: "", text: line.slice(1) });
+      deletions += 1;
+    } else {
+      rows.push({ tone: "ctx", oldNo: String(oldNo++), newNo: String(newNo++), text: line.startsWith(" ") ? line.slice(1) : line });
+    }
+  }
+  return { rows, additions, deletions };
+}
+
+/**
+ * Diff файла в стиле ревью: имя, `+N −M`, номера строк и подсветка добавленного/удалённого.
+ * Патч приходит текстом и в HTML не вставляется — React экранирует содержимое строк.
+ */
+function DiffView({ diff, path }: { diff: DiffState; path?: string }) {
   if (diff.loading) return <div className="git-diff-state"><Loader2 size={13} className="spin"/> Читаем diff…</div>;
   if (diff.error) return <div className="git-diff-state warn">{diff.error}</div>;
   if (diff.binary) return <div className="git-diff-state">Двоичный файл: diff не строится.</div>;
   if (diff.truncated) return <div className="git-diff-state">Файл слишком большой для построчного diff.</div>;
   if (!diff.patch) return <div className="git-diff-state">Содержимое не изменилось.</div>;
-  return <pre className="git-diff" aria-label="Разница версий файла">
-    {diff.patch.split("\n").map((line, index) => {
-      const tone = line.startsWith("@@") ? "hunk"
-        : line.startsWith("+++") || line.startsWith("---") ? "meta"
-          : line.startsWith("+") ? "add"
-            : line.startsWith("-") ? "del" : "ctx";
-      return <span className={tone} key={index}>{line || " "}</span>;
-    })}
-  </pre>;
+  const parsed = patchRows(diff.patch);
+  const additions = diff.additions ?? parsed.additions;
+  const deletions = diff.deletions ?? parsed.deletions;
+  return <div className="git-diff-card">
+    <div className="git-diff-head">
+      {path && <span className="git-diff-file" title={path}>{path}</span>}
+      <span className="git-diff-count add">+{additions}</span>
+      <span className="git-diff-count del">−{deletions}</span>
+    </div>
+    <div className="git-diff" aria-label="Разница версий файла">
+      {parsed.rows.map((row, index) => row.tone === "hunk"
+        ? <div className="git-diff-hunk" key={index}>{row.text}</div>
+        : <div className={"git-diff-row " + row.tone} key={index}>
+            <span className="git-diff-no" aria-hidden="true">{row.oldNo}</span>
+            <span className="git-diff-no" aria-hidden="true">{row.newNo}</span>
+            <span className="git-diff-mark" aria-hidden="true">{row.tone === "add" ? "+" : row.tone === "del" ? "−" : " "}</span>
+            <span className="git-diff-code">{row.text || " "}</span>
+          </div>,
+      )}
+    </div>
+  </div>;
 }
 
 export function ChangesPanel({ projectId, projectName, onRolledBack }: { projectId: string; projectName?: string; onRolledBack?: () => void }) {
@@ -147,6 +200,10 @@ export function ChangesPanel({ projectId, projectName, onRolledBack }: { project
   const changedFiles = worktree?.files ?? [];
   const selectedFiles = changedFiles.filter(file => selected.has(file.path));
   const canCommit = Boolean(message.trim()) && selectedFiles.length > 0 && !busy;
+  // Итог берётся из ответа сервера, но старый сервер без цифр не должен давать «+0 −0».
+  const statsReady = changedFiles.some(file => typeof file.additions === "number");
+  const totalAdditions = worktree?.additions ?? changedFiles.reduce((sum, file) => sum + (file.additions ?? 0), 0);
+  const totalDeletions = worktree?.deletions ?? changedFiles.reduce((sum, file) => sum + (file.deletions ?? 0), 0);
 
   const push = async () => {
     setBusy("push"); setNotice(null);
@@ -299,9 +356,17 @@ export function ChangesPanel({ projectId, projectName, onRolledBack }: { project
     setDiffs(current => ({ ...current, [key]: { loading: true, patch: "" } }));
     try {
       const result: ProjectFileDiff = await getProjectDiff(projectId, file, sha);
+      const parsed = patchRows(result.patch);
       setDiffs(current => ({
         ...current,
-        [key]: { loading: false, patch: result.patch, ...(result.binary ? { binary: true } : {}), ...(result.truncated ? { truncated: true } : {}) },
+        [key]: {
+          loading: false,
+          patch: result.patch,
+          additions: result.additions ?? parsed.additions,
+          deletions: result.deletions ?? parsed.deletions,
+          ...(result.binary ? { binary: true } : {}),
+          ...(result.truncated ? { truncated: true } : {}),
+        },
       }));
     } catch (diffError) {
       setDiffs(current => ({ ...current, [key]: { loading: false, patch: "", error: diffError instanceof Error ? diffError.message : String(diffError) } }));
@@ -400,7 +465,7 @@ export function ChangesPanel({ projectId, projectName, onRolledBack }: { project
 
       {!loading && data && <div className="git-card">
         <div className="git-card-head">
-          <div className="git-card-title"><FileCode size={13}/> Рабочие изменения <b>{changedFiles.length}</b><Hint label="Рабочие изменения">Файлы, которые ещё не попали в историю.</Hint></div>
+          <div className="git-card-title"><FileCode size={13}/> Рабочие изменения <b>{changedFiles.length}</b>{statsReady && <span className="git-review-total" title="Добавлено и удалено строк"><span className="add">+{totalAdditions}</span><span className="del">−{totalDeletions}</span></span>}<Hint label="Рабочие изменения">Файлы, которые ещё не попали в историю.</Hint></div>
           {changedFiles.length > 0 && <div className="git-card-tools">
             <button className="git-link-button" onClick={() => setSelected(new Set(changedFiles.map(file => file.path)))}>Выбрать все</button>
             {selected.size > 0 && <button className="git-link-button" onClick={() => setSelected(new Set())}>Снять</button>}
@@ -421,11 +486,14 @@ export function ChangesPanel({ projectId, projectName, onRolledBack }: { project
                     <button className="git-change-path" onClick={() => void showDiff(key, file.path)} title="Показать diff">
                       <span>{file.path}</span>
                       <span className={"git-status-text " + file.status}>{statusLabel[file.status]}</span>
+                      {typeof file.additions === "number" && <span className="git-file-stats" title="Добавлено и удалено строк">
+                        <span className="add">+{file.additions}</span><span className="del">−{file.deletions ?? 0}</span>
+                      </span>}
                     </button>
                     <button className="git-diff-toggle" onClick={() => void showDiff(key, file.path)} aria-expanded={open} title={open ? "Скрыть diff" : "Показать diff"}>
                       {open ? <ChevronDown size={13}/> : <ChevronDown size={13} className="git-chevron-right"/>}
                     </button>
-                    {open && <div className="git-diff-wrap"><DiffView diff={diffs[key] ?? { loading: true, patch: "" }}/></div>}
+                    {open && <div className="git-diff-wrap"><DiffView diff={diffs[key] ?? { loading: true, patch: "" }} path={file.path}/></div>}
                   </li>;
                 })}
               </ul>
@@ -493,13 +561,17 @@ export function ChangesPanel({ projectId, projectName, onRolledBack }: { project
                   {checkpoint.files.map(file => {
                     const key = checkpoint.sha + ":" + file.path;
                     const fileOpen = openDiff === key;
+                    const loaded = diffs[key];
                     return <li className="git-history-file" key={file.status + file.path}>
                       <button className="change-file git-history-file-button" onClick={() => void showDiff(key, file.path, checkpoint.sha)} aria-expanded={fileOpen}>
                         <span className={"change-file-mark " + file.status}>{fileMark[file.status]}</span>
                         <span className="change-file-path">{file.path}</span>
+                        {typeof loaded?.additions === "number" && <span className="git-file-stats" title="Добавлено и удалено строк">
+                          <span className="add">+{loaded.additions}</span><span className="del">−{loaded.deletions ?? 0}</span>
+                        </span>}
                         <ChevronDown size={11} className={fileOpen ? "" : "git-chevron-right"}/>
                       </button>
-                      {fileOpen && <div className="git-diff-wrap"><DiffView diff={diffs[key] ?? { loading: true, patch: "" }}/></div>}
+                      {fileOpen && <div className="git-diff-wrap"><DiffView diff={loaded ?? { loading: true, patch: "" }} path={file.path}/></div>}
                     </li>;
                   })}
                   {checkpoint.filesChanged > checkpoint.files.length && <li className="change-file more">и ещё {checkpoint.filesChanged - checkpoint.files.length}</li>}

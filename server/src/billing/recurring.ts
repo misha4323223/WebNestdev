@@ -1,4 +1,4 @@
-import { PLAN_CATALOG } from "../account/plans.js";
+import { planDisplayName } from "./plan-settings.js";
 import { renewalNoticeDays } from "./notify.js";
 import { chargeRecurring, planPriceRub, robokassaConfig } from "./robokassa.js";
 import { sendRenewalNotice } from "./notify.js";
@@ -45,7 +45,7 @@ export async function renewDueSubscriptions(now = new Date(), charge = chargeRec
         invId: payment.invId,
         parentInvId: record.parentInvId,
         amount,
-        description: "Продление подписки NestDev «" + PLAN_CATALOG[record.plan].name + "»",
+        description: "Продление подписки NestDev «" + planDisplayName(record.plan) + "»",
       });
       if (result.ok) {
         renewed += 1;

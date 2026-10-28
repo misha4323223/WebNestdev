@@ -14,11 +14,16 @@ export type OnboardingProfileInput = {
   name: string;
   /** Почта для обратной связи, не логин: аккаунт может быть привязан к телефону. */
   email: string;
+  /** Письма о работе сервиса. */
   newsletter: boolean;
+  /** Рекламные и информационные письма: уходят только при явном согласии. */
   productUpdates: boolean;
+  /** Откуда человек узнал о NestDev. */
+  source?: string;
 };
 
-export type OnboardingProfile = OnboardingProfileInput & {
+export type OnboardingProfile = Omit<OnboardingProfileInput, "source"> & {
+  source: string;
   completedAt: string;
   updatedAt: string;
 };
@@ -45,6 +50,26 @@ export async function saveOnboardingProfile(input: OnboardingProfileInput): Prom
     body: JSON.stringify(input),
   });
   return data.profile;
+}
+
+/**
+ * Точечная правка профиля: источник знакомства, согласие или почта меняются по одному полю.
+ * Сервер сам сохраняет остальные значения, поэтому форма настроек не переписывает чужие данные.
+ */
+export async function updateOnboardingProfile(
+  patch: Partial<Pick<OnboardingProfileInput, "name" | "email" | "newsletter" | "productUpdates" | "source">>,
+): Promise<OnboardingProfile> {
+  const data = await apiJson<{ profile: OnboardingProfile }>("/api/account/profile", {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  return data.profile;
+}
+
+/** Ответ на вопрос «откуда узнали» сохраняется отдельно от контактов: он идёт после них. */
+export function saveOnboardingSource(source: string): Promise<OnboardingProfile> {
+  return updateOnboardingProfile({ source });
 }
 
 /**

@@ -491,9 +491,31 @@ async function worktreeText(root: string, filepath: string): Promise<{ text: str
   return { text };
 }
 
-/** Diff рабочего дерева по файлу — то, что панель показывает до коммита. */
-export async function worktreeDiff(root: string, filepath: string): Promise<FileDiff> {
-  const scan = await scanChanges(root);
+/**
+ * Считает добавленные и удалённые строки по готовому unified diff. Заголовки файла и хунков
+ * (`---`, `+++`, `@@`) не считаются: иначе каждый diff прибавлял бы себе две «строки».
+ */
+export function diffStats(patch: string): { additions: number; deletions: number } {
+  let additions = 0;
+  let deletions = 0;
+  if (!patch) return { additions, deletions };
+  for (const line of patch.split("\n")) {
+    if (line.startsWith("+++") || line.startsWith("---") || line.startsWith("@@")) continue;
+    if (line.startsWith("+")) additions += 1;
+    else if (line.startsWith("-")) deletions += 1;
+  }
+  return { additions, deletions };
+}
+
+/**
+ * Diff рабочего дерева по уже сделанному сканированию. Отдельная функция нужна панели ревью:
+ * она берёт один `scanChanges` на все файлы, а не сканирует дерево заново для каждого diff.
+ */
+export async function worktreeDiffFromScan(
+  root: string,
+  filepath: string,
+  scan: Awaited<ReturnType<typeof scanChanges>>,
+): Promise<FileDiff> {
   const file = scan.changed.find(item => item.path === filepath);
   if (!file) throw new Error("Файл не изменён: возможно, он уже вошёл в историю.");
   let before = "";
@@ -501,18 +523,25 @@ export async function worktreeDiff(root: string, filepath: string): Promise<File
   if (oldOid) {
     const { blob } = await git.readBlob({ fs, dir: root, oid: oldOid });
     const text = blobText(blob);
-    if (text === null) return { path: filepath, status: file.status, patch: "", binary: true };
+    if (text === null) return { path: filepath, status: file.status, patch: "", additions: 0, deletions: 0, binary: true };
     before = text;
   }
   if (file.status === "deleted") {
     const { patch, truncated } = unifiedPatch(filepath, before, "");
-    return { path: filepath, status: file.status, patch, ...(truncated ? { truncated: true } : {}) };
+    const stats = diffStats(patch);
+    return { path: filepath, status: file.status, patch, ...stats, ...(truncated ? { truncated: true } : {}) };
   }
   const after = await worktreeText(root, filepath);
-  if (after.binary) return { path: filepath, status: file.status, patch: "", binary: true };
-  if (after.truncated) return { path: filepath, status: file.status, patch: "", truncated: true };
+  if (after.binary) return { path: filepath, status: file.status, patch: "", additions: 0, deletions: 0, binary: true };
+  if (after.truncated) return { path: filepath, status: file.status, patch: "", additions: 0, deletions: 0, truncated: true };
   const { patch, truncated } = unifiedPatch(filepath, before, after.text);
-  return { path: filepath, status: file.status, patch, ...(truncated ? { truncated: true } : {}) };
+  const stats = diffStats(patch);
+  return { path: filepath, status: file.status, patch, ...stats, ...(truncated ? { truncated: true } : {}) };
+}
+
+/** Diff рабочего дерева по файлу — то, что панель показывает до коммита. */
+export async function worktreeDiff(root: string, filepath: string): Promise<FileDiff> {
+  return worktreeDiffFromScan(root, filepath, await scanChanges(root));
 }
 
 /** Diff файла в готовом коммите: панель истории показывает тот же вид, что и рабочие правки. */
@@ -537,7 +566,8 @@ export async function checkpointDiff(root: string, sha: string, filepath: string
   };
   const [before, after] = await Promise.all([read(oldOid), read(newOid)]);
   const { patch, truncated } = unifiedPatch(filepath, before, after);
-  return { path: filepath, status, patch, ...(truncated ? { truncated: true } : {}) };
+  const stats = diffStats(patch);
+  return { path: filepath, status, patch, ...stats, ...(truncated ? { truncated: true } : {}) };
 }
 
 /**

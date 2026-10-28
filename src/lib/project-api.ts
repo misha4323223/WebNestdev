@@ -134,9 +134,9 @@ export type RepositoryBranch={name:string;current:boolean;remote:boolean;pushed:
 export type ProjectBranches={initialized:boolean;current:string;branches:RepositoryBranch[]};
 export const listProjectBranches=(projectId:string)=>apiJson<ProjectBranches>("/api/projects/"+projectId+"/changes/branches");
 /** Рабочие изменения: то, что ещё не стало точкой истории. */
-export type WorktreeFile={path:string;status:"added"|"modified"|"deleted"};
-export type ProjectWorktree={initialized:boolean;branch:string;files:WorktreeFile[]};
-export type ProjectFileDiff={path:string;status:"added"|"modified"|"deleted";patch:string;binary?:boolean;truncated?:boolean};
+export type WorktreeFile={path:string;status:"added"|"modified"|"deleted";additions?:number;deletions?:number};
+export type ProjectWorktree={initialized:boolean;branch:string;files:WorktreeFile[];additions?:number;deletions?:number};
+export type ProjectFileDiff={path:string;status:"added"|"modified"|"deleted";patch:string;additions?:number;deletions?:number;binary?:boolean;truncated?:boolean};
 export const getProjectWorktree=(projectId:string)=>apiJson<ProjectWorktree>("/api/projects/"+projectId+"/changes/worktree");
 /** Diff файла — из рабочего дерева или из коммита истории. */
 export const getProjectDiff=(projectId:string,path:string,sha?:string)=>apiJson<ProjectFileDiff>(

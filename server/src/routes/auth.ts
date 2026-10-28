@@ -7,7 +7,7 @@ import { findPhoneByUserId, formatPhone } from "../auth/phone-store.js";
 import { getUserProfile } from "../account/profile-store.js";
 import { checkAuthRateLimit } from "../auth/auth-rate-limit.js";
 import { recordAudit } from "../security/audit-journal.js";
-import { ACCOUNT_BLOCKED_MESSAGE } from "../account/restriction-store.js";
+import { blockedMessageFor, getRestriction } from "../account/restriction-store.js";
 
 const credentials = z.object({email:z.string().email().max(200),password:z.string().min(8).max(200)});
 
@@ -102,7 +102,7 @@ export async function registerAuthRoutes(app:FastifyInstance){
         ip: request.ip,
         details: { reason: "blocked" },
       });
-      return reply.code(403).send({error:ACCOUNT_BLOCKED_MESSAGE});
+      return reply.code(403).send({error:blockedMessageFor(await getRestriction(user.id))});
     }
     return {user:{id:user.id,email:user.email,createdAt:user.createdAt}};
   });

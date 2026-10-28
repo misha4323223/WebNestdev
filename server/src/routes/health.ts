@@ -17,7 +17,7 @@ import { supportKeyStatus } from "../support/support-api-key.js";
 import { mailSettings, mailSettingsSource } from "../mail/mailer.js";
 import { postboxConfig, postboxCredentialSummary } from "../mail/postbox.js";
 import { lastMailFailure } from "../mail/mail-health.js";
-import { getPlatformEnv } from "../platform/platform-env.js";
+import { getPlatformEnv, platformEnvSetByPanel } from "../platform/platform-env.js";
 import { normalizeAddress } from "../security/client-ip.js";
 import type { FastifyRequest } from "fastify";
 
@@ -126,9 +126,17 @@ function mailInfo(){
   const credential=postboxCredentialSummary();
   const campaigns=postboxConfig();
   const campaignsReady=Boolean(campaigns.auth)||credential.kind==="metadata";
+  const sender=settings?.from ?? (campaigns.sender || null);
+  // Значение из панели важнее .env выкатки, поэтому при замене переменной в GitHub ответ
+  // «почему адрес прежний» лежит здесь, а не в логах деплоя.
+  const senderKey=source==="MAIL_SMTP" ? "MAIL_FROM" : "POSTBOX_SENDER";
   return {
     provider:"postbox" as const,
-    sender:settings?.from ?? (campaigns.sender || null),
+    sender,
+    senderSource:sender ? (platformEnvSetByPanel(senderKey) ? "panel" : "environment") : null,
+    // Домен вместо адреса (`nestdev.ru` вместо `mail@nestdev.ru`) — это 550 на шаге from,
+    // и по одному виду значения это видно раньше, чем по отказу отправки.
+    senderIsAddress:sender ? sender.includes("@") : null,
     // Чем реально уходят письма поддержки и оплаты. Вид и источник описывают одно и то же:
     // раньше здесь могли оказаться ключ писем и ключ рассылки вперемешку, и поле врало именно
     // в том разборе, для которого сделано. Ключ рассылки — в `campaigns.credentialKind`.

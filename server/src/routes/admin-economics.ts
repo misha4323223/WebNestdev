@@ -1,6 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
-import { PLAN_CATALOG, type PlanId } from "../account/plans.js";
+import type { PlanId } from "../account/plans.js";
+import { planDisplayName } from "../billing/plan-settings.js";
 import { planPriceRub } from "../billing/robokassa.js";
 import {
   costForTokens,
@@ -63,7 +64,7 @@ function toPlan(value: unknown): PlanId {
 }
 
 function planName(plan: PlanId): string {
-  return PLAN_CATALOG[plan].name;
+  return planDisplayName(plan);
 }
 
 /** Инфраструктура в период: месячная сумма разложена по 30 дням, как и месячная оценка расхода. */

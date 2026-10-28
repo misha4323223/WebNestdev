@@ -11,6 +11,8 @@ export type SupportTicketInput = {
   context?: string;
   page?: string;
   projectId?: string;
+  /** Почта для ответа: подставляется из профиля, а без неё человек вводит её сам. */
+  contactEmail?: string;
   /** data URL картинки: сервер проверяет сигнатуру и размер. */
   screenshot: string;
 };

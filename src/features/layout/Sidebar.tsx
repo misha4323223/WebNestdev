@@ -1,7 +1,9 @@
 import { useEffect,useMemo,useState } from "react";
-import { ArrowUpRight,CreditCard,HardDrive,Pin,Plus,Trash2 } from "lucide-react";
+import { ArrowUpRight,CreditCard,HardDrive,Pencil,Pin,Plus,Trash2 } from "lucide-react";
+import { SidebarAccount } from "./SidebarAccount";
 import { SidebarBanner } from "./SidebarBanner";
 import { NestLoader } from "../../components/NestLoader";
+import { ProjectRenameForm } from "../home/ProjectRename";
 import { bytesLabel, getBilling } from "../../lib/billing-api";
 import { activePlanId, chosenPlanId, isPendingChoice, planName, usePlanChoice } from "../../lib/plan-choice";
 import { CHAT_GROUP_LABELS, formatSessionTime, groupChats, readPinnedChats, writePinnedChats } from "../agent/ChatSessions";
@@ -119,21 +121,26 @@ export type SidebarChats={
 
 /**
  * Колонка рабочей области — чаты проекта, как в чат-интерфейсах: сверху «Новый чат», ниже
- * закреплённые и остальные по датам, внизу тариф и баннер поддержки. Разделы (агент, файлы,
- * Git, терминал) живут строкой вкладок над содержимым, поэтому здесь их нет: колонка отвечает
- * только за то, какой чат открыт.
+ * закреплённые и остальные по датам, внизу тариф, баннер поддержки и аккаунт. Разделы (агент,
+ * файлы, Git, терминал) живут строкой вкладок над содержимым, поэтому здесь их нет: колонка
+ * отвечает только за то, какой чат открыт.
+ *
+ * Название проекта под «Новым чатом» — кнопка переименования: в шапке оно спорило за место с
+ * действиями и на телефоне обрезалось, а здесь видно, в каком проекте открыт чат.
  *
  * Закрепление поднимает чат над датами: у долгой работы бывает один главный разговор, к
  * которому возвращаются чаще остальных.
  */
-export function Sidebar({open,projectName,chats,onPlan}:{open:boolean;projectName:string;chats:SidebarChats;onPlan:()=>void}){
+export function Sidebar({open,projectName,projectRunning,chats,onSettings,onSecrets,onRenameProject}:{open:boolean;projectName:string;projectRunning?:boolean;chats:SidebarChats;onSettings:()=>void;onSecrets:()=>void;onRenameProject:(name:string)=>Promise<unknown>}){
   const plan=usePlanInfo();
   const [pinned,setPinned]=useState<string[]>(()=>readPinnedChats(chats.projectId));
   const [busy,setBusy]=useState(false);
   const [deleting,setDeleting]=useState("");
   const [actionError,setActionError]=useState("");
+  const [renaming,setRenaming]=useState(false);
+  const [renameError,setRenameError]=useState("");
   // Другой проект — другие закрепления: они хранятся по проекту, а не на всю учётную запись.
-  useEffect(()=>{setPinned(readPinnedChats(chats.projectId));setActionError("")},[chats.projectId]);
+  useEffect(()=>{setPinned(readPinnedChats(chats.projectId));setActionError("");setRenaming(false);setRenameError("")},[chats.projectId]);
 
   const groups=useMemo(()=>groupChats(chats.sessions??[],pinned),[chats.sessions,pinned]);
 
@@ -150,6 +157,17 @@ export function Sidebar({open,projectName,chats,onPlan}:{open:boolean;projectNam
     try{await chats.onNew()}
     catch(error){setActionError(error instanceof Error?error.message:"Не удалось создать чат")}
     finally{setBusy(false)}
+  }
+
+  /** Enter сохраняет, Escape отменяет; ошибка остаётся у формы, чтобы название не потерялось. */
+  async function submitRename(name:string){
+    setRenameError("");
+    try{
+      await onRenameProject(name);
+      setRenaming(false);
+    }catch(error){
+      setRenameError(error instanceof Error?error.message:"Не удалось переименовать проект");
+    }
   }
 
   /**
@@ -184,10 +202,26 @@ export function Sidebar({open,projectName,chats,onPlan}:{open:boolean;projectNam
         <span>Новый чат</span>
       </button>
       {/* Название проекта под кнопкой: в шапке оно делит место с действиями и на телефоне
-          обрезается, а в колонке видно, в каком проекте открыт чат. */}
-      <div className="chat-side-project" title={"Проект: "+projectName}>
+          обрезается, а в колонке видно, в каком проекте открыт чат. Клик открывает
+          переименование на месте — уходить для этого на главную больше не нужно. */}
+      <div className="chat-side-project">
         <small>Проект</small>
-        <strong>{projectName}</strong>
+        {renaming
+          ? <div className="chat-side-rename">
+              <ProjectRenameForm initial={projectName} onSubmit={name=>void submitRename(name)} onCancel={()=>{setRenaming(false);setRenameError("")}}/>
+              {renameError&&<span className="chat-side-rename-error" role="alert">{renameError}</span>}
+            </div>
+          : <button
+              type="button"
+              className="chat-side-project-button"
+              onClick={()=>{setRenaming(true);setRenameError("")}}
+              title={"Переименовать проект «"+projectName+"»"}
+              aria-label={"Переименовать проект «"+projectName+"»"}
+            >
+              <span className={"chat-side-project-dot"+(projectRunning?" is-live":"")} aria-hidden="true"/>
+              <strong>{projectName}</strong>
+              <Pencil size={10} className="chat-side-project-pencil" aria-hidden="true"/>
+            </button>}
       </div>
     </div>
 
@@ -233,8 +267,9 @@ export function Sidebar({open,projectName,chats,onPlan}:{open:boolean;projectNam
     </nav>
 
     <div className="sidebar-footer">
-      <SidebarPlan plan={plan} onPlan={onPlan}/>
+      <SidebarPlan plan={plan} onPlan={onSettings}/>
       <SidebarBanner/>
+      <SidebarAccount onSettings={onSettings} onSecrets={onSecrets}/>
     </div>
   </aside>;
 }

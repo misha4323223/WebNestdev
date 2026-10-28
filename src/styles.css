@@ -641,6 +641,27 @@ button,textarea{font:inherit}button{color:inherit}
 .account-toggle span small{margin-top:4px;color:#737c87;font-size:10px;line-height:1.4}
 .account-toggle input[type=checkbox]{accent-color:#e6e9ed;width:15px;height:15px;flex:none}
 .account-save{width:auto;min-width:145px;padding:0 12px}
+/* Подписка на рассылку в настройках: одна карточка на оба состояния — подписан и ещё нет. */
+.account-subscribe{display:grid;gap:11px;margin:0 0 16px;padding:13px;border:1px solid var(--line-warm);border-radius:8px;background:linear-gradient(160deg,#11151a,#0d1014)}
+.account-subscribe-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.account-subscribe-head>div{min-width:0}
+.account-subscribe-head strong{display:block;color:#dfe3e8;font-size:11.5px;font-weight:600}
+.account-subscribe-head small{display:block;margin-top:4px;color:#79828d;font-size:10px;line-height:1.5}
+.account-subscribe-state{display:inline-flex;flex:none;align-items:center;gap:4px;padding:4px 8px;border:1px solid #3d4a38;border-radius:999px;background:#151d14;color:#a9c29d;font-size:9px;font-weight:600;white-space:nowrap}
+.account-subscribe-open{flex:none;width:auto;height:30px;min-width:0;padding:0 11px;font-size:10.5px}
+.account-subscribe-form{display:grid;gap:9px;padding-top:11px;border-top:1px solid var(--line-warm)}
+.account-subscribe-field{display:grid;gap:5px;color:#9ba2ac;font-size:10px}
+.account-subscribe-field input{width:100%;height:34px;border:1px solid var(--line-warm);border-radius:6px;background:#0c0e12;color:#e0e3e8;padding:0 10px;outline:none;font:inherit}
+.account-subscribe-field input:focus{border-color:var(--camo-line-strong);box-shadow:0 0 0 3px rgba(204,195,178,.1)}
+.account-subscribe-check{display:flex;align-items:flex-start;gap:8px;color:#8e97a2;font-size:10px;line-height:1.45;cursor:pointer}
+.account-subscribe-check input{flex:none;width:13px;height:13px;margin:2px 0 0;accent-color:var(--camo);cursor:pointer}
+.account-subscribe-check a{color:var(--camo);text-decoration:underline;text-underline-offset:2px}
+.account-subscribe-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.account-subscribe-actions .send-button{width:auto;height:32px;padding:0 13px;font-size:10.5px}
+.account-subscribe-actions .ghost-button{height:32px;padding:0 11px;font-size:10.5px}
+.account-subscribe-error{color:#e0948a;font-size:10px;line-height:1.45}
+.account-subscribe-note{color:#6f7782;font-size:9.5px;line-height:1.5;margin:0}
+.account-subscribe-done{color:#a9c29d}
 .subscription-current{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:14px 0 10px;padding:12px;border:1px solid var(--line-warm);border-radius:7px;background:#0d1014}
 .subscription-current>div span,.subscription-current>div strong{display:block}
 .subscription-current>div span{font-size:10px;color:#818994}
@@ -2023,6 +2044,45 @@ button,textarea{font:inherit}button{color:inherit}
 .topbar-account-head strong{color:#e8e7e6;font-size:11.5px;font-weight:650;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .topbar-account-head small{color:#6f7883;font-size:9.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 @keyframes topbar-menu-in{from{opacity:0;transform:translateY(-4px)}}
+
+/* Колокольчик уведомлений: та же тёмная пластина, что у меню аккаунта, но собственный список.
+   Счётчик — единственная яркая точка: подарок администратора не должен выглядеть как обычная
+   иконка в шапке. */
+.notifications{position:relative;flex:none}
+.notifications-topbar{display:flex}
+.notifications-trigger{position:relative}
+.notifications-rail{width:100%;padding:6px;border:1px solid var(--line-warm-soft);border-radius:10px;background:#0e1014}
+.notifications-rail-trigger{position:relative;width:100%;height:34px;display:flex;align-items:center;gap:9px;padding:0 10px;border:1px solid transparent;border-radius:7px;background:transparent;color:#9aa2ad;font-size:11.5px;text-align:left;cursor:pointer}
+.notifications-rail-trigger:hover{background:#15181e;color:#e8eaed}
+.notifications-trigger-label{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.notifications-badge{flex:none;min-width:15px;height:15px;padding:0 4px;border:1px solid #0b0d10;border-radius:999px;background:#cfbc9c;color:#151008;font:700 8.5px/13px ui-monospace,SFMono-Regular,Menlo,monospace;text-align:center;letter-spacing:0}
+.notifications-topbar .notifications-badge,.notifications-tab .notifications-badge{position:absolute;top:-4px;right:-4px}
+.notifications-rail .notifications-badge{position:static;flex:none;margin-left:auto;border-color:#0e1014}
+.notifications-tab{display:flex;flex:none;position:relative}
+.notifications-tab-trigger{position:relative;padding:0 9px}
+.notifications-panel{position:absolute;z-index:46;top:calc(100% + 8px);right:0;width:min(340px,calc(100vw - 24px));max-height:min(460px,70vh);display:flex;flex-direction:column;padding:6px;border:1px solid var(--line-warm);border-radius:10px;background:linear-gradient(168deg,#131a21,#0d1116 72%);box-shadow:0 24px 54px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.05);animation:topbar-menu-in .13s ease both}
+.notifications-panel::before{content:"";position:absolute;left:10px;right:10px;top:0;height:1px;background:linear-gradient(90deg,transparent,rgba(207,188,156,.45),transparent)}
+.notifications-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:4px 8px 7px;border-bottom:1px solid var(--line-warm-soft)}
+.notifications-head>span{font:700 8.5px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.16em;color:#a39378}
+.notifications-read-all{padding:3px 5px;border:0;border-radius:5px;background:transparent;color:#cfbc9c;font-size:10px;cursor:pointer}
+.notifications-read-all:hover{background:#1d242b;color:#f0ece4}
+.notifications-read-all:disabled{opacity:.55;cursor:default}
+.notifications-error,.notifications-empty{margin:0;padding:12px 8px;color:#818a95;font-size:10.5px;line-height:1.5}
+.notifications-error{color:#e8b9b0}
+.notifications-list{display:grid;gap:2px;padding-top:4px;overflow:auto;scrollbar-width:thin}
+.notifications-item{display:flex;align-items:flex-start;gap:8px;padding:8px;border:1px solid transparent;border-radius:7px}
+.notifications-item.unread{border-color:var(--line-warm-soft);background:#151b21}
+.notifications-icon{flex:none;width:24px;height:24px;display:grid;place-items:center;border:1px solid #4a402e;border-radius:7px;background:#282011;color:#cfbc9c}
+.notifications-copy{flex:1;min-width:0;display:grid;gap:3px}
+.notifications-copy strong{color:#e8e7e6;font-size:11px;font-weight:600;line-height:1.4;overflow-wrap:anywhere}
+.notifications-copy small{color:#6f7883;font-size:9px}
+.notifications-read{flex:none;width:24px;height:24px;display:grid;place-items:center;border:1px solid var(--line-warm);border-radius:6px;background:transparent;color:#8f97a2;cursor:pointer}
+.notifications-read:hover{background:#1d242b;color:#f0ece4}
+.notifications-read:disabled{opacity:.55;cursor:default}
+@media(max-width:900px){.notifications-rail{display:none}}
+@media(max-width:650px){
+  .notifications-topbar .notifications-panel{position:fixed;top:calc(var(--topbar-h) + 6px);left:10px;right:10px;width:auto;max-width:none}
+}
 @keyframes topbar-dot{0%{box-shadow:0 0 0 0 rgba(207,188,156,.34)}70%{box-shadow:0 0 0 5px rgba(207,188,156,0)}100%{box-shadow:0 0 0 0 rgba(207,188,156,0)}}
 @media(prefers-reduced-motion:reduce){.topbar-menu,.topbar-dot.is-live{animation:none}}
 /* На телефоне путь сокращается до самого проекта: ветка и история открываются вкладкой «Изменения»,
@@ -2229,9 +2289,10 @@ button,textarea{font:inherit}button{color:inherit}
 .support-field{display:grid;gap:5px;color:#aab3bd;font-size:10px}
 .support-field>span{display:flex;align-items:baseline;gap:6px;color:#c3cbd3;font-size:10.5px;font-weight:600}
 .support-field>span i{color:#5f6873;font-size:8.5px;font-style:normal;font-weight:500}
-.support-field textarea{width:100%;min-height:52px;padding:8px 10px;border:1px solid var(--line-warm);border-radius:8px;background:#0b0e12;color:#dde2e7;font-family:inherit;font-size:11.5px;line-height:1.55;resize:vertical;outline:none;transition:border-color .16s ease}
-.support-field textarea::placeholder{color:#5c6570}
-.support-field textarea:focus{border-color:#645233;box-shadow:0 0 0 3px rgba(202,184,152,.07)}
+.support-field textarea,.support-field input{width:100%;min-height:52px;padding:8px 10px;border:1px solid var(--line-warm);border-radius:8px;background:#0b0e12;color:#dde2e7;font-family:inherit;font-size:11.5px;line-height:1.55;resize:vertical;outline:none;transition:border-color .16s ease}
+.support-field input{min-height:0;height:34px;resize:none}
+.support-field textarea::placeholder,.support-field input::placeholder{color:#5c6570}
+.support-field textarea:focus,.support-field input:focus{border-color:#645233;box-shadow:0 0 0 3px rgba(202,184,152,.07)}
 .support-field small{color:#646d78;font-size:9px;line-height:1.4}
 .support-error{margin:0;padding:8px 10px;font-size:10px}
 .support-compose{padding:8px 9px 7px;border:1px solid var(--line-warm);border-radius:10px;background:#0f1319;transition:border-color .16s ease,background .16s ease}
@@ -2425,6 +2486,10 @@ button,textarea{font:inherit}button{color:inherit}
 .onboarding-check>span{display:grid;gap:2px;min-width:0}
 .onboarding-check strong{font-size:11px;font-weight:600;line-height:1.4;color:#e3e2e1}
 .onboarding-check small{font-size:9.5px;line-height:1.45;color:#91897a}
+.onboarding-check small a{color:var(--camo);text-decoration:underline;text-underline-offset:2px}
+.onboarding-check.is-disabled{opacity:.55;cursor:not-allowed}
+.onboarding-check.is-disabled:hover{border-color:var(--line-warm);background:#0d1215}
+.onboarding-check input:disabled{cursor:not-allowed}
 
 /* Контекст для слоя темы: `.theme-sheet` лежит поверх кадра с `position:absolute`.
    Только на широком экране — на ≤900px панель сама `position:fixed` (шторка), и
@@ -2627,13 +2692,28 @@ button,textarea{font:inherit}button{color:inherit}
 .git-diff-toggle{width:22px;height:22px;display:grid;place-content:center;border:0;border-radius:4px;background:transparent;color:#6f7781;cursor:pointer;padding:0}
 .git-diff-toggle:hover{background:#1a1f26;color:#c5c9cf}
 .git-diff-wrap{grid-column:1/-1}
-.git-diff{margin:0 0 4px;padding:7px 0;border:1px solid var(--line-warm-soft);border-radius:6px;background:#080a0d;max-height:360px;overflow:auto;font:10px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;color:#aeb4bd;white-space:pre;tab-size:2}
-.git-diff span{display:block;padding:0 9px;min-height:15px}
-.git-diff .add{background:#231b0c;color:#cfc5b3}
-.git-diff .del{background:#241416;color:#e3a3a3}
-.git-diff .hunk{background:#11181e;color:#bdad91;margin:4px 0;padding:2px 9px}
-.git-diff .meta{color:#6f7781}
-.git-diff .ctx{color:#9aa3ae}
+/* Ревью файла: шапка с именем и итогом, ниже — diff с номерами строк обеих версий. */
+.git-diff-card{margin:0 0 4px;border:1px solid var(--line-warm-soft);border-radius:7px;background:#080a0d;overflow:hidden}
+.git-diff-head{display:flex;align-items:center;gap:7px;padding:6px 9px;border-bottom:1px solid #1a2027;background:#0d1116;font:9.5px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace}
+.git-diff-file{flex:1;min-width:0;color:#c5cad1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.git-diff-count{flex:none;padding:1px 5px;border-radius:4px;font-weight:700;font-variant-numeric:tabular-nums}
+.git-diff-count.add{color:#d3c19c;background:#231b0c}
+.git-diff-count.del{color:#e3a3a3;background:#241416}
+.git-diff{max-height:420px;overflow:auto;font:10px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;color:#9aa3ae;tab-size:2;scrollbar-width:thin}
+.git-diff-row{display:grid;grid-template-columns:38px 38px 14px auto;width:max-content;min-width:100%;align-items:start}
+.git-diff-row.add{background:#231b0c}
+.git-diff-row.del{background:#241416}
+.git-diff-no{padding:0 5px;color:#555e69;text-align:right;user-select:none;font-variant-numeric:tabular-nums;border-right:1px solid #14181d}
+.git-diff-mark{padding:0;text-align:center;color:#6f7781;user-select:none}
+.git-diff-code{min-height:16px;padding:0 4px;white-space:pre}
+.git-diff-row.add .git-diff-code{color:#d3c5aa}
+.git-diff-row.del .git-diff-code{color:#e3a3a3}
+.git-diff-row.ctx .git-diff-code{color:#9aa3ae}
+.git-diff-hunk{margin:4px 0;padding:2px 9px;background:#11181e;color:#bdad91;white-space:pre;width:max-content;min-width:100%}
+.git-review-total{display:inline-flex;align-items:center;gap:6px;margin-left:5px;font:700 9.5px/1 ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums;vertical-align:middle}
+.git-review-total .add,.git-file-stats .add{color:#c2aa81}
+.git-review-total .del,.git-file-stats .del{color:#d99b9b}
+.git-file-stats{display:inline-flex;align-items:center;gap:5px;flex:none;margin-left:7px;font:700 9px/1 ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums}
 .git-diff-state{padding:9px 11px;margin-bottom:4px;border:1px solid var(--line-warm-soft);border-radius:6px;background:#0b0d10;color:#7f8792;font-size:10px;display:flex;align-items:center;gap:6px}
 .git-diff-state.warn{color:#d99b9b;border-color:#4a3030;background:#1b1212}
 .git-commit{padding:9px 11px 11px;border-top:1px solid var(--line-warm-soft);background:#0d1014}
@@ -2976,3 +3056,85 @@ button,textarea{font:inherit}button{color:inherit}
 .access-writes strong{color:#e6e4e2;font-size:10.5px;font-weight:600}
 .access-writes small{color:#91846f;font-size:9.5px;line-height:1.45}
 @media(max-width:650px){.chat-credential{padding:11px;gap:8px;max-height:52dvh}.chat-credential-wait{width:100%;margin-right:0}.chat-credential-actions{justify-content:stretch}.chat-credential-actions .ghost-button,.chat-credential-save{flex:1;justify-content:center}.chat-credential-head .icon-button{flex:none}}
+
+/*
+ * Название проекта в колонке — кнопка переименования. В шапке оно делило место с действиями
+ * и на телефоне обрезалось; здесь имя видно целиком, а карандаш появляется при наведении.
+ */
+.chat-side-project-button{display:flex;align-items:center;gap:6px;width:100%;min-width:0;padding:2px 3px;border:1px solid transparent;border-radius:6px;background:transparent;color:#d4d9df;font:inherit;text-align:left;cursor:pointer;transition:background .15s ease,border-color .15s ease}
+.chat-side-project-button:hover{background:#151a20;border-color:var(--line-warm-soft)}
+.chat-side-project-button:focus-visible{outline:2px solid #524836;outline-offset:1px}
+.chat-side-project-button strong{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#d4d9df;font-size:11.5px;font-weight:600;letter-spacing:-.01em}
+.chat-side-project-dot{flex:none;width:5px;height:5px;border-radius:50%;background:#5b6570}
+.chat-side-project-dot.is-live{background:#cfbc9c;box-shadow:0 0 0 3px rgba(207,188,156,.13);animation:topbar-dot 2s ease-out infinite}
+.chat-side-project-pencil{flex:none;margin-left:auto;color:#6f7883;opacity:.45;transition:opacity .15s ease,color .15s ease}
+.chat-side-project-button:hover .chat-side-project-pencil,.chat-side-project-button:focus-visible .chat-side-project-pencil{opacity:1;color:#ccc3b2}
+.chat-side-rename{display:grid;gap:4px;min-width:0}
+.chat-side-rename .project-rename{grid-column:auto;flex-direction:row;align-items:center;gap:4px;width:100%}
+.chat-side-rename .project-rename input{width:auto;flex:1;min-width:0;height:26px;padding:0 7px;font-size:10.5px}
+.chat-side-rename .project-rename-actions{flex:none;gap:3px}
+.chat-side-rename .project-rename-actions .icon-button{width:24px;height:24px}
+.chat-side-rename-error{display:block;color:#d99b9b;font-size:9.5px;line-height:1.4;overflow-wrap:anywhere}
+
+/*
+ * Аккаунт — последняя строка колонки, под поддержкой проекта. Меню раскрывается вверх:
+ * внизу места нет, а так оно остаётся в пределах колонки и не уезжает вместе с чатами.
+ */
+.sidebar-account{position:relative;margin-top:14px;padding-top:12px;border-top:1px solid var(--line-warm-soft)}
+.sidebar-account-button{display:flex;align-items:center;gap:8px;width:100%;min-width:0;padding:5px;border:1px solid transparent;border-radius:8px;background:transparent;color:#d4d9df;font:inherit;text-align:left;cursor:pointer;transition:background .15s ease,border-color .15s ease}
+.sidebar-account-button:hover,.sidebar-account-button.open{background:#151a20;border-color:var(--line-warm-soft)}
+.sidebar-account-button:focus-visible{outline:2px solid #524836;outline-offset:1px}
+.sidebar-account-avatar{flex:none;width:28px;height:28px;display:grid;place-items:center;border:1px solid #4a402e;border-radius:8px;background:linear-gradient(150deg,#2f2616,#121a20);color:#ccc3b2}
+.sidebar-account-copy{flex:1;min-width:0;display:grid;gap:1px}
+.sidebar-account-copy strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e7e9ec;font-size:11.5px;font-weight:600}
+.sidebar-account-copy small{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#6f7883;font-size:9.5px}
+.sidebar-account-caret{flex:none;color:#6f7883;transition:transform .16s ease}
+.sidebar-account-caret.open{transform:rotate(180deg);color:#ccc3b2}
+.sidebar-account-menu{position:absolute;z-index:60;left:0;right:0;bottom:calc(100% + 7px);min-width:0;padding:6px;border:1px solid var(--line-warm);border-radius:10px;background:linear-gradient(168deg,#131a21,#0d1116 72%);box-shadow:0 24px 54px rgba(0,0,0,.58),inset 0 1px 0 rgba(255,255,255,.05);animation:topbar-menu-in .13s ease both}
+.sidebar-account-menu::before{content:"";position:absolute;left:10px;right:10px;top:0;height:1px;background:linear-gradient(90deg,transparent,rgba(207,188,156,.45),transparent)}
+
+/* Пока файл не выбран, дерево занимает всю панель: подсказка редактора не должна
+   отбирать половину ширины у списка папок. */
+.file-browser.is-browsing .file-tree{width:100%;max-height:none;border-right:0;border-bottom:0}
+.file-browser.is-browsing .file-editor{display:none}
+
+/* Загрузчик в строке размышления: маленький знак перед словом, а не отдельный блок под ответом. */
+.thinking-waiting{gap:6px}
+.thinking-head .nest-loader,.thinking-waiting .nest-loader{color:#bdad91}
+
+/* Скидка на тарифе: базовая цена остаётся видимой, но тише итоговой. */
+.plan-price-old{display:inline-block;margin-right:7px;color:#6f7884;font-size:13px;font-weight:500;text-decoration:line-through;text-decoration-color:#8d5f5f;vertical-align:2px}
+.plan-card-price{display:inline-flex;align-items:baseline;justify-content:flex-end;gap:6px;flex-wrap:wrap}
+.plan-card-price s{color:#6f7884;font-size:9px;font-weight:500;text-decoration-color:#8d5f5f}
+.plan-card-price b{color:#d9dee4;font-size:10.5px;font-weight:650;white-space:nowrap}
+
+/*
+ * Админская витрина тарифов: две карточки в том же тёплом материале, что остальные
+ * настройки. Поля не спорят с ценой: превью сразу показывает, что увидит человек.
+ */
+.admin-plan-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:4px 0 14px}
+.admin-plan-card{position:relative;display:flex;flex-direction:column;gap:10px;padding:14px;border:1px solid var(--line-warm);border-radius:11px;background:linear-gradient(165deg,#12171d,#0d1115);overflow:hidden}
+.admin-plan-card::before{content:"";position:absolute;left:14px;right:14px;top:0;height:1px;background:linear-gradient(90deg,transparent,rgba(207,188,156,.45),transparent)}
+.admin-plan-head{display:flex;align-items:baseline;gap:8px;min-width:0}
+.admin-plan-tag{flex:none;color:#a39378;font:700 8px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.14em}
+.admin-plan-head strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e8eaed;font-size:12px;font-weight:650}
+.admin-plan-field{display:grid;gap:5px;min-width:0}
+.admin-plan-field>span{color:#8b7d67;font-size:9px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+.admin-plan-field input,.admin-plan-field textarea{width:100%;box-sizing:border-box;border:1px solid var(--line-warm);border-radius:7px;background:#0a0d10;color:#e6e9ed;font:inherit;font-size:11.5px;padding:8px 9px;outline:none;transition:border-color .15s ease,box-shadow .15s ease}
+.admin-plan-field input{height:32px}
+.admin-plan-field textarea{min-height:66px;resize:vertical;line-height:1.5}
+.admin-plan-field input:focus,.admin-plan-field textarea:focus{border-color:#785e32;box-shadow:0 0 0 3px rgba(161,124,61,.12)}
+.admin-plan-field input::placeholder,.admin-plan-field textarea::placeholder{color:#5d6570}
+.admin-plan-row{display:grid;grid-template-columns:1.25fr 1fr;gap:9px}
+.admin-plan-discount{position:relative}
+.admin-plan-discount input{padding-right:27px}
+.admin-plan-discount svg{position:absolute;right:9px;top:50%;transform:translateY(-50%);color:#8b7d67;pointer-events:none}
+.admin-plan-preview{display:grid;gap:4px;padding:9px 10px;border:1px solid var(--line-warm-soft);border-radius:8px;background:#0a0d10}
+.admin-plan-preview>span{color:#6f7883;font-size:8px;font-weight:700;letter-spacing:.08em;text-transform:uppercase}
+.admin-plan-price{display:flex;align-items:baseline;gap:7px;flex-wrap:wrap}
+.admin-plan-price s{color:#7e6a6a;font-size:11px;text-decoration-color:#8d5f5f}
+.admin-plan-price strong{color:#efe9dc;font-size:18px;font-weight:650;letter-spacing:-.02em}
+.admin-plan-price small{color:#7f8792;font-size:9.5px}
+.admin-plan-price em{padding:1px 5px;border:1px solid #4a402e;border-radius:999px;background:#241d10;color:#d4c4a8;font:700 8.5px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;font-style:normal}
+@media(max-width:900px){.admin-plan-grid{grid-template-columns:minmax(0,1fr)}}
+@media(max-width:390px){.admin-plan-row{grid-template-columns:1fr}}

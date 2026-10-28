@@ -36,6 +36,7 @@ import {
   Wrench,
 } from "lucide-react";
 import type { AgentAction, ChatMessage, PlanState } from "../../lib/types";
+import { NestLoader } from "../../components/NestLoader";
 import { commandLines, diffLines, fileLines, previewToText, readLines, textLines, type CodePreview } from "./agent-diff";
 
 type IconComponent = typeof Globe;
@@ -685,11 +686,12 @@ export function MessageThinking({ text, running }: {
   const said = Boolean(text.trim());
   // Ни строчки размышления — не повод для пустого окна с обещанием: пока модель молчит, видно только
   // слово, которое само пульсирует, пока идёт работа. Разворачивать нечего, поэтому без стрелки.
-  if (!said && running) return <div className="thinking-waiting" role="status"><span className="thinking-title">Размышляю…</span></div>;
+  if (!said && running) return <div className="thinking-waiting" role="status"><NestLoader size={16} label="NestDev размышляет" /><span className="thinking-title">Размышляю…</span></div>;
   // A finished turn without thinking says nothing: an empty folded row would only be noise.
   if (!said) return null;
   return <div className={"thinking" + (open ? " thinking-open" : "") + (running ? " thinking-live" : "")}>
     <button type="button" className="thinking-head" title={open ? "Свернуть размышления" : "Развернуть размышления"} onClick={() => { setChosen(true); setOpen(value => !value); }} aria-expanded={open}>
+      {running && <NestLoader size={16} label="NestDev размышляет" />}
       <span className="thinking-title">{running ? "Размышляю…" : "Размышления"}</span>
       <span className="thinking-toggle"><ChevronDown size={12}/></span>
     </button>

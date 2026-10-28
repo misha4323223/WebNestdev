@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { getTable, isYdbEnabled, ydbQuery } from "../storage/ydb.js";
-import { FREE_PLAN, PLAN_CATALOG, type PlanId } from "../account/plans.js";
+import { FREE_PLAN, type PlanId } from "../account/plans.js";
+import { planDisplayName } from "./plan-settings.js";
 
 /**
  * Платежи и подписки — то, что делает оплату настоящей.
@@ -429,20 +430,26 @@ export async function setAutoRenew(userId: string, autoRenew: boolean, now = new
 /**
  * Тариф без оплаты — действие администратора.
  *
- * Запись собирается по тем же правилам, что и после настоящего платежа (продление от текущего
- * срока, а не «от сегодня»), но с двумя отличиями, которые важно сохранить: автопродление
- * выключено, иначе свипер выставил бы счёт живому человеку, а `noticeAt` пуст — письмо о списании
- * за выданный период не отправляется. Понижение до бесплатного — это истечение срока: `planForUser`
- * читает его как free, и оплаченные дни не остаются.
+ * Срок всегда считается от текущего `planUntil`, если подписка ещё действует, и от сегодня,
+ * если её нет. Это правило одно и для продления того же тарифа, и для перехода на другой:
+ * выдача не должна отнимать уже оплаченные или ранее выданные дни. `days` — для коротких
+ * компенсаций («плюс один день»), `months` — для обычной выдачи.
+ *
+ * Автопродление выключено, иначе свипер выставил бы счёт живому человеку, а `noticeAt` пуст —
+ * письмо о списании за выданный период не отправляется. Понижение до бесплатного — это истечение
+ * срока: `planForUser` читает его как free, и оплаченные дни не остаются.
  */
 export async function grantSubscription(input: {
   userId: string;
   plan: PlanId;
   months?: number;
+  /** Короткий срок в днях; при наличии важнее `months`. */
+  days?: number;
   now?: Date;
 }): Promise<SubscriptionRecord | null> {
   const now = input.now ?? new Date();
   const months = Math.max(1, Math.min(12, Math.trunc(input.months ?? 1)));
+  const days = input.days === undefined ? null : Math.max(1, Math.min(366, Math.trunc(input.days)));
   const existing = await getSubscriptionRecord(input.userId);
 
   if (input.plan === FREE_PLAN) {
@@ -458,18 +465,19 @@ export async function grantSubscription(input: {
     });
   }
 
-  const samePlan = Boolean(existing && isSubscriptionLive(existing, now) && existing.plan === input.plan);
-  // Продление выданного тарифа считается от текущего срока, как и оплаченного: выдача не
-  // отнимает уже оплаченные или выданные дни.
-  const base = samePlan ? new Date(existing!.renewsAt) : now;
+  const live = Boolean(existing && isSubscriptionLive(existing, now));
+  const base = live ? new Date(existing!.renewsAt) : now;
+  const renewsAt = days !== null
+    ? new Date(base.getTime() + days * 86_400_000).toISOString()
+    : addMonths(base, months).toISOString();
   return saveSubscription({
     userId: input.userId,
     plan: input.plan,
     status: "active",
-    startedAt: samePlan ? existing!.startedAt : now.toISOString(),
-    renewsAt: addMonths(base, months).toISOString(),
+    startedAt: live ? existing!.startedAt : now.toISOString(),
+    renewsAt,
     autoRenew: false,
-    parentInvId: samePlan ? existing!.parentInvId : 0,
+    parentInvId: live ? existing!.parentInvId : 0,
     noticeAt: null,
     renewalAttempts: 0,
     updatedAt: now.toISOString(),
@@ -561,7 +569,7 @@ export async function postponeRenewal(record: SubscriptionRecord, now = new Date
   return saveSubscription({ ...record, renewsAt: new Date(now.getTime() + 86_400_000).toISOString(), renewalAttempts: attempts, updatedAt: now.toISOString() });
 }
 
-/** Название и цена тарифа для письма, чека и истории платежей. */
+/** Название тарифа для письма, чека и истории платежей — с учётом настройки витрины. */
 export function planLabel(plan: PlanId) {
-  return PLAN_CATALOG[plan].name;
+  return planDisplayName(plan);
 }

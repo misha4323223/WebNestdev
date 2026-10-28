@@ -37,10 +37,10 @@ export function LayoutShell({children,projectId,projectName,onRenameProject,onSe
   };
 
   return <div className={"app-shell"+(sidebarHidden?" sidebar-hidden":"")}>
-    <Topbar projectId={projectId} projectName={projectName} onRenameProject={onRenameProject} running={agentRunning} sidebarOpen={sidebarOpen} onMenu={()=>setSidebarOpen(v=>!v)} onHome={onHome} onOpenChanges={onOpenChanges} onSettings={onSettings} onSecrets={onSecrets} onDeploy={onDeploy} previewOpen={previewOpen} previewRunning={previewRunning} onPreviewToggle={onPreviewToggle} onRepositoryChanged={onRepositoryChanged}/>
+    <Topbar projectId={projectId} sidebarOpen={sidebarOpen} onMenu={()=>setSidebarOpen(v=>!v)} onHome={onHome} onOpenChanges={onOpenChanges} onDeploy={onDeploy} previewOpen={previewOpen} previewRunning={previewRunning} onPreviewToggle={onPreviewToggle} onRepositoryChanged={onRepositoryChanged}/>
     <div className="workspace">
       <div className={"sidebar-backdrop"+(sidebarOpen?" open":"")} onClick={()=>setSidebarOpen(false)} aria-hidden="true"/>
-      <Sidebar open={sidebarOpen} projectName={projectName} chats={sidebarChats} onPlan={onSettings}/>
+      <Sidebar open={sidebarOpen} projectName={projectName} projectRunning={agentRunning} chats={sidebarChats} onSettings={onSettings} onSecrets={onSecrets} onRenameProject={onRenameProject}/>
       {children}
     </div>
   </div>;

@@ -60,4 +60,6 @@ export type MailRosterMember = {
   name: string;
   plan: PlanId;
   lastActiveAt: string | null;
+  /** Явное согласие на рекламные и информационные письма из профиля. */
+  productUpdates: boolean;
 };

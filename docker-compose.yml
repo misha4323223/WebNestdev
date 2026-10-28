@@ -69,6 +69,10 @@ services:
       # Отдельная соль для хеша IP в журнале секретов; пусто — используется ключ шифрования.
       WEBNESTDEV_AUDIT_SALT: ${WEBNESTDEV_AUDIT_SALT:-}
       WEBNESTDEV_ALLOWED_ORIGINS: ${WEBNESTDEV_ALLOWED_ORIGINS:?Set the public frontend origin(s), comma-separated}
+      # Публичный адрес панели: по нему строятся ссылки возврата Робокассы. Compose передаёт
+      # в контейнер только перечисленные переменные, поэтому без этой строки значение из .env
+      # на ВМ до сервера не доходило бы.
+      WEBNESTDEV_SITE_DOMAIN: ${WEBNESTDEV_SITE_DOMAIN:-nestdev.ru}
       # Кому доверять X-Forwarded-For. Адрес Caddy задан статически выше; контейнер предпросмотра
       # в эту сеть не входит, поэтому подменить адрес клиента он не может.
       WEBNESTDEV_TRUSTED_PROXIES: ${WEBNESTDEV_TRUSTED_PROXIES:-172.30.0.0/24}
@@ -248,6 +252,18 @@ services:
       POSTBOX_DKIM_SELECTORS: ${POSTBOX_DKIM_SELECTORS:-}
       POSTBOX_PRICE_PER_1000: ${POSTBOX_PRICE_PER_1000:-}
       BILLING_NOTICE_DAYS: ${BILLING_NOTICE_DAYS:-}
+      BILLING_SWEEP_MS: ${BILLING_SWEEP_MS:-}
+      # Робокасса: логин, пароли №1/№2 и алгоритм подписи. Без этих строк ключи из .env на ВМ
+      # не доезжали бы до сервера; значения из панели «Ключи сервера» по-прежнему важнее.
+      ROBOKASSA_LOGIN: ${ROBOKASSA_LOGIN:-}
+      ROBOKASSA_PASSWORD_1: ${ROBOKASSA_PASSWORD_1:-}
+      ROBOKASSA_PASSWORD_2: ${ROBOKASSA_PASSWORD_2:-}
+      ROBOKASSA_HASH: ${ROBOKASSA_HASH:-}
+      ROBOKASSA_TEST_MODE: ${ROBOKASSA_TEST_MODE:-}
+      ROBOKASSA_RECURRING: ${ROBOKASSA_RECURRING:-}
+      ROBOKASSA_RECEIPT: ${ROBOKASSA_RECEIPT:-}
+      ROBOKASSA_PRICE_PRO: ${ROBOKASSA_PRICE_PRO:-}
+      ROBOKASSA_PRICE_TEAM: ${ROBOKASSA_PRICE_TEAM:-}
       # Песочницы и предпросмотр монтируются в контейнеры проектов через `docker run -v`,
       # а этот путь разбирает демон на ХОСТЕ. Поэтому каталог обязан существовать на хосте и
       # в контейнере под одним и тем же абсолютным путём — иначе контейнеры видят пустой

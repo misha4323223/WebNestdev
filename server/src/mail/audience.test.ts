@@ -10,7 +10,7 @@ import type { MailRosterMember, MailSuppression } from "./types.js";
  */
 
 function member(overrides: Partial<MailRosterMember> & { userId: string; email: string }): MailRosterMember {
-  return { name: "", loginEmail: overrides.email, plan: "free", lastActiveAt: null, ...overrides };
+  return { name: "", loginEmail: overrides.email, plan: "free", lastActiveAt: null, productUpdates: true, ...overrides };
 }
 
 const roster: MailRosterMember[] = [
@@ -39,9 +39,20 @@ test("сегменты отбираются по входу и тарифу", ()
 test("служебные адреса, отписки и повторы до очереди не доходят", () => {
   const audience = audienceFor("all", roster, suppressions);
   assert.deepEqual(audience.members.map(item => item.email), ["ivan@nestdev.ru", "olga@nestdev.ru"]);
-  assert.deepEqual(audience.excluded, { unsubscribed: 0, bounced: 2, invalid: 1, duplicate: 1 });
+  assert.deepEqual(audience.excluded, { unsubscribed: 0, bounced: 2, invalid: 1, noConsent: 0, duplicate: 1 });
   assert.equal(audience.skipped.length, 4);
   assert.match(audience.skipped[0].reason, /служебный домен/);
+});
+
+test("без согласия на рекламные письма адрес в кампанию не попадает", () => {
+  const audience = audienceFor(
+    "all",
+    [member({ userId: "u1", email: "no-consent@nestdev.ru", productUpdates: false })],
+    new Map(),
+  );
+  assert.equal(audience.members.length, 0);
+  assert.equal(audience.excluded.noConsent, 1);
+  assert.equal(audience.skipped[0].reason, "нет согласия на рекламные письма");
 });
 
 test("отписка считается отдельно от отскока", () => {

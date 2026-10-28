@@ -22,6 +22,7 @@ import { sendSupportMail, supportMailSettings } from "../support/support-mail.js
 import { REPLY_MAX_CHARS, REPLY_MIN_CHARS, REPLY_SUBJECT_MAX_CHARS, sendSupportReply, supportReplyAddress, supportReplyQuota, supportReplySubject } from "../support/support-reply.js";
 import { supportApiKey, supportKeyAuthorizedCurrent, supportKeyFromHeaders, supportKeySource } from "../support/support-api-key.js";
 import { applyNoStoreToReply } from "./cache-headers.js";
+import { updateUserProfile } from "../account/profile-store.js";
 import { isServiceEmail, maskEmail } from "../mail/address.js";
 import { recordAudit } from "../security/audit-journal.js";
 
@@ -48,6 +49,15 @@ const ticketBody = z.object({
   context: z.string().trim().max(4000).optional(),
   page: z.string().trim().max(500).optional(),
   projectId: z.string().trim().max(100).optional(),
+  /**
+   * Почта для ответа из самой формы. Необязательна: у аккаунта с почтой поле уже заполнено,
+   * а человек без почты вводит её здесь. Проверяется на сервере, потому что тело можно
+   * прислать мимо формы.
+   */
+  contactEmail: z.string().trim().max(200).refine(
+    value => value === "" || /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value),
+    "Некорректный email для ответа",
+  ).optional(),
   screenshot: z.string().min(64).max(8_000_000),
 });
 
@@ -158,12 +168,26 @@ export async function registerSupportRoutes(app: FastifyInstance, deps: SupportR
         context: body.context || undefined,
         page: body.page || undefined,
         projectId: body.projectId || undefined,
+        contactEmail: body.contactEmail || undefined,
         userAgent: typeof request.headers["user-agent"] === "string" ? request.headers["user-agent"].slice(0, 300) : undefined,
         ip: request.ip.slice(0, 100),
         ...(reporter ? { reporter } : {}),
         screenshot: body.screenshot,
       });
       request.log.info({ supportTicket: ticket.id, category: body.category, severity: body.severity }, "support ticket created");
+      // Если в профиле почты не было, адрес из обращения становится контактом аккаунта: в
+      // следующую форму он подставится сам, а поддержка по-прежнему отвечает на адрес тикета.
+      // Ошибка этой записи не должна превращать отправленное обращение в неудачу.
+      if (body.contactEmail && reporter && !reporter.contactEmail) {
+        try {
+          await updateUserProfile(user.id, { email: body.contactEmail });
+        } catch (error) {
+          request.log.warn(
+            { supportTicket: ticket.id, error: error instanceof Error ? error.message : error },
+            "support contact email not saved to profile",
+          );
+        }
+      }
       // Письмо — отдельный шаг: тикет уже сохранён, и отказ почты не должен выглядеть как
       // «обращение не отправлено». Состояние доставки возвращается в ответе, чтобы окно сказало
       // правду: «ушло на почту» или «сохранено, почта не настроена».
@@ -183,6 +207,7 @@ export async function registerSupportRoutes(app: FastifyInstance, deps: SupportR
             ...(body.context ? { context: body.context } : {}),
             ...(body.page ? { page: body.page } : {}),
             ...(body.projectId ? { projectId: body.projectId } : {}),
+            ...(body.contactEmail ? { contactEmail: body.contactEmail } : {}),
             ip: request.ip.slice(0, 100),
             ...(reporter ? { reporter } : {}),
           }, shot);
@@ -233,7 +258,8 @@ export async function registerSupportRoutes(app: FastifyInstance, deps: SupportR
     const listed = tickets.map(ticket => ({
       ...ticket,
       emailKind: emailKindOf(ticket.email),
-      contactEmail: ticket.reporter?.contactEmail ?? null,
+      // Почта из формы важнее профиля: именно на неё человек ждёт ответ.
+      contactEmail: ticket.contactEmail || ticket.reporter?.contactEmail || null,
     }));
     // Переписка едет вместе со списком и у обращений без ответов приходит пустым массивом:
     // админке не нужно различать «ответов не было» и «поле не пришло».
@@ -269,7 +295,7 @@ export async function registerSupportRoutes(app: FastifyInstance, deps: SupportR
       ticket: {
         ...ticket,
         emailKind: emailKindOf(ticket.email),
-        contactEmail: ticket.reporter?.contactEmail ?? user?.contactEmail ?? null,
+        contactEmail: ticket.contactEmail || ticket.reporter?.contactEmail || user?.contactEmail || null,
       },
       user,
       messages: await listSupportMessages(ticket.id),
@@ -303,10 +329,10 @@ export async function registerSupportRoutes(app: FastifyInstance, deps: SupportR
     const ticket = await getSupportTicket(params.id);
     if (!ticket) return reply.code(404).send({ error: "Обращение не найдено", code: "ticket_not_found" });
 
-    // Почта профиля важнее логина: логин может быть служебным (`…@phone.webnestdev.local`), и
-    // письмо по нему уйдёт отскоком. У обращений до появления снимка адрес берётся из живого
-    // профиля — снимка у них нет, но человек есть.
-    let contactEmail = ticket.reporter?.contactEmail ?? null;
+    // Порядок адресов: почта из формы обращения → почта профиля → логин. Форма важнее всего:
+    // человек мог специально указать другой ящик для ответа. Логин последний, потому что он
+    // может быть служебным (`…@phone.webnestdev.local`) и письмо по нему уйдёт отскоком.
+    let contactEmail = ticket.contactEmail || ticket.reporter?.contactEmail || null;
     if (!contactEmail) {
       const live = await supportReporterFor(ticket.userId).catch(error => {
         request.log.warn(

@@ -303,8 +303,9 @@ Yandex Cloud и заводятся по таблице выше (пошагов�
 | `POST /api/admin/users/:id/sessions/revoke` | завершить все сеансы аккаунта, тело `{confirm: true}` |
 | `POST /api/admin/users/:id/block` | блокировка входа и отзыв сеансов, тело `{confirm: true, reason?}` |
 | `POST /api/admin/users/:id/unblock` | снять блокировку, тело `{confirm: true}` |
-| `POST /api/admin/users/:id/plan` | тариф без оплаты, тело `{confirm: true, plan, months?}` |
-| `POST /api/admin/users/:id/tokens` | надбавка к пулу текущего месяца, тело `{confirm: true, tokens}` |
+| `POST /api/admin/users/:id/plan` | тариф без оплаты, тело `{confirm: true, plan, months?, days?, notify?}`; ответ содержит `planUntil` |
+| `POST /api/admin/users/:id/tokens` | надбавка к пулу текущего месяца, тело `{confirm: true, tokens, notify?}`; `tokens` в ответе — новый баланс |
+| `GET /api/me/notifications` | уведомления аккаунта о подарках и тарифе; `POST /:id/read` и `/read-all` |
 | `GET /api/admin/billing?days=&limit=` | платежи, подписки, истекающие, калибровка пула |
 | `GET /api/admin/projects/:id` | карточка проекта: репозиторий, превью, переменные, выкатка |
 | `PATCH /api/support/tickets/:id/status` | статус обращения; `GET /api/admin/support/stats` — очередь и важность |

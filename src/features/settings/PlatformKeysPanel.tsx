@@ -11,7 +11,7 @@ import { apiJson } from "../../lib/api";
 type PlatformKeySource = "panel" | "environment" | "none";
 type PlatformKey = {
   name: string;
-  group: "github" | "gitlab" | "gitverse" | "yandex" | "sms" | "ai" | "search" | "billing" | "mail" | "support";
+  group: "github" | "gitlab" | "gitverse" | "yandex" | "sms" | "ai" | "search" | "billing" | "plans" | "mail" | "support";
   label: string;
   hint: string;
   kind: "secret" | "json-key" | "value" | "url" | "path" | "flag";
@@ -32,6 +32,7 @@ const GROUP_TITLES: Record<PlatformKey["group"], { title: string; note: string }
   search: { title: "Веб-поиск агента", note: "Тариф «Старт» ищет через DuckDuckGo без ключей. На платных тарифах основным провайдером работает Yandex Search API (ключ сервисного аккаунта со scope yc.search-api.execute и каталог с ролью search-api.webSearch.user), а Tavily — резервным." },
   support: { title: "Поддержка", note: "Обращения из кнопки «Поддержка» сохраняются на сервере и читаются админкой платформы. Ключ API открывает их только на чтение для внешнего приложения (десктопного или мобильного): GET /api/support/tickets с заголовком Authorization: Bearer <ключ>. Почта необязательна: подойдёт SMTP обычной почты (smtp.yandex.ru, smtp.mail.ru, smtp.gmail.com — порт 465 и пароль приложения), ответ уходит автору обращения по Reply-To." },
   billing: { title: "Оплата (Robokassa)", note: "Логин магазина и пароли №1 и №2 из «Технических настроек» Робокассы. ResultURL: <адрес панели>/api/billing/robokassa/result, SuccessURL: /api/billing/robokassa/success, FailURL: /api/billing/robokassa/fail. Цены можно менять здесь без выкатки." },
+  plans: { title: "Тарифы", note: "Названия, описания, цены и скидки настраиваются в соседнем разделе «Тарифы и скидки»." },
   mail: { title: "Почта (Yandex Cloud Postbox)", note: "Письма об оплате, предупреждения о списании и обращения поддержки. Postbox: сервисный аккаунт с ролью postbox.sender и API-ключ с областью yc.postbox.send — его идентификатор и секрет и есть логин и пароль SMTP. Адрес отправителя — с домена, подтверждённого в Postbox (DKIM). Пошаговая настройка: docs/MAIL.md." },
 };
 
@@ -123,7 +124,9 @@ export function PlatformKeysPanel() {
     </section>;
   }
 
-  const groups = ["support", "billing", "github", "gitlab", "yandex", "sms", "ai", "search"] as const;
+  // Почта стоит рядом с поддержкой: адрес отправителя и ключ SMTP — это то, что правят, когда
+  // не уходит письмо, и раньше группы не было в списке вовсе, хотя ключи в каталоге есть.
+  const groups = ["support", "mail", "billing", "github", "gitlab", "yandex", "sms", "ai", "search"] as const;
   const keys = state.keys ?? [];
 
   return <section className="settings-panel platform-keys">

@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { Bug, Check, ImagePlus, Lightbulb, RefreshCw, Send, X } from "lucide-react";
+import { apiJson } from "../../lib/api";
+import { realAccountEmail } from "../../lib/account-contact";
 import { sendSupportTicket, type SupportCategory } from "../../lib/support-api";
 
 /**
@@ -33,6 +35,11 @@ function bytesLabel(value: number) {
   if (value < 1024) return value + " Б";
   if (value < 1024 * 1024) return Math.round(value / 1024) + " КБ";
   return (value / 1024 / 1024).toFixed(1) + " МБ";
+}
+
+/** Проверка та же, что на сервере: без домена адрес не годится для ответа. */
+function validEmail(value: string) {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value.trim());
 }
 
 /**
@@ -72,6 +79,10 @@ export function SupportDialog({ open, onClose, projectId }: { open: boolean; onC
   const [error, setError] = useState("");
   const [sending, setSending] = useState(false);
   const [sent, setSent] = useState(false);
+  // Почта для ответа: сначала подставляется известная, но поле можно исправить — ответ уйдёт
+  // ровно на тот адрес, который человек оставит здесь.
+  const [replyEmail, setReplyEmail] = useState("");
+  const [sentTo, setSentTo] = useState("");
   // Чем закончилась доставка письма: обещать «ответим на почту», когда почта не настроена, нельзя.
   const [delivery, setDelivery] = useState<{ notified: boolean; configured: boolean } | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
@@ -82,11 +93,22 @@ export function SupportDialog({ open, onClose, projectId }: { open: boolean; onC
     if (!open) return;
     setSent(false);
     setError("");
+    let alive = true;
+    // Адрес берётся с сервера, а не из localStorage: профиль мог быть изменён на другом устройстве.
+    // Служебный логин телефонного входа не подставляется — отвечать на него нельзя.
+    void apiJson<{ email: string; loginEmail: string }>("/api/account/contact")
+      .then(data => {
+        if (!alive) return;
+        const known = data.email?.trim() || realAccountEmail(data.loginEmail);
+        setReplyEmail(current => current.trim() ? current : known);
+      })
+      .catch(() => { /* без сессии и при сбое поле остаётся пустым — человек введёт адрес сам */ });
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") closeRef.current(); };
     window.addEventListener("keydown", onKey);
     return () => {
+      alive = false;
       document.body.style.overflow = previousOverflow;
       window.removeEventListener("keydown", onKey);
     };
@@ -110,6 +132,8 @@ export function SupportDialog({ open, onClose, projectId }: { open: boolean; onC
       setScreenshot(null);
       setError("");
       setDelivery(null);
+      setReplyEmail("");
+      setSentTo("");
     }
     closeRef.current();
   }
@@ -126,6 +150,8 @@ export function SupportDialog({ open, onClose, projectId }: { open: boolean; onC
 
   async function submit() {
     const text = description.trim();
+    const contactEmail = replyEmail.trim();
+    if (!validEmail(contactEmail)) { setError("Укажите почту, на которую мы ответим"); return; }
     if (text.length < 10) { setError("Опишите проблему хотя бы в двух предложениях"); return; }
     if (category === "bug" && steps.trim().length < 10) { setError("Добавьте шаги: как повторить проблему"); return; }
     if (!screenshot) { setError("Прикрепите скриншот — с ним разбираться намного быстрее"); return; }
@@ -141,9 +167,11 @@ export function SupportDialog({ open, onClose, projectId }: { open: boolean; onC
         context: context.trim() || undefined,
         page: window.location.href.slice(0, 480),
         projectId: storedProject,
+        contactEmail,
         screenshot: screenshot.dataUrl,
       });
       setDelivery({ notified: Boolean(result.notified), configured: Boolean(result.mailConfigured) });
+      setSentTo(contactEmail);
       setSent(true);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Не удалось отправить обращение");
@@ -177,7 +205,7 @@ export function SupportDialog({ open, onClose, projectId }: { open: boolean; onC
             <span className="support-success-icon"><Check size={20}/></span>
             <strong>Спасибо — мы всё получили</strong>
             <p>{delivery?.notified
-              ? "Письмо с обращением ушло на почту поддержки. Ответ придёт на почту аккаунта."
+              ? "Письмо с обращением ушло в поддержку. Ответ придёт на " + sentTo + "."
               : delivery?.configured
                 ? "Обращение сохранено, но письмо поддержке не ушло: почтовый сервер отказал. Обращение осталось на сервере — проверьте настройки почты."
                 : "Обращение сохранено на сервере. Почта поддержки ещё не настроена — добавьте SMTP-ключи в «Настройки» → «Ключи сервера», и следующие обращения будут приходить письмом."}</p>
@@ -206,6 +234,14 @@ export function SupportDialog({ open, onClose, projectId }: { open: boolean; onC
             </div>
 
             <div className="support-fields">
+              <label className="support-field">
+                <span>Email для ответа</span>
+                <input type="email" value={replyEmail} maxLength={200} inputMode="email" autoComplete="email"
+                  onChange={event => { setReplyEmail(event.target.value); setError(""); }}
+                  placeholder="you@example.com" />
+                <small>Ответ поддержки придёт на этот адрес. Если он изменился — исправьте здесь.</small>
+              </label>
+
               <label className="support-field">
                 <span>{category === "bug" ? "Как повторить?" : "Как вы это видите?"}</span>
                 <textarea value={steps} maxLength={4000} rows={3} onChange={event => setSteps(event.target.value)}

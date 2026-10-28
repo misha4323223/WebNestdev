@@ -16,6 +16,10 @@ export type Plan = {
   /** Цена с сервера: сумма и подпись приходят из одного места, интерфейс их не хранит. */
   priceLabel: string;
   priceRub?: number;
+  /** Цена до скидки: показывается зачёркнутой, если скидка включена. */
+  basePriceLabel?: string;
+  basePriceRub?: number;
+  discountPercent?: number;
   tagline: string;
   description: string;
   audience: string;
