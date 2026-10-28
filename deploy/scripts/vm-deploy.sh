@@ -857,6 +857,7 @@ verify_preview(){
     no-docker) log "предпросмотр: docker недоступен из контейнера сервера" ; return 0 ;;
     image) log "предпросмотр: образ песочницы ещё не скачан на эту ВМ" ; return 0 ;;
     start-failed) log "предпросмотр: контейнер-проба не запустился (причина в строке выше, после «контейнер-проба не запустился»). Сеть предпросмотра здесь не при чём — проверьте `docker compose logs docker-broker` и `docker ps -a` на ВМ" ; return 0 ;;
+    exec-broken) log "ПРЕДПРОСМОТР: контейнер жив, но docker exec через брокер не отвечает — это регрессия брокера, а не сеть. Задавать PREVIEW_NETWORK бессмысленно: посмотрите `docker compose logs docker-broker` (запросы upgrade и строки «hijack»)" ; return 0 ;;
     unreachable) log "ПРЕДПРОСМОТР НЕДОСТУПЕН СЕРВЕРУ: контейнер предпросмотра стоит в сети, которую сервер не видит. Задайте PREVIEW_NETWORK в .env и выкатите снова (docs/PRODUCTION_DEPLOYMENT.md)" ; return 0 ;;
     *) log "проверка предпросмотра не ответила — пропускаю" ; return 0 ;;
   esac

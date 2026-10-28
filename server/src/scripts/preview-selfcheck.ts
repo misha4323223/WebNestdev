@@ -43,6 +43,17 @@ const PROBE_SCRIPT =
 /** Проверка изнутри контейнера: отличает «проба не поднялась» от «сервер её не видит». */
 const INSIDE_SCRIPT =
   'fetch("http://127.0.0.1:' + PREVIEW_APP_PORT + '/").then(response=>{process.stdout.write(String(response.status));process.exit(0)}).catch(()=>process.exit(1));';
+/**
+ * Бюджет проверки изнутри контейнера.
+ *
+ * Раньше это был цикл из 15 попыток по 10 с: когда `docker exec` через брокер не отвечал, проверка
+ * съедала весь `timeout 120` выкатки и не печатала НИ ОДНОГО вердикта — в журнале оставалась
+ * строка «проверка предпросмотра не ответила — пропускаю», и причину приходилось искать заново
+ * по журналу брокера. Теперь у цикла есть предел, а молчание `docker exec` называется своим
+ * вердиктом: это регрессия брокера, а не сеть предпросмотра.
+ */
+const INSIDE_BUDGET_MS = 25_000;
+const INSIDE_ATTEMPT_MS = 6_000;
 
 function verdict(value: string) {
   console.log("PREVIEW-NETWORK=" + value);
@@ -108,14 +119,25 @@ async function main() {
 async function probeContainer(containerId: string, network: string | null): Promise<number> {
   // Проба поднимается внутри контейнера: это тот же вопрос, что задаёт платформа (`ready`).
   let inside = false;
-  for (let attempt = 0; attempt < 15 && !inside; attempt++) {
-    const response = await dockerExec(["exec", containerId, "node", "-e", INSIDE_SCRIPT], 10_000).catch(() => null);
-    inside = Boolean(response && response.code === 0);
-    if (!inside) await new Promise(resolve => setTimeout(resolve, 300));
+  let lastFailure = "";
+  const deadline = Date.now() + INSIDE_BUDGET_MS;
+  for (let attempt = 0; attempt < 8 && !inside && Date.now() < deadline; attempt++) {
+    const response = await dockerExec(["exec", containerId, "node", "-e", INSIDE_SCRIPT], INSIDE_ATTEMPT_MS)
+      .catch(error => ({ code: 1, stdout: "", stderr: error instanceof Error ? error.message : String(error) }));
+    inside = response.code === 0;
+    if (!inside) {
+      const detail = (response.stderr || response.stdout).trim().replace(/\s+/g, " ").slice(-200);
+      lastFailure = "код " + response.code + (detail ? ": " + detail : " без вывода");
+      await new Promise(resolve => setTimeout(resolve, 300));
+    }
   }
   if (!inside) {
-    console.log("[preview] проба не отвечает и внутри контейнера: образ " + IMAGE + " не запускает node, либо " + PREVIEW_APP_PORT + " занят");
-    verdict("unreachable");
+    // Отдельный вердикт: контейнер-проба жив, а `docker exec` до него не доходит. Сеть
+    // предпросмотра здесь не при чём — платформа проверяет приложение тем же `docker exec`,
+    // поэтому белый кадр в панели будет и при идеальной сети.
+    console.log("[preview] docker exec внутрь контейнера не проходит (" + (lastFailure || "нет ответа") +
+      "): контейнер жив, а проверки и дверь панели через docker exec не работают — смотрите журнал брокера (docker compose logs docker-broker) и строки «hijack» в нём");
+    verdict("exec-broken");
     return 1;
   }
 

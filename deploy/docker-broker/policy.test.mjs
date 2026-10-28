@@ -127,6 +127,9 @@ test("classify пропускает операции платформы", () => 
   assert.deepEqual(classify("POST", "/containers/abc/attach?stream=1"), { kind: "container", action: "attach", id: "abc" });
   assert.deepEqual(classify("GET", "/containers/abc/logs?tail=120"), { kind: "container", action: "logs", id: "abc" });
   assert.deepEqual(classify("POST", "/exec/exec-1/start"), { kind: "exec-start", id: "exec-1" });
+  // Код выхода: без этого запроса `docker exec` не отличает успех от отказа.
+  assert.deepEqual(classify("GET", "/exec/exec-1/json"), { kind: "exec-inspect", id: "exec-1" });
+  assert.equal(classify("POST", "/exec/exec-1/json").kind, "deny");
   assert.deepEqual(classify("GET", "/networks/webnestdev-preview"), { kind: "network", action: "inspect", id: "webnestdev-preview" });
   assert.deepEqual(classify("POST", "/networks/webnestdev-preview/connect"), { kind: "network", action: "connect", id: "webnestdev-preview" });
   assert.equal(classify("GET", "/system/df").kind, "system-df");

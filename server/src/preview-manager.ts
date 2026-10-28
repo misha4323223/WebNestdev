@@ -88,6 +88,22 @@ function execRetryMs(){
 }
 
 /**
+ * Как часто повторять полную проверку адреса, пока он не подтверждён; `0` — на каждом чтении.
+ *
+ * Полная проверка — это `docker inspect`, запрос внутрь контейнера и до двух попыток починить адрес
+ * (`preview-address.ts`). Пока адрес не отвечает, каждый такой проход занимает десятки секунд, а
+ * прокси читает статус на КАЖДЫЙ файл приложения: страница из десятка модулей не показывалась
+ * вообще, и в панели это выглядело белым кадром, а не медленным предпросмотром. Между проверками
+ * отдаётся последний известный ответ — его возраст виден в `checkedAt`.
+ */
+function addressRetryMs(){
+  const value=process.env.PREVIEW_ADDRESS_RETRY_MS?.trim();
+  if(!value)return 10_000;
+  const raw=Number(value);
+  return Number.isFinite(raw)&&raw>=0?Math.floor(raw):10_000;
+}
+
+/**
  * The dev-server preview. A running one is reused instead of restarted: the dev server
  * watches the project files itself, so the agent's edits appear without another start.
  */
@@ -255,6 +271,27 @@ export async function previewStatus(projectId: string): Promise<PreviewStatus> {
     };
   }
 
+  // Неподтверждённый адрес: последний полный проход не повторяется на каждом чтении статуса
+  // (см. addressRetryMs). Ответ — то, что уже известно из предыдущего прохода: контейнер жив,
+  // адрес пока не подтверждён. Иначе каждый файл приложения платил бы десятки секунд за проверку,
+  // которая ещё не может ничего изменить, и кадр панели оставался бы пустым.
+  if(current.checkedAt&&Date.now()-current.checkedAt<addressRetryMs()){
+    touchPreview(projectId);
+    return {
+      running: true,
+      ready: Boolean(current.ready),
+      settled: false,
+      mode: "container",
+      port: current.port,
+      host: current.host,
+      containerId: current.containerId,
+      startedAt: current.startedAt,
+      hint: current.ready
+        ? "Приложение отвечает внутри контейнера, но недоступно по адресу контейнера: платформа пробует подключить его к сети сервера и пробросить порт — обновите статус; если подсказка осталась, задайте PREVIEW_NETWORK."
+        : "Приложение ещё запускается: первый старт dev-сервера занимает несколько секунд.",
+    };
+  }
+
   const inspect = await dockerExec([
     "inspect",
     "-f",
@@ -290,7 +327,7 @@ export async function previewStatus(projectId: string): Promise<PreviewStatus> {
   const settled = await settlePreviewAddress(current.execOnly?{...current,settled:false}:current, { appAnswers: ready });
   // Отметка о выполненной проверке — вместе с её результатом: следующий полный проход — не раньше,
   // чем через execRetryMs(), иначе каждый файл приложения платил бы за него заново.
-  const stamped = settled.execOnly ? { ...settled, execOnlyCheckedAt: Date.now() } : settled;
+  const stamped = { ...settled, ready, checkedAt: Date.now(), ...(settled.execOnly ? { execOnlyCheckedAt: Date.now() } : {}) };
   if (stamped !== current) setPreview(stamped);
   // Адрес подтверждён — значит до приложения доходит сам сервер, а вместе с ним панель, прокси и
   // Chromium. Это отдельный факт от «приложение живо»: без него «предпросмотр запущен» и белый

@@ -127,6 +127,14 @@ export function classify(method, rawUrl) {
   if (parts[0] === "exec" && parts.length === 3 && parts[2] === "start" && upper === "POST") {
     return { kind: "exec-start", id: parts[1] };
   }
+  // `docker exec` читает код выхода процесса именно так: после вывода он спрашивает
+  // `GET /exec/{id}/json`. Без этого эндпоинта команда внутри контейнера отрабатывала, но её
+  // результат нельзя было отличить от отказа — а на нём держатся проверка готовности приложения
+  // (`previewAppAnswers`), поиск порта по `/proc/net/tcp` и дверь предпросмотра через `docker exec`.
+  // Проверка владения — та же, что у `start`: id есть только у сессии, созданной через брокер.
+  if (parts[0] === "exec" && parts.length === 3 && parts[2] === "json" && upper === "GET") {
+    return { kind: "exec-inspect", id: parts[1] };
+  }
 
   if (parts[0] === "networks" && parts.length >= 2) {
     const id = parts[1];

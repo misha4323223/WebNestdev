@@ -36,6 +36,18 @@ const MAX_EXECS = 512;
  * долгим, и тишина между его кусками это работа приложения, а не зависший демон.
  */
 const DEFAULT_UPSTREAM_TIMEOUT_MS = 10_000;
+/**
+ * Сколько брокер ждёт первого байта демона на hijack-запросе (`attach`, `exec/start`).
+ *
+ * Демон отвечает `101 UPGRADED` сразу: он ещё не начал выполнять команду, поэтому "долго" здесь
+ * не бывает — даже `npm install` внутри контейнера отвечает переключением протокола мгновенно.
+ * Молчание дольше предела означает зависший hijack, и раньше оно стоило дороже всего: Docker CLI
+ * ждал своего таймаута, `docker exec` возвращал ошибку без причины, проверка готовности приложения
+ * и поиск порта внутри контейнера не работали, а панель показывала белый кадр и «Прокси
+ * предпросмотра не сработал: fetch failed». Теперь такой запрос называется в журнале и получает
+ * 504, как и обычный молчащий запрос.
+ */
+const DEFAULT_HIJACK_TIMEOUT_MS = 15_000;
 
 export function dockerUnavailableMessage(upstreamPath) {
   return "Cannot connect to the Docker daemon at unix://" + upstreamPath + ". Is the docker daemon running?";
@@ -64,6 +76,11 @@ export function createBrokerServer({ socketPath, upstreamPath, policy, log = con
     : Number(process.env.BROKER_UPSTREAM_TIMEOUT_MS) > 0
       ? Number(process.env.BROKER_UPSTREAM_TIMEOUT_MS)
       : DEFAULT_UPSTREAM_TIMEOUT_MS;
+  const hijackTimeoutMs = Number(process.env.BROKER_HIJACK_TIMEOUT_MS) > 0
+    ? Number(process.env.BROKER_HIJACK_TIMEOUT_MS)
+    : DEFAULT_HIJACK_TIMEOUT_MS;
+  /** Журнал upgrade-запросов: успешный hijack раньше не оставлял следа вовсе. */
+  const trace = () => process.env.BROKER_LOG_REQUESTS === "1";
   /** id/имя контейнера → когда истекает уверенность, что он наш. */
   const managed = new Map();
   /** id exec-сессии → время создания. Разрешает `POST /exec/{id}/start` только для своих сессий. */
@@ -118,7 +135,7 @@ export function createBrokerServer({ socketPath, upstreamPath, policy, log = con
     if (decision.kind === "self") return handleSelf(response);
     if (decision.kind === "container-create") return handleCreate(request, response, body, decision);
 
-    if (decision.kind === "container" || decision.kind === "network" || decision.kind === "exec-start") {
+    if (decision.kind === "container" || decision.kind === "network" || decision.kind === "exec-start" || decision.kind === "exec-inspect") {
       const allowed = await allowScoped(decision, body);
       if (!allowed.ok) {
         log.warn("[broker] отказ: " + request.method + " " + request.url + " — " + allowed.message);
@@ -139,7 +156,9 @@ export function createBrokerServer({ socketPath, upstreamPath, policy, log = con
 
   /** Проверка «свой ли объект» для операций над контейнерами и сетями. */
   async function allowScoped(decision, body) {
-    if (decision.kind === "exec-start") {
+    // `exec-inspect` — чтение кода выхода своей сессии: `docker exec` без него не может сказать,
+    // завершилась команда успешно или нет, и каждая проверка внутри контейнера выглядела отказом.
+    if (decision.kind === "exec-start" || decision.kind === "exec-inspect") {
       const createdAt = execs.get(decision.id);
       if (!createdAt || Date.now() - createdAt > EXEC_TTL_MS) {
         return { ok: false, status: 403, message: "Сессия exec не создана через брокер" };
@@ -382,6 +401,7 @@ export function createBrokerServer({ socketPath, upstreamPath, policy, log = con
    * без разбора: внутри уже нет HTTP, только вывод процесса.
    */
   async function handleUpgrade(request, clientSocket, head) {
+    if (trace()) log.log("[broker] upgrade " + request.method + " " + request.url);
     const decision = classify(request.method, request.url);
     let message = "";
     if (decision.kind === "container" && decision.action === "attach") {
@@ -400,15 +420,24 @@ export function createBrokerServer({ socketPath, upstreamPath, policy, log = con
     }
 
     const upstream = net.connect(upstreamPath);
-    // Только ожидание соединения: у hijack-потока нет «слишком долгой» паузы — консоль, которая
-    // молчит, это нормальная работа, а не зависший демон.
+    // Один ответ на запрос: таймаут и ошибка могли бы ответить дважды, и второй ответ поверх
+    // первого испортил бы уже отправленный код.
+    let answered = false;
+    const fail = (status, text) => {
+      if (answered) return;
+      answered = true;
+      writeRawError(clientSocket, status, text);
+      upstream.destroy();
+    };
+    // Ожидание соединения с демоном.
     const connectTimer = timeoutMs > 0
       ? setTimeout(() => {
           log.error("[broker] таймаут соединения с демоном: " + request.method + " " + request.url);
-          writeRawError(clientSocket, 504, upstreamTimeoutMessage(request.method, request.url, timeoutMs));
-          upstream.destroy();
+          fail(504, upstreamTimeoutMessage(request.method, request.url, timeoutMs));
         }, timeoutMs)
       : null;
+    /** Ждём первый байт демона: 101 приходит сразу, поэтому молчание — это зависший hijack. */
+    let responseTimer = null;
     upstream.once("connect", () => {
       if (connectTimer) clearTimeout(connectTimer);
       const lines = [request.method + " " + request.url + " HTTP/1.1"];
@@ -418,20 +447,40 @@ export function createBrokerServer({ socketPath, upstreamPath, policy, log = con
       upstream.write(lines.join("\r\n") + "\r\n\r\n");
       if (head?.length) upstream.write(head);
       clientSocket.pipe(upstream);
+      // Тело upgrade-запроса (`exec/start` шлёт `{"Detach":false,...}`) демон читает ДО ответа,
+      // поэтому поток клиента в демона включается раньше, чем приходит `101`.
+      if (hijackTimeoutMs > 0) {
+        responseTimer = setTimeout(() => {
+          log.error("[broker] таймаут демона (hijack): " + request.method + " " + request.url + " за " + Math.round(hijackTimeoutMs / 1000) + " с");
+          fail(504, upstreamTimeoutMessage(request.method, request.url, hijackTimeoutMs) + " (hijack: демон не ответил на переключение протокола)");
+        }, hijackTimeoutMs);
+      }
+      upstream.once("data", () => {
+        if (responseTimer) clearTimeout(responseTimer);
+        answered = true;
+        if (trace()) log.log("[broker] upgrade ответил: " + request.method + " " + request.url);
+      });
       upstream.pipe(clientSocket);
     });
     upstream.once("error", error => {
       if (connectTimer) clearTimeout(connectTimer);
+      if (responseTimer) clearTimeout(responseTimer);
       log.error("[broker] Docker недоступен (upgrade): " + error.message);
-      writeRawError(clientSocket, 502, dockerUnavailableMessage(upstreamPath));
-      upstream.destroy();
+      fail(502, dockerUnavailableMessage(upstreamPath));
     });
     clientSocket.once("error", () => upstream.destroy());
     clientSocket.once("close", () => upstream.destroy());
     // `end`, а не `destroy`: у вывода контейнера последний кусок может ещё лежать в буфере
     // клиентского сокета, и destroy() выбросил бы его вместе с хвостом лога.
     upstream.once("close", () => {
+      if (responseTimer) clearTimeout(responseTimer);
       if (!clientSocket.destroyed) clientSocket.end();
+    });
+    // Клиент мог сдаться первым (у платформы свой предел ожидания). Без этой строки в журнале
+    // оставался только запрос без ответа, и нельзя было отличить «демон молчит» от «клиент ушёл».
+    clientSocket.once("close", () => {
+      if (responseTimer) clearTimeout(responseTimer);
+      if (!answered && trace()) log.warn("[broker] клиент закрыл upgrade до ответа демона: " + request.method + " " + request.url);
     });
   }
 }

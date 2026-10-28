@@ -71,6 +71,8 @@ before(async () => {
         return;
       }
       if (url.pathname === "/containers/abc/exec") return json(response, { Id: "exec1" }, 201);
+      // Код выхода процесса: `docker exec` спрашивает его этим запросом.
+      if (url.pathname === "/exec/exec1/json") return json(response, { Running: false, ExitCode: 0 });
       if (url.pathname === "/system/df") return json(response, { LayersSize: 1 });
       if (url.pathname === "/containers/" + encodeURIComponent(os.hostname()) + "/json") {
         return json(response, {
@@ -316,6 +318,25 @@ test("exec: своя сессия работает через hijack, чужая
 
   const foreign = await call("POST", "/exec/foreign/start", {});
   assert.equal(foreign.status, 403);
+});
+
+/**
+ * `docker exec` читает код выхода через `GET /exec/{id}/json`. Пока этого эндпоинта не было в
+ * политике, команда внутри контейнера выполнялась, а её результат доезжал до платформы как отказ:
+ * проверка готовности приложения, поиск порта по `/proc/net/tcp` и дверь предпросмотра через
+ * `docker exec` не работали, хотя контейнер был жив.
+ */
+test("exec: код выхода читается только для своей сессии", async () => {
+  const created = await call("POST", "/containers/abc/exec", { Cmd: ["true"] });
+  assert.equal(created.status, 201);
+
+  const own = await call("GET", "/exec/exec1/json");
+  assert.equal(own.status, 200);
+  assert.deepEqual(JSON.parse(own.body), { Running: false, ExitCode: 0 });
+
+  const foreign = await call("GET", "/exec/foreign/json");
+  assert.equal(foreign.status, 403);
+  assert.match(foreign.body, /Сессия exec не создана через брокер/);
 });
 
 test("attach к своему контейнеру проксируется как поток", async () => {

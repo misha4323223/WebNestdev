@@ -101,7 +101,10 @@ export async function startPreviewContainer(config:SandboxConfig){
     await secrets.cleanup();
     throw error;
   }
-  setPreview(settled);
+  // Вместе с адресом сохраняется ответ проверки готовности и её время: панель читает статус на
+  // каждый файл приложения, и первый же её запрос не должен заново ждать полную проверку
+  // (см. preview-manager.ts, addressRetryMs).
+  setPreview({...settled,ready,checkedAt:Date.now()});
   // A dev server that has not answered yet is not a failure: npm may still be installing
   // or Vite may still be compiling. The state stays, the diagnostics come along, and the
   // next status check turns ready into the real answer.
