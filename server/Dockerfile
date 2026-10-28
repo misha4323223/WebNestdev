@@ -61,6 +61,9 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/server/dist ./server/dist
 COPY --from=build /app/server/certs ./server/certs
+# Docker-брокер едет в том же образе и запускается другой командой (docker-compose.yml). Так у него
+# нет отдельного тега и отдельной выкатки: обновление и откат сервера возвращают обе части вместе.
+COPY deploy/docker-broker ./deploy/docker-broker
 
 # Браузер нужен только headless: сервер нигде не открывает окно (все запуски —
 # `chromium.launch({ headless: true })`), поэтому полный Chromium (393 МБ) не ставится —

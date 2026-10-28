@@ -36,5 +36,8 @@ jobs:
         run: npm test
         working-directory: server
 
+      - name: Test Docker broker
+        run: npm run test:broker
+
       - name: Build web
         run: npm run build

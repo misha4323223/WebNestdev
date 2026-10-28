@@ -75,7 +75,11 @@ export async function checkSandboxMount(options:{serverDir?:string;hostDir?:stri
   }catch(error){
     return {...base,ok:false,reason:"disk",detail:tail(error instanceof Error?error.message:String(error))};
   }
-  const mount=["--rm","--pull=never","--network","none","--user","1000:1000","-v",hostDir+":/workspace","-w","/workspace",image];
+  // Проверка идёт через тот же брокер, что и рабочие контейнеры, поэтому флаги обязаны совпадать
+  // с политикой (deploy/docker-broker/policy.mjs): иначе проверка монтирования сама получала бы
+  // отказ и /api/health показывал бы несуществующую поломку. Здесь только чтение маркера, поэтому
+  // read-only корень и лимиты ничего не меняют.
+  const mount=["--rm","--pull=never","--network","none","--cap-drop","ALL","--security-opt","no-new-privileges:true","--read-only","--cpus","1","--memory","256m","--pids-limit","64","--user","1000:1000","-v",hostDir+":/workspace","-w","/workspace",image];
   try{
     const read=await dockerRun(["run",...mount,"/bin/sh","-lc","cat /workspace/"+markerName],timeoutMs);
     if(read.code!==0){

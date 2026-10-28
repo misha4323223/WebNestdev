@@ -32,6 +32,7 @@
 #                              потом подменяет тот, что лежит рядом с compose: сломанный конфиг
 #                              уронил бы HTTPS, то есть саму дверь к сервису.
 #   CADDY_SERVICE=caddy        сервис фронта в compose (поднимается вместе с сервером)
+#   BROKER_SERVICE=docker-broker сервис Docker-брокера (docs/DOCKER_BROKER.md)
 #   CADDY_IMAGE=caddy:2.8-alpine  образ для проверки конфигурации
 #   MIGRATE_SANDBOXES=1        перенести файлы проектов из старого тома в SANDBOX_DIR,
 #                              если на хосте каталог пуст.
@@ -97,6 +98,9 @@ IMAGE_REF="${IMAGE_REF:-}"
 APP_DIR="${APP_DIR:-$HOME/webnestdev/src}"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
 SERVICE="${SERVICE:-webnestdev-server}"
+# Docker-брокер появился в compose позже сервера: на ВМ со старым файлом сервиса его просто нет,
+# и выкатка ведёт себя как раньше (docs/DOCKER_BROKER.md).
+BROKER_SERVICE="${BROKER_SERVICE:-docker-broker}"
 GIT_BRANCH="${GIT_BRANCH:-main}"
 SYSTEMD_UNIT="${SYSTEMD_UNIT:-webnestdev}"
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8787/api/ready}"
@@ -716,7 +720,13 @@ validate_caddyfile(){
 # из самого compose, поэтому на ВМ со старым файлом (без caddy) выкатка ведёт себя как раньше.
 #
 services_to_start(){
-  local services="$SERVICE"
+  # Брокер идёт до сервера: сервер проверяет его сокет на старте. Compose эту зависимость тоже
+  # знает (depends_on), но перечисление явное — `up -d` с именами сервисов не поднимает остальных.
+  local services=""
+  if docker compose -f "$COMPOSE_FILE" config --services 2>/dev/null | grep -qx "$BROKER_SERVICE"; then
+    services="$BROKER_SERVICE"
+  fi
+  services="${services:+$services }$SERVICE"
   if docker compose -f "$COMPOSE_FILE" config --services 2>/dev/null | grep -qx "$CADDY_SERVICE"; then
     services="$services $CADDY_SERVICE"
   fi
@@ -875,6 +885,7 @@ verify_docker(){
   fi
   # Формат "{{.Server.Version}}" отвечает демон, а не клиент: именно по нему видно, что сокет открыт.
   output=$(timeout 60 docker compose exec -T "$SERVICE" sh -c '
+    echo "DOCKER-HOST=${DOCKER_HOST:-/var/run/docker.sock}"
     if ! command -v docker >/dev/null 2>&1; then echo "DOCKER-CHECK=no-cli"; exit 0; fi
     if version=$(docker version --format "{{.Server.Version}}" 2>&1); then echo "DOCKER-CHECK=ok $version"; exit 0; fi
     case "$version" in
@@ -885,14 +896,15 @@ verify_docker(){
   ' </dev/null 2>&1 || true)
   verdict=$(printf '%s\n' "$output" | grep -o 'DOCKER-CHECK=[a-z-]*' | tail -1 | cut -d= -f2 || true)
   reason=$(printf '%s\n' "$output" | grep -m1 'DOCKER-CHECK=' | cut -d' ' -f2- || true)
+  docker_host=$(printf '%s\n' "$output" | grep -m1 '^DOCKER-HOST=' | cut -d= -f2- || true)
   case "$verdict" in
-    ok) log "Docker доступен серверу (версия демона: ${reason:-не сообщена})" ; return 0 ;;
+    ok) log "Docker доступен серверу (${docker_host:-адрес неизвестен}, версия демона: ${reason:-не сообщена})" ; return 0 ;;
     no-cli)
       log "В КОНТЕЙНЕРЕ СЕРВЕРА НЕТ КОМАНДЫ docker: агент и предпросмотр не запустят ни одного контейнера (spawn docker ENOENT в логе сервера). Проверьте установку docker.io в server/Dockerfile и выкатите снова"
       return 0
       ;;
     no-socket)
-      log "КОНТЕЙНЕР СЕРВЕРА НЕ ДОХОДИТ ДО ДЕМОНА DOCKER (${reason:-нет причины}): в него не смонтирован /var/run/docker.sock. Добавьте монтирование в $COMPOSE_FILE, как в репозитории, и выкатите снова"
+      log "КОНТЕЙНЕР СЕРВЕРА НЕ ДОХОДИТ ДО ДЕМОНА DOCKER (${reason:-нет причины}, адрес ${docker_host:-неизвестен}): проверьте смонтированный сокет в $COMPOSE_FILE и контейнер $BROKER_SERVICE (docker compose logs $BROKER_SERVICE). Сервер откатывается на /var/run/docker.sock, поэтому песочницы работать не будут только при отсутствии обоих сокетов"
       return 0
       ;;
     failed) log "DOCKER НЕ РАБОТАЕТ ИЗ КОНТЕЙНЕРА СЕРВЕРА: ${reason:-причина не сообщена}" ; return 0 ;;

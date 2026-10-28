@@ -65,6 +65,10 @@ async function main() {
   const started = await dockerExec([
     "run", "-d", "--rm", "--init",
     "--memory", "256m",
+    "--cpus", "1",
+    "--pids-limit", "64",
+    "--cap-drop", "ALL",
+    "--security-opt", "no-new-privileges:true",
     "--read-only",
     "--tmpfs", "/tmp:rw,nosuid,size=16m",
     "--user", "1000:1000",

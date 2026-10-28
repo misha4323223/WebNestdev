@@ -21,6 +21,9 @@ export function dockerRunArgs(
   // `--cap-drop ALL` и `no-new-privileges` — страховка поверх uid 1000: контейнеру не нужны ни
   // capabilities, ни setuid-бинарники, а команда приходит из модели. `--read-only` уже не даёт
   // писать в корень образа, но без сброса capabilities остаются пути повышения прав внутри него.
+  // Набор флагов ниже — контракт с Docker-брокером (deploy/docker-broker/policy.mjs): он требует
+  // read-only корень, cap-drop ALL, no-new-privileges, uid 1000 и лимиты, а монтирования пускает
+  // только внутрь каталога песочниц. Новый флаг здесь появляется вместе с правилом в политике.
   const labels = Object.entries(mode.labels ?? {}).flatMap(([key, value]) => ["--label", key + "=" + value]);
   // env — только для конкретной команды (например, EXPO_TOKEN у EAS CLI): значение уходит
   // в окружение контейнера, а не в текст команды, поэтому не печатается в логах шага.

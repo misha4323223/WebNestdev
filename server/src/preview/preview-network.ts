@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import os from "node:os";
 import { dockerExec } from "./docker-exec.js";
+import { brokerSelfNetworks } from "../sandbox/docker/endpoint.js";
 
 /**
  * Сеть, в которой живёт сам сервер, — единственный адрес, по которому предпросмотр будет виден
@@ -67,6 +68,11 @@ async function networksByOwnAddress(){
 export async function serverNetworks():Promise<string[]>{
   const configured=process.env.PREVIEW_NETWORK?.trim();
   if(configured)return [configured];
+  // Под брокером `inspect` собственного контейнера запрещён: через него были бы видны метаданные
+  // чужих (включая `.Config.Env` базы). Брокер стоит в тех же сетях, что сервер (инвариант compose),
+  // поэтому его собственный набор сетей — и есть ответ.
+  const viaBroker=await brokerSelfNetworks().catch(()=>null);
+  if(viaBroker?.length)return viaBroker;
   for(const hostname of await ownHostnames()){
     const result=await dockerExec(["inspect","-f",NETWORK_NAMES_TEMPLATE,hostname],5000).catch(()=>null);
     if(result&&result.code===0){
