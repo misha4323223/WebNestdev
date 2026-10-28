@@ -50,7 +50,9 @@ button,textarea{font:inherit}button{color:inherit}
 /* Настройки и публикация занимают всю ширину: колонка слева закрывается, а вернуться
    можно кнопкой «К работе» внутри самих настроек. На телефоне шторка и так выезжает поверх. */
 @media(min-width:651px){.app-shell.sidebar-hidden .sidebar{display:none}}
-.section-label,.eyebrow{font-size:9px;letter-spacing:.09em;color:#69717c;font-weight:700}.sidebar-footer{margin-top:auto;padding:10px 4px}
+.section-label,.eyebrow{font-size:9px;letter-spacing:.09em;color:#69717c;font-weight:700}/* Низ колонки проекта остаётся на месте и при длинном списке чатов: тариф, поддержка и аккаунт
+   не уезжают вниз вместе с перепиской. */
+.sidebar-footer{position:sticky;bottom:0;z-index:3;margin-top:auto;padding:10px 4px;border-top:1px solid var(--line-warm-soft);background:#0d0f13}
 /* Баннер внизу сайдбара — графика, а не объявление: ни счётчиков, ни приглашений, ни кнопки.
    Место рассчитано на будущую строку логотипов сервисов, поэтому оно не привязано к одному
    партнёру и не меняется по таймеру. */
@@ -472,25 +474,54 @@ button,textarea{font:inherit}button{color:inherit}
 .home-hero-mark::before{content:"";position:absolute;z-index:0;width:min(208px,58vw);aspect-ratio:1;border:1px solid rgba(204,195,178,.2);border-radius:50%;background:radial-gradient(circle at 50% 0%,rgba(204,195,178,.7) 0 1.6px,transparent 2.2px);box-shadow:0 0 0 7px rgba(204,195,178,.025)}
 .home-hero-mark::after{content:"";position:absolute;z-index:0;width:min(176px,49vw);aspect-ratio:1;border:1px solid rgba(204,195,178,.24);border-right-color:transparent;border-left-color:transparent;border-radius:50%;transform:rotate(-18deg)}
 .home-hero-mark img{position:relative;z-index:1;display:block;object-fit:contain;filter:drop-shadow(0 12px 26px rgba(0,0,0,.42))}
+.home-kicker{display:inline-flex;margin-bottom:9px;color:#8c8476;font-size:8.5px;font-weight:550;letter-spacing:.18em}
 .home-hero>p{margin:0 auto;color:#777f89;font-size:13px;line-height:1.6;max-width:520px}
-.home-composer{margin:30px auto 0;max-width:760px;text-align:left;border:1px solid var(--line-warm);background:#111419;border-radius:11px;box-shadow:0 18px 50px rgba(0,0,0,.24);overflow:hidden}
-.home-composer:focus-within{border-color:var(--line-warm-strong)}
-.home-composer-top{display:flex;gap:10px;padding:14px 15px 6px}
-.home-composer-icon{width:28px;height:28px;flex:none;border:1px solid var(--line-warm);background:#171a20;border-radius:7px;display:grid;place-items:center;color:#b5bbc3}
-.home-composer textarea{min-height:48px;padding:3px 0 0;font-size:13px;line-height:1.55}
-.home-composer-bottom{min-height:40px;padding:0 9px 9px 15px;display:flex;align-items:center;justify-content:space-between;gap:12px;color:#606873;font-size:9px}
-.home-submit{width:29px;height:29px}
+/* Поле идеи — тот же материал, что и блоки шаблонов: тёплая кромка, угловая подсветка и
+   отдельная нижняя полоса действий. Так ввод не выглядит чужим элементом над списком стартов. */
+.home-composer{margin:24px auto 0;max-width:760px;text-align:left;border:1px solid var(--line-warm);background:radial-gradient(120% 130% at 100% 0,rgba(204,195,178,.055),transparent 52%),linear-gradient(172deg,#12161b,#0f1216 70%);border-radius:14px;box-shadow:0 18px 50px rgba(0,0,0,.26);overflow:hidden;transition:border-color .18s ease,box-shadow .18s ease}
+.home-composer:focus-within{border-color:var(--camo-line-strong);box-shadow:0 18px 50px rgba(0,0,0,.34),0 0 0 3px rgba(204,195,178,.05)}
+.home-composer-top{display:flex;align-items:flex-start;gap:10px;padding:14px 15px 8px}
+.home-composer-field{flex:1;min-width:0}
+.home-composer-label{display:block;margin:1px 0 4px;color:#7d7567;font-size:8.5px;letter-spacing:.14em}
+.home-composer-icon{width:30px;height:30px;flex:none;border:1px solid var(--line-warm);background:#171a20;border-radius:8px;display:grid;place-items:center;color:#c5bcaa}
+.home-composer textarea{min-height:46px;padding:0;font-size:13px;line-height:1.55}
+.home-composer-bottom{min-height:44px;padding:8px 9px 9px 15px;display:flex;align-items:center;justify-content:space-between;gap:12px;border-top:1px solid rgba(204,195,178,.09);color:#606873;font-size:9px}
+.home-composer-steps{display:flex;flex-wrap:wrap;gap:3px 10px;color:#6d7480;font-size:9px}
+.home-composer-steps>span{display:inline-flex;align-items:center;gap:5px}
+.home-composer-steps>span::before{content:"";width:3px;height:3px;border-radius:50%;background:#5d5546}
+.home-submit{width:auto;height:30px;flex:none;padding:0 12px;gap:6px;font-size:10px;font-weight:550}
+.home-submit span{white-space:nowrap}
 .home-section{width:min(980px,100%);margin:0 auto 38px}
-.home-section-head{display:flex;align-items:end;justify-content:space-between;margin-bottom:12px}
+.home-section-head{display:flex;align-items:end;justify-content:space-between;gap:12px;margin-bottom:12px}
 .home-section-head h2{margin:4px 0 0;font-size:14px;font-weight:600}
-.template-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
-.template-card{min-height:108px;border:1px solid var(--line-warm);background:#101318;border-radius:9px;padding:13px;text-align:left;color:inherit;display:flex;flex-direction:column;align-items:flex-start;gap:14px;cursor:pointer;transition:border-color .15s,background .15s}
-.template-card:hover,.recent-card:hover{border-color:var(--line-warm-strong);background:#14171c}
-.template-card>svg{margin-left:auto;color:#555e69}
-.template-icon{width:30px;height:30px;border:1px solid var(--line-warm);background:#171a20;border-radius:7px;display:grid;place-items:center;color:#b9bec6}
-.template-card strong,.template-card small{display:block}
-.template-card strong{font-size:11px;font-weight:600}
-.template-card small{margin-top:4px;color:#666e79;font-size:9px;line-height:1.45}
+.home-section-note{color:#5f6772;font-size:9px;text-align:right}
+/* Категории — строки-аккордеоны: заголовок отвечает «что можно собрать», раскрытый список —
+   «с чего начать». Открытая категория получает тёплую кромку, как активная карточка. */
+.starter-groups{display:grid;gap:7px}
+.starter-group{border:1px solid var(--line-warm);border-radius:11px;background:linear-gradient(168deg,#11151a,#0d1014 70%);overflow:hidden;transition:border-color .18s ease,background .18s ease}
+.starter-group:hover{border-color:var(--line-warm-strong)}
+.starter-group.open{border-color:var(--camo-line-strong);background:linear-gradient(168deg,#131711,#0d1014 74%)}
+.starter-group-head{width:100%;display:flex;align-items:center;gap:11px;padding:12px 14px;border:0;background:transparent;color:inherit;text-align:left;cursor:pointer}
+.starter-group-icon{width:32px;height:32px;flex:none;display:grid;place-items:center;border:1px solid var(--line-warm);border-radius:9px;background:#171b20;color:#c9c1b1}
+.starter-group.open .starter-group-icon{background:#1d1a13;color:#e2d6bf}
+.starter-group-copy{flex:1;min-width:0}
+.starter-group-copy strong{display:block;font-size:12px;font-weight:600}
+.starter-group-copy small{display:block;margin-top:3px;color:#6d7580;font-size:9.5px}
+.starter-group-count{flex:none;min-width:22px;padding:2px 7px;border:1px solid var(--line-warm-soft);border-radius:999px;color:#8d8577;font-size:9.5px;text-align:center}
+.starter-group-chevron{flex:none;color:#646c76;transition:transform .2s ease,color .2s ease}
+.starter-group.open .starter-group-chevron{transform:rotate(180deg);color:#c9c1b1}
+.starter-group-body{padding:0 14px 13px;animation:starter-in .18s ease both}
+@keyframes starter-in{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:none}}
+.starter-group-blurb{margin:0 0 10px;max-width:640px;color:#79818c;font-size:10px;line-height:1.6}
+.starter-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:6px}
+.starter-card{display:flex;align-items:center;gap:9px;min-height:52px;padding:9px 10px;border:1px solid var(--line-warm-soft);border-radius:9px;background:#0f1216;color:inherit;text-align:left;cursor:pointer;transition:border-color .15s,background .15s,transform .15s}
+.starter-card:hover{border-color:var(--line-warm-strong);background:#15181d;transform:translateY(-1px)}
+.starter-card-icon{width:26px;height:26px;flex:none;display:grid;place-items:center;border:1px solid var(--line-warm);border-radius:7px;background:#171a20;color:#b9bec6}
+.starter-card-copy{flex:1;min-width:0}
+.starter-card-copy strong{display:block;font-size:10.5px;font-weight:600}
+.starter-card-copy small{display:block;margin-top:2px;color:#666e79;font-size:9px;line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.starter-card-go{flex:none;color:#4f5865;transition:color .15s,transform .15s}
+.starter-card:hover .starter-card-go{color:#c9c1b1;transform:translate(1px,-1px)}
 .home-link{border:0;background:transparent;color:#8f97a2;font-size:10px;display:flex;align-items:center;gap:5px;cursor:pointer}.home-link:hover{color:#e8eaed}
 .recent-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:7px}
 .recent-card{min-height:48px;border:1px solid var(--line-warm);background:#101318;border-radius:8px;padding:7px 9px;text-align:left;color:inherit;cursor:pointer;display:grid;grid-template-columns:minmax(0,1fr);align-items:center}
@@ -518,23 +549,22 @@ button,textarea{font:inherit}button{color:inherit}
 .home-run span{display:block;margin-top:3px;color:#8e877b;font-size:10px;line-height:1.5}
 .home-run .home-run-open{height:30px;flex:none}
 .home-main.has-run .home-hero{--home-hero-gap:23px;padding-top:var(--home-hero-gap)}
-@media(max-width:800px){.home-hero{--home-hero-gap:39px;padding-top:var(--home-hero-gap)}.home-hero-mark img{width:132px;height:132px}.home-hero-mark::before{width:172px}.home-hero-mark::after{width:144px}.template-grid{grid-template-columns:repeat(2,1fr)}.recent-grid{grid-template-columns:repeat(2,1fr)}.template-card{min-height:92px;gap:10px;padding:12px}}
+@media(max-width:800px){.home-hero{--home-hero-gap:39px;padding-top:var(--home-hero-gap)}.home-hero-mark img{width:132px;height:132px}.home-hero-mark::before{width:172px}.home-hero-mark::after{width:144px}.recent-grid{grid-template-columns:repeat(2,1fr)}.starter-list{grid-template-columns:repeat(auto-fill,minmax(190px,1fr))}}
 /*
- * Шаблоны на телефоне — компактная плитка в две колонки: иконка, имя и короткое описание в две
- * строки. Раньше на узком экране каждая карточка занимала всю ширину и 108 пикселей высоты, поэтому
- * «Быстрый старт» уезжал за экран; теперь четыре шаблона видны сразу. Технологичность — угловая
- * подсветка фона и стрелка в углу карточки, без чужих цветов: палитра остаётся той же тёмной.
+ * Шаблоны на телефоне — одна колонка внутри раскрытой категории: заголовок категории остаётся
+ * крупным, а старты идут строками с иконкой, именем и одной строкой описания. Так список
+ * читается сверху вниз без горизонтальной прокрутки и не уводит проекты за экран.
  */
-@media(max-width:520px){.home-payment{flex-direction:column;align-items:flex-start;gap:9px}.home-payment-actions{width:100%}.home-payment-actions .ghost-button,.home-payment-actions .send-button{flex:1 1 auto;justify-content:center}.home-screen{padding:0 14px}.home-tabs{margin:0 -14px;padding:10px 14px}.home-hero{--home-hero-gap:29px;padding-top:var(--home-hero-gap)}.home-hero-mark img{width:104px;height:104px}.home-hero-mark::before{width:144px}.home-hero-mark::after{width:124px}.home-composer{margin-top:20px}.home-composer-bottom span{display:none}.home-section{margin-bottom:26px}.home-section-head{margin-bottom:9px}.recent-grid{grid-template-columns:1fr}.home-footer{flex-wrap:wrap}.home-footer span:nth-child(2){display:none}
-  .template-grid{grid-template-columns:repeat(2,1fr);gap:7px}
-  /* Угловая подсветка — часть фона карточки, а не слой поверх текста: накладка ослабляла бы его. */
-  .template-card{position:relative;min-height:0;padding:9px 10px;gap:7px;border-color:var(--line-warm);background:radial-gradient(125% 95% at 100% 0,rgba(120,168,224,.11),transparent 58%),linear-gradient(170deg,#141922,#101317 62%)}
-  .template-card:active{border-color:var(--line-warm-strong);background:radial-gradient(125% 95% at 100% 0,rgba(120,168,224,.18),transparent 58%),linear-gradient(170deg,#161b24,#111419 62%)}
-  .template-card>svg{position:absolute;top:9px;right:9px;width:12px;height:12px;color:#4f5865}
-  .template-icon{width:24px;height:24px;border-radius:7px}
-  .template-card strong{font-size:11.5px}
-  /* Описание остаётся, но в две строки: по нему выбирают шаблон, а высоту карточки задаёт он один. */
-  .template-card small{margin-top:3px;font-size:9px;line-height:1.35;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+@media(max-width:520px){.home-payment{flex-direction:column;align-items:flex-start;gap:9px}.home-payment-actions{width:100%}.home-payment-actions .ghost-button,.home-payment-actions .send-button{flex:1 1 auto;justify-content:center}.home-screen{padding:0 14px}.home-tabs{margin:0 -14px;padding:10px 14px}.home-hero{--home-hero-gap:29px;padding-top:var(--home-hero-gap)}.home-hero-mark img{width:104px;height:104px}.home-hero-mark::before{width:144px}.home-hero-mark::after{width:124px}.home-kicker{font-size:8px;letter-spacing:.14em}.home-composer{margin-top:20px;border-radius:12px}.home-composer-steps>span:nth-child(3){display:none}.home-submit{width:32px;padding:0;justify-content:center}.home-submit span{display:none}.home-section{margin-bottom:26px}.home-section-head{margin-bottom:9px}.home-section-note{display:none}.recent-grid{grid-template-columns:1fr}.home-footer{flex-wrap:wrap}.home-footer span:nth-child(2){display:none}
+  /* Категория на телефоне — компактная строка: диапазон остаётся, счётчик превращается в подпись. */
+  .starter-group-head{padding:11px 12px;gap:9px}
+  .starter-group-icon{width:29px;height:29px;border-radius:8px}
+  .starter-group-copy strong{font-size:11.5px}
+  .starter-group-copy small{font-size:9px}
+  .starter-group-body{padding:0 12px 11px}
+  .starter-list{grid-template-columns:1fr;gap:5px}
+  .starter-card{min-height:48px;padding:8px 9px}
+  .starter-card-copy small{white-space:normal;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
 }
 
 .nest-loader{--nest-size:42px;position:relative;display:inline-grid;width:var(--nest-size);height:var(--nest-size);place-items:center;flex:none;vertical-align:middle;isolation:isolate}
@@ -1012,7 +1042,9 @@ button,textarea{font:inherit}button{color:inherit}
 /* Home sidebar: sections first, then the selected section, account and billing */
 .home-layout{position:relative;z-index:1;display:grid;grid-template-columns:304px minmax(0,1fr);gap:26px;width:100%;align-items:start}
 .home-main{min-width:0;order:1}
-.home-rail{order:0;position:sticky;top:0;align-self:start;display:flex;flex-direction:column;gap:12px;height:100dvh;min-width:0;padding:0 0 18px}
+/* Высота окна — с запасным `vh` для браузеров без `dvh`: иначе колонка сжималась до высоты
+   оглавления, и блок «Тариф / Поддержка / Выйти» оказывался посередине экрана. */
+.home-rail{order:0;position:sticky;top:0;align-self:start;display:flex;flex-direction:column;gap:12px;height:100vh;height:100dvh;min-width:0;padding:0 0 18px}
 .rail-nav{display:flex;flex-direction:column;gap:2px;flex:none;padding:6px;border:1px solid var(--line-warm-soft);border-radius:10px;background:#0e1014}
 .rail-nav-item{height:34px;display:flex;align-items:center;gap:9px;padding:0 10px;border:1px solid transparent;border-radius:7px;background:transparent;color:#9aa2ad;font-size:11.5px;text-align:left;cursor:pointer}
 .rail-nav-item span{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
@@ -1054,7 +1086,9 @@ button,textarea{font:inherit}button{color:inherit}
 .rail-usage>div:not(.usage-meter-track) strong{color:#cbd0d8;font-variant-numeric:tabular-nums}
 .rail-plan-actions{display:grid;gap:7px;justify-items:start}
 .rail-plan-actions .plan-action{min-height:32px;padding:0 12px}
-.rail-foot{margin-top:auto;display:grid;gap:6px;flex:none}
+/* Действия аккаунта — у нижней кромки колонки, а не там, где закончилось оглавление: тариф,
+   поддержка и выход должны быть последней строкой экрана при любой высоте окна. */
+.rail-foot{position:sticky;bottom:0;z-index:3;margin-top:auto;display:grid;gap:6px;flex:none;padding-top:10px;border-top:1px solid var(--line-warm-soft);background:linear-gradient(180deg,rgba(11,13,16,0) 0,rgba(11,13,16,.88) 14px,#0b0d10 100%)}
 .rail-upsell{display:flex;align-items:center;gap:9px;min-height:48px;padding:7px 9px;border:1px solid #4a402e;border-radius:10px;background:linear-gradient(135deg,#272014,#111820 68%);color:#a9b4bf;font-size:10.5px;text-align:left;cursor:pointer;box-shadow:inset 0 1px 0 rgba(255,255,255,.035);transition:border-color .16s ease,background .16s ease,transform .16s ease}
 .rail-upsell:hover{border-color:#776648;background:linear-gradient(135deg,#2f2617,#141d24 68%);color:#eef1f3;transform:translateY(-1px)}
 .rail-upsell-icon{flex:none;width:29px;height:29px;display:grid;place-items:center;border:1px solid #534733;border-radius:8px;background:#282011;color:#ccc3b2}
@@ -1592,7 +1626,7 @@ button,textarea{font:inherit}button{color:inherit}
 
 /* Cookie-согласие: тёмное стекло с тонкой хаки-кромкой, чтобы баннер читался как
    часть продукта, а не как чужой юридический попап. */
-.cookie-banner{position:fixed;z-index:55;left:18px;bottom:18px;width:min(540px,calc(100vw - 36px));display:grid;gap:13px;padding:17px 18px;overflow:hidden;border:1px solid rgba(174,152,115,.24);border-radius:15px;background:linear-gradient(155deg,#1d170e 0%,#0d1215 55%,#0b0f12 100%);box-shadow:0 24px 70px rgba(0,0,0,.62),inset 0 1px 0 rgba(255,255,255,.045);animation:cookie-rise .4s cubic-bezier(.2,.8,.2,1) both}
+.cookie-banner{position:fixed;z-index:55;right:18px;bottom:18px;left:auto;width:min(480px,calc(100vw - 36px));display:grid;gap:13px;padding:17px 18px;overflow:hidden;border:1px solid rgba(174,152,115,.24);border-radius:15px;background:linear-gradient(155deg,#1d170e 0%,#0d1215 55%,#0b0f12 100%);box-shadow:0 24px 70px rgba(0,0,0,.62),inset 0 1px 0 rgba(255,255,255,.045);animation:cookie-rise-right .42s cubic-bezier(.2,.8,.2,1) both}
 .cookie-banner::before{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(120% 90% at 0% 0%,rgba(187,147,77,.13),transparent 55%),linear-gradient(90deg,rgba(195,170,127,.55),rgba(195,170,127,0) 45%) top/100% 1px no-repeat}
 .cookie-banner-glow{position:absolute;right:-72px;bottom:-96px;width:190px;height:190px;border-radius:50%;background:radial-gradient(circle,rgba(187,147,78,.16),transparent 70%);pointer-events:none}
 .cookie-head{position:relative;display:flex;align-items:flex-start;gap:11px}
@@ -1609,7 +1643,11 @@ button,textarea{font:inherit}button{color:inherit}
 .cookie-secondary:hover{border-color:#544833;background:#262117;color:#e1e0dd}
 .cookie-customize{margin-left:auto;padding:0 5px;border-color:transparent;background:transparent;color:#91897a;font-weight:500}
 .cookie-customize:hover{color:#c6c2bc}
-@keyframes cookie-rise{from{opacity:0;transform:translateY(14px) scale(.985)}to{opacity:1;transform:none}}
+/* Десктоп: карточка выезжает из-за правого края, а не всплывает по центру — она не закрывает
+   рабочую область и не спорит с колонкой навигации. */
+@keyframes cookie-rise-right{from{opacity:0;transform:translateX(30px) scale(.985)}to{opacity:1;transform:none}}
+/* Телефон: нижняя шторка поднимается из-за экрана и стоит по центру. */
+@keyframes cookie-sheet-up{from{opacity:0;transform:translate(-50%,calc(100% + 24px))}to{opacity:1;transform:translate(-50%,0)}}
 
 .cookie-backdrop{z-index:70}
 .cookie-modal{width:min(580px,100%);border-color:#3a3223;background:linear-gradient(170deg,#19150e,#0d1114 60%,#0b0e11)}
@@ -1636,7 +1674,7 @@ button,textarea{font:inherit}button{color:inherit}
 .account-pref-actions .account-save{margin-top:0}
 
 @media(max-width:650px){
-  .cookie-banner{left:10px;right:10px;bottom:10px;width:auto;gap:11px;padding:14px}
+  .cookie-banner{left:50%;right:auto;bottom:calc(10px + env(safe-area-inset-bottom,0px));width:min(440px,calc(100vw - 20px));transform:translateX(-50%);border-radius:14px;gap:11px;padding:14px;animation:cookie-sheet-up .44s cubic-bezier(.2,.85,.2,1) both}
   .cookie-title span{font-size:10px}
   .cookie-actions{display:grid;grid-template-columns:1fr 1fr;gap:7px;padding-left:0}
   .cookie-action{justify-content:center;height:34px;padding:0 8px}
@@ -2390,8 +2428,9 @@ button,textarea{font:inherit}button{color:inherit}
    ошибка — остаются в своих цветах: их кромка несёт смысл, а не оформление. */
 .home-screen .home-composer,
 .home-screen .home-composer-icon,
-.home-screen .template-card,
-.home-screen .template-icon,
+.home-screen .starter-group,
+.home-screen .starter-card,
+.home-screen .starter-card-icon,
 .home-screen .recent-card,
 .home-screen .recent-thumb,
 .home-screen .recent-tools button,
@@ -2413,7 +2452,9 @@ button,textarea{font:inherit}button{color:inherit}
 .home-screen .connector-key select,
 .home-screen .connector-hint{border-color:var(--line-warm)}
 .home-screen .home-composer:focus-within,
-.home-screen .template-card:hover,
+.home-screen .starter-group:hover,
+.home-screen .starter-group.open,
+.home-screen .starter-card:hover,
 .home-screen .recent-card:hover,
 .home-screen .recent-tools button:hover,
 .home-screen .project-rename input:focus,

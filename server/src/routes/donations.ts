@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireUser } from "../auth/auth.js";
 import { allocateInvoiceId } from "../billing/store.js";
 import { buildPaymentUrl, robokassaConfig } from "../billing/robokassa.js";
+import { reachableEmailFor } from "../billing/notify.js";
 import { createDonation } from "../support/donation-store.js";
 
 /**
@@ -56,6 +57,9 @@ export async function registerDonationRoutes(app: FastifyInstance) {
     let paymentUrl: string | null = null;
     if (config.configured) {
       invId = await allocateInvoiceId();
+      // Служебный адрес входа (`…@phone.webnestdev.local`) — не почта: чек туда не дойдёт.
+      // Берём настоящий контакт из профиля, иначе поле Email не передаём вовсе.
+      const email = await reachableEmailFor(user);
       const link = buildPaymentUrl({
         config,
         plan: "free",
@@ -63,7 +67,7 @@ export async function registerDonationRoutes(app: FastifyInstance) {
         invId,
         amount: body.amount,
         description: "Добровольная поддержка проекта NestDev",
-        email: user.email,
+        ...(email ? { email } : {}),
         kind: "donation",
       });
       paymentUrl = link.url;

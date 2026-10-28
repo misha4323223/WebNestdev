@@ -346,7 +346,7 @@ export const SERVICES: ServiceDefinition[] = [
     id: "robokassa",
     name: "Robokassa",
     category: "payments",
-    tagline: "Приём платежей, принимает самозанятых",
+    tagline: "Приём платежей, работает с НПД",
     keyUrl: "https://docs.robokassa.ru/ru/quick-start",
     docsUrl: "https://docs.robokassa.ru/ru/",
     steps: [

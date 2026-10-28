@@ -76,7 +76,7 @@ import { startBillingSweeper, stopBillingSweeper } from "./billing/recurring.js"
 import { startStorageReconcileScheduler } from "./account/storage-scheduler.js";
 import { describeObjectStore } from "./storage/object-store.js";
 import { startProjectArchiveScheduler } from "./storage/archive-scheduler.js";
-import { describeBilling } from "./billing/robokassa.js";
+import { describeBilling, robokassaConfig } from "./billing/robokassa.js";
 import { registerPlatformRoutes } from "./routes/platform.js";
 import { registerPlatformPlanRoutes } from "./routes/platform-plans.js";
 import { loadPlatformEnv } from "./platform/platform-env.js";
@@ -179,6 +179,10 @@ console.log("[web] " + describeWebSearch());
 // Настроена ли оплата и в каком режиме: без этой строки «кнопка оплаты не работает» и «ключи не
 // сохранились» выглядят одинаково.
 console.log("[billing] " + describeBilling());
+// При НПД чек создаёт Робокасса через «Робочеки СМЗ», а не наша передача Receipt. Включённый
+// флаг не ломает оплату, но чек может задвоиться или не сойтись с кассой, поэтому он заметен
+// в логе, а не только в панели ключей.
+if (robokassaConfig().receipt) console.warn("[billing] Receipt JSON включён: при НПД чеки формирует Робокасса («Робочеки СМЗ»), проверьте, что Receipt действительно нужен");
 // Настроена ли рассылка через Postbox и с какими пределами: проверка идёт в фоне, потому что
 // без ключа она ждёт метаданные ВМ, а старт сервера ждать этого не должен.
 void postboxStatus()

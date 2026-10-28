@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   buildPaymentUrl,
   buildReceipt,
+  buildRecurringBody,
   describeBilling,
   encodeReceipt,
   paymentSignatureBase,
@@ -101,6 +102,20 @@ test("a receipt is a service for a month with no VAT and the encoded value is si
   const encoded = encodeReceipt(receipt);
   assert.equal(new URL(link.url).searchParams.get("Receipt"), encoded);
   assert.equal(new URL(link.url).searchParams.get("SignatureValue"), signValue("nestdev:990.00:9:" + encoded + ":pass1", "md5"));
+});
+
+test("a recurring charge does not sign PreviousInvoiceID and carries a receipt when enabled", () => {
+  const base = { config, invId: 11, parentInvId: 9, amount: 990, description: "Продление подписки NestDev", planName: "Плюс" };
+  const plain = new URLSearchParams(buildRecurringBody(base));
+  // PreviousInvoiceID нужен в запросе, но подпись считается без него.
+  assert.equal(plain.get("PreviousInvoiceID"), "9");
+  assert.equal(plain.get("Receipt"), null);
+  assert.equal(plain.get("SignatureValue"), signValue("nestdev:990.00:11:pass1", "md5"));
+
+  const receipt = encodeReceipt(buildReceipt({ planName: "Плюс", amount: 990 }));
+  const fiscal = new URLSearchParams(buildRecurringBody({ ...base, config: { ...config, receipt: true } }));
+  assert.equal(fiscal.get("Receipt"), receipt);
+  assert.equal(fiscal.get("SignatureValue"), signValue("nestdev:990.00:11:" + receipt + ":pass1", "md5"));
 });
 
 test("a donation is a one-off payment with its own receipt item", () => {

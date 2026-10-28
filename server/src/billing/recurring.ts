@@ -45,6 +45,9 @@ export async function renewDueSubscriptions(now = new Date(), charge = chargeRec
         invId: payment.invId,
         parentInvId: record.parentInvId,
         amount,
+        // Тот же тариф и та же сумма, что в счёте: чек при автопродлении не должен
+        // расходиться с первым платежом.
+        planName: planDisplayName(record.plan),
         description: "Продление подписки NestDev «" + planDisplayName(record.plan) + "»",
       });
       if (result.ok) {

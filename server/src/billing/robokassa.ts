@@ -277,31 +277,47 @@ export type RecurringChargeInput = {
   parentInvId: number;
   amount: number;
   description: string;
+  /** Название тарифа для позиции чека. Нужно только при включённом Receipt. */
+  planName: string;
 };
+
+/**
+ * Тело запроса на повторное списание. Вынесено отдельно от сети, чтобы подпись и Receipt можно
+ * было проверить тестом: `PreviousInvoiceID` участвует в запросе, но не в подписи (так требует
+ * документация Robokassa), а Receipt при включённой фискализации встаёт перед паролем №1.
+ */
+export function buildRecurringBody(input: RecurringChargeInput) {
+  const outSum = formatAmount(input.amount);
+  const receipt = input.config.receipt
+    ? encodeReceipt(buildReceipt({ planName: input.planName, amount: input.amount }))
+    : undefined;
+  const params = new URLSearchParams({
+    MerchantLogin: input.config.login,
+    InvoiceID: String(input.invId),
+    PreviousInvoiceID: String(input.parentInvId),
+    OutSum: outSum,
+    Description: input.description.slice(0, 100),
+  });
+  if (receipt) params.set("Receipt", receipt);
+  params.set("SignatureValue", signValue(paymentSignatureBase({
+    login: input.config.login,
+    outSum,
+    invId: input.invId,
+    password1: input.config.password1,
+    ...(receipt ? { receipt } : {}),
+  }), input.config.hash));
+  return params.toString();
+}
 
 /**
  * Повторное списание. `OK+InvId` в ответе значит только «операция создана»: деньги списаны,
  * когда пришло уведомление ResultURL с этим InvId и верной подписью.
  */
 export async function chargeRecurring(input: RecurringChargeInput) {
-  const outSum = formatAmount(input.amount);
-  const body = new URLSearchParams({
-    MerchantLogin: input.config.login,
-    InvoiceID: String(input.invId),
-    PreviousInvoiceID: String(input.parentInvId),
-    OutSum: outSum,
-    Description: input.description.slice(0, 100),
-    SignatureValue: signValue(paymentSignatureBase({
-      login: input.config.login,
-      outSum,
-      invId: input.invId,
-      password1: input.config.password1,
-    }), input.config.hash),
-  });
   const response = await fetch(ROBOKASSA_RECURRING_URL, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
-    body: body.toString(),
+    body: buildRecurringBody(input),
   });
   const text = (await response.text()).trim();
   return { ok: response.ok && /^OK/i.test(text), status: response.status, text: text.slice(0, 300) };
