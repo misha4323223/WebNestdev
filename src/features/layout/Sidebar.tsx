@@ -32,7 +32,11 @@ function stepsAccent(ratio:number){
   return "#"+from.map((value,index)=>Math.round(value+(to[index]-value)*k).toString(16).padStart(2,"0")).join("");
 }
 
-function SidebarPlan({onPlan}:{onPlan:()=>void}){
+/**
+ * Тариф и расход читаются один раз на колонку: полоска запусков стоит сверху, карточка тарифа —
+ * внизу, и два отдельных запроса к биллингу показывали бы два разных состояния одновременно.
+ */
+function usePlanInfo(){
   const [plan,setPlan]=useState<SidebarPlanInfo|null>(null);
   const planChoice=usePlanChoice();
   // Действующий тариф приходит с сервера, а выбранный — общее состояние: человек видит и то,
@@ -59,12 +63,31 @@ function SidebarPlan({onPlan}:{onPlan:()=>void}){
     window.addEventListener("focus",load);
     return ()=>{active=false;window.removeEventListener("focus",load)}
   },[planChoice]);
+  return plan;
+}
+
+/**
+ * Бесплатные запуски — над «Новым чатом»: лимит виден до того, как человек начнёт работу, а не
+ * после того, как запуск не стартовал. Полоса показывается только на бесплатном тарифе.
+ */
+function SidebarRuns({plan}:{plan:SidebarPlanInfo|null}){
   if(!plan)return null;
   const free=plan.planId==="free"&&plan.limit>0;
-  const ratio=free?Math.max(0,Math.min(1,plan.used/plan.limit)):0;
+  if(!free)return null;
+  const ratio=Math.max(0,Math.min(1,plan.used/plan.limit));
   const percent=Math.round(ratio*100);
   const accent=stepsAccent(ratio);
   const left=Math.max(0,plan.limit-plan.used);
+  return <div className="sidebar-steps" title={left>0?"Использовано "+plan.used+" из "+plan.limit+" бесплатных запусков агента · осталось "+left:"Бесплатные запуски агента на сегодня закончились"}>
+    <div className="sidebar-steps-head"><span>Бесплатные запуски</span><strong style={{color:accent}}>{percent}%</strong></div>
+    <div className="sidebar-steps-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} aria-valuetext={percent+"%"} aria-label="Использование бесплатных запусков агента">
+      <span style={{width:percent+"%",background:"linear-gradient(90deg,#876832,"+accent+")",boxShadow:percent>0?"0 0 6px "+accent+"55":"none"}}/>
+    </div>
+  </div>;
+}
+
+function SidebarPlan({plan,onPlan}:{plan:SidebarPlanInfo|null;onPlan:()=>void}){
+  if(!plan)return null;
   // Хранилище показывается только когда оно близко к концу: в спокойном состоянии это
   // лишняя строка, а на 80% и 100% — новость, которую нельзя пропустить.
   const storageRatio=plan.storageLimit>0?plan.storageUsed/plan.storageLimit:0;
@@ -75,12 +98,6 @@ function SidebarPlan({onPlan}:{onPlan:()=>void}){
       <span className="sidebar-plan-copy"><small>Тариф</small><strong>{plan.name}</strong></span>
       {plan.chosen&&<span className="sidebar-plan-next"><ArrowUpRight size={11}/>{plan.chosen}</span>}
     </button>
-    {free&&<div className="sidebar-steps" title={left>0?"Использовано "+plan.used+" из "+plan.limit+" бесплатных запусков агента · осталось "+left:"Бесплатные запуски агента на сегодня закончились"}>
-      <div className="sidebar-steps-head"><span>Бесплатные запуски</span><strong style={{color:accent}}>{percent}%</strong></div>
-      <div className="sidebar-steps-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} aria-valuetext={percent+"%"} aria-label="Использование бесплатных запусков агента">
-        <span style={{width:percent+"%",background:"linear-gradient(90deg,#876832,"+accent+")",boxShadow:percent>0?"0 0 6px "+accent+"55":"none"}}/>
-      </div>
-    </div>}
     {storageState&&<button className={"sidebar-storage "+storageState} onClick={onPlan} title={storageState==="full"?"Лимит хранилища исчерпан — агент не может писать файлы":"Занято "+bytesLabel(plan.storageUsed)+" из "+bytesLabel(plan.storageLimit)+" — откройте тариф и хранилище"}>
       <HardDrive size={11}/>
       <span>{storageState==="full"?"Хранилище заполнено":"Хранилище "+Math.round(storageRatio*100)+"%"}</span>
@@ -109,7 +126,8 @@ export type SidebarChats={
  * Закрепление поднимает чат над датами: у долгой работы бывает один главный разговор, к
  * которому возвращаются чаще остальных.
  */
-export function Sidebar({open,chats,onPlan}:{open:boolean;chats:SidebarChats;onPlan:()=>void}){
+export function Sidebar({open,projectName,chats,onPlan}:{open:boolean;projectName:string;chats:SidebarChats;onPlan:()=>void}){
+  const plan=usePlanInfo();
   const [pinned,setPinned]=useState<string[]>(()=>readPinnedChats(chats.projectId));
   const [busy,setBusy]=useState(false);
   const [deleting,setDeleting]=useState("");
@@ -160,10 +178,17 @@ export function Sidebar({open,chats,onPlan}:{open:boolean;chats:SidebarChats;onP
 
   return <aside id="workspace-sidebar" className={"sidebar chats-sidebar"+(open?" open":"")}>
     <div className="chat-side-top">
+      <SidebarRuns plan={plan}/>
       <button className="chat-side-new" onClick={()=>void startChat()} disabled={busy} title="Новый чат в этом проекте">
         {busy?<NestLoader size={14}/>:<Plus size={14}/>}
         <span>Новый чат</span>
       </button>
+      {/* Название проекта под кнопкой: в шапке оно делит место с действиями и на телефоне
+          обрезается, а в колонке видно, в каком проекте открыт чат. */}
+      <div className="chat-side-project" title={"Проект: "+projectName}>
+        <small>Проект</small>
+        <strong>{projectName}</strong>
+      </div>
     </div>
 
     <nav className="chat-side-scroll" aria-label="Чаты проекта">
@@ -208,7 +233,7 @@ export function Sidebar({open,chats,onPlan}:{open:boolean;chats:SidebarChats;onP
     </nav>
 
     <div className="sidebar-footer">
-      <SidebarPlan onPlan={onPlan}/>
+      <SidebarPlan plan={plan} onPlan={onPlan}/>
       <SidebarBanner/>
     </div>
   </aside>;

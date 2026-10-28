@@ -40,7 +40,7 @@ export function LayoutShell({children,projectId,projectName,onRenameProject,onSe
     <Topbar projectId={projectId} projectName={projectName} onRenameProject={onRenameProject} running={agentRunning} sidebarOpen={sidebarOpen} onMenu={()=>setSidebarOpen(v=>!v)} onHome={onHome} onOpenChanges={onOpenChanges} onSettings={onSettings} onSecrets={onSecrets} onDeploy={onDeploy} previewOpen={previewOpen} previewRunning={previewRunning} onPreviewToggle={onPreviewToggle} onRepositoryChanged={onRepositoryChanged}/>
     <div className="workspace">
       <div className={"sidebar-backdrop"+(sidebarOpen?" open":"")} onClick={()=>setSidebarOpen(false)} aria-hidden="true"/>
-      <Sidebar open={sidebarOpen} chats={sidebarChats} onPlan={onSettings}/>
+      <Sidebar open={sidebarOpen} projectName={projectName} chats={sidebarChats} onPlan={onSettings}/>
       {children}
     </div>
   </div>;

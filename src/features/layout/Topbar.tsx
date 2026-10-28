@@ -31,6 +31,22 @@ function accountLabel(state:AuthState|null){
   return {name,detail:email||phone||"вход выполнен"};
 }
 
+/**
+ * Имя репозитория из адреса: `https://github.com/owner/repo.git`, `git@github.com:owner/repo.git`
+ * и `…/owner/repo` дают одно и то же `repo`. В шапке нужно имя, а не полный адрес: владелец
+ * остаётся в подсказке и в «Изменениях».
+ */
+function repositoryName(remoteUrl: string | null | undefined) {
+  const raw = remoteUrl?.trim();
+  if (!raw) return "";
+  const cleaned = raw
+    .replace(/\/+$/, "")
+    .replace(/\.git$/i, "")
+    .replace(/^[a-z][a-z0-9+.-]*:\/\//i, "")
+    .replace(/^[^@/]+@[^:/]+[:/]/i, "");
+  return cleaned.split(/[\\/]/).filter(Boolean).pop() ?? "";
+}
+
 /** «1 точка», «2 точки», «5 точек» — счётчик истории в чипе читается по-русски. */
 function pointsLabel(count: number) {
   const mod10 = count % 10;
@@ -185,6 +201,7 @@ export function Topbar({projectId,projectName,onRenameProject,running,sidebarOpe
 
   const repository=changes?.repository;
   const branch=repository?.branch||"main";
+  const repoName=repository?.connected?repositoryName(repository.remoteUrl):"";
   const points=changes?.checkpoints.length??0;
   // Репозиторий проекта и аккаунт GitHub — разные вещи: аккаунт может быть подключён, а
   // репозиторий у проекта ещё не создан. Неотправленные точки относятся именно к репозиторию
@@ -195,7 +212,7 @@ export function Topbar({projectId,projectName,onRenameProject,running,sidebarOpe
   const repoTitle="GitHub"+(!repoConnected
     ?(githubConnected?" подключён, репозиторий проекта ещё не создан":" не подключён — подключить в «Изменениях»")
     :(unpushed>0?" · не отправлено: "+pointsLabel(unpushed):" · репозиторий проекта"));
-  const branchTitle="Ветка "+branch+" · выбрать другую ветку проекта";
+  const branchTitle=(repoName?"Репозиторий "+repoName+" · ":"")+"ветка "+branch+" · выбрать другую ветку проекта";
 
   return <header className="topbar" ref={barRef}>
     <button className="icon-button mobile-only menu-toggle" onClick={onMenu} aria-label={sidebarOpen?"Закрыть панель":"Открыть панель"} aria-expanded={sidebarOpen} aria-controls="workspace-sidebar">
@@ -234,8 +251,12 @@ export function Topbar({projectId,projectName,onRenameProject,running,sidebarOpe
           Стоит у действий, рядом с предпросмотром: на телефоне путь не делит с ней ширину,
           и имя проекта получает всё место до правого края. */}
       <div className="topbar-branch" ref={branchRef}>
-        <button className="topbar-branch-button" onClick={toggleBranch} aria-haspopup="menu" aria-expanded={branchMenu} aria-controls="topbar-branch-menu" title={branchTitle} aria-label={"Ветка "+branch+": выбрать другую"}>
+        <button className="topbar-branch-button" onClick={toggleBranch} aria-haspopup="menu" aria-expanded={branchMenu} aria-controls="topbar-branch-menu" title={branchTitle} aria-label={(repoName?"Репозиторий "+repoName+", ":"")+"ветка "+branch+": выбрать другую"}>
           <GitBranch size={12}/>
+          {/* Имя репозитория рядом с веткой: клик по кнопке открывает ветки, но видно, куда
+              именно они уходят — раньше в кнопке была только ветка. */}
+          {repoName&&<span className="topbar-branch-repo">{repoName}</span>}
+          {repoName&&<span className="topbar-branch-sep" aria-hidden="true">·</span>}
           <span className="topbar-branch-name">{branch}</span>
           <ChevronDown size={11} className="topbar-branch-caret"/>
           {unpushed>0&&<i className="topbar-branch-dot" aria-hidden="true"/>}

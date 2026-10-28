@@ -109,6 +109,11 @@ button,textarea{font:inherit}button{color:inherit}
 .chat-side-new:hover{border-color:var(--line-warm-strong);background:linear-gradient(180deg,#1b2129,#12161b)}
 .chat-side-new svg{flex:none;color:#cab898}
 .chat-side-new:disabled{opacity:.65;cursor:default}
+/* Название проекта под «Новым чатом»: колонка отвечает на вопрос «в каком проекте я», не
+   открывая настройки. Две строки, как у поля адреса: подпись и имя. */
+.chat-side-project{display:grid;gap:2px;min-width:0;margin:9px 0 0;padding:0 3px}
+.chat-side-project small{font-size:8px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#646c76}
+.chat-side-project strong{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#d4d9df;font-size:11.5px;font-weight:600;letter-spacing:-.01em}
 .chat-side-scroll{flex:1;min-height:0;overflow-y:auto;overflow-x:hidden;display:flex;flex-direction:column;padding:0 2px 6px}
 .chat-side-group{padding:9px 7px 4px;font-size:8.5px;font-weight:700;letter-spacing:.1em;text-transform:uppercase;color:#646c76}
 .chat-side-group-wrap:first-child .chat-side-group{padding-top:2px}
@@ -1961,11 +1966,15 @@ button,textarea{font:inherit}button{color:inherit}
 /* Ветка — кнопка, а не подпись: отправка уходит в текущую ветку, поэтому имя ветки
    раскрывает список веток проекта, и выбор сразу переключает рабочую область. */
 .topbar-branch{position:relative;flex:none}
-.topbar-branch-button{display:flex;align-items:center;gap:5px;height:26px;max-width:190px;padding:0 7px;border:1px solid var(--line-warm-strong);border-radius:6px;background:#12161b;color:#c3ccd5;font-size:10.5px;cursor:pointer;transition:border-color .16s ease,background .16s ease,color .16s ease}
+.topbar-branch-button{display:flex;align-items:center;gap:5px;height:26px;max-width:230px;padding:0 7px;border:1px solid var(--line-warm-strong);border-radius:6px;background:#12161b;color:#c3ccd5;font-size:10.5px;cursor:pointer;transition:border-color .16s ease,background .16s ease,color .16s ease}
 .topbar-branch-button:hover,.topbar-branch-button[aria-expanded="true"]{border-color:#524836;background:#241f15;color:#eef2f5}
 .topbar-branch-button svg{flex:none;color:#8f99a4}
 .topbar-branch-button:hover svg,.topbar-branch-button[aria-expanded="true"] svg{color:#ccc3b2}
-.topbar-branch-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:600;letter-spacing:-.01em}
+/* В кнопке два имени: репозиторий — главное, ветка — уточнение. Репозиторий жирнее и светлее,
+   ветка тише: без этого они сливались бы в одну непонятную строку. */
+.topbar-branch-repo{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e4e9ee;font-weight:650;letter-spacing:-.01em}
+.topbar-branch-sep{flex:none;color:#5f6771;font-size:9px}
+.topbar-branch-name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#98a2ad;font-weight:500;letter-spacing:-.01em}
 .topbar-branch-button .topbar-branch-caret{color:#6f7883}
 .topbar-branch-dot{width:5px;height:5px;flex:none;border-radius:50%;background:#d3a86a;box-shadow:0 0 0 2px rgba(211,168,106,.16)}
 .topbar-chip-dot{width:5px;height:5px;border-radius:50%;background:#d3a86a;box-shadow:0 0 0 2px rgba(211,168,106,.16)}
@@ -2023,8 +2032,8 @@ button,textarea{font:inherit}button{color:inherit}
   /* Ветка остаётся в шапке и на телефоне — это единственный способ выбрать, куда отправлять.
      Она стоит рядом с предпросмотром, поэтому имя проекта занимает всё место слева до действий. */
   .topbar-trail{flex:1;min-width:0}
-  .topbar-branch-button{max-width:min(26vw,96px)}
-  .topbar-branch-name{max-width:56px}
+  .topbar-branch-button{max-width:min(36vw,140px)}
+  .topbar-branch-name{max-width:44px}
   /* Карандаш на телефоне не нужен: имя и так переименовывается нажатием, а его место
      отдаётся самому названию проекта. */
   .topbar-crumb{flex:1;max-width:none;gap:5px;padding:3px 4px}
