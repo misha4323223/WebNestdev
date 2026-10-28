@@ -438,6 +438,8 @@ export function createBrokerServer({ socketPath, upstreamPath, policy, log = con
       : null;
     /** Ждём первый байт демона: 101 приходит сразу, поэтому молчание — это зависший hijack. */
     let responseTimer = null;
+    /** Сколько байт демон отдал в upgraded-потоке: видно, был ли вывод команды и конец потока. */
+    let received = 0;
     upstream.once("connect", () => {
       if (connectTimer) clearTimeout(connectTimer);
       const lines = [request.method + " " + request.url + " HTTP/1.1"];
@@ -455,10 +457,17 @@ export function createBrokerServer({ socketPath, upstreamPath, policy, log = con
           fail(504, upstreamTimeoutMessage(request.method, request.url, hijackTimeoutMs) + " (hijack: демон не ответил на переключение протокола)");
         }, hijackTimeoutMs);
       }
-      upstream.once("data", () => {
+      upstream.on("data", chunk => {
+        received += chunk.length;
         if (responseTimer) clearTimeout(responseTimer);
+        if (answered) return;
         answered = true;
-        if (trace()) log.log("[broker] upgrade ответил: " + request.method + " " + request.url);
+        // В журнал — сама строка статуса: "ответил" без неё не отличает `101 UPGRADED` от отказа
+        // демона (`400`/`500`), а именно от этого зависит, виноват брокер или команда внутри.
+        if (trace()) {
+          const head = chunk.toString("latin1").replace(/\r?\n/g, " | ").slice(0, 160);
+          log.log("[broker] upgrade ответил: " + request.method + " " + request.url + " — " + head);
+        }
       });
       upstream.pipe(clientSocket);
     });
@@ -474,13 +483,17 @@ export function createBrokerServer({ socketPath, upstreamPath, policy, log = con
     // клиентского сокета, и destroy() выбросил бы его вместе с хвостом лога.
     upstream.once("close", () => {
       if (responseTimer) clearTimeout(responseTimer);
+      if (trace()) log.log("[broker] upgrade закрыт демоном: " + request.method + " " + request.url + ", отдал " + received + " байт");
       if (!clientSocket.destroyed) clientSocket.end();
     });
     // Клиент мог сдаться первым (у платформы свой предел ожидания). Без этой строки в журнале
     // оставался только запрос без ответа, и нельзя было отличить «демон молчит» от «клиент ушёл».
     clientSocket.once("close", () => {
       if (responseTimer) clearTimeout(responseTimer);
-      if (!answered && trace()) log.warn("[broker] клиент закрыл upgrade до ответа демона: " + request.method + " " + request.url);
+      if (trace()) {
+        log.warn("[broker] клиент закрыл upgrade: " + request.method + " " + request.url +
+          " (демон " + (answered ? "ответил" : "не ответил") + ", отдал " + received + " байт)");
+      }
     });
   }
 }
