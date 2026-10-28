@@ -246,7 +246,9 @@ function checkNetworkingConfig(networking, policy, networkMode) {
   if (EMPTY(settings)) return null;
   if (!isObject(settings)) return "Настройки сети должны быть объектом";
   for (const [field, value] of Object.entries(settings)) {
-    if (!EMPTY(value)) return "Настройки endpoint запрещены: " + field;
+    // Ноль и false — нулевые значения API, а не настройка: ненулевой alias/IPAM/priority по-прежнему
+    // запрещён.
+    if (!EMPTY(value) && value !== 0 && value !== false) return "Настройки endpoint запрещены: " + field;
   }
   return null;
 }
@@ -282,11 +284,16 @@ export function validateCreate(body, policy) {
   if (!(body.User === "1000:1000" || body.User === "1000")) {
     return fail("Контейнер обязан работать от uid 1000, а не от " + String(body.User));
   }
-  const workdir = body.WorkingDir ?? "/workspace";
-  if (typeof workdir !== "string" || !(workdir === "/workspace" || workdir.startsWith("/workspace/"))) {
+  // Пустой WorkingDir — это дефолт Docker (`/` внутри read-only корня), а не выход за песочницу:
+  // так запускаются диагностические пробы, которым каталог проекта не нужен. Заданный каталог
+  // обязан быть внутри /workspace.
+  const workdir = body.WorkingDir ?? "";
+  if (workdir !== "" && (typeof workdir !== "string" || !(workdir === "/workspace" || workdir.startsWith("/workspace/")))) {
     return fail("Рабочий каталог должен быть внутри /workspace: " + String(workdir));
   }
-  if (!Array.isArray(body.Env) || body.Env.some(item => typeof item !== "string")) {
+  // `Env: null` — то, что CLI присылает без единого `-e`; это пустое окружение, а не произвольные
+  // данные. Если переменные есть, они обязаны быть строками.
+  if (body.Env !== undefined && body.Env !== null && (!Array.isArray(body.Env) || body.Env.some(item => typeof item !== "string"))) {
     return fail("Env должен быть массивом строк");
   }
   if (!EMPTY(body.Labels) && (!isObject(body.Labels) || Object.values(body.Labels).some(v => typeof v !== "string"))) {

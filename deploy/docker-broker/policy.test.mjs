@@ -127,6 +127,11 @@ test("NetworkingConfig той же разрешённой сети проход�
   assert.deepEqual(validateCreate(none, policy), { ok: true });
 });
 
+test("проба без -e и -w проходит: Env null и пустой WorkingDir — дефолты Docker", () => {
+  assert.deepEqual(validateCreate(createBody({ Env: null, WorkingDir: "" }), policy), { ok: true });
+  assert.deepEqual(validateCreate(createBody({ Env: undefined }), policy), { ok: true });
+});
+
 test("create выходит за песочницу — отказ", () => {
   const cases = [
     ["privileged", withHost({ Privileged: true })],
@@ -162,6 +167,7 @@ test("create выходит за песочницу — отказ", () => {
     ["PidsLimit больше 512", withHost({ PidsLimit: 4096 })],
     ["корень контейнера от root", createBody({ User: "0" })],
     ["рабочий каталог вне /workspace", createBody({ WorkingDir: "/" })],
+    ["Env не массив строк", createBody({ Env: "HOME=/tmp" })],
     ["чужой образ", createBody({ Image: "alpine" })],
     ["Healthcheck", createBody({ Healthcheck: { Test: ["CMD", "true"] } })],
     ["EndpointsConfig", createBody({ NetworkingConfig: { EndpointsConfig: { webnestdev: {} } } })],
