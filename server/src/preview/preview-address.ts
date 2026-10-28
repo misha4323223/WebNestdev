@@ -40,6 +40,24 @@ const defaultDeps:PreviewAddressDeps={
 /** Сколько раз и с какой паузой перепроверять адрес после починки. */
 export const ADDRESS_CHECK_ATTEMPTS=6;
 export const ADDRESS_CHECK_DELAY_MS=400;
+
+/**
+ * Порты, которые спрашиваются напрямую, когда таблицы ядра ничего не дали.
+ *
+ * `/proc/net/tcp` — это один `docker exec` с коротким пределом времени: на занятом хосте он
+ * может не уложиться, и тогда приложение, слушающее свой порт (dev-скрипт не принял флаги),
+ * оставалось бы на каноническом 3000 навсегда — контейнер жив, а панель белая. Прямой опрос
+ * приложения внутри контейнера — второй источник того же факта, и он не зависит от того, успел
+ * ли ответить Docker.
+ */
+export const PROBE_PORTS=[5173,3001,8080,8000,5000];
+
+async function probeAppPort(containerId:string,deps:PreviewAddressDeps){
+  for(const port of PROBE_PORTS){
+    if(await deps.appAnswers({containerId,port}))return port;
+  }
+  return null;
+}
 export type AddressWait={attempts?:number;delayMs?:number};
 
 /**
@@ -76,7 +94,9 @@ export async function settlePreviewAddress(state:PreviewState,options:{deps?:Pre
   if(await deps.addressAnswers(state))return {...state,settled:true,execOnly:false};
 
   const ports=await deps.usedPorts(state.containerId);
-  const appPort=chooseAppPort(ports,state.port);
+  // Пустые таблицы — не приговор: порт спрашивается у самого приложения, иначе предпросмотр
+  // навсегда остаётся на порту, где ничего не слушает (белый кадр при живом контейнере).
+  const appPort=chooseAppPort(ports,state.port)??await probeAppPort(state.containerId,deps);
   let current=appPort&&appPort!==state.port?{...state,port:appPort}:state;
   // Порт проверяется и тогда, когда он не изменился: между двумя чтениями статуса мог встать
   // проброс или подключиться нужная сеть, и тогда подтверждать больше нечего.

@@ -13,11 +13,11 @@ function state(overrides: Partial<PreviewState> = {}): PreviewState {
  * Приложение в тесте отвечает ровно по тем адресам, которые перечислены: так проверяется и «свой
  * порт», и «только петля контейнера», и «не поднялось вовсе».
  */
-function deps(options: { answers: (candidate: { host: string; port: number }) => boolean; ports?: number[]; appUp?: boolean; relay?: boolean; attach?: { host: string; connected: string[] } }) {
+function deps(options: { answers: (candidate: { host: string; port: number }) => boolean; ports?: number[]; appUp?: boolean; appUpAt?: (port: number) => boolean; relay?: boolean; attach?: { host: string; connected: string[] } }) {
   const calls = { address: 0, ports: 0, attach: 0, relay: [] as Array<{ containerId: string; targetPort: number; listenPort: number }> };
   const value: PreviewAddressDeps = {
     addressAnswers: async candidate => { calls.address++; return options.answers(candidate); },
-    appAnswers: async () => { calls.ports++; return options.appUp ?? true; },
+    appAnswers: async candidate => { calls.ports++; return options.appUpAt ? options.appUpAt(candidate.port) : (options.appUp ?? true); },
     usedPorts: async () => options.ports ?? [],
     startRelay: async input => { calls.relay.push(input); return options.relay ?? true; },
     attachToServerNetworks: async () => { calls.attach++; return options.attach ?? { host: "", connected: [] }; },
@@ -46,6 +46,22 @@ test("the app's real port is adopted when the launch flags were ignored", async 
   assert.equal(settled.port, 5173);
   assert.equal(settled.settled, true);
   assert.deepEqual(calls.relay, []);
+  // Таблицы ядра ответили — значит приложение не опрашивается лишний раз.
+  assert.equal(calls.ports, 0);
+});
+
+/**
+ * `/proc/net/tcp` читается одним `docker exec` с коротким пределом, и на занятом хосте он может
+ * не уложиться. Раньше это оставляло предпросмотр на каноническом 3000, где ничего не слушает:
+ * контейнер жив, приложение работает, панель белая. Порт спрашивается у приложения напрямую.
+ *
+ * Ровно так выглядел живой предпросмотр этого репозитория: Vite на 5173, платформа стучится в 3000.
+ */
+test("when the kernel tables cannot be read, the port is asked from the app itself", async () => {
+  const { value } = deps({ answers: candidate => candidate.port === 5173, ports: [], appUpAt: port => port === 5173 });
+  const settled = await settlePreviewAddress(state(), { deps: value, appAnswers: false });
+  assert.equal(settled.port, 5173, "порт найден опросом, а не оставлен каноническим");
+  assert.equal(settled.settled, true);
 });
 
 test("an app bound to localhost is relayed onto the platform port", async () => {
