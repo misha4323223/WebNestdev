@@ -66,6 +66,11 @@ export function createBrokerServer({ socketPath, upstreamPath, policy, log = con
   return server;
 
   async function handleRequest(request, response) {
+    // Диагностика зависаний: видно, до какого запроса Docker CLI дошёл и что брокер получил.
+    // Включается BROKER_LOG_REQUESTS=1, по умолчанию выключена — журнал не растёт.
+    if (process.env.BROKER_LOG_REQUESTS === "1") {
+      log.log("[broker] " + request.method + " " + request.url);
+    }
     let body;
     try {
       body = await readBody(request);

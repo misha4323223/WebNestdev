@@ -72,6 +72,9 @@ services:
       # по суффиксу её не узнает. Пустое значение — правило по имени (как в preview-network.ts).
       PREVIEW_NETWORK: ${PREVIEW_NETWORK:-}
       BROKER_SOCKET_MODE: "0660"
+      # Журнал запросов для разбора зависаний: по нему видно, до какого шага дошёл Docker CLI.
+      # Выключить — убрать строку или поставить 0.
+      BROKER_LOG_REQUESTS: "1"
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       # Только чтение: брокер разрешает символические ссылки в путях монтирования и должен видеть
