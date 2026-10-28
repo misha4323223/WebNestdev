@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { containerFetchScript, parseContainerResponse, previewAppAnswers } from "./app-http.js";
+import { containerFetchScript, parseContainerResponse, portProbeScript, previewAppAnswers } from "./app-http.js";
 
 /** Тот же скрипт, что едет в контейнер, но запущенный здесь: это и есть предмет проверки. */
 function runScript(script: string) {
@@ -74,6 +74,29 @@ test("a dead port and a hanging app both come back as no answer", async () => {
   } finally {
     hanging.closeAllConnections();
     await new Promise<void>(resolve => hanging.close(() => resolve()));
+  }
+});
+
+/**
+ * Порт, когда таблицы ядра прочитать не удалось. Все кандидаты проверяются одним процессом в
+ * контейнере: номер порта — это stdout, отсутствие ответа — код 3.
+ */
+test("the port probe names the answering port and never invents one", async () => {
+  const site = await serve(() => ({ body: "ok" }));
+  // Порт, на котором никто не слушает: заняли и сразу освободили.
+  const spare = await serve(() => ({ body: "" }));
+  const deadPort = spare.port;
+  await spare.close();
+  try {
+    const found = await runScript(portProbeScript([deadPort, site.port], 4000));
+    assert.equal(found.code, 0, found.stdout);
+    assert.equal(found.stdout.trim(), String(site.port));
+
+    const none = await runScript(portProbeScript([deadPort], 2000));
+    assert.equal(none.code, 3, "ни один кандидат не ответил — это не найденный порт");
+    assert.equal(none.stdout.trim(), "");
+  } finally {
+    await site.close();
   }
 });
 

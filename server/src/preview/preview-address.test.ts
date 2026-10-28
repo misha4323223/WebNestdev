@@ -13,7 +13,7 @@ function state(overrides: Partial<PreviewState> = {}): PreviewState {
  * Приложение в тесте отвечает ровно по тем адресам, которые перечислены: так проверяется и «свой
  * порт», и «только петля контейнера», и «не поднялось вовсе».
  */
-function deps(options: { answers: (candidate: { host: string; port: number }) => boolean; ports?: number[]; appUp?: boolean; appUpAt?: (port: number) => boolean; relay?: boolean; attach?: { host: string; connected: string[] } }) {
+function deps(options: { answers: (candidate: { host: string; port: number }) => boolean; ports?: number[]; appUp?: boolean; appUpAt?: (port: number) => boolean; probe?: number | null; relay?: boolean; attach?: { host: string; connected: string[] } }) {
   const calls = { address: 0, ports: 0, attach: 0, relay: [] as Array<{ containerId: string; targetPort: number; listenPort: number }> };
   const value: PreviewAddressDeps = {
     addressAnswers: async candidate => { calls.address++; return options.answers(candidate); },
@@ -21,6 +21,7 @@ function deps(options: { answers: (candidate: { host: string; port: number }) =>
     usedPorts: async () => options.ports ?? [],
     startRelay: async input => { calls.relay.push(input); return options.relay ?? true; },
     attachToServerNetworks: async () => { calls.attach++; return options.attach ?? { host: "", connected: [] }; },
+    probePorts: async () => options.probe ?? null,
   };
   return { value, calls };
 }
@@ -58,10 +59,20 @@ test("the app's real port is adopted when the launch flags were ignored", async 
  * Ровно так выглядел живой предпросмотр этого репозитория: Vite на 5173, платформа стучится в 3000.
  */
 test("when the kernel tables cannot be read, the port is asked from the app itself", async () => {
-  const { value } = deps({ answers: candidate => candidate.port === 5173, ports: [], appUpAt: port => port === 5173 });
+  const { value } = deps({ answers: candidate => candidate.port === 5173, ports: [], probe: 5173 });
   const settled = await settlePreviewAddress(state(), { deps: value, appAnswers: false });
   assert.equal(settled.port, 5173, "порт найден опросом, а не оставлен каноническим");
   assert.equal(settled.settled, true);
+});
+
+/** Опрос не запускается, когда порты уже известны: это лишний процесс в контейнере на каждый статус. */
+test("the probe is not used when the kernel tables answered", async () => {
+  let probes = 0;
+  const { value } = deps({ answers: () => true, ports: [3000] });
+  const counted: PreviewAddressDeps = { ...value, probePorts: async () => { probes++; return null; } };
+  const settled = await settlePreviewAddress(state(), { deps: counted });
+  assert.equal(settled.settled, true);
+  assert.equal(probes, 0);
 });
 
 test("an app bound to localhost is relayed onto the platform port", async () => {

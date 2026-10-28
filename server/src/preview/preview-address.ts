@@ -1,4 +1,4 @@
-import { fetchAppFromContainer, previewAppAnswers } from "./app-http.js";
+import { fetchAppFromContainer, findAnsweringPort, previewAppAnswers } from "./app-http.js";
 import { chooseAppPort, listListeningPorts } from "./app-port.js";
 import { chooseRelayPort, startContainerRelay } from "./app-relay.js";
 import { attachToServerNetworks as attachContainerToServerNetworks } from "./preview-network.js";
@@ -27,6 +27,8 @@ export type PreviewAddressDeps={
   startRelay:(input:{containerId:string;targetPort:number;listenPort:number})=>Promise<boolean>;
   /** Подключает контейнер к сетям сервера и возвращает адрес, видимый с его стороны. */
   attachToServerNetworks:(containerId:string)=>Promise<{host:string;connected:string[]}>;
+  /** Порт, на котором приложение отвечает внутри контейнера, — когда таблицы ядра ничего не дали. */
+  probePorts:(containerId:string,ports:number[])=>Promise<number|null>;
 };
 
 const defaultDeps:PreviewAddressDeps={
@@ -35,6 +37,7 @@ const defaultDeps:PreviewAddressDeps={
   usedPorts:listListeningPorts,
   startRelay:startContainerRelay,
   attachToServerNetworks:containerId=>attachContainerToServerNetworks(containerId),
+  probePorts:(containerId,ports)=>findAnsweringPort({containerId,ports}),
 };
 
 /** Сколько раз и с какой паузой перепроверять адрес после починки. */
@@ -51,13 +54,6 @@ export const ADDRESS_CHECK_DELAY_MS=400;
  * ли ответить Docker.
  */
 export const PROBE_PORTS=[5173,3001,8080,8000,5000];
-
-async function probeAppPort(containerId:string,deps:PreviewAddressDeps){
-  for(const port of PROBE_PORTS){
-    if(await deps.appAnswers({containerId,port}))return port;
-  }
-  return null;
-}
 export type AddressWait={attempts?:number;delayMs?:number};
 
 /**
@@ -96,7 +92,7 @@ export async function settlePreviewAddress(state:PreviewState,options:{deps?:Pre
   const ports=await deps.usedPorts(state.containerId);
   // Пустые таблицы — не приговор: порт спрашивается у самого приложения, иначе предпросмотр
   // навсегда остаётся на порту, где ничего не слушает (белый кадр при живом контейнере).
-  const appPort=chooseAppPort(ports,state.port)??await probeAppPort(state.containerId,deps);
+  const appPort=chooseAppPort(ports,state.port)??await deps.probePorts(state.containerId,PROBE_PORTS);
   let current=appPort&&appPort!==state.port?{...state,port:appPort}:state;
   // Порт проверяется и тогда, когда он не изменился: между двумя чтениями статуса мог встать
   // проброс или подключиться нужная сеть, и тогда подтверждать больше нечего.

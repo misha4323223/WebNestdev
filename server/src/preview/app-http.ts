@@ -61,6 +61,46 @@ export async function fetchAppFromContainer(input:{containerId:string;port:numbe
 }
 
 /**
+ * Один процесс внутри контейнера ищет первый порт, который отвечает по HTTP.
+ *
+ * Порт приложения обычно берётся из таблиц ядра (`/proc/net/tcp`), но это отдельный `docker exec`
+ * с коротким пределом, и на занятом хосте он может не уложиться. Тогда порт спрашивается у самого
+ * приложения — и все кандидаты проверяются одним запуском: пять отдельных процессов на каждый
+ * опрос статуса (а панель опрашивает его часто) были бы дороже самой проверки.
+ *
+ * Код выхода 0 и номер порта в stdout — найден; 3 — не ответил ни один кандидат.
+ */
+export function portProbeScript(ports:number[],timeoutMs:number){
+  return [
+    "const ports="+JSON.stringify(ports)+";",
+    "const deadline=Date.now()+"+timeoutMs+";",
+    "const answers=async port=>{",
+    "  const left=deadline-Date.now();",
+    "  if(left<=0)return false;",
+    "  const controller=new AbortController();",
+    "  const timer=setTimeout(()=>controller.abort(),Math.min(1500,left));",
+    "  try{",
+    "    const response=await fetch('http://127.0.0.1:'+port+'/',{redirect:'manual',signal:controller.signal});",
+    "    return response.status<500;",
+    "  }catch{return false}",
+    "  finally{clearTimeout(timer)}",
+    "};",
+    "(async()=>{for(const port of ports){if(await answers(port)){process.stdout.write(String(port));process.exit(0)}}process.exit(3)})();",
+  ].join("");
+}
+
+/** Порт, на котором приложение отвечает внутри контейнера; null — не ответил ни один кандидат. */
+export async function findAnsweringPort(input:{containerId:string;ports:number[];timeoutMs?:number},deps:ContainerFetchDeps={}){
+  const docker=deps.docker??dockerExec;
+  const timeoutMs=input.timeoutMs??6_000;
+  const script=portProbeScript(input.ports,Math.max(500,timeoutMs-1_000));
+  const result=await docker(["exec",input.containerId,"node","-e",script],timeoutMs).catch(()=>null);
+  if(!result||result.code!==0)return null;
+  const port=Number.parseInt(result.stdout.trim(),10);
+  return input.ports.includes(port)?port:null;
+}
+
+/**
  * Готовность приложения: ответ меньше 500 — оно работает (404 у ещё не созданной страницы — тоже
  * ответ, а не отказ). Так же это понимали и раньше, когда проверка жила в preview-runner.
  */
