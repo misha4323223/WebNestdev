@@ -42,6 +42,41 @@ export async function listListeningPorts(containerId:string,docker=dockerExec){
   return parseListeningPorts(result.stdout);
 }
 
+/**
+ * Порты, которые дев-сервер сам назвал в своём выводе.
+ *
+ * Vite, Astro, SvelteKit, Next и Nuxt печатают адрес, на котором слушают: «Local: http://localhost:5173/».
+ * Это третий источник порта наравне с таблицами ядра и опросом внутри контейнера, и единственный,
+ * которому не нужен `docker exec`: `docker logs` работает всегда. Именно поэтому он спасает
+ * предпросмотр, когда exec недоступен (а без порта платформа навсегда остаётся на каноническом 3000:
+ * контейнер жив, приложение работает, панель белая).
+ *
+ * В чужие строки не лезем: берутся только строки с адресом, иначе чисел с двоеточием в выводе
+ * хватает (тайминги, версии). Выбор из найденного — тот же `chooseAppPort`, поэтому служебные порты
+ * и порт API вроде 8787 не перебивают 3000/5173.
+ */
+export function parseLoggedPorts(logs:string){
+  const ports=new Set<number>();
+  // Вывод дев-сервера идёт с ANSI-кодами, и цвет часто стоит прямо перед номером порта:
+  // `http://localhost:\u001b[1m5173\u001b[22m`. Без снятия цветов `:5173` не находится.
+  const plain=logs.replace(/\u001b\[[0-9;]*[A-Za-z]/g,"");
+  for(const line of plain.split("\n")){
+    if(!/(https?:\/\/|local\b|network\b|listening|running at|started server)/i.test(line))continue;
+    for(const match of line.matchAll(/:(\d{2,5})(?!\d)/g)){
+      const port=Number.parseInt(match[1],10);
+      if(Number.isInteger(port)&&port>0&&port<65536)ports.add(port);
+    }
+  }
+  return [...ports].sort((a,b)=>a-b);
+}
+
+/** Те же порты, но из вывода самого контейнера — без `docker exec`. */
+export async function listLoggedPorts(containerId:string,docker=dockerExec){
+  const result=await docker(["logs","--tail","200",containerId],8000).catch(()=>null);
+  if(!result||result.code!==0)return [];
+  return parseLoggedPorts(result.stdout+"\n"+result.stderr);
+}
+
 export async function discoverAppPort(containerId:string,preferred=PREVIEW_APP_PORT,docker=dockerExec){
   return chooseAppPort(await listListeningPorts(containerId,docker),preferred);
 }

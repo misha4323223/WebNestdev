@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { chooseAppPort, discoverAppPort, listListeningPorts, parseListeningPorts } from "./app-port.js";
+import { chooseAppPort, discoverAppPort, listListeningPorts, listLoggedPorts, parseListeningPorts, parseLoggedPorts } from "./app-port.js";
 
 /** Строка таблицы ядра: local_address (hex ip:hex port), rem_address, состояние. */
 function tcpLine(port: number, state = "0A") {
@@ -35,6 +35,37 @@ test("the canonical port wins, then a familiar one, then the first real one", ()
   // Порты ниже 1024 не может занять непривилегированный процесс контейнера.
   assert.equal(chooseAppPort([80, 443]), null);
   assert.equal(chooseAppPort([]), null);
+});
+
+/**
+ * Вывод настоящего дев-сервера (Vite в контейнере предпросмотра): ANSI-коды, адрес платформы рядом.
+ * Именно эта дверь остаётся открытой, когда `docker exec` не работает вообще.
+ */
+const viteLog = [
+  "\u001b[32m[1mVITE\u001b[22m v8.3.4\u001b[39m ready in \u001b[1m1294\u001b[22m ms",
+  "\u001b[32m➜\u001b[39m  \u001b[1mLocal\u001b[22m:   \u001b[36mhttp://localhost:\u001b[1m5173\u001b[22m/\u001b[39m",
+  "\u001b[32m➜\u001b[39m  \u001b[1mNetwork\u001b[22m: \u001b[36mhttp://172.21.0.4:\u001b[1m5173\u001b[22m/\u001b[39m",
+  'Server listening at http://127.0.0.1:8787',
+].join("\n");
+
+test("the dev server's own output names its port, without docker exec", () => {
+  assert.deepEqual(parseLoggedPorts(viteLog), [5173, 8787]);
+  // Порт приложения тот же, что выбрал бы разбор таблиц ядра: API рядом (8787) его не перебивает.
+  assert.equal(chooseAppPort(parseLoggedPorts(viteLog)), 5173);
+  // Без адреса в строке порт не выдумывается из таймингов и версий.
+  assert.deepEqual(parseLoggedPorts("ready in 1294 ms\nversion 1:2:3"), []);
+  assert.deepEqual(parseLoggedPorts(""), []);
+});
+
+test("logged ports are read with docker logs, so a broken exec door is not a dead end", async () => {
+  const calls: string[][] = [];
+  const docker = async (args: string[]) => {
+    calls.push(args);
+    return { code: 0, stdout: viteLog, stderr: "" };
+  };
+  assert.deepEqual(await listLoggedPorts("c1", docker), [5173, 8787]);
+  assert.deepEqual(calls[0].slice(0, 2), ["logs", "--tail"]);
+  assert.deepEqual(await listLoggedPorts("c1", async () => { throw new Error("docker недоступен"); }), []);
 });
 
 test("discovery reads the container's own tables and survives a failed exec", async () => {

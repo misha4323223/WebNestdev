@@ -13,12 +13,13 @@ function state(overrides: Partial<PreviewState> = {}): PreviewState {
  * Приложение в тесте отвечает ровно по тем адресам, которые перечислены: так проверяется и «свой
  * порт», и «только петля контейнера», и «не поднялось вовсе».
  */
-function deps(options: { answers: (candidate: { host: string; port: number }) => boolean; ports?: number[]; appUp?: boolean; appUpAt?: (port: number) => boolean; probe?: number | null; relay?: boolean; attach?: { host: string; connected: string[] } }) {
+function deps(options: { answers: (candidate: { host: string; port: number }) => boolean; ports?: number[]; logs?: number[]; appUp?: boolean; appUpAt?: (port: number) => boolean; probe?: number | null; relay?: boolean; attach?: { host: string; connected: string[] } }) {
   const calls = { address: 0, ports: 0, attach: 0, relay: [] as Array<{ containerId: string; targetPort: number; listenPort: number }> };
   const value: PreviewAddressDeps = {
     addressAnswers: async candidate => { calls.address++; return options.answers(candidate); },
     appAnswers: async candidate => { calls.ports++; return options.appUpAt ? options.appUpAt(candidate.port) : (options.appUp ?? true); },
     usedPorts: async () => options.ports ?? [],
+    loggedPorts: async () => options.logs ?? [],
     startRelay: async input => { calls.relay.push(input); return options.relay ?? true; },
     attachToServerNetworks: async () => { calls.attach++; return options.attach ?? { host: "", connected: [] }; },
     probePorts: async () => options.probe ?? null,
@@ -52,11 +53,24 @@ test("the app's real port is adopted when the launch flags were ignored", async 
 });
 
 /**
+ * `docker exec` может быть недоступен целиком (регрессия Docker-брокера): и таблицы ядра, и опрос
+ * тогда молчат, а предпросмотр остаётся на каноническом 3000, где ничего не слушает.
+ *
+ * Поэтому порт берётся из вывода самого дев-сервера: Vite печатает `Local: http://localhost:5173/`,
+ * а `docker logs` работает даже тогда, когда hijack сломан. Ровно так выглядел живой предпросмотр
+ * этого репозитория: Vite на 5173, платформа стучится в 3000 и показывает белый кадр.
+ */
+test("without docker exec the port comes from the dev server's own output", async () => {
+  const { value } = deps({ answers: candidate => candidate.port === 5173, ports: [], logs: [5173], probe: null });
+  const settled = await settlePreviewAddress(state(), { deps: value, appAnswers: false, wait: noWait });
+  assert.equal(settled.port, 5173, "порт взят из вывода приложения, а не из docker exec");
+  assert.equal(settled.settled, true);
+});
+
+/**
  * `/proc/net/tcp` читается одним `docker exec` с коротким пределом, и на занятом хосте он может
  * не уложиться. Раньше это оставляло предпросмотр на каноническом 3000, где ничего не слушает:
  * контейнер жив, приложение работает, панель белая. Порт спрашивается у приложения напрямую.
- *
- * Ровно так выглядел живой предпросмотр этого репозитория: Vite на 5173, платформа стучится в 3000.
  */
 test("when the kernel tables cannot be read, the port is asked from the app itself", async () => {
   const { value } = deps({ answers: candidate => candidate.port === 5173, ports: [], probe: 5173 });
@@ -94,6 +108,7 @@ test("the relay takes the free canonical port when the app sits on another loopb
     addressAnswers: async candidate => relayStarted && candidate.port === 3000,
     appAnswers: async () => true,
     usedPorts: async () => [5173],
+    loggedPorts: async () => [],
     startRelay: async input => { relay.push(input); relayStarted = true; return true; },
     attachToServerNetworks: async () => ({ host: "", connected: [] }),
     probePorts: async () => null,
@@ -152,6 +167,7 @@ test("a relay that needs a moment to start listening is still confirmed", async 
     },
     appAnswers: async () => true,
     usedPorts: async () => [3000],
+    loggedPorts: async () => [],
     startRelay: async input => { relay.push(input); return true; },
     attachToServerNetworks: async () => ({ host: "", connected: [] }),
     probePorts: async () => null,

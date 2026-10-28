@@ -1,5 +1,5 @@
 import { fetchAppFromContainer, findAnsweringPort, previewAppAnswers } from "./app-http.js";
-import { chooseAppPort, listListeningPorts } from "./app-port.js";
+import { chooseAppPort, listListeningPorts, listLoggedPorts } from "./app-port.js";
 import { chooseRelayPort, startContainerRelay } from "./app-relay.js";
 import { attachToServerNetworks as attachContainerToServerNetworks } from "./preview-network.js";
 import type { PreviewState } from "./types.js";
@@ -24,6 +24,8 @@ export type PreviewAddressDeps={
   addressAnswers:(state:{host:string;port:number})=>Promise<boolean>;
   appAnswers:(state:Pick<PreviewState,"containerId"|"port">)=>Promise<boolean>;
   usedPorts:(containerId:string)=>Promise<number[]>;
+  /** Порты, названные самим приложением в его выводе: источник, которому не нужен `docker exec`. */
+  loggedPorts:(containerId:string)=>Promise<number[]>;
   startRelay:(input:{containerId:string;targetPort:number;listenPort:number})=>Promise<boolean>;
   /** Подключает контейнер к сетям сервера и возвращает адрес, видимый с его стороны. */
   attachToServerNetworks:(containerId:string)=>Promise<{host:string;connected:string[]}>;
@@ -35,6 +37,7 @@ const defaultDeps:PreviewAddressDeps={
   addressAnswers:previewAddressAnswers,
   appAnswers:previewAppAnswers,
   usedPorts:listListeningPorts,
+  loggedPorts:listLoggedPorts,
   startRelay:startContainerRelay,
   attachToServerNetworks:containerId=>attachContainerToServerNetworks(containerId),
   probePorts:(containerId,ports)=>findAnsweringPort({containerId,ports}),
@@ -90,9 +93,12 @@ export async function settlePreviewAddress(state:PreviewState,options:{deps?:Pre
   if(await deps.addressAnswers(state))return {...state,settled:true,execOnly:false};
 
   const ports=await deps.usedPorts(state.containerId);
-  // Пустые таблицы — не приговор: порт спрашивается у самого приложения, иначе предпросмотр
-  // навсегда остаётся на порту, где ничего не слушает (белый кадр при живом контейнере).
-  const appPort=chooseAppPort(ports,state.port)??await deps.probePorts(state.containerId,PROBE_PORTS);
+  // Пустые таблицы — не приговор: порт берётся из вывода самого дев-сервера (ему не нужен
+  // `docker exec`), а затем спрашивается у приложения. Иначе предпросмотр навсегда остаётся на
+  // порту, где ничего не слушает (белый кадр при живом контейнере).
+  const appPort=chooseAppPort(ports,state.port)??
+    chooseAppPort(await deps.loggedPorts(state.containerId),state.port)??
+    await deps.probePorts(state.containerId,PROBE_PORTS);
   let current=appPort&&appPort!==state.port?{...state,port:appPort}:state;
   // Порт проверяется и тогда, когда он не изменился: между двумя чтениями статуса мог встать
   // проброс или подключиться нужная сеть, и тогда подтверждать больше нечего.
