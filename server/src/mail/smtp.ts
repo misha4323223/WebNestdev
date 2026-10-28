@@ -12,6 +12,48 @@ import { dotStuffed } from "./mime.js";
 
 const DEFAULT_TIMEOUT_MS = 20_000;
 
+type Step = "greeting" | "ehlo" | "auth" | "user" | "password" | "from" | "to" | "data" | "message";
+
+/**
+ * Имена шагов для текста ошибки. «SMTP ответил 550 на шаге «from»» не говорит ни админу, ни
+ * человеку ничего: MAIL FROM — это конверт, адрес отправителя, и именно его чаще всего отвергают.
+ */
+const STEP_LABEL: Record<Step, string> = {
+  greeting: "приветствие",
+  ehlo: "EHLO",
+  auth: "AUTH LOGIN",
+  user: "логин",
+  password: "пароль",
+  from: "MAIL FROM (адрес отправителя)",
+  to: "RCPT TO (адрес получателя)",
+  data: "DATA",
+  message: "передача текста письма",
+};
+
+/**
+ * Что делать с отказом. Код без подсказки заставляет искать расшифровку SMTP в интернете, а
+ * причина почти всегда одна из четырёх: адрес отправителя, ключ, получатель или квота.
+ */
+export function smtpRefusalHint(code: number, step: Step, response = ""): string {
+  const text = response.toLowerCase();
+  if (step === "from" && (code === 550 || code === 553 || code === 554)) {
+    // Postbox отдаёт 550 и на неподтверждённый адрес, и на выбранную суточную квоту; текст ответа
+    // различает их, поэтому он всегда идёт рядом с подсказкой.
+    if (text.includes("quota")) return "Выбрана суточная квота отправки: письма пойдут после того, как окно освободится.";
+    return "Postbox не принимает адрес отправителя: домен должен быть подтверждён в Postbox, а сам адрес — создан в том же каталоге, что и сервисный аккаунт. Проверьте POSTBOX_SENDER (или MAIL_FROM): в /api/health он виден как mail.sender.";
+  }
+  if (code === 535 || code === 534) {
+    return "Ключ не подошёл: нужен идентификатор и секрет API-ключа сервисного аккаунта с областью yc.postbox.send и ролью postbox.sender.";
+  }
+  if (step === "to" && (code === 550 || code === 553 || code === 551 || code === 450)) {
+    return "Получатель отклонён сервисом: адрес не существует или отказывается принимать почту.";
+  }
+  if (code === 454 || code === 421) {
+    return "Сервис просит снизить скорость отправки: повтор уйдёт позже, настройка — POSTBOX_RATE_PER_SECOND.";
+  }
+  return "";
+}
+
 export type SmtpCredentials = {
   host: string;
   port: number;
@@ -51,7 +93,9 @@ export function smtpSend(
       : (tls.connect({ host: credentials.host, port: credentials.port, servername: credentials.host }) as unknown as MailSocket);
     let buffer = "";
     let settled = false;
-    let step: "greeting" | "ehlo" | "auth" | "user" | "password" | "from" | "to" | "data" | "message" = "greeting";
+    let step: Step = "greeting";
+    /** Последняя строка ответа сервиса: без неё «550» неотличимо от «550 с причиной». */
+    let lastReply = "";
     const timer = setTimeout(() => finish(new Error("SMTP не ответил за " + timeoutMs / 1000 + " секунд")), timeoutMs);
 
     function finish(error?: Error) {
@@ -68,7 +112,14 @@ export function smtpSend(
     }
 
     function refuse(code: number) {
-      finish(new Error("SMTP ответил " + code + " на шаге «" + step + "»"));
+      const advice = smtpRefusalHint(code, step, lastReply);
+      finish(
+        new Error(
+          "SMTP ответил " + code + " на шаге «" + STEP_LABEL[step] + "»" +
+          (lastReply ? ": " + lastReply : "") +
+          (advice ? ". " + advice : ""),
+        ),
+      );
     }
 
     function handle(code: number) {
@@ -136,6 +187,7 @@ export function smtpSend(
           finish(new Error("SMTP вернул неожиданный ответ: " + (line.slice(0, 200) || "пустая строка")));
           return;
         }
+        lastReply = line.slice(0, 300);
         handle(Number(line.slice(0, 3)));
         if (settled) return;
       }
