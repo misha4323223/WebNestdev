@@ -848,7 +848,10 @@ verify_preview(){
     log "убраны контейнеры-пробы прошлых выкаток: $(printf '%s\n' "$stale" | grep -c .)"
   fi
   # Ограничение по времени: проба стартует контейнер и ждёт его ответа.
-  output=$(timeout 120 docker compose exec -T "$SERVICE" node server/dist/scripts/preview-selfcheck.js </dev/null 2>&1 || true)
+  # Бюджет с запасом: проверка внутри контейнера теперь печатает матрицу (exec, proc-net, node,
+  # node-fetch) и имеет свой предел; вместе с запуском пробы это меньше 120 с в худшем случае,
+  # но зависший `docker run` уже съедал 60 с — оставляем место на уборку.
+  output=$(timeout 180 docker compose exec -T "$SERVICE" node server/dist/scripts/preview-selfcheck.js </dev/null 2>&1 || true)
   printf '%s\n' "$output" | sed 's/^/[deploy] /'
   verdict=$(printf '%s\n' "$output" | grep -o 'PREVIEW-NETWORK=[a-z-]*' | tail -1 | cut -d= -f2 || true)
   case "$verdict" in
@@ -858,6 +861,8 @@ verify_preview(){
     image) log "предпросмотр: образ песочницы ещё не скачан на эту ВМ" ; return 0 ;;
     start-failed) log "предпросмотр: контейнер-проба не запустился (причина в строке выше, после «контейнер-проба не запустился»). Сеть предпросмотра здесь не при чём — проверьте `docker compose logs docker-broker` и `docker ps -a` на ВМ" ; return 0 ;;
     exec-broken) log "ПРЕДПРОСМОТР: контейнер жив, но docker exec через брокер не отвечает — это регрессия брокера, а не сеть. Задавать PREVIEW_NETWORK бессмысленно: посмотрите `docker compose logs docker-broker` (запросы upgrade и строки «hijack»)" ; return 0 ;;
+    no-node) log "ПРЕДПРОСМОТР: docker exec работает, а node внутри контейнера не запускается — платформа не может спросить приложение. Проверьте образ песочницы (SANDBOX_IMAGE)" ; return 0 ;;
+    app-silent) log "ПРЕДПРОСМОТР: exec и node работают, но приложение внутри контейнера не отвечает на петле — дев-сервер слушает не тот порт или не поднялся. Смотрите матрицу выше и логи предпросмотра" ; return 0 ;;
     unreachable) log "ПРЕДПРОСМОТР НЕДОСТУПЕН СЕРВЕРУ: контейнер предпросмотра стоит в сети, которую сервер не видит. Задайте PREVIEW_NETWORK в .env и выкатите снова (docs/PRODUCTION_DEPLOYMENT.md)" ; return 0 ;;
     *) log "проверка предпросмотра не ответила — пропускаю" ; return 0 ;;
   esac
