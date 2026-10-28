@@ -91,9 +91,14 @@ test("git в образе проверяется запуском git, а не �
     run:async args=>{calls.push(args);return {code:0,stdout:"git version 2.39.5\n",stderr:""}},
   });
   assert.deepEqual(result,{ok:true,version:"git version 2.39.5",reason:"ok"});
-  // Контейнер одноразовый и без сети: проверка не должна ничего оставлять после себя.
-  assert.deepEqual(calls[0].slice(0,9),["run","--rm","--pull=never","--network","none","--user","1000:1000","node:22-bookworm","git"]);
-  assert.deepEqual(calls[0].slice(9),["--version"]);
+  // Контейнер одноразовый, без сети и с теми же флагами, что требует политика Docker-брокера:
+  // иначе проверка получала бы отказ политики и показывала несуществующую поломку.
+  assert.deepEqual(calls[0],[
+    "run","--rm","--pull=never","--network","none",
+    "--cap-drop","ALL","--security-opt","no-new-privileges:true","--read-only",
+    "--cpus","1","--memory","256m","--pids-limit","64","--user","1000:1000",
+    "node:22-bookworm","git","--version",
+  ]);
 });
 
 test("образ без git отличается от отсутствующего образа", async () => {
