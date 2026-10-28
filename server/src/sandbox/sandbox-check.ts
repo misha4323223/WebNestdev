@@ -43,7 +43,9 @@ function dockerRun(args:string[],timeoutMs:number){
     let stdout="",stderr="";
     child.stdout.on("data",(chunk:Buffer)=>{stdout+=chunk.toString()});
     child.stderr.on("data",(chunk:Buffer)=>{stderr+=chunk.toString()});
-    const timer=setTimeout(()=>{child.kill("SIGKILL");reject(new Error("Проверка монтирования песочницы не ответила вовремя"))},timeoutMs);
+    // Подкоманда и предел — в тексте: иначе «не ответила вовремя» не говорит, ждал ли проверка
+    // запуска контейнера или его вывода, а в журнале остаётся только факт таймаута.
+    const timer=setTimeout(()=>{child.kill("SIGKILL");reject(new Error(`Проверка монтирования песочницы не ответила вовремя (docker ${args[0]??"run"}, ${Math.round(timeoutMs/1000)} с)`))},timeoutMs);
     child.once("error",error=>{clearTimeout(timer);reject(error)});
     child.once("close",code=>{clearTimeout(timer);resolve({code:code??1,stdout,stderr})});
   });

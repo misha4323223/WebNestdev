@@ -499,7 +499,7 @@ The repository ships that proxy as a `caddy` service in [`docker-compose.yml`](.
 | --- | --- |
 | `WEBNESTDEV_SITE_DOMAIN` | panel/API domain, e.g. `nestdev.ru` (compose default `localhost`) |
 | `PREVIEW_PUBLIC_DOMAIN` | preview domain, e.g. `preview.nestdev.ru`; empty disables public preview addresses **and, in production, closes the path-based preview in the panel** — project code must not run on the panel origin |
-| `WEBNESTDEV_TRUSTED_PROXIES` | address or CIDR of the reverse proxy allowed to set `X-Forwarded-For`; compose sets Caddy's static `10.77.0.10`. Defaults to loopback only, so a non-compose deployment behind another proxy must set it |
+| `WEBNESTDEV_TRUSTED_PROXIES` | address or CIDR of the reverse proxy allowed to set `X-Forwarded-For`; compose trusts its own subnet (`172.30.0.0/24` by default), because Caddy has no pinned address — preview containers live on a separate network, so project code cannot spoof the header. Defaults to loopback only, so a non-compose deployment behind another proxy must set it |
 | `ACME_EMAIL` | address Let's Encrypt writes to when a certificate cannot be issued |
 | `PREVIEW_HOST_PORT` | port of the preview door inside the container (default `8788`) |
 | `PREVIEW_TICKET_TTL_MS` | how long a preview link stays valid (default 12 h) |

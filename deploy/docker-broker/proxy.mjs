@@ -26,12 +26,32 @@ const MAX_BODY = 2 * 1024 * 1024;
 const MANAGED_TTL_MS = 60_000;
 const EXEC_TTL_MS = 60 * 60_000;
 const MAX_EXECS = 512;
+/**
+ * Сколько брокер ждёт ответа демона, прежде чем ответить сам.
+ *
+ * Без этого молчащий демон оставлял Docker CLI ждать до его собственного предела, и в журнале
+ * сервера оставалось «Превышено время ожидания операции Docker» без единого указания на то, какой
+ * именно запрос не вернулся. Предел короткий: create и start на здоровом хосте отвечают за
+ * миллисекунды. Ожидание применяется только к заголовкам ответа — потоковый `logs` может быть
+ * долгим, и тишина между его кусками это работа приложения, а не зависший демон.
+ */
+const DEFAULT_UPSTREAM_TIMEOUT_MS = 10_000;
 
 export function dockerUnavailableMessage(upstreamPath) {
   return "Cannot connect to the Docker daemon at unix://" + upstreamPath + ". Is the docker daemon running?";
 }
 
-export function createBrokerServer({ socketPath, upstreamPath, policy, log = console }) {
+export function upstreamTimeoutMessage(method, url, timeoutMs) {
+  return "Docker-брокер: демон не ответил на " + method + " " + url + " за " + Math.round(timeoutMs / 1000) +
+    " с. Это не отказ политики — демон занят или не отвечает: проверьте на хосте `docker ps`, свободное место (`df -h`) и память.";
+}
+
+export function createBrokerServer({ socketPath, upstreamPath, policy, log = console, upstreamTimeoutMs }) {
+  const timeoutMs = Number.isFinite(upstreamTimeoutMs) && upstreamTimeoutMs > 0
+    ? upstreamTimeoutMs
+    : Number(process.env.BROKER_UPSTREAM_TIMEOUT_MS) > 0
+      ? Number(process.env.BROKER_UPSTREAM_TIMEOUT_MS)
+      : DEFAULT_UPSTREAM_TIMEOUT_MS;
   /** id/имя контейнера → когда истекает уверенность, что он наш. */
   const managed = new Map();
   /** id exec-сессии → время создания. Разрешает `POST /exec/{id}/start` только для своих сессий. */
@@ -210,6 +230,23 @@ export function createBrokerServer({ socketPath, upstreamPath, policy, log = con
     return headers;
   }
 
+  /**
+   * Ждёт заголовки ответа демона, а не весь ответ: потоковый `logs` живёт долго и его тишина
+   * нормальна. Молчание сверх предела — это 504 с названием запроса, чтобы причина была в журнале,
+   * а не в таймауте клиента.
+   */
+  function guardUpstream(upstream, request, claim, response) {
+    if (!(timeoutMs > 0)) return;
+    upstream.setTimeout(timeoutMs, () => {
+      log.error("[broker] таймаут демона: " + request.method + " " + request.url + " за " + Math.round(timeoutMs / 1000) + " с");
+      if (!claim()) return;
+      // Сначала ответ клиенту, потом закрытие соединения: destroy() может дать `error`, и его
+      // обработчик не должен успеть закрыть ответ до отправки тела 504.
+      sendError(response, 504, upstreamTimeoutMessage(request.method, request.url, timeoutMs));
+      upstream.destroy();
+    });
+  }
+
   /** Пересылка обычного запроса с потоковым ответом. */
   function proxy(request, response, body) {
     const upstream = http.request({
@@ -218,12 +255,25 @@ export function createBrokerServer({ socketPath, upstreamPath, policy, log = con
       path: request.url,
       headers: upstreamHeaders(request, body),
     });
+    // Один ответ на запрос: destroy() по таймауту может вызвать ещё и `error`, и второй ответ
+    // поверх первого испортил бы уже отправленный 504.
+    let answered = false;
+    guardUpstream(upstream, request, () => {
+      if (answered) return false;
+      answered = true;
+      return true;
+    }, response);
     upstream.on("response", answer => {
+      // Заголовки пришли — дальше тишина допустима (долгий лог, живой attach).
+      upstream.setTimeout(0);
+      answered = true;
       response.writeHead(answer.statusCode ?? 502, answer.headers);
       answer.pipe(response);
     });
     upstream.on("error", error => {
       log.error("[broker] Docker недоступен: " + error.message);
+      if (answered) return response.destroy();
+      answered = true;
       sendError(response, 502, dockerUnavailableMessage(upstreamPath));
     });
     if (body?.length) upstream.write(body);
@@ -238,8 +288,16 @@ export function createBrokerServer({ socketPath, upstreamPath, policy, log = con
       path: request.url,
       headers: upstreamHeaders(request, body),
     });
+    let answered = false;
+    guardUpstream(upstream, request, () => {
+      if (answered) return false;
+      answered = true;
+      return true;
+    }, response);
     const chunks = [];
     upstream.on("response", answer => {
+      upstream.setTimeout(0);
+      answered = true;
       answer.on("data", chunk => chunks.push(chunk));
       answer.on("end", () => {
         const payload = Buffer.concat(chunks);
@@ -254,17 +312,33 @@ export function createBrokerServer({ socketPath, upstreamPath, policy, log = con
         response.end(payload);
       });
     });
-    upstream.on("error", () => sendError(response, 502, dockerUnavailableMessage(upstreamPath)));
+    upstream.on("error", () => {
+      if (answered) return response.destroy();
+      answered = true;
+      sendError(response, 502, dockerUnavailableMessage(upstreamPath));
+    });
     if (body?.length) upstream.write(body);
     upstream.end();
   }
 
-  /** Один запрос к демону с разбором JSON: нужен для проверки владения и своих сетей. */
-  function upstreamJson(path) {
+  /**
+   * Один запрос к демону с разбором JSON: нужен для проверки владения и своих сетей. Свой предел
+   * обязателен: этот вызов стоит внутри обработки `start`/`attach`/`rm`, и зависший inspect держал
+   * бы клиента до его собственного таймаута.
+   */
+  function upstreamJson(path, method = "GET") {
     return new Promise(resolve => {
-      const upstream = http.request({ socketPath: upstreamPath, method: "GET", path, headers: { host: "docker" } });
+      const upstream = http.request({ socketPath: upstreamPath, method, path, headers: { host: "docker" } });
+      const timer = timeoutMs > 0
+        ? setTimeout(() => {
+            log.error("[broker] таймаут демона: " + method + " " + path + " за " + Math.round(timeoutMs / 1000) + " с");
+            upstream.destroy();
+            resolve({ status: 504, json: null, error: "демон не ответил за " + Math.round(timeoutMs / 1000) + " с" });
+          }, timeoutMs)
+        : null;
       const chunks = [];
       upstream.on("response", answer => {
+        if (timer) clearTimeout(timer);
         answer.on("data", chunk => chunks.push(chunk));
         answer.on("end", () => {
           const text = Buffer.concat(chunks).toString("utf8");
@@ -277,7 +351,10 @@ export function createBrokerServer({ socketPath, upstreamPath, policy, log = con
           resolve({ status: answer.statusCode ?? 502, json });
         });
       });
-      upstream.on("error", error => resolve({ status: 502, json: null, error: error.message }));
+      upstream.on("error", error => {
+        if (timer) clearTimeout(timer);
+        resolve({ status: 502, json: null, error: error.message });
+      });
       upstream.end();
     });
   }
@@ -305,7 +382,17 @@ export function createBrokerServer({ socketPath, upstreamPath, policy, log = con
     }
 
     const upstream = net.connect(upstreamPath);
+    // Только ожидание соединения: у hijack-потока нет «слишком долгой» паузы — консоль, которая
+    // молчит, это нормальная работа, а не зависший демон.
+    const connectTimer = timeoutMs > 0
+      ? setTimeout(() => {
+          log.error("[broker] таймаут соединения с демоном: " + request.method + " " + request.url);
+          writeRawError(clientSocket, 504, upstreamTimeoutMessage(request.method, request.url, timeoutMs));
+          upstream.destroy();
+        }, timeoutMs)
+      : null;
     upstream.once("connect", () => {
+      if (connectTimer) clearTimeout(connectTimer);
       const lines = [request.method + " " + request.url + " HTTP/1.1"];
       for (let index = 0; index < request.rawHeaders.length; index += 2) {
         lines.push(request.rawHeaders[index] + ": " + request.rawHeaders[index + 1]);
@@ -316,6 +403,7 @@ export function createBrokerServer({ socketPath, upstreamPath, policy, log = con
       upstream.pipe(clientSocket);
     });
     upstream.once("error", error => {
+      if (connectTimer) clearTimeout(connectTimer);
       log.error("[broker] Docker недоступен (upgrade): " + error.message);
       writeRawError(clientSocket, 502, dockerUnavailableMessage(upstreamPath));
       upstream.destroy();
@@ -359,7 +447,7 @@ function sendError(response, status, message) {
 }
 
 function writeRawError(socket, status, message) {
-  const text = status === 403 ? "Forbidden" : status === 502 ? "Bad Gateway" : "Error";
+  const text = status === 403 ? "Forbidden" : status === 502 ? "Bad Gateway" : status === 504 ? "Gateway Timeout" : "Error";
   const payload = JSON.stringify({ message });
   socket.write(
     "HTTP/1.1 " + status + " " + text + "\r\n" +

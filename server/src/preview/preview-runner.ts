@@ -61,7 +61,11 @@ export async function startPreviewContainer(config:SandboxConfig){
       "-e","HOME=/tmp",
       "-e","CI=1",
       image,"/bin/sh","-lc",command,
-    ]);
+    ],
+    // На загруженном хосте старт контейнера вместе с созданием слоя может занять больше 15 с:
+    // рядом идёт npm install или сборка другого проекта. Предел больше только у этого шага;
+    // inspect и logs остаются короткими, чтобы зависший демон не держал панель.
+    60_000);
   } catch (error) {
     await secrets.cleanup();
     throw error;

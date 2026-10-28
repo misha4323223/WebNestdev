@@ -302,3 +302,56 @@ test("self отдаёт сети брокера, не открывая inspect �
   const payload = JSON.parse(answer.body);
   assert.deepEqual(payload.networks.sort(), ["src_webnestdev", "src_webnestdev-preview"]);
 });
+
+/**
+ * Молчащий демон: принимает запрос и не отвечает никогда. Прежде такой демон держал Docker CLI до
+ * его собственного предела, а в журнале сервера оставалось только «Превышено время ожидания
+ * операции Docker» — без указания, какой запрос не вернулся. Теперь брокер отвечает сам, и в тексте
+ * есть и запрос, и предел.
+ */
+test("молчащий демон получает 504 с названием запроса, а не вечное ожидание", async () => {
+  const silentDir = fs.mkdtempSync(path.join(os.tmpdir(), "wnd-silent-"));
+  const silentUpstreamPath = path.join(silentDir, "upstream.sock");
+  const silentBrokerPath = path.join(silentDir, "broker.sock");
+  const silent = http.createServer(() => {
+    // Ответа нет намеренно: сокет остаётся открытым.
+  });
+  silent.on("upgrade", () => undefined);
+  await listen(silent, silentUpstreamPath);
+  const silentBroker = createBrokerServer({
+    socketPath: silentBrokerPath,
+    upstreamPath: silentUpstreamPath,
+    policy,
+    log,
+    upstreamTimeoutMs: 150,
+  });
+  await listen(silentBroker, silentBrokerPath);
+  try {
+    const started = Date.now();
+    const payload = JSON.stringify(baseCreate());
+    const answer = await new Promise((resolve, reject) => {
+      const request = http.request(
+        { socketPath: silentBrokerPath, method: "POST", path: "/containers/create?name=wnd-cmd-1", agent: false, headers: { host: "docker", "content-type": "application/json", "content-length": String(Buffer.byteLength(payload)) } },
+        response => {
+          const chunks = [];
+          response.on("data", chunk => chunks.push(chunk));
+          response.on("end", () => resolve({ status: response.statusCode, body: Buffer.concat(chunks).toString("utf8") }));
+        },
+      );
+      request.on("error", reject);
+      request.end(payload);
+    });
+    // 504 приходит раньше собственного предела Docker CLI (15 с), поэтому причина видна в логах.
+    assert.ok(Date.now() - started < 5000, "ответ не должен ждать таймаута клиента");
+    assert.equal(answer.status, 504);
+    assert.match(JSON.parse(answer.body).message, /демон не ответил/);
+    assert.match(JSON.parse(answer.body).message, /POST \/containers\/create/);
+  } finally {
+    silentBroker.destroySockets?.();
+    silentBroker.closeAllConnections?.();
+    silent.closeAllConnections?.();
+    await new Promise(resolve => silentBroker.close(resolve));
+    await new Promise(resolve => silent.close(resolve));
+    fs.rmSync(silentDir, { recursive: true, force: true });
+  }
+});
