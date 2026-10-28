@@ -155,6 +155,17 @@ export async function runWithRunSlot<T>(work: () => Promise<T>, options: RunSlot
   // Taken before the wait, not after it: a queued request already belongs to the account, so its
   // second tab is refused right away instead of queueing behind itself for five minutes.
   const releaseAccount = userId ? takeAccountPlace(userId) : undefined;
+  // Место аккаунта отпускается и по обрыву соединения, а не только по концу работы: отменённый
+  // прогон, застрявший в ожидании внешнего процесса (Docker, ответ провайдера), иначе держал бы
+  // аккаунт занятым, и панель отвечала бы «Агент уже работает» при пустом экране. Место хоста при
+  // этом не отпускается: работа может ещё держать контейнер, и общий предел обязан это видеть.
+  const releaseOnAbort = releaseAccount
+    ? () => releaseAccount()
+    : undefined;
+  if (releaseOnAbort) {
+    if (options.signal.aborted) releaseOnAbort();
+    else options.signal.addEventListener("abort", releaseOnAbort, { once: true });
+  }
   try {
     const stats = runQueueStats();
     if (stats.active >= stats.limit) options.onQueued?.(stats.queued + 1);
@@ -165,6 +176,7 @@ export async function runWithRunSlot<T>(work: () => Promise<T>, options: RunSlot
       slot.release();
     }
   } finally {
+    if (releaseOnAbort) options.signal.removeEventListener("abort", releaseOnAbort);
     releaseAccount?.();
   }
 }

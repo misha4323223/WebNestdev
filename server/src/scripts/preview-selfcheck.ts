@@ -12,6 +12,8 @@
  *                                      починка, которую платформа делает сама в preview-address.ts);
  *   PREVIEW-NETWORK=unreachable      — не доходит и после подключения: сеть предпросмотра указывают
  *                                      вручную (PREVIEW_NETWORK) или хост блокирует трафик между сетями;
+ *   PREVIEW-NETWORK=start-failed     — контейнер-проба вообще не поднялся (Docker занят, отказ
+ *                                      политики, предел времени): это не сеть, причину смотреть выше;
  *   PREVIEW-NETWORK=no-docker|image  — Docker недоступен изнутри контейнера / образа нет на ВМ.
  *
  * На ВМ из каталога развёртывания:
@@ -83,7 +85,10 @@ async function main() {
     // в образе, хотя запуск упал на сети (ровно так имя `webnestdev-preview` вместо
     // `src_webnestdev-preview` выглядело как проблема образа). Сеть проверяется первой.
     const missingNetwork = /network .*not found/i.test(detail);
-    verdict(missingNetwork ? "unreachable" : /pull access denied|no such image|manifest unknown|not found|unauthorized/i.test(detail) ? "image" : "unreachable");
+    // Третий случай — контейнер вообще не поднялся (зависший Docker, отказ политики, предел
+    // времени). Это не «сеть не видна»: такой вердикт отправлял оператора задавать PREVIEW_NETWORK,
+    // когда причина была в запуске, и причину приходилось искать в логе заново.
+    verdict(missingNetwork ? "unreachable" : /pull access denied|no such image|manifest unknown|not found|unauthorized/i.test(detail) ? "image" : "start-failed");
     process.exit(1);
   }
 

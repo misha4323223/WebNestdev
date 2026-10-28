@@ -63,6 +63,13 @@ before(async () => {
         response.writeHead(200, { "content-type": "text/plain" });
         return response.end("hello from container");
       }
+      if (url.pathname === "/containers/abc/wait") {
+        // Так ведёт себя демон: 200 отправляется сразу, тело ждёт, пока контейнер остановится.
+        // Docker CLI синхронно ждёт именно заголовки, а потом посылает start.
+        response.writeHead(200, { "content-type": "application/json" });
+        response.flushHeaders();
+        return;
+      }
       if (url.pathname === "/containers/abc/exec") return json(response, { Id: "exec1" }, 201);
       if (url.pathname === "/system/df") return json(response, { LayersSize: 1 });
       if (url.pathname === "/containers/" + encodeURIComponent(os.hostname()) + "/json") {
@@ -252,6 +259,38 @@ test("свой контейнер: inspect, logs, системная инфор�
 
   const df = await call("GET", "/system/df");
   assert.equal(df.status, 200);
+});
+
+/**
+ * Docker CLI вызывает `ContainerWait` синхронно и ждёт ответные заголовки, и только потом шлёт
+ * `start`. Демон отвечает 200 сразу и держит тело до остановки контейнера. Если прокси не сбрасывает
+ * заголовки, клиент ждёт их, контейнер не стартует, тело не приходит — и `docker run` висит до
+ * таймаута. Именно это и происходило с предпросмотром и пробой песочницы.
+ */
+test("заголовки /wait уходят сразу, хотя тело демон держит открытым", async () => {
+  const started = Date.now();
+  const answer = await new Promise((resolve, reject) => {
+    const request = http.request(
+      { socketPath: brokerSocket, method: "POST", path: "/containers/abc/wait?condition=removed", agent: false, headers: { host: "docker", "content-type": "application/json" } },
+      response => {
+        clearTimeout(guard);
+        resolve({ response, headersAfterMs: Date.now() - started });
+      },
+    );
+    // Тест не должен висеть вечно при регрессии: это была бы та же взаимоблокировка.
+    const guard = setTimeout(() => {
+      request.destroy();
+      reject(new Error("заголовки /wait не пришли за 3 с — прокси не сбрасывает заголовки"));
+    }, 3000);
+    request.on("error", error => {
+      clearTimeout(guard);
+      reject(error);
+    });
+    request.end();
+  });
+  assert.ok(answer.headersAfterMs < 1000, "заголовки /wait должны приходить сразу, а не с телом");
+  assert.equal(answer.response.statusCode, 200);
+  answer.response.destroy();
 });
 
 test("запрещённые эндпоинты не пересылаются", async () => {

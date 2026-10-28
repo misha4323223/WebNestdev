@@ -41,6 +41,18 @@ export function dockerUnavailableMessage(upstreamPath) {
   return "Cannot connect to the Docker daemon at unix://" + upstreamPath + ". Is the docker daemon running?";
 }
 
+/**
+ * Запрос, который демон держит открытым законно долго.
+ *
+ * `/wait` отвечает заголовками сразу, а тело отдаёт только когда контейнер остановится или
+ * исчезнет; `logs` с `follow` живёт, пока приложение пишет. Предел ожидания к таким запросам
+ * неприменим: тишина здесь — это ожидание, а не зависший демон.
+ */
+export function isLongLivedRequest(request) {
+  const pathname = String(request.url ?? "").split("?")[0];
+  return /\/containers\/[^/]+\/(wait|logs)$/.test(pathname);
+}
+
 export function upstreamTimeoutMessage(method, url, timeoutMs) {
   return "Docker-брокер: демон не ответил на " + method + " " + url + " за " + Math.round(timeoutMs / 1000) +
     " с. Это не отказ политики — демон занят или не отвечает: проверьте на хосте `docker ps`, свободное место (`df -h`) и память.";
@@ -233,10 +245,10 @@ export function createBrokerServer({ socketPath, upstreamPath, policy, log = con
   /**
    * Ждёт заголовки ответа демона, а не весь ответ: потоковый `logs` живёт долго и его тишина
    * нормальна. Молчание сверх предела — это 504 с названием запроса, чтобы причина была в журнале,
-   * а не в таймауте клиента.
+   * а не в таймауте клиента. Долгоживущие запросы (`wait`, `logs`) предела не имеют.
    */
   function guardUpstream(upstream, request, claim, response) {
-    if (!(timeoutMs > 0)) return;
+    if (!(timeoutMs > 0) || isLongLivedRequest(request)) return;
     upstream.setTimeout(timeoutMs, () => {
       log.error("[broker] таймаут демона: " + request.method + " " + request.url + " за " + Math.round(timeoutMs / 1000) + " с");
       if (!claim()) return;
@@ -268,6 +280,12 @@ export function createBrokerServer({ socketPath, upstreamPath, policy, log = con
       upstream.setTimeout(0);
       answered = true;
       response.writeHead(answer.statusCode ?? 502, answer.headers);
+      // Отдать заголовки сразу, не дожидаясь первого куска тела. Без этого Docker CLI
+      // блокировался на `POST /containers/{id}/wait?condition=removed`: демон отправляет 200 и
+      // держит тело, пока контейнер не остановится, а CLI ждёт именно заголовки, прежде чем
+      // послать `start`. Получалась взаимоблокировка: контейнер не стартовал, тело не приходило.
+      // Настоящий демон заголовки сбрасывает — прокси обязан делать так же.
+      if (typeof response.flushHeaders === "function") response.flushHeaders();
       answer.pipe(response);
     });
     upstream.on("error", error => {

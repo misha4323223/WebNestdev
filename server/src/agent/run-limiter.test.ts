@@ -217,6 +217,33 @@ test("a free host does not announce a queue", async () => {
   }
 });
 
+test("оборванное соединение освобождает аккаунт, даже если работа ещё не вернулась", async () => {
+  // Зависший внешний процесс (Docker, ответ провайдера) не отвечает на отмену, но для пользователя
+  // запуск закончился: панель закрыла сокет. Место аккаунта должно освободиться сразу, иначе
+  // следующая попытка получает «Агент уже работает» при пустом экране.
+  const restoreLimit = withLimit("4");
+  try {
+    const holding = deferred();
+    const controller = new AbortController();
+    const first = runWithRunSlot(async () => { await holding.promise; }, { signal: controller.signal, userId: "аккаунт-1" });
+    await tick();
+    assert.equal(accountRunCount("аккаунт-1"), 1);
+
+    controller.abort();
+    assert.equal(accountRunCount("аккаунт-1"), 0, "после обрыва аккаунт свободен, хотя работа не вернулась");
+
+    let ranAgain = false;
+    await runWithRunSlot(async () => { ranAgain = true; }, { signal: signal(), userId: "аккаунт-1" });
+    assert.equal(ranAgain, true, "новый запуск того же аккаунта не ждёт брошенную работу");
+
+    holding.resolve();
+    await first;
+    assert.equal(accountRunCount("аккаунт-1"), 0, "поздний возврат работы не отпускает место дважды");
+  } finally {
+    restoreLimit();
+  }
+});
+
 test("a higher limit runs the configured number of agents at once", async () => {
   const restore = withLimit("2");
   try {
