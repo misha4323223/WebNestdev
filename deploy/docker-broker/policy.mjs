@@ -24,6 +24,13 @@ const EMPTY = value =>
 
 const isObject = value => typeof value === "object" && value !== null && !Array.isArray(value);
 
+/**
+ * Поле не задано. Docker CLI сериализует Go-структуру целиком, поэтому кроме null и пустых
+ * структур присылает нулевые значения (`OomScoreAdj: 0`, `PublishAllPorts: false`). Для
+ * неизвестного поля это «не задано», а не настройка: ненулевое значение всё равно запрещено.
+ */
+const UNSET = value => EMPTY(value) || value === 0 || value === false;
+
 /** Поля Config, которые сервер действительно присылает; остальные с непустым значением — отказ. */
 const CONFIG_KEYS = new Set([
   "Hostname", "Domainname", "User", "AttachStdin", "AttachStdout", "AttachStderr", "Tty",
@@ -37,7 +44,7 @@ const CONFIG_KEYS = new Set([
 const HOST_KEYS = new Set([
   "Binds", "NetworkMode", "CapAdd", "CapDrop", "SecurityOpt", "ReadonlyRootfs", "Tmpfs",
   "Memory", "MemorySwap", "MemoryReservation", "NanoCpus", "CpuShares", "CpuQuota", "CpuPeriod",
-  "PidsLimit", "ShmSize", "Init", "AutoRemove", "OomKillDisable", "ConsoleSize",
+  "PidsLimit", "ShmSize", "MemorySwappiness", "Init", "AutoRemove", "OomKillDisable", "ConsoleSize",
   "MaskedPaths", "ReadonlyPaths", "Privileged", "PidMode", "IpcMode", "UTSMode", "UsernsMode",
   "CgroupnsMode", "CgroupParent", "Devices", "DeviceRequests", "DeviceCgroupRules", "PortBindings",
   "PublishAllPorts", "RestartPolicy", "Runtime", "VolumesFrom", "Links", "ExtraHosts", "Dns",
@@ -263,7 +270,7 @@ export function validateCreate(body, policy) {
 
   for (const key of Object.keys(body)) {
     if (CONFIG_KEYS.has(key)) continue;
-    if (!EMPTY(body[key])) return fail("Неизвестное поле контейнера запрещено: " + key);
+    if (!UNSET(body[key])) return fail("Неизвестное поле контейнера запрещено: " + key);
   }
   if (!EMPTY(body.Hostname) || !EMPTY(body.Domainname) || !EMPTY(body.MacAddress)) {
     return fail("Своё имя хоста, домен и MAC-адрес запрещены");
@@ -299,7 +306,7 @@ export function validateCreate(body, policy) {
   if (!EMPTY(body.Labels) && (!isObject(body.Labels) || Object.values(body.Labels).some(v => typeof v !== "string"))) {
     return fail("Labels должен быть объектом строк");
   }
-  if (body.StopTimeout !== undefined && (!Number.isInteger(body.StopTimeout) || body.StopTimeout > 60)) {
+  if (body.StopTimeout !== undefined && body.StopTimeout !== null && (!Number.isInteger(body.StopTimeout) || body.StopTimeout > 60)) {
     return fail("StopTimeout больше 60 секунд запрещён");
   }
 
@@ -307,7 +314,7 @@ export function validateCreate(body, policy) {
   if (!isObject(host)) return fail("HostConfig обязателен");
   for (const key of Object.keys(host)) {
     if (HOST_KEYS.has(key)) continue;
-    if (!EMPTY(host[key])) return fail("Неизвестное поле HostConfig запрещено: " + key);
+    if (!UNSET(host[key])) return fail("Неизвестное поле HostConfig запрещено: " + key);
   }
   if (host.Privileged) return fail("privileged-контейнер запрещён");
   if (!EMPTY(host.CapAdd)) return fail("Добавление capabilities запрещено");
@@ -320,7 +327,7 @@ export function validateCreate(body, policy) {
   }
   if (host.ReadonlyRootfs !== true) return fail("Корень контейнера обязан быть read-only");
   for (const key of FORBIDDEN_HOST_FIELDS) {
-    if (!EMPTY(host[key])) return fail("Поле HostConfig." + key + " запрещено");
+    if (!UNSET(host[key])) return fail("Поле HostConfig." + key + " запрещено");
   }
   if (!EMPTY(host.PortBindings) || host.PublishAllPorts) {
     return fail("Публикация портов на хост запрещена");
@@ -336,6 +343,11 @@ export function validateCreate(body, policy) {
     return fail("Свой драйвер логов запрещён: вывод контейнера не должен уходить наружу");
   }
   if (host.OomKillDisable) return fail("Отключать OOM killer запрещено");
+  // -1 — дефолт Docker («не задано»); платформа swappiness не настраивает, поэтому любое
+  // другое значение отклоняется, а не проверяется на диапазон.
+  if (host.MemorySwappiness !== undefined && host.MemorySwappiness !== null && host.MemorySwappiness !== -1) {
+    return fail("MemorySwappiness не используется платформой");
+  }
   if (!EMPTY(host.ConsoleSize) && !(Array.isArray(host.ConsoleSize) && host.ConsoleSize.every(v => v === 0))) {
     return fail("ConsoleSize запрещён");
   }
