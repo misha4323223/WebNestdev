@@ -217,6 +217,41 @@ function checkTmpfs(tmpfs) {
 }
 
 /**
+ * `docker run --network` присылает сеть дважды: в `HostConfig.NetworkMode` и в
+ * `NetworkingConfig.EndpointsConfig`. Второе не расширяет прав, если имя сети уже разрешено, а
+ * настройки endpoint пусты: aliases, links и IPAM позволяли бы выдать контейнер за другой сервис
+ * внутри сети. Поэтому структура разрешена, а её содержимое — нет.
+ */
+function checkNetworkingConfig(networking, policy, networkMode) {
+  if (EMPTY(networking)) return null;
+  if (!isObject(networking)) return "NetworkingConfig должен быть объектом";
+  for (const key of Object.keys(networking)) {
+    if (key !== "EndpointsConfig" && !EMPTY(networking[key])) {
+      return "Неизвестное поле NetworkingConfig запрещено: " + key;
+    }
+  }
+  const endpoints = networking.EndpointsConfig;
+  if (EMPTY(endpoints)) return null;
+  if (!isObject(endpoints)) return "EndpointsConfig должен быть объектом";
+  const names = Object.keys(endpoints);
+  if (names.length > 1) return "Контейнер может быть только в одной сети";
+  const name = names[0];
+  if (!(name === "" || name === "default" || name === "bridge" || name === "none" || policy.isPreviewNetwork(name))) {
+    return "Сеть " + name + " запрещена: разрешены none, bridge и сеть предпросмотра";
+  }
+  if (networkMode && networkMode !== "default" && name !== networkMode) {
+    return "NetworkingConfig не совпадает с HostConfig.NetworkMode: " + name + " ≠ " + networkMode;
+  }
+  const settings = endpoints[name];
+  if (EMPTY(settings)) return null;
+  if (!isObject(settings)) return "Настройки сети должны быть объектом";
+  for (const [field, value] of Object.entries(settings)) {
+    if (!EMPTY(value)) return "Настройки endpoint запрещены: " + field;
+  }
+  return null;
+}
+
+/**
  * Проверка тела `containers/create`. Возвращает `{ok:true}` или `{ok:false, message}`.
  * Тело не переписывается: политика проверяет всё, что может вывести контейнер за песочницу, и
  * отказывает, а не «чинит» запрос — иначе непонятно, что именно запустилось.
@@ -236,9 +271,6 @@ export function validateCreate(body, policy) {
   }
   if (!EMPTY(body.ConsoleSize) && !(Array.isArray(body.ConsoleSize) && body.ConsoleSize.every(v => v === 0))) {
     return fail("ConsoleSize запрещён");
-  }
-  if (!EMPTY(body.NetworkingConfig)) {
-    return fail("NetworkingConfig запрещён: сеть задаётся только через HostConfig.NetworkMode");
   }
   if (!EMPTY(body.Healthcheck)) return fail("Healthcheck не используется платформой и запрещён");
   if (body.Tty || body.OpenStdin || body.AttachStdin || body.StdinOnce) {
@@ -305,6 +337,8 @@ export function validateCreate(body, policy) {
   if (!(network === "" || network === "default" || network === "bridge" || network === "none" || policy.isPreviewNetwork(network))) {
     return fail("Сеть " + network + " запрещена: разрешены none, bridge и сеть предпросмотра");
   }
+  const networkingError = checkNetworkingConfig(body.NetworkingConfig, policy, network);
+  if (networkingError) return fail(networkingError);
 
   // Монтирования: `-v` приходит в Binds, программный клиент может прислать Mounts. Проверяются оба.
   if (!EMPTY(host.Binds)) {

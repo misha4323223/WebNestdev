@@ -19,7 +19,9 @@
 - обязательны `ReadonlyRootfs`, `CapDrop: ["ALL"]`, `no-new-privileges`, uid 1000, лимиты памяти,
   CPU и pids;
 - сеть — только `none`, `bridge` или сеть предпросмотра; `host`, `container:<id>` и сеть базы
-  отклоняются;
+  отклоняются. `NetworkingConfig` разрешён только для той же сети, что `HostConfig.NetworkMode`, и
+  только с пустыми настройками endpoint: Docker CLI присылает его при каждом `--network`, а aliases,
+  links и IPAM позволяли бы выдать контейнер за другой сервис;
 - запрещены `Privileged`, `CapAdd`, `Devices`, `PidMode`/`IpcMode`/`UsernsMode`, публикация портов,
   `RestartPolicy` кроме `no`, удалённые драйверы логов (иначе вывод контейнера можно увести на чужой
   syslog), `Sysctls`, `ExtraHosts`, `Dns`, `VolumesFrom`, `CgroupParent`, `SecurityOpt` кроме

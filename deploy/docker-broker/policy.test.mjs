@@ -117,6 +117,16 @@ test("create с сетью предпросмотра и монтировани�
   assert.deepEqual(validateCreate(body, policy), { ok: true });
 });
 
+test("NetworkingConfig той же разрешённой сети проходит: так CLI присылает --network", () => {
+  const preview = withHost(
+    { NetworkMode: "webnestdev-preview" },
+    { NetworkingConfig: { EndpointsConfig: { "webnestdev-preview": {} } } },
+  );
+  assert.deepEqual(validateCreate(preview, policy), { ok: true });
+  const none = withHost({ NetworkMode: "none" }, { NetworkingConfig: { EndpointsConfig: { none: {} } } });
+  assert.deepEqual(validateCreate(none, policy), { ok: true });
+});
+
 test("create выходит за песочницу — отказ", () => {
   const cases = [
     ["privileged", withHost({ Privileged: true })],
@@ -155,6 +165,22 @@ test("create выходит за песочницу — отказ", () => {
     ["чужой образ", createBody({ Image: "alpine" })],
     ["Healthcheck", createBody({ Healthcheck: { Test: ["CMD", "true"] } })],
     ["EndpointsConfig", createBody({ NetworkingConfig: { EndpointsConfig: { webnestdev: {} } } })],
+    ["EndpointsConfig с сетью, не совпадающей с NetworkMode", withHost(
+      { NetworkMode: "webnestdev-preview" },
+      { NetworkingConfig: { EndpointsConfig: { bridge: {} } } },
+    )],
+    ["NetworkingConfig с alias", withHost(
+      { NetworkMode: "webnestdev-preview" },
+      { NetworkingConfig: { EndpointsConfig: { "webnestdev-preview": { Aliases: ["postgres"] } } } },
+    )],
+    ["NetworkingConfig с IPAM", withHost(
+      { NetworkMode: "webnestdev-preview" },
+      { NetworkingConfig: { EndpointsConfig: { "webnestdev-preview": { IPAMConfig: { IPv4Address: "10.0.0.2" } } } } },
+    )],
+    ["NetworkingConfig с двумя сетями", withHost(
+      { NetworkMode: "webnestdev-preview" },
+      { NetworkingConfig: { EndpointsConfig: { "webnestdev-preview": {}, bridge: {} } } },
+    )],
     ["неизвестное поле контейнера", { ...createBody(), SomethingNew: { a: 1 } }],
   ];
   for (const [name, body] of cases) {
