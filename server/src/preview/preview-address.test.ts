@@ -96,6 +96,7 @@ test("the relay takes the free canonical port when the app sits on another loopb
     usedPorts: async () => [5173],
     startRelay: async input => { relay.push(input); relayStarted = true; return true; },
     attachToServerNetworks: async () => ({ host: "", connected: [] }),
+    probePorts: async () => null,
   };
   const settled = await settlePreviewAddress(state(), { deps: value, appAnswers: true, wait: noWait });
   assert.deepEqual(relay, [{ containerId: "c1", targetPort: 5173, listenPort: 3000 }]);
@@ -153,6 +154,7 @@ test("a relay that needs a moment to start listening is still confirmed", async 
     usedPorts: async () => [3000],
     startRelay: async input => { relay.push(input); return true; },
     attachToServerNetworks: async () => ({ host: "", connected: [] }),
+    probePorts: async () => null,
   };
   const settled = await settlePreviewAddress(state(), { deps: value, appAnswers: true, wait: { attempts: 5, delayMs: 10 } });
   assert.deepEqual(relay, [{ containerId: "c1", targetPort: 3000, listenPort: 3001 }]);
