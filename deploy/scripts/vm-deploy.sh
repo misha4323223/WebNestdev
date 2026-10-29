@@ -912,7 +912,7 @@ verify_docker(){
       return 0
       ;;
     no-socket)
-      log "КОНТЕЙНЕР СЕРВЕРА НЕ ДОХОДИТ ДО ДЕМОНА DOCKER (${reason:-нет причины}, адрес ${docker_host:-неизвестен}): проверьте смонтированный сокет в $COMPOSE_FILE и контейнер $BROKER_SERVICE (docker compose logs $BROKER_SERVICE). Сервер откатывается на /var/run/docker.sock, поэтому песочницы работать не будут только при отсутствии обоих сокетов"
+      log "КОНТЕЙНЕР СЕРВЕРА НЕ ДОХОДИТ ДО ДЕМОНА DOCKER (${reason:-нет причины}, адрес ${docker_host:-неизвестен}): прямой сокет серверу не монтируется, единственный путь — брокер. Проверьте том docker-broker в $COMPOSE_FILE и контейнер $BROKER_SERVICE (docker compose ps $BROKER_SERVICE, docker compose logs $BROKER_SERVICE)"
       return 0
       ;;
     failed) log "DOCKER НЕ РАБОТАЕТ ИЗ КОНТЕЙНЕРА СЕРВЕРА: ${reason:-причина не сообщена}" ; return 0 ;;

@@ -119,6 +119,8 @@ export async function configureDockerEndpoint(): Promise<void> {
   delete process.env.DOCKER_HOST;
   console.warn(
     "[docker] брокер " + socket + " не ответил за " + Math.round(waitMs / 1000) +
-    " с: работаю через /var/run/docker.sock. Если это не первая выкатка — проверьте `docker compose logs docker-broker`",
+    " с: убираю DOCKER_HOST и пробую /var/run/docker.sock. В контейнере сервера этого сокета нет" +
+    " (docs/DOCKER_BROKER.md), поэтому песочницы и предпросмотр работать не будут: проверьте" +
+    " `docker compose ps docker-broker` и `docker compose logs docker-broker`",
   );
 }

@@ -397,10 +397,11 @@ services:
       # в .env он неудобен и легко обрезается. Читается тем же путём внутри контейнера,
       # поэтому YANDEX_SA_KEY_FILE=/var/lib/webnestdev/secrets/yandex-sa-key.json.
       - ${WEBNESTDEV_SECRETS_DIR:-/var/lib/webnestdev/secrets}:/var/lib/webnestdev/secrets:ro
-      # Сокет брокера. Прямой сокет ниже нужен только для перехода и отката: этап 3 его убирает
-      # (docs/DOCKER_BROKER.md), после чего RCE в API перестанет давать доступ к хосту.
+      # Только сокет брокера: настоящий docker.sock серверу не монтируется (этап 3,
+      # docs/DOCKER_BROKER.md). Сам сокет на хосте и у брокера остаётся — отключён лишь доступ
+      # сервера, поэтому RCE в API больше не даёт демон хоста. Откат — вернуть строку
+      # `- /var/run/docker.sock:/var/run/docker.sock` и выкатить снова.
       - docker-broker:/run/webnestdev-docker
-      - /var/run/docker.sock:/var/run/docker.sock
     # Сервер стоит в двух сетях: база/панель (Caddy, postgres) и предпросмотры.
     networks:
       - webnestdev
