@@ -14,7 +14,7 @@ const base: HealthInput = {
 const good = () => buildHealthChecks(base);
 const badDisk = () => buildHealthChecks({ ...base, diskUsedPercent: 91 });
 
-const { resetAlerts, runAlertCycle } = await import("./alerts.js");
+const { resetAlerts, runAlertCycle, alertEmail, alertEmailSource } = await import("./alerts.js");
 
 test("первое письмо, пауза, напоминание и восстановление", async () => {
   resetAlerts();
@@ -103,4 +103,34 @@ test("ошибка отправки не считается отправкой �
   assert.equal((await runAlertCycle(deps)).sent, true);
   assert.equal(attempts, 2);
   resetAlerts();
+});
+
+test("без ALERT_EMAIL получатель — адрес администратора", () => {
+  const alertBefore = process.env.ALERT_EMAIL;
+  const adminBefore = process.env.ADMIN_BOOTSTRAP_EMAIL;
+  try {
+    delete process.env.ALERT_EMAIL;
+    process.env.ADMIN_BOOTSTRAP_EMAIL = "owner@example.test";
+    assert.equal(alertEmail(), "owner@example.test");
+    assert.equal(alertEmailSource(), "ADMIN_BOOTSTRAP_EMAIL");
+
+    // Явный адрес важнее адреса администратора.
+    process.env.ALERT_EMAIL = "ops@example.test";
+    assert.equal(alertEmail(), "ops@example.test");
+    assert.equal(alertEmailSource(), "ALERT_EMAIL");
+
+    // Опечатка в явном адресе не подменяется молча адресом администратора.
+    process.env.ALERT_EMAIL = "не адрес";
+    assert.equal(alertEmail(), null);
+    assert.equal(alertEmailSource(), null);
+
+    delete process.env.ALERT_EMAIL;
+    delete process.env.ADMIN_BOOTSTRAP_EMAIL;
+    assert.equal(alertEmail(), null);
+  } finally {
+    if (alertBefore === undefined) delete process.env.ALERT_EMAIL;
+    else process.env.ALERT_EMAIL = alertBefore;
+    if (adminBefore === undefined) delete process.env.ADMIN_BOOTSTRAP_EMAIL;
+    else process.env.ADMIN_BOOTSTRAP_EMAIL = adminBefore;
+  }
 });

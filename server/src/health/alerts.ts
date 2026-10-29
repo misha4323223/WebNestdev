@@ -41,10 +41,26 @@ export type AlertCycleDeps = {
 
 const active = new Map<string, ActiveAlert>();
 
-/** Адрес из панели/окружения. Пустое или кривое значение — «не настроено», а не падение. */
+/**
+ * Кому уходят аварийные письма.
+ *
+ * Явный `ALERT_EMAIL` (панель или переменная выкатки) важнее всего. Если его нет, письма идут
+ * администратору платформы из `ADMIN_BOOTSTRAP_EMAIL`: у работающей платформы админ уже есть,
+ * и молчать о переполненном диске только потому, что забыли отдельное поле, нельзя. Кривое
+ * явное значение не подменяется адресом админа — иначе опечатка в панели выглядела бы как
+ * «всё настроено», а письма уходили бы не туда.
+ */
 export function alertEmail(): string | null {
-  const value = (getPlatformEnv("ALERT_EMAIL") ?? "").trim();
-  return value && EMAIL.test(value) ? value : null;
+  const explicit = (getPlatformEnv("ALERT_EMAIL") ?? "").trim();
+  if (explicit) return EMAIL.test(explicit) ? explicit : null;
+  const admin = (getPlatformEnv("ADMIN_BOOTSTRAP_EMAIL") ?? "").trim();
+  return admin && EMAIL.test(admin) ? admin : null;
+}
+
+/** Откуда взялся получатель — для лога запуска, без самого адреса. */
+export function alertEmailSource(): "ALERT_EMAIL" | "ADMIN_BOOTSTRAP_EMAIL" | null {
+  if (!alertEmail()) return null;
+  return (getPlatformEnv("ALERT_EMAIL") ?? "").trim() ? "ALERT_EMAIL" : "ADMIN_BOOTSTRAP_EMAIL";
 }
 
 function shortError(error: unknown) {
@@ -286,9 +302,13 @@ export function startAlertScheduler(): () => void {
   const timer = setInterval(tick, alertCheckIntervalMs());
   timer.unref();
   const email = alertEmail();
+  const source = alertEmailSource();
   console.log(
     "[alerts] проверка каждые " + Math.round(alertCheckIntervalMs() / 60_000) + " мин; " +
-      (email ? "письма включены" : "ALERT_EMAIL не задан — письма выключены") +
+      (email
+        ? "письма включены, получатель — " +
+          (source === "ADMIN_BOOTSTRAP_EMAIL" ? "адрес администратора (ALERT_EMAIL не задан)" : "ALERT_EMAIL")
+        : "ALERT_EMAIL и ADMIN_BOOTSTRAP_EMAIL не заданы — письма выключены") +
       "; пороги: диск " + HEALTH_THRESHOLDS.diskUsedPercent + "%, память " +
       HEALTH_THRESHOLDS.memoryUsedPercent + "%, swap " + HEALTH_THRESHOLDS.swapUsedPercent + "%",
   );
