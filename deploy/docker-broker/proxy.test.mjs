@@ -89,30 +89,20 @@ before(async () => {
    * `{"Detach":false,"Tty":false}` с `Content-Length`. Подставной должен вести себя так же —
    * иначе тест проходит, даже если прокси не пересылает тело, и регрессия уезжает в прод.
    */
-  upstream.on("upgrade", (request, socket, head) => {
+  upstream.on("upgrade", async (request, socket, head) => {
     const length = Number(request.headers["content-length"] ?? 0);
-    let body = Buffer.from(head ?? []);
-    const start = () => {
-      socket.write(
-        "HTTP/1.1 101 UPGRADED\r\n" +
-        "Content-Type: application/vnd.docker.raw-stream\r\n" +
-        "Connection: Upgrade\r\nUpgrade: tcp\r\n\r\n",
-      );
-      socket.on("data", chunk => socket.write(chunk));
-    };
-    if (!Number.isFinite(length) || length <= 0 || body.length >= length) {
-      if (length > 0) upgradeBodies.push(body.subarray(0, length).toString("utf8"));
-      start();
-      return;
-    }
-    const readBody = chunk => {
-      body = Buffer.concat([body, chunk]);
-      if (body.length < length) return;
-      socket.off("data", readBody);
-      upgradeBodies.push(body.subarray(0, length).toString("utf8"));
-      start();
-    };
-    socket.on("data", readBody);
+    // Демон читает тело запроса своим HTTP-сервером, а не сырым сокетом: от версии Node зависит,
+    // придёт тело потоком запроса или сокетом, и подставной демон обязан вести себя так же.
+    socket.pause();
+    const body = await readUpgradeBody(request, socket, head, Number.isFinite(length) ? length : 0, 1000);
+    if (length > 0) upgradeBodies.push(body.subarray(0, length).toString("utf8"));
+    socket.write(
+      "HTTP/1.1 101 UPGRADED\r\n" +
+      "Content-Type: application/vnd.docker.raw-stream\r\n" +
+      "Connection: Upgrade\r\nUpgrade: tcp\r\n\r\n",
+    );
+    socket.on("data", chunk => socket.write(chunk));
+    socket.resume();
   });
   await listen(upstream, upstreamSocket);
 
@@ -402,28 +392,22 @@ test("exec: код выхода читается только для своей 
  * `exec/start` присылает JSON следом за заголовками. Без паузы эти байты ушли бы в поток без
  * слушателя, демон не дождался бы тела и не отдал `101`.
  */
+/**
+ * Тело собирается из того источника, который даёт текущая версия Node: 22 — сокет и `head`,
+ * 26 — поток запроса. Тест проверяет оба пути на настоящем `http.Server`, поэтому регрессия
+ * видна и на версии из CI, и на версии серверного образа.
+ */
 test("тело upgrade не теряется, пока соединение с демоном ещё не открыто", async () => {
   const bodyDir = fs.mkdtempSync(path.join(os.tmpdir(), "wnd-body-"));
   const clientPath = path.join(bodyDir, "client.sock");
-  const server = net.createServer(socket => {
+  const server = http.createServer();
+  server.on("upgrade", (request, socket, head) => {
+    // Брокер проверяет запрос и только потом соединяется с демоном: тело уже в пути.
     socket.pause();
-    // Заголовки разбираются как в http.Server: остаток пакета — это `head` события upgrade.
-    let pending = Buffer.alloc(0);
-    const onData = chunk => {
-      pending = Buffer.concat([pending, chunk]);
-      const split = pending.indexOf("\r\n\r\n");
-      if (split < 0) return;
-      socket.off("data", onData);
-      socket.pause();
-      const head = pending.subarray(split + 4);
-      const length = Number(/content-length:\s*(\d+)/i.exec(pending.subarray(0, split).toString())?.[1] ?? 0);
-      // Брокер проверяет запрос и только потом соединяется с демоном: тело уже в пути.
-      setTimeout(async () => {
-        socket.end(await readUpgradeBody(socket, head, length, 1000));
-      }, 30);
-    };
-    socket.on("data", onData);
-    socket.resume();
+    setTimeout(async () => {
+      const body = await readUpgradeBody(request, socket, head, Number(request.headers["content-length"]), 1000);
+      socket.end(body);
+    }, 30);
   });
   await listen(server, clientPath);
   try {
@@ -433,7 +417,7 @@ test("тело upgrade не теряется, пока соединение с �
       socket.setEncoding("utf8");
       let received = "";
       socket.on("connect", () => {
-        socket.write("POST /exec/exec1/start HTTP/1.1\r\nContent-Length: " + payload.length + "\r\n\r\n");
+        socket.write("POST /exec/exec1/start HTTP/1.1\r\nHost: docker\r\nConnection: Upgrade\r\nUpgrade: tcp\r\nContent-Type: application/json\r\nContent-Length: " + payload.length + "\r\n\r\n");
         socket.write(payload);
       });
       socket.on("data", chunk => { received += chunk; });

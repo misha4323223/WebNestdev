@@ -88,22 +88,31 @@ export function upgradeBodyLength(headers) {
 /**
  * Собирает тело hijack-запроса до длины из `Content-Length`.
  *
- * Сокет уже стоит на паузе: пока брокер проверяет запрос и соединяется с демоном, байты тела
- * копятся в сокете, а не теряются в потоке без слушателя. Пауза снимается только перед передачей
- * сокета демону — иначе stdin команды уехал бы в демон раньше тела.
+ * Тело приходит из двух мест, и от версии Node зависит, из какого именно:
  *
- * `head` — байты, которые Node уже прочитал вместе с заголовками. Таймаут не ошибка: тело могли не
- * прислать вовсе, и тогда демон сам ответит на неполный запрос — но брокер не ждёт его вечно.
+ * - Node 22 отдаёт байты, пришедшие вместе с заголовками, в `head`, а остальные — сокетом; поток
+ *   запроса при этом сразу заканчивается пустым;
+ * - Node 26 отдаёт тело потоком самого запроса (`request`), а `head` и сокет остаются пустыми.
+ *
+ * Поэтому сначала читается поток запроса, и только если он закончился без тела — сокет. Сокет уже
+ * на паузе: пока идёт проверка запроса, байты копятся, а не теряются в потоке без слушателя. Пауза
+ * снимается только перед передачей сокета демону — иначе stdin команды уехал бы в демон раньше тела.
+ *
+ * Таймаут не ошибка: тело могли не прислать вовсе, и тогда демон сам ответит на неполный запрос —
+ * но брокер не ждёт его вечно.
  */
-export function readUpgradeBody(socket, head, length, waitMs = UPGRADE_BODY_WAIT_MS) {
+export function readUpgradeBody(request, socket, head, length, waitMs = UPGRADE_BODY_WAIT_MS) {
   let body = head?.length ? Buffer.from(head) : Buffer.alloc(0);
   if (length <= 0 || body.length >= length) return Promise.resolve(body);
   return new Promise(resolve => {
     let done = false;
+    let timer = null;
     const finish = () => {
       if (done) return;
       done = true;
       clearTimeout(timer);
+      request.off("data", onData);
+      request.off("end", onRequestEnd);
       socket.off("data", onData);
       socket.off("close", finish);
       socket.off("end", finish);
@@ -115,11 +124,25 @@ export function readUpgradeBody(socket, head, length, waitMs = UPGRADE_BODY_WAIT
       body = Buffer.concat([body, chunk]);
       if (body.length >= length) finish();
     };
-    const timer = setTimeout(finish, waitMs);
-    socket.on("data", onData);
-    socket.once("close", finish);
-    socket.once("end", finish);
-    socket.resume();
+    const onRequestEnd = () => {
+      request.off("data", onData);
+      if (body.length >= length) {
+        finish();
+        return;
+      }
+      socket.on("data", onData);
+      socket.once("close", finish);
+      socket.once("end", finish);
+      socket.resume();
+    };
+    timer = setTimeout(finish, waitMs);
+    if (request.readableEnded) {
+      onRequestEnd();
+      return;
+    }
+    request.on("data", onData);
+    request.once("end", onRequestEnd);
+    request.resume();
   });
 }
 
@@ -487,7 +510,7 @@ export function createBrokerServer({ socketPath, upstreamPath, policy, log = con
       return;
     }
     // Тело собирается до соединения с демоном: демон читает его до `101` и без него молчит.
-    const body = await readUpgradeBody(clientSocket, head, bodyLength);
+    const body = await readUpgradeBody(request, clientSocket, head, bodyLength);
     if (bodyLength > 0 && body.length < bodyLength) {
       log.warn("[broker] upgrade: тело " + request.method + " " + request.url + " пришло неполным — " +
         body.length + "/" + bodyLength + " байт");
