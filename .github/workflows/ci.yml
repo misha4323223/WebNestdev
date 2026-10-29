@@ -39,5 +39,8 @@ jobs:
       - name: Test Docker broker
         run: npm run test:broker
 
+      - name: Test PostgreSQL backup scripts
+        run: bash deploy/scripts/pg-backup.test.sh
+
       - name: Build web
         run: npm run build

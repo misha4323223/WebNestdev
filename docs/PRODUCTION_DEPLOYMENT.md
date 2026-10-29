@@ -144,6 +144,8 @@ npm run migrate:json-to-ydb
 
 The migration is idempotent and uses UPSERTs. It covers users, sessions, projects, conversations, providers, GitHub, Yandex, database connections, encrypted project secrets and the secret audit journal; platform keys stay in `platform/env.json` and are used by both backends.
 
+A daily logical backup of this database goes to the platform bucket, is checked for freshness, and is restored into a scratch database once a month. Setup, key layout, retention and the restore drill are in [POSTGRES_BACKUP.md](POSTGRES_BACKUP.md). A backup that has never been restored is not considered a backup.
+
 ## Docker
 
 Build from the repository root:
@@ -292,9 +294,11 @@ The current bill decomposes exactly as: compute `base` 2 vCPU / 4 GB 2 566 ₽ +
    `PLATFORM_IMAGE_BASE_URL` / `PLATFORM_IMAGE_MODEL` / `PLATFORM_IMAGE_KEY_1..3`).
    Secrets live in the environment,
    never in the repository.
-6. **Hygiene (cron)** — weekly `docker system prune -af --filter until=168h`, weekly removal of
-   `node_modules` in projects untouched for a month, and a nightly `pg_dump` to Object Storage
-   (cold class, 1.26 ₽/GB·month). MWS disk backups are incremental and manual only (3.456 ₽/GB·month).
+6. **Hygiene (cron)** — weekly `docker system prune -af --filter until=168h` and weekly removal of
+   `node_modules` in projects untouched for a month. The nightly `pg_dump` to Object Storage is no
+   longer a manual cron: it runs from `.github/workflows/pg-backup.yml` (see
+   [POSTGRES_BACKUP.md](POSTGRES_BACKUP.md)), with a daily freshness check and a monthly restore
+   drill. MWS disk backups are incremental and manual only (3.456 ₽/GB·month).
 7. **Firewall** — 80/443/22 only. Nothing in this platform should be reachable any other way.
 8. **Watch** — `df -h /`, swap usage, `dmesg` for OOM, the `[sandbox]` queue line, and p95 waiting
    time. These are the four numbers that decide when to buy RAM (`+2 566 ₽/month` for 4 vCPU / 8 GB,

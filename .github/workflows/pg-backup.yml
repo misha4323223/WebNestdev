@@ -1,0 +1,137 @@
+name: PostgreSQL backup
+
+# Ежедневный бэкап базы, ежедневная проверка свежести и учебное восстановление раз в месяц.
+# Скрипт выполняется на ВМ по SSH (или на self-hosted runner), поэтому доступ к самой ВМ
+# человеку не нужен: расписание, журнал и повторный запуск живут в GitHub Actions.
+#
+# Почему не cron на ВМ: у владельца нет терминала на сервере, а установка systemd-таймера
+# потребовала бы правки выкатки и root-доступа. Здесь же отдельный процесс не может сломать
+# деплой, а история запусков и ошибки видны в Actions. Когда появятся runner-узлы, таймер
+# переедет на них (docs/SCALING_3000_PLAN.md, этап 3).
+
+on:
+  schedule:
+    # 05:30 МСК — бэкап.
+    - cron: "30 2 * * *"
+    # 13:00 МСК — проверка: последнему бэкапу не больше 30 часов. Если сегодняшний бэкап
+    # не снялся, к этому времени предыдущему уже больше 30 часов — ошибка видна в тот же день.
+    - cron: "0 10 * * *"
+    # 1-е число, 07:00 МСК — учебное восстановление в отдельную базу.
+    - cron: "0 4 1 * *"
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Что сделать"
+        type: choice
+        options:
+          - backup
+          - check
+          - restore-drill
+        default: backup
+
+concurrency:
+  group: pg-backup
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    runs-on: ${{ vars.DEPLOY_RUNNER || 'ubuntu-latest' }}
+    environment: production
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Prepare the SSH key
+        if: ${{ vars.DEPLOY_RUNNER == '' }}
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$HOME/.ssh/deploy_key"
+          chmod 600 "$HOME/.ssh/deploy_key"
+          if [ -n "${DEPLOY_KNOWN_HOSTS:-}" ]; then
+            printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          else
+            ssh-keyscan -H "$DEPLOY_HOST" > "$HOME/.ssh/known_hosts" 2>/dev/null
+          fi
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Choose mode
+        id: mode
+        env:
+          INPUT_MODE: ${{ inputs.mode }}
+          SCHEDULE: ${{ github.event.schedule }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" = "workflow_dispatch" ]; then
+            mode="${INPUT_MODE:-backup}"
+          elif [ "$SCHEDULE" = "0 10 * * *" ]; then
+            mode=check
+          elif [ "$SCHEDULE" = "0 4 1 * *" ]; then
+            mode=restore-drill
+          else
+            mode=backup
+          fi
+          case "$mode" in
+            backup|check|restore-drill) ;;
+            *) echo "Неизвестный режим: $mode" >&2; exit 2 ;;
+          esac
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "Режим: $mode"
+
+      - name: Run on the VM over SSH
+        if: ${{ vars.DEPLOY_RUNNER == '' }}
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_APP_DIR: ${{ vars.DEPLOY_APP_DIR }}
+          BACKUP_MAX_AGE_HOURS: ${{ vars.BACKUP_MAX_AGE_HOURS }}
+          MODE: ${{ steps.mode.outputs.mode }}
+        run: |
+          set -euo pipefail
+          DEPLOY_HOST=$(printf '%s' "$DEPLOY_HOST" | tr -d '[:space:]')
+          DEPLOY_USER=$(printf '%s' "$DEPLOY_USER" | tr -d '[:space:]')
+          DEPLOY_PORT=$(printf '%s' "${DEPLOY_PORT:-22}" | tr -d '[:space:]')
+          APP_DIR="${DEPLOY_APP_DIR:-}"
+          AGE="${BACKUP_MAX_AGE_HOURS:-30}"
+          # Значения приходят из переменных репозитория, но подставляются в команду на ВМ:
+          # проверяем их, чтобы опечатка не превратилась в лишнюю команду.
+          case "$MODE" in backup|check|restore-drill) ;; *) echo "Неизвестный режим: $MODE" >&2; exit 2 ;; esac
+          if [ -n "$APP_DIR" ]; then
+            printf '%s' "$APP_DIR" | grep -Eq '^(/|~/)[A-Za-z0-9._/-]+$' || { echo "Некорректный DEPLOY_APP_DIR: $APP_DIR" >&2; exit 2; }
+          fi
+          printf '%s' "$AGE" | grep -Eq '^[0-9]+$' || { echo "Некорректный BACKUP_MAX_AGE_HOURS: $AGE" >&2; exit 2; }
+          remote="MODE=$(printf '%q' "$MODE") BACKUP_MAX_AGE_HOURS=$(printf '%q' "$AGE")"
+          if [ -n "$APP_DIR" ]; then
+            remote="$remote APP_DIR=$(printf '%q' "$APP_DIR")"
+          fi
+          ssh -i "$HOME/.ssh/deploy_key" \
+            -p "$DEPLOY_PORT" \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "$remote bash -s" \
+            < deploy/scripts/pg-backup.sh
+
+      - name: Run on the VM (self-hosted runner)
+        if: ${{ vars.DEPLOY_RUNNER != '' }}
+        env:
+          DEPLOY_APP_DIR: ${{ vars.DEPLOY_APP_DIR }}
+          BACKUP_MAX_AGE_HOURS: ${{ vars.BACKUP_MAX_AGE_HOURS }}
+          MODE: ${{ steps.mode.outputs.mode }}
+        run: |
+          set -euo pipefail
+          APP_DIR="${DEPLOY_APP_DIR:-}"
+          AGE="${BACKUP_MAX_AGE_HOURS:-30}"
+          if [ -n "$APP_DIR" ]; then
+            MODE="$MODE" APP_DIR="$APP_DIR" BACKUP_MAX_AGE_HOURS="$AGE" bash deploy/scripts/pg-backup.sh
+          else
+            MODE="$MODE" BACKUP_MAX_AGE_HOURS="$AGE" bash deploy/scripts/pg-backup.sh
+          fi
