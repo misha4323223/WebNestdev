@@ -11,6 +11,8 @@
  * не отправилось, состояние не меняется — следующий цикл попробует снова.
  */
 
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { diskStatus, memoryStatus } from "./host-metrics.js";
 import { buildHealthChecks, HEALTH_THRESHOLDS, type HealthCheck } from "./thresholds.js";
 import { archiveErrorsLastHour } from "../storage/archive-health.js";
@@ -61,6 +63,69 @@ export function alertEmail(): string | null {
 export function alertEmailSource(): "ALERT_EMAIL" | "ADMIN_BOOTSTRAP_EMAIL" | null {
   if (!alertEmail()) return null;
   return (getPlatformEnv("ALERT_EMAIL") ?? "").trim() ? "ALERT_EMAIL" : "ADMIN_BOOTSTRAP_EMAIL";
+}
+
+/** Где запомнен адрес, которому уже подтвердили канал. */
+function recipientStateFile() {
+  const root = process.env.WEBNESTDEV_DATA_DIR ?? path.resolve(".webnestdev");
+  return path.join(root, "health", "alert-recipient.txt");
+}
+
+export type RecipientConfirmDeps = {
+  email: () => string | null;
+  send: (mail: AlertMail) => Promise<unknown>;
+  stateFile: string;
+  log: (message: string) => void;
+};
+
+/**
+ * Одно письмо при смене получателя аварий.
+ *
+ * Настроенный канал — не то же самое, что работающий: адрес могли сохранить с опечаткой, а
+ * Postbox — не принять письмо по этому домену. Поэтому при первом запуске и при каждой смене
+ * адреса уходит подтверждение, а адрес запоминается только после успешной отправки. Повторные
+ * перезапуски с тем же адресом молчат: иначе каждое обновление сервера слало бы письмо.
+ * Ошибка отправки не пишет состояние — следующий старт попробует снова.
+ */
+export async function confirmAlertRecipient(overrides: Partial<RecipientConfirmDeps> = {}) {
+  const deps: RecipientConfirmDeps = {
+    email: alertEmail,
+    send: mail => sendMail(mail),
+    stateFile: recipientStateFile(),
+    log: message => console.log("[alerts] " + message),
+    ...overrides,
+  };
+  const email = deps.email();
+  if (!email) return { sent: false as const, reason: "no-email" as const };
+  let confirmed = "";
+  try {
+    confirmed = (await readFile(deps.stateFile, "utf8")).trim();
+  } catch {
+    // Файла ещё нет — это первый запуск с адресом, подтверждение нужно.
+  }
+  if (confirmed.toLowerCase() === email.toLowerCase()) return { sent: false as const, reason: "unchanged" as const };
+  await deps.send({
+    to: email,
+    subject: "Аварийные уведомления платформы включены",
+    text: [
+      "Это подтверждение канала аварийных уведомлений.",
+      "",
+      "Письма будут приходить на этот адрес, когда диск, память или swap выйдут за пороги,",
+      "архивация проектов начнёт падать или резервная копия базы окажется старше 30 часов.",
+      "Пороги: диск 75%, память 85%, swap 50%.",
+      "",
+      "Подтверждение уходит только при смене адреса; при обычных перезапусках письма не будет.",
+    ].join("\n"),
+  });
+  try {
+    await mkdir(path.dirname(deps.stateFile), { recursive: true });
+    await writeFile(deps.stateFile, email + "\n", "utf8");
+  } catch (error) {
+    // Не записали — следующий старт пришлёт ещё одно подтверждение. Это лучше, чем молчание.
+    deps.log("получатель подтверждён, но адрес не запомнен: " + shortError(error));
+  }
+  deps.log("канал подтверждён письмом");
+  return { sent: true as const, reason: "changed" as const };
 }
 
 function shortError(error: unknown) {
@@ -296,6 +361,15 @@ export function startAlertScheduler(): () => void {
     if (stopped) return;
     void runAlertCycle().catch(error => console.warn("[alerts] цикл упал: " + shortError(error)));
   };
+  // Подтверждение канала — раньше первой проверки и отдельным таймером: иначе при смене адреса
+  // вместе с реальной аварией ушли бы два письма подряд.
+  const confirm = setTimeout(() => {
+    if (stopped) return;
+    void confirmAlertRecipient().catch(error =>
+      console.warn("[alerts] подтверждение получателя не отправлено: " + shortError(error)),
+    );
+  }, 10_000);
+  confirm.unref();
   // Первое письмо не в момент старта: сервер ещё поднимается, метрики могут быть не готовы.
   const first = setTimeout(tick, 30_000);
   first.unref();
@@ -314,6 +388,7 @@ export function startAlertScheduler(): () => void {
   );
   return () => {
     stopped = true;
+    clearTimeout(confirm);
     clearTimeout(first);
     clearInterval(timer);
   };

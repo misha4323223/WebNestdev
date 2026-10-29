@@ -1,5 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { buildHealthChecks, type HealthInput } from "./thresholds.js";
 
 const base: HealthInput = {
@@ -14,7 +17,7 @@ const base: HealthInput = {
 const good = () => buildHealthChecks(base);
 const badDisk = () => buildHealthChecks({ ...base, diskUsedPercent: 91 });
 
-const { resetAlerts, runAlertCycle, alertEmail, alertEmailSource } = await import("./alerts.js");
+const { resetAlerts, runAlertCycle, alertEmail, alertEmailSource, confirmAlertRecipient } = await import("./alerts.js");
 
 test("первое письмо, пауза, напоминание и восстановление", async () => {
   resetAlerts();
@@ -132,5 +135,42 @@ test("без ALERT_EMAIL получатель — адрес администр�
     else process.env.ALERT_EMAIL = alertBefore;
     if (adminBefore === undefined) delete process.env.ADMIN_BOOTSTRAP_EMAIL;
     else process.env.ADMIN_BOOTSTRAP_EMAIL = adminBefore;
+  }
+});
+
+test("подтверждение канала уходит один раз на адрес", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "alerts-confirm-"));
+  const stateFile = path.join(root, "health", "alert-recipient.txt");
+  const sent: string[] = [];
+  const logs: string[] = [];
+  let email = "owner@example.test";
+  const deps = {
+    email: () => email,
+    send: async (mail: { to: string; subject: string; text: string }) => { sent.push(mail.to); },
+    stateFile,
+    log: (message: string) => { logs.push(message); },
+  };
+  try {
+    // Первый запуск: адрес не подтверждён — письмо и запись адреса.
+    assert.deepEqual(await confirmAlertRecipient(deps), { sent: true, reason: "changed" });
+    assert.deepEqual(sent, ["owner@example.test"]);
+    assert.equal((await readFile(stateFile, "utf8")).trim(), "owner@example.test");
+
+    // Повторный запуск с тем же адресом молчит.
+    assert.deepEqual(await confirmAlertRecipient(deps), { sent: false, reason: "unchanged" });
+    assert.equal(sent.length, 1);
+
+    // Смена адреса снова подтверждается.
+    email = "ops@example.test";
+    assert.deepEqual(await confirmAlertRecipient(deps), { sent: true, reason: "changed" });
+    assert.deepEqual(sent, ["owner@example.test", "ops@example.test"]);
+
+    // Ошибка отправки не запоминает новый адрес: следующий запуск повторит.
+    email = "third@example.test";
+    await assert.rejects(confirmAlertRecipient({ ...deps, send: async () => { throw new Error("smtp down"); } }), /smtp down/);
+    assert.equal((await readFile(stateFile, "utf8")).trim(), "ops@example.test");
+    assert.match(logs.join("\n"), /канал подтверждён/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
