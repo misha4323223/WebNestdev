@@ -113,11 +113,13 @@ jobs:
           if [ -n "$APP_DIR" ]; then
             remote="$remote APP_DIR=$(printf '%q' "$APP_DIR")"
           fi
+          # Скрипт пишет журнал в stderr, а JSON — в stdout. Сливаем их здесь, иначе в логах
+          # Actions виден только запуск ssh, а не то, что реально сделал бэкап.
           ssh -i "$HOME/.ssh/deploy_key" \
             -p "$DEPLOY_PORT" \
             -o BatchMode=yes -o StrictHostKeyChecking=yes \
             "$DEPLOY_USER@$DEPLOY_HOST" \
-            "$remote bash -s" \
+            "$remote bash -s" 2>&1 \
             < deploy/scripts/pg-backup.sh
 
       - name: Run on the VM (self-hosted runner)
