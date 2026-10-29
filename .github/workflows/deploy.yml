@@ -260,6 +260,9 @@ jobs:
           SUPPORT_SMTP_PASSWORD: ${{ secrets.SUPPORT_SMTP_PASSWORD }}
           # Почта платформы (Yandex Cloud Postbox): письма об оплате, предупреждение о списании
           # и обращения поддержки. Пустые значения ничего не стирают; значение из панели важнее.
+          # Куда присылать аварийные письма (диск, память, swap, бэкап): переменная репозитория;
+          # если пусто, адрес задаётся в панели «Ключи сервера».
+          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL || vars.ALERT_EMAIL }}
           MAIL_SMTP_HOST: ${{ secrets.MAIL_SMTP_HOST || vars.MAIL_SMTP_HOST }}
           MAIL_SMTP_PORT: ${{ secrets.MAIL_SMTP_PORT || vars.MAIL_SMTP_PORT }}
           MAIL_SMTP_USER: ${{ secrets.MAIL_SMTP_USER || vars.MAIL_SMTP_USER }}
@@ -393,6 +396,7 @@ jobs:
           add_platform_env SUPPORT_SMTP_USER "$SUPPORT_SMTP_USER"
           # Пароль SMTP — только Secret: он попадает в .env на ВМ.
           add_platform_env SUPPORT_SMTP_PASSWORD "$SUPPORT_SMTP_PASSWORD"
+          add_platform_env ALERT_EMAIL "$ALERT_EMAIL"
           add_platform_env MAIL_SMTP_HOST "$MAIL_SMTP_HOST"
           add_platform_env MAIL_SMTP_PORT "$MAIL_SMTP_PORT"
           add_platform_env MAIL_SMTP_USER "$MAIL_SMTP_USER"
@@ -588,6 +592,9 @@ jobs:
           SUPPORT_SMTP_PASSWORD: ${{ secrets.SUPPORT_SMTP_PASSWORD }}
           # Почта платформы (Yandex Cloud Postbox): письма об оплате, предупреждение о списании
           # и обращения поддержки. Пустые значения ничего не стирают; значение из панели важнее.
+          # Куда присылать аварийные письма (диск, память, swap, бэкап): переменная репозитория;
+          # если пусто, адрес задаётся в панели «Ключи сервера».
+          ALERT_EMAIL: ${{ secrets.ALERT_EMAIL || vars.ALERT_EMAIL }}
           MAIL_SMTP_HOST: ${{ secrets.MAIL_SMTP_HOST || vars.MAIL_SMTP_HOST }}
           MAIL_SMTP_PORT: ${{ secrets.MAIL_SMTP_PORT || vars.MAIL_SMTP_PORT }}
           MAIL_SMTP_USER: ${{ secrets.MAIL_SMTP_USER || vars.MAIL_SMTP_USER }}
@@ -701,6 +708,7 @@ jobs:
           add_platform_env SUPPORT_SMTP_USER "$SUPPORT_SMTP_USER"
           # Пароль SMTP — только Secret: он попадает в .env на ВМ.
           add_platform_env SUPPORT_SMTP_PASSWORD "$SUPPORT_SMTP_PASSWORD"
+          add_platform_env ALERT_EMAIL "$ALERT_EMAIL"
           add_platform_env MAIL_SMTP_HOST "$MAIL_SMTP_HOST"
           add_platform_env MAIL_SMTP_PORT "$MAIL_SMTP_PORT"
           add_platform_env MAIL_SMTP_USER "$MAIL_SMTP_USER"

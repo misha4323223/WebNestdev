@@ -16,7 +16,14 @@ import { PREVIEW_LABEL } from "../preview/types.js";
 import { lastProjectAccess } from "../storage/project-archive.js";
 import { listArchiveRecords, type ProjectArchiveRecord } from "../storage/project-archive-state.js";
 import { listUserIdentities } from "../auth/auth-store.js";
-import { objectStoreConfigFromEnv, summarizeBucket } from "../storage/object-store.js";
+import { objectStoreConfigFromEnv, s3ObjectStore, summarizeBucket } from "../storage/object-store.js";
+import { readManifest } from "../storage/postgres-backup.js";
+import { archiveErrorsLastHour } from "../storage/archive-health.js";
+import { memoryStatus } from "../health/host-metrics.js";
+import { buildHealthChecks, healthStatus, HEALTH_THRESHOLDS, type HealthCheck, type HealthStatus } from "../health/thresholds.js";
+import { getPlatformEnv } from "../platform/platform-env.js";
+import { alertEmail } from "../health/alerts.js";
+import { sendMail } from "../mail/mailer.js";
 
 /**
  * Инфраструктура платформы для админ-приложения: диск, Docker, песочницы, бакеты и база.
@@ -84,6 +91,8 @@ export type InfraUnavailable = { section: string; reason: string };
 export type InfraAlert = { level: "warn" | "danger"; text: string };
 export type DiskPressure = "ok" | "warn" | "danger";
 
+export type InfraSwap = { totalBytes: number; freeBytes: number; usedPercent: number };
+
 export type InfraHost = {
   hostname: string;
   platform: string;
@@ -92,7 +101,9 @@ export type InfraHost = {
   cpuCount: number;
   loadAverage: number[];
   uptimeSeconds: number;
-  memory: { totalBytes: number; usedBytes: number };
+  /** `availableBytes` — MemAvailable: свободная память плюс то, что ядро отдаст из кэша. */
+  memory: { totalBytes: number; usedBytes: number; freeBytes: number; availableBytes: number | null };
+  swap: InfraSwap | null;
   process: { rssBytes: number; heapUsedBytes: number };
 };
 
@@ -166,6 +177,14 @@ export type AdminSandboxRow = {
   diskBytes: number | null;
 };
 
+export type InfraMonitoring = {
+  status: HealthStatus;
+  checks: HealthCheck[];
+  thresholds: typeof HEALTH_THRESHOLDS;
+  archiveErrorsLastHour: number;
+  alertEmailConfigured: boolean;
+};
+
 export type InfraSnapshot = {
   generatedAt: string;
   host: InfraHost;
@@ -174,6 +193,7 @@ export type InfraSnapshot = {
   sandboxes?: InfraSandboxes;
   buckets: InfraBucket[];
   database?: InfraDatabase;
+  monitoring: InfraMonitoring;
   alerts: InfraAlert[];
   unavailable: InfraUnavailable[];
 };
@@ -686,28 +706,70 @@ async function collectDatabase(): Promise<{ database?: InfraDatabase; issues: In
       "База не ответила за 5 с",
     );
     const first = rows[0];
+    const name = first?.name ?? "";
+    let lastBackupAt: string | null = null;
+    const issues: InfraUnavailable[] = [];
+    // `latest.json` в бакете — единственный источник даты копии. Ошибка чтения не должна
+    // превращаться в выдуманную дату: поле остаётся null, причина уходит в `unavailable`.
+    if (name) {
+      let config: ReturnType<typeof objectStoreConfigFromEnv>;
+      try {
+        config = objectStoreConfigFromEnv();
+      } catch (error) {
+        issues.push({ section: "database.lastBackupAt", reason: "хранилище настроено не полностью: " + errorText(error) });
+        config = null;
+      }
+      if (!config) {
+        if (!issues.some(issue => issue.section === "database.lastBackupAt")) {
+          issues.push({ section: "database.lastBackupAt", reason: "объектное хранилище не настроено — дата копии неизвестна" });
+        }
+      } else {
+        try {
+          const manifest = await withTimeout(
+            readManifest(s3ObjectStore(config), name),
+            5_000,
+            "манифест бэкапа не прочитан за 5 с",
+          );
+          lastBackupAt = manifest.createdAt;
+        } catch (error) {
+          issues.push({ section: "database.lastBackupAt", reason: "последняя копия не прочитана: " + errorText(error) });
+        }
+      }
+    }
     return {
       database: {
         engine: "postgres",
-        name: first?.name ?? "",
+        name,
         totalBytes: first ? num(first.total_bytes) : null,
         connections: first ? num(first.connections) : null,
-        lastBackupAt: null,
+        lastBackupAt,
         tables: tables.map(table => ({ name: table.name, rows: num(table.live_rows), bytes: num(table.bytes) })),
       },
-      issues: [
-        { section: "database.lastBackupAt", reason: "журнала резервных копий нет — дата последней копии не измеряется" },
-      ],
+      issues,
     };
   } catch (error) {
     return { issues: [{ section: "database", reason: "база не ответила: " + errorText(error) }] };
   }
 }
 
-function hostSnapshot(): InfraHost {
+async function hostSnapshot(): Promise<InfraHost> {
   const memory = process.memoryUsage();
   const totalBytes = os.totalmem();
   const freeBytes = os.freemem();
+  const metrics = await memoryStatus();
+  const availableBytes = metrics.availableMb !== null ? metrics.availableMb * 1024 * 1024 : null;
+  // `usedBytes` — занятое без кэша: `total - MemAvailable`, а не `total - MemFree`. Иначе
+  // здоровый Linux с кэшем выглядел бы заполненным и алерты срабатывали бы зря.
+  const usedBytes = Math.max(0, totalBytes - (availableBytes ?? freeBytes));
+  const swapTotalBytes = metrics.swapTotalMb !== null ? metrics.swapTotalMb * 1024 * 1024 : null;
+  const swapFreeBytes = metrics.swapFreeMb !== null ? metrics.swapFreeMb * 1024 * 1024 : null;
+  const swap = swapTotalBytes !== null && swapTotalBytes > 0 && swapFreeBytes !== null
+    ? {
+        totalBytes: swapTotalBytes,
+        freeBytes: swapFreeBytes,
+        usedPercent: Math.round(((swapTotalBytes - swapFreeBytes) / swapTotalBytes) * 1000) / 10,
+      }
+    : null;
   return {
     hostname: os.hostname(),
     platform: os.platform() + " " + os.arch(),
@@ -716,7 +778,8 @@ function hostSnapshot(): InfraHost {
     cpuCount: os.cpus().length,
     loadAverage: os.loadavg(),
     uptimeSeconds: Math.round(os.uptime()),
-    memory: { totalBytes, usedBytes: Math.max(0, totalBytes - freeBytes) },
+    memory: { totalBytes, usedBytes, freeBytes, availableBytes },
+    swap,
     process: { rssBytes: memory.rss, heapUsedBytes: memory.heapUsed },
   };
 }
@@ -734,7 +797,7 @@ export async function buildInfraSnapshot(
   };
   for (const issue of inventoryIssues) mark(issue.section, issue.reason);
 
-  const host = hostSnapshot();
+  const host = await hostSnapshot();
   const [dockerProbe, bucketProbe, databaseProbe] = await Promise.all([collectDocker(), collectBuckets(), collectDatabase()]);
   const diskProbe = await collectDisk(dockerProbe.df);
   for (const issue of dockerProbe.issues) mark(issue.section, issue.reason);
@@ -773,6 +836,37 @@ export async function buildInfraSnapshot(
     };
   }
 
+  const archiveErrors = archiveErrorsLastHour();
+  const diskPercent = diskProbe.disk?.mounts.length
+    ? Math.round(Math.max(...diskProbe.disk.mounts.map(mount => mount.totalBytes > 0 ? mount.usedBytes / mount.totalBytes * 100 : 0)) * 10) / 10
+    : null;
+  const memoryPercent = host.memory.totalBytes > 0 && host.memory.availableBytes !== null
+    ? Math.round(((host.memory.totalBytes - host.memory.availableBytes) / host.memory.totalBytes) * 1000) / 10
+    : null;
+  const backupApplicable = isYdbEnabled();
+  const backupCreatedAt = databaseProbe.database?.lastBackupAt ?? null;
+  const backupAgeHours = backupCreatedAt && Number.isFinite(Date.parse(backupCreatedAt))
+    ? Math.max(0, (Date.now() - Date.parse(backupCreatedAt)) / 3_600_000)
+    : null;
+  const backupIssue = databaseProbe.issues.find(issue => issue.section === "database.lastBackupAt")?.reason;
+  const checks = buildHealthChecks({
+    diskUsedPercent: diskPercent,
+    memoryUsedPercent: memoryPercent,
+    swapUsedPercent: host.swap?.usedPercent ?? null,
+    swapConfigured: host.swap !== null,
+    archiveErrorsLastHour: archiveErrors,
+    backupApplicable,
+    backupAgeHours,
+    ...(backupIssue ? { backupDetail: backupIssue } : {}),
+  });
+  const monitoring: InfraMonitoring = {
+    status: healthStatus(checks),
+    checks,
+    thresholds: HEALTH_THRESHOLDS,
+    archiveErrorsLastHour: archiveErrors,
+    alertEmailConfigured: Boolean((getPlatformEnv("ALERT_EMAIL") ?? "").trim()),
+  };
+
   const alerts: InfraAlert[] = [];
   const alert = (level: InfraAlert["level"], text: string) => {
     if (alerts.length < 5) alerts.push({ level, text });
@@ -785,13 +879,23 @@ export async function buildInfraSnapshot(
     const percent = Math.round(worst.ratio * 100);
     if (worst.ratio >= 0.9) alert("danger", "Раздел " + worst.mount.mount + " занят на " + percent + "% — записи и сборки могут упасть");
     else if (worst.ratio >= 0.8) alert("warn", "Раздел " + worst.mount.mount + " занят на " + percent + "% — образы Docker займут его первыми");
+    else if (worst.ratio >= 0.75) alert("warn", "Раздел " + worst.mount.mount + " занят на " + percent + "% — пора чистить образы и кеш");
   }
   if (!dockerProbe.docker.available) alert("warn", "Docker недоступен: песочницы и предпросмотры не запустятся");
-  const memoryRatio = host.memory.totalBytes > 0 ? host.memory.usedBytes / host.memory.totalBytes : 0;
-  if (memoryRatio >= 0.9) alert("warn", "Память хоста занята на " + Math.round(memoryRatio * 100) + "% — контейнерам может не хватить");
+  if (memoryPercent !== null && memoryPercent >= HEALTH_THRESHOLDS.memoryUsedPercent) {
+    alert("warn", "Память хоста занята на " + memoryPercent + "% — контейнерам может не хватить");
+  }
+  if (host.swap && host.swap.usedPercent >= HEALTH_THRESHOLDS.swapUsedPercent) {
+    alert("warn", "Swap занят на " + host.swap.usedPercent + "% — хост уходит в диск");
+  }
   if (bucketProbe.failed) alert("warn", "Бакет проектов не отвечает: холодный ярус недоступен");
   if (isYdbEnabled() && databaseProbe.issues.some(issue => issue.section === "database")) {
     alert("warn", "База данных не отвечает: часть цифр недоступна");
+  }
+  if (archiveErrors > 0) alert("warn", "Архивация проектов: " + archiveErrors + " ошибок за последний час");
+  if (backupApplicable && backupAgeHours === null) alert("danger", "Нет ни одной резервной копии базы — проверьте бэкап");
+  else if (backupApplicable && backupAgeHours !== null && backupAgeHours > HEALTH_THRESHOLDS.backupMaxAgeHours) {
+    alert("danger", "Последняя резервная копия старше " + HEALTH_THRESHOLDS.backupMaxAgeHours + " ч");
   }
 
   return {
@@ -802,6 +906,7 @@ export async function buildInfraSnapshot(
     ...(sandboxes ? { sandboxes } : {}),
     buckets: bucketProbe.buckets,
     ...(databaseProbe.database ? { database: databaseProbe.database } : {}),
+    monitoring,
     alerts,
     unavailable,
   };
@@ -869,6 +974,37 @@ export async function registerAdminInfraRoutes(app: FastifyInstance) {
    * Песочницы списком. `total` считается до `limit`: экран показывает «34 холодных» и первые 50,
    * а не «50 холодных», если на хосте их больше.
    */
+  /**
+   * Проверка канала уведомлений: отправляет одно письмо на ALERT_EMAIL. Нужна после настройки
+   * Postbox и после смены адреса — иначе «алерты включены» остаётся обещанием, а не фактом.
+   */
+  app.post("/api/admin/infra/test-alert", async (request, reply) => {
+    const auth = await requireAdmin(request, reply);
+    if (!auth) return;
+    applyNoStoreToReply(reply);
+    const to = alertEmail();
+    if (!to) {
+      return reply.code(400).send({
+        error: "ALERT_EMAIL не задан или адрес некорректен. Заполните «Аварийные уведомления: адрес» в настройках платформы.",
+      });
+    }
+    try {
+      const result = await sendMail({
+        to,
+        subject: "[nestdev.ru] Тестовое аварийное уведомление",
+        text: [
+          "Это проверка канала аварийных уведомлений.",
+          "",
+          "Если вы получили письмо, Postbox и ALERT_EMAIL настроены верно.",
+          "Следующие письма будут приходить только при выходе проверок за пороги.",
+        ].join("\n"),
+      });
+      return { ok: true, messageId: result.messageId };
+    } catch (error) {
+      return reply.code(502).send({ error: "Письмо не отправлено: " + errorText(error) });
+    }
+  });
+
   app.get("/api/admin/sandboxes", async (request, reply) => {
     const auth = await requireAdmin(request, reply);
     if (!auth) return;

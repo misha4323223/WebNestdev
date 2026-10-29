@@ -12,7 +12,21 @@ import os from "node:os";
  */
 
 export type DiskStatus = { path: string; totalMb: number; freeMb: number; usedPercent: number } | null;
-export type MemoryStatus = { rssMb: number; totalMb: number; freeMb: number; swapTotalMb: number | null; swapFreeMb: number | null };
+export type MemoryStatus = {
+  rssMb: number;
+  totalMb: number;
+  freeMb: number;
+  /** `MemAvailable` из /proc/meminfo: свободная память плюс то, что ядро отдаст из кэша. */
+  availableMb: number | null;
+  swapTotalMb: number | null;
+  swapFreeMb: number | null;
+};
+
+export type Meminfo = {
+  availableKb: number | null;
+  swapTotalKb: number | null;
+  swapFreeKb: number | null;
+};
 
 const mb = (bytes: number) => Math.round((bytes / 1024 / 1024) * 10) / 10;
 
@@ -35,20 +49,28 @@ export async function diskStatus(path: string): Promise<DiskStatus> {
   }
 }
 
-/** Swap lives in /proc/meminfo on Linux; other systems report null rather than a wrong zero. */
-async function swap() {
+/**
+ * Разбор /proc/meminfo. Вынесен отдельно, чтобы границы проверялись тестом без Linux-хоста.
+ * `MemAvailable` есть в ядре с 3.14; на старом ядре его нет — тогда остаётся `null`, а не
+ * подмена `MemFree`, которая снова считала бы кэш занятой памятью.
+ */
+export function parseMeminfo(text: string): Meminfo {
+  const value = (name: string) => {
+    const match = new RegExp("^" + name + ":\\s+(\\d+)", "m").exec(text);
+    return match ? Number(match[1]) : null;
+  };
+  return {
+    availableKb: value("MemAvailable"),
+    swapTotalKb: value("SwapTotal"),
+    swapFreeKb: value("SwapFree"),
+  };
+}
+
+async function meminfo(): Promise<Meminfo | null> {
   try {
-    const text = await readFile("/proc/meminfo", "utf8");
-    const value = (name: string) => {
-      const match = new RegExp("^" + name + ":\\s+(\\d+)", "m").exec(text);
-      return match ? Number(match[1]) : null;
-    };
-    const totalKb = value("SwapTotal");
-    const freeKb = value("SwapFree");
-    if (totalKb === null || freeKb === null) return { swapTotalMb: null, swapFreeMb: null };
-    return { swapTotalMb: Math.round(totalKb / 1024), swapFreeMb: Math.round(freeKb / 1024) };
+    return parseMeminfo(await readFile("/proc/meminfo", "utf8"));
   } catch {
-    return { swapTotalMb: null, swapFreeMb: null };
+    return null;
   }
 }
 
@@ -58,10 +80,13 @@ async function swap() {
  * this process is not.
  */
 export async function memoryStatus(): Promise<MemoryStatus> {
+  const info = await meminfo();
   return {
     rssMb: mb(process.memoryUsage().rss),
     totalMb: Math.round(os.totalmem() / 1024 / 1024),
     freeMb: Math.round(os.freemem() / 1024 / 1024),
-    ...(await swap()),
+    availableMb: info?.availableKb !== null && info?.availableKb !== undefined ? mb(info.availableKb * 1024) : null,
+    swapTotalMb: info?.swapTotalKb !== null && info?.swapTotalKb !== undefined ? Math.round(info.swapTotalKb / 1024) : null,
+    swapFreeMb: info?.swapFreeKb !== null && info?.swapFreeKb !== undefined ? Math.round(info.swapFreeKb / 1024) : null,
   };
 }

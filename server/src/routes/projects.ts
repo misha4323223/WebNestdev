@@ -7,6 +7,7 @@ import { limitsForPlan } from "../account/plans.js";
 import { accountPlanFor } from "../billing/store.js";
 import { forgetProjectStorage } from "../account/storage-quota.js";
 import { archiveProject, deleteProjectArchive, projectArchiveInfo, restoreProject } from "../storage/project-archive.js";
+import { recordArchiveFailure } from "../storage/archive-health.js";
 import { isConversationRunning, isRunActive } from "../agent/active-runs.js";
 import { getPreview } from "../preview/preview-store.js";
 import { recordAudit } from "../security/audit-journal.js";
@@ -114,6 +115,7 @@ export async function registerProjectRoutes(app:FastifyInstance){
       const result=await archiveProject(p.id,user.id);
       return {archived:true,bytes:result.bytes,alreadyArchived:result.alreadyArchived};
     }catch(error){
+      recordArchiveFailure();
       const message=error instanceof Error?error.message:String(error);
       return reply.code(400).send({error:message,code:"ARCHIVE_FAILED"});
     }

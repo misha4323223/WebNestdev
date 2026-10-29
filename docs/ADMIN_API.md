@@ -461,9 +461,17 @@ curl -s -H "Authorization: Bearer $TOKEN" 'https://panel.example.com/api/admin/u
   префиксом; на пределе страниц `truncated: true`, и цифры не выдаются за полные. `updatedAt` пока
   `null`.
 - `database` — только для `WEBNESTDEV_STORAGE=postgres`: имя базы, размер, соединения и таблицы
-  (`rows` — оценка `pg_stat_user_tables.n_live_tup`, размеры точные). `lastBackupAt` — `null`, пока
-  нет журнала резервных копий. На JSON-хранилище секции нет, в `unavailable` — причина.
-- `alerts` — до пяти коротких фраз для баннера: диск, Docker, память, бакет, база.
+  (`rows` — оценка `pg_stat_user_tables.n_live_tup`, размеры точные). `lastBackupAt` читается из
+  `latest.json` последнего бэкапа в S3; если манифеста нет или он не прочитан, поле `null`, а причина
+  в `unavailable` (`database.lastBackupAt`). На JSON-хранилище секции нет, в `unavailable` — причина.
+- `host.memory.usedBytes` считается как `total - MemAvailable`, а не `total - MemFree`: иначе кэш
+  Linux выглядел бы занятой памятью. `host.memory.availableBytes` и `host.memory.freeBytes`
+  приходят отдельно. `host.swap` — `{totalBytes, freeBytes, usedPercent}` или `null`, если swap нет.
+- `monitoring` — готовый вердикт для админки: `status` (`ok` / `degraded` / `unknown`), `checks`
+  (диск 75%, память 85%, swap 50%, ошибки архивации > 0 за час, бэкап старше 30 ч), `thresholds`,
+  `archiveErrorsLastHour` и `alertEmailConfigured` (сам адрес не раскрывается).
+- `alerts` — до пяти коротких фраз для баннера: диск, Docker, память, swap, бакет, база, архивация,
+  бэкап.
 
 Что проверить после выкатки:
 
@@ -471,6 +479,8 @@ curl -s -H "Authorization: Bearer $TOKEN" 'https://panel.example.com/api/admin/u
 TOKEN=…
 curl -s -H "Authorization: Bearer $TOKEN" 'https://panel.example.com/api/admin/infra'
 curl -s -H "Authorization: Bearer $TOKEN" 'https://panel.example.com/api/admin/sandboxes?state=cold&limit=10'
+# Проверка канала аварийных писем: одно письмо на ALERT_EMAIL
+curl -s -X POST -H "Authorization: Bearer $TOKEN" 'https://panel.example.com/api/admin/infra/test-alert'
 ```
 
 В снимке должны быть `generatedAt`, `host.build` (та же сборка, что в `/api/version`), заполненный

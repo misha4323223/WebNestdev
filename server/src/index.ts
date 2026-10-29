@@ -77,6 +77,7 @@ import { startBillingSweeper, stopBillingSweeper } from "./billing/recurring.js"
 import { startStorageReconcileScheduler } from "./account/storage-scheduler.js";
 import { describeObjectStore } from "./storage/object-store.js";
 import { startProjectArchiveScheduler } from "./storage/archive-scheduler.js";
+import { startAlertScheduler } from "./health/alerts.js";
 import { describeBilling, robokassaConfig } from "./billing/robokassa.js";
 import { registerPlatformRoutes } from "./routes/platform.js";
 import { registerPlatformPlanRoutes } from "./routes/platform-plans.js";
@@ -359,6 +360,9 @@ void startPreviewHostServer()
 startPreviewSweeper();
 // Давно не открытые проекты уезжают в бакет и освобождают диск (PROJECT_ARCHIVE_ENABLED=1).
 startProjectArchiveScheduler();
+// Аварийные письма: диск, память, swap, ошибки архивации и возраст бэкапа. Почта уже настроена
+// для писем платформы, отдельный сервис уведомлений не нужен; внешний монитор подключается отдельно.
+startAlertScheduler();
 // Автопродление подписок: раз в час, и только когда в магазине включена услуга периодических
 // платежей. Без неё цикл не делает ни одного запроса к Робокассе.
 startBillingSweeper();

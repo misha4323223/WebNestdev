@@ -6,6 +6,7 @@ import { isRunActive } from "../agent/active-runs.js";
 import { getPreview } from "../preview/preview-store.js";
 import { objectStoreConfigFromEnv } from "./object-store.js";
 import { archiveProject, lastProjectAccess, projectArchiveInfo } from "./project-archive.js";
+import { recordArchiveFailure } from "./archive-health.js";
 
 /**
  * Перенос давно не открывавшихся проектов в объектное хранилище.
@@ -116,6 +117,7 @@ export async function sweepIdleProjects(idleMs = projectArchiveIdleMs()): Promis
       else result.archived++;
     } catch (error) {
       result.failed++;
+      recordArchiveFailure();
       console.warn(
         "[storage] не удалось перенести проект " + project.id + " в объектное хранилище: " +
         (error instanceof Error ? error.message : String(error)),
