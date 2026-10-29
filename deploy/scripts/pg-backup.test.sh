@@ -21,6 +21,12 @@ cat > "$WORK/bin/docker" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%s\n' "$*" >> "$STUB_LOG"
+# Настоящий `docker compose exec -T` читает stdin. Этот режим воспроизводит случай, когда
+# скрипт передан через `bash -s` и первый же exec может съесть его остаток. `compose version`
+# stdin не читает, поэтому глотаем его только на exec.
+if [ "${STUB_EAT_STDIN:-0}" = "1" ]; then
+  case "$*" in *"exec -T"*) cat >/dev/null || true ;; esac
+fi
 
 case "$*" in
   "compose version") exit 0 ;;
@@ -168,6 +174,19 @@ run_script restore-fail restore-drill STUB_RESTORE_FAIL=1
 expect_code 1
 expect_file 'восстановление в restore_check_' "$WORK/restore-fail.err"
 expect_file 'DROP DATABASE IF EXISTS "restore_check_' "$LOG"
+
+echo "ok - скрипт, переданный через stdin, не теряет остаток из-за docker exec"
+CASE=stdin
+: > "$LOG"
+set +e
+env PATH="$WORK/bin:$PATH" MODE=backup APP_DIR="$WORK/app" TMPDIR="$WORK/tmp" \
+  STUB_LOG="$LOG" STUB_DUMP="$DUMP" STUB_EAT_STDIN=1 \
+  bash -s < "$ROOT/deploy/scripts/pg-backup.sh" > "$WORK/stdin.out" 2> "$WORK/stdin.err"
+CODE=$?
+set -e
+expect_code 0
+expect_file 'бэкап готов' "$WORK/stdin.err"
+expect_file 'postgres-backup.js put --database webnestdev' "$LOG"
 
 echo "ok - неизвестный режим отклоняется"
 CASE=bad-mode

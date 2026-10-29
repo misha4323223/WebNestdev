@@ -51,7 +51,7 @@ dc_exec() { docker compose -f "$COMPOSE_FILE" exec -T "$@"; }
 cleanup() {
   if [ -n "${SCRATCH:-}" ] && [ "$KEEP_RESTORE_DB" != "1" ] && [ -n "${PG_USER:-}" ]; then
     dc_exec "$PG_SERVICE" psql -U "$PG_USER" -d postgres -v ON_ERROR_STOP=1 \
-      -c "DROP DATABASE IF EXISTS \"$SCRATCH\" WITH (FORCE)" >/dev/null 2>&1 || true
+      -c "DROP DATABASE IF EXISTS \"$SCRATCH\" WITH (FORCE)" < /dev/null >/dev/null 2>&1 || true
   fi
   if [ -n "${TMP:-}" ]; then rm -rf "$TMP"; fi
 }
@@ -74,15 +74,18 @@ if [ "$MODE" = "backup" ]; then
 fi
 
 read_database() {
-  PG_DB=$(dc_exec "$PG_SERVICE" sh -lc 'printf %s "${POSTGRES_DB:?}"') || fail "не удалось прочитать POSTGRES_DB"
-  PG_USER=$(dc_exec "$PG_SERVICE" sh -lc 'printf %s "${POSTGRES_USER:?}"') || fail "не удалось прочитать POSTGRES_USER"
+  # Скрипт приходит по SSH через `bash -s`, то есть сам является stdin. Любой `docker compose
+  # exec -T` без явного stdin вычитывает остаток скрипта, и оболочка молча доходит до EOF:
+  # режим завершается с кодом 0, ничего не сделав. Поэтому у служебных вызовов stdin закрыт.
+  PG_DB=$(dc_exec "$PG_SERVICE" sh -lc 'printf %s "${POSTGRES_DB:?}"' < /dev/null) || fail "не удалось прочитать POSTGRES_DB"
+  PG_USER=$(dc_exec "$PG_SERVICE" sh -lc 'printf %s "${POSTGRES_USER:?}"' < /dev/null) || fail "не удалось прочитать POSTGRES_USER"
   [[ "$PG_DB" =~ $DB_IDENT ]] || fail "некорректное имя базы: $PG_DB"
   [[ "$PG_USER" =~ $DB_IDENT ]] || fail "некорректное имя пользователя базы: $PG_USER"
 }
 
 database_bytes() {
   local raw
-  raw=$(dc_exec "$PG_SERVICE" psql -U "$PG_USER" -d "$PG_DB" -tAc 'SELECT pg_database_size(current_database())') \
+  raw=$(dc_exec "$PG_SERVICE" psql -U "$PG_USER" -d "$PG_DB" -tAc 'SELECT pg_database_size(current_database())' < /dev/null) \
     || fail "не удалось узнать размер базы"
   raw=$(printf '%s' "$raw" | tr -d '[:space:]')
   [[ "$raw" =~ ^[0-9]+$ ]] || fail "база вернула некорректный размер: $raw"
@@ -121,7 +124,7 @@ run_backup() {
 
   if ! dc_exec "$PG_SERVICE" sh -lc \
     'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom --no-owner --no-privileges --lock-wait-timeout=30s' \
-    > "$dump"; then
+    < /dev/null > "$dump"; then
     fail "pg_dump завершился с ошибкой"
   fi
 
@@ -150,14 +153,14 @@ run_backup() {
 run_check() {
   log "проверяю свежесть последнего бэкапа базы $PG_DB (предел ${BACKUP_MAX_AGE_HOURS} ч)"
   if ! dc_exec "$SERVICE" node server/dist/scripts/postgres-backup.js check \
-    --database "$PG_DB" --max-age-hours "$BACKUP_MAX_AGE_HOURS"; then
+    --database "$PG_DB" --max-age-hours "$BACKUP_MAX_AGE_HOURS" < /dev/null; then
     fail "проверка свежести бэкапа не прошла"
   fi
 }
 
 run_restore_drill() {
   local manifest key sha bytes tables
-  manifest=$(dc_exec "$SERVICE" node server/dist/scripts/postgres-backup.js manifest --database "$PG_DB") \
+  manifest=$(dc_exec "$SERVICE" node server/dist/scripts/postgres-backup.js manifest --database "$PG_DB" < /dev/null) \
     || fail "не удалось прочитать манифест последнего бэкапа"
   key=$(printf '%s' "$manifest" | sed -n 's/.*"key":"\([^"]*\)".*/\1/p')
   sha=$(printf '%s' "$manifest" | sed -n 's/.*"sha256":"\([0-9a-f]*\)".*/\1/p')
@@ -179,17 +182,17 @@ run_restore_drill() {
 
   log "восстанавливаю $key в $SCRATCH ($bytes байт)"
   dc_exec "$PG_SERVICE" psql -U "$PG_USER" -d postgres -v ON_ERROR_STOP=1 \
-    -c "CREATE DATABASE \"$SCRATCH\"" >/dev/null || fail "не удалось создать учебную базу $SCRATCH"
+    -c "CREATE DATABASE \"$SCRATCH\"" < /dev/null >/dev/null || fail "не удалось создать учебную базу $SCRATCH"
 
   # `pipefail` важен: если скачивание или проверка суммы сорвётся, pg_restore получит пустой
   # поток, и без pipefail код возврата конвейера мог бы остаться нулевым.
-  if ! dc_exec "$SERVICE" node server/dist/scripts/postgres-backup.js get --key "$key" --sha256 "$sha" \
+  if ! dc_exec "$SERVICE" node server/dist/scripts/postgres-backup.js get --key "$key" --sha256 "$sha" < /dev/null \
     | dc_exec "$PG_SERVICE" pg_restore -U "$PG_USER" -d "$SCRATCH" --no-owner --no-privileges --exit-on-error; then
     fail "восстановление в $SCRATCH не прошло"
   fi
 
   tables=$(dc_exec "$PG_SERVICE" psql -U "$PG_USER" -d "$SCRATCH" -tAc \
-    "SELECT count(*) FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema')")
+    "SELECT count(*) FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema')" < /dev/null)
   tables=$(printf '%s' "$tables" | tr -d '[:space:]')
   [[ "$tables" =~ ^[0-9]+$ ]] || fail "не удалось посчитать таблицы в $SCRATCH"
   [ "$tables" -gt 0 ] || fail "в восстановленной базе нет таблиц"
@@ -199,7 +202,7 @@ run_restore_drill() {
     SCRATCH=""
   else
     dc_exec "$PG_SERVICE" psql -U "$PG_USER" -d postgres -v ON_ERROR_STOP=1 \
-      -c "DROP DATABASE IF EXISTS \"$SCRATCH\" WITH (FORCE)" >/dev/null || fail "не удалось удалить учебную базу $SCRATCH"
+      -c "DROP DATABASE IF EXISTS \"$SCRATCH\" WITH (FORCE)" < /dev/null >/dev/null || fail "не удалось удалить учебную базу $SCRATCH"
     SCRATCH=""
     log "восстановление проверено: $tables таблиц; учебная база удалена"
   fi
