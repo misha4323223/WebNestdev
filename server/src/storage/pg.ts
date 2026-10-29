@@ -132,6 +132,7 @@ const PK_BY_TABLE: Record<string, string[]> = {
   domain_connections: ["user_id", "provider"],
   service_connections: ["user_id", "service"],
   project_sizes: ["project_id"],
+  project_archives: ["project_id"],
   user_storage: ["user_id"],
   phone_consents: ["consent_id"],
   project_secrets: ["project_id"],
@@ -578,6 +579,20 @@ export async function initializeStorage(): Promise<void> {
     await pool.query(`ALTER TABLE ${tbl("project_sizes")} ADD COLUMN IF NOT EXISTS last_write_at TEXT`);
 
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("project_sizes")}_user ON ${tbl("project_sizes")} (user_id)`);
+
+    // Холодный ярус: какие проекты лежат в бакете. Раньше это были JSON-файлы в томе одной ВМ,
+    // поэтому вторая реплика их не видела, а потеря тома делала архивы «неизвестными».
+    // `node` — узел, который упаковал проект: при нескольких машинах видно, откуда архив.
+    await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("project_archives")} (
+      project_id TEXT NOT NULL PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      key TEXT NOT NULL,
+      bytes BIGINT NOT NULL DEFAULT 0,
+      archived_at TEXT NOT NULL,
+      node TEXT NOT NULL DEFAULT ''
+    )`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("project_archives")}_user ON ${tbl("project_archives")} (user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("project_archives")}_archived ON ${tbl("project_archives")} (archived_at)`);
 
     await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("user_storage")} (
       user_id TEXT NOT NULL PRIMARY KEY,

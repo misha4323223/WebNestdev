@@ -101,8 +101,14 @@ What happens:
    build output — everything) and uploaded to the bucket.
 2. The server checks the stored object's size with `HEAD` and only then deletes the local directory.
    A failed upload or a short object leaves the project untouched.
-3. A small marker `project-archives/<projectId>.json` in `WEBNESTDEV_DATA_DIR` remembers the key and
-   the byte size.
+3. The marker remembers the key, the byte size, the owner and the node that packed the project.
+   With PostgreSQL it is a row in `project_archives`, so every replica sees it and it survives the
+   loss of a host volume. With `WEBNESTDEV_STORAGE=json` (local development) it stays a
+   `project-archives/<projectId>.json` file in `WEBNESTDEV_DATA_DIR`. Existing JSON markers are
+   copied into the table on startup with `INSERT ... ON CONFLICT DO NOTHING`; the file is kept as a
+   rollback snapshot and the import can be repeated safely. If the row is lost while the project
+   directory is gone, the server checks the deterministic object key with `HEAD` and restores the
+   row before downloading — the bucket is the last source of truth, not a guess.
 4. The first access — any route, tool or preview, all of which go through `getSandbox` — downloads
    the archive, checks the file list for absolute paths and `..`, unpacks it into a staging directory
    next to the sandboxes and replaces the project directory with a `rename`. The marker is removed
@@ -134,6 +140,7 @@ Configuration (`PLATFORM_S3_*` — the platform's own bucket, **not** a user's k
 | `PROJECT_ARCHIVE_SWEEP_INTERVAL_MS` | no | interval between sweeps, 10 minutes by default |
 | `PROJECT_ARCHIVE_ACCESS_GUARD_MS` | no | skip a project opened in this process less than an hour ago |
 | `PROJECT_ARCHIVE_TAR_TIMEOUT_MS` | no | `tar` timeout, 10 minutes by default |
+| `WEBNESTDEV_NODE_ID` | no | node name written into the archive marker; the hostname by default |
 
 All five Russian providers from «Интеграции» → «Файлы (S3)» work here (Selectel, VK Cloud, Yandex
 Object Storage, Timeweb Cloud, Cloud.ru), МТС Web Services and MinIO for a local run. For МВС the
@@ -160,10 +167,12 @@ Manual control and API:
   anything with an active agent run, a live preview, or a project opened in this process within
   `PROJECT_ARCHIVE_ACCESS_GUARD_MS` (reads do not update `project_sizes`).
 
-Known gaps: the marker is local to the host, like the sandbox directory itself; a host that loses
-its `WEBNESTDEV_DATA_DIR` will not restore archives automatically. The access guard is per process,
-so with several replicas a project opened on one of them can still be archived by another; run the
-sweeper on one replica (it is off by default) until the sandbox directory itself is shared. Archives are one object per
+Known gaps: the archive marker is now shared, but the sandbox directory itself is still local to a
+host, so a second machine can restore a project from the bucket only after the project is archived;
+the access guard is per process, so with several replicas a project opened on one of them can still
+be archived by another — run the sweeper on one replica (it is off by default) until the sandbox
+directory itself is shared. Legacy JSON markers left on a second host can be re-imported after a
+restore cleared the row; remove them when moving fully to PostgreSQL. Archives are one object per
 project, so a multi-hundred-MB project is downloaded in full on the first access — that is the price
 of the cheap tier, and a project under active use stays on disk.
 

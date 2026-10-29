@@ -77,6 +77,7 @@ import { startBillingSweeper, stopBillingSweeper } from "./billing/recurring.js"
 import { startStorageReconcileScheduler } from "./account/storage-scheduler.js";
 import { describeObjectStore } from "./storage/object-store.js";
 import { startProjectArchiveScheduler } from "./storage/archive-scheduler.js";
+import { importArchiveRecordsFromDisk } from "./storage/project-archive-state.js";
 import { startAlertScheduler } from "./health/alerts.js";
 import { describeBilling, robokassaConfig } from "./billing/robokassa.js";
 import { registerPlatformRoutes } from "./routes/platform.js";
@@ -209,6 +210,18 @@ let stopStorageReconcile: (() => void) | null = null;
 initializeStorage()
   .then(async () => {
     stopStorageReconcile = startStorageReconcileScheduler();
+    // Отметки холодного яруса переезжают из JSON на хосте в таблицу. Импорт идемпотентен и
+    // повторяется при каждом старте: файл, которого ещё нет в базе, будет перенесён. Ошибка
+    // импорта не должна мешать серверу подняться — архивы и без неё читаются по старым файлам
+    // в JSON-режиме, а в PostgreSQL просто не будет части отметок до следующего старта.
+    try {
+      await importArchiveRecordsFromDisk();
+    } catch (error) {
+      app.log.warn(
+        { error: error instanceof Error ? error.message : error },
+        "cold tier markers import skipped",
+      );
+    }
     // Первый администратор из окружения — путь для ВМ, где нет удобного терминала
     // (docs/ADMIN_API.md). Существующая запись не меняется; пароль в лог не попадает.
     // Ошибка здесь не должна выглядеть как «хранилище не поднялось»: база уже готова.

@@ -52,7 +52,7 @@ export async function registerProjectRoutes(app:FastifyInstance){
     const p=z.object({id:z.string().min(1)}).parse(request.params);
     const project=await getProject(p.id);
     if(!project||project.userId!==user.id)return reply.code(404).send({error:"Проект не найден"});
-    return {...project,archived:Boolean(await projectArchiveInfo(p.id))};
+    return {...project,archived:Boolean(await projectArchiveInfo(p.id,project.userId))};
   });
   app.post("/api/projects",async(request,reply)=>{
     const user=await requireUser(request,reply); if(!user)return;
@@ -137,7 +137,7 @@ export async function registerProjectRoutes(app:FastifyInstance){
     const p=z.object({id:z.string().min(1)}).parse(request.params);
     const project=await getProject(p.id);
     if(!project||project.userId!==user.id)return reply.code(404).send({error:"Проект не найден"});
-    const record=await projectArchiveInfo(p.id);
+    const record=await projectArchiveInfo(p.id,project.userId);
     return {archived:Boolean(record),bytes:record?.bytes??0,archivedAt:record?.archivedAt??null};
   });
   app.get("/api/projects/:id/conversations",async(request,reply)=>{

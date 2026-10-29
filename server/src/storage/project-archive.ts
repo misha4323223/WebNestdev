@@ -1,12 +1,19 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, rename, rm, stat } from "node:fs/promises";
+import { hostname } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { sandboxRootPath } from "../sandbox/config.js";
 import { recordStorageMutation } from "../account/storage-quota.js";
 import { objectStoreConfigFromEnv, projectArchiveKey, s3ObjectStore, type ObjectStore } from "./object-store.js";
-import { clearArchiveRecord, readArchiveRecord, writeArchiveRecord, type ProjectArchiveRecord } from "./project-archive-state.js";
+import {
+  archivedProjectCount as countArchiveRecords,
+  clearArchiveRecord,
+  readArchiveRecord,
+  writeArchiveRecord,
+  type ProjectArchiveRecord,
+} from "./project-archive-state.js";
 
 /**
  * Холодный ярус проектов: рабочая папка уезжает в S3-совместимый бакет и освобождает диск ВМ.
@@ -31,6 +38,15 @@ const TAR_TIMEOUT_MS = Number(process.env.PROJECT_ARCHIVE_TAR_TIMEOUT_MS ?? 10 *
 
 function dataDir() {
   return process.env.WEBNESTDEV_DATA_DIR ?? path.resolve(".webnestdev");
+}
+
+/**
+ * Имя узла для отметки архива. При нескольких машинах по нему видно, откуда проект уехал в бакет.
+ * `WEBNESTDEV_NODE_ID` задаётся выкаткой, когда имя контейнера меняется от пересоздания к
+ * пересозданию; иначе берётся имя хоста.
+ */
+function archiveNodeId() {
+  return (process.env.WEBNESTDEV_NODE_ID ?? "").trim() || hostname();
 }
 
 async function tempFile(extension: string) {
@@ -78,6 +94,67 @@ export function lastProjectAccess(projectId: string): number {
 export async function waitForProjectArchive(projectId: string): Promise<void> {
   const pending = locks.get(projectId);
   if (pending) await pending.catch(() => undefined);
+}
+
+/**
+ * Восстановить отметку, если она потерялась, а проекта на диске уже нет.
+ *
+ * Это страховка от двух разных потерь: база переехала/восстановилась без строки, а объект в
+ * бакете остался; или старый JSON-маркер не доехал. Ключ объекта детерминированный, поэтому
+ * достаточно `HEAD` — скачивать архив ради отметки не нужно.
+ *
+ * Живая папка важнее бакета: если проект есть на диске, старый объект в бакете не повод считать
+ * его архивным и удалять рабочую копию. Ошибка хранилища здесь не бросается: отсутствие отметки
+ * не должно ронять список проектов, а следующая попытка повторит проверку.
+ */
+export async function recoverProjectArchiveRecord(
+  projectId: string,
+  userId: string,
+  options: { store?: ObjectStore } = {},
+): Promise<ProjectArchiveRecord | null> {
+  const existing = await readArchiveRecord(projectId);
+  if (existing) return existing;
+  const local = await stat(sandboxRootPath(projectId)).catch(() => null);
+  if (local?.isDirectory()) return null;
+  let store: ObjectStore;
+  if (options.store) {
+    store = options.store;
+  } else {
+    let config: ReturnType<typeof objectStoreConfigFromEnv>;
+    try {
+      config = objectStoreConfigFromEnv();
+    } catch (error) {
+      console.warn(
+        "[storage] проект " + projectId + ": отметка архива потеряна, хранилище настроено не полностью: " +
+          (error instanceof Error ? error.message : String(error)),
+      );
+      return null;
+    }
+    if (!config) return null;
+    store = s3ObjectStore(config);
+  }
+  const key = projectArchiveKey(store.prefix, userId, projectId);
+  const stored = await store.head(key).catch(error => {
+    console.warn(
+      "[storage] проект " + projectId + ": отметка архива потеряна, HEAD не удался: " +
+        (error instanceof Error ? error.message : String(error)),
+    );
+    return null;
+  });
+  if (!stored) return null;
+  const record: ProjectArchiveRecord = {
+    projectId,
+    userId,
+    key,
+    bytes: stored.size,
+    archivedAt: new Date().toISOString(),
+    node: archiveNodeId(),
+  };
+  await writeArchiveRecord(record);
+  console.log(
+    "[storage] проект " + projectId + ": отметка архива восстановлена по объекту в бакете (" + stored.size + " байт)",
+  );
+  return record;
 }
 
 async function withArchiveLock<T>(projectId: string, action: () => Promise<T>): Promise<T> {
@@ -131,7 +208,7 @@ export async function archiveProject(
   options: { store?: ObjectStore } = {},
 ): Promise<ArchiveResult> {
   return withArchiveLock(projectId, async () => {
-    const existing = await readArchiveRecord(projectId);
+    const existing = await recoverProjectArchiveRecord(projectId, userId, options);
     if (existing) return { archived: true as const, bytes: existing.bytes, key: existing.key, alreadyArchived: true };
 
     const store = options.store ?? s3ObjectStore();
@@ -152,7 +229,14 @@ export async function archiveProject(
       if (!stored || stored.size !== bytes) {
         throw new Error("Хранилище приняло архив не целиком (" + (stored?.size ?? 0) + " из " + bytes + " байт)");
       }
-      const record: ProjectArchiveRecord = { projectId, userId, key, bytes, archivedAt: new Date().toISOString() };
+      const record: ProjectArchiveRecord = {
+        projectId,
+        userId,
+        key,
+        bytes,
+        archivedAt: new Date().toISOString(),
+        node: archiveNodeId(),
+      };
       await writeArchiveRecord(record);
       await rm(root, { recursive: true, force: true });
       await refreshSize(projectId, userId);
@@ -180,7 +264,7 @@ export async function restoreProject(
   options: { store?: ObjectStore } = {},
 ): Promise<boolean> {
   return withArchiveLock(projectId, async () => {
-    const record = await readArchiveRecord(projectId);
+    const record = await recoverProjectArchiveRecord(projectId, userId, options);
     if (!record) return false;
     if (record.userId !== userId) throw new Error("Проект не найден");
     const store = options.store ?? s3ObjectStore();
@@ -241,29 +325,39 @@ export async function ensureProjectWorkspace(
   // Упаковка могла начаться за миг до этого запроса: сначала даём ей закончиться, иначе отметка
   // архива ещё не видна и проект выглядит пустым.
   await waitForProjectArchive(projectId);
-  const record = await readArchiveRecord(projectId);
+  const record = await recoverProjectArchiveRecord(projectId, userId, options);
   if (!record) return false;
   if (record.userId !== userId) throw new Error("Проект не найден");
   return restoreProject(projectId, userId, options);
 }
 
-export async function projectArchiveInfo(projectId: string): Promise<ProjectArchiveRecord | null> {
-  return readArchiveRecord(projectId);
+/**
+ * Отметка архива для API и планировщика. Если известен владелец, потерянную отметку можно
+ * восстановить по объекту в бакете; без владельца ключ не построить, поэтому остаётся чтение.
+ */
+export async function projectArchiveInfo(
+  projectId: string,
+  userId?: string,
+  options: { store?: ObjectStore } = {},
+): Promise<ProjectArchiveRecord | null> {
+  return userId ? recoverProjectArchiveRecord(projectId, userId, options) : readArchiveRecord(projectId);
 }
 
 /** Удаление проекта: объект в бакете не должен остаться сиротой и оплачиваться дальше. */
 export async function deleteProjectArchive(projectId: string, userId: string): Promise<void> {
   const record = await readArchiveRecord(projectId);
-  if (!record) return;
-  if (record.userId !== userId) return;
+  if (record && record.userId !== userId) return;
   const config = objectStoreConfigFromEnv();
-  if (config) await s3ObjectStore(config).remove(record.key);
+  if (config) {
+    const store = s3ObjectStore(config);
+    // Ключ детерминированный: объект удаляется, даже если отметка уже потерялась. Иначе после
+    // удаления проекта в бакете остался бы оплачиваемый сирота, который никто не найдёт.
+    await store.remove(record?.key ?? projectArchiveKey(store.prefix, userId, projectId));
+  }
   await clearArchiveRecord(projectId);
 }
 
 /** Для `/api/health` и лога: сколько проектов сейчас лежит в бакете. */
 export async function archivedProjectCount(): Promise<number> {
-  const dir = path.join(dataDir(), "project-archives");
-  const names = await readdir(dir).catch(() => [] as string[]);
-  return names.filter(name => name.endsWith(".json")).length;
+  return countArchiveRecords();
 }

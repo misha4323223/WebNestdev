@@ -19,7 +19,7 @@ delete process.env.PLATFORM_S3_SECRET_ACCESS_KEY;
 
 const { archiveProject, ensureProjectWorkspace, projectArchiveInfo, restoreProject, unsafeArchiveEntry } = await import("./project-archive.js");
 const { sandboxRootPath } = await import("../sandbox/config.js");
-const { readArchiveRecord } = await import("./project-archive-state.js");
+const { clearArchiveRecord, readArchiveRecord } = await import("./project-archive-state.js");
 
 after(async () => {
   await rm(work, { recursive: true, force: true });
@@ -156,4 +156,35 @@ test("без настроенного бакета архивация говор
   const { projectId, userId, root } = await projectWithFiles();
   await assert.rejects(() => archiveProject(projectId, userId), /Объектное хранилище не настроено/);
   assert.ok((await stat(root)).isDirectory());
+});
+
+test("потерянная отметка восстанавливается по объекту в бакете", async () => {
+  const { projectId, userId, root } = await projectWithFiles();
+  const store = memoryStore();
+  const archived = await archiveProject(projectId, userId, { store });
+
+  // Так выглядит потеря тома или переезд базы без строки: объекта в бакете есть, отметки нет.
+  await clearArchiveRecord(projectId);
+  assert.equal(await readArchiveRecord(projectId), null);
+
+  const recovered = await projectArchiveInfo(projectId, userId, { store });
+  assert.ok(recovered);
+  assert.equal(recovered!.key, "test/projects/" + userId + "/" + projectId + "/workspace.tar.gz");
+  assert.equal(recovered!.bytes, archived.bytes);
+  assert.deepEqual(await readArchiveRecord(projectId), recovered);
+
+  // Восстановленная отметка возвращает проект на диск тем же путём, что и обычная.
+  assert.equal(await ensureProjectWorkspace(projectId, userId, { store }), true);
+  assert.equal(await readFile(path.join(root, "src", "index.ts"), "utf8"), "export const answer = 42;\n");
+  assert.equal(await readArchiveRecord(projectId), null);
+});
+
+test("живая папка важнее объекта в бакете: проект не считается архивным", async () => {
+  const { projectId, userId } = await projectWithFiles();
+  const store = memoryStore();
+  // Объект с детерминированным ключом существует, но рабочая папка на месте.
+  store.objects.set("test/projects/" + userId + "/" + projectId + "/workspace.tar.gz", Buffer.from("старый архив"));
+
+  assert.equal(await projectArchiveInfo(projectId, userId, { store }), null);
+  assert.equal(await readArchiveRecord(projectId), null);
 });
