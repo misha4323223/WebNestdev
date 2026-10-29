@@ -1,7 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { getCostSnapshot, platformPricing, recordRunUsage } from "./usage-store.js";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+// Свой каталог данных: параллельный usage-store.test.ts пишет тот же дневной файл расходов.
+process.env.WEBNESTDEV_DATA_DIR = await mkdtemp(path.join(tmpdir(), "usage-cost-"));
+
+const { getCostSnapshot, platformPricing, recordRunUsage } = await import("./usage-store.js");
 
 test("run usage is recorded per user and cost is estimated from configured prices",async()=>{
   process.env.PLATFORM_AI_PRICE_INPUT_PER_MILLION="1";

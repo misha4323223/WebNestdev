@@ -1,7 +1,16 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
-import { consumeAgentRun, consumeUsage, getBillingHistory, getTokenBudget, getUsageSnapshot, recordRunUsage, UsageLimitError } from "./usage-store.js";
+import { mkdtemp } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+// Свой каталог данных: дневной файл расходов общий для всех тестов, и параллельный файл
+// (usage-cost.test.ts) мог перезаписать его — тест пула токенов падал через раз.
+process.env.WEBNESTDEV_DATA_DIR = await mkdtemp(path.join(tmpdir(), "usage-store-"));
+
+const { consumeAgentRun, consumeUsage, getBillingHistory, getTokenBudget, getUsageSnapshot, recordRunUsage, UsageLimitError } =
+  await import("./usage-store.js");
 
 test("daily agent quota blocks the next run and usage is isolated per account", async () => {
   const userId = "quota-test-" + randomUUID();
