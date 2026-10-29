@@ -103,6 +103,43 @@ test("первое обращение возвращает проект на д�
   assert.ok(entries.includes("src"));
 });
 
+test("прерванная операция не теряет проект: живая отметка и остатки папки восстанавливаются", async () => {
+  const { projectId, userId, root } = await projectWithFiles();
+  const store = memoryStore();
+  await archiveProject(projectId, userId, { store });
+
+  // Оборванное удаление после архивации (или оборванная распаковка): на диске остались только
+  // node_modules и .git, отметка архива — на месте. Раньше такой каталог считался целой копией,
+  // отметка удалялась, и исходники уже никогда не возвращались.
+  await mkdir(path.join(root, "node_modules", "dep"), { recursive: true });
+  await mkdir(path.join(root, ".git"), { recursive: true });
+  await writeFile(path.join(root, "node_modules", "dep", "index.js"), "module.exports = 1;\n");
+  await writeFile(path.join(root, ".git", "HEAD"), "ref: refs/heads/main\n");
+
+  assert.equal(await ensureProjectWorkspace(projectId, userId, { store }), true);
+  assert.equal(await readFile(path.join(root, "src", "index.ts"), "utf8"), "export const answer = 42;\n");
+  assert.equal(await readArchiveRecord(projectId), null);
+  // Сторожащий каталог распаковки не остаётся рядом с проектом.
+  const siblings = await readdir(path.dirname(root));
+  assert.deepEqual(siblings.filter(name => name.startsWith(".restore-")), []);
+});
+
+test("неудачная распаковка не трогает рабочую папку и оставляет отметку архива", async () => {
+  const { projectId, userId, root } = await projectWithFiles();
+  const store = memoryStore();
+  await archiveProject(projectId, userId, { store });
+  // Объект испорчен: tar не сможет его распаковать.
+  for (const key of store.objects.keys()) store.objects.set(key, Buffer.from("not a tarball"));
+
+  await assert.rejects(() => ensureProjectWorkspace(projectId, userId, { store }));
+  assert.ok(await readArchiveRecord(projectId), "отметка остаётся, чтобы распаковка повторилась");
+  assert.deepEqual(
+    (await readdir(path.dirname(root))).filter(name => name.startsWith(".restore-")),
+    [],
+    "сторожащий каталог убран",
+  );
+});
+
 test("распаковка чужого архива и недопустимые пути отклоняются", async () => {
   assert.equal(unsafeArchiveEntry(["./src/index.ts", "./uploads/logo.png"]), null);
   assert.equal(unsafeArchiveEntry(["/etc/passwd"]), "/etc/passwd");

@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { mkdir, readdir, rm, stat } from "node:fs/promises";
+import { mkdir, readdir, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
 import { sandboxRootPath } from "../sandbox/config.js";
@@ -17,8 +17,11 @@ import { clearArchiveRecord, readArchiveRecord, writeArchiveRecord, type Project
  *   зависимостей»;
  * - локальная копия удаляется только после того, как хранилище подтвердило размер объекта
  *   (`head`): иначе сбой сети на последнем шаге стоил бы пользователю проекта;
- * - распаковка идёт в тот же каталог и только из нашего объекта; список файлов проверяется
- *   заранее, потому что архив — это данные, а не доверенный код;
+ * - распаковка идёт сначала в сторожащий каталог рядом с песочницами и только целиком заменяет
+ *   рабочую папку (`rename`): прерванная распаковка не оставляет полудерево, из которого потом
+ *   «пропадают файлы». Список файлов проверяется заранее, потому что архив — данные, а не код;
+ * - отметка архива снимается только после успешной замены, а её наличие — единственный признак
+ *   «проект в бакете»: непустая папка при живой отметке не считается целой копией;
  * - первое же обращение (`getSandbox`) возвращает проект на диск: панель, агент и предпросмотр
  *   работают с обычной папкой и о холодном ярусе не знают.
  */
@@ -34,6 +37,16 @@ async function tempFile(extension: string) {
   const dir = path.join(dataDir(), "tmp");
   await mkdir(dir, { recursive: true });
   return path.join(dir, "archive-" + randomUUID() + extension);
+}
+
+/**
+ * Куда распаковывается архив, пока рабочий каталог ещё не тронут. Каталог лежит рядом с
+ * песочницами — на той же файловой системе, иначе `rename` был бы копированием, — и начинается
+ * с точки, чтобы не выглядеть проектом. Удаляется в `finally` при любом исходе.
+ */
+function restoreStagingDir(projectId: string) {
+  const safe = projectId.replace(/[^A-Za-z0-9_-]/g, "_");
+  return path.join(path.dirname(sandboxRootPath(projectId)), ".restore-" + safe + "-" + randomUUID().slice(0, 8));
 }
 
 /** Одна архивация на проект: два параллельных запуска писали бы один объект и один маркер. */
@@ -126,6 +139,7 @@ export async function archiveProject(
     const info = await stat(root).catch(() => null);
     if (!info?.isDirectory()) throw new Error("Рабочая папка проекта не найдена — архивировать нечего");
 
+    const started = Date.now();
     const file = await tempFile(".tar.gz");
     try {
       await exec("tar", ["-czf", file, "-C", root, "."], { timeout: TAR_TIMEOUT_MS, maxBuffer: 1024 * 1024 });
@@ -142,6 +156,12 @@ export async function archiveProject(
       await writeArchiveRecord(record);
       await rm(root, { recursive: true, force: true });
       await refreshSize(projectId, userId);
+      // Строчный след на проект: агрегата «освобождено N» не хватало, чтобы разобрать инцидент
+      // без шелла на ВМ — по этим строкам видно, что и когда уезжало в бакет.
+      console.log(
+        "[storage] проект " + projectId + ": архивирован в бакет (" + bytes + " байт, " +
+        Math.round((Date.now() - started) / 1000) + " с)",
+      );
       return { archived: true as const, bytes, key, alreadyArchived: false };
     } finally {
       await rm(file, { force: true }).catch(() => undefined);
@@ -165,15 +185,39 @@ export async function restoreProject(
     if (record.userId !== userId) throw new Error("Проект не найден");
     const store = options.store ?? s3ObjectStore();
     const file = await tempFile(".tar.gz");
+    const started = Date.now();
     try {
       const found = await store.getToFile(record.key, file);
       if (!found) throw new Error("Архив проекта не найден в объектном хранилище");
       await assertSafeArchive(file);
       const root = sandboxRootPath(projectId);
-      await mkdir(root, { recursive: true });
-      await exec("tar", ["-xzf", file, "-C", root, "--no-same-owner"], { timeout: TAR_TIMEOUT_MS, maxBuffer: 1024 * 1024 });
+      const leftovers = await readdir(root).catch(() => [] as string[]);
+      if (leftovers.length) {
+        // Живая отметка при непустой папке — это последствие прерванной архивации или
+        // распаковки. Архив — источник истины: он распаковывается и заменяет каталог целиком,
+        // иначе проект остался бы полупустым навсегда (так и «пропадали файлы»).
+        console.log(
+          "[storage] проект " + projectId + ": локальная папка не пуста (" + leftovers.length +
+          " записей) при живой отметке архива — восстанавливаю поверх",
+        );
+      }
+      const staging = restoreStagingDir(projectId);
+      try {
+        await mkdir(staging, { recursive: true });
+        await exec("tar", ["-xzf", file, "-C", staging, "--no-same-owner"], { timeout: TAR_TIMEOUT_MS, maxBuffer: 1024 * 1024 });
+        // Старая копия убирается только после того, как новая распакована целиком: обрыв на
+        // любом шаге оставляет либо прежнюю папку, либо отметку архива — и распаковка повторится.
+        await rm(root, { recursive: true, force: true });
+        await rename(staging, root);
+      } finally {
+        await rm(staging, { recursive: true, force: true }).catch(() => undefined);
+      }
       await clearArchiveRecord(projectId);
       await refreshSize(projectId, userId);
+      console.log(
+        "[storage] проект " + projectId + ": восстановлен из архива (" + record.bytes + " байт, " +
+        Math.round((Date.now() - started) / 1000) + " с)",
+      );
       return true;
     } finally {
       await rm(file, { force: true }).catch(() => undefined);
@@ -183,8 +227,11 @@ export async function restoreProject(
 
 /**
  * Вызывается перед каждым доступом к песочнице. Быстрый путь — «отметки нет»: один `readFile`,
- * который сразу падает с ENOENT. Пустой каталог при наличии отметки — это прерванная распаковка
- * или архивация, поэтому проект восстанавливается, а не считается пустым.
+ * который сразу падает с ENOENT. Если отметка есть, проект лежит в бакете — независимо от того,
+ * что успело остаться на диске: непустая папка после прерванной архивации или распаковки не
+ * повод считать её целой копией (раньше именно это удаляло отметку и оставляло полупустой
+ * проект без возможности восстановления). Повторная распаковка идемпотентна: она собирает
+ * каталог в сторожащем месте и заменяет рабочую папку целиком.
  */
 export async function ensureProjectWorkspace(
   projectId: string,
@@ -197,12 +244,6 @@ export async function ensureProjectWorkspace(
   const record = await readArchiveRecord(projectId);
   if (!record) return false;
   if (record.userId !== userId) throw new Error("Проект не найден");
-  const entries = await readdir(sandboxRootPath(projectId)).catch(() => null);
-  if (entries && entries.length) {
-    // Локальная копия уже есть (например, архив создали, но распаковка шла вручную).
-    await clearArchiveRecord(projectId);
-    return false;
-  }
   return restoreProject(projectId, userId, options);
 }
 

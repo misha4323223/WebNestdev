@@ -104,8 +104,17 @@ What happens:
 3. A small marker `project-archives/<projectId>.json` in `WEBNESTDEV_DATA_DIR` remembers the key and
    the byte size.
 4. The first access — any route, tool or preview, all of which go through `getSandbox` — downloads
-   the archive, checks the file list for absolute paths and `..`, unpacks it and removes the marker.
+   the archive, checks the file list for absolute paths and `..`, unpacks it into a staging directory
+   next to the sandboxes and replaces the project directory with a `rename`. The marker is removed
+   only after that swap.
 5. Deleting a project deletes its object too, so the bucket does not accumulate orphans.
+
+An interrupted archive or unpack never leaves a half-restored project: the marker survives, and the
+next access repeats the restore. A non-empty directory with a live marker is treated as leftovers of
+an interrupted operation, not as a complete copy — it is replaced by the archive (an earlier version
+assumed "non-empty means done", dropped the marker and stranded the archive in the bucket). Each
+archive and each restore writes one `[storage] проект <id>: ...` line to the server log, so
+`mode=logs` in the deploy workflow shows what happened without a shell on the VM.
 
 Configuration (`PLATFORM_S3_*` — the platform's own bucket, **not** a user's keys from «Интеграции»):
 
