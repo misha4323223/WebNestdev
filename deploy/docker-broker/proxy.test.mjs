@@ -5,7 +5,7 @@ import net from "node:net";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createBrokerServer } from "./proxy.mjs";
+import { createBrokerServer, readUpgradeBody } from "./proxy.mjs";
 
 /**
  * Прокси проверяется на подставном демоне: в среде сборки Docker нет, а поведение нужно ровно
@@ -24,6 +24,8 @@ const policy = {
 
 const log = { warn() {}, error() {}, log() {} };
 const creates = [];
+/** Тела upgrade-запросов, которые демон прочитал до ответа `101` (exec/start присылает JSON). */
+const upgradeBodies = [];
 
 let upstream;
 let broker;
@@ -82,13 +84,35 @@ before(async () => {
       return json(response, { message: "No such container" }, 404);
     });
   });
-  upstream.on("upgrade", (request, socket) => {
-    socket.write(
-      "HTTP/1.1 101 UPGRADED\r\n" +
-      "Content-Type: application/vnd.docker.raw-stream\r\n" +
-      "Connection: Upgrade\r\nUpgrade: tcp\r\n\r\n",
-    );
-    socket.on("data", chunk => socket.write(chunk));
+  /**
+   * Настоящий демон читает тело upgrade-запроса ДО ответа: `exec/start` присылает
+   * `{"Detach":false,"Tty":false}` с `Content-Length`. Подставной должен вести себя так же —
+   * иначе тест проходит, даже если прокси не пересылает тело, и регрессия уезжает в прод.
+   */
+  upstream.on("upgrade", (request, socket, head) => {
+    const length = Number(request.headers["content-length"] ?? 0);
+    let body = Buffer.from(head ?? []);
+    const start = () => {
+      socket.write(
+        "HTTP/1.1 101 UPGRADED\r\n" +
+        "Content-Type: application/vnd.docker.raw-stream\r\n" +
+        "Connection: Upgrade\r\nUpgrade: tcp\r\n\r\n",
+      );
+      socket.on("data", chunk => socket.write(chunk));
+    };
+    if (!Number.isFinite(length) || length <= 0 || body.length >= length) {
+      if (length > 0) upgradeBodies.push(body.subarray(0, length).toString("utf8"));
+      start();
+      return;
+    }
+    const readBody = chunk => {
+      body = Buffer.concat([body, chunk]);
+      if (body.length < length) return;
+      socket.off("data", readBody);
+      upgradeBodies.push(body.subarray(0, length).toString("utf8"));
+      start();
+    };
+    socket.on("data", readBody);
   });
   await listen(upstream, upstreamSocket);
 
@@ -130,7 +154,7 @@ function call(method, requestPath, body, extraHeaders = {}) {
   });
 }
 
-function upgrade(requestPath) {
+function upgrade(requestPath, body, options = {}) {
   return new Promise((resolve, reject) => {
     const socket = net.connect(brokerSocket);
     let received = "";
@@ -141,10 +165,31 @@ function upgrade(requestPath) {
     }, 3000);
     socket.setEncoding("utf8");
     socket.on("connect", () => {
-      socket.write(
+      // Тело уходит отдельной записью, как у Docker CLI: заголовки и JSON могут прийти
+      // разными пакетами, и прокси обязан переслать оба.
+      const payload = body === undefined ? "" : (typeof body === "string" ? body : JSON.stringify(body));
+      const head =
         "POST " + requestPath + " HTTP/1.1\r\nHost: docker\r\n" +
-        "Connection: Upgrade\r\nUpgrade: tcp\r\n\r\n",
-      );
+        "Connection: Upgrade\r\nUpgrade: tcp\r\n" +
+        (payload ? "Content-Type: application/json\r\nContent-Length: " + Buffer.byteLength(payload) + "\r\n" : "") +
+        "\r\n";
+      if (options.together) {
+        // Docker CLI пишет заголовки и тело одним вызовом — тело приходит в `head` события upgrade.
+        socket.write(head + payload);
+      } else if (options.pieces) {
+        // Тело приходит несколькими пакетами: демон ждёт всю объявленную длину, и прокси обязан
+        // собрать её целиком до соединения, а не ждать, что байты окажутся в `head`.
+        socket.write(head);
+        const size = Math.ceil(payload.length / options.pieces);
+        for (let index = 0; index < options.pieces; index++) {
+          const piece = payload.slice(index * size, (index + 1) * size);
+          if (!piece) continue;
+          setTimeout(() => { if (!socket.destroyed) socket.write(piece); }, 5 * (index + 1));
+        }
+      } else {
+        socket.write(head);
+        if (payload) setTimeout(() => { if (!socket.destroyed) socket.write(payload); }, 5);
+      }
     });
     socket.on("data", chunk => {
       received += chunk;
@@ -312,8 +357,21 @@ test("exec: своя сессия работает через hijack, чужая
   assert.equal(created.status, 201);
   assert.equal(JSON.parse(created.body).Id, "exec1");
 
-  const own = await upgrade("/exec/exec1/start");
+  const own = await upgrade("/exec/exec1/start", { Detach: false, Tty: false });
   assert.match(own.received, /101 UPGRADED/);
+  // Второй вариант — как у настоящего CLI: заголовки и тело в одной записи (тело в `head`).
+  const together = await upgrade("/exec/exec1/start", { Detach: false, Tty: false }, { together: true });
+  assert.match(together.received, /101 UPGRADED/);
+  together.socket.destroy();
+  // Тело третьим вариантом — несколькими пакетами. Демон читает его ДО `101`, поэтому прокси
+  // должен собрать всю объявленную длину сам: иначе обе стороны ждут друг друга до таймаута клиента
+  // (в журнале демона это ответ `499`).
+  const pieces = await upgrade("/exec/exec1/start", { Detach: false, Tty: false }, { pieces: 3 });
+  assert.match(pieces.received, /101 UPGRADED/);
+  pieces.socket.destroy();
+  // Демон получил ровно то тело, которое он читает перед `101`, — иначе настоящий Docker
+  // молча ждёт его до таймаута клиента.
+  assert.ok(upgradeBodies.includes(JSON.stringify({ Detach: false, Tty: false })), "тело exec/start дошло до демона");
   own.socket.destroy();
 
   const foreign = await call("POST", "/exec/foreign/start", {});
@@ -337,6 +395,57 @@ test("exec: код выхода читается только для своей 
   const foreign = await call("GET", "/exec/foreign/json");
   assert.equal(foreign.status, 403);
   assert.match(foreign.body, /Сессия exec не создана через брокер/);
+});
+
+/**
+ * Сокет на паузе не теряет тело, пришедшее до того, как брокер начал его читать: ровно так
+ * `exec/start` присылает JSON следом за заголовками. Без паузы эти байты ушли бы в поток без
+ * слушателя, демон не дождался бы тела и не отдал `101`.
+ */
+test("тело upgrade не теряется, пока соединение с демоном ещё не открыто", async () => {
+  const bodyDir = fs.mkdtempSync(path.join(os.tmpdir(), "wnd-body-"));
+  const clientPath = path.join(bodyDir, "client.sock");
+  const server = net.createServer(socket => {
+    socket.pause();
+    // Заголовки разбираются как в http.Server: остаток пакета — это `head` события upgrade.
+    let pending = Buffer.alloc(0);
+    const onData = chunk => {
+      pending = Buffer.concat([pending, chunk]);
+      const split = pending.indexOf("\r\n\r\n");
+      if (split < 0) return;
+      socket.off("data", onData);
+      socket.pause();
+      const head = pending.subarray(split + 4);
+      const length = Number(/content-length:\s*(\d+)/i.exec(pending.subarray(0, split).toString())?.[1] ?? 0);
+      // Брокер проверяет запрос и только потом соединяется с демоном: тело уже в пути.
+      setTimeout(async () => {
+        socket.end(await readUpgradeBody(socket, head, length, 1000));
+      }, 30);
+    };
+    socket.on("data", onData);
+    socket.resume();
+  });
+  await listen(server, clientPath);
+  try {
+    const payload = Buffer.from(JSON.stringify({ Detach: false, Tty: false }));
+    const answer = await new Promise((resolve, reject) => {
+      const socket = net.connect(clientPath);
+      socket.setEncoding("utf8");
+      let received = "";
+      socket.on("connect", () => {
+        socket.write("POST /exec/exec1/start HTTP/1.1\r\nContent-Length: " + payload.length + "\r\n\r\n");
+        socket.write(payload);
+      });
+      socket.on("data", chunk => { received += chunk; });
+      socket.on("end", () => resolve(received));
+      socket.on("error", reject);
+    });
+    assert.deepEqual(JSON.parse(answer), { Detach: false, Tty: false });
+  } finally {
+    server.closeAllConnections?.();
+    await new Promise(resolve => server.close(resolve));
+    fs.rmSync(bodyDir, { recursive: true, force: true });
+  }
 });
 
 test("attach к своему контейнеру проксируется как поток", async () => {

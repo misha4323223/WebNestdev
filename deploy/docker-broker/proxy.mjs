@@ -23,6 +23,16 @@ import os from "node:os";
 import { classify, isAllowedName, isManagedContainer, validateCreate, MANAGED_LABEL } from "./policy.mjs";
 
 const MAX_BODY = 2 * 1024 * 1024;
+/** Тело hijack-запроса: `exec/start` шлёт JSON в десятки байт, больше — уже ошибка клиента. */
+const MAX_UPGRADE_BODY = 64 * 1024;
+/**
+ * Сколько брокер собирает тело hijack-запроса, прежде чем соединиться с демоном.
+ *
+ * Демон читает тело ДО ответа: `postContainerExecStart` вызывает `ReadJSON`, затем
+ * `HijackConnection` и только потом отдаёт `101`. Без собранного тела демон ждёт его, а клиент
+ * ждёт `101` — взаимоблокировка до таймаута клиента (в журнале демона это `499`).
+ */
+const UPGRADE_BODY_WAIT_MS = 2_000;
 const MANAGED_TTL_MS = 60_000;
 const EXEC_TTL_MS = 60 * 60_000;
 const MAX_EXECS = 512;
@@ -63,6 +73,54 @@ export function dockerUnavailableMessage(upstreamPath) {
 export function isLongLivedRequest(request) {
   const pathname = String(request.url ?? "").split("?")[0];
   return /\/containers\/[^/]+\/(wait|logs)$/.test(pathname);
+}
+
+/**
+ * Объявленная длина тела upgrade-запроса. У `attach` тела нет — 0.
+ * `content-length` в запросе может быть один или несколько (тогда берём первый).
+ */
+export function upgradeBodyLength(headers) {
+  const raw = headers["content-length"];
+  const value = Number(Array.isArray(raw) ? raw[0] : raw);
+  return Number.isFinite(value) && value > 0 ? value : 0;
+}
+
+/**
+ * Собирает тело hijack-запроса до длины из `Content-Length`.
+ *
+ * Сокет уже стоит на паузе: пока брокер проверяет запрос и соединяется с демоном, байты тела
+ * копятся в сокете, а не теряются в потоке без слушателя. Пауза снимается только перед передачей
+ * сокета демону — иначе stdin команды уехал бы в демон раньше тела.
+ *
+ * `head` — байты, которые Node уже прочитал вместе с заголовками. Таймаут не ошибка: тело могли не
+ * прислать вовсе, и тогда демон сам ответит на неполный запрос — но брокер не ждёт его вечно.
+ */
+export function readUpgradeBody(socket, head, length, waitMs = UPGRADE_BODY_WAIT_MS) {
+  let body = head?.length ? Buffer.from(head) : Buffer.alloc(0);
+  if (length <= 0 || body.length >= length) return Promise.resolve(body);
+  return new Promise(resolve => {
+    let done = false;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      socket.off("data", onData);
+      socket.off("close", finish);
+      socket.off("end", finish);
+      // Пауза, а не отписка: остаток тела и stdin доедут до демона после `101` через pipe.
+      socket.pause();
+      resolve(body);
+    };
+    const onData = chunk => {
+      body = Buffer.concat([body, chunk]);
+      if (body.length >= length) finish();
+    };
+    const timer = setTimeout(finish, waitMs);
+    socket.on("data", onData);
+    socket.once("close", finish);
+    socket.once("end", finish);
+    socket.resume();
+  });
 }
 
 export function upstreamTimeoutMessage(method, url, timeoutMs) {
@@ -401,6 +459,9 @@ export function createBrokerServer({ socketPath, upstreamPath, policy, log = con
    * без разбора: внутри уже нет HTTP, только вывод процесса.
    */
   async function handleUpgrade(request, clientSocket, head) {
+    // Пауза сразу: между этим событием и соединением с демоном сокет не читает никто, а тело
+    // `exec/start` приходит следом за заголовками — в потоке без слушателя оно бы потерялось.
+    clientSocket.pause();
     if (trace()) log.log("[broker] upgrade " + request.method + " " + request.url);
     const decision = classify(request.method, request.url);
     let message = "";
@@ -417,6 +478,19 @@ export function createBrokerServer({ socketPath, upstreamPath, policy, log = con
       log.warn("[broker] отказ upgrade: " + request.url + " — " + message);
       writeRawError(clientSocket, 403, message);
       return;
+    }
+
+    const bodyLength = upgradeBodyLength(request.headers);
+    if (bodyLength > MAX_UPGRADE_BODY) {
+      log.warn("[broker] отказ upgrade: " + request.url + " — тело " + bodyLength + " байт");
+      writeRawError(clientSocket, 413, "Тело upgrade-запроса слишком велико");
+      return;
+    }
+    // Тело собирается до соединения с демоном: демон читает его до `101` и без него молчит.
+    const body = await readUpgradeBody(clientSocket, head, bodyLength);
+    if (bodyLength > 0 && body.length < bodyLength) {
+      log.warn("[broker] upgrade: тело " + request.method + " " + request.url + " пришло неполным — " +
+        body.length + "/" + bodyLength + " байт");
     }
 
     const upstream = net.connect(upstreamPath);
@@ -447,8 +521,15 @@ export function createBrokerServer({ socketPath, upstreamPath, policy, log = con
         lines.push(request.rawHeaders[index] + ": " + request.rawHeaders[index + 1]);
       }
       upstream.write(lines.join("\r\n") + "\r\n\r\n");
-      if (head?.length) upstream.write(head);
+      // Демону — ровно объявленное тело: лишние байты, пришедшие вместе с ним, это уже stdin
+      // команды, и они должны идти в поток, а не в разбор запроса.
+      const declared = body.subarray(0, bodyLength);
+      if (declared.length) upstream.write(declared);
+      if (trace() && bodyLength > 0) {
+        log.log("[broker] upgrade тело: " + declared.length + "/" + bodyLength + " байт до ответа демона");
+      }
       clientSocket.pipe(upstream);
+      if (body.length > declared.length) upstream.write(body.subarray(declared.length));
       // Тело upgrade-запроса (`exec/start` шлёт `{"Detach":false,...}`) демон читает ДО ответа,
       // поэтому поток клиента в демона включается раньше, чем приходит `101`.
       if (hijackTimeoutMs > 0) {
