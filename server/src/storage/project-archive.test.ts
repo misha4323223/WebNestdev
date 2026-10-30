@@ -17,9 +17,10 @@ delete process.env.PLATFORM_S3_BUCKET;
 delete process.env.PLATFORM_S3_ACCESS_KEY_ID;
 delete process.env.PLATFORM_S3_SECRET_ACCESS_KEY;
 
-const { archiveProject, ensureProjectWorkspace, projectArchiveInfo, restoreProject, unsafeArchiveEntry } = await import("./project-archive.js");
+const { archiveProject, ensureProjectWorkspace, projectArchiveInfo, restoreProject, startProjectRestore, unsafeArchiveEntry } = await import("./project-archive.js");
 const { sandboxRootPath } = await import("../sandbox/config.js");
 const { clearArchiveRecord, readArchiveRecord } = await import("./project-archive-state.js");
+const { cancelProjectRestore, projectRestoreJob, restoreJobActive } = await import("./restore-jobs.js");
 
 after(async () => {
   await rm(work, { recursive: true, force: true });
@@ -35,11 +36,12 @@ function memoryStore(): ObjectStore & { objects: Map<string, Buffer> } {
       objects.set(key, data);
       return data.length;
     },
-    async getToFile(key, filePath) {
+    async getToFile(key, filePath, options) {
       const data = objects.get(key);
       if (!data) return false;
       await mkdir(path.dirname(filePath), { recursive: true });
       await writeFile(filePath, data);
+      options?.onProgress?.(data.length, data.length);
       return true;
     },
     async head(key) {
@@ -50,6 +52,17 @@ function memoryStore(): ObjectStore & { objects: Map<string, Buffer> } {
       objects.delete(key);
     },
   };
+}
+
+/** Задание восстановления выполняется в фоне: тест ждёт его завершения, а не спит фиксированно. */
+async function waitRestore(projectId: string, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const job = projectRestoreJob(projectId);
+    if (job && !restoreJobActive(job)) return job;
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  throw new Error("восстановление не завершилось за " + timeoutMs + " мс");
 }
 
 async function projectWithFiles() {
@@ -83,13 +96,20 @@ test("архив уезжает в хранилище, локальная пап
   assert.equal(store.objects.size, 1);
 });
 
-test("первое обращение возвращает проект на диск с файлами и очищает отметку", async () => {
+test("первое обращение запускает восстановление в фоне и возвращает проект на диск", async () => {
   const { projectId, userId, root } = await projectWithFiles();
   const store = memoryStore();
-  await archiveProject(projectId, userId, { store });
+  const archived = await archiveProject(projectId, userId, { store });
 
-  const restored = await ensureProjectWorkspace(projectId, userId, { store });
-  assert.equal(restored, true);
+  // Запрос больше не держится до конца распаковки: он отдаёт понятный код, а работу делает задание.
+  await assert.rejects(
+    () => ensureProjectWorkspace(projectId, userId, { store }),
+    (error: unknown) => (error as { code?: string }).code === "PROJECT_RESTORING",
+  );
+  const job = await waitRestore(projectId);
+  assert.equal(job.state, "done");
+  assert.equal(job.bytesTotal, archived.bytes);
+  assert.equal(job.bytesDone, archived.bytes);
   assert.equal(await readFile(path.join(root, "src", "index.ts"), "utf8"), "export const answer = 42;\n");
   assert.deepEqual([...await readFile(path.join(root, "uploads", "logo.png"))], [0x89, 0x50, 0x4e, 0x47]);
   assert.equal(await readArchiveRecord(projectId), null);
@@ -116,7 +136,11 @@ test("прерванная операция не теряет проект: жи
   await writeFile(path.join(root, "node_modules", "dep", "index.js"), "module.exports = 1;\n");
   await writeFile(path.join(root, ".git", "HEAD"), "ref: refs/heads/main\n");
 
-  assert.equal(await ensureProjectWorkspace(projectId, userId, { store }), true);
+  await assert.rejects(
+    () => ensureProjectWorkspace(projectId, userId, { store }),
+    (error: unknown) => (error as { code?: string }).code === "PROJECT_RESTORING",
+  );
+  assert.equal((await waitRestore(projectId)).state, "done");
   assert.equal(await readFile(path.join(root, "src", "index.ts"), "utf8"), "export const answer = 42;\n");
   assert.equal(await readArchiveRecord(projectId), null);
   // Сторожащий каталог распаковки не остаётся рядом с проектом.
@@ -131,8 +155,24 @@ test("неудачная распаковка не трогает рабочую
   // Объект испорчен: tar не сможет его распаковать.
   for (const key of store.objects.keys()) store.objects.set(key, Buffer.from("not a tarball"));
 
-  await assert.rejects(() => ensureProjectWorkspace(projectId, userId, { store }));
+  await assert.rejects(
+    () => ensureProjectWorkspace(projectId, userId, { store }),
+    (error: unknown) => (error as { code?: string }).code === "PROJECT_RESTORING",
+  );
+  const failed = await waitRestore(projectId);
+  assert.equal(failed.state, "failed");
+  assert.ok(failed.error, "причина записана в задание");
   assert.ok(await readArchiveRecord(projectId), "отметка остаётся, чтобы распаковка повторилась");
+  // Пока причина известна, доступ не начинает новое скачивание на каждом запросе.
+  await assert.rejects(
+    () => ensureProjectWorkspace(projectId, userId, { store }),
+    (error: unknown) => (error as { code?: string }).code === "RESTORE_FAILED",
+  );
+  // Кнопка «Повторить» в панели — это явный новый заход, а не ожидание протухания ошибки.
+  const retry = await startProjectRestore(projectId, userId, { store });
+  assert.ok(retry);
+  assert.notEqual(retry!.id, failed.id);
+  assert.equal((await waitRestore(projectId)).state, "failed");
   assert.deepEqual(
     (await readdir(path.dirname(root))).filter(name => name.startsWith(".restore-")),
     [],
@@ -174,9 +214,70 @@ test("потерянная отметка восстанавливается п�
   assert.deepEqual(await readArchiveRecord(projectId), recovered);
 
   // Восстановленная отметка возвращает проект на диск тем же путём, что и обычная.
-  assert.equal(await ensureProjectWorkspace(projectId, userId, { store }), true);
+  await assert.rejects(
+    () => ensureProjectWorkspace(projectId, userId, { store }),
+    (error: unknown) => (error as { code?: string }).code === "PROJECT_RESTORING",
+  );
+  assert.equal((await waitRestore(projectId)).state, "done");
   assert.equal(await readFile(path.join(root, "src", "index.ts"), "utf8"), "export const answer = 42;\n");
   assert.equal(await readArchiveRecord(projectId), null);
+});
+
+test("ensure отвечает сразу, пока архив ещё скачивается", async () => {
+  const { projectId, userId, root } = await projectWithFiles();
+  const store = memoryStore();
+  await archiveProject(projectId, userId, { store });
+  // Скачивание держим на воротах: пока они закрыты, запрос обязан уже ответить.
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const slow: ObjectStore = {
+    ...store,
+    async getToFile(key, filePath, options) {
+      await gate;
+      return store.getToFile(key, filePath, options);
+    },
+  };
+
+  const started = Date.now();
+  await assert.rejects(
+    () => ensureProjectWorkspace(projectId, userId, { store: slow }),
+    (error: unknown) => (error as { code?: string }).code === "PROJECT_RESTORING",
+  );
+  assert.ok(Date.now() - started < 1000, "запрос не ждёт скачивание");
+  // Задание действительно идёт, а не потерялось.
+  const running = projectRestoreJob(projectId);
+  assert.ok(running && restoreJobActive(running), "восстановление в работе");
+
+  release();
+  const job = await waitRestore(projectId);
+  assert.equal(job.state, "done");
+  assert.equal(await readFile(path.join(root, "src", "index.ts"), "utf8"), "export const answer = 42;\n");
+  assert.equal(await readArchiveRecord(projectId), null);
+});
+
+test("удаление во время скачивания отменяет распаковку", async () => {
+  const { projectId, userId, root } = await projectWithFiles();
+  const store = memoryStore();
+  await archiveProject(projectId, userId, { store });
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const slow: ObjectStore = {
+    ...store,
+    async getToFile(key, filePath, options) {
+      await gate;
+      return store.getToFile(key, filePath, options);
+    },
+  };
+
+  assert.ok(await startProjectRestore(projectId, userId, { store: slow }));
+  cancelProjectRestore(projectId);
+  release();
+  const failed = await waitRestore(projectId);
+  assert.equal(failed.state, "failed");
+  assert.match(failed.error ?? "", /отменено/);
+  // Каталог удалённого проекта не вернулся на диск, а отметка осталась: архив не потерян.
+  await assert.rejects(() => stat(root), /ENOENT/);
+  assert.ok(await readArchiveRecord(projectId));
 });
 
 test("живая папка важнее объекта в бакете: проект не считается архивным", async () => {

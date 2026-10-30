@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, stat } from "node:fs/promises";
 import { getProject } from "../project-store.js";
 import { ensureProjectWorkspace, noteProjectAccess } from "../storage/project-archive.js";
 import { buildSandboxConfig,sandboxRootPath } from "./config.js";
@@ -16,8 +16,19 @@ import type { SandboxConfig } from "./sandbox-types.js";
  * reopens what it created (see tools/filesystem-tools.ts).
  */
 const opened=new Map<string,Promise<void>>();
+/**
+ * Кеш «дерево уже открыто» привязан к inode каталога, а не только к пути. Восстановление из
+ * холодного яруса заменяет рабочую папку через `rename`: по тому же пути оказывается новый
+ * каталог, созданный от root, и кеш по одному пути молча пропустил бы обход — сборка тогда
+ * упирается в EPERM на корне проекта.
+ */
+const openedIno=new Map<string,number>();
 
-function openToSandboxUser(root:string){
+function openToSandboxUser(root:string,ino:number){
+  if(openedIno.get(root)!==ino){
+    openedIno.set(root,ino);
+    opened.delete(root);
+  }
   const pending=opened.get(root);
   if(pending)return pending;
   const run=openDirForSandbox(root)
@@ -41,14 +52,13 @@ export async function getSandbox(projectId:string,userId:string):Promise<Sandbox
   // Отметка для фоновой архивации ставится до восстановления: пока проект скачивается из бакета,
   // планировщик не должен решить, что он всё ещё простаивает, и начать упаковку заново.
   noteProjectAccess(projectId);
-  // Проект может лежать в объектном хранилище (холодный ярус): панель, агент и предпросмотр
-  // работают с обычной папкой, поэтому первый доступ возвращает её на диск.
-  const restored=await ensureProjectWorkspace(projectId,userId);
+  // Проект может лежать в объектном хранилище (холодный ярус): первый доступ ставит
+  // восстановление в фон и отвечает 409, поэтому сюда доходят уже после распаковки.
+  await ensureProjectWorkspace(projectId,userId);
   await mkdir(root,{recursive:true});
-  // Распаковка пишет от root уже после того, как дерево было открыто в этом процессе: без
-  // сброса пометки обход не повторился бы, и восстановленный проект остался бы root:root 755.
-  if(restored)opened.delete(root);
-  await openToSandboxUser(root);
+  // inode у восстановленного каталога другой — по нему и снимается устаревший кеш прав.
+  const info=await stat(root);
+  await openToSandboxUser(root,info.ino);
   // `.git` сервер пишет сам от root после каждого коммита и выгрузки, поэтому открывается не один
   // раз при первом доступе, а перед каждым обращением: иначе `git add`/`git commit` в контейнере
   // снова упираются в `.git/index: Permission denied`.

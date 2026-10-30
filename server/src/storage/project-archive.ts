@@ -14,6 +14,15 @@ import {
   writeArchiveRecord,
   type ProjectArchiveRecord,
 } from "./project-archive-state.js";
+import {
+  ProjectRestoreFailedError,
+  ProjectRestoringError,
+  projectRestoreCancelled,
+  projectRestoreJob,
+  restoreJobActive,
+  startRestoreJob,
+  type RestoreJob,
+} from "./restore-jobs.js";
 
 /**
  * Холодный ярус проектов: рабочая папка уезжает в S3-совместимый бакет и освобождает диск ВМ.
@@ -202,6 +211,20 @@ async function refreshSize(projectId: string, userId: string) {
 
 export type ArchiveResult = { archived: true; bytes: number; key: string; alreadyArchived: boolean };
 
+/** Прогресс восстановления: байты объекта, а не распакованного дерева — их видно уже при скачивании. */
+export type RestoreProgressHandler = (
+  bytesDone: number,
+  bytesTotal: number,
+  phase: "downloading" | "unpacking",
+) => void;
+
+export type RestoreOptions = {
+  store?: ObjectStore;
+  onProgress?: RestoreProgressHandler;
+  /** Отмена: проект удалили, пока архив ехал, — распаковывать его обратно нельзя. */
+  shouldAbort?: () => boolean;
+};
+
 export async function archiveProject(
   projectId: string,
   userId: string,
@@ -261,7 +284,7 @@ export async function archiveProject(
 export async function restoreProject(
   projectId: string,
   userId: string,
-  options: { store?: ObjectStore } = {},
+  options: RestoreOptions = {},
 ): Promise<boolean> {
   return withArchiveLock(projectId, async () => {
     const record = await recoverProjectArchiveRecord(projectId, userId, options);
@@ -270,9 +293,21 @@ export async function restoreProject(
     const store = options.store ?? s3ObjectStore();
     const file = await tempFile(".tar.gz");
     const started = Date.now();
+    const total = record.bytes;
     try {
-      const found = await store.getToFile(record.key, file);
+      options.onProgress?.(0, total, "downloading");
+      const found = await store.getToFile(record.key, file, {
+        onProgress: received => options.onProgress?.(Math.min(received, total), total, "downloading"),
+      });
       if (!found) throw new Error("Архив проекта не найден в объектном хранилище");
+      // Пока архив ехал, проект могли удалить. Без отметки распаковка вернула бы каталог
+      // удалённого проекта на диск и снова записала бы его в квоту.
+      if (!(await readArchiveRecord(projectId))) {
+        throw new Error("Архив проекта удалён — восстанавливать нечего");
+      }
+      // Дальше архив читается и распаковывается: байт уже столько же, меняется только фаза,
+      // чтобы панель не показывала «100%», пока дерево ещё собирается.
+      options.onProgress?.(total, total, "unpacking");
       await assertSafeArchive(file);
       const root = sandboxRootPath(projectId);
       const leftovers = await readdir(root).catch(() => [] as string[]);
@@ -289,6 +324,8 @@ export async function restoreProject(
       try {
         await mkdir(staging, { recursive: true });
         await exec("tar", ["-xzf", file, "-C", staging, "--no-same-owner"], { timeout: TAR_TIMEOUT_MS, maxBuffer: 1024 * 1024 });
+        // Удаление могло прийти и во время распаковки: подменять рабочую папку уже нельзя.
+        if (options.shouldAbort?.()) throw new Error("Восстановление отменено: проект удалён");
         // Старая копия убирается только после того, как новая распакована целиком: обрыв на
         // любом шаге оставляет либо прежнюю папку, либо отметку архива — и распаковка повторится.
         await rm(root, { recursive: true, force: true });
@@ -310,25 +347,61 @@ export async function restoreProject(
 }
 
 /**
+ * Поставить восстановление в фон. Возвращается само задание, а не результат: HTTP-запрос
+ * заканчивается сразу, панель спрашивает `projectRestoreJob`/`GET .../archive`.
+ *
+ * `null` — архива нет, проект уже на диске. Если для проекта уже идёт восстановление, вернётся
+ * оно: два параллельных скачивания в один каталог не нужны.
+ */
+export async function startProjectRestore(
+  projectId: string,
+  userId: string,
+  options: RestoreOptions = {},
+): Promise<RestoreJob | null> {
+  const running = projectRestoreJob(projectId);
+  if (running && restoreJobActive(running)) return running;
+  const record = await projectArchiveInfo(projectId, userId, { store: options.store });
+  if (!record) return null;
+  if (record.userId !== userId) throw new Error("Проект не найден");
+  console.log(
+    "[storage] проект " + projectId + ": восстановление начато (" + record.bytes + " байт)",
+  );
+  return startRestoreJob({
+    projectId,
+    userId,
+    bytesTotal: record.bytes,
+    run: progress =>
+      restoreProject(projectId, userId, {
+        ...options,
+        onProgress: progress,
+        shouldAbort: options.shouldAbort ?? (() => projectRestoreCancelled(projectId)),
+      }),
+  });
+}
+
+/**
  * Вызывается перед каждым доступом к песочнице. Быстрый путь — «отметки нет»: один `readFile`,
- * который сразу падает с ENOENT. Если отметка есть, проект лежит в бакете — независимо от того,
- * что успело остаться на диске: непустая папка после прерванной архивации или распаковки не
- * повод считать её целой копией (раньше именно это удаляло отметку и оставляло полупустой
- * проект без возможности восстановления). Повторная распаковка идемпотентна: она собирает
- * каталог в сторожащем месте и заменяет рабочую папку целиком.
+ * который сразу падает с ENOENT. Если проект лежит в бакете, распаковка ставится в фон, а
+ * вызывающий получает `ProjectRestoringError` (409): держать HTTP-запрос десятки секунд на
+ * проекте в 200 МБ — это и есть «сайт завис», от которого уходим.
+ *
+ * Задание проверяется до ожидания чужой архивации: иначе второй запрос ждал бы не упаковку, а
+ * идущее восстановление и снова висел бы до конца скачивания.
  */
 export async function ensureProjectWorkspace(
   projectId: string,
   userId: string,
-  options: { store?: ObjectStore } = {},
+  options: RestoreOptions = {},
 ): Promise<boolean> {
-  // Упаковка могла начаться за миг до этого запроса: сначала даём ей закончиться, иначе отметка
-  // архива ещё не видна и проект выглядит пустым.
+  const running = projectRestoreJob(projectId);
+  if (running && restoreJobActive(running)) throw new ProjectRestoringError(running);
+  if (running && running.state === "failed") throw new ProjectRestoreFailedError(running);
+  // Упаковка могла начаться за миг до этого запроса: сначала даём ей закончиться — после неё
+  // появится отметка, и восстановление начнётся уже из архива.
   await waitForProjectArchive(projectId);
-  const record = await recoverProjectArchiveRecord(projectId, userId, options);
-  if (!record) return false;
-  if (record.userId !== userId) throw new Error("Проект не найден");
-  return restoreProject(projectId, userId, options);
+  const job = await startProjectRestore(projectId, userId, options);
+  if (!job) return false;
+  throw new ProjectRestoringError(job);
 }
 
 /**

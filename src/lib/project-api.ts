@@ -251,3 +251,34 @@ export const skipProjectQuestion=(projectId:string,requestId:string)=>apiJson<{c
   "/api/projects/"+projectId+"/questions/"+encodeURIComponent(requestId)+"/skip",{method:"POST"});
 
 export const runProjectTerminal=(projectId:string,command:string,cwd?:string)=>apiJson<{ok:boolean;stdout:string;stderr:string}>("/api/projects/"+projectId+"/terminal",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({command,cwd})});
+
+/**
+ * Холодный ярус проекта. `archived` — рабочая папка лежит в бакете; `restoring` — её уже
+ * возвращают, `bytesDone`/`bytesTotal` — прогресс скачивания архива.
+ */
+export type ProjectArchivePhase="queued"|"downloading"|"unpacking"|null;
+export type ProjectArchiveState={
+  archived:boolean;
+  bytes:number;
+  archivedAt:string|null;
+  restoring:boolean;
+  bytesDone:number;
+  bytesTotal:number;
+  phase:ProjectArchivePhase;
+  jobId:string|null;
+  error:string|null;
+};
+export const getProjectArchive=(projectId:string)=>apiJson<ProjectArchiveState>("/api/projects/"+projectId+"/archive");
+/**
+ * Ставит восстановление в фон и сразу возвращает задание (`202`), а не ждёт распаковки.
+ * `jobId: null` — архива нет, проект уже на диске.
+ */
+export const startProjectRestore=(projectId:string)=>apiJson<{
+  archived:boolean;
+  restored:boolean;
+  restoring:boolean;
+  jobId:string|null;
+  bytesDone:number;
+  bytesTotal:number;
+  phase:ProjectArchivePhase;
+}>("/api/projects/"+projectId+"/restore",{method:"POST"});

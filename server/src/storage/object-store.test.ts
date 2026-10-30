@@ -84,8 +84,12 @@ test("скачивание пишет файл, а отсутствующий о
       fetch: (async () => new Response("содержимое", { status: 200 })) as unknown as typeof fetch,
     });
     const target = path.join(dir, "restored.tar.gz");
-    assert.equal(await client.getToFile("k", target), true);
+    const progress: Array<[number, number]> = [];
+    assert.equal(await client.getToFile("k", target, { onProgress: (received, total) => progress.push([received, total]) }), true);
     assert.equal(await readFile(target, "utf8"), "содержимое");
+    // Прогресс считает именно байты потока: по нему панель показывает полосу восстановления.
+    assert.deepEqual(progress.at(-1)?.[0], Buffer.byteLength("содержимое"));
+    assert.ok(progress.length > 0);
 
     const missing = s3ObjectStore(config, {
       fetch: (async () => new Response("<Error><Code>NoSuchKey</Code></Error>", { status: 404 })) as unknown as typeof fetch,

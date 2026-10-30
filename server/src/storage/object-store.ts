@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
 import { mkdir, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
-import { Readable } from "node:stream";
+import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { amzDate, awsEncode, parseS3ErrorCode, signAwsV4 } from "../services/s3.js";
 
@@ -40,8 +40,15 @@ export type ObjectStore = {
   readonly prefix: string;
   /** Загружает файл целиком и возвращает его размер. */
   putFile(key: string, filePath: string, contentType?: string): Promise<number>;
-  /** Скачивает объект в файл; `false`, если объекта нет. */
-  getToFile(key: string, filePath: string): Promise<boolean>;
+  /**
+   * Скачивает объект в файл; `false`, если объекта нет. `onProgress` нужен холодному ярусу:
+   * восстановление проекта идёт в фоне, и панель показывает, сколько байт уже на диске.
+   */
+  getToFile(
+    key: string,
+    filePath: string,
+    options?: { onProgress?: (received: number, total: number) => void },
+  ): Promise<boolean>;
   head(key: string): Promise<{ size: number } | null>;
   remove(key: string): Promise<void>;
 };
@@ -322,17 +329,29 @@ export function s3ObjectStore(config: ObjectStoreConfig | null = objectStoreConf
       await response.arrayBuffer().catch(() => undefined);
       return info.size;
     },
-    async getToFile(key, filePath) {
+    async getToFile(key, filePath, options) {
       const response = await signedRequest(config, "GET", key, {
         payloadHash: EMPTY_SHA256,
         timeoutMs: TRANSFER_TIMEOUT_MS,
       }, deps);
       if (response.status === 404) return false;
       if (!response.ok) throw await s3Error(response, "скачать");
+      if (!response.body) throw new Error("Хранилище вернуло пустой ответ вместо объекта " + key);
       await mkdir(path.dirname(filePath), { recursive: true });
       const temp = filePath + "." + process.pid + ".part";
+      // Счётчик стоит в потоке, а не на событии `data`: подписка на `data` переводит поток в
+      // flowing-режим и может потерять куски до того, как `pipeline` успеет подключиться.
+      const total = Number(response.headers.get("content-length") ?? "") || 0;
+      let received = 0;
+      const counter = new Transform({
+        transform(chunk: Buffer, _encoding, callback) {
+          received += chunk.length;
+          options?.onProgress?.(received, total);
+          callback(null, chunk);
+        },
+      });
       try {
-        await pipeline(Readable.fromWeb(response.body as never), createWriteStream(temp));
+        await pipeline(Readable.fromWeb(response.body as never), counter, createWriteStream(temp));
         await rename(temp, filePath);
       } catch (error) {
         await rm(temp, { force: true }).catch(() => undefined);

@@ -77,6 +77,7 @@ import { startBillingSweeper, stopBillingSweeper } from "./billing/recurring.js"
 import { startStorageReconcileScheduler } from "./account/storage-scheduler.js";
 import { describeObjectStore } from "./storage/object-store.js";
 import { startProjectArchiveScheduler } from "./storage/archive-scheduler.js";
+import { ProjectRestoreFailedError, ProjectRestoringError } from "./storage/restore-jobs.js";
 import { importArchiveRecordsFromDisk } from "./storage/project-archive-state.js";
 import { startAlertScheduler } from "./health/alerts.js";
 import { describeBilling, robokassaConfig } from "./billing/robokassa.js";
@@ -250,6 +251,17 @@ app.addHook("onClose", async () => { stopBillingSweeper(); stopMailQueue(); stop
 await registerSecurityHeaders(app);
 
 app.setErrorHandler((error, request, reply) => {
+  // Проект в холодном ярусе: первый доступ ставит восстановление в фон, а клиент получает
+  // `409 PROJECT_RESTORING` с прогрессом — это нормальный ход, а не сбой сервера.
+  if (error instanceof ProjectRestoringError || error instanceof ProjectRestoreFailedError) {
+    return reply.code(error.statusCode).send({
+      error: error.message,
+      code: error.code,
+      jobId: error.jobId,
+      bytesDone: error.bytesDone,
+      bytesTotal: error.bytesTotal,
+    });
+  }
   if (error instanceof ZodError) {
     return reply.code(400).send({
       error: "Некорректный запрос",

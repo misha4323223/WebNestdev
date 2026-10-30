@@ -1,17 +1,19 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { LayoutShell } from "../layout/LayoutShell";
 import { PreviewPanel } from "../preview/PreviewPanel";
 import { SettingsHub } from "../settings/SettingsHub";
 import { conversationMemoryKey, useWorkspace } from "./useWorkspace";
 import { WorkspaceNav,type WorkspaceView } from "./WorkspaceNav";
 import { WorkspaceContent } from "./WorkspaceContent";
+import { useProjectWake } from "./useProjectWake";
+import { ProjectWakeCard } from "./ProjectWakeCard";
 import { useChatSessions } from "../agent/ChatSessions";
 import { DeploymentWizard } from "../deployment/DeploymentWizard";
 import { composeAgentPrompt } from "../../lib/agent-compose";
 import { NestLoader } from "../../components/NestLoader";
 import { createConversation, deleteConversation, type ConversationSummary } from "../../lib/project-api";
 
-export function WorkspaceShell({onHome,onAgentState}:{onHome:()=>void;onAgentState?:(state:{running:boolean;projectName:string}|null)=>void}){
+export function WorkspaceShell({onHome,onAgentState,active=true}:{onHome:()=>void;onAgentState?:(state:{running:boolean;projectName:string}|null)=>void;active?:boolean}){
   const {projectId,conversationId,projectName,loading,error,retry,openConversation,renameCurrentProject}=useWorkspace();
   const [view,setView]=useState<WorkspaceView>("agent");
   // Рабочая область остаётся смонтированной, когда пользователь уходит на главную, поэтому
@@ -70,6 +72,38 @@ export function WorkspaceShell({onHome,onAgentState}:{onHome:()=>void;onAgentSta
   // Каждый законченный запуск может переписать TASKS.md: вкладка задач перечитывает файл,
   // когда её откроют, и не показывает список прошлого хода.
   const [taskReload,setTaskReload]=useState(0);
+  // Проект после долгого простоя лежит в бакете: пока файлы едут обратно, рабочая область
+  // показывает прогресс, а не пустые списки и 409 от каждого запроса. Готовность поднимает
+  // счётчик предпросмотра — он перечитывает статус и кадр уже на живой папке.
+  const wakeReady=useCallback(()=>setPreviewReload(value=>value+1),[]);
+  const wake=useProjectWake(projectId,wakeReady);
+  // Вкладка могла простоять открытой всю ночь: при возврате проверяем, не уехал ли проект в
+  // холодный ярус, и если да — показываем пробуждение вместо ошибок в панелях.
+  const recheckWake=wake.recheck;
+  const waking=wake.phase==="waking"||wake.phase==="failed";
+  // Смена вкладки — ещё один момент, когда проект мог уехать в архив, пока панель стояла
+  // открытой. Живой проект отвечает одним чтением отметки, поэтому проверка дешёвая.
+  const firstViewCheck=useRef(true);
+  useEffect(()=>{
+    if(firstViewCheck.current){firstViewCheck.current=false;return}
+    if(!waking)void recheckWake();
+  },[view,waking,recheckWake]);
+  // Главная и рабочая область живут одновременно: возврат из главной не перемонтирует панель,
+  // поэтому это отдельный повод проверить, не уехал ли проект в архив, пока его не было на экране.
+  const firstActive=useRef(true);
+  useEffect(()=>{
+    if(firstActive.current){firstActive.current=false;return}
+    if(active)void recheckWake();
+  },[active,recheckWake]);
+  useEffect(()=>{
+    const onVisible=()=>{if(document.visibilityState==="visible")void recheckWake()};
+    window.addEventListener("focus",onVisible);
+    document.addEventListener("visibilitychange",onVisible);
+    return ()=>{
+      window.removeEventListener("focus",onVisible);
+      document.removeEventListener("visibilitychange",onVisible);
+    };
+  },[recheckWake]);
 
   useEffect(()=>{onAgentState?.(agentRunning?{running:true,projectName}:null)},[agentRunning,projectName,onAgentState]);
   // Пока рабочая область жива, главная не имеет своего запуска: уходя, она снимает свой статус.
@@ -102,14 +136,16 @@ export function WorkspaceShell({onHome,onAgentState}:{onHome:()=>void;onAgentSta
   // иначе «Изменения» монтировались бы под ней и клик выглядел бы как пустой.
   const openChanges=()=>{setSettingsOpen(false);setPreviewOpen(false);setView("changes")};
 
+  // Пока проект просыпается, панели не монтируются: файлы, терминал и предпросмотр всё равно
+  // получили бы 409, а панель агента открыла бы сокет на полупустой каталог.
   return <LayoutShell projectId={projectId} projectName={projectName} onRenameProject={renameCurrentProject} onSettings={openSettings} onSecrets={openSecrets} onDeploy={()=>setDeployOpen(true)} onHome={onHome} onOpenChanges={openChanges} agentRunning={agentRunning} previewOpen={previewOpen} previewRunning={previewRunning} onPreviewToggle={()=>setPreviewOpen(value=>!value)} onRepositoryChanged={()=>setPreviewReload(value=>value+1)} sidebarHidden={settingsOpen} chats={{projectId,activeId:conversationId,sessions,error:sessionsError,onNew:newChat,onOpen:openConversation,onDelete:deleteChat}}>
     <main className="main">
       <div className="workspace-main">
-        {settingsOpen?<div className="workspace-overlay-panel">
+        {waking?<ProjectWakeCard progress={wake.progress} error={wake.error} onRetry={wake.retry}/>:settingsOpen?<div className="workspace-overlay-panel">
           <SettingsHub key={settingsKey} projectId={projectId} projectName={projectName} onClose={()=>setSettingsOpen(false)}/>
         </div>:<><WorkspaceNav view={view} onChange={setView} onSecrets={openSecrets}/><WorkspaceContent view={view} projectId={projectId} projectName={projectName} conversationId={conversationId} onRunFinished={()=>{setPreviewReload(value=>value+1);setTaskReload(value=>value+1);void sessionsReload()}} onFileSaved={()=>setPreviewReload(value=>value+1)} taskReload={taskReload} onOpenModelSettings={openModelSettings} onOpenAccountSettings={openSettings} onRunningChange={reportAgentState} onOpenChanges={()=>{setSettingsOpen(false);setView("changes")}} scrollSignal={scrollSignal} onChatEndChange={reportChatEnd} onScrollBottom={scrollChatToBottom} showScroll={view==="agent"&&!chatAtEnd} writing={view==="agent"&&!chatAtEnd&&agentRunning}/></>}
       </div>
-      <PreviewPanel projectId={projectId} reloadToken={previewReload} open={previewOpen} onClose={()=>setPreviewOpen(false)} onRunningChange={setPreviewRunning}/>
+      {!waking&&<PreviewPanel projectId={projectId} reloadToken={previewReload} open={previewOpen} onClose={()=>setPreviewOpen(false)} onRunningChange={setPreviewRunning}/>}
       {deployOpen&&<DeploymentWizard
         projectId={projectId}
         onClose={()=>setDeployOpen(false)}

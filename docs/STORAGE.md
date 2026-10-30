@@ -109,10 +109,12 @@ What happens:
    rollback snapshot and the import can be repeated safely. If the row is lost while the project
    directory is gone, the server checks the deterministic object key with `HEAD` and restores the
    row before downloading — the bucket is the last source of truth, not a guess.
-4. The first access — any route, tool or preview, all of which go through `getSandbox` — downloads
-   the archive, checks the file list for absolute paths and `..`, unpacks it into a staging directory
-   next to the sandboxes and replaces the project directory with a `rename`. The marker is removed
-   only after that swap.
+4. The first access — any route, tool or preview, all of which go through `getSandbox` — starts the
+   restore as a background job and answers immediately with `409 PROJECT_RESTORING` (`jobId`,
+   `bytesDone`, `bytesTotal`), instead of holding the request for the whole download. The job
+   downloads the archive, checks the file list for absolute paths and `..`, unpacks it into a staging
+   directory next to the sandboxes and replaces the project directory with a `rename`. The marker is
+   removed only after that swap; progress is read from `GET /api/projects/:id/archive`.
 5. Deleting a project deletes its object too, so the bucket does not accumulate orphans.
 
 An interrupted archive or unpack never leaves a half-restored project: the marker survives, and the
@@ -156,8 +158,11 @@ Manual control and API:
 
 - `POST /api/projects/:id/archive` — archive now. Refused with `409` while an agent run or a preview
   is alive: their files must not be packed mid-write.
-- `POST /api/projects/:id/restore` — download and unpack without waiting for the next access.
-- `GET /api/projects/:id/archive` — `{ archived, bytes, archivedAt }`.
+- `POST /api/projects/:id/restore` — start the background restore. `202` with `jobId` when the
+  project is in the bucket; `200` with `jobId: null` when there is nothing to restore.
+- `GET /api/projects/:id/archive` — `{ archived, bytes, archivedAt, restoring, bytesDone,
+  bytesTotal, phase, jobId, error }`. While `restoring` is true the progress is in bytes of the
+  archive; after the download `phase` becomes `unpacking` (the bar stays at 100%).
 - `PROJECT_ARCHIVE_ENABLED=1` adds a sweeper: projects whose last recorded write is older than
   `PROJECT_ARCHIVE_IDLE_MINUTES` (six hours by default), with no active run and no live preview, are
   archived in the background. The idle time comes from `project_sizes.last_write_at`, which every
@@ -167,7 +172,10 @@ Manual control and API:
   anything with an active agent run, a live preview, or a project opened in this process within
   `PROJECT_ARCHIVE_ACCESS_GUARD_MS` (reads do not update `project_sizes`).
 
-Known gaps: the archive marker is now shared, but the sandbox directory itself is still local to a
+Known gaps: the restore job registry lives in the server process. A restart in the middle of a
+restore loses the job, but the archive marker remains and the next access starts a new one; with
+several replicas each one runs its own job (the marker is shared, the staging directory is not).
+The archive marker is now shared, but the sandbox directory itself is still local to a
 host, so a second machine can restore a project from the bucket only after the project is archived;
 the access guard is per process, so with several replicas a project opened on one of them can still
 be archived by another — run the sweeper on one replica (it is off by default) until the sandbox

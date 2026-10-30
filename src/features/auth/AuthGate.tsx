@@ -140,7 +140,7 @@ export function AuthGate(){
       <HomeScreen key={homeVersion} onOpenWorkspace={openWorkspace} activeRun={agentRun?.running?{projectId:workspaceProject??"",projectName:agentRun.projectName}:null}/>
     </div>
     {workspaceProject!==null&&<div className="app-pane" hidden={home}>{
-      <WorkspaceShell key={workspaceProject} onHome={goHome} onAgentState={reportAgentState}/>
+      <WorkspaceShell key={workspaceProject} onHome={goHome} onAgentState={reportAgentState} active={!home}/>
     }</div>}
     {onboardingOpen&&<OnboardingFlow accountEmail={onboardingEmail} onStart={startFromOnboarding} onSkip={()=>setOnboardingOpen(false)}/>}
   </>;

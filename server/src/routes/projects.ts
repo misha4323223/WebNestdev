@@ -6,7 +6,8 @@ import type { Conversation } from "../project-store.js";
 import { limitsForPlan } from "../account/plans.js";
 import { accountPlanFor } from "../billing/store.js";
 import { forgetProjectStorage } from "../account/storage-quota.js";
-import { archiveProject, deleteProjectArchive, projectArchiveInfo, restoreProject } from "../storage/project-archive.js";
+import { archiveProject, deleteProjectArchive, projectArchiveInfo, startProjectRestore } from "../storage/project-archive.js";
+import { cancelProjectRestore, projectRestoreJob, restoreJobActive } from "../storage/restore-jobs.js";
 import { recordArchiveFailure } from "../storage/archive-health.js";
 import { isConversationRunning, isRunActive } from "../agent/active-runs.js";
 import { getPreview } from "../preview/preview-store.js";
@@ -80,6 +81,9 @@ export async function registerProjectRoutes(app:FastifyInstance){
     // Имя нужно журналу после удаления: в записи останется и id, и человекочитаемое название.
     const project=await getProject(p.id);
     if(!await deleteProject(p.id,user.id))return reply.code(404).send({error:"Проект не найден"});
+    // Если проект как раз возвращался из архива, распаковка должна остановиться: иначе каталог
+    // удалённого проекта вернулся бы на диск и снова занял квоту.
+    cancelProjectRestore(p.id);
     await recordAudit({
       action:"project.deleted",
       actorType:"user",
@@ -120,13 +124,29 @@ export async function registerProjectRoutes(app:FastifyInstance){
       return reply.code(400).send({error:message,code:"ARCHIVE_FAILED"});
     }
   });
+  /**
+   * Восстановление больше не держит запрос: проект в 200 МБ скачивается и распаковывается
+   * десятки секунд, а HTTP отвечает сразу `202` и `jobId`. Дальше панель опрашивает
+   * `GET .../archive` — там же `restoring`, `bytesDone` и `bytesTotal`.
+   */
   app.post("/api/projects/:id/restore",async(request,reply)=>{
     const user=await requireUser(request,reply); if(!user)return;
     const p=z.object({id:z.string().min(1)}).parse(request.params);
     const project=await getProject(p.id);
     if(!project||project.userId!==user.id)return reply.code(404).send({error:"Проект не найден"});
     try{
-      return {archived:false,restored:await restoreProject(p.id,user.id)};
+      const job=await startProjectRestore(p.id,user.id);
+      // Архива нет — восстанавливать нечего; это не ошибка и не задание.
+      if(!job)return {archived:false,restored:false,restoring:false,jobId:null,bytesDone:0,bytesTotal:0,phase:null};
+      return reply.code(202).send({
+        archived:true,
+        restored:false,
+        restoring:true,
+        jobId:job.id,
+        bytesDone:job.bytesDone,
+        bytesTotal:job.bytesTotal,
+        phase:job.state,
+      });
     }catch(error){
       const message=error instanceof Error?error.message:String(error);
       return reply.code(502).send({error:message,code:"RESTORE_FAILED"});
@@ -138,7 +158,21 @@ export async function registerProjectRoutes(app:FastifyInstance){
     const project=await getProject(p.id);
     if(!project||project.userId!==user.id)return reply.code(404).send({error:"Проект не найден"});
     const record=await projectArchiveInfo(p.id,project.userId);
-    return {archived:Boolean(record),bytes:record?.bytes??0,archivedAt:record?.archivedAt??null};
+    // `job` живёт на этой машине: после перезапуска сервера панель увидит только отметку архива,
+    // и первый же доступ к песочнице поставит восстановление заново.
+    const job=projectRestoreJob(p.id);
+    const restoring=job?restoreJobActive(job):false;
+    return {
+      archived:Boolean(record),
+      bytes:record?.bytes??job?.bytesTotal??0,
+      archivedAt:record?.archivedAt??null,
+      restoring,
+      bytesDone:job?.bytesDone??0,
+      bytesTotal:job?.bytesTotal??record?.bytes??0,
+      phase:restoring&&job?job.state:null,
+      jobId:job?.id??null,
+      error:job?.state==="failed"?job.error:null,
+    };
   });
   app.get("/api/projects/:id/conversations",async(request,reply)=>{
     const user=await requireUser(request,reply); if(!user)return;

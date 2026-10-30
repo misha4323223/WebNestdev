@@ -35,6 +35,7 @@ async function appWithProject() {
   return {
     app,
     projectId: project.id,
+    userId: user.id,
     headers: { cookie: "webnestdev_session=" + (await createSession(user.id)).id },
     otherHeaders: { cookie: "webnestdev_session=" + (await createSession(other.id)).id },
   };
@@ -49,7 +50,17 @@ test("проект без архива отдаёт archived:false и пусто
 
     const archive = await app.inject({ method: "GET", url: "/api/projects/" + projectId + "/archive", headers });
     assert.equal(archive.statusCode, 200);
-    assert.deepEqual(archive.json(), { archived: false, bytes: 0, archivedAt: null });
+    assert.deepEqual(archive.json(), {
+      archived: false,
+      bytes: 0,
+      archivedAt: null,
+      restoring: false,
+      bytesDone: 0,
+      bytesTotal: 0,
+      phase: null,
+      jobId: null,
+      error: null,
+    });
   } finally {
     await app.close();
   }
@@ -63,6 +74,67 @@ test("без настроенного бакета архивация отвеч
     assert.equal(response.json().code, "ARCHIVE_FAILED");
     assert.match(response.json().error, /Объектное хранилище не настроено/);
   } finally {
+    await app.close();
+  }
+});
+
+test("восстанавливать нечего — ответ 200 без задания, а не 202", async () => {
+  const { app, projectId, headers } = await appWithProject();
+  try {
+    const response = await app.inject({ method: "POST", url: "/api/projects/" + projectId + "/restore", headers });
+    assert.equal(response.statusCode, 200);
+    assert.deepEqual(response.json(), {
+      archived: false,
+      restored: false,
+      restoring: false,
+      jobId: null,
+      bytesDone: 0,
+      bytesTotal: 0,
+      phase: null,
+    });
+  } finally {
+    await app.close();
+  }
+});
+
+test("архивный проект отвечает 202 с jobId, а статус отдаёт прогресс", async () => {
+  const { app, projectId, userId, headers } = await appWithProject();
+  // Проверяется контракт API: задание уже идёт, поэтому маршруту не нужен настоящий бакет.
+  const { startRestoreJob } = await import("../storage/restore-jobs.js");
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const job = startRestoreJob({
+    projectId,
+    userId,
+    bytesTotal: 1000,
+    run: async progress => {
+      progress(400, 1000, "downloading");
+      await gate;
+      return false;
+    },
+  });
+  try {
+    const started = await app.inject({ method: "POST", url: "/api/projects/" + projectId + "/restore", headers });
+    assert.equal(started.statusCode, 202);
+    assert.equal(started.json().jobId, job.id);
+    assert.equal(started.json().bytesTotal, 1000);
+    assert.equal(started.json().restoring, true);
+
+    const status = await app.inject({ method: "GET", url: "/api/projects/" + projectId + "/archive", headers });
+    assert.equal(status.statusCode, 200);
+    assert.deepEqual(status.json(), {
+      archived: false,
+      bytes: 1000,
+      archivedAt: null,
+      restoring: true,
+      bytesDone: 400,
+      bytesTotal: 1000,
+      phase: "downloading",
+      jobId: job.id,
+      error: null,
+    });
+  } finally {
+    release();
     await app.close();
   }
 });
