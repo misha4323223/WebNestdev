@@ -348,6 +348,8 @@ test("обновление соединения до WebSocket передаёт�
     const handshake = await read(client);
     assert.match(handshake, /101 Switching Protocols/);
     assert.match(received[0] ?? "", /^GET \/hmr HTTP\/1\.1\r\n/);
+    assert.match(received[0] ?? "", new RegExp("\\r\\nhost: 127\\.0\\.0\\.1:" + sitePort + "\\r\\n", "i"), "приложение должно получить свой адрес: Vite проверяет Host для HMR");
+    assert.doesNotMatch(received[0] ?? "", new RegExp(PROJECT + "\\." + DOMAIN), "публичный Host не должен попадать в приложение");
     assert.match(received[0] ?? "", /app_session=1/);
     assert.doesNotMatch(received[0] ?? "", new RegExp(PREVIEW_TICKET_COOKIE), "билет не должен уходить в приложение");
 

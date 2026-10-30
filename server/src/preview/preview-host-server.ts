@@ -480,7 +480,7 @@ export function createPreviewHostServer(deps: PreviewHostDeps = defaultDeps, lim
     upstream.once("connect", () => {
       upstream.setTimeout(0);
       upstream.removeListener("error", fail);
-      upstream.write(upgradeRequestLine(request, upstreamPath));
+      upstream.write(upgradeRequestLine(request, upstreamPath, hostWithPort(state.host, state.port)));
       if (head?.length) upstream.write(head);
       socket.pipe(upstream);
       upstream.pipe(socket);
@@ -511,17 +511,31 @@ export function createPreviewHostServer(deps: PreviewHostDeps = defaultDeps, lim
 /**
  * Исходный запрос апгрейда, собранный обратно из разобранных заголовков. Заголовки проходят тот же
  * фильтр, что и у обычных запросов: cookie платформы (сессия панели и билет) в приложение не уходит.
+ *
+ * `Host` заменяется адресом самого приложения, а не остаётся публичным именем предпросмотра.
+ * Vite 8 проверяет его для HMR-соединения (`server.allowedHosts`) и на чужое имя отвечает 400,
+ * хотя обычная страница уже открыта: HTTP-путь и так ходит по адресу контейнера, а WebSocket
+ * раньше передавал публичный Host и ломал живую перезагрузку. Приложение, которому нужен именно
+ * публичный адрес, получает его в `Origin`; подменять Host обратно нельзя, иначе проверка снова
+ * увидит чужое имя.
  */
-function upgradeRequestLine(request: IncomingMessage, path = request.url ?? "/") {
+function upgradeRequestLine(request: IncomingMessage, path = request.url ?? "/", upstreamHost = "") {
+  const headers = forwardableHeaders(request.headers);
+  delete headers.host;
   const lines = [request.method + " " + path + " HTTP/1.1"];
-  for (const [name, value] of Object.entries(forwardableHeaders(request.headers))) {
+  if (upstreamHost) lines.push("host: " + upstreamHost);
+  for (const [name, value] of Object.entries(headers)) {
     if (value === undefined) continue;
-    // `host` остаётся именем предпросмотра: приложение получает тот адрес, по которому к нему
-    // пришёл браузер, и строит по нему свои ответы так же, как при прямом обращении.
     if (Array.isArray(value)) for (const item of value) lines.push(name + ": " + item);
     else lines.push(name + ": " + value);
   }
   return lines.join("\r\n") + "\r\n\r\n";
+}
+
+/** `Host` upstream: IPv6-адрес в заголовке обязан быть в квадратных скобках. */
+function hostWithPort(host: string, port: number) {
+  const formatted = host.includes(":") && !host.startsWith("[") ? "[" + host + "]" : host;
+  return formatted + ":" + port;
 }
 
 /** Отказ на этапе апгрейда: короткий HTTP-ответ, после которого соединение закрывается. */
