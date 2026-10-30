@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { containerVanishedMessage, previewLogsOf } from "./preview-runner.js";
+import { containerVanishedMessage, previewLogsOf, previewWatchEnv } from "./preview-runner.js";
 import type { DockerExecResult } from "./types.js";
 
 /**
@@ -12,6 +12,11 @@ const missing: DockerExecResult = {
   stdout: "",
   stderr: "Error response from daemon: No such container: 6714136cabb0477f991fd20634e08725c9fb13faf62828e53b29fe95c0857f33\n",
 };
+
+test("runsc previews poll the bind mount; runc keeps the native watcher", () => {
+  assert.deepEqual(previewWatchEnv("runsc"), ["CHOKIDAR_USEPOLLING=1", "CHOKIDAR_INTERVAL=300"]);
+  assert.deepEqual(previewWatchEnv("docker"), []);
+});
 
 test("logs of a container Docker no longer knows are marked missing, not returned as app output", async () => {
   const result = await previewLogsOf("6714136cabb0", async () => missing);

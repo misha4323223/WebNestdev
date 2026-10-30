@@ -1,5 +1,5 @@
 import type { SandboxConfig } from "../sandbox-manager.js";
-import { sandboxImage, sandboxRuntimeArgs, workspaceMountSource } from "../sandbox/config.js";
+import { sandboxImage, sandboxRuntime, sandboxRuntimeArgs, workspaceMountSource } from "../sandbox/config.js";
 import { previewAppAnswers } from "./app-http.js";
 import { dockerExec, missingContainer } from "./docker-exec.js";
 import { addressOnNetworks, firstContainerAddress, previewNetwork } from "./preview-network.js";
@@ -12,6 +12,15 @@ import { previewSecretMounts } from "../secrets/preview-secrets.js";
 
 const READY_ATTEMPTS=30;
 const READY_DELAY_MS=500;
+
+/**
+ * Watcher environment for the preview container. Under runsc, changes made on the host side of the
+ * bind mount produce no inotify event inside the container (gVisor), so Vite must poll; under runc
+ * the native watcher is cheaper and stays enabled.
+ */
+export function previewWatchEnv(runtime: ReturnType<typeof sandboxRuntime> = sandboxRuntime()) {
+  return runtime === "runsc" ? ["CHOKIDAR_USEPOLLING=1", "CHOKIDAR_INTERVAL=300"] : [];
+}
 
 /**
  * The preview runs the same way for the agent and for the button in the panel: one dev
@@ -63,6 +72,11 @@ export async function startPreviewContainer(config:SandboxConfig){
       "-w","/workspace",
       "-e","HOME=/tmp",
       "-e","CI=1",
+      // gVisor не пробрасывает inotify-события bind-mount'а из хоста в контейнер: Vite видел
+      // изменения файлов только при старте и продолжал отдавать старый модуль, поэтому HMR
+      // молчал. Polling читает stat самого файла и работает с любым mount; для runc оставляем
+      // нативный watcher, чтобы не платить обходом дерева на каждом проекте.
+      ...previewWatchEnv().flatMap(value => ["-e", value]),
       image,"/bin/sh","-lc",command,
     ],
     // На загруженном хосте старт контейнера вместе с созданием слоя может занять больше 15 с:
