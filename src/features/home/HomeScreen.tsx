@@ -102,8 +102,8 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
   const [tab,setTab]=useState<HomeTab>("home");
   // Все категории колонки свёрнуты при открытии: человек сначала видит оглавление, а не его раздел.
   const [section,setSection]=useState<RailSection|null>(null);
-  // Первая категория шаблонов раскрыта: пример стартов виден сразу, остальные — по нажатию.
-  const [openGroup,setOpenGroup]=useState<string>("sites");
+  // Все категории шаблонов свёрнуты при открытии: человек сначала видит оглавление, а не его раздел.
+  const [openGroup,setOpenGroup]=useState<string>("");
   // Возврат со страницы оплаты: платёжная система переводит браузер сюда с отметкой в адресе.
   const [paymentReturn,setPaymentReturn]=useState<"success"|"fail"|null>(null);
 
