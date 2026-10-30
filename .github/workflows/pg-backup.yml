@@ -42,7 +42,7 @@ jobs:
     environment: production
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Prepare the SSH key
         if: ${{ vars.DEPLOY_RUNNER == '' }}
