@@ -6,15 +6,40 @@ import { findYandexIdentityByUserId } from "../auth/yandex-account-store.js";
 import { findPhoneByUserId, formatPhone } from "../auth/phone-store.js";
 import { getUserProfile } from "../account/profile-store.js";
 import { checkAuthRateLimit } from "../auth/auth-rate-limit.js";
+import { ensurePublicDemoUser, isPublicDemoAccount, publicDemoEnabled } from "../auth/public-demo.js";
+import { isSameOriginRequest } from "../security/same-origin.js";
 import { recordAudit } from "../security/audit-journal.js";
 import { blockedMessageFor, getRestriction } from "../account/restriction-store.js";
 
 const credentials = z.object({email:z.string().email().max(200),password:z.string().min(8).max(200)});
 
 export async function registerAuthRoutes(app:FastifyInstance){
-  app.get("/api/auth/me", async request => {
-    const user = await getCurrentUser(request);
-    if (!user) return {authenticated:false,user:null,onboarding:{profile:null}};
+  app.get("/api/auth/me", async (request,reply) => {
+    let user = await getCurrentUser(request);
+    // `/auth` во фронтенде просит `?login=1`: в публичном демо-режиме это оставляет обычный
+    // вход. Иначе владелец не смог бы войти в свой аккаунт, пока режим включён.
+    const manualLogin = String((request.query as {login?:unknown} | undefined)?.login ?? "") === "1";
+    let publicDemo = false;
+    if (manualLogin && user && isPublicDemoAccount(user)) {
+      // Демо-cookie не должна мешать экрану входа: убираем её и показываем форму.
+      const sessionId = request.cookies?.[SESSION_COOKIE];
+      if (sessionId) await deleteSession(sessionId);
+      reply.clearCookie(SESSION_COOKIE,{path:"/"});
+      user = null;
+    }
+    if (!user && !manualLogin && publicDemoEnabled() && isSameOriginRequest(request)
+      && checkAuthRateLimit(request.ip, "publicDemo").allowed) {
+      try {
+        const demo = await ensurePublicDemoUser();
+        if (await attachSession(reply, demo.id, request)) {
+          user = demo;
+          publicDemo = true;
+        }
+      } catch (error) {
+        request.log.warn({ error: error instanceof Error ? error.message : error }, "public demo sign-in failed");
+      }
+    }
+    if (!user) return {authenticated:false,user:null,onboarding:{profile:null},publicDemo:publicDemoEnabled()};
     // Which identity opened the account is shown in the profile: a Yandex ID sign-in
     // has no password, and the synthetic address must not look like a real e-mail.
     const [yandex, phone] = await Promise.all([
@@ -35,6 +60,7 @@ export async function registerAuthRoutes(app:FastifyInstance){
       // Контакты знакомства приходят вместе с сессией: по ним интерфейс решает, показывать
       // ли первый экран. Отдельный запрос означал бы мигание главной перед знакомством.
       onboarding:{profile:await getUserProfile(user.id)},
+      ...(publicDemo || isPublicDemoAccount(user) ? {publicDemo:true} : {}),
     };
   });
   app.post("/api/auth/register", async (request,reply) => {

@@ -35,6 +35,9 @@ function restoreScreen():"workspace"|"home"{
 }
 
 export function AuthGate(){
+  // `/auth` — явный вход: в публичном демо-режиме он не должен подменяться демо-аккаунтом,
+  // иначе владелец не сможет войти в свой аккаунт, пока демо включено.
+  const manualLogin=window.location.pathname==="/auth"||new URLSearchParams(window.location.search).get("login")==="1";
   const [state,setState]=useState<"loading"|"authenticated"|"guest">("loading");
   const [home,setHome]=useState(()=>restoreScreen()!=="workspace");
   /**
@@ -64,14 +67,15 @@ export function AuthGate(){
   // on this screen often enough that asking first would answer 401 in the browser console.
   const refresh=()=>{
     setState("loading");
-    void getAuth().then(result=>{
+    void getAuth(manualLogin).then(result=>{
       setState(result.authenticated?"authenticated":"guest");
       if(!result.authenticated){setOnboardingOpen(false);return;}
       // Контакты приходят вместе с сессией, поэтому первый экран не мигает главной: он либо
       // нужен аккаунту, либо нет. Проверка серверная — так его увидят и те, кто вошёл до
       // появления знакомства, и на любом устройстве, а не только в одном браузере.
+      // В публичном демо знакомство не нужно: посетитель пришёл смотреть сайт, а не заполнять анкету.
       setOnboardingEmail(result.user?.email??"");
-      setOnboardingOpen(!result.onboarding?.profile);
+      setOnboardingOpen(!result.publicDemo&&!result.onboarding?.profile);
       void refreshPreferences();
     }).catch(()=>{setState("guest");setOnboardingOpen(false);});
   };

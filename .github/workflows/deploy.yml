@@ -240,6 +240,8 @@ jobs:
           # Минуты простоя до переезда в бакет. Дни остаются поддерживаемым старым ключом,
           # но новый ключ важнее (см. server/src/storage/archive-scheduler.ts).
           PROJECT_ARCHIVE_IDLE_MINUTES: ${{ secrets.PROJECT_ARCHIVE_IDLE_MINUTES || vars.PROJECT_ARCHIVE_IDLE_MINUTES }}
+          # 1 — временный публичный демо-доступ для проверки платёжного сервиса; 0/пусто — обычный вход.
+          WEBNESTDEV_PUBLIC_DEMO: ${{ vars.WEBNESTDEV_PUBLIC_DEMO }}
           WEBNESTDEV_ADMIN_EMAILS: ${{ secrets.WEBNESTDEV_ADMIN_EMAILS }}
           WEBNESTDEV_ADMIN_USER_IDS: ${{ secrets.WEBNESTDEV_ADMIN_USER_IDS }}
           # Первый администратор админ-приложения (docs/ADMIN_API.md). Сервер создаёт запись при
@@ -383,6 +385,7 @@ jobs:
           add_platform_env PLATFORM_S3_SECRET_ACCESS_KEY "$PLATFORM_S3_SECRET_ACCESS_KEY"
           add_platform_env PROJECT_ARCHIVE_ENABLED "$PROJECT_ARCHIVE_ENABLED"
           add_platform_env PROJECT_ARCHIVE_IDLE_MINUTES "$PROJECT_ARCHIVE_IDLE_MINUTES"
+          add_platform_env WEBNESTDEV_PUBLIC_DEMO "$WEBNESTDEV_PUBLIC_DEMO"
           add_platform_env WEBNESTDEV_ADMIN_EMAILS "$WEBNESTDEV_ADMIN_EMAILS"
           add_platform_env WEBNESTDEV_ADMIN_USER_IDS "$WEBNESTDEV_ADMIN_USER_IDS"
           add_platform_env ADMIN_BOOTSTRAP_EMAIL "$ADMIN_BOOTSTRAP_EMAIL"
@@ -572,6 +575,8 @@ jobs:
           # Минуты простоя до переезда в бакет. Дни остаются поддерживаемым старым ключом,
           # но новый ключ важнее (см. server/src/storage/archive-scheduler.ts).
           PROJECT_ARCHIVE_IDLE_MINUTES: ${{ secrets.PROJECT_ARCHIVE_IDLE_MINUTES || vars.PROJECT_ARCHIVE_IDLE_MINUTES }}
+          # 1 — временный публичный демо-доступ для проверки платёжного сервиса; 0/пусто — обычный вход.
+          WEBNESTDEV_PUBLIC_DEMO: ${{ vars.WEBNESTDEV_PUBLIC_DEMO }}
           WEBNESTDEV_ADMIN_EMAILS: ${{ secrets.WEBNESTDEV_ADMIN_EMAILS }}
           WEBNESTDEV_ADMIN_USER_IDS: ${{ secrets.WEBNESTDEV_ADMIN_USER_IDS }}
           # Первый администратор админ-приложения (docs/ADMIN_API.md). Сервер создаёт запись при
@@ -695,6 +700,7 @@ jobs:
           add_platform_env PLATFORM_S3_SECRET_ACCESS_KEY "$PLATFORM_S3_SECRET_ACCESS_KEY"
           add_platform_env PROJECT_ARCHIVE_ENABLED "$PROJECT_ARCHIVE_ENABLED"
           add_platform_env PROJECT_ARCHIVE_IDLE_MINUTES "$PROJECT_ARCHIVE_IDLE_MINUTES"
+          add_platform_env WEBNESTDEV_PUBLIC_DEMO "$WEBNESTDEV_PUBLIC_DEMO"
           add_platform_env WEBNESTDEV_ADMIN_EMAILS "$WEBNESTDEV_ADMIN_EMAILS"
           add_platform_env WEBNESTDEV_ADMIN_USER_IDS "$WEBNESTDEV_ADMIN_USER_IDS"
           add_platform_env ADMIN_BOOTSTRAP_EMAIL "$ADMIN_BOOTSTRAP_EMAIL"

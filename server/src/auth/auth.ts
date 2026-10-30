@@ -2,6 +2,7 @@ import type { FastifyRequest } from "fastify";
 import { createSession, deleteSession, getSession, getUser, sessionTtlMs } from "./auth-store.js";
 import { getProject, type Project } from "../project-store.js";
 import { isBlocked } from "../account/restriction-store.js";
+import { isPublicDemoAccount, publicDemoEnabled } from "./public-demo.js";
 
 export const SESSION_COOKIE = "webnestdev_session";
 
@@ -12,6 +13,12 @@ export async function getCurrentUser(request:FastifyRequest){
   if(!session) return null;
   const user = await getUser(session.userId);
   if(!user) return null;
+  // Публичный демо-доступ выключили — старые сессии демо-аккаунта сразу перестают работать,
+  // иначе посетитель оставался бы внутри после возврата обычного входа.
+  if(isPublicDemoAccount(user) && !publicDemoEnabled()){
+    await deleteSession(sessionId);
+    return null;
+  }
   // Заблокированный аккаунт не проходит ни в один закрытый маршрут — даже если его сессия
   // пережила блокировку (её отзывает само действие в админке). Сессию убираем сразу: иначе
   // каждый следующий запрос снова читал бы блокировку.

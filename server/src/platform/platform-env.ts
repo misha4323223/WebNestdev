@@ -13,7 +13,7 @@ import { parseAuthorizedKeyJson, parseServiceAccountKey } from "../yandex/yandex
  * a deployment that never opens the panel behaves exactly as before.
  */
 export type PlatformEnvKind = "secret" | "json-key" | "value" | "url" | "path" | "flag";
-export type PlatformEnvGroup = "github" | "gitlab" | "gitverse" | "yandex" | "sms" | "ai" | "search" | "billing" | "plans" | "mail" | "support";
+export type PlatformEnvGroup = "access" | "github" | "gitlab" | "gitverse" | "yandex" | "sms" | "ai" | "search" | "billing" | "plans" | "mail" | "support";
 
 export type PlatformEnvEntry = {
   name: string;
@@ -28,6 +28,9 @@ export type PlatformEnvEntry = {
  * `getPlatformEnv`, so the list is a promise: everything shown takes effect without a restart.
  */
 export const PLATFORM_ENV_CATALOG: PlatformEnvEntry[] = [
+  // Временный публичный доступ: включается на время проверки платёжного сервиса, а не для
+  // постоянной работы. Значение читается при каждом запросе, поэтому выключается без выкатки.
+  { name: "WEBNESTDEV_PUBLIC_DEMO", group: "access", label: "Публичный демо-доступ", hint: "1 — сайт открывается без входа под отдельным демо-аккаунтом; 0 или пусто — обычный вход. Включайте на время проверки Робокассы и выключайте сразу после.", kind: "flag" },
   { name: "GITHUB_CLIENT_ID", group: "github", label: "Client ID", hint: "GitHub → Settings → Developer settings → OAuth Apps → ваше приложение. Client ID виден открыто.", kind: "value" },
   { name: "GITHUB_CLIENT_SECRET", group: "github", label: "Client Secret", hint: "Там же: «Generate a new client secret». Старый после этого перестаёт работать.", kind: "secret" },
   { name: "GITHUB_CALLBACK_URL", group: "github", label: "Callback URL", hint: "Необязательно: пустое поле — адрес берётся из домена панели (https://<домен>/api/github/callback).", kind: "url" },
@@ -178,7 +181,7 @@ export type PlatformEnvStatus = {
 type StoredEntry = { value: string; preview: string; updatedAt: string };
 type StoreFile = { version: 1; values: Record<string, StoredEntry> };
 
-const GROUP_LABEL: Record<PlatformEnvGroup, string> = { github: "GitHub", gitlab: "GitLab", gitverse: "GitVerse", yandex: "Yandex Cloud", sms: "SMS-провайдеры", ai: "AI-провайдер платформы", search: "Веб-поиск агента", billing: "Оплата (Robokassa)", plans: "Тарифы", mail: "Почта (Yandex Cloud Postbox)", support: "Поддержка" };
+const GROUP_LABEL: Record<PlatformEnvGroup, string> = { access: "Доступ к сайту", github: "GitHub", gitlab: "GitLab", gitverse: "GitVerse", yandex: "Yandex Cloud", sms: "SMS-провайдеры", ai: "AI-провайдер платформы", search: "Веб-поиск агента", billing: "Оплата (Robokassa)", plans: "Тарифы", mail: "Почта (Yandex Cloud Postbox)", support: "Поддержка" };
 
 export function platformEnvGroupLabel(group: PlatformEnvGroup) {
   return GROUP_LABEL[group];
