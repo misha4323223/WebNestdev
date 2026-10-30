@@ -48,7 +48,7 @@ export const SELLER = {
   fullName: "Пимашин Михаил Игоревич",
   inn: "711612442203",
   ogrnip: "",
-  city: "",
+  city: "Тульская обл., г. Донской",
   email: "nestdev@mail.ru",
   phone: "+7 953 181-41-36",
   phoneHref: "+79531814136",

@@ -242,12 +242,14 @@ function LegalBlockView({ block, onCookieSettings }: { block: LegalBlock; onCook
 
 function Requisites({ onCookieSettings }: { onCookieSettings: () => void }) {
   const fullName = requisite(SELLER.fullName, REQUISITE_HINTS.fullName);
+  const city = requisite(SELLER.city, REQUISITE_HINTS.city);
 
   return <div className="legal-requisites">
     <dl>
       <div><dt>Исполнитель</dt><dd>{SELLER.status}</dd></div>
       <div><dt>ФИО</dt><dd>{fullName.pending ? <Pending text={fullName.text}/> : fullName.text}</dd></div>
       <div><dt>ИНН</dt><dd className="legal-mono">{SELLER.inn}</dd></div>
+      <div><dt>Город</dt><dd>{city.pending ? <Pending text={city.text}/> : city.text}</dd></div>
       <div><dt>Электронная почта</dt><dd><a href={"mailto:" + SELLER.email}>{SELLER.email}</a></dd></div>
       <div><dt>Телефон</dt><dd><a href={"tel:" + SELLER.phoneHref}>{SELLER.phone}</a></dd></div>
       <div><dt>Часы поддержки</dt><dd>{SELLER.supportHours}</dd></div>
