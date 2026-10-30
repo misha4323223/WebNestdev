@@ -21,7 +21,7 @@ cd server
 npm run admin:create -- --email admin@example.com
 
 # production (в образе только собранный dist)
-docker compose exec webnestdev-server node server/dist/scripts/admin-cli.js create --email admin@example.com
+docker compose exec --user 1000:1000 webnestdev-server node server/dist/scripts/admin-cli.js create --email admin@example.com
 ```
 
 Команда печатает пароль **один раз** — его надо сохранить в менеджере паролей. Дальше:

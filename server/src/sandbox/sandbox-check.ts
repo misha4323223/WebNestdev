@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { sandboxHostRootDir,sandboxImage,sandboxRootDir } from "./config.js";
+import { sandboxHostRootDir,sandboxImage,sandboxRootDir,sandboxRuntimeArgs } from "./config.js";
 
 /**
  * Prefix of the marker file the check writes and a container reads back through the mounted
@@ -59,6 +59,12 @@ function dockerRun(args:string[],timeoutMs:number){
 const POLICY_FLAGS=["--cap-drop","ALL","--security-opt","no-new-privileges:true","--read-only","--cpus","1","--memory","256m","--pids-limit","64","--user","1000:1000"];
 
 /**
+ * Флаги рантайма добавляются к каждой пробе. Проверка, запущенная без runsc, при включённом
+ * gVisor отвечала бы за runc — то есть подтверждала бы не тот путь, которым идут контейнеры.
+ */
+function runtimeFlags(){return sandboxRuntimeArgs()}
+
+/**
  * Writes a marker into the sandbox directory and asks a container to read it back through the same
  * mount a command uses. Everything else about the sandbox is a matter of configuration; this is the
  * one property that cannot be checked by reading files in this process, because the container's view
@@ -88,7 +94,7 @@ export async function checkSandboxMount(options:{serverDir?:string;hostDir?:stri
   // с политикой (deploy/docker-broker/policy.mjs): иначе проверка монтирования сама получала бы
   // отказ и /api/health показывал бы несуществующую поломку. Здесь только чтение маркера, поэтому
   // read-only корень и лимиты ничего не меняют.
-  const mount=["--rm","--pull=never","--network","none",...POLICY_FLAGS,"-v",hostDir+":/workspace","-w","/workspace",image];
+  const mount=["--rm","--pull=never","--network","none",...runtimeFlags(),...POLICY_FLAGS,"-v",hostDir+":/workspace","-w","/workspace",image];
   try{
     const read=await dockerRun(["run",...mount,"/bin/sh","-lc","cat /workspace/"+markerName],timeoutMs);
     if(read.code!==0){
@@ -117,7 +123,7 @@ export async function sandboxFileCounts(options:{serverDir?:string;hostDir?:stri
   const hostDir=options.hostDir??sandboxHostRootDir();
   const image=options.image??sandboxImage();
   const timeoutMs=options.timeoutMs??30000;
-  const container=await dockerRun(["run","--rm","--pull=never","--network","none",...POLICY_FLAGS,"-v",hostDir+":/workspace","-w","/workspace",image,"/bin/sh","-lc","find /workspace -type f 2>/dev/null | wc -l"],timeoutMs).catch(()=>null);
+  const container=await dockerRun(["run","--rm","--pull=never","--network","none",...runtimeFlags(),...POLICY_FLAGS,"-v",hostDir+":/workspace","-w","/workspace",image,"/bin/sh","-lc","find /workspace -type f 2>/dev/null | wc -l"],timeoutMs).catch(()=>null);
   const parsed=container&&container.code===0?Number(container.stdout.trim()):NaN;
   return {server:await countFiles(serverDir),container:Number.isFinite(parsed)?parsed:null};
 }
@@ -146,7 +152,7 @@ export async function checkSandboxGit(
   const image=options.image??sandboxImage();
   const timeoutMs=options.timeoutMs??20000;
   const run=deps.run??dockerRun;
-  const result=await run(["run","--rm","--pull=never","--network","none",...POLICY_FLAGS,image,"git","--version"],timeoutMs).catch(()=>null);
+  const result=await run(["run","--rm","--pull=never","--network","none",...runtimeFlags(),...POLICY_FLAGS,image,"git","--version"],timeoutMs).catch(()=>null);
   if(!result)return {ok:false,version:null,reason:"docker"};
   if(result.code===0){
     const version=result.stdout.trim().split("\n").filter(Boolean).pop()??null;

@@ -11,8 +11,10 @@
  *   BROKER_UPSTREAM    — настоящий сокет демона (по умолчанию /var/run/docker.sock);
  *   BROKER_SANDBOX_ROOT— каталог, внутри которого разрешены монтирования;
  *   BROKER_IMAGE       — единственный образ, который разрешено запускать;
+ *   BROKER_RUNTIME      — единственный разрешённый HostConfig.Runtime (docker|runsc);
  *   PREVIEW_NETWORK    — явно заданная сеть предпросмотра (если имя не кончается на preview);
- *   BROKER_SOCKET_MODE — права на сокет (по умолчанию 0660).
+ *   BROKER_SOCKET_MODE — права на сокет (по умолчанию 0660);
+ *   BROKER_SOCKET_GID  — группа сокета, чтобы сервер мог ходить в него не от root.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -23,7 +25,15 @@ const upstreamPath = process.env.BROKER_UPSTREAM?.trim() || "/var/run/docker.soc
 const sandboxRoot = path.posix.resolve(process.env.BROKER_SANDBOX_ROOT?.trim() || "/var/lib/webnestdev/sandboxes");
 const image = (process.env.BROKER_IMAGE?.trim() || process.env.SANDBOX_IMAGE?.trim() || "node:22-bookworm");
 const previewNetwork = process.env.PREVIEW_NETWORK?.trim() || "";
+const runtime = (process.env.BROKER_RUNTIME?.trim() || process.env.SANDBOX_RUNTIME?.trim() || "docker").toLowerCase();
+// Политика умеет только эти два значения. Опечатка должна остановить брокер с понятной
+// причиной, а не оставить его с runtime, который не разрешит ни один create.
+if (runtime !== "docker" && runtime !== "runsc") {
+  console.error("[broker] BROKER_RUNTIME=" + runtime + " не поддерживается: используйте docker или runsc");
+  process.exit(1);
+}
 const socketMode = Number.parseInt(process.env.BROKER_SOCKET_MODE?.trim() || "0660", 8);
+const socketGid = Number.parseInt(process.env.BROKER_SOCKET_GID?.trim() || "1000", 10);
 
 // Каталог песочниц смонтирован в брокер только на чтение (docker-compose.yml): по нему
 // разрешаются символические ссылки в путях монтирования. Без этого `link -> /` внутри проекта
@@ -38,6 +48,7 @@ function realRootOf(dir) {
 
 const policy = {
   image,
+  runtime,
   sandboxRoot,
   realRoot: realRootOf(sandboxRoot),
   realpath: source => fs.realpathSync(source),
@@ -47,7 +58,18 @@ const policy = {
     name === previewNetwork || /(^|[-_])preview$/i.test(String(name ?? "")),
 };
 
-fs.mkdirSync(path.dirname(socketPath), { recursive: true });
+const socketDir = path.dirname(socketPath);
+fs.mkdirSync(socketDir, { recursive: true });
+// Сервер работает от uid 1000 и должен пройти в каталог, чтобы открыть сокет. Обычный umask
+// даёт 0755, но при umask 077 каталог остался бы root-only и сокет был бы недоступен даже с
+// правильной группой. chmod принадлежащего root каталога не требует capabilities.
+if (socketDir !== "/") {
+  try {
+    fs.chmodSync(socketDir, 0o755);
+  } catch (error) {
+    console.warn("[broker] не удалось открыть каталог сокета " + socketDir + ": " + error.message);
+  }
+}
 try {
   fs.unlinkSync(socketPath);
 } catch (error) {
@@ -58,9 +80,25 @@ const server = createBrokerServer({ socketPath, upstreamPath, policy });
 
 server.listen(socketPath, () => {
   fs.chmodSync(socketPath, Number.isFinite(socketMode) ? socketMode : 0o660);
+  // Сервер после этапа 2.2 работает от uid 1000, а брокер остаётся root: сокет должен быть
+  // доступен группе сервера. Compose запускает брокер с первичной группой 1000, поэтому сокет
+  // обычно уже создан с нужной группой; chown нужен только при другом gid. Без CAP_CHOWN
+  // (cap_drop ALL) он не сработает, поэтому лишний вызов не делаем, а ошибку показываем.
+  if (Number.isFinite(socketGid) && socketGid >= 0) {
+    try {
+      const stat = fs.statSync(socketPath);
+      if (stat.uid !== 0 || stat.gid !== socketGid) {
+        fs.chownSync(socketPath, 0, socketGid);
+      }
+    } catch (error) {
+      console.warn("[broker] не удалось выставить группу сокета " + socketGid + ": " + error.message);
+    }
+  }
   console.log(
-    "[broker] сокет " + socketPath + " (" + (Number.isFinite(socketMode) ? socketMode.toString(8) : "660") + ")" +
+    "[broker] сокет " + socketPath + " (" + (Number.isFinite(socketMode) ? socketMode.toString(8) : "660") +
+    ", gid " + (Number.isFinite(socketGid) ? socketGid : "1000") + ")" +
     ", демон " + upstreamPath + ", образ " + image + ", песочницы " + sandboxRoot +
+    ", runtime " + runtime +
     (previewNetwork ? ", сеть предпросмотра " + previewNetwork : ""),
   );
 });

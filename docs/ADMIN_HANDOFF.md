@@ -325,7 +325,8 @@ Yandex Cloud и заводятся по таблице выше (пошагов�
   (передаются из GitHub Secrets в `.env` на ВМ, сервер создаёт запись при старте и не перезаписывает
   существующую).
 - CLI на сервере: `create`, `password`, `reset-2fa`, `list`
-  (`node server/dist/scripts/admin-cli.js …` внутри контейнера `webnestdev-server`).
+  (`docker compose exec --user 1000:1000 webnestdev-server node server/dist/scripts/admin-cli.js …`:
+  после этапа 2.2 команды, которые пишут в data, должны идти от uid 1000, а не от root).
 
 Тесты: `server/src/admin/totp.test.ts` (векторы RFC 6238), `server/src/admin/bootstrap.test.ts`,
 `server/src/routes/admin.test.ts`, `server/src/routes/admin-prune.test.ts`,
@@ -355,8 +356,10 @@ Yandex Cloud и заводятся по таблице выше (пошагов�
    поэтому маршрут потребовал бы новой таблицы и записи в пайплайне, а не только чтения.
 5. **Из бэклога безопасности** (`docs/SECURITY.md`): Docker-брокер вместо `docker.sock` (P1 #5)
    закрыт: сервер ходит только через сокет брокера, `/var/run/docker.sock` ему не смонтирован
-   (`deploy/docker-broker`, `docs/DOCKER_BROKER.md`). Дальше по этому пункту — изоляция ядра
-   (gVisor на контейнеры команд): контейнеры по-прежнему делят ядро с хостом.
+   (`deploy/docker-broker`, `docs/DOCKER_BROKER.md`); процесс сервера переведён на uid 1000,
+   деплой печатает `SERVER-USER=ok`. Дальше по этому пункту — изоляция ядра: gVisor реализован
+   флагом `SANDBOX_RUNTIME=runsc`; установка автоматизирована в деплое, но по умолчанию флаг
+   выключен, пока не пройдена матрица на живом проекте; контейнеры без него делят ядро с хостом.
    Аудит действий администратора (P1 #11) — сделан журналом `security_audit`; дальше политика
    паролей (#12), подтверждение email (#13) и лимит чтения ключа поддержки (#10).
 
@@ -371,7 +374,7 @@ gh run view <id> --job <deploy-job-id> --log     # лог выкатки
 
 ```bash
 cd ~/webnestdev/src
-docker compose exec webnestdev-server node server/dist/scripts/admin-cli.js list
+docker compose exec --user 1000:1000 webnestdev-server node server/dist/scripts/admin-cli.js list
 ```
 
 `list` покажет, подключён ли TOTP и сколько осталось кодов восстановления. `password` выдаёт новый

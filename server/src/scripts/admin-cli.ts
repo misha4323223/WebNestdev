@@ -10,7 +10,7 @@ import { createAdmin, deleteAdminSessions, findAdminByEmail, listAdmins, resetAd
  * есть тех же прав, что и развёртывание. Зато утёкший пароль больше никого не делает админом.
  *
  * Запуск в разработке:   npm run admin:create -- --email admin@example.com
- * Запуск в production:   docker compose exec webnestdev-server node server/dist/scripts/admin-cli.js create --email admin@example.com
+ * Запуск в production:   docker compose exec --user 1000:1000 webnestdev-server node server/dist/scripts/admin-cli.js create --email admin@example.com
  *                        (в образе нет tsx — только собранный dist)
  */
 

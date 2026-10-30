@@ -198,6 +198,24 @@ test("без настроенного бакета архивация говор
   assert.ok((await stat(root)).isDirectory());
 });
 
+test("хранилище не подтвердило размер: локальная папка и отметка не трогаются", async () => {
+  const { projectId, userId, root } = await projectWithFiles();
+  const store = memoryStore();
+  const unconfirmed: ObjectStore = {
+    ...store,
+    async head() {
+      return null;
+    },
+  };
+
+  await assert.rejects(
+    () => archiveProject(projectId, userId, { store: unconfirmed }),
+    /приняло архив не целиком/,
+  );
+  assert.ok((await stat(root)).isDirectory(), "рабочая папка осталась на диске");
+  assert.equal(await readArchiveRecord(projectId), null, "отметка архива не появилась");
+});
+
 test("потерянная отметка восстанавливается по объекту в бакете", async () => {
   const { projectId, userId, root } = await projectWithFiles();
   const store = memoryStore();

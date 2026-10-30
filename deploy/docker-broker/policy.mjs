@@ -56,7 +56,7 @@ const HOST_KEYS = new Set([
 
 /** Поля, которые обязаны быть пустыми: с ними контейнер выходит за пределы песочницы. */
 const FORBIDDEN_HOST_FIELDS = [
-  "PidMode", "IpcMode", "UTSMode", "UsernsMode", "CgroupnsMode", "CgroupParent", "Runtime",
+  "PidMode", "IpcMode", "UTSMode", "UsernsMode", "CgroupnsMode", "CgroupParent",
   "VolumesFrom", "Links", "ExtraHosts", "Dns", "DnsOptions", "DnsSearch", "Sysctls", "Ulimits",
   "GroupAdd", "MaskedPaths", "ReadonlyPaths", "Isolation", "CpusetCpus", "CpusetMems",
   "Devices", "DeviceRequests", "DeviceCgroupRules", "CpuRealtimeRuntime", "CpuRealtimePeriod",
@@ -334,6 +334,18 @@ export function validateCreate(body, policy) {
     return fail("SecurityOpt обязан быть ровно no-new-privileges:true");
   }
   if (host.ReadonlyRootfs !== true) return fail("Корень контейнера обязан быть read-only");
+  // Рантайм — не свободный выбор клиента: разрешён только тот, который включён оператором.
+  // Когда включён runsc, пустой Runtime — это не «по умолчанию», а тихий обход gVisor: Docker
+  // запустил бы контейнер на runc. Поэтому при runsc поле обязательно и обязано быть runsc.
+  // При docker пустое значение допустимо (это и есть рантайм по умолчанию), а `runc` явно
+  // просить нельзя.
+  const runtime = host.Runtime ?? "";
+  if (policy.runtime === "runsc" && runtime !== "runsc") {
+    return fail("При включённом gVisor контейнер обязан запускаться с --runtime=runsc");
+  }
+  if (runtime !== "" && runtime !== policy.runtime) {
+    return fail("Runtime " + String(runtime) + " запрещён: разрешён " + String(policy.runtime || "рантайм Docker по умолчанию"));
+  }
   for (const key of FORBIDDEN_HOST_FIELDS) {
     if (!UNSET(host[key])) return fail("Поле HostConfig." + key + " запрещено");
   }

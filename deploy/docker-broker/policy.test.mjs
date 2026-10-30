@@ -9,6 +9,7 @@ import { classify, isAllowedName, isManagedContainer, stripVersion, validateCrea
  */
 const policy = {
   image: "node:22-bookworm",
+  runtime: "docker",
   sandboxRoot: "/var/lib/webnestdev/sandboxes",
   realRoot: "/var/lib/webnestdev/sandboxes",
   // В тестах путей на диске нет: реальный путь совпадает со строкой. Проверка самого realpath —
@@ -160,6 +161,17 @@ test("classify закрывает всё остальное", () => {
 
 test("тело create платформы проходит проверку", () => {
   assert.deepEqual(validateCreate(createBody(), policy), { ok: true });
+});
+
+test("Runtime runsc разрешён только когда он включён политикой", () => {
+  const runsc = withHost({ Runtime: "runsc" });
+  assert.equal(validateCreate(runsc, policy).ok, false, "политика без runsc не должна его пропускать");
+  assert.deepEqual(validateCreate(runsc, { ...policy, runtime: "runsc" }), { ok: true });
+  assert.equal(validateCreate(withHost({ Runtime: "runc" }), { ...policy, runtime: "runsc" }).ok, false);
+  assert.equal(validateCreate(withHost({ Runtime: "host" }), { ...policy, runtime: "runsc" }).ok, false);
+  // Пустой Runtime — это runc по умолчанию у Docker; при включённом gVisor он обходил бы runsc.
+  assert.equal(validateCreate(createBody(), { ...policy, runtime: "runsc" }).ok, false, "runsc обязан быть указан явно");
+  assert.equal(validateCreate(withHost({ Runtime: "" }), { ...policy, runtime: "runsc" }).ok, false);
 });
 
 test("create с сетью предпросмотра и монтированием секретов проходит", () => {

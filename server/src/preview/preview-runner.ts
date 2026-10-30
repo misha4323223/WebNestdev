@@ -1,5 +1,5 @@
 import type { SandboxConfig } from "../sandbox-manager.js";
-import { sandboxImage, workspaceMountSource } from "../sandbox/config.js";
+import { sandboxImage, sandboxRuntimeArgs, workspaceMountSource } from "../sandbox/config.js";
 import { previewAppAnswers } from "./app-http.js";
 import { dockerExec, missingContainer } from "./docker-exec.js";
 import { addressOnNetworks, firstContainerAddress, previewNetwork } from "./preview-network.js";
@@ -41,6 +41,9 @@ export async function startPreviewContainer(config:SandboxConfig){
   try {
     result=await dockerExec([
       "run","-d","--init",
+      // Предпросмотр — тоже код проекта. Рантайм тот же, что у команд агента: выключатель
+      // SANDBOX_RUNTIME=docker возвращает обычный Docker и для предпросмотра.
+      ...sandboxRuntimeArgs(),
       "--cpus",String(config.cpuLimit),
       "--memory",String(config.memoryMb)+"m",
       "--pids-limit","128",

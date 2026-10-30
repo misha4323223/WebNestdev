@@ -3184,9 +3184,6 @@ button,textarea{font:inherit}button{color:inherit}
 .project-wake{flex:1;min-height:0;display:grid;place-items:center;padding:28px 18px;overflow:auto}
 .project-wake-card{width:min(420px,100%);display:grid;justify-items:center;gap:10px;padding:26px 22px;border:1px solid var(--line-warm);border-radius:12px;background:#101419;text-align:center;box-shadow:inset 0 1px 0 rgba(255,255,255,.035)}
 .project-wake-card strong{font-size:13px;font-weight:650;color:#e6e9ed}
-.project-wake-card p{margin:0;max-width:330px;color:#8b939e;font-size:11px;line-height:1.55}
 .project-wake-track{width:100%;height:5px;margin-top:2px;border-radius:3px;background:#1b2229;overflow:hidden}
 .project-wake-track span{display:block;height:100%;border-radius:3px;background:linear-gradient(90deg,#ab9163,#ccc3b2);transition:width .3s ease}
-.project-wake-meta{width:100%;display:flex;align-items:baseline;justify-content:space-between;gap:8px;color:#8b939e;font-size:10px;font-variant-numeric:tabular-nums}
-.project-wake-meta b{color:#d2cbc0;font-weight:600}
 .project-wake-error{max-width:340px;padding:8px 10px;border:1px solid #4a3030;border-radius:6px;background:#1b1212;color:#d99b9b;font-size:10.5px;line-height:1.5;word-break:break-word}

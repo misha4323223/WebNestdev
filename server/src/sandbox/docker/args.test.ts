@@ -10,6 +10,7 @@ const options: DockerSandboxOptions = {
   pids: "128",
   network: "none",
   maxOutput: 200_000,
+  runtime: "docker",
 };
 
 /**
@@ -23,6 +24,15 @@ test("контейнер команды запускается без capabiliti
   assert.ok(args.includes("no-new-privileges:true"), args.join(" "));
   assert.ok(args.includes("--read-only"), args.join(" "));
   assert.ok(args.includes("--user") && args[args.indexOf("--user") + 1] === "1000:1000", args.join(" "));
+});
+
+test("runsc добавляется флагом Docker и не появляется в обычном режиме", () => {
+  const config = { projectId: "p1", root: "/root/p1", memoryMb: 256, cpuLimit: 1, timeoutMs: 1000 };
+  const normal = dockerRunArgs(config, config.root, options, "npm test", "none");
+  assert.equal(normal.includes("--runtime=runsc"), false, "без gVisor флага быть не должно");
+  const runsc = dockerRunArgs(config, config.root, { ...options, runtime: "runsc" }, "npm test", "none");
+  assert.ok(runsc.includes("--runtime=runsc"), runsc.join(" "));
+  assert.equal(runsc[runsc.indexOf("--runtime=runsc") - 1], "--init", "рантайм применяется к контейнеру, а не к команде");
 });
 
 test("git в контейнере не спотыкается о владельца репозитория", () => {

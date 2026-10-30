@@ -12,7 +12,8 @@ name: deploy
 # старые образы с ВМ, mode=cleanup обнуляет логи контейнеров на ВМ (диск, а не версию),
 # mode=logs печатает последние строки логов сервиса в лог выкатки, mode=source собирает
 # образ на самой ВМ из репозитория, mode=disk показывает, чем занят диск (Docker, тома,
-# песочницы, логи) — без уборки и без перезапуска сервиса.
+# песочницы, логи) — без уборки и без перезапуска сервиса. Параметр sandbox_runtime=runsc
+# включает gVisor на один запуск: deploy сам установит runsc, если Docker его ещё не знает.
 # Подтверждение перед выкаткой включается без изменения файла:
 # Settings → Environments → production → Required reviewers (сейчас их нет).
 
@@ -32,6 +33,11 @@ on:
         description: "Тег образа для выкатки или отката, например sha-1a2b3c4d5e6f (по умолчанию — сборка этого запуска)"
         type: string
         required: false
+      sandbox_runtime:
+        description: "keep — оставить Variable/текущий .env; docker — runc; runsc — gVisor (при отсутствии установится автоматически, Docker может кратко перезапуститься)"
+        type: choice
+        options: ["keep", "docker", "runsc"]
+        default: "keep"
   push:
     branches:
       - main
@@ -240,6 +246,16 @@ jobs:
           # Минуты простоя до переезда в бакет. Дни остаются поддерживаемым старым ключом,
           # но новый ключ важнее (см. server/src/storage/archive-scheduler.ts).
           PROJECT_ARCHIVE_IDLE_MINUTES: ${{ secrets.PROJECT_ARCHIVE_IDLE_MINUTES || vars.PROJECT_ARCHIVE_IDLE_MINUTES }}
+          # docker — обычный runc; runsc — gVisor для контейнеров команд и превью. По умолчанию
+          # docker: выкатка без этой переменной не меняет рантайм. Для отката вернуть docker.
+          # Ручной запуск может переопределить Variable на один запуск: sandbox_runtime=runsc
+          # включит gVisor и при отсутствии установит его через deploy (без терминала на ВМ).
+          # Значение можно хранить и в Secret с тем же именем: старые инструкции называли этот
+          # раздел «секретами», и такой секрет не должен молча игнорироваться.
+          SANDBOX_RUNTIME: ${{ github.event_name == 'workflow_dispatch' && inputs.sandbox_runtime != 'keep' && inputs.sandbox_runtime || vars.SANDBOX_RUNTIME || secrets.SANDBOX_RUNTIME }}
+          # auto — установить runsc при SANDBOX_RUNTIME=runsc, если Docker его не знает; 0 —
+          # не трогать системный Docker (хост уже подготовлен администратором).
+          RUNSC_INSTALL: ${{ vars.RUNSC_INSTALL || secrets.RUNSC_INSTALL }}
           # 1 — временный публичный демо-доступ для проверки платёжного сервиса; 0/пусто — обычный вход.
           WEBNESTDEV_PUBLIC_DEMO: ${{ vars.WEBNESTDEV_PUBLIC_DEMO }}
           WEBNESTDEV_ADMIN_EMAILS: ${{ secrets.WEBNESTDEV_ADMIN_EMAILS }}
@@ -327,6 +343,9 @@ jobs:
           # осталась бы с прежним Caddyfile, и правка публичных адресов предпросмотра
           # требовала бы захода на сервер руками.
           CADDY_B64=$(base64 -w0 deploy/Caddyfile)
+          # Установщик gVisor едет на ВМ вместе со скриптом: в image-режиме чекаут на ВМ может
+          # быть старым, а установка нужна ровно та, что прошла тесты в этом коммите.
+          RUNSC_SCRIPT_B64=$(base64 -w0 deploy/scripts/install-runsc.sh)
           # Ключи платформы и админ панели — тем же способом: файл, а не аргумент команды.
           # Пустое значение не передаётся вовсе: незаведённый секрет не должен стирать
           # настройку, которую уже сделали на ВМ.
@@ -385,6 +404,7 @@ jobs:
           add_platform_env PLATFORM_S3_SECRET_ACCESS_KEY "$PLATFORM_S3_SECRET_ACCESS_KEY"
           add_platform_env PROJECT_ARCHIVE_ENABLED "$PROJECT_ARCHIVE_ENABLED"
           add_platform_env PROJECT_ARCHIVE_IDLE_MINUTES "$PROJECT_ARCHIVE_IDLE_MINUTES"
+          add_platform_env SANDBOX_RUNTIME "$SANDBOX_RUNTIME"
           add_platform_env WEBNESTDEV_PUBLIC_DEMO "$WEBNESTDEV_PUBLIC_DEMO"
           add_platform_env WEBNESTDEV_ADMIN_EMAILS "$WEBNESTDEV_ADMIN_EMAILS"
           add_platform_env WEBNESTDEV_ADMIN_USER_IDS "$WEBNESTDEV_ADMIN_USER_IDS"
@@ -487,7 +507,7 @@ jobs:
             -p "${DEPLOY_PORT:-22}" \
             -o BatchMode=yes -o StrictHostKeyChecking=yes \
             "$DEPLOY_USER@$DEPLOY_HOST" \
-            "MODE='$MODE' IMAGE_REF='$image' APP_DIR='$DEPLOY_APP_DIR' COMPOSE_B64='$COMPOSE_B64' CADDY_B64='$CADDY_B64' APP_KEY_FILE='$APP_KEY_FILE' PLATFORM_ENV_FILE='$PLATFORM_ENV_FILE' LOG_TAIL='$LOG_TAIL' bash -s" \
+            "MODE='$MODE' IMAGE_REF='$image' APP_DIR='$DEPLOY_APP_DIR' COMPOSE_B64='$COMPOSE_B64' CADDY_B64='$CADDY_B64' RUNSC_SCRIPT_B64='$RUNSC_SCRIPT_B64' RUNSC_INSTALL='$RUNSC_INSTALL' APP_KEY_FILE='$APP_KEY_FILE' PLATFORM_ENV_FILE='$PLATFORM_ENV_FILE' LOG_TAIL='$LOG_TAIL' bash -s" \
             < deploy/scripts/vm-deploy.sh
 
       - name: Deploy on the VM (self-hosted runner)
@@ -575,6 +595,16 @@ jobs:
           # Минуты простоя до переезда в бакет. Дни остаются поддерживаемым старым ключом,
           # но новый ключ важнее (см. server/src/storage/archive-scheduler.ts).
           PROJECT_ARCHIVE_IDLE_MINUTES: ${{ secrets.PROJECT_ARCHIVE_IDLE_MINUTES || vars.PROJECT_ARCHIVE_IDLE_MINUTES }}
+          # docker — обычный runc; runsc — gVisor для контейнеров команд и превью. По умолчанию
+          # docker: выкатка без этой переменной не меняет рантайм. Для отката вернуть docker.
+          # Ручной запуск может переопределить Variable на один запуск: sandbox_runtime=runsc
+          # включит gVisor и при отсутствии установит его через deploy (без терминала на ВМ).
+          # Значение можно хранить и в Secret с тем же именем: старые инструкции называли этот
+          # раздел «секретами», и такой секрет не должен молча игнорироваться.
+          SANDBOX_RUNTIME: ${{ github.event_name == 'workflow_dispatch' && inputs.sandbox_runtime != 'keep' && inputs.sandbox_runtime || vars.SANDBOX_RUNTIME || secrets.SANDBOX_RUNTIME }}
+          # auto — установить runsc при SANDBOX_RUNTIME=runsc, если Docker его не знает; 0 —
+          # не трогать системный Docker (хост уже подготовлен администратором).
+          RUNSC_INSTALL: ${{ vars.RUNSC_INSTALL || secrets.RUNSC_INSTALL }}
           # 1 — временный публичный демо-доступ для проверки платёжного сервиса; 0/пусто — обычный вход.
           WEBNESTDEV_PUBLIC_DEMO: ${{ vars.WEBNESTDEV_PUBLIC_DEMO }}
           WEBNESTDEV_ADMIN_EMAILS: ${{ secrets.WEBNESTDEV_ADMIN_EMAILS }}
@@ -700,6 +730,7 @@ jobs:
           add_platform_env PLATFORM_S3_SECRET_ACCESS_KEY "$PLATFORM_S3_SECRET_ACCESS_KEY"
           add_platform_env PROJECT_ARCHIVE_ENABLED "$PROJECT_ARCHIVE_ENABLED"
           add_platform_env PROJECT_ARCHIVE_IDLE_MINUTES "$PROJECT_ARCHIVE_IDLE_MINUTES"
+          add_platform_env SANDBOX_RUNTIME "$SANDBOX_RUNTIME"
           add_platform_env WEBNESTDEV_PUBLIC_DEMO "$WEBNESTDEV_PUBLIC_DEMO"
           add_platform_env WEBNESTDEV_ADMIN_EMAILS "$WEBNESTDEV_ADMIN_EMAILS"
           add_platform_env WEBNESTDEV_ADMIN_USER_IDS "$WEBNESTDEV_ADMIN_USER_IDS"
@@ -757,6 +788,7 @@ jobs:
           add_platform_env ROBOKASSA_PRICE_TEAM "$ROBOKASSA_PRICE_TEAM"
           # На этом раннере скрипт запускается на самой ВМ, поэтому ключ кладётся во временный
           # файл рядом, с правами только для владельца.
+          RUNSC_SCRIPT_B64=$(base64 -w0 deploy/scripts/install-runsc.sh)
           APP_KEY_FILE=""
           if [ -n "${YANDEX_SA_KEY_JSON:-}" ]; then
             APP_KEY_FILE=$(mktemp)
@@ -766,5 +798,6 @@ jobs:
           MODE="$MODE" IMAGE_REF="$image" APP_DIR="$DEPLOY_APP_DIR" \
             LOG_TAIL="$LOG_TAIL" \
             COMPOSE_SRC="$PWD/docker-compose.yml" CADDY_SRC="$PWD/deploy/Caddyfile" \
+            RUNSC_SCRIPT_B64="$RUNSC_SCRIPT_B64" RUNSC_INSTALL="$RUNSC_INSTALL" \
             APP_KEY_FILE="$APP_KEY_FILE" PLATFORM_ENV_FILE="$PLATFORM_ENV_FILE" \
             bash deploy/scripts/vm-deploy.sh

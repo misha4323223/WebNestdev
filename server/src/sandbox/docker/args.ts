@@ -28,7 +28,10 @@ export function dockerRunArgs(
   // env — только для конкретной команды (например, EXPO_TOKEN у EAS CLI): значение уходит
   // в окружение контейнера, а не в текст команды, поэтому не печатается в логах шага.
   const envArgs = Object.entries(env).flatMap(([key, value]) => ["-e", key + "=" + value]);
-  return ["run",...(mode.detached?["-d"]:["--rm"]),"--init",...(name?["--name",name]:[]),...labels,"--network",network,"--cap-drop","ALL","--security-opt","no-new-privileges:true","--cpus",options.cpus,"--memory",options.memory,"--pids-limit",options.pids,"--read-only","--tmpfs","/tmp:rw,nosuid,size=256m","--user","1000:1000","-v",workspaceMountSource(config)+":/workspace",...extraMounts,"-w","/workspace"+suffix,"-e","HOME=/tmp","-e","WEBNESTDEV_PROJECT_ID="+config.projectId,"-e","CI=1",...envArgs,
+  // gVisor включается одной переменной. Флаг добавляется ко всем контейнерам команд и заданий;
+  // политика брокера разрешает только тот Runtime, который назван в BROKER_RUNTIME.
+  const runtimeArgs = options.runtime==="runsc"?["--runtime=runsc"]:[];
+  return ["run",...(mode.detached?["-d"]:["--rm"]),"--init",...runtimeArgs,...(name?["--name",name]:[]),...labels,"--network",network,"--cap-drop","ALL","--security-opt","no-new-privileges:true","--cpus",options.cpus,"--memory",options.memory,"--pids-limit",options.pids,"--read-only","--tmpfs","/tmp:rw,nosuid,size=256m","--user","1000:1000","-v",workspaceMountSource(config)+":/workspace",...extraMounts,"-w","/workspace"+suffix,"-e","HOME=/tmp","-e","WEBNESTDEV_PROJECT_ID="+config.projectId,"-e","CI=1",...envArgs,
     // Репозиторий создаёт сервер от root, а git в контейнере работает от uid 1000. Права на
     // `.git` открывает openGitForSandbox, но git всё равно сверяет владельца и без этой записи
     // отказывается работать в чужом репозитории (`dubious ownership`). Внутри изолированного

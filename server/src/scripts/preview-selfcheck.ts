@@ -37,7 +37,7 @@
  * идут в одном месте — после него.
  */
 import { dockerExec } from "../preview/docker-exec.js";
-import { sandboxImage } from "../sandbox/config.js";
+import { sandboxImage, sandboxRuntimeArgs } from "../sandbox/config.js";
 import { addressOnNetworks, attachToServerNetworks, firstContainerAddress, previewNetwork, serverNetworks } from "../preview/preview-network.js";
 import { PREVIEW_APP_PORT, PREVIEW_LABEL } from "../preview/types.js";
 
@@ -95,6 +95,9 @@ async function main() {
 
   const started = await dockerExec([
     "run", "-d", "--rm", "--init",
+    // Проба должна идти тем же рантаймом, что и настоящий предпросмотр: иначе при runsc она
+    // проверяла бы runc и давала бы ложное «всё хорошо».
+    ...sandboxRuntimeArgs(),
     "--memory", "256m",
     "--cpus", "1",
     "--pids-limit", "64",

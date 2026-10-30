@@ -136,10 +136,14 @@ Configuration (`PLATFORM_S3_*` — the platform's own bucket, **not** a user's k
 | `PLATFORM_S3_PREFIX` | no | key prefix, `webnestdev` by default |
 | `PLATFORM_S3_ALLOW_HTTP` | no | `1` allows `http://` — only for a local MinIO |
 | `PROJECT_ARCHIVE_ENABLED` | no | `1` turns the idle-project sweeper on; off by default |
-| `PROJECT_ARCHIVE_IDLE_MINUTES` | no | minutes without writes before archiving, `360` (six hours) by default |
+| `PROJECT_ARCHIVE_IDLE_MINUTES` | no | minutes without writes before archiving, `180` (three hours) by default |
 | `PROJECT_ARCHIVE_IDLE_DAYS` | no | legacy alternative (days); ignored when minutes are set |
 | `PROJECT_ARCHIVE_START_DELAY_MS` | no | delay before the first sweep, 5 minutes by default |
 | `PROJECT_ARCHIVE_SWEEP_INTERVAL_MS` | no | interval between sweeps, 10 minutes by default |
+| `PROJECT_ARCHIVE_DISK_HIGH_PERCENT` | no | disk occupancy that starts pressure archiving, `75` by default |
+| `PROJECT_ARCHIVE_DISK_TARGET_PERCENT` | no | occupancy to stop at, `68` by default; always below the high threshold |
+| `PROJECT_ARCHIVE_CONCURRENCY` | no | projects packed at once, `2` by default (1–4) |
+| `PROJECT_ARCHIVE_PRESSURE_CHECK_MS` | no | disk-pressure check interval, 1 minute by default |
 | `PROJECT_ARCHIVE_ACCESS_GUARD_MS` | no | skip a project opened in this process less than an hour ago |
 | `PROJECT_ARCHIVE_TAR_TIMEOUT_MS` | no | `tar` timeout, 10 minutes by default |
 | `WEBNESTDEV_NODE_ID` | no | node name written into the archive marker; the hostname by default |
@@ -164,13 +168,20 @@ Manual control and API:
   bytesTotal, phase, jobId, error }`. While `restoring` is true the progress is in bytes of the
   archive; after the download `phase` becomes `unpacking` (the bar stays at 100%).
 - `PROJECT_ARCHIVE_ENABLED=1` adds a sweeper: projects whose last recorded write is older than
-  `PROJECT_ARCHIVE_IDLE_MINUTES` (six hours by default), with no active run and no live preview, are
+  `PROJECT_ARCHIVE_IDLE_MINUTES` (three hours by default), with no active run and no live preview, are
   archived in the background. The idle time comes from `project_sizes.last_write_at`, which every
   mutation refreshes; the daily reconcile only moves `updated_at` (the measurement time), so it no
   longer resets the idle clock. Rows created before that column existed fall back to `updated_at`,
   and the first reconcile fills `last_write_at` without moving it forward. The sweeper also skips
   anything with an active agent run, a live preview, or a project opened in this process within
   `PROJECT_ARCHIVE_ACCESS_GUARD_MS` (reads do not update `project_sizes`).
+- At `PROJECT_ARCHIVE_DISK_HIGH_PERCENT` (75% by default) the same eligibility rules apply, but the
+  oldest projects go first and the sweeper stops once `PROJECT_ARCHIVE_DISK_TARGET_PERCENT` (68%) is
+  reached. The pressure check runs every minute and does only `statfs` when the disk is below the
+  threshold; when there is nothing left to archive it backs off to the normal sweep interval.
+  Packing is limited to `PROJECT_ARCHIVE_CONCURRENCY` projects at a time (2 by default, at most 4). A project that cannot be packed or whose upload is not confirmed stays on disk
+  untouched. The last run and totals are in `activity.archive` of `/api/health` and in the
+  `[storage] холодный ярус` log line.
 
 Known gaps: the restore job registry lives in the server process. A restart in the middle of a
 restore loses the job, but the archive marker remains and the next access starts a new one; with
@@ -198,4 +209,5 @@ files or upgrade again.
 - `node_modules` and build output are part of the quota, so a free account can hit 700 MB right
   after `npm install`.
 - There is no per-project hard limit and no filesystem quota: the quota does not protect the
-  host disk. Watch `/api/health` (`disk`) and keep free space above 10–15%.
+  host disk. Pressure archiving is only a safety valve: if active projects fill the disk, it cannot
+  archive them, so watch `/api/health` (`disk`, `activity.archive`) and keep free space above 10–15%.

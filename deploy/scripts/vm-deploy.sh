@@ -74,6 +74,18 @@
 #                              Расхождение печатается громко, но выкатку не отменяет: у сервера
 #                              спереди может стоять кэширующий прокси, а откат из-за этого хуже самого
 #                              расхождения.
+#   SERVER_USER_CHECK=0         не проверять, что процесс сервера работает не от uid 0. Проверка
+#                              читает /proc/1/status; при ошибке entrypoint печатает SERVER-USER=root.
+#   SANDBOX_RUNTIME_CHECK=0     не проверять, что при SANDBOX_RUNTIME=runsc Docker знает этот
+#                              runtime. Проверка ничего не запускает, только читает docker info.
+#   RUNSC_INSTALL=auto         при SANDBOX_RUNTIME=runsc и отсутствии runtime установить runsc
+#                              через sudo -n до запуска новой версии. `0` запрещает установку
+#                              (хост уже подготовлен вручную); ошибка установки останавливает
+#                              выкатку, чтобы не поднять сервер с неработающей песочницей.
+#   RUNSC_SCRIPT_B64=…         содержимое deploy/scripts/install-runsc.sh в base64; workflow
+#                              присылает его вместе со скриптом, чтобы не зависеть от чекаута
+#                              на ВМ. Без него берётся $APP_DIR/deploy/scripts/install-runsc.sh.
+#   RUNSC_VERSION=…            переопределить закреплённую версию gVisor (необязательно).
 #   ENV_FILE=<путь>            файл переменных развёртывания, по умолчанию $APP_DIR/.env.
 #                              Вынесен в переменную, чтобы шаг установки ключей проверялся
 #                              на копии файла, не трогая настоящий .env.
@@ -126,6 +138,11 @@ SMS_CHECK="${SMS_CHECK:-1}"
 PREVIEW_CHECK="${PREVIEW_CHECK:-1}"
 DOCKER_CHECK="${DOCKER_CHECK:-1}"
 PANEL_CHECK="${PANEL_CHECK:-1}"
+SERVER_USER_CHECK="${SERVER_USER_CHECK:-1}"
+SANDBOX_RUNTIME_CHECK="${SANDBOX_RUNTIME_CHECK:-1}"
+RUNSC_INSTALL="${RUNSC_INSTALL:-auto}"
+RUNSC_SCRIPT_B64="${RUNSC_SCRIPT_B64:-}"
+RUNSC_VERSION="${RUNSC_VERSION:-}"
 APP_KEY_FILE="${APP_KEY_FILE:-}"
 PLATFORM_ENV_FILE="${PLATFORM_ENV_FILE:-}"
 # Метка контейнера-пробы в проверке предпросмотра (совпадает с PREVIEW_LABEL="webnestdev.preview"
@@ -698,6 +715,102 @@ ensure_sandbox_image(){
   fi
 }
 
+#
+# SANDBOX_RUNTIME=runsc — это не только флаг сервера: Docker на ВМ должен знать runtime.
+# Установка больше не требует терминала на ВМ. Если runtime отсутствует, deploy присылает
+# install-runsc.sh в base64 и запускает его через `sudo -n`; при удачном reload Docker
+# перезапуск не нужен, иначе скрипт перезапускает Docker и ждёт его (контейнеры с
+# restart: unless-stopped поднимаются сами, затем compose поднимает новую версию).
+#
+# Ошибка установки останавливает выкатку до подмены версии: иначе сервер с SANDBOX_RUNTIME=runsc
+# стартовал бы, а первая же команда падала с `unknown runtime`.
+#
+sandbox_runtime_value(){
+  local value="${SANDBOX_RUNTIME:-}"
+  if [ -z "$value" ] && [ -f "$ENV_FILE" ]; then
+    value=$(grep -m1 '^SANDBOX_RUNTIME=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- || true)
+  fi
+  printf '%s' "${value:-docker}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]'
+}
+
+docker_has_runsc(){
+  command -v docker >/dev/null 2>&1 || return 1
+  docker info --format '{{json .Runtimes}}' 2>/dev/null | grep -q '"runsc"'
+}
+
+ensure_runsc(){
+  local runtime script script_owned=0 rc=0
+  if [ "$MODE" != "image" ]; then
+    log "установка runsc пропущена: режим $MODE не меняет системный Docker"
+    return 0
+  fi
+  if [ "$DRY_RUN" = "1" ]; then
+    log "dry-run: при SANDBOX_RUNTIME=runsc установил бы runtime в Docker"
+    return 0
+  fi
+  runtime=$(sandbox_runtime_value)
+  if [ "$runtime" != "runsc" ]; then
+    log "SANDBOX_RUNTIME=$runtime: установка gVisor не нужна"
+    return 0
+  fi
+  if docker_has_runsc; then
+    log "SANDBOX_RUNTIME=runsc: Docker уже знает runtime runsc"
+    return 0
+  fi
+  case "$(printf '%s' "$RUNSC_INSTALL" | tr '[:upper:]' '[:lower:]')" in
+    auto|1) ;;
+    0) log "SANDBOX_RUNTIME=runsc, но Docker не знает runsc, а RUNSC_INSTALL=0. Установка запрещена — выкатка остановлена до подмены версии"; return 1 ;;
+    *) log "неизвестное RUNSC_INSTALL=$RUNSC_INSTALL (ожидается auto, 1 или 0)"; return 1 ;;
+  esac
+  if [ "$(id -u)" != "0" ]; then
+    if ! command -v sudo >/dev/null 2>&1; then
+      log "для установки runsc нужен root, но sudo не найден. Хост должен быть подготовлен администратором"; return 1
+    fi
+    if ! sudo -n true 2>/dev/null; then
+      log "для автоматической установки runsc нужен sudo без пароля у пользователя выкатки ($(id -un)). Иначе подготовьте runsc на хосте и повторите с RUNSC_INSTALL=0"; return 1
+    fi
+  fi
+  if [ -n "$RUNSC_SCRIPT_B64" ]; then
+    if ! script=$(mktemp "${TMPDIR:-/tmp}/webnestdev-runsc.XXXXXX"); then
+      log "не удалось создать временный файл для install-runsc.sh"; return 1
+    fi
+    if ! printf '%s' "$RUNSC_SCRIPT_B64" | base64 -d > "$script" 2>/dev/null; then
+      log "install-runsc.sh не распаковался из base64"; rm -f "$script"; return 1
+    fi
+    chmod 700 "$script"
+    script_owned=1
+  elif [ -f "$APP_DIR/deploy/scripts/install-runsc.sh" ]; then
+    script="$APP_DIR/deploy/scripts/install-runsc.sh"
+  else
+    log "install-runsc.sh не передан и не найден в $APP_DIR/deploy/scripts — установить runsc нечем"; return 1
+  fi
+  log "SANDBOX_RUNTIME=runsc: устанавливаю runsc (Docker перезапустится только если reload не хватит; контейнеры кратко остановятся)"
+  if [ "$(id -u)" = "0" ]; then
+    if [ -n "$RUNSC_VERSION" ]; then
+      RUNSC_VERSION="$RUNSC_VERSION" RUNSC_RESTART_DOCKER=1 /bin/sh "$script" || rc=$?
+    else
+      RUNSC_RESTART_DOCKER=1 /bin/sh "$script" || rc=$?
+    fi
+  else
+    if [ -n "$RUNSC_VERSION" ]; then
+      sudo -n env RUNSC_VERSION="$RUNSC_VERSION" RUNSC_RESTART_DOCKER=1 /bin/sh "$script" || rc=$?
+    else
+      sudo -n env RUNSC_RESTART_DOCKER=1 /bin/sh "$script" || rc=$?
+    fi
+  fi
+  if [ "$script_owned" = "1" ]; then
+    rm -f "$script"
+  fi
+  if [ "$rc" -ne 0 ]; then
+    log "установка runsc завершилась ошибкой (код $rc) — выкатка остановлена до подмены версии"; return 1
+  fi
+  if ! docker_has_runsc; then
+    log "install-runsc.sh завершился, но Docker всё ещё не показывает runtime runsc"; return 1
+  fi
+  log "SANDBOX_RUNTIME=runsc: Docker знает gVisor"
+  return 0
+}
+
 validate_caddyfile(){
   local file="$1"
   if [ "$DRY_RUN" = "1" ]; then
@@ -917,6 +1030,70 @@ verify_docker(){
       ;;
     failed) log "DOCKER НЕ РАБОТАЕТ ИЗ КОНТЕЙНЕРА СЕРВЕРА: ${reason:-причина не сообщена}" ; return 0 ;;
     *) log "проверка Docker в контейнере не ответила — пропускаю" ; return 0 ;;
+  esac
+}
+
+#
+# Процесс сервера после этапа 2.2 должен работать не от uid 0. Проверяется именно PID 1, а не
+# пользователь `docker compose exec`: exec по умолчанию идёт от root и ничего не доказывает.
+# Ошибка не отменяет выкатку (это диагностика безопасности), но печатается громко: иначе
+# «entrypoint сбрасывает права» осталось бы обещанием, а не фактом.
+#
+verify_server_user(){
+  local output uid
+  if [ "$SERVER_USER_CHECK" != "1" ]; then
+    log "проверка пользователя сервера пропущена (SERVER_USER_CHECK=0)"
+    return 0
+  fi
+  if [ "$MODE" = "source" ] || [ "$DRY_RUN" = "1" ]; then
+    log "проверка пользователя сервера пропущена (${MODE} режим)"
+    return 0
+  fi
+  output=$(timeout 30 docker compose exec -T "$SERVICE" sh -c 'awk "/^Uid:/{print \$2; exit}" /proc/1/status' </dev/null 2>&1 || true)
+  # Логи compose могут попасть в тот же поток: берём именно строку с числом, а не весь вывод.
+  uid=$(printf '%s\n' "$output" | grep -E '^[0-9]+$' | tail -1 || true)
+  case "$uid" in
+    0) log "SERVER-USER=root: процесс сервера всё ещё работает от root — entrypoint не сбросил права. Проверьте docker compose logs $SERVICE и строку [entrypoint]" ; return 0 ;;
+    ""|*[!0-9]*) log "SERVER-USER=unknown: не удалось прочитать /proc/1/status (${uid:-пусто})" ; return 0 ;;
+    *) log "SERVER-USER=ok uid=$uid: сервер работает не от root" ; return 0 ;;
+  esac
+}
+
+#
+# SANDBOX_RUNTIME=runsc — это не только флаг сервера: Docker на ВМ должен знать runtime с таким
+# именем. Иначе первый же контейнер команды падает с «unknown runtime», хотя конфигурация
+# выглядит правильной. Проверка только читает docker info и ничего не запускает.
+#
+verify_sandbox_runtime(){
+  local configured runtimes
+  if [ "$SANDBOX_RUNTIME_CHECK" != "1" ]; then
+    log "проверка SANDBOX_RUNTIME пропущена (SANDBOX_RUNTIME_CHECK=0)"
+    return 0
+  fi
+  if [ "$DRY_RUN" = "1" ]; then
+    log "dry-run: проверка SANDBOX_RUNTIME пропущена"
+    return 0
+  fi
+  configured="${SANDBOX_RUNTIME:-}"
+  if [ -z "$configured" ] && [ -f "$ENV_FILE" ]; then
+    configured=$(grep -m1 '^SANDBOX_RUNTIME=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- || true)
+  fi
+  configured=$(printf '%s' "${configured:-docker}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+  case "$configured" in
+    docker)
+      log "SANDBOX-RUNTIME=docker: контейнеры идут на обычном runc"
+      ;;
+    runsc)
+      runtimes=$(docker info --format '{{json .Runtimes}}' 2>/dev/null || true)
+      if printf '%s' "$runtimes" | grep -q '"runsc"'; then
+        log "SANDBOX-RUNTIME=runsc: Docker знает gVisor"
+      else
+        log "SANDBOX-RUNTIME=runsc, но Docker НЕ ЗНАЕТ runtime runsc: установите runsc и зарегистрируйте его (docs/PRODUCTION_DEPLOYMENT.md). Ошибка не отменяет выкатку, но контейнеры не запустятся"
+      fi
+      ;;
+    *)
+      log "SANDBOX-RUNTIME=${configured}: неизвестное значение, сервер не стартует. Допустимо docker или runsc"
+      ;;
   esac
 }
 
@@ -1186,6 +1363,10 @@ case "$MODE" in
     install_caddyfile || log "оставляю Caddyfile, который лежит на ВМ"
     # Ключи и .env — до запуска: compose читает .env при подъёме сервиса.
     apply_platform_env
+    # Установка gVisor — до подмены версии. Если SANDBOX_RUNTIME=runsc, а Docker не знает runtime,
+    # deploy присылает установщик и запускает его через sudo -n. Ошибка здесь не должна оставить
+    # новый сервер с неработающими контейнерами; старый стек при этом не переключается.
+    ensure_runsc || { log "выкатка не принята: runtime runsc недоступен"; exit 3; }
     install_app_secrets
     migrate_sandboxes
     # Образ песочницы скачивается до запуска сервера: проверка монтирования на старте идёт с
@@ -1297,6 +1478,11 @@ fi
 # Docker внутри сервера — до проверки песочницы: она сама спрашивает контейнер, и без docker её
 # «docker недоступен» не отличалось бы от «не смонтирован сокет» (см. verify_docker).
 verify_docker
+# Рантайм: если SANDBOX_RUNTIME=runsc, Docker должен знать это имя. Проверка не запускает
+# контейнер и не отменяет выкатку: причина видна в логе до первого запроса агента.
+verify_sandbox_runtime
+# Процесс сервера не root — второй критерий этапа 2.2; проверяется по PID 1, а не по exec.
+verify_server_user
 # Расхождение путей песочницы — не справка, а сломанная выкатка: агент пишет файлы, которых
 # не видит терминал. Такой деплой не считается успешным.
 if ! verify_sandbox; then

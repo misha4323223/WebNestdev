@@ -20,6 +20,33 @@ export function sandboxImage(){
   return process.env.SANDBOX_IMAGE?.trim()||DEFAULT_SANDBOX_IMAGE;
 }
 
+/**
+ * Рантайм контейнеров проекта. `docker` — обычный runc (поведение до этапа 2), `runsc` — gVisor.
+ *
+ * Значение читается при каждом запуске контейнера, а не один раз на импорте: переключатель должен
+ * работать без пересборки, а тест может подменить окружение. Неизвестное значение — ошибка, а не
+ * молчаливый возврат к runc: иначе опечатка в `.env` выглядела бы как «gVisor включён», хотя
+ * контейнеры остались на общем ядре.
+ */
+export type SandboxRuntime="docker"|"runsc";
+export function sandboxRuntime(setting:string|undefined=process.env.SANDBOX_RUNTIME):SandboxRuntime{
+  const value=(setting??"docker").trim().toLowerCase();
+  if(!value||value==="docker")return "docker";
+  if(value==="runsc")return "runsc";
+  throw new Error('SANDBOX_RUNTIME="'+value+'" не поддерживается: используйте docker или runsc');
+}
+
+/** Аргументы Docker CLI для выбранного рантайма; для обычного Docker их нет. */
+export function sandboxRuntimeArgs():string[]{
+  return sandboxRuntime()==="runsc"?["--runtime=runsc"]:[];
+}
+
+/** Строка для старта и health: какой рантайм реально выбран. */
+export function describeSandboxRuntime(){
+  const runtime=sandboxRuntime();
+  return "рантайм контейнеров: "+runtime+(runtime==="runsc"?" (gVisor)":" (runc)");
+}
+
 const sandboxRoot=path.resolve(process.env.WEBNESTDEV_SANDBOX_DIR??".webnestdev/sandboxes");
 
 /**

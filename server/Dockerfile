@@ -50,7 +50,7 @@ ENV WEBNESTDEV_BUILD=${GIT_SHA}
 # бинарник из официального `-cli` образа весит 43 МБ, тогда как пакет `docker.io` тянул 282 МБ
 # вместе с containerd, runc и iptables, которые внутри этого контейнера никогда не запускаются.
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates curl \
+  && apt-get install -y --no-install-recommends ca-certificates curl findutils util-linux \
   && rm -rf /var/lib/apt/lists/*
 
 COPY --from=docker:29.9-cli /usr/local/bin/docker /usr/local/bin/docker
@@ -64,6 +64,13 @@ COPY --from=build /app/server/certs ./server/certs
 # Docker-брокер едет в том же образе и запускается другой командой (docker-compose.yml). Так у него
 # нет отдельного тега и отдельной выкатки: обновление и откат сервера возвращают обе части вместе.
 COPY deploy/docker-broker ./deploy/docker-broker
+# Entrypoint запускает сервер не от root (этап 2.2). Он же используется для подготовки томов;
+# брокер запускается отдельной командой и остаётся root, потому что говорит с docker.sock.
+COPY server/entrypoint.sh /usr/local/bin/webnestdev-entrypoint
+RUN chmod 0755 /usr/local/bin/webnestdev-entrypoint
+# Entrypoint в образе, а не в compose: при откате на предыдущий образ без этого файла compose
+# не должен ссылаться на несуществующий путь. Брокер переопределяет entrypoint в compose.
+ENTRYPOINT ["/usr/local/bin/webnestdev-entrypoint"]
 
 # Браузер нужен только headless: сервер нигде не открывает окно (все запуски —
 # `chromium.launch({ headless: true })`), поэтому полный Chromium (393 МБ) не ставится —

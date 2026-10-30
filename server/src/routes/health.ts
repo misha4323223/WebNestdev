@@ -9,7 +9,7 @@ import { previewAddresses } from "../preview/preview-store.js";
 import { previewPublicDomain } from "../preview/preview-host.js";
 import { execProxyQueueStats } from "../preview/exec-proxy.js";
 import { DEFAULT_CHARS_PER_TOKEN,contextBudgetTokens,contextMaxMessages } from "../agent/context-budget.js";
-import { sandboxHostRootDir,sandboxRootDir } from "../sandbox/config.js";
+import { sandboxHostRootDir,sandboxRootDir,sandboxRuntime } from "../sandbox/config.js";
 import { lastSandboxMountCheck } from "../sandbox/sandbox-check.js";
 import { diskStatus, memoryStatus } from "../health/host-metrics.js";
 import { smsReadiness, smsSummary } from "../auth/sms.js";
@@ -17,6 +17,7 @@ import { supportKeyStatus } from "../support/support-api-key.js";
 import { mailSettings, mailSettingsSource } from "../mail/mailer.js";
 import { postboxConfig, postboxCredentialSummary } from "../mail/postbox.js";
 import { lastMailFailure } from "../mail/mail-health.js";
+import { archiveStats } from "../storage/archive-health.js";
 import { getPlatformEnv, platformEnvSetByPanel } from "../platform/platform-env.js";
 import { normalizeAddress } from "../security/client-ip.js";
 import type { FastifyRequest } from "fastify";
@@ -45,7 +46,7 @@ async function dependencyStatus(){
     // Пути и последняя проверка монтирования. Без них расхождение «сервер пишет в один
     // каталог, контейнеры монтируют другой» выглядит как жалоба агента на пропавшие файлы,
     // а не как ошибка выкатки с понятным исправлением.
-    sandbox:{...sandbox,sandboxDir:sandboxRootDir(),sandboxHostDir:sandboxHostRootDir(),mount:lastSandboxMountCheck()},
+    sandbox:{...sandbox,runtime:sandboxRuntime(),sandboxDir:sandboxRootDir(),sandboxHostDir:sandboxHostRootDir(),mount:lastSandboxMountCheck()},
   };
 }
 
@@ -61,6 +62,12 @@ async function dependencyStatus(){
  */
 async function activity(){
   return {
+    // После этапа 2.2 сервер должен работать не от uid 0. Значение читается из процесса, а не
+    // из переменной окружения: именно оно отвечает, сбросил ли entrypoint права на самом деле.
+    process: {
+      uid: typeof process.getuid === "function" ? process.getuid() : null,
+      gid: typeof process.getgid === "function" ? process.getgid() : null,
+    },
     runs: runQueueStats(),
     sandbox: sandboxQueueStats(),
     browser: browserQueueStats(),
@@ -89,6 +96,10 @@ async function activity(){
     // `charsPerTokenDefault` — стартовая оценка: во время запуска она уточняется по отчёту
     // провайдера (см. `run.progress.tokens`), поэтому здесь честно только значение по умолчанию.
     context: { budgetTokens: contextBudgetTokens(), maxMessages: contextMaxMessages(), charsPerTokenDefault: DEFAULT_CHARS_PER_TOKEN },
+    // Холодный ярус: сколько проектов он освободил с запуска, сколько было ошибок и что
+    // показал последний проход. По этим числам видно, работает ли архивация по давлению,
+    // не читая логи и не заходя на ВМ.
+    archive: archiveStats(),
     disk: await diskStatus(sandboxRootDir()),
     memory: await memoryStatus(),
   };

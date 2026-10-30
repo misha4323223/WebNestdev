@@ -23,7 +23,7 @@ import { assertEncryptionConfigured } from "./storage/secret-crypto.js";
 import { describeTrustProxy, trustProxyOption } from "./security/client-ip.js";
 import { registerSameOriginGuard } from "./security/same-origin.js";
 import { registerSecurityHeaders } from "./security/headers.js";
-import { describeSandboxPaths } from "./sandbox/config.js";
+import { describeSandboxPaths, describeSandboxRuntime, sandboxRuntime } from "./sandbox/config.js";
 import { configureDockerEndpoint, describeDockerEndpoint } from "./sandbox/docker/endpoint.js";
 import { describeSandboxMount,verifySandboxMount } from "./sandbox/sandbox-check.js";
 import { ensureDataDir } from "./project-store.js";
@@ -118,9 +118,13 @@ import "./tools/image-tools.js";
 // работать на JSON-файлах: иначе данные «теряются» при первом же переезде.
 assertStorageConfigured();
 assertEncryptionConfigured();
+// Опечатка в SANDBOX_RUNTIME должна остановить старт, а не оставить контейнеры на runc, пока
+// оператор считает, что включён gVisor.
+sandboxRuntime();
 // Адрес Docker выбирается до первого вызова `docker`: контейнер брокера поднимается вместе с
-// сервером, и без ожидания первый `docker run` ушёл бы в закрытый сокет. Если брокера нет, функция
-// возвращает сервер на прямой сокет — старт не должен зависеть от нового компонента.
+// сервером, и без ожидания первый `docker run` ушёл бы в закрытый сокет. Если брокера нет,
+// функция снимает DOCKER_HOST; в контейнере прямого сокета нет, поэтому API поднимается без
+// песочниц и превью, а не с неверным адресом.
 await configureDockerEndpoint();
 
 // Адрес клиента: порт приложения наружу не публикуется, поэтому без доверия к Caddy все клиенты
@@ -200,6 +204,7 @@ void postboxStatus()
 // который демон разбирает на хосте. Оба печатаются при старте, чтобы расхождение было видно
 // сразу, а не после того, как агент пожалуется на пустой терминал.
 console.log("[sandbox] " + describeSandboxPaths());
+console.log("[sandbox] " + describeSandboxRuntime());
 console.log("[docker] " + describeDockerEndpoint());
 // База инициализируется в фоне: DDL на «холодной» серверлесс-базе занимает 30–60 с.
 // Если дождаться её здесь, app.listen() так и не выполнится (порт 8787 не поднимется,

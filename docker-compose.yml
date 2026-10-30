@@ -62,16 +62,26 @@ services:
     build:
       context: .
       dockerfile: server/Dockerfile
-    command: ["node","deploy/docker-broker/index.mjs"]
+    # Явный entrypoint: образ сервера теперь имеет ENTRYPOINT (сброс прав), а брокеру он не
+    # нужен — брокер обязан остаться root, иначе не откроет docker.sock. Так образ можно
+    # откатить на предыдущую версию, не меняя compose: старый образ просто не имеет серверного
+    # entrypoint, и отсутствие override в сервисе сервера не мешает ему запуститься.
+    entrypoint: ["node","deploy/docker-broker/index.mjs"]
     environment:
       BROKER_SOCKET: /run/webnestdev-docker/docker.sock
       BROKER_UPSTREAM: /var/run/docker.sock
       BROKER_SANDBOX_ROOT: ${SANDBOX_DIR:-/var/lib/webnestdev/sandboxes}
       BROKER_IMAGE: ${SANDBOX_IMAGE:-node:22-bookworm}
+      # Единственный Runtime, который политика разрешает в create. Пустое/`docker` — контейнеры
+      # идут на runc; `runsc` — gVisor. Значение должно совпадать с SANDBOX_RUNTIME сервера:
+      # иначе политика отклонит create и будет понятная ошибка, а не тихий откат на runc.
+      BROKER_RUNTIME: ${SANDBOX_RUNTIME:-docker}
       # Явно заданная сеть предпросмотра: имя может не кончаться на `preview`, и тогда правило
       # по суффиксу её не узнает. Пустое значение — правило по имени (как в preview-network.ts).
       PREVIEW_NETWORK: ${PREVIEW_NETWORK:-}
       BROKER_SOCKET_MODE: "0660"
+      # Сервер после этапа 2.2 работает от uid 1000; сокет должен быть доступен этой группе.
+      BROKER_SOCKET_GID: ${WEBNESTDEV_GID:-1000}
       # Журнал запросов для разбора зависаний: по нему видно, до какого шага дошёл Docker CLI.
       # Выключить — убрать строку или поставить 0.
       BROKER_LOG_REQUESTS: "1"
@@ -89,6 +99,10 @@ services:
     networks:
       - webnestdev
       - webnestdev-preview
+    # uid 0 нужен для docker.sock, но первичная группа — группа сервера: сокет создаётся
+    # сразу root:1000, и chown не требуется (cap_drop ALL убирает CAP_CHOWN). chmod своего
+    # сокета владельцу разрешён и без capabilities.
+    user: "0:1000"
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -107,9 +121,15 @@ services:
       postgres:
         condition: service_healthy
       # Брокер поднимается первым, но сервер его не ждёт бесконечно: если сокет не появился,
-      # configureDockerEndpoint() вернётся на прямой сокет (docs/DOCKER_BROKER.md, план Б).
+      # configureDockerEndpoint() снимает DOCKER_HOST, и API работает без песочниц и превью
+      # (прямого сокета у текущего образа нет). Подробности — docs/DOCKER_BROKER.md.
       docker-broker:
         condition: service_started
+    # Entrypoint живёт в образе (server/Dockerfile): он стартует root только чтобы выставить
+    # владельца на тома и скопировать секреты, затем через setpriv запускает Node от uid 1000.
+    # В compose его нет намеренно: при откате на предыдущий образ без этого файла контейнер
+    # должен запуститься старым CMD, а не упасть на отсутствующем entrypoint. Брокер остаётся
+    # root: он один видит настоящий docker.sock, поэтому ему нужен доступ к демону.
     environment:
       NODE_ENV: production
       PORT: 8787
@@ -197,11 +217,18 @@ services:
       PLATFORM_S3_SECRET_ACCESS_KEY: ${PLATFORM_S3_SECRET_ACCESS_KEY:-}
       # 0 — проекты остаются на диске; 1 — простой дольше PROJECT_ARCHIVE_IDLE_MINUTES минут
       # уезжает в бакет и освобождает диск ВМ. Включается осознанно: первое открытие проекта
-      # после простоя сначала скачивает архив. Обход раз в 10 минут, чтобы «час простоя»
-      # действительно означал час, а не «час плюс до шести часов ожидания обхода».
+      # после простоя сначала скачивает архив. Обход раз в 10 минут, поэтому порог
+      # срабатывает с точностью до десяти минут.
       PROJECT_ARCHIVE_ENABLED: ${PROJECT_ARCHIVE_ENABLED:-0}
-      PROJECT_ARCHIVE_IDLE_MINUTES: ${PROJECT_ARCHIVE_IDLE_MINUTES:-360}
+      PROJECT_ARCHIVE_IDLE_MINUTES: ${PROJECT_ARCHIVE_IDLE_MINUTES:-180}
       PROJECT_ARCHIVE_SWEEP_INTERVAL_MS: ${PROJECT_ARCHIVE_SWEEP_INTERVAL_MS:-600000}
+      # Давление на диск: при занятости выше порога самые старые простаивающие проекты
+      # уезжают в бакет, пока занятость не опустится до цели. Проверка дешёвая (statfs)
+      # и идёт чаще обычного обхода; упаковка ограничена, чтобы не есть CPU у превью.
+      PROJECT_ARCHIVE_DISK_HIGH_PERCENT: ${PROJECT_ARCHIVE_DISK_HIGH_PERCENT:-75}
+      PROJECT_ARCHIVE_DISK_TARGET_PERCENT: ${PROJECT_ARCHIVE_DISK_TARGET_PERCENT:-68}
+      PROJECT_ARCHIVE_CONCURRENCY: ${PROJECT_ARCHIVE_CONCURRENCY:-2}
+      PROJECT_ARCHIVE_PRESSURE_CHECK_MS: ${PROJECT_ARCHIVE_PRESSURE_CHECK_MS:-60000}
       # Веб-поиск агента. `auto` — провайдер по тарифу: бесплатный ищет через DuckDuckGo без ключей,
       # платные — Yandex Search API, а Tavily страхует его как резерв. Перечислено явно, потому что
       # Compose не передаёт в контейнер переменные, которых нет в этом списке: ключ, положенный в .env
@@ -327,9 +354,19 @@ services:
       # монтированием ниже, сервер отдаст контейнерам правильный путь вместо угадывания.
       WEBNESTDEV_SANDBOX_HOST_DIR: ${SANDBOX_DIR:-/var/lib/webnestdev/sandboxes}
       SANDBOX_MODE: docker
-      # Docker: сервер говорит с брокером, а не с демоном хоста. Прямой сокет ниже остаётся
-      # смонтированным только на время обкатки — это план Б. WEBNESTDEV_DOCKER_BROKER=0 в .env
-      # на ВМ возвращает прежнее поведение без выкатки (docs/DOCKER_BROKER.md).
+      # docker — обычный runc; runsc — gVisor для контейнеров команд, заданий, превью и проб.
+      # По умолчанию docker: выкатка не меняет поведение, пока оператор не включит runsc.
+      SANDBOX_RUNTIME: ${SANDBOX_RUNTIME:-docker}
+      # uid/gid, на который entrypoint сбрасывает права. Сейчас поддерживается только 1000:1000:
+      # контейнеры песочниц и политика брокера уже используют этот uid, и другой сделал бы файлы
+      # сервера недоступными для записи контейнеру. Оставлено явно, чтобы entrypoint мог
+      # отказаться от неверного значения, а не молча сломать проекты.
+      WEBNESTDEV_UID: ${WEBNESTDEV_UID:-1000}
+      WEBNESTDEV_GID: ${WEBNESTDEV_GID:-1000}
+      # Docker: сервер говорит с брокером, а не с демоном хоста. Прямой сокет серверу не
+      # монтируется. WEBNESTDEV_DOCKER_BROKER=0 на текущем образе не вернёт Docker: сервер
+      # работает от uid 1000, а прямой сокет — root:docker 0660. Откат — предыдущий образ
+      # (docs/DOCKER_BROKER.md §6).
       DOCKER_HOST: unix:///run/webnestdev-docker/docker.sock
       WEBNESTDEV_DOCKER_BROKER: ${WEBNESTDEV_DOCKER_BROKER:-1}
       WEBNESTDEV_DOCKER_BROKER_WAIT_MS: ${WEBNESTDEV_DOCKER_BROKER_WAIT_MS:-10000}
@@ -403,8 +440,8 @@ services:
       - ${WEBNESTDEV_SECRETS_DIR:-/var/lib/webnestdev/secrets}:/var/lib/webnestdev/secrets:ro
       # Только сокет брокера: настоящий docker.sock серверу не монтируется (этап 3,
       # docs/DOCKER_BROKER.md). Сам сокет на хосте и у брокера остаётся — отключён лишь доступ
-      # сервера, поэтому RCE в API больше не даёт демон хоста. Откат — вернуть строку
-      # `- /var/run/docker.sock:/var/run/docker.sock` и выкатить снова.
+      # сервера, поэтому RCE в API больше не даёт демон хоста. Вернуть строку монтирования
+      # прямого сокета недостаточно: сервер работает от uid 1000. Откат — предыдущий образ.
       - docker-broker:/run/webnestdev-docker
     # Сервер стоит в двух сетях: база/панель (Caddy, postgres) и предпросмотры.
     networks:

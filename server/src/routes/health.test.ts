@@ -101,7 +101,13 @@ test("health отдаёт подробности только loopback-запр�
     const internalBody = internal.json() as Record<string, unknown>;
     assert.equal(typeof internalBody.build, "string");
     assert.ok(internalBody.sandbox, "loopback-ответ содержит состояние песочницы");
+    const sandbox = internalBody.sandbox as { runtime?: string };
+    assert.ok(sandbox.runtime === "docker" || sandbox.runtime === "runsc", "sandbox.runtime называет реально выбранный рантайм");
     assert.ok(internalBody.activity, "loopback-ответ содержит метрики хоста");
+    const activity = internalBody.activity as { process?: { uid: number | null; gid: number | null } };
+    assert.ok(activity.process, "activity.process показывает реального пользователя процесса");
+    assert.equal(typeof activity.process?.uid, "number");
+    assert.equal(typeof activity.process?.gid, "number");
   } finally {
     await app.close();
   }
