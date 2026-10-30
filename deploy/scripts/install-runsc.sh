@@ -52,8 +52,34 @@ for command in curl sha256sum tar; do
     exit 1
   fi
 done
-if ! tar --help 2>&1 | grep -q -- '-j'; then
-  echo "tar не умеет bzip2; установите bzip2" >&2
+
+# GNU tar умеет флаг -j, но распаковку делегирует отдельному bzip2. На минимальной ВМ
+# (именно такой оказался прод) tar --help показывает -j, а распаковка падает с
+# "bzip2: Cannot exec". Поэтому проверяем сам декомпрессор и при необходимости ставим его:
+# установщик и так запускается от root, а без bzip2 релиз gVisor не распаковать.
+if ! command -v bzip2 >/dev/null 2>&1; then
+  echo "[runsc] bzip2 не найден — устанавливаю пакет"
+  if command -v apt-get >/dev/null 2>&1; then
+    # Сначала без update: на ВМ могут быть готовые списки пакетов, а лишний поход в
+    # репозиторий — это ещё одна сетевая точка отказа. update нужен только если пакет
+    # не нашёлся в уже загруженных списках.
+    if ! DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends bzip2; then
+      DEBIAN_FRONTEND=noninteractive apt-get update -qq && \
+        DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends bzip2
+    fi
+  elif command -v apk >/dev/null 2>&1; then
+    apk add --no-cache bzip2
+  elif command -v dnf >/dev/null 2>&1; then
+    dnf install -y bzip2
+  elif command -v yum >/dev/null 2>&1; then
+    yum install -y bzip2
+  else
+    echo "bzip2 не найден, а пакетный менеджер не распознан; установите bzip2 вручную" >&2
+    exit 1
+  fi
+fi
+if ! command -v bzip2 >/dev/null 2>&1; then
+  echo "bzip2 всё ещё недоступен после установки; распаковать gVisor нельзя" >&2
   exit 1
 fi
 
