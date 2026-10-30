@@ -1,9 +1,9 @@
-import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { dockerRunArgs } from "./docker/args.js";
 import { dockerOptions } from "./docker/options.js";
-import { dockerUnavailableMessage } from "./docker/unavailable.js";
 import { openProjectForSandbox } from "./permissions.js";
+import { sandboxHost } from "./host.js";
+import type { DockerCliResult } from "./docker/types.js";
 import { tailLogLines } from "../preview/log-lines.js";
 import { secretEnvMaskMounts } from "./secret-mask.js";
 import type { SandboxConfig } from "./sandbox-types.js";
@@ -66,35 +66,10 @@ export function isSandboxJobName(value: string) {
   return /^wnd-job-[A-Za-z0-9_.-]{1,112}$/.test(value);
 }
 
-type DockerResult = { code: number | null; stdout: string; stderr: string };
+type DockerResult = DockerCliResult;
 
 function docker(args: string[], timeoutMs = DOCKER_TIMEOUT_MS): Promise<DockerResult> {
-  return new Promise((resolve, reject) => {
-    const child = spawn("docker", args, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
-    let stdout = "";
-    let stderr = "";
-    let settled = false;
-    const finish = (result: DockerResult) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      resolve(result);
-    };
-    const fail = (error: Error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      reject(error);
-    };
-    const timer = setTimeout(() => {
-      child.kill("SIGTERM");
-      fail(new Error("Docker не ответил за " + Math.round(timeoutMs / 1000) + " с"));
-    }, timeoutMs);
-    child.stdout.on("data", (chunk: Buffer) => { stdout += chunk.toString(); });
-    child.stderr.on("data", (chunk: Buffer) => { stderr += chunk.toString(); });
-    child.once("error", error => fail(new Error(dockerUnavailableMessage(error))));
-    child.once("close", code => finish({ code, stdout, stderr }));
-  });
+  return sandboxHost().docker(args, timeoutMs);
 }
 
 function forgetJob(record: JobRecord) {

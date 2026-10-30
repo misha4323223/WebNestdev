@@ -256,8 +256,6 @@ jobs:
           # auto — установить runsc при SANDBOX_RUNTIME=runsc, если Docker его не знает; 0 —
           # не трогать системный Docker (хост уже подготовлен администратором).
           RUNSC_INSTALL: ${{ vars.RUNSC_INSTALL || secrets.RUNSC_INSTALL }}
-          # 1 — временный публичный демо-доступ для проверки платёжного сервиса; 0/пусто — обычный вход.
-          WEBNESTDEV_PUBLIC_DEMO: ${{ vars.WEBNESTDEV_PUBLIC_DEMO }}
           WEBNESTDEV_ADMIN_EMAILS: ${{ secrets.WEBNESTDEV_ADMIN_EMAILS }}
           WEBNESTDEV_ADMIN_USER_IDS: ${{ secrets.WEBNESTDEV_ADMIN_USER_IDS }}
           # Первый администратор админ-приложения (docs/ADMIN_API.md). Сервер создаёт запись при
@@ -405,7 +403,6 @@ jobs:
           add_platform_env PROJECT_ARCHIVE_ENABLED "$PROJECT_ARCHIVE_ENABLED"
           add_platform_env PROJECT_ARCHIVE_IDLE_MINUTES "$PROJECT_ARCHIVE_IDLE_MINUTES"
           add_platform_env SANDBOX_RUNTIME "$SANDBOX_RUNTIME"
-          add_platform_env WEBNESTDEV_PUBLIC_DEMO "$WEBNESTDEV_PUBLIC_DEMO"
           add_platform_env WEBNESTDEV_ADMIN_EMAILS "$WEBNESTDEV_ADMIN_EMAILS"
           add_platform_env WEBNESTDEV_ADMIN_USER_IDS "$WEBNESTDEV_ADMIN_USER_IDS"
           add_platform_env ADMIN_BOOTSTRAP_EMAIL "$ADMIN_BOOTSTRAP_EMAIL"
@@ -605,8 +602,6 @@ jobs:
           # auto — установить runsc при SANDBOX_RUNTIME=runsc, если Docker его не знает; 0 —
           # не трогать системный Docker (хост уже подготовлен администратором).
           RUNSC_INSTALL: ${{ vars.RUNSC_INSTALL || secrets.RUNSC_INSTALL }}
-          # 1 — временный публичный демо-доступ для проверки платёжного сервиса; 0/пусто — обычный вход.
-          WEBNESTDEV_PUBLIC_DEMO: ${{ vars.WEBNESTDEV_PUBLIC_DEMO }}
           WEBNESTDEV_ADMIN_EMAILS: ${{ secrets.WEBNESTDEV_ADMIN_EMAILS }}
           WEBNESTDEV_ADMIN_USER_IDS: ${{ secrets.WEBNESTDEV_ADMIN_USER_IDS }}
           # Первый администратор админ-приложения (docs/ADMIN_API.md). Сервер создаёт запись при
@@ -731,7 +726,6 @@ jobs:
           add_platform_env PROJECT_ARCHIVE_ENABLED "$PROJECT_ARCHIVE_ENABLED"
           add_platform_env PROJECT_ARCHIVE_IDLE_MINUTES "$PROJECT_ARCHIVE_IDLE_MINUTES"
           add_platform_env SANDBOX_RUNTIME "$SANDBOX_RUNTIME"
-          add_platform_env WEBNESTDEV_PUBLIC_DEMO "$WEBNESTDEV_PUBLIC_DEMO"
           add_platform_env WEBNESTDEV_ADMIN_EMAILS "$WEBNESTDEV_ADMIN_EMAILS"
           add_platform_env WEBNESTDEV_ADMIN_USER_IDS "$WEBNESTDEV_ADMIN_USER_IDS"
           add_platform_env ADMIN_BOOTSTRAP_EMAIL "$ADMIN_BOOTSTRAP_EMAIL"

@@ -1,5 +1,5 @@
 import type { FastifyInstance } from "fastify";
-import { sandboxStatus } from "../docker-sandbox.js";
+import { sandboxHost } from "../sandbox/host.js";
 import { isYdbEnabled, ydbQuery } from "../storage/ydb.js";
 import { runQueueStats } from "../agent/run-limiter.js";
 import { sandboxQueueStats } from "../sandbox/sandbox-limiter.js";
@@ -35,7 +35,7 @@ function buildId() {
 }
 
 async function dependencyStatus(){
-  const sandbox=await sandboxStatus();
+  const sandbox=await sandboxHost().status();
   const mode: "json"|"ydb"|"postgres" = isYdbEnabled() ? "postgres" : "json";
   let storage:{mode:string;ok:boolean}={mode,ok:true};
   if(isYdbEnabled()){
@@ -216,5 +216,5 @@ export async function registerHealthRoutes(app:FastifyInstance){
     }
     return reply.code(ok?200:503).send({ok,service:"webnestdev-server",build:buildId(),...dependencies,sms:await smsInfo(),activity:await activity()});
   });
-  app.get("/api/sandbox/status",async()=>sandboxStatus());
+  app.get("/api/sandbox/status",async()=>sandboxHost().status());
 }

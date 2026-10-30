@@ -281,10 +281,6 @@ services:
       WEBNESTDEV_SMS_TEST_MODE: ${WEBNESTDEV_SMS_TEST_MODE:-}
       WEBNESTDEV_DEMO_PHONE_ENABLED: ${WEBNESTDEV_DEMO_PHONE_ENABLED:-}
       WEBNESTDEV_DEMO_PHONE: ${WEBNESTDEV_DEMO_PHONE:-}
-      # ВРЕМЕННО, на время проверки Робокассы: 1 — публичный доступ под отдельным
-      # демо-аккаунтом без экрана входа. После проверки вернуть 0 и выкатить.
-      # Значение из панели «Ключи сервера» важнее.
-      WEBNESTDEV_PUBLIC_DEMO: ${WEBNESTDEV_PUBLIC_DEMO:-1}
       # Поддержка: ключ чтения обращений для внешней админки и SMTP. Compose передаёт в
       # контейнер только перечисленные переменные, поэтому без этих строк SUPPORT_* из .env
       # на ВМ до сервера не доходили бы. Значение из панели «Ключи сервера» важнее значения
@@ -353,6 +349,10 @@ services:
       # Явно, а не через молчаливый фолбэк: если это значение когда-нибудь разойдётся с
       # монтированием ниже, сервер отдаст контейнерам правильный путь вместо угадывания.
       WEBNESTDEV_SANDBOX_HOST_DIR: ${SANDBOX_DIR:-/var/lib/webnestdev/sandboxes}
+      # Stable identity of this execution node. Multiple machines must set different values;
+      # the node registry and the archive marker read the same variable.
+      WEBNESTDEV_NODE_ID: ${WEBNESTDEV_NODE_ID:-local}
+      WEBNESTDEV_NODE_ADDRESS: ${WEBNESTDEV_NODE_ADDRESS:-}
       SANDBOX_MODE: docker
       # docker — обычный runc; runsc — gVisor для контейнеров команд, заданий, превью и проб.
       # По умолчанию docker: выкатка не меняет поведение, пока оператор не включит runsc.

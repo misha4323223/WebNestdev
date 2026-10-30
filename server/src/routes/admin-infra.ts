@@ -8,9 +8,12 @@ import { requireAdmin } from "./admin.js";
 import { applyNoStoreToReply } from "./cache-headers.js";
 import { isYdbEnabled, ydbQuery } from "../storage/ydb.js";
 import { listProjectOwners, type ProjectOwner } from "../project-store.js";
+import { countProjectsByNode, listNodes, type SandboxNode } from "../nodes/node-store.js";
+import { isNodeFresh } from "../nodes/placement.js";
+import { nodeId } from "../nodes/identity.js";
 import { readProjectSizes } from "../account/storage-quota.js";
 import { sandboxRootDir } from "../sandbox/config.js";
-import { sandboxStatus } from "../docker-sandbox.js";
+import { sandboxHost, type SandboxHostStatus } from "../sandbox/host.js";
 import { listPreviews } from "../preview/preview-store.js";
 import { PREVIEW_LABEL } from "../preview/types.js";
 import { lastProjectAccess } from "../storage/project-archive.js";
@@ -167,6 +170,8 @@ export type SandboxQueryState = AdminSandboxState | "all";
 export type AdminSandboxRow = {
   projectId: string;
   name: string;
+  /** Execution node where the project's files live. Empty only for a malformed legacy row. */
+  node: string;
   email: string;
   state: AdminSandboxState;
   container: string;
@@ -185,11 +190,18 @@ export type InfraMonitoring = {
   alertEmailConfigured: boolean;
 };
 
+export type InfraNode = SandboxNode & {
+  projects: number;
+  freeMemoryMb: number;
+  fresh: boolean;
+};
+
 export type InfraSnapshot = {
   generatedAt: string;
   host: InfraHost;
   disk?: InfraDisk;
   docker: InfraDocker;
+  nodes?: InfraNode[];
   sandboxes?: InfraSandboxes;
   buckets: InfraBucket[];
   database?: InfraDatabase;
@@ -398,6 +410,7 @@ export function buildSandboxRows(source: SandboxRowSource): AdminSandboxRow[] {
     rows.push({
       projectId: project.id,
       name: project.name,
+      node: project.node ?? nodeId(),
       email: source.emails.get(project.userId) ?? "",
       state,
       container: container?.name ?? "",
@@ -539,7 +552,7 @@ async function collectSandboxInventory(): Promise<SandboxInventory> {
 
 async function collectDocker(): Promise<{ docker: InfraDocker; issues: InfraUnavailable[]; df: DockerDfSummary | null }> {
   const issues: InfraUnavailable[] = [];
-  const status: Awaited<ReturnType<typeof sandboxStatus>> = await withTimeout(sandboxStatus(), 4_000, "Docker не ответил за 4 с").catch(error => ({
+  const status: SandboxHostStatus = await withTimeout(sandboxHost().status(), 4_000, "Docker не ответил за 4 с").catch(error => ({
     mode: process.env.SANDBOX_MODE ?? "docker",
     available: false,
     detail: errorText(error),
@@ -784,6 +797,26 @@ async function hostSnapshot(): Promise<InfraHost> {
   };
 }
 
+async function collectNodes(): Promise<{ nodes: InfraNode[] | null; issues: InfraUnavailable[] }> {
+  try {
+    const [nodes, projectsByNode] = await Promise.all([
+      withTimeout(listNodes(), 4_000, "Узлы не прочитаны за 4 с"),
+      withTimeout(countProjectsByNode(), 4_000, "Размещение проектов не прочитано за 4 с"),
+    ]);
+    return {
+      nodes: nodes.map(node => ({
+        ...node,
+        projects: projectsByNode.get(node.id) ?? 0,
+        freeMemoryMb: Math.max(0, node.memoryTotalMb - node.memoryUsedMb),
+        fresh: isNodeFresh(node),
+      })),
+      issues: [],
+    };
+  } catch (error) {
+    return { nodes: null, issues: [{ section: "nodes", reason: "реестр узлов не прочитан: " + errorText(error) }] };
+  }
+}
+
 export async function buildInfraSnapshot(
   inventory: SandboxInventory | null,
   inventoryIssues: InfraUnavailable[] = [],
@@ -798,8 +831,14 @@ export async function buildInfraSnapshot(
   for (const issue of inventoryIssues) mark(issue.section, issue.reason);
 
   const host = await hostSnapshot();
-  const [dockerProbe, bucketProbe, databaseProbe] = await Promise.all([collectDocker(), collectBuckets(), collectDatabase()]);
+  const [dockerProbe, bucketProbe, databaseProbe, nodesProbe] = await Promise.all([
+    collectDocker(),
+    collectBuckets(),
+    collectDatabase(),
+    collectNodes(),
+  ]);
   const diskProbe = await collectDisk(dockerProbe.df);
+  for (const issue of nodesProbe.issues) mark(issue.section, issue.reason);
   for (const issue of dockerProbe.issues) mark(issue.section, issue.reason);
   for (const issue of diskProbe.issues) mark(issue.section, issue.reason);
   for (const issue of bucketProbe.issues) mark(issue.section, issue.reason);
@@ -903,6 +942,7 @@ export async function buildInfraSnapshot(
     host,
     ...(diskProbe.disk ? { disk: diskProbe.disk } : {}),
     docker: dockerProbe.docker,
+    ...(nodesProbe.nodes ? { nodes: nodesProbe.nodes } : {}),
     ...(sandboxes ? { sandboxes } : {}),
     buckets: bucketProbe.buckets,
     ...(databaseProbe.database ? { database: databaseProbe.database } : {}),

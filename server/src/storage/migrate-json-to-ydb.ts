@@ -14,7 +14,7 @@ async function files(dir:string){
 
 type User={id:string;email:string;passwordHash:string;createdAt:string};
 type Session={id:string;userId:string;expiresAt:string;lastSeenAt?:string};
-type Project={id:string;name:string;createdAt:string;updatedAt:string;github?:unknown;userId:string};
+type Project={id:string;name:string;createdAt:string;updatedAt:string;github?:unknown;userId:string;node?:string};
 type Conversation={id:string;projectId:string;title:string;messages:ChatMessage[];createdAt:string;updatedAt:string};
 type Provider={provider:string;baseUrl:string;model:string;token?:string};
 type GitHub={id:string;userId:string;accessToken:string;githubLogin?:string;createdAt:string};
@@ -48,7 +48,7 @@ async function main(){
 
   for(const name of await files(path.join(root,"projects"))){
     const p=json<Project>(await readFile(path.join(root,"projects",name),"utf8"));
-    await sql`UPSERT INTO ${sql.identifier(getTable("projects"))} (id,name,created_at,updated_at,github_json,user_id) VALUES (${p.id},${p.name},${p.createdAt},${p.updatedAt},${p.github ? JSON.stringify(p.github) : ""},${p.userId})`;
+    await sql`UPSERT INTO ${sql.identifier(getTable("projects"))} (id,name,created_at,updated_at,github_json,user_id,node) VALUES (${p.id},${p.name},${p.createdAt},${p.updatedAt},${p.github ? JSON.stringify(p.github) : ""},${p.userId},${p.node ?? ""})`;
   }
 
   for(const name of await files(path.join(root,"conversations"))){

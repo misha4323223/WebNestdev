@@ -24,6 +24,8 @@ import { describeTrustProxy, trustProxyOption } from "./security/client-ip.js";
 import { registerSameOriginGuard } from "./security/same-origin.js";
 import { registerSecurityHeaders } from "./security/headers.js";
 import { describeSandboxPaths, describeSandboxRuntime, sandboxRuntime } from "./sandbox/config.js";
+import { initializeNodeRegistry, stopNodeHeartbeat } from "./nodes/local-node.js";
+import { NoSandboxNodeError } from "./nodes/placement.js";
 import { configureDockerEndpoint, describeDockerEndpoint } from "./sandbox/docker/endpoint.js";
 import { describeSandboxMount,verifySandboxMount } from "./sandbox/sandbox-check.js";
 import { ensureDataDir } from "./project-store.js";
@@ -58,6 +60,7 @@ import { registerAdminAnalyticsRoutes } from "./routes/admin-analytics.js";
 import { registerAdminEconomicsRoutes } from "./routes/admin-economics.js";
 import { registerAdminAuditRoutes } from "./routes/admin-audit.js";
 import { registerAdminInfraRoutes } from "./routes/admin-infra.js";
+import { registerAdminNodeRoutes } from "./routes/admin-nodes.js";
 import { registerAdminPruneRoutes } from "./routes/admin-prune.js";
 import { registerAdminMailRoutes } from "./routes/admin-mail.js";
 import { registerAdminUserActionRoutes } from "./routes/admin-users.js";
@@ -228,6 +231,21 @@ initializeStorage()
         "cold tier markers import skipped",
       );
     }
+    // The local node is the first placement target and the source of the project-node backfill.
+    // A failure here must not prevent the API from starting: the first project creation retries
+    // registration, and a clear error is better than serving projects pinned to nowhere.
+    try {
+      const registry = await initializeNodeRegistry();
+      app.log.info(
+        { node: registry.node.id, backfilledProjects: registry.backfilledProjects },
+        "node registry ready",
+      );
+    } catch (error) {
+      app.log.warn(
+        { error: error instanceof Error ? error.message : error },
+        "node registry initialization skipped",
+      );
+    }
     // Первый администратор из окружения — путь для ВМ, где нет удобного терминала
     // (docs/ADMIN_API.md). Существующая запись не меняется; пароль в лог не попадает.
     // Ошибка здесь не должна выглядеть как «хранилище не поднялось»: база уже готова.
@@ -251,7 +269,7 @@ if (demoEnabled) {
   app.log.info({ demoEmail: demo.email, created: demo.created }, "demo account ready");
 }
 
-app.addHook("onClose", async () => { stopBillingSweeper(); stopMailQueue(); stopStorageReconcile?.(); await stopPreviewHostServer(); await closeStorage(); });
+app.addHook("onClose", async () => { stopBillingSweeper(); stopMailQueue(); stopStorageReconcile?.(); stopNodeHeartbeat(); await stopPreviewHostServer(); await closeStorage(); });
 
 await registerSecurityHeaders(app);
 
@@ -266,6 +284,9 @@ app.setErrorHandler((error, request, reply) => {
       bytesDone: error.bytesDone,
       bytesTotal: error.bytesTotal,
     });
+  }
+  if (error instanceof NoSandboxNodeError) {
+    return reply.code(error.statusCode).send({ error: error.message, code: error.code });
   }
   if (error instanceof ZodError) {
     return reply.code(400).send({
@@ -301,6 +322,8 @@ await registerAdminEconomicsRoutes(app);
 await registerAdminAuditRoutes(app);
 // Инфраструктура: диск, Docker, песочницы, бакеты и база. Только чтение и только админ-токен.
 await registerAdminInfraRoutes(app);
+// Реестр узлов и drain: администратор видит размещение и может вывести машину из обслуживания.
+await registerAdminNodeRoutes(app);
 // Безопасная очистка Docker: кэш сборки и висячие образы. Контейнеры и тома не трогает.
 await registerAdminPruneRoutes(app);
 // Рассылка через Postbox: сегменты, предпросмотр, тест, отправка и остановка (docs/MAIL.md).

@@ -146,7 +146,10 @@ Configuration (`PLATFORM_S3_*` — the platform's own bucket, **not** a user's k
 | `PROJECT_ARCHIVE_PRESSURE_CHECK_MS` | no | disk-pressure check interval, 1 minute by default |
 | `PROJECT_ARCHIVE_ACCESS_GUARD_MS` | no | skip a project opened in this process less than an hour ago |
 | `PROJECT_ARCHIVE_TAR_TIMEOUT_MS` | no | `tar` timeout, 10 minutes by default |
-| `WEBNESTDEV_NODE_ID` | no | node name written into the archive marker; the hostname by default |
+| `WEBNESTDEV_NODE_ID` | no | stable node id for the registry and archive marker; `local` by default. Set a unique value on every machine when there is more than one. |
+| `WEBNESTDEV_NODE_ADDRESS` | no | private runner address stored in the node registry; empty for the local node |
+| `WEBNESTDEV_NODE_HEARTBEAT_MS` | no | local node heartbeat interval, 30 seconds by default (minimum 5 seconds) |
+| `WEBNESTDEV_NODE_STALE_MS` | no | how long a node may miss heartbeats before placement excludes it, 2 minutes by default |
 
 All five Russian providers from «Интеграции» → «Файлы (S3)» work here (Selectel, VK Cloud, Yandex
 Object Storage, Timeweb Cloud, Cloud.ru), МТС Web Services and MinIO for a local run. For МВС the

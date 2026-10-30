@@ -1,8 +1,8 @@
-import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { sandboxHostRootDir,sandboxImage,sandboxRootDir,sandboxRuntimeArgs } from "./config.js";
+import { sandboxHost } from "./host.js";
 
 /**
  * Prefix of the marker file the check writes and a container reads back through the mounted
@@ -38,17 +38,9 @@ export function markerMatches(expected:string,stdout:string){return stdout.trim(
 function tail(value:string,max=400){const text=value.trim();return text.length>max?text.slice(-max):text}
 
 function dockerRun(args:string[],timeoutMs:number){
-  return new Promise<{code:number;stdout:string;stderr:string}>((resolve,reject)=>{
-    const child=spawn("docker",args,{stdio:["ignore","pipe","pipe"],windowsHide:true});
-    let stdout="",stderr="";
-    child.stdout.on("data",(chunk:Buffer)=>{stdout+=chunk.toString()});
-    child.stderr.on("data",(chunk:Buffer)=>{stderr+=chunk.toString()});
-    // Подкоманда и предел — в тексте: иначе «не ответила вовремя» не говорит, ждал ли проверка
-    // запуска контейнера или его вывода, а в журнале остаётся только факт таймаута.
-    const timer=setTimeout(()=>{child.kill("SIGKILL");reject(new Error(`Проверка монтирования песочницы не ответила вовремя (docker ${args[0]??"run"}, ${Math.round(timeoutMs/1000)} с)`))},timeoutMs);
-    child.once("error",error=>{clearTimeout(timer);reject(error)});
-    child.once("close",code=>{clearTimeout(timer);resolve({code:code??1,stdout,stderr})});
-  });
+  // Проба идёт через тот же исполняющий хост, что и рабочие контейнеры. Локально маркер лежит
+  // в общем каталоге; удалённой реализации понадобится ещё передать его в workspace узла.
+  return sandboxHost().docker(args,timeoutMs);
 }
 
 /**

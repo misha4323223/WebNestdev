@@ -3,6 +3,7 @@ import { z } from "zod";
 import { requireAdmin } from "./admin.js";
 import { applyNoStoreToReply } from "./cache-headers.js";
 import { getProject } from "../project-store.js";
+import { nodeId } from "../nodes/identity.js";
 import { getUser } from "../auth/auth-store.js";
 import { sandboxRootPath } from "../sandbox/config.js";
 import { listProjectSecrets } from "../secrets/project-secrets.js";
@@ -58,6 +59,7 @@ export async function registerAdminProjectRoutes(app: FastifyInstance) {
         name: project.name,
         createdAt: project.createdAt,
         updatedAt: project.updatedAt,
+        node: project.node ?? nodeId(),
         repository: project.github ?? null,
       },
       owner: owner ? { id: owner.id, email: owner.email, createdAt: owner.createdAt } : { id: project.userId, email: null, createdAt: null },

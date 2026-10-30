@@ -2,7 +2,13 @@ import type { FastifyRequest } from "fastify";
 import { createSession, deleteSession, getSession, getUser, sessionTtlMs } from "./auth-store.js";
 import { getProject, type Project } from "../project-store.js";
 import { isBlocked } from "../account/restriction-store.js";
-import { isPublicDemoAccount, publicDemoEnabled } from "./public-demo.js";
+
+/**
+ * Аккаунт временного публичного доступа, открывавшего сайт для проверки Робокассы.
+ * Демо-вход удалён после одобрения, но старые cookie могли остаться в браузерах
+ * проверяющих — их сессии отзываются при первом же запросе.
+ */
+const RETIRED_REVIEW_EMAIL = "review@webnestdev.local";
 
 export const SESSION_COOKIE = "webnestdev_session";
 
@@ -13,9 +19,8 @@ export async function getCurrentUser(request:FastifyRequest){
   if(!session) return null;
   const user = await getUser(session.userId);
   if(!user) return null;
-  // Публичный демо-доступ выключили — старые сессии демо-аккаунта сразу перестают работать,
-  // иначе посетитель оставался бы внутри после возврата обычного входа.
-  if(isPublicDemoAccount(user) && !publicDemoEnabled()){
+  // Демо-вход удалён; сессии служебного аккаунта больше не должны открывать сайт.
+  if(user.email.trim().toLowerCase() === RETIRED_REVIEW_EMAIL){
     await deleteSession(sessionId);
     return null;
   }

@@ -3,7 +3,7 @@ type Bucket = { count: number; resetAt: number };
 const buckets = new Map<string, Bucket>();
 const WINDOW_MS = 15 * 60 * 1000;
 
-export type AuthAction = "login" | "register" | "phone" | "phoneVerify" | "phoneDemo" | "publicDemo" | "adminLogin" | "adminTotp";
+export type AuthAction = "login" | "register" | "phone" | "phoneVerify" | "phoneDemo" | "adminLogin" | "adminTotp";
 
 /** Попытки с одного адреса: грубая защита, не зависящая от того, какой аккаунт перебирают. */
 const IP_LIMITS: Record<AuthAction, number> = {
@@ -12,9 +12,6 @@ const IP_LIMITS: Record<AuthAction, number> = {
   phone: 10,
   phoneVerify: 30,
   phoneDemo: 60,
-  // Новый браузер в публичном демо получает сессию без пароля; ограничение не даёт ботам
-  // плодить их без конца, но оставляет запас на перезагрузки и несколько проверяющих.
-  publicDemo: 60,
   // Вход администратора: адресов меньше, чем пользователей, но и попыток должно хватать на смену.
   adminLogin: 20,
   adminTotp: 30,
@@ -30,7 +27,6 @@ const SUBJECT_LIMITS: Record<AuthAction, number> = {
   phone: 4,
   phoneVerify: 15,
   phoneDemo: 60,
-  publicDemo: 60,
   adminLogin: 10,
   adminTotp: 20,
 };

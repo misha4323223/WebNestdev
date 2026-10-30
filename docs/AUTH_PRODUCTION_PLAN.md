@@ -119,22 +119,6 @@ and off with `WEBNESTDEV_DEMO_PHONE_ENABLED=0`. The number is configurable with
 The sign-in screen shows no provider or demo notes — the number is entered like any
 other; `GET /api/auth/phone/status` still reports it for API clients.
 
-### Temporary public demo access (payment-provider review)
-
-`WEBNESTDEV_PUBLIC_DEMO=1` makes the site usable without the sign-in screen while a payment
-provider reviews it. When `/api/auth/me` sees no session, it creates one for a dedicated
-`review@webnestdev.local` account, so the ordinary panel opens straight away. The account
-is separate from real users, has no administrator rights, and gets a filled "Гость NestDev"
-profile so the onboarding dialog does not cover the site.
-
-The flag is a platform key in **Settings → Server keys → Доступ к сайту**; it is read on every
-request, so no redeploy is needed to switch it on or off. The same value can come from the
-`WEBNESTDEV_PUBLIC_DEMO` repository variable during a deployment; a value saved in the panel
-wins. Set it to `0` (or clear it) after
-the review: new visitors immediately get the normal sign-in screen, and existing demo
-sessions stop working on their next request. `/auth` always shows the normal sign-in form,
-so the owner can still sign in to their own account while the demo flag is on.
-
 ### Test mode
 
 With no provider credentials (or `WEBNESTDEV_SMS_TEST_MODE=1`) the server sends

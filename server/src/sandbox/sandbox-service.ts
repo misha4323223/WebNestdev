@@ -63,5 +63,5 @@ export async function getSandbox(projectId:string,userId:string):Promise<Sandbox
   // раз при первом доступе, а перед каждым обращением: иначе `git add`/`git commit` в контейнере
   // снова упираются в `.git/index: Permission denied`.
   await openGitForSandbox(root);
-  return buildSandboxConfig(projectId,root);
+  return buildSandboxConfig(projectId,root,project.node);
 }

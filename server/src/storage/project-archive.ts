@@ -1,9 +1,9 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, rename, rm, stat } from "node:fs/promises";
-import { hostname } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
+import { nodeId } from "../nodes/identity.js";
 import { sandboxRootPath } from "../sandbox/config.js";
 import { recordStorageMutation } from "../account/storage-quota.js";
 import { objectStoreConfigFromEnv, projectArchiveKey, s3ObjectStore, type ObjectStore } from "./object-store.js";
@@ -51,11 +51,11 @@ function dataDir() {
 
 /**
  * Имя узла для отметки архива. При нескольких машинах по нему видно, откуда проект уехал в бакет.
- * `WEBNESTDEV_NODE_ID` задаётся выкаткой, когда имя контейнера меняется от пересоздания к
- * пересозданию; иначе берётся имя хоста.
+ * Источник тот же, что у реестра узлов: `WEBNESTDEV_NODE_ID`, иначе `local`. Так отметка архива
+ * и закрепление проекта не расходятся из-за случайного hostname контейнера.
  */
 function archiveNodeId() {
-  return (process.env.WEBNESTDEV_NODE_ID ?? "").trim() || hostname();
+  return nodeId();
 }
 
 async function tempFile(extension: string) {

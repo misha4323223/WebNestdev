@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import type { SandboxConfig } from "./sandbox-manager.js";
 import { dockerOptions } from "./sandbox/docker/options.js";
-import type { SandboxRunOptions } from "./sandbox-worker.js";
+import type { SandboxRunOptions } from "./sandbox/host.js";
 import { dockerRunArgs } from "./sandbox/docker/args.js";
 import { dockerUnavailableMessage } from "./sandbox/docker/unavailable.js";
 import { secretEnvMaskMounts } from "./sandbox/secret-mask.js";

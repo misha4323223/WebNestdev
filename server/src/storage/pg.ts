@@ -112,6 +112,7 @@ const PK_BY_TABLE: Record<string, string[]> = {
   phone_accounts: ["phone"],
   yandex_accounts: ["yandex_id"],
   sessions: ["id"],
+  nodes: ["id"],
   projects: ["id"],
   conversations: ["id"],
   conversation_messages: ["conversation_id", "created_at", "message_id"],
@@ -349,15 +350,35 @@ export async function initializeStorage(): Promise<void> {
     )`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("admin_sessions")}_admin ON ${tbl("admin_sessions")} (admin_id)`);
 
+    // Execution nodes. A row is the durable placement target: the project pin must reference
+    // the same id after a restart, so this cannot live in process memory.
+    await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("nodes")} (
+      id TEXT NOT NULL PRIMARY KEY,
+      address TEXT NOT NULL DEFAULT '',
+      status TEXT NOT NULL DEFAULT 'online',
+      memory_total_mb INTEGER NOT NULL DEFAULT 0,
+      memory_used_mb INTEGER NOT NULL DEFAULT 0,
+      containers INTEGER NOT NULL DEFAULT 0,
+      last_seen_at TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL
+    )`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("nodes")}_status ON ${tbl("nodes")} (status)`);
+
     await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("projects")} (
       id TEXT NOT NULL PRIMARY KEY,
       name TEXT NOT NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       github_json TEXT NOT NULL DEFAULT '',
-      user_id TEXT NOT NULL
+      user_id TEXT NOT NULL,
+      node TEXT NOT NULL DEFAULT ''
     )`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("projects")}_user ON ${tbl("projects")} (user_id)`);
+    // Databases created before node pinning get the column here; an empty value means the
+    // project predates the registry and is backfilled to the local node at startup.
+    await pool.query(`ALTER TABLE ${tbl("projects")} ADD COLUMN IF NOT EXISTS node TEXT NOT NULL DEFAULT ''`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("projects")}_node ON ${tbl("projects")} (node)`);
 
     await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("conversations")} (
       id TEXT NOT NULL PRIMARY KEY,

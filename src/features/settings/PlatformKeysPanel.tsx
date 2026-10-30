@@ -11,7 +11,7 @@ import { apiJson } from "../../lib/api";
 type PlatformKeySource = "panel" | "environment" | "none";
 type PlatformKey = {
   name: string;
-  group: "access" | "github" | "gitlab" | "gitverse" | "yandex" | "sms" | "ai" | "search" | "billing" | "plans" | "mail" | "support";
+  group: "github" | "gitlab" | "gitverse" | "yandex" | "sms" | "ai" | "search" | "billing" | "plans" | "mail" | "support";
   label: string;
   hint: string;
   kind: "secret" | "json-key" | "value" | "url" | "path" | "flag";
@@ -23,7 +23,6 @@ type KeysResponse = { admin: boolean; adminsConfigured: boolean; guide?: string;
 type SaveResponse = { saved: string[]; cleared: string[]; skipped: Array<{ name: string; message: string }>; status: PlatformKey[] };
 
 const GROUP_TITLES: Record<PlatformKey["group"], { title: string; note: string }> = {
-  access: { title: "Доступ к сайту", note: "Публичный демо-доступ нужен только на время проверки платёжного сервиса. Пока он включён, сайт открывается без экрана входа под отдельным демо-аккаунтом; выключите его сразу после проверки, и вернётся обычный вход. Войти в свой аккаунт при включённом демо можно по адресу /auth." },
   github: { title: "GitHub OAuth", note: "Вход через GitHub и импорт репозиториев. Callback: <адрес панели>/api/github/callback. В GitHub Secrets имя не может начинаться с GITHUB_ — там используйте GH_OAUTH_CLIENT_ID и GH_OAUTH_CLIENT_SECRET, а сюда вставьте значения напрямую." },
   gitlab: { title: "GitLab OAuth", note: "Импорт репозиториев из gitlab.com или своего GitLab. Callback: <адрес панели>/api/gitlab/callback. Приложение создаётся в аватаре → Edit profile → Access → Applications (прямая ссылка: https://gitlab.com/-/user_settings/applications) с правами read_api, read_repository и write_repository; личный токен работает и без OAuth-приложения." },
   gitverse: { title: "GitVerse OAuth", note: "Импорт и отправка коммитов в GitVerse. Callback: <адрес панели>/api/gitverse/callback. Приложение создаётся в Настройках профиля → Приложения, права read:user, read:repository и write:repository; GitVerse требует PKCE — сервер добавляет code_challenge сам. Личный токен тоже работает." },
@@ -127,7 +126,7 @@ export function PlatformKeysPanel() {
 
   // Почта стоит рядом с поддержкой: адрес отправителя и ключ SMTP — это то, что правят, когда
   // не уходит письмо, и раньше группы не было в списке вовсе, хотя ключи в каталоге есть.
-  const groups = ["access", "support", "mail", "billing", "github", "gitlab", "yandex", "sms", "ai", "search"] as const;
+  const groups = ["support", "mail", "billing", "github", "gitlab", "yandex", "sms", "ai", "search"] as const;
   const keys = state.keys ?? [];
 
   return <section className="settings-panel platform-keys">

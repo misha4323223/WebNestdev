@@ -517,7 +517,6 @@ Repository variables (same page → **Variables**):
 | `PROJECT_ARCHIVE_IDLE_DAYS` | optional legacy form in days; ignored when the minutes key is set |
 | `SANDBOX_RUNTIME` | optional; `docker` (default, runc) or `runsc` (gVisor). Setting `runsc` makes the deploy install gVisor on first use if Docker does not know it |
 | `RUNSC_INSTALL` | optional; `auto` (default) or `0`. `0` forbids the deploy from touching Docker and requires `runsc` to be pre-installed |
-| `WEBNESTDEV_PUBLIC_DEMO` | optional; `1` opens the site under a dedicated demo account without the sign-in screen, `0` or empty keeps the normal sign-in. Meant for temporary payment-provider review |
 
 Where the values come from — none of them is issued by a service, the only generated one is the key:
 

@@ -168,8 +168,10 @@ curl -s https://panel.example.com/api/admin/2fa/verify -H 'content-type: applica
 | `GET /api/admin/users/:id` | `Bearer` | карточка: проекты, модели, ряд за 30 дней |
 | `GET /api/admin/projects` | `Bearer` | проекты: поиск, владелец, расход |
 | `GET /api/admin/audit` | `Bearer` | журнал безопасности: входы, второй фактор, ключи, удаление проектов (раздел 9) |
-| `GET /api/admin/infra` | `Bearer` | снимок инфраструктуры: хост, диск, Docker, песочницы, бакеты, база (раздел 7.5) |
+| `GET /api/admin/infra` | `Bearer` | снимок инфраструктуры: хост, диск, Docker, узлы, песочницы, бакеты, база (раздел 7.5) |
 | `GET /api/admin/sandboxes` | `Bearer` | песочницы списком: `state` = `cold` / `running` / `never` / `all`, `limit` 1…200 (раздел 7.5) |
+| `GET /api/admin/nodes` | `Bearer` | реестр узлов, их свободная память и число закреплённых проектов (раздел 7.11) |
+| `POST /api/admin/nodes/:id/status` | `Bearer` | `online` / `draining` / `offline`; тело `{status, confirm: true}` (раздел 7.11) |
 | `GET /api/admin/infra/prune` | `Bearer` | что освободит безопасная очистка Docker и что останется (раздел 7.6) |
 | `POST /api/admin/infra/prune` | `Bearer` | безопасная очистка Docker: тело `{confirm: true}`, не чаще раза в 30 секунд (раздел 7.6) |
 | `GET /api/admin/users/:id/restriction` | `Bearer` | заблокирован ли аккаунт и кем (раздел 7.7) |
@@ -432,8 +434,8 @@ curl -s -H "Authorization: Bearer $TOKEN" 'https://panel.example.com/api/admin/u
 
 | Маршрут | Параметры | Что отдаёт |
 |---|---|---|
-| `GET /api/admin/infra` | — | снимок: `host`, `disk`, `docker`, `sandboxes`, `buckets`, `database`, `alerts`, `unavailable` |
-| `GET /api/admin/sandboxes` | `state` = `cold` (по умолчанию), `running`, `never`, `all`; `limit` 1…200 (50) | `total` — число подходящих до `limit`, `sandboxes` — страница, отсортированная по `lastActiveAt` |
+| `GET /api/admin/infra` | — | снимок: `host`, `disk`, `docker`, `nodes`, `sandboxes`, `buckets`, `database`, `alerts`, `unavailable` |
+| `GET /api/admin/sandboxes` | `state` = `cold` (по умолчанию), `running`, `never`, `all`; `limit` 1…200 (50) | `total` — число подходящих до `limit`, `sandboxes` — страница, отсортированная по `lastActiveAt`; у каждой строки есть `node` |
 
 **Любая секция необязательна.** Если сервер не может что-то измерить, поле приходит `null` (или
 секция отсутствует), а в `unavailable` появляется `{section, reason}`. Ноль вместо «не знаю» здесь
@@ -445,6 +447,10 @@ curl -s -H "Authorization: Bearer $TOKEN" 'https://panel.example.com/api/admin/u
 - `docker.available: false` — Docker не установлен или недоступен; `containers`, `images` и
   `reclaimableBytes` тогда не выдумываются. `dockerBytes`/`reclaimableBytes` считаются по
   `docker system df`; если хоть одна строка не разобрана, сумма приходит `null`.
+- `nodes` — реестр исполняющих узлов: `status`, `memoryTotalMb`, `memoryUsedMb`, `containers`,
+  `projects`, `freeMemoryMb`, `fresh`, `lastSeenAt`. Выведенный из обслуживания узел остаётся в списке, но
+  новые проекты на него не размещаются. Если реестр не прочитан, секции нет, а причина лежит в
+  `unavailable`.
 - `sandboxes.running` — живой предпросмотр (контейнер или статическая раздача), `cold` — проект
   известен, но не работает: рабочая папка на диске, архив в бакете или остановленный контейнер.
   `neverStarted` — проекта нет ни на диске, ни в бакете. В этой платформе контейнер предпросмотра
@@ -700,6 +706,7 @@ curl -s -H "Authorization: Bearer $TOKEN" 'https://nestdev.ru/api/admin/projects
 ```json
 {
   "project": { "id": "…", "name": "Магазин цветов", "createdAt": "…", "updatedAt": "…",
+               "node": "local",
                "repository": { "owner": "acme", "name": "shop", "fullName": "acme/shop",
                                "defaultBranch": "main", "url": "https://github.com/acme/shop" } },
   "owner": { "id": "…", "email": "owner@example.test", "createdAt": "…" },
@@ -752,6 +759,42 @@ curl -s -H "Authorization: Bearer $TOKEN" 'https://nestdev.ru/api/admin/plans'
 
 `POST` принимает оба тарифа целиком; `priceRub` — цена до скидки, `discountPercent` — целое
 число от 0 до 90. Ответ `{ saved: true, plans: [...] }` показывает то, что уже уйдёт в оплату.
+
+### 7.11. Узлы исполнения и drain
+
+Код: `server/src/routes/admin-nodes.ts`. Тесты: `server/src/routes/admin-nodes.test.ts`.
+Реестр хранится в PostgreSQL (в JSON-режиме — `nodes/state.json`), а проект получает поле
+`node` в момент создания. Это закрепление переживает перезапуск сервера и не зависит от того,
+какая реплика обработала запрос.
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" 'https://nestdev.ru/api/admin/nodes'
+```
+
+```json
+{
+  "localNodeId": "local",
+  "nodes": [
+    { "id": "local", "address": "", "status": "online", "memoryTotalMb": 3968,
+      "memoryUsedMb": 1200, "containers": 4, "projects": 12, "freeMemoryMb": 2768,
+      "fresh": true, "lastSeenAt": "2026-10-30T12:00:00.000Z" }
+  ]
+}
+```
+
+`POST /api/admin/nodes/:id/status` меняет статус и требует `confirm: true`:
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"status":"draining","confirm":true}' \
+  'https://nestdev.ru/api/admin/nodes/local/status'
+```
+
+`draining` — безопасный вывод: новые проекты не размещаются на узле, уже закреплённые проекты
+остаются на месте, пока их не перенесут или не архивируют. `offline` исключает узел из выбора
+сразу. Если онлайн-узлов не осталось, ответ содержит `warning`, а создание нового проекта
+отвечает `503 NO_SANDBOX_NODE` — тихого возврата на локальную машину нет. Возврат `online` снова
+разрешает размещение.
 
 ## 8. Обращения поддержки
 
@@ -1124,6 +1167,7 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `user.login.failed` | Неудачный вход пользователя |
 | `user.sessions.revoked` | Завершены все сеансы пользователя |
 | `infra.docker.pruned` | Очистка Docker |
+| `node.status` | Статус узла изменён (online / draining / offline) |
 | `user.blocked` | Аккаунт заблокирован администратором |
 | `user.unblocked` | Блокировка аккаунта снята |
 | `user.sessions.revoked.admin` | Сеансы пользователя завершены администратором |

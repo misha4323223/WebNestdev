@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile, readdir, rename, rm, stat, unlink } from "node:fs/promises";
 import path from "node:path";
-import { sandboxRootPath } from "./sandbox/config.js";
+import { sandboxMemoryMb, sandboxRootPath } from "./sandbox/config.js";
+import { chooseProjectNode } from "./nodes/placement.js";
 import type { ChatMessage, PlanState } from "./types.js";
-import { isYdbEnabled, ydbQuery, getTable } from "./storage/ydb.js";
+import { initializeStorage, isYdbEnabled, ydbQuery, getTable } from "./storage/ydb.js";
 import { decryptSecret, encryptSecret, isEncryptedSecret } from "./storage/secret-crypto.js";
 
 export type RepositoryProvider = "github" | "gitlab" | "gitverse" | "sourcecraft";
@@ -26,6 +27,8 @@ export type Project = {
   updatedAt:string;
   github?:GitHubRepositoryRef;
   userId: string;
+  /** Execution node the project is pinned to; empty on projects created before stage 3.1. */
+  node?: string;
 };
 export type Conversation = { id:string; projectId:string; title:string; messages:ChatMessage[]; plan?:PlanState|null; createdAt:string; updatedAt:string };
 export type ProjectProviderConfig = { provider:string; baseUrl:string; model:string; token?:string };
@@ -35,8 +38,11 @@ export async function ensureDataDir(){await mkdir(root,{recursive:true})}
 
 export async function getProject(projectId:string):Promise<Project|null>{
   if(isYdbEnabled()){
-    const [rows]=await ydbQuery()<Array<{id:string;name:string;created_at:string;updated_at:string;github_json:string;user_id:string}>>`
-      SELECT id,name,created_at,updated_at,github_json,user_id
+    // The `node` column is added by initializeStorage's migration. Waiting here is what keeps a
+    // request that arrives immediately after deploy from selecting a column that does not exist yet.
+    await initializeStorage();
+    const [rows]=await ydbQuery()<Array<{id:string;name:string;created_at:string;updated_at:string;github_json:string;user_id:string;node:string}>>`
+      SELECT id,name,created_at,updated_at,github_json,user_id,node
       FROM ${ydbQuery().identifier(getTable("projects"))}
       WHERE id = ${projectId}
       LIMIT 1
@@ -45,7 +51,8 @@ export async function getProject(projectId:string):Promise<Project|null>{
     if(!row)return null;
     return {
       id:row.id,name:row.name,createdAt:row.created_at,updatedAt:row.updated_at,userId:row.user_id,
-      ...(row.github_json ? {github:JSON.parse(row.github_json) as GitHubRepositoryRef} : {})
+      ...(row.github_json ? {github:JSON.parse(row.github_json) as GitHubRepositoryRef} : {}),
+      ...(row.node ? {node:row.node} : {})
     };
   }
   try{return JSON.parse(await readFile(path.join(root,"projects",projectId+".json"),"utf8")) as Project}catch{return null}
@@ -53,15 +60,17 @@ export async function getProject(projectId:string):Promise<Project|null>{
 
 export async function listProjects(userId:string){
   if(isYdbEnabled()){
-    const [rows]=await ydbQuery()<Array<{id:string;name:string;created_at:string;updated_at:string;github_json:string;user_id:string}>>`
-      SELECT id,name,created_at,updated_at,github_json,user_id
+    await initializeStorage();
+    const [rows]=await ydbQuery()<Array<{id:string;name:string;created_at:string;updated_at:string;github_json:string;user_id:string;node:string}>>`
+      SELECT id,name,created_at,updated_at,github_json,user_id,node
       FROM ${ydbQuery().identifier(getTable("projects"))}
       WHERE user_id = ${userId}
       ORDER BY updated_at DESC
     `;
     return rows.map(row=>({
       id:row.id,name:row.name,createdAt:row.created_at,updatedAt:row.updated_at,userId:row.user_id,
-      ...(row.github_json ? {github:JSON.parse(row.github_json) as GitHubRepositoryRef} : {})
+      ...(row.github_json ? {github:JSON.parse(row.github_json) as GitHubRepositoryRef} : {}),
+      ...(row.node ? {node:row.node} : {})
     }));
   }
   const result:Project[]=[];
@@ -82,15 +91,16 @@ export async function listProjects(userId:string){
  * Все проекты без содержимого — только владение. Нужно сверке хранилища: она обходит диск и
  * должна знать, какому аккаунту принадлежит каталог, не загружая диалоги и секреты проектов.
  */
-export type ProjectOwner = { id:string; name:string; userId:string; updatedAt:string };
+export type ProjectOwner = { id:string; name:string; userId:string; updatedAt:string; node?:string };
 
 export async function listProjectOwners():Promise<ProjectOwner[]>{
   if(isYdbEnabled()){
-    const [rows]=await ydbQuery()<Array<{id:string;name:string;user_id:string;updated_at:string}>>`
-      SELECT id,name,user_id,updated_at
+    await initializeStorage();
+    const [rows]=await ydbQuery()<Array<{id:string;name:string;user_id:string;updated_at:string;node:string}>>`
+      SELECT id,name,user_id,updated_at,node
       FROM ${ydbQuery().identifier(getTable("projects"))}
     `;
-    return rows.map(row=>({id:row.id,name:row.name,userId:row.user_id,updatedAt:row.updated_at}));
+    return rows.map(row=>({id:row.id,name:row.name,userId:row.user_id,updatedAt:row.updated_at,...(row.node?{node:row.node}:{})}));
   }
   const result:ProjectOwner[]=[];
   try{
@@ -99,23 +109,23 @@ export async function listProjectOwners():Promise<ProjectOwner[]>{
       try{
         const project=JSON.parse(await readFile(path.join(root,"projects",name),"utf8")) as Project;
         if(!project?.id||!project.userId)continue;
-        result.push({id:project.id,name:project.name,userId:project.userId,updatedAt:project.updatedAt});
+        result.push({id:project.id,name:project.name,userId:project.userId,updatedAt:project.updatedAt,...(project.node?{node:project.node}:{})});
       }catch{}
     }
   }catch{}
   return result;
 }
 
-function newProject(name:string,github:GitHubRepositoryRef|undefined,userId:string):Project{
+function newProject(name:string,github:GitHubRepositoryRef|undefined,userId:string,node:string):Project{
   const now=new Date().toISOString();
-  return {id:randomUUID(),name:name.trim()||"Новый проект",github,userId,createdAt:now,updatedAt:now};
+  return {id:randomUUID(),name:name.trim()||"Новый проект",github,userId,node,createdAt:now,updatedAt:now};
 }
 async function persistProject(project:Project){
   if(isYdbEnabled()){
     await ydbQuery()`
       INSERT INTO ${ydbQuery().identifier(getTable("projects"))}
-        (id,name,created_at,updated_at,github_json,user_id)
-      VALUES (${project.id},${project.name},${project.createdAt},${project.updatedAt},${project.github ? JSON.stringify(project.github) : ""},${project.userId})
+        (id,name,created_at,updated_at,github_json,user_id,node)
+      VALUES (${project.id},${project.name},${project.createdAt},${project.updatedAt},${project.github ? JSON.stringify(project.github) : ""},${project.userId},${project.node ?? ""})
     `;
     return project;
   }
@@ -124,7 +134,8 @@ async function persistProject(project:Project){
   return project;
 }
 export async function createProject(name:string,github:GitHubRepositoryRef|undefined,userId:string):Promise<Project>{
-  return persistProject(newProject(name,github,userId));
+  const node=await chooseProjectNode({requiredMemoryMb:sandboxMemoryMb()});
+  return persistProject(newProject(name,github,userId,node.id));
 }
 
 export class ProjectLimitError extends Error{
@@ -146,7 +157,10 @@ async function withProjectLock<T>(userId:string,action:()=>Promise<T>):Promise<T
   finally{release();if(projectLocks.get(userId)===current)projectLocks.delete(userId)}
 }
 export async function createProjectWithinLimit(name:string,github:GitHubRepositoryRef|undefined,userId:string,limit:number):Promise<Project>{
-  const project=newProject(name,github,userId);
+  // Placement happens before the project row exists: the project must be pinned in the same
+  // transaction that creates it, otherwise a failed insert leaves a node decision with no project.
+  const node=await chooseProjectNode({requiredMemoryMb:sandboxMemoryMb()});
+  const project=newProject(name,github,userId,node.id);
   if(isYdbEnabled()){
     const sql=ydbQuery();
     const projectCountersTable=sql.identifier(getTable("project_counters"));
@@ -173,8 +187,8 @@ export async function createProjectWithinLimit(name:string,github:GitHubReposito
       `;
       await tx`
         INSERT INTO ${projectsTable}
-          (id,name,created_at,updated_at,github_json,user_id)
-        VALUES (${project.id},${project.name},${project.createdAt},${project.updatedAt},${project.github?JSON.stringify(project.github):""},${project.userId})
+          (id,name,created_at,updated_at,github_json,user_id,node)
+        VALUES (${project.id},${project.name},${project.createdAt},${project.updatedAt},${project.github?JSON.stringify(project.github):""},${project.userId},${project.node??""})
       `;
     });
     return project;

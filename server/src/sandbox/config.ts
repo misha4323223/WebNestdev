@@ -1,4 +1,5 @@
 import path from "node:path";
+import { nodeId } from "../nodes/identity.js";
 import type { SandboxConfig } from "./sandbox-types.js";
 
 /**
@@ -87,12 +88,19 @@ export function describeSandboxPaths(){
   return `каталог песочниц: сервер ${sandboxRoot}`+(same?"":"; для docker — "+sandboxHostRoot);
 }
 
-export function buildSandboxConfig(projectId:string,root:string):SandboxConfig{
+/** Memory a project container normally receives; also the reservation used by node placement. */
+export function sandboxMemoryMb(){
+  const value=Number(process.env.SANDBOX_MEMORY_MB??1024);
+  return Number.isFinite(value)&&value>0?value:1024;
+}
+
+export function buildSandboxConfig(projectId:string,root:string,node=nodeId()):SandboxConfig{
   return {
     projectId,
     root,
     hostRoot:hostPathFor(root),
-    memoryMb:Number(process.env.SANDBOX_MEMORY_MB??1024),
+    node,
+    memoryMb:sandboxMemoryMb(),
     cpuLimit:Number(process.env.SANDBOX_CPU_LIMIT??1),
     timeoutMs:Number(process.env.TOOL_COMMAND_TIMEOUT_MS??120000)
   };
