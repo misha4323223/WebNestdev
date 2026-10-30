@@ -1,15 +1,26 @@
-import { useCallback,useEffect,useState } from "react";
+import { lazy,Suspense,useCallback,useEffect,useState } from "react";
 import { getAuth } from "../../lib/auth-api";
 import { refreshPreferences } from "../../lib/preferences";
 import { rememberedScreen,rememberScreen } from "../../lib/screen";
 import { AuthScreen } from "./AuthScreen";
 import { NestLoader } from "../../components/NestLoader";
-import { WorkspaceShell } from "../workspace/WorkspaceShell";
-import { HomeScreen } from "../home/HomeScreen";
-import { OnboardingFlow } from "../onboarding/OnboardingFlow";
 import { ideaKickoff } from "../../lib/agent-kickoff";
 import { onboardingBrief, type OnboardingAnswers } from "../../lib/onboarding";
 import { startProjectWithAgent } from "../../lib/start-project";
+
+// Гость на входе не должен загружать интерфейс проекта. Главная и рабочая область получают
+// собственные чанки: они появятся только после входа и открытия проекта соответственно.
+const HomeScreen = lazy(() => import("../home/HomeScreen").then(module => ({ default: module.HomeScreen })));
+const WorkspaceShell = lazy(() => import("../workspace/WorkspaceShell").then(module => ({ default: module.WorkspaceShell })));
+const OnboardingFlow = lazy(() => import("../onboarding/OnboardingFlow").then(module => ({ default: module.OnboardingFlow })));
+
+function PaneFallback({label}:{label:string}){
+  return <div className="app-loading"><NestLoader size={46} label={label}/><span>{label}…</span></div>;
+}
+
+function OnboardingFallback(){
+  return <div className="onboarding"><div className="onboarding-card"><div className="app-loading"><NestLoader size={46} label="Загружаем знакомство"/></div></div></div>;
+}
 
 /**
  * Every connector that authorizes in its own window returns through one query
@@ -141,11 +152,17 @@ export function AuthGate(){
   // продолжает держать сокет запуска, поэтому агент не останавливается на главной.
   return <>
     <div className="app-pane" hidden={!home}>
-      <HomeScreen key={homeVersion} onOpenWorkspace={openWorkspace} activeRun={agentRun?.running?{projectId:workspaceProject??"",projectName:agentRun.projectName}:null}/>
+      <Suspense fallback={<PaneFallback label="Загружаем главную"/>}>
+        <HomeScreen key={homeVersion} onOpenWorkspace={openWorkspace} activeRun={agentRun?.running?{projectId:workspaceProject??"",projectName:agentRun.projectName}:null}/>
+      </Suspense>
     </div>
-    {workspaceProject!==null&&<div className="app-pane" hidden={home}>{
-      <WorkspaceShell key={workspaceProject} onHome={goHome} onAgentState={reportAgentState} active={!home}/>
-    }</div>}
-    {onboardingOpen&&<OnboardingFlow accountEmail={onboardingEmail} onStart={startFromOnboarding} onSkip={()=>setOnboardingOpen(false)}/>}
+    {workspaceProject!==null&&<div className="app-pane" hidden={home}>
+      <Suspense fallback={<PaneFallback label="Загружаем рабочую область"/>}>
+        <WorkspaceShell key={workspaceProject} onHome={goHome} onAgentState={reportAgentState} active={!home}/>
+      </Suspense>
+    </div>}
+    {onboardingOpen&&<Suspense fallback={<OnboardingFallback/>}>
+      <OnboardingFlow accountEmail={onboardingEmail} onStart={startFromOnboarding} onSkip={()=>setOnboardingOpen(false)}/>
+    </Suspense>}
   </>;
 }

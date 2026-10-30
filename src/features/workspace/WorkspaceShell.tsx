@@ -1,17 +1,20 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { LayoutShell } from "../layout/LayoutShell";
 import { PreviewPanel } from "../preview/PreviewPanel";
-import { SettingsHub } from "../settings/SettingsHub";
 import { conversationMemoryKey, useWorkspace } from "./useWorkspace";
 import { WorkspaceNav,type WorkspaceView } from "./WorkspaceNav";
 import { WorkspaceContent } from "./WorkspaceContent";
 import { useProjectWake } from "./useProjectWake";
 import { ProjectWakeCard } from "./ProjectWakeCard";
 import { useChatSessions } from "../agent/ChatSessions";
-import { DeploymentWizard } from "../deployment/DeploymentWizard";
 import { composeAgentPrompt } from "../../lib/agent-compose";
 import { NestLoader } from "../../components/NestLoader";
 import { createConversation, deleteConversation, type ConversationSummary } from "../../lib/project-api";
+
+// Настройки и мастер развёртывания открываются поверх рабочей области и не нужны при каждом
+// входе в проект. Их код приезжает только по нажатию, а до этого рабочая область остаётся легче.
+const SettingsHub = lazy(() => import("../settings/SettingsHub").then(module => ({ default: module.SettingsHub })));
+const DeploymentWizard = lazy(() => import("../deployment/DeploymentWizard").then(module => ({ default: module.DeploymentWizard })));
 
 export function WorkspaceShell({onHome,onAgentState,active=true}:{onHome:()=>void;onAgentState?:(state:{running:boolean;projectName:string}|null)=>void;active?:boolean}){
   const {projectId,conversationId,projectName,loading,error,retry,openConversation,renameCurrentProject}=useWorkspace();
@@ -142,15 +145,19 @@ export function WorkspaceShell({onHome,onAgentState,active=true}:{onHome:()=>voi
     <main className="main">
       <div className="workspace-main">
         {waking?<ProjectWakeCard progress={wake.progress} error={wake.error} onRetry={wake.retry}/>:settingsOpen?<div className="workspace-overlay-panel">
-          <SettingsHub key={settingsKey} projectId={projectId} projectName={projectName} onClose={()=>setSettingsOpen(false)}/>
+          <Suspense fallback={<div className="app-loading"><NestLoader size={42} label="Загружаем настройки"/></div>}>
+            <SettingsHub key={settingsKey} projectId={projectId} projectName={projectName} onClose={()=>setSettingsOpen(false)}/>
+          </Suspense>
         </div>:<><WorkspaceNav view={view} onChange={setView} onSecrets={openSecrets}/><WorkspaceContent view={view} projectId={projectId} projectName={projectName} conversationId={conversationId} onRunFinished={()=>{setPreviewReload(value=>value+1);setTaskReload(value=>value+1);void sessionsReload()}} onFileSaved={()=>setPreviewReload(value=>value+1)} taskReload={taskReload} onOpenModelSettings={openModelSettings} onOpenAccountSettings={openSettings} onRunningChange={reportAgentState} onOpenChanges={()=>{setSettingsOpen(false);setView("changes")}} scrollSignal={scrollSignal} onChatEndChange={reportChatEnd} onScrollBottom={scrollChatToBottom} showScroll={view==="agent"&&!chatAtEnd} writing={view==="agent"&&!chatAtEnd&&agentRunning}/></>}
       </div>
       {!waking&&<PreviewPanel projectId={projectId} reloadToken={previewReload} open={previewOpen} onClose={()=>setPreviewOpen(false)} onRunningChange={setPreviewRunning}/>}
-      {deployOpen&&<DeploymentWizard
-        projectId={projectId}
-        onClose={()=>setDeployOpen(false)}
-        onStarted={brief=>{setDeployOpen(false);setSettingsOpen(false);setPreviewOpen(false);setView("agent");composeAgentPrompt(brief)}}
-      />}
+      {deployOpen&&<Suspense fallback={<div className="app-loading"><NestLoader size={42} label="Загружаем мастер развёртывания"/></div>}>
+        <DeploymentWizard
+          projectId={projectId}
+          onClose={()=>setDeployOpen(false)}
+          onStarted={brief=>{setDeployOpen(false);setSettingsOpen(false);setPreviewOpen(false);setView("agent");composeAgentPrompt(brief)}}
+        />
+      </Suspense>}
     </main>
   </LayoutShell>;
 }
