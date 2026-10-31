@@ -8,7 +8,7 @@ import { liveRuntimePreviews, liveStaticPreviews, perUserPreviewLimit, runtimePr
 import { previewAddresses } from "../preview/preview-store.js";
 import { previewPublicDomain } from "../preview/preview-host.js";
 import { execProxyQueueStats } from "../preview/exec-proxy.js";
-import { DEFAULT_CHARS_PER_TOKEN,contextBudgetTokens,contextMaxMessages } from "../agent/context-budget.js";
+import { agentStepLimit,contextBudgetTokensFor,contextMaxMessagesFor,DEFAULT_CHARS_PER_TOKEN } from "../agent/context-budget.js";
 import { sandboxHostRootDir,sandboxRootDir,sandboxRuntime } from "../sandbox/config.js";
 import { lastSandboxMountCheck } from "../sandbox/sandbox-check.js";
 import { diskStatus, memoryStatus } from "../health/host-metrics.js";
@@ -95,7 +95,14 @@ async function activity(){
     // промпта выглядит необъяснимым (agent/context-budget.ts).
     // `charsPerTokenDefault` — стартовая оценка: во время запуска она уточняется по отчёту
     // провайдера (см. `run.progress.tokens`), поэтому здесь честно только значение по умолчанию.
-    context: { budgetTokens: contextBudgetTokens(), maxMessages: contextMaxMessages(), charsPerTokenDefault: DEFAULT_CHARS_PER_TOKEN },
+    context: {
+      budgetTokens: contextBudgetTokensFor("paid"),
+      maxMessages: contextMaxMessagesFor("paid"),
+      charsPerTokenDefault: DEFAULT_CHARS_PER_TOKEN,
+      paid: { budgetTokens: contextBudgetTokensFor("paid"), maxMessages: contextMaxMessagesFor("paid") },
+      free: { budgetTokens: contextBudgetTokensFor("free"), maxMessages: contextMaxMessagesFor("free") },
+      steps: agentStepLimit(),
+    },
     // Холодный ярус: сколько проектов он освободил с запуска, сколько было ошибок и что
     // показал последний проход. По этим числам видно, работает ли архивация по давлению,
     // не читая логи и не заходя на ВМ.

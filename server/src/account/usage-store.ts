@@ -234,6 +234,8 @@ export type RunUsageInput = {
   model: string;
   promptTokens: number;
   completionTokens: number;
+  /** Часть promptTokens, прочитанная из кэша провайдера; не вычитается из пула. */
+  cachedPromptTokens?: number;
   estimated: boolean;
 };
 
@@ -246,6 +248,7 @@ type UsageCostRecord = {
   model: string;
   promptTokens: number;
   completionTokens: number;
+  cachedPromptTokens: number;
   estimated: boolean;
   createdAt: string;
 };
@@ -255,6 +258,8 @@ export type CostSnapshot = {
   runs: number;
   promptTokens: number;
   completionTokens: number;
+  /** Входные токены, прочитанные из кэша провайдера; уже входят в promptTokens. */
+  cachedPromptTokens: number;
   exact: boolean;
   pricesConfigured: boolean;
   costEstimate: number | null;
@@ -263,6 +268,7 @@ export type CostSnapshot = {
     model: string;
     promptTokens: number;
     completionTokens: number;
+    cachedPromptTokens: number;
     exact: boolean;
     costEstimate: number | null;
     createdAt: string;
@@ -278,6 +284,7 @@ export type BillingHistoryDay = {
   runs: number;
   promptTokens: number;
   completionTokens: number;
+  cachedPromptTokens: number;
   costEstimate: number | null;
 };
 
@@ -310,12 +317,12 @@ export async function getBillingHistory(userId: string, days = 7, now = new Date
   const from = dates[0] ?? utcDay(now);
   const to = dates[dates.length - 1] ?? utcDay(now);
   const counters = new Map<string, { agentRuns: number; browserChecks: number; webSearches: number }>();
-  const usageByDay = new Map<string, { runs: number; promptTokens: number; completionTokens: number; costEstimate: number }>();
+  const usageByDay = new Map<string, { runs: number; promptTokens: number; completionTokens: number; cachedPromptTokens: number; costEstimate: number }>();
   const pricing = platformPricing();
 
   for (const date of dates) {
     counters.set(date, { agentRuns: 0, browserChecks: 0, webSearches: 0 });
-    usageByDay.set(date, { runs: 0, promptTokens: 0, completionTokens: 0, costEstimate: 0 });
+    usageByDay.set(date, { runs: 0, promptTokens: 0, completionTokens: 0, cachedPromptTokens: 0, costEstimate: 0 });
   }
 
   if (isYdbEnabled()) {
@@ -332,8 +339,8 @@ export async function getBillingHistory(userId: string, days = 7, now = new Date
       else if (row.kind === "webSearches") day.webSearches = used;
     }
 
-    const [costRows] = await ydbQuery()<Array<{usage_date: string; prompt_tokens: number | string | bigint; completion_tokens: number | string | bigint}>>`
-      SELECT usage_date, prompt_tokens, completion_tokens FROM ${ydbQuery().identifier(getTable("model_usage"))}
+    const [costRows] = await ydbQuery()<Array<{usage_date: string; prompt_tokens: number | string | bigint; completion_tokens: number | string | bigint; cached_prompt_tokens: number | string | bigint}>>`
+      SELECT usage_date, prompt_tokens, completion_tokens, cached_prompt_tokens FROM ${ydbQuery().identifier(getTable("model_usage"))}
       WHERE user_id = ${userId} AND usage_date >= ${from} AND usage_date <= ${to}
     `;
     for (const row of costRows) {
@@ -344,6 +351,7 @@ export async function getBillingHistory(userId: string, days = 7, now = new Date
       day.runs += 1;
       day.promptTokens += promptTokens;
       day.completionTokens += completionTokens;
+      day.cachedPromptTokens += Number(row.cached_prompt_tokens ?? 0);
       day.costEstimate += costFor({ promptTokens, completionTokens }, pricing) ?? 0;
     }
   } else {
@@ -362,6 +370,7 @@ export async function getBillingHistory(userId: string, days = 7, now = new Date
         spend.runs += 1;
         spend.promptTokens += record.promptTokens;
         spend.completionTokens += record.completionTokens;
+        spend.cachedPromptTokens += record.cachedPromptTokens ?? 0;
         spend.costEstimate += costFor(record, pricing) ?? 0;
       }
     }
@@ -410,14 +419,18 @@ export async function recordRunUsage(userId: string, input: RunUsageInput, now =
     model: input.model,
     promptTokens: Math.max(0, Math.round(input.promptTokens)),
     completionTokens: Math.max(0, Math.round(input.completionTokens)),
+    cachedPromptTokens: Math.max(0, Math.min(
+      Math.round(input.cachedPromptTokens ?? 0),
+      Math.round(input.promptTokens),
+    )),
     estimated: input.estimated,
     createdAt: now.toISOString(),
   };
   if (isYdbEnabled()) {
     await ydbQuery()`
       UPSERT INTO ${ydbQuery().identifier(getTable("model_usage"))}
-        (user_id, usage_date, run_id, project_id, conversation_id, model, prompt_tokens, completion_tokens, estimated, created_at)
-      VALUES (${userId}, ${date}, ${record.id}, ${record.projectId}, ${record.conversationId}, ${record.model}, ${record.promptTokens}, ${record.completionTokens}, ${record.estimated}, ${record.createdAt})
+        (user_id, usage_date, run_id, project_id, conversation_id, model, prompt_tokens, completion_tokens, cached_prompt_tokens, estimated, created_at)
+      VALUES (${userId}, ${date}, ${record.id}, ${record.projectId}, ${record.conversationId}, ${record.model}, ${record.promptTokens}, ${record.completionTokens}, ${record.cachedPromptTokens}, ${record.estimated}, ${record.createdAt})
     `;
     return record;
   }
@@ -434,8 +447,8 @@ export async function getCostSnapshot(userId: string, now = new Date()): Promise
   const date = utcDay(now);
   let records: UsageCostRecord[];
   if (isYdbEnabled()) {
-    const [rows] = await ydbQuery()<Array<{run_id:string;project_id:string;conversation_id:string;model:string;prompt_tokens:number|string|bigint;completion_tokens:number|string|bigint;estimated:boolean;created_at:string}>>`
-      SELECT run_id, project_id, conversation_id, model, prompt_tokens, completion_tokens, estimated, created_at
+    const [rows] = await ydbQuery()<Array<{run_id:string;project_id:string;conversation_id:string;model:string;prompt_tokens:number|string|bigint;completion_tokens:number|string|bigint;cached_prompt_tokens:number|string|bigint;estimated:boolean;created_at:string}>>`
+      SELECT run_id, project_id, conversation_id, model, prompt_tokens, completion_tokens, cached_prompt_tokens, estimated, created_at
       FROM ${ydbQuery().identifier(getTable("model_usage"))}
       WHERE user_id = ${userId} AND usage_date = ${date}
       ORDER BY created_at DESC
@@ -449,6 +462,7 @@ export async function getCostSnapshot(userId: string, now = new Date()): Promise
       model: row.model,
       promptTokens: Number(row.prompt_tokens),
       completionTokens: Number(row.completion_tokens),
+      cachedPromptTokens: Number(row.cached_prompt_tokens ?? 0),
       estimated: Boolean(row.estimated),
       createdAt: row.created_at,
     }));
@@ -460,12 +474,14 @@ export async function getCostSnapshot(userId: string, now = new Date()): Promise
   const pricing = platformPricing();
   const promptTokens = records.reduce((sum, record) => sum + record.promptTokens, 0);
   const completionTokens = records.reduce((sum, record) => sum + record.completionTokens, 0);
+  const cachedPromptTokens = records.reduce((sum, record) => sum + (record.cachedPromptTokens ?? 0), 0);
   const last = records[0];
   return {
     date,
     runs: records.length,
     promptTokens,
     completionTokens,
+    cachedPromptTokens,
     exact: records.length > 0 && records.every(record => !record.estimated),
     pricesConfigured: Boolean(pricing),
     costEstimate: pricing ? records.reduce((sum, record) => sum + (costFor(record, pricing) ?? 0), 0) : null,
@@ -475,6 +491,7 @@ export async function getCostSnapshot(userId: string, now = new Date()): Promise
           model: last.model,
           promptTokens: last.promptTokens,
           completionTokens: last.completionTokens,
+          cachedPromptTokens: last.cachedPromptTokens ?? 0,
           exact: !last.estimated,
           costEstimate: costFor(last, pricing),
           createdAt: last.createdAt,

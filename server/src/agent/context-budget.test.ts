@@ -9,8 +9,11 @@ import {
   calibrateCharsPerToken,
   clip,
   clipToolCallArgs,
+  agentStepLimit,
   contextBudgetTokens,
+  contextBudgetTokensFor,
   contextMaxMessages,
+  contextMaxMessagesFor,
   estimateTokens,
   groupMessages,
   messageChars,
@@ -40,6 +43,56 @@ test("бюджет контекста берётся из окружения и 
     else process.env.AGENT_CONTEXT_TOKENS = before.tokens;
     if (before.reserve === undefined) delete process.env.AGENT_CONTEXT_OUTPUT_RESERVE;
     else process.env.AGENT_CONTEXT_OUTPUT_RESERVE = before.reserve;
+  }
+});
+
+test("платная модель получает больше контекста и сообщений, чем бесплатная", () => {
+  const names = [
+    "AGENT_CONTEXT_TOKENS", "AGENT_CONTEXT_TOKENS_PAID", "AGENT_CONTEXT_TOKENS_FREE",
+    "AGENT_CONTEXT_MAX_MESSAGES", "AGENT_CONTEXT_MAX_MESSAGES_PAID", "AGENT_CONTEXT_MAX_MESSAGES_FREE",
+    "AGENT_CONTEXT_OUTPUT_RESERVE",
+  ];
+  const before = Object.fromEntries(names.map(name => [name, process.env[name]]));
+  try {
+    for (const name of names) delete process.env[name];
+    assert.equal(contextBudgetTokensFor("paid"), 200_000 - 8_192);
+    assert.equal(contextBudgetTokensFor("free"), 120_000 - 8_192);
+    assert.equal(contextMaxMessagesFor("paid"), 200);
+    assert.equal(contextMaxMessagesFor("free"), 100);
+
+    // Отдельная настройка тарифа важнее общей.
+    process.env.AGENT_CONTEXT_TOKENS = "120000";
+    process.env.AGENT_CONTEXT_TOKENS_PAID = "300000";
+    process.env.AGENT_CONTEXT_MAX_MESSAGES_PAID = "120";
+    assert.equal(contextBudgetTokensFor("paid"), 300_000 - 8_192);
+    assert.equal(contextBudgetTokensFor("free"), 120_000 - 8_192);
+    assert.equal(contextMaxMessagesFor("paid"), 120);
+    assert.equal(contextMaxMessagesFor("free"), 100);
+  } finally {
+    for (const name of names) {
+      if (before[name] === undefined) delete process.env[name];
+      else process.env[name] = before[name];
+    }
+  }
+});
+
+test("двадцатый шаг не завершает запуск: по умолчанию разрешено два окна", () => {
+  const before = { steps: process.env.AGENT_MAX_STEPS, windows: process.env.AGENT_MAX_STEP_WINDOWS };
+  try {
+    delete process.env.AGENT_MAX_STEPS;
+    delete process.env.AGENT_MAX_STEP_WINDOWS;
+    assert.equal(agentStepLimit(), 40);
+    process.env.AGENT_MAX_STEPS = "20";
+    process.env.AGENT_MAX_STEP_WINDOWS = "3";
+    assert.equal(agentStepLimit(), 60);
+    process.env.AGENT_MAX_STEPS = "50";
+    process.env.AGENT_MAX_STEP_WINDOWS = "5";
+    assert.equal(agentStepLimit(), 100);
+  } finally {
+    if (before.steps === undefined) delete process.env.AGENT_MAX_STEPS;
+    else process.env.AGENT_MAX_STEPS = before.steps;
+    if (before.windows === undefined) delete process.env.AGENT_MAX_STEP_WINDOWS;
+    else process.env.AGENT_MAX_STEP_WINDOWS = before.windows;
   }
 });
 

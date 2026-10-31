@@ -302,7 +302,6 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   // запомненное свёрнутое состояние панели.
   const [actionsOpen,setActionsOpen]=useState(false);
   const actionsDockRef=useRef<HTMLDivElement|null>(null);
-  const [progress,setProgress]=useState<{step:number;maxSteps:number;tokens?:number;budget?:number}|null>(null);
   /**
    * Запрос ключа от агента. Само значение живёт только в этом состоянии до отправки и уходит прямо
    * в песочницу проекта: оно не попадает ни в переписку, ни в события, ни в ответы модели.
@@ -617,7 +616,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     scrollMessagesToTop();
     cancelAutoResume();
     autoResumeRef.current=0;setReconnect(null);setResume(null);closedByUsRef.current=true;
-    actionsRef.current=[];setActions([]);setProgress(null);
+    actionsRef.current=[];setActions([]);
     // Картинки прошлого разговора к новому не относятся: их место заняла загруженная история.
     setLiveImages([]);
     setPlan(readPlan(conversationId));
@@ -790,7 +789,6 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     // не должна выглядеть бездействующей, пока идёт повторная попытка.
     if(!resuming)setReconnect(null);
     updateActions(()=>[]);
-    setProgress(null);
     completedRef.current=false;
 
     /**
@@ -831,7 +829,6 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
         if(event.type==="run.started")retryNoticeRef.current=false;
         setNotice(event.type==="run.queued"?"Сервер занят другим запуском — вы в очереди"+(typeof event.queued==="number"&&event.queued>0?" (впереди: "+event.queued+")":"")+"…":"");
       }
-      if(event.type==="run.progress"&&typeof event.step==="number"&&typeof event.maxSteps==="number")setProgress({step:event.step,maxSteps:event.maxSteps,...(typeof event.tokens==="number"?{tokens:event.tokens}:{}),...(typeof event.budget==="number"?{budget:event.budget}:{})});
       // Провайдер ответил «подожди»: запуск не прерывается, шаг ждёт и повторяется сам. Пользователь
       // видит это строкой над полем ввода, а не ошибкой в переписке.
       if(event.type==="run.retrying"){
@@ -1586,7 +1583,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       {/* Док действий — под полем ввода: это statusbar текущей работы. Развёрнутый список
           поднимается вверх, поверх переписки. */}
       {(actions.length>0||running)&&<div className="actions-dock" ref={actionsDockRef}>
-        <ActionsDock actions={actions} running={running} progress={progress} open={actionsOpen} onOpenChange={setActionsOpen}/>
+        <ActionsDock actions={actions} running={running} open={actionsOpen} onOpenChange={setActionsOpen}/>
       </div>}
       {changesNotice&&<button type="button" className="changes-toast" onClick={()=>onOpenChanges?.()} disabled={!onOpenChanges} title={onOpenChanges?"Открыть историю изменений проекта":undefined}>
         <History size={14}/>

@@ -3,7 +3,14 @@ import type { ChatMessage } from "../types.js";
 import { lines } from "./stream-lines.js";
 import { ProviderHttpError,parseRetryAfterHeader } from "./provider-errors.js";
 import type { Provider,ProviderChunk,ProviderStreamOptions,ProviderToolCall } from "./provider-types.js";
+import { DsmlTextFilter } from "./dsml-tool-calls.js";
 import type { ReasoningEffort } from "../types.js";
+import {
+  cacheUsageFromUsage,
+  promptCachePolicy,
+  promptCacheRequestFields,
+  withPromptCacheControl,
+} from "./prompt-caching.js";
 
 function chatCompletionsUrl(baseUrl:string){
   const base=baseUrl.trim().replace(/\/+$/,"");
@@ -22,8 +29,10 @@ type WireToolCall={
   function:{name:string;arguments:string};
 };
 
+type WireContentPart={type:"text";text:string;cache_control?:{type:"ephemeral"}};
+type WireContent=string|WireContentPart[];
 type WireMessage=
-  | {role:"user"|"system";content:string}
+  | {role:"user"|"system";content:WireContent}
   | {role:"assistant";content:string;tool_calls?:WireToolCall[]}
   | {role:"tool";content:string;tool_call_id:string};
 
@@ -172,7 +181,14 @@ export class OpenAICompatibleProvider implements Provider{
     // Так склейка на стороне прокси всегда корректная (нет дублей /v1/v1 и /api/v1/api/v1).
     const normBase=this.base.trim().replace(/\/+$/,"");
     const chatPath=normBase.endsWith("/v1")?"/chat/completions":"/v1/chat/completions";
-    const wire=toWireMessages(messages);
+    // Кэш провайдера: DeepSeek/OpenAI/Gemini/Grok кэшируют префикс сами, Claude требует
+    // явные точки. Разметка не меняет обычные сообщения и не отправляется шлюзам, которые
+    // такого формата не знают (prompt-caching.ts).
+    const cachePolicy=promptCachePolicy(normBase,model);
+    const wire=cachePolicy.mode==="explicit"
+      ? withPromptCacheControl(toWireMessages(messages))
+      : toWireMessages(messages);
+    const cacheFields=promptCacheRequestFields(cachePolicy,options?.cacheKey);
     const send=(body:unknown)=>proxyUrl
       ? fetch(proxyUrl+chatPath,{
         method:"POST",
@@ -196,7 +212,7 @@ export class OpenAICompatibleProvider implements Provider{
       });
     const effort=reasoningEffort(options);
     const key=probeKey(normBase,model);
-    const payload=(withReasoning:boolean)=>({model,messages:wire,tools,stream:true,...(withReasoning&&effort?{reasoning_effort:effort}:{})});
+    const payload=(withReasoning:boolean)=>({model,messages:wire,tools,stream:true,...cacheFields,...(withReasoning&&effort?{reasoning_effort:effort}:{})});
     // Мысли нужны пользователю, но не настолько, чтобы сломать запуск: шлюз, отвечающий на просьбу
     // о рассуждении отказом формы (400/422), получает тот же запрос без неё — и запоминается, чтобы
     // следующие шаги запуска не платили за это двумя запросами каждый.
@@ -223,6 +239,8 @@ export class OpenAICompatibleProvider implements Provider{
     if(!response.body)throw new Error("Провайдер не вернул поток данных");
 
     const pending=new Map<number,ProviderToolCall>();
+    const recovered:ProviderToolCall[]=[];
+    const dsml=new DsmlTextFilter(tools);
     let debugged=0;
     // Шлюзы делятся надвое: одни стримят размышление чанками, другие присылают его готовым
     // сообщением в последнем чанке. Флаг не даёт показать одно и то же дважды.
@@ -231,7 +249,9 @@ export class OpenAICompatibleProvider implements Provider{
       if(!line||line==="[DONE]")continue;
       const data=JSON.parse(line) as any;
       if(data.usage){
-        yield {type:"usage",promptTokens:Number(data.usage.prompt_tokens??0),completionTokens:Number(data.usage.completion_tokens??0)};
+        // `cachedPromptTokens` — не отдельный счётчик денег, а расшифровка уже полученного
+        // prompt_tokens: Polza/DeepSeek/OpenAI называют кэш по-разному, разбор один.
+        yield {type:"usage",promptTokens:Number(data.usage.prompt_tokens??0),completionTokens:Number(data.usage.completion_tokens??0),...cacheUsageFromUsage(data.usage)};
       }
       const delta=data.choices?.[0]?.delta;
       if(STREAM_DEBUG&&delta&&debugged<STREAM_DEBUG_CHUNKS){
@@ -240,7 +260,11 @@ export class OpenAICompatibleProvider implements Provider{
         console.error("[provider] AI_STREAM_DEBUG: модель "+model+", чанк "+debugged+", поля delta — "+(names.join(", ")||"(пусто)")+
           (names.some(name=>/reason/i.test(name))?" [есть поле с reasoning, но текст не разобран]":""));
       }
-      if(delta?.content)yield {type:"text",text:delta.content};
+      if(delta?.content){
+        const filtered=dsml.push(delta.content);
+        if(filtered.text)yield {type:"text",text:filtered.text};
+        recovered.push(...filtered.calls);
+      }
       const reasoning=reasoningDelta(delta);
       if(reasoning){
         sawReasoning=true;
@@ -271,8 +295,18 @@ export class OpenAICompatibleProvider implements Provider{
       }
     }
     if(sawReasoning)recordProbe(key,{streamed:true});
-    for(const call of pending.values()){
+    const tail=dsml.flush();
+    if(tail.text)yield {type:"text",text:tail.text};
+    recovered.push(...tail.calls);
+    // A structured call wins over a recovered copy of the same call: some gateways send
+    // both the parsed field and the raw DSML tail. Dedupe by name and arguments, not by id,
+    // because the recovered call gets a new local id.
+    const seen=new Set<string>();
+    for(const call of [...pending.values(),...recovered]){
       delete (call as any).__raw;
+      const key=call.name+"|"+JSON.stringify(call.arguments??{});
+      if(seen.has(key))continue;
+      seen.add(key);
       yield {type:"tool_call",call};
     }
     yield {type:"done"};

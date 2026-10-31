@@ -87,7 +87,7 @@ function stubFetch(handler:FetchHandler){
   return {captured,restore:()=>{globalThis.fetch=original}};
 }
 
-async function collect(provider:OpenAICompatibleProvider,model:string,options?:{reasoning?:"low"|"medium"|"high"}){
+async function collect(provider:OpenAICompatibleProvider,model:string,options?:{reasoning?:"low"|"medium"|"high";cacheKey?:string}){
   const chunks:ProviderChunk[]=[];
   for await(const chunk of provider.stream([{role:"user",content:"привет"}],model,undefined,undefined,options))chunks.push(chunk);
   return chunks;
@@ -163,5 +163,68 @@ test("шлюз, не знающий reasoning_effort, получает повт�
     await collect(provider,"strict-model");
     assert.equal(stub.captured.length,3);
     assert.ok(!("reasoning_effort" in stub.captured[2].body));
+  }finally{stub.restore()}
+});
+
+test("DSML в content превращается в tool_call, а не в текст ответа",async()=>{
+  const bar="\uFF5C";
+  const open=(name:string)=>`<${bar}DSML${bar}${name}>`;
+  const close=(name:string)=>`</${bar}DSML${bar}${name}>`;
+  const param=`<${bar}DSML${bar}parameter name="path" string="true">src/a.ts</${bar}DSML${bar}parameter>`;
+  const raw="Готово\n"+open("tool_calls")+`<${bar}DSML${bar}invoke name="fs.write">`+param+close("invoke")+close("tool_calls");
+  const stub=stubFetch(()=>streamResponse([{choices:[{delta:{content:raw},finish_reason:"stop"}]}]));
+  try{
+    const chunks:ProviderChunk[]=[];
+    for await(const chunk of new OpenAICompatibleProvider("https://gateway-dsml.example/v1").stream(
+      [{role:"user",content:"создай файл"}],
+      "deepseek-v4",
+      [{type:"function",function:{name:"fs.write"}}]
+    ))chunks.push(chunk);
+    const calls=chunks.filter(chunk=>chunk.type==="tool_call");
+    assert.equal(calls.length,1);
+    const call=calls[0];
+    assert.equal(call?.type,"tool_call");
+    if(call?.type!=="tool_call")return;
+    assert.equal(call.call.name,"fs.write");
+    assert.deepEqual(call.call.arguments,{path:"src/a.ts"});
+    assert.ok(!chunks.some(chunk=>chunk.type==="text"&&chunk.text.includes("DSML")),"сырая разметка не должна доходить до чата");
+  }finally{stub.restore()}
+});
+
+test("Polza получает ключ серии кэша и отдаёт cached tokens в usage",async()=>{
+  const stub=stubFetch(()=>streamResponse([
+    {choices:[],usage:{prompt_tokens:1000,completion_tokens:10,prompt_tokens_details:{cached_tokens:800}}}
+  ]));
+  try{
+    const chunks=await collect(
+      new OpenAICompatibleProvider("https://polza.ai/api/v1"),
+      "deepseek/deepseek-v4.1-flash",
+      {cacheKey:"nestdev-series"},
+    );
+    assert.equal(stub.captured[0].body.prompt_cache_key,"nestdev-series");
+    assert.deepEqual(chunks.find(chunk=>chunk.type==="usage"),{
+      type:"usage",promptTokens:1000,completionTokens:10,cachedPromptTokens:800,cacheWritePromptTokens:0
+    });
+  }finally{stub.restore()}
+});
+
+test("прямой DeepSeek не получает незнакомое поле, а Claude получает точки кэша",async()=>{
+  let stub=stubFetch(()=>streamResponse([{choices:[{delta:{content:"Ответ"}}]}]));
+  try{
+    await collect(new OpenAICompatibleProvider("https://api.deepseek.com/v1"),"deepseek-flash",{cacheKey:"nestdev-series"});
+    assert.ok(!("prompt_cache_key" in stub.captured[0].body));
+  }finally{stub.restore()}
+
+  stub=stubFetch(()=>streamResponse([{choices:[{delta:{content:"Ответ"}}]}]));
+  try{
+    const provider=new OpenAICompatibleProvider("https://polza.ai/api/v1");
+    for await(const _chunk of provider.stream([
+      {role:"system",content:"инструкции"},
+      {role:"user",content:"привет"}
+    ],"anthropic/claude-sonnet-4.6",undefined,undefined,{cacheKey:"nestdev-series"})){}
+    assert.equal(stub.captured[0].body.prompt_cache_key,"nestdev-series");
+    const messages=stub.captured[0].body.messages as Array<{role:string;content:unknown}>;
+    assert.ok(Array.isArray(messages[0].content),"системный блок размечен как content-части");
+    assert.deepEqual((messages[0].content as Array<{cache_control?:unknown}>)[0].cache_control,{type:"ephemeral"});
   }finally{stub.restore()}
 });

@@ -3,13 +3,13 @@ import type { AgentRunRequest,ChatMessage,PlanState } from "./types.js";
 import { createProvider } from "./provider.js";
 import { appendConversationMessages,getConversationPlan,getProject,getProjectProvider,saveConversationPlan } from "./project-store.js";
 import { buildInitialMessages,insertSystemNotice,resumeNotice,storedHistory,webSearchNotice } from "./agent/message-builder.js";
-import { NOTES_PREFIX,notesNotice,readNoteLines } from "./agent/notes.js";
+import { notesNotice,notesUpdateNotice,readNoteLines } from "./agent/notes.js";
 import { buildProjectContext } from "./agent/context-builder.js";
 import { retrieveRelevantFiles } from "./agent/context-retrieval.js";
 import { executeTool } from "./agent/tool-executor.js";
 import { runBudgetedStep,type StepBudget } from "./agent/step-runner.js";
 import type { EventSink } from "./agent/types.js";
-import { contextBudgetTokens,contextMaxMessages,boundToolOutput,DEFAULT_CHARS_PER_TOKEN } from "./agent/context-budget.js";
+import { agentStepLimit,contextBudgetTokensFor,contextMaxMessagesFor,boundToolOutput,DEFAULT_CHARS_PER_TOKEN } from "./agent/context-budget.js";
 import { planQaScenario } from "./qa/scenario-planner.js";
 import { analyzeChangedFiles } from "./qa/diff-analyzer.js";
 import { parseChangedSource, type ParsedChange } from "./qa/change-parser.js";
@@ -72,6 +72,7 @@ export function changesSomething(name:string,input:unknown){
 import { commandSucceeded,countVerificationFailure,MAX_VERIFICATION_ATTEMPTS,routeFromMutation,shouldRunBrowserRuntime,verificationBuildCommand,verificationFailureSummary } from "./agent/verification-policy.js";
 import { getPlatformProviderConfig } from "./provider/platform-provider.js";
 import { createFreeModelRoute } from "./provider/free-model.js";
+import { cacheHitRate } from "./provider/prompt-caching.js";
 import { getSandbox } from "./sandbox-manager.js";
 import { readBuildScript } from "./preview/static-plan.js";
 import { recordRunUsage } from "./account/usage-store.js";
@@ -99,7 +100,7 @@ export class AgentRuntime {
     const runId=randomUUID(); emit({type:"run.started",runId});
     // The idle sweeper must not stop this project's preview while the run is still working.
     beginRun(request.projectId,request.conversationId);
-    const usageTotals={promptTokens:0,completionTokens:0,estimated:false};
+    const usageTotals={promptTokens:0,completionTokens:0,cachedPromptTokens:0,cacheWritePromptTokens:0,estimated:false};
     let usageModel="";
     // Токены в `model_usage` — это расход платформы: из них считается месячный пул тарифа и
     // стоимость для владельца. Запуск на ключе пользователя платформа не оплачивает, поэтому
@@ -152,11 +153,12 @@ export class AgentRuntime {
       if(!model)throw new Error("Модель AI не настроена");
       // Имя модели бесплатного тарифа не уходит в журнал расхода: в интерфейсе его тоже нет.
       usageModel=freeRoute?"free-model":model;
-      const maxSteps=Math.min(50,Math.max(1,Number(process.env.AGENT_MAX_STEPS??20)));
+      const maxSteps=agentStepLimit();
+      const contextTier=freeRoute?"free":"paid";
       // Контекст ограничен на каждом шаге, а не только в начале запуска: сообщения добавляются
       // по ходу (выводы инструментов, проверки), а модель получает их целиком. Как именно шаг
       // подрезается и что происходит при отказе провайдера — в agent/step-runner.ts.
-      let budget:StepBudget={budgetTokens:contextBudgetTokens(),charsPerToken:DEFAULT_CHARS_PER_TOKEN,maxMessages:contextMaxMessages()};
+      let budget:StepBudget={budgetTokens:contextBudgetTokensFor(contextTier),charsPerToken:DEFAULT_CHARS_PER_TOKEN,maxMessages:contextMaxMessagesFor(contextTier)};
       let consecutiveVerifyFailures=0;
       let consecutiveScenarioFailures=0;
       let lastVerificationFailure="";
@@ -255,6 +257,8 @@ export class AgentRuntime {
         const result=stepRun.result;
         usageTotals.promptTokens+=result.usage.promptTokens;
         usageTotals.completionTokens+=result.usage.completionTokens;
+        usageTotals.cachedPromptTokens+=result.usage.cachedPromptTokens;
+        usageTotals.cacheWritePromptTokens+=result.usage.cacheWritePromptTokens;
         usageTotals.estimated=usageTotals.estimated||result.usage.estimated;
 
         if(!result.calls.length){
@@ -331,12 +335,20 @@ export class AgentRuntime {
 
             // Решение записано — заметка в промпте обновляется сразу, на этом же шаге: следующая
             // модель должна уже видеть новую договорённость, не дожидаясь следующего запуска.
+            // Обновление дописывается в конец, а не заменяет прежний системный блок: замена в
+            // середине промпта ломает кэш-префикс DeepSeek и заставляет заново обрабатывать всю
+            // историю. Актуальный список в конце важнее старого, а начало остаётся стабильным.
             if(call.name==="note.remember"){
               const stored=(output as {notes?:unknown}).notes;
+              const added=(output as {added?:unknown}).added===true;
+              const note=(output as {note?:unknown}).note;
               if(Array.isArray(stored)&&stored.every(item=>typeof item==="string")){
                 noteLines=stored as string[];
-                const index=messages.findIndex(message=>message.role==="system"&&message.content.startsWith(NOTES_PREFIX));
-                if(index>=0)messages[index]={role:"system",content:notesNotice(noteLines)};
+                // Только новая строка, а не весь список: иначе несколько заметок за запуск
+                // раздували бы конец промпта и съедали бюджет контекста.
+                if(added&&typeof note==="string"&&note.trim()){
+                  messages.push({role:"system",content:notesUpdateNotice(note)});
+                }
               }
             }
 
@@ -465,9 +477,16 @@ export class AgentRuntime {
     }
     finally{
       endRun(request.projectId,request.conversationId);
+      if(usageModel&&usageTotals.promptTokens>0){
+        // Наблюдаемость без содержимого промпта: сколько входа пришло из кэша провайдера.
+        // Ноль здесь — нормальный первый шаг, а не ошибка: кэш строится после первого запроса.
+        const percent=Math.round(cacheHitRate(usageTotals.promptTokens,usageTotals.cachedPromptTokens)*100);
+        const written=usageTotals.cacheWritePromptTokens>0 ? ", записано в кэш "+usageTotals.cacheWritePromptTokens : "";
+        console.log("[cache] "+usageModel+": из кэша "+usageTotals.cachedPromptTokens+" из "+usageTotals.promptTokens+" входных токенов ("+percent+"%)"+written);
+      }
       if(platformModel&&usageModel&&usageTotals.promptTokens+usageTotals.completionTokens>0){
         try{
-          await recordRunUsage(request.userId,{runId,projectId:request.projectId,conversationId:request.conversationId,model:usageModel,promptTokens:usageTotals.promptTokens,completionTokens:usageTotals.completionTokens,estimated:usageTotals.estimated});
+          await recordRunUsage(request.userId,{runId,projectId:request.projectId,conversationId:request.conversationId,model:usageModel,promptTokens:usageTotals.promptTokens,completionTokens:usageTotals.completionTokens,cachedPromptTokens:usageTotals.cachedPromptTokens,estimated:usageTotals.estimated});
         }catch(error){console.error("Failed to record run usage",error);}
       }
     }

@@ -12,15 +12,18 @@ import type { ChatMessage } from "../types.js";
  *
  * A gateway enforces two independent limits, and only bounding the first one is a mistake we made:
  *
- * - **size** — `AGENT_CONTEXT_TOKENS` (default 120000) is the largest prompt this platform is willing
- *   to send, `AGENT_CONTEXT_OUTPUT_RESERVE` (default 8192) is subtracted for the answer, and the
- *   ratio of characters per token is calibrated during a run from the provider's own usage report;
+ * - **size** — `AGENT_CONTEXT_TOKENS_PAID` (default 200000) and `AGENT_CONTEXT_TOKENS_FREE`
+ *   (default 120000) are the largest prompts each tier may send; the common `AGENT_CONTEXT_TOKENS`
+ *   remains a fallback/ceiling for deployments that set it. `AGENT_CONTEXT_OUTPUT_RESERVE`
+ *   (default 8192) is subtracted for the answer, and the ratio of characters per token is
+ *   calibrated during a run from the provider's own usage report;
  * - **count** — many OpenAI-compatible routers validate the body and refuse a `messages` array past
  *   a fixed number of entries. The gateway this platform talks to answers
  *   `[{"origin":"array","code":"too_big","maximum":100,"path":["messages"]}]`, and a run
  *   collects two messages per step plus a verification round of five, so forty steps alone cross a
- *   hundred. `AGENT_CONTEXT_MAX_MESSAGES` (default 80) keeps a request under such a cap; what is
- *   dropped for it is the same old history the token budget drops.
+ *   hundred. `AGENT_CONTEXT_MAX_MESSAGES_PAID` (default 200) and `_FREE` (default 100) keep a
+ *   request under the provider's cap; what is dropped for it is the same old history the token
+ *   budget drops.
  */
 
 /** Characters per token for English text with code. Calibrated from real usage during a run. */
@@ -128,6 +131,35 @@ export function contextBudgetTokens() {
   return Math.max(4_000, total - reserve);
 }
 
+/** Платная модель и бесплатная цепочка живут в разных пределах: у них разные модели и цена ошибки. */
+export type ContextTier = "paid" | "free";
+
+/**
+ * Специфичная для тарифа настройка важнее общей: `AGENT_CONTEXT_TOKENS_PAID` перекрывает
+ * `AGENT_CONTEXT_TOKENS`, а без обеих работает безопасный предел своего тарифа.
+ */
+function tierLimit(specificName: string, globalName: string, fallback: number) {
+  const specific = process.env[specificName]?.trim();
+  if (specific) return positiveInt(specific, fallback);
+  const global = process.env[globalName]?.trim();
+  if (global) return positiveInt(global, fallback);
+  return fallback;
+}
+
+/**
+ * Бюджет промпта по тарифу. Платная модель получает 200k, бесплатная — 120k: поднимать
+ * бесплатную вместе с платной нельзя, её резервные модели могут видеть только 128k.
+ */
+export function contextBudgetTokensFor(tier: ContextTier) {
+  const total = tierLimit(
+    tier === "paid" ? "AGENT_CONTEXT_TOKENS_PAID" : "AGENT_CONTEXT_TOKENS_FREE",
+    "AGENT_CONTEXT_TOKENS",
+    tier === "paid" ? 200_000 : 120_000,
+  );
+  const reserve = positiveInt(process.env.AGENT_CONTEXT_OUTPUT_RESERVE, 8_192);
+  return Math.max(4_000, total - reserve);
+}
+
 /**
  * How many messages one request may carry, whatever their size. The count a provider accepts is not
  * a token question: a hundred messages of ten characters each are tiny and still refused.
@@ -136,12 +168,34 @@ export function contextMaxMessages() {
   return Math.max(MIN_MAX_MESSAGES, positiveInt(process.env.AGENT_CONTEXT_MAX_MESSAGES, DEFAULT_MAX_MESSAGES));
 }
 
+/** Предел сообщений по тарифу: платной модели нужно больше запаса, бесплатной — безопаснее. */
+export function contextMaxMessagesFor(tier: ContextTier) {
+  return Math.max(MIN_MAX_MESSAGES, tierLimit(
+    tier === "paid" ? "AGENT_CONTEXT_MAX_MESSAGES_PAID" : "AGENT_CONTEXT_MAX_MESSAGES_FREE",
+    "AGENT_CONTEXT_MAX_MESSAGES",
+    tier === "paid" ? 200 : 100,
+  ));
+}
+
+/**
+ * Сколько шагов разрешено одному запуску.
+ *
+ * `AGENT_MAX_STEPS` — размер одного окна, `AGENT_MAX_STEP_WINDOWS` — сколько окон разрешено
+ * пройти незаметно. Поэтому 20 шагов больше не являются жёсткой остановкой: по умолчанию
+ * запуск продолжается до 40, а промежуточный переход не показывается как ошибка.
+ */
+export function agentStepLimit() {
+  const perWindow = Math.min(50, Math.max(1, positiveInt(process.env.AGENT_MAX_STEPS, 20)));
+  const windows = Math.min(5, Math.max(1, positiveInt(process.env.AGENT_MAX_STEP_WINDOWS, 2)));
+  return Math.min(100, perWindow * windows);
+}
+
 /** Printed once at startup, next to the other limits, so an operator sees what bounds a run. */
 export function describeContextBudget() {
-  return "бюджет контекста на шаг: " + contextBudgetTokens() + " токенов и " + contextMaxMessages() + " сообщений" +
-    " (AGENT_CONTEXT_TOKENS " + positiveInt(process.env.AGENT_CONTEXT_TOKENS, 120_000) +
-    ", резерв на ответ " + positiveInt(process.env.AGENT_CONTEXT_OUTPUT_RESERVE, 8_192) +
-    ", AGENT_CONTEXT_MAX_MESSAGES " + positiveInt(process.env.AGENT_CONTEXT_MAX_MESSAGES, DEFAULT_MAX_MESSAGES) + ")";
+  return "бюджет контекста на шаг: платная " + contextBudgetTokensFor("paid") + " токенов/" + contextMaxMessagesFor("paid") +
+    " сообщений, бесплатная " + contextBudgetTokensFor("free") + " токенов/" + contextMaxMessagesFor("free") +
+    " сообщений, шагов за запуск " + agentStepLimit() +
+    " (резерв на ответ " + positiveInt(process.env.AGENT_CONTEXT_OUTPUT_RESERVE, 8_192) + ")";
 }
 
 /** Keeps a run's estimate honest: the provider's own token count beats any character count. */

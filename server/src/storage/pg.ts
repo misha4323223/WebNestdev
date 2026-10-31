@@ -472,10 +472,14 @@ export async function initializeStorage(): Promise<void> {
       model TEXT NOT NULL,
       prompt_tokens BIGINT NOT NULL DEFAULT 0,
       completion_tokens BIGINT NOT NULL DEFAULT 0,
+      cached_prompt_tokens BIGINT NOT NULL DEFAULT 0,
       estimated BOOLEAN NOT NULL DEFAULT false,
       created_at TEXT NOT NULL,
       PRIMARY KEY (user_id, usage_date, run_id)
     )`);
+    // Кэш контекста появился позже самой таблицы: старые базы должны получить колонку,
+    // иначе запись расхода упадёт на живом сервере. Старые строки читаются как ноль.
+    await pool.query(`ALTER TABLE ${tbl("model_usage")} ADD COLUMN IF NOT EXISTS cached_prompt_tokens BIGINT NOT NULL DEFAULT 0`);
     // Аналитика админки (routes/admin-analytics.ts) фильтрует расход по дню и группирует его по
     // проекту. Без этих индексов обзор и список проектов превращаются в полный перебор при каждом
     // открытии вкладки, а PK покрывает только одного пользователя.

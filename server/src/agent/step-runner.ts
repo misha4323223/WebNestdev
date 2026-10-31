@@ -4,9 +4,10 @@ import { getToolDefinitions } from "../tool-registry.js";
 import { ContextBudgetError,MIN_MAX_MESSAGES,calibrateCharsPerToken,estimateTokens,trimMessagesToBudget } from "./context-budget.js";
 import { ProviderHttpError,describeProviderFailure } from "../provider/provider-errors.js";
 import { providerRetryPolicy,withProviderRetry } from "../provider/provider-retry.js";
+import { promptCacheKey } from "../provider/prompt-caching.js";
 import type { AgentContext } from "./types.js";
 
-export type StepUsage={promptTokens:number;completionTokens:number;estimated:boolean};
+export type StepUsage={promptTokens:number;completionTokens:number;cachedPromptTokens:number;cacheWritePromptTokens:number;estimated:boolean};
 export type StepResult={text:string;reasoning:string;calls:ProviderToolCall[];usage:StepUsage};
 
 /** Rough fallback for providers that do not report streaming usage. */
@@ -16,13 +17,16 @@ export async function runAgentStep(provider:Provider,messages:ChatMessage[],mode
   let text="";let reasoning="";const calls:ProviderToolCall[]=[];let reported:StepUsage|null=null;
   /** Whether any of this step reached the panel already. */
   let streamed=false;
+  // Один и тот же ключ на всех шагах разговора: шлюз держит серию у одного провайдера,
+  // поэтому следующий шаг попадает в тот же кэш префикса, а не в соседний аккаунт.
+  const cacheKey=promptCacheKey({projectId:context.request.projectId,conversationId:context.request.conversationId,runId:context.runId},model);
   try{
-    for await(const chunk of provider.stream(messages,model,getToolDefinitions(),context.signal,{reasoning:context.request.reasoning})){
+    for await(const chunk of provider.stream(messages,model,getToolDefinitions(),context.signal,{reasoning:context.request.reasoning,cacheKey})){
       if(context.signal?.aborted)throw new Error("Запуск агента отменён");
       if(chunk.type==="text"){text+=chunk.text;streamed=true;context.emit({type:"message.delta",runId:context.runId,delta:chunk.text});}
       else if(chunk.type==="reasoning"){reasoning+=chunk.text;streamed=true;context.emit({type:"reasoning.delta",runId:context.runId,delta:chunk.text});}
       else if(chunk.type==="tool_call")calls.push(chunk.call);
-      else if(chunk.type==="usage")reported={promptTokens:chunk.promptTokens,completionTokens:chunk.completionTokens,estimated:false};
+      else if(chunk.type==="usage")reported={promptTokens:chunk.promptTokens,completionTokens:chunk.completionTokens,cachedPromptTokens:chunk.cachedPromptTokens??0,cacheWritePromptTokens:chunk.cacheWritePromptTokens??0,estimated:false};
     }
   }catch(error){
     // Отказ посреди потока: часть ответа уже показана и в панели, и в сессии, поэтому повтор прислал
@@ -34,6 +38,8 @@ export async function runAgentStep(provider:Provider,messages:ChatMessage[],mode
   const usage:StepUsage=reported??{
     promptTokens:estimateTokens(messages),
     completionTokens:estimateTokensOfText(text+JSON.stringify(calls)),
+    cachedPromptTokens:0,
+    cacheWritePromptTokens:0,
     estimated:true
   };
   return {text,reasoning,calls,usage};

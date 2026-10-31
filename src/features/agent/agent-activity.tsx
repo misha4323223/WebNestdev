@@ -587,10 +587,9 @@ function actionCountLabel(count: number) {
  * должен стоять там, где уже находится рука. Разворачивается вверх, поверх переписки, и
  * закрывается нажатием в любом месте вне дока — не только своей стрелкой.
  */
-export function ActionsDock({ actions, running, progress, open, onOpenChange }: {
+export function ActionsDock({ actions, running, open, onOpenChange }: {
   actions: AgentAction[];
   running: boolean;
-  progress: { step: number; maxSteps: number } | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -647,7 +646,7 @@ export function ActionsDock({ actions, running, progress, open, onOpenChange }: 
       {actions.length > 0 && <span className="actions-dock-meta">{actionCountLabel(actions.length)}</span>}
       <span className="actions-dock-state">
         {running
-          ? <><LoaderCircle size={12} className="agent-spin"/>выполняется{progress ? " · шаг " + progress.step + "/" + progress.maxSteps : ""}</>
+          ? <><LoaderCircle size={12} className="agent-spin"/>выполняется</>
           : "завершено"}
       </span>
       {failed > 0 && <span className="actions-dock-error" title={"Действий с ошибкой: " + failed} aria-label={"Действий с ошибкой: " + failed}><CircleAlert size={12}/>{failed}</span>}

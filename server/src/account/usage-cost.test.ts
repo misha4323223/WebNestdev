@@ -8,7 +8,7 @@ import path from "node:path";
 // Свой каталог данных: параллельный usage-store.test.ts пишет тот же дневной файл расходов.
 process.env.WEBNESTDEV_DATA_DIR = await mkdtemp(path.join(tmpdir(), "usage-cost-"));
 
-const { getCostSnapshot, platformPricing, recordRunUsage } = await import("./usage-store.js");
+const { getBillingHistory, getCostSnapshot, platformPricing, recordRunUsage } = await import("./usage-store.js");
 
 test("run usage is recorded per user and cost is estimated from configured prices",async()=>{
   process.env.PLATFORM_AI_PRICE_INPUT_PER_MILLION="1";
@@ -36,6 +36,16 @@ test("run usage is recorded per user and cost is estimated from configured price
     delete process.env.PLATFORM_AI_PRICE_OUTPUT_PER_MILLION;
     delete process.env.PLATFORM_AI_PRICE_CURRENCY;
   }
+});
+
+test("cached prompt tokens are stored with the run and shown in cost and history",async()=>{
+  const userId="cost-cache-"+randomUUID();
+  await recordRunUsage(userId,{runId:randomUUID(),projectId:"project-cache",conversationId:"conv-cache",model:"deepseek/deepseek-v4.1-flash",promptTokens:1000,completionTokens:100,cachedPromptTokens:800,estimated:false});
+  const snapshot=await getCostSnapshot(userId);
+  assert.equal(snapshot.cachedPromptTokens,800);
+  assert.equal(snapshot.lastRun?.cachedPromptTokens,800);
+  const history=await getBillingHistory(userId,7);
+  assert.equal(history.days[6].cachedPromptTokens,800);
 });
 
 test("without pricing the snapshot has no money value and users stay isolated",async()=>{

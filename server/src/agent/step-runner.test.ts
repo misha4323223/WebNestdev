@@ -163,6 +163,25 @@ test("лимит, который держится дольше бюджета, �
   }
 });
 
+test("кэш провайдера: cached tokens доходят до шага, а ключ серии стабилен", async () => {
+  const keys: Array<string | undefined> = [];
+  const provider: Provider = {
+    async *stream(_messages, _model, _tools, _signal, options): AsyncGenerator<ProviderChunk> {
+      keys.push(options?.cacheKey);
+      yield { type: "text", text: "готово" };
+      yield { type: "usage", promptTokens: 1000, completionTokens: 10, cachedPromptTokens: 700, cacheWritePromptTokens: 50 };
+    },
+  };
+  const ctx = { ...context(), request: { ...context().request, conversationId: "conv-cache" } };
+  const budget = { budgetTokens: 20000, charsPerToken: 3.6, maxMessages: 80 };
+  const first = await runBudgetedStep(provider, longHistory(), "deepseek/deepseek-v4.1-flash", ctx, budget);
+  const second = await runBudgetedStep(provider, longHistory(), "deepseek/deepseek-v4.1-flash", ctx, budget);
+  assert.equal(first.result.usage.cachedPromptTokens, 700);
+  assert.equal(first.result.usage.cacheWritePromptTokens, 50);
+  assert.match(keys[0] ?? "", /^nestdev-[a-f0-9]{40}$/);
+  assert.equal(keys[0], keys[1], "следующий шаг идёт в ту же серию кэша");
+});
+
 test("другие ошибки провайдера не повторяются", async () => {
   let attempts = 0;
   const provider: Provider = {

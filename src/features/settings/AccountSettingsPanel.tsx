@@ -33,6 +33,7 @@ type AccountData = {
 
 const initialPreferences: Preferences = { language: "ru", compactMode: false, emailNotifications: true, productUpdates: false };
 const tokenLabel = (value: number) => value.toLocaleString("ru-RU");
+const cachePercent = (cached: number, prompt: number) => prompt > 0 ? Math.min(100, Math.max(0, Math.round(cached / prompt * 100))) : 0;
 const validEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(value.trim());
 
 /**
@@ -274,6 +275,8 @@ export function AccountSettingsPanel() {
     }
   };
   const tokensToday = billing ? billing.cost.promptTokens + billing.cost.completionTokens : 0;
+  const cachedToday = billing?.cost.cachedPromptTokens ?? 0;
+  const cacheTodayPercent = billing ? cachePercent(cachedToday, billing.cost.promptTokens) : 0;
   const historyDays = billing?.history?.days ?? [];
   // Высота столбика — вся активность дня; шкала общая, иначе график сравнивал бы дни между собой нечестно.
   const historyMax = Math.max(1, ...historyDays.map(day => day.agentRuns + day.browserChecks));
@@ -368,7 +371,7 @@ export function AccountSettingsPanel() {
               <article className="billing-card">
                 <span className="billing-card-top"><Receipt size={12}/> Расходы сегодня</span>
                 <strong>{billing?.cost.pricesConfigured ? moneyLabel(billing.cost.costEstimate, billing.cost.currency) : "—"}</strong>
-                <small>{billing ? billing.cost.runs + " прогонов · " + tokenLabel(tokensToday) + " токенов" : "—"}</small>
+                <small>{billing ? billing.cost.runs + " прогонов · " + tokenLabel(tokensToday) + " токенов" + (cachedToday > 0 ? " · из кэша " + cacheTodayPercent + "%" : "") : "—"}</small>
               </article>
             </div>
             {paid && subscription && <div className="account-toggle subscription-renew">
@@ -425,7 +428,7 @@ export function AccountSettingsPanel() {
               })}</div>
               <div className="billing-legend"><span><i className="billing-dot runs"/>запуски</span><span><i className="billing-dot checks"/>проверки</span></div>
             </div>
-            {billing?.cost.lastRun && <div className="usage-meter-list"><div className="usage-meter-title"><strong>Последний прогон</strong><small>{billing.cost.pricesConfigured ? (billing.cost.exact ? "по данным провайдера" : "оценка по объёму") : "цены не заданы"}</small></div><div className="usage-meter"><div><span>Модель</span><strong>{billing.cost.lastRun.model}</strong></div></div><div className="usage-meter"><div><span>Токены</span><strong>{tokenLabel(billing.cost.lastRun.promptTokens)} вход / {tokenLabel(billing.cost.lastRun.completionTokens)} выход</strong></div></div><div className="usage-meter"><div><span>Стоимость</span><strong>{moneyLabel(billing.cost.lastRun.costEstimate, billing.cost.currency)}</strong></div></div></div>}
+            {billing?.cost.lastRun && <div className="usage-meter-list"><div className="usage-meter-title"><strong>Последний прогон</strong><small>{billing.cost.pricesConfigured ? (billing.cost.exact ? "по данным провайдера" : "оценка по объёму") : "цены не заданы"}</small></div><div className="usage-meter"><div><span>Модель</span><strong>{billing.cost.lastRun.model}</strong></div></div><div className="usage-meter"><div><span>Токены</span><strong>{tokenLabel(billing.cost.lastRun.promptTokens)} вход / {tokenLabel(billing.cost.lastRun.completionTokens)} выход</strong></div></div>{billing.cost.lastRun.cachedPromptTokens > 0 && <div className="usage-meter"><div><span>Из кэша</span><strong>{tokenLabel(billing.cost.lastRun.cachedPromptTokens)} ({cachePercent(billing.cost.lastRun.cachedPromptTokens, billing.cost.lastRun.promptTokens)}% входа)</strong></div></div>}<div className="usage-meter"><div><span>Стоимость</span><strong>{moneyLabel(billing.cost.lastRun.costEstimate, billing.cost.currency)}</strong></div></div></div>}
 
             <div className="usage-meter-list">
               <div className="usage-meter-title"><strong>Платежи</strong><small>{payments.length ? payments.length + " за всё время" : "пока пусто"}</small></div>

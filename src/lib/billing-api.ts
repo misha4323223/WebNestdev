@@ -41,12 +41,14 @@ export type Storage = {
   measuredAt?: string | null;
   projects?: StorageProject[];
 };
-export type CostRun = { model: string; promptTokens: number; completionTokens: number; exact: boolean; costEstimate: number | null; createdAt: string };
+export type CostRun = { model: string; promptTokens: number; completionTokens: number; cachedPromptTokens: number; exact: boolean; costEstimate: number | null; createdAt: string };
 export type Cost = {
   date: string;
   runs: number;
   promptTokens: number;
   completionTokens: number;
+  /** Входные токены из кэша провайдера; уже входят в promptTokens. */
+  cachedPromptTokens: number;
   exact: boolean;
   pricesConfigured: boolean;
   costEstimate: number | null;
@@ -62,6 +64,7 @@ export type BillingHistoryDay = {
   runs: number;
   promptTokens: number;
   completionTokens: number;
+  cachedPromptTokens: number;
   costEstimate: number | null;
 };
 export type BillingHistory = { currency: string; pricesConfigured: boolean; days: BillingHistoryDay[] };
