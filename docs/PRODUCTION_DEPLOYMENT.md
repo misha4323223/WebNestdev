@@ -158,6 +158,100 @@ The image contains the built Vite frontend, Fastify server, Chromium for browser
 
 Do not expose the Docker socket publicly. The current socket-based sandbox is an interim architecture; the production target is a dedicated sandbox worker.
 
+## Remote runner node (stages 3.2–3.3)
+
+The API can execute a project on a separate machine instead of its own Docker daemon. The runner
+is the same image with a different command, no database, no platform/payment keys and no access
+to `.env` secrets:
+
+```bash
+# on the runner machine
+WEBNESTDEV_RUNNER=1 \
+WEBNESTDEV_NODE_ID=node-2 \
+WEBNESTDEV_SANDBOX_DIR=/srv/webnestdev/sandboxes \
+WEBNESTDEV_SANDBOX_HOST_DIR=/srv/webnestdev/sandboxes \
+WEBNESTDEV_SHARED_SANDBOX=1 \
+RUNNER_TOKEN='<the same 32+ character secret as the API>' \
+RUNNER_BIND=0.0.0.0 RUNNER_PORT=8790 \
+RUNNER_PREVIEW_BIND=0.0.0.0 RUNNER_PREVIEW_HOST=10.0.0.12 \
+node server/dist/runner/main.js
+```
+
+For local development the same process starts with `npm run runner --workspace=server`. The
+runner needs a working Docker CLI/socket (the API's Docker broker is only for the API host), the
+sandbox image (`SANDBOX_IMAGE`, default `node:22-bookworm`) and the project workspace.
+`WEBNESTDEV_RUNNER=1` tells the shared image entrypoint not to prepare API data or secrets; without
+it every restart would recursively `chown` the shared workspace. The runner container has the Docker
+socket, which is root-equivalent on that machine; keep the machine dedicated to the runner and do
+not mount the API's data, secrets or `.env` into it. If `PREVIEW_NETWORK` is set explicitly on the
+API, set the same `PREVIEW_NETWORK` on the runner; otherwise the runner picks a network containing
+`preview` and refuses the database/API network. `RUNNER_PREVIEW_NETWORK` is only the policy
+allowlist for unusual names; setting `PREVIEW_NETWORK` covers both selection and policy.
+
+**The hot workspace must be shared.** The API reads files, builds the project's file context and
+serves static previews; the runner executes containers. Both must see the same absolute path
+with the same files. Mount one POSIX filesystem (NFS/GlusterFS/cloud file share) at the same path
+on both machines and set `WEBNESTDEV_SHARED_SANDBOX=1` on **both**. The API refuses to open a
+remote project without this flag and also refuses to create an empty local directory when the
+mount is missing, so a broken mount fails clearly instead of showing an empty project. File
+permissions must allow the API's uid and the container uid 1000 to write (`chown` is attempted;
+on NFS use matching UID/GID or `all_squash` with writable permissions). Do not use two local
+disks — the API would write one copy and the runner would execute another.
+
+On the API set the same token and either register the node with the admin API or declare it once
+the environment (entries are idempotent; the heartbeat supplies real capacity):
+
+```bash
+WEBNESTDEV_RUNNER_TOKEN='<same secret>'
+WEBNESTDEV_SHARED_SANDBOX=1
+WEBNESTDEV_REMOTE_NODES='[{"id":"node-2","address":"10.0.0.12:8790"}]'
+# optional: move projects off a node that has been offline for the freshness window
+WEBNESTDEV_AUTO_MOVE_PROJECTS=1
+```
+
+`POST /api/admin/nodes` (admin cookie) registers a runner at runtime with
+`{"id":"node-2","address":"10.0.0.12:8790"}`; `GET /api/admin/nodes` shows capacity, heartbeat
+age, project count, live previews per node and the nearest-rank p95 of preview starts in the last
+30 minutes (`previewStarts.count/p95Ms/failures`). `POST /api/admin/nodes/:id/status` with `{"status":"draining","confirm":true}`
+stops new placement; existing projects keep executing. `offline` removes the cached host and
+returns a clear `NODE_UNAVAILABLE`/503 instead of falling back to the API machine. When
+`WEBNESTDEV_AUTO_MOVE_PROJECTS=1`, opening a project whose node is offline/stale moves only its
+pin to an eligible online node on the same shared workspace; it refuses while a preview or a long
+job is active, so it never abandons a live container.
+
+Network/firewall requirements:
+
+- API → runner `8790/tcp` (JSON control API) and the private preview relay ports. The relay binds
+to `RUNNER_PREVIEW_BIND`; `RUNNER_PREVIEW_HOST` is the address the API uses to reach it. Allow the
+API host to the runner's private interface (ephemeral TCP range on Linux) and never expose either
+port to the internet. A public preview still goes through the API's public-preview listener and
+ticket; the relay is not a public endpoint.
+- The runner's `/health` is public on the bind and only says `{ok,nodeId}`; all other endpoints
+require `Authorization: Bearer $RUNNER_TOKEN`. Use a private network/VPN and TLS termination if
+the network is not trusted; a shared secret alone is not a substitute for network isolation.
+- The runner accepts only hardened `docker run` shapes (read-only, non-root, cap-drop ALL,
+  no-new-privileges, CPU/memory/PID limits, project-only mounts) and only operates on containers
+  carrying platform labels. It cannot `exec` into PostgreSQL or the API container even with the
+  token.
+
+Runner replies include observed memory/container counts; the API polls `/v1/status` every 30 s
+(`WEBNESTDEV_RUNNER_HEARTBEAT_MS`) and writes `last_seen`. A failed poll does not invent a
+heartbeat: the node becomes stale by the normal placement window. `RUNNER_REAP_ON_START=0`
+disables the runner's cleanup of labelled preview/job containers on boot; set it only when you
+know why orphans should survive a runner restart.
+
+Verification without a second machine:
+
+```bash
+npm run test:broker
+node --import tsx --test server/src/runner/*.test.ts
+node --import tsx --test server/src/sandbox/remote-host-routing.test.ts
+npx tsc -p server/tsconfig.json --noEmit
+```
+
+The code and protocol can be exercised locally; the stage acceptance criteria (a real project on
+a second machine, 30 previews across two nodes, a node failure) still require the second VM.
+
 ## Sandbox and preview
 
 Agent commands and the live preview run in containers started by the server through the mounted socket. Both mount the project directory from `WEBNESTDEV_SANDBOX_DIR`, and that path is resolved by the **Docker daemon on the VM**, not by the server process. The directory therefore has to exist on the host under exactly the same absolute path and be mounted into the server container the same way: `docker-compose.yml` does it with `SANDBOX_DIR` (default `/var/lib/webnestdev/sandboxes`), and [`deploy/scripts/make-env-vm.sh`](../deploy/scripts/make-env-vm.sh) writes the same path into `.env` and creates it. A named volume or a container-only path is not enough — the sandbox and preview containers would get an empty directory while the agent writes files into the server's own copy.

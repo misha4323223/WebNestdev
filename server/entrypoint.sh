@@ -8,6 +8,14 @@
 # старте, идемпотентно; на повторных стартах данные уже принадлежат uid 1000.
 set -eu
 
+# The runner has no platform data, secrets or payment keys. Its image still carries the API
+# entrypoint, so an explicit mode skips data/secrets preparation: a recursive chown of a shared
+# NFS workspace on every runner restart is expensive and can change ownership behind the API.
+if [ "${WEBNESTDEV_RUNNER:-0}" = "1" ]; then
+  echo "[entrypoint] режим runner: платформенные данные не подготавливаются"
+  exec "$@"
+fi
+
 uid="${WEBNESTDEV_UID:-1000}"
 gid="${WEBNESTDEV_GID:-1000}"
 data="${WEBNESTDEV_DATA_DIR:-/app/.webnestdev}"

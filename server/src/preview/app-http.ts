@@ -104,7 +104,15 @@ export async function findAnsweringPort(input:{containerId:string;ports:number[]
  * Готовность приложения: ответ меньше 500 — оно работает (404 у ещё не созданной страницы — тоже
  * ответ, а не отказ). Так же это понимали и раньше, когда проверка жила в preview-runner.
  */
-export async function previewAppAnswers(state:Pick<PreviewState,"containerId"|"port">,docker=dockerExec){
-  const response=await fetchAppFromContainer({containerId:state.containerId,port:state.port,timeoutMs:8_000,bodyMaxBytes:0,docker});
+export async function previewAppAnswers(state:Pick<PreviewState,"containerId"|"port"|"containerPort">,docker=dockerExec){
+  const response=await fetchAppFromContainer({
+    containerId:state.containerId,
+    // On a runner `port` is the API-facing relay port; the app (or the in-container relay)
+    // listens on `containerPort`. Keeping both avoids asking the relay itself over exec.
+    port:state.containerPort??state.port,
+    timeoutMs:8_000,
+    bodyMaxBytes:0,
+    docker,
+  });
   return Boolean(response&&response.status<500);
 }

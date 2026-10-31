@@ -111,6 +111,25 @@ POST без тела (запуск/остановка предпросмотра
 (`server/src/sandbox/docker/args.ts`) и предпросмотра (`server/src/preview/preview-runner.ts`).
 Проверка: `server/src/sandbox/docker/args.test.ts` (флаги, uid, read-only).
 
+### ✅ 3.2. Runner не получает платформенные секреты
+
+**Стало.** Удалённый узел — отдельный процесс (`server/src/runner/main.ts`) с одним
+`RUNNER_TOKEN` (32+ символа). У него нет `DATABASE_URL`, `WEBNESTDEV_ENCRYPTION_KEY`, ключей
+платежей и S3: он получает только project-scoped команды и Docker-операции. Docker-политика
+(`server/src/runner/policy.ts`) принимает лишь hardened `docker run` (read-only, uid 1000,
+`cap-drop ALL`, `no-new-privileges`, CPU/memory/PID limits, монтирование только своего проекта)
+и операции над контейнерами с метками платформы — токен не даёт `docker exec` в PostgreSQL
+или API. `/v1/preview/relay` тоже проверяет метку контейнера.
+
+**Граница.** Bearer-секрет — единственная аутентификация; runner должен стоять в приватной
+сети/VPN, а не в интернете (`docs/PRODUCTION_DEPLOYMENT.md`). mTLS и отдельная сеть для relay —
+следующий уровень, не выкачен. Общий `SANDBOX_DIR` обязателен и проверяется: без
+`WEBNESTDEV_SHARED_SANDBOX=1` API не открывает удалённый проект и не создаёт пустой локальный
+каталог вместо отсутствующего mount.
+
+**Тесты:** `server/src/runner/policy.test.ts`, `server/src/runner/server.test.ts`
+(включая попытку `exec` в чужой контейнер и path traversal в `projectId`).
+
 ### ✅ 1.5. Предпросмотр на origin панели (найдено при анализе этапа)
 
 **Было.** Панель открывала приложение по пути `/api/projects/<id>/preview/open/`, то есть на том

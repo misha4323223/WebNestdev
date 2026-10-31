@@ -30,6 +30,26 @@ function deps(options: { answers: (candidate: { host: string; port: number }) =>
 /** Ждать в тестах незачем: ожидание проверяется отдельно, здесь важны решения. */
 const noWait = { attempts: 1, delayMs: 0 };
 
+test("a runner preview is reached through its private TCP relay", async () => {
+  let opened: { containerId: string; targetPort: number } | null = null;
+  const { value } = deps({
+    answers: candidate => candidate.host === "10.0.0.2" && candidate.port === 4567,
+    ports: [3000],
+    appUp: true,
+    relay: false,
+  });
+  value.openRelay = async input => {
+    opened = input;
+    return { host: "10.0.0.2", port: 4567 };
+  };
+  const settled = await settlePreviewAddress(state({ host: "172.19.0.4" }), { deps: value, appAnswers: true, wait: noWait });
+  assert.deepEqual(opened, { containerId: "c1", targetPort: 3000 });
+  assert.equal(settled.host, "10.0.0.2");
+  assert.equal(settled.port, 4567);
+  assert.equal(settled.containerPort, 3000);
+  assert.equal(settled.settled, true);
+});
+
 test("a reachable preview is confirmed once and never inspected again", async () => {
   const { value, calls } = deps({ answers: () => true });
   const settled = await settlePreviewAddress(state(), { deps: value });

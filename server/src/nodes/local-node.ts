@@ -1,6 +1,7 @@
 import { memoryStatus } from "../health/host-metrics.js";
 import { runDockerCli } from "../sandbox/docker/cli.js";
 import { nodeAddress, nodeId } from "./identity.js";
+import { registerConfiguredRemoteNodes, startRemoteNodeHeartbeat } from "./remote-heartbeat.js";
 import {
   backfillProjectNodes,
   getNode,
@@ -149,5 +150,9 @@ export async function initializeNodeRegistry(): Promise<{ node: SandboxNode; bac
   const node = await ensureLocalNode();
   const backfilledProjects = await backfillProjectNodes(node.id);
   startNodeHeartbeat();
+  // Remote runners have no database; the API registers configured entries and polls them for
+  // the observed metrics.
+  await registerConfiguredRemoteNodes();
+  startRemoteNodeHeartbeat();
   return { node, backfilledProjects };
 }

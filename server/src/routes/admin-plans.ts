@@ -3,7 +3,7 @@ import { requireAdmin } from "./admin.js";
 import { applyNoStoreToReply } from "./cache-headers.js";
 import { recordAudit } from "../security/audit-journal.js";
 import { planAdminList } from "../billing/robokassa.js";
-import { planSettingsSchema, savePlanSettings } from "../billing/plan-settings.js";
+import { planSettingsFeaturePresence, planSettingsSchema, savePlanSettings } from "../billing/plan-settings.js";
 
 /**
  * Та же витрина тарифов для внешней админки: Bearer-токен, как у остальных `/api/admin/*`.
@@ -22,9 +22,11 @@ export async function registerAdminPlanRoutes(app: FastifyInstance) {
     const auth = await requireAdmin(request, reply);
     if (!auth) return;
     applyNoStoreToReply(reply);
-    const parsed = planSettingsSchema.safeParse(request.body ?? {});
-    if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "Проверьте название, описание, цену и скидку" });
-    await savePlanSettings(parsed.data);
+    const raw = request.body ?? {};
+    const parsed = planSettingsSchema.safeParse(raw);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "Проверьте название, описание, пункты, цену и скидку" });
+    const featuresProvided = planSettingsFeaturePresence(raw);
+    await savePlanSettings(parsed.data, { preserveFeatures: { pro: !featuresProvided.pro, team: !featuresProvided.team } });
     await recordAudit({
       action: "billing.plans.updated",
       actorType: "admin",

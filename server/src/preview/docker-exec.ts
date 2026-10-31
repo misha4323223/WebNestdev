@@ -1,5 +1,6 @@
 import { dockerTimeoutMessage } from "../sandbox/docker/cli.js";
-import { sandboxHost } from "../sandbox/host.js";
+import { resolveSandboxHost, sandboxHost } from "../sandbox/host.js";
+import { nodeId } from "../nodes/identity.js";
 import type { DockerExecResult } from "./types.js";
 
 /**
@@ -21,4 +22,17 @@ export { dockerTimeoutMessage };
  */
 export function dockerExec(args:string[],timeoutMs=15000):Promise<DockerExecResult>{
   return sandboxHost().docker(args,timeoutMs);
+}
+
+/**
+ * Docker operations for one project's node. Resolving the host lazily is what lets the same
+ * preview code run on the API VM or on a remote runner: the caller already has the node id in
+ * the preview state, and a missing runner fails with a clear node error instead of silently
+ * running a container on the API host.
+ */
+export function dockerForNode(node?:string):(args:string[],timeoutMs?:number)=>Promise<DockerExecResult>{
+  return async (args,timeoutMs=15000)=>{
+    const host=await resolveSandboxHost(node||nodeId());
+    return host.docker(args,timeoutMs);
+  };
 }

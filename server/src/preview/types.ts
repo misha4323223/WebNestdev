@@ -15,7 +15,14 @@ export type PreviewMode="container"|"static";
  * `settled` — этот адрес уже подтверждён запросом; до подтверждения статус доводит его заново
  * (см. preview/preview-address.ts).
  */
-export type PreviewState={mode:PreviewMode;containerId:string;port:number;host:string;projectId:string;startedAt:number;lastUsedAt:number;settled?:boolean;/**
+export type PreviewState={mode:PreviewMode;containerId:string;port:number;host:string;projectId:string;startedAt:number;lastUsedAt:number;/**
+ * The project's execution node. A preview on a remote runner must keep its container, logs and
+ * relay on that node; the API never falls back to its own Docker socket.
+ */node?:string;/**
+ * The port inside the container that serves the app (or the in-container TCP relay). For a local
+ * preview this equals `port`; on a runner `port` is the private relay's port and this is the
+ * target the API uses for `docker exec` fallback.
+ */containerPort?:number;settled?:boolean;/**
  * Адрес контейнера недоступен серверу (Docker изолирует bridge-сети), и запросы панели идут внутрь
  * контейнера через `docker exec` (см. preview/exec-proxy.ts). Снимается, когда адрес подтверждён
  * заново: прямой путь быстрее и отдаёт поток.
@@ -34,5 +41,5 @@ export type PreviewState={mode:PreviewMode;containerId:string;port:number;host:s
  * адрес подтверждён запросом самого сервера; без подтверждения панель, агент и Chromium до
  * приложения не доходят, даже когда оно отвечает внутри контейнера (`ready`).
  */
-export type PreviewStatus={running:false}|{running:true;ready:boolean;port:number;host:string;containerId:string;startedAt:number;mode?:PreviewMode;settled?:boolean;/** Приложение отдаётся панели через `docker exec`: адрес контейнера серверу недоступен. */viaExec?:boolean;hint?:string};
+export type PreviewStatus={running:false}|{running:true;ready:boolean;port:number;host:string;containerId:string;startedAt:number;mode?:PreviewMode;settled?:boolean;/** Port inside the container for the exec fallback; absent means the same as `port`. */containerPort?:number;/** Execution node that owns the container and relay. */node?:string;/** Приложение отдаётся панели через `docker exec`: адрес контейнера серверу недоступен. */viaExec?:boolean;hint?:string};
 export type DockerExecResult={code:number;stdout:string;stderr:string};

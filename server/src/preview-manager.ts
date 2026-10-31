@@ -1,12 +1,17 @@
 import type { SandboxConfig } from "./sandbox-manager.js";
 import { getProject } from "./project-store.js";
-import { dockerExec } from "./preview/docker-exec.js";
+import { dockerExec, dockerForNode } from "./preview/docker-exec.js";
+import { resolveSandboxHost } from "./sandbox/host.js";
+import { previewDepsForHost } from "./preview/node-deps.js";
+import { nodeId } from "./nodes/identity.js";
+import { listNodes } from "./nodes/node-store.js";
 import { decideRuntimePreviewStart, liveRuntimePreviews } from "./preview/preview-limiter.js";
 import { previewAppAnswers } from "./preview/app-http.js";
 import { settlePreviewAddress } from "./preview/preview-address.js";
 import { getPreview, removePreview, setPreview, touchPreview } from "./preview/preview-store.js";
 import { startPreviewContainer, previewLogsOf, removePreviewContainer } from "./preview/preview-runner.js";
 import { previewModeSetting, startStaticPreview, staticAppAnswers, staticPreviewLogs, stopStaticPreview } from "./preview/static-preview.js";
+import { recordPreviewStart } from "./preview/preview-metrics.js";
 import { PREVIEW_LABEL, type PreviewStatus } from "./preview/types.js";
 import { clearPreviewSecrets } from "./secrets/preview-secrets.js";
 import { recordStorageMutation } from "./account/storage-quota.js";
@@ -21,8 +26,12 @@ export type { PreviewState, PreviewStatus } from "./preview/types.js";
  * it does not (no build script, a failing build, or an output without index.html).
  */
 export async function startPreview(config: SandboxConfig) {
+  const startedAt = Date.now();
+  let ok = false;
   try {
-    return await startPreviewWithFallback(config);
+    const status = await startPreviewWithFallback(config);
+    ok = true;
+    return status;
   } catch (error) {
 
     // Причина отказа раньше жила только в ответе панели и в сообщении агенту, а тот, кто смотрит
@@ -31,6 +40,7 @@ export async function startPreview(config: SandboxConfig) {
     console.error("[preview] не удалось запустить предпросмотр: проект " + config.projectId + " — " + describeError(error));
     throw error;
   } finally {
+    recordPreviewStart(config.node ?? nodeId(), Date.now() - startedAt, ok);
     // Запуск предпросмотра — это ещё и запись: он ставит зависимости и собирает `dist`.
     // Счётчик квоты обязан увидеть это сразу, иначе пользователь видит старый размер, хотя
     // `node_modules` уже лежит на диске. Замер идёт в фоне и не задерживает ответ панели.
@@ -149,7 +159,7 @@ export async function stopPreview(projectId: string) {
     await clearPreviewSecrets(projectId);
     return { stopped: true };
   }
-  await removePreviewContainer(current.containerId);
+  await removePreviewContainer(current.containerId,current.node);
   removePreview(projectId);
   await clearPreviewSecrets(projectId);
   return { stopped: true };
@@ -169,7 +179,7 @@ export async function previewLogs(projectId: string) {
     return { running: true, logs: staticPreviewLogs(projectId) };
   }
 
-  const result = await previewLogsOf(current.containerId);
+  const result = await previewLogsOf(current.containerId,dockerForNode(current.node));
   // Логи читает панель каждые четыре секунды, и у контейнера, который убрали извне, она видела
   // вместо вывода приложения ответ Docker «No such container». Такой предпросмотр уже не запущен:
   // состояние снимается здесь же, и следующий запуск поднимает новый контейнер.
@@ -198,6 +208,34 @@ export async function reapOrphanPreviews() {
   const ids = listed.stdout.split("\n").map(value => value.trim()).filter(Boolean);
   for (const id of ids) await removePreviewContainer(id);
   return { stopped: ids.length };
+}
+
+/**
+ * Remove preview containers left on remote runners by an API restart. The runner's own boot
+ * reap covers a runner restart; this covers the API restart while runners stay up. The same
+ * opt-out as the local reap applies: several API replicas sharing one runner must set
+ * PREVIEW_REAP_ON_START=0, otherwise one replica would stop another's live previews.
+ */
+export async function reapRemotePreviews() {
+  if (process.env.PREVIEW_REAP_ON_START === "0") return { stopped: 0 };
+  const local = nodeId();
+  const nodes = (await listNodes()).filter(node => node.id !== local && node.address.trim());
+  let stopped = 0;
+  for (const node of nodes) {
+    try {
+      const host = await resolveSandboxHost(node.id);
+      const listed = await host.docker(["ps", "-aq", "--filter", "label=" + PREVIEW_LABEL]);
+      if (listed.code !== 0) continue;
+      const ids = listed.stdout.split(/\s+/).filter(Boolean);
+      if (ids.length) {
+        await host.docker(["rm", "-f", ...ids]);
+        stopped += ids.length;
+      }
+    } catch (error) {
+      console.warn("[preview] уборка на узле " + node.id + " пропущена: " + describeError(error));
+    }
+  }
+  return { stopped };
 }
 
 export async function previewStatus(projectId: string): Promise<PreviewStatus> {
@@ -243,6 +281,8 @@ export async function previewStatus(projectId: string): Promise<PreviewStatus> {
       host: current.host,
       containerId: current.containerId,
       startedAt: current.startedAt,
+      ...(current.node?{node:current.node}:{}),
+      ...(current.containerPort?{containerPort:current.containerPort}:{}),
       hint: EXEC_ONLY_HINT,
     };
   }
@@ -268,6 +308,8 @@ export async function previewStatus(projectId: string): Promise<PreviewStatus> {
       host: current.host,
       containerId: current.containerId,
       startedAt: current.startedAt,
+      ...(current.node?{node:current.node}:{}),
+      ...(current.containerPort?{containerPort:current.containerPort}:{}),
     };
   }
 
@@ -286,13 +328,17 @@ export async function previewStatus(projectId: string): Promise<PreviewStatus> {
       host: current.host,
       containerId: current.containerId,
       startedAt: current.startedAt,
+      ...(current.node?{node:current.node}:{}),
+      ...(current.containerPort?{containerPort:current.containerPort}:{}),
       hint: current.ready
         ? "Приложение отвечает внутри контейнера, но недоступно по адресу контейнера: платформа пробует подключить его к сети сервера и пробросить порт — обновите статус; если подсказка осталась, задайте PREVIEW_NETWORK."
         : "Приложение ещё запускается: первый старт dev-сервера занимает несколько секунд.",
     };
   }
 
-  const inspect = await dockerExec([
+  const host=await resolveSandboxHost(current.node||nodeId());
+  const docker=(args:string[],timeoutMs?:number)=>host.docker(args,timeoutMs);
+  const inspect = await docker([
     "inspect",
     "-f",
     "{{.State.Running}}",
@@ -303,7 +349,7 @@ export async function previewStatus(projectId: string): Promise<PreviewStatus> {
     removePreview(projectId);
     // Контейнер мог не исчезнуть, а завершиться: без `--rm` он остаётся на хосте, и убрать его
     // больше некому — следующий запуск создал бы рядом новый.
-    await removePreviewContainer(current.containerId);
+    await removePreviewContainer(current.containerId,current.node);
     return { running: false };
   }
 
@@ -314,7 +360,7 @@ export async function previewStatus(projectId: string): Promise<PreviewStatus> {
   // A dev server that is still compiling has not failed: the container is the truth here,
   // and `ready` says whether the app answers yet. Dropping the state on a slow first start
   // used to lose the container and leave it running with nothing left to stop it.
-  const ready = await previewAppAnswers(current);
+  const ready = await previewAppAnswers(current,docker);
   // Приложение отвечает внутри контейнера, но не по адресу контейнера (обычно слушает только
   // петлю, а иногда — свой порт вместо запрошенного): адрес доводится до рабочего здесь же,
   // потому что статус читают и панель, и прокси, и агент. Медленный первый старт поэтому
@@ -324,7 +370,7 @@ export async function previewStatus(projectId: string): Promise<PreviewStatus> {
   // позже и на своём порту (dev-скрипт, который не принял флаги запуска), а подтверждения у адреса
   // всё ещё нет. Раньше шаг выполнялся только при `ready`, поэтому такой предпросмотр навсегда
   // оставался с портом, на котором ничего не слушает: приложение живо, а панель показывает пустой кадр.
-  const settled = await settlePreviewAddress(current.execOnly?{...current,settled:false}:current, { appAnswers: ready });
+  const settled = await settlePreviewAddress(current.execOnly?{...current,settled:false}:current, { appAnswers: ready, deps: previewDepsForHost(host) });
   // Отметка о выполненной проверке — вместе с её результатом: следующий полный проход — не раньше,
   // чем через execRetryMs(), иначе каждый файл приложения платил бы за него заново.
   const stamped = { ...settled, ready, checkedAt: Date.now(), ...(settled.execOnly ? { execOnlyCheckedAt: Date.now() } : {}) };
@@ -343,6 +389,8 @@ export async function previewStatus(projectId: string): Promise<PreviewStatus> {
     host: settled.host,
     containerId: current.containerId,
     startedAt: current.startedAt,
+    ...(settled.node?{node:settled.node}:{}),
+    ...(settled.containerPort?{containerPort:settled.containerPort}:{}),
     // Адрес контейнера не отвечает, но приложение живо внутри: панель отдаётся через `docker exec`
     // (см. preview/exec-proxy.ts), поэтому кадр не пустой — и об этом честно сказано пользователю.
     ...(settled.execOnly

@@ -2,8 +2,11 @@ import type { SandboxConfig } from "../sandbox-manager.js";
 import { sandboxImage, sandboxRuntime, sandboxRuntimeArgs, workspaceMountSource } from "../sandbox/config.js";
 import { previewAppAnswers } from "./app-http.js";
 import { dockerExec, missingContainer } from "./docker-exec.js";
-import { addressOnNetworks, firstContainerAddress, previewNetwork } from "./preview-network.js";
+import { addressOnNetworks, firstContainerAddress, previewAttachNetworks, previewNetwork } from "./preview-network.js";
 import { settlePreviewAddress } from "./preview-address.js";
+import { previewDepsForHost } from "./node-deps.js";
+import { resolveSandboxHost } from "../sandbox/host.js";
+import { nodeId } from "../nodes/identity.js";
 import { resolvePreviewCommand } from "./preview-command.js";
 import { ensureProjectDependencies } from "./dependencies.js";
 import { setPreview } from "./preview-store.js";
@@ -42,13 +45,20 @@ export async function startPreviewContainer(config:SandboxConfig){
   if(!dependencies.ok)throw new Error(dependencies.reason);
   const command=await resolvePreviewCommand(config);
   const image=sandboxImage();
-  const network=await previewNetwork();
+  // The preview belongs to the project's node. Resolve it before any Docker call: a missing
+  // runner must be a clear error, not a container silently started on the API machine.
+  const host=await resolveSandboxHost(config.node||nodeId());
+  const docker=(args:string[],timeoutMs?:number)=>host.docker(args,timeoutMs);
+  const networks=host.networks
+    ? await host.networks()
+    : {preview:await previewNetwork(docker),attach:await previewAttachNetworks(docker)};
+  const network=networks.preview;
   // Секреты приходят из зашифрованного хранилища как read-only файлы поверх `/workspace`.
   // В рабочей области их нет: агент и файловый API не видят ни значения, ни файла.
   const secrets=await previewSecretMounts(config);
   let result;
   try {
-    result=await dockerExec([
+    result=await docker([
       "run","-d","--init",
       // Предпросмотр — тоже код проекта. Рантайм тот же, что у команд агента: выключатель
       // SANDBOX_RUNTIME=docker возвращает обычный Docker и для предпросмотра.
@@ -94,27 +104,27 @@ export async function startPreviewContainer(config:SandboxConfig){
   const containerId=result.stdout.trim();
   // Адрес берётся именно на той сети, куда контейнер поставлен: у контейнера может быть несколько
   // интерфейсов, и адрес не с той сети серверу недоступен (см. preview-network.ts).
-  const host=(network?await addressOnNetworks(containerId,[network]):"")||await firstContainerAddress(containerId);
-  if(!host){
-    await removePreviewContainer(containerId);
+  const containerAddress=(network?await addressOnNetworks(containerId,[network],docker):"")||await firstContainerAddress(containerId,docker);
+  if(!containerAddress){
+    await removePreviewContainer(containerId,config.node);
     await secrets.cleanup();
     throw new Error("Адрес контейнера предпросмотра не назначен");
   }
   const now=Date.now();
-  const state:PreviewState={mode:"container",containerId,projectId:config.projectId,host,port:PREVIEW_APP_PORT,startedAt:now,lastUsedAt:now};
+  const state:PreviewState={mode:"container",containerId,projectId:config.projectId,node:config.node,host:containerAddress,port:PREVIEW_APP_PORT,startedAt:now,lastUsedAt:now};
   setPreview(state);
   let ready:boolean;
   let settled:PreviewState;
   try{
-    ready=await waitForApp(state);
+    ready=await waitForApp(state,docker);
     // Приложение решает, где слушать: оно могло не принять флаги запуска (тогда порт берётся из
     // /proc/net/tcp) или слушать только петлю контейнера (тогда поднимается проброс), иначе
     // предпросмотр выглядел бы работающим, а панель, агент и Chromium не доходили бы до него.
-    settled=await settlePreviewAddress(state,{appAnswers:ready});
+    settled=await settlePreviewAddress(state,{deps:previewDepsForHost(host),appAnswers:ready});
   }catch(error){
     // Неудачный запуск не должен оставлять ни открытый env-файл на хосте, ни контейнер: без `--rm`
     // он остался бы остановленным и занимал место до следующей уборки.
-    await removePreviewContainer(containerId);
+    await removePreviewContainer(containerId,config.node);
     await secrets.cleanup();
     throw error;
   }
@@ -127,15 +137,15 @@ export async function startPreviewContainer(config:SandboxConfig){
   // next status check turns ready into the real answer.
   // Лог установки — единственное место, где видно, почему первый запуск занял минуту, а также
   // причина отказа, если dev-сервер так и не ответил.
-  return {...settled,running:true as const,ready,...(ready?{}:{logs:[dependencies.log,await recentPreviewLogs(containerId)].filter(Boolean).join("\n\n")})};
+  return {...settled,running:true as const,ready,...(ready?{}:{logs:[dependencies.log,await recentPreviewLogs(containerId,docker)].filter(Boolean).join("\n\n")})};
 }
 
 /** Bounded wait: the dev server answers in a second or two, a cold npm install takes longer. */
-async function waitForApp(state:PreviewState){
+async function waitForApp(state:PreviewState,docker:typeof dockerExec=dockerExec){
   for(let attempt=0;attempt<READY_ATTEMPTS;attempt++){
     // Код выхода читается вместе с признаком работы: упавший процесс объясняет отказ точнее, чем
     // отсутствие ответа на порту.
-    const inspect=await dockerExec(["inspect","-f","{{.State.Running}} {{.State.ExitCode}}",state.containerId]);
+    const inspect=await docker(["inspect","-f","{{.State.Running}} {{.State.ExitCode}}",state.containerId]);
     const [isRunning,exitCode]=inspect.stdout.trim().split(/\s+/);
     if(inspect.code!==0){
       if(missingContainer(inspect))throw new Error(containerVanishedMessage(state.containerId));
@@ -144,11 +154,11 @@ async function waitForApp(state:PreviewState){
     if(isRunning!=="true"){
       // Причина отказа — это вывод самого dev-сервера: без `--rm` контейнер остаётся, и `docker logs`
       // возвращает текст настоящей ошибки (не установлены зависимости, занят порт, синтаксис).
-      const logs=await recentPreviewLogs(state.containerId);
+      const logs=await recentPreviewLogs(state.containerId,docker);
       if(logs)throw new Error(logs);
       throw new Error("Процесс предпросмотра завершился при запуске"+(exitCode&&exitCode!=="0"?" (код выхода "+exitCode+")":"")+": вывода нет, проверьте команду запуска в package.json.");
     }
-    if(await previewAppAnswers(state))return true;
+    if(await previewAppAnswers(state,docker))return true;
     await new Promise(resolve=>setTimeout(resolve,READY_DELAY_MS));
   }
   return false;
@@ -182,7 +192,14 @@ export async function recentPreviewLogs(containerId:string,docker:typeof dockerE
  * Убирает контейнер предпросмотра с хоста. Ответ не проверяется: контейнера могло уже не быть, а
  * остановка предпросмотра не должна из-за этого падать.
  */
-export async function removePreviewContainer(containerId:string){
-  const result=await dockerExec(["rm","-f",containerId]).catch(()=>null);
+export async function removePreviewContainer(containerId:string,node?:string){
+  let run:(args:string[],timeoutMs?:number)=>Promise<{code:number;stdout:string;stderr:string}>;
+  if(node){
+    try{
+      const host=await resolveSandboxHost(node);
+      run=(args,timeoutMs)=>host.docker(args,timeoutMs);
+    }catch{return false}
+  }else run=dockerExec;
+  const result=await run(["rm","-f",containerId]).catch(()=>null);
   return Boolean(result&&result.code===0);
 }

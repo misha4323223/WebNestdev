@@ -13,6 +13,7 @@ const Fastify = (await import("fastify")).default;
 const { registerAdminNodeRoutes } = await import("./admin-nodes.js");
 const { createAdmin, createAdminSession } = await import("../admin/admin-store.js");
 const { upsertNode } = await import("../nodes/node-store.js");
+const { recordPreviewStart, resetPreviewStartStatsForTests } = await import("../preview/preview-metrics.js");
 const { ZodError } = await import("zod");
 
 const admin = await createAdmin("nodes-admin@example.test", "correct-horse-battery");
@@ -43,12 +44,44 @@ test("nodes are visible to an admin and drain is an explicit status change", asy
     const anonymous = await app.inject({ method: "GET", url: "/api/admin/nodes" });
     assert.equal(anonymous.statusCode, 401);
 
+    resetPreviewStartStatsForTests();
+    for (let index = 1; index <= 20; index += 1) recordPreviewStart("local", index * 10, index !== 20);
     const listed = await app.inject({ method: "GET", url: "/api/admin/nodes", headers: auth });
     assert.equal(listed.statusCode, 200);
-    const listBody = listed.json() as { localNodeId: string; nodes: Array<{ id: string; status: string; projects: number; freeMemoryMb: number }> };
+    const listBody = listed.json() as { localNodeId: string; nodes: Array<{ id: string; status: string; projects: number; previews: number; previewStarts: { count: number; p95Ms: number | null; failures: number }; freeMemoryMb: number }> };
     assert.equal(listBody.localNodeId, "local");
     assert.equal(listBody.nodes[0]?.status, "online");
     assert.equal(listBody.nodes[0]?.freeMemoryMb, 3072);
+    assert.equal(listBody.nodes[0]?.previews, 0);
+    assert.deepEqual(listBody.nodes[0]?.previewStarts, { count: 20, p95Ms: 190, failures: 1 });
+
+    const registered = await app.inject({
+      method: "POST",
+      url: "/api/admin/nodes",
+      headers: auth,
+      payload: { id: "runner-a", address: "10.0.0.5:8790" },
+    });
+    assert.equal(registered.statusCode, 201);
+    const registeredBody = registered.json() as { node: { id: string; address: string; status: string; freeMemoryMb: number } };
+    assert.equal(registeredBody.node.id, "runner-a");
+    assert.equal(registeredBody.node.status, "online");
+    assert.equal(registeredBody.node.freeMemoryMb, 0);
+
+    const localRegistration = await app.inject({
+      method: "POST",
+      url: "/api/admin/nodes",
+      headers: auth,
+      payload: { id: "local", address: "10.0.0.6:8790" },
+    });
+    assert.equal(localRegistration.statusCode, 400);
+
+    const badAddress = await app.inject({
+      method: "POST",
+      url: "/api/admin/nodes",
+      headers: auth,
+      payload: { id: "runner-b", address: "http://user:pass@10.0.0.5:8790" },
+    });
+    assert.equal(badAddress.statusCode, 400);
 
     const badConfirm = await app.inject({
       method: "POST",
@@ -57,6 +90,13 @@ test("nodes are visible to an admin and drain is an explicit status change", asy
       payload: { status: "draining", confirm: false },
     });
     assert.equal(badConfirm.statusCode, 400);
+
+    await app.inject({
+      method: "POST",
+      url: "/api/admin/nodes/runner-a/status",
+      headers: auth,
+      payload: { status: "offline", confirm: true },
+    });
 
     const drained = await app.inject({
       method: "POST",

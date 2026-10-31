@@ -21,8 +21,8 @@ delete process.env.ROBOKASSA_RECEIPT;
 process.env.PLAN_SETTINGS = JSON.stringify({
   version: 1,
   plans: {
-    pro: { name: "Профи", description: "Для постоянной работы", priceRub: 1000, discountPercent: 20 },
-    team: { name: "Студия", description: "Для нескольких продуктов", priceRub: 3000, discountPercent: 0 },
+    pro: { name: "Профи", description: "Для постоянной работы", features: ["15 проектов", "Поддержка"], priceRub: 1000, discountPercent: 20 },
+    team: { name: "Студия", description: "Для нескольких продуктов", features: ["50 проектов"], priceRub: 3000, discountPercent: 0 },
   },
 });
 
@@ -50,11 +50,16 @@ test("скидка попадает в счёт и подпись Робокас
   const headers = { cookie: SESSION_COOKIE + "=" + session.id };
 
   const plans = (await app.inject({ method: "GET", url: "/api/billing/plans" })).json() as {
-    plans: Array<{ id: string; name: string; priceRub: number; priceLabel: string; basePriceRub: number; basePriceLabel: string; discountPercent: number }>;
+    plans: Array<{ id: string; name: string; features: string[]; priceRub: number; priceLabel: string; basePriceRub: number; basePriceLabel: string; discountPercent: number }>;
   };
   const pro = plans.plans.find(plan => plan.id === "pro");
+  const free = plans.plans.find(plan => plan.id === "free");
   assert.ok(pro);
   assert.equal(pro.name, "Профи");
+  assert.deepEqual(pro.features, ["15 проектов", "Поддержка"]);
+  assert.ok(free);
+  assert.equal(free.features[0], "3 проекта", "пункты бесплатного тарифа не редактируются");
+  assert.notDeepEqual(free.features, pro.features);
   assert.equal(pro.basePriceRub, 1000);
   assert.equal(pro.priceRub, 800);
   assert.equal(pro.discountPercent, 20);

@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { dockerRunArgs } from "./docker/args.js";
 import { dockerOptions } from "./docker/options.js";
 import { openProjectForSandbox } from "./permissions.js";
-import { sandboxHost } from "./host.js";
+import { resolveSandboxHost, sandboxHost, type SandboxHost } from "./host.js";
+import { nodeId } from "../nodes/identity.js";
 import type { DockerCliResult } from "./docker/types.js";
 import { tailLogLines } from "../preview/log-lines.js";
 import { secretEnvMaskMounts } from "./secret-mask.js";
@@ -36,6 +37,7 @@ type JobRecord = {
   cwd: string;
   startedAt: number;
   timer: NodeJS.Timeout;
+  host: SandboxHost;
 };
 
 const jobs = new Map<string, JobRecord>();
@@ -68,22 +70,18 @@ export function isSandboxJobName(value: string) {
 
 type DockerResult = DockerCliResult;
 
-function docker(args: string[], timeoutMs = DOCKER_TIMEOUT_MS): Promise<DockerResult> {
-  return sandboxHost().docker(args, timeoutMs);
-}
-
 function forgetJob(record: JobRecord) {
   clearTimeout(record.timer);
   jobs.delete(record.name);
 }
 
-async function removeContainer(name: string) {
-  await docker(["rm", "-f", name], DOCKER_TIMEOUT_MS).catch(() => undefined);
+async function removeContainer(record: JobRecord) {
+  await record.host.docker(["rm", "-f", record.name], DOCKER_TIMEOUT_MS).catch(() => undefined);
 }
 
 async function stopInternal(record: JobRecord) {
   forgetJob(record);
-  await removeContainer(record.name);
+  await removeContainer(record);
 }
 
 /** Активные задания проекта: по ним видно, что уже запущено, и можно остановить нужное. */
@@ -136,6 +134,7 @@ export async function startSandboxJob(
   }
 
   await openProjectForSandbox(config.root);
+  const host=await resolveSandboxHost(config.node||nodeId());
   const masks = await secretEnvMaskMounts(config);
   if (signal?.aborted) throw Object.assign(new Error("Запуск агента отменён"), { name: "AbortError" });
   const name = sandboxJobName(config.projectId);
@@ -149,7 +148,7 @@ export async function startSandboxJob(
     masks,
     { detached: true, labels: { "webnestdev.job": "1", "webnestdev.project": config.projectId } },
   );
-  const result = await docker(args);
+  const result = await host.docker(args);
   if (result.code !== 0) {
     const detail = (result.stderr || result.stdout).trim().slice(0, 500);
     throw new Error("Не удалось запустить долгую команду" + (detail ? ": " + detail : ""));
@@ -163,6 +162,7 @@ export async function startSandboxJob(
     cwd,
     startedAt: Date.now(),
     timer: setTimeout(() => { void stopInternal(record); }, sandboxJobMaxMs()),
+    host,
   };
   record.timer.unref?.();
   jobs.set(name, record);
@@ -234,8 +234,8 @@ export async function tailSandboxJob(
   }
 
   const [logsResult, stateResult] = await Promise.all([
-    docker(["logs", "--tail", String(MAX_TAIL_LINES), jobId]),
-    docker(["inspect", "--format", "{{.State.Status}}|{{.State.ExitCode}}", jobId]),
+    record.host.docker(["logs", "--tail", String(MAX_TAIL_LINES), jobId]),
+    record.host.docker(["inspect", "--format", "{{.State.Status}}|{{.State.ExitCode}}", jobId]),
   ]);
   if (logsResult.code !== 0 && /no such container/i.test(logsResult.stderr)) {
     forgetJob(record);
@@ -313,9 +313,9 @@ export async function stopSandboxJob(projectId: string, userId: string, jobId: s
  */
 export async function cleanupSandboxJobs() {
   if (process.env.SANDBOX_JOBS_REAP_ON_START === "0") return { removed: 0 };
-  const listed = await docker(["ps", "-aq", "--filter", "label=webnestdev.job=1"]);
+  const listed = await sandboxHost().docker(["ps", "-aq", "--filter", "label=webnestdev.job=1"]);
   if (listed.code !== 0) return { removed: 0 };
   const ids = listed.stdout.split(/\s+/).filter(Boolean);
-  if (ids.length) await docker(["rm", "-f", ...ids]);
+  if (ids.length) await sandboxHost().docker(["rm", "-f", ...ids]);
   return { removed: ids.length };
 }

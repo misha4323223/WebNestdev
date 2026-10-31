@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile, readdir, rename, rm, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 import { sandboxMemoryMb, sandboxRootPath } from "./sandbox/config.js";
-import { chooseProjectNode } from "./nodes/placement.js";
+import { chooseProjectNode, NoSandboxNodeError } from "./nodes/placement.js";
+import { nodeId } from "./nodes/identity.js";
 import type { ChatMessage, PlanState } from "./types.js";
 import { initializeStorage, isYdbEnabled, ydbQuery, getTable } from "./storage/ydb.js";
 import { decryptSecret, encryptSecret, isEncryptedSecret } from "./storage/secret-crypto.js";
@@ -133,8 +134,18 @@ async function persistProject(project:Project){
   await writeFile(path.join(root,"projects",project.id+".json"),JSON.stringify(project,null,2),{flag:"wx"});
   return project;
 }
+function assertNodeWorkspace(node:{id:string}){
+  if(node.id!==nodeId()&&process.env.WEBNESTDEV_SHARED_SANDBOX!=="1"){
+    throw new NoSandboxNodeError(
+      "Выбран удалённый узел " + node.id + ", но WEBNESTDEV_SHARED_SANDBOX не включён: " +
+        "API и runner должны видеть один SANDBOX_DIR. Включите общий каталог или выведите узел из обслуживания.",
+    );
+  }
+}
+
 export async function createProject(name:string,github:GitHubRepositoryRef|undefined,userId:string):Promise<Project>{
   const node=await chooseProjectNode({requiredMemoryMb:sandboxMemoryMb()});
+  assertNodeWorkspace(node);
   return persistProject(newProject(name,github,userId,node.id));
 }
 
@@ -160,6 +171,7 @@ export async function createProjectWithinLimit(name:string,github:GitHubReposito
   // Placement happens before the project row exists: the project must be pinned in the same
   // transaction that creates it, otherwise a failed insert leaves a node decision with no project.
   const node=await chooseProjectNode({requiredMemoryMb:sandboxMemoryMb()});
+  assertNodeWorkspace(node);
   const project=newProject(name,github,userId,node.id);
   if(isYdbEnabled()){
     const sql=ydbQuery();
@@ -261,6 +273,28 @@ export async function linkProjectGithub(projectId:string,userId:string,github:Gi
  * Renames a project and bumps its updated time. Returns null when the project is
  * missing or belongs to another account.
  */
+/**
+ * Move a project pin without touching its files. Used only after a node is declared offline
+ * and the caller has proved that no live preview/job still owns a container there. The hot
+ * workspace is shared, so the new runner sees the same directory; the cold archive is untouched.
+ */
+export async function reassignProjectNode(projectId:string,userId:string,node:string):Promise<Project|null>{
+  const project=await getProject(projectId);
+  if(!project||project.userId!==userId)return null;
+  const updated:Project={...project,node,updatedAt:new Date().toISOString()};
+  if(isYdbEnabled()){
+    await ydbQuery()`
+      UPDATE ${ydbQuery().identifier(getTable("projects"))}
+      SET node=${node},updated_at=${updated.updatedAt}
+      WHERE id=${projectId}
+    `;
+    return updated;
+  }
+  await mkdir(path.join(root,"projects"),{recursive:true});
+  await writeFile(path.join(root,"projects",projectId+".json"),JSON.stringify(updated,null,2));
+  return updated;
+}
+
 export async function renameProject(projectId:string,userId:string,name:string):Promise<Project|null>{
   const project=await getProject(projectId);
   if(!project||project.userId!==userId)return null;

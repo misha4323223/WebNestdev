@@ -113,10 +113,22 @@ export async function sandboxStatus(): Promise<{ mode: string; available: boolea
   return new Promise(resolve => {
     const child = spawn("docker", ["version", "--format", "{{.Server.Version}}"], { stdio: ["ignore", "pipe", "pipe"] });
     let output = "";
+    let finished = false;
+    const finish = (value: { mode: string; available: boolean; reason?: string; detail?: string; dockerVersion?: string }) => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(timer);
+      resolve(value);
+    };
+    const timer = setTimeout(() => {
+      child.kill("SIGKILL");
+      finish({ mode, available: false, detail: "Docker не ответил за 5 с: проверьте демон и сокет" });
+    }, 5_000);
+    timer.unref?.();
     child.stdout.on("data", (x: Buffer) => output += x.toString());
     // `/api/health` и `/api/ready` показывают эту причину: без неё «available:false» выглядит
     // как временная неисправность, хотя это отсутствие Docker на хосте.
-    child.on("error", error => resolve({ mode, available: false, detail: dockerUnavailableMessage(error) }));
-    child.on("close", code => resolve({ mode, available: code === 0, dockerVersion: code === 0 ? output.trim() : undefined }));
+    child.on("error", error => finish({ mode, available: false, detail: dockerUnavailableMessage(error) }));
+    child.on("close", code => finish({ mode, available: code === 0, dockerVersion: code === 0 ? output.trim() : undefined }));
   });
 }

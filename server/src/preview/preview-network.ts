@@ -46,14 +46,14 @@ function ownAddresses(){
  * в каждой сети, и `docker network inspect` перечисляет адреса контейнеров. Так сеть находится
  * даже тогда, когда имя контейнера не совпадает с hostname (свой `hostname:` в compose).
  */
-async function networksByOwnAddress(){
+async function networksByOwnAddress(docker:typeof dockerExec=dockerExec){
   const addresses=ownAddresses();
   if(!addresses.length)return [];
-  const listed=await dockerExec(["network","ls","--format","{{.Name}}"],5000).catch(()=>null);
+  const listed=await docker(["network","ls","--format","{{.Name}}"],5000).catch(()=>null);
   if(!listed||listed.code!==0)return [];
   const found:string[]=[];
   for(const name of lines(listed.stdout)){
-    const inspected=await dockerExec(["network","inspect","-f","{{range .Containers}}{{.IPv4Address}}\n{{end}}",name],5000).catch(()=>null);
+    const inspected=await docker(["network","inspect","-f","{{range .Containers}}{{.IPv4Address}}\n{{end}}",name],5000).catch(()=>null);
     if(!inspected||inspected.code!==0)continue;
     if(lines(inspected.stdout).some(value=>addresses.includes(value.split("/")[0])))found.push(name);
   }
@@ -65,7 +65,7 @@ async function networksByOwnAddress(){
  * имени хоста, затем по адресам). Пустой ответ — это не «сеть по умолчанию», а «сервер не в
  * контейнере»: на хосте предпросмотр на bridge по умолчанию виден напрямую.
  */
-export async function serverNetworks():Promise<string[]>{
+export async function serverNetworks(docker:typeof dockerExec=dockerExec):Promise<string[]>{
   const configured=process.env.PREVIEW_NETWORK?.trim();
   if(configured)return [configured];
   // Под брокером `inspect` собственного контейнера запрещён: через него были бы видны метаданные
@@ -74,13 +74,13 @@ export async function serverNetworks():Promise<string[]>{
   const viaBroker=await brokerSelfNetworks().catch(()=>null);
   if(viaBroker?.length)return viaBroker;
   for(const hostname of await ownHostnames()){
-    const result=await dockerExec(["inspect","-f",NETWORK_NAMES_TEMPLATE,hostname],5000).catch(()=>null);
+    const result=await docker(["inspect","-f",NETWORK_NAMES_TEMPLATE,hostname],5000).catch(()=>null);
     if(result&&result.code===0){
       const names=lines(result.stdout);
       if(names.length)return names;
     }
   }
-  return networksByOwnAddress();
+  return networksByOwnAddress(docker);
 }
 
 /** Сеть базы платформы: предпросмотр к ней подключать нельзя. */
@@ -99,8 +99,8 @@ export function preferPreviewNetwork(names:string[]){
 }
 
 /** Сеть, на которой запускается контейнер предпросмотра; пусто — подходящей сети нет. */
-export async function previewNetwork(){
-  return preferPreviewNetwork(await serverNetworks());
+export async function previewNetwork(docker:typeof dockerExec=dockerExec){
+  return preferPreviewNetwork(await serverNetworks(docker));
 }
 
 /**
@@ -108,22 +108,22 @@ export async function previewNetwork(){
  * сервер стоит и в сети базы, а подключать туда контейнер пользователя нельзя ни при каких
  * обстоятельствах.
  */
-export async function previewAttachNetworks(){
+export async function previewAttachNetworks(docker:typeof dockerExec=dockerExec){
   const configured=process.env.PREVIEW_NETWORK?.trim();
   if(configured)return [configured];
-  const networks=await serverNetworks();
+  const networks=await serverNetworks(docker);
   const preferred=preferPreviewNetwork(networks);
   return preferred?[preferred]:[];
 }
 
-export async function containerNetworks(containerId:string){
-  const result=await dockerExec(["inspect","-f",NETWORK_NAMES_TEMPLATE,containerId],5000).catch(()=>null);
+export async function containerNetworks(containerId:string,docker:typeof dockerExec=dockerExec){
+  const result=await docker(["inspect","-f",NETWORK_NAMES_TEMPLATE,containerId],5000).catch(()=>null);
   return result&&result.code===0?lines(result.stdout):[];
 }
 
 /** `сеть → адрес` контейнера: адрес нужен тот, который сервер действительно видит. */
-async function networkAddresses(containerId:string){
-  const result=await dockerExec(["inspect","-f",NETWORK_ADDRESSES_TEMPLATE,containerId],5000).catch(()=>null);
+async function networkAddresses(containerId:string,docker:typeof dockerExec=dockerExec){
+  const result=await docker(["inspect","-f",NETWORK_ADDRESSES_TEMPLATE,containerId],5000).catch(()=>null);
   const map=new Map<string,string>();
   if(!result||result.code!==0)return map;
   for(const line of result.stdout.split("\n")){
@@ -134,8 +134,8 @@ async function networkAddresses(containerId:string){
 }
 
 /** Адрес контейнера в одной из перечисленных сетей — та сторона, с которой его видит сервер. */
-export async function addressOnNetworks(containerId:string,networks:string[]){
-  const addresses=await networkAddresses(containerId);
+export async function addressOnNetworks(containerId:string,networks:string[],docker:typeof dockerExec=dockerExec){
+  const addresses=await networkAddresses(containerId,docker);
   for(const network of networks){
     const address=addresses.get(network);
     if(address)return address;
@@ -144,15 +144,15 @@ export async function addressOnNetworks(containerId:string,networks:string[]){
 }
 
 /** Первый адрес контейнера: запасной путь, когда сеть сервера неизвестна. */
-export async function firstContainerAddress(containerId:string){
-  const result=await dockerExec(["inspect","-f",FIRST_ADDRESS_TEMPLATE,containerId],5000).catch(()=>null);
+export async function firstContainerAddress(containerId:string,docker:typeof dockerExec=dockerExec){
+  const result=await docker(["inspect","-f",FIRST_ADDRESS_TEMPLATE,containerId],5000).catch(()=>null);
   if(!result||result.code!==0)return "";
   return lines(result.stdout)[0]??"";
 }
 
 /** `docker network connect` для уже подключённого контейнера — тоже успех. */
-async function connectNetwork(network:string,containerId:string){
-  const result=await dockerExec(["network","connect",network,containerId],8000).catch(()=>null);
+async function connectNetwork(network:string,containerId:string,docker:typeof dockerExec=dockerExec){
+  const result=await docker(["network","connect",network,containerId],8000).catch(()=>null);
   if(!result)return false;
   return result.code===0||/already exists/i.test(result.stderr);
 }
@@ -162,6 +162,7 @@ export type AttachDeps={
   containerNetworks?:(containerId:string)=>Promise<string[]>;
   connect?:(network:string,containerId:string)=>Promise<boolean>;
   addressOnNetworks?:(containerId:string,networks:string[])=>Promise<string>;
+  docker?:typeof dockerExec;
 };
 
 export type AttachResult={host:string;connected:string[]};
@@ -172,16 +173,17 @@ export type AttachResult={host:string;connected:string[]};
  * connect` не нужны, а чтение адреса нужно ровно затем, чтобы проверять именно доступную сторону.
  */
 export async function attachToServerNetworks(containerId:string,deps:AttachDeps={}):Promise<AttachResult>{
-  const networks=await (deps.networks??previewAttachNetworks)();
+  const docker=deps.docker??dockerExec;
+  const networks=await (deps.networks??(()=>previewAttachNetworks(docker)))();
   if(!networks.length)return {host:"",connected:[]};
-  const readNetworks=deps.containerNetworks??containerNetworks;
-  const connect=deps.connect??connectNetwork;
+  const readNetworks=deps.containerNetworks??((id:string)=>containerNetworks(id,docker));
+  const connect=deps.connect??((network:string,id:string)=>connectNetwork(network,id,docker));
   const attached=await readNetworks(containerId);
   const connected:string[]=[];
   for(const network of networks){
     if(attached.includes(network))continue;
     if(await connect(network,containerId))connected.push(network);
   }
-  const host=await (deps.addressOnNetworks??addressOnNetworks)(containerId,networks);
+  const host=await (deps.addressOnNetworks??((id:string,items:string[])=>addressOnNetworks(id,items,docker)))(containerId,networks);
   return {host,connected};
 }

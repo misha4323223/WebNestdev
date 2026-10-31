@@ -6,7 +6,7 @@ import websocket from "@fastify/websocket";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { initializeStorage, closeStorage, describeStorage, assertStorageConfigured } from "./storage/ydb.js";
-import { reapOrphanPreviews } from "./preview-manager.js";
+import { reapOrphanPreviews, reapRemotePreviews } from "./preview-manager.js";
 import { startPreviewSweeper } from "./preview/idle-sweep.js";
 import { describePreviewMode } from "./preview/static-preview.js";
 import { describePreviewHostServer, startPreviewHostServer, stopPreviewHostServer } from "./preview/preview-host-server.js";
@@ -25,7 +25,9 @@ import { registerSameOriginGuard } from "./security/same-origin.js";
 import { registerSecurityHeaders } from "./security/headers.js";
 import { describeSandboxPaths, describeSandboxRuntime, sandboxRuntime } from "./sandbox/config.js";
 import { initializeNodeRegistry, stopNodeHeartbeat } from "./nodes/local-node.js";
+import { stopRemoteNodeHeartbeat } from "./nodes/remote-heartbeat.js";
 import { NoSandboxNodeError } from "./nodes/placement.js";
+import { SandboxNodeUnavailableError, SharedWorkspaceRequiredError } from "./sandbox/host.js";
 import { configureDockerEndpoint, describeDockerEndpoint } from "./sandbox/docker/endpoint.js";
 import { describeSandboxMount,verifySandboxMount } from "./sandbox/sandbox-check.js";
 import { ensureDataDir } from "./project-store.js";
@@ -269,7 +271,7 @@ if (demoEnabled) {
   app.log.info({ demoEmail: demo.email, created: demo.created }, "demo account ready");
 }
 
-app.addHook("onClose", async () => { stopBillingSweeper(); stopMailQueue(); stopStorageReconcile?.(); stopNodeHeartbeat(); await stopPreviewHostServer(); await closeStorage(); });
+app.addHook("onClose", async () => { stopBillingSweeper(); stopMailQueue(); stopStorageReconcile?.(); stopNodeHeartbeat(); stopRemoteNodeHeartbeat(); await stopPreviewHostServer(); await closeStorage(); });
 
 await registerSecurityHeaders(app);
 
@@ -285,7 +287,7 @@ app.setErrorHandler((error, request, reply) => {
       bytesTotal: error.bytesTotal,
     });
   }
-  if (error instanceof NoSandboxNodeError) {
+  if (error instanceof NoSandboxNodeError || error instanceof SandboxNodeUnavailableError || error instanceof SharedWorkspaceRequiredError) {
     return reply.code(error.statusCode).send({ error: error.message, code: error.code });
   }
   if (error instanceof ZodError) {
@@ -383,6 +385,9 @@ await app.listen({host:"0.0.0.0",port:Number(process.env.PORT??8787)});
 void reapOrphanPreviews()
   .then(result => { if (result.stopped) app.log.info({ stopped: result.stopped }, "stopped orphan preview containers"); })
   .catch(error => app.log.warn({ error: error instanceof Error ? error.message : error }, "preview reap skipped"));
+void reapRemotePreviews()
+  .then(result => { if (result.stopped) app.log.info({ stopped: result.stopped }, "stopped orphan preview containers on remote nodes"); })
+  .catch(error => app.log.warn({ error: error instanceof Error ? error.message : error }, "remote preview reap skipped"));
 // Долгие задания принадлежат контейнерам, а не процессу: после перезапуска прочитать их уже
 // никто не сможет, поэтому они снимаются на старте — как и контейнеры предпросмотра.
 void cleanupSandboxJobs()

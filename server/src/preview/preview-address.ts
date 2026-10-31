@@ -22,7 +22,7 @@ export async function previewAddressAnswers(state:{host:string;port:number},time
 
 export type PreviewAddressDeps={
   addressAnswers:(state:{host:string;port:number})=>Promise<boolean>;
-  appAnswers:(state:Pick<PreviewState,"containerId"|"port">)=>Promise<boolean>;
+  appAnswers:(state:Pick<PreviewState,"containerId"|"port"|"containerPort">)=>Promise<boolean>;
   usedPorts:(containerId:string)=>Promise<number[]>;
   /** Порты, названные самим приложением в его выводе: источник, которому не нужен `docker exec`. */
   loggedPorts:(containerId:string)=>Promise<number[]>;
@@ -31,6 +31,12 @@ export type PreviewAddressDeps={
   attachToServerNetworks:(containerId:string)=>Promise<{host:string;connected:string[]}>;
   /** Порт, на котором приложение отвечает внутри контейнера, — когда таблицы ядра ничего не дали. */
   probePorts:(containerId:string,ports:number[])=>Promise<number|null>;
+  /**
+   * A private TCP relay on a remote runner. It is opened only after the app answers inside the
+   * container; the API cannot route to the runner's Docker bridge, and a raw TCP relay carries
+   * both HTTP and HMR WebSockets without publishing a port on the VM.
+   */
+  openRelay?:(input:{containerId:string;targetPort:number})=>Promise<{host:string;port:number}|null>;
 };
 
 const defaultDeps:PreviewAddressDeps={
@@ -106,7 +112,10 @@ export async function settlePreviewAddress(state:PreviewState,options:{deps?:Pre
 
   // Адрес молчит — сначала выясняется, живо ли приложение вообще: «не отвечает внутри» и «отвечает,
   // но недоступно снаружи» лечатся по-разному (см. unreachablePreviewDiagnosis).
-  const appIsUp=options.appAnswers??await deps.appAnswers(current);
+  // A `false` from the initial readiness wait means "not on the canonical port yet", not
+  // "not running": the app may have chosen 5173. Check the discovered port before giving up,
+  // otherwise a remote preview would never open its relay.
+  const appIsUp=options.appAnswers===true?true:await deps.appAnswers(current);
   if(!appIsUp)return current;
 
   // Первая починка — сеть: контейнер мог оказаться в сети, которую сервер не видит (Docker
@@ -118,11 +127,28 @@ export async function settlePreviewAddress(state:PreviewState,options:{deps?:Pre
   }
 
   // Вторая — петля: приложение слушает только 127.0.0.1, и проброс поднимается внутрь контейнера.
+  let addressState=current;
   const listenPort=chooseRelayPort(ports,state.port);
-  if(!listenPort)return current;
-  if(!await deps.startRelay({containerId:current.containerId,targetPort:current.port,listenPort}))return current;
-  const relayed={...current,port:listenPort};
-  return await waitForAddress(relayed,deps,options.wait)?{...relayed,settled:true,execOnly:false}:current;
+  if(listenPort){
+    if(await deps.startRelay({containerId:current.containerId,targetPort:current.port,listenPort})){
+      const relayed={...current,port:listenPort};
+      if(await waitForAddress(relayed,deps,options.wait))return {...relayed,settled:true,execOnly:false};
+      addressState=relayed;
+    }
+  }
+
+  // Third — the runner's private TCP relay. On another VM the container address is not
+  // routable from the API at all; the relay is the only path that keeps streamed responses and
+  // HMR WebSockets. It targets the in-container relay when one was started, otherwise the app
+  // port directly. `containerPort` keeps the exec fallback on the app-facing port.
+  if(deps.openRelay){
+    const relay=await deps.openRelay({containerId:current.containerId,targetPort:addressState.port}).catch(()=>null);
+    if(relay){
+      const bridged={...current,host:relay.host,port:relay.port,containerPort:addressState.port};
+      if(await waitForAddress(bridged,deps,options.wait))return {...bridged,settled:true,execOnly:false};
+    }
+  }
+  return current;
 }
 
 /**

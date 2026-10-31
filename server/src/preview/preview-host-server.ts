@@ -4,6 +4,7 @@ import { connect, type Socket } from "node:net";
 import { getProject } from "../project-store.js";
 import { previewStatus } from "../preview-manager.js";
 import { execFetchPreview, type ExecFetchResult } from "./exec-proxy.js";
+import { dockerForNode } from "./docker-exec.js";
 import { previewHostTarget, previewPublicDomain, previewPublicUrl } from "./preview-host.js";
 import { proxyPreviewRequest, withoutPlatformCookies, type PreviewDoor } from "./preview-proxy.js";
 import { PREVIEW_SESSION_PATH, PREVIEW_TICKET_COOKIE, PREVIEW_TICKET_PARAM, previewTicketProject, previewTicketTtlMs } from "./preview-ticket.js";
@@ -75,7 +76,7 @@ export type PreviewHostDeps = {
   target: (host: string | undefined) => { projectId: string } | null;
   getProject: (projectId: string) => Promise<{ id: string; userId: string } | null>;
   previewStatus: (projectId: string) => Promise<PreviewStatus>;
-  execPreview: (input: { containerId: string; port: number; path: string; method: string; headers: Record<string, string>; body?: Buffer; timeoutMs: number }) => Promise<ExecFetchResult | null>;
+  execPreview: (input: { containerId: string; node?: string; port: number; path: string; method: string; headers: Record<string, string>; body?: Buffer; timeoutMs: number }) => Promise<ExecFetchResult | null>;
   unsettle: (projectId: string) => void;
   setExecOnly: (projectId: string, execOnly: boolean) => void;
   ticketProject: (ticket: string | undefined | null, now?: number) => string;
@@ -87,7 +88,7 @@ const defaultDeps: PreviewHostDeps = {
   target: previewHostTarget,
   getProject,
   previewStatus,
-  execPreview: execFetchPreview,
+  execPreview: input => execFetchPreview(input, { docker: dockerForNode(input.node) }),
   unsettle: unsettlePreview,
   setExecOnly: setPreviewExecOnly,
   ticketProject: previewTicketProject,

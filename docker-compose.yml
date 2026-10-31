@@ -353,6 +353,17 @@ services:
       # the node registry and the archive marker read the same variable.
       WEBNESTDEV_NODE_ID: ${WEBNESTDEV_NODE_ID:-local}
       WEBNESTDEV_NODE_ADDRESS: ${WEBNESTDEV_NODE_ADDRESS:-}
+      # Stage 3.2: a bearer secret shared with every runner. Empty means remote execution is
+      # disabled; the API still works on its local node.
+      WEBNESTDEV_RUNNER_TOKEN: ${WEBNESTDEV_RUNNER_TOKEN:-}
+      # Remote projects require one hot workspace mounted on both API and runner. Without this
+      # flag getSandbox refuses to open a remote project, instead of writing to the wrong disk.
+      WEBNESTDEV_SHARED_SANDBOX: ${WEBNESTDEV_SHARED_SANDBOX:-0}
+      # Optional JSON: [{"id":"node-2","address":"10.0.0.12:8790"}]. Idempotent; the admin API
+      # can register a node at runtime too.
+      WEBNESTDEV_REMOTE_NODES: ${WEBNESTDEV_REMOTE_NODES:-}
+      WEBNESTDEV_RUNNER_HEARTBEAT_MS: ${WEBNESTDEV_RUNNER_HEARTBEAT_MS:-30000}
+      WEBNESTDEV_AUTO_MOVE_PROJECTS: ${WEBNESTDEV_AUTO_MOVE_PROJECTS:-0}
       SANDBOX_MODE: docker
       # docker — обычный runc; runsc — gVisor для контейнеров команд, заданий, превью и проб.
       # По умолчанию docker: выкатка не меняет поведение, пока оператор не включит runsc.

@@ -1,7 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import { getPlatformEnv } from "../platform/platform-env.js";
 import { PLAN_CATALOG, type PlanId } from "../account/plans.js";
-import { planDisplayDescription, planDisplayName, planOverride, type PaidPlanId } from "./plan-settings.js";
+import { planDisplayDescription, planDisplayFeatures, planDisplayName, planOverride, type PaidPlanId } from "./plan-settings.js";
 
 /**
  * Robokassa: денежная часть подписки.
@@ -120,6 +120,7 @@ export function publicPlans() {
       ...plan,
       name: planDisplayName(plan.id),
       description: planDisplayDescription(plan.id),
+      features: planDisplayFeatures(plan.id),
       priceRub: planPriceRub(plan.id),
       priceLabel: planPriceLabel(plan.id),
       basePriceRub,
@@ -133,6 +134,8 @@ export type PlanAdminView = {
   id: PaidPlanId;
   name: string;
   description: string;
+  /** Актуальные пункты карточки: override, иначе каталог. */
+  features: string[];
   /** Базовая цена для формы: скидка считается уже на сервере. */
   priceRub: number;
   discountPercent: number;
@@ -146,6 +149,7 @@ export function planAdminList(): PlanAdminView[] {
     id: plan.id as PaidPlanId,
     name: plan.name,
     description: plan.description,
+    features: plan.features,
     priceRub: plan.basePriceRub,
     discountPercent: plan.discountPercent,
     priceLabel: plan.priceLabel,

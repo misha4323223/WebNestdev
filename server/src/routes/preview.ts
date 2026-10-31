@@ -6,10 +6,12 @@ import { startPreview,stopPreview,previewStatus,previewLogs } from "../preview-m
 import { previewProxyBase } from "../preview/preview-rewrite.js";
 import { proxyPreviewRequest, previewRequestBody, type PreviewDoor } from "../preview/preview-proxy.js";
 import { execFetchPreview, type ExecFetchResult } from "../preview/exec-proxy.js";
+import { dockerForNode } from "../preview/docker-exec.js";
 import { setPreviewExecOnly, touchPreview as touchPreviewStore, unsettlePreview } from "../preview/preview-store.js";
 import { mintPreviewTicket, previewTicketTtlMs, previewTicketUrl, PREVIEW_TICKET_PARAM } from "../preview/preview-ticket.js";
 import { previewHostTarget, previewPublicUrl } from "../preview/preview-host.js";
 import { getProject } from "../project-store.js";
+import { SandboxNodeUnavailableError, SharedWorkspaceRequiredError } from "../sandbox/host.js";
 
 /**
  * The routes take their collaborators as a parameter (the same way the agent WebSocket takes
@@ -23,7 +25,7 @@ export type PreviewRouteDeps={
    * Вторая дверь к приложению — запрос изнутри его контейнера (`docker exec`). Взята как
    * параметр, как и остальные соучастники: путь прокси проверяется тестом без Docker.
    */
-  execPreview:(input:{containerId:string;port:number;path:string;method:string;headers:Record<string,string>;body?:Buffer;timeoutMs:number})=>Promise<ExecFetchResult|null>;
+  execPreview:(input:{containerId:string;node?:string;port:number;path:string;method:string;headers:Record<string,string>;body?:Buffer;timeoutMs:number})=>Promise<ExecFetchResult|null>;
   getSandbox:(projectId:string,userId:string)=>Promise<Parameters<typeof startPreview>[0]>;
   startPreview:typeof startPreview;
   stopPreview:typeof stopPreview;
@@ -45,7 +47,7 @@ export type PreviewRouteDeps={
 
 const defaultDeps:PreviewRouteDeps={
   authorize:async (request,reply,projectId)=>requireProjectUser(request as never,reply as never,projectId),
-  execPreview:execFetchPreview,
+  execPreview:(input)=>execFetchPreview(input,{docker:dockerForNode(input.node)}),
   getSandbox,
   startPreview,
   stopPreview,
@@ -183,7 +185,8 @@ export async function registerPreviewRoutes(app:FastifyInstance,deps:PreviewRout
     try{
       return reply.send(await action());
     }catch(error){
-      return reply.code(400).send({error:error instanceof Error?error.message:String(error)});
+      const status=error instanceof SandboxNodeUnavailableError||error instanceof SharedWorkspaceRequiredError?error.statusCode:400;
+      return reply.code(status).send({error:error instanceof Error?error.message:String(error)});
     }
   }
 }

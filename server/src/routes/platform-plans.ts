@@ -5,7 +5,7 @@ import { isSameOriginRequest, sameOriginRefusal } from "../security/same-origin.
 import { recordAudit } from "../security/audit-journal.js";
 import { applyNoStoreToReply } from "./cache-headers.js";
 import { planAdminList } from "../billing/robokassa.js";
-import { planSettingsSchema, savePlanSettings } from "../billing/plan-settings.js";
+import { planSettingsFeaturePresence, planSettingsSchema, savePlanSettings } from "../billing/plan-settings.js";
 
 /**
  * Витрина тарифов для админки панели: название, описание, базовая цена и скидка.
@@ -35,9 +35,11 @@ export async function registerPlatformPlanRoutes(app: FastifyInstance) {
     if (!guard(request, reply)) return;
     const user = await requireUser(request, reply); if (!user) return;
     if (!isPlatformAdmin(user)) return reply.code(403).send({ error: "Тарифы может менять только администратор платформы" });
-    const parsed = planSettingsSchema.safeParse(request.body ?? {});
-    if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "Проверьте название, описание, цену и скидку" });
-    await savePlanSettings(parsed.data);
+    const raw = request.body ?? {};
+    const parsed = planSettingsSchema.safeParse(raw);
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "Проверьте название, описание, пункты, цену и скидку" });
+    const featuresProvided = planSettingsFeaturePresence(raw);
+    await savePlanSettings(parsed.data, { preserveFeatures: { pro: !featuresProvided.pro, team: !featuresProvided.team } });
     await recordAudit({
       action: "billing.plans.updated",
       actorType: "user",

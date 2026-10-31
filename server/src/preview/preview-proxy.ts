@@ -49,7 +49,7 @@ export function describeProxyFailure(error: unknown, host: string, port: number,
 export type PreviewDoor = {
   previewStatus: (projectId: string) => Promise<PreviewStatus>;
   /** Вторая дверь к приложению — запрос изнутри его контейнера (`docker exec`). */
-  execPreview: (input: { containerId: string; port: number; path: string; method: string; headers: Record<string, string>; body?: Buffer; timeoutMs: number }) => Promise<ExecFetchResult | null>;
+  execPreview: (input: { containerId: string; node?: string; port: number; path: string; method: string; headers: Record<string, string>; body?: Buffer; timeoutMs: number }) => Promise<ExecFetchResult | null>;
   /** Снять подтверждение адреса: прямой путь только что не ответил. */
   unsettle: (projectId: string) => void;
   /** Переключить предпросмотр на путь через `docker exec` и обратно. */
@@ -116,7 +116,9 @@ export async function proxyPreviewRequest(door: PreviewDoor, request: PreviewPro
   // проверяет его готовность. Без этого живой предпросмотр оставался в панели белым кадром.
   const viaExec = await door.execPreview({
     containerId: state.containerId,
-    port: state.port,
+    node: state.node,
+    // `port` may be the runner's private relay; exec must target the container-facing port.
+    port: state.containerPort ?? state.port,
     path: request.path,
     method: request.method ?? "GET",
     headers: forwardedPreviewHeaders(request.headers),
