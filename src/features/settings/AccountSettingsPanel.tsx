@@ -13,16 +13,16 @@ import {
   refreshStorage,
   rubLabel,
   shortDayLabel,
-  startCheckout,
   updateAutoRenew,
   type BillingData,
+  type PlanId,
 } from "../../lib/billing-api";
-import { activePlanId, usePlanChoice, writePlanChoice } from "../../lib/plan-choice";
+import { activePlanId, usePlanChoice } from "../../lib/plan-choice";
 import { contactEmailOf } from "../../lib/account-contact";
 import { updateOnboardingProfile, type OnboardingProfile } from "../../lib/onboarding";
-import { CheckoutConsent, type CheckoutConsentState } from "../billing/CheckoutConsent";
+import { PlanDetail } from "../billing/PlanDetail";
 import { openCookieSettings } from "../legal/CookieConsent";
-import { Check, CreditCard, LogOut, Receipt, RefreshCw, Settings2, ShieldCheck, UserRound, Wallet } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, CreditCard, LogOut, Receipt, RefreshCw, Settings2, ShieldCheck, UserRound, Wallet } from "lucide-react";
 
 type Preferences = UserPreferences;
 type AccountData = {
@@ -146,8 +146,9 @@ export function AccountSettingsPanel() {
   // Контакты и согласие сохраняются отдельно от настроек интерфейса: это профиль, а не тема.
   const [profileDraft, setProfileDraft] = useState({ name: "", email: "" });
   const [savingProfile, setSavingProfile] = useState(false);
-  const [paying, setPaying] = useState<string | null>(null);
   const [savingRenew, setSavingRenew] = useState(false);
+  // Выбор карточки в настройках открывает тот же компактный экран тарифа, что и на главной.
+  const [planDetailId, setPlanDetailId] = useState<PlanId | null>(null);
   // The chosen plan is shared state: it is the plan the user wants to move to, so the
   // settings screen names it exactly like the home rail and the top bar do.
   const planChoice = usePlanChoice();
@@ -155,8 +156,6 @@ export function AccountSettingsPanel() {
   const [notice, setNotice] = useState("");
   const [refreshingStorage, setRefreshingStorage] = useState(false);
   const [signingOutEverywhere, setSigningOutEverywhere] = useState(false);
-  // Те же отметки, что в окне тарифов: оплата с этой страницы идёт по общим правилам, а не в обход.
-  const [consent, setConsent] = useState<CheckoutConsentState>({ ready: false, autoRenew: false });
 
   async function reload() {
     setLoading(true); setError("");
@@ -205,18 +204,6 @@ export function AccountSettingsPanel() {
     finally { setSavingProfile(false); }
   }
 
-  async function pay(plan: "pro" | "team") {
-    if (!consent.ready) {
-      setError("Отметьте согласие на обработку данных и принятие оферты — без этого оплата недоступна.");
-      return;
-    }
-    setPaying(plan); setError(""); setNotice("");
-    try {
-      const checkout = await startCheckout(plan, consent.autoRenew);
-      window.location.assign(checkout.paymentUrl);
-    } catch (e) { setError(e instanceof Error ? e.message : String(e)); setPaying(null); }
-  }
-
   /**
    * Отзыв всех сессий. После ответа текущая cookie уже недействительна, поэтому остаётся
    * только перезагрузить страницу: панель сама покажет экран входа.
@@ -250,6 +237,7 @@ export function AccountSettingsPanel() {
   const paymentsEnabled = Boolean(billing?.paymentsEnabled);
   const paid = currentPlanId !== "free" && Boolean(subscription?.renewsAt);
   const chosenPlan = planChoice && billing ? billing.plans.find(plan => plan.id === planChoice) : undefined;
+  const selectedPlan = planDetailId ? billing?.plans.find(plan => plan.id === planDetailId) : undefined;
   // Поиск в интернете — инструмент внутри запуска агента, а не отдельная шкала расхода: его
   // дневная квота остаётся на сервере, но в интерфейсе не показывается.
   const usageRows = billing ? [
@@ -304,7 +292,7 @@ export function AccountSettingsPanel() {
     <div className="panel-title"><div><span className="eyebrow">ЛИЧНЫЙ КАБИНЕТ</span><strong>Настройки аккаунта</strong></div></div>
     {loading ? <div className="settings-body">Загружаем настройки аккаунта…</div> : <>
       <div className="account-settings-layout">
-        <nav className="account-settings-nav">{nav.map(item => { const Icon = item.icon; return <button key={item.id} className={section === item.id ? "active" : ""} onClick={() => { setSection(item.id); setError(""); setNotice(""); }}><Icon size={14}/>{item.label}</button>; })}</nav>
+        <nav className="account-settings-nav">{nav.map(item => { const Icon = item.icon; return <button key={item.id} className={section === item.id ? "active" : ""} onClick={() => { setSection(item.id); setPlanDetailId(null); setError(""); setNotice(""); }}><Icon size={14}/>{item.label}</button>; })}</nav>
         <div className="account-settings-content">
           {section === "account" && <div className="account-section">
             <span className="eyebrow">ПРОФИЛЬ</span><h3>Профиль</h3><p className="account-muted">Основная информация вашего аккаунта NestDev.</p>
@@ -354,7 +342,14 @@ export function AccountSettingsPanel() {
               <button className="send-button account-save" disabled={saving} onClick={() => void savePreferences()}>{saving ? "Сохраняем…" : "Сохранить настройки"}</button>
             </div>
           </div>}
-          {section === "subscription" && <div className="account-section billing-section">
+          {section === "subscription" && (planDetailId && billing && selectedPlan
+            ? <div className="account-section billing-section">
+                <button type="button" className="ghost-button plan-detail-back" onClick={() => setPlanDetailId(null)}><ArrowLeft size={13}/> Все тарифы</button>
+                <div className="plan-detail-shell account-plan-detail">
+                  <PlanDetail key={selectedPlan.id} plan={selectedPlan} billing={billing} active={selectedPlan.id === currentPlanId}/>
+                </div>
+              </div>
+            : <div className="account-section billing-section">
             <span className="eyebrow">БИЛЛИНГ</span><h3>Тариф, подписка и расходы</h3>
             <p className="account-muted">{paymentNotice(billing)}</p>
             <div className="billing-cards">
@@ -442,20 +437,19 @@ export function AccountSettingsPanel() {
                 : <div className="billing-empty"><Receipt size={14}/><div><strong>Платежей пока нет</strong><span>{paymentsEnabled ? "Оплата тарифа появится здесь с номером счёта и датой." : "Оплата ещё не подключена — пополнения и списания появятся позже."}</span></div></div>}
             </div>
 
-            {paymentsEnabled && <CheckoutConsent recurring={Boolean(subscription?.recurringAvailable)} onChange={setConsent}/>}
-            <div className="plan-grid">{billing?.plans.map(plan => <article key={plan.id} className={"plan-card" + (plan.id === currentPlanId ? " selected" : "") + (planChoice === plan.id && plan.id !== currentPlanId ? " chosen" : "")}>
+            <div className="plan-grid">{billing?.plans.map(plan => <button
+              type="button"
+              key={plan.id}
+              className={"plan-card plan-card-select" + (plan.id === currentPlanId ? " selected" : "") + (planChoice === plan.id && plan.id !== currentPlanId ? " chosen" : "")}
+              onClick={() => setPlanDetailId(plan.id)}
+              aria-label={"Открыть описание тарифа «" + plan.name + "»"}
+            >
               <div className="plan-card-head"><div><strong>{plan.name}</strong><small>{plan.description}</small></div><span className="plan-card-price">{Boolean(plan.discountPercent)&&<s>{plan.basePriceLabel}</s>}<b>{plan.priceLabel}</b></span></div>
-              <ul>{plan.features.map(feature => <li key={feature}><Check size={12}/>{feature}</li>)}</ul>
-              {plan.id === "free"
-                ? <span className="plan-current">{plan.id === currentPlanId ? "Текущий тариф" : "Входит всегда"}</span>
-                : !paymentsEnabled
-                  ? <button className="plan-action" onClick={() => writePlanChoice(plan.id)}>{planChoice === plan.id ? "Выбран · оплата скоро" : "Выбрать тариф"}</button>
-                  : <button className="plan-action" disabled={paying !== null || !consent.ready} title={consent.ready ? undefined : "Отметьте согласия выше"} onClick={() => void pay(plan.id as "pro" | "team")}>
-                      {paying === plan.id ? <><RefreshCw size={12} className="spin"/> Открываем…</> : <>{plan.id === currentPlanId ? "Продлить" : "Оплатить"} {plan.priceLabel}</>}
-                    </button>}
-            </article>)}</div>
+              <ul>{plan.features.slice(0, 4).map(feature => <li key={feature}><Check size={12}/>{feature}</li>)}</ul>
+              <span className="plan-card-open">{plan.id === currentPlanId ? "Текущий тариф" : "Описание и оплата"} <ArrowRight size={12}/></span>
+            </button>)}</div>
             <p className="billing-disclaimer">Оплата принимается картой РФ и через СБП.</p>
-          </div>}
+          </div>)}
         </div>
       </div>
     </>}

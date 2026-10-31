@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { ArrowRight, ArrowUpRight, AppWindow, Bot, Box, Boxes, Building2, ChevronDown, Code2, CreditCard, Database, FolderGit2, Gamepad2, Globe, Home, LayoutDashboard, Layers3, LogOut, MessageCircle, Newspaper, Pencil, Plug, Rocket, ShoppingBag, Smartphone, Sparkles, Store, Trash2, UserRound, Workflow } from "lucide-react";
 import { deleteProject, listProjects, renameProject, type Project } from "../../lib/project-api";
+import type { PlanId } from "../../lib/billing-api";
 import { logout } from "../../lib/auth-api";
 import { HomeRail, type RailSection } from "./HomeRail";
 import { WebNestLogo } from "../../components/WebNestLogo";
@@ -96,6 +97,9 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
   const [renaming,setRenaming]=useState("");
   const [error,setError]=useState("");
   const [page,setPage]=useState<"home"|"subscription">("home");
+  // Какая карточка открыта на странице тарифов: обзор и описание — один маршрут,
+  // поэтому переход из окна выбора не теряет загруженный биллинг и работает без перезагрузки.
+  const [planDetail,setPlanDetail]=useState<PlanId|null>(null);
   const [plansOpen,setPlansOpen]=useState(false);
   // Вкладка телефона и раздел колонки: выбор раздела на телефоне показывает его сразу,
   // а на ПК та же колонка остаётся рядом с главной страницей.
@@ -230,10 +234,15 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
   }
 
   const openPlans=()=>setPlansOpen(true);
+  const openPlanDetails=(plan:PlanId)=>{setPlansOpen(false);setPlanDetail(plan);setPage("subscription")};
 
   if(page==="subscription")return <>
-    <SubscriptionPage onBack={()=>setPage("home")} onOpenPicker={openPlans}/>
-    <PlanPickerModal open={plansOpen} onClose={()=>setPlansOpen(false)} onOpenDetails={()=>setPage("subscription")}/>
+    <SubscriptionPage
+      onBack={()=>{setPlanDetail(null);setPage("home")}}
+      selectedPlanId={planDetail}
+      onSelectPlan={setPlanDetail}
+    />
+    <PlanPickerModal open={plansOpen} onClose={()=>setPlansOpen(false)} onChoosePlan={openPlanDetails}/>
   </>;
 
   const activeProjectId=localStorage.getItem(activeProjectKey);
@@ -364,11 +373,11 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
           onRename={rename}
           onDelete={project=>void remove(project)}
           onOpenPlans={openPlans}
-          onOpenSubscriptions={()=>setPage("subscription")}
+          onOpenSubscriptions={()=>{setPlanDetail(null);setPage("subscription")}}
           onExit={()=>void exit()}
         />
       </div>
     </main>
-    <PlanPickerModal open={plansOpen} onClose={()=>setPlansOpen(false)} onOpenDetails={()=>{setPlansOpen(false);setPage("subscription")}} onChanged={()=>void reload()}/>
+    <PlanPickerModal open={plansOpen} onClose={()=>setPlansOpen(false)} onChoosePlan={openPlanDetails}/>
   </>;
 }

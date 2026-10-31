@@ -784,6 +784,15 @@ button,textarea{font:inherit}button{color:inherit}
 .plan-card ul{list-style:none;display:grid;gap:8px;padding:0;margin:16px 0;flex:1}
 .plan-card li{display:flex;align-items:flex-start;gap:6px;color:#a5acb6;font-size:10px;line-height:1.4}
 .plan-card li svg{flex:none;color:#aea79c;margin-top:1px}
+.plan-card-select{width:100%;text-align:left;color:inherit;font:inherit;cursor:pointer;transition:border-color .16s ease,background .16s ease,transform .16s ease,box-shadow .16s ease}
+.plan-card-select:hover{border-color:var(--line-warm-strong);background:#12161c;transform:translateY(-1px)}
+.plan-card-select:focus-visible{outline:2px solid #8f7a55;outline-offset:2px}
+.plan-card-select .plan-badge{align-self:flex-start;margin-top:10px}
+.plan-card-open{display:flex;align-items:center;justify-content:space-between;gap:6px;margin-top:auto;padding-top:10px;border-top:1px solid var(--line-warm-soft);color:#cbbd9e;font-size:9.5px;font-weight:600}
+.plan-card-select:hover .plan-card-open{color:#efe2c2}
+.plan-card-open svg{transition:transform .16s ease}
+.plan-card-select:hover .plan-card-open svg{transform:translateX(2px)}
+.modal-foot-note{font-size:9.5px;line-height:1.4}
 .plan-current{height:30px;display:flex;align-items:center;color:#929aa5;font-size:10px}
 .plan-action{min-height:30px;padding:0 8px;border:1px solid var(--line-warm-strong);border-radius:6px;background:#e5e8ec;color:#14171b;font-size:10px;font-weight:600;cursor:pointer}
 .plan-action:hover{background:#fff}.plan-action:disabled{opacity:.5;cursor:default}
@@ -1211,7 +1220,14 @@ button,textarea{font:inherit}button{color:inherit}
 .subscription-status>div strong{display:block;margin-top:4px;font-size:18px;color:#eef0f3}
 .subscription-status-text{margin:12px 0 0}
 .subscription-plans{max-width:1180px;margin:0 auto;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;align-items:stretch}
-.subscription-plan{display:flex;flex-direction:column;gap:14px;padding:18px;border:1px solid var(--line-warm);border-radius:12px;background:#0f1216}
+.subscription-plan{display:flex;flex-direction:column;gap:14px;width:100%;padding:18px;border:1px solid var(--line-warm);border-radius:12px;background:#0f1216;color:inherit;font:inherit;text-align:left;cursor:pointer;transition:border-color .16s ease,background .16s ease,transform .16s ease,box-shadow .16s ease}
+.subscription-plan:hover{border-color:var(--line-warm-strong);background:#12161c;transform:translateY(-2px);box-shadow:0 12px 28px rgba(0,0,0,.2)}
+.subscription-plan:focus-visible{outline:2px solid #8f7a55;outline-offset:2px}
+.subscription-plan .plan-feature-list{flex:1}
+.subscription-plan-open{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:auto;padding-top:13px;border-top:1px solid var(--line-warm-soft);color:#cfc2a9;font-size:10.5px;font-weight:600}
+.subscription-plan-open svg{transition:transform .16s ease}
+.subscription-plan:hover .subscription-plan-open{color:#efe2c2}
+.subscription-plan:hover .subscription-plan-open svg{transform:translateX(3px)}
 .subscription-plan.recommended{border-color:var(--line-warm-strong);background:linear-gradient(180deg,#12161b,#0f1216)}
 .subscription-plan.active{border-color:#574c38;box-shadow:inset 0 0 0 1px #3f3627}
 .plan-badge{align-self:flex-start;padding:3px 8px;border:1px solid #3a3424;border-radius:99px;background:#211d13;color:#d7bd79;font-size:9px;text-transform:uppercase;letter-spacing:.05em}
@@ -1253,6 +1269,58 @@ button,textarea{font:inherit}button{color:inherit}
 .subscription-error{margin:18px auto 0;max-width:1180px}
 .subscription-page>.billing-disclaimer{max-width:1180px;margin:28px auto 0}
 @media(max-width:900px){.subscription-plans{grid-template-columns:1fr}.faq-grid{grid-template-columns:1fr}.subscription-hero h1{font-size:26px}.subscription-page{padding:18px 16px 32px}}
+
+/* Compact plan detail: one narrow card instead of a full pricing page. The consent
+   block and the pay button are the last things in it, so they are always found together. */
+.plan-detail-shell{max-width:760px;margin:24px auto 0}
+.account-plan-detail{max-width:none;margin-top:14px}
+.plan-detail-back{margin-bottom:2px;border-color:var(--line-warm)}
+.plan-detail-loading{max-width:760px;margin:24px auto 0}
+.plan-detail{display:grid;padding:22px;border:1px solid var(--line-warm);border-radius:14px;background:linear-gradient(180deg,#12161b,#0e1115);box-shadow:inset 0 1px 0 rgba(255,255,255,.035)}
+.plan-detail-head{display:grid;gap:12px}
+.plan-detail-badges{display:flex;align-items:center;flex-wrap:wrap;gap:6px}
+.plan-detail-badges .chosen-badge{border-color:#4e5e5b;background:#17201f;color:#c8d4cf}
+.plan-detail-title{display:flex;align-items:flex-start;justify-content:space-between;gap:24px}
+.plan-detail-title h1{margin:0;font-size:27px;font-weight:650;letter-spacing:-.03em;color:#f0f2f4}
+.plan-detail-tagline{margin:6px 0 0;color:#c4b795;font-size:12px;line-height:1.5}
+.plan-detail-description{margin:7px 0 0;max-width:500px;color:#8d95a0;font-size:11px;line-height:1.65}
+.plan-detail-price{flex:none;display:flex;flex-direction:column;align-items:flex-end;gap:2px;padding-top:3px}
+.plan-detail-price s{color:#7e6a6a;font-size:12px;text-decoration-color:#8d5f5f}
+.plan-detail-price strong{color:#f1eee7;font-size:26px;font-weight:650;letter-spacing:-.03em;white-space:nowrap}
+.plan-detail-price small{color:#7f8792;font-size:9.5px}
+.plan-detail-audience{margin:0;color:#929aa5;font-size:11px;line-height:1.6}
+.plan-detail-subscription{display:flex;align-items:center;gap:7px;padding:9px 10px;border:1px solid var(--line-warm-soft);border-radius:8px;background:#0d1014;color:#aeb7c1;font-size:10px;line-height:1.5}
+.plan-detail-subscription svg{flex:none;color:#b8a77e}
+.plan-detail-body{display:grid;gap:14px;margin-top:17px;padding-top:15px;border-top:1px solid var(--line-warm-soft)}
+.plan-detail .plan-feature-list{grid-template-columns:repeat(2,minmax(0,1fr));gap:9px 20px}
+.plan-detail .plan-feature-list li{font-size:11px;line-height:1.5}
+.plan-detail-more{padding-top:11px;border-top:1px solid var(--line-warm-soft)}
+.plan-detail-more summary{display:inline-flex;align-items:center;gap:6px;color:#b9ab88;font-size:10.5px;font-weight:600;cursor:pointer;list-style:none}
+.plan-detail-more summary::-webkit-details-marker{display:none}
+.plan-detail-more summary::before{content:"+";display:inline-grid;place-items:center;width:15px;height:15px;border:1px solid #4b412f;border-radius:4px;color:#cbbd9e;font-size:11px;line-height:1}
+.plan-detail-more[open] summary::before{content:"−"}
+.plan-detail-more .plan-detail-list{margin-top:11px;padding-top:0;border-top:0}
+.plan-detail-checkout{display:grid;gap:10px;margin-top:18px;padding-top:16px;border-top:1px solid var(--line-warm-soft)}
+.plan-detail-checkout .checkout-consent{margin:0}
+.plan-detail-checkout .settings-error{margin:0}
+.plan-pay-button{width:100%;height:40px;justify-content:center;gap:8px;border-radius:8px;font-size:11.5px;font-weight:650}
+.plan-select-button{width:100%;justify-content:center;min-height:38px;border-radius:8px;font-size:11.5px}
+.plan-select-button:disabled{cursor:default;opacity:.6}
+.plan-detail-free{display:flex;align-items:center;gap:8px;padding:11px 12px;border:1px solid var(--line-warm-soft);border-radius:8px;background:#0d1014;color:#aeb7c1;font-size:10.5px}
+.plan-detail-free svg{flex:none;color:#b8a77e}
+.plan-detail .checkout-consent-note{margin:0;font-size:9px}
+.plan-detail-missing{display:grid;justify-items:start;gap:10px;padding:18px;border:1px solid var(--line-warm);border-radius:10px;background:#0f1216;color:#8d95a0;font-size:11px}
+.plan-detail-missing p{margin:0}
+@media(max-width:760px){
+  .plan-detail-shell,.plan-detail-loading{margin-top:18px}
+  .plan-detail{padding:17px}
+  .plan-detail-title{display:grid;gap:12px}
+  .plan-detail-description{max-width:none}
+  .plan-detail-price{flex-direction:row;align-items:baseline;gap:7px;padding-top:0}
+  .plan-detail-price small{display:none}
+  .plan-detail .plan-feature-list{grid-template-columns:1fr;gap:8px}
+  .plan-detail-title h1{font-size:23px}
+}
 
 /* Preview panel: preview and logs as the two sides of one window */
 .preview-head>div:first-child{min-width:0}

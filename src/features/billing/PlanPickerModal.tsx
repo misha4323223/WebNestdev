@@ -1,42 +1,30 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowRight, Check, CreditCard, RefreshCw, Sparkles, X } from "lucide-react";
-import { getBilling, paymentNotice, startCheckout, type BillingData, type PlanId } from "../../lib/billing-api";
-import { CheckoutConsent, type CheckoutConsentState } from "./CheckoutConsent";
-import { activePlanId, planName, readPlanChoice, writePlanChoice } from "../../lib/plan-choice";
+import { getBilling, paymentNotice, type BillingData, type PlanId } from "../../lib/billing-api";
+import { activePlanId, chosenPlanId, isPendingChoice, planName, usePlanChoice } from "../../lib/plan-choice";
 
 /**
- * Ссылки на оферту и условия оплаты показываются рядом с кнопкой оплаты — до перехода на
- * страницу оплаты.
- *
- * Выбор тарифа. Когда приём денег настроен, кнопка платного тарифа открывает страницу оплаты:
- * тариф включает сервер по уведомлению об оплате, а не этот экран. Пока оплата не настроена,
- * выбор остаётся пожеланием и сохраняется на устройстве.
+ * Выбор тарифа. Здесь остаются только карточки: нажатие открывает отдельный
+ * компактный экран тарифа, где внизу стоят согласия и кнопка оплаты. Так галочки
+ * не приходится искать под сеткой, а описание не дублируется в двух местах.
  */
-export function PlanPickerModal({ open, onClose, onOpenDetails, onChanged }: {
+export function PlanPickerModal({ open, onClose, onChoosePlan }: {
   open: boolean;
   onClose: () => void;
-  onOpenDetails: () => void;
-  onChanged?: () => void;
+  onChoosePlan: (plan: PlanId) => void;
 }) {
   const [billing, setBilling] = useState<BillingData | null>(null);
-  const [selected, setSelected] = useState<PlanId | null>(null);
   const [loading, setLoading] = useState(false);
-  const [paying, setPaying] = useState<PlanId | null>(null);
   const [error, setError] = useState("");
-  // Согласия живут в этом же компоненте, а окно при закрытии не размонтируется —
-  // поэтому при открытии они сбрасываются вместе с формой (см. эффект ниже).
-  const [consent, setConsent] = useState<CheckoutConsentState>({ ready: false, autoRenew: false });
-  // Callbacks are kept in refs so the open effect does not re-run on every render.
+  // Callback is kept in a ref so the open effect does not re-run on every render.
   const closeRef = useRef(onClose);
-  const changedRef = useRef(onChanged);
   closeRef.current = onClose;
-  changedRef.current = onChanged;
+  const planChoice = usePlanChoice();
 
   useEffect(() => {
     if (!open) return;
     let active = true;
-    // The stored choice is the plan the user wants to move to, so the picker reopens on it.
-    setSelected(readPlanChoice()); setError(""); setConsent({ ready: false, autoRenew: false }); setPaying(null); setLoading(true);
+    setError(""); setLoading(true);
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = "hidden";
     const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") closeRef.current(); };
@@ -52,36 +40,12 @@ export function PlanPickerModal({ open, onClose, onOpenDetails, onChanged }: {
     };
   }, [open]);
 
-  /** Selecting a plan remembers it everywhere: it is the plan the user wants to move to. */
-  function choose(plan: PlanId | null) {
-    setSelected(plan);
-    writePlanChoice(plan);
-    changedRef.current?.();
-  }
-
-  /** Счёт создаёт сервер; браузер только уходит на страницу оплаты, которую тот вернул. */
-  async function pay(plan: "pro" | "team") {
-    if (!consent.ready) {
-      setError("Отметьте согласие на обработку данных и принятие оферты — без этого оплата недоступна.");
-      return;
-    }
-    setPaying(plan); setError("");
-    try {
-      const checkout = await startCheckout(plan, consent.autoRenew);
-      writePlanChoice(plan);
-      changedRef.current?.();
-      window.location.assign(checkout.paymentUrl);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-      setPaying(null);
-    }
-  }
-
   if (!open) return null;
 
   const enabled = Boolean(billing?.paymentsEnabled);
   const current = activePlanId(billing);
-  const chosen = selected ? billing?.plans.find(plan => plan.id === selected) : undefined;
+  const chosenId = chosenPlanId(planChoice);
+  const chosenPending = isPendingChoice(planChoice, billing);
 
   return <div className="modal-backdrop" role="presentation" onMouseDown={() => closeRef.current()}>
     <section className="modal plan-modal" role="dialog" aria-modal="true" aria-label="Выбор тарифа" onMouseDown={event => event.stopPropagation()}>
@@ -94,7 +58,7 @@ export function PlanPickerModal({ open, onClose, onOpenDetails, onChanged }: {
       </header>
 
       <div className="modal-body">
-        <p className="modal-lead">{paymentNotice(billing)}</p>
+        <p className="modal-lead">Откройте карточку тарифа — там полное описание, условия и оплата. {paymentNotice(billing)}</p>
 
         {loading && <div className="modal-state"><RefreshCw size={14} className="spin"/> Загружаем тарифы…</div>}
 
@@ -107,47 +71,37 @@ export function PlanPickerModal({ open, onClose, onOpenDetails, onChanged }: {
           </div>
           <p className="account-muted">{billing.subscription?.renewsAt
             ? "Тариф действует до " + new Date(billing.subscription.renewsAt).toLocaleDateString("ru-RU", { day: "numeric", month: "long", year: "numeric" }) + ". Оплата продлевает срок от текущей даты окончания."
-            : chosen
-              ? "Выбран тариф «" + chosen.name + "» · " + chosen.priceLabel + ". " + (enabled ? "Оплатите его, чтобы включить." : "Включим его, когда подключим оплату.")
-              : (enabled ? "Оплата проходит на защищённой странице; тариф включается сразу после подтверждения платежа." : "Тариф можно выбрать заранее: выбор сохранится и включится вместе с оплатой.")}</p>
+            : enabled
+              ? "Оплата проходит на защищённой странице; тариф включается сразу после подтверждения платежа."
+              : "Тариф можно выбрать заранее: выбор сохранится и включится вместе с оплатой."}</p>
 
           <div className="plan-grid">
-            {billing.plans.map(plan => <article key={plan.id} className={"plan-card" + (plan.id === current ? " selected" : "") + (selected === plan.id && plan.id !== current ? " chosen" : "")}>
-              <div className="plan-card-head">
-                <div><strong>{plan.name}</strong><small>{plan.description}</small></div>
-                <span className="plan-card-price">
-                  {Boolean(plan.discountPercent)&&<s>{plan.basePriceLabel}</s>}
-                  <b>{plan.priceLabel}</b>
-                </span>
-              </div>
-              <ul>{plan.features.map(feature => <li key={feature}><Check size={12}/>{feature}</li>)}</ul>
-              {plan.id === current
-                ? <span className="plan-current">Текущий тариф</span>
-                : plan.id === "free"
-                  ? <span className="plan-current">Входит всегда</span>
-                  : enabled
-                    ? <button className="plan-action" onClick={() => void pay(plan.id as "pro" | "team")} disabled={paying !== null || !consent.ready} title={consent.ready ? undefined : "Отметьте согласия ниже"}>
-                        {paying === plan.id ? <><RefreshCw size={12} className="spin"/> Открываем оплату…</> : <>Оплатить {plan.priceLabel} <ArrowRight size={12}/></>}
-                      </button>
-                    : <button className="plan-action" onClick={() => choose(plan.id)}>{selected === plan.id ? "Выбран · оплата скоро" : "Выбрать тариф"}</button>}
-            </article>)}
-          </div>
-
-          {chosen && !enabled && <div className="plan-confirm">
-            <div><strong>Выбран тариф «{chosen.name}» · {chosen.priceLabel}</strong><span>Тариф включится вместе с оплатой — выбор уже сохранён.</span></div>
-            <div className="plan-confirm-actions">
-              <button className="ghost-button" onClick={() => choose(null)}>Убрать выбор</button>
-              <button className="plan-action" onClick={() => closeRef.current()}>Готово</button>
-            </div>
-          </div>}
-
-          {/* Согласия стоят там, где человек нажимает «Оплатить»: до перехода на страницу
-              оплаты он видит сумму, период и условия списаний и подтверждает их сам. */}
-          {enabled && <CheckoutConsent recurring={Boolean(billing.subscription?.recurringAvailable)} onChange={setConsent}/>}
-
-          <div className="billing-disclaimer">
-            Оплата принимается картой и через СБП на защищённой странице «Робокассы». Тариф включается
-            сразу после подтверждения платежа, чек НПД приходит на контакт из аккаунта.
+            {billing.plans.map(plan => {
+              const active = plan.id === current;
+              const chosen = chosenPending && chosenId === plan.id;
+              return <button
+                type="button"
+                key={plan.id}
+                className={"plan-card plan-card-select" + (active ? " selected" : "") + (chosen ? " chosen" : "")}
+                onClick={() => onChoosePlan(plan.id)}
+                aria-label={"Открыть описание тарифа «" + plan.name + "»"}
+              >
+                <div className="plan-card-head">
+                  <div><strong>{plan.name}</strong><small>{plan.description}</small></div>
+                  <span className="plan-card-price">
+                    {Boolean(plan.discountPercent)&&<s>{plan.basePriceLabel}</s>}
+                    <b>{plan.priceLabel}</b>
+                  </span>
+                </div>
+                {active
+                  ? <span className="plan-badge">Ваш тариф</span>
+                  : chosen
+                    ? <span className="plan-badge">{enabled ? "Выбран" : "Выбран · оплата скоро"}</span>
+                    : plan.recommended ? <span className="plan-badge">Популярный выбор</span> : null}
+                <ul>{plan.features.slice(0, 4).map(feature => <li key={feature}><Check size={12}/>{feature}</li>)}</ul>
+                <span className="plan-card-open">{active ? "Текущий тариф" : "Описание и оплата"} <ArrowRight size={12}/></span>
+              </button>;
+            })}
           </div>
         </>}
 
@@ -155,7 +109,7 @@ export function PlanPickerModal({ open, onClose, onOpenDetails, onChanged }: {
       </div>
 
       <footer className="modal-foot">
-        <button className="ghost-button" onClick={onOpenDetails}>Подробнее о тарифах <ArrowRight size={13}/></button>
+        <span className="account-muted modal-foot-note">Нажмите карточку, чтобы открыть тариф.</span>
         <button className="send-button" onClick={() => closeRef.current()}>Готово</button>
       </footer>
     </section>
