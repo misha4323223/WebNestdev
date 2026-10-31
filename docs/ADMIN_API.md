@@ -183,6 +183,9 @@ curl -s https://panel.example.com/api/admin/2fa/verify -H 'content-type: applica
 | `GET /api/admin/billing?days=&limit=` | `Bearer` | платежи, подписки, истекающие и калибровка пула (раздел 7.8) |
 | `GET /api/admin/plans` | `Bearer` | тарифы: название, описание, базовая цена и скидка (раздел 7.10) |
 | `POST /api/admin/plans` | `Bearer` | изменить витрину и скидку; ответ уже содержит итоговую цену (раздел 7.10) |
+| `GET /api/admin/ai` | `Bearer` | главный AI-провайдер: название, Base URL, модель и источник ключа (раздел 7.12) |
+| `POST /api/admin/ai` | `Bearer` | переключить провайдера, модель и при необходимости ключ (раздел 7.12) |
+| `POST /api/admin/ai/test` | `Bearer` | проверить черновик провайдера настоящим вызовом с инструментом (раздел 7.12) |
 | `GET /api/admin/projects/:id` | `Bearer` | карточка проекта: репозиторий, превью, переменные, выкатка (раздел 7.9) |
 | `GET /api/admin/support/stats` | `Bearer` | где болит: очередь, важность, давность (раздел 8.5) |
 
@@ -799,6 +802,47 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/
 сразу. Если онлайн-узлов не осталось, ответ содержит `warning`, а создание нового проекта
 отвечает `503 NO_SANDBOX_NODE` — тихого возврата на локальную машину нет. Возврат `online` снова
 разрешает размещение.
+
+### 7.12. Главный AI-провайдер
+
+Код: `server/src/routes/admin-ai.ts`. Тесты: `server/src/routes/admin-ai.test.ts`. Управление
+идёт только через это API админ-приложения; отдельная веб-панель для смены провайдера не нужна.
+Ключ никогда не возвращается в ответе: `keySource` говорит, сохранён ли он на сервере
+(`panel` — зашифрованное хранилище платформы, не веб-панель) или взят из окружения.
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" 'https://nestdev.ru/api/admin/ai'
+```
+
+```json
+{
+  "ai": {
+    "configured": true,
+    "provider": "DeepSeek",
+    "providerSource": "panel",
+    "baseUrl": "https://api.deepseek.com/v1",
+    "model": "deepseek-flash",
+    "hasKey": true,
+    "keySource": "panel"
+  }
+}
+```
+
+Переключение — одним запросом; `apiKey` необязателен и при отсутствии сохраняет текущий ключ.
+Ответ сразу содержит новое состояние, новые запуски используют его без перезапуска:
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"provider":"OpenRouter","baseUrl":"https://openrouter.ai/api/v1","model":"deepseek/deepseek-chat","apiKey":"sk-or-…"}' \
+  'https://nestdev.ru/api/admin/ai'
+```
+
+`POST /api/admin/ai/test` принимает те же `provider`, `baseUrl`, `model` и необязательный
+`apiKey`. Без нового ключа проверка использует сохранённый. Результат: `ok`, `latencyMs`,
+`tools` (подтверждён ли вызов инструментов), `text` и `usage`; ключ в ответ не попадает.
+
+Бесплатная модель тарифа «Старт» (`PLATFORM_AI_FREE_*`) и генерация картинок (`PLATFORM_IMAGE_*`)
+этим маршрутом не меняются.
 
 ## 8. Обращения поддержки
 

@@ -119,6 +119,7 @@ export const PLATFORM_ENV_CATALOG: PlatformEnvEntry[] = [
   // тревоги не смешивались с перепиской с пользователями и не зависели от адреса поддержки.
   { name: "ALERT_EMAIL", group: "mail", label: "Аварийные уведомления: адрес", hint: "Куда присылать письма о диске, памяти, swap, ошибках архивации и устаревшей резервной копии. Пусто — проверки работают, но письма не уходят.", kind: "value" },
 
+  { name: "PLATFORM_AI_PROVIDER", group: "ai", label: "AI провайдер", hint: "Название главного AI-провайдера в интерфейсе и логах: например, DeepSeek, Yandex Cloud AI Studio или OpenRouter.", kind: "value" },
   { name: "PLATFORM_AI_BASE_URL", group: "ai", label: "AI Base URL", hint: "OpenAI-совместимый адрес модели платформы — то, чем пользуются проекты без своего провайдера.", kind: "url" },
   { name: "PLATFORM_AI_MODEL", group: "ai", label: "AI модель", hint: "Идентификатор модели для этого адреса.", kind: "value" },
   { name: "PLATFORM_AI_API_KEY", group: "ai", label: "AI ключ", hint: "Ключ провайдера модели платформы. Проекты со своим ключом его не используют.", kind: "secret" },

@@ -68,6 +68,7 @@ import { registerAdminMailRoutes } from "./routes/admin-mail.js";
 import { registerAdminUserActionRoutes } from "./routes/admin-users.js";
 import { registerAdminBillingRoutes } from "./routes/admin-billing.js";
 import { registerAdminPlanRoutes } from "./routes/admin-plans.js";
+import { registerAdminAiRoutes } from "./routes/admin-ai.js";
 import { registerAdminProjectRoutes } from "./routes/admin-projects.js";
 import { registerUnsubscribeRoutes } from "./routes/unsubscribe.js";
 import { describePostbox, postboxStatus } from "./mail/postbox.js";
@@ -337,6 +338,8 @@ await registerAdminUserActionRoutes(app);
 await registerAdminBillingRoutes(app);
 // Витрина тарифов: название, описание, цена и скидка. Меняется и из панели, и из внешней админки.
 await registerAdminPlanRoutes(app);
+// Главный AI-провайдер: чтение, проверка черновика и переключение из внешней админки.
+await registerAdminAiRoutes(app);
 // Карточка проекта: владелец, репозиторий, превью, переменные секретов, план выкатки.
 await registerAdminProjectRoutes(app);
 // Отписка — публичная страница, а не /api: ссылка приходит в письме и открывается без сессии.
