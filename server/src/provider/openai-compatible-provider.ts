@@ -19,6 +19,29 @@ function chatCompletionsUrl(baseUrl:string){
     : base+"/v1/chat/completions";
 }
 
+/**
+ * Поле `provider` для шлюза. `only` — жёсткий белый список, `allow_fallbacks: false` запрещает
+ * шлюзу самому уходить к другому провайдеру: иначе выбранный дешёвый Morph мог бы молча
+ * замениться дорогим. Переключение делает RoutedProvider, когда провайдер выключен или отказал
+ * до первого байта ответа.
+ */
+function upstreamRequestFields(options?:ProviderStreamOptions):Record<string,unknown>{
+  const upstream=options?.upstream;
+  if(!upstream||!upstream.only.length)return {};
+  const maxPrice=upstream.maxPrice;
+  const hasMaxPrice=Boolean(maxPrice&&(maxPrice.prompt!==undefined||maxPrice.completion!==undefined));
+  return {
+    provider:{
+      only:upstream.only,
+      allow_fallbacks:upstream.allowFallbacks,
+      ...(hasMaxPrice?{max_price:{
+        ...(maxPrice?.prompt!==undefined?{prompt:maxPrice.prompt}:{}),
+        ...(maxPrice?.completion!==undefined?{completion:maxPrice.completion}:{}),
+      }}:{}),
+    },
+  };
+}
+
 // AI-прокси: если задан AI_PROXY_URL, запрос идёт через зарубежный прокси.
 const proxyUrl=(process.env.AI_PROXY_URL??"").replace(/\/+$/,"");
 const proxyToken=(process.env.AI_PROXY_TOKEN??"").trim();
@@ -212,7 +235,8 @@ export class OpenAICompatibleProvider implements Provider{
       });
     const effort=reasoningEffort(options);
     const key=probeKey(normBase,model);
-    const payload=(withReasoning:boolean)=>({model,messages:wire,tools,stream:true,...cacheFields,...(withReasoning&&effort?{reasoning_effort:effort}:{})});
+    const upstreamFields=upstreamRequestFields(options);
+    const payload=(withReasoning:boolean)=>({model,messages:wire,tools,stream:true,...cacheFields,...upstreamFields,...(withReasoning&&effort?{reasoning_effort:effort}:{})});
     // Мысли нужны пользователю, но не настолько, чтобы сломать запуск: шлюз, отвечающий на просьбу
     // о рассуждении отказом формы (400/422), получает тот же запрос без неё — и запоминается, чтобы
     // следующие шаги запуска не платили за это двумя запросами каждый.
@@ -242,12 +266,19 @@ export class OpenAICompatibleProvider implements Provider{
     const recovered:ProviderToolCall[]=[];
     const dsml=new DsmlTextFilter(tools);
     let debugged=0;
+    // Шлюз называет фактического провайдера в корне ответа. Лог подтверждает выбор: при `auto`
+    // это единственное место, где видно, кто на самом деле обслужил запрос.
+    let upstreamLogged=false;
     // Шлюзы делятся надвое: одни стримят размышление чанками, другие присылают его готовым
     // сообщением в последнем чанке. Флаг не даёт показать одно и то же дважды.
     let sawReasoning=false;
     for await(const line of lines(response.body)){
       if(!line||line==="[DONE]")continue;
       const data=JSON.parse(line) as any;
+      if(!upstreamLogged&&typeof data.provider==="string"&&data.provider){
+        upstreamLogged=true;
+        console.log("[provider] "+model+" обслужил "+data.provider);
+      }
       if(data.usage){
         // `cachedPromptTokens` — не отдельный счётчик денег, а расшифровка уже полученного
         // prompt_tokens: Polza/DeepSeek/OpenAI называют кэш по-разному, разбор один.

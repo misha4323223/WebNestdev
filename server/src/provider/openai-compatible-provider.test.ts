@@ -93,6 +93,28 @@ async function collect(provider:OpenAICompatibleProvider,model:string,options?:{
   return chunks;
 }
 
+test("явный upstream-провайдер уходит в provider.only и запрещает fallback шлюза",async()=>{
+  const stub=stubFetch(()=>streamResponse([
+    {provider:"morph/fp8",choices:[{delta:{content:"Готово"}}]}
+  ]));
+  try{
+    const chunks:ProviderChunk[]=[];
+    for await(const chunk of new OpenAICompatibleProvider("https://polza.ai/api/v1").stream(
+      [{role:"user",content:"привет"}],
+      "deepseek/deepseek-v4.1-flash-1017",
+      undefined,
+      undefined,
+      {upstream:{only:["morph/fp8"],allowFallbacks:false,maxPrice:{prompt:10,completion:30}}},
+    ))chunks.push(chunk);
+    assert.deepEqual(stub.captured[0].body.provider,{
+      only:["morph/fp8"],
+      allow_fallbacks:false,
+      max_price:{prompt:10,completion:30},
+    });
+    assert.deepEqual(chunks.filter(chunk=>chunk.type==="text"),[{type:"text",text:"Готово"}]);
+  }finally{stub.restore()}
+});
+
 test("размышление просят у модели и показывают в ответе",{skip:REASONING_DISABLED},async()=>{
   const stub=stubFetch(()=>streamResponse([
     {choices:[{delta:{reasoning_content:"сначала посмотрю файлы"}}]},

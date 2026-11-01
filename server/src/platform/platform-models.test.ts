@@ -38,6 +38,13 @@ test("модель сохраняется с зашифрованным ключ
   assert.equal(saved.baseUrl, "https://openrouter.ai/api/v1");
   assert.equal(saved.apiKey, "sk-max-secret");
   assert.deepEqual(saved.creditRates, { inputPerMillion: 250, outputPerMillion: 2_550, minimumPerRun: 2 });
+  assert.deepEqual(saved.routing, {
+    mode: "auto",
+    providers: [],
+    allowFallback: true,
+    fallbackToAuto: false,
+    assumedInputPerOutput: 10,
+  });
 
   const listed = await listPlatformModels();
   assert.equal(listed.length, 1);
@@ -60,6 +67,36 @@ test("обновление без ключа сохраняет старый, а
 
   const cleared = await savePlatformModel("max", { clearKey: true });
   assert.equal(cleared.apiKey, undefined);
+});
+
+test("маршрутизация модели сохраняется, обновляется и сбрасывается в auto", async () => {
+  const fixed = await savePlatformModel("max", { routing: { mode: "fixed", providers: ["morph/fp8", "open-inference/fp4"] } });
+  assert.deepEqual(fixed.routing, {
+    mode: "fixed",
+    providers: ["morph/fp8", "open-inference/fp4"],
+    allowFallback: true,
+    fallbackToAuto: false,
+    assumedInputPerOutput: 10,
+  });
+  assert.deepEqual((await getPlatformModel("max"))?.routing, fixed.routing);
+
+  const cheapest = await savePlatformModel("max", { routing: { mode: "cheapest", providers: [], assumedInputPerOutput: 30 } });
+  assert.equal(cheapest.routing.mode, "cheapest");
+  assert.equal(cheapest.routing.assumedInputPerOutput, 30);
+
+  await assert.rejects(
+    savePlatformModel("max", { routing: { mode: "fixed", providers: [] } }),
+    /routing:.*хотя бы одного/,
+  );
+
+  const reset = await savePlatformModel("max", { routing: null });
+  assert.deepEqual(reset.routing, {
+    mode: "auto",
+    providers: [],
+    allowFallback: true,
+    fallbackToAuto: false,
+    assumedInputPerOutput: 10,
+  });
 });
 
 test("тариф решает, какая дополнительная модель доступна", async () => {

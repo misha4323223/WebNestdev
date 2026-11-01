@@ -49,7 +49,7 @@ export function CheckoutConsent({ recurring, purpose = "subscription", onChange 
       <input type="checkbox" checked={personalData} onChange={event => setPersonalData(event.target.checked)}/>
       <span>
         Даю {link("/legal/consent", "согласие на обработку персональных данных")} для оформления и оплаты
-        {purpose === "credits" ? " пакета кредитов" : " подписки"} и подтверждаю, что ознакомлен с{" "}
+        {purpose === "credits" ? " докупки кредитов" : " подписки"} и подтверждаю, что ознакомлен с{" "}
         {link("/legal/privacy", "Политикой обработки данных")}.
       </span>
     </label>
@@ -58,7 +58,7 @@ export function CheckoutConsent({ recurring, purpose = "subscription", onChange 
       <span>
         Принимаю {link("/legal/offer", "публичную оферту")} и {link("/legal/payments", "условия оплаты и возврата")}.{" "}
         {purpose === "credits"
-          ? "Оплата разовая — за выбранный пакет кредитов. Докупленные кредиты не сгорают и расходуются после месячного лимита тарифа."
+          ? "Оплата разовая — за выбранное количество кредитов. Докупленные кредиты не сгорают и расходуются после месячного лимита тарифа."
           : recurring
             ? "Продление — только по отдельному согласию ниже."
             : "Оплата разовая — за один календарный месяц: автопродление сейчас не подключено."}

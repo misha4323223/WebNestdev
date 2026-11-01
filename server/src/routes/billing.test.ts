@@ -86,14 +86,14 @@ test("checkout creates a pending invoice and returns a signed Robokassa link", a
   });
 });
 
-test("credit top-up is a one-off invoice, requires a paid plan and is credited after ResultURL", async () => {
+test("credit top-up takes any amount above the minimum, is one-off and credited after ResultURL", async () => {
   await withShop(async () => {
     const app = await shopApp();
     try {
       const { user, cookie } = await signedInUser();
       const unavailable = await app.inject({
         method: "POST", url: "/api/billing/credits/checkout", headers: { cookie },
-        payload: { packId: "credits-5000" },
+        payload: { credits: 5_000 },
       });
       assert.equal(unavailable.statusCode, 409, "на бесплатном тарифе докупка не имеет смысла");
 
@@ -101,23 +101,35 @@ test("credit top-up is a one-off invoice, requires a paid plan and is credited a
       const planPayment = await createPayment({ userId: user.id, plan: "pro", amount: 990 });
       await markPaymentPaid(planPayment.invId);
 
+      const tooFew = await app.inject({
+        method: "POST", url: "/api/billing/credits/checkout", headers: { cookie },
+        payload: { credits: 999 },
+      });
+      assert.equal(tooFew.statusCode, 400, "минимум 1000 кредитов проверяется на сервере");
+
+      const tooMany = await app.inject({
+        method: "POST", url: "/api/billing/credits/checkout", headers: { cookie },
+        payload: { credits: 100_001 },
+      });
+      assert.equal(tooMany.statusCode, 400, "верхняя граница проверяется на сервере");
+
       const response = await app.inject({
         method: "POST", url: "/api/billing/credits/checkout", headers: { cookie },
-        payload: { packId: "credits-5000" },
+        payload: { credits: 5_000 },
       });
       assert.equal(response.statusCode, 200);
       const body = response.json() as { invId: number; paymentUrl: string; amount: number; credits: number; packId: string };
-      assert.equal(body.amount, 1_190);
+      assert.equal(body.amount, 1_450);
       assert.equal(body.credits, 5_000);
-      assert.equal(body.packId, "credits-5000");
-      assert.equal(new URL(body.paymentUrl).searchParams.get("OutSum"), "1190.00");
+      assert.equal(body.packId, "custom");
+      assert.equal(new URL(body.paymentUrl).searchParams.get("OutSum"), "1450.00");
       assert.equal(new URL(body.paymentUrl).searchParams.get("Recurring"), null, "кредиты не открывают серию списаний");
       assert.equal(await creditBalance(user.id), 0, "счёт ещё не оплачен");
 
       const notification = await app.inject({
         method: "POST", url: "/api/billing/robokassa/result",
         headers: { "content-type": "application/x-www-form-urlencoded" },
-        payload: resultBody(body.invId, "1190.00"),
+        payload: resultBody(body.invId, "1450.00"),
       });
       assert.equal(notification.statusCode, 200);
       assert.equal(notification.body, "OK" + body.invId);
@@ -126,10 +138,10 @@ test("credit top-up is a one-off invoice, requires a paid plan and is credited a
       const repeated = await app.inject({
         method: "POST", url: "/api/billing/robokassa/result",
         headers: { "content-type": "application/x-www-form-urlencoded" },
-        payload: resultBody(body.invId, "1190.00"),
+        payload: resultBody(body.invId, "1450.00"),
       });
       assert.equal(repeated.statusCode, 200);
-      assert.equal(await creditBalance(user.id), 5_000, "повтор не зачисляет пакет второй раз");
+      assert.equal(await creditBalance(user.id), 5_000, "повтор не зачисляет кредиты второй раз");
     } finally { await app.close(); }
   });
 });

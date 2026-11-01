@@ -13,7 +13,7 @@ const Fastify = (await import("fastify")).default;
 const { registerAdminAiModelsRoutes } = await import("./admin-ai-models.js");
 const { createAdmin, createAdminSession } = await import("../admin/admin-store.js");
 
-const seen: { value: { provider: string; baseUrl: string; model: string; token?: string } | null } = { value: null };
+const seen: { value: { provider: string; baseUrl: string; model: string; token?: string; routing?: { mode: string } } | null } = { value: null };
 const app = Fastify();
 await registerAdminAiModelsRoutes(app, {
   testAi: async config => {
@@ -54,15 +54,23 @@ test("модель добавляется, ключ не попадает в о�
       apiKey: "sk-max-secret",
       plans: ["pro", "team"],
       creditRates: { inputPerMillion: 300, outputPerMillion: 3_000, minimumPerRun: 2 },
+      routing: { mode: "fixed", providers: ["morph/fp8", "open-inference/fp4"] },
     },
   });
   assert.equal(created.statusCode, 201);
-  const body = created.json() as { saved: boolean; model: { id: string; name: string; hasKey: boolean; creditRates: unknown } };
+  const body = created.json() as { saved: boolean; model: { id: string; name: string; hasKey: boolean; creditRates: unknown; routing: unknown } };
   assert.equal(body.saved, true);
   assert.equal(body.model.id, "max");
   assert.equal(body.model.name, "NestDev Max");
   assert.equal(body.model.hasKey, true);
   assert.deepEqual(body.model.creditRates, { inputPerMillion: 300, outputPerMillion: 3_000, minimumPerRun: 2 });
+  assert.deepEqual(body.model.routing, {
+    mode: "fixed",
+    providers: ["morph/fp8", "open-inference/fp4"],
+    allowFallback: true,
+    fallbackToAuto: false,
+    assumedInputPerOutput: 10,
+  });
   assert.ok(!created.body.includes("sk-max-secret"));
 
   const changed = await app.inject({
@@ -108,6 +116,36 @@ test("для mini достаточно адреса, модели и ключа:
   await app.inject({ method: "DELETE", url: "/api/admin/ai/models/mini", headers: auth });
 });
 
+test("маршрутизация Max обновляется и сбрасывается в auto", async () => {
+  const changed = await app.inject({
+    method: "PATCH",
+    url: "/api/admin/ai/models/max",
+    headers: auth,
+    payload: { routing: { mode: "cheapest", assumedInputPerOutput: 30 } },
+  });
+  assert.equal(changed.statusCode, 200);
+  assert.equal(changed.json().model.routing.mode, "cheapest");
+  assert.equal(changed.json().model.routing.assumedInputPerOutput, 30);
+
+  const reset = await app.inject({
+    method: "PATCH",
+    url: "/api/admin/ai/models/max",
+    headers: auth,
+    payload: { routing: null },
+  });
+  assert.equal(reset.statusCode, 200);
+  assert.equal(reset.json().model.routing.mode, "auto");
+
+  const invalid = await app.inject({
+    method: "PATCH",
+    url: "/api/admin/ai/models/max",
+    headers: auth,
+    payload: { routing: { mode: "fixed", providers: [] } },
+  });
+  assert.equal(invalid.statusCode, 400);
+  assert.match(invalid.json().error, /routing:.*хотя бы одного/);
+});
+
 test("проверка модели использует сохранённый ключ и не возвращает его", async () => {
   const response = await app.inject({
     method: "POST",
@@ -118,6 +156,7 @@ test("проверка модели использует сохранённый 
   assert.equal(response.statusCode, 200);
   assert.equal(response.json().ok, true);
   assert.equal(seen.value?.token, "sk-max-secret");
+  assert.equal(seen.value?.routing?.mode, "auto", "проверка берёт сохранённую цепочку модели");
   assert.ok(!response.body.includes("sk-max-secret"));
 });
 

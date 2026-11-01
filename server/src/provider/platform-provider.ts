@@ -1,6 +1,14 @@
 import { getPlatformEnv } from "../platform/platform-env.js";
+import { parseUpstreamRouting, type UpstreamRouting } from "./upstream-routing.js";
 
-export type PlatformProviderConfig={provider:string;baseUrl:string;model:string;token?:string};
+export type PlatformProviderConfig={
+  provider:string;
+  baseUrl:string;
+  model:string;
+  token?:string;
+  /** Кого из upstream-провайдеров шлюза можно использовать и в каком порядке. */
+  routing?:UpstreamRouting;
+};
 
 function firstEnv(...names:string[]){
   for(const name of names){
@@ -23,10 +31,12 @@ export function getPlatformProviderConfig():PlatformProviderConfig|null{
   const model=firstEnv("PLATFORM_AI_MODEL","AI_MODEL");
   if(!baseUrl||!model)return null;
   const token=firstEnv("PLATFORM_AI_API_KEY","AI_API_KEY");
+  const routing=parseUpstreamRouting(firstEnv("PLATFORM_AI_ROUTING"));
   return {
     provider:firstEnv("PLATFORM_AI_PROVIDER")??"Платформа NestDev",
     baseUrl,
     model,
-    ...(token?{token}:{})
+    ...(token?{token}:{}),
+    ...(routing?{routing}:{})
   };
 }

@@ -23,7 +23,7 @@ const faq = [
   { question: "Как оплатить тариф?", answer: "Откройте карточку тарифа, отметьте согласия и нажмите «Оплатить» — откроется защищённая страница оплаты. Доступны карта РФ, СБП и другие способы." },
   { question: "Когда включится тариф?", answer: "Сразу после подтверждения оплаты. Если страница оплаты закрылась, вернитесь в личный кабинет: подписка уже будет активна." },
   { question: "Что с продлением?", answer: "Подписка действует месяц. Автопродление — по отдельному согласию: отметкой при оплате или переключателем в личном кабинете. Отключить можно в любой момент." },
-  { question: "Можно ли докупить кредиты?", answer: "Да, на «Плюсе» и «Премиуме». Выберите пакет ниже, оплатите его как разовый платёж — кредиты зачислятся сразу. Докупленные кредиты не сгорают и расходуются после месячного лимита тарифа." },
+  { question: "Можно ли докупить кредиты?", answer: "Да, на «Плюсе» и «Премиуме». Введите количество кредитов — минимум указан в блоке докупки, оплатите разовый платёж — кредиты зачислятся сразу. Докупленные кредиты не сгорают и расходуются после месячного лимита тарифа." },
 ];
 
 const limitRows: Array<{ label: string; key: keyof PlanLimits }> = [
@@ -105,7 +105,7 @@ export function SubscriptionPage({ onBack, selectedPlanId, onSelectPlan }: {
     <section className="subscription-hero">
       <span className="eyebrow">ТАРИФЫ NESTDEV</span>
       <h1>Тарифы и подписка</h1>
-      <p>Три уровня доступа к агентной разработке: от знакомства до работы небольшой команды. Выберите карточку — откроется описание тарифа, согласия и оплата. На платных тарифах кредиты можно докупить отдельным пакетом. {paymentNotice(billing)}</p>
+      <p>Три уровня доступа к агентной разработке: от знакомства до работы небольшой команды. Выберите карточку — откроется описание тарифа, согласия и оплата. На платных тарифах кредиты можно докупить любым количеством от {creditsLabel(billing?.creditTopUp?.minCredits ?? 1_000)}. {paymentNotice(billing)}</p>
       <div className="subscription-status">
         <div><span>Текущий тариф</span><strong>{billing?.plans.find(plan => plan.id === currentPlanId)?.name ?? "Старт"}</strong></div>
         <div><span>{paid ? "Оплачено до" : "Баланс"}</span><strong>{paid ? dateLabel(subscription?.renewsAt ?? null) : balanceLabel(billing?.balance)}</strong></div>
@@ -216,7 +216,7 @@ export function SubscriptionPage({ onBack, selectedPlanId, onSelectPlan }: {
                 <div><span>Кредиты на агента</span><strong>{creditsLabel(budget.used)} из {creditsLabel(budget.limit)}</strong></div>
                 <div className="usage-meter-track"><span style={{ width: `${Math.min(100, (budget.used / budget.limit) * 100)}%` }} /></div>
                 <small className={"usage-meter-left" + (state === "ok" ? "" : " " + state)}>{state === "full"
-                  ? "Кредиты исчерпаны: докупите пакет ниже или дождитесь 1-го числа"
+                  ? "Кредиты исчерпаны: докупите кредиты ниже или дождитесь 1-го числа"
                   : "Осталось " + creditsLabel(budget.remaining) + (budget.purchased > 0 ? " · докупленные не сгорают" : " · сброс 1-го числа")}</small>
                 {budget.purchased > 0 && <small className="usage-meter-left">Месячный лимит тарифа: {creditsLabel(budget.planLimit)} · докуплено: {creditsLabel(budget.purchased)}</small>}
               </div>

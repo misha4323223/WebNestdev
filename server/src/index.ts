@@ -67,6 +67,7 @@ import { registerAdminPruneRoutes } from "./routes/admin-prune.js";
 import { registerAdminMailRoutes } from "./routes/admin-mail.js";
 import { registerAdminUserActionRoutes } from "./routes/admin-users.js";
 import { registerAdminBillingRoutes } from "./routes/admin-billing.js";
+import { registerAdminCreditRoutes } from "./routes/admin-credits.js";
 import { registerAdminPlanRoutes } from "./routes/admin-plans.js";
 import { registerAdminAiRoutes } from "./routes/admin-ai.js";
 import { registerAdminAiModelsRoutes } from "./routes/admin-ai-models.js";
@@ -337,6 +338,8 @@ await registerAdminMailRoutes(app);
 await registerAdminUserActionRoutes(app);
 // Реестр платежей и подписок плюс калибровка пула: сколько токенов реально выбирают.
 await registerAdminBillingRoutes(app);
+// Докупка кредитов: цена за 1000, минимум и максимум для внешней админки.
+await registerAdminCreditRoutes(app);
 // Витрина тарифов: название, описание, цена и скидка. Меняется и из панели, и из внешней админки.
 await registerAdminPlanRoutes(app);
 // Главный AI-провайдер: чтение, проверка черновика и переключение из внешней админки.

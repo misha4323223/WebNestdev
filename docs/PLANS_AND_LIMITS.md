@@ -87,17 +87,22 @@ remains in the payload only as raw model-usage analytics for the owner/admin scr
 
 ## Purchased credits
 
-Paid accounts can buy an extra credit pack without changing their subscription:
+Paid accounts can buy any amount of credits from 1 000 without changing their subscription.
+The owner sets one rate per 1 000 credits (290 ₽ by default) plus the minimum and maximum amount
+through `POST /api/admin/billing/credits`; the browser sends only the number of credits.
+`POST /api/billing/credits/checkout` calculates the amount on the server, creates a separate
+Robokassa invoice and `POST /api/billing/robokassa/result` credits the account after the signed
+payment notification.
 
-| Pack | Credits | Price |
-|---|---:|---:|
-| Small | 1 000 | 290 ₽ |
-| Medium | 5 000 | 1 190 ₽ |
-| Large | 15 000 | 2 990 ₽ |
+| Credits | Price at the default 290 ₽ / 1 000 |
+|---:|---:|
+| 1 000 | 290 ₽ |
+| 5 000 | 1 450 ₽ |
+| 15 000 | 4 350 ₽ |
 
-Prices and pack contents live on the server (`server/src/billing/credit-packs.ts`); the browser only
-sends a pack id. `POST /api/billing/credits/checkout` creates a separate Robokassa invoice and
-`POST /api/billing/robokassa/result` credits the account after the signed payment notification.
+Amounts are whole rubles, rounded up: `ceil(credits × pricePer1000 / 1000)`. Legacy `packId`
+requests still work, but their price is calculated from the same current rate instead of a frozen
+catalogue price. Already issued invoices keep their amount.
 
 Purchased credits are stored in the append-only `credit_ledger`, not in the monthly `model_usage`
 sum. `recordRunUsage` writes a negative ledger entry only for the part of a run that exceeded the
@@ -105,9 +110,10 @@ plan's monthly limit, keyed by `run_id`, so a repeated run cannot debit twice. P
 not expire, are spent after the monthly plan credits, and become available again after a downgrade
 if the account returns to a paid plan. The account balance is never allowed to go below zero.
 
-`GET /api/billing` returns the catalog in `creditPacks` and the account's invoices in
-`creditPurchases`; both the subscription page and settings expose the top-up block. The UI labels
-`planLimit` as the monthly allowance and `purchased` as the non-expiring balance.
+`GET /api/billing` returns the top-up settings in `creditTopUp`, legacy presets in `creditPacks`
+and the account's invoices in `creditPurchases`; both the subscription page and settings expose the
+top-up block. The UI labels `planLimit` as the monthly allowance and `purchased` as the non-expiring
+balance.
 
 ## Integration limits
 

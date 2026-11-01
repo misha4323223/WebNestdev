@@ -14,6 +14,8 @@ import {
 } from "../platform/platform-models.js";
 import { reasoningSupport } from "../provider/openai-compatible-provider.js";
 import { testProviderConnection } from "../provider/connection-test.js";
+import { normalizeUpstreamRouting, upstreamRoutingProblem, type UpstreamRouting } from "../provider/upstream-routing.js";
+import { upstreamRoutingSchema } from "./admin-ai-schema.js";
 
 /**
  * Дополнительные модели платформы для внешней админки: Max, Mini и любые другие
@@ -48,6 +50,8 @@ const modelSchema = z.object({
   contextTokens: z.number().int().min(4_000).max(2_000_000).nullable().optional(),
   /** Ставки списания кредитов за 1 млн входных и выходных токенов. */
   creditRates,
+  /** `null` возвращает авто-выбор шлюза; отсутствие поля оставляет настройку как была. */
+  routing: upstreamRoutingSchema,
 });
 
 const createSchema = modelSchema.extend({ id: modelId });
@@ -60,6 +64,8 @@ const testSchema = z.object({
   baseUrl: baseUrl.optional(),
   model: z.string().trim().max(300).optional(),
   apiKey: z.string().trim().max(20_000).optional(),
+  /** Проверить черновик с цепочкой; без поля берётся сохранённая у модели. */
+  routing: upstreamRoutingSchema,
 });
 
 export type AdminAiModelsRouteDeps = {
@@ -148,11 +154,23 @@ export async function registerAdminAiModelsRoutes(
     if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "Проверьте адрес и модель" });
     const saved = parsed.data.id ? await getPlatformModel(parsed.data.id) : null;
     if (parsed.data.id && !saved) return reply.code(404).send({ error: "Модель не найдена" });
+    let routing: UpstreamRouting | undefined;
+    if (parsed.data.routing === null) {
+      routing = undefined;
+    } else if (parsed.data.routing !== undefined) {
+      const normalized = normalizeUpstreamRouting(parsed.data.routing);
+      const problem = normalized ? upstreamRoutingProblem(normalized) : "проверьте режим, список провайдеров и maxPrice";
+      if (!normalized || problem) return reply.code(400).send({ error: "routing: " + problem });
+      routing = normalized;
+    } else {
+      routing = saved?.routing;
+    }
     const target = {
       provider: parsed.data.provider?.trim() || saved?.provider || "Модель платформы",
       baseUrl: parsed.data.baseUrl || saved?.baseUrl || "",
       model: parsed.data.model || saved?.model || "",
       token: parsed.data.apiKey?.trim() || saved?.apiKey,
+      ...(routing ? { routing } : {}),
     };
     if (!target.baseUrl || !target.model) return reply.code(400).send({ error: "Укажите Base URL и модель" });
     const result = await deps.testAi(target);
@@ -196,6 +214,7 @@ export async function registerAdminAiModelsRoutes(
           plans: model.plans,
           enabled: model.enabled,
           creditRates: model.creditRates,
+          routing: model.routing,
           hasKey: Boolean(model.apiKey),
         },
       });

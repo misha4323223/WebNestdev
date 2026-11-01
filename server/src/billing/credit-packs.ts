@@ -1,12 +1,11 @@
+import { creditPriceRub, creditSettings } from "./credit-settings.js";
+
 /**
- * Пакеты кредитов для докупки сверх месячного лимита тарифа.
+ * Старые идентификаторы пакетов кредитов.
  *
- * Цена и количество живут на сервере: браузер присылает только id пакета, а сумму для счёта
- * берёт отсюда. Так покупатель не может подменить стоимость запросом, а витрина и Робокасса
- * всегда говорят одну и ту же цифру.
- *
- * Докупленные кредиты не сгорают и не входят в месячный сброс. Они расходуются после кредитов
- * тарифа — см. `credit-store.ts` и `account/usage-store.ts`.
+ * Новый интерфейс покупает любое количество кредитов, поэтому фиксированных цен здесь больше
+ * нет: `priceRub` каждый раз считается по текущей ставке за 1000. Это сохраняет старым клиентам
+ * привычный `packId`, но не даёт им обойти цену, которую владелец задал в админке.
  */
 export type CreditPack = {
   id: string;
@@ -17,11 +16,12 @@ export type CreditPack = {
   recommended: boolean;
 };
 
-export const CREDIT_PACKS: readonly CreditPack[] = [
+type CreditPackPreset = Omit<CreditPack, "priceRub">;
+
+const PRESETS: readonly CreditPackPreset[] = [
   {
     id: "credits-1000",
     credits: 1_000,
-    priceRub: 290,
     name: "1 000 кредитов",
     note: "Небольшая правка или короткая задача",
     recommended: false,
@@ -29,7 +29,6 @@ export const CREDIT_PACKS: readonly CreditPack[] = [
   {
     id: "credits-5000",
     credits: 5_000,
-    priceRub: 1_190,
     name: "5 000 кредитов",
     note: "Несколько задач без ожидания нового месяца",
     recommended: true,
@@ -37,7 +36,6 @@ export const CREDIT_PACKS: readonly CreditPack[] = [
   {
     id: "credits-15000",
     credits: 15_000,
-    priceRub: 2_990,
     name: "15 000 кредитов",
     note: "Для интенсивной работы над большим проектом",
     recommended: false,
@@ -47,12 +45,20 @@ export const CREDIT_PACKS: readonly CreditPack[] = [
 export type PublicCreditPack = CreditPack & { priceLabel: string };
 
 export function creditPackById(id: string): CreditPack | null {
-  return CREDIT_PACKS.find(pack => pack.id === id) ?? null;
+  const preset = PRESETS.find(pack => pack.id === id);
+  return preset ? { ...preset, priceRub: creditPriceRub(preset.credits) } : null;
 }
 
 export function publicCreditPacks(): PublicCreditPack[] {
-  return CREDIT_PACKS.map(pack => ({
-    ...pack,
-    priceLabel: pack.priceRub.toLocaleString("ru-RU") + " ₽",
-  }));
+  const settings = creditSettings();
+  return PRESETS
+    .filter(preset => preset.credits >= settings.minCredits && preset.credits <= settings.maxCredits)
+    .map(preset => {
+      const priceRub = creditPriceRub(preset.credits, settings);
+      return {
+        ...preset,
+        priceRub,
+        priceLabel: priceRub.toLocaleString("ru-RU") + " ₽",
+      };
+    });
 }

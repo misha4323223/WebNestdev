@@ -179,6 +179,9 @@ services:
       PLATFORM_AI_BASE_URL: ${PLATFORM_AI_BASE_URL:-}
       PLATFORM_AI_MODEL: ${PLATFORM_AI_MODEL:-}
       PLATFORM_AI_API_KEY: ${PLATFORM_AI_API_KEY:-}
+      # Маршрутизация upstream-провайдеров (JSON). Нужна здесь только для значения из .env;
+      # настройка из админки хранится в DATA_DIR и работает без этой строки.
+      PLATFORM_AI_ROUTING: ${PLATFORM_AI_ROUTING:-}
       # Бесплатная модель тарифа «Старт»: до трёх ключей из разных аккаунтов. Compose передаёт
       # в контейнер только перечисленные переменные, поэтому без этого блока ключи из .env
       # на ВМ до сервера не доходили бы (так уже было с SMS и холодным ярусом).

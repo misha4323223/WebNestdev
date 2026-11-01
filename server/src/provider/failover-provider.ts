@@ -1,7 +1,7 @@
 import { OpenAICompatibleProvider } from "./openai-compatible-provider.js";
 import { ProviderHttpError } from "./provider-errors.js";
 import { providerRetryDecision } from "./provider-retry.js";
-import type { Provider, ProviderChunk, ProviderStreamOptions } from "./provider-types.js";
+import type { Provider, ProviderChunk, ProviderStreamOptions, UpstreamProviderRequest } from "./provider-types.js";
 
 /**
  * Один адрес модели в цепочке. `primary` — бесплатные ключи, `fallback` — платная модель
@@ -16,6 +16,10 @@ export type FailoverEndpoint = {
   baseUrl: string;
   model: string;
   token?: string;
+  /** Явный upstream-провайдер шлюза; пусто — шлюз выбирает сам (режим auto). */
+  upstream?: UpstreamProviderRequest;
+  /** Готовая фабрика для адреса с собственной цепочкой (например, резерв бесплатной модели). */
+  provider?: () => Provider;
 };
 
 export type FailoverState = {
@@ -111,7 +115,7 @@ export class FailoverProvider implements Provider {
   constructor(private readonly endpoints: FailoverEndpoint[], options: FailoverOptions = {}) {
     this.state = options.state ?? sharedState;
     this.now = options.now ?? Date.now;
-    this.create = options.create ?? (endpoint => new OpenAICompatibleProvider(endpoint.baseUrl, endpoint.token));
+    this.create = options.create ?? (endpoint => endpoint.provider?.() ?? new OpenAICompatibleProvider(endpoint.baseUrl, endpoint.token));
     this.log = options.log ?? (message => console.warn(message));
   }
 
@@ -180,7 +184,12 @@ export class FailoverProvider implements Provider {
       const startedAt = this.now();
       try {
         const provider = this.create(endpoint);
-        for await (const chunk of provider.stream(messages, endpoint.model, tools, signal, options)) {
+        // Каждый адрес несёт своего upstream-провайдера: переключение между ними не требует
+        // повторной сборки запроса и не меняет ключ серии кэша.
+        const endpointOptions = endpoint.upstream
+          ? { ...options, upstream: endpoint.upstream }
+          : options;
+        for await (const chunk of provider.stream(messages, endpoint.model, tools, signal, endpointOptions)) {
           // Строка на первый байт ответа: по ней в логе видно, какой ключ или резерв
           // действительно ответил, а не только кто отказал. Ключ в сообщение не попадает —
           // только подпись вида «Agnes AI #2» и время до первого чанка.

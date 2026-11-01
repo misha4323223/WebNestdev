@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { getPlatformProviderConfig } from "./platform-provider.js";
 
-const NAMES=["PLATFORM_AI_BASE_URL","PLATFORM_AI_API_KEY","PLATFORM_AI_MODEL","PLATFORM_AI_PROVIDER","AI_BASE_URL","AI_API_KEY","AI_MODEL"];
+const NAMES=["PLATFORM_AI_BASE_URL","PLATFORM_AI_API_KEY","PLATFORM_AI_MODEL","PLATFORM_AI_PROVIDER","PLATFORM_AI_ROUTING","AI_BASE_URL","AI_API_KEY","AI_MODEL"];
 function clear(){for(const name of NAMES)delete process.env[name];}
 
 test("platform provider requires base URL and model",()=>{
@@ -16,6 +16,25 @@ test("platform provider requires base URL and model",()=>{
   assert.equal(config?.baseUrl,"https://api.example.com/v1");
   assert.equal(config?.model,"test-model");
   assert.equal(config?.token,"test-secret");
+  clear();
+});
+
+test("маршрутизация главной модели читается из PLATFORM_AI_ROUTING",()=>{
+  clear();
+  process.env.PLATFORM_AI_BASE_URL="https://polza.ai/api/v1";
+  process.env.PLATFORM_AI_MODEL="deepseek/deepseek-v4.1-flash";
+  process.env.PLATFORM_AI_ROUTING=JSON.stringify({mode:"fixed",providers:["morph/fp8","open-inference/fp4"]});
+  assert.deepEqual(getPlatformProviderConfig()?.routing,{
+    mode:"fixed",
+    providers:["morph/fp8","open-inference/fp4"],
+    allowFallback:true,
+    fallbackToAuto:false,
+    assumedInputPerOutput:10,
+  });
+
+  // Битая настройка не должна мешать запуску: остаётся авто-выбор шлюза.
+  process.env.PLATFORM_AI_ROUTING="{not json";
+  assert.equal(getPlatformProviderConfig()?.routing,undefined);
   clear();
 });
 

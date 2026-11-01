@@ -798,7 +798,7 @@ button,textarea{font:inherit}button{color:inherit}
 .billing-payment-status.pending{border-color:#3f3a2b;color:#c6b487;background:#1a1710}
 .billing-payment-status.failed{border-color:#4a3030;color:#d99b9b;background:#1b1212}
 /* Докупка кредитов: отдельный разовый платёж, поэтому блок стоит рядом с расходами, а не
-   внутри карточки тарифа. Пакеты — кнопки: выбранный пакет подсвечивается до оплаты. */
+   внутри карточки тарифа. Количество вводится вручную, цена считается по ставке за 1000. */
 .credit-topup{max-width:1180px;margin:36px auto 0;padding:18px;border:1px solid var(--line-warm);border-radius:12px;background:linear-gradient(180deg,#12161b,#0d1014)}
 .credit-topup.compact{max-width:none;margin:16px 0 0;padding:14px}
 .credit-topup-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
@@ -807,19 +807,18 @@ button,textarea{font:inherit}button{color:inherit}
 .credit-topup-balance{flex:none;min-width:112px;padding:9px 11px;border:1px solid #3d4b42;border-radius:8px;background:#101814;text-align:right}
 .credit-topup-balance span,.credit-topup-balance small{display:block;color:#7f9485;font-size:9px}
 .credit-topup-balance strong{display:block;margin:3px 0 2px;color:#cfe0d2;font-size:18px;font-variant-numeric:tabular-nums}
-.credit-pack-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:16px}
-.credit-pack{position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:5px;min-height:104px;padding:13px;border:1px solid var(--line-warm);border-radius:9px;background:#0e1115;color:inherit;font:inherit;text-align:left;cursor:pointer;transition:border-color .16s ease,background .16s ease,transform .16s ease,box-shadow .16s ease}
-.credit-pack:hover{border-color:var(--line-warm-strong);background:#12161c;transform:translateY(-1px)}
-.credit-pack:focus-visible{outline:2px solid #8f7a55;outline-offset:2px}
-.credit-pack.selected{border-color:#7c8d80;background:#111a15;box-shadow:inset 0 0 0 1px #405246}
-.credit-pack.recommended{border-color:#4d4937}
-.credit-pack.recommended.selected{border-color:#8b8661}
-.credit-pack-badge{display:inline-flex;align-items:center;gap:4px;margin-bottom:2px;color:#cbbd8c;font-size:8.5px;text-transform:uppercase;letter-spacing:.04em}
-.credit-pack-name{color:#dce1e6;font-size:11px;font-weight:600}
-.credit-pack strong{color:#eef0f3;font-size:20px;font-weight:650;font-variant-numeric:tabular-nums}
-.credit-pack small{color:#7d8692;font-size:9.5px;line-height:1.4}
-.credit-pack-check{position:absolute;top:10px;right:10px;display:grid;place-items:center;width:15px;height:15px;border:1px solid #3f4b41;border-radius:50%;color:#cfe0d2;font-size:10px;line-height:1}
-.credit-pack.selected .credit-pack-check{border-color:#78927d;background:#1b2a20}
+.credit-topup-form{display:grid;grid-template-columns:minmax(0,1fr) minmax(170px,auto);gap:10px;margin-top:16px}
+.credit-topup-amount{display:flex;flex-direction:column;gap:6px;min-width:0;padding:13px;border:1px solid var(--line-warm);border-radius:9px;background:#0e1115;color:#7d8692;font-size:9.5px}
+.credit-topup-amount>span{color:#dce1e6;font-size:11px;font-weight:600}
+.credit-topup-amount-row{display:flex;align-items:center;gap:8px;height:42px;padding:0 10px;border:1px solid #3d4b42;border-radius:7px;background:#0b0d10;transition:border-color .16s ease,box-shadow .16s ease}
+.credit-topup-amount-row:focus-within{border-color:#78927d;box-shadow:0 0 0 2px rgba(120,146,125,.15)}
+.credit-topup-amount-row input{min-width:0;width:100%;border:0;outline:0;background:transparent;color:#eef0f3;font:inherit;font-size:20px;font-weight:650;font-variant-numeric:tabular-nums}
+.credit-topup-amount-row em{flex:none;color:#7d8692;font-size:9.5px;font-style:normal}
+.credit-topup-amount small{color:#7d8692;font-size:9px;line-height:1.4}
+.credit-topup-amount small.warning{color:#d29b7e}
+.credit-topup-total{display:flex;flex-direction:column;justify-content:center;gap:3px;min-width:170px;padding:13px;border:1px solid #3d4b42;border-radius:9px;background:#101814;text-align:right}
+.credit-topup-total span,.credit-topup-total small{color:#7f9485;font-size:9px}
+.credit-topup-total strong{color:#cfe0d2;font-size:23px;font-weight:650;font-variant-numeric:tabular-nums}
 .credit-topup .checkout-consent{margin-top:14px}
 .credit-topup-pay{width:100%;height:40px;margin-top:10px;justify-content:center;gap:8px;border-radius:8px;font-size:11.5px;font-weight:650}
 .credit-topup-error{margin:0}
@@ -834,7 +833,7 @@ button,textarea{font:inherit}button{color:inherit}
 .credit-topup-locked>svg{flex:none;margin-top:1px;color:#b9ab88}
 .credit-topup-locked strong,.credit-topup-locked span{display:block}
 .credit-topup-locked strong{margin-bottom:3px;color:#d5dbe2;font-size:11px;font-weight:600}
-@media(max-width:760px){.credit-topup{padding:14px}.credit-topup-head{display:block}.credit-topup-balance{display:inline-block;margin-top:12px;text-align:left}.credit-pack-grid{grid-template-columns:1fr;gap:8px}.credit-pack{min-height:0}.credit-topup-pay{height:38px;font-size:11px}}
+@media(max-width:760px){.credit-topup{padding:14px}.credit-topup-head{display:block}.credit-topup-balance{display:inline-block;margin-top:12px;text-align:left}.credit-topup-form{grid-template-columns:1fr;gap:8px}.credit-topup-total{min-width:0;text-align:left}.credit-topup-pay{height:38px;font-size:11px}}
 /* Возврат со страницы оплаты: баннер на главной, чтобы платёж не «терялся» между вкладками. */
 .home-payment{width:min(980px,100%);margin:22px auto 0;display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid #3a3121;border-radius:10px;background:linear-gradient(180deg,#1c170e,#0f1216);color:#b5a993}
 .home-payment.fail{border-color:#4a3030;background:linear-gradient(180deg,#1a1313,#0f1216);color:#d99b9b}

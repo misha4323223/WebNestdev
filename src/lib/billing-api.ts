@@ -114,7 +114,7 @@ export type BillingPayment = {
   createdAt: string;
   paidAt: string | null;
 };
-/** Пакет докупки: сумма и количество кредитов приходят с сервера. */
+/** Старый пресет докупки: оставлен для совместимости, новый интерфейс его не использует. */
 export type CreditPack = {
   id: string;
   credits: number;
@@ -123,6 +123,16 @@ export type CreditPack = {
   name: string;
   note: string;
   recommended: boolean;
+};
+/** Настройки произвольной докупки: границы и цена за 1000 кредитов. */
+export type CreditTopUp = {
+  pricePer1000Rub: number;
+  pricePer1000Label: string;
+  minCredits: number;
+  maxCredits: number;
+  minAmountRub: number;
+  maxAmountRub: number;
+  currency: "RUB";
 };
 export type CreditPurchase = {
   invId: number;
@@ -149,11 +159,13 @@ export type BillingData = {
   history?: BillingHistory;
   payments?: BillingPayment[];
   paymentsEnabled?: boolean;
+  /** @deprecated Новый интерфейс покупает произвольное количество через `creditTopUp`. */
   creditPacks?: CreditPack[];
+  creditTopUp?: CreditTopUp;
   creditPurchases?: CreditPurchase[];
 };
 export type Checkout = { invId: number; paymentUrl: string; amount: number; currency: string; test: boolean };
-export type CreditCheckout = Checkout & { credits: number; packId: string };
+export type CreditCheckout = Checkout & { credits: number; packId?: string };
 
 export const getBilling = () => apiJson<BillingData>("/api/billing");
 
@@ -184,12 +196,17 @@ export const startCheckout = (plan: "pro" | "team", autoRenew: boolean) => apiJs
   body: JSON.stringify({ plan, autoRenew }),
 });
 
-/** Докупка кредитов — разовый платёж; пакет выбирается по id, цену считает сервер. */
-export const startCreditCheckout = (packId: string) => apiJson<CreditCheckout>("/api/billing/credits/checkout", {
+/** Докупка кредитов — разовый платёж; количество выбирает человек, цену считает сервер. */
+export const startCreditCheckout = (credits: number) => apiJson<CreditCheckout>("/api/billing/credits/checkout", {
   method: "POST",
   headers: { "content-type": "application/json" },
-  body: JSON.stringify({ packId }),
+  body: JSON.stringify({ credits }),
 });
+
+/** Та же формула, что на сервере: целые рубли, округление вверх. */
+export function creditPriceRub(credits: number, pricePer1000Rub: number): number {
+  return Math.max(1, Math.ceil(Math.max(1, Math.trunc(credits)) * pricePer1000Rub / 1_000));
+}
 
 /** Автопродление: сервер сам проверяет, доступно ли оно для подписки. */
 export const updateAutoRenew = (autoRenew: boolean) => apiJson<{ subscription: Subscription }>("/api/billing/subscription", {

@@ -1,6 +1,7 @@
 import { getPlatformEnv } from "../platform/platform-env.js";
 import { getPlatformProviderConfig,type PlatformProviderConfig } from "./platform-provider.js";
 import { FailoverProvider,type FailoverEndpoint } from "./failover-provider.js";
+import { createProvider } from "./index.js";
 
 /**
  * Бесплатная модель тарифа «Старт».
@@ -77,6 +78,9 @@ export function createFreeModelRoute(config=getFreeModelConfig()):FreeModelRoute
   if(!config)return null;
   // Подпись «#2» появляется только там, где ключей больше одного.
   const label=(index:number)=>config.providerName+(config.keys.length>1?" #"+(index+1):"");
+  // Резервная модель создаётся один раз на маршрут: её RoutedProvider хранит выбранного
+  // upstream-провайдера и паузы между шагами, а не начинает цепочку заново каждый раз.
+  const fallbackProvider=config.fallback?createProvider(config.fallback):null;
   const endpoints:FailoverEndpoint[]=[
     ...config.keys.map((token,index)=>({
       id:"free-"+index,
@@ -93,6 +97,9 @@ export function createFreeModelRoute(config=getFreeModelConfig()):FreeModelRoute
       baseUrl:config.fallback.baseUrl,
       model:config.fallback.model,
       ...(config.fallback.token?{token:config.fallback.token}:{}),
+      // Резерв — это уже готовая конфигурация платформенной модели, включая routing:
+      // переиспользуем один экземпляр, чтобы не терять выбранного провайдера между шагами.
+      provider:()=>fallbackProvider!,
     }]:[]),
   ];
   return {

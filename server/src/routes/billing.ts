@@ -4,6 +4,7 @@ import { requireUser } from "../auth/auth.js";
 import type { PlanId } from "../account/plans.js";
 import { accountPlanFor } from "../billing/store.js";
 import { creditPackById } from "../billing/credit-packs.js";
+import { creditPriceRub, creditSettings } from "../billing/credit-settings.js";
 import { createCreditPurchase, getCreditPurchase, markCreditPurchasePaid } from "../billing/credit-store.js";
 import { isSameOriginRequest, sameOriginRefusal } from "../security/same-origin.js";
 import {
@@ -44,8 +45,15 @@ const checkoutSchema = z.object({
 });
 const renewSchema = z.object({ autoRenew: z.boolean() });
 const creditCheckoutSchema = z.object({
-  /** Браузер выбирает только пакет; цену и количество кредитов сервер берёт из каталога. */
-  packId: z.string().trim().min(1).max(64),
+  /** Новый клиент присылает количество; цену за него считает сервер по ставке за 1000. */
+  credits: z.coerce.number().int("Количество кредитов — целое число")
+    .min(1, "Количество кредитов должно быть больше нуля")
+    .max(1_000_000, "Слишком много кредитов")
+    .optional(),
+  /** Старые клиенты присылают id пакета; его цена тоже считается по текущей ставке. */
+  packId: z.string().trim().min(1).max(64).optional(),
+}).strict().refine(value => (value.credits !== undefined) !== (value.packId !== undefined), {
+  message: "Укажите количество кредитов",
 });
 
 type FormBody = Record<string, string | undefined>;
@@ -147,41 +155,60 @@ export async function registerBillingRoutes(app: FastifyInstance) {
     const user = await requireUser(request, reply); if (!user) return;
     if (crossSiteRefused(request)) return reply.code(403).send({ error: sameOriginRefusal() });
     const parsed = creditCheckoutSchema.safeParse(request.body ?? {});
-    if (!parsed.success) return reply.code(400).send({ error: "Выберите пакет кредитов" });
+    if (!parsed.success) {
+      return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "Укажите количество кредитов" });
+    }
     const config = robokassaConfig();
     if (!config.configured) return reply.code(503).send({ error: "Оплата пока не подключена. Попробуйте позже." });
     const plan = await accountPlanFor(user.id);
     if (plan === "free") {
       return reply.code(409).send({ error: "Докупить кредиты можно на тарифе «Плюс» или «Премиум». Сначала оформите подписку." });
     }
-    const pack = creditPackById(parsed.data.packId);
-    if (!pack) return reply.code(400).send({ error: "Такого пакета кредитов нет" });
+    const settings = creditSettings();
+    let credits: number;
+    let packId: string;
+    if (parsed.data.credits !== undefined) {
+      credits = parsed.data.credits;
+      packId = "custom";
+    } else {
+      const pack = creditPackById(parsed.data.packId ?? "");
+      if (!pack) return reply.code(400).send({ error: "Такого пакета кредитов нет" });
+      credits = pack.credits;
+      packId = pack.id;
+    }
+    if (credits < settings.minCredits) {
+      return reply.code(400).send({ error: "Минимальная докупка — " + settings.minCredits.toLocaleString("ru-RU") + " кредитов" });
+    }
+    if (credits > settings.maxCredits) {
+      return reply.code(400).send({ error: "Максимум за одну докупку — " + settings.maxCredits.toLocaleString("ru-RU") + " кредитов" });
+    }
+    const amount = creditPriceRub(credits, settings);
     const purchase = await createCreditPurchase({
       userId: user.id,
-      packId: pack.id,
-      credits: pack.credits,
-      amount: pack.priceRub,
+      packId,
+      credits,
+      amount,
     });
     const email = await reachableEmailFor(user);
     const link = buildPaymentUrl({
       config,
       plan,
-      planName: pack.name,
+      planName: credits.toLocaleString("ru-RU") + " кредитов",
       invId: purchase.invId,
-      amount: pack.priceRub,
-      description: "Кредиты NestDev — " + pack.credits.toLocaleString("ru-RU") + " шт.",
+      amount,
+      description: "Кредиты NestDev — " + credits.toLocaleString("ru-RU") + " шт.",
       kind: "credits",
-      credits: pack.credits,
+      credits,
       ...(email ? { email } : {}),
     });
-    request.log.info({ invId: purchase.invId, userId: user.id, packId: pack.id, credits: pack.credits, amount: pack.priceRub }, "billing: счёт на кредиты создан");
+    request.log.info({ invId: purchase.invId, userId: user.id, packId, credits, amount }, "billing: счёт на кредиты создан");
     return {
       invId: purchase.invId,
       paymentUrl: link.url,
-      amount: pack.priceRub,
+      amount,
       currency: "RUB",
-      credits: pack.credits,
-      packId: pack.id,
+      credits,
+      packId,
       test: config.testMode,
     };
   });

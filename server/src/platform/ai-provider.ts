@@ -1,4 +1,5 @@
 import { getPlatformProviderConfig } from "../provider/platform-provider.js";
+import { defaultUpstreamRouting, type UpstreamRouting } from "../provider/upstream-routing.js";
 import { mainCreditRates, type CreditRates } from "../account/credits.js";
 import { platformEnvStatus, type PlatformEnvSource } from "./platform-env.js";
 
@@ -16,6 +17,8 @@ export type PlatformAiProviderStatus = {
   keySource: PlatformEnvSource;
   /** Кредиты за 1M токенов и минимум за запуск; не рубли провайдера. */
   creditRates: CreditRates;
+  /** Выбор upstream-провайдера внутри шлюза. */
+  routing: UpstreamRouting;
 };
 
 export function platformAiProviderStatus(): PlatformAiProviderStatus {
@@ -32,5 +35,6 @@ export function platformAiProviderStatus(): PlatformAiProviderStatus {
     hasKey: Boolean(config?.token),
     keySource: key?.source ?? "none",
     creditRates: mainCreditRates(),
+    routing: config?.routing ?? defaultUpstreamRouting(),
   };
 }

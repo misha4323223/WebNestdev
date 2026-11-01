@@ -4,6 +4,12 @@ import path from "node:path";
 import { decryptSecret, encryptSecret, isEncryptedSecret } from "../storage/secret-crypto.js";
 import type { PlatformProviderConfig } from "../provider/platform-provider.js";
 import {
+  defaultUpstreamRouting,
+  normalizeUpstreamRouting,
+  upstreamRoutingProblem,
+  type UpstreamRouting,
+} from "../provider/upstream-routing.js";
+import {
   BASE_CREDIT_RATES,
   creditRatesProblem,
   defaultCreditRatesFor,
@@ -40,6 +46,8 @@ export type PlatformModelRecord = {
   contextTokens?: number;
   /** Сколько кредитов стоит миллион входных и выходных токенов этой модели. */
   creditRates: CreditRates;
+  /** Выбор upstream-провайдера внутри шлюза; `auto` — шлюз выбирает сам. */
+  routing: UpstreamRouting;
   createdAt: string;
   updatedAt: string;
 };
@@ -57,6 +65,8 @@ export type PlatformModelInput = {
   contextTokens?: number | null;
   /** Частичное обновление ставок; `null` возвращает стартовые ставки модели. */
   creditRates?: Partial<CreditRates> | null;
+  /** Маршрутизация upstream-провайдера; `null` возвращает `auto`. */
+  routing?: Partial<UpstreamRouting> | null;
 };
 
 export type PlatformModelAdminView = Omit<PlatformModelRecord, "apiKey"> & { hasKey: boolean };
@@ -139,6 +149,8 @@ async function readStore(): Promise<PlatformModelRecord[]> {
       enabled: record.enabled !== false,
       // Старые записи каталога появились до кредитов: им нужен понятный старт, а не ноль.
       creditRates: normalizeCreditRates(record.creditRates, defaultCreditRatesFor(record.id)),
+      // Старые записи не знали о маршрутизации: `auto` сохраняет прежнее поведение.
+      routing: normalizeUpstreamRouting(record.routing) ?? defaultUpstreamRouting(),
     });
   }
   return result;
@@ -213,6 +225,14 @@ export async function savePlatformModel(id: string, input: PlatformModelInput): 
     : normalizeCreditRates(input.creditRates, existing?.creditRates ?? defaultCreditRatesFor(id));
   const creditProblem = creditRatesProblem(creditRates);
   if (creditProblem) throw new Error(creditProblem);
+  const routing = input.routing === null
+    ? defaultUpstreamRouting()
+    : input.routing !== undefined
+      ? normalizeUpstreamRouting(input.routing)
+      : existing?.routing ?? defaultUpstreamRouting();
+  if (!routing) throw new Error("routing: проверьте режим, список провайдеров и maxPrice");
+  const routingProblem = upstreamRoutingProblem(routing);
+  if (routingProblem) throw new Error("routing: " + routingProblem);
   const next: PlatformModelRecord = {
     id,
     name,
@@ -225,6 +245,7 @@ export async function savePlatformModel(id: string, input: PlatformModelInput): 
     enabled: input.enabled ?? existing?.enabled ?? true,
     ...(contextTokens ? { contextTokens } : {}),
     creditRates,
+    routing,
     createdAt: existing?.createdAt ?? now,
     updatedAt: now,
   };
@@ -255,6 +276,7 @@ export function platformModelProviderConfig(model: PlatformModelRecord): Platfor
     baseUrl: model.baseUrl,
     model: model.model,
     ...(model.apiKey ? { token: model.apiKey } : {}),
+    routing: model.routing,
   };
 }
 

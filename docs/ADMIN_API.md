@@ -184,11 +184,14 @@ curl -s https://panel.example.com/api/admin/2fa/verify -H 'content-type: applica
 | `POST /api/admin/users/:id/plan` | `Bearer` | выдать тариф без оплаты или снять его (раздел 7.7) |
 | `POST /api/admin/users/:id/tokens` | `Bearer` | надбавка к месячному пулу токенов; 10 000 токенов = 1 кредит (раздел 7.7) |
 | `GET /api/admin/billing?days=&limit=` | `Bearer` | платежи, подписки, истекающие и калибровка пула (раздел 7.8) |
+| `GET /api/admin/billing/credits` | `Bearer` | цена за 1 000 кредитов, минимум, максимум и примеры сумм (раздел 7.8.1) |
+| `POST /api/admin/billing/credits` | `Bearer` | изменить ставку и границы докупки; тело частичное (раздел 7.8.1) |
 | `GET /api/admin/plans` | `Bearer` | тарифы: название, описание, базовая цена и скидка (раздел 7.10) |
 | `POST /api/admin/plans` | `Bearer` | изменить витрину и скидку; ответ уже содержит итоговую цену (раздел 7.10) |
-| `GET /api/admin/ai` | `Bearer` | главный AI-провайдер: название, Base URL, модель, источник ключа и ставки кредитов (раздел 7.12) |
-| `POST /api/admin/ai` | `Bearer` | переключить провайдера, модель, ключ и ставки кредитов (раздел 7.12) |
-| `POST /api/admin/ai/test` | `Bearer` | проверить черновик провайдера настоящим вызовом с инструментом (раздел 7.12) |
+| `GET /api/admin/ai` | `Bearer` | главный AI-провайдер: название, Base URL, модель, источник ключа, ставки кредитов и routing (раздел 7.12) |
+| `POST /api/admin/ai` | `Bearer` | переключить провайдера, модель, ключ, ставки кредитов и routing (раздел 7.12) |
+| `POST /api/admin/ai/test` | `Bearer` | проверить черновик провайдера настоящим вызовом с инструментом и выбранной цепочкой (раздел 7.12) |
+| `GET /api/admin/ai/providers` | `Bearer` | каталог upstream-провайдеров модели: цены, tools, рекомендация (раздел 7.12) |
 | `GET /api/admin/ai/models` | `Bearer` | дополнительные модели платформы: Max, Mini и другие (раздел 7.13) |
 | `POST /api/admin/ai/models` | `Bearer` | добавить модель; `id` в теле (раздел 7.13) |
 | `PUT /api/admin/ai/models/:id` | `Bearer` | создать или полностью обновить модель (раздел 7.13) |
@@ -710,6 +713,58 @@ curl -s -H "Authorization: Bearer $TOKEN" 'https://nestdev.ru/api/admin/billing?
 
 Ответ не кэшируется (`cache-control: no-store`): это живые деньги.
 
+### 7.8.1. Настройка докупки кредитов
+
+Покупатель вводит любое количество кредитов от 1 000; цена считается по ставке за 1 000.
+Владелец задаёт ставку и границы через внешнюю админку, без выкатки:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" 'https://nestdev.ru/api/admin/billing/credits'
+```
+
+```json
+{
+  "creditTopUp": {
+    "pricePer1000Rub": 290,
+    "pricePer1000Label": "290 ₽",
+    "minCredits": 1000,
+    "maxCredits": 100000,
+    "minAmountRub": 290,
+    "maxAmountRub": 29000,
+    "currency": "RUB"
+  },
+  "examples": [
+    { "credits": 1000, "amountRub": 290, "priceLabel": "290 ₽" },
+    { "credits": 5000, "amountRub": 1450, "priceLabel": "1 450 ₽" }
+  ]
+}
+```
+
+Изменение — частичное: можно прислать только цену, только границы или всё сразу.
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"pricePer1000Rub":250,"minCredits":1000,"maxCredits":50000}' \
+  'https://nestdev.ru/api/admin/billing/credits'
+```
+
+Правила:
+
+- `pricePer1000Rub` — целое число рублей от 1 до 1 000 000. Сумма счёта:
+  `ceil(credits × pricePer1000Rub / 1000)`, то есть целые рубли с округлением вверх;
+- `minCredits` — от 1 000 до 1 000 000; `maxCredits` — от 1 000 до 1 000 000 и не меньше
+  минимума. Минимум ниже 1 000 не принимается;
+- неизвестные поля и пустое тело отклоняются с `400`, поэтому опечатка не сохраняется молча;
+- изменения действуют только на новые счета: уже выставленный счёт и его сумма не меняются;
+- старый `packId` в `POST /api/billing/credits/checkout` продолжает работать, но его цена тоже
+  считается по текущей ставке — обойти настройку через старый клиент нельзя;
+- настройки лежат в зашифрованном `CREDIT_SETTINGS` и скрыты из формы ключей платформы;
+- докупка по-прежнему доступна только на «Плюсе» и «Премиуме».
+
+`GET /api/billing` возвращает те же значения покупателю в `creditTopUp`; `examples` — только
+для админки. `creditPacks` остаётся в ответе для старых клиентов: это те же три пресета, но с
+ценой по текущей ставке и только в пределах действующих минимума и максимума.
+
 ### 7.9. Карточка проекта
 
 ```bash
@@ -838,6 +893,13 @@ curl -s -H "Authorization: Bearer $TOKEN" 'https://nestdev.ru/api/admin/ai'
       "inputPerMillion": 50,
       "outputPerMillion": 510,
       "minimumPerRun": 1
+    },
+    "routing": {
+      "mode": "fixed",
+      "providers": ["morph/fp8", "open-inference/fp4"],
+      "allowFallback": true,
+      "fallbackToAuto": false,
+      "assumedInputPerOutput": 10
     }
   }
 }
@@ -862,6 +924,52 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/
 `POST /api/admin/ai/test` принимает те же `provider`, `baseUrl`, `model` и необязательный
 `apiKey`. Без нового ключа проверка использует сохранённый. Результат: `ok`, `latencyMs`,
 `tools` (подтверждён ли вызов инструментов), `text` и `usage`; ключ в ответ не попадает.
+
+### Маршрутизация upstream-провайдеров
+
+У одной модели Polza.ai десятки провайдеров с разной ценой. Без настройки шлюз выбирает сам, и
+это не обязательно самый дешёвый. Поле `routing` закрепляет выбор; оно необязательное — без него
+работает `auto`, как раньше.
+
+```json
+{
+  "mode": "fixed",
+  "providers": ["morph/fp8", "open-inference/fp4", "deepseek"],
+  "allowFallback": true,
+  "fallbackToAuto": false,
+  "assumedInputPerOutput": 10,
+  "maxPrice": { "prompt": 20, "completion": 70 }
+}
+```
+
+- `mode: "auto"` — поле `provider` в запрос не отправляется, выбирает шлюз.
+- `mode: "fixed"` — `providers` задаёт точный порядок. Каждый запрос идёт с
+  `provider.only = [текущий]` и `allow_fallbacks: false`; сервер сам переходит к следующему, если
+  провайдера нет в каталоге или он отказал до первого байта ответа. Если Morph выключили, он не
+  будет выбран, а запрос уйдёт к следующему из списка.
+- `mode: "cheapest"` — `providers` работает как белый список (пусто — все провайдеры модели), но
+  порядок считается по каталогу. Оценка: `prompt × assumedInputPerOutput + completion`, рубли за
+  1M токенов. Провайдеры без `tools`, с дублем имени и `spot`/`flex`/`batch` не выбираются
+  автоматически. `maxPrice` ограничивает цену сверху.
+- `allowFallback: false` оставляет только первого провайдера. `fallbackToAuto: true` разрешает
+  шлюзу выбрать самому, если вся цепочка недоступна; по умолчанию выключено.
+- `routing: null` возвращает `auto`; отсутствие поля оставляет настройку без изменений.
+
+Каталог для выбора отдаёт отдельный маршрут:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  'https://nestdev.ru/api/admin/ai/providers?baseUrl=https%3A%2F%2Fpolza.ai%2Fapi%2Fv1&model=deepseek%2Fdeepseek-v4.1-flash-1017'
+```
+
+В ответе: `providers[]` с `promptPerMillion`, `completionPerMillion`, `tools`, `contextLength`,
+`ambiguous`, `eligible`, `selected` и `estimatedCost`, плюс `recommended` — первый по цене
+подходящий провайдер. `refresh=1` обходит пятиминутный кэш; `stale: true` означает, что каталог
+временно недоступен и отдана прошлая копия. Для модели каталога Max/Mini можно передать `id=max`
+и не дублировать адрес и модель.
+
+`POST /api/admin/ai/test` принимает `routing` в теле; без него для того же `baseUrl` и `model`
+используется сохранённая цепочка. `routing: null` в этом запросе проверяет авто-выбор.
 
 Бесплатная модель тарифа «Старт» (`PLATFORM_AI_FREE_*`) и генерация картинок (`PLATFORM_IMAGE_*`)
 этим маршрутом не меняются.
@@ -896,6 +1004,13 @@ curl -s -H "Authorization: Bearer $TOKEN" 'https://nestdev.ru/api/admin/ai/model
       "enabled": true,
       "contextTokens": 180000,
       "creditRates": { "inputPerMillion": 250, "outputPerMillion": 2550, "minimumPerRun": 2 },
+      "routing": {
+        "mode": "fixed",
+        "providers": ["morph/fp8", "open-inference/fp4"],
+        "allowFallback": true,
+        "fallbackToAuto": false,
+        "assumedInputPerOutput": 10
+      },
       "hasKey": true,
       "createdAt": "2026-11-01T10:00:00.000Z",
       "updatedAt": "2026-11-01T10:00:00.000Z",
@@ -918,7 +1033,8 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" -H 'content-type: application/j
     "apiKey":"sk-…",
     "plans":["pro","team"],
     "contextTokens":180000,
-    "creditRates":{"inputPerMillion":250,"outputPerMillion":2550,"minimumPerRun":2}
+    "creditRates":{"inputPerMillion":250,"outputPerMillion":2550,"minimumPerRun":2},
+    "routing":{"mode":"fixed","providers":["morph/fp8","open-inference/fp4"]}
   }' \
   'https://nestdev.ru/api/admin/ai/models/max'
 ```
@@ -929,7 +1045,10 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" -H 'content-type: application/j
 `baseUrl`, `model` и (для рабочей модели) `apiKey`. `plans` — только `pro` и `team`; по умолчанию
 обе. `enabled: false` скрывает модель из выбора, не удаляя её. `contextTokens` — бюджет промпта
 для этой модели; пусто — общий бюджет платного тарифа. `clearKey: true` удаляет ключ (например,
-перед сменой провайдера).
+перед сменой провайдера). `routing` — та же маршрутизация upstream-провайдеров, что у главной
+модели (раздел 7.12): `fixed` с порядком, `cheapest` по каталогу, `auto` по умолчанию;
+`routing: null` возвращает `auto`. Если Morph отключат, сервер пропустит его по каталогу и
+перейдёт к следующему из списка, а не уйдёт молча к дорогому провайдеру.
 
 **Кредиты.** `creditRates` — сколько кредитов стоит 1 млн входных и выходных токенов этой модели
 плюс минимум за запуск. Для `max` стартовые ставки `250 / 2550 / 2`, для `mini` — `25 / 255 / 1`,
@@ -952,7 +1071,9 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/
 ```
 
 Ответ: `ok`, `latencyMs`, `tools` (подтверждён ли вызов инструментов), `text`, `usage` и
-`reasoning`; ключ не возвращается. Удаление — `DELETE /api/admin/ai/models/max`.
+`reasoning`; ключ не возвращается. Проверка использует сохранённый `routing` модели; можно
+передать свой `routing` в теле, а `routing: null` проверяет авто-выбор. Удаление —
+`DELETE /api/admin/ai/models/max`.
 
 Выбор модели пользователем проверяется на сервере: клиент присылает `model` (`nestdev`,
 `nestdev-air` или id из этого каталога), а `agent-ws` и рантайм сверяют его с тарифом. Подставить

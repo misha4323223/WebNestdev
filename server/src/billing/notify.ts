@@ -131,7 +131,7 @@ export async function notifyPaymentPaid(
 }
 
 /** Письмо-предупреждение перед автопродлением. Без него свипер не списывает деньги. */
-/** Письмо после оплаты пакета кредитов. Отказ почты не влияет на зачисление. */
+/** Письмо после оплаты кредитов. Отказ почты не влияет на зачисление. */
 export async function notifyCreditPurchasePaid(
   input: { userId: string; credits: number; amount: number; invId: number },
   send: LetterSend = sendMail,

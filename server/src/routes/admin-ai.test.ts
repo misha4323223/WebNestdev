@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import type { UpstreamCatalogModel } from "../provider/upstream-catalog.js";
 
 process.env.WEBNESTDEV_STORAGE = "json";
 process.env.WEBNESTDEV_ENCRYPTION_KEY = "0123456789abcdef".repeat(4);
@@ -13,13 +14,38 @@ const Fastify = (await import("fastify")).default;
 const { registerAdminAiRoutes } = await import("./admin-ai.js");
 const { createAdmin, createAdminSession } = await import("../admin/admin-store.js");
 
-const seen: { value: { provider: string; baseUrl: string; model: string; token?: string } | null } = { value: null };
+const seen: { value: { provider: string; baseUrl: string; model: string; token?: string; routing?: { mode: string } } | null } = { value: null };
+function catalogFor(model: string): UpstreamCatalogModel {
+  return {
+    id: model,
+    name: model,
+    contextLength: 1_048_576,
+    topProvider: "morph/fp8",
+    fetchedAt: "2026-11-01T12:00:00.000Z",
+    stale: false,
+    providers: [
+      {
+        name: "morph/fp8", promptPerMillion: 5.7, completionPerMillion: 21.88, cacheReadPerMillion: 0.91,
+        currency: "RUB", contextLength: 1_048_576, maxCompletionTokens: 943_718,
+        supportedParameters: ["tools"], tools: true, ambiguous: false, duplicateCount: 1,
+        isUnofficial: false, isModerated: false, storesDataInRussia: false, isFz152Compliant: false, hostedOnPolza: false,
+      },
+      {
+        name: "open-inference/fp4", promptPerMillion: 3.99, completionPerMillion: 56.97, cacheReadPerMillion: 0.57,
+        currency: "RUB", contextLength: 1_048_576, maxCompletionTokens: 900_000,
+        supportedParameters: ["tools"], tools: true, ambiguous: false, duplicateCount: 1,
+        isUnofficial: false, isModerated: false, storesDataInRussia: false, isFz152Compliant: false, hostedOnPolza: false,
+      },
+    ],
+  };
+}
 const app = Fastify();
 await registerAdminAiRoutes(app, {
   testAi: async config => {
     seen.value = config;
     return { ok: true, provider: config.provider, model: config.model, latencyMs: 10, tools: true };
   },
+  catalog: async (_baseUrl, _token, model) => catalogFor(model),
 });
 await app.ready();
 
@@ -125,6 +151,80 @@ test("частичное обновление ставок главной мод
   });
   assert.equal(saved.statusCode, 200);
   assert.deepEqual(saved.json().ai.creditRates, { inputPerMillion: 60, outputPerMillion: 700, minimumPerRun: 2 });
+});
+
+test("админка сохраняет маршрутизацию и отдаёт каталог провайдеров", async () => {
+  const saved = await app.inject({
+    method: "POST",
+    url: "/api/admin/ai",
+    headers: auth,
+    payload: {
+      provider: "Polza.ai",
+      baseUrl: "https://polza.ai/api/v1",
+      model: "deepseek/deepseek-v4.1-flash-1017",
+      routing: { mode: "fixed", providers: ["morph/fp8"], allowFallback: true },
+    },
+  });
+  assert.equal(saved.statusCode, 200);
+  assert.deepEqual(saved.json().ai.routing, {
+    mode: "fixed",
+    providers: ["morph/fp8"],
+    allowFallback: true,
+    fallbackToAuto: false,
+    assumedInputPerOutput: 10,
+  });
+
+  const status = await app.inject({ method: "GET", url: "/api/admin/ai", headers: auth });
+  assert.equal(status.statusCode, 200);
+  assert.deepEqual(status.json().ai.routing, saved.json().ai.routing);
+
+  const catalog = await app.inject({
+    method: "GET",
+    url: "/api/admin/ai/providers?baseUrl=" + encodeURIComponent("https://polza.ai/api/v1") +
+      "&model=" + encodeURIComponent("deepseek/deepseek-v4.1-flash-1017"),
+    headers: auth,
+  });
+  assert.equal(catalog.statusCode, 200);
+  const body = catalog.json() as {
+    recommended: string | null;
+    providers: Array<{ name: string; selected: boolean; eligible: boolean; estimatedCost: number }>;
+  };
+  assert.equal(body.recommended, "morph/fp8");
+  assert.deepEqual(body.providers.map(provider => provider.name), ["morph/fp8", "open-inference/fp4"]);
+  assert.equal(body.providers.find(provider => provider.name === "morph/fp8")?.selected, true);
+  assert.equal(body.providers.find(provider => provider.name === "open-inference/fp4")?.selected, false);
+  assert.equal(body.providers.find(provider => provider.name === "open-inference/fp4")?.eligible, true);
+  assert.equal(body.providers.find(provider => provider.name === "morph/fp8")?.estimatedCost, 78.88);
+
+  // Проверка того же адреса и модели должна идти с сохранённой цепочкой, а не с auto.
+  const tested = await app.inject({
+    method: "POST",
+    url: "/api/admin/ai/test",
+    headers: auth,
+    payload: {
+      provider: "Polza.ai",
+      baseUrl: "https://polza.ai/api/v1",
+      model: "deepseek/deepseek-v4.1-flash-1017",
+    },
+  });
+  assert.equal(tested.statusCode, 200);
+  assert.equal(seen.value?.routing?.mode, "fixed");
+});
+
+test("fixed без провайдера отклоняется на уровне API", async () => {
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/admin/ai",
+    headers: auth,
+    payload: {
+      provider: "Polza.ai",
+      baseUrl: "https://polza.ai/api/v1",
+      model: "deepseek/deepseek-v4.1-flash-1017",
+      routing: { mode: "fixed", providers: [] },
+    },
+  });
+  assert.equal(response.statusCode, 400);
+  assert.match(response.json().error, /routing:.*хотя бы одного/);
 });
 
 test("нулевые обе ставки главной модели отклоняются", async () => {

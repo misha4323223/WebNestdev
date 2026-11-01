@@ -1,5 +1,6 @@
 import { createProvider } from "./index.js";
 import { reasoningSupport, type ReasoningSupport } from "./openai-compatible-provider.js";
+import type { UpstreamRouting } from "./upstream-routing.js";
 
 export type ProviderConnectionTestResult = {
   ok: boolean;
@@ -20,7 +21,7 @@ export type ProviderConnectionTestResult = {
  * Ключ передаётся только в заголовок запроса и никогда не возвращается в результате.
  */
 export async function testProviderConnection(
-  config: { provider: string; baseUrl: string; model: string; token?: string },
+  config: { provider: string; baseUrl: string; model: string; token?: string; routing?: UpstreamRouting },
   timeoutMs = 20_000,
 ): Promise<ProviderConnectionTestResult> {
   const started = Date.now();

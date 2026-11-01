@@ -34,6 +34,7 @@ export const AUDIT_ACTIONS = {
   "platform.ai_model.deleted": "Удалена модель платформы",
   "platform.ai_model.tested": "Проверена модель платформы",
   "billing.plans.updated": "Изменены тарифы и скидки",
+  "billing.credits.updated": "Изменена цена и границы докупки кредитов",
   "project.deleted": "Удалён проект",
   "user.registered": "Зарегистрирован аккаунт",
   "user.login.failed": "Неудачный вход пользователя",

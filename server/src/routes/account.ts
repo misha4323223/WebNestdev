@@ -10,6 +10,7 @@ import { getBillingHistory, getCostSnapshot, getCreditBudget, getTokenBudget, ge
 import { getStorageOverview, refreshUserStorage } from "../account/storage-quota.js";
 import { accountPlanFor, getSubscriptionRecord, isSubscriptionLive, listPayments } from "../billing/store.js";
 import { publicCreditPacks } from "../billing/credit-packs.js";
+import { publicCreditTopUp } from "../billing/credit-settings.js";
 import { listCreditPurchases } from "../billing/credit-store.js";
 import { planPriceLabel, planPriceRub, publicPlans, robokassaConfig } from "../billing/robokassa.js";
 import { planDisplayName } from "../billing/plan-settings.js";
@@ -145,7 +146,10 @@ export async function registerAccountRoutes(app: FastifyInstance) {
     return {
       plans: publicPlans(),
       plan,
+      // `creditPacks` оставлен для старых клиентов; новый интерфейс покупает любое количество
+      // кредитов и считает цену по `creditTopUp`.
       creditPacks: publicCreditPacks(),
+      creditTopUp: publicCreditTopUp(),
       creditPurchases: creditPurchases.map(purchase => ({
         invId: purchase.invId,
         packId: purchase.packId,
