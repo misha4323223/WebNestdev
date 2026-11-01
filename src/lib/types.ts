@@ -18,6 +18,19 @@ export type ReasoningEffort="low"|"medium"|"high";
  * шлюз отказал формой и запрос уходит без поля. `enabled=false` — глубину выключил администратор.
  */
 export type ReasoningSupport={enabled:boolean;effort:ReasoningEffort|null;status:"confirmed"|"silent"|"rejected"|"unknown";checkedAt:string|null};
+/** Одна модель в выборе композера: основная, бесплатная Air или дополнительная из каталога. */
+export type PlatformModelOption={
+  id:string;
+  name:string;
+  description:string;
+  available:boolean;
+  locked:boolean;
+  freeModel:boolean;
+  current:boolean;
+  reasoning:ReasoningSupport|null;
+  /** Во сколько раз модель дороже основной по входу; 0 — бесплатная Air. */
+  creditMultiplier:number;
+};
 export type FileEntry={name:string;type:"file"|"directory"};
 /** `static` serves the built app without a dev server, so there is no hot reload. */
 export type PreviewMode="container"|"static";

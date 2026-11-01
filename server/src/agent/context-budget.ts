@@ -12,7 +12,7 @@ import type { ChatMessage } from "../types.js";
  *
  * A gateway enforces two independent limits, and only bounding the first one is a mistake we made:
  *
- * - **size** — `AGENT_CONTEXT_TOKENS_PAID` (default 200000) and `AGENT_CONTEXT_TOKENS_FREE`
+ * - **size** — `AGENT_CONTEXT_TOKENS_PAID` (default 150000) and `AGENT_CONTEXT_TOKENS_FREE`
  *   (default 120000) are the largest prompts each tier may send; the common `AGENT_CONTEXT_TOKENS`
  *   remains a fallback/ceiling for deployments that set it. `AGENT_CONTEXT_OUTPUT_RESERVE`
  *   (default 8192) is subtracted for the answer, and the ratio of characters per token is
@@ -21,9 +21,8 @@ import type { ChatMessage } from "../types.js";
  *   a fixed number of entries. The gateway this platform talks to answers
  *   `[{"origin":"array","code":"too_big","maximum":100,"path":["messages"]}]`, and a run
  *   collects two messages per step plus a verification round of five, so forty steps alone cross a
- *   hundred. `AGENT_CONTEXT_MAX_MESSAGES_PAID` (default 200) and `_FREE` (default 100) keep a
- *   request under the provider's cap; what is dropped for it is the same old history the token
- *   budget drops.
+ *   hundred. `AGENT_CONTEXT_MAX_MESSAGES_PAID` and `_FREE` (both default 80) keep a request under
+ *   the provider's cap; what is dropped for it is the same old history the token budget drops.
  */
 
 /** Characters per token for English text with code. Calibrated from real usage during a run. */
@@ -147,14 +146,14 @@ function tierLimit(specificName: string, globalName: string, fallback: number) {
 }
 
 /**
- * Бюджет промпта по тарифу. Платная модель получает 200k, бесплатная — 120k: поднимать
+ * Бюджет промпта по тарифу. Платная модель получает 150k, бесплатная — 120k: поднимать
  * бесплатную вместе с платной нельзя, её резервные модели могут видеть только 128k.
  */
 export function contextBudgetTokensFor(tier: ContextTier) {
   const total = tierLimit(
     tier === "paid" ? "AGENT_CONTEXT_TOKENS_PAID" : "AGENT_CONTEXT_TOKENS_FREE",
     "AGENT_CONTEXT_TOKENS",
-    tier === "paid" ? 200_000 : 120_000,
+    tier === "paid" ? 150_000 : 120_000,
   );
   const reserve = positiveInt(process.env.AGENT_CONTEXT_OUTPUT_RESERVE, 8_192);
   return Math.max(4_000, total - reserve);
@@ -168,12 +167,12 @@ export function contextMaxMessages() {
   return Math.max(MIN_MAX_MESSAGES, positiveInt(process.env.AGENT_CONTEXT_MAX_MESSAGES, DEFAULT_MAX_MESSAGES));
 }
 
-/** Предел сообщений по тарифу: платной модели нужно больше запаса, бесплатной — безопаснее. */
+/** Предел сообщений по тарифу: 80 — безопасный размер для шлюза и достаточно для текущего шага. */
 export function contextMaxMessagesFor(tier: ContextTier) {
   return Math.max(MIN_MAX_MESSAGES, tierLimit(
     tier === "paid" ? "AGENT_CONTEXT_MAX_MESSAGES_PAID" : "AGENT_CONTEXT_MAX_MESSAGES_FREE",
     "AGENT_CONTEXT_MAX_MESSAGES",
-    tier === "paid" ? 200 : 100,
+    DEFAULT_MAX_MESSAGES,
   ));
 }
 

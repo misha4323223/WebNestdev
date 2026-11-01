@@ -3,11 +3,14 @@ import { apiJson } from "./api";
 export type PlanId = "free" | "pro" | "team";
 export type PlanLimits = {
   projects: number;
-  agentRunsPerDay: number;
+  /** null — дневного лимита нет: на платных тарифах расход ограничен кредитами. */
+  agentRunsPerDay: number | null;
   browserChecksPerDay: number;
   webSearchesPerDay: number;
   storageBytes?: number;
-  /** Пул токенов встроенной модели на месяц; 0 или отсутствие — пула нет, работает дневной лимит. */
+  /** Месячный бюджет кредитов; 0 или отсутствие — кредитов нет, работает дневной лимит запусков. */
+  agentCreditsPerMonth?: number;
+  /** Сырые токены для аналитики; пользовательский лимит теперь считается в кредитах. */
   agentTokensPerMonth?: number;
 };
 export type Plan = {
@@ -29,7 +32,9 @@ export type Plan = {
   details: string[];
 };
 export type Usage = { date: string; agentRuns: number; browserChecks: number; webSearches: number };
-/** Расход месячного пула: `limit: 0` — у тарифа пула нет, шкала не рисуется. */
+/** Расход месячного бюджета кредитов: `limit: 0` — кредитов у тарифа нет. */
+export type CreditBudget = { month: string; used: number; limit: number; bonus?: number; remaining: number };
+/** Сырой токенный пул оставлен для совместимости и аналитики. */
 export type TokenBudget = { month: string; used: number; limit: number; remaining: number };
 /** Состояние квоты считает сервер: пороги 80% и 100% должны совпадать на всех экранах. */
 export type StorageState = "ok" | "warning" | "full";
@@ -103,6 +108,7 @@ export type BillingData = {
   plan?: PlanId;
   limits: PlanLimits;
   usage: Usage;
+  credits?: CreditBudget;
   tokens?: TokenBudget;
   storage?: Storage;
   cost: Cost;
@@ -161,6 +167,10 @@ export const paymentNotice = (billing: BillingData | null | undefined) => billin
   : paymentsPendingNotice;
 
 /** Токены в человеческом виде: «50 млн», а не «50000000» — так их читают в сравнении тарифов. */
+export function creditsLabel(value: number): string {
+  return Math.max(0, Math.round(value)).toLocaleString("ru-RU");
+}
+
 export function tokensLabel(value: number): string {
   if (value >= 1_000_000) {
     const millions = value / 1_000_000;

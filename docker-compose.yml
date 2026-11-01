@@ -204,6 +204,10 @@ services:
       PLATFORM_AI_PRICE_OUTPUT_PER_MILLION: ${PLATFORM_AI_PRICE_OUTPUT_PER_MILLION:-}
       PLATFORM_AI_PRICE_CURRENCY: ${PLATFORM_AI_PRICE_CURRENCY:-}
       PLATFORM_AI_MODEL_PRICES: ${PLATFORM_AI_MODEL_PRICES:-}
+      # Ставки кредитов основной модели: без них сервер использует базовые 50/510/1.
+      PLATFORM_AI_CREDITS_INPUT_PER_MILLION: ${PLATFORM_AI_CREDITS_INPUT_PER_MILLION:-}
+      PLATFORM_AI_CREDITS_OUTPUT_PER_MILLION: ${PLATFORM_AI_CREDITS_OUTPUT_PER_MILLION:-}
+      PLATFORM_AI_CREDITS_MINIMUM_PER_RUN: ${PLATFORM_AI_CREDITS_MINIMUM_PER_RUN:-}
       PLATFORM_INFRA_COST_PER_MONTH: ${PLATFORM_INFRA_COST_PER_MONTH:-}
       # Холодный ярус проектов: архив рабочей папки в S3-совместимом бакете (docs/STORAGE.md).
       # Compose передаёт в контейнер только перечисленные переменные, поэтому без этого блока

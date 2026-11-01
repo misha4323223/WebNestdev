@@ -3,13 +3,13 @@ import { ArrowLeft, ArrowRight, Check, CreditCard, RefreshCw, ShieldCheck } from
 import {
   balanceLabel,
   bytesLabel,
+  creditsLabel,
   dateLabel,
   getBilling,
   paymentNotice,
   paymentStatusLabel,
   rubLabel,
   shortDayLabel,
-  tokensLabel,
   updateAutoRenew,
   type BillingData,
   type PlanId,
@@ -64,6 +64,7 @@ export function SubscriptionPage({ onBack, selectedPlanId, onSelectPlan }: {
   const subscription = billing?.subscription;
   const paid = currentPlanId !== "free" && Boolean(subscription?.renewsAt);
   const selectedPlan = selectedPlanId ? billing?.plans.find(plan => plan.id === selectedPlanId) : undefined;
+  const runsLimit = billing?.limits.agentRunsPerDay ?? null;
 
   // Карточка открывает отдельный компактный экран: на нём описание, согласия и оплата.
   // Пока данные загружаются, страница не мигает обратно на общую сетку.
@@ -173,12 +174,12 @@ export function SubscriptionPage({ onBack, selectedPlanId, onSelectPlan }: {
             <tbody>
               {limitRows.map(row => <tr key={row.key}>
                 <th scope="row">{row.label}</th>
-                {billing.plans.map(plan => <td key={plan.id} className={plan.id === currentPlanId ? "current" : ""}>{plan.limits[row.key]}</td>)}
+                {billing.plans.map(plan => <td key={plan.id} className={plan.id === currentPlanId ? "current" : ""}>{plan.limits[row.key] ?? "Без ограничений"}</td>)}
               </tr>)}
               <tr>
-                <th scope="row">Токенов агента в месяц</th>
+                <th scope="row">Кредитов агента в месяц</th>
                 {billing.plans.map(plan => <td key={plan.id} className={plan.id === currentPlanId ? "current" : ""}>
-                  {plan.limits.agentTokensPerMonth ? tokensLabel(plan.limits.agentTokensPerMonth) : "по дневному лимиту"}
+                  {plan.limits.agentCreditsPerMonth ? creditsLabel(plan.limits.agentCreditsPerMonth) : "по дневному лимиту"}
                 </td>)}
               </tr>
               <tr>
@@ -197,21 +198,21 @@ export function SubscriptionPage({ onBack, selectedPlanId, onSelectPlan }: {
         <div className="subscription-section-head"><span className="eyebrow">СЕГОДНЯ</span><h2>Использование</h2></div>
         <div className="usage-meter-list">
           <div className="usage-meter-title"><strong>Текущий день</strong><small>Сброс по UTC · {billing.usage.date}</small></div>
-          <div className="usage-meter"><div><span>Запуски агента</span><strong>{billing.usage.agentRuns} / {billing.limits.agentRunsPerDay}</strong></div><div className="usage-meter-track"><span style={{ width: `${Math.min(100, billing.usage.agentRuns / Math.max(1, billing.limits.agentRunsPerDay) * 100)}%` }}/></div></div>
+          <div className="usage-meter"><div><span>Запуски агента</span><strong>{runsLimit == null ? billing.usage.agentRuns + " · без дневного лимита" : billing.usage.agentRuns + " / " + runsLimit}</strong></div>{runsLimit != null && <div className="usage-meter-track"><span style={{ width: `${Math.min(100, billing.usage.agentRuns / Math.max(1, runsLimit) * 100)}%` }}/></div>}{runsLimit == null && <small className="usage-meter-left">Расход ограничен месячными кредитами</small>}</div>
           <div className="usage-meter"><div><span>Браузерные проверки</span><strong>{billing.usage.browserChecks} / {billing.limits.browserChecksPerDay}</strong></div><div className="usage-meter-track"><span style={{ width: `${Math.min(100, billing.usage.browserChecks / Math.max(1, billing.limits.browserChecksPerDay) * 100)}%` }}/></div></div>
-          {/* Пул токенов — основной лимит платного тарифа и месячный, а не дневной: он живёт
+          {/* Кредиты — основной лимит платного тарифа и месячный, а не дневной: он живёт
               отдельной шкалой, иначе его сброс путают с полуночью по UTC. */}
           {(() => {
-            const budget = billing.tokens;
+            const budget = billing.credits;
             if (!budget || budget.limit <= 0) return null;
             const state = budget.remaining <= 0 ? "full" : budget.used >= budget.limit * 0.8 ? "warning" : "ok";
             return (
               <div className={"usage-meter" + (state === "ok" ? "" : " is-" + state)}>
-                <div><span>Токены агента в месяц</span><strong>{tokensLabel(budget.used)} из {tokensLabel(budget.limit)}</strong></div>
+                <div><span>Кредиты агента в месяц</span><strong>{creditsLabel(budget.used)} из {creditsLabel(budget.limit)}</strong></div>
                 <div className="usage-meter-track"><span style={{ width: `${Math.min(100, (budget.used / budget.limit) * 100)}%` }} /></div>
                 <small className={"usage-meter-left" + (state === "ok" ? "" : " " + state)}>{state === "full"
-                  ? "Пул исчерпан: встроенная модель недоступна до 1-го числа"
-                  : "Осталось " + tokensLabel(budget.remaining) + " · сброс 1-го числа"}</small>
+                  ? "Кредиты исчерпаны: платные модели недоступны до 1-го числа"
+                  : "Осталось " + creditsLabel(budget.remaining) + " · сброс 1-го числа"}</small>
               </div>
             );
           })()}
@@ -231,7 +232,7 @@ export function SubscriptionPage({ onBack, selectedPlanId, onSelectPlan }: {
             );
           })()}
         </div>
-        <p className="account-muted">Запуски и токены считаются только для встроенной модели платформы. Подключите свой AI-провайдер в настройках проекта — запуски пойдут через ваш ключ и модель, и ни дневная квота, ни пул токенов к ним не применяются.</p>
+        <p className="account-muted">Запуски и кредиты считаются только для моделей платформы. Подключите свой AI-провайдер в настройках проекта — запуски пойдут через ваш ключ и модель, и ни дневная квота, ни кредиты к ним не применяются. На Max кредиты расходуются быстрее, на Mini — медленнее.</p>
       </section>
 
       {Boolean(billing.payments?.length) && <section className="subscription-compare">

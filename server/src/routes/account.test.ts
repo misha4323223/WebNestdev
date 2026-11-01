@@ -1,10 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { FREE_PLAN, PLAN_CATALOG } from "./account.js";
-import { balanceFor, integrationLimitFor, subscriptionFor, tokenPoolFor } from "../account/plans.js";
+import { balanceFor, creditPoolFor, integrationLimitFor, subscriptionFor } from "../account/plans.js";
 import { assertIntegrationSlot, IntegrationLimitError } from "../account/integration-limits.js";
 
-test("paid plans carry a monthly price and quotas grow with the plan", () => {
+test("paid plans carry a monthly price, more projects and no daily run cap", () => {
   assert.equal(PLAN_CATALOG.free.priceLabel, "0 ₽");
   assert.equal(PLAN_CATALOG.free.priceRub, 0);
   assert.equal(PLAN_CATALOG.pro.priceRub, 990);
@@ -12,8 +12,9 @@ test("paid plans carry a monthly price and quotas grow with the plan", () => {
   assert.ok(PLAN_CATALOG.pro.priceLabel.includes("₽"), "цена тарифа видна в интерфейсе");
   assert.ok(PLAN_CATALOG.free.limits.projects < PLAN_CATALOG.pro.limits.projects);
   assert.ok(PLAN_CATALOG.pro.limits.projects < PLAN_CATALOG.team.limits.projects);
-  assert.ok(PLAN_CATALOG.free.limits.agentRunsPerDay < PLAN_CATALOG.pro.limits.agentRunsPerDay);
-  assert.ok(PLAN_CATALOG.pro.limits.agentRunsPerDay < PLAN_CATALOG.team.limits.agentRunsPerDay);
+  assert.equal(PLAN_CATALOG.free.limits.agentRunsPerDay, 10, "на бесплатном тарифе дневной лимит остаётся");
+  assert.equal(PLAN_CATALOG.pro.limits.agentRunsPerDay, null, "на платных тарифах дневного лимита запусков нет");
+  assert.equal(PLAN_CATALOG.team.limits.agentRunsPerDay, null);
 });
 
 /** 700 MiB, not 700 000 000 bytes: the billing formatter divides by 1024 and must print «700 МБ». */
@@ -46,16 +47,16 @@ test("the billing account reports an active free plan and an empty balance until
 });
 
 /**
- * Пул токенов — то, что человек покупает на платном тарифе: он растёт вместе с ценой, а на
+ * Кредиты — то, что человек покупает на платном тарифе: бюджет растёт вместе с ценой, а на
  * бесплатном его нет вовсе (там работает дневной лимит запусков). Это проверяется отдельно,
- * потому что ноль в каталоге означает «пула нет», а не «пул нулевой».
+ * потому что ноль в каталоге означает «кредитов нет», а не «бюджет нулевой».
  */
-test("the monthly token pool is a paid-plan benefit and grows with the plan", () => {
-  assert.equal(tokenPoolFor("free"), 0, "бесплатный тариф живёт дневным лимитом запусков");
-  assert.ok(tokenPoolFor("pro") > 0 && tokenPoolFor("team") > tokenPoolFor("pro"));
-  assert.ok(PLAN_CATALOG.pro.features.some(feature => feature.includes("токенов")));
-  assert.ok(PLAN_CATALOG.team.details.some(detail => detail.includes("токенов")));
-  // Пул — не бесконечность и не «безлимит»: в описании сказано, по какому факту он считается.
+test("the monthly credit pool is a paid-plan benefit and grows with the plan", () => {
+  assert.equal(creditPoolFor("free"), 0, "бесплатный тариф живёт дневным лимитом запусков");
+  assert.ok(creditPoolFor("pro") > 0 && creditPoolFor("team") > creditPoolFor("pro"));
+  assert.ok(PLAN_CATALOG.pro.features.some(feature => feature.includes("кредитов")));
+  assert.ok(PLAN_CATALOG.team.details.some(detail => detail.includes("кредитов")));
+  // Бюджет — не бесконечность и не «безлимит»: в описании сказано, по какому факту он считается.
   assert.ok(PLAN_CATALOG.pro.details.some(detail => detail.includes("фактический расход")));
 });
 

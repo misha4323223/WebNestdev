@@ -41,6 +41,12 @@ const PLANNER_FORBIDDEN_TOOLS=new Set(["git.add","git.commit","git.pull","secret
 const READ_ONLY_COMMANDS=new Set(["ls","cat","head","tail","wc","find","grep","rg","tree","pwd","file","stat","du","df","which","whereis","echo","jq","diff","sort","uniq","cut","basename","dirname","realpath","sed","awk","git","npm","node","tsc","eslint","prettier"]);
 const WRITE_MARKERS=[">","tee ","sed -i","perl -i","--in-place","--write","--fix","rm ","rmdir ","mv ","cp ","mkdir ","touch ","truncate ","chmod ","chown ","ln ","dd ","patch ","git add","git commit","git push","git pull","git fetch","git clone","git checkout","git switch","git restore","git reset","git clean","git stash","git merge","git rebase","git rm","git mv","npm i ","npm install","npm ci","npm run","npm exec","yarn add","pnpm add","bun add","bun run","pip install","python -c","node -e","node --eval","curl ","wget ","ssh ","scp ","sudo ","kill ","systemctl ","docker "];
 
+function platformModelUnavailable(message:string){
+  const error=new Error(message);
+  Object.assign(error,{statusCode:403,code:"MODEL_NOT_AVAILABLE"});
+  return error;
+}
+
 function isReadOnlyCommand(command:string){
   const value=command.trim();
   if(!value)return false;
@@ -71,11 +77,13 @@ export function changesSomething(name:string,input:unknown){
 
 import { commandSucceeded,countVerificationFailure,MAX_VERIFICATION_ATTEMPTS,routeFromMutation,shouldRunBrowserRuntime,verificationBuildCommand,verificationFailureSummary } from "./agent/verification-policy.js";
 import { getPlatformProviderConfig } from "./provider/platform-provider.js";
+import { resolvePaidPlatformModel, type PaidPlatformModelChoice } from "./platform/platform-models.js";
 import { createFreeModelRoute } from "./provider/free-model.js";
 import { cacheHitRate } from "./provider/prompt-caching.js";
 import { getSandbox } from "./sandbox-manager.js";
 import { readBuildScript } from "./preview/static-plan.js";
 import { recordRunUsage } from "./account/usage-store.js";
+import { creditsForUsage, mainCreditRates, type CreditRates } from "./account/credits.js";
 import { beginRun,endRun } from "./agent/active-runs.js";
 
 
@@ -102,6 +110,9 @@ export class AgentRuntime {
     beginRun(request.projectId,request.conversationId);
     const usageTotals={promptTokens:0,completionTokens:0,cachedPromptTokens:0,cacheWritePromptTokens:0,estimated:false};
     let usageModel="";
+    let usageModelId="nestdev";
+    // Ставки фиксируются на старте запуска: правка каталога во время работы не меняет цену задним числом.
+    let usageCreditRates:CreditRates|null=null;
     // Токены в `model_usage` — это расход платформы: из них считается месячный пул тарифа и
     // стоимость для владельца. Запуск на ключе пользователя платформа не оплачивает, поэтому
     // в этот журнал не попадает — иначе пул списывался бы за чужие токены.
@@ -112,10 +123,29 @@ export class AgentRuntime {
       const config=await getProjectProvider(request.projectId);
       // Свой провайдер проекта — значит токены платит пользователь, а не платформа.
       platformModel=!config;
-      const platformConfig=getPlatformProviderConfig();
+      const defaultPlatformConfig=getPlatformProviderConfig();
+      const requestedModel=request.model?.trim();
       // Бесплатный тариф без своего ключа идёт через бесплатную модель с резервом на платформенную.
       // Платные тарифы и проекты со своим провайдером сюда не попадают — у них всё как раньше.
       const freeRoute=!config&&request.plan==="free"?createFreeModelRoute():null;
+      // Дополнительные модели (Max, Mini) лежат в каталоге платформы. Клиент присылает их id,
+      // а не имя upstream-модели: иначе любой запуск мог бы попросить чужую дорогую модель в обход
+      // тарифа. Основная модель остаётся «nestdev», бесплатная — «nestdev-air».
+      let platformChoice:PaidPlatformModelChoice|null=null;
+      if(!config&&request.plan){
+        if(request.plan==="free"){
+          if(requestedModel&&requestedModel!=="nestdev-air")throw platformModelUnavailable("Эта модель доступна только на платном тарифе");
+        }else if(requestedModel&&requestedModel!=="nestdev"){
+          platformChoice=await resolvePaidPlatformModel(requestedModel,request.plan,defaultPlatformConfig);
+          if(!platformChoice)throw platformModelUnavailable("Модель недоступна на вашем тарифе или ещё не настроена");
+        }
+      }else if(!config&&requestedModel&&requestedModel!=="nestdev"){
+        // Запуск без тарифа — служебный/тестовый: каталог ему не разрешён, только основная модель.
+        throw platformModelUnavailable("Модель недоступна: тариф не определён");
+      }
+      const platformConfig=platformChoice?.config??defaultPlatformConfig;
+      usageModelId=freeRoute?"nestdev-air":platformChoice?.id??"nestdev";
+      usageCreditRates=freeRoute||request.plan==="free"?null:platformChoice?.creditRates??mainCreditRates();
       const provider=freeRoute?.provider??createProvider(config??platformConfig??undefined);
       const projectContext=await buildProjectContext(project,request.userId);
       // История — это сохранённый разговор, а не копия из браузера: в ней лежат результаты
@@ -149,7 +179,8 @@ export class AgentRuntime {
         }
         messages=insertSystemNotice(messages,resumeNotice(request.resume.reason,plan));
       }
-      const model=freeRoute?.model??request.model??config?.model??(config?undefined:platformConfig?.model);
+      const model=freeRoute?.model
+        ??(config?(requestedModel||config.model):platformChoice?.config.model??platformConfig?.model);
       if(!model)throw new Error("Модель AI не настроена");
       // Имя модели бесплатного тарифа не уходит в журнал расхода: в интерфейсе его тоже нет.
       usageModel=freeRoute?"free-model":model;
@@ -158,7 +189,9 @@ export class AgentRuntime {
       // Контекст ограничен на каждом шаге, а не только в начале запуска: сообщения добавляются
       // по ходу (выводы инструментов, проверки), а модель получает их целиком. Как именно шаг
       // подрезается и что происходит при отказе провайдера — в agent/step-runner.ts.
-      let budget:StepBudget={budgetTokens:contextBudgetTokensFor(contextTier),charsPerToken:DEFAULT_CHARS_PER_TOKEN,maxMessages:contextMaxMessagesFor(contextTier)};
+      // У Max и Mini может быть меньше окно, чем общий бюджет платного тарифа. Модель сама
+      // объявляет свой предел, и он важнее общего: иначе провайдер ответит отказом по контексту.
+      let budget:StepBudget={budgetTokens:platformChoice?.contextTokens??contextBudgetTokensFor(contextTier),charsPerToken:DEFAULT_CHARS_PER_TOKEN,maxMessages:contextMaxMessagesFor(contextTier)};
       let consecutiveVerifyFailures=0;
       let consecutiveScenarioFailures=0;
       let lastVerificationFailure="";
@@ -486,7 +519,8 @@ export class AgentRuntime {
       }
       if(platformModel&&usageModel&&usageTotals.promptTokens+usageTotals.completionTokens>0){
         try{
-          await recordRunUsage(request.userId,{runId,projectId:request.projectId,conversationId:request.conversationId,model:usageModel,promptTokens:usageTotals.promptTokens,completionTokens:usageTotals.completionTokens,cachedPromptTokens:usageTotals.cachedPromptTokens,estimated:usageTotals.estimated});
+          const credits=usageCreditRates?creditsForUsage(usageCreditRates,usageTotals.promptTokens,usageTotals.completionTokens):0;
+          await recordRunUsage(request.userId,{runId,projectId:request.projectId,conversationId:request.conversationId,model:usageModel,modelId:usageModelId,promptTokens:usageTotals.promptTokens,completionTokens:usageTotals.completionTokens,cachedPromptTokens:usageTotals.cachedPromptTokens,credits,estimated:usageTotals.estimated});
         }catch(error){console.error("Failed to record run usage",error);}
       }
     }

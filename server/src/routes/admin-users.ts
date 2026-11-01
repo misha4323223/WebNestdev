@@ -7,7 +7,7 @@ import { deleteUserSessions, getUser } from "../auth/auth-store.js";
 import { blockUser, getRestriction, unblockUser } from "../account/restriction-store.js";
 import { addTokenBonus, tokenBonusFor, tokenMonth } from "../account/token-bonus.js";
 import { accountPlanFor, grantSubscription } from "../billing/store.js";
-import { getTokenBudget } from "../account/usage-store.js";
+import { getCreditBudget, getTokenBudget } from "../account/usage-store.js";
 import { createNotification } from "../account/notification-store.js";
 import type { PlanId } from "../account/plans.js";
 import { planDisplayName } from "../billing/plan-settings.js";
@@ -307,6 +307,7 @@ export async function registerAdminUserActionRoutes(app: FastifyInstance) {
     const plan = await accountPlanFor(user.id);
     // Пул читается после записи: `tokens` в ответе — новый доступный остаток, а не сумма выдачи.
     const budget = await getTokenBudget(user.id, plan);
+    const credits = await getCreditBudget(user.id, plan);
     const message = "Начислено " + numberLabel(body.tokens) + " токенов";
     const notified = body.notify
       ? await notify(user.id, { kind: "gift", message, tokens: body.tokens })
@@ -339,6 +340,8 @@ export async function registerAdminUserActionRoutes(app: FastifyInstance) {
       bonus: record.tokens,
       // Пул без надбавки бесполезен: на бесплатном тарифе она не расширяет ничего.
       appliesToPool: budget.limit > budget.bonus,
+      // 10 000 токенов = 1 кредит: старые надбавки видны и в новом бюджете.
+      credits,
       budget,
       notified,
     };

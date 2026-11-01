@@ -1,15 +1,16 @@
 import { useEffect,useMemo,useRef,useState,type DragEvent as ReactDragEvent,type MouseEvent as ReactMouseEvent } from "react";
 import Markdown,{type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { AlertTriangle,ArrowDownToLine,Check,Copy,Cpu,Eye,EyeOff,ExternalLink,FileText,History,Image as ImageIcon,KeyRound,ListPlus,Paperclip,Play,RotateCcw,Send,ShieldCheck,Sparkles,Square,X } from "lucide-react";
+import { AlertTriangle,ArrowDownToLine,Check,Copy,Eye,EyeOff,ExternalLink,FileText,History,Image as ImageIcon,KeyRound,ListPlus,Paperclip,Play,RotateCcw,Send,ShieldCheck,Sparkles,Square,X } from "lucide-react";
 import { createAgentSocket } from "../../lib/agent-socket";
 import { apiJson } from "../../lib/api";
 import { addProjectTasks,answerProjectQuestion,cancelProjectSecret,getConversation,listPendingProjectSecrets,skipProjectQuestion,submitProjectSecret,uploadProjectFile,type PendingProjectSecret } from "../../lib/project-api";
 import { cancelProjectAccess,submitProjectAccess } from "../../lib/deployment-api";
 import { ActionsDock,MessageThinking,PlanPanel,actionTarget,chatImagesByMessage,contentBefore,deriveActions,readPlan,writePlan,type ChatImage,type PanelId,type PanelState } from "./agent-activity";
-import type { AgentAction,AgentMode,ChatMessage,PlanState,ReasoningEffort,ReasoningSupport } from "../../lib/types";
+import type { AgentAction,AgentMode,ChatMessage,PlatformModelOption,PlanState,ReasoningEffort,ReasoningSupport } from "../../lib/types";
 import { QuestionSheet,type AgentQuestion } from "./QuestionSheet";
 import { AgentModeControl } from "./AgentModeControl";
+import { ModelPicker } from "./ModelPicker";
 import { ChatBookmarks } from "./ChatBookmarks";
 import { SupportButton } from "../support/SupportDialog";
 import { takeAgentStart } from "../../lib/agent-start";
@@ -99,6 +100,14 @@ function readStoredMode():AgentMode{
   try{return localStorage.getItem(modeKey)==="planner"?"planner":"developer"}catch{return "developer"}
 }
 
+function platformModelKey(projectId:string){return "webnestdev.platformModel."+projectId}
+function readStoredPlatformModel(projectId:string){
+  try{return localStorage.getItem(platformModelKey(projectId))??undefined}catch{return undefined}
+}
+function writeStoredPlatformModel(projectId:string,id:string){
+  try{localStorage.setItem(platformModelKey(projectId),id)}catch{}
+}
+
 function readStoredReasoning():ReasoningEffort{
   try{
     const value=localStorage.getItem(reasoningKey);
@@ -149,8 +158,8 @@ const MAX_AUTO_RESUME=2;
 const RETRY_NOTICE_CLEAR_EVENTS=new Set(["message.delta","reasoning.delta","tool.started","tool.finished","plan.updated","run.completed","run.failed","error"]);
 
 /** The provider state the composer reads to show the model a run will use. */
-type ProviderStatus={configured:boolean;provider:string;model:string;platformDefault?:{available:boolean;providerName:string;model:string;freeModel?:boolean}|null;reasoning?:ReasoningSupport|null};
-type ModelInfo={model:string;provider:string;source:"project"|"platform"|"none"|"unknown";freeModel?:boolean};
+type ProviderStatus={configured:boolean;provider:string;model:string;platformDefault?:{available:boolean;providerName:string;model:string;freeModel?:boolean;displayName?:string;id?:string;description?:string}|null;platformModels?:PlatformModelOption[];selectedModelId?:string|null;reasoning?:ReasoningSupport|null};
+type ModelInfo={model:string;provider:string;source:"project"|"platform"|"none"|"unknown";freeModel?:boolean;id?:string;displayName?:string;description?:string};
 
 const MAX_UPLOAD_BYTES=1_200_000;
 
@@ -286,6 +295,9 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   const [reasoning,setReasoning]=useState<ReasoningEffort>(readStoredReasoning);
   const [webSearch,setWebSearch]=useState<boolean>(readStoredWebSearch);
   const [modelInfo,setModelInfo]=useState<ModelInfo|null>(null);
+  const [platformModels,setPlatformModels]=useState<PlatformModelOption[]>([]);
+  // Id выбранной модели нужен в момент отправки, когда состояние уже могло перерисоваться.
+  const modelIdRef=useRef<string|undefined>(undefined);
   // Поддержка глубины размышления у выбранной модели: если шлюз её не принимает, выбор глубины
   // не показывается — переключатель, который ничего не меняет, хуже его отсутствия.
   const [reasoningSupport,setReasoningSupport]=useState<ReasoningSupport|null>(null);
@@ -327,7 +339,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   const [questionPrompt,setQuestionPrompt]=useState<AgentQuestion|null>(null);
   const [questionBusy,setQuestionBusy]=useState(false);
   const [questionError,setQuestionError]=useState("");
-  const [quotaNotice,setQuotaNotice]=useState<"storage"|"daily"|"tokens"|null>(null);
+  const [quotaNotice,setQuotaNotice]=useState<"storage"|"daily"|"credits"|null>(null);
   // The project's saved chats. The list comes from the server, so a chat is something
   // the user can return to from another device, not just from this browser.
   // Остановленный запуск — не потеря задачи: история и план уже на сервере, поэтому панель
@@ -535,6 +547,24 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     try{localStorage.setItem(reasoningKey,next)}catch{}
   }
 
+  /** Выбор платформенной модели: id уходит на сервер, там он проверяется по тарифу. */
+  function choosePlatformModel(option:PlatformModelOption){
+    if(!option.available||option.locked)return;
+    modelIdRef.current=option.id;
+    writeStoredPlatformModel(projectId,option.id);
+    setPlatformModels(current=>current.map(item=>({...item,current:item.id===option.id})));
+    setReasoningSupport(option.reasoning??null);
+    setModelInfo({
+      id:option.id,
+      model:"",
+      provider:"",
+      source:"platform",
+      freeModel:option.freeModel,
+      displayName:option.name,
+      description:option.description,
+    });
+  }
+
   /** Кнопка поиска: включает и выключает выход агента в интернет на следующие запуски. */
   function chooseWebSearch(next:boolean){
     webSearchRef.current=next;
@@ -737,12 +767,36 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   useEffect(()=>{
     let cancelled=false;
     setModelInfo(null);
-    void apiJson<ProviderStatus>(`/api/projects/${encodeURIComponent(projectId)}/provider`).then(status=>{
+    setPlatformModels([]);
+    modelIdRef.current=undefined;
+    const stored=readStoredPlatformModel(projectId);
+    const query=stored?`?model=${encodeURIComponent(stored)}`:``;
+    void apiJson<ProviderStatus>(`/api/projects/${encodeURIComponent(projectId)}/provider`+query).then(status=>{
       if(cancelled)return;
+      const models=status.platformModels??[];
+      setPlatformModels(models);
       setReasoningSupport(status.reasoning??null);
-      if(status.configured)setModelInfo({model:status.model,provider:status.provider,source:"project"});
-      else if(status.platformDefault?.available)setModelInfo({model:status.platformDefault.model,provider:status.platformDefault.providerName,source:"platform",freeModel:status.platformDefault.freeModel===true});
-      else setModelInfo({model:"",provider:"",source:"none"});
+      if(status.configured){
+        setModelInfo({model:status.model,provider:status.provider,source:"project"});
+        return;
+      }
+      const selected=status.selectedModelId??models.find(item=>item.current)?.id;
+      if(selected){
+        modelIdRef.current=selected;
+        writeStoredPlatformModel(projectId,selected);
+      }
+      if(status.platformDefault?.available){
+        const current=models.find(item=>item.current);
+        setModelInfo({
+          model:status.platformDefault.model,
+          provider:status.platformDefault.providerName,
+          source:"platform",
+          freeModel:status.platformDefault.freeModel===true,
+          ...(selected?{id:selected}:{}),
+          displayName:status.platformDefault.displayName||current?.name||undefined,
+          description:status.platformDefault.description||current?.description||undefined,
+        });
+      }else setModelInfo({model:"",provider:"",source:"none"});
     }).catch(()=>{if(!cancelled)setModelInfo({model:"",provider:"",source:"unknown"})});
     return()=>{cancelled=true};
   },[projectId]);
@@ -752,8 +806,12 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
    * `reasoning_effort`, выбор глубины должен исчезнуть сразу, а не после перезагрузки панели.
    */
   function refreshReasoningSupport(){
-    void apiJson<ProviderStatus>(`/api/projects/${encodeURIComponent(projectId)}/provider`)
-      .then(status=>setReasoningSupport(status.reasoning??null))
+    const selected=modelIdRef.current;
+    void apiJson<ProviderStatus>(`/api/projects/${encodeURIComponent(projectId)}/provider`+(selected?`?model=${encodeURIComponent(selected)}`:``))
+      .then(status=>{
+        setReasoningSupport(status.reasoning??null);
+        if(status.platformModels?.length)setPlatformModels(status.platformModels);
+      })
       .catch(()=>{});
   }
 
@@ -925,19 +983,19 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
         const errorMsg = event.error ?? "соединение потеряно";
         const isStorageLimit = event.code === "STORAGE_LIMIT_REACHED";
         const isDailyQuota = event.code === "DAILY_QUOTA_EXCEEDED";
-        // Пул токенов тарифа: сброс не сегодня, а с первого числа месяца, поэтому подсказка другая.
-        const isTokenBudget = event.code === "TOKEN_BUDGET_EXHAUSTED";
+        // Кредиты тарифа: сброс не сегодня, а с первого числа месяца, поэтому подсказка другая.
+        const isCreditBudget = event.code === "CREDIT_BUDGET_EXHAUSTED" || event.code === "TOKEN_BUDGET_EXHAUSTED";
         // The server is at its parallel-run limit: the queue was full or the wait ran out.
         const isBusy = event.code === "SERVER_BUSY";
         // One account runs one agent at a time, so a second tab or project is turned away.
         const isAccountBusy = event.code === "RUN_ALREADY_ACTIVE";
-        const quotaKind = isStorageLimit ? "storage" : isTokenBudget ? "tokens" : isDailyQuota ? "daily" : null;
-        updateMessages(current=>[...current,{role:"assistant",content:(quotaKind==="storage"?"Достигнут лимит хранилища вашего тарифа. ":quotaKind==="tokens"?"Месячный пул токенов тарифа исчерпан. ":quotaKind==="daily"?"Дневной лимит запусков агента исчерпан. ":isAccountBusy?"Агент уже работает в этом аккаунте. ":isBusy?"Сервер занят. ":"Ошибка: ")+errorMsg}]);
+        const quotaKind = isStorageLimit ? "storage" : isCreditBudget ? "credits" : isDailyQuota ? "daily" : null;
+        updateMessages(current=>[...current,{role:"assistant",content:(quotaKind==="storage"?"Достигнут лимит хранилища вашего тарифа. ":quotaKind==="credits"?"Месячный лимит кредитов тарифа исчерпан. ":quotaKind==="daily"?"Дневной лимит запусков агента исчерпан. ":isAccountBusy?"Агент уже работает в этом аккаунте. ":isBusy?"Сервер занят. ":"Ошибка: ")+errorMsg}]);
         if(quotaKind)setQuotaNotice(quotaKind);
         // Тариф и очередь аккаунта требуют не «Продолжить», а действия с тарифом или ожидания: у этих
         // отказов запуск даже не начался, и кнопка продолжения только запутала бы.
         const resumable=!quotaKind&&!isAccountBusy;
-        endRun(socket,{drain:false,notice:quotaKind==="storage"?"Хранилище заполнено — обновите тариф":quotaKind==="tokens"?"Пул токенов на месяц исчерпан":quotaKind==="daily"?"Дневной лимит исчерпан":isAccountBusy?"Агент уже работает в этом аккаунте — дождитесь завершения или остановите его":isBusy?"Сервер занят — повторите запуск позже":"Запуск остановлен",...(resumable?{resume:{reason:"запуск был отклонён сервером: "+errorMsg.slice(0,160),label:"Запуск остановлен — агент продолжит с того же места."}}:{})});
+        endRun(socket,{drain:false,notice:quotaKind==="storage"?"Хранилище заполнено — обновите тариф":quotaKind==="credits"?"Кредиты на месяц исчерпаны":quotaKind==="daily"?"Дневной лимит исчерпан":isAccountBusy?"Агент уже работает в этом аккаунте — дождитесь завершения или остановите его":isBusy?"Сервер занят — повторите запуск позже":"Запуск остановлен",...(resumable?{resume:{reason:"запуск был отклонён сервером: "+errorMsg.slice(0,160),label:"Запуск остановлен — агент продолжит с того же места."}}:{})});
       }
     },()=>drop());
       socketRef.current=socket;
@@ -947,7 +1005,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       socket.addEventListener("open",()=>{
         opened=true;
         setReconnect(null);
-        socket.send(JSON.stringify({type:"agent.run",request:{projectId,conversationId,messages:history,mode:modeRef.current,reasoning:reasoningRef.current,webSearch:webSearchRef.current,...(resuming?{resume:{reason:options.resumeReason}}:{})}}));
+        socket.send(JSON.stringify({type:"agent.run",request:{projectId,conversationId,messages:history,mode:modeRef.current,reasoning:reasoningRef.current,webSearch:webSearchRef.current,...(modelIdRef.current?{model:modelIdRef.current}:{}),...(resuming?{resume:{reason:options.resumeReason}}:{})}}));
       },{once:true});
 
       /**
@@ -1274,15 +1332,17 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   // Конкретное имя здесь показывать нельзя: от шага к шагу оно может меняться, а для человека
   // это один агент NestDev.
   const freeModel=modelInfo?.source==="platform"&&modelInfo.freeModel===true;
-  const modelName=freeModel?"NestDev":modelInfo?modelInfo.model.split("/").pop()||"Модель не настроена":"Определяем модель…";
+  const modelName=modelInfo?.displayName||(freeModel?"NestDev Air":modelInfo?modelInfo.model.split("/").pop()||"Модель не настроена":"Определяем модель…");
   const modelDetails=freeModel?"":[modelInfo?.provider,modelInfo?.model].filter(Boolean).join(" · ");
   const modelTitle=freeModel
-    ?"Модель бесплатного тарифа. Чтобы выбрать модель, подключите свой AI-провайдер."
+    ?"NestDev Air — бесплатная модель. Нажмите, чтобы посмотреть доступные модели."
     :!modelInfo
       ?"Выбранная модель появится здесь"
-      :modelInfo.model
-        ?(modelInfo.source==="platform"?"Модель платформы":"Модель проекта")+": "+modelDetails+". Нажмите, чтобы открыть настройки AI-провайдера."
-        :"AI-провайдер не настроен. Нажмите, чтобы указать Base URL и модель.";
+      :modelInfo.source==="platform"
+        ?(modelInfo.description?modelInfo.displayName+" · "+modelInfo.description:modelInfo.displayName||"Модель платформы")+". Нажмите, чтобы выбрать модель."
+        :modelInfo.model
+          ?"Модель проекта: "+modelDetails+". Нажмите, чтобы открыть настройки AI-провайдера."
+          :"AI-провайдер не настроен. Нажмите, чтобы указать Base URL и модель.";
 
   // Tool results are part of the stored history but not of the transcript; the action
   // list is built from them instead.
@@ -1566,10 +1626,16 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
               onReasoning={chooseReasoning}
               onWebSearch={chooseWebSearch}
             />
-            <button type="button" className="composer-model" onClick={()=>onOpenModelSettings?.()} title={modelTitle} aria-label={freeModel?"Модель бесплатного тарифа. Открыть настройки AI-провайдера":"Модель: "+modelName+". Открыть настройки AI-провайдера"}>
-              <Cpu size={12}/>
-              <span className="composer-model-name">{modelName}</span>
-            </button>
+            <ModelPicker
+              name={modelName}
+              options={modelInfo?.source==="platform"?platformModels:[]}
+              canChoose={modelInfo?.source==="platform"}
+              freeModel={freeModel}
+              title={modelTitle}
+              onSelect={choosePlatformModel}
+              onLocked={()=>onOpenAccountSettings?.()}
+              onOpenSettings={()=>onOpenModelSettings?.()}
+            />
           </div>
           <div className="composer-buttons">
             {/* Поддержка стоит рядом с отправкой — там, где человек уже пишет, и её не нужно искать в меню. */}
@@ -1612,15 +1678,15 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     {quotaNotice&&<div className="modal-backdrop" role="presentation" onMouseDown={()=>setQuotaNotice(null)}>
       <section className="modal quota-modal" role="dialog" aria-modal="true" aria-label="Лимит тарифа достигнут" onMouseDown={event=>event.stopPropagation()}>
         <header className="modal-head">
-          <div><span className="eyebrow">ЛИМИТ ТАРИФА</span><h2>{quotaNotice==="storage"?"Хранилище заполнено":quotaNotice==="tokens"?"Пул токенов исчерпан":"Дневной лимит исчерпан"}</h2></div>
+          <div><span className="eyebrow">ЛИМИТ ТАРИФА</span><h2>{quotaNotice==="storage"?"Хранилище заполнено":quotaNotice==="credits"?"Кредиты исчерпаны":"Дневной лимит исчерпан"}</h2></div>
           <button className="icon-button" onClick={()=>setQuotaNotice(null)} aria-label="Закрыть" title="Закрыть"><X size={16}/></button>
         </header>
         <div className="modal-body">
           <div className="quota-modal-icon"><AlertTriangle size={18}/></div>
           <p className="modal-lead">{quotaNotice==="storage"
             ?"Лимит хранилища вашего тарифа достигнут: агент больше не может писать файлы в проект. Освободите место или обновите тариф — лимиты: Старт 700 МБ, Плюс 10 ГБ, Премиум 50 ГБ."
-            :quotaNotice==="tokens"
-            ?"Месячный пул токенов встроенной модели израсходован: он считается по фактическому расходу и возобновится первого числа следующего месяца. Точный расход виден на странице тарифов. Подключите свой AI-провайдер в настройках проекта — такие запуски идут через ваш ключ и не тратят пул платформы."
+            :quotaNotice==="credits"
+            ?"Месячный лимит кредитов израсходован: он считается по фактическому расходу и возобновится первого числа следующего месяца. Точный расход виден на странице тарифов. Подключите свой AI-провайдер в настройках проекта — такие запуски идут через ваш ключ и не тратят кредиты платформы."
             :"Дневная квота запусков агента исчерпана. Новые запуски станут доступны после сброса по UTC или при обновлении тарифа. Лимит относится только к встроенной модели платформы: подключите свой AI-провайдер в настройках проекта — запуски пойдут через ваш ключ и модель, без дневной квоты."}</p>
         </div>
         <footer className="modal-foot">

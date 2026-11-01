@@ -14,7 +14,7 @@ import type { ConversationSummary } from "../../lib/project-api";
  * Тариф в колонке, над баннером. Раньше капсула стояла в шапке рядом с названием проекта и спорила
  * с ним за место; здесь она рядом с баннером, а смена тарифа открывается тем же путём — настройками.
  */
-type SidebarPlanInfo={name:string;chosen:string|null;planId:string;used:number;limit:number;storageUsed:number;storageLimit:number};
+type SidebarPlanInfo={name:string;chosen:string|null;planId:string;used:number;limit:number|null;storageUsed:number;storageLimit:number};
 
 /**
  * Бесплатный лимит в колонке. Считать «шаги» человеку неудобно: внутри одного запуска агент делает
@@ -74,13 +74,13 @@ function usePlanInfo(){
  */
 function SidebarRuns({plan}:{plan:SidebarPlanInfo|null}){
   if(!plan)return null;
-  const free=plan.planId==="free"&&plan.limit>0;
-  if(!free)return null;
-  const ratio=Math.max(0,Math.min(1,plan.used/plan.limit));
+  const limit=plan.limit;
+  if(plan.planId!=="free"||limit==null||limit<=0)return null;
+  const ratio=Math.max(0,Math.min(1,plan.used/limit));
   const percent=Math.round(ratio*100);
   const accent=stepsAccent(ratio);
-  const left=Math.max(0,plan.limit-plan.used);
-  return <div className="sidebar-steps" title={left>0?"Использовано "+plan.used+" из "+plan.limit+" бесплатных запусков агента · осталось "+left:"Бесплатные запуски агента на сегодня закончились"}>
+  const left=Math.max(0,limit-plan.used);
+  return <div className="sidebar-steps" title={left>0?"Использовано "+plan.used+" из "+limit+" бесплатных запусков агента · осталось "+left:"Бесплатные запуски агента на сегодня закончились"}>
     <div className="sidebar-steps-head"><span>Бесплатные запуски</span><strong style={{color:accent}}>{percent}%</strong></div>
     <div className="sidebar-steps-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} aria-valuetext={percent+"%"} aria-label="Использование бесплатных запусков агента">
       <span style={{width:percent+"%",background:"linear-gradient(90deg,#876832,"+accent+")",boxShadow:percent>0?"0 0 6px "+accent+"55":"none"}}/>

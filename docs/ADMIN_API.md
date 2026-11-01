@@ -179,13 +179,19 @@ curl -s https://panel.example.com/api/admin/2fa/verify -H 'content-type: applica
 | `POST /api/admin/users/:id/block` | `Bearer` | заблокировать вход и отозвать сеансы (раздел 7.7) |
 | `POST /api/admin/users/:id/unblock` | `Bearer` | снять блокировку (раздел 7.7) |
 | `POST /api/admin/users/:id/plan` | `Bearer` | выдать тариф без оплаты или снять его (раздел 7.7) |
-| `POST /api/admin/users/:id/tokens` | `Bearer` | надбавка к месячному пулу токенов (раздел 7.7) |
+| `POST /api/admin/users/:id/tokens` | `Bearer` | надбавка к месячному пулу токенов; 10 000 токенов = 1 кредит (раздел 7.7) |
 | `GET /api/admin/billing?days=&limit=` | `Bearer` | платежи, подписки, истекающие и калибровка пула (раздел 7.8) |
 | `GET /api/admin/plans` | `Bearer` | тарифы: название, описание, базовая цена и скидка (раздел 7.10) |
 | `POST /api/admin/plans` | `Bearer` | изменить витрину и скидку; ответ уже содержит итоговую цену (раздел 7.10) |
 | `GET /api/admin/ai` | `Bearer` | главный AI-провайдер: название, Base URL, модель и источник ключа (раздел 7.12) |
 | `POST /api/admin/ai` | `Bearer` | переключить провайдера, модель и при необходимости ключ (раздел 7.12) |
 | `POST /api/admin/ai/test` | `Bearer` | проверить черновик провайдера настоящим вызовом с инструментом (раздел 7.12) |
+| `GET /api/admin/ai/models` | `Bearer` | дополнительные модели платформы: Max, Mini и другие (раздел 7.13) |
+| `POST /api/admin/ai/models` | `Bearer` | добавить модель; `id` в теле (раздел 7.13) |
+| `PUT /api/admin/ai/models/:id` | `Bearer` | создать или полностью обновить модель (раздел 7.13) |
+| `PATCH /api/admin/ai/models/:id` | `Bearer` | изменить поля модели, не трогая ключ (раздел 7.13) |
+| `DELETE /api/admin/ai/models/:id` | `Bearer` | удалить модель (раздел 7.13) |
+| `POST /api/admin/ai/models/test` | `Bearer` | проверить модель настоящим вызовом с инструментом (раздел 7.13) |
 | `GET /api/admin/projects/:id` | `Bearer` | карточка проекта: репозиторий, превью, переменные, выкатка (раздел 7.9) |
 | `GET /api/admin/support/stats` | `Bearer` | где болит: очередь, важность, давность (раздел 8.5) |
 
@@ -618,12 +624,13 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/
 **Токены** — надбавка к пулу, а не правка расхода: `model_usage` остаётся единственным источником
 правды, поэтому «выдали 5 млн» не искажает статистику. Сумма складывается с уже начисленным
 (`bonus` в ответе — итог месяца), на следующий месяц не переносится, на бесплатном тарифе
-(`agentTokensPerMonth: 0`) не расширяет ничего — это видно по `appliesToPool: false`. `tokens` в
-ответе — новый доступный остаток на месяц (`budget.remaining`), а `granted` — сумма этой выдачи;
-по ним админка показывает, что баланс действительно вырос.
+(`agentCreditsPerMonth: 0`) не расширяет ничего — это видно по `appliesToPool: false`. `tokens` в
+ответе — новый доступный остаток по старому токенному пулу (`budget.remaining`), а `credits` —
+новый бюджет кредитов: 10 000 начисленных токенов дают 1 кредит. `granted` — сумма этой выдачи;
+по этим полям админка показывает, что баланс действительно вырос.
 
 ```json
-{ "ok": true, "tokens": 53800000, "message": "Начислено 5 000 000 токенов", "month": "2026-10", "granted": 5000000, "bonus": 5000000, "appliesToPool": true, "budget": { "used": 1200000, "limit": 55000000, "bonus": 5000000, "remaining": 53800000 } }
+{ "ok": true, "tokens": 53800000, "credits": { "month": "2026-10", "used": 120, "limit": 5500, "bonus": 500, "remaining": 5380 }, "message": "Начислено 5 000 000 токенов", "month": "2026-10", "granted": 5000000, "bonus": 5000000, "appliesToPool": true, "budget": { "used": 1200000, "limit": 55000000, "bonus": 5000000, "remaining": 53800000 } }
 ```
 
 **Уведомления человека.** Оба маршрута принимают `notify: true`; тогда вместе с действием
@@ -691,12 +698,12 @@ curl -s -H "Authorization: Bearer $TOKEN" 'https://nestdev.ru/api/admin/billing?
 - `expiringSoon` — действующие подписки со сроком в ближайшие 7 дней;
 - `renewalFailures` — у кого `renewalAttempts > 0`: один-два отказа ещё лечатся, третий закрывает
   доступ;
-- **`pool` — калибровка тарифа.** `medianTokens` и `p90Tokens` считаются по действующим
-  подписчикам за календарный месяц из `model_usage`. `p90Tokens` — масштаб, а не решение:
-  столько токенов покрывает 90% подписчиков. `fullPoolShare` — доля тех, кто выбирает пул целиком
-  (`used >= agentTokensPerMonth`), `nearPoolShare` — от 90% пула. Высокая доля при низкой медиане
-  значит «тариф тесен», низкая доля при высокой медиане — «в пуле есть запас». Общий расход для
-  этого вопроса слишком грубый: он смешивает кабинет с тяжёлым пользователем.
+- **`pool` — историческая калибровка по токенам.** `medianTokens` и `p90Tokens` считаются по
+  действующим подписчикам за календарный месяц из `model_usage`. Пользовательский лимит теперь
+  считается в кредитах (`agentCreditsPerMonth`), поэтому `fullPoolShare`/`nearPoolShare` — это
+  сырая аналитика, а не решение о размере тарифа. `p90Tokens` — масштаб, а не решение: столько
+  токенов покрывает 90% подписчиков. Общий расход для этого вопроса слишком грубый: он смешивает
+  кабинет с тяжёлым пользователем.
 
 Ответ не кэшируется (`cache-control: no-store`): это живые деньги.
 
@@ -843,6 +850,98 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/
 
 Бесплатная модель тарифа «Старт» (`PLATFORM_AI_FREE_*`) и генерация картинок (`PLATFORM_IMAGE_*`)
 этим маршрутом не меняются.
+
+### 7.13. Дополнительные модели платформы (Max и Mini)
+
+Код: `server/src/routes/admin-ai-models.ts`, хранилище — `server/src/platform/platform-models.ts`.
+Тесты: `server/src/routes/admin-ai-models.test.ts`, `server/src/platform/platform-models.test.ts`.
+Управление идёт только через это API: веб-админка не нужна, мобильное приложение использует тот
+же `Authorization: Bearer`, что и остальные маршруты `/api/admin/*`.
+
+Главная модель (`NestDev`, `PLATFORM_AI_*`) остаётся в разделе 7.12 и работает по умолчанию.
+Здесь — дополнительные модели, которые пользователь видит на платном тарифе: `NestDev Max`,
+`NestDev Mini` или любые другие OpenAI-совместимые точки входа. Ключи шифруются на диске и
+никогда не возвращаются даже замаскированными; в ответе только `hasKey`.
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" 'https://nestdev.ru/api/admin/ai/models'
+```
+
+```json
+{
+  "models": [
+    {
+      "id": "max",
+      "name": "NestDev Max",
+      "description": "Для сложных задач",
+      "provider": "DeepSeek",
+      "baseUrl": "https://api.deepseek.com/v1",
+      "model": "deepseek-v4-pro",
+      "plans": ["pro", "team"],
+      "enabled": true,
+      "contextTokens": 180000,
+      "creditRates": { "inputPerMillion": 250, "outputPerMillion": 2550, "minimumPerRun": 2 },
+      "hasKey": true,
+      "createdAt": "2026-11-01T10:00:00.000Z",
+      "updatedAt": "2026-11-01T10:00:00.000Z",
+      "reasoning": { "enabled": true, "effort": "medium", "status": "unknown", "checkedAt": null }
+    }
+  ]
+}
+```
+
+Добавить Max одним запросом (повторный `PUT` обновляет запись; пустой `apiKey` сохраняет прежний):
+
+```bash
+curl -s -X PUT -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{
+    "name":"NestDev Max",
+    "description":"Для сложных задач",
+    "provider":"DeepSeek",
+    "baseUrl":"https://api.deepseek.com/v1",
+    "model":"deepseek-v4-pro",
+    "apiKey":"sk-…",
+    "plans":["pro","team"],
+    "contextTokens":180000,
+    "creditRates":{"inputPerMillion":250,"outputPerMillion":2550,"minimumPerRun":2}
+  }' \
+  'https://nestdev.ru/api/admin/ai/models/max'
+```
+
+`id` — 2–32 символа: латиница в нижнем регистре, цифры и дефис. Заняты `nestdev`,
+`nestdev-air`, `air` и `free`. Обычные id: `max` и `mini`; для них `name` и `description`
+подставляются автоматически, а `provider` по умолчанию `OpenAI-compatible`. Обязательны только
+`baseUrl`, `model` и (для рабочей модели) `apiKey`. `plans` — только `pro` и `team`; по умолчанию
+обе. `enabled: false` скрывает модель из выбора, не удаляя её. `contextTokens` — бюджет промпта
+для этой модели; пусто — общий бюджет платного тарифа. `clearKey: true` удаляет ключ (например,
+перед сменой провайдера).
+
+**Кредиты.** `creditRates` — сколько кредитов стоит 1 млн входных и выходных токенов этой модели
+плюс минимум за запуск. Для `max` стартовые ставки `250 / 2550 / 2`, для `mini` — `25 / 255 / 1`,
+для остальных id — базовые `50 / 510 / 1`. Поля можно присылать частично: `PATCH
+{"creditRates":{"outputPerMillion":3000}}` не меняет вход и минимум. `creditRates: null`
+возвращает стартовые ставки модели. Формула списания и ограничения — в `docs/PLANS_AND_LIMITS.md`;
+для основной модели ставки задаются `PLATFORM_AI_CREDITS_*`.
+
+Если провайдер даёт цену в долларах за 1M токенов, пересчитайте её в кредиты по своей базовой
+ставке. Например, при базе 50 кредитов за 1M входа и 510 за 1M выхода множитель `×5` означает
+`250 / 2550`. Не ставьте Max с ценой Claude за `×5`, если себестоимость выше: кредиты должны
+отражать реальную цену, иначе дорогая модель съест маржу тарифа.
+
+Проверка — настоящий вызов с инструментом. Без `apiKey` берётся сохранённый ключ:
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"id":"max"}' 'https://nestdev.ru/api/admin/ai/models/test'
+```
+
+Ответ: `ok`, `latencyMs`, `tools` (подтверждён ли вызов инструментов), `text`, `usage` и
+`reasoning`; ключ не возвращается. Удаление — `DELETE /api/admin/ai/models/max`.
+
+Выбор модели пользователем проверяется на сервере: клиент присылает `model` (`nestdev`,
+`nestdev-air` или id из этого каталога), а `agent-ws` и рантайм сверяют его с тарифом. Подставить
+имя upstream-модели в обход каталога нельзя. Бесплатный тариф видит `NestDev Air` и закрытые
+Max/Mini как апселл; платный — основную модель и все включённые дополнительные.
 
 ## 8. Обращения поддержки
 

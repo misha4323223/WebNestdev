@@ -9,7 +9,7 @@ import path from "node:path";
 // (usage-cost.test.ts) мог перезаписать его — тест пула токенов падал через раз.
 process.env.WEBNESTDEV_DATA_DIR = await mkdtemp(path.join(tmpdir(), "usage-store-"));
 
-const { consumeAgentRun, consumeUsage, getBillingHistory, getTokenBudget, getUsageSnapshot, recordRunUsage, UsageLimitError } =
+const { consumeAgentRun, consumeUsage, getBillingHistory, getCreditBudget, getTokenBudget, getUsageSnapshot, recordRunUsage, UsageLimitError } =
   await import("./usage-store.js");
 
 test("daily agent quota blocks the next run and usage is isolated per account", async () => {
@@ -25,6 +25,16 @@ test("daily agent quota blocks the next run and usage is isolated per account", 
   assert.equal(own.agentRuns, 10);
   assert.equal(own.browserChecks, 0);
   assert.equal(other.agentRuns, 0);
+});
+
+/**
+ * На платном тарифе дневного лимита нет: расход ограничивают кредиты, а счётчик запусков остаётся
+ * только для истории. Проверяем больше прежнего потолка в 100 запусков.
+ */
+test("paid plans do not stop runs at a daily cap: credits are the limit", async () => {
+  const userId = "quota-paid-" + randomUUID();
+  for (let index = 0; index < 120; index++) await consumeUsage(userId, "agentRuns", "pro");
+  assert.equal((await getUsageSnapshot(userId)).agentRuns, 120);
 });
 
 test("daily browser quota is enforced independently from agent runs", async () => {
@@ -78,6 +88,30 @@ test("the monthly token budget reads real model usage, and the free plan has no 
   assert.equal(paid.used, 1000, "пул считает и промпт, и ответ модели");
   assert.equal(paid.remaining, paid.limit - 1000);
   assert.equal(paid.month, empty.month);
+
+  const credits = await getCreditBudget(userId, "pro");
+  assert.equal(credits.limit, 5_000);
+  assert.equal(credits.used, 1, "старая строка без credits оценивается как 10 000 токенов = 1 кредит");
+  assert.equal((await getCreditBudget(userId, "free")).limit, 0);
+});
+
+test("кредиты читаются из model_usage, а новые запуски пишут точное списание", async () => {
+  const userId = "credit-budget-" + randomUUID();
+  await recordRunUsage(userId, {
+    runId: randomUUID(),
+    projectId: "credit-project",
+    model: "max-upstream",
+    modelId: "max",
+    promptTokens: 1_000_000,
+    completionTokens: 100_000,
+    credits: 7,
+    estimated: false,
+  });
+  const budget = await getCreditBudget(userId, "team");
+  assert.equal(budget.month, new Date().toISOString().slice(0, 7));
+  assert.equal(budget.used, 7);
+  assert.equal(budget.limit, 25_000);
+  assert.equal(budget.remaining, 24_993);
 });
 
 test("the daily web search quota grows with the plan and is counted separately", async () => {

@@ -69,6 +69,7 @@ import { registerAdminUserActionRoutes } from "./routes/admin-users.js";
 import { registerAdminBillingRoutes } from "./routes/admin-billing.js";
 import { registerAdminPlanRoutes } from "./routes/admin-plans.js";
 import { registerAdminAiRoutes } from "./routes/admin-ai.js";
+import { registerAdminAiModelsRoutes } from "./routes/admin-ai-models.js";
 import { registerAdminProjectRoutes } from "./routes/admin-projects.js";
 import { registerUnsubscribeRoutes } from "./routes/unsubscribe.js";
 import { describePostbox, postboxStatus } from "./mail/postbox.js";
@@ -340,6 +341,8 @@ await registerAdminBillingRoutes(app);
 await registerAdminPlanRoutes(app);
 // Главный AI-провайдер: чтение, проверка черновика и переключение из внешней админки.
 await registerAdminAiRoutes(app);
+// Дополнительные модели платформы (Max, Mini): каталог, проверка и управление из внешней админки.
+await registerAdminAiModelsRoutes(app);
 // Карточка проекта: владелец, репозиторий, превью, переменные секретов, план выкатки.
 await registerAdminProjectRoutes(app);
 // Отписка — публичная страница, а не /api: ссылка приходит в письме и открывается без сессии.

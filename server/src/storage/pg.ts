@@ -470,9 +470,11 @@ export async function initializeStorage(): Promise<void> {
       project_id TEXT NOT NULL,
       conversation_id TEXT NOT NULL,
       model TEXT NOT NULL,
+      model_id TEXT NOT NULL DEFAULT '',
       prompt_tokens BIGINT NOT NULL DEFAULT 0,
       completion_tokens BIGINT NOT NULL DEFAULT 0,
       cached_prompt_tokens BIGINT NOT NULL DEFAULT 0,
+      credits BIGINT NOT NULL DEFAULT 0,
       estimated BOOLEAN NOT NULL DEFAULT false,
       created_at TEXT NOT NULL,
       PRIMARY KEY (user_id, usage_date, run_id)
@@ -480,6 +482,10 @@ export async function initializeStorage(): Promise<void> {
     // Кэш контекста появился позже самой таблицы: старые базы должны получить колонку,
     // иначе запись расхода упадёт на живом сервере. Старые строки читаются как ноль.
     await pool.query(`ALTER TABLE ${tbl("model_usage")} ADD COLUMN IF NOT EXISTS cached_prompt_tokens BIGINT NOT NULL DEFAULT 0`);
+    // Кредитный учёт появился позже: старые строки получают model_id = '' и credits = 0,
+    // а budget читает их по базовому курсу 10 000 токенов = 1 кредит.
+    await pool.query(`ALTER TABLE ${tbl("model_usage")} ADD COLUMN IF NOT EXISTS model_id TEXT NOT NULL DEFAULT ''`);
+    await pool.query(`ALTER TABLE ${tbl("model_usage")} ADD COLUMN IF NOT EXISTS credits BIGINT NOT NULL DEFAULT 0`);
     // Аналитика админки (routes/admin-analytics.ts) фильтрует расход по дню и группирует его по
     // проекту. Без этих индексов обзор и список проектов превращаются в полный перебор при каждом
     // открытии вкладки, а PK покрывает только одного пользователя.

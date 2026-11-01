@@ -5,6 +5,7 @@ import { applyPreferences, type UserPreferences } from "../../lib/preferences";
 import {
   balanceLabel,
   bytesLabel,
+  creditsLabel,
   dateLabel,
   getBilling,
   moneyLabel,
@@ -388,7 +389,8 @@ export function AccountSettingsPanel() {
               <span>Выбранный тариф · включим вместе с оплатой</span>
               <strong>{chosenPlan.name} · {chosenPlan.priceLabel}</strong>
             </div>}
-            <div className="usage-meter-list"><div className="usage-meter-title"><strong>Использование за сегодня</strong><small>Сброс по UTC · {billing?.usage.date ?? ""}</small></div>{usageRows.map(row => <div className="usage-meter" key={row.label}><div><span>{row.label}</span><strong>{row.used} / {row.limit}</strong></div><div className="usage-meter-track"><span style={{ width: `${Math.min(100, row.used / Math.max(1, row.limit) * 100)}%` }}/></div><small className="usage-meter-left">{Math.max(0, row.limit - row.used)} осталось</small></div>)}</div>
+            <div className="usage-meter-list"><div className="usage-meter-title"><strong>Использование за сегодня</strong><small>Сброс по UTC · {billing?.usage.date ?? ""}</small></div>{usageRows.map(row => <div className="usage-meter" key={row.label}><div><span>{row.label}</span><strong>{row.limit == null ? row.used + " · без дневного лимита" : row.used + " / " + row.limit}</strong></div>{row.limit != null && <><div className="usage-meter-track"><span style={{ width: `${Math.min(100, row.used / Math.max(1, row.limit) * 100)}%` }}/></div><small className="usage-meter-left">{Math.max(0, row.limit - row.used)} осталось</small></>}{row.limit == null && <small className="usage-meter-left">Расход ограничен месячными кредитами</small>}</div>)}</div>
+            {billing?.credits && billing.credits.limit > 0 && <div className="usage-meter-list"><div className="usage-meter-title"><strong>Кредиты агента в месяц</strong><small>Сброс 1-го числа</small></div><div className="usage-meter"><div><span>Израсходовано</span><strong>{creditsLabel(billing.credits.used)} из {creditsLabel(billing.credits.limit)}</strong></div><div className="usage-meter-track"><span style={{ width: `${Math.min(100, billing.credits.used / Math.max(1, billing.credits.limit) * 100)}%` }}/></div><small className="usage-meter-left">Осталось {creditsLabel(billing.credits.remaining)} · Max расходует быстрее, Mini — медленнее</small></div></div>}
             {storageLimit > 0 && <div className={"usage-meter-list storage-card " + storageState}>
               <div className="usage-meter-title"><strong>Хранилище аккаунта</strong><small>{bytesLabel(storageUsed)} из {bytesLabel(storageLimit)} · {storagePercent}%</small></div>
               <div className={"usage-meter-track storage-track " + storageState} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={storagePercent} aria-label="Хранилище аккаунта"><span style={{ width: `${storagePercent}%` }}/></div>

@@ -7,6 +7,7 @@ import { getProject,getConversation,appendConversationMessages,getProjectProvide
 import type { ChatMessage } from "../types.js";
 import { consumeAgentRun } from "../account/usage-store.js";
 import { accountPlanFor } from "../billing/store.js";
+import { getPlatformModelForPlan } from "../platform/platform-models.js";
 import { runQueueStats,runWithRunSlot } from "../agent/run-limiter.js";
 import { positiveInt } from "../concurrency.js";
 
@@ -125,6 +126,16 @@ export async function registerAgentWebSocket(app:FastifyInstance,runtime=new Age
         // Тариф решает, какую модель брать для запуска платформы: бесплатную с резервом или
         // платформенную. Свой провайдер проекта не зависит от тарифа, поэтому его не читаем.
         const plan=ownProvider?undefined:await accountPlanFor(user.id);
+        // Модель выбирает клиент, но право на неё проверяет сервер: id каталога — не имя
+        // upstream-модели, и подставить чужую дорогую модель в обход тарифа нельзя. Основная
+        // модель называется «nestdev», бесплатная — «nestdev-air».
+        const requestedModel=parsed.model?.trim();
+        if(!ownProvider&&requestedModel&&plan){
+          const allowed=plan==="free"
+            ? requestedModel==="nestdev-air"
+            : requestedModel==="nestdev"||Boolean(await getPlatformModelForPlan(requestedModel,plan));
+          if(!allowed)throw Object.assign(new Error("Модель недоступна на вашем тарифе"),{statusCode:403,code:"MODEL_NOT_AVAILABLE"});
+        }
         // Одно чтение сессии отвечает на два вопроса: какие из присланных сообщений новые, и какая
         // история на самом деле была у разговора. Второе важнее: модель получает её, а не копию из
         // браузера, поэтому в контекст попадают результаты инструментов прошлых запусков — и запуск
@@ -165,15 +176,16 @@ export async function registerAgentWebSocket(app:FastifyInstance,runtime=new Age
         const statusCode = error && typeof error === "object" && "statusCode" in error ? (error as {statusCode?:unknown}).statusCode : undefined;
         const isQuota = statusCode === 429;
         const isStorage = error instanceof Error && error.name === "StorageLimitError";
-        // Пул токенов закончился — это не дневная квота: панель должна предложить тариф или
-        // свой ключ, а не ждать сброса по UTC.
-        const isTokenBudget = error instanceof Error && error.name === "TokenBudgetError";
+        // Месячные кредиты закончились — это не дневная квота: панель должна предложить тариф
+        // или свой ключ, а не ждать сброса по UTC.
+        const isCreditBudget = error instanceof Error
+          && (error.name === "CreditBudgetError" || error.name === "TokenBudgetError");
         // 503 is the limiter: the queue is full at this moment, or the wait ran out.
         const isBusy = statusCode === 503;
         // Anything that carries its own code ("this account is already running an agent") is
         // passed straight through, so the panel can say what happened instead of "Ошибка".
         const ownCode = error && typeof error === "object" && "code" in error && typeof (error as {code?:unknown}).code === "string" ? (error as {code:string}).code : undefined;
-        const quotaCode = isStorage ? "STORAGE_LIMIT_REACHED" : isTokenBudget ? "TOKEN_BUDGET_EXHAUSTED" : "DAILY_QUOTA_EXCEEDED";
+        const quotaCode = isStorage ? "STORAGE_LIMIT_REACHED" : isCreditBudget ? "CREDIT_BUDGET_EXHAUSTED" : "DAILY_QUOTA_EXCEEDED";
         safeSend({type:"error",error:message,...(isQuota?{code:quotaCode}:isBusy?{code:"SERVER_BUSY"}:ownCode?{code:ownCode}:{})});
       }
       finally{controller=null;running=false;}

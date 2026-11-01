@@ -2,9 +2,9 @@ import { mkdir, readFile, writeFile, rename, unlink } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { isYdbEnabled, ydbQuery, getTable } from "../storage/ydb.js";
-import { limitsForPlan, type PlanId, type UsageKind, type UsageSnapshot } from "./plans.js";
+import { creditPoolFor, limitsForPlan, type PlanId, type UsageKind, type UsageSnapshot } from "./plans.js";
 import { accountPlanFor } from "../billing/store.js";
-import { tokenBonusFor, tokenMonth } from "./token-bonus.js";
+import { tokenBonusFor } from "./token-bonus.js";
 
 /**
  * Какая граница тарифа отвечает за каждый вид расхода. Таблица, а не тернарный оператор: новый вид
@@ -101,7 +101,7 @@ export async function consumeUsage(userId: string, kind: UsageKind, plan: PlanId
           LIMIT 1
         `;
         const used = Number(rows[0]?.used ?? 0);
-        if (used >= limit) throw new UsageLimitError(kind, limit, used);
+        if (limit !== null && used >= limit) throw new UsageLimitError(kind, limit, used);
         await tx`
           UPSERT INTO ${usageCountersTable}
             (user_id, usage_date, kind, used)
@@ -117,7 +117,7 @@ export async function consumeUsage(userId: string, kind: UsageKind, plan: PlanId
     }
     const snapshot = await getUsageSnapshot(userId, now);
     const used = snapshot[kind];
-    if (used >= limit) throw new UsageLimitError(kind, limit, used);
+    if (limit !== null && used >= limit) throw new UsageLimitError(kind, limit, used);
     const file = path.join(root, "account", "usage", date + ".json");
     const events = await readJson<UsageEvent[]>(file, []);
     events.push(event);
@@ -196,6 +196,86 @@ export async function getTokenBudget(userId: string, plan: PlanId, now = new Dat
   return { month, used, limit, bonus, remaining: limit > 0 ? Math.max(0, limit - used) : 0 };
 }
 
+/**
+ * Сколько кредитов аккаунт потратил с начала календарного месяца (UTC).
+ *
+ * Источник тот же, что у токенов — `model_usage`, но суммируется уже готовое списание `credits`.
+ * Старые строки без кредитов оцениваются по базовому курсу, чтобы апгрейд тарифа не обнулял
+ * фактически потраченный месяц. Бесплатные запуски в кредиты не превращаются.
+ */
+async function monthlyCreditsUsed(userId: string, now = new Date()): Promise<{ month: string; used: number }> {
+  const { month, first, today, days } = monthWindow(now);
+  if (isYdbEnabled()) {
+    const [rows] = await ydbQuery()<Array<{
+      prompt_tokens: number | string | bigint;
+      completion_tokens: number | string | bigint;
+      credits: number | string | bigint | null;
+      model: string;
+      model_id: string | null;
+    }>>`
+      SELECT prompt_tokens, completion_tokens, credits, model, model_id
+      FROM ${ydbQuery().identifier(getTable("model_usage"))}
+      WHERE user_id = ${userId} AND usage_date >= ${first} AND usage_date <= ${today}
+    `;
+    return {
+      month,
+      used: rows.reduce((sum, row) => sum + creditsForRecord({
+        credits: Number(row.credits ?? 0),
+        model: row.model,
+        modelId: row.model_id ?? "",
+        promptTokens: Number(row.prompt_tokens ?? 0),
+        completionTokens: Number(row.completion_tokens ?? 0),
+      }), 0),
+    };
+  }
+  let used = 0;
+  for (const date of days) {
+    const records = await readJson<UsageCostRecord[]>(path.join(root, "account", "costs", date + ".json"), []);
+    for (const record of records) {
+      if (record.userId !== userId) continue;
+      used += creditsForRecord(record);
+    }
+  }
+  return { month, used };
+}
+
+/**
+ * Месячный бюджет кредитов. `limit: 0` — кредитов у тарифа нет (бесплатный тариф живёт
+ * дневным лимитом запусков). Надбавка администратора приходит в токенах; 10 000 токенов = 1
+ * кредит, поэтому старые подарки продолжают работать и после перехода на кредиты.
+ */
+export type CreditBudget = {
+  month: string;
+  used: number;
+  limit: number;
+  bonus: number;
+  remaining: number;
+};
+
+export async function getCreditBudget(userId: string, plan: PlanId, now = new Date()): Promise<CreditBudget> {
+  const { month } = monthWindow(now);
+  const planCredits = creditPoolFor(plan);
+  if (planCredits <= 0) {
+    return { month, used: 0, limit: 0, bonus: 0, remaining: 0 };
+  }
+  const { used } = await monthlyCreditsUsed(userId, now);
+  const bonusTokens = await tokenBonusFor(userId, month);
+  const bonus = Math.floor(bonusTokens / 10_000);
+  const limit = planCredits + bonus;
+  return { month, used, limit, bonus, remaining: Math.max(0, limit - used) };
+}
+
+/** Отказ по кредитному бюджету: отдельный код, чтобы панель не путала его с дневной квотой. */
+export class CreditBudgetError extends Error {
+  readonly statusCode = 429;
+  readonly code = "CREDIT_BUDGET_EXHAUSTED";
+
+  constructor(readonly used: number, readonly limit: number) {
+    super("Месячный лимит кредитов тарифа исчерпан");
+    this.name = "CreditBudgetError";
+  }
+}
+
 /** Отказ по пулу токенов: отдельный код, чтобы панель сказала «пул исчерпан», а не «дневной лимит». */
 export class TokenBudgetError extends Error {
   readonly statusCode = 429;
@@ -209,20 +289,20 @@ export class TokenBudgetError extends Error {
 
 /**
  * Запуск агента. На бесплатном тарифе считаются запуски встроенной модели: она отвечает за счёт
- * платформы. На платном — сначала проверяется месячный пул токенов, а дневной лимит остаётся
- * предохранителем от циклов. Проект со своим AI-провайдером тратит свои токены и свой ключ,
- * поэтому его запуски не считаются и не блокируются — вместо ошибки возвращается текущий снимок
- * использования, чтобы панель показала те же цифры, что и раньше.
+ * платформы, а кредитов на нём нет. На платном — сначала проверяется месячный бюджет кредитов;
+ * дневного лимита запусков там нет, но счётчик всё равно пишется для истории и аналитики.
+ * Проект со своим AI-провайдером тратит свои токены и свой ключ, поэтому его запуски не
+ * считаются и не блокируются — вместо ошибки возвращается текущий снимок использования, чтобы
+ * панель показала те же цифры, что и раньше.
  */
 export async function consumeAgentRun(userId: string, options: { ownProvider: boolean }, now = new Date()) {
   if (options.ownProvider) return getUsageSnapshot(userId, now);
   const plan = await accountPlanFor(userId);
-  const planPool = limitsForPlan(plan).agentTokensPerMonth;
-  if (planPool > 0) {
-    // Начисленные администратором токены расширяют пул на этот месяц, но не отменяют его.
-    const pool = planPool + await tokenBonusFor(userId, tokenMonth(now));
-    const { used } = await monthlyTokensUsed(userId, now);
-    if (used >= pool) throw new TokenBudgetError(used, pool);
+  // Платный тариф ограничен кредитами, а не сырыми токенами: Max и Mini стоят по-разному.
+  const planCredits = creditPoolFor(plan);
+  if (planCredits > 0) {
+    const budget = await getCreditBudget(userId, plan, now);
+    if (budget.used >= budget.limit) throw new CreditBudgetError(budget.used, budget.limit);
   }
   return consumeUsage(userId, "agentRuns", plan, now);
 }
@@ -232,10 +312,14 @@ export type RunUsageInput = {
   projectId: string;
   conversationId?: string;
   model: string;
+  /** id каталога (`nestdev`, `max`, `mini`), а не upstream-имя. */
+  modelId?: string;
   promptTokens: number;
   completionTokens: number;
-  /** Часть promptTokens, прочитанная из кэша провайдера; не вычитается из пула. */
+  /** Часть promptTokens, прочитанная из кэша провайдера; не вычитается из бюджета. */
   cachedPromptTokens?: number;
+  /** Сколько кредитов списано за запуск; пусто — старый запуск без кредитного учёта. */
+  credits?: number;
   estimated: boolean;
 };
 
@@ -246,9 +330,11 @@ type UsageCostRecord = {
   projectId: string;
   conversationId: string;
   model: string;
+  modelId: string;
   promptTokens: number;
   completionTokens: number;
   cachedPromptTokens: number;
+  credits: number;
   estimated: boolean;
   createdAt: string;
 };
@@ -285,6 +371,8 @@ export type BillingHistoryDay = {
   promptTokens: number;
   completionTokens: number;
   cachedPromptTokens: number;
+  /** Списано кредитов за день; старые строки без кредитов оцениваются по токенам. */
+  credits: number;
   costEstimate: number | null;
 };
 
@@ -317,12 +405,12 @@ export async function getBillingHistory(userId: string, days = 7, now = new Date
   const from = dates[0] ?? utcDay(now);
   const to = dates[dates.length - 1] ?? utcDay(now);
   const counters = new Map<string, { agentRuns: number; browserChecks: number; webSearches: number }>();
-  const usageByDay = new Map<string, { runs: number; promptTokens: number; completionTokens: number; cachedPromptTokens: number; costEstimate: number }>();
+  const usageByDay = new Map<string, { runs: number; promptTokens: number; completionTokens: number; cachedPromptTokens: number; credits: number; costEstimate: number }>();
   const pricing = platformPricing();
 
   for (const date of dates) {
     counters.set(date, { agentRuns: 0, browserChecks: 0, webSearches: 0 });
-    usageByDay.set(date, { runs: 0, promptTokens: 0, completionTokens: 0, cachedPromptTokens: 0, costEstimate: 0 });
+    usageByDay.set(date, { runs: 0, promptTokens: 0, completionTokens: 0, cachedPromptTokens: 0, credits: 0, costEstimate: 0 });
   }
 
   if (isYdbEnabled()) {
@@ -339,8 +427,9 @@ export async function getBillingHistory(userId: string, days = 7, now = new Date
       else if (row.kind === "webSearches") day.webSearches = used;
     }
 
-    const [costRows] = await ydbQuery()<Array<{usage_date: string; prompt_tokens: number | string | bigint; completion_tokens: number | string | bigint; cached_prompt_tokens: number | string | bigint}>>`
-      SELECT usage_date, prompt_tokens, completion_tokens, cached_prompt_tokens FROM ${ydbQuery().identifier(getTable("model_usage"))}
+    const [costRows] = await ydbQuery()<Array<{usage_date: string; prompt_tokens: number | string | bigint; completion_tokens: number | string | bigint; cached_prompt_tokens: number | string | bigint; credits: number | string | bigint | null; model: string; model_id: string | null}>>`
+      SELECT usage_date, prompt_tokens, completion_tokens, cached_prompt_tokens, credits, model, model_id
+      FROM ${ydbQuery().identifier(getTable("model_usage"))}
       WHERE user_id = ${userId} AND usage_date >= ${from} AND usage_date <= ${to}
     `;
     for (const row of costRows) {
@@ -352,6 +441,13 @@ export async function getBillingHistory(userId: string, days = 7, now = new Date
       day.promptTokens += promptTokens;
       day.completionTokens += completionTokens;
       day.cachedPromptTokens += Number(row.cached_prompt_tokens ?? 0);
+      day.credits += creditsForRecord({
+        credits: Number(row.credits ?? 0),
+        model: row.model,
+        modelId: row.model_id ?? "",
+        promptTokens,
+        completionTokens,
+      });
       day.costEstimate += costFor({ promptTokens, completionTokens }, pricing) ?? 0;
     }
   } else {
@@ -371,6 +467,7 @@ export async function getBillingHistory(userId: string, days = 7, now = new Date
         spend.promptTokens += record.promptTokens;
         spend.completionTokens += record.completionTokens;
         spend.cachedPromptTokens += record.cachedPromptTokens ?? 0;
+        spend.credits += creditsForRecord(record);
         spend.costEstimate += costFor(record, pricing) ?? 0;
       }
     }
@@ -407,6 +504,26 @@ function costFor(record: { promptTokens: number; completionTokens: number }, pri
   return (record.promptTokens / 1_000_000) * pricing.inputPerMillion + (record.completionTokens / 1_000_000) * pricing.outputPerMillion;
 }
 
+/**
+ * Кредиты старой строки `model_usage`: новые запуски пишут точное число, а записи до кредитного
+ * учёта оцениваются по базовому курсу 10 000 токенов = 1 кредит. Бесплатная модель не должна
+ * превращаться в кредиты при апгрейде тарифа посередине месяца.
+ */
+function creditsForRecord(record: {
+  credits: number;
+  model: string;
+  modelId?: string;
+  promptTokens: number;
+  completionTokens: number;
+}) {
+  if (record.credits > 0) return record.credits;
+  if (record.model === "free-model" || record.modelId === "nestdev-air" || record.modelId === "air") return 0;
+  // Новая строка с явным нулём не должна превращаться в кредиты: model_id появился вместе
+  // с кредитным учётом. Если id пуст — это старый запуск, его оцениваем по токенам.
+  if (record.modelId) return 0;
+  return Math.ceil((record.promptTokens + record.completionTokens) / 10_000);
+}
+
 /** Records model spend of one agent run so the owner can measure real cost per generated site. */
 export async function recordRunUsage(userId: string, input: RunUsageInput, now = new Date()) {
   const date = utcDay(now);
@@ -417,20 +534,22 @@ export async function recordRunUsage(userId: string, input: RunUsageInput, now =
     projectId: input.projectId,
     conversationId: input.conversationId ?? "",
     model: input.model,
+    modelId: input.modelId?.trim() ?? "",
     promptTokens: Math.max(0, Math.round(input.promptTokens)),
     completionTokens: Math.max(0, Math.round(input.completionTokens)),
     cachedPromptTokens: Math.max(0, Math.min(
       Math.round(input.cachedPromptTokens ?? 0),
       Math.round(input.promptTokens),
     )),
+    credits: Math.max(0, Math.round(input.credits ?? 0)),
     estimated: input.estimated,
     createdAt: now.toISOString(),
   };
   if (isYdbEnabled()) {
     await ydbQuery()`
       UPSERT INTO ${ydbQuery().identifier(getTable("model_usage"))}
-        (user_id, usage_date, run_id, project_id, conversation_id, model, prompt_tokens, completion_tokens, cached_prompt_tokens, estimated, created_at)
-      VALUES (${userId}, ${date}, ${record.id}, ${record.projectId}, ${record.conversationId}, ${record.model}, ${record.promptTokens}, ${record.completionTokens}, ${record.cachedPromptTokens}, ${record.estimated}, ${record.createdAt})
+        (user_id, usage_date, run_id, project_id, conversation_id, model, model_id, prompt_tokens, completion_tokens, cached_prompt_tokens, credits, estimated, created_at)
+      VALUES (${userId}, ${date}, ${record.id}, ${record.projectId}, ${record.conversationId}, ${record.model}, ${record.modelId}, ${record.promptTokens}, ${record.completionTokens}, ${record.cachedPromptTokens}, ${record.credits}, ${record.estimated}, ${record.createdAt})
     `;
     return record;
   }
@@ -447,8 +566,8 @@ export async function getCostSnapshot(userId: string, now = new Date()): Promise
   const date = utcDay(now);
   let records: UsageCostRecord[];
   if (isYdbEnabled()) {
-    const [rows] = await ydbQuery()<Array<{run_id:string;project_id:string;conversation_id:string;model:string;prompt_tokens:number|string|bigint;completion_tokens:number|string|bigint;cached_prompt_tokens:number|string|bigint;estimated:boolean;created_at:string}>>`
-      SELECT run_id, project_id, conversation_id, model, prompt_tokens, completion_tokens, cached_prompt_tokens, estimated, created_at
+    const [rows] = await ydbQuery()<Array<{run_id:string;project_id:string;conversation_id:string;model:string;model_id:string|null;prompt_tokens:number|string|bigint;completion_tokens:number|string|bigint;cached_prompt_tokens:number|string|bigint;credits:number|string|bigint|null;estimated:boolean;created_at:string}>>`
+      SELECT run_id, project_id, conversation_id, model, model_id, prompt_tokens, completion_tokens, cached_prompt_tokens, credits, estimated, created_at
       FROM ${ydbQuery().identifier(getTable("model_usage"))}
       WHERE user_id = ${userId} AND usage_date = ${date}
       ORDER BY created_at DESC
@@ -460,9 +579,11 @@ export async function getCostSnapshot(userId: string, now = new Date()): Promise
       projectId: row.project_id,
       conversationId: row.conversation_id,
       model: row.model,
+      modelId: row.model_id ?? "",
       promptTokens: Number(row.prompt_tokens),
       completionTokens: Number(row.completion_tokens),
       cachedPromptTokens: Number(row.cached_prompt_tokens ?? 0),
+      credits: Number(row.credits ?? 0),
       estimated: Boolean(row.estimated),
       createdAt: row.created_at,
     }));

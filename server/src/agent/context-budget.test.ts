@@ -46,7 +46,7 @@ test("бюджет контекста берётся из окружения и 
   }
 });
 
-test("платная модель получает больше контекста и сообщений, чем бесплатная", () => {
+test("платная модель получает больше контекста, а предел сообщений у тарифов общий", () => {
   const names = [
     "AGENT_CONTEXT_TOKENS", "AGENT_CONTEXT_TOKENS_PAID", "AGENT_CONTEXT_TOKENS_FREE",
     "AGENT_CONTEXT_MAX_MESSAGES", "AGENT_CONTEXT_MAX_MESSAGES_PAID", "AGENT_CONTEXT_MAX_MESSAGES_FREE",
@@ -55,10 +55,10 @@ test("платная модель получает больше контекст
   const before = Object.fromEntries(names.map(name => [name, process.env[name]]));
   try {
     for (const name of names) delete process.env[name];
-    assert.equal(contextBudgetTokensFor("paid"), 200_000 - 8_192);
+    assert.equal(contextBudgetTokensFor("paid"), 150_000 - 8_192);
     assert.equal(contextBudgetTokensFor("free"), 120_000 - 8_192);
-    assert.equal(contextMaxMessagesFor("paid"), 200);
-    assert.equal(contextMaxMessagesFor("free"), 100);
+    assert.equal(contextMaxMessagesFor("paid"), 80);
+    assert.equal(contextMaxMessagesFor("free"), 80);
 
     // Отдельная настройка тарифа важнее общей.
     process.env.AGENT_CONTEXT_TOKENS = "120000";
@@ -67,7 +67,7 @@ test("платная модель получает больше контекст
     assert.equal(contextBudgetTokensFor("paid"), 300_000 - 8_192);
     assert.equal(contextBudgetTokensFor("free"), 120_000 - 8_192);
     assert.equal(contextMaxMessagesFor("paid"), 120);
-    assert.equal(contextMaxMessagesFor("free"), 100);
+    assert.equal(contextMaxMessagesFor("free"), 80);
   } finally {
     for (const name of names) {
       if (before[name] === undefined) delete process.env[name];

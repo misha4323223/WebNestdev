@@ -6,7 +6,7 @@ import { findPhoneByUserId, formatPhone } from "../auth/phone-store.js";
 import { getUserPreferences, saveUserPreferences, type UserPreferences } from "../account/account-store.js";
 import { getUserProfile, saveUserProfile, updateUserProfile } from "../account/profile-store.js";
 import { FREE_PLAN, PLAN_CATALOG, balanceFor, limitsForPlan, subscriptionFor, type BillingSubscription } from "../account/plans.js";
-import { getBillingHistory, getCostSnapshot, getTokenBudget, getUsageSnapshot } from "../account/usage-store.js";
+import { getBillingHistory, getCostSnapshot, getCreditBudget, getTokenBudget, getUsageSnapshot } from "../account/usage-store.js";
 import { getStorageOverview, refreshUserStorage } from "../account/storage-quota.js";
 import { accountPlanFor, getSubscriptionRecord, isSubscriptionLive, listPayments } from "../billing/store.js";
 import { planPriceLabel, planPriceRub, publicPlans, robokassaConfig } from "../billing/robokassa.js";
@@ -158,6 +158,8 @@ export async function registerAccountRoutes(app: FastifyInstance) {
         paidAt: payment.paidAt,
       })),
       usage: await getUsageSnapshot(user.id),
+      // Кредиты — основной пользовательский лимит; токены остаются сырой аналитикой расхода.
+      credits: await getCreditBudget(user.id, plan),
       // Месячный пул встроенной модели: `limit: 0` у бесплатного тарифа — пула нет, шкалу не рисуем.
       tokens: await getTokenBudget(user.id, plan),
       history: await getBillingHistory(user.id, 7),
