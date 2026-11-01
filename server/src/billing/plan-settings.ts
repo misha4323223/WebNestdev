@@ -138,13 +138,32 @@ export function planDisplayDescription(plan: PlanId): string {
 }
 
 /**
+ * Пункты, которые сохранились в PLAN_SETTINGS до перехода на кредиты. Старый текст продолжает
+ * перекрывать каталог на уже настроенных стендах, поэтому при чтении заменяем только известные
+ * устаревшие строки. Остальные пункты админки остаются как есть.
+ */
+const LEGACY_FEATURE_REPLACEMENTS: Record<string, string> = {
+  "50 млн токенов агента в месяц": "5 000 кредитов агента в месяц",
+  "100 запусков агента в день": "Без дневного лимита запусков",
+  "250 млн токенов агента в месяц": "25 000 кредитов агента в месяц",
+  "500 запусков агента в день": "Без дневного лимита запусков",
+};
+
+function modernFeature(feature: string) {
+  return LEGACY_FEATURE_REPLACEMENTS[feature.trim()] ?? feature;
+}
+
+/**
  * Пункты карточки: непустой override заменяет каталог; пустой или отсутствующий — каталог.
  * Для бесплатного тарифа каталог остаётся всегда: его условия не продаются и не редактируются.
  */
 export function planDisplayFeatures(plan: PlanId): string[] {
   if (plan === "free") return [...PLAN_CATALOG[plan].features];
   const override = planOverride(plan).features;
-  return override?.length ? [...override] : [...PLAN_CATALOG[plan].features];
+  if (!override?.length) return [...PLAN_CATALOG[plan].features];
+  const modern = override.map(modernFeature);
+  // Две старые строки могли превратиться в одну; повтор не должен показываться дважды.
+  return modern.filter((feature, index) => modern.indexOf(feature) === index);
 }
 
 /**

@@ -55,6 +55,49 @@ test("admin plan settings change the name, features, description and discounted 
   });
 });
 
+/**
+ * На проде PLAN_SETTINGS уже содержал старые пункты про токены и дневные запуски. Они не должны
+ * перекрывать новый каталог: иначе витрина и мобильная админка показывают старые лимиты после
+ * выкатки. Кастомные пункты при этом не теряются — это проверяет соседний тест.
+ */
+test("legacy token and daily-run features are modernized on read", () => {
+  withSettings({
+    version: 1,
+    plans: {
+      pro: { features: [
+        "15 проектов",
+        "50 млн токенов агента в месяц",
+        "100 запусков агента в день",
+        "50 браузерных проверок в день",
+        "10 ГБ хранилища",
+        "Импорт репозиториев без лимита",
+        "Все интеграции без ограничений",
+        "Поддержка в рабочий день",
+      ] },
+      team: { features: [
+        "50 проектов",
+        "250 млн токенов агента в месяц",
+        "500 запусков агента в день",
+        "250 браузерных проверок в день",
+        "50 ГБ хранилища",
+        "Все возможности «Плюса»",
+        "Приоритетная поддержка",
+      ] },
+    },
+  }, () => {
+    const plans = publicPlans();
+    const pro = plans.find(plan => plan.id === "pro");
+    const team = plans.find(plan => plan.id === "team");
+    assert.ok(pro && team);
+    assert.deepEqual(pro.features, [...PLAN_CATALOG.pro.features]);
+    assert.deepEqual(team.features, [...PLAN_CATALOG.team.features]);
+    assert.ok(pro.features.includes("5 000 кредитов агента в месяц"));
+    assert.ok(pro.features.includes("Без дневного лимита запусков"));
+    assert.ok(!pro.features.some(feature => feature.includes("100 запусков")));
+    assert.deepEqual(planAdminList()[0].features, [...PLAN_CATALOG.pro.features]);
+  });
+});
+
 test("a broken or incomplete plan setting falls back to the catalog instead of breaking checkout", () => {
   withSettings(undefined, () => {
     assert.equal(planPriceRub("pro"), 990);
