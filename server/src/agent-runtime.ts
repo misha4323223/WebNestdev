@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { AgentRunRequest,ChatMessage,PlanState } from "./types.js";
 import { createProvider } from "./provider.js";
 import { appendConversationMessages,getConversationPlan,getProject,getProjectProvider,saveConversationPlan } from "./project-store.js";
-import { buildInitialMessages,insertSystemNotice,resumeNotice,storedHistory,webSearchNotice } from "./agent/message-builder.js";
+import { browserCheckNotice,buildInitialMessages,insertSystemNotice,resumeNotice,storedHistory,webSearchNotice } from "./agent/message-builder.js";
 import { notesNotice,notesUpdateNotice,readNoteLines } from "./agent/notes.js";
 import { buildProjectContext } from "./agent/context-builder.js";
 import { retrieveRelevantFiles } from "./agent/context-retrieval.js";
@@ -157,11 +157,16 @@ export class AgentRuntime {
       const task=history.filter(message=>message.role==="user").at(-1)?.content??"";
       const relevantFiles=await retrieveRelevantFiles(request.projectId,request.userId,task);
       const mode=request.mode==="planner"?"planner":"developer";
+      // Браузерная проверка — разрешение на этот запуск, а не свойство тарифа. Выключенная
+      // проверка отключает и автоматическую Chromium-QA после правок.
+      const browserCheckEnabled=request.browserCheck===true;
       let messages:ChatMessage[]=buildInitialMessages(history,projectContext+"\n\nTASK-RELEVANT SOURCE FILES\n"+relevantFiles,mode);
       // Переключатель поиска в интернете живёт в панели ввода, поэтому модель узнаёт о нём из
       // заметки, а инструменты проверяют тот же флаг сами (web-tools.ts). Выключенный поиск —
       // не повод выдумывать факты, а повод попросить пользователя включить кнопку.
       messages=insertSystemNotice(messages,webSearchNotice(request.webSearch===true));
+      // Тот же принцип для Chromium: без разрешения модель не должна тратить шаг на отказ.
+      messages=insertSystemNotice(messages,browserCheckNotice(browserCheckEnabled));
       // Заметка о согласованном — отдельным системным сообщением. Обрезка контекста системные
       // сообщения не выбрасывает и не сокращает, поэтому «какой вариант мы выбрали» остаётся
       // в промпте даже тогда, когда вся история вокруг уже свёрнута в срез.
@@ -444,11 +449,11 @@ export class AgentRuntime {
 
         if(mutationSucceeded){
           verificationPending=true;
-          const verified=await runVerification(browserRuntimeRequired,[...verificationRoutes]);
+          const verified=await runVerification(browserCheckEnabled&&browserRuntimeRequired,[...verificationRoutes]);
           if(verified){
             consecutiveVerifyFailures=0;
             verificationPending=false;
-            if(browserRuntimeRequired){
+            if(browserCheckEnabled&&browserRuntimeRequired){
               scenarioPending=true;
               consecutiveScenarioFailures=0;
               const affectedRoute=[...verificationRoutes][0]??"/";

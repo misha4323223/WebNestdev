@@ -1,11 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { Brain, Check, ChevronDown, ClipboardList, Code2, Globe, SlidersHorizontal } from "lucide-react";
+import { Brain, Check, ChevronDown, ClipboardList, Code2, Globe, MonitorCheck, SlidersHorizontal } from "lucide-react";
 import type { AgentMode, ReasoningEffort } from "../../lib/types";
 
 /**
- * Режим, глубина размышления и поиск в интернете — настройки одного запуска, поэтому и один
- * контрол: кнопка показывает, как агент отработает следующее сообщение, а меню рядом переключает
- * роль, глубину и разрешение выйти в сеть. Отдельная подсказка под полем ввода больше не нужна.
+ * Режим, глубина размышления, поиск в интернете и браузерная проверка — настройки одного запуска,
+ * поэтому и один контрол: кнопка показывает, как агент отработает следующее сообщение, а меню
+ * рядом переключает роль, глубину, выход в сеть и запуск Chromium. Отдельная подсказка под полем
+ * ввода больше не нужна.
  */
 export const reasoningLabels: Record<ReasoningEffort, string> = { low: "Лёгкое", medium: "Среднее", high: "Глубокое" };
 
@@ -23,10 +24,11 @@ const reasoningHints: Record<ReasoningEffort, string> = {
 const modes: AgentMode[] = ["developer", "planner"];
 const depths: ReasoningEffort[] = ["low", "medium", "high"];
 
-export function AgentModeControl({ mode, reasoning, webSearch, reasoningAvailable = true, onMode, onReasoning, onWebSearch }: {
+export function AgentModeControl({ mode, reasoning, webSearch, browserCheck, reasoningAvailable = true, onMode, onReasoning, onWebSearch, onBrowserCheck }: {
   mode: AgentMode;
   reasoning: ReasoningEffort;
   webSearch: boolean;
+  browserCheck: boolean;
   /**
    * Шлюз этой модели отклонил `reasoning_effort` (или глубину выключил администратор). Выбор
    * глубины тогда скрыт: переключатель, который ничего не меняет, только обещает лишнее.
@@ -35,6 +37,7 @@ export function AgentModeControl({ mode, reasoning, webSearch, reasoningAvailabl
   onMode: (mode: AgentMode) => void;
   onReasoning: (reasoning: ReasoningEffort) => void;
   onWebSearch: (enabled: boolean) => void;
+  onBrowserCheck: (enabled: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
   const boxRef = useRef<HTMLDivElement | null>(null);
@@ -59,12 +62,13 @@ export function AgentModeControl({ mode, reasoning, webSearch, reasoningAvailabl
   const modeLabel = mode === "planner" ? "Планировщик" : "Разработчик";
   const triggerTitle = "Режимы агента · сейчас: " + modeLabel
     + (reasoningAvailable ? ", размышление " + reasoningLabels[reasoning].toLowerCase() : ", глубина размышления недоступна")
-    + (webSearch ? ", поиск в интернете включён" : "") + ". Открыть настройки запуска.";
+    + (webSearch ? ", поиск в интернете включён" : "")
+    + (browserCheck ? ", браузерная проверка включена" : "") + ". Открыть настройки запуска.";
 
   return <div className="agent-mode" ref={boxRef}>
     <button
       type="button"
-      className={"agent-mode-trigger" + (mode === "planner" ? " planner" : "") + (open ? " open" : "") + (webSearch ? " search-on" : "")}
+      className={"agent-mode-trigger" + (mode === "planner" ? " planner" : "") + (open ? " open" : "") + (webSearch ? " search-on" : "") + (browserCheck ? " browser-on" : "")}
       onClick={() => setOpen(value => !value)}
       aria-expanded={open}
       aria-haspopup="dialog"
@@ -77,10 +81,11 @@ export function AgentModeControl({ mode, reasoning, webSearch, reasoningAvailabl
         <span className="agent-mode-depth">{reasoningLabels[reasoning]}</span>
       </>}
       {webSearch && <Globe size={11} className="agent-mode-globe" aria-hidden="true"/>}
+      {browserCheck && <MonitorCheck size={11} className="agent-mode-browser" aria-hidden="true"/>}
       <ChevronDown size={12} className="agent-mode-caret"/>
     </button>
 
-    {open && <div className="agent-mode-menu" role="dialog" aria-label="Режим, размышление и интернет">
+    {open && <div className="agent-mode-menu" role="dialog" aria-label="Режим, размышление, интернет и браузер">
       <div className="agent-mode-head"><span className="eyebrow">РЕЖИМ АГЕНТА</span></div>
       <div className="agent-mode-options">
         {modes.map(id => {
@@ -130,6 +135,23 @@ export function AgentModeControl({ mode, reasoning, webSearch, reasoningAvailabl
         <span className="agent-mode-switch-text">
           <strong>Поиск в интернете</strong>
           <small>{webSearch ? "Включён: ищет и открывает страницы" : "Выключен: только проект и память"}</small>
+        </span>
+        <span className="agent-mode-pill" aria-hidden="true"><span/></span>
+      </button>
+
+      <div className="agent-mode-head with-icon"><MonitorCheck size={11}/> <span className="eyebrow">БРАУЗЕР</span></div>
+      <button
+        type="button"
+        role="switch"
+        aria-checked={browserCheck}
+        className={"agent-mode-switch" + (browserCheck ? " active" : "")}
+        onClick={() => onBrowserCheck(!browserCheck)}
+        title={browserCheck ? "Браузерная проверка включена на этот запуск — нажмите, чтобы выключить" : "Проверить страницу в Chromium — это добавляет шаги и расход токенов"}
+      >
+        <span className="agent-mode-switch-icon"><MonitorCheck size={13}/></span>
+        <span className="agent-mode-switch-text">
+          <strong>Браузерная проверка</strong>
+          <small>{browserCheck ? "Включена: смотрит страницу в Chromium" : "Выключена: без Chromium и лишних токенов"}</small>
         </span>
         <span className="agent-mode-pill" aria-hidden="true"><span/></span>
       </button>

@@ -20,6 +20,12 @@ const storagePostRecordTools = new Set([
   "deploy.plan",
 ]);
 const heavyStorageMutationTools = new Set(["terminal.exec", "npm.install", "pip.install", "net.download"]);
+/**
+ * Эти инструменты запускают Chromium. Браузерная проверка — режим запуска, а не квота тарифа,
+ * поэтому без включённого переключателя они не работают: иначе автоматическая QA обходила бы
+ * решение человека и тратила бы его токены.
+ */
+const browserCheckTools = new Set(["browser.runtime", "browser.scenario", "browser.screenshot"]);
 
 export async function executeTool(call:ProviderToolCall,context:AgentContext){
   const tool=getTool(call.name);
@@ -33,9 +39,12 @@ export async function executeTool(call:ProviderToolCall,context:AgentContext){
   }
   const handler=tool.execute??tool.async;
   if(!handler)throw new Error("У инструмента нет обработчика: "+call.name);
-  // Снимок — такая же браузерная проверка, как runtime и сценарий: она запускает Chromium и
-  // расходует ту же дневную единицу, иначе лимит обходится одним вызовом browser.screenshot.
-  if(call.name==="browser.runtime"||call.name==="browser.scenario"||call.name==="browser.screenshot"){
+  if(browserCheckTools.has(call.name)){
+    if(context.request.browserCheck!==true){
+      throw new Error("Браузерная проверка выключена. Включите «Браузерную проверку» в меню «Режимы» у поля ввода: без этого Chromium и автоматическая браузерная QA не запускаются.");
+    }
+    // Счётчик браузерных проверок остаётся для аналитики. Дневной квоты у него больше нет:
+    // расход ограничивают кредиты, лимит шагов и очередь Chromium.
     await consumeUsageForCurrentPlan(context.request.userId,"browserChecks");
   }
   if(storagePreCheckTools.has(call.name)){
@@ -45,7 +54,7 @@ export async function executeTool(call:ProviderToolCall,context:AgentContext){
   // а остановка запуска передаётся внутрь инструмента, чтобы ожидание закрылось вместе с ним.
   // Поиск в интернете разрешён только при включённом переключателе в панели ввода: флаг читается
   // здесь, поэтому его видят и web.search, и web.read, и ни один из них не обходит решение человека.
-  const result=await handler(call.arguments,{projectId:context.request.projectId,runId:context.runId,userId:context.request.userId,...(context.request.conversationId?{conversationId:context.request.conversationId}:{}),emit:context.emit,webSearchEnabled:context.request.webSearch===true,...(context.signal?{signal:context.signal}:{})});
+  const result=await handler(call.arguments,{projectId:context.request.projectId,runId:context.runId,userId:context.request.userId,...(context.request.conversationId?{conversationId:context.request.conversationId}:{}),emit:context.emit,webSearchEnabled:context.request.webSearch===true,browserCheckEnabled:context.request.browserCheck===true,...(context.signal?{signal:context.signal}:{})});
   if(storagePostRecordTools.has(call.name)){
     await recordStorageMutation(context.request.projectId, context.request.userId, {
       heavy: heavyStorageMutationTools.has(call.name),

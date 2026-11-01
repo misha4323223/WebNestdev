@@ -75,6 +75,22 @@ export function paymentPaidLetter(input: { plan: PlanId; amount: number; invId: 
   return { subject: "Оплата принята — тариф «" + planName + "»", text: lines.join("\n") };
 }
 
+export function creditPurchasePaidLetter(input: { credits: number; amount: number; invId: number }) {
+  const lines = [
+    "Оплата принята: кредиты зачислены.",
+    "",
+    "Кредитов: " + input.credits.toLocaleString("ru-RU"),
+    "Сумма: " + rubLabel(input.amount),
+    "Счёт №: " + input.invId,
+    "",
+    "Докупленные кредиты не сгорают и расходуются после месячного лимита тарифа.",
+    "Баланс и история докупок видны в личном кабинете: «Настройки» → «Тариф и подписка».",
+    "",
+    "Чек НПД придёт отдельным сообщением от платёжного сервиса.",
+  ];
+  return { subject: "Кредиты зачислены — " + input.credits.toLocaleString("ru-RU"), text: lines.join("\n") };
+}
+
 export function renewalNoticeLetter(input: { plan: PlanId; amount: number; renewsAt: string }) {
   const planName = planDisplayName(input.plan);
   const when = dateLabel(input.renewsAt);
@@ -115,6 +131,19 @@ export async function notifyPaymentPaid(
 }
 
 /** Письмо-предупреждение перед автопродлением. Без него свипер не списывает деньги. */
+/** Письмо после оплаты пакета кредитов. Отказ почты не влияет на зачисление. */
+export async function notifyCreditPurchasePaid(
+  input: { userId: string; credits: number; amount: number; invId: number },
+  send: LetterSend = sendMail,
+): Promise<boolean> {
+  const user = await getUser(input.userId);
+  if (!user) return false;
+  const to = await reachableEmailFor(user);
+  if (!to) return false;
+  await send({ to, ...creditPurchasePaidLetter(input) });
+  return true;
+}
+
 export async function sendRenewalNotice(record: SubscriptionRecord, send: LetterSend = sendMail): Promise<boolean> {
   const user = await getUser(record.userId);
   if (!user) return false;

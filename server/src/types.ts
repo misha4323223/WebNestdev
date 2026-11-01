@@ -76,10 +76,14 @@ export type ReasoningEffort="low"|"medium"|"high";
  * ходит в сеть. Флаг приходит от клиента, потому что это решение пользователя на конкретный запуск,
  * а не свойство аккаунта; тариф по-прежнему выбирает провайдера (`web/search.ts`).
  *
+ * `browserCheck` — отдельный переключатель того же меню: разрешает Chromium-инструменты и
+ * автоматическую браузерную QA на этот запуск. Выключен по умолчанию, потому что проверка
+ * добавляет шаги и результаты в контекст, а значит расходует больше токенов.
+ *
  * `plan` ставит сервер, а не клиент: на бесплатном тарифе он выбирает бесплатную модель с
  * резервом на платформенную, а на платных оставляет платформенную по умолчанию.
  */
-export type AgentRunRequest={projectId:string;conversationId?:string;messages:ChatMessage[];history?:ChatMessage[];model?:string;mode?:AgentMode;reasoning?:ReasoningEffort;webSearch?:boolean;resume?:{reason?:string};plan?:PlanId;userId:string};
+export type AgentRunRequest={projectId:string;conversationId?:string;messages:ChatMessage[];history?:ChatMessage[];model?:string;mode?:AgentMode;reasoning?:ReasoningEffort;webSearch?:boolean;browserCheck?:boolean;resume?:{reason?:string};plan?:PlanId;userId:string};
 /**
  * `emit` и `signal` нужны инструментам, которые работают не сами по себе, а вместе с пользователем:
  * `secrets.request` показывает модальное окно через поток запуска и ждёт ответа, а остановка запуска
@@ -89,6 +93,6 @@ export type AgentRunRequest={projectId:string;conversationId?:string;messages:Ch
  * `conversationId` нужен инструментам, которые пишут в разговор, а не в проект: заметки решений
  * принадлежат чату, а не проекту (в разных чатах одного проекта договариваются о разном).
  */
-export type ToolContext={projectId:string;runId:string;userId:string;conversationId?:string;emit?:(event:AgentEvent)=>void;signal?:AbortSignal;/** `web.search`/`web.read` разрешены только когда пользователь включил поиск в панели ввода. */webSearchEnabled?:boolean};
+export type ToolContext={projectId:string;runId:string;userId:string;conversationId?:string;emit?:(event:AgentEvent)=>void;signal?:AbortSignal;/** `web.search`/`web.read` разрешены только когда пользователь включил поиск в панели ввода. */webSearchEnabled?:boolean;/** Тяжёлые `browser.*` разрешены только когда пользователь включил браузерную проверку. */browserCheckEnabled?:boolean};
 export type ToolHandler=(input:unknown,context:ToolContext)=>Promise<unknown>;
 export type ToolDefinition={name:string;description:string;execute?:ToolHandler;async?:ToolHandler;/** Optional JSON Schema sent to the provider so the model knows the exact input shape. */parameters?:Record<string,unknown>};

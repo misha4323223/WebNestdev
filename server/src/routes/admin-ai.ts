@@ -5,16 +5,25 @@ import { applyNoStoreToReply } from "./cache-headers.js";
 import { recordAudit } from "../security/audit-journal.js";
 import { savePlatformEnv } from "../platform/platform-env.js";
 import { platformAiProviderStatus } from "../platform/ai-provider.js";
+import { mainCreditRates, creditRatesProblem, normalizeCreditRates } from "../account/credits.js";
 import { getPlatformProviderConfig } from "../provider/platform-provider.js";
 import { testProviderConnection } from "../provider/connection-test.js";
 
 const baseUrl = z.string().trim().url().max(500).refine(value => /^https?:\/\//i.test(value), "Нужен адрес вида https://…");
+/** Частичные ставки: админ-приложение может прислать только изменённое поле. */
+const creditRatesSchema = z.object({
+  inputPerMillion: z.number().finite().min(0).max(1_000_000).optional(),
+  outputPerMillion: z.number().finite().min(0).max(1_000_000).optional(),
+  minimumPerRun: z.number().int().min(0).max(10_000).optional(),
+}).partial().nullable().optional();
 const providerSchema = z.object({
   provider: z.string().trim().min(1, "Укажите название провайдера").max(120),
   baseUrl,
   model: z.string().trim().min(1, "Укажите модель").max(300),
   /** Пусто — сохранить текущий ключ: так смена модели не требует повторной вставки секрета. */
   apiKey: z.string().trim().max(20_000).optional(),
+  /** Ставки списания кредитов основной модели; не рубли провайдера. */
+  creditRates: creditRatesSchema,
 });
 const testSchema = z.object({
   provider: z.string().trim().max(120).optional(),
@@ -55,6 +64,27 @@ export async function registerAdminAiRoutes(app: FastifyInstance, overrides: Par
       PLATFORM_AI_MODEL: parsed.data.model,
     };
     if (parsed.data.apiKey?.trim()) values.PLATFORM_AI_API_KEY = parsed.data.apiKey;
+    if (parsed.data.creditRates === null) {
+      // Пустая строка удаляет значение панели: ставки возвращаются к окружению, затем к базовым.
+      values.PLATFORM_AI_CREDITS_INPUT_PER_MILLION = "";
+      values.PLATFORM_AI_CREDITS_OUTPUT_PER_MILLION = "";
+      values.PLATFORM_AI_CREDITS_MINIMUM_PER_RUN = "";
+    } else if (parsed.data.creditRates !== undefined) {
+      const next = normalizeCreditRates(parsed.data.creditRates, mainCreditRates());
+      const problem = creditRatesProblem(next);
+      if (problem) return reply.code(400).send({ error: problem });
+      // Сохраняем только присланные поля: остальные продолжают читаться из окружения, пока
+      // админ-приложение не переопределит их явно.
+      if (parsed.data.creditRates.inputPerMillion !== undefined) {
+        values.PLATFORM_AI_CREDITS_INPUT_PER_MILLION = String(next.inputPerMillion);
+      }
+      if (parsed.data.creditRates.outputPerMillion !== undefined) {
+        values.PLATFORM_AI_CREDITS_OUTPUT_PER_MILLION = String(next.outputPerMillion);
+      }
+      if (parsed.data.creditRates.minimumPerRun !== undefined) {
+        values.PLATFORM_AI_CREDITS_MINIMUM_PER_RUN = String(next.minimumPerRun);
+      }
+    }
     const result = await deps.save(values);
     if (result.skipped.length) {
       return reply.code(400).send({ error: result.skipped.map(item => item.name + " — " + item.message).join("; ") });

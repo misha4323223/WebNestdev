@@ -457,8 +457,8 @@ The design intent is that users be bounded by what they consume, not by each oth
    user never waits behind free traffic. This is a product decision, not a limit; the current code
    deliberately treats every account the same.
 4. **Make the heavy path cheaper** — the static preview already removes the dev-server container;
-   keeping browser checks on demand (they are off unless the change touches the UI) keeps Chromium
-   out of most runs. Both reduce how often the queue is reached at all.
+   browser checks are now off unless the user turns on «Браузерная проверка» in the «Режимы» menu,
+   so automatic Chromium QA does not run by default. Both reduce how often the queue is reached at all.
 
 ### What a small host costs in Russia (2026)
 

@@ -79,7 +79,7 @@ test("the recurring flag marks the first payment of a series only with the custo
     plan: "team",
     planName: "Премиум",
     invId: 7,
-    amount: 2990,
+    amount: 2_000,
     description: "Подписка",
     ...input,
   }).url);
@@ -118,6 +118,25 @@ test("a recurring charge does not sign PreviousInvoiceID and carries a receipt w
   assert.equal(fiscal.get("SignatureValue"), signValue("nestdev:990.00:11:" + receipt + ":pass1", "md5"));
 });
 
+test("a credit pack is a one-off payment with its own receipt item", () => {
+  const link = buildPaymentUrl({
+    config: { ...config, receipt: true, recurring: true },
+    plan: "pro",
+    planName: "5 000 кредитов",
+    invId: 100002,
+    amount: 1_190,
+    description: "Кредиты NestDev — 5 000 шт.",
+    kind: "credits",
+    credits: 5_000,
+    recurring: true,
+  });
+  const url = new URL(link.url);
+  assert.equal(url.searchParams.get("Recurring"), null, "кредиты не открывают серию списаний");
+  const receipt = JSON.parse(decodeURIComponent(url.searchParams.get("Receipt") ?? "{}")) as { items: Array<{ name: string }> };
+  assert.match(receipt.items[0]?.name ?? "", /Кредиты NestDev.*5/);
+  assert.equal(url.searchParams.get("OutSum"), "1190.00");
+});
+
 test("a donation is a one-off payment with its own receipt item", () => {
   const link = buildPaymentUrl({
     config: { ...config, recurring: true, receipt: true },
@@ -141,7 +160,7 @@ test("prices come from the catalog and can be changed by a key without a deploy"
   withEnv({ ROBOKASSA_PRICE_PRO: "1490" }, () => {
     assert.equal(planPriceRub("pro"), 1490);
     // Пустое или мусорное значение не ломает цену: остаётся каталожная.
-    assert.equal(planPriceRub("team"), 2990);
+    assert.equal(planPriceRub("team"), 2_000);
   });
   withEnv({ ROBOKASSA_PRICE_PRO: "дорого" }, () => assert.equal(planPriceRub("pro"), 990));
   assert.equal(planPriceRub("free"), 0);

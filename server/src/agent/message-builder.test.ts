@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { ChatMessage } from "../types.js";
-import { PLANNER_MODE_PROMPT, SYSTEM_PROMPT, buildInitialMessages, insertSystemNotice, storedHistory } from "./message-builder.js";
+import { PLANNER_MODE_PROMPT, SYSTEM_PROMPT, browserCheckNotice, buildInitialMessages, insertSystemNotice, storedHistory } from "./message-builder.js";
 
 /**
  * The stored chat is the model's memory of a run, so what it hands to a provider has to be exactly
@@ -96,6 +96,20 @@ test("the agent reasons in Russian by default", () => {
 test("an English request still gets English reasoning and answer", () => {
   assert.match(SYSTEM_PROMPT, /English request gets English reasoning and an English answer/i);
   assert.doesNotMatch(SYSTEM_PROMPT, /When the user writes in another language, answer in that language\./);
+});
+
+/**
+ * Браузерная проверка выключена по умолчанию: модель узнаёт это до первого шага и не тратит ход
+ * на вызов Chromium, который сервер всё равно отклонит.
+ */
+test("browser check notice keeps Chromium off until the user turns it on", () => {
+  const off = browserCheckNotice(false);
+  assert.match(off, /BROWSER CHECK IS OFF/i);
+  assert.match(off, /browser\.runtime/);
+  assert.match(off, /preview\.start/);
+  const on = browserCheckNotice(true);
+  assert.match(on, /BROWSER CHECK IS ON/i);
+  assert.match(on, /browser\.scenario/);
 });
 
 test("planner mode follows the language of the request", () => {

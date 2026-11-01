@@ -79,17 +79,25 @@ function optionalFeatures(value: unknown): string[] | undefined {
     .map(item => item.slice(0, 80));
 }
 
+/** Старые цены каталога до текущей акции: их больше не показываем как ручную настройку. */
+const LEGACY_DEFAULT_PRICES: Record<PaidPlanId, number> = { pro: 990, team: 2_990 };
+
 /** Даже ручная правка JSON в хранилище не должна отдавать на витрину мусор. */
-function normalizeEntry(value: unknown): PlanOverrides {
+function normalizeEntry(value: unknown, plan: PaidPlanId): PlanOverrides {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   const raw = value as Record<string, unknown>;
   const features = optionalFeatures(raw.features);
+  const price = optionalPrice(raw.priceRub);
+  const discount = optionalDiscount(raw.discountPercent);
+  // Старая настройка 990/2 990 без скидки — это прежняя цена каталога, а не осознанный отказ
+  // от акции. Убираем её, чтобы ниже подставились новые базовая цена и процент скидки.
+  const legacyDefault = price === LEGACY_DEFAULT_PRICES[plan] && (discount === undefined || discount === 0);
   return {
     ...(optionalText(raw.name, 48) ? { name: optionalText(raw.name, 48) } : {}),
     ...(optionalText(raw.description, 180) ? { description: optionalText(raw.description, 180) } : {}),
     ...(features ? { features } : {}),
-    ...(optionalPrice(raw.priceRub) ? { priceRub: optionalPrice(raw.priceRub) } : {}),
-    ...(optionalDiscount(raw.discountPercent) !== undefined ? { discountPercent: optionalDiscount(raw.discountPercent) } : {}),
+    ...(price && !legacyDefault ? { priceRub: price } : {}),
+    ...(discount !== undefined && !legacyDefault ? { discountPercent: discount } : {}),
   };
 }
 
@@ -113,8 +121,8 @@ function readSettings(): StoredPlanSettings {
     cached = {
       version: 1,
       plans: {
-        pro: normalizeEntry(parsed.plans?.pro),
-        team: normalizeEntry(parsed.plans?.team),
+        pro: normalizeEntry(parsed.plans?.pro, "pro"),
+        team: normalizeEntry(parsed.plans?.team, "team"),
       },
     };
   } catch {
@@ -138,32 +146,53 @@ export function planDisplayDescription(plan: PlanId): string {
 }
 
 /**
- * Пункты, которые сохранились в PLAN_SETTINGS до перехода на кредиты. Старый текст продолжает
- * перекрывать каталог на уже настроенных стендах, поэтому при чтении заменяем только известные
- * устаревшие строки. Остальные пункты админки остаются как есть.
+ * Пункты, которые сохранились в PLAN_SETTINGS до перехода на кредиты и новые лимиты проектов.
+ * Старый текст продолжает перекрывать каталог на уже настроенных стендах, поэтому при чтении
+ * заменяем известные устаревшие строки. Это именно миграция сохранённых значений, а не запрет
+ * на редактирование: остальные пункты админки остаются как есть.
  */
-const LEGACY_FEATURE_REPLACEMENTS: Record<string, string> = {
-  "50 млн токенов агента в месяц": "5 000 кредитов агента в месяц",
-  "100 запусков агента в день": "Без дневного лимита запусков",
-  "250 млн токенов агента в месяц": "25 000 кредитов агента в месяц",
-  "500 запусков агента в день": "Без дневного лимита запусков",
+const LEGACY_FEATURE_REPLACEMENTS: Record<PaidPlanId, Record<string, string>> = {
+  pro: {
+    "50 млн токенов агента в месяц": "5 000 кредитов на агента в месяц",
+    "5 000 кредитов агента в месяц": "5 000 кредитов на агента в месяц",
+    "15 проектов": "9 проектов",
+  },
+  team: {
+    "250 млн токенов агента в месяц": "10 000 кредитов на агента в месяц",
+    "25 000 кредитов агента в месяц": "10 000 кредитов на агента в месяц",
+    "10 000 кредитов агента в месяц": "10 000 кредитов на агента в месяц",
+    "50 проектов": "15 проектов",
+  },
 };
 
-function modernFeature(feature: string) {
-  return LEGACY_FEATURE_REPLACEMENTS[feature.trim()] ?? feature;
+/**
+ * Эти обещания больше не принадлежат тарифам: запуски на платных тарифах ограничены кредитами,
+ * браузерная проверка — отдельный режим запуска, а поддержка не входит в карточку тарифа.
+ * Фильтр нужен и для старых сохранённых пунктов, и для пунктов, добавленных вручную в админке.
+ */
+const RETIRED_FEATURE = /без дневного лимита|браузерн[\wа-яё]*\s+провер|поддержк|\d+\s+запусков агента в день/iu;
+
+function modernFeature(plan: PaidPlanId, feature: string) {
+  const normalized = feature.trim();
+  if (RETIRED_FEATURE.test(normalized)) return "";
+  return LEGACY_FEATURE_REPLACEMENTS[plan][normalized] ?? normalized;
 }
 
 /**
  * Пункты карточки: непустой override заменяет каталог; пустой или отсутствующий — каталог.
  * Для бесплатного тарифа каталог остаётся всегда: его условия не продаются и не редактируются.
+ * Если после миграции не осталось ни одного пункта, показываем каталог, а не пустую карточку.
  */
 export function planDisplayFeatures(plan: PlanId): string[] {
   if (plan === "free") return [...PLAN_CATALOG[plan].features];
   const override = planOverride(plan).features;
   if (!override?.length) return [...PLAN_CATALOG[plan].features];
-  const modern = override.map(modernFeature);
+  const modern = override
+    .map(feature => modernFeature(plan, feature))
+    .filter((feature): feature is string => Boolean(feature));
   // Две старые строки могли превратиться в одну; повтор не должен показываться дважды.
-  return modern.filter((feature, index) => modern.indexOf(feature) === index);
+  const unique = modern.filter((feature, index) => modern.indexOf(feature) === index);
+  return unique.length ? unique : [...PLAN_CATALOG[plan].features];
 }
 
 /**

@@ -69,26 +69,39 @@ export function formatAmount(amount: number) {
   return amount.toFixed(2);
 }
 
+/** Цена из старого ключа окружения; null, если ключ не задан или испорчен. */
+function configuredPriceRub(plan: PlanId): number | null {
+  const configured = Number((getPlatformEnv("ROBOKASSA_PRICE_" + plan.toUpperCase()) ?? "").trim().replace(",", "."));
+  if (!Number.isFinite(configured) || configured <= 0) return null;
+  return Math.round(configured);
+}
+
 /**
  * Базовая цена до скидки. Сначала значение из админского раздела «Тарифы и скидки», затем
- * прежний ключ ROBOKASSA_PRICE_* и только потом каталог. Так старые настройки продолжают
- * работать, а новая форма не требует выкатки.
+ * прежний ключ ROBOKASSA_PRICE_* и только потом каталожная база. Так старые настройки
+ * продолжают работать, а новая форма не требует выкатки.
  */
 export function planBasePriceRub(plan: PlanId): number {
   if (plan === "free") return 0;
   const override = planOverride(plan).priceRub;
   if (override && override > 0) return Math.round(override);
-  const fallback = PLAN_CATALOG[plan].priceRub;
-  const configured = Number((getPlatformEnv("ROBOKASSA_PRICE_" + plan.toUpperCase()) ?? "").trim().replace(",", "."));
-  if (!Number.isFinite(configured) || configured <= 0) return fallback;
-  return Math.round(configured);
+  return configuredPriceRub(plan) ?? PLAN_CATALOG[plan].basePriceRub;
 }
 
-/** Скидка на тариф в процентах: 0 — её нет, 90 — максимум, который принимает админка. */
+/**
+ * Скидка на тариф в процентах: 0 — её нет, 90 — максимум, который принимает админка.
+ *
+ * Явно заданная цена (в админке или старым ключом ROBOKASSA_PRICE_*) считается итоговой:
+ * каталожная скидка к ней не применяется, иначе прежняя настройка 990 ₽ внезапно стала бы 653 ₽.
+ * Скидка каталога работает только для базовой цены по умолчанию.
+ */
 export function planDiscountPercent(plan: PlanId): number {
   if (plan === "free") return 0;
-  const value = planOverride(plan).discountPercent;
-  return value && value > 0 ? value : 0;
+  const override = planOverride(plan);
+  if (override.discountPercent !== undefined) return override.discountPercent;
+  if (override.priceRub && override.priceRub > 0) return 0;
+  if (configuredPriceRub(plan) !== null) return 0;
+  return PLAN_CATALOG[plan].discountPercent;
 }
 
 /** Итоговая цена: именно она попадает в счёт, чек и витрину. */
@@ -192,11 +205,13 @@ export function sameSignature(expected: string, received: string) {
  * ни месяца, ни тарифа — иначе чек обещал бы человеку услугу, которой он не покупал.
  * Название позиции — до 128 символов, как требует документация Робокассы.
  */
-export function buildReceipt(input: { planName: string; amount: number; months?: number; kind?: "subscription" | "donation" }) {
+export function buildReceipt(input: { planName: string; amount: number; months?: number; credits?: number; kind?: "subscription" | "donation" | "credits" }) {
   const months = input.months ?? 1;
   const name = input.kind === "donation"
     ? "Добровольная поддержка проекта NestDev"
-    : "Подписка NestDev «" + input.planName + "», " + months + " мес.";
+    : input.kind === "credits"
+      ? "Кредиты NestDev — " + (input.credits ?? 0).toLocaleString("ru-RU") + " шт."
+      : "Подписка NestDev «" + input.planName + "», " + months + " мес.";
   return JSON.stringify({
     items: [{
       name: name.slice(0, 128),
@@ -222,8 +237,10 @@ export type PaymentLinkInput = {
   amount: number;
   description: string;
   email?: string;
-  /** Донат отличается только позицией чека: подписки и периода у него нет. */
-  kind?: "subscription" | "donation";
+  /** Донат и кредиты отличаются позицией чека: подписки и периода у них нет. */
+  kind?: "subscription" | "donation" | "credits";
+  /** Количество кредитов для позиции чека. */
+  credits?: number;
   /** Отдельное согласие человека на регулярные списания: с ним платёж становится первым в серии. */
   recurring?: boolean;
 };
@@ -238,7 +255,12 @@ export type PaymentLinkInput = {
 export function buildPaymentUrl(input: PaymentLinkInput) {
   const config = input.config;
   const outSum = formatAmount(input.amount);
-  const receipt = config.receipt ? encodeReceipt(buildReceipt({ planName: input.planName, amount: input.amount, ...(input.kind ? { kind: input.kind } : {}) })) : undefined;
+  const receipt = config.receipt ? encodeReceipt(buildReceipt({
+    planName: input.planName,
+    amount: input.amount,
+    ...(input.kind ? { kind: input.kind } : {}),
+    ...(input.credits ? { credits: input.credits } : {}),
+  })) : undefined;
   const signature = signValue(paymentSignatureBase({
     login: config.login,
     outSum,
@@ -260,7 +282,7 @@ export function buildPaymentUrl(input: PaymentLinkInput) {
   if (config.testMode) params.push(["IsTest", "1"]);
   // `Recurring=true` открывает серию списаний, поэтому ставится только для тарифов и только по
   // отдельному согласию человека: без этой отметки платёж остаётся разовым (см. 376-ФЗ).
-  if (config.recurring && input.recurring && input.kind !== "donation") params.push(["Recurring", "true"]);
+  if (config.recurring && input.recurring && input.kind !== "donation" && input.kind !== "credits") params.push(["Recurring", "true"]);
   if (receipt) params.push(["Receipt", receipt]);
 
   // Receipt кодируется второй раз, как в справочных примерах Робокассы: на проводе лежит уже

@@ -152,7 +152,7 @@ export function AdminPlansPanel() {
             <div className="admin-plan-row">
               <label className="admin-plan-field">
                 <span>Цена, ₽/мес</span>
-                <input value={draft.priceRub} inputMode="numeric" onChange={event => update(plan.id, "priceRub", event.target.value)} placeholder="990"/>
+                <input value={draft.priceRub} inputMode="numeric" onChange={event => update(plan.id, "priceRub", event.target.value)} placeholder={plan.id === "pro" ? "1500" : "2500"}/>
               </label>
               <label className="admin-plan-field">
                 <span>Скидка, %</span>

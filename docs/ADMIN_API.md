@@ -7,6 +7,9 @@
 поэтому браузер не может приложить вход к чужому запросу, а CORS открывается только для адресов из
 `WEBNESTDEV_ADMIN_ORIGINS`.
 
+Отдельной веб-админки в этом репозитории нет и она не разрабатывается: документ описывает API
+для внешнего приложения. Новые административные возможности добавляются сюда, а не в веб-интерфейс.
+
 Код: `server/src/routes/admin.ts`, `server/src/admin/*`. Тесты: `server/src/admin/totp.test.ts`,
 `server/src/routes/admin.test.ts`.
 
@@ -183,8 +186,8 @@ curl -s https://panel.example.com/api/admin/2fa/verify -H 'content-type: applica
 | `GET /api/admin/billing?days=&limit=` | `Bearer` | платежи, подписки, истекающие и калибровка пула (раздел 7.8) |
 | `GET /api/admin/plans` | `Bearer` | тарифы: название, описание, базовая цена и скидка (раздел 7.10) |
 | `POST /api/admin/plans` | `Bearer` | изменить витрину и скидку; ответ уже содержит итоговую цену (раздел 7.10) |
-| `GET /api/admin/ai` | `Bearer` | главный AI-провайдер: название, Base URL, модель и источник ключа (раздел 7.12) |
-| `POST /api/admin/ai` | `Bearer` | переключить провайдера, модель и при необходимости ключ (раздел 7.12) |
+| `GET /api/admin/ai` | `Bearer` | главный AI-провайдер: название, Base URL, модель, источник ключа и ставки кредитов (раздел 7.12) |
+| `POST /api/admin/ai` | `Bearer` | переключить провайдера, модель, ключ и ставки кредитов (раздел 7.12) |
 | `POST /api/admin/ai/test` | `Bearer` | проверить черновик провайдера настоящим вызовом с инструментом (раздел 7.12) |
 | `GET /api/admin/ai/models` | `Bearer` | дополнительные модели платформы: Max, Mini и другие (раздел 7.13) |
 | `POST /api/admin/ai/models` | `Bearer` | добавить модель; `id` в теле (раздел 7.13) |
@@ -758,13 +761,13 @@ curl -s -H "Authorization: Bearer $TOKEN" 'https://nestdev.ru/api/admin/plans'
 {
   "plans": [
     { "id": "pro", "name": "Плюс", "description": "Для регулярной разработки",
-      "features": ["15 проектов", "50 млн токенов агента в месяц"],
-      "priceRub": 990, "discountPercent": 0,
-      "priceLabel": "990 ₽", "basePriceLabel": "990 ₽" },
+      "features": ["9 проектов", "5 000 кредитов на агента в месяц"],
+      "priceRub": 1500, "discountPercent": 34,
+      "priceLabel": "990 ₽", "basePriceLabel": "1 500 ₽" },
     { "id": "team", "name": "Премиум", "description": "Для больших проектов",
-      "features": ["50 проектов", "250 млн токенов агента в месяц"],
-      "priceRub": 2990, "discountPercent": 0,
-      "priceLabel": "2 990 ₽", "basePriceLabel": "2 990 ₽" }
+      "features": ["15 проектов", "10 000 кредитов на агента в месяц"],
+      "priceRub": 2500, "discountPercent": 20,
+      "priceLabel": "2 000 ₽", "basePriceLabel": "2 500 ₽" }
   ]
 }
 ```
@@ -813,9 +816,9 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/
 ### 7.12. Главный AI-провайдер
 
 Код: `server/src/routes/admin-ai.ts`. Тесты: `server/src/routes/admin-ai.test.ts`. Управление
-идёт только через это API админ-приложения; отдельная веб-панель для смены провайдера не нужна.
-Ключ никогда не возвращается в ответе: `keySource` говорит, сохранён ли он на сервере
-(`panel` — зашифрованное хранилище платформы, не веб-панель) или взят из окружения.
+идёт только через это API админ-приложения; отдельной веб-админки для этого нет и она не
+разрабатывается. Ключ никогда не возвращается в ответе: `keySource` говорит, сохранён ли он на
+сервере (`panel` — зашифрованное хранилище платформы, не веб-админка) или взят из окружения.
 
 ```bash
 curl -s -H "Authorization: Bearer $TOKEN" 'https://nestdev.ru/api/admin/ai'
@@ -830,7 +833,12 @@ curl -s -H "Authorization: Bearer $TOKEN" 'https://nestdev.ru/api/admin/ai'
     "baseUrl": "https://api.deepseek.com/v1",
     "model": "deepseek-flash",
     "hasKey": true,
-    "keySource": "panel"
+    "keySource": "panel",
+    "creditRates": {
+      "inputPerMillion": 50,
+      "outputPerMillion": 510,
+      "minimumPerRun": 1
+    }
   }
 }
 ```
@@ -840,9 +848,16 @@ curl -s -H "Authorization: Bearer $TOKEN" 'https://nestdev.ru/api/admin/ai'
 
 ```bash
 curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
-  -d '{"provider":"OpenRouter","baseUrl":"https://openrouter.ai/api/v1","model":"deepseek/deepseek-chat","apiKey":"sk-or-…"}' \
+  -d '{"provider":"OpenRouter","baseUrl":"https://openrouter.ai/api/v1","model":"deepseek/deepseek-chat","apiKey":"sk-or-…","creditRates":{"inputPerMillion":60,"outputPerMillion":600,"minimumPerRun":2}}' \
   'https://nestdev.ru/api/admin/ai'
 ```
+
+`creditRates` — сколько кредитов списывается за 1 млн входных и выходных токенов плюс минимум за
+запуск. Это **не рубли провайдера**: закупочная цена задаётся отдельно в `PLATFORM_AI_MODEL_PRICES`.
+Поле необязательное: если его нет, ставки не меняются. Частичный объект меняет только переданные
+поля; `creditRates: null` удаляет значения, сохранённые через API, и возвращает ставки из
+`PLATFORM_AI_CREDITS_*` или базовые `50 / 510 / 1`. Ограничения: ставки от 0 до 1 000 000,
+минимум — целое от 0 до 10 000; обе ставки не могут быть нулевыми.
 
 `POST /api/admin/ai/test` принимает те же `provider`, `baseUrl`, `model` и необязательный
 `apiKey`. Без нового ключа проверка использует сохранённый. Результат: `ok`, `latencyMs`,
@@ -921,7 +936,8 @@ curl -s -X PUT -H "Authorization: Bearer $TOKEN" -H 'content-type: application/j
 для остальных id — базовые `50 / 510 / 1`. Поля можно присылать частично: `PATCH
 {"creditRates":{"outputPerMillion":3000}}` не меняет вход и минимум. `creditRates: null`
 возвращает стартовые ставки модели. Формула списания и ограничения — в `docs/PLANS_AND_LIMITS.md`;
-для основной модели ставки задаются `PLATFORM_AI_CREDITS_*`.
+для основной модели те же ставки читаются из `PLATFORM_AI_CREDITS_*` и меняются через
+`POST /api/admin/ai` (раздел 7.12).
 
 Если провайдер даёт цену в долларах за 1M токенов, пересчитайте её в кредиты по своей базовой
 ставке. Например, при базе 50 кредитов за 1M входа и 510 за 1M выхода множитель `×5` означает

@@ -5,7 +5,8 @@ export type PlanLimits = {
   projects: number;
   /** null — дневного лимита нет: на платных тарифах расход ограничен кредитами. */
   agentRunsPerDay: number | null;
-  browserChecksPerDay: number;
+  /** null — это режим запуска, а не квота тарифа; счётчик остаётся только в аналитике. */
+  browserChecksPerDay: number | null;
   webSearchesPerDay: number;
   storageBytes?: number;
   /** Месячный бюджет кредитов; 0 или отсутствие — кредитов нет, работает дневной лимит запусков. */
@@ -32,8 +33,19 @@ export type Plan = {
   details: string[];
 };
 export type Usage = { date: string; agentRuns: number; browserChecks: number; webSearches: number };
-/** Расход месячного бюджета кредитов: `limit: 0` — кредитов у тарифа нет. */
-export type CreditBudget = { month: string; used: number; limit: number; bonus?: number; remaining: number };
+/**
+ * Бюджет кредитов: `planLimit` — месячный пул тарифа, `purchased` — неистраченные докупленные
+ * кредиты, которые не сгорают. `limit` — их общая сумма.
+ */
+export type CreditBudget = {
+  month: string;
+  used: number;
+  planLimit: number;
+  limit: number;
+  bonus?: number;
+  purchased: number;
+  remaining: number;
+};
 /** Сырой токенный пул оставлен для совместимости и аналитики. */
 export type TokenBudget = { month: string; used: number; limit: number; remaining: number };
 /** Состояние квоты считает сервер: пороги 80% и 100% должны совпадать на всех экранах. */
@@ -102,6 +114,26 @@ export type BillingPayment = {
   createdAt: string;
   paidAt: string | null;
 };
+/** Пакет докупки: сумма и количество кредитов приходят с сервера. */
+export type CreditPack = {
+  id: string;
+  credits: number;
+  priceRub: number;
+  priceLabel: string;
+  name: string;
+  note: string;
+  recommended: boolean;
+};
+export type CreditPurchase = {
+  invId: number;
+  packId: string;
+  credits: number;
+  amount: number;
+  currency: string;
+  status: PaymentStatus;
+  createdAt: string;
+  paidAt: string | null;
+};
 /** The plan catalog, the limits of the account's own plan and today's usage. */
 export type BillingData = {
   plans: Plan[];
@@ -117,8 +149,11 @@ export type BillingData = {
   history?: BillingHistory;
   payments?: BillingPayment[];
   paymentsEnabled?: boolean;
+  creditPacks?: CreditPack[];
+  creditPurchases?: CreditPurchase[];
 };
 export type Checkout = { invId: number; paymentUrl: string; amount: number; currency: string; test: boolean };
+export type CreditCheckout = Checkout & { credits: number; packId: string };
 
 export const getBilling = () => apiJson<BillingData>("/api/billing");
 
@@ -147,6 +182,13 @@ export const startCheckout = (plan: "pro" | "team", autoRenew: boolean) => apiJs
   method: "POST",
   headers: { "content-type": "application/json" },
   body: JSON.stringify({ plan, autoRenew }),
+});
+
+/** Докупка кредитов — разовый платёж; пакет выбирается по id, цену считает сервер. */
+export const startCreditCheckout = (packId: string) => apiJson<CreditCheckout>("/api/billing/credits/checkout", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ packId }),
 });
 
 /** Автопродление: сервер сам проверяет, доступно ли оно для подписки. */

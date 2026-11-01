@@ -3,7 +3,7 @@ import { previewAppAnswers, findAnsweringPort } from "./app-http.js";
 import { listListeningPorts, listLoggedPorts } from "./app-port.js";
 import { startContainerRelay } from "./app-relay.js";
 import { previewAddressAnswers, type PreviewAddressDeps } from "./preview-address.js";
-import { attachToServerNetworks, previewAttachNetworks, previewNetwork } from "./preview-network.js";
+import { attachToServerNetworks, previewNetworks } from "./preview-network.js";
 
 /**
  * Preview collaborators bound to one execution node. Every Docker call in the status/repair
@@ -19,9 +19,7 @@ export function previewDepsForHost(host: SandboxHost): PreviewAddressDeps {
     loggedPorts: containerId => listLoggedPorts(containerId, docker),
     startRelay: input => startContainerRelay({ ...input, docker }),
     attachToServerNetworks: async containerId => {
-      const networks = host.networks
-        ? await host.networks()
-        : { preview: await previewNetwork(docker), attach: await previewAttachNetworks(docker) };
+      const networks = host.networks ? await host.networks() : await previewNetworks(docker);
       if (!networks.attach.length) return { host: "", connected: [] };
       return attachToServerNetworks(containerId, { networks: async () => networks.attach, docker });
     },

@@ -22,7 +22,12 @@ export type CheckoutConsentState = {
   autoRenew: boolean;
 };
 
-export function CheckoutConsent({ recurring, onChange }: { recurring: boolean; onChange: (state: CheckoutConsentState) => void }) {
+export function CheckoutConsent({ recurring, purpose = "subscription", onChange }: {
+  recurring: boolean;
+  /** Кредиты — разовая покупка: текст согласия не должен обещать месяц подписки. */
+  purpose?: "subscription" | "credits";
+  onChange: (state: CheckoutConsentState) => void;
+}) {
   const [personalData, setPersonalData] = useState(false);
   const [terms, setTerms] = useState(false);
   const [autoRenew, setAutoRenew] = useState(false);
@@ -43,17 +48,20 @@ export function CheckoutConsent({ recurring, onChange }: { recurring: boolean; o
     <label className="checkout-consent-row">
       <input type="checkbox" checked={personalData} onChange={event => setPersonalData(event.target.checked)}/>
       <span>
-        Даю {link("/legal/consent", "согласие на обработку персональных данных")} для оформления и оплаты подписки
-        и подтверждаю, что ознакомлен с {link("/legal/privacy", "Политикой обработки данных")}.
+        Даю {link("/legal/consent", "согласие на обработку персональных данных")} для оформления и оплаты
+        {purpose === "credits" ? " пакета кредитов" : " подписки"} и подтверждаю, что ознакомлен с{" "}
+        {link("/legal/privacy", "Политикой обработки данных")}.
       </span>
     </label>
     <label className="checkout-consent-row">
       <input type="checkbox" checked={terms} onChange={event => setTerms(event.target.checked)}/>
       <span>
         Принимаю {link("/legal/offer", "публичную оферту")} и {link("/legal/payments", "условия оплаты и возврата")}.{" "}
-        {recurring
-          ? "Продление — только по отдельному согласию ниже."
-          : "Оплата разовая — за один календарный месяц: автопродление сейчас не подключено."}
+        {purpose === "credits"
+          ? "Оплата разовая — за выбранный пакет кредитов. Докупленные кредиты не сгорают и расходуются после месячного лимита тарифа."
+          : recurring
+            ? "Продление — только по отдельному согласию ниже."
+            : "Оплата разовая — за один календарный месяц: автопродление сейчас не подключено."}
       </span>
     </label>
     {/* Отметка автопродления отдельная и необязательная: она не входит в условие готовности,

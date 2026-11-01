@@ -39,15 +39,15 @@ test("админка меняет название, описание, цену �
   assert.equal(before.statusCode, 200);
   const beforeBody = before.json() as { plans: Array<{ id: string; name: string; priceRub: number; discountPercent: number }> };
   assert.equal(beforeBody.plans.find(plan => plan.id === "pro")?.name, "Плюс");
-  assert.equal(beforeBody.plans.find(plan => plan.id === "pro")?.priceRub, 990);
+  assert.equal(beforeBody.plans.find(plan => plan.id === "pro")?.priceRub, 1_500);
 
   const saved = await app.inject({
     method: "POST",
     url: "/api/admin/plans",
     headers: { ...auth, "content-type": "application/json" },
     payload: {
-      pro: { name: "Профи", description: "Для постоянной работы", features: ["15 проектов", "Поддержка"], priceRub: 1200, discountPercent: 25 },
-      team: { name: "Студия", description: "Для нескольких продуктов", features: ["50 проектов"], priceRub: 3000, discountPercent: 0 },
+      pro: { name: "Профи", description: "Для постоянной работы", features: ["9 проектов", "Свой домен"], priceRub: 1200, discountPercent: 25 },
+      team: { name: "Студия", description: "Для нескольких продуктов", features: ["15 проектов"], priceRub: 3000, discountPercent: 0 },
     },
   });
   assert.equal(saved.statusCode, 200);
@@ -56,7 +56,7 @@ test("админка меняет название, описание, цену �
   const pro = body.plans.find(plan => plan.id === "pro");
   assert.ok(pro);
   assert.equal(pro.name, "Профи");
-  assert.deepEqual(pro.features, ["15 проектов", "Поддержка"]);
+  assert.deepEqual(pro.features, ["9 проектов", "Свой домен"]);
   assert.equal(pro.discountPercent, 25);
   assert.equal(pro.basePriceLabel.replace(/\u00a0/g, " "), "1 200 ₽");
   assert.equal(pro.priceLabel, "900 ₽", "в счёт и на витрину идёт цена со скидкой");
@@ -65,7 +65,7 @@ test("админка меняет название, описание, цену �
   assert.equal(after.statusCode, 200);
   const afterBody = after.json() as { plans: Array<{ id: string; name: string; features: string[]; priceLabel: string }> };
   assert.equal(afterBody.plans.find(plan => plan.id === "pro")?.name, "Профи");
-  assert.deepEqual(afterBody.plans.find(plan => plan.id === "pro")?.features, ["15 проектов", "Поддержка"]);
+  assert.deepEqual(afterBody.plans.find(plan => plan.id === "pro")?.features, ["9 проектов", "Свой домен"]);
   assert.equal(afterBody.plans.find(plan => plan.id === "pro")?.priceLabel, "900 ₽");
 });
 
@@ -85,7 +85,7 @@ test("слишком большая скидка отклоняется, а пр
   const body = after.json() as { plans: Array<{ id: string; name: string; priceLabel: string; features: string[] }> };
   assert.equal(body.plans.find(plan => plan.id === "pro")?.name, "Профи");
   assert.equal(body.plans.find(plan => plan.id === "pro")?.priceLabel, "900 ₽");
-  assert.deepEqual(body.plans.find(plan => plan.id === "pro")?.features, ["15 проектов", "Поддержка"], "отклонённая форма не стёрла пункты");
+  assert.deepEqual(body.plans.find(plan => plan.id === "pro")?.features, ["9 проектов", "Свой домен"], "отклонённая форма не стёрла пункты");
 });
 
 test("старый админ без поля features продолжает сохранять тариф", async () => {
@@ -101,7 +101,7 @@ test("старый админ без поля features продолжает со
   assert.equal(response.statusCode, 200);
   const body = response.json() as { saved: boolean; plans: Array<{ id: string; features: string[] }> };
   assert.equal(body.saved, true);
-  assert.deepEqual(body.plans.find(plan => plan.id === "pro")?.features, ["15 проектов", "Поддержка"], "старый клиент не стирает пункты");
+  assert.deepEqual(body.plans.find(plan => plan.id === "pro")?.features, ["9 проектов", "Свой домен"], "старый клиент не стирает пункты");
 });
 
 test("слишком длинный список пунктов отклоняется", async () => {

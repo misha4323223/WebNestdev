@@ -5,6 +5,7 @@ import { isYdbEnabled, ydbQuery, getTable } from "../storage/ydb.js";
 import { creditPoolFor, limitsForPlan, type PlanId, type UsageKind, type UsageSnapshot } from "./plans.js";
 import { accountPlanFor } from "../billing/store.js";
 import { tokenBonusFor } from "./token-bonus.js";
+import { creditBalance, recordCreditConsumption } from "../billing/credit-store.js";
 
 /**
  * Какая граница тарифа отвечает за каждый вид расхода. Таблица, а не тернарный оператор: новый вид
@@ -247,8 +248,13 @@ async function monthlyCreditsUsed(userId: string, now = new Date()): Promise<{ m
 export type CreditBudget = {
   month: string;
   used: number;
+  /** Месячный лимит тарифа и админской надбавки; докупленные кредиты сюда не входят. */
+  planLimit: number;
+  /** Общий доступный лимит: месячный пул плюс неистраченные докупленные кредиты. */
   limit: number;
   bonus: number;
+  /** Остаток докупленных кредитов; он не сгорает при смене месяца. */
+  purchased: number;
   remaining: number;
 };
 
@@ -256,13 +262,32 @@ export async function getCreditBudget(userId: string, plan: PlanId, now = new Da
   const { month } = monthWindow(now);
   const planCredits = creditPoolFor(plan);
   if (planCredits <= 0) {
-    return { month, used: 0, limit: 0, bonus: 0, remaining: 0 };
+    return { month, used: 0, planLimit: 0, limit: 0, bonus: 0, purchased: 0, remaining: 0 };
   }
   const { used } = await monthlyCreditsUsed(userId, now);
   const bonusTokens = await tokenBonusFor(userId, month);
   const bonus = Math.floor(bonusTokens / 10_000);
-  const limit = planCredits + bonus;
-  return { month, used, limit, bonus, remaining: Math.max(0, limit - used) };
+  const planLimit = planCredits + bonus;
+  const purchased = await creditBalance(userId);
+  const limit = planLimit + purchased;
+  return { month, used, planLimit, limit, bonus, purchased, remaining: Math.max(0, limit - used) };
+}
+
+/**
+ * Списывает с докупленного баланса только ту часть запуска, которая не помещалась в месячный
+ * лимит тарифа. Вызывается после записи `model_usage`, поэтому `used` уже включает этот запуск.
+ * Если запуск повторно записывается с тем же run_id, разница не появляется и списания нет.
+ */
+async function consumePurchasedCreditsForRun(userId: string, runId: string, credits: number, now: Date) {
+  if (credits <= 0) return;
+  const plan = await accountPlanFor(userId);
+  if (plan === "free") return;
+  const { month } = monthWindow(now);
+  const planLimit = creditPoolFor(plan) + Math.floor(await tokenBonusFor(userId, month) / 10_000);
+  const { used } = await monthlyCreditsUsed(userId, now);
+  const usedBefore = Math.max(0, used - credits);
+  const overage = Math.max(0, used - planLimit) - Math.max(0, usedBefore - planLimit);
+  if (overage > 0) await recordCreditConsumption(userId, runId, overage, now);
 }
 
 /** Отказ по кредитному бюджету: отдельный код, чтобы панель не путала его с дневной квотой. */
@@ -551,14 +576,19 @@ export async function recordRunUsage(userId: string, input: RunUsageInput, now =
         (user_id, usage_date, run_id, project_id, conversation_id, model, model_id, prompt_tokens, completion_tokens, cached_prompt_tokens, credits, estimated, created_at)
       VALUES (${userId}, ${date}, ${record.id}, ${record.projectId}, ${record.conversationId}, ${record.model}, ${record.modelId}, ${record.promptTokens}, ${record.completionTokens}, ${record.cachedPromptTokens}, ${record.credits}, ${record.estimated}, ${record.createdAt})
     `;
+    await consumePurchasedCreditsForRun(userId, record.id, record.credits, now);
     return record;
   }
+  let duplicate = false;
   await withLock("json-cost:" + date, async () => {
     const file = path.join(root, "account", "costs", date + ".json");
     const records = await readJson<UsageCostRecord[]>(file, []);
+    if (records.some(item => item.userId === userId && item.id === record.id)) { duplicate = true; return; }
     records.push(record);
     await writeJsonAtomic(file, records);
   });
+  // Повторная запись того же запуска не должна ни удваивать расход, ни списывать кредиты ещё раз.
+  if (!duplicate) await consumePurchasedCreditsForRun(userId, record.id, record.credits, now);
   return record;
 }
 

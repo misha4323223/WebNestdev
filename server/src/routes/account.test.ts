@@ -8,13 +8,35 @@ test("paid plans carry a monthly price, more projects and no daily run cap", () 
   assert.equal(PLAN_CATALOG.free.priceLabel, "0 ₽");
   assert.equal(PLAN_CATALOG.free.priceRub, 0);
   assert.equal(PLAN_CATALOG.pro.priceRub, 990);
-  assert.equal(PLAN_CATALOG.team.priceRub, 2990);
+  assert.equal(PLAN_CATALOG.pro.basePriceRub, 1_500);
+  assert.equal(PLAN_CATALOG.pro.discountPercent, 34);
+  assert.equal(PLAN_CATALOG.team.priceRub, 2_000);
+  assert.equal(PLAN_CATALOG.team.basePriceRub, 2_500);
+  assert.equal(PLAN_CATALOG.team.discountPercent, 20);
+  assert.equal(PLAN_CATALOG.team.limits.agentCreditsPerMonth, 10_000);
   assert.ok(PLAN_CATALOG.pro.priceLabel.includes("₽"), "цена тарифа видна в интерфейсе");
-  assert.ok(PLAN_CATALOG.free.limits.projects < PLAN_CATALOG.pro.limits.projects);
-  assert.ok(PLAN_CATALOG.pro.limits.projects < PLAN_CATALOG.team.limits.projects);
+  assert.equal(PLAN_CATALOG.free.limits.projects, 3);
+  assert.equal(PLAN_CATALOG.pro.limits.projects, 9);
+  assert.equal(PLAN_CATALOG.team.limits.projects, 15);
   assert.equal(PLAN_CATALOG.free.limits.agentRunsPerDay, 10, "на бесплатном тарифе дневной лимит остаётся");
   assert.equal(PLAN_CATALOG.pro.limits.agentRunsPerDay, null, "на платных тарифах дневного лимита запусков нет");
   assert.equal(PLAN_CATALOG.team.limits.agentRunsPerDay, null);
+  assert.equal(PLAN_CATALOG.free.limits.browserChecksPerDay, null, "браузерная проверка — режим, а не квота тарифа");
+  assert.equal(PLAN_CATALOG.pro.limits.browserChecksPerDay, null);
+  assert.equal(PLAN_CATALOG.team.limits.browserChecksPerDay, null);
+});
+
+/** В карточках тарифов не должно остаться обещаний, которые больше не продаются. */
+test("plan cards mention neither support nor browser checks", () => {
+  for (const plan of Object.values(PLAN_CATALOG)) {
+    for (const feature of plan.features) {
+      assert.doesNotMatch(feature, /поддержк|браузерн/i, plan.id + ": " + feature);
+      if (plan.id !== "free") assert.doesNotMatch(feature, /без дневного лимита/i, plan.id + ": " + feature);
+    }
+    for (const detail of plan.details) {
+      assert.doesNotMatch(detail, /поддержк|браузерн/i, plan.id + ": " + detail);
+    }
+  }
 });
 
 /** 700 MiB, not 700 000 000 bytes: the billing formatter divides by 1024 and must print «700 МБ». */

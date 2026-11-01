@@ -9,6 +9,8 @@ import { FREE_PLAN, PLAN_CATALOG, balanceFor, limitsForPlan, subscriptionFor, ty
 import { getBillingHistory, getCostSnapshot, getCreditBudget, getTokenBudget, getUsageSnapshot } from "../account/usage-store.js";
 import { getStorageOverview, refreshUserStorage } from "../account/storage-quota.js";
 import { accountPlanFor, getSubscriptionRecord, isSubscriptionLive, listPayments } from "../billing/store.js";
+import { publicCreditPacks } from "../billing/credit-packs.js";
+import { listCreditPurchases } from "../billing/credit-store.js";
 import { planPriceLabel, planPriceRub, publicPlans, robokassaConfig } from "../billing/robokassa.js";
 import { planDisplayName } from "../billing/plan-settings.js";
 
@@ -139,9 +141,21 @@ export async function registerAccountRoutes(app: FastifyInstance) {
           recurringAvailable: config.recurring,
         });
     const payments = await listPayments(user.id, 20);
+    const creditPurchases = await listCreditPurchases(user.id, 20);
     return {
       plans: publicPlans(),
       plan,
+      creditPacks: publicCreditPacks(),
+      creditPurchases: creditPurchases.map(purchase => ({
+        invId: purchase.invId,
+        packId: purchase.packId,
+        credits: purchase.credits,
+        amount: purchase.amount,
+        currency: "RUB",
+        status: purchase.status,
+        createdAt: purchase.createdAt,
+        paidAt: purchase.paidAt,
+      })),
       limits: limitsForPlan(plan),
       subscription,
       balance: { ...balanceFor(), paymentsConnected: config.configured },

@@ -1,4 +1,5 @@
 import { getPlatformProviderConfig } from "../provider/platform-provider.js";
+import { mainCreditRates, type CreditRates } from "../account/credits.js";
 import { platformEnvStatus, type PlatformEnvSource } from "./platform-env.js";
 
 /**
@@ -13,6 +14,8 @@ export type PlatformAiProviderStatus = {
   model: string;
   hasKey: boolean;
   keySource: PlatformEnvSource;
+  /** Кредиты за 1M токенов и минимум за запуск; не рубли провайдера. */
+  creditRates: CreditRates;
 };
 
 export function platformAiProviderStatus(): PlatformAiProviderStatus {
@@ -28,5 +31,6 @@ export function platformAiProviderStatus(): PlatformAiProviderStatus {
     model: config?.model ?? "",
     hasKey: Boolean(config?.token),
     keySource: key?.source ?? "none",
+    creditRates: mainCreditRates(),
   };
 }

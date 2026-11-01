@@ -6,6 +6,8 @@ import { legalPath } from "../../lib/legal";
 
 /** Правовые ссылки стоят до отправки кода: согласие даётся осознанно, а не после SMS. */
 const RESEND_SECONDS = 45;
+/** Арт для правой половины десктопного входа: на телефоне он скрыт, там важнее форма. */
+const AUTH_ART = "/brand/file_000000005ed481f4a60f669dea9ef0ed.webp";
 
 /**
  * What the Yandex callback puts in `?yandex_login=…`. A successful return never shows
@@ -108,60 +110,65 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void })
 
   return <main className="auth-screen">
     <section className="auth-card">
-      <div className="brand auth-brand"><span className="brand-mark"><WebNestLogo size={24} tone="light"/></span><span>NestDev</span></div>
-      <div className="auth-heading">
-        <span className="eyebrow">АККАУНТ</span>
-        <h1>{stage === "code" ? "Введите код из SMS" : "Вход в аккаунт"}</h1>
-        {stage === "code"
-          ? <p>Код отправлен на {phone}</p>
-          : <p>Проекты сохраняются в вашем аккаунте.</p>}
-      </div>
-
-      {stage === "number" && <>
-        <button type="button" className="auth-yandex" onClick={signInWithYandex} disabled={yandexUnavailable}>
-          <span className="auth-yandex-mark" aria-hidden="true">Я</span>
-          Войти через Яндекс ID
-        </button>
-        {yandexUnavailable && <div className="auth-yandex-hint">Яндекс ID сейчас недоступен — войдите по SMS.</div>}
-        {yandexNotice && <div className="auth-error auth-yandex-error">{yandexNotice}</div>}
-        <div className="auth-divider">или по номеру телефона</div>
-      </>}
-
-      {stage === "number" && <form onSubmit={requestCode} className="auth-form">
-        <label><span>Номер телефона</span><input type="tel" inputMode="tel" value={phone} onChange={event => setPhone(event.target.value)} placeholder="+7 999 123-45-67" autoComplete="tel" title="Номер для входа по SMS" required /></label>
-        <label className="auth-consent">
-          <input type="checkbox" checked={consent} onChange={event => { setConsent(event.target.checked); setError(""); }} />
-          <span>Даю согласие на обработку номера телефона и технических данных для входа по SMS</span>
-        </label>
-        {/* Согласие даётся осознанно: текст согласия и политика открываются до отправки кода. */}
-        <div className="auth-consent-links">
-          <a href={legalPath("consent")} target="_blank" rel="noopener noreferrer">Согласие на обработку данных</a>
-          <span>·</span>
-          <a href={legalPath("privacy")} target="_blank" rel="noopener noreferrer">Политика обработки данных</a>
+      <div className="auth-card-inner">
+        <div className="brand auth-brand"><span className="brand-mark"><WebNestLogo size={24} tone="light"/></span><span>NestDev</span></div>
+        <div className="auth-heading">
+          <span className="eyebrow">АККАУНТ</span>
+          <h1>{stage === "code" ? "Введите код из SMS" : "Вход в аккаунт"}</h1>
+          {stage === "code"
+            ? <p>Код отправлен на {phone}</p>
+            : <p>Проекты сохраняются в вашем аккаунте.</p>}
         </div>
-        {error && <div className="auth-error">{error}</div>}
-        <button className="send-button auth-submit" disabled={busy || !phone.trim() || !consent}>{busy ? "Отправляем код…" : "Получить код"}</button>
-      </form>}
 
-      {stage === "code" && <form onSubmit={submitCode} className="auth-form">
-        <label><span>Код из SMS</span><input type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={event => setCode(event.target.value.replace(/\D/g, ""))} placeholder="123456" title="Код из SMS" required /></label>
-        {notice && <div className="auth-note">{notice}</div>}
-        {error && <div className="auth-error">{error}</div>}
-        <button className="send-button auth-submit" disabled={busy || code.length < 4}>{busy ? "Проверяем…" : "Войти"}</button>
-        <div className="auth-phone-actions">
-          <button type="button" className="ghost-button" onClick={() => { setStage("number"); setError(""); setCode(""); }}>Изменить номер</button>
-          <button type="button" className="ghost-button" disabled={seconds > 0 || busy} onClick={() => void requestCode()}>{seconds > 0 ? "Ещё раз через " + seconds + " с" : "Отправить ещё раз"}</button>
+        {stage === "number" && <>
+          <button type="button" className="auth-yandex" onClick={signInWithYandex} disabled={yandexUnavailable}>
+            <span className="auth-yandex-mark" aria-hidden="true">Я</span>
+            Войти через Яндекс ID
+          </button>
+          {yandexUnavailable && <div className="auth-yandex-hint">Яндекс ID сейчас недоступен — войдите по SMS.</div>}
+          {yandexNotice && <div className="auth-error auth-yandex-error">{yandexNotice}</div>}
+          <div className="auth-divider">или по номеру телефона</div>
+        </>}
+
+        {stage === "number" && <form onSubmit={requestCode} className="auth-form">
+          <label><span>Номер телефона</span><input type="tel" inputMode="tel" value={phone} onChange={event => setPhone(event.target.value)} placeholder="+7 999 123-45-67" autoComplete="tel" title="Номер для входа по SMS" required /></label>
+          <label className="auth-consent">
+            <input type="checkbox" checked={consent} onChange={event => { setConsent(event.target.checked); setError(""); }} />
+            <span>Даю согласие на обработку номера телефона и технических данных для входа по SMS</span>
+          </label>
+          {/* Согласие даётся осознанно: текст согласия и политика открываются до отправки кода. */}
+          <div className="auth-consent-links">
+            <a href={legalPath("consent")} target="_blank" rel="noopener noreferrer">Согласие на обработку данных</a>
+            <span>·</span>
+            <a href={legalPath("privacy")} target="_blank" rel="noopener noreferrer">Политика обработки данных</a>
+          </div>
+          {error && <div className="auth-error">{error}</div>}
+          <button className="send-button auth-submit" disabled={busy || !phone.trim() || !consent}>{busy ? "Отправляем код…" : "Получить код"}</button>
+        </form>}
+
+        {stage === "code" && <form onSubmit={submitCode} className="auth-form">
+          <label><span>Код из SMS</span><input type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={event => setCode(event.target.value.replace(/\D/g, ""))} placeholder="123456" title="Код из SMS" required /></label>
+          {notice && <div className="auth-note">{notice}</div>}
+          {error && <div className="auth-error">{error}</div>}
+          <button className="send-button auth-submit" disabled={busy || code.length < 4}>{busy ? "Проверяем…" : "Войти"}</button>
+          <div className="auth-phone-actions">
+            <button type="button" className="ghost-button" onClick={() => { setStage("number"); setError(""); setCode(""); }}>Изменить номер</button>
+            <button type="button" className="ghost-button" disabled={seconds > 0 || busy} onClick={() => void requestCode()}>{seconds > 0 ? "Ещё раз через " + seconds + " с" : "Отправить ещё раз"}</button>
+          </div>
+        </form>}
+
+        {/* Подвал входа: то, что человек вправе прочитать до регистрации. Ссылки открываются в
+            новой вкладке, чтобы введённый номер и код не потерялись. */}
+        <div className="auth-legal">
+          <a href={legalPath("offer")} target="_blank" rel="noopener noreferrer">Оферта</a>
+          <a href={legalPath("terms")} target="_blank" rel="noopener noreferrer">Соглашение</a>
+          <a href={legalPath("privacy")} target="_blank" rel="noopener noreferrer">Персональные данные</a>
+          <button type="button" className="ghost-button" onClick={openCookieSettings}>Cookie-настройки</button>
         </div>
-      </form>}
-
-      {/* Подвал входа: то, что человек вправе прочитать до регистрации. Ссылки открываются в
-          новой вкладке, чтобы введённый номер и код не потерялись. */}
-      <div className="auth-legal">
-        <a href={legalPath("offer")} target="_blank" rel="noopener noreferrer">Оферта</a>
-        <a href={legalPath("terms")} target="_blank" rel="noopener noreferrer">Соглашение</a>
-        <a href={legalPath("privacy")} target="_blank" rel="noopener noreferrer">Персональные данные</a>
-        <button type="button" className="ghost-button" onClick={openCookieSettings}>Cookie-настройки</button>
       </div>
     </section>
+    <aside className="auth-visual" aria-hidden="true">
+      <img src={AUTH_ART} alt="" loading="eager" decoding="async"/>
+    </aside>
   </main>;
 }

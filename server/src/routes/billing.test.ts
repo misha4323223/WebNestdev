@@ -5,7 +5,8 @@ import Fastify from "fastify";
 import cookie from "@fastify/cookie";
 import { createSession, createUser } from "../auth/auth-store.js";
 import { SESSION_COOKIE } from "../auth/auth.js";
-import { getPayment, getSubscriptionRecord, planForUser } from "../billing/store.js";
+import { createPayment, getPayment, getSubscriptionRecord, markPaymentPaid, planForUser } from "../billing/store.js";
+import { creditBalance } from "../billing/credit-store.js";
 import { resultSignatureBase, signValue } from "../billing/robokassa.js";
 import { registerBillingRoutes } from "./billing.js";
 
@@ -85,6 +86,54 @@ test("checkout creates a pending invoice and returns a signed Robokassa link", a
   });
 });
 
+test("credit top-up is a one-off invoice, requires a paid plan and is credited after ResultURL", async () => {
+  await withShop(async () => {
+    const app = await shopApp();
+    try {
+      const { user, cookie } = await signedInUser();
+      const unavailable = await app.inject({
+        method: "POST", url: "/api/billing/credits/checkout", headers: { cookie },
+        payload: { packId: "credits-5000" },
+      });
+      assert.equal(unavailable.statusCode, 409, "на бесплатном тарифе докупка не имеет смысла");
+
+      // Активируем платный тариф без ResultURL подписки: для документа кредитов этого достаточно.
+      const planPayment = await createPayment({ userId: user.id, plan: "pro", amount: 990 });
+      await markPaymentPaid(planPayment.invId);
+
+      const response = await app.inject({
+        method: "POST", url: "/api/billing/credits/checkout", headers: { cookie },
+        payload: { packId: "credits-5000" },
+      });
+      assert.equal(response.statusCode, 200);
+      const body = response.json() as { invId: number; paymentUrl: string; amount: number; credits: number; packId: string };
+      assert.equal(body.amount, 1_190);
+      assert.equal(body.credits, 5_000);
+      assert.equal(body.packId, "credits-5000");
+      assert.equal(new URL(body.paymentUrl).searchParams.get("OutSum"), "1190.00");
+      assert.equal(new URL(body.paymentUrl).searchParams.get("Recurring"), null, "кредиты не открывают серию списаний");
+      assert.equal(await creditBalance(user.id), 0, "счёт ещё не оплачен");
+
+      const notification = await app.inject({
+        method: "POST", url: "/api/billing/robokassa/result",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        payload: resultBody(body.invId, "1190.00"),
+      });
+      assert.equal(notification.statusCode, 200);
+      assert.equal(notification.body, "OK" + body.invId);
+      assert.equal(await creditBalance(user.id), 5_000);
+
+      const repeated = await app.inject({
+        method: "POST", url: "/api/billing/robokassa/result",
+        headers: { "content-type": "application/x-www-form-urlencoded" },
+        payload: resultBody(body.invId, "1190.00"),
+      });
+      assert.equal(repeated.statusCode, 200);
+      assert.equal(await creditBalance(user.id), 5_000, "повтор не зачисляет пакет второй раз");
+    } finally { await app.close(); }
+  });
+});
+
 test("a valid ResultURL activates the plan, answers OK{InvId} and is idempotent", async () => {
   await withShop(async () => {
     const app = await shopApp();
@@ -128,12 +177,12 @@ test("a forged signature or a different amount never activates the plan", async 
         method: "POST",
         url: "/api/billing/robokassa/result",
         headers: { "content-type": "application/x-www-form-urlencoded" },
-        payload: resultBody(checkout.invId, "2990.00", "0".repeat(32)),
+        payload: resultBody(checkout.invId, "2000.00", "0".repeat(32)),
       });
       assert.equal(forged.statusCode, 400);
       assert.equal(await planForUser(user.id), "free", "поддельное уведомление ничего не включает");
 
-      // Верная подпись на другую сумму: подпись сходится, но счёт был на 2 990.
+      // Верная подпись на другую сумму: подпись сходится, но счёт был на 2 000.
       const cheap = await app.inject({
         method: "POST",
         url: "/api/billing/robokassa/result",

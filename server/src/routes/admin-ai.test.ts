@@ -89,3 +89,55 @@ test("некорректный адрес провайдера отклоняе�
   });
   assert.equal(response.statusCode, 400);
 });
+
+test("админка сохраняет ставки главной модели и отдаёт их в GET", async () => {
+  const saved = await app.inject({
+    method: "POST",
+    url: "/api/admin/ai",
+    headers: auth,
+    payload: {
+      provider: "OpenRouter",
+      baseUrl: "https://openrouter.ai/api/v1",
+      model: "deepseek/deepseek-chat",
+      creditRates: { inputPerMillion: 60, outputPerMillion: 600, minimumPerRun: 2 },
+    },
+  });
+  assert.equal(saved.statusCode, 200);
+  const body = saved.json() as { ai: { creditRates: { inputPerMillion: number; outputPerMillion: number; minimumPerRun: number } } };
+  assert.deepEqual(body.ai.creditRates, { inputPerMillion: 60, outputPerMillion: 600, minimumPerRun: 2 });
+
+  const status = await app.inject({ method: "GET", url: "/api/admin/ai", headers: auth });
+  assert.equal(status.statusCode, 200);
+  assert.deepEqual(status.json().ai.creditRates, { inputPerMillion: 60, outputPerMillion: 600, minimumPerRun: 2 });
+});
+
+test("частичное обновление ставок главной модели не сбрасывает остальные поля", async () => {
+  const saved = await app.inject({
+    method: "POST",
+    url: "/api/admin/ai",
+    headers: auth,
+    payload: {
+      provider: "OpenRouter",
+      baseUrl: "https://openrouter.ai/api/v1",
+      model: "deepseek/deepseek-chat",
+      creditRates: { outputPerMillion: 700 },
+    },
+  });
+  assert.equal(saved.statusCode, 200);
+  assert.deepEqual(saved.json().ai.creditRates, { inputPerMillion: 60, outputPerMillion: 700, minimumPerRun: 2 });
+});
+
+test("нулевые обе ставки главной модели отклоняются", async () => {
+  const response = await app.inject({
+    method: "POST",
+    url: "/api/admin/ai",
+    headers: auth,
+    payload: {
+      provider: "OpenRouter",
+      baseUrl: "https://openrouter.ai/api/v1",
+      model: "deepseek/deepseek-chat",
+      creditRates: { inputPerMillion: 0, outputPerMillion: 0 },
+    },
+  });
+  assert.equal(response.statusCode, 400);
+});

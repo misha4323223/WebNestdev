@@ -29,6 +29,12 @@ const panelsKey="webnestdev.runPanels";
  */
 const webSearchKey="webnestdev.webSearch";
 /**
+ * Браузерная проверка — отдельный режим запуска рядом с поиском и глубиной размышления. По
+ * умолчанию выключена: Chromium добавляет шаги и результаты в контекст, а значит расходует больше
+ * токенов. Сервер проверяет тот же флаг и без него не запускает браузерные инструменты.
+ */
+const browserCheckKey="webnestdev.browserCheck";
+/**
  * Ответ агента — markdown: заголовки, списки, таблицы и блоки кода. Таблица оборачивается
  * в прокручиваемый контейнер, иначе широкая таблица растягивает всю переписку, а ссылка
  * из ответа открывается в новой вкладке, не уводя из рабочей области.
@@ -118,6 +124,11 @@ function readStoredReasoning():ReasoningEffort{
 /** По умолчанию поиск выключен: в сеть агент идёт только когда человек сам включил кнопку. */
 function readStoredWebSearch(){
   try{return localStorage.getItem(webSearchKey)==="on"}catch{return false}
+}
+
+/** Браузерная проверка тоже выключена по умолчанию: это дополнительный расход на запуск. */
+function readStoredBrowserCheck(){
+  try{return localStorage.getItem(browserCheckKey)==="on"}catch{return false}
 }
 
 /**
@@ -294,6 +305,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   const [mode,setMode]=useState<AgentMode>(readStoredMode);
   const [reasoning,setReasoning]=useState<ReasoningEffort>(readStoredReasoning);
   const [webSearch,setWebSearch]=useState<boolean>(readStoredWebSearch);
+  const [browserCheck,setBrowserCheck]=useState<boolean>(readStoredBrowserCheck);
   const [modelInfo,setModelInfo]=useState<ModelInfo|null>(null);
   const [platformModels,setPlatformModels]=useState<PlatformModelOption[]>([]);
   // Id выбранной модели нужен в момент отправки, когда состояние уже могло перерисоваться.
@@ -389,6 +401,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   const reasoningRef=useRef<ReasoningEffort>(reasoning);
   // Очередь и переподключение запускают запуск из колбеков сокета, поэтому флаг читается из ref.
   const webSearchRef=useRef<boolean>(webSearch);
+  const browserCheckRef=useRef<boolean>(browserCheck);
   /** A queued template/import start is consumed once per conversation, never twice. */
   const pendingStartRef=useRef<string|null>(null);
   const fileRef=useRef<HTMLInputElement|null>(null);
@@ -570,6 +583,13 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     webSearchRef.current=next;
     setWebSearch(next);
     try{localStorage.setItem(webSearchKey,next?"on":"off")}catch{}
+  }
+
+  /** Браузерная проверка: разрешает Chromium и автоматическую QA только на этот запуск. */
+  function chooseBrowserCheck(next:boolean){
+    browserCheckRef.current=next;
+    setBrowserCheck(next);
+    try{localStorage.setItem(browserCheckKey,next?"on":"off")}catch{}
   }
 
   /** Stores the plan per conversation so a panel remount keeps showing it. */
@@ -1005,7 +1025,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       socket.addEventListener("open",()=>{
         opened=true;
         setReconnect(null);
-        socket.send(JSON.stringify({type:"agent.run",request:{projectId,conversationId,messages:history,mode:modeRef.current,reasoning:reasoningRef.current,webSearch:webSearchRef.current,...(modelIdRef.current?{model:modelIdRef.current}:{}),...(resuming?{resume:{reason:options.resumeReason}}:{})}}));
+        socket.send(JSON.stringify({type:"agent.run",request:{projectId,conversationId,messages:history,mode:modeRef.current,reasoning:reasoningRef.current,webSearch:webSearchRef.current,browserCheck:browserCheckRef.current,...(modelIdRef.current?{model:modelIdRef.current}:{}),...(resuming?{resume:{reason:options.resumeReason}}:{})}}));
       },{once:true});
 
       /**
@@ -1616,15 +1636,17 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
           <div className="composer-tools">
             <button className="icon-button" onClick={()=>fileRef.current?.click()} disabled={!loaded||uploading} title="Прикрепить файл или изображение" aria-label="Прикрепить файл или изображение"><Paperclip size={14}/></button>
             <input ref={fileRef} type="file" multiple hidden onChange={e=>void pickFiles(e.target.files)}/>
-            {/* Режим, глубина размышления и поиск в интернете — один компактный контрол. */}
+            {/* Режим, глубина размышления, поиск и браузерная проверка — один компактный контрол. */}
             <AgentModeControl
               mode={mode}
               reasoning={reasoning}
               webSearch={webSearch}
+              browserCheck={browserCheck}
               reasoningAvailable={!reasoningSupport||(reasoningSupport.enabled&&reasoningSupport.status!=="rejected")}
               onMode={chooseMode}
               onReasoning={chooseReasoning}
               onWebSearch={chooseWebSearch}
+              onBrowserCheck={chooseBrowserCheck}
             />
             <ModelPicker
               name={modelName}
@@ -1686,12 +1708,17 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
           <p className="modal-lead">{quotaNotice==="storage"
             ?"Лимит хранилища вашего тарифа достигнут: агент больше не может писать файлы в проект. Освободите место или обновите тариф — лимиты: Старт 700 МБ, Плюс 10 ГБ, Премиум 50 ГБ."
             :quotaNotice==="credits"
-            ?"Месячный лимит кредитов израсходован: он считается по фактическому расходу и возобновится первого числа следующего месяца. Точный расход виден на странице тарифов. Подключите свой AI-провайдер в настройках проекта — такие запуски идут через ваш ключ и не тратят кредиты платформы."
+            ?"Лимит кредитов израсходован: он считается по фактическому расходу. Докупите пакет на странице «Тариф и подписка» — дополнительные кредиты не сгорают. Или подключите свой AI-провайдер в настройках проекта: такие запуски идут через ваш ключ и не тратят кредиты платформы."
             :"Дневная квота запусков агента исчерпана. Новые запуски станут доступны после сброса по UTC или при обновлении тарифа. Лимит относится только к встроенной модели платформы: подключите свой AI-провайдер в настройках проекта — запуски пойдут через ваш ключ и модель, без дневной квоты."}</p>
         </div>
         <footer className="modal-foot">
           <button className="ghost-button" onClick={()=>setQuotaNotice(null)}>Понятно</button>
-          <button className="send-button" onClick={()=>{setQuotaNotice(null);onOpenAccountSettings?.()}}>Обновить тариф</button>
+          <button className="send-button" onClick={()=>{
+            if(quotaNotice==="credits"){
+              try{localStorage.setItem("webnestdev.openBillingTab","1")}catch{}
+            }
+            setQuotaNotice(null);onOpenAccountSettings?.();
+          }}>{quotaNotice==="credits"?"Докупить кредиты":"Обновить тариф"}</button>
         </footer>
       </section>
     </div>}

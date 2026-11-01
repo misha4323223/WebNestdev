@@ -103,7 +103,7 @@ test("предупреждение о списании объясняет, ск�
   const { sent, send } = capture();
   assert.equal(await sendRenewalNotice(record, send), true);
   // Сумма печатается с неразрывным пробелом между разрядами — проверяем вид, а не код символа.
-  assert.match(sent[0]?.subject ?? "", /Скоро спишем 2[\s\u00A0\u202F]990[\s\u00A0\u202F]₽/);
+  assert.match(sent[0]?.subject ?? "", /Скоро спишем 2[\s\u00A0\u202F]000[\s\u00A0\u202F]₽/);
   assert.match(sent[0]?.text ?? "", /Дата списания: 1 ноября 2026/);
   assert.match(sent[0]?.text ?? "", /отключите его в личном кабинете/);
   assert.match(sent[0]?.text ?? "", /бесплатный тариф/, "честно сказано, чем закончится неудача карты");

@@ -158,6 +158,27 @@ test("a preview container in a foreign network is attached to the server's netwo
 });
 
 /**
+ * Сеть могла подключиться между двумя чтениями статуса: адрес уже тот же, но интерфейс в netstack
+ * появляется асинхронно. Одиночная проверка сразу после attach давала ложный отказ и белый кадр.
+ */
+test("an address reported by attach is waited on even when it matches the current host", async () => {
+  let checks = 0;
+  const { value } = deps({
+    answers: () => { checks++; return checks > 1; },
+    ports: [3000],
+    appUp: true,
+    attach: { host: "172.19.0.4", connected: ["src_webnestdev"] },
+  });
+  const settled = await settlePreviewAddress(state(), {
+    deps: value,
+    appAnswers: true,
+    wait: { attempts: 2, delayMs: 0 },
+  });
+  assert.equal(settled.settled, true);
+  assert.equal(settled.host, "172.19.0.4");
+});
+
+/**
  * Порт не изменился — но адрес всё равно проверяется: между двумя чтениями статуса мог встать
  * проброс или подключиться нужная сеть. Без этой проверки состояние оставалось без подтверждённого
  * адреса, а панель — с белым экраном при живом приложении.

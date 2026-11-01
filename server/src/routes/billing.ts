@@ -2,6 +2,9 @@ import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { requireUser } from "../auth/auth.js";
 import type { PlanId } from "../account/plans.js";
+import { accountPlanFor } from "../billing/store.js";
+import { creditPackById } from "../billing/credit-packs.js";
+import { createCreditPurchase, getCreditPurchase, markCreditPurchasePaid } from "../billing/credit-store.js";
 import { isSameOriginRequest, sameOriginRefusal } from "../security/same-origin.js";
 import {
   buildPaymentUrl,
@@ -19,7 +22,7 @@ import {
   markPaymentPaid,
   setAutoRenew,
 } from "../billing/store.js";
-import { autoRenewRefusal, notifyPaymentPaid, reachableEmailFor } from "../billing/notify.js";
+import { autoRenewRefusal, notifyCreditPurchasePaid, notifyPaymentPaid, reachableEmailFor } from "../billing/notify.js";
 import { getDonationByInvoice, markDonationPaid } from "../support/donation-store.js";
 
 /**
@@ -40,6 +43,10 @@ const checkoutSchema = z.object({
   autoRenew: z.boolean().optional(),
 });
 const renewSchema = z.object({ autoRenew: z.boolean() });
+const creditCheckoutSchema = z.object({
+  /** Браузер выбирает только пакет; цену и количество кредитов сервер берёт из каталога. */
+  packId: z.string().trim().min(1).max(64),
+});
 
 type FormBody = Record<string, string | undefined>;
 
@@ -133,6 +140,53 @@ export async function registerBillingRoutes(app: FastifyInstance) {
   });
 
   /**
+   * Счёт на докупку кредитов. Это разовый платёж, а не подписка: он не меняет тариф и не
+   * включает автопродление. Докупленные кредиты зачисляются только после ResultURL.
+   */
+  app.post("/api/billing/credits/checkout", async (request, reply) => {
+    const user = await requireUser(request, reply); if (!user) return;
+    if (crossSiteRefused(request)) return reply.code(403).send({ error: sameOriginRefusal() });
+    const parsed = creditCheckoutSchema.safeParse(request.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: "Выберите пакет кредитов" });
+    const config = robokassaConfig();
+    if (!config.configured) return reply.code(503).send({ error: "Оплата пока не подключена. Попробуйте позже." });
+    const plan = await accountPlanFor(user.id);
+    if (plan === "free") {
+      return reply.code(409).send({ error: "Докупить кредиты можно на тарифе «Плюс» или «Премиум». Сначала оформите подписку." });
+    }
+    const pack = creditPackById(parsed.data.packId);
+    if (!pack) return reply.code(400).send({ error: "Такого пакета кредитов нет" });
+    const purchase = await createCreditPurchase({
+      userId: user.id,
+      packId: pack.id,
+      credits: pack.credits,
+      amount: pack.priceRub,
+    });
+    const email = await reachableEmailFor(user);
+    const link = buildPaymentUrl({
+      config,
+      plan,
+      planName: pack.name,
+      invId: purchase.invId,
+      amount: pack.priceRub,
+      description: "Кредиты NestDev — " + pack.credits.toLocaleString("ru-RU") + " шт.",
+      kind: "credits",
+      credits: pack.credits,
+      ...(email ? { email } : {}),
+    });
+    request.log.info({ invId: purchase.invId, userId: user.id, packId: pack.id, credits: pack.credits, amount: pack.priceRub }, "billing: счёт на кредиты создан");
+    return {
+      invId: purchase.invId,
+      paymentUrl: link.url,
+      amount: pack.priceRub,
+      currency: "RUB",
+      credits: pack.credits,
+      packId: pack.id,
+      test: config.testMode,
+    };
+  });
+
+  /**
    * Уведомление об успешной оплате. Порядок проверок важен: подпись, затем счёт, затем сумма.
    * `OK{InvId}` — единственный ответ, после которого Робокасса считает платёж доставленным.
    */
@@ -152,16 +206,17 @@ export async function registerBillingRoutes(app: FastifyInstance) {
       return reply.code(400).send("Invalid signature");
     }
 
-    // Один и тот же ResultURL принимает и подписки, и добровольные донаты: счёт ищется в обоих
-    // хранилищах, иначе оплата поддержки выглядела бы как уведомление о неизвестном счёте.
+    // Один и тот же ResultURL принимает подписки, добровольные донаты и докупку кредитов:
+    // счёт ищется во всех хранилищах, иначе оплата выглядела бы как неизвестное уведомление.
     const donation = await getDonationByInvoice(invId);
-    const payment = donation ? null : await getPayment(invId);
-    if (!donation && !payment) {
+    const creditPurchase = donation ? null : await getCreditPurchase(invId);
+    const payment = donation || creditPurchase ? null : await getPayment(invId);
+    if (!donation && !creditPurchase && !payment) {
       request.log.error({ invId }, "billing: уведомление о неизвестном счёте");
       return reply.code(404).send("Unknown invoice");
     }
     // Сравнение сумм, а не строк: тестовый и боевой режимы печатают OutSum по-разному.
-    const expectedAmount = donation ? donation.amount : payment!.amount;
+    const expectedAmount = donation ? donation.amount : creditPurchase ? creditPurchase.amount : payment!.amount;
     if (Math.abs(Number(outSum) - expectedAmount) > 0.01) {
       request.log.error({ invId, outSum, expected: expectedAmount }, "billing: сумма уведомления не совпала со счётом");
       return reply.code(400).send("Amount mismatch");
@@ -169,6 +224,23 @@ export async function registerBillingRoutes(app: FastifyInstance) {
     if (donation) {
       await markDonationPaid(invId);
       request.log.info({ invId, userId: donation.userId, amount: donation.amount }, "donation paid");
+      return "OK" + invId;
+    }
+    if (creditPurchase) {
+      const result = await markCreditPurchasePaid(invId);
+      request.log.info({ invId, userId: creditPurchase.userId, credits: creditPurchase.credits, alreadyPaid: result?.alreadyPaid }, "billing: оплата кредитов подтверждена");
+      if (result && !result.alreadyPaid) {
+        void notifyCreditPurchasePaid({
+          userId: creditPurchase.userId,
+          credits: creditPurchase.credits,
+          amount: creditPurchase.amount,
+          invId,
+        }).then(sent => {
+          if (!sent) request.log.info({ invId, userId: creditPurchase.userId }, "billing: письмо о кредитах не отправлено — у аккаунта нет почты");
+        }).catch(error => {
+          request.log.error({ invId }, "billing: письмо о кредитах не ушло: " + (error instanceof Error ? error.message : String(error)));
+        });
+      }
       return "OK" + invId;
     }
     // Ветка выше уже вернула ответ для доната, значит здесь счёт подписки. Проверка нужна

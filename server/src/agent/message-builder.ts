@@ -113,6 +113,18 @@ export function webSearchNotice(enabled: boolean): string {
     : "WEB SEARCH IS OFF. The user did not turn on the internet search switch next to the message box, and it is off by default. Do not call web.search or web.read, and never answer from memory as if a search had happened. If the task needs something from the internet — a library version or API, release notes, error messages from other projects, pricing, service documentation — stop and tell the user in one short sentence that internet search is off and they need to turn it on in the «Режимы» menu next to the message box. Work that does not need the internet continues as usual.";
 }
 
+/**
+ * Что модель знает о браузерной проверке до первого шага. Это не квота тарифа, а разрешение на
+ * Chromium: выключенный режим означает, что тяжёлые browser.* не запускаются и автоматическая QA
+ * после правок пропускается. HTTP-проверки (preview.start, project.verify, browser.open,
+ * browser.inspect) остаются доступны — они не поднимают Chromium и не добавляют его вывод в контекст.
+ */
+export function browserCheckNotice(enabled: boolean): string {
+  return enabled
+    ? "BROWSER CHECK IS ON. The user allowed Chromium checks for this run in the «Режимы» menu. browser.runtime, browser.scenario and browser.screenshot are available, and automatic browser QA may run after UI changes. They add page results to the context and cost tokens, so use the smallest check that proves the user-visible behavior and do not repeat the same check without a fix."
+    : "BROWSER CHECK IS OFF. The user did not turn on the browser check in the «Режимы» menu, and it is off by default. Do not call browser.runtime, browser.scenario or browser.screenshot; automatic Chromium QA after UI changes is skipped. preview.start, project.verify, browser.open and browser.inspect are still available for HTTP and HTML checks. If visual or client-side behavior really needs Chromium, tell the user in one short sentence to enable «Браузерная проверка» in the «Режимы» menu next to the message box, and continue with the work that does not need it.";
+}
+
 export function buildInitialMessages(messages: ChatMessage[], projectContext: string, mode: "planner" | "developer" = "developer"): ChatMessage[] {
   return [
     { role: "system", content: SYSTEM_PROMPT },

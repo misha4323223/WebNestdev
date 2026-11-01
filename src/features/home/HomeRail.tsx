@@ -211,22 +211,24 @@ function RailBilling({ billing, choice, error, onOpenPlans, onOpenSubscriptions 
       </div>}
       <p className="account-muted">{paymentNotice(billing)}</p>
       <div className="rail-usage">
-        <div><span>Запуски агента</span><strong>{runsLimit == null ? billing.usage.agentRuns + " · без лимита" : billing.usage.agentRuns + " / " + runsLimit}</strong></div>
-        {runsLimit != null && <div className="usage-meter-track"><span style={{ width: `${Math.min(100, billing.usage.agentRuns / Math.max(1, runsLimit) * 100)}%` }}/></div>}
-        <div><span>Браузерные проверки</span><strong>{billing.usage.browserChecks} / {billing.limits.browserChecksPerDay}</strong></div>
-        <div className="usage-meter-track"><span style={{ width: `${Math.min(100, billing.usage.browserChecks / Math.max(1, billing.limits.browserChecksPerDay) * 100)}%` }}/></div>
+        {runsLimit != null && <>
+          <div><span>Запуски агента</span><strong>{billing.usage.agentRuns} / {runsLimit}</strong></div>
+          <div className="usage-meter-track"><span style={{ width: `${Math.min(100, billing.usage.agentRuns / Math.max(1, runsLimit) * 100)}%` }}/></div>
+        </>}
         {billing.credits && billing.credits.limit > 0 && <>
-          <div><span>Кредиты в месяц</span><strong>{creditsLabel(billing.credits.used)} / {creditsLabel(billing.credits.limit)}</strong></div>
+          <div><span>Кредиты на агента</span><strong>{creditsLabel(billing.credits.used)} / {creditsLabel(billing.credits.limit)}</strong></div>
           <div className="usage-meter-track"><span style={{ width: `${Math.min(100, billing.credits.used / Math.max(1, billing.credits.limit) * 100)}%` }}/></div>
+          {billing.credits.purchased > 0 && <small className="account-muted">{creditsLabel(billing.credits.purchased)} докупленных не сгорают</small>}
         </>}
         {storageLimit > 0 && <>
           <div><span>Хранилище</span><strong>{(storageUsed / 1024 / 1024).toFixed(1)} / {(storageLimit / 1024 / 1024 / 1024).toFixed(1)} ГБ</strong></div>
           <div className="usage-meter-track"><span style={{ width: `${Math.min(100, storageUsed / storageLimit * 100)}%` }}/></div>
         </>}
       </div>
-      <p className="account-muted">На бесплатном тарифе — 10 запусков в день; на платных дневного лимита нет, расход ограничен кредитами. Со своим AI-провайдером кредиты не тратятся.</p>
+      <p className="account-muted">На бесплатном тарифе — 10 запусков в день. На платных тарифах расход ограничен кредитами; со своим AI-провайдером кредиты не тратятся.</p>
       <div className="rail-plan-actions">
         <button className="plan-action" onClick={onOpenPlans}>{billing.paymentsEnabled ? (paid ? "Продлить подписку" : "Оплатить тариф") : "Сменить тариф"}</button>
+        {paid && billing.credits && billing.credits.limit > 0 && <button className="ghost-button" onClick={onOpenSubscriptions}>Докупить кредиты <ArrowRight size={12}/></button>}
         <button className="ghost-button" onClick={onOpenSubscriptions}>Подробнее о тарифах <ArrowRight size={12}/></button>
       </div>
     </>}

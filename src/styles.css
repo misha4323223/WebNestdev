@@ -156,7 +156,9 @@ button,textarea{font:inherit}button{color:inherit}
 .agent-mode-trigger.open .agent-mode-caret{transform:rotate(180deg)}
 /* Включённый поиск виден одной иконкой в кнопке: подпись заняла бы место у поля ввода. */
 .agent-mode-globe{flex:none;color:#cfbc9c}
+.agent-mode-browser{flex:none;color:#a9c0aa}
 .agent-mode-trigger.search-on{border-color:#674f24;background:#241b0c}
+.agent-mode-trigger.browser-on{border-color:#3f4c3f;background:#111712}
 /* Планировщик ничего не меняет в файлах — это осторожное состояние, а не действие. */
 .agent-mode-trigger.planner{border-color:#3d3a22;background:#15140a;color:#d7bd79}
 .agent-mode-trigger.planner>svg:first-child{color:#c9a34d}
@@ -482,6 +484,21 @@ button,textarea{font:inherit}button{color:inherit}
    выглядит одинаково и при сломанной настройке, и при чужой клавиатуре. */
 .auth-note{padding:9px;border:1px solid #3a3320;border-radius:6px;background:#191509;color:#d9c48d;font-size:10px;line-height:1.5}
 
+/* Десктопный вход — две половины: форма слева, арт справа. На телефоне картинка скрыта,
+   потому что там важнее сама форма, а не декоративный фон. */
+.auth-screen{display:grid;grid-template-columns:minmax(400px,44%) minmax(0,1fr);place-items:stretch;padding:0;background:#080a0d}
+.auth-card{width:100%;min-height:100vh;border:0;border-right:1px solid var(--line-warm);border-radius:0;padding:clamp(30px,5vw,72px) clamp(28px,5vw,72px);display:flex;flex-direction:column;justify-content:center;background:radial-gradient(90% 70% at 15% 0%,rgba(204,195,178,.06),transparent 62%),#0b0d10;box-shadow:none}
+.auth-card-inner{width:min(420px,100%);margin:0 auto}
+.auth-visual{position:relative;min-height:100vh;overflow:hidden;background:#05070a}
+.auth-visual img{display:block;width:100%;height:100%;min-height:100vh;object-fit:cover;object-position:right center;filter:saturate(1.06) contrast(1.02)}
+.auth-visual::after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(90deg,rgba(8,10,13,.92) 0%,rgba(8,10,13,.38) 16%,transparent 42%),linear-gradient(0deg,rgba(5,7,10,.45),transparent 30%)}
+@media(max-width:900px){
+  .auth-screen{grid-template-columns:1fr;place-items:center;padding:24px;background:radial-gradient(58% 46% at 50% 0%,rgba(204,195,178,.07),transparent 62%),#0b0d10}
+  .auth-card{width:min(420px,100%);min-height:0;border:1px solid var(--line-warm);border-radius:12px;padding:24px;background:radial-gradient(120% 100% at 50% 0%,rgba(204,195,178,.045),transparent 58%),#111419;box-shadow:0 20px 60px rgba(0,0,0,.3),0 0 0 1px rgba(255,255,255,.03)}
+  .auth-card-inner{max-width:none}
+  .auth-visual{display:none}
+}
+
 /* Фон главной — только градиенты и тонкая сетка: ни картинок, ни текстовых слоёв. Сетка
    растворяется к низу, а вокруг логотипа стоят тонкие орбиты вместо размытого пятна: хаки-знак
    остаётся главным пятном на странице, и фон не выглядит туманом. */
@@ -780,6 +797,44 @@ button,textarea{font:inherit}button{color:inherit}
 .billing-payment-status.paid{border-color:#534224;color:#c3b193;background:#241c0d}
 .billing-payment-status.pending{border-color:#3f3a2b;color:#c6b487;background:#1a1710}
 .billing-payment-status.failed{border-color:#4a3030;color:#d99b9b;background:#1b1212}
+/* Докупка кредитов: отдельный разовый платёж, поэтому блок стоит рядом с расходами, а не
+   внутри карточки тарифа. Пакеты — кнопки: выбранный пакет подсвечивается до оплаты. */
+.credit-topup{max-width:1180px;margin:36px auto 0;padding:18px;border:1px solid var(--line-warm);border-radius:12px;background:linear-gradient(180deg,#12161b,#0d1014)}
+.credit-topup.compact{max-width:none;margin:16px 0 0;padding:14px}
+.credit-topup-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+.credit-topup-head h2{margin:4px 0 0;font-size:16px;font-weight:600;color:#eef0f3}
+.credit-topup-head p{max-width:680px;margin:7px 0 0;color:#828a95;font-size:11px;line-height:1.6}
+.credit-topup-balance{flex:none;min-width:112px;padding:9px 11px;border:1px solid #3d4b42;border-radius:8px;background:#101814;text-align:right}
+.credit-topup-balance span,.credit-topup-balance small{display:block;color:#7f9485;font-size:9px}
+.credit-topup-balance strong{display:block;margin:3px 0 2px;color:#cfe0d2;font-size:18px;font-variant-numeric:tabular-nums}
+.credit-pack-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-top:16px}
+.credit-pack{position:relative;display:flex;flex-direction:column;align-items:flex-start;gap:5px;min-height:104px;padding:13px;border:1px solid var(--line-warm);border-radius:9px;background:#0e1115;color:inherit;font:inherit;text-align:left;cursor:pointer;transition:border-color .16s ease,background .16s ease,transform .16s ease,box-shadow .16s ease}
+.credit-pack:hover{border-color:var(--line-warm-strong);background:#12161c;transform:translateY(-1px)}
+.credit-pack:focus-visible{outline:2px solid #8f7a55;outline-offset:2px}
+.credit-pack.selected{border-color:#7c8d80;background:#111a15;box-shadow:inset 0 0 0 1px #405246}
+.credit-pack.recommended{border-color:#4d4937}
+.credit-pack.recommended.selected{border-color:#8b8661}
+.credit-pack-badge{display:inline-flex;align-items:center;gap:4px;margin-bottom:2px;color:#cbbd8c;font-size:8.5px;text-transform:uppercase;letter-spacing:.04em}
+.credit-pack-name{color:#dce1e6;font-size:11px;font-weight:600}
+.credit-pack strong{color:#eef0f3;font-size:20px;font-weight:650;font-variant-numeric:tabular-nums}
+.credit-pack small{color:#7d8692;font-size:9.5px;line-height:1.4}
+.credit-pack-check{position:absolute;top:10px;right:10px;display:grid;place-items:center;width:15px;height:15px;border:1px solid #3f4b41;border-radius:50%;color:#cfe0d2;font-size:10px;line-height:1}
+.credit-pack.selected .credit-pack-check{border-color:#78927d;background:#1b2a20}
+.credit-topup .checkout-consent{margin-top:14px}
+.credit-topup-pay{width:100%;height:40px;margin-top:10px;justify-content:center;gap:8px;border-radius:8px;font-size:11.5px;font-weight:650}
+.credit-topup-error{margin:0}
+.credit-topup-history{margin-top:14px;padding-top:12px;border-top:1px solid var(--line-warm-soft)}
+.credit-topup-history summary{display:flex;align-items:center;gap:7px;color:#b9ab88;font-size:10.5px;font-weight:600;cursor:pointer;list-style:none}
+.credit-topup-history summary::-webkit-details-marker{display:none}
+.credit-topup-history summary::before{content:"+";display:inline-grid;place-items:center;width:15px;height:15px;border:1px solid #4b412f;border-radius:4px;color:#cbbd9e;font-size:11px;line-height:1}
+.credit-topup-history[open] summary::before{content:"−"}
+.credit-topup-history summary span{margin-left:auto;color:#737c87;font-size:9px;font-weight:400}
+.credit-topup-history .billing-payments{margin:10px 0 0}
+.credit-topup-locked{display:flex;align-items:flex-start;gap:9px;margin-top:14px;padding:11px 12px;border:1px dashed var(--line-warm);border-radius:8px;background:#0c0f13;color:#9aa2ad;font-size:10.5px;line-height:1.5}
+.credit-topup-locked>svg{flex:none;margin-top:1px;color:#b9ab88}
+.credit-topup-locked strong,.credit-topup-locked span{display:block}
+.credit-topup-locked strong{margin-bottom:3px;color:#d5dbe2;font-size:11px;font-weight:600}
+@media(max-width:760px){.credit-topup{padding:14px}.credit-topup-head{display:block}.credit-topup-balance{display:inline-block;margin-top:12px;text-align:left}.credit-pack-grid{grid-template-columns:1fr;gap:8px}.credit-pack{min-height:0}.credit-topup-pay{height:38px;font-size:11px}}
 /* Возврат со страницы оплаты: баннер на главной, чтобы платёж не «терялся» между вкладками. */
 .home-payment{width:min(980px,100%);margin:22px auto 0;display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid #3a3121;border-radius:10px;background:linear-gradient(180deg,#1c170e,#0f1216);color:#b5a993}
 .home-payment.fail{border-color:#4a3030;background:linear-gradient(180deg,#1a1313,#0f1216);color:#d99b9b}
@@ -1241,6 +1296,8 @@ button,textarea{font:inherit}button{color:inherit}
 .subscription-status>div span{display:block;color:#818994;font-size:9.5px}
 .subscription-status>div strong{display:block;margin-top:4px;font-size:18px;color:#eef0f3}
 .subscription-status-text{margin:12px 0 0}
+.subscription-credit-link{height:32px;margin-top:10px;gap:6px;border-color:#4b5a4f;color:#cfe0d2;background:#101814}
+.subscription-credit-link:hover{border-color:#6e8874;background:#142019}
 .subscription-plans{max-width:1180px;margin:0 auto;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:14px;align-items:stretch}
 .subscription-plan{display:flex;flex-direction:column;gap:14px;width:100%;padding:18px;border:1px solid var(--line-warm);border-radius:12px;background:#0f1216;color:inherit;font:inherit;text-align:left;cursor:pointer;transition:border-color .16s ease,background .16s ease,transform .16s ease,box-shadow .16s ease}
 .subscription-plan:hover{border-color:var(--line-warm-strong);background:#12161c;transform:translateY(-2px);box-shadow:0 12px 28px rgba(0,0,0,.2)}

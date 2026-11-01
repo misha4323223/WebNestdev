@@ -1,3 +1,5 @@
+import { getPlatformEnv } from "../platform/platform-env.js";
+
 /**
  * Кредиты — единица стоимости работы модели, а не ещё один счётчик токенов.
  *
@@ -97,10 +99,15 @@ export function creditMultiplier(rates: CreditRates, base: CreditRates = BASE_CR
   return Math.round(Math.max(0, ratio) * 10) / 10;
 }
 
-/** Ставки основной модели можно менять без выкатки: цены провайдера живут в окружении. */
-export function mainCreditRates(env: NodeJS.ProcessEnv = process.env): CreditRates {
+/**
+ * Ставки основной модели читаются из platform env: значение, сохранённое админ-приложением,
+ * важнее переменной окружения, а без сохранённого значения работает прежний env/базовый набор.
+ * Явный `env` нужен тестам и расчётам без общего хранилища.
+ */
+export function mainCreditRates(env?: NodeJS.ProcessEnv): CreditRates {
+  const read = (name: string) => env ? env[name] : getPlatformEnv(name);
   const envNumber = (name: string) => {
-    const raw = (env[name] ?? "").trim();
+    const raw = (read(name) ?? "").trim();
     if (!raw) return undefined;
     const value = Number(raw);
     return Number.isFinite(value) ? value : undefined;

@@ -2,7 +2,7 @@ import type { SandboxConfig } from "../sandbox-manager.js";
 import { sandboxImage, sandboxRuntime, sandboxRuntimeArgs, workspaceMountSource } from "../sandbox/config.js";
 import { previewAppAnswers } from "./app-http.js";
 import { dockerExec, missingContainer } from "./docker-exec.js";
-import { addressOnNetworks, firstContainerAddress, previewAttachNetworks, previewNetwork } from "./preview-network.js";
+import { addressOnNetworks, firstContainerAddress, previewNetworks } from "./preview-network.js";
 import { settlePreviewAddress } from "./preview-address.js";
 import { previewDepsForHost } from "./node-deps.js";
 import { resolveSandboxHost } from "../sandbox/host.js";
@@ -49,9 +49,7 @@ export async function startPreviewContainer(config:SandboxConfig){
   // runner must be a clear error, not a container silently started on the API machine.
   const host=await resolveSandboxHost(config.node||nodeId());
   const docker=(args:string[],timeoutMs?:number)=>host.docker(args,timeoutMs);
-  const networks=host.networks
-    ? await host.networks()
-    : {preview:await previewNetwork(docker),attach:await previewAttachNetworks(docker)};
+  const networks=host.networks ? await host.networks() : await previewNetworks(docker);
   const network=networks.preview;
   // Секреты приходят из зашифрованного хранилища как read-only файлы поверх `/workspace`.
   // В рабочей области их нет: агент и файловый API не видят ни значения, ни файла.

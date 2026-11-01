@@ -141,6 +141,8 @@ const PK_BY_TABLE: Record<string, string[]> = {
   billing_payments: ["inv_id"],
   billing_subscriptions: ["user_id"],
   billing_counters: ["id"],
+  credit_purchases: ["inv_id"],
+  credit_ledger: ["id"],
 };
 
 /**
@@ -721,6 +723,32 @@ export async function initializeStorage(): Promise<void> {
       value BIGINT NOT NULL DEFAULT 0
     )`);
 
+    // Докупка кредитов — отдельный счёт, а журнал хранит и покупки, и расход сверх тарифа.
+    // `id` журнала фиксированный (`purchase:<invId>` / `usage:<runId>`), поэтому повторная
+    // обработка уведомления или запуска не зачисляет и не списывает кредиты второй раз.
+    await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("credit_purchases")} (
+      inv_id BIGINT NOT NULL PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      pack_id TEXT NOT NULL,
+      credits BIGINT NOT NULL,
+      amount BIGINT NOT NULL,
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      paid_at TEXT
+    )`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("credit_purchases")}_user ON ${tbl("credit_purchases")} (user_id, created_at)`);
+
+    await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("credit_ledger")} (
+      id TEXT NOT NULL PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      credits BIGINT NOT NULL,
+      inv_id BIGINT,
+      run_id TEXT,
+      created_at TEXT NOT NULL
+    )`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("credit_ledger")}_user ON ${tbl("credit_ledger")} (user_id, created_at)`);
+
     // Базы, созданные до появления счётчика попыток, дополняются здесь.
     await pool.query(`ALTER TABLE ${tbl("billing_subscriptions")} ADD COLUMN IF NOT EXISTS renewal_attempts INTEGER NOT NULL DEFAULT 0`);
     // Счета, созданные до появления отдельного согласия на автопродление, дополняются здесь:
@@ -729,6 +757,11 @@ export async function initializeStorage(): Promise<void> {
     // Подписки, созданные до появления письма-предупреждения о списании, дополняются здесь:
     // `notice_at` пусто, поэтому первые списания по ним пройдут только после письма.
     await pool.query(`ALTER TABLE ${tbl("billing_subscriptions")} ADD COLUMN IF NOT EXISTS notice_at TEXT`);
+
+    // Старые базы могли создать журнал кредитов до появления run_id/inv_id. Новые таблицы
+    // создаются выше, а эти ALTER безопасны и для уже существующих.
+    await pool.query(`ALTER TABLE ${tbl("credit_ledger")} ADD COLUMN IF NOT EXISTS inv_id BIGINT`);
+    await pool.query(`ALTER TABLE ${tbl("credit_ledger")} ADD COLUMN IF NOT EXISTS run_id TEXT`);
 
     // Рассылка: кампания, её получатели и список отписок.
     //

@@ -8,21 +8,31 @@ publishing or team roles, because those features do not exist.
 
 ## Plans
 
-| | Старт (free) | Плюс (pro, 990 ₽/mo) | Премиум (team, 2 990 ₽/mo) |
+| | Старт (free) | Плюс (pro, 1 500 ₽/mo, сейчас 990 ₽) | Премиум (team, 2 500 ₽/mo, сейчас 2 000 ₽) |
 |---|---|---|---|
-| Projects | 3 | 15 | 50 |
-| Agent credits per month | — (daily run limit) | 5 000 | 25 000 |
+| Projects | 3 | 9 | 15 |
+| Agent credits per agent/month | — (daily run limit) | 5 000 | 10 000 |
 | Agent runs/day | 10 | no limit | no limit |
-| Browser checks/day | 5 | 50 | 250 |
 | Web searches/day | 25 | 200 | 500 |
 | Storage | 700 MB | 10 GB | 50 GB |
 | Repository import | up to 100 MB | no limit | no limit |
 | Integrations | 1 cloud, 1 registrar, 3 services | no limit | no limit |
 
+Paid plan prices are base prices before the current promo discount: the catalog defaults are 34%
+for «Плюс» (1 500 ₽ → 990 ₽) and 20% for «Премиум» (2 500 ₽ → 2 000 ₽). The server applies the
+discount to the showcase, invoice and receipt; the admin section «Тарифы и скидки» can override
+both the base price and the percentage.
+
 Storage is one quota per account, shared by every project, not a per-project allowance. The
 per-plan number is the ceiling the whole account can use; `node_modules` and build output count.
 The free plan's 700 MB is stored as 734,003,200 bytes (700 MiB) so the UI, which divides by 1024,
 shows exactly «700 МБ».
+
+Browser checks are not a plan quota. «Браузерная проверка» is a switch in the «Режимы» menu,
+off by default; when it is off, `browser.runtime`, `browser.scenario`, `browser.screenshot` and the
+automatic Chromium QA are skipped. When it is on, the checks are counted for analytics but have no
+daily cap: the run's step limit and the model credits are the limit. The plan cards and the billing
+screens therefore mention neither browser checks nor support.
 
 ## The monthly credit pool
 
@@ -38,10 +48,10 @@ reason).
 Rates live in `server/src/account/credits.ts`. The base model starts at 50 credits per 1M input and
 510 per 1M output, with a minimum of 1 credit per run: at a typical 90/10 mix this is about 10 000
 tokens per credit and 5 000 credits ≈ 50M tokens. Max starts at 250 / 2 550 with a 2-credit minimum,
-Mini at 25 / 255 with a 1-credit minimum. The main model can be tuned without a deploy with
+Mini at 25 / 255 with a 1-credit minimum. The main model can be tuned with
 `PLATFORM_AI_CREDITS_INPUT_PER_MILLION`, `PLATFORM_AI_CREDITS_OUTPUT_PER_MILLION` and
-`PLATFORM_AI_CREDITS_MINIMUM_PER_RUN`; catalog models store `creditRates` and are edited through
-`/api/admin/ai/models`.
+`PLATFORM_AI_CREDITS_MINIMUM_PER_RUN`, or through `POST /api/admin/ai` (the saved value wins over
+environment); catalog models store `creditRates` and are edited through `/api/admin/ai/models`.
 
 ```text
 credits = ceil(
@@ -52,16 +62,18 @@ credits = max(credits, minimum_per_run)
 ```
 
 - `getCreditBudget(userId, plan)` sums the stored `credits` for the current UTC calendar month and
-  returns `{ month, used, limit, bonus, remaining }`. Rows written before credit accounting are
-  estimated at 10 000 tokens = 1 credit; rows of the free `free-model` are not converted.
-- Plan budgets are `limits.agentCreditsPerMonth`: 5 000 on Pro, 25 000 on Team. `limit: 0` means
+  returns `{ month, used, planLimit, limit, bonus, purchased, remaining }`. Rows written before
+  credit accounting are estimated at 10 000 tokens = 1 credit; rows of the free `free-model` are not
+  converted.
+- Plan budgets are `limits.agentCreditsPerMonth`: 5 000 on Pro, 10 000 on Team. `limit: 0` means
   “this plan has no credit pool”: the free plan counts daily runs instead, and the UI draws no credit
   bar for it.
 - `consumeAgentRun` checks the credit pool for a paid plan before counting the run and throws
   `CreditBudgetError` (`code: "CREDIT_BUDGET_EXHAUSTED"`, HTTP 429) when it is used up. The agent
   panel turns that into «Кредиты исчерпаны» with the reset date instead of the daily-quota text, and
   does not offer «Продолжить».
-- The pool does not roll over: unused credits are not carried into the next month.
+- The monthly pool does not roll over: unused plan credits are not carried into the next month.
+  Purchased credits are different — they have their own ledger and do not expire; see below.
 - A project with its own AI provider spends the user's key and the user's tokens, so those runs
   neither count nor are blocked — neither by credits nor by the daily run limit. `routes/agent-ws.ts`
   asks once whether the project has its own provider and passes the answer to `consumeAgentRun`.
@@ -69,9 +81,33 @@ credits = max(credits, minimum_per_run)
   `getCreditBudget`. The admin route also returns the new `credits` budget next to the legacy token
   budget.
 
-`GET /api/billing` returns `credits` next to `usage` and `storage`; the subscription page shows it as
-a monthly meter with the reset note, and the plan comparison table lists credits per plan. `tokens`
+`GET /api/billing` returns `credits` next to `usage` and `storage`; the subscription page shows the
+plan meter with the reset note, and the plan comparison table lists credits per plan. `tokens`
 remains in the payload only as raw model-usage analytics for the owner/admin screens.
+
+## Purchased credits
+
+Paid accounts can buy an extra credit pack without changing their subscription:
+
+| Pack | Credits | Price |
+|---|---:|---:|
+| Small | 1 000 | 290 ₽ |
+| Medium | 5 000 | 1 190 ₽ |
+| Large | 15 000 | 2 990 ₽ |
+
+Prices and pack contents live on the server (`server/src/billing/credit-packs.ts`); the browser only
+sends a pack id. `POST /api/billing/credits/checkout` creates a separate Robokassa invoice and
+`POST /api/billing/robokassa/result` credits the account after the signed payment notification.
+
+Purchased credits are stored in the append-only `credit_ledger`, not in the monthly `model_usage`
+sum. `recordRunUsage` writes a negative ledger entry only for the part of a run that exceeded the
+plan's monthly limit, keyed by `run_id`, so a repeated run cannot debit twice. Purchased credits do
+not expire, are spent after the monthly plan credits, and become available again after a downgrade
+if the account returns to a paid plan. The account balance is never allowed to go below zero.
+
+`GET /api/billing` returns the catalog in `creditPacks` and the account's invoices in
+`creditPurchases`; both the subscription page and settings expose the top-up block. The UI labels
+`planLimit` as the monthly allowance and `purchased` as the non-expiring balance.
 
 ## Integration limits
 
@@ -92,8 +128,13 @@ a subscription ended.
 - Agent runs consume one daily unit at the authenticated WebSocket run boundary on the free plan;
   paid plans have no daily run cap and check the monthly credit pool instead. The run counter is
   still recorded for history and analytics, but `agentRunsPerDay: null` means it does not block.
-- `browser.runtime`, `browser.scenario` and `browser.screenshot` consume one daily browser-check unit
-  each, including checks invoked automatically after agent changes.
+- `browser.runtime`, `browser.scenario` and `browser.screenshot` are available only while the
+  «Браузерная проверка» switch is on for the run; the switch is off by default. An off run skips
+  both explicit Chromium tools and automatic browser QA. The usage counter remains for analytics,
+  but there is no daily plan cap: credits and the agent step limit bound the work.
+- The plan catalog and saved `PLAN_SETTINGS` no longer promise daily browser checks, daily paid runs
+  or support. The saved plan features are migrated on read, so a deploy does not bring the old
+  wording back.
 - `GET /api/billing` returns the plan catalog, the limits of the account's plan, the UTC-day usage
   counters, the monthly credit pool, the account's storage usage and the model cost snapshot. The
   settings screen shows usage, the per-project storage breakdown and the 80%/100% state.

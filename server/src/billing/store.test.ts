@@ -58,11 +58,11 @@ test("a paid invoice activates the plan for a month and a repeated notification 
 test("a renewal extends the paid period instead of replacing it and keeps the parent invoice", async () => {
   const userId = newUser();
   const now = new Date("2026-05-01T09:00:00.000Z");
-  const initial = await createPayment({ userId, plan: "team", amount: 2990, autoRenew: true });
+  const initial = await createPayment({ userId, plan: "team", amount: 2_000, autoRenew: true });
   await markPaymentPaid(initial.invId, now);
 
   // Продление внутри оплаченного срока: месяц добавляется к концу, а не к сегодняшнему дню.
-  const renewal = await createPayment({ userId, plan: "team", amount: 2990, kind: "renewal", parentInvId: initial.invId, autoRenew: true });
+  const renewal = await createPayment({ userId, plan: "team", amount: 2_000, kind: "renewal", parentInvId: initial.invId, autoRenew: true });
   await markPaymentPaid(renewal.invId, new Date("2026-05-11T09:00:00.000Z"));
 
   const record = await getSubscriptionRecord(userId);

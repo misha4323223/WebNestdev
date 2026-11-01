@@ -121,8 +121,11 @@ export async function settlePreviewAddress(state:PreviewState,options:{deps?:Pre
   // Первая починка — сеть: контейнер мог оказаться в сети, которую сервер не видит (Docker
   // изолирует bridge-сети друг от друга, а `docker exec` внутрь работает в любом случае).
   const attached=await deps.attachToServerNetworks(current.containerId).catch(()=>({host:"",connected:[]}));
-  if(attached.host&&attached.host!==current.host){
-    current={...current,host:attached.host};
+  if(attached.host){
+    // Ждать нужно и тогда, когда адрес не изменился: сеть могла подключиться между двумя
+    // чтениями статуса, и интерфейс в netstack появляется не мгновенно. Одиночная проверка
+    // сразу после attach — это ложное «не получилось» и белый кадр при живом приложении.
+    current=attached.host===current.host?current:{...current,host:attached.host};
     if(await waitForAddress(current,deps,options.wait))return {...current,settled:true,execOnly:false};
   }
 

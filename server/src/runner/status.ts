@@ -23,7 +23,8 @@ async function dockerNetworks() {
 
 async function previewNetworks() {
   const configured = process.env.PREVIEW_NETWORK?.trim();
-  if (configured) return { preview: configured, attach: [configured] };
+  // Сеть базы не становится сетью предпросмотра даже при явной ошибке в PREVIEW_NETWORK.
+  if (configured && !isDatabaseNetwork(configured)) return { preview: configured, attach: [configured] };
   const preview = preferPreviewNetwork(await dockerNetworks());
   return { preview, attach: preview ? [preview] : [] };
 }

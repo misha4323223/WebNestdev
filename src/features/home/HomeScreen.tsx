@@ -287,7 +287,7 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
             <div>
               <strong>{paymentReturn==="success"?"Оплата принята":"Оплата не прошла"}</strong>
               <span>{paymentReturn==="success"
-                ?"Тариф включится автоматически. Если он ещё прежний, обновите через минуту."
+                ?"Тариф или кредиты обновятся автоматически. Если баланс ещё прежний, обновите через минуту."
                 :"Деньги не списаны. Можно вернуться к тарифам и попробовать снова."}</span>
             </div>
             <div className="home-payment-actions">

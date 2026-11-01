@@ -38,7 +38,7 @@
  */
 import { dockerExec } from "../preview/docker-exec.js";
 import { sandboxImage, sandboxRuntimeArgs } from "../sandbox/config.js";
-import { addressOnNetworks, attachToServerNetworks, firstContainerAddress, previewNetwork, serverNetworks } from "../preview/preview-network.js";
+import { addressOnNetworks, attachToServerNetworks, firstContainerAddress, preferPreviewNetwork, serverNetworks } from "../preview/preview-network.js";
 import { PREVIEW_APP_PORT, PREVIEW_LABEL } from "../preview/types.js";
 
 const IMAGE = sandboxImage();
@@ -89,7 +89,7 @@ async function main() {
     process.exit(1);
   }
   const networks = await serverNetworks();
-  const network = await previewNetwork();
+  const network = preferPreviewNetwork(networks);
   console.log("[preview] сеть предпросмотра: " + (network || "по умолчанию (сервер не в контейнере)") +
     (networks.length > 1 ? "; все сети сервера: " + networks.join(", ") : ""));
 

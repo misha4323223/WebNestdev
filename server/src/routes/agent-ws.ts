@@ -27,9 +27,10 @@ const messageSchema=z.discriminatedUnion("role",[
 export const MAX_REQUEST_MESSAGES=1000;
 // `resume` — продолжение прерванного запуска: сообщения приходят как обычно, а рантайм добавляет
 // модели системную заметку о том, что это продолжение и на каком шаге остановился план.
-// `webSearch` — переключатель поиска в интернете из панели ввода. Приходит булевым от клиента,
-// разбирается терпимо: старый клиент его не присылает, и тогда поиск считается выключенным.
-export const runSchema=z.object({projectId:z.string().min(1).max(200),conversationId:z.string().max(200).optional(),messages:z.array(messageSchema).min(1).max(MAX_REQUEST_MESSAGES),model:z.string().max(200).optional(),mode:z.enum(["planner","developer"]).optional(),reasoning:z.enum(["low","medium","high"]).optional(),webSearch:z.boolean().optional(),resume:z.object({reason:z.string().max(300).optional()}).optional()});
+// `webSearch` и `browserCheck` — переключатели из меню «Режимы» в панели ввода. Приходят
+// булевыми от клиента и разбираются терпимо: старый клиент их не присылает, и тогда поиск и
+// браузерная проверка считаются выключенными.
+export const runSchema=z.object({projectId:z.string().min(1).max(200),conversationId:z.string().max(200).optional(),messages:z.array(messageSchema).min(1).max(MAX_REQUEST_MESSAGES),model:z.string().max(200).optional(),mode:z.enum(["planner","developer"]).optional(),reasoning:z.enum(["low","medium","high"]).optional(),webSearch:z.boolean().optional(),browserCheck:z.boolean().optional(),resume:z.object({reason:z.string().max(300).optional()}).optional()});
 
 /**
  * Как часто работающий запуск говорит в сокет «жив».

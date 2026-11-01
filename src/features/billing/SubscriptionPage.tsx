@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, ArrowRight, Check, CreditCard, RefreshCw, ShieldCheck } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, CreditCard, Plus, RefreshCw, ShieldCheck } from "lucide-react";
 import {
   balanceLabel,
   bytesLabel,
@@ -17,20 +17,21 @@ import {
 } from "../../lib/billing-api";
 import { activePlanId, chosenPlanId, isPendingChoice, planName, usePlanChoice } from "../../lib/plan-choice";
 import { PlanDetail } from "./PlanDetail";
+import { CreditTopUp } from "./CreditTopUp";
 
 const faq = [
   { question: "Как оплатить тариф?", answer: "Откройте карточку тарифа, отметьте согласия и нажмите «Оплатить» — откроется защищённая страница оплаты. Доступны карта РФ, СБП и другие способы." },
   { question: "Когда включится тариф?", answer: "Сразу после подтверждения оплаты. Если страница оплаты закрылась, вернитесь в личный кабинет: подписка уже будет активна." },
   { question: "Что с продлением?", answer: "Подписка действует месяц. Автопродление — по отдельному согласию: отметкой при оплате или переключателем в личном кабинете. Отключить можно в любой момент." },
+  { question: "Можно ли докупить кредиты?", answer: "Да, на «Плюсе» и «Премиуме». Выберите пакет ниже, оплатите его как разовый платёж — кредиты зачислятся сразу. Докупленные кредиты не сгорают и расходуются после месячного лимита тарифа." },
 ];
 
 const limitRows: Array<{ label: string; key: keyof PlanLimits }> = [
   { label: "Проектов одновременно", key: "projects" },
-  { label: "Запусков агента в день", key: "agentRunsPerDay" },
-  { label: "Браузерных проверок в день", key: "browserChecksPerDay" },
 ];
-// Квоту поиска в интернете в сравнении тарифов не показываем: для человека это инструмент внутри
-// запуска агента, а не отдельная шкала. Дневной лимит остаётся на сервере как защита от перерасхода.
+// Запуски и браузерные проверки — не отдельные шкалы тарифа: на платных тарифах расход
+// ограничен кредитами, а браузерная проверка включается режимом на конкретный запуск. Поэтому
+// в сравнении остаются только проекты, кредиты и цена.
 
 /**
  * Separate page with the full description of every plan. It is a full-screen
@@ -104,11 +105,16 @@ export function SubscriptionPage({ onBack, selectedPlanId, onSelectPlan }: {
     <section className="subscription-hero">
       <span className="eyebrow">ТАРИФЫ NESTDEV</span>
       <h1>Тарифы и подписка</h1>
-      <p>Три уровня доступа к агентной разработке: от знакомства до работы небольшой команды. Выберите карточку — откроется описание тарифа, согласия и оплата. {paymentNotice(billing)}</p>
+      <p>Три уровня доступа к агентной разработке: от знакомства до работы небольшой команды. Выберите карточку — откроется описание тарифа, согласия и оплата. На платных тарифах кредиты можно докупить отдельным пакетом. {paymentNotice(billing)}</p>
       <div className="subscription-status">
         <div><span>Текущий тариф</span><strong>{billing?.plans.find(plan => plan.id === currentPlanId)?.name ?? "Старт"}</strong></div>
         <div><span>{paid ? "Оплачено до" : "Баланс"}</span><strong>{paid ? dateLabel(subscription?.renewsAt ?? null) : balanceLabel(billing?.balance)}</strong></div>
       </div>
+      {paid && billing?.credits && billing.credits.limit > 0 && <button
+        type="button"
+        className="ghost-button subscription-credit-link"
+        onClick={() => document.getElementById("credit-topup")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+      ><Plus size={12}/> Докупить кредиты</button>}
       {paid && subscription && <div className="account-toggle subscription-renew">
         <span>
           <strong>Автопродление</strong>
@@ -177,7 +183,7 @@ export function SubscriptionPage({ onBack, selectedPlanId, onSelectPlan }: {
                 {billing.plans.map(plan => <td key={plan.id} className={plan.id === currentPlanId ? "current" : ""}>{plan.limits[row.key] ?? "Без ограничений"}</td>)}
               </tr>)}
               <tr>
-                <th scope="row">Кредитов агента в месяц</th>
+                <th scope="row">Кредитов на агента в месяц</th>
                 {billing.plans.map(plan => <td key={plan.id} className={plan.id === currentPlanId ? "current" : ""}>
                   {plan.limits.agentCreditsPerMonth ? creditsLabel(plan.limits.agentCreditsPerMonth) : "по дневному лимиту"}
                 </td>)}
@@ -198,8 +204,7 @@ export function SubscriptionPage({ onBack, selectedPlanId, onSelectPlan }: {
         <div className="subscription-section-head"><span className="eyebrow">СЕГОДНЯ</span><h2>Использование</h2></div>
         <div className="usage-meter-list">
           <div className="usage-meter-title"><strong>Текущий день</strong><small>Сброс по UTC · {billing.usage.date}</small></div>
-          <div className="usage-meter"><div><span>Запуски агента</span><strong>{runsLimit == null ? billing.usage.agentRuns + " · без дневного лимита" : billing.usage.agentRuns + " / " + runsLimit}</strong></div>{runsLimit != null && <div className="usage-meter-track"><span style={{ width: `${Math.min(100, billing.usage.agentRuns / Math.max(1, runsLimit) * 100)}%` }}/></div>}{runsLimit == null && <small className="usage-meter-left">Расход ограничен месячными кредитами</small>}</div>
-          <div className="usage-meter"><div><span>Браузерные проверки</span><strong>{billing.usage.browserChecks} / {billing.limits.browserChecksPerDay}</strong></div><div className="usage-meter-track"><span style={{ width: `${Math.min(100, billing.usage.browserChecks / Math.max(1, billing.limits.browserChecksPerDay) * 100)}%` }}/></div></div>
+          {runsLimit != null && <div className="usage-meter"><div><span>Запуски агента</span><strong>{billing.usage.agentRuns} / {runsLimit}</strong></div><div className="usage-meter-track"><span style={{ width: `${Math.min(100, billing.usage.agentRuns / Math.max(1, runsLimit) * 100)}%` }}/></div></div>}
           {/* Кредиты — основной лимит платного тарифа и месячный, а не дневной: он живёт
               отдельной шкалой, иначе его сброс путают с полуночью по UTC. */}
           {(() => {
@@ -208,11 +213,12 @@ export function SubscriptionPage({ onBack, selectedPlanId, onSelectPlan }: {
             const state = budget.remaining <= 0 ? "full" : budget.used >= budget.limit * 0.8 ? "warning" : "ok";
             return (
               <div className={"usage-meter" + (state === "ok" ? "" : " is-" + state)}>
-                <div><span>Кредиты агента в месяц</span><strong>{creditsLabel(budget.used)} из {creditsLabel(budget.limit)}</strong></div>
+                <div><span>Кредиты на агента</span><strong>{creditsLabel(budget.used)} из {creditsLabel(budget.limit)}</strong></div>
                 <div className="usage-meter-track"><span style={{ width: `${Math.min(100, (budget.used / budget.limit) * 100)}%` }} /></div>
                 <small className={"usage-meter-left" + (state === "ok" ? "" : " " + state)}>{state === "full"
-                  ? "Кредиты исчерпаны: платные модели недоступны до 1-го числа"
-                  : "Осталось " + creditsLabel(budget.remaining) + " · сброс 1-го числа"}</small>
+                  ? "Кредиты исчерпаны: докупите пакет ниже или дождитесь 1-го числа"
+                  : "Осталось " + creditsLabel(budget.remaining) + (budget.purchased > 0 ? " · докупленные не сгорают" : " · сброс 1-го числа")}</small>
+                {budget.purchased > 0 && <small className="usage-meter-left">Месячный лимит тарифа: {creditsLabel(budget.planLimit)} · докуплено: {creditsLabel(budget.purchased)}</small>}
               </div>
             );
           })()}
@@ -232,8 +238,10 @@ export function SubscriptionPage({ onBack, selectedPlanId, onSelectPlan }: {
             );
           })()}
         </div>
-        <p className="account-muted">Запуски и кредиты считаются только для моделей платформы. Подключите свой AI-провайдер в настройках проекта — запуски пойдут через ваш ключ и модель, и ни дневная квота, ни кредиты к ним не применяются. На Max кредиты расходуются быстрее, на Mini — медленнее.</p>
+        <p className="account-muted">Кредиты считаются только для моделей платформы. Подключите свой AI-провайдер в настройках проекта — запуски пойдут через ваш ключ и модель, и кредиты к ним не применяются. На Max кредиты расходуются быстрее, на Mini — медленнее.</p>
       </section>
+
+      <CreditTopUp billing={billing} paid={paid}/>
 
       {Boolean(billing.payments?.length) && <section className="subscription-compare">
         <div className="subscription-section-head"><span className="eyebrow">ПЛАТЕЖИ</span><h2>Последние платежи</h2></div>

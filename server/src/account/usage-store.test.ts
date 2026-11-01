@@ -11,6 +11,8 @@ process.env.WEBNESTDEV_DATA_DIR = await mkdtemp(path.join(tmpdir(), "usage-store
 
 const { consumeAgentRun, consumeUsage, getBillingHistory, getCreditBudget, getTokenBudget, getUsageSnapshot, recordRunUsage, UsageLimitError } =
   await import("./usage-store.js");
+const { grantSubscription } = await import("../billing/store.js");
+const { createCreditPurchase, creditBalance, markCreditPurchasePaid } = await import("../billing/credit-store.js");
 
 test("daily agent quota blocks the next run and usage is isolated per account", async () => {
   const userId = "quota-test-" + randomUUID();
@@ -37,14 +39,14 @@ test("paid plans do not stop runs at a daily cap: credits are the limit", async 
   assert.equal((await getUsageSnapshot(userId)).agentRuns, 120);
 });
 
-test("daily browser quota is enforced independently from agent runs", async () => {
+/**
+ * Браузерная проверка — режим запуска, а не квота тарифа. Счётчик остаётся для аналитики, но
+ * больше не останавливает проверку: расход ограничивают кредиты и лимит шагов агента.
+ */
+test("browser checks are counted but no longer have a daily plan cap", async () => {
   const userId = "quota-test-" + randomUUID();
-  for (let index = 0; index < 5; index++) await consumeUsage(userId, "browserChecks", "free");
-  await assert.rejects(
-    () => consumeUsage(userId, "browserChecks", "free"),
-    (error: unknown) => error instanceof UsageLimitError && error.limit === 5 && error.used === 5,
-  );
-  assert.equal((await getUsageSnapshot(userId)).browserChecks, 5);
+  for (let index = 0; index < 8; index++) await consumeUsage(userId, "browserChecks", "free");
+  assert.equal((await getUsageSnapshot(userId)).browserChecks, 8);
 });
 
 /**
@@ -110,8 +112,62 @@ test("кредиты читаются из model_usage, а новые запус
   const budget = await getCreditBudget(userId, "team");
   assert.equal(budget.month, new Date().toISOString().slice(0, 7));
   assert.equal(budget.used, 7);
-  assert.equal(budget.limit, 25_000);
-  assert.equal(budget.remaining, 24_993);
+  assert.equal(budget.limit, 10_000);
+  assert.equal(budget.remaining, 9_993);
+});
+
+test("purchased credits cover the overage above the monthly plan and do not reset next month", async () => {
+  const userId = "credit-topup-" + randomUUID();
+  await grantSubscription({ userId, plan: "pro" });
+  const purchase = await createCreditPurchase({
+    userId,
+    packId: "credits-1000",
+    credits: 1_000,
+    amount: 290,
+  });
+  await markCreditPurchasePaid(purchase.invId);
+
+  await recordRunUsage(userId, {
+    runId: randomUUID(),
+    projectId: "credit-topup-project",
+    model: "max-upstream",
+    modelId: "max",
+    promptTokens: 1_000,
+    completionTokens: 100,
+    credits: 5_001,
+    estimated: false,
+  });
+  const budget = await getCreditBudget(userId, "pro");
+  assert.equal(budget.used, 5_001);
+  assert.equal(budget.planLimit, 5_000);
+  assert.equal(budget.purchased, 999, "сверх тарифа списан ровно один кредит из докупки");
+  assert.equal(budget.limit, 5_999);
+  assert.equal(budget.remaining, 998);
+  assert.equal(await creditBalance(userId), 999);
+
+  // Смена календарного месяца сбрасывает только кредиты тарифа, но не докупленный остаток.
+  const now = new Date();
+  const nextMonth = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1, 12));
+  const resetBudget = await getCreditBudget(userId, "pro", nextMonth);
+  assert.equal(resetBudget.used, 0);
+  assert.equal(resetBudget.purchased, 999);
+  assert.equal(resetBudget.limit, 5_999);
+
+  // Следующий запуск снова уходит за месячный лимит: докупка расходуется до нуля, не в минус.
+  await recordRunUsage(userId, {
+    runId: randomUUID(),
+    projectId: "credit-topup-project",
+    model: "max-upstream",
+    modelId: "max",
+    promptTokens: 2_000,
+    completionTokens: 200,
+    credits: 2_000,
+    estimated: false,
+  });
+  const exhausted = await getCreditBudget(userId, "pro");
+  assert.equal(exhausted.purchased, 0);
+  assert.equal((await creditBalance(userId)), 0);
+  assert.equal(exhausted.remaining, 0);
 });
 
 test("the daily web search quota grows with the plan and is counted separately", async () => {

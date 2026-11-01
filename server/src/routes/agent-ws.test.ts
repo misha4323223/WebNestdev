@@ -57,6 +57,14 @@ test("internet search is opt-in per run", () => {
   assert.equal(runSchema.safeParse({ projectId: "p1", messages, webSearch: "yes" }).success, false);
 });
 
+/** Браузерная проверка — такой же необязательный режим запуска, а не свойство тарифа. */
+test("browser check is opt-in per run", () => {
+  const messages = [{ role: "user" as const, content: "проверь страницу" }];
+  assert.equal(runSchema.parse({ projectId: "p1", messages }).browserCheck, undefined);
+  assert.equal(runSchema.parse({ projectId: "p1", messages, browserCheck: true }).browserCheck, true);
+  assert.equal(runSchema.safeParse({ projectId: "p1", messages, browserCheck: "yes" }).success, false);
+});
+
 test("the too-long error reaches the panel as an ordinary sentence", () => {
   const messages = Array.from({ length: MAX_REQUEST_MESSAGES + 1 }, () => ({ role: "user" as const, content: "x" }));
   const result = runSchema.safeParse({ projectId: "p1", messages });

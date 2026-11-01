@@ -21,6 +21,8 @@ export type PlatformEnvEntry = {
   label: string;
   hint: string;
   kind: PlatformEnvKind;
+  /** Внутренний ключ: хранилище и API его принимают, но в веб-панели ключей он не показывается. */
+  hidden?: boolean;
 };
 
 /**
@@ -77,8 +79,8 @@ export const PLATFORM_ENV_CATALOG: PlatformEnvEntry[] = [
   { name: "ROBOKASSA_TEST_MODE", group: "billing", label: "Тестовый режим", hint: "1 — платёж идёт с IsTest=1 и тестовыми паролями магазина: деньги не списываются.", kind: "flag" },
   { name: "ROBOKASSA_RECURRING", group: "billing", label: "Периодические платежи", hint: "1 — только после одобрения услуги «Периодические платежи» в Робокассе: включает автопродление.", kind: "flag" },
   { name: "ROBOKASSA_RECEIPT", group: "billing", label: "Receipt JSON", hint: "1 — передавать состав чека в параметре Receipt. При НПД с «Робочеками СМЗ» не включайте: чеки в ФНС и «Мой налог» формирует сама Робокасса.", kind: "flag" },
-  { name: "ROBOKASSA_PRICE_PRO", group: "billing", label: "Цена тарифа «Плюс», ₽/мес", hint: "Необязательно: по умолчанию 990. Меняется без выкатки; если цена задана в разделе «Тарифы и скидки», она важнее.", kind: "value" },
-  { name: "ROBOKASSA_PRICE_TEAM", group: "billing", label: "Цена тарифа «Премиум», ₽/мес", hint: "Необязательно: по умолчанию 2 990. Если цена задана в разделе «Тарифы и скидки», она важнее.", kind: "value" },
+  { name: "ROBOKASSA_PRICE_PRO", group: "billing", label: "Базовая цена тарифа «Плюс», ₽/мес", hint: "Необязательно: по умолчанию 1 500 ₽. Если цена задана в разделе «Тарифы и скидки», она важнее.", kind: "value" },
+  { name: "ROBOKASSA_PRICE_TEAM", group: "billing", label: "Базовая цена тарифа «Премиум», ₽/мес", hint: "Необязательно: по умолчанию 2 500 ₽. Если цена задана в разделе «Тарифы и скидки», она важнее.", kind: "value" },
   { name: "BILLING_NOTICE_DAYS", group: "billing", label: "Дней до письма о списании", hint: "Необязательно: за сколько дней до автопродления отправлять письмо-предупреждение. По умолчанию 3. Без отправленного письма списание не выполняется вовсе.", kind: "value" },
 
   // Витрина тарифов: название, описание, базовая цена и скидка. Редактируется в отдельном
@@ -123,6 +125,12 @@ export const PLATFORM_ENV_CATALOG: PlatformEnvEntry[] = [
   { name: "PLATFORM_AI_BASE_URL", group: "ai", label: "AI Base URL", hint: "OpenAI-совместимый адрес модели платформы — то, чем пользуются проекты без своего провайдера.", kind: "url" },
   { name: "PLATFORM_AI_MODEL", group: "ai", label: "AI модель", hint: "Идентификатор модели для этого адреса.", kind: "value" },
   { name: "PLATFORM_AI_API_KEY", group: "ai", label: "AI ключ", hint: "Ключ провайдера модели платформы. Проекты со своим ключом его не используют.", kind: "secret" },
+  // Ставки списания кредитов основной модели. Это не рубли провайдера: значение задаёт, сколько
+  // кредитов списывается с пользователя за 1 млн токенов. Админ-приложение меняет их через
+  // POST /api/admin/ai; здесь ключи нужны, чтобы platform env принял и сохранил значения.
+  { name: "PLATFORM_AI_CREDITS_INPUT_PER_MILLION", group: "ai", label: "AI кредитов за 1M входа", hint: "Сколько кредитов списывается за 1 млн входных токенов основной модели. Не рубли провайдера. По умолчанию 50.", kind: "value", hidden: true },
+  { name: "PLATFORM_AI_CREDITS_OUTPUT_PER_MILLION", group: "ai", label: "AI кредитов за 1M выхода", hint: "Сколько кредитов списывается за 1 млн выходных токенов основной модели; reasoning тоже считается выходом. По умолчанию 510.", kind: "value", hidden: true },
+  { name: "PLATFORM_AI_CREDITS_MINIMUM_PER_RUN", group: "ai", label: "AI минимум кредитов за запуск", hint: "Минимум кредитов за один запуск основной модели, целое число. По умолчанию 1.", kind: "value", hidden: true },
   { name: "PLATFORM_AI_FREE_BASE_URL", group: "ai", label: "Free AI Base URL", hint: "Бесплатная модель тарифа «Старт», OpenAI-совместимый адрес. Пусто — бесплатный тариф работает на модели платформы выше. Для Cloudflare Workers AI: https://api.cloudflare.com/client/v4/accounts/<Account ID>/ai/v1", kind: "url" },
   { name: "PLATFORM_AI_FREE_MODEL", group: "ai", label: "Free AI модель", hint: "Идентификатор бесплатной модели, например agnes-2.5-flash или @cf/openai/gpt-oss-120b у Cloudflare.", kind: "value" },
   { name: "PLATFORM_AI_FREE_PROVIDER", group: "ai", label: "Free AI провайдер", hint: "Необязательно: как называть бесплатную модель в логах и подсказках. По умолчанию Agnes AI; для Cloudflare Workers AI так и напишите.", kind: "value" },
@@ -373,6 +381,14 @@ export function validatePlatformValue(name: string, value: string): string | nul
   if (name === "WEB_SEARCH_PROVIDER" && !/^(auto|duckduckgo|yandex|tavily)$/i.test(text)) return "Допустимо: auto, duckduckgo, yandex или tavily";
   if (name === "ROBOKASSA_HASH" && !/^(md5|sha1|sha256|sha384|sha512|ripemd160)$/i.test(text)) return "Допустимо: md5, sha1, sha256, sha384, sha512 или ripemd160";
   if ((name === "ROBOKASSA_PRICE_PRO" || name === "ROBOKASSA_PRICE_TEAM") && !(Number(text.replace(",", ".")) > 0)) return "Нужна цена в рублях больше нуля";
+  if (name === "PLATFORM_AI_CREDITS_INPUT_PER_MILLION" || name === "PLATFORM_AI_CREDITS_OUTPUT_PER_MILLION") {
+    const value = Number(text.replace(",", "."));
+    if (!Number.isFinite(value) || value < 0 || value > 1_000_000) return "Нужно число кредитов от 0 до 1 000 000";
+  }
+  if (name === "PLATFORM_AI_CREDITS_MINIMUM_PER_RUN") {
+    const value = Number(text.replace(",", "."));
+    if (!Number.isInteger(value) || value < 0 || value > 10_000) return "Нужно целое число кредитов от 0 до 10 000";
+  }
   return null;
 }
 
@@ -424,7 +440,7 @@ export async function savePlatformEnv(values: Record<string, string | undefined>
 }
 
 export function platformEnvStatus(): PlatformEnvStatus[] {
-  return PLATFORM_ENV_CATALOG.map(entry => {
+  return PLATFORM_ENV_CATALOG.filter(entry => !entry.hidden).map(entry => {
     const stored = overrides.get(entry.name);
     if (stored) {
       return {
@@ -554,6 +570,7 @@ function canonicalKeyJson(text: string) {
 
 /** Что делать с именами, которые панель не применяет: так загруженный файл объясняется целиком. */
 export function describeUnappliedName(name: string) {
+  if (catalogEntry(name)?.hidden) return "управляется через API админ-приложения";
   return DEPLOY_ONLY.has(name) ? "изменяется при выкладке (compose/окружение)" : "неизвестная переменная";
 }
 
