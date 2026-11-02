@@ -32,7 +32,7 @@ const { registerBillingRoutes } = await import("./billing.js");
 const { createSession, createUser } = await import("../auth/auth-store.js");
 const { SESSION_COOKIE } = await import("../auth/auth.js");
 const { getPayment } = await import("../billing/store.js");
-const { signValue } = await import("../billing/robokassa.js");
+const { buildReceipt, encodeReceipt, signValue } = await import("../billing/robokassa.js");
 
 const app = Fastify();
 await app.register(cookie);
@@ -72,6 +72,8 @@ test("скидка попадает в счёт и подпись Робокас
   assert.equal(body.amount, 800, "в счёт уходит цена со скидкой");
   const url = new URL(body.paymentUrl);
   assert.equal(url.searchParams.get("OutSum"), "800.00");
-  assert.equal(url.searchParams.get("SignatureValue"), signValue("nestdev:800.00:" + body.invId + ":pass1", "md5"));
+  const receipt = encodeReceipt(buildReceipt({ planName: "Профи", amount: 800 }));
+  assert.equal(url.searchParams.get("Receipt"), receipt);
+  assert.equal(url.searchParams.get("SignatureValue"), signValue("nestdev:800.00:" + body.invId + ":" + receipt + ":pass1", "md5"));
   assert.equal((await getPayment(body.invId))?.amount, 800);
 });

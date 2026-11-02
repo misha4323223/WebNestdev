@@ -27,7 +27,10 @@ export type RobokassaConfig = {
   testMode: boolean;
   /** Услуга «Периодические платежи» включена в магазине (её включает менеджер Робокассы). */
   recurring: boolean;
-  /** Отправлять Receipt JSON: нужно, когда фискализация идёт через Робокассу. */
+  /**
+   * Отправлять Receipt JSON. Включено по умолчанию: без состава заказа Робокасса не формирует
+   * чек, даже когда фискализация идёт через «Робочеки СМЗ».
+   */
   receipt: boolean;
   /** Заданы ли логин и оба пароля — без них оплата недоступна. */
   configured: boolean;
@@ -39,6 +42,15 @@ function flag(name: string) {
 
 function text(name: string) {
   return (getPlatformEnv(name) ?? "").trim();
+}
+
+/**
+ * Receipt нужен всегда, когда фискализация идёт через Робокассу: без номенклатуры она не
+ * выпускает чек и просит зарегистрировать доход вручную. Поэтому пустое значение — это
+ * «включено»; выключить можно только явным `0` для магазина без фискализации.
+ */
+function receiptEnabled() {
+  return !/^(0|false|no|нет)$/i.test(text("ROBOKASSA_RECEIPT"));
 }
 
 export function robokassaConfig(): RobokassaConfig {
@@ -53,7 +65,7 @@ export function robokassaConfig(): RobokassaConfig {
     hash: HASHES.has(configuredHash) ? configuredHash : "md5",
     testMode: flag("ROBOKASSA_TEST_MODE"),
     recurring: flag("ROBOKASSA_RECURRING"),
-    receipt: flag("ROBOKASSA_RECEIPT"),
+    receipt: receiptEnabled(),
     configured: Boolean(login && password1 && password2),
   };
 }

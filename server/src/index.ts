@@ -73,7 +73,9 @@ import { registerAdminAiRoutes } from "./routes/admin-ai.js";
 import { registerAdminAiModelsRoutes } from "./routes/admin-ai-models.js";
 import { registerAdminProjectRoutes } from "./routes/admin-projects.js";
 import { registerUnsubscribeRoutes } from "./routes/unsubscribe.js";
-import { describePostbox, postboxStatus } from "./mail/postbox.js";
+import { describePostbox, postboxConfig, postboxStatus } from "./mail/postbox.js";
+import { checkMailDomain } from "./mail/domain.js";
+import { mailSettings } from "./mail/mailer.js";
 import { startMailQueue, stopMailQueue } from "./mail/queue.js";
 import { registerPhoneAuthRoutes } from "./routes/phone-auth.js";
 import { registerAccountRoutes } from "./routes/account.js";
@@ -198,16 +200,27 @@ console.log("[sandbox] " + describeSandboxLimiter());
 console.log("[web] " + describeWebSearch());
 // Настроена ли оплата и в каком режиме: без этой строки «кнопка оплаты не работает» и «ключи не
 // сохранились» выглядят одинаково.
-console.log("[billing] " + describeBilling());
-// При НПД чек создаёт Робокасса через «Робочеки СМЗ», а не наша передача Receipt. Включённый
-// флаг не ломает оплату, но чек может задвоиться или не сойтись с кассой, поэтому он заметен
-// в логе, а не только в панели ключей.
-if (robokassaConfig().receipt) console.warn("[billing] Receipt JSON включён: при НПД чеки формирует Робокасса («Робочеки СМЗ»), проверьте, что Receipt действительно нужен");
+const billingConfig = robokassaConfig();
+console.log("[billing] " + describeBilling(billingConfig));
+// Без Receipt Робокасса не формирует чек и просит зарегистрировать доход вручную. Это не
+// «лишний» параметр для НПД: его отсутствие как раз и приводит к ошибке номенклатуры.
+if (billingConfig.configured && !billingConfig.receipt) {
+  console.warn("[billing] Receipt JSON выключен: Робокасса не сформирует чек. Включите ROBOKASSA_RECEIPT, если фискализация идёт через Робокассу");
+}
 // Настроена ли рассылка через Postbox и с какими пределами: проверка идёт в фоне, потому что
 // без ключа она ждёт метаданные ВМ, а старт сервера ждать этого не должен.
 void postboxStatus()
   .then(status => console.log("[mail] " + describePostbox(status)))
   .catch(error => console.warn("[mail] состояние рассылки не проверено: " + (error instanceof Error ? error.message : error)));
+// Ключ и адрес отправителя ещё не значит, что получатели примут письмо: без DKIM/SPF
+// Postbox-домен не подтверждён, и письмо об оплате уйдёт в спам или будет отклонено. Проверка
+// не блокирует старт и печатает только причину, без значений ключей.
+void (async () => {
+  const settings = mailSettings();
+  if (!settings) return;
+  const domain = await checkMailDomain(settings.from, postboxConfig().dkimSelectors);
+  if (!domain.verified) console.warn("[mail] домен отправителя " + domain.domain + " не подтверждён: " + domain.hint);
+})().catch(error => console.warn("[mail] проверка домена не удалась: " + (error instanceof Error ? error.message : error)));
 // Каталог песочниц у сервера и у docker — разные вещи: контейнеры проектов монтируют путь,
 // который демон разбирает на хосте. Оба печатаются при старте, чтобы расхождение было видно
 // сразу, а не после того, как агент пожалуется на пустой терминал.

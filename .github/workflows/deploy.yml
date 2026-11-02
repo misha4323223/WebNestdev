@@ -470,7 +470,7 @@ jobs:
           echo "[deploy] Холодный ярус: endpoint=$(has "${PLATFORM_S3_ENDPOINT:-}"), бакет=${PLATFORM_S3_BUCKET:-—}, ключ=$(has "${PLATFORM_S3_ACCESS_KEY_ID:-}"), включён=${PROJECT_ARCHIVE_ENABLED:-0}"
           echo "[deploy] Цены расхода: таблица моделей=$(has "${PLATFORM_AI_MODEL_PRICES:-}"), общая ставка=$(has "${PLATFORM_AI_PRICE_INPUT_PER_MILLION:-}"), инфраструктура=$(has "${PLATFORM_INFRA_COST_PER_MONTH:-}"), валюта=${PLATFORM_AI_PRICE_CURRENCY:-USD}"
           echo "[deploy] Поддержка: ключ API=$(has "${SUPPORT_API_KEY:-}"), почта=${SUPPORT_EMAIL_TO:-—}, SMTP=$(has "${SUPPORT_SMTP_PASSWORD:-}")"
-          echo "[deploy] Почта платформы: сервер=$(has "${MAIL_SMTP_HOST:-}"), отправитель=${MAIL_FROM:-—}, пароль=$(has "${MAIL_SMTP_PASSWORD:-}")"
+          echo "[deploy] Почта платформы: MAIL_SMTP=$(has "${MAIL_SMTP_HOST:-}"), Postbox SMTP=$(has "${POSTBOX_KEY_ID:-}${POSTBOX_SECRET:-}"), отправитель=${MAIL_FROM:-${POSTBOX_SENDER:-—}}"
           echo "[deploy] Robokassa: логин=$(has "${ROBOKASSA_LOGIN:-}"), пароль №1=$(has "${ROBOKASSA_PASSWORD_1:-}"), пароль №2=$(has "${ROBOKASSA_PASSWORD_2:-}"), тест=${ROBOKASSA_TEST_MODE:-0}"
           # Рассылка: «включена» не значит «домен подтверждён» — вторая половина строки отвечает
           # на вопрос, почему письма уходят в спам, не заставляя лезть в консоль Postbox.

@@ -166,6 +166,18 @@ test("prices come from the catalog and can be changed by a key without a deploy"
   assert.equal(planPriceRub("free"), 0);
 });
 
+test("a receipt is sent by default and only an explicit zero disables it", () => {
+  withEnv({ ROBOKASSA_LOGIN: "nestdev", ROBOKASSA_PASSWORD_1: "p1", ROBOKASSA_PASSWORD_2: "p2" }, () => {
+    const defaultConfig = robokassaConfig();
+    assert.equal(defaultConfig.receipt, true, "без Receipt Робокасса не выпустит чек");
+    assert.match(describeBilling(defaultConfig), /чеки/);
+  });
+  // Явное выключение остаётся для магазина без фискализации; для НПД это не наш случай.
+  withEnv({ ROBOKASSA_LOGIN: "nestdev", ROBOKASSA_PASSWORD_1: "p1", ROBOKASSA_PASSWORD_2: "p2", ROBOKASSA_RECEIPT: "0" }, () => {
+    assert.equal(robokassaConfig().receipt, false);
+  });
+});
+
 test("payment is unavailable until the shop login and both passwords are set", () => {
   withEnv({}, () => {
     const empty = robokassaConfig();

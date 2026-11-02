@@ -376,7 +376,6 @@ export type CostSnapshot = {
   costEstimate: number | null;
   currency: string;
   lastRun: {
-    model: string;
     promptTokens: number;
     completionTokens: number;
     cachedPromptTokens: number;
@@ -639,7 +638,6 @@ export async function getCostSnapshot(userId: string, now = new Date()): Promise
     currency: pricing?.currency ?? "USD",
     lastRun: last
       ? {
-          model: last.model,
           promptTokens: last.promptTokens,
           completionTokens: last.completionTokens,
           cachedPromptTokens: last.cachedPromptTokens ?? 0,

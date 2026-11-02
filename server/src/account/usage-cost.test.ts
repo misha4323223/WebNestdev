@@ -29,8 +29,8 @@ test("run usage is recorded per user and cost is estimated from configured price
     assert.equal(snapshot.pricesConfigured,true);
     assert.equal(snapshot.currency,"RUB");
     assert.equal(snapshot.costEstimate,2);
-    assert.equal(snapshot.lastRun?.model,"model-1");
     assert.equal(snapshot.lastRun?.costEstimate,2);
+    assert.equal("model" in (snapshot.lastRun ?? {}), false, "upstream-модель не уходит в пользовательский ответ");
   }finally{
     delete process.env.PLATFORM_AI_PRICE_INPUT_PER_MILLION;
     delete process.env.PLATFORM_AI_PRICE_OUTPUT_PER_MILLION;

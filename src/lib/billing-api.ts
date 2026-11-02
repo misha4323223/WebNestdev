@@ -58,7 +58,7 @@ export type Storage = {
   measuredAt?: string | null;
   projects?: StorageProject[];
 };
-export type CostRun = { model: string; promptTokens: number; completionTokens: number; cachedPromptTokens: number; exact: boolean; costEstimate: number | null; createdAt: string };
+export type CostRun = { promptTokens: number; completionTokens: number; cachedPromptTokens: number; exact: boolean; costEstimate: number | null; createdAt: string };
 export type Cost = {
   date: string;
   runs: number;

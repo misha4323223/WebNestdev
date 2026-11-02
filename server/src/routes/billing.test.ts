@@ -7,10 +7,10 @@ import { createSession, createUser } from "../auth/auth-store.js";
 import { SESSION_COOKIE } from "../auth/auth.js";
 import { createPayment, getPayment, getSubscriptionRecord, markPaymentPaid, planForUser } from "../billing/store.js";
 import { creditBalance } from "../billing/credit-store.js";
-import { resultSignatureBase, signValue } from "../billing/robokassa.js";
+import { buildReceipt, encodeReceipt, resultSignatureBase, signValue } from "../billing/robokassa.js";
 import { registerBillingRoutes } from "./billing.js";
 
-const MANAGED = ["ROBOKASSA_LOGIN", "ROBOKASSA_PASSWORD_1", "ROBOKASSA_PASSWORD_2", "ROBOKASSA_HASH", "ROBOKASSA_TEST_MODE", "ROBOKASSA_RECURRING"] as const;
+const MANAGED = ["ROBOKASSA_LOGIN", "ROBOKASSA_PASSWORD_1", "ROBOKASSA_PASSWORD_2", "ROBOKASSA_HASH", "ROBOKASSA_TEST_MODE", "ROBOKASSA_RECURRING", "ROBOKASSA_RECEIPT"] as const;
 const PASSWORD2 = "pass2";
 
 async function withShop<T>(run: () => Promise<T>): Promise<T> {
@@ -21,6 +21,7 @@ async function withShop<T>(run: () => Promise<T>): Promise<T> {
   process.env.ROBOKASSA_HASH = "md5";
   delete process.env.ROBOKASSA_TEST_MODE;
   delete process.env.ROBOKASSA_RECURRING;
+  delete process.env.ROBOKASSA_RECEIPT;
   try { return await run(); }
   finally {
     for (const [name, value] of previous) {
@@ -76,7 +77,9 @@ test("checkout creates a pending invoice and returns a signed Robokassa link", a
       const url = new URL(body.paymentUrl);
       assert.equal(url.searchParams.get("InvId"), String(body.invId));
       assert.equal(url.searchParams.get("OutSum"), "990.00");
-      assert.equal(url.searchParams.get("SignatureValue"), signValue("nestdev:990.00:" + body.invId + ":pass1", "md5"));
+      const receipt = encodeReceipt(buildReceipt({ planName: "Плюс", amount: 990 }));
+      assert.equal(url.searchParams.get("Receipt"), receipt, "чек уходит по умолчанию");
+      assert.equal(url.searchParams.get("SignatureValue"), signValue("nestdev:990.00:" + body.invId + ":" + receipt + ":pass1", "md5"));
 
       const payment = await getPayment(body.invId);
       assert.equal(payment?.userId, user.id);
