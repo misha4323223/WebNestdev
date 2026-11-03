@@ -4,6 +4,7 @@ import { SERVICE_CATEGORIES, SERVICES, findService, resolveServiceFields } from 
 import { deleteServiceConnection, getServiceConnection, listServiceConnections, saveServiceConnection } from "../services/connections.js";
 import { verifyServiceCredential } from "../services/verify.js";
 import { assertIntegrationSlot } from "../account/integration-limits.js";
+import { connectorAllowedForPlan, connectorRefusal } from "../account/connector-access.js";
 import { accountPlanFor } from "../billing/store.js";
 
 /**
@@ -26,10 +27,14 @@ export async function registerServiceRoutes(app: FastifyInstance) {
   app.get("/api/services", async (request, reply) => {
     const user = await requireUser(request, reply);
     if (!user) return;
+    const plan = await accountPlanFor(user.id);
+    // Бесплатный тариф видит только S3-хранилище: остальные категории не приходят даже в списке.
+    const visible = SERVICES.filter(service => connectorAllowedForPlan(plan, "service", service.category));
     const connections = await listServiceConnections(user.id);
     return {
-      categories: SERVICE_CATEGORIES,
-      services: SERVICES.map(service => {
+      categories: SERVICE_CATEGORIES.filter(category => visible.some(service => service.category === category.id)),
+      restricted: visible.length !== SERVICES.length,
+      services: visible.map(service => {
         const connection = connections.find(item => item.service === service.id);
         return {
           id: service.id,
@@ -51,6 +56,8 @@ export async function registerServiceRoutes(app: FastifyInstance) {
     if (!user) return;
     const service = serviceFrom(request.params);
     if (!service) return reply.code(404).send({ error: "Неизвестный сервис" });
+    const refusal = await connectorRefusal(user.id, "service", service.category);
+    if (refusal) return reply.code(403).send(refusal);
 
     let fields: Record<string, string>;
     try {
@@ -104,6 +111,8 @@ export async function registerServiceRoutes(app: FastifyInstance) {
     if (!user) return;
     const service = serviceFrom(request.params);
     if (!service) return reply.code(404).send({ error: "Неизвестный сервис" });
+    const refusal = await connectorRefusal(user.id, "service", service.category);
+    if (refusal) return reply.code(403).send(refusal);
     const connection = await getServiceConnection(user.id, service.id);
     if (!connection) return reply.code(400).send({ error: service.name + " не подключён" });
     if (service.verification !== "check") {

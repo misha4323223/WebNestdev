@@ -39,10 +39,10 @@ test("plan cards mention neither support nor browser checks", () => {
   }
 });
 
-/** 700 MiB, not 700 000 000 bytes: the billing formatter divides by 1024 and must print «700 МБ». */
-test("the free plan gives 700 MB of account storage", () => {
-  assert.equal(PLAN_CATALOG.free.limits.storageBytes, 700 * 1024 * 1024);
-  assert.ok(PLAN_CATALOG.free.features.includes("700 МБ хранилища"));
+/** 500 MiB, not 500 000 000 bytes: the billing formatter divides by 1024 and must print «500 МБ». */
+test("the free plan gives 500 MB of account storage", () => {
+  assert.equal(PLAN_CATALOG.free.limits.storageBytes, 500 * 1024 * 1024);
+  assert.ok(PLAN_CATALOG.free.features.includes("500 МБ хранилища"));
   assert.ok(PLAN_CATALOG.free.details.some(detail => detail.includes("на все проекты")), "квота подписана как общая на аккаунт");
 });
 

@@ -19,7 +19,7 @@ type StatusResponse = { services?: ServiceStatus[] };
  * что у облаков и регистраторов; различие — в подписи: у сервисов без проверки честно написано,
  * что ключ сохраняется без неё, и почему.
  */
-export function ServiceConnectors() {
+export function ServiceConnectors({ freePlan = false }: { freePlan?: boolean }) {
   const [statuses, setStatuses] = useState<Record<string, ServiceStatus>>({});
   const [states, setStates] = useState<Record<string, KeyConnectionState>>({});
   const [refreshBusy, setRefreshBusy] = useState<string | null>(null);
@@ -65,6 +65,8 @@ export function ServiceConnectors() {
   return <div className="cloud-list">
     {error && <div className="connector-notice">{error}</div>}
     {SERVICE_CATEGORIES.map(category => {
+      // На бесплатном тарифе открыто только S3-хранилище: остальные категории не показываем.
+      if (freePlan && category.id !== "storage") return null;
       const services = SERVICES.filter(service => service.category === category.id);
       if (!services.length) return null;
       return <div className="service-group" key={category.id}>
@@ -87,6 +89,10 @@ export function ServiceConnectors() {
         })}
       </div>;
     })}
-    <p className="connector-fineprint">Ключи сервиса переносятся в переменные окружения проекта по команде агента — значения не попадают ни в чат, ни в браузер.</p>
+    <p className="connector-fineprint">
+      {freePlan
+        ? "Ключи сервиса переносятся в переменные окружения проекта по команде агента — значения не попадают ни в чат, ни в браузер. Остальные сервисы открываются на платных тарифах."
+        : "Ключи сервиса переносятся в переменные окружения проекта по команде агента — значения не попадают ни в чат, ни в браузер."}
+    </p>
   </div>;
 }

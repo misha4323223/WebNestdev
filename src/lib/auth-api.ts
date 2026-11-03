@@ -16,7 +16,12 @@ export const getVkAuthStatus=()=>apiJson<VkAuthStatus>("/api/auth/vk/status?orig
 export const getPhoneStatus=()=>apiJson<PhoneStatus>("/api/auth/phone/status");
 export const startPhoneLogin=(phone:string,consent:boolean)=>apiJson<PhoneStart>("/api/auth/phone/start",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({phone,consent})});
 export const verifyPhoneLogin=(phone:string,code:string)=>apiJson<{user:AuthUser}>("/api/auth/phone/verify",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({phone,code})});
-export const register=(email:string,password:string)=>apiJson<{user:AuthUser}>("/api/auth/register",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({email,password})});
+/** Регистрация по почте завершается письмом, а не сессией: вход появится после перехода по ссылке. */
+export type RegisterResult={verificationRequired:true;email:string;expiresInSeconds:number};
+export const register=(email:string,password:string)=>apiJson<RegisterResult>("/api/auth/register",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({email,password})});
+export const resendVerification=(email:string)=>apiJson<{sent:boolean;retryAfter?:number}>("/api/auth/resend-verification",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({email})});
+/** Ссылка из письма не активирует аккаунт сама: пароль подтверждает, что регистрация своя. */
+export const verifyEmail=(token:string,password:string)=>apiJson<{user:AuthUser}>("/api/auth/verify-email",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({token,password})});
 export const login=(email:string,password:string)=>apiJson<{user:AuthUser}>("/api/auth/login",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({email,password})});
 export const logout=()=>apiJson<{ok:boolean}>("/api/auth/logout",{method:"POST"});
 /** Отзывает все входы аккаунта, включая текущий: после ответа сессии на этом устройстве тоже нет. */

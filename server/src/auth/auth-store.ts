@@ -1,4 +1,4 @@
-import { randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, randomUUID, scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -9,9 +9,15 @@ const root = process.env.WEBNESTDEV_DATA_DIR ?? path.resolve(".webnestdev");
 const usersDir = path.join(root, "auth");
 const usersFile = path.join(usersDir, "users.json");
 const sessionsFile = path.join(usersDir, "sessions.json");
+const emailVerificationsFile = path.join(usersDir, "email-verifications.json");
 
-export type User = { id:string; email:string; passwordHash:string; createdAt:string };
+export type User = { id:string; email:string; passwordHash:string; createdAt:string; emailVerified:boolean };
+/** Запись старого формата: до подтверждения почты поле отсутствовало у всех аккаунтов. */
+type StoredUser = Omit<User,"emailVerified"> & { emailVerified?:boolean };
+/** Исторические аккаунты считаются подтверждёнными: иначе выкатка закрыла бы им вход. */
+function normalizeUser(user:StoredUser):User{ return {...user,emailVerified:user.emailVerified!==false}; }
 export const EMAIL_TAKEN_MESSAGE = "Этот email уже зарегистрирован";
+export const EMAIL_NOT_VERIFIED_MESSAGE = "Подтвердите почту: откройте ссылку из письма или запросите новое.";
 
 /**
  * Сессия. `expiresAt` — абсолютный срок, `lastSeenAt` — когда ею пользовались в последний раз.
@@ -48,35 +54,42 @@ async function writeJson(file:string, value:unknown){
   await writeFile(file, JSON.stringify(value, null, 2), {mode:0o600});
 }
 
+type UserRow = {id:string;email:string;password_hash:string;created_at:string;email_verified:boolean};
+function userFromRow(row:UserRow):User{
+  return {id:row.id,email:row.email,passwordHash:row.password_hash,createdAt:row.created_at,emailVerified:row.email_verified!==false};
+}
+
 export async function findUserByEmail(email:string){
   const normalized=email.toLowerCase();
   if(isYdbEnabled()){
-    const [rows]=await ydbQuery()<Array<{id:string;email:string;password_hash:string;created_at:string}>>`
-      SELECT id,email,password_hash,created_at
+    const [rows]=await ydbQuery()<UserRow[]>`
+      SELECT id,email,password_hash,created_at,email_verified
       FROM ${ydbQuery().identifier(getTable("users"))}
       WHERE email = ${normalized}
       LIMIT 1
     `;
     const row=rows?.[0];
-    return row ? {id:row.id,email:row.email,passwordHash:row.password_hash,createdAt:row.created_at} : null;
+    return row ? userFromRow(row) : null;
   }
-  const users = await readJson<User[]>(usersFile, []);
-  return users.find(user => user.email === normalized) ?? null;
+  const users = await readJson<StoredUser[]>(usersFile, []);
+  const user = users.find(item => item.email === normalized);
+  return user ? normalizeUser(user) : null;
 }
 
 export async function getUser(userId:string){
   if(isYdbEnabled()){
-    const [rows]=await ydbQuery()<Array<{id:string;email:string;password_hash:string;created_at:string}>>`
-      SELECT id,email,password_hash,created_at
+    const [rows]=await ydbQuery()<UserRow[]>`
+      SELECT id,email,password_hash,created_at,email_verified
       FROM ${ydbQuery().identifier(getTable("users"))}
       WHERE id = ${userId}
       LIMIT 1
     `;
     const row=rows?.[0];
-    return row ? {id:row.id,email:row.email,passwordHash:row.password_hash,createdAt:row.created_at} : null;
+    return row ? userFromRow(row) : null;
   }
-  const users = await readJson<User[]>(usersFile, []);
-  return users.find(user => user.id === userId) ?? null;
+  const users = await readJson<StoredUser[]>(usersFile, []);
+  const user = users.find(item => item.id === userId);
+  return user ? normalizeUser(user) : null;
 }
 
 /**
@@ -91,22 +104,27 @@ export async function listUserIdentities():Promise<Array<{id:string;email:string
     `;
     return rows.map(row=>({id:row.id,email:row.email}));
   }
-  const users=await readJson<User[]>(usersFile,[]);
+  const users=await readJson<StoredUser[]>(usersFile,[]);
   return users.map(user=>({id:user.id,email:user.email}));
 }
 
-export async function createUser(email:string, password:string){
+/**
+ * `emailVerified` по умолчанию true: так создаются аккаунты OAuth, телефона и демо. Только
+ * регистрация по почте передаёт false и ждёт перехода по ссылке из письма.
+ */
+export async function createUser(email:string, password:string, options:{emailVerified?:boolean}={}){
   const normalized = email.trim().toLowerCase();
   if(await findUserByEmail(normalized)) throw new Error(EMAIL_TAKEN_MESSAGE);
   const salt = randomBytes(16).toString("hex");
   const derived = await scrypt(password, salt, 64) as Buffer;
-  const user:User = {id:randomUUID(), email:normalized, passwordHash:salt + ":" + derived.toString("hex"), createdAt:new Date().toISOString()};
+  const emailVerified = options.emailVerified !== false;
+  const user:User = {id:randomUUID(), email:normalized, passwordHash:salt + ":" + derived.toString("hex"), createdAt:new Date().toISOString(), emailVerified};
   if(isYdbEnabled()){
     try {
       await ydbQuery()`
         INSERT INTO ${ydbQuery().identifier(getTable("users"))}
-          (id,email,password_hash,created_at)
-        VALUES (${user.id},${user.email},${user.passwordHash},${user.createdAt})
+          (id,email,password_hash,created_at,email_verified)
+        VALUES (${user.id},${user.email},${user.passwordHash},${user.createdAt},${user.emailVerified})
       `;
     } catch (error) {
       if(await findUserByEmail(normalized)) throw new Error(EMAIL_TAKEN_MESSAGE);
@@ -114,10 +132,130 @@ export async function createUser(email:string, password:string){
     }
     return user;
   }
-  const users = await readJson<User[]>(usersFile, []);
+  const users = await readJson<StoredUser[]>(usersFile, []);
   users.push(user);
   await writeJson(usersFile, users);
   return user;
+}
+
+export type EmailVerification = { userId:string; tokenHash:string; expiresAt:string; sentAt:string };
+export type EmailVerificationResult =
+  | { status:"verified"; user:User }
+  | { status:"expired" }
+  | { status:"invalid" };
+
+/** В ссылке лежит случайный токен; в базе — только его SHA-256, чтобы утечка файла не давала вход. */
+export function hashEmailVerificationToken(token:string){
+  return createHash("sha256").update(token).digest("hex");
+}
+
+/** Один актуальный токен на аккаунт: повторная отправка заменяет предыдущее письмо. */
+export async function saveEmailVerification(record:EmailVerification){
+  if(isYdbEnabled()){
+    await ydbQuery()`
+      UPSERT INTO ${ydbQuery().identifier(getTable("email_verifications"))}
+        (user_id,token_hash,expires_at,sent_at)
+      VALUES (${record.userId},${record.tokenHash},${record.expiresAt},${record.sentAt})
+    `;
+    return;
+  }
+  const records = await readJson<EmailVerification[]>(emailVerificationsFile, []);
+  const next = records.filter(item => item.userId !== record.userId);
+  next.push(record);
+  await writeJson(emailVerificationsFile, next);
+}
+
+export async function getEmailVerification(userId:string):Promise<EmailVerification|null>{
+  if(isYdbEnabled()){
+    const [rows]=await ydbQuery()<Array<{user_id:string;token_hash:string;expires_at:string;sent_at:string}>>`
+      SELECT user_id,token_hash,expires_at,sent_at
+      FROM ${ydbQuery().identifier(getTable("email_verifications"))}
+      WHERE user_id = ${userId}
+      LIMIT 1
+    `;
+    const row=rows?.[0];
+    return row ? {userId:row.user_id,tokenHash:row.token_hash,expiresAt:row.expires_at,sentAt:row.sent_at} : null;
+  }
+  const records = await readJson<EmailVerification[]>(emailVerificationsFile, []);
+  return records.find(item => item.userId === userId) ?? null;
+}
+
+/** Поиск до погашения: пароль проверяется раньше, чтобы неверная попытка не сжигала ссылку. */
+export async function findEmailVerificationByTokenHash(tokenHash:string):Promise<EmailVerification|null>{
+  if(isYdbEnabled()){
+    const [rows]=await ydbQuery()<Array<{user_id:string;token_hash:string;expires_at:string;sent_at:string}>>`
+      SELECT user_id,token_hash,expires_at,sent_at
+      FROM ${ydbQuery().identifier(getTable("email_verifications"))}
+      WHERE token_hash = ${tokenHash}
+      LIMIT 1
+    `;
+    const row=rows?.[0];
+    return row ? {userId:row.user_id,tokenHash:row.token_hash,expiresAt:row.expires_at,sentAt:row.sent_at} : null;
+  }
+  const records = await readJson<EmailVerification[]>(emailVerificationsFile, []);
+  return records.find(item => item.tokenHash === tokenHash) ?? null;
+}
+
+export async function deleteEmailVerification(userId:string){
+  if(isYdbEnabled()){
+    await ydbQuery()`DELETE FROM ${ydbQuery().identifier(getTable("email_verifications"))} WHERE user_id = ${userId}`;
+    return;
+  }
+  const records = await readJson<EmailVerification[]>(emailVerificationsFile, []);
+  await writeJson(emailVerificationsFile, records.filter(item => item.userId !== userId));
+}
+
+/**
+ * Одноразовое погашение ссылки. В PostgreSQL удаление и есть проверка «токен ещё не использован»:
+ * два одновременных перехода не могут оба получить строку. В JSON-режиме те же шаги выполняются
+ * над файлом; сбой между удалением токена и отметкой пользователя лечится повторной отправкой.
+ */
+export async function consumeEmailVerification(tokenHash:string, now=Date.now()):Promise<EmailVerificationResult>{
+  const stamp = new Date(now).toISOString();
+  if(isYdbEnabled()){
+    const [consumed]=await ydbQuery()<Array<{user_id:string}>>`
+      DELETE FROM ${ydbQuery().identifier(getTable("email_verifications"))}
+      WHERE token_hash = ${tokenHash} AND expires_at > ${stamp}
+      RETURNING user_id
+    `;
+    const userId=consumed?.[0]?.user_id;
+    if(!userId){
+      const [expired]=await ydbQuery()<Array<{user_id:string}>>`
+        SELECT user_id
+        FROM ${ydbQuery().identifier(getTable("email_verifications"))}
+        WHERE token_hash = ${tokenHash}
+        LIMIT 1
+      `;
+      if(expired?.[0]){
+        await ydbQuery()`DELETE FROM ${ydbQuery().identifier(getTable("email_verifications"))} WHERE token_hash = ${tokenHash}`;
+        return {status:"expired"};
+      }
+      return {status:"invalid"};
+    }
+    await ydbQuery()`
+      UPDATE ${ydbQuery().identifier(getTable("users"))}
+      SET email_verified = TRUE
+      WHERE id = ${userId}
+    `;
+    await ydbQuery()`DELETE FROM ${ydbQuery().identifier(getTable("email_verifications"))} WHERE user_id = ${userId}`;
+    const user=await getUser(userId);
+    return user ? {status:"verified",user} : {status:"invalid"};
+  }
+
+  const records = await readJson<EmailVerification[]>(emailVerificationsFile, []);
+  const record = records.find(item => item.tokenHash === tokenHash);
+  if(!record) return {status:"invalid"};
+  if(Date.parse(record.expiresAt) <= now){
+    await writeJson(emailVerificationsFile, records.filter(item => item.tokenHash !== tokenHash));
+    return {status:"expired"};
+  }
+  await writeJson(emailVerificationsFile, records.filter(item => item.userId !== record.userId));
+  const users = await readJson<StoredUser[]>(usersFile, []);
+  const index = users.findIndex(item => item.id === record.userId);
+  if(index < 0) return {status:"invalid"};
+  users[index] = {...users[index], emailVerified:true};
+  await writeJson(usersFile, users);
+  return {status:"verified", user:normalizeUser(users[index])};
 }
 
 export const DEMO_ACCOUNT = { email: "demo@webnestdev.local", password: "demo1234" };

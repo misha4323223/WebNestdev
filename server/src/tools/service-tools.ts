@@ -5,6 +5,8 @@ import { getSandbox } from "../sandbox-manager.js";
 import { SERVICE_CATEGORIES, SERVICES, findService, serviceEnvValues } from "../services/catalog.js";
 import { getServiceConnection, listServiceConnections } from "../services/connections.js";
 import { listProjectSecrets, saveProjectSecrets } from "../secrets/project-secrets.js";
+import { accountPlanFor } from "../billing/store.js";
+import { FREE_CONNECTOR_MESSAGE, connectorAllowedForPlan, connectorRefusal } from "../account/connector-access.js";
 
 /**
  * Подключённые сервисы пользователя: файлы, почта, оплата, AI, карты, CRM. Агент видит, что
@@ -22,25 +24,33 @@ registerTool({
     "Call it before writing code that needs storage, email, payments, AI or maps, and when the user asks what is already connected. " +
     "It never returns the credential itself.",
   execute: async (_input, context) => {
+    const plan = await accountPlanFor(context.userId);
+    const allowed = (service: { category: string } | undefined) => connectorAllowedForPlan(plan, "service", service?.category);
     const connections = await listServiceConnections(context.userId);
-    const connected = connections.map(connection => {
-      const service = findService(connection.service);
-      return {
-        service: connection.service,
-        name: service?.name ?? connection.service,
-        category: service?.category ?? "unknown",
-        account: connection.account,
-        env: service ? service.env.map(entry => entry.name) : [],
-        connectedAt: connection.updatedAt,
-      };
-    });
+    const connected = connections
+      // На бесплатном тарифе уже подключённые закрытые сервисы тоже не видны: их ключи нельзя
+      // перенести в проект, значит и предлагать их модели незачем.
+      .filter(connection => allowed(findService(connection.service)))
+      .map(connection => {
+        const service = findService(connection.service);
+        return {
+          service: connection.service,
+          name: service?.name ?? connection.service,
+          category: service?.category ?? "unknown",
+          account: connection.account,
+          env: service ? service.env.map(entry => entry.name) : [],
+          connectedAt: connection.updatedAt,
+        };
+      });
     const notConnected = SERVICES
-      .filter(service => !connections.some(connection => connection.service === service.id))
+      .filter(service => allowed(service) && !connections.some(connection => connection.service === service.id))
       .map(service => ({ service: service.id, name: service.name, category: service.category }));
+    const restricted = SERVICES.some(service => !allowed(service));
     return {
       connected,
-      categories: SERVICE_CATEGORIES,
+      categories: SERVICE_CATEGORIES.filter(category => SERVICES.some(service => service.category === category.id && allowed(service))),
       notConnected,
+      ...(restricted ? { restricted: true, planNote: FREE_CONNECTOR_MESSAGE } : {}),
       hint: connected.length
         ? "Ключи сервиса переносятся в проект инструментом service.env — значения при этом тебе не показываются."
         : "Ни один сервис не подключён: попросите пользователя открыть «Интеграции» → «Сервисы» и вставить ключ провайдера.",
@@ -68,6 +78,8 @@ registerTool({
     const { service: serviceId } = envSchema.parse(input ?? {});
     const service = findService(serviceId);
     if (!service) throw new Error("Неизвестный сервис: " + serviceId + ". Список доступных — в service.status.");
+    const refusal = await connectorRefusal(context.userId, "service", service.category);
+    if (refusal) return { ok: false, restricted: true, code: refusal.code, service: service.id, error: refusal.error };
     const connection = await getServiceConnection(context.userId, service.id);
     if (!connection) {
       throw new Error("Сервис " + service.name + " не подключён: попросите пользователя открыть «Интеграции» → «Сервисы» и подключить его.");

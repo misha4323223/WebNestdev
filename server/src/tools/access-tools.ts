@@ -5,8 +5,10 @@ import { resolveAccessTarget } from "../access/targets.js";
 import { getCloudConnection } from "../cloud/connections.js";
 import { getDomainConnection } from "../domains/connections.js";
 import { getServiceConnection } from "../services/connections.js";
+import { findService } from "../services/catalog.js";
 import { getYandexConnection } from "../yandex/yandex-connection-store.js";
 import { databaseStatus } from "../database/database-api.js";
+import { connectorRefusal } from "../account/connector-access.js";
 
 /**
  * Доступ к провайдеру — это не ключ приложения. Ключ приложения живёт в секретах проекта и
@@ -79,6 +81,23 @@ registerTool({
     const parsed = inputSchema.parse(input ?? {});
     const kind = parsed.kind as AccessKind;
     const target = resolveAccessTarget(kind, parsed.provider);
+
+    // Тариф проверяется до карточки: закрытый коннектор не должен даже просить ключ.
+    const refusal = await connectorRefusal(context.userId, kind, kind === "service" ? findService(target.providerId)?.category : undefined);
+    if (refusal) {
+      return {
+        ok: false,
+        restricted: true,
+        code: refusal.code,
+        kind,
+        provider: target.providerId,
+        name: target.name,
+        error: refusal.error,
+        note:
+          "Тариф пользователя не открывает этот коннектор. Не проси ключ и не предлагай обход: предложи продолжить без него, " +
+          "а если он нужен для запуска — назови, что именно останется недоступным, и предложи платный тариф.",
+      };
+    }
 
     const existing = await connectedAccount(kind, target.providerId, context.userId);
     if (existing) {

@@ -7,6 +7,7 @@ import {
   createProjectBranch,
   createRepositoryForProject,
   diffForProject,
+  RepositoryPushBlockedError,
   listProjectBranches,
   pullFromGithub,
   pushCurrentBranch,
@@ -40,6 +41,7 @@ export async function registerChangesRoutes(app: FastifyInstance) {
     try {
       return reply.code(201).send(await createRepositoryForProject(params.id, user.id, body.name));
     } catch (error) {
+      if (error instanceof RepositoryPushBlockedError) return reply.code(403).send({ error: error.message, code: error.code });
       return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
     }
   });
@@ -78,6 +80,7 @@ export async function registerChangesRoutes(app: FastifyInstance) {
       }
       return { pushed: true, branch: outcome.branch, at: outcome.at };
     } catch (error) {
+      if (error instanceof RepositoryPushBlockedError) return reply.code(403).send({ error: error.message, code: error.code });
       return reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
     }
   });

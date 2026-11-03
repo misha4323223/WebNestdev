@@ -5,6 +5,7 @@ import { deleteCloudConnection, getCloudConnection, listCloudConnections, saveCl
 import { CLOUD_PROVIDERS, findCloudProvider, readCloudFields } from "../cloud/providers.js";
 import { verifyCloudCredential } from "../cloud/verify.js";
 import { assertIntegrationSlot } from "../account/integration-limits.js";
+import { assertConnectorAccess, connectorAllowedForPlan } from "../account/connector-access.js";
 import { accountPlanFor } from "../billing/store.js";
 
 /**
@@ -30,6 +31,10 @@ export async function registerCloudRoutes(app: FastifyInstance) {
   app.get("/api/cloud", async (request, reply) => {
     const user = await requireUser(request, reply);
     if (!user) return;
+    const plan = await accountPlanFor(user.id);
+    // Бесплатный тариф не получает список облаков: карточки скрыты, а прямой запрос должен
+    // отвечать так же, как интерфейс, а не показывать подключения в обход тарифа.
+    if (!connectorAllowedForPlan(plan, "cloud")) return { providers: [], restricted: true };
     const connections = await listCloudConnections(user.id);
     return {
       providers: CLOUD_PROVIDERS.map(provider => {
@@ -49,6 +54,8 @@ export async function registerCloudRoutes(app: FastifyInstance) {
   app.post("/api/cloud/:provider", async (request, reply) => {
     const user = await requireUser(request, reply);
     if (!user) return;
+    try { await assertConnectorAccess(user.id, "cloud"); }
+    catch (error) { return reply.code(403).send({ error: messageOf(error), code: "PLAN_CONNECTOR_LOCKED" }); }
     const provider = providerFrom(request.params);
     if (!provider) return reply.code(404).send({ error: "Неизвестное облако" });
 
@@ -101,6 +108,8 @@ export async function registerCloudRoutes(app: FastifyInstance) {
   app.post("/api/cloud/:provider/writes", async (request, reply) => {
     const user = await requireUser(request, reply);
     if (!user) return;
+    try { await assertConnectorAccess(user.id, "cloud"); }
+    catch (error) { return reply.code(403).send({ error: messageOf(error), code: "PLAN_CONNECTOR_LOCKED" }); }
     const provider = providerFrom(request.params);
     if (!provider) return reply.code(404).send({ error: "Неизвестное облако" });
     const parsed = z.object({ allowWrites: z.boolean() }).safeParse(request.body ?? {});
@@ -120,6 +129,8 @@ export async function registerCloudRoutes(app: FastifyInstance) {
   app.post("/api/cloud/:provider/refresh", async (request, reply) => {
     const user = await requireUser(request, reply);
     if (!user) return;
+    try { await assertConnectorAccess(user.id, "cloud"); }
+    catch (error) { return reply.code(403).send({ error: messageOf(error), code: "PLAN_CONNECTOR_LOCKED" }); }
     const provider = providerFrom(request.params);
     if (!provider) return reply.code(404).send({ error: "Неизвестное облако" });
     const connection = await getCloudConnection(user.id, provider.id);

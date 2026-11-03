@@ -158,6 +158,11 @@ async function measureProjectSize(projectId: string): Promise<number> {
   return archived?.bytes ?? 0;
 }
 
+/** Фактический размер проекта на диске — для лимита импорта до записи в квоту. */
+export async function projectDirectoryBytes(projectId: string): Promise<number> {
+  return measureProjectSize(projectId);
+}
+
 async function jsonStorageFile() {
   return path.join(root, "account", "storage-sizes.json");
 }

@@ -182,7 +182,7 @@ export const refreshStorage = () => apiJson<{ projects: number; measured: number
 
 /** Единый формат байтов для квоты: настройки, колонка и страница подписки должны читать одно и то же. */
 export function bytesLabel(value: number): string {
-  // Целые гигабайты и мегабайты печатаются без «.0»: лимит тарифа читается как «700 МБ», а не «700.0 МБ».
+  // Целые гигабайты и мегабайты печатаются без «.0»: лимит тарифа читается как «500 МБ», а не «500.0 МБ».
   const size = (amount: number) => amount.toFixed(1).replace(/\.0$/, "");
   if (value < 1024) return value + " Б";
   if (value < 1024 * 1024) return Math.round(value / 1024) + " КБ";

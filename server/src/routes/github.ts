@@ -5,10 +5,10 @@ import { resolveOAuthFlow, redirectToApp, type OAuthFlowOptions } from "../oauth
 import { getGitHubConnection, saveGitHubConnection, deleteGitHubConnection } from "../github/github-connection-store.js";
 import { createOAuthState, consumeOAuthState, originFromOAuthState } from "../github/github-oauth-state.js";
 import { getGitHubUser, getGitHubLoginFromToken, listGitHubRepositories, getGitHubRepository, getGitHubTree, getGitHubBlob } from "../github/github-api.js";
-import { createConversation, createProjectWithinLimit, ProjectLimitError } from "../project-store.js";
+import { createConversation, createProjectWithinLimit, deleteProject, ProjectLimitError } from "../project-store.js";
 import { limitsForPlan, repositoryImportLimitFor, repositorySizeLabel } from "../account/plans.js";
 import { accountPlanFor } from "../billing/store.js";
-import { recordStorageMutation } from "../account/storage-quota.js";
+import { projectDirectoryBytes, recordStorageMutation } from "../account/storage-quota.js";
 import { getSandbox } from "../sandbox-manager.js";
 import { getPlatformEnv } from "../platform/platform-env.js";
 import { initRepo } from "../changes/git-repo.js";
@@ -204,6 +204,21 @@ export async function registerGitHubRoutes(app: FastifyInstance) {
       if (blob.encoding !== "base64") continue;
       // Путь пришёл из GitHub-дерева: `..` и ссылки отсекает та же запись, что и у агента.
       await writeFileInside(sandbox.root, path.join(sandbox.root, entry.path), Buffer.from(blob.content.replace(/\n/g, ""), "base64"));
+    }
+    // Размер из API — сжатый и может отсутствовать. Перед созданием истории проверяем то,
+    // что фактически легло на диск: иначе бесплатный тариф мог бы принять больше 50 МБ.
+    if (repositoryLimit !== null) {
+      const importedBytes = await projectDirectoryBytes(project.id);
+      if (importedBytes > repositoryLimit) {
+        await deleteProject(project.id, user.id);
+        return reply.code(403).send({
+          error: "Репозиторий занимает " + repositorySizeLabel(importedBytes) + ", а на бесплатном тарифе импорт ограничен " + repositorySizeLabel(repositoryLimit) + ". Оформите платный тариф или импортируйте проект меньше " + repositorySizeLabel(repositoryLimit) + ".",
+          code: "REPOSITORY_TOO_LARGE",
+          sizeBytes: importedBytes,
+          limitBytes: repositoryLimit,
+          plan,
+        });
+      }
     }
     // История импортированного проекта начинается с коммита GitHub, а не с пустого места:
     // первая же задача получает родителем настоящий коммит репозитория, поэтому отправка —

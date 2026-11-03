@@ -10,9 +10,13 @@ process.env.WEBNESTDEV_DATA_DIR = await mkdtemp(path.join(tmpdir(), "nestdev-dom
 const { saveDomainConnection } = await import("../domains/connections.js");
 const { domainNamesFrom, domainRegistrarId, domainRegistrarPath } = await import("./domain-tools.js");
 const { getTool } = await import("../tool-registry.js");
+const { grantSubscription } = await import("../billing/store.js");
 
 const now = "2026-10-22T00:00:00.000Z";
 const context = { userId: "tool-user", projectId: "project-1" } as never;
+// Кабинет регистратора — платная интеграция: проверки самого инструмента идут на оплаченном
+// тарифе, а закрытый на free доступ проверяется отдельным тестом ниже.
+await grantSubscription({ userId: "tool-user", plan: "pro" });
 
 function request(input: unknown) {
   const tool = getTool("domain.request");
@@ -96,6 +100,18 @@ test("a change (and everything else) is refused when the cabinet is not connecte
   assert.equal(result.ok, false);
   assert.equal(result.blocked, "not_connected");
   assert.match(result.hint ?? "", /«Интеграции» → «Домены»/);
+});
+
+test("domain.request is closed on the free plan before any cabinet call", async () => {
+  const tool = getTool("domain.request");
+  assert.ok(tool, "инструмент domain.request должен быть зарегистрирован");
+  const result = await tool.execute!(
+    { registrar: "regru", path: "zone/get_resource_records" },
+    { userId: "free-tool-user", projectId: "project-1" } as never,
+  ) as { ok: boolean; restricted?: boolean; code?: string };
+  assert.equal(result.ok, false);
+  assert.equal(result.restricted, true);
+  assert.equal(result.code, "PLAN_CONNECTOR_LOCKED");
 });
 
 test("read commands are classified as such, so they never need the switch", async () => {

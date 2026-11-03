@@ -83,7 +83,7 @@ export function HomeRail(props: HomeRailProps) {
     {section && <div className="rail-content">
       {section === "integrations" && <section className="rail-section">
         <div className="rail-section-head"><span className="eyebrow">ИНТЕГРАЦИИ</span><strong>Подключения</strong></div>
-        <IntegrationsList surface="home"/>
+        <IntegrationsList surface="home" planId={activePlanId(billing)}/>
       </section>}
 
       {section === "projects" && <section className="rail-section">

@@ -197,6 +197,9 @@ export function ChangesPanel({ projectId, projectName, onRolledBack }: { project
   const currentSha = checkpoints[0]?.sha;
   const repository = data?.repository;
   const providerName = repository?.provider === "gitlab" ? "GitLab" : repository?.provider === "gitverse" ? "GitVerse" : repository?.provider === "sourcecraft" ? "SourceCraft" : "GitHub";
+  // Старый сервер мог не присылать поле: считаем отправку разрешённой, пока она явно не закрыта.
+  const pushAllowed = repository?.pushAllowed !== false;
+  const pushBlockedReason = repository?.pushBlockedReason ?? "На бесплатном тарифе отправка коммитов в репозиторий недоступна.";
   const changedFiles = worktree?.files ?? [];
   const selectedFiles = changedFiles.filter(file => selected.has(file.path));
   const canCommit = Boolean(message.trim()) && selectedFiles.length > 0 && !busy;
@@ -206,6 +209,7 @@ export function ChangesPanel({ projectId, projectName, onRolledBack }: { project
   const totalDeletions = worktree?.deletions ?? changedFiles.reduce((sum, file) => sum + (file.deletions ?? 0), 0);
 
   const push = async () => {
+    if (!pushAllowed) { setNotice({ kind: "warn", text: pushBlockedReason }); return; }
     setBusy("push"); setNotice(null);
     try {
       const result = await pushProjectChanges(projectId);
@@ -243,10 +247,11 @@ export function ChangesPanel({ projectId, projectName, onRolledBack }: { project
     if (!canCommit) return;
     setBusy("commit"); setNotice(null);
     try {
+      const pushRequested = pushAfter && repository?.connected && pushAllowed;
       const result = await commitProjectWorktree(projectId, {
         message: message.trim(),
         paths: selectedFiles.map(file => file.path),
-        ...(pushAfter && repository?.connected ? { push: true } : {}),
+        ...(pushRequested ? { push: true } : {}),
       });
       setData(result.overview);
       setMessage("");
@@ -256,7 +261,7 @@ export function ChangesPanel({ projectId, projectName, onRolledBack }: { project
       await load();
       const pushedText = result.pushed
         ? " и отправлены в ветку " + result.branch + " на " + providerName
-        : pushAfter && result.pushError ? ", но отправить не удалось: " + result.pushError : "";
+        : pushRequested && result.pushError ? ", но отправить не удалось: " + result.pushError : "";
       setNotice({
         kind: result.pushError ? "warn" : "ok",
         text: "Закоммичено " + filesLabel(result.checkpoint.filesChanged) + pushedText + ".",
@@ -268,6 +273,7 @@ export function ChangesPanel({ projectId, projectName, onRolledBack }: { project
   };
 
   const createRepository = async () => {
+    if (!pushAllowed) { setNotice({ kind: "warn", text: pushBlockedReason }); return; }
     setBusy("repository"); setNotice(null);
     try {
       const result = await createProjectRepository(projectId, repoName.trim() || projectName || "");
@@ -327,9 +333,11 @@ export function ChangesPanel({ projectId, projectName, onRolledBack }: { project
       const result = await rollbackProjectChanges(projectId, checkpoint.sha);
       setNotice({
         kind: "ok",
-        text: repository?.connected
-          ? "Проект возвращён к " + checkpoint.shortSha + ". Отправьте точку на " + providerName + " кнопкой, когда убедитесь в результате."
-          : "Проект возвращён к " + checkpoint.shortSha + ". История осталась в проекте — " + providerName + " не подключён.",
+        text: !pushAllowed
+          ? "Проект возвращён к " + checkpoint.shortSha + ". Отправка обратно в " + providerName + " на бесплатном тарифе недоступна, точка сохранена в истории проекта."
+          : repository?.connected
+            ? "Проект возвращён к " + checkpoint.shortSha + ". Отправьте точку на " + providerName + " кнопкой, когда убедитесь в результате."
+            : "Проект возвращён к " + checkpoint.shortSha + ". История осталась в проекте — " + providerName + " не подключён.",
       });
       setData(result.overview);
       setDiffs({}); setOpenDiff("");
@@ -392,8 +400,8 @@ export function ChangesPanel({ projectId, projectName, onRolledBack }: { project
         {repository?.connected && <button className="ghost-button changes-sync" onClick={() => void pull()} disabled={Boolean(busy)} title={"Забрать ветку из " + providerName + " в проект"}>
           <CloudDownload size={14}/> {busy === "pull" ? "Выгружаем…" : <><span className="changes-label-full">Выгрузить</span><span className="changes-label-short">Pull</span></>}
         </button>}
-        {repository?.connected && <button className="ghost-button changes-sync" onClick={() => void push()} disabled={Boolean(busy)} title={"Отправить текущую ветку на " + providerName}>
-          <CloudUpload size={14}/> {busy === "push" ? "Отправляем…" : <><span className="changes-label-full">Отправить</span><span className="changes-label-short">Push</span></>}
+        {repository?.connected && <button className="ghost-button changes-sync" onClick={() => void push()} disabled={Boolean(busy) || !pushAllowed} title={pushAllowed ? "Отправить текущую ветку на " + providerName : pushBlockedReason}>
+          {pushAllowed ? <CloudUpload size={14}/> : <CloudOff size={14}/>} {busy === "push" ? "Отправляем…" : <><span className="changes-label-full">{pushAllowed ? "Отправить" : "Push закрыт"}</span><span className="changes-label-short">{pushAllowed ? "Push" : "Тариф"}</span></>}
         </button>}
         <button className="ghost-button" onClick={() => void load()} disabled={loading} title="Обновить состояние"><RefreshCw size={14}/> Обновить</button>
       </div>
@@ -438,9 +446,9 @@ export function ChangesPanel({ projectId, projectName, onRolledBack }: { project
         </div>
         <div className="changes-repo-state">
           {repository?.connected
-            ? <span className={"changes-state " + (repository.lastPushError ? "warn" : "ok")}>
-                {repository.lastPushError ? <CloudOff size={12}/> : <CloudUpload size={12}/>}
-                {pushState?.text ?? "готово к отправке"}
+            ? <span className={"changes-state " + (!pushAllowed || repository.lastPushError ? "warn" : "ok")} title={pushAllowed ? undefined : pushBlockedReason}>
+                {!pushAllowed || repository.lastPushError ? <CloudOff size={12}/> : <CloudUpload size={12}/>}
+                {!pushAllowed ? "отправка закрыта на бесплатном тарифе" : pushState?.text ?? "готово к отправке"}
               </span>
             : <span className="changes-state muted">локальная история</span>}
         </div>
@@ -449,14 +457,18 @@ export function ChangesPanel({ projectId, projectName, onRolledBack }: { project
       {repository && !repository.connected && <div className="changes-connect">
         <div className="changes-connect-text">
           <strong>{providerName} не подключён</strong>
-          <span>История хранится в проекте. Подключите репозиторий, чтобы отправлять коммиты в ветку {repository.branch}.</span>
+          <span>{pushAllowed
+            ? "История хранится в проекте. Подключите репозиторий, чтобы отправлять коммиты в ветку " + repository.branch + "."
+            : "История хранится в проекте. На бесплатном тарифе можно импортировать готовый репозиторий, но отправлять коммиты обратно нельзя."}</span>
         </div>
-        {gitHub?.connected
-          ? <div className="changes-connect-form">
-              <input value={repoName} onChange={event => setRepoName(event.target.value)} placeholder="имя репозитория" maxLength={100} aria-label={"Имя репозитория на " + providerName}/>
-              <button className="send-button" onClick={() => void createRepository()} disabled={Boolean(busy)}>{busy === "repository" ? "Создаём…" : "Создать и отправить"}</button>
-            </div>
-          : <button className="ghost-button changes-connect-button" onClick={() => { window.location.href = apiUrl("/api/github/connect?origin=" + encodeURIComponent(window.location.origin)); }}>Подключить GitHub</button>}
+        {!pushAllowed
+          ? <span className="changes-tariff-note">На бесплатном тарифе отправка в репозиторий недоступна. Импортировать готовый репозиторий можно в «Интеграциях»; для отправки коммитов оформите платный тариф.</span>
+          : gitHub?.connected
+            ? <div className="changes-connect-form">
+                <input value={repoName} onChange={event => setRepoName(event.target.value)} placeholder="имя репозитория" maxLength={100} aria-label={"Имя репозитория на " + providerName}/>
+                <button className="send-button" onClick={() => void createRepository()} disabled={Boolean(busy)}>{busy === "repository" ? "Создаём…" : "Создать и отправить"}</button>
+              </div>
+            : <button className="ghost-button changes-connect-button" onClick={() => { window.location.href = apiUrl("/api/github/connect?origin=" + encodeURIComponent(window.location.origin)); }}>Подключить GitHub</button>}
       </div>}
 
       {notice && <div className={"changes-notice " + notice.kind} role="status">{notice.text}</div>}
@@ -507,13 +519,15 @@ export function ChangesPanel({ projectId, projectName, onRolledBack }: { project
                   aria-label="Сообщение коммита"
                 />
                 <div className="git-commit-actions">
-                  <label className={"git-push-choice" + (repository?.connected ? "" : " disabled")} title={repository?.connected ? "После коммита отправить ветку в репозиторий" : "Репозиторий не подключён"}>
-                    <input type="checkbox" checked={pushAfter} onChange={event => setPushAfter(event.target.checked)} disabled={!repository?.connected}/>
-                    <Send size={11}/> Отправить
-                  </label>
+                  {pushAllowed
+                    ? <label className={"git-push-choice" + (repository?.connected ? "" : " disabled")} title={repository?.connected ? "После коммита отправить ветку в репозиторий" : "Репозиторий не подключён"}>
+                        <input type="checkbox" checked={pushAfter} onChange={event => setPushAfter(event.target.checked)} disabled={!repository?.connected}/>
+                        <Send size={11}/> Отправить
+                      </label>
+                    : <span className="git-push-locked" title={pushBlockedReason}><CloudOff size={11}/> отправка на бесплатном тарифе недоступна</span>}
                   <span className="git-selected">{selectedFiles.length} из {changedFiles.length} {filesLabel(changedFiles.length)}</span>
                   <button className="git-commit-btn" onClick={() => void commit()} disabled={!canCommit}>
-                    {busy === "commit" ? <><Loader2 size={12} className="spin"/> Коммитим…</> : pushAfter && repository?.connected ? "Закоммитить и отправить" : "Закоммитить"}
+                    {busy === "commit" ? <><Loader2 size={12} className="spin"/> Коммитим…</> : pushAllowed && pushAfter && repository?.connected ? "Закоммитить и отправить" : "Закоммитить"}
                   </button>
                 </div>
               </div>

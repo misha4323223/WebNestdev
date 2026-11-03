@@ -4,6 +4,7 @@ import { checkDomain } from "../domains/rdap.js";
 import { listDomainConnections } from "../domains/connections.js";
 import { forbiddenRegistrarAction, isReadOnlyRegistrarCall, listRegistrarDomains, registrarRequest, type RegistrarCall, type RegistrarMethod } from "../domains/registrar-api.js";
 import { DOMAIN_REGISTRARS, type DomainRegistrarId } from "../domains/providers.js";
+import { FREE_CONNECTOR_MESSAGE, connectorRefusal } from "../account/connector-access.js";
 
 /**
  * Домены без ключей: агент может проверить, свободно ли имя, через публичный RDAP —
@@ -138,6 +139,18 @@ registerTool({
     },
   },
   execute: async (input, context) => {
+    // domain.check выше остаётся публичным: RDAP не требует кабинета. А кабинеты регистраторов — коннектор.
+    const refusal = await connectorRefusal(context.userId, "domain");
+    if (refusal) {
+      return {
+        registrars: [],
+        notConnected: [],
+        restricted: true,
+        code: refusal.code,
+        planNote: FREE_CONNECTOR_MESSAGE,
+        hint: "На этом тарифе кабинеты регистраторов закрыты. Не предлагай подключить регистратора: проверять свободные имена через domain.check можно, менять DNS — только на платном тарифе.",
+      };
+    }
     const rawRegistrar = (input as { registrar?: unknown } | null)?.registrar;
     const wanted = rawRegistrar === undefined ? null : domainRegistrarId(rawRegistrar);
     if (rawRegistrar !== undefined && !wanted) {
@@ -231,6 +244,8 @@ registerTool({
   },
   execute: async (input, context) => {
     const raw = requestSchema.parse(input && typeof input === "object" ? input : {});
+    const refusal = await connectorRefusal(context.userId, "domain");
+    if (refusal) return { ok: false, restricted: true, code: refusal.code, error: refusal.error };
     const registrar = domainRegistrarId(raw.registrar);
     if (!registrar) {
       return {

@@ -209,7 +209,7 @@ files or upgrade again.
 
 - Uploads, imports and pulls are counted but are not blocked when the account is already at the
   limit; only agent writes are refused.
-- `node_modules` and build output are part of the quota, so a free account can hit 700 MB right
+- `node_modules` and build output are part of the quota, so a free account can hit 500 MB right
   after `npm install`.
 - There is no per-project hard limit and no filesystem quota: the quota does not protect the
   host disk. Pressure archiving is only a safety valve: if active projects fill the disk, it cannot

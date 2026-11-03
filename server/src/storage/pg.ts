@@ -109,6 +109,7 @@ function buildSql(strings: TemplateStringsArray, values: unknown[]): { sql: stri
 /** PK по имени таблицы (без префикса) — бьётся с DDL выше */
 const PK_BY_TABLE: Record<string, string[]> = {
   users: ["id"],
+  email_verifications: ["user_id"],
   phone_accounts: ["phone"],
   yandex_accounts: ["yandex_id"],
   vk_accounts: ["vk_id"],
@@ -262,7 +263,20 @@ export async function initializeStorage(): Promise<void> {
       id TEXT NOT NULL PRIMARY KEY,
       email TEXT NOT NULL UNIQUE,
       password_hash TEXT NOT NULL,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      email_verified BOOLEAN NOT NULL DEFAULT TRUE
+    )`);
+    // Аккаунты, созданные до подтверждения почты, остаются рабочими: новая колонка получает
+    // TRUE, а false явно записывает только регистрация по почте.
+    await pool.query(`ALTER TABLE ${tbl("users")} ADD COLUMN IF NOT EXISTS email_verified BOOLEAN NOT NULL DEFAULT TRUE`);
+
+    // Одноразовые ссылки подтверждения почты. Токен хранится хешем; строка удаляется при
+    // успешном подтверждении, поэтому повторное использование письма уже не создаёт сессию.
+    await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("email_verifications")} (
+      user_id TEXT NOT NULL PRIMARY KEY,
+      token_hash TEXT NOT NULL UNIQUE,
+      expires_at TEXT NOT NULL,
+      sent_at TEXT NOT NULL
     )`);
 
     await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("phone_accounts")} (

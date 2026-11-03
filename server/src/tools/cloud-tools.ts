@@ -4,6 +4,7 @@ import { cloudFetch } from "../cloud/api.js";
 import { cloudDocsUrl, cloudNotFoundHint, cloudServiceCatalog } from "../cloud/catalog.js";
 import { listCloudConnections } from "../cloud/connections.js";
 import { CLOUD_PROVIDERS } from "../cloud/providers.js";
+import { FREE_CONNECTOR_MESSAGE, connectorRefusal } from "../account/connector-access.js";
 
 /**
  * Облака, подключённые пользователем. Агент видит их через эти два инструмента: список
@@ -32,6 +33,17 @@ registerTool({
     "Call it before working with a cloud to see what is actually available and whether a change is allowed at all, " +
     "and after a cloud call says the cloud is not connected. It never returns the credential itself.",
   execute: async (_input, context) => {
+    const refusal = await connectorRefusal(context.userId, "cloud");
+    if (refusal) {
+      return {
+        connected: [],
+        notConnected: [],
+        restricted: true,
+        code: refusal.code,
+        planNote: FREE_CONNECTOR_MESSAGE,
+        hint: "На этом тарифе облака закрыты. Не предлагай подключить облако и не ищи обход: назови, что именно останется недоступным, и продолжи без него.",
+      };
+    }
     const connections = await listCloudConnections(context.userId);
     const connected = connections.map(connection => ({
       provider: connection.provider,
@@ -78,6 +90,8 @@ registerTool({
   } },
   execute: async (input, context) => {
     const request = requestSchema.parse(input);
+    const refusal = await connectorRefusal(context.userId, "cloud");
+    if (refusal) return { ok: false, restricted: true, code: refusal.code, error: refusal.error };
     const result = await cloudFetch(context.userId, request.provider, request);
     // 404 — самая дорогая ошибка в облачном API: путь существует не там или называется иначе.
     // Вместо повторной догадки сразу отдаём каталог сервисов и ссылку на документацию.

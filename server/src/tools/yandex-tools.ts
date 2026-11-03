@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { registerTool } from "../tool-registry.js";
 import { listYandexResources, yandexFetch, yandexStatus } from "../yandex/yandex-api.js";
+import { FREE_CONNECTOR_MESSAGE, connectorRefusal } from "../account/connector-access.js";
 
 const METADATA_HOST = "operation.api.cloud.yandex.net";
 const MAX_RESOURCE_ITEMS = 50;
@@ -30,6 +31,16 @@ registerTool({
     "Call it before Yandex work when you are unsure whether the account is connected, and again if a Yandex call " +
     "reports that writes are disabled.",
   execute: async (_input, context) => {
+    const refusal = await connectorRefusal(context.userId, "yandex");
+    if (refusal) {
+      return {
+        connected: false,
+        restricted: true,
+        code: refusal.code,
+        planNote: FREE_CONNECTOR_MESSAGE,
+        hint: "На этом тарифе Yandex Cloud закрыт. Не предлагай подключить аккаунт: назови, что останется недоступным, и продолжи без него.",
+      };
+    }
     const status = await yandexStatus(context.userId);
     if (!status.connected) {
       return { connected: false, hint: "Yandex Cloud не подключён. Попросите пользователя подключить аккаунт в разделе «Интеграции» → «Yandex Cloud»." };
@@ -47,6 +58,8 @@ registerTool({
     "(folderId, subnetId, imageId) needed for further calls.",
   execute: async (input, context) => {
     const { folderId } = resourcesSchema.parse(input ?? {});
+    const refusal = await connectorRefusal(context.userId, "yandex");
+    if (refusal) return { ok: false, restricted: true, code: refusal.code, error: refusal.error };
     const result = await listYandexResources(context.userId, folderId);
     return { ...result, note: result.folderId ? "Ограничено " + MAX_RESOURCE_ITEMS + " ресурсами на тип." : result.note };
   },
@@ -69,6 +82,8 @@ registerTool({
     "until done is true, then read its metadata or response for the created or deleted resource id.",
   execute: async (input, context) => {
     const request = requestSchema.parse(input ?? {});
+    const refusal = await connectorRefusal(context.userId, "yandex");
+    if (refusal) return { ok: false, restricted: true, code: refusal.code, error: refusal.error };
     const method = request.method ?? "GET";
     const result = await yandexFetch(context.userId, { method, host: request.host, path: request.path, body: request.body });
     const operation = result.body && typeof result.body === "object" ? (result.body as { id?: string; done?: boolean }) : null;

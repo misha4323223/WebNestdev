@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
-import { Cloud, Code2, Database, Globe, Layers } from "lucide-react";
+import { Cloud, Code2, Database, Globe, Layers, Lock } from "lucide-react";
+import type { PlanId } from "../../lib/billing-api";
 import { GitHubConnect, type ConnectorSurface } from "../github/GitHubConnect";
 import { GitLabConnect } from "../gitlab/GitLabConnect";
 import { RepoConnect } from "../repos/RepoConnect";
@@ -32,9 +33,18 @@ function ConnectorSection({ icon, title, note, children }: { icon: ReactNode; ti
  * Каталог интеграций: каждая категория — свой заголовок, внутри — карточки одного вида.
  * Yandex Cloud стоит вместе с остальными облаками, база данных — в «Базах», GitHub и
  * GitLab — в «Коде», чтобы ни один коннектор не висел над списком без объяснения.
+ *
+ * Тариф приходит с сервера: на бесплатном остаются только репозитории, базы и S3, а
+ * облака, домены и остальные сервисы не рисуются вовсе — сервер отвечает по тому же правилу.
  */
-export function IntegrationsList({surface="home",onImported}:{surface?:ConnectorSurface;onImported?:(projectId:string,conversationId:string)=>void}){
+export function IntegrationsList({surface="home",onImported,planId="free"}:{surface?:ConnectorSurface;onImported?:(projectId:string,conversationId:string)=>void;planId?:PlanId}){
+  const free = planId === "free";
   return <div className="connectors">
+    {free && <div className="connectors-plan-note">
+      <Lock size={12}/>
+      <span>На «Старте» открыты репозитории, базы данных и S3-хранилище. Облака, домены и остальные сервисы — на платных тарифах.</span>
+    </div>}
+
     <ConnectorSection icon={<Database size={12}/>} title="Базы данных" note="Своя база для проекта — PostgreSQL, MySQL, MongoDB, Redis и Yandex YDB.">
       <DatabaseConnect surface={surface}/>
     </ConnectorSection>
@@ -46,17 +56,17 @@ export function IntegrationsList({surface="home",onImported}:{surface?:Connector
       <RepoConnect provider="sourcecraft" surface={surface} onImported={onImported}/>
     </ConnectorSection>
 
-    <ConnectorSection icon={<Cloud size={12}/>} title="Облака" note="Виртуальные машины, диски, бакеты и базы.">
+    {!free && <ConnectorSection icon={<Cloud size={12}/>} title="Облака" note="Виртуальные машины, диски, бакеты и базы.">
       <YandexConnect/>
       <CloudConnectors/>
-    </ConnectorSection>
+    </ConnectorSection>}
 
-    <ConnectorSection icon={<Globe size={12}/>} title="Домены" note="Регистраторы доменов с доступом по API-ключу.">
+    {!free && <ConnectorSection icon={<Globe size={12}/>} title="Домены" note="Регистраторы доменов с доступом по API-ключу.">
       <DomainConnectors/>
-    </ConnectorSection>
+    </ConnectorSection>}
 
-    <ConnectorSection icon={<Layers size={12}/>} title="Сервисы" note="Почта, оплата, AI, карты, CRM, файлы и сборки мобильных приложений.">
-      <ServiceConnectors/>
+    <ConnectorSection icon={<Layers size={12}/>} title="Сервисы" note={free ? "S3-хранилище для файлов приложения. Остальные сервисы открываются на платных тарифах." : "Почта, оплата, AI, карты, CRM, файлы и сборки мобильных приложений."}>
+      <ServiceConnectors freePlan={free}/>
     </ConnectorSection>
   </div>;
 }

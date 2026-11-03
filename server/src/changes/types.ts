@@ -72,6 +72,10 @@ export type ChangesOverview = {
     remoteUrl: string | null;
     lastPushAt: string | null;
     lastPushError: string | null;
+    /** Разрешена ли отправка коммитов обратно на текущем тарифе. */
+    pushAllowed: boolean;
+    /** Причина запрета отправки, если она закрыта тарифом. */
+    pushBlockedReason: string | null;
   };
   checkpoints: Checkpoint[];
 };

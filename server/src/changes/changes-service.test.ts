@@ -33,6 +33,9 @@ test("история задач, откат и проверка владельц
     const empty = await changesOverview(project.id, "user-changes");
     assert.equal(empty.initialized, true);
     assert.equal(empty.checkpoints.length, 0);
+    // Без оплаченной подписки проект ведёт локальную историю, но не пушит её наружу.
+    assert.equal(empty.repository.pushAllowed, false);
+    assert.match(empty.repository.pushBlockedReason ?? "", /бесплатном тарифе/);
 
     await writeFile(path.join(sandbox, "index.html"), "<h1>Первая версия</h1>\n");
     const first = await finalizeRunChanges({ projectId: project.id, userId: "user-changes", runId: "run-1", conversationId: "conv-1", title: "Собрать страницу" });

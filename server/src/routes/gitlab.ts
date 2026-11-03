@@ -6,10 +6,10 @@ import { resolveOAuthFlow, redirectToApp, type OAuthFlowOptions } from "../oauth
 import { getGitLabConnection, saveGitLabConnection, deleteGitLabConnection } from "../gitlab/gitlab-connection-store.js";
 import { createOAuthState, consumeOAuthState, originFromOAuthState } from "../github/github-oauth-state.js";
 import { getGitLabLoginFromToken, getGitLabUser, listGitLabRepositories, getGitLabProject, getGitLabTree, getGitLabFile, gitlabBaseUrl } from "../gitlab/gitlab-api.js";
-import { createConversation, createProjectWithinLimit, ProjectLimitError } from "../project-store.js";
+import { createConversation, createProjectWithinLimit, deleteProject, ProjectLimitError } from "../project-store.js";
 import { limitsForPlan, repositoryImportLimitFor, repositorySizeLabel } from "../account/plans.js";
 import { accountPlanFor } from "../billing/store.js";
-import { recordStorageMutation } from "../account/storage-quota.js";
+import { projectDirectoryBytes, recordStorageMutation } from "../account/storage-quota.js";
 import { getSandbox } from "../sandbox-manager.js";
 import { getPlatformEnv } from "../platform/platform-env.js";
 import { initRepo } from "../changes/git-repo.js";
@@ -210,6 +210,21 @@ export async function registerGitLabRoutes(app: FastifyInstance) {
     for (const entry of files) {
       const content = await getGitLabFile(user.id, repository.id, entry.path, branch);
       await writeFileInside(sandbox.root, path.join(sandbox.root, entry.path), content);
+    }
+    // GitLab отдаёт repository_size не всегда и не для всех проектов. Фактический размер
+    // проверяем до истории, чтобы на бесплатном тарифе не остался проект больше 50 МБ.
+    if (repositoryLimit !== null) {
+      const importedBytes = await projectDirectoryBytes(project.id);
+      if (importedBytes > repositoryLimit) {
+        await deleteProject(project.id, user.id);
+        return reply.code(403).send({
+          error: "Репозиторий занимает " + repositorySizeLabel(importedBytes) + ", а на бесплатном тарифе импорт ограничен " + repositorySizeLabel(repositoryLimit) + ". Оформите платный тариф или импортируйте проект меньше " + repositorySizeLabel(repositoryLimit) + ".",
+          code: "REPOSITORY_TOO_LARGE",
+          sizeBytes: importedBytes,
+          limitBytes: repositoryLimit,
+          plan,
+        });
+      }
     }
     try {
       const connection = await getGitLabConnection(user.id);

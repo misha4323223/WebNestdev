@@ -9,6 +9,7 @@ import { getYandexConnection, saveYandexConnection, deleteYandexConnection } fro
 import { fetchYandexLogin, saveVerifiedYandexCredential, yandexStatus } from "../yandex/yandex-api.js";
 import { yandexOAuthConfig } from "../yandex/yandex-oauth-config.js";
 import { resolveOAuthFlow, redirectToApp, type OAuthFlowOptions } from "../oauth/oauth-flow.js";
+import { FREE_CONNECTOR_MESSAGE, connectorRefusal } from "../account/connector-access.js";
 
 /**
  * The same Yandex ID app is used for two different things:
@@ -85,6 +86,10 @@ export async function registerYandexRoutes(app: FastifyInstance) {
 
   app.get("/api/yandex/status", async (request, reply) => {
     const user = await requireUser(request, reply); if (!user) return;
+    // На бесплатном тарифе коннектор закрыт: статус не раскрывает даже сохранённое подключение.
+    if (await connectorRefusal(user.id, "yandex")) {
+      return { connected: false, restricted: true, planNote: FREE_CONNECTOR_MESSAGE };
+    }
     const query = z.object({ origin: z.string().max(500).optional() }).parse(request.query);
     const flow = resolveFlow(request, query.origin);
     const status = await yandexStatus(user.id);
@@ -95,6 +100,8 @@ export async function registerYandexRoutes(app: FastifyInstance) {
   /** The key/token form: verified against Yandex Cloud before it is stored. */
   app.post("/api/yandex/secret", async (request, reply) => {
     const user = await requireUser(request, reply); if (!user) return;
+    const refusal = await connectorRefusal(user.id, "yandex");
+    if (refusal) return reply.code(403).send(refusal);
     const body = z.object({ secret: z.string().min(20).max(8000), allowWrites: z.boolean().optional() }).parse(request.body);
     const existing = await getYandexConnection(user.id);
     try {
@@ -107,6 +114,8 @@ export async function registerYandexRoutes(app: FastifyInstance) {
   /** Writes are the user's decision, so creating and deleting resources is opt-in. */
   app.post("/api/yandex/writes", async (request, reply) => {
     const user = await requireUser(request, reply); if (!user) return;
+    const refusal = await connectorRefusal(user.id, "yandex");
+    if (refusal) return reply.code(403).send(refusal);
     const body = z.object({ allowWrites: z.boolean() }).parse(request.body);
     const connection = await getYandexConnection(user.id);
     if (!connection) return reply.code(400).send({ error: "Yandex Cloud не подключён" });
@@ -122,6 +131,8 @@ export async function registerYandexRoutes(app: FastifyInstance) {
 
   app.get("/api/yandex/connect", async (request, reply) => {
     const user = await requireUser(request, reply); if (!user) return;
+    const refusal = await connectorRefusal(user.id, "yandex");
+    if (refusal) return reply.code(403).send(refusal);
     const query = z.object({ origin: z.string().max(500).optional() }).parse(request.query);
     const flow = resolveFlow(request, query.origin);
     const { clientId, clientSecret, scope } = yandexOAuthConfig();
@@ -175,6 +186,8 @@ export async function registerYandexRoutes(app: FastifyInstance) {
 
     // The connector: an already signed-in user links Yandex Cloud.
     const user = await requireUser(request, reply); if (!user) return;
+    const refusal = await connectorRefusal(user.id, "yandex");
+    if (refusal) return reply.code(403).send(refusal);
     const flow = resolveFlow(request, originFromOAuthState(query.state) ?? undefined);
     if (query.error) return redirect(reply, flow.frontendUrl, "denied");
     if (!query.code) return redirect(reply, flow.frontendUrl, "error");

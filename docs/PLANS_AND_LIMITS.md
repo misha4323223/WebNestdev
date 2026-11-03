@@ -14,9 +14,9 @@ publishing or team roles, because those features do not exist.
 | Agent credits per agent/month | — (daily run limit) | 5 000 | 10 000 |
 | Agent runs/day | 10 | no limit | no limit |
 | Web searches/day | 25 | 200 | 500 |
-| Storage | 700 MB | 10 GB | 50 GB |
-| Repository import | up to 100 MB | no limit | no limit |
-| Integrations | 1 cloud, 1 registrar, 3 services | no limit | no limit |
+| Storage | 500 MB | 10 GB | 50 GB |
+| Repository import | up to 50 MB | no limit | no limit |
+| Integrations | databases and S3 only | no limit | no limit |
 
 Paid plan prices are base prices before the current promo discount: the catalog defaults are 34%
 for «Плюс» (1 500 ₽ → 990 ₽) and 20% for «Премиум» (2 500 ₽ → 2 000 ₽). The server applies the
@@ -25,8 +25,14 @@ both the base price and the percentage.
 
 Storage is one quota per account, shared by every project, not a per-project allowance. The
 per-plan number is the ceiling the whole account can use; `node_modules` and build output count.
-The free plan's 700 MB is stored as 734,003,200 bytes (700 MiB) so the UI, which divides by 1024,
-shows exactly «700 МБ».
+
+On the free plan `server/src/account/connector-access.ts` is the single policy for connectors:
+repositories (GitHub, GitLab, GitVerse, SourceCraft), databases and S3 services are open; clouds,
+domain registrars, Yandex Cloud and every other service are closed in both the integration routes
+and the agent tools. Connections made on a paid plan are kept, not deleted, and simply unavailable
+while the account is on «Старт».
+The free plan's 500 MB is stored as 524,288,000 bytes (500 MiB) so the UI, which divides by 1024,
+shows exactly «500 МБ».
 
 Browser checks are not a plan quota. «Браузерная проверка» is a switch in the «Режимы» menu,
 off by default; when it is off, `browser.runtime`, `browser.scenario`, `browser.screenshot` and the

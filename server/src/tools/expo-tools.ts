@@ -4,6 +4,7 @@ import { registerTool } from "../tool-registry.js";
 import { getSandbox } from "../sandbox-manager.js";
 import { resolveInsideSandbox, writeFileInside } from "../sandbox/path-guard.js";
 import { openDirsForSandbox, openFileForSandbox } from "../sandbox/permissions.js";
+import { FREE_CONNECTOR_MESSAGE, connectorRefusal } from "../account/connector-access.js";
 import {
   allBuilds,
   buildSummary,
@@ -77,6 +78,11 @@ async function prepare(projectId: string, userId: string, relativeCwd = "") {
   return { connection, sandbox, directory, project };
 }
 
+/** EAS — мобильный сервис: на бесплатном тарифе он закрыт вместе с остальными коннекторами. */
+async function mobileRefusal(userId: string) {
+  return connectorRefusal(userId, "service", "mobile");
+}
+
 const defaultEasJson = {
   cli: { version: ">= 12.0.0", appVersionSource: "remote" },
   build: {
@@ -103,6 +109,16 @@ registerTool({
   },
   execute: async (input, context) => {
     const { cwd } = z.object({ cwd: cwdSchema }).parse(input ?? {});
+    const refusal = await mobileRefusal(context.userId);
+    if (refusal) {
+      return {
+        connected: false,
+        restricted: true,
+        code: refusal.code,
+        planNote: FREE_CONNECTOR_MESSAGE,
+        note: "На этом тарифе Expo/EAS закрыт. Не предлагай подключить Expo: назови, что останется недоступным, и продолжи без него.",
+      };
+    }
     const connection = await getExpoConnection(context.userId).catch(error => {
       throw new Error(messageOf(error));
     });
@@ -153,6 +169,8 @@ registerTool({
   },
   execute: async (input, context) => {
     const parsed = z.object({ cwd: cwdSchema, account: accountSchema, projectId: projectIdSchema }).parse(input ?? {});
+    const refusal = await mobileRefusal(context.userId);
+    if (refusal) return { ok: false, restricted: true, code: refusal.code, error: refusal.error };
     const { connection, sandbox, directory, project } = await prepare(context.projectId, context.userId, parsed.cwd ?? "");
     if (!project.hasEasJson) {
       const target = path.join(directory, "eas.json");
@@ -228,6 +246,8 @@ registerTool({
       message: z.string().trim().max(300).regex(/^[^\u0000-\u001f\u007f]*$/, "Сообщение содержит управляющие символы").optional(),
       cwd: cwdSchema,
     }).parse(input ?? {});
+    const refusal = await mobileRefusal(context.userId);
+    if (refusal) return { ok: false, restricted: true, code: refusal.code, error: refusal.error };
     const { connection, sandbox, directory, project } = await prepare(context.projectId, context.userId, parsed.cwd ?? "");
     if (!project.hasEasJson) {
       throw new Error("В проекте нет eas.json. Вызовите expo.setup — он создаст базовые профили, затем повторите expo.build.");
@@ -288,6 +308,8 @@ registerTool({
   execute: async (input, context) => {
     const parsed = z.object({ buildId: buildIdSchema, logs: z.boolean().optional(), cwd: cwdSchema }).parse(input ?? {});
     const buildId = normalizeBuildId(parsed.buildId);
+    const refusal = await mobileRefusal(context.userId);
+    if (refusal) return { ok: false, restricted: true, code: refusal.code, error: refusal.error };
     const { connection, sandbox, directory, project } = await prepare(context.projectId, context.userId, parsed.cwd ?? "");
     if (!project.projectId) {
       throw new Error("Проект Expo не связан с EAS. Вызовите expo.setup, затем повторите сборку.");

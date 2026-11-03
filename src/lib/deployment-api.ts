@@ -93,6 +93,9 @@ export type DeploymentOptions = {
   projectType: DeploymentProjectType;
   needs: DeploymentNeeds;
   needsEvidence: Partial<Record<keyof DeploymentNeeds, string[]>>;
+  /** Какие категории закрыты тарифом: квиз не предлагает их и говорит почему. */
+  restricted?: { clouds: boolean; domains: boolean };
+  planNote?: string;
   clouds: DeploymentCloud[];
   domains: DeploymentRegistrar[];
   database: DeploymentDatabase;

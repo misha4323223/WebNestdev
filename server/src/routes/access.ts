@@ -16,6 +16,7 @@ import { verifyServiceCredential } from "../services/verify.js";
 import { saveDatabaseCredential } from "../database/database-api.js";
 import { saveVerifiedYandexCredential } from "../yandex/yandex-api.js";
 import { assertIntegrationSlot } from "../account/integration-limits.js";
+import { assertConnectorAccess } from "../account/connector-access.js";
 import { accountPlanFor } from "../billing/store.js";
 import { applyNoStoreToReply } from "./cache-headers.js";
 import { isSameOriginRequest, sameOriginRefusal } from "../security/same-origin.js";
@@ -56,6 +57,8 @@ async function assertSlot(kind: "cloud" | "domains" | "services", userId: string
 async function saveAccess(userId: string, pending: AccessRequest, fields: Record<string, string>, allowWrites: boolean | undefined) {
   const target = resolveAccessTarget(pending.kind, pending.providerId);
   const now = new Date().toISOString();
+  // Та же политика, что у маршрутов интеграций: карточка в чате не открывает то, что закрыто тарифом.
+  await assertConnectorAccess(userId, pending.kind, pending.kind === "service" ? findService(pending.providerId)?.category : undefined);
 
   if (pending.kind === "cloud") {
     const provider = CLOUD_PROVIDERS.find(item => item.id === pending.providerId);

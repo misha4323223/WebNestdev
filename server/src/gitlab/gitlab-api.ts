@@ -78,7 +78,7 @@ export async function listGitLabRepositories(userId: string) {
   );
 }
 
-/** Размер репозитория нужен до импорта: на бесплатном тарифе больше 100 МБ не принимается. */
+/** Размер репозитория нужен до импорта: на бесплатном тарифе больше 50 МБ не принимается. */
 export async function getGitLabProject(userId: string, projectId: number) {
   return gitlabFetch<GitLabProject>(userId, "/projects/" + projectId + "?statistics=true");
 }

@@ -67,6 +67,8 @@ export function ModelPicker({ name, options, canChoose, freeModel, title, onSele
       {choosable && <ChevronDown size={11} className="model-caret"/>}
     </button>
 
+    {/* На телефоне меню — нижняя шторка, как у «Режимов»: затемнение закрывает его тапом. */}
+    {open && choosable && <div className="model-scrim" aria-hidden="true" onClick={() => setOpen(false)}/>}
     {open && choosable && <div className="model-menu" role="dialog" aria-label="Выбор модели">
       <div className="model-menu-head">
         <span className="eyebrow">МОДЕЛЬ</span>

@@ -250,6 +250,7 @@ button,textarea{font:inherit}button{color:inherit}
 .model-caret{flex:none;color:#7f8792;transition:transform .18s ease}
 .composer-model.open .model-caret{transform:rotate(180deg)}
 .model-menu{position:absolute;left:0;bottom:calc(100% + 7px);z-index:30;width:302px;max-width:calc(100vw - 28px);padding:7px;border:1px solid var(--line-warm-strong);border-radius:10px;background:#11151a;box-shadow:0 16px 44px rgba(0,0,0,.46)}
+.model-scrim{display:none}
 .model-menu-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px;padding:3px 5px 7px}
 .model-menu-head small{color:#6f7783;font-size:8.5px;white-space:nowrap}
 .model-menu-list{display:grid;gap:3px}
@@ -460,24 +461,30 @@ button,textarea{font:inherit}button{color:inherit}
 .github-login{font-size:10px;color:#747c87}.github-repositories{max-height:360px;overflow:auto;padding:8px 0}.github-repository{width:100%;border:1px solid transparent;background:transparent;border-radius:7px;padding:9px;text-align:left;cursor:pointer;display:block}.github-repository:hover,.github-repository.selected{background:#181b21;border-color:var(--line-warm)}.github-repository strong,.github-repository small{display:block}.github-repository strong{font-size:11px;color:#dfe2e6}.github-repository small{margin-top:3px;font-size:9px;color:#737b86}@media(max-width:650px){.file-browser{display:block;overflow:auto}.file-tree{width:100%;max-height:42%;border-right:0;border-bottom:1px solid var(--line-warm-soft)}.file-editor{height:58%}.github-popover{right:6px;width:calc(100vw - 12px)}}
 
 .auth-screen{min-height:100vh;display:grid;place-items:center;padding:24px;background:radial-gradient(58% 46% at 50% 0%,rgba(204,195,178,.07),transparent 62%),#0b0d10}.auth-card{width:min(420px,100%);border:1px solid var(--line-warm);background:radial-gradient(120% 100% at 50% 0%,rgba(204,195,178,.045),transparent 58%),#111419;border-radius:12px;padding:24px;box-shadow:0 20px 60px rgba(0,0,0,.3),0 0 0 1px rgba(255,255,255,.03)}.auth-brand{margin-bottom:30px}.auth-heading h1{margin:5px 0 7px;font-size:21px;font-weight:600}.auth-heading p{margin:0;color:#777f89;font-size:11px;line-height:1.6}.auth-form{display:grid;gap:14px;margin-top:22px}.auth-form label{display:grid;gap:6px;color:#9da5af;font-size:10px}.auth-form input{height:36px;border:1px solid var(--line-warm);border-radius:6px;background:#0b0d10;color:#e8eaed;padding:0 10px;outline:none;transition:border-color .15s ease,box-shadow .15s ease}.auth-form input:focus{border-color:var(--line-warm-strong);box-shadow:0 0 0 3px rgba(204,195,178,.07)}.auth-submit{width:100%;height:36px;margin-top:3px}.auth-error{padding:9px;border:1px solid #4a3030;border-radius:6px;background:#1b1212;color:#d99b9b;font-size:10px;line-height:1.4}
-/* Sign-in: Yandex ID first, phone number and SMS code below it */
-.auth-yandex{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;height:40px;margin-top:22px;border:1px solid var(--line-warm-strong);border-radius:7px;background:#f7f8fa;color:#16181c;font:inherit;font-size:12px;font-weight:600;cursor:pointer;box-shadow:0 0 0 3px rgba(46,40,34,.55);transition:background .15s ease,border-color .15s ease,transform .15s ease,box-shadow .15s ease}
-.auth-yandex:hover:not(:disabled){background:#fff;border-color:var(--line-warm);transform:translateY(-1px);box-shadow:0 0 0 4px rgba(58,49,41,.7)}
-.auth-yandex:disabled{opacity:.55;cursor:not-allowed}
-.auth-yandex-mark{display:grid;place-items:center;width:20px;height:20px;border-radius:50%;background:#fc3f1d;color:#fff;font-size:12px;font-weight:700;line-height:1}
+/* Sign-in: Yandex ID and VK ID — тёмные кнопки в палитре сайта: бренд остаётся иконкой,
+   а не заливкой на пол-карточки. Рамка, тёплый подъём на hover и без внешнего ореола. */
+.auth-oauth-buttons{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:22px}
+.auth-oauth-buttons .auth-yandex{margin-top:0}
+.auth-yandex,.auth-vk{display:flex;align-items:center;justify-content:center;gap:8px;width:100%;height:38px;border:1px solid var(--line-warm);border-radius:7px;background:linear-gradient(180deg,#171b20,#12151a);color:#d9dde2;font:inherit;font-size:11px;font-weight:500;cursor:pointer;box-shadow:inset 0 1px 0 rgba(255,255,255,.035);transition:background .16s ease,border-color .16s ease,color .16s ease,transform .16s ease}
+.auth-yandex:hover:not(:disabled),.auth-vk:hover:not(:disabled){background:linear-gradient(180deg,#1d2229,#171b21);border-color:var(--line-warm-strong);color:#fff;transform:translateY(-1px)}
+.auth-yandex:disabled,.auth-vk:disabled{opacity:.5;cursor:not-allowed}
+.auth-yandex-mark{flex:none;display:grid;place-items:center;width:18px;height:18px;border-radius:5px;background:#fc3f1d;color:#fff;font-size:10px;font-weight:700;line-height:1}
 .auth-yandex-hint{margin-top:9px;color:#777f89;font-size:10px;line-height:1.5}
 .auth-yandex-error{margin-top:9px}
-.auth-oauth-buttons{display:grid;gap:8px;margin-top:22px}
-.auth-oauth-buttons .auth-yandex{margin-top:0}
-.auth-vk{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;height:40px;border:1px solid #0077ff;border-radius:7px;background:#0077ff;color:#fff;font:inherit;font-size:12px;font-weight:600;cursor:pointer;box-shadow:0 0 0 3px rgba(46,40,34,.55);transition:background .15s ease,border-color .15s ease,transform .15s ease,box-shadow .15s ease}
-.auth-vk:hover:not(:disabled){background:#006ee6;border-color:#006ee6;transform:translateY(-1px);box-shadow:0 0 0 4px rgba(58,49,41,.7)}
-.auth-vk:disabled{opacity:.55;cursor:not-allowed}
-.auth-vk-mark{display:grid;place-items:center;width:20px;height:20px;border-radius:50%;background:#fff}
-.auth-vk-mark img{display:block;width:14px;height:14px}
+.auth-vk-mark{flex:none;display:grid;place-items:center;width:18px;height:18px;border:1px solid rgba(0,119,255,.34);border-radius:5px;background:#0d2438}
+.auth-vk-mark img{display:block;width:12px;height:12px}
+@media(max-width:420px){.auth-oauth-buttons{grid-template-columns:1fr}}
 .auth-oauth-hint{margin-top:9px;color:#777f89;font-size:10px;line-height:1.5}
 .auth-oauth-error{margin-top:9px}
 .auth-divider{display:flex;align-items:center;gap:10px;margin-top:18px;color:#5c636d;font-size:9px;letter-spacing:.08em;text-transform:uppercase}
 .auth-divider::before,.auth-divider::after{content:"";height:1px;flex:1;background:var(--line-warm)}
+.auth-hint{color:#777f89;font-size:10px;line-height:1.5}
+.auth-verification{display:grid;gap:14px;margin-top:22px}
+.auth-verification .auth-submit{margin-top:0}
+.auth-verification-notice{margin-top:14px}
+.auth-success{padding:9px;border:1px solid #2f4634;border-radius:6px;background:#101a13;color:#9cc6a4;font-size:10px;line-height:1.5}
+.auth-switch{display:flex;align-items:center;justify-content:space-between;gap:10px;color:#777f89;font-size:10px}
+.auth-switch .ghost-button{height:26px;border-color:var(--line-warm);color:#a99f8d}
 .auth-form{margin-top:16px}
 .auth-phone-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .auth-phone-actions .ghost-button{height:28px;border-color:var(--line-warm)}
@@ -539,29 +546,31 @@ button,textarea{font:inherit}button{color:inherit}
 .home-section-note{color:#5f6772;font-size:9px;text-align:right}
 /* Категории — строки-аккордеоны: заголовок отвечает «что можно собрать», раскрытый список —
    «с чего начать». Открытая категория получает тёплую кромку, как активная карточка. */
-.starter-groups{display:grid;gap:7px}
-.starter-group{border:1px solid var(--line-warm);border-radius:11px;background:linear-gradient(168deg,#11151a,#0d1014 70%);overflow:hidden;transition:border-color .18s ease,background .18s ease}
+/* Компактная сетка: категория-строка занимает 42px, старты внутри — плотные плитки.
+   Секция остаётся на одном экране с описанием идеи, не уводя проекты вниз. */
+.starter-groups{display:grid;gap:6px}
+.starter-group{border:1px solid var(--line-warm);border-radius:10px;background:linear-gradient(168deg,#11151a,#0d1014 70%);overflow:hidden;transition:border-color .18s ease,background .18s ease}
 .starter-group:hover{border-color:var(--line-warm-strong)}
 .starter-group.open{border-color:var(--camo-line-strong);background:linear-gradient(168deg,#131711,#0d1014 74%)}
-.starter-group-head{width:100%;display:flex;align-items:center;gap:11px;padding:12px 14px;border:0;background:transparent;color:inherit;text-align:left;cursor:pointer}
-.starter-group-icon{width:32px;height:32px;flex:none;display:grid;place-items:center;border:1px solid var(--line-warm);border-radius:9px;background:#171b20;color:#c9c1b1}
+.starter-group-head{width:100%;display:flex;align-items:center;gap:9px;padding:7px 11px;border:0;background:transparent;color:inherit;text-align:left;cursor:pointer}
+.starter-group-icon{width:26px;height:26px;flex:none;display:grid;place-items:center;border:1px solid var(--line-warm);border-radius:7px;background:#171b20;color:#c9c1b1}
 .starter-group.open .starter-group-icon{background:#1d1a13;color:#e2d6bf}
 .starter-group-copy{flex:1;min-width:0}
-.starter-group-copy strong{display:block;font-size:12px;font-weight:600}
-.starter-group-copy small{display:block;margin-top:3px;color:#6d7580;font-size:9.5px}
-.starter-group-count{flex:none;min-width:22px;padding:2px 7px;border:1px solid var(--line-warm-soft);border-radius:999px;color:#8d8577;font-size:9.5px;text-align:center}
+.starter-group-copy strong{display:block;font-size:11.5px;font-weight:600}
+.starter-group-copy small{display:block;margin-top:2px;color:#6d7580;font-size:9px}
+.starter-group-count{flex:none;min-width:20px;padding:1px 6px;border:1px solid var(--line-warm-soft);border-radius:999px;color:#8d8577;font-size:9px;text-align:center}
 .starter-group-chevron{flex:none;color:#646c76;transition:transform .2s ease,color .2s ease}
 .starter-group.open .starter-group-chevron{transform:rotate(180deg);color:#c9c1b1}
-.starter-group-body{padding:0 14px 13px;animation:starter-in .18s ease both}
+.starter-group-body{padding:0 11px 10px;animation:starter-in .18s ease both}
 @keyframes starter-in{from{opacity:0;transform:translateY(-3px)}to{opacity:1;transform:none}}
-.starter-group-blurb{margin:0 0 10px;max-width:640px;color:#79818c;font-size:10px;line-height:1.6}
-.starter-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:6px}
-.starter-card{display:flex;align-items:center;gap:9px;min-height:52px;padding:9px 10px;border:1px solid var(--line-warm-soft);border-radius:9px;background:#0f1216;color:inherit;text-align:left;cursor:pointer;transition:border-color .15s,background .15s,transform .15s}
+.starter-group-blurb{margin:0 0 7px;max-width:640px;color:#79818c;font-size:9.5px;line-height:1.55}
+.starter-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(176px,1fr));gap:5px}
+.starter-card{display:flex;align-items:center;gap:8px;min-height:42px;padding:6px 8px;border:1px solid var(--line-warm-soft);border-radius:8px;background:#0f1216;color:inherit;text-align:left;cursor:pointer;transition:border-color .15s,background .15s,transform .15s}
 .starter-card:hover{border-color:var(--line-warm-strong);background:#15181d;transform:translateY(-1px)}
-.starter-card-icon{width:26px;height:26px;flex:none;display:grid;place-items:center;border:1px solid var(--line-warm);border-radius:7px;background:#171a20;color:#b9bec6}
+.starter-card-icon{width:22px;height:22px;flex:none;display:grid;place-items:center;border:1px solid var(--line-warm);border-radius:6px;background:#171a20;color:#b9bec6}
 .starter-card-copy{flex:1;min-width:0}
-.starter-card-copy strong{display:block;font-size:10.5px;font-weight:600}
-.starter-card-copy small{display:block;margin-top:2px;color:#666e79;font-size:9px;line-height:1.4;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.starter-card-copy strong{display:block;font-size:10px;font-weight:600}
+.starter-card-copy small{display:block;margin-top:1px;color:#666e79;font-size:8.5px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .starter-card-go{flex:none;color:#4f5865;transition:color .15s,transform .15s}
 .starter-card:hover .starter-card-go{color:#c9c1b1;transform:translate(1px,-1px)}
 .home-link{border:0;background:transparent;color:#8f97a2;font-size:10px;display:flex;align-items:center;gap:5px;cursor:pointer}.home-link:hover{color:#e8eaed}
@@ -599,13 +608,13 @@ button,textarea{font:inherit}button{color:inherit}
  */
 @media(max-width:520px){.home-payment{flex-direction:column;align-items:flex-start;gap:9px}.home-payment-actions{width:100%}.home-payment-actions .ghost-button,.home-payment-actions .send-button{flex:1 1 auto;justify-content:center}.home-screen{padding:0 14px}.home-tabs{margin:0 -14px;padding:10px 14px}.home-hero{--home-hero-gap:29px;padding-top:var(--home-hero-gap)}.home-hero-mark img{width:104px;height:104px}.home-hero-mark::before{width:144px}.home-hero-mark::after{width:124px}.home-kicker{font-size:8px;letter-spacing:.14em}.home-composer{margin-top:20px;border-radius:12px}.home-composer-steps>span:nth-child(3){display:none}.home-submit{width:32px;padding:0;justify-content:center}.home-submit span{display:none}.home-section{margin-bottom:26px}.home-section-head{margin-bottom:9px}.home-section-note{display:none}.recent-grid{grid-template-columns:1fr}.home-footer{flex-wrap:wrap}.home-footer span:nth-child(2){display:none}
   /* Категория на телефоне — компактная строка: диапазон остаётся, счётчик превращается в подпись. */
-  .starter-group-head{padding:11px 12px;gap:9px}
-  .starter-group-icon{width:29px;height:29px;border-radius:8px}
-  .starter-group-copy strong{font-size:11.5px}
-  .starter-group-copy small{font-size:9px}
-  .starter-group-body{padding:0 12px 11px}
-  .starter-list{grid-template-columns:1fr;gap:5px}
-  .starter-card{min-height:48px;padding:8px 9px}
+  .starter-group-head{padding:8px 10px;gap:8px}
+  .starter-group-icon{width:25px;height:25px;border-radius:7px}
+  .starter-group-copy strong{font-size:11px}
+  .starter-group-copy small{font-size:8.5px}
+  .starter-group-body{padding:0 10px 9px}
+  .starter-list{grid-template-columns:1fr;gap:4px}
+  .starter-card{min-height:42px;padding:6px 8px}
   .starter-card-copy small{white-space:normal;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden}
 }
 
@@ -1032,6 +1041,9 @@ button,textarea{font:inherit}button{color:inherit}
 
 /* Integrations: one card per service, with a connect button and a status indicator */
 .connectors{display:grid;gap:18px;min-width:0;grid-template-columns:minmax(0,1fr)}
+/* Пояснение тарифа над каталогом: объясняет пропавшие разделы один раз, вместо замка на каждом. */
+.connectors-plan-note{grid-column:1/-1;display:flex;align-items:flex-start;gap:8px;padding:9px 10px;border:1px solid var(--line-warm);border-radius:8px;background:linear-gradient(160deg,rgba(204,195,178,.055),rgba(12,15,19,.32));color:#a9a293;font-size:10px;line-height:1.55}
+.connectors-plan-note svg{flex:none;margin-top:1px;color:#b9a985}
 /* Категория каталога: заголовок с иконкой и линией отделяет облака, базы и сервисы
    друг от друга, но остаётся тише самих карточек. */
 .connector-section{display:grid;gap:9px;min-width:0;padding-top:16px;border-top:1px solid var(--line-warm-soft)}
@@ -1649,6 +1661,7 @@ button,textarea{font:inherit}button{color:inherit}
 .changes-connect-form input{height:32px;min-width:180px;border:1px solid var(--line-warm);border-radius:6px;background:#0b0d10;color:#dce0e5;padding:0 9px;font-size:11px;outline:none}
 .changes-connect-form input:focus{border-color:#785e32;box-shadow:0 0 0 3px rgba(161,124,61,.16)}
 .changes-connect-form .send-button{height:32px;padding:0 12px;font-size:10.5px;width:auto}
+.changes-tariff-note{max-width:340px;color:#a1937c;font-size:10.5px;line-height:1.5}
 .changes-connect-button{flex:none}
 .changes-notice{margin-bottom:12px;padding:9px 11px;border-radius:7px;border:1px solid #3a3121;background:#1d170d;color:#b5a993;font-size:10.5px;line-height:1.5;overflow-wrap:anywhere}
 .changes-notice.warn{border-color:#4a3030;background:#1b1212;color:#d99b9b}
@@ -3010,6 +3023,7 @@ button,textarea{font:inherit}button{color:inherit}
 .git-push-choice{display:inline-flex;align-items:center;gap:5px;color:#98a0aa;font-size:10px;cursor:pointer}
 .git-push-choice input{accent-color:#b18c4c;margin:0}
 .git-push-choice.disabled{opacity:.45;cursor:default}
+.git-push-locked{display:inline-flex;align-items:center;gap:5px;color:#7f7565;font-size:10px;line-height:1.4}
 .git-selected{margin-left:auto;color:#6f7781;font-size:9.5px}
 .git-commit-btn{height:28px;padding:0 12px;border:1px solid #89682e;border-radius:6px;background:#413116;color:#e4e2df;font-size:10.5px;cursor:pointer;display:inline-flex;align-items:center;gap:5px}
 .git-commit-btn:hover:not(:disabled){background:#533e1c;border-color:#a37c39}
@@ -3442,6 +3456,16 @@ button,textarea{font:inherit}button{color:inherit}
   .agent-mode-menu .agent-mode-note{font-size:9px}
   .agent-mode-menu .agent-mode-head.with-icon{padding-top:7px;margin-top:1px}
 }
+/* Выбор модели на телефоне — та же нижняя шторка: меню не уезжает за правый край,
+   а длинный список моделей прокручивается внутри и не выходит за экран. */
+@media(max-width:650px){
+  .model-scrim{display:block;position:fixed;inset:0;z-index:29;background:rgba(5,7,10,.58);backdrop-filter:blur(2px);animation:agent-mode-fade .16s ease-out}
+  .model-menu{position:fixed;left:0;right:0;bottom:0;width:auto;max-width:none;max-height:min(78dvh,520px);overflow:auto;overscroll-behavior:contain;border-radius:14px 14px 0 0;padding:14px 14px calc(14px + env(safe-area-inset-bottom));box-shadow:0 -18px 50px rgba(0,0,0,.62);animation:agent-mode-sheet .18s ease-out}
+  .model-menu-head{padding:2px 2px 9px}
+  .model-menu-list{gap:5px}
+  .model-option{padding:10px 9px}
+  .model-option-text small{font-size:9.5px}
+}
 @keyframes agent-mode-fade{from{opacity:0}to{opacity:1}}
 @keyframes agent-mode-sheet{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
-@media(prefers-reduced-motion:reduce){.agent-mode-scrim,.agent-mode-menu{animation:none}}
+@media(prefers-reduced-motion:reduce){.agent-mode-scrim,.agent-mode-menu,.model-scrim,.model-menu{animation:none}}

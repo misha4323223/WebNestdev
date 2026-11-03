@@ -9,7 +9,7 @@ Replit и доступности российских API. Ниже — что �
 
 | Категория | Реализовано | Файлы |
 |---|---|---|
-| Репозитории | GitHub и GitLab (импорт, коммиты, отправка; на бесплатном тарифе импорт до 100 МБ) | `server/src/github/`, `server/src/gitlab/`, `src/features/github/`, `src/features/gitlab/` |
+| Репозитории | GitHub, GitLab, GitVerse и SourceCraft (импорт до 50 МБ и без отправки обратно на бесплатном тарифе; на платных — отправка коммитов) | `server/src/github/`, `server/src/gitlab/`, `server/src/repos/` |
 | База данных проекта | Yandex Managed PostgreSQL, Yandex Serverless YDB, VK Cloud, Selectel, Timeweb, Cloud.ru, свой сервер | `server/src/database/`, `src/features/database/` |
 | Облака пользователя | Yandex Cloud (ключ + OAuth-вход), Timeweb Cloud, Cloud.ru, MWS, REG.RU Облако | `server/src/cloud/`, `src/features/integrations/cloud/` |
 | Домены | Проверка занятости (`domain.check`), кабинеты REG.RU / Beget / Timeweb Cloud (`domain.list`) и настройка DNS агентом с разрешения пользователя (`domain.request`, переключатель в карточке) | `server/src/domains/`, `server/src/tools/domain-tools.ts` |

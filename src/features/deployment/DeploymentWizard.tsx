@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle, ArrowRight, Check, ChevronLeft, Cloud, CreditCard, Database,
-  Globe2, HardDrive, Mail, MessageSquare, Rocket, Server, ShieldCheck, Sparkles, X,
+  Globe2, HardDrive, Lock, Mail, MessageSquare, Rocket, Server, ShieldCheck, Sparkles, X,
 } from "lucide-react";
 import { NestLoader } from "../../components/NestLoader";
 import { BrandMark, type BrandId } from "../../components/BrandLogo";
@@ -532,6 +532,9 @@ export function DeploymentWizard({ projectId, onClose, onStarted }: {
             <span className="eyebrow">ОБЛАКО</span>
             <span className="deploy-muted">Можно подключить позже.</span>
           </div>
+          {options.clouds.length === 0 && <div className="deploy-note">
+            <Lock size={13}/><span>{options.planNote ?? "Облака открываются на платных тарифах."}</span>
+          </div>}
           <div className="deploy-providers">
             {options.clouds.map(cloud => {
               const brand = CLOUD_BRANDS[cloud.id];
@@ -588,7 +591,9 @@ export function DeploymentWizard({ projectId, onClose, onStarted }: {
             <Globe2 size={13}/><span>
               {options.domains.some(item => item.connected)
                 ? "Регистратор подключён: " + options.domains.filter(item => item.connected).map(item => item.name).join(", ") + ". Агент сможет менять DNS."
-                : "Регистратор не подключён. Его можно добавить позже."}
+                : options.restricted?.domains
+                  ? "Регистраторы доменов открываются на платных тарифах. Без домена проект откроется по адресу провайдера."
+                  : "Регистратор не подключён. Его можно добавить позже."}
             </span>
           </div>
           {formError && <div className="connector-notice" role="alert">{formError}</div>}

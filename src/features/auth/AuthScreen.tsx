@@ -1,11 +1,10 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { getVkAuthStatus, getYandexAuthStatus, startPhoneLogin, verifyPhoneLogin, type VkAuthStatus, type YandexAuthStatus } from "../../lib/auth-api";
+import { ApiError } from "../../lib/api";
+import { getVkAuthStatus, getYandexAuthStatus, login as loginByEmail, register as registerByEmail, resendVerification, verifyEmail as confirmEmail, type VkAuthStatus, type YandexAuthStatus } from "../../lib/auth-api";
 import { WebNestLogo } from "../../components/WebNestLogo";
 import { openCookieSettings } from "../legal/CookieConsent";
 import { legalPath } from "../../lib/legal";
 
-/** Правовые ссылки стоят до отправки кода: согласие даётся осознанно, а не после SMS. */
-const RESEND_SECONDS = 45;
 /** Арт для правой половины десктопного входа: на телефоне он скрыт, там важнее форма. */
 const AUTH_ART = "/brand/file_000000005ed481f4a60f669dea9ef0ed.webp";
 
@@ -17,7 +16,7 @@ const AUTH_ART = "/brand/file_000000005ed481f4a60f669dea9ef0ed.webp";
 const vkNotices: Record<string, string> = {
   ok: "VK подтвердил вход, но сессия не сохранилась. Разрешите cookie для сайта и попробуйте ещё раз.",
   denied: "Вы отменили вход через VK ID.",
-  not_configured: "Вход через VK ID временно недоступен. Используйте вход по SMS.",
+  not_configured: "Вход через VK ID временно недоступен. Используйте вход по почте.",
   state_expired: "Ссылка входа через VK ID устарела. Нажмите кнопку ещё раз.",
   token_error: "VK ID не выдал токен входа. Проверьте Redirect URL и тип приложения в кабинете VK ID.",
   profile_error: "VK ID не отдал профиль. Проверьте доступ к личным данным в настройках приложения.",
@@ -30,7 +29,7 @@ const yandexNotices: Record<string, string> = {
   // AuthGate would already be showing the app.
   ok: "Яндекс подтвердил вход, но сессия не сохранилась. Разрешите cookie для сайта и попробуйте ещё раз.",
   denied: "Вы отменили вход через Яндекс ID.",
-  not_configured: "Вход через Яндекс ID временно недоступен. Используйте вход по SMS.",
+  not_configured: "Вход через Яндекс ID временно недоступен. Используйте вход по почте.",
   state_expired: "Ссылка входа через Яндекс ID устарела. Нажмите кнопку ещё раз.",
   token_error: "Яндекс не выдал токен входа. Попробуйте ещё раз.",
   profile_error: "Яндекс ID не отдал профиль. В приложении на oauth.yandex.ru должно быть включено право «Доступ к логину, имени и фамилии, полу» (login:info).",
@@ -39,28 +38,25 @@ const yandexNotices: Record<string, string> = {
 };
 
 export function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void }) {
-  const [phone, setPhone] = useState("");
-  const [code, setCode] = useState("");
-  const [stage, setStage] = useState<"number" | "code">("number");
-  // Signing in by number needs an explicit consent to process it.
-  const [consent, setConsent] = useState(false);
+  const [emailMode, setEmailMode] = useState<"login" | "register">("login");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [error, setError] = useState("");
-  // Что сервер говорит о доставке кода: тестовый режим или отсутствие провайдера. Без этой
-  // строки «SMS не приходят» на экране выглядит одинаково при любой причине.
-  const [notice, setNotice] = useState("");
-  // Яндекс ID — отдельный вход: его состояние и ошибки не должны смешиваться с SMS.
+  // Адрес, на который отправлено письмо. Пока он задан, форма заменена экраном ожидания.
+  const [pendingEmail, setPendingEmail] = useState<string|null>(null);
+  const [resendBusy, setResendBusy] = useState(false);
+  const [resendNotice, setResendNotice] = useState("");
+  const [verificationNotice, setVerificationNotice] = useState("");
+  // Токен из письма. Он открывает форму, но аккаунт подтверждается только вместе с паролем.
+  const [verificationToken, setVerificationToken] = useState<string|null>(null);
+  const [verificationPassword, setVerificationPassword] = useState("");
+  // Яндекс ID и VK ID — отдельные способы входа: их состояние и ошибки не должны
+  // смешиваться с формой почты.
   const [yandex, setYandex] = useState<YandexAuthStatus | null>(null);
   const [yandexNotice, setYandexNotice] = useState("");
   const [vk, setVk] = useState<VkAuthStatus | null>(null);
   const [vkNotice, setVkNotice] = useState("");
   const [busy, setBusy] = useState(false);
-  const [seconds, setSeconds] = useState(0);
-
-  useEffect(() => {
-    if (seconds <= 0) return;
-    const timer = window.setTimeout(() => setSeconds(value => value - 1), 1000);
-    return () => window.clearTimeout(timer);
-  }, [seconds]);
 
   useEffect(() => {
     let alive = true;
@@ -69,18 +65,19 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void })
     return () => { alive = false; };
   }, []);
 
-  // Read the OAuth result in an effect: a state initializer runs twice under StrictMode.
+  // Read the OAuth/email result in an effect: a state initializer runs twice under StrictMode.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const yandexStatus = params.get("yandex_login");
     const vkStatus = params.get("vk_login");
-    if (!yandexStatus && !vkStatus) return;
-    params.delete("yandex_login");
-    params.delete("vk_login");
+    const verifyToken = params.get("verify_email");
+    if (!yandexStatus && !vkStatus && !verifyToken) return;
+    for (const name of ["yandex_login", "vk_login", "verify_email"]) params.delete(name);
     const query = params.toString();
     window.history.replaceState(null, "", window.location.pathname + (query ? "?" + query : ""));
     if (yandexStatus) setYandexNotice(yandexNotices[yandexStatus] ?? yandexNotices.error);
     if (vkStatus) setVkNotice(vkNotices[vkStatus] ?? vkNotices.error);
+    if (verifyToken) { setVerificationToken(verifyToken); setPendingEmail(null); }
   }, []);
 
   function signInWithYandex() {
@@ -99,37 +96,102 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void })
     window.location.href = path + "?origin=" + encodeURIComponent(window.location.origin);
   }
 
-  async function requestCode(event?: FormEvent) {
-    event?.preventDefault();
+  async function submitEmail(event: FormEvent) {
+    event.preventDefault();
     setError("");
+    setResendNotice("");
+    setVerificationNotice("");
     setBusy(true);
     try {
-      const data = await startPhoneLogin(phone, consent);
-      // A configured demo number returns a session right away; nothing to type next.
-      if (data.user) { onAuthenticated(); return; }
-      setStage("code");
-      setCode("");
-      setNotice(data.notice ?? "");
-      setSeconds(RESEND_SECONDS);
+      if (emailMode === "register") {
+        const result = await registerByEmail(email.trim(), password);
+        // Сессии ещё нет: сервер выдаст её только после перехода по ссылке из письма.
+        setPendingEmail(result.email);
+        setPassword("");
+        return;
+      }
+      await loginByEmail(email.trim(), password);
+      onAuthenticated();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Не удалось отправить код");
+      if (e instanceof ApiError && e.code === "EMAIL_NOT_VERIFIED") {
+        setPendingEmail(email.trim());
+        setVerificationNotice("Почта ещё не подтверждена. Отправьте письмо ещё раз.");
+        setError("");
+        return;
+      }
+      if (e instanceof ApiError && e.code === "EMAIL_SEND_FAILED") {
+        // Аккаунт уже создан; экран ожидания позволяет отправить письмо повторно.
+        setPendingEmail(email.trim());
+        setError(e.message);
+        return;
+      }
+      setError(e instanceof Error ? e.message : emailMode === "register" ? "Не удалось создать аккаунт" : "Не удалось войти");
     } finally {
       setBusy(false);
     }
   }
 
-  async function submitCode(event: FormEvent) {
+  async function submitVerification(event: FormEvent) {
     event.preventDefault();
+    if (!verificationToken) return;
     setError("");
+    setVerificationNotice("");
     setBusy(true);
     try {
-      await verifyPhoneLogin(phone, code);
+      await confirmEmail(verificationToken, verificationPassword);
       onAuthenticated();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Не удалось подтвердить код");
+      if (e instanceof ApiError && e.code === "VERIFICATION_EXPIRED") {
+        setVerificationNotice("Срок ссылки подтверждения истёк. Вернитесь на экран регистрации и запросите новое письмо.");
+      } else {
+        setError(e instanceof Error ? e.message : "Не удалось подтвердить почту");
+      }
     } finally {
       setBusy(false);
     }
+  }
+
+  function cancelVerification() {
+    setVerificationToken(null);
+    setVerificationPassword("");
+    setError("");
+    setVerificationNotice("");
+    setEmailMode("login");
+  }
+
+  async function resendEmail() {
+    if (!pendingEmail) return;
+    setResendBusy(true);
+    setError("");
+    setResendNotice("");
+    try {
+      const result = await resendVerification(pendingEmail);
+      setResendNotice(result.retryAfter
+        ? `Письмо уже отправлено. Новое можно запросить через ${result.retryAfter} с.`
+        : "Письмо отправлено повторно. Проверьте «Входящие» и «Спам».");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось отправить письмо");
+    } finally {
+      setResendBusy(false);
+    }
+  }
+
+  function changeEmail() {
+    setPendingEmail(null);
+    setVerificationToken(null);
+    setEmailMode("register");
+    setPassword("");
+    setError("");
+    setResendNotice("");
+    setVerificationNotice("");
+  }
+
+  function switchEmailMode() {
+    setEmailMode(current => current === "login" ? "register" : "login");
+    setVerificationToken(null);
+    setError("");
+    setResendNotice("");
+    setVerificationNotice("");
   }
 
   const yandexUnavailable = yandex?.configured === false;
@@ -140,60 +202,80 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void })
       <div className="auth-card-inner">
         <div className="brand auth-brand"><span className="brand-mark"><WebNestLogo size={24} tone="light"/></span><span>NestDev</span></div>
         <div className="auth-heading">
-          <span className="eyebrow">АККАУНТ</span>
-          <h1>{stage === "code" ? "Введите код из SMS" : "Вход в аккаунт"}</h1>
-          {stage === "code"
-            ? <p>Код отправлен на {phone}</p>
-            : <p>Проекты сохраняются в вашем аккаунте.</p>}
+          <span className="eyebrow">{verificationToken ? "ПОДТВЕРЖДЕНИЕ" : pendingEmail ? "ПОЧТА" : "АККАУНТ"}</span>
+          <h1>{verificationToken ? "Подтвердите почту" : pendingEmail ? "Проверьте почту" : emailMode === "register" ? "Создайте аккаунт" : "Вход в аккаунт"}</h1>
+          {verificationToken
+            ? <p>Введите пароль, который вы указали при регистрации. Так аккаунт подтвердит именно его владелец.</p>
+            : pendingEmail
+              ? <p>Мы отправили ссылку на <strong>{pendingEmail}</strong>. Она действует 24 часа.</p>
+              : emailMode === "login" && <p>Введите почту и пароль от аккаунта NestDev.</p>}
         </div>
 
-        {stage === "number" && <>
-          <div className="auth-oauth-buttons">
-            <button type="button" className="auth-yandex" onClick={signInWithYandex} disabled={yandexUnavailable}>
-              <span className="auth-yandex-mark" aria-hidden="true">Я</span>
-              Войти через Яндекс ID
+        {verificationToken ? (
+          <form onSubmit={submitVerification} className="auth-form">
+            {verificationNotice && <div className="auth-error">{verificationNotice}</div>}
+            {error && <div className="auth-error">{error}</div>}
+            <label><span>Пароль</span><input type="password" value={verificationPassword} onChange={event => setVerificationPassword(event.target.value)} placeholder="Пароль от аккаунта" autoComplete="current-password" title="Пароль от аккаунта" autoFocus required /></label>
+            <div className="auth-hint">Ссылка действует 24 часа. После подтверждения вы сразу войдёте в аккаунт.</div>
+            <button className="send-button auth-submit" disabled={busy || !verificationPassword}>
+              {busy ? "Подтверждаем…" : "Подтвердить почту"}
             </button>
-            <button type="button" className="auth-vk" onClick={signInWithVk} disabled={vkUnavailable}>
-              <span className="auth-vk-mark" aria-hidden="true"><img src="/brand/logos/vk.svg" alt=""/></span>
-              Войти через VK ID
+            <div className="auth-switch">
+              <span>Ссылка не подходит?</span>
+              <button type="button" className="ghost-button" onClick={cancelVerification}>Вернуться ко входу</button>
+            </div>
+          </form>
+        ) : pendingEmail ? (
+          <div className="auth-verification">
+            {verificationNotice && <div className="auth-error">{verificationNotice}</div>}
+            {resendNotice && <div className="auth-success">{resendNotice}</div>}
+            {error && <div className="auth-error">{error}</div>}
+            <div className="auth-hint">Откройте ссылку из письма и подтвердите вход паролем. Если письма нет, проверьте «Спам» или отправьте его ещё раз.</div>
+            <button type="button" className="send-button auth-submit" onClick={() => void resendEmail()} disabled={resendBusy}>
+              {resendBusy ? "Отправляем…" : "Отправить письмо ещё раз"}
             </button>
+            <div className="auth-switch">
+              <span>Не тот адрес?</span>
+              <button type="button" className="ghost-button" onClick={changeEmail}>Изменить почту</button>
+            </div>
           </div>
-          {yandexUnavailable && <div className="auth-oauth-hint">Яндекс ID сейчас недоступен — войдите по SMS.</div>}
-          {vkUnavailable && <div className="auth-oauth-hint">VK ID сейчас недоступен — войдите по SMS.</div>}
-          {yandexNotice && <div className="auth-error auth-yandex-error">{yandexNotice}</div>}
-          {vkNotice && <div className="auth-error auth-oauth-error">{vkNotice}</div>}
-          <div className="auth-divider">или по номеру телефона</div>
-        </>}
+        ) : (
+          <>
+            {verificationNotice && <div className="auth-error auth-verification-notice">{verificationNotice}</div>}
+            <div className="auth-oauth-buttons">
+              <button type="button" className="auth-yandex" onClick={signInWithYandex} disabled={yandexUnavailable}>
+                <span className="auth-yandex-mark" aria-hidden="true">Я</span>
+                Войти через Яндекс ID
+              </button>
+              <button type="button" className="auth-vk" onClick={signInWithVk} disabled={vkUnavailable}>
+                <span className="auth-vk-mark" aria-hidden="true"><img src="/brand/logos/vk.svg" alt=""/></span>
+                Войти через VK ID
+              </button>
+            </div>
+            {yandexUnavailable && <div className="auth-oauth-hint">Яндекс ID сейчас недоступен — войдите по почте.</div>}
+            {vkUnavailable && <div className="auth-oauth-hint">VK ID сейчас недоступен — войдите по почте.</div>}
+            {yandexNotice && <div className="auth-error auth-yandex-error">{yandexNotice}</div>}
+            {vkNotice && <div className="auth-error auth-oauth-error">{vkNotice}</div>}
+            <div className="auth-divider">или по почте</div>
 
-        {stage === "number" && <form onSubmit={requestCode} className="auth-form">
-          <label><span>Номер телефона</span><input type="tel" inputMode="tel" value={phone} onChange={event => setPhone(event.target.value)} placeholder="+7 999 123-45-67" autoComplete="tel" title="Номер для входа по SMS" required /></label>
-          <label className="auth-consent">
-            <input type="checkbox" checked={consent} onChange={event => { setConsent(event.target.checked); setError(""); }} />
-            <span>Даю согласие на обработку номера телефона и технических данных для входа по SMS</span>
-          </label>
-          {/* Согласие даётся осознанно: текст согласия и политика открываются до отправки кода. */}
-          <div className="auth-consent-links">
-            <a href={legalPath("consent")} target="_blank" rel="noopener noreferrer">Согласие на обработку данных</a>
-            <span>·</span>
-            <a href={legalPath("privacy")} target="_blank" rel="noopener noreferrer">Политика обработки данных</a>
-          </div>
-          {error && <div className="auth-error">{error}</div>}
-          <button className="send-button auth-submit" disabled={busy || !phone.trim() || !consent}>{busy ? "Отправляем код…" : "Получить код"}</button>
-        </form>}
-
-        {stage === "code" && <form onSubmit={submitCode} className="auth-form">
-          <label><span>Код из SMS</span><input type="text" inputMode="numeric" autoComplete="one-time-code" maxLength={6} value={code} onChange={event => setCode(event.target.value.replace(/\D/g, ""))} placeholder="123456" title="Код из SMS" required /></label>
-          {notice && <div className="auth-note">{notice}</div>}
-          {error && <div className="auth-error">{error}</div>}
-          <button className="send-button auth-submit" disabled={busy || code.length < 4}>{busy ? "Проверяем…" : "Войти"}</button>
-          <div className="auth-phone-actions">
-            <button type="button" className="ghost-button" onClick={() => { setStage("number"); setError(""); setCode(""); }}>Изменить номер</button>
-            <button type="button" className="ghost-button" disabled={seconds > 0 || busy} onClick={() => void requestCode()}>{seconds > 0 ? "Ещё раз через " + seconds + " с" : "Отправить ещё раз"}</button>
-          </div>
-        </form>}
+            <form onSubmit={submitEmail} className="auth-form">
+              <label><span>Почта</span><input type="email" inputMode="email" value={email} onChange={event => setEmail(event.target.value)} placeholder="you@example.com" autoComplete="email" title="Почта для входа" required /></label>
+              <label><span>Пароль</span><input type="password" value={password} onChange={event => setPassword(event.target.value)} placeholder="Не меньше 8 символов" autoComplete={emailMode === "register" ? "new-password" : "current-password"} minLength={8} title="Пароль от аккаунта" required /></label>
+              {emailMode === "register" && <div className="auth-hint">Пароль должен быть не короче 8 символов. Почта станет логином после подтверждения.</div>}
+              {error && <div className="auth-error">{error}</div>}
+              <button className="send-button auth-submit" disabled={busy || !email.trim() || password.length < 8}>
+                {busy ? (emailMode === "register" ? "Создаём аккаунт…" : "Входим…") : emailMode === "register" ? "Зарегистрироваться" : "Войти"}
+              </button>
+              <div className="auth-switch">
+                <span>{emailMode === "register" ? "Уже есть аккаунт?" : "Впервые здесь?"}</span>
+                <button type="button" className="ghost-button" onClick={switchEmailMode}>{emailMode === "register" ? "Войти" : "Создать аккаунт"}</button>
+              </div>
+            </form>
+          </>
+        )}
 
         {/* Подвал входа: то, что человек вправе прочитать до регистрации. Ссылки открываются в
-            новой вкладке, чтобы введённый номер и код не потерялись. */}
+            новой вкладке, чтобы введённые данные не потерялись. */}
         <div className="auth-legal">
           <a href={legalPath("offer")} target="_blank" rel="noopener noreferrer">Оферта</a>
           <a href={legalPath("terms")} target="_blank" rel="noopener noreferrer">Соглашение</a>

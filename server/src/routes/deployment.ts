@@ -13,6 +13,8 @@ import { databaseStatus } from "../database/database-api.js";
 import { SERVICES } from "../services/catalog.js";
 import { listServiceConnections } from "../services/connections.js";
 import { yandexStatus } from "../yandex/yandex-api.js";
+import { accountPlanFor } from "../billing/store.js";
+import { FREE_CONNECTOR_MESSAGE, connectorAllowedForPlan } from "../account/connector-access.js";
 
 /**
  * Профиль для квиза развёртывания.
@@ -47,14 +49,20 @@ export async function registerDeploymentRoutes(app: FastifyInstance, deps: Deplo
     const profile = await readDeploymentProfile(sandbox.root).catch(() => null);
     if (!profile) return reply.code(500).send({ error: "Не удалось прочитать проект" });
 
-    const [cloudConnections, domainConnections, database, serviceConnections, yandex, plan] = await Promise.all([
+    const [cloudConnections, domainConnections, database, serviceConnections, yandex, plan, accountPlan] = await Promise.all([
       listCloudConnections(user.id).catch(() => []),
       listDomainConnections(user.id).catch(() => []),
       databaseStatus(user.id).catch(() => ({ connected: false as const })),
       listServiceConnections(user.id).catch(() => []),
       yandexStatus(user.id).catch(() => ({ connected: false as const })),
       readDeployPlan(sandbox.root).catch(() => null),
+      accountPlanFor(user.id),
     ]);
+    // Квиз развёртывания — тот же интерфейс: на бесплатном тарифе он не предлагает закрытые
+    // коннекторы, а показывает только базы данных и S3-сервисы, как и «Интеграции».
+    const cloudsAllowed = connectorAllowedForPlan(accountPlan, "cloud");
+    const domainsAllowed = connectorAllowedForPlan(accountPlan, "domain");
+    const yandexAllowed = connectorAllowedForPlan(accountPlan, "yandex");
 
     const neededCategories = new Set<string>();
     if (profile.needs.storage) neededCategories.add("storage");
@@ -69,8 +77,10 @@ export async function registerDeploymentRoutes(app: FastifyInstance, deps: Deplo
       projectType: profile.projectType,
       needs: profile.needs,
       needsEvidence: profile.needsEvidence,
-      clouds: [
-        {
+      restricted: { clouds: !cloudsAllowed, domains: !domainsAllowed },
+      ...(cloudsAllowed && domainsAllowed ? {} : { planNote: FREE_CONNECTOR_MESSAGE }),
+      clouds: !cloudsAllowed ? [] : [
+        ...(yandexAllowed ? [{
           id: "yandex",
           name: "Yandex Cloud",
           connected: yandex.connected,
@@ -78,7 +88,7 @@ export async function registerDeploymentRoutes(app: FastifyInstance, deps: Deplo
           allowWrites: yandex.connected ? yandex.allowWrites : null,
           keyUrl: "https://yandex.cloud/ru/docs/iam/operations/authentication/manage-authorized-keys",
           docsUrl: "https://yandex.cloud/ru/docs/",
-        },
+        }] : []),
         ...CLOUD_PROVIDERS.map(provider => {
           const connection = cloudConnections.find(item => item.provider === provider.id);
           return {
@@ -92,7 +102,7 @@ export async function registerDeploymentRoutes(app: FastifyInstance, deps: Deplo
           };
         }),
       ],
-      domains: DOMAIN_REGISTRARS.map(registrar => {
+      domains: !domainsAllowed ? [] : DOMAIN_REGISTRARS.map(registrar => {
         const connection = domainConnections.find(item => item.provider === registrar.id);
         return {
           id: registrar.id,
@@ -114,7 +124,7 @@ export async function registerDeploymentRoutes(app: FastifyInstance, deps: Deplo
         { id: "cloudru", name: "Cloud.ru", note: "PostgreSQL или MySQL." },
         { id: "custom", name: "Другая база", note: "Строка подключения из любого кабинета." },
       ],
-      services: SERVICES.filter(service => neededCategories.has(service.category)).map(service => {
+      services: SERVICES.filter(service => neededCategories.has(service.category) && connectorAllowedForPlan(accountPlan, "service", service.category)).map(service => {
         const connection = serviceConnections.find(item => item.service === service.id);
         return {
           id: service.id,

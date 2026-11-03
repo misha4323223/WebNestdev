@@ -113,7 +113,7 @@ export const PLATFORM_ENV_CATALOG: PlatformEnvEntry[] = [
   // выше. Настройка — docs/MAIL.md.
   { name: "POSTBOX_SENDER", group: "mail", label: "Почта: адрес отправителя", hint: "Подтверждённый в Postbox адрес, например noreply@nestdev.ru. Им представляются письма платформы и рассылка; домен должен быть подтверждён по DKIM.", kind: "value" },
   { name: "POSTBOX_FROM_NAME", group: "mail", label: "Рассылка: имя отправителя", hint: "Необязательно: как подписывать рассылку, например NestDev.", kind: "value" },
-  { name: "PLATFORM_URL", group: "mail", label: "Адрес платформы", hint: "Например https://nestdev.ru. Нужен для абсолютной ссылки отписки: относительная ссылка в письме не работает.", kind: "url" },
+  { name: "PLATFORM_URL", group: "mail", label: "Адрес платформы", hint: "Например https://nestdev.ru. Нужен для абсолютных ссылок отписки и подтверждения почты: относительная ссылка в письме не работает.", kind: "url" },
   { name: "POSTBOX_ENDPOINT", group: "mail", label: "Рассылка: endpoint", hint: "Необязательно: по умолчанию https://postbox.cloud.yandex.net. Меняется только если Yandex сменил адрес.", kind: "url" },
   { name: "POSTBOX_IAM_TOKEN", group: "mail", label: "Рассылка: IAM-токен", hint: "Готовый токен сервисного аккаунта с ролью postbox.sender. Живёт около 12 часов: подходит для проверки, для постоянной работы — ключ сервисного аккаунта.", kind: "secret" },
   { name: "POSTBOX_STATIC_KEY_ID", group: "mail", label: "Рассылка: статический ключ, Key ID", hint: "Идентификатор статического ключа доступа (это не API-ключ сервисного аккаунта). Вместе с секретом ниже подписывает REST-запросы рассылки по SigV4. Без отдельного ключа сервисного аккаунта достаточно POSTBOX_IAM_TOKEN.", kind: "value" },

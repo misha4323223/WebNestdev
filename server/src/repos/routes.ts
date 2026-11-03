@@ -7,10 +7,10 @@ import { redirectToApp, resolveOAuthFlow } from "../oauth/oauth-flow.js";
 import { getRepoConnection, saveRepoConnection, deleteRepoConnection } from "./connection-store.js";
 import { repoToken } from "./tokens.js";
 import type { RepoProvider } from "./types.js";
-import { createConversation, createProjectWithinLimit, ProjectLimitError } from "../project-store.js";
-import { limitsForPlan } from "../account/plans.js";
+import { createConversation, createProjectWithinLimit, deleteProject, ProjectLimitError } from "../project-store.js";
+import { limitsForPlan, repositoryImportLimitFor, repositorySizeLabel } from "../account/plans.js";
 import { accountPlanFor } from "../billing/store.js";
-import { recordStorageMutation } from "../account/storage-quota.js";
+import { projectDirectoryBytes, recordStorageMutation } from "../account/storage-quota.js";
 import { getSandbox } from "../sandbox-manager.js";
 import { initRepo } from "../changes/git-repo.js";
 
@@ -196,6 +196,23 @@ export async function registerRepoRoutes(app: FastifyInstance, provider: RepoPro
     }
     const sandbox = await getSandbox(project.id, user.id);
     const importedFiles = await provider.importRepository(token, repository, sandbox.root);
+    // У GitVerse и SourceCraft API не всегда отдаёт размер до импорта, поэтому проверяем
+    // фактический размер после скачивания. Превышение удаляет только что созданный проект:
+    // пустой или слишком большой проект не должен занимать место в лимите аккаунта.
+    const repositoryLimit = repositoryImportLimitFor(plan);
+    if (repositoryLimit !== null) {
+      const importedBytes = await projectDirectoryBytes(project.id);
+      if (importedBytes > repositoryLimit) {
+        await deleteProject(project.id, user.id);
+        return reply.code(403).send({
+          error: "Репозиторий занимает " + repositorySizeLabel(importedBytes) + ", а на бесплатном тарифе импорт ограничен " + repositorySizeLabel(repositoryLimit) + ". Оформите платный тариф или импортируйте проект меньше " + repositorySizeLabel(repositoryLimit) + ".",
+          code: "REPOSITORY_TOO_LARGE",
+          sizeBytes: importedBytes,
+          limitBytes: repositoryLimit,
+          plan,
+        });
+      }
+    }
     // У GitVerse история ставится на настоящую ветку (как у GitHub и GitLab), чтобы первая же
     // задача отправлялась fast-forward. SourceCraft уже пришёл клоном с историей.
     if (provider.id === "gitverse" && repository.cloneUrl) {

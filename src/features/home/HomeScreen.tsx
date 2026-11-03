@@ -306,10 +306,10 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
                 const open=openGroup===group.id;
                 return <div className={"starter-group"+(open?" open":"")} key={group.id}>
                   <button className="starter-group-head" onClick={()=>setOpenGroup(open?"":group.id)} aria-expanded={open} aria-controls={"starter-"+group.id} title={open?"Свернуть категорию":"Показать шаблоны категории"}>
-                    <span className="starter-group-icon"><Icon size={16}/></span>
+                    <span className="starter-group-icon"><Icon size={14}/></span>
                     <span className="starter-group-copy"><strong>{group.name}</strong><small>{group.range}</small></span>
                     <span className="starter-group-count" title={"Шаблонов: "+group.templates.length}>{group.templates.length}</span>
-                    <ChevronDown size={15} className="starter-group-chevron"/>
+                    <ChevronDown size={13} className="starter-group-chevron"/>
                   </button>
                   {open&&<div className="starter-group-body" id={"starter-"+group.id}>
                     <p className="starter-group-blurb">{group.blurb}</p>
@@ -317,9 +317,9 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
                       {group.templates.map(template=>{
                         const TemplateIcon=template.icon;
                         return <button key={template.name} className="starter-card" onClick={()=>void start(template.name,{plannerPrompt:templateKickoff(group,template),title:"Быстрый старт: "+template.name})} title={template.prompt+". Агент начнёт с плана и уточняющих вопросов."}>
-                          <span className="starter-card-icon"><TemplateIcon size={14}/></span>
+                          <span className="starter-card-icon"><TemplateIcon size={12}/></span>
                           <span className="starter-card-copy"><strong>{template.name}</strong><small>{template.note}</small></span>
-                          <ArrowUpRight size={13} className="starter-card-go"/>
+                          <ArrowUpRight size={12} className="starter-card-go"/>
                         </button>;
                       })}
                     </div>

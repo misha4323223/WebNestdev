@@ -5,6 +5,7 @@ import { deleteDomainConnection, getDomainConnection, listDomainConnections, sav
 import { DOMAIN_REGISTRARS, findDomainRegistrar, readRegistrarFields } from "../domains/providers.js";
 import { verifyRegistrarCredential } from "../domains/verify.js";
 import { assertIntegrationSlot } from "../account/integration-limits.js";
+import { connectorAllowedForPlan, connectorRefusal } from "../account/connector-access.js";
 import { accountPlanFor } from "../billing/store.js";
 
 /**
@@ -33,6 +34,9 @@ export async function registerDomainRoutes(app: FastifyInstance) {
   app.get("/api/domains", async (request, reply) => {
     const user = await requireUser(request, reply);
     if (!user) return;
+    const plan = await accountPlanFor(user.id);
+    // На бесплатном тарифе регистраторы закрыты целиком: тот же пустой список, что и в интерфейсе.
+    if (!connectorAllowedForPlan(plan, "domain")) return { providers: [], restricted: true };
     const connections = await listDomainConnections(user.id);
     return {
       providers: DOMAIN_REGISTRARS.map(registrar => {
@@ -52,6 +56,8 @@ export async function registerDomainRoutes(app: FastifyInstance) {
   app.post("/api/domains/:provider", async (request, reply) => {
     const user = await requireUser(request, reply);
     if (!user) return;
+    const refusal = await connectorRefusal(user.id, "domain");
+    if (refusal) return reply.code(403).send(refusal);
     const registrar = registrarFrom(request.params);
     if (!registrar) return reply.code(404).send({ error: "Неизвестный регистратор" });
 
@@ -112,6 +118,8 @@ export async function registerDomainRoutes(app: FastifyInstance) {
   app.post("/api/domains/:provider/writes", async (request, reply) => {
     const user = await requireUser(request, reply);
     if (!user) return;
+    const refusal = await connectorRefusal(user.id, "domain");
+    if (refusal) return reply.code(403).send(refusal);
     const registrar = registrarFrom(request.params);
     if (!registrar) return reply.code(404).send({ error: "Неизвестный регистратор" });
     const parsed = z.object({ allowWrites: z.boolean() }).safeParse(request.body ?? {});
@@ -127,6 +135,8 @@ export async function registerDomainRoutes(app: FastifyInstance) {
   app.post("/api/domains/:provider/refresh", async (request, reply) => {
     const user = await requireUser(request, reply);
     if (!user) return;
+    const refusal = await connectorRefusal(user.id, "domain");
+    if (refusal) return reply.code(403).send(refusal);
     const registrar = registrarFrom(request.params);
     if (!registrar) return reply.code(404).send({ error: "Неизвестный регистратор" });
     const connection = await getDomainConnection(user.id, registrar.id);

@@ -1,6 +1,8 @@
 import { getGitHubConnection } from "../github/github-connection-store.js";
 import { getGitLabConnection } from "../gitlab/gitlab-connection-store.js";
 import { repoToken } from "../repos/tokens.js";
+import { accountPlanFor } from "../billing/store.js";
+import { FREE_REPOSITORY_PUSH_MESSAGE, repositoryPushAllowedFor } from "../account/plans.js";
 import { createGitHubRepository } from "../github/github-api.js";
 import { getProject, linkProjectGithub, type RepositoryProvider } from "../project-store.js";
 import { getSandbox } from "../sandbox-manager.js";
@@ -60,6 +62,23 @@ type Repository = {
   remoteUrl: string | null;
   commitUrl?: (sha: string) => string;
 };
+
+/** Отказ отправки на бесплатном тарифе: маршрут отдаёт его как 403, а не 400. */
+export class RepositoryPushBlockedError extends Error {
+  readonly code = "PUSH_REQUIRES_PAID_PLAN";
+  constructor() {
+    super(FREE_REPOSITORY_PUSH_MESSAGE);
+    this.name = "RepositoryPushBlockedError";
+  }
+}
+
+async function remotePushAllowed(userId: string) {
+  return repositoryPushAllowedFor(await accountPlanFor(userId));
+}
+
+async function assertRemotePushAllowed(userId: string) {
+  if (!(await remotePushAllowed(userId))) throw new RepositoryPushBlockedError();
+}
 
 /** Старые проекты без поля provider — это GitHub; остальные провайдеры появились позже. */
 function providerOf(value?: string): RepositoryProvider {
@@ -125,6 +144,11 @@ async function ensureRepo(repository: Repository, userId: string) {
 
 /** Отправка ограничена по времени: панель не должна ждать недоступный GitHub минутами. */
 async function pushWithTimeout(repository: Repository, userId: string) {
+  // Последняя линия защиты: даже если новый вызывающий код забудет проверить тариф,
+  // удалённая ветка не изменится. Проверка стоит до чтения токена и до git push.
+  if (!(await remotePushAllowed(userId))) {
+    return { pushed: false, branch: repository.branch, at: new Date().toISOString(), error: FREE_REPOSITORY_PUSH_MESSAGE };
+  }
   const token = repository.remoteUrl ? await tokenFor(userId, repository.provider) : null;
   const branch = await currentBranch(repository.sandbox.root, repository.branch);
   const configuredTimeout = Number(process.env.CHANGES_PUSH_TIMEOUT_MS ?? 20_000);
@@ -186,6 +210,8 @@ export async function finalizeRunChanges(options: {
 
 export async function changesOverview(projectId: string, userId: string): Promise<ChangesOverview> {
   const repository = await repositoryFor(projectId, userId);
+  const pushAllowed = await remotePushAllowed(userId);
+  const pushBlockedReason = pushAllowed ? null : FREE_REPOSITORY_PUSH_MESSAGE;
   if (!await hasRepo(repository.sandbox.root)) {
     return {
       initialized: false,
@@ -196,6 +222,8 @@ export async function changesOverview(projectId: string, userId: string): Promis
         remoteUrl: repository.remoteUrl,
         lastPushAt: null,
         lastPushError: null,
+        pushAllowed,
+        pushBlockedReason,
       },
       checkpoints: [],
     };
@@ -214,6 +242,8 @@ export async function changesOverview(projectId: string, userId: string): Promis
       remoteUrl: repository.remoteUrl,
       lastPushAt: pushState?.lastPushAt ?? null,
       lastPushError: pushState?.lastPushError ?? null,
+      pushAllowed,
+      pushBlockedReason,
     },
     // Коммит, пришедший из GitHub, уже лежит там — он не «не отправлен», просто появился не
     // через задачу агента. Свой первый коммит (без трейлера) мы так не помечаем: он мог не
@@ -275,6 +305,9 @@ export async function createRepositoryForProject(projectId: string, userId: stri
     const project = await getProject(projectId);
     if (!project || project.userId !== userId) throw new Error("Проект не найден");
     if (project.github) throw new Error("Проект уже связан с «" + project.github.fullName + "»");
+    // Проверка до createGitHubRepository: иначе на бесплатном тарифе в аккаунте появился бы
+    // пустой удалённый репозиторий, который мы всё равно не имеем права наполнять.
+    await assertRemotePushAllowed(userId);
     const name = repositoryNameFromProject(requestedName?.trim() || project.name);
     const created = await createGitHubRepository(userId, { name, private: true }) as {
       name: string;
@@ -378,6 +411,7 @@ export async function pushCurrentBranch(projectId: string, userId: string) {
   return withProjectLock(projectId, async () => {
     const repository = await repositoryFor(projectId, userId);
     if (!repository.remoteUrl) throw new Error("У проекта нет подключённого репозитория");
+    await assertRemotePushAllowed(userId);
     if (!await hasRepo(repository.sandbox.root)) throw new Error("В проекте ещё нет истории изменений");
     const outcome = await pushWithTimeout(repository, userId);
     return outcome;
@@ -467,9 +501,15 @@ export async function commitWorktreeChanges(projectId: string, userId: string, o
     let pushed = false;
     let pushError: string | undefined;
     if (options.push && repository.remoteUrl) {
-      const outcome = await pushWithTimeout(repository, userId);
-      pushed = outcome.pushed;
-      pushError = outcome.error;
+      if (await remotePushAllowed(userId)) {
+        const outcome = await pushWithTimeout(repository, userId);
+        pushed = outcome.pushed;
+        pushError = outcome.error;
+      } else {
+        // Локальный коммит не отменяем: он остаётся в истории проекта, но удалённая ветка
+        // не меняется. Так прямой запрос к API тоже не обходит запрет тарифа.
+        pushError = FREE_REPOSITORY_PUSH_MESSAGE;
+      }
     }
     return {
       checkpoint: withLink(checkpoint, repository),

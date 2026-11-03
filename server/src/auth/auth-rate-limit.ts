@@ -3,7 +3,7 @@ type Bucket = { count: number; resetAt: number };
 const buckets = new Map<string, Bucket>();
 const WINDOW_MS = 15 * 60 * 1000;
 
-export type AuthAction = "login" | "register" | "phone" | "phoneVerify" | "phoneDemo" | "adminLogin" | "adminTotp";
+export type AuthAction = "login" | "register" | "phone" | "phoneVerify" | "phoneDemo" | "emailVerification" | "emailVerify" | "adminLogin" | "adminTotp";
 
 /** Попытки с одного адреса: грубая защита, не зависящая от того, какой аккаунт перебирают. */
 const IP_LIMITS: Record<AuthAction, number> = {
@@ -12,6 +12,8 @@ const IP_LIMITS: Record<AuthAction, number> = {
   phone: 10,
   phoneVerify: 30,
   phoneDemo: 60,
+  emailVerification: 6,
+  emailVerify: 12,
   // Вход администратора: адресов меньше, чем пользователей, но и попыток должно хватать на смену.
   adminLogin: 20,
   adminTotp: 30,
@@ -27,6 +29,8 @@ const SUBJECT_LIMITS: Record<AuthAction, number> = {
   phone: 4,
   phoneVerify: 15,
   phoneDemo: 60,
+  emailVerification: 3,
+  emailVerify: 8,
   adminLogin: 10,
   adminTotp: 20,
 };

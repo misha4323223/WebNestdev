@@ -18,9 +18,11 @@ const { sandboxRootPath } = await import("../sandbox/config.js");
 const { createCheckpoint, initRepo } = await import("../changes/git-repo.js");
 const { registerChangesRoutes } = await import("./changes.js");
 
-async function appWithProject() {
+type RepositoryRef = Parameters<typeof createProject>[1];
+
+async function appWithProject(repository?: RepositoryRef) {
   const user = await createUser("changes-" + randomUUID() + "@example.com", "password-123");
-  const project = await createProject("Git-панель", undefined, user.id);
+  const project = await createProject("Git-панель", repository, user.id);
   const session = await createSession(user.id);
   const root = sandboxRootPath(project.id);
   await mkdir(root, { recursive: true });
@@ -36,6 +38,56 @@ async function appWithProject() {
   await app.ready();
   return { app, projectId: project.id, headers: { cookie: "webnestdev_session=" + session.id } };
 }
+
+test("бесплатный тариф не отправляет коммиты в подключённый репозиторий", async () => {
+  const { app, projectId, headers } = await appWithProject({
+    provider: "github",
+    owner: "owner",
+    name: "repo",
+    fullName: "owner/repo",
+    defaultBranch: "main",
+    url: "https://github.com/owner/repo",
+  });
+  try {
+    const overview = await app.inject({ method: "GET", url: "/api/projects/" + projectId + "/changes", headers });
+    assert.equal(overview.statusCode, 200);
+    assert.equal(overview.json().repository.pushAllowed, false);
+
+    const push = await app.inject({ method: "POST", url: "/api/projects/" + projectId + "/changes/push", headers });
+    assert.equal(push.statusCode, 403);
+    assert.equal(push.json().code, "PUSH_REQUIRES_PAID_PLAN");
+    assert.match(push.json().error, /бесплатном тарифе/);
+
+    // Коммит остаётся локальным даже если старый клиент всё ещё присылает push:true.
+    const commit = await app.inject({
+      method: "POST",
+      url: "/api/projects/" + projectId + "/changes/commit",
+      headers,
+      payload: { message: "Локальная точка", paths: ["index.html"], push: true },
+    });
+    assert.equal(commit.statusCode, 200);
+    assert.equal(commit.json().pushed, false);
+    assert.match(commit.json().pushError, /бесплатном тарифе/);
+  } finally {
+    await app.close();
+  }
+});
+
+test("бесплатный тариф не создаёт удалённый репозиторий", async () => {
+  const { app, projectId, headers } = await appWithProject();
+  try {
+    const create = await app.inject({
+      method: "POST",
+      url: "/api/projects/" + projectId + "/changes/repository",
+      headers,
+      payload: { name: "free-project" },
+    });
+    assert.equal(create.statusCode, 403, "создание удалённого репозитория тоже не обходит тариф");
+    assert.equal(create.json().code, "PUSH_REQUIRES_PAID_PLAN");
+  } finally {
+    await app.close();
+  }
+});
 
 test("Git-панель: рабочие изменения, diff, выборочный коммит и ветка", async () => {
   const { app, projectId, headers } = await appWithProject();

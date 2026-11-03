@@ -135,14 +135,33 @@ test("legacy token and daily-run features are modernized on read", () => {
     const pro = plans.find(plan => plan.id === "pro");
     const team = plans.find(plan => plan.id === "team");
     assert.ok(pro && team);
-    assert.deepEqual(pro.features, [...PLAN_CATALOG.pro.features, "Свой домен"]);
+    // Сохранённый override заменяет каталог: новые пункты каталога сами в него не добавляются.
+    assert.deepEqual(pro.features, [
+      "9 проектов",
+      "5 000 кредитов на агента в месяц",
+      "10 ГБ хранилища",
+      "Импорт репозиториев без лимита",
+      "Все интеграции без ограничений",
+      "Свой домен",
+    ]);
     assert.deepEqual(team.features, [...PLAN_CATALOG.team.features]);
+    assert.ok(
+      PLAN_CATALOG.pro.features.includes("Отправка коммитов в GitHub, GitLab, GitVerse и SourceCraft"),
+      "каталог рекламирует отправку коммитов на платном тарифе",
+    );
     assert.ok(pro.features.includes("9 проектов"));
     assert.ok(pro.features.includes("5 000 кредитов на агента в месяц"));
     assert.ok(!pro.features.some(feature => /без дневного лимита|браузерн|поддержк/i.test(feature)));
     assert.ok(!pro.features.some(feature => feature.includes("100 запусков")));
     assert.ok(team.features.includes("15 проектов"));
-    assert.deepEqual(planAdminList()[0].features, [...PLAN_CATALOG.pro.features, "Свой домен"]);
+    assert.deepEqual(planAdminList()[0].features, [
+      "9 проектов",
+      "5 000 кредитов на агента в месяц",
+      "10 ГБ хранилища",
+      "Импорт репозиториев без лимита",
+      "Все интеграции без ограничений",
+      "Свой домен",
+    ]);
   });
 });
 

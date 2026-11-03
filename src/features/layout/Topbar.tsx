@@ -139,9 +139,13 @@ export function Topbar({projectId,sidebarOpen,onMenu,onHome,onOpenChanges,onDepl
   // репозиторий у проекта ещё не создан. Неотправленные точки относятся именно к репозиторию
   // проекта, иначе шапка обещала бы отправку, которой некуда идти.
   const repoConnected=Boolean(repository?.connected);
-  const unpushed=repoConnected?(changes?.checkpoints??[]).filter(item=>!item.pushed).length:0;
+  const pushAllowed=repository?.pushAllowed!==false;
+  // На бесплатном тарифе точки не «ждут отправки»: отправка закрыта, и мигающая точка
+  // в шапке обещала бы действие, которого нет.
+  const unpushed=repoConnected&&pushAllowed?(changes?.checkpoints??[]).filter(item=>!item.pushed).length:0;
   const repoTitle="GitHub"+(!repoConnected
     ?(githubConnected?" подключён, репозиторий проекта ещё не создан":" не подключён — подключить в «Изменениях»")
+    :!pushAllowed?" · отправка закрыта на бесплатном тарифе"
     :(unpushed>0?" · не отправлено: "+pointsLabel(unpushed):" · репозиторий проекта"));
   const branchTitle=(repoName?"Репозиторий "+repoName+" · ":"")+"ветка "+branch+" · выбрать другую ветку проекта";
 
