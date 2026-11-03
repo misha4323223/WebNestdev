@@ -106,6 +106,44 @@ test("вывод инструмента обрезается по краям, а
   assert.match(bounded, /error: last line/);
 });
 
+// Реальный длинный вывод сборки: сначала он ограничивается при записи в историю, затем старые
+// результаты сжимаются на следующих шагах, а последние остаются целыми. Без этого один
+// verbose-билд занимал бы весь бюджет запуска.
+test("длинный вывод сборки не раздувает контекст: старое сжимается, последние шаги защищены", () => {
+  const messages: ChatMessage[] = [
+    { role: "system", content: "промпт" },
+    { role: "user", content: "почини сборку" },
+  ];
+  const buildLog = "vite v8.3.4 building for production...\n" + "transforming module src/components/App.tsx\n".repeat(3000) + "error: Unexpected token\n";
+  for (let index = 0; index < 24; index++) {
+    messages.push({ role: "assistant", content: "шаг " + index, tool_calls: [{ id: "build-" + index, name: "terminal.exec", arguments: { command: "npm run build" } }] });
+    messages.push({ role: "tool", content: boundToolOutput("terminal.exec", { ok: index === 23, stdout: buildLog }), tool_call_id: "build-" + index });
+  }
+  // Каждый результат уже ограничен при записи, а не только при переполнении.
+  for (const message of messages) if (message.role === "tool") assert.ok(message.content.length <= 6100, "результат шага не больше лимита: " + message.content.length);
+
+  const keepRecent = 8;
+  const budgetTokens = 20000;
+  const { messages: trimmed, report } = trimMessagesToBudget(messages, { budgetTokens, keepRecent });
+  assert.ok(report.estimatedTokens <= budgetTokens, "история уложилась в бюджет: " + report.estimatedTokens);
+  assert.ok(report.compacted + report.dropped > 0, "старые шаги сжаты, а не отправлены целиком");
+  // Последние шаги — то, что модель сейчас продолжает, и их нельзя менять.
+  assert.deepEqual(trimmed.slice(-keepRecent), messages.slice(-keepRecent));
+  // Старый результат либо сокращён с явной пометкой, либо выброшен вместе со своей парой.
+  const announced = new Set<string>();
+  for (const message of trimmed) {
+    if (message.role === "assistant") for (const call of message.tool_calls ?? []) announced.add(call.id);
+    if (message.role === "tool") assert.ok(announced.has(message.tool_call_id), "результат " + message.tool_call_id + " без вызова");
+  }
+  const oldResults = trimmed.filter(message => message.role === "tool" && message.tool_call_id !== "build-23");
+  assert.ok(report.compacted > 0 || report.dropped > 0, "старые результаты сокращены или выброшены");
+  assert.ok(oldResults.length > 0, "часть старых результатов остаётся");
+  // Сжатие идёт от старых к новым и останавливается, как только бюджет сошёлся: часть
+  // результатов у границы защищённого окна может остаться целой — это и есть дешёвый путь.
+  assert.ok(oldResults.some(message => message.content.length < 3000), "старые результаты сокращены");
+  assert.match(trimmed.map(message => message.content).join("\n"), /сокращён/);
+});
+
 test("маленький вывод инструмента проходит без изменений", () => {
   const bounded = boundToolOutput("fs.write", { ok: true, path: "index.html" });
   assert.equal(bounded, JSON.stringify({ ok: true, path: "index.html" }));

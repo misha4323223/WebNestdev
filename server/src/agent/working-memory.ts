@@ -17,6 +17,12 @@ export type WorkingMemory = {
   planFromPreviousRun: boolean;
   changed: Map<string, string>;
   checks: string[];
+  /**
+   * Последний измеренный размер промпта. Запуск узнаёт его от провайдера только после шага,
+   * поэтому здесь лежит значение предыдущего шага: модель видит запас до обрыва заранее, а не
+   * узнаёт о переполнении из ошибки.
+   */
+  context?: { tokens: number; budgetTokens: number };
 };
 
 export const WORKING_STATE_PREFIX = "[ТЕКУЩЕЕ СОСТОЯНИЕ]";
@@ -128,6 +134,18 @@ export function workingStateText(memory: WorkingMemory) {
     for (const [path, summary] of memory.changed) lines.push("- " + path + (summary ? " — " + summary : ""));
   }
   if (memory.checks.length) lines.push("Уже проверено: " + memory.checks.join("; "));
+  if (memory.context && memory.context.budgetTokens > 0) {
+    const total = Math.max(1, Math.round(memory.context.budgetTokens));
+    const used = Math.min(total, Math.max(0, Math.round(memory.context.tokens)));
+    const left = Math.max(0, total - used);
+    const leftPercent = Math.round((left / total) * 100);
+    lines.push(
+      "Контекст: ~" + used + " из " + total + " токенов, осталось ~" + left + " (" + leftPercent + "%)." +
+      (leftPercent <= 15
+        ? " Запас подходит к концу: не читай файлы целиком — используй fs.outline, fs.grep и точечные fs.edit."
+        : " Старые шаги при переполнении сокращаются автоматически."),
+    );
+  }
   lines.push("Не повторяй уже сделанное. Если факта не хватает, прочитай нужный файл или запусти проверку, а не пересказывай задачу заново.");
   const text = lines.join("\n");
   // The block is re-sent on every step, so it must never grow without a bound. The tail is the

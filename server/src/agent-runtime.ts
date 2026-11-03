@@ -374,7 +374,12 @@ export class AgentRuntime {
         const context={runId,request,emit,signal};
         const stepRun=await runBudgetedStep(provider,messages,model,context,budget,{
           // Шаг и размер контекста идут в панель: видно, что запуск работает и сколько занято.
-          onPrepared:prepared=>emit({type:"run.progress",runId,step:step+1,maxSteps,tokens:prepared.tokens,budget:prepared.budgetTokens}),
+          // То же число попадает в рабочую память — на следующем шаге модель уже знает остаток
+          // и заранее выбирает grep/outline вместо чтения файлов целиком.
+          onPrepared:prepared=>{
+            working.context={tokens:prepared.tokens,budgetTokens:prepared.budgetTokens};
+            emit({type:"run.progress",runId,step:step+1,maxSteps,tokens:prepared.tokens,budget:prepared.budgetTokens});
+          },
         });
         messages=stepRun.messages;
         budget=stepRun.budget;

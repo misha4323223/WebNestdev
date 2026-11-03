@@ -19,6 +19,7 @@ import {
   Globe,
   KeyRound,
   ListChecks,
+  ListTree,
   LoaderCircle,
   MonitorCheck,
   MousePointerClick,
@@ -50,6 +51,8 @@ type ActionDescriptor = { icon: IconComponent; label: string };
 const TOOL_ICONS: Record<string, ActionDescriptor> = {
   "fs.list": { icon: FolderTree, label: "Смотрит файлы" },
   "fs.read": { icon: FileText, label: "Читает файл" },
+  "fs.grep": { icon: Search, label: "Ищет по коду" },
+  "fs.outline": { icon: ListTree, label: "Строит карту файла" },
   "fs.write": { icon: Wrench, label: "Пишет код" },
   "fs.edit": { icon: Wrench, label: "Правит код" },
   "fs.rename": { icon: FileSymlink, label: "Переименовывает файл" },
@@ -100,6 +103,11 @@ export function actionTarget(name: string, input: unknown): string {
     const from = text(value.from);
     const to = text(value.to);
     if (from || to) return [from, to].filter(Boolean).join(" → ");
+  }
+  // В строке поиска важнее сам шаблон, а путь — только место, где искали.
+  if (name === "fs.grep") {
+    const pattern = text(value.pattern);
+    if (pattern) return "«" + pattern + "» в " + (text(value.path) || "проекте");
   }
   if (name === "npm.install") {
     const packages = [value.packages, value.dependencies].find(Array.isArray) as unknown[] | undefined;

@@ -53,6 +53,20 @@ test("предыдущий блок заменяется, а не копится
   assert.deepEqual(second.slice(0, first.length - 1), first.slice(0, -1));
 });
 
+test("модель видит остаток контекста и заранее получает совет при нехватке", () => {
+  const memory = createWorkingMemory("задача");
+  memory.context = { tokens: 175000, budgetTokens: 250000 };
+  const normal = workingStateText(memory);
+  assert.match(normal, /Контекст: ~175000 из 250000 токенов, осталось ~75000 \(30%\)/);
+  assert.match(normal, /сокращаются автоматически/);
+
+  memory.context = { tokens: 240000, budgetTokens: 250000 };
+  const tight = workingStateText(memory);
+  assert.match(tight, /осталось ~10000 \(4%\)/);
+  assert.match(tight, /fs\.outline/);
+  assert.match(tight, /fs\.grep/);
+});
+
 test("план с прошлого этапа помечается, чтобы новая задача его заменила", () => {
   const memory = createWorkingMemory("продолжить", plan);
   memory.planFromPreviousRun = true;

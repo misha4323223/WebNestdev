@@ -10,6 +10,11 @@ import { useState } from "react";
  * (top bar, home rail, auth screen) — the light variant is what those places use.
  */
 export function WebNestLogo({size=32,className,tone="brand"}:{size?:number;className?:string;tone?:"brand"|"light"}){
+  // WebP is the asset the product ships now; the PNG stays as a fallback for a stale cache or a
+  // browser without WebP support, and the drawn mark covers a completely missing file.
+  const primary=tone==="light"?"/brand/nestdev-mark-light.webp":"/brand/nestdev-mark.png";
+  const fallback=tone==="light"?"/brand/nestdev-mark-light.png":null;
+  const [src,setSrc]=useState(primary);
   const [missing,setMissing]=useState(false);
   if(missing)return <svg className={className} width={size} height={size} viewBox="0 0 64 64" fill="none" aria-hidden="true">
     <path d="M11 30C21 25 43 25 53 30" stroke="currentColor" strokeWidth="2.9" strokeLinecap="round" opacity=".5"/>
@@ -27,6 +32,8 @@ export function WebNestLogo({size=32,className,tone="brand"}:{size?:number;class
     </g>
     <path d="M11 30C18 36 46 36 53 30" stroke="currentColor" strokeWidth="2.9" strokeLinecap="round"/>
   </svg>;
-  const src=tone==="light"?"/brand/nestdev-mark-light.png":"/brand/nestdev-mark.png";
-  return <img className={className} src={src} width={size} height={size} alt="" draggable={false} onError={()=>setMissing(true)}/>;
+  return <img className={className} src={src} width={size} height={size} alt="" draggable={false} onError={()=>{
+    if(fallback&&src!==fallback)setSrc(fallback);
+    else setMissing(true);
+  }}/>;
 }

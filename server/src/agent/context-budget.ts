@@ -71,6 +71,10 @@ const SQUEEZE_TAIL_CHARS = 200;
  */
 const TOOL_OUTPUT_CHARS: Record<string, number> = {
   "fs.read": 24000,
+  // Поиск и карта файла — компактные структурированные ответы; лимит выше общего, потому что
+  // несколько совпадений с контекстом и тело одной функции действительно нужны целиком.
+  "fs.grep": 14000,
+  "fs.outline": 16000,
   "terminal.exec": 6000,
   "npm.install": 6000,
   "pip.install": 6000,

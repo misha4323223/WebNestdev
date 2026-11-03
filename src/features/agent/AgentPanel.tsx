@@ -292,6 +292,8 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   const [dragActive,setDragActive]=useState(false);
   const [uploading,setUploading]=useState(false);
   const [notice,setNotice]=useState("");
+  /** Контекст последнего шага: сколько занято и какой бюджет. Виден, пока запуск идёт. */
+  const [contextUsage,setContextUsage]=useState<{tokens:number;budget:number}|null>(null);
   // Действия под ответом агента: копирование и отправка списка в TASKS.md. Состояние
   // привязано к номеру сообщения, чтобы нажатие не подсвечивало чужие ответы.
   const [copiedMessage,setCopiedMessage]=useState<number|null>(null);
@@ -858,6 +860,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     setResume(null);
     setRunning(true);
     setNotice("");
+    setContextUsage(null);
     // Новая задача — новый итог: прошлая точка уже в истории, и напоминание о ней не нужно.
     setChangesNotice(null);
     // Отправленное сообщение и ответ на него — то, что хочется видеть, даже если до этого
@@ -898,6 +901,11 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
           if(last?.role==="assistant")next[next.length-1]={...last,reasoning:(last.reasoning??"")+delta};
           return next;
         });
+      }
+      // Сколько контекста занято на шаге и какой у него предел: видно заранее, а не только
+      // по ошибке «переполнен контекст» в конце.
+      if(event.type==="run.progress"&&typeof event.budget==="number"&&event.budget>0){
+        setContextUsage({tokens:typeof event.tokens==="number"?event.tokens:0,budget:event.budget});
       }
       // The server runs only a few agents at once, so a busy moment makes the run wait instead
       // of failing. The line says so and disappears the moment the run really starts.
@@ -1425,6 +1433,14 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     }
   }
 
+  // Остаток бюджета считается от последнего измеренного шага. Окно может уменьшиться на ходу
+  // (провайдер назвал свой предел), поэтому проценты берутся от актуального `budget`, а не от
+  // стартовой настройки.
+  const contextUsed=contextUsage?Math.min(contextUsage.budget,Math.max(0,contextUsage.tokens)):0;
+  const contextLeft=contextUsage?Math.max(0,contextUsage.budget-contextUsed):0;
+  const contextLeftPercent=contextUsage?Math.round(contextLeft/Math.max(1,contextUsage.budget)*100):0;
+  const contextUsedPercent=contextUsage?100-contextLeftPercent:0;
+
   return <section className="chat">
     {/* Переписка и её закладки. Полоска закладок — рядом со скроллом, а не в нём: у каждой метки
         своя точка в переписке, и она должна оставаться на месте при прокрутке. */}
@@ -1688,6 +1704,12 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
         {onOpenChanges&&<span className="changes-toast-open">Открыть</span>}
       </button>}
       {notice&&<div className="composer-notice">{notice}</div>}
+      {running&&contextUsage&&<div className={"composer-context"+(contextLeftPercent<=15?" is-tight":"")} title={"Контекст шага: занято "+contextUsed+" из "+contextUsage.budget+" токенов, осталось "+contextLeft}>
+        <span className="composer-context-label">Контекст</span>
+        <i className="composer-context-bar" aria-hidden="true"><span style={{width:contextUsedPercent+"%"}}/></i>
+        <b>осталось {contextLeftPercent}%</b>
+        <span className="composer-context-numbers">{contextUsed.toLocaleString("ru-RU")} / {contextUsage.budget.toLocaleString("ru-RU")}</span>
+      </div>}
     </div>
 
     {/* Вопрос агента — отдельное модальное окно: оно не спорит с перепиской и не зависит от того,

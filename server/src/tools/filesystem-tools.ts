@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
+import { lstat } from "node:fs/promises";
+import type { Dirent } from "node:fs";
 import path from "node:path";
 import { getSandbox } from "../sandbox-manager.js";
-import { deleteInside, listInside, readFileBytesInside, readFileInside, renameInside, writeFileInside } from "../sandbox/path-guard.js";
+import { deleteInside, listInside, readFileBytesInside, readFileInside, renameInside, resolveInsideSandbox, writeFileInside } from "../sandbox/path-guard.js";
 import { looksBinary } from "../sandbox/binary.js";
 import { openDirsForSandbox, openFileForSandbox } from "../sandbox/permissions.js";
 import { registerTool } from "../tool-registry.js";
@@ -262,5 +264,497 @@ registerTool({
     await deleteInside(sandbox.root, candidate);
     invalidateReadCache(context.projectId, context.runId, value.path);
     return { ok: true, path: value.path, removedChanges };
+  },
+});
+
+/**
+ * Поиск по проекту — отдельный инструмент, а не `grep` через terminal.exec.
+ *
+ * У оболочки два недостатка, которые мешают агенту: каждый вызов тащит в контекст шум
+ * (`cd`, заголовки, коды возврата), а вывод grep нужно ещё разбирать глазами. Здесь тот же
+ * поиск отдаёт структуру `{file,line,column,text}`: её можно сразу превратить в `fs.read`
+ * с нужным окном и не тратить шаг на разбор текста терминала.
+ */
+const SEARCH_MAX_FILES = 4000;
+const SEARCH_MAX_TOTAL_BYTES = 32 * 1024 * 1024;
+const SEARCH_MAX_FILE_BYTES = 512 * 1024;
+const GREP_DEFAULT_RESULTS = 80;
+const GREP_MAX_RESULTS = 200;
+const GREP_MAX_LINE_CHARS = 260;
+const GREP_CONTEXT_MAX = 4;
+
+/** Каталоги зависимостей и сборки: искать в них исходники почти никогда не нужно. */
+const SEARCH_SKIP_DIRS = new Set([
+  "node_modules", ".git", "dist", "build", "coverage", ".next", ".nuxt", ".output",
+  ".cache", ".vite", ".turbo", ".python", "vendor", "target", "__pycache__",
+  ".venv", "venv", ".idea", ".vscode",
+]);
+
+function normalizeProjectRelative(value: string) {
+  return value.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/+$/, "");
+}
+
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Glob в стиле оболочки: `*`, `**`, `?` и `{a,b}`. Без `**` шаблон совпадает с именем файла
+ * на любой глубине (`*.ts`), с `**` — с путём от корня проекта.
+ */
+function globMatcher(glob: string) {
+  const pattern = normalizeProjectRelative(glob.trim());
+  let source = "";
+  for (let i = 0; i < pattern.length; i++) {
+    const char = pattern[i];
+    if (char === "*") {
+      if (pattern[i + 1] === "*") {
+        i++;
+        if (pattern[i + 1] === "/") {
+          i++;
+          source += "(?:.*/)?";
+        } else source += ".*";
+      } else source += "[^/]*";
+    } else if (char === "?") source += "[^/]";
+    else if (char === "{") {
+      const end = pattern.indexOf("}", i);
+      if (end === -1) source += "\\{";
+      else {
+        source += "(?:" + pattern.slice(i + 1, end).split(",").map(escapeRegExp).join("|") + ")";
+        i = end;
+      }
+    } else source += escapeRegExp(char);
+  }
+  const expression = new RegExp("^" + (pattern.includes("/") ? "" : "(?:.*/)?") + source + "$");
+  return (relative: string) => expression.test(relative);
+}
+
+/**
+ * Все файлы под `startRelative`, кроме каталогов сборки и ссылок. Каталог, названный в `path`
+ * явно, всё равно обходится: `path: "dist"` означает «искать в dist», а не «пропустить его».
+ */
+async function* walkProjectFiles(root: string, startRelative: string, skipped: { dirs: number }) {
+  const relativeStart = normalizeProjectRelative(startRelative);
+  const target = path.join(root, startRelative || ".");
+  let info;
+  try {
+    info = await lstat(await resolveInsideSandbox(root, target));
+  } catch {
+    throw new Error("Путь не найден: " + (startRelative || "."));
+  }
+  if (info.isFile()) {
+    yield { relative: relativeStart, absolute: target };
+    return;
+  }
+  if (!info.isDirectory()) throw new Error("Поиск работает только по файлу или каталогу");
+  const stack: Array<{ relative: string; absolute: string }> = [{ relative: relativeStart, absolute: target }];
+  while (stack.length) {
+    const dir = stack.pop() as { relative: string; absolute: string };
+    let entries: Dirent[];
+    try {
+      entries = await listInside(root, dir.absolute);
+    } catch {
+      continue;
+    }
+    entries.sort((a, b) => a.name.localeCompare(b.name));
+    const subdirs: Array<{ relative: string; absolute: string }> = [];
+    for (const entry of entries) {
+      const relative = dir.relative ? dir.relative + "/" + entry.name : entry.name;
+      if (entry.isDirectory()) {
+        if (SEARCH_SKIP_DIRS.has(entry.name) && normalizeProjectRelative(relative) !== relativeStart) {
+          skipped.dirs++;
+          continue;
+        }
+        subdirs.push({ relative, absolute: path.join(dir.absolute, entry.name) });
+      } else if (entry.isFile()) {
+        yield { relative, absolute: path.join(dir.absolute, entry.name) };
+      }
+    }
+    // Разворачиваем стек в обратном порядке, чтобы обход шёл по алфавиту.
+    stack.push(...subdirs.reverse());
+  }
+}
+
+/** Строка вокруг совпадения: длинная строка не должна прятать сам найденный фрагмент. */
+function grepLineWindow(line: string, at: number) {
+  // Табы не раскрываются: `column` считается по исходной строке, и менять её длину значило бы
+  // вернуть столбец, который не совпадает с текстом.
+  const text = line.trimEnd();
+  if (text.length <= GREP_MAX_LINE_CHARS) return text;
+  const column = Math.min(Math.max(0, at), Math.max(0, text.length - 1));
+  let start = Math.max(0, column - Math.floor(GREP_MAX_LINE_CHARS / 3));
+  let end = Math.min(text.length, start + GREP_MAX_LINE_CHARS);
+  start = Math.max(0, end - GREP_MAX_LINE_CHARS);
+  return (start > 0 ? "…" : "") + text.slice(start, end) + (end < text.length ? "…" : "");
+}
+
+registerTool({
+  name: "fs.grep",
+  description: "Search project text for a regular expression and get structured matches. Input: {pattern:string,path?:string,glob?:string,ignoreCase?:boolean,literal?:boolean,context?:number,maxResults?:number}. Returns {file,line,column,text} without shell noise; dependencies and build output are skipped unless `path` points inside them. Use `glob` like \"*.ts\" or \"src/**/*.{ts,tsx}\". Prefer this over terminal.exec grep.",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    required: ["pattern"],
+    properties: {
+      pattern: { type: "string", description: "Регулярное выражение (или литерал при literal:true)" },
+      path: { type: "string", description: "Файл или каталог внутри проекта; по умолчанию весь проект" },
+      glob: { type: "string", description: "Фильтр имён: *.ts, src/**/*.{ts,tsx}" },
+      ignoreCase: { type: "boolean", description: "Искать без учёта регистра" },
+      literal: { type: "boolean", description: "Искать pattern как обычную строку, без регулярных выражений" },
+      context: { type: "number", description: "Сколько строк до и после показать (0–" + GREP_CONTEXT_MAX + ", по умолчанию 0)" },
+      maxResults: { type: "number", description: "Предел совпадений, по умолчанию " + GREP_DEFAULT_RESULTS + ", максимум " + GREP_MAX_RESULTS },
+    },
+  },
+  execute: async (input, context) => {
+    const value = input as { pattern?: string; path?: string; glob?: string; ignoreCase?: boolean; literal?: boolean; context?: number; maxResults?: number };
+    if (!value.pattern) throw new Error("не указан pattern для поиска");
+    if (value.path) assertNotSecretProjectPath(value.path, "искать");
+    let expression: RegExp;
+    try {
+      expression = new RegExp(value.literal ? escapeRegExp(value.pattern) : value.pattern, value.ignoreCase ? "i" : "");
+    } catch (error) {
+      throw new Error("pattern не является корректным регулярным выражением: " + (error instanceof Error ? error.message : String(error)));
+    }
+    const sandbox = await getSandbox(context.projectId, context.userId);
+    const matches = globMatcher(value.glob ?? "**/*");
+    const contextLines = Math.min(GREP_CONTEXT_MAX, Math.max(0, Math.floor(Number(value.context) || 0)));
+    const maxResults = Math.min(GREP_MAX_RESULTS, Math.max(1, Math.floor(Number(value.maxResults) || GREP_DEFAULT_RESULTS)));
+    const skipped = { dirs: 0, binary: 0, large: 0, secret: 0 };
+    const matchedFiles = new Set<string>();
+    const found: unknown[] = [];
+    let filesScanned = 0;
+    let totalBytes = 0;
+    let truncated = false;
+    let stopReason = "";
+    outer: for await (const file of walkProjectFiles(sandbox.root, value.path ?? "", skipped)) {
+      if (isSecretProjectPath(file.relative)) {
+        skipped.secret++;
+        continue;
+      }
+      const relative = normalizeProjectRelative(file.relative);
+      if (!matches(relative)) continue;
+      const info = await lstat(file.absolute).catch(() => null);
+      if (!info?.isFile()) continue;
+      if (info.size > SEARCH_MAX_FILE_BYTES) {
+        skipped.large++;
+        continue;
+      }
+      if (filesScanned >= SEARCH_MAX_FILES) {
+        truncated = true;
+        stopReason = "fileLimit";
+        break;
+      }
+      if (totalBytes + info.size > SEARCH_MAX_TOTAL_BYTES) {
+        truncated = true;
+        stopReason = "byteLimit";
+        break;
+      }
+      let bytes: Buffer;
+      try {
+        bytes = await readFileBytesInside(sandbox.root, file.absolute);
+      } catch {
+        continue;
+      }
+      if (looksBinary(bytes)) {
+        skipped.binary++;
+        continue;
+      }
+      filesScanned++;
+      totalBytes += bytes.length;
+      const lines = bytes.toString("utf8").split(/\r?\n/);
+      for (let index = 0; index < lines.length; index++) {
+        const line = lines[index];
+        if (!line) continue;
+        const match = expression.exec(line);
+        if (!match) continue;
+        const before: Array<{ line: number; text: string }> = [];
+        const after: Array<{ line: number; text: string }> = [];
+        if (contextLines) {
+          for (let i = Math.max(0, index - contextLines); i < index; i++) before.push({ line: i + 1, text: grepLineWindow(lines[i], 0) });
+          for (let i = index + 1; i <= Math.min(lines.length - 1, index + contextLines); i++) after.push({ line: i + 1, text: grepLineWindow(lines[i], 0) });
+        }
+        found.push({
+          file: relative,
+          line: index + 1,
+          column: match.index + 1,
+          text: grepLineWindow(line, match.index),
+          ...(before.length ? { before } : {}),
+          ...(after.length ? { after } : {}),
+        });
+        matchedFiles.add(relative);
+        if (found.length >= maxResults) {
+          truncated = true;
+          stopReason = "resultLimit";
+          break outer;
+        }
+      }
+    }
+    return {
+      pattern: value.pattern,
+      ...(value.path ? { path: value.path } : {}),
+      ...(value.glob ? { glob: value.glob } : {}),
+      matches: found,
+      matchCount: found.length,
+      fileCount: matchedFiles.size,
+      filesScanned,
+      ...(truncated ? { truncated: true, stopReason, hint: "Показаны не все совпадения — сузьте path, glob или pattern." } : {}),
+      ...(skipped.binary || skipped.large || skipped.secret ? { skipped } : {}),
+      ...(found.length || truncated ? {} : { hint: "Совпадений нет. Проверьте pattern/glob или поищите другое слово." }),
+    };
+  },
+});
+
+/**
+ * Карта файла по символам. Модель, которой нужна одна функция, больше не читает весь файл
+ * целиком: `fs.outline` отдаёт строки и сигнатуры, а `name` — ещё и тело выбранного символа.
+ */
+type OutlineSymbol = { kind: string; name: string; line: number; signature?: string; exported?: boolean; container?: string };
+
+type BraceScanState = { blockComment: boolean; quote: string | null; escaped: boolean; parens: number };
+
+/**
+ * Скобки вне строк и комментариев: по ним считается конец функции или класса. Скобки внутри
+ * параметров (`options = {}`) не меняют вложенность — иначе сигнатура метода с объектом по
+ * умолчанию выглядела бы как уже открытое и закрытое тело функции.
+ */
+function braceDelta(line: string, state: BraceScanState) {
+  let delta = 0;
+  for (let i = 0; i < line.length; i++) {
+    const char = line[i];
+    if (state.blockComment) {
+      if (char === "*" && line[i + 1] === "/") {
+        state.blockComment = false;
+        i++;
+      }
+      continue;
+    }
+    if (state.quote) {
+      if (state.escaped) state.escaped = false;
+      else if (char === "\\") state.escaped = true;
+      else if (char === state.quote) state.quote = null;
+      continue;
+    }
+    if (char === "/" && line[i + 1] === "/") break;
+    if (char === "/" && line[i + 1] === "*") {
+      state.blockComment = true;
+      i++;
+      continue;
+    }
+    if (char === "\"" || char === "'" || char === "`") {
+      state.quote = char;
+      continue;
+    }
+    if (char === "(") {
+      state.parens++;
+      continue;
+    }
+    if (char === ")") {
+      state.parens = Math.max(0, state.parens - 1);
+      continue;
+    }
+    if (state.parens > 0) continue;
+    if (char === "{") delta++;
+    else if (char === "}") delta--;
+  }
+  return delta;
+}
+
+const JS_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".mts", ".cts"]);
+const JS_TOP_PATTERNS: Array<{ kind: string; expression: RegExp }> = [
+  { kind: "function", expression: /^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s*\*?\s*([A-Za-z_$][\w$]*)\s*(?:<[^>]*>)?\s*\(/ },
+  { kind: "class", expression: /^\s*(?:export\s+)?(?:default\s+)?(?:abstract\s+)?class\s+([A-Za-z_$][\w$]*)/ },
+  { kind: "interface", expression: /^\s*(?:export\s+)?interface\s+([A-Za-z_$][\w$]*)/ },
+  { kind: "type", expression: /^\s*(?:export\s+)?type\s+([A-Za-z_$][\w$]*)/ },
+  { kind: "enum", expression: /^\s*(?:export\s+)?(?:const\s+)?enum\s+([A-Za-z_$][\w$]*)/ },
+  { kind: "const", expression: /^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*(?::[^=]+)?=>/ },
+  { kind: "function", expression: /^\s*(?:export\s+)?(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s+)?function\b/ },
+];
+const JS_METHOD_PATTERN = /^\s*(?:(?:public|private|protected|static|readonly|override|async|get|set|declare|abstract)\s+)*\*?\s*([A-Za-z_$][\w$]*)\s*(?:<[^>]*>)?\s*\([^)]*\)\s*(?::[^={]+)?\{/;
+const JS_CLASS_FIELD_PATTERN = /^\s*(?:(?:public|private|protected|static|readonly|override|declare)\s+)*([A-Za-z_$][\w$]*)\s*(?::[^=]+)?=\s*(?:async\s*)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*(?::[^=]+)?=>/;
+const JS_SKIP_NAMES = new Set(["if", "for", "while", "switch", "catch", "return", "function", "new", "typeof", "do", "else", "await", "with"]);
+
+function signatureOf(line: string) {
+  return line.trim().replace(/\s+/g, " ").slice(0, 160);
+}
+
+function jsOutline(lines: string[]): OutlineSymbol[] {
+  const symbols: OutlineSymbol[] = [];
+  const state: BraceScanState = { blockComment: false, quote: null, escaped: false, parens: 0 };
+  let depth = 0;
+  let classDepth = -1;
+  let className = "";
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index];
+    const before = depth;
+    depth += braceDelta(line, state);
+    if (before === 0) {
+      const anonymousDefault = /^\s*export\s+default\s+(?:async\s+)?function\s*\(/.test(line);
+      if (anonymousDefault) {
+        symbols.push({ kind: "function", name: "default", line: index + 1, signature: signatureOf(line), exported: true });
+      } else {
+        for (const { kind, expression } of JS_TOP_PATTERNS) {
+          const match = line.match(expression);
+          if (!match) continue;
+          symbols.push({
+            kind,
+            name: match[1],
+            line: index + 1,
+            signature: signatureOf(line),
+            ...(/^\s*export\b/.test(line) ? { exported: true } : {}),
+          });
+          if (kind === "class" && depth > before) {
+            classDepth = depth;
+            className = match[1];
+          }
+          break;
+        }
+      }
+    } else if (classDepth > 0 && before === classDepth) {
+      const method = line.match(JS_METHOD_PATTERN);
+      const field = method ? null : line.match(JS_CLASS_FIELD_PATTERN);
+      const name = method?.[1] ?? field?.[1];
+      if (name && !JS_SKIP_NAMES.has(name)) {
+        symbols.push({ kind: "method", name, container: className, line: index + 1, signature: signatureOf(line) });
+      }
+    }
+    if (classDepth > 0 && depth < classDepth) {
+      classDepth = -1;
+      className = "";
+    }
+  }
+  return symbols;
+}
+
+function pythonIndent(line: string) {
+  return (line.match(/^\s*/)?.[0] ?? "").replace(/\t/g, "    ").length;
+}
+
+function pythonOutline(lines: string[]): OutlineSymbol[] {
+  const symbols: OutlineSymbol[] = [];
+  const classes: Array<{ name: string; indent: number }> = [];
+  for (let index = 0; index < lines.length; index++) {
+    const line = lines[index];
+    if (!line.trim() || line.trimStart().startsWith("#")) continue;
+    const indent = pythonIndent(line);
+    while (classes.length && indent <= classes[classes.length - 1].indent) classes.pop();
+    const classMatch = line.match(/^\s*class\s+([A-Za-z_]\w*)/);
+    if (classMatch) {
+      symbols.push({ kind: "class", name: classMatch[1], line: index + 1, signature: signatureOf(line) });
+      classes.push({ name: classMatch[1], indent });
+      continue;
+    }
+    const functionMatch = line.match(/^\s*(?:async\s+)?def\s+([A-Za-z_]\w*)\s*\(/);
+    if (!functionMatch) continue;
+    const container = classes.length ? classes.map(item => item.name).join(".") : undefined;
+    symbols.push({
+      kind: container ? "method" : "function",
+      name: functionMatch[1],
+      line: index + 1,
+      signature: signatureOf(line),
+      ...(container ? { container } : {}),
+    });
+  }
+  return symbols;
+}
+
+/** Конец JS/TS-символа по балансу скобок; однострочные объявления заканчиваются на своей строке. */
+function jsSymbolEnd(lines: string[], startIndex: number) {
+  const state: BraceScanState = { blockComment: false, quote: null, escaped: false, parens: 0 };
+  let depth = 0;
+  let opened = false;
+  for (let index = startIndex; index < Math.min(lines.length, startIndex + 600); index++) {
+    depth += braceDelta(lines[index], state);
+    if (depth > 0) opened = true;
+    if (opened && depth <= 0) return index + 1;
+    if (!opened && index - startIndex >= 12) return startIndex + 1;
+  }
+  return Math.min(lines.length, startIndex + 600);
+}
+
+function pythonSymbolEnd(lines: string[], startIndex: number) {
+  const base = pythonIndent(lines[startIndex]);
+  let last = startIndex;
+  for (let index = startIndex + 1; index < lines.length; index++) {
+    if (!lines[index].trim()) continue;
+    if (pythonIndent(lines[index]) <= base) return last + 1;
+    last = index;
+  }
+  return last + 1;
+}
+
+const OUTLINE_SOURCE_CHARS = 16000;
+
+registerTool({
+  name: "fs.outline",
+  description: "Map a JS/TS or Python file by symbols without reading it whole. Input: {path:string,name?:string}. Returns functions, classes, methods, interfaces, types and exported consts with line numbers and signatures. Pass `name` (for example `buildSession`) to get that symbol's full source instead of the map.",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    required: ["path"],
+    properties: {
+      path: { type: "string", description: "Путь к файлу внутри проекта" },
+      name: { type: "string", description: "Имя функции, класса или метода; вернуть его код вместо карты файла" },
+    },
+  },
+  execute: async (input, context) => {
+    const value = input as { path?: string; name?: string };
+    if (!value.path) throw new Error("не указан путь");
+    assertNotSecretProjectPath(value.path, "читать");
+    const sandbox = await getSandbox(context.projectId, context.userId);
+    const bytes = await readFileBytesInside(sandbox.root, path.join(sandbox.root, value.path));
+    if (looksBinary(bytes)) throw new Error("файл двоичный — карта символов не строится");
+    const content = bytes.toString("utf8");
+    if (content.length > 2_000_000) throw new Error("файл больше 2 МБ — карта символов не строится; используйте fs.grep и fs.read окнами");
+    const lines = content.split(/\r?\n/);
+    const extension = path.extname(value.path).toLowerCase();
+    const language = JS_EXTENSIONS.has(extension) ? extension.slice(1) : extension === ".py" ? "python" : "";
+    if (!language) {
+      return {
+        path: value.path,
+        supported: false,
+        language: extension.slice(1) || "unknown",
+        hint: "Карта символов построена для JS/TS и Python. Для остальных файлов используйте fs.grep и fs.read.",
+      };
+    }
+    const symbols = language === "python" ? pythonOutline(lines) : jsOutline(lines);
+    const imports = [...new Set(Array.from(content.matchAll(/^\s*import\s+(?:type\s+)?(?:[^'"]*?\s+from\s+)?["']([^"']+)["']/gm), match => match[1]))].slice(0, 30);
+    if (!symbols.length) {
+      return { path: value.path, language, lines: lines.length, symbols: [], ...(imports.length ? { imports } : {}), hint: "Символы не найдены — возможно, файл состоит из выражений; используйте fs.read." };
+    }
+    if (value.name) {
+      const query = value.name.trim().replace(/\(\)$/, "");
+      const exact = symbols.filter(symbol => symbol.name === query || (symbol.container ? symbol.container + "." + symbol.name === query : false));
+      const lowered = query.toLowerCase();
+      const selected = exact.length ? exact : symbols.filter(symbol => symbol.name.toLowerCase().includes(lowered) || (symbol.container ? (symbol.container + "." + symbol.name).toLowerCase().includes(lowered) : false));
+      if (!selected.length) {
+        const available = symbols.slice(0, 25).map(symbol => (symbol.container ? symbol.container + "." : "") + symbol.name).join(", ");
+        throw new Error("Символ «" + query + "» не найден. В файле: " + available + (symbols.length > 25 ? "…" : ""));
+      }
+      return {
+        path: value.path,
+        language,
+        symbols: selected.map(symbol => {
+          const start = symbol.line - 1;
+          const end = language === "python" ? pythonSymbolEnd(lines, start) : jsSymbolEnd(lines, start);
+          const source = lines.slice(start, end).join("\n");
+          return {
+            kind: symbol.kind,
+            name: symbol.name,
+            ...(symbol.container ? { container: symbol.container } : {}),
+            line: symbol.line,
+            endLine: end,
+            source: source.length > OUTLINE_SOURCE_CHARS ? source.slice(0, OUTLINE_SOURCE_CHARS) + "\n…[символ сокращён: " + source.length + " символов]" : source,
+          };
+        }),
+      };
+    }
+    return {
+      path: value.path,
+      language,
+      lines: lines.length,
+      symbols: symbols.slice(0, 200),
+      ...(symbols.length > 200 ? { truncated: true } : {}),
+      ...(imports.length ? { imports } : {}),
+    };
   },
 });
