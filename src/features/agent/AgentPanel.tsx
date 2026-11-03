@@ -163,6 +163,12 @@ type QueuedMessage={id:string;text:string;attachments:Attachment[]};
  */
 const MAX_AUTO_RESUME=2;
 /**
+ * Сколько раз панель сама сокращает переполненную историю и продолжает запуск. Две попытки
+ * закрывают обычный длинный диалог; после них человек получает понятную строку и кнопку
+ * «Продолжить», а не техническую ошибку провайдера.
+ */
+const MAX_CONTEXT_COMPACTIONS=2;
+/**
  * События, после которых ожидание лимита провайдера закончилось: за любым из них идёт настоящая
  * работа или конец запуска, поэтому строка «жду N с и продолжаю» должна уйти.
  */
@@ -292,8 +298,6 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   const [dragActive,setDragActive]=useState(false);
   const [uploading,setUploading]=useState(false);
   const [notice,setNotice]=useState("");
-  /** Контекст последнего шага: сколько занято и какой бюджет. Виден, пока запуск идёт. */
-  const [contextUsage,setContextUsage]=useState<{tokens:number;budget:number}|null>(null);
   // Действия под ответом агента: копирование и отправка списка в TASKS.md. Состояние
   // привязано к номеру сообщения, чтобы нажатие не подсвечивало чужие ответы.
   const [copiedMessage,setCopiedMessage]=useState<number|null>(null);
@@ -369,6 +373,9 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   const completedRef=useRef(false);
   // Сколько ограниченных автопереподключений уже сделано; сбрасывается в ноль при новом запуске.
   const autoResumeRef=useRef(0);
+  // Сколько автоматических сокращений контекста уже было в текущей задаче. Сбрасывается
+  // новым сообщением и успешным завершением, чтобы следующая задача снова получила две попытки.
+  const contextCompactionsRef=useRef(0);
   /**
    * Строка «провайдер просил подождать — жду и продолжаю» сейчас на экране. Она живёт только до
    * первого признака настоящей работы: пока агент ждёт лимит, панель не должна выглядеть как ошибка.
@@ -667,7 +674,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     pinnedToEndRef.current=false;
     scrollMessagesToTop();
     cancelAutoResume();
-    autoResumeRef.current=0;setReconnect(null);setResume(null);closedByUsRef.current=true;
+    autoResumeRef.current=0;contextCompactionsRef.current=0;setReconnect(null);setResume(null);closedByUsRef.current=true;
     actionsRef.current=[];setActions([]);
     // Картинки прошлого разговора к новому не относятся: их место заняла загруженная история.
     setLiveImages([]);
@@ -850,17 +857,23 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     // Новое сообщение или ручное продолжение отменяет отложенную попытку: иначе она сработала бы
     // поверх только что начатого запуска и заменила его.
     if(!options.auto)cancelAutoResume();
+    if(!options.auto)contextCompactionsRef.current=0;
     const content=item?withAttachments(item.text,item.attachments):"";
     const history=resuming
       ?toUserTurns(messagesRef.current)
       :[...toUserTurns(messagesRef.current),{role:"user" as const,content}];
-    replaceMessages(resuming
-      ?[...messagesRef.current,{role:"assistant",content:""}]
-      :[...messagesRef.current,{role:"user",content},{role:"assistant",content:""}]);
+    // Продолжение после пустого ответа переиспользует его облачко: иначе после каждого
+    // автоматического сокращения в чате оставалась бы пустая реплика ассистента.
+    const last=messagesRef.current.at(-1);
+    const reuseEmpty=resuming&&last?.role==="assistant"&&!last.content;
+    replaceMessages(reuseEmpty
+      ?[...messagesRef.current]
+      :resuming
+        ?[...messagesRef.current,{role:"assistant",content:""}]
+        :[...messagesRef.current,{role:"user",content},{role:"assistant",content:""}]);
     setResume(null);
     setRunning(true);
     setNotice("");
-    setContextUsage(null);
     // Новая задача — новый итог: прошлая точка уже в истории, и напоминание о ней не нужно.
     setChangesNotice(null);
     // Отправленное сообщение и ответ на него — то, что хочется видеть, даже если до этого
@@ -901,11 +914,6 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
           if(last?.role==="assistant")next[next.length-1]={...last,reasoning:(last.reasoning??"")+delta};
           return next;
         });
-      }
-      // Сколько контекста занято на шаге и какой у него предел: видно заранее, а не только
-      // по ошибке «переполнен контекст» в конце.
-      if(event.type==="run.progress"&&typeof event.budget==="number"&&event.budget>0){
-        setContextUsage({tokens:typeof event.tokens==="number"?event.tokens:0,budget:event.budget});
       }
       // The server runs only a few agents at once, so a busy moment makes the run wait instead
       // of failing. The line says so and disappears the moment the run really starts.
@@ -1002,15 +1010,42 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
         // Задача записана в историю проекта. Отправка на GitHub — только по кнопке пользователя.
         setChangesNotice({shortSha:event.checkpoint.shortSha});
       }
-      if(event.type==="run.completed"){completedRef.current=true;endRun(socket,{drain:true});onChanged();refreshReasoningSupport()}
+      if(event.type==="run.completed"){completedRef.current=true;contextCompactionsRef.current=0;endRun(socket,{drain:true});onChanged();refreshReasoningSupport()}
       if(event.type==="run.failed"){
-        // A run that died on the context limit has a different fix than a failed tool call, so the
-        // panel says which one it is instead of leaving the user with the provider's wording.
-        const overflow=event.code==="CONTEXT_OVERFLOW";
-        updateMessages(current=>[...current,{role:"assistant",content:"Ошибка: "+(event.error??"неизвестная ошибка")+(overflow?"\n\nИстория этого диалога уже слишком большая для модели: начните новый диалог или разбейте задачу на части — либо нажмите «Продолжить»: история будет сокращена.":"")}]);
-        endRun(socket,{drain:false,notice:overflow?"Запуск остановлен: переполнен контекст модели.":"Запуск остановлен ошибкой — можно продолжить с этого места.",resume:{
+        // Переполнение контекста — не ответ пользователю, а внутренняя деталь запуска. Сервер
+        // уже сокращает старые шаги; панель повторяет запуск сама, чтобы человек видел работу,
+        // а не строку валидатора провайдера. После двух попыток остаётся понятная кнопка.
+        const overflow=event.code==="CONTEXT_OVERFLOW"||event.code==="TOO_MANY_MESSAGES";
+        if(overflow){
+          const attempt=contextCompactionsRef.current+1;
+          if(attempt<=MAX_CONTEXT_COMPACTIONS){
+            contextCompactionsRef.current=attempt;
+            endRun(socket,{drain:false,notice:"История диалога стала большой — сокращаю её и продолжаю автоматически…"});
+            cancelAutoResume();
+            autoResumeTimerRef.current=window.setTimeout(()=>{
+              autoResumeTimerRef.current=null;
+              startRun(null,{resumeReason:"контекст диалога переполнен: старые шаги автоматически сокращены, продолжай с того же места и не начинай задачу заново",auto:true});
+            },700);
+            return;
+          }
+          const text="История диалога стала очень длинной. Старые шаги уже сокращены, но модели всё ещё не хватает места — нажмите «Продолжить».";
+          updateMessages(current=>{
+            const next=[...current];
+            const last=next.at(-1);
+            if(last?.role==="assistant"&&!last.content)next[next.length-1]={...last,content:text};
+            else next.push({role:"assistant",content:text});
+            return next;
+          });
+          endRun(socket,{drain:false,notice:"История сокращена — нажмите «Продолжить».",resume:{
+            reason:"контекст диалога переполнен после автоматического сокращения",
+            label:"История сокращена — продолжите с того же места.",
+          }});
+          return;
+        }
+        updateMessages(current=>[...current,{role:"assistant",content:"Ошибка: "+(event.error??"неизвестная ошибка")}]);
+        endRun(socket,{drain:false,notice:"Запуск остановлен ошибкой — можно продолжить с этого места.",resume:{
           reason:"запуск был остановлен ошибкой: "+(event.error??"неизвестная ошибка").slice(0,160),
-          label:overflow?"Переполнен контекст модели: продолжение начнётся с сокращённой историей.":"Запуск остановлен ошибкой — агент продолжит с того же места.",
+          label:"Запуск остановлен ошибкой — агент продолжит с того же места.",
         }});
       }
       if(event.type==="error"){
@@ -1433,14 +1468,6 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     }
   }
 
-  // Остаток бюджета считается от последнего измеренного шага. Окно может уменьшиться на ходу
-  // (провайдер назвал свой предел), поэтому проценты берутся от актуального `budget`, а не от
-  // стартовой настройки.
-  const contextUsed=contextUsage?Math.min(contextUsage.budget,Math.max(0,contextUsage.tokens)):0;
-  const contextLeft=contextUsage?Math.max(0,contextUsage.budget-contextUsed):0;
-  const contextLeftPercent=contextUsage?Math.round(contextLeft/Math.max(1,contextUsage.budget)*100):0;
-  const contextUsedPercent=contextUsage?100-contextLeftPercent:0;
-
   return <section className="chat">
     {/* Переписка и её закладки. Полоска закладок — рядом со скроллом, а не в нём: у каждой метки
         своя точка в переписке, и она должна оставаться на месте при прокрутке. */}
@@ -1704,12 +1731,6 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
         {onOpenChanges&&<span className="changes-toast-open">Открыть</span>}
       </button>}
       {notice&&<div className="composer-notice">{notice}</div>}
-      {running&&contextUsage&&<div className={"composer-context"+(contextLeftPercent<=15?" is-tight":"")} title={"Контекст шага: занято "+contextUsed+" из "+contextUsage.budget+" токенов, осталось "+contextLeft}>
-        <span className="composer-context-label">Контекст</span>
-        <i className="composer-context-bar" aria-hidden="true"><span style={{width:contextUsedPercent+"%"}}/></i>
-        <b>осталось {contextLeftPercent}%</b>
-        <span className="composer-context-numbers">{contextUsed.toLocaleString("ru-RU")} / {contextUsage.budget.toLocaleString("ru-RU")}</span>
-      </div>}
     </div>
 
     {/* Вопрос агента — отдельное модальное окно: оно не спорит с перепиской и не зависит от того,

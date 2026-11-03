@@ -288,6 +288,18 @@ test("длинные просьбы не вытесняют остальную �
   assert.ok(note.length <= CUT_NOTE_CHARS, "заметка не растёт без предела: " + note.length);
 });
 
+test("жёсткий предел числа сообщений не останавливает запуск и сохраняет текущую задачу", () => {
+  const messages: ChatMessage[] = [
+    ...Array.from({ length: 82 }, (_, index) => ({ role: "system" as const, content: "служебная заметка " + index })),
+    { role: "user", content: "текущая задача, которую нельзя потерять" },
+  ];
+  const { messages: trimmed, report } = trimMessagesToBudget(messages, { budgetTokens: 1000000, maxMessages: 80 });
+  assert.ok(report.messages <= 80, "запрос укладывается в предел: " + report.messages);
+  assert.ok(trimmed.some(message => message.role === "user" && message.content.includes("текущая задача")));
+  // Служебные заметки не выбрасываются: они сливаются в одну, чтобы освободить место в массиве.
+  assert.ok(trimmed.some(message => message.role === "system" && message.content.includes("служебная заметка 0")));
+});
+
 test("недостижимый предел сообщений — ошибка с числами, а не вечный отбор", () => {
   const messages: ChatMessage[] = [
     { role: "system", content: "промпт" },

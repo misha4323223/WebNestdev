@@ -632,6 +632,38 @@ export function trimMessagesToBudget(
   }
   if (!overBudget()) return done();
 
+  // 4b — the protected window and the system notes can fill the count cap even after every
+  // removable group is gone. A request that cannot be sent is worse than a shorter one, so the
+  // quality window yields here: oldest whole groups are dropped beyond it, while the current user
+  // message and every system message stay. This is the case that used to stop a long run with
+  // "82 messages, limit 80" — the trim had run out of removable history and refused instead of
+  // making the request fit. A tiny cap can still be genuinely impossible (the system block alone
+  // is longer), which remains a `ContextBudgetError` below.
+  if (overCount() && maxMessages >= MIN_MAX_MESSAGES) {
+    const lastUser = [...working].reverse().find(message => message.role === "user");
+    for (const group of groupMessages(working)) {
+      if (!overCount()) break;
+      if (group.messages.some(message => message.role === "system")) continue;
+      if (lastUser && group.messages.includes(lastUser)) continue;
+      for (const message of group.messages) {
+        collectCut(cut, message);
+        dropMessage(message);
+        dropped++;
+      }
+      const removed = new Set(group.messages);
+      working = working.filter(message => !removed.has(message));
+    }
+    // If the notices alone do not fit, one combined system message does. The model still reads
+    // all of them, but the array gets the headroom the provider's validator demands.
+    const systems = working.filter(message => message.role === "system");
+    if (overCount() && systems.length > 1) {
+      const rest = working.filter(message => message.role !== "system");
+      working = [{ role: "system", content: systems.map(message => message.content).join("\n\n") }, ...rest];
+      totalChars = messageChars(working);
+    }
+  }
+  if (!overBudget()) return done();
+
   // 5 — last resort: shorten what is left, newest included.
   if (overTokens()) {
     for (let i = 0; i < working.length && overTokens(); i++) {
