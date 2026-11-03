@@ -2,6 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireUser } from "../auth/auth.js";
 import { findYandexIdentityByUserId } from "../auth/yandex-account-store.js";
+import { findVkIdentityByUserId } from "../auth/vk-account-store.js";
 import { findPhoneByUserId, formatPhone } from "../auth/phone-store.js";
 import { getUserPreferences, saveUserPreferences, type UserPreferences } from "../account/account-store.js";
 import { getUserProfile, saveUserProfile, updateUserProfile } from "../account/profile-store.js";
@@ -59,8 +60,9 @@ const profilePatchSchema = z.object({
 export async function registerAccountRoutes(app: FastifyInstance) {
   app.get("/api/account/settings", async (request, reply) => {
     const user = await requireUser(request, reply); if (!user) return;
-    const [yandex, phone, profile] = await Promise.all([
+    const [yandex, vk, phone, profile] = await Promise.all([
       findYandexIdentityByUserId(user.id),
+      findVkIdentityByUserId(user.id),
       findPhoneByUserId(user.id),
       getUserProfile(user.id),
     ]);
@@ -73,6 +75,7 @@ export async function registerAccountRoutes(app: FastifyInstance) {
         // отдельно, а почта берётся из контактов знакомства.
         ...(phone ? { phone: formatPhone(phone) } : {}),
         ...(yandex ? { yandex: { login: yandex.login, email: yandex.email ?? null } } : {}),
+        ...(vk ? { vk: { name: vk.name, email: vk.email ?? null } } : {}),
       },
       // Имя и почта для связи, которые аккаунт оставил при знакомстве. null — ещё не оставил.
       profile,

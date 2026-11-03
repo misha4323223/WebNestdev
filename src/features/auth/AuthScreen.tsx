@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { getYandexAuthStatus, startPhoneLogin, verifyPhoneLogin, type YandexAuthStatus } from "../../lib/auth-api";
+import { getVkAuthStatus, getYandexAuthStatus, startPhoneLogin, verifyPhoneLogin, type VkAuthStatus, type YandexAuthStatus } from "../../lib/auth-api";
 import { WebNestLogo } from "../../components/WebNestLogo";
 import { openCookieSettings } from "../legal/CookieConsent";
 import { legalPath } from "../../lib/legal";
@@ -14,6 +14,17 @@ const AUTH_ART = "/brand/file_000000005ed481f4a60f669dea9ef0ed.webp";
  * this screen (the session already exists), so every text here is a failure with a
  * next step: "не удалось" without a reason is exactly what makes an OAuth setup hard.
  */
+const vkNotices: Record<string, string> = {
+  ok: "VK подтвердил вход, но сессия не сохранилась. Разрешите cookie для сайта и попробуйте ещё раз.",
+  denied: "Вы отменили вход через VK ID.",
+  not_configured: "Вход через VK ID временно недоступен. Используйте вход по SMS.",
+  state_expired: "Ссылка входа через VK ID устарела. Нажмите кнопку ещё раз.",
+  token_error: "VK ID не выдал токен входа. Проверьте Redirect URL и тип приложения в кабинете VK ID.",
+  profile_error: "VK ID не отдал профиль. Проверьте доступ к личным данным в настройках приложения.",
+  error: "Не удалось завершить вход через VK ID.",
+  blocked: "Аккаунт заблокирован администратором. Напишите в поддержку.",
+};
+
 const yandexNotices: Record<string, string> = {
   // Reaching this screen with `ok` means the session cookie did not stick, otherwise
   // AuthGate would already be showing the app.
@@ -40,6 +51,8 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void })
   // Яндекс ID — отдельный вход: его состояние и ошибки не должны смешиваться с SMS.
   const [yandex, setYandex] = useState<YandexAuthStatus | null>(null);
   const [yandexNotice, setYandexNotice] = useState("");
+  const [vk, setVk] = useState<VkAuthStatus | null>(null);
+  const [vkNotice, setVkNotice] = useState("");
   const [busy, setBusy] = useState(false);
   const [seconds, setSeconds] = useState(0);
 
@@ -52,24 +65,37 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void })
   useEffect(() => {
     let alive = true;
     void getYandexAuthStatus().then(status => { if (alive) setYandex(status); }).catch(() => {});
+    void getVkAuthStatus().then(status => { if (alive) setVk(status); }).catch(() => {});
     return () => { alive = false; };
   }, []);
 
   // Read the OAuth result in an effect: a state initializer runs twice under StrictMode.
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    const status = params.get("yandex_login");
-    if (!status) return;
+    const yandexStatus = params.get("yandex_login");
+    const vkStatus = params.get("vk_login");
+    if (!yandexStatus && !vkStatus) return;
     params.delete("yandex_login");
+    params.delete("vk_login");
     const query = params.toString();
     window.history.replaceState(null, "", window.location.pathname + (query ? "?" + query : ""));
-    setYandexNotice(yandexNotices[status] ?? yandexNotices.error);
+    if (yandexStatus) setYandexNotice(yandexNotices[yandexStatus] ?? yandexNotices.error);
+    if (vkStatus) setVkNotice(vkNotices[vkStatus] ?? vkNotices.error);
   }, []);
 
   function signInWithYandex() {
     setError("");
     setYandexNotice("");
+    setVkNotice("");
     const path = yandex?.loginPath ?? "/api/auth/yandex/start";
+    window.location.href = path + "?origin=" + encodeURIComponent(window.location.origin);
+  }
+
+  function signInWithVk() {
+    setError("");
+    setYandexNotice("");
+    setVkNotice("");
+    const path = vk?.loginPath ?? "/api/auth/vk/start";
     window.location.href = path + "?origin=" + encodeURIComponent(window.location.origin);
   }
 
@@ -107,6 +133,7 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void })
   }
 
   const yandexUnavailable = yandex?.configured === false;
+  const vkUnavailable = vk?.configured === false;
 
   return <main className="auth-screen">
     <section className="auth-card">
@@ -121,12 +148,20 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void })
         </div>
 
         {stage === "number" && <>
-          <button type="button" className="auth-yandex" onClick={signInWithYandex} disabled={yandexUnavailable}>
-            <span className="auth-yandex-mark" aria-hidden="true">Я</span>
-            Войти через Яндекс ID
-          </button>
-          {yandexUnavailable && <div className="auth-yandex-hint">Яндекс ID сейчас недоступен — войдите по SMS.</div>}
+          <div className="auth-oauth-buttons">
+            <button type="button" className="auth-yandex" onClick={signInWithYandex} disabled={yandexUnavailable}>
+              <span className="auth-yandex-mark" aria-hidden="true">Я</span>
+              Войти через Яндекс ID
+            </button>
+            <button type="button" className="auth-vk" onClick={signInWithVk} disabled={vkUnavailable}>
+              <span className="auth-vk-mark" aria-hidden="true"><img src="/brand/logos/vk.svg" alt=""/></span>
+              Войти через VK ID
+            </button>
+          </div>
+          {yandexUnavailable && <div className="auth-oauth-hint">Яндекс ID сейчас недоступен — войдите по SMS.</div>}
+          {vkUnavailable && <div className="auth-oauth-hint">VK ID сейчас недоступен — войдите по SMS.</div>}
           {yandexNotice && <div className="auth-error auth-yandex-error">{yandexNotice}</div>}
+          {vkNotice && <div className="auth-error auth-oauth-error">{vkNotice}</div>}
           <div className="auth-divider">или по номеру телефона</div>
         </>}
 

@@ -336,6 +336,18 @@ Server environment:
 2. Provide `YANDEX_CLIENT_ID` and `YANDEX_CLIENT_SECRET` (`YANDEX_CALLBACK_URL`, `YANDEX_FRONTEND_URL` and `YANDEX_OAUTH_SCOPE` override the defaults; the scope defaults to `cloud-api`).
 3. The key path does not need an OAuth app at all, so these values are only used by the sign-in flow; the connector card opens the console and the key form regardless.
 
+### VK ID sign-in
+
+VK ID is the second social sign-in button. The server uses Authorization Code + PKCE on
+`https://id.vk.ru`; a self-employed account can register the app as «Физическое лицо →
+Самозанятый» without ИП/ООО and verify it through Госуслуги, Сбер ID or T-ID. Create a web
+app at `https://id.vk.ru`, set the base domain to the panel domain and the trusted redirect
+to `https://<panel-domain>/api/auth/vk/callback`, then add `VK_CLIENT_ID` in Settings →
+Environment (or the server keys panel). A public client needs nothing else; a confidential
+one also takes `VK_SERVICE_TOKEN` and the server IP in its allowlist. `VK_OAUTH_SCOPE=email`
+is optional after e-mail access is enabled. The full checklist, including the 60-day
+verification window, is in [docs/AUTH_PRODUCTION_PLAN.md](docs/AUTH_PRODUCTION_PLAN.md#vk-id-sign-in).
+
 See docs/AUTH_PRODUCTION_PLAN.md for the staged rollout. Credential encryption, legacy-token migration, and key rotation are documented in docs/SECRET_ENCRYPTION.md.
 
 ## Other Russian clouds

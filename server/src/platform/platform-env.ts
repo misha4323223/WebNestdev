@@ -13,7 +13,7 @@ import { parseAuthorizedKeyJson, parseServiceAccountKey } from "../yandex/yandex
  * a deployment that never opens the panel behaves exactly as before.
  */
 export type PlatformEnvKind = "secret" | "json-key" | "value" | "url" | "path" | "flag";
-export type PlatformEnvGroup = "github" | "gitlab" | "gitverse" | "yandex" | "sms" | "ai" | "search" | "billing" | "plans" | "mail" | "support";
+export type PlatformEnvGroup = "github" | "gitlab" | "gitverse" | "yandex" | "vk" | "sms" | "ai" | "search" | "billing" | "plans" | "mail" | "support";
 
 export type PlatformEnvEntry = {
   name: string;
@@ -43,6 +43,12 @@ export const PLATFORM_ENV_CATALOG: PlatformEnvEntry[] = [
 
   { name: "GITVERSE_CLIENT_ID", group: "gitverse", label: "Client ID", hint: "GitVerse → Настройки профиля → Приложения → ваше приложение. OAuth в GitVerse работает только с PKCE — сервер делает это сам.", kind: "value" },
   { name: "GITVERSE_CLIENT_SECRET", group: "gitverse", label: "Client secret", hint: "Там же. GitVerse показывает секрет один раз — скопируйте сразу.", kind: "secret" },
+
+  { name: "VK_CLIENT_ID", group: "vk", label: "VK ID Client ID", hint: "Приложение в сервисе авторизации VK ID (id.vk.ru), раздел «Настройки приложения». Для входа нужен только Client ID; профиль бизнеса подтверждается отдельно, самозанятому доступен тип «Физическое лицо → Самозанятый».", kind: "value" },
+  { name: "VK_SERVICE_TOKEN", group: "vk", label: "Сервисный ключ доступа", hint: "Только для конфиденциального приложения: им VK подтверждает обмен кода на бэкенде. Публичному приложению не нужен — хватает PKCE. Не путайте с «Защищённым ключом» для SDK.", kind: "secret" },
+  { name: "VK_CALLBACK_URL", group: "vk", label: "Redirect URL", hint: "Необязательно: по умолчанию https://<домен>/api/auth/vk/callback. Должен буква в букву совпадать с доверенным redirect URL в приложении VK ID.", kind: "url" },
+  { name: "VK_FRONTEND_URL", group: "vk", label: "Адрес возврата", hint: "Необязательно: куда вернуть браузер после входа (по умолчанию — корень панели).", kind: "url" },
+  { name: "VK_OAUTH_SCOPE", group: "vk", label: "OAuth scope", hint: "Необязательно: по умолчанию запрашивается только vkid.personal_info. Впишите email после того, как включите почту в доступах приложения; телефон требует подтверждённого профиля бизнеса.", kind: "value" },
 
   { name: "YANDEX_CLIENT_ID", group: "yandex", label: "Yandex ID Client ID", hint: "Приложение в oauth.yandex.ru. Нужен для входа через Яндекс; ключ сервисного аккаунта работает и без него.", kind: "value" },
   { name: "YANDEX_CLIENT_SECRET", group: "yandex", label: "Yandex ID Client secret", hint: "Там же, в настройках приложения Yandex ID.", kind: "secret" },
@@ -193,7 +199,7 @@ export type PlatformEnvStatus = {
 type StoredEntry = { value: string; preview: string; updatedAt: string };
 type StoreFile = { version: 1; values: Record<string, StoredEntry> };
 
-const GROUP_LABEL: Record<PlatformEnvGroup, string> = { github: "GitHub", gitlab: "GitLab", gitverse: "GitVerse", yandex: "Yandex Cloud", sms: "SMS-провайдеры", ai: "AI-провайдер платформы", search: "Веб-поиск агента", billing: "Оплата (Robokassa)", plans: "Тарифы", mail: "Почта (Yandex Cloud Postbox)", support: "Поддержка" };
+const GROUP_LABEL: Record<PlatformEnvGroup, string> = { github: "GitHub", gitlab: "GitLab", gitverse: "GitVerse", yandex: "Yandex Cloud", vk: "VK ID", sms: "SMS-провайдеры", ai: "AI-провайдер платформы", search: "Веб-поиск агента", billing: "Оплата (Robokassa)", plans: "Тарифы", mail: "Почта (Yandex Cloud Postbox)", support: "Поддержка" };
 
 export function platformEnvGroupLabel(group: PlatformEnvGroup) {
   return GROUP_LABEL[group];

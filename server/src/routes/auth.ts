@@ -3,6 +3,7 @@ import { z } from "zod";
 import { attachSession, getCurrentUser, requireUser, SESSION_COOKIE } from "../auth/auth.js";
 import { createUser, deleteSession, deleteUserSessions, verifyUser, EMAIL_TAKEN_MESSAGE } from "../auth/auth-store.js";
 import { findYandexIdentityByUserId } from "../auth/yandex-account-store.js";
+import { findVkIdentityByUserId } from "../auth/vk-account-store.js";
 import { findPhoneByUserId, formatPhone } from "../auth/phone-store.js";
 import { getUserProfile } from "../account/profile-store.js";
 import { checkAuthRateLimit } from "../auth/auth-rate-limit.js";
@@ -17,8 +18,9 @@ export async function registerAuthRoutes(app:FastifyInstance){
     if (!user) return {authenticated:false,user:null,onboarding:{profile:null}};
     // Which identity opened the account is shown in the profile: a Yandex ID sign-in
     // has no password, and the synthetic address must not look like a real e-mail.
-    const [yandex, phone] = await Promise.all([
+    const [yandex, vk, phone] = await Promise.all([
       findYandexIdentityByUserId(user.id),
+      findVkIdentityByUserId(user.id),
       findPhoneByUserId(user.id),
     ]);
     return {
@@ -31,6 +33,7 @@ export async function registerAuthRoutes(app:FastifyInstance){
         // он иначе выглядел бы как непонятный email.
         ...(phone ? {phone:formatPhone(phone)} : {}),
         ...(yandex ? {yandex:{login:yandex.login,email:yandex.email??null}} : {}),
+        ...(vk ? {vk:{name:vk.name,email:vk.email??null}} : {}),
       },
       // Контакты знакомства приходят вместе с сессией: по ним интерфейс решает, показывать
       // ли первый экран. Отдельный запрос означал бы мигание главной перед знакомством.

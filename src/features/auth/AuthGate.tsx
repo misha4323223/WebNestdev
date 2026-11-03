@@ -88,13 +88,14 @@ export function AuthGate(){
   };
   useEffect(()=>{refresh()},[]);
   useEffect(()=>{localStorage.removeItem("webnestdev.openWorkspace")},[]);
-  // A successful Yandex sign-in never mounts AuthScreen, so its query parameter is
+  // A successful OAuth sign-in never mounts AuthScreen, so its query parameter is
   // cleaned here; a failed one is left for the sign-in screen to explain and remove.
   useEffect(()=>{
     if(state!=="authenticated")return;
     const params=new URLSearchParams(window.location.search);
-    if(params.get("yandex_login")!=="ok")return;
+    if(params.get("yandex_login")!=="ok"&&params.get("vk_login")!=="ok")return;
     params.delete("yandex_login");
+    params.delete("vk_login");
     const query=params.toString();
     window.history.replaceState(null,"",window.location.pathname+(query?"?"+query:""));
   },[state]);

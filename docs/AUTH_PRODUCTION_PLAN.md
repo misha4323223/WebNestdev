@@ -171,20 +171,71 @@ resources, use a service account key with explicit roles (the connector's main p
 Cloud identity federation for an organisation, or a refresh token issued by the Cloud
 OAuth flow. The sign-in button never silently turns into cloud access.
 
-### Why not VK ID / Госуслуги
+## VK ID sign-in
+
+The sign-in screen also offers **«Войти через VK ID»**. It is a separate public flow on the
+server (`/api/auth/vk/start` and `/api/auth/vk/callback`) and uses VK's current OAuth 2.1
+endpoints on `https://id.vk.ru`, not the legacy `oauth.vk.com`:
+
+- Authorization Code + PKCE (`S256`) is mandatory. The server generates a fresh
+  `code_verifier` (43–128 characters) and a 64-character `state` for every attempt; the
+  short-lived `webnestdev_vk_login` cookie keeps the verifier, the state and the origin
+  that started the flow. The access token is used once to read the profile and is never
+  stored.
+- VK returns the result inside a JSON `payload` parameter; the callback accepts direct
+  `code`/`state`/`device_id` query parameters too, which keeps older integrations and
+  tests working. The state is compared before any token request.
+- The VK profile id is stored in `vk_accounts` (PostgreSQL) or `auth/vk-accounts.json`
+  (local JSON). Every VK identity gets its own local account with a synthetic address
+  (`vk-…@vk-id.webnestdev.local`). The VK e-mail is stored with the identity but **does
+  not merge accounts**, for the same reason as Yandex: an unverified e-mail/password
+  registration must not be taken over by a later social sign-in.
+- The callback must be exactly the trusted redirect URL registered in the VK app, for
+  example `https://nestdev.ru/api/auth/vk/callback`. VK rejects anchors, a different path
+  or an unregistered domain; the callback response is a redirect, so the page has no
+  scripts or embedded content.
+
+Configuration, all readable from the server keys panel without a restart:
+
+| Variable | Required | Meaning |
+| --- | --- | --- |
+| `VK_CLIENT_ID` | yes | Client ID of the VK ID web app. Without it the button is disabled. |
+| `VK_SERVICE_TOKEN` | confidential apps | Service access key sent with the code exchange; the server IP must also be in the app's allowlist. A public app uses PKCE alone. |
+| `VK_CALLBACK_URL` | no | Defaults to `<panel origin>/api/auth/vk/callback`; must match the app exactly. |
+| `VK_FRONTEND_URL` | no | Where to return the browser after sign-in; defaults to the panel root. |
+| `VK_OAUTH_SCOPE` | no | Empty by default (`vkid.personal_info`). Set to `email` after enabling e-mail access in the app; phone needs a verified business profile. |
+
+### VK ID for a self-employed account
+
+VK ID explicitly supports **«Физическое лицо → Самозанятый»** in VK Business ID: neither
+ИП nor ООО is required, and no separate contract is signed. What is required:
+
+1. Create a business profile at `https://id.vk.ru` and choose the self-employed type.
+2. Verify it within **60 days** after creating the first app. Self-employed profiles are
+   verified online through **Госуслуги**, **Сбер ID** (with the «Своё дело» service) or
+   **T-ID**; manual document review is available only to legal entities. Without
+   verification the app is blocked.
+3. Create a **web application**, set the base domain (`nestdev.ru`) and the trusted
+   redirect URL (`https://nestdev.ru/api/auth/vk/callback`), then enable the profile and,
+   if needed, e-mail access.
+
+Before verification VK allows up to three apps and the basic profile/e-mail; phone access
+and higher API limits appear after it. OAuth sign-ins are not counted in VK's API call
+limits. A public client is the simplest choice: it needs only `VK_CLIENT_ID` and PKCE. If
+VK issues the app as confidential, paste the service key into `VK_SERVICE_TOKEN` and add
+the server's public IP to the app's allowlist.
+
+### Why not Госуслуги / other providers
 
 These are identity providers, not SMS gateways, and they change what the user has to do:
 
-- **VK ID** — free OAuth/SDK, supports phone-login inside the VK flow, but the user must
-  log in *through VK*, not by typing a code we send. Good as an extra button, not as a
-  standalone phone-code login.
 - **ЕСИА / Госуслуги** — available only to government bodies and registered organisations
   with an agreement, not to ordinary developers, so it is not an option here.
 - **Telegram / MAX / Sber ID** — usable as additional identity buttons, subject to the
   same "login through their flow" caveat.
 
-Yandex ID is now implemented as such an additional button; the SMS-code login stays the
-passwordless phone option.
+VK ID and Yandex ID are now implemented as such additional buttons; the SMS-code login
+stays the passwordless phone option.
 
 ## Phase 5 — Security hardening
 - CSRF protection where required by the final cookie architecture.
@@ -195,12 +246,13 @@ passwordless phone option.
 
 ## Current milestone
 
-Phase 1 is implemented locally, plus passwordless **phone login for Russian numbers**
-and **Yandex ID sign-in** (see above). Both open the same kind of local user: a Yandex
-sign-in needs no SMS, and a phone sign-in needs no Yandex app. This is independent of
-Yandex Cloud access — see the table above. Phone login runs in test mode until one of
-the SMS provider blocks is filled in; Yandex ID needs only `YANDEX_CLIENT_ID` and
-`YANDEX_CLIENT_SECRET`; the e-mail/password flow needs no external service.
+Phase 1 is implemented locally, plus passwordless **phone login for Russian numbers**,
+**Yandex ID sign-in** and **VK ID sign-in** (see above). All open the same kind of local
+user: a social sign-in needs no SMS, and a phone sign-in needs no OAuth app. This is
+independent of Yandex Cloud access — see the table above. Phone login runs in test mode
+until one of the SMS provider blocks is filled in; Yandex ID needs `YANDEX_CLIENT_ID`
+and `YANDEX_CLIENT_SECRET`, VK ID needs `VK_CLIENT_ID` (and optionally
+`VK_SERVICE_TOKEN`); the e-mail/password flow needs no external service.
 
 Phone login is covered by tests:
 
@@ -217,4 +269,7 @@ Phone login is covered by tests:
   without e-mail still gets a readable synthetic address.
 - `server/src/routes/yandex-auth.test.ts` — the public start redirect, the state cookie,
   the mocked token/profile exchange, the session cookie, `state_expired`, and the
+  `not_configured` return.
+- `server/src/routes/vk-auth.test.ts` — VK's `payload` result, PKCE parameters, the
+  service token, direct query parameters, account reuse, tampered state, and the
   `not_configured` return.

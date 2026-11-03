@@ -111,6 +111,7 @@ const PK_BY_TABLE: Record<string, string[]> = {
   users: ["id"],
   phone_accounts: ["phone"],
   yandex_accounts: ["yandex_id"],
+  vk_accounts: ["vk_id"],
   sessions: ["id"],
   nodes: ["id"],
   projects: ["id"],
@@ -281,6 +282,17 @@ export async function initializeStorage(): Promise<void> {
       created_at TEXT NOT NULL
     )`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("yandex_accounts")}_user ON ${tbl("yandex_accounts")} (user_id)`);
+
+    // VK ID sign-in keeps the same kind of link: the profile id is the key, the
+    // token is used once and never stored, and the e-mail does not merge accounts.
+    await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("vk_accounts")} (
+      vk_id TEXT NOT NULL PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      name TEXT NOT NULL,
+      email TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL
+    )`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("vk_accounts")}_user ON ${tbl("vk_accounts")} (user_id)`);
 
     await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("sessions")} (
       id TEXT NOT NULL PRIMARY KEY,

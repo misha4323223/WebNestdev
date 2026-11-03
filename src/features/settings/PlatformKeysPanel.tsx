@@ -11,7 +11,7 @@ import { apiJson } from "../../lib/api";
 type PlatformKeySource = "panel" | "environment" | "none";
 type PlatformKey = {
   name: string;
-  group: "github" | "gitlab" | "gitverse" | "yandex" | "sms" | "ai" | "search" | "billing" | "plans" | "mail" | "support";
+  group: "github" | "gitlab" | "gitverse" | "yandex" | "vk" | "sms" | "ai" | "search" | "billing" | "plans" | "mail" | "support";
   label: string;
   hint: string;
   kind: "secret" | "json-key" | "value" | "url" | "path" | "flag";
@@ -27,6 +27,7 @@ const GROUP_TITLES: Record<PlatformKey["group"], { title: string; note: string }
   gitlab: { title: "GitLab OAuth", note: "Импорт репозиториев из gitlab.com или своего GitLab. Callback: <адрес панели>/api/gitlab/callback. Приложение создаётся в аватаре → Edit profile → Access → Applications (прямая ссылка: https://gitlab.com/-/user_settings/applications) с правами read_api, read_repository и write_repository; личный токен работает и без OAuth-приложения." },
   gitverse: { title: "GitVerse OAuth", note: "Импорт и отправка коммитов в GitVerse. Callback: <адрес панели>/api/gitverse/callback. Приложение создаётся в Настройках профиля → Приложения, права read:user, read:repository и write:repository; GitVerse требует PKCE — сервер добавляет code_challenge сам. Личный токен тоже работает." },
   yandex: { title: "Yandex Cloud", note: "SMS входа по номеру и подключение облака. Ключ сервисного аккаунта принимается JSON-файлом целиком." },
+  vk: { title: "VK ID", note: "Вход через VK ID. Client ID берётся в сервисе авторизации VK ID (id.vk.ru), Redirect URL — <адрес панели>/api/auth/vk/callback. Публичному приложению достаточно Client ID и PKCE; конфиденциальному нужен сервисный ключ и IP сервера в списке разрешённых. Профиль самозанятого подтверждается через Госуслуги, Сбер ID или T-ID." },
   sms: { title: "SMS-провайдеры", note: "Достаточно одного провайдера: сервер выберет первый, у которого есть ключ." },
   ai: { title: "Модель платформы", note: "Модель по умолчанию для проектов без своего провайдера." },
   search: { title: "Веб-поиск агента", note: "Тариф «Старт» ищет через DuckDuckGo без ключей. На платных тарифах основным провайдером работает Yandex Search API (ключ сервисного аккаунта со scope yc.search-api.execute и каталог с ролью search-api.webSearch.user), а Tavily — резервным." },
@@ -126,7 +127,7 @@ export function PlatformKeysPanel() {
 
   // Почта стоит рядом с поддержкой: адрес отправителя и ключ SMTP — это то, что правят, когда
   // не уходит письмо, и раньше группы не было в списке вовсе, хотя ключи в каталоге есть.
-  const groups = ["support", "mail", "billing", "github", "gitlab", "yandex", "sms", "ai", "search"] as const;
+  const groups = ["support", "mail", "billing", "github", "gitlab", "yandex", "vk", "sms", "ai", "search"] as const;
   const keys = state.keys ?? [];
 
   return <section className="settings-panel platform-keys">

@@ -46,6 +46,7 @@ import { registerGitLabRoutes } from "./routes/gitlab.js";
 import { registerRepoRoutes } from "./repos/routes.js";
 import { REPO_PROVIDERS } from "./repos/index.js";
 import { registerYandexRoutes } from "./routes/yandex.js";
+import { registerVkRoutes } from "./routes/vk.js";
 import { registerDatabaseRoutes } from "./routes/database.js";
 import { registerCloudRoutes } from "./routes/cloud.js";
 import { registerDomainRoutes } from "./routes/domains.js";
@@ -381,6 +382,7 @@ await registerGitLabRoutes(app);
 // GitVerse и SourceCraft: один и тот же набор маршрутов, разные адаптеры (/api/gitverse, /api/sourcecraft).
 for (const provider of REPO_PROVIDERS) await registerRepoRoutes(app, provider);
 await registerYandexRoutes(app);
+await registerVkRoutes(app);
 await registerDatabaseRoutes(app);
 await registerCloudRoutes(app);
 await registerDomainRoutes(app);

@@ -28,7 +28,7 @@ import { ArrowLeft, ArrowRight, Check, CreditCard, LogOut, Receipt, Settings2, S
 
 type Preferences = UserPreferences;
 type AccountData = {
-  user: { id: string; email: string; phone?: string; createdAt: string; yandex?: { login: string; email: string | null } };
+  user: { id: string; email: string; phone?: string; createdAt: string; yandex?: { login: string; email: string | null }; vk?: { name: string; email: string | null } };
   profile: OnboardingProfile | null;
   preferences: Preferences;
 };
@@ -302,9 +302,10 @@ export function AccountSettingsPanel() {
             {!profile && <p className="account-muted">Профиль ещё не заполнен — контакты появятся после знакомства.</p>}
             {accountPhone && <label>Телефон<input value={accountPhone} readOnly/></label>}
             {account?.user.yandex && <label>Вход через Яндекс ID<input value={"@" + account.user.yandex.login} readOnly/></label>}
+            {account?.user.vk && <label>Вход через VK ID<input value={account.user.vk.name} readOnly/></label>}
             <label>ID аккаунта<input value={account?.user.id ?? ""} readOnly/></label>
             <label>Дата регистрации<input value={dateLabel(account?.user.createdAt ?? null)} readOnly/></label>
-            <div className="account-note"><ShieldCheck size={14}/> {account?.user.yandex ? "Профиль подтверждён через Яндекс ID — данные видны только вам." : "Данные профиля защищены и видны только вам."}</div>
+            <div className="account-note"><ShieldCheck size={14}/> {account?.user.yandex || account?.user.vk ? "Профиль подтверждён через внешний вход — данные видны только вам." : "Данные профиля защищены и видны только вам."}</div>
             {/* Документы в личном кабинете: их ищут здесь, а не только в подвале сайта. */}
             <div className="account-legal">
               <span className="eyebrow">ДОКУМЕНТЫ</span>

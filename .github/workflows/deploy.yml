@@ -196,6 +196,13 @@ jobs:
           YANDEX_CALLBACK_URL: ${{ vars.YANDEX_CALLBACK_URL }}
           YANDEX_FRONTEND_URL: ${{ vars.YANDEX_FRONTEND_URL }}
           YANDEX_OAUTH_SCOPE: ${{ vars.YANDEX_OAUTH_SCOPE }}
+          # VK ID OAuth. Client ID берётся из приложения id.vk.ru; сервисный ключ
+          # нужен только конфиденциальному клиенту, публичному хватает PKCE.
+          VK_CLIENT_ID: ${{ secrets.VK_CLIENT_ID || vars.VK_CLIENT_ID }}
+          VK_SERVICE_TOKEN: ${{ secrets.VK_SERVICE_TOKEN }}
+          VK_CALLBACK_URL: ${{ vars.VK_CALLBACK_URL }}
+          VK_FRONTEND_URL: ${{ vars.VK_FRONTEND_URL }}
+          VK_OAUTH_SCOPE: ${{ vars.VK_OAUTH_SCOPE }}
           # Веб-поиск агента. Ключ Yandex Search API — отдельный (сервисный аккаунт со scope
           # yc.search-api.execute), это не тот ключ, что нужен SMS. Tavily — резерв платных
           # тарифов. Пустые значения не передаются и ничего не стирают на ВМ.
@@ -368,6 +375,11 @@ jobs:
           add_platform_env YANDEX_CALLBACK_URL "$YANDEX_CALLBACK_URL"
           add_platform_env YANDEX_FRONTEND_URL "$YANDEX_FRONTEND_URL"
           add_platform_env YANDEX_OAUTH_SCOPE "$YANDEX_OAUTH_SCOPE"
+          add_platform_env VK_CLIENT_ID "$VK_CLIENT_ID"
+          add_platform_env VK_SERVICE_TOKEN "$VK_SERVICE_TOKEN"
+          add_platform_env VK_CALLBACK_URL "$VK_CALLBACK_URL"
+          add_platform_env VK_FRONTEND_URL "$VK_FRONTEND_URL"
+          add_platform_env VK_OAUTH_SCOPE "$VK_OAUTH_SCOPE"
           add_platform_env WEB_SEARCH_PROVIDER "$WEB_SEARCH_PROVIDER"
           add_platform_env YANDEX_SEARCH_API_KEY "$YANDEX_SEARCH_API_KEY"
           add_platform_env YANDEX_SEARCH_FOLDER_ID "$YANDEX_SEARCH_FOLDER_ID"
@@ -466,6 +478,8 @@ jobs:
           echo "[deploy] OAuth GitVerse: client_id=$(has "${GITVERSE_CLIENT_ID:-}"), secret=$(has "${GITVERSE_CLIENT_SECRET:-}")"
           echo "[deploy] OAuth Яндекс ID: client_id=$(has "${YANDEX_CLIENT_ID:-}"), secret=$(has "${YANDEX_CLIENT_SECRET:-}")"
           echo "[deploy] Yandex ID redirect_uri: ${YANDEX_CALLBACK_URL:-https://<домен панели>/api/yandex/callback}"
+          echo "[deploy] OAuth VK ID: client_id=$(has "${VK_CLIENT_ID:-}"), service_token=$(has "${VK_SERVICE_TOKEN:-}")"
+          echo "[deploy] VK ID redirect_uri: ${VK_CALLBACK_URL:-https://<домен панели>/api/auth/vk/callback}"
           echo "[deploy] Веб-поиск: Yandex Search API key=$(has "${YANDEX_SEARCH_API_KEY:-}"), folder=$(has "${YANDEX_SEARCH_FOLDER_ID:-}"), Tavily=$(has "${TAVILY_API_KEY:-}")"
           echo "[deploy] Холодный ярус: endpoint=$(has "${PLATFORM_S3_ENDPOINT:-}"), бакет=${PLATFORM_S3_BUCKET:-—}, ключ=$(has "${PLATFORM_S3_ACCESS_KEY_ID:-}"), включён=${PROJECT_ARCHIVE_ENABLED:-0}"
           echo "[deploy] Цены расхода: таблица моделей=$(has "${PLATFORM_AI_MODEL_PRICES:-}"), общая ставка=$(has "${PLATFORM_AI_PRICE_INPUT_PER_MILLION:-}"), инфраструктура=$(has "${PLATFORM_INFRA_COST_PER_MONTH:-}"), валюта=${PLATFORM_AI_PRICE_CURRENCY:-USD}"
@@ -546,6 +560,13 @@ jobs:
           YANDEX_CALLBACK_URL: ${{ vars.YANDEX_CALLBACK_URL }}
           YANDEX_FRONTEND_URL: ${{ vars.YANDEX_FRONTEND_URL }}
           YANDEX_OAUTH_SCOPE: ${{ vars.YANDEX_OAUTH_SCOPE }}
+          # VK ID OAuth. Client ID берётся из приложения id.vk.ru; сервисный ключ
+          # нужен только конфиденциальному клиенту, публичному хватает PKCE.
+          VK_CLIENT_ID: ${{ secrets.VK_CLIENT_ID || vars.VK_CLIENT_ID }}
+          VK_SERVICE_TOKEN: ${{ secrets.VK_SERVICE_TOKEN }}
+          VK_CALLBACK_URL: ${{ vars.VK_CALLBACK_URL }}
+          VK_FRONTEND_URL: ${{ vars.VK_FRONTEND_URL }}
+          VK_OAUTH_SCOPE: ${{ vars.VK_OAUTH_SCOPE }}
           # Веб-поиск агента. Ключ Yandex Search API — отдельный (сервисный аккаунт со scope
           # yc.search-api.execute), это не тот ключ, что нужен SMS. Tavily — резерв платных
           # тарифов. Пустые значения не передаются и ничего не стирают на ВМ.
@@ -691,6 +712,11 @@ jobs:
           add_platform_env YANDEX_CALLBACK_URL "$YANDEX_CALLBACK_URL"
           add_platform_env YANDEX_FRONTEND_URL "$YANDEX_FRONTEND_URL"
           add_platform_env YANDEX_OAUTH_SCOPE "$YANDEX_OAUTH_SCOPE"
+          add_platform_env VK_CLIENT_ID "$VK_CLIENT_ID"
+          add_platform_env VK_SERVICE_TOKEN "$VK_SERVICE_TOKEN"
+          add_platform_env VK_CALLBACK_URL "$VK_CALLBACK_URL"
+          add_platform_env VK_FRONTEND_URL "$VK_FRONTEND_URL"
+          add_platform_env VK_OAUTH_SCOPE "$VK_OAUTH_SCOPE"
           add_platform_env WEB_SEARCH_PROVIDER "$WEB_SEARCH_PROVIDER"
           add_platform_env YANDEX_SEARCH_API_KEY "$YANDEX_SEARCH_API_KEY"
           add_platform_env YANDEX_SEARCH_FOLDER_ID "$YANDEX_SEARCH_FOLDER_ID"

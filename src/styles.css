@@ -478,6 +478,15 @@ button,textarea{font:inherit}button{color:inherit}
 .auth-yandex-mark{display:grid;place-items:center;width:20px;height:20px;border-radius:50%;background:#fc3f1d;color:#fff;font-size:12px;font-weight:700;line-height:1}
 .auth-yandex-hint{margin-top:9px;color:#777f89;font-size:10px;line-height:1.5}
 .auth-yandex-error{margin-top:9px}
+.auth-oauth-buttons{display:grid;gap:8px;margin-top:22px}
+.auth-oauth-buttons .auth-yandex{margin-top:0}
+.auth-vk{display:flex;align-items:center;justify-content:center;gap:10px;width:100%;height:40px;border:1px solid #0077ff;border-radius:7px;background:#0077ff;color:#fff;font:inherit;font-size:12px;font-weight:600;cursor:pointer;box-shadow:0 0 0 3px rgba(46,40,34,.55);transition:background .15s ease,border-color .15s ease,transform .15s ease,box-shadow .15s ease}
+.auth-vk:hover:not(:disabled){background:#006ee6;border-color:#006ee6;transform:translateY(-1px);box-shadow:0 0 0 4px rgba(58,49,41,.7)}
+.auth-vk:disabled{opacity:.55;cursor:not-allowed}
+.auth-vk-mark{display:grid;place-items:center;width:20px;height:20px;border-radius:50%;background:#fff}
+.auth-vk-mark img{display:block;width:14px;height:14px}
+.auth-oauth-hint{margin-top:9px;color:#777f89;font-size:10px;line-height:1.5}
+.auth-oauth-error{margin-top:9px}
 .auth-divider{display:flex;align-items:center;gap:10px;margin-top:18px;color:#5c636d;font-size:9px;letter-spacing:.08em;text-transform:uppercase}
 .auth-divider::before,.auth-divider::after{content:"";height:1px;flex:1;background:var(--line-warm)}
 .auth-form{margin-top:16px}

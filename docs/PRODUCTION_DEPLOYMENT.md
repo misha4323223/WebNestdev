@@ -110,6 +110,13 @@ The server intentionally fails fast in production when the allowed-origin list i
   `GITHUB_CALLBACK_URL` и `GITHUB_FRONTEND_URL` можно не задавать: адрес выводится из домена, на
   котором открыта панель. Ротация секрета — «Generate a new client secret» на GitHub, вставить
   новое значение в панель; старый секрет перестаёт работать сразу после этого.
+- **VK ID.** Для кнопки «Войти через VK ID» создайте веб-приложение в сервисе авторизации
+  VK ID (`https://id.vk.ru`), укажите базовый домен панели и доверенный redirect URL
+  `https://<домен панели>/api/auth/vk/callback`, затем вставьте `VK_CLIENT_ID` в панель
+  «Ключи сервера». Публичному приложению больше ничего не нужно; конфиденциальному — ещё
+  `VK_SERVICE_TOKEN` и IP сервера в списке разрешённых. Самозанятый регистрирует профиль
+  бизнеса как «Физическое лицо → Самозанятый» и подтверждает его через Госуслуги, Сбер ID
+  или T-ID в течение 60 дней. Подробности — [AUTH_PRODUCTION_PLAN.md](AUTH_PRODUCTION_PLAN.md#vk-id-sign-in).
 - **Yandex Cloud.** `YANDEX_CLOUD_ID=b1g…` и `YANDEX_FOLDER_ID=b1g…` — поля панели. Ключ
   сервисного аккаунта вставляется в `YANDEX_SA_KEY` файлом authorized key целиком (многострочным —
   поле это выдерживает) либо указывается путь внутри контейнера в `YANDEX_SA_KEY_FILE`

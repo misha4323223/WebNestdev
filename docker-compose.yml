@@ -152,6 +152,13 @@ services:
       YANDEX_CALLBACK_URL: ${YANDEX_CALLBACK_URL:-}
       YANDEX_FRONTEND_URL: ${YANDEX_FRONTEND_URL:-}
       YANDEX_OAUTH_SCOPE: ${YANDEX_OAUTH_SCOPE:-cloud-api}
+      # VK ID OAuth (optional): вход через VK. Публичному приложению достаточно
+      # Client ID и PKCE; VK_SERVICE_TOKEN нужен конфиденциальному приложению.
+      VK_CLIENT_ID: ${VK_CLIENT_ID:-}
+      VK_SERVICE_TOKEN: ${VK_SERVICE_TOKEN:-}
+      VK_CALLBACK_URL: ${VK_CALLBACK_URL:-}
+      VK_FRONTEND_URL: ${VK_FRONTEND_URL:-}
+      VK_OAUTH_SCOPE: ${VK_OAUTH_SCOPE:-}
       # GitHub OAuth (optional)
       GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
       GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}

@@ -1,16 +1,18 @@
 import { apiJson } from "./api";
 import type { OnboardingProfile } from "./onboarding";
 
-export type AuthUser={id:string;email:string;phone?:string;createdAt:string;yandex?:{login:string;email:string|null}};
+export type AuthUser={id:string;email:string;phone?:string;createdAt:string;yandex?:{login:string;email:string|null};vk?:{name:string;email:string|null}};
 /** Контакты знакомства приходят вместе с сессией: null — аккаунт их ещё не оставлял. */
 export type AuthState={authenticated:boolean;user:AuthUser|null;onboarding?:{profile:OnboardingProfile|null}};
 export type YandexAuthStatus={configured:boolean;callbackUrl:string;loginPath:string};
+export type VkAuthStatus={configured:boolean;callbackUrl:string;loginPath:string;scope?:string|null};
 
 export type PhoneStatus={provider:string|null;providerLabel:string;configured:boolean;testMode:boolean;sender:string;hint?:string;demoPhone?:string};
 export type PhoneStart={sent:boolean;phone:string;provider:string;providerLabel:string;testMode:boolean;expiresInSeconds:number;devCode?:string;notice?:string;demo?:boolean;user?:AuthUser};
 
 export const getAuth=()=>apiJson<AuthState>("/api/auth/me");
 export const getYandexAuthStatus=()=>apiJson<YandexAuthStatus>("/api/auth/yandex/status?origin="+encodeURIComponent(window.location.origin));
+export const getVkAuthStatus=()=>apiJson<VkAuthStatus>("/api/auth/vk/status?origin="+encodeURIComponent(window.location.origin));
 export const getPhoneStatus=()=>apiJson<PhoneStatus>("/api/auth/phone/status");
 export const startPhoneLogin=(phone:string,consent:boolean)=>apiJson<PhoneStart>("/api/auth/phone/start",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({phone,consent})});
 export const verifyPhoneLogin=(phone:string,code:string)=>apiJson<{user:AuthUser}>("/api/auth/phone/verify",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({phone,code})});
