@@ -2,14 +2,11 @@ import { useEffect, useState } from "react";
 import { ArrowLeft, ArrowRight, Check, CreditCard, Plus, RefreshCw, ShieldCheck } from "lucide-react";
 import {
   balanceLabel,
-  bytesLabel,
   creditsLabel,
   dateLabel,
   getBilling,
   paymentNotice,
-  paymentStatusLabel,
   rubLabel,
-  shortDayLabel,
   updateAutoRenew,
   type BillingData,
   type PlanId,
@@ -17,13 +14,15 @@ import {
 } from "../../lib/billing-api";
 import { activePlanId, chosenPlanId, isPendingChoice, planName, usePlanChoice } from "../../lib/plan-choice";
 import { PlanDetail } from "./PlanDetail";
-import { CreditTopUp } from "./CreditTopUp";
+import { CreditTopUpDialog } from "./CreditTopUpDialog";
+import { PaymentHistory } from "./PaymentHistory";
+import { UsageOverview } from "./UsageOverview";
 
 const faq = [
   { question: "Как оплатить тариф?", answer: "Откройте карточку тарифа, отметьте согласия и нажмите «Оплатить» — откроется защищённая страница оплаты. Доступны карта РФ, СБП и другие способы." },
   { question: "Когда включится тариф?", answer: "Сразу после подтверждения оплаты. Если страница оплаты закрылась, вернитесь в личный кабинет: подписка уже будет активна." },
-  { question: "Что с продлением?", answer: "Подписка действует месяц. Автопродление — по отдельному согласию: отметкой при оплате или переключателем в личном кабинете. Отключить можно в любой момент." },
-  { question: "Можно ли докупить кредиты?", answer: "Да, на «Плюсе» и «Премиуме». Введите количество кредитов — минимум указан в блоке докупки, оплатите разовый платёж — кредиты зачислятся сразу. Докупленные кредиты не сгорают и расходуются после месячного лимита тарифа." },
+  { question: "Что с продлением?", answer: "Подписка действует месяц. Пока оплаченный период не закончился, тот же тариф повторно оплатить нельзя: дата окончания не сдвигается. После окончания его можно оплатить снова. Автопродление — по отдельному согласию, отключить можно в любой момент." },
+  { question: "Можно ли докупить кредиты?", answer: "Да, на «Плюсе» и «Премиуме». Откройте «Докупить кредиты», введите количество и оплатите разовый платёж — кредиты зачислятся сразу, не сгорят и расходуются после месячного лимита тарифа." },
 ];
 
 const limitRows: Array<{ label: string; key: keyof PlanLimits }> = [
@@ -45,6 +44,7 @@ export function SubscriptionPage({ onBack, selectedPlanId, onSelectPlan }: {
   const [billing, setBilling] = useState<BillingData | null>(null);
   const [loading, setLoading] = useState(true);
   const [savingRenew, setSavingRenew] = useState(false);
+  const [topUpOpen, setTopUpOpen] = useState(false);
   const [error, setError] = useState("");
   // The plan the user selected is what they want to move to, so it is named here too.
   const planChoice = usePlanChoice();
@@ -56,6 +56,14 @@ export function SubscriptionPage({ onBack, selectedPlanId, onSelectPlan }: {
     finally { setLoading(false); }
   }
   useEffect(() => { void load(); }, []);
+  // «Докупить кредиты» из боковой панели ведёт сразу к окну докупки, а не просто на тарифы.
+  useEffect(() => {
+    try {
+      if (!localStorage.getItem("webnestdev.openCreditTopUp")) return;
+      localStorage.removeItem("webnestdev.openCreditTopUp");
+      setTopUpOpen(true);
+    } catch {}
+  }, []);
 
   // Действующий тариф — тот, что вернул сервер: выбор пользователя это пожелание, а не право.
   const currentPlanId = activePlanId(billing);
@@ -65,7 +73,6 @@ export function SubscriptionPage({ onBack, selectedPlanId, onSelectPlan }: {
   const subscription = billing?.subscription;
   const paid = currentPlanId !== "free" && Boolean(subscription?.renewsAt);
   const selectedPlan = selectedPlanId ? billing?.plans.find(plan => plan.id === selectedPlanId) : undefined;
-  const runsLimit = billing?.limits.agentRunsPerDay ?? null;
 
   // Карточка открывает отдельный компактный экран: на нём описание, согласия и оплата.
   // Пока данные загружаются, страница не мигает обратно на общую сетку.
@@ -78,12 +85,13 @@ export function SubscriptionPage({ onBack, selectedPlanId, onSelectPlan }: {
       {loading && <div className="modal-state plan-detail-loading"><RefreshCw size={14} className="spin"/> Загружаем тариф…</div>}
       {error && <div className="settings-error subscription-error">{error}</div>}
       {billing && selectedPlan && <div className="plan-detail-shell">
-        <PlanDetail key={selectedPlan.id} plan={selectedPlan} billing={billing} active={selectedPlan.id === currentPlanId}/>
+        <PlanDetail key={selectedPlan.id} plan={selectedPlan} billing={billing} active={selectedPlan.id === currentPlanId} onTopUp={() => setTopUpOpen(true)}/>
       </div>}
       {billing && !selectedPlan && <div className="plan-detail-shell plan-detail-missing">
         <p>Такого тарифа больше нет в каталоге.</p>
         <button className="ghost-button" onClick={() => onSelectPlan(null)}>Вернуться к тарифам</button>
       </div>}
+      <CreditTopUpDialog open={topUpOpen} onClose={() => setTopUpOpen(false)} billing={billing} paid={paid}/>
     </main>;
   }
 
@@ -113,7 +121,7 @@ export function SubscriptionPage({ onBack, selectedPlanId, onSelectPlan }: {
       {paid && billing?.credits && billing.credits.limit > 0 && <button
         type="button"
         className="ghost-button subscription-credit-link"
-        onClick={() => document.getElementById("credit-topup")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+        onClick={() => setTopUpOpen(true)}
       ><Plus size={12}/> Докупить кредиты</button>}
       {paid && subscription && <div className="account-toggle subscription-renew">
         <span>
@@ -163,8 +171,7 @@ export function SubscriptionPage({ onBack, selectedPlanId, onSelectPlan }: {
                 {plan.priceLabel}<small>{plan.id === "free" ? "навсегда" : (enabled ? "в месяц" : "оплата скоро")}</small>
               </div>
             </div>
-            <p className="plan-audience">{plan.audience}</p>
-            <ul className="plan-feature-list">{plan.features.slice(0, 4).map(feature => <li key={feature}><Check size={13}/>{feature}</li>)}</ul>
+            <ul className="plan-feature-list">{plan.features.slice(0, 3).map(feature => <li key={feature}><Check size={13}/>{feature}</li>)}</ul>
             <span className="subscription-plan-open">{active ? "Текущий тариф" : "Описание и оплата"} <ArrowRight size={13}/></span>
           </button>;
         })}
@@ -201,56 +208,11 @@ export function SubscriptionPage({ onBack, selectedPlanId, onSelectPlan }: {
       </section>
 
       <section className="subscription-usage">
-        <div className="subscription-section-head"><span className="eyebrow">СЕГОДНЯ</span><h2>Использование</h2></div>
-        <div className="usage-meter-list">
-          <div className="usage-meter-title"><strong>Текущий день</strong><small>Сброс по UTC · {billing.usage.date}</small></div>
-          {runsLimit != null && <div className="usage-meter"><div><span>Запуски агента</span><strong>{billing.usage.agentRuns} / {runsLimit}</strong></div><div className="usage-meter-track"><span style={{ width: `${Math.min(100, billing.usage.agentRuns / Math.max(1, runsLimit) * 100)}%` }}/></div></div>}
-          {/* Кредиты — основной лимит платного тарифа и месячный, а не дневной: он живёт
-              отдельной шкалой, иначе его сброс путают с полуночью по UTC. */}
-          {(() => {
-            const budget = billing.credits;
-            if (!budget || budget.limit <= 0) return null;
-            const state = budget.remaining <= 0 ? "full" : budget.used >= budget.limit * 0.8 ? "warning" : "ok";
-            return (
-              <div className={"usage-meter" + (state === "ok" ? "" : " is-" + state)}>
-                <div><span>Кредиты на агента</span><strong>{creditsLabel(budget.used)} из {creditsLabel(budget.limit)}</strong></div>
-                <div className="usage-meter-track"><span style={{ width: `${Math.min(100, (budget.used / budget.limit) * 100)}%` }} /></div>
-                <small className={"usage-meter-left" + (state === "ok" ? "" : " " + state)}>{state === "full"
-                  ? "Кредиты исчерпаны: докупите кредиты ниже или дождитесь 1-го числа"
-                  : "Осталось " + creditsLabel(budget.remaining) + (budget.purchased > 0 ? " · докупленные не сгорают" : " · сброс 1-го числа")}</small>
-                {budget.purchased > 0 && <small className="usage-meter-left">Месячный лимит тарифа: {creditsLabel(budget.planLimit)} · докуплено: {creditsLabel(budget.purchased)}</small>}
-              </div>
-            );
-          })()}
-          {(() => {
-            const storageLimit = billing.limits.storageBytes ?? 0;
-            const storageUsed = billing.storage?.usedBytes ?? 0;
-            if (storageLimit <= 0) return null;
-            const state = billing.storage?.state ?? (storageUsed >= storageLimit ? "full" : storageUsed >= storageLimit * 0.8 ? "warning" : "ok");
-            return (
-              <div className={"usage-meter" + (state === "ok" ? "" : " is-" + state)}>
-                <div><span>Хранилище аккаунта</span><strong>{bytesLabel(storageUsed)} из {bytesLabel(storageLimit)}</strong></div>
-                <div className="usage-meter-track"><span style={{ width: `${Math.min(100, (storageUsed / storageLimit) * 100)}%` }} /></div>
-                {state !== "ok" && <small className={"usage-meter-left " + state}>{state === "full"
-                  ? "Лимит исчерпан: запись файлов агентом приостановлена"
-                  : "Осталось " + bytesLabel(Math.max(0, storageLimit - storageUsed))}</small>}
-              </div>
-            );
-          })()}
-        </div>
-        <p className="account-muted">Кредиты считаются только для моделей платформы. Подключите свой AI-провайдер в настройках проекта — запуски пойдут через ваш ключ и модель, и кредиты к ним не применяются. На Max кредиты расходуются быстрее, на Mini — медленнее.</p>
+        <UsageOverview billing={billing} paid={paid} onTopUp={() => setTopUpOpen(true)}/>
       </section>
 
-      <CreditTopUp billing={billing} paid={paid}/>
-
-      {Boolean(billing.payments?.length) && <section className="subscription-compare">
-        <div className="subscription-section-head"><span className="eyebrow">ПЛАТЕЖИ</span><h2>Последние платежи</h2></div>
-        <div className="billing-payments">
-          {(billing.payments ?? []).slice(0, 6).map(payment => <div className="billing-payment" key={payment.invId}>
-            <div><strong>{payment.planName} · {rubLabel(payment.amount)}</strong><small>Счёт №{payment.invId} · {shortDayLabel(payment.createdAt.slice(0, 10))}</small></div>
-            <span className={"billing-payment-status " + payment.status}>{paymentStatusLabel(payment.status)}</span>
-          </div>)}
-        </div>
+      {Boolean(billing.payments?.length) && <section className="subscription-payments">
+        <PaymentHistory payments={billing.payments ?? []}/>
       </section>}
     </>}
 
@@ -258,7 +220,7 @@ export function SubscriptionPage({ onBack, selectedPlanId, onSelectPlan }: {
       <div className="subscription-section-head"><span className="eyebrow">ВОПРОСЫ</span><h2>Частые вопросы</h2></div>
       <div className="faq-grid">{faq.map(item => <article key={item.question}><strong>{item.question}</strong><p>{item.answer}</p></article>)}</div>
     </section>    <section className="subscription-cta">
-      <div><strong>{paid ? "Продлить подписку" : "Выберите тариф"}</strong><span>{enabled ? "Оплата картой или через СБП на защищённой странице оплаты." : "Тариф сохранится и включится вместе с оплатой."}</span></div>
+      <div><strong>{paid ? "Тариф и кредиты" : "Выберите тариф"}</strong><span>{paid ? "Повторно оплатить текущий тариф можно после окончания периода; кредиты доступны сейчас." : enabled ? "Оплата картой или через СБП на защищённой странице оплаты." : "Тариф сохранится и включится вместе с оплатой."}</span></div>
       <div className="subscription-cta-actions">
         <button className="ghost-button" onClick={onBack}>Вернуться на главную</button>
         <button className="send-button subscription-cta-button" onClick={() => document.getElementById("subscription-plans")?.scrollIntoView({ behavior: "smooth", block: "start" })}>К тарифам <ArrowRight size={13}/></button>

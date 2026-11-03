@@ -15,10 +15,12 @@ import { CheckoutConsent, type CheckoutConsentState } from "./CheckoutConsent";
  * описанием: на обзорной сетке их больше нет, поэтому человек не ищет галочки между
  * карточками. Сумма и ссылка на оплату по-прежнему приходят с сервера.
  */
-export function PlanDetail({ plan, billing, active }: {
+export function PlanDetail({ plan, billing, active, onTopUp }: {
   plan: Plan;
   billing: BillingData;
   active: boolean;
+  /** Активный тариф нельзя купить повторно, но кредиты докупить можно. */
+  onTopUp?: () => void;
 }) {
   const [consent, setConsent] = useState<CheckoutConsentState>({ ready: false, autoRenew: false });
   const [paying, setPaying] = useState(false);
@@ -28,6 +30,8 @@ export function PlanDetail({ plan, billing, active }: {
   const recurring = Boolean(billing.subscription?.recurringAvailable);
   const paidPlan = plan.id !== "free";
   const subscription = billing.subscription;
+  const activePaid = active && paidPlan;
+  const activeUntil = activePaid ? subscription?.renewsAt ?? null : null;
 
   async function pay() {
     if (!consent.ready) {
@@ -88,19 +92,26 @@ export function PlanDetail({ plan, billing, active }: {
     </div>
 
     <div className="plan-detail-checkout">
-      {paidPlan && enabled ? <>
+      {activePaid ? <div className="plan-detail-active">
+        <ShieldCheck size={15}/>
+        <div>
+          <strong>Тариф «{plan.name}» уже активен</strong>
+          <span>{activeUntil ? "Оплачен до " + dateLabel(activeUntil) + ". " : "Оплаченный период уже действует. "}Повторно купить его можно будет после окончания периода — сейчас доступны кредиты и другие тарифы.</span>
+        </div>
+        {onTopUp && <button type="button" className="ghost-button" onClick={onTopUp}>Докупить кредиты</button>}
+      </div> : paidPlan && enabled ? <>
         <CheckoutConsent recurring={recurring} onChange={setConsent}/>
         {error && <div className="settings-error">{error}</div>}
         <button type="button" className="send-button plan-pay-button" onClick={() => void pay()} disabled={paying || !consent.ready} title={consent.ready ? undefined : "Отметьте обязательные согласия выше"}>
           {paying
             ? <><RefreshCw size={13} className="spin"/> Открываем оплату…</>
-            : <><CreditCard size={14}/> {active ? "Продлить" : "Оплатить"} {plan.priceLabel}</>}
+            : <><CreditCard size={14}/> Оплатить {plan.priceLabel}</>}
         </button>
         <p className="checkout-consent-note">Оплата проходит на стороне «Робокассы»: данные карты вводятся там и в NestDev не попадают. Чек приходит на контакт из аккаунта.</p>
       </> : paidPlan ? <>
         {error && <div className="settings-error">{error}</div>}
-        <button type="button" className="plan-action plan-select-button" onClick={choose} disabled={chosen || active}>
-          {active ? "Текущий тариф" : chosen ? "Выбран · включим с оплатой" : "Выбрать тариф"}
+        <button type="button" className="plan-action plan-select-button" onClick={choose} disabled={chosen}>
+          {chosen ? "Выбран · включим с оплатой" : "Выбрать тариф"}
         </button>
         <p className="checkout-consent-note">{paymentNotice(billing)}</p>
       </> : <div className="plan-detail-free">

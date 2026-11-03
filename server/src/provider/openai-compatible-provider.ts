@@ -54,9 +54,9 @@ type WireToolCall={
 
 type WireContentPart={type:"text";text:string;cache_control?:{type:"ephemeral"}};
 type WireContent=string|WireContentPart[];
-type WireMessage=
+type WireMessage =
   | {role:"user"|"system";content:WireContent}
-  | {role:"assistant";content:string;tool_calls?:WireToolCall[]}
+  | {role:"assistant";content:string;reasoning_content?:string;tool_calls?:WireToolCall[]}
   | {role:"tool";content:string;tool_call_id:string};
 
 /**
@@ -83,7 +83,9 @@ const REASONING_FIELDS=["reasoning_content","reasoning","reasoning_details","rea
  * Reasoning-capable models stream their chain of thought in one of several fields,
  * depending on the gateway: DeepSeek uses `reasoning_content`, Qwen `reasoning`, and a
  * few gateways send `reasoning_details`, `reasoning_text`, `thinking` or `thought`. Any of
- * them becomes a reasoning chunk. It is shown to the user and never sent back to the provider.
+ * them becomes a reasoning chunk. DeepSeek thinking mode is the exception to "show, never
+ * send back": with tools it requires the earlier `reasoning_content` in the next request,
+ * otherwise it either rejects the request or loses the thread and re-analyses the task.
  */
 export function reasoningDelta(delta:unknown):string{
   if(!delta||typeof delta!=="object")return "";
@@ -171,15 +173,34 @@ function reasoningEffort(options?:ProviderStreamOptions):ReasoningEffort|null{
 const STREAM_DEBUG=/^(1|true|yes|on)$/i.test((process.env.AI_STREAM_DEBUG??"").trim());
 const STREAM_DEBUG_CHUNKS=20;
 
-export function toWireMessages(messages:ChatMessage[]):WireMessage[]{
+/**
+ * DeepSeek's thinking mode is the one provider that must receive its previous chain of thought
+ * back. The official API requires `reasoning_content` on earlier assistant turns when tools are in
+ * play; Polza exposes the same model under a `deepseek/...` id. Other OpenAI-compatible gateways
+ * reject an unknown assistant field or bill it as ordinary input, so the passback stays conditional.
+ */
+export function reasoningPassbackSupported(baseUrl:string,model:string){
+  const id=model.trim().toLowerCase();
+  return id.includes("deepseek")||baseUrl.trim().toLowerCase().includes("deepseek.com");
+}
+
+export function toWireMessages(messages:ChatMessage[],options?:{reasoningPassthrough?:boolean}):WireMessage[]{
   return messages.map(message=>{
     if(message.role==="assistant"){
+      // Only a DeepSeek thinking request gets the field, and it is always present there: once a
+      // request carries tools, the API requires `reasoning_content` on every previous assistant
+      // turn — including turns that did not call a tool. An absent field is a 400, while an empty
+      // string is the honest value for a turn whose chain was not streamed.
+      const reasoning=options?.reasoningPassthrough
+        ?{reasoning_content:message.reasoning??""}
+        :{};
       if(!message.tool_calls?.length){
-        return {role:"assistant",content:message.content};
+        return {role:"assistant",content:message.content,...reasoning};
       }
       return {
       role:"assistant",
       content:message.content,
+      ...reasoning,
       tool_calls:message.tool_calls.map(call=>({
         id:call.id,
         type:"function",
@@ -208,9 +229,10 @@ export class OpenAICompatibleProvider implements Provider{
     // явные точки. Разметка не меняет обычные сообщения и не отправляется шлюзам, которые
     // такого формата не знают (prompt-caching.ts).
     const cachePolicy=promptCachePolicy(normBase,model);
+    const wireOptions={reasoningPassthrough:reasoningPassbackSupported(normBase,model)};
     const wire=cachePolicy.mode==="explicit"
-      ? withPromptCacheControl(toWireMessages(messages))
-      : toWireMessages(messages);
+      ? withPromptCacheControl(toWireMessages(messages,wireOptions))
+      : toWireMessages(messages,wireOptions);
     const cacheFields=promptCacheRequestFields(cachePolicy,options?.cacheKey);
     const send=(body:unknown)=>proxyUrl
       ? fetch(proxyUrl+chatPath,{

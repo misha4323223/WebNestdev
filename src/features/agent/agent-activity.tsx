@@ -51,6 +51,7 @@ const TOOL_ICONS: Record<string, ActionDescriptor> = {
   "fs.list": { icon: FolderTree, label: "Смотрит файлы" },
   "fs.read": { icon: FileText, label: "Читает файл" },
   "fs.write": { icon: Wrench, label: "Пишет код" },
+  "fs.edit": { icon: Wrench, label: "Правит код" },
   "fs.rename": { icon: FileSymlink, label: "Переименовывает файл" },
   "fs.delete": { icon: Trash2, label: "Удаляет файл" },
   "terminal.exec": { icon: SquareTerminal, label: "Команда в терминале" },
@@ -137,7 +138,7 @@ export function deriveActions(messages: ChatMessage[]): AgentAction[] {
     for (const call of message.tool_calls) {
       if (call.name === "plan.update") continue;
       const result = results.get(call.id);
-      const before = call.name === "fs.write" || call.name === "fs.delete"
+      const before = call.name === "fs.write" || call.name === "fs.edit" || call.name === "fs.delete"
         ? knownFileContent(actions, filePathOf(call.arguments))
         : undefined;
       actions.push({
@@ -240,8 +241,15 @@ export function knownFileContent(actions: AgentAction[], path: string): string |
       const content = asRecord(action.input).content;
       if (typeof content === "string") return content;
     }
+    if (action.name === "fs.edit") {
+      const base = knownFileContent(actions.slice(0, index), normalized);
+      return base === undefined ? undefined : applyTextEdit(base, action.input);
+    }
     if (action.name === "fs.read") {
       const output = asRecord(action.output);
+      // A cached read is deliberately only the beginning of the window; it must not be used as
+      // the previous full version when the panel builds a diff for the next write or edit.
+      if (output.cached === true) continue;
       if (output.offset === 0 && output.truncated === false && typeof output.content === "string") return output.content;
     }
     // A later deletion means the file did not exist when the current action started: the
@@ -251,9 +259,20 @@ export function knownFileContent(actions: AgentAction[], path: string): string |
   return undefined;
 }
 
-/** Content the action is about to replace or remove, when an earlier action read it. */
+/** Apply the exact fragment of an `fs.edit` to a known earlier version, for the diff preview. */
+function applyTextEdit(content: string, input: unknown) {
+  const value = asRecord(input);
+  const oldText = stringValue(value.oldText);
+  const newText = stringValue(value.newText);
+  if (!oldText) return undefined;
+  if (value.replaceAll === true) return content.split(oldText).join(newText);
+  const at = content.indexOf(oldText);
+  return at < 0 ? undefined : content.slice(0, at) + newText + content.slice(at + oldText.length);
+}
+
+/** Content the action is about to replace, change or remove, when an earlier action read it. */
 export function contentBefore(actions: AgentAction[], name: string, input: unknown): string | undefined {
-  if (name !== "fs.write" && name !== "fs.delete") return undefined;
+  if (name !== "fs.write" && name !== "fs.edit" && name !== "fs.delete") return undefined;
   return knownFileContent(actions, filePathOf(input));
 }
 
@@ -407,9 +426,24 @@ function actionDetail(action: AgentAction): ActionDetailData {
     const total = typeof output.totalChars === "number" ? output.totalChars : content.length;
     return {
       title: "Содержимое файла",
-      note: "окно с " + offset.toLocaleString("ru-RU") + " · " + total.toLocaleString("ru-RU") + " символов",
+      note: output.cached === true
+        ? "файл не изменился · показано начало окна · " + total.toLocaleString("ru-RU") + " символов всего"
+        : "окно с " + offset.toLocaleString("ru-RU") + " · " + total.toLocaleString("ru-RU") + " символов",
       preview: readLines(content),
       copyText: content,
+    };
+  }
+
+  if (action.name === "fs.edit") {
+    const oldText = stringValue(input.oldText);
+    const newText = stringValue(input.newText);
+    const diff = diffLines(oldText, newText);
+    return {
+      title: "Точечная правка",
+      note: changeNote(diff.added, diff.removed),
+      preview: diff,
+      copyText: previewToText(diff),
+      empty: "Текст не изменился.",
     };
   }
 
@@ -596,6 +630,10 @@ export function ActionsDock({ actions, running, open, onOpenChange }: {
   const [openId, setOpenId] = useState<string | null>(null);
   const listRef = useRef<HTMLUListElement | null>(null);
   const failed = actions.filter(action => action.status === "failed").length;
+  // В свёрнутой строке показываем не абстрактное «выполняется», а последнее действие агента:
+  // так видно, что именно он делает прямо сейчас, не раскрывая весь список.
+  const current = [...actions].reverse().find(action => action.status === "running");
+  const currentLabel = current ? describeAction(current.name).label + (current.target ? " · " + current.target : "") : "начинает работу…";
   // Открытый список держится у последнего действия: агент пишет сверху вниз, и новое должно быть
   // видно без ручной прокрутки.
   useEffect(() => {
@@ -644,9 +682,9 @@ export function ActionsDock({ actions, running, open, onOpenChange }: {
       <Activity size={13} className={running ? "actions-dock-live" : ""}/>
       <strong>Действия агента</strong>
       {actions.length > 0 && <span className="actions-dock-meta">{actionCountLabel(actions.length)}</span>}
-      <span className="actions-dock-state">
+      <span className={"actions-dock-state" + (running ? " live" : "")} aria-live="polite">
         {running
-          ? <><LoaderCircle size={12} className="agent-spin"/>выполняется</>
+          ? <><i className="actions-dock-pulse"/><span>{currentLabel}</span></>
           : "завершено"}
       </span>
       {failed > 0 && <span className="actions-dock-error" title={"Действий с ошибкой: " + failed} aria-label={"Действий с ошибкой: " + failed}><CircleAlert size={12}/>{failed}</span>}

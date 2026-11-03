@@ -59,6 +59,8 @@ export type Storage = {
   projects?: StorageProject[];
 };
 export type CostRun = { promptTokens: number; completionTokens: number; cachedPromptTokens: number; exact: boolean; costEstimate: number | null; createdAt: string };
+/** Публичная строка расхода: только имя NestDev, без upstream-модели. */
+export type CostModel = { id: string; name: string; promptTokens: number; completionTokens: number; runs: number };
 export type Cost = {
   date: string;
   runs: number;
@@ -70,6 +72,8 @@ export type Cost = {
   pricesConfigured: boolean;
   costEstimate: number | null;
   currency: string;
+  /** Расход за сегодня по публичным моделям NestDev. */
+  models?: CostModel[];
   lastRun: CostRun | null;
 };
 /** Один день истории: из него складывается график трат и список последних дней. */

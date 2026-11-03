@@ -47,8 +47,9 @@ test("fs.read отказывает в корне и в подкаталоге, �
   }
 });
 
-test("fs.write, fs.rename и fs.delete не могут создать, подменить или удалить секрет", async () => {
+test("fs.write, fs.edit, fs.rename и fs.delete не могут создать, подменить или удалить секрет", async () => {
   await assert.rejects(async () => tool("fs.write", { path: ".env.local", content: "X=1" }), /секрет/i);
+  await assert.rejects(async () => tool("fs.edit", { path: ".env.local", oldText: "SECRET_VALUE", newText: "LEAK" }), /секрет/i);
   await assert.rejects(async () => tool("fs.write", { path: "apps/web/.env.production", content: "X=1" }), /секрет/i);
   await assert.rejects(
     async () => tool("fs.rename", { from: ".env.local", to: "leak.txt" }),

@@ -227,8 +227,11 @@ function RailBilling({ billing, choice, error, onOpenPlans, onOpenSubscriptions 
       </div>
       <p className="account-muted">На бесплатном тарифе — 10 запусков в день. На платных тарифах расход ограничен кредитами; со своим AI-провайдером кредиты не тратятся.</p>
       <div className="rail-plan-actions">
-        <button className="plan-action" onClick={onOpenPlans}>{billing.paymentsEnabled ? (paid ? "Продлить подписку" : "Оплатить тариф") : "Сменить тариф"}</button>
-        {paid && billing.credits && billing.credits.limit > 0 && <button className="ghost-button" onClick={onOpenSubscriptions}>Докупить кредиты <ArrowRight size={12}/></button>}
+        <button className="plan-action" onClick={onOpenPlans}>{billing.paymentsEnabled ? (paid ? "Тариф и кредиты" : "Оплатить тариф") : "Сменить тариф"}</button>
+        {paid && billing.credits && billing.credits.limit > 0 && <button className="ghost-button" onClick={() => {
+          try { localStorage.setItem("webnestdev.openCreditTopUp", "1"); } catch {}
+          onOpenSubscriptions();
+        }}>Докупить кредиты <ArrowRight size={12}/></button>}
         <button className="ghost-button" onClick={onOpenSubscriptions}>Подробнее о тарифах <ArrowRight size={12}/></button>
       </div>
     </>}

@@ -364,6 +364,15 @@ type UsageCostRecord = {
   createdAt: string;
 };
 
+/** Публичная строка расхода: upstream-модель здесь не показывается, только имя NestDev. */
+export type CostModelUsage = {
+  id: string;
+  name: string;
+  promptTokens: number;
+  completionTokens: number;
+  runs: number;
+};
+
 export type CostSnapshot = {
   date: string;
   runs: number;
@@ -375,6 +384,8 @@ export type CostSnapshot = {
   pricesConfigured: boolean;
   costEstimate: number | null;
   currency: string;
+  /** Расход за сегодня по публичным моделям NestDev, без upstream-имён. */
+  models: CostModelUsage[];
   lastRun: {
     promptTokens: number;
     completionTokens: number;
@@ -548,6 +559,38 @@ function creditsForRecord(record: {
   return Math.ceil((record.promptTokens + record.completionTokens) / 10_000);
 }
 
+const PUBLIC_MODEL_LABELS: Record<string, { id: string; name: string }> = {
+  "": { id: "nestdev", name: "NestDev" },
+  "nestdev": { id: "nestdev", name: "NestDev" },
+  "nestdev-air": { id: "nestdev-air", name: "NestDev Air" },
+  "air": { id: "nestdev-air", name: "NestDev Air" },
+  "mini": { id: "mini", name: "NestDev Mini" },
+  "max": { id: "max", name: "NestDev Max" },
+};
+const PUBLIC_MODEL_ORDER = ["nestdev", "mini", "max", "nestdev-air", "other"];
+
+/**
+ * id запуска — публичный идентификатор каталога, а не upstream-имя. Неизвестные id не раскрываем:
+ * они попадают в одну строку «Дополнительная модель». Так пользователь видит расход своих моделей,
+ * но не может узнать, какой внешний провайдер стоит за Mini или Max.
+ */
+function publicModelOf(modelId: string) {
+  return PUBLIC_MODEL_LABELS[modelId] ?? { id: "other", name: "Дополнительная модель" };
+}
+
+function modelUsageOf(records: UsageCostRecord[]): CostModelUsage[] {
+  const rows = new Map<string, CostModelUsage>();
+  for (const record of records) {
+    const meta = publicModelOf(record.modelId ?? "");
+    const row = rows.get(meta.id) ?? { ...meta, promptTokens: 0, completionTokens: 0, runs: 0 };
+    row.promptTokens += record.promptTokens;
+    row.completionTokens += record.completionTokens;
+    row.runs += 1;
+    rows.set(meta.id, row);
+  }
+  return [...rows.values()].sort((a, b) => PUBLIC_MODEL_ORDER.indexOf(a.id) - PUBLIC_MODEL_ORDER.indexOf(b.id));
+}
+
 /** Records model spend of one agent run so the owner can measure real cost per generated site. */
 export async function recordRunUsage(userId: string, input: RunUsageInput, now = new Date()) {
   const date = utcDay(now);
@@ -636,6 +679,7 @@ export async function getCostSnapshot(userId: string, now = new Date()): Promise
     pricesConfigured: Boolean(pricing),
     costEstimate: pricing ? records.reduce((sum, record) => sum + (costFor(record, pricing) ?? 0), 0) : null,
     currency: pricing?.currency ?? "USD",
+    models: modelUsageOf(records),
     lastRun: last
       ? {
           promptTokens: last.promptTokens,

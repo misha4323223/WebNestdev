@@ -53,24 +53,18 @@ button,textarea{font:inherit}button{color:inherit}
 .section-label,.eyebrow{font-size:9px;letter-spacing:.09em;color:#69717c;font-weight:700}/* Низ колонки проекта остаётся на месте и при длинном списке чатов: тариф, поддержка и аккаунт
    не уезжают вниз вместе с перепиской. */
 .sidebar-footer{position:sticky;bottom:0;z-index:3;margin-top:auto;padding:10px 4px;border-top:1px solid var(--line-warm-soft);background:#0d0f13}
-/* Баннер внизу сайдбара — графика, а не объявление: ни счётчиков, ни приглашений, ни кнопки.
-   Место рассчитано на будущую строку логотипов сервисов, поэтому оно не привязано к одному
-   партнёру и не меняется по таймеру. */
-.sidebar-banner{position:relative;display:block;width:100%;aspect-ratio:300/64;min-height:58px;margin:0 0 8px;padding:0;border:1px solid var(--line-warm);border-radius:11px;overflow:hidden;background:linear-gradient(160deg,#111821,#0b0f14);box-shadow:inset 0 1px 0 rgba(255,255,255,.04);cursor:pointer;text-align:left;font:inherit;transition:border-color .18s ease,box-shadow .18s ease,transform .18s ease}
-.sidebar-banner:hover{border-color:#645130;box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 10px 26px rgba(0,0,0,.32),0 0 0 1px rgba(202,184,152,.08);transform:translateY(-1px)}
+/* Поддержка внизу сайдбара — компактная карточка-действие: иконка, короткое пояснение
+   и стрелка. Без иллюстрации и сердечек, чтобы не спорить с тарифом и аккаунтом. */
+.sidebar-banner{display:flex;align-items:center;gap:9px;width:100%;min-height:44px;margin:0 0 8px;padding:7px 9px;border:1px solid var(--line-warm);border-radius:9px;background:linear-gradient(135deg,#171a1f,#0f1216 70%);box-shadow:inset 0 1px 0 rgba(255,255,255,.035);cursor:pointer;text-align:left;font:inherit;transition:border-color .18s ease,background .18s ease,box-shadow .18s ease}
+.sidebar-banner:hover{border-color:#645130;background:linear-gradient(135deg,#1c1c1d,#11151a 70%);box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 8px 20px -14px rgba(0,0,0,.6)}
 .sidebar-banner:focus-visible{outline:2px solid #665332;outline-offset:3px}
-.sidebar-banner-art{position:absolute;inset:0;display:block;overflow:hidden}
-.sidebar-banner svg{display:block;width:100%;height:100%;transition:transform .4s cubic-bezier(.2,.8,.2,1)}
-.sidebar-banner:hover svg{transform:scale(1.04)}
-.sidebar-banner-art::after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(180deg,rgba(11,13,16,0) 30%,rgba(11,13,16,.82) 68%,#0b0f14)}
-/* Подпись под картинкой: одна строка, без пояснений — владелец попросил только её. */
-.sidebar-banner-copy{position:absolute;inset:auto 0 0;display:grid;gap:2px;padding:0 10px 6px}
-.sidebar-banner-kicker{display:flex;align-items:center;gap:5px;color:#c3b193;font:700 7.5px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.14em;text-transform:uppercase}
-.sidebar-banner-copy strong{font-size:11.5px;font-weight:600;line-height:1.2;letter-spacing:-.01em;color:#eef2ef}
-.sidebar-banner-copy small{display:flex;align-items:center;gap:4px;color:#b0aa9f;font-size:9.5px;font-weight:500;transition:color .16s ease}
-.sidebar-banner:hover .sidebar-banner-copy small{color:#e4e2df}
-.sidebar-banner:hover .sidebar-banner-copy small svg{transform:translate(1px,-1px)}
-.sidebar-banner-copy small svg{transition:transform .16s ease}
+.sidebar-banner-icon{flex:none;width:27px;height:27px;display:grid;place-items:center;border:1px solid #4a402e;border-radius:7px;background:#211b12;color:#d2bc94;transition:border-color .16s ease,color .16s ease}
+.sidebar-banner:hover .sidebar-banner-icon{border-color:#6b5835;color:#e3cfaa}
+.sidebar-banner-copy{min-width:0;display:grid;gap:1px}
+.sidebar-banner-copy strong{font-size:10.5px;font-weight:600;line-height:1.3;letter-spacing:-.01em;color:#e7e5e0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sidebar-banner-copy small{font-size:8.5px;line-height:1.35;color:#7f8792;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sidebar-banner-arrow{flex:none;margin-left:auto;color:#676f7a;transition:color .16s ease,transform .16s ease}
+.sidebar-banner:hover .sidebar-banner-arrow{color:#cbb386;transform:translate(1px,-1px)}
 /* Тариф над витриной: тот же тёплый хаки, что и у подписки на главной. */
 .sidebar-plan{display:flex;align-items:center;gap:8px;width:100%;min-height:44px;padding:6px 8px;margin:0 0 8px;border:1px solid #4a402e;border-radius:9px;background:linear-gradient(135deg,#272014,#111820 68%);color:#a9b4bf;font-size:10.5px;text-align:left;cursor:pointer;box-shadow:inset 0 1px 0 rgba(255,255,255,.035);transition:border-color .16s ease,background .16s ease}
 .sidebar-plan:hover{border-color:#776648;background:linear-gradient(135deg,#2f2617,#141d24 68%)}
@@ -165,31 +159,32 @@ button,textarea{font:inherit}button{color:inherit}
 .agent-mode-trigger.planner .agent-mode-dot,.agent-mode-trigger.planner .agent-mode-depth{color:#9c8b52}
 .agent-mode-trigger.planner:hover,.agent-mode-trigger.planner.open{border-color:#514c2c;background:#191708;color:#e8d59a}
 /* Меню открывается вверх: панель ввода стоит у нижнего края экрана. */
-.agent-mode-menu{position:absolute;left:0;bottom:calc(100% + 8px);z-index:30;width:280px;padding:10px;border:1px solid var(--line-warm);border-radius:10px;background:#0e1216;box-shadow:0 18px 44px rgba(0,0,0,.55);display:grid;gap:8px}
+.agent-mode-scrim{display:none}
+.agent-mode-menu{position:absolute;left:0;bottom:calc(100% + 7px);z-index:30;width:min(272px,calc(100vw - 24px));padding:9px;border:1px solid var(--line-warm);border-radius:10px;background:#0e1216;box-shadow:0 18px 44px rgba(0,0,0,.55);display:grid;gap:7px}
 .agent-mode-head{display:flex;align-items:center;gap:5px;color:#69717c}
 .agent-mode-head .eyebrow{font-size:9px}
 .agent-mode-head.with-icon{margin-top:2px;padding-top:8px;border-top:1px solid var(--line-warm-soft)}
 .agent-mode-head.with-icon svg{color:#69717c}
 .agent-mode-options{display:grid;gap:3px}
-.agent-mode-option{display:flex;align-items:flex-start;gap:8px;width:100%;padding:7px 8px;border:1px solid transparent;border-radius:7px;background:transparent;color:#aeb4bd;text-align:left;cursor:pointer}
+.agent-mode-option{display:flex;align-items:flex-start;gap:7px;width:100%;padding:6px 7px;border:1px solid transparent;border-radius:7px;background:transparent;color:#aeb4bd;text-align:left;cursor:pointer}
 .agent-mode-option:hover{background:#151a20;color:#e8eaed}
 .agent-mode-option.active{border-color:#3f3627;background:#1c170e;color:#e8eaed}
-.agent-mode-option-icon{flex:none;width:22px;height:22px;border-radius:6px;background:#1a1f26;color:#9aa2ad;display:grid;place-items:center}
+.agent-mode-option-icon{flex:none;width:20px;height:20px;border-radius:5px;background:#1a1f26;color:#9aa2ad;display:grid;place-items:center}
 .agent-mode-option.active .agent-mode-option-icon{background:#392d17;color:#cfbc9c}
 .agent-mode-option-text{min-width:0;display:grid;gap:1px}
 .agent-mode-option-text strong{font-size:11px;font-weight:600;line-height:1.4}
 .agent-mode-option-text small{font-size:9.5px;line-height:1.45;color:#7c848f}
 .agent-mode-check{flex:none;margin-left:auto;margin-top:2px;color:#c4ac82}
 .agent-mode-depths{display:grid;grid-template-columns:repeat(3,1fr);gap:4px}
-.agent-mode-depths button{height:26px;padding:0 4px;border:1px solid var(--line-warm);border-radius:6px;background:#0b0f13;color:#8d95a0;font-size:9.5px;cursor:pointer}
+.agent-mode-depths button{height:24px;padding:0 4px;border:1px solid var(--line-warm);border-radius:6px;background:#0b0f13;color:#8d95a0;font-size:9.5px;cursor:pointer}
 .agent-mode-depths button:hover{border-color:var(--line-warm-strong);color:#d6dbe2}
 .agent-mode-depths button.active{border-color:#674f24;background:#251d0e;color:#d2c4ad}
 .agent-mode-note{margin:0;color:#6f7783;font-size:9.5px;line-height:1.45}
 /* Поиск в интернете живёт в том же меню: это разрешение на сеть, а не роль агента. */
-.agent-mode-switch{display:flex;align-items:center;gap:8px;width:100%;padding:7px 8px;border:1px solid var(--line-warm);border-radius:7px;background:#0b0f13;color:#aeb4bd;text-align:left;cursor:pointer;transition:border-color .16s ease,background .16s ease,color .16s ease}
+.agent-mode-switch{display:flex;align-items:center;gap:7px;width:100%;padding:6px 7px;border:1px solid var(--line-warm);border-radius:7px;background:#0b0f13;color:#aeb4bd;text-align:left;cursor:pointer;transition:border-color .16s ease,background .16s ease,color .16s ease}
 .agent-mode-switch:hover{border-color:var(--line-warm-strong);color:#e8eaed}
 .agent-mode-switch.active{border-color:#674f24;background:#241b0c;color:#e8eaed}
-.agent-mode-switch-icon{flex:none;width:22px;height:22px;border-radius:6px;background:#1a1f26;color:#9aa2ad;display:grid;place-items:center}
+.agent-mode-switch-icon{flex:none;width:20px;height:20px;border-radius:5px;background:#1a1f26;color:#9aa2ad;display:grid;place-items:center}
 .agent-mode-switch.active .agent-mode-switch-icon{background:#392d17;color:#cfbc9c}
 .agent-mode-switch-text{min-width:0;display:grid;gap:1px}
 .agent-mode-switch-text strong{font-size:11px;font-weight:600;line-height:1.4}
@@ -834,6 +829,97 @@ button,textarea{font:inherit}button{color:inherit}
 .credit-topup-locked strong,.credit-topup-locked span{display:block}
 .credit-topup-locked strong{margin-bottom:3px;color:#d5dbe2;font-size:11px;font-weight:600}
 @media(max-width:760px){.credit-topup{padding:14px}.credit-topup-head{display:block}.credit-topup-balance{display:inline-block;margin-top:12px;text-align:left}.credit-topup-form{grid-template-columns:1fr;gap:8px}.credit-topup-total{min-width:0;text-align:left}.credit-topup-pay{height:38px;font-size:11px}}
+/* ── Компактный обзор ресурсов: кредиты, хранилище и модели в одном блоке ───────────── */
+.usage-overview{display:grid;gap:12px;margin:14px 0 18px;padding:14px;border:1px solid var(--line-warm);border-radius:10px;background:#0d1014}
+.usage-overview-head{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.usage-overview-head h2{margin:4px 0 0;color:#e7eaee;font-size:15px;font-weight:600}
+.usage-overview-head>small{color:#6f7883;font-size:9px;white-space:nowrap;padding-top:3px}
+.usage-overview-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+.usage-resource{display:grid;gap:8px;min-width:0;padding:11px;border:1px solid var(--line-warm-soft);border-radius:9px;background:#0b0e12}
+.usage-resource.is-warning{border-color:#4a3a26}
+.usage-resource.is-full{border-color:#4a2f2b}
+.usage-resource header{display:flex;align-items:baseline;justify-content:space-between;gap:8px}
+.usage-resource header span{color:#9ca4af;font-size:10px}
+.usage-resource header strong{color:#e6e9ed;font-size:11.5px;font-weight:600;text-align:right;font-variant-numeric:tabular-nums}
+.usage-resource .usage-meter-track{height:7px}
+.usage-resource.is-warning .usage-meter-track span{background:linear-gradient(90deg,#8a6a3d,#d9a066)}
+.usage-resource.is-full .usage-meter-track span{background:linear-gradient(90deg,#7d3f37,#dd8a7c)}
+.usage-resource-meta{display:flex;flex-wrap:wrap;gap:10px 18px}
+.usage-resource-meta span{display:grid;gap:2px;min-width:0}
+.usage-resource-meta em{color:#6f7883;font-size:8px;font-style:normal;letter-spacing:.04em;text-transform:uppercase}
+.usage-resource-meta b{color:#cbd0d8;font-size:10px;font-weight:600;font-variant-numeric:tabular-nums;white-space:nowrap}
+.usage-resource-note{margin:0;color:#737c87;font-size:9px;line-height:1.5}
+.usage-resource-note.warning{color:#d9b98a}
+.usage-resource-note.full{color:#e3a79c}
+.usage-resource-action{justify-self:start;height:26px;padding:0 9px;border-color:var(--line-warm);font-size:9.5px}
+.usage-storage-details{margin-top:1px;padding-top:7px;border-top:1px solid var(--line-warm-soft)}
+.usage-storage-details>summary{display:flex;align-items:center;gap:6px;color:#b9ab88;font-size:9.5px;font-weight:600;cursor:pointer;list-style:none}
+.usage-storage-details>summary::-webkit-details-marker{display:none}
+.usage-storage-details>summary::before{content:"+";display:inline-grid;place-items:center;width:14px;height:14px;border:1px solid #4b412f;border-radius:4px;color:#cbbd9e;font-size:10px;line-height:1}
+.usage-storage-details[open]>summary::before{content:"−"}
+.usage-storage-details>summary span{margin-left:auto;color:#737c87;font-size:9px;font-weight:400}
+.usage-storage-details .storage-projects{margin-top:8px}
+.usage-models{display:grid;gap:7px;padding-top:10px;border-top:1px solid var(--line-warm-soft)}
+.usage-models-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.usage-models-head strong{color:#cbd0d8;font-size:10px;font-weight:600}
+.usage-models-head small{color:#6f7883;font-size:9px}
+.usage-models table{width:100%;border-collapse:collapse;font-size:10px;font-variant-numeric:tabular-nums}
+.usage-models th,.usage-models td{padding:6px 8px;border-bottom:1px solid var(--line-warm-soft);text-align:right;color:#aeb6c0}
+.usage-models thead th{color:#6f7883;font-size:8.5px;font-weight:500;text-transform:uppercase;letter-spacing:.04em}
+.usage-models tbody th{text-align:left;color:#c6ccd4;font-weight:500}
+.usage-models tbody tr:last-child th,.usage-models tbody tr:last-child td{border-bottom:0}
+.usage-models-empty{margin:0;color:#6f7883;font-size:9px;line-height:1.5}
+.usage-overview-hint{margin:0;color:#6f7883;font-size:9px;line-height:1.5}
+
+/* ── Платежи: свёрнутая история, в заголовке — последний платёж ───────────────────── */
+.billing-payments-details{margin:14px 0 4px;border:1px solid var(--line-warm);border-radius:8px;background:#0d1014;overflow:hidden}
+.billing-payments-details>summary{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 12px;cursor:pointer;list-style:none}
+.billing-payments-details>summary::-webkit-details-marker{display:none}
+.billing-payments-summary{display:flex;align-items:center;gap:7px;min-width:0}
+.billing-payments-summary>svg{flex:none;color:#8b93a0}
+.billing-payments-summary strong{color:#dde1e6;font-size:10.5px;font-weight:600}
+.billing-payments-summary small{color:#737c87;font-size:9px;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.billing-payments-count{flex:none;color:#6f7883;font-size:9px;font-variant-numeric:tabular-nums}
+.billing-payments-details>summary::after{content:"+";display:inline-grid;place-items:center;flex:none;width:15px;height:15px;border:1px solid #4b412f;border-radius:4px;color:#cbbd9e;font-size:11px;line-height:1}
+.billing-payments-details[open]>summary::after{content:"−"}
+.billing-payments-details .billing-payments{margin:0;padding:0 12px 12px}
+.billing-payments-details .billing-empty{margin:0 12px 12px}
+.subscription-payments{max-width:1180px;margin:28px auto 0}
+
+/* ── Компактные карточки тарифов: подробности остаются на отдельном экране ────────── */
+.plan-card.plan-card-compact{padding:10px;gap:4px}
+.plan-card.plan-card-compact .plan-card-head small{display:none}
+.plan-card.plan-card-compact .plan-card-head strong{font-size:12.5px}
+.plan-card.plan-card-compact .plan-card-head>span{font-size:9.5px;padding-top:0}
+.plan-card.plan-card-compact ul{gap:4px;margin:8px 0}
+.plan-card.plan-card-compact li{font-size:9.5px;line-height:1.35}
+.plan-card.plan-card-compact .plan-badge{margin-top:6px;padding:2px 6px;font-size:8px}
+.plan-card.plan-card-compact .plan-card-open{padding-top:7px;font-size:9px}
+.subscription-plans .subscription-plan{padding:14px;gap:10px}
+.subscription-plans .subscription-plan h2{margin:8px 0 3px;font-size:16px}
+.subscription-plans .plan-tagline{font-size:10.5px}
+.subscription-plans .plan-price{margin-top:8px;font-size:20px}
+.subscription-plans .plan-feature-list{gap:6px}
+.subscription-plans .plan-feature-list li{font-size:10.5px}
+.subscription-plans .subscription-plan-open{padding-top:10px;font-size:10px}
+
+/* ── Окно докупки кредитов ────────────────────────────────────────────────────────── */
+.credit-topup-modal{width:min(640px,100%)}
+.credit-topup-modal .modal-body{padding:0;display:block;overflow:auto}
+.credit-topup-modal .credit-topup{max-width:none;margin:0;padding:18px;border:0;border-radius:0;background:transparent}
+.credit-topup-head-side{display:flex;align-items:flex-start;gap:8px;flex:none}
+.credit-topup-close{flex:none;border-color:var(--line-warm)}
+@media(max-width:760px){.usage-overview{padding:12px}.usage-overview-head{display:grid;gap:3px}.usage-overview-head>small{padding-top:0}.usage-overview-grid{grid-template-columns:1fr}.usage-models{overflow-x:auto}.usage-models table{min-width:330px}.billing-payments-summary small{white-space:normal}.credit-topup-head-side{margin-top:10px;justify-content:space-between;align-items:center}.credit-topup-head-side .credit-topup-balance{margin-top:0}.credit-topup-modal .credit-topup{padding:14px}}
+
+/* Активный тариф в деталях: повторная оплата закрыта, но докупка кредитов остаётся. */
+.plan-detail-active{display:flex;align-items:center;gap:10px;padding:12px;border:1px solid #3d4a38;border-radius:9px;background:#101814;color:#cfe0d2}
+.plan-detail-active>svg{flex:none;color:#9bb78e}
+.plan-detail-active>div{flex:1;min-width:0}
+.plan-detail-active strong{display:block;color:#d7e5d8;font-size:11.5px;font-weight:600}
+.plan-detail-active span{display:block;margin-top:4px;color:#8fa395;font-size:10px;line-height:1.5}
+.plan-detail-active .ghost-button{flex:none;border-color:#3d4a38;font-size:10px}
+@media(max-width:760px){.plan-detail-active{display:grid;gap:8px}.plan-detail-active .ghost-button{justify-self:start}}
+
 /* Возврат со страницы оплаты: баннер на главной, чтобы платёж не «терялся» между вкладками. */
 .home-payment{width:min(980px,100%);margin:22px auto 0;display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid #3a3121;border-radius:10px;background:linear-gradient(180deg,#1c170e,#0f1216);color:#b5a993}
 .home-payment.fail{border-color:#4a3030;background:linear-gradient(180deg,#1a1313,#0f1216);color:#d99b9b}
@@ -2401,6 +2487,11 @@ button,textarea{font:inherit}button{color:inherit}
 .actions-dock-trigger svg{flex:none}
 .actions-dock-meta{color:#7f8994;white-space:nowrap}
 .actions-dock-state{margin-left:auto;min-width:0;display:flex;align-items:center;gap:5px;color:#8f9aa5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.actions-dock-state>span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.actions-dock-state.live{color:#d8c5a2}
+.actions-dock-pulse{flex:none;width:5px;height:5px;border-radius:50%;background:#cfbc9c;box-shadow:0 0 0 0 rgba(207,188,156,.5);animation:actions-dock-pulse 1.5s ease-out infinite}
+@keyframes actions-dock-pulse{0%{box-shadow:0 0 0 0 rgba(207,188,156,.45)}70%{box-shadow:0 0 0 5px rgba(207,188,156,0)}100%{box-shadow:0 0 0 0 rgba(207,188,156,0)}}
+@media(prefers-reduced-motion:reduce){.actions-dock-pulse{animation:none}}
 .actions-dock-error{display:flex;align-items:center;gap:4px;color:#c98d84;white-space:nowrap}
 .actions-dock-live{color:#cfbc9c}
 .actions-dock-chevron{color:#6f7883;transition:transform .16s ease}
@@ -3333,3 +3424,16 @@ button,textarea{font:inherit}button{color:inherit}
 .project-wake-track{width:100%;height:5px;margin-top:2px;border-radius:3px;background:#1b2229;overflow:hidden}
 .project-wake-track span{display:block;height:100%;border-radius:3px;background:linear-gradient(90deg,#ab9163,#ccc3b2);transition:width .3s ease}
 .project-wake-error{max-width:340px;padding:8px 10px;border:1px solid #4a3030;border-radius:6px;background:#1b1212;color:#d99b9b;font-size:10.5px;line-height:1.5;word-break:break-word}
+
+/* «Режимы» на телефоне — нижняя шторка на всю ширину: меню больше не уезжает вправо
+   от кнопки, а длинный список прокручивается внутри и не прячет часть настроек. */
+@media(max-width:650px){
+  .agent-mode-scrim{display:block;position:fixed;inset:0;z-index:29;background:rgba(5,7,10,.58);backdrop-filter:blur(2px);animation:agent-mode-fade .16s ease-out}
+  .agent-mode-menu{position:fixed;left:0;right:0;bottom:0;width:auto;max-width:none;max-height:min(82dvh,560px);overflow:auto;overscroll-behavior:contain;border-radius:14px 14px 0 0;padding:14px 14px calc(14px + env(safe-area-inset-bottom));box-shadow:0 -18px 50px rgba(0,0,0,.62);animation:agent-mode-sheet .18s ease-out}
+  .agent-mode-menu .agent-mode-option-text small{font-size:9px;line-height:1.35}
+  .agent-mode-menu .agent-mode-note{font-size:9px}
+  .agent-mode-menu .agent-mode-head.with-icon{padding-top:7px;margin-top:1px}
+}
+@keyframes agent-mode-fade{from{opacity:0}to{opacity:1}}
+@keyframes agent-mode-sheet{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+@media(prefers-reduced-motion:reduce){.agent-mode-scrim,.agent-mode-menu{animation:none}}

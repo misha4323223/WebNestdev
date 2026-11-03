@@ -16,7 +16,7 @@ test("сообщения дописываются, а размышление и 
   try {
     const receipt = await appendConversationMessages(conversation.id, [
       { role: "user", content: "задача" },
-      { role: "assistant", content: "отвечаю", reasoning: "т".repeat(9000) },
+      { role: "assistant", content: "отвечаю", reasoning: "т".repeat(20000) },
       { role: "tool", content: "x".repeat(20000), tool_call_id: "c1" },
     ]);
     assert.equal(receipt.appended, 3);
@@ -32,11 +32,11 @@ test("сообщения дописываются, а размышление и 
 
     const assistant = stored?.messages[1];
     const reasoning = assistant?.role === "assistant" ? assistant.reasoning ?? "" : "";
-    assert.ok(reasoning.length < 4100, "размышление записано в ограниченном виде: " + reasoning.length);
+    assert.ok(reasoning.length < 16100, "размышление записано в ограниченном виде: " + reasoning.length);
     assert.match(reasoning, /размышление обрезано при сохранении/);
 
     const tool = stored?.messages[2];
-    assert.ok((tool?.content.length ?? 0) < 8100, "вывод инструмента записан в ограниченном виде: " + (tool?.content.length ?? 0));
+    assert.ok((tool?.content.length ?? 0) < 16100, "вывод инструмента записан в ограниченном виде: " + (tool?.content.length ?? 0));
     assert.match(tool?.content ?? "", /вывод обрезан при сохранении/);
   } finally {
     await deleteProject(project.id, userId);

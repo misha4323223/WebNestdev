@@ -8,6 +8,7 @@ import { buildProjectContext } from "./agent/context-builder.js";
 import { retrieveRelevantFiles } from "./agent/context-retrieval.js";
 import { executeTool } from "./agent/tool-executor.js";
 import { runBudgetedStep,type StepBudget } from "./agent/step-runner.js";
+import { createWorkingMemory,recordWorkingChange,setWorkingCheck,setWorkingPlan,withWorkingState } from "./agent/working-memory.js";
 import type { EventSink } from "./agent/types.js";
 import { agentStepLimit,contextBudgetTokensFor,contextMaxMessagesFor,boundToolOutput,DEFAULT_CHARS_PER_TOKEN } from "./agent/context-budget.js";
 import { planQaScenario } from "./qa/scenario-planner.js";
@@ -19,7 +20,25 @@ import { finalizeRunChanges } from "./changes/changes-service.js";
  * Tools that change the project and therefore trigger the automatic verification cycle.
  * `database.env` writes the project's connection string, so it belongs here too.
  */
-const MUTATING_TOOLS=new Set(["fs.write","fs.rename","fs.delete","terminal.exec","npm.install","pip.install","net.download","database.env"]);
+const MUTATING_TOOLS=new Set(["fs.write","fs.edit","fs.rename","fs.delete","terminal.exec","npm.install","pip.install","net.download","database.env"]);
+
+/** A short fact about a mutation for the run's working memory — never the file body. */
+function mutationSummary(name:string,args:Record<string,unknown>,output:unknown){
+  const value=output&&typeof output==="object"?output as Record<string,unknown>:{};
+  if(name==="fs.write"){
+    return typeof value.bytes==="number"?"записан, "+value.bytes+" Б":"записан";
+  }
+  if(name==="fs.edit"){
+    return typeof value.replacements==="number"?"правка, замен: "+value.replacements:"точечная правка";
+  }
+  if(name==="fs.rename"){
+    const from=typeof args.from==="string"?args.from:"?";
+    return from+" → "+(typeof args.to==="string"?args.to:"?");
+  }
+  if(name==="fs.delete")return "удалён";
+  if(name==="net.download")return typeof value.bytes==="number"?"скачан, "+value.bytes+" Б":"скачан";
+  return "изменён";
+}
 /**
  * Git bookkeeping changes the repository, not the code, so it is not verified.
  *
@@ -155,6 +174,16 @@ export class AgentRuntime {
       const stored=request.history?.length?storedHistory(request.history):[];
       const history:ChatMessage[]=stored.length?stored:request.messages;
       const task=history.filter(message=>message.role==="user").at(-1)?.content??"";
+      // The stored plan is a bookmark, not only for a resumed run: a user can send a new message
+      // after a normal pause, and the unfinished plan is still the work in progress. A plan whose
+      // every item is done is history, not a current instruction.
+      let savedPlan:PlanState|undefined;
+      if(request.conversationId){
+        try{savedPlan=await getConversationPlan(request.conversationId);}catch(error){console.error("Failed to read the stored plan",error);}
+      }
+      const activeSavedPlan=savedPlan&&Array.isArray(savedPlan.items)&&savedPlan.items.some(item=>item.status!=="done")?savedPlan:undefined;
+      const working=createWorkingMemory(task,activeSavedPlan);
+      working.planFromPreviousRun=Boolean(activeSavedPlan);
       const relevantFiles=await retrieveRelevantFiles(request.projectId,request.userId,task);
       const mode=request.mode==="planner"?"planner":"developer";
       // Браузерная проверка — разрешение на этот запуск, а не свойство тарифа. Выключенная
@@ -177,12 +206,7 @@ export class AgentRuntime {
       if(request.resume){
         // Возобновление: история — это память о сделанном, сохранённый план — закладка. Без заметки
         // модель с большой историей часто начинает задачу заново или переспрашивает пользователя.
-        let plan:PlanState|undefined;
-        if(request.conversationId){
-          // Только план: закладка продолжения не стоит чтения всей переписки сессии.
-          try{plan=await getConversationPlan(request.conversationId);}catch(error){console.error("Failed to read the stored plan for resume",error);}
-        }
-        messages=insertSystemNotice(messages,resumeNotice(request.resume.reason,plan));
+        messages=insertSystemNotice(messages,resumeNotice(request.resume.reason,activeSavedPlan));
       }
       const model=freeRoute?.model
         ??(config?(requestedModel||config.model):platformChoice?.config.model??platformConfig?.model);
@@ -203,10 +227,30 @@ export class AgentRuntime {
       let verificationPending=false;
       let scenarioPending=false;
       // The plan is what the user watches during a long run, so it is tracked per run.
-      let planSeen=false;
+      let planSeen=Boolean(activeSavedPlan?.items.length);
       let planNudged=false;
       const changedFiles=new Set<string>();
       const parsedChanges:ParsedChange[]=[];
+      // A model can get stuck repeating one failing call. The message is not a hard stop: it names
+      // the repetition and asks for a different action, so a temporary error is still recoverable.
+      const repeatedToolFailures=new Map<string,number>();
+      let repeatedToolNotice="";
+      const noteToolFailure=(call:{name:string;arguments:Record<string,unknown>},failed:boolean)=>{
+        const key=call.name+"\u0000"+JSON.stringify(call.arguments??{}).slice(0,1200);
+        if(!failed){repeatedToolFailures.delete(key);return;}
+        const count=(repeatedToolFailures.get(key)??0)+1;
+        repeatedToolFailures.set(key,count);
+        while(repeatedToolFailures.size>64){
+          const oldest=repeatedToolFailures.keys().next().value;
+          if(oldest===undefined)break;
+          repeatedToolFailures.delete(oldest);
+        }
+        if(count===3){
+          // Delivered at the start of the next model step, not between the tool results of this
+          // one: a provider expects the answers to one assistant turn to stay together.
+          repeatedToolNotice="REPEATED TOOL FAILURE: "+call.name+" failed with the same arguments three times. Do not repeat it. Read the actual file or error, use the working state, and choose a different action; if the task cannot proceed, explain the blocker instead of retrying.";
+        }
+      };
 
       /**
        * Everything the user can see — the answers, the thinking behind them and every
@@ -235,6 +279,21 @@ export class AgentRuntime {
           ...(browserRuntime?routes.map(path=>({id:randomUUID(),name:"browser.runtime",arguments:{path}})):[]),
         ];
         const qa={build:!buildCommand,preview:false,ssr:false,browser:browserRuntime?false:true};
+        // Verification is the runtime's own turn, but its tool results still need a call before
+        // them: a strict OpenAI/DeepSeek request rejects a tool message without an assistant
+        // tool_call. One synthetic turn covers every check; skipped checks get a paired result too.
+        messages.push({
+          role:"assistant",
+          content:"",
+          tool_calls:verifyCalls.map(call=>({id:call.id,name:call.name,arguments:call.arguments})),
+        });
+        const skipRemaining=(failedId:string,reason:string)=>{
+          let afterFailed=false;
+          for(const call of verifyCalls){
+            if(afterFailed)messages.push({role:"tool",content:JSON.stringify({ok:false,skipped:true,reason}),tool_call_id:call.id});
+            if(call.id===failedId)afterFailed=true;
+          }
+        };
         for(const verifyCall of verifyCalls){
           if(signal?.aborted)throw new Error("Запуск агента отменён");
           emit({type:"tool.started",runId,toolCallId:verifyCall.id,name:verifyCall.name,input:verifyCall.arguments});
@@ -246,6 +305,9 @@ export class AgentRuntime {
               qa.build=commandSucceeded(output);
               if(!qa.build){
                 lastVerificationFailure=verificationFailureSummary(output)||lastVerificationFailure;
+                setWorkingCheck(working,"проверка","ошибка");
+                setWorkingCheck(working,"сборка","ошибка");
+                skipRemaining(verifyCall.id,lastVerificationFailure||"сборка не прошла");
                 return false;
               }
             }
@@ -253,6 +315,9 @@ export class AgentRuntime {
               qa.preview=Boolean((output as {running?:boolean;ok?:boolean}).running??(output as {ok?:boolean}).ok);
               if(!qa.preview){
                 lastVerificationFailure=verificationFailureSummary(output)||lastVerificationFailure;
+                setWorkingCheck(working,"проверка","ошибка");
+                setWorkingCheck(working,"превью","ошибка");
+                skipRemaining(verifyCall.id,lastVerificationFailure||"превью не запустилось");
                 return false;
               }
             }
@@ -260,6 +325,9 @@ export class AgentRuntime {
               qa.ssr=Boolean((output as {ok?:boolean}).ok);
               if(!qa.ssr){
                 lastVerificationFailure=verificationFailureSummary(output)||lastVerificationFailure;
+                setWorkingCheck(working,"проверка","ошибка");
+                setWorkingCheck(working,"SSR","ошибка");
+                skipRemaining(verifyCall.id,lastVerificationFailure||"SSR не прошёл");
                 return false;
               }
             }
@@ -267,6 +335,9 @@ export class AgentRuntime {
               qa.browser=Boolean((output as {ok?:boolean}).ok);
               if(!qa.browser){
                 lastVerificationFailure=verificationFailureSummary(output)||lastVerificationFailure;
+                setWorkingCheck(working,"проверка","ошибка");
+                setWorkingCheck(working,"браузер","ошибка");
+                skipRemaining(verifyCall.id,lastVerificationFailure||"браузерная проверка не прошла");
                 return false;
               }
             }
@@ -274,17 +345,32 @@ export class AgentRuntime {
             const message=error instanceof Error?error.message:String(error);
             const output={ok:false,error:message};
             lastVerificationFailure=message;
+            setWorkingCheck(working,"проверка","ошибка");
             await finishTool(verifyCall,output);
             messages.push({role:"tool",content:boundToolOutput(verifyCall.name,output),tool_call_id:verifyCall.id});
+            skipRemaining(verifyCall.id,message);
             return false;
           }
         }
+        setWorkingCheck(working,"проверка","пройдена");
+        setWorkingCheck(working,"сборка",buildCommand?"пройдена":"не требуется");
+        setWorkingCheck(working,"превью","запущено");
+        setWorkingCheck(working,"SSR","пройден");
+        if(browserRuntime)setWorkingCheck(working,"браузер","пройден");
         messages.push({role:"system",content:"QA VERIFICATION PASSED: BUILD="+(buildCommand?"PASS":"SKIPPED (the project declares no build script)")+", PREVIEW=PASS, SSR=PASS"+(browserRuntime?", BROWSER=PASS":"")});
         return true;
       };
 
       for(let step=0;step<maxSteps;step++){
         if(signal?.aborted)throw new Error("Запуск агента отменён");
+        if(repeatedToolNotice){
+          messages.push({role:"system",content:repeatedToolNotice});
+          repeatedToolNotice="";
+        }
+        // The run's clipboard goes last, after every tool result and notice of the previous step.
+        // Replacing it here (rather than appending another copy) keeps the prompt prefix stable and
+        // the tail small; `trimMessagesToBudget` never drops or shrinks a system message.
+        messages=withWorkingState(messages,working);
         const context={runId,request,emit,signal};
         const stepRun=await runBudgetedStep(provider,messages,model,context,budget,{
           // Шаг и размер контекста идут в панель: видно, что запуск работает и сколько занято.
@@ -362,6 +448,7 @@ export class AgentRuntime {
             const refusal={error:"Режим «Планировщик»: изменения и запуск отключены. Разрешены только чтение файлов, команды из списка только-для-чтения (без перенаправлений, установки пакетов и git add/commit) и GET/HEAD-запросы. Опишите этот шаг в плане и продолжите изучение проекта.",mode:"planner"};
             await finishTool(call,refusal);
             messages.push({role:"tool",content:JSON.stringify(refusal),tool_call_id:call.id});
+            noteToolFailure(call,true);
             continue;
           }
           try{
@@ -370,6 +457,8 @@ export class AgentRuntime {
             await finishTool(call,output);
             // Ограниченный вывод: журнал сборки читается один раз, а в истории остаётся до конца запуска.
             messages.push({role:"tool",content:boundToolOutput(call.name,output),tool_call_id:call.id});
+            const failedOutput=output!==null&&typeof output==="object"&&((output as {ok?:unknown}).ok===false||typeof (output as {error?:unknown}).error==="string");
+            noteToolFailure(call,failedOutput);
 
             // Решение записано — заметка в промпте обновляется сразу, на этом же шаге: следующая
             // модель должна уже видеть новую договорённость, не дожидаясь следующего запуска.
@@ -394,6 +483,7 @@ export class AgentRuntime {
               const plan=(output as {plan?:PlanState}).plan;
               if(plan){
                 planSeen=true;
+                setWorkingPlan(working,plan);
                 emit({type:"plan.updated",runId,plan});
                 if(request.conversationId){
                   try{await saveConversationPlan(request.conversationId,plan);}
@@ -406,9 +496,11 @@ export class AgentRuntime {
               if((output as {ok?:boolean}).ok===true){
                 scenarioPending=false;
                 consecutiveScenarioFailures=0;
+                setWorkingCheck(working,"сценарий браузера","пройден");
                 messages.push({role:"system",content:"BROWSER QA SCENARIO PASSED: user-visible flow completed successfully with no browser console, page, HTTP, or network errors."});
               }else{
                 scenarioPending=true;
+                setWorkingCheck(working,"сценарий браузера","ошибка");
                 consecutiveScenarioFailures++;
                 if(consecutiveScenarioFailures>=MAX_VERIFICATION_ATTEMPTS){
                   throw new Error("Сценарий проверки в браузере не прошёл несколько раз подряд — достигнут предел попыток");
@@ -420,9 +512,13 @@ export class AgentRuntime {
               if((output as {ok?:boolean}).ok===true){
                 verificationPending=false;
                 consecutiveVerifyFailures=0;
+                setWorkingCheck(working,"проверка","пройдена");
+                setWorkingCheck(working,call.name==="browser.runtime"?"браузер":"страница",call.name==="browser.runtime"?"пройден":"доступна");
               }else{
                 verificationPending=true;
                 lastVerificationFailure=verificationFailureSummary(output)||lastVerificationFailure;
+                setWorkingCheck(working,"проверка","ошибка");
+                setWorkingCheck(working,call.name==="browser.runtime"?"браузер":"страница","ошибка");
                 consecutiveVerifyFailures=countVerificationFailure(consecutiveVerifyFailures,"tool");
               }
             }
@@ -434,6 +530,7 @@ export class AgentRuntime {
               const changedPath=typeof call.arguments.path==="string"?call.arguments.path:typeof call.arguments.to==="string"?call.arguments.to:"";
               if(changedPath){
                 changedFiles.add(changedPath);
+                recordWorkingChange(working,changedPath,mutationSummary(call.name,call.arguments,output));
                 const source=typeof call.arguments.content==="string"?call.arguments.content:"";
                 if(source) parsedChanges.push(...parseChangedSource(changedPath,source).changes);
                 const removedChanges=(output as {removedChanges?:ParsedChange[]}).removedChanges;
@@ -444,6 +541,7 @@ export class AgentRuntime {
             const message=error instanceof Error?error.message:String(error);
             await finishTool(call,{error:message});
             messages.push({role:"tool",content:JSON.stringify({error:message}),tool_call_id:call.id});
+            noteToolFailure(call,true);
           }
         }
 
@@ -472,6 +570,7 @@ export class AgentRuntime {
                   messages.push({role:"system",content:"BROWSER QA SCENARIO PASSED: the automatically planned user flow passed in Chromium with no browser console, page, HTTP, or network errors."});
                 }else{
                   scenarioPending=true;
+                  setWorkingCheck(working,"сценарий браузера","ошибка");
                   consecutiveScenarioFailures++;
                   messages.push({role:"system",content:"AUTOMATIC BROWSER QA FAILED. Inspect the scenario diagnostics and failure screenshot, fix the smallest necessary issue, then repeat verification. Do not finish while Browser QA is pending."});
                   if(consecutiveScenarioFailures>=MAX_VERIFICATION_ATTEMPTS) throw new Error("Сценарий проверки в браузере не прошёл несколько раз подряд — достигнут предел попыток");
@@ -479,6 +578,7 @@ export class AgentRuntime {
               }catch(error){
                 const message=error instanceof Error?error.message:String(error);
                 scenarioPending=true;
+                setWorkingCheck(working,"сценарий браузера","ошибка");
                 consecutiveScenarioFailures++;
                 await finishTool(scenarioCall,{ok:false,error:message});
                 messages.push({role:"tool",content:JSON.stringify({ok:false,error:message}),tool_call_id:scenarioCall.id});

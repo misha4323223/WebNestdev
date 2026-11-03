@@ -280,7 +280,7 @@ function interruptedSecretRequest(messages:ChatMessage[]):{variable:string;file:
   return null;
 }
 
-export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettings,onOpenAccountSettings,onRunningChange,onOpenChanges,scrollSignal,onChatEndChange,onScrollBottom,showScroll,writing}:{projectId:string;conversationId:string;onChanged:()=>void;onOpenModelSettings?:()=>void;onOpenAccountSettings?:()=>void;onRunningChange?:(running:boolean)=>void;onOpenChanges?:()=>void;scrollSignal?:number;onChatEndChange?:(atEnd:boolean)=>void;onScrollBottom?:()=>void;showScroll?:boolean;writing?:boolean}){
+export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettings,onOpenAccountSettings,onRunningChange,onOpenChanges,onPreviewStarted,scrollSignal,onChatEndChange,onScrollBottom,showScroll,writing}:{projectId:string;conversationId:string;onChanged:()=>void;onOpenModelSettings?:()=>void;onOpenAccountSettings?:()=>void;onRunningChange?:(running:boolean)=>void;onOpenChanges?:()=>void;onPreviewStarted?:()=>void;scrollSignal?:number;onChatEndChange?:(atEnd:boolean)=>void;onScrollBottom?:()=>void;showScroll?:boolean;writing?:boolean}){
   const [messages,setMessages]=useState<ChatMessage[]>([]);
   const [prompt,setPrompt]=useState<string>(()=>readDraft(conversationId));
   const [running,setRunning]=useState(false);
@@ -917,6 +917,9 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       }
       if(event.type==="tool.started"&&event.name){
         const name=event.name;
+        // Агент запускает предпросмотр — панель открывается сразу, не дожидаясь, пока человек
+        // найдёт стрелку в шапке. На десктопе она и так на месте, на телефоне это шторка.
+        if(name==="preview.start")onPreviewStarted?.();
         const id=event.toolCallId??nextId();
         // Publishing the plan already updates the plan card, so it is not repeated here.
         if(name!=="plan.update")updateActions(current=>{
@@ -929,6 +932,9 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
         const output=event.output as {error?:unknown;ok?:unknown}|null;
         const failed=Boolean(output&&typeof output==="object"&&(("error" in output&&output.error)||output.ok===false));
         updateActions(current=>current.map(action=>action.id===id?{...action,status:failed?"failed":"done",durationMs:Date.now()-action.startedAt,output:event.output}:action));
+        // Предпросмотр уже поднялся: открытая панель перечитывает статус и показывает кадр
+        // без нажатия «Обновить».
+        if(event.name==="preview.start"&&!failed)onPreviewStarted?.();
         // Картинка, нарисованная по просьбе пользователя, видна сразу: результата инструмента
         // в списке сообщений ещё нет — он появится только в сохранённой истории.
         if(event.name==="image.generate"&&output&&typeof output==="object"){
@@ -1715,7 +1721,10 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
           <button className="ghost-button" onClick={()=>setQuotaNotice(null)}>Понятно</button>
           <button className="send-button" onClick={()=>{
             if(quotaNotice==="credits"){
-              try{localStorage.setItem("webnestdev.openBillingTab","1")}catch{}
+              try{
+                localStorage.setItem("webnestdev.openBillingTab","1");
+                localStorage.setItem("webnestdev.openCreditTopUp","1");
+              }catch{}
             }
             setQuotaNotice(null);onOpenAccountSettings?.();
           }}>{quotaNotice==="credits"?"Докупить кредиты":"Обновить тариф"}</button>

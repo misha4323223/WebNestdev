@@ -23,16 +23,18 @@ export const SYSTEM_PROMPT = "LANGUAGE RULE, READ FIRST: reason in Russian by de
  * change the project. The runtime also refuses mutating tools, so this prompt is the
  * explanation the model works with rather than the only guard.
  */
-export const PLANNER_MODE_PROMPT = "PLANNER MODE IS ON. The user asked for a plan or analysis, not for changes. First understand the goal: inspect the project with read-only tools (fs.list, fs.read, git status, read-only terminal commands) and, only if a genuinely important decision is missing from the task and the project, ask at most two questions with question.ask (goal, audience, scope, data, preferred approach). Do not ask permission to continue and do not ask what you can find in the files. Then publish the result with plan.update: the full ordered list of steps, each with a concrete title, exactly one step 'in_progress' only while you are still exploring. Do not call fs.write, fs.rename, fs.delete, npm.install, pip.install, net.download, database.env, git.add, git.commit, preview.start or preview.stop, and do not call yandex.request or net.request with anything other than GET or HEAD — the runtime rejects them in this mode. A single read-only terminal command is allowed (ls, cat, head, tail, grep, find, git status, git log, git diff, git branch, npm ls); anything chained, piped, redirecting output, installing packages or running a script is refused, so keep inspection commands separate and simple. Write the plan items, the reasoning and the summary in the user's language — Russian by default, or the language the user wrote in — while code, paths and commands keep their original spelling. Finish your answer with the plan, the assumptions you made, and what the user should confirm before switching to Developer mode.";
+export const PLANNER_MODE_PROMPT = "PLANNER MODE IS ON. The user asked for a plan or analysis, not for changes. First understand the goal: inspect the project with read-only tools (fs.list, fs.read, git status, read-only terminal commands) and, only if a genuinely important decision is missing from the task and the project, ask at most two questions with question.ask (goal, audience, scope, data, preferred approach). Do not ask permission to continue and do not ask what you can find in the files. Then publish the result with plan.update: the full ordered list of steps, each with a concrete title, exactly one step 'in_progress' only while you are still exploring. Do not call fs.write, fs.edit, fs.rename, fs.delete, npm.install, pip.install, net.download, database.env, git.add, git.commit, preview.start or preview.stop, and do not call yandex.request or net.request with anything other than GET or HEAD — the runtime rejects them in this mode. A single read-only terminal command is allowed (ls, cat, head, tail, grep, find, git status, git log, git diff, git branch, npm ls); anything chained, piped, redirecting output, installing packages or running a script is refused, so keep inspection commands separate and simple. Write the plan items, the reasoning and the summary in the user's language — Russian by default, or the language the user wrote in — while code, paths and commands keep their original spelling. Finish your answer with the plan, the assumptions you made, and what the user should confirm before switching to Developer mode.";
 
 /**
  * The stored conversation as the model's history.
  *
  * It is the same chat the user reads, so a run continues from what actually happened — including the
  * tool results of the previous run, which the panel cannot send back (it sends plain turns). Two
- * things are cleaned up before it goes to a provider:
+ * rules decide what is safe to send to a provider:
  *
- * - `reasoning` is dropped: the user reads the thinking, the provider does not get it back;
+ * - `reasoning` is kept: the panel shows it, and DeepSeek thinking mode requires the earlier chain
+ *   back when tools are in the request. The provider decides conditionally whether to send it, so a
+ *   non-DeepSeek gateway never sees an unknown field;
  * - every tool call keeps its result and every result its call. A run interrupted mid-step leaves an
  *   unanswered call, and a write that failed halfway leaves a result without its call; a provider
  *   rejects both, so such a pair is removed. Where the work stopped is said by the resume notice
@@ -53,7 +55,12 @@ export function storedHistory(messages: ChatMessage[]): ChatMessage[] {
     }
     if (message.role === "assistant") {
       for (const call of message.tool_calls ?? []) announced.add(call.id);
-      kept.push({ role: "assistant", content: message.content, ...(message.tool_calls?.length ? { tool_calls: message.tool_calls } : {}) });
+      kept.push({
+        role: "assistant",
+        content: message.content,
+        ...(message.reasoning ? { reasoning: message.reasoning } : {}),
+        ...(message.tool_calls?.length ? { tool_calls: message.tool_calls } : {}),
+      });
       continue;
     }
     kept.push({ role: "user", content: message.content });
@@ -63,7 +70,12 @@ export function storedHistory(messages: ChatMessage[]): ChatMessage[] {
     if (message.role !== "assistant" || !message.tool_calls?.length) return message;
     const calls = message.tool_calls.filter(call => answered.has(call.id));
     if (calls.length === message.tool_calls.length) return message;
-    return { role: "assistant" as const, content: message.content, ...(calls.length ? { tool_calls: calls } : {}) };
+    return {
+      role: "assistant" as const,
+      content: message.content,
+      ...(message.reasoning ? { reasoning: message.reasoning } : {}),
+      ...(calls.length ? { tool_calls: calls } : {}),
+    };
   });
 }
 

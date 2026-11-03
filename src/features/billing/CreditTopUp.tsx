@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { CreditCard, RefreshCw, ShieldCheck } from "lucide-react";
+import { CreditCard, RefreshCw, ShieldCheck, X } from "lucide-react";
 import {
   creditPriceRub,
   creditsLabel,
@@ -19,10 +19,12 @@ import { CheckoutConsent, type CheckoutConsentState } from "./CheckoutConsent";
  * сумме из ответа `/api/billing/credits/checkout`, поэтому подменить цену запросом нельзя.
  * Докупленные кредиты не сгорают, поэтому блок показывает их отдельно от месячной шкалы.
  */
-export function CreditTopUp({ billing, paid, compact = false }: {
+export function CreditTopUp({ billing, paid, compact = false, onClose }: {
   billing: BillingData;
   paid: boolean;
   compact?: boolean;
+  /** В окне докупки форма закрывается крестиком, не выходя из кабинета. */
+  onClose?: () => void;
 }) {
   const topUp = billing.creditTopUp;
   const purchases = billing.creditPurchases ?? [];
@@ -82,10 +84,13 @@ export function CreditTopUp({ billing, paid, compact = false }: {
           ? "Введите количество кредитов. Минимум — " + creditsLabel(minCredits) + "; цена — " + topUp.pricePer1000Label + " за 1 000. Докупленные кредиты не сгорают и расходуются после кредитов тарифа."
           : "Докупка временно недоступна: не удалось загрузить настройки цены. Попробуйте позже."}</p>
       </div>
-      {paid && <div className="credit-topup-balance">
-        <span>Докуплено</span>
-        <strong>{creditsLabel(purchased)}</strong>
-        <small>не сгорают</small>
+      {(paid || onClose) && <div className="credit-topup-head-side">
+        {paid && <div className="credit-topup-balance">
+          <span>Докуплено</span>
+          <strong>{creditsLabel(purchased)}</strong>
+          <small>не сгорают</small>
+        </div>}
+        {onClose && <button type="button" className="icon-button credit-topup-close" onClick={onClose} aria-label="Закрыть" title="Закрыть"><X size={16}/></button>}
       </div>}
     </div>
 

@@ -89,6 +89,25 @@ test("checkout creates a pending invoice and returns a signed Robokassa link", a
   });
 });
 
+test("the same active plan cannot be bought again, while another plan can still be chosen", async () => {
+  await withShop(async () => {
+    const app = await shopApp();
+    try {
+      const { user, cookie } = await signedInUser();
+      const first = await createPayment({ userId: user.id, plan: "pro", amount: 990 });
+      await markPaymentPaid(first.invId);
+
+      const repeat = await app.inject({ method: "POST", url: "/api/billing/checkout", headers: { cookie }, payload: { plan: "pro" } });
+      assert.equal(repeat.statusCode, 409);
+      assert.match(repeat.body, /уже активен до/);
+      assert.match(repeat.body, /докупите кредиты/);
+
+      const otherPlan = await app.inject({ method: "POST", url: "/api/billing/checkout", headers: { cookie }, payload: { plan: "team" } });
+      assert.equal(otherPlan.statusCode, 200, "переход на другой тариф не блокируется");
+    } finally { await app.close(); }
+  });
+});
+
 test("credit top-up takes any amount above the minimum, is one-off and credited after ResultURL", async () => {
   await withShop(async () => {
     const app = await shopApp();

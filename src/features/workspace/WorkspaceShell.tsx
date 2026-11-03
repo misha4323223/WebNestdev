@@ -72,6 +72,9 @@ export function WorkspaceShell({onHome,onAgentState,active=true}:{onHome:()=>voi
   // Every finished run bumps this: the preview panel re-reads the status and reloads the
   // frame, so the app the agent just changed is what the user sees, without a restart.
   const [previewReload,setPreviewReload]=useState(0);
+  // preview.start из агента открывает панель и просит её перечитать статус. На телефоне это
+  // шторка поверх чата, на десктопе — уже видимая колонка; в обоих случаях кадр появляется сам.
+  const previewStarted=useCallback(()=>{setPreviewOpen(true);setPreviewReload(value=>value+1)},[]);
   // Каждый законченный запуск может переписать TASKS.md: вкладка задач перечитывает файл,
   // когда её откроют, и не показывает список прошлого хода.
   const [taskReload,setTaskReload]=useState(0);
@@ -148,7 +151,7 @@ export function WorkspaceShell({onHome,onAgentState,active=true}:{onHome:()=>voi
           <Suspense fallback={<div className="app-loading"><NestLoader size={42} label="Загружаем настройки"/></div>}>
             <SettingsHub key={settingsKey} projectId={projectId} projectName={projectName} onClose={()=>setSettingsOpen(false)}/>
           </Suspense>
-        </div>:<><WorkspaceNav view={view} onChange={setView} onSecrets={openSecrets}/><WorkspaceContent view={view} projectId={projectId} projectName={projectName} conversationId={conversationId} onRunFinished={()=>{setPreviewReload(value=>value+1);setTaskReload(value=>value+1);void sessionsReload()}} onFileSaved={()=>setPreviewReload(value=>value+1)} taskReload={taskReload} onOpenModelSettings={openModelSettings} onOpenAccountSettings={openSettings} onRunningChange={reportAgentState} onOpenChanges={()=>{setSettingsOpen(false);setView("changes")}} scrollSignal={scrollSignal} onChatEndChange={reportChatEnd} onScrollBottom={scrollChatToBottom} showScroll={view==="agent"&&!chatAtEnd} writing={view==="agent"&&!chatAtEnd&&agentRunning}/></>}
+        </div>:<><WorkspaceNav view={view} onChange={setView} onSecrets={openSecrets}/><WorkspaceContent view={view} projectId={projectId} projectName={projectName} conversationId={conversationId} onRunFinished={()=>{setPreviewReload(value=>value+1);setTaskReload(value=>value+1);void sessionsReload()}} onFileSaved={()=>setPreviewReload(value=>value+1)} taskReload={taskReload} onOpenModelSettings={openModelSettings} onOpenAccountSettings={openSettings} onRunningChange={reportAgentState} onOpenChanges={()=>{setSettingsOpen(false);setView("changes")}} onPreviewStarted={previewStarted} scrollSignal={scrollSignal} onChatEndChange={reportChatEnd} onScrollBottom={scrollChatToBottom} showScroll={view==="agent"&&!chatAtEnd} writing={view==="agent"&&!chatAtEnd&&agentRunning}/></>}
       </div>
       {!waking&&<PreviewPanel projectId={projectId} reloadToken={previewReload} open={previewOpen} onClose={()=>setPreviewOpen(false)} onRunningChange={setPreviewRunning}/>}
       {deployOpen&&<Suspense fallback={<div className="app-loading"><NestLoader size={42} label="Загружаем мастер развёртывания"/></div>}>

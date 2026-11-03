@@ -5,10 +5,10 @@ import { PLANNER_MODE_PROMPT, SYSTEM_PROMPT, browserCheckNotice, buildInitialMes
 
 /**
  * The stored chat is the model's memory of a run, so what it hands to a provider has to be exactly
- * what a provider accepts. These tests pin the two rules that matter: the thinking is not sent back,
- * and a tool call and its result are never separated.
+ * what a provider accepts. These tests pin the rules that matter: the thinking survives for the
+ * provider that requires it, and a tool call and its result are never separated.
  */
-test("история из хранилища: размышления остаются пользователю, а не провайдеру", () => {
+test("история из хранилища: размышления сохраняются и доходят до провайдера", () => {
   const stored: ChatMessage[] = [
     { role: "system", content: "промпт" },
     { role: "user", content: "сделай лендинг" },
@@ -18,7 +18,7 @@ test("история из хранилища: размышления остаю�
   assert.equal(history.length, 2);
   assert.deepEqual(history[0], { role: "user", content: "сделай лендинг" });
   assert.equal(history[1].role, "assistant");
-  assert.ok(!("reasoning" in history[1]), "размышление не возвращается провайдеру");
+  assert.equal(history[1].role === "assistant" ? history[1].reasoning : undefined, "сначала посмотрю структуру проекта");
   assert.equal(history[1].content, "готово");
 });
 
@@ -47,6 +47,27 @@ test("история из хранилища: незакрытая пара вы
   assert.equal(history[1].role, "assistant");
   assert.ok(!(history[1].role === "assistant" && history[1].tool_calls), "у ответа не осталось висящего вызова");
   assert.equal(history[1].content, "вызываю инструмент", "текст ответа сохраняется");
+});
+
+test("история из хранилища: при обрезании незакрытого вызова размышление не теряется", () => {
+  const stored: ChatMessage[] = [
+    { role: "user", content: "задача" },
+    {
+      role: "assistant",
+      content: "вызываю два инструмента",
+      reasoning: "сначала прочитаю файл, затем список",
+      tool_calls: [
+        { id: "c1", name: "fs.read", arguments: { path: "index.html" } },
+        { id: "c2", name: "fs.list", arguments: {} },
+      ],
+    },
+    { role: "tool", content: "результат первого", tool_call_id: "c1" },
+  ];
+  const history = storedHistory(stored);
+  const assistant = history[1];
+  assert.equal(assistant.role, "assistant");
+  assert.equal(assistant.role === "assistant" ? assistant.reasoning : undefined, "сначала прочитаю файл, затем список");
+  assert.deepEqual(assistant.role === "assistant" ? assistant.tool_calls?.map(call => call.id) : [], ["c1"]);
 });
 
 test("история из хранилища: результат без своего вызова не отправляется", () => {

@@ -38,6 +38,36 @@ test("run usage is recorded per user and cost is estimated from configured price
   }
 });
 
+test("model usage is grouped by public NestDev names and never leaks the upstream model", async () => {
+  const userId = "cost-models-" + randomUUID();
+  await recordRunUsage(userId, {
+    runId: randomUUID(),
+    projectId: "project-models",
+    model: "anthropic/claude-sonnet",
+    modelId: "max",
+    promptTokens: 1_200,
+    completionTokens: 300,
+    estimated: false,
+  });
+  await recordRunUsage(userId, {
+    runId: randomUUID(),
+    projectId: "project-models",
+    model: "deepseek/deepseek-v4.1-flash",
+    modelId: "mini",
+    promptTokens: 800,
+    completionTokens: 200,
+    estimated: false,
+  });
+
+  const snapshot = await getCostSnapshot(userId);
+  const max = snapshot.models.find(model => model.id === "max");
+  const mini = snapshot.models.find(model => model.id === "mini");
+  assert.deepEqual(max, { id: "max", name: "NestDev Max", promptTokens: 1_200, completionTokens: 300, runs: 1 });
+  assert.deepEqual(mini, { id: "mini", name: "NestDev Mini", promptTokens: 800, completionTokens: 200, runs: 1 });
+  assert.equal(JSON.stringify(snapshot.models).includes("anthropic"), false, "upstream-модель не уходит в пользовательский ответ");
+  assert.equal(JSON.stringify(snapshot.models).includes("deepseek"), false, "upstream-модель не уходит в пользовательский ответ");
+});
+
 test("cached prompt tokens are stored with the run and shown in cost and history",async()=>{
   const userId="cost-cache-"+randomUUID();
   await recordRunUsage(userId,{runId:randomUUID(),projectId:"project-cache",conversationId:"conv-cache",model:"deepseek/deepseek-v4.1-flash",promptTokens:1000,completionTokens:100,cachedPromptTokens:800,estimated:false});

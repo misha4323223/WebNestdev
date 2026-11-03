@@ -32,12 +32,14 @@ export function devTarget(argv, env = process.env) {
 
 function main() {
   const target = devTarget(process.argv.slice(2));
-  // Vite проксирует /api и /ws на 8787 (vite.config.ts), поэтому API в разработке всегда слушает
-  // этот порт. Иначе в среде, которая задаёт PORT для веб-сервера (например 3000), API пытался бы
-  // занять тот же порт, что и Vite, и падал бы с EADDRINUSE.
+  // Обычно Vite слушает 5173, а API — 8787 (на него смотрит прокси в vite.config.ts). Но платформа
+  // может отдать 8787 самому веб-интерфейсу; тогда API встаёт рядом (8789, оставляя 8788 двери
+  // публичных предпросмотров), и Vite получает его порт через VITE_API_PORT. Иначе оба процесса
+  // занимали бы 8787 и API падал бы с EADDRINUSE — ровно то, что ломало предпросмотр.
+  const apiPort = target.port === 8787 ? "8789" : "8787";
   const commands = [
-    { name: "WEB", args: ["run", "dev:web", "--", "--host", target.host, "--port", String(target.port)], env: process.env },
-    { name: "API", args: ["run", "dev:server"], env: { ...process.env, PORT: "8787" } },
+    { name: "WEB", args: ["run", "dev:web", "--", "--host", target.host, "--port", String(target.port)], env: { ...process.env, VITE_API_PORT: apiPort } },
+    { name: "API", args: ["run", "dev:server"], env: { ...process.env, PORT: apiPort } },
   ];
   const children = commands.map(({ name, args, env }) => {
     const child = spawn(npm, args, { stdio: "inherit", shell: false, env });

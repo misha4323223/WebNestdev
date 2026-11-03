@@ -3,17 +3,28 @@ import assert from "node:assert/strict";
 import { describePreviewHosts, previewHostLabel, previewHostTarget, previewPublicDomain, previewPublicUrl } from "./preview-host.js";
 
 const KEY = "PREVIEW_PUBLIC_DOMAIN";
+const SITE = "WEBNESTDEV_SITE_DOMAIN";
+const NODE_ENV = "NODE_ENV";
 
-function withDomain(value: string | undefined, body: () => void) {
-  const before = process.env[KEY];
-  if (value === undefined) delete process.env[KEY];
-  else process.env[KEY] = value;
+function withEnv(changes: Record<string, string | undefined>, body: () => void) {
+  const before = new Map<string, string | undefined>();
+  for (const [name, value] of Object.entries(changes)) {
+    before.set(name, process.env[name]);
+    if (value === undefined) delete process.env[name];
+    else process.env[name] = value;
+  }
   try {
     body();
   } finally {
-    if (before === undefined) delete process.env[KEY];
-    else process.env[KEY] = before;
+    for (const [name, value] of before) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
   }
+}
+
+function withDomain(value: string | undefined, body: () => void) {
+  withEnv({ [KEY]: value }, body);
 }
 
 test("без PREVIEW_PUBLIC_DOMAIN публичных адресов нет", () => {
@@ -68,5 +79,28 @@ test("публичный адрес собирается из домена и и
     assert.equal(previewPublicUrl("p1"), "https://p1.preview.nestdev.ru");
     assert.equal(previewPublicUrl("не проект"), "");
     assert.match(describePreviewHosts(), /preview\.nestdev\.ru/);
+  });
+});
+
+test("в production домен предпросмотра выводится из домена панели, если переменная не задана", () => {
+  // Caddy уже обслуживает *.preview.<домен>; без вывода сервер закрывал бы путь в панели,
+  // хотя публичная дверь настроена. Схема, www и слэш — обычный вид адреса панели.
+  withEnv({ [KEY]: undefined, [NODE_ENV]: "production", [SITE]: "https://www.nestdev.ru/" }, () => {
+    assert.equal(previewPublicDomain(), "preview.nestdev.ru");
+    assert.equal(previewPublicUrl("p1"), "https://p1.preview.nestdev.ru");
+  });
+});
+
+test("в production localhost и IP не получают публичный домен", () => {
+  for (const site of ["localhost", "127.0.0.1", "http://localhost:8787"]) {
+    withEnv({ [KEY]: undefined, [NODE_ENV]: "production", [SITE]: site }, () => {
+      assert.equal(previewPublicDomain(), "", site);
+    });
+  }
+});
+
+test("явно заданный некорректный домен не заменяется догадкой", () => {
+  withEnv({ [KEY]: "*", [NODE_ENV]: "production", [SITE]: "nestdev.ru" }, () => {
+    assert.equal(previewPublicDomain(), "");
   });
 });

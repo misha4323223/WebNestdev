@@ -12,7 +12,7 @@ import type { ChatMessage } from "../types.js";
  *
  * A gateway enforces two independent limits, and only bounding the first one is a mistake we made:
  *
- * - **size** — `AGENT_CONTEXT_TOKENS_PAID` (default 150000) and `AGENT_CONTEXT_TOKENS_FREE`
+ * - **size** — `AGENT_CONTEXT_TOKENS_PAID` (default 250000) and `AGENT_CONTEXT_TOKENS_FREE`
  *   (default 120000) are the largest prompts each tier may send; the common `AGENT_CONTEXT_TOKENS`
  *   remains a fallback/ceiling for deployments that set it. `AGENT_CONTEXT_OUTPUT_RESERVE`
  *   (default 8192) is subtracted for the answer, and the ratio of characters per token is
@@ -35,8 +35,12 @@ export const DEFAULT_CHARS_PER_TOKEN = 3.6;
 export const MIN_CHARS_PER_TOKEN = 1.5;
 export const MAX_CHARS_PER_TOKEN = 8;
 
-/** How many of the newest messages are never dropped: the model needs the current step in full. */
-const KEEP_RECENT_MESSAGES = 8;
+/**
+ * How many of the newest messages are never dropped: the model needs the current step in full.
+ * Eight protected messages were four tool rounds — too little for a run that edits several files.
+ * Twenty-four keeps twelve rounds of real work and still leaves room for the digest under the cap.
+ */
+const KEEP_RECENT_MESSAGES = 24;
 /**
  * Messages one request may carry by default. A gateway cap that is smaller than this is discovered
  * from its own refusal and the run continues with a reduced cap (see `step-runner.ts`).
@@ -146,14 +150,15 @@ function tierLimit(specificName: string, globalName: string, fallback: number) {
 }
 
 /**
- * Бюджет промпта по тарифу. Платная модель получает 150k, бесплатная — 120k: поднимать
- * бесплатную вместе с платной нельзя, её резервные модели могут видеть только 128k.
+ * Бюджет промпта по тарифу. Платная модель получает 250k — четверть миллиона из миллиона
+ * DeepSeek, достаточно для длинной истории с reasoning и далеко от края окна. Бесплатная — 120k:
+ * поднимать её вместе с платной нельзя, её резервные модели могут видеть только 128k.
  */
 export function contextBudgetTokensFor(tier: ContextTier) {
   const total = tierLimit(
     tier === "paid" ? "AGENT_CONTEXT_TOKENS_PAID" : "AGENT_CONTEXT_TOKENS_FREE",
     "AGENT_CONTEXT_TOKENS",
-    tier === "paid" ? 150_000 : 120_000,
+    tier === "paid" ? 250_000 : 120_000,
   );
   const reserve = positiveInt(process.env.AGENT_CONTEXT_OUTPUT_RESERVE, 8_192);
   return Math.max(4_000, total - reserve);
@@ -204,7 +209,12 @@ export function calibrateCharsPerToken(chars: number, reportedTokens: number) {
 }
 
 export function messageChars(messages: ChatMessage[]) {
-  return messages.reduce((sum, message) => sum + message.content.length + (message.role === "assistant" ? JSON.stringify(message.tool_calls ?? []).length : 0), 0);
+  return messages.reduce((sum, message) => {
+    if (message.role !== "assistant") return sum + message.content.length;
+    // DeepSeek thinking mode receives the previous `reasoning_content` back with the history.
+    // Ignoring it here made the estimate smaller than the prompt by tens of thousands of tokens.
+    return sum + message.content.length + (message.reasoning?.length ?? 0) + JSON.stringify(message.tool_calls ?? []).length;
+  }, 0);
 }
 
 export function estimateTokens(messages: ChatMessage[], charsPerToken = DEFAULT_CHARS_PER_TOKEN) {
@@ -297,6 +307,17 @@ function clipCallArgs(message: ChatMessage): ChatMessage | null {
   return { ...message, tool_calls: calls };
 }
 
+/**
+ * Old thinking is part of the prompt in DeepSeek thinking mode. Keeping every earlier chain whole
+ * would make a long run unable to fit even after its tool output is dropped, so an old turn keeps a
+ * readable head and tail of it. The newest protected turns are never touched.
+ */
+function clipReasoning(message: ChatMessage, head = COMPACT_HEAD_CHARS, tail = COMPACT_TAIL_CHARS): ChatMessage | null {
+  if (message.role !== "assistant" || !message.reasoning) return null;
+  if (message.reasoning.length <= head + tail) return null;
+  return { ...message, reasoning: clip(message.reasoning, head, tail, "старое размышление сокращено") };
+}
+
 /** One line, whitespace collapsed: what a digest entry is made of. */
 function digestHead(content: string, limit: number) {
   const text = content.replace(/\s+/g, " ").trim();
@@ -345,9 +366,18 @@ const DIGEST_MAX_ACTIONS = 20;
 export function toolCallTarget(input: unknown) {
   if (!input || typeof input !== "object") return "";
   const values = input as Record<string, unknown>;
-  for (const key of ["path", "to", "command", "url", "route", "query"]) {
+  for (const key of ["path", "to", "command", "url", "route", "query", "text"]) {
     const value = values[key];
     if (typeof value === "string" && value.trim()) return digestHead(value, DIGEST_ACTION_CHARS);
+  }
+  // The plan is a tool call too. Its items are what the user watches, so a cut keeps their titles
+  // instead of reducing the whole plan to the word `plan.update`.
+  if (Array.isArray(values.items)) {
+    const titles = values.items
+      .map(item => (item && typeof item === "object" ? (item as Record<string, unknown>).title : ""))
+      .filter((item): item is string => typeof item === "string" && Boolean(item.trim()))
+      .map(item => digestHead(item, 40));
+    if (titles.length) return "план: " + titles.join("; ");
   }
   return "";
 }
@@ -418,7 +448,7 @@ function cutNote(collector: CutCollector, dropped: number) {
   if (skipped > 0) parts.push("ещё " + skipped + " более ранних просьб не поместились в срез — если факта нет в проекте, прочитай файлы, а не переспрашивай");
   if (answers.length) parts.push("агент уже отвечал: " + answers.map(item => "«" + item + "»").join(" "));
   if (actions.length) parts.push("уже сделано с проектом: " + actions.join(", "));
-  if (collector.toolResults) parts.push("вывод инструментов выброшен (" + collector.toolResults + " результатов) — читай файлы и запускай команды заново, если он нужен");
+  if (collector.toolResults) parts.push("вывод инструментов выброшен (" + collector.toolResults + " результатов) — сначала смотри блок ТЕКУЩЕЕ СОСТОЯНИЕ, а если нужного факта нет, прочитай файл или повтори команду");
   const note = "[" + parts.join(". ") + "]";
   return note.length > CUT_NOTE_CHARS ? note.slice(0, CUT_NOTE_CHARS) + "…]" : note;
 }
@@ -538,6 +568,12 @@ export function trimMessagesToBudget(
         // the model an old conclusion for nothing.
         if (!overTokens()) break;
       }
+      const withReasoning = clipReasoning(working[i]);
+      if (withReasoning) {
+        setMessage(i, withReasoning);
+        compacted++;
+        if (!overTokens()) break;
+      }
       const current = working[i];
       if (current.content.length <= COMPACT_HEAD_CHARS + COMPACT_TAIL_CHARS) continue;
       setContent(i, current, clip(current.content, COMPACT_HEAD_CHARS, COMPACT_TAIL_CHARS, "старый шаг сокращён"));
@@ -600,6 +636,12 @@ export function trimMessagesToBudget(
       const withCalls = clipCallArgs(message);
       if (withCalls) {
         setMessage(i, withCalls);
+        compacted++;
+        if (!overTokens()) break;
+      }
+      const withReasoning = clipReasoning(working[i], SQUEEZE_HEAD_CHARS, SQUEEZE_TAIL_CHARS);
+      if (withReasoning) {
+        setMessage(i, withReasoning);
         compacted++;
         if (!overTokens()) break;
       }

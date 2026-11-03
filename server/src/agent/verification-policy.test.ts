@@ -11,6 +11,7 @@ test("routeFromMutation maps common Next.js page files to concrete smoke-test ro
   assert.equal(routeFromMutation("fs.write", { path: "app/layout.tsx" }), "/");
   assert.equal(routeFromMutation("fs.write", { path: "app/products/layout.tsx" }), "/");
   assert.equal(routeFromMutation("fs.write", { path: "src/App.tsx" }), "/");
+  assert.equal(routeFromMutation("fs.edit", { path: "pages/products/[id].tsx" }), "/products/test");
   assert.equal(routeFromMutation("fs.delete", { path: "pages/products/[id].tsx" }), "/products/test");
   assert.equal(routeFromMutation("terminal.exec", { command: "npm run build" }), "/");
 });
@@ -71,6 +72,7 @@ test("the failure summary names the line to fix, not the whole build log", () =>
 test("browser runtime policy includes UI source changes but skips non-code documentation", () => {
   assert.equal(shouldRunBrowserRuntime("fs.write", { path: "src/App.tsx" }), true);
   assert.equal(shouldRunBrowserRuntime("fs.write", { path: "src/styles.css" }), true);
+  assert.equal(shouldRunBrowserRuntime("fs.edit", { path: "src/components/Button.tsx" }), true);
   assert.equal(shouldRunBrowserRuntime("fs.delete", { path: "src/components/Button.tsx" }), true);
   assert.equal(shouldRunBrowserRuntime("fs.delete", { path: "README.md" }), false);
   assert.equal(shouldRunBrowserRuntime("fs.write", { path: "README.md" }), false);

@@ -3,7 +3,10 @@ import type { PlanId } from "./account/plans.js";
 export type Role="user"|"assistant"|"system"|"tool";
 export type ChatMessage=
   | {role:"user"|"system";content:string}
-  /** `reasoning` is what the model thought before answering; it is kept for the user, never sent back to the provider. */
+  /**
+   * `reasoning` is what the model thought before answering. It is shown to the user and kept in the
+   * session; DeepSeek thinking mode also receives it back with tools, while other providers do not.
+   */
   | {role:"assistant";content:string;reasoning?:string;tool_calls?:Array<{id:string;name:string;arguments:Record<string,unknown>}>}
   | {role:"tool";content:string;tool_call_id:string};
 export type PlanItemStatus="pending"|"in_progress"|"done";

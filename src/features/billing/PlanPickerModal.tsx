@@ -70,7 +70,7 @@ export function PlanPickerModal({ open, onClose, onChoosePlan }: {
             </span>
           </div>
           <p className="account-muted">{billing.subscription?.renewsAt
-            ? "Тариф действует до " + new Date(billing.subscription.renewsAt).toLocaleDateString("ru-RU", { day: "numeric", month: "long", year: "numeric" }) + ". Оплата продлевает срок от текущей даты окончания."
+            ? "Тариф действует до " + new Date(billing.subscription.renewsAt).toLocaleDateString("ru-RU", { day: "numeric", month: "long", year: "numeric" }) + ". Повторно оплатить этот же тариф до окончания нельзя; можно сменить тариф или докупить кредиты."
             : enabled
               ? "Оплата проходит на защищённой странице; тариф включается сразу после подтверждения платежа."
               : "Тариф можно выбрать заранее: выбор сохранится и включится вместе с оплатой."}</p>
@@ -82,7 +82,7 @@ export function PlanPickerModal({ open, onClose, onChoosePlan }: {
               return <button
                 type="button"
                 key={plan.id}
-                className={"plan-card plan-card-select" + (active ? " selected" : "") + (chosen ? " chosen" : "")}
+                className={"plan-card plan-card-select plan-card-compact" + (active ? " selected" : "") + (chosen ? " chosen" : "")}
                 onClick={() => onChoosePlan(plan.id)}
                 aria-label={"Открыть описание тарифа «" + plan.name + "»"}
               >
@@ -98,7 +98,7 @@ export function PlanPickerModal({ open, onClose, onChoosePlan }: {
                   : chosen
                     ? <span className="plan-badge">{enabled ? "Выбран" : "Выбран · оплата скоро"}</span>
                     : plan.recommended ? <span className="plan-badge">Популярный выбор</span> : null}
-                <ul>{plan.features.slice(0, 4).map(feature => <li key={feature}><Check size={12}/>{feature}</li>)}</ul>
+                <ul>{plan.features.slice(0, 3).map(feature => <li key={feature}><Check size={12}/>{feature}</li>)}</ul>
                 <span className="plan-card-open">{active ? "Текущий тариф" : "Описание и оплата"} <ArrowRight size={12}/></span>
               </button>;
             })}

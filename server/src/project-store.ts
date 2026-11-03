@@ -406,13 +406,14 @@ function messageFromRow(row:{created_at:string;message_id:string;role:string;con
  * the row keeps enough for the user to read what happened (and for the action list to
  * be rebuilt after a reload), while the model's own context keeps the full output.
  */
-const MAX_STORED_TOOL_CHARS=8000;
+const MAX_STORED_TOOL_CHARS=16000;
 /**
- * The chain of thought is read back in the panel after a reload, but it is not the work and it is not
- * sent to the provider again: a step of thinking can be tens of kilobytes, and a long chat would
- * carry every one of them in the database for good.
+ * The chain of thought is shown in the panel and, for DeepSeek thinking mode, sent back with the
+ * history when tools are in play. Four thousand characters cut the thread of a long reasoning step
+ * exactly where the model had decided what to do; sixteen thousand keeps a real step readable while
+ * still bounding what a long chat carries in the database.
  */
-const MAX_STORED_REASONING_CHARS=4000;
+const MAX_STORED_REASONING_CHARS=16000;
 function clipStored(text:string,limit:number,label:string){
   return text.length<=limit?text:text.slice(0,limit)+'\n…['+label+']';
 }

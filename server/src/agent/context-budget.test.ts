@@ -55,7 +55,7 @@ test("платная модель получает больше контекст
   const before = Object.fromEntries(names.map(name => [name, process.env[name]]));
   try {
     for (const name of names) delete process.env[name];
-    assert.equal(contextBudgetTokensFor("paid"), 150_000 - 8_192);
+    assert.equal(contextBudgetTokensFor("paid"), 250_000 - 8_192);
     assert.equal(contextBudgetTokensFor("free"), 120_000 - 8_192);
     assert.equal(contextMaxMessagesFor("paid"), 80);
     assert.equal(contextMaxMessagesFor("free"), 80);
@@ -335,11 +335,33 @@ test("если одни схемы инструментов больше бюд�
   assert.throws(() => trimMessagesToBudget(messages, { budgetTokens: 1000, overheadChars: 200000 }), ContextBudgetError);
 });
 
-test("оценка токенов считается по символам всей истории, включая вызовы инструментов", () => {
-  const messages: ChatMessage[] = [...exchange(3600, 1)];
+test("оценка токенов считается по символам всей истории, включая вызовы и размышления", () => {
+  const messages: ChatMessage[] = [
+    { role: "assistant", content: "ответ", reasoning: "р".repeat(500), tool_calls: [{ id: "c-reasoning", name: "fs.read", arguments: { path: "index.html" } }] },
+  ];
   assert.equal(estimateTokens(messages, 3.6), Math.ceil(messageChars(messages) / 3.6));
-  // Вызов инструмента тоже занимает место в промпте, а не только его результат.
-  assert.ok(messageChars(messages) > 3600);
+  // И вызов инструмента, и reasoning уезжают в промпт, а не только видимый ответ.
+  assert.equal(messageChars(messages), "ответ".length + 500 + JSON.stringify(messages[0].role === "assistant" ? messages[0].tool_calls : []).length);
+  assert.ok(messageChars(messages) > 500);
+});
+
+// DeepSeek requires the reasoning back, so an old reasoning is part of the budget. Keeping it whole
+// forever would make a long run impossible to fit; the old turn keeps a readable head and tail.
+test("старое размышление сокращается вместе со старым шагом, а не выбивает бюджет", () => {
+  const messages: ChatMessage[] = [{ role: "system", content: "промпт" }, { role: "user", content: "задача" }];
+  for (let index = 0; index < 5; index++) {
+    messages.push({
+      role: "assistant",
+      content: "шаг " + index,
+      reasoning: "мысль ".repeat(500),
+      tool_calls: [{ id: "r" + index, name: "fs.read", arguments: { path: "page" + index + ".tsx" } }],
+    });
+    messages.push({ role: "tool", content: "x".repeat(100), tool_call_id: "r" + index });
+  }
+  const { messages: trimmed, report } = trimMessagesToBudget(messages, { budgetTokens: 4000, keepRecent: 4 });
+  assert.ok(report.compacted > 0);
+  assert.ok(report.estimatedTokens <= 4000, "история уложилась в бюджет: " + report.estimatedTokens);
+  assert.ok(trimmed.some(message => message.role === "assistant" && (message.reasoning?.includes("старое размышление сокращено") ?? false)));
 });
 
 test("clip оставляет короткий текст без изменений", () => {

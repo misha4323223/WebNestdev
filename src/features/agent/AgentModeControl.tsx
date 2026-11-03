@@ -85,6 +85,7 @@ export function AgentModeControl({ mode, reasoning, webSearch, browserCheck, rea
       <ChevronDown size={12} className="agent-mode-caret"/>
     </button>
 
+    {open && <div className="agent-mode-scrim" aria-hidden="true" onClick={() => setOpen(false)}/>}
     {open && <div className="agent-mode-menu" role="dialog" aria-label="Режим, размышление, интернет и браузер">
       <div className="agent-mode-head"><span className="eyebrow">РЕЖИМ АГЕНТА</span></div>
       <div className="agent-mode-options">

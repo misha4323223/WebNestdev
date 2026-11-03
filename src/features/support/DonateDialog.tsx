@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ArrowUpRight, Check, Heart, RefreshCw, Send, X } from "lucide-react";
+import { ArrowUpRight, Check, HandCoins, RefreshCw, Send, X } from "lucide-react";
 import { sendDonation, type DonationResult } from "../../lib/donation-api";
 
 /** Суммы, с которых начинают чаще всего: человек выбирает сумму одним нажатием, а не считает в голове. */
@@ -88,7 +88,7 @@ export function DonateDialog({ open, onClose }: { open: boolean; onClose: () => 
           </div>
         : <div className="modal-body donate-body">
             <div className="donate-hero">
-              <span className="donate-hero-icon"><Heart size={18}/></span>
+              <span className="donate-hero-icon"><HandCoins size={18}/></span>
               <p>NestDev делает небольшая команда — без рекламы и без продажи данных. Поддержка идёт на серверы, модели и новые возможности, чтобы проект оставался доступным тем, кто только учится.</p>
             </div>
 
@@ -141,7 +141,7 @@ export function DonateDialog({ open, onClose }: { open: boolean; onClose: () => 
             {error && <div className="settings-error donate-error" role="alert">{error}</div>}
 
             <button type="button" className="donate-submit" onClick={() => void submit()} disabled={!ready || sending}>
-              {sending ? <><RefreshCw size={14} className="spin"/> Отправляем…</> : <><Heart size={14}/> Поддержать на {ready ? rub(amount) : "—"} <ArrowUpRight size={13}/></>}
+              {sending ? <><RefreshCw size={14} className="spin"/> Отправляем…</> : <><HandCoins size={14}/> Поддержать на {ready ? rub(amount) : "—"} <ArrowUpRight size={13}/></>}
             </button>
             <p className="donate-fineprint">Оплата картой или через СБП. Это добровольный взнос, а не подписка: он ничего не включает и не продлевает.</p>
           </div>}

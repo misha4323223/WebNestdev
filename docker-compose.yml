@@ -427,8 +427,9 @@ services:
       PREVIEW_EXEC_QUEUE_TIMEOUT_MS: ${PREVIEW_EXEC_QUEUE_TIMEOUT_MS:-60000}
       PREVIEW_EXEC_RETRY_MS: ${PREVIEW_EXEC_RETRY_MS:-60000}
       # Публичный адрес предпросмотра: `<проект>.<домен>` отдаётся отдельным слушателем на
-      # PREVIEW_HOST_PORT (в него смотрит реверс-прокси, см. deploy/Caddyfile). Пустое значение —
-      # публичных адресов нет, и предпросмотр остаётся доступным только путём в панели.
+      # PREVIEW_HOST_PORT (в него смотрит реверс-прокси, см. deploy/Caddyfile). Пустое значение в
+      # production — домен выводится из WEBNESTDEV_SITE_DOMAIN как preview.<домен>; `off`
+      # выключает публичные адреса, и предпросмотр остаётся доступным только путём в панели.
       PREVIEW_PUBLIC_DOMAIN: ${PREVIEW_PUBLIC_DOMAIN:-}
       PREVIEW_HOST_PORT: ${PREVIEW_HOST_PORT:-8788}
       PREVIEW_HOST_BIND: ${PREVIEW_HOST_BIND:-0.0.0.0}

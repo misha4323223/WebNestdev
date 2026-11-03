@@ -22,7 +22,7 @@ them is a separate product decision and is not implemented.
 
 | Event | Updates the size |
 |---|---|
-| `fs.write`, `fs.delete`, `fs.rename`, `terminal.exec`, `npm.install`, `git.add`, `git.commit`, `git.pull` | yes, after the tool runs (a pull only when it changed files) |
+| `fs.write`, `fs.edit`, `fs.delete`, `fs.rename`, `terminal.exec`, `npm.install`, `git.add`, `git.commit`, `git.pull` | yes, after the tool runs (a pull only when it changed files) |
 | File upload from the panel | yes, after the file is written |
 | GitHub import | yes, after files and history are written |
 | `pull` from GitHub | yes, when the pull changed files |
@@ -82,7 +82,7 @@ Schedule and thresholds (`server/src/account/storage-scheduler.ts`):
 `state` is computed on the server: `ok` below 80%, `warning` from 80%, `full` at 100%. The same
 value drives the settings card, the subscription page and the sidebar line, so the thresholds
 cannot drift between screens. `usedBytes` is what the write check uses: at `full`, the agent's
-`fs.write`, `terminal.exec` and `npm.install` are refused with `StorageLimitError`.
+`fs.write`, `fs.edit`, `terminal.exec` and `npm.install` are refused with `StorageLimitError`.
 
 `POST /api/account/storage/refresh` re-measures the account's projects and returns the fresh
 overview. It has a 60-second per-account cooldown; the button in settings says how long to wait.

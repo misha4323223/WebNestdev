@@ -5,12 +5,10 @@ import { applyPreferences, type UserPreferences } from "../../lib/preferences";
 import {
   balanceLabel,
   bytesLabel,
-  creditsLabel,
   dateLabel,
   getBilling,
   moneyLabel,
   paymentNotice,
-  paymentStatusLabel,
   refreshStorage,
   rubLabel,
   shortDayLabel,
@@ -22,9 +20,11 @@ import { activePlanId, usePlanChoice } from "../../lib/plan-choice";
 import { contactEmailOf } from "../../lib/account-contact";
 import { updateOnboardingProfile, type OnboardingProfile } from "../../lib/onboarding";
 import { PlanDetail } from "../billing/PlanDetail";
-import { CreditTopUp } from "../billing/CreditTopUp";
+import { CreditTopUpDialog } from "../billing/CreditTopUpDialog";
+import { PaymentHistory } from "../billing/PaymentHistory";
+import { UsageOverview } from "../billing/UsageOverview";
 import { openCookieSettings } from "../legal/CookieConsent";
-import { ArrowLeft, ArrowRight, Check, CreditCard, LogOut, Receipt, RefreshCw, Settings2, ShieldCheck, UserRound, Wallet } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, CreditCard, LogOut, Receipt, Settings2, ShieldCheck, UserRound, Wallet } from "lucide-react";
 
 type Preferences = UserPreferences;
 type AccountData = {
@@ -152,6 +152,7 @@ export function AccountSettingsPanel() {
   const [savingRenew, setSavingRenew] = useState(false);
   // Выбор карточки в настройках открывает тот же компактный экран тарифа, что и на главной.
   const [planDetailId, setPlanDetailId] = useState<PlanId | null>(null);
+  const [topUpOpen, setTopUpOpen] = useState(false);
   // The chosen plan is shared state: it is the plan the user wants to move to, so the
   // settings screen names it exactly like the home rail and the top bar do.
   const planChoice = usePlanChoice();
@@ -177,11 +178,16 @@ export function AccountSettingsPanel() {
   }
   useEffect(() => { void reload(); }, []);
   // Кнопка «Докупить кредиты» в лимите агента просит сразу открыть тариф, а не профиль.
+  // Для кредитов дополнительно открываем окно докупки: человек уже нажал именно эту кнопку.
   useEffect(() => {
     try {
-      if (!localStorage.getItem("webnestdev.openBillingTab")) return;
+      const billingTab = localStorage.getItem("webnestdev.openBillingTab");
+      const creditTopUp = localStorage.getItem("webnestdev.openCreditTopUp");
+      if (!billingTab && !creditTopUp) return;
       localStorage.removeItem("webnestdev.openBillingTab");
+      localStorage.removeItem("webnestdev.openCreditTopUp");
       setSection("subscription");
+      if (creditTopUp) setTopUpOpen(true);
     } catch {}
   }, []);
 
@@ -249,28 +255,6 @@ export function AccountSettingsPanel() {
   const paid = currentPlanId !== "free" && Boolean(subscription?.renewsAt);
   const chosenPlan = planChoice && billing ? billing.plans.find(plan => plan.id === planChoice) : undefined;
   const selectedPlan = planDetailId ? billing?.plans.find(plan => plan.id === planDetailId) : undefined;
-  // Дневная шкала остаётся только у бесплатного тарифа. На платных запуски ограничены кредитами,
-  // поэтому строка «0 · без дневного лимита» здесь не нужна; браузерная проверка — режим запуска,
-  // а не отдельная квота тарифа.
-  const runsLimit = billing?.limits.agentRunsPerDay ?? null;
-  const usageRows = billing && runsLimit != null
-    ? [{ label: "Запуски агента", used: billing.usage.agentRuns, limit: runsLimit }]
-    : [];
-  const storageLimit = billing?.limits.storageBytes ?? 0;
-  const storageUsed = billing?.storage?.usedBytes ?? 0;
-  const storage = billing?.storage;
-  // Порог считает сервер; локальная копия нужна только для старых ответов без `state`.
-  const storageState = storage?.state ?? (storageLimit > 0
-    ? (storageUsed >= storageLimit ? "full" : storageUsed >= storageLimit * 0.8 ? "warning" : "ok")
-    : "ok");
-  const storagePercent = storageLimit > 0 ? Math.min(100, Math.round(storageUsed / storageLimit * 100)) : 0;
-  const storageProjects = storage?.projects ?? [];
-  // В карточке видны самые крупные проекты: список из пятидесяти строк читать никто не будет,
-  // а полный размер по каждому всё равно приходит с сервера.
-  const visibleStorageProjects = storageProjects.slice(0, 6);
-  const storageMeasuredAt = storage?.measuredAt
-    ? new Date(storage.measuredAt).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })
-    : "";
   const refreshStorageSize = async () => {
     setRefreshingStorage(true);
     setError("");
@@ -306,7 +290,7 @@ export function AccountSettingsPanel() {
     <div className="panel-title"><div><span className="eyebrow">ЛИЧНЫЙ КАБИНЕТ</span><strong>Настройки аккаунта</strong></div></div>
     {loading ? <div className="settings-body">Загружаем настройки аккаунта…</div> : <>
       <div className="account-settings-layout">
-        <nav className="account-settings-nav">{nav.map(item => { const Icon = item.icon; return <button key={item.id} className={section === item.id ? "active" : ""} onClick={() => { setSection(item.id); setPlanDetailId(null); setError(""); setNotice(""); }}><Icon size={14}/>{item.label}</button>; })}</nav>
+        <nav className="account-settings-nav">{nav.map(item => { const Icon = item.icon; return <button key={item.id} className={section === item.id ? "active" : ""} onClick={() => { setSection(item.id); setPlanDetailId(null); setTopUpOpen(false); setError(""); setNotice(""); }}><Icon size={14}/>{item.label}</button>; })}</nav>
         <div className="account-settings-content">
           {section === "account" && <div className="account-section">
             <span className="eyebrow">ПРОФИЛЬ</span><h3>Профиль</h3><p className="account-muted">Основная информация вашего аккаунта NestDev.</p>
@@ -360,7 +344,7 @@ export function AccountSettingsPanel() {
             ? <div className="account-section billing-section">
                 <button type="button" className="ghost-button plan-detail-back" onClick={() => setPlanDetailId(null)}><ArrowLeft size={13}/> Все тарифы</button>
                 <div className="plan-detail-shell account-plan-detail">
-                  <PlanDetail key={selectedPlan.id} plan={selectedPlan} billing={billing} active={selectedPlan.id === currentPlanId}/>
+                  <PlanDetail key={selectedPlan.id} plan={selectedPlan} billing={billing} active={selectedPlan.id === currentPlanId} onTopUp={() => setTopUpOpen(true)}/>
                 </div>
               </div>
             : <div className="account-section billing-section">
@@ -376,7 +360,7 @@ export function AccountSettingsPanel() {
                 <span className="billing-card-top"><Wallet size={12}/> {paid ? "Автопродление" : "Баланс"}</span>
                 <strong>{paid ? (subscription?.autoRenew ? "Включено" : "Выключено") : balanceLabel(billing?.balance)}</strong>
                 <small>{paid
-                  ? subscription?.autoRenew ? "Спишем " + rubLabel(subscription.amountRub) + " " + dateLabel(subscription.renewsAt) : subscription?.recurringAvailable ? "Можно включить в любой момент" : "Продлить можно вручную после окончания"
+                  ? subscription?.autoRenew ? "Спишем " + rubLabel(subscription.amountRub) + " " + dateLabel(subscription.renewsAt) : subscription?.recurringAvailable ? "Можно включить в любой момент" : "После окончания можно оплатить снова"
                   : "Пополнение не нужно: оплачивается подписка"}</small>
               </article>
               <article className="billing-card">
@@ -399,33 +383,7 @@ export function AccountSettingsPanel() {
               <span>Выбранный тариф · включим вместе с оплатой</span>
               <strong>{chosenPlan.name} · {chosenPlan.priceLabel}</strong>
             </div>}
-            {usageRows.length > 0 && <div className="usage-meter-list"><div className="usage-meter-title"><strong>Использование за сегодня</strong><small>Сброс по UTC · {billing?.usage.date ?? ""}</small></div>{usageRows.map(row => <div className="usage-meter" key={row.label}><div><span>{row.label}</span><strong>{row.used} / {row.limit}</strong></div><div className="usage-meter-track"><span style={{ width: `${Math.min(100, row.used / Math.max(1, row.limit) * 100)}%` }}/></div><small className="usage-meter-left">{Math.max(0, row.limit - row.used)} осталось</small></div>)}</div>}
-            {billing?.credits && billing.credits.limit > 0 && <div className="usage-meter-list"><div className="usage-meter-title"><strong>Кредиты на агента</strong><small>{billing.credits.purchased > 0 ? "Докупленные не сгорают" : "Сброс 1-го числа"}</small></div><div className="usage-meter"><div><span>Израсходовано</span><strong>{creditsLabel(billing.credits.used)} из {creditsLabel(billing.credits.limit)}</strong></div><div className="usage-meter-track"><span style={{ width: `${Math.min(100, billing.credits.used / Math.max(1, billing.credits.limit) * 100)}%` }}/></div><small className="usage-meter-left">Осталось {creditsLabel(billing.credits.remaining)} · Max расходует быстрее, Mini — медленнее</small>{billing.credits.purchased > 0 && <small className="usage-meter-left">Месячный лимит тарифа: {creditsLabel(billing.credits.planLimit)} · докуплено: {creditsLabel(billing.credits.purchased)}</small>}</div></div>}
-            {billing && <CreditTopUp billing={billing} paid={paid} compact/>}
-            {storageLimit > 0 && <div className={"usage-meter-list storage-card " + storageState}>
-              <div className="usage-meter-title"><strong>Хранилище аккаунта</strong><small>{bytesLabel(storageUsed)} из {bytesLabel(storageLimit)} · {storagePercent}%</small></div>
-              <div className={"usage-meter-track storage-track " + storageState} role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={storagePercent} aria-label="Хранилище аккаунта"><span style={{ width: `${storagePercent}%` }}/></div>
-              {storageState !== "ok" && <p className={"storage-note " + storageState}>{storageState === "full"
-                ? "Лимит исчерпан: агент не сможет писать файлы, пока место не освободится. Удалите файлы проекта или смените тариф."
-                : "Осталось " + bytesLabel(Math.max(0, storageLimit - storageUsed)) + ". Освободите место или смените тариф, чтобы агент не остановился на середине задачи."}</p>}
-              <div className="storage-projects">
-                <div className="storage-projects-head">
-                  <strong>Проекты</strong>
-                  <button type="button" className="ghost-button storage-refresh" onClick={() => void refreshStorageSize()} disabled={refreshingStorage}>
-                    <RefreshCw size={11} className={refreshingStorage ? "spin" : ""}/> {refreshingStorage ? "Считаем…" : "Пересчитать"}
-                  </button>
-                </div>
-                {visibleStorageProjects.length > 0
-                  ? visibleStorageProjects.map(project => <div className="storage-project" key={project.id}>
-                      <span className="storage-project-name" title={project.name}>{project.name}</span>
-                      <span className="storage-project-size">{bytesLabel(project.sizeBytes)}</span>
-                      <span className="storage-project-share" title="Доля квоты аккаунта">{storageLimit > 0 ? Math.round(project.sizeBytes / storageLimit * 100) : 0}%</span>
-                    </div>)
-                  : <p className="storage-empty">Проектов пока нет — размер появится после первого файла.</p>}
-                {storageProjects.length > visibleStorageProjects.length && <p className="storage-empty">и ещё {storageProjects.length - visibleStorageProjects.length} проектов</p>}
-              </div>
-              <p className="storage-hint">В размер входят все файлы проекта, включая зависимости и сборки.{storageMeasuredAt ? " Обновлено " + storageMeasuredAt + "." : ""} Сверка повторяется раз в сутки.</p>
-            </div>}
+            {billing && <UsageOverview billing={billing} paid={paid} onTopUp={() => setTopUpOpen(true)} onRefreshStorage={() => void refreshStorageSize()} refreshingStorage={refreshingStorage}/>}
             <p className="account-muted">На бесплатном тарифе действует 10 запусков в день на встроенной модели. На платных тарифах запуски ограничены месячными кредитами; со своим AI-провайдером кредиты не тратятся.</p>
             <div className="usage-meter-list"><div className="usage-meter-title"><strong>Последние 7 дней</strong><small>{billing?.cost.pricesConfigured ? moneyLabel(weekSpend, billing.cost.currency) + " за неделю" : "цены модели не заданы"}</small></div>
               <div className="billing-bars">{historyDays.map(day => {
@@ -442,25 +400,17 @@ export function AccountSettingsPanel() {
             </div>
             {billing?.cost.lastRun && <div className="usage-meter-list"><div className="usage-meter-title"><strong>Последний прогон</strong><small>{billing.cost.pricesConfigured ? (billing.cost.exact ? "по данным провайдера" : "оценка по объёму") : "цены не заданы"}</small></div><div className="usage-meter"><div><span>Токены</span><strong>{tokenLabel(billing.cost.lastRun.promptTokens)} вход / {tokenLabel(billing.cost.lastRun.completionTokens)} выход</strong></div></div>{billing.cost.lastRun.cachedPromptTokens > 0 && <div className="usage-meter"><div><span>Из кэша</span><strong>{tokenLabel(billing.cost.lastRun.cachedPromptTokens)} ({cachePercent(billing.cost.lastRun.cachedPromptTokens, billing.cost.lastRun.promptTokens)}% входа)</strong></div></div>}<div className="usage-meter"><div><span>Стоимость</span><strong>{moneyLabel(billing.cost.lastRun.costEstimate, billing.cost.currency)}</strong></div></div></div>}
 
-            <div className="usage-meter-list">
-              <div className="usage-meter-title"><strong>Платежи</strong><small>{payments.length ? payments.length + " за всё время" : "пока пусто"}</small></div>
-              {payments.length
-                ? <div className="billing-payments">{payments.map(payment => <div className="billing-payment" key={payment.invId}>
-                    <div><strong>{payment.planName} · {rubLabel(payment.amount)}</strong><small>Счёт №{payment.invId} · {dateLabel(payment.createdAt)}{payment.kind === "renewal" ? " · продление" : ""}</small></div>
-                    <span className={"billing-payment-status " + payment.status}>{paymentStatusLabel(payment.status)}</span>
-                  </div>)}</div>
-                : <div className="billing-empty"><Receipt size={14}/><div><strong>Платежей пока нет</strong><span>{paymentsEnabled ? "Оплата тарифа появится здесь с номером счёта и датой." : "Оплата ещё не подключена — пополнения и списания появятся позже."}</span></div></div>}
-            </div>
+            <PaymentHistory payments={payments}/>
 
             <div className="plan-grid">{billing?.plans.map(plan => <button
               type="button"
               key={plan.id}
-              className={"plan-card plan-card-select" + (plan.id === currentPlanId ? " selected" : "") + (planChoice === plan.id && plan.id !== currentPlanId ? " chosen" : "")}
+              className={"plan-card plan-card-select plan-card-compact" + (plan.id === currentPlanId ? " selected" : "") + (planChoice === plan.id && plan.id !== currentPlanId ? " chosen" : "")}
               onClick={() => setPlanDetailId(plan.id)}
               aria-label={"Открыть описание тарифа «" + plan.name + "»"}
             >
               <div className="plan-card-head"><div><strong>{plan.name}</strong><small>{plan.description}</small></div><span className="plan-card-price">{Boolean(plan.discountPercent)&&<s>{plan.basePriceLabel}</s>}<b>{plan.priceLabel}</b></span></div>
-              <ul>{plan.features.slice(0, 4).map(feature => <li key={feature}><Check size={12}/>{feature}</li>)}</ul>
+              <ul>{plan.features.slice(0, 2).map(feature => <li key={feature}><Check size={12}/>{feature}</li>)}</ul>
               <span className="plan-card-open">{plan.id === currentPlanId ? "Текущий тариф" : "Описание и оплата"} <ArrowRight size={12}/></span>
             </button>)}</div>
             <p className="billing-disclaimer">Оплата принимается картой РФ и через СБП.</p>
@@ -468,6 +418,7 @@ export function AccountSettingsPanel() {
         </div>
       </div>
     </>}
+    <CreditTopUpDialog open={topUpOpen} onClose={() => setTopUpOpen(false)} billing={billing} paid={paid}/>
     {(error || notice) && <div className={error ? "settings-error account-feedback" : "settings-status account-feedback"}>{error || notice}</div>}
   </section>;
 }

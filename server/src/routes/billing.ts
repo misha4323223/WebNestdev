@@ -20,6 +20,8 @@ import { planDisplayName } from "../billing/plan-settings.js";
 import {
   createPayment,
   getPayment,
+  getSubscriptionRecord,
+  isSubscriptionLive,
   markPaymentPaid,
   setAutoRenew,
 } from "../billing/store.js";
@@ -71,6 +73,16 @@ function crossSiteRefused(request: FastifyRequest) {
   return !isSameOriginRequest(request);
 }
 
+/** Дата окончания в сообщении сервера: та же формулировка, что в личном кабинете. */
+function renewalDateLabel(iso: string) {
+  return new Date(iso).toLocaleDateString("ru-RU", {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  });
+}
+
 function publicSiteUrl(request: FastifyRequest) {
   const configured = (process.env.WEBNESTDEV_SITE_DOMAIN ?? "").trim().replace(/\/+$/, "");
   if (configured) return /^https?:\/\//i.test(configured) ? configured : "https://" + configured;
@@ -117,6 +129,16 @@ export async function registerBillingRoutes(app: FastifyInstance) {
     }
     const amount = planPriceRub(body.plan);
     if (!(amount > 0)) return reply.code(409).send({ error: "Для этого тарифа не задана цена" });
+    // Один и тот же тариф нельзя оплатить повторно, пока оплаченный период действует: иначе
+    // срок молча сдвигается на месяц вперёд, и человек платит за то, чем ещё не пользуется.
+    // Смена тарифа остаётся доступной — блокируется только повторная покупка текущего.
+    const existingSubscription = await getSubscriptionRecord(user.id);
+    if (existingSubscription && isSubscriptionLive(existingSubscription) && existingSubscription.plan === body.plan) {
+      return reply.code(409).send({
+        error: "Тариф «" + planDisplayName(body.plan) + "» уже активен до " + renewalDateLabel(existingSubscription.renewsAt) +
+          ". Повторная оплата не нужна: докупите кредиты или дождитесь окончания периода.",
+      });
+    }
     if (body.autoRenew) {
       if (!config.recurring) {
         return reply.code(409).send({ error: "Автопродление сейчас недоступно. Продлить подписку можно вручную после окончания оплаченного периода." });

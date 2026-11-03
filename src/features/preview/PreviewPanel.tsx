@@ -113,6 +113,9 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
   // Ссылка с билетом на публичный адрес. Билет выпускается на этот проект и на время: по адресу
   // предпросмотра cookie сессии панели не отправляется (она выставляется для домена панели).
   const [publicLink,setPublicLink]=useState("");
+  // Пока билет в пути, кадр не подставляется путём панели: в production этот путь закрыт, и
+  // пользователь успевал увидеть 503 вместо своего приложения.
+  const [publicLinkPending,setPublicLinkPending]=useState(false);
   // Адрес показывается рядом с кнопкой копирования: ссылку отдают другому человеку, поэтому
   // копировать её должно быть можно в один тап, а не выделять текст мышью.
   const [copied,setCopied]=useState(false);
@@ -145,13 +148,35 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
   // даже тогда, когда вкладка простояла дольше его срока. Отказ — не ошибка панели: приложение
   // остаётся доступным по пути в панели, поэтому кадр просто берётся оттуда.
   useEffect(()=>{
-    if(!preview.running||!preview.publicUrl){setPublicLink("");return}
+    if(!preview.running||!preview.publicUrl){setPublicLink("");setPublicLinkPending(false);return}
     let cancelled=false;
+    setPublicLinkPending(true);
     requestPreviewTicket(projectId)
       .then(result=>{if(!cancelled)setPublicLink(result.url)})
-      .catch(()=>{if(!cancelled)setPublicLink("")});
+      .catch(()=>{if(!cancelled)setPublicLink("")})
+      .finally(()=>{if(!cancelled)setPublicLinkPending(false)});
     return ()=>{cancelled=true};
   },[projectId,preview.running,preview.publicUrl,reloadToken,frameToken]);
+
+  // Пока приложение поднимается, статус перечитывается сам: иначе кадр загружался один раз в
+  // момент старта, оставался белым, и человеку приходилось вручную нажимать «Обновить».
+  // Ждём и подтверждения адреса (`settled`), а не только ответа приложения: на первом запуске
+  // dev-сервер отвечает позже, чем контейнер начинает считать себя живым.
+  const previewReady=Boolean(preview.running&&preview.ready===true&&(preview.settled===true||preview.viaExec===true));
+  useEffect(()=>{
+    if(!preview.running||previewReady)return;
+    let cancelled=false;
+    const timer=window.setInterval(()=>{
+      void getPreviewStatus(projectId)
+        .then(next=>{
+          if(cancelled)return;
+          setPreview(next);
+          if(next.running&&next.ready!==false&&(next.settled!==false||next.viaExec))setFrameToken(value=>value+1);
+        })
+        .catch(()=>undefined);
+    },2200);
+    return ()=>{cancelled=true;window.clearInterval(timer)}
+  },[projectId,preview.running,previewReady]);
 
   const loadLogs=useCallback(async()=>{
     setLoadingLogs(true);setLogsError("");
@@ -207,7 +232,13 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
 
   async function start(){
     setError("");
-    try{setPreview(await startPreview(projectId))}
+    try{
+      const next=await startPreview(projectId);
+      setPreview(next);
+      // Если сервер ответил «уже запускается», кадр не ждёт ручного обновления: эффект выше
+      // сам дочитает статус до готовности и перезагрузит его один раз.
+      if(next.running&&next.ready!==false)setFrameToken(value=>value+1);
+    }
     catch(e){setError(e instanceof Error?e.message:"Не удалось запустить предпросмотр")}
   }
   async function stop(){
@@ -338,6 +369,8 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
               // сессия: он смог бы читать её API и DOM. Сервер такую дверь закрывает (503), а панель
               // говорит причину вместо пустого кадра.
               ? <div className="preview-empty"><div className="preview-icon"><Terminal size={20}/></div><strong>Публичный адрес не настроен</strong><span>Предпросмотр в панели выключен: код проекта не должен работать на одном origin с панелью. Задайте PREVIEW_PUBLIC_DOMAIN и перезапустите сервер.</span></div>
+              : publicLinkPending&&!publicLink
+              ? <div className="preview-empty"><div className="preview-icon"><Terminal size={20}/></div><strong>Готовим предпросмотр</strong><span>Открываем защищённый адрес приложения…</span></div>
               : <div className="preview-canvas" ref={canvasRef}>
                 {/* Кадр рисуется в настоящей ширине устройства, поэтому медиазапросы приложения
                     срабатывают как на телефоне, планшете и десктопе; видимый размер даёт zoom,
