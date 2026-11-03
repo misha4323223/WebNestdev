@@ -34,8 +34,9 @@ function ConnectorSection({ icon, title, note, children }: { icon: ReactNode; ti
  * Yandex Cloud стоит вместе с остальными облаками, база данных — в «Базах», GitHub и
  * GitLab — в «Коде», чтобы ни один коннектор не висел над списком без объяснения.
  *
- * Тариф приходит с сервера: на бесплатном остаются только репозитории, базы и S3, а
- * облака, домены и остальные сервисы не рисуются вовсе — сервер отвечает по тому же правилу.
+ * Тариф приходит с сервера: на бесплатном открыты только репозитории, базы и S3, а облака,
+ * домены и остальные сервисы остаются в списке неактивными. Человек видит весь каталог и
+ * понимает, что даст платный тариф, но не может начать закрытое подключение.
  */
 export function IntegrationsList({surface="home",onImported,planId="free"}:{surface?:ConnectorSurface;onImported?:(projectId:string,conversationId:string)=>void;planId?:PlanId}){
   const free = planId === "free";
@@ -56,14 +57,14 @@ export function IntegrationsList({surface="home",onImported,planId="free"}:{surf
       <RepoConnect provider="sourcecraft" surface={surface} onImported={onImported}/>
     </ConnectorSection>
 
-    {!free && <ConnectorSection icon={<Cloud size={12}/>} title="Облака" note="Виртуальные машины, диски, бакеты и базы.">
-      <YandexConnect/>
-      <CloudConnectors/>
-    </ConnectorSection>}
+    <ConnectorSection icon={<Cloud size={12}/>} title="Облака" note={free ? "Тариф «Старт» не включает облака — карточки откроются на платном тарифе." : "Виртуальные машины, диски, бакеты и базы."}>
+      <YandexConnect locked={free}/>
+      <CloudConnectors locked={free}/>
+    </ConnectorSection>
 
-    {!free && <ConnectorSection icon={<Globe size={12}/>} title="Домены" note="Регистраторы доменов с доступом по API-ключу.">
-      <DomainConnectors/>
-    </ConnectorSection>}
+    <ConnectorSection icon={<Globe size={12}/>} title="Домены" note={free ? "Регистраторы откроются на платном тарифе." : "Регистраторы доменов с доступом по API-ключу."}>
+      <DomainConnectors locked={free}/>
+    </ConnectorSection>
 
     <ConnectorSection icon={<Layers size={12}/>} title="Сервисы" note={free ? "S3-хранилище для файлов приложения. Остальные сервисы открываются на платных тарифах." : "Почта, оплата, AI, карты, CRM, файлы и сборки мобильных приложений."}>
       <ServiceConnectors freePlan={free}/>

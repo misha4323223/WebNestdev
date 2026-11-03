@@ -36,11 +36,11 @@ const noticeFlag = "webnestdev.yandexNotice";
 
 /**
  * The Yandex Cloud card stays folded until it is needed: one button in the header, everything
- * else behind it. Pressing it opens the console in a new tab and unfolds the key field — the only
- * path that still grants Cloud access. Пошаговых подсказок в карточке нет: путь к ключу
- * объясняет сама консоль по кнопке «Открыть консоль».
+ * else behind it. Pressing it only unfolds the card — the console opens from the explicit
+ * «Открыть консоль» button inside, so a click never leaves the app by surprise. Пошаговых
+ * подсказок в карточке нет: путь к ключу объясняет сама консоль по кнопке «Открыть консоль».
  */
-export function YandexConnect(){
+export function YandexConnect({ locked = false }: { locked?: boolean }){
   const [status,setStatus]=useState<ConnectorStatus>("loading");
   const [info,setInfo]=useState<YandexStatus|null>(null);
   const [busy,setBusy]=useState(false);
@@ -76,10 +76,9 @@ export function YandexConnect(){
     window.open(CONSOLE_URL,"_blank","noopener,noreferrer");
   }
 
-  function connect(){
+  function toggleOpen(){
     setError(null);setNotice(null);
-    openConsole();
-    setOpen(true);
+    setOpen(value=>!value);
   }
 
   async function disconnect(){
@@ -132,7 +131,9 @@ export function YandexConnect(){
     account={account}
     busy={busy}
     busyLabel="Сохраняем…"
-    onConnect={connect}
+    expanded={open}
+    onToggle={toggleOpen}
+    locked={locked}
     onDisconnect={()=>void disconnect()}
     onRefresh={()=>void loadStatus()}
     note={<>
@@ -141,7 +142,7 @@ export function YandexConnect(){
       {connected&&info?.kind&&<span className="connector-meta-line">{kindLabels[info.kind]??info.kind}{info.folderId?" · каталог "+info.folderId:""}</span>}
     </>}
   >
-    <div className="connector-body">
+    {open&&<div className="connector-body">
       {connected&&<label className="connector-write">
         <strong>Разрешить агенту изменять ресурсы</strong>
         <span className="switch"><input type="checkbox" checked={Boolean(info?.allowWrites)} disabled={busy} onChange={event=>void setWrites(event.target.checked)}/><span className="switch-track"><span className="switch-thumb"/></span></span>
@@ -165,6 +166,6 @@ export function YandexConnect(){
 
         <p className="connector-fineprint">Ключ шифруется на сервере и используется только от вашего имени. <a href={CONSOLE_HINT} target="_blank" rel="noreferrer">Инструкция Яндекса</a></p>
       </div>}
-    </div>
+    </div>}
   </ConnectorCard>;
 }

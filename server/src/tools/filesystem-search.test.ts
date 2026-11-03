@@ -19,6 +19,7 @@ const projectRoot = sandboxRootPath(project.id);
 await mkdir(path.join(projectRoot, "src"), { recursive: true });
 await mkdir(path.join(projectRoot, "src", "nested"), { recursive: true });
 await mkdir(path.join(projectRoot, "node_modules", "pkg"), { recursive: true });
+await mkdir(path.join(projectRoot, ".webnestdev", "screenshots"), { recursive: true });
 
 const appSource = [
   'import { helper } from "./helper";',
@@ -50,6 +51,7 @@ await writeFile(path.join(projectRoot, "src", "helper.ts"), 'export function hel
 await writeFile(path.join(projectRoot, "src", "nested", "extra.ts"), 'export const marker = "needle";\n');
 await writeFile(path.join(projectRoot, "node_modules", "pkg", "index.ts"), 'export const marker = "needle in dependency";\n');
 await writeFile(path.join(projectRoot, ".env.local"), "SECRET=needle\n");
+await writeFile(path.join(projectRoot, ".webnestdev", "screenshots", "runtime.txt"), "needle in service screenshot log\n");
 
 async function tool(name: string, input: unknown) {
   const definition = getTool(name);
@@ -72,7 +74,7 @@ test("fs.grep ищет по исходникам и отдаёт file/line/colum
   assert.ok((result.filesScanned ?? 0) >= 2);
 });
 
-test("fs.grep пропускает зависимости, секреты и уважает glob", async () => {
+test("fs.grep пропускает зависимости, секреты, служебную папку и уважает glob", async () => {
   const all = await tool("fs.grep", { pattern: "needle" }) as { matches?: Array<{ file: string }> };
   assert.deepEqual(all.matches?.map(match => match.file), ["src/nested/extra.ts"]);
 

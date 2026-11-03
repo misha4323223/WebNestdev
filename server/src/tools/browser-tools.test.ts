@@ -32,6 +32,21 @@ const RENDERED_PAGE = `<!doctype html><html><head><meta charset="utf-8"><title>A
 
 const NOT_FOUND_PAGE = `<!doctype html><html><head><meta charset="utf-8"><title>404</title></head><body><p>Страница не найдена</p></body></html>`;
 
+/** Игра на pointer-событиях: без drag сценарий может проверить только наличие элемента. */
+const DRAG_PAGE = `<!doctype html><html><head><meta charset="utf-8"><title>Катание</title>
+<style>#track{width:400px;height:200px;touch-action:none;background:#eee}</style></head><body>
+<div id="track" data-testid="track"></div>
+<div id="status" data-testid="status">idle</div>
+<script>
+  const status = document.getElementById('status');
+  let active = false;
+  const track = document.getElementById('track');
+  track.addEventListener('pointerdown', event => { active = true; status.textContent = 'down'; track.setPointerCapture?.(event.pointerId); });
+  window.addEventListener('pointermove', () => { if (active) status.textContent = 'move'; });
+  window.addEventListener('pointerup', () => { if (active) { active = false; status.textContent = 'done'; } });
+</script>
+</body></html>`;
+
 /**
  * Страница, на которой текст есть, а стиль не пришёл: ровно та "белая страница", на которой
  * проверка терялась — DOM не пуст, консоль молчит, а пользователь видит неоформленный экран.
@@ -63,6 +78,11 @@ async function startApp() {
     if (url === "/unstyled") {
       response.writeHead(200, { "content-type": "text/html" });
       response.end(UNSTYLED_PAGE);
+      return;
+    }
+    if (url === "/drag") {
+      response.writeHead(200, { "content-type": "text/html" });
+      response.end(DRAG_PAGE);
       return;
     }
     response.writeHead(200, { "content-type": "text/html" });
@@ -177,6 +197,29 @@ test("сценарий в реальном Chromium: рабочая страни
     assert.match(result.rendered?.text ?? "", /Добро пожаловать/, "модель читает, что на странице");
     assert.ok((result.rendered?.visibleElements ?? 0) > 0);
     assert.ok(!JSON.stringify(result).includes("screenshotBase64"), "нечитаемый скриншот больше не занимает контекст");
+  } finally {
+    await app.close();
+  }
+});
+
+test("сценарий в реальном Chromium: drag проводит pointerdown/move/up, а не только проверяет элемент", async t => {
+  if (!(await chromiumAvailable())) return t.skip("Chromium недоступен в этой среде");
+  const app = await startApp();
+  try {
+    setPreview({ mode: "static", containerId: "", host: "127.0.0.1", port: app.port, projectId: "p-drag", startedAt: Date.now(), lastUsedAt: Date.now() });
+    const scenario = getTool("browser.scenario");
+    assert.ok(scenario?.execute);
+    const result = (await scenario.execute({
+      path: "/drag",
+      steps: [
+        { action: "expectVisible", selector: "[data-testid=track]" },
+        { action: "drag", from: { x: 80, y: 80 }, to: { x: 300, y: 140 }, steps: 8 },
+        { action: "expectText", text: "done" },
+      ],
+    }, { projectId: "p-drag", runId: "r", userId: "" })) as { ok: boolean; steps?: Array<{ action: string; ok: boolean; detail?: string }>; diagnostic?: string };
+
+    assert.equal(result.ok, true, result.diagnostic ?? "");
+    assert.ok(result.steps?.every(step => step.ok), (result.steps ?? []).map(step => step.action + ": " + (step.detail ?? "ok")).join("; "));
   } finally {
     await app.close();
   }

@@ -17,7 +17,7 @@ type WritesResponse = { error?: string; allowWrites?: boolean };
  * а не часть ключа: карточка показывает его состояние и сразу откатывает переключатель, если
  * сервер отказал.
  */
-export function CloudConnectors() {
+export function CloudConnectors({ locked = false }: { locked?: boolean }) {
   const [states, setStates] = useState<Record<string, CloudConnectionState>>({});
   const [writesBusy, setWritesBusy] = useState<string | null>(null);
   const [refreshBusy, setRefreshBusy] = useState<string | null>(null);
@@ -94,6 +94,7 @@ export function CloudConnectors() {
       writesBusy={writesBusy === provider.id}
       onRefresh={() => void refresh(provider.id)}
       refreshing={refreshBusy === provider.id}
+      locked={locked}
     />)}
   </div>;
 }

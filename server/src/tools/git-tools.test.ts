@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { filterSecretStatus, gitBinaryMissing, redactSecretEnvDiff, secretPathspecExclusions } from "./git-tools.js";
+import { filterSecretStatus, gitBinaryMissing, parseNumstat, redactSecretEnvDiff, secretPathspecExclusions } from "./git-tools.js";
 
 test("diff секретного файла выбрасывается целиком, а обычный остаётся", () => {
   const output = [
@@ -28,6 +28,20 @@ test("diff секретного файла выбрасывается целик
   assert.match(redacted, /src\/app\.ts/);
   assert.match(redacted, /\+new/);
   assert.doesNotMatch(redacted, /STRIPE|TOKEN|\.env/);
+});
+
+test("git diff --numstat: счётчики, бинарные файлы и секретные пути", () => {
+  const files = parseNumstat([
+    "12\t3\tsrc/app.ts",
+    "-\t-\tpublic/logo.png",
+    "1\t1\t.env.local",
+    "0\t0\tapps/web/.env.production",
+    "",
+  ].join("\n"));
+  assert.deepEqual(files, [
+    { path: "src/app.ts", additions: 12, deletions: 3, binary: false },
+    { path: "public/logo.png", additions: null, deletions: null, binary: true },
+  ]);
 });
 
 test("git add исключает секретные файлы по literal pathspec, не трогая шаблон", () => {

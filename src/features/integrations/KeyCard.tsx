@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronDown, ExternalLink, KeyRound, Minus, Plus, RefreshCw } from "lucide-react";
+import { ChevronDown, ExternalLink, KeyRound, Lock, Minus, Plus, RefreshCw } from "lucide-react";
 import { BrandLogo, type BrandId } from "../../components/BrandLogo";
 
 export type KeyProviderField = {
@@ -49,7 +49,7 @@ export type KeyConnectionState = {
  * объясняет страница по кнопке «Где взять ключ», а проверка видна по самому действию. Поэтому
  * раскрытая карточка — это сначала поля ключа, потом переключатель разрешения, потом действие.
  */
-export function KeyCard({ provider, state, onChanged, endpoint, keyLabel = "Где взять ключ", fineprint, writes, onRefresh, refreshing }: {
+export function KeyCard({ provider, state, onChanged, endpoint, keyLabel = "Где взять ключ", fineprint, writes, onRefresh, refreshing, locked }: {
   provider: KeyProviderInfo;
   state: KeyConnectionState | undefined;
   onChanged: (next: KeyConnectionState) => void;
@@ -67,6 +67,8 @@ export function KeyCard({ provider, state, onChanged, endpoint, keyLabel = "Гд
   /** Перечитать живую подпись (число серверов, домены, аккаунт), не меняя ключ. */
   onRefresh?: () => void;
   refreshing?: boolean;
+  /** Тариф не даёт подключить сервис: карточка видна, но не раскрывается и не шлёт запросы. */
+  locked?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const [fields, setFields] = useState<Record<string, string>>({});
@@ -130,34 +132,43 @@ export function KeyCard({ provider, state, onChanged, endpoint, keyLabel = "Гд
 
   const ready = provider.fields.every(field => field.optional || (fields[field.key] ?? "").trim().length > 0);
 
-  return <article className={"connector key-card" + (connected ? " is-connected" : "")}>
+  return <article className={"connector key-card" + (connected ? " is-connected" : "") + (locked ? " is-locked" : "")}>
     <div className="connector-head">
       {/* Логотип и название — одна кнопка: она делает то же, что раньше делала кнопка
           «Подключить» справа. У подключённой карточки клик раскрывает замену доступа, а
           «Отключить» остаётся отдельной кнопкой, чтобы случайный клик не снял доступ. */}
-      <button
-        type="button"
-        className="connector-identity"
-        onClick={() => setOpen(value => !value)}
-        disabled={busy}
-        aria-expanded={open}
-        aria-label={(connected ? "Доступ к " : "Подключить ") + provider.name}
-      >
-        <BrandLogo brand={provider.logo} />
-        <span className="connector-meta">
-          <strong>{provider.name}</strong>
-          <span className="connector-state">{connected ? <><span className="connector-dot"/>{state?.account ? "Подключено · " + state.account : "Подключено"}</> : provider.tagline}</span>
-        </span>
-        {/* Кружок — не отдельная кнопка, а часть той же строки: он показывает, что произойдёт
-            по нажатию (плюс раскрывает подключение, шеврон — доступ к настройкам). */}
-        <span className={"connector-socket" + (connected ? " is-on" : "") + (open ? " is-open" : "")} aria-hidden="true">
-          {connected ? <ChevronDown size={14} className="connector-caret"/> : open ? <Minus size={14}/> : <Plus size={14}/>}
-        </span>
-      </button>
-      {connected && <button className="ghost-button connector-action" onClick={() => void disconnect()} disabled={busy}>Отключить</button>}
+      {locked
+        ? <div className="connector-identity connector-identity-static" aria-disabled="true">
+            <BrandLogo brand={provider.logo} />
+            <span className="connector-meta">
+              <strong>{provider.name}</strong>
+              <span className="connector-state locked"><Lock size={10}/>Доступно на платных тарифах</span>
+            </span>
+            <span className="connector-socket is-locked" aria-hidden="true"><Lock size={13}/></span>
+          </div>
+        : <button
+            type="button"
+            className="connector-identity"
+            onClick={() => setOpen(value => !value)}
+            disabled={busy}
+            aria-expanded={open}
+            aria-label={(connected ? "Доступ к " : "Подключить ") + provider.name}
+          >
+            <BrandLogo brand={provider.logo} />
+            <span className="connector-meta">
+              <strong>{provider.name}</strong>
+              <span className="connector-state">{connected ? <><span className="connector-dot"/>{state?.account ? "Подключено · " + state.account : "Подключено"}</> : provider.tagline}</span>
+            </span>
+            {/* Кружок — не отдельная кнопка, а часть той же строки: он показывает, что произойдёт
+                по нажатию (плюс раскрывает подключение, шеврон — доступ к настройкам). */}
+            <span className={"connector-socket" + (connected ? " is-on" : "") + (open ? " is-open" : "")} aria-hidden="true">
+              {connected ? <ChevronDown size={14} className="connector-caret"/> : open ? <Minus size={14}/> : <Plus size={14}/>}
+            </span>
+          </button>}
+      {!locked && connected && <button className="ghost-button connector-action" onClick={() => void disconnect()} disabled={busy}>Отключить</button>}
     </div>
 
-    {connected && <div className="connector-actions-row">
+    {!locked && connected && <div className="connector-actions-row">
       <button className="ghost-button" onClick={() => setOpen(value => !value)}>{open ? "Скрыть доступ" : "Заменить доступ"}</button>
       {onRefresh && <button className="ghost-button" onClick={onRefresh} disabled={busy || refreshing} title="Перечитать данные из кабинета">
         <RefreshCw size={11} className={refreshing ? "spin" : undefined}/>{refreshing ? "Обновляем…" : "Обновить данные"}
@@ -165,14 +176,14 @@ export function KeyCard({ provider, state, onChanged, endpoint, keyLabel = "Гд
       <a className="ghost-button" href={provider.keyUrl} target="_blank" rel="noreferrer">{keyLabel} <ExternalLink size={11}/></a>
     </div>}
 
-    {connected && writes && <label className="connector-write">
+    {!locked && connected && writes && <label className="connector-write">
       <strong>Разрешить агенту изменять ресурсы</strong>
       <span className="switch"><input type="checkbox" checked={writes.allowed} disabled={busy || writes.busy} onChange={event => writes.onToggle(event.target.checked)}/><span className="switch-track"><span className="switch-thumb"/></span></span>
     </label>}
 
-    {error && <div className="connector-notice">{error}</div>}
+    {!locked && error && <div className="connector-notice">{error}</div>}
 
-    {open && <div className="connector-key">
+    {!locked && open && <div className="connector-key">
       {/* Сначала то, что заполняют, — поля ключа. Разрешение спрашивается после: человек уже
           понимает, какой доступ даёт ключ, и не читает абзац перед вводом. */}
       {provider.fields.map(field => <label key={field.key}>

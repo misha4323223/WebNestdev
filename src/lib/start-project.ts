@@ -19,7 +19,12 @@ export type ProjectStartOptions = {
 export async function startProjectWithAgent({ name, plannerPrompt, title }: ProjectStartOptions): Promise<Project> {
   const project = await createProject(name);
   const conversation = await createConversation(project.id);
-  if (plannerPrompt) queueAgentStart(conversation.id, { prompt: plannerPrompt, ...(title ? { title } : {}) });
+  if (plannerPrompt) {
+    // Флаг ставится до открытия рабочей области: её первый кадр уже показывает планирование,
+    // а не пустой чат, который через мгновение сменился бы вопросами.
+    try { localStorage.setItem("webnestdev.planning." + conversation.id, JSON.stringify({ title: title ?? name })); } catch {}
+    queueAgentStart(conversation.id, { prompt: plannerPrompt, planning: true, ...(title ? { title } : {}) });
+  }
   localStorage.setItem("webnestdev.projectId", project.id);
   localStorage.setItem("webnestdev.projectName", project.name);
   localStorage.setItem("webnestdev.conversationId", conversation.id);

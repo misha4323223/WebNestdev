@@ -84,6 +84,7 @@ const TOOL_OUTPUT_CHARS: Record<string, number> = {
   "net.download": 1500,
   "browser.runtime": 6000,
   "browser.scenario": 8000,
+  "image.inspect": 8000,
   "git.diff": 8000,
   // Явный запрос логов и истории: модель сама попросила этот кусок, и обрезать его до общего
   // минимума — значит заставить её повторять тот же вызов.
@@ -343,7 +344,17 @@ function digestEdges(content: string, head: number, tail: number) {
  * which files and commands it already touched. The digest keeps those and drops the rest, so a long
  * chat continues from knowledge — «I already did this» — instead of from a count of messages.
  */
-type CutCollector = { requests: string[]; answers: string[]; actions: string[]; toolResults: number };
+type ToolDigest = { name: string; target: string; detail: string };
+type CutCollector = {
+  requests: string[];
+  answers: string[];
+  actions: string[];
+  toolResults: number;
+  /** Краткие итоги выброшенных результатов: имя, цель и суть, а не только счётчик. */
+  toolDigests: ToolDigest[];
+  /** Вызовы по id: по ним результат получает имя инструмента и его цель. */
+  calls: Map<string, { name: string; arguments: unknown }>;
+};
 
 /**
  * Просьба пользователя — это требование, а не пересказ: она хранится почти целиком (до 1200 знаков)
@@ -359,12 +370,16 @@ const DIGEST_ANSWER_HEAD_CHARS = 150;
 const DIGEST_ANSWER_TAIL_CHARS = 150;
 const DIGEST_ACTION_CHARS = 90;
 /** Квоты разделов: они делят одну заметку, а не конкурируют за неё. */
-const DIGEST_REQUESTS_QUOTA = 1500;
-const DIGEST_ANSWERS_QUOTA = 900;
-const DIGEST_ACTIONS_QUOTA = 500;
+// Сумма квот оставляет место заголовку и подписям внутри CUT_NOTE_CHARS: иначе хвост заметки
+// (а в нём — как раз итоги инструментов) срезался бы общим лимитом.
+const DIGEST_REQUESTS_QUOTA = 1200;
+const DIGEST_ANSWERS_QUOTA = 700;
+const DIGEST_ACTIONS_QUOTA = 400;
+const DIGEST_TOOLS_QUOTA = 800;
 const DIGEST_MAX_REQUESTS = 12;
 const DIGEST_MAX_ANSWERS = 12;
 const DIGEST_MAX_ACTIONS = 20;
+const DIGEST_MAX_TOOLS = 10;
 
 /** The one thing a tool call says about itself: the path, command or route it worked on. */
 export function toolCallTarget(input: unknown) {
@@ -386,6 +401,37 @@ export function toolCallTarget(input: unknown) {
   return "";
 }
 
+/** Одна строка о результате инструмента: что он вернул по существу, а не весь JSON. */
+function toolResultDigest(content: string) {
+  const text = content.replace(/\s+/g, " ").trim();
+  if (!text) return "пусто";
+  try {
+    const parsed = JSON.parse(content) as unknown;
+    if (parsed && typeof parsed === "object") {
+      const value = parsed as Record<string, unknown>;
+      if (typeof value.error === "string" && value.error.trim()) return digestHead("ошибка: " + value.error, 180);
+      if (value.ok === false) return "ok:false";
+      if (typeof value.stdout === "string" && value.stdout.trim()) return digestHead(value.stdout, 180);
+      if (Array.isArray(value.matches)) return value.matches.length + " совпадений" + (typeof value.fileCount === "number" ? " в " + value.fileCount + " файлах" : "");
+      if (typeof value.content === "string" && value.content.trim()) return digestHead(value.content, 180);
+      if (typeof value.body === "string" && value.body.trim()) return digestHead(value.body, 180);
+      if (typeof value.exitCode === "number") return "exitCode " + value.exitCode + (typeof value.stderr === "string" && value.stderr.trim() ? ": " + digestHead(value.stderr, 140) : "");
+    }
+  } catch {
+    // Не JSON — это обычный текст команды или файла; ниже берём его начало.
+  }
+  return digestHead(text, 180);
+}
+
+function collectToolCalls(messages: ChatMessage[]) {
+  const calls = new Map<string, { name: string; arguments: unknown }>();
+  for (const message of messages) {
+    if (message.role !== "assistant") continue;
+    for (const call of message.tool_calls ?? []) calls.set(call.id, { name: call.name, arguments: call.arguments });
+  }
+  return calls;
+}
+
 function collectCut(collector: CutCollector, message: ChatMessage) {
   if (message.role === "user") {
     collector.requests.push(digestEdges(message.content, DIGEST_REQUEST_CHARS - 300, 300));
@@ -393,6 +439,12 @@ function collectCut(collector: CutCollector, message: ChatMessage) {
   }
   if (message.role === "tool") {
     collector.toolResults++;
+    const call = collector.calls.get(message.tool_call_id);
+    collector.toolDigests.push({
+      name: call?.name ?? "tool",
+      target: call ? toolCallTarget(call.arguments) : "",
+      detail: toolResultDigest(message.content),
+    });
     return;
   }
   if (message.role !== "assistant") return;
@@ -452,7 +504,22 @@ function cutNote(collector: CutCollector, dropped: number) {
   if (skipped > 0) parts.push("ещё " + skipped + " более ранних просьб не поместились в срез — если факта нет в проекте, прочитай файлы, а не переспрашивай");
   if (answers.length) parts.push("агент уже отвечал: " + answers.map(item => "«" + item + "»").join(" "));
   if (actions.length) parts.push("уже сделано с проектом: " + actions.join(", "));
-  if (collector.toolResults) parts.push("вывод инструментов выброшен (" + collector.toolResults + " результатов) — сначала смотри блок ТЕКУЩЕЕ СОСТОЯНИЕ, а если нужного факта нет, прочитай файл или повтори команду");
+  if (collector.toolResults) {
+    // Раньше здесь был только счётчик, и модель знала «что-то потеряно», но не «что именно».
+    // Краткие итоги позволяют не перечитывать файл, если факт уже назван в срезе.
+    const toolLines = fitSection(
+      newest(collector.toolDigests, DIGEST_MAX_TOOLS).map(item =>
+        item.name + (item.target ? " " + item.target : "") + " → " + item.detail,
+      ),
+      DIGEST_TOOLS_QUOTA,
+      false,
+    );
+    parts.push(
+      "вывод инструментов выброшен (" + collector.toolResults + " результатов" +
+        (toolLines.length ? "; последние: " + toolLines.join("; ") : "") +
+        ") — сначала смотри блок ТЕКУЩЕЕ СОСТОЯНИЕ, а если нужного факта нет, прочитай файл, повтори команду или открой сохранённый результат через chat.history",
+    );
+  }
   const note = "[" + parts.join(". ") + "]";
   return note.length > CUT_NOTE_CHARS ? note.slice(0, CUT_NOTE_CHARS) + "…]" : note;
 }
@@ -504,7 +571,7 @@ export function trimMessagesToBudget(
   let compacted = 0;
   let dropped = 0;
   // What the cut owes the model, collected until it is written as one note.
-  const cut: CutCollector = { requests: [], answers: [], actions: [], toolResults: 0 };
+  const cut: CutCollector = { requests: [], answers: [], actions: [], toolResults: 0, toolDigests: [], calls: collectToolCalls(messages) };
   // The note is a real message only once it is in `working`; until then it is a reserved place.
   let noteWritten = false;
   // The size is carried along instead of being summed again on every question: the trim asks
@@ -620,18 +687,6 @@ export function trimMessagesToBudget(
     }
   }
 
-  // One note where the cut begins, so the model knows the history is not complete but keeps what it
-  // was about. It goes after the system messages: the prompt and the project context always stay first.
-  if (dropped) {
-    const note = cutNote(cut, dropped);
-    let insertAt = 0;
-    while (insertAt < working.length && working[insertAt].role === "system") insertAt++;
-    working.splice(insertAt, 0, { role: "system", content: note });
-    totalChars += note.length;
-    noteWritten = true;
-  }
-  if (!overBudget()) return done();
-
   // 4b — the protected window and the system notes can fill the count cap even after every
   // removable group is gone. A request that cannot be sent is worse than a shorter one, so the
   // quality window yields here: oldest whole groups are dropped beyond it, while the current user
@@ -661,6 +716,18 @@ export function trimMessagesToBudget(
       working = [{ role: "system", content: systems.map(message => message.content).join("\n\n") }, ...rest];
       totalChars = messageChars(working);
     }
+  }
+
+  // The note is written only after 4b: that phase can drop more groups, and a note written before it
+  // would keep an outdated count and lose the summaries of exactly those results. It goes after the
+  // system messages, so the prompt and the project context always stay first.
+  if (dropped) {
+    const note = cutNote(cut, dropped);
+    let insertAt = 0;
+    while (insertAt < working.length && working[insertAt].role === "system") insertAt++;
+    working.splice(insertAt, 0, { role: "system", content: note });
+    totalChars += note.length;
+    noteWritten = true;
   }
   if (!overBudget()) return done();
 

@@ -7,6 +7,7 @@ import { registerTool } from "../tool-registry.js";
 import { getSandbox } from "../sandbox/sandbox-service.js";
 import { withBrowserSlot } from "./browser-limiter.js";
 import { layoutSummary, readLayout, saveScreenshot, type LayoutAudit, type SavedScreenshot } from "./screenshot-file.js";
+import { BROWSER_VIEWPORTS, readBrowserViewport } from "./browser-viewport.js";
 
 const MAX_BODY = 200_000;
 const MAX_DIAGNOSTIC_ITEMS = 100;
@@ -589,13 +590,79 @@ async function inspectRuntimePage(projectId: string, path: string, userId?: stri
   };
 }
 
-import type { QaScenarioStep as BrowserScenarioStep } from "../qa/scenario-planner.js";
+import type { QaScenarioStep as BrowserScenarioStep, ScenarioPoint } from "../qa/scenario-planner.js";
 
 const MAX_SCENARIO_STEPS = 20;
+const MAX_DRAG_STEPS = 40;
 
-async function runBrowserScenario(projectId: string, input: unknown) {
+type ScenarioStepResult = {
+  step: number;
+  action: string;
+  ok: boolean;
+  detail?: string;
+  screenshot?: SavedScreenshot;
+  layout?: LayoutAudit;
+};
+
+function readPoint(value: unknown): ScenarioPoint | null {
+  if (!value || typeof value !== "object") return null;
+  const point = value as { x?: unknown; y?: unknown };
+  const x = typeof point.x === "number" && Number.isFinite(point.x) ? point.x : NaN;
+  const y = typeof point.y === "number" && Number.isFinite(point.y) ? point.y : NaN;
+  return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
+}
+
+function clampPoint(point: ScenarioPoint, viewport: { width: number; height: number }): ScenarioPoint {
+  return {
+    x: Math.max(0, Math.min(viewport.width, point.x)),
+    y: Math.max(0, Math.min(viewport.height, point.y)),
+  };
+}
+
+/**
+ * Pointer-перетаскивание. Мышь даёт pointerdown → pointermove → pointerup, которых ждут игры на
+ * указателях; touch отправляет те же события через CDP, иначе мобильный свайп не проверить.
+ */
+async function dragOnPage(
+  page: Page,
+  input: { from: ScenarioPoint; to: ScenarioPoint; steps?: number; touch?: boolean },
+) {
+  const count = Math.max(1, Math.min(MAX_DRAG_STEPS, Math.floor(Number(input.steps) || 8)));
+  if (input.touch) {
+    const client = await page.context().newCDPSession(page);
+    try {
+      const point = (value: ScenarioPoint) => [{ x: value.x, y: value.y }];
+      await client.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: point(input.from) });
+      for (let index = 1; index <= count; index++) {
+        const ratio = index / count;
+        await client.send("Input.dispatchTouchEvent", {
+          type: "touchMove",
+          touchPoints: point({
+            x: input.from.x + (input.to.x - input.from.x) * ratio,
+            y: input.from.y + (input.to.y - input.from.y) * ratio,
+          }),
+        });
+        await page.waitForTimeout(16);
+      }
+      await client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+    } finally {
+      await client.detach().catch(() => undefined);
+    }
+    return;
+  }
+  await page.mouse.move(input.from.x, input.from.y);
+  await page.mouse.down();
+  try {
+    await page.mouse.move(input.to.x, input.to.y, { steps: count });
+  } finally {
+    await page.mouse.up();
+  }
+}
+
+async function runBrowserScenario(projectId: string, input: unknown, userId?: string) {
   const value = (input && typeof input === "object" ? input : {}) as {
     path?: unknown;
+    viewport?: unknown;
     steps?: unknown;
   };
   const initialPath = typeof value.path === "string" ? getPath({ path: value.path }) : "/";
@@ -607,15 +674,31 @@ async function runBrowserScenario(projectId: string, input: unknown) {
   const current = getPreview(projectId);
   if (!current) throw new Error("Состояние предпросмотра недоступно — предпросмотр не запущен");
 
+  const viewportName = readBrowserViewport(value.viewport);
+  const viewport = BROWSER_VIEWPORTS[viewportName];
   const browser = await chromium.launch({ headless: true, executablePath: process.env.WEBNESTDEV_BROWSER_EXECUTABLE || undefined });
   const consoleErrors: ConsoleMessage[] = [];
   const pageErrors: string[] = [];
   const failedRequests: Array<{ url: string; error: string }> = [];
   const httpErrors: Array<{ url: string; status: number }> = [];
-  const results: Array<{ step: number; action: string; ok: boolean; detail?: string }> = [];
+  const results: ScenarioStepResult[] = [];
+
+  // Корень проекта нужен только шагам screenshot: сценарий без снимков работает и без песочницы.
+  let captureRoot: string | null | undefined;
+  const ensureCaptureRoot = async () => {
+    if (captureRoot !== undefined) return captureRoot;
+    if (!userId) return null;
+    captureRoot = (await getSandbox(projectId, userId).catch(() => null))?.root ?? null;
+    return captureRoot;
+  };
 
   try {
-    const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+    const page = await browser.newPage({
+      viewport,
+      // hasTouch влияет на pointer-события и media queries: включаем его только когда сценарий
+      // действительно просит touch-drag, чтобы десктопный вид не превращался в мобильный.
+      hasTouch: steps.some(step => step.action === "drag" && step.touch === true),
+    });
     page.on("console", message => { if (message.type() === "error" && consoleErrors.length < 50) consoleErrors.push({ text: message.text().slice(0, 2000), url: message.location()?.url ?? "" }); });
     page.on("pageerror", error => { if (pageErrors.length < 50) pageErrors.push(error.message.slice(0, 2000)); });
     page.on("response", response => { if (response.status() >= 400 && httpErrors.length < 50) httpErrors.push({ url: response.url().slice(0, 2000), status: response.status() }); });
@@ -626,6 +709,8 @@ async function runBrowserScenario(projectId: string, input: unknown) {
 
     for (let index = 0; index < steps.length; index++) {
       const step = steps[index];
+      let screenshot: SavedScreenshot | undefined;
+      let layout: LayoutAudit | undefined;
       try {
         switch (step.action) {
           case "goto": {
@@ -664,10 +749,31 @@ async function runBrowserScenario(projectId: string, input: unknown) {
           case "expectNotVisible":
             await page.locator(step.selector).first().waitFor({ state: "hidden", timeout: 5000 });
             break;
+          case "drag": {
+            const from = readPoint(step.from);
+            const to = readPoint(step.to);
+            if (!from || !to) throw new Error("Для drag нужны точки from:{x,y} и to:{x,y}");
+            await dragOnPage(page, { from: clampPoint(from, viewport), to: clampPoint(to, viewport), steps: step.steps, touch: step.touch });
+            await page.waitForTimeout(150);
+            break;
+          }
+          case "screenshot": {
+            const root = await ensureCaptureRoot();
+            if (!root) throw new Error("Не удалось получить каталог проекта для скриншота: неизвестен владелец проекта");
+            await page.waitForTimeout(100);
+            screenshot = await saveScreenshot(page, {
+              root,
+              projectId,
+              label: step.name?.trim() || "step-" + (index + 1),
+              fullPage: step.fullPage === true,
+            });
+            layout = await readLayout(page);
+            break;
+          }
           default:
             throw new Error(`Unsupported scenario action: ${(step as { action?: string }).action ?? "unknown"}`);
         }
-        results.push({ step: index + 1, action: step.action, ok: true });
+        results.push({ step: index + 1, action: step.action, ok: true, ...(screenshot ? { screenshot } : {}), ...(layout ? { layout } : {}) });
       } catch (error) {
         results.push({ step: index + 1, action: step.action, ok: false, detail: error instanceof Error ? error.message : String(error) });
         break;
@@ -679,10 +785,15 @@ async function runBrowserScenario(projectId: string, input: unknown) {
     const judged = classifyRuntimeFailures({ pageErrors, consoleErrors, failedRequests, httpErrors, documentStatus, blank: rendered.blank, styles: rendered.styles });
     const ok = stepsPassed && judged.ok;
     const failedStep = results.find(item => !item.ok);
+    const screenshots = results
+      .filter((item): item is ScenarioStepResult & { screenshot: SavedScreenshot } => Boolean(item.screenshot))
+      .map(item => ({ step: item.step, ...item.screenshot, ...(item.layout ? { layout: item.layout } : {}) }));
     return {
       ok,
       initialPath,
+      viewport: viewportName,
       steps: results,
+      screenshots,
       finalUrl: page.url(),
       documentStatus,
       /** Что отрисовано на последнем экране сценария — единственное доказательство белого экрана. */
@@ -694,7 +805,8 @@ async function runBrowserScenario(projectId: string, input: unknown) {
       background: judged.background,
       failures: judged.failures,
       diagnostic: ok
-        ? "Сценарий прошёл: шаги выполнились, страница отрисовала содержимое, ошибок страницы, консоли и сети нет."
+        ? "Сценарий прошёл: шаги выполнились, страница отрисовала содержимое, ошибок страницы, консоли и сети нет." +
+          (screenshots.length ? " Снимков: " + screenshots.length + "." : "")
         : (!stepsPassed ? "Сценарий остановлен на шаге " + failedStep?.step + " (" + failedStep?.action + "): " + (failedStep?.detail ?? "шаг не выполнился") + ". " : "") +
           (judged.failures.length ? "Поломки: " + briefList(judged.failures) + ". " : "") +
           (judged.background.length ? "Фон, который чинить не нужно: " + briefList(judged.background) + "." : ""),
@@ -703,7 +815,7 @@ async function runBrowserScenario(projectId: string, input: unknown) {
         : rendered.blank
           ? "Страница пустая: приложение ничего не отрисовало (0 видимых элементов и 0 символов текста). Проверьте точку входа (монтирование в #root или #app), стартовый маршрут и состояние загрузки до ответа авторизации — экран не должен оставаться пустым, пока запросы сессии не ответили."
           : !stepsPassed
-            ? "Исправьте то, на чём остановился шаг (selector/text выше), и запустите сценарий снова. Фоновые 4xx и отменённые запросы чинить не нужно."
+            ? "Исправьте то, на чём остановился шаг (selector/text/координаты выше), и запустите сценарий снова. Фоновые 4xx и отменённые запросы чинить не нужно."
             : "Исправьте перечисленное в failures, затем запустите сценарий снова.",
     };
   } finally {
@@ -713,12 +825,13 @@ async function runBrowserScenario(projectId: string, input: unknown) {
 
 registerTool({
   name: "browser.scenario",
-  description: "Run a real Chromium user-flow scenario against Preview. Input: {path?:string,steps:[{action:'goto',path}|{action:'click',selector}|{action:'fill',selector,value}|{action:'press',selector,key}|{action:'expectText',text}|{action:'expectUrl',pattern}|{action:'expectVisible',selector}|{action:'expectNotVisible',selector}]}. Maximum 20 steps. Supports visibility assertions, stops on the first failed step, and reports what the page rendered (visible text, blank screen), console/page errors, HTTP 5xx and failed requests; 4xx from the app's own API and aborted requests come back as `background`, not as failures.",
+  description: "Run a real Chromium user-flow scenario against Preview. Input: {path?:string,viewport?:'desktop'|'tablet'|'mobile',steps:[{action:'goto',path}|{action:'click',selector}|{action:'fill',selector,value}|{action:'press',selector,key}|{action:'expectText',text}|{action:'expectUrl',pattern}|{action:'expectVisible',selector}|{action:'expectNotVisible',selector}|{action:'drag',from:{x,y},to:{x,y},steps?,touch?}|{action:'screenshot',name?,fullPage?}]}. Maximum 20 steps. drag sends pointerdown/move/up (mouse) or real touch events (touch:true), so games and sliders can be checked instead of only asserting that an element exists. screenshot saves a PNG inside the project at an intermediate step and returns path/url + layout — it does not put base64 into the context. Supports visibility assertions, stops on the first failed step, and reports what the page rendered (visible text, blank screen), console/page errors, HTTP 5xx and failed requests; 4xx from the app's own API and aborted requests come back as `background`, not as failures.",
   parameters: {
     type: "object",
     required: ["steps"],
     properties: {
       path: { type: "string", description: "Маршрут предпросмотра, с которого начинается сценарий; по умолчанию /" },
+      viewport: { type: "string", enum: ["desktop", "tablet", "mobile"], description: "Размер окна сценария: desktop 1440×900, tablet 820×1180, mobile 390×844; по умолчанию desktop" },
       steps: {
         type: "array",
         maxItems: 20,
@@ -727,13 +840,31 @@ registerTool({
           type: "object",
           required: ["action"],
           properties: {
-            action: { type: "string", enum: ["goto", "click", "fill", "press", "expectText", "expectUrl", "expectVisible", "expectNotVisible"] },
+            action: { type: "string", enum: ["goto", "click", "fill", "press", "expectText", "expectUrl", "expectVisible", "expectNotVisible", "drag", "screenshot"] },
             path: { type: "string", description: "Для action=goto" },
             selector: { type: "string", description: "CSS-селектор для click/fill/press/expectVisible/expectNotVisible" },
             value: { type: "string", description: "Значение для action=fill" },
             key: { type: "string", description: "Клавиша для action=press, например Enter" },
             text: { type: "string", description: "Ожидаемый текст для action=expectText" },
             pattern: { type: "string", description: "Регулярное выражение URL для action=expectUrl" },
+            from: {
+              type: "object",
+              description: "Начальная точка drag в координатах viewport",
+              additionalProperties: false,
+              required: ["x", "y"],
+              properties: { x: { type: "number" }, y: { type: "number" } },
+            },
+            to: {
+              type: "object",
+              description: "Конечная точка drag в координатах viewport",
+              additionalProperties: false,
+              required: ["x", "y"],
+              properties: { x: { type: "number" }, y: { type: "number" } },
+            },
+            steps: { type: "number", description: "Сколько промежуточных pointermove сделать (1–40, по умолчанию 8)" },
+            touch: { type: "boolean", description: "true — настоящие touch-события вместо мыши (для мобильного свайпа)" },
+            name: { type: "string", description: "Имя снимка для action=screenshot" },
+            fullPage: { type: "boolean", description: "true — снимать страницу целиком" },
           },
         },
       },
@@ -741,7 +872,7 @@ registerTool({
   },
   // Chromium is launched inside the server container without a memory limit, so only a
   // configured number of checks may run at once; withBrowserSlot holds that place.
-  execute: async (input, context) => withBrowserSlot(() => runBrowserScenario(context.projectId, input)),
+  execute: async (input, context) => withBrowserSlot(() => runBrowserScenario(context.projectId, input, context.userId)),
 });
 
 registerTool({

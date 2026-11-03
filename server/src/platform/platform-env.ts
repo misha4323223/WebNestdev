@@ -151,6 +151,13 @@ export const PLATFORM_ENV_CATALOG: PlatformEnvEntry[] = [
   { name: "PLATFORM_AI_FREE_KEY_3", group: "ai", label: "Free AI ключ 3", hint: "Третий ключ бесплатной модели из другого аккаунта — последний резерв перед моделью платформы.", kind: "secret" },
   // Генерация изображений для проектов: инструмент image.generate. Это не модель агента, а
   // отдельный сервис картинок, поэтому и имена свои — включение не трогает ни один PLATFORM_AI_*.
+  // Зрение агента: инструмент image.inspect. Это отдельная модель, а не основная модель
+  // разговора, поэтому её можно включить, не меняя текст агента. Без base/key берутся
+  // PLATFORM_AI_BASE_URL и PLATFORM_AI_API_KEY — но только когда задана vision-модель.
+  { name: "PLATFORM_VISION_MODEL", group: "ai", label: "Зрение: модель", hint: "Модель, которая понимает изображения: например gpt-4o-mini, qwen2.5-vl-72b-instruct или vision-модель вашего шлюза. Без неё image.inspect честно отвечает not_configured.", kind: "value" },
+  { name: "PLATFORM_VISION_BASE_URL", group: "ai", label: "Зрение: Base URL", hint: "Необязательно: OpenAI-совместимый адрес vision-модели. Пусто — берётся PLATFORM_AI_BASE_URL.", kind: "url" },
+  { name: "PLATFORM_VISION_API_KEY", group: "ai", label: "Зрение: ключ", hint: "Необязательно: ключ vision-модели. Пусто — берётся PLATFORM_AI_API_KEY.", kind: "secret" },
+  { name: "PLATFORM_VISION_PROVIDER", group: "ai", label: "Зрение: провайдер", hint: "Необязательно: имя провайдера в ответе инструмента, по умолчанию берётся имя AI-провайдера.", kind: "value" },
   { name: "PLATFORM_IMAGE_BASE_URL", group: "ai", label: "Картинки: Base URL", hint: "Адрес сервиса генерации изображений. Cloudflare Workers AI: https://api.cloudflare.com/client/v4/accounts/<Account ID>/ai/run — модель дописывается к адресу. OpenAI-совместимый сервис: адрес с /v1, к нему допишется /images/generations.", kind: "url" },
   { name: "PLATFORM_IMAGE_MODEL", group: "ai", label: "Картинки: модель", hint: "Например @cf/black-forest-labs/flux-1-schnell (быстрая, до 8 шагов) или @cf/stabilityai/stable-diffusion-xl-base-1.0 (принимает размер и негативный промпт).", kind: "value" },
   { name: "PLATFORM_IMAGE_PROVIDER", group: "ai", label: "Картинки: провайдер", hint: "Необязательно: имя сервиса в логах и подсказках. По умолчанию Cloudflare Workers AI.", kind: "value" },

@@ -63,6 +63,7 @@ export function GitLabConnect({surface="home",onImported=openImportedProject}:{s
   const [baseUrl,setBaseUrl]=useState("https://gitlab.com");
   const [repositories,setRepositories]=useState<Repository[]>([]);
   const [selected,setSelected]=useState<Repository|null>(null);
+  const [open,setOpen]=useState(false);
   const [reposOpen,setReposOpen]=useState(false);
   const [busy,setBusy]=useState(false);
   const [loadingRepos,setLoadingRepos]=useState(false);
@@ -136,6 +137,7 @@ export function GitLabConnect({surface="home",onImported=openImportedProject}:{s
       if(!data||data.type!=="webnestdev.gitlab")return;
       stopWatching();
       setNotice(data.status??"connected");
+      if((data.status??"connected")==="connected")setOpen(true);
       void loadStatus(true);
     }
     window.addEventListener("message",onMessage);
@@ -160,6 +162,7 @@ export function GitLabConnect({surface="home",onImported=openImportedProject}:{s
         if(next!=="connected")return;
         stopWatching();
         setNotice("connected");
+        setOpen(true);
         try{popup.close()}catch{}
       });
     },1500);
@@ -174,7 +177,7 @@ export function GitLabConnect({surface="home",onImported=openImportedProject}:{s
         const data=await response.json().catch(()=>({})) as {error?:string};
         throw new Error(data.error??"GitLab не подтвердил отключение");
       }
-      setLogin(null);setRepositories([]);setSelected(null);setReposOpen(false);setNotice(null);
+      setLogin(null);setRepositories([]);setSelected(null);setReposOpen(false);setOpen(false);setNotice(null);
       await loadStatus(true);
     }catch(e){setError(e instanceof Error?e.message:"Не удалось отключить GitLab")}
     finally{setBusy(false)}
@@ -192,7 +195,7 @@ export function GitLabConnect({surface="home",onImported=openImportedProject}:{s
       });
       const data=await response.json() as GitLabStatus;
       if(!response.ok)throw new Error(data.error??"GitLab не принял токен");
-      setToken("");setNotice("connected");
+      setToken("");setNotice("connected");setOpen(true);
       await loadStatus(true);
     }catch(e){setError(e instanceof Error?e.message:"Не удалось сохранить токен")}
     finally{setSavingToken(false)}
@@ -226,6 +229,8 @@ export function GitLabConnect({surface="home",onImported=openImportedProject}:{s
     account={login}
     busy={busy}
     busyLabel="Ждём GitLab…"
+    expanded={open}
+    onToggle={()=>setOpen(value=>!value)}
     onConnect={connect}
     onDisconnect={()=>void disconnect()}
     onRefresh={()=>void loadStatus()}
@@ -244,7 +249,10 @@ export function GitLabConnect({surface="home",onImported=openImportedProject}:{s
       </div>}
     </>}
   >
-    {status!=="connected"&&<div className="connector-body">
+    {open&&status!=="connected"&&<div className="connector-body">
+      <div className="connector-actions-row">
+        <button className="connector-action connector-connect" onClick={connect} disabled={busy}>{busy?"Ждём GitLab…":"Подключить через GitLab"}</button>
+      </div>
       <div className="connector-key">
         <label>
           <span><KeyRound size={12}/> Личный токен GitLab</span>
@@ -262,8 +270,8 @@ export function GitLabConnect({surface="home",onImported=openImportedProject}:{s
       </div>
     </div>}
 
-    {status==="connected"&&<div className="connector-body">
-      <button className="ghost-button connector-toggle" onClick={()=>setReposOpen(open=>!open)}>{reposOpen?"Скрыть репозитории":"Импортировать репозиторий"}</button>
+    {open&&status==="connected"&&<div className="connector-body">
+      <button className="ghost-button connector-toggle" onClick={()=>setReposOpen(value=>!value)}>{reposOpen?"Скрыть репозитории":"Импортировать репозиторий"}</button>
       {reposOpen&&<>
         <div className="github-repositories">
           {repositories.length

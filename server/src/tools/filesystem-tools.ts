@@ -8,7 +8,9 @@ import { looksBinary } from "../sandbox/binary.js";
 import { openDirsForSandbox, openFileForSandbox } from "../sandbox/permissions.js";
 import { registerTool } from "../tool-registry.js";
 import { parseChangedSource } from "../qa/change-parser.js";
+import { splitLines, unifiedPatch } from "../changes/diff.js";
 import { assertNotSecretProjectPath, isSecretProjectPath } from "../secrets/secret-paths.js";
+import { IGNORED_PROJECT_DIRS } from "../project-ignore.js";
 
 /**
  * Сервер пишет от root, а команды проекта выполняются в контейнере от uid 1000: созданные
@@ -22,6 +24,11 @@ async function openCreated(sandboxRoot: string, filePath: string) {
 /** Сколько читается за один вызов и сколько вообще разрешено вернуть. */
 const READ_WINDOW_CHARS = 20000;
 const READ_MAX_CHARS = 60000;
+/** Окно построчного чтения: 120 строк — обычный размер функции или секции. */
+const READ_LINE_WINDOW = 120;
+const READ_LINE_MAX = 400;
+/** Компактный diff правки: модель читает подтверждение, а не весь файл. */
+const EDIT_DIFF_MAX_CHARS = 5000;
 
 /**
  * A file read twice in one run is usually the same file: the first read is still in the history.
@@ -29,13 +36,27 @@ const READ_MAX_CHARS = 60000;
  * gives the model the full text when it really needs it again. The cache is per run and per
  * path/window, invalidated by every write, edit, rename or delete.
  */
-type ReadCacheEntry={hash:string;preview:string;totalChars:number;offset:number;limit:number;truncated:boolean;nextOffset?:number};
+type ReadCacheEntry={
+  hash:string;
+  preview:string;
+  totalChars:number;
+  /** Фактическая длина окна до обрезки preview: по ней видно, попал ли весь ответ в кэш. */
+  fullChars:number;
+  offset?:number;
+  limit?:number;
+  lineStart?:number;
+  lineEnd?:number;
+  totalLines?:number;
+  nextLineStart?:number;
+  truncated:boolean;
+  nextOffset?:number;
+};
 const readCache=new Map<string,ReadCacheEntry>();
 const READ_CACHE_ENTRIES=192;
 const CACHED_READ_PREVIEW_CHARS=800;
 
 function cachePath(value:string){return path.normalize(value).replace(/^\.\//,"").replace(/\\/g,"/");}
-function cacheKey(projectId:string,runId:string,file:string,offset:number,limit:number){return projectId+"\u0000"+runId+"\u0000"+cachePath(file)+"\u0000"+offset+"\u0000"+limit;}
+function cacheKey(projectId:string,runId:string,file:string,window:string){return projectId+"\u0000"+runId+"\u0000"+cachePath(file)+"\u0000"+window;}
 function invalidateReadCache(projectId:string,runId:string,file:string){
   const prefix=projectId+"\u0000"+runId+"\u0000"+cachePath(file)+"\u0000";
   for(const key of readCache.keys())if(key.startsWith(prefix))readCache.delete(key);
@@ -77,20 +98,22 @@ registerTool({
 
 registerTool({
   name: "fs.read",
-  description: "Read a UTF-8 text file, or one window of a large one. Input: {path:string,offset?:number,limit?:number,fresh?:boolean}. Large files come back in windows with `nextOffset` — read the next window instead of assuming the file ends here. A file already read unchanged in this run returns a short {cached:true} marker; pass fresh:true when you need the full text again. Binary files (images, fonts, archives) return {binary:true,bytes} instead of text — do not try to read them as source.",
+  description: "Read a UTF-8 text file, or one window of a large one. Two window modes: line mode {path,lineStart,lineLimit} with 1-based lines — preferred for source code — and character mode {path,offset,limit}. Large files come back with `nextLineStart` or `nextOffset`; read the next window instead of assuming the file ends here. A file already read unchanged in this run returns a short {cached:true} marker; pass fresh:true when you need the full text again. Binary files (images, fonts, archives) return {binary:true,bytes} instead of text — do not try to read them as source.",
   parameters: {
     type: "object",
     additionalProperties: false,
     required: ["path"],
     properties: {
       path: { type: "string", description: "Путь к файлу внутри проекта" },
-      offset: { type: "number", description: "С какого символа читать; по умолчанию с начала" },
-      limit: { type: "number", description: "Сколько символов вернуть; по умолчанию " + READ_WINDOW_CHARS + ", максимум " + READ_MAX_CHARS },
+      lineStart: { type: "number", description: "С какой строки читать, начиная с 1; включает построчный режим" },
+      lineLimit: { type: "number", description: "Сколько строк вернуть; по умолчанию " + READ_LINE_WINDOW + ", максимум " + READ_LINE_MAX },
+      offset: { type: "number", description: "С какого символа читать в символьном режиме; по умолчанию с начала" },
+      limit: { type: "number", description: "Сколько символов вернуть в символьном режиме; по умолчанию " + READ_WINDOW_CHARS + ", максимум " + READ_MAX_CHARS },
       fresh: { type: "boolean", description: "Вернуть полный текст, даже если файл уже читали в этом запуске" },
     },
   },
   execute: async (input, context) => {
-    const value = input as { path?: string; offset?: number; limit?: number; fresh?: boolean };
+    const value = input as { path?: string; lineStart?: number; lineLimit?: number; offset?: number; limit?: number; fresh?: boolean };
     if (!value.path) throw new Error("не указан путь");
     assertNotSecretProjectPath(value.path, "читать");
     const sandbox = await getSandbox(context.projectId, context.userId);
@@ -106,13 +129,94 @@ registerTool({
       };
     }
     const content = bytes.toString("utf8");
+    const hash = createHash("sha1").update(content).digest("hex");
+    const lineMode = typeof value.lineStart === "number" && Number.isFinite(value.lineStart);
+
+    if (lineMode) {
+      const lines = splitLines(content);
+      const totalLines = lines.length;
+      const requestedStart = Math.max(1, Math.floor(Number(value.lineStart) || 1));
+      if (!totalLines || requestedStart > totalLines) {
+        return {
+          path: value.path,
+          content: "",
+          mode: "lines",
+          totalLines,
+          lineStart: requestedStart,
+          lineEnd: 0,
+          truncated: false,
+          hint: totalLines
+            ? "В файле " + totalLines + " строк — lineStart=" + requestedStart + " за концом файла."
+            : "Файл пуст.",
+        };
+      }
+      const lineStart = requestedStart;
+      const requestedLimit = Math.floor(Number(value.lineLimit) || READ_LINE_WINDOW);
+      const lineLimit = Math.min(READ_LINE_MAX, Math.max(1, requestedLimit));
+      let lineEnd = Math.min(totalLines, lineStart - 1 + lineLimit);
+      let selected = lines.slice(lineStart - 1, lineEnd);
+      // Даже 400 строк с очень длинными строками не должны пробить общий предел ответа.
+      while (selected.length > 1 && selected.join("\n").length > READ_MAX_CHARS) {
+        selected = selected.slice(0, -1);
+        lineEnd--;
+      }
+      let window = selected.join("\n");
+      const charLimited = window.length > READ_MAX_CHARS;
+      if (charLimited) window = window.slice(0, READ_MAX_CHARS);
+      const truncated = lineEnd < totalLines;
+      const key = cacheKey(context.projectId, context.runId, value.path, "lines:" + lineStart + ":" + lineLimit);
+      const cached = readCache.get(key);
+      if (!value.fresh && cached?.hash === hash) {
+        return {
+          path: value.path,
+          content: cached.preview,
+          mode: "lines",
+          totalLines,
+          lineStart,
+          lineEnd,
+          truncated: cached.truncated,
+          cached: true,
+          unchanged: true,
+          previewChars: cached.preview.length,
+          contentComplete: cached.preview.length >= cached.fullChars,
+          ...(cached.nextLineStart ? { nextLineStart: cached.nextLineStart } : {}),
+          hint: "Файл не изменился с прошлого чтения в этом запуске — показано только начало окна. Если полный текст нужен снова, вызови fs.read с fresh:true.",
+        };
+      }
+      rememberRead(key, {
+        hash,
+        preview: window.slice(0, CACHED_READ_PREVIEW_CHARS),
+        totalChars: content.length,
+        fullChars: window.length,
+        lineStart,
+        lineEnd,
+        totalLines,
+        truncated,
+        ...(truncated ? { nextLineStart: lineEnd + 1 } : {}),
+      });
+      return {
+        path: value.path,
+        content: window,
+        mode: "lines",
+        totalChars: content.length,
+        totalLines,
+        lineStart,
+        lineEnd,
+        truncated,
+        ...(charLimited ? { charLimited: true, hint: "Одна выбранная строка длиннее предела чтения — она сокращена. Увеличьте lineStart или читайте символьным режимом." } : {}),
+        ...(truncated
+          ? { nextLineStart: lineEnd + 1, ...(charLimited ? {} : { hint: "Продолжение: fs.read с lineStart=" + (lineEnd + 1) + " и lineLimit=" + lineLimit }) }
+          : {}),
+        ...(!totalLines ? { hint: "Файл пуст." } : {}),
+      };
+    }
+
     // Окно, а не весь файл: неограниченное чтение — то, из-за чего запуск упирался в лимит модели.
     const offset = Math.max(0, Math.floor(Number(value.offset) || 0));
     const limit = Math.min(READ_MAX_CHARS, Math.max(1, Math.floor(Number(value.limit) || READ_WINDOW_CHARS)));
     const window = content.slice(offset, offset + limit);
     const truncated = offset + window.length < content.length;
-    const key = cacheKey(context.projectId, context.runId, value.path, offset, limit);
-    const hash = createHash("sha1").update(content).digest("hex");
+    const key = cacheKey(context.projectId, context.runId, value.path, "chars:" + offset + ":" + limit);
     const cached = readCache.get(key);
     if (!value.fresh && cached?.hash === hash) {
       return {
@@ -124,7 +228,7 @@ registerTool({
         cached: true,
         unchanged: true,
         previewChars: cached.preview.length,
-        contentComplete: cached.preview.length >= (cached.truncated ? cached.limit : cached.totalChars - offset),
+        contentComplete: cached.preview.length >= cached.fullChars,
         ...(cached.truncated ? { nextOffset: cached.nextOffset } : {}),
         hint: "Файл не изменился с прошлого чтения в этом запуске — показано только начало окна. Если полный текст нужен снова, вызови fs.read с fresh:true.",
       };
@@ -133,6 +237,7 @@ registerTool({
       hash,
       preview: window.slice(0, CACHED_READ_PREVIEW_CHARS),
       totalChars: content.length,
+      fullChars: window.length,
       offset,
       limit,
       truncated,
@@ -163,10 +268,12 @@ registerTool({
     const written = await writeFileInside(sandbox.root, path.join(sandbox.root, value.path), value.content);
     invalidateReadCache(context.projectId, context.runId, value.path);
     await openCreated(sandbox.root, written);
+    const info = await lstat(written).catch(() => null);
     return {
       ok: true,
       path: value.path,
       bytes: Buffer.byteLength(value.content),
+      ...(info ? { mtime: info.mtime.toISOString() } : {}),
     };
   },
 });
@@ -212,6 +319,16 @@ registerTool({
     const written = await writeFileInside(sandbox.root, file, after);
     invalidateReadCache(context.projectId, context.runId, value.path);
     await openCreated(sandbox.root, written);
+    const info = await lstat(written).catch(() => null);
+    // Правка подтверждается не словом «ok», а тем, что изменилось: несколько строк контекста
+    // вокруг замены. Полный патч для большого replaceAll не нужен — он режется по лимиту.
+    const patch = unifiedPatch(value.path, before, after, 3);
+    const diffTruncated = patch.patch.length > EDIT_DIFF_MAX_CHARS;
+    const diff = patch.patch
+      ? diffTruncated
+        ? patch.patch.slice(0, EDIT_DIFF_MAX_CHARS) + "\n…[дифф сокращён]"
+        : patch.patch
+      : undefined;
     return {
       ok: true,
       path: value.path,
@@ -219,6 +336,10 @@ registerTool({
       bytes: Buffer.byteLength(after),
       linesBefore: before.split("\n").length,
       linesAfter: after.split("\n").length,
+      ...(diff ? { diff } : {}),
+      ...(patch.truncated ? { diffTruncated: true, diffNote: "Файл слишком велик для построчного диффа — проверьте нужный фрагмент через fs.read." } : {}),
+      ...(diffTruncated ? { diffNote: "Дифф сокращён до " + EDIT_DIFF_MAX_CHARS + " символов." } : {}),
+      ...(info ? { mtime: info.mtime.toISOString() } : {}),
     };
   },
 });
@@ -282,13 +403,6 @@ const GREP_DEFAULT_RESULTS = 80;
 const GREP_MAX_RESULTS = 200;
 const GREP_MAX_LINE_CHARS = 260;
 const GREP_CONTEXT_MAX = 4;
-
-/** Каталоги зависимостей и сборки: искать в них исходники почти никогда не нужно. */
-const SEARCH_SKIP_DIRS = new Set([
-  "node_modules", ".git", "dist", "build", "coverage", ".next", ".nuxt", ".output",
-  ".cache", ".vite", ".turbo", ".python", "vendor", "target", "__pycache__",
-  ".venv", "venv", ".idea", ".vscode",
-]);
 
 function normalizeProjectRelative(value: string) {
   return value.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\/+$/, "");
@@ -361,7 +475,7 @@ async function* walkProjectFiles(root: string, startRelative: string, skipped: {
     for (const entry of entries) {
       const relative = dir.relative ? dir.relative + "/" + entry.name : entry.name;
       if (entry.isDirectory()) {
-        if (SEARCH_SKIP_DIRS.has(entry.name) && normalizeProjectRelative(relative) !== relativeStart) {
+        if (IGNORED_PROJECT_DIRS.has(entry.name) && normalizeProjectRelative(relative) !== relativeStart) {
           skipped.dirs++;
           continue;
         }

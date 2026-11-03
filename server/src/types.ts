@@ -86,7 +86,7 @@ export type ReasoningEffort="low"|"medium"|"high";
  * `plan` ставит сервер, а не клиент: на бесплатном тарифе он выбирает бесплатную модель с
  * резервом на платформенную, а на платных оставляет платформенную по умолчанию.
  */
-export type AgentRunRequest={projectId:string;conversationId?:string;messages:ChatMessage[];history?:ChatMessage[];model?:string;mode?:AgentMode;reasoning?:ReasoningEffort;webSearch?:boolean;browserCheck?:boolean;resume?:{reason?:string};plan?:PlanId;userId:string};
+export type AgentRunRequest={projectId:string;conversationId?:string;messages:ChatMessage[];history?:ChatMessage[];model?:string;mode?:AgentMode;reasoning?:ReasoningEffort;webSearch?:boolean;browserCheck?:boolean;resume?:{reason?:string};/** Первый запуск нового проекта: только вопросы и резюме, без осмотра файлов. */planning?:boolean;plan?:PlanId;userId:string};
 /**
  * `emit` и `signal` нужны инструментам, которые работают не сами по себе, а вместе с пользователем:
  * `secrets.request` показывает модальное окно через поток запуска и ждёт ответа, а остановка запуска

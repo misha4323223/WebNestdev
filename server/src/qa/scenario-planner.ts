@@ -2,6 +2,8 @@ import { appendExpectedOutcomeSteps } from "./expected-outcome-planner.js";
 
 import type { ParsedChange as ParsedQaChange } from "./change-parser.js";
 
+export type ScenarioPoint = { x: number; y: number };
+
 export type QaScenarioStep =
   | { action: "goto"; path: string }
   | { action: "click"; selector: string }
@@ -10,7 +12,11 @@ export type QaScenarioStep =
   | { action: "expectText"; text: string }
   | { action: "expectUrl"; pattern: string }
   | { action: "expectVisible"; selector: string }
-  | { action: "expectNotVisible"; selector: string };
+  | { action: "expectNotVisible"; selector: string }
+  /** Pointer-перетаскивание: от точки к точке, с промежуточными pointermove. */
+  | { action: "drag"; from: ScenarioPoint; to: ScenarioPoint; steps?: number; touch?: boolean }
+  /** Снимок промежуточного состояния: без него экран SPA, живущий в состоянии React, недостижим. */
+  | { action: "screenshot"; name?: string; fullPage?: boolean };
 
 export type QaScenario = { path: string; steps: QaScenarioStep[]; reason: string; changeKind?: string; confidence?: number; parsedChanges?: ParsedQaChange[] };
 

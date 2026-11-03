@@ -26,7 +26,7 @@ const heavyStorageMutationTools = new Set(["terminal.exec", "npm.install", "pip.
  * поэтому без включённого переключателя они не работают: иначе автоматическая QA обходила бы
  * решение человека и тратила бы его токены.
  */
-const browserCheckTools = new Set(["browser.runtime", "browser.scenario", "browser.screenshot"]);
+const browserCheckTools = new Set(["browser.runtime", "browser.scenario", "browser.screenshot", "browser.perf"]);
 
 export async function executeTool(call:ProviderToolCall,context:AgentContext){
   const tool=getTool(call.name);

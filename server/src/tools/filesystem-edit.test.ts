@@ -87,6 +87,57 @@ test("повторное чтение неизменённого файла от
   assert.equal(fresh.content, content);
 });
 
+test("fs.read в построчном режиме отдаёт строки 900–1020, а не 120 символов", async () => {
+  const content = Array.from({ length: 1200 }, (_, index) => "line " + (index + 1)).join("\n") + "\n";
+  await tool("fs.write", { path: "long.ts", content });
+  const result = await tool("fs.read", { path: "long.ts", lineStart: 900, lineLimit: 120 }) as {
+    content?: string;
+    mode?: string;
+    totalLines?: number;
+    lineStart?: number;
+    lineEnd?: number;
+    nextLineStart?: number;
+    truncated?: boolean;
+  };
+  assert.equal(result.mode, "lines");
+  assert.equal(result.totalLines, 1200);
+  assert.equal(result.lineStart, 900);
+  assert.equal(result.lineEnd, 1019);
+  assert.equal(result.nextLineStart, 1020);
+  assert.equal(result.truncated, true);
+  assert.equal(result.content?.split("\n")[0], "line 900");
+  assert.equal(result.content?.split("\n").length, 120);
+});
+
+test("fs.read за концом файла говорит, сколько строк, вместо возврата последней", async () => {
+  await tool("fs.write", { path: "short.ts", content: "one\ntwo\n" });
+  const result = await tool("fs.read", { path: "short.ts", lineStart: 10, lineLimit: 5 }) as {
+    content?: string;
+    totalLines?: number;
+    lineStart?: number;
+    lineEnd?: number;
+    hint?: string;
+  };
+  assert.equal(result.content, "");
+  assert.equal(result.totalLines, 2);
+  assert.equal(result.lineStart, 10);
+  assert.equal(result.lineEnd, 0);
+  assert.match(result.hint ?? "", /2 строк/);
+});
+
+test("fs.edit подтверждает правку диффом и временем изменения", async () => {
+  await tool("fs.write", { path: "diff.ts", content: "const a = 1;\nconst b = 2;\nconst c = 3;\n" });
+  const result = await tool("fs.edit", {
+    path: "diff.ts",
+    oldText: "const b = 2;",
+    newText: "const b = 20;",
+  }) as { diff?: string; mtime?: string };
+  assert.match(result.diff ?? "", /^--- a\/diff\.ts/m);
+  assert.match(result.diff ?? "", /^-const b = 2;$/m);
+  assert.match(result.diff ?? "", /^\+const b = 20;$/m);
+  assert.ok(result.mtime && !Number.isNaN(Date.parse(result.mtime)), "mtime должен быть ISO-датой");
+});
+
 test("правка инвалидирует кэш: следующее чтение возвращает новый файл целиком", async () => {
   await tool("fs.write", { path: "cache.ts", content: "export const value = 1;\n" });
   await tool("fs.read", { path: "cache.ts" });

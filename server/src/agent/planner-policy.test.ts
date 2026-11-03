@@ -16,7 +16,7 @@ test("reading the project stays possible", () => {
 });
 
 test("terminal.exec is allowed only for inspection commands", () => {
-  for (const command of ["ls -la", "cat src/index.ts", "grep -rn provider src", "git status --short", "git diff", "git log --oneline -5", "npm ls", "find . -name '*.ts'"]) {
+  for (const command of ["ls -la", "cat src/index.ts", "grep -rn provider src", "grep -o provider src/app.ts", "git status --short", "git diff", "git log --oneline -5", "git branch --list", "git tag -l", "git remote -v", "git config --get user.name", "git stash list", "npm ls", "find . -name '*.ts'"]) {
     assert.equal(changesSomething("terminal.exec", { command }), false, command + " must be allowed");
   }
   for (const command of [
@@ -33,6 +33,17 @@ test("terminal.exec is allowed only for inspection commands", () => {
     "mv src/a.ts src/b.ts",
     "python -c 'open(\"a\",\"w\")'",
     "curl https://example.com",
+    "find . -delete",
+    "find . -exec rm {} \\;",
+    "git branch -D main",
+    "git tag -d v1",
+    "git config user.name x",
+    "git remote add origin https://example.com/x.git",
+    "git stash push",
+    "git diff --output=patch.txt",
+    "sort -o sorted.txt src/app.ts",
+    "grep --pre 'cat' pattern src",
+    "cat src/index.ts\nrm -rf src",
   ]) {
     assert.equal(changesSomething("terminal.exec", { command }), true, command + " must be refused");
   }

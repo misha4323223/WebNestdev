@@ -25,6 +25,8 @@ const MAX_RESULT_CHARS = 9000;
 const MAX_TOOL_RESULT_CHARS = 3000;
 const TOOL_RESULT_HEAD_CHARS = 700;
 const TOOL_RESULT_TAIL_CHARS = 300;
+/** Точечное чтение одного результата: столько же, сколько хранит переписка. */
+const MAX_SINGLE_TOOL_RESULT_CHARS = 16_000;
 const TOOL_ARGUMENT_HEAD_CHARS = 300;
 const TOOL_ARGUMENT_TAIL_CHARS = 100;
 const MAX_TOOL_TURNS = 8;
@@ -64,12 +66,12 @@ export function fitTurns(turns: HistoryTurn[]): HistoryTurn[] {
 }
 
 /**
- * Результаты инструментов из сохранённой переписки. Раньше `chat.history` отдавал только
- * реплики, и после обрезки контекста агент заново запускал grep или сборку, хотя вывод уже был
- * записан. Пары «вызов — результат» собираются по `tool_call_id`: непарный результат модель
- * всё равно не примет, а искать по нему нечего.
+ * Все пары «вызов — результат» из сохранённой переписки в порядке появления: по ним работает
+ * и поиск, и точечное чтение по индексу. Раньше `chat.history` отдавал только реплики, и после
+ * обрезки контекста агент заново запускал grep или сборку, хотя вывод уже был записан. Пары
+ * собираются по `tool_call_id`: непарный результат модель всё равно не примет, а искать нечего.
  */
-export function selectToolResults(messages: ChatMessage[], query: string, limit: number): { tools: HistoryToolTurn[]; matched: number } {
+export function allToolResults(messages: ChatMessage[]): HistoryToolTurn[] {
   const calls = new Map<string, { name: string; arguments: string; index: number }>();
   const all: HistoryToolTurn[] = [];
   messages.forEach((message, index) => {
@@ -85,7 +87,11 @@ export function selectToolResults(messages: ChatMessage[], query: string, limit:
     calls.delete(message.tool_call_id);
     all.push({ index: call.index, name: call.name, arguments: call.arguments, result: message.content });
   });
+  return all;
+}
 
+export function selectToolResults(messages: ChatMessage[], query: string, limit: number): { tools: HistoryToolTurn[]; matched: number } {
+  const all = allToolResults(messages);
   const needle = query.replace(/\s+/g, " ").trim().toLowerCase();
   const matched = all.filter(item =>
     !needle || (item.name + " " + item.arguments + " " + item.result).toLowerCase().includes(needle),
@@ -110,8 +116,9 @@ export function fitToolTurns(turns: HistoryToolTurn[]): HistoryToolTurn[] {
 registerTool({
   name: "chat.history",
   description:
-    "Read the stored conversation of this chat verbatim — the part that is no longer in your context. Input: {query?: string, limit?: number, tools?: boolean}. Without a query it returns the newest turns (default 12, max 30); with a query it searches the WHOLE stored chat for a word or phrase and returns the newest matches. " +
+    "Read the stored conversation of this chat verbatim — the part that is no longer in your context. Input: {query?: string, limit?: number, tools?: boolean, toolIndex?: number}. Without a query it returns the newest turns (default 12, max 30); with a query it searches the WHOLE stored chat for a word or phrase and returns the newest matches. " +
     "By default only the user's messages and your own answers come back, clipped head+tail per turn. With tools:true it also returns saved tool calls and their results (newest matches, clipped and bounded): use it when a command output, file read or verification result was trimmed from the visible context, instead of running the same command again. " +
+    "To read one saved tool result in full, pass toolIndex from a previous tools[].index: it returns up to 16k characters of that exact result, so a large grep or build log does not have to be re-run. " +
     "Use it when a concrete detail from earlier is missing from the visible history and from the notes: what was asked at the start, which variant was agreed, a name, a number, a domain, a build or verify result. Do not use it to re-read what is already visible, and prefer note.remember for decisions so they do not have to be searched for again.",
   parameters: {
     type: "object",
@@ -120,14 +127,18 @@ registerTool({
       query: { type: "string", description: "Слово или фраза для поиска по всей сохранённой переписке; без него — последние реплики" },
       limit: { type: "integer", description: "Сколько реплик вернуть: по умолчанию 12, максимум 30" },
       tools: { type: "boolean", description: "Искать ещё и по сохранённым вызовам инструментов и их результатам; по умолчанию false" },
+      toolIndex: { type: "integer", description: "Индекс из tools[].index: вернуть этот сохранённый результат целиком (до 16 000 символов)" },
     },
   },
   execute: async (input, context) => {
-    const value = (input && typeof input === "object" ? input : {}) as { query?: unknown; limit?: unknown; tools?: unknown };
+    const value = (input && typeof input === "object" ? input : {}) as { query?: unknown; limit?: unknown; tools?: unknown; toolIndex?: unknown };
     const query = typeof value.query === "string" ? value.query : "";
     const requested = typeof value.limit === "number" && Number.isFinite(value.limit) ? Math.round(value.limit) : DEFAULT_LIMIT;
     const limit = Math.min(MAX_LIMIT, Math.max(1, requested));
     const includeTools = value.tools === true;
+    const toolIndex = typeof value.toolIndex === "number" && Number.isFinite(value.toolIndex)
+      ? Math.round(value.toolIndex)
+      : null;
     if (!context.conversationId) {
       return { ok: false, error: "У этого запуска нет сохранённого разговора: читать нечего. Работай с тем, что видно в контексте, и с файлами проекта." };
     }
@@ -140,6 +151,26 @@ registerTool({
     // Разговор принадлежит проекту: чужой чат этим путём не читается.
     if (!conversation || conversation.projectId !== context.projectId) {
       return { ok: false, error: "Разговор не найден в этом проекте." };
+    }
+    if (toolIndex !== null) {
+      const tool = allToolResults(conversation.messages).find(item => item.index === toolIndex);
+      if (!tool) {
+        return {
+          ok: false,
+          error: "Результат инструмента с индексом " + toolIndex + " не найден. Возьмите индекс из tools[].index предыдущего ответа chat.history.",
+        };
+      }
+      const result = tool.result.length > MAX_SINGLE_TOOL_RESULT_CHARS
+        ? tool.result.slice(0, MAX_SINGLE_TOOL_RESULT_CHARS) + "\n…[результат сокращён до " + MAX_SINGLE_TOOL_RESULT_CHARS + " символов]"
+        : tool.result;
+      return {
+        ok: true,
+        toolIndex,
+        tool: { ...tool, result },
+        resultChars: result.length,
+        truncated: tool.result.length > MAX_SINGLE_TOOL_RESULT_CHARS,
+        note: "Это сохранённый результат инструмента целиком (в пределах лимита хранения), а не пересказ. Повторять команду не нужно.",
+      };
     }
     const { turns, matched } = selectTurns(conversation.messages, query, limit);
     const kept = fitTurns(turns);

@@ -23,7 +23,10 @@ type HistoryResult = {
   returned?: number;
   truncated?: boolean;
   turns?: Array<{ role: string; text: string }>;
-  tools?: Array<{ name: string; arguments: string; result: string }>;
+  tools?: Array<{ index?: number; name: string; arguments: string; result: string }>;
+  toolIndex?: number;
+  tool?: { index: number; name: string; arguments: string; result: string };
+  resultChars?: number;
   toolsMatched?: number;
   note?: string;
   error?: string;
@@ -41,6 +44,10 @@ test("chat.history ищет по всей сохранённой перепис�
   // Отдельная проверка: результат сборки уже был в переписке, но выпал из видимого контекста.
   messages.push({ role: "assistant", content: "Собираю проект", tool_calls: [{ id: "build", name: "terminal.exec", arguments: { command: "npm run build" } }] });
   messages.push({ role: "tool", content: JSON.stringify({ ok: true, exitCode: 0, stdout: "vite v8 built in 1.7s", stderr: "" }), tool_call_id: "build" });
+  // Результат, у которого важная строка находится в середине: обычный tools:true её обрежет,
+  // а точечное чтение по индексу должно вернуть сохранённый текст целиком.
+  messages.push({ role: "assistant", content: "Ищу середину", tool_calls: [{ id: "long", name: "terminal.exec", arguments: { command: "grep -R marker src" } }] });
+  messages.push({ role: "tool", content: "начало\n" + "x".repeat(5000) + "\nMIDDLE-MARKER\n" + "y".repeat(5000) + "\nконец", tool_call_id: "long" });
   messages.push({ role: "user", content: "Согласовали палитру #0E1A16 и шрифт Inter, тёмный герой отклонён" });
   messages.push({ role: "assistant", content: "Понял: палитра #0E1A16, шрифт Inter. Итог зафиксирован." });
   await appendConversationMessages(conversation.id, messages);
@@ -75,6 +82,18 @@ test("chat.history ищет по всей сохранённой перепис�
   assert.equal(toolHistory.tools?.[0]?.name, "terminal.exec");
   assert.match(toolHistory.tools?.[0]?.result ?? "", /built in 1\.7s/);
   assert.match(toolHistory.tools?.[0]?.arguments ?? "", /npm run build/);
+
+  const longMatch = (await tool.execute({ query: "MIDDLE-MARKER", tools: true }, context)) as HistoryResult;
+  assert.equal(longMatch.toolsMatched, 1);
+  assert.ok((longMatch.tools?.[0]?.index ?? -1) >= 0);
+  assert.doesNotMatch(longMatch.tools?.[0]?.result ?? "", /MIDDLE-MARKER/, "обычный поиск показывает только края");
+  const longIndex = longMatch.tools?.[0]?.index ?? NaN;
+  assert.ok(Number.isFinite(longIndex));
+  const full = (await tool.execute({ toolIndex: longIndex }, context)) as HistoryResult;
+  assert.equal(full.ok, true, full.error ?? "");
+  assert.equal(full.tool?.name, "terminal.exec");
+  assert.match(full.tool?.result ?? "", /MIDDLE-MARKER/);
+  assert.ok((full.resultChars ?? 0) > 9000, "точечное чтение отдаёт сохранённый результат, а не обрезанный пересказ");
 
   const otherProject = await createProject("Чужой", undefined, "u-other");
   const foreign = (await tool.execute({}, { projectId: otherProject.id, runId: "r", userId: "u-other", conversationId: conversation.id })) as HistoryResult;

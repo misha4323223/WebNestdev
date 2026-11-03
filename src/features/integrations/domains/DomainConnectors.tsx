@@ -17,7 +17,7 @@ type WritesResponse = { error?: string; allowWrites?: boolean };
  * поэтому карточка спрашивает об этом до сохранения ключа, а переключатель в карточке меняет
  * только это поле. Без разрешения агент читает кабинет и не трогает записи.
  */
-export function DomainConnectors() {
+export function DomainConnectors({ locked = false }: { locked?: boolean }) {
   const [states, setStates] = useState<Record<string, KeyConnectionState>>({});
   const [writesBusy, setWritesBusy] = useState<string | null>(null);
   const [refreshBusy, setRefreshBusy] = useState<string | null>(null);
@@ -95,6 +95,7 @@ export function DomainConnectors() {
       }}
       onRefresh={() => void refresh(registrar.id)}
       refreshing={refreshBusy === registrar.id}
+      locked={locked}
     />)}
     <p className="connector-fineprint">
       С включённым разрешением агент настраивает DNS (A-записи на сервер, TXT-подтверждения) в

@@ -3,11 +3,11 @@ import path from "node:path";
 import { getSandbox } from "../sandbox-manager.js";
 import { readFileInside } from "../sandbox/path-guard.js";
 import { isSecretProjectPath } from "../secrets/secret-paths.js";
+import { isIgnoredProjectDir } from "../project-ignore.js";
 
 const MAX_FILES = 12;
 const MAX_FILE_CHARS = 12000;
 const MAX_TOTAL_CHARS = 70000;
-const IGNORED = new Set([".git", "node_modules", "dist", "build", ".next", ".cache", ".turbo"]);
 
 function tokens(text: string): Set<string> {
   return new Set(
@@ -36,7 +36,7 @@ async function collectFiles(root: string, current: string, relative: string, res
   let entries;
   try { entries = await readdir(current, { withFileTypes: true }); } catch { return; }
   for (const entry of entries) {
-    if (IGNORED.has(entry.name)) continue;
+    if (isIgnoredProjectDir(entry.name)) continue;
     // Секретный env-файл не попадает в контекст даже по имени: модель не должна просить его
     // содержимое и не должна получать его случайно вместе с исходниками.
     if (isSecretProjectPath(entry.name)) continue;

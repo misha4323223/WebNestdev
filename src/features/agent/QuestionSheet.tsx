@@ -3,10 +3,10 @@ import { useEffect, useMemo, useState } from "react";
 import { Check, CornerDownLeft, HelpCircle, Sparkles, X } from "lucide-react";
 
 /**
- * Вопрос агента, который ждёт решения пользователя. Это модальное окно поверх рабочей области:
- * агент уже остановился на этом шаге, поэтому вопрос не должен уезжать вместе с перепиской или
- * зависеть от того, какая вкладка открыта. Варианты готовые, но всегда можно написать свой:
- * у задачи редко бывает ровно два ответа.
+ * Вопрос агента, который ждёт решения пользователя. В обычном чате это модальное окно поверх
+ * рабочей области; в окне планирования — встроенная карточка (`embedded`), чтобы первый разговор
+ * о проекте не выглядел как диалог поверх диалога. Варианты готовые, но всегда можно написать
+ * свой: у задачи редко бывает ровно два ответа.
  */
 export type AgentQuestion={
   requestId:string;
@@ -17,12 +17,14 @@ export type AgentQuestion={
   allowCustom:boolean;
 };
 
-export function QuestionSheet({prompt,busy,error,onAnswer,onSkip}:{
+export function QuestionSheet({prompt,busy,error,onAnswer,onSkip,embedded=false}:{
   prompt:AgentQuestion;
   busy:boolean;
   error:string;
   onAnswer:(answer:{selected:string[];custom?:string})=>void;
   onSkip:()=>void;
+  /** Встроенный вариант для окна планирования: без подложки и заголовка модального окна. */
+  embedded?:boolean;
 }){
   const [selected,setSelected]=useState<string[]>([]);
   const [custom,setCustom]=useState("");
@@ -64,6 +66,73 @@ export function QuestionSheet({prompt,busy,error,onAnswer,onSkip}:{
     return()=>window.removeEventListener("keydown",onKeyDown);
   },[busy,onSkip]);
 
+  const controls=<>
+    <div className={"question-options"+(prompt.multiSelect?" multi":"")} role="group" aria-label={prompt.question}>
+      {prompt.options.map(option=>{
+        const active=selected.includes(option.label);
+        return <button
+          type="button"
+          key={option.label}
+          className={"question-option"+(active?" selected":"")}
+          role={prompt.multiSelect?"checkbox":"radio"}
+          aria-checked={active}
+          onClick={()=>toggle(option.label)}
+          disabled={busy||(!active&&atLimit)}
+        >
+          <span className="question-mark" aria-hidden="true">{active?<Check size={12}/>:null}</span>
+          <span className="question-option-body">
+            {option.imageUrl&&<img className="question-option-image" src={option.imageUrl} alt="" loading="lazy"/>}
+            <strong>{option.label}</strong>
+            {option.description&&<small>{option.description}</small>}
+          </span>
+        </button>;
+      })}
+    </div>
+
+    {prompt.multiSelect&&limit<prompt.options.length&&<p className="question-limit">Можно выбрать до {limit} вариантов.</p>}
+
+    {prompt.allowCustom&&<label className="question-custom">
+      <span>Свой вариант</span>
+      <input
+        type="text"
+        value={custom}
+        maxLength={2000}
+        disabled={busy}
+        onChange={event=>{
+          const value=event.target.value;
+          setCustom(value);
+          // Свой текст для вопроса с одним ответом заменяет выбранный вариант, а не дополняет его.
+          if(value.trim()&&!prompt.multiSelect)setSelected([]);
+        }}
+        onKeyDown={event=>{if(event.key==="Enter"){event.preventDefault();submit()}}}
+        placeholder="Свой ответ"
+        aria-label="Свой ответ"
+      />
+    </label>}
+
+    {error&&<div className="connector-notice">{error}</div>}
+  </>;
+
+  if(embedded){
+    return <section className="planning-question" aria-labelledby="planning-question-text">
+      <header className="planning-question-head">
+        <span className="planning-question-icon" aria-hidden="true"><HelpCircle size={15}/></span>
+        <div>
+          <span className="eyebrow">УТОЧНЯЮ ДЕТАЛИ</span>
+          <h3 id="planning-question-text" className="question-text">{prompt.question}</h3>
+        </div>
+      </header>
+      {controls}
+      <footer className="planning-question-actions">
+        <button type="button" className="ghost-button" onClick={onSkip} disabled={busy}>Пропустить</button>
+        <button type="button" className="send-button" onClick={submit} disabled={busy||!ready}>
+          {busy?"Отправляем…":"Ответить"}
+          {!busy&&ready?<CornerDownLeft size={13}/>:null}
+        </button>
+      </footer>
+    </section>;
+  }
+
   return <div className="modal-backdrop tech-backdrop" role="presentation">
     <section
       className="modal tech-modal question-modal"
@@ -85,52 +154,7 @@ export function QuestionSheet({prompt,busy,error,onAnswer,onSkip}:{
 
       <div className="modal-body">
         <p className="question-text" id="agent-question-text">{prompt.question}</p>
-
-        <div className={"question-options"+(prompt.multiSelect?" multi":"")} role="group" aria-label={prompt.question}>
-          {prompt.options.map(option=>{
-            const active=selected.includes(option.label);
-            return <button
-              type="button"
-              key={option.label}
-              className={"question-option"+(active?" selected":"")}
-              role={prompt.multiSelect?"checkbox":"radio"}
-              aria-checked={active}
-              onClick={()=>toggle(option.label)}
-              disabled={busy||(!active&&atLimit)}
-            >
-              <span className="question-mark" aria-hidden="true">{active?<Check size={12}/>:null}</span>
-              <span className="question-option-body">
-                {option.imageUrl&&<img className="question-option-image" src={option.imageUrl} alt="" loading="lazy"/>}
-                <strong>{option.label}</strong>
-                {option.description&&<small>{option.description}</small>}
-              </span>
-            </button>;
-          })}
-        </div>
-
-        {prompt.multiSelect&&limit<prompt.options.length&&<p className="question-limit">Можно выбрать до {limit} вариантов.</p>}
-
-        {prompt.allowCustom&&<label className="question-custom">
-          <span>Свой вариант</span>
-          <input
-            type="text"
-            value={custom}
-            maxLength={2000}
-            disabled={busy}
-            onChange={event=>{
-              const value=event.target.value;
-              setCustom(value);
-              // Свой текст для вопроса с одним ответом заменяет выбранный вариант, а не дополняет его.
-              if(value.trim()&&!prompt.multiSelect)setSelected([]);
-            }}
-            onKeyDown={event=>{if(event.key==="Enter"){event.preventDefault();submit()}}}
-            placeholder="Свой ответ"
-            aria-label="Свой ответ"
-          />
-        </label>}
-
-        {error&&<div className="connector-notice">{error}</div>}
-
+        {controls}
         <p className="question-meta"><Sparkles size={12}/><span>Агент продолжит с этого шага.</span></p>
       </div>
 

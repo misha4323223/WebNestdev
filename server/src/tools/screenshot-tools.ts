@@ -5,6 +5,7 @@ import { previewStatus } from "../preview-manager.js";
 import { registerTool } from "../tool-registry.js";
 import { withBrowserSlot } from "./browser-limiter.js";
 import { layoutSummary, readLayout, saveScreenshot, type LayoutAudit, type SavedScreenshot } from "./screenshot-file.js";
+import { BROWSER_VIEWPORTS, readBrowserViewport, type BrowserViewport } from "./browser-viewport.js";
 
 /**
  * Снимок страницы — вторая половина проверки вёрстки. browser.runtime отвечает, что страница
@@ -15,21 +16,16 @@ import { layoutSummary, readLayout, saveScreenshot, type LayoutAudit, type Saved
  * тот, кто умеет смотреть изображения; числа читает модель.
  */
 
-export const VIEWPORTS = {
-  desktop: { width: 1440, height: 900 },
-  tablet: { width: 820, height: 1180 },
-  mobile: { width: 390, height: 844 },
-} as const;
+export const VIEWPORTS = BROWSER_VIEWPORTS;
 
-export type ScreenshotViewport = keyof typeof VIEWPORTS;
+export type ScreenshotViewport = BrowserViewport;
 
 const SETTLE_MS = 700;
 const NETWORK_IDLE_MS = 4_000;
 const LOAD_TIMEOUT_MS = 15_000;
 
 function readViewport(input: unknown): ScreenshotViewport {
-  const value = (input as { viewport?: unknown } | null)?.viewport;
-  return value === "mobile" || value === "tablet" ? value : "desktop";
+  return readBrowserViewport((input as { viewport?: unknown } | null)?.viewport);
 }
 
 function readPath(input: unknown) {

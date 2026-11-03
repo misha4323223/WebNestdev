@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { ChatMessage } from "../types.js";
-import { PLANNER_MODE_PROMPT, SYSTEM_PROMPT, browserCheckNotice, buildInitialMessages, insertSystemNotice, storedHistory } from "./message-builder.js";
+import { PLANNER_MODE_PROMPT, PROJECT_PLANNING_PROMPT, SYSTEM_PROMPT, browserCheckNotice, buildInitialMessages, insertSystemNotice, storedHistory } from "./message-builder.js";
 
 /**
  * The stored chat is the model's memory of a run, so what it hands to a provider has to be exactly
@@ -136,4 +136,14 @@ test("browser check notice keeps Chromium off until the user turns it on", () =>
 test("planner mode follows the language of the request", () => {
   assert.match(PLANNER_MODE_PROMPT, /in the user's language/i);
   assert.match(PLANNER_MODE_PROMPT, /Russian by default/i);
+});
+
+test("project planning asks before the empty project is inspected", () => {
+  const built = buildInitialMessages([{ role: "user", content: "Лендинг" }], "контекст проекта", "planner", true);
+  const system = built.filter(message => message.role === "system").map(message => message.content).join("\n");
+  assert.match(system, /PROJECT PLANNING MODE IS ON/);
+  assert.match(system, /do not inspect files/i);
+  assert.match(system, /question\.ask/);
+  assert.doesNotMatch(system, /PLANNER MODE IS ON/);
+  assert.equal(system.includes(PROJECT_PLANNING_PROMPT), true);
 });

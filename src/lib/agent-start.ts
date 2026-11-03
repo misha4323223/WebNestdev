@@ -7,6 +7,8 @@ export type PendingAgentStart={
   prompt:string;
   /** Short label for the opening notice in the chat. */
   title?:string;
+  /** Новый проект: рабочая область сначала открывает окно планирования, а не чат. */
+  planning?:boolean;
   createdAt:number;
 };
 
@@ -28,6 +30,7 @@ export function takeAgentStart(conversationId:string):PendingAgentStart|null{
     return {
       prompt:parsed.prompt,
       ...(typeof parsed.title==="string"&&parsed.title?{title:parsed.title}:{}),
+      ...(parsed.planning===true?{planning:true}:{}),
       createdAt:typeof parsed.createdAt==="number"?parsed.createdAt:Date.now(),
     };
   }catch{return null}

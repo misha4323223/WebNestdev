@@ -50,15 +50,15 @@ function mutationSummary(name:string,args:Record<string,unknown>,output:unknown)
  * `image.generate` тоже не запускает проверку: картинка — готовый ассет, собирать из-за неё проект
  * незачем. Но планировщику она запрещена: это запись в проект и расход ключа платформы.
  */
-const PLANNER_FORBIDDEN_TOOLS=new Set(["git.add","git.commit","git.pull","secrets.request","access.request","deploy.plan","preview.start","preview.stop","image.generate"]);
+const PLANNER_FORBIDDEN_TOOLS=new Set(["git.add","git.commit","git.pull","secrets.request","access.request","deploy.plan","preview.start","preview.stop","image.generate","project.check"]);
 
 /**
  * Planner mode still has to read the project, so plain inspection commands are allowed
  * while everything that writes is refused. Anything chained or piped is refused too:
  * one command, one answer, with no room for a write hidden behind a pipe.
  */
-const READ_ONLY_COMMANDS=new Set(["ls","cat","head","tail","wc","find","grep","rg","tree","pwd","file","stat","du","df","which","whereis","echo","jq","diff","sort","uniq","cut","basename","dirname","realpath","sed","awk","git","npm","node","tsc","eslint","prettier"]);
-const WRITE_MARKERS=[">","tee ","sed -i","perl -i","--in-place","--write","--fix","rm ","rmdir ","mv ","cp ","mkdir ","touch ","truncate ","chmod ","chown ","ln ","dd ","patch ","git add","git commit","git push","git pull","git fetch","git clone","git checkout","git switch","git restore","git reset","git clean","git stash","git merge","git rebase","git rm","git mv","npm i ","npm install","npm ci","npm run","npm exec","yarn add","pnpm add","bun add","bun run","pip install","python -c","node -e","node --eval","curl ","wget ","ssh ","scp ","sudo ","kill ","systemctl ","docker "];
+const READ_ONLY_COMMANDS=new Set(["ls","cat","head","tail","wc","find","grep","rg","tree","pwd","file","stat","du","df","which","whereis","echo","jq","diff","sort","cut","basename","dirname","realpath","eslint","prettier"]);
+const WRITE_MARKERS=[">","<","tee ","sed -i","perl -i","--in-place","--write","--fix","--output","rm ","rmdir ","mv ","cp ","mkdir ","touch ","truncate ","chmod ","chown ","ln ","dd ","patch ","git add","git commit","git push","git pull","git fetch","git clone","git checkout","git switch","git restore","git reset","git clean","git merge","git rebase","git rm","git mv","npm i ","npm install","npm ci","npm run","npm exec","yarn add","pnpm add","bun add","bun run","pip install","python -c","node -e","node --eval","curl ","wget ","ssh ","scp ","sudo ","kill ","systemctl ","docker "];
 
 function platformModelUnavailable(message:string){
   const error=new Error(message);
@@ -66,12 +66,58 @@ function platformModelUnavailable(message:string){
   return error;
 }
 
+function isReadOnlyFind(args:string[]){
+  const unsafe=["-delete","-exec","-execdir","-ok","-okdir","-fprint","-fprint0","-fprintf","-fls"];
+  return !args.some(arg=>unsafe.some(flag=>arg===flag||arg.startsWith(flag+"=")));
+}
+
+function isReadOnlyGit(args:string[]){
+  let index=0;
+  while(args[index]&&/^--(no-pager|literal-pathspecs|no-replace-objects)$/.test(args[index]))index++;
+  const sub=args[index];
+  const rest=args.slice(index+1);
+  if(!sub)return false;
+  const readSubs=new Set(["status","diff","log","show","blame","grep","shortlog","describe","rev-parse","ls-files","ls-tree","cat-file","merge-base","name-rev","show-ref","for-each-ref","count-objects","diff-tree","whatchanged"]);
+  if(readSubs.has(sub)){
+    return !rest.some(arg=>/^(--output|--ext-diff|--textconv|--open-files-in-pager|--paginate)(=|$)/.test(arg));
+  }
+  if(sub==="branch"){
+    return rest.every(arg=>/^(--list|--show-current|-a|-r|-v|--verbose)$/.test(arg));
+  }
+  if(sub==="tag"){
+    return rest.length===0||((rest[0]==="-l"||rest[0]==="--list")&&rest.slice(1).every(arg=>!arg.startsWith("-")));
+  }
+  if(sub==="remote"){
+    return rest.length===0||rest[0]==="-v"||rest[0]==="show"||rest[0]==="get-url";
+  }
+  if(sub==="stash"){
+    return rest[0]==="list"||rest[0]==="show";
+  }
+  if(sub==="config"){
+    return rest[0]==="--get"||rest[0]==="--get-all"||rest[0]==="--list"||rest[0]==="-l";
+  }
+  if(sub==="worktree")return rest[0]==="list";
+  return false;
+}
+
 function isReadOnlyCommand(command:string){
   const value=command.trim();
   if(!value)return false;
-  if(/[;&|]/.test(value))return false;
+  // Перевод строки, подстановка команды и перенаправление ввода — это несколько команд или
+  // чтение за пределами проекта, даже если первое слово выглядит безобидно.
+  if(/[;&|\n\r<>`]/.test(value)||value.includes("$("))return false;
   if(WRITE_MARKERS.some(marker=>value.includes(marker)))return false;
-  return READ_ONLY_COMMANDS.has(value.split(/\s+/)[0].replace(/^.*\//,""));
+  const tokens=value.split(/\s+/);
+  const head=tokens[0].replace(/^.*\//,"");
+  const args=tokens.slice(1);
+  if(head==="git")return isReadOnlyGit(args);
+  if(head==="npm")return args.length>0&&["ls","list","ll","la"].includes(args[0]);
+  if(head==="find")return isReadOnlyFind(args);
+  if(head==="grep"||head==="rg")return !args.some(arg=>/^--pre(=|$)/.test(arg));
+  if(head==="sort")return !args.some(arg=>/^(-o|--output|--compress-program)/.test(arg));
+  if(head==="diff")return !args.some(arg=>/^(-o|--output)/.test(arg));
+  if(head==="tree")return !args.some(arg=>/^(-o|--output)/.test(arg));
+  return READ_ONLY_COMMANDS.has(head);
 }
 
 /**
@@ -184,12 +230,17 @@ export class AgentRuntime {
       const activeSavedPlan=savedPlan&&Array.isArray(savedPlan.items)&&savedPlan.items.some(item=>item.status!=="done")?savedPlan:undefined;
       const working=createWorkingMemory(task,activeSavedPlan);
       working.planFromPreviousRun=Boolean(activeSavedPlan);
-      const relevantFiles=await retrieveRelevantFiles(request.projectId,request.userId,task);
       const mode=request.mode==="planner"?"planner":"developer";
+      // Первый запуск нового проекта: окно планирования просит только вопросы и резюме,
+      // поэтому модель не осматривает пустой проект и не рассказывает, что в нём ничего нет.
+      const planning=mode==="planner"&&request.planning===true;
+      // Подбор файлов по задаче — работа для проекта с кодом; в планировании нового проекта
+      // он только добавляет пустой контекст и задерживает первый вопрос.
+      const relevantFiles=planning?"":await retrieveRelevantFiles(request.projectId,request.userId,task);
       // Браузерная проверка — разрешение на этот запуск, а не свойство тарифа. Выключенная
       // проверка отключает и автоматическую Chromium-QA после правок.
       const browserCheckEnabled=request.browserCheck===true;
-      let messages:ChatMessage[]=buildInitialMessages(history,projectContext+"\n\nTASK-RELEVANT SOURCE FILES\n"+relevantFiles,mode);
+      let messages:ChatMessage[]=buildInitialMessages(history,projectContext+"\n\nTASK-RELEVANT SOURCE FILES\n"+relevantFiles,mode,planning);
       // Переключатель поиска в интернете живёт в панели ввода, поэтому модель узнаёт о нём из
       // заметки, а инструменты проверяют тот же флаг сами (web-tools.ts). Выключенный поиск —
       // не повод выдумывать факты, а повод попросить пользователя включить кнопку.
@@ -270,9 +321,10 @@ export class AgentRuntime {
         await persist([{role:"tool",content:JSON.stringify(output??null),tool_call_id:call.id}]);
       };
 
-      const runVerification=async (browserRuntime:boolean,routes:string[])=>{
+      const runVerification=async (browserRuntime:boolean,routes:string[],checkTypeScript=false)=>{
         const buildCommand=await projectBuildCommand(request.projectId,request.userId);
         const verifyCalls=[
+          ...(checkTypeScript?[{id:randomUUID(),name:"project.check",arguments:{typecheck:true,lint:false}}]:[]),
           ...(buildCommand?[{id:randomUUID(),name:"terminal.exec",arguments:{command:buildCommand}}]:[]),
           {id:randomUUID(),name:"preview.start",arguments:{}},
           {id:randomUUID(),name:"project.verify",arguments:{path:routes[0]??"/"}},
@@ -301,6 +353,17 @@ export class AgentRuntime {
             const output=await executeTool(verifyCall as any,{runId,request,emit,signal});
             await finishTool(verifyCall,output);
             messages.push({role:"tool",content:boundToolOutput(verifyCall.name,output),tool_call_id:verifyCall.id});
+            if(verifyCall.name==="project.check"){
+              const passed=Boolean((output as {ok?:boolean}).ok);
+              if(!passed){
+                lastVerificationFailure=verificationFailureSummary(output)||lastVerificationFailure;
+                setWorkingCheck(working,"проверка","ошибка");
+                setWorkingCheck(working,"TypeScript","ошибка");
+                skipRemaining(verifyCall.id,lastVerificationFailure||"TypeScript не прошёл");
+                return false;
+              }
+              setWorkingCheck(working,"TypeScript",(output as {configured?:boolean}).configured===false?"не настроена":"пройдена");
+            }
             if(verifyCall.name==="terminal.exec"){
               qa.build=commandSucceeded(output);
               if(!qa.build){
@@ -357,7 +420,7 @@ export class AgentRuntime {
         setWorkingCheck(working,"превью","запущено");
         setWorkingCheck(working,"SSR","пройден");
         if(browserRuntime)setWorkingCheck(working,"браузер","пройден");
-        messages.push({role:"system",content:"QA VERIFICATION PASSED: BUILD="+(buildCommand?"PASS":"SKIPPED (the project declares no build script)")+", PREVIEW=PASS, SSR=PASS"+(browserRuntime?", BROWSER=PASS":"")});
+        messages.push({role:"system",content:"QA VERIFICATION PASSED: TS="+(checkTypeScript?"CHECKED":"SKIPPED (no TypeScript files changed)")+", BUILD="+(buildCommand?"PASS":"SKIPPED (the project declares no build script)")+", PREVIEW=PASS, SSR=PASS"+(browserRuntime?", BROWSER=PASS":"")});
         return true;
       };
 
@@ -552,7 +615,8 @@ export class AgentRuntime {
 
         if(mutationSucceeded){
           verificationPending=true;
-          const verified=await runVerification(browserCheckEnabled&&browserRuntimeRequired,[...verificationRoutes]);
+          const checkTypeScript=[...changedFiles].some(file=>/\.(ts|tsx|mts|cts)$/i.test(file));
+          const verified=await runVerification(browserCheckEnabled&&browserRuntimeRequired,[...verificationRoutes],checkTypeScript);
           if(verified){
             consecutiveVerifyFailures=0;
             verificationPending=false;
@@ -601,7 +665,7 @@ export class AgentRuntime {
 
         // Asked once per run: a task that already changed files should be visible as a
         // plan. Waiting for the model to remember on its own would make the plan empty.
-        if(!planSeen&&!planNudged&&(mutationSucceeded||(mode==="planner"&&step>=1))){
+        if(!planSeen&&!planNudged&&(mutationSucceeded||(mode==="planner"&&step>=1&&!planning))){
           planNudged=true;
           messages.push({role:"system",content:mode==="planner"
             ? "NO PLAN PUBLISHED YET: in Planner mode the plan is the deliverable. Call plan.update now with the full ordered list of steps and their statuses, so the user can read and confirm it."

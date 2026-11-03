@@ -22,7 +22,6 @@ export function WorkspaceShell({onHome,onAgentState,active=true}:{onHome:()=>voi
   // Рабочая область остаётся смонтированной, когда пользователь уходит на главную, поэтому
   // запуск продолжается; состояние поднимается наверх, чтобы главная сказала, над чем идёт работа.
   const [agentRunning,setAgentRunning]=useState(false);
-  const reportAgentState=useCallback((running:boolean)=>setAgentRunning(running),[]);
   const [settingsOpen,setSettingsOpen]=useState(false);
   // Квиз развёртывания — отдельное окно поверх рабочей области: собрав параметры, оно
   // закрывается и передаёт агенту готовый бриф, а не оставляет пользователя в форме.
@@ -72,9 +71,51 @@ export function WorkspaceShell({onHome,onAgentState,active=true}:{onHome:()=>voi
   // Every finished run bumps this: the preview panel re-reads the status and reloads the
   // frame, so the app the agent just changed is what the user sees, without a restart.
   const [previewReload,setPreviewReload]=useState(0);
+  /**
+   * Автооткрытие шторки — один раз за запуск агента: preview.start нередко вызывается подряд
+   * (сборка, проверка, повторный старт), и каждый вызов раньше снова накрывал экран после того,
+   * как человек его закрыл. Флаг закрытия сильнее всех последующих preview.start до конца задачи.
+   * Новый запуск — новый один шанс: следующий запрос снова может показать превью сам.
+   */
+  const previewAutoAllowed=useRef(true);
+  const previewAutoShown=useRef(false);
+  const previewRunActive=useRef(false);
+  // Куда смотрит человек в момент preview.start. На телефоне шторка не должна выезжать поверх
+  // файлов, терминала или настроек: туда её открывают только кнопкой в шапке.
+  const previewPlace=useRef({view,settingsOpen,deployOpen});
+  previewPlace.current={view,settingsOpen,deployOpen};
+  const closePreview=useCallback(()=>{
+    previewAutoAllowed.current=false;
+    setPreviewOpen(false);
+  },[]);
+  const togglePreview=useCallback(()=>{
+    setPreviewOpen(value=>{
+      if(value)previewAutoAllowed.current=false;
+      return !value;
+    });
+  },[]);
   // preview.start из агента открывает панель и просит её перечитать статус. На телефоне это
   // шторка поверх чата, на десктопе — уже видимая колонка; в обоих случаях кадр появляется сам.
-  const previewStarted=useCallback(()=>{setPreviewOpen(true);setPreviewReload(value=>value+1)},[]);
+  const previewStarted=useCallback(()=>{
+    setPreviewReload(value=>value+1);
+    const place=previewPlace.current;
+    if(place.view!=="agent"||place.settingsOpen||place.deployOpen)return;
+    if(!previewAutoAllowed.current||previewAutoShown.current)return;
+    previewAutoShown.current=true;
+    setPreviewOpen(true);
+  },[]);
+  // Новый запуск агента снова разрешает один автоматический показ. Внутри запуска закрытие
+  // остаётся флагом: повторные preview.start не перекрывают экран.
+  const reportAgentState=useCallback((running:boolean)=>{
+    if(running&&!previewRunActive.current){
+      previewRunActive.current=true;
+      previewAutoAllowed.current=true;
+      previewAutoShown.current=false;
+    }else if(!running){
+      previewRunActive.current=false;
+    }
+    setAgentRunning(running);
+  },[]);
   // Каждый законченный запуск может переписать TASKS.md: вкладка задач перечитывает файл,
   // когда её откроют, и не показывает список прошлого хода.
   const [taskReload,setTaskReload]=useState(0);
@@ -128,7 +169,7 @@ export function WorkspaceShell({onHome,onAgentState,active=true}:{onHome:()=>voi
   if(!projectId||!conversationId)return <div className="app-loading">Рабочая область не создана.</div>;
 
   // Облатка заменяет рабочую область, поэтому шторка закрывается, а не висит поверх неё.
-  const openSettings=()=>{setPreviewOpen(false);setSettingsOpen(true)};
+  const openSettings=()=>{closePreview();setSettingsOpen(true)};
   // The sidebar opens the same settings overlay, but on the project secrets tab.
   const openSecrets=()=>{
     try{localStorage.setItem("webnestdev.openSecretsTab","1")}catch{}
@@ -140,11 +181,11 @@ export function WorkspaceShell({onHome,onAgentState,active=true}:{onHome:()=>voi
 
   // Ветка и история в шапке открывают тот же раздел, поэтому сначала закрывается облатка настроек:
   // иначе «Изменения» монтировались бы под ней и клик выглядел бы как пустой.
-  const openChanges=()=>{setSettingsOpen(false);setPreviewOpen(false);setView("changes")};
+  const openChanges=()=>{setSettingsOpen(false);closePreview();setView("changes")};
 
   // Пока проект просыпается, панели не монтируются: файлы, терминал и предпросмотр всё равно
   // получили бы 409, а панель агента открыла бы сокет на полупустой каталог.
-  return <LayoutShell projectId={projectId} projectName={projectName} onRenameProject={renameCurrentProject} onSettings={openSettings} onSecrets={openSecrets} onDeploy={()=>setDeployOpen(true)} onHome={onHome} onOpenChanges={openChanges} agentRunning={agentRunning} previewOpen={previewOpen} previewRunning={previewRunning} onPreviewToggle={()=>setPreviewOpen(value=>!value)} onRepositoryChanged={()=>setPreviewReload(value=>value+1)} sidebarHidden={settingsOpen} chats={{projectId,activeId:conversationId,sessions,error:sessionsError,onNew:newChat,onOpen:openConversation,onDelete:deleteChat}}>
+  return <LayoutShell projectId={projectId} projectName={projectName} onRenameProject={renameCurrentProject} onSettings={openSettings} onSecrets={openSecrets} onDeploy={()=>setDeployOpen(true)} onHome={onHome} onOpenChanges={openChanges} agentRunning={agentRunning} previewOpen={previewOpen} previewRunning={previewRunning} onPreviewToggle={togglePreview} onRepositoryChanged={()=>setPreviewReload(value=>value+1)} sidebarHidden={settingsOpen} chats={{projectId,activeId:conversationId,sessions,error:sessionsError,onNew:newChat,onOpen:openConversation,onDelete:deleteChat}}>
     <main className="main">
       <div className="workspace-main">
         {waking?<ProjectWakeCard progress={wake.progress} error={wake.error} onRetry={wake.retry}/>:settingsOpen?<div className="workspace-overlay-panel">
@@ -153,12 +194,12 @@ export function WorkspaceShell({onHome,onAgentState,active=true}:{onHome:()=>voi
           </Suspense>
         </div>:<><WorkspaceNav view={view} onChange={setView} onSecrets={openSecrets}/><WorkspaceContent view={view} projectId={projectId} projectName={projectName} conversationId={conversationId} onRunFinished={()=>{setPreviewReload(value=>value+1);setTaskReload(value=>value+1);void sessionsReload()}} onFileSaved={()=>setPreviewReload(value=>value+1)} taskReload={taskReload} onOpenModelSettings={openModelSettings} onOpenAccountSettings={openSettings} onRunningChange={reportAgentState} onOpenChanges={()=>{setSettingsOpen(false);setView("changes")}} onPreviewStarted={previewStarted} scrollSignal={scrollSignal} onChatEndChange={reportChatEnd} onScrollBottom={scrollChatToBottom} showScroll={view==="agent"&&!chatAtEnd} writing={view==="agent"&&!chatAtEnd&&agentRunning}/></>}
       </div>
-      {!waking&&<PreviewPanel projectId={projectId} reloadToken={previewReload} open={previewOpen} onClose={()=>setPreviewOpen(false)} onRunningChange={setPreviewRunning}/>}
+      {!waking&&<PreviewPanel projectId={projectId} reloadToken={previewReload} open={previewOpen} onClose={closePreview} onRunningChange={setPreviewRunning}/>}
       {deployOpen&&<Suspense fallback={<div className="app-loading"><NestLoader size={42} label="Загружаем мастер развёртывания"/></div>}>
         <DeploymentWizard
           projectId={projectId}
           onClose={()=>setDeployOpen(false)}
-          onStarted={brief=>{setDeployOpen(false);setSettingsOpen(false);setPreviewOpen(false);setView("agent");composeAgentPrompt(brief)}}
+          onStarted={brief=>{setDeployOpen(false);setSettingsOpen(false);closePreview();setView("agent");composeAgentPrompt(brief)}}
         />
       </Suspense>}
     </main>

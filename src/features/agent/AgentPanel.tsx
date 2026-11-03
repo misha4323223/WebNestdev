@@ -9,6 +9,7 @@ import { cancelProjectAccess,submitProjectAccess } from "../../lib/deployment-ap
 import { ActionsDock,MessageThinking,PlanPanel,actionTarget,chatImagesByMessage,contentBefore,deriveActions,readPlan,writePlan,type ChatImage,type PanelId,type PanelState } from "./agent-activity";
 import type { AgentAction,AgentMode,ChatMessage,PlatformModelOption,PlanState,ReasoningEffort,ReasoningSupport } from "../../lib/types";
 import { QuestionSheet,type AgentQuestion } from "./QuestionSheet";
+import { PlanningRoom } from "./PlanningRoom";
 import { AgentModeControl } from "./AgentModeControl";
 import { ModelPicker } from "./ModelPicker";
 import { ChatBookmarks } from "./ChatBookmarks";
@@ -21,6 +22,27 @@ import { parseTaskList } from "../../lib/task-parse";
 
 const modeKey="webnestdev.agentMode";
 const reasoningKey="webnestdev.reasoning";
+/**
+ * Окно планирования принадлежит чату: пока флаг стоит, первый запуск нового проекта показывает
+ * вопросы и резюме вместо обычной переписки. Флаг снимается переходом в разработку или
+ * «Пропустить», поэтому возврат в уже начатый проект открывает обычный чат.
+ */
+function planningKey(conversationId:string){return "webnestdev.planning."+conversationId}
+function readPlanning(conversationId:string):{active:boolean;title:string}{
+  if(!conversationId)return {active:false,title:""};
+  try{
+    const raw=localStorage.getItem(planningKey(conversationId));
+    if(!raw)return {active:false,title:""};
+    const parsed=JSON.parse(raw) as {title?:unknown};
+    return {active:true,title:typeof parsed.title==="string"?parsed.title:""};
+  }catch{return {active:false,title:""}}
+}
+function rememberPlanning(conversationId:string,title:string){
+  try{localStorage.setItem(planningKey(conversationId),JSON.stringify({title}))}catch{}
+}
+function forgetPlanning(conversationId:string){
+  try{localStorage.removeItem(planningKey(conversationId))}catch{}
+}
 const panelsKey="webnestdev.runPanels";
 /**
  * Поиск в интернете — переключатель в меню «Режимы», рядом с глубиной размышления, по умолчанию
@@ -309,6 +331,9 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   // The plan and the actions of the latest run are what the user watches while the
   // agent works, so they live here next to the messages.
   const [mode,setMode]=useState<AgentMode>(readStoredMode);
+  // Первый экран нового проекта: только вопросы и резюме, без обычного чата.
+  const [planning,setPlanning]=useState(()=>readPlanning(conversationId).active);
+  const [planningTitle,setPlanningTitle]=useState(()=>readPlanning(conversationId).title);
   const [reasoning,setReasoning]=useState<ReasoningEffort>(readStoredReasoning);
   const [webSearch,setWebSearch]=useState<boolean>(readStoredWebSearch);
   const [browserCheck,setBrowserCheck]=useState<boolean>(readStoredBrowserCheck);
@@ -407,6 +432,9 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   const jumpTimerRef=useRef<number|null>(null);
   // Queued messages start runs from socket callbacks, so the mode is read from a ref.
   const modeRef=useRef<AgentMode>(mode);
+  // Запрос уходит из колбеков сокета: флаг окна планирования тоже читается из ref.
+  const planningRef=useRef<boolean>(planning);
+  planningRef.current=planning;
   const reasoningRef=useRef<ReasoningEffort>(reasoning);
   // Очередь и переподключение запускают запуск из колбеков сокета, поэтому флаг читается из ref.
   const webSearchRef=useRef<boolean>(webSearch);
@@ -679,6 +707,11 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     // Картинки прошлого разговора к новому не относятся: их место заняла загруженная история.
     setLiveImages([]);
     setPlan(readPlan(conversationId));
+    // Другой чат — своё окно планирования: у нового проекта оно открыто, у начатого — нет.
+    const storedPlanning=readPlanning(conversationId);
+    planningRef.current=storedPlanning.active;
+    setPlanning(storedPlanning.active);
+    setPlanningTitle(storedPlanning.title);
     // Запрос ключа и вопрос принадлежат запуску в этом чате: при открытии другого окна устаревают.
     recoveredSecretRef.current=null;
     clearSecretPrompt();
@@ -734,8 +767,27 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   useEffect(()=>{
     if(!loaded||running||pendingStartRef.current===conversationId)return;
     const pending=takeAgentStart(conversationId);
-    if(!pending)return;
+    if(!pending){
+      // Перезагрузка посреди планирования: очередь уже прочитана, а запуск оборван вместе
+      // с сокетом. Окно не должно вечно показывать «Собираю вопросы» — предлагаем продолжить.
+      if(planningRef.current&&interruptedRun(messagesRef.current)){
+        setResume(current=>current??{
+          reason:"планирование проекта было прервано перезагрузкой или потерей связи",
+          label:"Планирование прервалось — продолжите с вопросов.",
+        });
+      }
+      return;
+    }
     pendingStartRef.current=conversationId;
+    // Новый проект открывается окном планирования; импорт репозитория остаётся в обычном чате,
+    // потому что там планировщик должен сначала прочитать уже существующие файлы.
+    if(pending.planning){
+      const title=pending.title||"Новый проект";
+      planningRef.current=true;
+      setPlanning(true);
+      setPlanningTitle(title);
+      rememberPlanning(conversationId,title);
+    }
     chooseMode("planner");
     startRun({text:pending.prompt,attachments:[]});
   },[loaded,conversationId,running]);
@@ -1074,7 +1126,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       socket.addEventListener("open",()=>{
         opened=true;
         setReconnect(null);
-        socket.send(JSON.stringify({type:"agent.run",request:{projectId,conversationId,messages:history,mode:modeRef.current,reasoning:reasoningRef.current,webSearch:webSearchRef.current,browserCheck:browserCheckRef.current,...(modelIdRef.current?{model:modelIdRef.current}:{}),...(resuming?{resume:{reason:options.resumeReason}}:{})}}));
+        socket.send(JSON.stringify({type:"agent.run",request:{projectId,conversationId,messages:history,mode:modeRef.current,reasoning:reasoningRef.current,webSearch:webSearchRef.current,browserCheck:browserCheckRef.current,...(planningRef.current&&modeRef.current==="planner"?{planning:true}:{}),...(modelIdRef.current?{model:modelIdRef.current}:{}),...(resuming?{resume:{reason:options.resumeReason}}:{})}}));
       },{once:true});
 
       /**
@@ -1224,6 +1276,39 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     const steps=plan.items.map((item,index)=>(index+1)+". "+item.title+(item.note?" — "+item.note:"")).join("\n");
     chooseMode("developer");
     startRun({text:"План утверждён. Переключаюсь в режим разработчика: выполни утверждённый план по шагам, отмечай прогресс через plan.update и проверь результат.\n\n"+steps,attachments:[]});
+  }
+
+  /**
+   * Кнопка окна планирования: утверждает резюме и открывает обычный чат уже в режиме
+   * разработчика. Флаг снимается до запуска, иначе следующий запрос снова попросил бы только план.
+   */
+  function startDevelopment(){
+    if(running)return;
+    planningRef.current=false;
+    setPlanning(false);
+    forgetPlanning(conversationId);
+    if(plan?.items.length){
+      approvePlan();
+      return;
+    }
+    // Планировщик закончил без резюме: не держим человека в пустом окне — открываем обычный
+    // чат в режиме разработчика, где он может сразу описать задачу.
+    chooseMode("developer");
+    setResume(null);
+  }
+
+  /**
+   * Пропуск планирования — не ошибка: человек может сразу перейти к делу. Остановленный
+   * планировщик не продолжит задавать вопросы поверх обычного чата.
+   */
+  function skipPlanning(){
+    if(questionBusy)return;
+    planningRef.current=false;
+    setPlanning(false);
+    forgetPlanning(conversationId);
+    if(running)interrupt({resume:false});
+    else setResume(null);
+    chooseMode("developer");
   }
 
   function send(){
@@ -1468,6 +1553,22 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     }
   }
 
+  if(planning) return <PlanningRoom
+    title={planningTitle}
+    loaded={loaded}
+    question={questionPrompt}
+    questionBusy={questionBusy}
+    questionError={questionError}
+    onAnswer={answer=>void answerQuestion(answer)}
+    onSkipQuestion={()=>void skipQuestion()}
+    plan={plan}
+    running={running}
+    resume={resume}
+    onContinue={continueRun}
+    onStart={startDevelopment}
+    onSkip={skipPlanning}
+  />;
+
   return <section className="chat">
     {/* Переписка и её закладки. Полоска закладок — рядом со скроллом, а не в нём: у каждой метки
         своя точка в переписке, и она должна оставаться на месте при прокрутке. */}
@@ -1476,6 +1577,10 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       {visibleMessages.map((m,i)=>{
         // Ответ, который модель пишет прямо сейчас: над ним идёт её размышление.
         const live=running&&i===visibleMessages.length-1;
+        // Пустой ход ассистента состоял только из вызова инструмента (или из размышления,
+        // которое в планировании не показывается): после вопросов такие облака в чате не нужны.
+        // Живой ход оставляем — в нём размышление видно, пока модель работает.
+        if(m.role==="assistant"&&!m.content.trim()&&!live)return null;
         // Картинки, которые агент показал в этом запуске, и картинки из сохранённой истории —
         // один список без повторов: пока запуск идёт, результата инструмента в сообщениях ещё нет.
         const images=[...(chatImages.get(m)??[]),...liveImages.filter(item=>item.messageIndex===i).map(item=>item.image)]

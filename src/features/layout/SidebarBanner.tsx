@@ -6,9 +6,9 @@ import { DonateDialog } from "../support/DonateDialog";
 /**
  * Баннер внизу сайдбара — компактный вход в поддержку проекта.
  *
- * Вся карточка — одна кнопка с иконкой и коротким пояснением: она не занимает пол-колонки
- * и не спорит с тарифом и аккаунтом за место. Превью и «сердечки» убраны: это действие,
- * а не декоративная открытка.
+ * Вся карточка — одна кнопка с иконкой и названием: она не занимает пол-колонки и не спорит
+ * с тарифом и аккаунтом за место. Пояснение убрано — в узкой колонке оно обрезалось, а
+ * название помещается целиком.
  */
 export function SidebarBanner() {
   const [open, setOpen] = useState(false);
@@ -17,7 +17,6 @@ export function SidebarBanner() {
     <span className="sidebar-banner-icon" aria-hidden="true"><HandCoins size={15}/></span>
     <span className="sidebar-banner-copy">
       <strong>Поддержать проект</strong>
-      <small>Помочь NestDev развиваться</small>
     </span>
     <ArrowUpRight size={13} className="sidebar-banner-arrow" aria-hidden="true"/>
   </button>

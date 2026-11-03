@@ -6,6 +6,7 @@ import type { Project } from "../project-store.js";
 import { runInSandbox } from "../sandbox-worker.js";
 import { isSecretProjectPath } from "../secrets/secret-paths.js";
 import { deployPlanNotice, readDeployPlan } from "../deploy/deploy-plan.js";
+import { isIgnoredProjectDir } from "../project-ignore.js";
 
 const MAX_TREE_ENTRIES = 500;
 const MAX_TREE_CHARS = 9000;
@@ -15,7 +16,6 @@ type TreeEntry = { path: string; type: "file" | "directory"; size?: number };
 
 async function collectTree(root: string): Promise<TreeEntry[]> {
   const result: TreeEntry[] = [];
-  const ignored = new Set([".git", "node_modules", ".next", "dist", "build", ".cache", ".turbo"]);
 
   async function walk(current: string, relative: string, depth: number) {
     if (result.length >= MAX_TREE_ENTRIES || depth > 8) return;
@@ -24,7 +24,7 @@ async function collectTree(root: string): Promise<TreeEntry[]> {
     entries.sort((a, b) => a.name.localeCompare(b.name));
 
     for (const entry of entries) {
-      if (result.length >= MAX_TREE_ENTRIES || ignored.has(entry.name)) continue;
+      if (result.length >= MAX_TREE_ENTRIES || isIgnoredProjectDir(entry.name)) continue;
       // Секреты не должны появляться в контексте даже как имя файла.
       if (isSecretProjectPath(entry.name)) continue;
       // Ссылка может вести наружу: в опись проекта она не попадает, а читать её запрещено.
@@ -47,15 +47,21 @@ async function collectTree(root: string): Promise<TreeEntry[]> {
   return result;
 }
 
-function packageSummary(raw: string): string {
+export function packageSummary(raw: string): string {
   try {
     const pkg = JSON.parse(raw) as Record<string, unknown>;
+    // Версии — часть контракта: по снимку без них агент может поставить несовместимую
+    // зависимость или решить, что пакета нет. Поэтому объект зависимостей сохраняется как есть,
+    // а не превращается в список имён.
     const pick = (key: string) => {
       const value = pkg[key];
-      return value && typeof value === "object" ? Object.keys(value as object) : [];
+      if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+      return Object.fromEntries(
+        Object.entries(value as Record<string, unknown>).filter(([, version]) => typeof version === "string"),
+      ) as Record<string, string>;
     };
 
-    return JSON.stringify({
+    const summary = {
       name: pkg.name,
       version: pkg.version,
       private: pkg.private,
@@ -64,7 +70,45 @@ function packageSummary(raw: string): string {
       scripts: pkg.scripts,
       dependencies: pick("dependencies"),
       devDependencies: pick("devDependencies"),
-    }, null, 2).slice(0, MAX_PACKAGE_CHARS);
+      engines: pkg.engines,
+    };
+
+    const pretty = JSON.stringify(summary, null, 2);
+    if (pretty.length <= MAX_PACKAGE_CHARS) return pretty;
+    const compact = JSON.stringify(summary);
+    if (compact.length <= MAX_PACKAGE_CHARS) return compact;
+
+    // Слишком большой package.json: сохраняем valid JSON, а не режем строку посередине объекта.
+    // Сначала убираем devDependencies, затем ограничиваем сами карты зависимостей.
+    const withoutDev = {
+      ...summary,
+      devDependencies: undefined,
+      note: "devDependencies не показаны: package.json слишком велик для контекста",
+    };
+    const trimmed = JSON.stringify(withoutDev);
+    if (trimmed.length <= MAX_PACKAGE_CHARS) return trimmed;
+
+    const cap = (value: Record<string, string> | undefined) => value
+      ? Object.fromEntries(Object.entries(value).slice(0, 80))
+      : undefined;
+    const dependencies = cap(summary.dependencies);
+    const core = JSON.stringify({
+      name: summary.name,
+      version: summary.version,
+      packageManager: summary.packageManager,
+      workspaces: summary.workspaces,
+      scripts: summary.scripts,
+      dependencies,
+      note: "Показаны первые 80 зависимостей; devDependencies пропущены — package.json слишком велик",
+    });
+    return core.length <= MAX_PACKAGE_CHARS
+      ? core
+      : JSON.stringify({
+          name: summary.name,
+          version: summary.version,
+          packageManager: summary.packageManager,
+          note: "package.json слишком велик для контекста; прочитайте файл через fs.read",
+        });
   } catch {
     return raw.slice(0, MAX_PACKAGE_CHARS);
   }

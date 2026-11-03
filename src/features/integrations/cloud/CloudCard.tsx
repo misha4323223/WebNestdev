@@ -12,7 +12,7 @@ export type CloudConnectionState = KeyConnectionState & { allowWrites: boolean }
  * узнаёт о нём, когда агент уже что-то создал. Абзаца «что даёт подключение» здесь нет: его
  * место занял сам переключатель, а объяснение осталось в подписи к нему.
  */
-export function CloudCard({ provider, state, onChanged, onToggleWrites, writesBusy, onRefresh, refreshing }: {
+export function CloudCard({ provider, state, onChanged, onToggleWrites, writesBusy, onRefresh, refreshing, locked }: {
   provider: CloudProviderInfo;
   state: CloudConnectionState | undefined;
   /** Карточка сообщает только «подключено / кто»; разрешение на изменения живёт рядом. */
@@ -21,12 +21,14 @@ export function CloudCard({ provider, state, onChanged, onToggleWrites, writesBu
   writesBusy?: boolean;
   onRefresh?: () => void;
   refreshing?: boolean;
+  locked?: boolean;
 }) {
   return <KeyCard
     provider={provider}
     state={state}
     onChanged={onChanged}
     endpoint="/api/cloud"
+    locked={locked}
     writes={{ allowed: Boolean(state?.allowWrites), busy: writesBusy, onToggle: onToggleWrites }}
     {...(onRefresh ? { onRefresh } : {})}
     {...(refreshing ? { refreshing } : {})}

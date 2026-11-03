@@ -64,6 +64,31 @@ export function secretPathspecExclusions(paths: string[]) {
   return paths.map((projectPath) => ":(exclude,literal)" + projectPath);
 }
 
+export type FileDiffStat = { path: string; additions: number | null; deletions: number | null; binary: boolean };
+
+/**
+ * `git diff --numstat`: по строке на файл, счётчики через табуляцию. Бинарный файл приходит как
+ * `-\t-\tpath`; его нельзя превращать в 0/0, иначе агент решит, что файл не изменился.
+ */
+export function parseNumstat(output: string): FileDiffStat[] {
+  const files: FileDiffStat[] = [];
+  for (const line of output.split("\n")) {
+    if (!line.trim()) continue;
+    const parts = line.split("\t");
+    if (parts.length < 3) continue;
+    const target = parts.slice(2).join("\t").replace(/^"|"$/g, "");
+    if (!target || isSecretProjectPath(target)) continue;
+    const binary = parts[0] === "-" || parts[1] === "-";
+    files.push({
+      path: target,
+      additions: binary ? null : Number(parts[0]) || 0,
+      deletions: binary ? null : Number(parts[1]) || 0,
+      binary,
+    });
+  }
+  return files;
+}
+
 /** Строки `git status` с секретным путём не нужны агенту даже как имя файла. */
 export function filterSecretStatus(output: string) {
   return output
@@ -88,10 +113,36 @@ registerTool({
 
 registerTool({
   name: "git.diff",
-  description: "Show unstaged Git diff for the project.",
-  execute: async (_input, context) => {
+  description: "Show unstaged Git diff for the project. Input: {stat?:boolean}. With stat:true it returns a compact per-file summary {path, additions, deletions, binary} and totals instead of the full patch — use it to check what your edits actually changed before finishing. Secret env files are always filtered out.",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      stat: { type: "boolean", description: "true — только сводка по файлам, без полного патча" },
+    },
+  },
+  execute: async (input, context) => {
     // Здесь маска не используется: у отслеживаемого `.env.local` она превратила бы diff в
     // удаление всех строк, то есть выдала бы секрет. Вывод фильтруется по путям.
+    if ((input as { stat?: unknown } | null)?.stat === true) {
+      const result = await git(context, "diff --numstat --no-ext-diff");
+      const files = parseNumstat(result.stdout);
+      const totals = files.reduce(
+        (sum, file) => ({
+          additions: sum.additions + (file.additions ?? 0),
+          deletions: sum.deletions + (file.deletions ?? 0),
+          files: sum.files + 1,
+          binary: sum.binary + (file.binary ? 1 : 0),
+        }),
+        { additions: 0, deletions: 0, files: 0, binary: 0 },
+      );
+      return {
+        ...result,
+        stdout: files.map(file => file.path + "\t" + (file.binary ? "binary" : "+" + file.additions + " -" + file.deletions)).join("\n"),
+        files,
+        totals,
+      };
+    }
     const result = await git(context, "diff --no-ext-diff");
     return { ...result, stdout: redactSecretEnvDiff(result.stdout) };
   },

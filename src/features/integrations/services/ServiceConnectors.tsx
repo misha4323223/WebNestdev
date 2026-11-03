@@ -65,8 +65,9 @@ export function ServiceConnectors({ freePlan = false }: { freePlan?: boolean }) 
   return <div className="cloud-list">
     {error && <div className="connector-notice">{error}</div>}
     {SERVICE_CATEGORIES.map(category => {
-      // На бесплатном тарифе открыто только S3-хранилище: остальные категории не показываем.
-      if (freePlan && category.id !== "storage") return null;
+      // На бесплатном тарифе открыто только S3-хранилище. Остальные категории остаются видны,
+      // но карточки в них неактивны: человек понимает, что сервис есть, и что даст тариф.
+      const locked = freePlan && category.id !== "storage";
       const services = SERVICES.filter(service => service.category === category.id);
       if (!services.length) return null;
       return <div className="service-group" key={category.id}>
@@ -81,6 +82,7 @@ export function ServiceConnectors({ freePlan = false }: { freePlan?: boolean }) 
             state={states[service.id]}
             onChanged={next => setStates(current => ({ ...current, [service.id]: next }))}
             endpoint="/api/services"
+            locked={locked}
             fineprint={checking
               ? "Ключ проверяется до сохранения, шифруется на сервере и не возвращается в браузер. "
               : "Проверка недоступна: ключи шифруются на сервере и не возвращаются в браузер. "}

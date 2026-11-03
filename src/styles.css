@@ -60,9 +60,8 @@ button,textarea{font:inherit}button{color:inherit}
 .sidebar-banner:focus-visible{outline:2px solid #665332;outline-offset:3px}
 .sidebar-banner-icon{flex:none;width:27px;height:27px;display:grid;place-items:center;border:1px solid #4a402e;border-radius:7px;background:#211b12;color:#d2bc94;transition:border-color .16s ease,color .16s ease}
 .sidebar-banner:hover .sidebar-banner-icon{border-color:#6b5835;color:#e3cfaa}
-.sidebar-banner-copy{min-width:0;display:grid;gap:1px}
-.sidebar-banner-copy strong{font-size:10.5px;font-weight:600;line-height:1.3;letter-spacing:-.01em;color:#e7e5e0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.sidebar-banner-copy small{font-size:8.5px;line-height:1.35;color:#7f8792;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sidebar-banner-copy{flex:1;min-width:0;display:grid}
+.sidebar-banner-copy strong{font-size:10.5px;font-weight:600;line-height:1.25;letter-spacing:-.01em;color:#e7e5e0;white-space:normal;overflow-wrap:anywhere}
 .sidebar-banner-arrow{flex:none;margin-left:auto;color:#676f7a;transition:color .16s ease,transform .16s ease}
 .sidebar-banner:hover .sidebar-banner-arrow{color:#cbb386;transform:translate(1px,-1px)}
 /* Тариф над витриной: тот же тёплый хаки, что и у подписки на главной. */
@@ -1108,6 +1107,15 @@ button,textarea{font:inherit}button{color:inherit}
 .connector-actions .connector-action{padding:0 9px;border:1px solid var(--line-warm);background:transparent;color:#aeb4bd}
 .connector-actions .connector-action:hover{border-color:var(--line-warm-strong);background:#171a20;color:#e8eaed}
 .connector.is-soon{opacity:.72}
+/* Закрытый тарифом коннектор остаётся в каталоге, но читается как неактивный: приглушённый,
+   без реакции на наведение и без курсора-руки. Это не ошибка подключения, поэтому карточка
+   не исчезает — по ней видно, что откроется на платном тарифе. */
+.connector.is-locked{opacity:.42;filter:grayscale(.35);background:linear-gradient(180deg,#0c0f13,#090b0e);border-color:#24282e;box-shadow:none}
+.connector.is-locked .connector-identity,.connector.is-locked .connector-identity-static{cursor:not-allowed}
+.connector.is-locked .connector-identity:hover .connector-meta strong{color:inherit}
+.connector.is-locked .connector-identity:hover>.brand-logo{box-shadow:0 6px 16px rgba(0,0,0,.32)}
+.connector-state.locked{display:inline-flex;align-items:center;gap:4px;color:#8d806b}
+.connector-socket.is-locked{background:#15181c;border-color:#2c3036;color:#7b705e;box-shadow:none}
 .connector-body{display:grid;gap:8px}
 .connector-toggle{width:max-content;height:27px;border-color:var(--line-warm)}
 .connector-toggle.active{border-color:var(--line-warm-strong);background:#1b2026;color:#e8eaed}
@@ -3469,3 +3477,65 @@ button,textarea{font:inherit}button{color:inherit}
 @keyframes agent-mode-fade{from{opacity:0}to{opacity:1}}
 @keyframes agent-mode-sheet{from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
 @media(prefers-reduced-motion:reduce){.agent-mode-scrim,.agent-mode-menu,.model-scrim,.model-menu{animation:none}}
+
+/* Окно планирования нового проекта: отдельный экран вместо чата. Здесь нет размышлений и
+   списка инструментов — только вопрос, резюме и переход в разработку. */
+.planning-room{flex:1;min-width:0;min-height:0;overflow-y:auto;background:radial-gradient(90% 70% at 50% -10%,rgba(202,184,152,.08),transparent 60%),#0b0e12}
+.planning-room-inner{width:min(760px,100%);min-height:100%;margin:0 auto;display:flex;flex-direction:column;justify-content:center;padding:clamp(20px,5vw,52px) clamp(14px,4vw,30px) 26px}
+.planning-room-head{display:flex;align-items:flex-start;gap:13px;min-width:0;margin-bottom:22px}
+.planning-room-mark{flex:none;width:38px;height:38px;display:grid;place-items:center;border:1px solid #4b4332;border-radius:10px;background:linear-gradient(145deg,#221c11,#111820);color:#d3c3a4;box-shadow:inset 0 1px 0 rgba(255,255,255,.045)}
+.planning-room-title{flex:1;min-width:0}
+.planning-room-title h2{margin:5px 0 0;color:#f0f2f4;font-size:clamp(20px,3.4vw,28px);font-weight:650;line-height:1.15;letter-spacing:-.025em;overflow-wrap:anywhere}
+.planning-room-title p{max-width:560px;margin:8px 0 0;color:#8b939d;font-size:11.5px;line-height:1.55}
+.planning-room-skip{flex:none;color:#7f8791;font-size:10px;border-color:var(--line-warm-soft)}
+.planning-room-stage{display:grid;gap:14px;min-width:0}
+.planning-question{display:grid;gap:13px;padding:clamp(15px,3.4vw,20px);border:1px solid var(--line-warm);border-radius:14px;background:linear-gradient(180deg,#11161c,#0d1116);box-shadow:inset 0 1px 0 rgba(255,255,255,.04),0 18px 44px -32px rgba(0,0,0,.9)}
+.planning-question-head{display:flex;align-items:flex-start;gap:10px;min-width:0}
+.planning-question-icon{flex:none;width:29px;height:29px;display:grid;place-items:center;border:1px solid #4b4332;border-radius:8px;background:#211b12;color:#d2bc94}
+.planning-question-head .question-text{margin-top:4px;font-size:clamp(14px,2.6vw,17px);font-weight:600;line-height:1.4;color:#edf0f3}
+.planning-question .question-options{max-height:none;grid-template-columns:repeat(auto-fit,minmax(210px,1fr))}
+.planning-question .question-option{padding:12px;border-radius:11px}
+.planning-question-actions{display:flex;align-items:center;justify-content:space-between;gap:10px;padding-top:3px}
+.planning-question-actions .send-button{width:auto;height:34px;padding:0 15px;gap:6px}
+.planning-summary{overflow:hidden;border:1px solid var(--line-warm);border-radius:14px;background:linear-gradient(180deg,#11161c,#0b0e12);box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
+.planning-summary-head{padding:17px 18px 13px;border-bottom:1px solid var(--line-warm-soft)}
+.planning-summary-head h3{margin:5px 0 0;color:#f0f2f4;font-size:17px;font-weight:650;letter-spacing:-.02em}
+.planning-summary-head p{margin:5px 0 0;color:#858d98;font-size:10.5px;line-height:1.5}
+.planning-summary-list{list-style:none;display:grid;gap:0;margin:0;padding:0}
+.planning-summary-list li{display:flex;align-items:flex-start;gap:10px;padding:11px 18px;border-bottom:1px solid var(--line-warm-soft)}
+.planning-summary-list li:last-child{border-bottom:0}
+.planning-summary-index{flex:none;width:19px;height:19px;display:grid;place-items:center;margin-top:1px;border:1px solid #4b4332;border-radius:6px;background:#1e1910;color:#cbb998;font:650 9px/1 ui-monospace,SFMono-Regular,Menlo,monospace}
+.planning-summary-list li>div{min-width:0;display:grid;gap:3px}
+.planning-summary-list strong{color:#dfe3e8;font-size:11.5px;font-weight:600;line-height:1.45;overflow-wrap:anywhere}
+.planning-summary-list small{color:#858d98;font-size:10px;line-height:1.5;overflow-wrap:anywhere}
+.planning-room-start{justify-self:center;width:min(340px,100%);height:40px;justify-content:center;gap:8px;font-size:11.5px;background:#8b7350}
+.planning-room-start:hover{background:#9e835b}
+.planning-room-status{display:flex;align-items:center;justify-content:center;gap:8px;margin:0;color:#8c8578;font-size:10.5px}
+.planning-room-wait{display:grid;justify-items:center;gap:8px;padding:34px 18px;border:1px solid var(--line-warm-soft);border-radius:14px;background:#0e1217;text-align:center}
+.planning-room-wait strong{color:#dfe3e8;font-size:12px;font-weight:600}
+.planning-room-wait span{color:#7d8590;font-size:10.5px}
+.planning-room-resume{display:flex;align-items:center;gap:11px;padding:14px;border:1px solid #493c25;border-radius:12px;background:#17130d}
+.planning-room-resume-icon{flex:none;width:30px;height:30px;display:grid;place-items:center;border:1px solid #4b402e;border-radius:8px;background:#211b12;color:#d2bc94}
+.planning-room-resume>div{flex:1;min-width:0;display:grid;gap:2px}
+.planning-room-resume strong{color:#e5e0d6;font-size:11.5px;font-weight:600}
+.planning-room-resume span{color:#948a78;font-size:10px;line-height:1.45}
+.planning-room-resume .send-button{flex:none;width:auto;height:32px;padding:0 12px;gap:6px}
+.planning-room-empty{display:grid;gap:14px;padding:18px;border:1px solid var(--line-warm-soft);border-radius:13px;background:#0e1217}
+.planning-room-empty>div{display:grid;gap:4px}
+.planning-room-empty strong{color:#dfe3e8;font-size:12px;font-weight:600}
+.planning-room-empty span{color:#7d8590;font-size:10.5px;line-height:1.5}
+.planning-room-empty .send-button{justify-self:start;width:auto;height:34px;padding:0 14px;gap:7px}
+.planning-room-foot{display:flex;justify-content:center;margin-top:18px;color:#5e6670;font-size:9px;letter-spacing:.02em}
+@media(max-width:650px){
+  .planning-room-inner{justify-content:flex-start;padding:18px 12px 22px}
+  .planning-room-head{flex-wrap:wrap;gap:10px;margin-bottom:16px}
+  .planning-room-skip{order:3;margin-left:51px}
+  .planning-question .question-options{grid-template-columns:1fr}
+  .planning-question-actions{flex-direction:column-reverse;align-items:stretch}
+  .planning-question-actions .send-button{width:100%;justify-content:center}
+  .planning-summary-list li{padding:10px 13px}
+  .planning-room-start{width:100%}
+  .planning-room-resume{flex-wrap:wrap}
+  .planning-room-resume .send-button{width:100%;justify-content:center}
+  .planning-room-empty .send-button{justify-self:stretch;width:100%;justify-content:center}
+}
