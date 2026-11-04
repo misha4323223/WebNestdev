@@ -869,6 +869,27 @@ reload_caddy(){
 }
 
 #
+# ВРЕМЕННО: разбор 404 у сайта rec.host.nestdev.ru. Печатает то, что нельзя увидеть снаружи —
+# активную конфигурацию Caddy, монтирования его контейнера и файлы сайта на диске. Удалить
+# вместе с правкой причины.
+#
+hosting_diagnostics(){
+  if ! docker compose -f "$COMPOSE_FILE" config --services 2>/dev/null | grep -qx "$CADDY_SERVICE"; then
+    return 0
+  fi
+  log "диагностика: активная конфигурация Caddy"
+  docker compose -f "$COMPOSE_FILE" exec -T "$CADDY_SERVICE" sh -c 'wget -qO- http://127.0.0.1:2019/config/ 2>&1' 2>&1 | head -c 6000 || true
+  log "диагностика: монтирования контейнера $CADDY_SERVICE"
+  docker inspect "$(docker compose -f "$COMPOSE_FILE" ps -q "$CADDY_SERVICE")" --format '{{range .Mounts}}{{.Source}} => {{.Destination}} rw={{.RW}}{{"\n"}}{{end}}' 2>&1 || true
+  log "диагностика: каталог сайтов внутри $CADDY_SERVICE"
+  docker compose -f "$COMPOSE_FILE" exec -T "$CADDY_SERVICE" sh -c 'ls -la /srv/sites; echo ---; ls -la /srv/sites/rec; echo ---; readlink /srv/sites/rec/current; echo ---; ls -la /srv/sites/rec/current/ 2>&1 | head' 2>&1 || true
+  log "диагностика: каталог сайтов внутри $SERVICE"
+  docker compose -f "$COMPOSE_FILE" exec -T "$SERVICE" sh -c 'ls -la /srv/sites; echo ---; ls -la /srv/sites/rec 2>&1; echo ---; readlink /srv/sites/rec/current' 2>&1 || true
+  log "диагностика: последние строки лога $CADDY_SERVICE"
+  docker compose -f "$COMPOSE_FILE" logs --no-color --tail 40 "$CADDY_SERVICE" 2>&1 || true
+}
+
+#
 # Файлы уже созданных проектов лежат в именованном томе (там их писал сервер, когда песочницы
 # жили внутри тома). Новый каталог песочниц — это каталог хоста, поэтому файлы переносятся один
 # раз. Переносится только в пустой каталог: если на хосте уже что-то есть, решает оператор
@@ -1395,6 +1416,7 @@ case "$MODE" in
     ensure_sandbox_image
     run docker compose -f "$COMPOSE_FILE" up -d --no-build $(services_to_start)
     reload_caddy
+    hosting_diagnostics
     ;;
   source)
     log "обновляю репозиторий до origin/$GIT_BRANCH"
