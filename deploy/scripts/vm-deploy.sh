@@ -895,9 +895,9 @@ reload_caddy(){
 # (в ней сессионный токен), только хост и длина. Удалить вместе с правкой причины.
 #
 media_diagnostics(){
-  docker compose -f "$COMPOSE_FILE" logs --no-color "$SERVICE" 2>&1 | grep -F "[media]" | tail -3 || true
+  docker compose -f "$COMPOSE_FILE" logs --no-color --tail 400 "$SERVICE" 2>&1 | grep -F "[media]" | tail -3 || true
   docker compose -f "$COMPOSE_FILE" exec -T "$SERVICE" node --input-type=module - 2>&1 <<'NODE' | head -c 4000 || true
-import { abortMultipartUpload, createMultipartUpload, mediaConfigFromEnv } from "/app/dist/media/media-store.js";
+import { abortMultipartUpload, createMultipartUpload, mediaConfigFromEnv } from "/app/server/dist/media/media-store.js";
 const config = mediaConfigFromEnv();
 if (!config) { console.log("media: не настроено"); process.exit(0); }
 console.log("media host=" + config.host + " bucket=" + config.bucket + " public=" + config.publicBaseUrl);
