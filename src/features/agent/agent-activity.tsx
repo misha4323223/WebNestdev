@@ -80,6 +80,7 @@ const TOOL_ICONS: Record<string, ActionDescriptor> = {
   // инструментов, чтобы в списке было видно, что агент искал, а что читал найденное.
   "web.search": { icon: Search, label: "Ищет в интернете" },
   "web.read": { icon: Newspaper, label: "Читает страницу" },
+  "agent.scout": { icon: ScanSearch, label: "Запускает разведку" },
   "plan.update": { icon: ListChecks, label: "Обновляет план задач" },
   "secrets.request": { icon: KeyRound, label: "Запрашивает ключ" },
 };
@@ -122,7 +123,7 @@ export function actionTarget(name: string, input: unknown): string {
   }
   // `question` — строка инструмента question.ask: в списке действий видно, о чём агент спросил,
   // а не безымянный набор ключей.
-  for (const key of ["command", "path", "url", "query", "prompt", "question", "message", "branch", "name", "title", "variable"]) {
+  for (const key of ["command", "path", "url", "query", "prompt", "task", "question", "message", "branch", "name", "title", "variable"]) {
     const candidate = text(value[key]);
     if (candidate) return candidate;
   }
@@ -719,10 +720,67 @@ export function ActionsDock({ actions, running, open, onOpenChange }: {
  * Пока модель не прислала ни строчки размышления, остаётся та же надпись без стрелки: разворачивать
  * нечего. Выбор пользователя сильнее умолчания: если блок свернули руками, он таким и останется.
  */
-export function MessageThinking({ text, running }: {
+type ThinkingStep = { id: string; title: string; text: string; running?: boolean; children?: ThinkingStep[] };
+
+function countThinkingSteps(steps: ThinkingStep[]): number {
+  return steps.reduce((sum, step) => sum + 1 + countThinkingSteps(step.children ?? []), 0);
+}
+
+/** Один шаг внутри раскрытого блока размышлений; дочерние узлы уже готовы к субагентам. */
+function ThinkingStepView({ step }: { step: ThinkingStep }) {
+  const [open, setOpen] = useState(Boolean(step.running));
+  useEffect(() => { if (step.running) setOpen(true); }, [step.running]);
+  return <div className={"thinking-step" + (open ? " thinking-step-open" : "") + (step.running ? " thinking-step-live" : "")}>
+    <button type="button" className="thinking-step-head" title={open ? "Свернуть шаг" : "Развернуть шаг"} onClick={() => setOpen(value => !value)} aria-expanded={open}>
+      <span className="thinking-step-title">{step.title}</span>
+      <span className="thinking-step-toggle"><ChevronDown size={11}/></span>
+    </button>
+    {open && <div className="thinking-step-body">
+      <div className="thinking-step-text">{step.text}{step.running && <span className="thinking-cursor" aria-hidden="true"/>}</div>
+      {step.children?.length ? <div className="thinking-step-children">{step.children.map(child => <ThinkingStepView key={child.id} step={child}/>)}</div> : null}
+    </div>}
+  </div>;
+}
+
+function stepsWord(count: number) {
+  const tail = count % 100;
+  const last = count % 10;
+  if (tail >= 11 && tail <= 14) return "шагов";
+  if (last === 1) return "шаг";
+  if (last >= 2 && last <= 4) return "шага";
+  return "шагов";
+}
+
+/** Несколько сохранённых шагов одного запуска: один родительский блок и вложенные подшаги. */
+function ThinkingTrace({ steps, running }: { steps: ThinkingStep[]; running?: boolean }) {
+  const [open, setOpen] = useState(Boolean(running));
+  const [chosen, setChosen] = useState(false);
+  const bodyRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => { if (!chosen) setOpen(Boolean(running)); }, [running, chosen]);
+  useEffect(() => {
+    const box = bodyRef.current;
+    if (!box || !running) return;
+    box.scrollTop = box.scrollHeight;
+  }, [steps, running]);
+  return <div className={"thinking thinking-trace" + (open ? " thinking-open" : "") + (running ? " thinking-live" : "")}>
+    <button type="button" className="thinking-head" title={open ? "Свернуть размышления" : "Развернуть размышления"} onClick={() => { setChosen(true); setOpen(value => !value); }} aria-expanded={open}>
+      {running && <NestLoader size={16} label="NestDev размышляет" />}
+      <span className="thinking-title">{running ? "Размышляю…" : "Размышления"}</span>
+      <span className="thinking-count">{countThinkingSteps(steps)} {stepsWord(countThinkingSteps(steps))}</span>
+      <span className="thinking-toggle"><ChevronDown size={12}/></span>
+    </button>
+    {open && <div className="thinking-body thinking-trace-body" ref={bodyRef}>
+      {steps.map(step => <ThinkingStepView key={step.id} step={step} />)}
+    </div>}
+  </div>;
+}
+
+export function MessageThinking({ text, running, steps }: {
   text: string;
   /** The answer this block belongs to is being written right now. */
   running?: boolean;
+  /** Несколько шагов одного запуска: тогда родительский блок раскрывает вложенные. */
+  steps?: ThinkingStep[];
 }) {
   const [open, setOpen] = useState(Boolean(running));
   const [chosen, setChosen] = useState(false);
@@ -734,6 +792,8 @@ export function MessageThinking({ text, running }: {
     if (!box || !running) return;
     box.scrollTop = box.scrollHeight;
   }, [text, running]);
+  // Все hooks вызваны выше: переключение на набор шагов не меняет их порядок.
+  if (steps && countThinkingSteps(steps) > 1) return <ThinkingTrace steps={steps} running={running} />;
   const said = Boolean(text.trim());
   // Ни строчки размышления — не повод для пустого окна с обещанием: пока модель молчит, видно только
   // слово, которое само пульсирует, пока идёт работа. Разворачивать нечего, поэтому без стрелки.

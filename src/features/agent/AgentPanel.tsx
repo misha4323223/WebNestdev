@@ -7,7 +7,8 @@ import { apiJson } from "../../lib/api";
 import { addProjectTasks,answerProjectQuestion,cancelProjectSecret,getConversation,listPendingProjectSecrets,skipProjectQuestion,submitProjectSecret,uploadProjectFile,type PendingProjectSecret } from "../../lib/project-api";
 import { cancelProjectAccess,submitProjectAccess } from "../../lib/deployment-api";
 import { ActionsDock,MessageThinking,PlanPanel,actionTarget,chatImagesByMessage,contentBefore,deriveActions,readPlan,writePlan,type ChatImage,type PanelId,type PanelState } from "./agent-activity";
-import type { AgentAction,AgentMode,ChatMessage,PlatformModelOption,PlanState,ReasoningEffort,ReasoningSupport } from "../../lib/types";
+import { buildReasoningTraces } from "./reasoning-trace";
+import type { AgentAction,AgentMode,ChatMessage,PlatformModelOption,PlanState,ReasoningBlock,ReasoningMode,ReasoningSupport } from "../../lib/types";
 import { QuestionSheet,type AgentQuestion } from "./QuestionSheet";
 import { PlanningRoom } from "./PlanningRoom";
 import { AgentModeControl } from "./AgentModeControl";
@@ -136,11 +137,11 @@ function writeStoredPlatformModel(projectId:string,id:string){
   try{localStorage.setItem(platformModelKey(projectId),id)}catch{}
 }
 
-function readStoredReasoning():ReasoningEffort{
+function readStoredReasoning():ReasoningMode{
   try{
     const value=localStorage.getItem(reasoningKey);
-    return value==="low"||value==="high"?value:"medium";
-  }catch{return "medium"}
+    return value==="auto"||value==="low"||value==="medium"||value==="high"?value:"auto";
+  }catch{return "auto"}
 }
 
 /** По умолчанию поиск выключен: в сеть агент идёт только когда человек сам включил кнопку. */
@@ -334,7 +335,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   // Первый экран нового проекта: только вопросы и резюме, без обычного чата.
   const [planning,setPlanning]=useState(()=>readPlanning(conversationId).active);
   const [planningTitle,setPlanningTitle]=useState(()=>readPlanning(conversationId).title);
-  const [reasoning,setReasoning]=useState<ReasoningEffort>(readStoredReasoning);
+  const [reasoning,setReasoning]=useState<ReasoningMode>(readStoredReasoning);
   const [webSearch,setWebSearch]=useState<boolean>(readStoredWebSearch);
   const [browserCheck,setBrowserCheck]=useState<boolean>(readStoredBrowserCheck);
   const [modelInfo,setModelInfo]=useState<ModelInfo|null>(null);
@@ -435,7 +436,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   // Запрос уходит из колбеков сокета: флаг окна планирования тоже читается из ref.
   const planningRef=useRef<boolean>(planning);
   planningRef.current=planning;
-  const reasoningRef=useRef<ReasoningEffort>(reasoning);
+  const reasoningRef=useRef<ReasoningMode>(reasoning);
   // Очередь и переподключение запускают запуск из колбеков сокета, поэтому флаг читается из ref.
   const webSearchRef=useRef<boolean>(webSearch);
   const browserCheckRef=useRef<boolean>(browserCheck);
@@ -591,7 +592,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     try{localStorage.setItem(modeKey,next)}catch{}
   }
 
-  function chooseReasoning(next:ReasoningEffort){
+  function chooseReasoning(next:ReasoningMode){
     reasoningRef.current=next;
     setReasoning(next);
     try{localStorage.setItem(reasoningKey,next)}catch{}
@@ -954,16 +955,82 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
         const next=[...current];
         const last=next.at(-1);
         if(last?.role==="assistant")next[next.length-1]={...last,content:last.content+(event.delta??"")};
+        // Текст без reasoning после восстановления соединения тоже должен попасть в облачко,
+        // иначе он появится только после перезагрузки истории.
+        else next.push({role:"assistant",content:event.delta??""});
         return next;
       });
-      if(event.type==="reasoning.delta"&&event.delta){
-        const delta=event.delta;
-        // Размышление живёт на том ответе, к которому относится: оно показывается над ним, пока
-        // модель работает, и сохраняется вместе с сообщением, поэтому переживает перезагрузку.
+      if(event.type==="reasoning.start"&&event.blockId){
+        const blockId=event.blockId;
+        const step=event.step??1;
+        const startedAt=event.startedAt??new Date().toISOString();
         updateMessages(current=>{
           const next=[...current];
           const last=next.at(-1);
-          if(last?.role==="assistant")next[next.length-1]={...last,reasoning:(last.reasoning??"")+delta};
+          // После перезагрузки посреди запуска история может заканчиваться сообщением пользователя:
+          // без облачка ассистента live-блок было бы некуда положить, и размышление пропало бы до
+          // сохранения. Пустой ход — тот же placeholder, что создаётся при отправке.
+          if(last?.role!=="assistant")next.push({role:"assistant",content:""});
+          const target=next[next.length-1]!;
+          if(target.reasoningBlocks?.some(block=>block.id===blockId))return current;
+          const block:ReasoningBlock={
+            id:blockId,
+            runId:event.runId??"",
+            ...(event.parentId?{parentId:event.parentId}:{}),
+            kind:event.blockKind??"step",
+            title:event.title??"Шаг "+step,
+            text:"",
+            step,
+            status:"running",
+            startedAt,
+          };
+          next[next.length-1]={...target,reasoningBlocks:[...(target.reasoningBlocks??[]),block]};
+          return next;
+        });
+      }
+      if(event.type==="reasoning.delta"&&event.delta){
+        const delta=event.delta;
+        const blockId=event.blockId;
+        // Размышление живёт на том ответе, к которому относится: оно показывается над ним, пока
+        // модель работает, и сохраняется вместе с сообщением, поэтому переживает перезагрузку.
+        // Структурированный блок обновляется вместе с плоской строкой: старые клиенты и
+        // сохранённые сессии без блоков продолжают работать.
+        updateMessages(current=>{
+          const next=[...current];
+          const last=next.at(-1);
+          if(last?.role!=="assistant")next.push({role:"assistant",content:""});
+          const target=next[next.length-1]!;
+          const blocks=target.reasoningBlocks??[];
+          const index=blockId?blocks.findIndex(block=>block.id===blockId):-1;
+          const reasoningBlocks=blockId
+            ? index>=0
+              ? blocks.map((block,i)=>i===index?{...block,text:block.text+delta,status:"running" as const}:block)
+              : [...blocks,{
+                id:blockId,runId:event.runId??"",kind:"step" as const,title:"Шаг "+(event.step??1),
+                text:delta,step:event.step??1,status:"running" as const,startedAt:new Date().toISOString(),
+              }]
+            : target.reasoningBlocks;
+          next[next.length-1]={...target,reasoning:(target.reasoning??"")+delta,...(reasoningBlocks?{reasoningBlocks}:{})};
+          return next;
+        });
+      }
+      if(event.type==="reasoning.end"&&event.blockId){
+        const blockId=event.blockId;
+        updateMessages(current=>{
+          const next=[...current];
+          const last=next.at(-1);
+          if(last?.role!=="assistant"||!last.reasoningBlocks?.some(block=>block.id===blockId))return current;
+          next[next.length-1]={
+            ...last,
+            ...(event.text&&!last.reasoning?{reasoning:event.text}:{}),
+            reasoningBlocks:last.reasoningBlocks.map(block=>block.id===blockId?{
+              ...block,
+              ...(event.text?{text:event.text}:{}),
+              ...(event.title?{title:event.title}:{}),
+              status:event.status??"done",
+              finishedAt:event.finishedAt??new Date().toISOString(),
+            }:block),
+          };
           return next;
         });
       }
@@ -974,6 +1041,18 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
         // провайдера делят одно место, а ссылка не должна пережить показанную строку.
         if(event.type==="run.started")retryNoticeRef.current=false;
         setNotice(event.type==="run.queued"?"Сервер занят другим запуском — вы в очереди"+(typeof event.queued==="number"&&event.queued>0?" (впереди: "+event.queued+")":"")+"…":"");
+      }
+      // Новый шаг модели — новый ход в переписке. Без этого живые размышления склеивались в один
+      // блок, а сохранённая история показывала их отдельными шагами: теперь оба вида совпадают.
+      if(event.type==="run.progress"&&typeof event.step==="number"&&event.step>1){
+        updateMessages(current=>{
+          const last=current.at(-1);
+          // Тот же placeholder, что и при отправке: шаг не должен терять свой reasoning, если
+          // соединение восстановилось, когда в истории ещё нет ответа ассистента.
+          if(last?.role!=="assistant")return [...current,{role:"assistant",content:""}];
+          if(!last.content.trim()&&!last.reasoning?.trim())return current;
+          return [...current,{role:"assistant",content:""}];
+        });
       }
       // Провайдер ответил «подожди»: запуск не прерывается, шаг ждёт и повторяется сам. Пользователь
       // видит это строкой над полем ввода, а не ошибкой в переписке.
@@ -1500,7 +1579,15 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
 
   // Tool results are part of the stored history but not of the transcript; the action
   // list is built from them instead.
-  const visibleMessages=messages.filter(message=>message.role!=="tool");
+  const visibleMessages=useMemo(()=>messages.filter(message=>message.role!=="tool"),[messages]);
+  // Группировка уже сохранённых шагов одного запуска. Это только представление: история,
+  // порядок сообщений и стоимость запросов не меняются.
+  const liveIndex=running?visibleMessages.length-1:-1;
+  const reasoningTraces=useMemo(()=>buildReasoningTraces(visibleMessages,liveIndex),[visibleMessages,liveIndex]);
+  const coveredReasoning=useMemo(
+    () => new Set(Array.from(reasoningTraces.values()).flatMap(trace => trace.covers)),
+    [reasoningTraces],
+  );
   // Картинки из сохранённой истории: их отмечает результат инструмента, поэтому после
   // перезагрузки страницы они исчезают не вместе с состоянием запуска.
   const chatImages=useMemo(()=>chatImagesByMessage(messages),[messages]);
@@ -1577,10 +1664,17 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       {visibleMessages.map((m,i)=>{
         // Ответ, который модель пишет прямо сейчас: над ним идёт её размышление.
         const live=running&&i===visibleMessages.length-1;
+        const trace=reasoningTraces.get(i);
+        // Если сервер сохранил только структурный узел, без плоской копии, он всё равно виден.
+        const reasoningText=m.role==="assistant"
+          ? (m.reasoning?.trim()?m.reasoning:m.reasoningBlocks?.[0]?.text)
+          : undefined;
+        const hasReasoning=m.role==="assistant"&&Boolean(reasoningText?.trim());
         // Пустой ход ассистента состоял только из вызова инструмента (или из размышления,
         // которое в планировании не показывается): после вопросов такие облака в чате не нужны.
-        // Живой ход оставляем — в нём размышление видно, пока модель работает.
-        if(m.role==="assistant"&&!m.content.trim()&&!live)return null;
+        // Исключение — якорь сгруппированных размышлений: он должен быть виден, даже если текст
+        // ответа пустой. Живой ход оставляем — в нём размышление видно, пока модель работает.
+        if(m.role==="assistant"&&!m.content.trim()&&!live&&!trace&&!hasReasoning)return null;
         // Картинки, которые агент показал в этом запуске, и картинки из сохранённой истории —
         // один список без повторов: пока запуск идёт, результата инструмента в сообщениях ещё нет.
         const images=[...(chatImages.get(m)??[]),...liveImages.filter(item=>item.messageIndex===i).map(item=>item.image)]
@@ -1592,8 +1686,11 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
             {/* Подпись автора осталась только у пользователя: над ответом агента ни имя, ни
                 значок не нужны — карточка и так читается как ответ. */}
             {m.role==="user"&&<div className="message-role"><span>Вы</span></div>}
-            {/* Размышление — над ответом, в своём контейнере, который можно свернуть и развернуть. */}
-            {m.role==="assistant"&&(m.reasoning||live)&&<MessageThinking text={m.reasoning??""} running={live}/>}
+            {/* Размышление — над ответом, в своём контейнере, который можно свернуть и развернуть.
+                Несколько шагов одного запуска показываются одним родительским блоком с подшагами. */}
+            {trace
+              ? <MessageThinking text="" running={trace.running} steps={trace.steps}/>
+              : m.role==="assistant"&&(reasoningText||live)&&!coveredReasoning.has(i)&&<MessageThinking text={reasoningText??""} running={live}/>}
             {m.role==="assistant"
               ? <div className="message-text markdown" onClick={openMarkdownLink}>{m.content
                   ? <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{m.content}</Markdown>

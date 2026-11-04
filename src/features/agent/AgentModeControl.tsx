@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Brain, Check, ChevronDown, ClipboardList, Code2, Globe, MonitorCheck, SlidersHorizontal } from "lucide-react";
-import type { AgentMode, ReasoningEffort } from "../../lib/types";
+import type { AgentMode, ReasoningMode } from "../../lib/types";
 
 /**
  * Режим, глубина размышления, поиск в интернете и браузерная проверка — настройки одного запуска,
@@ -8,25 +8,26 @@ import type { AgentMode, ReasoningEffort } from "../../lib/types";
  * рядом переключает роль, глубину, выход в сеть и запуск Chromium. Отдельная подсказка под полем
  * ввода больше не нужна.
  */
-export const reasoningLabels: Record<ReasoningEffort, string> = { low: "Лёгкое", medium: "Среднее", high: "Глубокое" };
+export const reasoningLabels: Record<ReasoningMode, string> = { auto: "Авто", low: "Лёгкое", medium: "Среднее", high: "Глубокое" };
 
 const modeHints: Record<AgentMode, string> = {
   developer: "Пишет код, запускает проверки и меняет проект",
   planner: "Изучает проект и готовит план, не меняя файлы",
 };
 
-const reasoningHints: Record<ReasoningEffort, string> = {
+const reasoningHints: Record<ReasoningMode, string> = {
+  auto: "Сама выбирает глубину по шагу: анализ, рутина, ошибка",
   low: "Быстрые ответы для простых правок",
   medium: "Баланс скорости и качества",
   high: "Глубокий разбор сложных задач",
 };
 
 const modes: AgentMode[] = ["developer", "planner"];
-const depths: ReasoningEffort[] = ["low", "medium", "high"];
+const depths: ReasoningMode[] = ["auto", "low", "medium", "high"];
 
 export function AgentModeControl({ mode, reasoning, webSearch, browserCheck, reasoningAvailable = true, onMode, onReasoning, onWebSearch, onBrowserCheck }: {
   mode: AgentMode;
-  reasoning: ReasoningEffort;
+  reasoning: ReasoningMode;
   webSearch: boolean;
   browserCheck: boolean;
   /**
@@ -35,7 +36,7 @@ export function AgentModeControl({ mode, reasoning, webSearch, browserCheck, rea
    */
   reasoningAvailable?: boolean;
   onMode: (mode: AgentMode) => void;
-  onReasoning: (reasoning: ReasoningEffort) => void;
+  onReasoning: (reasoning: ReasoningMode) => void;
   onWebSearch: (enabled: boolean) => void;
   onBrowserCheck: (enabled: boolean) => void;
 }) {

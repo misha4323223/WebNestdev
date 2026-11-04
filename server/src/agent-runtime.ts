@@ -10,6 +10,10 @@ import { executeTool } from "./agent/tool-executor.js";
 import { runBudgetedStep,type StepBudget } from "./agent/step-runner.js";
 import { createWorkingMemory,recordWorkingChange,setWorkingCheck,setWorkingPlan,withWorkingState } from "./agent/working-memory.js";
 import type { EventSink } from "./agent/types.js";
+import { createReasoningBlock } from "./agent/reasoning-blocks.js";
+import { selectToolNames } from "./agent/tool-catalog.js";
+import { createScoutRunner,SCOUT_BUDGET_TOKENS,SCOUT_MAX_MESSAGES } from "./agent/scout.js";
+import { resolveReasoning } from "./agent/reasoning-policy.js";
 import { agentStepLimit,contextBudgetTokensFor,contextMaxMessagesFor,boundToolOutput,DEFAULT_CHARS_PER_TOKEN } from "./agent/context-budget.js";
 import { planQaScenario } from "./qa/scenario-planner.js";
 import { analyzeChangedFiles } from "./qa/diff-analyzer.js";
@@ -50,7 +54,7 @@ function mutationSummary(name:string,args:Record<string,unknown>,output:unknown)
  * `image.generate` тоже не запускает проверку: картинка — готовый ассет, собирать из-за неё проект
  * незачем. Но планировщику она запрещена: это запись в проект и расход ключа платформы.
  */
-const PLANNER_FORBIDDEN_TOOLS=new Set(["git.add","git.commit","git.pull","secrets.request","access.request","deploy.plan","preview.start","preview.stop","image.generate","project.check"]);
+const PLANNER_FORBIDDEN_TOOLS=new Set(["git.add","git.commit","git.pull","secrets.request","access.request","deploy.plan","preview.start","preview.stop","image.generate","project.check","service.env"]);
 
 /**
  * Planner mode still has to read the project, so plain inspection commands are allowed
@@ -231,6 +235,8 @@ export class AgentRuntime {
       const working=createWorkingMemory(task,activeSavedPlan);
       working.planFromPreviousRun=Boolean(activeSavedPlan);
       const mode=request.mode==="planner"?"planner":"developer";
+      // Старые клиенты могли не присылать глубину: для них работает автоматический выбор.
+      const requestedReasoning=request.reasoning??"auto";
       // Первый запуск нового проекта: окно планирования просит только вопросы и резюме,
       // поэтому модель не осматривает пустой проект и не рассказывает, что в нём ничего нет.
       const planning=mode==="planner"&&request.planning===true;
@@ -240,6 +246,14 @@ export class AgentRuntime {
       // Браузерная проверка — разрешение на этот запуск, а не свойство тарифа. Выключенная
       // проверка отключает и автоматическую Chromium-QA после правок.
       const browserCheckEnabled=request.browserCheck===true;
+      // Каталог фиксируется один раз на запуск: схемы не должны меняться между шагами,
+      // иначе кэш префикса DeepSeek будет промахиваться на каждом запросе.
+      const toolNames=selectToolNames({
+        mode,
+        task,
+        webSearch:request.webSearch===true,
+        browserCheck:browserCheckEnabled,
+      });
       let messages:ChatMessage[]=buildInitialMessages(history,projectContext+"\n\nTASK-RELEVANT SOURCE FILES\n"+relevantFiles,mode,planning);
       // Переключатель поиска в интернете живёт в панели ввода, поэтому модель узнаёт о нём из
       // заметки, а инструменты проверяют тот же флаг сами (web-tools.ts). Выключенный поиск —
@@ -272,6 +286,24 @@ export class AgentRuntime {
       // У Max и Mini может быть меньше окно, чем общий бюджет платного тарифа. Модель сама
       // объявляет свой предел, и он важнее общего: иначе провайдер ответит отказом по контексту.
       let budget:StepBudget={budgetTokens:platformChoice?.contextTokens??contextBudgetTokensFor(contextTier),charsPerToken:DEFAULT_CHARS_PER_TOKEN,maxMessages:contextMaxMessagesFor(contextTier)};
+      // У разведчика свой контекст и свой потолок: он не видит историю основного запуска и не
+      // расходует его бюджет. Расход при этом общий — токены потрачены одной задачей.
+      const scout=createScoutRunner({
+        provider,model,runId,request,emit,
+        ...(signal?{signal}:{}),
+        budget:{
+          budgetTokens:Math.min(SCOUT_BUDGET_TOKENS,budget.budgetTokens),
+          charsPerToken:DEFAULT_CHARS_PER_TOKEN,
+          maxMessages:Math.min(SCOUT_MAX_MESSAGES,budget.maxMessages),
+        },
+        onUsage:usage=>{
+          usageTotals.promptTokens+=usage.promptTokens;
+          usageTotals.completionTokens+=usage.completionTokens;
+          usageTotals.cachedPromptTokens+=usage.cachedPromptTokens;
+          usageTotals.cacheWritePromptTokens+=usage.cacheWritePromptTokens;
+          usageTotals.estimated=usageTotals.estimated||usage.estimated;
+        },
+      });
       let consecutiveVerifyFailures=0;
       let consecutiveScenarioFailures=0;
       let lastVerificationFailure="";
@@ -350,7 +382,7 @@ export class AgentRuntime {
           if(signal?.aborted)throw new Error("Запуск агента отменён");
           emit({type:"tool.started",runId,toolCallId:verifyCall.id,name:verifyCall.name,input:verifyCall.arguments});
           try{
-            const output=await executeTool(verifyCall as any,{runId,request,emit,signal});
+            const output=await executeTool(verifyCall as any,{runId,request,emit,signal,toolNames});
             await finishTool(verifyCall,output);
             messages.push({role:"tool",content:boundToolOutput(verifyCall.name,output),tool_call_id:verifyCall.id});
             if(verifyCall.name==="project.check"){
@@ -434,7 +466,17 @@ export class AgentRuntime {
         // Replacing it here (rather than appending another copy) keeps the prompt prefix stable and
         // the tail small; `trimMessagesToBudget` never drops or shrinks a system message.
         messages=withWorkingState(messages,working);
-        const context={runId,request,emit,signal};
+        const stepReasoning=resolveReasoning({
+          requested:requestedReasoning,
+          step:step+1,
+          task,
+          mode,
+          verificationFailures:consecutiveVerifyFailures,
+          changedFiles:changedFiles.size,
+          resumed:Boolean(request.resume),
+        });
+        const context={runId,request,emit,signal,step:step+1,toolNames,reasoning:stepReasoning,scout};
+        const stepStartedAt=new Date().toISOString();
         const stepRun=await runBudgetedStep(provider,messages,model,context,budget,{
           // Шаг и размер контекста идут в панель: видно, что запуск работает и сколько занято.
           // То же число попадает в рабочую память — на следующем шаге модель уже знает остаток
@@ -447,6 +489,17 @@ export class AgentRuntime {
         messages=stepRun.messages;
         budget=stepRun.budget;
         const result=stepRun.result;
+        // Узел истории создаётся из того же текста, что уже ушёл в поток. Это не второй запрос к
+        // модели, а только запись того, что она уже сказала.
+        const reasoningBlocks=result.reasoning
+          ? [createReasoningBlock({
+            // Тот же id и время старта, что уже ушли в поток: иначе live-блок и сохранённый
+            // узел были бы двумя разными узлами с одинаковым текстом.
+            ...(result.reasoningBlock?{id:result.reasoningBlock.id}:{}),
+            runId,step:step+1,text:result.reasoning,calls:result.calls,
+            startedAt:result.reasoningBlock?.startedAt??stepStartedAt,finishedAt:new Date().toISOString(),
+          })]
+          : undefined;
         usageTotals.promptTokens+=result.usage.promptTokens;
         usageTotals.completionTokens+=result.usage.completionTokens;
         usageTotals.cachedPromptTokens+=result.usage.cachedPromptTokens;
@@ -475,7 +528,7 @@ export class AgentRuntime {
 
           const text=result.text||"Модель не вернула ответ.";
           if(!result.text)emit({type:"message.delta",runId,delta:text});
-          await persist([{role:"assistant",content:text,...(result.reasoning?{reasoning:result.reasoning}:{})}]);
+          await persist([{role:"assistant",content:text,...(result.reasoning?{reasoning:result.reasoning}:{}),...(reasoningBlocks?{reasoningBlocks}:{})}]);
           // Изменения записываются в историю проекта только теперь: сборка, предпросмотр и
           // браузерная проверка уже прошли, то есть в точку попадает проверенное состояние.
           // Точка остаётся локальной: отправку на GitHub пользователь запускает сам, агент
@@ -498,7 +551,7 @@ export class AgentRuntime {
           emit({type:"run.completed",runId}); return;
         }
 
-        const assistantMessage:ChatMessage={role:"assistant",content:result.text,tool_calls:result.calls,...(result.reasoning?{reasoning:result.reasoning}:{})};
+        const assistantMessage:ChatMessage={role:"assistant",content:result.text,tool_calls:result.calls,...(result.reasoning?{reasoning:result.reasoning}:{}),...(reasoningBlocks?{reasoningBlocks}:{})};
         messages.push(assistantMessage);
         // The assistant turn is part of the user-visible history, so it is persisted as it
         // is produced — with the thinking behind it — and survives a reload mid-run.
@@ -630,7 +683,7 @@ export class AgentRuntime {
               const scenarioCall={id:randomUUID(),name:"browser.scenario",arguments:plannedScenario};
               emit({type:"tool.started",runId,toolCallId:scenarioCall.id,name:scenarioCall.name,input:scenarioCall.arguments});
               try{
-                const scenarioOutput=await executeTool(scenarioCall as any,{runId,request,emit,signal});
+                const scenarioOutput=await executeTool(scenarioCall as any,{runId,request,emit,signal,toolNames});
                 await finishTool(scenarioCall,scenarioOutput);
                 messages.push({role:"tool",content:boundToolOutput(scenarioCall.name,scenarioOutput),tool_call_id:scenarioCall.id});
                 if((scenarioOutput as {ok?:boolean}).ok===true){

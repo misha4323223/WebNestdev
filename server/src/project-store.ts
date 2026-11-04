@@ -4,7 +4,7 @@ import path from "node:path";
 import { sandboxMemoryMb, sandboxRootPath } from "./sandbox/config.js";
 import { chooseProjectNode, NoSandboxNodeError } from "./nodes/placement.js";
 import { nodeId } from "./nodes/identity.js";
-import type { ChatMessage, PlanState } from "./types.js";
+import type { ChatMessage, PlanState, ReasoningBlock } from "./types.js";
 import { initializeStorage, isYdbEnabled, ydbQuery, getTable } from "./storage/ydb.js";
 import { decryptSecret, encryptSecret, isEncryptedSecret } from "./storage/secret-crypto.js";
 
@@ -389,13 +389,46 @@ export async function removeProjectProvider(projectId:string){
 
 async function conversationsDir(){const d=path.join(root,"conversations");await mkdir(d,{recursive:true});return d}
 
-function messageFromRow(row:{created_at:string;message_id:string;role:string;content:string;tool_calls_json:string;tool_call_id:string;reasoning?:string}):ChatMessage{
+/**
+ * Старые строки и повреждённый JSON не должны ронять историю. Каждый узел приводится к полному
+ * виду с безопасными значениями: клиент ждёт обязательные поля, а не частичный объект из БД.
+ */
+function normalizeReasoningBlock(value:unknown):ReasoningBlock|null{
+  if(!value||typeof value!=="object")return null;
+  const block=value as Partial<ReasoningBlock>;
+  if(typeof block.id!=="string"||!block.id||typeof block.text!=="string")return null;
+  const step=typeof block.step==="number"&&Number.isFinite(block.step)?block.step:1;
+  return {
+    id:block.id,
+    runId:typeof block.runId==="string"?block.runId:"",
+    ...(typeof block.parentId==="string"&&block.parentId?{parentId:block.parentId}:{}),
+    kind:block.kind==="subagent"?"subagent":"step",
+    title:typeof block.title==="string"&&block.title.trim()?block.title:"Шаг "+step,
+    text:block.text,
+    step,
+    status:block.status==="running"||block.status==="error"?block.status:"done",
+    startedAt:typeof block.startedAt==="string"&&block.startedAt?block.startedAt:new Date(0).toISOString(),
+    ...(typeof block.finishedAt==="string"&&block.finishedAt?{finishedAt:block.finishedAt}:{}),
+  };
+}
+function parseReasoningBlocks(value:string|undefined):ReasoningBlock[]|undefined{
+  if(!value)return undefined;
+  try{
+    const parsed=JSON.parse(value) as unknown;
+    if(!Array.isArray(parsed))return undefined;
+    const blocks=parsed.map(normalizeReasoningBlock).filter((block):block is ReasoningBlock=>Boolean(block));
+    return blocks.length?blocks:undefined;
+  }catch{return undefined}
+}
+function messageFromRow(row:{created_at:string;message_id:string;role:string;content:string;tool_calls_json:string;tool_call_id:string;reasoning?:string;reasoning_blocks?:string}):ChatMessage{
   const base={role:row.role as ChatMessage["role"],content:row.content};
   if(row.role==="assistant"){
+    const reasoningBlocks=parseReasoningBlocks(row.reasoning_blocks);
     return {
       ...base,role:"assistant",
       ...(row.tool_calls_json ? {tool_calls:JSON.parse(row.tool_calls_json) as Extract<ChatMessage,{role:"assistant"}>["tool_calls"]}: {}),
       ...(row.reasoning ? {reasoning:row.reasoning}: {}),
+      ...(reasoningBlocks ? {reasoningBlocks}: {}),
     } as ChatMessage;
   }
   if(row.role==="tool")return {...base,role:"tool",tool_call_id:row.tool_call_id};
@@ -414,8 +447,24 @@ const MAX_STORED_TOOL_CHARS=16000;
  * still bounding what a long chat carries in the database.
  */
 const MAX_STORED_REASONING_CHARS=16000;
+/** Один шаг не должен съесть весь бюджет истории: длинная мысль режется, но остаётся читаемой. */
+const MAX_STORED_REASONING_BLOCKS=24;
 function clipStored(text:string,limit:number,label:string){
   return text.length<=limit?text:text.slice(0,limit)+'\n…['+label+']';
+}
+function boundReasoningBlocks(blocks:ReasoningBlock[]|undefined):ReasoningBlock[]|undefined{
+  if(!blocks?.length)return blocks;
+  let remaining=MAX_STORED_REASONING_CHARS;
+  const bounded:ReasoningBlock[]=[];
+  for(const block of blocks.slice(0,MAX_STORED_REASONING_BLOCKS)){
+    if(remaining<=0)break;
+    const text=block.text.length>remaining
+      ? clipStored(block.text,remaining,"размышление обрезано при сохранении")
+      : block.text;
+    bounded.push({...block,text});
+    remaining-=text.length;
+  }
+  return bounded.length?bounded:undefined;
 }
 function boundMessage(message:ChatMessage):ChatMessage{
   if(message.role==="tool"){
@@ -426,8 +475,13 @@ function boundMessage(message:ChatMessage):ChatMessage{
   const reasoning=message.reasoning&&message.reasoning.length>MAX_STORED_REASONING_CHARS
     ? clipStored(message.reasoning,MAX_STORED_REASONING_CHARS,"размышление обрезано при сохранении")
     : message.reasoning;
-  if(reasoning===message.reasoning)return message;
-  return {...message,reasoning};
+  const reasoningBlocks=boundReasoningBlocks(message.reasoningBlocks);
+  if(reasoning===message.reasoning&&reasoningBlocks===message.reasoningBlocks)return message;
+  return {
+    ...message,
+    ...(reasoning?{reasoning}:{}),
+    ...(reasoningBlocks?{reasoningBlocks}:{}),
+  };
 }
 function messageRow(projectId:string,conversationId:string,message:ChatMessage,createdAt:string){
   return {
@@ -435,6 +489,7 @@ function messageRow(projectId:string,conversationId:string,message:ChatMessage,c
     role:message.role,content:message.content,
     toolCallsJson:message.role==="assistant"&&message.tool_calls ? JSON.stringify(message.tool_calls):"",
     reasoningJson:message.role==="assistant"&&message.reasoning ? message.reasoning:"",
+    reasoningBlocksJson:message.role==="assistant"&&message.reasoningBlocks?.length ? JSON.stringify(message.reasoningBlocks):"",
     toolCallId:message.role==="tool" ? message.tool_call_id:""
   };
 }
@@ -465,8 +520,8 @@ export async function getConversation(id:string):Promise<Conversation|null>{
     `;
     const row=rows?.[0];
     if(!row)return null;
-    const [messageRows]=await ydbQuery()<Array<{created_at:string;message_id:string;role:string;content:string;tool_calls_json:string;tool_call_id:string;reasoning:string}>>`
-      SELECT created_at,message_id,role,content,tool_calls_json,tool_call_id,reasoning
+    const [messageRows]=await ydbQuery()<Array<{created_at:string;message_id:string;role:string;content:string;tool_calls_json:string;tool_call_id:string;reasoning:string;reasoning_blocks:string}>>`
+      SELECT created_at,message_id,role,content,tool_calls_json,tool_call_id,reasoning,reasoning_blocks
       FROM ${ydbQuery().identifier(getTable("conversation_messages"))}
       WHERE conversation_id = ${id}
       ORDER BY created_at,message_id
@@ -486,8 +541,8 @@ export async function listConversations(projectId:string){
       ORDER BY updated_at DESC
     `;
     const result=rows.map(row=>({id:row.id,projectId:row.project_id,title:row.title,messages:[] as ChatMessage[],createdAt:row.created_at,updatedAt:row.updated_at}));
-    const [messageRows]=await ydbQuery()<Array<{conversation_id:string;created_at:string;message_id:string;role:string;content:string;tool_calls_json:string;tool_call_id:string}>>`
-      SELECT conversation_id,created_at,message_id,role,content,tool_calls_json,tool_call_id
+    const [messageRows]=await ydbQuery()<Array<{conversation_id:string;created_at:string;message_id:string;role:string;content:string;tool_calls_json:string;tool_call_id:string;reasoning:string;reasoning_blocks:string}>>`
+      SELECT conversation_id,created_at,message_id,role,content,tool_calls_json,tool_call_id,reasoning,reasoning_blocks
       FROM ${ydbQuery().identifier(getTable("conversation_messages"))}
       WHERE project_id = ${projectId}
       ORDER BY created_at,message_id
@@ -576,8 +631,8 @@ export async function appendConversationMessages(id:string,messages:ChatMessage[
       const row=messageRow(meta.projectId,id,bounded[index],new Date(now+index).toISOString());
       await ydbQuery()`
         UPSERT INTO ${ydbQuery().identifier(getTable("conversation_messages"))}
-          (conversation_id,created_at,message_id,project_id,role,content,tool_calls_json,reasoning,tool_call_id)
-        VALUES (${row.conversationId},${row.createdAt},${row.messageId},${row.projectId},${row.role},${row.content},${row.toolCallsJson},${row.reasoningJson},${row.toolCallId})
+          (conversation_id,created_at,message_id,project_id,role,content,tool_calls_json,reasoning,reasoning_blocks,tool_call_id)
+        VALUES (${row.conversationId},${row.createdAt},${row.messageId},${row.projectId},${row.role},${row.content},${row.toolCallsJson},${row.reasoningJson},${row.reasoningBlocksJson},${row.toolCallId})
       `;
     }
     await ydbQuery()`

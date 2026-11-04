@@ -86,3 +86,13 @@ test("контекст не тянет TASKS.md целиком: задачи ч�
   assert.match(full, /TASKS\.md/, "имя файла видно в дереве проекта");
   assert.doesNotMatch(full, /Задача, которая не должна попасть в контекст/);
 });
+
+test("автоподбор не отправляет большой файл целиком", async () => {
+  const big = Array.from({ length: 900 }, (_, index) => "export const line" + index + " = \"" + "x".repeat(30) + "\";").join("\n");
+  await writeFile(path.join(projectRoot, "big-file.ts"), big);
+  const retrieved = await retrieveRelevantFiles(project.id, "u1", "big file");
+  assert.ok(retrieved.length < 35000, "автоподбор ограничен: " + retrieved.length);
+  assert.match(retrieved, /big-file\.ts/);
+  assert.match(retrieved, /показаны первые/);
+  assert.ok(retrieved.length < big.length, "большой файл не попал целиком");
+});

@@ -5,9 +5,12 @@ import { readFileInside } from "../sandbox/path-guard.js";
 import { isSecretProjectPath } from "../secrets/secret-paths.js";
 import { isIgnoredProjectDir } from "../project-ignore.js";
 
-const MAX_FILES = 12;
-const MAX_FILE_CHARS = 12000;
-const MAX_TOTAL_CHARS = 70000;
+// Контекст — это аванс, а не склад. Восемь файлов и короткий фрагмент каждого дают модели
+// направление, а полный текст она читает через fs.read/fs.outline уже по необходимости.
+const MAX_FILES = 8;
+const MAX_FILE_CHARS = 5000;
+const MAX_TOTAL_CHARS = 28000;
+const MAX_EXCERPT_LINES = 80;
 
 function tokens(text: string): Set<string> {
   return new Set(
@@ -77,10 +80,17 @@ export async function retrieveRelevantFiles(
       const content = await readFileInside(sandbox.root, path.join(sandbox.root, item.file));
       const remaining = MAX_TOTAL_CHARS - total;
       if (remaining <= 0) break;
-      const snippet = content.length > Math.min(MAX_FILE_CHARS, remaining)
-        ? content.slice(0, Math.min(MAX_FILE_CHARS, remaining)) + "\n...[truncated]"
-        : content;
-      sections.push("FILE: " + item.file + "\n" + snippet);
+      const lines = content.split(/\r?\n/);
+      const head = lines.slice(0, MAX_EXCERPT_LINES).join("\n");
+      const excerpt = content.length <= MAX_FILE_CHARS && lines.length <= MAX_EXCERPT_LINES
+        ? content
+        : head.slice(0, Math.min(MAX_FILE_CHARS, remaining));
+      const note = excerpt.length < content.length
+        ? "\n…[показаны первые " + Math.min(lines.length, MAX_EXCERPT_LINES) + " строк из " + lines.length +
+          "; остальное — через fs.read или fs.outline]…"
+        : "";
+      const snippet = excerpt + note;
+      sections.push("FILE: " + item.file + " (" + lines.length + " строк)\n" + snippet);
       total += snippet.length;
     } catch {}
   }

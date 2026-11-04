@@ -13,6 +13,16 @@ export type AgentSocketEvent={
   plan?:PlanState;
   step?:number;
   maxSteps?:number;
+  /** Структурированный reasoning: блок открывается, растёт дельтами и закрывается. */
+  blockId?:string;
+  title?:string;
+  parentId?:string;
+  blockKind?:"step"|"subagent";
+  status?:"running"|"done"|"error";
+  startedAt?:string;
+  finishedAt?:string;
+  /** Полный текст блока на reasoning.end. */
+  text?:string;
   /** Context size of the step that just started, and the budget it is bounded by. */
   tokens?:number;
   budget?:number;

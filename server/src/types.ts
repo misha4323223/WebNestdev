@@ -1,13 +1,31 @@
 import type { PlanId } from "./account/plans.js";
 
 export type Role="user"|"assistant"|"system"|"tool";
+/**
+ * Один узел дерева размышлений. Сейчас шаг — корневой узел запуска; `parentId` уже хранится,
+ * чтобы будущий субагент мог стать ребёнком шага, не меняя формат истории.
+ */
+export type ReasoningBlockKind="step"|"subagent";
+export type ReasoningBlockStatus="running"|"done"|"error";
+export type ReasoningBlock={
+  id:string;
+  runId:string;
+  parentId?:string;
+  kind:ReasoningBlockKind;
+  title:string;
+  text:string;
+  step:number;
+  status:ReasoningBlockStatus;
+  startedAt:string;
+  finishedAt?:string;
+};
 export type ChatMessage=
   | {role:"user"|"system";content:string}
   /**
    * `reasoning` is what the model thought before answering. It is shown to the user and kept in the
    * session; DeepSeek thinking mode also receives it back with tools, while other providers do not.
    */
-  | {role:"assistant";content:string;reasoning?:string;tool_calls?:Array<{id:string;name:string;arguments:Record<string,unknown>}>}
+  | {role:"assistant";content:string;reasoning?:string;reasoningBlocks?:ReasoningBlock[];tool_calls?:Array<{id:string;name:string;arguments:Record<string,unknown>}>}
   | {role:"tool";content:string;tool_call_id:string};
 export type PlanItemStatus="pending"|"in_progress"|"done";
 export type PlanItem={title:string;status:PlanItemStatus;note?:string};
@@ -15,7 +33,9 @@ export type PlanState={items:PlanItem[];updatedAt:string};
 export type AgentEvent=
   | {type:"run.started";runId:string}
   | {type:"message.delta";runId:string;delta:string}
-  | {type:"reasoning.delta";runId:string;delta:string}
+  | {type:"reasoning.start";runId:string;blockId:string;step:number;title:string;startedAt:string;parentId?:string;blockKind?:ReasoningBlockKind}
+  | {type:"reasoning.delta";runId:string;delta:string;blockId?:string;step?:number}
+  | {type:"reasoning.end";runId:string;blockId:string;status:"done"|"error";finishedAt:string;title?:string;text?:string}
   | {type:"tool.started";runId:string;toolCallId:string;name:string;input:unknown}
   | {type:"tool.finished";runId:string;toolCallId:string;name:string;output:unknown}
   | {type:"plan.updated";runId:string;plan:PlanState}
@@ -66,6 +86,21 @@ export type AgentMode="planner"|"developer";
  */
 export type ReasoningEffort="low"|"medium"|"high";
 /**
+ * `auto` — не отдельная сила модели, а разрешение агенту выбрать её по шагу: первый шаг
+ * анализирует задачу, рутинные шаги идут дешевле, а после ошибки проверки глубина возвращается.
+ * Явный low/medium/high всегда важнее автоматики.
+ */
+export type ReasoningMode=ReasoningEffort|"auto";
+/**
+ * `code` ищет по исходникам проекта, `web` — по публичным страницам, когда пользователь включил
+ * поиск в интернете. Оба профиля read-only и не могут позвать друг друга.
+ */
+export type ScoutKind="code"|"web";
+/** Read-only разведчик: отдельный контекст и отдельный ответ, без доступа к изменениям проекта. */
+export type ScoutRequest={task:string;focus?:string;kind?:ScoutKind};
+export type ScoutResult={ok:boolean;summary:string;files:string[];findings:string[];sources?:string[]};
+export type ScoutRunner=(input:ScoutRequest)=>Promise<ScoutResult>;
+/**
  * `resume` marks a run that continues an interrupted one: the history arrives as usual, but the
  * runtime tells the model that this is a continuation and where the plan stopped.
  *
@@ -86,7 +121,7 @@ export type ReasoningEffort="low"|"medium"|"high";
  * `plan` ставит сервер, а не клиент: на бесплатном тарифе он выбирает бесплатную модель с
  * резервом на платформенную, а на платных оставляет платформенную по умолчанию.
  */
-export type AgentRunRequest={projectId:string;conversationId?:string;messages:ChatMessage[];history?:ChatMessage[];model?:string;mode?:AgentMode;reasoning?:ReasoningEffort;webSearch?:boolean;browserCheck?:boolean;resume?:{reason?:string};/** Первый запуск нового проекта: только вопросы и резюме, без осмотра файлов. */planning?:boolean;plan?:PlanId;userId:string};
+export type AgentRunRequest={projectId:string;conversationId?:string;messages:ChatMessage[];history?:ChatMessage[];model?:string;mode?:AgentMode;reasoning?:ReasoningMode;webSearch?:boolean;browserCheck?:boolean;resume?:{reason?:string};/** Первый запуск нового проекта: только вопросы и резюме, без осмотра файлов. */planning?:boolean;plan?:PlanId;userId:string};
 /**
  * `emit` и `signal` нужны инструментам, которые работают не сами по себе, а вместе с пользователем:
  * `secrets.request` показывает модальное окно через поток запуска и ждёт ответа, а остановка запуска
@@ -96,6 +131,6 @@ export type AgentRunRequest={projectId:string;conversationId?:string;messages:Ch
  * `conversationId` нужен инструментам, которые пишут в разговор, а не в проект: заметки решений
  * принадлежат чату, а не проекту (в разных чатах одного проекта договариваются о разном).
  */
-export type ToolContext={projectId:string;runId:string;userId:string;conversationId?:string;emit?:(event:AgentEvent)=>void;signal?:AbortSignal;/** `web.search`/`web.read` разрешены только когда пользователь включил поиск в панели ввода. */webSearchEnabled?:boolean;/** Тяжёлые `browser.*` разрешены только когда пользователь включил браузерную проверку. */browserCheckEnabled?:boolean};
+export type ToolContext={projectId:string;runId:string;userId:string;conversationId?:string;emit?:(event:AgentEvent)=>void;signal?:AbortSignal;/** `web.search`/`web.read` разрешены только когда пользователь включил поиск в панели ввода. */webSearchEnabled?:boolean;/** Тяжёлые `browser.*` разрешены только когда пользователь включил браузерную проверку. */browserCheckEnabled?:boolean;/** Read-only субагент, если текущий запуск его поддерживает. */scout?:ScoutRunner};
 export type ToolHandler=(input:unknown,context:ToolContext)=>Promise<unknown>;
 export type ToolDefinition={name:string;description:string;execute?:ToolHandler;async?:ToolHandler;/** Optional JSON Schema sent to the provider so the model knows the exact input shape. */parameters?:Record<string,unknown>};

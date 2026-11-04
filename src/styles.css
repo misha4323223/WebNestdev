@@ -340,6 +340,21 @@ button,textarea{font:inherit}button{color:inherit}
 @keyframes thinking-breathe{0%,100%{opacity:.72}50%{opacity:1}}
 /* Пока модель не прислала ни строчки размышления, видно только слово: разворачивать пока нечего. */
 .thinking-waiting{display:flex;align-items:center;margin:0 0 10px;color:#c0b9ac;font-size:11.5px;font-weight:600}
+/* Несколько шагов одного запуска: родительская строка остаётся такой же тихой, а шаги
+   раскрываются внутри неё. Подшаг — не отдельный ответ, поэтому у него нет своей карточки. */
+.thinking-count{margin-left:2px;color:#7f7668;font-size:10px;font-weight:500;letter-spacing:.01em}
+.thinking-trace-body{padding:2px 0 4px 10px}
+.thinking-step{border-top:1px solid var(--line-warm-soft)}
+.thinking-step:first-child{border-top:0}
+.thinking-step-head{display:flex;align-items:center;gap:7px;width:100%;padding:6px 2px 6px 0;border:0;background:transparent;color:#b6ada0;font-size:10.5px;cursor:pointer;text-align:left}
+.thinking-step-head:hover{color:#ddd7cb}
+.thinking-step-title{font-weight:600}
+.thinking-step-live .thinking-step-title{color:#d0c8ba;animation:thinking-breathe 2.4s ease-in-out infinite}
+.thinking-step-toggle{display:grid;place-items:center;margin-left:auto;color:#8e7f66;transition:transform .18s ease}
+.thinking-step-open .thinking-step-toggle{transform:rotate(180deg)}
+.thinking-step-body{padding:0 2px 7px 0}
+.thinking-step-text{white-space:pre-wrap;overflow-wrap:anywhere;padding:0;color:#98a1ac;font:400 11px/1.72 ui-monospace,SFMono-Regular,Menlo,monospace}
+.thinking-step-children{margin:5px 0 0 10px;padding-left:8px;border-left:1px solid #332b22}
 .agent-plan-bar{height:3px;background:#1a1f26}
 .plan-approve{max-width:760px;display:flex;align-items:center;justify-content:space-between;gap:12px;margin:-10px auto 10px;padding:10px 11px;border:1px solid #493c25;border-top:0;border-radius:0 0 10px 10px;background:linear-gradient(180deg,#1d170e,#16120c)}
 .plan-approve>div{display:flex;flex-direction:column;gap:2px;min-width:0}

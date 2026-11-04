@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { appendConversationMessages, createConversation, createProject, deleteProject, getConversation } from "./project-store.js";
+import type { ReasoningBlock } from "./types.js";
 
 /**
  * What a chat costs to keep is decided at write time, because a run writes as it goes and a session
@@ -38,6 +39,37 @@ test("сообщения дописываются, а размышление и 
     const tool = stored?.messages[2];
     assert.ok((tool?.content.length ?? 0) < 16100, "вывод инструмента записан в ограниченном виде: " + (tool?.content.length ?? 0));
     assert.match(tool?.content ?? "", /вывод обрезан при сохранении/);
+  } finally {
+    await deleteProject(project.id, userId);
+  }
+});
+
+test("структурное дерево размышлений сохраняется и обрезается по бюджету", async () => {
+  const userId = "messages-test-" + randomUUID();
+  const project = await createProject("Дерево размышлений", undefined, userId);
+  const conversation = await createConversation(project.id, "Сессия");
+  const startedAt = "2026-11-04T10:00:00.000Z";
+  const root: ReasoningBlock = {
+    id: "block-root", runId: "run-1", kind: "step", title: "Шаг 1 · чтение файла",
+    text: "сначала посмотрю файл", step: 1, status: "done", startedAt,
+  };
+  const child: ReasoningBlock = {
+    id: "block-child", runId: "run-1", parentId: root.id, kind: "subagent", title: "Проверяю гипотезу",
+    text: "т".repeat(20000), step: 2, status: "done", startedAt,
+  };
+  try {
+    await appendConversationMessages(conversation.id, [
+      { role: "assistant", content: "ответ", reasoning: "сначала посмотрю файл", reasoningBlocks: [root, child] },
+    ]);
+    const stored = await getConversation(conversation.id);
+    const assistant = stored?.messages[0];
+    const blocks = assistant?.role === "assistant" ? assistant.reasoningBlocks ?? [] : [];
+    assert.equal(blocks.length, 2, "оба узла дерева дошли до истории");
+    assert.equal(blocks[0]?.title, "Шаг 1 · чтение файла");
+    assert.equal(blocks[1]?.parentId, "block-root");
+    assert.equal(blocks[1]?.kind, "subagent");
+    assert.ok((blocks[1]?.text.length ?? 0) < 16100, "длинный узел обрезан: " + (blocks[1]?.text.length ?? 0));
+    assert.match(blocks[1]?.text ?? "", /размышление обрезано при сохранении/);
   } finally {
     await deleteProject(project.id, userId);
   }

@@ -248,3 +248,41 @@ test("повторный отказ по числу сообщений объя�
   );
   assert.equal(seen.length, 2, "попыток ровно две");
 });
+
+test("размышление приходит структурными событиями с blockId и номером шага", async () => {
+  const events: AgentEvent[] = [];
+  const provider: Provider = {
+    async *stream(): AsyncGenerator<ProviderChunk> {
+      yield { type: "reasoning", text: "сначала " };
+      yield { type: "reasoning", text: "посмотрю файл" };
+      yield { type: "text", text: "готово" };
+      yield { type: "usage", promptTokens: 100, completionTokens: 10 };
+    },
+  };
+  const step = await runBudgetedStep(provider, [{ role: "user", content: "посмотри" }], "модель", {
+    ...context(),
+    step: 3,
+    emit: event => events.push(event),
+  }, { budgetTokens: 20000, charsPerToken: 3.6, maxMessages: 80 });
+
+  assert.equal(step.result.text, "готово");
+  assert.equal(step.result.reasoning, "сначала посмотрю файл");
+  const start = events.find((event): event is Extract<AgentEvent, { type: "reasoning.start" }> => event.type === "reasoning.start");
+  assert.ok(start, "блок открывается до первой дельты");
+  assert.equal(step.result.reasoningBlock?.id, start.blockId, "история получает тот же блок, а не второй");
+  assert.equal(step.result.reasoningBlock?.startedAt, start.startedAt, "время старта не расходится с потоком");
+  assert.equal(start.step, 3);
+  assert.equal(typeof start.blockId, "string");
+  assert.match(start.title, /Шаг 3/);
+
+  const deltas = events.filter((event): event is Extract<AgentEvent, { type: "reasoning.delta" }> => event.type === "reasoning.delta");
+  assert.equal(deltas.length, 2);
+  assert.ok(deltas.every(delta => delta.blockId === start.blockId && delta.step === 3), "все дельты принадлежат одному блоку");
+
+  const end = events.find((event): event is Extract<AgentEvent, { type: "reasoning.end" }> => event.type === "reasoning.end");
+  assert.ok(end, "блок закрывается после шага");
+  assert.equal(end.blockId, start.blockId);
+  assert.equal(end.status, "done");
+  assert.equal(end.text, "сначала посмотрю файл");
+  assert.match(end.title ?? "", /Шаг 3/);
+});

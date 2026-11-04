@@ -58,8 +58,8 @@ async function main(){
       const message=c.messages[index];
       const createdAt=new Date(Date.parse(c.createdAt)+index).toISOString();
       await sql`UPSERT INTO ${sql.identifier(getTable("conversation_messages"))}
-        (conversation_id,created_at,message_id,project_id,role,content,tool_calls_json,tool_call_id)
-        VALUES (${c.id},${createdAt},${randomUUID()},${c.projectId},${message.role},${message.content},${message.role==="assistant"&&message.tool_calls ? JSON.stringify(message.tool_calls):""},${message.role==="tool" ? message.tool_call_id:""})
+        (conversation_id,created_at,message_id,project_id,role,content,tool_calls_json,reasoning,reasoning_blocks,tool_call_id)
+        VALUES (${c.id},${createdAt},${randomUUID()},${c.projectId},${message.role},${message.content},${message.role==="assistant"&&message.tool_calls ? JSON.stringify(message.tool_calls):""},${message.role==="assistant"&&message.reasoning ? message.reasoning:""},${message.role==="assistant"&&message.reasoningBlocks?.length ? JSON.stringify(message.reasoningBlocks):""},${message.role==="tool" ? message.tool_call_id:""})
       `;
     }
   }

@@ -30,7 +30,7 @@ export const MAX_REQUEST_MESSAGES=1000;
 // `webSearch` и `browserCheck` — переключатели из меню «Режимы» в панели ввода. Приходят
 // булевыми от клиента и разбираются терпимо: старый клиент их не присылает, и тогда поиск и
 // браузерная проверка считаются выключенными.
-export const runSchema=z.object({projectId:z.string().min(1).max(200),conversationId:z.string().max(200).optional(),messages:z.array(messageSchema).min(1).max(MAX_REQUEST_MESSAGES),model:z.string().max(200).optional(),mode:z.enum(["planner","developer"]).optional(),reasoning:z.enum(["low","medium","high"]).optional(),webSearch:z.boolean().optional(),browserCheck:z.boolean().optional(),planning:z.boolean().optional(),resume:z.object({reason:z.string().max(300).optional()}).optional()});
+export const runSchema=z.object({projectId:z.string().min(1).max(200),conversationId:z.string().max(200).optional(),messages:z.array(messageSchema).min(1).max(MAX_REQUEST_MESSAGES),model:z.string().max(200).optional(),mode:z.enum(["planner","developer"]).optional(),reasoning:z.enum(["auto","low","medium","high"]).optional(),webSearch:z.boolean().optional(),browserCheck:z.boolean().optional(),planning:z.boolean().optional(),resume:z.object({reason:z.string().max(300).optional()}).optional()});
 
 /**
  * Как часто работающий запуск говорит в сокет «жив».

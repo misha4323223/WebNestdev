@@ -1,40 +1,60 @@
 import type { ChatMessage } from "../types.js";
 import type { Provider,ProviderToolCall } from "../provider.js";
-import { getToolDefinitions } from "../tool-registry.js";
+import { getToolDefinitionsFor } from "../tool-registry.js";
 import { ContextBudgetError,MIN_MAX_MESSAGES,calibrateCharsPerToken,estimateTokens,trimMessagesToBudget } from "./context-budget.js";
 import { ProviderHttpError,describeProviderFailure } from "../provider/provider-errors.js";
 import { providerRetryPolicy,withProviderRetry } from "../provider/provider-retry.js";
 import { promptCacheKey } from "../provider/prompt-caching.js";
 import type { AgentContext } from "./types.js";
+import { createReasoningBlock, reasoningBlockTitle } from "./reasoning-blocks.js";
 
 export type StepUsage={promptTokens:number;completionTokens:number;cachedPromptTokens:number;cacheWritePromptTokens:number;estimated:boolean};
-export type StepResult={text:string;reasoning:string;calls:ProviderToolCall[];usage:StepUsage};
+export type StepResult={text:string;reasoning:string;calls:ProviderToolCall[];usage:StepUsage;/** Идентичность live-блока: по ней история получает тот же узел, а не второй. */reasoningBlock?:{id:string;startedAt:string}};
 
 /** Rough fallback for providers that do not report streaming usage. */
 const estimateTokensOfText=(text:string)=>Math.max(1,Math.ceil(text.length/4));
 
 export async function runAgentStep(provider:Provider,messages:ChatMessage[],model:string,context:AgentContext):Promise<StepResult>{
   let text="";let reasoning="";const calls:ProviderToolCall[]=[];let reported:StepUsage|null=null;
+  const step=context.step??1;
+  // Блок открывается только тогда, когда провайдер действительно прислал мысль. Модель без
+  // reasoning не создаёт пустой узел в дереве.
+  let reasoningBlock:{id:string;startedAt:string}|null=null;
   /** Whether any of this step reached the panel already. */
   let streamed=false;
   // Один и тот же ключ на всех шагах разговора: шлюз держит серию у одного провайдера,
   // поэтому следующий шаг попадает в тот же кэш префикса, а не в соседний аккаунт.
   const cacheKey=promptCacheKey({projectId:context.request.projectId,conversationId:context.request.conversationId,runId:context.runId},model);
+  // `auto` — это решение рантайма, а не значение для провайдера. Если шаг не получил
+  // конкретную глубину, оставляем провайдеру его собственный default.
+  const requestedReasoning=context.reasoning ?? (context.request.reasoning === "auto" ? undefined : context.request.reasoning);
   try{
-    for await(const chunk of provider.stream(messages,model,getToolDefinitions(),context.signal,{reasoning:context.request.reasoning,cacheKey})){
+    for await(const chunk of provider.stream(messages,model,getToolDefinitionsFor(context.toolNames),context.signal,{reasoning:requestedReasoning,cacheKey})){
       if(context.signal?.aborted)throw new Error("Запуск агента отменён");
       if(chunk.type==="text"){text+=chunk.text;streamed=true;context.emit({type:"message.delta",runId:context.runId,delta:chunk.text});}
-      else if(chunk.type==="reasoning"){reasoning+=chunk.text;streamed=true;context.emit({type:"reasoning.delta",runId:context.runId,delta:chunk.text});}
+      else if(chunk.type==="reasoning"){
+        if(!reasoningBlock){
+          const block=createReasoningBlock({runId:context.runId,step,text:""});
+          reasoningBlock={id:block.id,startedAt:block.startedAt};
+          context.emit({type:"reasoning.start",runId:context.runId,blockId:block.id,step,title:block.title,startedAt:block.startedAt,blockKind:"step"});
+        }
+        reasoning+=chunk.text;streamed=true;
+        context.emit({type:"reasoning.delta",runId:context.runId,delta:chunk.text,blockId:reasoningBlock.id,step});
+      }
       else if(chunk.type==="tool_call")calls.push(chunk.call);
       else if(chunk.type==="usage")reported={promptTokens:chunk.promptTokens,completionTokens:chunk.completionTokens,cachedPromptTokens:chunk.cachedPromptTokens??0,cacheWritePromptTokens:chunk.cacheWritePromptTokens??0,estimated:false};
     }
   }catch(error){
+    // Модель успела подумать и оборвалась: узел закрывается как ошибочный, чтобы в дереве не
+    // осталась вечно бегущая строка.
+    if(reasoningBlock)context.emit({type:"reasoning.end",runId:context.runId,blockId:reasoningBlock.id,status:"error",finishedAt:new Date().toISOString(),text:reasoning});
     // Отказ посреди потока: часть ответа уже показана и в панели, и в сессии, поэтому повтор прислал
     // бы её второй раз. Такой сбой остаётся ошибкой запуска (у пользователя есть «Продолжить»),
     // а повторяются только отказы до первого байта — их и лечит provider-retry.ts.
     if(streamed&&error&&typeof error==="object")Object.assign(error,{partialStreamed:true});
     throw error;
   }
+  if(reasoningBlock)context.emit({type:"reasoning.end",runId:context.runId,blockId:reasoningBlock.id,status:"done",finishedAt:new Date().toISOString(),title:reasoningBlockTitle(step,calls),text:reasoning});
   const usage:StepUsage=reported??{
     promptTokens:estimateTokens(messages),
     completionTokens:estimateTokensOfText(text+JSON.stringify(calls)),
@@ -42,7 +62,7 @@ export async function runAgentStep(provider:Provider,messages:ChatMessage[],mode
     cacheWritePromptTokens:0,
     estimated:true
   };
-  return {text,reasoning,calls,usage};
+  return {text,reasoning,calls,usage,...(reasoningBlock?{reasoningBlock}:{})};
 }
 
 /** How much of the model's window this run is allowed to use, how characters map to tokens, and how
@@ -57,8 +77,8 @@ export type BudgetedStep={result:StepResult;messages:ChatMessage[];budget:StepBu
  * parameter schemas are tens of kilobytes. Leaving them out of the estimate is exactly how a
  * "120000 token" budget sent the gateway a 932489-token prompt.
  */
-export function toolDefinitionChars(){
-  try{return JSON.stringify(getToolDefinitions()).length}catch{return 0}
+export function toolDefinitionChars(names?: readonly string[]){
+  try{return JSON.stringify(getToolDefinitionsFor(names)).length}catch{return 0}
 }
 
 /**
@@ -91,7 +111,7 @@ export async function runBudgetedStep(
   hooks:{onPrepared?:(prepared:{tokens:number;budgetTokens:number})=>void}={},
 ):Promise<BudgetedStep>{
   let current:StepBudget={...budget};
-  const overheadChars=toolDefinitionChars();
+  const overheadChars=toolDefinitionChars(context.toolNames);
   const trim=(list:ChatMessage[],keepRecent?:number)=>trimMessagesToBudget(list,{budgetTokens:current.budgetTokens,charsPerToken:current.charsPerToken,maxMessages:current.maxMessages,overheadChars,...(keepRecent?{keepRecent}:{})});
   let prepared=trim(messages);
   hooks.onPrepared?.({tokens:prepared.report.estimatedTokens,budgetTokens:current.budgetTokens});

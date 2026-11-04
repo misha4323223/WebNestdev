@@ -428,6 +428,7 @@ export async function initializeStorage(): Promise<void> {
       content TEXT NOT NULL,
       tool_calls_json TEXT NOT NULL DEFAULT '',
       reasoning TEXT NOT NULL DEFAULT '',
+      reasoning_blocks TEXT NOT NULL DEFAULT '',
       tool_call_id TEXT NOT NULL DEFAULT '',
       PRIMARY KEY (conversation_id, created_at, message_id)
     )`);
@@ -436,6 +437,9 @@ export async function initializeStorage(): Promise<void> {
     // CREATE TABLE IF NOT EXISTS would leave them without the new columns.
     await pool.query(`ALTER TABLE ${tbl("conversations")} ADD COLUMN IF NOT EXISTS plan_json TEXT NOT NULL DEFAULT ''`);
     await pool.query(`ALTER TABLE ${tbl("conversation_messages")} ADD COLUMN IF NOT EXISTS reasoning TEXT NOT NULL DEFAULT ''`);
+    // Дерево шагов хранится рядом с плоским reasoning: старые строки читаются как раньше, а
+    // новые клиенты получают структуру без миграции уже сохранённых размышлений.
+    await pool.query(`ALTER TABLE ${tbl("conversation_messages")} ADD COLUMN IF NOT EXISTS reasoning_blocks TEXT NOT NULL DEFAULT ''`);
 
     await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("providers")} (
       project_id TEXT NOT NULL PRIMARY KEY,

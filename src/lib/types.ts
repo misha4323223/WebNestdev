@@ -1,8 +1,23 @@
+/** Один узел дерева размышлений; `parentId` уже сохраняется для будущих субагентов. */
+export type ReasoningBlock={
+  id:string;
+  runId:string;
+  parentId?:string;
+  kind:"step"|"subagent";
+  title:string;
+  text:string;
+  step:number;
+  status:"running"|"done"|"error";
+  startedAt:string;
+  finishedAt?:string;
+};
 export type ChatMessage={
   role:"user"|"assistant"|"tool";
   content:string;
   /** What the model thought before answering; kept in the history and shown on demand. */
   reasoning?:string;
+  /** Структурированные шаги: старые чаты приходят только с плоским `reasoning`. */
+  reasoningBlocks?:ReasoningBlock[];
   /** Tool calls a stored assistant turn made, used to rebuild the action list. */
   tool_calls?:Array<{id:string;name:string;arguments:Record<string,unknown>}>;
   /** Set on a stored tool result: the call this message answers. */
@@ -12,6 +27,8 @@ export type ChatMessage={
 export type AgentMode="planner"|"developer";
 /** How deeply the model is asked to reason before answering. */
 export type ReasoningEffort="low"|"medium"|"high";
+/** `auto` lets the server raise or lower the depth per step; explicit values always win. */
+export type ReasoningMode=ReasoningEffort|"auto";
 /**
  * Что сервер знает о поддержке `reasoning_effort` у выбранной модели: `confirmed` — рассуждения
  * пришли, `silent` — поле принято, но мыслей нет (обычная чат-модель его игнорирует), `rejected` —

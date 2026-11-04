@@ -114,6 +114,17 @@ test("the agent reasons in Russian by default", () => {
   assert.match(SYSTEM_PROMPT, /write the answer in Russian/i);
 });
 
+test("системный промпт объясняет, когда звать субагента-разведчика", () => {
+  assert.match(SYSTEM_PROMPT, /agent\.scout/);
+  assert.match(SYSTEM_PROMPT, /several files or directories/i);
+  assert.match(SYSTEM_PROMPT, /three or more files/i);
+  assert.match(SYSTEM_PROMPT, /Do not call it for what one fs\.read/i);
+  assert.match(SYSTEM_PROMPT, /cannot change anything/i);
+  assert.match(SYSTEM_PROMPT, /kind 'web'/i);
+  assert.match(SYSTEM_PROMPT, /internet-search switch/i);
+  assert.match(SYSTEM_PROMPT, /never answer from memory as if it had searched/i);
+});
+
 test("an English request still gets English reasoning and answer", () => {
   assert.match(SYSTEM_PROMPT, /English request gets English reasoning and an English answer/i);
   assert.doesNotMatch(SYSTEM_PROMPT, /When the user writes in another language, answer in that language\./);

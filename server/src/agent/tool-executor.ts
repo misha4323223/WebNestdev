@@ -29,6 +29,12 @@ const heavyStorageMutationTools = new Set(["terminal.exec", "npm.install", "pip.
 const browserCheckTools = new Set(["browser.runtime", "browser.scenario", "browser.screenshot", "browser.perf"]);
 
 export async function executeTool(call:ProviderToolCall,context:AgentContext){
+  // Набор схем уже сужен под запуск. Та же граница нужна и здесь: модель не должна обойти её
+  // вызовом инструмента, которого нет в каталоге, — иначе экономия контекста была бы только
+  // косметической.
+  if(context.toolNames&&!context.toolNames.includes(call.name)){
+    throw new Error("Инструмент "+call.name+" не входит в набор этого запуска. Доступные инструменты: "+context.toolNames.join(", "));
+  }
   const tool=getTool(call.name);
   // The list is what turns a wrong tool name into a corrected next step instead of a dead end —
   // a model that guessed a tool name (and told the user it was "unavailable") can pick a real one.
@@ -55,7 +61,7 @@ export async function executeTool(call:ProviderToolCall,context:AgentContext){
   // а остановка запуска передаётся внутрь инструмента, чтобы ожидание закрылось вместе с ним.
   // Поиск в интернете разрешён только при включённом переключателе в панели ввода: флаг читается
   // здесь, поэтому его видят и web.search, и web.read, и ни один из них не обходит решение человека.
-  const result=await handler(call.arguments,{projectId:context.request.projectId,runId:context.runId,userId:context.request.userId,...(context.request.conversationId?{conversationId:context.request.conversationId}:{}),emit:context.emit,webSearchEnabled:context.request.webSearch===true,browserCheckEnabled:context.request.browserCheck===true,...(context.signal?{signal:context.signal}:{})});
+  const result=await handler(call.arguments,{projectId:context.request.projectId,runId:context.runId,userId:context.request.userId,...(context.request.conversationId?{conversationId:context.request.conversationId}:{}),emit:context.emit,webSearchEnabled:context.request.webSearch===true,browserCheckEnabled:context.request.browserCheck===true,...(context.signal?{signal:context.signal}:{}),...(context.scout?{scout:context.scout}:{})});
   if(storagePostRecordTools.has(call.name)){
     await recordStorageMutation(context.request.projectId, context.request.userId, {
       heavy: heavyStorageMutationTools.has(call.name),

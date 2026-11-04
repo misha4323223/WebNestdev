@@ -98,6 +98,7 @@ import { loadPlatformEnv } from "./platform/platform-env.js";
 import { ensureDemoUser } from "./auth/auth-store.js";
 import { ensureBootstrapAdmin } from "./admin/bootstrap.js";
 import "./tools/project-tools.js";
+import "./tools/scout-tools.js";
 import "./tools/filesystem-tools.js";
 import "./tools/terminal-tools.js";
 import "./tools/git-tools.js";
