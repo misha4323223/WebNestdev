@@ -245,6 +245,21 @@ export async function deleteProject(projectId:string,userId:string):Promise<bool
     }catch{}
   }
   await rm(sandboxRootPath(projectId),{recursive:true,force:true});
+  // Сайт — отдельная запись и отдельный каталог релизов, поэтому удаление проекта не
+  // удаляет его каскадом. Снимаем public-состояние и файлы здесь, чтобы после удаления
+  // проекта не остался оплачиваемый диск и живой адрес. Динамический импорт не создаёт
+  // цикл: site-store сам не импортирует project-store.
+  try {
+    const { getSiteByProject, markSiteDeleted } = await import("./hosting/site-store.js");
+    const site = await getSiteByProject(projectId);
+    if (site && site.status !== "deleted") {
+      await markSiteDeleted(site.id);
+      const { reconcileSite } = await import("./hosting/reconcile.js");
+      await reconcileSite(site.id);
+    }
+  } catch (error) {
+    console.warn("[hosting] не удалось удалить сайт проекта", error);
+  }
   return true;
 }
 

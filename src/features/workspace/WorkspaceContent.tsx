@@ -3,6 +3,7 @@ import { ChangesPanel } from "../changes/ChangesPanel";
 import { FilePanel } from "../files/FilePanel";
 import { TerminalPanel } from "../terminal/TerminalPanel";
 import { TasksPanel } from "../tasks/TasksPanel";
+import { HostingPanel } from "../hosting/HostingPanel";
 import type { WorkspaceView } from "./WorkspaceNav";
 
 /**
@@ -20,5 +21,6 @@ export function WorkspaceContent({view,projectId,projectName,conversationId,onRu
     {view==="files"&&<FilePanel projectId={projectId} projectName={projectName} onSaved={onFileSaved}/>}
     {view==="changes"&&<ChangesPanel projectId={projectId} projectName={projectName} onRolledBack={onRunFinished}/>}
     {view==="terminal"&&<TerminalPanel projectId={projectId}/>}
+    {view==="hosting"&&<HostingPanel projectId={projectId}/>}
   </>;
 }

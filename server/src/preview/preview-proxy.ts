@@ -3,7 +3,7 @@ import type { ExecFetchResult } from "./exec-proxy.js";
 import type { PreviewStatus } from "./types.js";
 import { applyNoStore } from "../routes/cache-headers.js";
 import { PREVIEW_TICKET_COOKIE } from "./preview-ticket.js";
-import { SESSION_COOKIE } from "../auth/auth.js";
+import { SESSION_COOKIE, SECURE_SESSION_COOKIE } from "../auth/auth.js";
 
 /**
  * Одна дверь к живому приложению проекта. Их две, и обе живут здесь: путь в панели
@@ -193,7 +193,7 @@ export function withoutPlatformCookies(cookie: string | undefined): string {
     .map(value => value.trim())
     .filter(value => {
       const name = value.split("=")[0]?.trim();
-      return Boolean(name) && name !== SESSION_COOKIE && name !== PREVIEW_TICKET_COOKIE;
+      return Boolean(name) && name !== SESSION_COOKIE && name !== SECURE_SESSION_COOKIE && name !== PREVIEW_TICKET_COOKIE;
     })
     .join("; ");
 }

@@ -3554,3 +3554,82 @@ button,textarea{font:inherit}button{color:inherit}
   .planning-room-resume .send-button{width:100%;justify-content:center}
   .planning-room-empty .send-button{justify-self:stretch;width:100%;justify-content:center}
 }
+
+/* ── Hosting panel ──────────────────────────────────────────────────────────
+   Сайт — это файлы на диске, а не процесс. Панель поэтому выглядит как карточка
+   публикации: адрес, активный релиз и история, без терминала и кнопки «запустить». */
+.hosting-panel{flex:1;min-width:0;background:#0b0d10}
+.hosting-head{flex:none}
+.hosting-head-actions{display:flex;gap:5px;align-items:center}
+.hosting-scroll{flex:1;min-height:0;overflow:auto;padding:22px clamp(14px,4vw,42px) 36px;max-width:1040px;width:100%;margin:0 auto}
+.hosting-empty{display:flex;align-items:center;justify-content:center;gap:9px;min-height:220px;color:#8a929d;font-size:11px}
+.hosting-alert{display:flex;align-items:flex-start;gap:8px;margin:0 0 14px;padding:10px 12px;border:1px solid #4a3030;border-radius:8px;background:#1b1212;color:#d99b9b;font-size:10.5px;line-height:1.5}
+.hosting-alert svg{flex:none;margin-top:1px}
+.hosting-alert.warn{border-color:#4a402e;background:#1a1610;color:#cdbb98}
+.hosting-kicker{display:block;color:#8d7d63;font-size:8.5px;font-weight:750;letter-spacing:.13em;text-transform:uppercase}
+.hosting-hero{display:grid;grid-template-columns:auto minmax(0,1fr);gap:14px 18px;padding:26px;border:1px solid #4a402e;border-radius:14px;background:radial-gradient(120% 140% at 0 0,#211b12 0,#11151a 55%,#0d1116 100%);box-shadow:inset 0 1px 0 rgba(255,255,255,.04),0 20px 50px -38px rgba(0,0,0,.9)}
+.hosting-hero-icon{width:48px;height:48px;display:grid;place-items:center;border:1px solid #5d4d32;border-radius:12px;background:#241d12;color:#d9c39d}
+.hosting-hero h2{margin:5px 0 0;color:#f0eee9;font-size:clamp(19px,2.4vw,26px);font-weight:650;letter-spacing:-.035em}
+.hosting-hero h2 em{color:#d8bf94;font-style:normal;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.78em;letter-spacing:-.04em}
+.hosting-hero p{max-width:660px;margin:7px 0 0;color:#969da7;font-size:11px;line-height:1.65}
+.hosting-hero-facts{grid-column:2;display:flex;flex-wrap:wrap;gap:7px;margin-top:2px}
+.hosting-hero-facts span{display:inline-flex;align-items:center;gap:5px;padding:5px 8px;border:1px solid #343b44;border-radius:6px;background:#0d1116;color:#858e99;font-size:9.5px}
+.hosting-primary{grid-column:2;justify-self:start;margin-top:4px}
+.hosting-primary,.hosting-actions .primary-button{display:inline-flex;align-items:center;justify-content:center;gap:7px;height:34px;padding:0 14px;border:1px solid #6d5838;border-radius:7px;background:#3a2d1b;color:#eadbc1;font-size:11px;font-weight:650;cursor:pointer;transition:background .15s ease,border-color .15s ease}
+.hosting-primary:hover,.hosting-actions .primary-button:hover{background:#4a3822;border-color:#8a7048}
+.hosting-actions .primary-button:disabled,.hosting-primary:disabled{opacity:.55;cursor:not-allowed}
+.hosting-site-card{margin-top:16px;padding:18px;border:1px solid #303842;border-radius:12px;background:linear-gradient(148deg,#13191f,#0e1217 72%);box-shadow:inset 0 1px 0 rgba(255,255,255,.035)}
+.hosting-site-top{display:flex;align-items:flex-start;justify-content:space-between;gap:12px}
+.hosting-url-row{display:flex;align-items:center;gap:5px;margin-top:5px;min-width:0}
+.hosting-url{display:inline-flex;align-items:center;gap:6px;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#e7dfd0;font:600 14px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;text-decoration:none}
+.hosting-url:hover{color:#f4e5c9;text-decoration:underline;text-underline-offset:3px}
+.hosting-url svg{flex:none;color:#8d7d63}
+.hosting-url.muted{color:#737b85;font-family:inherit;font-size:11px;font-weight:500}
+.hosting-badge{flex:none;display:inline-flex;align-items:center;gap:5px;padding:5px 8px;border:1px solid #3d4852;border-radius:999px;background:#121820;color:#9ba6b3;font-size:9px;font-weight:700;letter-spacing:.03em;text-transform:uppercase}
+.hosting-badge.live{border-color:#37533c;background:#102017;color:#9fc8a8}
+.hosting-badge.suspended{border-color:#5c3838;background:#1d1212;color:#d99b9b}
+.hosting-badge.unpublished{color:#cbb998;border-color:#4a402e;background:#1a1610}
+.hosting-meta{display:flex;flex-wrap:wrap;gap:9px 18px;margin-top:13px;padding-top:11px;border-top:1px solid #252c35;color:#707985;font-size:9.5px}
+.hosting-meta strong{color:#aeb6c0;font-weight:600}
+.hosting-note{display:flex;align-items:flex-start;gap:6px;margin-top:10px;padding:8px 9px;border-radius:6px;font-size:10px;line-height:1.5;background:#1b1212;color:#d99b9b}
+.hosting-note.danger{border:1px solid #5c3838}
+.hosting-note.error{background:#1a1310;color:#d5aa84}
+.hosting-note svg{flex:none;margin-top:1px}
+.hosting-building{display:flex;align-items:center;gap:7px;margin-top:11px;color:#cbb998;font-size:10.5px}
+.hosting-actions{display:flex;align-items:center;flex-wrap:wrap;gap:7px;margin-top:14px}
+.hosting-actions .ghost-button.danger{color:#c08d8d;border-color:#4a3030}
+.hosting-actions .ghost-button.danger:hover{background:#1d1212;border-color:#704343}
+.hosting-muted{color:#707985;font-size:10px}
+.hosting-releases{margin-top:22px}
+.hosting-section-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;padding-bottom:8px;border-bottom:1px solid #252c35;color:#b6bdc6;font-size:11px}
+.hosting-section-head span{color:#646d78;font-size:9.5px}
+.hosting-release-list{display:grid}
+.hosting-release{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px 2px;border-bottom:1px solid #1b2129}
+.hosting-release.active{background:linear-gradient(90deg,rgba(204,195,178,.035),transparent)}
+.hosting-release-main{display:flex;align-items:center;gap:9px;min-width:0}
+.hosting-release-main>div{display:grid;gap:3px;min-width:0}
+.hosting-release-main strong{color:#d4d9df;font-size:10.5px;font-weight:600}
+.hosting-release-main span{color:#6e7782;font:9.5px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace}
+.hosting-dot{flex:none;width:7px;height:7px;border-radius:50%;background:#6c7682;box-shadow:0 0 0 3px rgba(108,118,130,.09)}
+.hosting-dot.ready{background:#78a984;box-shadow:0 0 0 3px rgba(120,169,132,.1)}
+.hosting-dot.building{background:#cbb998;box-shadow:0 0 0 3px rgba(203,185,152,.1)}
+.hosting-dot.failed{background:#c06e6e;box-shadow:0 0 0 3px rgba(192,110,110,.1)}
+.hosting-release-actions{display:flex;align-items:center;gap:7px;flex:none}
+.hosting-status{padding:3px 6px;border:1px solid #303842;border-radius:4px;color:#818b96;font:8.5px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace;text-transform:uppercase}
+.hosting-status.ready{color:#93bf9e;border-color:#34493a}
+.hosting-status.building{color:#cbb998;border-color:#4a402e}
+.hosting-status.failed{color:#c58d8d;border-color:#4a3030}
+.hosting-log{margin:10px 0 0;padding:11px;max-height:240px;overflow:auto;border:1px solid #303842;border-radius:7px;background:#080a0d;color:#aeb6c0;font:9.5px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
+.hosting-footnote{max-width:760px;margin:20px 0 0;color:#5f6873;font-size:9.5px;line-height:1.6}
+@media(max-width:650px){
+  .hosting-scroll{padding:16px 12px 26px}
+  .hosting-hero{grid-template-columns:1fr;padding:18px}
+  .hosting-hero-icon{width:40px;height:40px}
+  .hosting-hero-facts,.hosting-primary{grid-column:1}
+  .hosting-primary{width:100%}
+  .hosting-site-top{flex-direction:column-reverse;align-items:flex-start}
+  .hosting-url{font-size:12px}
+  .hosting-release{align-items:flex-start;flex-direction:column;gap:6px}
+  .hosting-release-actions{width:100%;justify-content:space-between}
+  .hosting-actions .ghost-button,.hosting-actions .primary-button{flex:1 1 auto}
+}

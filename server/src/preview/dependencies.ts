@@ -60,6 +60,15 @@ export async function missingDependencies(root: string) {
 
 export type DependencyInstallResult = { ok: true; installed: boolean; log: string } | { ok: false; reason: string };
 
+export type DependencyRunOptions = {
+  /** Публичная сборка хостинга: никаких секретов проекта. */
+  injectSecretEnvFile?: boolean;
+  /** Маскировать существующие `.env*` пустыми файлами. */
+  maskSecretEnvFiles?: boolean;
+  /** Дополнительные mount'ы; порядок важен, публичный env идёт после масок. */
+  extraMounts?: string[];
+};
+
 /**
  * Установка, если она нужна. Перед сборкой и перед запуском dev-сервера вызывается одно и то
  * же: проект с готовыми зависимостями не платит за это ничем, кроме проверки каталогов.
@@ -67,6 +76,7 @@ export type DependencyInstallResult = { ok: true; installed: boolean; log: strin
 export async function ensureProjectDependencies(
   config: SandboxConfig,
   run: (config: SandboxConfig, command: string, cwd: string, options: SandboxRunOptions) => Promise<CommandResult> = runInSandbox,
+  runOptions: DependencyRunOptions = {},
 ): Promise<DependencyInstallResult> {
   const missing = await missingDependencies(config.root).catch(() => null);
   if (missing === null || missing.length === 0) return { ok: true, installed: false, log: "" };
@@ -75,7 +85,12 @@ export async function ensureProjectDependencies(
   try {
     // Lifecycle-скрипты проекта могут читать env; предпросмотр получает канонические секреты,
     // но только на время установки — файл удаляется сразу после команды.
-    result = await run(config, INSTALL_COMMAND, config.root, { network: "bridge", injectSecretEnvFile: true });
+    result = await run(config, INSTALL_COMMAND, config.root, {
+      network: "bridge",
+      injectSecretEnvFile: runOptions.injectSecretEnvFile ?? true,
+      maskSecretEnvFiles: runOptions.maskSecretEnvFiles ?? false,
+      extraMounts: runOptions.extraMounts ?? [],
+    });
   } catch (error) {
     return { ok: false, reason: "не удалось установить зависимости: " + (error instanceof Error ? error.message : String(error)) };
   }

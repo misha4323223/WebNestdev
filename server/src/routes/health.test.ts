@@ -104,6 +104,8 @@ test("health отдаёт подробности только loopback-запр�
     const sandbox = internalBody.sandbox as { runtime?: string };
     assert.ok(sandbox.runtime === "docker" || sandbox.runtime === "runsc", "sandbox.runtime называет реально выбранный рантайм");
     assert.ok(internalBody.activity, "loopback-ответ содержит метрики хоста");
+    assert.ok(internalBody.hosting, "loopback-ответ содержит срез хостинга");
+    assert.equal(publicBody.hosting, undefined, "публичный ответ не раскрывает сайты и пути");
     const activity = internalBody.activity as { process?: { uid: number | null; gid: number | null } };
     assert.ok(activity.process, "activity.process показывает реального пользователя процесса");
     assert.equal(typeof activity.process?.uid, "number");

@@ -73,6 +73,9 @@ import { registerAdminPlanRoutes } from "./routes/admin-plans.js";
 import { registerAdminAiRoutes } from "./routes/admin-ai.js";
 import { registerAdminAiModelsRoutes } from "./routes/admin-ai-models.js";
 import { registerAdminProjectRoutes } from "./routes/admin-projects.js";
+import { registerHostingRoutes } from "./routes/hosting.js";
+import { describeHosting, hostingConfig } from "./hosting/config.js";
+import { reconcileHosting } from "./hosting/reconcile.js";
 import { registerUnsubscribeRoutes } from "./routes/unsubscribe.js";
 import { describePostbox, postboxConfig, postboxStatus } from "./mail/postbox.js";
 import { checkMailDomain } from "./mail/domain.js";
@@ -180,6 +183,9 @@ console.log("[storage] " + describeObjectStore());
 // Which preview mode this host runs is the first thing to check when memory or a project's
 // preview behaves unexpectedly (PREVIEW_MODE: auto | static | container).
 console.log("[preview] " + describePreviewMode() + "; " + describePreviewLimits());
+// Статический хостинг: домен, TLS и SITES_DIR. Строка печатается даже при выключенном
+// HOSTING_ENABLED: уже опубликованные сайты Caddy продолжает отдавать.
+console.log("[hosting] " + describeHosting());
 // Публичные адреса предпросмотра (`<проект>.preview.<домен>`): по какому адресу их отдаёт
 // реверс-прокси и поднята ли дверь. Без этой строки «предпросмотр работает только в панели»
 // выглядит как поведение по умолчанию, а не как незаданная переменная PREVIEW_PUBLIC_DOMAIN.
@@ -264,6 +270,15 @@ initializeStorage()
         { node: registry.node.id, backfilledProjects: registry.backfilledProjects },
         "node registry ready",
       );
+      // После реестра: reconcile сайтов опирается на node_id и не должен трогать чужие
+      // файлы на этой ВМ. Первый проход — после DDL, дальше раз в час.
+      if (hostingConfig().enabled) {
+        void reconcileHosting().catch(error => app.log.warn({ error: error instanceof Error ? error.message : error }, "hosting reconcile skipped"));
+        const timer = setInterval(() => {
+          void reconcileHosting().catch(error => app.log.warn({ error: error instanceof Error ? error.message : error }, "hosting reconcile skipped"));
+        }, 60 * 60_000);
+        timer.unref();
+      }
     } catch (error) {
       app.log.warn(
         { error: error instanceof Error ? error.message : error },
@@ -377,6 +392,7 @@ await registerBillingRoutes(app);
 await registerSupportRoutes(app);
 await registerDonationRoutes(app);
 await registerProjectRoutes(app);
+await registerHostingRoutes(app);
 await registerPreviewRoutes(app);
 await registerToolRoutes(app);
 await registerWorkspaceRoutes(app);

@@ -143,10 +143,11 @@ function domainError(value: string) {
   return "";
 }
 
-export function DeploymentWizard({ projectId, onClose, onStarted }: {
+export function DeploymentWizard({ projectId, onClose, onStarted, onOpenHosting }: {
   projectId: string;
   onClose: () => void;
   onStarted: (brief: string) => void;
+  onOpenHosting?: () => void;
 }) {
   const [options, setOptions] = useState<DeploymentOptions | null>(null);
   const [loading, setLoading] = useState(true);
@@ -168,7 +169,8 @@ export function DeploymentWizard({ projectId, onClose, onStarted }: {
   const [ignorePlan, setIgnorePlan] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   // Развилка появляется до сводки: пользователь сначала выбирает, где живёт проект.
-  // Хостинг проекта пока только помечен статусом «Скоро» и никуда не ведёт.
+  // Для статики хостинг проекта уже доступен — карточка ведёт во вкладку «Хостинг»;
+  // серверным приложениям пока остаётся статус «Скоро».
   const [target, setTarget] = useState<"external" | null>(null);
 
   useEffect(() => {
@@ -367,16 +369,32 @@ export function DeploymentWizard({ projectId, onClose, onStarted }: {
           </div>
 
           <div className="deploy-targets" aria-label="Где размещаем проект">
-            <div className="deploy-target is-soon" aria-label="Хостинг проекта — скоро">
-              <span className="deploy-target-head">
-                <span className="deploy-target-icon"><Server size={18}/></span>
-                <span className="deploy-target-badge soon"><Sparkles size={9}/> СКОРО</span>
-              </span>
-              <span className="deploy-target-kicker">NESTDEV CLOUD</span>
-              <strong>Хостинг проекта</strong>
-              <span className="deploy-target-copy">Развернуть проект прямо в NestDev: контейнеры, домены и HTTPS — без внешнего облака.</span>
-              <span className="deploy-target-soon-note"><span className="deploy-target-soon-dot" aria-hidden="true"/>Готовим запуск. Пока выберите внешнее облако →</span>
-            </div>
+            {architecture === "static" && onOpenHosting
+              ? <button
+                  type="button"
+                  className="deploy-target"
+                  onClick={onOpenHosting}
+                  aria-label="Открыть хостинг статического сайта"
+                >
+                  <span className="deploy-target-head">
+                    <span className="deploy-target-icon"><Server size={18}/></span>
+                    <span className="deploy-target-badge live">ДОСТУПНО</span>
+                  </span>
+                  <span className="deploy-target-kicker">NESTDEV CLOUD</span>
+                  <strong>Хостинг проекта</strong>
+                  <span className="deploy-target-copy">Публичный HTTPS-адрес для статического сайта. Публикация и история версий — во вкладке «Хостинг».</span>
+                  <span className="deploy-target-cta">Открыть хостинг <ArrowRight size={12}/></span>
+                </button>
+              : <div className="deploy-target is-soon" aria-label="Хостинг проекта — скоро">
+                  <span className="deploy-target-head">
+                    <span className="deploy-target-icon"><Server size={18}/></span>
+                    <span className="deploy-target-badge soon"><Sparkles size={9}/> СКОРО</span>
+                  </span>
+                  <span className="deploy-target-kicker">NESTDEV CLOUD</span>
+                  <strong>Хостинг проекта</strong>
+                  <span className="deploy-target-copy">Развернуть проект прямо в NestDev: контейнеры, домены и HTTPS — без внешнего облака.</span>
+                  <span className="deploy-target-soon-note"><span className="deploy-target-soon-dot" aria-hidden="true"/>Готовим запуск. Пока выберите внешнее облако →</span>
+                </div>}
 
             <button
               type="button"

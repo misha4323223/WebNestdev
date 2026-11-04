@@ -1,7 +1,7 @@
 import { randomBytes } from "node:crypto";
 import type { FastifyInstance, FastifyRequest } from "fastify";
 import { z } from "zod";
-import { attachSession, getCurrentUser, requireUser, SESSION_COOKIE } from "../auth/auth.js";
+import { attachSession, getCurrentUser, requireUser, SESSION_COOKIE, SECURE_SESSION_COOKIE } from "../auth/auth.js";
 import {
   consumeEmailVerification,
   createUser,
@@ -284,8 +284,9 @@ export async function registerAuthRoutes(app:FastifyInstance, deps:AuthRouteDeps
     return {user:{id:user.id,email:user.email,createdAt:user.createdAt}};
   });
   app.post("/api/auth/logout", async (request,reply) => {
-    const sessionId = request.cookies?.[SESSION_COOKIE];
+    const sessionId = request.cookies?.[SECURE_SESSION_COOKIE] ?? request.cookies?.[SESSION_COOKIE];
     if(sessionId) await deleteSession(sessionId);
+    reply.clearCookie(SECURE_SESSION_COOKIE,{path:"/",secure:true});
     reply.clearCookie(SESSION_COOKIE,{path:"/"});
     return {ok:true};
   });
@@ -306,6 +307,7 @@ export async function registerAuthRoutes(app:FastifyInstance, deps:AuthRouteDeps
       ip: request.ip,
       details: { revoked },
     });
+    reply.clearCookie(SECURE_SESSION_COOKIE,{path:"/",secure:true});
     reply.clearCookie(SESSION_COOKIE,{path:"/"});
     return {ok:true,revoked};
   });

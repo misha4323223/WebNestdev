@@ -31,6 +31,8 @@ export type StorageState = "ok" | "warning" | "full";
 export type ProjectStorageInfo = { id: string; name: string; sizeBytes: number; measuredAt: string | null };
 export type StorageOverview = {
   usedBytes: number;
+  /** Из usedBytes: готовые релизы статических сайтов. */
+  hostingBytes: number;
   limitBytes: number;
   state: StorageState;
   measuredAt: string | null;
@@ -374,10 +376,23 @@ export async function refreshProjectSize(
   });
 }
 
+async function hostingStorageBytes(userId: string): Promise<number> {
+  try {
+    const { hostingBytesForUser } = await import("../hosting/usage.js");
+    return await hostingBytesForUser(userId);
+  } catch (error) {
+    // Старые базы до DDL хостинга не должны ломать экран квоты; при следующем старте
+    // initializeStorage создаст таблицы, и значение появится без перезапуска бизнес-логики.
+    console.warn("[storage] hosting usage не прочитан", error);
+    return 0;
+  }
+}
+
 export async function getStorageSnapshot(userId: string, plan: PlanId): Promise<{ usedBytes: number; limitBytes: number }> {
   const limitBytes = limitsForPlan(plan).storageBytes ?? 0;
   const stored = await readUserStorage(userId);
-  return { usedBytes: stored?.usedBytes ?? 0, limitBytes };
+  const hostingBytes = await hostingStorageBytes(userId);
+  return { usedBytes: (stored?.usedBytes ?? 0) + hostingBytes, limitBytes };
 }
 
 /**
@@ -386,10 +401,11 @@ export async function getStorageSnapshot(userId: string, plan: PlanId): Promise<
  */
 export async function getStorageOverview(userId: string, plan: PlanId): Promise<StorageOverview> {
   const limitBytes = limitsForPlan(plan).storageBytes ?? 0;
-  const [projects, sizes, stored] = await Promise.all([
+  const [projects, sizes, stored, hostingBytes] = await Promise.all([
     listProjects(userId),
     readProjectSizes(userId),
     readUserStorage(userId),
+    hostingStorageBytes(userId),
   ]);
   const items: ProjectStorageInfo[] = projects
     .map(project => ({
@@ -403,8 +419,8 @@ export async function getStorageOverview(userId: string, plan: PlanId): Promise<
     (latest, item) => item.measuredAt && (!latest || item.measuredAt > latest) ? item.measuredAt : latest,
     null,
   );
-  const usedBytes = stored?.usedBytes ?? items.reduce((sum, item) => sum + item.sizeBytes, 0);
-  return { usedBytes, limitBytes, state: storageState(usedBytes, limitBytes), measuredAt, projects: items };
+  const usedBytes = (stored?.usedBytes ?? items.reduce((sum, item) => sum + item.sizeBytes, 0)) + hostingBytes;
+  return { usedBytes, hostingBytes, limitBytes, state: storageState(usedBytes, limitBytes), measuredAt, projects: items };
 }
 
 export async function assertWithinStorageLimit(userId: string, plan: PlanId): Promise<void> {

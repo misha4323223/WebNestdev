@@ -35,6 +35,10 @@ services:
       # не смотрит (HTTPS не работает). .env на ВМ может переопределить.
       WEBNESTDEV_SITE_DOMAIN: ${WEBNESTDEV_SITE_DOMAIN:-nestdev.ru}
       PREVIEW_PUBLIC_DOMAIN: ${PREVIEW_PUBLIC_DOMAIN:-preview.nestdev.ru}
+      # Отдельное доменное пространство для статических сайтов. Не должно совпадать с
+      # WEBNESTDEV_SITE_DOMAIN: иначе пользовательский JS на поддомене делит registrable
+      # domain с панелью и может влиять на её cookie.
+      HOSTING_PUBLIC_DOMAIN: ${HOSTING_PUBLIC_DOMAIN:-host.nestdev.ru}
       ACME_EMAIL: ${ACME_EMAIL:-nestdev@mail.ru}
     ports:
       - "80:80"
@@ -42,6 +46,9 @@ services:
       - "443:443/udp"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Только чтение: Caddy отдаёт готовые релизы, но не должен уметь менять сайты.
+      # Один и тот же каталог на хосте монтируется серверу для записи.
+      - ${HOSTING_SITES_DIR:-/var/lib/webnestdev/sites}:/srv/sites:ro
       - caddy-data:/data
       - caddy-config:/config
     # Caddy остаётся в сети, которая уже создана на ВМ. Доверие к X-Forwarded-For задаётся не
@@ -142,6 +149,28 @@ services:
       # в контейнер только перечисленные переменные, поэтому без этой строки значение из .env
       # на ВМ до сервера не доходило бы.
       WEBNESTDEV_SITE_DOMAIN: ${WEBNESTDEV_SITE_DOMAIN:-nestdev.ru}
+      # Статический хостинг. HOSTING_ENABLED=0 не выключает выдачу уже опубликованных
+      # сайтов Caddy: флаг запрещает только новые публикации и изменения из панели.
+      HOSTING_ENABLED: ${HOSTING_ENABLED:-0}
+      HOSTING_PUBLIC_DOMAIN: ${HOSTING_PUBLIC_DOMAIN:-host.nestdev.ru}
+      HOSTING_TLS_MODE: ${HOSTING_TLS_MODE:-on_demand}
+      # SITES_DIR внутри контейнера всегда /srv/sites; снаружи его задаёт HOSTING_SITES_DIR.
+      # Это отдельный том состояния, как DATA_DIR: выкатка не должна его пересоздавать.
+      WEBNESTDEV_SITES_DIR: /srv/sites
+      SITES_DIR: /srv/sites
+      # 1 — этот узел видит общий SITES_DIR (NFS/volume). Без этого сайт, созданный на
+      # другой ВМ, здесь не публикуется и не «исправляется» reconcile.
+      HOSTING_SHARED_STORAGE: ${HOSTING_SHARED_STORAGE:-0}
+      HOSTING_MAX_RELEASE_BYTES: ${HOSTING_MAX_RELEASE_BYTES:-52428800}
+      HOSTING_MAX_FILE_BYTES: ${HOSTING_MAX_FILE_BYTES:-26214400}
+      HOSTING_MAX_FILES: ${HOSTING_MAX_FILES:-5000}
+      HOSTING_KEEP_RELEASES: ${HOSTING_KEEP_RELEASES:-3}
+      HOSTING_BUILD_TIMEOUT_MS: ${HOSTING_BUILD_TIMEOUT_MS:-600000}
+      HOSTING_MAX_RELEASE_SECONDS: ${HOSTING_MAX_RELEASE_SECONDS:-600}
+      HOSTING_BUILD_CONCURRENCY: ${HOSTING_BUILD_CONCURRENCY:-1}
+      HOSTING_GLOBAL_BYTES: ${HOSTING_GLOBAL_BYTES:-16106127360}
+      HOSTING_MIN_FREE_BYTES: ${HOSTING_MIN_FREE_BYTES:-5368709120}
+      HOSTING_MAX_SITES: ${HOSTING_MAX_SITES:-0}
       # Кому доверять X-Forwarded-For. Адрес Caddy задан статически выше; контейнер предпросмотра
       # в эту сеть не входит, поэтому подменить адрес клиента он не может.
       WEBNESTDEV_TRUSTED_PROXIES: ${WEBNESTDEV_TRUSTED_PROXIES:-172.30.0.0/24}
@@ -459,6 +488,9 @@ services:
       - "127.0.0.1:8787:8787"
     volumes:
       - webnestdev-data:/app/.webnestdev
+      # Релизы статических сайтов. Тот же каталог на хосте смонтирован Caddy только для
+      # чтения; сервер пишет сюда staging/rename. Не удаляется при выкатке.
+      - ${HOSTING_SITES_DIR:-/var/lib/webnestdev/sites}:/srv/sites
       - ${SANDBOX_DIR:-/var/lib/webnestdev/sandboxes}:${SANDBOX_DIR:-/var/lib/webnestdev/sandboxes}
       # Ключ сервисного аккаунта Yandex Cloud лежит файлом: это JSON с переносами строк,
       # в .env он неудобен и легко обрезается. Читается тем же путём внутри контейнера,

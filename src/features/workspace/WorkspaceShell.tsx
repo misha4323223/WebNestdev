@@ -200,6 +200,7 @@ export function WorkspaceShell({onHome,onAgentState,active=true}:{onHome:()=>voi
           projectId={projectId}
           onClose={()=>setDeployOpen(false)}
           onStarted={brief=>{setDeployOpen(false);setSettingsOpen(false);closePreview();setView("agent");composeAgentPrompt(brief)}}
+          onOpenHosting={()=>{setDeployOpen(false);setSettingsOpen(false);closePreview();setView("hosting")}}
         />
       </Suspense>}
     </main>

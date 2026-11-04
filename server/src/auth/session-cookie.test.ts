@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { sessionCookieSecure } from "./auth.js";
+import { SECURE_SESSION_COOKIE, SESSION_COOKIE, sessionCookieName, sessionCookieSecure } from "./auth.js";
 
 type Request = Parameters<typeof sessionCookieSecure>[0];
 
@@ -39,6 +39,14 @@ test("cookie с Secure, когда соединение действительн
     assert.equal(sessionCookieSecure(request({ "x-forwarded-proto": "http" })), false);
     // Заголовок решает и тогда, когда сокет внутри уже без шифрования.
     assert.equal(sessionCookieSecure(request({ "x-forwarded-proto": "http" }, "https")), false);
+  });
+});
+
+test("на https cookie получает __Host- и не может быть подменена поддоменом", () => {
+  withConfigured(undefined, () => {
+    assert.equal(sessionCookieName(request({}, "https")), SECURE_SESSION_COOKIE);
+    assert.equal(sessionCookieName(request()), SESSION_COOKIE);
+    assert.match(SECURE_SESSION_COOKIE, /^__Host-/);
   });
 });
 

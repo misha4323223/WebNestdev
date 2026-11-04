@@ -46,6 +46,16 @@ if ! mkdir -p "$SANDBOX_DIR" 2>/dev/null; then
 fi
 chmod 0775 "$SANDBOX_DIR" 2>/dev/null || true
 
+# Каталог статических сайтов. Он должен быть отдельным от DATA_DIR и SANDBOX_DIR: Caddy
+# монтирует его read-only, а сервер пишет релизы. Тот же путь задан в docker-compose.yml.
+HOSTING_SITES_DIR="${HOSTING_SITES_DIR:-/var/lib/webnestdev/sites}"
+if ! mkdir -p "$HOSTING_SITES_DIR" 2>/dev/null; then
+  echo "каталог $HOSTING_SITES_DIR недоступен для записи. Выполните один раз:" >&2
+  echo "  sudo mkdir -p $HOSTING_SITES_DIR && sudo chmod 0775 $HOSTING_SITES_DIR" >&2
+  exit 1
+fi
+chmod 0775 "$HOSTING_SITES_DIR" 2>/dev/null || true
+
 # docker-compose.yml requires POSTGRES_PASSWORD: the postgres service and the server's
 # DATABASE_URL are both built from it, and without it `docker compose up` refuses to start.
 # It is reused when present — postgres only reads it while creating the data volume, so a
@@ -79,7 +89,7 @@ chmod 700 "$SECRETS_DIR" 2>/dev/null || true
 # о списании, а автопродление отказывается включаться.
 # Админы панели переносятся обязательно: без WEBNESTDEV_ADMIN_EMAILS редактор ключей закрыт, и
 # потеря строки выглядела бы как «панель ключей сломалась».
-CARRY_PATTERN='^(SMS_PROVIDER|SMS_SENDER|YANDEX_[A-Z0-9_]+|SMS_RU_API_ID|SMSC_[A-Z]+|EXOLVE_API_KEY|SMSAERO_[A-Z]+|WEBNESTDEV_SMS_TEST_MODE|WEBNESTDEV_DEMO_PHONE[A-Z_]*|WEBNESTDEV_ALLOWED_ORIGINS|WEBNESTDEV_SITE_DOMAIN|PREVIEW_PUBLIC_DOMAIN|PREVIEW_TICKET_TTL_MS|ACME_EMAIL|GITHUB_[A-Z_]+|GITLAB_[A-Z_]+|GITVERSE_[A-Z_]+|PLATFORM_AI_[A-Z0-9_]+|PLATFORM_IMAGE_[A-Z0-9_]+|PLATFORM_S3_[A-Z0-9_]+|PLATFORM_INFRA_[A-Z0-9_]+|PROJECT_ARCHIVE_[A-Z0-9_]+|SANDBOX_RUNTIME|WEBNESTDEV_ADMIN_[A-Z_]+|ADMIN_[A-Z_]+|TAVILY_API_KEY|WEB_SEARCH_PROVIDER|ROBOKASSA_[A-Z0-9_]+|BILLING_[A-Z0-9_]+|ALERT_[A-Z0-9_]+|MAIL_[A-Z0-9_]+|POSTBOX_[A-Z0-9_]+|SUPPORT_[A-Z0-9_]+)='
+CARRY_PATTERN='^(SMS_PROVIDER|SMS_SENDER|YANDEX_[A-Z0-9_]+|SMS_RU_API_ID|SMSC_[A-Z]+|EXOLVE_API_KEY|SMSAERO_[A-Z]+|WEBNESTDEV_SMS_TEST_MODE|WEBNESTDEV_DEMO_PHONE[A-Z_]*|WEBNESTDEV_ALLOWED_ORIGINS|WEBNESTDEV_SITE_DOMAIN|PREVIEW_PUBLIC_DOMAIN|PREVIEW_TICKET_TTL_MS|ACME_EMAIL|GITHUB_[A-Z_]+|GITLAB_[A-Z_]+|GITVERSE_[A-Z_]+|PLATFORM_AI_[A-Z0-9_]+|PLATFORM_IMAGE_[A-Z0-9_]+|PLATFORM_S3_[A-Z0-9_]+|PLATFORM_INFRA_[A-Z0-9_]+|PROJECT_ARCHIVE_[A-Z0-9_]+|SANDBOX_RUNTIME|HOSTING_[A-Z0-9_]+|WEBNESTDEV_ADMIN_[A-Z_]+|ADMIN_[A-Z_]+|TAVILY_API_KEY|WEB_SEARCH_PROVIDER|ROBOKASSA_[A-Z0-9_]+|BILLING_[A-Z0-9_]+|ALERT_[A-Z0-9_]+|MAIL_[A-Z0-9_]+|POSTBOX_[A-Z0-9_]+|SUPPORT_[A-Z0-9_]+)='
 CARRY="$(grep -E "$CARRY_PATTERN" .env 2>/dev/null || true)"
 if [ -n "$CARRY" ]; then echo "SMS-ENV-REUSED"; fi
 # Адреса фронтенда: из прошлого .env или из PUBLIC_ORIGIN. localhost здесь нельзя — в production
@@ -118,6 +128,9 @@ if ! printf '%s\n' "$CARRY" | grep -q '^ACME_EMAIL='; then ACME="nestdev@mail.ru
   printf 'WEBNESTDEV_STORAGE=json\n'
   printf 'WEBNESTDEV_DATA_DIR=%s\n' "$DATA_DIR"
   printf 'SANDBOX_DIR=%s\n' "$SANDBOX_DIR"
+  # Пилот стартует выключенным: включите после DNS/TLS-проверки. Уже опубликованные сайты
+  # Caddy продолжает отдавать и при HOSTING_ENABLED=0.
+  if ! printf '%s\n' "$CARRY" | grep -q '^HOSTING_ENABLED='; then printf 'HOSTING_ENABLED=0\n'; fi
   printf 'WEBNESTDEV_ENCRYPTION_KEY=%s\n' "$ENCKEY"
   printf 'WEBNESTDEV_AUDIT_SALT=%s\n' "$AUDITSALT"
   # Каталог секретов монтируется в контейнер, поэтому он записан и здесь, и в compose.
@@ -131,12 +144,16 @@ if ! printf '%s\n' "$CARRY" | grep -q '^ACME_EMAIL='; then ACME="nestdev@mail.ru
   printf 'POSTGRES_PASSWORD=%s\n' "$PGPASS"
   # Перенесённые значения (ключи SMS, прошлые адреса фронтенда).
   if [ -n "$CARRY" ]; then printf '%s\n' "$CARRY"; fi
+  # Путь сайтов печатаем последним: если в старом .env было своё значение, оно
+  # перенесено выше, но каталог, который подготовил этот запуск, должен победить.
+  printf 'HOSTING_SITES_DIR=%s\n' "$HOSTING_SITES_DIR"
 } > .env
 chmod 600 .env
 echo "LINES=$(wc -l < .env)"
 echo "ENCLEN=$(grep -c '^WEBNESTDEV_ENCRYPTION_KEY=[a-f0-9]\{64\}$' .env)"
 echo "DATADIR=$(grep '^WEBNESTDEV_DATA_DIR=' .env | cut -d= -f2)"
 echo "SANDBOXDIR=$(grep '^SANDBOX_DIR=' .env | cut -d= -f2)"
+echo "HOSTINGDIR=$(grep '^HOSTING_SITES_DIR=' .env | cut -d= -f2)"
 echo "PGPASS=$(grep -c '^POSTGRES_PASSWORD=.\+' .env)"
 echo "SMSKEYS=$(grep -cE "$CARRY_PATTERN" .env)"
 echo "SECRETSDIR=$SECRETS_DIR"

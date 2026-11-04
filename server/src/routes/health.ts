@@ -12,6 +12,8 @@ import { agentStepLimit,contextBudgetTokensFor,contextMaxMessagesFor,DEFAULT_CHA
 import { sandboxHostRootDir,sandboxRootDir,sandboxRuntime } from "../sandbox/config.js";
 import { lastSandboxMountCheck } from "../sandbox/sandbox-check.js";
 import { diskStatus, memoryStatus } from "../health/host-metrics.js";
+import { hostingConfig } from "../hosting/config.js";
+import { hostingHealth } from "../hosting/site-store.js";
 import { smsReadiness, smsSummary } from "../auth/sms.js";
 import { supportKeyStatus } from "../support/support-api-key.js";
 import { mailSettings, mailSettingsSource } from "../mail/mailer.js";
@@ -113,6 +115,34 @@ async function activity(){
 }
 
 /**
+ * Хостинг для внутреннего `/api/health`: включён ли он, где лежат релизы, сколько занимает
+ * и когда была последняя публикация. Сайты и релизы отдаются одним агрегатом, а не обходом
+ * каждого сайта: health опрашивается часто. Публичный ответ через Caddy этот блок не получает.
+ */
+async function hostingInfo(){
+  try{
+    const config=hostingConfig();
+    const disk=await diskStatus(config.sitesDir);
+    const summary=await hostingHealth().catch(error=>{
+      console.warn("[hosting] health summary failed:",error instanceof Error?error.message:String(error));
+      return null;
+    });
+    return {
+      enabled:config.enabled,
+      domain:config.publicDomain,
+      nodeId:config.nodeId,
+      sharedStorage:config.sharedStorage,
+      diskFreeBytes:disk ? Math.round(disk.freeMb*1024*1024) : null,
+      ...(summary ?? {unavailable:true}),
+    };
+  }catch(error){
+    // Кривой HOSTING_PUBLIC_DOMAIN не должен ронять health: оператор должен увидеть
+    // «хостинг не настроен» и причину, а не 500 от всего сервера.
+    return {enabled:false,unavailable:true,reason:error instanceof Error?error.message:String(error)};
+  }
+}
+
+/**
  * Состояние SMS для /api/health: провайдер, тестовый режим, способ аутентификации и —
  * главное — читается ли выбранный ключ. Без последнего «ключ задан» было неотличимо от
  * «ключ не читается», и об этом узнавали только по отказу отправки.
@@ -204,6 +234,7 @@ export async function registerHealthRoutes(app:FastifyInstance){
       // Почта: откуда ключ, чем подписывается письмо и что ответил сервис в последний раз.
       mail:mailInfo(),
       support,
+      hosting:await hostingInfo(),
       activity:await activity(),
     };
   });

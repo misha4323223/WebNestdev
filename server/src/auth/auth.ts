@@ -11,9 +11,27 @@ import { isBlocked } from "../account/restriction-store.js";
 const RETIRED_REVIEW_EMAIL = "review@webnestdev.local";
 
 export const SESSION_COOKIE = "webnestdev_session";
+/**
+ * На HTTPS сессия панели получает префикс `__Host-`. Это не косметика: сайты хостинга живут
+ * на поддомене того же registrable domain, и без префикса пользовательский JavaScript мог бы
+ * выставить родительскую cookie `webnestdev_session` (cookie tossing) и влиять на вход в
+ * панель. `__Host-` требует Secure, Path=/ и отсутствие Domain; такую cookie поддомен не
+ * может подменить для родителя.
+ *
+ * Старое имя читается только по http — в локальной разработке. На https fallback намеренно
+ * отсутствует: иначе поддомен снова мог бы прислать старую cookie, и защита была бы ложной.
+ */
+export const SECURE_SESSION_COOKIE = "__Host-webnestdev_session";
+
+export function sessionCookieName(request?:FastifyRequest){
+  return sessionCookieSecure(request) ? SECURE_SESSION_COOKIE : SESSION_COOKIE;
+}
 
 export async function getCurrentUser(request:FastifyRequest){
-  const sessionId = request.cookies?.[SESSION_COOKIE];
+  const secure = sessionCookieSecure(request);
+  const sessionId = secure
+    ? request.cookies?.[SECURE_SESSION_COOKIE]
+    : request.cookies?.[SESSION_COOKIE];
   if(!sessionId) return null;
   const session = await getSession(sessionId);
   if(!session) return null;
@@ -89,6 +107,7 @@ export async function attachSession(reply:any,userId:string,request?:FastifyRequ
   }
   // Cookie живёт ровно столько же, сколько разрешён абсолютный срок сессии: idle-таймаут
   // проверяет сервер по отметке активности, а не браузер по сроку cookie.
-  reply.setCookie(SESSION_COOKIE, session.id, {httpOnly:true,sameSite:"lax",secure,path:"/",maxAge:Math.max(1,Math.floor(sessionTtlMs()/1000))});
+  const name = secure ? SECURE_SESSION_COOKIE : SESSION_COOKIE;
+  reply.setCookie(name, session.id, {httpOnly:true,sameSite:"lax",secure,path:"/",maxAge:Math.max(1,Math.floor(sessionTtlMs()/1000))});
   return true;
 }

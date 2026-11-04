@@ -23,7 +23,10 @@
 	# поддерживаются, а защитой служит сам ответ endpoint — выдача начинается только для того имени,
 	# которое принадлежит проекту на этом сервере, и полученный сертификат потом берётся из кэша.
 	on_demand_tls {
-		ask http://webnestdev-server:8787/api/preview/tls-ask
+		# Один ask на два поддоменных пространства: preview и статические сайты.
+		# Сервер различает их по домену и отвечает 200 только для существующего проекта
+		# или live-сайта; для draft/unpublished сертификат не выдаётся.
+		ask http://webnestdev-server:8787/api/tls-ask
 	}
 }
 
@@ -43,6 +46,58 @@
 # Доступ к адресу даёт билет, который панель просит у сервера: cookie сессии панели на поддомен не
 # отправляется, а расширять её до всего домена нельзя (прокси передаёт приложение заголовки запроса,
 # то есть код пользователя увидел бы cookie платформы).
+# Статические сайты проекта: `<slug>.host.nestdev.ru`. Ссылка `current` относительная и
+# создаётся только сервером; expression проверяет, что slug — это ровно 12 hex-символов,
+# а не произвольный Host. Caddy читает SITES_DIR только на чтение.
+*.{$HOSTING_PUBLIC_DOMAIN:host.nestdev.ru} {
+	tls {
+		on_demand
+	}
+
+	encode zstd gzip
+
+	# labels.3 — slug только для домена из трёх меток (host.nestdev.ru). Если домен станет
+	# host.staging.nestdev.ru, индекс нужно пересчитать и проверить в smoke, а не угадывать.
+	@site `{http.request.host.labels.3}.matches('[a-f0-9]{12}')`
+	handle @site {
+		root * /srv/sites/{http.request.host.labels.3}/current
+
+		# Скрытые файлы и служебные каталоги. `hide` не является границей безопасности,
+		# поэтому они ещё и не попадают в артефакт при публикации.
+		@hidden {
+			path_regexp dot (^|/)\.
+			not path /.well-known/*
+		}
+		respond @hidden 404
+
+		@html path / *.html
+		header @html Cache-Control "no-cache"
+
+		# Годовая immutable-кешировка только для файлов с хешем в имени. Обычный
+		# /assets/logo.png не должен получить max-age=31536000.
+		@hashed path_regexp hashed -[A-Za-z0-9_-]{6,}\.[a-z0-9]{1,8}$
+		header @hashed Cache-Control "public, max-age=31536000, immutable"
+
+		header {
+			X-Content-Type-Options nosniff
+			Referrer-Policy strict-origin-when-cross-origin
+		}
+
+		# SPA-fallback только для путей без расширения: `/assets/missing.js` остаётся 404,
+		# а не превращается в index.html.
+		@spa not path_regexp ext \.[a-z0-9]{1,8}$
+		handle @spa {
+			try_files {path} /index.html
+			file_server
+		}
+		handle {
+			file_server
+		}
+	}
+	# Неизвестный или невалидный slug: не отдаём чужой каталог и не подставляем панель.
+	respond 404
+}
+
 *.{$PREVIEW_PUBLIC_DOMAIN:preview.localhost} {
 	# Сертификат на конкретное имя (`p1.preview.nestdev.ru`) Caddy получает в момент первого
 	# обращения к нему, а не заранее: имена проектов появляются вместе с проектами. Полученные

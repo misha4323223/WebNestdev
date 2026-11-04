@@ -20,8 +20,12 @@ uid="${WEBNESTDEV_UID:-1000}"
 gid="${WEBNESTDEV_GID:-1000}"
 data="${WEBNESTDEV_DATA_DIR:-/app/.webnestdev}"
 sandbox="${WEBNESTDEV_SANDBOX_DIR:-$data/sandboxes}"
+# Релизы статических сайтов. Caddy монтирует этот же путь read-only; сервер обязан писать сюда
+# от uid 1000, иначе первая публикация падает на EACCES после успешной сборки.
+hosting="${WEBNESTDEV_SITES_DIR:-/srv/sites}"
 secrets="${WEBNESTDEV_SECRETS_DIR:-}"
 marker="$data/.sandbox-owner-v1"
+hosting_marker="$data/.hosting-owner-v1"
 
 case "$uid$gid" in
   *[!0-9]*) echo "[entrypoint] WEBNESTDEV_UID/GID должны быть числами: $uid/$gid" >&2; exit 1 ;;
@@ -44,12 +48,24 @@ case "$sandbox" in
   /*) ;;
   *) echo "[entrypoint] WEBNESTDEV_SANDBOX_DIR должен быть абсолютным: $sandbox" >&2; exit 1 ;;
 esac
+case "$hosting" in
+  ""|"/") echo "[entrypoint] небезопасный WEBNESTDEV_SITES_DIR=$hosting" >&2; exit 1 ;;
+  /*) ;;
+  *) echo "[entrypoint] WEBNESTDEV_SITES_DIR должен быть абсолютным: $hosting" >&2; exit 1 ;;
+esac
 # Данные не должны оказаться внутри песочницы: тогда chown -hR по песочнице затронул бы
 # платформенные секреты и ключи, которые лежат в data. Обратное (песочница внутри data) —
 # штатный локальный режим, его обрабатывает отдельная ветка ниже.
 case "$data" in
-  "$sandbox"/*) echo "[entrypoint] WEBNESTDEV_DATA_DIR не должен лежать внутри песочницы: $data" >&2; exit 1 ;;
-esac
+  "$sandbox"/*) echo "[entrypoint] WEBNESTDEV_DATA_DIR не должен лежать внутри песочницы: $data" >&2; exit 1 ;;  "$hosting"|"$hosting"/*) echo "[entrypoint] WEBNESTDEV_DATA_DIR не должен совпадать с SITES_DIR или лежать внутри него: $data" >&2; exit 1 ;;
+  esac
+  case "$hosting" in
+  "$data"|"$data"/*) echo "[entrypoint] WEBNESTDEV_SITES_DIR не должен совпадать с данными или лежать внутри них: $hosting" >&2; exit 1 ;;
+  "$sandbox"|"$sandbox"/*) echo "[entrypoint] WEBNESTDEV_SITES_DIR не должен совпадать с песочницей или лежать внутри неё: $hosting" >&2; exit 1 ;;
+  esac
+  case "$sandbox" in
+  "$hosting"|"$hosting"/*) echo "[entrypoint] WEBNESTDEV_SANDBOX_DIR не должен совпадать с SITES_DIR или лежать внутри него: $sandbox" >&2; exit 1 ;;
+  esac
 if [ -n "$secrets" ]; then
   # Каталог секретов не должен ни лежать внутри данных/песочниц, ни содержать их: иначе cp -a
   # скопировал бы проекты в runtime-secrets, а chown сделал бы секреты доступными серверу.
@@ -67,6 +83,12 @@ if [ -n "$secrets" ]; then
   case "$sandbox" in
     "$secrets"/*) echo "[entrypoint] WEBNESTDEV_SANDBOX_DIR не должен лежать внутри каталога секретов: $sandbox" >&2; exit 1 ;;
   esac
+  case "$hosting" in
+    "$secrets"|"$secrets"/*) echo "[entrypoint] WEBNESTDEV_SITES_DIR не должен лежать внутри каталога секретов: $hosting" >&2; exit 1 ;;
+  esac
+  case "$secrets" in
+    "$hosting"/*) echo "[entrypoint] WEBNESTDEV_SECRETS_DIR не должен лежать внутри SITES_DIR: $secrets" >&2; exit 1 ;;
+  esac
 fi
 
 # Если образ когда-нибудь запустят уже от непривилегированного пользователя, подготавливать
@@ -77,6 +99,7 @@ fi
 
 echo "[entrypoint] подготовка томов для uid=$uid gid=$gid"
 mkdir -p "$data"
+mkdir -p "$hosting"
 
 # Данные сервера: аккаунты, шифрованные секреты, ключи платформы, состояние алертов. Размер
 # небольшой, поэтому рекурсивный chown здесь дешевле, чем разбираться с EACCES на первом запросе.
@@ -110,6 +133,19 @@ else
     else
       echo "[entrypoint] WARNING: не удалось сменить владельца $sandbox; контейнеры могут не писать в проекты" >&2
     fi
+  fi
+fi
+
+# SITES_DIR создаётся Docker как root при первом bind-mount. Рекурсивный chown делаем один
+# раз (маркер), чтобы старт с сотнями релизов не обходил весь диск; саму вершину обновляем
+# всегда, иначе новый пустой каталог останется root и сервер не сможет создать сайт.
+chown -h "$uid:$gid" "$hosting" 2>/dev/null || true
+if [ -d "$hosting" ] && [ ! -e "$hosting_marker" ]; then
+  if chown -hR "$uid:$gid" "$hosting"; then
+    : > "$hosting_marker" 2>/dev/null || true
+    echo "[entrypoint] владелец SITES_DIR $hosting обновлён"
+  else
+    echo "[entrypoint] WARNING: не удалось сменить владельца SITES_DIR $hosting; публикация может упасть с EACCES" >&2
   fi
 fi
 

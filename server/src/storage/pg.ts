@@ -408,6 +408,70 @@ export async function initializeStorage(): Promise<void> {
     await pool.query(`ALTER TABLE ${tbl("projects")} ADD COLUMN IF NOT EXISTS node TEXT NOT NULL DEFAULT ''`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("projects")}_node ON ${tbl("projects")} (node)`);
 
+    // Статический хостинг: сайт один на проект, релизы неизменяемы. `node_id` — узел, на
+    // котором лежат файлы; при нескольких ВМ это обязательная часть записи, иначе вторая
+    // реплика может решить, что сайт живёт на её локальном SITES_DIR.
+    await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("sites")} (
+      id TEXT NOT NULL PRIMARY KEY,
+      user_id TEXT NOT NULL,
+      project_id TEXT NOT NULL UNIQUE,
+      slug TEXT NOT NULL UNIQUE,
+      status TEXT NOT NULL DEFAULT 'draft',
+      active_release_id TEXT,
+      publishing_release_id TEXT,
+      node_id TEXT NOT NULL DEFAULT '',
+      last_error TEXT NOT NULL DEFAULT '',
+      suspend_reason TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      published_at TEXT,
+      unpublished_at TEXT,
+      suspended_at TEXT,
+      CONSTRAINT sites_status_check CHECK (status IN ('draft','live','unpublished','suspended','deleted'))
+    )`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("sites")}_user ON ${tbl("sites")} (user_id)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("sites")}_status ON ${tbl("sites")} (status)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("sites")}_node ON ${tbl("sites")} (node_id)`);
+
+    await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("site_releases")} (
+      id TEXT NOT NULL PRIMARY KEY,
+      site_id TEXT NOT NULL REFERENCES ${tbl("sites")}(id) ON DELETE CASCADE,
+      user_id TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'building',
+      kind TEXT NOT NULL DEFAULT '',
+      bytes BIGINT NOT NULL DEFAULT 0,
+      stored_bytes BIGINT NOT NULL DEFAULT 0,
+      files INTEGER NOT NULL DEFAULT 0,
+      sha256 TEXT NOT NULL DEFAULT '',
+      manifest_json TEXT NOT NULL DEFAULT '',
+      storage_key TEXT NOT NULL DEFAULT '',
+      manifest_key TEXT NOT NULL DEFAULT '',
+      error TEXT NOT NULL DEFAULT '',
+      build_log TEXT NOT NULL DEFAULT '',
+      node_id TEXT NOT NULL DEFAULT '',
+      created_at TEXT NOT NULL,
+      ready_at TEXT,
+      activated_at TEXT,
+      deleted_at TEXT,
+      CONSTRAINT site_releases_status_check CHECK (status IN ('building','ready','failed','deleted'))
+    )`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("site_releases")}_site ON ${tbl("site_releases")} (site_id, created_at)`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("site_releases")}_user ON ${tbl("site_releases")} (user_id)`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_${getTable("site_releases")}_one_building ON ${tbl("site_releases")} (site_id) WHERE status = 'building'`);
+    await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_${getTable("site_releases")}_id_site ON ${tbl("site_releases")} (id, site_id)`);
+    // Составной FK не даёт active/publishing указать на релиз другого сайта. Ограничения
+    // отложенные: удаление сайта каскадно убирает релизы и активную ссылку в одной транзакции.
+    await pool.query(`DO $$ BEGIN
+      ALTER TABLE ${tbl("sites")} ADD CONSTRAINT ${getTable("sites")}_active_release_fk
+        FOREIGN KEY (active_release_id, id) REFERENCES ${tbl("site_releases")}(id, site_id)
+        DEFERRABLE INITIALLY DEFERRED;
+    EXCEPTION WHEN duplicate_object THEN NULL; END $$`);
+    await pool.query(`DO $$ BEGIN
+      ALTER TABLE ${tbl("sites")} ADD CONSTRAINT ${getTable("sites")}_publishing_release_fk
+        FOREIGN KEY (publishing_release_id, id) REFERENCES ${tbl("site_releases")}(id, site_id)
+        DEFERRABLE INITIALLY DEFERRED;
+    EXCEPTION WHEN duplicate_object THEN NULL; END $$`);
+
     await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("conversations")} (
       id TEXT NOT NULL PRIMARY KEY,
       project_id TEXT NOT NULL,
