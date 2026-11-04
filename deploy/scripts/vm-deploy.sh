@@ -889,6 +889,30 @@ reload_caddy(){
 
 
 #
+# ВРЕМЕННО: разбор «Failed to fetch» при загрузке изображения в чат. Печатает адрес, который
+# сервер выдаёт браузеру для части файла, и прогоняет preflight + PUT части с самой ВМ — так
+# видно, настроен ли CORS на реальном хосте и работает ли подпись. Ссылка целиком не печатается
+# (в ней сессионный токен), только хост и длина. Удалить вместе с правкой причины.
+#
+media_diagnostics(){
+  docker compose -f "$COMPOSE_FILE" logs --no-color "$SERVICE" 2>&1 | grep -F "[media]" | tail -3 || true
+  docker compose -f "$COMPOSE_FILE" exec -T "$SERVICE" node --input-type=module - 2>&1 <<'NODE' | head -c 4000 || true
+import { abortMultipartUpload, createMultipartUpload, mediaConfigFromEnv } from "/app/dist/media/media-store.js";
+const config = mediaConfigFromEnv();
+if (!config) { console.log("media: не настроено"); process.exit(0); }
+console.log("media host=" + config.host + " bucket=" + config.bucket + " public=" + config.publicBaseUrl);
+const part = await createMultipartUpload(config, { userId: "diag", projectId: "diag", name: "diag.bin", size: 1024 });
+const url = part.parts[0].url;
+console.log("part url host=" + new URL(url).host + " length=" + url.length);
+const preflight = await fetch(url, { method: "OPTIONS", headers: { Origin: "https://nestdev.ru", "Access-Control-Request-Method": "PUT", "Access-Control-Request-Headers": "content-type" } });
+console.log("preflight=" + preflight.status + " acao=" + preflight.headers.get("access-control-allow-origin") + " expose=" + preflight.headers.get("access-control-expose-headers"));
+const put = await fetch(url, { method: "PUT", body: new Uint8Array(1024), headers: { Origin: "https://nestdev.ru", "content-type": "application/octet-stream" } });
+console.log("put=" + put.status + " etag=" + put.headers.get("etag") + " body=" + (await put.text()).slice(0, 300));
+await abortMultipartUpload(config, part.key, part.uploadId).catch(error => console.log("abort: " + error.message));
+NODE
+}
+
+#
 # Файлы уже созданных проектов лежат в именованном томе (там их писал сервер, когда песочницы
 # жили внутри тома). Новый каталог песочниц — это каталог хоста, поэтому файлы переносятся один
 # раз. Переносится только в пустой каталог: если на хосте уже что-то есть, решает оператор
@@ -1415,6 +1439,7 @@ case "$MODE" in
     ensure_sandbox_image
     run docker compose -f "$COMPOSE_FILE" up -d --no-build $(services_to_start)
     reload_caddy
+    media_diagnostics
     ;;
   source)
     log "обновляю репозиторий до origin/$GIT_BRANCH"
