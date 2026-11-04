@@ -6,6 +6,7 @@ import {
   parseUpstreamModel,
   rankUpstreamProviders,
   resetUpstreamCatalogCache,
+  resolveUpstreamProviderName,
   upstreamProviderEligible,
   type UpstreamCatalogProvider,
 } from "./upstream-catalog.js";
@@ -76,6 +77,20 @@ test("cheapest сортирует по профилю нагрузки и не �
   assert.equal(upstreamProviderEligible(providers[3], {}), false, "spot не выбирается автоматически");
   assert.equal(upstreamProviderEligible(providers[6], {}), false, "дубль имени нельзя закрепить точно");
   assert.deepEqual(rankUpstreamProviders(providers, { assumedInputPerOutput: 10, maxPrice: { completion: 20 } }).map(item => item.name), ["sail-research/fp4"]);
+});
+
+test("подпись провайдера из админки приводится к имени каталога", () => {
+  const providers = [
+    provider("sail-research/fp4/us", 11.51, 17.09),
+    provider("sail-research/fp4", 11.51, 17.09),
+    provider("sail-research/fp4:batch", 9, 15),
+    provider("morph/fp8", 5.7, 21.88),
+  ];
+  assert.equal(resolveUpstreamProviderName(providers, "sail-research/fp4"), "sail-research/fp4");
+  assert.equal(resolveUpstreamProviderName(providers, "Sail Research"), "sail-research/fp4", "вендор без варианта — обычный, не /us и не :batch");
+  assert.equal(resolveUpstreamProviderName(providers, "Sail Research FP4"), "sail-research/fp4");
+  assert.equal(resolveUpstreamProviderName(providers, "Morph"), "morph/fp8");
+  assert.equal(resolveUpstreamProviderName(providers, "Unknown Provider"), null);
 });
 
 test("каталог кэшируется и переживает временный сбой", async () => {

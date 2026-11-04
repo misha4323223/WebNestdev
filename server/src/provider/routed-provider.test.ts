@@ -92,6 +92,30 @@ test("fixed пропускает выключенного Morph и берёт с
   assert.ok(logs.some(message => /morph\/fp8 отсутствует в каталоге/.test(message)), logs.join("\n"));
 });
 
+test("fixed понимает подпись Sail Research и отправляет шлюзу точное имя", async () => {
+  const calls: Call[] = [];
+  const logs: string[] = [];
+  const instance = new RoutedProvider(
+    "https://polza.ai/api/v1",
+    "key",
+    routing({ mode: "fixed", providers: ["Sail Research"] }),
+    {
+      catalog: async () => catalogOf(
+        provider("sail-research/fp4/us", 11.51, 17.09),
+        provider("sail-research/fp4", 11.51, 17.09),
+        provider("morph/fp8", 5.7, 21.88),
+      ),
+      create: recordingCreate(calls),
+      log: message => logs.push(message),
+    },
+  );
+
+  await collect(instance);
+  assert.deepEqual(calls.map(call => call.label), ["sail-research/fp4"]);
+  assert.deepEqual(calls[0]?.upstream, { only: ["sail-research/fp4"], allowFallbacks: false });
+  assert.ok(logs.some(message => /«Sail Research» → sail-research\/fp4/.test(message)), logs.join("\n"));
+});
+
 test("fixed переключается, если провайдер ответил отказом до первого байта", async () => {
   const calls: Call[] = [];
   const instance = new RoutedProvider(

@@ -19,6 +19,7 @@ import {
   estimatedUpstreamCost,
   getUpstreamModelCatalog,
   rankUpstreamProviders,
+  resolveUpstreamProviderName,
   upstreamProviderEligible,
 } from "../provider/upstream-catalog.js";
 import { getPlatformModel } from "../platform/platform-models.js";
@@ -216,7 +217,11 @@ export async function registerAdminAiRoutes(app: FastifyInstance, overrides: Par
     }
 
     const sameBase = Boolean(saved && normalizeBaseUrl(saved.baseUrl) === normalizeBaseUrl(targetBaseUrl));
-    const token = catalogModel?.apiKey ?? (sameBase ? saved?.token : undefined);
+    // Черновик новой модели ещё не сохранён, поэтому его ключ неоткуда взять, кроме заголовка.
+    // Ключ в query не принимаем: Fastify пишет URL с query в лог, и секрет попал бы в журнал.
+    const headerKey = request.headers["x-ai-provider-key"];
+    const draftToken = (Array.isArray(headerKey) ? headerKey[0] : headerKey)?.trim();
+    const token = catalogModel?.apiKey ?? draftToken ?? (sameBase ? saved?.token : undefined);
     const catalog = await deps.catalog(targetBaseUrl, token, targetModel, { refresh: refreshRequested(parsed.data.refresh) });
     if (!catalog) {
       return reply.code(502).send({
@@ -226,11 +231,15 @@ export async function registerAdminAiRoutes(app: FastifyInstance, overrides: Par
       });
     }
 
-    const routing = catalogModel?.routing ?? saved?.routing ?? defaultUpstreamRouting();
+    // Routing главной модели относится только к ней. Для черновика Mini с другим адресом или
+    // моделью он не должен показывать чужой выбранный список — начинаем с auto.
+    const savedRouting = saved && sameBase && saved.model === targetModel ? saved.routing : undefined;
+    const routing = catalogModel?.routing ?? savedRouting ?? defaultUpstreamRouting();
     const ranked = rankUpstreamProviders(catalog.providers, routing);
     const rankedNames = new Set(ranked.map(provider => provider.name));
     const selected = new Set(
-      routing.mode === "fixed" ? routing.providers
+      routing.mode === "fixed"
+        ? routing.providers.map(name => resolveUpstreamProviderName(catalog.providers, name) ?? name)
         : routing.mode === "cheapest" ? [...rankedNames]
           : [],
     );

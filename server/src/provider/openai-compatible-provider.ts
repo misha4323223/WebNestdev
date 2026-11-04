@@ -42,6 +42,30 @@ function upstreamRequestFields(options?:ProviderStreamOptions):Record<string,unk
   };
 }
 
+/**
+ * Polza and some other gateways report an upstream refusal as an SSE event inside an HTTP 200
+ * stream: `{error:{code:"TOO_MANY_REQUESTS"}, choices:[{delta:{content:""},finish_reason:"error"}]}`.
+ * Without this check the parser sees a successful, empty stream and the user gets «Модель не вернула
+ * ответ»; FailoverProvider never sees the refusal and cannot try the next provider. Map the gateway
+ * code to the HTTP status ProviderHttpError already understands, so a rate-limited upstream is
+ * retried or replaced instead of silently becoming an empty answer.
+ */
+function streamErrorResponse(data:any):{status:number;body:string}|null{
+  const error=data?.error;
+  const finish=data?.choices?.[0]?.finish_reason;
+  if(!error&&finish!=="error")return null;
+  const code=typeof error?.code==="string"?error.code:typeof error?.type==="string"?error.type:"";
+  const message=typeof error==="string"?error:typeof error?.message==="string"?error.message:"";
+  const normalized=(code+" "+message).toLowerCase();
+  const status=/too_many_requests|rate[_ ]?limit|429/.test(normalized)?429
+    :/unauthorized|invalid[_ ]?api[_ ]?key|authentication|401/.test(normalized)?401        :/insufficient|quota|payment|402/.test(normalized)?402
+        :/context|too[_ ]?long|maximum.*token|token.*limit/.test(normalized)?400
+          :/invalid|bad[_ ]?request|validation|not[_ ]?found|404/.test(normalized)?400
+            :/service[_ ]?unavailable|overload|timeout|503|502|504/.test(normalized)?503
+              :502;
+  return {status,body:JSON.stringify({error:error??{code:"STREAM_ERROR",message:"Провайдер вернул ошибку в потоке"},choices:data?.choices})};
+}
+
 // AI-прокси: если задан AI_PROXY_URL, запрос идёт через зарубежный прокси.
 const proxyUrl=(process.env.AI_PROXY_URL??"").replace(/\/+$/,"");
 const proxyToken=(process.env.AI_PROXY_TOKEN??"").trim();
@@ -297,6 +321,8 @@ export class OpenAICompatibleProvider implements Provider{
     for await(const line of lines(response.body)){
       if(!line||line==="[DONE]")continue;
       const data=JSON.parse(line) as any;
+      const streamError=streamErrorResponse(data);
+      if(streamError)throw new ProviderHttpError(streamError.status,streamError.body,parseRetryAfterHeader(response.headers.get("retry-after")));
       if(!upstreamLogged&&typeof data.provider==="string"&&data.provider){
         upstreamLogged=true;
         console.log("[provider] "+model+" обслужил "+data.provider);

@@ -9,6 +9,7 @@ import {
   getUpstreamModelCatalog,
   isWithinUpstreamPrice,
   rankUpstreamProviders,
+  resolveUpstreamProviderName,
   type UpstreamCatalogModel,
 } from "./upstream-catalog.js";
 import type { Provider, ProviderChunk, ProviderStreamOptions } from "./provider-types.js";
@@ -140,12 +141,16 @@ export class RoutedProvider implements Provider {
     if (this.routing.mode === "fixed") {
       if (catalog && catalog.providers.length) {
         const byName = new Map(catalog.providers.map(provider => [provider.name, provider]));
-        for (const name of this.routing.providers) {
-          const provider = byName.get(name);
-          if (!provider) {
-            notes.push(name + " отсутствует в каталоге — пропущен");
+        for (const configured of this.routing.providers) {
+          // В админке провайдер может быть сохранён подписью («Sail Research»). Шлюзу нужно
+          // точное имя каталога (`sail-research/fp4`), иначе fixed молча останется без адресов.
+          const name = resolveUpstreamProviderName(catalog.providers, configured);
+          const provider = name ? byName.get(name) : undefined;
+          if (!name || !provider) {
+            notes.push(configured + " отсутствует в каталоге — пропущен");
             continue;
           }
+          if (name !== configured) notes.push("«" + configured + "» → " + name);
           if (provider.ambiguous) {
             notes.push(name + " встречается в каталоге несколько раз — выбран первый вариант");
           }
@@ -168,13 +173,17 @@ export class RoutedProvider implements Provider {
       if (catalog && catalog.providers.length) {
         let candidates = catalog.providers;
         if (this.routing.providers.length) {
-          const allowed = new Set(this.routing.providers);
-          candidates = candidates.filter(provider => allowed.has(provider.name));
-          for (const name of this.routing.providers) {
-            if (!catalog.providers.some(provider => provider.name === name)) {
-              notes.push(name + " отсутствует в каталоге — пропущен");
+          const allowed = new Set<string>();
+          for (const configured of this.routing.providers) {
+            const name = resolveUpstreamProviderName(catalog.providers, configured);
+            if (!name) {
+              notes.push(configured + " отсутствует в каталоге — пропущен");
+              continue;
             }
+            if (name !== configured) notes.push("«" + configured + "» → " + name);
+            allowed.add(name);
           }
+          candidates = candidates.filter(provider => allowed.has(provider.name));
         }
         names.push(...rankUpstreamProviders(candidates, this.routing).map(provider => provider.name));
         if (!names.length) {

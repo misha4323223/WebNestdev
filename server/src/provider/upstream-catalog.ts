@@ -239,6 +239,35 @@ export async function getUpstreamModelCatalog(
   }
 }
 
+/**
+ * Приводит имя провайдера из настроек к имени в каталоге. Админка показывает человеческие
+ * подписи («Sail Research»), а шлюзу нужно точное имя варианта (`sail-research/fp4`); если
+ * сохранить подпись как есть, `fixed` не найдёт её и запуск закончится пустым ответом.
+ *
+ * Сравнение идёт по точному имени, затем по нормализованному полному имени, затем по вендору
+ * до первого `/`. Когда у вендора несколько вариантов (`/us`, `:batch`), выбирается самый
+ * короткий — обычный, а не региональный или пакетный.
+ */
+export function resolveUpstreamProviderName(providers: UpstreamCatalogProvider[], wanted: string): string | null {
+  const value = wanted.trim();
+  if (!value) return null;
+  const exact = providers.find(provider => provider.name === value)
+    ?? providers.find(provider => provider.name.toLowerCase() === value.toLowerCase());
+  if (exact) return exact.name;
+
+  const normalized = (text: string) => text.trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  const target = normalized(value);
+  if (!target) return null;
+
+  const full = providers.find(provider => normalized(provider.name) === target);
+  if (full) return full.name;
+
+  const vendor = providers
+    .filter(provider => normalized(provider.name.split("/")[0] ?? "") === target)
+    .sort((left, right) => left.name.length - right.name.length || left.name.localeCompare(right.name));
+  return vendor[0]?.name ?? null;
+}
+
 /** Оценка стоимости под профиль нагрузки: входные токены дороже/дешевле выходных по-разному. */
 export function estimatedUpstreamCost(provider: UpstreamCatalogProvider, assumedInputPerOutput: number): number | null {
   if (provider.promptPerMillion === null || provider.completionPerMillion === null) return null;

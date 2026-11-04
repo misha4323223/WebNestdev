@@ -15,6 +15,7 @@ const { registerAdminAiRoutes } = await import("./admin-ai.js");
 const { createAdmin, createAdminSession } = await import("../admin/admin-store.js");
 
 const seen: { value: { provider: string; baseUrl: string; model: string; token?: string; routing?: { mode: string } } | null } = { value: null };
+const catalogSeen: { value: { baseUrl: string; token?: string; model: string } | null } = { value: null };
 function catalogFor(model: string): UpstreamCatalogModel {
   return {
     id: model,
@@ -45,7 +46,10 @@ await registerAdminAiRoutes(app, {
     seen.value = config;
     return { ok: true, provider: config.provider, model: config.model, latencyMs: 10, tools: true };
   },
-  catalog: async (_baseUrl, _token, model) => catalogFor(model),
+  catalog: async (baseUrl, token, model) => {
+    catalogSeen.value = { baseUrl, ...(token ? { token } : {}), model };
+    return catalogFor(model);
+  },
 });
 await app.ready();
 
@@ -209,6 +213,21 @@ test("админка сохраняет маршрутизацию и отдаё
   });
   assert.equal(tested.statusCode, 200);
   assert.equal(seen.value?.routing?.mode, "fixed");
+});
+
+test("каталог черновика получает ключ из заголовка и не наследует routing главной модели", async () => {
+  const response = await app.inject({
+    method: "GET",
+    url: "/api/admin/ai/providers?baseUrl=" + encodeURIComponent("https://gateway.example/v1") +
+      "&model=" + encodeURIComponent("mini-model"),
+    headers: { ...auth, "x-ai-provider-key": "sk-mini-draft" },
+  });
+  assert.equal(response.statusCode, 200);
+  assert.equal(catalogSeen.value?.token, "sk-mini-draft");
+  assert.equal(catalogSeen.value?.baseUrl, "https://gateway.example/v1");
+  assert.equal(catalogSeen.value?.model, "mini-model");
+  assert.equal(response.json().routing.mode, "auto", "routing главной модели относится только к ней");
+  assert.deepEqual(response.json().providers.map((provider: { selected: boolean }) => provider.selected), [false, false]);
 });
 
 test("fixed без провайдера отклоняется на уровне API", async () => {

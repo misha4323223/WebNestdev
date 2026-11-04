@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { OpenAICompatibleProvider, reasoningDelta, reasoningSupport, resetReasoningProbes, toWireMessages } from "./openai-compatible-provider.js";
+import { ProviderHttpError } from "./provider-errors.js";
 import type { ProviderChunk } from "./provider-types.js";
 import type { ChatMessage } from "../types.js";
 
@@ -112,6 +113,18 @@ test("явный upstream-провайдер уходит в provider.only и з
       max_price:{prompt:10,completion:30},
     });
     assert.deepEqual(chunks.filter(chunk=>chunk.type==="text"),[{type:"text",text:"Готово"}]);
+  }finally{stub.restore()}
+});
+
+test("SSE-ошибка шлюза превращается в отказ провайдера, а не в пустой ответ",async()=>{
+  const stub=stubFetch(()=>streamResponse([
+    {provider:"unknown",error:{code:"TOO_MANY_REQUESTS",message:"Превышен лимит запросов к провайдеру"},choices:[{delta:{content:""},finish_reason:"error"}]}
+  ]));
+  try{
+    await assert.rejects(
+      collect(new OpenAICompatibleProvider("https://polza.ai/api/v1"),"deepseek/deepseek-v4.1-flash-1017"),
+      error=>error instanceof ProviderHttpError&&error.code==="RATE_LIMIT",
+    );
   }finally{stub.restore()}
 });
 
