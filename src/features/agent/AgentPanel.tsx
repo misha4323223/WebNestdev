@@ -1,10 +1,10 @@
 import { useEffect,useMemo,useRef,useState,type DragEvent as ReactDragEvent,type MouseEvent as ReactMouseEvent } from "react";
 import Markdown,{type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { AlertTriangle,ArrowDownToLine,Check,Copy,Eye,EyeOff,ExternalLink,FileText,History,Image as ImageIcon,KeyRound,ListPlus,Paperclip,Play,RotateCcw,Send,ShieldCheck,Sparkles,Square,X } from "lucide-react";
+import { AlertTriangle,ArrowDownToLine,Check,Copy,Eye,EyeOff,ExternalLink,FileText,History,KeyRound,ListPlus,Paperclip,Play,RotateCcw,Send,ShieldCheck,Sparkles,Square,X } from "lucide-react";
 import { createAgentSocket } from "../../lib/agent-socket";
 import { apiJson } from "../../lib/api";
-import { addProjectTasks,answerProjectQuestion,cancelProjectSecret,getConversation,listPendingProjectSecrets,skipProjectQuestion,submitProjectSecret,uploadProjectFile,type PendingProjectSecret } from "../../lib/project-api";
+import { addProjectTasks,answerProjectQuestion,cancelProjectSecret,getConversation,listPendingProjectSecrets,projectAssetUrl,skipProjectQuestion,submitProjectSecret,uploadProjectFile,type PendingProjectSecret } from "../../lib/project-api";
 import { deleteUploadedMedia,uploadProjectMedia } from "../../lib/media-api";
 import { cancelProjectAccess,submitProjectAccess } from "../../lib/deployment-api";
 import { ActionsDock,MessageThinking,PlanPanel,actionTarget,chatImagesByMessage,contentBefore,deriveActions,readPlan,writePlan,type ChatImage,type PanelId,type PanelState } from "./agent-activity";
@@ -278,7 +278,9 @@ async function shrinkImage(file:File):Promise<{blob:Blob;name:string;compressed:
 function withAttachments(text:string,attachments:Attachment[]){
   if(!attachments.length)return text;
   const remote=attachments.filter(item=>item.remote);
-  const list=attachments.map(item=>"- "+item.path+(item.remote?" (публичная ссылка в хранилище)":item.image?" (изображение в проекте)":" (файл в проекте)")).join("\n");
+  const list=attachments.map(item=>"- "+item.path+(item.remote
+    ? item.image?" (изображение по публичной ссылке)":" (файл по публичной ссылке)"
+    : item.image?" (изображение в проекте)":" (файл в проекте)")).join("\n");
   let prompt=text+"\n\nЭти файлы уже доступны:\n"+list;
   if(remote.length)prompt+="\n\nДля файлов с публичной ссылкой используй в коде именно этот URL (src, href, CSS url() или данные) и не скачивай файл в проект: он уже лежит в хранилище и должен оставаться ссылкой.";
   if(remote.length<attachments.length)prompt+="\nДля файлов с локальным путём используй путь в проекте.";
@@ -1710,6 +1712,16 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
         // один список без повторов: пока запуск идёт, результата инструмента в сообщениях ещё нет.
         const images=[...(chatImages.get(m)??[]),...liveImages.filter(item=>item.messageIndex===i).map(item=>item.image)]
           .filter((image,index,list)=>list.findIndex(other=>other.url===image.url)===index);
+        // Превью вложений пользователя: путь берётся из служебного хвоста сообщения, поэтому
+        // картинка остаётся в переписке и после перезагрузки, а не только в поле ввода.
+        const shown=m.role==="user"?shownUserMessage(m.content):null;
+        const uploadedImages=(shown?.attachments??[])
+          .filter(item=>item.image)
+          .map(item=>({url:item.remote?item.path:projectAssetUrl(projectId,item.path),path:item.path}))
+          .filter((image,index,list)=>list.findIndex(other=>other.url===image.url)===index);
+        // Подпись «Изображение» нужна только закладкам и списку сессий; в самом сообщении
+        // достаточно картинки, без текстовой заглушки вместо имени файла.
+        const userText=shown?.text==="Изображение"&&uploadedImages.length?"":shown?.text??"";
         // Карточка ответа занимает ту же ширину, что «План задач» и «Действия агента»,
         // поэтому левый и правый края совпадают.
         return <div className={"message-row "+m.role+(jumpedIndex===i?" is-jumped":"")} key={i} data-message-index={i}>
@@ -1726,7 +1738,15 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
               ? <div className="message-text markdown" onClick={openMarkdownLink}>{m.content
                   ? <Markdown remarkPlugins={[remarkGfm]} components={markdownComponents}>{m.content}</Markdown>
                   : ""}</div>
-              : <div className="message-text">{shownUserMessage(m.content).text}</div>}
+              : userText?<div className="message-text">{userText}</div>:null}
+            {/* Вложение пользователя — картинкой, а не именем файла. */}
+            {uploadedImages.length>0&&<div className="message-images message-uploads">
+              {uploadedImages.map((image,index)=><figure className="message-image message-upload-image" key={image.url+"-"+index}>
+                <a href={image.url} target="_blank" rel="noreferrer" title="Открыть изображение">
+                  <img src={image.url} alt="Изображение, прикреплённое к сообщению" loading="lazy"/>
+                </a>
+              </figure>)}
+            </div>}
             {/* Нарисованная картинка — в самой переписке, а не только в списке действий:
                 человек просил её увидеть, а не найти файл в дереве проекта. */}
             {images.length>0&&<div className="message-images">
@@ -1886,7 +1906,13 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       <ul>{queue.map(item=><li key={item.id}>
         <div className="message-queue-text">
           <span>{shownUserMessage(item.text).text}</span>
-          {item.attachments.length>0&&<small>{item.attachments.map(attachment=>attachment.name).join(", ")}</small>}
+          {item.attachments.length>0&&<div className="message-queue-attachments">
+            {item.attachments.map(attachment=>{
+              if(!attachment.image)return <small key={attachment.id}>{attachment.name}</small>;
+              const url=attachment.remote?attachment.path:projectAssetUrl(projectId,attachment.path);
+              return <a key={attachment.id} href={url} target="_blank" rel="noreferrer" title="Открыть изображение"><img src={url} alt="" loading="lazy"/></a>;
+            })}
+          </div>}
         </div>
         <button className="ghost-button message-queue-send" onClick={()=>sendQueuedNow(item.id)} title={running?"Прервать текущую задачу и отправить это сообщение":"Отправить это сообщение"}>Отправить сейчас</button>
         <button className="icon-button" onClick={()=>removeQueued(item.id)} title="Убрать из очереди" aria-label="Убрать из очереди"><X size={13}/></button>
@@ -1906,12 +1932,22 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
         <textarea ref={promptBoxRef} disabled={!loaded} value={prompt} onChange={e=>setPrompt(e.target.value)} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send()}}} placeholder={loaded?"Опишите проект или задачу...":"Загружаем сессию…"} rows={3}/>
 
         {attachments.length>0&&<div className="composer-attachments">
-          {attachments.map(attachment=><span className="attachment-chip" key={attachment.id}>
-            {attachment.image?<ImageIcon size={12}/>:<FileText size={12}/>}
-            <span className="attachment-name" title={attachment.path}>{attachment.name}{attachment.remote?" · ссылка":""}</span>
-            <small>{formatBytes(attachment.bytes)}</small>
-            <button className="icon-button attachment-remove" onClick={()=>void removeAttachment(attachment)} title="Убрать файл" aria-label={"Убрать файл "+attachment.name}><X size={12}/></button>
-          </span>)}
+          {attachments.map(attachment=>{
+            const url=attachment.remote?attachment.path:projectAssetUrl(projectId,attachment.path);
+            return attachment.image
+              ? <span className="attachment-thumb" key={attachment.id}>
+                  <a href={url} target="_blank" rel="noreferrer" title="Открыть изображение">
+                    <img src={url} alt="" loading="lazy"/>
+                  </a>
+                  <button className="icon-button attachment-remove" onClick={()=>void removeAttachment(attachment)} title="Убрать изображение" aria-label={"Убрать изображение "+attachment.name}><X size={11}/></button>
+                </span>
+              : <span className="attachment-chip" key={attachment.id}>
+                  <FileText size={12}/>
+                  <span className="attachment-name" title={attachment.path}>{attachment.name}{attachment.remote?" · ссылка":""}</span>
+                  <small>{formatBytes(attachment.bytes)}</small>
+                  <button className="icon-button attachment-remove" onClick={()=>void removeAttachment(attachment)} title="Убрать файл" aria-label={"Убрать файл "+attachment.name}><X size={12}/></button>
+                </span>;
+          })}
         </div>}
 
         <div className="composer-footer">

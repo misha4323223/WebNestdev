@@ -276,6 +276,11 @@ button,textarea{font:inherit}button{color:inherit}
 .attachment-chip>svg{flex:none;color:#8d95a0}
 .attachment-name{max-width:170px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .attachment-chip small{flex:none;color:#6f7884;font-size:9px}
+.attachment-thumb{position:relative;display:inline-flex;flex:none;width:54px;height:54px;border:1px solid var(--line-warm);border-radius:8px;overflow:hidden;background:#15191f}
+.attachment-thumb>a{display:block;width:100%;height:100%;line-height:0}
+.attachment-thumb img{display:block;width:100%;height:100%;object-fit:cover}
+.attachment-thumb .attachment-remove{position:absolute;top:2px;right:2px;width:18px;height:18px;background:rgba(10,13,16,.84);border-color:rgba(255,255,255,.2);color:#fff}
+.attachment-thumb .attachment-remove:hover{background:#2a3139;color:#fff}
 .attachment-remove{width:20px;height:20px;flex:none}
 .attachment-remove:hover{background:#1f242b;color:#e8eaed}
 .composer-notice{max-width:760px;margin:8px auto 0;padding:8px 10px;border:1px solid #3a3424;border-radius:7px;background:#1a1710;color:#d7bd79;font-size:10px;line-height:1.5}
@@ -301,6 +306,8 @@ button,textarea{font:inherit}button{color:inherit}
 .message-queue-text{flex:1;min-width:0;display:grid;gap:4px}
 .message-queue-text span{color:#d5d8dd;font-size:11.5px;line-height:1.5;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
 .message-queue-text small{color:#6f7884;font-size:9.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.message-queue-attachments{display:flex;flex-wrap:wrap;gap:4px;align-items:center}
+.message-queue-attachments img{display:block;width:38px;height:38px;object-fit:cover;border:1px solid var(--line-warm);border-radius:6px}
 .message-queue li .icon-button{flex:none;border-color:var(--line-warm)}
 
 /* The task plan the agent publishes and the actions of the current run */
@@ -2005,6 +2012,7 @@ button,textarea{font:inherit}button{color:inherit}
 .message-image{margin:0;max-width:100%;border:1px solid var(--line-warm);border-radius:10px;overflow:hidden;background:#0a0d10}
 .message-image a{display:block;line-height:0}
 .message-image img{display:block;width:auto;max-width:100%;max-height:420px;object-fit:contain}
+.message-upload-image img{max-height:360px}
 .message-image figcaption{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:6px 9px;border-top:1px solid var(--line-warm-soft);color:#7f8792;font:10px/1.4 ui-monospace,"SF Mono","JetBrains Mono",SFMono-Regular,Menlo,monospace}
 .message-image figcaption code{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#9ba6b2}
 .message-image figcaption span{flex:none;color:#8a7a5e}

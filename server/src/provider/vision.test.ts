@@ -9,7 +9,11 @@ const NAMES = [
   "PLATFORM_VISION_PROVIDER",
   "PLATFORM_AI_BASE_URL",
   "PLATFORM_AI_API_KEY",
+  "PLATFORM_AI_MODEL",
   "PLATFORM_AI_PROVIDER",
+  "AI_BASE_URL",
+  "AI_API_KEY",
+  "AI_MODEL",
   "AI_PROXY_URL",
   "AI_PROXY_TOKEN",
 ] as const;
@@ -27,9 +31,57 @@ function withEnv(values: Partial<Record<(typeof NAMES)[number], string>>, run: (
   });
 }
 
-test("vision без модели честно выключен, а не подменяется текстовой моделью", async () => {
+test("vision без отдельной и без главной модели честно выключен", async () => {
   await withEnv({}, () => {
     assert.equal(getVisionConfig(), null);
+  });
+});
+
+test("vision без PLATFORM_VISION_MODEL использует главную модель платформы", async () => {
+  await withEnv({
+    PLATFORM_AI_MODEL: "deepseek/deepseek-v4.1-flash-1018",
+    PLATFORM_AI_BASE_URL: "https://polza.example/v1",
+    PLATFORM_AI_API_KEY: "main-key",
+    PLATFORM_AI_PROVIDER: "Polza",
+  }, () => {
+    const config = getVisionConfig();
+    assert.equal(config?.model, "deepseek/deepseek-v4.1-flash-1018");
+    assert.equal(config?.baseUrl, "https://polza.example/v1");
+    assert.equal(config?.key, "main-key");
+    assert.equal(config?.provider, "Polza");
+  });
+});
+
+test("vision использует провайдера проекта, если отдельной модели нет", async () => {
+  await withEnv({}, () => {
+    const config = getVisionConfig({
+      provider: "Project gateway",
+      baseUrl: "https://project.example/v1",
+      model: "project-vision-model",
+      token: "project-key",
+    });
+    assert.equal(config?.model, "project-vision-model");
+    assert.equal(config?.baseUrl, "https://project.example/v1");
+    assert.equal(config?.key, "project-key");
+    assert.equal(config?.provider, "Project gateway");
+  });
+});
+
+test("отдельная vision-модель важнее главной", async () => {
+  await withEnv({
+    PLATFORM_VISION_MODEL: "vision-model",
+    PLATFORM_VISION_BASE_URL: "https://vision.example/v1",
+    PLATFORM_VISION_API_KEY: "vision-key",
+  }, () => {
+    const config = getVisionConfig({
+      provider: "Project gateway",
+      baseUrl: "https://project.example/v1",
+      model: "main-model",
+      token: "main-key",
+    });
+    assert.equal(config?.model, "vision-model");
+    assert.equal(config?.baseUrl, "https://vision.example/v1");
+    assert.equal(config?.key, "vision-key");
   });
 });
 

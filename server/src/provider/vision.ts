@@ -3,14 +3,14 @@ import { getPlatformEnv } from "../platform/platform-env.js";
 /**
  * Зрение агента — отдельная возможность, а не свойство основной модели.
  *
- * Основная модель платформы может быть текстовой, а бесплатная почти наверняка текстовая.
- * Поэтому `image.inspect` ходит к отдельной vision-модели через OpenAI-совместимый
+ * Если задана `PLATFORM_VISION_MODEL`, `image.inspect` ходит к ней через OpenAI-совместимый
  * `/chat/completions`: так изображение получает тот, кто умеет его читать, а основной контекст
- * не заполняется base64. Адрес и ключ по умолчанию берутся из `PLATFORM_AI_*`, но модель
- * задаётся отдельно — иначе пришлось бы менять модель всего агента ради одного инструмента.
+ * не заполняется base64. Адрес и ключ по умолчанию берутся из `PLATFORM_AI_*`.
  *
- * Без `PLATFORM_VISION_MODEL` инструмент отвечает `not_configured`. Это лучше, чем отправить
- * картинку текстовой модели и получить уверенную выдумку.
+ * Если отдельная vision-модель не задана, используется главная модель проекта или платформы
+ * (её передаёт `image.inspect`). Это рассчитано на мультимодальные основные модели: текстовая
+ * модель картинку не увидит и может уверенно выдумать описание. Поэтому без модели вообще
+ * инструмент по-прежнему отвечает `not_configured`, а не угадывает.
  */
 
 const REQUEST_TIMEOUT_MS = 60_000;
@@ -21,6 +21,14 @@ export type VisionConfig = {
   baseUrl: string;
   model: string;
   key: string;
+};
+
+/** Главная модель проекта/платформы, на которую можно откатиться без отдельной vision-модели. */
+export type VisionFallback = {
+  provider: string;
+  baseUrl: string;
+  model: string;
+  token?: string;
 };
 
 export type VisionRequest = {
@@ -45,17 +53,31 @@ function firstEnv(...names: string[]) {
   return undefined;
 }
 
-export function getVisionConfig(): VisionConfig | null {
-  const model = getPlatformEnv("PLATFORM_VISION_MODEL")?.trim();
-  if (!model) return null;
+export function getVisionConfig(fallback?: VisionFallback): VisionConfig | null {
+  const configuredModel = getPlatformEnv("PLATFORM_VISION_MODEL")?.trim();
   const baseUrl = firstEnv("PLATFORM_VISION_BASE_URL", "PLATFORM_AI_BASE_URL") ?? process.env.AI_BASE_URL?.trim();
   const key = firstEnv("PLATFORM_VISION_API_KEY", "PLATFORM_AI_API_KEY") ?? process.env.AI_API_KEY?.trim();
-  if (!baseUrl || !key) return null;
+  if (configuredModel) {
+    if (!baseUrl || !key) return null;
+    return {
+      provider: getPlatformEnv("PLATFORM_VISION_PROVIDER")?.trim() || getPlatformEnv("PLATFORM_AI_PROVIDER")?.trim() || "vision",
+      baseUrl,
+      model: configuredModel,
+      key,
+    };
+  }
+
+  // Отдельной vision-модели нет — используем ту же модель, что и основной агент. Для проекта
+  // со своим провайдером это его модель; иначе — PLATFORM_AI_MODEL (или старый AI_MODEL).
+  const fallbackModel = fallback?.model.trim() || firstEnv("PLATFORM_AI_MODEL", "AI_MODEL");
+  const fallbackBaseUrl = fallback?.baseUrl.trim() || baseUrl;
+  const fallbackKey = fallback ? fallback.token?.trim() ?? "" : key;
+  if (!fallbackModel || !fallbackBaseUrl) return null;
   return {
-    provider: getPlatformEnv("PLATFORM_VISION_PROVIDER")?.trim() || getPlatformEnv("PLATFORM_AI_PROVIDER")?.trim() || "vision",
-    baseUrl,
-    model,
-    key,
+    provider: fallback?.provider.trim() || getPlatformEnv("PLATFORM_VISION_PROVIDER")?.trim() || getPlatformEnv("PLATFORM_AI_PROVIDER")?.trim() || "vision",
+    baseUrl: fallbackBaseUrl,
+    model: fallbackModel,
+    key: fallbackKey ?? "",
   };
 }
 
@@ -130,7 +152,7 @@ export async function inspectImage(config: VisionConfig, request: VisionRequest,
     signal,
     headers: {
       "content-type": "application/json",
-      authorization: "Bearer " + config.key,
+      ...(config.key ? { authorization: "Bearer " + config.key } : {}),
       ...(proxy ? { "x-ai-proxy-target": config.baseUrl.trim().replace(/\/+$/, ""), ...(proxyToken ? { "x-proxy-token": proxyToken } : {}) } : {}),
     },
     body: JSON.stringify(body),

@@ -4,8 +4,9 @@ import { getTool } from "../tool-registry.js";
 import "./vision-tools.js";
 
 test("image.inspect без vision-модели честно отвечает not_configured и называет переменную", async () => {
-  const before = process.env.PLATFORM_VISION_MODEL;
-  delete process.env.PLATFORM_VISION_MODEL;
+  const names = ["PLATFORM_VISION_MODEL", "PLATFORM_AI_MODEL", "AI_MODEL"] as const;
+  const before = new Map(names.map(name => [name, process.env[name]]));
+  for (const name of names) delete process.env[name];
   try {
     const tool = getTool("image.inspect");
     assert.ok(tool?.execute);
@@ -18,7 +19,10 @@ test("image.inspect без vision-модели честно отвечает not
     assert.equal(result.code, "not_configured");
     assert.match(result.error ?? "", /PLATFORM_VISION_MODEL/);
   } finally {
-    if (before === undefined) delete process.env.PLATFORM_VISION_MODEL;
-    else process.env.PLATFORM_VISION_MODEL = before;
+    for (const name of names) {
+      const value = before.get(name);
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
   }
 });

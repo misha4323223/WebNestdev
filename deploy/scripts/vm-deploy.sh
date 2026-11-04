@@ -848,6 +848,27 @@ services_to_start(){
 }
 
 #
+# `docker compose up -d` не перезапускает уже работающий Caddy, если изменился только
+# смонтированный Caddyfile: конфиг контейнера не поменялся, поэтому compose считает его
+# актуальным. В результате деплой писал новый Caddyfile, а процесс продолжал работать со
+# старым — например, с прежним matcher адресов сайтов, и читаемый slug отдавал 404.
+# Поэтому после подъёма сервисов всегда просим Caddy перечитать файл. Если admin API
+# недоступен, пересоздаём контейнер: конфигурация важнее короткого перерыва.
+#
+reload_caddy(){
+  if ! docker compose -f "$COMPOSE_FILE" config --services 2>/dev/null | grep -qx "$CADDY_SERVICE"; then
+    return 0
+  fi
+  log "перечитываю Caddyfile в Caddy"
+  if run timeout 30 docker compose -f "$COMPOSE_FILE" exec -T "$CADDY_SERVICE" caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile; then
+    return 0
+  fi
+  log "caddy reload не удался — пересоздаю контейнер $CADDY_SERVICE"
+  run docker compose -f "$COMPOSE_FILE" up -d --no-build --force-recreate "$CADDY_SERVICE" || \
+    log "не удалось пересоздать $CADDY_SERVICE; проверьте docker compose logs $CADDY_SERVICE"
+}
+
+#
 # Файлы уже созданных проектов лежат в именованном томе (там их писал сервер, когда песочницы
 # жили внутри тома). Новый каталог песочниц — это каталог хоста, поэтому файлы переносятся один
 # раз. Переносится только в пустой каталог: если на хосте уже что-то есть, решает оператор
@@ -1373,6 +1394,7 @@ case "$MODE" in
     # `--pull=never`, и без образа /api/health показывал бы «image» до следующего перезапуска.
     ensure_sandbox_image
     run docker compose -f "$COMPOSE_FILE" up -d --no-build $(services_to_start)
+    reload_caddy
     ;;
   source)
     log "обновляю репозиторий до origin/$GIT_BRANCH"
@@ -1395,6 +1417,7 @@ case "$MODE" in
     # команда, что и в image-режиме, и только если файл сервисов его описывает.
     if docker compose -f "$COMPOSE_FILE" config --services 2>/dev/null | grep -qx "$CADDY_SERVICE"; then
       run docker compose -f "$COMPOSE_FILE" up -d --no-build "$CADDY_SERVICE"
+      reload_caddy
     fi
     ;;
   repair)

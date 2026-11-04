@@ -18,10 +18,19 @@ export function ideaKickoff(idea: string, context?: string) {
  * идею проекта или короткую подпись автозапуска. История при этом не меняется — на сервер уходит
  * исходный текст, и агент по-прежнему видит все инструкции.
  */
+export type PublicAttachment = {
+  /** Путь в проекте или публичная ссылка из хранилища. */
+  path: string;
+  image: boolean;
+  remote: boolean;
+};
+
 export type PublicMessage = {
   text: string;
   /** true — сообщение целиком служебное и в закладках-запросах ему делать нечего. */
   internal: boolean;
+  /** Вложения, восстановленные из служебного хвоста: по ним чат показывает превью. */
+  attachments: PublicAttachment[];
 };
 
 const plannerTail = /\s*Сначала работай в режиме планировщика[\s\S]*$/;
@@ -29,18 +38,38 @@ const plannerTail = /\s*Сначала работай в режиме плани
 // одной строки, хотя модели уходит весь текст с шагами (см. lib/agent-compose.ts).
 const themeSetup = /^Собери тему проекта/;
 const onboardingContext = /\s*Контекст из знакомства при входе\.[\s\S]*?(?=\s*(?:Сначала работай в режиме планировщика|$))/;
-const attachmentTail = /\s*Эти файлы уже лежат в проекте, используй их по путям:[\s\S]*$/;
+const attachmentTail = /\s*Эти файлы уже (?:доступны|лежат в проекте, используй их по путям):\s*([\s\S]*)$/;
+const imageFile = /\.(?:png|jpe?g|gif|webp|svg|avif|bmp|ico)(?:[?#].*)?$/i;
+
+function parseAttachments(tail: string): PublicAttachment[] {
+  const attachments: PublicAttachment[] = [];
+  for (const line of tail.split("\n")) {
+    const match = /^-\s+(.+?)\s+\((изображение в проекте|файл в проекте|изображение по публичной ссылке|файл по публичной ссылке|публичная ссылка в хранилище)\)\s*$/.exec(line);
+    if (!match) continue;
+    const attachmentPath = match[1] ?? "";
+    const label = match[2] ?? "";
+    const remote = label.includes("ссылк");
+    attachments.push({
+      path: attachmentPath,
+      image: label.startsWith("изображение") || (label === "публичная ссылка в хранилище" && imageFile.test(attachmentPath)),
+      remote,
+    });
+  }
+  return attachments;
+}
 
 export function publicUserMessage(raw: string): PublicMessage {
   const text = raw.trim();
-  if (/^Разверни проект по квизу\./.test(text)) return { text: "Развернуть проект по выбранным параметрам", internal: false };
-  if (/^Продолжи развёртывание по квизу\./.test(text)) return { text: "Продолжить развёртывание", internal: false };
-  if (/^План утверждён\./.test(text)) return { text: "План утверждён — начинаю разработку", internal: true };
+  if (/^Разверни проект по квизу\./.test(text)) return { text: "Развернуть проект по выбранным параметрам", internal: false, attachments: [] };
+  if (/^Продолжи развёртывание по квизу\./.test(text)) return { text: "Продолжить развёртывание", internal: false, attachments: [] };
+  if (/^План утверждён\./.test(text)) return { text: "План утверждён — начинаю разработку", internal: true, attachments: [] };
   const repository = /^Импортирован репозиторий GitHub:\s*([^\s(]+)/.exec(text);
-  if (repository) return { text: "Импорт репозитория " + repository[1], internal: true };
+  if (repository) return { text: "Импорт репозитория " + repository[1], internal: true, attachments: [] };
   const template = /^Быстрый старт(?:\s*:\s*[^→]+→\s*|\s+по шаблону\s*)«([^»]+)»/.exec(text);
-  if (template) return { text: "Шаблон «" + template[1] + "»", internal: true };
-  if (themeSetup.test(text)) return { text: "Собрать тему проекта", internal: true };
+  if (template) return { text: "Шаблон «" + template[1] + "»", internal: true, attachments: [] };
+  if (themeSetup.test(text)) return { text: "Собрать тему проекта", internal: true, attachments: [] };
+  const attachmentMatch = attachmentTail.exec(text);
+  const attachments = attachmentMatch ? parseAttachments(attachmentMatch[1] ?? "") : [];
   const visible = text
     .replace(plannerTail, "")
     .replace(onboardingContext, "")
@@ -48,5 +77,6 @@ export function publicUserMessage(raw: string): PublicMessage {
     .trim();
   // `internal` относится ко всему сообщению, а не к вырезанной части: идея проекта и текст
   // с прикреплёнными файлами остаются запросами пользователя, даже если служебный хвост у них убран.
-  return { text: visible || "Новая задача", internal: !visible };
+  const fallback = attachments.some(item => item.image) ? "Изображение" : attachments.length ? "Файл" : "Новая задача";
+  return { text: visible || fallback, internal: !visible && attachments.length === 0, attachments };
 }
