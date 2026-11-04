@@ -34,7 +34,7 @@ export type ConversationSummary={id:string;projectId:string;title:string;label:s
 export const listProjects=()=>apiJson<{projects:Project[]}>("/api/projects");
 export const createProject=(name="Новый проект")=>apiJson<Project>("/api/projects",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({name})});
 export const renameProject=(projectId:string,name:string)=>apiJson<Project>("/api/projects/"+projectId,{method:"PATCH",headers:{"content-type":"application/json"},body:JSON.stringify({name})});
-export const deleteProject=(projectId:string)=>apiJson<{deleted:boolean}>("/api/projects/"+projectId,{method:"DELETE"});
+export const deleteProject=(projectId:string)=>apiJson<{deleted:boolean;mediaDeleted?:number;mediaFailed?:number}>("/api/projects/"+projectId,{method:"DELETE"});
 export const createConversation=(projectId:string,title="Новая сессия")=>apiJson<Conversation>("/api/projects/"+projectId+"/conversations",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({title})});
 /** Deletes one saved chat; the project and its other chats stay. */
 export const deleteConversation=(conversationId:string)=>apiJson<{deleted:boolean}>("/api/conversations/"+conversationId,{method:"DELETE"});

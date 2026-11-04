@@ -10,6 +10,7 @@ import {
   readCurrentReleaseId,
   removeCurrent,
   removeSiteDirectory,
+  renameSiteDirectory,
   switchCurrent,
 } from "./paths.js";
 
@@ -61,6 +62,23 @@ test("удаление каталога сайта не выходит за SITE
   await removeSiteDirectory(slug, sites);
   assert.equal(await readCurrentReleaseId(slug, sites), null);
   await assert.rejects(() => removeSiteDirectory("../outside", sites), /slug/);
+});
+
+test("переименование каталога переносит релизы и относительный current", async t => {
+  const root = await mkdtemp(path.join(tmpdir(), "webnestdev-paths-"));
+  process.env.WEBNESTDEV_DATA_DIR = path.join(root, "data");
+  const sites = path.join(root, "sites");
+  t.after(() => rm(root, { recursive: true, force: true }));
+  await ensureSiteLayout(slug, sites);
+  const dir = hostingReleaseDir(slug, release, sites);
+  await mkdir(dir, { recursive: true });
+  await writeFile(path.join(dir, "index.html"), "renamed");
+  await switchCurrent(slug, release, sites);
+
+  assert.equal(await renameSiteDirectory(slug, "my-site", sites), true);
+  assert.equal(await readCurrentReleaseId("my-site", sites), release);
+  await ensureSiteLayout("another-site", sites);
+  await assert.rejects(() => renameSiteDirectory(slug, "another-site", sites), /Каталог/);
 });
 
 test("current, указывающий за пределы releases, отвергается", async t => {

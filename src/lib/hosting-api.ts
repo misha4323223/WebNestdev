@@ -56,8 +56,18 @@ const base = (projectId: string) => "/api/projects/" + encodeURIComponent(projec
 
 export const getHosting = (projectId: string) => apiJson<HostingState>(base(projectId));
 
-export const createHosting = (projectId: string) =>
-  apiJson<{ site: HostingSite; enabled: boolean; domain: string }>(base(projectId), { method: "POST" });
+export const createHosting = (projectId: string, slug?: string) =>
+  apiJson<{ site: HostingSite; enabled: boolean; domain: string }>(base(projectId), {
+    method: "POST",
+    ...(slug ? { headers: { "content-type": "application/json" }, body: JSON.stringify({ slug }) } : {}),
+  });
+
+export const updateHostingSlug = (projectId: string, slug: string) =>
+  apiJson<HostingSite>(base(projectId) + "/slug", {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ slug }),
+  });
 
 export const publishHosting = (projectId: string) =>
   apiJson<{ site: HostingSite; release: HostingRelease }>(base(projectId) + "/publish", { method: "POST" });

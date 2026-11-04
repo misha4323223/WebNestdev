@@ -185,12 +185,15 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
   }
 
   async function remove(project:Project){
-    if(!window.confirm(`Удалить проект «${project.name}»? Его файлы, история и настройки провайдера будут удалены.`))return;
+    if(!window.confirm(`Удалить проект «${project.name}»? Его файлы, история, настройки провайдера и загруженные вложения будут удалены.`))return;
     setDeleting(project.id);
     setError("");
     try{
-      await deleteProject(project.id);
+      const result=await deleteProject(project.id);
       setProjects(current=>current.filter(item=>item.id!==project.id));
+      if(result.mediaFailed){
+        setError("Проект удалён, но часть вложений удалить не удалось. Проверьте хранилище.");
+      }
       if(localStorage.getItem(activeProjectKey)===project.id){
         localStorage.removeItem(activeProjectKey);
         localStorage.removeItem("webnestdev.conversationId");

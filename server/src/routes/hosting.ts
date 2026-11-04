@@ -4,9 +4,9 @@ import { requireUser } from "../auth/auth.js";
 import { getProject } from "../project-store.js";
 import { hostingConfig, hostingSiteUrl } from "../hosting/config.js";
 import { assertGlobalSiteLimit } from "../hosting/limits.js";
-import { hostSlugForDomain } from "../hosting/slug.js";
+import { hostSlugForDomain, normalizeHostingSlug } from "../hosting/slug.js";
 import { startPublish, startRollback } from "../hosting/publisher.js";
-import { removeCurrent } from "../hosting/paths.js";
+import { removeCurrent, renameSiteDirectory } from "../hosting/paths.js";
 import { reconcileSite } from "../hosting/reconcile.js";
 import {
   createSite,
@@ -15,6 +15,7 @@ import {
   getSiteBySlug,
   listReleases,
   markSiteDeleted,
+  renameSiteSlug,
   restoreSite,
   suspendSite,
   unpublishSite,
@@ -23,6 +24,7 @@ import { HostingError, type HostingSite } from "../hosting/types.js";
 import { recordAudit } from "../security/audit-journal.js";
 import { requireAdmin } from "./admin.js";
 import { previewHostTarget } from "../preview/preview-host.js";
+import { withSiteLock } from "../hosting/site-lock.js";
 
 /**
  * API хостинга. Панель работает только с проектом, а не с внутренним id сайта: у проекта
@@ -105,6 +107,15 @@ export async function registerHostingRoutes(app: FastifyInstance) {
     if (!auth) return;
     const config = hostingConfig();
     if (!config.enabled) return reply.code(503).send({ error: "Хостинг выключен", code: "HOSTING_DISABLED" });
+    const body = z.object({ slug: z.string().trim().max(120).optional() }).parse(request.body ?? {});
+    let requestedSlug: string | undefined;
+    if (body.slug) {
+      try {
+        requestedSlug = normalizeHostingSlug(body.slug, config.publicDomain);
+      } catch (error) {
+        return reply.code(400).send({ error: error instanceof Error ? error.message : String(error), code: "INVALID_SLUG" });
+      }
+    }
     try {
       const existing = await getSiteByProject(params.id);
       // Сайт должен создаваться на том узле, где лежат файлы проекта, иначе получится
@@ -119,9 +130,73 @@ export async function registerHostingRoutes(app: FastifyInstance) {
         );
       }
       if (!existing || existing.status === "deleted") await assertGlobalSiteLimit(config);
-      const site = await createSite({ projectId: params.id, userId: auth.user.id, nodeId: siteNode });
+      const site = await createSite({ projectId: params.id, userId: auth.user.id, nodeId: siteNode, slug: requestedSlug });
       await recordAudit({ action: "hosting.created", actorType: "user", actorId: auth.user.id, actorLabel: auth.user.email, target: site.id, targetLabel: site.slug, ip: request.ip }).catch(() => undefined);
       return reply.code(existing ? 200 : 201).send({ site: publicSite(site), enabled: config.enabled, domain: config.publicDomain });
+    } catch (error) {
+      return sendHostingError(reply, error);
+    }
+  });
+
+  app.patch("/api/projects/:id/hosting/slug", async (request, reply) => {
+    const params = z.object({ id: z.string().min(1) }).parse(request.params);
+    const auth = await requireProject(request, reply, params.id);
+    if (!auth) return;
+    const config = hostingConfig();
+    if (!config.enabled) return reply.code(503).send({ error: "Хостинг выключен", code: "HOSTING_DISABLED" });
+    const body = z.object({ slug: z.string().trim().min(1).max(120) }).parse(request.body ?? {});
+    let desired: string;
+    try {
+      desired = normalizeHostingSlug(body.slug, config.publicDomain);
+    } catch (error) {
+      return reply.code(400).send({ error: error instanceof Error ? error.message : String(error), code: "INVALID_SLUG" });
+    }
+    const site = await getSiteByProject(params.id);
+    if (!site || site.userId !== auth.user.id || site.status === "deleted") {
+      return reply.code(404).send({ error: "Сайт не найден", code: "SITE_NOT_FOUND" });
+    }
+    if (site.slug === desired) return publicSite(site);
+    if (site.nodeId && site.nodeId !== config.nodeId && !config.sharedStorage) {
+      return reply.code(503).send({ error: "Сайт закреплён за другим узлом; измените адрес через узел сайта", code: "PROJECT_REMOTE" });
+    }
+    try {
+      const updated = await withSiteLock(site.id, async () => {
+        const current = await getSite(site.id);
+        if (!current || current.status === "deleted") throw new HostingError("SITE_NOT_FOUND", "Сайт не найден", 404);
+        if (current.slug !== site.slug) throw new HostingError("SLUG_TAKEN", "Адрес уже изменился, обновите страницу", 409);
+        if (current.publishingReleaseId) {
+          throw new HostingError("SITE_BUSY", "Дождитесь окончания публикации, затем измените адрес", 409);
+        }
+        let moved = false;
+        try {
+          moved = await renameSiteDirectory(current.slug, desired, config.sitesDir);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "EEXIST") {
+            throw new HostingError("SLUG_TAKEN", "Этот адрес уже занят", 409);
+          }
+          throw new HostingError("PUBLISH_FAILED", "Не удалось переименовать каталог сайта", 500);
+        }
+        try {
+          return await renameSiteSlug({ siteId: current.id, expectedSlug: current.slug, slug: desired });
+        } catch (error) {
+          if (moved) {
+            await renameSiteDirectory(desired, current.slug, config.sitesDir).catch(rollbackError => {
+              console.error("[hosting] не удалось вернуть каталог после смены адреса", rollbackError);
+            });
+          }
+          throw error;
+        }
+      });
+      await recordAudit({
+        action: "hosting.slug.changed",
+        actorType: "user",
+        actorId: auth.user.id,
+        actorLabel: auth.user.email,
+        target: site.id,
+        targetLabel: site.slug + " -> " + desired,
+        ip: request.ip,
+      }).catch(() => undefined);
+      return publicSite(updated);
     } catch (error) {
       return sendHostingError(reply, error);
     }

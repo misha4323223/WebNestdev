@@ -1,6 +1,7 @@
 import { AgentPanel } from "../agent/AgentPanel";
 import { ChangesPanel } from "../changes/ChangesPanel";
 import { FilePanel } from "../files/FilePanel";
+import { MediaPanel } from "../media/MediaPanel";
 import { TerminalPanel } from "../terminal/TerminalPanel";
 import { TasksPanel } from "../tasks/TasksPanel";
 import { HostingPanel } from "../hosting/HostingPanel";
@@ -19,6 +20,7 @@ export function WorkspaceContent({view,projectId,projectName,conversationId,onRu
     </div>
     {view==="tasks"&&<TasksPanel projectId={projectId} reloadToken={taskReload}/>}
     {view==="files"&&<FilePanel projectId={projectId} projectName={projectName} onSaved={onFileSaved}/>}
+    {view==="media"&&<MediaPanel projectId={projectId} onChanged={onFileSaved}/>}
     {view==="changes"&&<ChangesPanel projectId={projectId} projectName={projectName} onRolledBack={onRunFinished}/>}
     {view==="terminal"&&<TerminalPanel projectId={projectId}/>}
     {view==="hosting"&&<HostingPanel projectId={projectId}/>}

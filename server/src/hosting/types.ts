@@ -60,6 +60,8 @@ export type CreateSiteInput = {
   projectId: string;
   userId: string;
   nodeId: string;
+  /** Необязательный читаемый адрес; без него создаётся случайный 12-hex slug. */
+  slug?: string;
 };
 
 export type BeginPublishInput = {
@@ -100,6 +102,8 @@ export type HostingStateErrorCode =
   | "HOSTING_DISABLED"
   | "SITE_NOT_FOUND"
   | "SITE_BUSY"
+  | "INVALID_SLUG"
+  | "SLUG_TAKEN"
   | "SITE_SUSPENDED"
   | "SITE_DELETED"
   | "RELEASE_NOT_FOUND"

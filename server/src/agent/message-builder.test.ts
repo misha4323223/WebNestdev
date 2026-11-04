@@ -125,6 +125,11 @@ test("системный промпт объясняет, когда звать 
   assert.match(SYSTEM_PROMPT, /never answer from memory as if it had searched/i);
 });
 
+test("публичная медиа-ссылка остаётся ссылкой на бакет", () => {
+  assert.match(SYSTEM_PROMPT, /public bucket URL/i);
+  assert.match(SYSTEM_PROMPT, /Do not download or copy that file into the project/i);
+});
+
 test("an English request still gets English reasoning and answer", () => {
   assert.match(SYSTEM_PROMPT, /English request gets English reasoning and an English answer/i);
   assert.doesNotMatch(SYSTEM_PROMPT, /When the user writes in another language, answer in that language\./);

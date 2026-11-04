@@ -37,6 +37,7 @@ export const AUDIT_ACTIONS = {
   "billing.credits.updated": "Изменена цена и границы докупки кредитов",
   "project.deleted": "Удалён проект",
   "hosting.created": "Создан статический сайт",
+  "hosting.slug.changed": "Изменён адрес статического сайта",
   "hosting.publish.requested": "Запрошена публикация сайта",
   "hosting.rolled.back": "Сайт переключён на прежний релиз",
   "hosting.unpublished": "Сайт снят с публикации",

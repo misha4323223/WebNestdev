@@ -83,7 +83,7 @@ export function UsageOverview({ billing, paid, onTopUp, onRefreshStorage, refres
 
       <article className={"usage-resource" + (storageState === "ok" ? "" : " is-" + storageState)}>
         <header>
-          <span>Хранилище аккаунта</span>
+          <span>Хранилище</span>
           <strong>{storageLimit > 0 ? bytesLabel(storageUsed) + " / " + bytesLabel(storageLimit) : "—"}</strong>
         </header>
         <div className="usage-meter-track"><span style={{ width: `${storagePercent}%` }}/></div>
@@ -112,7 +112,7 @@ export function UsageOverview({ billing, paid, onTopUp, onRefreshStorage, refres
                 </div>)}
             {storageProjects.length > 6 && <p className="storage-empty">и ещё {storageProjects.length - 6} проектов</p>}
           </div>
-          <p className="storage-hint">В размер входят все файлы проекта, включая зависимости и сборки, готовые релизы сайтов и большие медиа.{storageMeasuredAt ? " Обновлено " + storageMeasuredAt + "." : ""} Сверка повторяется раз в сутки.</p>
+          <p className="storage-hint">В размер входит всё, что аккаунт хранит: файлы проектов, зависимости и сборки.{storageMeasuredAt ? " Обновлено " + storageMeasuredAt + "." : ""} Сверка повторяется раз в сутки.</p>
         </details>}
       </article>
     </div>

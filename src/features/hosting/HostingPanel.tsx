@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
 import {
   AlertTriangle, Check, Clock3, Copy, ExternalLink, FileCode2, Globe2, Loader2,
-  RefreshCw, Rocket, ShieldCheck, Trash2, EyeOff,
+  Pencil, RefreshCw, Rocket, ShieldCheck, Trash2, EyeOff, X,
 } from "lucide-react";
 import {
   createHosting, deleteHosting, getHosting, getHostingReleaseLog, publishHosting,
-  rollbackHosting, unpublishHosting, type HostingRelease, type HostingState,
+  rollbackHosting, unpublishHosting, updateHostingSlug, type HostingRelease, type HostingState,
 } from "../../lib/hosting-api";
 
 /**
@@ -20,6 +20,9 @@ export function HostingPanel({ projectId }: { projectId: string }) {
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   const [log, setLog] = useState<{ releaseId: string; text: string } | null>(null);
+  const [newSlug, setNewSlug] = useState("");
+  const [editingSlug, setEditingSlug] = useState(false);
+  const [slugValue, setSlugValue] = useState("");
 
   const load = useCallback(async (quiet = false) => {
     if (!quiet) setLoading(true);
@@ -35,6 +38,7 @@ export function HostingPanel({ projectId }: { projectId: string }) {
   }, [projectId]);
 
   useEffect(() => { void load(); }, [load]);
+  useEffect(() => { setEditingSlug(false); setSlugValue(""); setNewSlug(""); }, [projectId]);
 
   // Сборка идёт на сервере; страница не должна держать WebSocket ради одного статуса.
   // Опрос прекращается, как только `building` исчезает из состояния.
@@ -60,9 +64,34 @@ export function HostingPanel({ projectId }: { projectId: string }) {
   };
 
   const createAndPublish = () => run("create", async () => {
-    await createHosting(projectId);
-    await publishHosting(projectId);
+    await createHosting(projectId, newSlug.trim() || undefined);
+    try {
+      await publishHosting(projectId);
+    } catch (error) {
+      // Сайт уже создан; показываем карточку и ошибку публикации, а не пустой hero.
+      await load(true);
+      throw error;
+    }
   });
+
+  const startEditSlug = () => {
+    if (!state?.site) return;
+    setSlugValue(state.site.slug);
+    setEditingSlug(true);
+    setError("");
+  };
+
+  const saveSlug = () => {
+    const candidate = slugValue.trim();
+    if (!candidate) {
+      setError("Введите название сайта");
+      return;
+    }
+    void run("slug", async () => {
+      await updateHostingSlug(projectId, candidate);
+      setEditingSlug(false);
+    });
+  };
 
   const publish = () => run("publish", () => publishHosting(projectId));
   const rollback = (release: HostingRelease) => {
@@ -132,12 +161,28 @@ export function HostingPanel({ projectId }: { projectId: string }) {
           <h2>Сайт по адресу <em>{state.domain}</em></h2>
           <p>Соберём проект в изолированной песочнице и отдадим готовые файлы через HTTPS. Подходит для Vite, React, готового HTML и других статических сборок.</p>
         </div>
+        <label className="hosting-name-field">
+          <span>Название сайта</span>
+          <div className="hosting-name-box">
+            <input
+              value={newSlug}
+              onChange={event => setNewSlug(event.target.value)}
+              placeholder="moy-sayt"
+              maxLength={63}
+              spellCheck={false}
+              autoCapitalize="none"
+              autoCorrect="off"
+            />
+            <span>.{state.domain}</span>
+          </div>
+          <small>Латиница, цифры и дефис, 3–63 символа. Например: moy-sayt. Адрес можно будет поменять.</small>
+        </label>
         <div className="hosting-hero-facts">
           <span><Rocket size={13}/> до {Math.round(state.limits.maxReleaseBytes / 1024 / 1024)} МБ</span>
           <span><FileCode2 size={13}/> до {state.limits.maxFiles.toLocaleString("ru-RU")} файлов</span>
           <span><Clock3 size={13}/> храним {state.limits.keepReleases} версии</span>
         </div>
-        <button className="primary-button hosting-primary" onClick={() => void createAndPublish()} disabled={!state.enabled || Boolean(busy)}>
+        <button className="primary-button hosting-primary" onClick={() => void createAndPublish()} disabled={!state.enabled || Boolean(busy) || !newSlug.trim()}>
           {busy === "create" || busy === "publish" ? <Loader2 size={14} className="spin"/> : <Rocket size={14}/>} Опубликовать сайт
         </button>
       </div> : null}
@@ -147,10 +192,37 @@ export function HostingPanel({ projectId }: { projectId: string }) {
           <div className="hosting-site-top">
             <div>
               <span className="hosting-kicker">Адрес сайта</span>
-              <div className="hosting-url-row">
-                {site.url ? <a href={site.url} target="_blank" rel="noreferrer" className="hosting-url">{site.url.replace(/^https?:\/\//, "")}<ExternalLink size={12}/></a> : <span className="hosting-url muted">Адрес ещё не назначен</span>}
+              {editingSlug ? <div className="hosting-slug-editor">
+                <div className="hosting-slug-input">
+                  <input
+                    autoFocus
+                    value={slugValue}
+                    onChange={event => setSlugValue(event.target.value)}
+                    onKeyDown={event => {
+                      if (event.key === "Enter") { event.preventDefault(); saveSlug(); }
+                      if (event.key === "Escape") { setEditingSlug(false); setError(""); }
+                    }}
+                    maxLength={63}
+                    spellCheck={false}
+                    autoCapitalize="none"
+                    autoCorrect="off"
+                    aria-label="Название сайта"
+                    disabled={busy === "slug"}
+                  />
+                  <span>.{state?.domain}</span>
+                </div>
+                <button className="ghost-button" onClick={saveSlug} disabled={Boolean(busy)}>
+                  {busy === "slug" ? <Loader2 size={12} className="spin"/> : <Check size={12}/>} Сохранить
+                </button>
+                <button className="icon-button" title="Отмена" aria-label="Отмена" onClick={() => { setEditingSlug(false); setError(""); }} disabled={busy === "slug"}><X size={13}/></button>
+                <small>Старый адрес перестанет открываться. Новый заработает автоматически.</small>
+              </div> : <div className="hosting-url-row">
+                {site.url
+                  ? <a href={site.url} target="_blank" rel="noreferrer" className="hosting-url">{site.url.replace(/^https?:\/\//, "")}<ExternalLink size={12}/></a>
+                  : <span className="hosting-url muted">{site.slug}.{state?.domain}</span>}
                 {site.url ? <button className="icon-button" title="Скопировать адрес" aria-label="Скопировать адрес" onClick={() => void copyUrl(site.url!)}>{copied ? <Check size={13}/> : <Copy size={13}/>}</button> : null}
-              </div>
+                <button className="ghost-button hosting-edit-address" title="Изменить адрес" onClick={startEditSlug} disabled={Boolean(busy) || building}><Pencil size={12}/> Изменить</button>
+              </div>}
             </div>
             <span className={"hosting-badge " + site.status}>{statusLabel(site.status)}</span>
           </div>

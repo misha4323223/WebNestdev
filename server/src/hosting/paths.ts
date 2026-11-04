@@ -198,6 +198,39 @@ export async function removeSiteDirectory(slug: string, root = hostingSitesDir()
   await rm(dir, { recursive: true, force: true });
 }
 
+/**
+ * Переименование каталога сайта вместе с релизами и относительной ссылкой `current`.
+ * Оба имени уже проверены как slug, поэтому `..` сюда не попадает. Если каталога ещё нет
+ * (сайт создан, но не публиковался), это не ошибка: меняется только запись в БД.
+ * Существующий целевой каталог — конфликт: иначе можно было бы подхватить чужие/осиротевшие
+ * файлы под новым адресом.
+ */
+export async function renameSiteDirectory(oldSlug: string, newSlug: string, root = hostingSitesDir()) {
+  const from = hostingSiteDir(oldSlug, root);
+  const to = hostingSiteDir(newSlug, root);
+  if (from === to) return false;
+  const target = await lstat(to).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  });
+  if (target) {
+    const conflict = new Error("Каталог с новым адресом уже существует") as NodeJS.ErrnoException;
+    conflict.code = "EEXIST";
+    throw conflict;
+  }
+  const source = await lstat(from).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  });
+  if (!source) return false;
+  if (!source.isDirectory() || source.isSymbolicLink()) {
+    throw new Error("Каталог сайта не является обычным каталогом");
+  }
+  await rename(from, to);
+  await fsyncDir(path.dirname(from));
+  return true;
+}
+
 /** Для тестов и восстановления: ссылка создаётся только после проверки существования релиза. */
 export async function restoreCurrent(slug: string, releaseId: string, root = hostingSitesDir()) {
   return switchCurrent(slug, releaseId, root);

@@ -29,6 +29,24 @@ test("один проект — один сайт; повторное созда
   assert.equal(second.nodeId, "node-a");
 });
 
+test("пользовательский slug проверяется, не повторяется и старый адрес резервируется", async () => {
+  await store.resetHostingJsonStore();
+  const site = await store.createSite({ projectId: "project-custom", userId: "user-custom", nodeId: "node-a", slug: "my-site" });
+  assert.equal(site.slug, "my-site");
+  await assert.rejects(
+    () => store.createSite({ projectId: "project-custom-2", userId: "user-custom", nodeId: "node-a", slug: "my-site" }),
+    error => error instanceof Error && "code" in error && (error as { code: string }).code === "SLUG_TAKEN",
+  );
+  const renamed = await store.renameSiteSlug({ siteId: site.id, expectedSlug: "my-site", slug: "my-new-site" });
+  assert.equal(renamed.slug, "my-new-site");
+  await assert.rejects(
+    () => store.createSite({ projectId: "project-custom-3", userId: "user-custom", nodeId: "node-a", slug: "my-site" }),
+    error => error instanceof Error && "code" in error && (error as { code: string }).code === "SLUG_TAKEN",
+  );
+  const back = await store.renameSiteSlug({ siteId: site.id, expectedSlug: "my-new-site", slug: "my-site" });
+  assert.equal(back.slug, "my-site");
+});
+
 test("второй проект получает отдельный slug и отдельную строку", async () => {
   const first = await store.createSite({ projectId: "project-b", userId: "user-a", nodeId: "node-a" });
   const second = await store.createSite({ projectId: "project-c", userId: "user-a", nodeId: "node-a" });

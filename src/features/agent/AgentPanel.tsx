@@ -5,7 +5,7 @@ import { AlertTriangle,ArrowDownToLine,Check,Copy,Eye,EyeOff,ExternalLink,FileTe
 import { createAgentSocket } from "../../lib/agent-socket";
 import { apiJson } from "../../lib/api";
 import { addProjectTasks,answerProjectQuestion,cancelProjectSecret,getConversation,listPendingProjectSecrets,skipProjectQuestion,submitProjectSecret,uploadProjectFile,type PendingProjectSecret } from "../../lib/project-api";
-import { uploadProjectMedia } from "../../lib/media-api";
+import { deleteUploadedMedia,uploadProjectMedia } from "../../lib/media-api";
 import { cancelProjectAccess,submitProjectAccess } from "../../lib/deployment-api";
 import { ActionsDock,MessageThinking,PlanPanel,actionTarget,chatImagesByMessage,contentBefore,deriveActions,readPlan,writePlan,type ChatImage,type PanelId,type PanelState } from "./agent-activity";
 import { buildReasoningTraces } from "./reasoning-trace";
@@ -202,7 +202,12 @@ const RETRY_NOTICE_CLEAR_EVENTS=new Set(["message.delta","reasoning.delta","tool
 type ProviderStatus={configured:boolean;provider:string;model:string;platformDefault?:{available:boolean;providerName:string;model:string;freeModel?:boolean;displayName?:string;id?:string;description?:string}|null;platformModels?:PlatformModelOption[];selectedModelId?:string|null;reasoning?:ReasoningSupport|null};
 type ModelInfo={model:string;provider:string;source:"project"|"platform"|"none"|"unknown";freeModel?:boolean;id?:string;displayName?:string;description?:string};
 
-const MAX_UPLOAD_BYTES=1_200_000;
+/**
+ * Всё, что больше 300 КБ, уходит в публичный бакет, а не в uploads/ проекта. Порог считается
+ * и по исходному файлу: фото на 1 МБ может сжаться до 200 КБ, но это всё равно медиа, а не
+ * локальная копия, которая потом попадёт в релиз и на диск ВМ.
+ */
+const MEDIA_UPLOAD_BYTES=300*1024;
 
 function nextId(){return Math.random().toString(36).slice(2)+Date.now().toString(36)}
 
@@ -269,11 +274,15 @@ async function shrinkImage(file:File):Promise<{blob:Blob;name:string;compressed:
   }
 }
 
-/** The agent reads text, so attachments are announced by the path they were stored at. */
+/** Вложения передаются агенту с явным различием: ссылка на бакет или локальный файл проекта. */
 function withAttachments(text:string,attachments:Attachment[]){
   if(!attachments.length)return text;
-  const list=attachments.map(item=>"- "+item.path+(item.remote?" (публичная ссылка в хранилище)":"")+(item.image?" (изображение)":" (файл)")).join("\n");
-  return text+"\n\nЭти файлы уже доступны — используй локальные пути или публичные ссылки:\n"+list;
+  const remote=attachments.filter(item=>item.remote);
+  const list=attachments.map(item=>"- "+item.path+(item.remote?" (публичная ссылка в хранилище)":item.image?" (изображение в проекте)":" (файл в проекте)")).join("\n");
+  let prompt=text+"\n\nЭти файлы уже доступны:\n"+list;
+  if(remote.length)prompt+="\n\nДля файлов с публичной ссылкой используй в коде именно этот URL (src, href, CSS url() или данные) и не скачивай файл в проект: он уже лежит в хранилище и должен оставаться ссылкой.";
+  if(remote.length<attachments.length)prompt+="\nДля файлов с локальным путём используй путь в проекте.";
+  return prompt;
 }
 
 /**
@@ -1519,6 +1528,19 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     try{await skipProjectQuestion(projectId,prompt.requestId)}catch{}
   }
 
+  /** Снятие ещё не отправленного вложения: объект в бакете не должен остаться сиротой. */
+  async function removeAttachment(attachment:Attachment){
+    setAttachments(current=>current.filter(item=>item.id!==attachment.id));
+    if(!attachment.remote)return;
+    try{
+      // Файл ещё не отправлен, поэтому ссылок на него в проекте быть не может: проверка
+      // исходников здесь только задерживала бы снятие вложения.
+      await deleteUploadedMedia(projectId,attachment.id,true);
+    }catch(error){
+      setNotice("Файл убран из сообщения, но остался в хранилище: "+(error instanceof Error?error.message:String(error)));
+    }
+  }
+
   async function pickFiles(files:FileList|null){
     if(!files?.length)return;
     setNotice("");
@@ -1531,13 +1553,14 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
         try{
           const prepared=await shrinkImage(file);
           const image=prepared.blob.type.startsWith("image/")||/\.(png|jpe?g|gif|webp|svg|avif|bmp|ico)$/i.test(prepared.name);
-          if(prepared.blob.size>MAX_UPLOAD_BYTES){
-            // Большой файл не проходит через JSON: браузер кладёт его в публичный бакет частями.
+          const useMedia=file.size>MEDIA_UPLOAD_BYTES||prepared.blob.size>MEDIA_UPLOAD_BYTES;
+          if(useMedia){
+            // Файл не проходит через JSON: браузер кладёт его в публичный бакет частями.
             const mediaFile=new File([prepared.blob],prepared.name,{type:prepared.blob.type||"application/octet-stream"});
             const result=await uploadProjectMedia(projectId,mediaFile,(done,total)=>setNotice("Загружаем "+file.name+": "+Math.round(done/total*100)+"%"));
             if(prepared.compressed)compressed++;
             uploaded.push({id:result.key,name:prepared.name,path:result.publicUrl,bytes:result.bytes,image,remote:true});
-            messages.push(file.name+": загружен в публичное хранилище");
+            messages.push(file.name+": загружен в хранилище, в проект попадёт ссылка");
             continue;
           }
           const data=await readAsBase64(prepared.blob);
@@ -1551,7 +1574,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       if(uploaded.length)setAttachments(current=>[...current,...uploaded]);
       // О сжатии сообщаем: пользователь должен знать, почему файл в проекте называется .webp
       // и весит меньше, чем снимок на диске.
-      if(compressed)messages.push("Фото уменьшены до "+IMAGE_MAX_EDGE+" px по длинной стороне — в проекте они легче, на вид те же");
+      if(compressed)messages.push("Фото уменьшены до "+IMAGE_MAX_EDGE+" px по длинной стороне");
       if(messages.length)setNotice(messages.join(" · "));
     }finally{
       setUploading(false);
@@ -1887,7 +1910,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
             {attachment.image?<ImageIcon size={12}/>:<FileText size={12}/>}
             <span className="attachment-name" title={attachment.path}>{attachment.name}{attachment.remote?" · ссылка":""}</span>
             <small>{formatBytes(attachment.bytes)}</small>
-            <button className="icon-button attachment-remove" onClick={()=>setAttachments(current=>current.filter(item=>item.id!==attachment.id))} title="Убрать файл" aria-label={"Убрать файл "+attachment.name}><X size={12}/></button>
+            <button className="icon-button attachment-remove" onClick={()=>void removeAttachment(attachment)} title="Убрать файл" aria-label={"Убрать файл "+attachment.name}><X size={12}/></button>
           </span>)}
         </div>}
 

@@ -36,6 +36,7 @@ import {
   switchCurrent,
 } from "./paths.js";
 import { HostingError, type HostingProjectKind, type HostingRelease, type HostingSite } from "./types.js";
+import { withSiteLock } from "./site-lock.js";
 import {
   hostingReleaseStore,
   hostingReleaseStoreSafe,
@@ -127,6 +128,10 @@ function logLine(level: "info" | "warn" | "error", message: string, details: Rec
  * старта попадают в релиз и `site.last_error`, а не в уже закрытый HTTP-ответ.
  */
 export async function startPublish(siteId: string, userId: string): Promise<{ site: HostingSite; release: HostingRelease }> {
+  return withSiteLock(siteId, () => startPublishLocked(siteId, userId));
+}
+
+async function startPublishLocked(siteId: string, userId: string): Promise<{ site: HostingSite; release: HostingRelease }> {
   const config = hostingConfig();
   if (!config.enabled) throw new HostingError("HOSTING_DISABLED", "Публикация сайтов пока недоступна", 503);
   const site = await getSite(siteId);
@@ -161,6 +166,14 @@ export async function startPublish(siteId: string, userId: string): Promise<{ si
  * active_release_id в БД. При ошибке БД возвращаем прежнюю ссылку.
  */
 export async function startRollback(
+  siteId: string,
+  userId: string,
+  releaseId: string,
+): Promise<{ site: HostingSite; release: HostingRelease }> {
+  return withSiteLock(siteId, () => startRollbackLocked(siteId, userId, releaseId));
+}
+
+async function startRollbackLocked(
   siteId: string,
   userId: string,
   releaseId: string,

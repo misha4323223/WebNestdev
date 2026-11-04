@@ -31,14 +31,14 @@
 
 | Пункт | Статус | Проверка |
 |---|---|---|
-| `sites`, `site_releases` в PostgreSQL | код DDL есть | `server/src/storage/pg.ts`; **DDL не выполнен на живой БД** |
+| `sites`, `site_releases`, `hosting_slug_history` в PostgreSQL | код DDL есть | `server/src/storage/pg.ts`; **DDL не выполнен на живой БД** |
 | JSON fallback для dev/test | сделано | `server/src/hosting/site-store.ts` |
 | Один сайт на проект | сделано | unit: повторное создание возвращает тот же сайт |
 | `SITES_DIR`, проверка отделения от `DATA_DIR` | сделано | `config.ts`, `paths.ts`; unit путей |
-| Slug/releaseId | сделано | 12 hex, releaseId UUID-подобный; unit путей |
+| Slug/releaseId | сделано | стартовый 12 hex или пользовательская DNS-метка 3–63; releaseId UUID-подобный; unit путей |
 | Store: begin/finish/fail/unpublish/suspend/restore/delete | сделано | 7 unit-тестов JSON-режима |
 | PostgreSQL-блокировки `FOR UPDATE` + partial unique `building` | код есть | **не проверено** без PostgreSQL |
-| Unit-тесты | сделано | `node --import tsx --test "server/src/hosting/*.test.ts"` — 23/23 (store, пути, артефакты, slug, public env, health-срез) |
+| Unit-тесты | сделано | `node --import tsx --test "server/src/hosting/*.test.ts"` — 30/30 (store, пути, артефакты, slug, public env, health-срез) |
 | Откат на готовый релиз | сделано | `activateRelease` в store; JSON-тест переключает active и сохраняет историю |
 
 Не сделано: миграция существующих данных (их нет), проверка DDL на реальном PostgreSQL,
@@ -78,12 +78,13 @@
 | Пункт | Статус | Проверка |
 |---|---|---|
 | Статус, создание, публикация, unpublish, delete | сделано | `routes/hosting.ts` |
+| Читаемый адрес сайта | сделано | `POST /hosting` принимает `slug`, `PATCH /hosting/slug`; история старых адресов в `hosting_slug_history`; route-тест |
 | История и лог релиза | сделано | `GET /releases/:id/log` |
 | Ownership | сделано | `requireProject` |
 | Коды ошибок и лимиты | сделано | `HostingError` |
 | Suspend/restore для администратора | сделано | `/api/admin/hosting/...` |
 | Reconcile | сделано | `reconcile.ts`, запуск после инициализации БД |
-| Route-тесты / curl-сценарий | частично | 3 route-теста (ownership, create/get/unpublish/delete, rollback с файлами); реальный curl на ВМ — ещё нет |
+| Route-тесты / curl-сценарий | частично | 4 route-теста (ownership, create/get/unpublish/delete, rollback с файлами, пользовательский адрес); реальный curl на ВМ — ещё нет |
 | Откат на конкретный релиз | сделано | `POST .../releases/:releaseId/rollback`, `activateRelease`, переключение `current` и откат ссылки при ошибке БД; route-тест с файлами |
 
 ### Этап 5. UI
@@ -92,6 +93,7 @@
 |---|---|---|
 | Вкладка «Хостинг» | сделано | `WorkspaceNav`, `WorkspaceContent` |
 | Создание/публикация/снятие/удаление | сделано | `src/features/hosting/HostingPanel.tsx` |
+| Выбор и смена адреса | сделано | поле названия при создании и кнопка «Изменить» у адреса; **визуально не проверялось** |
 | Polling статуса, ошибки, лог | сделано | 2,5 с, пока есть `building` |
 | Мобильная версия и стили | сделано | CSS `hosting-*`; **визуально не проверялось** |
 | Откат на прежний релиз | сделано | кнопка «Вернуть» у готового неактивного релиза |

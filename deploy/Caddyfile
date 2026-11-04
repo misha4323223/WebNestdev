@@ -47,8 +47,9 @@
 # отправляется, а расширять её до всего домена нельзя (прокси передаёт приложение заголовки запроса,
 # то есть код пользователя увидел бы cookie платформы).
 # Статические сайты проекта: `<slug>.host.nestdev.ru`. Ссылка `current` относительная и
-# создаётся только сервером; expression проверяет, что slug — это ровно 12 hex-символов,
-# а не произвольный Host. Caddy читает SITES_DIR только на чтение.
+# создаётся только сервером; expression проверяет, что slug — DNS-метка из 3–63 строчных
+# латинских букв, цифр и дефисов, а не произвольный Host. Caddy читает SITES_DIR только
+# на чтение.
 *.{$HOSTING_PUBLIC_DOMAIN:host.nestdev.ru} {
 	tls {
 		on_demand
@@ -58,7 +59,7 @@
 
 	# labels.3 — slug только для домена из трёх меток (host.nestdev.ru). Если домен станет
 	# host.staging.nestdev.ru, индекс нужно пересчитать и проверить в smoke, а не угадывать.
-	@site `{http.request.host.labels.3}.matches('[a-f0-9]{12}')`
+	@site `{http.request.host.labels.3}.matches('^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$')`
 	handle @site {
 		root * /srv/sites/{http.request.host.labels.3}/current
 

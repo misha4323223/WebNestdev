@@ -432,6 +432,14 @@ export async function initializeStorage(): Promise<void> {
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("sites")}_user ON ${tbl("sites")} (user_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("sites")}_status ON ${tbl("sites")} (status)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("sites")}_node ON ${tbl("sites")} (node_id)`);
+    // Старые адреса после переименования остаются занятыми: иначе освободившийся поддомен
+    // мог бы занять другой проект, а старые ссылки начали бы вести на чужой сайт.
+    await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("hosting_slug_history")} (
+      slug TEXT NOT NULL PRIMARY KEY,
+      site_id TEXT NOT NULL,
+      retired_at TEXT NOT NULL
+    )`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("hosting_slug_history")}_site ON ${tbl("hosting_slug_history")} (site_id)`);
 
     await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("site_releases")} (
       id TEXT NOT NULL PRIMARY KEY,

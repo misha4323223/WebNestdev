@@ -15,6 +15,51 @@ export type UploadedMedia = {
   bytes: number;
 };
 
+export type MediaUsage = {
+  count: number;
+  files: Array<{ path: string; line: number }>;
+};
+
+export type ProjectMediaObject = {
+  key: string;
+  url: string;
+  name: string;
+  bytes: number;
+  lastModified: string;
+  usage: MediaUsage | null;
+};
+
+export type ProjectMediaList = {
+  objects: ProjectMediaObject[];
+  truncated: boolean;
+  usageTruncated: boolean;
+  usageAvailable: boolean;
+  publicBaseUrl: string;
+};
+
+/** Список объектов в бакете проекта: он не зависит от того, сохранился ли чат с файлом. */
+export async function listProjectMedia(projectId: string) {
+  return apiJson<ProjectMediaList>("/api/projects/" + projectId + "/media/objects");
+}
+
+/** Удаляет уже загруженный файл из бакета; ключ проверяется на сервере по проекту. */
+export async function deleteUploadedMedia(projectId: string, key: string, force = false) {
+  return apiJson<{ deleted: boolean }>("/api/projects/" + projectId + "/media", {
+    method: "DELETE",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ key, ...(force ? { force: true } : {}) }),
+  });
+}
+
+/** Переименование меняет URL, поэтому сервер разрешает его только для неиспользуемых файлов. */
+export async function renameProjectMedia(projectId: string, key: string, name: string) {
+  return apiJson<{ key: string; url: string; name: string; bytes: number }>("/api/projects/" + projectId + "/media/rename", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ key, name }),
+  });
+}
+
 /**
  * Большой файл уходит в S3 частями. Сервер подписывает каждую часть, браузер кладёт её
  * напрямую в бакет, а в конце сервер проверяет размер и только тогда отдаёт публичную ссылку.
@@ -24,11 +69,17 @@ export async function uploadProjectMedia(
   projectId: string,
   file: Blob & { name: string },
   onProgress?: (uploaded: number, total: number) => void,
+  options: { replaceKey?: string } = {},
 ): Promise<UploadedMedia> {
   const start = await apiJson<MediaUpload>("/api/projects/" + projectId + "/media", {
     method: "POST",
     headers: { "content-type": "application/json" },
-    body: JSON.stringify({ name: file.name, size: file.size, contentType: file.type || undefined }),
+    body: JSON.stringify({
+      name: file.name,
+      size: file.size,
+      contentType: file.type || undefined,
+      ...(options.replaceKey ? { replaceKey: options.replaceKey } : {}),
+    }),
   });
   const parts: Array<{ partNumber: number; etag: string }> = [];
   let uploaded = 0;

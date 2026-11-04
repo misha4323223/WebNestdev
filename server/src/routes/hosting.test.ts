@@ -87,6 +87,58 @@ test("создание, чтение, снятие с публикации и у
   }
 });
 
+test("пользователь выбирает адрес сайта и может переименовать его", async () => {
+  const { app, projectId, ownerId, ownerHeaders, strangerHeaders } = await fixture();
+  try {
+    const created = await app.inject({
+      method: "POST",
+      url: "/api/projects/" + projectId + "/hosting",
+      headers: ownerHeaders,
+      payload: { slug: "my-site" },
+    });
+    assert.equal(created.statusCode, 201);
+    assert.equal(created.json().site.slug, "my-site");
+
+    const renamed = await app.inject({
+      method: "PATCH",
+      url: "/api/projects/" + projectId + "/hosting/slug",
+      headers: ownerHeaders,
+      payload: { slug: "https://My-New-Site.host.nestdev.ru/" },
+    });
+    assert.equal(renamed.statusCode, 200);
+    assert.equal(renamed.json().slug, "my-new-site");
+
+    const invalid = await app.inject({
+      method: "PATCH",
+      url: "/api/projects/" + projectId + "/hosting/slug",
+      headers: ownerHeaders,
+      payload: { slug: "ab" },
+    });
+    assert.equal(invalid.statusCode, 400);
+    assert.equal(invalid.json().code, "INVALID_SLUG");
+
+    const foreign = await app.inject({
+      method: "PATCH",
+      url: "/api/projects/" + projectId + "/hosting/slug",
+      headers: strangerHeaders,
+      payload: { slug: "stolen-site" },
+    });
+    assert.equal(foreign.statusCode, 404);
+
+    const other = await createProject("Другой сайт", undefined, ownerId);
+    const conflict = await app.inject({
+      method: "POST",
+      url: "/api/projects/" + other.id + "/hosting",
+      headers: ownerHeaders,
+      payload: { slug: "my-site" },
+    });
+    assert.equal(conflict.statusCode, 409);
+    assert.equal(conflict.json().code, "SLUG_TAKEN");
+  } finally {
+    await app.close();
+  }
+});
+
 test("откат на готовый релиз переключает current и active_release_id", async () => {
   const { app, projectId, ownerId, ownerHeaders } = await fixture();
   try {

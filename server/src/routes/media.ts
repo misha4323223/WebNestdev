@@ -7,12 +7,18 @@ import {
   abortMultipartUpload,
   completeMultipartUpload,
   createMultipartUpload,
+  deleteMediaObject,
+  headMediaObject,
   invalidateMediaUsage,
+  listMediaObjects,
   mediaConfigFromEnv,
   mediaKeyBelongsTo,
   MediaError,
+  mediaPublicUrl,
+  renameMediaObject,
   type MediaConfig,
 } from "../media/media-store.js";
+import { scanMediaUsage } from "../media/media-usage.js";
 
 /**
  * Прямая загрузка больших файлов в публичный бакет. Браузер получает presigned URL на каждую
@@ -34,6 +40,22 @@ function sendMediaError(reply: FastifyReply, error: unknown) {
     return reply.code(error.statusCode).send({ error: error.message, code: error.code });
   }
   throw error;
+}
+
+async function usageFor(
+  config: MediaConfig,
+  userId: string,
+  projectId: string,
+  urls: string[],
+): Promise<{ usage: Map<string, { count: number; files: Array<{ path: string; line: number }> }>; truncated: boolean } | null> {
+  try {
+    return await scanMediaUsage(projectId, userId, config.publicBaseUrl, urls);
+  } catch (error) {
+    // Проект в архиве, песочница недоступна или файлы ещё не вернулись: это не повод
+    // показывать «не используется». Лучше честно потребовать force для удаления.
+    console.warn("[media] не удалось проверить ссылки в проекте", error);
+    return null;
+  }
 }
 
 async function assertQuota(userId: string, addBytes: number) {
@@ -69,6 +91,34 @@ export async function registerMediaRoutes(app: FastifyInstance) {
     };
   });
 
+  /**
+   * Список того, что реально лежит в бакете. Он не зависит от истории чата: файл, который
+   * забыли удалить, остаётся видимым и управляемым. `usage` показывает ссылки в исходниках,
+   * чтобы интерфейс предупредил перед удалением или переименованием.
+   */
+  app.get("/api/projects/:id/media/objects", async (request, reply) => {
+    const params = z.object({ id: z.string().min(1) }).parse(request.params);
+    const user = await requireProjectUser(request, reply, params.id);
+    if (!user) return;
+    try {
+      const config = configOrThrow();
+      const listed = await listMediaObjects(config, user.id, params.id);
+      const scan = await usageFor(config, user.id, params.id, listed.objects.map(object => object.url));
+      return {
+        objects: listed.objects.map(object => ({
+          ...object,
+          usage: scan?.usage.get(object.url) ?? null,
+        })),
+        truncated: listed.truncated,
+        usageTruncated: scan?.truncated ?? false,
+        usageAvailable: scan !== null,
+        publicBaseUrl: config.publicBaseUrl,
+      };
+    } catch (error) {
+      return sendMediaError(reply, error);
+    }
+  });
+
   app.post("/api/projects/:id/media", async (request, reply) => {
     const params = z.object({ id: z.string().min(1) }).parse(request.params);
     const user = await requireProjectUser(request, reply, params.id);
@@ -79,16 +129,97 @@ export async function registerMediaRoutes(app: FastifyInstance) {
         name: z.string().min(1).max(300),
         size: z.number().int().positive(),
         contentType: z.string().max(200).optional(),
+        // Замена: новый файл пишется в тот же ключ, поэтому URL в коде остаётся прежним.
+        replaceKey: z.string().min(1).max(2000).optional(),
       }).parse(request.body);
-      await assertQuota(user.id, body.size);
+      if (body.replaceKey && !mediaKeyBelongsTo(config, body.replaceKey, user.id, params.id)) {
+        return reply.code(403).send({ error: "Этот ключ медиа не принадлежит проекту", code: "MEDIA_FOREIGN_KEY" });
+      }
+      // При замене в квоте считается только прирост: старый объект уже занимает место.
+      const oldBytes = body.replaceKey ? (await headMediaObject(config, body.replaceKey)).bytes : 0;
+      await assertQuota(user.id, Math.max(0, body.size - oldBytes));
       const upload = await createMultipartUpload(config, {
         userId: user.id,
         projectId: params.id,
         name: body.name,
         size: body.size,
         contentType: body.contentType,
+        ...(body.replaceKey ? { key: body.replaceKey } : {}),
       });
       return upload;
+    } catch (error) {
+      return sendMediaError(reply, error);
+    }
+  });
+
+  /**
+   * Удаление одного готового файла: пользователь снял вложение до отправки или очищает медиа
+   * вручную. Ключ обязан принадлежать этому проекту, иначе чужой объект удалить нельзя.
+   */
+  app.delete("/api/projects/:id/media", async (request, reply) => {
+    const params = z.object({ id: z.string().min(1) }).parse(request.params);
+    const user = await requireProjectUser(request, reply, params.id);
+    if (!user) return;
+    try {
+      const config = configOrThrow();
+      const body = z.object({ key: z.string().min(1).max(2000), force: z.boolean().optional() }).parse(request.body);
+      if (!mediaKeyBelongsTo(config, body.key, user.id, params.id)) {
+        return reply.code(403).send({ error: "Этот ключ медиа не принадлежит проекту", code: "MEDIA_FOREIGN_KEY" });
+      }
+      const scan = await usageFor(config, user.id, params.id, [mediaPublicUrl(config, body.key)]);
+      const used = scan?.usage.values().next().value;
+      if (!body.force && (!scan || (used && used.count > 0))) {
+        return reply.code(409).send({
+          error: scan ? "Файл используется в проекте — сначала уберите ссылку или подтвердите удаление" : "Не удалось проверить ссылки в проекте — подтвердите удаление",
+          code: "MEDIA_IN_USE",
+          usage: used ?? null,
+          usageAvailable: scan !== null,
+        });
+      }
+      await deleteMediaObject(config, body.key);
+      invalidateMediaUsage(user.id);
+      return { deleted: true };
+    } catch (error) {
+      return sendMediaError(reply, error);
+    }
+  });
+
+  /**
+   * Переименование — это новый ключ, а значит новый URL. Поэтому используемый файл
+   * переименовывать нельзя: иначе ссылки в исходниках молча станут битыми. Для используемых
+   * картинок правильное действие — «Заменить» с тем же ключом.
+   */
+  app.post("/api/projects/:id/media/rename", async (request, reply) => {
+    const params = z.object({ id: z.string().min(1) }).parse(request.params);
+    const user = await requireProjectUser(request, reply, params.id);
+    if (!user) return;
+    try {
+      const config = configOrThrow();
+      const body = z.object({
+        key: z.string().min(1).max(2000),
+        name: z.string().trim().min(1).max(300),
+      }).parse(request.body);
+      if (!mediaKeyBelongsTo(config, body.key, user.id, params.id)) {
+        return reply.code(403).send({ error: "Этот ключ медиа не принадлежит проекту", code: "MEDIA_FOREIGN_KEY" });
+      }
+      const scan = await usageFor(config, user.id, params.id, [mediaPublicUrl(config, body.key)]);
+      const used = scan?.usage.values().next().value;
+      if (!scan || (used && used.count > 0)) {
+        return reply.code(409).send({
+          error: scan ? "Файл используется в проекте — переименование сломает ссылки. Замените файл, чтобы сохранить URL." : "Не удалось проверить ссылки в проекте — переименование отменено",
+          code: "MEDIA_IN_USE",
+          usage: used ?? null,
+          usageAvailable: scan !== null,
+        });
+      }
+      const result = await renameMediaObject(config, {
+        userId: user.id,
+        projectId: params.id,
+        key: body.key,
+        name: body.name,
+      });
+      invalidateMediaUsage(user.id);
+      return result;
     } catch (error) {
       return sendMediaError(reply, error);
     }
@@ -114,7 +245,9 @@ export async function registerMediaRoutes(app: FastifyInstance) {
       }
       // Размер в начале загрузки — обещание клиента, а не факт. На завершении проверяем
       // фактический размер ещё раз, иначе можно начать с одного байта и залить гигабайт.
-      await assertQuota(user.id, body.bytes).catch(async error => {
+      // Для замены старый объект ещё лежит в бакете: в квоту идёт только прирост.
+      const existing = await listMediaObjects(config, user.id, params.id).then(list => list.objects.find(object => object.key === body.key));
+      await assertQuota(user.id, Math.max(0, body.bytes - (existing?.bytes ?? 0))).catch(async error => {
         await abortMultipartUpload(config, body.key, body.uploadId).catch(() => undefined);
         throw error;
       });
@@ -123,6 +256,7 @@ export async function registerMediaRoutes(app: FastifyInstance) {
         uploadId: body.uploadId,
         parts: body.parts,
         expectedBytes: body.bytes,
+        preserveOnMismatch: Boolean(existing),
       });
       invalidateMediaUsage(user.id);
       return result;

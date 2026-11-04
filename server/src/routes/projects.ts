@@ -12,6 +12,7 @@ import { recordArchiveFailure } from "../storage/archive-health.js";
 import { isConversationRunning, isRunActive } from "../agent/active-runs.js";
 import { getPreview } from "../preview/preview-store.js";
 import { recordAudit } from "../security/audit-journal.js";
+import { deleteProjectMedia, mediaConfigFromEnv } from "../media/media-store.js";
 
 /** How many chats the picker shows. Older sessions stay stored and reachable by id. */
 const CONVERSATION_LIST_LIMIT = 50;
@@ -101,7 +102,23 @@ export async function registerProjectRoutes(app:FastifyInstance){
     // Архив в бакете пережил бы удаление проекта и оплачивался бы дальше.
     await deleteProjectArchive(p.id,user.id)
       .catch(error=>console.warn("[storage] не удалось удалить архив проекта из хранилища",error));
-    return {deleted:true};
+    // Медиа из чата лежат в отдельном публичном бакете и не входят в архив проекта. Без этой
+    // очистки после удаления проекта оставались бы оплачиваемые объекты, на которые больше
+    // никто не ссылается. Сбой уборки не отменяет уже выполненное удаление проекта.
+    let mediaDeleted=0;
+    let mediaFailed=0;
+    try{
+      const config=mediaConfigFromEnv();
+      if(config){
+        const result=await deleteProjectMedia(config,user.id,p.id);
+        mediaDeleted=result.deleted;
+        mediaFailed=result.failed;
+      }
+    }catch(error){
+      mediaFailed+=1;
+      console.warn("[media] не удалось очистить медиа удалённого проекта",error);
+    }
+    return {deleted:true,mediaDeleted,mediaFailed};
   });
   /**
    * Холодный ярус: рабочая папка уезжает в объектное хранилище и освобождает диск ВМ. Открытие

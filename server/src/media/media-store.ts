@@ -186,7 +186,7 @@ async function s3Request(
   config: MediaConfig,
   method: string,
   key: string,
-  options: { query?: Record<string, string>; body?: string; contentType?: string } = {},
+  options: { query?: Record<string, string>; body?: string; contentType?: string; cacheControl?: string; headers?: Record<string, string> } = {},
 ) {
   const session = await storageSession();
   const body = options.body ?? "";
@@ -199,6 +199,8 @@ async function s3Request(
     "x-amz-security-token": session.sessionToken,
   };
   if (options.contentType) headers["content-type"] = options.contentType;
+  if (options.cacheControl) headers["cache-control"] = options.cacheControl;
+  for (const [name, value] of Object.entries(options.headers ?? {})) headers[name.toLowerCase()] = value;
   const path = objectPath(config.bucket, key);
   const signed = signAwsV4({
     method,
@@ -317,7 +319,7 @@ export function mediaKeyBelongsTo(config: MediaConfig, key: string, userId: stri
 
 export async function createMultipartUpload(
   config: MediaConfig,
-  input: { userId: string; projectId: string; name: string; size: number; contentType?: string },
+  input: { userId: string; projectId: string; name: string; size: number; contentType?: string; key?: string },
 ): Promise<MultipartUpload> {
   if (!Number.isSafeInteger(input.size) || input.size <= 0) {
     throw new MediaError("MEDIA_EMPTY_FILE", "Пустой файл");
@@ -329,10 +331,17 @@ export async function createMultipartUpload(
   if (partCount > config.maxParts) {
     throw new MediaError("MEDIA_TOO_LARGE", "Файл требует слишком много частей: " + partCount + " > " + config.maxParts);
   }
-  const key = mediaKey(config, input.userId, input.projectId, input.name);
+  // Замена идёт в тот же ключ: URL в коде не меняется, а старый объект остаётся на месте,
+  // пока multipart не завершён. Поэтому сорванная замена не ломает картинку на сайте.
+  const key = input.key ?? mediaKey(config, input.userId, input.projectId, input.name);
+  if (!mediaKeyBelongsTo(config, key, input.userId, input.projectId)) {
+    throw new MediaError("MEDIA_BAD_KEY", "Ключ медиа не принадлежит проекту", 403);
+  }
   const created = await s3Request(config, "POST", key, {
     query: { uploads: "" },
     contentType: (input.contentType ?? "").replace(/[\r\n]/g, "").slice(0, 200) || "application/octet-stream",
+    // Замена должна быть видна сразу, а не через час из кеша браузера.
+    cacheControl: "public, max-age=0, must-revalidate",
   });
   const uploadId = /<UploadId>([^<]+)<\/UploadId>/.exec(created.text)?.[1];
   if (!uploadId) throw new MediaError("MEDIA_STORAGE_FAILED", "Хранилище не вернуло UploadId", 502);
@@ -375,7 +384,7 @@ function validEtag(value: string) {
 
 export async function completeMultipartUpload(
   config: MediaConfig,
-  input: { key: string; uploadId: string; parts: Array<{ partNumber: number; etag: string }>; expectedBytes: number },
+  input: { key: string; uploadId: string; parts: Array<{ partNumber: number; etag: string }>; expectedBytes: number; preserveOnMismatch?: boolean },
 ) {
   if (!input.parts.length) throw new MediaError("MEDIA_BAD_PARTS", "Нет загруженных частей");
   const parts = [...input.parts]
@@ -398,7 +407,9 @@ export async function completeMultipartUpload(
   const head = await s3Request(config, "HEAD", input.key);
   const size = Number(head.response.headers.get("content-length") ?? 0);
   if (!Number.isFinite(size) || size !== input.expectedBytes) {
-    await s3Request(config, "DELETE", input.key).catch(() => undefined);
+    // При замене старый объект уже перезаписан: удалять ключ нельзя, иначе URL в коде
+    // начнёт отдавать 404. Оставляем новый объект и просим повторить замену.
+    if (!input.preserveOnMismatch) await s3Request(config, "DELETE", input.key).catch(() => undefined);
     throw new MediaError("MEDIA_SIZE_MISMATCH", "Хранилище приняло " + size + " байт вместо " + input.expectedBytes, 502);
   }
   return { key: input.key, publicUrl: mediaPublicUrl(config, input.key), bytes: size };
@@ -408,9 +419,158 @@ export async function abortMultipartUpload(config: MediaConfig, key: string, upl
   await s3Request(config, "DELETE", key, { query: { uploadId } });
 }
 
-/** Удаление готового объекта: нужно тестам и будущей очистке брошенных медиа. */
+/** Удаление готового объекта: снятое вложение и очистка проекта. */
 export async function deleteMediaObject(config: MediaConfig, key: string) {
   await s3Request(config, "DELETE", key);
+}
+
+/** Размер готового объекта: нужен для квоты при замене и для проверки лимита копирования. */
+export async function headMediaObject(config: MediaConfig, key: string) {
+  const head = await s3Request(config, "HEAD", key);
+  const bytes = Number(head.response.headers.get("content-length") ?? 0);
+  if (!Number.isFinite(bytes) || bytes < 0) {
+    throw new MediaError("MEDIA_STORAGE_FAILED", "Хранилище не вернуло размер объекта", 502);
+  }
+  return { bytes };
+}
+
+/** S3 CopyObject: переименование не гоняет байты через Node. */
+export async function copyMediaObject(config: MediaConfig, sourceKey: string, targetKey: string) {
+  const copied = await s3Request(config, "PUT", targetKey, {
+    headers: { "x-amz-copy-source": objectPath(config.bucket, sourceKey) },
+  });
+  // S3 умеет ответить HTTP 200 и положить ошибку в тело: без этой проверки переименование
+  // выглядело бы успешным, а новый объект не появился бы.
+  if (/<Error>/i.test(copied.text)) {
+    const code = parseS3ErrorCode(copied.text) ?? "CopyObject";
+    throw new MediaError("MEDIA_STORAGE_FAILED", "Хранилище не скопировало объект: " + code, 502);
+  }
+}
+
+function decodeXml(value: string) {
+  return value
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&");
+}
+
+export type MediaObject = {
+  key: string;
+  url: string;
+  name: string;
+  bytes: number;
+  lastModified: string;
+};
+
+/** Имя без UUID-префикса: в списке нужен человеческий файл, а не ключ бакета. */
+export function mediaDisplayName(key: string) {
+  const base = key.split("/").pop() || "file";
+  return base.replace(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}-/i, "") || base;
+}
+
+/**
+ * Объекты под префиксом вместе с размером и датой. Список нужен и удалению проекта, и вкладке
+ * «Медиа»: по ключам видно, что реально лежит в бакете, а не только то, что сохранилось в чате.
+ */
+async function listMediaObjectsByPrefix(config: MediaConfig, prefix: string) {
+  const objects: MediaObject[] = [];
+  let token = "";
+  let pageIndex = 0;
+  let truncated = false;
+  for (; pageIndex < 100; pageIndex += 1) {
+    const query: Record<string, string> = { "list-type": "2", prefix, "max-keys": "1000" };
+    if (token) query["continuation-token"] = token;
+    const page = await s3BucketRequest(config, query);
+    for (const block of page.matchAll(/<Contents>([\s\S]*?)<\/Contents>/g)) {
+      const body = block[1];
+      const keyMatch = /<Key>([\s\S]*?)<\/Key>/.exec(body);
+      if (!keyMatch) continue;
+      const key = decodeXml(keyMatch[1]);
+      const bytes = Number(/<Size>(\d+)<\/Size>/.exec(body)?.[1] ?? 0);
+      const lastModified = decodeXml(/<LastModified>([^<]+)<\/LastModified>/.exec(body)?.[1] ?? "");
+      objects.push({ key, url: mediaPublicUrl(config, key), name: mediaDisplayName(key), bytes: Number.isFinite(bytes) ? bytes : 0, lastModified });
+    }
+    if (!/<IsTruncated>true<\/IsTruncated>/.test(page)) break;
+    const next = /<NextContinuationToken>([^<]+)<\/NextContinuationToken>/.exec(page)?.[1];
+    if (!next) break;
+    token = next;
+    if (pageIndex === 99) truncated = true;
+  }
+  return { objects, truncated };
+}
+
+async function listMediaKeys(config: MediaConfig, prefix: string): Promise<string[]> {
+  return (await listMediaObjectsByPrefix(config, prefix)).objects.map(object => object.key);
+}
+
+export async function listMediaObjects(config: MediaConfig, userId: string, projectId: string) {
+  return listMediaObjectsByPrefix(config, config.prefix + "/" + userId + "/" + projectId + "/");
+}
+
+/**
+ * Переименование меняет ключ и публичный URL. Вызывается только для файлов, которые не
+ * используются в проекте: иначе пришлось бы молча переписать чужие ссылки в исходниках.
+ * Копирование ограничено 5 ГБ — это предел одного S3 CopyObject; для больших файлов
+ * честно возвращаем ошибку, а не делаем вид, что переименовали.
+ */
+export async function renameMediaObject(
+  config: MediaConfig,
+  input: { userId: string; projectId: string; key: string; name: string },
+) {
+  if (!mediaKeyBelongsTo(config, input.key, input.userId, input.projectId)) {
+    throw new MediaError("MEDIA_BAD_KEY", "Ключ медиа не принадлежит проекту", 403);
+  }
+  const old = await headMediaObject(config, input.key);
+  if (old.bytes > 5_000_000_000) {
+    throw new MediaError("MEDIA_RENAME_TOO_LARGE", "Файл больше 5 ГБ: переименование такого объекта пока не поддерживается", 413);
+  }
+  const slash = input.key.lastIndexOf("/");
+  const directory = input.key.slice(0, slash + 1);
+  const oldBase = input.key.slice(slash + 1);
+  const extension = oldBase.match(/\.[A-Za-z0-9]{1,12}$/)?.[0] ?? "";
+  let requested = safeMediaName(input.name);
+  if (extension && !/\.[A-Za-z0-9]{1,12}$/.test(requested)) requested += extension;
+  const key = directory + randomUUID() + "-" + requested;
+  await copyMediaObject(config, input.key, key);
+  try {
+    await deleteMediaObject(config, input.key);
+  } catch (error) {
+    // Старый объект остался, поэтому копию можно безопасно убрать: лучше два одинаковых
+    // файла, чем битая ссылка на новый ключ.
+    await deleteMediaObject(config, key).catch(() => undefined);
+    throw error;
+  }
+  invalidateMediaUsage(input.userId);
+  return { key, url: mediaPublicUrl(config, key), name: mediaDisplayName(key), bytes: old.bytes };
+}
+
+/**
+ * Удаляет все медиа проекта: ключи лежат под `media/<userId>/<projectId>/`, поэтому проект
+ * не может задеть чужие файлы. Сначала собираем список, потом удаляем небольшими пачками:
+ * удаление во время пагинации сдвигало бы continuation-token. Ошибка одного объекта не
+ * останавливает очистку остальных, а результат говорит, что именно осталось в бакете.
+ */
+export async function deleteProjectMedia(config: MediaConfig, userId: string, projectId: string) {
+  const prefix = config.prefix + "/" + userId + "/" + projectId + "/";
+  const keys = await listMediaKeys(config, prefix);
+  let deleted = 0;
+  let failed = 0;
+  for (let index = 0; index < keys.length; index += 8) {
+    const batch = keys.slice(index, index + 8);
+    const results = await Promise.allSettled(batch.map(key => deleteMediaObject(config, key)));
+    results.forEach((result, offset) => {
+      if (result.status === "fulfilled") {
+        deleted += 1;
+      } else {
+        failed += 1;
+        console.warn("[media] не удалось удалить объект " + batch[offset], result.reason);
+      }
+    });
+  }
+  invalidateMediaUsage(userId);
+  return { deleted, failed };
 }
 
 /**

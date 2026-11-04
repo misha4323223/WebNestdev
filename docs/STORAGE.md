@@ -251,6 +251,31 @@ Uploads need `MWS_SA_KEY`, `MWS_SA_KEY_ID` + `MWS_SA_PRIVATE_KEY`, or `MWS_SA_KE
 must allow anonymous `s3:GetObject`; listing stays private, and CORS must expose `ETag` so the
 browser can complete the multipart upload.
 
+### Media library, replacement and deletion
+
+The **Медиа** tab in the workspace reads the bucket, not the chat history: a file whose message was
+removed is still visible and manageable. Each object shows its public URL, size, date and the
+project files that reference it. The scan is deliberately bounded (source files, no `node_modules`,
+`dist` or secrets), so it is a warning, not a proof: external links and dynamically built URLs are
+not checked.
+
+| Action | What happens |
+|---|---|
+| **Заменить** | A new multipart upload writes the same key. The public URL in code does not change; a failed upload leaves the old object in place. New uploads carry `Cache-Control: public, max-age=0, must-revalidate` so a replacement is not hidden by a stale browser cache. Quota counts only the size difference. |
+| **Переименовать** | `CopyObject` to a new key, then delete the old one. The URL changes, so this is allowed only when the source scan finds no references; a used file must be replaced instead. CopyObject is limited to 5 GB per object. |
+| **Удалить** | The object is removed from the bucket. If the source scan finds references, the panel asks for explicit confirmation and the API requires `force: true`; deleting anyway leaves the code references broken. |
+
+Removing an uploaded attachment from the composer before sending calls
+`DELETE /api/projects/:id/media` with its key; the object is deleted from the bucket immediately.
+
+Deleting a project deletes every object under `media/<userId>/<projectId>/` after the project row
+is removed. The API returns `mediaDeleted` and `mediaFailed`; a cleanup failure does not undo the
+project deletion, and the panel tells the user that some objects may remain.
+
+Files in the bucket are not tied to a conversation in the database, so deleting an individual chat
+does not delete its media; use the **Медиа** tab. Uploads abandoned before they are attached remain
+visible there, but are not removed automatically.
+
 ## Plan changes
 
 `accountPlanFor` reads the subscription on every request, so a paid plan raises the storage limit

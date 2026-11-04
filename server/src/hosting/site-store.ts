@@ -4,6 +4,7 @@ import path from "node:path";
 import { getTable, initializeStorage, isYdbEnabled, ydbQuery } from "../storage/ydb.js";
 import type { YdbQueryTag } from "../storage/pg.js";
 import { hostingLimits } from "./config.js";
+import { isHostingSlug } from "./slug.js";
 import {
   HostingBusyError,
   HostingError,
@@ -145,6 +146,8 @@ type JsonState = {
   version: 1;
   sites: HostingSite[];
   releases: HostingRelease[];
+  /** Старые адреса после переименования: их нельзя занять другому сайту. */
+  retiredSlugs: Array<{ slug: string; siteId: string }>;
 };
 
 const jsonQueues = new Map<string, Promise<unknown>>();
@@ -167,9 +170,12 @@ async function readJsonState(): Promise<JsonState> {
     if (parsed.version !== 1 || !Array.isArray(parsed.sites) || !Array.isArray(parsed.releases)) {
       throw new Error("Повреждённое JSON-хранилище хостинга");
     }
-    return { version: 1, sites: parsed.sites, releases: parsed.releases };
+    const retiredSlugs = Array.isArray(parsed.retiredSlugs)
+      ? parsed.retiredSlugs.filter(item => item && typeof item.slug === "string" && typeof item.siteId === "string")
+      : [];
+    return { version: 1, sites: parsed.sites, releases: parsed.releases, retiredSlugs };
   } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { version: 1, sites: [], releases: [] };
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { version: 1, sites: [], releases: [], retiredSlugs: [] };
     throw error;
   }
 }
@@ -239,6 +245,38 @@ async function pgSiteBySlug(slug: string): Promise<HostingSite | null> {
      WHERE slug = ${slug}
      LIMIT 1`;
   return rows[0] ? siteFromRow(rows[0]) : null;
+}
+
+/**
+ * Старый адрес резервируется после переименования. `siteId` исключается только при
+ * переименовании этого же сайта: вернуть своё прежнее имя можно, забрать чужое — нет.
+ */
+async function pgRetiredSlug(slug: string, siteId?: string): Promise<boolean> {
+  await initializeStorage();
+  const table = sqlTable("hosting_slug_history");
+  const [rows] = siteId
+    ? await ydbQuery()<Array<{ slug: string }>>`
+        SELECT slug FROM ${table} WHERE slug = ${slug} AND site_id <> ${siteId} LIMIT 1`
+    : await ydbQuery()<Array<{ slug: string }>>`
+        SELECT slug FROM ${table} WHERE slug = ${slug} LIMIT 1`;
+  return Boolean(rows[0]);
+}
+
+async function pgRememberRetiredSlug(slug: string, siteId: string, now: string, tx?: YdbQueryTag) {
+  const table = sqlTable("hosting_slug_history");
+  const sql = tx ?? ydbQuery();
+  await sql`
+    INSERT INTO ${table} (slug, site_id, retired_at)
+    VALUES (${slug}, ${siteId}, ${now})
+    ON CONFLICT (slug) DO NOTHING`;
+}
+
+function isUniqueViolation(error: unknown) {
+  return String((error as { code?: string } | null)?.code ?? "").includes("23505");
+}
+
+function slugTaken(message = "Этот адрес уже занят") {
+  return new HostingError("SLUG_TAKEN", message, 409);
 }
 
 async function pgRelease(id: string): Promise<HostingRelease | null> {
@@ -399,6 +437,9 @@ export async function transferSiteOwners(
 export async function createSite(input: CreateSiteInput): Promise<HostingSite> {
   const { newHostingSlug } = await import("./slug.js");
   const now = new Date().toISOString();
+  if (input.slug !== undefined && !isHostingSlug(input.slug)) {
+    throw new HostingError("INVALID_SLUG", "Некорректный адрес сайта", 400);
+  }
   if (isYdbEnabled()) {
     await initializeStorage();
     const table = sqlTable("sites");
@@ -406,22 +447,40 @@ export async function createSite(input: CreateSiteInput): Promise<HostingSite> {
     if (existing && existing.status !== "deleted") return existing;
     if (existing?.status === "deleted") {
       // Tombstone остаётся строкой для аудита, но новый сайт получает новый slug и чистый
-      // `current`. Старый адрес после этого не воскресает.
-      const slug = newHostingSlug();
-      const [rows] = await ydbQuery()<SiteRow[]>`
-        UPDATE ${table}
-           SET slug = ${slug}, status = 'draft', active_release_id = NULL, publishing_release_id = NULL,
-               node_id = ${input.nodeId}, last_error = '', suspend_reason = '', updated_at = ${now},
-               published_at = NULL, unpublished_at = NULL, suspended_at = NULL
-         WHERE id = ${existing.id}
-         RETURNING id,user_id,project_id,slug,status,active_release_id,publishing_release_id,node_id,
-                   last_error,suspend_reason,created_at,updated_at,published_at,unpublished_at,suspended_at`;
-      if (rows[0]) return siteFromRow(rows[0]);
+      // `current`. Старый адрес после этого не воскресает и попадает в историю.
+      const slug = input.slug ?? await pickGeneratedSlug(existing.slug);
+      if (slug === existing.slug) throw slugTaken("Этот адрес уже использовался этим сайтом");
+      if (input.slug && await pgRetiredSlug(slug)) throw slugTaken();
+      let output: HostingSite | null = null;
+      try {
+        await ydbQuery().transaction({}, async tx => {
+          const [rows] = await tx<SiteRow[]>`
+            UPDATE ${table}
+               SET slug = ${slug}, status = 'draft', active_release_id = NULL, publishing_release_id = NULL,
+                   node_id = ${input.nodeId}, last_error = '', suspend_reason = '', updated_at = ${now},
+                   published_at = NULL, unpublished_at = NULL, suspended_at = NULL
+             WHERE id = ${existing.id}
+             RETURNING id,user_id,project_id,slug,status,active_release_id,publishing_release_id,node_id,
+                       last_error,suspend_reason,created_at,updated_at,published_at,unpublished_at,suspended_at`;
+          if (!rows[0]) throw new HostingError("PUBLISH_FAILED", "Не удалось пересоздать сайт");
+          await pgRememberRetiredSlug(existing.slug, existing.id, now, tx);
+          output = siteFromRow(rows[0]);
+        });
+      } catch (error) {
+        if (isUniqueViolation(error)) throw slugTaken();
+        throw error;
+      }
+      if (output) return output;
       throw new HostingError("PUBLISH_FAILED", "Не удалось пересоздать сайт");
     }
     let lastError: unknown = null;
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const slug = newHostingSlug();
+    const attempts = input.slug ? 1 : 5;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      const slug = input.slug ?? newHostingSlug();
+      if (await pgRetiredSlug(slug)) {
+        if (input.slug) throw slugTaken();
+        continue;
+      }
       try {
         const [rows] = await ydbQuery()<SiteRow[]>`
           INSERT INTO ${table}
@@ -437,7 +496,8 @@ export async function createSite(input: CreateSiteInput): Promise<HostingSite> {
         if (raced && raced.status !== "deleted") return raced;
       } catch (error) {
         lastError = error;
-        if (!String((error as { code?: string }).code ?? "").includes("23505")) throw error;
+        if (!isUniqueViolation(error)) throw error;
+        if (input.slug) throw slugTaken();
       }
     }
     throw new HostingError("PUBLISH_FAILED", "Не удалось выделить уникальный адрес сайта: " + (lastError instanceof Error ? lastError.message : ""));
@@ -447,8 +507,20 @@ export async function createSite(input: CreateSiteInput): Promise<HostingSite> {
     const state = await readJsonState();
     const existing = state.sites.find(site => site.projectId === input.projectId);
     if (existing && existing.status !== "deleted") return existing;
-    let slug = newHostingSlug();
-    for (let attempt = 0; attempt < 5 && state.sites.some(site => site.slug === slug); attempt++) slug = newHostingSlug();
+    if (input.slug && existing?.slug === input.slug) throw slugTaken("Этот адрес уже использовался этим сайтом");
+    if (input.slug && (state.sites.some(site => site.slug === input.slug) || state.retiredSlugs.some(item => item.slug === input.slug))) {
+      throw slugTaken();
+    }
+    let slug = input.slug ?? newHostingSlug();
+    for (let attempt = 0; attempt < 8 && (state.sites.some(site => site.slug === slug) || state.retiredSlugs.some(item => item.slug === slug)); attempt++) {
+      slug = newHostingSlug();
+    }
+    if (state.sites.some(site => site.slug === slug) || state.retiredSlugs.some(item => item.slug === slug)) {
+      throw new HostingError("PUBLISH_FAILED", "Не удалось выделить уникальный адрес сайта");
+    }
+    if (existing && !state.retiredSlugs.some(item => item.slug === existing.slug && item.siteId === existing.id)) {
+      state.retiredSlugs.push({ slug: existing.slug, siteId: existing.id });
+    }
     const site: HostingSite = existing
       ? { ...existing, slug, status: "draft", activeReleaseId: null, publishingReleaseId: null, nodeId: input.nodeId, lastError: "", suspendReason: "", updatedAt: now, publishedAt: null, unpublishedAt: null, suspendedAt: null }
       : {
@@ -472,6 +544,91 @@ export async function createSite(input: CreateSiteInput): Promise<HostingSite> {
     else state.sites.push(site);
     await writeJsonState(state);
     return site;
+  });
+}
+
+/** Свободный сгенерированный адрес; история старых имён тоже считается занятой. */
+async function pickGeneratedSlug(exclude?: string) {
+  const { newHostingSlug } = await import("./slug.js");
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const slug = newHostingSlug();
+    if (slug !== exclude && !await pgRetiredSlug(slug) && !await pgSiteBySlug(slug)) return slug;
+  }
+  throw new HostingError("PUBLISH_FAILED", "Не удалось выделить уникальный адрес сайта");
+}
+
+/**
+ * Меняет публичное имя сайта. Файловую систему переименовывает вызывающий код до этой
+ * записи; здесь проверяются занятость адреса, незавершённая публикация и уникальность.
+ * `expectedSlug` не даёт двум одновременным сменам адреса затереть друг друга.
+ */
+export async function renameSiteSlug(input: {
+  siteId: string;
+  expectedSlug: string;
+  slug: string;
+}): Promise<HostingSite> {
+  if (!isHostingSlug(input.slug)) throw new HostingError("INVALID_SLUG", "Некорректный адрес сайта", 400);
+  const now = new Date().toISOString();
+  if (isYdbEnabled()) {
+    await initializeStorage();
+    let output: HostingSite | null = null;
+    const sites = sqlTable("sites");
+    const history = sqlTable("hosting_slug_history");
+    try {
+      await ydbQuery().transaction({}, async tx => {
+        const [rows] = await tx<SiteRow[]>`
+          SELECT id,user_id,project_id,slug,status,active_release_id,publishing_release_id,node_id,
+                 last_error,suspend_reason,created_at,updated_at,published_at,unpublished_at,suspended_at
+            FROM ${sites} WHERE id = ${input.siteId} FOR UPDATE`;
+        const row = rows[0];
+        if (!row) throw new HostingError("SITE_NOT_FOUND", "Сайт не найден", 404);
+        const site = siteFromRow(row);
+        if (site.status === "deleted") throw new HostingError("SITE_DELETED", "Сайт удалён", 410);
+        if (site.slug !== input.expectedSlug) throw slugTaken("Адрес уже изменился, обновите страницу");
+        if (site.slug === input.slug) {
+          output = site;
+          return;
+        }
+        if (site.publishingReleaseId) throw new HostingBusyError(site.id, "Дождитесь окончания публикации, затем измените адрес");
+        const [other] = await tx<Array<{ id: string }>>`
+          SELECT id FROM ${sites} WHERE slug = ${input.slug} AND id <> ${site.id} LIMIT 1`;
+        if (other[0]) throw slugTaken();
+        const [retired] = await tx<Array<{ slug: string }>>`
+          SELECT slug FROM ${history} WHERE slug = ${input.slug} AND site_id <> ${site.id} LIMIT 1`;
+        if (retired[0]) throw slugTaken();
+        const [updated] = await tx<SiteRow[]>`
+          UPDATE ${sites}
+             SET slug = ${input.slug}, updated_at = ${now}
+           WHERE id = ${site.id}
+           RETURNING id,user_id,project_id,slug,status,active_release_id,publishing_release_id,node_id,
+                     last_error,suspend_reason,created_at,updated_at,published_at,unpublished_at,suspended_at`;
+        if (!updated[0]) throw new HostingError("SITE_NOT_FOUND", "Сайт не найден", 404);
+        await pgRememberRetiredSlug(site.slug, site.id, now, tx);
+        output = siteFromRow(updated[0]);
+      });
+    } catch (error) {
+      if (isUniqueViolation(error)) throw slugTaken();
+      throw error;
+    }
+    if (!output) throw new HostingError("PUBLISH_FAILED", "Не удалось изменить адрес сайта");
+    return output;
+  }
+  return withJsonLock(async () => {
+    const state = await readJsonState();
+    const site = state.sites.find(item => item.id === input.siteId);
+    if (!site) throw new HostingError("SITE_NOT_FOUND", "Сайт не найден", 404);
+    if (site.status === "deleted") throw new HostingError("SITE_DELETED", "Сайт удалён", 410);
+    if (site.slug !== input.expectedSlug) throw slugTaken("Адрес уже изменился, обновите страницу");
+    if (site.slug === input.slug) return { ...site };
+    if (site.publishingReleaseId) throw new HostingBusyError(site.id, "Дождитесь окончания публикации, затем измените адрес");
+    if (state.sites.some(item => item.id !== site.id && item.slug === input.slug)) throw slugTaken();
+    if (state.retiredSlugs.some(item => item.slug === input.slug && item.siteId !== site.id)) throw slugTaken();
+    if (!state.retiredSlugs.some(item => item.slug === site.slug && item.siteId === site.id)) {
+      state.retiredSlugs.push({ slug: site.slug, siteId: site.id });
+    }
+    Object.assign(site, { slug: input.slug, updatedAt: now });
+    await writeJsonState(state);
+    return { ...site };
   });
 }
 
