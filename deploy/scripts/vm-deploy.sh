@@ -695,7 +695,15 @@ install_caddyfile(){
   fi
   log "обновляю $CADDY_FILE из репозитория (прежний — $CADDY_FILE.bak)"
   cp "$APP_DIR/$CADDY_FILE" "$APP_DIR/$CADDY_FILE.bak" 2>/dev/null || true
-  mv "$staged" "$APP_DIR/$CADDY_FILE"
+  # Запись поверх файла, а не `mv`: Caddyfile смонтирован в контейнер отдельным файлом, и rename
+  # создаёт новый inode — контейнер продолжил бы читать прежний файл и не увидел новых правил
+  # (см. reload_caddy). Запись поверх сохраняет inode, поэтому смонтированный файл обновляется.
+  if ! cat "$staged" > "$APP_DIR/$CADDY_FILE"; then
+    log "не удалось записать $CADDY_FILE — на ВМ остаётся прежний файл"
+    rm -f "$staged"
+    return 1
+  fi
+  rm -f "$staged"
 }
 
 # Образ песочницы теперь полный (в slim нет git, а он нужен инструментам агента) и весит около
@@ -850,13 +858,24 @@ services_to_start(){
 #
 # `docker compose up -d` не перезапускает уже работающий Caddy, если изменился только
 # смонтированный Caddyfile: конфиг контейнера не поменялся, поэтому compose считает его
-# актуальным. В результате деплой писал новый Caddyfile, а процесс продолжал работать со
-# старым — например, с прежним matcher адресов сайтов, и читаемый slug отдавал 404.
-# Поэтому после подъёма сервисов всегда просим Caddy перечитать файл. Если admin API
-# недоступен, пересоздаём контейнер: конфигурация важнее короткого перерыва.
+# актуальным. Хуже того, bind-mount привязывает контейнер к inode файла: если на ВМ файл
+# подменили через rename, контейнер продолжает читать прежний файл, а `caddy reload` отвечает
+# «config is unchanged» — деплой писал новый matcher адресов сайтов, а Caddy работал со старым,
+# и читаемый slug отдавал 404. Поэтому сначала сверяем файл внутри контейнера с файлом на ВМ
+# и при расхождении пересоздаём контейнер, а если файл тот же — просим перечитать его без
+# перерыва. Если admin API недоступен, пересоздаём контейнер: конфигурация важнее перерыва.
 #
 reload_caddy(){
   if ! docker compose -f "$COMPOSE_FILE" config --services 2>/dev/null | grep -qx "$CADDY_SERVICE"; then
+    return 0
+  fi
+  local host_sum container_sum
+  host_sum=$(sha256sum "$APP_DIR/$CADDY_FILE" 2>/dev/null | cut -d' ' -f1 || true)
+  container_sum=$(docker compose -f "$COMPOSE_FILE" exec -T "$CADDY_SERVICE" sha256sum "/etc/caddy/$CADDY_FILE" 2>/dev/null | cut -d' ' -f1 || true)
+  if [ -n "$host_sum" ] && [ "$host_sum" != "$container_sum" ]; then
+    log "контейнер $CADDY_SERVICE читает другую версию $CADDY_FILE — пересоздаю его"
+    run docker compose -f "$COMPOSE_FILE" up -d --no-build --force-recreate "$CADDY_SERVICE" || \
+      log "не удалось пересоздать $CADDY_SERVICE; проверьте docker compose logs $CADDY_SERVICE"
     return 0
   fi
   log "перечитываю Caddyfile в Caddy"
@@ -868,26 +887,6 @@ reload_caddy(){
     log "не удалось пересоздать $CADDY_SERVICE; проверьте docker compose logs $CADDY_SERVICE"
 }
 
-#
-# ВРЕМЕННО: разбор 404 у сайта rec.host.nestdev.ru. Печатает то, что нельзя увидеть снаружи —
-# активную конфигурацию Caddy, монтирования его контейнера и файлы сайта на диске. Удалить
-# вместе с правкой причины.
-#
-hosting_diagnostics(){
-  if ! docker compose -f "$COMPOSE_FILE" config --services 2>/dev/null | grep -qx "$CADDY_SERVICE"; then
-    return 0
-  fi
-  log "диагностика: активная конфигурация Caddy"
-  docker compose -f "$COMPOSE_FILE" exec -T "$CADDY_SERVICE" sh -c 'wget -qO- http://127.0.0.1:2019/config/ 2>&1' 2>&1 | head -c 6000 || true
-  log "диагностика: монтирования контейнера $CADDY_SERVICE"
-  docker inspect "$(docker compose -f "$COMPOSE_FILE" ps -q "$CADDY_SERVICE")" --format '{{range .Mounts}}{{.Source}} => {{.Destination}} rw={{.RW}}{{"\n"}}{{end}}' 2>&1 || true
-  log "диагностика: каталог сайтов внутри $CADDY_SERVICE"
-  docker compose -f "$COMPOSE_FILE" exec -T "$CADDY_SERVICE" sh -c 'ls -la /srv/sites; echo ---; ls -la /srv/sites/rec; echo ---; readlink /srv/sites/rec/current; echo ---; ls -la /srv/sites/rec/current/ 2>&1 | head' 2>&1 || true
-  log "диагностика: каталог сайтов внутри $SERVICE"
-  docker compose -f "$COMPOSE_FILE" exec -T "$SERVICE" sh -c 'ls -la /srv/sites; echo ---; ls -la /srv/sites/rec 2>&1; echo ---; readlink /srv/sites/rec/current' 2>&1 || true
-  log "диагностика: последние строки лога $CADDY_SERVICE"
-  docker compose -f "$COMPOSE_FILE" logs --no-color --tail 40 "$CADDY_SERVICE" 2>&1 || true
-}
 
 #
 # Файлы уже созданных проектов лежат в именованном томе (там их писал сервер, когда песочницы
@@ -1416,7 +1415,6 @@ case "$MODE" in
     ensure_sandbox_image
     run docker compose -f "$COMPOSE_FILE" up -d --no-build $(services_to_start)
     reload_caddy
-    hosting_diagnostics
     ;;
   source)
     log "обновляю репозиторий до origin/$GIT_BRANCH"
