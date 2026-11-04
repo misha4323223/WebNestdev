@@ -9,6 +9,7 @@ import {
   mediaPublicUrl,
   renameMediaObject,
   safeMediaName,
+  uploadMultipartPart,
 } from "./media-store.js";
 import { presignAwsV4 } from "../services/s3.js";
 
@@ -153,6 +154,48 @@ test("media list shows object metadata and rename copies then removes the old ke
     assert.ok(calls.some(call => call.method === "DELETE" && call.url.includes("11111111-1111-1111-1111-111111111111-photo.jpg")));
   } finally {
     globalThis.fetch = originalFetch;
+  }
+});
+
+test("a part sent through the API keeps the multipart key, number and bytes", async () => {
+  const config = mediaConfigFromEnv(env);
+  assert.ok(config);
+  const previousToken = process.env.MWS_IAM_TOKEN;
+  const originalFetch = globalThis.fetch;
+  const calls: Array<{ url: string; method: string; headers: Headers; body: unknown }> = [];
+  process.env.MWS_IAM_TOKEN = "test-token";
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = (init?.method ?? "GET").toUpperCase();
+    calls.push({ url, method, headers: new Headers(init?.headers), body: init?.body });
+    if (url.includes("issueServiceAccountToken")) {
+      return new Response(JSON.stringify({ accessToken: "iam-token", expirationTs: new Date(Date.now() + 10 * 60_000).toISOString() }), { status: 200 });
+    }
+    if (url.includes("issueSessionToken")) {
+      return new Response(JSON.stringify({
+        AccessKeyId: "access", SecretAccessKey: "secret", SessionToken: "session",
+        Expiration: new Date(Date.now() + 10 * 60_000).toISOString(),
+      }), { status: 200 });
+    }
+    if (method === "PUT") return new Response(null, { status: 200, headers: { etag: "\"0f343b0931126a20f133d67c2b018a3b\"" } });
+    return new Response("unexpected", { status: 500 });
+  }) as typeof fetch;
+  try {
+    const key = mediaKey(config, "user-1", "project-1", "photo.webp");
+    const bytes = Buffer.from("part-bytes");
+    const etag = await uploadMultipartPart(config, { key, uploadId: "00065F75B1B0B26B", partNumber: 1, body: bytes });
+    assert.equal(etag, "\"0f343b0931126a20f133d67c2b018a3b\"");
+    const put = calls.find(call => call.method === "PUT");
+    assert.ok(put?.url.includes("partNumber=1"));
+    assert.ok(put?.url.includes("uploadId=00065F75B1B0B26B"));
+    assert.ok(put?.url.includes("/nestdev-media/" + key));
+    assert.deepEqual(put?.body, new Uint8Array(bytes));
+    // Подпись считается по телу части: иначе хранилище отклонит загрузку.
+    assert.ok(put?.headers.get("authorization")?.includes("Signature="));
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousToken === undefined) delete process.env.MWS_IAM_TOKEN;
+    else process.env.MWS_IAM_TOKEN = previousToken;
   }
 });
 

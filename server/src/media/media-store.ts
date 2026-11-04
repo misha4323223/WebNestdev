@@ -186,11 +186,11 @@ async function s3Request(
   config: MediaConfig,
   method: string,
   key: string,
-  options: { query?: Record<string, string>; body?: string; contentType?: string; cacheControl?: string; headers?: Record<string, string> } = {},
+  options: { query?: Record<string, string>; body?: string | Buffer; contentType?: string; cacheControl?: string; headers?: Record<string, string> } = {},
 ) {
   const session = await storageSession();
   const body = options.body ?? "";
-  const payloadHash = sha256(body);
+  const payloadHash = createHash("sha256").update(body).digest("hex");
   const date = amzDate();
   const headers: Record<string, string> = {
     host: config.host,
@@ -220,7 +220,8 @@ async function s3Request(
     const response = await fetch("https://" + config.host + path + (query ? "?" + query : ""), {
       method,
       headers: { ...headers, Authorization: signed.authorization },
-      body: options.body === undefined ? undefined : body,
+      // Buffer — это Uint8Array, но его тип для fetch приходится приводить явно.
+      body: options.body === undefined ? undefined : typeof body === "string" ? body : new Uint8Array(body),
       signal: controller.signal,
     });
     const text = await response.text();
@@ -417,6 +418,33 @@ export async function completeMultipartUpload(
 
 export async function abortMultipartUpload(config: MediaConfig, key: string, uploadId: string) {
   await s3Request(config, "DELETE", key, { query: { uploadId } });
+}
+
+/**
+ * Часть файла, отправленная через API. Обычно браузер кладёт часть прямо в бакет, но сеть
+ * пользователя, расширение или CORS могут этот запрос не пустить — тогда та же часть идёт через
+ * сервер, у которого доступ к хранилищу есть всегда. Multipart тот же: ключ, uploadId и номер
+ * части приходят от `createMultipartUpload`, поэтому `complete` соберёт файл без изменений.
+ */
+export async function uploadMultipartPart(
+  config: MediaConfig,
+  input: { key: string; uploadId: string; partNumber: number; body: Buffer },
+) {
+  if (!Number.isSafeInteger(input.partNumber) || input.partNumber < 1) {
+    throw new MediaError("MEDIA_BAD_PARTS", "Некорректный номер части");
+  }
+  if (!input.body.length) throw new MediaError("MEDIA_EMPTY_FILE", "Пустая часть файла");
+  if (input.body.length > config.partSizeBytes) {
+    throw new MediaError("MEDIA_TOO_LARGE", "Часть больше " + Math.round(config.partSizeBytes / 1024 / 1024) + " МБ", 413);
+  }
+  const response = await s3Request(config, "PUT", input.key, {
+    query: { partNumber: String(input.partNumber), uploadId: input.uploadId },
+    body: input.body,
+    contentType: "application/octet-stream",
+  });
+  const etag = response.response.headers.get("etag");
+  if (!etag) throw new MediaError("MEDIA_STORAGE_FAILED", "Хранилище не вернуло ETag части", 502);
+  return etag;
 }
 
 /** Удаление готового объекта: снятое вложение и очистка проекта. */

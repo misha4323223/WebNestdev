@@ -65,6 +65,37 @@ export async function renameProjectMedia(projectId: string, key: string, name: s
  * напрямую в бакет, а в конце сервер проверяет размер и только тогда отдаёт публичную ссылку.
  * Ошибка на любой части отменяет multipart, чтобы неоплаченные обрывки не лежали в бакете.
  */
+/**
+ * Отправка одной части. Сначала прямо в бакет: так байты не идут через API. Если браузер не смог
+ * достучаться до хранилища (сеть, расширение, CORS), та же часть уходит через API — ключ, uploadId
+ * и номер части одни и те же, поэтому сборка файла в конце не меняется.
+ */
+async function uploadPart(
+  projectId: string,
+  start: MediaUpload,
+  part: { partNumber: number; url: string },
+  chunk: Blob,
+): Promise<string> {
+  let response: Response;
+  try {
+    response = await fetch(part.url, { method: "PUT", body: chunk });
+  } catch {
+    const proxied = await apiJson<{ etag: string }>(
+      "/api/projects/" + projectId + "/media/part?partNumber=" + part.partNumber +
+        "&uploadId=" + encodeURIComponent(start.uploadId) + "&key=" + encodeURIComponent(start.key),
+      { method: "PUT", headers: { "content-type": "application/octet-stream" }, body: chunk },
+    );
+    if (!proxied.etag) throw new Error("Сервер не вернул ETag части " + part.partNumber);
+    return proxied.etag;
+  }
+  if (!response.ok) {
+    throw new Error("Хранилище отклонило часть " + part.partNumber + ": HTTP " + response.status);
+  }
+  const etag = response.headers.get("etag");
+  if (!etag) throw new Error("Хранилище не вернуло ETag части " + part.partNumber);
+  return etag;
+}
+
 export async function uploadProjectMedia(
   projectId: string,
   file: Blob & { name: string },
@@ -88,18 +119,7 @@ export async function uploadProjectMedia(
       const begin = (part.partNumber - 1) * start.partSizeBytes;
       const end = Math.min(file.size, begin + start.partSizeBytes);
       const chunk = file.slice(begin, end);
-      let response: Response;
-      try {
-        response = await fetch(part.url, { method: "PUT", body: chunk });
-      } catch (error) {
-        throw new Error("Не удалось отправить часть " + part.partNumber + ": " + (error instanceof Error ? error.message : String(error)));
-      }
-      if (!response.ok) {
-        throw new Error("Хранилище отклонило часть " + part.partNumber + ": HTTP " + response.status);
-      }
-      const etag = response.headers.get("etag");
-      if (!etag) throw new Error("Хранилище не вернуло ETag части " + part.partNumber);
-      parts.push({ partNumber: part.partNumber, etag });
+      parts.push({ partNumber: part.partNumber, etag: await uploadPart(projectId, start, part, chunk) });
       uploaded += chunk.size;
       onProgress?.(uploaded, file.size);
     }

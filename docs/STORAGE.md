@@ -236,6 +236,12 @@ No permanent HMAC key is stored for this path: the MWS service account is exchan
 short-lived storage session (`IssueSessionToken`), and that session signs the parts. The same
 session is used for the quota listing under `media/<userId>/`.
 
+If the browser cannot reach the bucket at all (corporate network, a blocker extension, CORS), the
+panel sends the same part through `PUT /api/projects/:id/media/part` with the same key, `uploadId`
+and part number, and the server puts it into the bucket. Uploads therefore do not depend on the
+browser's access to the storage host; the direct path stays the default because it keeps the bytes
+out of the API.
+
 | Variable | Default | Meaning |
 |---|---|---|
 | `MEDIA_S3_ENDPOINT` | — | S3 endpoint, for example `https://storage.mwsapis.ru` |

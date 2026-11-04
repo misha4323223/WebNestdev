@@ -16,6 +16,7 @@ import {
   MediaError,
   mediaPublicUrl,
   renameMediaObject,
+  uploadMultipartPart,
   type MediaConfig,
 } from "../media/media-store.js";
 import { scanMediaUsage } from "../media/media-usage.js";
@@ -72,7 +73,25 @@ async function assertQuota(userId: string, addBytes: number) {
   }
 }
 
+/**
+ * Предел тела для части файла: часть приходит двоичными данными, а общий лимит приложения (2 МБ)
+ * меньше любой нормальной фотографии. Значение берётся из той же настройки, что и размер части.
+ */
+function partBodyLimit() {
+  try {
+    const config = mediaConfigFromEnv();
+    if (config) return config.partSizeBytes + 1024 * 1024;
+  } catch {
+    // Сломанная конфигурация называется в обработчике маршрута, а не при регистрации.
+  }
+  return 65 * 1024 * 1024;
+}
+
 export async function registerMediaRoutes(app: FastifyInstance) {
+  // Часть файла передаётся как есть: base64 раздул бы 64 МиБ части до 85 МиБ и потребовал
+  // бы держать в памяти две копии. Fastify для незнакомого типа сам отвечал бы 415.
+  app.addContentTypeParser("application/octet-stream", { parseAs: "buffer" }, (_request, body, done) => done(null, body));
+
   app.get("/api/projects/:id/media", async (request, reply) => {
     const params = z.object({ id: z.string().min(1) }).parse(request.params);
     const user = await requireProjectUser(request, reply, params.id);
@@ -220,6 +239,40 @@ export async function registerMediaRoutes(app: FastifyInstance) {
       });
       invalidateMediaUsage(user.id);
       return result;
+    } catch (error) {
+      return sendMediaError(reply, error);
+    }
+  });
+
+  /**
+   * Часть файла через API: тот же multipart, те же ключ, uploadId и номер части, но тело идёт
+   * через сервер. Нужен, когда браузер не может положить часть прямо в бакет — сеть
+   * пользователя, расширение или CORS. Без этого такие сети вообще не могут загрузить фото.
+   */
+  app.put("/api/projects/:id/media/part", { bodyLimit: partBodyLimit() }, async (request, reply) => {
+    const params = z.object({ id: z.string().min(1) }).parse(request.params);
+    const user = await requireProjectUser(request, reply, params.id);
+    if (!user) return;
+    try {
+      const config = configOrThrow();
+      const query = z.object({
+        key: z.string().min(1).max(2000),
+        uploadId: z.string().min(1).max(2000),
+        partNumber: z.coerce.number().int().min(1).max(10_000),
+      }).parse(request.query);
+      if (!mediaKeyBelongsTo(config, query.key, user.id, params.id)) {
+        return reply.code(403).send({ error: "Этот ключ медиа не принадлежит проекту", code: "MEDIA_FOREIGN_KEY" });
+      }
+      if (!Buffer.isBuffer(request.body) || !request.body.length) {
+        return reply.code(415).send({ error: "Ожидаются двоичные данные части файла", code: "MEDIA_BAD_BODY" });
+      }
+      const etag = await uploadMultipartPart(config, {
+        key: query.key,
+        uploadId: query.uploadId,
+        partNumber: query.partNumber,
+        body: request.body,
+      });
+      return { etag };
     } catch (error) {
       return sendMediaError(reply, error);
     }
