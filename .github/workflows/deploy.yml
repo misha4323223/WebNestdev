@@ -248,6 +248,18 @@ jobs:
           PLATFORM_S3_PREFIX: ${{ secrets.PLATFORM_S3_PREFIX || vars.PLATFORM_S3_PREFIX }}
           PLATFORM_S3_ACCESS_KEY_ID: ${{ secrets.PLATFORM_S3_ACCESS_KEY_ID }}
           PLATFORM_S3_SECRET_ACCESS_KEY: ${{ secrets.PLATFORM_S3_SECRET_ACCESS_KEY }}
+          # Медиа: сервисный аккаунт MWS обменивается на короткую storage-сессию, поэтому
+          # HMAC-пара в Secrets не нужна. Пустые значения просто выключают загрузку.
+          MWS_SA_KEY: ${{ secrets.MWS_SA_KEY }}
+          MWS_SA_KEY_ID: ${{ secrets.MWS_SA_KEY_ID }}
+          MWS_SA_PRIVATE_KEY: ${{ secrets.MWS_SA_PRIVATE_KEY }}
+          MEDIA_S3_ENDPOINT: ${{ secrets.MEDIA_S3_ENDPOINT || vars.MEDIA_S3_ENDPOINT }}
+          MEDIA_S3_BUCKET: ${{ secrets.MEDIA_S3_BUCKET || vars.MEDIA_S3_BUCKET }}
+          MEDIA_S3_REGION: ${{ secrets.MEDIA_S3_REGION || vars.MEDIA_S3_REGION }}
+          MEDIA_S3_PREFIX: ${{ secrets.MEDIA_S3_PREFIX || vars.MEDIA_S3_PREFIX }}
+          MEDIA_PUBLIC_BASE_URL: ${{ secrets.MEDIA_PUBLIC_BASE_URL || vars.MEDIA_PUBLIC_BASE_URL }}
+          MEDIA_MAX_FILE_BYTES: ${{ secrets.MEDIA_MAX_FILE_BYTES || vars.MEDIA_MAX_FILE_BYTES }}
+          MEDIA_PART_SIZE_BYTES: ${{ secrets.MEDIA_PART_SIZE_BYTES || vars.MEDIA_PART_SIZE_BYTES }}
           # 1 включает уборку простаивающих проектов в бакет; 0/пусто — проекты остаются на диске.
           PROJECT_ARCHIVE_ENABLED: ${{ secrets.PROJECT_ARCHIVE_ENABLED || vars.PROJECT_ARCHIVE_ENABLED }}
           # Минуты простоя до переезда в бакет. Дни остаются поддерживаемым старым ключом,
@@ -258,6 +270,10 @@ jobs:
           HOSTING_ENABLED: ${{ vars.HOSTING_ENABLED || secrets.HOSTING_ENABLED || '1' }}
           HOSTING_PUBLIC_DOMAIN: ${{ vars.HOSTING_PUBLIC_DOMAIN || secrets.HOSTING_PUBLIC_DOMAIN || 'host.nestdev.ru' }}
           HOSTING_SITES_DIR: ${{ vars.HOSTING_SITES_DIR || secrets.HOSTING_SITES_DIR || '/var/lib/webnestdev/sites' }}
+          # auto — бакет включается, когда заданы PLATFORM_S3_*; 0 — только диск; 1 — требовать S3.
+          # Префикс отделяет релизы сайтов от архивов проектов в том же бакете.
+          HOSTING_S3_ENABLED: ${{ vars.HOSTING_S3_ENABLED || secrets.HOSTING_S3_ENABLED || 'auto' }}
+          HOSTING_S3_PREFIX: ${{ vars.HOSTING_S3_PREFIX || secrets.HOSTING_S3_PREFIX || 'hosting' }}
           # docker — обычный runc; runsc — gVisor для контейнеров команд и превью. По умолчанию
           # docker: выкатка без этой переменной не меняет рантайм. Для отката вернуть docker.
           # Ручной запуск может переопределить Variable на один запуск: sandbox_runtime=runsc
@@ -417,11 +433,23 @@ jobs:
           add_platform_env PLATFORM_S3_PREFIX "$PLATFORM_S3_PREFIX"
           add_platform_env PLATFORM_S3_ACCESS_KEY_ID "$PLATFORM_S3_ACCESS_KEY_ID"
           add_platform_env PLATFORM_S3_SECRET_ACCESS_KEY "$PLATFORM_S3_SECRET_ACCESS_KEY"
+          add_platform_env MWS_SA_KEY "$(printf '%s' "${MWS_SA_KEY:-}" | tr -d '\n\r')"
+          add_platform_env MWS_SA_KEY_ID "$MWS_SA_KEY_ID"
+          add_platform_env MWS_SA_PRIVATE_KEY "$(printf '%s' "${MWS_SA_PRIVATE_KEY:-}" | tr -d '\n\r')"
+          add_platform_env MEDIA_S3_ENDPOINT "$MEDIA_S3_ENDPOINT"
+          add_platform_env MEDIA_S3_BUCKET "$MEDIA_S3_BUCKET"
+          add_platform_env MEDIA_S3_REGION "$MEDIA_S3_REGION"
+          add_platform_env MEDIA_S3_PREFIX "$MEDIA_S3_PREFIX"
+          add_platform_env MEDIA_PUBLIC_BASE_URL "$MEDIA_PUBLIC_BASE_URL"
+          add_platform_env MEDIA_MAX_FILE_BYTES "$MEDIA_MAX_FILE_BYTES"
+          add_platform_env MEDIA_PART_SIZE_BYTES "$MEDIA_PART_SIZE_BYTES"
           add_platform_env PROJECT_ARCHIVE_ENABLED "$PROJECT_ARCHIVE_ENABLED"
           add_platform_env PROJECT_ARCHIVE_IDLE_MINUTES "$PROJECT_ARCHIVE_IDLE_MINUTES"
           add_platform_env HOSTING_ENABLED "$HOSTING_ENABLED"
           add_platform_env HOSTING_PUBLIC_DOMAIN "$HOSTING_PUBLIC_DOMAIN"
           add_platform_env HOSTING_SITES_DIR "$HOSTING_SITES_DIR"
+          add_platform_env HOSTING_S3_ENABLED "$HOSTING_S3_ENABLED"
+          add_platform_env HOSTING_S3_PREFIX "$HOSTING_S3_PREFIX"
           add_platform_env SANDBOX_RUNTIME "$SANDBOX_RUNTIME"
           add_platform_env WEBNESTDEV_ADMIN_EMAILS "$WEBNESTDEV_ADMIN_EMAILS"
           add_platform_env WEBNESTDEV_ADMIN_USER_IDS "$WEBNESTDEV_ADMIN_USER_IDS"
@@ -618,6 +646,18 @@ jobs:
           PLATFORM_S3_PREFIX: ${{ secrets.PLATFORM_S3_PREFIX || vars.PLATFORM_S3_PREFIX }}
           PLATFORM_S3_ACCESS_KEY_ID: ${{ secrets.PLATFORM_S3_ACCESS_KEY_ID }}
           PLATFORM_S3_SECRET_ACCESS_KEY: ${{ secrets.PLATFORM_S3_SECRET_ACCESS_KEY }}
+          # Медиа: сервисный аккаунт MWS обменивается на короткую storage-сессию, поэтому
+          # HMAC-пара в Secrets не нужна. Пустые значения просто выключают загрузку.
+          MWS_SA_KEY: ${{ secrets.MWS_SA_KEY }}
+          MWS_SA_KEY_ID: ${{ secrets.MWS_SA_KEY_ID }}
+          MWS_SA_PRIVATE_KEY: ${{ secrets.MWS_SA_PRIVATE_KEY }}
+          MEDIA_S3_ENDPOINT: ${{ secrets.MEDIA_S3_ENDPOINT || vars.MEDIA_S3_ENDPOINT }}
+          MEDIA_S3_BUCKET: ${{ secrets.MEDIA_S3_BUCKET || vars.MEDIA_S3_BUCKET }}
+          MEDIA_S3_REGION: ${{ secrets.MEDIA_S3_REGION || vars.MEDIA_S3_REGION }}
+          MEDIA_S3_PREFIX: ${{ secrets.MEDIA_S3_PREFIX || vars.MEDIA_S3_PREFIX }}
+          MEDIA_PUBLIC_BASE_URL: ${{ secrets.MEDIA_PUBLIC_BASE_URL || vars.MEDIA_PUBLIC_BASE_URL }}
+          MEDIA_MAX_FILE_BYTES: ${{ secrets.MEDIA_MAX_FILE_BYTES || vars.MEDIA_MAX_FILE_BYTES }}
+          MEDIA_PART_SIZE_BYTES: ${{ secrets.MEDIA_PART_SIZE_BYTES || vars.MEDIA_PART_SIZE_BYTES }}
           PROJECT_ARCHIVE_ENABLED: ${{ secrets.PROJECT_ARCHIVE_ENABLED || vars.PROJECT_ARCHIVE_ENABLED }}
           # Минуты простоя до переезда в бакет. Дни остаются поддерживаемым старым ключом,
           # но новый ключ важнее (см. server/src/storage/archive-scheduler.ts).
@@ -627,6 +667,10 @@ jobs:
           HOSTING_ENABLED: ${{ vars.HOSTING_ENABLED || secrets.HOSTING_ENABLED || '1' }}
           HOSTING_PUBLIC_DOMAIN: ${{ vars.HOSTING_PUBLIC_DOMAIN || secrets.HOSTING_PUBLIC_DOMAIN || 'host.nestdev.ru' }}
           HOSTING_SITES_DIR: ${{ vars.HOSTING_SITES_DIR || secrets.HOSTING_SITES_DIR || '/var/lib/webnestdev/sites' }}
+          # auto — бакет включается, когда заданы PLATFORM_S3_*; 0 — только диск; 1 — требовать S3.
+          # Префикс отделяет релизы сайтов от архивов проектов в том же бакете.
+          HOSTING_S3_ENABLED: ${{ vars.HOSTING_S3_ENABLED || secrets.HOSTING_S3_ENABLED || 'auto' }}
+          HOSTING_S3_PREFIX: ${{ vars.HOSTING_S3_PREFIX || secrets.HOSTING_S3_PREFIX || 'hosting' }}
           # docker — обычный runc; runsc — gVisor для контейнеров команд и превью. По умолчанию
           # docker: выкатка без этой переменной не меняет рантайм. Для отката вернуть docker.
           # Ручной запуск может переопределить Variable на один запуск: sandbox_runtime=runsc
@@ -763,11 +807,23 @@ jobs:
           add_platform_env PLATFORM_S3_PREFIX "$PLATFORM_S3_PREFIX"
           add_platform_env PLATFORM_S3_ACCESS_KEY_ID "$PLATFORM_S3_ACCESS_KEY_ID"
           add_platform_env PLATFORM_S3_SECRET_ACCESS_KEY "$PLATFORM_S3_SECRET_ACCESS_KEY"
+          add_platform_env MWS_SA_KEY "$(printf '%s' "${MWS_SA_KEY:-}" | tr -d '\n\r')"
+          add_platform_env MWS_SA_KEY_ID "$MWS_SA_KEY_ID"
+          add_platform_env MWS_SA_PRIVATE_KEY "$(printf '%s' "${MWS_SA_PRIVATE_KEY:-}" | tr -d '\n\r')"
+          add_platform_env MEDIA_S3_ENDPOINT "$MEDIA_S3_ENDPOINT"
+          add_platform_env MEDIA_S3_BUCKET "$MEDIA_S3_BUCKET"
+          add_platform_env MEDIA_S3_REGION "$MEDIA_S3_REGION"
+          add_platform_env MEDIA_S3_PREFIX "$MEDIA_S3_PREFIX"
+          add_platform_env MEDIA_PUBLIC_BASE_URL "$MEDIA_PUBLIC_BASE_URL"
+          add_platform_env MEDIA_MAX_FILE_BYTES "$MEDIA_MAX_FILE_BYTES"
+          add_platform_env MEDIA_PART_SIZE_BYTES "$MEDIA_PART_SIZE_BYTES"
           add_platform_env PROJECT_ARCHIVE_ENABLED "$PROJECT_ARCHIVE_ENABLED"
           add_platform_env PROJECT_ARCHIVE_IDLE_MINUTES "$PROJECT_ARCHIVE_IDLE_MINUTES"
           add_platform_env HOSTING_ENABLED "$HOSTING_ENABLED"
           add_platform_env HOSTING_PUBLIC_DOMAIN "$HOSTING_PUBLIC_DOMAIN"
           add_platform_env HOSTING_SITES_DIR "$HOSTING_SITES_DIR"
+          add_platform_env HOSTING_S3_ENABLED "$HOSTING_S3_ENABLED"
+          add_platform_env HOSTING_S3_PREFIX "$HOSTING_S3_PREFIX"
           add_platform_env SANDBOX_RUNTIME "$SANDBOX_RUNTIME"
           add_platform_env WEBNESTDEV_ADMIN_EMAILS "$WEBNESTDEV_ADMIN_EMAILS"
           add_platform_env WEBNESTDEV_ADMIN_USER_IDS "$WEBNESTDEV_ADMIN_USER_IDS"

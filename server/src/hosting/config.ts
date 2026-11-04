@@ -53,6 +53,34 @@ export function hostingPublicDomain(value = process.env.HOSTING_PUBLIC_DOMAIN ??
   return domain;
 }
 
+/**
+ * Префикс ключей хостинга внутри бакета `PLATFORM_S3_*`. Не `PLATFORM_S3_PREFIX`: тот
+ * отделяет данные платформы от чужих объектов, а этот — релизы сайтов от архивов проектов.
+ * Сегменты проверяются как сегменты ключа: `..` в префиксе означал бы запись вне своего места.
+ */
+export function hostingBucketPrefix(value = process.env.HOSTING_S3_PREFIX ?? "hosting") {
+  const prefix = value.trim().replace(/^\/+|\/+$/g, "");
+  if (!prefix) throw new Error("HOSTING_S3_PREFIX не может быть пустым");
+  for (const part of prefix.split("/")) {
+    if (!part || part === "." || part === ".." || !/^[A-Za-z0-9._-]+$/.test(part)) {
+      throw new Error("HOSTING_S3_PREFIX содержит недопустимый сегмент: " + prefix);
+    }
+  }
+  return prefix;
+}
+
+/**
+ * auto — включать бакет, когда заданы `PLATFORM_S3_*`; 0 — всегда диск; 1 — требовать бакет.
+ * Так пилот не начинает зависеть от S3 только потому, что бакет настроен для холодного яруса,
+ * но и не требует второй переменной на каждом стенде.
+ */
+export function hostingBucketMode(value = process.env.HOSTING_S3_ENABLED ?? "auto") {
+  const mode = value.trim().toLowerCase();
+  if (["0", "false", "off", "no"].includes(mode)) return "off" as const;
+  if (["1", "true", "on", "yes"].includes(mode)) return "on" as const;
+  return "auto" as const;
+}
+
 export function hostingSitesDir(value = process.env.WEBNESTDEV_SITES_DIR ?? process.env.SITES_DIR ?? "/srv/sites") {
   const dir = path.resolve(value);
   if (dir === path.parse(dir).root) {
@@ -127,6 +155,9 @@ export function describeHosting(config = hostingConfig()) {
     "; узел " +
     config.nodeId +
     (config.sharedStorage ? "; общий SITES_DIR" : "") +
+    "; бакет " +
+    hostingBucketMode() +
+    (hostingBucketMode() === "off" ? "" : " (" + hostingBucketPrefix() + ")") +
     "; релиз " +
     Math.round(limits.maxReleaseBytes / MIB) +
     " МиБ / " +

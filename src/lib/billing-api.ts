@@ -53,6 +53,8 @@ export type StorageState = "ok" | "warning" | "full";
 export type StorageProject = { id: string; name: string; sizeBytes: number; measuredAt: string | null };
 export type Storage = {
   usedBytes: number;
+  hostingBytes?: number;
+  mediaBytes?: number;
   limitBytes: number;
   state?: StorageState;
   measuredAt?: string | null;

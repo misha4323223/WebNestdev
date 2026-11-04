@@ -38,6 +38,7 @@ import { registerProjectRoutes } from "./routes/projects.js";
 import { registerPreviewRoutes } from "./routes/preview.js";
 import { registerToolRoutes } from "./routes/tools.js";
 import { registerWorkspaceRoutes } from "./routes/workspace.js";
+import { registerMediaRoutes } from "./routes/media.js";
 import { registerThemeRoutes } from "./routes/theme.js";
 import { registerAgentWebSocket } from "./routes/agent-ws.js";
 import { registerProviderRoutes } from "./routes/providers.js";
@@ -90,6 +91,7 @@ import { registerDonationRoutes } from "./routes/donations.js";
 import { startBillingSweeper, stopBillingSweeper } from "./billing/recurring.js";
 import { startStorageReconcileScheduler } from "./account/storage-scheduler.js";
 import { describeObjectStore } from "./storage/object-store.js";
+import { describeMediaConfig, mediaConfigFromEnv } from "./media/media-store.js";
 import { startProjectArchiveScheduler } from "./storage/archive-scheduler.js";
 import { ProjectRestoreFailedError, ProjectRestoringError } from "./storage/restore-jobs.js";
 import { importArchiveRecordsFromDisk } from "./storage/project-archive-state.js";
@@ -180,6 +182,11 @@ console.log("[storage] " + describeStorage());
 // Холодный ярус проектов: настроен ли бакет и включена ли архивация. Без этой строки «диск
 // кончается, а архивов нет» выглядит как поломка, хотя причина — незаданные PLATFORM_S3_*.
 console.log("[storage] " + describeObjectStore());
+try {
+  console.log("[media] " + describeMediaConfig(mediaConfigFromEnv()));
+} catch (error) {
+  console.warn("[media] конфигурация неполная: " + (error instanceof Error ? error.message : String(error)));
+}
 // Which preview mode this host runs is the first thing to check when memory or a project's
 // preview behaves unexpectedly (PREVIEW_MODE: auto | static | container).
 console.log("[preview] " + describePreviewMode() + "; " + describePreviewLimits());
@@ -396,6 +403,7 @@ await registerHostingRoutes(app);
 await registerPreviewRoutes(app);
 await registerToolRoutes(app);
 await registerWorkspaceRoutes(app);
+await registerMediaRoutes(app);
 await registerThemeRoutes(app);
 await registerProviderRoutes(app);
 await registerGitHubRoutes(app);

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, readdir, rename, rm, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { getProject, type Project } from "../project-store.js";
 import { getSandbox } from "../sandbox-manager.js";
@@ -36,6 +36,12 @@ import {
   switchCurrent,
 } from "./paths.js";
 import { HostingError, type HostingProjectKind, type HostingRelease, type HostingSite } from "./types.js";
+import {
+  hostingReleaseStore,
+  hostingReleaseStoreSafe,
+  type ReleaseStore,
+  type StoredRelease,
+} from "./release-store.js";
 
 /**
  * Публикация статического сайта.
@@ -174,6 +180,17 @@ export async function startRollback(
   if (release.status !== "ready") throw new HostingError("RELEASE_NOT_READY", "Откатиться можно только на готовый релиз", 409);
 
   await ensureSiteLayout(site.slug, config.sitesDir);
+  const releaseDir = hostingReleaseDir(site.slug, release.id, config.sitesDir);
+  const local = await lstat(releaseDir).catch(() => null);
+  if (!local?.isDirectory()) {
+    // Локальный кэш мог не пережить потерю диска. Архив в бакете — единственный способ
+    // вернуть старый релиз без повторной сборки проекта.
+    const store = hostingReleaseStore();
+    if (!store) {
+      throw new HostingError("RELEASE_NOT_READY", "Файлы выбранного релиза не найдены на этом узле", 409);
+    }
+    await store.restore({ site, release, dir: releaseDir });
+  }
   let previous: string | null;
   try {
     previous = await switchCurrent(site.slug, release.id, config.sitesDir);
@@ -269,8 +286,11 @@ async function runPublish(site: HostingSite, release: HostingRelease, project: P
   let buildLog = "";
   let secretValues: string[] = [];
   let publishedBytes = 0;
+  let releaseStore: ReleaseStore | null = null;
+  let stored: StoredRelease | null = null;
 
   try {
+    releaseStore = hostingReleaseStore();
     await withBuildSlot(limits.maxReleaseSeconds * 1000, async () => {
       await ensureSiteLayout(site.slug, config.sitesDir);
       const sandbox = await getSandbox(project.id, project.userId);
@@ -322,6 +342,18 @@ async function runPublish(site: HostingSite, release: HostingRelease, project: P
       await mkdir(path.dirname(manifestPath), { recursive: true, mode: 0o755 });
       await writeFile(manifestPath, JSON.stringify(inspected), { encoding: "utf8", mode: 0o644 });
 
+      // Архив загружается до переключения current: если S3 недоступен, старый сайт должен
+      // продолжать работать, а не замениться релизом, которого нет в источнике правды.
+      if (releaseStore) {
+        stored = await releaseStore.put({ site, releaseId: release.id, dir: target, manifest: inspected });
+        logLine("info", "release archived", {
+          site: site.slug,
+          release: release.id,
+          bytes: stored.storedBytes,
+          key: stored.storageKey,
+        });
+      }
+
       previousRelease = await switchCurrent(site.slug, release.id, config.sitesDir);
       switched = true;
 
@@ -332,12 +364,12 @@ async function runPublish(site: HostingSite, release: HostingRelease, project: P
           userId: project.userId,
           kind,
           bytes: inspected.bytes,
-          storedBytes: inspected.bytes,
+          storedBytes: stored?.storedBytes ?? inspected.bytes,
           files: inspected.filesCount,
           sha256: inspected.sha256,
           manifestJson: JSON.stringify(inspected),
-          storageKey: "releases/" + site.slug + "/" + release.id,
-          manifestKey: "manifests/" + site.slug + "/" + release.id + ".json",
+          storageKey: stored?.storageKey ?? "",
+          manifestKey: stored?.manifestKey ?? "",
         });
         committed = true;
       } catch (error) {
@@ -400,6 +432,18 @@ async function runPublish(site: HostingSite, release: HostingRelease, project: P
         logLine("error", "current rollback failed", { site: site.slug, error: restoreError instanceof Error ? restoreError.message : String(restoreError) });
       }
     }
+    if (!committed && releaseStore) {
+      // Релиз не записан в БД — его объекты никто не найдёт. Ключи детерминированные,
+      // поэтому чистим и тот случай, когда put упал после загрузки архива.
+      const keys = stored ?? releaseStore.keys(site, release.id);
+      await releaseStore.removeKeys(keys.storageKey, keys.manifestKey).catch(cleanupError => {
+        logLine("warn", "release objects cleanup failed", {
+          site: site.slug,
+          release: release.id,
+          error: cleanupError instanceof Error ? cleanupError.message : String(cleanupError),
+        });
+      });
+    }
     if (!committed) {
       await failPublish({
         siteId: site.id,
@@ -418,6 +462,7 @@ async function runPublish(site: HostingSite, release: HostingRelease, project: P
 
 export async function pruneOldReleases(site: HostingSite, activeReleaseId: string, keep: number, sitesDir = hostingConfig().sitesDir) {
   const stale = await staleReleases(site.id, activeReleaseId, keep);
+  const store = hostingReleaseStoreSafe();
   for (const release of stale) {
     if (release.id === activeReleaseId) continue;
     const dir = hostingReleaseDir(site.slug, release.id, sitesDir);
@@ -427,6 +472,17 @@ export async function pruneOldReleases(site: HostingSite, activeReleaseId: strin
       if (!(await markReleaseDeleted(release.id))) continue;
       await rm(dir, { recursive: true, force: true });
       await rm(hostingManifestPath(site.slug, release.id, sitesDir), { force: true });
+      // Строка уже помечена deleted: активным этот релиз стать не может, объект больше
+      // не нужен. Ошибка S3 не отменяет публикацию — только оставляет объект на разбор.
+      if (store) {
+        await store.remove({ site, release }).catch(error => {
+          logLine("warn", "old release object cleanup failed", {
+            site: site.slug,
+            release: release.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+      }
     } catch (error) {
       logLine("warn", "old release cleanup failed", {
         site: site.slug,

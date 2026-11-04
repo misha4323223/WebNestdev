@@ -112,7 +112,7 @@ export function UsageOverview({ billing, paid, onTopUp, onRefreshStorage, refres
                 </div>)}
             {storageProjects.length > 6 && <p className="storage-empty">и ещё {storageProjects.length - 6} проектов</p>}
           </div>
-          <p className="storage-hint">В размер входят все файлы проекта, включая зависимости и сборки.{storageMeasuredAt ? " Обновлено " + storageMeasuredAt + "." : ""} Сверка повторяется раз в сутки.</p>
+          <p className="storage-hint">В размер входят все файлы проекта, включая зависимости и сборки, готовые релизы сайтов и большие медиа.{storageMeasuredAt ? " Обновлено " + storageMeasuredAt + "." : ""} Сверка повторяется раз в сутки.</p>
         </details>}
       </article>
     </div>

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { getTable, initializeStorage, isYdbEnabled, ydbQuery } from "./pg.js";
+import { getTable, initializeStorage, isYdbEnabled, ydbQuery, type YdbQueryTag } from "./pg.js";
 
 /**
  * Отметка «рабочая папка проекта лежит в бакете».
@@ -153,6 +153,40 @@ export async function listArchiveRecords(): Promise<ProjectArchiveRecord[]> {
       FROM ${table}
      ORDER BY archived_at DESC`;
   return rows.map(rowToRecord);
+}
+
+/**
+ * Передаёт отметки холодного яруса другому аккаунту. Ключ объекта в бакете не меняется:
+ * архив лежит по `projectId`, поэтому копировать мегабайты при смене владельца не нужно.
+ *
+ * `tx` передаётся из общей транзакции переноса, чтобы проект и его отметка не разъехались
+ * между репликами. Возвращает число обновлённых отметок.
+ */
+export async function transferArchiveOwners(
+  projectIds: string[],
+  fromUserId: string,
+  toUserId: string,
+  tx?: YdbQueryTag,
+): Promise<number> {
+  if (!projectIds.length) return 0;
+  if (isYdbEnabled()) {
+    const sql = tx ?? ydbQuery();
+    const table = sql.identifier(getTable("project_archives"));
+    const [rows] = await sql<Array<{ project_id: string }>>`
+      UPDATE ${table}
+         SET user_id = ${toUserId}
+       WHERE user_id = ${fromUserId} AND project_id = ANY(${projectIds})
+       RETURNING project_id`;
+    return rows.length;
+  }
+  let moved = 0;
+  for (const projectId of projectIds) {
+    const record = await readFileRecord(projectId);
+    if (!record || record.userId !== fromUserId) continue;
+    await writeFileRecord({ ...record, userId: toUserId });
+    moved++;
+  }
+  return moved;
 }
 
 export async function clearArchiveRecord(projectId: string) {

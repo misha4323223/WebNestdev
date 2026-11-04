@@ -5,6 +5,7 @@ import { AlertTriangle,ArrowDownToLine,Check,Copy,Eye,EyeOff,ExternalLink,FileTe
 import { createAgentSocket } from "../../lib/agent-socket";
 import { apiJson } from "../../lib/api";
 import { addProjectTasks,answerProjectQuestion,cancelProjectSecret,getConversation,listPendingProjectSecrets,skipProjectQuestion,submitProjectSecret,uploadProjectFile,type PendingProjectSecret } from "../../lib/project-api";
+import { uploadProjectMedia } from "../../lib/media-api";
 import { cancelProjectAccess,submitProjectAccess } from "../../lib/deployment-api";
 import { ActionsDock,MessageThinking,PlanPanel,actionTarget,chatImagesByMessage,contentBefore,deriveActions,readPlan,writePlan,type ChatImage,type PanelId,type PanelState } from "./agent-activity";
 import { buildReasoningTraces } from "./reasoning-trace";
@@ -177,7 +178,7 @@ type AccessPrompt={
   writes:boolean;
   defaultAllowWrites:boolean;
 };
-type Attachment={id:string;name:string;path:string;bytes:number;image:boolean};
+type Attachment={id:string;name:string;path:string;bytes:number;image:boolean;remote?:boolean};
 type QueuedMessage={id:string;text:string;attachments:Attachment[]};
 /**
  * Сколько раз панель переподключается к серверу сама, прежде чем отдать решение пользователю.
@@ -208,7 +209,8 @@ function nextId(){return Math.random().toString(36).slice(2)+Date.now().toString
 function formatBytes(bytes:number){
   if(bytes<1024)return bytes+" Б";
   if(bytes<1024*1024)return Math.round(bytes/1024)+" КБ";
-  return (bytes/1024/1024).toFixed(1)+" МБ";
+  if(bytes<1024*1024*1024)return (bytes/1024/1024).toFixed(1)+" МБ";
+  return (bytes/1024/1024/1024).toFixed(2)+" ГБ";
 }
 
 function readAsBase64(file:Blob){
@@ -270,8 +272,8 @@ async function shrinkImage(file:File):Promise<{blob:Blob;name:string;compressed:
 /** The agent reads text, so attachments are announced by the path they were stored at. */
 function withAttachments(text:string,attachments:Attachment[]){
   if(!attachments.length)return text;
-  const list=attachments.map(item=>"- "+item.path+(item.image?" (изображение)":" (файл)")).join("\n");
-  return text+"\n\nЭти файлы уже лежат в проекте, используй их по путям:\n"+list;
+  const list=attachments.map(item=>"- "+item.path+(item.remote?" (публичная ссылка в хранилище)":"")+(item.image?" (изображение)":" (файл)")).join("\n");
+  return text+"\n\nЭти файлы уже доступны — используй локальные пути или публичные ссылки:\n"+list;
 }
 
 /**
@@ -1528,14 +1530,20 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       for(const file of Array.from(files)){
         try{
           const prepared=await shrinkImage(file);
+          const image=prepared.blob.type.startsWith("image/")||/\.(png|jpe?g|gif|webp|svg|avif|bmp|ico)$/i.test(prepared.name);
           if(prepared.blob.size>MAX_UPLOAD_BYTES){
-            messages.push(file.name+": больше "+formatBytes(MAX_UPLOAD_BYTES)+" — уменьшите файл перед загрузкой");
+            // Большой файл не проходит через JSON: браузер кладёт его в публичный бакет частями.
+            const mediaFile=new File([prepared.blob],prepared.name,{type:prepared.blob.type||"application/octet-stream"});
+            const result=await uploadProjectMedia(projectId,mediaFile,(done,total)=>setNotice("Загружаем "+file.name+": "+Math.round(done/total*100)+"%"));
+            if(prepared.compressed)compressed++;
+            uploaded.push({id:result.key,name:prepared.name,path:result.publicUrl,bytes:result.bytes,image,remote:true});
+            messages.push(file.name+": загружен в публичное хранилище");
             continue;
           }
           const data=await readAsBase64(prepared.blob);
           const result=await uploadProjectFile(projectId,{name:prepared.name,data});
           if(prepared.compressed)compressed++;
-          uploaded.push({id:result.path,name:result.name,path:result.path,bytes:result.bytes,image:prepared.blob.type.startsWith("image/")||/\.(png|jpe?g|gif|webp|svg|avif|bmp|ico)$/i.test(result.name)});
+          uploaded.push({id:result.path,name:result.name,path:result.path,bytes:result.bytes,image});
         }catch(error){
           messages.push(file.name+": "+(error instanceof Error?error.message:"не удалось загрузить"));
         }
@@ -1877,7 +1885,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
         {attachments.length>0&&<div className="composer-attachments">
           {attachments.map(attachment=><span className="attachment-chip" key={attachment.id}>
             {attachment.image?<ImageIcon size={12}/>:<FileText size={12}/>}
-            <span className="attachment-name" title={attachment.path}>{attachment.name}</span>
+            <span className="attachment-name" title={attachment.path}>{attachment.name}{attachment.remote?" · ссылка":""}</span>
             <small>{formatBytes(attachment.bytes)}</small>
             <button className="icon-button attachment-remove" onClick={()=>setAttachments(current=>current.filter(item=>item.id!==attachment.id))} title="Убрать файл" aria-label={"Убрать файл "+attachment.name}><X size={12}/></button>
           </span>)}

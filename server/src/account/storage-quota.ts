@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { sandboxRootPath } from "../sandbox/config.js";
 import { isYdbEnabled, ydbQuery, getTable, withAdvisoryLock } from "../storage/ydb.js";
+import type { YdbQueryTag } from "../storage/pg.js";
 import { limitsForPlan, type PlanId } from "./plans.js";
 import { accountPlanFor } from "../billing/store.js";
 import { listProjectOwners, listProjects } from "../project-store.js";
@@ -33,6 +34,8 @@ export type StorageOverview = {
   usedBytes: number;
   /** Из usedBytes: готовые релизы статических сайтов. */
   hostingBytes: number;
+  /** Из usedBytes: большие файлы в публичном медиа-бакете. */
+  mediaBytes: number;
   limitBytes: number;
   state: StorageState;
   measuredAt: string | null;
@@ -388,11 +391,27 @@ async function hostingStorageBytes(userId: string): Promise<number> {
   }
 }
 
+async function mediaStorageBytes(userId: string): Promise<number> {
+  try {
+    const { mediaBytesForUser, mediaConfigFromEnv } = await import("../media/media-store.js");
+    const config = mediaConfigFromEnv();
+    return config ? await mediaBytesForUser(config, userId) : 0;
+  } catch (error) {
+    // Недоступный S3 не должен превращать экран квоты в ошибку: проекты на диске
+    // продолжают считаться, а медиа добавится, когда хранилище ответит.
+    console.warn("[storage] media usage не прочитан", error);
+    return 0;
+  }
+}
+
 export async function getStorageSnapshot(userId: string, plan: PlanId): Promise<{ usedBytes: number; limitBytes: number }> {
   const limitBytes = limitsForPlan(plan).storageBytes ?? 0;
-  const stored = await readUserStorage(userId);
-  const hostingBytes = await hostingStorageBytes(userId);
-  return { usedBytes: (stored?.usedBytes ?? 0) + hostingBytes, limitBytes };
+  const [stored, hostingBytes, mediaBytes] = await Promise.all([
+    readUserStorage(userId),
+    hostingStorageBytes(userId),
+    mediaStorageBytes(userId),
+  ]);
+  return { usedBytes: (stored?.usedBytes ?? 0) + hostingBytes + mediaBytes, limitBytes };
 }
 
 /**
@@ -401,11 +420,12 @@ export async function getStorageSnapshot(userId: string, plan: PlanId): Promise<
  */
 export async function getStorageOverview(userId: string, plan: PlanId): Promise<StorageOverview> {
   const limitBytes = limitsForPlan(plan).storageBytes ?? 0;
-  const [projects, sizes, stored, hostingBytes] = await Promise.all([
+  const [projects, sizes, stored, hostingBytes, mediaBytes] = await Promise.all([
     listProjects(userId),
     readProjectSizes(userId),
     readUserStorage(userId),
     hostingStorageBytes(userId),
+    mediaStorageBytes(userId),
   ]);
   const items: ProjectStorageInfo[] = projects
     .map(project => ({
@@ -419,8 +439,8 @@ export async function getStorageOverview(userId: string, plan: PlanId): Promise<
     (latest, item) => item.measuredAt && (!latest || item.measuredAt > latest) ? item.measuredAt : latest,
     null,
   );
-  const usedBytes = (stored?.usedBytes ?? items.reduce((sum, item) => sum + item.sizeBytes, 0)) + hostingBytes;
-  return { usedBytes, hostingBytes, limitBytes, state: storageState(usedBytes, limitBytes), measuredAt, projects: items };
+  const usedBytes = (stored?.usedBytes ?? items.reduce((sum, item) => sum + item.sizeBytes, 0)) + hostingBytes + mediaBytes;
+  return { usedBytes, hostingBytes, mediaBytes, limitBytes, state: storageState(usedBytes, limitBytes), measuredAt, projects: items };
 }
 
 export async function assertWithinStorageLimit(userId: string, plan: PlanId): Promise<void> {
@@ -452,6 +472,63 @@ export async function forgetProjectStorage(projectId: string, userId: string): P
   sizeCache.delete(projectId);
   await deleteProjectSizes([projectId]);
   await recomputeUserStorage(userId, new Date().toISOString());
+}
+
+/**
+ * Переносит размеры переданных проектов и пересчитывает обе суммы аккаунтов. Размеры не
+ * пересчитываются заново: файлы не переезжают, меняется только владелец.
+ *
+ * `tx` передаётся из общей транзакции переноса, иначе строка `user_storage` могла бы на
+ * мгновение показывать место у обоих аккаунтов. Возвращает число переданных измерений.
+ */
+export async function transferProjectStorage(
+  projectIds: string[],
+  fromUserId: string,
+  toUserId: string,
+  tx?: YdbQueryTag,
+): Promise<number> {
+  if (!projectIds.length) return 0;
+  const now = new Date().toISOString();
+  if (isYdbEnabled()) {
+    const sql = tx ?? ydbQuery();
+    const sizes = sql.identifier(getTable("project_sizes"));
+    const storage = sql.identifier(getTable("user_storage"));
+    const [rows] = await sql<Array<{ project_id: string }>>`
+      UPDATE ${sizes}
+         SET user_id = ${toUserId}
+       WHERE user_id = ${fromUserId} AND project_id = ANY(${projectIds})
+       RETURNING project_id`;
+    await sql`
+      INSERT INTO ${storage} (user_id, used_bytes, updated_at)
+      SELECT user_id, COALESCE(SUM(size_bytes), 0), ${now}
+        FROM ${sizes}
+       WHERE user_id IN (${fromUserId}, ${toUserId})
+       GROUP BY user_id
+      ON CONFLICT (user_id) DO UPDATE SET used_bytes = EXCLUDED.used_bytes, updated_at = EXCLUDED.updated_at`;
+    // У источника не осталось проектов — его строка не должна висеть нулевым остатком.
+    await sql`
+      DELETE FROM ${storage}
+       WHERE user_id = ${fromUserId}
+         AND NOT EXISTS (SELECT 1 FROM ${sizes} WHERE user_id = ${fromUserId})`;
+    return rows.length;
+  }
+  return withJsonWriteLock(async () => {
+    const data = await readJsonStorage();
+    let moved = 0;
+    for (const projectId of projectIds) {
+      const item = data.projectSizes[projectId];
+      if (!item || item.userId !== fromUserId) continue;
+      item.userId = toUserId;
+      moved++;
+    }
+    for (const userId of [fromUserId, toUserId]) {
+      const usedBytes = sumUserProjectSizes(data, userId);
+      if (usedBytes > 0) data.users[userId] = { usedBytes, updatedAt: now };
+      else delete data.users[userId];
+    }
+    await writeJsonStorage(data);
+    return moved;
+  });
 }
 
 /**

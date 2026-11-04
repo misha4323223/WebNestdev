@@ -78,13 +78,64 @@ export type SignedRequest = {
 };
 
 /**
+ * Presigned URL для браузера: подпись уходит в query, а не в заголовок. Так клиент может
+ * положить часть большого файла прямо в S3, не получая HMAC-ключ и не гоняя гигабайты через
+ * API сервера. `path` уже закодирован по RFC 3986, `host` может содержать порт.
+ */
+export type PresignInput = {
+  method: string;
+  host: string;
+  path: string;
+  query?: Record<string, string>;
+  expiresSeconds: number;
+  amzDate: string;
+  region: string;
+  accessKey: string;
+  secretKey: string;
+  sessionToken?: string;
+};
+
+export function presignAwsV4(input: PresignInput) {
+  const date = input.amzDate.slice(0, 8);
+  const scope = date + "/" + input.region + "/" + SERVICE + "/aws4_request";
+  const query: Record<string, string> = {
+    ...input.query,
+    "X-Amz-Algorithm": ALGORITHM,
+    "X-Amz-Credential": input.accessKey + "/" + scope,
+    "X-Amz-Date": input.amzDate,
+    "X-Amz-Expires": String(input.expiresSeconds),
+    "X-Amz-SignedHeaders": "host",
+  };
+  if (input.sessionToken) query["X-Amz-Security-Token"] = input.sessionToken;
+  const canonicalQuery = Object.entries(query)
+    .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+    .map(([key, value]) => awsEncode(key) + "=" + awsEncode(value))
+    .join("&");
+  const canonicalHeaders = "host:" + input.host + "\n";
+  const canonicalRequest = [
+    input.method.toUpperCase(),
+    input.path,
+    canonicalQuery,
+    canonicalHeaders,
+    "host",
+    "UNSIGNED-PAYLOAD",
+  ].join("\n");
+  const stringToSign = [ALGORITHM, input.amzDate, scope, sha256Hex(canonicalRequest)].join("\n");
+  const signingKey = hmac(hmac(hmac(hmac("AWS4" + input.secretKey, date), input.region), SERVICE), "aws4_request");
+  const signature = createHmac("sha256", signingKey).update(stringToSign, "utf8").digest("hex");
+  return "https://" + input.host + input.path + "?" + canonicalQuery + "&X-Amz-Signature=" + signature;
+}
+
+/**
  * Подпись AWS Signature V4. Экспортируется отдельно от S3, чтобы контрольный вектор AWS можно
  * было воспроизвести ровно так, как он опубликован (хост и дата без прочих заголовков).
  */
 export function signAwsV4(input: SignInput): SignedRequest {
   const service = input.service ?? SERVICE;
   const query = Object.entries(input.query ?? {})
-    .sort(([left], [right]) => left.localeCompare(right))
+    // AWS требует побайтовый порядок, а localeCompare ставит строчные буквы раньше заглавных:
+    // с ним `partNumber` оказывался перед `X-Amz-*`, и подпись разваливалась.
+    .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
     .map(([key, value]) => awsEncode(key) + "=" + awsEncode(value))
     .join("&");
 

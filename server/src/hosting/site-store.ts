@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { getTable, initializeStorage, isYdbEnabled, ydbQuery } from "../storage/ydb.js";
+import type { YdbQueryTag } from "../storage/pg.js";
 import { hostingLimits } from "./config.js";
 import {
   HostingBusyError,
@@ -332,6 +333,62 @@ export async function listSites(filters: SiteFilters = {}): Promise<HostingSite[
     .filter(site => (!filters.status || site.status === filters.status) && (!filters.userId || site.userId === filters.userId))
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
     .slice(0, limit));
+}
+
+/**
+ * Передаёт владение сайтами и их релизами другому аккаунту. Адрес сайта, релизы и файлы
+ * остаются прежними — меняется только `user_id`, иначе перенос проектов ломал бы публикацию.
+ *
+ * `tx` передаётся из общей транзакции переноса: смена владельца проекта и его сайта должна
+ * быть видна другой реплике одновременно. Возвращает счётчики для аудита/ответа.
+ */
+export async function transferSiteOwners(
+  projectIds: string[],
+  fromUserId: string,
+  toUserId: string,
+  tx?: YdbQueryTag,
+): Promise<{ sites: number; releases: number }> {
+  if (!projectIds.length) return { sites: 0, releases: 0 };
+  if (isYdbEnabled()) {
+    const sql = tx ?? ydbQuery();
+    const sites = sql.identifier(getTable("sites"));
+    const releases = sql.identifier(getTable("site_releases"));
+    const [siteRows] = await sql<Array<{ id: string }>>`
+      UPDATE ${sites}
+         SET user_id = ${toUserId}
+       WHERE user_id = ${fromUserId} AND project_id = ANY(${projectIds})
+       RETURNING id`;
+    const [releaseRows] = await sql<Array<{ id: string }>>`
+      UPDATE ${releases}
+         SET user_id = ${toUserId}
+       WHERE user_id = ${fromUserId}
+         AND site_id IN (SELECT id FROM ${sites} WHERE project_id = ANY(${projectIds}))
+       RETURNING id`;
+    return { sites: siteRows.length, releases: releaseRows.length };
+  }
+  const ids = new Set(projectIds);
+  return withJsonLock(async () => {
+    const state = await readJsonState();
+    const siteIds = new Set(
+      state.sites.filter(site => site.userId === fromUserId && ids.has(site.projectId)).map(site => site.id),
+    );
+    let sites = 0;
+    let releases = 0;
+    for (const site of state.sites) {
+      if (siteIds.has(site.id) && site.userId === fromUserId) {
+        site.userId = toUserId;
+        sites++;
+      }
+    }
+    for (const release of state.releases) {
+      if (release.userId === fromUserId && siteIds.has(release.siteId)) {
+        release.userId = toUserId;
+        releases++;
+      }
+    }
+    if (sites || releases) await writeJsonState(state);
+    return { sites, releases };
+  });
 }
 
 /**

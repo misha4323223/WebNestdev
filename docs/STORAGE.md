@@ -198,6 +198,59 @@ restore cleared the row; remove them when moving fully to PostgreSQL. Archives a
 project, so a multi-hundred-MB project is downloaded in full on the first access — that is the price
 of the cheap tier, and a project under active use stays on disk.
 
+## Static hosting releases
+
+Published static sites use the same bucket as the cold tier, under a separate prefix. A release is
+two objects:
+
+```
+hosting/<userId>/<siteId>/releases/<releaseId>.tar.gz
+hosting/<userId>/<siteId>/releases/<releaseId>.json
+```
+
+The archive contains the whole release, including images, video, fonts and every other asset the
+site serves. The bucket is the durable copy; `SITES_DIR` remains the hot cache Caddy reads, so page
+requests never make an S3 call. The archive is uploaded **before** `current` is switched: if S3
+fails, the previous site stays live. Rollback and reconcile restore a missing local release from
+the archive and check its `sha256` and file count against `site_releases` before switching `current`.
+Old releases are removed from the bucket when they are pruned or when the site/project is deleted.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `HOSTING_S3_ENABLED` | `auto` | `auto` uses the bucket when `PLATFORM_S3_*` is complete, `0` keeps releases on disk only, `1` requires the bucket and fails the publish when it is missing |
+| `HOSTING_S3_PREFIX` | `hosting` | key prefix inside the bucket; must not collide with the project prefix |
+
+This covers files that are part of a published build. Uploads made by visitors at runtime (a photo
+or video sent through a form) need an application backend and are not part of the static host; the
+working project directory also stays on the VM because the agent and dev server need POSIX files.
+
+## Large media uploads
+
+Files that are too large for the JSON upload endpoint go directly to a public media bucket. The
+browser asks the server for a multipart upload, receives presigned URLs for 64 MiB parts, uploads
+them straight to S3, and then asks the server to complete the upload. The server checks the
+owner, the plan quota and the final object size; the public URL is returned only after `HEAD`
+confirms the byte count.
+
+No permanent HMAC key is stored for this path: the MWS service account is exchanged for a
+short-lived storage session (`IssueSessionToken`), and that session signs the parts. The same
+session is used for the quota listing under `media/<userId>/`.
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `MEDIA_S3_ENDPOINT` | — | S3 endpoint, for example `https://storage.mwsapis.ru` |
+| `MEDIA_S3_BUCKET` | — | public bucket; the test bucket is `nestdev-media` |
+| `MEDIA_S3_REGION` | `ru-1` | SigV4 region accepted by MWS |
+| `MEDIA_S3_PREFIX` | `media` | key prefix inside the bucket |
+| `MEDIA_PUBLIC_BASE_URL` | endpoint + bucket | public URL prefix |
+| `MEDIA_MAX_FILE_BYTES` | 10 GiB | one file limit |
+| `MEDIA_PART_SIZE_BYTES` | 64 MiB | multipart part size, minimum 5 MiB |
+| `MEDIA_URL_TTL_SECONDS` | 3600 | presigned part lifetime |
+
+Uploads need `MWS_SA_KEY`, `MWS_SA_KEY_ID` + `MWS_SA_PRIVATE_KEY`, or `MWS_SA_KEY_FILE`. The bucket policy
+must allow anonymous `s3:GetObject`; listing stays private, and CORS must expose `ETag` so the
+browser can complete the multipart upload.
+
 ## Plan changes
 
 `accountPlanFor` reads the subscription on every request, so a paid plan raises the storage limit

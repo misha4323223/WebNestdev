@@ -3,6 +3,7 @@ import path from "node:path";
 import { hostingConfig } from "./config.js";
 import { ensureSiteLayout, hostingManifestsDir, hostingReleaseDir, hostingReleasesDir, hostingTmpDir, readCurrentReleaseId, removeCurrent, removeSiteDirectory, switchCurrent } from "./paths.js";
 import { getRelease, listReleases, listSites, markStaleBuilds } from "./site-store.js";
+import { hostingReleaseStoreSafe } from "./release-store.js";
 
 /**
  * Startup/periodic reconciliation. Файловая система — источник истины для `current`, БД —
@@ -48,6 +49,7 @@ export async function reconcileHosting(): Promise<ReconcileResult> {
   });
 
   const sites = await listSites({ limit: 1_000 });
+  const store = hostingReleaseStoreSafe();
   for (const site of sites) {
     // Файлы удалённого сайта остаются, если сервер упал между tombstone и очисткой.
     // Удаляем их только на узле, которому принадлежат; на общем SITES_DIR — на любом.
@@ -56,6 +58,13 @@ export async function reconcileHosting(): Promise<ReconcileResult> {
       await safely(async () => {
         await removeCurrent(site.slug, config.sitesDir);
         await removeSiteDirectory(site.slug, config.sitesDir);
+        if (store) {
+          for (const release of await listReleases(site.id, 100)) {
+            await store.remove({ site, release }).catch(error => {
+              console.warn("[hosting] не удалось удалить объект удалённого сайта:", error instanceof Error ? error.message : String(error));
+            });
+          }
+        }
         result.orphanDirectoriesRemoved++;
       }).then(ok => { if (!ok) result.errors++; });
       continue;
@@ -77,19 +86,54 @@ export async function reconcileHosting(): Promise<ReconcileResult> {
           // Строка активного релиза потеряна или больше не готова. Не оставляем Caddy
           // отдавать неизвестный/неудачный каталог: снимаем current до следующей публикации.
           if (await removeCurrent(site.slug, config.sitesDir)) result.currentRepaired++;
-        } else if (current !== active) {
-          const exists = await lstat(hostingReleaseDir(site.slug, active, config.sitesDir)).catch(() => null);
-          if (exists?.isDirectory()) {
+        } else {
+          const dir = hostingReleaseDir(site.slug, active, config.sitesDir);
+          const exists = await lstat(dir).catch(() => null);
+          if (!exists?.isDirectory()) {
+            // Горячий кэш потерян (диск, ручная очистка). Если релиз есть в бакете, он
+            // возвращается без пересборки; иначе снимаем current, чтобы не отдавать 404
+            // вместо сайта и не оставлять ссылку на несуществующий каталог.
+            let restored = false;
+            if (store && activeRelease.storageKey) {
+              try {
+                await store.restore({ site, release: activeRelease, dir });
+                restored = true;
+              } catch (error) {
+                console.warn(
+                  "[hosting] не удалось восстановить активный релиз " + active + ": " +
+                    (error instanceof Error ? error.message : String(error)),
+                );
+              }
+            }
+            if (restored) {
+              await switchCurrent(site.slug, active, config.sitesDir);
+              result.currentRepaired++;
+            } else if (await removeCurrent(site.slug, config.sitesDir)) {
+              result.currentRepaired++;
+            }
+          } else if (current !== active) {
             await switchCurrent(site.slug, active, config.sitesDir);
-            result.currentRepaired++;
-          } else {
-            await removeCurrent(site.slug, config.sitesDir);
             result.currentRepaired++;
           }
         }
       } else if (current) {
         await removeCurrent(site.slug, config.sitesDir);
         result.currentRepaired++;
+      }
+
+      // Оборванная публикация могла успеть загрузить архив до записи в БД. После
+      // markStaleBuilds строка становится failed, и объект уже не нужен ни откату, ни
+      // истории; ready/building не трогаем.
+      if (store) {
+        for (const release of releases) {
+          if (release.status === "ready" || release.status === "building") continue;
+          await store.remove({ site, release }).catch(error => {
+            console.warn(
+              "[hosting] не удалось удалить объект релиза " + release.id + ": " +
+                (error instanceof Error ? error.message : String(error)),
+            );
+          });
+        }
       }
 
       // Каталог релиза без строки в БД — остаток упавшего rename/старой версии. Не трогаем
@@ -143,4 +187,11 @@ export async function reconcileSite(siteId: string): Promise<void> {
   if (!site) return;
   await removeCurrent(site.slug, config.sitesDir).catch(() => undefined);
   await removeSiteDirectory(site.slug, config.sitesDir).catch(() => undefined);
+  const store = hostingReleaseStoreSafe();
+  if (!store) return;
+  for (const release of await listReleases(site.id, 100)) {
+    await store.remove({ site, release }).catch(error => {
+      console.warn("[hosting] не удалось удалить архив удалённого сайта:", error instanceof Error ? error.message : String(error));
+    });
+  }
 }

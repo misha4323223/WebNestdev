@@ -7,6 +7,7 @@ import { nodeId } from "./nodes/identity.js";
 import type { ChatMessage, PlanState, ReasoningBlock } from "./types.js";
 import { initializeStorage, isYdbEnabled, ydbQuery, getTable } from "./storage/ydb.js";
 import { decryptSecret, encryptSecret, isEncryptedSecret } from "./storage/secret-crypto.js";
+import type { YdbQueryTag } from "./storage/pg.js";
 
 export type RepositoryProvider = "github" | "gitlab" | "gitverse" | "sourcecraft";
 export type GitHubRepositoryRef = {
@@ -210,6 +211,43 @@ export async function createProjectWithinLimit(name:string,github:GitHubReposito
     if(projects.length>=limit)throw new ProjectLimitError(limit,projects.length);
     return persistProject(project);
   });
+}
+
+/**
+ * Передаёт владение проектами другому аккаунту. Меняется только `user_id`:
+ * песочница, диалоги, провайдеры и секреты привязаны к `projectId` и остаются на месте.
+ *
+ * `tx` передаётся из общей транзакции переноса: в PostgreSQL смена владельца проекта,
+ * сайта, размера и архива должна быть атомарной. Без него функция работает самостоятельно.
+ * Возвращает число действительно переданных проектов — вызывающий сверяет его с запрошенным
+ * списком и откатывает перенос, если проект успели удалить.
+ */
+export async function transferProjectOwners(
+  projectIds:string[],
+  fromUserId:string,
+  toUserId:string,
+  tx?:YdbQueryTag,
+):Promise<number>{
+  if(!projectIds.length)return 0;
+  if(isYdbEnabled()){
+    const sql=tx??ydbQuery();
+    const [rows]=await sql<Array<{id:string}>>`
+      UPDATE ${sql.identifier(getTable("projects"))}
+      SET user_id=${toUserId}
+      WHERE user_id=${fromUserId} AND id = ANY(${projectIds})
+      RETURNING id
+    `;
+    return rows.length;
+  }
+  let moved=0;
+  await mkdir(path.join(root,"projects"),{recursive:true});
+  for(const projectId of projectIds){
+    const project=await getProject(projectId);
+    if(!project||project.userId!==fromUserId)continue;
+    await writeFile(path.join(root,"projects",projectId+".json"),JSON.stringify({...project,userId:toUserId},null,2));
+    moved++;
+  }
+  return moved;
 }
 
 /**

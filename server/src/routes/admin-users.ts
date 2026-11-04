@@ -11,6 +11,7 @@ import { getCreditBudget, getTokenBudget } from "../account/usage-store.js";
 import { createNotification } from "../account/notification-store.js";
 import type { PlanId } from "../account/plans.js";
 import { planDisplayName } from "../billing/plan-settings.js";
+import { ProjectTransferError, transferProjects } from "../account/project-transfer.js";
 
 /**
  * Действия администратора над аккаунтом: завершить сеансы, заблокировать, сменить тариф,
@@ -57,6 +58,13 @@ const tokensSchema = z.object({
   /** Надбавка к пулу текущего месяца; складывается с уже начисленным. */
   tokens: z.number().int().min(1_000).max(500_000_000),
   notify: z.boolean().optional(),
+}).strict();
+const transferSchema = z.object({
+  confirm: z.literal(true),
+  /** Куда переносить. Источник задан в пути: `/users/:id/projects/transfer`. */
+  toUserId: z.string().trim().min(1).max(100),
+  /** Пусто — все проекты источника; иначе только перечисленные. */
+  projectIds: z.array(z.string().trim().min(1).max(100)).min(1).max(500).optional(),
 }).strict();
 
 const CONFIRM_REQUIRED = { error: "Нужно подтверждение: { confirm: true }" };
@@ -345,5 +353,72 @@ export async function registerAdminUserActionRoutes(app: FastifyInstance) {
       budget,
       notified,
     };
+  });
+
+  /**
+   * Перенос проектов другому аккаунту. Нужен, когда старый вход недоступен без восстановления,
+   * но проекты живые: удалять их и создавать заново — значит потерять диалоги, секреты и сайт.
+   *
+   * Действие двигает только проектные данные. Тариф, платежи, кредиты и подключения (GitHub,
+   * GitLab, облака, домены) остаются у источника: это свойства аккаунта, а не проекта.
+   * `projectIds` не передан — переносятся все проекты; передан — ровно выбранные, причём
+   * чужой или несуществующий id отвергает весь запрос, а не молча пропускается.
+   */
+  app.post("/api/admin/users/:id/projects/transfer", async (request, reply) => {
+    const auth = await requireAdmin(request, reply);
+    if (!auth) return;
+    applyNoStoreToReply(reply);
+
+    const user = await targetUser(request, reply);
+    if (!user) return;
+    const body = parseBody(transferSchema, request.body);
+    if (!body) {
+      return reply.code(400).send({
+        error: 'Нужно подтверждение: { confirm: true, toUserId: "<id>", projectIds?: ["..."] }',
+      });
+    }
+
+    try {
+      const result = await transferProjects({
+        fromUserId: user.id,
+        toUserId: body.toUserId,
+        projectIds: body.projectIds,
+      });
+      await recordAudit({
+        action: "projects.transferred",
+        actorType: "admin",
+        actorId: auth.admin.id,
+        actorLabel: auth.admin.email,
+        target: user.id,
+        targetLabel: user.email,
+        ip: request.ip,
+        details: {
+          fromUserId: user.id,
+          fromEmail: user.email,
+          toUserId: result.to.id,
+          toEmail: result.to.email,
+          count: result.transferred.length,
+          projectIds: result.transferred.map(project => project.id).join(","),
+          sites: result.moved.sites,
+          releases: result.moved.releases,
+          sizes: result.moved.sizes,
+          archives: result.moved.archives,
+        },
+      });
+      return {
+        ok: true,
+        from: result.from,
+        to: result.to,
+        transferred: result.transferred,
+        counts: result.counts,
+      };
+    } catch (error) {
+      if (!(error instanceof ProjectTransferError)) throw error;
+      return reply.code(error.statusCode).send({
+        error: error.message,
+        code: error.code,
+        ...(error.projects.length ? { projects: error.projects } : {}),
+      });
+    }
   });
 }
