@@ -34,11 +34,12 @@
 #   ACME_SH_INSTALL=1       разрешить установку acme.sh, если его нет (по умолчанию запрещено)
 #   ACME_EMAIL              адрес регистрации в Let's Encrypt
 #   ACME_DNS_SLEEP          сколько секунд ждать распространения TXT-записи перед проверкой
-#                           (по умолчанию 300: reg.ru публикует зону с задержкой, а Let's Encrypt
-#                           проверяет сразу после создания заказа. 120 с оказалось мало — две
-#                           попытки подряд упали на «No TXT record found». Пауза удлиняет только
-#                           ту выкатку, которая действительно выпускает сертификат, а сорванная
-#                           выдача стоит трёх часов кэша DNS и одной из пяти неудач в час)
+#                           (по умолчанию 600). Запись через API reg.ru в зону попадает (TTL TXT
+#                           там 21600 с), но не мгновенно: при 120 с две попытки подряд упали на
+#                           «No TXT record found». Пауза удлиняет только ту выкатку, которая
+#                           действительно выпускает сертификат (раз в ~60 дней), а сорванная
+#                           выдача стоит трёх часов кэша отрицательного ответа DNS и одной из
+#                           пяти неудач в час, поэтому запас здесь дешевле риска
 #   ACME_FAILURE_COOLDOWN_MIN  сколько минут не повторять выпуск после неудачи (180). Это не
 #                           осторожность ради осторожности: SOA-минимум зоны nestdev.ru — 10800 с,
 #                           и столько резолверы Let's Encrypt держат ответ «TXT-записи нет»;
@@ -84,7 +85,7 @@ ACME_SH="${ACME_SH:-$HOME/.acme.sh/acme.sh}"
 ACME_DNS_PROVIDER="${ACME_DNS_PROVIDER:-dns_regru}"
 ACME_EMAIL="${ACME_EMAIL:-nestdev@mail.ru}"
 ACME_SERVER="${ACME_SERVER:-letsencrypt}"
-ACME_DNS_SLEEP="${ACME_DNS_SLEEP:-300}"
+ACME_DNS_SLEEP="${ACME_DNS_SLEEP:-600}"
 ACME_FAILURE_COOLDOWN_MIN="${ACME_FAILURE_COOLDOWN_MIN:-180}"
 ACME_SH_INSTALL="${ACME_SH_INSTALL:-0}"
 RENEW_BEFORE_DAYS="${RENEW_BEFORE_DAYS:-30}"
