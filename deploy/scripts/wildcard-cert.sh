@@ -156,8 +156,18 @@ cert_days_left(){
   printf '%s' $(( (epoch - now) / 86400 ))
 }
 
+# acme.sh берёт хуки DNS API из каталога рядом с собой (`dnsapi/<провайдер>.sh`). Один файл без
+# этого каталога умеет только ручной режим и падает с «Cannot find DNS API hook».
+acme_hooks_dir(){ printf '%s/dnsapi' "$(dirname "$ACME_SH")"; }
+
+acme_ready(){
+  [ -x "$ACME_SH" ] || return 1
+  [ "$ACME_DNS_PROVIDER" = "dns_manual" ] && return 0
+  [ -f "$(acme_hooks_dir)/$ACME_DNS_PROVIDER.sh" ]
+}
+
 ensure_acme(){
-  if [ -x "$ACME_SH" ]; then return 0; fi
+  if acme_ready; then return 0; fi
   if [ "$ACME_SH_INSTALL" != "1" ]; then
     fail "acme.sh не найден ($ACME_SH). Установите его (curl https://get.acme.sh | sh -s email=$ACME_EMAIL) или задайте ACME_SH=… и ACME_SH_INSTALL=1, чтобы скрипт поставил его сам"
   fi
@@ -177,21 +187,42 @@ ensure_acme(){
   fi
   rm -f "$ACME_SH.installer"
 
-  # Запасной путь: сам acme.sh — один файл. Установщик может упасть и без сети (например, нет
-  # crontab), а без cron продление всё равно сделает выкатка — она проходит шаг каждый раз.
-  if [ ! -x "$ACME_SH" ]; then
-    log "установщик не сработал — скачиваю acme.sh напрямую"
-    curl -fsSL --retry 2 --retry-delay 2 --max-time 60 \
+  # Штатный установщик на этой ВМ не срабатывает (вероятно, нет crontab), поэтому основной
+  # запасной путь — архив репозитория: в нём есть dnsapi, без которого DNS-01 невозможен.
+  if ! acme_ready; then
+    log "ставлю acme.sh из архива с dnsapi (установщик: $(tail -1 "$install_log" 2>/dev/null))"
+    local tmp; tmp=$(mktemp -d)
+    if curl -fsSL --retry 2 --retry-delay 2 --max-time 120 \
+        https://codeload.github.com/acmesh-official/acme.sh/tar.gz/refs/heads/master \
+        -o "$tmp/acme.tgz" 2>>"$install_log" && tar -xzf "$tmp/acme.tgz" -C "$tmp" 2>>"$install_log"; then
+      local src; src=$(find "$tmp" -maxdepth 1 -mindepth 1 -type d -name 'acme.sh-*' | head -1)
+      if [ -n "$src" ]; then
+        mkdir -p "$(dirname "$ACME_SH")"
+        cp -R "$src/." "$(dirname "$ACME_SH")/"
+        chmod +x "$ACME_SH" 2>/dev/null || true
+      fi
+    fi
+    rm -rf "$tmp"
+  fi
+
+  # Последний запас: сам файл acme.sh и ровно один нужный хук.
+  if ! acme_ready; then
+    log "архив не подошёл — беру acme.sh и хук $ACME_DNS_PROVIDER по отдельности"
+    [ -s "$ACME_SH" ] || curl -fsSL --retry 2 --retry-delay 2 --max-time 60 \
       https://raw.githubusercontent.com/acmesh-official/acme.sh/master/acme.sh \
       -o "$ACME_SH" 2>>"$install_log" || rm -f "$ACME_SH"
-    [ -s "$ACME_SH" ] || curl -fsSL --retry 2 --retry-delay 2 --max-time 60 \
-      https://cdn.jsdelivr.net/gh/acmesh-official/acme.sh@master/acme.sh \
-      -o "$ACME_SH" 2>>"$install_log" || rm -f "$ACME_SH"
     [ -s "$ACME_SH" ] && chmod +x "$ACME_SH" 2>/dev/null || true
+    if [ "$ACME_DNS_PROVIDER" != "dns_manual" ]; then
+      mkdir -p "$(acme_hooks_dir)"
+      curl -fsSL --retry 2 --retry-delay 2 --max-time 60 \
+        "https://raw.githubusercontent.com/acmesh-official/acme.sh/master/dnsapi/$ACME_DNS_PROVIDER.sh" \
+        -o "$(acme_hooks_dir)/$ACME_DNS_PROVIDER.sh" 2>>"$install_log" \
+        || rm -f "$(acme_hooks_dir)/$ACME_DNS_PROVIDER.sh"
+    fi
   fi
   [ -s "$ACME_SH" ] || fail "acme.sh не установился: $(tail -3 "$install_log" 2>/dev/null | tr '\n' ' ')"
   [ -x "$ACME_SH" ] || chmod +x "$ACME_SH" 2>/dev/null || true
-  [ -x "$ACME_SH" ] || fail "acme.sh скачан в $ACME_SH, но не стал исполняемым"
+  acme_ready || fail "acme.sh есть ($ACME_SH), но нет хука $ACME_DNS_PROVIDER: $(tail -2 "$install_log" 2>/dev/null | tr '\n' ' ')"
   log "acme.sh на месте: $ACME_SH (журнал: $install_log)"
 }
 

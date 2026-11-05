@@ -55,6 +55,9 @@ printf 'docker %s\n' "$*" >> "$STUB_LOG"
 exit 0
 STUB
 chmod +x "$WORK/bin/acme.sh" "$WORK/bin/docker"
+# acme.sh берёт хуки DNS API из dnsapi рядом с собой — без файла хука он считает себя неготовым
+# и пытался бы ставиться заново.
+mkdir -p "$WORK/bin/dnsapi" && : > "$WORK/bin/dnsapi/dns_regru.sh"
 
 run_cert(){
   local domain=()
