@@ -747,7 +747,13 @@ install_wildcard_cert(){
       REGRU_API_Username="$REGRU_API_USERNAME" REGRU_API_Password="$REGRU_API_PASSWORD" \
       ACME_EMAIL="$(compose_env_value ACME_EMAIL)" ACME_SH_INSTALL=1 \
       bash "$script" --issue; then
-    log "wildcard в порядке: $CERTS_HOST_DIR/preview"
+    # Скрипт выходит успешно и когда выпуск отложен паузой после неудачи — это не «сертификат
+    # готов», поэтому смотрим на файлы, а не на код возврата.
+    if [ -f "$CERTS_HOST_DIR/preview/fullchain.pem" ]; then
+      log "wildcard в порядке: $CERTS_HOST_DIR/preview"
+    else
+      log "выпуск отложен (пауза после неудачной попытки) — превью пока на сертификате на каждое имя"
+    fi
   else
     log "wildcard не выпущен — превью работают на сертификате на каждое имя (выкатка продолжается)"
   fi
