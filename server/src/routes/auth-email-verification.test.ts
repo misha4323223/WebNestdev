@@ -21,8 +21,10 @@ const { registerAuthRoutes } = await import("./auth.js");
 const { createUser } = await import("../auth/auth-store.js");
 const { clearAuthRateLimits } = await import("../auth/auth-rate-limit.js");
 
-// Счётчики живут в процессе: без сброса лимит одного теста блокировал бы следующий.
-beforeEach(() => clearAuthRateLimits());
+// Счётчики общие: без сброса лимит одного теста блокировал бы следующий.
+beforeEach(async () => {
+  await clearAuthRateLimits();
+});
 
 type Sent = { to: string; link: string };
 type Deps = Parameters<typeof registerAuthRoutes>[1];

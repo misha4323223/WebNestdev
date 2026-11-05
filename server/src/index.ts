@@ -93,6 +93,8 @@ import { startStorageReconcileScheduler } from "./account/storage-scheduler.js";
 import { describeObjectStore } from "./storage/object-store.js";
 import { describeMediaConfig, mediaConfigFromEnv } from "./media/media-store.js";
 import { startProjectArchiveScheduler } from "./storage/archive-scheduler.js";
+import { archiveProject as archiveProjectToBucket, runQueuedRestore } from "./storage/project-archive.js";
+import { startJobWorker } from "./jobs/worker.js";
 import { ProjectRestoreFailedError, ProjectRestoringError } from "./storage/restore-jobs.js";
 import { importArchiveRecordsFromDisk } from "./storage/project-archive-state.js";
 import { startAlertScheduler } from "./health/alerts.js";
@@ -471,6 +473,21 @@ void startPreviewHostServer()
 startPreviewSweeper();
 // Давно не открытые проекты уезжают в бакет и освобождают диск (PROJECT_ARCHIVE_ENABLED=1).
 startProjectArchiveScheduler();
+// Очередь долгих заданий: архивация по команде оператора и восстановление, прерванное
+// рестартом. Встроенный воркер можно выключить (`JOBS_INLINE_WORKER=0`) и держать очередь на
+// отдельном процессе — `node server/dist/scripts/job-worker.js`.
+if (process.env.JOBS_INLINE_WORKER !== "0") {
+  startJobWorker({
+    concurrency: Number(process.env.JOBS_CONCURRENCY ?? 2),
+    handlers: {
+      "project.archive": async job => {
+        const result = await archiveProjectToBucket(job.projectId, job.userId);
+        return { done: result.bytes, total: result.bytes };
+      },
+      "project.restore": (job, context) => runQueuedRestore(job.projectId, job.userId, context.report),
+    },
+  });
+}
 // Аварийные письма: диск, память, swap, ошибки архивации и возраст бэкапа. Почта уже настроена
 // для писем платформы, отдельный сервис уведомлений не нужен; внешний монитор подключается отдельно.
 startAlertScheduler();

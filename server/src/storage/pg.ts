@@ -136,6 +136,8 @@ const PK_BY_TABLE: Record<string, string[]> = {
   service_connections: ["user_id", "service"],
   project_sizes: ["project_id"],
   project_archives: ["project_id"],
+  jobs: ["id"],
+  rate_limits: ["key"],
   user_storage: ["user_id"],
   phone_consents: ["consent_id"],
   project_secrets: ["project_id"],
@@ -728,6 +730,45 @@ export async function initializeStorage(): Promise<void> {
     )`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("project_archives")}_user ON ${tbl("project_archives")} (user_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("project_archives")}_archived ON ${tbl("project_archives")} (archived_at)`);
+
+    // Счётчики частоты (вход, регистрация, коды). До этой таблицы они жили в памяти процесса:
+    // рестарт обнулял их, а вторая реплика API не видела попыток первой — перебор шёл бы по
+    // каждой реплике заново. Ключ — уже готовое имя счётчика (`ip:login:…`), окно — до `reset_at`.
+    await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("rate_limits")} (
+      key TEXT NOT NULL PRIMARY KEY,
+      count INTEGER NOT NULL DEFAULT 0,
+      reset_at BIGINT NOT NULL
+    )`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("rate_limits")}_reset ON ${tbl("rate_limits")} (reset_at)`);
+
+    // Очередь долгих заданий (архивация, восстановление). До неё состояние жило в памяти
+    // процесса, а рестарт посреди архивации оставлял проект ни на диске, ни в очереди.
+    // `run_after` — и backoff после ошибки, и отложенный старт, поэтому по нему же индекс для
+    // захвата: воркер выбирает самое раннее готовое задание.
+    await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("jobs")} (
+      id TEXT NOT NULL PRIMARY KEY,
+      kind TEXT NOT NULL,
+      subject TEXT NOT NULL,
+      project_id TEXT NOT NULL DEFAULT '',
+      user_id TEXT NOT NULL DEFAULT '',
+      state TEXT NOT NULL,
+      attempts INTEGER NOT NULL DEFAULT 0,
+      max_attempts INTEGER NOT NULL DEFAULT 3,
+      run_after TEXT NOT NULL,
+      locked_until TEXT,
+      locked_by TEXT NOT NULL DEFAULT '',
+      last_error TEXT NOT NULL DEFAULT '',
+      progress_done BIGINT NOT NULL DEFAULT 0,
+      progress_total BIGINT NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL,
+      updated_at TEXT NOT NULL,
+      finished_at TEXT
+    )`);
+    await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("jobs")}_ready ON ${tbl("jobs")} (state, run_after)`);
+    // Одно активное задание на проект и вид: две реплики не создадут вторую архивацию.
+    await pool.query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_${getTable("jobs")}_active ON ${tbl("jobs")} (kind, subject) WHERE state IN ('queued', 'running')`,
+    );
 
     await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("user_storage")} (
       user_id TEXT NOT NULL PRIMARY KEY,

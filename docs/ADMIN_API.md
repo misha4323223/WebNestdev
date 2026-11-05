@@ -200,6 +200,9 @@ curl -s https://panel.example.com/api/admin/2fa/verify -H 'content-type: applica
 | `DELETE /api/admin/ai/models/:id` | `Bearer` | удалить модель (раздел 7.13) |
 | `POST /api/admin/ai/models/test` | `Bearer` | проверить модель настоящим вызовом с инструментом (раздел 7.13) |
 | `GET /api/admin/projects/:id` | `Bearer` | карточка проекта: репозиторий, превью, переменные, выкатка (раздел 7.9) |
+| `POST /api/admin/projects/:id/archive` | `Bearer` | поставить архивацию в очередь, `202` и `jobId` (раздел 7.9.1) |
+| `GET /api/admin/jobs` | `Bearer` | очередь заданий: состояния, попытки, ошибки (раздел 7.9.1) |
+| `POST /api/admin/projects/:id/restore` | `Bearer` | вернуть проект из бакета на диск, `202` и `jobId` (раздел 7.9.1) |
 | `GET /api/admin/support/stats` | `Bearer` | где болит: очередь, важность, давность (раздел 8.5) |
 
 Ответы не кэшируются (`cache-control: no-store`). Ошибки: `401` — нет или истёк вход / не подошёл
@@ -801,6 +804,43 @@ curl -s -H "Authorization: Bearer $TOKEN" 'https://nestdev.ru/api/admin/projects
   хранилища выкаток нет: план — единственная запись, которая переживает перезапуск, поэтому
   «последний деплой» читается из него. Если файла нет, `exists: false`;
 - `repository: null` — проект без подключённого репозитория.
+
+### 7.9.1. Холодный ярус руками оператора
+
+Две ручки для случаев, когда ждать трёх часов простоя нельзя: диск кончается сейчас, или надо
+разобраться, почему проект «не открывается». Обычно этим занимается планировщик сам, поэтому
+ручки нужны оператору и приёмке, а не панели пользователя.
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $TOKEN" 'https://nestdev.ru/api/admin/projects/<id>/archive'
+# 202 {"archived":false,"queued":true,"jobId":"…","state":"queued"}
+
+curl -s -X POST -H "Authorization: Bearer $TOKEN" 'https://nestdev.ru/api/admin/projects/<id>/restore'
+# 202 {"archived":true,"restored":false,"restoring":true,"jobId":"…","bytesDone":0,"bytesTotal":18342122}
+
+curl -s -H "Authorization: Bearer $TOKEN" 'https://nestdev.ru/api/admin/jobs?state=failed&limit=20'
+# {"jobs":[{"kind":"project.archive","state":"failed","attempts":3,"lastError":"…"}],"counters":{…}}
+```
+
+Что важно знать:
+
+- **архивация теперь асинхронная.** Ручка ставит задание в очередь и отвечает `202`: `tar` и
+  загрузка в бакет больше не держат HTTP-запрос (на проекте в 200 МБ это были минуты). Если
+  проект уже в бакете — сразу `200 {"archived":true,"bytes":…,"alreadyArchived":true}`;
+- **рабочая папка удаляется только после подтверждения размера бакетом.** Ошибка загрузки,
+  несовпадение размера или недоступное хранилище оставляют проект на диске, а задание
+  закрывается `failed` с причиной: видно в `GET /api/admin/jobs` и в счётчике
+  `archiveErrorsLastHour`;
+- `409 PROJECT_BUSY` / `409 PREVIEW_RUNNING` — проект нельзя упаковывать, пока в нём работает
+  агент или открыт предпросмотр: `tar` читал бы файлы, которые прямо сейчас пишутся;
+- `restore` без отметки архива — не ошибка: `200 {"archived":false,"restored":false,"restoring":false,"jobId":null}`;
+- оба действия пишутся в журнал безопасности (`admin.project.archived`, `admin.project.restored`)
+  с id проекта и автором;
+- прогресс возврата — через `GET /api/projects/:id/archive` (фаза, байты, ошибка) или
+  `GET /api/admin/projects/:id`, где видно, на каком узле проект закреплён;
+- задания переживают рестарт: если процесс упал посреди работы, аренда истекает и воркер
+  возвращает задание в очередь; после трёх неудач оно закрывается `failed` с текстом ошибки,
+  а не крутится вечно. `GET /api/admin/jobs` принимает `state`, `kind`, `projectId`, `limit`.
 
 ### 7.10. Тарифы и скидки
 

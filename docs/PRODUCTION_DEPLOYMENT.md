@@ -509,11 +509,13 @@ preview built by the panel is a short sandbox command, not a run.
 
 Every deploy pulls a new image, and the server image contains Chromium — that is gigabytes per
 version. Left alone, a 30 GB disk fills after a handful of deploys, and a full disk takes down
-Postgres, builds and project writes at once. So the deploy script keeps only the **running** image
-of the deployment repository (`KEEP_IMAGES`, default `1`) and removes the rest *after* the health
-check passes. The spare copy is not worth its gigabytes: the image is already in GHCR, and a manual
-rollback begins with `docker pull`. A failed deploy still keeps the previous image in place, because
-pruning runs only after a successful health check — that rollback stays instant.
+Postgres, builds and project writes at once. So the deploy script keeps the **running** image of the
+deployment repository and the **previous** one (`KEEP_IMAGES`, default `2`) and removes the rest
+*after* the health check passes. The spare copy costs 1.5–2.5 GB, and it buys an offline rollback
+that needs no registry; drop it with `KEEP_IMAGES=1` when disk matters more — the image is already in
+GHCR, and a manual rollback then begins with `docker pull`. A failed deploy still keeps the previous
+image in place, because pruning runs only after a successful health check — that rollback stays
+instant.
 
 - **Automatic:** every image deploy prunes old versions; nothing to schedule.
 - **Automatic, when the disk is already full:** a `docker pull` that fails is answered with the same
@@ -532,7 +534,7 @@ pruning runs only after a successful health check — that rollback stays instan
 - **On a timer (optional):** the same logic is reachable from the VM if the repository is checked
   out there — `MODE=prune bash deploy/scripts/vm-deploy.sh`, so a cron line
   `0 4 * * 0 MODE=prune bash /path/to/vm-deploy.sh >> /var/log/webnestdev-prune.log 2>&1` is enough.
-  `KEEP_IMAGES=2` brings the second copy back if a fast offline rollback matters more than disk.
+  `KEEP_IMAGES=1` drops the spare copy if disk matters more than a fast offline rollback.
   The same applies to `MODE=repair`, which prunes first and then brings the service back up.
 
 - **The image itself is kept small:** the runtime stage installs production dependencies only
@@ -554,7 +556,8 @@ not for the working disk.
 That cold tier is implemented: with `PLATFORM_S3_*` set and `PROJECT_ARCHIVE_ENABLED=1`, projects
 without writes for `PROJECT_ARCHIVE_IDLE_MINUTES` (three hours by default) are packed into
 `<prefix>/projects/<userId>/<projectId>/workspace.tar.gz`, verified by size, and removed from the
-VM disk. The next access downloads and unpacks them automatically, so the panel and the agent see a
+VM disk. Derived caches (`node_modules/.vite`, `.next/cache`, `.turbo`, `coverage`, `*.tsbuildinfo`)
+and `.webnestdev/screenshots` are left out of the archive: they are rebuilt or retaken on demand. The next access downloads and unpacks them automatically, so the panel and the agent see a
 normal directory. On the numbers above this is what lets one 30 GB disk serve more than 20–40
 projects: only projects in active use occupy it. Setup, variables and the API are in
 [STORAGE.md](STORAGE.md#object-storage-cold-tier).
@@ -564,6 +567,8 @@ projects: only projects in active use occupy it. Setup, variables and the API ar
 [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) builds the image, pushes it to GHCR (`ghcr.io/<owner>/<repo>`) and then runs [`deploy/scripts/vm-deploy.sh`](../deploy/scripts/vm-deploy.sh) **on the server** — over SSH, or locally when the job runs on a self-hosted runner installed on the VM itself.
 
 It runs automatically on every push to `main`, and can also be started by hand from Actions → **deploy** → *Run workflow* (for example to roll back with an older image tag).
+
+> **There is no interactive terminal on the VM.** The operator of this deployment has no shell on the server: no `ssh` login, no `scp`, no `docker`, `caddy` or `sudo` typed by hand, and nothing can be run interactively. Any instruction that starts with "log in to the VM and run…" is unexecutable here, and documenting one is a bug in the document, not in the operator. Everything that has to happen on the server is done by [`deploy/scripts/vm-deploy.sh`](../deploy/scripts/vm-deploy.sh) during a deploy, and every value it needs is supplied through GitHub Actions secrets/variables (or already lives in `.env` on the VM). If a task seems to need a terminal, it has to become a deploy step instead of a manual procedure.
 
 Two modes:
 
@@ -618,6 +623,7 @@ Repository variables (same page → **Variables**):
 | `PROJECT_ARCHIVE_IDLE_DAYS` | optional legacy form in days; ignored when the minutes key is set |
 | `SANDBOX_RUNTIME` | optional; `docker` (default, runc) or `runsc` (gVisor). Setting `runsc` makes the deploy install gVisor on first use if Docker does not know it |
 | `RUNSC_INSTALL` | optional; `auto` (default) or `0`. `0` forbids the deploy from touching Docker and requires `runsc` to be pre-installed |
+| `WILDCARD_CERT` | optional; `auto` (default — issue `*.preview.<domain>` when `REGRU_API_USERNAME`/`REGRU_API_PASSWORD` are set) or `0` (never touch certificates) |
 
 Where the values come from — none of them is issued by a service, the only generated one is the key:
 
@@ -650,6 +656,7 @@ The repository ships that proxy as a `caddy` service in [`docker-compose.yml`](.
 | `PREVIEW_PUBLIC_DOMAIN` | preview domain, e.g. `preview.nestdev.ru`. If unset in production, the server derives `preview.<WEBNESTDEV_SITE_DOMAIN>` (the same wildcard Caddy serves); set `off` to disable public preview addresses. Without a public domain the path-based preview in the panel is closed in production — project code must not run on the panel origin |
 | `WEBNESTDEV_TRUSTED_PROXIES` | address or CIDR of the reverse proxy allowed to set `X-Forwarded-For`; compose trusts its own subnet (`172.30.0.0/24` by default), because Caddy has no pinned address — preview containers live on a separate network, so project code cannot spoof the header. Defaults to loopback only, so a non-compose deployment behind another proxy must set it |
 | `ACME_EMAIL` | address Let's Encrypt writes to when a certificate cannot be issued |
+| `CERTS_HOST_DIR` | host directory with the preview wildcard certificate (default `./certs` next to `docker-compose.yml`), mounted read-only into Caddy as `/certs`; written only by the deploy, which runs `deploy/scripts/wildcard-cert.sh` as its own user — no root or `sudo` on a VM that has no terminal |
 | `PREVIEW_HOST_PORT` | port of the preview door inside the container (default `8788`) |
 | `PREVIEW_TICKET_TTL_MS` | how long a preview link stays valid (default 12 h) |
 
@@ -666,9 +673,76 @@ How it is put together:
 - **The address is derived, not stored.** The host label is the project id, so `<projectId>.<PREVIEW_PUBLIC_DOMAIN>` (36 characters, a valid DNS label) is stable across renames and unique without a new table; a deleted project's address answers 404. `PREVIEW_PUBLIC_DOMAIN` wins when set; in production an unset value falls back to `preview.<WEBNESTDEV_SITE_DOMAIN>`, matching the wildcard Caddy already serves. Set `PREVIEW_PUBLIC_DOMAIN=off` to turn public addresses off; the panel's path-based preview then answers 503 in production, because serving project code from the panel's own origin would give it the session and the panel API.
 - **The door is a separate listener in the server process** (`PREVIEW_HOST_PORT`, [`server/src/preview/preview-host-server.ts`](../server/src/preview/preview-host-server.ts)). It cannot be a route in the main Fastify app: on its hostname the user's app owns the whole path, `/api/…` included, and its live reload arrives on a WebSocket from an arbitrary path — a wildcard WebSocket route there would take the `/*` that serving the panel needs. Requests go through the same proxy core as the panel path ([`preview/preview-proxy.ts`](../server/src/preview/preview-proxy.ts): direct address first, `docker exec` second, `no-store`, the app's framing headers dropped) and the upgrade is relayed byte for byte, so the app negotiates WebSocket itself.
 - **Access is a ticket, not the session cookie.** The panel's session cookie is issued for the panel domain and is *not* sent to a subdomain, and widening it to the whole domain would be worse: the proxy passes request headers to the app, so the platform cookie would end up in the user's own code. Instead `POST /api/projects/:id/preview/ticket` mints a short-lived ticket bound to one project (encrypted with `WEBNESTDEV_ENCRYPTION_KEY`), and the panel opens `https://<project>.<preview-domain>/#ticket=…`. The ticket is in the **fragment**, not the query: the browser never sends a fragment to a server, so the ticket is absent from access logs, proxy logs, browser history and the app's own `Referer`. Without a cookie the door answers a link navigation with a platform page (its own CSP nonce, `no-store`), which reads the ticket from `location.hash`, POSTs it to `/__nest/preview/session` on the same origin and gets an `HttpOnly`, `SameSite=Lax` cookie there; the exchange accepts only same-origin JSON, and the page then replaces the address with the clean URL, so the app's own assets, `fetch` and WebSocket carry on without it. A resource request without the cookie still gets 401, and the door no longer accepts a ticket in the query string or in a WebSocket URL at all — old `?ticket=…` links stop working. Platform cookies (`webnestdev_session`, `webnestdev_preview`) are stripped from everything forwarded to the app.
-- **The certificate is issued on demand, per project hostname.** A wildcard certificate would need DNS-01 against the registrar's API; per-hostname issuance needs only the `ask` endpoint. `on_demand_tls { ask http://webnestdev-server:8787/api/preview/tls-ask }` makes Caddy ask before every issuance, and the endpoint ([`server/src/routes/preview.ts`](../server/src/routes/preview.ts)) answers 200 only for the host of an existing project and 404 for everything else — without that check a wildcard DNS record would let anyone request a certificate for an invented name and burn the Let's Encrypt limit for the domain (50 certificates per registered domain per week). On-demand also means Caddy does **not** try to obtain the wildcard `*.preview.<domain>` certificate in the background, and the first handshake for `p1.preview.<domain>` is what asks for `p1.preview.<domain>` — the concrete name, solvable with HTTP-01/TLS-ALPN, which is why this works without DNS-01 ([automatic HTTPS](https://caddyserver.com/docs/automatic-https#on-demand-tls), [tls directive](https://caddyserver.com/docs/caddyfile/directives/tls)). Caddy's rate-limiting subdirectives (`interval`, `burst`) are deliberately not used: Caddy ≥2.9 rejects them, and the gate is the endpoint plus the certificate cache. Keep the image tag in `docker-compose.yml` and the Caddyfile in step — the deploy validates the file before installing it, and Caddy ≥2.9 would reject a file that still names those subdirectives.
+- **By default the certificate is issued on demand, per project hostname.** A wildcard certificate needs DNS-01 against the registrar's API; per-hostname issuance needs only the `ask` endpoint (the wildcard is available as an option: [Wildcard certificate for previews](#wildcard-certificate-for-previews-previewdomain)). `on_demand_tls { ask http://webnestdev-server:8787/api/preview/tls-ask }` makes Caddy ask before every issuance, and the endpoint ([`server/src/routes/preview.ts`](../server/src/routes/preview.ts)) answers 200 only for the host of an existing project and 404 for everything else — without that check a wildcard DNS record would let anyone request a certificate for an invented name and burn the Let's Encrypt limit for the domain (50 certificates per registered domain per week). On-demand also means Caddy does **not** try to obtain the wildcard `*.preview.<domain>` certificate in the background, and the first handshake for `p1.preview.<domain>` is what asks for `p1.preview.<domain>` — the concrete name, solvable with HTTP-01/TLS-ALPN, which is why this works without DNS-01 ([automatic HTTPS](https://caddyserver.com/docs/automatic-https#on-demand-tls), [tls directive](https://caddyserver.com/docs/caddyfile/directives/tls)). Caddy's rate-limiting subdirectives (`interval`, `burst`) are deliberately not used: Caddy ≥2.9 rejects them, and the gate is the endpoint plus the certificate cache. Keep the image tag in `docker-compose.yml` and the Caddyfile in step — the deploy validates the file before installing it, and Caddy ≥2.9 would reject a file that still names those subdirectives.
 - **Certificates live in the `caddy-data` volume.** Without it every deploy would start from an empty certificate store and ask for a certificate per hostname all over again; the weekly limit is met by not asking twice, not by asking less often. Keep the volume: the Caddyfile is the file that is replaced on deploy, the volume is not.
 - A stopped preview answers 503 with the reason instead of an empty page, a running one whose container address the server cannot reach says so on the WebSocket (no live reload, the page still works), and a request without a ticket gets the ticket page (a navigation) or 401 (a resource). Without a public domain (`PREVIEW_PUBLIC_DOMAIN=off`, or no site domain to derive from) the path-based preview keeps working only in development; in production it is closed (503) so that project code never runs on the panel origin.
+
+### Wildcard certificate for previews (`*.preview.<domain>`)
+
+On-demand issuance costs one Let's Encrypt certificate per project and the limit is 50 certificates
+per registered domain per week, with a handshake delay on a project's first visit. One wildcard
+replaces all of them; it can only be issued over DNS-01, because a wildcard cannot be validated
+with HTTP-01.
+
+Caddy cannot do DNS-01 on its own (the official image has no DNS plugins), so
+[`deploy/scripts/wildcard-cert.sh`](../deploy/scripts/wildcard-cert.sh) drives `acme.sh`, which
+writes the `_acme-challenge` TXT record through the registrar's API and installs the files into
+`CERTS_HOST_DIR/preview`. Caddy keeps serving a static certificate:
+
+```
+*.{$PREVIEW_PUBLIC_DOMAIN} {
+	import /etc/caddy/preview-tls.caddy   # tls { on_demand }  ИЛИ  tls /certs/preview/fullchain.pem /certs/preview/key.pem
+	…
+}
+```
+
+`deploy/preview-tls.caddy` in the repository is the on-demand variant, so the default behaviour does
+not change until a wildcard is issued. The deploy ships that file next to the Caddyfile but never
+overwrites a snippet that already points at `/certs/` — otherwise every deploy would roll Caddy back
+to per-hostname issuance and spend the weekly limit again. Both variants are validated by
+`caddy validate` before installing, with the snippet and the certificate directory mounted.
+
+**Switching it on is two repository secrets and a deploy** — there is no terminal on the VM (see the
+box in [GitHub Actions deployment](#github-actions-deployment)). Add under **Settings → Secrets and
+variables → Actions → New repository secret**:
+
+| Secret | Value |
+| --- | --- |
+| `REGRU_API_USERNAME` | the reg.ru account login |
+| `REGRU_API_PASSWORD` | the **API** password from «Настройки → API → Альтернативный пароль», not the account password |
+
+The VM's address (`178.236.27.102`) must be in «Настройки → API → Диапазоны IP-адресов» at reg.ru,
+otherwise the API answers `ACCESS_DENIED_FROM_IP`. Then run the deploy (push to `main`, or
+Actions → **deploy** → *Run workflow*). [`vm-deploy.sh`](../deploy/scripts/vm-deploy.sh) ships
+[`wildcard-cert.sh`](../deploy/scripts/wildcard-cert.sh) to the VM, runs it only when both secrets
+are set, and the script: issues `*.<PREVIEW_PUBLIC_DOMAIN>` over DNS-01, writes
+`CERTS_HOST_DIR/preview/{fullchain,key}.pem`, switches `preview-tls.caddy` to those files and reloads
+Caddy. When the certificate is younger than 30 days the step only re-reads Caddy, so it is safe to
+run on every deploy. An issuance failure is logged but does not fail the deploy: previews keep
+working on per-hostname certificates.
+
+The credentials are needed only for issuance and renewal. They are not read by any container, are
+not written into `.env`, and are passed to the script as process environment only; acme.sh keeps
+them in `~/.acme.sh/account.conf` (mode 600) after the first run and installs its own cron entry,
+which renews and reloads Caddy without a deploy. `WILDCARD_CERT=0` (repository variable) turns the
+whole step off.
+
+The script is also runnable by hand where a shell does exist:
+
+```bash
+bash deploy/scripts/wildcard-cert.sh --issue    # выпуск + включение + reload Caddy
+bash deploy/scripts/wildcard-cert.sh --status   # «схема: wildcard», срок действия
+bash deploy/scripts/wildcard-cert.sh --check    # код 1, если сертификат кончается
+bash deploy/scripts/wildcard-cert.sh --disable  # назад на on_demand
+``` Renewal is the cron entry `acme.sh --install` adds; `--install-cert` records a reload command
+with absolute paths, because cron has none of the deploy environment. Check it from monitoring with
+`bash deploy/scripts/wildcard-cert.sh --check` (exit 1 when the certificate is missing or expires
+within `RENEW_BEFORE_DAYS`, default 30).
+
+Rollback: `bash deploy/scripts/wildcard-cert.sh --disable` restores `tls { on_demand }`, reloads
+Caddy and keeps the files, so re-enabling does not spend a new issuance. A different domain (for
+example `host.<domain>` for static sites) uses `WILDCARD_DOMAIN=host.<domain>` plus its own snippet in
+that site block — the preview snippet is not touched.
 
 Check it without a shell on the VM:
 

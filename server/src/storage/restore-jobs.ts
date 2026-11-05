@@ -40,6 +40,11 @@ export type RestoreRunner = (progress: RestoreProgress) => Promise<boolean>;
 const FINISHED_TTL_MS = 10 * 60 * 1000;
 const jobs = new Map<string, RestoreJob>();
 /**
+ * Обещание выполнения задания. Очередь (`jobs/store.ts`) закрывает свою строку только когда
+ * восстановление действительно закончилось — иначе «выполнено» появлялось бы раньше времени.
+ */
+const settled = new Map<string, Promise<void>>();
+/**
  * Отменённые проекты. Проект могли удалить, пока архив ехал: распаковка вернула бы каталог
  * удалённого проекта на диск и снова записала его в квоту. Флаг снимается новым заданием.
  */
@@ -58,6 +63,7 @@ function prune(now = Date.now()) {
     if (now - Date.parse(job.finishedAt) > FINISHED_TTL_MS) {
       jobs.delete(projectId);
       cancelled.delete(projectId);
+      settled.delete(job.id);
     }
   }
 }
@@ -117,7 +123,7 @@ export function startRestoreJob(input: {
     job.state = phase;
   };
 
-  void (async () => {
+  const task = (async () => {
     job.state = "downloading";
     try {
       const restored = await input.run(report);
@@ -138,6 +144,7 @@ export function startRestoreJob(input: {
       );
     }
   })();
+  settled.set(job.id, task.then(() => undefined, () => undefined));
 
   return job;
 }
@@ -171,6 +178,11 @@ export class ProjectRestoringError extends Error {
     this.bytesDone = job.bytesDone;
     this.bytesTotal = job.bytesTotal;
   }
+}
+
+/** Дождаться конца задания: очередь и админка показывают результат, а не «начато». */
+export async function waitRestoreJob(jobId: string): Promise<void> {
+  await settled.get(jobId);
 }
 
 /** Задание уже упало: повторять скачивание на каждом запросе нельзя, нужен явный повтор. */

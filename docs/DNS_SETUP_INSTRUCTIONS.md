@@ -58,10 +58,14 @@
 
 ## Что дальше (на ВМ)
 
+> Пункты ниже выполняются выкаткой: интерактивного терминала на ВМ нет (ни SSH, ни `scp`), поэтому
+> вручную на сервере ничего не запускается — см. блок «There is no interactive terminal on the VM»
+> в `docs/PRODUCTION_DEPLOYMENT.md`.
+
 1. Caddy (или OpenResty) должен быть на `:80` и `:443`, и слушать `0.0.0.0`.
 2. В Caddyfile: `site { nestdev.ru, www.nestdev.ru } → reverse_proxy localhost:8787` (или твой port).
 3. Для превью: `site { *.preview.nestdev.ru } → reverse_proxy localhost:8787` (один и тот же upsteam, а сервер сам решает, какой проект дать по `Host`).
-4. TLS: Let's Encrypt (HTTP-01) — или Wildcard через DNS-01 (нужен API reg.ru / DNS-модуль Caddy / certbot).
+4. TLS: по умолчанию Caddy выдаёт сертификат на каждое имя превью по запросу (HTTP-01). Один `*.preview` на все проекты — `deploy/scripts/wildcard-cert.sh` (acme.sh + DNS-01 через API reg.ru); порядок включения — `docs/PRODUCTION_DEPLOYMENT.md`, раздел «Wildcard certificate for previews».
 
 ## Ограничения / грабли
 

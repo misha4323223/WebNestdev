@@ -46,6 +46,14 @@ services:
       - "443:443/udp"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Схема TLS для публичных превью: по умолчанию выдача на каждое имя (on_demand), после
+      # выпуска wildcard — пути к файлам сертификата. Отдельный файл, потому что у Caddyfile нет
+      # условий; его переписывает deploy/scripts/wildcard-cert.sh и перечитывает Caddy.
+      - ./preview-tls.caddy:/etc/caddy/preview-tls.caddy:ro
+      # Сертификаты wildcard (DNS-01). Только чтение: Caddy их не меняет, файлы кладёт скрипт.
+      # Каталог рядом с compose, а не в /var/lib: его создаёт выкатка от имени своего пользователя,
+      # без root и sudo (на этой ВМ нет интерактивного терминала, спросить пароль не у кого).
+      - ${CERTS_HOST_DIR:-./certs}:/certs:ro
       # Только чтение: Caddy отдаёт готовые релизы, но не должен уметь менять сайты.
       # Один и тот же каталог на хосте монтируется серверу для записи.
       - ${HOSTING_SITES_DIR:-/var/lib/webnestdev/sites}:/srv/sites:ro

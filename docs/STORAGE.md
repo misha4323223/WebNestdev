@@ -98,7 +98,11 @@ filesystem replacement.
 What happens:
 
 1. A project directory is packed into `workspace.tar.gz` (sources, uploads, `.git`, `node_modules`,
-   build output — everything) and uploaded to the bucket.
+   build output — everything except derived caches) and uploaded to the bucket. Excluded on purpose:
+   `node_modules/.vite`, `node_modules/.cache`, `.next/cache`, `.turbo`, `coverage`, `*.tsbuildinfo`
+   and `.webnestdev/screenshots` — they are rebuilt or retaken on demand, while costing tens to
+   hundreds of megabytes and thousands of files. `node_modules` itself stays, so a wake-up needs no
+   install; `dist`/build output stays, so a static preview opens without a build.
 2. The server checks the stored object's size with `HEAD` and only then deletes the local directory.
    A failed upload or a short object leaves the project untouched.
 3. The marker remembers the key, the byte size, the owner and the node that packed the project.

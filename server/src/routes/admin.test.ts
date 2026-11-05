@@ -40,7 +40,7 @@ let secret = "";
 let recoveryCodes: string[] = [];
 
 test("пароль без кода не даёт сессию: первый вход ведёт к подключению TOTP", async () => {
-  clearAuthRateLimits();
+  await clearAuthRateLimits();
   await createAdmin(EMAIL, PASSWORD);
 
   const wrong = await login("wrong-password-1");
@@ -95,7 +95,7 @@ test("пароль без кода не даёт сессию: первый вх
 });
 
 test("повторный вход требует код, и принятый код нельзя предъявить второй раз", async () => {
-  clearAuthRateLimits();
+  await clearAuthRateLimits();
   const first = await login();
   assert.equal(first.body.stage, "verify");
 
@@ -118,7 +118,7 @@ test("повторный вход требует код, и принятый к�
 });
 
 test("код восстановления подходит один раз и уменьшает остаток", async () => {
-  clearAuthRateLimits();
+  await clearAuthRateLimits();
   const first = await login();
   const used = await verify(String(first.body.challenge), recoveryCodes[0]);
   assert.equal(used.status, 200);
@@ -131,7 +131,7 @@ test("код восстановления подходит один раз и у
 });
 
 test("пять ошибок закрывают шаг входа: дальше нужен пароль заново", async () => {
-  clearAuthRateLimits();
+  await clearAuthRateLimits();
   const first = await login();
   const challenge = String(first.body.challenge);
   const expected = [4, 3, 2, 1, 0];
@@ -146,7 +146,7 @@ test("пять ошибок закрывают шаг входа: дальше �
 });
 
 test("новый набор кодов восстановления отменяет старый", async () => {
-  clearAuthRateLimits();
+  await clearAuthRateLimits();
   const first = await login();
   assert.equal(first.status, 200, JSON.stringify(first.body));
   const entered = await verify(String(first.body.challenge), recoveryCodes[1]);
@@ -174,7 +174,7 @@ test("новый набор кодов восстановления отменя
 });
 
 test("выход закрывает токен, «выйти везде» — все сессии", async () => {
-  clearAuthRateLimits();
+  await clearAuthRateLimits();
   const first = await login();
   const entered = await verify(String(first.body.challenge), recoveryCodes[1]);
   assert.equal(entered.status, 200);

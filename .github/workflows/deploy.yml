@@ -163,6 +163,10 @@ jobs:
           # Ключ сервисного аккаунта Yandex Cloud (файл JSON целиком). Необязательный: без него
           # выкатка идёт как раньше, а SMS остаётся нерабочим и говорит об этом в логе.
           YANDEX_SA_KEY_JSON: ${{ secrets.YANDEX_SA_KEY_JSON }}
+          # API reg.ru для wildcard-сертификата превью (DNS-01). Необязательные: без них превью
+          # работает на сертификате на каждое имя. В .env не попадают — контейнерам они не нужны.
+          REGRU_API_USERNAME: ${{ secrets.REGRU_API_USERNAME }}
+          REGRU_API_PASSWORD: ${{ secrets.REGRU_API_PASSWORD }}
           # Те же ключи можно ввести в панели «Ключи сервера» — тогда здесь ничего не нужно.
           # Значения отсюда — запасной источник для чистой ВМ: они попадают в .env, а панель
           # остаётся важнее (её значения лежат в DATA_DIR и переживают выкатку).
@@ -369,6 +373,12 @@ jobs:
           # осталась бы с прежним Caddyfile, и правка публичных адресов предпросмотра
           # требовала бы захода на сервер руками.
           CADDY_B64=$(base64 -w0 deploy/Caddyfile)
+          # Сниппет TLS (on_demand либо wildcard) — рядом с Caddyfile: основной файл подключает его
+          # строкой `import`, и без него проверка конфигурации не пройдёт.
+          PREVIEW_TLS_B64=$(base64 -w0 deploy/preview-tls.caddy)
+          # Скрипт выпуска wildcard: на ВМ нет ни терминала, ни чекаута, поэтому скрипт едет
+          # вместе с выкаткой и запускается сам, когда заданы секреты reg.ru.
+          WILDCARD_CERT_B64=$(base64 -w0 deploy/scripts/wildcard-cert.sh)
           # Установщик gVisor едет на ВМ вместе со скриптом: в image-режиме чекаут на ВМ может
           # быть старым, а установка нужна ровно та, что прошла тесты в этом коммите.
           RUNSC_SCRIPT_B64=$(base64 -w0 deploy/scripts/install-runsc.sh)
@@ -555,7 +565,7 @@ jobs:
             -p "${DEPLOY_PORT:-22}" \
             -o BatchMode=yes -o StrictHostKeyChecking=yes \
             "$DEPLOY_USER@$DEPLOY_HOST" \
-            "MODE='$MODE' IMAGE_REF='$image' APP_DIR='$DEPLOY_APP_DIR' COMPOSE_B64='$COMPOSE_B64' CADDY_B64='$CADDY_B64' RUNSC_SCRIPT_B64='$RUNSC_SCRIPT_B64' RUNSC_INSTALL='$RUNSC_INSTALL' APP_KEY_FILE='$APP_KEY_FILE' PLATFORM_ENV_FILE='$PLATFORM_ENV_FILE' LOG_TAIL='$LOG_TAIL' bash -s" \
+            "MODE='$MODE' IMAGE_REF='$image' APP_DIR='$DEPLOY_APP_DIR' COMPOSE_B64='$COMPOSE_B64' CADDY_B64='$CADDY_B64' PREVIEW_TLS_B64='$PREVIEW_TLS_B64' WILDCARD_CERT_B64='$WILDCARD_CERT_B64' REGRU_API_USERNAME='$REGRU_API_USERNAME' REGRU_API_PASSWORD='$REGRU_API_PASSWORD' RUNSC_SCRIPT_B64='$RUNSC_SCRIPT_B64' RUNSC_INSTALL='$RUNSC_INSTALL' APP_KEY_FILE='$APP_KEY_FILE' PLATFORM_ENV_FILE='$PLATFORM_ENV_FILE' LOG_TAIL='$LOG_TAIL' bash -s" \
             < deploy/scripts/vm-deploy.sh
 
       - name: Deploy on the VM (self-hosted runner)
@@ -567,6 +577,8 @@ jobs:
           BUILT_IMAGE: ${{ needs.build.outputs.image }}
           DEPLOY_APP_DIR: ${{ vars.DEPLOY_APP_DIR }}
           YANDEX_SA_KEY_JSON: ${{ secrets.YANDEX_SA_KEY_JSON }}
+          REGRU_API_USERNAME: ${{ secrets.REGRU_API_USERNAME }}
+          REGRU_API_PASSWORD: ${{ secrets.REGRU_API_PASSWORD }}
           # GitHub запрещает секреты и переменные с префиксом GITHUB_ (он зарезервирован под
           # служебные значения), поэтому в настройках репозитория эти два ключа называются
           # GH_OAUTH_CLIENT_ID / GH_OAUTH_CLIENT_SECRET, а в .env попадают под обычными именами,
@@ -891,6 +903,9 @@ jobs:
           MODE="$MODE" IMAGE_REF="$image" APP_DIR="$DEPLOY_APP_DIR" \
             LOG_TAIL="$LOG_TAIL" \
             COMPOSE_SRC="$PWD/docker-compose.yml" CADDY_SRC="$PWD/deploy/Caddyfile" \
+            PREVIEW_TLS_SRC="$PWD/deploy/preview-tls.caddy" \
+            WILDCARD_CERT_SRC="$PWD/deploy/scripts/wildcard-cert.sh" \
+            REGRU_API_USERNAME="$REGRU_API_USERNAME" REGRU_API_PASSWORD="$REGRU_API_PASSWORD" \
             RUNSC_SCRIPT_B64="$RUNSC_SCRIPT_B64" RUNSC_INSTALL="$RUNSC_INSTALL" \
             APP_KEY_FILE="$APP_KEY_FILE" PLATFORM_ENV_FILE="$PLATFORM_ENV_FILE" \
             bash deploy/scripts/vm-deploy.sh

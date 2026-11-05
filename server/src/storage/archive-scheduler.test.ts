@@ -157,6 +157,53 @@ function sweepDeps(options: {
   };
 }
 
+test("сбой архивации одного проекта не мешает остальным и не трогает его файлы", async () => {
+  await withArchiveEnv({ concurrency: "1", guard: "3600000" }, async () => {
+    const now = Date.parse("2026-10-30T12:00:00.000Z");
+    const projects = [
+      { id: "broken", userId: "u" },
+      { id: "healthy", userId: "u" },
+    ];
+    const sizes = new Map(
+      projects.map((project, index) => [
+        project.id,
+        {
+          sizeBytes: 1000,
+          updatedAt: new Date(now - (10 - index) * 60 * 60 * 1000).toISOString(),
+          lastWriteAt: new Date(now - (10 - index) * 60 * 60 * 1000).toISOString(),
+        },
+      ]),
+    );
+    const attempted: string[] = [];
+    let failures = 0;
+    const deps = {
+      ...sweepDeps({
+        projects,
+        sizes,
+        disk: { usedPercent: 80 },
+        now,
+        archive: async projectId => {
+          attempted.push(projectId);
+          if (projectId === "broken") throw new Error("хранилище недоступно");
+          return { alreadyArchived: false, bytes: 1000 };
+        },
+      }),
+      recordFailure: () => {
+        failures++;
+      },
+    };
+
+    const result = await sweepIdleProjects(3 * 60 * 60 * 1000, { deps });
+    // Сбой одного проекта — это счётчик и строка в логе, а не удаление: второй проект всё равно
+    // уезжает, а неудавшийся остаётся на диске и повторится следующим проходом.
+    assert.equal(result.failed, 1);
+    assert.equal(result.archived, 1);
+    assert.equal(result.deferred, 0);
+    assert.deepEqual(attempted, ["broken", "healthy"]);
+    assert.equal(failures, 1, "сбой учтён в счётчике ошибок");
+  });
+});
+
 test("при заполненном диске архивирует самых старых до цели и не трогает остальные", async () => {
   await withArchiveEnv({ concurrency: "1", guard: "3600000" }, async () => {
     const now = Date.parse("2026-10-30T12:00:00.000Z");

@@ -2,6 +2,7 @@ import test, { after } from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { ObjectStore } from "./object-store.js";
@@ -94,6 +95,38 @@ test("архив уезжает в хранилище, локальная пап
   const again = await archiveProject(projectId, userId, { store });
   assert.equal(again.alreadyArchived, true);
   assert.equal(store.objects.size, 1);
+});
+
+test("в архив не едут кеши сборки и снимки, а исходники, dist и node_modules остаются", async () => {
+  const { projectId, userId, root } = await projectWithFiles();
+  for (const dir of ["node_modules/.vite", "node_modules/.cache", ".next/cache", ".turbo", "coverage", ".webnestdev/screenshots", "dist"]) {
+    await mkdir(path.join(root, dir), { recursive: true });
+  }
+  await writeFile(path.join(root, "node_modules", ".vite", "deps.js"), "prebundled\n");
+  await writeFile(path.join(root, "node_modules", ".cache", "babel.json"), "{}\n");
+  await writeFile(path.join(root, ".next", "cache", "webpack.pack"), "cache\n");
+  await writeFile(path.join(root, ".turbo", "turbo.log"), "log\n");
+  await writeFile(path.join(root, "coverage", "lcov.info"), "TN:\n");
+  await writeFile(path.join(root, ".webnestdev", "screenshots", "home.png"), "png\n");
+  await writeFile(path.join(root, ".webnestdev", "notes-1.md"), "- решили: синий фон\n");
+  await writeFile(path.join(root, "tsconfig.tsbuildinfo"), "{}\n");
+  await writeFile(path.join(root, "dist", "index.html"), "<html></html>\n");
+  await writeFile(path.join(root, "node_modules", "react.js"), "module.exports = {};\n");
+
+  const store = memoryStore();
+  const archived = await archiveProject(projectId, userId, { store });
+  const file = path.join(work, "excludes-" + projectId + ".tar.gz");
+  await writeFile(file, store.objects.get(archived.key)!);
+  const entries = execFileSync("tar", ["-tzf", file], { encoding: "utf8" }).split("\n");
+  await rm(file, { force: true });
+
+  const has = (suffix: string) => entries.some(entry => entry === "./" + suffix || entry.startsWith("./" + suffix + "/"));
+  for (const gone of ["node_modules/.vite", "node_modules/.cache", ".next/cache", ".turbo", "coverage", ".webnestdev/screenshots", "tsconfig.tsbuildinfo"]) {
+    assert.equal(has(gone), false, "в архиве не должно быть " + gone);
+  }
+  for (const kept of ["src/index.ts", "package.json", "dist/index.html", "node_modules/react.js", ".webnestdev/notes-1.md"]) {
+    assert.equal(has(kept), true, "в архиве должен остаться " + kept);
+  }
 });
 
 test("первое обращение запускает восстановление в фоне и возвращает проект на диск", async () => {
@@ -214,6 +247,81 @@ test("хранилище не подтвердило размер: локаль�
   );
   assert.ok((await stat(root)).isDirectory(), "рабочая папка осталась на диске");
   assert.equal(await readArchiveRecord(projectId), null, "отметка архива не появилась");
+});
+
+test("обрыв загрузки в хранилище: рабочая папка цела, отметки нет, повтор проходит", async () => {
+  const { projectId, userId, root } = await projectWithFiles();
+  const store = memoryStore();
+  const broken: ObjectStore = {
+    ...store,
+    async putFile() {
+      throw new Error("socket hang up");
+    },
+  };
+
+  await assert.rejects(() => archiveProject(projectId, userId, { store: broken }), /socket hang up/);
+  // Именно это и проверяем: проект не «полуархивирован» — файлы на месте, отметки нет,
+  // значит следующая попытка снова увидит проект целиком, а не пустую папку.
+  assert.ok((await stat(root)).isDirectory(), "рабочая папка осталась на диске");
+  assert.equal(await readFile(path.join(root, "package.json"), "utf8"), "{\"name\":\"demo\"}\n");
+  assert.equal(await readArchiveRecord(projectId), null, "отметка архива не появилась");
+  assert.equal(store.objects.size, 0, "объект в бакете не появился");
+  // Временный tar не остаётся валяться в data/tmp.
+  assert.deepEqual(await readdir(path.join(work, "data", "tmp")).catch(() => []), []);
+
+  // Повторная попытка после восстановления связи проходит обычным путём.
+  assert.equal((await archiveProject(projectId, userId, { store })).alreadyArchived, false);
+});
+
+test("объект в бакете пропал: проект не превращается в пустую папку", async () => {
+  const { projectId, userId, root } = await projectWithFiles();
+  const store = memoryStore();
+  await archiveProject(projectId, userId, { store });
+  // Так выглядит удалённый lifecycle-правилом или чужим ключом объект: отметка есть, файла нет.
+  for (const key of store.objects.keys()) store.objects.delete(key);
+
+  await assert.rejects(
+    () => ensureProjectWorkspace(projectId, userId, { store }),
+    (error: unknown) => (error as { code?: string }).code === "PROJECT_RESTORING",
+  );
+  const failed = await waitRestore(projectId);
+  assert.equal(failed.state, "failed");
+  assert.match(failed.error ?? "", /не найден в объектном хранилище/);
+  assert.ok(await readArchiveRecord(projectId), "отметка не удалена — иначе архив уже не найти");
+  await assert.rejects(() => stat(root), /ENOENT/, "пустой рабочей папки не появилось");
+});
+
+test("хранилище недоступно при восстановлении: отметка цела, пустой папки не появилось", async () => {
+  const { projectId, userId, root } = await projectWithFiles();
+  const store = memoryStore();
+  await archiveProject(projectId, userId, { store });
+  const down: ObjectStore = {
+    ...store,
+    async getToFile() {
+      throw new Error("503 Service Unavailable");
+    },
+  };
+
+  await assert.rejects(
+    () => ensureProjectWorkspace(projectId, userId, { store: down }),
+    (error: unknown) => (error as { code?: string }).code === "PROJECT_RESTORING",
+  );
+  const failed = await waitRestore(projectId);
+  assert.equal(failed.state, "failed");
+  assert.match(failed.error ?? "", /503/);
+  // Ничего не удалено и не создано: проект по-прежнему только в бакете, отметка — на месте.
+  assert.ok(await readArchiveRecord(projectId), "отметка остаётся, пока проект не вернулся");
+  await assert.rejects(() => stat(root), /ENOENT/, "пустая рабочая папка не создана");
+  assert.deepEqual(
+    (await readdir(path.dirname(root))).filter(name => name.startsWith(".restore-")),
+    [],
+    "сторожащий каталог распаковки не остался",
+  );
+
+  // Хранилище вернулось — повторное восстановление проходит.
+  assert.ok(await startProjectRestore(projectId, userId, { store }));
+  assert.equal((await waitRestore(projectId)).state, "done");
+  assert.equal(await readFile(path.join(root, "src", "index.ts"), "utf8"), "export const answer = 42;\n");
 });
 
 test("потерянная отметка восстанавливается по объекту в бакете", async () => {

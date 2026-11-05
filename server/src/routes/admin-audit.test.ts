@@ -44,7 +44,7 @@ test("журнал закрыт без админ-токена", async () => {
 });
 
 test("вход и подключение второго фактора попадают в журнал", async () => {
-  clearAuthRateLimits();
+  await clearAuthRateLimits();
   await createAdmin(EMAIL, PASSWORD);
 
   const failed = await login("wrong-password");
@@ -108,7 +108,7 @@ test("неизвестное действие отклоняется, а не о
 });
 
 test("попытки сверх лимита тоже видны в журнале", async () => {
-  clearAuthRateLimits();
+  await clearAuthRateLimits();
   for (let attempt = 0; attempt < 12; attempt += 1) await login("wrong-password-again");
   const response = await read(token, "?action=admin.login.failed&limit=50");
   const body = response.json() as { entries: Array<{ details: { reason?: string } }> };

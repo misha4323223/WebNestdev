@@ -112,7 +112,7 @@ export async function registerAdminRoutes(app: FastifyInstance) {
   app.post("/api/admin/login", async (request, reply) => {
     startReply(reply);
     const body = loginSchema.parse(request.body);
-    const limit = checkAuthRateLimit(request.ip, "adminLogin", body.email);
+    const limit = await checkAuthRateLimit(request.ip, "adminLogin", body.email);
     if (!limit.allowed) {
       // 429 — не просто отказ: серия таких ответов и есть картина перебора. Пишем её в журнал,
       // но без пароля и без тела запроса.
@@ -205,7 +205,7 @@ export async function registerAdminRoutes(app: FastifyInstance) {
     const admin = await getAdmin(state.adminId);
     if (!admin) return reply.code(401).send({ error: "Администратор не найден" });
 
-    const limit = checkAuthRateLimit(request.ip, "adminTotp", admin.email);
+    const limit = await checkAuthRateLimit(request.ip, "adminTotp", admin.email);
     if (!limit.allowed) {
       reply.header("Retry-After", String(limit.retryAfter));
       return reply.code(429).send({ error: "Слишком много попыток кода. Попробуйте позже." });
@@ -266,7 +266,7 @@ export async function registerAdminRoutes(app: FastifyInstance) {
       return reply.code(401).send({ error: "У администратора не подключён второй фактор" });
     }
 
-    const limit = checkAuthRateLimit(request.ip, "adminTotp", admin.email);
+    const limit = await checkAuthRateLimit(request.ip, "adminTotp", admin.email);
     if (!limit.allowed) {
       reply.header("Retry-After", String(limit.retryAfter));
       return reply.code(429).send({ error: "Слишком много попыток кода. Попробуйте позже." });
@@ -348,7 +348,7 @@ export async function registerAdminRoutes(app: FastifyInstance) {
     if (!auth) return;
     const body = recoverySchema.parse(request.body);
 
-    const limit = checkAuthRateLimit(request.ip, "adminTotp", auth.admin.email);
+    const limit = await checkAuthRateLimit(request.ip, "adminTotp", auth.admin.email);
     if (!limit.allowed) {
       reply.header("Retry-After", String(limit.retryAfter));
       return reply.code(429).send({ error: "Слишком много попыток кода. Попробуйте позже." });

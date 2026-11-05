@@ -1,6 +1,20 @@
-type Bucket = { count: number; resetAt: number };
+import { clearRateLimits, consumeRateLimit } from "../storage/rate-limit-store.js";
 
-const buckets = new Map<string, Bucket>();
+/**
+ * Лимиты попыток входа, регистрации и кодов.
+ *
+ * Сколько попыток разрешено — это правило продукта и живёт здесь; *где* считаются попытки — в
+ * `storage/rate-limit-store.ts`. Раньше счётчики были `Map` в памяти процесса: выкатка обнуляла
+ * окна, а вторая реплика API считала всё заново. Теперь окно одно на платформу.
+ *
+ * Две двери считаются всегда: адрес и аккаунт. Адрес останавливает веер по аккаунтам, аккаунт —
+ * перебор с разных адресов. За прокси одного адреса мало: все пришли бы с одного IP.
+ */
+
+export type RateLimitResult =
+  | { allowed: true }
+  | { allowed: false; retryAfter: number };
+
 const WINDOW_MS = 15 * 60 * 1000;
 
 export type AuthAction = "login" | "register" | "phone" | "phoneVerify" | "phoneDemo" | "emailVerification" | "emailVerify" | "adminLogin" | "adminTotp";
@@ -35,50 +49,40 @@ const SUBJECT_LIMITS: Record<AuthAction, number> = {
   adminTotp: 20,
 };
 
-function allow(key: string, limit: number) {
-  const now = Date.now();
-  const current = buckets.get(key);
-  if (!current || current.resetAt <= now) {
-    if (buckets.size >= 10_000) {
-      for (const [bucketKey, bucket] of buckets) {
-        if (bucket.resetAt <= now) buckets.delete(bucketKey);
-      }
-      if (buckets.size >= 10_000) {
-        const oldestKey = buckets.keys().next().value;
-        if (oldestKey !== undefined) buckets.delete(oldestKey);
-      }
-    }
-    buckets.set(key, { count: 1, resetAt: now + WINDOW_MS });
-    return { allowed: true, retryAfter: 0 };
-  }
-  if (current.count >= limit) {
-    return { allowed: false, retryAfter: Math.max(1, Math.ceil((current.resetAt - now) / 1000)) };
-  }
-  current.count += 1;
-  return { allowed: true, retryAfter: 0 };
-}
-
 /**
- * Обе двери проверяются всегда: адрес и аккаунт. `subject` — нормализованный email или телефон;
- * он необязателен, потому что запрос без валидного тела ещё не знает, кого перебирают, и тогда
- * работает только счётчик адреса.
+ * Проверка: адрес, затем аккаунт. `subject` — нормализованный email или телефон; он необязателен,
+ * потому что запрос без валидного тела ещё не знает, кого перебирают.
+ *
+ * Ошибка хранилища не запирает вход: `consumeRateLimit` в этом случае пропускает, а причина
+ * остаётся в логе. Иначе недоступная база превращалась бы в «войти нельзя никому».
  */
-export function checkAuthRateLimit(ip: string, action: AuthAction, subject?: string) {
+export async function checkAuthRateLimit(ip: string, action: AuthAction, subject?: string): Promise<RateLimitResult> {
   // Коды SMS дополнительно ограничены по номеру внутри phone-store (сколько отправок и попыток),
   // а здесь — счётчики адреса и аккаунта: они отвечают на «кто и кого перебирает».
-  const byIp = allow("ip:" + action + ":" + (ip || "unknown"), IP_LIMITS[action]);
-  if (!byIp.allowed) return { allowed: false as const, retryAfter: byIp.retryAfter };
+  const byIp = await consume("ip:" + action + ":" + (ip || "unknown"), IP_LIMITS[action]);
+  if (!byIp.allowed) return { allowed: false, retryAfter: byIp.retryAfter };
 
   const normalized = subject?.trim().toLowerCase();
   if (normalized) {
-    const limit = SUBJECT_LIMITS[action];
-    const bySubject = allow("subject:" + action + ":" + normalized, limit);
-    if (!bySubject.allowed) return { allowed: false as const, retryAfter: bySubject.retryAfter };
+    const bySubject = await consume("subject:" + action + ":" + normalized, SUBJECT_LIMITS[action]);
+    if (!bySubject.allowed) return { allowed: false, retryAfter: bySubject.retryAfter };
   }
-  return { allowed: true as const };
+  return { allowed: true };
 }
 
-/** Тесты начинают с чистых счётчиков: карта живёт вместе с процессом. */
-export function clearAuthRateLimits() {
-  buckets.clear();
+async function consume(key: string, limit: number) {
+  try {
+    return await consumeRateLimit(key, limit, WINDOW_MS);
+  } catch (error) {
+    console.warn(
+      "[auth] счётчик попыток недоступен, проверка лимита пропущена: " +
+        (error instanceof Error ? error.message : String(error)),
+    );
+    return { allowed: true, retryAfter: 0 };
+  }
+}
+
+/** Сброс окон: тесты начинают с чистых счётчиков, администратор — при разборе блокировки. */
+export async function clearAuthRateLimits(): Promise<void> {
+  await clearRateLimits();
 }

@@ -90,7 +90,7 @@ test("отзыв сеансов действительно закрывает в
 });
 
 test("блокировка закрывает вход, уже выданную сессию и снимается обратно", async () => {
-  clearAuthRateLimits();
+  await clearAuthRateLimits();
   const user = await makeUser();
   const session = await createSession(user.id);
 

@@ -109,7 +109,7 @@ export async function registerAuthRoutes(app:FastifyInstance, deps:AuthRouteDeps
     const body = credentials.parse(request.body);
     // Лимит считается и по адресу, и по адресу почты: иначе перебор с разных IP не встречал бы
     // сопротивления, а один счётчик на всех позволял бы блокировать регистрацию целиком.
-    const rateLimit = checkAuthRateLimit(request.ip, "register", body.email);
+    const rateLimit = await checkAuthRateLimit(request.ip, "register", body.email);
     if (!rateLimit.allowed) {
       reply.header("Retry-After", String(rateLimit.retryAfter));
       return reply.code(429).send({error:"Слишком много попыток регистрации. Попробуйте позже."});
@@ -165,7 +165,7 @@ export async function registerAuthRoutes(app:FastifyInstance, deps:AuthRouteDeps
     if(!verification) return reply.code(400).send({error:"Ссылка подтверждения недействительна или уже использована.",code:"VERIFICATION_INVALID"});
     const user = await getUser(verification.userId);
     if(!user) return reply.code(400).send({error:"Ссылка подтверждения недействительна или уже использована.",code:"VERIFICATION_INVALID"});
-    const rateLimit = checkAuthRateLimit(request.ip,"emailVerify",user.email);
+    const rateLimit = await checkAuthRateLimit(request.ip,"emailVerify",user.email);
     if(!rateLimit.allowed){
       reply.header("Retry-After",String(rateLimit.retryAfter));
       return reply.code(429).send({error:"Слишком много попыток подтверждения. Попробуйте позже."});
@@ -207,7 +207,7 @@ export async function registerAuthRoutes(app:FastifyInstance, deps:AuthRouteDeps
    * форма превращалась бы в проверку, зарегистрирован ли человек. */
   app.post("/api/auth/resend-verification", async (request,reply) => {
     const body = resendCredentials.parse(request.body);
-    const rateLimit = checkAuthRateLimit(request.ip,"emailVerification",body.email);
+    const rateLimit = await checkAuthRateLimit(request.ip,"emailVerification",body.email);
     if(!rateLimit.allowed){
       reply.header("Retry-After",String(rateLimit.retryAfter));
       return reply.code(429).send({error:"Слишком много запросов письма. Попробуйте позже."});
@@ -228,7 +228,7 @@ export async function registerAuthRoutes(app:FastifyInstance, deps:AuthRouteDeps
   });
   app.post("/api/auth/login", async (request,reply) => {
     const body = credentials.parse(request.body);
-    const rateLimit = checkAuthRateLimit(request.ip, "login", body.email);
+    const rateLimit = await checkAuthRateLimit(request.ip, "login", body.email);
     if (!rateLimit.allowed) {
       await recordAudit({
         action: "user.login.failed",

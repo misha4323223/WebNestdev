@@ -21,8 +21,10 @@ import {
   projectRestoreJob,
   restoreJobActive,
   startRestoreJob,
+  waitRestoreJob,
   type RestoreJob,
 } from "./restore-jobs.js";
+import { enqueueJob, finishJob } from "../jobs/store.js";
 
 /**
  * Холодный ярус проектов: рабочая папка уезжает в S3-совместимый бакет и освобождает диск ВМ.
@@ -209,6 +211,25 @@ async function refreshSize(projectId: string, userId: string) {
   );
 }
 
+/**
+ * Что не едет в архив: производные кеши сборки и снимки проверки. Оба восстанавливаются сами —
+ * кеш пересобирается, снимок делается заново, — но занимают десятки-сотни мегабайт и тысячи
+ * файлов, а значит удлиняют и упаковку, и распаковку при пробуждении. `node_modules`, `.git` и
+ * `dist` остаются: без них пробуждение стало бы установкой пакетов, а статическое превью — сборкой.
+ */
+export const ARCHIVE_EXCLUDES = [
+  "./node_modules/.vite",
+  "./node_modules/.cache",
+  "./.next/cache",
+  "./.turbo",
+  "./coverage",
+  "./.webnestdev/screenshots",
+  "*.tsbuildinfo",
+] as const;
+
+/** Сколько строка очереди ждёт, пока восстановление идёт в том же процессе. */
+const RESTORE_QUEUE_GRACE_MS = 15 * 60 * 1000;
+
 export type ArchiveResult = { archived: true; bytes: number; key: string; alreadyArchived: boolean };
 
 /** Прогресс восстановления: байты объекта, а не распакованного дерева — их видно уже при скачивании. */
@@ -242,7 +263,11 @@ export async function archiveProject(
     const started = Date.now();
     const file = await tempFile(".tar.gz");
     try {
-      await exec("tar", ["-czf", file, "-C", root, "."], { timeout: TAR_TIMEOUT_MS, maxBuffer: 1024 * 1024 });
+      await exec(
+        "tar",
+        ["-czf", file, "-C", root, ...ARCHIVE_EXCLUDES.map(pattern => "--exclude=" + pattern), "."],
+        { timeout: TAR_TIMEOUT_MS, maxBuffer: 1024 * 1024 },
+      );
       const bytes = (await stat(file)).size;
       if (!bytes) throw new Error("Архив проекта получился пустым");
       const key = projectArchiveKey(store.prefix, userId, projectId);
@@ -366,7 +391,19 @@ export async function startProjectRestore(
   console.log(
     "[storage] проект " + projectId + ": восстановление начато (" + record.bytes + " байт)",
   );
-  return startRestoreJob({
+  // Строка очереди — страховка от рестарта: сама распаковка идёт здесь же, в этом процессе, но
+  // если его убьют, аренда истечёт, и воркер доведёт восстановление по базе. Без такой строки
+  // прерванное восстановление оставалось только «проект висит в 409» до нового запроса.
+  // Отложенный старт на пятнадцать минут: пока этот процесс жив, восстановление уже идёт,
+  // и воркер не должен брать ту же строку вторым исполнителем. Если процесс умрёт, аренда
+  // истечёт и уже `reclaimExpired` вернёт задание в очередь.
+  const queued = await enqueueJob({
+    kind: "project.restore",
+    projectId,
+    userId,
+    runAfter: new Date(Date.now() + RESTORE_QUEUE_GRACE_MS),
+  }).catch(() => null);
+  const job = startRestoreJob({
     projectId,
     userId,
     bytesTotal: record.bytes,
@@ -377,6 +414,37 @@ export async function startProjectRestore(
         shouldAbort: options.shouldAbort ?? (() => projectRestoreCancelled(projectId)),
       }),
   });
+  if (queued) {
+    void waitRestoreJob(job.id).then(() =>
+      finishJob(queued.id, {
+        state: job.state === "failed" ? "failed" : "done",
+        ...(job.error ? { error: job.error } : {}),
+        done: job.bytesDone,
+        total: job.bytesTotal,
+      }).catch(() => undefined),
+    );
+  }
+  return job;
+}
+
+/**
+ * Восстановление, поднятое воркером очереди после чужого рестарта. Прогресс идёт в строку
+ * задания, а не в реестр панели: реестр живёт в памяти и после рестарта пуст, а `409` с прогрессом
+ * человек уже не увидит — проект просто должен вернуться на диск.
+ */
+export async function runQueuedRestore(
+  projectId: string,
+  userId: string,
+  report: (done: number, total?: number) => void,
+): Promise<{ done: number; total: number }> {
+  const record = await projectArchiveInfo(projectId, userId);
+  if (!record) return { done: 0, total: 0 };
+  if (record.userId !== userId) throw new Error("Проект не найден");
+  await restoreProject(projectId, userId, {
+    onProgress: (done, total) => report(done, total),
+    shouldAbort: () => projectRestoreCancelled(projectId),
+  });
+  return { done: record.bytes, total: record.bytes };
 }
 
 /**

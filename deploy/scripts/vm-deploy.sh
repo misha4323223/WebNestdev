@@ -31,6 +31,19 @@
 #                              него берётся CADDY_SRC. Файл проверяется `caddy validate` и только
 #                              потом подменяет тот, что лежит рядом с compose: сломанный конфиг
 #                              уронил бы HTTPS, то есть саму дверь к сервису.
+#   PREVIEW_TLS_B64=…          сниппет TLS публичных превью (deploy/preview-tls.caddy) в base64;
+#                              без него берётся PREVIEW_TLS_SRC. По умолчанию в нём выдача
+#                              сертификата на каждое имя (on_demand); после выпуска wildcard
+#                              (deploy/scripts/wildcard-cert.sh) файл на ВМ уже содержит пути к
+#                              сертификату, и выкатка его не перезаписывает.
+#   WILDCARD_CERT=auto|1|0      выпускать ли wildcard-сертификат превью (DNS-01 через API
+#                              регистратора). auto — только когда заданы REGRU_API_USERNAME и
+#                              REGRU_API_PASSWORD; 0 — не трогать. Ошибка выпуска не валит выкатку:
+#                              превью просто остаются на сертификате на каждое имя.
+#   REGRU_API_USERNAME, REGRU_API_PASSWORD  учётные данные API reg.ru (из GitHub secrets);
+#                              в .env не пишутся и контейнерам не передаются
+#   CERTS_HOST_DIR=$APP_DIR/certs  каталог wildcard-сертификатов на хосте
+#                              (deploy/scripts/wildcard-cert.sh); монтируется в Caddy как /certs
 #   CADDY_SERVICE=caddy        сервис фронта в compose (поднимается вместе с сервером)
 #   BROKER_SERVICE=docker-broker сервис Docker-брокера (docs/DOCKER_BROKER.md)
 #   CADDY_IMAGE=caddy:2.8-alpine  образ для проверки конфигурации
@@ -45,8 +58,9 @@
 #                              По умолчанию сверяется: выкатка, которую не удалось подтвердить,
 #                              откатывается на предыдущий образ и завершается ошибкой (код 5),
 #                              а не оставляет на сервисе версию, о которой ничего не известно.
-#   KEEP_IMAGES=1              сколько версий образа оставлять на диске. Одна — только работающая:
-#                              предыдущая не нужна, она лежит в GHCR и скачивается при откате.
+#   KEEP_IMAGES=2              сколько версий образа оставлять на диске: работающая и предыдущая.
+#                              Предыдущая стоит 1,5–2,5 ГБ, но даёт мгновенный откат без похода в GHCR.
+#                              KEEP_IMAGES=1 оставляет только работающую — когда важнее место.
 #   IMAGE_REPO_PATTERN=webnestdev  какие репозитории чистить
 #   PRUNE_BUILD_CACHE=all|1|0  чистка кеша сборки: всё (по умолчанию), старше недели, не трогать.
 #                              По умолчанию «всё», потому что эта ВМ никогда не собирает образы:
@@ -119,7 +133,7 @@ SYSTEMD_UNIT="${SYSTEMD_UNIT:-webnestdev}"
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8787/api/ready}"
 HEALTH_TRIES="${HEALTH_TRIES:-30}"
 DRY_RUN="${DRY_RUN:-0}"
-KEEP_IMAGES="${KEEP_IMAGES:-1}"
+KEEP_IMAGES="${KEEP_IMAGES:-2}"
 IMAGE_PULL_TIMEOUT="${IMAGE_PULL_TIMEOUT:-1200}"
 IMAGE_PULL_TRIES="${IMAGE_PULL_TRIES:-2}"
 IMAGE_REPO_PATTERN="${IMAGE_REPO_PATTERN:-webnestdev}"
@@ -132,6 +146,16 @@ CADDY_SRC="${CADDY_SRC:-}"
 CADDY_SERVICE="${CADDY_SERVICE:-caddy}"
 CADDY_IMAGE="${CADDY_IMAGE:-caddy:2.8-alpine}"
 CADDY_FILE="${CADDY_FILE:-Caddyfile}"
+PREVIEW_TLS_B64="${PREVIEW_TLS_B64:-}"
+PREVIEW_TLS_SRC="${PREVIEW_TLS_SRC:-}"
+PREVIEW_TLS_FILE="${PREVIEW_TLS_FILE:-preview-tls.caddy}"
+# Каталог wildcard-сертификатов; должен совпадать с монтированием в docker-compose.yml.
+CERTS_HOST_DIR="${CERTS_HOST_DIR:-$APP_DIR/certs}"
+WILDCARD_CERT="${WILDCARD_CERT:-auto}"
+WILDCARD_CERT_B64="${WILDCARD_CERT_B64:-}"
+WILDCARD_CERT_SRC="${WILDCARD_CERT_SRC:-}"
+REGRU_API_USERNAME="${REGRU_API_USERNAME:-}"
+REGRU_API_PASSWORD="${REGRU_API_PASSWORD:-}"
 MIGRATE_SANDBOXES="${MIGRATE_SANDBOXES:-1}"
 VERIFY_VERSION="${VERIFY_VERSION:-1}"
 SMS_CHECK="${SMS_CHECK:-1}"
@@ -237,8 +261,9 @@ install_access_key
 
 #
 # Каждая выкатка приносит новый образ (в нём Chromium — это гигабайты), и без уборки диск
-# кончается за несколько деплоев. По умолчанию остаётся только работающая версия: вторая
-# копия — это 1,5–2,5 ГБ на диске ради ускорения отката, а сам образ и так лежит в GHCR.
+# кончается за несколько деплоев. По умолчанию остаются две версии: работающая и предыдущая —
+# вторая копия это 1,5–2,5 ГБ ради мгновенного отката. KEEP_IMAGES=1 оставляет только
+# работающую: сам образ и так лежит в GHCR и скачивается при откате.
 # Ручной откат на произвольный тег всё равно начинается с `docker pull` (см. MODE=image),
 # а автоматический откат после неудачной проверки здоровья идёт ДО уборки — предыдущий
 # образ в этот момент ещё на месте, поэтому откат остаётся мгновенным.
@@ -659,6 +684,127 @@ install_compose(){
 }
 
 #
+# Значение переменной окружения сервиса из уже разрешённого compose-файла: домен превью и адрес
+# ACME живут в .env на ВМ, а выкатка его не читает.
+#
+compose_env_value(){
+  # Пустое значение пропускаем: у сервера PREVIEW_PUBLIC_DOMAIN по умолчанию пустой, и первая
+  # строка в выводе может оказаться именно его.
+  docker compose -f "$COMPOSE_FILE" config 2>/dev/null | awk -v key="$1:" '
+    $1 == key { v = $2; gsub(/"/, "", v); if (v != "") { print v; exit } }'
+}
+
+#
+# Wildcard-сертификат превью: `*.PREVIEW_PUBLIC_DOMAIN`.
+#
+# Ручного шага быть не может — на ВМ нет терминала, — поэтому выпуск делает выкатка, когда в
+# GitHub secrets лежат учётные данные API регистратора. Скрипт идемпотентен: пока сертификату
+# больше 30 дней, он только перечитывает Caddy; продление — cron, который ставит себе acme.sh.
+# Ошибка выпуска не валит выкатку: без wildcard превью работает на сертификате на каждое имя —
+# медленнее и с расходом лимита Let's Encrypt, но живо.
+#
+install_wildcard_cert(){
+  if [ "$WILDCARD_CERT" = "0" ]; then
+    log "wildcard не выпускаю (WILDCARD_CERT=0)"
+    return 0
+  fi
+  # Каталог создаём до `compose up`: иначе Docker создаст его сам от root, и выкатка уже не сможет
+  # туда писать (а сертификат кладёт именно она).
+  mkdir -p "$CERTS_HOST_DIR" 2>/dev/null || log "не удалось создать $CERTS_HOST_DIR"
+  if [ -z "$REGRU_API_USERNAME" ] || [ -z "$REGRU_API_PASSWORD" ]; then
+    log "учётные данные API reg.ru не заданы — превью остаются на сертификате на каждое имя"
+    return 0
+  fi
+  if [ "$DRY_RUN" = "1" ]; then
+    log "dry-run: выпуск wildcard-сертификата пропущен"
+    return 0
+  fi
+  local script="$APP_DIR/.wildcard-cert.sh" domain site
+  if [ -n "$WILDCARD_CERT_B64" ]; then
+    if ! printf '%s' "$WILDCARD_CERT_B64" | base64 -d > "$script" 2>/dev/null; then
+      log "wildcard-скрипт не распаковался — сертификат не выпускаю"
+      rm -f "$script"
+      return 0
+    fi
+  elif [ -n "$WILDCARD_CERT_SRC" ] && [ -f "$WILDCARD_CERT_SRC" ]; then
+    cp "$WILDCARD_CERT_SRC" "$script"
+  else
+    log "wildcard-скрипт не передан — сертификат не выпускаю"
+    return 0
+  fi
+  domain=$(compose_env_value PREVIEW_PUBLIC_DOMAIN)
+  if [ -z "$domain" ]; then
+    site=$(compose_env_value WEBNESTDEV_SITE_DOMAIN)
+    if [ -n "$site" ] && [ "$site" != "localhost" ]; then domain="preview.$site"; fi
+  fi
+  if [ -z "$domain" ] || [ "$domain" = "off" ]; then
+    log "публичный домен превью не задан — wildcard не нужен"
+    rm -f "$script"
+    return 0
+  fi
+  log "проверяю wildcard-сертификат для *.$domain"
+  if APP_DIR="$APP_DIR" PREVIEW_PUBLIC_DOMAIN="$domain" CERTS_HOST_DIR="$CERTS_HOST_DIR" \
+      REGRU_API_Username="$REGRU_API_USERNAME" REGRU_API_Password="$REGRU_API_PASSWORD" \
+      ACME_EMAIL="$(compose_env_value ACME_EMAIL)" ACME_SH_INSTALL=1 \
+      bash "$script" --issue; then
+    log "wildcard в порядке: $CERTS_HOST_DIR/preview"
+  else
+    log "wildcard не выпущен — превью работают на сертификате на каждое имя (выкатка продолжается)"
+  fi
+  rm -f "$script"
+}
+
+install_preview_tls(){
+  if [ "$SYNC_COMPOSE" != "1" ]; then
+    log "сниппет TLS не синхронизирую (SYNC_COMPOSE=0)"
+    return 0
+  fi
+  local target="$APP_DIR/$PREVIEW_TLS_FILE" staged="$APP_DIR/.$PREVIEW_TLS_FILE.synced"
+  if [ -d "$target" ]; then
+    # Docker создал каталог на месте отсутствующего файла при первом подъёме Caddy.
+    rmdir "$target" 2>/dev/null || { log "$target — каталог, а не файл: уберите его руками"; return 1; }
+  fi
+  # Выпущенный wildcard — это решение эксплуатации, а не версия файла в репозитории: если на ВМ
+  # сниппет уже ссылается на сертификат, оставляем его, иначе каждая выкатка откатывала бы Caddy
+  # на выдачу по одному имени и тратила лимит Let's Encrypt.
+  if [ -f "$target" ] && grep -q '/certs/' "$target"; then
+    log "$PREVIEW_TLS_FILE уже указывает на wildcard-сертификат — оставляю как есть"
+    return 0
+  fi
+  if [ -n "$PREVIEW_TLS_B64" ]; then
+    if ! printf '%s' "$PREVIEW_TLS_B64" | base64 -d > "$staged" 2>/dev/null; then
+      log "присланный $PREVIEW_TLS_FILE не распаковался — оставляю файл на ВМ"
+      rm -f "$staged"
+      return 1
+    fi
+  elif [ -n "$PREVIEW_TLS_SRC" ] && [ -f "$PREVIEW_TLS_SRC" ]; then
+    cp "$PREVIEW_TLS_SRC" "$staged"
+  else
+    # Не передан: либо оставляем то, что на ВМ, либо — на свежей машине — пишем on_demand,
+    # иначе `import` в Caddyfile сошлётся на отсутствующий путь (Docker создал бы там каталог).
+    if [ -f "$target" ]; then
+      log "$PREVIEW_TLS_FILE не передан — оставляю файл на ВМ"
+      return 0
+    fi
+    log "$PREVIEW_TLS_FILE не передан и на ВМ его нет — записываю on_demand по умолчанию"
+    [ -d "$target" ] && rmdir "$target" 2>/dev/null || true
+    printf 'tls {\n\ton_demand\n}\n' > "$staged"
+  fi
+  if cmp -s "$staged" "$target"; then
+    rm -f "$staged"
+    return 0
+  fi
+  # Запись поверх, а не `mv`: файл смонтирован в контейнер отдельным файлом (см. install_caddyfile).
+  if ! cat "$staged" > "$target"; then
+    log "не удалось записать $PREVIEW_TLS_FILE — на ВМ остаётся прежний файл"
+    rm -f "$staged"
+    return 1
+  fi
+  rm -f "$staged"
+  log "обновил $PREVIEW_TLS_FILE из репозитория"
+}
+
+#
 # Конфигурация фронта с сертификатами. Правится она вместе с остальными файлами развёртывания, но
 # в отличие от compose ошибка здесь видна не сразу: Caddy просто не поднимется (или будет отдавать
 # без TLS), а сервис за ним останется живым. Поэтому файл сначала проверяется (`caddy validate`),
@@ -834,7 +980,24 @@ validate_caddyfile(){
   fi
   # stdin из /dev/null: скрипт приходит по ssh на stdin, и команда, которая его читает, съедает
   # остаток файла (см. комментарий у verify_sandbox).
-  docker run --rm -v "$file:/etc/caddy/Caddyfile:ro" "$CADDY_IMAGE" caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile </dev/null 2>&1 | sed 's/^/[deploy]   /'
+  # Caddyfile подключает сниппет TLS строкой `import`, поэтому проверка без него не проходит.
+  # Если сниппета ещё нет (свежая ВМ), подкладываем временный on_demand: именно это состояние
+  # и будет записано первым.
+  local extra=() tmp=""
+  if [ -f "$APP_DIR/$PREVIEW_TLS_FILE" ]; then
+    extra=(-v "$APP_DIR/$PREVIEW_TLS_FILE:/etc/caddy/preview-tls.caddy:ro")
+    # Сниппет с wildcard ссылается на файлы сертификата: без этого монтирования `caddy validate`
+    # не смог бы их прочитать и отверг бы правильный конфиг.
+    [ -d "$CERTS_HOST_DIR" ] && extra+=(-v "$CERTS_HOST_DIR:/certs:ro")
+  else
+    tmp=$(mktemp)
+    printf 'tls {\n\ton_demand\n}\n' > "$tmp"
+    extra=(-v "$tmp:/etc/caddy/preview-tls.caddy:ro")
+  fi
+  local rc=0
+  docker run --rm -v "$file:/etc/caddy/Caddyfile:ro" ${extra[@]+"${extra[@]}"} "$CADDY_IMAGE" caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile </dev/null 2>&1 | sed 's/^/[deploy]   /' || rc=$?
+  [ -n "$tmp" ] && rm -f "$tmp"
+  return "$rc"
 }
 
 #
@@ -1400,6 +1563,12 @@ case "$MODE" in
     # Сначала файл сервисов, потом перенос файлов проектов, и только потом запуск: контейнеры
     # поднимаются уже с правильным каталогом песочниц.
     install_compose || log "выкатываю на compose, который лежит на ВМ"
+    # Сниппет TLS — до Caddyfile: основной файл подключает его строкой `import`, и проверка
+    # конфигурации без сниппета не пройдёт.
+    install_preview_tls || log "оставляю сниппет TLS, который лежит на ВМ"
+    # Сертификат — после сниппета: при успехе он сам переключает сниппет на wildcard, и
+    # проверка Caddyfile ниже увидит итоговое состояние.
+    install_wildcard_cert
     # Конфигурация фронта — до запуска: Caddy читает её, поднимаясь вместе с сервисом.
     install_caddyfile || log "оставляю Caddyfile, который лежит на ВМ"
     # Ключи и .env — до запуска: compose читает .env при подъёме сервиса.
