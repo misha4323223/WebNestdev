@@ -34,9 +34,12 @@
 #   ACME_SH_INSTALL=1       разрешить установку acme.sh, если его нет (по умолчанию запрещено)
 #   ACME_EMAIL              адрес регистрации в Let's Encrypt
 #   ACME_DNS_SLEEP          сколько секунд ждать распространения TXT-записи перед проверкой
-#                           (по умолчанию 120: reg.ru обновляет зону не мгновенно — в первом
-#                           выпуске запись стала видна через ~2 минуты, — а Let's Encrypt проверяет
-#                           из нескольких мест и при спешке не находит её)
+#                           (по умолчанию 300: reg.ru публикует зону с задержкой, а Let's Encrypt
+#                           проверяет сразу после создания заказа)
+#   ACME_FAILURE_COOLDOWN_MIN  сколько минут не повторять выпуск после неудачи (180). Это не
+#                           осторожность ради осторожности: SOA-минимум зоны nestdev.ru — 10800 с,
+#                           и столько резолверы Let's Encrypt держат ответ «TXT-записи нет»;
+#                           без паузы следующая попытка гарантированно упрётся в тот же кэш
 #   RENEW_BEFORE_DAYS       за сколько дней до конца срока обновлять (по умолчанию 30)
 #   APP_DIR                 каталог развёртывания с docker-compose.yml (по умолчанию ~/webnestdev/src)
 #   CERTS_HOST_DIR          каталог сертификатов на хосте (по умолчанию $APP_DIR/certs — рядом с
@@ -78,7 +81,8 @@ ACME_SH="${ACME_SH:-$HOME/.acme.sh/acme.sh}"
 ACME_DNS_PROVIDER="${ACME_DNS_PROVIDER:-dns_regru}"
 ACME_EMAIL="${ACME_EMAIL:-nestdev@mail.ru}"
 ACME_SERVER="${ACME_SERVER:-letsencrypt}"
-ACME_DNS_SLEEP="${ACME_DNS_SLEEP:-120}"
+ACME_DNS_SLEEP="${ACME_DNS_SLEEP:-300}"
+ACME_FAILURE_COOLDOWN_MIN="${ACME_FAILURE_COOLDOWN_MIN:-180}"
 ACME_SH_INSTALL="${ACME_SH_INSTALL:-0}"
 RENEW_BEFORE_DAYS="${RENEW_BEFORE_DAYS:-30}"
 DOCKER="${DOCKER:-docker}"
@@ -86,6 +90,20 @@ DOCKER="${DOCKER:-docker}"
 WILDCARD_DOMAIN="${WILDCARD_DOMAIN:-${PREVIEW_PUBLIC_DOMAIN:-}}"
 CERT_FILE="$CERT_DIR/fullchain.pem"
 KEY_FILE="$CERT_DIR/key.pem"
+# Метка последней неудачной попытки: по ней выдерживается пауза перед повтором.
+FAIL_MARKER="$CERT_DIR/.last-failure"
+
+cooling_down(){
+  [ -f "$FAIL_MARKER" ] || return 1
+  local last now elapsed
+  last=$(cat "$FAIL_MARKER" 2>/dev/null || echo 0)
+  case "$last" in ''|*[!0-9]*) return 1 ;; esac
+  now=$(date +%s)
+  elapsed=$(( (now - last) / 60 ))
+  [ "$elapsed" -lt "$ACME_FAILURE_COOLDOWN_MIN" ] || return 1
+  log "прошлая попытка была $elapsed мин назад: резолверы Let's Encrypt держат ответ «TXT-записи нет» до SOA-минимума зоны (3 ч), поэтому жду ещё $(( ACME_FAILURE_COOLDOWN_MIN - elapsed )) мин (--force игнорирует паузу)"
+  return 0
+}
 
 #
 # Сниппет: единственное место, где выбор схемы записан в конфиге. Caddyfile подключает его
@@ -252,8 +270,11 @@ issue_cert(){
   [ "$FORCE" = "1" ] && args+=(--force)
   log "выпускаю $domain через $ACME_DNS_PROVIDER"
   if ! "$ACME_SH" "${args[@]}" </dev/null; then
-    fail "acme.sh не выпустил $domain. Проверьте учётные данные DNS-провайдера и что домен обслуживается его API"
+    mkdir -p "$CERT_DIR" 2>/dev/null || true
+    date +%s > "$FAIL_MARKER" 2>/dev/null || true
+    fail "acme.sh не выпустил $domain. Если в логе «No TXT record found» — это кэш отрицательного ответа DNS (SOA-минимум зоны 3 ч), повтор сработает через $ACME_FAILURE_COOLDOWN_MIN мин; если «ACCESS_DENIED_FROM_IP» — добавьте IP ВМ в настройки API reg.ru"
   fi
+  rm -f "$FAIL_MARKER"
   install_cert
 }
 
@@ -317,6 +338,10 @@ case "$MODE" in
   issue)
     [ -n "$WILDCARD_DOMAIN" ] || fail "не задан PREVIEW_PUBLIC_DOMAIN (или WILDCARD_DOMAIN)"
     command -v openssl >/dev/null 2>&1 || fail "нужен openssl (проверка срока сертификата)"
+
+    if [ "$FORCE" != "1" ] && cooling_down; then
+      exit 0
+    fi
 
     days=$(cert_days_left || echo "")
     if [ -f "$CERT_FILE" ] && [ "$FORCE" != "1" ] && [ -n "$days" ] && [ "$days" -gt "$RENEW_BEFORE_DAYS" ]; then

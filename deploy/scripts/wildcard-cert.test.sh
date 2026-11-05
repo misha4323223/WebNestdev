@@ -106,6 +106,19 @@ else
   ok "повторный --issue не тратит выдачу"
 fi
 
+# 3b. После неудачи повторов нет, пока не истечёт пауза (кэш отрицательного ответа DNS).
+rm -f "$WORK/certs/preview/fullchain.pem" "$WORK/certs/preview/key.pem"
+mkdir -p "$WORK/certs/preview" && date +%s > "$WORK/certs/preview/.last-failure"
+: > "$LOG"
+run_cert --issue >/dev/null 2>&1
+if grep -q '^acme --issue' "$LOG"; then
+  bad "выпуск повторился, не выждав кэш отрицательного ответа DNS"
+else
+  ok "повтор после неудачи ждёт окончания паузы"
+fi
+rm -f "$WORK/certs/preview/.last-failure"
+run_cert --issue >/dev/null 2>&1 || bad "выпуск после снятия паузы вернул ошибку"
+
 # 4. --check на свежем сертификате и статус.
 run_cert --check >/dev/null 2>&1 && ok "--check на свежем сертификате возвращает 0" \
   || bad "--check на свежем сертификате вернул не 0"
