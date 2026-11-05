@@ -162,9 +162,37 @@ ensure_acme(){
     fail "acme.sh не найден ($ACME_SH). Установите его (curl https://get.acme.sh | sh -s email=$ACME_EMAIL) или задайте ACME_SH=… и ACME_SH_INSTALL=1, чтобы скрипт поставил его сам"
   fi
   command -v curl >/dev/null 2>&1 || fail "для установки acme.sh нужен curl"
-  log "ставлю acme.sh в $HOME/.acme.sh"
-  curl -fsSL https://get.acme.sh | sh -s "email=$ACME_EMAIL" >/dev/null 2>&1 </dev/null || fail "установка acme.sh не удалась"
-  [ -x "$ACME_SH" ] || fail "acme.sh установился, но $ACME_SH не найден — задайте ACME_SH"
+  mkdir -p "$(dirname "$ACME_SH")"
+  local install_log="$ACME_SH.install.log"
+  : > "$install_log" 2>/dev/null || install_log=/dev/null
+
+  # Штатный установщик: ставит acme.sh, ключ аккаунта и cron для продления. Сообщения не
+  # выбрасываем в /dev/null: без них причина отказа на ВМ не видна, а терминала там нет.
+  log "ставлю acme.sh в $(dirname "$ACME_SH")"
+  if curl -fsSL --retry 2 --retry-delay 2 --max-time 60 https://get.acme.sh \
+      -o "$ACME_SH.installer" 2>>"$install_log"; then
+    sh "$ACME_SH.installer" -s "email=$ACME_EMAIL" >>"$install_log" 2>&1 </dev/null || true
+  else
+    printf 'get.acme.sh недоступен\n' >>"$install_log"
+  fi
+  rm -f "$ACME_SH.installer"
+
+  # Запасной путь: сам acme.sh — один файл. Установщик может упасть и без сети (например, нет
+  # crontab), а без cron продление всё равно сделает выкатка — она проходит шаг каждый раз.
+  if [ ! -x "$ACME_SH" ]; then
+    log "установщик не сработал — скачиваю acme.sh напрямую"
+    curl -fsSL --retry 2 --retry-delay 2 --max-time 60 \
+      https://raw.githubusercontent.com/acmesh-official/acme.sh/master/acme.sh \
+      -o "$ACME_SH" 2>>"$install_log" || rm -f "$ACME_SH"
+    [ -s "$ACME_SH" ] || curl -fsSL --retry 2 --retry-delay 2 --max-time 60 \
+      https://cdn.jsdelivr.net/gh/acmesh-official/acme.sh@master/acme.sh \
+      -o "$ACME_SH" 2>>"$install_log" || rm -f "$ACME_SH"
+    [ -s "$ACME_SH" ] && chmod +x "$ACME_SH" 2>/dev/null || true
+  fi
+  [ -s "$ACME_SH" ] || fail "acme.sh не установился: $(tail -3 "$install_log" 2>/dev/null | tr '\n' ' ')"
+  [ -x "$ACME_SH" ] || chmod +x "$ACME_SH" 2>/dev/null || true
+  [ -x "$ACME_SH" ] || fail "acme.sh скачан в $ACME_SH, но не стал исполняемым"
+  log "acme.sh на месте: $ACME_SH (журнал: $install_log)"
 }
 
 provider_hint(){
