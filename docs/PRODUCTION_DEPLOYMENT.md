@@ -721,7 +721,7 @@ Caddy. When the certificate is younger than 30 days the step only re-reads Caddy
 run on every deploy. An issuance failure is logged but does not fail the deploy: previews keep
 working on per-hostname certificates.
 
-Issuance waits `ACME_DNS_SLEEP` seconds (default 300) after writing the `_acme-challenge` TXT record,
+Issuance waits `ACME_DNS_SLEEP` seconds (default 180) after writing the `_acme-challenge` TXT record,
 because reg.ru does not publish zone changes instantly. A failed attempt is not retried for
 `ACME_FAILURE_COOLDOWN_MIN` minutes (default 180): the zone's SOA minimum is 10800 s (3 h), which is
 how long resolvers — Let's Encrypt's included — keep the negative "no TXT record" answer, so an

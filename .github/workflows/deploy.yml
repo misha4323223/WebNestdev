@@ -561,9 +561,13 @@ jobs:
               "$DEPLOY_USER@$DEPLOY_HOST" \
               "umask 077; cat > '$APP_KEY_FILE'"
           fi
+          # ServerAlive*: выкатка может молчать минутами (выпуск wildcard-сертификата ждёт
+          # распространения DNS-записи), а NAT провайдера рвёт простаивающее соединение через
+          # ~5 минут — сессия падала с кодом 255 посреди выпуска. Keepalive держит канал живым.
           ssh -i "$HOME/.ssh/deploy_key" \
             -p "${DEPLOY_PORT:-22}" \
             -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=30 \
             "$DEPLOY_USER@$DEPLOY_HOST" \
             "MODE='$MODE' IMAGE_REF='$image' APP_DIR='$DEPLOY_APP_DIR' COMPOSE_B64='$COMPOSE_B64' CADDY_B64='$CADDY_B64' PREVIEW_TLS_B64='$PREVIEW_TLS_B64' WILDCARD_CERT_B64='$WILDCARD_CERT_B64' REGRU_API_USERNAME='$REGRU_API_USERNAME' REGRU_API_PASSWORD='$REGRU_API_PASSWORD' RUNSC_SCRIPT_B64='$RUNSC_SCRIPT_B64' RUNSC_INSTALL='$RUNSC_INSTALL' APP_KEY_FILE='$APP_KEY_FILE' PLATFORM_ENV_FILE='$PLATFORM_ENV_FILE' LOG_TAIL='$LOG_TAIL' bash -s" \
             < deploy/scripts/vm-deploy.sh
