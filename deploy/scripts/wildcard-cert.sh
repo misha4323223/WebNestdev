@@ -33,7 +33,10 @@
 #   ACME_SH                 путь к acme.sh (по умолчанию ~/.acme.sh/acme.sh)
 #   ACME_SH_INSTALL=1       разрешить установку acme.sh, если его нет (по умолчанию запрещено)
 #   ACME_EMAIL              адрес регистрации в Let's Encrypt
-#   ACME_SERVER             ACME-сервер (по умолчанию letsencrypt; для проверок — staging)
+#   ACME_DNS_SLEEP          сколько секунд ждать распространения TXT-записи перед проверкой
+#                           (по умолчанию 120: reg.ru обновляет зону не мгновенно — в первом
+#                           выпуске запись стала видна через ~2 минуты, — а Let's Encrypt проверяет
+#                           из нескольких мест и при спешке не находит её)
 #   RENEW_BEFORE_DAYS       за сколько дней до конца срока обновлять (по умолчанию 30)
 #   APP_DIR                 каталог развёртывания с docker-compose.yml (по умолчанию ~/webnestdev/src)
 #   CERTS_HOST_DIR          каталог сертификатов на хосте (по умолчанию $APP_DIR/certs — рядом с
@@ -75,6 +78,7 @@ ACME_SH="${ACME_SH:-$HOME/.acme.sh/acme.sh}"
 ACME_DNS_PROVIDER="${ACME_DNS_PROVIDER:-dns_regru}"
 ACME_EMAIL="${ACME_EMAIL:-nestdev@mail.ru}"
 ACME_SERVER="${ACME_SERVER:-letsencrypt}"
+ACME_DNS_SLEEP="${ACME_DNS_SLEEP:-120}"
 ACME_SH_INSTALL="${ACME_SH_INSTALL:-0}"
 RENEW_BEFORE_DAYS="${RENEW_BEFORE_DAYS:-30}"
 DOCKER="${DOCKER:-docker}"
@@ -241,7 +245,10 @@ issue_cert(){
   ensure_acme
   provider_hint
   local domain="*.$WILDCARD_DOMAIN"
-  local args=(--issue --dns "$ACME_DNS_PROVIDER" -d "$domain" --keylength ec-256 --server "$ACME_SERVER")
+  # --dnssleep: без паузы вторичная проверка Let's Encrypt отвечает «No TXT record found» —
+  # запись в зоне reg.ru уже есть, но не успела разойтись по всем серверам имён.
+  local args=(--issue --dns "$ACME_DNS_PROVIDER" -d "$domain" --keylength ec-256 \
+    --server "$ACME_SERVER" --dnssleep "$ACME_DNS_SLEEP")
   [ "$FORCE" = "1" ] && args+=(--force)
   log "выпускаю $domain через $ACME_DNS_PROVIDER"
   if ! "$ACME_SH" "${args[@]}" </dev/null; then

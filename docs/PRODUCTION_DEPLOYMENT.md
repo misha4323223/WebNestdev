@@ -721,6 +721,11 @@ Caddy. When the certificate is younger than 30 days the step only re-reads Caddy
 run on every deploy. An issuance failure is logged but does not fail the deploy: previews keep
 working on per-hostname certificates.
 
+Issuance waits `ACME_DNS_SLEEP` seconds (default 120) after writing the `_acme-challenge` TXT record:
+reg.ru does not publish zone changes instantly, and Let's Encrypt's secondary validation points
+otherwise answer "No TXT record found" while the record is already live for everyone else. The wait
+extends the deploy that issues a certificate, not the ones that find it valid.
+
 The credentials are needed only for issuance and renewal. They are not read by any container, are
 not written into `.env`, and are passed to the script as process environment only; acme.sh keeps
 them in `~/.acme.sh/account.conf` (mode 600) after the first run and installs its own cron entry,
