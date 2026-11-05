@@ -21,9 +21,9 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "image — готовый образ из реестра, source — сборка на ВМ из репозитория, repair — починить запущенный сервис без смены версии, logs — показать логи контейнера, cleanup — только обнулить логи, prune — только уборка старых образов, disk — показать, что занимает место на диске"
+        description: "image — готовый образ из реестра, source — сборка на ВМ из репозитория, cert — только wildcard-сертификат превью, repair — починить запущенный сервис без смены версии, logs — показать логи контейнера, cleanup — только обнулить логи, prune — только уборка старых образов, disk — показать, что занимает место на диске"
         type: choice
-        options: ["image", "source", "repair", "logs", "cleanup", "prune", "disk"]
+        options: ["image", "source", "cert", "repair", "logs", "cleanup", "prune", "disk"]
         default: "image"
       tail:
         description: "Сколько последних строк логов контейнера печатать в mode=logs (по умолчанию 120)"
@@ -41,6 +41,12 @@ on:
   push:
     branches:
       - main
+  # Раз в сутки — только сертификат: на ВМ нет терминала, и без этого выпуск wildcard-сертификата
+  # (и его продление) зависел бы от того, были ли пуши. Успешный сертификат не выпускается заново,
+  # запуск занимает секунды и не трогает ни образ, ни сервис. Время — после SOA-минимума зоны
+  # (3 ч), чтобы суточный повтор не попадал в кэш отрицательного ответа DNS.
+  schedule:
+    - cron: '30 3 * * *'
 
 permissions:
   contents: read
@@ -52,8 +58,9 @@ concurrency:
 
 jobs:
   build:
-    # В режиме source образ не нужен: на ВМ собирается код из репозитория.
-    if: ${{ github.event_name != 'workflow_dispatch' || inputs.mode == 'image' }}
+    # В режимах source и cert образ не нужен: в source на ВМ собирается код из репозитория,
+    # в cert трогается только сертификат.
+    if: ${{ github.event_name != 'schedule' && (github.event_name != 'workflow_dispatch' || inputs.mode == 'image') }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
     env:
@@ -156,7 +163,8 @@ jobs:
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
           DEPLOY_APP_DIR: ${{ vars.DEPLOY_APP_DIR }}
-          MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'image' }}
+          # schedule приходит без inputs.mode — это режим cert (сертификат без выкатки).
+          MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || (github.event_name == 'schedule' && 'cert' || 'image') }}
           LOG_TAIL: ${{ inputs.tail }}
           IMAGE_INPUT: ${{ inputs.image }}
           BUILT_IMAGE: ${{ needs.build.outputs.image }}
@@ -575,7 +583,7 @@ jobs:
       - name: Deploy on the VM (self-hosted runner)
         if: ${{ vars.DEPLOY_RUNNER != '' }}
         env:
-          MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || 'image' }}
+          MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || (github.event_name == 'schedule' && 'cert' || 'image') }}
           LOG_TAIL: ${{ inputs.tail }}
           IMAGE_INPUT: ${{ inputs.image }}
           BUILT_IMAGE: ${{ needs.build.outputs.image }}

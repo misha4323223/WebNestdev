@@ -721,7 +721,7 @@ Caddy. When the certificate is younger than 30 days the step only re-reads Caddy
 run on every deploy. An issuance failure is logged but does not fail the deploy: previews keep
 working on per-hostname certificates.
 
-Issuance waits `ACME_DNS_SLEEP` seconds (default 180) after writing the `_acme-challenge` TXT record,
+Issuance waits `ACME_DNS_SLEEP` seconds (default 300) after writing the `_acme-challenge` TXT record,
 because reg.ru does not publish zone changes instantly. A failed attempt is not retried for
 `ACME_FAILURE_COOLDOWN_MIN` minutes (default 180): the zone's SOA minimum is 10800 s (3 h), which is
 how long resolvers — Let's Encrypt's included — keep the negative "no TXT record" answer, so an
@@ -731,9 +731,17 @@ renew a certificate, not the ones that find it valid; `--force` (or deleting
 
 The credentials are needed only for issuance and renewal. They are not read by any container, are
 not written into `.env`, and are passed to the script as process environment only; acme.sh keeps
-them in `~/.acme.sh/account.conf` (mode 600) after the first run and installs its own cron entry,
-which renews and reloads Caddy without a deploy. `WILDCARD_CERT=0` (repository variable) turns the
-whole step off.
+them in `~/.acme.sh/account.conf` (mode 600) after the first run and installs its own cron entry.
+`WILDCARD_CERT=0` (repository variable) turns the whole step off.
+
+**A daily run of its own.** That cron entry is not the only renewal path: the `deploy` workflow also
+runs on a schedule (`30 3 * * *` UTC) with `MODE=cert`, which ships the snippet and the script,
+issues or renews the certificate if it is due, re-reads Caddy and stops — no image pull, no service
+restart, seconds of work. Issuance and renewal therefore do not depend on whether anyone pushed
+that week, and they still work on a host where acme.sh's own cron was never installed (on this VM
+the upstream installer does not take). `Actions → deploy → Run workflow → mode: cert` is the same
+thing by hand. The schedule time is after the zone's 3-hour negative-cache window, so a retry never
+lands inside it.
 
 The script is also runnable by hand where a shell does exist:
 
