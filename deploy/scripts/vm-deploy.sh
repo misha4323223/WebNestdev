@@ -294,6 +294,10 @@ log_docker_space(){
     [ -n "$row" ] || continue
     log "образ на диске: $(printf '%s' "$row" | tr '\t' ' ')"
   done < <(docker images --format '{{.Repository}}:{{.Tag}}\t{{.Size}}\t{{.CreatedSince}}' 2>/dev/null | head -6 || true)
+  # Ровно тот формат, который разбирает админ-API версий (`GET /api/admin/releases`): одна строка
+  # JSON. В логе видно, что поля ID/Repository/Tag/Size/CreatedAt на этом Docker есть — иначе список
+  # версий в панели молча оказался бы пустым, а причина была бы только в версии CLI.
+  log "версия (json): $(docker images --no-trunc --format '{{json .}}' 2>/dev/null | head -1 || true)"
   while IFS= read -r row; do
     [ -n "$row" ] || continue
     log "контейнер: $(printf '%s' "$row" | tr '\t' ' ')"

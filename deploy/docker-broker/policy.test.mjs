@@ -137,6 +137,10 @@ test("classify пропускает операции платформы", () => 
   assert.equal(classify("POST", "/build/prune?-a=1").kind, "prune");
   assert.equal(classify("GET", "/images/json").kind, "images-list");
   assert.deepEqual(classify("GET", "/images/node%3A22-bookworm/json"), { kind: "image", name: "node:22-bookworm" });
+  // `docker rmi` — единственный способ освободить старую версию выкатки из админки. С force —
+  // отказ: `force` снёс бы теги и у живого образа.
+  assert.deepEqual(classify("DELETE", "/images/sha256%3Aabc?force=0&noprune=0"), { kind: "image-delete", name: "sha256:abc" });
+  assert.equal(classify("DELETE", "/images/sha256%3Aabc?force=1").kind, "deny");
 });
 
 test("classify закрывает всё остальное", () => {

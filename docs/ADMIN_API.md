@@ -177,6 +177,8 @@ curl -s https://panel.example.com/api/admin/2fa/verify -H 'content-type: applica
 | `POST /api/admin/nodes/:id/status` | `Bearer` | `online` / `draining` / `offline`; тело `{status, confirm: true}` (раздел 7.11) |
 | `GET /api/admin/infra/prune` | `Bearer` | что освободит безопасная очистка Docker и что останется (раздел 7.6) |
 | `POST /api/admin/infra/prune` | `Bearer` | безопасная очистка Docker: тело `{confirm: true}`, не чаще раза в 30 секунд (раздел 7.6) |
+| `GET /api/admin/releases` | `Bearer` | версии выкатки на диске: активная, окно откката, зависшая, старая (раздел 7.6.1) |
+| `DELETE /api/admin/releases/:id?confirm=1` | `Bearer` | удалить одну версию; `containers=remove` снимает держащие её контейнеры (раздел 7.6.1) |
 | `GET /api/admin/users/:id/restriction` | `Bearer` | заблокирован ли аккаунт и кем (раздел 7.7) |
 | `POST /api/admin/users/:id/sessions/revoke` | `Bearer` | завершить все сеансы аккаунта (раздел 7.7) |
 | `POST /api/admin/users/:id/block` | `Bearer` | заблокировать вход и отозвать сеансы (раздел 7.7) |
@@ -568,6 +570,91 @@ curl -s -o /dev/null -w '%{http_code}\n' -X POST -H "Authorization: Bearer $TOKE
 
 Главная проверка — число остановленных контейнеров до и после совпадает, а `GET /api/admin/infra`
 после очистки показывает те же холодные проекты.
+
+### 7.6.1. Версии выкатки на диске
+
+Код: `server/src/routes/admin-releases.ts`, политика брокера — `deploy/docker-broker/policy.mjs`.
+Тесты: `server/src/routes/admin-releases.test.ts`, `deploy/docker-broker/policy.test.mjs`.
+
+Зачем это нужно. «В админке занято 12.5 ГБ, я удалил зависший проект, и цифра не изменилась» —
+это не баг уборки, а разница между двумя разными числами. `df` по `/` показывает занятое **всем
+разделом**, и один образ выкатки (~1.45 ГБ) — лишь его часть. На рабочей ВМ на 48 ГБ при 13 ГБ
+занятых это примерно: образы и слои Docker 5.0 ГБ, База/ОС 2.3 ГБ, swap-файл 4.1 ГБ, журналы
+0.5 ГБ, песочницы 0.2 ГБ. Удаление зависшего контейнера освобождает мегабайты, поэтому в
+процентах и не видно.
+
+`GET /api/admin/releases` отдаёт обе цифры рядом, чтобы вопрос «куда уходит место» решался по
+цифрам, а не по интуиции:
+
+```json
+{
+  "generatedAt": "2026-11-07T09:00:00.000Z",
+  "pattern": "webnestdev",
+  "keep": 2,
+  "available": true,
+  "disk": { "totalBytes": 512110190592, "usedBytes": 13958643712, "freeBytes": 38654705664 },
+  "docker": { "imagesBytes": 5015000000, "imagesCount": 6, "reclaimableBytes": 3071000000, "dockerBytes": 5237000000 },
+  "releases": [
+    {
+      "id": "sha256:867954…", "shortId": "867954ffab9e",
+      "tags": ["ghcr.io/misha4323223/webnestdev:sha-867954ffab9e"],
+      "repo": "ghcr.io/misha4323223/webnestdev", "buildSha": "867954ffab9e",
+      "createdAt": "2026-11-06T21:20:00.000Z", "ageDays": 0,
+      "sizeBytes": 1450000000, "sizeText": "1.45GB",
+      "status": "active", "kept": true, "rank": 1,
+      "activeContainers": [{ "name": "webnestdev-server-1", "state": "running", "removable": false }],
+      "holders": [], "canDelete": false,
+      "reason": "образ работает: webnestdev-server-1"
+    }
+  ],
+  "summary": { "count": 2, "totalBytes": 2900000000, "activeBytes": 1450000000,
+    "rollbackBytes": 1450000000, "deletableBytes": 0, "stuckBytes": 0, "oldest": { "shortId": "527e4e3dfb80", "createdAt": "…" } },
+  "reason": null
+}
+```
+
+Состояния версии — ровно те, о которых спрашивают в панели:
+
+| `status` | Что значит | Можно удалить |
+|---|---|---|
+| `active` | На этом образе работает контейнер | Нет: это остановка сайта, `409` |
+| `previous` | Версия в окне откката (`keep`, по умолчанию 2 на репозиторий) | Да, но откат станет `docker pull` из GHCR |
+| `stuck` | Не работает, но её держат контейнеры — обычно зависшие `wnd-cmd-…`; место не освобождается | Да, с `containers=remove` |
+| `old` | Сверх окна и ничего не держит — та самая «старая, но не удалённая» | Да, обычным `DELETE` |
+
+Рядом с каждым релизом есть `holders` (кто держит: имя, состояние, `removable` — может ли сервер
+снять контейнер) и `kept` (входит ли в окно откката). Зависшая версия может быть и внутри окна:
+тогда в ней видно и `stuck`, и `kept: true` — именно этот случай раньше держал третью версию на
+диске при `KEEP_IMAGES=2`.
+
+Удаление одной версии:
+
+```bash
+TOKEN=…
+# старое и ничего не держит
+curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
+  'https://nestdev.ru/api/admin/releases/sha256%3Aabcd…?confirm=1'
+# зависшая: сначала контейнеры, потом образ (только wnd-…; чужие контейнеры — 409)
+curl -s -X DELETE -H "Authorization: Bearer $TOKEN" \
+  'https://nestdev.ru/api/admin/releases/abcd1234ef56?confirm=1&containers=remove'
+```
+
+`:id` принимает полный ID, короткий ID (`867954ffab9e`) или тег (`ghcr.io/…:sha-…`). Ответ 200: `ok`,
+`deleted` (удалённый релиз целиком), `removedContainers`, `freedBytes` (разница `docker system df`
+до и после, `null` — если `df` не разобрался), плюс свежие `releases`, `summary`, `disk`, `docker`,
+чтобы панели не нужно было сразу делать второй запрос. Ошибки: `400` — нет `confirm=1` или
+неизвестное значение `containers`; `404` — такой версии нет; `409` — активная версия, чужие
+контейнеры, держащие контейнеры без `containers=remove` или Docker не смог снять образ;
+`502` — Docker не ответил. Удаление уходит в журнал безопасности действием `infra.release.deleted`.
+
+Настройка: `PLATFORM_RELEASES_PATTERN` (по умолчанию `webnestdev` — имя образа платформы) и
+`PLATFORM_RELEASES_KEEP` (1–10, по умолчанию 2). Окно должно совпадать с `KEEP_IMAGES` выкатки,
+иначе панель будет считать «старой» версию, которую уборка сознательно оставляет. Базовые образы
+песочниц (`node:22-bookworm`), кеш сборки и висячие слои в список не попадают: первые — не релизы,
+вторые — раздел 7.6.
+
+Чтобы `docker rmi` вообще был возможен, брокер разрешает `DELETE /images/{name}` без `force`:
+с `force` отказ 403, чтобы нельзя было снести теги у работающего образа.
 
 ### 7.7. Действия над аккаунтом
 

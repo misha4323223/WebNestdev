@@ -70,6 +70,7 @@ import { registerAdminAuditRoutes } from "./routes/admin-audit.js";
 import { registerAdminInfraRoutes } from "./routes/admin-infra.js";
 import { registerAdminNodeRoutes } from "./routes/admin-nodes.js";
 import { registerAdminPruneRoutes } from "./routes/admin-prune.js";
+import { registerAdminReleasesRoutes } from "./routes/admin-releases.js";
 import { registerAdminMailRoutes } from "./routes/admin-mail.js";
 import { registerAdminUserActionRoutes } from "./routes/admin-users.js";
 import { registerAdminBillingRoutes } from "./routes/admin-billing.js";
@@ -383,6 +384,8 @@ await registerAdminInfraRoutes(app);
 await registerAdminNodeRoutes(app);
 // Безопасная очистка Docker: кэш сборки и висячие образы. Контейнеры и тома не трогает.
 await registerAdminPruneRoutes(app);
+// Версии выкатки на диске: активная, окно откката, зависшая под контейнерами, старая — и удаление.
+await registerAdminReleasesRoutes(app);
 // Рассылка через Postbox: сегменты, предпросмотр, тест, отправка и остановка (docs/MAIL.md).
 await registerAdminMailRoutes(app);
 // Действия над аккаунтом: сеансы, блокировка, тариф без оплаты, надбавка к пулу токенов.

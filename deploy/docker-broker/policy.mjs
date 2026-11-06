@@ -150,6 +150,16 @@ export function classify(method, rawUrl) {
   if (parts[0] === "images" && parts.length >= 3 && upper === "GET" && parts.at(-1) === "json") {
     return { kind: "image", name: parts.slice(1, -1).join("/") };
   }
+  // `DELETE /images/{name}` — `docker rmi` из админ-маршрута версий выкатки
+  // (server/src/routes/admin-releases.ts). Разрешено только удаление по имени/ID без force:
+  // образ, на котором работает контейнер, демон не отдаёт и так, а `force` снёс бы и живую
+  // версию. `images/prune` обрабатывается выше отдельным видом и force сюда не попадает.
+  if (parts[0] === "images" && parts.length === 2 && upper === "DELETE") {
+    if (query.get("force") === "1" || query.get("force") === "true") {
+      return deny(403, "Удалять образы с force политика брокера не разрешает");
+    }
+    return { kind: "image-delete", name: parts[1] };
+  }
 
   return deny(403, "Эндпоинт Docker запрещён политикой брокера: " + upper + " " + pathname);
 }
