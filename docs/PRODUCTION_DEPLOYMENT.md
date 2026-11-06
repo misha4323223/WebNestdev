@@ -524,6 +524,20 @@ image in place, because pruning runs only after a successful health check — th
 instant.
 
 - **Automatic:** every image deploy prunes old versions; nothing to schedule.
+- **A stuck container no longer pins an image:** a sandbox command is its own container
+  (`wnd-cmd-…`), and if the API dies mid-command that container outlives the process — usually in
+  `created` state, when `docker run` never reached start. `docker rmi` refuses an image any container
+  references, so a single leftover meant three versions on disk instead of `KEEP_IMAGES` and a
+  "2.5 GB can be freed" line that never shrank. Two guards close it: the deploy removes
+  `created`/`dead` containers and exited job containers **before** pruning, and the server itself
+  (`server/src/sandbox/cleanup.ts`) sweeps `wnd-cmd-…`/`wnd-job-…` containers in `created` (5 min),
+  `exited` (15 min) and `dead` (1 min) states every ten minutes. `running` containers are never
+  touched (a live job belongs to the agent) and neither are previews — a stopped preview keeps the
+  logs that explain why it failed. Tunables: `SANDBOX_REAP_INTERVAL_MINUTES` (`0` disables the
+  timer), `SANDBOX_STUCK_CREATED_MINUTES`, `SANDBOX_STUCK_EXITED_MINUTES`,
+  `SANDBOX_STUCK_DEAD_MINUTES`. The prune log now ends with the number of versions left and warns
+  when it exceeds `KEEP_IMAGES`, so a container holding an image is visible in the deploy log
+  instead of being discovered when the disk fills.
 - **Automatic, when the disk is already full:** a `docker pull` that fails is answered with the same
   cleanup and **one retry**. Without it a full disk was a dead end — the layers of a new image (and
   Chromium inside them) do not extract with `no space left on device`, the pull dies before the

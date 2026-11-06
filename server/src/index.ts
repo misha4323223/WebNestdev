@@ -17,7 +17,7 @@ import { describeProviderRetry } from "./provider/provider-retry.js";
 import { describeFreeModelRoute } from "./provider/free-model.js";
 import { describeImageGeneration } from "./provider/image-generation.js";
 import { describeSandboxLimiter } from "./sandbox/sandbox-limiter.js";
-import { cleanupSandboxJobs } from "./sandbox/jobs.js";
+import { startSandboxMaintenance } from "./sandbox/cleanup.js";
 import { describeWebSearch } from "./web/search.js";
 import { assertEncryptionConfigured } from "./storage/secret-crypto.js";
 import { describeTrustProxy, trustProxyOption } from "./security/client-ip.js";
@@ -457,9 +457,15 @@ void reapRemotePreviews()
   .catch(error => app.log.warn({ error: error instanceof Error ? error.message : error }, "remote preview reap skipped"));
 // Долгие задания принадлежат контейнерам, а не процессу: после перезапуска прочитать их уже
 // никто не сможет, поэтому они снимаются на старте — как и контейнеры предпросмотра.
-void cleanupSandboxJobs()
-  .then(result => { if (result.removed) app.log.info({ removed: result.removed }, "removed orphan sandbox jobs"); })
-  .catch(error => app.log.warn({ error: error instanceof Error ? error.message : error }, "sandbox job reap skipped"));
+//
+// Сторож песочниц добавляет к этому уборку зависших контейнеров команд (`created`/`exited`/`dead`)
+// и повторяет проход раз в `SANDBOX_REAP_INTERVAL_MINUTES`: один такой контейнер в состоянии
+// `created` держит слой образа, и настоящая версия остаётся на диске даже после уборки образов
+// (см. sandbox/cleanup.ts).
+const stopSandboxMaintenance = startSandboxMaintenance((message, extra) => app.log.info(extra ?? {}, message));
+app.addHook("onClose", async () => {
+  stopSandboxMaintenance();
+});
 // Песочница проверяется один раз после старта: маркер в каталоге песочниц и `cat` его из
 // контейнера. Это единственный способ узнать, что контейнеры видят те же файлы, что и агент;
 // результат остаётся в /api/health (`sandbox.mount`), а расхождение ещё и понижает /api/ready.

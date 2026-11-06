@@ -341,11 +341,50 @@ log_disk_breakdown(){
   timeout 60 $sudo_cmd du -shx /var/log /var/cache /usr /home /opt 2>/dev/null | sort -h | sed 's/^/[disk] /' || true
 }
 
+#
+# Снять контейнеры, которые держат слои образов и не делают ничего полезного.
+#
+# `docker rmi` не удаляет образ, на который ссылается хоть один контейнер — а контейнер команды
+# агента (`wnd-cmd-…`) переживает процесс, который его запустил: после перезапуска сервера или
+# падения ВМ он остаётся в состоянии `created` (запуск не доехал до старта) или `exited`.
+# Снаружи это выглядит как «в docker images три наших версии вместо двух» и «можно освободить
+# 2.5 ГБ, но место не меняется». Задания (`wnd-job-…`) помечены меткой и снимаются здесь же:
+# свои сироты сервер убирает на старте, но если он не поднялся — образ держат они.
+# Предпросмотры не трогаются никогда: выключенный контейнер предпросмотра хранит логи причины
+# падения и переиспользуется сервером, а у него своя уборка по простою.
+#
+reap_stuck_containers(){
+  local ids removed=0 id
+  command -v docker >/dev/null 2>&1 || return 0
+  docker info >/dev/null 2>&1 || { log "уборка контейнеров: Docker не отвечает, пропускаю"; return 0; }
+  # Два отдельных вызова: одинаковые ключи `--filter` в docker складываются по И, и
+  # `--filter status=created --filter status=dead` не нашёл бы ничего ни в одном из состояний.
+  ids=$(docker ps -aq --filter "status=created" 2>/dev/null | tr '\n' ' ' || true)
+  ids="$ids $(docker ps -aq --filter "status=dead" 2>/dev/null | tr '\n' ' ' || true)"
+  ids="$ids $(docker ps -aq --filter "status=exited" --filter "label=webnestdev.job=1" 2>/dev/null | tr '\n' ' ' || true)"
+  ids=$(printf '%s\n' "$ids" | tr ' ' '\n' | sed '/^$/d' | sort -u | tr '\n' ' ')
+  if [ -z "$ids" ]; then
+    log "зависших контейнеров нет"
+    return 0
+  fi
+  if [ "$DRY_RUN" = "1" ]; then
+    log "dry-run: снял бы зависшие контейнеры: $(printf '%s' "$ids" | sed 's/ $//')"
+    return 0
+  fi
+  for id in $ids; do
+    if docker rm -f "$id" >/dev/null 2>&1; then removed=$((removed + 1)); fi
+  done
+  log "сняты зависшие контейнеры: $removed (они держали слои образов)"
+}
+
 prune_images(){
   local keep="$KEEP_IMAGES"
   case "$keep" in ''|*[!0-9]*) keep=1;; esac
-  local before after doomed active protected="" protected_id=""
+  local before after doomed active protected="" protected_id="" left
   before=$(docker system df --format '{{.Size}}' 2>/dev/null | tr '\n' ' ' || true)
+  # Сначала освободить образы от контейнеров, и только потом удалять: иначе `rmi` отвечает
+  # «образ используется» и лишняя версия остаётся до следующего прохода.
+  reap_stuck_containers
   # Репозитории, которые сейчас действительно работают. Образы из остальных (схема выкатки,
   # которой больше нет: сборка на ВМ, ручной `webnestdev:production`) не нужны ни для запуска,
   # ни для откката, но проходили мимо правила «2 последних»: в своём репозитории такой образ
@@ -425,6 +464,17 @@ prune_images(){
   fi
   after=$(docker system df --format '{{.Size}}' 2>/dev/null | tr '\n' ' ' || true)
   log "docker system df: было [$before], стало [$after]"
+  # Сколько наших версий реально осталось: если больше `$keep`, значит лишние держат контейнеры,
+  # и причина должна быть в логе, а не выясняться через неделю по кончившемуся диску.
+  left=$(docker images --format '{{.ID}}\t{{.Repository}}' 2>/dev/null \
+    | awk -F'\t' -v pattern="$IMAGE_REPO_PATTERN" 'index($2, pattern) > 0 { print $1 }' \
+    | sort -u | wc -l | tr -d ' ' || true)
+  case "$left" in ''|*[!0-9]*) left=0;; esac
+  if [ "$left" -gt "$keep" ]; then
+    log "ВНИМАНИЕ: наших версий на диске $left при KEEP_IMAGES=$keep — лишние держат контейнеры (сторож сервера снимет их в течение SANDBOX_REAP_INTERVAL_MINUTES)"
+  else
+    log "наших версий на диске: $left (KEEP_IMAGES=$keep)"
+  fi
 }
 
 # «Логи выкатки» на ВМ — это json-логи контейнеров, а не файлы деплоя: скрипт ничего не пишет
