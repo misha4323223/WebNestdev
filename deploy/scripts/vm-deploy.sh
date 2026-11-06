@@ -300,6 +300,47 @@ log_docker_space(){
   done < <(timeout 60 docker ps -a --size --format '{{.Names}}\t{{.State}}\t{{.Size}}' 2>/dev/null | head -10 || true)
 }
 
+#
+# Разбор «что занимает место на диске» — рядом с docker df, но про весь раздел, а не про Docker.
+#
+# Вопрос «в панели 13 ГБ, а Docker показывает 5.8» одним `df` не решается: разница — это ОС,
+# журналы, данные платформы и расхождение между `docker system df` и байтами на диске. Отчёт
+# печатает верхний уровень корня, оба хранилища Docker (слои образов лежат в containerd, а не в
+# /var/lib/docker) и каталог песочниц — то есть всё, что складывается в «занято». Только чтение,
+# у каждого шага свой предел: зависший `du` не должен держать выкатку.
+#
+log_disk_breakdown(){
+  local sudo_cmd="" sandbox_dir
+  # Каталоги Docker и containerd закрыты для обычного пользователя: без sudo `du` по ним молча
+  # возвращает пустоту, и самой крупной строки в отчёте нет.
+  if sudo -n true 2>/dev/null; then sudo_cmd="sudo -n"; fi
+  log "диск: что занимает место (только чтение)"
+  df -h / 2>/dev/null | sed 's/^/[disk] /' || true
+  log "верхний уровень / (топ по размеру):"
+  timeout 90 $sudo_cmd du -xsh /* 2>/dev/null | sort -h | tail -10 | sed 's/^/[disk] /' || true
+  log "данные Docker и containerd:"
+  timeout 90 $sudo_cmd du -shx /var/lib/docker /var/lib/containerd 2>/dev/null | sort -h | sed 's/^/[disk] /' || true
+  # Внутри: слои образов (containerd), writable-слои контейнеров и тома (второй каталог).
+  # `-x` обязателен: /var/lib/docker/rootfs/overlayfs/<id> — те же слои ещё раз.
+  timeout 90 $sudo_cmd du -shx \
+    /var/lib/containerd/io.containerd.content.v1.content \
+    /var/lib/containerd/io.containerd.snapshotter.v1.overlayfs \
+    /var/lib/docker/volumes /var/lib/docker/containers 2>/dev/null \
+    | sort -h | sed 's/^/[disk] /' || true
+  # Песочницы: путь берётся из .env, иначе на ВМ с другим SANDBOX_DIR отчёт показывал бы пустой
+  # каталог вместо настоящего. Проекты уезжают в бакет по простою, но у открытых есть node_modules.
+  sandbox_dir=$(grep -m1 '^SANDBOX_DIR=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- || true)
+  sandbox_dir=${sandbox_dir:-/var/lib/webnestdev/sandboxes}
+  if [ -d "$sandbox_dir" ]; then
+    log "песочницы $sandbox_dir: $(timeout 60 du -sh "$sandbox_dir" 2>/dev/null | cut -f1 || echo неизвестно), каталогов проектов $(find "$sandbox_dir" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | wc -l | tr -d ' ')"
+    timeout 60 du -sh "$sandbox_dir"/*/ 2>/dev/null | sort -h | tail -5 | sed 's/^/[disk] /' || true
+  else
+    log "каталога песочниц нет: $sandbox_dir"
+  fi
+  log "журнал системы: $(journalctl --disk-usage 2>/dev/null || echo неизвестно)"
+  timeout 60 $sudo_cmd du -shx /var/log /var/cache /usr /home /opt 2>/dev/null | sort -h | sed 's/^/[disk] /' || true
+}
+
 prune_images(){
   local keep="$KEEP_IMAGES"
   case "$keep" in ''|*[!0-9]*) keep=1;; esac
@@ -1984,4 +2025,8 @@ log "деплой завершён, живая сборка: $(live_build)"
 PRUNE_PROTECT_IMAGE="$IMAGE_REF" prune_images
 # Состав диска — в лог выкатки: вопрос «почему Docker занимает 20 ГБ» должен читаться в Actions,
 # а не выясняться заходом на ВМ, где интерактивного терминала нет.
-if [ "$MODE" = "image" ] && [ "$DRY_RUN" != "1" ]; then log_docker_space; fi
+if [ "$MODE" = "image" ] && [ "$DRY_RUN" != "1" ]; then
+  log_docker_space
+  # Полный разбор раздела — в том же логе, а не только по заходу на ВМ, где нет терминала.
+  log_disk_breakdown
+fi
