@@ -1067,9 +1067,13 @@ reload_caddy(){
   if ! docker compose -f "$COMPOSE_FILE" config --services 2>/dev/null | grep -qx "$CADDY_SERVICE"; then
     return 0
   fi
+  # `</dev/null` у каждого exec: `docker compose exec` подключает stdin, а при запуске
+  # `ssh … bash -s` в stdin лежит сам скрипт — команда вычитывала его остаток, bash видел EOF и
+  # выкатка заканчивалась на середине с кодом 0 (проверка здоровья, все verify и уборка образов
+  # просто не выполнялись). Остальные exec в скрипте уже перенаправляют stdin по этой же причине.
   local host_sum container_sum
   host_sum=$(sha256sum "$APP_DIR/$CADDY_FILE" 2>/dev/null | cut -d' ' -f1 || true)
-  container_sum=$(docker compose -f "$COMPOSE_FILE" exec -T "$CADDY_SERVICE" sha256sum "/etc/caddy/$CADDY_FILE" 2>/dev/null | cut -d' ' -f1 || true)
+  container_sum=$(docker compose -f "$COMPOSE_FILE" exec -T "$CADDY_SERVICE" sha256sum "/etc/caddy/$CADDY_FILE" </dev/null 2>/dev/null | cut -d' ' -f1 || true)
   if [ -n "$host_sum" ] && [ "$host_sum" != "$container_sum" ]; then
     log "контейнер $CADDY_SERVICE читает другую версию $CADDY_FILE — пересоздаю его"
     run docker compose -f "$COMPOSE_FILE" up -d --no-build --force-recreate "$CADDY_SERVICE" || \
@@ -1077,7 +1081,7 @@ reload_caddy(){
     return 0
   fi
   log "перечитываю Caddyfile в Caddy"
-  if run timeout 30 docker compose -f "$COMPOSE_FILE" exec -T "$CADDY_SERVICE" caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile; then
+  if run timeout 30 docker compose -f "$COMPOSE_FILE" exec -T "$CADDY_SERVICE" caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile </dev/null; then
     return 0
   fi
   log "caddy reload не удался — пересоздаю контейнер $CADDY_SERVICE"
