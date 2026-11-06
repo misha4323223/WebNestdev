@@ -12,18 +12,20 @@ Internet
   | HTTPS :443
   v
 Caddy / nginx
-  |
-  | HTTP :8787
-  v
-WebNestDev Fastify
-  |-- /             -> Vite dist/
-  |-- /api          -> API
-  |-- /ws           -> WebSocket
-  |
-  +--> YDB          -> persistent metadata
-  |
-  +--> Docker       -> sandbox/preview
+  |-- HTTP :8787 -> WebNestDev Fastify (панель, /api, /ws)
+  |-- HTTP :8788 -> дверь публичных предпросмотров (отдельный процесс)
+                        |
+                        +--> state/preview state -> API по 127.0.0.1:8787 (внутренний токен)
+                        +--> Docker -> контейнер предпросмотра
 ```
+
+Оба порта — один контейнер `webnestdev-server` с двумя процессами: API и дверь предпросмотра
+(пункт 6.1 плана масштабирования, `server/preview-door-run.sh`). Разделение включается
+`PREVIEW_DOOR_SEPARATE=1` (по умолчанию в compose) и выключается значением `0` или старым образом:
+тогда дверь снова живёт внутри API. Зачем два процесса: соединения открытых вкладок и HMR-сокеты
+держит именно дверь, и в общем процессе они ели бы память и файловые дескрипторы панели.
+`PREVIEW_DOOR_SEPARATE=1` сама дверь не поднимет — второй процесс запускает супервизор в
+контейнере, а API в этом режиме свой слушатель не открывает.
 
 ## Required production environment
 
@@ -777,6 +779,6 @@ The two numbers to watch when a preview address misbehaves: `/api/health` → `a
 
 ## Health endpoints
 
-- `GET /api/health` — liveness plus dependency state, **when requested from loopback inside the server**. `sandbox` carries the selected runtime (`runtime`), the two sandbox directories (`sandboxDir`, `sandboxHostDir`) and the last mount check (`mount`), and `activity.disk.path` is the directory the projects actually live in — three fields that answer "why does the sandbox terminal look empty" without a shell on the VM. `activity.process.uid`/`gid` show the user the server process actually runs as (stage 2.2), rather than what the compose file asked for. `build` is the commit SHA the running image was built from (what the deploy verifies), and `sms` names the active SMS provider with whether it sends for real and how it authenticates (`credentialKind`: a self-renewing `key` or a `token` that expires). `activity.previews.addresses` lists every live preview (`mode`, `port`, `settled`, `ageSeconds`): `settled: false` on a running preview is the precise answer to "the preview says it is running and the panel is empty" — the server cannot reach the address the panel would use, and `preview-selfcheck` says why on this host. Публичный ответ через Caddy содержит только `ok`, `service`, `build` и `sms`; полный — командой `docker compose exec -T webnestdev-server curl -s http://127.0.0.1:8787/api/health`.
+- `GET /api/health` — liveness plus dependency state, **when requested from loopback inside the server**. `sandbox` carries the selected runtime (`runtime`), the two sandbox directories (`sandboxDir`, `sandboxHostDir`) and the last mount check (`mount`), and `activity.disk.path` is the directory the projects actually live in — three fields that answer "why does the sandbox terminal look empty" without a shell on the VM. `activity.process.uid`/`gid` show the user the server process actually runs as (stage 2.2), rather than what the compose file asked for. `build` is the commit SHA the running image was built from (what the deploy verifies), and `sms` names the active SMS provider with whether it sends for real and how it authenticates (`credentialKind`: a self-renewing `key` or a `token` that expires). `activity.previews.door` показывает, где живёт дверь публичных адресов: `mode: in-process` (прежнее поведение) или `mode: separate` вместе с её лимитами (`maxConnections`, `maxUpgrades`, `upgradeTimeoutMs`) и живым состоянием (`connections`, `upgrades`, `uptimeSeconds`) — по ним видно, далеко ли хост от потолка и отвечает ли второй процесс вообще. `activity.previews.addresses` lists every live preview (`mode`, `port`, `settled`, `ageSeconds`): `settled: false` on a running preview is the precise answer to "the preview says it is running and the panel is empty" — the server cannot reach the address the panel would use, and `preview-selfcheck` says why on this host. Публичный ответ через Caddy содержит только `ok`, `service`, `build` и `sms`; полный — командой `docker compose exec -T webnestdev-server curl -s http://127.0.0.1:8787/api/health`.
 - `GET /api/ready` — readiness; returns HTTP 503 when required dependencies are unavailable, and also when the mount check reported `mismatch` — the one sandbox failure that does not heal on its own. Снаружи ответ содержит только `ok`, `service`, `build`; подробности — тем же loopback-запросом из контейнера.
 - Порт `8787` опубликован только на `127.0.0.1` хоста: наружу обязан смотреть Caddy (80/443). Проверка `curl localhost:8787` на ВМ остаётся рабочей, а обход HTTPS и Origin-проверки с внешнего адреса — нет.

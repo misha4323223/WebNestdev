@@ -36,6 +36,7 @@ import { registerHealthRoutes } from "./routes/health.js";
 import { registerPanelFiles } from "./routes/panel-static.js";
 import { registerProjectRoutes } from "./routes/projects.js";
 import { registerPreviewRoutes } from "./routes/preview.js";
+import { registerPreviewDoorRoutes } from "./routes/preview-door.js";
 import { registerToolRoutes } from "./routes/tools.js";
 import { registerWorkspaceRoutes } from "./routes/workspace.js";
 import { registerMediaRoutes } from "./routes/media.js";
@@ -403,6 +404,10 @@ await registerDonationRoutes(app);
 await registerProjectRoutes(app);
 await registerHostingRoutes(app);
 await registerPreviewRoutes(app);
+// Внутренний канал для двери предпросмотра, когда она работает отдельным процессом (пункт 6.1):
+// состояние проекта и предпросмотра по общему токену. Публичного смысла у маршрутов нет, но
+// `/api/*` виден через Caddy, поэтому дверь — токен, а не адрес.
+await registerPreviewDoorRoutes(app);
 await registerToolRoutes(app);
 await registerWorkspaceRoutes(app);
 await registerMediaRoutes(app);
@@ -462,12 +467,21 @@ void verifySandboxMount()
 // приложение занимает на своём поддомене весь путь, включая `/api`, и живой WebSocket с него, а
 // подстановочный маршрут в этом же приложении занял бы `/*` у раздачи панели. Дверь поднимается
 // только при заданном PREVIEW_PUBLIC_DOMAIN; отказ не мешает серверу работать.
-void startPreviewHostServer()
-  .then(result => {
-    if (result.started) console.log("[preview] дверь публичных адресов слушает порт " + result.port);
-    else console.log("[preview] дверь публичных адресов не поднята: " + result.reason);
-  })
-  .catch(error => console.error("[preview] дверь публичных адресов не поднялась: " + (error instanceof Error ? error.message : error)));
+//
+// `PREVIEW_DOOR_SEPARATE=1` — дверь работает своим процессом (preview/door-main.ts): соединения
+// открытых предпросмотров больше не занимают память API, а падение двери не трогает панель.
+// Процесс поднимает супервизор в контейнере; здесь важно только не занять тот же порт вторым
+// слушателем, поэтому собственный слушатель в этом режиме выключен.
+if (process.env.PREVIEW_DOOR_SEPARATE === "1") {
+  console.log("[preview] дверь публичных адресов вынесена в отдельный процесс (PREVIEW_DOOR_SEPARATE=1)");
+} else {
+  void startPreviewHostServer()
+    .then(result => {
+      if (result.started) console.log("[preview] дверь публичных адресов слушает порт " + result.port);
+      else console.log("[preview] дверь публичных адресов не поднята: " + result.reason);
+    })
+    .catch(error => console.error("[preview] дверь публичных адресов не поднялась: " + (error instanceof Error ? error.message : error)));
+}
 // A preview nobody uses is stopped after PREVIEW_IDLE_MS (five minutes by default): without
 // the sweep every project that was ever previewed would keep a dev server and its memory.
 startPreviewSweeper();

@@ -82,6 +82,9 @@ services:
     # откатить на предыдущую версию, не меняя compose: старый образ просто не имеет серверного
     # entrypoint, и отсутствие override в сервисе сервера не мешает ему запуститься.
     entrypoint: ["node","deploy/docker-broker/index.mjs"]
+    # CMD образа — супервизор сервера (два процесса). Брокеру он не нужен: с одним entrypoint
+    # аргументы CMD попали бы в argv брокера. Пустая команда их снимает.
+    command: []
     environment:
       BROKER_SOCKET: /run/webnestdev-docker/docker.sock
       BROKER_UPSTREAM: /var/run/docker.sock
@@ -495,6 +498,17 @@ services:
       PREVIEW_PUBLIC_DOMAIN: ${PREVIEW_PUBLIC_DOMAIN:-}
       PREVIEW_HOST_PORT: ${PREVIEW_HOST_PORT:-8788}
       PREVIEW_HOST_BIND: ${PREVIEW_HOST_BIND:-0.0.0.0}
+      # Дверь публичных предпросмотров отдельным процессом (пункт 6.1 плана): соединения открытых
+      # вкладок и HMR больше не занимают память API, а её падение не трогает панель. Процессов в
+      # контейнере два, роли делит супервизор server/preview-door-run.sh. Старый образ эту
+      # переменную не читает — откат образа ведёт себя как раньше, дверь остаётся в API.
+      PREVIEW_DOOR_SEPARATE: ${PREVIEW_DOOR_SEPARATE:-1}
+      # Внутренний адрес состояния предпросмотра и кеш ответа в двери: соседний процесс контейнера.
+      PREVIEW_DOOR_API_URL: ${PREVIEW_DOOR_API_URL:-http://127.0.0.1:8787}
+      PREVIEW_DOOR_CACHE_MS: ${PREVIEW_DOOR_CACHE_MS:-1000}
+      # Health двери: его опрашивает /api/health, и в нём видны лимиты и занятые соединения.
+      PREVIEW_DOOR_HEALTH_PORT: ${PREVIEW_DOOR_HEALTH_PORT:-8789}
+      PREVIEW_DOOR_HEALTH_URL: ${PREVIEW_DOOR_HEALTH_URL:-http://127.0.0.1:8789/__health}
       # Сколько живёт билет на публичный адрес: столько может быть открыта вкладка предпросмотра.
       PREVIEW_TICKET_TTL_MS: ${PREVIEW_TICKET_TTL_MS:-43200000}
       # Сколько диалогов с агентом этот хост ведёт одновременно. Прогон почти всё время ждёт

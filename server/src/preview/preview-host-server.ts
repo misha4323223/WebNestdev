@@ -329,6 +329,8 @@ async function writeProxyResponse(response: ServerResponse, upstream: Response) 
 
 export type PreviewHostServer = {
   server: Server;
+  /** Занятые сейчас соединения и WebSocket: это значения лимитов, и без них их не по чему сверять. */
+  stats: () => { connections: number; upgrades: number };
   close: () => Promise<void>;
 };
 
@@ -345,6 +347,9 @@ export function createPreviewHostServer(deps: PreviewHostDeps = defaultDeps, lim
   };
 
   let upgrades = 0;
+  // Счётчик соединений — не для лимита (его держит `maxConnections`), а для health: по нему видно,
+  // сколько публичных предпросмотров открыто на самом деле и далеко ли до потолка.
+  let connections = 0;
   const server = createServer((request, response) => {
     // Обработчик асинхронный, а обещание никто не ждёт: любое исключение внутри стало бы
     // unhandled rejection, то есть упавшим сервером от одного запроса. Поэтому всё, что не
@@ -357,6 +362,10 @@ export function createPreviewHostServer(deps: PreviewHostDeps = defaultDeps, lim
   });
   // Соединения без запроса и медленные заголовки — самый дешёвый способ занять сокеты.
   server.maxConnections = limits.maxConnections;
+  server.on("connection", socket => {
+    connections++;
+    socket.once("close", () => { connections--; });
+  });
   server.headersTimeout = 15_000;
   server.requestTimeout = 60_000;
   server.keepAliveTimeout = 5_000;
@@ -497,6 +506,7 @@ export function createPreviewHostServer(deps: PreviewHostDeps = defaultDeps, lim
 
   return {
     server,
+    stats: () => ({ connections, upgrades }),
     // Сначала `close()` — перестать принимать новые соединения, и только потом разорвать уже
     // открытые: при обратном порядке порт ещё мгновение принимает запросы и отвечает разрывом
     // вместо отказа, а остановленный предпросмотр выглядит «сломанным», а не остановленным.
@@ -567,10 +577,13 @@ function statusText(status: number) {
 let running: PreviewHostServer | null = null;
 
 /** Поднимает дверь, если публичные адреса настроены; иначе тихо ничего не делает. */
-export async function startPreviewHostServer(): Promise<{ started: boolean; port?: number; reason?: string }> {
+export async function startPreviewHostServer(
+  deps: PreviewHostDeps = defaultDeps,
+  limits: PreviewHostLimits = previewHostLimits(),
+): Promise<{ started: boolean; port?: number; reason?: string }> {
   if (!previewPublicDomain()) return { started: false, reason: "PREVIEW_PUBLIC_DOMAIN не задан" };
   if (running) return { started: true, port: previewHostPort() };
-  const created = createPreviewHostServer();
+  const created = createPreviewHostServer(deps, limits);
   const port = previewHostPort();
   await new Promise<void>((resolve, reject) => {
     created.server.once("error", reject);

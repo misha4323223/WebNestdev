@@ -67,7 +67,11 @@ COPY deploy/docker-broker ./deploy/docker-broker
 # Entrypoint запускает сервер не от root (этап 2.2). Он же используется для подготовки томов;
 # брокер запускается отдельной командой и остаётся root, потому что говорит с docker.sock.
 COPY server/entrypoint.sh /usr/local/bin/webnestdev-entrypoint
-RUN chmod 0755 /usr/local/bin/webnestdev-entrypoint
+# Супервизор контейнера: API плюс дверь предпросмотра отдельным процессом (пункт 6.1). Отдельный
+# файл, а не строки в entrypoint: entrypoint готовит тома и сбрасывает права, а этот скрипт решает,
+# сколько процессов запускать и что делать с их падением.
+COPY server/preview-door-run.sh /usr/local/bin/webnestdev-preview-door
+RUN chmod 0755 /usr/local/bin/webnestdev-entrypoint /usr/local/bin/webnestdev-preview-door
 # Entrypoint в образе, а не в compose: при откате на предыдущий образ без этого файла compose
 # не должен ссылаться на несуществующий путь. Брокер переопределяет entrypoint в compose.
 ENTRYPOINT ["/usr/local/bin/webnestdev-entrypoint"]
@@ -78,4 +82,6 @@ ENTRYPOINT ["/usr/local/bin/webnestdev-entrypoint"]
 RUN npx playwright install --with-deps --only-shell chromium
 
 EXPOSE 8787
-CMD ["node","server/dist/index.js"]
+# Супервизор запускает ровно ту команду, что была раньше, когда разделение выключено
+# (PREVIEW_DOOR_SEPARATE≠1) — поэтому старый compose и откат образа ведут себя как прежде.
+CMD ["/usr/local/bin/webnestdev-preview-door","node","server/dist/index.js"]

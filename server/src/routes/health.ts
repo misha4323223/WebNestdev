@@ -7,6 +7,8 @@ import { browserQueueStats } from "../tools/browser-limiter.js";
 import { liveRuntimePreviews, liveStaticPreviews, perUserPreviewLimit, runtimePreviewLimit } from "../preview/preview-limiter.js";
 import { previewAddresses } from "../preview/preview-store.js";
 import { previewPublicDomain } from "../preview/preview-host.js";
+import { previewHostBind, previewHostLimits, previewHostPort } from "../preview/preview-host-server.js";
+import { probePreviewDoor } from "../preview/door-client.js";
 import { execProxyQueueStats } from "../preview/exec-proxy.js";
 import { agentStepLimit,contextBudgetTokensFor,contextMaxMessagesFor,DEFAULT_CHARS_PER_TOKEN } from "../agent/context-budget.js";
 import { sandboxHostRootDir,sandboxRootDir,sandboxRuntime } from "../sandbox/config.js";
@@ -53,6 +55,21 @@ async function dependencyStatus(){
 }
 
 /**
+ * Где живёт дверь публичных предпросмотров и далеко ли она от своего потолка.
+ *
+ * `in-process` — прежнее поведение: слушатель в этом же процессе, лимиты общие с API.
+ * `separate` — дверь своим процессом (`PREVIEW_DOOR_SEPARATE=1`): лимиты считаются там, а здесь
+ * остаётся только её живое состояние, снятое коротким запросом к её health-слушателю.
+ */
+async function previewDoorInfo(){
+  const limits=previewHostLimits();
+  if(process.env.PREVIEW_DOOR_SEPARATE!=="1"){
+    return {mode:"in-process" as const,bind:previewHostBind(),port:previewHostPort(),limits};
+  }
+  return {mode:"separate" as const,limits,health:await probePreviewDoor()};
+}
+
+/**
  * What the host is doing right now — the same numbers the launch checklist tells an operator to
  * watch, in one place, so nobody has to guess why a preview or a run is waiting:
  *
@@ -92,6 +109,10 @@ async function activity(){
       // Публичный домен предпросмотра: пусто — адресов `<проект>.<домен>` на этом хосте нет,
       // и панель показывает приложение только своим путём (PREVIEW_PUBLIC_DOMAIN).
       publicDomain: previewPublicDomain(),
+      // Дверь публичных адресов и её лимиты (пункт 6.1 плана). В режиме `separate` это уже
+      // другой процесс: здесь видно, отвечает ли он и сколько соединений держит, иначе вопрос
+      // «почему предпросмотры перестали открываться» снова начинался бы с захода на ВМ.
+      door: await previewDoorInfo(),
     },
     // Сколько контекста уходит модели за один шаг: без этого числа отказ провайдера по размеру
     // промпта выглядит необъяснимым (agent/context-budget.ts).
