@@ -9,6 +9,7 @@ import { previewAddresses } from "../preview/preview-store.js";
 import { previewPublicDomain } from "../preview/preview-host.js";
 import { previewHostBind, previewHostLimits, previewHostPort } from "../preview/preview-host-server.js";
 import { probePreviewDoor } from "../preview/door-client.js";
+import { egressInfo } from "../egress/proxy-health.js";
 import { execProxyQueueStats } from "../preview/exec-proxy.js";
 import { agentStepLimit,contextBudgetTokensFor,contextMaxMessagesFor,DEFAULT_CHARS_PER_TOKEN } from "../agent/context-budget.js";
 import { sandboxHostRootDir,sandboxRootDir,sandboxRuntime } from "../sandbox/config.js";
@@ -114,6 +115,10 @@ async function activity(){
       // «почему предпросмотры перестали открываться» снова начинался бы с захода на ВМ.
       door: await previewDoorInfo(),
     },
+    // Фильтр исходящей сети для кода проекта (пункт 5.1 плана). Режим, адрес прокси и счётчики
+    // отказов: «npm install перестал ставиться» должно объясняться из health, а не из логов
+    // контейнера, которого может уже не быть.
+    egress: await egressInfo(),
     // Сколько контекста уходит модели за один шаг: без этого числа отказ провайдера по размеру
     // промпта выглядит необъяснимым (agent/context-budget.ts).
     // `charsPerTokenDefault` — стартовая оценка: во время запуска она уточняется по отчёту

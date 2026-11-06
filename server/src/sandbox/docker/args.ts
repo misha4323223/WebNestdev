@@ -1,3 +1,5 @@
+import { egressProxyEnv } from "../../egress/config.js";
+import { proxyReachableFrom } from "../../egress/network.js";
 import { workspaceMountSource } from "../config.js";
 import type { SandboxConfig } from "../sandbox-types.js";
 import type { DockerSandboxOptions } from "./types.js";
@@ -27,7 +29,12 @@ export function dockerRunArgs(
   const labels = Object.entries(mode.labels ?? {}).flatMap(([key, value]) => ["--label", key + "=" + value]);
   // env — только для конкретной команды (например, EXPO_TOKEN у EAS CLI): значение уходит
   // в окружение контейнера, а не в текст команды, поэтому не печатается в логах шага.
-  const envArgs = Object.entries(env).flatMap(([key, value]) => ["-e", key + "=" + value]);
+  // Переменные egress-прокси (пункт 5.1) — только контейнерам, которые до него дотягиваются:
+  // прокси живёт в сети предпросмотра, а `none` и `bridge` — другие сети (в bridge же
+  // оказываются и удалённые runner'ы). Передать их там значило бы сломать установку пакетов
+  // адресом, которого нет.
+  const proxyEnv = proxyReachableFrom(network) ? egressProxyEnv() : {};
+  const envArgs = [...Object.entries({ ...proxyEnv, ...env })].flatMap(([key, value]) => ["-e", key + "=" + value]);
   // gVisor включается одной переменной. Флаг добавляется ко всем контейнерам команд и заданий;
   // политика брокера разрешает только тот Runtime, который назван в BROKER_RUNTIME.
   const runtimeArgs = options.runtime==="runsc"?["--runtime=runsc"]:[];

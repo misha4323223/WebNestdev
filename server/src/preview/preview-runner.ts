@@ -12,6 +12,7 @@ import { ensureProjectDependencies } from "./dependencies.js";
 import { setPreview } from "./preview-store.js";
 import { PREVIEW_APP_PORT, PREVIEW_LABEL, type PreviewState } from "./types.js";
 import { previewSecretMounts } from "../secrets/preview-secrets.js";
+import { egressProxyEnv } from "../egress/config.js";
 
 const READY_ATTEMPTS=30;
 const READY_DELAY_MS=500;
@@ -80,6 +81,10 @@ export async function startPreviewContainer(config:SandboxConfig){
       "-w","/workspace",
       "-e","HOME=/tmp",
       "-e","CI=1",
+      // Egress-прокси (пункт 5.1): предпросмотр — тоже чужой код, запущенный у нас. Переменные
+      // задаёт сервер, а не проект: `.env` приложения не должен переопределять путь наружу.
+      // Без сети (network пуст) их не передаём: контейнер окажется в bridge, а прокси там нет.
+      ...(network?Object.entries(egressProxyEnv()).flatMap(([key,value])=>["-e",key+"="+value]):[]),
       // gVisor не пробрасывает inotify-события bind-mount'а из хоста в контейнер: Vite видел
       // изменения файлов только при старте и продолжал отдавать старый модуль, поэтому HMR
       // молчал. Polling читает stat самого файла и работает с любым mount; для runc оставляем

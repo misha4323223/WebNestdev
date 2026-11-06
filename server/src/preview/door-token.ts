@@ -26,21 +26,36 @@ export function previewDoorKey(): string | null {
   return raw || null;
 }
 
+/**
+ * Токен внутреннего канала для конкретного назначения.
+ *
+ * Назначение входит в HMAC, поэтому токен двери не подходит к другим внутренним маршрутам
+ * (например, к вопросу egress-прокси «чей это адрес», см. egress/attribution.ts), даже если оба
+ * выведены из одного ключа. Отдельного секрета на каждое назначение по-прежнему не нужно.
+ */
+export function internalToken(purpose: string, key: string | null = previewDoorKey()): string | null {
+  if (!key) return null;
+  return createHmac("sha256", key).update(purpose).digest("hex");
+}
+
 /** Токен двери; `null` — выводить не из чего, и внутренний маршрут отвечает 503. */
 export function previewDoorToken(key: string | null = previewDoorKey()): string | null {
-  if (!key) return null;
-  return createHmac("sha256", key).update(PURPOSE).digest("hex");
+  return internalToken(PURPOSE, key);
 }
 
 /**
  * Сверка заголовка `Authorization` с ожидаемым токеном. Сравнение постоянного времени: длина у
  * дайджеста фиксированная, поэтому `timingSafeEqual` не выдаёт, на каком байте разошлось.
  */
-export function previewDoorTokenValid(header: string | undefined | null, expected: string | null = previewDoorToken()): boolean {
+export function bearerTokenValid(header: string | undefined | null, expected: string | null): boolean {
   if (!expected) return false;
   const value = (header ?? "").trim();
   const prefix = "bearer ";
   const token = value.slice(0, prefix.length).toLowerCase() === prefix ? value.slice(prefix.length).trim() : "";
   if (token.length !== expected.length) return false;
   return timingSafeEqual(Buffer.from(token, "utf8"), Buffer.from(expected, "utf8"));
+}
+
+export function previewDoorTokenValid(header: string | undefined | null, expected: string | null = previewDoorToken()): boolean {
+  return bearerTokenValid(header, expected);
 }

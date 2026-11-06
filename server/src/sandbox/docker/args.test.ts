@@ -51,6 +51,34 @@ test("git в контейнере не спотыкается о владель�
   assert.equal(env.GIT_CONFIG_VALUE_0, "*");
 });
 
+test("переменные egress-прокси получает только контейнер в сети, где прокси есть", () => {
+  const config = { projectId: "p1", root: "/root/p1", memoryMb: 256, cpuLimit: 1, timeoutMs: 1000 };
+  const saved = process.env.EGRESS_MODE;
+  process.env.EGRESS_MODE = "allowlist";
+  const envOf = (args: string[]) => {
+    const result: Record<string, string> = {};
+    for (let index = 0; index < args.length; index++) {
+      if (args[index] !== "-e" || typeof args[index + 1] !== "string") continue;
+      const [key, ...value] = (args[index + 1] as string).split("=");
+      result[key as string] = value.join("=");
+    }
+    return result;
+  };
+  try {
+    const networked = envOf(dockerRunArgs(config, config.root, options, "npm install", "webnestdev-preview"));
+    assert.match(networked.HTTPS_PROXY ?? "", /3128$/);
+    assert.match(networked.npm_config_https_proxy ?? "", /3128$/);
+    // bridge и none — другие сети: адрес прокси там не резолвится, и установка шла бы в пустоту.
+    for (const network of ["bridge", "none"]) {
+      const bare = envOf(dockerRunArgs(config, config.root, options, "npm install", network));
+      assert.equal(bare.HTTPS_PROXY, undefined, network);
+    }
+  } finally {
+    if (saved === undefined) delete process.env.EGRESS_MODE;
+    else process.env.EGRESS_MODE = saved;
+  }
+});
+
 test("долгое задание запускается отсоединённым, без --rm и с метками для уборки", () => {
   const config = { projectId: "p1", root: "/root/p1", memoryMb: 256, cpuLimit: 1, timeoutMs: 1000 };
   const args = dockerRunArgs(config, config.root, options, "npm test", "none", "wnd-job-p1-1", [], {

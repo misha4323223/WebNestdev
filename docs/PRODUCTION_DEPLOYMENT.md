@@ -17,6 +17,10 @@ Caddy / nginx
                         |
                         +--> state/preview state -> API по 127.0.0.1:8787 (внутренний токен)
                         +--> Docker -> контейнер предпросмотра
+
+контейнер проекта (webnestdev-preview)
+  |-- HTTPS/HTTP наружу -> egress-прокси :3128 (тот же контейнер, что и API, allowlist)
+  |-- прямой сокет наружу -> REJECT (DOCKER-USER на хосте, deploy/scripts/egress-firewall.sh)
 ```
 
 Оба порта — один контейнер `webnestdev-server` с двумя процессами: API и дверь предпросмотра
@@ -777,8 +781,61 @@ curl -s -o /dev/null -w '%{http_code}\n' 'https://<project-id>.preview.nestdev.r
 
 The two numbers to watch when a preview address misbehaves: `/api/health` → `activity.previews.publicDomain` (is the domain configured at all) and `activity.previews.addresses` → `settled` (can the server reach the app it is being asked to serve).
 
+## Egress filter for project code (stage 5.1)
+
+Код проекта — чужой код на нашей ВМ. Изоляция (gVisor) закрывает ядро, но не сеть: без фильтра
+контейнер может майнить, рассылать спам и атаковать чужие адреса с нашего IP. Поэтому исходящий
+трафик идёт через прокси с allowlist, а прямой выход закрыт правилами Docker.
+
+- **Прокси** — третий процесс контейнера `webnestdev-server` (`server/src/egress/proxy-main.ts`,
+  `EGRESS_MODE`). Он не расшифровывает HTTPS: `CONNECT` остаётся туннелем, в журнал попадают
+  только домен, порт, причина отказа и проект. Health — `127.0.0.1:8790/__health` (режим, размер
+  allowlist, соединения, счётчики отказов), его печатает выкатка.
+- **Allowlist** (`server/src/egress/allowlist.ts`): реестры пакетов (npm, yarn, pypi, rubygems),
+  git-хостинги, типовые CDN и шрифты. Расширяется без пересборки — `EGRESS_ALLOWLIST` в `.env`
+  (через запятую), встроенный минимум при этом сохраняется. Приватные адреса, loopback, CGNAT и
+  metadata-сервис (`169.254.169.254`, `metadata.google.internal`) закрыты всегда, в любом режиме.
+- **Режимы:** `allowlist` (по умолчанию), `private-only` (разрешено всё публичное — аварийный
+  выключатель, если allowlist ломает нужный проект), `off` (прежнее поведение: прокси не
+  запускается, переменные в контейнеры не передаются).
+- **Запрет обхода** — `deploy/scripts/egress-firewall.sh`: правила в цепочке `DOCKER-USER` для
+  подсети `webnestdev-preview`. Разрешены выход контейнерам сервера и брокера (провайдер модели,
+  S3, GitHub) и трафик внутри подсети (API, дверь, прокси на 3128); всё остальное отклоняется.
+  Выкатка кладёт скрипт в `/usr/local/sbin/webnestdev-egress`, включает юнит
+  `webnestdev-egress.service` (правила возвращаются после перезагрузки ВМ) и применяет правила
+  сейчас. Отключить — `EGRESS_ENFORCE=0`.
+
+Выкатка проверяет фильтр на живой системе и печатает вердикт в лог Actions:
+
+```text
+egress: прокси жив, {"ok":true,"service":"egress-proxy",…}
+egress: сервер ходит наружу сам (registry.npmjs.org → 200)
+egress: через прокси registry.npmjs.org отвечает (200) — установка пакетов работает
+egress: посторонний домен отклонён прокси (example.com → 403)
+egress: контейнер проекта ставит пакеты через прокси (200)
+egress: обход закрыт (прямое соединение из контейнера проекта не открывается)
+```
+
+Если проверка не прошла, правила снимаются и юнит выключается: открытый выход хуже закрытого, но
+сломанная установка пакетов хуже обоих. Причина в том же логе.
+
+Правила требуют root на хосте — выкатка использует `sudo -n` (как для runsc). Без него фильтр
+работает только прокси-частью: установка пакетов идёт через прокси, но обход сырым сокетом
+возможен — в логе будет строка «правила Docker не применены».
+
+Диагностика на живой системе без терминала:
+
+```bash
+docker compose exec -T webnestdev-server curl -s http://127.0.0.1:8790/__health
+docker compose exec -T webnestdev-server curl -s http://127.0.0.1:8787/api/health  # activity.egress
+```
+
+`activity.egress` в полном `/api/health` показывает режим, адрес прокси, число соединений и
+последние отказы (`denies`: домен, проект, причина) — этого достаточно, чтобы ответить «почему
+`npm install` перестал ставиться» без захода на ВМ.
+
 ## Health endpoints
 
-- `GET /api/health` — liveness plus dependency state, **when requested from loopback inside the server**. `sandbox` carries the selected runtime (`runtime`), the two sandbox directories (`sandboxDir`, `sandboxHostDir`) and the last mount check (`mount`), and `activity.disk.path` is the directory the projects actually live in — three fields that answer "why does the sandbox terminal look empty" without a shell on the VM. `activity.process.uid`/`gid` show the user the server process actually runs as (stage 2.2), rather than what the compose file asked for. `build` is the commit SHA the running image was built from (what the deploy verifies), and `sms` names the active SMS provider with whether it sends for real and how it authenticates (`credentialKind`: a self-renewing `key` or a `token` that expires). `activity.previews.door` показывает, где живёт дверь публичных адресов: `mode: in-process` (прежнее поведение) или `mode: separate` вместе с её лимитами (`maxConnections`, `maxUpgrades`, `upgradeTimeoutMs`) и живым состоянием (`connections`, `upgrades`, `uptimeSeconds`) — по ним видно, далеко ли хост от потолка и отвечает ли второй процесс вообще. `activity.previews.addresses` lists every live preview (`mode`, `port`, `settled`, `ageSeconds`): `settled: false` on a running preview is the precise answer to "the preview says it is running and the panel is empty" — the server cannot reach the address the panel would use, and `preview-selfcheck` says why on this host. Публичный ответ через Caddy содержит только `ok`, `service`, `build` и `sms`; полный — командой `docker compose exec -T webnestdev-server curl -s http://127.0.0.1:8787/api/health`.
+- `GET /api/health` — liveness plus dependency state, **when requested from loopback inside the server**. `sandbox` carries the selected runtime (`runtime`), the two sandbox directories (`sandboxDir`, `sandboxHostDir`) and the last mount check (`mount`), and `activity.disk.path` is the directory the projects actually live in — three fields that answer "why does the sandbox terminal look empty" without a shell on the VM. `activity.process.uid`/`gid` show the user the server process actually runs as (stage 2.2), rather than what the compose file asked for. `build` is the commit SHA the running image was built from (what the deploy verifies), and `sms` names the active SMS provider with whether it sends for real and how it authenticates (`credentialKind`: a self-renewing `key` or a `token` that expires). `activity.previews.door` показывает, где живёт дверь публичных адресов: `mode: in-process` (прежнее поведение) или `mode: separate` вместе с её лимитами (`maxConnections`, `maxUpgrades`, `upgradeTimeoutMs`) и живым состоянием (`connections`, `upgrades`, `uptimeSeconds`) — по ним видно, далеко ли хост от потолка и отвечает ли второй процесс вообще. `activity.previews.addresses` lists every live preview (`mode`, `port`, `settled`, `ageSeconds`): `settled: false` on a running preview is the precise answer to "the preview says it is running and the panel is empty" — the server cannot reach the address the panel would use, and `preview-selfcheck` says why on this host. `activity.egress` — режим фильтра исходящей сети (`off`, `private-only`, `allowlist`), адрес прокси, где он живёт (`in-process`/`separate`) и, в отдельном режиме, health прокси: соединения, счётчики и последние отказы (`denies`: домен, проект, причина). Публичный ответ через Caddy содержит только `ok`, `service`, `build` и `sms`; полный — командой `docker compose exec -T webnestdev-server curl -s http://127.0.0.1:8787/api/health`.
 - `GET /api/ready` — readiness; returns HTTP 503 when required dependencies are unavailable, and also when the mount check reported `mismatch` — the one sandbox failure that does not heal on its own. Снаружи ответ содержит только `ok`, `service`, `build`; подробности — тем же loopback-запросом из контейнера.
 - Порт `8787` опубликован только на `127.0.0.1` хоста: наружу обязан смотреть Caddy (80/443). Проверка `curl localhost:8787` на ВМ остаётся рабочей, а обход HTTPS и Origin-проверки с внешнего адреса — нет.

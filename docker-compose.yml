@@ -509,6 +509,24 @@ services:
       # Health двери: его опрашивает /api/health, и в нём видны лимиты и занятые соединения.
       PREVIEW_DOOR_HEALTH_PORT: ${PREVIEW_DOOR_HEALTH_PORT:-8789}
       PREVIEW_DOOR_HEALTH_URL: ${PREVIEW_DOOR_HEALTH_URL:-http://127.0.0.1:8789/__health}
+      # Фильтр исходящей сети для кода проекта (пункт 5.1 плана). Прокси — третьим процессом
+      # контейнера: контейнеры проектов ходят наружу только через него, а прямой выход закрывают
+      # правила Docker на узле (deploy/scripts/egress-firewall.sh). `off` — прежнее поведение,
+      # `private-only` — разрешено всё публичное (аварийный выключатель allowlist).
+      EGRESS_MODE: ${EGRESS_MODE:-allowlist}
+      EGRESS_PROXY_SEPARATE: ${EGRESS_PROXY_SEPARATE:-1}
+      EGRESS_PROXY_PORT: ${EGRESS_PROXY_PORT:-3128}
+      EGRESS_PROXY_HEALTH_PORT: ${EGRESS_PROXY_HEALTH_PORT:-8790}
+      # Адрес, который получают контейнеры проектов. Имя сервиса резолвится встроенным DNS Docker
+      # в сети предпросмотра; прокси в том же контейнере, что и API.
+      EGRESS_PROXY_URL: ${EGRESS_PROXY_URL:-http://webnestdev-server:3128}
+      # Куда прокси спрашивает «чей это адрес» — соседний процесс того же контейнера.
+      EGRESS_PROXY_API_URL: ${EGRESS_PROXY_API_URL:-http://127.0.0.1:8787}
+      # Дополнительные домены к встроенному списку (через запятую): точечное расширение без
+      # пересборки образа. Выключать фильтр целиком — EGRESS_MODE=off.
+      EGRESS_ALLOWLIST: ${EGRESS_ALLOWLIST:-}
+      # Применять ли правила Docker, закрывающие обход прокси. 0 — прокси только считает и пишет.
+      EGRESS_ENFORCE: ${EGRESS_ENFORCE:-1}
       # Сколько живёт билет на публичный адрес: столько может быть открыта вкладка предпросмотра.
       PREVIEW_TICKET_TTL_MS: ${PREVIEW_TICKET_TTL_MS:-43200000}
       # Сколько диалогов с агентом этот хост ведёт одновременно. Прогон почти всё время ждёт

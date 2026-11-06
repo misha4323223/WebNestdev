@@ -101,6 +101,9 @@
 #   RUNSC_SCRIPT_B64=…         содержимое deploy/scripts/install-runsc.sh в base64; workflow
 #                              присылает его вместе со скриптом, чтобы не зависеть от чекаута
 #                              на ВМ. Без него берётся $APP_DIR/deploy/scripts/install-runsc.sh.
+#   EGRESS_FIREWALL_B64=…      то же для deploy/scripts/egress-firewall.sh: правила, закрывающие
+#                              обход egress-прокси (пункт 5.1 плана). Без него берётся файл из
+#                              $APP_DIR, а без файла правила не применяются — прокси остаётся.
 #   RUNSC_VERSION=…            переопределить закреплённую версию gVisor (необязательно).
 #   ENV_FILE=<путь>            файл переменных развёртывания, по умолчанию $APP_DIR/.env.
 #                              Вынесен в переменную, чтобы шаг установки ключей проверялся
@@ -1544,6 +1547,188 @@ verify_preview_door(){
   return 0
 }
 
+#
+# Фильтр исходящей сети для кода проекта (пункт 5.1 плана масштабирования).
+#
+# Прокси поднимается третьим процессом контейнера (EGRESS_MODE, docker-compose.yml), но один он
+# ничего не запрещает: сокет мимо прокси ходит напрямую. Обход закрывают правила Docker на узле
+# (deploy/scripts/egress-firewall.sh), и они нужны не только сейчас, но и после перезагрузки ВМ —
+# поэтому скрипт кладётся на хост и включается systemd-юнитом.
+#
+# Порядок принципиален: сначала применить правила, потом проверить, что установка пакетов идёт, а
+# посторонний домен — нет. Если проверка не прошла, правила снимаются: открытый выход хуже
+# закрытого, но сломанная установка пакетов хуже обоих. Отказ не отменяет выкатку — это настройка
+# хоста, а не собранной версии, и вердикт целиком печатается в лог Actions.
+#
+egress_firewall_script(){
+  # Свежий коммит важнее чекаута на ВМ: в image-режиме он может быть старым (так же едет runsc).
+  if [ -n "${EGRESS_FIREWALL_B64:-}" ]; then
+    local file
+    file=$(mktemp "${TMPDIR:-/tmp}/webnestdev-egress.XXXXXX") || return 1
+    if ! printf '%s' "$EGRESS_FIREWALL_B64" | base64 -d > "$file" 2>/dev/null; then
+      rm -f "$file"; return 1
+    fi
+    chmod 700 "$file"
+    printf '%s' "$file"
+    return 0
+  fi
+  if [ -f "$APP_DIR/deploy/scripts/egress-firewall.sh" ]; then
+    printf '%s' "$APP_DIR/deploy/scripts/egress-firewall.sh"
+  fi
+}
+
+egress_network(){
+  local net
+  net=$(compose_env_value PREVIEW_NETWORK 2>/dev/null || true)
+  if [ -z "$net" ]; then
+    net=$(docker network ls --format '{{.Name}}' 2>/dev/null | grep -E '(^|[-_])preview$' | grep -vE '(^|[-_])db$' | head -n 1 || true)
+  fi
+  printf '%s' "$net"
+}
+
+install_egress_firewall_unit(){
+  local script="$1" rc=0
+  if [ "$(id -u)" = "0" ]; then
+    install -m 0755 "$script" /usr/local/sbin/webnestdev-egress
+  else
+    sudo -n install -m 0755 "$script" /usr/local/sbin/webnestdev-egress || rc=$?
+  fi
+  if [ "$rc" -ne 0 ]; then
+    log "egress: не удалось положить скрипт правил в /usr/local/sbin"; return 1
+  fi
+  local unit="[Unit]
+Description=WebNestDev egress firewall for project containers
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/webnestdev-egress apply
+ExecStop=/usr/local/sbin/webnestdev-egress clear
+
+[Install]
+WantedBy=multi-user.target
+"
+  if [ "$(id -u)" = "0" ]; then
+    printf '%s' "$unit" > /etc/systemd/system/webnestdev-egress.service || return 1
+    systemctl daemon-reload || return 1
+    systemctl enable --now webnestdev-egress.service || return 1
+  else
+    printf '%s' "$unit" | sudo -n tee /etc/systemd/system/webnestdev-egress.service >/dev/null || return 1
+    sudo -n systemctl daemon-reload || return 1
+    # `enable --now`: юнит включается на будущие загрузки и применяет правила сейчас.
+    sudo -n systemctl enable --now webnestdev-egress.service || return 1
+  fi
+  return 0
+}
+
+# Курл из контейнера сервера: короткий предел, пустой ответ — не ошибка скрипта, а вердикт.
+egress_exec_code(){
+  timeout 45 docker compose exec -T "$SERVICE" sh -c "$1" </dev/null 2>/dev/null || true
+}
+
+verify_egress(){
+  local mode net image health allow deny direct viaproxy api
+  mode=$(compose_env_value EGRESS_MODE 2>/dev/null || true)
+  mode=${mode:-allowlist}
+  health=$(egress_exec_code 'curl -s --max-time 3 http://127.0.0.1:${EGRESS_PROXY_HEALTH_PORT:-8790}/__health')
+  case "$health" in
+    *'"service":"egress-proxy"'*) log "egress: прокси жив, ${health}" ;;
+    *) log "egress: прокси не отвечает на health (${health:-пусто}) — правила не применяю"; return 1 ;;
+  esac
+  # Собственный выход API: правила не должны задеть сам сервер, иначе отвалятся модель, S3 и GitHub.
+  api=$(egress_exec_code 'curl -s -o /dev/null -w "%{http_code}" --noproxy "*" --max-time 20 https://registry.npmjs.org/')
+  case "$api" in
+    2*|3*) log "egress: сервер ходит наружу сам (registry.npmjs.org → $api)" ;;
+    *) log "egress: СЕРВЕР ПОТЕРЯЛ ВЫХОД (registry.npmjs.org → ${api:-пусто}) — правила снимаю"; return 1 ;;
+  esac
+  # Установка через прокси: это ровно то, что делает npm install в контейнере проекта.
+  allow=$(egress_exec_code 'curl -s -o /dev/null -w "%{http_code}" --max-time 30 -x http://127.0.0.1:${EGRESS_PROXY_PORT:-3128} https://registry.npmjs.org/')
+  case "$allow" in
+    2*|3*) log "egress: через прокси registry.npmjs.org отвечает ($allow) — установка пакетов работает" ;;
+    *) log "egress: через прокси реестр не отвечает (${allow:-пусто}) — установка пакетов сломана, правила снимаю"; return 1 ;;
+  esac
+  # Посторонний домен: при allowlist обязан быть отказ (403 от прокси), при private-only — проход.
+  deny=$(egress_exec_code 'curl -s -o /dev/null -w "%{http_code}" --max-time 15 -x http://127.0.0.1:${EGRESS_PROXY_PORT:-3128} http://example.com/')
+  if [ "$mode" = "allowlist" ]; then
+    case "$deny" in
+      403) log "egress: посторонний домен отклонён прокси (example.com → 403)" ;;
+      *) log "egress: allowlist не отклонил посторонний домен (example.com → ${deny:-пусто})" ;;
+    esac
+  else
+    log "egress: режим $mode — посторонние публичные домены разрешены (example.com → ${deny:-пусто})"
+  fi
+  # Сеть предпросмотра: прокси должен быть виден из контейнера проекта по имени сервиса.
+  net=$(egress_network)
+  image=$(compose_env_value SANDBOX_IMAGE 2>/dev/null || true)
+  image=${image:-node:22-bookworm}
+  if [ -z "$net" ]; then
+    log "egress: сеть предпросмотра не найдена — проверка из контейнера проекта пропущена"; return 0
+  fi
+  viaproxy=$(timeout 90 docker run --rm --network "$net" --pull=never "$image" sh -c 'curl -s -o /dev/null -w "%{http_code}" --max-time 30 -x http://webnestdev-server:${EGRESS_PROXY_PORT:-3128} https://registry.npmjs.org/' </dev/null 2>&1 || true)
+  case "$viaproxy" in
+    2*|3*) log "egress: контейнер проекта ставит пакеты через прокси ($viaproxy)" ;;
+    *"manifest unknown"*|*"No such image"*|*"pull access"*)
+      log "egress: образ $image не найден на хосте — проверка из контейнера проекта пропущена" ;;
+    *) log "egress: КОНТЕЙНЕР ПРОЕКТА НЕ ДОХОДИТ ДО ПРОКСИ (${viaproxy:-пусто}) — установка пакетов сломана"; return 1 ;;
+  esac
+  # Обход: прямой сокет из того же контейнера, без прокси. Обязан не открыться.
+  direct=$(timeout 90 docker run --rm --network "$net" --pull=never "$image" node -e 'const s=require("net").connect({host:"1.1.1.1",port:443});s.setTimeout(5000);s.on("connect",()=>{console.log("EGRESS=open");process.exit(0)});s.on("timeout",()=>{console.log("EGRESS=blocked");process.exit(0)});s.on("error",e=>{console.log("EGRESS=blocked:"+e.code);process.exit(0)})' </dev/null 2>&1 || true)
+  case "$direct" in
+    *EGRESS=open*) log "egress: ОБХОД ПРОКСИ ОТКРЫТ (1.1.1.1:443 соединяется напрямую) — правила не сработали"; return 2 ;;
+    *EGRESS=blocked*) log "egress: обход закрыт (прямое соединение из контейнера проекта не открывается)" ;;
+    *) log "egress: проверка обхода не дала ответа (${direct:-пусто}) — считаю неизвестной" ;;
+  esac
+  return 0
+}
+
+# Режимы: 0 — всё в порядке, 1 — прокси или установка сломаны, 2 — правила не закрывают обход.
+apply_egress_firewall(){
+  local mode enforce script rc=0
+  if [ "$MODE" != "image" ] || [ "$DRY_RUN" = "1" ]; then
+    log "egress: правила Docker не применяю (режим $MODE, dry-run $DRY_RUN)"
+    return 0
+  fi
+  mode=$(compose_env_value EGRESS_MODE 2>/dev/null || true)
+  mode=${mode:-allowlist}
+  enforce=$(compose_env_value EGRESS_ENFORCE 2>/dev/null || true)
+  enforce=${enforce:-1}
+  script=$(egress_firewall_script || true)
+  if [ "$mode" = "off" ] || [ "$enforce" = "0" ]; then
+    if [ -n "$script" ] && { [ "$(id -u)" = "0" ] || sudo -n true 2>/dev/null; }; then
+      if [ "$(id -u)" = "0" ]; then sh "$script" clear >/dev/null 2>&1 || true; else sudo -n sh "$script" clear >/dev/null 2>&1 || true; fi
+    fi
+    log "egress: правила не применяются (EGRESS_MODE=$mode, EGRESS_ENFORCE=$enforce) — выход из сети предпросмотра открыт напрямую"
+    return 0
+  fi
+  if [ -z "$script" ]; then
+    log "egress: egress-firewall.sh не передан и не найден в $APP_DIR — правила не применены"; return 0
+  fi
+  if [ "$(id -u)" != "0" ] && ! sudo -n true 2>/dev/null; then
+    log "egress: нет root и sudo -n недоступен — правила Docker не применены. Прокси работает, но обход возможен; подготовьте sudo без пароля для пользователя $(id -un)"
+    return 0
+  fi
+  if ! install_egress_firewall_unit "$script"; then
+    log "egress: юнит правил не установлен — правила не применены"; return 0
+  fi
+  log "egress: правила Docker применены (сеть предпросмотра $(egress_network))"
+  verify_egress || rc=$?
+  if [ "$rc" != "0" ]; then
+    log "egress: проверка не прошла (код $rc) — снимаю правила и выключаю юнит, выход остаётся открытым"
+    if [ "$(id -u)" = "0" ]; then
+      systemctl disable --now webnestdev-egress.service >/dev/null 2>&1 || true
+      sh "$script" clear >/dev/null 2>&1 || true
+    else
+      sudo -n systemctl disable --now webnestdev-egress.service >/dev/null 2>&1 || true
+      sudo -n sh "$script" clear >/dev/null 2>&1 || true
+    fi
+    return 0
+  fi
+  log "egress: фильтр исходящей сети проверен на живой системе"
+  return 0
+}
+
 verify_sms(){
   local output verdict
   if [ "$SMS_CHECK" != "1" ]; then
@@ -1777,6 +1962,9 @@ verify_panel "$(image_sha "$IMAGE_REF")"
 verify_preview
 # Дверь отдельным процессом (пункт 6.1): печатается её health с лимитами и занятыми соединениями.
 verify_preview_door
+# Фильтр исходящей сети (пункт 5.1): правила Docker, закрывающие обход прокси, и проверка на живой
+# системе — установка пакетов через прокси, отказ постороннему домену, закрытый прямой сокет.
+apply_egress_firewall
 # Вход по номеру: печатается в лог выкатки, чтобы «SMS не приходят» читалось из Actions, а не
 # выяснялось из .env на ВМ. Отказ здесь не отменяет выкатку (см. verify_sms).
 verify_sms

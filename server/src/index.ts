@@ -37,6 +37,9 @@ import { registerPanelFiles } from "./routes/panel-static.js";
 import { registerProjectRoutes } from "./routes/projects.js";
 import { registerPreviewRoutes } from "./routes/preview.js";
 import { registerPreviewDoorRoutes } from "./routes/preview-door.js";
+import { registerEgressRoutes } from "./routes/egress.js";
+import { describeEgress } from "./egress/config.js";
+import { startInProcessEgressProxy } from "./egress/in-process.js";
 import { registerToolRoutes } from "./routes/tools.js";
 import { registerWorkspaceRoutes } from "./routes/workspace.js";
 import { registerMediaRoutes } from "./routes/media.js";
@@ -249,6 +252,7 @@ void (async () => {
 console.log("[sandbox] " + describeSandboxPaths());
 console.log("[sandbox] " + describeSandboxRuntime());
 console.log("[docker] " + describeDockerEndpoint());
+console.log("[egress] " + describeEgress());
 // База инициализируется в фоне: DDL на «холодной» серверлесс-базе занимает 30–60 с.
 // Если дождаться её здесь, app.listen() так и не выполнится (порт 8787 не поднимется,
 // а healthcheck и клиенты не дождутся ответа). HTTP стартует сразу; DDL отрабатывает в фоне.
@@ -408,6 +412,9 @@ await registerPreviewRoutes(app);
 // состояние проекта и предпросмотра по общему токену. Публичного смысла у маршрутов нет, но
 // `/api/*` виден через Caddy, поэтому дверь — токен, а не адрес.
 await registerPreviewDoorRoutes(app);
+// Внутренний канал egress-прокси (пункт 5.1): адрес источника → проект. Нужен только ради
+// журнала отказов — сам трафик идёт через прокси, а не через API.
+await registerEgressRoutes(app);
 await registerToolRoutes(app);
 await registerWorkspaceRoutes(app);
 await registerMediaRoutes(app);
@@ -472,6 +479,16 @@ void verifySandboxMount()
 // открытых предпросмотров больше не занимают память API, а падение двери не трогает панель.
 // Процесс поднимает супервизор в контейнере; здесь важно только не занять тот же порт вторым
 // слушателем, поэтому собственный слушатель в этом режиме выключен.
+// Фильтр исходящей сети (пункт 5.1). В контейнере прокси — отдельный процесс под супервизором
+// (`EGRESS_PROXY_SEPARATE=1`); здесь остаётся случай, когда супервизора нет: тогда прокси
+// поднимается в этом процессе, чтобы переменные, которые получили контейнеры проектов, вели
+// к работающему слушателю, а не в пустоту.
+void startInProcessEgressProxy()
+  .then(result => {
+    if (result.started) console.log("[egress] прокси в процессе API слушает порт " + String(result.port));
+    else if (result.reason) console.log("[egress] прокси в API не поднят: " + result.reason);
+  })
+  .catch(error => console.warn("[egress] прокси не запустился: " + (error instanceof Error ? error.message : String(error))));
 if (process.env.PREVIEW_DOOR_SEPARATE === "1") {
   console.log("[preview] дверь публичных адресов вынесена в отдельный процесс (PREVIEW_DOOR_SEPARATE=1)");
 } else {

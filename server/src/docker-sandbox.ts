@@ -6,6 +6,7 @@ import type { SandboxRunOptions } from "./sandbox/host.js";
 import { dockerRunArgs } from "./sandbox/docker/args.js";
 import { dockerUnavailableMessage } from "./sandbox/docker/unavailable.js";
 import { secretEnvMaskMounts } from "./sandbox/secret-mask.js";
+import { sandboxNetwork } from "./egress/network.js";
 import type { DockerCommandResult } from "./sandbox/docker/types.js";
 
 export type { DockerCommandResult };
@@ -42,7 +43,10 @@ export async function runDockerSandbox(config: SandboxConfig, command: string, c
   // Маски идут последними: если одна и та же точка появится в extraMounts, пустой read-only
   // файл должен победить. Сейчас эти режимы не пересекаются, но порядок сохраняет гарантию.
   const extraMounts = [...(runOptions.extraMounts ?? []), ...masks];
-  const args = dockerRunArgs(config, cwd, options, command, runOptions.network ?? options.network, name, extraMounts, {}, runOptions.env ?? {});
+  // `bridge` в вызовах значит «этому контейнеру нужен интернет». При включённом egress-фильтре
+  // такая установка идёт в сеть предпросмотра — там живёт прокси (см. egress/network.ts).
+  const network = await sandboxNetwork(runOptions.network ?? options.network).catch(() => runOptions.network ?? options.network);
+  const args = dockerRunArgs(config, cwd, options, command, network, name, extraMounts, {}, runOptions.env ?? {});
   return new Promise((resolve, reject) => {
     const child = spawn("docker", args, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
     let stdout = "", stderr = "", truncated = false;
