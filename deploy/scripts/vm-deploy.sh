@@ -272,6 +272,31 @@ install_access_key
 # а автоматический откат после неудачной проверки здоровья идёт ДО уборки — предыдущий
 # образ в этот момент ещё на месте, поэтому откат остаётся мгновенным.
 #
+#
+# Что именно занимает место внутри Docker. `docker system df` даёт четыре строки, и в панели они
+# складываются в одну — «20 ГБ образов и слоёв», а «можно освободить» получается суммой колонки
+# Reclaimable. Без расшифровки в логе это число ни на что не отвечает: Docker считает освобождаемым
+# целый остановленный контейнер, хотя в его записываемом слое лежит node_modules проекта, и
+# называет размер образа без вычета общих слоёв. Поэтому рядом с уборкой печатаются разделы, крупные
+# образы и остановленные контейнеры — по ним видно, что убирать, а что вернётся при холодном старте.
+#
+log_docker_space(){
+  command -v docker >/dev/null 2>&1 || return 0
+  local row
+  while IFS= read -r row; do
+    [ -n "$row" ] || continue
+    log "docker df: $(printf '%s' "$row" | tr '\t' ' ')"
+  done < <(docker system df --format '{{.Type}}\t{{.TotalCount}}\t{{.Size}}\t{{.Reclaimable}}' 2>/dev/null || true)
+  while IFS= read -r row; do
+    [ -n "$row" ] || continue
+    log "образ на диске: $(printf '%s' "$row" | tr '\t' ' ')"
+  done < <(docker images --format '{{.Repository}}:{{.Tag}}\t{{.Size}}\t{{.CreatedSince}}' 2>/dev/null | head -6 || true)
+  while IFS= read -r row; do
+    [ -n "$row" ] || continue
+    log "контейнер: $(printf '%s' "$row" | tr '\t' ' ')"
+  done < <(timeout 60 docker ps -a --size --format '{{.Names}}\t{{.State}}\t{{.Size}}' 2>/dev/null | head -10 || true)
+}
+
 prune_images(){
   local keep="$KEEP_IMAGES"
   case "$keep" in ''|*[!0-9]*) keep=1;; esac
@@ -1743,3 +1768,6 @@ log "деплой завершён, живая сборка: $(live_build)"
 # остаётся на месте и можно сразу откатиться на него без сборки. Работающий образ защищён и
 # здесь: иначе `DRY_RUN=1` обещал бы удалить версию, которую сам же только что поднял.
 PRUNE_PROTECT_IMAGE="$IMAGE_REF" prune_images
+# Состав диска — в лог выкатки: вопрос «почему Docker занимает 20 ГБ» должен читаться в Actions,
+# а не выясняться заходом на ВМ, где интерактивного терминала нет.
+if [ "$MODE" = "image" ] && [ "$DRY_RUN" != "1" ]; then log_docker_space; fi
