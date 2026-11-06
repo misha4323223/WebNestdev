@@ -2,7 +2,7 @@ import { createServer, type Server } from "node:http";
 import type { FastifyRequest } from "fastify";
 import { sessionCookieSecure } from "../auth/auth.js";
 import { dockerForNode } from "./docker-exec.js";
-import { lookupPreview, reportPreviewEvent } from "./door-client.js";
+import { lookupPreview, reportPreviewEvent, waitForDoorApi } from "./door-client.js";
 import { previewDoorToken } from "./door-token.js";
 import { execFetchPreview } from "./exec-proxy.js";
 import { previewHostTarget, previewPublicDomain } from "./preview-host.js";
@@ -164,12 +164,15 @@ async function main() {
   console.log("[door] публичные адреса проектов: " + bind + ":" + port + " (" + domain + "), health на " + healthPort);
   // Проверка внутреннего канала сразу при старте: без него дверь жива, но на каждый запрос
   // отвечает «предпросмотр не запущен», потому что состояние живёт в процессе API. Строка в логе
-  // выкатки — единственное место, где это видно без терминала на ВМ.
-  try {
-    const probe = await lookupPreview("00000000-0000-0000-0000-000000000000");
-    console.log("[door] канал состояния работает: API ответил, проект-маркер найден: " + probe.exists);
-  } catch (error) {
-    console.error("[door] канал состояния недоступен — предпросмотры не откроются: " + (error instanceof Error ? error.message : String(error)));
+  // выкатки — единственное место, где это видно без терминала на ВМ. Ждём: API стартует рядом.
+  const probeId = "00000000-0000-0000-0000-000000000000";
+  const channel = await waitForDoorApi(() => lookupPreview(probeId));
+  if (channel.ok) {
+    console.log("[door] канал состояния работает: API ответил с попытки " + channel.attempts);
+  } else {
+    console.error(
+      "[door] канал состояния недоступен после " + channel.attempts + " попыток — предпросмотры не откроются: " + (channel.error ?? "причина неизвестна"),
+    );
   }
   console.log(
     "[door] лимиты: соединений " + limits.maxConnections + ", WebSocket " + limits.maxUpgrades +

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { lookupPreview, probePreviewDoor, reportPreviewEvent, resetPreviewLookupCache } from "./door-client.js";
+import { lookupPreview, probePreviewDoor, reportPreviewEvent, resetPreviewLookupCache, waitForDoorApi } from "./door-client.js";
 import { previewDoorToken } from "./door-token.js";
 
 /**
@@ -117,6 +117,23 @@ test("событие двери уходит тем же токеном, а ег
     }) as unknown as typeof fetch;
     await assert.doesNotReject(() => reportPreviewEvent("p1", "unsettle", undefined, { fetch: failing }));
   });
+});
+
+test("waitForDoorApi ждёт API, а не падает на первой гонке старта", async () => {
+  let calls = 0;
+  const waits: number[] = [];
+  const probe = async () => {
+    calls += 1;
+    if (calls < 3) throw new Error("fetch failed");
+    return { exists: false };
+  };
+  const result = await waitForDoorApi(probe, { attempts: 5, intervalMs: 10, sleep: async ms => { waits.push(ms); } });
+  assert.deepEqual(result, { ok: true, attempts: 3 });
+  assert.deepEqual(waits, [10, 10]);
+  const failed = await waitForDoorApi(async () => { throw new Error("fetch failed"); }, { attempts: 3, intervalMs: 0, sleep: async () => {} });
+  assert.equal(failed.ok, false);
+  assert.equal(failed.attempts, 3);
+  assert.match(failed.error ?? "", /fetch failed/);
 });
 
 test("probePreviewDoor: живая дверь отдаёт лимиты, мёртвая — причину", async () => {

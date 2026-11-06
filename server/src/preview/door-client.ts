@@ -143,6 +143,37 @@ export async function probePreviewDoor(
   }
 }
 
+/**
+ * Дождаться, пока API ответит на внутренний запрос.
+ *
+ * Дверь и API стартуют одновременно (супервизор контейнера), поэтому дверь почти всегда поднимается
+ * раньше, чем API занял порт — а он ещё и читает схему базы на старте. Одна попытка даёт «fetch
+ * failed» в логе выкатки при полностью рабочей системе: строка, которой перестают верить. Ждём с
+ * паузой, а в лог пишется итог и номер попытки.
+ *
+ * Бесконечно ждать нельзя: если канала нет, честнее строка «недоступен» при каждом старте, чем
+ * висящий процесс без объяснения.
+ */
+export async function waitForDoorApi(
+  probe: () => Promise<unknown>,
+  options: { attempts?: number; intervalMs?: number; sleep?: (ms: number) => Promise<void> } = {},
+): Promise<{ ok: boolean; attempts: number; error?: string }> {
+  const attempts = Math.max(1, options.attempts ?? positiveInt(process.env.PREVIEW_DOOR_API_ATTEMPTS, 30));
+  const intervalMs = Math.max(0, options.intervalMs ?? positiveInt(process.env.PREVIEW_DOOR_API_INTERVAL_MS, 2_000));
+  const sleep = options.sleep ?? ((ms: number) => new Promise<void>(resolve => setTimeout(resolve, ms)));
+  let lastError = "";
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      await probe();
+      return { ok: true, attempts: attempt };
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+      if (attempt < attempts) await sleep(intervalMs);
+    }
+  }
+  return { ok: false, attempts, error: lastError };
+}
+
 export type PreviewDoorEvent = "unsettle" | "exec-only";
 
 /**
