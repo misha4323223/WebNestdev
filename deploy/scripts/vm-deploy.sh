@@ -388,10 +388,12 @@ reap_stuck_containers(){
 # попадает имя контейнера, который его держит.
 enforce_image_limit(){
   local keep="$1" protect_id="${2:-}" extra id repo holders
+  # Защищённый образ здесь НЕ исключается из счёта: он один из `keep` версий (обычно самая новая),
+  # а не сверх них. С исключением лимит молча становился `keep+1`, и на диске лежали три версии
+  # при «оставляю 2» — именно это показала выкатка 34c638f.
   extra=$(docker images --format '{{.ID}}\t{{.Repository}}\t{{.CreatedAt}}' 2>/dev/null \
-    | awk -F'\t' -v pattern="$IMAGE_REPO_PATTERN" -v protect_id="$protect_id" '
+    | awk -F'\t' -v pattern="$IMAGE_REPO_PATTERN" '
         index($2, pattern) == 0 { next }
-        protect_id != "" && $1 == protect_id { next }
         seen[$1]++ { next }
         { print $3 "\t" $1 "\t" $2 }
       ' \
@@ -408,6 +410,10 @@ enforce_image_limit(){
   while IFS=$'\t' read -r id repo; do
     [ -n "$id" ] || continue
     # Работающий образ не удаляется даже сверх лимита: на нём стоит сервис.
+    if [ -n "$protect_id" ] && [ "$id" = "$protect_id" ]; then
+      log "образ $id — им поднимается сервис, не удаляю"
+      continue
+    fi
     if [ -n "$(docker ps -q --filter "ancestor=$id" 2>/dev/null | head -1)" ]; then
       log "образ $id работает — оставляю сверх лимита"
       continue
@@ -453,9 +459,8 @@ prune_images(){
   # она не должна. Без docker (или с ним не отвечающим) список просто оказывается пустым, и
   # выкатка продолжает свою работу и показывает свою причину.
   doomed=$(docker images --format '{{.ID}}\t{{.Repository}}\t{{.CreatedAt}}' 2>/dev/null \
-    | awk -F'\t' -v pattern="$IMAGE_REPO_PATTERN" -v protect_id="$protected_id" '
+    | awk -F'\t' -v pattern="$IMAGE_REPO_PATTERN" '
         index($2, pattern) == 0 { next }
-        protect_id != "" && $1 == protect_id { next }
         seen[$1]++ { next }
         { print $3 "\t" $1 "\t" $2 }
       ' \
@@ -477,6 +482,12 @@ prune_images(){
   else
     while read -r id; do
       [ -n "$id" ] || continue
+      # Версия, которой поднимается сервис, не удаляется никогда: MODE=repair чинит именно такой
+      # хост, и удалить её перед её же подъёмом значило бы пойти за ней в GHCR.
+      if [ -n "$protected_id" ] && [ "$id" = "$protected_id" ]; then
+        log "образ $id — им поднимается сервис, не удаляю"
+        continue
+      fi
       # Занятый образ удалить нельзя — это нормально: он работает прямо сейчас.
       if docker rmi "$id" >/dev/null 2>&1; then
         log "удалён старый образ $id"
