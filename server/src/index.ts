@@ -260,6 +260,10 @@ console.log("[egress] " + describeEgress());
 // размеры, а не поднимает сервер. Первый проход отложен, чтобы не спорить с контейнерами,
 // которые поднимаются сразу после деплоя; дальше — раз в сутки (см. storage-scheduler.ts).
 let stopStorageReconcile: (() => void) | null = null;
+// Сторож песочниц стартует после listen (ему нужен Docker через брокер), а останавливаться должен
+// вместе с остальными таймерами — в единственном onClose ниже. Свой addHook там уже нельзя:
+// Fastify не принимает хуки после listen.
+let stopSandboxMaintenance: (() => void) | null = null;
 initializeStorage()
   .then(async () => {
     stopStorageReconcile = startStorageReconcileScheduler();
@@ -322,7 +326,7 @@ if (demoEnabled) {
   app.log.info({ demoEmail: demo.email, created: demo.created }, "demo account ready");
 }
 
-app.addHook("onClose", async () => { stopBillingSweeper(); stopMailQueue(); stopStorageReconcile?.(); stopNodeHeartbeat(); stopRemoteNodeHeartbeat(); await stopPreviewHostServer(); await closeStorage(); });
+app.addHook("onClose", async () => { stopSandboxMaintenance?.(); stopBillingSweeper(); stopMailQueue(); stopStorageReconcile?.(); stopNodeHeartbeat(); stopRemoteNodeHeartbeat(); await stopPreviewHostServer(); await closeStorage(); });
 
 await registerSecurityHeaders(app);
 
@@ -462,10 +466,7 @@ void reapRemotePreviews()
 // и повторяет проход раз в `SANDBOX_REAP_INTERVAL_MINUTES`: один такой контейнер в состоянии
 // `created` держит слой образа, и настоящая версия остаётся на диске даже после уборки образов
 // (см. sandbox/cleanup.ts).
-const stopSandboxMaintenance = startSandboxMaintenance((message, extra) => app.log.info(extra ?? {}, message));
-app.addHook("onClose", async () => {
-  stopSandboxMaintenance();
-});
+stopSandboxMaintenance = startSandboxMaintenance((message, extra) => app.log.info(extra ?? {}, message));
 // Песочница проверяется один раз после старта: маркер в каталоге песочниц и `cat` его из
 // контейнера. Это единственный способ узнать, что контейнеры видят те же файлы, что и агент;
 // результат остаётся в /api/health (`sandbox.mount`), а расхождение ещё и понижает /api/ready.
