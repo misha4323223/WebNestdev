@@ -192,6 +192,9 @@ curl -s https://panel.example.com/api/admin/2fa/verify -H 'content-type: applica
 | `GET /api/admin/ai` | `Bearer` | главный AI-провайдер: название, Base URL, модель, источник ключа, ставки кредитов и routing (раздел 7.12) |
 | `POST /api/admin/ai` | `Bearer` | переключить провайдера, модель, ключ, ставки кредитов и routing (раздел 7.12) |
 | `POST /api/admin/ai/test` | `Bearer` | проверить черновик провайдера настоящим вызовом с инструментом и выбранной цепочкой (раздел 7.12) |
+| `GET /api/admin/ai/vision` | `Bearer` | модель зрения: режим, модель, адрес и есть ли ключ (раздел 7.12.1) |
+| `POST /api/admin/ai/vision` | `Bearer` | задать модель зрения, адрес, провайдера, ключ или режим `auto\|off` (раздел 7.12.1) |
+| `POST /api/admin/ai/vision/test` | `Bearer` | проверить модель зрения настоящей картинкой (раздел 7.12.1) |
 | `GET /api/admin/ai/providers` | `Bearer` | каталог upstream-провайдеров модели: цены, tools, рекомендация (раздел 7.12) |
 | `GET /api/admin/ai/models` | `Bearer` | дополнительные модели платформы: Max, Mini и другие (раздел 7.13) |
 | `POST /api/admin/ai/models` | `Bearer` | добавить модель; `id` в теле (раздел 7.13) |
@@ -1025,6 +1028,49 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 
 Бесплатная модель тарифа «Старт» (`PLATFORM_AI_FREE_*`) и генерация картинок (`PLATFORM_IMAGE_*`)
 этим маршрутом не меняются.
+
+### 7.12.1. Зрение: отдельная модель для изображений
+
+Код: `server/src/routes/admin-ai.ts` (маршруты `/api/admin/ai/vision*`), логика —
+`server/src/provider/vision.ts` и `server/src/agent/attachments.ts`. Тесты:
+`server/src/routes/admin-ai-vision.test.ts`, `server/src/agent/attachments.test.ts`,
+`server/src/provider/wire-images.test.ts`.
+
+**По умолчанию картинку видит сама главная модель.** Сервер разбирает служебный хвост сообщения
+(«Эти файлы уже доступны: …»), загружает вложение — из бакета по публичной ссылке или из
+песочницы по пути проекта — и подставляет его в запрос частью сообщения (`image_url` с data-URL).
+Отдельного vision-вызова при этом нет, поэтому и нет прежнего отказа «vision-провайдер вернул
+пустой ответ». В историю base64 не попадает: в сессии остаётся текст с публичной ссылкой, а байты
+живут только в запросе этого запуска. Лимиты: не больше двух картинок и не больше 4 МБ каждая.
+
+**Отдельная модель нужна, когда главная изображения не принимает.** Тогда её описание
+вставляется в сообщение текстом и модель работает с описанием. «Не принимает» определяется двумя
+способами: настройкой `PLATFORM_VISION_MODE=off` (аварийный выключатель) и фактическим отказом
+провайдера — `400` про `image_url` или шаг, вернувший пустой ответ на запрос с картинкой. Вторая
+модель запоминается в памяти процесса, и следующие шаги сразу идут через описание. Если отдельная
+модель не задана, модель получает честную заметку «изображение недоступно», а не выдумку.
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" 'https://nestdev.ru/api/admin/ai/vision'
+```
+
+```json
+{ "vision": { "mode": "auto", "dedicated": true, "model": "gpt-4o-mini",
+  "baseUrl": "https://vision.example/v1", "provider": "Vision Gateway", "keySet": true } }
+```
+
+`POST /api/admin/ai/vision` принимает частичное тело: `mode` (`auto` | `off`), `model`, `baseUrl`,
+`provider`, `apiKey`. Пустая строка стирает значение: `{"model": ""}` возвращает поведение по
+умолчанию. Пустой `apiKey` означает «оставить сохранённый», поэтому смена модели не требует
+повторной вставки секрета. Ключ в ответ не попадает ни в каком виде — только `keySet`.
+Хранятся как `PLATFORM_VISION_MODE`, `PLATFORM_VISION_MODEL`, `PLATFORM_VISION_BASE_URL`,
+`PLATFORM_VISION_API_KEY`, `PLATFORM_VISION_PROVIDER`; без своего адреса и ключа берутся
+`PLATFORM_AI_BASE_URL` и `PLATFORM_AI_API_KEY`.
+
+`POST /api/admin/ai/vision/test` проверяет черновик настоящей картинкой (1×1 PNG) и возвращает
+`{ ok, model, provider, latencyMs, preview }` или `{ ok: false, error }`. Пустой текст в ответе —
+это вердикт «модель не принимает изображения», а не сбой админки; так неверная модель или ключ
+видны до сохранения.
 
 ### 7.13. Дополнительные модели платформы (Max и Mini)
 

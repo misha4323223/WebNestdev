@@ -151,12 +151,13 @@ export const PLATFORM_ENV_CATALOG: PlatformEnvEntry[] = [
   { name: "PLATFORM_AI_FREE_KEY_3", group: "ai", label: "Free AI ключ 3", hint: "Третий ключ бесплатной модели из другого аккаунта — последний резерв перед моделью платформы.", kind: "secret" },
   // Генерация изображений для проектов: инструмент image.generate. Это не модель агента, а
   // отдельный сервис картинок, поэтому и имена свои — включение не трогает ни один PLATFORM_AI_*.
-  // Зрение агента: инструмент image.inspect. Если отдельная модель не задана, используется
-  // главная модель проекта/платформы — она должна принимать изображения. Без base/key берутся
-  // PLATFORM_AI_BASE_URL и PLATFORM_AI_API_KEY.
-  { name: "PLATFORM_VISION_MODEL", group: "ai", label: "Зрение: модель", hint: "Необязательно: отдельная модель для изображений, например gpt-4o-mini или qwen2.5-vl-72b-instruct. Пусто — image.inspect использует главную модель проекта/платформы, если она понимает изображения.", kind: "value" },
-  { name: "PLATFORM_VISION_BASE_URL", group: "ai", label: "Зрение: Base URL", hint: "Необязательно: OpenAI-совместимый адрес отдельной vision-модели. Пусто — берётся PLATFORM_AI_BASE_URL или провайдер проекта.", kind: "url" },
-  { name: "PLATFORM_VISION_API_KEY", group: "ai", label: "Зрение: ключ", hint: "Необязательно: ключ отдельной vision-модели. Пусто — берётся PLATFORM_AI_API_KEY или провайдер проекта.", kind: "secret" },
+  // Зрение агента. По умолчанию картинку из чата видит сама главная модель: сервер подставляет
+  // её в запрос как часть сообщения. Отдельная модель нужна только там, где главная не умеет
+  // изображения, — тогда её описание вставляется в сообщение текстом.
+  { name: "PLATFORM_VISION_MODE", group: "ai", label: "Зрение: режим", hint: "auto (по умолчанию) — главная модель смотрит картинку сама, отдельная — только если не умеет. off — в главную модель изображения не отправляются вообще (аварийный выключатель для шлюза, который падает на картинках).", kind: "value" },
+  { name: "PLATFORM_VISION_MODEL", group: "ai", label: "Зрение: модель", hint: "Модель, которая смотрит изображения, когда главная этого не умеет: например gpt-4o-mini или qwen2.5-vl-72b-instruct. Пусто — второго прохода нет, а image.inspect работает через главную модель.", kind: "value" },
+  { name: "PLATFORM_VISION_BASE_URL", group: "ai", label: "Зрение: Base URL", hint: "Необязательно: OpenAI-совместимый адрес отдельной модели зрения. Пусто — берётся PLATFORM_AI_BASE_URL.", kind: "url" },
+  { name: "PLATFORM_VISION_API_KEY", group: "ai", label: "Зрение: ключ", hint: "Необязательно: ключ отдельной модели зрения. Пусто — берётся PLATFORM_AI_API_KEY.", kind: "secret" },
   { name: "PLATFORM_VISION_PROVIDER", group: "ai", label: "Зрение: провайдер", hint: "Необязательно: имя провайдера в ответе инструмента, по умолчанию берётся имя AI-провайдера.", kind: "value" },
   { name: "PLATFORM_IMAGE_BASE_URL", group: "ai", label: "Картинки: Base URL", hint: "Адрес сервиса генерации изображений. Cloudflare Workers AI: https://api.cloudflare.com/client/v4/accounts/<Account ID>/ai/run — модель дописывается к адресу. OpenAI-совместимый сервис: адрес с /v1, к нему допишется /images/generations.", kind: "url" },
   { name: "PLATFORM_IMAGE_MODEL", group: "ai", label: "Картинки: модель", hint: "Например @cf/black-forest-labs/flux-1-schnell (быстрая, до 8 шагов) или @cf/stabilityai/stable-diffusion-xl-base-1.0 (принимает размер и негативный промпт).", kind: "value" },

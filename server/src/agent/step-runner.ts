@@ -7,6 +7,7 @@ import { providerRetryPolicy,withProviderRetry } from "../provider/provider-retr
 import { promptCacheKey } from "../provider/prompt-caching.js";
 import type { AgentContext } from "./types.js";
 import { createReasoningBlock, reasoningBlockTitle } from "./reasoning-blocks.js";
+import { collectInlineImages, describeImages, dropInlineImages, isImageRejection, markModelTextOnly, withImageDescription } from "./attachments.js";
 
 export type StepUsage={promptTokens:number;completionTokens:number;cachedPromptTokens:number;cacheWritePromptTokens:number;estimated:boolean};
 export type StepResult={text:string;reasoning:string;calls:ProviderToolCall[];usage:StepUsage;/** Идентичность live-блока: по ней история получает тот же узел, а не второй. */reasoningBlock?:{id:string;startedAt:string}};
@@ -116,6 +117,23 @@ export async function runBudgetedStep(
   let prepared=trim(messages);
   hooks.onPrepared?.({tokens:prepared.report.estimatedTokens,budgetTokens:current.budgetTokens});
 
+  /**
+   * Откат с изображений на текст — единожды за шаг.
+   *
+   * Два разных вида одного и того же отказа: шлюз либо отвечает 400 на часть `image_url`, либо
+   * молча возвращает шаг без текста и вызовов. В обоих случаях модель объявляется текстовой
+   * (``markModelTextOnly``), картинки снимаются, а вместо них в сообщение вставляется описание
+   * отдельной модели зрения — если она настроена. Без описания шаг всё равно повторяется текстом:
+   * лучше честная заметка «изображение недоступно», чем пустой ответ и падение запуска.
+   */
+  const retryWithoutImages=async(images:ReturnType<typeof collectInlineImages>,reason:string)=>{
+    markModelTextOnly(model);
+    console.error("[agent] главная модель не приняла изображение ("+reason+"), повторяю шаг без картинок и с описанием");
+    const description=await describeImages(images,context.signal?{signal:context.signal}:{});
+    prepared=trim(withImageDescription(dropInlineImages(prepared.messages),description));
+    hooks.onPrepared?.({tokens:prepared.report.estimatedTokens,budgetTokens:current.budgetTokens});
+  };
+
   for(let attempt=0;attempt<2;attempt++){
     try{
       // Отказ по лимиту частоты или временная недоступность лечится ожиданием и тем же запросом:
@@ -126,6 +144,15 @@ export async function runBudgetedStep(
         ...(context.signal?{signal:context.signal}:{}),
         onWait:info=>context.emit({type:"run.retrying",runId:context.runId,attempt:info.attempt,attempts:info.attempts,waitSeconds:Math.max(1,Math.round(info.waitMs/1000)),...(info.code?{code:info.code}:{})}),
       });
+      // Пустой шаг при картинках в запросе — тот самый «vision-провайдер вернул пустой ответ»:
+      // шлюз проглотил изображение и вернул ничего. Это не конец запуска, а повод снять картинки.
+      if(!result.text.trim()&&!result.calls.length&&!result.reasoning.trim()){
+        const images=collectInlineImages(prepared.messages);
+        if(images.length&&attempt===0){
+          await retryWithoutImages(images,"пустой ответ на запрос с изображением");
+          continue;
+        }
+      }
       if(!result.usage.estimated&&result.usage.promptTokens>0){
         // The provider counted the real prompt, so it says how many characters a token really is.
         current.charsPerToken=calibrateCharsPerToken(prepared.report.chars,result.usage.promptTokens);
@@ -135,6 +162,12 @@ export async function runBudgetedStep(
       }
       return {result,messages:prepared.messages,budget:current,estimatedTokens:prepared.report.estimatedTokens};
     }catch(error){
+      if(error instanceof ProviderHttpError&&error.code==="BAD_REQUEST"&&isImageRejection(error.detail)){
+        const images=collectInlineImages(prepared.messages);
+        if(!images.length||attempt>0)throw error;
+        await retryWithoutImages(images,describeProviderFailure(error));
+        continue;
+      }
       if(!(error instanceof ProviderHttpError)||(error.code!=="CONTEXT_OVERFLOW"&&error.code!=="TOO_MANY_MESSAGES"))throw error;
       const tooMany=error.code==="TOO_MANY_MESSAGES";
       if(attempt>0)throw new ContextBudgetError(

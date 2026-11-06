@@ -76,7 +76,14 @@ type WireToolCall={
   function:{name:string;arguments:string};
 };
 
-type WireContentPart={type:"text";text:string;cache_control?:{type:"ephemeral"}};
+/**
+ * Части содержимого запроса. Картинка — стандартная часть OpenAI-совместимого протокола:
+ * `image_url` с data-URL внутри. Она нужна, чтобы главная мультимодальная модель видела экран
+ * сама, а не через отдельный vision-запрос: тот путь и ломался с «провайдер вернул пустой ответ».
+ */
+type WireContentPart=
+  |{type:"text";text:string;cache_control?:{type:"ephemeral"}}
+  |{type:"image_url";image_url:{url:string;detail?:"auto"|"low"|"high"}};
 type WireContent=string|WireContentPart[];
 type WireMessage =
   | {role:"user"|"system";content:WireContent}
@@ -233,6 +240,20 @@ export function toWireMessages(messages:ChatMessage[],options?:{reasoningPassthr
           arguments:JSON.stringify(call.arguments??{})
         }
       }))
+      };
+    }
+    if(message.role==="user"&&message.images?.length){
+      // Текст остаётся первой частью: шлюзы без поддержки частей отвечают ошибкой формы, и её
+      // ловит step-runner — тогда изображения снимаются и шаг повторяется текстом.
+      return {
+        role:"user",
+        content:[
+          ...(message.content?[{type:"text" as const,text:message.content}]:[]),
+          ...message.images.map(image=>({
+            type:"image_url" as const,
+            image_url:{url:"data:"+image.contentType+";base64,"+image.data,detail:"high" as const},
+          })),
+        ],
       };
     }
     return message;

@@ -23,6 +23,7 @@ import {
   upstreamProviderEligible,
 } from "../provider/upstream-catalog.js";
 import { getPlatformModel } from "../platform/platform-models.js";
+import { describeImage, getDedicatedVisionConfig, visionStatus, type VisionConfig } from "../provider/vision.js";
 import { upstreamRoutingSchema } from "./admin-ai-schema.js";
 
 const baseUrl = z.string().trim().url().max(500).refine(value => /^https?:\/\//i.test(value), "Нужен адрес вида https://…");
@@ -59,11 +60,41 @@ const catalogQuerySchema = z.object({
   refresh: z.union([z.string(), z.boolean()]).optional(),
 });
 
+/**
+ * Модель зрения из админки.
+ *
+ * По умолчанию картинку из чата видит сама главная модель — сюда заходят только тогда, когда
+ * она не умеет изображения: тогда описание делает эта модель, а текст описания попадает в
+ * сообщение. Пустое поле стирает значение: пустая модель возвращает поведение по умолчанию.
+ */
+const visionSchema = z.object({
+  /** `auto` — главная модель пробует сама; `off` — изображения в неё не отправляются вообще. */
+  mode: z.enum(["auto", "off"]).optional(),
+  model: z.string().trim().max(300).optional(),
+  baseUrl: baseUrl.optional(),
+  provider: z.string().trim().max(120).optional(),
+  /** Пусто — сохранить текущий ключ: смена модели не должна требовать повторной вставки секрета. */
+  apiKey: z.string().trim().max(20_000).optional(),
+});
+const visionTestSchema = z.object({
+  model: z.string().trim().min(1, "Укажите модель зрения").max(300),
+  baseUrl: baseUrl.optional(),
+  provider: z.string().trim().max(120).optional(),
+  apiKey: z.string().trim().max(20_000).optional(),
+});
+/** Крошечный PNG для проверки связи: модель должна ответить текстом, а не понять картинку. */
+const PROBE_PNG = Buffer.from(
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==",
+  "base64",
+);
+
 export type AdminAiRouteDeps = {
   save: typeof savePlatformEnv;
   testAi: typeof testProviderConnection;
   /** Каталог провайдеров; в тестах подменяется, чтобы не ходить в сеть. */
   catalog: typeof getUpstreamModelCatalog;
+  /** Проверка модели зрения; в тестах подменяется, чтобы не ходить в сеть. */
+  probeVision: (config: VisionConfig, bytes: Buffer) => Promise<string>;
 };
 
 function normalizeBaseUrl(value: string) {
@@ -84,6 +115,7 @@ export async function registerAdminAiRoutes(app: FastifyInstance, overrides: Par
     save: savePlatformEnv,
     testAi: testProviderConnection,
     catalog: getUpstreamModelCatalog,
+    probeVision: (config, bytes) => describeImage(config, { bytes, contentType: "image/png" }),
     ...overrides,
   };
 
@@ -91,7 +123,8 @@ export async function registerAdminAiRoutes(app: FastifyInstance, overrides: Par
     const auth = await requireAdmin(request, reply);
     if (!auth) return;
     applyNoStoreToReply(reply);
-    return { ai: platformAiProviderStatus() };
+    // Модель зрения рядом с главной: админке не нужен второй запрос, чтобы показать оба поля.
+    return { ai: platformAiProviderStatus(), vision: visionStatus() };
   });
 
   app.post("/api/admin/ai", async (request, reply) => {
@@ -188,6 +221,85 @@ export async function registerAdminAiRoutes(app: FastifyInstance, overrides: Par
       token: parsed.data.apiKey?.trim() || saved?.token,
       ...(routing ? { routing } : {}),
     });
+  });
+
+  /**
+   * Модель зрения: что сейчас настроено. Ключ не возвращается даже замаскированным — только факт
+   * его наличия: по этому ответу админка показывает «настроено/нет» без секрета в браузере.
+   */
+  app.get("/api/admin/ai/vision", async (request, reply) => {
+    const auth = await requireAdmin(request, reply);
+    if (!auth) return;
+    applyNoStoreToReply(reply);
+    return { vision: visionStatus() };
+  });
+
+  app.post("/api/admin/ai/vision", async (request, reply) => {
+    const auth = await requireAdmin(request, reply);
+    if (!auth) return;
+    applyNoStoreToReply(reply);
+    const parsed = visionSchema.safeParse(request.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "Проверьте модель зрения и адрес" });
+    const values: Record<string, string> = {};
+    if (parsed.data.mode !== undefined) values.PLATFORM_VISION_MODE = parsed.data.mode === "off" ? "off" : "";
+    if (parsed.data.model !== undefined) values.PLATFORM_VISION_MODEL = parsed.data.model;
+    if (parsed.data.baseUrl !== undefined) values.PLATFORM_VISION_BASE_URL = parsed.data.baseUrl;
+    if (parsed.data.provider !== undefined) values.PLATFORM_VISION_PROVIDER = parsed.data.provider;
+    if (parsed.data.apiKey?.trim()) values.PLATFORM_VISION_API_KEY = parsed.data.apiKey;
+    if (!Object.keys(values).length) return reply.code(400).send({ error: "Нечего сохранять: передайте модель, адрес, ключ или режим" });
+    const result = await deps.save(values);
+    if (result.skipped.length) {
+      return reply.code(400).send({ error: result.skipped.map(item => item.name + " — " + item.message).join("; ") });
+    }
+    await recordAudit({
+      action: "platform.vision.updated",
+      actorType: "admin",
+      actorId: auth.admin.id,
+      actorLabel: auth.admin.email,
+      ip: request.ip,
+      details: {
+        saved: result.saved.join(", "),
+        cleared: result.cleared.join(", "),
+        model: parsed.data.model ?? null,
+        mode: parsed.data.mode ?? null,
+      },
+    });
+    return { saved: true, vision: visionStatus() };
+  });
+
+  /**
+   * Проверка модели зрения до сохранения: черновик (адрес, модель, ключ) или то, что уже
+   * сохранено, если нового ключа нет. Ответ `ok:false` — это вердикт провайдера, а не сбой админки:
+   * именно так видно, что ключ или модель вставлены неверно.
+   */
+  app.post("/api/admin/ai/vision/test", async (request, reply) => {
+    const auth = await requireAdmin(request, reply);
+    if (!auth) return;
+    applyNoStoreToReply(reply);
+    const parsed = visionTestSchema.safeParse(request.body ?? {});
+    if (!parsed.success) return reply.code(400).send({ error: parsed.error.issues[0]?.message ?? "Проверьте адрес и модель" });
+    const saved = getDedicatedVisionConfig();
+    const config: VisionConfig = {
+      provider: parsed.data.provider?.trim() || saved?.provider || "vision",
+      baseUrl: parsed.data.baseUrl ?? saved?.baseUrl ?? "",
+      model: parsed.data.model,
+      key: parsed.data.apiKey?.trim() || saved?.key || "",
+    };
+    if (!config.baseUrl) return reply.code(400).send({ error: "Укажите Base URL модели зрения или сохраните PLATFORM_AI_BASE_URL" });
+    const started = Date.now();
+    try {
+      const answer = (await deps.probeVision(config, PROBE_PNG)).trim();
+      if (!answer) return { ok: false, error: "Модель ответила пустым текстом — скорее всего, она не принимает изображения", model: config.model, provider: config.provider, latencyMs: Date.now() - started };
+      return { ok: true, model: config.model, provider: config.provider, latencyMs: Date.now() - started, preview: answer.slice(0, 200) };
+    } catch (error) {
+      return {
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+        model: config.model,
+        provider: config.provider,
+        latencyMs: Date.now() - started,
+      };
+    }
   });
 
   /**

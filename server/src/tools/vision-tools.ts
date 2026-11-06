@@ -9,8 +9,10 @@ import { assertNotSecretProjectPath } from "../secrets/secret-paths.js";
 import { getVisionConfig, inspectImage } from "../provider/vision.js";
 import { getPlatformProviderConfig } from "../provider/platform-provider.js";
 import { getProjectProvider } from "../project-store.js";
-import { sniffImageType } from "../provider/image-generation.js";
-import { assertPublicUrl, requestPage, WebReadError, type ResolveName } from "../web/read-url.js";
+import { imageContentType, loadImageFromUrl, MAX_IMAGE_BYTES, type ImageUrlResult } from "../media/remote-image.js";
+
+/** Ссылка на изображение грузится общим модулем: он же нужен рантайму агента (см. media/remote-image.ts). */
+export { loadImageFromUrl, type ImageUrlResult };
 
 /**
  * `image.inspect` — единственный способ агента действительно увидеть картинку.
@@ -28,9 +30,6 @@ import { assertPublicUrl, requestPage, WebReadError, type ResolveName } from "..
  * придумает описание.
  */
 
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
-const URL_TIMEOUT_MS = 15_000;
-const MAX_REDIRECTS = 4;
 const DEFAULT_QUESTION =
   "Опиши этот экран как внимательный UI-ревьюер: что видно, где нарушены отступы, выравнивание, читаемость или иерархия, что обрезано или выглядит незаконченным. Перечисли самые важные проблемы по расположению и элементам.";
 
@@ -53,95 +52,6 @@ const requestSchema = z.object({
 }).refine(value => Boolean(value.path) !== Boolean(value.url), {
   message: "Нужен ровно один источник изображения: path или url",
 });
-
-function imageContentType(bytes: Buffer): string | null {
-  const known = sniffImageType(bytes);
-  if (known) return known;
-  if (bytes.length >= 6) {
-    const head = bytes.subarray(0, 6).toString("latin1");
-    if (head === "GIF87a" || head === "GIF89a") return "image/gif";
-  }
-  return null;
-}
-
-export type ImageUrlResult =
-  | { ok: true; bytes: Buffer; contentType: string; finalUrl: string }
-  | { ok: false; code: "not_url" | "blocked_host" | "unavailable" | "too_large" | "unsupported"; error: string };
-
-/**
- * Изображение по публичной ссылке — без скачивания копии в проект.
- *
- * Вложения из чата живут в бакете, и в сообщении агент видит их ссылкой; раньше единственным
- * входом `image.inspect` был путь внутри проекта, поэтому картинку приходилось скачивать, а потом
- * удалять. Транспорт здесь тот же, что у `web.read`, и это не мелочь: адрес называет модель, а
- * сервер видит внутреннюю сеть Docker, Postgres на loopback и метаданные облака. Поэтому только
- * http/https и порты 80/443, имя резолвится один раз и соединение идёт на проверенный адрес
- * (иначе DNS rebinding вернул бы внутренний хост), каждый редирект проверяется заново, а тело
- * ограничено по размеру и времени.
- */
-export async function loadImageFromUrl(
-  raw: string,
-  options: { signal?: AbortSignal; resolve?: ResolveName } = {},
-): Promise<ImageUrlResult> {
-  const timeout = new AbortController();
-  const timer = setTimeout(() => timeout.abort(), URL_TIMEOUT_MS);
-  const signal = options.signal ? AbortSignal.any([options.signal, timeout.signal]) : timeout.signal;
-  try {
-    let current: URL;
-    let addresses: string[];
-    try {
-      const checked = await assertPublicUrl(raw, options.resolve);
-      current = checked.url;
-      addresses = checked.addresses;
-    } catch (error) {
-      const reason = error instanceof WebReadError ? error : null;
-      const code = reason?.code === "blocked_host" ? "blocked_host" : reason?.code === "not_url" ? "not_url" : "unavailable";
-      return { ok: false, code, error: reason?.message ?? (error instanceof Error ? error.message : String(error)) };
-    }
-
-    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
-      const response = await requestPage(current, addresses, signal, { maxBytes: MAX_IMAGE_BYTES });
-      if (response.status >= 300 && response.status < 400) {
-        const header = response.headers.location;
-        const location = Array.isArray(header) ? header[0] : header;
-        if (!location) return { ok: false, code: "unavailable", error: "Ссылка отвечает редиректом без адреса (Location)" };
-        try {
-          const next = await assertPublicUrl(new URL(location, current).href, options.resolve);
-          current = next.url;
-          addresses = next.addresses;
-        } catch (error) {
-          return {
-            ok: false,
-            code: "blocked_host",
-            error: "Редирект ведёт на запрещённый адрес: " + (error instanceof Error ? error.message : String(error)),
-          };
-        }
-        continue;
-      }
-      if (response.status < 200 || response.status >= 300) {
-        return { ok: false, code: "unavailable", error: "Ссылка на изображение ответила HTTP " + response.status };
-      }
-      if (response.oversized || response.bytes.length > MAX_IMAGE_BYTES) {
-        return { ok: false, code: "too_large", error: "Изображение по ссылке больше 10 МБ — уменьшите его перед анализом" };
-      }
-      if (!response.bytes.length) return { ok: false, code: "unavailable", error: "По ссылке пришёл пустой ответ" };
-      // Тип определяется по самим байтам: заголовок ответа может врать, а модель ждёт настоящий.
-      const contentType = imageContentType(response.bytes);
-      if (!contentType) {
-        return { ok: false, code: "unsupported", error: "По ссылке не PNG/JPEG/WebP/GIF: vision-модель такие форматы не принимает" };
-      }
-      return { ok: true, bytes: response.bytes, contentType, finalUrl: current.href };
-    }
-    return { ok: false, code: "unavailable", error: "Слишком много перенаправлений (больше " + MAX_REDIRECTS + ")" };
-  } catch (error) {
-    if (error instanceof Error && error.name === "AbortError") {
-      return { ok: false, code: "unavailable", error: "Ссылка не ответила за " + Math.round(URL_TIMEOUT_MS / 1000) + " секунд" };
-    }
-    return { ok: false, code: "unavailable", error: "Не удалось открыть ссылку: " + (error instanceof Error ? error.message : String(error)) };
-  } finally {
-    clearTimeout(timer);
-  }
-}
 
 registerTool({
   name: "image.inspect",

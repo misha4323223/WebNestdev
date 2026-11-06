@@ -7,6 +7,7 @@ import { notesNotice,notesUpdateNotice,readNoteLines } from "./agent/notes.js";
 import { buildProjectContext } from "./agent/context-builder.js";
 import { retrieveRelevantFiles } from "./agent/context-retrieval.js";
 import { executeTool } from "./agent/tool-executor.js";
+import { inlineAttachedImages, visionNotice } from "./agent/attachments.js";
 import { runBudgetedStep,type StepBudget } from "./agent/step-runner.js";
 import { createWorkingMemory,recordWorkingChange,setWorkingCheck,setWorkingPlan,withWorkingState } from "./agent/working-memory.js";
 import type { EventSink } from "./agent/types.js";
@@ -304,6 +305,27 @@ export class AgentRuntime {
           usageTotals.estimated=usageTotals.estimated||usage.estimated;
         },
       });
+      // Вложения пользователя — в контекст главной модели: картинка уходит частью того же
+      // сообщения, а не вторым запросом к отдельной модели. Истории это не меняет: base64 живёт
+      // только в этом запуске (agent/attachments.ts), сессия по-прежнему хранит текст со ссылкой.
+      // Если главная модель картинки не принимает — описание сделает модель зрения из админки,
+      // а без неё модель получит честную заметку «изображение недоступно».
+      try{
+        const inlined=await inlineAttachedImages(messages,{
+          projectId:request.projectId,
+          userId:request.userId,
+          model,
+          ...(signal?{signal}:{}),
+        });
+        messages=inlined.messages;
+        const notice=visionNotice(inlined);
+        if(notice)messages=insertSystemNotice(messages,notice);
+        // Строка в журнал: по ней видно, дошла ли картинка до главной модели или ушла на описание.
+        if(inlined.attached||inlined.described)console.log("[vision] изображения: "+inlined.attached+" в контексте, описание модели зрения: "+(inlined.described?"да":"нет")+", модель "+model);
+      }catch(error){
+        // Вложение — не повод не начинать работу: без картинки запуск продолжается как раньше.
+        console.error("Failed to inline the attached images",error);
+      }
       let consecutiveVerifyFailures=0;
       let consecutiveScenarioFailures=0;
       let lastVerificationFailure="";

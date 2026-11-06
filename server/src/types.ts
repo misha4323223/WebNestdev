@@ -19,8 +19,17 @@ export type ReasoningBlock={
   startedAt:string;
   finishedAt?:string;
 };
+/**
+ * Байты одного изображения для шага модели: тип и base64 без префикса.
+ *
+ * В историю это не попадает никогда: сообщение пользователя в сессии хранит только текст с
+ * публичной ссылкой, а картинка подставляется в запрос на время запуска. Иначе одна фотография
+ * занимала бы мегабайты в PostgreSQL и уезжала бы в каждый следующий запрос разговора.
+ */
+export type MessageImage={contentType:string;data:string;name?:string};
 export type ChatMessage=
-  | {role:"user"|"system";content:string}
+  | {role:"user";content:string;/** Только на время запуска: см. MessageImage. */images?:MessageImage[]}
+  | {role:"system";content:string}
   /**
    * `reasoning` is what the model thought before answering. It is shown to the user and kept in the
    * session; DeepSeek thinking mode also receives it back with tools, while other providers do not.
