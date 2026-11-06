@@ -669,6 +669,17 @@ wait_for_health(){
   log "диагностика $diagnostic:"
   curl -sS --max-time 5 "$diagnostic" 2>&1 | head -c 500 || true
   printf '\n'
+  # Почему сервис молчит, из /api/health не видно, если процесс не слушает вовсе: тогда
+  # ответить просто некому, и единственный след — логи контейнера. Без этой строки отказ
+  # выкатки выглядит как «не поднялся за 60 с» и требует SSH, которого на ВМ нет.
+  if command -v docker >/dev/null 2>&1 && [ -f "$COMPOSE_FILE" ]; then
+    log "состояние контейнеров:"
+    docker compose -f "$COMPOSE_FILE" ps 2>&1 | sed 's/^/[deploy] /' | tail -8 || true
+    log "логи $SERVICE (последние 80 строк):"
+    # `--no-color` и `--tail`: строка и так уходит в лог Actions, а весь вывод не нужен.
+    docker compose -f "$COMPOSE_FILE" logs --no-color --tail=80 "$SERVICE" 2>&1 \
+      | sed 's/^/[deploy] /' | tail -80 || true
+  fi
   return 1
 }
 
