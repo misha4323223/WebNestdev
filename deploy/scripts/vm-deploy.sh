@@ -377,6 +377,50 @@ reap_stuck_containers(){
   log "сняты зависшие контейнеры: $removed (они держали слои образов)"
 }
 
+# Довести число версий до лимита по факту, а не по правилу.
+#
+# Классификация в `prune_images` — правило: «две последние на репозиторий, чужие репозитории
+# целиком». Оно ошибается в трёх случаях: у образа два тега (в листинге две строки на один ID),
+# строка репозитория не совпадает с активным (`latest` рядом с `sha-…`), и `docker rmi` не смог
+# удалить образ, который в этот момент держал контейнер. Тогда «оставляю 2» остаётся обещанием,
+# а на диске лежит 3 версии по 1.45 ГБ — именно это и показала выкатка 52edc54. Здесь считается
+# фактический список после первой попытки, и каждый лишний образ либо удаляется, либо в лог
+# попадает имя контейнера, который его держит.
+enforce_image_limit(){
+  local keep="$1" protect_id="${2:-}" extra id repo holders
+  extra=$(docker images --format '{{.ID}}\t{{.Repository}}\t{{.CreatedAt}}' 2>/dev/null \
+    | awk -F'\t' -v pattern="$IMAGE_REPO_PATTERN" -v protect_id="$protect_id" '
+        index($2, pattern) == 0 { next }
+        protect_id != "" && $1 == protect_id { next }
+        seen[$1]++ { next }
+        { print $3 "\t" $1 "\t" $2 }
+      ' \
+    | sort -r \
+    | awk -F'\t' -v keep="$keep" '{ if (++count[$3] > keep) print $2 "\t" $3 }' || true)
+  if [ -z "$extra" ]; then
+    log "сверх лимита $keep версий нет"
+    return 0
+  fi
+  if [ "$DRY_RUN" = "1" ]; then
+    log "dry-run: удалил бы сверх лимита: $(printf '%s' "$extra" | cut -f1 | tr '\n' ' ')"
+    return 0
+  fi
+  while IFS=$'\t' read -r id repo; do
+    [ -n "$id" ] || continue
+    # Работающий образ не удаляется даже сверх лимита: на нём стоит сервис.
+    if [ -n "$(docker ps -q --filter "ancestor=$id" 2>/dev/null | head -1)" ]; then
+      log "образ $id работает — оставляю сверх лимита"
+      continue
+    fi
+    if docker rmi "$id" >/dev/null 2>&1; then
+      log "удалён лишний образ $id ($repo)"
+    else
+      holders=$(docker ps -a --filter "ancestor=$id" --format '{{.Names}} ({{.State}})' 2>/dev/null | tr '\n' ' ' || true)
+      log "образ $id удалить не удалось: держат контейнеры ${holders:-неизвестно}"
+    fi
+  done <<< "$extra"
+}
+
 prune_images(){
   local keep="$KEEP_IMAGES"
   case "$keep" in ''|*[!0-9]*) keep=1;; esac
@@ -462,16 +506,17 @@ prune_images(){
       *) log "кеш сборки не трогаю (PRUNE_BUILD_CACHE=0)" ;;
     esac
   fi
+  enforce_image_limit "$keep" "$protected_id"
   after=$(docker system df --format '{{.Size}}' 2>/dev/null | tr '\n' ' ' || true)
   log "docker system df: было [$before], стало [$after]"
-  # Сколько наших версий реально осталось: если больше `$keep`, значит лишние держат контейнеры,
-  # и причина должна быть в логе, а не выясняться через неделю по кончившемуся диску.
+  # Сколько наших версий реально осталось после доведения до лимита. Строка нужна даже когда всё
+  # в порядке: она подтверждает в логе выкатки, что обещание «две версии» выполнено.
   left=$(docker images --format '{{.ID}}\t{{.Repository}}' 2>/dev/null \
     | awk -F'\t' -v pattern="$IMAGE_REPO_PATTERN" 'index($2, pattern) > 0 { print $1 }' \
     | sort -u | wc -l | tr -d ' ' || true)
   case "$left" in ''|*[!0-9]*) left=0;; esac
   if [ "$left" -gt "$keep" ]; then
-    log "ВНИМАНИЕ: наших версий на диске $left при KEEP_IMAGES=$keep — лишние держат контейнеры (сторож сервера снимет их в течение SANDBOX_REAP_INTERVAL_MINUTES)"
+    log "ВНИМАНИЕ: наших версий на диске $left при KEEP_IMAGES=$keep — причина в строке «держат контейнеры» выше; сторож сервера снимает такие контейнеры каждые SANDBOX_REAP_INTERVAL_MINUTES"
   else
     log "наших версий на диске: $left (KEEP_IMAGES=$keep)"
   fi
