@@ -162,6 +162,15 @@ async function main() {
   }
 
   console.log("[door] публичные адреса проектов: " + bind + ":" + port + " (" + domain + "), health на " + healthPort);
+  // Проверка внутреннего канала сразу при старте: без него дверь жива, но на каждый запрос
+  // отвечает «предпросмотр не запущен», потому что состояние живёт в процессе API. Строка в логе
+  // выкатки — единственное место, где это видно без терминала на ВМ.
+  try {
+    const probe = await lookupPreview("00000000-0000-0000-0000-000000000000");
+    console.log("[door] канал состояния работает: API ответил, проект-маркер найден: " + probe.exists);
+  } catch (error) {
+    console.error("[door] канал состояния недоступен — предпросмотры не откроются: " + (error instanceof Error ? error.message : String(error)));
+  }
   console.log(
     "[door] лимиты: соединений " + limits.maxConnections + ", WebSocket " + limits.maxUpgrades +
       ", таймаут апгрейда " + limits.upgradeTimeoutMs + " мс",

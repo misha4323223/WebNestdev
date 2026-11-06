@@ -602,10 +602,18 @@ export async function stopPreviewHostServer() {
   if (current) await current.close();
 }
 
-/** Строка в лог при старте: по какому адресу реверс-прокси отдаёт предпросмотры. */
+/**
+ * Строка в лог при старте: по какому адресу реверс-прокси отдаёт предпросмотры.
+ *
+ * При `PREVIEW_DOOR_SEPARATE=1` порт держит не этот процесс: писать «дверь слушает» из API значит
+ * отправлять читателя лога искать слушатель не в том процессе. Здесь говорится, где дверь живёт,
+ * а собственный старт двери она печатает сама (`[door] …`).
+ */
 export function describePreviewHostServer() {
   const domain = previewPublicDomain();
   if (!domain) return "дверь публичных предпросмотров не поднимается: PREVIEW_PUBLIC_DOMAIN не задан";
-  return "дверь публичных предпросмотров: " + previewHostBind() + ":" + previewHostPort() + " (проект." + domain + "), пример адреса — " + previewPublicUrl("00000000-0000-0000-0000-000000000000");
+  const address = previewHostBind() + ":" + previewHostPort() + " (проект." + domain + "), пример адреса — " + previewPublicUrl("00000000-0000-0000-0000-000000000000");
+  if (process.env.PREVIEW_DOOR_SEPARATE === "1") return "дверь публичных предпросмотров: отдельный процесс, " + address;
+  return "дверь публичных предпросмотров: " + address;
 }
 
