@@ -2,6 +2,7 @@ import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { runInSandbox, type CommandResult, type SandboxRunOptions } from "../sandbox-worker.js";
 import type { SandboxConfig } from "../sandbox-manager.js";
+import { npmInstallTimeoutMs } from "../sandbox/config.js";
 
 /**
  * Зависимости проекта — до сборки и до dev-сервера.
@@ -87,6 +88,8 @@ export async function ensureProjectDependencies(
     // но только на время установки — файл удаляется сразу после команды.
     result = await run(config, INSTALL_COMMAND, config.root, {
       network: "bridge",
+      // Установка не должна упираться в общий лимит команды: большое дерево идёт минуты.
+      timeoutMs: npmInstallTimeoutMs(),
       injectSecretEnvFile: runOptions.injectSecretEnvFile ?? true,
       maskSecretEnvFiles: runOptions.maskSecretEnvFiles ?? false,
       extraMounts: runOptions.extraMounts ?? [],

@@ -4,6 +4,7 @@ import { runInSandbox } from "../sandbox-worker.js";
 import { listSandboxJobs, startSandboxJob, stopSandboxJob, tailSandboxJob } from "../sandbox/jobs.js";
 import { commandNeedsNetwork, isPackageInstall, networkHint, networkHintForLogs, NO_NETWORK_HINT, PACKAGE_INSTALL_HINT } from "../sandbox/network-hint.js";
 import { registerTool } from "../tool-registry.js";
+import { npmInstallTimeoutMs } from "../sandbox/config.js";
 
 /**
  * Контейнерных команд в песочнице нет: проект уже выполняется в контейнере платформы, а `docker`
@@ -214,6 +215,7 @@ registerTool({
     const sandbox = await getSandbox(context.projectId, context.userId);
     const cwd = await resolveInsideSandbox(sandbox.root, sandbox.root + "/" + (value.cwd ?? ""));
     // `npm install` выполняет lifecycle-скрипты проекта; они тоже не должны видеть секреты.
-    return runInSandbox(sandbox, "npm install --no-audit --no-fund", cwd, { network: "bridge", signal: context.signal, maskSecretEnvFiles: true });
+    // Таймаут — установочный, а не общий: дерево из сотен пакетов не укладывается в 120 с.
+    return runInSandbox(sandbox, "npm install --no-audit --no-fund", cwd, { network: "bridge", signal: context.signal, maskSecretEnvFiles: true, timeoutMs: npmInstallTimeoutMs() });
   },
 });

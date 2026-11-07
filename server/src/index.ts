@@ -23,7 +23,7 @@ import { assertEncryptionConfigured } from "./storage/secret-crypto.js";
 import { describeTrustProxy, trustProxyOption } from "./security/client-ip.js";
 import { registerSameOriginGuard } from "./security/same-origin.js";
 import { registerSecurityHeaders } from "./security/headers.js";
-import { describeSandboxPaths, describeSandboxRuntime, sandboxRuntime } from "./sandbox/config.js";
+import { describeSandboxPaths, describeSandboxRuntime, npmInstallTimeoutMs, sandboxRuntime } from "./sandbox/config.js";
 import { dockerCliRunner, productionAbuseWatch } from "./security/abuse-watch.js";
 import { initializeNodeRegistry, stopNodeHeartbeat } from "./nodes/local-node.js";
 import { stopRemoteNodeHeartbeat } from "./nodes/remote-heartbeat.js";
@@ -253,6 +253,9 @@ void (async () => {
 // сразу, а не после того, как агент пожалуется на пустой терминал.
 console.log("[sandbox] " + describeSandboxPaths());
 console.log("[sandbox] " + describeSandboxRuntime());
+// Установка зависимостей идёт дольше обычной команды; без этой строки «почему install ждал
+// десять минут» и «где менять предел» ищут в коде, а не в логе старта.
+console.log("[sandbox] установка зависимостей: до " + Math.round(npmInstallTimeoutMs() / 1000) + " с (NPM_INSTALL_TIMEOUT_MS)");
 console.log("[docker] " + describeDockerEndpoint());
 console.log("[egress] " + describeEgress());
 // База инициализируется в фоне: DDL на «холодной» серверлесс-базе занимает 30–60 с.

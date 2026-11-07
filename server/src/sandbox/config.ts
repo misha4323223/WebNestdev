@@ -22,6 +22,20 @@ import type { SandboxConfig } from "./sandbox-types.js";
  */
 export const DEFAULT_SANDBOX_IMAGE="node:26-bookworm";
 
+/**
+ * Сколько ждём установку npm-зависимостей.
+ *
+ * Общий лимит команды (TOOL_COMMAND_TIMEOUT_MS, 120 с) — про команды агента: долгая команда
+ * держит место контейнера и шаг. Установка — другое дело: дерево из нескольких сотен пакетов
+ * (Vite, Playwright, Fastify) не укладывается в две минуты, и `npm install` умирал ровно на
+ * таймауте, оставляя недособранный node_modules. Десять минут по умолчанию закрывают такие
+ * проекты, а NPM_INSTALL_TIMEOUT_MS позволяет поднять предел до 30 минут.
+ */
+export function npmInstallTimeoutMs(){
+  const value=Number(process.env.NPM_INSTALL_TIMEOUT_MS??600_000);
+  return Number.isFinite(value)&&value>=30_000?Math.min(Math.round(value),30*60_000):600_000;
+}
+
 /** Образ песочницы из окружения; пустая строка — это «не задано», а не имя образа. */
 export function sandboxImage(){
   return process.env.SANDBOX_IMAGE?.trim()||DEFAULT_SANDBOX_IMAGE;
