@@ -11,6 +11,7 @@ import { cancelProjectRestore, projectRestoreJob, restoreJobActive } from "../st
 import { recordArchiveFailure } from "../storage/archive-health.js";
 import { isConversationRunning, isRunActive } from "../agent/active-runs.js";
 import { getPreview } from "../preview/preview-store.js";
+import { stopPreview } from "../preview-manager.js";
 import { recordAudit } from "../security/audit-journal.js";
 import { deleteProjectMedia, mediaConfigFromEnv } from "../media/media-store.js";
 import { consumeRateLimit } from "../storage/rate-limit-store.js";
@@ -112,7 +113,12 @@ export async function registerProjectRoutes(app:FastifyInstance){
     const p=z.object({id:z.string().min(1)}).parse(request.params);
     // Имя нужно журналу после удаления: в записи останется и id, и человекочитаемое название.
     const project=await getProject(p.id);
+    // Агент может дописать файлы уже после удаления каталога — тогда удалённый проект
+    // вернулся бы на диск и снова занял место. Удаление начинается только после остановки.
+    if(project?.userId===user.id&&isRunActive(p.id))return reply.code(409).send({error:"Агент ещё работает в проекте — дождитесь окончания запуска или остановите его",code:"PROJECT_BUSY"});
     if(!await deleteProject(p.id,user.id))return reply.code(404).send({error:"Проект не найден"});
+    // Контейнер предпросмотра держит папку проекта открытой и пережил бы удаление.
+    await stopPreview(p.id).catch(error=>console.warn("[preview] не удалось остановить предпросмотр удалённого проекта",error));
     // Если проект как раз возвращался из архива, распаковка должна остановиться: иначе каталог
     // удалённого проекта вернулся бы на диск и снова занял квоту.
     cancelProjectRestore(p.id);

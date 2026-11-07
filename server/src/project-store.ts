@@ -282,6 +282,21 @@ export async function deleteProject(projectId:string,userId:string):Promise<bool
       }
     }catch{}
   }
+  // Фоновые команды и секреты живут вне каталога проекта: контейнер задания продолжает
+  // писать в примонтированную папку, а шифрованный файл секретов остался бы навсегда.
+  // Убираем их до удаления каталога, чтобы процессы не успели вернуть файлы обратно.
+  try {
+    const { listSandboxJobs, stopSandboxJob } = await import("./sandbox/jobs.js");
+    for (const job of listSandboxJobs(projectId)) await stopSandboxJob(projectId, userId, job.jobId);
+  } catch (error) {
+    console.warn("[sandbox] не удалось остановить задания удалённого проекта", error);
+  }
+  try {
+    const { saveStoredSecretValues } = await import("./secrets/secret-store.js");
+    await saveStoredSecretValues(projectId, {});
+  } catch (error) {
+    console.warn("[secrets] не удалось удалить секреты удалённого проекта", error);
+  }
   await rm(sandboxRootPath(projectId),{recursive:true,force:true});
   // Сайт — отдельная запись и отдельный каталог релизов, поэтому удаление проекта не
   // удаляет его каскадом. Снимаем public-состояние и файлы здесь, чтобы после удаления
