@@ -163,6 +163,11 @@ jobs:
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
           DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
           DEPLOY_APP_DIR: ${{ vars.DEPLOY_APP_DIR }}
+          # Публичный SSH-ключ для прямого доступа к ВМ. Хранится в настройках репозитория,
+          # а не в git: ключ не секрет, но и лишней копии в коде ему не нужно. Без значения
+          # выкатка идёт как обычно, только ключ не устанавливается. Читаются оба места:
+          # Variables и Secrets — куда именно вставили, не важно.
+          AGENT_SSH_PUBKEY: ${{ vars.AGENT_SSH_PUBKEY || secrets.AGENT_SSH_PUBKEY }}
           # schedule приходит без inputs.mode — это режим cert (сертификат без выкатки).
           MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || (github.event_name == 'schedule' && 'cert' || 'image') }}
           LOG_TAIL: ${{ inputs.tail }}
@@ -374,6 +379,11 @@ jobs:
             echo "Недопустимый тег образа: $image" >&2
             exit 1
           fi
+          # Ключ приходит из переменной репозитория и подставляется в команду на ВМ, поэтому
+          # экранируется как значение, а не как текст: пробелы внутри одного аргумента и
+          # случайная кавычка не превратятся в лишнюю команду. Содержимое проверяет уже
+          # vm-deploy.sh — оно же решает, устанавливать ключ или пропустить шаг.
+          AGENT_SSH_PUBKEY=$(printf '%q' "${AGENT_SSH_PUBKEY:-}")
           # Файл сервисов едет на ВМ вместе со скриптом: выкатка образа раньше не касалась
           # compose, и ВМ молча оставалась со старым — без SANDBOX_DIR и монтирования песочниц.
           COMPOSE_B64=$(base64 -w0 docker-compose.yml)
@@ -586,7 +596,7 @@ jobs:
             -o BatchMode=yes -o StrictHostKeyChecking=yes \
             -o ServerAliveInterval=30 -o ServerAliveCountMax=30 \
             "$DEPLOY_USER@$DEPLOY_HOST" \
-            "umask 077; f=/tmp/.vm-deploy.\$\$.sh; cat > \"\$f\" && MODE='$MODE' IMAGE_REF='$image' APP_DIR='$DEPLOY_APP_DIR' COMPOSE_B64='$COMPOSE_B64' CADDY_B64='$CADDY_B64' PREVIEW_TLS_B64='$PREVIEW_TLS_B64' WILDCARD_CERT_B64='$WILDCARD_CERT_B64' REGRU_API_USERNAME='$REGRU_API_USERNAME' REGRU_API_PASSWORD='$REGRU_API_PASSWORD' RUNSC_SCRIPT_B64='$RUNSC_SCRIPT_B64' RUNSC_INSTALL='$RUNSC_INSTALL' EGRESS_FIREWALL_B64='$EGRESS_FIREWALL_B64' APP_KEY_FILE='$APP_KEY_FILE' PLATFORM_ENV_FILE='$PLATFORM_ENV_FILE' LOG_TAIL='$LOG_TAIL' bash \"\$f\"; rc=\$?; rm -f \"\$f\"; exit \$rc" \
+            "umask 077; f=/tmp/.vm-deploy.\$\$.sh; cat > \"\$f\" && MODE='$MODE' IMAGE_REF='$image' APP_DIR='$DEPLOY_APP_DIR' AGENT_SSH_PUBKEY=$AGENT_SSH_PUBKEY COMPOSE_B64='$COMPOSE_B64' CADDY_B64='$CADDY_B64' PREVIEW_TLS_B64='$PREVIEW_TLS_B64' WILDCARD_CERT_B64='$WILDCARD_CERT_B64' REGRU_API_USERNAME='$REGRU_API_USERNAME' REGRU_API_PASSWORD='$REGRU_API_PASSWORD' RUNSC_SCRIPT_B64='$RUNSC_SCRIPT_B64' RUNSC_INSTALL='$RUNSC_INSTALL' EGRESS_FIREWALL_B64='$EGRESS_FIREWALL_B64' APP_KEY_FILE='$APP_KEY_FILE' PLATFORM_ENV_FILE='$PLATFORM_ENV_FILE' LOG_TAIL='$LOG_TAIL' bash \"\$f\"; rc=\$?; rm -f \"\$f\"; exit \$rc" \
             < deploy/scripts/vm-deploy.sh
 
       - name: Deploy on the VM (self-hosted runner)
@@ -597,6 +607,7 @@ jobs:
           IMAGE_INPUT: ${{ inputs.image }}
           BUILT_IMAGE: ${{ needs.build.outputs.image }}
           DEPLOY_APP_DIR: ${{ vars.DEPLOY_APP_DIR }}
+          AGENT_SSH_PUBKEY: ${{ vars.AGENT_SSH_PUBKEY || secrets.AGENT_SSH_PUBKEY }}
           YANDEX_SA_KEY_JSON: ${{ secrets.YANDEX_SA_KEY_JSON }}
           REGRU_API_USERNAME: ${{ secrets.REGRU_API_USERNAME }}
           REGRU_API_PASSWORD: ${{ secrets.REGRU_API_PASSWORD }}
@@ -923,6 +934,7 @@ jobs:
             printf '%s\n' "$YANDEX_SA_KEY_JSON" | tr -d '\r' > "$APP_KEY_FILE"
           fi
           MODE="$MODE" IMAGE_REF="$image" APP_DIR="$DEPLOY_APP_DIR" \
+            AGENT_SSH_PUBKEY="$AGENT_SSH_PUBKEY" \
             LOG_TAIL="$LOG_TAIL" \
             COMPOSE_SRC="$PWD/docker-compose.yml" CADDY_SRC="$PWD/deploy/Caddyfile" \
             PREVIEW_TLS_SRC="$PWD/deploy/preview-tls.caddy" \
