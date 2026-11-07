@@ -312,9 +312,9 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
     </div>
     {error&&<div className="preview-error">{error}</div>}
     {/* Подсказка нужна и тому, кто ждёт запуска (ready===false), и тому, у кого страница белая при
-        живом приложении (settled===false), и тому, у кого приложение отдаётся через docker exec
-        (viaExec): это разные причины и разные исправления. */}
-    {!error&&preview.running&&(preview.ready===false||preview.settled===false||preview.viaExec)&&<div className="preview-hint">{preview.hint??"Приложение ещё запускается…"}</div>}
+        живом приложении (settled===false). Режим `docker exec` — рабочий: приложение видно, и
+        отдельная строка об этом только отвлекает, поэтому подсказку для него не показываем. */}
+    {!error&&preview.running&&(preview.ready===false||(preview.settled===false&&!preview.viaExec))&&<div className="preview-hint">{preview.hint??"Приложение ещё запускается…"}</div>}
     {/* Публичный адрес показывается, а не прячется в подсказке кнопки: это адрес, который видят
         другие, и по нему приложение работает без переписывания ссылок. */}
     {!error&&preview.running&&preview.publicUrl&&<div className="preview-share">
