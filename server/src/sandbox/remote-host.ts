@@ -208,6 +208,16 @@ export function createRemoteSandboxHost(input: { id: string; address: string; to
     async docker(args: string[], timeoutMs = 15_000) {
       return dockerResult(await requestJson("/v1/docker", { args, timeoutMs }, timeoutMs + 5_000));
     },
+    async ensureWorkspace(projectId: string) {
+      const value = asRecord(await requestJson("/v1/workspace/ensure", { projectId }, 15_000));
+      if (value.ok !== true) {
+        throw new RemoteRunnerError("Runner не создал каталог проекта", 502, "RUNNER_BAD_RESPONSE");
+      }
+      return {
+        ok: true,
+        ...(typeof value.path === "string" ? { path: value.path } : {}),
+      };
+    },
     async networks() {
       const current = await status();
       return {

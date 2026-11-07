@@ -82,6 +82,12 @@ export type SandboxHost = {
    * local Docker daemon resolves them on this VM.
    */
   docker(args: string[], timeoutMs?: number): Promise<DockerCliResult>;
+  /**
+   * Create the project directory on this host. The API creates local projects itself; a project
+   * pinned to another node gets its directory from the runner, because an API-side mkdir over a
+   * broken shared mount would leave an empty local directory the runner cannot see.
+   */
+  ensureWorkspace?(projectId: string): Promise<{ ok: boolean; path?: string }>;
   /** Preview networks as they exist on this host, not on the API VM. */
   networks?(): Promise<{ preview: string; attach: string[] }>;
   /**

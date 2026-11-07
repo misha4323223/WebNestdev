@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -119,6 +119,15 @@ test("a runner that reports another node id is refused", async () => {
   const wrong = createRemoteSandboxHost({ id: "runner-a", address: "127.0.0.1:" + otherAddress.port, token });
   await assert.rejects(wrong.status(), /представился/);
   await new Promise<void>(resolve => other.close(() => resolve()));
+});
+
+test("the runner creates a project workspace that the API can see", async () => {
+  const id = "new-project";
+  await assert.rejects(stat(path.join(root, id)), /ENOENT/);
+  const created = await host.ensureWorkspace?.(id);
+  assert.equal(created?.ok, true);
+  assert.equal(created?.path, path.join(root, id));
+  assert.equal((await stat(path.join(root, id))).isDirectory(), true);
 });
 
 test.after(async () => {

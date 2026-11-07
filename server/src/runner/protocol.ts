@@ -27,6 +27,10 @@ export const runnerCommandSchema = z.object({
   options: runnerRunOptionsSchema.optional(),
 }).strict();
 
+export const runnerWorkspaceSchema = z.object({
+  projectId: z.string().min(1).max(120).regex(/^[A-Za-z0-9][A-Za-z0-9_.-]*$/, "Недопустимый id проекта"),
+}).strict();
+
 export const runnerDockerSchema = z.object({
   args: z.array(z.string().max(40_000_000)).min(1).max(512),
   timeoutMs: z.number().int().min(500).max(5 * 60_000).optional(),
@@ -38,6 +42,13 @@ export const runnerRelaySchema = z.object({
 }).strict();
 
 export type RunnerCommandRequest = z.infer<typeof runnerCommandSchema>;
+export type RunnerWorkspaceRequest = z.infer<typeof runnerWorkspaceSchema>;
+export type RunnerWorkspaceResult = {
+  ok: true;
+  path: string;
+  uid: number;
+  gid: number;
+};
 export type RunnerDockerRequest = z.infer<typeof runnerDockerSchema>;
 export type RunnerRelayRequest = z.infer<typeof runnerRelaySchema>;
 

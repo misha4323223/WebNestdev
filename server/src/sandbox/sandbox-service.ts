@@ -6,7 +6,7 @@ import { getPreview } from "../preview/preview-store.js";
 import { listSandboxJobs } from "./jobs.js";
 import { ensureProjectWorkspace, noteProjectAccess } from "../storage/project-archive.js";
 import { buildSandboxConfig,sandboxMemoryMb,sandboxRootPath } from "./config.js";
-import { SandboxNodeUnavailableError, SharedWorkspaceRequiredError } from "./host.js";
+import { resolveSandboxHost, SandboxNodeUnavailableError, SharedWorkspaceRequiredError } from "./host.js";
 import { nodeId } from "../nodes/identity.js";
 import { clearRootOwnedBuildCaches,openDirForSandbox,openGitForSandbox,openTreeForSandbox } from "./permissions.js";
 import type { SandboxConfig } from "./sandbox-types.js";
@@ -71,11 +71,15 @@ export async function getSandbox(projectId:string,userId:string):Promise<Sandbox
   // восстановление в фон и отвечает 409, поэтому сюда доходят уже после распаковки.
   await ensureProjectWorkspace(projectId,userId);
   if(node!==nodeId()){
-    // Never mkdir a remote project's root: an empty directory would hide a missing NFS/shared
-    // mount and the runner would see no files while the API happily reports success.
-    const mounted=await stat(root).catch(()=>null);
-    if(!mounted?.isDirectory()){
-      throw new SharedWorkspaceRequiredError(node,"каталог "+root+" не виден на API — проверьте общий mount");
+    // A new project has no directory yet, and the API must not create it: mkdir over a broken
+    // shared mount would succeed locally while the runner sees an empty workspace. The runner
+    // creates it on the mount both sides share, and the API then proves it sees the result.
+    if(!(await stat(root).catch(()=>null))?.isDirectory()){
+      const host=await resolveSandboxHost(node);
+      await host.ensureWorkspace?.(projectId);
+      if(!(await stat(root).catch(()=>null))?.isDirectory()){
+        throw new SharedWorkspaceRequiredError(node,"каталог "+root+" не виден на API — проверьте общий mount");
+      }
     }
     // Recovery after a lost node is opt-in: a transient heartbeat gap must not move a project
     // with a live preview. The shared workspace makes the file move unnecessary; only the pin

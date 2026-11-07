@@ -1,5 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { timingSafeEqual } from "node:crypto";
+import { mkdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { runDockerSandbox } from "../docker-sandbox.js";
@@ -11,8 +12,10 @@ import {
   runnerCommandSchema,
   runnerDockerSchema,
   runnerRelaySchema,
+  runnerWorkspaceSchema,
   type RunnerErrorBody,
   type RunnerStatus,
+  type RunnerWorkspaceResult,
 } from "./protocol.js";
 import { assertDockerArgsAllowed, assertExtraMountsAllowed, RunnerPolicyError } from "./policy.js";
 import { runnerStatus } from "./status.js";
@@ -220,6 +223,24 @@ export function createRunnerServer(deps: RunnerDeps) {
         } finally {
           response.removeListener("close", onClose);
         }
+        return;
+      }
+
+      if (url.pathname === "/v1/workspace/ensure") {
+        // A new project on this node has no directory yet, and the API must not create it: an
+        // API-side mkdir over a broken mount would produce an empty local directory while the
+        // runner sees nothing. The runner owns the same shared mount, so it creates the
+        // directory and the API then proves it sees the result.
+        const body = runnerWorkspaceSchema.parse(await readJson(request, 1_000));
+        const root = sandboxRootPath(body.projectId);
+        await mkdir(root, { recursive: true });
+        const info = await stat(root);
+        sendJson(response, 200, {
+          ok: true,
+          path: root,
+          uid: info.uid,
+          gid: info.gid,
+        } satisfies RunnerWorkspaceResult);
         return;
       }
 
