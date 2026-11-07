@@ -62,6 +62,28 @@ export function rankNodes(
     });
 }
 
+/**
+ * A healthy node exists, but not one with room for the project. Overfilling a machine is worse
+ * than a clear refusal: containers then start and die on the host's own memory limit, and the
+ * user sees a broken preview instead of "нет свободной ёмкости".
+ */
+export class NoCapacityError extends Error {
+  readonly statusCode = 503;
+  readonly code = "NO_CAPACITY";
+  constructor(
+    readonly requiredMemoryMb: number,
+    readonly freeMemoryMb: number,
+    readonly node: string,
+  ) {
+    super(
+      "Нет свободной ёмкости: для проекта нужно " + requiredMemoryMb + " МБ, " +
+        "на самом свободном узле (" + node + ") доступно " + freeMemoryMb + " МБ. " +
+        "Добавьте узел или освободите память на существующих.",
+    );
+    this.name = "NoCapacityError";
+  }
+}
+
 export class NoSandboxNodeError extends Error {
   readonly statusCode = 503;
   readonly code = "NO_SANDBOX_NODE";
@@ -97,5 +119,11 @@ export async function chooseProjectNode(options: ChooseNodeDeps = {}): Promise<S
     ...(options.requiredMemoryMb !== undefined ? { requiredMemoryMb: options.requiredMemoryMb } : {}),
   });
   if (!ranked.length) throw new NoSandboxNodeError();
-  return ranked[0].node;
+  const best = ranked[0];
+  // The gate is opt-in through `requiredMemoryMb`, so callers that only rank nodes (tests, the
+  // admin view) keep working; every placement path passes the sandbox requirement.
+  if (options.requiredMemoryMb !== undefined && best.freeAfterProjectMb < 0) {
+    throw new NoCapacityError(Math.round(options.requiredMemoryMb), best.freeMemoryMb, best.node.id);
+  }
+  return best.node;
 }

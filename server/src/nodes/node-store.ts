@@ -305,6 +305,51 @@ export async function countProjectsByNode(): Promise<Map<string, number>> {
   return counts;
 }
 
+/** One project pinned to a node; used by operator tooling and the rebalancer. */
+export type ProjectOnNode = { id: string; userId: string; name: string };
+
+/**
+ * Projects pinned to one node, oldest update first. The list is a snapshot: a caller that acts
+ * on it must re-check the project before moving it, because the pin or the preview state can
+ * change in between.
+ */
+export async function listProjectsOnNode(node: string, limit = 10): Promise<ProjectOnNode[]> {
+  const max = Math.max(1, Math.min(200, Math.round(limit)));
+  if (isYdbEnabled()) {
+    await initializeStorage();
+    const table = ydbQuery().identifier(getTable("projects"));
+    const [rows] = await ydbQuery()<Array<{ id: string; user_id: string; name: string }>>`
+      SELECT id, user_id, name
+        FROM ${table}
+       WHERE node = ${node}
+       ORDER BY updated_at ASC
+       LIMIT ${max}`;
+    return rows.map(row => ({ id: row.id, userId: row.user_id, name: row.name }));
+  }
+  const projects = path.join(dataDir(), "projects");
+  const names = await readdir(projects).catch(error => {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return [] as string[];
+    throw error;
+  });
+  const result: ProjectOnNode[] = [];
+  for (const name of names) {
+    if (!name.endsWith(".json")) continue;
+    try {
+      const project = JSON.parse(await readFile(path.join(projects, name), "utf8")) as {
+        id?: unknown; userId?: unknown; name?: unknown; node?: unknown;
+      };
+      const assigned = typeof project.node === "string" && project.node.trim() ? project.node.trim() : nodeId();
+      if (assigned !== node) continue;
+      if (typeof project.id !== "string" || typeof project.userId !== "string") continue;
+      result.push({ id: project.id, userId: project.userId, name: typeof project.name === "string" ? project.name : "" });
+      if (result.length >= max) break;
+    } catch {
+      // A malformed project file is not a reason to hide the others.
+    }
+  }
+  return result;
+}
+
 /**
  * One-time backfill for projects created before node pinning. A blank `node` means the project
  * lives on the node that is running this code. Returned count is logged at startup.

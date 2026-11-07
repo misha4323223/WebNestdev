@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  NoCapacityError,
   NoSandboxNodeError,
   chooseProjectNode,
   rankNodes,
@@ -71,6 +72,39 @@ test("choosing a node uses the local registration when no explicit list is suppl
   });
   assert.equal(ensured, 1);
   assert.equal(chosen.id, "local");
+});
+
+test("a node without room for the project is a refusal, not a silent overfill", async () => {
+  const tight = node({ id: "local", memoryTotalMb: 2048, memoryUsedMb: 1800 });
+  await assert.rejects(
+    chooseProjectNode({
+      ensureLocal: async () => tight,
+      list: async () => [tight],
+      projectsByNode: async () => new Map(),
+      now: () => NOW,
+      requiredMemoryMb: 1024,
+    }),
+    (error: unknown) => {
+      assert.ok(error instanceof NoCapacityError);
+      assert.equal(error.statusCode, 503);
+      assert.equal(error.code, "NO_CAPACITY");
+      assert.equal(error.freeMemoryMb, 248);
+      assert.match(error.message, /Нет свободной ёмкости/);
+      return true;
+    },
+  );
+});
+
+test("the threshold keeps a node with enough room in play", async () => {
+  const roomy = node({ id: "node-2", memoryTotalMb: 4096, memoryUsedMb: 1024 });
+  const chosen = await chooseProjectNode({
+    ensureLocal: async () => roomy,
+    list: async () => [roomy],
+    projectsByNode: async () => new Map(),
+    now: () => NOW,
+    requiredMemoryMb: 1024,
+  });
+  assert.equal(chosen.id, "node-2");
 });
 
 test("selection fails clearly when every node is unavailable", async () => {

@@ -12,6 +12,10 @@ import {
   type SandboxNodeStatus,
 } from "../nodes/node-store.js";
 import { isNodeFresh } from "../nodes/placement.js";
+import { getProject, reassignProjectNode } from "../project-store.js";
+import { getPreview } from "../preview/preview-store.js";
+import { listSandboxJobs } from "../sandbox/jobs.js";
+import { sandboxMemoryMb } from "../sandbox/config.js";
 import { recordAudit } from "../security/audit-journal.js";
 import { unregisterSandboxHost } from "../sandbox/host.js";
 import { listPreviews } from "../preview/preview-store.js";
@@ -20,6 +24,10 @@ import { previewStartStats } from "../preview/preview-metrics.js";
 const statusSchema = z.object({
   status: z.enum(["online", "draining", "offline"]),
   confirm: z.literal(true),
+});
+
+const moveSchema = z.object({
+  node: z.string().trim().min(1).max(120),
 });
 
 const registerSchema = z.object({
@@ -136,6 +144,71 @@ export async function registerAdminNodeRoutes(app: FastifyInstance) {
       node: nodes.find(item => item.id === node.id) ?? { ...node, projects: 0, freeMemoryMb: 0 },
       warning: online === 0
         ? "Ни одного онлайн-узла не осталось: новые проекты не будут размещены, пока узел не вернут в online."
+        : undefined,
+    };
+  });
+
+  /**
+   * Move a project's pin to another node. This is the API for the external operator panel: the
+   * panel ships separately, so no UI is coupled to it here. Files do not move — every node sees
+   * one shared workspace, so the pin is the whole change. A live preview or a running job blocks
+   * the move: those containers belong to the old node and would be orphaned silently.
+   */
+  app.post("/api/admin/projects/:id/node", async (request, reply) => {
+    const auth = await requireAdmin(request, reply);
+    if (!auth) return;
+    applyNoStoreToReply(reply);
+    const params = z.object({ id: z.string().trim().min(1).max(120) }).parse(request.params);
+    const body = moveSchema.parse(request.body);
+    const project = await getProject(params.id);
+    if (!project) return reply.code(404).send({ error: "Проект не найден" });
+    const target = await getNode(body.node);
+    if (!target) return reply.code(404).send({ error: "Узел не найден" });
+    if (target.status !== "online") {
+      return reply.code(409).send({
+        error: "Узел " + target.id + " в статусе " + target.status + ": перенос возможен только на online",
+        code: "NODE_NOT_ONLINE",
+      });
+    }
+    if (!isNodeFresh(target)) {
+      return reply.code(409).send({
+        error: "Узел " + target.id + " не отвечает: последний heartbeat " + target.lastSeenAt,
+        code: "NODE_STALE",
+      });
+    }
+    const current = project.node || nodeId();
+    const freeMemoryMb = Math.max(0, target.memoryTotalMb - target.memoryUsedMb);
+    if (current === target.id) {
+      return {
+        moved: false,
+        project: { id: project.id, name: project.name, node: current },
+        node: { id: target.id, freeMemoryMb },
+      };
+    }
+    if (getPreview(project.id) || listSandboxJobs(project.id).length) {
+      return reply.code(409).send({
+        error: "У проекта есть активный предпросмотр или задание: остановите их и повторите — перенос не трогает живые контейнеры",
+        code: "PROJECT_BUSY",
+      });
+    }
+    const moved = await reassignProjectNode(project.id, project.userId, target.id);
+    if (!moved) return reply.code(409).send({ error: "Проект изменился во время переноса, повторите" });
+    await recordAudit({
+      action: "project.node",
+      actorType: "admin",
+      actorId: auth.admin.id,
+      actorLabel: auth.admin.email,
+      target: project.id,
+      targetLabel: project.name,
+      ip: request.ip,
+      details: { from: current, to: target.id },
+    });
+    return {
+      moved: true,
+      project: { id: moved.id, name: moved.name, node: moved.node },
+      node: { id: target.id, freeMemoryMb },
+      warning: freeMemoryMb < sandboxMemoryMb()
+        ? "На целевом узле меньше " + sandboxMemoryMb() + " МБ свободной памяти: проект может не запуститься."
         : undefined,
     };
   });

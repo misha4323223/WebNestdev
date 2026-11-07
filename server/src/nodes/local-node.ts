@@ -2,6 +2,7 @@ import { memoryStatus } from "../health/host-metrics.js";
 import { runDockerCli } from "../sandbox/docker/cli.js";
 import { nodeAddress, nodeId } from "./identity.js";
 import { registerConfiguredRemoteNodes, startRemoteNodeHeartbeat } from "./remote-heartbeat.js";
+import { startProjectRebalance } from "./rebalance.js";
 import {
   backfillProjectNodes,
   getNode,
@@ -154,5 +155,8 @@ export async function initializeNodeRegistry(): Promise<{ node: SandboxNode; bac
   // the observed metrics.
   await registerConfiguredRemoteNodes();
   startRemoteNodeHeartbeat();
+  // Opt-in: placement already sends new projects to the roomiest node, so this only drains
+  // projects that landed on a node before it got busy, or returns them to a freed machine.
+  startProjectRebalance();
   return { node, backfilledProjects };
 }

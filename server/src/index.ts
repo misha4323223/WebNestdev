@@ -27,7 +27,8 @@ import { describeSandboxPaths, describeSandboxRuntime, npmInstallTimeoutMs, sand
 import { dockerCliRunner, productionAbuseWatch } from "./security/abuse-watch.js";
 import { initializeNodeRegistry, stopNodeHeartbeat } from "./nodes/local-node.js";
 import { stopRemoteNodeHeartbeat } from "./nodes/remote-heartbeat.js";
-import { NoSandboxNodeError } from "./nodes/placement.js";
+import { describeProjectRebalance, stopProjectRebalance } from "./nodes/rebalance.js";
+import { NoCapacityError, NoSandboxNodeError } from "./nodes/placement.js";
 import { SandboxNodeUnavailableError, SharedWorkspaceRequiredError } from "./sandbox/host.js";
 import { configureDockerEndpoint, describeDockerEndpoint } from "./sandbox/docker/endpoint.js";
 import { describeSandboxMount,verifySandboxMount } from "./sandbox/sandbox-check.js";
@@ -293,6 +294,9 @@ initializeStorage()
         { node: registry.node.id, backfilledProjects: registry.backfilledProjects },
         "node registry ready",
       );
+      // Могут ли проекты переезжать между машинами сами: без этой строки «разъехались» и
+      // «выключено» выглядят одинаково при разборе инцидента.
+      console.log("[nodes] " + describeProjectRebalance());
       // После реестра: reconcile сайтов опирается на node_id и не должен трогать чужие
       // файлы на этой ВМ. Первый проход — после DDL, дальше раз в час.
       if (hostingConfig().enabled) {
@@ -331,7 +335,7 @@ if (demoEnabled) {
   app.log.info({ demoEmail: demo.email, created: demo.created }, "demo account ready");
 }
 
-app.addHook("onClose", async () => { stopSandboxMaintenance?.(); stopBillingSweeper(); stopMailQueue(); stopStorageReconcile?.(); stopNodeHeartbeat(); stopRemoteNodeHeartbeat(); await stopPreviewHostServer(); await closeStorage(); });
+app.addHook("onClose", async () => { stopSandboxMaintenance?.(); stopBillingSweeper(); stopMailQueue(); stopStorageReconcile?.(); stopNodeHeartbeat(); stopRemoteNodeHeartbeat(); stopProjectRebalance(); await stopPreviewHostServer(); await closeStorage(); });
 
 await registerSecurityHeaders(app);
 
@@ -347,7 +351,7 @@ app.setErrorHandler((error, request, reply) => {
       bytesTotal: error.bytesTotal,
     });
   }
-  if (error instanceof NoSandboxNodeError || error instanceof SandboxNodeUnavailableError || error instanceof SharedWorkspaceRequiredError) {
+  if (error instanceof NoSandboxNodeError || error instanceof NoCapacityError || error instanceof SandboxNodeUnavailableError || error instanceof SharedWorkspaceRequiredError) {
     return reply.code(error.statusCode).send({ error: error.message, code: error.code });
   }
   if (error instanceof ZodError) {
