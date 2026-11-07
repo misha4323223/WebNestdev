@@ -1,10 +1,10 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { createCheckpoint, ignoredPath, initRepo, listCheckpoints, pushBranch, readPushState, restoreCheckpoint } from "./git-repo.js";
+import { createCheckpoint, ignoredPath, initRepo, listCheckpoints, pushBranch, readPushState, resetWorkspaceForImport, restoreCheckpoint } from "./git-repo.js";
 
 async function withRoot(run: (root: string) => Promise<void>) {
   const root = await mkdtemp(path.join(os.tmpdir(), "webnestdev-changes-"));
@@ -16,6 +16,13 @@ async function withRoot(run: (root: string) => Promise<void>) {
 }
 
 const branch = "main";
+
+test("импорт начинается с пустого каталога: старые файлы и .git не наследуются", () => withRoot(async root => {
+  await mkdir(path.join(root, ".git", "refs"), { recursive: true });
+  await writeFile(path.join(root, "old.txt"), "старое дерево");
+  await resetWorkspaceForImport(root);
+  assert.deepEqual(await readdir(root), []);
+}));
 
 test("служебные каталоги и секреты не попадают в историю", () => {
   assert.equal(ignoredPath("node_modules/react/index.js"), true);

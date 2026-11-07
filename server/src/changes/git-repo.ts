@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import type { Dirent } from "node:fs";
-import { lstat, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { lstat, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import git from "isomorphic-git";
 import http from "isomorphic-git/http/node";
@@ -146,6 +146,24 @@ export async function initRepo(root: string, options: InitOptions): Promise<{ ad
 
 function describe(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Импорт всегда начинается с пустого каталога.
+ *
+ * Новый проект получает новый каталог, поэтому обычно здесь нечего удалять. Но если прежний
+ * проект с этим каталогом не дочистился (удаление упало на правах, распаковка архива вернула
+ * папку после удаления), импорт писал бы файлы поверх старого дерева, `git init` подхватил бы
+ * старый `.git` — и в «новом» проекте снова оказались бы локальные коммиты, которые пользователь
+ * как раз хотел начать заново. Пустой старт делает обещание «новый проект» буквальным.
+ */
+export async function resetWorkspaceForImport(root: string) {
+  // Непустой каталог у только что созданного проекта — аномалия, и её надо видеть в журнале:
+  // именно так в «новый» проект могли бы вернуться старые файлы и локальные коммиты.
+  const stale = await readdir(root).catch(() => [] as string[]);
+  if (stale.length) console.warn("[changes] импорт начинается поверх непустого каталога: удаляю " + stale.length + " записей (" + root + ")");
+  await rm(root, { recursive: true, force: true });
+  await mkdir(root, { recursive: true });
 }
 
 /**

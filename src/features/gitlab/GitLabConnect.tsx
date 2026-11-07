@@ -45,6 +45,7 @@ function repoKickoff(repository:Repository,intent:RepoIntent,custom:string){
 
 const notices:Record<string,string>={
   connected:"GitLab подключён. Репозитории можно импортировать.",
+  imported:"Репозиторий склонирован. Проект есть в списке — откройте его, когда понадобится.",
   denied:"Доступ не подтверждён — подключение можно начать заново.",
   not_configured:"GitLab OAuth не настроен на сервере (GITLAB_CLIENT_ID и GITLAB_CLIENT_SECRET). Подключите аккаунт личным токеном — поле ниже работает всегда.",
   state_expired:"Ссылка авторизации устарела. Начните подключение заново.",
@@ -68,6 +69,8 @@ export function GitLabConnect({surface="home",onImported=openImportedProject}:{s
   const [busy,setBusy]=useState(false);
   const [loadingRepos,setLoadingRepos]=useState(false);
   const [importing,setImporting]=useState(false);
+  // Сначала клон, потом вопросы: иначе модальное окно висело на «Импортируем…» всё время загрузки.
+  const [imported,setImported]=useState<{projectId:string;conversationId:string;repository:Repository}|null>(null);
   const [intentOpen,setIntentOpen]=useState(false);
   const [intent,setIntent]=useState<RepoIntent>("analysis");
   const [customIntent,setCustomIntent]=useState("");
@@ -201,19 +204,34 @@ export function GitLabConnect({surface="home",onImported=openImportedProject}:{s
     finally{setSavingToken(false)}
   }
 
+  /** Шаг 1: клон репозитория. Вопросы — после него, а не до загрузки. */
   async function importRepository(){
-    if(!selected)return;
-    if(intent==="custom"&&!customIntent.trim()){setError("Опишите, что сделать с проектом");return}
-    setImporting(true);setError(null);
+    if(!selected||importing)return;
+    setImporting(true);setError(null);setNotice(null);
     try{
       const response=await fetch("/api/gitlab/import",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:selected.id})});
       const data=await response.json() as { error?:string; project?:{id:string}; conversation?:{id:string} };
       if(!response.ok||!data.project||!data.conversation)throw new Error(data.error??"Не удалось импортировать репозиторий");
-      queueAgentStart(data.conversation.id,{prompt:repoKickoff(selected,intent,customIntent),title:"Импорт: "+selected.path_with_namespace});
-      setIntentOpen(false);
-      onImported(data.project.id,data.conversation.id);
+      setImported({projectId:data.project.id,conversationId:data.conversation.id,repository:selected});
+      setIntent("analysis");setCustomIntent("");setIntentOpen(true);
     }catch(e){setError(e instanceof Error?e.message:"Ошибка импорта")}
     finally{setImporting(false)}
+  }
+
+  /** Шаг 2: задача планировщику по уже склонированному проекту. */
+  function startImported(){
+    if(!imported)return;
+    if(intent==="custom"&&!customIntent.trim()){setError("Опишите, что сделать с проектом");return}
+    queueAgentStart(imported.conversationId,{prompt:repoKickoff(imported.repository,intent,customIntent),title:"Импорт: "+imported.repository.path_with_namespace});
+    setIntentOpen(false);
+    setImported(null);
+    onImported(imported.projectId,imported.conversationId);
+  }
+
+  function closeImported(){
+    setIntentOpen(false);
+    setImported(null);
+    setNotice("imported");
   }
 
   const appOrigin=window.location.origin;
@@ -282,39 +300,40 @@ export function GitLabConnect({surface="home",onImported=openImportedProject}:{s
         </div>
         <div className="connector-repo-actions">
           <button className="ghost-button" onClick={()=>void loadRepositories()} disabled={loadingRepos}>Обновить</button>
-          <button className="connector-action connector-connect" onClick={()=>{setIntent("analysis");setCustomIntent("");setIntentOpen(true)}} disabled={!selected||importing}><UploadCloud size={13}/> {importing?"Импортируем…":"Импортировать"}</button>
+          <button className="connector-action connector-connect" onClick={()=>void importRepository()} disabled={!selected||importing}><UploadCloud size={13}/> {importing?"Клонируем…":"Импортировать"}</button>
         </div>
+        {importing&&<p className="connector-fineprint">Клонируем {selected?.path_with_namespace}. Это может занять до минуты; вопросы появятся сразу после.</p>}
       </>}
     </div>}
   </ConnectorCard>
 
-    {intentOpen&&selected&&<div className="modal-backdrop" role="presentation" onMouseDown={()=>{if(!importing)setIntentOpen(false)}}>
+    {intentOpen&&imported&&<div className="modal-backdrop" role="presentation" onMouseDown={closeImported}>
       <section className="modal repo-intent-modal" role="dialog" aria-modal="true" aria-label="Что сделать с импортированным репозиторием" onMouseDown={event=>event.stopPropagation()}>
         <header className="modal-head">
-          <div><span className="eyebrow">ИМПОРТ РЕПОЗИТОРИЯ</span><h2>Что сделать с проектом?</h2></div>
-          <button className="icon-button" onClick={()=>setIntentOpen(false)} disabled={importing} aria-label="Закрыть" title="Закрыть"><X size={16}/></button>
+          <div><span className="eyebrow">РЕПОЗИТОРИЙ СКЛОНИРОВАН</span><h2>Что сделать с проектом?</h2></div>
+          <button className="icon-button" onClick={closeImported} aria-label="Закрыть" title="Закрыть"><X size={16}/></button>
         </header>
         <div className="modal-body">
-          <p className="modal-lead">{selected.path_with_namespace}. Агент начнёт в режиме планировщика: изучит проект, задаст уточняющие вопросы и покажет план. Разработка стартует только после вашего подтверждения. На бесплатном тарифе импорт ограничен 50 МБ, а отправка коммитов обратно недоступна.</p>
+          <p className="modal-lead">{imported.repository.path_with_namespace} уже импортирован. Агент начнёт в режиме планировщика: изучит проект, задаст уточняющие вопросы и покажет план. Разработка стартует только после вашего подтверждения. На бесплатном тарифе импорт ограничен 50 МБ, а отправка коммитов обратно недоступна.</p>
           <div className="repo-intent-grid">
-            {repoIntents.map(item=>{const Icon=item.icon;return <button key={item.id} type="button" className={"repo-intent-option"+(intent===item.id?" selected":"")} onClick={()=>setIntent(item.id)} disabled={importing}>
+            {repoIntents.map(item=>{const Icon=item.icon;return <button key={item.id} type="button" className={"repo-intent-option"+(intent===item.id?" selected":"")} onClick={()=>setIntent(item.id)}>
               <span className="repo-intent-icon"><Icon size={16}/></span>
               <span><strong>{item.label}</strong><small>{item.description}</small></span>
             </button>})}
-            <button type="button" className={"repo-intent-option"+(intent==="custom"?" selected":"")} onClick={()=>setIntent("custom")} disabled={importing}>
+            <button type="button" className={"repo-intent-option"+(intent==="custom"?" selected":"")} onClick={()=>setIntent("custom")}>
               <span className="repo-intent-icon"><UploadCloud size={16}/></span>
               <span><strong>Свой ответ</strong><small>Опишите задачу своими словами</small></span>
             </button>
           </div>
           {intent==="custom"&&<label className="repo-intent-custom">
             <span>Что сделать с проектом</span>
-            <textarea value={customIntent} onChange={event=>setCustomIntent(event.target.value)} rows={3} placeholder="Например: переделать главную страницу под новую айдентику и добавить тёмную тему" disabled={importing}/>
+            <textarea value={customIntent} onChange={event=>setCustomIntent(event.target.value)} rows={3} placeholder="Например: переделать главную страницу под новую айдентику и добавить тёмную тему"/>
           </label>}
           {error&&<div className="connector-notice">{error}</div>}
         </div>
         <footer className="modal-foot">
-          <button className="ghost-button" onClick={()=>setIntentOpen(false)} disabled={importing}>Отмена</button>
-          <button className="send-button" onClick={()=>void importRepository()} disabled={importing||(intent==="custom"&&!customIntent.trim())}><UploadCloud size={13}/> {importing?"Импортируем…":"Импортировать и спланировать"}</button>
+          <button className="ghost-button" onClick={closeImported}>Позже</button>
+          <button className="send-button" onClick={startImported} disabled={intent==="custom"&&!customIntent.trim()}><UploadCloud size={13}/> Спланировать</button>
         </footer>
       </section>
     </div>}

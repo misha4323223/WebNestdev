@@ -12,7 +12,7 @@ import { limitsForPlan, repositoryImportLimitFor, repositorySizeLabel } from "..
 import { accountPlanFor } from "../billing/store.js";
 import { projectDirectoryBytes, recordStorageMutation } from "../account/storage-quota.js";
 import { getSandbox } from "../sandbox-manager.js";
-import { initRepo } from "../changes/git-repo.js";
+import { initRepo, resetWorkspaceForImport } from "../changes/git-repo.js";
 
 /**
  * Authorization Code + PKCE: GitVerse требует PKCE даже у конфиденциального клиента, поэтому
@@ -195,6 +195,9 @@ export async function registerRepoRoutes(app: FastifyInstance, provider: RepoPro
       throw error;
     }
     const sandbox = await getSandbox(project.id, user.id);
+    // Импорт — это новый проект: старый каталог (если он почему-то остался) не должен
+    // принести локальные коммиты и файлы, которых нет в репозитории.
+    await resetWorkspaceForImport(sandbox.root);
     const importedFiles = await provider.importRepository(token, repository, sandbox.root);
     // У GitVerse и SourceCraft API не всегда отдаёт размер до импорта, поэтому проверяем
     // фактический размер после скачивания. Превышение удаляет только что созданный проект:

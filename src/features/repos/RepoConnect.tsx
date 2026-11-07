@@ -268,6 +268,7 @@ export function RepoConnect({ provider, surface = "home", onImported = openImpor
             <button className="ghost-button" onClick={() => void loadRepositories()} disabled={loadingRepos}>Обновить</button>
             <button className="connector-action connector-connect" onClick={() => void importRepository()} disabled={!selected || importing}><UploadCloud size={13}/> {importing ? "Импортируем…" : "Импортировать"}</button>
           </div>
+          {importing&&<p className="connector-fineprint">Импортируем {selected?.fullName}. Это может занять до минуты.</p>}
           <p className="connector-fineprint">На бесплатном тарифе — репозитории до 50 МБ. Отправка коммитов обратно доступна на платных тарифах.</p>
         </>}
       </>}

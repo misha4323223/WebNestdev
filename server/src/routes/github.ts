@@ -11,7 +11,7 @@ import { accountPlanFor } from "../billing/store.js";
 import { projectDirectoryBytes, recordStorageMutation } from "../account/storage-quota.js";
 import { getSandbox } from "../sandbox-manager.js";
 import { getPlatformEnv } from "../platform/platform-env.js";
-import { initRepo } from "../changes/git-repo.js";
+import { initRepo, resetWorkspaceForImport } from "../changes/git-repo.js";
 import path from "node:path";
 import { writeFileInside } from "../sandbox/path-guard.js";
 
@@ -196,6 +196,9 @@ export async function registerGitHubRoutes(app: FastifyInstance) {
       throw error;
     }
     const sandbox = await getSandbox(project.id,user.id);
+    // Новый проект должен начинаться с нуля: остатки прежнего каталога не должны вернуть
+    // локальные коммиты, которые пользователь как раз удалил.
+    await resetWorkspaceForImport(sandbox.root);
     const tree = await getGitHubTree(user.id, repository.owner.login, repository.name, repository.default_branch);
     const files = tree.tree.filter((entry: { type: string; path: string }) => entry.type === "blob" && entry.path);
     if (files.length > 5000) throw new Error("В репозитории слишком много файлов для импорта");

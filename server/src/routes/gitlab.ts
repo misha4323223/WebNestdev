@@ -12,7 +12,7 @@ import { accountPlanFor } from "../billing/store.js";
 import { projectDirectoryBytes, recordStorageMutation } from "../account/storage-quota.js";
 import { getSandbox } from "../sandbox-manager.js";
 import { getPlatformEnv } from "../platform/platform-env.js";
-import { initRepo } from "../changes/git-repo.js";
+import { initRepo, resetWorkspaceForImport } from "../changes/git-repo.js";
 import { writeFileInside } from "../sandbox/path-guard.js";
 
 // read_api/read_repository — импорт, write_repository — отправка коммитов обратно в GitLab.
@@ -204,6 +204,8 @@ export async function registerGitLabRoutes(app: FastifyInstance) {
       throw error;
     }
     const sandbox = await getSandbox(project.id, user.id);
+    // См. GitHub-импорт: импорт не должен наследовать старый каталог и его коммиты.
+    await resetWorkspaceForImport(sandbox.root);
     const tree = await getGitLabTree(user.id, repository.id, branch);
     const files = tree.filter(entry => entry.type === "blob" && entry.path);
     if (files.length > 5000) throw new Error("В репозитории слишком много файлов для импорта");
