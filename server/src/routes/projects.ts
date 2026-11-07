@@ -113,15 +113,15 @@ export async function registerProjectRoutes(app:FastifyInstance){
     const p=z.object({id:z.string().min(1)}).parse(request.params);
     // Имя нужно журналу после удаления: в записи останется и id, и человекочитаемое название.
     const project=await getProject(p.id);
+    if(!project||project.userId!==user.id)return reply.code(404).send({error:"Проект не найден"});
     // Агент может дописать файлы уже после удаления каталога — тогда удалённый проект
     // вернулся бы на диск и снова занял место. Удаление начинается только после остановки.
-    if(project?.userId===user.id&&isRunActive(p.id))return reply.code(409).send({error:"Агент ещё работает в проекте — дождитесь окончания запуска или остановите его",code:"PROJECT_BUSY"});
-    if(!await deleteProject(p.id,user.id))return reply.code(404).send({error:"Проект не найден"});
-    // Контейнер предпросмотра держит папку проекта открытой и пережил бы удаление.
-    await stopPreview(p.id).catch(error=>console.warn("[preview] не удалось остановить предпросмотр удалённого проекта",error));
-    // Если проект как раз возвращался из архива, распаковка должна остановиться: иначе каталог
-    // удалённого проекта вернулся бы на диск и снова занял квоту.
+    if(isRunActive(p.id))return reply.code(409).send({error:"Агент ещё работает в проекте — дождитесь окончания запуска или остановите его",code:"PROJECT_BUSY"});
+    // Всё, что пишет в папку проекта, останавливается ДО `rm`: иначе распаковка архива или
+    // контейнер предпросмотра могли вернуть каталог уже после удаления.
     cancelProjectRestore(p.id);
+    await stopPreview(p.id).catch(error=>console.warn("[preview] не удалось остановить предпросмотр удаляемого проекта",error));
+    if(!await deleteProject(p.id,user.id))return reply.code(404).send({error:"Проект не найден"});
     await recordAudit({
       action:"project.deleted",
       actorType:"user",
