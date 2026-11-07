@@ -6,7 +6,9 @@ import type { SandboxRunOptions } from "./sandbox/host.js";
 import { dockerRunArgs } from "./sandbox/docker/args.js";
 import { dockerUnavailableMessage } from "./sandbox/docker/unavailable.js";
 import { secretEnvMaskMounts } from "./sandbox/secret-mask.js";
+import { egressProxyEnv } from "./egress/config.js";
 import { sandboxNetwork } from "./egress/network.js";
+import { proxyUrlForNetwork } from "./egress/proxy-address.js";
 import type { DockerCommandResult } from "./sandbox/docker/types.js";
 
 export type { DockerCommandResult };
@@ -46,7 +48,14 @@ export async function runDockerSandbox(config: SandboxConfig, command: string, c
   // `bridge` в вызовах значит «этому контейнеру нужен интернет». При включённом egress-фильтре
   // такая установка идёт в сеть предпросмотра — там живёт прокси (см. egress/network.ts).
   const network = await sandboxNetwork(runOptions.network ?? options.network).catch(() => runOptions.network ?? options.network);
-  const args = dockerRunArgs(config, cwd, options, command, network, name, extraMounts, {}, runOptions.env ?? {});
+  // Адрес прокси по IP, а не по имени сервиса: `npm` разрешает хост прокси прямо в контейнере, и
+  // под нагрузкой этот запрос истекает (`EAI_AGAIN webnestdev-server`) — установка падает, хотя
+  // фильтр и прокси живы. Переменные идут в env и перекрывают адрес по имени из dockerRunArgs.
+  const proxyUrl = await proxyUrlForNetwork(network).catch(() => "");
+  const env = proxyUrl
+    ? { ...(runOptions.env ?? {}), ...egressProxyEnv(process.env, proxyUrl) }
+    : runOptions.env ?? {};
+  const args = dockerRunArgs(config, cwd, options, command, network, name, extraMounts, {}, env);
   return new Promise((resolve, reject) => {
     const child = spawn("docker", args, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
     let stdout = "", stderr = "", truncated = false;

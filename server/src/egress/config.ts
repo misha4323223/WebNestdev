@@ -82,9 +82,11 @@ export function egressProxyUrl(env: NodeJS.ProcessEnv = process.env): string {
  * и часть версий CLI смотрят только на свои ключи, и тогда установка шла бы мимо прокси — то есть
  * падала бы на закрытом выходе с невнятной ошибкой соединения.
  */
-export function egressProxyEnv(env: NodeJS.ProcessEnv = process.env): Record<string, string> {
+export function egressProxyEnv(env: NodeJS.ProcessEnv = process.env, urlOverride?: string): Record<string, string> {
   if (!egressProxyEnabled(env)) return {};
-  const url = egressProxyUrl(env);
+  // Адрес по IP (egress/proxy-address.ts) приходит сюда: песочнице не нужно разрешать имя
+  // сервиса, а именно этот запрос и падал с EAI_AGAIN в момент установки пакетов.
+  const url = (urlOverride ?? "").trim() || egressProxyUrl(env);
   const local = "localhost,127.0.0.1,::1";
   return {
     HTTP_PROXY: url,
