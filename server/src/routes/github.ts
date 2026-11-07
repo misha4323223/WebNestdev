@@ -4,16 +4,14 @@ import { requireUser } from "../auth/auth.js";
 import { resolveOAuthFlow, redirectToApp, type OAuthFlowOptions } from "../oauth/oauth-flow.js";
 import { getGitHubConnection, saveGitHubConnection, deleteGitHubConnection } from "../github/github-connection-store.js";
 import { createOAuthState, consumeOAuthState, originFromOAuthState } from "../github/github-oauth-state.js";
-import { getGitHubUser, getGitHubLoginFromToken, listGitHubRepositories, getGitHubRepository, getGitHubTree, getGitHubBlob } from "../github/github-api.js";
+import { getGitHubUser, getGitHubLoginFromToken, listGitHubRepositories, getGitHubRepository, getGitHubTree } from "../github/github-api.js";
 import { createConversation, createProjectWithinLimit, deleteProject, ProjectLimitError } from "../project-store.js";
 import { limitsForPlan, repositoryImportLimitFor, repositorySizeLabel } from "../account/plans.js";
 import { accountPlanFor } from "../billing/store.js";
 import { projectDirectoryBytes, recordStorageMutation } from "../account/storage-quota.js";
 import { getSandbox } from "../sandbox-manager.js";
 import { getPlatformEnv } from "../platform/platform-env.js";
-import { initRepo, resetWorkspaceForImport } from "../changes/git-repo.js";
-import path from "node:path";
-import { writeFileInside } from "../sandbox/path-guard.js";
+import { cloneRepository, resetWorkspaceForImport } from "../changes/git-repo.js";
 
 const oauthScope = "repo";
 
@@ -202,11 +200,22 @@ export async function registerGitHubRoutes(app: FastifyInstance) {
     const tree = await getGitHubTree(user.id, repository.owner.login, repository.name, repository.default_branch);
     const files = tree.tree.filter((entry: { type: string; path: string }) => entry.type === "blob" && entry.path);
     if (files.length > 5000) throw new Error("В репозитории слишком много файлов для импорта");
-    for (const entry of files) {
-      const blob = await getGitHubBlob(user.id, repository.owner.login, repository.name, entry.path);
-      if (blob.encoding !== "base64") continue;
-      // Путь пришёл из GitHub-дерева: `..` и ссылки отсекает та же запись, что и у агента.
-      await writeFileInside(sandbox.root, path.join(sandbox.root, entry.path), Buffer.from(blob.content.replace(/\n/g, ""), "base64"));
+    // Раньше каждый файл скачивался отдельным запросом к GitHub, а потом история забиралась
+    // вторым проходом. На проекте в сотни файлов это тысячи последовательных запросов: импорт
+    // выглядел зависшим и упирался в таймаут прокси. Клон забирает файлы и историю одним
+    // пакетом — так же, как импорт у GitVerse и SourceCraft.
+    const connection = await getGitHubConnection(user.id);
+    try {
+      await cloneRepository(sandbox.root, {
+        url: repository.html_url,
+        branch: repository.default_branch,
+        token: connection?.accessToken ?? null,
+        username: "x-access-token",
+      });
+    } catch (error) {
+      // Пустой проект в списке хуже ошибки: место на тарифе уже занято, а файлов нет.
+      await deleteProject(project.id, user.id);
+      throw new Error("Не удалось склонировать " + repository.full_name + ": " + (error instanceof Error ? error.message : String(error)));
     }
     // Размер из API — сжатый и может отсутствовать. Перед созданием истории проверяем то,
     // что фактически легло на диск: иначе бесплатный тариф мог бы принять больше 50 МБ.
@@ -223,22 +232,8 @@ export async function registerGitHubRoutes(app: FastifyInstance) {
         });
       }
     }
-    // История импортированного проекта начинается с коммита GitHub, а не с пустого места:
-    // первая же задача получает родителем настоящий коммит репозитория, поэтому отправка —
-    // fast-forward. Отказ загрузки истории не отменяет импорт: вкладка «Изменения» честно
-    // скажет об этом, а локальная история начнётся с первого коммита задачи.
-    try {
-      const connection = await getGitHubConnection(user.id);
-      const history = await initRepo(sandbox.root, {
-        branch: repository.default_branch,
-        remoteUrl: repository.html_url,
-        token: connection?.accessToken ?? null,
-        username: "x-access-token",
-      });
-      if (history.warning) console.warn("[changes] " + repository.full_name + ": " + history.warning);
-    } catch (error) {
-      console.error("[changes] не удалось создать историю импортированного проекта", error);
-    }
+    // Клон уже содержит историю: первая задача станет коммитом поверх настоящей ветки,
+    // поэтому отдельный `initRepo` с повторной загрузкой тех же данных больше не нужен.
     // Импорт — самая крупная запись в проект: зависимости, история и файлы появляются здесь,
     // а счётчик размера должен увидеть их сразу, а не после первой задачи агента.
     await recordStorageMutation(project.id, user.id, { heavy: true })

@@ -1,19 +1,17 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import path from "node:path";
 import { requireUser } from "../auth/auth.js";
 import { resolveOAuthFlow, redirectToApp, type OAuthFlowOptions } from "../oauth/oauth-flow.js";
 import { getGitLabConnection, saveGitLabConnection, deleteGitLabConnection } from "../gitlab/gitlab-connection-store.js";
 import { createOAuthState, consumeOAuthState, originFromOAuthState } from "../github/github-oauth-state.js";
-import { getGitLabLoginFromToken, getGitLabUser, listGitLabRepositories, getGitLabProject, getGitLabTree, getGitLabFile, gitlabBaseUrl } from "../gitlab/gitlab-api.js";
+import { getGitLabLoginFromToken, getGitLabUser, listGitLabRepositories, getGitLabProject, getGitLabTree, gitlabBaseUrl } from "../gitlab/gitlab-api.js";
 import { createConversation, createProjectWithinLimit, deleteProject, ProjectLimitError } from "../project-store.js";
 import { limitsForPlan, repositoryImportLimitFor, repositorySizeLabel } from "../account/plans.js";
 import { accountPlanFor } from "../billing/store.js";
 import { projectDirectoryBytes, recordStorageMutation } from "../account/storage-quota.js";
 import { getSandbox } from "../sandbox-manager.js";
 import { getPlatformEnv } from "../platform/platform-env.js";
-import { initRepo, resetWorkspaceForImport } from "../changes/git-repo.js";
-import { writeFileInside } from "../sandbox/path-guard.js";
+import { cloneRepository, resetWorkspaceForImport } from "../changes/git-repo.js";
 
 // read_api/read_repository — импорт, write_repository — отправка коммитов обратно в GitLab.
 const oauthScope = "read_api read_repository write_repository";
@@ -209,9 +207,18 @@ export async function registerGitLabRoutes(app: FastifyInstance) {
     const tree = await getGitLabTree(user.id, repository.id, branch);
     const files = tree.filter(entry => entry.type === "blob" && entry.path);
     if (files.length > 5000) throw new Error("В репозитории слишком много файлов для импорта");
-    for (const entry of files) {
-      const content = await getGitLabFile(user.id, repository.id, entry.path, branch);
-      await writeFileInside(sandbox.root, path.join(sandbox.root, entry.path), content);
+    // См. GitHub-импорт: один клон вместо запроса на каждый файл и второго прохода за историей.
+    const connection = await getGitLabConnection(user.id);
+    try {
+      await cloneRepository(sandbox.root, {
+        url: repository.http_url_to_repo || repository.web_url,
+        branch,
+        token: connection?.accessToken ?? null,
+        username: "oauth2",
+      });
+    } catch (error) {
+      await deleteProject(project.id, user.id);
+      throw new Error("Не удалось склонировать " + repository.path_with_namespace + ": " + (error instanceof Error ? error.message : String(error)));
     }
     // GitLab отдаёт repository_size не всегда и не для всех проектов. Фактический размер
     // проверяем до истории, чтобы на бесплатном тарифе не остался проект больше 50 МБ.
@@ -228,18 +235,7 @@ export async function registerGitLabRoutes(app: FastifyInstance) {
         });
       }
     }
-    try {
-      const connection = await getGitLabConnection(user.id);
-      const history = await initRepo(sandbox.root, {
-        branch,
-        remoteUrl: repository.http_url_to_repo || repository.web_url,
-        token: connection?.accessToken ?? null,
-        username: "oauth2",
-      });
-      if (history.warning) console.warn("[changes] " + repository.path_with_namespace + ": " + history.warning);
-    } catch (error) {
-      console.error("[changes] не удалось создать историю импортированного проекта", error);
-    }
+    // Клон уже содержит историю; повторная `initRepo` загрузка не нужна.
     await recordStorageMutation(project.id, user.id, { heavy: true })
       .catch(error => console.warn("[storage] не удалось обновить размер после импорта", error));
     const conversation = await createConversation(project.id, "GitLab: " + repository.path_with_namespace);
