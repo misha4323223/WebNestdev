@@ -52,7 +52,14 @@ export async function runAgentStep(provider:Provider,messages:ChatMessage[],mode
     // Отказ посреди потока: часть ответа уже показана и в панели, и в сессии, поэтому повтор прислал
     // бы её второй раз. Такой сбой остаётся ошибкой запуска (у пользователя есть «Продолжить»),
     // а повторяются только отказы до первого байта — их и лечит provider-retry.ts.
-    if(streamed&&error&&typeof error==="object")Object.assign(error,{partialStreamed:true});
+    // Незаконченный текст и размышление уходят вместе с ошибкой: рантайм дописывает их в историю,
+    // чтобы остановка не стирала уже написанное после перезагрузки.
+    if(streamed&&error&&typeof error==="object")Object.assign(error,{partialStreamed:true,partial:{
+      ...(text?{text}:{}),
+      ...(reasoning?{reasoning}:{}),
+      ...(reasoningBlock?{blockId:reasoningBlock.id,startedAt:reasoningBlock.startedAt}:{}),
+      step,
+    }});
     throw error;
   }
   if(reasoningBlock)context.emit({type:"reasoning.end",runId:context.runId,blockId:reasoningBlock.id,status:"done",finishedAt:new Date().toISOString(),title:reasoningBlockTitle(step,calls),text:reasoning});

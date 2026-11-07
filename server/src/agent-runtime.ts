@@ -20,6 +20,7 @@ import { planQaScenario } from "./qa/scenario-planner.js";
 import { analyzeChangedFiles } from "./qa/diff-analyzer.js";
 import { parseChangedSource, type ParsedChange } from "./qa/change-parser.js";
 import { finalizeRunChanges } from "./changes/changes-service.js";
+import { commitSubject } from "./changes/commit-subject.js";
 
 /**
  * Tools that change the project and therefore trigger the automatic verification cycle.
@@ -563,11 +564,17 @@ export class AgentRuntime {
           // он логируется, а задача завершается как обычно.
           if(mode==="developer"){
             try{
-              const title=task.split("\n").find(line=>line.trim())?.trim()??"";
+              // Тема коммита — сделанное, а не текст запроса: пункты плана этой задачи, а без
+              // плана — первое предложение запроса. Иначе в истории проекта лежала бы вся переписка.
+              const title=commitSubject({
+                task,
+                ...(working.plan?{plan:working.plan}:{}),
+                planFromPreviousRun:working.planFromPreviousRun,
+              });
               const changes=await finalizeRunChanges({
                 projectId:request.projectId,userId:request.userId,runId,
                 ...(request.conversationId?{conversationId:request.conversationId}:{}),
-                title:title.slice(0,140)||"Изменения проекта",
+                title,
               });
               if(changes)emit({
                 type:"changes.created",runId,branch:changes.branch,pushed:false,
@@ -757,6 +764,33 @@ export class AgentRuntime {
       if(scenarioPending)throw new Error("Достигнут лимит шагов агента, проверка в браузере не завершена");
       throw new Error("Достигнут лимит шагов агента");
     }catch(error){
+      // Оборванный шаг: модель уже что-то написала или подумала, но шаг не завершился. Эта часть
+      // живёт только в потоке, поэтому остановка или перезагрузка стирала бы её. Дописываем в
+      // историю как есть — с пометкой ошибки у размышления, — и после перезагрузки незаконченный
+      // ответ остаётся на месте, а не превращается в пустые строки.
+      const partial=(error&&typeof error==="object"&&"partial" in error?(error as {partial?:{text?:string;reasoning?:string;step?:number;blockId?:string;startedAt?:string}}).partial:undefined);
+      if(partial&&request.conversationId&&((partial.text??"").trim()||(partial.reasoning??"").trim())){
+        const finishedAt=new Date().toISOString();
+        const partialText=(partial.text??"").trim()?partial.text:"";
+        const partialReasoning=(partial.reasoning??"").trim()?partial.reasoning:undefined;
+        const partialBlock=partialReasoning?createReasoningBlock({
+          ...(partial.blockId?{id:partial.blockId}:{}),
+          runId,
+          step:partial.step??1,
+          text:partialReasoning,
+          ...(partial.startedAt?{startedAt:partial.startedAt}:{}),
+          finishedAt,
+          status:"error",
+        }):undefined;
+        try{
+          await appendConversationMessages(request.conversationId,[{
+            role:"assistant",
+            content:partialText??"",
+            ...(partialReasoning?{reasoning:partialReasoning}:{}),
+            ...(partialBlock?{reasoningBlocks:[partialBlock]}:{}),
+          }]);
+        }catch(persistError){console.error("Failed to persist the partial answer",persistError);}
+      }
       // `code` lets the panel explain the failure (context size, provider key, rate limit) instead of
       // repeating a sentence the model wrote.
       const code=error&&typeof error==="object"&&"code" in error&&typeof (error as {code?:unknown}).code==="string"?(error as {code:string}).code:undefined;

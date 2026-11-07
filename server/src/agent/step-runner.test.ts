@@ -249,6 +249,27 @@ test("повторный отказ по числу сообщений объя�
   assert.equal(seen.length, 2, "попыток ровно две");
 });
 
+test("обрыв посреди потока отдаёт незаконченный текст и размышление вместе с ошибкой", async () => {
+  const provider: Provider = {
+    async *stream(): AsyncGenerator<ProviderChunk> {
+      yield { type: "reasoning", text: "сначала" };
+      yield { type: "text", text: "почти готово" };
+      throw new Error("связь пропала");
+    },
+  };
+  await assert.rejects(
+    runBudgetedStep(provider, [{ role: "user", content: "посмотри" }], "модель", { ...context(), step: 2 }, { budgetTokens: 20000, charsPerToken: 3.6, maxMessages: 80 }),
+    (error: Error & { partialStreamed?: boolean; partial?: { text?: string; reasoning?: string; step?: number; blockId?: string } }) => {
+      assert.equal(error.partialStreamed, true);
+      assert.equal(error.partial?.text, "почти готово");
+      assert.equal(error.partial?.reasoning, "сначала");
+      assert.equal(error.partial?.step, 2);
+      assert.equal(typeof error.partial?.blockId, "string", "блок размышления сохраняет свой id");
+      return true;
+    },
+  );
+});
+
 test("размышление приходит структурными событиями с blockId и номером шага", async () => {
   const events: AgentEvent[] = [];
   const provider: Provider = {

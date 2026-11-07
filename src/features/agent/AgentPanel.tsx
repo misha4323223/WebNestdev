@@ -1323,7 +1323,10 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     updateMessages(current=>{
       const next=[...current];
       const last=next.at(-1);
-      if(last?.role==="assistant")next[next.length-1]={role:"assistant",content:last.content?last.content+"\n\n— остановлено —":"Выполнение остановлено."};
+      // Останавливать — не значит стирать уже сказанное: текст, размышления и их блоки остаются
+      // в сообщении, к ним только добавляется пометка. Иначе незаконченный ответ и ход мыслей
+      // пропадали бы в момент нажатия «Стоп».
+      if(last?.role==="assistant")next[next.length-1]={...last,content:last.content?last.content+"\n\n— остановлено —":"Выполнение остановлено."};
       return next;
     });
   }
@@ -1709,7 +1712,9 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
         // которое в планировании не показывается): после вопросов такие облака в чате не нужны.
         // Исключение — якорь сгруппированных размышлений: он должен быть виден, даже если текст
         // ответа пустой. Живой ход оставляем — в нём размышление видно, пока модель работает.
-        if(m.role==="assistant"&&!m.content.trim()&&!live&&!trace&&!hasReasoning)return null;
+        // Размышление, уже вошедшее в общий блок шагов (coveredReasoning), не рисуется отдельно;
+        // пустая строка с ним осталась бы в чате пустой полоской.
+        if(m.role==="assistant"&&!m.content.trim()&&!live&&!trace&&(!hasReasoning||coveredReasoning.has(i)))return null;
         // Картинки, которые агент показал в этом запуске, и картинки из сохранённой истории —
         // один список без повторов: пока запуск идёт, результата инструмента в сообщениях ещё нет.
         const images=[...(chatImages.get(m)??[]),...liveImages.filter(item=>item.messageIndex===i).map(item=>item.image)]
