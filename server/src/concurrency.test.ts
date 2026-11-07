@@ -118,9 +118,10 @@ test("the run limiter takes its limits from the environment", () => {
   const previous = process.env.AGENT_MAX_CONCURRENT_RUNS;
   try {
     delete process.env.AGENT_MAX_CONCURRENT_RUNS;
-    // Runs are cheap — they wait on the model — so the default is several conversations at
-    // once; the memory lives in the sandbox container limit, not here.
-    assert.equal(runQueueStats().limit, 8, "по умолчанию восемь диалогов одновременно");
+    // Runs are cheap — they wait on the model — so the default is 150 conversations at once:
+    // the gateway measured 1 584 requests per minute at that concurrency with no 429, and the
+    // memory lives in the sandbox container limit, not here.
+    assert.equal(runQueueStats().limit, 150, "по умолчанию 150 диалогов одновременно");
     assert.equal(sandboxQueueStats().limit, 2, "и два контейнера песочницы: это и есть лимит памяти");
     process.env.AGENT_MAX_CONCURRENT_RUNS = "4";
     assert.equal(runQueueStats().limit, 4);

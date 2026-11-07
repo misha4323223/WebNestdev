@@ -14,6 +14,10 @@ process.env.WEBNESTDEV_ENCRYPTION_KEY = "0123456789abcdef".repeat(4);
 process.env.PLATFORM_URL = "https://nestdev.test";
 const root = await mkdtemp(path.join(tmpdir(), "auth-email-verification-"));
 process.env.WEBNESTDEV_DATA_DIR = root;
+// Предел трёх аккаунтов с адреса здесь выключен: этот файл про подтверждение почты, а все
+// запросы идут с одного адреса инъекции. Сам предел проверяют auth/signup-ip.test.ts и
+// routes/auth-register-ip.test.ts.
+process.env.SIGNUP_IP_LIMIT = "0";
 
 const Fastify = (await import("fastify")).default;
 const cookie = (await import("@fastify/cookie")).default;

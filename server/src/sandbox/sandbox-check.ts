@@ -164,7 +164,7 @@ export function describeSandboxGit(result:SandboxGitCheck){
   if(result.ok)return `git в образе песочницы: ${result.version}`;
   if(result.reason==="image")return `образ песочницы недоступен для проверки git: ${result.detail??"docker его не нашёл"}`;
   if(result.reason==="docker")return "Docker недоступен — наличие git в образе не проверить";
-  return `В ОБРАЗЕ ПЕСОЧНИЦЫ НЕТ GIT: инструменты «Работа с Git» не смогут работать. Задайте SANDBOX_IMAGE с git (node:22-bookworm) — ${result.detail??"git --version завершился с ошибкой"}`;
+  return `В ОБРАЗЕ ПЕСОЧНИЦЫ НЕТ GIT: инструменты «Работа с Git» не смогут работать. Задайте SANDBOX_IMAGE с git (node:26-bookworm) — ${result.detail??"git --version завершился с ошибкой"}`;
 }
 
 /** The last result, so `/api/health` can answer for free instead of repeating the round trip. */

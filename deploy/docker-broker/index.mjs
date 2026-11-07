@@ -23,7 +23,7 @@ import { createBrokerServer } from "./proxy.mjs";
 const socketPath = process.env.BROKER_SOCKET?.trim() || "/run/webnestdev-docker/docker.sock";
 const upstreamPath = process.env.BROKER_UPSTREAM?.trim() || "/var/run/docker.sock";
 const sandboxRoot = path.posix.resolve(process.env.BROKER_SANDBOX_ROOT?.trim() || "/var/lib/webnestdev/sandboxes");
-const image = (process.env.BROKER_IMAGE?.trim() || process.env.SANDBOX_IMAGE?.trim() || "node:22-bookworm");
+const image = (process.env.BROKER_IMAGE?.trim() || process.env.SANDBOX_IMAGE?.trim() || "node:26-bookworm");
 const previewNetwork = process.env.PREVIEW_NETWORK?.trim() || "";
 const runtime = (process.env.BROKER_RUNTIME?.trim() || process.env.SANDBOX_RUNTIME?.trim() || "docker").toLowerCase();
 // Политика умеет только эти два значения. Опечатка должна остановить брокер с понятной

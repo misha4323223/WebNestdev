@@ -134,6 +134,39 @@ Only a new connection is checked: re-saving the same provider replaces a slot (`
 and connections that already exist keep working after a downgrade — nobody loses their cloud because
 a subscription ended.
 
+## Host resource limits (5.2)
+
+Plans also bound what one account can take from the single VM, independently of token credits:
+
+| | Старт (free) | Плюс (pro) | Премиум (team) |
+|---|---|---|---|
+| Sandbox container minutes per UTC day | 120 | 600 | 1 800 |
+| Concurrent sandbox containers per account | 1 | 1 | 1 |
+
+Sandbox minutes are the wall-clock life of command containers (agent `terminal.exec`, package installs,
+builds, preview builds), stored per user/day as `sandboxSeconds` in `usage_counters`. A container is
+charged at least one second. When the budget is used up, the next command fails with HTTP 429
+`SANDBOX_QUOTA_EXCEEDED` and a message naming the used minutes, the reset time (00:00 UTC) and support.
+Concurrent containers are **one per account on every plan**: the agent runs one at a time anyway, so a
+parallel build only takes a host slot without speeding anything up. The per-account queue is separate
+from the host ceiling `SANDBOX_MAX_CONCURRENT`: a second container of the same account waits without
+taking a host place, so another account is not slowed down. `SANDBOX_MAX_PER_USER` overrides the number
+(`0` disables the per-account queue).
+
+Accounts are also limited **per IP address, permanently**: 3 accounts from one address, counting email
+and phone signups (`server/src/auth/signup-ip.ts`, table `signup_ips`). The counter is not windowed on
+purpose — a daily window can be walked around by signing up one account a day — and it is not reduced
+when an account is deleted. The fourth signup gets HTTP 403 `SIGNUP_IP_LIMIT` with the support path, and
+the refusal is written to the audit journal as `security.signup.blocked`. `SIGNUP_IP_LIMIT` changes the
+number (`0` disables the limit); support can reset one address with `resetSignupIp`.
+
+Project creation is also limited per IP address: 10 new projects per 24 hours, regardless of how many
+accounts that address opens (HTTP 429 `PROJECT_CREATE_RATE_LIMITED`).
+
+A container of one project above `ABUSE_CPU_PERCENT` (90% by default) for `ABUSE_SUSTAINED_MS`
+(10 minutes) blocks its account with the reason «контейнер проекта … держал загрузку CPU» and an audit
+entry `security.abuse.blocked`; the containers are stopped. `ABUSE_WATCH=0` disables the watchdog.
+
 ## Enforcement and usage
 
 - Project creation checks the authenticated user's current plan and project count.

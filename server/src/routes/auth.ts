@@ -26,6 +26,7 @@ import { findVkIdentityByUserId } from "../auth/vk-account-store.js";
 import { findPhoneByUserId, formatPhone } from "../auth/phone-store.js";
 import { getUserProfile } from "../account/profile-store.js";
 import { checkAuthRateLimit } from "../auth/auth-rate-limit.js";
+import { releaseSignupIp, reserveSignupIp, signupIpExceededMessage } from "../auth/signup-ip.js";
 import { recordAudit } from "../security/audit-journal.js";
 import { blockedMessageFor, getRestriction } from "../account/restriction-store.js";
 
@@ -114,8 +115,33 @@ export async function registerAuthRoutes(app:FastifyInstance, deps:AuthRouteDeps
       reply.header("Retry-After", String(rateLimit.retryAfter));
       return reply.code(429).send({error:"Слишком много попыток регистрации. Попробуйте позже."});
     }
+    // Три аккаунта с адреса — навсегда, а не за сутки: недельное окно обходится регистрацией
+    // по одному аккаунту в день, и бесплатный тариф становится бессрочным.
+    const ipLimit = await reserveSignupIp(request.ip).catch(error => {
+      // Сбой счётчика не должен закрывать регистрацию всем: это защита, а не вход.
+      request.log.error({error:error instanceof Error ? error.message : error},"signup ip counter unavailable");
+      return null;
+    });
+    if (ipLimit && !ipLimit.allowed) {
+      await recordAudit({
+        action: "security.signup.blocked",
+        actorType: "system",
+        actorId: "signup-ip",
+        ip: request.ip,
+        details: { limit: ipLimit.limit },
+      });
+      return reply.code(403).send({error:signupIpExceededMessage(ipLimit.limit),code:"SIGNUP_IP_LIMIT"});
+    }
     try{
-      const user = await createUser(body.email,body.password,{emailVerified:false});
+      let user;
+      try{
+        user = await createUser(body.email,body.password,{emailVerified:false});
+      }catch(error){
+        // Аккаунт не создался — место под него освобождается, иначе отказ по занятой почте
+        // съедал бы лимит адреса.
+        if(ipLimit) await releaseSignupIp(request.ip).catch(()=>undefined);
+        throw error;
+      }
       const baseUrl = verificationBaseUrl(request);
       try{
         await sendEmailVerification(user,baseUrl,now(),sendVerification);

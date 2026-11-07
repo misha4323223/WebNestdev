@@ -1057,7 +1057,7 @@ install_caddyfile(){
 # `docker run` под таймаутом инструмента, и медленная загрузка выглядела бы как зависшая команда.
 # Отказ не валит выкатку: следующая команда скачает образ сама, проверка просто скажет «image».
 ensure_sandbox_image(){
-  local image="${SANDBOX_IMAGE:-node:22-bookworm}"
+  local image="${SANDBOX_IMAGE:-node:26-bookworm}"
   if [ "$DRY_RUN" = "1" ]; then log "dry-run: docker pull $image"; return 0; fi
   if docker image inspect "$image" >/dev/null 2>&1; then return 0; fi
   log "скачиваю образ песочницы $image (git и компилятор для npm install) — разовая загрузка, около гигабайта"
@@ -1289,7 +1289,7 @@ migrate_sandboxes(){
   log "переношу файлы проектов из тома $volume в $dir"
   # Перенос не должен ронять выкатку: если копирование не удалось, каталог остаётся пустым и
   # следующая выкатка повторит попытку (условие — «каталог пуст»).
-  if ! docker run --rm --network none -v "$volume:/from:ro" -v "$dir:/to" "${SANDBOX_IMAGE:-node:22-bookworm}" \
+  if ! docker run --rm --network none -v "$volume:/from:ro" -v "$dir:/to" "${SANDBOX_IMAGE:-node:26-bookworm}" \
     sh -c 'if [ -d /from/sandboxes ]; then cp -a /from/sandboxes/. /to/ 2>/dev/null || true; echo "файлов: $(find /to -type f 2>/dev/null | wc -l)"; else echo "в томе нет каталога sandboxes"; fi'; then
     log "перенос файлов проектов не удался — повторю при следующей выкатке"
   fi
@@ -1319,7 +1319,7 @@ verify_sandbox(){
   git_verdict=$(printf '%s\n' "$output" | grep -o 'SANDBOX-GIT=[a-z]*' | tail -1 | cut -d= -f2 || true)
   case "$git_verdict" in
     ok) log "git в образе песочницы есть" ;;
-    missing) log "ПЕСОЧНИЦА БЕЗ GIT: «Работа с Git» у агента не заработает. Задайте SANDBOX_IMAGE с git (node:22-bookworm) и выкатите снова" ;;
+    missing) log "ПЕСОЧНИЦА БЕЗ GIT: «Работа с Git» у агента не заработает. Задайте SANDBOX_IMAGE с git (node:26-bookworm) и выкатите снова" ;;
     image) log "образ песочницы на ВМ отсутствует — наличие git не проверено (команды агента скачают его при первом запуске)" ;;
     "") ;;
     *) log "наличие git в образе песочницы не определилось ($git_verdict)" ;;
@@ -1824,7 +1824,7 @@ verify_egress(){
   # Сеть предпросмотра: прокси должен быть виден из контейнера проекта по имени сервиса.
   net=$(egress_network)
   image=$(compose_env_value SANDBOX_IMAGE 2>/dev/null || true)
-  image=${image:-node:22-bookworm}
+  image=${image:-node:26-bookworm}
   if [ -z "$net" ]; then
     log "egress: сеть предпросмотра не найдена — проверка из контейнера проекта пропущена"; return 0
   fi

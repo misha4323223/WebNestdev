@@ -24,6 +24,7 @@ import { describeTrustProxy, trustProxyOption } from "./security/client-ip.js";
 import { registerSameOriginGuard } from "./security/same-origin.js";
 import { registerSecurityHeaders } from "./security/headers.js";
 import { describeSandboxPaths, describeSandboxRuntime, sandboxRuntime } from "./sandbox/config.js";
+import { dockerCliRunner, productionAbuseWatch } from "./security/abuse-watch.js";
 import { initializeNodeRegistry, stopNodeHeartbeat } from "./nodes/local-node.js";
 import { stopRemoteNodeHeartbeat } from "./nodes/remote-heartbeat.js";
 import { NoSandboxNodeError } from "./nodes/placement.js";
@@ -470,6 +471,22 @@ void reapRemotePreviews()
 // `created` держит слой образа, и настоящая версия остаётся на диске даже после уборки образов
 // (см. sandbox/cleanup.ts).
 stopSandboxMaintenance = startSandboxMaintenance((message, extra) => app.log.info(extra ?? {}, message));
+// Детектор майнинга (5.2): раз в минуту снимает CPU контейнеров платформы через брокер. Реакция —
+// блокировка аккаунта с записью в журнал и понятной причиной, а не молчаливое убийство процесса.
+// `ABUSE_WATCH=0` выключает наблюдение на машине без Docker CLI: каждая выборка иначе стоила бы
+// таймаута, а пользы не было бы.
+if (process.env.ABUSE_WATCH !== "0") {
+  const abuseWatch = productionAbuseWatch(dockerCliRunner);
+  const interval = Number(process.env.ABUSE_WATCH_INTERVAL_MS ?? 60_000);
+  const every = Number.isFinite(interval) && interval >= 30_000 ? interval : 60_000;
+  console.log("[abuse] наблюдение за нагрузкой контейнеров включено, интервал " + Math.round(every / 1000) + " с");
+  const timer = setInterval(() => {
+    void abuseWatch.tick().catch(error =>
+      app.log.warn({ error: error instanceof Error ? error.message : error }, "abuse watch tick skipped"),
+    );
+  }, every);
+  timer.unref();
+}
 // Песочница проверяется один раз после старта: маркер в каталоге песочниц и `cat` его из
 // контейнера. Это единственный способ узнать, что контейнеры видят те же файлы, что и агент;
 // результат остаётся в /api/health (`sandbox.mount`), а расхождение ещё и понижает /api/ready.

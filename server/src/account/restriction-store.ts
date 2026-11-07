@@ -34,7 +34,12 @@ export const ACCOUNT_BLOCKED_MESSAGE = "Аккаунт заблокирован 
 export function blockedMessageFor(restriction: UserRestriction | null) {
   const reason = (restriction?.reason ?? "").trim().replace(/[.?!]+$/, "").slice(0, 300);
   if (!reason || reason === "Блокировка администратором") return ACCOUNT_BLOCKED_MESSAGE;
-  return "Аккаунт заблокирован администратором: " + reason + ". Напишите в поддержку.";
+  // Автоматическая блокировка (детектор майнинга 5.2) не должна читаться как решение живого
+  // администратора: иначе первый же разбор начинается с поиска человека, которого не было.
+  const prefix = restriction?.blockedBy === "system"
+    ? "Доступ приостановлен автоматической проверкой нагрузки: "
+    : "Аккаунт заблокирован администратором: ";
+  return prefix + reason + ". Напишите в поддержку.";
 }
 
 const root = process.env.WEBNESTDEV_DATA_DIR ?? path.resolve(".webnestdev");

@@ -123,6 +123,7 @@ const PK_BY_TABLE: Record<string, string[]> = {
   user_profiles: ["user_id"],
   usage_events: ["user_id", "usage_date", "event_id"],
   usage_counters: ["user_id", "usage_date", "kind"],
+  signup_ips: ["ip"],
   project_counters: ["user_id"],
   model_usage: ["user_id", "usage_date", "run_id"],
   oauth_states: ["state"],
@@ -562,6 +563,16 @@ export async function initializeStorage(): Promise<void> {
       kind TEXT NOT NULL,
       used BIGINT NOT NULL DEFAULT 0,
       PRIMARY KEY (user_id, usage_date, kind)
+    )`);
+
+    // Сколько аккаунтов создано с одного IP — навсегда, а не на сутки (5.2). Отдельная таблица,
+    // а не окно `rate_limits`: окно чистится по времени, а это правило не должно сбрасываться
+    // само, иначе «по одному аккаунту в день» снова открывает бесконечный бесплатный тариф.
+    await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("signup_ips")} (
+      ip TEXT NOT NULL PRIMARY KEY,
+      accounts BIGINT NOT NULL DEFAULT 0,
+      first_at TEXT NOT NULL,
+      last_at TEXT NOT NULL
     )`);
 
     await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("project_counters")} (

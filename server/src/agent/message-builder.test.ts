@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { ChatMessage } from "../types.js";
-import { PLANNER_MODE_PROMPT, PROJECT_PLANNING_PROMPT, SYSTEM_PROMPT, browserCheckNotice, buildInitialMessages, insertSystemNotice, storedHistory } from "./message-builder.js";
+import { PLANNER_MODE_PROMPT, PROJECT_PLANNING_PROMPT, SYSTEM_PROMPT, browserCheckNotice, buildInitialMessages, closeInterruptedTurns, insertSystemNotice, storedHistory } from "./message-builder.js";
 
 /**
  * The stored chat is the model's memory of a run, so what it hands to a provider has to be exactly
@@ -147,6 +147,33 @@ test("browser check notice keeps Chromium off until the user turns it on", () =>
   const on = browserCheckNotice(true);
   assert.match(on, /BROWSER CHECK IS ON/i);
   assert.match(on, /browser\.scenario/);
+});
+
+/**
+ * Отмена запуска закрывает сокет и не оставляет ответа на просьбу, поэтому следующее сообщение
+ * пользователя оказывается вторым подряд. Без заметки модель считает старую просьбу действующей и
+ * продолжает её — а блок текущего состояния каждый шаг повторяет новую цель («ты тут?»).
+ */
+test("оборванный ход закрывается перед новым сообщением пользователя", () => {
+  const history: ChatMessage[] = [
+    { role: "user", content: "сделай лендинг" },
+    { role: "user", content: "ты тут?" },
+  ];
+  const closed = closeInterruptedTurns(history);
+  assert.equal(closed.length, 3);
+  assert.equal(closed[1].role, "assistant");
+  assert.match(closed[1].content, /запуск был прерван/i);
+  assert.deepEqual(closed[2], { role: "user", content: "ты тут?" });
+});
+
+/** Обычный диалог между двумя репликами уже содержит ответ агента — трогать его нельзя. */
+test("обычный диалог заметкой не трогается", () => {
+  const history: ChatMessage[] = [
+    { role: "user", content: "сделай лендинг" },
+    { role: "assistant", content: "готово" },
+    { role: "user", content: "добавь форму" },
+  ];
+  assert.deepEqual(closeInterruptedTurns(history), history);
 });
 
 test("planner mode follows the language of the request", () => {

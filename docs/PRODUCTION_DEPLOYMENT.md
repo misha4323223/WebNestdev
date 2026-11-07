@@ -192,7 +192,7 @@ node server/dist/runner/main.js
 
 For local development the same process starts with `npm run runner --workspace=server`. The
 runner needs a working Docker CLI/socket (the API's Docker broker is only for the API host), the
-sandbox image (`SANDBOX_IMAGE`, default `node:22-bookworm`) and the project workspace.
+sandbox image (`SANDBOX_IMAGE`, default `node:26-bookworm`) and the project workspace.
 `WEBNESTDEV_RUNNER=1` tells the shared image entrypoint not to prepare API data or secrets; without
 it every restart would recursively `chown` the shared workspace. The runner container has the Docker
 socket, which is root-equivalent on that machine; keep the machine dedicated to the runner and do
@@ -272,7 +272,7 @@ Agent commands and the live preview run in containers started by the server thro
 - Project directories are handed to the sandbox user, not just chmod-ed: the containers run as uid 1000. Before stage 2.2 the server wrote files as root, and the entrypoint still normalises ownership of legacy trees on the first start; after that the server also runs as 1000, so new files belong to the same user as the container. Files and directories are `chown`ed to 1000 (775/664, secrets 600); on a host where that is impossible, permissions fall back to 777/666 only so the container can still write. File ownership is what git checks: a repo whose `.git` belongs to root while git runs as 1000 answers `dubious ownership`, and writes to `.git/FETCH_HEAD` or `.git/index` fail with `Permission denied`. The `.git` tree is re-opened before every container command, and the command container carries `safe.directory=*` so a legacy root-owned repo is usable immediately. Vite caches under `node_modules` that were created by a non-container user are removed, since Vite cannot write into them and they are disposable.
 An installation that predates the host path keeps its project files in the `webnestdev-data` volume; move them once with [`deploy/scripts/migrate-sandboxes.sh`](../deploy/scripts/migrate-sandboxes.sh) (`SANDBOX_DIR=/var/lib/webnestdev/sandboxes bash migrate-sandboxes.sh` from the deployment directory), otherwise existing projects open empty. An **image deploy does this itself**: `vm-deploy.sh` copies the volume into `SANDBOX_DIR` when that directory is still empty and says so when it is not (`MIGRATE_SANDBOXES=0` disables it).
 - **Git inside the container works on a repo the server owns.** The worktree and `.git` belong to uid 1000 (the server chowns them), the agent's `git.commit` supplies the platform author (`NestDev Agent`) instead of requiring a `user.name` that project repos never had, and remote operations are not attempted from the container at all — `git.pull` runs in the server process with the connected token (see the `git.pull` tool), because the container has no network and no credentials.
-- **The sandbox image is the full Node image, not `-slim`.** It is the environment for the agent's commands, `npm install` and the preview container, and the agent's git tools run `git` inside it. `node:22-bookworm-slim` has no git at all, so «Работа с Git» answered `/bin/sh: 1: git: not found` (exit 127) while the panel's history kept working (it uses isomorphic-git in the server process). The full image is buildpack-deps based: it brings git, `make` and a C compiler, so native `npm install` and git-URL dependencies work too. It costs about 1 GB on disk instead of ~330 MB; the deploy pre-pulls it best-effort (`SANDBOX_IMAGE`, default in `server/src/sandbox/config.ts`), and a host that wants the small image back builds its own slim+git image and sets `SANDBOX_IMAGE` to it — the platform does not assume git exists and says so in the tool error instead of returning the shell's answer as repository state.
+- **The sandbox image is the full Node 26 image, not `-slim`.** It is the environment for the agent's commands, `npm install` and the preview container, and the agent's git tools run `git` inside it. Node 26 is the platform's own LTS, and it matters on its own: projects declare `"engines": { "node": ">=24" }`, and npm 10 on Node 22 died mid-install with `Exit handler never called!` and `ENOTEMPTY`, leaving `node_modules` without `.bin`. `node:26-bookworm-slim` has no git at all, so «Работа с Git» answered `/bin/sh: 1: git: not found` (exit 127) while the panel's history kept working (it uses isomorphic-git in the server process). The full image is buildpack-deps based: it brings git, `make` and a C compiler, so native `npm install` and git-URL dependencies work too. It costs about 1 GB on disk instead of ~330 MB; the deploy pre-pulls it best-effort (`SANDBOX_IMAGE`, default in `server/src/sandbox/config.ts`), and a host that wants the small image back builds its own slim+git image and sets `SANDBOX_IMAGE` to it — the platform does not assume git exists and says so in the tool error instead of returning the shell's answer as repository state. The npm cache is pointed at `/workspace/node_modules/.cache/npm` rather than `$HOME/.npm`: `/tmp` is a 256 MB tmpfs and a few hundred packages overflow it, while the project disk does not (and `./node_modules/.cache` is already excluded from cold-tier archives).
 - The two paths are kept apart in code, not assumed equal. The server writes projects into `WEBNESTDEV_SANDBOX_DIR`, while every container mount uses `WEBNESTDEV_SANDBOX_HOST_DIR` (same value by default) — so a sandbox directory that is *not* mounted at the same absolute path in the server container can still be made to work by naming its host path. A relative path is reported as a failure instead of being passed to `docker run -v`, where it would silently resolve against the host root.
 - **The path contract is checked, not trusted.** At startup the server writes a marker file into the sandbox directory and asks a container to read it back through the same mount a command uses; the result stays in `GET /api/health` under `sandbox.mount` and in the startup log. `docker compose exec -T webnestdev-server node server/dist/scripts/sandbox-selfcheck.js` runs the check on demand and prints both directories plus a machine-readable `SANDBOX-MOUNT=` verdict (`ok`, `mismatch`, `image`, `docker`, `disk`). This exists because the reverse of it is what happened in practice: the VM ran a `docker-compose.yml` older than the repository, the server fell back to its own default directory, the containers mounted a host path that was empty, and the symptom surfaced as an agent reporting that files had disappeared.
 
@@ -342,8 +342,8 @@ model over the network. Bounding the conversation was a mistake this section use
 one user held the whole host while doing nothing, and everyone else queued behind an idle chat.
 All three limits are printed at startup (`[agent] …`, `[sandbox] …`).
 
-- `AGENT_MAX_CONCURRENT_RUNS` (default `8`) — conversations running at once. A run that arrives
-  while the limit is reached waits in a queue (`AGENT_MAX_QUEUE`, default `64`) and the panel says
+- `AGENT_MAX_CONCURRENT_RUNS` (default `150`) — conversations running at once. A run that arrives
+  while the limit is reached waits in a queue (`AGENT_MAX_QUEUE`, default `200`) and the panel says
   so instead of looking stuck; `AGENT_QUEUE_TIMEOUT_MS` (default `300000`) bounds the wait, and a
   closed tab or a pressed stop releases the place at once. The daily run quota is consumed only
   once the run really starts, so a full queue never spends one of the user's daily runs; a request
@@ -407,7 +407,8 @@ server ~0.15-0.2 GB, **two** command containers ~0.6-1.0 GB, one or two containe
 
 So the box is limited by **containers, not by conversations**: 2 heavy operations at a time
 (seconds each) and as many open conversations as the provider quota allows — conversations are
-so cheap that `AGENT_MAX_CONCURRENT_RUNS` can go to 20-30 here if the provider keeps up. What it
+so cheap that 150 concurrent runs were measured against the gateway at 1 584 requests per minute
+with no `429` (median step 2.7 s), and `AGENT_MAX_CONCURRENT_RUNS` now defaults to 150. What it
 is *not* sized for is one long-lived dev-server container per project (that is what static
 previews removed), and what it runs out of first is **disk**, not memory.
 
@@ -433,7 +434,7 @@ The current bill decomposes exactly as: compute `base` 2 vCPU / 4 GB 2 566 ₽ +
    the proxy forwards the scheme, or the cookie stops being `secure`. Caddy also proxies
    WebSockets, which `/ws` and container-preview HMR need.
 4. **Limits** — `PREVIEW_MODE=auto`, `SANDBOX_MAX_CONCURRENT=2`, `SANDBOX_MEMORY=512m`,
-   `AGENT_MAX_CONCURRENT_RUNS=8` (20-30 is fine on this box), `BROWSER_MAX_CONCURRENT=1`.
+   `AGENT_MAX_CONCURRENT_RUNS=150`, `BROWSER_MAX_CONCURRENT=1`.
    Lower `TOOL_COMMAND_MAX_OUTPUT` (default 200 000 chars) — every command output is sent to the
    model, so this number is a *bill*, not a comfort setting.
 5. **Secrets** — `WEBNESTDEV_ENCRYPTION_KEY`, `WEBNESTDEV_ALLOWED_ORIGINS`, `POSTGRES_PASSWORD`,
@@ -561,7 +562,7 @@ instant.
   (`npm ci --omit=dev`), the browser is `chromium-headless-shell` rather than the full Chromium (the
   server launches it headless everywhere, which saves ~390 MB), and `docker` is the 43 MB static
   client instead of the 282 MB `docker.io` package with containerd and runc inside it.
-- Other repositories (`postgres`, `node:22-bookworm`) are deliberately **not** touched: deleting
+- Other repositories (`postgres`, `node:26-bookworm`) are deliberately **not** touched: deleting
   them only means re-pulling them later. `IMAGE_REPO_PATTERN` changes which repositories are cleaned.
 - Build cache is pruned too, and on a real VM it turned out to be the biggest single line in
   `docker system df` — **15 GB**, more than every image together, because an image-mode deploy never

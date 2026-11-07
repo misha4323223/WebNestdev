@@ -26,6 +26,18 @@ test("контейнер команды запускается без capabiliti
   assert.ok(args.includes("--user") && args[args.indexOf("--user") + 1] === "1000:1000", args.join(" "));
 });
 
+/**
+ * Кэш npm не должен жить в /tmp: там tmpfs на 256 МБ, а дерево зависимостей на несколько сотен
+ * пакетов его переполняет — npm падает с `Exit handler never called!` и оставляет node_modules
+ * без `.bin`. Диск проекта больше, а `./node_modules/.cache` исключён из архивов.
+ */
+test("кэш npm лежит на диске проекта, а не в ограниченном /tmp", () => {
+  const config = { projectId: "p1", root: "/root/p1", memoryMb: 256, cpuLimit: 1, timeoutMs: 1000 };
+  const args = dockerRunArgs(config, config.root, options, "npm install", "none");
+  const cache = args.indexOf("npm_config_cache=/workspace/node_modules/.cache/npm");
+  assert.ok(cache > 0 && args[cache - 1] === "-e", args.join(" "));
+});
+
 test("runsc добавляется флагом Docker и не появляется в обычном режиме", () => {
   const config = { projectId: "p1", root: "/root/p1", memoryMb: 256, cpuLimit: 1, timeoutMs: 1000 };
   const normal = dockerRunArgs(config, config.root, options, "npm test", "none");

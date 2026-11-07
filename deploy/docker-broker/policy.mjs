@@ -120,6 +120,22 @@ export function classify(method, rawUrl) {
       if (upper === "POST" && action === "exec") return { kind: "container", action: "exec", id };
       if (upper === "GET" && action === "logs") return { kind: "container", action: "logs", id };
       if (upper === "POST" && action === "wait") return { kind: "container", action: "wait", id };
+      // Остановка — слабее уже разрешённого удаления контейнера (`DELETE` ниже): реакция детектора
+      // майнинга на перегрузку CPU, а не новый способ распоряжаться диском. Владение проверяется
+      // в proxy.mjs, как и для остальных операций.
+      if (upper === "POST" && action === "stop") return { kind: "container", action: "stop", id };
+      // `docker stats --no-stream` читает `GET /containers/{id}/stats` — единственный признак
+      // майнинга, который видно без содержимого трафика (server/src/security/abuse-watch.ts).
+      // Разрешён только одиночный замер: потоковая статистика держала бы соединение открытым и
+      // превращала бы наблюдение в постоянный канал. Владение контейнером проверяет proxy.mjs,
+      // как и для остальных действий.
+      if (upper === "GET" && action === "stats") {
+        const stream = query.get("stream");
+        if (stream && stream !== "0" && stream !== "false") {
+          return deny(403, "Потоковая статистика контейнера запрещена политикой брокера");
+        }
+        return { kind: "container", action: "stats", id };
+      }
     }
     return deny(403, "Операция с контейнером запрещена политикой брокера: " + upper + " " + pathname);
   }

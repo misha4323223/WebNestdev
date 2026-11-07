@@ -32,6 +32,16 @@ export const PLAN_CATALOG = {
       browserChecksPerDay: null,
       webSearchesPerDay: 25,
       storageBytes: 524_288_000,
+      /**
+       * Ресурсы хоста, а не деньги платформы за токены. Это то, чем один аккаунт может занять
+       * единственную машину: минуты контейнеров в сутки и сколько контейнеров одновременно.
+       * Потолок хоста (`SANDBOX_MAX_CONCURRENT`) при этом остаётся и может быть ниже.
+       *
+       * Одновременный контейнер — **один на аккаунт на всех тарифах**: агент запускается один,
+       * и вторая параллельная сборка ничего не ускоряет, а только занимает место хоста. Поле
+       * оставлено в лимитах, чтобы тарифы в интерфейсе показывали правило явно.
+       */
+      resourceLimits: { sandboxMinutesPerDay: 120, concurrentSandbox: 1 },
       /** Месячный бюджет кредитов; 0 — вместо него работает дневной лимит запусков. */
       agentCreditsPerMonth: 0,
       /** Сырые токены для админской аналитики и старых надбавок; пользовательский лимит — кредиты. */
@@ -83,6 +93,7 @@ export const PLAN_CATALOG = {
       browserChecksPerDay: null,
       webSearchesPerDay: 200,
       storageBytes: 10_737_418_240,
+      resourceLimits: { sandboxMinutesPerDay: 600, concurrentSandbox: 1 },
       // 5 000 кредитов — стартовая калибровка: примерно 50 млн токенов NestDev при смеси 90/10.
       // Max тратит кредиты быстрее, Mini — медленнее; ставки задаются в каталоге моделей.
       agentCreditsPerMonth: 5_000,
@@ -128,6 +139,7 @@ export const PLAN_CATALOG = {
       browserChecksPerDay: null,
       webSearchesPerDay: 500,
       storageBytes: 50_368_744_176,
+      resourceLimits: { sandboxMinutesPerDay: 1_800, concurrentSandbox: 1 },
       // 10 000 кредитов — примерно 100 млн токенов NestDev при обычной смеси 90/10:
       // вдвое больше «Плюса», что соответствует разнице в цене тарифов.
       agentCreditsPerMonth: 10_000,

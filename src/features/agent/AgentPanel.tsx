@@ -396,7 +396,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   const [questionPrompt,setQuestionPrompt]=useState<AgentQuestion|null>(null);
   const [questionBusy,setQuestionBusy]=useState(false);
   const [questionError,setQuestionError]=useState("");
-  const [quotaNotice,setQuotaNotice]=useState<"storage"|"daily"|"credits"|null>(null);
+  const [quotaNotice,setQuotaNotice]=useState<"storage"|"daily"|"credits"|"sandbox"|null>(null);
   // The project's saved chats. The list comes from the server, so a chat is something
   // the user can return to from another device, not just from this browser.
   // Остановленный запуск — не потеря задачи: история и план уже на сервере, поэтому панель
@@ -1198,17 +1198,19 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
         const isDailyQuota = event.code === "DAILY_QUOTA_EXCEEDED";
         // Кредиты тарифа: сброс не сегодня, а с первого числа месяца, поэтому подсказка другая.
         const isCreditBudget = event.code === "CREDIT_BUDGET_EXHAUSTED" || event.code === "TOKEN_BUDGET_EXHAUSTED";
+        // Квота ресурсов: минуты контейнеров, а не число запусков — поэтому и объяснение своё.
+        const isSandboxQuota = event.code === "SANDBOX_QUOTA_EXCEEDED";
         // The server is at its parallel-run limit: the queue was full or the wait ran out.
         const isBusy = event.code === "SERVER_BUSY";
         // One account runs one agent at a time, so a second tab or project is turned away.
         const isAccountBusy = event.code === "RUN_ALREADY_ACTIVE";
-        const quotaKind = isStorageLimit ? "storage" : isCreditBudget ? "credits" : isDailyQuota ? "daily" : null;
-        updateMessages(current=>[...current,{role:"assistant",content:(quotaKind==="storage"?"Достигнут лимит хранилища вашего тарифа. ":quotaKind==="credits"?"Месячный лимит кредитов тарифа исчерпан. ":quotaKind==="daily"?"Дневной лимит запусков агента исчерпан. ":isAccountBusy?"Агент уже работает в этом аккаунте. ":isBusy?"Сервер занят. ":"Ошибка: ")+errorMsg}]);
+        const quotaKind = isStorageLimit ? "storage" : isCreditBudget ? "credits" : isDailyQuota ? "daily" : isSandboxQuota ? "sandbox" : null;
+        updateMessages(current=>[...current,{role:"assistant",content:(quotaKind==="storage"?"Достигнут лимит хранилища вашего тарифа. ":quotaKind==="credits"?"Месячный лимит кредитов тарифа исчерпан. ":quotaKind==="daily"?"Дневной лимит запусков агента исчерпан. ":quotaKind==="sandbox"?"Дневной лимит времени песочницы исчерпан. ":isAccountBusy?"Агент уже работает в этом аккаунте. ":isBusy?"Сервер занят. ":"Ошибка: ")+errorMsg}]);
         if(quotaKind)setQuotaNotice(quotaKind);
         // Тариф и очередь аккаунта требуют не «Продолжить», а действия с тарифом или ожидания: у этих
         // отказов запуск даже не начался, и кнопка продолжения только запутала бы.
         const resumable=!quotaKind&&!isAccountBusy;
-        endRun(socket,{drain:false,notice:quotaKind==="storage"?"Хранилище заполнено — обновите тариф":quotaKind==="credits"?"Кредиты на месяц исчерпаны":quotaKind==="daily"?"Дневной лимит исчерпан":isAccountBusy?"Агент уже работает в этом аккаунте — дождитесь завершения или остановите его":isBusy?"Сервер занят — повторите запуск позже":"Запуск остановлен",...(resumable?{resume:{reason:"запуск был отклонён сервером: "+errorMsg.slice(0,160),label:"Запуск остановлен — агент продолжит с того же места."}}:{})});
+        endRun(socket,{drain:false,notice:quotaKind==="storage"?"Хранилище заполнено — обновите тариф":quotaKind==="credits"?"Кредиты на месяц исчерпаны":quotaKind==="daily"?"Дневной лимит исчерпан":quotaKind==="sandbox"?"Лимит времени песочницы исчерпан — сброс в 00:00 UTC":isAccountBusy?"Агент уже работает в этом аккаунте — дождитесь завершения или остановите его":isBusy?"Сервер занят — повторите запуск позже":"Запуск остановлен",...(resumable?{resume:{reason:"запуск был отклонён сервером: "+errorMsg.slice(0,160),label:"Запуск остановлен — агент продолжит с того же места."}}:{})});
       }
     },()=>drop());
       socketRef.current=socket;
@@ -2018,7 +2020,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     {quotaNotice&&<div className="modal-backdrop" role="presentation" onMouseDown={()=>setQuotaNotice(null)}>
       <section className="modal quota-modal" role="dialog" aria-modal="true" aria-label="Лимит тарифа достигнут" onMouseDown={event=>event.stopPropagation()}>
         <header className="modal-head">
-          <div><span className="eyebrow">ЛИМИТ ТАРИФА</span><h2>{quotaNotice==="storage"?"Хранилище заполнено":quotaNotice==="credits"?"Кредиты исчерпаны":"Дневной лимит исчерпан"}</h2></div>
+          <div><span className="eyebrow">ЛИМИТ ТАРИФА</span><h2>{quotaNotice==="storage"?"Хранилище заполнено":quotaNotice==="credits"?"Кредиты исчерпаны":quotaNotice==="sandbox"?"Время песочницы исчерпано":"Дневной лимит исчерпан"}</h2></div>
           <button className="icon-button" onClick={()=>setQuotaNotice(null)} aria-label="Закрыть" title="Закрыть"><X size={16}/></button>
         </header>
         <div className="modal-body">
@@ -2027,6 +2029,8 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
             ?"Лимит хранилища вашего тарифа достигнут: агент больше не может писать файлы в проект. Освободите место или обновите тариф — лимиты: Старт 500 МБ, Плюс 10 ГБ, Премиум 50 ГБ."
             :quotaNotice==="credits"
             ?"Лимит кредитов израсходован: он считается по фактическому расходу. Докупите кредиты на странице «Тариф и подписка» — дополнительные кредиты не сгорают. Или подключите свой AI-провайдер в настройках проекта: такие запуски идут через ваш ключ и не тратят кредиты платформы."
+            :quotaNotice==="sandbox"
+            ?"Дневной лимит времени контейнеров исчерпан: команды, установки пакетов и сборки снова заработают после сброса в 00:00 UTC. Время считается по длительности контейнеров, а не по числу запусков. Тариф с большим лимитом меняется в разделе «Тарифы»; если лимит израсходован не вами — напишите в поддержку."
             :"Дневная квота запусков агента исчерпана. Новые запуски станут доступны после сброса по UTC или при обновлении тарифа. Лимит относится только к встроенной модели платформы: подключите свой AI-провайдер в настройках проекта — запуски пойдут через ваш ключ и модель, без дневной квоты."}</p>
         </div>
         <footer className="modal-foot">

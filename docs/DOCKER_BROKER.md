@@ -55,6 +55,7 @@ root, сокет брокера доступен ему по общей груп
 | `preview/app-http.ts`, `app-port.ts`, `app-relay.ts`, `exec-proxy.ts`, `docker-exec.ts` | `exec` (в том числе `-d`) | контейнер свой; hijack проксируется байт-в-байт |
 | `preview/preview-network.ts` | `network ls`, `network inspect`, `network connect`, `inspect` | сеть только `*preview`; контейнер свой |
 | `routes/admin-infra.ts`, `routes/admin-prune.ts` | `ps --filter label`, `system df`, `image ls`, `builder prune`, `image prune` | только чтение и уборка кеша |
+| `security/abuse-watch.ts` | `ps --filter label`, `inspect`, `stats --no-stream`, `stop` | чтение состояния и остановка своего контейнера; потоковая статистика (`stream=1`) закрыта |
 | `scripts/preview-selfcheck.ts` | `version`, `run -d`, `exec`, `rm -f` | как выше |
 
 Четыре места, которые нельзя было сделать «по общим правилам»:

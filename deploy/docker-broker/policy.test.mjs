@@ -141,6 +141,12 @@ test("classify пропускает операции платформы", () => 
   // отказ: `force` снёс бы теги и у живого образа.
   assert.deepEqual(classify("DELETE", "/images/sha256%3Aabc?force=0&noprune=0"), { kind: "image-delete", name: "sha256:abc" });
   assert.equal(classify("DELETE", "/images/sha256%3Aabc?force=1").kind, "deny");
+  // Один замер CPU для детектора майнинга; поток — отказ, иначе наблюдение стало бы каналом.
+  assert.deepEqual(classify("GET", "/containers/abc/stats?stream=0&one-shot=true"), { kind: "container", action: "stats", id: "abc" });
+  assert.deepEqual(classify("GET", "/containers/abc/stats?stream=false"), { kind: "container", action: "stats", id: "abc" });
+  assert.equal(classify("GET", "/containers/abc/stats?stream=1").kind, "deny");
+  // Остановка перегруженного контейнера: слабее уже разрешённого удаления, владение проверяет прокси.
+  assert.deepEqual(classify("POST", "/containers/abc/stop?t=5"), { kind: "container", action: "stop", id: "abc" });
 });
 
 test("classify закрывает всё остальное", () => {
@@ -151,7 +157,7 @@ test("classify закрывает всё остальное", () => {
     ["POST", "/volumes/create"],
     ["GET", "/secrets"],
     ["GET", "/containers/abc/archive"],
-    ["POST", "/containers/abc/stop"],
+    ["POST", "/containers/abc/kill"],
     ["POST", "/exec/exec-1/resize"],
     ["POST", "/networks/create"],
     ["POST", "/swarm/init"],

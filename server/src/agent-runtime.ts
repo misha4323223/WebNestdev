@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { AgentRunRequest,ChatMessage,PlanState } from "./types.js";
 import { createProvider } from "./provider.js";
 import { appendConversationMessages,getConversationPlan,getProject,getProjectProvider,saveConversationPlan } from "./project-store.js";
-import { browserCheckNotice,buildInitialMessages,insertSystemNotice,resumeNotice,storedHistory,webSearchNotice } from "./agent/message-builder.js";
+import { browserCheckNotice,buildInitialMessages,closeInterruptedTurns,insertSystemNotice,resumeNotice,storedHistory,webSearchNotice } from "./agent/message-builder.js";
 import { notesNotice,notesUpdateNotice,readNoteLines } from "./agent/notes.js";
 import { buildProjectContext } from "./agent/context-builder.js";
 import { retrieveRelevantFiles } from "./agent/context-retrieval.js";
@@ -255,7 +255,12 @@ export class AgentRuntime {
         webSearch:request.webSearch===true,
         browserCheck:browserCheckEnabled,
       });
-      let messages:ChatMessage[]=buildInitialMessages(history,projectContext+"\n\nTASK-RELEVANT SOURCE FILES\n"+relevantFiles,mode,planning);
+      // Остановленный в прошлый раз запуск не оставляет ответа на просьбу пользователя, и она
+      // выглядит для модели действующей задачей. Заметка закрывает такой ход, и новое сообщение
+      // («ты тут?») не превращается в продолжение старой команды. При `resume` её быть не должно:
+      // там пользователь как раз просит продолжить.
+      const cleanHistory=request.resume?history:closeInterruptedTurns(history);
+      let messages:ChatMessage[]=buildInitialMessages(cleanHistory,projectContext+"\n\nTASK-RELEVANT SOURCE FILES\n"+relevantFiles,mode,planning);
       // Переключатель поиска в интернете живёт в панели ввода, поэтому модель узнаёт о нём из
       // заметки, а инструменты проверяют тот же флаг сами (web-tools.ts). Выключенный поиск —
       // не повод выдумывать факты, а повод попросить пользователя включить кнопку.

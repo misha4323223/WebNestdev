@@ -3,7 +3,9 @@ import { z } from "zod";
 import { attachSession } from "../auth/auth.js";
 import { blockedMessageFor, getRestriction } from "../account/restriction-store.js";
 import { checkAuthRateLimit } from "../auth/auth-rate-limit.js";
-import { demoPhone, ensurePhoneAccount, formatPhone, normalizePhone, startPhoneLogin, verifyPhoneCode } from "../auth/phone-store.js";
+import { demoPhone, ensurePhoneAccount, findUserIdByPhone, formatPhone, normalizePhone, startPhoneLogin, verifyPhoneCode } from "../auth/phone-store.js";
+import { releaseSignupIp, reserveSignupIp, signupIpExceededMessage } from "../auth/signup-ip.js";
+import { recordAudit } from "../security/audit-journal.js";
 import { PHONE_CONSENT_REQUIRED_MESSAGE, recordPhoneConsent } from "../auth/phone-consent.js";
 import { sendLoginCode, smsConfig, smsConfigHint, smsProviderLabel, smsReadiness, smsSummary } from "../auth/sms.js";
 
@@ -122,7 +124,31 @@ export async function registerPhoneAuthRoutes(app: FastifyInstance) {
     const checked = verifyPhoneCode(phone, body.code);
     if (!checked.ok) return reply.code(401).send({ error: checked.error });
 
-    const user = await ensurePhoneAccount(phone);
+    // Новый номер — новый аккаунт: тот же предел адреса, что и у регистрации по почте.
+    // Вход в уже существующий аккаунт место не занимает и не проверяется.
+    const knownAccount = Boolean(await findUserIdByPhone(phone));
+    const ipLimit = knownAccount ? null : await reserveSignupIp(request.ip).catch(error => {
+      request.log.error({error:error instanceof Error ? error.message : error},"signup ip counter unavailable");
+      return null;
+    });
+    if (ipLimit && !ipLimit.allowed) {
+      await recordAudit({
+        action: "security.signup.blocked",
+        actorType: "system",
+        actorId: "signup-ip",
+        ip: request.ip,
+        details: { limit: ipLimit.limit, channel: "phone" },
+      });
+      return reply.code(403).send({ error: signupIpExceededMessage(ipLimit.limit), code: "SIGNUP_IP_LIMIT" });
+    }
+
+    let user;
+    try {
+      user = await ensurePhoneAccount(phone);
+    } catch (error) {
+      if (ipLimit) await releaseSignupIp(request.ip).catch(() => undefined);
+      throw error;
+    }
     if (!(await attachSession(reply, user.id, request))) {
       return reply.code(403).send({ error: blockedMessageFor(await getRestriction(user.id)) });
     }

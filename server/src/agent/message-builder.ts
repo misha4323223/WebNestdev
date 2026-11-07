@@ -161,6 +161,37 @@ export function browserCheckNotice(enabled: boolean): string {
     : "BROWSER CHECK IS OFF. The user did not turn on the browser check in the «Режимы» menu, and it is off by default. Do not call browser.runtime, browser.scenario or browser.screenshot; automatic Chromium QA after UI changes is skipped. preview.start, project.verify, browser.open and browser.inspect are still available for HTTP and HTML checks. If visual or client-side behavior really needs Chromium, tell the user in one short sentence to enable «Браузерная проверка» in the «Режимы» menu next to the message box, and continue with the work that does not need it.";
 }
 
+/**
+ * Что модель читает между двумя сообщениями пользователя подряд.
+ *
+ * Такая пара появляется только тогда, когда предыдущий запуск был прерван (остановка кнопкой,
+ * обрыв сокета, падение провайдера): сообщение пользователя сохраняется до запуска, а ответ на него
+ * — нет. Без этой заметки модель видит неотвеченную просьбу, считает её действующей и продолжает
+ * работу, хотя человек уже написал новое сообщение. Именно так «ты тут?» после отмены превращалось
+ * в «да я тут» на каждом шаге: блок текущего состояния повторял цель «ты тут?», а незакрытая
+ * команда оставалась задачей.
+ */
+export const INTERRUPTED_TURN_NOTICE =
+  "Предыдущая просьба осталась без ответа: запуск был прерван. Не продолжай её без новой команды — ответь на последнее сообщение пользователя.";
+
+/**
+ * Закрывает оборванные ходы: между двумя сообщениями пользователя подряд вставляется заметка о том,
+ * что первое осталось без ответа. Обычный диалог не меняется — там между репликами всегда есть
+ * ответ агента. При продолжении прерванного запуска (`resume`) заметка не нужна: там как раз просят
+ * продолжить, и её текст противоречил бы заметке о возобновлении.
+ */
+export function closeInterruptedTurns(messages: ChatMessage[]): ChatMessage[] {
+  const kept: ChatMessage[] = [];
+  for (const message of messages) {
+    if (message.role === "system") continue;
+    if (message.role === "user" && kept.at(-1)?.role === "user") {
+      kept.push({ role: "assistant", content: INTERRUPTED_TURN_NOTICE });
+    }
+    kept.push(message);
+  }
+  return kept;
+}
+
 export function buildInitialMessages(messages: ChatMessage[], projectContext: string, mode: "planner" | "developer" = "developer", planning = false): ChatMessage[] {
   return [
     { role: "system", content: SYSTEM_PROMPT },

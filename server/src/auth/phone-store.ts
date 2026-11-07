@@ -38,12 +38,28 @@ export function formatPhone(phone: string) {
  */
 const DEFAULT_DEMO_PHONE = "+79990000000";
 
+let warnedAboutDefaultDemoPhone = false;
+
 export function demoPhone(): string | null {
+  const production = process.env.NODE_ENV === "production";
   const enabled = process.env.WEBNESTDEV_DEMO_PHONE_ENABLED
     ? process.env.WEBNESTDEV_DEMO_PHONE_ENABLED !== "0"
-    : process.env.NODE_ENV !== "production";
+    : !production;
   if (!enabled) return null;
-  return normalizePhone(process.env.WEBNESTDEV_DEMO_PHONE?.trim() || DEFAULT_DEMO_PHONE);
+  const configured = normalizePhone(process.env.WEBNESTDEV_DEMO_PHONE?.trim() ?? "");
+  // В production номер по умолчанию известен всем: вход по нему без SMS был бы общей дверью.
+  // Флаг разрешает демо-режим, но только со своим номером (P2 #17, docs/SECURITY.md).
+  if (production && (!configured || configured === DEFAULT_DEMO_PHONE)) {
+    if (!warnedAboutDefaultDemoPhone) {
+      warnedAboutDefaultDemoPhone = true;
+      console.warn(
+        "[auth] демо-номер отключён: в production нужен свой WEBNESTDEV_DEMO_PHONE, " +
+          "номер по умолчанию известен и не годится для входа без SMS",
+      );
+    }
+    return null;
+  }
+  return configured || normalizePhone(DEFAULT_DEMO_PHONE);
 }
 
 async function readAccounts(): Promise<PhoneAccount[]> {

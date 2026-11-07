@@ -38,7 +38,14 @@ export function dockerRunArgs(
   // gVisor включается одной переменной. Флаг добавляется ко всем контейнерам команд и заданий;
   // политика брокера разрешает только тот Runtime, который назван в BROKER_RUNTIME.
   const runtimeArgs = options.runtime==="runsc"?["--runtime=runsc"]:[];
-  return ["run",...(mode.detached?["-d"]:["--rm"]),"--init",...runtimeArgs,...(name?["--name",name]:[]),...labels,"--network",network,"--cap-drop","ALL","--security-opt","no-new-privileges:true","--cpus",options.cpus,"--memory",options.memory,"--pids-limit",options.pids,"--read-only","--tmpfs","/tmp:rw,nosuid,size=256m","--user","1000:1000","-v",workspaceMountSource(config)+":/workspace",...extraMounts,"-w","/workspace"+suffix,"-e","HOME=/tmp","-e","WEBNESTDEV_PROJECT_ID="+config.projectId,"-e","CI=1",...envArgs,
+  return ["run",...(mode.detached?["-d"]:["--rm"]),"--init",...runtimeArgs,...(name?["--name",name]:[]),...labels,"--network",network,"--cap-drop","ALL","--security-opt","no-new-privileges:true","--cpus",options.cpus,"--memory",options.memory,"--pids-limit",options.pids,"--read-only","--tmpfs","/tmp:rw,nosuid,size=256m","--user","1000:1000","-v",workspaceMountSource(config)+":/workspace",...extraMounts,"-w","/workspace"+suffix,"-e","HOME=/tmp",
+    // Кэш npm по умолчанию живёт в $HOME/.npm, то есть в /tmp — а это tmpfs на 256 МБ. На дереве
+    // из нескольких сотен пакетов он переполняется, и npm умирает посреди установки
+    // (`Exit handler never called!`, `ENOTEMPTY`), оставляя node_modules без `.bin`. Кэш на диске
+    // проекта решает это и не попадает в архив холодного яруса: `./node_modules/.cache` уже
+    // исключён в project-archive.ts.
+    "-e","npm_config_cache=/workspace/node_modules/.cache/npm",
+    "-e","WEBNESTDEV_PROJECT_ID="+config.projectId,"-e","CI=1",...envArgs,
     // Репозиторий создаёт сервер от root, а git в контейнере работает от uid 1000. Права на
     // `.git` открывает openGitForSandbox, но git всё равно сверяет владельца и без этой записи
     // отказывается работать в чужом репозитории (`dubious ownership`). Внутри изолированного

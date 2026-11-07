@@ -89,7 +89,7 @@ services:
       BROKER_SOCKET: /run/webnestdev-docker/docker.sock
       BROKER_UPSTREAM: /var/run/docker.sock
       BROKER_SANDBOX_ROOT: ${SANDBOX_DIR:-/var/lib/webnestdev/sandboxes}
-      BROKER_IMAGE: ${SANDBOX_IMAGE:-node:22-bookworm}
+      BROKER_IMAGE: ${SANDBOX_IMAGE:-node:26-bookworm}
       # Единственный Runtime, который политика разрешает в create. Пустое/`docker` — контейнеры
       # идут на runc; `runsc` — gVisor. Значение должно совпадать с SANDBOX_RUNTIME сервера:
       # иначе политика отклонит create и будет понятная ошибка, а не тихий откат на runc.
@@ -455,8 +455,10 @@ services:
       WEBNESTDEV_DOCKER_BROKER_WAIT_MS: ${WEBNESTDEV_DOCKER_BROKER_WAIT_MS:-10000}
       # Полный образ, а не slim: в slim нет git, и «Работа с Git» у агента отвечала
       # `/bin/sh: 1: git: not found`. Здесь есть git, make и компилятор — ставится и нативный
-      # npm install. Свой образ (в том числе slim с git внутри) задаётся этим же значением.
-      SANDBOX_IMAGE: node:22-bookworm
+      # npm install. Node 26 — тот же LTS, на котором собран сам сервер; проекты объявляют
+      # engines >=24, а npm 10 на Node 22 падал посреди установки (`Exit handler never called!`).
+      # Свой образ задаётся этим же значением.
+      SANDBOX_IMAGE: node:26-bookworm
       SANDBOX_MEMORY: 1g
       SANDBOX_CPUS: 1
       SANDBOX_PIDS_LIMIT: 128

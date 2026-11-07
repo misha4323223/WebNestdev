@@ -264,10 +264,23 @@ export const DEMO_ACCOUNT = { email: "demo@webnestdev.local", password: "demo123
  * Shared demo account: NestDev seeds it on startup so a fresh install can be
  * opened without registering. Disabled in production unless WEBNESTDEV_DEMO_USER=1;
  * credentials can be overridden with WEBNESTDEV_DEMO_EMAIL / WEBNESTDEV_DEMO_PASSWORD.
+ *
+ * В production одного флага мало: пароль по умолчанию (`demo1234`) известен всем, и включённый
+ * демо-аккаунт означал бы общий вход в платформу. Поэтому в production нужен свой пароль; без
+ * него аккаунт не создаётся, а в лог уходит причина. Это закрывает P2 #17 из docs/SECURITY.md.
  */
 export async function ensureDemoUser(){
   const email = process.env.WEBNESTDEV_DEMO_EMAIL?.trim().toLowerCase() || DEMO_ACCOUNT.email;
-  const password = process.env.WEBNESTDEV_DEMO_PASSWORD?.trim() || DEMO_ACCOUNT.password;
+  const configured = process.env.WEBNESTDEV_DEMO_PASSWORD?.trim();
+  const production = process.env.NODE_ENV === "production";
+  if (production && (!configured || configured === DEMO_ACCOUNT.password)) {
+    console.warn(
+      "[auth] демо-аккаунт не создан: в production нужен свой WEBNESTDEV_DEMO_PASSWORD, " +
+        "пароль по умолчанию известен и не годится для общего входа",
+    );
+    return { email, created: false };
+  }
+  const password = configured || DEMO_ACCOUNT.password;
   if(await findUserByEmail(email)) return {email,created:false};
   try{
     await createUser(email,password);

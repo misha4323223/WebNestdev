@@ -61,7 +61,8 @@ When the operator sets `PREVIEW_PUBLIC_DOMAIN` (e.g. `preview.nestdev.ru`), ever
 ## How much runs at once
 
 Three different things are bounded, because they cost different things. A conversation mostly
-waits for the model, so `AGENT_MAX_CONCURRENT_RUNS` (default **8**) controls how many run at once;
+waits for the model, so `AGENT_MAX_CONCURRENT_RUNS` (default **150**) controls how many run at once
+(the gateway was measured at 1 584 requests per minute with 150 concurrent streams and no `429`);
 the memory lives in the containers, so `SANDBOX_MAX_CONCURRENT` (default **2**) controls how many
 `docker run` command containers exist at the same moment — that second number is the one to raise
 with the host's RAM; and `BROWSER_MAX_CONCURRENT` (default one) controls Chromium instances. A

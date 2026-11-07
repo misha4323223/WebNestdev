@@ -20,7 +20,7 @@ export function gitBinaryMissing(result: { ok: boolean; exitCode: number | null;
 
 export const GIT_MISSING_MESSAGE =
   "В образе песочницы нет git: SANDBOX_IMAGE указывает на сборку без него. Задайте образ с git " +
-  "(например SANDBOX_IMAGE=node:22-bookworm в docker-compose.yml) и перезапустите контейнер сервера. " +
+  "(например SANDBOX_IMAGE=node:26-bookworm в docker-compose.yml) и перезапустите контейнер сервера. " +
   "История проекта при этом цела — панель «Изменения» работает с ней отдельно от контейнера.";
 
 function assertGitAvailable<T extends { ok: boolean; exitCode: number | null; stderr: string }>(result: T): T {

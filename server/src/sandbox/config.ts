@@ -10,11 +10,17 @@ import type { SandboxConfig } from "./sandbox-types.js";
  * хотя платформа умеет работать с историей проекта. Полный образ Node собран на buildpack-deps: там
  * есть git, make и компилятор, поэтому ставится и нативный `npm install`, и зависимость из git-URL.
  *
+ * Версия — 26: это действующий LTS и ровно та версия, на которой собран сам сервер
+ * (`Dockerfile`, `server/Dockerfile`). Проекты объявляют `"engines": { "node": ">=24" }`, а npm 10
+ * на Node 22 падал на большом дереве зависимостей с `Exit handler never called!`, оставляя
+ * половину `node_modules` без `.bin`. Тег фиксированный, а не `node:latest`: `latest` молча
+ * меняется вместе с реестром, и однажды «вчера работало» превращается в загадку.
+ *
  * Значение живёт в одном месте: раньше `node:22-bookworm-slim` был вписан отдельно в песочницу,
  * предпросмотр, проверки и compose, и достаточно было поправить одно место, чтобы они разошлись.
  * Свой образ (в том числе slim с git) задаётся через `SANDBOX_IMAGE`.
  */
-export const DEFAULT_SANDBOX_IMAGE="node:22-bookworm";
+export const DEFAULT_SANDBOX_IMAGE="node:26-bookworm";
 
 /** Образ песочницы из окружения; пустая строка — это «не задано», а не имя образа. */
 export function sandboxImage(){
@@ -94,7 +100,7 @@ export function sandboxMemoryMb(){
   return Number.isFinite(value)&&value>0?value:1024;
 }
 
-export function buildSandboxConfig(projectId:string,root:string,node=nodeId()):SandboxConfig{
+export function buildSandboxConfig(projectId:string,root:string,node=nodeId(),userId?:string):SandboxConfig{
   return {
     projectId,
     root,
@@ -102,6 +108,7 @@ export function buildSandboxConfig(projectId:string,root:string,node=nodeId()):S
     node,
     memoryMb:sandboxMemoryMb(),
     cpuLimit:Number(process.env.SANDBOX_CPU_LIMIT??1),
-    timeoutMs:Number(process.env.TOOL_COMMAND_TIMEOUT_MS??120000)
+    timeoutMs:Number(process.env.TOOL_COMMAND_TIMEOUT_MS??120000),
+    ...(userId?{userId}:{})
   };
 }

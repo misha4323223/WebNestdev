@@ -335,7 +335,8 @@ test("запрещённые эндпоинты не пересылаются", 
     ["POST", "/images/create?fromImage=alpine"],
     ["POST", "/build"],
     ["POST", "/volumes/create"],
-    ["POST", "/containers/abc/stop"],
+    // `POST /containers/:id/stop` сюда больше не входит: остановка контейнера — действие
+    // брокера (security.abuse останавливает контейнеры), а не запрещённый эндпоинт.
   ]) {
     const answer = await call(method, requestPath, {});
     assert.equal(answer.status, 403, method + " " + requestPath);
