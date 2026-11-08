@@ -10,6 +10,7 @@ const usersDir = path.join(root, "auth");
 const usersFile = path.join(usersDir, "users.json");
 const sessionsFile = path.join(usersDir, "sessions.json");
 const emailVerificationsFile = path.join(usersDir, "email-verifications.json");
+const passwordResetsFile = path.join(usersDir, "password-resets.json");
 
 export type User = { id:string; email:string; passwordHash:string; createdAt:string; emailVerified:boolean };
 /** Запись старого формата: до подтверждения почты поле отсутствовало у всех аккаунтов. */
@@ -18,6 +19,20 @@ type StoredUser = Omit<User,"emailVerified"> & { emailVerified?:boolean };
 function normalizeUser(user:StoredUser):User{ return {...user,emailVerified:user.emailVerified!==false}; }
 export const EMAIL_TAKEN_MESSAGE = "Этот email уже зарегистрирован";
 export const EMAIL_NOT_VERIFIED_MESSAGE = "Подтвердите почту: откройте ссылку из письма или запросите новое.";
+
+/**
+ * Служебный домен синтетических адресов: телефон, Яндекс ID, VK ID и демо-аккаунт.
+ * Письмо на такой адрес уйти не может, поэтому восстановление пароля по нему не отправляется.
+ * Заодно это ответ на вопрос «есть ли у аккаунта настоящий пароль»: у внешних входов он
+ * случайный, и сменить его, не зная текущего, нельзя.
+ */
+export const SYNTHETIC_EMAIL_DOMAIN = "webnestdev.local";
+export function hasLoginPassword(email:string){
+  const domain = email.trim().toLowerCase().split("@").pop() ?? "";
+  // Служебные адреса живут и на поддоменах: phone., yandex-id., vk-id. — поэтому проверяется
+  // и сам домен, и его поддомены, а не только конец строки с «@».
+  return domain !== SYNTHETIC_EMAIL_DOMAIN && !domain.endsWith("." + SYNTHETIC_EMAIL_DOMAIN);
+}
 
 /**
  * Сессия. `expiresAt` — абсолютный срок, `lastSeenAt` — когда ею пользовались в последний раз.
@@ -256,6 +271,140 @@ export async function consumeEmailVerification(tokenHash:string, now=Date.now())
   users[index] = {...users[index], emailVerified:true};
   await writeJson(usersFile, users);
   return {status:"verified", user:normalizeUser(users[index])};
+}
+
+/**
+ * Восстановление пароля. Устроено так же, как подтверждение почты: в ссылке случайный токен,
+ * в хранилище — только его SHA-256, на аккаунт живёт один актуальный токен.
+ *
+ * Отдельная таблица, а не поле в `users`: неудачная отправка не должна трогать сам аккаунт,
+ * а срок и одноразовость проверяются по записи токена.
+ */
+export type PasswordReset = { userId:string; tokenHash:string; expiresAt:string; sentAt:string };
+export type PasswordResetTake =
+  | { status:"ok"; userId:string }
+  | { status:"expired" }
+  | { status:"invalid" };
+
+export function hashPasswordResetToken(token:string){
+  return createHash("sha256").update(token).digest("hex");
+}
+
+/** Один актуальный токен на аккаунт: новый запрос заменяет предыдущее письмо. */
+export async function savePasswordReset(record:PasswordReset){
+  if(isYdbEnabled()){
+    await ydbQuery()`
+      UPSERT INTO ${ydbQuery().identifier(getTable("password_resets"))}
+        (user_id,token_hash,expires_at,sent_at)
+      VALUES (${record.userId},${record.tokenHash},${record.expiresAt},${record.sentAt})
+    `;
+    return;
+  }
+  const records = await readJson<PasswordReset[]>(passwordResetsFile, []);
+  const next = records.filter(item => item.userId !== record.userId);
+  next.push(record);
+  await writeJson(passwordResetsFile, next);
+}
+
+export async function getPasswordReset(userId:string):Promise<PasswordReset|null>{
+  if(isYdbEnabled()){
+    const [rows]=await ydbQuery()<Array<{user_id:string;token_hash:string;expires_at:string;sent_at:string}>>`
+      SELECT user_id,token_hash,expires_at,sent_at
+      FROM ${ydbQuery().identifier(getTable("password_resets"))}
+      WHERE user_id = ${userId}
+      LIMIT 1
+    `;
+    const row=rows?.[0];
+    return row ? {userId:row.user_id,tokenHash:row.token_hash,expiresAt:row.expires_at,sentAt:row.sent_at} : null;
+  }
+  const records = await readJson<PasswordReset[]>(passwordResetsFile, []);
+  return records.find(item => item.userId === userId) ?? null;
+}
+
+export async function deletePasswordReset(userId:string){
+  if(isYdbEnabled()){
+    await ydbQuery()`DELETE FROM ${ydbQuery().identifier(getTable("password_resets"))} WHERE user_id = ${userId}`;
+    return;
+  }
+  const records = await readJson<PasswordReset[]>(passwordResetsFile, []);
+  await writeJson(passwordResetsFile, records.filter(item => item.userId !== userId));
+}
+
+/**
+ * Одноразовое погашение ссылки. Сначала удаление, потом проверка срока: в PostgreSQL удаление
+ * с условием `expires_at > now` и есть проверка «токен ещё жив и не использован», поэтому два
+ * одновременных перехода не могут оба получить строку. Просроченная запись удаляется, чтобы
+ * повторный переход отвечал «истёк», а не «недействителен».
+ */
+export async function takePasswordReset(tokenHash:string, now=Date.now()):Promise<PasswordResetTake>{
+  const stamp = new Date(now).toISOString();
+  if(isYdbEnabled()){
+    const [consumed]=await ydbQuery()<Array<{user_id:string}>>`
+      DELETE FROM ${ydbQuery().identifier(getTable("password_resets"))}
+      WHERE token_hash = ${tokenHash} AND expires_at > ${stamp}
+      RETURNING user_id
+    `;
+    const userId=consumed?.[0]?.user_id;
+    if(userId) return {status:"ok",userId};
+    const [expired]=await ydbQuery()<Array<{user_id:string}>>`
+      SELECT user_id
+      FROM ${ydbQuery().identifier(getTable("password_resets"))}
+      WHERE token_hash = ${tokenHash}
+      LIMIT 1
+    `;
+    if(expired?.[0]){
+      await ydbQuery()`DELETE FROM ${ydbQuery().identifier(getTable("password_resets"))} WHERE token_hash = ${tokenHash}`;
+      return {status:"expired"};
+    }
+    return {status:"invalid"};
+  }
+  const records = await readJson<PasswordReset[]>(passwordResetsFile, []);
+  const record = records.find(item => item.tokenHash === tokenHash);
+  if(!record) return {status:"invalid"};
+  await writeJson(passwordResetsFile, records.filter(item => item.userId !== record.userId));
+  return Date.parse(record.expiresAt) <= now ? {status:"expired"} : {status:"ok",userId:record.userId};
+}
+
+/** Новый пароль. `false` — аккаунта уже нет (например, удалён между запросом и переходом). */
+export async function setUserPassword(userId:string, password:string):Promise<boolean>{
+  const salt = randomBytes(16).toString("hex");
+  const derived = await scrypt(password, salt, 64) as Buffer;
+  const passwordHash = salt + ":" + derived.toString("hex");
+  if(isYdbEnabled()){
+    const [rows]=await ydbQuery()<Array<{id:string}>>`
+      UPDATE ${ydbQuery().identifier(getTable("users"))}
+      SET password_hash = ${passwordHash}
+      WHERE id = ${userId}
+      RETURNING id
+    `;
+    return Boolean(rows?.[0]?.id);
+  }
+  const users = await readJson<StoredUser[]>(usersFile, []);
+  const index = users.findIndex(item => item.id === userId);
+  if(index < 0) return false;
+  users[index] = {...users[index], passwordHash};
+  await writeJson(usersFile, users);
+  return true;
+}
+
+/**
+ * Переход по ссылке восстановления доказывает владение адресом, поэтому заодно снимает
+ * неподтверждённость: иначе человек сменил бы пароль и всё равно не смог войти.
+ */
+export async function markEmailVerified(userId:string):Promise<void>{
+  if(isYdbEnabled()){
+    await ydbQuery()`
+      UPDATE ${ydbQuery().identifier(getTable("users"))}
+      SET email_verified = TRUE
+      WHERE id = ${userId}
+    `;
+    return;
+  }
+  const users = await readJson<StoredUser[]>(usersFile, []);
+  const index = users.findIndex(item => item.id === userId);
+  if(index < 0) return;
+  users[index] = {...users[index], emailVerified:true};
+  await writeJson(usersFile, users);
 }
 
 export const DEMO_ACCOUNT = { email: "demo@webnestdev.local", password: "demo1234" };

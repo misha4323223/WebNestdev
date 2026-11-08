@@ -10,8 +10,8 @@ import path from "node:path";
  * квоту, запись в переписку, журнал и отказ. Само письмо (отправитель, Reply-To, тема, текст)
  * проверяется в `support/support-reply.test.ts` на поддельном SMTP-соединении.
  *
- * Так же проверяется главное обещание двери: ключ поддержки обращения читает, но писем людям не
- * отправляет, а ответы считаются в тот же суточный предел, что и рассылка.
+ * Так же проверяется главное обещание двери: без админ-сессии обращения не читаются и письма
+ * людям не уходят, а ответы считаются в тот же суточный предел, что и рассылка.
  *
  * Переменные выставляются до импорта: тип хранилища и каталог данных читаются при загрузке
  * admin-store, а суточный предел — при каждом запросе.
@@ -19,7 +19,6 @@ import path from "node:path";
 process.env.WEBNESTDEV_STORAGE = "json";
 process.env.WEBNESTDEV_DATA_DIR = await mkdtemp(path.join(tmpdir(), "support-reply-"));
 process.env.POSTBOX_DAILY_LIMIT = "200";
-process.env.SUPPORT_API_KEY = "test-support-read-key-1234";
 
 const Fastify = (await import("fastify")).default;
 const { registerSupportRoutes } = await import("./support.js");
@@ -43,7 +42,6 @@ await registerSupportRoutes(app, {
 
 const EMAIL = "admin@example.test";
 const PASSWORD = "correct-horse-battery";
-const SUPPORT_KEY = process.env.SUPPORT_API_KEY ?? "";
 const PHONE_LOGIN = "79531814136@phone.webnestdev.local";
 
 const admin = await createAdmin(EMAIL, PASSWORD);
@@ -86,22 +84,17 @@ function reply(ticketId: string, payload: unknown) {
   return app.inject({ method: "POST", url: "/api/support/tickets/" + ticketId + "/reply", headers: auth, payload: payload as never });
 }
 
-test("ключ поддержки читает обращения, но писем людям не отправляет", async () => {
+test("без админ-сессии обращения не читаются и письма не уходят", async () => {
   const payload = { body: "Здравствуйте! Проверка ответа из админки." };
 
-  const anonymous = await app.inject({ method: "POST", url: "/api/support/tickets/" + ticket.id + "/reply", payload });
-  assert.equal(anonymous.statusCode, 401);
+  const anonymousReply = await app.inject({ method: "POST", url: "/api/support/tickets/" + ticket.id + "/reply", payload });
+  assert.equal(anonymousReply.statusCode, 401);
 
-  const byKey = await app.inject({
-    method: "POST",
-    url: "/api/support/tickets/" + ticket.id + "/reply",
-    headers: { "x-support-key": SUPPORT_KEY },
-    payload,
-  });
-  assert.equal(byKey.statusCode, 401, "ключ чтения не отправляет письма");
+  const anonymousRead = await app.inject({ method: "GET", url: "/api/support/tickets" });
+  assert.equal(anonymousRead.statusCode, 401);
 
-  const read = await app.inject({ method: "GET", url: "/api/support/tickets", headers: { "x-support-key": SUPPORT_KEY } });
-  assert.equal(read.statusCode, 200, "тем же ключом обращения читаются");
+  const read = await app.inject({ method: "GET", url: "/api/support/tickets", headers: auth });
+  assert.equal(read.statusCode, 200, "админ-сессия обращения читает");
   assert.deepEqual(sent, [], "до отправки дело не дошло");
 });
 

@@ -8,6 +8,7 @@ import { releaseSignupIp, reserveSignupIp, signupIpExceededMessage } from "../au
 import { recordAudit } from "../security/audit-journal.js";
 import { PHONE_CONSENT_REQUIRED_MESSAGE, recordPhoneConsent } from "../auth/phone-consent.js";
 import { sendLoginCode, smsConfig, smsConfigHint, smsProviderLabel, smsReadiness, smsSummary } from "../auth/sms.js";
+import { PHONE_AUTH_DISABLED_MESSAGE, phoneAuthEnabled } from "../auth/phone-auth-config.js";
 
 const phoneInput = z.object({ phone: z.string().min(1).max(30), consent: z.boolean().optional() });
 const verifyInput = z.object({ phone: z.string().min(1).max(30), code: z.string().min(1).max(10) });
@@ -21,11 +22,25 @@ export async function registerPhoneAuthRoutes(app: FastifyInstance) {
   // Public on purpose: the sign-in screen asks which provider is available before
   // anybody is authenticated. It exposes no credentials, only the provider's name.
   app.get("/api/auth/phone/status", async () => {
+    // Выключенный вход остаётся видимым для клиентов: иначе старый экран покажет «провайдер
+    // не подключён» вместо честного «вход отключён».
+    if (!phoneAuthEnabled()) {
+      return {
+        enabled: false,
+        provider: null,
+        providerLabel: "отключён",
+        configured: false,
+        testMode: false,
+        sender: "",
+        hint: PHONE_AUTH_DISABLED_MESSAGE,
+      };
+    }
     const config = smsConfig();
     const summary = smsSummary();
     const readiness = await smsReadiness();
     const demo = demoPhone();
     return {
+      enabled: true,
       provider: config.provider,
       providerLabel: smsProviderLabel(config.provider),
       configured: Boolean(config.provider),
@@ -45,6 +60,9 @@ export async function registerPhoneAuthRoutes(app: FastifyInstance) {
   });
 
   app.post("/api/auth/phone/start", async (request, reply) => {
+    if (!phoneAuthEnabled()) {
+      return reply.code(403).send({ error: PHONE_AUTH_DISABLED_MESSAGE, code: "PHONE_AUTH_DISABLED" });
+    }
     const body = phoneInput.parse(request.body ?? {});
     const phone = normalizePhone(body.phone);
     if (!phone) return reply.code(400).send({ error: "Введите российский номер телефона, например +7 999 123-45-67" });
@@ -110,6 +128,9 @@ export async function registerPhoneAuthRoutes(app: FastifyInstance) {
   });
 
   app.post("/api/auth/phone/verify", async (request, reply) => {
+    if (!phoneAuthEnabled()) {
+      return reply.code(403).send({ error: PHONE_AUTH_DISABLED_MESSAGE, code: "PHONE_AUTH_DISABLED" });
+    }
     const body = verifyInput.parse(request.body ?? {});
     const phone = normalizePhone(body.phone);
     if (!phone) return reply.code(400).send({ error: "Введите российский номер телефона" });

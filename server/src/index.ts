@@ -34,6 +34,7 @@ import { configureDockerEndpoint, describeDockerEndpoint } from "./sandbox/docke
 import { describeSandboxMount,verifySandboxMount } from "./sandbox/sandbox-check.js";
 import { ensureDataDir } from "./project-store.js";
 import { clearAllPreviewSecrets } from "./secrets/preview-secrets.js";
+import { cleanupAbandonedTemp } from "./storage/temp-cleanup.js";
 import { registerHealthRoutes } from "./routes/health.js";
 import { registerPanelFiles } from "./routes/panel-static.js";
 import { registerProjectRoutes } from "./routes/projects.js";
@@ -461,6 +462,28 @@ const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../.
 await registerPanelFiles(app, rootDir);
 
 
+// Хвосты прошлого запуска: если процесс убили посреди архивации или распаковки, `finally`
+// не выполнился и временные файлы остались. Убираем их до `listen`, пока этот процесс ещё
+// ничего не создал. Ошибка уборки не должна мешать серверу подняться: это обслуживание.
+try {
+  // При встроенном воркере (обычная выкатка) других процессов, которым принадлежали бы эти
+  // файлы, нет: можно убрать все совпадения, включая хвост только что убитого процесса.
+  // Если воркер вынесен (`JOBS_INLINE_WORKER=0`), оставляем часовой порог, чтобы не удалить
+  // его идущую распаковку.
+  const separateWorker = process.env.JOBS_INLINE_WORKER === "0";
+  const cleaned = await cleanupAbandonedTemp(separateWorker ? {} : { maxAgeMs: 0 });
+  if (cleaned.files || cleaned.dirs || cleaned.failed) {
+    const mb = cleaned.bytes > 0 ? " (" + (cleaned.bytes / (1024 * 1024)).toFixed(1) + " МБ)" : "";
+    console.log(
+      "[storage] убраны временные файлы прошлого запуска: " + cleaned.files + " файлов" + mb +
+      ", " + cleaned.dirs + " папок" + (cleaned.failed ? ", ошибок: " + cleaned.failed : ""),
+    );
+  }
+} catch (error) {
+  console.warn(
+    "[storage] уборка временных файлов не удалась: " + (error instanceof Error ? error.message : String(error)),
+  );
+}
 await app.listen({host:"0.0.0.0",port:Number(process.env.PORT??8787)});
 // Preview containers outlive the server that started them, so the ones left from a
 // previous run are stopped on boot instead of running on with nothing owning them.

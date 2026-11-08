@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { ApiError } from "../../lib/api";
-import { getVkAuthStatus, getYandexAuthStatus, login as loginByEmail, register as registerByEmail, resendVerification, verifyEmail as confirmEmail, type VkAuthStatus, type YandexAuthStatus } from "../../lib/auth-api";
+import { confirmPasswordReset, getVkAuthStatus, getYandexAuthStatus, login as loginByEmail, register as registerByEmail, requestPasswordReset, resendVerification, verifyEmail as confirmEmail, type VkAuthStatus, type YandexAuthStatus } from "../../lib/auth-api";
 import { WebNestLogo } from "../../components/WebNestLogo";
 import { openCookieSettings } from "../legal/CookieConsent";
 import { legalPath } from "../../lib/legal";
@@ -50,6 +50,12 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void })
   // Токен из письма. Он открывает форму, но аккаунт подтверждается только вместе с паролем.
   const [verificationToken, setVerificationToken] = useState<string|null>(null);
   const [verificationPassword, setVerificationPassword] = useState("");
+  // Восстановление пароля: запрос письма и форма нового пароля по ссылке из него.
+  const [forgotMode, setForgotMode] = useState(false);
+  const [resetSentTo, setResetSentTo] = useState<string|null>(null);
+  const [resetToken, setResetToken] = useState<string|null>(null);
+  const [resetPassword, setResetPassword] = useState("");
+  const [resetRepeat, setResetRepeat] = useState("");
   // Яндекс ID и VK ID — отдельные способы входа: их состояние и ошибки не должны
   // смешиваться с формой почты.
   const [yandex, setYandex] = useState<YandexAuthStatus | null>(null);
@@ -71,13 +77,15 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void })
     const yandexStatus = params.get("yandex_login");
     const vkStatus = params.get("vk_login");
     const verifyToken = params.get("verify_email");
-    if (!yandexStatus && !vkStatus && !verifyToken) return;
-    for (const name of ["yandex_login", "vk_login", "verify_email"]) params.delete(name);
+    const resetValue = params.get("reset_password");
+    if (!yandexStatus && !vkStatus && !verifyToken && !resetValue) return;
+    for (const name of ["yandex_login", "vk_login", "verify_email", "reset_password"]) params.delete(name);
     const query = params.toString();
     window.history.replaceState(null, "", window.location.pathname + (query ? "?" + query : ""));
     if (yandexStatus) setYandexNotice(yandexNotices[yandexStatus] ?? yandexNotices.error);
     if (vkStatus) setVkNotice(vkNotices[vkStatus] ?? vkNotices.error);
-    if (verifyToken) { setVerificationToken(verifyToken); setPendingEmail(null); }
+    if (verifyToken) { setVerificationToken(verifyToken); setPendingEmail(null); setResetToken(null); }
+    if (resetValue) { setResetToken(resetValue); setPendingEmail(null); setVerificationToken(null); setForgotMode(false); setResetSentTo(null); }
   }, []);
 
   function signInWithYandex() {
@@ -159,6 +167,65 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void })
     setEmailMode("login");
   }
 
+  /** «Забыли пароль?»: письмо уходит только на настоящий адрес, но ответ экрана всегда один. */
+  async function submitForgot(event: FormEvent) {
+    event.preventDefault();
+    setError("");
+    setBusy(true);
+    try {
+      await requestPasswordReset(email.trim());
+      setResetSentTo(email.trim());
+      setForgotMode(false);
+      setPassword("");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Не удалось отправить письмо");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  /** Новый пароль по ссылке. Сервер сам отзывает старые сессии и открывает эту. */
+  async function submitReset(event: FormEvent) {
+    event.preventDefault();
+    if (!resetToken) return;
+    setError("");
+    if (resetPassword.length < 8) { setError("Пароль должен быть не короче 8 символов"); return; }
+    if (resetPassword !== resetRepeat) { setError("Пароли не совпадают"); return; }
+    setBusy(true);
+    try {
+      await confirmPasswordReset(resetToken, resetPassword);
+      onAuthenticated();
+    } catch (e) {
+      setError(e instanceof ApiError && e.code === "PASSWORD_RESET_EXPIRED"
+        ? "Срок ссылки истёк. Запросите новое письмо на экране входа."
+        : e instanceof Error ? e.message : "Не удалось сменить пароль");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function startForgot() {
+    setForgotMode(true);
+    setResetSentTo(null);
+    setError("");
+    setResendNotice("");
+    setVerificationNotice("");
+    setYandexNotice("");
+    setVkNotice("");
+  }
+
+  function cancelReset() {
+    setResetToken(null);
+    setResetPassword("");
+    setResetRepeat("");
+    setForgotMode(false);
+    setResetSentTo(null);
+    setError("");
+    setResendNotice("");
+    setVerificationNotice("");
+    setEmailMode("login");
+  }
+
   async function resendEmail() {
     if (!pendingEmail) return;
     setResendBusy(true);
@@ -202,16 +269,36 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void })
       <div className="auth-card-inner">
         <div className="brand auth-brand"><span className="brand-mark"><WebNestLogo size={24} tone="light"/></span><span>NestDev</span></div>
         <div className="auth-heading">
-          <span className="eyebrow">{verificationToken ? "ПОДТВЕРЖДЕНИЕ" : pendingEmail ? "ПОЧТА" : "АККАУНТ"}</span>
-          <h1>{verificationToken ? "Подтвердите почту" : pendingEmail ? "Проверьте почту" : emailMode === "register" ? "Создайте аккаунт" : "Вход в аккаунт"}</h1>
-          {verificationToken
-            ? <p>Введите пароль, который вы указали при регистрации. Так аккаунт подтвердит именно его владелец.</p>
-            : pendingEmail
-              ? <p>Мы отправили ссылку на <strong>{pendingEmail}</strong>. Она действует 24 часа.</p>
-              : emailMode === "login" && <p>Введите почту и пароль от аккаунта NestDev.</p>}
+          <span className="eyebrow">{resetToken ? "ВОССТАНОВЛЕНИЕ" : verificationToken ? "ПОДТВЕРЖДЕНИЕ" : resetSentTo || pendingEmail || forgotMode ? "ПОЧТА" : "АККАУНТ"}</span>
+          <h1>{resetToken ? "Новый пароль" : verificationToken ? "Подтвердите почту" : resetSentTo || pendingEmail ? "Проверьте почту" : forgotMode ? "Восстановление пароля" : emailMode === "register" ? "Создайте аккаунт" : "Вход в аккаунт"}</h1>
+          {resetToken
+            ? <p>Придумайте новый пароль. После сохранения все старые входы завершатся, а этот откроется сразу.</p>
+            : verificationToken
+              ? <p>Введите пароль, который вы указали при регистрации. Так аккаунт подтвердит именно его владелец.</p>
+              : resetSentTo
+                ? <p>Если аккаунт с адресом <strong>{resetSentTo}</strong> существует, письмо со ссылкой уже отправлено. Ссылка действует 1 час.</p>
+                : pendingEmail
+                  ? <p>Мы отправили ссылку на <strong>{pendingEmail}</strong>. Она действует 24 часа.</p>
+                  : forgotMode
+                    ? <p>Укажите почту, на которую зарегистрирован аккаунт. Пришлём ссылку для нового пароля.</p>
+                    : emailMode === "login" && <p>Введите почту и пароль от аккаунта NestDev.</p>}
         </div>
 
-        {verificationToken ? (
+        {resetToken ? (
+          <form onSubmit={submitReset} className="auth-form">
+            {error && <div className="auth-error">{error}</div>}
+            <label><span>Новый пароль</span><input type="password" value={resetPassword} onChange={event => setResetPassword(event.target.value)} placeholder="Не меньше 8 символов" autoComplete="new-password" minLength={8} title="Новый пароль" autoFocus required /></label>
+            <label><span>Повторите пароль</span><input type="password" value={resetRepeat} onChange={event => setResetRepeat(event.target.value)} placeholder="Ещё раз" autoComplete="new-password" minLength={8} title="Повторите новый пароль" required /></label>
+            <div className="auth-hint">После смены пароля остальные устройства выйдут из аккаунта, а это — сразу войдёт.</div>
+            <button className="send-button auth-submit" disabled={busy || resetPassword.length < 8 || resetRepeat.length < 8}>
+              {busy ? "Сохраняем…" : "Сохранить пароль"}
+            </button>
+            <div className="auth-switch">
+              <span>Ссылка не подходит?</span>
+              <button type="button" className="ghost-button" onClick={cancelReset}>Вернуться ко входу</button>
+            </div>
+          </form>
+        ) : verificationToken ? (
           <form onSubmit={submitVerification} className="auth-form">
             {verificationNotice && <div className="auth-error">{verificationNotice}</div>}
             {error && <div className="auth-error">{error}</div>}
@@ -225,6 +312,16 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void })
               <button type="button" className="ghost-button" onClick={cancelVerification}>Вернуться ко входу</button>
             </div>
           </form>
+        ) : resetSentTo ? (
+          <div className="auth-verification">
+            <div className="auth-success">Проверьте «Входящие» и «Спам». Ссылка работает один раз и действует час.</div>
+            <div className="auth-hint">Если письма нет, проверьте адрес или запросите его ещё раз через минуту. Если аккаунт создан по телефону или через Яндекс ID / VK ID, пароля у него нет — войдите тем же способом.</div>
+            <button type="button" className="send-button auth-submit" onClick={cancelReset}>Вернуться ко входу</button>
+            <div className="auth-switch">
+              <span>Не тот адрес?</span>
+              <button type="button" className="ghost-button" onClick={() => { setResetSentTo(null); startForgot(); }}>Изменить почту</button>
+            </div>
+          </div>
         ) : pendingEmail ? (
           <div className="auth-verification">
             {verificationNotice && <div className="auth-error">{verificationNotice}</div>}
@@ -239,6 +336,19 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void })
               <button type="button" className="ghost-button" onClick={changeEmail}>Изменить почту</button>
             </div>
           </div>
+        ) : forgotMode ? (
+          <form onSubmit={submitForgot} className="auth-form">
+            {error && <div className="auth-error">{error}</div>}
+            <label><span>Почта</span><input type="email" inputMode="email" value={email} onChange={event => setEmail(event.target.value)} placeholder="you@example.com" autoComplete="email" title="Почта для входа" autoFocus required /></label>
+            <div className="auth-hint">Ответ одинаковый для любого адреса: форма не показывает, зарегистрирован ли он.</div>
+            <button className="send-button auth-submit" disabled={busy || !email.trim()}>
+              {busy ? "Отправляем…" : "Отправить ссылку"}
+            </button>
+            <div className="auth-switch">
+              <span>Вспомнили пароль?</span>
+              <button type="button" className="ghost-button" onClick={cancelReset}>Вернуться ко входу</button>
+            </div>
+          </form>
         ) : (
           <>
             {verificationNotice && <div className="auth-error auth-verification-notice">{verificationNotice}</div>}
@@ -270,6 +380,10 @@ export function AuthScreen({ onAuthenticated }: { onAuthenticated: () => void })
                 <span>{emailMode === "register" ? "Уже есть аккаунт?" : "Впервые здесь?"}</span>
                 <button type="button" className="ghost-button" onClick={switchEmailMode}>{emailMode === "register" ? "Войти" : "Создать аккаунт"}</button>
               </div>
+              {emailMode === "login" && <div className="auth-switch">
+                <span>Забыли пароль?</span>
+                <button type="button" className="ghost-button" onClick={startForgot}>Восстановить</button>
+              </div>}
             </form>
           </>
         )}

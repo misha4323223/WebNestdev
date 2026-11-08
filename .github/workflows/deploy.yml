@@ -308,9 +308,9 @@ jobs:
           # он попадает в .env на ВМ, где и так лежат ключ шифрования и пароль базы.
           ADMIN_BOOTSTRAP_EMAIL: ${{ secrets.ADMIN_BOOTSTRAP_EMAIL }}
           ADMIN_BOOTSTRAP_PASSWORD: ${{ secrets.ADMIN_BOOTSTRAP_PASSWORD }}
-          # Поддержка: ключ чтения обращений для внешней админки и SMTP. Пустые значения не
-          # передаются и не стирают уже настроенное на ВМ; значение из панели важнее.
-          SUPPORT_API_KEY: ${{ secrets.SUPPORT_API_KEY || vars.SUPPORT_API_KEY }}
+          # Поддержка: SMTP для писем об обращениях. Пустые значения не передаются и не
+          # стирают уже настроенное на ВМ; значение из панели важнее.
+          # Ключа чтения обращений больше нет: внешняя админка входит по админ-сессии.
           SUPPORT_EMAIL_TO: ${{ secrets.SUPPORT_EMAIL_TO || vars.SUPPORT_EMAIL_TO }}
           SUPPORT_EMAIL_FROM: ${{ secrets.SUPPORT_EMAIL_FROM || vars.SUPPORT_EMAIL_FROM }}
           # Адрес, который человек видит в «Ответить» на письме поддержки.
@@ -486,7 +486,6 @@ jobs:
           add_platform_env WEBNESTDEV_ADMIN_USER_IDS "$WEBNESTDEV_ADMIN_USER_IDS"
           add_platform_env ADMIN_BOOTSTRAP_EMAIL "$ADMIN_BOOTSTRAP_EMAIL"
           add_platform_env ADMIN_BOOTSTRAP_PASSWORD "$ADMIN_BOOTSTRAP_PASSWORD"
-          add_platform_env SUPPORT_API_KEY "$SUPPORT_API_KEY"
           add_platform_env SUPPORT_EMAIL_TO "$SUPPORT_EMAIL_TO"
           add_platform_env SUPPORT_EMAIL_FROM "$SUPPORT_EMAIL_FROM"
           add_platform_env SUPPORT_REPLY_TO "$SUPPORT_REPLY_TO"
@@ -551,7 +550,7 @@ jobs:
           echo "[deploy] Холодный ярус: endpoint=$(has "${PLATFORM_S3_ENDPOINT:-}"), бакет=${PLATFORM_S3_BUCKET:-—}, ключ=$(has "${PLATFORM_S3_ACCESS_KEY_ID:-}"), включён=${PROJECT_ARCHIVE_ENABLED:-0}"
           echo "[deploy] Статический хостинг: enabled=${HOSTING_ENABLED:-0}, домен=${HOSTING_PUBLIC_DOMAIN:-—}, каталог=${HOSTING_SITES_DIR:-—}"
           echo "[deploy] Цены расхода: таблица моделей=$(has "${PLATFORM_AI_MODEL_PRICES:-}"), общая ставка=$(has "${PLATFORM_AI_PRICE_INPUT_PER_MILLION:-}"), инфраструктура=$(has "${PLATFORM_INFRA_COST_PER_MONTH:-}"), валюта=${PLATFORM_AI_PRICE_CURRENCY:-USD}"
-          echo "[deploy] Поддержка: ключ API=$(has "${SUPPORT_API_KEY:-}"), почта=${SUPPORT_EMAIL_TO:-—}, SMTP=$(has "${SUPPORT_SMTP_PASSWORD:-}")"
+          echo "[deploy] Поддержка: почта=${SUPPORT_EMAIL_TO:-—}, SMTP=$(has "${SUPPORT_SMTP_PASSWORD:-}")"
           echo "[deploy] Почта платформы: MAIL_SMTP=$(has "${MAIL_SMTP_HOST:-}"), Postbox SMTP=$(has "${POSTBOX_KEY_ID:-}${POSTBOX_SECRET:-}"), отправитель=${MAIL_FROM:-${POSTBOX_SENDER:-—}}"
           echo "[deploy] Robokassa: логин=$(has "${ROBOKASSA_LOGIN:-}"), пароль №1=$(has "${ROBOKASSA_PASSWORD_1:-}"), пароль №2=$(has "${ROBOKASSA_PASSWORD_2:-}"), тест=${ROBOKASSA_TEST_MODE:-0}"
           # Рассылка: «включена» не значит «домен подтверждён» — вторая половина строки отвечает
@@ -732,9 +731,9 @@ jobs:
           # он попадает в .env на ВМ, где и так лежат ключ шифрования и пароль базы.
           ADMIN_BOOTSTRAP_EMAIL: ${{ secrets.ADMIN_BOOTSTRAP_EMAIL }}
           ADMIN_BOOTSTRAP_PASSWORD: ${{ secrets.ADMIN_BOOTSTRAP_PASSWORD }}
-          # Поддержка: ключ чтения обращений для внешней админки и SMTP. Пустые значения не
-          # передаются и не стирают уже настроенное на ВМ; значение из панели важнее.
-          SUPPORT_API_KEY: ${{ secrets.SUPPORT_API_KEY || vars.SUPPORT_API_KEY }}
+          # Поддержка: SMTP для писем об обращениях. Пустые значения не передаются и не
+          # стирают уже настроенное на ВМ; значение из панели важнее.
+          # Ключа чтения обращений больше нет: внешняя админка входит по админ-сессии.
           SUPPORT_EMAIL_TO: ${{ secrets.SUPPORT_EMAIL_TO || vars.SUPPORT_EMAIL_TO }}
           SUPPORT_EMAIL_FROM: ${{ secrets.SUPPORT_EMAIL_FROM || vars.SUPPORT_EMAIL_FROM }}
           # Адрес, который человек видит в «Ответить» на письме поддержки.
@@ -873,7 +872,6 @@ jobs:
           add_platform_env WEBNESTDEV_ADMIN_USER_IDS "$WEBNESTDEV_ADMIN_USER_IDS"
           add_platform_env ADMIN_BOOTSTRAP_EMAIL "$ADMIN_BOOTSTRAP_EMAIL"
           add_platform_env ADMIN_BOOTSTRAP_PASSWORD "$ADMIN_BOOTSTRAP_PASSWORD"
-          add_platform_env SUPPORT_API_KEY "$SUPPORT_API_KEY"
           add_platform_env SUPPORT_EMAIL_TO "$SUPPORT_EMAIL_TO"
           add_platform_env SUPPORT_EMAIL_FROM "$SUPPORT_EMAIL_FROM"
           add_platform_env SUPPORT_REPLY_TO "$SUPPORT_REPLY_TO"

@@ -12,6 +12,7 @@ import path from "node:path";
 const dataDir = await mkdtemp(path.join(tmpdir(), "phone-auth-ip-"));
 process.env.WEBNESTDEV_DATA_DIR = dataDir;
 process.env.NODE_ENV = "test";
+process.env.PHONE_AUTH_ENABLED = "1";
 delete process.env.WEBNESTDEV_SMS_TEST_MODE;
 delete process.env.SIGNUP_IP_LIMIT;
 for (const name of [

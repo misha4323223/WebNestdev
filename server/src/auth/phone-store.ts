@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { isYdbEnabled, ydbQuery, getTable } from "../storage/ydb.js";
 import { createUser, findUserByEmail, getUser, type User } from "./auth-store.js";
+import { phoneAuthEnabled } from "./phone-auth-config.js";
 
 const root = process.env.WEBNESTDEV_DATA_DIR ?? path.resolve(".webnestdev");
 const phonesFile = path.join(root, "auth", "phones.json");
@@ -41,6 +42,8 @@ const DEFAULT_DEMO_PHONE = "+79990000000";
 let warnedAboutDefaultDemoPhone = false;
 
 export function demoPhone(): string | null {
+  // Демо-номер — обход SMS, поэтому он тоже выключен вместе со всем входом по телефону.
+  if (!phoneAuthEnabled()) return null;
   const production = process.env.NODE_ENV === "production";
   const enabled = process.env.WEBNESTDEV_DEMO_PHONE_ENABLED
     ? process.env.WEBNESTDEV_DEMO_PHONE_ENABLED !== "0"

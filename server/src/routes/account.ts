@@ -1,6 +1,7 @@
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { requireUser } from "../auth/auth.js";
+import { hasLoginPassword } from "../auth/auth-store.js";
 import { findYandexIdentityByUserId } from "../auth/yandex-account-store.js";
 import { findVkIdentityByUserId } from "../auth/vk-account-store.js";
 import { findPhoneByUserId, formatPhone } from "../auth/phone-store.js";
@@ -71,6 +72,8 @@ export async function registerAccountRoutes(app: FastifyInstance) {
         id: user.id,
         email: user.email,
         createdAt: user.createdAt,
+        // Настоящий пароль есть только у входа по почте; у SMS и внешних входов его нет.
+        hasPassword: hasLoginPassword(user.email),
         // У входа по телефону адрес служебный (…@phone.webnestdev.local): номер показывается
         // отдельно, а почта берётся из контактов знакомства.
         ...(phone ? { phone: formatPhone(phone) } : {}),

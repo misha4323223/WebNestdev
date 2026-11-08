@@ -21,6 +21,8 @@ for (const name of [
   delete process.env[name];
 }
 process.env.NODE_ENV = "test";
+// Флаг по умолчанию выключен: тесты проверяют сам вход, поэтому включают его явно.
+process.env.PHONE_AUTH_ENABLED = "1";
 
 const Fastify = (await import("fastify")).default;
 const cookie = (await import("@fastify/cookie")).default;

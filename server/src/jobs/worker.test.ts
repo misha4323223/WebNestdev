@@ -137,6 +137,59 @@ test("задание без обработчика не висит в очере
   }
 });
 
+test("падение воркера не теряет задание: аренда истекает, его забирает второй", async () => {
+  await freshQueue();
+  const job = await enqueueJob({ kind: "project.archive", projectId: "w-crash", userId: "u1", now: at(0) });
+
+  // Первый воркер захватил задание и «умер» внутри обработчика: stop() не закрывает задание.
+  // Именно так выглядит рестарт процесса во время архивации.
+  const crashed = startJobWorker({
+    now: () => at(0),
+    leaseMs: 1000,
+    log: silent,
+    handlers: {
+      "project.archive": async () => {
+        await new Promise(() => undefined);
+        return {};
+      },
+    },
+  });
+  await crashed.tick();
+  crashed.stop();
+
+  let stored = await jobById(job.id);
+  assert.equal(stored!.state, "running");
+  assert.equal(stored!.attempts, 1);
+
+  // Аренда истекла: следующий воркер видит задание снова и доводит его до конца.
+  const seen: string[] = [];
+  const restarted = startJobWorker({
+    now: () => at(2000),
+    leaseMs: 60_000,
+    log: silent,
+    handlers: {
+      "project.archive": async record => {
+        seen.push(record.projectId);
+        return { done: 7, total: 7 };
+      },
+    },
+  });
+  try {
+    assert.equal((await restarted.tick()).claimed, 1);
+    const deadline = Date.now() + 2000;
+    while (stored && stored.state !== "done" && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+      stored = await jobById(job.id);
+    }
+    assert.deepEqual(seen, ["w-crash"], "задание доделал второй воркер");
+    assert.equal(stored!.state, "done");
+    assert.equal(stored!.attempts, 2, "падение засчитано как попытка, а не потеря");
+    assert.equal(stored!.progressDone, 7);
+  } finally {
+    restarted.stop();
+  }
+});
+
 test("backoff растёт вдвое и упирается в потолок", () => {
   assert.equal(retryDelayMs(1), 30_000);
   assert.equal(retryDelayMs(2), 60_000);

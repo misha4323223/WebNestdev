@@ -12,6 +12,8 @@ import path from "node:path";
 const dataDir = await mkdtemp(path.join(os.tmpdir(), "nestdev-demo-guard-"));
 process.env.WEBNESTDEV_DATA_DIR = dataDir;
 process.env.NODE_ENV = "test";
+// Демо-номер живёт внутри телефонного входа: проверяем его защиту при включённом входе.
+process.env.PHONE_AUTH_ENABLED = "1";
 delete process.env.WEBNESTDEV_STORAGE;
 delete process.env.DATABASE_URL;
 

@@ -28,9 +28,16 @@
 
 ## Phone login (Russian numbers)
 
-The sign-in screen offers **Yandex ID** (see below) and **sign-in by phone number**,
-which sends a one-time code by SMS. The e-mail/password endpoints still exist for API
-clients, but the screen is built around these two passwordless methods. Only Russian
+> **Отключено 08.11.2026.** Вход по SMS — платный канал, поэтому он выключен по умолчанию:
+> без `PHONE_AUTH_ENABLED=1` маршруты `/api/auth/phone/*` не создают коды, не создают
+> телефонные аккаунты и не отправляют SMS, а `start`/`verify` отвечают `403` с кодом
+> `PHONE_AUTH_DISABLED`. Код, провайдеры и тесты сохранены для будущего; включение —
+> `PHONE_AUTH_ENABLED=1` плюс ключ провайдера (см. ниже). Всё дальнейшее описание относится
+> к включённому режиму.
+
+When enabled, the sign-in screen offers **Yandex ID** (see below) and **sign-in by phone
+number**, which sends a one-time code by SMS. The e-mail/password endpoints still exist for
+API clients, but the screen is built around these two passwordless methods. Only Russian
 numbers are accepted (`8XXXXXXXXXX`, `7XXXXXXXXXX` and the bare 10 digits all normalise
 to `+7XXXXXXXXXX`); anything else is rejected before a code exists.
 
@@ -110,8 +117,8 @@ promotional.
 
 ### Demo number (sign-in without SMS)
 
-The phone form sits on the sign-in screen next to Yandex ID, and a **demo number** lets the
-phone flow be used before an SMS provider exists. It defaults to `+7 999 000-00-00` and is let straight in — no code, no
+When phone sign-in is enabled, the phone form sits on the sign-in screen next to Yandex ID,
+and a **demo number** lets the phone flow be used before an SMS provider exists. It defaults to `+7 999 000-00-00` and is let straight in — no code, no
 SMS, an ordinary session. It follows the same convention as the demo e-mail account:
 enabled outside production, opt-in in production via `WEBNESTDEV_DEMO_PHONE_ENABLED=1`,
 and off with `WEBNESTDEV_DEMO_PHONE_ENABLED=0`. The number is configurable with
@@ -129,7 +136,7 @@ is in test mode.
 
 ## Yandex ID sign-in
 
-The sign-in screen now offers **«Войти через Яндекс ID»** next to the phone-code form.
+The sign-in screen offers **«Войти через Яндекс ID»**; the phone-code form appears only when phone login is enabled.
 It is a separate OAuth flow on the server (`/api/auth/yandex/start` and the shared
 `/api/yandex/callback`), and it creates or opens an ordinary NestDev account:
 
@@ -246,8 +253,9 @@ stays the passwordless phone option.
 
 ## Current milestone
 
-Phase 1 is implemented locally, plus passwordless **phone login for Russian numbers**,
-**Yandex ID sign-in** and **VK ID sign-in** (see above). All open the same kind of local
+Phase 1 is implemented locally, plus passwordless **phone login for Russian numbers**
+(currently disabled by default — see the note above), **Yandex ID sign-in** and
+**VK ID sign-in** (see above). All open the same kind of local
 user: a social sign-in needs no SMS, and a phone sign-in needs no OAuth app. This is
 independent of Yandex Cloud access — see the table above. Phone login runs in test mode
 until one of the SMS provider blocks is filled in; Yandex ID needs `YANDEX_CLIENT_ID`

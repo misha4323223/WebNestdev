@@ -1,5 +1,6 @@
 import { sendYandexSms, yandexNotifyConfigured, yandexNotifyCredentialKind, yandexNotifyCredentialStatus, yandexNotifyLabel } from "./yandex-notify.js";
 import { getPlatformEnv } from "../platform/platform-env.js";
+import { PHONE_AUTH_DISABLED_MESSAGE, phoneAuthEnabled } from "./phone-auth-config.js";
 
 /**
  * SMS delivery for phone login. Only Russian providers are supported, because that is
@@ -74,6 +75,7 @@ export function smsProviderLabel(provider: SmsProviderId | null) {
  * arriving" and a configuration that is simply wrong.
  */
 export function smsConfigHint() {
+  if (!phoneAuthEnabled()) return PHONE_AUTH_DISABLED_MESSAGE;
   const config = smsConfig();
   if (config.provider === "yandex") {
     const notes = ["Yandex Cloud Notification Service: SMS уходят только на российские номера. Пока у канала общий отправитель, действует песочница — сообщения получают только подтверждённые тестовые номера."];
@@ -95,6 +97,7 @@ export function smsConfigHint() {
  * (ENOENT в ответе), хотя /api/health и экран входа уже говорили «ключ».
  */
 export async function smsReadiness(): Promise<{ ready: boolean; keyFile?: string; note?: string; problem?: string }> {
+  if (!phoneAuthEnabled()) return { ready: false, problem: PHONE_AUTH_DISABLED_MESSAGE };
   if (smsConfig().provider !== "yandex") return { ready: true };
   const status = await yandexNotifyCredentialStatus();
   return {
@@ -113,6 +116,7 @@ export async function smsReadiness(): Promise<{ ready: boolean; keyFile?: string
 export function smsSummary() {
   const config = smsConfig();
   return {
+    enabled: phoneAuthEnabled(),
     provider: config.provider,
     label: smsProviderLabel(config.provider),
     testMode: config.test,
@@ -207,6 +211,10 @@ async function deliver(provider: SmsProviderId, phone: string, text: string, sen
  * `test: true` and the code is written to the log for the person testing the flow.
  */
 export async function sendLoginCode(phone: string, code: string): Promise<SmsResult> {
+  // Защита от случайной отправки, даже если маршрут когда-нибудь обойдёт проверку флага.
+  if (!phoneAuthEnabled()) {
+    return { ok: false, provider: "test", providerLabel: "отключён", test: false, error: PHONE_AUTH_DISABLED_MESSAGE };
+  }
   const config = smsConfig();
   const text = "Код входа в NestDev: " + code + ". Никому его не сообщайте.";
   if (config.test || !config.provider) {

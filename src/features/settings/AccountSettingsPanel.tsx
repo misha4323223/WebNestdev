@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { apiJson } from "../../lib/api";
-import { logoutAll } from "../../lib/auth-api";
+import { changePassword, logoutAll } from "../../lib/auth-api";
 import { applyPreferences, type UserPreferences } from "../../lib/preferences";
 import {
   balanceLabel,
@@ -28,7 +28,7 @@ import { ArrowLeft, ArrowRight, Check, CreditCard, LogOut, Receipt, Settings2, S
 
 type Preferences = UserPreferences;
 type AccountData = {
-  user: { id: string; email: string; phone?: string; createdAt: string; yandex?: { login: string; email: string | null }; vk?: { name: string; email: string | null } };
+  user: { id: string; email: string; phone?: string; createdAt: string; hasPassword?: boolean; yandex?: { login: string; email: string | null }; vk?: { name: string; email: string | null } };
   profile: OnboardingProfile | null;
   preferences: Preferences;
 };
@@ -160,6 +160,9 @@ export function AccountSettingsPanel() {
   const [notice, setNotice] = useState("");
   const [refreshingStorage, setRefreshingStorage] = useState(false);
   const [signingOutEverywhere, setSigningOutEverywhere] = useState(false);
+  // Смена пароля: три поля живут вместе, чтобы ошибка не сбрасывала уже введённое.
+  const [passwordDraft, setPasswordDraft] = useState({ current: "", next: "", repeat: "" });
+  const [savingPassword, setSavingPassword] = useState(false);
 
   async function reload() {
     setLoading(true); setError("");
@@ -235,6 +238,26 @@ export function AccountSettingsPanel() {
       setError(e instanceof Error ? e.message : String(e));
       setSigningOutEverywhere(false);
     }
+  }
+
+  /**
+   * Смена пароля. Сервер проверяет текущий пароль и меняет cookie на новую сессию, поэтому
+   * эта вкладка остаётся в аккаунте, а остальные устройства выходят.
+   */
+  async function savePassword() {
+    const { current, next, repeat } = passwordDraft;
+    if (next.length < 8) { setError("Новый пароль должен быть не короче 8 символов"); return; }
+    if (next !== repeat) { setError("Новые пароли не совпадают"); return; }
+    setSavingPassword(true); setError(""); setNotice("");
+    try {
+      const result = await changePassword(current, next);
+      setPasswordDraft({ current: "", next: "", repeat: "" });
+      setNotice(result.signedIn === false
+        ? "Пароль изменён. Все входы завершены — войдите заново."
+        : "Пароль изменён. Остальные устройства вышли из аккаунта.");
+      if (result.signedIn === false) window.setTimeout(() => window.location.reload(), 800);
+    } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setSavingPassword(false); }
   }
 
   async function toggleRenew(autoRenew: boolean) {
@@ -320,7 +343,21 @@ export function AccountSettingsPanel() {
             </div>
           </div>}
           {section === "security" && <div className="account-section">
-            <span className="eyebrow">БЕЗОПАСНОСТЬ</span><h3>Сессии и входы</h3>
+            <span className="eyebrow">БЕЗОПАСНОСТЬ</span><h3>Пароль</h3>
+            {account?.user.hasPassword ? <>
+              <p className="account-muted">Пароль открывает аккаунт по почте. После смены остальные устройства выйдут из аккаунта, а этот браузер останется.</p>
+              <label>Текущий пароль<input type="password" value={passwordDraft.current} autoComplete="current-password" maxLength={200} title="Текущий пароль" onChange={event => setPasswordDraft(current => ({ ...current, current: event.target.value }))}/></label>
+              <label>Новый пароль<input type="password" value={passwordDraft.next} autoComplete="new-password" minLength={8} maxLength={200} title="Новый пароль" onChange={event => setPasswordDraft(current => ({ ...current, next: event.target.value }))}/></label>
+              <label>Повторите новый пароль<input type="password" value={passwordDraft.repeat} autoComplete="new-password" minLength={8} maxLength={200} title="Повторите новый пароль" onChange={event => setPasswordDraft(current => ({ ...current, repeat: event.target.value }))}/></label>
+              <div className="account-pref-actions">
+                <button type="button" className="send-button account-save" disabled={savingPassword || !passwordDraft.current || passwordDraft.next.length < 8 || passwordDraft.repeat.length < 8} onClick={() => void savePassword()}>
+                  {savingPassword ? "Меняем…" : "Сменить пароль"}
+                </button>
+              </div>
+              <p className="account-muted account-legal-note">Забыли текущий пароль — выйдите из аккаунта и выберите «Восстановить» на экране входа.</p>
+            </> : <p className="account-muted">Аккаунт создан по телефону или через внешний сервис: пароля нет. Вход — через Яндекс ID или VK ID; вход по SMS сейчас отключён.</p>}
+            <hr className="account-divider"/>
+            <span className="eyebrow">СЕССИИ</span><h3>Сессии и входы</h3>
             <p className="account-muted">Вход открывает сессию в браузере. Она завершается после долгого бездействия и по абсолютному сроку — сервер проверяет это при каждом запросе.</p>
             <div className="account-note"><ShieldCheck size={14}/> Если вы входили на чужом устройстве или потеряли доступ к нему, завершите все сессии сразу.</div>
             <div className="account-pref-actions">

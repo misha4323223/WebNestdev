@@ -2,7 +2,7 @@ import { apiJson } from "./api";
 
 export type HealthSnapshot = {
   build: string;
-  sms?: { provider: string | null; label: string; testMode: boolean; credentialKind: "key" | "token" | null };
+  sms?: { enabled?: boolean; provider: string | null; label: string; testMode: boolean; credentialKind: "key" | "token" | null };
 };
 
 /**

@@ -166,12 +166,11 @@ export const PLATFORM_ENV_CATALOG: PlatformEnvEntry[] = [
   { name: "PLATFORM_IMAGE_KEY_2", group: "ai", label: "Картинки: ключ 2", hint: "Второй ключ из другого аккаунта — резерв первого.", kind: "secret" },
   { name: "PLATFORM_IMAGE_KEY_3", group: "ai", label: "Картинки: ключ 3", hint: "Третий ключ — последний резерв, дальше инструмент отвечает отказом.", kind: "secret" },
 
-  // Поддержка: обращения из кнопки «Поддержка» сохраняются на сервере, читаются в админке
-  // платформы и — по ключу API — во внешней админке (десктопное и мобильное приложение).
+  // Поддержка: обращения из кнопки «Поддержка» сохраняются на сервере и читаются в админке
+  // платформы по админ-сессии. Отдельного ключа чтения нет.
   // Почта необязательна: с SMTP обычной почты (Яндекс, Mail.ru, Gmail) сервер входит в твой ящик
   // и шлёт письмо на него же, без отдельного сервиса. Без почтовых ключей обращения остаются
   // на сервере и в API.
-  { name: "SUPPORT_API_KEY", group: "support", label: "Ключ API для админки", hint: "Ключ только для чтения: внешнее приложение забирает обращения запросом GET /api/support/tickets с заголовком Authorization: Bearer <ключ> или X-Support-Key: <ключ>. Скриншот — GET /api/support/tickets/<id>/screenshot. Создать обращение по ключу нельзя. Не короче 16 символов; пробелы и невидимые символы убираются при сохранении.", kind: "secret" },
   { name: "SUPPORT_EMAIL_TO", group: "support", label: "Куда присылать обращения", hint: "Адрес ящика поддержки, например support@example.ru. На него придет письмо с обращением.", kind: "value" },
   { name: "SUPPORT_REPLY_TO", group: "support", label: "Куда отвечает человек", hint: "Необязательно: адрес в Reply-To писем-ответов, по умолчанию support@nestdev.ru. На него уйдёт ответ, если человек нажмёт «Ответить» в письме поддержки.", kind: "value" },
   { name: "SUPPORT_EMAIL_FROM", group: "support", label: "Адрес отправителя", hint: "Необязательно: по умолчанию совпадает с логином SMTP. У Яндекса и Mail.ru это должен быть тот же ящик. Не нужен, если настроена почта платформы выше.", kind: "value" },
@@ -374,26 +373,12 @@ export function normalizePastedValue(value: string) {
   return value.replace(/\r\n?/g, "\n").trim();
 }
 
-/**
- * Ключ API приходит из буфера обмена вместе с невидимыми символами: переводом строки, пробелом,
- * zero-width разделителем. В заголовке это не часть ключа, поэтому при сохранении и сравнении
- * они убираются — иначе панель говорит «сохранено», а тот же ключ в запросе получает 401.
- */
-export function normalizeApiKeyValue(value: string) {
-  // Кроме пробелов и переводов строк — мягкий перенос, word joiner, bidi-марки и другие
-  // невидимые разделители, которые приезжают вместе с текстом из документа или мессенджера.
-  return value.replace(/[\s\u00AD\u180E\u200B-\u200F\u202A-\u202E\u2060-\u2064\uFEFF]+/g, "");
-}
-
 /** Проверка значения до записи: ошибка объясняет, что не так, вместо «сохранено, но не работает». */
 export function validatePlatformValue(name: string, value: string): string | null {
   const entry = catalogEntry(name);
   if (!entry) return "Неизвестный ключ: " + name;
   const text = normalizePastedValue(value);
   if (!text) return null;
-  if (name === "SUPPORT_API_KEY" && normalizeApiKeyValue(text).length < 16) {
-    return "Ключ API для админки должен быть не короче 16 символов (без пробелов и невидимых символов)";
-  }
   if (entry.kind === "json-key") {
     try { parseServiceAccountKey(text); }
     catch (error) { return error instanceof Error ? error.message : String(error); }
@@ -447,11 +432,7 @@ export async function savePlatformEnv(values: Record<string, string | undefined>
     }
     const problem = validatePlatformValue(name, value);
     if (problem) { skipped.push({ name, message: problem }); continue; }
-    // Ключ поддержки хранится и показывается уже очищенным: пробелы и невидимые символы
-    // не должны попадать ни в файл, ни в превью «nest…0-26».
-    const storedValue = name === "SUPPORT_API_KEY"
-      ? normalizeApiKeyValue(value)
-      : entry.kind === "json-key" ? canonicalKeyJson(value) : value;
+    const storedValue = entry.kind === "json-key" ? canonicalKeyJson(value) : value;
     next.set(name, { value: storedValue, preview: previewOf(storedValue), updatedAt: new Date().toISOString() });
     saved.push(name);
   }

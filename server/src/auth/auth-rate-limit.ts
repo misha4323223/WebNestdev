@@ -17,7 +17,20 @@ export type RateLimitResult =
 
 const WINDOW_MS = 15 * 60 * 1000;
 
-export type AuthAction = "login" | "register" | "phone" | "phoneVerify" | "phoneDemo" | "emailVerification" | "emailVerify" | "adminLogin" | "adminTotp";
+export type AuthAction =
+  | "login"
+  | "register"
+  | "phone"
+  | "phoneVerify"
+  | "phoneDemo"
+  | "emailVerification"
+  | "emailVerify"
+  /** Запрос письма восстановления пароля: по адресу и по аккаунту. */
+  | "passwordReset"
+  /** Переход по ссылке восстановления: токен длинный, но попытки всё равно считаем. */
+  | "passwordResetConfirm"
+  | "adminLogin"
+  | "adminTotp";
 
 /** Попытки с одного адреса: грубая защита, не зависящая от того, какой аккаунт перебирают. */
 const IP_LIMITS: Record<AuthAction, number> = {
@@ -28,6 +41,8 @@ const IP_LIMITS: Record<AuthAction, number> = {
   phoneDemo: 60,
   emailVerification: 6,
   emailVerify: 12,
+  passwordReset: 6,
+  passwordResetConfirm: 20,
   // Вход администратора: адресов меньше, чем пользователей, но и попыток должно хватать на смену.
   adminLogin: 20,
   adminTotp: 30,
@@ -45,6 +60,9 @@ const SUBJECT_LIMITS: Record<AuthAction, number> = {
   phoneDemo: 60,
   emailVerification: 3,
   emailVerify: 8,
+  passwordReset: 3,
+  // У подтверждения сброса нет email в теле: счётчик только по адресу запроса.
+  passwordResetConfirm: 20,
   adminLogin: 10,
   adminTotp: 20,
 };

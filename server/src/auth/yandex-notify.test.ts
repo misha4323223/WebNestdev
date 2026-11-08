@@ -13,6 +13,10 @@ const KEY_PEM = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey
   .toString();
 const AUTHORIZED_KEY = JSON.stringify({ id: "aje1testkey", service_account_id: "aje2testaccount", private_key: KEY_PEM });
 
+// Эти тесты проверяют настройку SMS-провайдера во включённом режиме: по умолчанию вход
+// по телефону выключен, и подсказки честно говорят об этом.
+process.env.PHONE_AUTH_ENABLED = "1";
+
 const CREDENTIAL_NAMES = [
   "YANDEX_NOTIFY_IAM_TOKEN",
   "YANDEX_SA_KEY",

@@ -110,6 +110,7 @@ function buildSql(strings: TemplateStringsArray, values: unknown[]): { sql: stri
 const PK_BY_TABLE: Record<string, string[]> = {
   users: ["id"],
   email_verifications: ["user_id"],
+  password_resets: ["user_id"],
   phone_accounts: ["phone"],
   yandex_accounts: ["yandex_id"],
   vk_accounts: ["vk_id"],
@@ -276,6 +277,15 @@ export async function initializeStorage(): Promise<void> {
     // Одноразовые ссылки подтверждения почты. Токен хранится хешем; строка удаляется при
     // успешном подтверждении, поэтому повторное использование письма уже не создаёт сессию.
     await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("email_verifications")} (
+      user_id TEXT NOT NULL PRIMARY KEY,
+      token_hash TEXT NOT NULL UNIQUE,
+      expires_at TEXT NOT NULL,
+      sent_at TEXT NOT NULL
+    )`);
+
+    // Одноразовые ссылки восстановления пароля. Токен — хешем, как и у подтверждения почты;
+    // запись одна на аккаунт, потому что новое письмо отменяет старое.
+    await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("password_resets")} (
       user_id TEXT NOT NULL PRIMARY KEY,
       token_hash TEXT NOT NULL UNIQUE,
       expires_at TEXT NOT NULL,

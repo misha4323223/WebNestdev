@@ -20,7 +20,7 @@ import {
 import { loadSupportUser, supportReporterFor, supportReporterFrom } from "../support/support-user.js";
 import { sendSupportMail, supportMailSettings } from "../support/support-mail.js";
 import { REPLY_MAX_CHARS, REPLY_MIN_CHARS, REPLY_SUBJECT_MAX_CHARS, sendSupportReply, supportReplyAddress, supportReplyQuota, supportReplySubject } from "../support/support-reply.js";
-import { supportApiKey, supportKeyAuthorizedCurrent, supportKeyFromHeaders, supportKeySource } from "../support/support-api-key.js";
+
 import { applyNoStoreToReply } from "./cache-headers.js";
 import { updateUserProfile } from "../account/profile-store.js";
 import { isServiceEmail, maskEmail } from "../mail/address.js";
@@ -85,17 +85,20 @@ function allowTicket(userId: string) {
 }
 
 /**
- * Кто читает обращения. Три двери: администратор платформы в браузере (cookie сессии), внешняя
- * админка по своей админ-сессии (`Authorization: Bearer`) и клиент по ключу чтения
- * (`X-Support-Key` или `Authorization: Bearer`). Все три дают только чтение: создание обращения
- * по-прежнему требует пользовательской сессии.
+ * Кто читает обращения. Две двери: администратор платформы в браузере (cookie сессии) и
+ * внешняя админка по своей админ-сессии (`Authorization: Bearer`, вход по паролю и TOTP).
+ * Cookie админки здесь намеренно не принимается — только заголовок, поэтому CSRF-барьер
+ * не ослабляется. Обе двери дают только чтение: создание обращения и ответ требуют своей
+ * сессии.
+ *
+ * Отдельного общего ключа чтения больше нет. Он был статическим секретом без срока и
+ * привязки к устройству, а админ-сессия даёт тот же доступ с нормальным сроком, отзывом и
+ * аудитом входа. Если появится неинтерактивный клиент, ему нужны именные токены с хешем,
+ * сроком и отдельным отзывом, а не ещё один общий ключ.
  */
 async function allowTicketRead(request: FastifyRequest, reply: FastifyReply) {
-  if (await supportKeyAuthorizedCurrent(request.headers)) return true;
-
-  // Админ-приложение уже вошло по паролю и TOTP. Его сессия — такая же дверь, как ключ:
-  // отдельный общий секрет не нужен, а срок и бездействие проверяются как в остальной админке.
-  // Cookie здесь не принимается — только Authorization, поэтому CSRF-барьер не ослабляется.
+  // Админ-приложение уже вошло по паролю и TOTP; срок и бездействие проверяются как в
+  // остальной админке.
   const adminToken = bearerToken(request.headers.authorization);
   if (adminToken) {
     try {
@@ -105,17 +108,9 @@ async function allowTicketRead(request: FastifyRequest, reply: FastifyReply) {
     }
   }
 
-  const providedKey = supportKeyFromHeaders(request.headers);
   const user = await getCurrentUser(request);
   if (!user) {
-    // Заголовок объясняет отказ без раскрытия значения: клиент видит, настроен ли ключ на этом
-    // процессе и совпал ли он, вместо одинакового 401 на все случаи.
-    reply.header("X-Support-Auth", providedKey ? (supportApiKey() ? "key-mismatch" : "key-not-configured") : "session-required");
-    request.log.info({
-      supportKey: providedKey ? (supportApiKey() ? "mismatch" : "not-configured") : "absent",
-      supportKeySource: supportKeySource(),
-      adminToken: adminToken ? "not-a-session" : "absent",
-    }, "support read refused");
+    request.log.info({ adminToken: adminToken ? "not-a-session" : "absent" }, "support read refused");
     await reply.code(401).send({ error: "Требуется вход в аккаунт" });
     return false;
   }
@@ -306,9 +301,9 @@ export async function registerSupportRoutes(app: FastifyInstance, deps: SupportR
   /**
    * Ответ человеку письмом от имени платформы.
    *
-   * Дверь здесь другая, чем у чтения: ключ поддержки и админ платформы в браузере обращения
-   * читают, но писем людям не отправляют. Письмо уходит только по сессии админ-приложения — той
-   * же, что открывает `/api/admin/*`.
+   * Дверь здесь строже, чем у чтения: обращения читают и админ платформы в браузере, и
+   * админ-сессия, а писать людям может только сессия админ-приложения — та же, что открывает
+   * `/api/admin/*`.
    */
   app.post("/api/support/tickets/:id/reply", async (request, reply) => {
     const admin = await requireAdmin(request, reply);

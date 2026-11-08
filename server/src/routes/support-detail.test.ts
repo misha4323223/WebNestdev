@@ -12,12 +12,11 @@ import path from "node:path";
 process.env.WEBNESTDEV_STORAGE = "json";
 const root = await mkdtemp(path.join(tmpdir(), "support-detail-"));
 process.env.WEBNESTDEV_DATA_DIR = root;
-const KEY = "read-only-key-0123456789";
-process.env.SUPPORT_API_KEY = KEY;
 
 const Fastify = (await import("fastify")).default;
 const cookie = (await import("@fastify/cookie")).default;
 const { registerSupportRoutes } = await import("./support.js");
+const { createAdmin, createAdminSession } = await import("../admin/admin-store.js");
 const { createSupportTicket } = await import("../support/support-store.js");
 const { createSession, createUser } = await import("../auth/auth-store.js");
 const { linkPhone } = await import("../auth/phone-store.js");
@@ -30,6 +29,11 @@ const app = Fastify();
 await app.register(cookie);
 await registerSupportRoutes(app);
 await app.ready();
+
+// Читает администратор платформы: отдельного ключа чтения больше нет.
+const admin = await createAdmin("support-detail-admin@example.test", "correct-horse-battery");
+const adminSession = await createAdminSession(admin.id);
+const readAuth = { authorization: "Bearer " + adminSession.token };
 
 test.after(async () => {
   await app.close();
@@ -68,7 +72,7 @@ test("список и карточка обращения отдают подр�
   const list = await app.inject({
     method: "GET",
     url: "/api/support/tickets",
-    headers: { "x-support-key": KEY },
+    headers: readAuth,
   });
   assert.equal(list.statusCode, 200, list.body);
   const listed = list.json().tickets.find((item: { id: string }) => item.id === ticket.id);
@@ -80,7 +84,7 @@ test("список и карточка обращения отдают подр�
   const detail = await app.inject({
     method: "GET",
     url: "/api/support/tickets/" + ticket.id,
-    headers: { authorization: "Bearer " + KEY },
+    headers: readAuth,
   });
   assert.equal(detail.statusCode, 200, detail.body);
   const body = detail.json();
@@ -127,7 +131,7 @@ test("новое обращение сохраняет снимок автора
   const detail = await app.inject({
     method: "GET",
     url: "/api/support/tickets/" + created.json().id,
-    headers: { "x-support-key": KEY },
+    headers: readAuth,
   });
   assert.equal(detail.statusCode, 200, detail.body);
   const ticket = detail.json().ticket;
@@ -137,14 +141,14 @@ test("новое обращение сохраняет снимок автора
   assert.equal(ticket.ip, "127.0.0.1");
 });
 
-test("карточка закрыта без ключа и не выдумывает несуществующее обращение", async () => {
+test("карточка закрыта без сессии и не выдумывает несуществующее обращение", async () => {
   const anonymous = await app.inject({ method: "GET", url: "/api/support/tickets/00000000-0000-4000-8000-000000000000" });
   assert.equal(anonymous.statusCode, 401);
 
   const missing = await app.inject({
     method: "GET",
     url: "/api/support/tickets/00000000-0000-4000-8000-000000000000",
-    headers: { "x-support-key": KEY },
+    headers: readAuth,
   });
   assert.equal(missing.statusCode, 404);
 });

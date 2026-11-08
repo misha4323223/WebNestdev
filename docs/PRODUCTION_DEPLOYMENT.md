@@ -39,8 +39,11 @@ Caddy / nginx
 - `DATABASE_URL=postgres://...` when `WEBNESTDEV_STORAGE=postgres`
 - An unknown `WEBNESTDEV_STORAGE` value (including the old `ydb`) now stops startup instead of silently writing JSON files.
 - GitHub OAuth URLs must use HTTPS when OAuth credentials are enabled.
-- Phone login sends real SMS as soon as one Russian provider block is set **and is passed
-  into the container**: Compose forwards only the variables named in `docker-compose.yml`,
+- **Phone login is disabled by default (08.11.2026).** Without `PHONE_AUTH_ENABLED=1` the
+  `/api/auth/phone/*` routes answer `403`, no code is created and no SMS is sent, even when
+  provider keys are present. Set the flag only when phone sign-in should return.
+- When phone login is enabled, it sends real SMS as soon as one Russian provider block is set
+  **and is passed into the container**: Compose forwards only the variables named in `docker-compose.yml`,
   so a key that sits in `.env` but is not listed there reaches nothing — the server stays
   in test mode and only logs the code, which looks exactly like "SMS stopped arriving".
   All the provider keys are passed through now; fill the one you use: Yandex Cloud

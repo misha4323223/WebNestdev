@@ -6,19 +6,28 @@ import {
   consumeEmailVerification,
   createUser,
   deleteEmailVerification,
+  deletePasswordReset,
   deleteSession,
   deleteUserSessions,
   findEmailVerificationByTokenHash,
   findUserByEmail,
   getEmailVerification,
+  getPasswordReset,
   getUser,
+  hasLoginPassword,
   hashEmailVerificationToken,
+  hashPasswordResetToken,
+  markEmailVerified,
   saveEmailVerification,
+  savePasswordReset,
+  setUserPassword,
+  takePasswordReset,
   verifyUser,
   EMAIL_NOT_VERIFIED_MESSAGE,
   EMAIL_TAKEN_MESSAGE,
 } from "../auth/auth-store.js";
 import { emailVerificationLink, EMAIL_VERIFICATION_TTL_MS, sendVerificationEmail } from "../auth/email-verification-mail.js";
+import { passwordResetLink, PASSWORD_RESET_TTL_MS, sendPasswordResetEmail } from "../auth/password-reset-mail.js";
 import { getPlatformEnv } from "../platform/platform-env.js";
 import { originFromRequest } from "../oauth/oauth-flow.js";
 import { findYandexIdentityByUserId } from "../auth/yandex-account-store.js";
@@ -33,15 +42,27 @@ import { blockedMessageFor, getRestriction } from "../account/restriction-store.
 const credentials = z.object({email:z.string().email().max(200),password:z.string().min(8).max(200)});
 const resendCredentials = z.object({email:z.string().email().max(200)});
 const verificationCredentials = z.object({token:z.string().min(32).max(200),password:z.string().min(1).max(200)});
+const resetCredentials = z.object({token:z.string().min(32).max(200),password:z.string().min(8,"Пароль должен быть не короче 8 символов").max(200)});
+const passwordChange = z.object({
+  currentPassword:z.string().min(1).max(200),
+  newPassword:z.string().min(8,"Пароль должен быть не короче 8 символов").max(200),
+});
 
 /** Тесты подменяют отправку, иначе регистрация пыталась бы открыть настоящее SMTP. */
 export type AuthRouteDeps = {
   sendVerificationEmail?: (input:{to:string;link:string}) => Promise<unknown>;
+  sendPasswordResetEmail?: (input:{to:string;link:string}) => Promise<unknown>;
   now?: () => number;
 };
 
 function resendCooldownMs(){
   const value = Number(process.env.EMAIL_VERIFICATION_RESEND_COOLDOWN_MS);
+  return Number.isFinite(value) && value >= 0 ? value : 60_000;
+}
+
+/** Отдельная пауза: письмо сброса и письмо подтверждения — разные поводы. */
+function passwordResetCooldownMs(){
+  const value = Number(process.env.PASSWORD_RESET_RESEND_COOLDOWN_MS);
   return Number.isFinite(value) && value >= 0 ? value : 60_000;
 }
 
@@ -76,8 +97,33 @@ async function sendEmailVerification(user:{id:string;email:string}, baseUrl:stri
   }
 }
 
+/**
+ * Выпускает новый одноразовый токен сброса и отправляет письмо. Неудачная отправка
+ * восстанавливает предыдущий токен: сбой SMTP не должен отбирать уже полученную ссылку.
+ */
+async function sendPasswordResetToken(user:{id:string;email:string}, baseUrl:string, now:number, send:(input:{to:string;link:string})=>Promise<unknown>){
+  const token = randomBytes(32).toString("hex");
+  const previous = await getPasswordReset(user.id);
+  await savePasswordReset({
+    userId:user.id,
+    tokenHash:hashPasswordResetToken(token),
+    expiresAt:new Date(now + PASSWORD_RESET_TTL_MS).toISOString(),
+    sentAt:new Date(now).toISOString(),
+  });
+  try{
+    return await send({to:user.email, link:passwordResetLink(baseUrl, token)});
+  }catch(error){
+    try{
+      if(previous) await savePasswordReset(previous);
+      else await deletePasswordReset(user.id);
+    }catch{ /* исходная ошибка отправки важнее ошибки отката */ }
+    throw error;
+  }
+}
+
 export async function registerAuthRoutes(app:FastifyInstance, deps:AuthRouteDeps = {}){
   const sendVerification = deps.sendVerificationEmail ?? sendVerificationEmail;
+  const sendReset = deps.sendPasswordResetEmail ?? sendPasswordResetEmail;
   const now = deps.now ?? Date.now;
   app.get("/api/auth/me", async request => {
     const user = await getCurrentUser(request);
@@ -95,6 +141,9 @@ export async function registerAuthRoutes(app:FastifyInstance, deps:AuthRouteDeps
         id:user.id,
         email:user.email,
         createdAt:user.createdAt,
+        // Есть ли у аккаунта настоящий пароль: у входа по SMS и через внешние сервисы он
+        // случайный, и форма «сменить пароль» им не показывается.
+        hasPassword:hasLoginPassword(user.email),
         // Телефон отдельно от почты: в служебном адресе …@phone.webnestdev.local
         // он иначе выглядел бы как непонятный email.
         ...(phone ? {phone:formatPhone(phone)} : {}),
@@ -251,6 +300,122 @@ export async function registerAuthRoutes(app:FastifyInstance, deps:AuthRouteDeps
       return reply.code(503).send({error:"Не удалось отправить письмо. Попробуйте позже.",code:"EMAIL_SEND_FAILED"});
     }
     return {sent:true};
+  });
+  /**
+   * Запрос ссылки восстановления пароля. Ответ всегда одинаковый — иначе форма стала бы
+   * проверкой, зарегистрирован ли адрес. Служебные адреса (SMS, Яндекс ID, VK ID, демо)
+   * письма не получают: настоящего пароля у них нет.
+   *
+   * Сбой почты тоже не меняет ответ: человек повторит запрос, а причина останется в логе.
+   * `retryAfter` для известного адреса не возвращается по той же причине, что и для чужого.
+   */
+  app.post("/api/auth/password-reset/request", async (request,reply) => {
+    const body = resendCredentials.parse(request.body);
+    const rateLimit = await checkAuthRateLimit(request.ip, "passwordReset", body.email);
+    if(!rateLimit.allowed){
+      reply.header("Retry-After", String(rateLimit.retryAfter));
+      return reply.code(429).send({error:"Слишком много запросов восстановления. Попробуйте позже."});
+    }
+    const user = await findUserByEmail(body.email);
+    if(!user || !hasLoginPassword(user.email)) return {sent:true};
+    const existing = await getPasswordReset(user.id);
+    const sentAt = existing ? Date.parse(existing.sentAt) : 0;
+    if(Number.isFinite(sentAt) && sentAt + passwordResetCooldownMs() > now()) return {sent:true};
+    try{
+      await sendPasswordResetToken(user, verificationBaseUrl(request), now(), sendReset);
+      await recordAudit({
+        action: "user.password.reset.requested",
+        actorType: "user",
+        actorId: user.id,
+        actorLabel: user.email,
+        target: user.id,
+        ip: request.ip,
+      });
+    }catch(error){
+      request.log.error({error:error instanceof Error ? error.message : error},"password reset email not sent");
+    }
+    return {sent:true};
+  });
+  /**
+   * Новый пароль по ссылке из письма. Токен гасится до записи пароля: ссылка одноразовая, и
+   * два одновременных перехода не должны оба сменить пароль. Все старые сессии отзываются —
+   * если ссылку открыл не владелец, украденный вход не переживёт сброса.
+   *
+   * Переход по ссылке доказывает владение адресом, поэтому аккаунт заодно считается
+   * подтверждённым: иначе человек сменил бы пароль и всё равно не смог войти.
+   */
+  app.post("/api/auth/password-reset/confirm", async (request,reply) => {
+    const body = resetCredentials.parse(request.body);
+    const rateLimit = await checkAuthRateLimit(request.ip,"passwordResetConfirm");
+    if(!rateLimit.allowed){
+      reply.header("Retry-After",String(rateLimit.retryAfter));
+      return reply.code(429).send({error:"Слишком много попыток восстановления. Попробуйте позже."});
+    }
+    const taken = await takePasswordReset(hashPasswordResetToken(body.token), now());
+    if(taken.status === "expired") return reply.code(410).send({error:"Срок ссылки восстановления истёк. Запросите новое письмо.",code:"PASSWORD_RESET_EXPIRED"});
+    if(taken.status !== "ok") return reply.code(400).send({error:"Ссылка восстановления недействительна или уже использована.",code:"PASSWORD_RESET_INVALID"});
+    if(!(await setUserPassword(taken.userId, body.password))){
+      return reply.code(400).send({error:"Ссылка восстановления недействительна или уже использована.",code:"PASSWORD_RESET_INVALID"});
+    }
+    await markEmailVerified(taken.userId);
+    const revoked = await deleteUserSessions(taken.userId);
+    const user = await getUser(taken.userId);
+    if(!user) return reply.code(400).send({error:"Ссылка восстановления недействительна или уже использована.",code:"PASSWORD_RESET_INVALID"});
+    if(!(await attachSession(reply,user.id,request))){
+      return reply.code(403).send({error:blockedMessageFor(await getRestriction(user.id)),code:"ACCOUNT_BLOCKED"});
+    }
+    await recordAudit({
+      action: "user.password.reset",
+      actorType: "user",
+      actorId: user.id,
+      actorLabel: user.email,
+      target: user.id,
+      ip: request.ip,
+      details: { revoked },
+    });
+    return {user:{id:user.id,email:user.email,createdAt:user.createdAt}};
+  });
+  /**
+   * Смена пароля из настроек. Текущий пароль обязателен: одна украденная cookie не должна
+   * позволять закрепиться в аккаунте новым паролем. После смены отзываются все сессии, а
+   * текущий браузер получает новую — иначе кнопка выкидывала бы человека из его же вкладки.
+   */
+  app.post("/api/auth/password/change", async (request,reply) => {
+    const user = await requireUser(request, reply); if(!user) return;
+    const body = passwordChange.parse(request.body);
+    if(!hasLoginPassword(user.email)){
+      return reply.code(409).send({error:"У аккаунта нет пароля: вход выполняется по телефону или через Яндекс ID / VK ID.",code:"PASSWORD_NOT_SET"});
+    }
+    if(!(await verifyUser(user.email, body.currentPassword))){
+      await recordAudit({
+        action: "user.login.failed",
+        actorType: "user",
+        actorId: user.id,
+        actorLabel: user.email,
+        target: user.id,
+        ip: request.ip,
+        details: { reason: "password_change_bad_current" },
+      });
+      return reply.code(403).send({error:"Текущий пароль неверен.",code:"PASSWORD_MISMATCH"});
+    }
+    if(body.currentPassword === body.newPassword){
+      return reply.code(400).send({error:"Новый пароль совпадает с текущим.",code:"PASSWORD_SAME"});
+    }
+    if(!(await setUserPassword(user.id, body.newPassword))){
+      return reply.code(404).send({error:"Аккаунт не найден",code:"USER_NOT_FOUND"});
+    }
+    const revoked = await deleteUserSessions(user.id);
+    const signedIn = await attachSession(reply, user.id, request);
+    await recordAudit({
+      action: "user.password.changed",
+      actorType: "user",
+      actorId: user.id,
+      actorLabel: user.email,
+      target: user.id,
+      ip: request.ip,
+      details: { revoked },
+    });
+    return {ok:true,revoked,signedIn};
   });
   app.post("/api/auth/login", async (request,reply) => {
     const body = credentials.parse(request.body);

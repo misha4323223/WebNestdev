@@ -50,8 +50,10 @@ test("минуты растут с тарифом, а параллельный �
 
 test("исчерпанный бюджет — 429 с причиной, временем сброса и поддержкой", async () => {
   const limit = quota.sandboxMinutesLimitFor("free");
-  await quota.addSandboxSeconds("user-full", limit * 60);
+  // Расход пишется той же датой, которой потом проверяется: иначе тест зависел бы от того,
+  // совпадает ли реальное «сегодня» с зашитой датой проверки.
   const now = new Date("2026-11-07T10:00:00Z");
+  await quota.addSandboxSeconds("user-full", limit * 60, now);
   await assert.rejects(quota.assertSandboxBudget("user-full", "free", now), (error: unknown) => {
     const typed = error as { statusCode?: number; code?: string; message: string };
     assert.equal(typed.statusCode, 429);

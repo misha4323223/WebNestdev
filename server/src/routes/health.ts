@@ -18,7 +18,6 @@ import { diskStatus, memoryStatus } from "../health/host-metrics.js";
 import { hostingConfig } from "../hosting/config.js";
 import { hostingHealth } from "../hosting/site-store.js";
 import { smsReadiness, smsSummary } from "../auth/sms.js";
-import { supportKeyStatus } from "../support/support-api-key.js";
 import { mailSettings, mailSettingsSource } from "../mail/mailer.js";
 import { postboxConfig, postboxCredentialSummary } from "../mail/postbox.js";
 import { lastMailFailure } from "../mail/mail-health.js";
@@ -242,11 +241,8 @@ function isInternalHealthRequest(request:FastifyRequest){
 
 export async function registerHealthRoutes(app:FastifyInstance){
   app.get("/api/health",async request=>{
-    // Настроен ли ключ чтения обращений и откуда он взят — без самого значения. Это отличает
-    // «ключ не сохранён» от «сохранён в панели, но запрос попал в процесс без него».
-    const support = supportKeyStatus();
     if(!isInternalHealthRequest(request)){
-      return {ok:true,service:"webnestdev-server",build:buildId(),sms:await smsInfo(),mail:mailInfo(),support};
+      return {ok:true,service:"webnestdev-server",build:buildId(),sms:await smsInfo(),mail:mailInfo()};
     }
     return {
       ok:true,
@@ -259,7 +255,6 @@ export async function registerHealthRoutes(app:FastifyInstance){
       sms:await smsInfo(),
       // Почта: откуда ключ, чем подписывается письмо и что ответил сервис в последний раз.
       mail:mailInfo(),
-      support,
       hosting:await hostingInfo(),
       activity:await activity(),
     };
