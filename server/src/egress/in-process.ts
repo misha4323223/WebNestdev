@@ -1,4 +1,4 @@
-import { listPreviews } from "../preview/preview-store.js";
+import { listPreviewsAcrossReplicas } from "../preview/preview-store.js";
 import { checkEgress, egressAllowlist } from "./allowlist.js";
 import { egressMode, egressProxyPort } from "./config.js";
 import { startEgressProxy, type EgressProxy } from "./proxy.js";
@@ -26,7 +26,7 @@ export async function startInProcessEgressProxy(
   const allowlist = egressAllowlist(env.EGRESS_ALLOWLIST);
   const proxy = startEgressProxy({
     check: (host, targetPort, address) => checkEgress(host, targetPort, address, { mode, allowlist }),
-    identify: async address => listPreviews().find(state => state.host === address)?.projectId ?? null,
+    identify: async address => (await listPreviewsAcrossReplicas()).find(state => state.host === address)?.projectId ?? null,
     onDeny: entry => console.warn("[egress] отказ: " + JSON.stringify(entry)),
   });
   try {

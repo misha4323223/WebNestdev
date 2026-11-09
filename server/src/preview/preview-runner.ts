@@ -9,7 +9,7 @@ import { resolveSandboxHost } from "../sandbox/host.js";
 import { nodeId } from "../nodes/identity.js";
 import { resolvePreviewCommand } from "./preview-command.js";
 import { ensureProjectDependencies } from "./dependencies.js";
-import { setPreview } from "./preview-store.js";
+import { removePreview, setPreview } from "./preview-store.js";
 import { PREVIEW_APP_PORT, PREVIEW_LABEL, type PreviewState } from "./types.js";
 import { previewSecretMounts } from "../secrets/preview-secrets.js";
 import { egressProxyEnv } from "../egress/config.js";
@@ -114,7 +114,7 @@ export async function startPreviewContainer(config:SandboxConfig){
     throw new Error("Адрес контейнера предпросмотра не назначен");
   }
   const now=Date.now();
-  const state:PreviewState={mode:"container",containerId,projectId:config.projectId,node:config.node,host:containerAddress,port:PREVIEW_APP_PORT,startedAt:now,lastUsedAt:now};
+  const state:PreviewState={mode:"container",containerId,projectId:config.projectId,ownerUserId:config.userId,node:config.node,host:containerAddress,port:PREVIEW_APP_PORT,startedAt:now,lastUsedAt:now};
   setPreview(state);
   let ready:boolean;
   let settled:PreviewState;
@@ -126,8 +126,10 @@ export async function startPreviewContainer(config:SandboxConfig){
     settled=await settlePreviewAddress(state,{deps:previewDepsForHost(host),appAnswers:ready});
   }catch(error){
     // Неудачный запуск не должен оставлять ни открытый env-файл на хосте, ни контейнер: без `--rm`
-    // он остался бы остановленным и занимал место до следующей уборки.
+    // он остался бы остановленным и занимал место до следующей уборки. Строку общего реестра
+    // тоже убираем: иначе вторая реплика до TTL считала бы упавший preview живым.
     await removePreviewContainer(containerId,config.node);
+    removePreview(config.projectId);
     await secrets.cleanup();
     throw error;
   }

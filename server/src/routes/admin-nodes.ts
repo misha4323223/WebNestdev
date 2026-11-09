@@ -13,13 +13,15 @@ import {
 } from "../nodes/node-store.js";
 import { isNodeFresh } from "../nodes/placement.js";
 import { getProject, reassignProjectNode } from "../project-store.js";
-import { getPreview } from "../preview/preview-store.js";
+import { hydratePreview, listPreviewsAcrossReplicas } from "../preview/preview-store.js";
 import { listSandboxJobs } from "../sandbox/jobs.js";
 import { sandboxMemoryMb } from "../sandbox/config.js";
 import { recordAudit } from "../security/audit-journal.js";
 import { unregisterSandboxHost } from "../sandbox/host.js";
 import { listPreviews } from "../preview/preview-store.js";
 import { previewStartStats } from "../preview/preview-metrics.js";
+import { powerOnNode, readNodePower } from "../nodes/mws-power.js";
+import { readSwitchover, requestSwitchover, switchoverStatus } from "../nodes/switchover.js";
 
 const statusSchema = z.object({
   status: z.enum(["online", "draining", "offline"]),
@@ -28,6 +30,17 @@ const statusSchema = z.object({
 
 const moveSchema = z.object({
   node: z.string().trim().min(1).max(120),
+});
+
+const powerSchema = z.object({
+  action: z.literal("on"),
+  confirm: z.literal(true),
+  reason: z.string().trim().max(200).optional(),
+});
+
+const switchoverSchema = z.object({
+  confirm: z.literal(true),
+  reason: z.string().trim().max(200).optional(),
 });
 
 const registerSchema = z.object({
@@ -45,10 +58,14 @@ function validRunnerAddress(value: string) {
   }
 }
 
+function errorText(error: unknown) {
+  return (error instanceof Error ? error.message : String(error)).slice(0, 500);
+}
+
 async function nodesWithProjects() {
   const [nodes, projectsByNode] = await Promise.all([listNodes(), countProjectsByNode()]);
   const previewsByNode = new Map<string, number>();
-  for (const preview of listPreviews()) {
+  for (const preview of await listPreviewsAcrossReplicas()) {
     const key = preview.node ?? nodeId();
     previewsByNode.set(key, (previewsByNode.get(key) ?? 0) + 1);
   }
@@ -115,6 +132,105 @@ export async function registerAdminNodeRoutes(app: FastifyInstance) {
       details: { status: node.status },
     });
     return reply.code(existing ? 200 : 201).send({ node: { ...node, projects: 0, previews: 0, previewStarts: { count: 0, p95Ms: null, failures: 0 }, freeMemoryMb: Math.max(0, node.memoryTotalMb - node.memoryUsedMb), fresh: isNodeFresh(node) } });
+  });
+
+  app.get("/api/admin/nodes/switchover", async (request, reply) => {
+    const auth = await requireAdmin(request, reply);
+    if (!auth) return;
+    applyNoStoreToReply(reply);
+    return { operation: switchoverStatus(await readSwitchover()) };
+  });
+
+  /**
+   * Planned handoff from the current primary to another node. This endpoint only
+   * writes a request: the HA controller performs replication catch-up, stops the
+   * old PostgreSQL, promotes the target and keeps the old node as API/runner.
+   * It never calls MWS fencing and never promotes directly from HTTP.
+   */
+  app.post("/api/admin/nodes/:id/switchover", async (request, reply) => {
+    const auth = await requireAdmin(request, reply);
+    if (!auth) return;
+    applyNoStoreToReply(reply);
+    const params = z.object({ id: z.string().trim().min(1).max(120) }).parse(request.params);
+    const body = switchoverSchema.parse(request.body);
+    const target = await getNode(params.id);
+    if (!target) return reply.code(404).send({ error: "Узел не найден" });
+    if (target.id === nodeId()) {
+      return reply.code(409).send({ error: "Целевой узел совпадает с узлом, обслуживающим API", code: "TARGET_IS_LOCAL" });
+    }
+    if (target.status !== "online" || !isNodeFresh(target)) {
+      return reply.code(409).send({
+        error: "Целевой узел должен быть online и fresh: " + target.id,
+        code: "TARGET_NOT_READY",
+      });
+    }
+    let operation;
+    try {
+      operation = await requestSwitchover({
+        target: target.id,
+        requestedBy: auth.admin.email,
+        ...(body.reason ? { reason: body.reason } : {}),
+      });
+    } catch (error) {
+      const message = errorText(error);
+      return reply.code(409).send({ error: message, code: "SWITCHOVER_BUSY" });
+    }
+    await recordAudit({
+      action: "node.switchover",
+      actorType: "admin",
+      actorId: auth.admin.id,
+      actorLabel: auth.admin.email,
+      target: target.id,
+      targetLabel: target.id,
+      ip: request.ip,
+      details: { operationId: operation.id, target: target.id },
+    });
+    return reply.code(202).send({ operation: switchoverStatus(operation) });
+  });
+
+  app.get("/api/admin/nodes/:id/power", async (request, reply) => {
+    const auth = await requireAdmin(request, reply);
+    if (!auth) return;
+    applyNoStoreToReply(reply);
+    const params = z.object({ id: z.string().trim().min(1).max(120) }).parse(request.params);
+    const node = await getNode(params.id);
+    if (!node) return reply.code(404).send({ error: "Узел не найден" });
+    try {
+      return { node: node.id, ...(await readNodePower(node.id)) };
+    } catch (error) {
+      return reply.code(502).send({ error: errorText(error) });
+    }
+  });
+
+  /**
+   * Power-on only. Turning a VM off is deliberately not exposed here: the
+   * current primary must be handed over first, otherwise the operator can kill
+   * the only healthy API with one request.
+   */
+  app.post("/api/admin/nodes/:id/power", async (request, reply) => {
+    const auth = await requireAdmin(request, reply);
+    if (!auth) return;
+    applyNoStoreToReply(reply);
+    const params = z.object({ id: z.string().trim().min(1).max(120) }).parse(request.params);
+    const body = powerSchema.parse(request.body);
+    const node = await getNode(params.id);
+    if (!node) return reply.code(404).send({ error: "Узел не найден" });
+    try {
+      const state = await powerOnNode(node.id);
+      await recordAudit({
+        action: "node.power",
+        actorType: "admin",
+        actorId: auth.admin.id,
+        actorLabel: auth.admin.email,
+        target: node.id,
+        targetLabel: node.id,
+        ip: request.ip,
+        details: { action: body.action, power: state.power },
+      });
+      return { node: node.id, power: state.power };
+    } catch (error) {
+      return reply.code(502).send({ error: errorText(error) });
+    }
   });
 
   app.post("/api/admin/nodes/:id/status", async (request, reply) => {
@@ -185,7 +301,7 @@ export async function registerAdminNodeRoutes(app: FastifyInstance) {
         node: { id: target.id, freeMemoryMb },
       };
     }
-    if (getPreview(project.id) || listSandboxJobs(project.id).length) {
+    if (await hydratePreview(project.id) || listSandboxJobs(project.id).length) {
       return reply.code(409).send({
         error: "У проекта есть активный предпросмотр или задание: остановите их и повторите — перенос не трогает живые контейнеры",
         code: "PROJECT_BUSY",

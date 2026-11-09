@@ -5,10 +5,12 @@ import { resolveSandboxHost } from "./sandbox/host.js";
 import { previewDepsForHost } from "./preview/node-deps.js";
 import { nodeId } from "./nodes/identity.js";
 import { listNodes } from "./nodes/node-store.js";
-import { decideRuntimePreviewStart, liveRuntimePreviews } from "./preview/preview-limiter.js";
+import { decideRuntimePreviewStart, perUserPreviewLimit, runtimePreviewLimit } from "./preview/preview-limiter.js";
+import { reservePreviewStart } from "./preview/preview-reservation.js";
 import { previewAppAnswers } from "./preview/app-http.js";
 import { settlePreviewAddress } from "./preview/preview-address.js";
-import { getPreview, removePreview, setPreview, touchPreview } from "./preview/preview-store.js";
+import { flushPreviewWrites, hydratePreview, listPreviewsAcrossReplicas, removePreview, setPreview, touchPreview } from "./preview/preview-store.js";
+import { listSharedPreviews, sharedPreviewRegistryEnabled } from "./preview/preview-registry.js";
 import { startPreviewContainer, previewLogsOf, removePreviewContainer } from "./preview/preview-runner.js";
 import { previewModeSetting, startStaticPreview, staticAppAnswers, staticPreviewLogs, stopStaticPreview } from "./preview/static-preview.js";
 import { recordPreviewStart } from "./preview/preview-metrics.js";
@@ -118,7 +120,7 @@ function addressRetryMs(){
  * watches the project files itself, so the agent's edits appear without another start.
  */
 async function startContainerPreview(config: SandboxConfig, staticReason?: string) {
-  const current = getPreview(config.projectId);
+  const current = await hydratePreview(config.projectId);
   if (current?.mode === "static") {
     // The mode changed, or the static start fell back: a listener must not be left behind.
     await stopStaticPreview(config.projectId);
@@ -131,23 +133,65 @@ async function startContainerPreview(config: SandboxConfig, staticReason?: strin
   // that has to be counted. A static preview is not: it is a listener, and the panel shows it
   // from the same process whatever this number says.
   const project = await getProject(config.projectId);
-  const live = await Promise.all(
-    liveRuntimePreviews().map(async state => ({
-      projectId: state.projectId,
-      lastUsedAt: state.lastUsedAt,
-      userId: (await getProject(state.projectId))?.userId,
-    })),
-  );
-  const decision = decideRuntimePreviewStart({ live, projectId: config.projectId, userId: project?.userId ?? "" });
-  if (!decision.ok) throw new Error(decision.reason);
-  if (decision.stopProjectId) await stopPreview(decision.stopProjectId);
-  const status = await startPreviewContainer(config);
-  if (!staticReason || !status.ready) return status;
-  return { ...status, hint: "Статическая сборка недоступна (" + staticReason + "), работает dev-сервер." };
+  const userId = project?.userId ?? "";
+  // В общей схеме проверка и старт должны быть одним шагом: между чтением реестра и появлением
+  // новой строки проходит установка зависимостей, и две реплики иначе обе проходят лимит.
+  // Бронь живёт в PostgreSQL и снимается после записи состояния; в JSON-режиме остаётся
+  // прежняя локальная проверка.
+  const reserved = await reservePreviewStart({
+    projectId: config.projectId,
+    userId,
+    node: config.node,
+    perUser: perUserPreviewLimit(),
+    hostLimit: runtimePreviewLimit(),
+  });
+  if (reserved.kind === "busy") throw new Error(reserved.reason);
+
+  let stopProjectIds: string[];
+  if (reserved.kind === "disabled") {
+    // Считаем по общему реестру, а не по локальной карте: иначе вторая реплика видит только
+    // свои предпросмотры и разрешает аккаунту второй контейнер. Владелец обычно уже записан
+    // вместе с состоянием; `getProject` остаётся только для старых строк без owner_user_id.
+    const shared = (await listPreviewsAcrossReplicas()).filter(state => state.mode === "container");
+    const live = await Promise.all(
+      shared.map(async state => ({
+        projectId: state.projectId,
+        lastUsedAt: state.lastUsedAt,
+        userId: state.ownerUserId || (await getProject(state.projectId))?.userId || "",
+      })),
+    );
+    const decision = decideRuntimePreviewStart({ live, projectId: config.projectId, userId });
+    if (!decision.ok) throw new Error(decision.reason);
+    stopProjectIds = decision.stopProjectId ? [decision.stopProjectId] : [];
+  } else {
+    stopProjectIds = reserved.stopProjectIds;
+  }
+
+  try {
+    for (const projectId of stopProjectIds) await stopPreview(projectId);
+    const status = await startPreviewContainer(config);
+    // Снимаем бронь только после того, как строка preview действительно ушла в общий реестр:
+    // иначе следующая реплика в это окно увидит пустой реестр и запустит второй контейнер.
+    if (reserved.kind === "acquired") await flushPreviewWrites(config.projectId);
+    if (!staticReason || !status.ready) return status;
+    return { ...status, hint: "Статическая сборка недоступна (" + staticReason + "), работает dev-сервер." };
+  } finally {
+    if (reserved.kind === "acquired") await reserved.reservation.release();
+  }
+}
+
+/**
+ * Heartbeat панели по preview, которое могло быть начато на другой реплике. Сначала поднимаем
+ * состояние из общего реестра, затем продлеваем его локальную и общую отметку.
+ */
+export async function touchPreviewAnywhere(projectId: string) {
+  const current = await hydratePreview(projectId);
+  if (!current) return false;
+  return touchPreview(projectId);
 }
 
 export async function stopPreview(projectId: string) {
-  const current = getPreview(projectId);
+  const current = await hydratePreview(projectId);
   if (!current) {
     // Остановка могла прийти после падения запуска: временный env-файл всё равно убираем.
     await clearPreviewSecrets(projectId);
@@ -170,7 +214,7 @@ export async function stopPreview(projectId: string) {
  * preview, the build output for a static one (nothing runs that could produce more).
  */
 export async function previewLogs(projectId: string) {
-  const current = getPreview(projectId);
+  const current = await hydratePreview(projectId);
   if (!current) return { running: false, logs: "" };
 
   if (current.mode === "static") {
@@ -194,10 +238,22 @@ export async function previewLogs(projectId: string) {
 }
 
 /**
- * The preview state lives in memory, so after a server restart every labelled preview
- * container is an orphan: nothing owns it, it keeps running with its resources, and the
- * next start would create a second one for the same project. Reaping on boot keeps that
- * bounded. Set PREVIEW_REAP_ON_START=0 when several server replicas share one Docker host.
+ * Оставляет только те контейнеры, на которые не претендует живая строка общего реестра.
+ * В JSON-режиме реестра нет, и поведение прежнее: всё с меткой — сирота этого процесса.
+ */
+async function orphanPreviewIds(ids: string[]) {
+  // В общей схеме живой preview принадлежит не этому процессу. Удалять все контейнеры с меткой
+  // при старте API нельзя: перезапуск второй реплики уносил бы preview первой. Поэтому
+  // оставляем всё, на что есть непросроченная строка реестра.
+  if (!sharedPreviewRegistryEnabled()) return ids;
+  const live = new Set((await listSharedPreviews()).map(state => state.containerId).filter(Boolean));
+  return ids.filter(id => !live.has(id));
+}
+
+/**
+ * The preview state used to live only in memory, so after a server restart every labelled
+ * preview container was an orphan. Now the shared registry tells which ones belong to another
+ * live replica; only the rest are removed. Set PREVIEW_REAP_ON_START=0 to disable even that.
  * Static previews live in this process, so a restart leaves nothing of them behind.
  */
 export async function reapOrphanPreviews() {
@@ -205,16 +261,16 @@ export async function reapOrphanPreviews() {
   // Все контейнеры с меткой, а не только работающие: предпросмотр запускается без `--rm`, и
   // упавший остаётся остановленным — на диске он тоже никому не нужен.
   const listed = await dockerExec(["ps", "-aq", "--filter", "label=" + PREVIEW_LABEL]);
-  const ids = listed.stdout.split("\n").map(value => value.trim()).filter(Boolean);
+  const ids = await orphanPreviewIds(listed.stdout.split("\n").map(value => value.trim()).filter(Boolean));
   for (const id of ids) await removePreviewContainer(id);
   return { stopped: ids.length };
 }
 
 /**
  * Remove preview containers left on remote runners by an API restart. The runner's own boot
- * reap covers a runner restart; this covers the API restart while runners stay up. The same
- * opt-out as the local reap applies: several API replicas sharing one runner must set
- * PREVIEW_REAP_ON_START=0, otherwise one replica would stop another's live previews.
+ * reap covers a runner restart; this covers the API restart while runners stay up. The shared
+ * registry protects previews owned by another live replica; `PREVIEW_REAP_ON_START=0` remains
+ * the escape hatch when the registry itself is unavailable during a rollout.
  */
 export async function reapRemotePreviews() {
   if (process.env.PREVIEW_REAP_ON_START === "0") return { stopped: 0 };
@@ -226,7 +282,7 @@ export async function reapRemotePreviews() {
       const host = await resolveSandboxHost(node.id);
       const listed = await host.docker(["ps", "-aq", "--filter", "label=" + PREVIEW_LABEL]);
       if (listed.code !== 0) continue;
-      const ids = listed.stdout.split(/\s+/).filter(Boolean);
+      const ids = await orphanPreviewIds(listed.stdout.split(/\s+/).filter(Boolean));
       if (ids.length) {
         await host.docker(["rm", "-f", ...ids]);
         stopped += ids.length;
@@ -239,7 +295,7 @@ export async function reapRemotePreviews() {
 }
 
 export async function previewStatus(projectId: string): Promise<PreviewStatus> {
-  const current = getPreview(projectId);
+  const current = await hydratePreview(projectId);
   if (!current) return { running: false };
 
   // Nothing runs in a container for a static preview, so there is nothing to inspect: the

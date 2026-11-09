@@ -2,8 +2,8 @@ import { stat } from "node:fs/promises";
 import { listProjectOwners } from "../project-store.js";
 import { sandboxRootDir, sandboxRootPath } from "../sandbox/config.js";
 import { readProjectSizes } from "../account/storage-quota.js";
-import { isRunActive } from "../agent/active-runs.js";
-import { getPreview } from "../preview/preview-store.js";
+import { isRunActiveAnywhere } from "../agent/run-activity.js";
+import { hydratePreview } from "../preview/preview-store.js";
 import { diskStatus, type DiskStatus } from "../health/host-metrics.js";
 import { objectStoreConfigFromEnv } from "./object-store.js";
 import {
@@ -171,8 +171,8 @@ export type ArchiveSweepDeps = {
   hasStore: () => boolean;
   listProjects: () => Promise<Array<{ id: string; userId: string }>>;
   readSizes: () => Promise<Map<string, ProjectSize>>;
-  isProjectActive: (projectId: string) => boolean;
-  hasPreview: (projectId: string) => boolean;
+  isProjectActive: (projectId: string) => Promise<boolean>;
+  hasPreview: (projectId: string) => Promise<boolean>;
   lastProjectAccess: (projectId: string) => number;
   archiveInfo: (projectId: string) => Promise<unknown | null>;
   workspaceExists: (projectId: string) => Promise<boolean>;
@@ -192,8 +192,8 @@ const defaultDeps: ArchiveSweepDeps = {
   },
   listProjects: () => listProjectOwners(),
   readSizes: () => readProjectSizes(),
-  isProjectActive: projectId => isRunActive(projectId),
-  hasPreview: projectId => Boolean(getPreview(projectId)),
+  isProjectActive: projectId => isRunActiveAnywhere(projectId),
+  hasPreview: async projectId => Boolean(await hydratePreview(projectId)),
   lastProjectAccess: projectId => projectLastAccess(projectId),
   archiveInfo: projectId => projectArchiveInfo(projectId),
   workspaceExists: async projectId => {
@@ -297,8 +297,8 @@ export async function sweepIdleProjects(
       sizeBytes: measured.sizeBytes,
       lastWriteMs,
       lastAccessMs: deps.lastProjectAccess(project.id),
-      active: deps.isProjectActive(project.id),
-      preview: deps.hasPreview(project.id),
+      active: await deps.isProjectActive(project.id),
+      preview: await deps.hasPreview(project.id),
       archived: Boolean(archived),
       // Живая папка важнее отметки; отсутствие папки без отметки — не архив, а потерянный проект.
       workspace: archived ? false : await deps.workspaceExists(project.id),

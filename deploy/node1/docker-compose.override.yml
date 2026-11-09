@@ -1,0 +1,30 @@
+# node-1 as an API/Caddy standby and, after promotion, the primary.
+#
+# PostgreSQL runs as the system cluster: 5433 is the physical standby, 5432 is
+# HAProxy. While node-2 is healthy HAProxy sends the API to the node-2 primary;
+# after fencing/promotion it falls back to the local promoted standby.
+services:
+  webnestdev-server:
+    # DATA_DIR должен быть общим: при переключении API на node-2 платформенные ключи
+    # и настройки должны быть те же, что на node-1. Gluster-том монтируется вместо
+    # именованного тома compose.
+    volumes:
+      - /var/lib/webnestdev/data:/app/.webnestdev
+    environment:
+      DATABASE_URL: postgres://webnestdev:${NODE2_PG_PASSWORD:?Set NODE2_PG_PASSWORD}@host.docker.internal:5432/webnestdev
+      WEBNESTDEV_NODE_ID: node-1
+      WEBNESTDEV_RUNNER_TOKEN: ${NODE1_RUNNER_TOKEN:?Set NODE1_RUNNER_TOKEN}
+      WEBNESTDEV_REMOTE_NODES: '[{"id":"node-2","address":"10.0.0.5:8790"}]'
+      WEBNESTDEV_SHARED_SANDBOX: "1"
+      WEBNESTDEV_AUTO_MOVE_PROJECTS: "1"
+      HOSTING_SHARED_STORAGE: "1"
+      WEBNESTDEV_TRUSTED_PROXIES: 172.30.0.0/24
+      EGRESS_MODE: private-only
+      EGRESS_ENFORCE: "0"
+      PREVIEW_MAX_CONTAINERS: "2"
+      SANDBOX_MAX_CONCURRENT: "2"
+    extra_hosts:
+      - "host.docker.internal:10.0.0.4"
+
+  caddy:
+    depends_on: []

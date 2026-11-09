@@ -67,6 +67,30 @@ test("nodes are visible to an admin and drain is an explicit status change", asy
     assert.equal(registeredBody.node.status, "online");
     assert.equal(registeredBody.node.freeMemoryMb, 0);
 
+    const switchover = await app.inject({
+      method: "POST",
+      url: "/api/admin/nodes/runner-a/switchover",
+      headers: auth,
+      payload: { confirm: true, reason: "освободить local" },
+    });
+    assert.equal(switchover.statusCode, 202);
+    const switchoverBody = switchover.json() as { operation: { target: string; state: string } };
+    assert.equal(switchoverBody.operation.target, "runner-a");
+    assert.equal(switchoverBody.operation.state, "requested");
+
+    const switchoverStatus = await app.inject({ method: "GET", url: "/api/admin/nodes/switchover", headers: auth });
+    assert.equal(switchoverStatus.statusCode, 200);
+    assert.equal((switchoverStatus.json() as { operation: { target: string } }).operation.target, "runner-a");
+
+    const duplicateSwitchover = await app.inject({
+      method: "POST",
+      url: "/api/admin/nodes/runner-a/switchover",
+      headers: auth,
+      payload: { confirm: true },
+    });
+    assert.equal(duplicateSwitchover.statusCode, 409);
+    assert.equal((duplicateSwitchover.json() as { code: string }).code, "SWITCHOVER_BUSY");
+
     const localRegistration = await app.inject({
       method: "POST",
       url: "/api/admin/nodes",

@@ -3,11 +3,11 @@ import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readdir, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { cleanupAbandonedTemp } from "./temp-cleanup.js";
+import { cleanupAbandonedTemp, defaultStorageTempDir } from "./temp-cleanup.js";
 
 const HOUR = 60 * 60_000;
 
-test("стартовая уборка удаляет только старые временные архивы и .restore-*", async () => {
+test("стартовая уборка удаляет только старые временные архивы и .restore-* этой реплики", async () => {
   const base = await mkdtemp(path.join(tmpdir(), "wnd-temp-cleanup-"));
   const tempDir = path.join(base, "tmp");
   const sandboxDir = path.join(base, "sandboxes");
@@ -29,14 +29,20 @@ test("стартовая уборка удаляет только старые �
     await writeFile(unrelated, "keep");
     await utimes(unrelated, old, old);
 
-    const oldRestore = path.join(sandboxDir, ".restore-project-old");
+    const oldRestore = path.join(sandboxDir, ".restore-local-project-old");
     await mkdir(oldRestore);
     await writeFile(path.join(oldRestore, "partial.txt"), "partial");
     await utimes(oldRestore, old, old);
 
-    const newRestore = path.join(sandboxDir, ".restore-project-new");
+    const newRestore = path.join(sandboxDir, ".restore-local-project-new");
     await mkdir(newRestore);
     await writeFile(path.join(newRestore, "partial.txt"), "partial");
+
+    // Файл другой реплики на том же общем SANDBOX_DIR не принадлежит этой уборке.
+    const otherNode = path.join(sandboxDir, ".restore-node-2-project-old");
+    await mkdir(otherNode);
+    await writeFile(path.join(otherNode, "partial.txt"), "partial");
+    await utimes(otherNode, old, old);
 
     const liveProject = path.join(sandboxDir, "project-id");
     await mkdir(liveProject);
@@ -48,11 +54,15 @@ test("стартовая уборка удаляет только старые �
       maxAgeMs: HOUR,
       tempDir,
       sandboxDir,
+      nodeId: "local",
     });
 
     assert.deepEqual(result, { files: 1, dirs: 1, bytes: 3, failed: 0 });
     assert.deepEqual((await readdir(tempDir)).sort(), ["archive-new.tar.gz", "notes.txt"]);
-    assert.deepEqual((await readdir(sandboxDir)).sort(), [".restore-project-new", "project-id"]);
+    assert.deepEqual(
+      (await readdir(sandboxDir)).sort(),
+      [".restore-local-project-new", ".restore-node-2-project-old", "project-id"],
+    );
   } finally {
     await rm(base, { recursive: true, force: true });
   }
@@ -67,10 +77,10 @@ test("при maxAgeMs=0 убирает свежий хвост убитого п
     await mkdir(tempDir, { recursive: true });
     await mkdir(sandboxDir, { recursive: true });
     await writeFile(path.join(tempDir, "archive-fresh.tar.gz"), "fresh");
-    await mkdir(path.join(sandboxDir, ".restore-project-fresh"));
+    await mkdir(path.join(sandboxDir, ".restore-local-project-fresh"));
     await mkdir(path.join(sandboxDir, "project-id"));
 
-    const result = await cleanupAbandonedTemp({ maxAgeMs: 0, tempDir, sandboxDir });
+    const result = await cleanupAbandonedTemp({ maxAgeMs: 0, tempDir, sandboxDir, nodeId: "local" });
 
     assert.deepEqual(result, { files: 1, dirs: 1, bytes: 5, failed: 0 });
     assert.deepEqual(await readdir(tempDir), []);
@@ -78,6 +88,17 @@ test("при maxAgeMs=0 убирает свежий хвост убитого п
   } finally {
     await rm(base, { recursive: true, force: true });
   }
+});
+
+test("временные архивы разложены по namespace реплики", () => {
+  assert.equal(
+    defaultStorageTempDir({ WEBNESTDEV_DATA_DIR: "/data", WEBNESTDEV_NODE_ID: "node-2" }),
+    path.join("/data", "tmp", "node-2"),
+  );
+  assert.equal(
+    defaultStorageTempDir({ WEBNESTDEV_DATA_DIR: "/data", WEBNESTDEV_NODE_ID: "../other" }),
+    path.join("/data", "tmp", "other"),
+  );
 });
 
 test("отсутствующие каталоги не мешают старту", async () => {

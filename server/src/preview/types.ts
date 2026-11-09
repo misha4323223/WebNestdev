@@ -16,6 +16,9 @@ export type PreviewMode="container"|"static";
  * (см. preview/preview-address.ts).
  */
 export type PreviewState={mode:PreviewMode;containerId:string;port:number;host:string;projectId:string;startedAt:number;lastUsedAt:number;/**
+ * Владелец проекта. Нужен общему лимиту preview: вторая реплика API не может выяснить владельца
+ * по своей локальной карте, а запросы к `project-store` на каждый чужой preview — лишние.
+ */ownerUserId?:string;/**
  * The project's execution node. A preview on a remote runner must keep its container, logs and
  * relay on that node; the API never falls back to its own Docker socket.
  */node?:string;/**

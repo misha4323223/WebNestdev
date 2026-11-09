@@ -4,8 +4,8 @@ import { isYdbEnabled, ydbQuery } from "../storage/ydb.js";
 import { runQueueStats } from "../agent/run-limiter.js";
 import { sandboxQueueStats } from "../sandbox/sandbox-limiter.js";
 import { browserQueueStats } from "../tools/browser-limiter.js";
-import { liveRuntimePreviews, liveStaticPreviews, perUserPreviewLimit, runtimePreviewLimit } from "../preview/preview-limiter.js";
-import { previewAddresses } from "../preview/preview-store.js";
+import { perUserPreviewLimit, runtimePreviewLimit } from "../preview/preview-limiter.js";
+import { listPreviewsAcrossReplicas, previewAddresses } from "../preview/preview-store.js";
 import { previewPublicDomain } from "../preview/preview-host.js";
 import { previewHostBind, previewHostLimits, previewHostPort } from "../preview/preview-host-server.js";
 import { probePreviewDoor } from "../preview/door-client.js";
@@ -80,6 +80,7 @@ async function previewDoorInfo(){
  * - disk and memory, because those are what actually run out first.
  */
 async function activity(){
+  const previewStates = await listPreviewsAcrossReplicas().catch(() => []);
   return {
     // После этапа 2.2 сервер должен работать не от uid 0. Значение читается из процесса, а не
     // из переменной окружения: именно оно отвечает, сбросил ли entrypoint права на самом деле.
@@ -91,12 +92,12 @@ async function activity(){
     sandbox: sandboxQueueStats(),
     browser: browserQueueStats(),
     previews: {
-      runtime: liveRuntimePreviews().length,
+      runtime: previewStates.filter(state => state.mode === "container").length,
       // Сколько контейнерных предпросмотров разрешено одному аккаунту: это правило продукта.
       runtimePerUser: perUserPreviewLimit(),
       // Предохранитель на весь хост; 0 — не задан (см. preview/preview-limiter.ts).
       runtimeLimit: runtimePreviewLimit(),
-      static: liveStaticPreviews().length,
+      static: previewStates.filter(state => state.mode === "static").length,
       // Адреса живых предпросмотров: `settled` — этот адрес подтверждён запросом самого сервера,
       // то есть приложение видно и панели, и Chromium. `settled: false` у работающего предпросмотра
       // — это ответ на «предпросмотр запущен, а в панели белый экран», который иначе искали бы
@@ -274,6 +275,20 @@ export async function registerHealthRoutes(app:FastifyInstance){
       return reply.code(ok?200:503).send({ok,service:"webnestdev-server",build:buildId()});
     }
     return reply.code(ok?200:503).send({ok,service:"webnestdev-server",build:buildId(),...dependencies,sms:await smsInfo(),activity:await activity()});
+  });
+  /**
+   * Готовность исполнительного узла, отдельно от панели. API может принимать вход и читать
+   * проекты, пока локальный Docker недоступен; но этот узел не должен получать задания,
+   * которым нужны контейнеры. NLB и оператор могут проверять этот адрес отдельно, а `/api/ready`
+   * остаётся общей готовностью API (хранилище + песочница + монтирование).
+   */
+  app.get("/api/node/ready",async(request,reply)=>{
+    const dependencies=await dependencyStatus();
+    const ok=dependencies.sandbox.available && dependencies.sandbox.mount?.reason!=="mismatch";
+    if(!isInternalHealthRequest(request)){
+      return reply.code(ok?200:503).send({ok,service:"webnestdev-node",build:buildId()});
+    }
+    return reply.code(ok?200:503).send({ok,service:"webnestdev-node",build:buildId(),sandbox:dependencies.sandbox});
   });
   app.get("/api/sandbox/status",async()=>sandboxHost().status());
 }

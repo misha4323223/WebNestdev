@@ -2,7 +2,7 @@ import type { FastifyInstance } from "fastify";
 import { createHash, randomBytes } from "node:crypto";
 import { z } from "zod";
 import { requireUser } from "../auth/auth.js";
-import { createOAuthState, consumeOAuthState, originFromOAuthState } from "../github/github-oauth-state.js";
+import { createOAuthState, consumeOAuthStateWithVerifier, originFromOAuthState } from "../github/github-oauth-state.js";
 import { redirectToApp, resolveOAuthFlow } from "../oauth/oauth-flow.js";
 import { getRepoConnection, saveRepoConnection, deleteRepoConnection } from "./connection-store.js";
 import { repoToken } from "./tokens.js";
@@ -16,23 +16,10 @@ import { initRepo, resetWorkspaceForImport } from "../changes/git-repo.js";
 
 /**
  * Authorization Code + PKCE: GitVerse требует PKCE даже у конфиденциального клиента, поэтому
- * рядом с state живёт code_verifier. Он не хранится в базе: живёт минуты, привязан к state и
- * исчезает вместе с ним. Перезапуск сервера в эти минуты просто попросит начать заново.
+ * code_verifier едет вместе с state в общей таблице `oauth_states` и удаляется при первом
+ * использовании. Callback может прийти на другую реплику API — память процесса для этого
+ * не годится.
  */
-const verifiers = new Map<string, { verifier: string; expiresAt: number }>();
-
-function saveVerifier(state: string, verifier: string) {
-  const now = Date.now();
-  for (const [key, value] of verifiers) if (value.expiresAt <= now) verifiers.delete(key);
-  verifiers.set(state, { verifier, expiresAt: now + 15 * 60_000 });
-}
-
-function takeVerifier(state: string) {
-  const found = verifiers.get(state);
-  verifiers.delete(state);
-  if (!found || found.expiresAt <= Date.now()) return null;
-  return found.verifier;
-}
 
 function pkce() {
   const verifier = randomBytes(48).toString("base64url").slice(0, 64);
@@ -73,9 +60,8 @@ export async function registerRepoRoutes(app: FastifyInstance, provider: RepoPro
         requestedOrigin: query.origin,
       });
       if (!oauth.clientId || !oauth.clientSecret) return redirectToApp(reply, flow.frontendUrl, provider.id, "not_configured");
-      const state = await createOAuthState(user.id, flow.origin);
       const { verifier, challenge } = pkce();
-      saveVerifier(state, verifier);
+      const state = await createOAuthState(user.id, flow.origin, verifier);
       const url = new URL(oauth.authorizeUrl);
       url.searchParams.set("client_id", oauth.clientId);
       url.searchParams.set("redirect_uri", flow.callbackUrl);
@@ -100,8 +86,9 @@ export async function registerRepoRoutes(app: FastifyInstance, provider: RepoPro
       });
       if (query.error) return redirectToApp(reply, flow.frontendUrl, provider.id, "denied");
       if (!query.code) return redirectToApp(reply, flow.frontendUrl, provider.id, "error");
-      const owner = await consumeOAuthState(query.state);
-      const verifier = takeVerifier(query.state);
+      const consumed = await consumeOAuthStateWithVerifier(query.state);
+      const owner = consumed?.userId;
+      const verifier = consumed?.verifier;
       if (!owner || owner !== user.id || !verifier) return redirectToApp(reply, flow.frontendUrl, provider.id, "state_expired");
       try {
         const response = await fetch(oauth.tokenUrl, {

@@ -1,0 +1,41 @@
+[Unit]
+Description=WebNestDev bidirectional PostgreSQL failover (node-2)
+Documentation=file:///opt/webnestdev-ha/README.md
+After=network-online.target postgresql@17-main.service haproxy.service docker.service
+Wants=network-online.target haproxy.service
+
+[Service]
+Type=simple
+User=root
+EnvironmentFile=/etc/webnestdev-ha/mws.env
+EnvironmentFile=/etc/webnestdev-ha/regru.env
+EnvironmentFile=-/etc/webnestdev-ha/node2.env
+Environment=FAILOVER_GRACE_SECONDS=30
+Environment=CHECK_INTERVAL_SECONDS=5
+Environment=HA_LOCAL_NODE=node-2
+Environment=HA_PEER_NODE=node-1
+Environment=LOCAL_PG_PORT=5433
+Environment=PRIMARY_PG_HOST=10.0.0.4
+Environment=PRIMARY_PG_PORT=5432
+Environment=MWS_VM_PATH=/compute/v1/projects/project-pimashin2015/virtualMachines/webnestdev
+Environment=API_CONTAINER=src-webnestdev-server-1
+Environment=CADDY_CONTAINER=src-caddy-1
+Environment=BROKER_CONTAINER=src-docker-broker-1
+Environment=RUNNER_CONTAINER=node2-runner
+Environment=API_READY_URL=http://127.0.0.1:8787/api/ready
+Environment=HA_LOCAL_PUBLIC_IP=2.59.80.174
+Environment=HA_PEER_PUBLIC_IP=2.59.83.250
+Environment=DNS_DOMAIN=nestdev.ru
+Environment=DNS_NAMES=@,www,host,*.host,*.preview
+# DNS указывает на NLB, а не на конкретную ВМ: при failover записи не меняются.
+Environment=DNS_ENABLED=0
+Environment=HA_STORAGE_PATH=/var/lib/webnestdev/sandboxes
+Environment=HA_REQUIRE_STORAGE=1
+Environment=HA_CONTROL_PATH=/var/lib/webnestdev/data/ha-switchover.json
+Environment=HA_SWITCHOVER_TIMEOUT_SECONDS=180
+ExecStart=/usr/bin/python3 -u /opt/webnestdev-ha/failover.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -2,12 +2,12 @@ import type { FastifyInstance,FastifyReply } from "fastify";
 import { z } from "zod";
 import { requireProjectUser } from "../auth/auth.js";
 import { getSandbox } from "../sandbox-manager.js";
-import { startPreview,stopPreview,previewStatus,previewLogs } from "../preview-manager.js";
+import { startPreview,stopPreview,previewStatus,previewLogs,touchPreviewAnywhere } from "../preview-manager.js";
 import { previewProxyBase } from "../preview/preview-rewrite.js";
 import { proxyPreviewRequest, previewRequestBody, type PreviewDoor } from "../preview/preview-proxy.js";
 import { execFetchPreview, type ExecFetchResult } from "../preview/exec-proxy.js";
 import { dockerForNode } from "../preview/docker-exec.js";
-import { setPreviewExecOnly, touchPreview as touchPreviewStore, unsettlePreview } from "../preview/preview-store.js";
+import { setPreviewExecOnly, unsettlePreview } from "../preview/preview-store.js";
 import { mintPreviewTicket, previewTicketTtlMs, previewTicketUrl, PREVIEW_TICKET_PARAM } from "../preview/preview-ticket.js";
 import { previewHostTarget, previewPublicUrl } from "../preview/preview-host.js";
 import { getProject } from "../project-store.js";
@@ -32,7 +32,7 @@ export type PreviewRouteDeps={
   previewStatus:typeof previewStatus;
   previewLogs:typeof previewLogs;
   /** Last-use mark for the idle sweeper; only the panel's heartbeat calls it directly. */
-  touchPreview:(projectId:string)=>boolean;
+  touchPreview:(projectId:string)=>Promise<boolean>|boolean;
   /**
    * Публичный адрес предпросмотра (`<проект>.preview.nestdev.ru`) и билет к нему. Пустой адрес —
    * публичные адреса на этом хосте выключены, и панель открывает приложение только путём.
@@ -53,7 +53,7 @@ const defaultDeps:PreviewRouteDeps={
   stopPreview,
   previewStatus,
   previewLogs,
-  touchPreview:touchPreviewStore,
+  touchPreview:touchPreviewAnywhere,
   publicUrl:previewPublicUrl,
   mintTicket:mintPreviewTicket,
   ticketTtlMs:previewTicketTtlMs,
@@ -141,7 +141,7 @@ export async function registerPreviewRoutes(app:FastifyInstance,deps:PreviewRout
   app.post("/api/projects/:id/preview/touch",async(request,reply)=>{
     const p=z.object({id:z.string().min(1)}).parse(request.params);
     if(!await deps.authorize(request,reply,p.id))return;
-    return reply.send({ok:deps.touchPreview(p.id)});
+    return reply.send({ok:await deps.touchPreview(p.id)});
   });
   // Без слэша в конце относительные ссылки приложения ("style.css", "app.js") разрешаются на
   // уровень выше — в платформенный обработчик, который отвечает JSON-404. Браузер тогда отказывается

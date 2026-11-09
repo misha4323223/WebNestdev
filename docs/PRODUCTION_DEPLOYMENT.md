@@ -152,6 +152,62 @@ The server intentionally fails fast in production when the allowed-origin list i
 
 The server creates its required tables on startup with `CREATE TABLE IF NOT EXISTS`. Persistent application metadata is stored in PostgreSQL; the local filesystem remains for the sandbox workspace itself.
 
+### Current two-node test: system PostgreSQL on node-1
+
+The single-VM `docker-compose.yml` still defines a `postgres` service, but the node-specific
+overrides in [`deploy/node1/docker-compose.override.yml`](../deploy/node1/docker-compose.override.yml)
+and [`deploy/node2/docker-compose.override.yml`](../deploy/node2/docker-compose.override.yml) use the
+**host system cluster**. As tested on 2026-11-08:
+
+- **node-1** (`10.0.0.4`): PostgreSQL 17.11, cluster `17/main`, port `5433`, primary after the
+  final test. HAProxy listens on `:5432` and forwards to `127.0.0.1:5433`; the API reaches it
+  through `host.docker.internal:5432`. GlusterFS volumes `sandboxes`, `sites` and `data` are
+  mounted at the same host paths as on `node-2`, and node-1 runs Caddy, the API, docker-broker
+  and `node1-runner`.
+- **node-2** (`10.0.0.5`): GlusterFS peer with the same mounts and HAProxy on `:5432` pointing
+  to the primary. During the test its PostgreSQL `17/main` ran on port `5433` as a streaming
+  standby; API/Caddy/runner were verified. It is **currently powered off after the test**;
+  production HA will turn it on permanently later. 18 projects are in the replicated database
+  and shared storage. `WEBNESTDEV_AUTO_MOVE_PROJECTS=1` remains enabled for projects pinned to
+  a node that is unavailable.
+- The old container `src-postgres-1` is stopped. Its volume `src_postgres-data` still exists and
+  was deliberately not deleted; do not remove it until the old data has been checked and backed
+  up.
+
+The public address is separate from these internal addresses: `178.236.27.102` is the MWS
+external address `ea-webnestdev` attached to NLB `webnestdev-nlb-main`, with Caddy on
+node-1 (`10.0.0.4`) and node-2 (`10.0.0.5`) as backends. Node-1's management address is
+`2.59.83.250` (`ea-webnestdev-admin`); node-2's is `2.59.80.174`. Management addresses must
+not be used in DNS.
+
+Both failover directions were tested on 08.11.2026: with `node-1` off, node-2 completed fencing,
+promotion, API/Caddy startup and served `/api/ready=200`; with `node-2` off, node-1 did the same
+and served `https://nestdev.ru=200`. This is not a full production HA yet: automatic failback is
+not implemented and there is no third witness/quorum. This remains a test stand: node-2 is
+turned off after the check. Ingress is the MWS NLB on the existing `178.236.27.102`, so DNS
+does not switch between VMs; with node-2 off only node-1 is a healthy backend until production
+HA is enabled.
+Details are in
+[HA_BIDIRECTIONAL_PLAN.md](HA_BIDIRECTIONAL_PLAN.md). A known startup trap was observed during the first promotion: if the API
+starts before PostgreSQL is out of recovery, it initializes storage in read-only mode and hangs
+until the API container is restarted. Before starting the API after promotion, verify
+`pg_is_in_recovery() = f`; the startup sequence still needs an explicit gate.
+
+Check the live state with:
+
+```bash
+sudo pg_lsclusters
+sudo -u postgres psql -p 5433 -Atc 'select pg_is_in_recovery();'
+sudo ss -ltnp | grep -E ':(5432|5433)\b'
+```
+
+The backup shell now supports both `PG_MODE=container` and the host system cluster; on `node-1` the
+`auto` mode selects the system cluster because the `postgres` container is stopped. On 2026-11-08
+the updated script was run manually over SSH against the system cluster: `backup`, `check` and
+`restore-drill` succeeded, and the restore produced 55 tables in a scratch database (then removed
+it). The scheduled GitHub Actions run with this script is still pending commit/push. Details:
+[`POSTGRES_BACKUP.md`](POSTGRES_BACKUP.md).
+
 For an existing installation that still has JSON metadata, run from `server/` with `WEBNESTDEV_STORAGE=postgres` and `DATABASE_URL` set:
 
 ```bash
@@ -160,7 +216,7 @@ npm run migrate:json-to-ydb
 
 The migration is idempotent and uses UPSERTs. It covers users, sessions, projects, conversations, providers, GitHub, Yandex, database connections, encrypted project secrets and the secret audit journal; platform keys stay in `platform/env.json` and are used by both backends.
 
-A daily logical backup of this database goes to the platform bucket, is checked for freshness, and is restored into a scratch database once a month. Setup, key layout, retention and the restore drill are in [POSTGRES_BACKUP.md](POSTGRES_BACKUP.md). A backup that has never been restored is not considered a backup.
+A daily logical backup of this database goes to the platform bucket, is checked for freshness, and is restored into a scratch database once a month. Setup, key layout, retention and the restore drill are in [POSTGRES_BACKUP.md](POSTGRES_BACKUP.md). A backup that has never been restored is not considered a backup. The tested path for the current host system cluster is `PG_MODE=system` (or `auto`); on 2026-11-08 it produced a dump and a successful restore drill with 55 tables.
 
 ## Docker
 
@@ -735,7 +791,7 @@ variables → Actions → New repository secret**:
 | `REGRU_API_USERNAME` | the reg.ru account login |
 | `REGRU_API_PASSWORD` | the **API** password from «Настройки → API → Альтернативный пароль», not the account password |
 
-The VM's address (`178.236.27.102`) must be in «Настройки → API → Диапазоны IP-адресов» at reg.ru,
+The management address of node-1 (`2.59.83.250`) must be in «Настройки → API → Диапазоны IP-адресов» at reg.ru,
 otherwise the API answers `ACCESS_DENIED_FROM_IP`. Then run the deploy (push to `main`, or
 Actions → **deploy** → *Run workflow*). [`vm-deploy.sh`](../deploy/scripts/vm-deploy.sh) ships
 [`wildcard-cert.sh`](../deploy/scripts/wildcard-cert.sh) to the VM, runs it only when both secrets
@@ -865,4 +921,5 @@ docker compose exec -T webnestdev-server curl -s http://127.0.0.1:8787/api/healt
 
 - `GET /api/health` — liveness plus dependency state, **when requested from loopback inside the server**. `sandbox` carries the selected runtime (`runtime`), the two sandbox directories (`sandboxDir`, `sandboxHostDir`) and the last mount check (`mount`), and `activity.disk.path` is the directory the projects actually live in — three fields that answer "why does the sandbox terminal look empty" without a shell on the VM. `activity.process.uid`/`gid` show the user the server process actually runs as (stage 2.2), rather than what the compose file asked for. `build` is the commit SHA the running image was built from (what the deploy verifies), and `sms` names the active SMS provider with whether it sends for real and how it authenticates (`credentialKind`: a self-renewing `key` or a `token` that expires). `activity.previews.door` показывает, где живёт дверь публичных адресов: `mode: in-process` (прежнее поведение) или `mode: separate` вместе с её лимитами (`maxConnections`, `maxUpgrades`, `upgradeTimeoutMs`) и живым состоянием (`connections`, `upgrades`, `uptimeSeconds`) — по ним видно, далеко ли хост от потолка и отвечает ли второй процесс вообще. `activity.previews.addresses` lists every live preview (`mode`, `port`, `settled`, `ageSeconds`): `settled: false` on a running preview is the precise answer to "the preview says it is running and the panel is empty" — the server cannot reach the address the panel would use, and `preview-selfcheck` says why on this host. `activity.egress` — режим фильтра исходящей сети (`off`, `private-only`, `allowlist`), адрес прокси, где он живёт (`in-process`/`separate`) и, в отдельном режиме, health прокси: соединения, счётчики и последние отказы (`denies`: домен, проект, причина). Публичный ответ через Caddy содержит только `ok`, `service`, `build` и `sms`; полный — командой `docker compose exec -T webnestdev-server curl -s http://127.0.0.1:8787/api/health`.
 - `GET /api/ready` — readiness; returns HTTP 503 when required dependencies are unavailable, and also when the mount check reported `mismatch` — the one sandbox failure that does not heal on its own. Снаружи ответ содержит только `ok`, `service`, `build`; подробности — тем же loopback-запросом из контейнера.
+- `GET /api/node/ready` — готовность именно исполнительного узла: Docker доступен, а проверка монтирования песочницы не дала `mismatch`. Его можно использовать для health-check узла в NLB, когда API должен принимать панель, но не должен получать проекты. Снаружи ответ содержит только `ok`, `service`, `build`; подробности — loopback-запросом.
 - Порт `8787` опубликован только на `127.0.0.1` хоста: наружу обязан смотреть Caddy (80/443). Проверка `curl localhost:8787` на ВМ остаётся рабочей, а обход HTTPS и Origin-проверки с внешнего адреса — нет.

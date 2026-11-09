@@ -1,4 +1,4 @@
-import { isRunActive } from "../agent/active-runs.js";
+import { isRunActiveAnywhere } from "../agent/run-activity.js";
 import { getUser } from "../auth/auth-store.js";
 import { listProjects, transferProjectOwners } from "../project-store.js";
 import { transferSiteOwners } from "../hosting/site-store.js";
@@ -124,7 +124,10 @@ export async function transferProjects(input: ProjectTransferInput): Promise<Pro
 
   // Работающий агент пишет в проект от имени старого владельца. Перенос посреди запуска
   // оставил бы часть файлов и сообщений за прежним аккаунтом, поэтому сначала ждём завершения.
-  const busy = selected.filter(project => isRunActive(project.id));
+  const busy = [];
+  for (const project of selected) {
+    if (await isRunActiveAnywhere(project.id)) busy.push(project);
+  }
   if (busy.length) {
     throw new ProjectTransferError(
       "PROJECT_BUSY",

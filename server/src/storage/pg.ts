@@ -1,5 +1,9 @@
 import path from "node:path";
 import { Pool } from "pg";
+import { acquireStorageInitLock } from "./init-lock.js";
+import { ensurePreviewTable } from "./preview-table.js";
+import { ensurePreviewReservationTable } from "./preview-reservation-table.js";
+import { ensureRunLeaseTable } from "./run-lease-table.js";
 
 /**
  * PostgreSQL storage backend — API-совместим с прежним YDB-модулем.
@@ -260,6 +264,12 @@ export async function initializeStorage(): Promise<void> {
     pool = new Pool({ connectionString, max: 10 });
     const test = await pool.query("SELECT 1");
     if (!test.rows.length) throw new Error("PostgreSQL connection failed");
+
+    // DDL выполняет один процесс за раз (storage/init-lock.ts). Без этого две реплики API,
+    // стартующие одновременно, проходят миграции параллельно: сегодняшние `IF NOT EXISTS`
+    // это обычно переживают, но будущие constraint-ы и переименования — нет.
+    const initLock = await acquireStorageInitLock(pool);
+    try {
 
     const tbl = (name: string) => `"${safeIdentifier(getTable(name)).value}"`;
 
@@ -622,8 +632,13 @@ export async function initializeStorage(): Promise<void> {
     await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("oauth_states")} (
       state TEXT NOT NULL PRIMARY KEY,
       user_id TEXT NOT NULL,
-      expires_at TEXT NOT NULL
+      expires_at TEXT NOT NULL,
+      verifier TEXT NOT NULL DEFAULT ''
     )`);
+    // Состояние GitVerse с PKCE могло быть создано предыдущей версией без колонки.
+    await pool.query(
+      `ALTER TABLE ${tbl("oauth_states")} ADD COLUMN IF NOT EXISTS verifier TEXT NOT NULL DEFAULT ''`,
+    );
 
     await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("github_connections")} (
       user_id TEXT NOT NULL PRIMARY KEY,
@@ -790,6 +805,12 @@ export async function initializeStorage(): Promise<void> {
     await pool.query(
       `CREATE UNIQUE INDEX IF NOT EXISTS idx_${getTable("jobs")}_active ON ${tbl("jobs")} (kind, subject) WHERE state IN ('queued', 'running')`,
     );
+
+    // Общее состояние API-реплик: живые preview и аренды запусков агента. Обе таблицы
+    // появились в C1, когда состояние перестало помещаться в память одного процесса.
+    await ensurePreviewTable(pool, getTable("previews"));
+    await ensurePreviewReservationTable(pool, getTable("preview_reservations"));
+    await ensureRunLeaseTable(pool, getTable("run_leases"));
 
     await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("user_storage")} (
       user_id TEXT NOT NULL PRIMARY KEY,
@@ -977,6 +998,9 @@ export async function initializeStorage(): Promise<void> {
     )`);
 
     console.log("[pg] storage initialized: all tables ready");
+    } finally {
+      await initLock.release();
+    }
   })().catch((error) => {
     initialization = null;
     pool = null;

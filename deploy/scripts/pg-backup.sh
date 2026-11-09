@@ -3,10 +3,13 @@
 # Резервная копия PostgreSQL: дамп, загрузка в S3-совместимое хранилище, проверка свежести
 # и учебное восстановление в отдельную базу.
 #
-# Скрипт выполняется НА ВМ (в том числе через `ssh … "bash -s" < deploy/scripts/pg-backup.sh`),
-# поэтому дамп снимает контейнер `postgres:17`: клиент `pg_dump` должен быть той же версии, что
-# сервер. Загрузку и проверку суммы делает `server/dist/scripts/postgres-backup.js` внутри
-# контейнера сервера — там есть S3-клиент и ключи хранилища.
+# Скрипт выполняется НА ВМ (в том числе через `ssh … "bash -s" < deploy/scripts/pg-backup.sh`).
+# Поддерживаются оба варианта PostgreSQL:
+#   * container — база в compose-сервисе `postgres` (прежняя схема);
+#   * system    — системный кластер на хосте (текущая схема node-1, порт 5433).
+# Клиент pg_dump/pg_restore должен быть той же мажорной версии, что сервер. Загрузку и проверку
+# суммы делает `server/dist/scripts/postgres-backup.js` внутри контейнера сервера — там есть
+# S3-клиент и ключи хранилища.
 #
 # Режимы:
 #   MODE=backup        снять дамп, проверить целостность, загрузить, обновить latest.json
@@ -19,7 +22,10 @@
 #   APP_DIR=~/webnestdev/src       каталог с docker-compose.yml и .env
 #   COMPOSE_FILE=docker-compose.yml
 #   SERVICE=webnestdev-server      сервис, внутри которого живёт S3-клиент
-#   PG_SERVICE=postgres            сервис базы
+#   PG_SERVICE=postgres            сервис базы в container-режиме
+#   PG_MODE=auto                   auto | container | system
+#   PG_PORT=5433                   порт системного кластера
+#   PG_DB=webnestdev               имя рабочей базы в system-режиме
 #   BACKUP_MAX_AGE_HOURS=30        предел возраста для MODE=check
 #   RESTORE_DB_PREFIX=restore_check
 #   KEEP_RESTORE_DB=0              не удалять учебную базу после восстановления
@@ -33,6 +39,8 @@ APP_DIR="${APP_DIR:-$HOME/webnestdev/src}"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
 SERVICE="${SERVICE:-webnestdev-server}"
 PG_SERVICE="${PG_SERVICE:-postgres}"
+PG_MODE="${PG_MODE:-auto}"        # auto | container | system
+PG_PORT="${PG_PORT:-5433}"        # порт системного кластера на хосте
 BACKUP_MAX_AGE_HOURS="${BACKUP_MAX_AGE_HOURS:-30}"
 RESTORE_DB_PREFIX="${RESTORE_DB_PREFIX:-restore_check}"
 KEEP_RESTORE_DB="${KEEP_RESTORE_DB:-0}"
@@ -48,9 +56,48 @@ fail() { log "ОШИБКА: $*"; exit 1; }
 
 dc_exec() { docker compose -f "$COMPOSE_FILE" exec -T "$@"; }
 
+# Общие операции с базой. В container-режиме они идут через compose-сервис postgres,
+# в system-режиме — через локальный superuser postgres и отдельный порт кластера.
+pg_psql() {
+  if [ "$PG_MODE" = container ]; then
+    dc_exec "$PG_SERVICE" psql -U "$PG_USER" "$@"
+  else
+    sudo -n -u postgres psql -p "$PG_PORT" -U postgres "$@"
+  fi
+}
+
+pg_dump_db() {
+  if [ "$PG_MODE" = container ]; then
+    dc_exec "$PG_SERVICE" sh -lc \
+      'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom --no-owner --no-privileges --lock-wait-timeout=30s' \
+      < /dev/null
+  else
+    sudo -n -u postgres pg_dump -p "$PG_PORT" -U postgres -d "$PG_DB" \
+      --format=custom --no-owner --no-privileges --lock-wait-timeout=30s
+  fi
+}
+
+pg_restore_list() {
+  if [ "$PG_MODE" = container ]; then
+    dc_exec "$PG_SERVICE" pg_restore -l
+  else
+    sudo -n -u postgres pg_restore -p "$PG_PORT" -U postgres -l
+  fi
+}
+
+pg_restore_db() {
+  local db="$1"
+  if [ "$PG_MODE" = container ]; then
+    dc_exec "$PG_SERVICE" pg_restore -U "$PG_USER" -d "$db" --no-owner --no-privileges --exit-on-error
+  else
+    sudo -n -u postgres pg_restore -p "$PG_PORT" -U postgres -d "$db" \
+      --no-owner --no-privileges --exit-on-error
+  fi
+}
+
 cleanup() {
   if [ -n "${SCRATCH:-}" ] && [ "$KEEP_RESTORE_DB" != "1" ] && [ -n "${PG_USER:-}" ]; then
-    dc_exec "$PG_SERVICE" psql -U "$PG_USER" -d postgres -v ON_ERROR_STOP=1 \
+    pg_psql -d postgres -v ON_ERROR_STOP=1 \
       -c "DROP DATABASE IF EXISTS \"$SCRATCH\" WITH (FORCE)" < /dev/null >/dev/null 2>&1 || true
   fi
   if [ -n "${TMP:-}" ]; then rm -rf "$TMP"; fi
@@ -61,6 +108,23 @@ trap cleanup EXIT
 cd "$APP_DIR"
 command -v docker >/dev/null 2>&1 || fail "docker не найден на этой машине"
 docker compose version >/dev/null 2>&1 || fail "docker compose недоступен"
+
+# auto выбирает контейнер, только если compose-сервис postgres действительно запущен.
+# В текущей схеме node-1 контейнер остановлен, поэтому будет выбран системный кластер.
+case "$PG_MODE" in
+  auto)
+    if docker compose -f "$COMPOSE_FILE" ps --status running --services 2>/dev/null | grep -Fxq "$PG_SERVICE"; then
+      PG_MODE=container
+    else
+      PG_MODE=system
+    fi
+    ;;
+  container|system) ;;
+  *)
+    fail "неизвестный PG_MODE=$PG_MODE (ожидается auto, container или system)"
+    ;;
+esac
+log "PostgreSQL mode: $PG_MODE"
 
 # Один бэкап за раз: две одновременные загрузки не опасны, но засоряют хранилище и мешают
 # журналу. Занятая блокировка — это не ошибка: следующий запуск просто не нужен.
@@ -77,15 +141,28 @@ read_database() {
   # Скрипт приходит по SSH через `bash -s`, то есть сам является stdin. Любой `docker compose
   # exec -T` без явного stdin вычитывает остаток скрипта, и оболочка молча доходит до EOF:
   # режим завершается с кодом 0, ничего не сделав. Поэтому у служебных вызовов stdin закрыт.
-  PG_DB=$(dc_exec "$PG_SERVICE" sh -lc 'printf %s "${POSTGRES_DB:?}"' < /dev/null) || fail "не удалось прочитать POSTGRES_DB"
-  PG_USER=$(dc_exec "$PG_SERVICE" sh -lc 'printf %s "${POSTGRES_USER:?}"' < /dev/null) || fail "не удалось прочитать POSTGRES_USER"
+  if [ "$PG_MODE" = container ]; then
+    PG_DB=$(dc_exec "$PG_SERVICE" sh -lc 'printf %s "${POSTGRES_DB:?}"' < /dev/null) || fail "не удалось прочитать POSTGRES_DB"
+    PG_USER=$(dc_exec "$PG_SERVICE" sh -lc 'printf %s "${POSTGRES_USER:?}"' < /dev/null) || fail "не удалось прочитать POSTGRES_USER"
+  else
+    # Для системного кластера дамп и восстановление делает локальный superuser postgres;
+    # имя рабочей базы можно переопределить через PG_DB.
+    PG_DB="${PG_DB:-webnestdev}"
+    PG_USER=postgres
+  fi
   [[ "$PG_DB" =~ $DB_IDENT ]] || fail "некорректное имя базы: $PG_DB"
   [[ "$PG_USER" =~ $DB_IDENT ]] || fail "некорректное имя пользователя базы: $PG_USER"
+  if [ "$PG_MODE" = system ]; then
+    local exists
+    exists=$(pg_psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname = '$PG_DB'" < /dev/null) \
+      || fail "не удалось проверить существование базы $PG_DB в системном кластере"
+    [ "$exists" = "1" ] || fail "база $PG_DB не найдена в системном кластере (порт $PG_PORT)"
+  fi
 }
 
 database_bytes() {
   local raw
-  raw=$(dc_exec "$PG_SERVICE" psql -U "$PG_USER" -d "$PG_DB" -tAc 'SELECT pg_database_size(current_database())' < /dev/null) \
+  raw=$(pg_psql -d "$PG_DB" -tAc 'SELECT pg_database_size(current_database())' < /dev/null) \
     || fail "не удалось узнать размер базы"
   raw=$(printf '%s' "$raw" | tr -d '[:space:]')
   [[ "$raw" =~ ^[0-9]+$ ]] || fail "база вернула некорректный размер: $raw"
@@ -122,9 +199,7 @@ run_backup() {
   started=$(date +%s)
   log "дамп базы $PG_DB: $((db_bytes / 1024 / 1024)) МБ, свободно $((before / 1024)) МБ"
 
-  if ! dc_exec "$PG_SERVICE" sh -lc \
-    'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom --no-owner --no-privileges --lock-wait-timeout=30s' \
-    < /dev/null > "$dump"; then
+  if ! pg_dump_db < /dev/null > "$dump"; then
     fail "pg_dump завершился с ошибкой"
   fi
 
@@ -132,7 +207,7 @@ run_backup() {
   [[ "$size" =~ ^[0-9]+$ ]] || fail "не удалось посчитать размер дампа"
   [ "$size" -ge 1024 ] || fail "дамп подозрительно мал: $size байт"
   # `pg_restore -l` читает оглавление архива: это дешёвая проверка, что дамп не обрезан.
-  if ! dc_exec "$PG_SERVICE" pg_restore -l < "$dump" >/dev/null; then
+  if ! pg_restore_list < "$dump" >/dev/null; then
     fail "дамп не читается pg_restore -l"
   fi
 
@@ -159,7 +234,7 @@ run_check() {
 }
 
 run_restore_drill() {
-  local manifest key sha bytes tables
+  local manifest key sha bytes tables dump downloaded
   manifest=$(dc_exec "$SERVICE" node server/dist/scripts/postgres-backup.js manifest --database "$PG_DB" < /dev/null) \
     || fail "не удалось прочитать манифест последнего бэкапа"
   key=$(printf '%s' "$manifest" | sed -n 's/.*"key":"\([^"]*\)".*/\1/p')
@@ -181,17 +256,26 @@ run_restore_drill() {
   [ "$SCRATCH" != "$PG_DB" ] || fail "учебная база совпала с рабочей — восстановление отменено"
 
   log "восстанавливаю $key в $SCRATCH ($bytes байт)"
-  dc_exec "$PG_SERVICE" psql -U "$PG_USER" -d postgres -v ON_ERROR_STOP=1 \
+  pg_psql -d postgres -v ON_ERROR_STOP=1 \
     -c "CREATE DATABASE \"$SCRATCH\"" < /dev/null >/dev/null || fail "не удалось создать учебную базу $SCRATCH"
 
-  # `pipefail` важен: если скачивание или проверка суммы сорвётся, pg_restore получит пустой
-  # поток, и без pipefail код возврата конвейера мог бы остаться нулевым.
-  if ! dc_exec "$SERVICE" node server/dist/scripts/postgres-backup.js get --key "$key" --sha256 "$sha" < /dev/null \
-    | dc_exec "$PG_SERVICE" pg_restore -U "$PG_USER" -d "$SCRATCH" --no-owner --no-privileges --exit-on-error; then
+  # Скачиваем дамп в файл, а не в pipe в pg_restore: `docker compose exec` может вернуть
+  # 255 после того, как данные уже отданы (EPIPE на закрытом stdin pg_restore), и pipefail
+  # превращал успешное восстановление в ложную ошибку. Файл также позволяет проверить размер.
+  TMP=$(mktemp -d "${TMPDIR:-/tmp}/webnestdev-pg-restore.XXXXXX") \
+    || fail "не удалось создать временный каталог для восстановления"
+  dump="$TMP/db.dump"
+  if ! dc_exec "$SERVICE" node server/dist/scripts/postgres-backup.js get --key "$key" --sha256 "$sha" < /dev/null > "$dump"; then
+    fail "не удалось скачать бэкап $key"
+  fi
+  downloaded=$(wc -c < "$dump" | tr -d '[:space:]')
+  [ "$downloaded" = "$bytes" ] || fail "скачанный дамп не совпал с размером манифеста: $downloaded != $bytes"
+
+  if ! pg_restore_db "$SCRATCH" < "$dump"; then
     fail "восстановление в $SCRATCH не прошло"
   fi
 
-  tables=$(dc_exec "$PG_SERVICE" psql -U "$PG_USER" -d "$SCRATCH" -tAc \
+  tables=$(pg_psql -d "$SCRATCH" -tAc \
     "SELECT count(*) FROM information_schema.tables WHERE table_schema NOT IN ('pg_catalog','information_schema')" < /dev/null)
   tables=$(printf '%s' "$tables" | tr -d '[:space:]')
   [[ "$tables" =~ ^[0-9]+$ ]] || fail "не удалось посчитать таблицы в $SCRATCH"
@@ -201,7 +285,7 @@ run_restore_drill() {
     log "восстановление проверено: $tables таблиц; база $SCRATCH оставлена (KEEP_RESTORE_DB=1)"
     SCRATCH=""
   else
-    dc_exec "$PG_SERVICE" psql -U "$PG_USER" -d postgres -v ON_ERROR_STOP=1 \
+    pg_psql -d postgres -v ON_ERROR_STOP=1 \
       -c "DROP DATABASE IF EXISTS \"$SCRATCH\" WITH (FORCE)" < /dev/null >/dev/null || fail "не удалось удалить учебную базу $SCRATCH"
     SCRATCH=""
     log "восстановление проверено: $tables таблиц; учебная база удалена"

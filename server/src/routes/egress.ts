@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { EGRESS_WHOIS_PURPOSE } from "../egress/config.js";
-import { listPreviews } from "../preview/preview-store.js";
+import { listPreviewsAcrossReplicas } from "../preview/preview-store.js";
 import { bearerTokenValid, internalToken } from "../preview/door-token.js";
 
 /**
@@ -26,7 +26,7 @@ export type EgressRouteDeps = {
  * попадают: для них журнал останется с адресом, и это честнее, чем приписать отказ чужому проекту.
  */
 const defaultDeps: EgressRouteDeps = {
-  projectByAddress: async address => listPreviews().find(state => state.host === address)?.projectId ?? null,
+  projectByAddress: async address => (await listPreviewsAcrossReplicas()).find(state => state.host === address)?.projectId ?? null,
 };
 
 function addressFrom(body: unknown): string | null {

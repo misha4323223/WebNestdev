@@ -2,8 +2,9 @@ import { mkdir, stat } from "node:fs/promises";
 import { getProject, reassignProjectNode } from "../project-store.js";
 import { chooseProjectNode, isNodeFresh } from "../nodes/placement.js";
 import { getNode } from "../nodes/node-store.js";
-import { getPreview } from "../preview/preview-store.js";
+import { hydratePreview } from "../preview/preview-store.js";
 import { listSandboxJobs } from "./jobs.js";
+import { isRunActiveAnywhere } from "../agent/run-activity.js";
 import { ensureProjectWorkspace, noteProjectAccess } from "../storage/project-archive.js";
 import { buildSandboxConfig,sandboxMemoryMb,sandboxRootPath } from "./config.js";
 import { resolveSandboxHost, SandboxNodeUnavailableError, SharedWorkspaceRequiredError } from "./host.js";
@@ -87,7 +88,7 @@ export async function getSandbox(projectId:string,userId:string):Promise<Sandbox
     if(process.env.WEBNESTDEV_AUTO_MOVE_PROJECTS==="1"){
       const current=await getNode(node);
       if(!current||current.status==="offline"||!isNodeFresh(current)){
-        if(getPreview(projectId)||listSandboxJobs(projectId).length){
+        if(await hydratePreview(projectId)||listSandboxJobs(projectId).length||await isRunActiveAnywhere(projectId)){
           throw new SandboxNodeUnavailableError(
             node,
             "есть активный предпросмотр или задание; остановите их и повторите — автоматический перенос не трогает живые контейнеры",

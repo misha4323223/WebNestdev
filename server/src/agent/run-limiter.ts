@@ -1,4 +1,6 @@
 import { QueueAbortedError, createLimiter, positiveInt, type LimiterStats, type Slot } from "../concurrency.js";
+import { acquireRunLease, type RunLease } from "./run-lease.js";
+import { isYdbEnabled } from "../storage/pg.js";
 
 /**
  * How many conversations this server runs at the same time.
@@ -82,6 +84,8 @@ export type RunSlotOptions = {
   signal: AbortSignal;
   /** The account this run belongs to; a second run for it is refused while the first holds a place. */
   userId?: string;
+  /** Проект запуска: по нему другие реплики не трогают файлы, пока агент работает. */
+  projectId?: string;
   onQueued?: (waiting: number) => void;
 };
 
@@ -146,7 +150,20 @@ function waitForAccountFree(userId: string, signal: AbortSignal, timeoutMs: numb
  */
 export async function runWithRunSlot<T>(work: () => Promise<T>, options: RunSlotOptions): Promise<T> {
   const userId = options.userId;
-  if (userId && accountRunCount(userId) >= 1) {
+  // Общая аренда — первая проверка: она видит запуск на другой реплике. Локальная карта ниже
+  // остаётся быстрым предохранителем процесса и работает, когда PostgreSQL недоступен.
+  let sharedLease: RunLease | undefined;
+  if (userId) {
+    const shared = await acquireRunLease(userId, {
+      signal: options.signal,
+      waitMs: accountWaitMs(),
+      projectId: options.projectId,
+    });
+    if (shared.kind === "aborted") throw new QueueAbortedError("Запуск");
+    if (shared.kind === "busy") throw new AccountBusyError();
+    if (shared.kind === "acquired") sharedLease = shared.lease;
+  }
+  if (userId && !sharedLease && accountRunCount(userId) >= 1) {
     // Сначала ждём: отменённый или только что завершённый прогон отпускает место через несколько
     // миллисекунд, и без этого ожидания собственное сообщение пользователя выглядело вторым агентом.
     await waitForAccountFree(userId, options.signal, accountWaitMs());
@@ -154,15 +171,31 @@ export async function runWithRunSlot<T>(work: () => Promise<T>, options: RunSlot
     if (options.signal.aborted) throw new QueueAbortedError("Запуск");
     if (accountRunCount(userId) >= 1) throw new AccountBusyError();
   }
+  // Аренда могла достаться процессу, где локальная карта ещё видит старый прогон (например,
+  // PostgreSQL только что вернулся). Не запускаем второй параллельно: ждём локальное место.
+  if (userId && sharedLease && accountRunCount(userId) >= 1) {
+    await waitForAccountFree(userId, options.signal, accountWaitMs());
+    if (options.signal.aborted) {
+      await sharedLease.release();
+      throw new QueueAbortedError("Запуск");
+    }
+    if (accountRunCount(userId) >= 1) {
+      await sharedLease.release();
+      throw new AccountBusyError();
+    }
+  }
   // Taken before the wait, not after it: a queued request already belongs to the account, so its
   // second tab is refused right away instead of queueing behind itself for five minutes.
   const releaseAccount = userId ? takeAccountPlace(userId) : undefined;
-  // Место аккаунта отпускается и по обрыву соединения, а не только по концу работы: отменённый
-  // прогон, застрявший в ожидании внешнего процесса (Docker, ответ провайдера), иначе держал бы
-  // аккаунт занятым, и панель отвечала бы «Агент уже работает» при пустом экране. Место хоста при
-  // этом не отпускается: работа может ещё держать контейнер, и общий предел обязан это видеть.
-  const releaseOnAbort = releaseAccount
-    ? () => releaseAccount()
+  // Место аккаунта и общая аренда отпускаются по обрыву соединения, а не только по концу работы:
+  // отменённый прогон, застрявший в ожидании внешнего процесса (Docker, ответ провайдера), иначе
+  // держал бы аккаунт занятым, и панель отвечала бы «Агент уже работает» при пустом экране. Место
+  // хоста при этом не отпускается: работа может ещё держать контейнер, и общий предел обязан это видеть.
+  const releaseOnAbort = userId
+    ? () => {
+        releaseAccount?.();
+        if (sharedLease) void sharedLease.release();
+      }
     : undefined;
   if (releaseOnAbort) {
     if (options.signal.aborted) releaseOnAbort();
@@ -180,6 +213,7 @@ export async function runWithRunSlot<T>(work: () => Promise<T>, options: RunSlot
   } finally {
     if (releaseOnAbort) options.signal.removeEventListener("abort", releaseOnAbort);
     releaseAccount?.();
+    if (sharedLease) await sharedLease.release();
   }
 }
 
@@ -193,6 +227,6 @@ export function describeRunLimiter() {
   const accountWait = accountWaitMs();
   return "параллельных запусков агента: " + stats.limit + ", очередь: " + stats.queueLimit +
     ", ожидание до " + Math.round(positiveInt(process.env.AGENT_QUEUE_TIMEOUT_MS, 300_000) / 1000) + " с" +
-    ", на аккаунт: 1 одновременно" +
+    ", на аккаунт: 1 одновременно" + (isYdbEnabled() ? " (общая аренда в PostgreSQL)" : "") +
     (accountWait > 0 ? ", ожидание места аккаунта до " + Math.round(accountWait / 1000) + " с" : ", место аккаунта не ждём");
 }

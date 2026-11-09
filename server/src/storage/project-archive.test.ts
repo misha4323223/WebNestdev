@@ -11,6 +11,7 @@ import type { ObjectStore } from "./object-store.js";
 // один раз при загрузке. Тест идёт в отдельном процессе (node --test), поэтому это безопасно.
 const work = await mkdtemp(path.join(tmpdir(), "project-archive-"));
 process.env.WEBNESTDEV_DATA_DIR = path.join(work, "data");
+process.env.WEBNESTDEV_NODE_ID = "local";
 process.env.WEBNESTDEV_SANDBOX_DIR = path.join(work, "sandboxes");
 process.env.WEBNESTDEV_STORAGE = "json";
 delete process.env.PLATFORM_S3_ENDPOINT;
@@ -266,8 +267,8 @@ test("обрыв загрузки в хранилище: рабочая папк
   assert.equal(await readFile(path.join(root, "package.json"), "utf8"), "{\"name\":\"demo\"}\n");
   assert.equal(await readArchiveRecord(projectId), null, "отметка архива не появилась");
   assert.equal(store.objects.size, 0, "объект в бакете не появился");
-  // Временный tar не остаётся валяться в data/tmp.
-  assert.deepEqual(await readdir(path.join(work, "data", "tmp")).catch(() => []), []);
+  // Временный tar не остаётся валяться в каталоге этой реплики.
+  assert.deepEqual(await readdir(path.join(work, "data", "tmp", "local")).catch(() => []), []);
 
   // Повторная попытка после восстановления связи проходит обычным путём.
   assert.equal((await archiveProject(projectId, userId, { store })).alreadyArchived, false);

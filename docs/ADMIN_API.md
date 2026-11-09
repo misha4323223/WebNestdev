@@ -175,6 +175,10 @@ curl -s https://panel.example.com/api/admin/2fa/verify -H 'content-type: applica
 | `GET /api/admin/sandboxes` | `Bearer` | песочницы списком: `state` = `cold` / `running` / `never` / `all`, `limit` 1…200 (раздел 7.5) |
 | `GET /api/admin/nodes` | `Bearer` | реестр узлов, их свободная память и число закреплённых проектов (раздел 7.11) |
 | `POST /api/admin/nodes/:id/status` | `Bearer` | `online` / `draining` / `offline`; тело `{status, confirm: true}` (раздел 7.11) |
+| `GET /api/admin/nodes/:id/power` | `Bearer` | текущее питание ВМ по MWS (раздел 7.11.1) |
+| `POST /api/admin/nodes/:id/power` | `Bearer` | только включить ВМ: `{action:"on", confirm:true}` (раздел 7.11.1) |
+| `GET /api/admin/nodes/switchover` | `Bearer` | состояние планового переключения primary (раздел 7.11.1) |
+| `POST /api/admin/nodes/:id/switchover` | `Bearer` | запрос планового switchover на узел `:id`; `{confirm:true}` (раздел 7.11.1) |
 | `GET /api/admin/infra/prune` | `Bearer` | что освободит безопасная очистка Docker и что останется (раздел 7.6) |
 | `POST /api/admin/infra/prune` | `Bearer` | безопасная очистка Docker: тело `{confirm: true}`, не чаще раза в 30 секунд (раздел 7.6) |
 | `GET /api/admin/releases` | `Bearer` | версии выкатки на диске: активная, окно откката, зависшая, старая (раздел 7.6.1) |
@@ -998,6 +1002,73 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/
 сразу. Если онлайн-узлов не осталось, ответ содержит `warning`, а создание нового проекта
 отвечает `503 NO_SANDBOX_NODE` — тихого возврата на локальную машину нет. Возврат `online` снова
 разрешает размещение.
+
+### 7.11.1. Питание ВМ и плановое переключение primary
+
+Код: `server/src/nodes/mws-power.ts`, `server/src/nodes/switchover.ts`,
+`server/src/routes/admin-nodes.ts`. Тесты: `server/src/nodes/mws-power.test.ts`,
+`server/src/nodes/switchover.test.ts`, `server/src/routes/admin-nodes.test.ts`.
+
+Внешняя админка может включить упавшую ВМ и передать роль PostgreSQL-primary другой ВМ.
+Оба действия идут через API и не дают браузеру напрямую вызывать MWS или PostgreSQL.
+
+#### Питание
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" \
+  'https://nestdev.ru/api/admin/nodes/node-2/power'
+# → {"node":"node-2","power":"OFF","etag":"…"}
+
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"action":"on","confirm":true}' \
+  'https://nestdev.ru/api/admin/nodes/node-2/power'
+```
+
+`POST` умеет **только включать** ВМ. Выключения через API намеренно нет: одним запросом
+нельзя погасить единственный healthy API. Если ВМ уже `ON`, повторный запрос ничего не меняет.
+Включение не означает, что PostgreSQL станет primary: `pg_start_guard` не пустит вернувшийся
+старый primary, пока peer остаётся primary. Узел сможет сразу принимать API/проекты через
+текущий primary.
+
+#### Плановый switchover
+
+Сценарий «освободить `node-1`»: оператор выбирает `node-2` целью, контроллер догоняет WAL,
+останавливает PostgreSQL и API на `node-1`, повышает `node-2` и снова поднимает API на
+`node-1` уже через базу `node-2`. `node-1` остаётся рабочим API/runner-узлом, но его
+PostgreSQL выключен до ручного rejoin.
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+  -d '{"confirm":true,"reason":"освободить node-1"}' \
+  'https://nestdev.ru/api/admin/nodes/node-2/switchover'
+# 202: {"operation":{"id":"…","state":"requested","target":"node-2",…}}
+
+curl -s -H "Authorization: Bearer $TOKEN" \
+  'https://nestdev.ru/api/admin/nodes/switchover'
+```
+
+Статусы: `requested` → `target_ready` → `source_stopped` → `promoted`; ошибки дают `failed`,
+а источник после остановки PostgreSQL может вернуться в `rolled_back`. Пока операция в первых
+трёх состояниях, повторный запрос отвечает `409 SWITCHOVER_BUSY`. `GET` возвращает также
+`ageMs`, `replayLsn`, `message` и время шагов.
+
+Правила безопасности:
+
+- endpoint только пишет запрос в общий файл `data/ha-switchover.json`; HTTP не вызывает
+  `promote` и не трогает MWS-питание;
+- управляет только HA-контроллер узла; target обязан быть streaming standby и подтвердить
+  LSN, source останавливает API до финальной сверки WAL, затем PostgreSQL;
+- плановый switchover **не** вызывает MWS fencing: старый primary жив и не должен быть
+  выключен как «упавший»;
+- target должен быть `online` и `fresh` в реестре узлов; цель, совпадающая с узлом, который
+  обслуживает API, отклоняется;
+- автоматического failback нет. Вернуть `node-1` в роли primary можно только отдельным rejoin
+  standby и явным переключением.
+
+Для работы нужны `deploy/ha/control.py` и `switchover.py` на обоих узлах (их ставит
+`install-node1.sh` / `install-node2.sh`) и общий `HA_CONTROL_PATH` в сервисах. Если файл
+повреждён или содержит неизвестное состояние, контроллер пишет ошибку и не начинает
+непредусмотренный promotion.
 
 ### 7.12. Главный AI-провайдер
 

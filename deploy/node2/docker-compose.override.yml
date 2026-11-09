@@ -1,0 +1,33 @@
+# Вторая ВМ: тот же образ и Caddy, но PostgreSQL — системный кластер на хосте.
+# Compose запускается с `--no-deps`, поэтому сервис postgres из основного файла не поднимается.
+services:
+  webnestdev-server:
+    # Тот же общий DATA_DIR, что на node-1; без него ключи платформы и настройки
+    # остаются в локальном именованном томе и после переключения теряются.
+    volumes:
+      - /var/lib/webnestdev/data:/app/.webnestdev
+    environment:
+      DATABASE_URL: postgres://webnestdev:${NODE2_PG_PASSWORD:?Set NODE2_PG_PASSWORD}@host.docker.internal:5432/webnestdev
+      WEBNESTDEV_NODE_ID: node-2
+      # node-1 после падения возвращается не как API, а как runner: token и адрес
+      # регистрируются здесь, а общий NFS-каталог виден обоим узлам.
+      WEBNESTDEV_RUNNER_TOKEN: ${NODE1_RUNNER_TOKEN:?Set NODE1_RUNNER_TOKEN}
+      WEBNESTDEV_REMOTE_NODES: '[{"id":"node-1","address":"10.0.0.4:8790"}]'
+      WEBNESTDEV_SHARED_SANDBOX: "1"
+      # Если node-1 выпала, проект, закреплённый за ней, можно открыть на node-2:
+      # общий каталог уже есть, меняется только pin (без живого preview/задания).
+      WEBNESTDEV_AUTO_MOVE_PROJECTS: "1"
+      # node-1 публикует сайты через общий SANDBOX_DIR, а релизы пишет API node-2
+      # в свой SITES_DIR; для сайта проекта с node-1 это общий storage с точки зрения API.
+      HOSTING_SHARED_STORAGE: "1"
+      WEBNESTDEV_TRUSTED_PROXIES: 172.30.0.0/24
+      # Freebuff-тест: фильтр egress не настроен на этой ВМ, прокси не должен блокировать npm.
+      EGRESS_MODE: private-only
+      EGRESS_ENFORCE: "0"
+      PREVIEW_MAX_CONTAINERS: "2"
+      SANDBOX_MAX_CONCURRENT: "2"
+    extra_hosts:
+      - "host.docker.internal:10.0.0.5"
+
+  caddy:
+    depends_on: []

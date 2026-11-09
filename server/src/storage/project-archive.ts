@@ -25,6 +25,7 @@ import {
   type RestoreJob,
 } from "./restore-jobs.js";
 import { enqueueJob, finishJob } from "../jobs/store.js";
+import { restoreStagingPrefix, storageTempDir } from "./temp-paths.js";
 
 /**
  * Холодный ярус проектов: рабочая папка уезжает в S3-совместимый бакет и освобождает диск ВМ.
@@ -47,10 +48,6 @@ import { enqueueJob, finishJob } from "../jobs/store.js";
 const exec = promisify(execFile);
 const TAR_TIMEOUT_MS = Number(process.env.PROJECT_ARCHIVE_TAR_TIMEOUT_MS ?? 10 * 60 * 1000);
 
-function dataDir() {
-  return process.env.WEBNESTDEV_DATA_DIR ?? path.resolve(".webnestdev");
-}
-
 /**
  * Имя узла для отметки архива. При нескольких машинах по нему видно, откуда проект уехал в бакет.
  * Источник тот же, что у реестра узлов: `WEBNESTDEV_NODE_ID`, иначе `local`. Так отметка архива
@@ -61,7 +58,8 @@ function archiveNodeId() {
 }
 
 async function tempFile(extension: string) {
-  const dir = path.join(dataDir(), "tmp");
+  // Свой каталог на реплику: две API на общем DATA_DIR не должны убирать архивы друг друга.
+  const dir = storageTempDir();
   await mkdir(dir, { recursive: true });
   return path.join(dir, "archive-" + randomUUID() + extension);
 }
@@ -73,7 +71,12 @@ async function tempFile(extension: string) {
  */
 function restoreStagingDir(projectId: string) {
   const safe = projectId.replace(/[^A-Za-z0-9_-]/g, "_");
-  return path.join(path.dirname(sandboxRootPath(projectId)), ".restore-" + safe + "-" + randomUUID().slice(0, 8));
+  // Узел в имени каталога: стартовая уборка одной реплики не имеет права трогать распаковку
+  // другой, даже если обе видят один SANDBOX_DIR.
+  return path.join(
+    path.dirname(sandboxRootPath(projectId)),
+    restoreStagingPrefix() + safe + "-" + randomUUID().slice(0, 8),
+  );
 }
 
 /** Одна архивация на проект: два параллельных запуска писали бы один объект и один маркер. */

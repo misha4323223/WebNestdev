@@ -9,7 +9,7 @@ import { readPalette, normalizePaletteValue, patchPaletteValue, readPaletteFile,
 import { createProjectPalette } from "../design/palette-create.js";
 import { FONT_OPTIONS } from "../design/theme.js";
 import { refreshStaticPreview } from "../preview/static-preview.js";
-import { getPreview } from "../preview/preview-store.js";
+import { hydratePreview } from "../preview/preview-store.js";
 import { startPreview, stopPreview } from "../preview-manager.js";
 
 /**
@@ -63,7 +63,7 @@ function liveScriptPalette(palette: Palette) {
 }
 
 async function restartServerPreview(projectId: string, userId: string) {
-  const state = getPreview(projectId);
+  const state = await hydratePreview(projectId);
   if (!state || state.mode !== "container") return false;
   const config = await getSandbox(projectId, userId);
   await stopPreview(projectId);

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 #
 # Проверка оболочки бэкапа без Docker и без базы: `docker` подменяется заглушкой, которая
-# отвечает как compose-сервисы. Проверяются ветки backup, check и restore-drill, отказ загрузки
-# и обязательная уборка учебной базы после неудачного восстановления.
+# отвечает как compose-сервисы; для system-режима добавлена заглушка `sudo` с psql/pg_dump.
+# Проверяются ветки backup, check и restore-drill, оба режима PostgreSQL, отказ загрузки и
+# обязательная уборка учебной базы после неудачного восстановления.
 #
 # Запуск: bash deploy/scripts/pg-backup.test.sh
 set -Eeuo pipefail
@@ -65,12 +66,30 @@ esac
 STUB
 chmod +x "$WORK/bin/docker"
 
+cat > "$WORK/bin/sudo" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+printf 'sudo %s\n' "$*" >> "$STUB_LOG"
+case "$*" in
+  *"psql"*"SELECT 1 FROM pg_database"*) printf '1\n' ;;
+  *"psql"*"pg_database_size"*) printf '4194304\n' ;;
+  *"psql"*"CREATE DATABASE"*) exit 0 ;;
+  *"psql"*"DROP DATABASE"*) exit 0 ;;
+  *"psql"*"count(*)"*) printf '42\n' ;;
+  *"pg_dump"*) cat "$STUB_DUMP" ;;
+  *"pg_restore -l"*) cat >/dev/null ;;
+  *"pg_restore"*) cat >/dev/null; exit 0 ;;
+  *) echo "unexpected sudo: $*" >&2; exit 99 ;;
+esac
+STUB
+chmod +x "$WORK/bin/sudo"
+
 run_script() {
   local name="$1" mode="$2"
   shift 2
   set +e
   env PATH="$WORK/bin:$PATH" MODE="$mode" APP_DIR="$WORK/app" TMPDIR="$WORK/tmp" \
-    STUB_LOG="$LOG" STUB_DUMP="$DUMP" "$@" \
+    PG_MODE="${PG_MODE:-container}" STUB_LOG="$LOG" STUB_DUMP="$DUMP" "$@" \
     bash "$ROOT/deploy/scripts/pg-backup.sh" > "$WORK/$name.out" 2> "$WORK/$name.err"
   CODE=$?
   set -e
@@ -133,6 +152,22 @@ expect_code 1
 expect_file 'мало места' "$WORK/backup-nospace.err"
 expect_no_file 'pg_dump' "$LOG"
 
+echo "ok - system PostgreSQL: backup и restore-drill через локальный кластер"
+CASE=system-backup
+: > "$LOG"
+PG_MODE=system run_script system-backup backup
+expect_code 0
+expect_file '"ok":true' "$WORK/system-backup.out"
+expect_file 'PostgreSQL mode: system' "$WORK/system-backup.err"
+expect_file 'sudo -n -u postgres pg_dump -p 5433' "$LOG"
+
+CASE=system-restore
+: > "$LOG"
+PG_MODE=system run_script system-restore restore-drill
+expect_code 0
+expect_file 'pg_restore -p 5433' "$LOG"
+expect_file 'восстановление проверено: 42 таблиц' "$WORK/system-restore.err"
+
 echo "ok - проверка свежести: успех и отказ"
 CASE=check
 : > "$LOG"
@@ -180,7 +215,7 @@ CASE=stdin
 : > "$LOG"
 set +e
 env PATH="$WORK/bin:$PATH" MODE=backup APP_DIR="$WORK/app" TMPDIR="$WORK/tmp" \
-  STUB_LOG="$LOG" STUB_DUMP="$DUMP" STUB_EAT_STDIN=1 \
+  PG_MODE="${PG_MODE:-container}" STUB_LOG="$LOG" STUB_DUMP="$DUMP" STUB_EAT_STDIN=1 \
   bash -s < "$ROOT/deploy/scripts/pg-backup.sh" > "$WORK/stdin.out" 2> "$WORK/stdin.err"
 CODE=$?
 set -e

@@ -1,6 +1,7 @@
-import { isRunActive } from "../agent/active-runs.js";
+import { isRunActiveAnywhere } from "../agent/run-activity.js";
 import { stopPreview } from "../preview-manager.js";
 import { listPreviews } from "./preview-store.js";
+import { pruneSharedPreviews } from "./preview-registry.js";
 import type { PreviewState } from "./types.js";
 
 /** Five minutes without a single use: the container is stopped and its memory returned. */
@@ -34,7 +35,15 @@ export function idlePreviews(states:PreviewState[],now:number,idleMs=idleTimeout
  * forgetting a container that is still running.
  */
 export async function stopIdlePreviews(now=Date.now(),idleMs=idleTimeoutMs(),deps:IdleSweepDeps=defaultIdleSweepDeps){
-  const candidates=idlePreviews(listPreviews(),now,idleMs).filter(state=>!isRunActive(state.projectId));
+  // Просроченные строки чужих реплик не должны копиться после падений: их всё равно не отдаёт
+  // чтение, но уборка базы — единственное место, где они исчезают совсем.
+  await pruneSharedPreviews().catch(()=>undefined);
+  const candidates=[];
+  for(const state of idlePreviews(listPreviews(),now,idleMs)){
+    // Проверка общая: preview мог быть поднят на этой реплике, а агент ещё работает на другой.
+    if(await isRunActiveAnywhere(state.projectId))continue;
+    candidates.push(state);
+  }
   let stopped=0;
   for(const state of candidates){
     try{

@@ -1,9 +1,10 @@
 import { countProjectsByNode, listNodes, listProjectsOnNode, type SandboxNode } from "./node-store.js";
 import { isNodeFresh, nodeStaleMs } from "./placement.js";
 import { sandboxMemoryMb } from "../sandbox/config.js";
-import { getPreview } from "../preview/preview-store.js";
+import { hydratePreview } from "../preview/preview-store.js";
 import { listSandboxJobs } from "../sandbox/jobs.js";
 import { reassignProjectNode } from "../project-store.js";
+import { isRunActiveAnywhere } from "../agent/run-activity.js";
 
 /**
  * Rebalancing moves a project's pin from a crowded node to a freer one. It is deliberately
@@ -92,7 +93,9 @@ export async function rebalanceOnce(
   if (!plan) return null;
   for (const project of await listProjectsOnNode(plan.from, 10)) {
     // A live preview or job owns a container on the old node; changing the pin would orphan it.
-    if (getPreview(project.id) || listSandboxJobs(project.id).length) continue;
+    if (await hydratePreview(project.id) || listSandboxJobs(project.id).length) continue;
+    // A run on another replica is writing files right now; moving the pin would split it.
+    if (await isRunActiveAnywhere(project.id)) continue;
     const moved = await reassignProjectNode(project.id, project.userId, plan.to);
     if (!moved) continue;
     log(

@@ -14,7 +14,7 @@ import { nodeId } from "../nodes/identity.js";
 import { readProjectSizes } from "../account/storage-quota.js";
 import { sandboxRootDir } from "../sandbox/config.js";
 import { sandboxHost, type SandboxHostStatus } from "../sandbox/host.js";
-import { listPreviews } from "../preview/preview-store.js";
+import { listPreviewsAcrossReplicas } from "../preview/preview-store.js";
 import { PREVIEW_LABEL } from "../preview/types.js";
 import { lastProjectAccess } from "../storage/project-archive.js";
 import { listArchiveRecords, type ProjectArchiveRecord } from "../storage/project-archive-state.js";
@@ -534,7 +534,7 @@ async function collectSandboxInventory(): Promise<SandboxInventory> {
   }
 
   const previews = new Map<string, { mode: "container" | "static"; startedAt: number; lastUsedAt: number }>();
-  for (const preview of listPreviews()) {
+  for (const preview of await listPreviewsAcrossReplicas()) {
     previews.set(preview.projectId, { mode: preview.mode, startedAt: preview.startedAt, lastUsedAt: preview.lastUsedAt });
   }
   const access = new Map<string, number>();

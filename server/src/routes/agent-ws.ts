@@ -167,6 +167,7 @@ export async function registerAgentWebSocket(app:FastifyInstance,runtime=new Age
           },{
             signal:runController.signal,
             userId:user.id,
+            projectId:parsed.projectId,
             onQueued:waiting=>safeSend({type:"run.queued",queued:waiting,limit:runQueueStats().limit}),
           });
         }finally{

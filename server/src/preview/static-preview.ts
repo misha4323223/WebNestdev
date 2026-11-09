@@ -103,7 +103,7 @@ export async function startStaticPreview(config:SandboxConfig):Promise<StaticSta
   const listener=await listenStatic(plan.dir);
   const run:StaticRun={server:listener.app,dir:plan.dir,port:listener.port,log,builtAt:marker,startedAt:Date.now(),instant:!plan.build,config};
   runs.set(config.projectId,run);
-  setPreview({mode:"static",containerId:"",host:STATIC_HOST,port:run.port,projectId:config.projectId,startedAt:run.startedAt,lastUsedAt:run.startedAt});
+  setPreview({mode:"static",containerId:"",host:STATIC_HOST,port:run.port,projectId:config.projectId,ownerUserId:config.userId,startedAt:run.startedAt,lastUsedAt:run.startedAt});
   return {ok:true,status:statusFor(run)};
 }
 

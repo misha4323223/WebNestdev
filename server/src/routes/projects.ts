@@ -9,8 +9,9 @@ import { forgetProjectStorage } from "../account/storage-quota.js";
 import { archiveProject, deleteProjectArchive, projectArchiveInfo, startProjectRestore } from "../storage/project-archive.js";
 import { cancelProjectRestore, projectRestoreJob, restoreJobActive } from "../storage/restore-jobs.js";
 import { recordArchiveFailure } from "../storage/archive-health.js";
-import { isConversationRunning, isRunActive } from "../agent/active-runs.js";
-import { getPreview } from "../preview/preview-store.js";
+import { isConversationRunning } from "../agent/active-runs.js";
+import { isRunActiveAnywhere } from "../agent/run-activity.js";
+import { hydratePreview } from "../preview/preview-store.js";
 import { stopPreview } from "../preview-manager.js";
 import { recordAudit } from "../security/audit-journal.js";
 import { deleteProjectMedia, mediaConfigFromEnv } from "../media/media-store.js";
@@ -116,7 +117,7 @@ export async function registerProjectRoutes(app:FastifyInstance){
     if(!project||project.userId!==user.id)return reply.code(404).send({error:"Проект не найден"});
     // Агент может дописать файлы уже после удаления каталога — тогда удалённый проект
     // вернулся бы на диск и снова занял место. Удаление начинается только после остановки.
-    if(isRunActive(p.id))return reply.code(409).send({error:"Агент ещё работает в проекте — дождитесь окончания запуска или остановите его",code:"PROJECT_BUSY"});
+    if(await isRunActiveAnywhere(p.id))return reply.code(409).send({error:"Агент ещё работает в проекте — дождитесь окончания запуска или остановите его",code:"PROJECT_BUSY"});
     // Всё, что пишет в папку проекта, останавливается ДО `rm`: иначе распаковка архива или
     // контейнер предпросмотра могли вернуть каталог уже после удаления.
     cancelProjectRestore(p.id);
@@ -167,8 +168,8 @@ export async function registerProjectRoutes(app:FastifyInstance){
     const p=z.object({id:z.string().min(1)}).parse(request.params);
     const project=await getProject(p.id);
     if(!project||project.userId!==user.id)return reply.code(404).send({error:"Проект не найден"});
-    if(isRunActive(p.id))return reply.code(409).send({error:"Агент ещё работает в проекте — дождитесь окончания запуска",code:"PROJECT_BUSY"});
-    if(getPreview(p.id))return reply.code(409).send({error:"Остановите предпросмотр: он держит файлы проекта открытыми",code:"PREVIEW_RUNNING"});
+    if(await isRunActiveAnywhere(p.id))return reply.code(409).send({error:"Агент ещё работает в проекте — дождитесь окончания запуска",code:"PROJECT_BUSY"});
+    if(await hydratePreview(p.id))return reply.code(409).send({error:"Остановите предпросмотр: он держит файлы проекта открытыми",code:"PREVIEW_RUNNING"});
     try{
       const result=await archiveProject(p.id,user.id);
       return {archived:true,bytes:result.bytes,alreadyArchived:result.alreadyArchived};

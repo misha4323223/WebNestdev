@@ -9,8 +9,8 @@ import { sandboxRootPath } from "../sandbox/config.js";
 import { listProjectSecrets } from "../secrets/project-secrets.js";
 import { readDeployPlan } from "../deploy/deploy-plan.js";
 import { previewStatus } from "../preview-manager.js";
-import { getPreview } from "../preview/preview-store.js";
-import { isRunActive } from "../agent/active-runs.js";
+import { hydratePreview } from "../preview/preview-store.js";
+import { isRunActiveAnywhere } from "../agent/run-activity.js";
 import { projectArchiveInfo, startProjectRestore } from "../storage/project-archive.js";
 import { recordArchiveFailure } from "../storage/archive-health.js";
 import { enqueueJob, jobCounters, listJobs, type JobKind, type JobState } from "../jobs/store.js";
@@ -127,10 +127,10 @@ export async function registerAdminProjectRoutes(
     if (!project) return reply.code(404).send({ error: "Проект не найден" });
     // Те же два ограничения, что у пользовательской ручки: иначе tar читает файлы, которые
     // прямо сейчас пишет агент, или которые держит открытыми превью.
-    if (isRunActive(id)) {
+    if (await isRunActiveAnywhere(id)) {
       return reply.code(409).send({ error: "Агент ещё работает в проекте — дождитесь окончания запуска", code: "PROJECT_BUSY" });
     }
-    if (getPreview(id)) {
+    if (await hydratePreview(id)) {
       return reply.code(409).send({ error: "Остановите предпросмотр: он держит файлы проекта открытыми", code: "PREVIEW_RUNNING" });
     }
     try {

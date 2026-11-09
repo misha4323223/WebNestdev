@@ -102,7 +102,8 @@ npm run mws:check --workspace=server -- --key-file /путь/key.json
 | Проект | `project-pimashin2015` |
 | Сервисный аккаунт / ключ | `nestdev` / `nestdev` |
 | ВМ | `webnestdev` — `base-2-4` (2 vCPU / 4 ГБ), диск 50 ГБ `nbs-pl2`, Ubuntu 24.04 LTS, зона `ru-central1-b`, включена |
-| Внешний адрес | `178.236.27.102` (`ea-halkuf`, 1:1 NAT) — на него же смотрит A-запись `nestdev.ru` |
+| Публичный ingress | NLB `webnestdev-nlb-main` на `178.236.27.102` (`ea-webnestdev`) — на него смотрит A-запись `nestdev.ru`; бэкенды `10.0.0.4` и `10.0.0.5` |
+| Management-адрес node-1 | `2.59.83.250` (`ea-webnestdev-admin`) — SSH, в DNS не входит |
 | Внутренний адрес | `10.0.0.4` в сети `webnestdev-net` (`internetAccess: true`), подсеть `webnestdev-sub` `10.0.0.0/24` |
 
 Ключ видит только этот проект: право `rm.project.list` на организацию МВС не выдано
