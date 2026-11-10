@@ -133,6 +133,15 @@ MODE="${MODE:-image}"
 IMAGE_REF="${IMAGE_REF:-}"
 APP_DIR="${APP_DIR:-$HOME/webnestdev/src}"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
+# Production-specific override (system PostgreSQL, shared storage) must be merged into every
+# compose call. Without it `up -d` recreates the server from the base file and silently switches
+# DATABASE_URL back to the legacy `postgres` container — the deploy looked green while the API
+# served the wrong database.
+COMPOSE_OVERRIDE="${COMPOSE_OVERRIDE:-docker-compose.override.yml}"
+COMPOSE_FILES=(-f "$COMPOSE_FILE")
+if [ -f "$APP_DIR/$COMPOSE_OVERRIDE" ]; then
+  COMPOSE_FILES+=(-f "$APP_DIR/$COMPOSE_OVERRIDE")
+fi
 SERVICE="${SERVICE:-webnestdev-server}"
 # Docker-брокер появился в compose позже сервера: на ВМ со старым файлом сервиса его просто нет,
 # и выкатка ведёт себя как раньше (docs/DOCKER_BROKER.md).
@@ -573,7 +582,7 @@ cleanup_logs(){
   ids=""
   if command -v docker >/dev/null 2>&1 && docker info >/dev/null 2>&1; then
     if [ -f "$COMPOSE_FILE" ]; then
-      ids=$(docker compose -f "$COMPOSE_FILE" ps -q 2>/dev/null | tr '\n' ' ' || true)
+      ids=$(docker compose "${COMPOSE_FILES[@]}" ps -q 2>/dev/null | tr '\n' ' ' || true)
     fi
     [ -n "$ids" ] || ids=$(docker ps -q 2>/dev/null | tr '\n' ' ' || true)
   else
@@ -726,7 +735,7 @@ dump_container_logs(){
     log "docker не отвечает — логи контейнера не прочитать"
     return 1
   fi
-  out=$(docker compose -f "$COMPOSE_FILE" logs --no-color --tail "$tail_lines" "$service" 2>&1 || true)
+  out=$(docker compose "${COMPOSE_FILES[@]}" logs --no-color --tail "$tail_lines" "$service" 2>&1 || true)
   if [ -z "$out" ]; then
     log "логов нет: сервис $service ещё не запускался"
     return 0
@@ -757,10 +766,10 @@ wait_for_health(){
   # выкатки выглядит как «не поднялся за 60 с» и требует SSH, которого на ВМ нет.
   if command -v docker >/dev/null 2>&1 && [ -f "$COMPOSE_FILE" ]; then
     log "состояние контейнеров:"
-    docker compose -f "$COMPOSE_FILE" ps 2>&1 | sed 's/^/[deploy] /' | tail -8 || true
+    docker compose "${COMPOSE_FILES[@]}" ps 2>&1 | sed 's/^/[deploy] /' | tail -8 || true
     log "логи $SERVICE (последние 80 строк):"
     # `--no-color` и `--tail`: строка и так уходит в лог Actions, а весь вывод не нужен.
-    docker compose -f "$COMPOSE_FILE" logs --no-color --tail=80 "$SERVICE" 2>&1 \
+    docker compose "${COMPOSE_FILES[@]}" logs --no-color --tail=80 "$SERVICE" 2>&1 \
       | sed 's/^/[deploy] /' | tail -80 || true
   fi
   return 1
@@ -773,7 +782,7 @@ wait_for_health(){
 #
 running_image(){
   local cid
-  cid=$(docker compose -f "$COMPOSE_FILE" ps -q "$SERVICE" 2>/dev/null | head -1 || true)
+  cid=$(docker compose "${COMPOSE_FILES[@]}" ps -q "$SERVICE" 2>/dev/null | head -1 || true)
   [ -n "$cid" ] || return 0
   docker inspect --format '{{.Config.Image}}' "$cid" 2>/dev/null || true
 }
@@ -820,7 +829,7 @@ rollback(){
   [ -n "$previous" ] || { log "предыдущий образ неизвестен — откатываться не на что"; return 1; }
   log "возвращаю предыдущий образ $previous"
   export WEBNESTDEV_IMAGE="$previous"
-  run docker compose -f "$COMPOSE_FILE" up -d --no-build "$SERVICE"
+  run docker compose "${COMPOSE_FILES[@]}" up -d --no-build "$SERVICE"
   if wait_for_health; then
     # Откат — тоже рабочая версия: закрепляем её в .env, иначе после перезагрузки compose
     # поднимет то, что там записано (или локальный образ по умолчанию).
@@ -907,7 +916,7 @@ install_compose(){
 compose_env_value(){
   # Пустое значение пропускаем: у сервера PREVIEW_PUBLIC_DOMAIN по умолчанию пустой, и первая
   # строка в выводе может оказаться именно его.
-  docker compose -f "$COMPOSE_FILE" config 2>/dev/null | awk -v key="$1:" '
+  docker compose "${COMPOSE_FILES[@]}" config 2>/dev/null | awk -v key="$1:" '
     $1 == key { v = $2; gsub(/"/, "", v); if (v != "") { print v; exit } }'
 }
 
@@ -1231,11 +1240,11 @@ services_to_start(){
   # Брокер идёт до сервера: сервер проверяет его сокет на старте. Compose эту зависимость тоже
   # знает (depends_on), но перечисление явное — `up -d` с именами сервисов не поднимает остальных.
   local services=""
-  if docker compose -f "$COMPOSE_FILE" config --services 2>/dev/null | grep -qx "$BROKER_SERVICE"; then
+  if docker compose "${COMPOSE_FILES[@]}" config --services 2>/dev/null | grep -qx "$BROKER_SERVICE"; then
     services="$BROKER_SERVICE"
   fi
   services="${services:+$services }$SERVICE"
-  if docker compose -f "$COMPOSE_FILE" config --services 2>/dev/null | grep -qx "$CADDY_SERVICE"; then
+  if docker compose "${COMPOSE_FILES[@]}" config --services 2>/dev/null | grep -qx "$CADDY_SERVICE"; then
     services="$services $CADDY_SERVICE"
   fi
   printf '%s' "$services"
@@ -1252,7 +1261,7 @@ services_to_start(){
 # перерыва. Если admin API недоступен, пересоздаём контейнер: конфигурация важнее перерыва.
 #
 reload_caddy(){
-  if ! docker compose -f "$COMPOSE_FILE" config --services 2>/dev/null | grep -qx "$CADDY_SERVICE"; then
+  if ! docker compose "${COMPOSE_FILES[@]}" config --services 2>/dev/null | grep -qx "$CADDY_SERVICE"; then
     return 0
   fi
   # `</dev/null` у каждого exec: `docker compose exec` подключает stdin, а при запуске
@@ -1261,19 +1270,19 @@ reload_caddy(){
   # просто не выполнялись). Остальные exec в скрипте уже перенаправляют stdin по этой же причине.
   local host_sum container_sum
   host_sum=$(sha256sum "$APP_DIR/$CADDY_FILE" 2>/dev/null | cut -d' ' -f1 || true)
-  container_sum=$(docker compose -f "$COMPOSE_FILE" exec -T "$CADDY_SERVICE" sha256sum "/etc/caddy/$CADDY_FILE" </dev/null 2>/dev/null | cut -d' ' -f1 || true)
+  container_sum=$(docker compose "${COMPOSE_FILES[@]}" exec -T "$CADDY_SERVICE" sha256sum "/etc/caddy/$CADDY_FILE" </dev/null 2>/dev/null | cut -d' ' -f1 || true)
   if [ -n "$host_sum" ] && [ "$host_sum" != "$container_sum" ]; then
     log "контейнер $CADDY_SERVICE читает другую версию $CADDY_FILE — пересоздаю его"
-    run docker compose -f "$COMPOSE_FILE" up -d --no-build --force-recreate "$CADDY_SERVICE" || \
+    run docker compose "${COMPOSE_FILES[@]}" up -d --no-build --force-recreate "$CADDY_SERVICE" || \
       log "не удалось пересоздать $CADDY_SERVICE; проверьте docker compose logs $CADDY_SERVICE"
     return 0
   fi
   log "перечитываю Caddyfile в Caddy"
-  if run timeout 30 docker compose -f "$COMPOSE_FILE" exec -T "$CADDY_SERVICE" caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile </dev/null; then
+  if run timeout 30 docker compose "${COMPOSE_FILES[@]}" exec -T "$CADDY_SERVICE" caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile </dev/null; then
     return 0
   fi
   log "caddy reload не удался — пересоздаю контейнер $CADDY_SERVICE"
-  run docker compose -f "$COMPOSE_FILE" up -d --no-build --force-recreate "$CADDY_SERVICE" || \
+  run docker compose "${COMPOSE_FILES[@]}" up -d --no-build --force-recreate "$CADDY_SERVICE" || \
     log "не удалось пересоздать $CADDY_SERVICE; проверьте docker compose logs $CADDY_SERVICE"
 }
 
@@ -2084,7 +2093,7 @@ case "$MODE" in
     # Образ песочницы скачивается до запуска сервера: проверка монтирования на старте идёт с
     # `--pull=never`, и без образа /api/health показывал бы «image» до следующего перезапуска.
     ensure_sandbox_image
-    run docker compose -f "$COMPOSE_FILE" up -d --no-build $(services_to_start)
+    run docker compose "${COMPOSE_FILES[@]}" up -d --no-build $(services_to_start)
     reload_caddy
     ;;
   source)
@@ -2106,8 +2115,8 @@ case "$MODE" in
     run sudo systemctl restart "$SYSTEMD_UNIT"
     # Фронт с сертификатами — контейнер, а не systemd-юнит: в этом режиме его поднимает та же
     # команда, что и в image-режиме, и только если файл сервисов его описывает.
-    if docker compose -f "$COMPOSE_FILE" config --services 2>/dev/null | grep -qx "$CADDY_SERVICE"; then
-      run docker compose -f "$COMPOSE_FILE" up -d --no-build "$CADDY_SERVICE"
+    if docker compose "${COMPOSE_FILES[@]}" config --services 2>/dev/null | grep -qx "$CADDY_SERVICE"; then
+      run docker compose "${COMPOSE_FILES[@]}" up -d --no-build "$CADDY_SERVICE"
       reload_caddy
     fi
     ;;
@@ -2130,7 +2139,7 @@ case "$MODE" in
     # --force-recreate, а не простой up: контейнер мог зависнуть в перезапусках, и тогда compose
     # счёл бы его «уже поднятым» и не тронул. Конфигурацию берём ту, что лежит на ВМ: ремонт не
     # приносит новых файлов.
-    run docker compose -f "$COMPOSE_FILE" up -d --no-build --force-recreate $(services_to_start)
+    run docker compose "${COMPOSE_FILES[@]}" up -d --no-build --force-recreate $(services_to_start)
     ;;
   logs)
     log "режим logs: показываю логи контейнера, сервис не перезапускаю"
