@@ -129,12 +129,23 @@ ssh node1 'cd "$HOME/webnestdev/src" && docker compose \
 
 ## 6. Деплой
 
-- GitHub Actions сейчас деплоит `node-1`; `node-2` автоматически не деплоится.
-- Полный деплой на `node-2` требует отдельного запуска `vm-deploy.sh` на ней.
+- GitHub Actions деплоит `node-1` (`deploy/scripts/vm-deploy.sh`), затем шаг
+  `Deploy to node-2 over SSH` запускает на `node-1` `deploy/scripts/node2-sync.sh`: образ
+  передаётся на `node-2` по SSH (`docker save | ssh | docker load`, GHCR ей отвечает
+  `unauthorized`), обновляются `docker-compose.yml`/`Caddyfile`/`preview-tls.caddy`,
+  пересоздаются API и брокер с `--no-deps`, гасится legacy postgres, проверяются `/api/ready`
+  и сборка. Недоступная `node-2` — не ошибка выкатки (пропуск); `SYNC_NODE2=1` в переменных
+  репозитория делает недоступность ошибкой, `SYNC_NODE2=0` выключает шаг.
+- Runner обновляется автоматически на обеих нодах (`deploy/scripts/update-runner.sh`): раньше
+  он оставался на прежней сборке, пока сервис уже работал на новой.
+- `MODE=image` больше не поднимает legacy `postgres` из базового compose: с production
+  override `up` идёт с `--no-deps`, а запущенный контейнер останавливается после выкатки.
+- Полный деплой на `node-2` вручную по-прежнему возможен (`vm-deploy.sh` на ней), но штатный
+  путь — шаг workflow выше.
 - `MODE=token` и `MODE=pg-password` только пишут env и не перезапускают сервис.
 - `MODE=image` — полная выкатка образа; не использовать его только ради env-синхронизации.
 - В image-режиме на `node-1` токен runner синхронизируется автоматически.
-- Для `node-2` учитывать её отдельные env-файлы из раздела 3.
+- Для `node-2` учитывать её отдельные env-файлы из раздела 3 (`runtime.env` + `node2.env`).
 - **Image-deploy не обновляет HA-скрипты.** `/opt/webnestdev-ha` ставится отдельно через
   `deploy/ha/install-node1.sh` и `install-node2.sh`. Если на ВМ остался старый checkout,
   установка из него вернёт контроллер без `switchover.py`/`control.py`. После изменений в
@@ -143,8 +154,9 @@ ssh node1 'cd "$HOME/webnestdev/src" && docker compose \
 
 ## 7. Что проверять после работ с `node-2`
 
-1. MWS: `status.hardware.power=OFF`, если production-HA ещё не запущен.
-2. SSH к `10.0.0.5` не отвечает после выключения.
+1. MWS: `status.hardware.power=ON` — `node-2` остаётся включённой по решению пользователя.
+   Питание меняется только по явной просьбе; после выключения проверять `power=OFF`.
+2. SSH к `10.0.0.5` (через `node-1`) и `node2-runner` отвечают, пока узел в строю.
 3. `node-1`: `/api/ready` = `200`.
 4. Токены `node-1` и `node-2` совпадают, если обе ВМ использовались.
 5. `docker compose config --quiet` на `node-1` проходит.
@@ -166,9 +178,10 @@ ssh node1 'cd "$HOME/webnestdev/src" && docker compose \
 
 Проверено на реальных ВМ при включённой `node-2`, без выключения прод-базы:
 
-- `node-2` обновлена до production-образа `ghcr.io/misha4323223/webnestdev:sha-30b7bf876c1e`
-  (build `30b7bf876c1e83a3f92d26e3ff0a1d2727fd0fd9`); API и `node2-runner` отвечают,
-  PostgreSQL — streaming standby от `10.0.0.4`.
+- `node-2` обновлена до production-образа `ghcr.io/misha4323223/webnestdev:sha-af837ac1659f`
+  (build `af837ac1659f32154c7936646dacc23ab7a6b4af`); API и `node2-runner` отвечают,
+  PostgreSQL — streaming standby от `10.0.0.4`. Синхронизация `node-2` из workflow появилась
+  после этого прогона, поэтому здесь она ещё выкатывалась вручную.
 - NLB `webnestdev-nlb-main` видит оба бэкенда (`tcp:80`, `tcp:443`) в состоянии `OK`.
 - При нагрузке на `node-2` новый проект A размещён на `node-1`; terminal на `node-1`
   выполнился (`node v26.13.0`).

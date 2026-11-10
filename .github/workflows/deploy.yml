@@ -400,6 +400,10 @@ jobs:
           # Установщик gVisor едет на ВМ вместе со скриптом: в image-режиме чекаут на ВМ может
           # быть старым, а установка нужна ровно та, что прошла тесты в этом коммите.
           RUNSC_SCRIPT_B64=$(base64 -w0 deploy/scripts/install-runsc.sh)
+          # Runner — отдельный контейнер вне compose, и выкатка его не касалась: сервис днями
+          # работал на новой сборке, а задачи в песочницах исполнял прежний код. Скрипт
+          # обновления едет так же, как установщик runsc, — той версии, что прошла тесты.
+          RUNNER_SCRIPT_B64=$(base64 -w0 deploy/scripts/update-runner.sh)
           # Правила, закрывающие обход egress-прокси (пункт 5.1 плана), едут так же: они нужны
           # ровно той версии, что прошла тесты в этом коммите, а не той, что лежит в чекауте на ВМ.
           EGRESS_FIREWALL_B64=$(base64 -w0 deploy/scripts/egress-firewall.sh)
@@ -595,7 +599,7 @@ jobs:
             -o BatchMode=yes -o StrictHostKeyChecking=yes \
             -o ServerAliveInterval=30 -o ServerAliveCountMax=30 \
             "$DEPLOY_USER@$DEPLOY_HOST" \
-            "umask 077; f=/tmp/.vm-deploy.\$\$.sh; cat > \"\$f\" && MODE='$MODE' IMAGE_REF='$image' APP_DIR='$DEPLOY_APP_DIR' AGENT_SSH_PUBKEY=$AGENT_SSH_PUBKEY COMPOSE_B64='$COMPOSE_B64' CADDY_B64='$CADDY_B64' PREVIEW_TLS_B64='$PREVIEW_TLS_B64' WILDCARD_CERT_B64='$WILDCARD_CERT_B64' REGRU_API_USERNAME='$REGRU_API_USERNAME' REGRU_API_PASSWORD='$REGRU_API_PASSWORD' RUNSC_SCRIPT_B64='$RUNSC_SCRIPT_B64' RUNSC_INSTALL='$RUNSC_INSTALL' EGRESS_FIREWALL_B64='$EGRESS_FIREWALL_B64' APP_KEY_FILE='$APP_KEY_FILE' PLATFORM_ENV_FILE='$PLATFORM_ENV_FILE' LOG_TAIL='$LOG_TAIL' bash \"\$f\"; rc=\$?; rm -f \"\$f\"; exit \$rc" \
+            "umask 077; f=/tmp/.vm-deploy.\$\$.sh; cat > \"\$f\" && MODE='$MODE' IMAGE_REF='$image' APP_DIR='$DEPLOY_APP_DIR' AGENT_SSH_PUBKEY=$AGENT_SSH_PUBKEY COMPOSE_B64='$COMPOSE_B64' CADDY_B64='$CADDY_B64' PREVIEW_TLS_B64='$PREVIEW_TLS_B64' WILDCARD_CERT_B64='$WILDCARD_CERT_B64' REGRU_API_USERNAME='$REGRU_API_USERNAME' REGRU_API_PASSWORD='$REGRU_API_PASSWORD' RUNSC_SCRIPT_B64='$RUNSC_SCRIPT_B64' RUNSC_INSTALL='$RUNSC_INSTALL' RUNNER_SCRIPT_B64='$RUNNER_SCRIPT_B64' EGRESS_FIREWALL_B64='$EGRESS_FIREWALL_B64' APP_KEY_FILE='$APP_KEY_FILE' PLATFORM_ENV_FILE='$PLATFORM_ENV_FILE' LOG_TAIL='$LOG_TAIL' bash \"\$f\"; rc=\$?; rm -f \"\$f\"; exit \$rc" \
             < deploy/scripts/vm-deploy.sh
 
       - name: Deploy on the VM (self-hosted runner)
@@ -925,6 +929,7 @@ jobs:
           # файл рядом, с правами только для владельца.
           RUNSC_SCRIPT_B64=$(base64 -w0 deploy/scripts/install-runsc.sh)
           EGRESS_FIREWALL_B64=$(base64 -w0 deploy/scripts/egress-firewall.sh)
+          RUNNER_SCRIPT_B64=$(base64 -w0 deploy/scripts/update-runner.sh)
           APP_KEY_FILE=""
           if [ -n "${YANDEX_SA_KEY_JSON:-}" ]; then
             APP_KEY_FILE=$(mktemp)
@@ -939,6 +944,66 @@ jobs:
             WILDCARD_CERT_SRC="$PWD/deploy/scripts/wildcard-cert.sh" \
             REGRU_API_USERNAME="$REGRU_API_USERNAME" REGRU_API_PASSWORD="$REGRU_API_PASSWORD" \
             RUNSC_SCRIPT_B64="$RUNSC_SCRIPT_B64" RUNSC_INSTALL="$RUNSC_INSTALL" \
+            RUNNER_SCRIPT_B64="$RUNNER_SCRIPT_B64" \
             EGRESS_FIREWALL_B64="$EGRESS_FIREWALL_B64" \
             APP_KEY_FILE="$APP_KEY_FILE" PLATFORM_ENV_FILE="$PLATFORM_ENV_FILE" \
             bash deploy/scripts/vm-deploy.sh
+
+      #
+      # Вторая нода.
+      #
+      # GitHub Actions деплоит только node-1: у node-2 нет внешнего адреса, а GHCR отвечает ей
+      # `unauthorized` (вход в реестр там не настроен). Из-за этого HA-контур держался на ручной
+      # выкатке: после падения первой ноды вторая поднимала старую сборку. Скрипт запускается на
+      # node-1 и сам передаёт образ на node-2 по SSH (deploy/scripts/node2-sync.sh).
+      # Недоступная node-2 — не ошибка выкатки (её могли выключить); SYNC_NODE2=1 в переменных
+      # репозитория делает недоступность ошибкой.
+      - name: Deploy to node-2 over SSH
+        if: ${{ vars.DEPLOY_RUNNER == '' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'image')) }}
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          DEPLOY_APP_DIR: ${{ vars.DEPLOY_APP_DIR }}
+          IMAGE_INPUT: ${{ inputs.image }}
+          BUILT_IMAGE: ${{ needs.build.outputs.image }}
+          SYNC_NODE2: ${{ vars.SYNC_NODE2 || 'auto' }}
+        run: |
+          set -euo pipefail
+          image="$IMAGE_INPUT"
+          [ -n "$image" ] || image="$BUILT_IMAGE"
+          if [ -z "$image" ]; then
+            echo "[node2] образ неизвестен — вторую ноду пропускаю"
+            exit 0
+          fi
+          if ! printf '%s' "$image" | grep -Eq '^[A-Za-z0-9][A-Za-z0-9._/-]*:[A-Za-z0-9._-]+$'; then
+            echo "Недопустимый тег образа: $image" >&2
+            exit 1
+          fi
+          RUNNER_SCRIPT_B64=$(base64 -w0 deploy/scripts/update-runner.sh)
+          ssh -i "$HOME/.ssh/deploy_key" \
+            -p "${DEPLOY_PORT:-22}" \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=30 \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "IMAGE_REF='$image' APP_DIR='$DEPLOY_APP_DIR' SYNC_NODE2='$SYNC_NODE2' RUNNER_SCRIPT_B64='$RUNNER_SCRIPT_B64' bash -s" \
+            < deploy/scripts/node2-sync.sh
+
+      - name: Deploy to node-2 (self-hosted runner)
+        if: ${{ vars.DEPLOY_RUNNER != '' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'image')) }}
+        env:
+          DEPLOY_APP_DIR: ${{ vars.DEPLOY_APP_DIR }}
+          IMAGE_INPUT: ${{ inputs.image }}
+          BUILT_IMAGE: ${{ needs.build.outputs.image }}
+          SYNC_NODE2: ${{ vars.SYNC_NODE2 || 'auto' }}
+        run: |
+          set -euo pipefail
+          image="$IMAGE_INPUT"
+          [ -n "$image" ] || image="$BUILT_IMAGE"
+          if [ -z "$image" ]; then
+            echo "[node2] образ неизвестен — вторую ноду пропускаю"
+            exit 0
+          fi
+          IMAGE_REF="$image" APP_DIR="$DEPLOY_APP_DIR" SYNC_NODE2="$SYNC_NODE2" \
+            RUNNER_SCRIPT_SRC="$PWD/deploy/scripts/update-runner.sh" \
+            bash deploy/scripts/node2-sync.sh

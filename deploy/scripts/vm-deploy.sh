@@ -100,6 +100,10 @@
 #                              через sudo -n до запуска новой версии. `0` запрещает установку
 #                              (хост уже подготовлен вручную); ошибка установки останавливает
 #                              выкатку, чтобы не поднять сервер с неработающей песочницей.
+#   RUNNER_SCRIPT_B64=…        содержимое deploy/scripts/update-runner.sh в base64; workflow
+#   RUNNER_SCRIPT_SRC=<путь>   тот же скрипт файлом (self-hosted runner). Runner — контейнер вне
+#                              compose, поэтому без этого шага он молча оставался на прежней
+#                              сборке, пока сервис уже работал на новой.
 #   RUNSC_SCRIPT_B64=…         содержимое deploy/scripts/install-runsc.sh в base64; workflow
 #                              присылает его вместе со скриптом, чтобы не зависеть от чекаута
 #                              на ВМ. Без него берётся $APP_DIR/deploy/scripts/install-runsc.sh.
@@ -139,8 +143,14 @@ COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
 # served the wrong database.
 COMPOSE_OVERRIDE="${COMPOSE_OVERRIDE:-docker-compose.override.yml}"
 COMPOSE_FILES=(-f "$COMPOSE_FILE")
+# Production override меняет источник базы на системный PostgreSQL, но не убирает `depends_on`
+# сервера от сервиса `postgres`. Обычный `up -d` из-за этой зависимости поднимал legacy-контейнер
+# при каждой выкатке: он снова занимает том и память, а сервер при этом ходит в системную базу.
+# С override зависимости compose не поднимает — их роль выполняет сам override.
+COMPOSE_NO_DEPS=()
 if [ -f "$APP_DIR/$COMPOSE_OVERRIDE" ]; then
   COMPOSE_FILES+=(-f "$APP_DIR/$COMPOSE_OVERRIDE")
+  COMPOSE_NO_DEPS+=(--no-deps)
 fi
 SERVICE="${SERVICE:-webnestdev-server}"
 # Docker-брокер появился в compose позже сервера: на ВМ со старым файлом сервиса его просто нет,
@@ -184,6 +194,8 @@ SERVER_USER_CHECK="${SERVER_USER_CHECK:-1}"
 SANDBOX_RUNTIME_CHECK="${SANDBOX_RUNTIME_CHECK:-1}"
 RUNSC_INSTALL="${RUNSC_INSTALL:-auto}"
 RUNSC_SCRIPT_B64="${RUNSC_SCRIPT_B64:-}"
+RUNNER_SCRIPT_B64="${RUNNER_SCRIPT_B64:-}"
+RUNNER_SCRIPT_SRC="${RUNNER_SCRIPT_SRC:-}"
 RUNSC_VERSION="${RUNSC_VERSION:-}"
 APP_KEY_FILE="${APP_KEY_FILE:-}"
 PLATFORM_ENV_FILE="${PLATFORM_ENV_FILE:-}"
@@ -829,7 +841,7 @@ rollback(){
   [ -n "$previous" ] || { log "предыдущий образ неизвестен — откатываться не на что"; return 1; }
   log "возвращаю предыдущий образ $previous"
   export WEBNESTDEV_IMAGE="$previous"
-  run docker compose "${COMPOSE_FILES[@]}" up -d --no-build "$SERVICE"
+  run docker compose "${COMPOSE_FILES[@]}" up -d --no-build "${COMPOSE_NO_DEPS[@]}" "$SERVICE"
   if wait_for_health; then
     # Откат — тоже рабочая версия: закрепляем её в .env, иначе после перезагрузки compose
     # поднимет то, что там записано (или локальный образ по умолчанию).
@@ -1251,6 +1263,67 @@ services_to_start(){
 }
 
 #
+# Legacy PostgreSQL из compose не должен работать рядом с системной базой.
+#
+# С override серверу база нужна не из контейнера, а с хоста (system PostgreSQL + HAProxy), но
+# `depends_on` в базовом файле остаётся, и `docker compose up` тянул `postgres` за сервером при
+# каждой выкатке. Контейнер с `restart: unless-stopped` поднимался снова и жил до ручной
+# остановки, занимая том, память и порт. С `--no-deps` compose его больше не поднимает, а эта
+# проверка гасит тот, что успел запуститься раньше (или был запущен руками).
+stop_legacy_postgres(){
+  if [ "${#COMPOSE_NO_DEPS[@]}" = "0" ]; then
+    return 0
+  fi
+  if ! docker compose "${COMPOSE_FILES[@]}" config --services 2>/dev/null | grep -qx postgres; then
+    return 0
+  fi
+  local cid running
+  cid=$(docker compose "${COMPOSE_FILES[@]}" ps -q postgres 2>/dev/null | head -1 || true)
+  [ -n "$cid" ] || return 0
+  running=$(docker inspect --format '{{.State.Running}}' "$cid" 2>/dev/null || true)
+  [ "$running" = "true" ] || return 0
+  log "legacy postgres (${cid:0:12}) запущен, хотя с override сервер работает на системной базе — останавливаю"
+  run docker compose "${COMPOSE_FILES[@]}" stop postgres >/dev/null || \
+    log "legacy postgres не остановился — остановите вручную: docker compose stop postgres"
+}
+
+#
+# Runner — отдельный контейнер вне compose, поэтому выкатка основного сервиса его не касалась:
+# сервис работал на новой сборке, а задачи в песочницах исполнял прежний код. Пересоздание живёт
+# в deploy/scripts/update-runner.sh (его же использует синхронизация node-2), а сюда скрипт
+# приходит так же, как установщик runsc: содержимым в base64 или файлом на self-hosted runner.
+#
+# Ошибка обновления runner'а не откатывает уже поднятый сервис: API рабочий, а runner —
+# отдельный процесс, и его состояние видно в логе выкатки.
+update_runner_version(){
+  if [ -z "$IMAGE_REF" ]; then
+    log "runner: версия выкатки неизвестна — не обновляю"
+    return 0
+  fi
+  local script="" owned=0 rc=0
+  if [ -n "$RUNNER_SCRIPT_B64" ]; then
+    script=$(mktemp)
+    if ! printf '%s' "$RUNNER_SCRIPT_B64" | base64 -d > "$script" 2>/dev/null; then
+      log "runner: присланный скрипт не распаковался — оставляю runner на прежней сборке"
+      rm -f "$script"
+      return 0
+    fi
+    owned=1
+  elif [ -n "$RUNNER_SCRIPT_SRC" ] && [ -f "$RUNNER_SCRIPT_SRC" ]; then
+    script="$RUNNER_SCRIPT_SRC"
+  else
+    log "runner: скрипт обновления не передан — runner остаётся на прежней сборке"
+    return 0
+  fi
+  IMAGE_REF="$IMAGE_REF" DRY_RUN="$DRY_RUN" bash "$script" || rc=$?
+  [ "$owned" = "1" ] && rm -f "$script"
+  if [ "$rc" -ne 0 ]; then
+    log "runner не обновился (код $rc) — сервис выкачен, но runner остался на прежней сборке"
+  fi
+  return 0
+}
+
+#
 # `docker compose up -d` не перезапускает уже работающий Caddy, если изменился только
 # смонтированный Caddyfile: конфиг контейнера не поменялся, поэтому compose считает его
 # актуальным. Хуже того, bind-mount привязывает контейнер к inode файла: если на ВМ файл
@@ -1273,7 +1346,7 @@ reload_caddy(){
   container_sum=$(docker compose "${COMPOSE_FILES[@]}" exec -T "$CADDY_SERVICE" sha256sum "/etc/caddy/$CADDY_FILE" </dev/null 2>/dev/null | cut -d' ' -f1 || true)
   if [ -n "$host_sum" ] && [ "$host_sum" != "$container_sum" ]; then
     log "контейнер $CADDY_SERVICE читает другую версию $CADDY_FILE — пересоздаю его"
-    run docker compose "${COMPOSE_FILES[@]}" up -d --no-build --force-recreate "$CADDY_SERVICE" || \
+    run docker compose "${COMPOSE_FILES[@]}" up -d --no-build --force-recreate "${COMPOSE_NO_DEPS[@]}" "$CADDY_SERVICE" || \
       log "не удалось пересоздать $CADDY_SERVICE; проверьте docker compose logs $CADDY_SERVICE"
     return 0
   fi
@@ -1282,7 +1355,7 @@ reload_caddy(){
     return 0
   fi
   log "caddy reload не удался — пересоздаю контейнер $CADDY_SERVICE"
-  run docker compose "${COMPOSE_FILES[@]}" up -d --no-build --force-recreate "$CADDY_SERVICE" || \
+  run docker compose "${COMPOSE_FILES[@]}" up -d --no-build --force-recreate "${COMPOSE_NO_DEPS[@]}" "$CADDY_SERVICE" || \
     log "не удалось пересоздать $CADDY_SERVICE; проверьте docker compose logs $CADDY_SERVICE"
 }
 
@@ -2093,8 +2166,11 @@ case "$MODE" in
     # Образ песочницы скачивается до запуска сервера: проверка монтирования на старте идёт с
     # `--pull=never`, и без образа /api/health показывал бы «image» до следующего перезапуска.
     ensure_sandbox_image
-    run docker compose "${COMPOSE_FILES[@]}" up -d --no-build $(services_to_start)
+    run docker compose "${COMPOSE_FILES[@]}" up -d --no-build "${COMPOSE_NO_DEPS[@]}" $(services_to_start)
+    stop_legacy_postgres
     reload_caddy
+    # Runner переводится на новую сборку после проверки версии (ниже): упавшая выкатка не
+    # должна оставить runner на образе, который сервис не принял.
     ;;
   source)
     log "обновляю репозиторий до origin/$GIT_BRANCH"
@@ -2116,7 +2192,7 @@ case "$MODE" in
     # Фронт с сертификатами — контейнер, а не systemd-юнит: в этом режиме его поднимает та же
     # команда, что и в image-режиме, и только если файл сервисов его описывает.
     if docker compose "${COMPOSE_FILES[@]}" config --services 2>/dev/null | grep -qx "$CADDY_SERVICE"; then
-      run docker compose "${COMPOSE_FILES[@]}" up -d --no-build "$CADDY_SERVICE"
+      run docker compose "${COMPOSE_FILES[@]}" up -d --no-build "${COMPOSE_NO_DEPS[@]}" "$CADDY_SERVICE"
       reload_caddy
     fi
     ;;
@@ -2139,7 +2215,9 @@ case "$MODE" in
     # --force-recreate, а не простой up: контейнер мог зависнуть в перезапусках, и тогда compose
     # счёл бы его «уже поднятым» и не тронул. Конфигурацию берём ту, что лежит на ВМ: ремонт не
     # приносит новых файлов.
-    run docker compose "${COMPOSE_FILES[@]}" up -d --no-build --force-recreate $(services_to_start)
+    run docker compose "${COMPOSE_FILES[@]}" up -d --no-build --force-recreate "${COMPOSE_NO_DEPS[@]}" $(services_to_start)
+    stop_legacy_postgres
+    update_runner_version
     ;;
   logs)
     log "режим logs: показываю логи контейнера, сервис не перезапускаю"
@@ -2228,6 +2306,8 @@ if [ "$MODE" = "image" ] && [ "$DRY_RUN" != "1" ]; then
   fi
   # Подтверждённая версия закрепляется в .env: перезагрузка ВМ не должна поднимать другой образ.
   pin_image "$IMAGE_REF"
+  # Только теперь: сервис подтвердил сборку, значит runner можно переводить на неё же.
+  update_runner_version
 fi
 # В ремонте версия не меняется, откатываться не на что — но если после пересоздания сервис
 # отвечает не закреплённой сборкой, это единственный след, и молчать о нём нельзя.
