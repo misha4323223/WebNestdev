@@ -29,6 +29,9 @@
 #   SYNC_NODE2=auto|1|0        auto — молча пропустить, если node-2 недоступна; 1 — ошибка
 #   RUNNER_SCRIPT_B64=…        содержимое deploy/scripts/update-runner.sh в base64
 #   RUNNER_SCRIPT_SRC=<путь>   тот же скрипт файлом
+#   DEPLOY_SCRIPT_SRC=<путь>   deploy/scripts/vm-deploy.sh файлом: его MODE=prune убирает
+#                              старые образы на node-2 по тому же правилу, что и на node-1
+#   KEEP_IMAGES=2              сколько версий образа оставлять на node-2
 #   DRY_RUN=1
 set -euo pipefail
 
@@ -45,6 +48,9 @@ NODE2_HEALTH_TRIES="${NODE2_HEALTH_TRIES:-30}"
 SYNC_NODE2="${SYNC_NODE2:-auto}"
 RUNNER_SCRIPT_B64="${RUNNER_SCRIPT_B64:-}"
 RUNNER_SCRIPT_SRC="${RUNNER_SCRIPT_SRC:-}"
+DEPLOY_SCRIPT_SRC="${DEPLOY_SCRIPT_SRC:-}"
+KEEP_IMAGES="${KEEP_IMAGES:-2}"
+IMAGE_REPO_PATTERN="${IMAGE_REPO_PATTERN:-webnestdev}"
 DRY_RUN="${DRY_RUN:-0}"
 
 log(){ printf '[node2] %s\n' "$*"; }
@@ -232,5 +238,22 @@ fi
 if [ -n "$expected" ] && [ "${build#"$expected"}" = "$build" ]; then
   log "node-2 работает на сборке $build, а выкатывали $expected"
   exit 1
+fi
+
+#
+# Уборка образов на node-2.
+#
+# node-1 чистит их сам внутри каждой выкатки (`KEEP_IMAGES`), а вторая нода до 10.11.2026
+# обновлялась вручную и не чистилась ни разу: там лежали четыре образа сервера по 1.45 ГБ
+# и 1.45 ГБ кеша сборки при диске 19 ГБ. Здесь вызывается тот же `prune_images` из
+# vm-deploy.sh, поэтому правило «текущая и предыдущая версия» не разъезжается между нодами.
+# Ошибка уборки не отменяет выкатку: сервис уже проверен, а место — состояние хоста.
+if [ -n "$DEPLOY_SCRIPT_SRC" ] && [ -f "$DEPLOY_SCRIPT_SRC" ]; then
+  log "убираю старые образы на node-2 (оставляю $KEEP_IMAGES версий)"
+  if ! ssh2_stdin "MODE='prune' APP_DIR='$NODE2_APP_DIR' KEEP_IMAGES='$KEEP_IMAGES' IMAGE_REPO_PATTERN='$IMAGE_REPO_PATTERN' bash -s" < "$DEPLOY_SCRIPT_SRC"; then
+    log "уборка образов на node-2 не удалась — место на диске не освободилось"
+  fi
+else
+  log "скрипт выкатки не передан — старые образы на node-2 не убираю"
 fi
 log "node-2 готова: сборка $build отвечает на /api/ready"

@@ -1022,12 +1022,20 @@ jobs:
             exit 1
           fi
           RUNNER_SCRIPT_B64=$(base64 -w0 deploy/scripts/update-runner.sh)
+          # Скрипт выкатки нужен node-2 для уборки старых образов: на первой ноде это делает
+          # vm-deploy.sh в конце каждой выкатки, а вторая без этого копила версии.
+          DEPLOY_SCRIPT_FILE="/tmp/.webnestdev-vm-deploy.sh"
+          ssh -i "$HOME/.ssh/deploy_key" \
+            -p "${DEPLOY_PORT:-22}" \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "umask 077; cat > '$DEPLOY_SCRIPT_FILE'" < deploy/scripts/vm-deploy.sh
           ssh -i "$HOME/.ssh/deploy_key" \
             -p "${DEPLOY_PORT:-22}" \
             -o BatchMode=yes -o StrictHostKeyChecking=yes \
             -o ServerAliveInterval=30 -o ServerAliveCountMax=30 \
             "$DEPLOY_USER@$DEPLOY_HOST" \
-            "IMAGE_REF='$image' APP_DIR='$DEPLOY_APP_DIR' SYNC_NODE2='$SYNC_NODE2' RUNNER_SCRIPT_B64='$RUNNER_SCRIPT_B64' bash -s" \
+            "IMAGE_REF='$image' APP_DIR='$DEPLOY_APP_DIR' SYNC_NODE2='$SYNC_NODE2' DEPLOY_SCRIPT_SRC='$DEPLOY_SCRIPT_FILE' RUNNER_SCRIPT_B64='$RUNNER_SCRIPT_B64' bash -s" \
             < deploy/scripts/node2-sync.sh
 
       - name: Deploy to node-2 (self-hosted runner)
@@ -1047,4 +1055,5 @@ jobs:
           fi
           IMAGE_REF="$image" APP_DIR="$DEPLOY_APP_DIR" SYNC_NODE2="$SYNC_NODE2" \
             RUNNER_SCRIPT_SRC="$PWD/deploy/scripts/update-runner.sh" \
+            DEPLOY_SCRIPT_SRC="$PWD/deploy/scripts/vm-deploy.sh" \
             bash deploy/scripts/node2-sync.sh
