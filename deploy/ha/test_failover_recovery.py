@@ -109,5 +109,32 @@ class RecoveringNodeTests(unittest.TestCase):
         ensure.assert_called_once_with(True)
 
 
+class StorageGateTests(unittest.TestCase):
+    def test_api_is_not_started_on_unmounted_storage(self) -> None:
+        # Пустой локальный каталог вместо общего тома не должен выглядеть как
+        # рабочий узел: API поднимается только после перемонтирования.
+        with (
+            patch.object(failover, "START_SERVICES", True),
+            patch.object(failover, "REQUIRE_STORAGE", True),
+            patch.object(failover, "STORAGE_PATH", "/var/lib/webnestdev/data"),
+            patch.object(failover, "storage_probe", return_value=False),
+            patch.object(failover.postgres, "is_in_recovery", return_value=False),
+            patch.object(failover, "start_services") as start,
+            patch.object(failover, "container_running", return_value=False),
+        ):
+            failover.ensure_local_services({"services_started": False})
+
+        start.assert_not_called()
+
+    def test_storage_probe_rejects_dangling_mount(self) -> None:
+        # Мёртвый FUSE-моунт остаётся mountpoint, но читать его нельзя.
+        with (
+            patch.object(failover.os.path, "ismount", return_value=True),
+            patch.object(failover.subprocess, "run", return_value=type("R", (), {"stdout": "fuse.glusterfs\n"})()),
+            patch.object(failover.os, "scandir", side_effect=OSError(107, "Transport endpoint is not connected")),
+        ):
+            self.assertFalse(failover.storage_probe("/var/lib/webnestdev/data"))
+
+
 if __name__ == "__main__":
     unittest.main()

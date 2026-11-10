@@ -1,6 +1,6 @@
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { timingSafeEqual } from "node:crypto";
-import { mkdir, stat } from "node:fs/promises";
+import { chmod, chown, mkdir, stat } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
 import { runDockerSandbox } from "../docker-sandbox.js";
@@ -17,6 +17,7 @@ import {
   type RunnerStatus,
   type RunnerWorkspaceResult,
 } from "./protocol.js";
+import { SANDBOX_GID, SANDBOX_UID } from "../sandbox/permissions.js";
 import { assertDockerArgsAllowed, assertExtraMountsAllowed, RunnerPolicyError } from "./policy.js";
 import { runnerStatus } from "./status.js";
 import { createPreviewRelayManager, type PreviewRelayManager } from "./preview-relay.js";
@@ -234,6 +235,12 @@ export function createRunnerServer(deps: RunnerDeps) {
         const body = runnerWorkspaceSchema.parse(await readJson(request, 1_000));
         const root = sandboxRootPath(body.projectId);
         await mkdir(root, { recursive: true });
+        // Проект наполняют контейнеры команд от uid 1000, а runner работает от root. Если
+        // оставить каталог root:root, первый же терминал на этой ВМ падает с
+        // 'Permission denied', а API на другой ВМ может не успеть исправить права
+        // (первый chmod по свежему каталогу Gluster иногда возвращает EPERM).
+        await chown(root, SANDBOX_UID, SANDBOX_GID).catch(() => undefined);
+        await chmod(root, 0o775).catch(() => undefined);
         const info = await stat(root);
         sendJson(response, 200, {
           ok: true,

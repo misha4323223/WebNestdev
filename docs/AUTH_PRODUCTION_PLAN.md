@@ -26,14 +26,13 @@
 - Put production routing for frontend, `/api` and `/ws` at the infrastructure layer.
 - Configure Yandex Cloud environment variables and domains.
 
-## Phone login (Russian numbers)
+## Phone login (Russian numbers) — withdrawn
 
-> **Отключено 08.11.2026.** Вход по SMS — платный канал, поэтому он выключен по умолчанию:
-> без `PHONE_AUTH_ENABLED=1` маршруты `/api/auth/phone/*` не создают коды, не создают
-> телефонные аккаунты и не отправляют SMS, а `start`/`verify` отвечают `403` с кодом
-> `PHONE_AUTH_DISABLED`. Код, провайдеры и тесты сохранены для будущего; включение —
-> `PHONE_AUTH_ENABLED=1` плюс ключ провайдера (см. ниже). Всё дальнейшее описание относится
-> к включённому режиму.
+> **Вход по номеру отменён навсегда (10.11.2026).** Это не временное отключение и не future
+> work: `PHONE_AUTH_ENABLED` не включать, SMS-провайдеров не подключать, код и тесты не
+> развивать. Маршруты `/api/auth/phone/*` остаются выключенными и отвечают `403`; телефонный
+> вход не должен появляться в интерфейсе. Всё дальнейшее описание — архив старой реализации,
+> а не план.
 
 When enabled, the sign-in screen offers **Yandex ID** (see below) and **sign-in by phone
 number**, which sends a one-time code by SMS. The e-mail/password endpoints still exist for
@@ -108,23 +107,17 @@ than generic failures:**
   **verified test numbers** receive messages (`SMSSandboxNumberNotVerified`). To reach
   arbitrary numbers you must register an **individual sender** — legal entities or ИП
   only, requested via support, roughly 10 166 ₽/month — and then **exit the sandbox** from
-  the console. That registration takes time (and SMS templates take 2–4 weeks), so plan it
-  before launch; until then the phone login works end-to-end against sandbox numbers.
+  the console. This is historical: phone login is withdrawn and no sender registration is
+  planned.
 
 `Transactional` is sent as the SMS type, which is the correct type for a one-time code
 once a matching template is registered; without a template the message bills as
 promotional.
 
-### Demo number (sign-in without SMS)
+### Demo number (legacy, not used)
 
-When phone sign-in is enabled, the phone form sits on the sign-in screen next to Yandex ID,
-and a **demo number** lets the phone flow be used before an SMS provider exists. It defaults to `+7 999 000-00-00` and is let straight in — no code, no
-SMS, an ordinary session. It follows the same convention as the demo e-mail account:
-enabled outside production, opt-in in production via `WEBNESTDEV_DEMO_PHONE_ENABLED=1`,
-and off with `WEBNESTDEV_DEMO_PHONE_ENABLED=0`. The number is configurable with
-`WEBNESTDEV_DEMO_PHONE`. It is rate limited like the rest of the flow, just generously.
-The sign-in screen shows no provider or demo notes — the number is entered like any
-other; `GET /api/auth/phone/status` still reports it for API clients.
+The old demo-number flow is inactive and must not be re-enabled; it is kept only as
+historical code. No phone form is shown on the sign-in screen.
 
 ### Test mode
 
@@ -136,7 +129,7 @@ is in test mode.
 
 ## Yandex ID sign-in
 
-The sign-in screen offers **«Войти через Яндекс ID»**; the phone-code form appears only when phone login is enabled.
+The sign-in screen offers **«Войти через Яндекс ID»**; the phone-code form is not shown because phone login is withdrawn.
 It is a separate OAuth flow on the server (`/api/auth/yandex/start` and the shared
 `/api/yandex/callback`), and it creates or opens an ordinary NestDev account:
 
@@ -148,7 +141,7 @@ It is a separate OAuth flow on the server (`/api/auth/yandex/start` and the shar
   identity and shown in the profile, but it **does not merge accounts**: e-mail/password
   registration never verifies the address, so linking by e-mail would let whoever
   pre-registered a victim's address take over the account when the victim signs in with
-  Yandex. Explicit account linking (phone + Yandex) is a separate future flow.
+  Yandex. Cross-provider account linking is not planned.
 - The callback path is the same `/api/yandex/callback` the Cloud connector already uses,
   so an existing Yandex app registration keeps working. The two flows are told apart by
   a short-lived `webnestdev_yandex_login` cookie: sign-in is public, the connector still
@@ -241,8 +234,8 @@ These are identity providers, not SMS gateways, and they change what the user ha
 - **Telegram / MAX / Sber ID** — usable as additional identity buttons, subject to the
   same "login through their flow" caveat.
 
-VK ID and Yandex ID are now implemented as such additional buttons; the SMS-code login
-stays the passwordless phone option.
+VK ID and Yandex ID are now implemented as such additional buttons. SMS-code login is
+withdrawn and is not an option.
 
 ## Phase 5 — Security hardening
 - CSRF protection where required by the final cookie architecture.
@@ -253,16 +246,13 @@ stays the passwordless phone option.
 
 ## Current milestone
 
-Phase 1 is implemented locally, plus passwordless **phone login for Russian numbers**
-(currently disabled by default — see the note above), **Yandex ID sign-in** and
-**VK ID sign-in** (see above). All open the same kind of local
-user: a social sign-in needs no SMS, and a phone sign-in needs no OAuth app. This is
-independent of Yandex Cloud access — see the table above. Phone login runs in test mode
-until one of the SMS provider blocks is filled in; Yandex ID needs `YANDEX_CLIENT_ID`
-and `YANDEX_CLIENT_SECRET`, VK ID needs `VK_CLIENT_ID` (and optionally
-`VK_SERVICE_TOKEN`); the e-mail/password flow needs no external service.
+Phase 1 is implemented locally with **Yandex ID sign-in** and **VK ID sign-in** (see
+above), plus the e-mail/password flow. Phone login is withdrawn and is not part of the
+current milestone. Yandex ID needs `YANDEX_CLIENT_ID` and `YANDEX_CLIENT_SECRET`, VK ID
+needs `VK_CLIENT_ID` (and optionally `VK_SERVICE_TOKEN`); the e-mail/password flow needs
+no external service.
 
-Phone login is covered by tests:
+Legacy phone-login tests remain only as inactive code:
 
 - `server/src/auth/phone-store.test.ts` — number normalisation, code hashing, cooldown,
   window limit, single-use and expiry.

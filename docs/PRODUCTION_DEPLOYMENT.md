@@ -2,7 +2,7 @@
 
 ## Where production runs
 
-The production VM and the Docker containers on it live in **MWS (МТС Web Services, `mws.ru`)**, not in Yandex Cloud. The VM runs Docker Compose, the `webnestdev-server` container, Postgres and the sandbox/preview containers started through the mounted Docker socket. Yandex Cloud is used only for optional integrations (Yandex Search API, Notification Service/SMS, Yandex ID sign-in) and for the object-storage keys a project may need — not for hosting. Keep this in mind when changing deploy scripts, firewall rules, disk or backup settings: they act on an MWS VM.
+The production VM and the Docker containers on it live in **MWS (МТС Web Services, `mws.ru`)**, not in Yandex Cloud. The VM runs Docker Compose, the `webnestdev-server` container, Postgres and the sandbox/preview containers started through the mounted Docker socket. Yandex Cloud is used only for optional integrations (Yandex Search API, Yandex ID sign-in, Postbox) and for the object-storage keys a project may need — not for hosting. Keep this in mind when changing deploy scripts, firewall rules, disk or backup settings: they act on an MWS VM.
 
 ## Runtime topology
 
@@ -39,56 +39,19 @@ Caddy / nginx
 - `DATABASE_URL=postgres://...` when `WEBNESTDEV_STORAGE=postgres`
 - An unknown `WEBNESTDEV_STORAGE` value (including the old `ydb`) now stops startup instead of silently writing JSON files.
 - GitHub OAuth URLs must use HTTPS when OAuth credentials are enabled.
-- **Phone login is disabled by default (08.11.2026).** Without `PHONE_AUTH_ENABLED=1` the
-  `/api/auth/phone/*` routes answer `403`, no code is created and no SMS is sent, even when
-  provider keys are present. Set the flag only when phone sign-in should return.
-- When phone login is enabled, it sends real SMS as soon as one Russian provider block is set
-  **and is passed into the container**: Compose forwards only the variables named in `docker-compose.yml`,
-  so a key that sits in `.env` but is not listed there reaches nothing — the server stays
-  in test mode and only logs the code, which looks exactly like "SMS stopped arriving".
-  All the provider keys are passed through now; fill the one you use: Yandex Cloud
-  Notification Service (`YANDEX_SA_KEY` / `YANDEX_SA_KEY_FILE` + `YANDEX_CLOUD_ID`),
-  otherwise `SMS_RU_API_ID`, or `SMSC_LOGIN`+`SMSC_PASSWORD`, or `EXOLVE_API_KEY`, or
-  `SMSAERO_EMAIL`+`SMSAERO_API_KEY`; sender name via `SMS_SENDER` or `YANDEX_SMS_SENDER`.
-- **For Yandex, use the service account key, not a ready-made token.** An IAM token lives
-  about 12 hours: SMS work right after the setup and then every send fails with 401. The
-  key is exchanged for a fresh token by the server itself, and it wins even when a stale
-  `YANDEX_NOTIFY_IAM_TOKEN` is still set. Put the key file in `/var/lib/webnestdev/secrets`
-  (mounted read-only into the container) and set
-  `YANDEX_SA_KEY_FILE=/var/lib/webnestdev/secrets/yandex-sa-key.json`. The path in that
-  variable is a path **inside the server container**, so `/app/yandex-sa-key.json` is a value
-  that cannot work: the image never contains the key, and the wrong value survives
-  `make-env-vm.sh` because it is carried along as an SMS key. When the configured path does not
-  open, the key is looked up by name in the locations that usually hold it — the mounted
-  secrets directory (`WEBNESTDEV_SECRETS_DIR`, otherwise `/var/lib/webnestdev/secrets`),
-  `/run/secrets`, `./secrets` and `./keys` — and `GET /api/health` reports `sms.ready` with
-  `sms.keyFile` (the path it was actually read from) and a `sms.note` when that differs from
-  the variable. `npm run sms:check --workspace=server` prints the same and answers
-  `SMS-CHECK=key-unreadable` instead of `configured` when no path opens. The deploy runs that
-  check itself after every rollout (`verify_sms` in
-  [`deploy/scripts/vm-deploy.sh`](../deploy/scripts/vm-deploy.sh)) and prints the verdict as
-  `[deploy] SMS: …`, so a key path that cannot work is visible in the Actions log — without a
-  shell on the VM, and without waiting for the first user who cannot sign in.
-- With no provider the server stays in test mode and logs the code — safe for staging, not
-  for real users. Keep `WEBNESTDEV_SMS_TEST_MODE` unset in production. Note the Yandex
-  sender registration lead time (see [AUTH_PRODUCTION_PLAN.md](AUTH_PRODUCTION_PLAN.md)).
-
-When SMS do not arrive, look in this order: `npm run sms:check --workspace=server` — one command
-that names the active provider, the credential kind and (for Yandex) the channel state read from
-CNS without sending anything, so «канал в песочнице», «нет прав» и «ключ не дошёл до контейнера»
-различаются между собой; добавьте `-- --to <номер>`, чтобы отправить настоящее сообщение и
-увидеть отказ провайдера целиком. Дальше: `curl -s localhost:8787/api/health` → `sms`
-shows the provider that is actually active and whether it authenticates with a `key` or a
-`token`; the sign-in screen itself prints the reason it got from the server (test mode,
-sandbox number, expired token); and `docker compose logs webnestdev-server` has the
-provider's own refusal — every failed send is logged with its cause.
+- **Phone/SMS login is permanently out of scope (10.11.2026).** `/api/auth/phone/*` remains
+  disabled; no SMS provider is needed and `PHONE_AUTH_ENABLED` must not be enabled. The legacy
+  `verify_sms` step may still print `SMS-CHECK=key-unreadable`; that is expected and is **not**
+  a deployment failure or a task. The Yandex service-account key remains useful for Postbox
+  mail, but its SMS readiness is no longer a launch criterion. See `AGENTS.md` for the product
+  decision; the old SMS details are archived in [AUTH_PRODUCTION_PLAN.md](AUTH_PRODUCTION_PLAN.md).
 
 The server intentionally fails fast in production when the allowed-origin list is missing or contains localhost.
 
 ## Ключи сервера: панель вместо правки .env
 
 Ключи самого сервиса — GitHub OAuth (`GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`), Yandex Cloud
-(`YANDEX_CLOUD_ID`, `YANDEX_FOLDER_ID`, `YANDEX_SA_KEY`), ключи SMS-провайдеров, модель платформы
+(`YANDEX_CLOUD_ID`, `YANDEX_FOLDER_ID`, `YANDEX_SA_KEY`), модель платформы
 (`PLATFORM_AI_*`), оплата (Robokassa) и почта платформы (`MAIL_*`, Yandex Cloud Postbox) — вводятся
 в панели: **Настройки → Ключи сервера**. Это ответ на вопрос «как
 прокинуть ключи на продакшен»: заходить на ВМ и править `.env` больше не нужно, и перезапуск тоже.
@@ -98,7 +61,7 @@ The server intentionally fails fast in production when the allowed-origin list i
   `WEBNESTDEV_ENCRYPTION_KEY`, что и подключения интеграций. В браузер значения не возвращаются:
   список показывает форму (`sk-…f3a2`, `строк: 23`) и источник (панель / `.env` / не задан).
 - Ключ из панели важнее переменной окружения и читается на каждый запрос, поэтому вход через
-  GitHub и отправка SMS начинают работать сразу после сохранения. Пустое поле возвращает ключ к
+  GitHub и почта начинают работать сразу после сохранения. Пустое поле возвращает ключ к
   значению из `.env` — «как было», без правки файла на ВМ.
 - **Кому открыта панель.** Только администратору, которого называют в окружении:
   `WEBNESTDEV_ADMIN_EMAILS=you@example.com` (через запятую) или `WEBNESTDEV_ADMIN_USER_IDS=…`.
@@ -177,16 +140,18 @@ and [`deploy/node2/docker-compose.override.yml`](../deploy/node2/docker-compose.
 The public address is separate from these internal addresses: `178.236.27.102` is the MWS
 external address `ea-webnestdev` attached to NLB `webnestdev-nlb-main`, with Caddy on
 node-1 (`10.0.0.4`) and node-2 (`10.0.0.5`) as backends. Node-1's management address is
-`2.59.83.250` (`ea-webnestdev-admin`); node-2's is `2.59.80.174`. Management addresses must
-not be used in DNS.
+`2.59.83.250` (`ea-webnestdev-admin`). Node-2 has no stable external management address:
+its MWS NAT changes, so use `10.0.0.5` through the ProxyCommand on node-1, or read the current
+NAT from the MWS API when node-1 is down. Management addresses must not be used in DNS.
 
 Both failover directions were tested on 08.11.2026: with `node-1` off, node-2 completed fencing,
 promotion, API/Caddy startup and served `/api/ready=200`; with `node-2` off, node-1 did the same
 and served `https://nestdev.ru=200`. On 10.11.2026 the current HA code was installed on both
 nodes and the planned switchover was exercised in both directions (`node-1 → node-2 → node-1`),
-with rejoin and a cold start of node-2; it does not replace the destructive failover drill. This
-is not a full production HA yet: automatic failback is not implemented and there is no third
-witness/quorum. `node-2` is the second production node, currently powered off only because the
+with rejoin and a cold start of node-2. The destructive drill was repeated with the current code
+on 10.11.2026, but only with a temporary Gluster `quorum-type=none`: automatic storage-quorum
+and node-1 automount remain broken. This is not a full production HA yet: automatic failback is
+not implemented and there is no third witness/quorum. `node-2` is the second production node, currently powered off only because the
 pre-production HA setup is not launched yet and the VM costs money while it is on; its data and
 configuration are not test data. Ingress is the MWS NLB on the existing `178.236.27.102`, so DNS
 does not switch between VMs; with node-2 off only node-1 is a healthy backend until production HA
@@ -343,7 +308,7 @@ Agent commands and the live preview run in containers started by the server thro
 - Project directories are handed to the sandbox user, not just chmod-ed: the containers run as uid 1000. Before stage 2.2 the server wrote files as root, and the entrypoint still normalises ownership of legacy trees on the first start; after that the server also runs as 1000, so new files belong to the same user as the container. Files and directories are `chown`ed to 1000 (775/664, secrets 600); on a host where that is impossible, permissions fall back to 777/666 only so the container can still write. File ownership is what git checks: a repo whose `.git` belongs to root while git runs as 1000 answers `dubious ownership`, and writes to `.git/FETCH_HEAD` or `.git/index` fail with `Permission denied`. The `.git` tree is re-opened before every container command, and the command container carries `safe.directory=*` so a legacy root-owned repo is usable immediately. Vite caches under `node_modules` that were created by a non-container user are removed, since Vite cannot write into them and they are disposable.
 An installation that predates the host path keeps its project files in the `webnestdev-data` volume; move them once with [`deploy/scripts/migrate-sandboxes.sh`](../deploy/scripts/migrate-sandboxes.sh) (`SANDBOX_DIR=/var/lib/webnestdev/sandboxes bash migrate-sandboxes.sh` from the deployment directory), otherwise existing projects open empty. An **image deploy does this itself**: `vm-deploy.sh` copies the volume into `SANDBOX_DIR` when that directory is still empty and says so when it is not (`MIGRATE_SANDBOXES=0` disables it).
 - **Git inside the container works on a repo the server owns.** The worktree and `.git` belong to uid 1000 (the server chowns them), the agent's `git.commit` supplies the platform author (`NestDev Agent`) instead of requiring a `user.name` that project repos never had, and remote operations are not attempted from the container at all — `git.pull` runs in the server process with the connected token (see the `git.pull` tool), because the container has no network and no credentials.
-- **The sandbox image is the full Node 26 image, not `-slim`.** It is the environment for the agent's commands, `npm install` and the preview container, and the agent's git tools run `git` inside it. Node 26 is the platform's own LTS, and it matters on its own: projects declare `"engines": { "node": ">=24" }`, and npm 10 on Node 22 died mid-install with `Exit handler never called!` and `ENOTEMPTY`, leaving `node_modules` without `.bin`. `node:26-bookworm-slim` has no git at all, so «Работа с Git» answered `/bin/sh: 1: git: not found` (exit 127) while the panel's history kept working (it uses isomorphic-git in the server process). The full image is buildpack-deps based: it brings git, `make` and a C compiler, so native `npm install` and git-URL dependencies work too. It costs about 1 GB on disk instead of ~330 MB; the deploy pre-pulls it best-effort (`SANDBOX_IMAGE`, default in `server/src/sandbox/config.ts`), and a host that wants the small image back builds its own slim+git image and sets `SANDBOX_IMAGE` to it — the platform does not assume git exists and says so in the tool error instead of returning the shell's answer as repository state. The npm cache is pointed at `/workspace/node_modules/.cache/npm` rather than `$HOME/.npm`: `/tmp` is a 256 MB tmpfs and a few hundred packages overflow it, while the project disk does not (and `./node_modules/.cache` is already excluded from cold-tier archives). Dependency installation also has its own time limit: `NPM_INSTALL_TIMEOUT_MS` (default 10 minutes, clamped to 30) instead of the 120-second command limit, because a tree of a few hundred packages does not fit in two minutes. The same limit applies to the preview's automatic install, so `preview.start` and `npm.install` agree.
+- **The sandbox image is the full Node 26 image, not `-slim`.** It is the environment for the agent's commands, `npm install` and the preview container, and the agent's git tools run `git` inside it. Node 26 is the platform's own LTS, and it matters on its own: projects declare `"engines": { "node": ">=24" }`, and npm 10 on Node 22 died mid-install with `Exit handler never called!` and `ENOTEMPTY`, leaving `node_modules` without `.bin`. `node:26-bookworm-slim` has no git at all, so «Работа с Git» answered `/bin/sh: 1: git: not found` (exit 127) while the panel's history kept working (it uses isomorphic-git in the server process). The full image is buildpack-deps based: it brings git, `make` and a C compiler, so native `npm install` and git-URL dependencies work too. It costs about 1 GB on disk instead of ~330 MB; the deploy pre-pulls it best-effort (`SANDBOX_IMAGE`, default in `server/src/sandbox/config.ts`), and a host that wants the small image back builds its own slim+git image and sets `SANDBOX_IMAGE` to it — the platform does not assume git exists and says so in the tool error instead of returning the shell's answer as repository state. The npm cache is pointed at `/workspace/node_modules/.cache/npm` rather than `$HOME/.npm`: `/tmp` is a 256 MB tmpfs and a few hundred packages overflow it, while the project disk does not (`node_modules` is excluded from cold-tier archives and installed by the preview on demand). Dependency installation also has its own time limit: `NPM_INSTALL_TIMEOUT_MS` (default 10 minutes, clamped to 30) instead of the 120-second command limit, because a tree of a few hundred packages does not fit in two minutes. The same limit applies to the preview's automatic install, so `preview.start` and `npm.install` agree.
 - The two paths are kept apart in code, not assumed equal. The server writes projects into `WEBNESTDEV_SANDBOX_DIR`, while every container mount uses `WEBNESTDEV_SANDBOX_HOST_DIR` (same value by default) — so a sandbox directory that is *not* mounted at the same absolute path in the server container can still be made to work by naming its host path. A relative path is reported as a failure instead of being passed to `docker run -v`, where it would silently resolve against the host root.
 - **The path contract is checked, not trusted.** At startup the server writes a marker file into the sandbox directory and asks a container to read it back through the same mount a command uses; the result stays in `GET /api/health` under `sandbox.mount` and in the startup log. `docker compose exec -T webnestdev-server node server/dist/scripts/sandbox-selfcheck.js` runs the check on demand and prints both directories plus a machine-readable `SANDBOX-MOUNT=` verdict (`ok`, `mismatch`, `image`, `docker`, `disk`). This exists because the reverse of it is what happened in practice: the VM ran a `docker-compose.yml` older than the repository, the server fell back to its own default directory, the containers mounted a host path that was empty, and the symptom surfaced as an agent reporting that files had disappeared.
 
@@ -690,7 +655,7 @@ Repository secrets (Settings → Secrets and variables → Actions → **Secrets
 | `DEPLOY_SSH_KEY` | private key (the public one goes to `~/.ssh/authorized_keys`) |
 | `DEPLOY_PORT` | SSH port, optional, default 22 |
 | `DEPLOY_KNOWN_HOSTS` | optional; without it the runner runs `ssh-keyscan` |
-| `YANDEX_SA_KEY_JSON` | optional; the whole service account key file. The deploy writes it to `/var/lib/webnestdev/secrets/yandex-sa-key.json` (mode 600), points `YANDEX_SA_KEY_FILE` at it and removes the temporary copy — SMS login stops depending on someone logging into the VM to place the file |
+| `YANDEX_SA_KEY_JSON` | optional; the whole service account key file. The deploy writes it to `/var/lib/webnestdev/secrets/yandex-sa-key.json` (mode 600), points `YANDEX_SA_KEY_FILE` at it and removes the temporary copy, so Postbox and other Yandex integrations do not depend on someone placing the file by hand. Legacy SMS readiness is not a deploy criterion |
 | `YANDEX_SEARCH_API_KEY` | optional; API key of the service account with the `yc.search-api.execute` scope. This is the web search of paid plans (Yandex Search API v2), not the SMS key |
 | `YANDEX_SEARCH_FOLDER_ID` | optional; the folder where that account has the `search-api.webSearch.user` role. Empty — the server falls back to `YANDEX_FOLDER_ID` |
 | `TAVILY_API_KEY` | optional; reserve web search provider for paid plans, used when Yandex Search API is not configured or refused |
@@ -730,7 +695,7 @@ ssh-keyscan -H <DEPLOY_HOST>   # DEPLOY_KNOWN_HOSTS, optional
 
 `DEPLOY_HOST`, `DEPLOY_USER` and `DEPLOY_PORT` are the address, login and port you already use to reach the VM; `DEPLOY_KNOWN_HOSTS` is optional, without it the runner runs `ssh-keyscan` itself. With a self-hosted runner (`DEPLOY_RUNNER` set) the SSH secrets are not needed at all — the script runs on the VM itself. The `ci.yml` and `production-ci.yml` workflows need no secrets: `GITHUB_TOKEN` is issued automatically.
 
-Application secrets are **not** copied into GitHub, with three deliberate exceptions: the Yandex service account key may be set as the `YANDEX_SA_KEY_JSON` repository secret, the web-search keys (`YANDEX_SEARCH_API_KEY`, `YANDEX_SEARCH_FOLDER_ID`, `TAVILY_API_KEY`) may be set as repository secrets, and the cold-tier bucket pair (`PLATFORM_S3_ACCESS_KEY_ID`, `PLATFORM_S3_SECRET_ACCESS_KEY`, plus the endpoint/bucket/region variables) may be set the same way — the deploy writes them into `.env` on the VM, where Compose passes them to the server. The service account key is a multi-line file rather than a one-line value, and hand-placing it on the VM was exactly why SMS login kept failing (`YANDEX_SA_KEY_FILE=/app/yandex-sa-key.json` is a path inside the image). The deploy installs it and points the variable at the installed file; without the secret the step says so and changes nothing. Everything else — `WEBNESTDEV_ENCRYPTION_KEY`, OAuth client secrets, the other SMS keys and AI-provider keys — belongs to the server and stays only in the `.env` inside `DEPLOY_APP_DIR` on the VM: Compose reads them there, and the deploy workflow never sees them — it builds the image, runs the tests (they set the key they need themselves, no real secret required) and restarts the service. A second copy in Actions would add another place to leak and to rotate without giving the pipeline anything. The one GitHub-side credential the VM may need is a one-time `docker login ghcr.io` with a token that can `read:packages` — entered on the VM and kept there. Alternatively make the GHCR package public in the package settings, and no login is needed.
+Application secrets are **not** copied into GitHub, with three deliberate exceptions: the Yandex service account key may be set as the `YANDEX_SA_KEY_JSON` repository secret, the web-search keys (`YANDEX_SEARCH_API_KEY`, `YANDEX_SEARCH_FOLDER_ID`, `TAVILY_API_KEY`) may be set as repository secrets, and the cold-tier bucket pair (`PLATFORM_S3_ACCESS_KEY_ID`, `PLATFORM_S3_SECRET_ACCESS_KEY`, plus the endpoint/bucket/region variables) may be set the same way — the deploy writes them into `.env` on the VM, where Compose passes them to the server. The service account key is a multi-line file rather than a one-line value, and hand-placing it on the VM was a recurring failure (`YANDEX_SA_KEY_FILE=/app/yandex-sa-key.json` is a path inside the image). The deploy installs it and points the variable at the installed file; without the secret the step says so and changes nothing. It is used by Postbox and other Yandex integrations; legacy SMS keys are not part of the product scope. Everything else — `WEBNESTDEV_ENCRYPTION_KEY`, OAuth client secrets and AI-provider keys — belongs to the server and stays only in the `.env` inside `DEPLOY_APP_DIR` on the VM: Compose reads them there, and the deploy workflow never sees them — it builds the image, runs the tests (they set the key they need themselves, no real secret required) and restarts the service. A second copy in Actions would add another place to leak and to rotate without giving the pipeline anything. The one GitHub-side credential the VM may need is a one-time `docker login ghcr.io` with a token that can `read:packages` — entered on the VM and kept there. Alternatively make the GHCR package public in the package settings, and no login is needed.
 
 The `production` environment is created on the first run; add *Required reviewers* there to make every deploy wait for an approval.
 

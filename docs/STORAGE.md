@@ -97,12 +97,14 @@ filesystem replacement.
 
 What happens:
 
-1. A project directory is packed into `workspace.tar.gz` (sources, uploads, `.git`, `node_modules`,
-   build output — everything except derived caches) and uploaded to the bucket. Excluded on purpose:
-   `node_modules/.vite`, `node_modules/.cache`, `.next/cache`, `.turbo`, `coverage`, `*.tsbuildinfo`
-   and `.webnestdev/screenshots` — they are rebuilt or retaken on demand, while costing tens to
-   hundreds of megabytes and thousands of files. `node_modules` itself stays, so a wake-up needs no
-   install; `dist`/build output stays, so a static preview opens without a build.
+1. A project directory is packed into `workspace.tar.gz` (sources, uploads, `.git`, build output
+   and notes — everything except `node_modules` and derived caches) and uploaded to the bucket.
+   `node_modules` is excluded on purpose: dependencies are reproducible, and thousands of small
+   files on shared storage made a wake-up take tens of seconds. The preview installs them on its
+   first start (`preview/dependencies.ts`); the code archive itself is small and unpacks in about
+   two seconds. `dist`/build output stays, so a static preview opens without a build. Excluded too:
+   `.next/cache`, `.turbo`, `coverage`, `*.tsbuildinfo` and `.webnestdev/screenshots` — they are
+   rebuilt or retaken on demand, while costing tens to hundreds of megabytes and thousands of files.
 2. The server checks the stored object's size with `HEAD` and only then deletes the local directory.
    A failed upload or a short object leaves the project untouched.
 3. The marker remembers the key, the byte size, the owner and the node that packed the project.

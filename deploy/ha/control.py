@@ -83,6 +83,12 @@ def read() -> dict | None:
             return _read_unlocked()
     except FileNotFoundError:
         return None
+    except OSError as error:
+        # Stale FUSE-моунт общего тома отвечает 'Transport endpoint is not
+        # connected'/'Stale file handle'. Это не «команды нет»: вызывающий обязан
+        # приостановить обычный failover, иначе fencing/promotion пойдут при
+        # недоступном storage.
+        raise RuntimeError(f"общий том switchover недоступен: {error}") from error
 
 
 def write(command: dict) -> None:

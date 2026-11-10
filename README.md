@@ -207,7 +207,7 @@ The development UI runs on port 5173 and the API on port 8787. Vite proxies /api
 WebNestDev now uses a real local authentication flow before opening the workspace:
 
 - register with email and password;
-- passwordless **sign-in by phone number** for Russian numbers (`+7…`): an SMS one-time code, no password (disabled by default since 08.11.2026, see “Phone login and SMS delivery”);
+- sign-in with Yandex ID or VK ID; phone/SMS sign-in is not offered and is permanently out of scope;
 - a shared demo account `demo@webnestdev.local` / `demo1234` is seeded at startup, so a fresh install can be opened without registering (disabled in production unless `WEBNESTDEV_DEMO_USER=1`; change the credentials with `WEBNESTDEV_DEMO_EMAIL` / `WEBNESTDEV_DEMO_PASSWORD`);
 - login and logout;
 - HTTP-only session cookie;
@@ -218,17 +218,7 @@ Local account data is stored under .webnestdev/auth. This is a development stora
 
 ### Phone login and SMS delivery
 
-**Phone sign-in is off by default (08.11.2026).** SMS is a paid channel, so the server keeps the whole flow but does not use it: `/api/auth/phone/start` and `/verify` answer `403 PHONE_AUTH_DISABLED`, no code is created and no message is sent. The sign-in screen offers e-mail/password, Yandex ID and VK ID. The code, provider integrations and tests remain for the future — set `PHONE_AUTH_ENABLED=1` plus a provider key to turn phone login back on; `GET /api/auth/phone/status` reports `enabled:false` while it is off. The rest of this section describes the flow as it works when enabled.
-
-When phone sign-in is enabled, signing in by number requires an explicit consent to process the number: the screen keeps a checkbox, and the server refuses to generate a code (`400`, `consentRequired`) without it. Every accepted consent is appended to an audit log — `auth/phone-consents.json` locally, the `phone_consents` table on PostgreSQL — with the consent version, the purpose (sign-in or linking) and an HMAC of the address instead of the address itself. Set `WEBNESTDEV_PHONE_CONSENT_SECRET` (32+ characters) to key that hash in production; the encryption key is used when it is missing.
-
-When phone sign-in is enabled, a **demo number** signs in without any SMS, so the flow can be used before a provider is connected. It defaults to `+7 999 000-00-00`, is on outside production and opt-in in production through `WEBNESTDEV_DEMO_PHONE_ENABLED=1` (set the number with `WEBNESTDEV_DEMO_PHONE`, turn it off entirely with `WEBNESTDEV_DEMO_PHONE_ENABLED=0`). It is entered like any other number; the phone endpoint reports it for API clients, and the sign-in screen keeps no dev notes.
-
-Phone sign-in sends a code through a Russian SMS provider. The first choice is **Yandex Cloud Notification Service** (SNS-compatible HTTP API), configured with a service account key (`YANDEX_SA_KEY` / `YANDEX_SA_KEY_FILE`) plus `YANDEX_CLOUD_ID`; the service account needs the `editor` role on the folder. A ready `YANDEX_NOTIFY_IAM_TOKEN` also works but **expires in about 12 hours** — SMS arrive while it is fresh and then stop, so the key is what production should use (it is preferred even when a stale token is still set, because the server mints and caches a fresh token from it). Alternative providers are `SMS_RU_API_ID`, `SMSC_LOGIN`+`SMSC_PASSWORD`, `EXOLVE_API_KEY`, or `SMSAERO_EMAIL`+`SMSAERO_API_KEY`. With none set the server runs in test mode: the code is logged and (outside production) returned as `devCode`, so the whole flow can be tested before a provider exists.
-
-When no code arrives, the reason is not a guess: `GET /api/auth/phone/status` reports the active provider, whether it is in test mode, and whether it authenticates with a self-renewing `key` or an expiring `token`; the sign-in screen shows the server's explanation after the code is requested; every failed send is logged with the provider's own refusal; and `GET /api/health` → `sms` carries the same summary for the operator. In a container the keys must be listed in `docker-compose.yml` as well — Compose forwards only the variables named there.
-
-Yandex Cloud Notification Service delivers SMS only to Russian numbers, and until an individual sender is registered the channel sits in the sandbox, where only verified test numbers receive messages — see docs/AUTH_PRODUCTION_PLAN.md for the registration lead time.
+**Not supported and not planned.** Phone sign-in was disabled on 08.11.2026 and permanently removed from the product scope on 10.11.2026. `/api/auth/phone/*` remains disabled, no SMS is sent, and no SMS provider is required. The old implementation and tests are kept only as inactive legacy code; do not re-enable `PHONE_AUTH_ENABLED` or extend it.
 
 ### Which build is running
 

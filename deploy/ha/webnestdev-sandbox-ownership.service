@@ -1,0 +1,9 @@
+[Unit]
+Description=WebNestDev sandbox ownership reconciler
+Documentation=https://github.com/misha4323223/WebNestDev
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/webnestdev-sandbox-ownership
+# Рекурсивный обход дерева проекта на Gluster: запас на первый прогон по большому node_modules.
+TimeoutStartSec=300

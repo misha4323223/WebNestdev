@@ -34,6 +34,7 @@ if [ ! -r "$CONF/node2.env" ]; then
 fi
 
 bash "$SRC/pg_hba_probe.sh" 10.0.0.4
+RUNNER_CONTAINER=node2-runner bash "$SRC/install-storage-guard.sh"
 systemctl daemon-reload
 systemctl enable --now haproxy
 systemctl enable webnestdev-failover-node2.service

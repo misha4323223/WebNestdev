@@ -169,6 +169,12 @@ def ensure_local_services(state: dict) -> None:
     """
     if not START_SERVICES:
         return
+    # Пустой локальный каталог вместо общего тома выглядит как рабочая ВМ, но
+    # проекты и платформенные ключи в нём отсутствуют. Пока storage не готов,
+    # API не поднимаем: storage-guard и таймер перемонтируют том сами.
+    if REQUIRE_STORAGE and STORAGE_PATH and not storage_probe(STORAGE_PATH):
+        LOG.error("общий storage %s недоступен: API не поднимаю, чтобы не работать с пустыми каталогами", STORAGE_PATH)
+        return
     local_primary = local_primary_role()
     if local_primary is None:
         if not postgres.primary_reachable():
@@ -243,12 +249,38 @@ def wait_api(state: dict, timeout: float = 90.0) -> bool:
     return False
 
 
+def storage_probe(path: str, timeout: float = 5.0) -> bool:
+    """Общий том действительно смонтирован и отвечает.
+
+    `os.path.ismount` возвращает True и для мёртвого FUSE-моунта, который отдаёт
+    'Transport endpoint is not connected'. Dangling mount опаснее отсутствующего:
+    API стартует и видит пустые каталоги вместо данных проектов.
+    """
+    if not os.path.ismount(path):
+        return False
+    try:
+        result = subprocess.run(
+            ["findmnt", "-no", "FSTYPE", "--target", path],
+            capture_output=True, text=True, timeout=timeout, check=False,
+        )
+        if result.stdout.strip() != "fuse.glusterfs":
+            return False
+    except (OSError, subprocess.SubprocessError):
+        return False
+    try:
+        with os.scandir(path) as entries:
+            next(entries, None)
+    except OSError:
+        return False
+    return True
+
+
 def storage_ready() -> bool:
     if not STORAGE_PATH:
         return True
-    if os.path.ismount(STORAGE_PATH):
+    if storage_probe(STORAGE_PATH):
         return True
-    LOG.error("storage %s не смонтирован: promotion опасен, файлы проектов могут быть пустыми", STORAGE_PATH)
+    LOG.error("storage %s не смонтирован или не отвечает: promotion опасен, файлы проектов могут быть пустыми", STORAGE_PATH)
     return not REQUIRE_STORAGE
 
 

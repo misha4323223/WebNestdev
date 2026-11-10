@@ -1,6 +1,6 @@
 # Кластер: active-active API и Postgres primary/standby
 
-Статус: **двусторонний failover реализован и проверен на живой паре**, 08.11.2026. Проверены оба направления: `node-1 → node-2` и `node-2 → node-1`, включая PostgreSQL promotion, fencing через MWS, GlusterFS-хранилище, API/Caddy и DNS. 10.11.2026 дополнительно проверены плановый switchover в обе стороны, оба rejoin и холодный старт `node-2` с актуальным HA-кодом. Автоматического failback базы нет: вернувшийся узел пересоздаётся как standby отдельным rejoin. **Принятое production-решение: `node-2` постоянно включена, обе ВМ работают active-active для API/runner/preview; PostgreSQL остаётся один primary, второй — standby.** `node-2` — вторая production-нода; сейчас она выключена **только из-за стоимости** до запуска production-HA. Её данные и настройки не являются тестовыми. Детали, команды и результаты — в [HA_BIDIRECTIONAL_PLAN.md](HA_BIDIRECTIONAL_PLAN.md).
+Статус: **двусторонний failover реализован и проверен на живой паре**, 08.11.2026. Проверены оба направления: `node-1 → node-2` и `node-2 → node-1`, включая PostgreSQL promotion, fencing через MWS, GlusterFS-хранилище, API/Caddy и DNS. 10.11.2026 дополнительно проверены плановый switchover в обе стороны, оба rejoin и холодный старт `node-2` с актуальным HA-кодом; повторный destructive выполнен с временным `quorum-type=none` и выявил блокеры storage-quorum/automount, поэтому чистым прохождением не считается. Автоматического failback базы нет: вернувшийся узел пересоздаётся как standby отдельным rejoin. **Принятое production-решение: `node-2` постоянно включена, обе ВМ работают active-active для API/runner/preview; PostgreSQL остаётся один primary, второй — standby.** `node-2` — вторая production-нода; сейчас она выключена **только из-за стоимости** до запуска production-HA. Её данные и настройки не являются тестовыми. Детали, команды и результаты — в [HA_BIDIRECTIONAL_PLAN.md](HA_BIDIRECTIONAL_PLAN.md).
 
 Документ описывает, как превратить текущую одну ВМ в отказоустойчивый кластер из трёх машин,
 что уже готово в коде, чего не хватает и в каком порядке это проверять на двух ВМ. Это не
@@ -33,7 +33,7 @@ node-1  10.0.0.4  / 2.59.83.250 (ea-webnestdev-admin, management/SSH)
   API, Caddy, HAProxy :5432, GlusterFS brick, node1-runner
   системный PostgreSQL 17.11, кластер 17/main, порт 5433 — primary
 
-node-2  10.0.0.5  / 2.59.80.174 (внешний адрес для управления)
+node-2  10.0.0.5  / внешний NAT динамический; SSH через ProxyCommand на node-1
   power=OFF после проверки 10.11; HAProxy настроен на primary
   последнее состояние PostgreSQL — streaming standby от node-1 (после rejoin 10.11)
   GlusterFS brick и общие тома сохранены; node2-runner остановлен вместе с ВМ
@@ -44,8 +44,9 @@ NFS-сервер `node-1` и NFS-клиент `node-2` больше не исп�
 
 Все A-записи `nestdev.ru`, `www`, `host`, `*.host`, `*.preview` и `ha-test` указывают на
 `178.236.27.102`. Это адрес NLB `webnestdev-nlb-main`, а не конкретной ВМ; при failover
-DNS не меняется. `2.59.83.250` — management-адрес `node-1`, `2.59.80.174` — адрес
-`node-2`; в DNS их нет. Старый `2.59.82.143` освобождён MWS.
+DNS не меняется. `2.59.83.250` — management-адрес `node-1`; у `node-2` постоянного внешнего
+адреса нет, NAT MWS меняется, штатный SSH — `10.0.0.5` через ProxyCommand на `node-1`.
+В DNS management-адреса не входят. Старый `2.59.82.143` освобождён MWS.
 
 ### 0.1a. Как должны работать обе ВМ одновременно
 
@@ -93,8 +94,10 @@ DNS не меняется. `2.59.83.250` — management-адрес `node-1`, `2.
   свойство текущего стенда, а не проекта.
 
 Ingress уже готов: NLB `webnestdev-nlb-main` на постоянном адресе, оба target проверены.
-Осталось для production: witness/quorum, полный destructive failover drill, проверка
-quorum-переходов под нагрузкой и постоянное включение `node-2`.
+Осталось для production: witness/quorum, исправление storage-quorum и automount, **чистый**
+повторный destructive failover drill на текущем `deploy/ha` (10.11 прогон прошёл только с
+временным `quorum-type=none`), проверка quorum-переходов под нагрузкой и постоянное
+включение `node-2`.
 
 ### 0.2. Что проверено
 
@@ -293,7 +296,7 @@ production-запуска. `node-1`: 2 vCPU, 3886 МБ RAM, диск 48 ГБ; `n
 | Активные запуски проекта | `agent/active-runs.ts` (`Map`) | архиватор на другой реплике не увидит активность |
 | Лимит preview на аккаунт/хост | `preview/preview-limiter.ts` | лимит считается отдельно на каждой реплике |
 | OAuth/репозиторные состояния | `github/github-oauth-state.ts`, `repos/routes.ts` | callback может попасть на реплику, которая не начинала вход |
-| Телефонные коды | `auth/phone-store.ts` | код, отправленный на одной реплике, не принимается другой |
+| Телефонные коды | — | не актуально: вход по номеру и SMS отменены навсегда, общий store не нужен |
 | Алерты, реконсиляция, архиватор | `health/alerts.ts`, `hosting/reconcile.ts`, `storage/archive-scheduler.ts` | несколько реплик делают одну работу или шлют дубли |
 
 Часть этого можно закрыть sticky-маршрутизацией, но sticky не спасает при падении узла:
@@ -571,9 +574,8 @@ Fencing — обязательное условие автоматическог
    ослабление на время сбоя, а не постоянный режим.
 6. **✅ OAuth/репозиторные состояния.** GitHub, GitLab и Yandex используют общую таблицу
    `oauth_states`; PKCE-verifier GitVerse теперь едет в той же строке, а не в памяти процесса,
-   поэтому callback на второй реплике не теряет вход. Телефонные коды пока остаются в памяти:
-   вход по SMS в production выключен (`PHONE_AUTH_ENABLED=0`), до его включения нужен такой же
-   общий store.
+   поэтому callback на второй реплике не теряет вход. Телефонные коды не входят в scope:
+   вход по номеру и SMS отменены навсегда, общий store для них не нужен.
 7. **`DATA_DIR` и `SITES_DIR`.** Для теста — общий GlusterFS с `node-2`; для прода — выбранный
    storage. `HOSTING_SHARED_STORAGE=1` на всех репликах.
 8. **Runner на каждом узле.** API-реплика должна уметь выполнить проект, закреплённый за её
@@ -781,11 +783,12 @@ rejoin. Иначе это режим «ручной cutover со свежим д
 **Приёмка C1 на живой паре:** общий `DATA_DIR`/`SITES_DIR`/`SANDBOX_DIR` через GlusterFS,
 API/Caddy/broker на `node-2`, двусторонний PostgreSQL failover и DNS failover проверены
 08.11.2026; плановый switchover, оба rejoin, холодный старт и cross-replica preview —
-10.11.2026. Остались production-усиления: witness/quorum, полный destructive failover drill
+10.11.2026. Остались production-усиления: witness/quorum, исправление автоматического
+storage-quorum и automount, **чистый** destructive failover drill на текущем `deploy/ha`
 по [PRODUCTION_LAUNCH.md](PRODUCTION_LAUNCH.md) и постоянное включение `node-2`. Static-preview
 теперь пишется в общий реестр с `owner_address`; подробности —
-[PRODUCTION_STATE.md](PRODUCTION_STATE.md) §10. Телефонные коды входа всё ещё живут в памяти
-процесса; SMS-вход в production выключен, до его включения нужен такой же общий store.
+[PRODUCTION_STATE.md](PRODUCTION_STATE.md) §10. Телефонный вход и SMS отменены навсегда
+(10.11.2026), поэтому `phone-store` и общий store для кодов в оставшийся scope не входят.
 
 **Проверено локально (08.11.2026, после правок):** полный набор сервера — **1656/1656**;
 `tsc -p server/tsconfig.json --noEmit` и `tsc -b --noEmit` чисто. Тесты реестра, аренды,

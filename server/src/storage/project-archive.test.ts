@@ -98,7 +98,7 @@ test("архив уезжает в хранилище, локальная пап
   assert.equal(store.objects.size, 1);
 });
 
-test("в архив не едут кеши сборки и снимки, а исходники, dist и node_modules остаются", async () => {
+test("в архив не едут node_modules, кеши сборки и снимки, а исходники и dist остаются", async () => {
   const { projectId, userId, root } = await projectWithFiles();
   for (const dir of ["node_modules/.vite", "node_modules/.cache", ".next/cache", ".turbo", "coverage", ".webnestdev/screenshots", "dist"]) {
     await mkdir(path.join(root, dir), { recursive: true });
@@ -122,10 +122,10 @@ test("в архив не едут кеши сборки и снимки, а ис
   await rm(file, { force: true });
 
   const has = (suffix: string) => entries.some(entry => entry === "./" + suffix || entry.startsWith("./" + suffix + "/"));
-  for (const gone of ["node_modules/.vite", "node_modules/.cache", ".next/cache", ".turbo", "coverage", ".webnestdev/screenshots", "tsconfig.tsbuildinfo"]) {
+  for (const gone of ["node_modules", ".next/cache", ".turbo", "coverage", ".webnestdev/screenshots", "tsconfig.tsbuildinfo"]) {
     assert.equal(has(gone), false, "в архиве не должно быть " + gone);
   }
-  for (const kept of ["src/index.ts", "package.json", "dist/index.html", "node_modules/react.js", ".webnestdev/notes-1.md"]) {
+  for (const kept of ["src/index.ts", "package.json", "dist/index.html", ".webnestdev/notes-1.md"]) {
     assert.equal(has(kept), true, "в архиве должен остаться " + kept);
   }
 });
@@ -180,6 +180,11 @@ test("прерванная операция не теряет проект: жи
   // Сторожащий каталог распаковки не остаётся рядом с проектом.
   const siblings = await readdir(path.dirname(root));
   assert.deepEqual(siblings.filter(name => name.startsWith(".restore-")), []);
+  // Непустая прежняя папка не удалена, а отложена рядом: если на диске была более свежая
+  // работа, чем объект в бакете, её можно вернуть.
+  const backup = path.join(path.dirname(root), ".project-backup-" + projectId.replace(/[^A-Za-z0-9_-]/g, "_"));
+  assert.equal(await readFile(path.join(backup, ".git", "HEAD"), "utf8"), "ref: refs/heads/main\n");
+  assert.equal(await readFile(path.join(backup, "node_modules", "dep", "index.js"), "utf8"), "module.exports = 1;\n");
 });
 
 test("неудачная распаковка не трогает рабочую папку и оставляет отметку архива", async () => {

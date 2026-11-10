@@ -1,0 +1,16 @@
+[Unit]
+Description=WebNestDev shared Gluster storage mount guard
+Documentation=https://github.com/misha4323223/WebNestDev
+Wants=network-online.target glusterd.service
+After=network-online.target glusterd.service
+Before=docker.service
+ConditionPathExists=/etc/fstab
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/webnestdev-storage-ensure
+TimeoutStartSec=90
+RemainAfterExit=no
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,12 @@
+[Unit]
+Description=Re-check WebNestDev sandbox ownership
+Documentation=https://github.com/misha4323223/WebNestDev
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=60s
+AccuracySec=10s
+Unit=webnestdev-sandbox-ownership.service
+
+[Install]
+WantedBy=timers.target

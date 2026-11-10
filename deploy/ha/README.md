@@ -178,19 +178,47 @@ rejoin нужен, только если `node-1` снова должна ста
 До его появления запись через разделённую сеть должна блокироваться кворумом Gluster, а
 не «лечиться» повышением второго primary.
 
+**Исправлено и проверено 10.11.2026:**
+
+- `storage_quorum.desired()` снимает кворум (`none`) и на standby, как только MWS подтвердил
+  `power=OFF` peer'а. Раньше standby возвращал `None`, кворум оставался `auto`, и promotion
+  упирался в `no read subvols`. Если peer включён или MWS недоступен — остаётся `auto`.
+- `control.read()` превращает `Transport endpoint is not connected` в понятную ошибку и
+  приостанавливает failover, а `failover.storage_ready()` проверяет тип моунта и реальное
+  чтение каталога, а не только `ismount`.
+- `install-storage-guard.sh` ставит `webnestdev-storage.{service,timer}`: монтирование через
+  systemd-юниты (а не `mount(8)`), проверка чтения с `timeout`, а при мёртвом FUSE-моунте —
+  остановка держащих его контейнеров, перемонт и их запуск. При загрузке юнит идёт
+  `Before=docker.service`; в fstab добавлен `nofail`.
+- `standby.sh` больше не подавляет ошибку слота: проверяет, создаёт и падает явно. `.pgpass`
+  использует базу `*`, иначе проверка слота в `postgres` шла без пароля.
+- `webnestdev-sandbox-ownership.timer` теперь обходит дерево проекта рекурсивно (включая
+  `node_modules`) и возвращает чужим элементам uid/gid 1000. До этого лечился только верхний
+  уровень, и `npm install` падал с `EACCES ... unlink .../node_modules/...`, когда вложенные
+  каталоги оставались `root:root` от старых запусков сборки от root. На живой базе 10.11.2026
+  так исправлено 58 вложенных элементов в двух проектах. Ручной запуск на ВМ:
+  `sudo systemctl start webnestdev-sandbox-ownership.service`; из внешней админки —
+  `POST /api/admin/projects/:id/permissions` (появится в проде со следующей сборкой образа).
+
+Результат destructive-прогона: `node-1 → node-2` — quorum `none`, PG primary 15:00:43, API
+`200` 15:00:53 без ручного обхода кворума; `node-2 → node-1` — публичный `200` через **79 с**
+(RTO), RPO = 0 подтверждённых записей в обоих направлениях, оба rejoin — streaming standby
+со слотами, созданными `standby.sh`. Подробности — в
+[`../docs/PRODUCTION_STATE.md`](../docs/PRODUCTION_STATE.md) §12.
+
 ## Важно
 
 - Автоматического failback базы нет: роль возвращается только через rejoin + явное переключение.
   Failover в обе стороны автоматический, но возврат старого primary — ручной rejoin.
-- `node-2` — вторая production-нода, а не тестовая ВМ. После проверки 10.11.2026 она
-  выключена (`power=OFF`) только из-за стоимости до production-запуска. HAProxy, API/Caddy/runner,
-  guard и standby PostgreSQL на ней установлены и проверены; после production-решения она
-  работает постоянно.
+- `node-2` — вторая production-нода, а не тестовая ВМ. 10.11.2026 она оставлена включённой
+  по решению пользователя: HAProxy, API/Caddy/runner, guard и standby PostgreSQL на ней
+  установлены и проверены.
 - Пока нет третьего witness, внезапная потеря standby-ВМ при живом primary может оставить
   GlusterFS в quorum `auto` и заморозить запись до MWS-подтверждения её `power=OFF`.
   Для production с постоянной второй ВМ нужен witness/arbiter или fencing со стороны primary.
 - Один стабильный ingress — NLB `webnestdev-nlb-main` на **уже существующем** статическом
   адресе `ea-webnestdev` (`178.236.27.102`), на который смотрит REG.RU. Бэкенды — Caddy
   на `10.0.0.4` и `10.0.0.5`; health check TCP 443. DNS при failover не меняется.
-  У `node-1` management-адрес `2.59.83.250`, у `node-2` — `2.59.80.174`; в DNS их нет.
+  У `node-1` management-адрес `2.59.83.250`; у `node-2` постоянного внешнего нет — NAT MWS
+  меняется, штатный SSH идёт на `10.0.0.5` через ProxyCommand на `node-1`; в DNS их нет.
   В HA-контроллере стоит `DNS_ENABLED=0`, чтобы REG.RU не переключался на адрес ВМ.

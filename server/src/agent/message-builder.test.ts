@@ -125,9 +125,11 @@ test("системный промпт объясняет, когда звать 
   assert.match(SYSTEM_PROMPT, /never answer from memory as if it had searched/i);
 });
 
-test("публичная медиа-ссылка остаётся ссылкой на бакет", () => {
-  assert.match(SYSTEM_PROMPT, /public bucket URL/i);
-  assert.match(SYSTEM_PROMPT, /Do not download or copy that file into the project/i);
+test("вложение чата не становится ассетом проекта без просьбы", () => {
+  assert.match(SYSTEM_PROMPT, /CHAT ATTACHMENTS VS PROJECT ASSETS/i);
+  assert.match(SYSTEM_PROMPT, /Do not put its URL into source code just because the user sent it/i);
+  assert.match(SYSTEM_PROMPT, /download it into the project with net\.download/i);
+  assert.match(SYSTEM_PROMPT, /never leave a shipped page dependent on a chat attachment URL by accident/i);
 });
 
 test("an English request still gets English reasoning and answer", () => {

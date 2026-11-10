@@ -58,12 +58,9 @@ def _set(volume: str, value: str) -> bool:
     return True
 
 
-def desired(local_primary: bool, peer_reachable: bool) -> str | None:
+def desired(local_primary: bool, peer_reachable: bool) -> str:
     if peer_reachable:
         return "auto"
-    if not local_primary:
-        # Standby не пишет; оставляем защиту включённой.
-        return None
     try:
         power = str(mws.vm_state().get("power") or "").upper()
     except mws.MwsError as error:
@@ -71,7 +68,16 @@ def desired(local_primary: bool, peer_reachable: bool) -> str | None:
         return "auto"
     # Если peer включён, но не отвечает — это может быть сетевая изоляция.
     # Разрешать запись в одиночку в этом состоянии нельзя.
-    return "none" if power == "OFF" else "auto"
+    if power != "OFF":
+        return "auto"
+    # Peer подтверждённо выключен, второй brick недоступен не из-за сети.
+    # quorum снимается и на standby: иначе после promotion клиент Gluster
+    # получает 'Client-quorum is not met / no read subvols', проверка storage
+    # не проходит и узел не повышается. Пока узел standby, приложение в него
+    # не пишет, а второй копии нет — split-brain невозможен.
+    if not local_primary:
+        print("[storage-quorum] peer power=OFF: снимаю quorum, чтобы standby мог читать storage при promotion", flush=True)
+    return "none"
 
 
 def ensure(local_primary: bool, peer_reachable: bool) -> None:
@@ -88,7 +94,12 @@ def ensure(local_primary: bool, peer_reachable: bool) -> None:
     _last_check = now
     _last_desired = target
     for volume in VOLUMES:
-        if _current(volume) == target:
-            continue
-        if _set(volume, target):
-            print(f"[storage-quorum] {volume}: cluster.quorum-type={target}", flush=True)
+        try:
+            if _current(volume) == target:
+                continue
+            if _set(volume, target):
+                print(f"[storage-quorum] {volume}: cluster.quorum-type={target}", flush=True)
+        except (OSError, subprocess.SubprocessError) as error:
+            # gluster CLI может зависнуть на мёртвом моунте/сети. Это не повод
+            # ронять весь цикл failover: promotion решит storage_ready().
+            print(f"[storage-quorum] {volume}: ошибка gluster CLI: {error}", flush=True)

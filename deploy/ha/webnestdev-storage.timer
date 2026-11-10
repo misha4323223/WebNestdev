@@ -1,0 +1,12 @@
+[Unit]
+Description=Re-check WebNestDev Gluster mounts
+Documentation=https://github.com/misha4323223/WebNestDev
+
+[Timer]
+OnBootSec=15s
+OnUnitActiveSec=30s
+AccuracySec=5s
+Unit=webnestdev-storage.service
+
+[Install]
+WantedBy=timers.target

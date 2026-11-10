@@ -5,6 +5,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { nodeId } from "../nodes/identity.js";
 import { sandboxRootPath } from "../sandbox/config.js";
+import { SANDBOX_GID, SANDBOX_UID } from "../sandbox/permissions.js";
 import { recordStorageMutation } from "../account/storage-quota.js";
 import { objectStoreConfigFromEnv, projectArchiveKey, s3ObjectStore, type ObjectStore } from "./object-store.js";
 import {
@@ -31,9 +32,10 @@ import { restoreStagingPrefix, storageTempDir } from "./temp-paths.js";
  * Холодный ярус проектов: рабочая папка уезжает в S3-совместимый бакет и освобождает диск ВМ.
  *
  * Что здесь важно и почему так:
- * - архивируется весь каталог проекта (`tar.gz`), включая `node_modules` и `.git`: распаковка
- *   должна вернуть проект ровно в то состояние, в котором его оставили, а не «исходники без
- *   зависимостей»;
+ * - архивируется каталог проекта (`tar.gz`) с исходниками, `.git`, `dist` и заметками, но без
+ *   `node_modules`: это воспроизводимые зависимости, а тысячи мелких файлов на общем storage
+ *   растягивают распаковку на десятки секунд. Первый запуск превью ставит их сам
+ *   (`preview/dependencies.ts`), поэтому архив остаётся источником кода, а не окружения;
  * - локальная копия удаляется только после того, как хранилище подтвердило размер объекта
  *   (`head`): иначе сбой сети на последнем шаге стоил бы пользователю проекта;
  * - распаковка идёт сначала в сторожащий каталог рядом с песочницами и только целиком заменяет
@@ -69,6 +71,16 @@ async function tempFile(extension: string) {
  * песочницами — на той же файловой системе, иначе `rename` был бы копированием, — и начинается
  * с точки, чтобы не выглядеть проектом. Удаляется в `finally` при любом исходе.
  */
+/**
+ * Куда уезжает рабочая папка перед заменой восстановленной. Сосед проекта на том же Gluster:
+ * `rename` дешёвый и атомарный, копирование не нужно. На проект держится не больше одной копии —
+ * следующее восстановление заменяет её.
+ */
+function restoreBackupDir(projectId: string) {
+  const safe = projectId.replace(/[^A-Za-z0-9_-]/g, "_");
+  return path.join(path.dirname(sandboxRootPath(projectId)), ".project-backup-" + safe);
+}
+
 function restoreStagingDir(projectId: string) {
   const safe = projectId.replace(/[^A-Za-z0-9_-]/g, "_");
   // Узел в имени каталога: стартовая уборка одной реплики не имеет права трогать распаковку
@@ -215,14 +227,15 @@ async function refreshSize(projectId: string, userId: string) {
 }
 
 /**
- * Что не едет в архив: производные кеши сборки и снимки проверки. Оба восстанавливаются сами —
- * кеш пересобирается, снимок делается заново, — но занимают десятки-сотни мегабайт и тысячи
- * файлов, а значит удлиняют и упаковку, и распаковку при пробуждении. `node_modules`, `.git` и
- * `dist` остаются: без них пробуждение стало бы установкой пакетов, а статическое превью — сборкой.
+ * Что не едет в архив. `node_modules` не сохраняется целиком: это воспроизводимые пакеты, а не
+ * данные пользователя, и на общем storage распаковка тысяч мелких файлов занимает десятки секунд.
+ * При первом запуске превью `preview/dependencies.ts` выполнит `npm install`, поэтому проект
+ * возвращается кодом, а окружение собирается на месте. Остальные исключения — производные кеши и
+ * снимки: они пересоздаются сами, но стоят мегабайты и тысячи файлов. `.git`, `dist` и заметки
+ * остаются: без них пропала бы история, а статическое превью пришлось бы собирать заново.
  */
 export const ARCHIVE_EXCLUDES = [
-  "./node_modules/.vite",
-  "./node_modules/.cache",
+  "node_modules",
   "./.next/cache",
   "./.turbo",
   "./coverage",
@@ -351,12 +364,40 @@ export async function restoreProject(
       const staging = restoreStagingDir(projectId);
       try {
         await mkdir(staging, { recursive: true });
-        await exec("tar", ["-xzf", file, "-C", staging, "--no-same-owner"], { timeout: TAR_TIMEOUT_MS, maxBuffer: 1024 * 1024 });
+        // API работает от root, поэтому владельца назначаем сразу при распаковке. Отдельный
+        // `chown -R` после неё — это второй проход по тысячам файлов (на Gluster ~8 с на проект),
+        // и именно он делал restore заметно дольше. `--owner/--group` выставляют uid/gid в момент
+        // создания, а `--no-same-owner` не даёт архиву вернуть чужие права.
+        // Назначать uid/gid может только root; локальный запуск и тесты без root
+        // распаковывают от своего пользователя — там `--owner` только уронил бы tar.
+        const ownership =
+          process.getuid?.() === 0
+            ? ["--owner=" + SANDBOX_UID, "--group=" + SANDBOX_GID]
+            : [];
+        await exec(
+          "tar",
+          ["-xzf", file, "-C", staging, "--no-same-owner", ...ownership],
+          { timeout: TAR_TIMEOUT_MS, maxBuffer: 1024 * 1024 },
+        );
         // Удаление могло прийти и во время распаковки: подменять рабочую папку уже нельзя.
         if (options.shouldAbort?.()) throw new Error("Восстановление отменено: проект удалён");
-        // Старая копия убирается только после того, как новая распакована целиком: обрыв на
-        // любом шаге оставляет либо прежнюю папку, либо отметку архива — и распаковка повторится.
-        await rm(root, { recursive: true, force: true });
+        // Прежняя папка не удаляется, а откладывается рядом. Живая отметка архива при непустой
+        // папке — это не только «остатки после сбоя»: так выглядит рассинхрон, когда свежая
+        // работа лежит на диске, а в бакете старый объект (например, после смены базы или
+        // нескольких реплик). Удалять её молча нельзя: восстановление — не повод терять код.
+        if (leftovers.length) {
+          const backup = restoreBackupDir(projectId);
+          await rm(backup, { recursive: true, force: true }).catch(() => undefined);
+          await rename(root, backup).catch(error => {
+            // Папку могли удалить между readdir и rename — сохранять нечего, это не ошибка.
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          });
+          console.log("[storage] проект " + projectId + ": прежняя папка сохранена в " + backup);
+        } else {
+          // Старая копия убирается только после того, как новая распакована целиком: обрыв на
+          // любом шаге оставляет либо прежнюю папку, либо отметку архива — и распаковка повторится.
+          await rm(root, { recursive: true, force: true });
+        }
         await rename(staging, root);
       } finally {
         await rm(staging, { recursive: true, force: true }).catch(() => undefined);

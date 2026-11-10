@@ -23,6 +23,7 @@ for file in mws.env replication.env; do
 done
 
 bash "$SRC/pg_hba_probe.sh" 10.0.0.5
+RUNNER_CONTAINER=node1-runner bash "$SRC/install-storage-guard.sh"
 systemctl daemon-reload
 systemctl enable --now haproxy
 systemctl enable webnestdev-failover.service

@@ -1,9 +1,11 @@
 # Двусторонний failover node-1 ↔ node-2
 
-Статус: **реализовано и проверено в обе стороны**, 08.11.2026; 10.11.2026 дополнительно
-проверены плановый switchover `node-1 → node-2 → node-1`, оба rejoin и холодный старт
-`node-2` с текущим HA-кодом. Полный destructive-прогон с аварийным выключением каждой ВМ
-остаётся обязательным перед production-запуском (см. [PRODUCTION_LAUNCH.md](PRODUCTION_LAUNCH.md)).
+Статус: **аварийный failover проверен в обе стороны 08.11.2026**, но на предыдущей версии
+HA-скриптов; 10.11.2026 дополнительно проверены плановый switchover `node-1 → node-2 →
+node-1`, оба rejoin и холодный старт `node-2` с текущим HA-кодом. Повторный destructive-прогон
+с аварийным выключением каждой ВМ **на текущем `deploy/ha`** выполнен 10.11.2026, но
+**с временным `quorum-type=none`**: обнаружены блокеры автоматического storage-quorum и
+automount Gluster, поэтому чистым прохождением он не считается (см. §0.2).
 Документ описывает, как превратить односторонний сценарий `node-2 → node-1` в двусторонний.
 Это не замена [CLUSTER_HA_PLAN.md](CLUSTER_HA_PLAN.md): общая целевая схема и ограничения
 остаются там, здесь — конкретная работа, порядок, критерии приёмки и откат.
@@ -52,7 +54,70 @@
 Этот прогон не заменяет аварийный failover: MWS fencing и promotion после потери
 primary нужно проверить отдельно в полном прогоне.
 
-### 0.2. Инцидент 09.11.2026: node-2 поднялась как primary
+### 0.2. Повторный destructive-прогон 10.11.2026 (с тестовым обходом storage)
+
+Выполнен на текущем `deploy/ha` с реальным MWS `power=OFF`: `node-1` выключалась, затем
+возвращалась; после rejoin выключалась `node-2`. Оба контроллера на время смены роли были
+остановлены, `data`/`sandboxes`/`sites` временно переведены в `cluster.quorum-type=none`,
+потому что текущий код не размораживает Gluster после потери peer (дефект 1). При обоих
+включённых узлах `quorum-type` вернулся в `auto`; после финального выключения `node-2`
+контроллер оставил `none` как для единственного узла. Этот прогон подтверждает
+fencing/promotion/API/DB, но **не подтверждает автоматический переход storage-quorum
+из standby в primary**.
+
+| Событие | `node-1` → `node-2` | `node-2` → `node-1` |
+| --- | --- | --- |
+| Начало MWS power-off | 13:32:29 UTC | 13:53:06 UTC |
+| MWS подтвердил `power=OFF` | 13:33:43 | 13:54:34 |
+| Контроллер увидел потерю primary | 13:34:07 (`suspect`) | 13:54:53 (`suspect`) |
+| Fencing / promotion | 13:35:06 / 13:35:07 | 13:55:39 / 13:55:40 |
+| API `/api/ready=200` | 13:35:16 | 13:55:54 (краткий `502` в 13:55:48) |
+| Публичный `https://nestdev.ru` | `200` в 13:35:21 | `200` в 13:55:54 |
+
+RTO: **1 мин 38 с** и **1 мин 20 с** от подтверждённого `power=OFF`; от начала вызова
+MWS — **2 мин 52 с** и **2 мин 48 с**. RPO под записью не измерялся: перед выключением
+непрерывной нагрузки не было. После обоих promotion в базе было **18 проектов и 5 сайтов**,
+временная таблица принимала запись, `my-furniture.host.nestdev.ru` и
+`my-sayt.host.nestdev.ru` отвечали `200`.
+
+Возврат узлов:
+
+- `node-1` после promotion на `node-2` не запустила PostgreSQL (start-guard), API работала
+  через `node-2`; rejoin выполнен в 13:52:05, standby `t`, `streaming`, лаг нулевой.
+- `node-2` после promotion на `node-1` также не запустила PostgreSQL; rejoin выполнен
+  в 14:04:19, standby `t`, `streaming`, лаг нулевой.
+- Финальное состояние: `node-1` primary, `node-2` standby; при обоих включённых узлах
+  `quorum-type=auto`, после штатного выключения `node-2` — `none` (единственный узел),
+  публичный `ready=200`; MWS `power=OFF`.
+
+**Дефекты, найденные прогоном (не закрыты):**
+
+1. **Storage-quorum блокирует promotion из standby.** При `cluster.quorum-type=auto`,
+   выключенном peer и локальной роли standby клиент Gluster получает
+   `Client-quorum is not met` и `no read subvols`; чтение `HA_CONTROL_PATH` падает с
+   `Transport endpoint is not connected`. Контроллер уходит в повторяющуюся ошибку цикла
+   и не доходит до promotion. Когда локальный узел уже primary, `storage_quorum` умеет
+   выставить `none`; проблема именно в переходе standby → primary. Нужно переводить
+   quorum в `none` после MWS `power=OFF` **до** promotion, делать control path независимым
+   от общего storage и проверять реальное чтение mount, а не только `os.path.ismount`.
+2. **Gluster не монтируется автоматически на `node-1` после загрузки.** Юниты
+   `var-lib-webnestdev-{data,sandboxes,sites}.mount` переходят в `failed`; API стартует
+   с локальными пустыми каталогами. В прогоне помогли ручные `mount -a` и перезапуск
+   `broker/API/Caddy/runner`. Нужны зависимость от `glusterd` и повторное монтирование.
+3. **Rejoin не создаёт replication slot.** `standby.sh` молча игнорирует ошибку создания
+   слота, затем `pg_basebackup -S` падает с `replication slot "node1" does not exist`.
+   Слоты `node1` и `node2` пришлось создавать вручную на текущем primary.
+4. **Внешний management-IP `node-2` динамический.** MWS выдавал `111.88.128.56`, затем
+   `171.22.75.81`; адрес `2.59.80.174` из старых документов уже не актуален. Штатный
+   доступ — `10.0.0.5` через ProxyCommand на `node-1`, при выключенной `node-1` — текущий
+   NAT из MWS API или консоль MWS.
+
+> Пункты 1–3 закрыты 10.11.2026: quorum снимается на standby после MWS `power=OFF`,
+> storage-guard перемонтирует том и освобождает его от контейнеров, `standby.sh` создаёт
+> слот и больше не скрывает ошибку. Повторный destructive-прогон прошёл без ручного
+> вмешательства: RTO 79 с в реверсе, RPO 0. См. `PRODUCTION_STATE.md` §12.
+
+### 0.3. Инцидент 09.11.2026: node-2 поднялась как primary
 
 После включения `node-2` её PostgreSQL стартовал как **primary**, а не standby: data directory
 остался от прежнего promotion, `standby.signal` и корректный `primary_conninfo` отсутствовали,
@@ -86,7 +151,7 @@ data directory стартует как primary, guard сначала прове�
 | Storage | GlusterFS `sandboxes/sites/data`, replica 2 | GlusterFS `sandboxes/sites/data`, replica 2 |
 | HA-контроллер | `webnestdev-failover.service`, обе стороны | `webnestdev-failover-node2.service`, обе стороны |
 | MWS | цель fencing — `node-2` | MWS-имя первой ВМ — `webnestdev`, не `node-1` |
-| Ingress | NLB `webnestdev-nlb-main` на `178.236.27.102` | бэкенд NLB; management `2.59.80.174` |
+| Ingress | NLB `webnestdev-nlb-main` на `178.236.27.102` | бэкенд NLB; management — динамический NAT MWS, штатный SSH через `10.0.0.5` |
 | DNS | `nestdev.ru` и `*.preview` → `178.236.27.102` (NLB, не меняется) | DNS не трогаем |
 
 Тест 08.11.2026 подтвердил оба направления. **Production-инварианты:** `node-2` постоянно
@@ -143,7 +208,8 @@ node-1` прошёл; остаточный риск replica 2 без arbiter —
 
 `178.236.27.102` (`ea-webnestdev`) закреплён за NLB `webnestdev-nlb-main`; бэкенды —
 Caddy на `node-1` и `node-2`, health check TCP 443. У `node-1` management-адрес
-`2.59.83.250`, у `node-2` — `2.59.80.174`; в DNS они не входят.
+`2.59.83.250`; у `node-2` постоянного внешнего нет — NAT MWS меняется, штатный SSH идёт
+на `10.0.0.5` через ProxyCommand на `node-1`. В DNS management-адреса не входят.
 
 DNS на адрес конкретной ВМ не используется: при failover A-записи остаются на NLB.
 `DNS_ENABLED=0` в HA-контроллере это фиксирует.

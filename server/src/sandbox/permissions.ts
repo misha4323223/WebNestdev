@@ -15,8 +15,8 @@ import path from "node:path";
  * закрытым, об этом скажет сама команда.
  */
 
-const SANDBOX_UID = 1000;
-const SANDBOX_GID = 1000;
+export const SANDBOX_UID = 1000;
+export const SANDBOX_GID = 1000;
 
 /** Права, когда владелец — uid контейнера. */
 const DIR_MODE = 0o775;
@@ -31,6 +31,12 @@ const SECRET_FALLBACK = 0o644;
  * Каталоги, которые наполняет сам контейнер: обход по ним ничего не исправляет, но дорог.
  * `.git` пропускается здесь не потому, что контейнер его наполняет, а потому что его наполняет
  * **сервер** (isomorphic-git от root) — у него отдельный обход, см. openGitForSandbox.
+ *
+ * `node_modules` может достаться от старых сборок от root (или из распакованного архива): тогда
+ * `npm install` падает на `EACCES ... unlink .../node_modules/...`, потому что удалять файл можно
+ * только при праве записи на каталог. Такой случай лечит host-таймер
+ * `webnestdev-sandbox-ownership` (рекурсивный обход от root): проверять всё дерево пакетов перед
+ * каждой командой контейнера слишком дорого для Gluster.
  */
 const SKIP_DIRS = new Set(["node_modules", ".git", ".cache", ".vite", ".turbo", ".python"]);
 /** Потолок разового обхода: большое дерево лечится частично, но не тормозит первый вызов. */
@@ -65,7 +71,28 @@ async function open(target: string, mode: number, fallback: number, keepExec = f
     // которому агент выставил `chmod +x`, без этого перестал бы запускаться после первой же
     // команды (`. ./scripts/deploy.sh`).
     const exec = keepExec ? info.mode & 0o111 : 0;
-    await chmod(target, (owned ? mode : fallback) | exec);
+    const desired = (owned ? mode : fallback) | exec;
+    // Каталог, созданный runner на другой ВМ, виден здесь сразу, но первый chmod может
+    // вернуть EPERM, пока Gluster не освежил inode. Без повтора новый проект оставался
+    // root:root, и контейнер с uid 1000 не мог в него писать.
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await chmod(target, desired);
+        if (!owned) await own(target);
+        return;
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (attempt < 3 && (code === "EPERM" || code === "EACCES")) {
+          await new Promise(resolve => setTimeout(resolve, 150));
+          const retryInfo = await lstat(target).catch(() => null);
+          if (retryInfo && (retryInfo.uid !== SANDBOX_UID || (retryInfo.mode & 0o777) !== desired)) {
+            continue;
+          }
+          return;
+        }
+        throw error;
+      }
+    }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
       console.error(`[sandbox] не удалось выставить права на ${target}`, error);

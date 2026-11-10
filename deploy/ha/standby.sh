@@ -45,18 +45,39 @@ fi
 sudo -n install -d -o postgres -g postgres -m 700 "$PG_DATA"
 
 # .pgpass читается pg_basebackup и затем самим standby; пароль не попадает в argv.
+# База в строке — `*`: слот проверяется в PG_DB (по умолчанию postgres), а
+# pg_basebackup открывает служебную базу replication. С прежним `replication`
+# проверка слота шла без пароля и падала с 'no password supplied'.
 sudo -n install -d -o postgres -g postgres -m 700 "$(dirname "$PGPASSFILE")"
-printf '%s:%s:replication:%s:%s\n' "$SOURCE_HOST" "$SOURCE_PORT" "$PG_USER" "$PGPASSWORD" \
+printf '%s:%s:*:%s:%s\n' "$SOURCE_HOST" "$SOURCE_PORT" "$PG_USER" "$PGPASSWORD" \
   | sudo -n tee "$PGPASSFILE" >/dev/null
 sudo -n chown postgres:postgres "$PGPASSFILE"
 sudo -n chmod 600 "$PGPASSFILE"
 
+slot_exists() {
+  [ "$(sudo -n -u postgres env PGPASSFILE="$PGPASSFILE" \
+    psql -h "$SOURCE_HOST" -p "$SOURCE_PORT" -U "$PG_USER" -d "$PG_DB" -tAc \
+    "SELECT 1 FROM pg_replication_slots WHERE slot_name = '$SLOT'")" = "1" ]
+}
+
 if [ -n "$SLOT" ]; then
   log "ensuring replication slot $SLOT on $SOURCE_HOST:$SOURCE_PORT"
-  sudo -n -u postgres env PGPASSFILE="$PGPASSFILE" \
-    psql -h "$SOURCE_HOST" -p "$SOURCE_PORT" -U "$PG_USER" -d "$PG_DB" -v ON_ERROR_STOP=1 \
-    -c "SELECT pg_create_physical_replication_slot('$SLOT') WHERE NOT EXISTS (SELECT 1 FROM pg_replication_slots WHERE slot_name = '$SLOT');" \
-    >/dev/null 2>&1 || log "slot may already exist; continuing"
+  if ! slot_exists; then
+    # Ошибку создания больше не подавляем: без слота pg_basebackup -S падает
+    # с 'replication slot "$SLOT" does not exist', а невнятное сообщение
+    # заставляет искать причину на пустом месте.
+    if ! sudo -n -u postgres env PGPASSFILE="$PGPASSFILE" \
+      psql -h "$SOURCE_HOST" -p "$SOURCE_PORT" -U "$PG_USER" -d "$PG_DB" -v ON_ERROR_STOP=1 \
+      -c "SELECT pg_create_physical_replication_slot('$SLOT');" ; then
+      log "ERROR: не удалось создать replication slot $SLOT on $SOURCE_HOST:$SOURCE_PORT"
+      exit 3
+    fi
+  fi
+  if ! slot_exists; then
+    log "ERROR: replication slot $SLOT отсутствует на $SOURCE_HOST:$SOURCE_PORT после создания"
+    exit 3
+  fi
+  log "replication slot $SLOT is present on $SOURCE_HOST:$SOURCE_PORT"
 fi
 
 log "basebackup from $SOURCE_HOST:$SOURCE_PORT into $PG_DATA"

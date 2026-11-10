@@ -14,7 +14,7 @@ Replit и доступности российских API. Ниже — что �
 | Облака пользователя | Yandex Cloud (ключ + OAuth-вход), Timeweb Cloud, Cloud.ru, MWS, REG.RU Облако | `server/src/cloud/`, `src/features/integrations/cloud/` |
 | Домены | Проверка занятости (`domain.check`), кабинеты REG.RU / Beget / Timeweb Cloud (`domain.list`) и настройка DNS агентом с разрешения пользователя (`domain.request`, переключатель в карточке) | `server/src/domains/`, `server/src/tools/domain-tools.ts` |
 | Сервисы с ключом | 21 российский сервис: файлы (S3), почта, оплата, AI, карты, CRM — с проверкой ключа и переносом переменных в проект | `server/src/services/`, `src/features/integrations/services/` |
-| Вход | Email + пароль, телефон (Yandex Notify, SMS.RU, SMSC, Exolve, SMS Aero), Yandex ID | `server/src/auth/`, `src/features/auth/` |
+| Вход | Email + пароль, Yandex ID, VK ID; телефонный вход отменён навсегда | `server/src/auth/`, `src/features/auth/` |
 | AI агента | Платформенный провайдер (`PLATFORM_AI_*`) + свой ключ | `docs/PLATFORM_AI.md` |
 | Секреты | Зашифрованное хранилище + модалка `secrets.request` для ключей в проект | `server/src/secrets/` |
 
@@ -120,7 +120,7 @@ WebSocket/Socket.IO на инфраструктуре пользователя).
 1. **Почта самой платформы** — подключена: оплата, предупреждение о списании и обращения
    поддержки уходят через Yandex Cloud Postbox (ключи — группа «Почта (Yandex Cloud Postbox)»,
    шаги — `docs/MAIL.md`). Подтверждение адреса и восстановление пароля по почте сделаны
-   (этап 5.3); вход по SMS остаётся отдельным каналом.
+   (этап 5.3); вход по SMS не планируется — отменён навсегда 10.11.2026.
 2. **Yandex Metrika** — единственная крупная категория, которой нужен OAuth-вход.
 3. **Платёжный модуль платформы** — сделан на Робокассе: счёт, `ResultURL`, подписка, история
    платежей, автопродление, письмо об оплате и предупреждение о списании (`docs/ROBOKASSA.md`,
