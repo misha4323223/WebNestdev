@@ -383,7 +383,6 @@ jobs:
           # экранируется как значение, а не как текст: пробелы внутри одного аргумента и
           # случайная кавычка не превратятся в лишнюю команду. Содержимое проверяет уже
           # vm-deploy.sh — оно же решает, устанавливать ключ или пропустить шаг.
-          AGENT_SSH_PUBKEY=$(printf '%q' "${AGENT_SSH_PUBKEY:-}")
           # Файл сервисов едет на ВМ вместе со скриптом: выкатка образа раньше не касалась
           # compose, и ВМ молча оставалась со старым — без SANDBOX_DIR и монтирования песочниц.
           COMPOSE_B64=$(base64 -w0 docker-compose.yml)
@@ -400,10 +399,6 @@ jobs:
           # Установщик gVisor едет на ВМ вместе со скриптом: в image-режиме чекаут на ВМ может
           # быть старым, а установка нужна ровно та, что прошла тесты в этом коммите.
           RUNSC_SCRIPT_B64=$(base64 -w0 deploy/scripts/install-runsc.sh)
-          # Runner — отдельный контейнер вне compose, и выкатка его не касалась: сервис днями
-          # работал на новой сборке, а задачи в песочницах исполнял прежний код. Скрипт
-          # обновления едет так же, как установщик runsc, — той версии, что прошла тесты.
-          RUNNER_SCRIPT_B64=$(base64 -w0 deploy/scripts/update-runner.sh)
           # Правила, закрывающие обход egress-прокси (пункт 5.1 плана), едут так же: они нужны
           # ровно той версии, что прошла тесты в этом коммите, а не той, что лежит в чекауте на ВМ.
           EGRESS_FIREWALL_B64=$(base64 -w0 deploy/scripts/egress-firewall.sh)
@@ -572,6 +567,17 @@ jobs:
               "umask 077; cat > '$PLATFORM_ENV_FILE'"
           fi
           rm -f "$PLATFORM_ENV_LOCAL"
+          # Runner — отдельный контейнер вне compose, и выкатка его не касалась: сервис днями
+          # работал на новой сборке, а задачи в песочницах исполнял прежний код. Скрипт
+          # обновления едет файлом, а не base64 в команде ssh: вместе с COMPOSE_B64, CADDY_B64
+          # и остальными аргументами строка уже подходила к пределу ядра (MAX_ARG_STRLEN), и
+          # лишние ~9 КБ роняли выкатку с «Argument list too long».
+          RUNNER_SCRIPT_FILE="/tmp/.webnestdev-update-runner.sh"
+          ssh -i "$HOME/.ssh/deploy_key" \
+            -p "${DEPLOY_PORT:-22}" \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "umask 077; cat > '$RUNNER_SCRIPT_FILE'" < deploy/scripts/update-runner.sh
           # Ключ передаётся отдельным потоком, а не аргументом команды: значение секрета в
           # командной строке было бы видно в списке процессов на обеих машинах.
           APP_KEY_FILE=""
@@ -585,6 +591,42 @@ jobs:
               "$DEPLOY_USER@$DEPLOY_HOST" \
               "umask 077; cat > '$APP_KEY_FILE'"
           fi
+          #
+          # Переменные выкатки передаются файлом, а не аргументами ssh.
+          #
+          # COMPOSE_B64 (~67 КБ), CADDY_B64, wildcard-сертификат и установщики в сумме давали
+          # строку команды под 126 КБ — почти предел ядра на один аргумент (MAX_ARG_STRLEN,
+          # 128 КБ). Добавление скрипта runner'а перешло его, и выкатка падала до запуска скрипта
+          # с «Argument list too long». С файлом длина команды перестаёт зависеть от размера
+          # файлов в репозитории; %q сохраняет значения с пробелами и кавычками без изменений.
+          DEPLOY_VARS_FILE="/tmp/.webnestdev-deploy-vars.$$.env"
+          DEPLOY_VARS_LOCAL=$(mktemp)
+          emit_var(){ printf 'export %s=%q\n' "$1" "$2"; }
+          {
+            emit_var MODE "$MODE"
+            emit_var IMAGE_REF "$image"
+            emit_var APP_DIR "$DEPLOY_APP_DIR"
+            emit_var AGENT_SSH_PUBKEY "${AGENT_SSH_PUBKEY:-}"
+            emit_var COMPOSE_B64 "$COMPOSE_B64"
+            emit_var CADDY_B64 "$CADDY_B64"
+            emit_var PREVIEW_TLS_B64 "$PREVIEW_TLS_B64"
+            emit_var WILDCARD_CERT_B64 "$WILDCARD_CERT_B64"
+            emit_var REGRU_API_USERNAME "$REGRU_API_USERNAME"
+            emit_var REGRU_API_PASSWORD "$REGRU_API_PASSWORD"
+            emit_var RUNSC_SCRIPT_B64 "$RUNSC_SCRIPT_B64"
+            emit_var RUNSC_INSTALL "$RUNSC_INSTALL"
+            emit_var RUNNER_SCRIPT_SRC "$RUNNER_SCRIPT_FILE"
+            emit_var EGRESS_FIREWALL_B64 "$EGRESS_FIREWALL_B64"
+            emit_var APP_KEY_FILE "$APP_KEY_FILE"
+            emit_var PLATFORM_ENV_FILE "$PLATFORM_ENV_FILE"
+            emit_var LOG_TAIL "$LOG_TAIL"
+          } > "$DEPLOY_VARS_LOCAL"
+          ssh -i "$HOME/.ssh/deploy_key" \
+            -p "${DEPLOY_PORT:-22}" \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "umask 077; cat > '$DEPLOY_VARS_FILE'" < "$DEPLOY_VARS_LOCAL"
+          rm -f "$DEPLOY_VARS_LOCAL"
           # ServerAlive*: выкатка может молчать минутами (выпуск wildcard-сертификата ждёт
           # распространения DNS-записи), а NAT провайдера рвёт простаивающее соединение через
           # ~5 минут — сессия падала с кодом 255 посреди выпуска. Keepalive держит канал живым.
@@ -592,14 +634,14 @@ jobs:
           # Скрипт сначала кладётся в файл и только потом запускается. С `bash -s` stdin — это сам
           # скрипт, и любая команда внутри, читающая stdin (`docker compose exec`), съедала его
           # остаток: bash видел EOF и молча заканчивал работу с кодом 0. Так выкатка обрывалась
-          # на перечитывании Caddy — без проверки здоровья, откката и уборки образов, и в логе
+          # на перечитывании Caddy — без проверки здоровья, отката и уборки образов, и в логе
           # этого не было видно (их строки просто не печатались).
           ssh -i "$HOME/.ssh/deploy_key" \
             -p "${DEPLOY_PORT:-22}" \
             -o BatchMode=yes -o StrictHostKeyChecking=yes \
             -o ServerAliveInterval=30 -o ServerAliveCountMax=30 \
             "$DEPLOY_USER@$DEPLOY_HOST" \
-            "umask 077; f=/tmp/.vm-deploy.\$\$.sh; cat > \"\$f\" && MODE='$MODE' IMAGE_REF='$image' APP_DIR='$DEPLOY_APP_DIR' AGENT_SSH_PUBKEY=$AGENT_SSH_PUBKEY COMPOSE_B64='$COMPOSE_B64' CADDY_B64='$CADDY_B64' PREVIEW_TLS_B64='$PREVIEW_TLS_B64' WILDCARD_CERT_B64='$WILDCARD_CERT_B64' REGRU_API_USERNAME='$REGRU_API_USERNAME' REGRU_API_PASSWORD='$REGRU_API_PASSWORD' RUNSC_SCRIPT_B64='$RUNSC_SCRIPT_B64' RUNSC_INSTALL='$RUNSC_INSTALL' RUNNER_SCRIPT_B64='$RUNNER_SCRIPT_B64' EGRESS_FIREWALL_B64='$EGRESS_FIREWALL_B64' APP_KEY_FILE='$APP_KEY_FILE' PLATFORM_ENV_FILE='$PLATFORM_ENV_FILE' LOG_TAIL='$LOG_TAIL' bash \"\$f\"; rc=\$?; rm -f \"\$f\"; exit \$rc" \
+            "umask 077; f=/tmp/.vm-deploy.\$\$.sh; cat > \"\$f\" && . '$DEPLOY_VARS_FILE' && bash \"\$f\"; rc=\$?; rm -f \"\$f\" '$DEPLOY_VARS_FILE'; exit \$rc" \
             < deploy/scripts/vm-deploy.sh
 
       - name: Deploy on the VM (self-hosted runner)
@@ -929,7 +971,6 @@ jobs:
           # файл рядом, с правами только для владельца.
           RUNSC_SCRIPT_B64=$(base64 -w0 deploy/scripts/install-runsc.sh)
           EGRESS_FIREWALL_B64=$(base64 -w0 deploy/scripts/egress-firewall.sh)
-          RUNNER_SCRIPT_B64=$(base64 -w0 deploy/scripts/update-runner.sh)
           APP_KEY_FILE=""
           if [ -n "${YANDEX_SA_KEY_JSON:-}" ]; then
             APP_KEY_FILE=$(mktemp)
@@ -944,7 +985,7 @@ jobs:
             WILDCARD_CERT_SRC="$PWD/deploy/scripts/wildcard-cert.sh" \
             REGRU_API_USERNAME="$REGRU_API_USERNAME" REGRU_API_PASSWORD="$REGRU_API_PASSWORD" \
             RUNSC_SCRIPT_B64="$RUNSC_SCRIPT_B64" RUNSC_INSTALL="$RUNSC_INSTALL" \
-            RUNNER_SCRIPT_B64="$RUNNER_SCRIPT_B64" \
+            RUNNER_SCRIPT_SRC="$PWD/deploy/scripts/update-runner.sh" \
             EGRESS_FIREWALL_B64="$EGRESS_FIREWALL_B64" \
             APP_KEY_FILE="$APP_KEY_FILE" PLATFORM_ENV_FILE="$PLATFORM_ENV_FILE" \
             bash deploy/scripts/vm-deploy.sh
