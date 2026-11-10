@@ -129,6 +129,13 @@ def container_running(name: str) -> bool:
     return result.returncode == 0 and result.stdout.strip() == "true"
 
 
+def all_services_running() -> bool:
+    names = [
+        name for name in (BROKER_CONTAINER, API_CONTAINER, CADDY_CONTAINER, RUNNER_CONTAINER) if name
+    ]
+    return all(container_running(name) for name in names)
+
+
 def local_primary_role() -> bool | None:
     """Роль локальной базы: True primary, False standby, None — база не запущена.
 
@@ -181,17 +188,12 @@ def ensure_local_services(state: dict) -> None:
     # После смены цели рвём старые соединения API: пул не должен ходить в прежний primary.
     if changed and container_running(API_CONTAINER):
         restart_api()
-        state["services_started"] = True
-        save_state(state)
-        return
 
-    # state.json переживает выключение ВМ. Если контейнер остановлен, флаг
-    # services_started уже недостаточен — проверяем фактическое состояние Docker.
-    if (
-        not state.get("services_started")
-        or not container_running(API_CONTAINER)
-        or (RUNNER_CONTAINER and not container_running(RUNNER_CONTAINER))
-    ):
+    # Флаг services_started переживает выключение ВМ, а broker и Caddy имеют
+    # restart=no: Docker после загрузки поднимает только API и runner, и флаг
+    # скрывал остановленный ingress. NLB видит Caddy как бэкенд, поэтому
+    # проверяем фактическое состояние всех контейнеров, а не только флаг.
+    if changed or not all_services_running():
         start_services()
         state["services_started"] = True
         save_state(state)

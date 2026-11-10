@@ -58,6 +58,8 @@ export type PreviewDoor = {
 
 export type PreviewProxyRequest = {
   projectId: string;
+  /** Уже прочитанный статус: дверь проверяет owner и передаёт его сюда, чтобы не читать дважды. */
+  state?: PreviewStatus;
   /** Путь вместе со строкой запроса, например `/src/main.tsx?v=1`. */
   path: string;
   method?: string;
@@ -75,7 +77,7 @@ export type PreviewProxyRequest = {
  * `Response` с запретом кэширования; причины отказа — исключениями.
  */
 export async function proxyPreviewRequest(door: PreviewDoor, request: PreviewProxyRequest): Promise<Response> {
-  const state = await door.previewStatus(request.projectId);
+  const state = request.state ?? await door.previewStatus(request.projectId);
   if (!state.running) throw new Error("Предпросмотр не запущен");
   const host = state.host || process.env.PREVIEW_PROXY_HOST || "127.0.0.1";
   const timeoutMs = previewProxyTimeoutMs();

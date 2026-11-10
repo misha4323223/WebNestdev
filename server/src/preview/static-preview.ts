@@ -7,6 +7,8 @@ import type { SandboxConfig } from "../sandbox-manager.js";
 import { removePreview,setPreview,touchPreview } from "./preview-store.js";
 import { indexFileExists,isStaticBuildFresh,planStaticPreview } from "./static-plan.js";
 import { ensureProjectDependencies } from "./dependencies.js";
+import { localPreviewOwnerAddress } from "./preview-owner.js";
+import { nodeId } from "../nodes/identity.js";
 import type { PreviewStatus } from "./types.js";
 
 /**
@@ -103,7 +105,10 @@ export async function startStaticPreview(config:SandboxConfig):Promise<StaticSta
   const listener=await listenStatic(plan.dir);
   const run:StaticRun={server:listener.app,dir:plan.dir,port:listener.port,log,builtAt:marker,startedAt:Date.now(),instant:!plan.build,config};
   runs.set(config.projectId,run);
-  setPreview({mode:"static",containerId:"",host:STATIC_HOST,port:run.port,projectId:config.projectId,ownerUserId:config.userId,startedAt:run.startedAt,lastUsedAt:run.startedAt});
+  // Static слушает только эта реплика, поэтому owner — дверь именно этого процесса. Вторая
+  // реплика прочитает строку из общего реестра и проксирует запрос сюда.
+  const ownerAddress=localPreviewOwnerAddress();
+  setPreview({mode:"static",containerId:"",host:STATIC_HOST,port:run.port,projectId:config.projectId,ownerUserId:config.userId,node:nodeId(),startedAt:run.startedAt,lastUsedAt:run.startedAt,ready:true,settled:true,...(ownerAddress?{ownerAddress}:{})});
   return {ok:true,status:statusFor(run)};
 }
 
@@ -172,7 +177,8 @@ export async function staticAppAnswers(host:string,port:number){
 }
 
 function statusFor(run:StaticRun):PreviewStatus{
-  return {running:true,ready:true,port:run.port,host:STATIC_HOST,containerId:"",startedAt:run.startedAt,mode:"static"};
+  const ownerAddress=localPreviewOwnerAddress();
+  return {running:true,ready:true,port:run.port,host:STATIC_HOST,containerId:"",startedAt:run.startedAt,mode:"static",...(ownerAddress?{ownerAddress}:{})};
 }
 
 async function runBuild(config:SandboxConfig):Promise<DockerCommandResult|{reason:string}>{

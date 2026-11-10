@@ -49,16 +49,17 @@ function state(projectId: string, overrides: Partial<PreviewState> = {}): Previe
   };
 }
 
-test("container-preview сохраняется, static — нет, а удаление убирает строку", async () => {
+test("container и static сохраняются в общем реестре, удаление убирает строку", async () => {
   const { backend, rows } = memoryBackend();
   setPreviewRegistryBackendForTests(backend);
   try {
-    setPreview(state("registry-container", { ownerUserId: "user-1" }));
-    setPreview(state("registry-static", { mode: "static", host: "127.0.0.1" }));
+    setPreview(state("registry-container", { ownerUserId: "user-1", ownerAddress: "10.0.0.5:8788" }));
+    setPreview(state("registry-static", { mode: "static", host: "127.0.0.1", ownerAddress: "10.0.0.4:8788", ready: true, settled: true }));
     await flushPreviewWritesForTests();
 
     assert.equal(rows.get("registry-container")?.ownerUserId, "user-1");
-    assert.equal(rows.has("registry-static"), false, "слушатель static живёт только в своём процессе");
+    assert.equal(rows.get("registry-container")?.ownerAddress, "10.0.0.5:8788");
+    assert.equal(rows.get("registry-static")?.ownerAddress, "10.0.0.4:8788", "вторая реплика должна знать дверь static-владельца");
 
     removePreview("registry-container");
     await flushPreviewWritesForTests();
@@ -133,9 +134,12 @@ test("просроченная или неполная строка не счи�
     exec_only_checked_at: null,
     ready: true,
     checked_at: 30,
+    owner_address: "10.0.0.4:8788",
     expires_at: 1_000,
   };
   assert.equal(previewFromRow(row, 999)?.projectId, "p1");
   assert.equal(previewFromRow(row, 1_000), null, "истёкшая строка не должна выглядеть живой");
-  assert.equal(previewFromRow({ ...row, mode: "static" }, 999), null, "static в реестр не пишется");
+  const staticRow = previewFromRow({ ...row, mode: "static" }, 999);
+  assert.equal(staticRow?.mode, "static");
+  assert.equal(staticRow?.ownerAddress, "10.0.0.4:8788");
 });

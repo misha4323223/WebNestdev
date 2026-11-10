@@ -5,6 +5,10 @@
 # after fencing/promotion it falls back to the local promoted standby.
 services:
   webnestdev-server:
+    # Дверь публичных предпросмотров должна быть доступна с node-2 по приватной сети:
+    # вторая реплика проксирует запрос владельцу preview (см. preview/peer-door.ts).
+    ports:
+      - "10.0.0.4:8788:8788"
     # DATA_DIR должен быть общим: при переключении API на node-2 платформенные ключи
     # и настройки должны быть те же, что на node-1. Gluster-том монтируется вместо
     # именованного тома compose.
@@ -13,6 +17,7 @@ services:
     environment:
       DATABASE_URL: postgres://webnestdev:${NODE2_PG_PASSWORD:?Set NODE2_PG_PASSWORD}@host.docker.internal:5432/webnestdev
       WEBNESTDEV_NODE_ID: node-1
+      WEBNESTDEV_NODE_ADDRESS: 10.0.0.4:8790
       WEBNESTDEV_RUNNER_TOKEN: ${NODE1_RUNNER_TOKEN:?Set NODE1_RUNNER_TOKEN}
       WEBNESTDEV_REMOTE_NODES: '[{"id":"node-2","address":"10.0.0.5:8790"}]'
       WEBNESTDEV_SHARED_SANDBOX: "1"

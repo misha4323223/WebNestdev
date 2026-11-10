@@ -9,8 +9,9 @@ import type { PreviewState } from "./types.js";
  * сюда, а промах кэша на второй реплике поднимает состояние из базы. Без этого API на другой
  * ВМ отвечал «предпросмотр не запущен» на живой контейнер.
  *
- * Static-preview намеренно не сохраняется: его слушатель — часть конкретного процесса, и
- * `127.0.0.1:<port>` с другой машины указывает в пустоту.
+ * Static-preview тоже сохраняется: его слушатель — часть конкретного процесса, поэтому строка
+ * несёт `owner_address` — приватную дверь этого процесса. Вторая реплика не ходит на
+ * `127.0.0.1:<port>`, а проксирует запрос на дверь владельца (см. preview/peer-door.ts).
  */
 
 export type SharedPreviewBackend = {
@@ -46,6 +47,7 @@ type PreviewRow = {
   exec_only_checked_at: number | string | null;
   ready: boolean | null;
   checked_at: number | string | null;
+  owner_address: string | null;
   expires_at: number | string;
 };
 
@@ -60,10 +62,10 @@ function optionalInteger(value: number | string | null | undefined): number | un
 
 /** Строка БД → состояние; просроченная или неполная строка не считается живым preview. */
 export function previewFromRow(row: PreviewRow, now = Date.now()): PreviewState | null {
-  if (row.mode !== "container" || !row.project_id) return null;
+  if ((row.mode !== "container" && row.mode !== "static") || !row.project_id) return null;
   if (integer(row.expires_at) <= now) return null;
   const state: PreviewState = {
-    mode: "container",
+    mode: row.mode === "static" ? "static" : "container",
     projectId: row.project_id,
     containerId: row.container_id ?? "",
     host: row.host ?? "",
@@ -74,6 +76,8 @@ export function previewFromRow(row: PreviewRow, now = Date.now()): PreviewState 
   };
   const owner = row.owner_user_id?.trim();
   if (owner) state.ownerUserId = owner;
+  const ownerAddress = row.owner_address?.trim();
+  if (ownerAddress) state.ownerAddress = ownerAddress;
   const node = row.node?.trim();
   if (node) state.node = node;
   const containerPort = optionalInteger(row.container_port);
@@ -98,13 +102,13 @@ const postgresBackend: SharedPreviewBackend = {
       INSERT INTO ${table} (
         project_id, owner_user_id, node, mode, container_id, host, port, container_port,
         started_at, last_used_at, settled, exec_only, exec_only_checked_at, ready, checked_at,
-        updated_at, expires_at
+        owner_address, updated_at, expires_at
       ) VALUES (
         ${state.projectId}, ${state.ownerUserId ?? ""}, ${state.node ?? ""}, ${state.mode},
         ${state.containerId}, ${state.host}, ${state.port}, ${state.containerPort ?? null},
         ${state.startedAt}, ${state.lastUsedAt}, ${Boolean(state.settled)}, ${Boolean(state.execOnly)},
         ${state.execOnlyCheckedAt ?? null}, ${state.ready ?? null}, ${state.checkedAt ?? null},
-        ${now}, ${expiresAt}
+        ${state.ownerAddress ?? ""}, ${now}, ${expiresAt}
       )
       ON CONFLICT (project_id) DO UPDATE SET
         owner_user_id = COALESCE(NULLIF(EXCLUDED.owner_user_id, ''), ${table}.owner_user_id),
@@ -121,6 +125,7 @@ const postgresBackend: SharedPreviewBackend = {
         exec_only_checked_at = EXCLUDED.exec_only_checked_at,
         ready = EXCLUDED.ready,
         checked_at = EXCLUDED.checked_at,
+        owner_address = COALESCE(NULLIF(EXCLUDED.owner_address, ''), ${table}.owner_address),
         updated_at = EXCLUDED.updated_at,
         expires_at = EXCLUDED.expires_at`;
   },
@@ -177,7 +182,7 @@ export function sharedPreviewRegistryEnabled(): boolean {
 }
 
 export function saveSharedPreview(state: PreviewState): Promise<void> {
-  if (state.mode !== "container" || !backend.enabled()) return Promise.resolve();
+  if (!backend.enabled()) return Promise.resolve();
   return backend.save(state);
 }
 

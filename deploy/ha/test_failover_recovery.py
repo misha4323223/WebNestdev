@@ -59,6 +59,42 @@ class RecoveringNodeTests(unittest.TestCase):
         ensure.assert_called_once_with(False)
         start.assert_called_once()
 
+    def test_running_services_are_not_started_again(self) -> None:
+        with (
+            patch.object(failover, "START_SERVICES", True),
+            patch.object(failover.postgres, "is_in_recovery", return_value=True),
+            patch.object(failover.postgres, "primary_reachable", return_value=True),
+            patch.object(failover.db_proxy, "ensure", return_value=False),
+            patch.object(failover, "container_running", return_value=True),
+            patch.object(failover, "start_services") as start,
+        ):
+            failover.ensure_local_services(self.state)
+
+        start.assert_not_called()
+
+    def test_stopped_broker_is_started_even_when_state_says_services_started(self) -> None:
+        # После перезагрузки ВМ Docker поднимает API и runner (restart=unless-stopped),
+        # но broker и Caddy с restart=no остаются остановленными, а state.json уже
+        # содержит services_started=true.
+        self.state = {"services_started": True}
+        running = {
+            failover.API_CONTAINER: True,
+            failover.RUNNER_CONTAINER: True,
+            failover.BROKER_CONTAINER: False,
+            failover.CADDY_CONTAINER: False,
+        }
+        with (
+            patch.object(failover, "START_SERVICES", True),
+            patch.object(failover.postgres, "is_in_recovery", return_value=True),
+            patch.object(failover.postgres, "primary_reachable", return_value=True),
+            patch.object(failover.db_proxy, "ensure", return_value=False),
+            patch.object(failover, "container_running", side_effect=lambda name: running.get(name, False)),
+            patch.object(failover, "start_services") as start,
+        ):
+            failover.ensure_local_services(self.state)
+
+        start.assert_called_once()
+
     def test_primary_uses_local_database(self) -> None:
         with (
             patch.object(failover, "START_SERVICES", True),

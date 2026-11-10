@@ -30,6 +30,10 @@ export type PreviewState={mode:PreviewMode;containerId:string;port:number;host:s
  * контейнера через `docker exec` (см. preview/exec-proxy.ts). Снимается, когда адрес подтверждён
  * заново: прямой путь быстрее и отдаёт поток.
  */execOnly?:boolean;/**
+ * Приватный адрес двери публичных предпросмотров (`host:port`), которая умеет отдать этот preview:
+ * для контейнера — дверь его узла, для static — дверь процесса, который держит слушатель. Вторая
+ * реплика проксирует запрос туда, вместо того чтобы пытаться достучаться до чужого Docker-моста.
+ */ownerAddress?:string;/**
  * Последний полный ответ проверки адреса: `ready` — приложение ответило внутри контейнера,
  * `checkedAt` — когда это проверялось. Прокси читает статус на КАЖДЫЙ файл приложения, а полная
  * проверка (inspect + запрос внутрь контейнера + починка адреса) стоит десятки секунд, если адрес
@@ -44,5 +48,5 @@ export type PreviewState={mode:PreviewMode;containerId:string;port:number;host:s
  * адрес подтверждён запросом самого сервера; без подтверждения панель, агент и Chromium до
  * приложения не доходят, даже когда оно отвечает внутри контейнера (`ready`).
  */
-export type PreviewStatus={running:false}|{running:true;ready:boolean;port:number;host:string;containerId:string;startedAt:number;mode?:PreviewMode;settled?:boolean;/** Port inside the container for the exec fallback; absent means the same as `port`. */containerPort?:number;/** Execution node that owns the container and relay. */node?:string;/** Приложение отдаётся панели через `docker exec`: адрес контейнера серверу недоступен. */viaExec?:boolean;hint?:string};
+export type PreviewStatus={running:false}|{running:true;ready:boolean;port:number;host:string;containerId:string;startedAt:number;mode?:PreviewMode;settled?:boolean;/** Port inside the container for the exec fallback; absent means the same as `port`. */containerPort?:number;/** Execution node that owns the container and relay. */node?:string;/** Приватная дверь, которая умеет отдать этот preview (см. PreviewState.ownerAddress). */ownerAddress?:string;/** Приложение отдаётся панели через `docker exec`: адрес контейнера серверу недоступен. */viaExec?:boolean;hint?:string};
 export type DockerExecResult={code:number;stdout:string;stderr:string};

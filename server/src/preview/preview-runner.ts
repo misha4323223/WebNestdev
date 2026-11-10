@@ -5,11 +5,12 @@ import { dockerExec, missingContainer } from "./docker-exec.js";
 import { addressOnNetworks, firstContainerAddress, previewNetworks } from "./preview-network.js";
 import { settlePreviewAddress } from "./preview-address.js";
 import { previewDepsForHost } from "./node-deps.js";
+import { previewOwnerAddressForNode } from "./preview-owner.js";
 import { resolveSandboxHost } from "../sandbox/host.js";
 import { nodeId } from "../nodes/identity.js";
 import { resolvePreviewCommand } from "./preview-command.js";
 import { ensureProjectDependencies } from "./dependencies.js";
-import { removePreview, setPreview } from "./preview-store.js";
+import { flushPreviewWrites, removePreview, setPreview } from "./preview-store.js";
 import { PREVIEW_APP_PORT, PREVIEW_LABEL, type PreviewState } from "./types.js";
 import { previewSecretMounts } from "../secrets/preview-secrets.js";
 import { egressProxyEnv } from "../egress/config.js";
@@ -114,8 +115,15 @@ export async function startPreviewContainer(config:SandboxConfig){
     throw new Error("Адрес контейнера предпросмотра не назначен");
   }
   const now=Date.now();
-  const state:PreviewState={mode:"container",containerId,projectId:config.projectId,ownerUserId:config.userId,node:config.node,host:containerAddress,port:PREVIEW_APP_PORT,startedAt:now,lastUsedAt:now};
+  // Дверь узла контейнера умеет отдать preview даже после переезда API: адрес нужен второй
+  // реплике, чтобы проксировать запрос туда, а не в чужой Docker-мост.
+  const ownerAddress=await previewOwnerAddressForNode(config.node);
+  const state:PreviewState={mode:"container",containerId,projectId:config.projectId,ownerUserId:config.userId,node:config.node,host:containerAddress,port:PREVIEW_APP_PORT,startedAt:now,lastUsedAt:now,...(ownerAddress?{ownerAddress}:{})};
   setPreview(state);
+  // Строка должна быть в общем реестре уже сейчас, а не только после проверки готовности.
+  // Если ожидание ответа приложения будет прервано, следующая реплика всё равно увидит
+  // контейнер и сможет отдать его статус и логи вместо вечной брони.
+  await flushPreviewWrites(config.projectId);
   let ready:boolean;
   let settled:PreviewState;
   try{

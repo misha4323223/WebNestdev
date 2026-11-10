@@ -152,7 +152,7 @@ The server intentionally fails fast in production when the allowed-origin list i
 
 The server creates its required tables on startup with `CREATE TABLE IF NOT EXISTS`. Persistent application metadata is stored in PostgreSQL; the local filesystem remains for the sandbox workspace itself.
 
-### Current two-node test: system PostgreSQL on node-1
+### Current two-node pre-production layout: system PostgreSQL on node-1
 
 The single-VM `docker-compose.yml` still defines a `postgres` service, but the node-specific
 overrides in [`deploy/node1/docker-compose.override.yml`](../deploy/node1/docker-compose.override.yml)
@@ -182,16 +182,28 @@ not be used in DNS.
 
 Both failover directions were tested on 08.11.2026: with `node-1` off, node-2 completed fencing,
 promotion, API/Caddy startup and served `/api/ready=200`; with `node-2` off, node-1 did the same
-and served `https://nestdev.ru=200`. This is not a full production HA yet: automatic failback is
-not implemented and there is no third witness/quorum. This remains a test stand: node-2 is
-turned off after the check. Ingress is the MWS NLB on the existing `178.236.27.102`, so DNS
-does not switch between VMs; with node-2 off only node-1 is a healthy backend until production
-HA is enabled.
+and served `https://nestdev.ru=200`. On 10.11.2026 the current HA code was installed on both
+nodes and the planned switchover was exercised in both directions (`node-1 → node-2 → node-1`),
+with rejoin and a cold start of node-2; it does not replace the destructive failover drill. This
+is not a full production HA yet: automatic failback is not implemented and there is no third
+witness/quorum. `node-2` is the second production node, currently powered off only because the
+pre-production HA setup is not launched yet and the VM costs money while it is on; its data and
+configuration are not test data. Ingress is the MWS NLB on the existing `178.236.27.102`, so DNS
+does not switch between VMs; with node-2 off only node-1 is a healthy backend until production HA
+is enabled.
 Details are in
 [HA_BIDIRECTIONAL_PLAN.md](HA_BIDIRECTIONAL_PLAN.md). A known startup trap was observed during the first promotion: if the API
 starts before PostgreSQL is out of recovery, it initializes storage in read-only mode and hangs
 until the API container is restarted. Before starting the API after promotion, verify
 `pg_is_in_recovery() = f`; the startup sequence still needs an explicit gate.
+
+**HA scripts are not part of the image deploy.** The application image only replaces API/broker
+containers. `switchover.py`, `control.py`, `failover.py` and the start-guard live in
+`/opt/webnestdev-ha` and are installed by `deploy/ha/install-node1.sh` /
+`deploy/ha/install-node2.sh`. If a VM checkout is stale, installing from it silently restores an
+old controller without switchover support. Copy the current `deploy/ha` from the working tree or
+release bundle to both VMs, run the installers, restart both failover units, and verify
+`switchover.py`/`control.py` plus `HA_CONTROL_PATH` before the launch drill.
 
 Check the live state with:
 

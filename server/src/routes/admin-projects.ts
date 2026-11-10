@@ -9,6 +9,7 @@ import { sandboxRootPath } from "../sandbox/config.js";
 import { listProjectSecrets } from "../secrets/project-secrets.js";
 import { readDeployPlan } from "../deploy/deploy-plan.js";
 import { previewStatus } from "../preview-manager.js";
+import { findPreviewReservation } from "../preview/preview-reservation.js";
 import { hydratePreview } from "../preview/preview-store.js";
 import { isRunActiveAnywhere } from "../agent/run-activity.js";
 import { projectArchiveInfo, startProjectRestore } from "../storage/project-archive.js";
@@ -74,6 +75,16 @@ export async function registerAdminProjectRoutes(
     if (!project) return reply.code(404).send({ error: "Проект не найден" });
 
     const root = sandboxRootPath(project.id);
+    // Бронь — не то же самое, что живой preview: именно она отвечает пользователю «уже
+    // запускается», когда строка состояния потеряна. Без этого поля админка видела только
+    // `running:false` и не могла отличить зависший запуск от выключенного предпросмотра.
+    const reservation = await findPreviewReservation(project.id).then(
+      value => ({ reservation: value, error: null as string | null }),
+      error => ({
+        reservation: null,
+        error: error instanceof Error ? error.message : String(error),
+      }),
+    );
     const [owner, secrets, preview] = await Promise.all([
       getUser(project.userId),
       // Проект мог быть создан до появления секретов или песочница могла быть удалена:
@@ -103,6 +114,9 @@ export async function registerAdminProjectRoutes(
         ...preview,
         /** Причина, по которой живое превью не отвечает, — ровно то, что нужно для разбора. */
         error: preview.running ? preview.hint ?? null : null,
+        /** Активная бронь запуска: `null` — запуск не идёт. */
+        reservation: reservation.reservation,
+        ...(reservation.error ? { reservationError: reservation.error } : {}),
       },
       secrets: {
         count: secrets.length,

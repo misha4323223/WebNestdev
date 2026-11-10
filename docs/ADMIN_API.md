@@ -212,6 +212,7 @@ curl -s https://panel.example.com/api/admin/2fa/verify -H 'content-type: applica
 | `POST /api/admin/projects/:id/archive` | `Bearer` | поставить архивацию в очередь, `202` и `jobId` (раздел 7.9.1) |
 | `GET /api/admin/jobs` | `Bearer` | очередь заданий: состояния, попытки, ошибки (раздел 7.9.1) |
 | `POST /api/admin/projects/:id/restore` | `Bearer` | вернуть проект из бакета на диск, `202` и `jobId` (раздел 7.9.1) |
+| `POST /api/admin/projects/:id/preview/reset` | `Bearer` | сбросить зависший предпросмотр: контейнеры, состояние и бронь (раздел 7.9.2) |
 | `GET /api/admin/support/stats` | `Bearer` | где болит: очередь, важность, давность (раздел 8.5) |
 
 Ответы не кэшируются (`cache-control: no-store`). Ошибки: `401` — нет или истёк вход / не подошёл
@@ -878,7 +879,8 @@ curl -s -H "Authorization: Bearer $TOKEN" 'https://nestdev.ru/api/admin/projects
   "owner": { "id": "…", "email": "owner@example.test", "createdAt": "…" },
   "preview": { "running": true, "ready": true, "port": 3000, "host": "172.17.0.4",
                "settled": true, "viaExec": false, "startedAt": 1761555600000,
-               "lastUsedAt": 1761559200000, "error": null },
+               "lastUsedAt": 1761559200000, "error": null,
+               "reservation": null },
   "secrets": { "count": 2, "variables": [
     { "name": "DATABASE_URL", "file": ".env.local", "preview": "скрыто · 1 строк" },
     { "name": "API_TOKEN", "file": ".env.local", "preview": "скрыто · 1 строк" }
@@ -894,6 +896,10 @@ curl -s -H "Authorization: Bearer $TOKEN" 'https://nestdev.ru/api/admin/projects
   нужно понять, какой переменной не хватает, а не прочитать ключ;
 - `preview.error` — причина, по которой живое превью не отвечает (`hint` менеджера); у выключенного
   превью поля нет;
+- `preview.reservation` — активная бронь запуска (`projectId`, `ownerUserId`, `node`, `createdAt`,
+  `expiresAt`) или `null`. Если она есть, а `preview.running=false`, пользователь видит «уже
+  запускается»: это зависший запуск, его разбирают в разделе 7.9.2. `preview.reservationError`
+  появляется, только если состояние брони прочитать не удалось;
 - `deploy` — последний план выкатки из `deploy_project.md` в песочнице проекта. Отдельного
   хранилища выкаток нет: план — единственная запись, которая переживает перезапуск, поэтому
   «последний деплой» читается из него. Если файла нет, `exists: false`;
@@ -935,6 +941,53 @@ curl -s -H "Authorization: Bearer $TOKEN" 'https://nestdev.ru/api/admin/jobs?sta
 - задания переживают рестарт: если процесс упал посреди работы, аренда истекает и воркер
   возвращает задание в очередь; после трёх неудач оно закрывается `failed` с текстом ошибки,
   а не крутится вечно. `GET /api/admin/jobs` принимает `state`, `kind`, `projectId`, `limit`.
+
+### 7.9.2. Зависший предпросмотр руками оператора
+
+Бронь запуска живёт 15 минут. Если процесс упал до создания контейнера или Docker не ответил,
+пользователь до истечения TTL видит «Этот предпросмотр уже запускается», а логов у предпросмотра
+нет: контейнера ещё нет. Автоматика принимает уже существующий контейнер, но не может угадать,
+что запуска нет и бронь пора снять. Для этого — отдельная ручка.
+
+Сначала посмотрите карточку проекта: `preview.reservation` покажет активную бронь, её узел и
+срок. Если бронь есть, а `preview.running=false`, это и есть зависший запуск.
+
+```bash
+curl -s -X POST -H "Authorization: Bearer $TOKEN" \
+  -H 'content-type: application/json' -d '{"confirm":true}' \
+  'https://nestdev.ru/api/admin/projects/<id>/preview/reset'
+
+# 200
+# {
+#   "ok": true,
+#   "removedContainers": ["2ad5917a7078"],
+#   "remainingContainers": [],
+#   "stateRemoved": true,
+#   "reservationCleared": true,
+#   "warnings": []
+# }
+```
+
+Что делает ручка:
+
+- находит контейнеры с меткой проекта на узле проекта и на узле из текущего состояния, затем
+  удаляет их через `docker rm -f`;
+- убирает строку предпросмотра из локального кэша и общего реестра;
+- снимает активную бронь запуска;
+- удаляет временные env-файлы предпросмотра;
+- пишет в журнал безопасности `admin.preview.reset` с числом удалённых контейнеров.
+
+Важно:
+
+- тело обязательно содержит `"confirm":true`; без него — `400 CONFIRM_REQUIRED`;
+- это **останавливает текущий предпросмотр**. Если контейнер работал, пользователь запустит его
+  заново; состояние проекта и файлы не затрагиваются;
+- если Docker недоступен или контейнер не удалился, `reservationCleared` всё равно снимает
+  блокировку, а причина остаётся в `warnings` и `remainingContainers`. Повторный вызов безопасен;
+- ручка не удаляет контейнеры других проектов: фильтр строго по `webnestdev.preview=<id>`;
+- после сброса следующий `startPreview` создаёт новый контейнер. Если старый всё же остался
+  (например, узел был недоступен), его подхватит автоматическое принятие по метке или следующая
+  уборка.
 
 ### 7.10. Тарифы и скидки
 

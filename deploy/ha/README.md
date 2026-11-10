@@ -3,6 +3,12 @@
 Двусторонний PostgreSQL failover для `node-1` и `node-2`. Подробный план и результаты
 live-теста — в [`docs/HA_BIDIRECTIONAL_PLAN.md`](../../docs/HA_BIDIRECTIONAL_PLAN.md).
 
+Проверено 10.11.2026 на рабочей паре: текущий `switchover.py`/`control.py` установлен на
+обе ВМ, плановый switchover прошёл в обе стороны (`node-1 → node-2 → node-1`), оба rejoin
+дали streaming standby, холодный старт `node-2` поднял PostgreSQL standby, API, Caddy,
+broker и runner без ручных команд. После проверки `node-1` — primary, `node-2` — standby и
+выключена до production-запуска.
+
 ## Роли и адреса
 
 | Узел | MWS VM | Приватный IP | Локальный PG | API |
@@ -36,20 +42,40 @@ sudo bash deploy/ha/install-node1.sh
 sudo bash deploy/ha/install-node2.sh
 ```
 
-Секреты в репозиторий не добавлять. `replication.env` создаётся на узле и копируется на
-второй узел только защищённым каналом.
+**Важно:** image-deploy обновляет только контейнеры приложения и **не** обновляет
+`/opt/webnestdev-ha`. Если checkout на ВМ старый, установка «из него» вернёт старый
+контроллер без `switchover.py`. Перед установкой скопируйте актуальный каталог `deploy/ha`
+из рабочего дерева/релиза на ВМ и запускайте installer из этой копии. После установки
+проверьте на обеих ВМ:
+
+```bash
+test -f /opt/webnestdev-ha/switchover.py && test -f /opt/webnestdev-ha/control.py
+grep -E '^Environment=HA_(CONTROL_PATH|SWITCHOVER_TIMEOUT_SECONDS)=' \
+  /etc/systemd/system/webnestdev-failover*.service
+# на node-1
+sudo systemctl restart webnestdev-failover.service
+sudo systemctl is-active webnestdev-failover.service
+
+# на node-2
+sudo systemctl restart webnestdev-failover-node2.service
+sudo systemctl is-active webnestdev-failover-node2.service
+```
+
+На каждой ВМ её failover-юнит должен быть `active`, а `HA_CONTROL_PATH` — указывать на
+общий `/var/lib/webnestdev/data/ha-switchover.json`. Секреты в репозиторий не добавлять.
+`replication.env` создаётся на узле и копируется на второй узел только защищённым каналом.
 
 ## Проверка
 
 ```bash
+# node-1
+sudo systemctl status webnestdev-failover.service
+
+# node-2
+sudo systemctl status webnestdev-failover-node2.service
+
 # на каждом узле
-sudo systemctl status webnestdev-failover.service          # node-1
-sudo systemctl status webnestdev-failover-node2.service    # node-2
-
-# PostgreSQL
 sudo -u postgres psql -p 5433 -d webnestdev -Atc 'select pg_is_in_recovery()'
-
-# API
 curl -fsS http://127.0.0.1:8787/api/ready
 ```
 
@@ -119,6 +145,14 @@ API: `GET /api/admin/nodes/switchover`, `POST /api/admin/nodes/:id/switchover` �
 На вернувшемся узле:
 
 ```bash
+# node-1 возвращается как standby от node-2
+sudo bash -c '
+  set -a; . /etc/webnestdev-ha/replication.env; set +a
+  PGPASSWORD="$REPLICATION_PASSWORD" bash /opt/webnestdev-ha/standby.sh \
+    10.0.0.5 5432 node1
+'
+
+# node-2 возвращается как standby от node-1
 sudo bash -c '
   set -a; . /etc/webnestdev-ha/replication.env; set +a
   PGPASSWORD="$REPLICATION_PASSWORD" bash /opt/webnestdev-ha/standby.sh \
@@ -126,13 +160,15 @@ sudo bash -c '
 '
 ```
 
-Для обратного направления источник — `10.0.0.5:5432`, слот `node1`. Скрипт сохраняет
-старый data directory, делает basebackup и запускает standby. После rejoin контроллер
-автоматически сбрасывает старое состояние `done` в `passive`.
+Скрипт сохраняет старый data directory, делает basebackup и запускает standby. После rejoin
+контроллер автоматически сбрасывает старое состояние `done` в `passive`.
 
 После планового switchover на `node-1` уже работает API/runner, но PostgreSQL остановлен;
 rejoin нужен, только если `node-1` снова должна стать primary или полноценным standby для
-следующего переключения.
+следующего переключения. На проверке 10.11.2026 после каждого switchover выполнялся rejoin,
+чтобы оба узла закончили в состоянии `streaming standby` и следующий холодный старт был
+предсказуемым. Если `replication.env` недоступен, штатный `standby.sh` требует `PGPASSWORD`;
+не подставляйте пароль в argv и не печатайте его.
 
 ## Storage
 
@@ -146,9 +182,10 @@ rejoin нужен, только если `node-1` снова должна ста
 
 - Автоматического failback базы нет: роль возвращается только через rejoin + явное переключение.
   Failover в обе стороны автоматический, но возврат старого primary — ручной rejoin.
-- `node-2` — тестовая ВМ: после проверки выключена (`power=OFF`). HAProxy, API/Caddy/runner,
-  guard и standby PostgreSQL на ней установлены и проверены; постоянное включение — отдельное
-  решение production-HA, а не текущий тест.
+- `node-2` — вторая production-нода, а не тестовая ВМ. После проверки 10.11.2026 она
+  выключена (`power=OFF`) только из-за стоимости до production-запуска. HAProxy, API/Caddy/runner,
+  guard и standby PostgreSQL на ней установлены и проверены; после production-решения она
+  работает постоянно.
 - Пока нет третьего witness, внезапная потеря standby-ВМ при живом primary может оставить
   GlusterFS в quorum `auto` и заморозить запись до MWS-подтверждения её `power=OFF`.
   Для production с постоянной второй ВМ нужен witness/arbiter или fencing со стороны primary.

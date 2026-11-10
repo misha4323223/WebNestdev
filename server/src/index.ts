@@ -82,6 +82,7 @@ import { registerAdminPlanRoutes } from "./routes/admin-plans.js";
 import { registerAdminAiRoutes } from "./routes/admin-ai.js";
 import { registerAdminAiModelsRoutes } from "./routes/admin-ai-models.js";
 import { registerAdminProjectRoutes } from "./routes/admin-projects.js";
+import { registerAdminPreviewResetRoutes } from "./routes/admin-preview.js";
 import { registerHostingRoutes } from "./routes/hosting.js";
 import { describeHosting, hostingConfig } from "./hosting/config.js";
 import { reconcileHosting } from "./hosting/reconcile.js";
@@ -412,6 +413,9 @@ await registerAdminAiRoutes(app);
 await registerAdminAiModelsRoutes(app);
 // Карточка проекта: владелец, репозиторий, превью, переменные секретов, план выкатки.
 await registerAdminProjectRoutes(app);
+// Зависший предпросмотр: оператор видит активную бронь и может сбросить контейнер,
+// состояние и бронь одной ручкой. Это ручной путь на случай, который не закрыла автоматика.
+await registerAdminPreviewResetRoutes(app);
 // Отписка — публичная страница, а не /api: ссылка приходит в письме и открывается без сессии.
 await registerUnsubscribeRoutes(app);
 await registerPhoneAuthRoutes(app);

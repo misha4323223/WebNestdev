@@ -28,10 +28,16 @@ export async function ensurePreviewTable(pool: Pool, table: string): Promise<voi
     exec_only_checked_at BIGINT,
     ready BOOLEAN,
     checked_at BIGINT,
+    owner_address TEXT NOT NULL DEFAULT '',
     updated_at BIGINT NOT NULL,
     expires_at BIGINT NOT NULL,
-    CONSTRAINT previews_mode_check CHECK (mode = 'container')
+    CONSTRAINT previews_mode_check CHECK (mode IN ('container', 'static'))
   )`);
+  // Совместимость с таблицей, созданной до cross-replica static preview: колонка и ограничение
+  // добавляются на месте, без пересоздания и без потери живых строк.
+  await pool.query(`ALTER TABLE ${name} ADD COLUMN IF NOT EXISTS owner_address TEXT NOT NULL DEFAULT ''`);
+  await pool.query(`ALTER TABLE ${name} DROP CONSTRAINT IF EXISTS previews_mode_check`);
+  await pool.query(`ALTER TABLE ${name} ADD CONSTRAINT previews_mode_check CHECK (mode IN ('container', 'static'))`);
   await pool.query(
     `CREATE INDEX IF NOT EXISTS idx_${table}_expires ON ${name} (expires_at)`,
   );

@@ -13,6 +13,8 @@
 #        cleanup                только обнулить логи контейнеров на ВМ (диск, а не версия)
 #        prune                  только убрать старые образы и кеш сборки
 #        disk                   только показать, что занимает место на диске (чтение, без уборки)
+#        token                  только синхронизировать RUNNER_TOKEN из контейнера runner в .env
+#        pg-password            только записать NODE2_PG_PASSWORD из PG_PASSWORD_FILE в .env
 #        repair                 починить запущенный сервис, не меняя версию: уборка образов и
 #                               пересоздание контейнеров из закреплённого в .env WEBNESTDEV_IMAGE
 #   IMAGE_REF=ghcr.io/…        образ для MODE=image
@@ -176,6 +178,12 @@ RUNSC_SCRIPT_B64="${RUNSC_SCRIPT_B64:-}"
 RUNSC_VERSION="${RUNSC_VERSION:-}"
 APP_KEY_FILE="${APP_KEY_FILE:-}"
 PLATFORM_ENV_FILE="${PLATFORM_ENV_FILE:-}"
+# Имя контейнера runner на этой ВМ. По умолчанию ищется node1-runner/node2-runner:
+# токен должен быть тот же, что у API, иначе удалённые песочницы остаются выключенными.
+RUNNER_CONTAINER="${RUNNER_CONTAINER:-}"
+# Для MODE=pg-password: файл с фактическим паролем роли webnestdev на node-2.
+# Файл читается на ВМ и удаляется после записи; в лог попадает только результат.
+PG_PASSWORD_FILE="${PG_PASSWORD_FILE:-}"
 # Метка контейнера-пробы в проверке предпросмотра (совпадает с PREVIEW_LABEL="webnestdev.preview"
 # в server/src/preview/types.ts). Нужна, чтобы убирать пробы прошлых выкаток, не трогая предпросмотры
 # пользователей.
@@ -1596,6 +1604,75 @@ install_key_as_root(){
   return 0
 }
 
+set_env_value(){
+  local name="$1" value="$2" file="$3" staged current
+  [ -f "$file" ] || return 1
+  current=$(grep -m1 "^${name}=" "$file" 2>/dev/null | cut -d= -f2- || true)
+  [ "$current" = "$value" ] && return 0
+  staged="$file.runner.new"
+  cp "$file" "$staged"
+  chmod 600 "$staged" 2>/dev/null || true
+  grep -v "^${name}=" "$staged" > "$staged.tmp" || true
+  printf '%s=%s\n' "$name" "$value" >> "$staged.tmp"
+  chmod 600 "$staged.tmp" 2>/dev/null || true
+  cp "$file" "$file.bak" 2>/dev/null || true
+  mv "$staged.tmp" "$file"
+  rm -f "$staged"
+  chmod 600 "$file" 2>/dev/null || true
+  return 2
+}
+
+#
+# Токен runner — единственная граница между API и runner. Он уже лежит в окружении
+# работающего контейнера; копировать его в GitHub или в репозиторий не нужно. Здесь он
+# переносится в .env, чтобы API получил тот же bearer-токен после пересоздания контейнера.
+# Значение не печатается: в лог попадают только имя контейнера и факт синхронизации.
+#
+sync_runner_token(){
+  local runner="" token=""
+  if [ ! -f "$ENV_FILE" ]; then
+    log "$ENV_FILE нет — RUNNER_TOKEN не синхронизирую"
+    return 0
+  fi
+  if [ -n "$RUNNER_CONTAINER" ]; then
+    runner="$RUNNER_CONTAINER"
+  else
+    local candidate
+    for candidate in node1-runner node2-runner; do
+      if docker inspect "$candidate" >/dev/null 2>&1; then
+        runner="$candidate"
+        break
+      fi
+    done
+  fi
+  if [ -z "$runner" ]; then
+    log "контейнер runner не найден — WEBNESTDEV_RUNNER_TOKEN не синхронизирую"
+    return 0
+  fi
+  token=$(docker inspect "$runner" --format '{{range .Config.Env}}{{println .}}{{end}}' 2>/dev/null \
+    | sed -n 's/^RUNNER_TOKEN=//p' | head -n1 || true)
+  if [ -z "$token" ]; then
+    log "у $runner нет RUNNER_TOKEN — WEBNESTDEV_RUNNER_TOKEN не синхронизирую"
+    return 0
+  fi
+  if [ "${#token}" -lt 32 ]; then
+    log "RUNNER_TOKEN у $runner короче 32 символов — не синхронизирую"
+    return 0
+  fi
+  local name rc=0 result=0
+  for name in WEBNESTDEV_RUNNER_TOKEN NODE1_RUNNER_TOKEN; do
+    rc=0
+    set_env_value "$name" "$token" "$ENV_FILE" || rc=$?
+    [ "$rc" = "2" ] && result=2
+    [ "$rc" = "1" ] && result=1
+  done
+  case "$result" in
+    0) log "токены API и runner уже совпадают с RUNNER_TOKEN контейнера $runner" ;;
+    2) log "WEBNESTDEV_RUNNER_TOKEN и NODE1_RUNNER_TOKEN синхронизированы с RUNNER_TOKEN контейнера $runner" ;;
+    *) log "RUNNER_TOKEN не удалось записать в $ENV_FILE" ;;
+  esac
+}
+
 #
 # Ключ сервисного аккаунта Yandex Cloud: файлом, а не переменной. Ключ многострочный, поле
 # секрета — нет, поэтому из GitHub он приезжает отдельным потоком (workflow кладёт его в
@@ -1947,6 +2024,8 @@ fi
 log "режим: $MODE$( [ "$DRY_RUN" = "1" ] && echo " (dry-run)" )"
 case "$MODE" in
   prune|cleanup|disk) ;;
+  token) log "режим token: синхронизирую RUNNER_TOKEN, сервис не перезапускаю"; cd "$APP_DIR" ;;
+  pg-password) log "режим pg-password: записываю NODE2_PG_PASSWORD, сервис не перезапускаю"; cd "$APP_DIR" ;;
   repair) log "режим repair: чиню запущенный сервис, версию не меняю"; cd "$APP_DIR" ;;
   logs) log "режим logs: читаю логи контейнера в $APP_DIR"; cd "$APP_DIR" ;;
   *) log "деплой в $APP_DIR"; cd "$APP_DIR" ;;
@@ -1994,6 +2073,8 @@ case "$MODE" in
     install_caddyfile || log "оставляю Caddyfile, который лежит на ВМ"
     # Ключи и .env — до запуска: compose читает .env при подъёме сервиса.
     apply_platform_env
+    # Токен уже есть у локального runner; API должен получить то же значение.
+    sync_runner_token
     # Установка gVisor — до подмены версии. Если SANDBOX_RUNTIME=runsc, а Docker не знает runtime,
     # deploy присылает установщик и запускает его через sudo -n. Ошибка здесь не должна оставить
     # новый сервер с неработающими контейнерами; старый стек при этом не переключается.
@@ -2063,6 +2144,33 @@ case "$MODE" in
     log "уборка логов завершена"
     exit 0
     ;;
+  token)
+    log "режим token: синхронизирую RUNNER_TOKEN, сервис не перезапускаю"
+    sync_runner_token
+    exit 0
+    ;;
+  pg-password)
+    if [ -z "$PG_PASSWORD_FILE" ] || [ ! -s "$PG_PASSWORD_FILE" ]; then
+      log "pg-password: PG_PASSWORD_FILE не задан или пуст — NODE2_PG_PASSWORD не записан"
+      exit 2
+    fi
+    pg_password=$(tr -d '\r\n' < "$PG_PASSWORD_FILE")
+    if [ -z "$pg_password" ]; then
+      log "pg-password: значение пустое — NODE2_PG_PASSWORD не записан"
+      exit 2
+    fi
+    if set_env_value NODE2_PG_PASSWORD "$pg_password" "$ENV_FILE"; then
+      log "NODE2_PG_PASSWORD уже совпадает с значением из PG_PASSWORD_FILE"
+    elif [ "$?" = "2" ]; then
+      log "NODE2_PG_PASSWORD записан из PG_PASSWORD_FILE"
+    else
+      log "NODE2_PG_PASSWORD не удалось записать в $ENV_FILE"
+      rm -f "$PG_PASSWORD_FILE"
+      exit 1
+    fi
+    rm -f "$PG_PASSWORD_FILE"
+    exit 0
+    ;;
   cert)
     log "режим cert: только wildcard-сертификат превью, версию не меняю"
     # Сниппет — до выпуска: при успехе скрипт сертификата сам перепишет его на статический,
@@ -2085,7 +2193,7 @@ case "$MODE" in
     exit 0
     ;;
   *)
-    log "неизвестный MODE=$MODE (ожидается image, source, cert, repair, logs, cleanup, prune или disk)"
+    log "неизвестный MODE=$MODE (ожидается image, source, cert, token, pg-password, repair, logs, cleanup, prune или disk)"
     exit 2
     ;;
 esac

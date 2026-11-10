@@ -70,6 +70,7 @@ test("карточка показывает владельца и перемен
   assert.equal(body.project.repository, null);
   assert.equal(body.owner.email, user.email);
   assert.equal(body.preview.running, false);
+  assert.equal(body.preview.reservation, null);
   assert.equal(body.deploy.exists, false);
 
   const names = body.secrets.variables.map((variable: { name: string }) => variable.name).sort();

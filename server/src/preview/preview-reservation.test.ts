@@ -1,7 +1,9 @@
 import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
 import {
+  clearPreviewReservation,
   decidePreviewReservation,
+  findPreviewReservation,
   reservePreviewStart,
   setPreviewReservationBackendForTests,
   type PreviewReservationBackend,
@@ -112,6 +114,53 @@ test("бронь снимается тем же токеном и пережив
   await result.reservation.release();
   await result.reservation.release();
   assert.deepEqual(released, ["reservation-1"], "повторный release не должен трогать backend");
+});
+
+test("потерянная бронь снимается по проекту", async () => {
+  const cleared: string[] = [];
+  const backend: PreviewReservationBackend = {
+    enabled: () => true,
+    reserve: async () => ({ kind: "acquired", reservationId: "reservation-1", stopProjectIds: [] }),
+    release: async () => undefined,
+    clear: async projectId => { cleared.push(projectId); },
+  };
+  setPreviewReservationBackendForTests(backend);
+  await clearPreviewReservation("project-a");
+  assert.deepEqual(cleared, ["project-a"]);
+});
+
+test("админка читает активную бронь проекта", async () => {
+  const backend: PreviewReservationBackend = {
+    enabled: () => true,
+    reserve: async () => ({ kind: "busy", reason: "не используется" }),
+    release: async () => undefined,
+    get: async projectId => ({
+      projectId,
+      ownerUserId: "user-1",
+      node: "node-1",
+      createdAt: 1000,
+      expiresAt: 2000,
+    }),
+  };
+  setPreviewReservationBackendForTests(backend);
+  assert.deepEqual(await findPreviewReservation("project-a"), {
+    projectId: "project-a",
+    ownerUserId: "user-1",
+    node: "node-1",
+    createdAt: 1000,
+    expiresAt: 2000,
+  });
+});
+
+test("снятие брони сообщает, что база его не приняла", async () => {
+  const backend: PreviewReservationBackend = {
+    enabled: () => true,
+    reserve: async () => ({ kind: "busy", reason: "" }),
+    release: async () => undefined,
+    clear: async () => { throw new Error("нет связи"); },
+  };
+  setPreviewReservationBackendForTests(backend);
+  assert.equal(await clearPreviewReservation("project-a"), false);
 });
 
 test("занятая бронь возвращает причину, а не молчаливый отказ", async () => {

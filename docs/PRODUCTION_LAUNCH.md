@@ -1,11 +1,16 @@
 # Запуск в продакшен: HA и проверка восстановленных узлов
 
-Статус: **чеклист к исполнению, не прогонялся**. Это не отчёт о тесте. Документ
-фиксирует, что нужно проверить до production-запуска второй ВМ и какие пользовательские
-сценарии должны работать после каждого восстановления.
+Статус: **чеклист к исполнению, частично прогнан 10.11.2026**. Плановый switchover в обе
+стороны через `control.py`, оба rejoin и холодный старт `node-2` с текущим HA-кодом уже
+проверены. Аварийные этапы B/D (выключение ВМ с MWS fencing), живой admin endpoint
+switchover, полный пользовательский E2E на каждом восстановленном узле, NLB targets,
+backup/restore drill и RTO/RPO ещё не прогонялись.
+Документ фиксирует, что нужно проверить до production-запуска второй ВМ и какие
+пользовательские сценарии должны работать после каждого восстановления.
 
 Связанные документы:
 
+- [`PRODUCTION_STATE.md`](PRODUCTION_STATE.md) — текущее состояние ВМ, env, токенов и PG-пароля;
 - [`HA_BIDIRECTIONAL_PLAN.md`](HA_BIDIRECTIONAL_PLAN.md) — архитектура и результаты
   прошлых failover-тестов;
 - [`CLUSTER_HA_PLAN.md`](CLUSTER_HA_PLAN.md) — целевая схема, ограничения и матрица проверок;
@@ -44,7 +49,8 @@
 - Прогон выполняется в отдельное окно. На это время лучше предупредить пользователей:
   возможны короткие разрывы WebSocket, терминала и preview.
 - Перед началом — свежий backup и проверенный restore drill. Без backup тест не начинать.
-- `node-2` — тестовая ВМ. Для прогона её нужно включить; после прогона, если production
+- `node-2` — вторая production-ВМ, а не тестовая. Сейчас она выключена из-за стоимости
+  до запуска production-HA. Для прогона её нужно включить; после прогона, если production
   ещё не объявлен, **выключить и подтвердить `power=OFF`**. В production она остаётся
   включённой постоянно.
 - Не создавать `/etc/webnestdev-ha/ALLOW_PRIMARY` и не запускать PostgreSQL вручную через
@@ -73,7 +79,8 @@
 не меняется. PostgreSQL primary — ровно один; второй узел streaming standby.
 
 Перед прогоном `node-2` должна быть включена, но это ещё не production-решение: после
-теста её состояние возвращается по правилу тестовой ВМ, если запуск не состоялся.
+работ её состояние возвращается по правилу экономии до production-запуска, если запуск
+не состоялся.
 
 ## 4. Подготовка
 
@@ -99,7 +106,7 @@ management-адрес `2.59.80.174` напрямую или консоль MWS (
 двухмашинный тест начинать нельзя: вы не сможете проверить `node-2` после отказа
 `node-1`.
 
-### 4.2. Включить тестовую `node-2`, если она выключена
+### 4.2. Включить `node-2`, если она выключена
 
 Если `node-2` сейчас `power=OFF`:
 
@@ -111,7 +118,81 @@ management-адрес `2.59.80.174` напрямую или консоль MWS (
 4. Проверить, что прод не использует `node-2` как единственное хранилище или
    единственную базу. Общие тома GlusterFS должны быть видны обоим узлам.
 
-После теста, если production ещё не объявлен, `node-2` выключается; см. этап F.
+После работ, если production ещё не объявлен, `node-2` выключается из-за стоимости; см. этап F.
+
+### 4.2.1. Синхронизировать runner-токен на `node-2`
+
+API и runner должны использовать один и тот же `RUNNER_TOKEN`. На `node-1` он уже
+лежит в `.env`; на `node-2` compose использует **не `.env`**, а два файла:
+
+- `runtime.env`
+- `node2.env`
+
+Это видно по метке контейнера `com.docker.compose.project.environment_file`. Не создавать
+пустой `.env` и не копировать `.env.bak`: остальные настройки `node-2` уже лежат в её
+compose env-файлах, включая `NODE2_PG_PASSWORD`.
+
+Для синхронизации используется режим `MODE=token` в `deploy/scripts/vm-deploy.sh`. Он
+читает `RUNNER_TOKEN` из контейнера `node2-runner` и записывает его как
+`WEBNESTDEV_RUNNER_TOKEN` и `NODE1_RUNNER_TOKEN`, **не перезапуская сервис**:
+
+```bash
+ssh node2 'MODE=token APP_DIR="$HOME/webnestdev/src" ENV_FILE="$HOME/webnestdev/src/runtime.env" bash -s' \
+  < deploy/scripts/vm-deploy.sh
+ssh node2 'MODE=token APP_DIR="$HOME/webnestdev/src" ENV_FILE="$HOME/webnestdev/src/node2.env" bash -s' \
+  < deploy/scripts/vm-deploy.sh
+```
+
+В логе должно быть одно из двух:
+
+```text
+WEBNESTDEV_RUNNER_TOKEN и NODE1_RUNNER_TOKEN синхронизированы с RUNNER_TOKEN контейнера node2-runner
+```
+
+или:
+
+```text
+токены API и runner уже совпадают с RUNNER_TOKEN контейнера node2-runner
+```
+
+Сообщение `.../.env нет — RUNNER_TOKEN не синхронизирую` означает, что выбран не тот
+файл: на `node-2` нужно явно передать `runtime.env` и `node2.env`.
+
+После записи проверить, что compose видит правильное значение, **не печатая сам токен**:
+
+```bash
+ssh node2 'cd "$HOME/webnestdev/src" && docker compose \
+  --env-file runtime.env --env-file node2.env \
+  config --format json | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d[\"services\"][\"webnestdev-server\"][\"environment\"][\"WEBNESTDEV_RUNNER_TOKEN\"]))"'
+```
+
+Ожидаемо: `64` (или другая длина, но не `0`). Сам токен в терминал не выводится.
+
+Токен `node1-runner` и `node2-runner` должен совпадать: иначе API на одной ВМ не сможет
+обращаться к runner на другой. Скрипт синхронизирует API с **локальным** runner, но не
+сравнивает токены двух ВМ. Если значения различаются, сначала привести их к одному
+значению на обоих runner-контейнерах, затем повторить синхронизацию.
+
+`MODE=token` только пишет env-файлы. Если API на узле уже запущен, после синхронизации
+перезапустить его штатным `docker compose ... up -d --no-build` (или при следующем
+плановом запуске узла), иначе работающий контейнер сохранит старое окружение.
+
+`NODE2_PG_PASSWORD` на `node-1` должен быть фактическим паролем роли `webnestdev` на
+`node-2`, а не заглушкой. Его нельзя печатать в терминал. Перенос выполняется отдельным
+режимом `MODE=pg-password`: значение кладётся в временный файл с правами `600`, после чего
+скрипт записывает его в env и удаляет временный файл:
+
+```bash
+ssh node1 'MODE=pg-password PG_PASSWORD_FILE=/tmp/node2-pg.secret bash -s' \
+  < deploy/scripts/vm-deploy.sh
+```
+
+После записи проверить, что compose на `node-1` собирается без ошибок и не выводит пароль:
+
+```bash
+ssh node1 'cd "$HOME/webnestdev/src" && docker compose \
+  -f docker-compose.yml -f docker-compose.override.yml config --quiet && echo compose-ok'
+```
 
 ### 4.3. Backup
 
@@ -177,9 +258,13 @@ HA-E2E-E-<UTC timestamp>   # создан на вернувшейся node-2
 Выполнить на обеих ВМ и записать результат:
 
 ```bash
-# контроллер
-sudo systemctl is-active webnestdev-failover.service          # node-1
-sudo systemctl is-active webnestdev-failover-node2.service    # node-2
+# контроллер: выполнить на соответствующей ВМ
+# node-1:
+sudo systemctl is-active webnestdev-failover.service
+sudo systemctl is-enabled webnestdev-failover.service
+# node-2:
+sudo systemctl is-active webnestdev-failover-node2.service
+sudo systemctl is-enabled webnestdev-failover-node2.service
 
 # PostgreSQL: ровно один primary
 sudo -u postgres psql -p 5433 -Atc "select pg_is_in_recovery()"
@@ -196,10 +281,16 @@ test -f /etc/systemd/system/postgresql@17-main.service.d/webnestdev-pg-guard.con
 
 Ожидаемое исходное состояние:
 
-- оба контроллера `active`;
+- оба контроллера `active` и `enabled`;
+- на обеих ВМ есть `/opt/webnestdev-ha/switchover.py` и `control.py`, в юнитах заданы
+  `HA_CONTROL_PATH` и `HA_SWITCHOVER_TIMEOUT_SECONDS=180`; это актуальный набор, а не
+  старый checkout (image-deploy HA-скрипты не обновляет);
 - `node-1`: `pg_is_in_recovery()=f` (primary), HAProxy → `127.0.0.1:5433`;
 - `node-2`: `pg_is_in_recovery()=t` (standby), HAProxy → `10.0.0.4:5432`;
 - оба `/api/ready` = `200`;
+- на `node-2` выполнен `MODE=token` для `runtime.env` и `node2.env`, токены API и
+  `node2-runner` совпадают;
+- на `node-1` записан фактический `NODE2_PG_PASSWORD`, `docker compose config` проходит;
 - NLB: оба target `OK`;
 - `https://nestdev.ru` и `https://nestdev.ru/api/ready` = `200`;
 - `/etc/webnestdev-ha/ALLOW_PRIMARY` отсутствует на обеих ВМ;
@@ -208,6 +299,66 @@ test -f /etc/systemd/system/postgresql@17-main.service.d/webnestdev-pg-guard.con
 - backup свежий.
 
 Если исходное состояние другое — сначала восстановить его, не начиная сценарии.
+
+Дополнительно проверить автоматический старт и sandbox:
+
+```bash
+# на обеих ВМ: контейнеры должны иметь restart=unless-stopped
+for c in src-docker-broker-1 src-webnestdev-server-1 src-caddy-1; do
+  docker inspect -f '{{.Name}} restart={{.HostConfig.RestartPolicy.Name}}' "$c"
+done
+
+# node-2: runner тоже должен переживать перезагрузку
+docker inspect -f '{{.Name}} restart={{.HostConfig.RestartPolicy.Name}}' node2-runner
+
+# gVisor на обеих ВМ
+docker info --format '{{json .Runtimes}}' | grep -o runsc
+```
+
+Ожидаемо: broker/API/Caddy/runner — `unless-stopped`, `runsc` есть в Docker; API и broker
+получают `SANDBOX_RUNTIME=runsc` / `BROKER_RUNTIME=runsc`.
+
+На `node-1` отдельно проверить неактивный слот `node2` и запас `pg_wal`: пока `node-2`
+выключена, слот удерживает WAL. Если `pg_wal` растёт или диск заканчивается, слот нужно
+удалить и после включения `node-2` сделать rejoin, а не ждать заполнения диска.
+
+```bash
+sudo -u postgres psql -p 5433 -Atc "select slot_name, active,
+  pg_size_pretty(pg_wal_lsn_diff(pg_current_wal_lsn(), restart_lsn))
+  from pg_replication_slots"
+df -h /var/lib/postgresql
+```
+
+### 4.6. Плановый switchover: обязательная репетиция
+
+До аварийных этапов B/D прогнать плановый switchover без выключения ВМ. Он проверяет
+`switchover.py`/`control.py`, остановку API на источнике, promotion target, запись в базу и
+возврат источника в API-работу. Использовать административный Bearer-токен, не печатать его.
+
+1. Убедиться, что `node-1` primary, `node-2` standby, оба API `200`.
+2. Запросить переход на `node-2`:
+
+   ```bash
+   curl -fsS -X POST "https://nestdev.ru/api/admin/nodes/node-2/switchover" \
+     -H "Authorization: Bearer $ADMIN_TOKEN" -H 'Content-Type: application/json' \
+     -d '{"confirm":true,"reason":"pre-production switchover rehearsal"}'
+   ```
+
+3. Опрашивать `GET /api/admin/nodes/switchover`, пока состояние не станет `promoted`
+   (не дольше 180 с) или `failed`.
+4. Проверить на `node-2`: `pg_is_in_recovery()=f`, запись `create temp table`/`insert`,
+   `/api/ready` и Caddy `200`; публичный `/api/ready` `200`. На `node-1`: `/api/ready`
+   `200` через HAProxy на `node-2`, локальный PostgreSQL остановлен.
+5. Rejoin `node-1` по разделу 6, этап C; проверить `t` и `streaming`.
+6. Запросить обратный переход на `node-1`, дождаться `promoted`, проверить primary и API;
+   rejoin `node-2` по разделу 6, этап E; проверить `streaming`.
+7. Сделать холодный старт `node-2`: `power=OFF` → `power=ON`, дождаться автоматического
+   запуска standby/API/Caddy/broker/runner и `runsc`. Если production ещё не объявлен,
+   выключить `node-2` и подтвердить `power=OFF`.
+
+Если любой шаг не проходит — зафиксировать и не начинать аварийные этапы. Этот прогон
+проверяет только плановый протокол; MWS fencing и promotion после реальной потери primary
+он не заменяет.
 
 ## 5. Как проверять пользовательские сценарии
 
@@ -478,23 +629,26 @@ management-адрес `2.59.80.174` напрямую или консоль MWS. 
 1. Объявить maintenance window и зафиксировать release/commit.
 2. Сделать свежий backup.
 3. Включить `node-2` (если она была выключена после теста).
-4. Убедиться, что оба контроллера `active`, start-guard установлен, `ALLOW_PRIMARY`
+4. Синхронизировать runner-токен на `node-2` по разделу 4.2.1 и убедиться, что API
+   получит тот же токен, что и `node2-runner`; при необходимости перезапустить API.
+5. Убедиться, что оба контроллера `active`, start-guard установлен, `ALLOW_PRIMARY`
    отсутствует.
-5. Проверить топологию: `node-1` primary, `node-2` standby; оба API `200`; NLB targets
+6. Проверить топологию: `node-1` primary, `node-2` standby; оба API `200`; NLB targets
    `OK`.
-6. Выполнить финальный smoke-тест на production-аккаунте:
+7. Выполнить финальный smoke-тест на production-аккаунте:
    - открыть панель;
    - открыть существующий проект;
    - выполнить безопасную команду в терминале;
    - запустить и открыть preview;
    - проверить публичный `/api/ready`.
-7. Включить мониторинг на 30–60 минут: NLB targets, роли PostgreSQL, лаг репликации,
+8. Включить мониторинг на 30–60 минут: NLB targets, роли PostgreSQL, лаг репликации,
    `/api/ready`, 5xx, ошибки контроллера.
-8. Только после этого объявить запуск завершённым.
+9. Только после этого объявить запуск завершённым.
 
 В production `node-2` **не выключать** после проверки: это уже постоянная ёмкость,
 если решение о production-HA зафиксировано в `docs/CLUSTER_HA_PLAN.md`. Без этой
-отдельной записи действует правило тестовой ВМ — выключить после прогона.
+отдельной записи действует правило экономии до production-запуска — выключить после
+работ.
 
 ## 8. Матрица приёмки
 
@@ -579,16 +733,28 @@ management-адрес `2.59.80.174` напрямую или консоль MWS. 
 - Start-guard защищает `systemctl`-запуск; прямой `pg_ctlcluster start` его обходит.
 - Терминал и WebSocket при падении узла рвутся; это ожидаемо, после переключения
   пользователь переподключается и повторяет действие.
+- HA-скрипты не входят в image-deploy: после изменения `deploy/ha` их нужно установить на
+  обе ВМ и перезапустить оба failover-юнита. Проверять наличие `switchover.py`/`control.py`,
+  а не только active-статус старого контроллера.
+- Плановый switchover 10.11.2026 не заменяет аварийный failover с MWS fencing. Этапы B/D
+  остаются обязательными до production-запуска.
 
 ## 12. Чеклист перед нажатием «запуск»
 
 - [ ] Backup создан, `check` пройден, restore drill известен.
-- [ ] Оба направления failover прогнаны.
+- [ ] Актуальный `deploy/ha` установлен на обе ВМ; есть `switchover.py`/`control.py`,
+  на каждой ВМ свой failover-юнит active/enabled, `HA_CONTROL_PATH` общий, timeout задан.
+- [ ] Плановый switchover пройден в обе стороны, оба rejoin дали `streaming` с нулевым
+  лагом, холодный старт `node-2` поднял standby/API/Caddy/broker/runner без ручных команд.
+- [ ] Оба направления аварийного failover прогнаны (выключение ВМ + MWS fencing).
 - [ ] На каждом восстановленном узле создан проект, выполнен терминал, открыт preview.
 - [ ] Pin проекта проверялся на нужном узле, а не только публичный `200`.
 - [ ] В каждом состоянии ровно один primary.
 - [ ] Rejoin обоих узлов проверен, streaming WAL подтверждён.
 - [ ] NLB targets и публичный сайт проверены.
+- [ ] На `node-2` синхронизированы `runtime.env` и `node2.env`, токены API и runner
+  совпадают с `node-1`.
+- [ ] На `node-1` записан фактический `NODE2_PG_PASSWORD`; compose-конфигурация проходит.
 - [ ] RTO/RPO записаны.
 - [ ] Нет `ALLOW_PRIMARY`, нет обойдённого guard.
 - [ ] Есть ответственный за окно и план отката.

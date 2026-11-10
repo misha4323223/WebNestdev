@@ -156,8 +156,6 @@ export function touchPreview(projectId: string, now = Date.now()) {
   const current = previews.get(projectId);
   if (!current) return false;
   previews.set(projectId, { ...current, lastUsedAt: now });
-  // Static-preview не живёт в общем реестре: обновлять там нечего.
-  if (current.mode !== "container") return true;
   if (now - (lastSharedTouch.get(projectId) ?? 0) < SHARED_TOUCH_INTERVAL_MS) return true;
   lastSharedTouch.set(projectId, now);
   enqueueWrite(projectId, () => touchSharedPreview(projectId, now));

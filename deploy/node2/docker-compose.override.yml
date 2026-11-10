@@ -2,6 +2,10 @@
 # Compose запускается с `--no-deps`, поэтому сервис postgres из основного файла не поднимается.
 services:
   webnestdev-server:
+    # Вторая реплика принимает публичный трафик и должна уметь отдать preview, запущенный
+    # на node-1: её дверь проксирует запрос на приватную дверь владельца.
+    ports:
+      - "10.0.0.5:8788:8788"
     # Тот же общий DATA_DIR, что на node-1; без него ключи платформы и настройки
     # остаются в локальном именованном томе и после переключения теряются.
     volumes:
@@ -9,6 +13,7 @@ services:
     environment:
       DATABASE_URL: postgres://webnestdev:${NODE2_PG_PASSWORD:?Set NODE2_PG_PASSWORD}@host.docker.internal:5432/webnestdev
       WEBNESTDEV_NODE_ID: node-2
+      WEBNESTDEV_NODE_ADDRESS: 10.0.0.5:8790
       # node-1 после падения возвращается не как API, а как runner: token и адрес
       # регистрируются здесь, а общий NFS-каталог виден обоим узлам.
       WEBNESTDEV_RUNNER_TOKEN: ${NODE1_RUNNER_TOKEN:?Set NODE1_RUNNER_TOKEN}

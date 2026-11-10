@@ -10,6 +10,8 @@ import { proxyPreviewRequest, withoutPlatformCookies, type PreviewDoor } from ".
 import { PREVIEW_SESSION_PATH, PREVIEW_TICKET_COOKIE, PREVIEW_TICKET_PARAM, previewTicketProject, previewTicketTtlMs } from "./preview-ticket.js";
 import { PICK_BRIDGE_PATH, canInjectPickBridge, injectPickBridge, pickBridgeResponse } from "./pick-bridge.js";
 import { setPreviewExecOnly, unsettlePreview } from "./preview-store.js";
+import { isLocalPreviewOwner } from "./preview-owner.js";
+import { forwardPreviewHttp, forwardPreviewUpgrade } from "./peer-door.js";
 import { sessionCookieSecure } from "../auth/auth.js";
 import type { PreviewStatus } from "./types.js";
 import type { FastifyRequest } from "fastify";
@@ -415,9 +417,17 @@ export function createPreviewHostServer(deps: PreviewHostDeps = defaultDeps, lim
       sendMessage(request, response, 413, "Запрос больше предела, который принимает предпросмотр.");
       return;
     }
+    // Preview может принадлежать другой реплике: NLB не различает владельца, а чужой Docker-мост
+    // с этой машины недоступен. Запись preview несёт приватную дверь владельца — передаём туда.
+    const state = await deps.previewStatus(target.projectId).catch(() => null);
+    if (state?.running && !isLocalPreviewOwner(state.ownerAddress)) {
+      await forwardPreviewHttp(request, response, state.ownerAddress!, body);
+      return;
+    }
     try {
       const upstream = await proxyPreviewRequest(door, {
         projectId: target.projectId,
+        ...(state ? { state } : {}),
         // Публичный адрес — корень приложения, поэтому тело отдаётся как есть: переписывать нечего,
         // а переписывание сломало бы ссылки, которые приложение строит само.
         path: request.url || "/",
@@ -463,6 +473,24 @@ export function createPreviewHostServer(deps: PreviewHostDeps = defaultDeps, lim
     const state = await deps.previewStatus(target.projectId).catch(() => ({ running: false }) as PreviewStatus);
     if (!state.running) {
       refuseUpgrade(socket, 503, "Предпросмотр не запущен: запустите его в панели проекта.");
+      return;
+    }
+    // WebSocket и HMR тоже идут через дверь-владельца: соединение к контейнеру на другом узле
+    // отсюда не установить, а владелец видит его напрямую или через свой relay.
+    if (!isLocalPreviewOwner(state.ownerAddress)) {
+      upgrades++;
+      let released = false;
+      const release = () => {
+        if (released) return;
+        released = true;
+        upgrades--;
+      };
+      socket.once("close", release);
+      socket.once("error", release);
+      forwardPreviewUpgrade(request, socket, head, state.ownerAddress!, error => {
+        release();
+        refuseUpgrade(socket, 502, "Дверь-владелец предпросмотра недоступна: " + error.message);
+      });
       return;
     }
     // Через `docker exec` соединение не продолжить: это отдельный процесс на каждый запрос, а не

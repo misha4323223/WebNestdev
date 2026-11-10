@@ -3,15 +3,17 @@ import { getProject } from "./project-store.js";
 import { dockerExec, dockerForNode } from "./preview/docker-exec.js";
 import { resolveSandboxHost } from "./sandbox/host.js";
 import { previewDepsForHost } from "./preview/node-deps.js";
+import { isLocalPreviewOwner } from "./preview/preview-owner.js";
 import { nodeId } from "./nodes/identity.js";
 import { listNodes } from "./nodes/node-store.js";
 import { decideRuntimePreviewStart, perUserPreviewLimit, runtimePreviewLimit } from "./preview/preview-limiter.js";
-import { reservePreviewStart } from "./preview/preview-reservation.js";
+import { clearPreviewReservation, reservePreviewStart } from "./preview/preview-reservation.js";
 import { previewAppAnswers } from "./preview/app-http.js";
 import { settlePreviewAddress } from "./preview/preview-address.js";
 import { flushPreviewWrites, hydratePreview, listPreviewsAcrossReplicas, removePreview, setPreview, touchPreview } from "./preview/preview-store.js";
 import { listSharedPreviews, sharedPreviewRegistryEnabled } from "./preview/preview-registry.js";
 import { startPreviewContainer, previewLogsOf, removePreviewContainer } from "./preview/preview-runner.js";
+import { adoptRunningPreview } from "./preview/preview-adopt.js";
 import { previewModeSetting, startStaticPreview, staticAppAnswers, staticPreviewLogs, stopStaticPreview } from "./preview/static-preview.js";
 import { recordPreviewStart } from "./preview/preview-metrics.js";
 import { PREVIEW_LABEL, type PreviewStatus } from "./preview/types.js";
@@ -120,14 +122,27 @@ function addressRetryMs(){
  * watches the project files itself, so the agent's edits appear without another start.
  */
 async function startContainerPreview(config: SandboxConfig, staticReason?: string) {
-  const current = await hydratePreview(config.projectId);
+  let current = await hydratePreview(config.projectId);
   if (current?.mode === "static") {
     // The mode changed, or the static start fell back: a listener must not be left behind.
     await stopStaticPreview(config.projectId);
     removePreview(config.projectId);
+    current = undefined;
   } else if (current) {
     const status = await previewStatus(config.projectId);
     if (status.running) return status;
+    current = undefined;
+  }
+  // Прерванный старт мог оставить работающий контейнер без строки состояния. Принять его
+  // дешевле и честнее, чем поднимать второй: приложение уже отвечает, а бронь от старого
+  // запуска иначе отвечала бы «уже запускается» до истечения TTL.
+  if (!current) {
+    const adopted = await adoptRunningPreview(config);
+    if (adopted) {
+      await clearPreviewReservation(config.projectId);
+      const status = await previewStatus(config.projectId);
+      if (status.running) return status;
+    }
   }
   // A running dev server holds its memory until it is stopped, so this is the one preview kind
   // that has to be counted. A static preview is not: it is a listener, and the panel shows it
@@ -191,6 +206,9 @@ export async function touchPreviewAnywhere(projectId: string) {
 }
 
 export async function stopPreview(projectId: string) {
+  // Остановка закрывает и незавершённый старт: иначе бронь переживёт контейнер и следующий
+  // запуск снова упрётся в «уже запускается».
+  await clearPreviewReservation(projectId);
   const current = await hydratePreview(projectId);
   if (!current) {
     // Остановка могла прийти после падения запуска: временный env-файл всё равно убираем.
@@ -301,7 +319,10 @@ export async function previewStatus(projectId: string): Promise<PreviewStatus> {
   // Nothing runs in a container for a static preview, so there is nothing to inspect: the
   // listener answers or it does not.
   if (current.mode === "static") {
-    const ready = await staticAppAnswers(current.host, current.port);
+    // На чужой реплике слушателя нет: проверять 127.0.0.1 бессмысленно. Дверь всё равно
+    // проксирует запрос на owner_address, поэтому статус берётся из общего реестра.
+    const local = isLocalPreviewOwner(current.ownerAddress);
+    const ready = local ? await staticAppAnswers(current.host, current.port) : current.ready !== false;
     touchPreview(projectId);
     return {
       running: true,
@@ -314,6 +335,7 @@ export async function previewStatus(projectId: string): Promise<PreviewStatus> {
       host: current.host,
       containerId: current.containerId,
       startedAt: current.startedAt,
+      ...(current.ownerAddress ? { ownerAddress: current.ownerAddress } : {}),
       ...(ready
         ? {}
         : { hint: "Статическая сборка не отвечает — запустите предпросмотр заново." }),
@@ -339,6 +361,7 @@ export async function previewStatus(projectId: string): Promise<PreviewStatus> {
       startedAt: current.startedAt,
       ...(current.node?{node:current.node}:{}),
       ...(current.containerPort?{containerPort:current.containerPort}:{}),
+      ...(current.ownerAddress?{ownerAddress:current.ownerAddress}:{}),
       hint: EXEC_ONLY_HINT,
     };
   }
@@ -366,6 +389,7 @@ export async function previewStatus(projectId: string): Promise<PreviewStatus> {
       startedAt: current.startedAt,
       ...(current.node?{node:current.node}:{}),
       ...(current.containerPort?{containerPort:current.containerPort}:{}),
+      ...(current.ownerAddress?{ownerAddress:current.ownerAddress}:{}),
     };
   }
 
@@ -386,6 +410,7 @@ export async function previewStatus(projectId: string): Promise<PreviewStatus> {
       startedAt: current.startedAt,
       ...(current.node?{node:current.node}:{}),
       ...(current.containerPort?{containerPort:current.containerPort}:{}),
+      ...(current.ownerAddress?{ownerAddress:current.ownerAddress}:{}),
       hint: current.ready
         ? "Приложение отвечает внутри контейнера, но недоступно по адресу контейнера: платформа пробует подключить его к сети сервера и пробросить порт — обновите статус; если подсказка осталась, задайте PREVIEW_NETWORK."
         : "Приложение ещё запускается: первый старт dev-сервера занимает несколько секунд.",
@@ -447,6 +472,7 @@ export async function previewStatus(projectId: string): Promise<PreviewStatus> {
     startedAt: current.startedAt,
     ...(settled.node?{node:settled.node}:{}),
     ...(settled.containerPort?{containerPort:settled.containerPort}:{}),
+    ...(settled.ownerAddress?{ownerAddress:settled.ownerAddress}:{}),
     // Адрес контейнера не отвечает, но приложение живо внутри: панель отдаётся через `docker exec`
     // (см. preview/exec-proxy.ts), поэтому кадр не пустой — и об этом честно сказано пользователю.
     ...(settled.execOnly

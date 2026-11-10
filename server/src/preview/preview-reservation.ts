@@ -100,13 +100,32 @@ type BackendReserveResult =
   | { kind: "acquired"; reservationId: string; stopProjectIds: string[] }
   | { kind: "busy"; reason: string };
 
+export type PreviewReservationInfo = {
+  projectId: string;
+  ownerUserId: string;
+  node: string;
+  createdAt: number;
+  expiresAt: number;
+};
+
 export type PreviewReservationBackend = {
   enabled: () => boolean;
   reserve: (input: ReserveInput) => Promise<BackendReserveResult>;
   release: (input: { projectId: string; reservationId: string }) => Promise<void>;
+  /** Снять бронь, потерявшую владельца: контейнер уже принят из Docker или его остановили. */
+  clear?: (projectId: string) => Promise<void>;
+  /** Активная бронь проекта — для карточки проекта во внешней админке. */
+  get?: (projectId: string, now: number) => Promise<PreviewReservationInfo | null>;
 };
 
 type PreviewRow = { project_id: string; owner_user_id: string | null; last_used_at: number | string };
+type ReservationRow = {
+  project_id: string;
+  owner_user_id: string | null;
+  node: string | null;
+  created_at: number | string;
+  expires_at: number | string;
+};
 
 function integer(value: number | string | null | undefined): number {
   const parsed = typeof value === "number" ? value : Number(value);
@@ -188,6 +207,29 @@ const postgresBackend: PreviewReservationBackend = {
        WHERE project_id = ${input.projectId} AND reservation_id = ${input.reservationId}
     `;
   },
+  async clear(projectId) {
+    await initializeStorage();
+    const table = ydbQuery().identifier(getTable("preview_reservations"));
+    await ydbQuery()`DELETE FROM ${table} WHERE project_id = ${projectId}`;
+  },
+  async get(projectId, now) {
+    await initializeStorage();
+    const table = ydbQuery().identifier(getTable("preview_reservations"));
+    const [rows] = await ydbQuery()<ReservationRow[]>`
+      SELECT project_id, owner_user_id, node, created_at, expires_at
+        FROM ${table}
+       WHERE project_id = ${projectId} AND expires_at > ${now}
+       LIMIT 1`;
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      projectId: row.project_id,
+      ownerUserId: row.owner_user_id ?? "",
+      node: row.node ?? "",
+      createdAt: integer(row.created_at),
+      expiresAt: integer(row.expires_at),
+    };
+  },
 };
 
 let backend: PreviewReservationBackend = postgresBackend;
@@ -248,4 +290,32 @@ export async function reservePreviewStart(input: {
 
 function describeError(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+/**
+ * Снять бронь проекта, когда старт уже не может быть активным: контейнер принят из Docker
+ * или пользователь остановил предпросмотр. Без этого оставшаяся после прерванного запуска
+ * строка продолжала бы отвечать «уже запускается» до истечения TTL.
+ *
+ * Возвращает `false`, только если база не приняла удаление: админке важно отличить «брони уже
+ * нет» от «снять не удалось», иначе ручной разбор зависшего preview выглядел бы успешным.
+ */
+export async function clearPreviewReservation(projectId: string): Promise<boolean> {
+  if (!backend.enabled()) return true;
+  try {
+    await backend.clear?.(projectId);
+    return true;
+  } catch (error) {
+    console.warn("[preview] не удалось снять бронь запуска " + projectId + ": " + describeError(error));
+    return false;
+  }
+}
+
+/**
+ * Активная бронь проекта. Ошибку базы не глотаем: админка должна показать «состояние
+ * неизвестно», а не делать вид, что брони нет.
+ */
+export async function findPreviewReservation(projectId: string): Promise<PreviewReservationInfo | null> {
+  if (!backend.enabled()) return null;
+  return (await backend.get?.(projectId, Date.now())) ?? null;
 }

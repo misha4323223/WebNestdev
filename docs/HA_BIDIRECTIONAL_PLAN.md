@@ -1,11 +1,14 @@
 # Двусторонний failover node-1 ↔ node-2
 
-Статус: **реализовано и проверено в обе стороны**, 08.11.2026. Документ описывает, как
-превратить односторонний сценарий `node-2 → node-1` в двусторонний. Это не замена
-[CLUSTER_HA_PLAN.md](CLUSTER_HA_PLAN.md): общая целевая схема и ограничения остаются там,
-здесь — конкретная работа, порядок, критерии приёмки и откат.
+Статус: **реализовано и проверено в обе стороны**, 08.11.2026; 10.11.2026 дополнительно
+проверены плановый switchover `node-1 → node-2 → node-1`, оба rejoin и холодный старт
+`node-2` с текущим HA-кодом. Полный destructive-прогон с аварийным выключением каждой ВМ
+остаётся обязательным перед production-запуском (см. [PRODUCTION_LAUNCH.md](PRODUCTION_LAUNCH.md)).
+Документ описывает, как превратить односторонний сценарий `node-2 → node-1` в двусторонний.
+Это не замена [CLUSTER_HA_PLAN.md](CLUSTER_HA_PLAN.md): общая целевая схема и ограничения
+остаются там, здесь — конкретная работа, порядок, критерии приёмки и откат.
 
-## 0. Результаты live-теста 08.11.2026
+## 0. Результаты live-тестов 08.11 и 10.11.2026
 
 Проверено на реальных ВМ, без ручного promotion базы:
 
@@ -18,14 +21,38 @@
 - **21:17–21:18 UTC, `node-2` → `node-1`:** `node-2` выключена; контроллер `node-1`
   выполнил fencing, повысил standby, поднял broker/API/Caddy и переключил DNS на
   `178.236.27.102`. `/api/ready` и `https://nestdev.ru` ответили `200`.
-- **Текущее тестовое состояние:** `node-1` — primary, `node-2` — `power=OFF` после
-  проверки. NLB и active-active код остаются готовыми, но production-HA ещё не включён;
-  `node-2` будет постоянно включена только отдельным production-решением.
+- **Текущее состояние:** `node-1` — primary, `node-2` — вторая production-нода,
+  `power=OFF` только из-за стоимости до production-запуска. NLB и active-active код
+  готовы; после production-решения `node-2` будет включена постоянно.
 
 В ходе теста исправлены три реальные ошибки: MWS-имя первой ВМ (`webnestdev`, не `node-1`),
 порядок запуска `docker-broker` перед API и сброс старого состояния `done` после rejoin.
 
-### 1.1. Инцидент 09.11.2026: node-2 поднялась как primary
+### 0.1. Плановый switchover 10.11.2026
+
+Текущий `deploy/ha` установлен на обе ВМ из рабочего дерева; прежние каталоги сохранены в
+`/opt/webnestdev-ha.bak-20261110112118` (`node-1`) и `/opt/webnestdev-ha.bak-20261110112139`
+(`node-2`). На обеих ВМ есть `switchover.py`, `control.py`, `HA_CONTROL_PATH` и
+`HA_SWITCHOVER_TIMEOUT_SECONDS=180`, контроллеры active.
+
+- Плановый switchover `node-1 → node-2`: `target_ready` 11:24:12 UTC,
+  `source_stopped` 11:24:28, `promoted` 11:24:32. `node-2` стала primary, API/Caddy и
+  запись в PostgreSQL проверены; `node-1` осталась API-узлом через `node-2`.
+- Rejoin `node-1` 11:26:25 UTC: streaming standby, лаг нулевой.
+- Обратный switchover `node-2 → node-1`: `target_ready` 11:27:09, `source_stopped`
+  11:27:17, `promoted` 11:27:24. Primary вернулся на `node-1`.
+- Rejoin `node-2` 11:28:00 UTC: standby `t`, `streaming` от `10.0.0.4`,
+  `pg_stat_replication=17/main|streaming|async`.
+- Холодный старт `node-2` после rejoin: автоматически поднялись PostgreSQL standby,
+  failover-контроллер, broker/API/Caddy и runner; `/api/ready` и Caddy — `200`,
+  `SANDBOX_RUNTIME=runsc`, `BROKER_RUNTIME=runsc`, Docker видит `runsc`.
+- Публичный `https://nestdev.ru/api/ready` — `200`; после проверки `node-1` primary,
+  `node-2` standby и `power=OFF` по правилу экономии до production-запуска.
+
+Этот прогон не заменяет аварийный failover: MWS fencing и promotion после потери
+primary нужно проверить отдельно в полном прогоне.
+
+### 0.2. Инцидент 09.11.2026: node-2 поднялась как primary
 
 После включения `node-2` её PostgreSQL стартовал как **primary**, а не standby: data directory
 остался от прежнего promotion, `standby.signal` и корректный `primary_conninfo` отсутствовали,
@@ -50,10 +77,10 @@ data directory стартует как primary, guard сначала прове�
 
 | Слой | node-1 | node-2 |
 | --- | --- | --- |
-| Питание | включена | выключена после теста |
-| API | `src-webnestdev-server-1` работает | остановлен вместе с ВМ; проверен `200` до выключения |
-| Caddy | работает | остановлен вместе с ВМ |
-| PostgreSQL | системный кластер `17/main`, порт `5433`, primary | был streaming standby на `5433`; сейчас выключен |
+| Питание | включена | `power=OFF` после проверки 10.11; данные standby готовы к включению |
+| API | `src-webnestdev-server-1` работает | остановлен вместе с ВМ; холодный старт 10.11 дал `200` |
+| Caddy | работает | остановлен вместе с ВМ; холодный старт дал `200` |
+| PostgreSQL | системный кластер `17/main`, порт `5433`, primary | streaming standby от `node-1` после rejoin 10.11; при выключении данные сохранены |
 | HAProxy | `0.0.0.0:5432` → `127.0.0.1:5433` | установлен, настроен на `10.0.0.4:5432`; остановлен вместе с ВМ |
 | NFS | выключен, заменён Gluster | NFS-клиент убран |
 | Storage | GlusterFS `sandboxes/sites/data`, replica 2 | GlusterFS `sandboxes/sites/data`, replica 2 |
@@ -123,9 +150,10 @@ DNS на адрес конкретной ВМ не используется: п�
 
 ### 3.3. PostgreSQL
 
-`node-1` уже был физическим standby, но после promotion он primary. `node-2` после теста
-выключена; её кластер был standby перед выключением, но для следующего включения его нужно
-пересоздать из текущего primary. Нужны:
+`node-1` — primary; `node-2` после rejoin 10.11 — streaming standby и выключена до
+production-запуска. Её data directory уже содержит `standby.signal` и `primary_conninfo` на
+`node-1`; холодный старт 10.11 это подтвердил, новый basebackup при неизменном primary не
+нужен. После каждого switchover всё равно требуется rejoin. Нужны:
 
 - basebackup с текущего primary;
 - `standby.signal` и `primary_conninfo`;
