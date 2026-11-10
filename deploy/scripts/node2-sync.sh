@@ -241,19 +241,29 @@ if [ -n "$expected" ] && [ "${build#"$expected"}" = "$build" ]; then
 fi
 
 #
-# Уборка образов на node-2.
+# Уборка на node-2: образы и логи.
 #
-# node-1 чистит их сам внутри каждой выкатки (`KEEP_IMAGES`), а вторая нода до 10.11.2026
+# node-1 чистит образы сам внутри каждой выкатки (`KEEP_IMAGES`), а вторая нода до 10.11.2026
 # обновлялась вручную и не чистилась ни разу: там лежали четыре образа сервера по 1.45 ГБ
-# и 1.45 ГБ кеша сборки при диске 19 ГБ. Здесь вызывается тот же `prune_images` из
-# vm-deploy.sh, поэтому правило «текущая и предыдущая версия» не разъезжается между нодами.
-# Ошибка уборки не отменяет выкатку: сервис уже проверен, а место — состояние хоста.
+# и 1.45 ГБ кеша сборки при диске 19 ГБ. Скрипт пересылается на node-2 один раз и запускается
+# дважды — `prune` (образы) и `housekeeping` (логи), поэтому правило «текущая и предыдущая
+# версия» остаётся тем же, что на первой ноде. Ошибка уборки не отменяет выкатку: сервис уже
+# проверен, а место — состояние хоста.
 if [ -n "$DEPLOY_SCRIPT_SRC" ] && [ -f "$DEPLOY_SCRIPT_SRC" ]; then
-  log "убираю старые образы на node-2 (оставляю $KEEP_IMAGES версий)"
-  if ! ssh2_stdin "MODE='prune' APP_DIR='$NODE2_APP_DIR' KEEP_IMAGES='$KEEP_IMAGES' IMAGE_REPO_PATTERN='$IMAGE_REPO_PATTERN' bash -s" < "$DEPLOY_SCRIPT_SRC"; then
-    log "уборка образов на node-2 не удалась — место на диске не освободилось"
+  if [ "$DRY_RUN" = "1" ]; then
+    log "dry-run: уборку образов и логов на node-2 пропускаю"
+  else
+    remote_script="/tmp/.webnestdev-maintenance.$$.sh"
+    ssh2_stdin "umask 077; cat > '$remote_script'" < "$DEPLOY_SCRIPT_SRC"
+    log "убираю старые образы на node-2 (оставляю $KEEP_IMAGES версий)"
+    ssh2 "MODE='prune' APP_DIR='$NODE2_APP_DIR' KEEP_IMAGES='$KEEP_IMAGES' IMAGE_REPO_PATTERN='$IMAGE_REPO_PATTERN' bash '$remote_script'" || \
+      log "уборка образов на node-2 не удалась — место на диске не освободилось"
+    log "чищу логи node-2 (journald и glusterfs)"
+    ssh2 "MODE='housekeeping' APP_DIR='$NODE2_APP_DIR' bash '$remote_script'" || \
+      log "ротация логов на node-2 не отработала"
+    ssh2 "rm -f '$remote_script'" || true
   fi
 else
-  log "скрипт выкатки не передан — старые образы на node-2 не убираю"
+  log "скрипт выкатки не передан — уборку на node-2 не делаю"
 fi
 log "node-2 готова: сборка $build отвечает на /api/ready"

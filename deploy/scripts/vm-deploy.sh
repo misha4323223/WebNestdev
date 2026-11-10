@@ -12,7 +12,7 @@
 #        logs                   только показать последние строки логов сервиса (без выкатки)
 #        cleanup                только обнулить логи контейнеров на ВМ (диск, а не версия)
 #        prune                  только убрать старые образы и кеш сборки
-#        disk                   только показать, что занимает место на диске (чтение, без уборки)
+#        disk                   только показать, что занимает место на диске (чтение, без уборки)#        housekeeping           только ротация логов хоста (journald, glusterfs): данные не трогает
 #        token                  только синхронизировать RUNNER_TOKEN из контейнера runner в .env
 #        pg-password            только записать NODE2_PG_PASSWORD из PG_PASSWORD_FILE в .env
 #        repair                 починить запущенный сервис, не меняя версию: уборка образов и
@@ -1263,6 +1263,61 @@ services_to_start(){
 }
 
 #
+# Ротация логов хоста.
+#
+# Логи — единственное, что можно удалять по возрасту без риска для данных: это не проекты.
+# journald без настроек занимает до 10% диска (на 19 ГБ node-2 — почти 2 ГБ), а glusterd
+# пишет свои логи вообще без ротации. На 10.11.2026: /var/log/journal — 313 МБ,
+# /var/log/glusterfs — 186 МБ. Сначала предел в конфиге (иначе журнал отрастёт снова), потом
+# разовая уборка: после первого запуска новые записи уже не выходят за предел.
+#
+# Ошибка ротации не отменяет выкатку: место на диске — состояние хоста, а не собранной версии.
+JOURNAL_MAX_MB="${JOURNAL_MAX_MB:-200}"
+GLUSTER_LOG_MB="${GLUSTER_LOG_MB:-50}"
+housekeeping(){
+  if [ "$DRY_RUN" = "1" ]; then
+    log "dry-run: journald до ${JOURNAL_MAX_MB} МБ, glusterfs — по ${GLUSTER_LOG_MB} МБ; ничего не меняю"
+    return 0
+  fi
+  if ! sudo -n true 2>/dev/null; then
+    log "ротация логов: нет sudo — пропускаю"
+    return 0
+  fi
+  local conf=/etc/systemd/journald.conf
+  local before
+  before=$(sudo -n du -shx /var/log 2>/dev/null | cut -f1 || true)
+  log "ротация логов: /var/log занимает ${before:-неизвестно}"
+  # Предел ставится один раз; повторная выкатка видит активную строку и конфиг не трогает.
+  if ! sudo -n grep -qE '^SystemMaxUse=' "$conf" 2>/dev/null; then
+    if ! sudo -n sed -i "s/^#SystemMaxUse=.*/SystemMaxUse=${JOURNAL_MAX_MB}M/" "$conf" 2>/dev/null \
+      || ! sudo -n grep -qE '^SystemMaxUse=' "$conf" 2>/dev/null; then
+      printf '\n[Journal]\nSystemMaxUse=%sM\n' "$JOURNAL_MAX_MB" | sudo -n tee -a "$conf" >/dev/null 2>&1 || true
+    fi
+    sudo -n systemctl restart systemd-journald >/dev/null 2>&1 || \
+      log "journald не перезапустился — новый предел применится при следующем старте"
+  fi
+  sudo -n journalctl --vacuum-size="${JOURNAL_MAX_MB}M" >/dev/null 2>&1 || true
+  # glusterd своей ротации не имеет: файл переживает выкатки и действует на весь узел.
+  if [ -d /var/log/glusterfs ]; then
+    sudo -n tee /etc/logrotate.d/glusterfs >/dev/null 2>&1 <<EOF || true
+/var/log/glusterfs/*.log {
+  size ${GLUSTER_LOG_MB}M
+  rotate 2
+  compress
+  missingok
+  notifempty
+  copytruncate
+}
+EOF
+    sudo -n logrotate -f /etc/logrotate.d/glusterfs >/dev/null 2>&1 || \
+      log "logrotate для glusterfs не отработал"
+  fi
+  local after
+  after=$(sudo -n du -shx /var/log 2>/dev/null | cut -f1 || true)
+  log "ротация логов завершена: /var/log было ${before:-?}, стало ${after:-?}; свободно на диске $(df -h / | awk 'NR==2{print $4}')"
+}
+
+#
 # Legacy PostgreSQL из compose не должен работать рядом с системной базой.
 #
 # С override серверу база нужна не из контейнера, а с хоста (system PostgreSQL + HAProxy), но
@@ -2095,7 +2150,7 @@ verify_sms(){
 }
 
 if [ ! -d "$APP_DIR" ]; then
-  if [ "$MODE" = "prune" ] || [ "$MODE" = "disk" ]; then
+  if [ "$MODE" = "prune" ] || [ "$MODE" = "disk" ] || [ "$MODE" = "housekeeping" ]; then
     log "каталог развёртывания не найден ($APP_DIR), но для этого режима он не нужен"
   else
     log "каталог развёртывания не найден: $APP_DIR"
@@ -2219,6 +2274,11 @@ case "$MODE" in
     stop_legacy_postgres
     update_runner_version
     ;;
+  housekeeping)
+    log "режим housekeeping: ротация логов, сервис не перезапускаю"
+    housekeeping
+    exit 0
+    ;;
   logs)
     log "режим logs: показываю логи контейнера, сервис не перезапускаю"
     dump_container_logs || exit 1
@@ -2280,7 +2340,7 @@ case "$MODE" in
     exit 0
     ;;
   *)
-    log "неизвестный MODE=$MODE (ожидается image, source, cert, token, pg-password, repair, logs, cleanup, prune или disk)"
+    log "неизвестный MODE=$MODE (ожидается image, source, cert, token, pg-password, repair, logs, cleanup, prune, disk или housekeeping)"
     exit 2
     ;;
 esac
@@ -2308,6 +2368,7 @@ if [ "$MODE" = "image" ] && [ "$DRY_RUN" != "1" ]; then
   pin_image "$IMAGE_REF"
   # Только теперь: сервис подтвердил сборку, значит runner можно переводить на неё же.
   update_runner_version
+  housekeeping
 fi
 # В ремонте версия не меняется, откатываться не на что — но если после пересоздания сервис
 # отвечает не закреплённой сборкой, это единственный след, и молчать о нём нельзя.

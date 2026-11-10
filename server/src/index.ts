@@ -103,6 +103,7 @@ import { startStorageReconcileScheduler } from "./account/storage-scheduler.js";
 import { describeObjectStore } from "./storage/object-store.js";
 import { describeMediaConfig, mediaConfigFromEnv } from "./media/media-store.js";
 import { startProjectArchiveScheduler } from "./storage/archive-scheduler.js";
+import { startOrphanProjectSweeper } from "./storage/orphan-sweeper.js";
 import { archiveProject as archiveProjectToBucket, runQueuedRestore } from "./storage/project-archive.js";
 import { startJobWorker } from "./jobs/worker.js";
 import { ProjectRestoreFailedError, ProjectRestoringError } from "./storage/restore-jobs.js";
@@ -568,6 +569,8 @@ if (process.env.PREVIEW_DOOR_SEPARATE === "1") {
 startPreviewSweeper();
 // Давно не открытые проекты уезжают в бакет и освобождают диск (PROJECT_ARCHIVE_ENABLED=1).
 startProjectArchiveScheduler();
+// Каталоги удалённых проектов, которые остались на общем диске: их нет в базе, открыть их некому.
+startOrphanProjectSweeper();
 // Очередь долгих заданий: архивация по команде оператора и восстановление, прерванное
 // рестартом. Встроенный воркер можно выключить (`JOBS_INLINE_WORKER=0`) и держать очередь на
 // отдельном процессе — `node server/dist/scripts/job-worker.js`.
