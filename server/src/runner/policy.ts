@@ -243,10 +243,15 @@ export async function assertDockerArgsAllowed(args: string[]): Promise<void> {
     return;
   }
   if (head === "ps") {
-    if (args.length !== 4 || args[1] !== "-aq" || args[2] !== "--filter" ||
-        !/^label=webnestdev\.[A-Za-z0-9_.=-]+$/.test(args[3])) {
-      reject("Разрешён только docker ps -aq --filter label=webnestdev.*");
-    }
+    // `--no-trunc` нужен уборщику: Docker иначе отдаёт короткие ID, а в общем реестре
+    // хранится полный, и живой preview выглядел бы осиротевшим. Обе формы безопасны:
+    // без `--no-trunc` команда остаётся для старых вызовов.
+    const noTrunc = args[1] === "-aq" && args[2] === "--no-trunc";
+    const filterAt = noTrunc ? 3 : 2;
+    const valid = (noTrunc ? args.length === 5 : args.length === 4) &&
+      args[filterAt] === "--filter" &&
+      /^label=webnestdev\.[A-Za-z0-9_.=-]+$/.test(args[filterAt + 1] ?? "");
+    if (!valid) reject("Разрешён только docker ps -aq [--no-trunc] --filter label=webnestdev.*");
     return;
   }
   if (head === "network") {

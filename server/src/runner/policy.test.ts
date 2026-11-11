@@ -62,6 +62,8 @@ test("the remaining preview and job operations stay available", async () => {
   await assert.doesNotReject(assertDockerArgsAllowed(["logs", "--tail", "120", "wnd-preview-1"]));
   await assert.doesNotReject(assertDockerArgsAllowed(["inspect", "-f", "{{.State.Running}}", "abc123"]));
   await assert.doesNotReject(assertDockerArgsAllowed(["ps", "-aq", "--filter", "label=webnestdev.preview"]));
+  await assert.doesNotReject(assertDockerArgsAllowed(["ps", "-aq", "--no-trunc", "--filter", "label=webnestdev.preview"]));
+  await rejects(["ps", "-aq", "--no-trunc", "--filter", "name=webnestdev"], /label=webnestdev/);
   await assert.doesNotReject(assertDockerArgsAllowed(["network", "ls", "--format", "{{.Name}}"]));
   await assert.doesNotReject(assertDockerArgsAllowed(["network", "connect", "preview_net", "abc123"]));
   await assert.doesNotReject(assertDockerArgsAllowed(["exec", "-d", "abc123", "node", "-e", "1+1"]));
