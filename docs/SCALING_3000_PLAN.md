@@ -953,12 +953,13 @@ WAL старше 21 суток — таймеры `webnestdev-pg-basebackup.time
 три ловушки (`recovery.signal`, идемпотентный `archive_command`, `archive_mode=off` у учебного
 кластера) — [`POSTGRES_BACKUP.md`](POSTGRES_BACKUP.md) §5.
 
-**Вывоз WAL в S3 — готов к включению.** `deploy/scripts/pg-pitr-s3.sh` каждые 5 минут
-выгружает новые сегменты и base backup (`pitr/wal/…`, `pitr/basebackup/<ts>.tar.gz`, индекс и
-`latest.txt`); восстановление из бакета — `pg-pitr.sh restore-s3`. На 10.11.2026 выгрузчик и
-таймеры установлены, но вывоз ждёт выкатки: в текущем образе нет CLI-команд `put-object`/
-`get-object` (код готов и типизируется). До выкатки WAL локален и защищает только от ошибки в
-данных; от потери ВМ — ежедневный дамп.
+**Вывоз WAL в S3 включён 11.11.2026.** `deploy/scripts/pg-pitr-s3.sh` каждые 5 минут выгружает
+новые сегменты и base backup (`pitr/wal/…`, `pitr/basebackup/<ts>.tar.gz`, индекс и `latest.txt`);
+восстановление из бакета — `pg-pitr.sh restore-s3`. Образ `sha-343ee73fc0c4` содержит CLI
+`put-object`/`get-object`/`head-object`; таймер выгрузил 18 WAL-сегментов и base backup
+`20261110T223005Z.tar.gz` (17 МБ), `latest.txt` подтверждён. При первом запуске найден баг
+`local dir="$1" tar="$dir.tar.gz"` (`dir: unbound variable`, base backup не уходил); исправлено
+и установлено на обе ноды. Теперь PITR защищает и от ошибки в данных, и от потери ВМ.
 
 **Предпродовые шаги (вне плана масштабирования):** переезд primary на `node-2` (чтобы база не
 делила ВМ с API), TLS на участке HAProxy ↔ PostgreSQL и проверка `restore-s3` после выкатки

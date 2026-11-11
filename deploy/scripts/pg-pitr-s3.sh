@@ -65,7 +65,8 @@ upload_file() {
 
 # Бандл base backup: pg_basebackup оставляет каталог, а в бакет удобнее один объект.
 bundle() {
-  local dir="$1" tar="$dir.tar.gz"
+  local dir="$1"
+  local tar="$dir.tar.gz"
   [ -f "$tar" ] || tar -czf "$tar" -C "$dir" .
   printf '%s' "$tar"
 }

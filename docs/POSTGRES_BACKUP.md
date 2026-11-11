@@ -160,12 +160,13 @@ sudo env RESTORE_TIME='2026-11-10 21:41:04.205539+00' /usr/local/sbin/webnestdev
 sudo env RESTORE_TIME='…' S3_TS=20261110T214324Z /usr/local/sbin/webnestdev-pg-pitr restore-s3
 ```
 
-**Статус 10.11.2026:** выгрузчик и таймеры установлены, но вывоз ждёт выкатки нового образа: в
-текущей сборке CLI (`server/dist/scripts/postgres-backup.js`) ещё нет команд `put-object`,
-`get-object`, `head-object` — они добавлены в код и проходят `tsc`, но попадут в контейнер
-следующей выкаткой. До неё таймер пишет в журнал «этот образ сервера не умеет put-object» и
-ничего не выгружает; поэтому сейчас PITR по-прежнему защищает только от ошибки в данных, а от
-потери ВМ — ежедневный дамп в S3.
+**Статус 11.11.2026 — вывоз работает.** Образ `sha-343ee73fc0c4` содержит CLI `put-object`,
+`get-object`, `head-object`; таймер `webnestdev-pg-pitr-s3.timer` на primary выгрузил 18
+WAL-сегментов, `index.txt` и base backup `20261110T223005Z.tar.gz` (17 МБ сжатый), `latest.txt`
+подтверждён через `head-object`. При первом запуске найден баг: в `bundle()` строка
+`local dir="$1" tar="$dir.tar.gz"` падала на `set -u` (`dir: unbound variable`) после выгрузки WAL,
+поэтому base backup не уходил. Исправлено разделением на два `local`; исправленный скрипт
+установлен на обе ноды, сервис завершился успешно. Восстановление из бакета — `restore-s3`.
 
 Переменные GitHub (не секреты): `DEPLOY_APP_DIR`, при необходимости `BACKUP_MAX_AGE_HOURS`
 (по умолчанию 30). Секреты `DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS`, `DEPLOY_HOST`, `DEPLOY_USER`,
