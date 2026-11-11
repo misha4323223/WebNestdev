@@ -36,6 +36,10 @@ tmp-compose.b64
 wn-diag.sh
 wn-proxy-patch.sh
 
+# --- Python-кэш (deploy/ha) ---
+__pycache__/
+*.pyc
+
 # --- Мусор doc-генератора ---
 doc/
 

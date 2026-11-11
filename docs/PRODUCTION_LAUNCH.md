@@ -1,5 +1,54 @@
 # Запуск в продакшен: HA и проверка восстановленных узлов
 
+## ⚠️ Перед запуском: вернуть primary PostgreSQL на `node-2`
+
+На 10.11.2026 primary специально возвращён на `node-1`, потому что `node-2` на две недели
+выключается. **Это временное состояние.** Перед production-запуском (и до того, как
+`node-2` снова станет постоянной) нужно повторить переезд базы, иначе API и база останутся
+на одной ВМ и пункт 4.4 будет не закрыт.
+
+Порядок (проверено 10.11.2026 в обе стороны):
+
+```bash
+# 1. Pre-flight с node-1: node-1 primary, node-2 standby, лаг 0, оба API 200
+sudo -u postgres psql -p 5433 -Atc 'select pg_is_in_recovery()'
+ssh -i ~/.ssh/node2_key ubuntu@10.0.0.5 \
+  "sudo -u postgres psql -p 5433 -Atc 'select pg_is_in_recovery()'"
+curl -fsS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8787/api/ready
+
+# 2. Плановый switchover на node-2 (штатный mailbox, не ручной promote)
+sudo env PYTHONPATH=/opt/webnestdev-ha python3 - <<'PY'
+import control, time, uuid
+control.write({"id": str(uuid.uuid4()), "action": "switchover", "target": "node-2",
+               "state": "requested", "requestedBy": "operator",
+               "createdAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+               "reason": "production: primary back to node-2"})
+PY
+
+# 3. Дождаться state=promoted и проверить, что node-2 принимает записи
+python3 -c 'import json;print(json.load(open("/var/lib/webnestdev/data/ha-switchover.json"))["state"])'
+
+# 4. Вернуть node-1 standby'ом от node-2
+sudo bash -c 'set -a; . /etc/webnestdev-ha/replication.env; set +a; \
+  PGPASSWORD="$REPLICATION_PASSWORD" bash /opt/webnestdev-ha/standby.sh 10.0.0.5 5432 node1'
+
+# 5. PITR на новой primary: rejoin теряет archive_mode в auto.conf
+ssh -i ~/.ssh/node2_key ubuntu@10.0.0.5 'sudo /usr/local/sbin/webnestdev-pg-pitr setup'
+sudo -u postgres psql -p 5433 -Atc 'show archive_mode'   # ожидается on
+```
+
+Что проверить после пункта 5: `show archive_mode = on`, `pg_switch_wal()` даёт сегмент в
+`last_archived_wal` без роста `failed_count`, таймеры `webnestdev-pg-*` активны на primary и
+пропускают работу на standby. Если API на какой-то ноде висит после рестарта базы —
+`sudo systemctl reload haproxy` на этой ноде (старый worker держит мёртвые соединения).
+
+Не включать TLS «по пути»: в `node-2` остались пустые `/var/lib/postgresql/tls/*.crt` и
+`ssl=off`. TLS делать отдельным шагом с валидным сертификатом и проверкой соединения.
+
+Подробности переезда 10.11.2026 и простоя — [`PRODUCTION_STATE.md`](PRODUCTION_STATE.md) §15.
+
+---
+
 Статус: **чеклист к исполнению, частично прогнан 10.11.2026**. Плановый switchover в обе
 стороны через `control.py`, оба rejoin и холодный старт `node-2` с текущим HA-кодом уже
 проверены. Аварийный failover с реальным `power=OFF` проходил 08.11.2026 на предыдущей
@@ -771,4 +820,7 @@ automount и replication slot не закрыты.
 - [ ] RTO/RPO записаны.
 - [ ] Нет `ALLOW_PRIMARY`, нет обойдённого guard.
 - [ ] Есть ответственный за окно и план отката.
+- [ ] **Primary PostgreSQL перенесён на `node-2`** (см. раздел в начале документа), `node-1` —
+  streaming standby с лагом 0.
+- [ ] На новой primary после rejoin включён `archive_mode` и проверен архив WAL.
 - [ ] Принято отдельное решение о постоянной работе `node-2`.

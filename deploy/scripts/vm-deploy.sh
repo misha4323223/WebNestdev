@@ -2077,8 +2077,17 @@ verify_egress(){
 # Режимы: 0 — всё в порядке, 1 — прокси или установка сломаны, 2 — правила не закрывают обход.
 apply_egress_firewall(){
   local mode enforce script rc=0
-  if [ "$MODE" != "image" ] || [ "$DRY_RUN" = "1" ]; then
-    log "egress: правила Docker не применяю (режим $MODE, dry-run $DRY_RUN)"
+  # `egress` — тот же шаг для второй ноды: она обновляется своим скриптом (node2-sync.sh), и без
+  # отдельного режима её правила ставились бы только вручную — то есть никогда.
+  case "$MODE" in
+    image|egress) ;;
+    *)
+      log "egress: правила Docker не применяю (режим $MODE, dry-run $DRY_RUN)"
+      return 0
+      ;;
+  esac
+  if [ "$DRY_RUN" = "1" ]; then
+    log "egress: правила Docker не применяю (dry-run)"
     return 0
   fi
   mode=$(compose_env_value EGRESS_MODE 2>/dev/null || true)
@@ -2161,6 +2170,8 @@ fi
 log "режим: $MODE$( [ "$DRY_RUN" = "1" ] && echo " (dry-run)" )"
 case "$MODE" in
   prune|cleanup|disk) ;;
+  # Правила egress читают режим из compose-конфига, поэтому нужен каталог с файлами.
+  egress) cd "$APP_DIR" ;;
   token) log "режим token: синхронизирую RUNNER_TOKEN, сервис не перезапускаю"; cd "$APP_DIR" ;;
   pg-password) log "режим pg-password: записываю NODE2_PG_PASSWORD, сервис не перезапускаю"; cd "$APP_DIR" ;;
   repair) log "режим repair: чиню запущенный сервис, версию не меняю"; cd "$APP_DIR" ;;
@@ -2277,6 +2288,11 @@ case "$MODE" in
   housekeeping)
     log "режим housekeeping: ротация логов, сервис не перезапускаю"
     housekeeping
+    exit 0
+    ;;
+  egress)
+    log "режим egress: правила фильтра исходящей сети, сервис не перезапускаю"
+    apply_egress_firewall
     exit 0
     ;;
   logs)

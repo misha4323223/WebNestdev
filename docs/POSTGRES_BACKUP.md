@@ -89,6 +89,84 @@ docker compose exec -T webnestdev-server node server/dist/scripts/postgres-backu
 Ожидаемо: JSON с `endpoint`, `bucket`, `prefix` и `region`. Если команда отвечает «объектное
 хранилище не настроено», бэкап работать не будет — сначала проверьте `PLATFORM_S3_*`.
 
+## 5. PITR: восстановление на момент времени (этап 4.4, 10.11.2026)
+
+Дамп раз в сутки отвечает на «вернуть вчерашнее состояние», но не на «вернуть то, что было в
+14:37, до ошибочного `DELETE`». Для этого включён PITR: непрерывная архивация WAL плюс
+физический base backup.
+
+| Что | Где | Когда |
+| --- | --- | --- |
+| WAL-сегменты | `/var/lib/postgresql/wal-archive` | непрерывно, `archive_command` |
+| base backup | `/var/lib/postgresql/basebackup/<ГГГГММДДT…Z>` | воскресенье 04:30 UTC (`webnestdev-pg-basebackup.timer`) |
+| чистка WAL | там же | ежедневно 05:00 UTC, старше `WAL_KEEP_DAYS=21` (`webnestdev-pg-wal-prune.timer`) |
+
+Всё делает `deploy/scripts/pg-pitr.sh`, установленный как `/usr/local/sbin/webnestdev-pg-pitr`:
+
+```bash
+sudo /usr/local/sbin/webnestdev-pg-pitr status      # настройки, архив, копии, LATEST
+sudo /usr/local/sbin/webnestdev-pg-pitr setup       # включить archive_mode, поставить юниты
+sudo /usr/local/sbin/webnestdev-pg-pitr basebackup  # снять копию вручную
+sudo /usr/local/sbin/webnestdev-pg-pitr prune       # почистить старый WAL
+
+# восстановление на момент времени в отдельный кластер на 5544
+sudo env RESTORE_TIME='2026-11-10 21:41:04.205539+00' /usr/local/sbin/webnestdev-pg-pitr restore
+sudo -u postgres psql -p 5544 -d webnestdev -c 'select count(*) from webnestdev_projects;'
+sudo /usr/local/sbin/webnestdev-pg-pitr stop
+```
+
+Три детали, на которых легко потерять часы (все проверены 10.11.2026):
+
+- `archive_command` обязан быть идемпотентным: `cp` во временный файл + `mv`. С
+  `test ! -f … && cp` PostgreSQL считает сегмент неархивированным, если файл уже есть, и
+  повторяет его вечно — архивация встаёт.
+- Для восстановления на момент времени нужен `recovery.signal`. С одним `backup_label`
+  PostgreSQL завершает recovery на конце backup и игнорирует `recovery_target_time`.
+- Учебный кластер восстанавливается с `archive_mode = off`. Иначе после promotion он пишет свои
+  timeline-файлы в общий архив, и следующий restore падает на «requested timeline N is not a
+  child of this server's history».
+- **`standby.sh` при rejoin перезаписывает `postgresql.auto.conf`** — `archive_mode` исчезает.
+  После каждого rejoin или переезда primary: `webnestdev-pg-pitr setup` и проверка
+  `show archive_mode` = `on`, иначе WAL просто не архивируется, а PITR молча деградирует.
+- Таймеры basebackup/prune/S3 стоят на обеих нодах, но работают только на primary
+  (`pg_is_in_recovery() = f`); на standby они пишут в лог «шаг пропущен».
+
+**Проверка 10.11.2026.** Base backup 88 МБ (4 с), WAL-сегменты по 16 МБ. Drill: две метки с
+разницей 3 с, `restore` на момент между ними — в восстановленной базе осталась только
+`before-target`, `webnestdev_projects` = 18, восстановление заняло 1–3 с.
+
+## 6. Вывоз PITR-архива в S3
+
+Локальный архив переживает ошибку в данных, но не потерю `node-1`: вторая нода для этого не
+годится — standby хранит только свежий WAL для репликации, а не историю. Поэтому сегменты и
+base backup выгружаются в бакет под `pitr/`:
+
+| Ключ | Что |
+| --- | --- |
+| `<prefix>/pitr/wal/<сегмент>` | WAL-сегмент |
+| `<prefix>/pitr/wal/index.txt` | список выгруженных сегментов (вместо ListObjects) |
+| `<prefix>/pitr/basebackup/<ts>.tar.gz` | физическая копия одним архивом |
+| `<prefix>/pitr/basebackup/latest.txt` | какую копию восстанавливать |
+
+Делает `deploy/scripts/pg-pitr-s3.sh` (`/usr/local/sbin/webnestdev-pg-pitr-s3`, таймер каждые
+5 минут). S3-клиента на хосте нет — файл стримется в контейнер сервера, где ключи уже есть:
+`docker exec -i … node server/dist/scripts/postgres-backup.js put-object --key …`.
+
+Восстановление из бакета — тот же drill, но данные приезжают из S3:
+
+```bash
+sudo env RESTORE_TIME='2026-11-10 21:41:04.205539+00' /usr/local/sbin/webnestdev-pg-pitr restore-s3
+# конкретная копия вместо latest.txt:
+sudo env RESTORE_TIME='…' S3_TS=20261110T214324Z /usr/local/sbin/webnestdev-pg-pitr restore-s3
+```
+
+**Статус 10.11.2026:** выгрузчик и таймеры установлены, но вывоз ждёт выкатки нового образа: в
+текущей сборке CLI (`server/dist/scripts/postgres-backup.js`) ещё нет команд `put-object`,
+`get-object`, `head-object` — они добавлены в код и проходят `tsc`, но попадут в контейнер
+следующей выкаткой. До неё таймер пишет в журнал «этот образ сервера не умеет put-object» и
+ничего не выгружает; поэтому сейчас PITR по-прежнему защищает только от ошибки в данных, а от
+потери ВМ — ежедневный дамп в S3.
+
 Переменные GitHub (не секреты): `DEPLOY_APP_DIR`, при необходимости `BACKUP_MAX_AGE_HOURS`
 (по умолчанию 30). Секреты `DEPLOY_SSH_KEY`, `DEPLOY_KNOWN_HOSTS`, `DEPLOY_HOST`, `DEPLOY_USER`,
 `DEPLOY_PORT` уже используются выкаткой.

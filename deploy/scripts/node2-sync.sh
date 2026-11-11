@@ -49,6 +49,7 @@ SYNC_NODE2="${SYNC_NODE2:-auto}"
 RUNNER_SCRIPT_B64="${RUNNER_SCRIPT_B64:-}"
 RUNNER_SCRIPT_SRC="${RUNNER_SCRIPT_SRC:-}"
 DEPLOY_SCRIPT_SRC="${DEPLOY_SCRIPT_SRC:-}"
+EGRESS_SCRIPT_SRC="${EGRESS_SCRIPT_SRC:-$APP_DIR/deploy/scripts/egress-firewall.sh}"
 KEEP_IMAGES="${KEEP_IMAGES:-2}"
 IMAGE_REPO_PATTERN="${IMAGE_REPO_PATTERN:-webnestdev}"
 DRY_RUN="${DRY_RUN:-0}"
@@ -261,6 +262,22 @@ if [ -n "$DEPLOY_SCRIPT_SRC" ] && [ -f "$DEPLOY_SCRIPT_SRC" ]; then
     log "чищу логи node-2 (journald и glusterfs)"
     ssh2 "MODE='housekeeping' APP_DIR='$NODE2_APP_DIR' bash '$remote_script'" || \
       log "ротация логов на node-2 не отработала"
+    # Фильтр исходящей сети (5.1) на второй ноде: до этого правила ставились только на первой,
+    # и превью, попавшее на node-2, могло ходить наружу мимо прокси. Скрипт тот же, решение о
+    # включении — в EGRESS_MODE/EGRESS_ENFORCE на самой ноде.
+    log "применяю правила egress на node-2"
+    # Скрипт передаётся тем же способом, что и в первую ноду: в base64, а не чекаутом на node-2 —
+    # там лежит только compose и образ, и старый скрипт правил тихо расходился бы с кодом.
+    if [ -f "$EGRESS_SCRIPT_SRC" ]; then
+      egress_b64=$(base64 -w0 "$EGRESS_SCRIPT_SRC")
+      # У node-2 нет .env: без COMPOSE_ENV_FILES `docker compose config/exec` в MODE=egress
+      # возвращает пустоту, проверка считает прокси мёртвым и снимает уже поставленные правила.
+      node2_compose_envs=$(printf '%s' "$NODE2_ENV_FILES" | tr ' ' ',')
+      ssh2 "MODE='egress' APP_DIR='$NODE2_APP_DIR' COMPOSE_ENV_FILES='$node2_compose_envs' EGRESS_FIREWALL_B64='$egress_b64' bash '$remote_script'" || \
+        log "правила egress на node-2 не применены — смотрите лог выше"
+    else
+      log "egress-firewall.sh не найден ($EGRESS_SCRIPT_SRC) — правила на node-2 не ставлю"
+    fi
     ssh2 "rm -f '$remote_script'" || true
   fi
 else

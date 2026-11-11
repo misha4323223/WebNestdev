@@ -14,6 +14,11 @@
  * stdout — только машиночитаемый результат (JSON или байты дампа); всё человеческое идёт в
  * stderr, поэтому оболочка может безопасно перехватывать вывод.
  */
+import { createReadStream, createWriteStream } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { pipeline } from "node:stream/promises";
 import { objectStoreConfigFromEnv, s3ObjectStore } from "../storage/object-store.js";
 import { checkBackup, putBackup, readBackup, readManifest } from "../storage/postgres-backup.js";
 
@@ -23,6 +28,9 @@ const USAGE = [
   "postgres-backup manifest --database <имя>",
   "postgres-backup check --database <имя> [--max-age-hours 30]",
   "postgres-backup get --key <ключ> --sha256 <сумма>",
+  "postgres-backup put-object --key <ключ>   (stdin → S3)",
+  "postgres-backup get-object --key <ключ>   (S3 → stdout)",
+  "postgres-backup head-object --key <ключ>",
 ].join("\n");
 
 function flag(name: string) {
@@ -51,6 +59,24 @@ function store() {
     );
   }
   return s3ObjectStore(config);
+}
+
+/**
+ * Ключи PITR: только под нашим префиксом и без выхода из каталога.
+ *
+ * Отдельная проверка нужна потому, что эти команды вызываются из shell-скрипта выкатки и
+ * принимают имя объекта снаружи: ключ `../` увёл бы загрузку в чужой каталог бакета.
+ */
+function pitrObjectKey(): string {
+  const key = required("--key").replace(/^\/+/, "");
+  if (!/^[A-Za-z0-9._-]+(\/[A-Za-z0-9._-]+)*$/.test(key) || key.split("/").includes("..")) {
+    throw new Error("некорректный ключ объекта: " + key);
+  }
+  const prefix = objectStoreConfigFromEnv()?.prefix ?? "webnestdev";
+  if (!key.startsWith(prefix + "/pitr/")) {
+    throw new Error("ключ PITR должен начинаться с " + prefix + "/pitr/");
+  }
+  return key;
 }
 
 async function main() {
@@ -103,6 +129,41 @@ async function main() {
       const key = required("--key");
       const sha256 = required("--sha256");
       await readBackup({ store: store(), key, sha256, output: process.stdout });
+      return;
+    }
+    case "put-object": {
+      // Файл может быть большим (base backup), поэтому он идёт через временный файл: putFile
+      // требует путь, а держать такой объём в памяти незачем.
+      const key = pitrObjectKey();
+      const dir = await mkdtemp(path.join(tmpdir(), "wnd-pitr-"));
+      try {
+        const file = path.join(dir, "object");
+        await pipeline(process.stdin, createWriteStream(file, { mode: 0o600 }));
+        const bytes = await store().putFile(key, file, "application/octet-stream");
+        const head = await store().head(key);
+        if (!head || head.size !== bytes) throw new Error("хранилище не подтвердило объект " + key);
+        console.log(JSON.stringify({ ok: true, key, bytes }));
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+      return;
+    }
+    case "get-object": {
+      const key = pitrObjectKey();
+      const dir = await mkdtemp(path.join(tmpdir(), "wnd-pitr-"));
+      try {
+        const file = path.join(dir, "object");
+        if (!(await store().getToFile(key, file))) throw new Error("объекта нет: " + key);
+        await pipeline(createReadStream(file), process.stdout);
+      } finally {
+        await rm(dir, { recursive: true, force: true });
+      }
+      return;
+    }
+    case "head-object": {
+      const key = pitrObjectKey();
+      const head = await store().head(key);
+      console.log(JSON.stringify({ ok: true, exists: Boolean(head), bytes: head?.size ?? 0 }));
       return;
     }
     default:
