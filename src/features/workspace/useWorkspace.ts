@@ -61,6 +61,7 @@ export function useWorkspace(){
     return updated;
   },[projectId]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the chat is chosen only when the workspace opens; conversationId changes are the user's choice
   const initialize=useCallback(async()=>{
     // Заглушка загрузки нужна только тогда, когда показать ещё нечего: сохранённый чат
     // открывается сразу, а список чатов лишь уточняет выбор без мигания экрана.

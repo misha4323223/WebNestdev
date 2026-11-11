@@ -73,6 +73,7 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
   // Кадр в ширине устройства больше колонки предпросмотра, поэтому он уменьшается масштабом.
   // Размер холста меряется, а не берётся из окна: панель на телефоне занимает почти весь экран,
   // на десктопе это узкая колонка справа, и масштаб у них разный.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: face, running and device are triggers: the frame is remeasured when its layout changes
   useEffect(()=>{
     const element=canvasRef.current;
     if(!element)return;
@@ -102,6 +103,7 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
   // пролистать холст (он скроллится), меньше — увидеть страницу целиком даже на телефоне.
   // Смена устройства сбрасывает масштаб: у 390 и 1280 px разный смысл одного и того же шага.
   const [zoom,setZoom]=useState(1);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: device is a trigger: switching devices resets the zoom
   useEffect(()=>{setZoom(1)},[device]);
   const scale=fit>0?Math.min(4,Math.max(0.1,fit*zoom)):0;
   const zoomBy=(step:number)=>setZoom(value=>Math.min(4,Math.max(0.5,Math.round((value+step)*100)/100)));
@@ -130,23 +132,24 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
       setCopied(true);
       window.setTimeout(()=>setCopied(false),1600);
     }catch{setError("Скопируйте адрес вручную: "+url)}
-  }
-  const refresh=async()=>{
+  }  const refresh=useCallback(async()=>{
     setError("");
-    try{
+    try {
       const next=await getPreviewStatus(projectId);
       setPreview(next);
       // Приложение могло подняться уже после того, как кадр загрузился: со новым статусом он берётся заново.
       if(next.running)setFrameToken(value=>value+1);
     }catch(e){setError(e instanceof Error?e.message:"Не удалось получить статус предпросмотра")}
-  };
+  },[projectId]);
   // Refreshed when the project changes and after every agent run: a preview the agent
   // started through preview.start shows up here without the user pressing anything.
-  useEffect(()=>{void refresh()},[projectId,reloadToken]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reloadToken is a trigger: an agent run should re-read the same project's status
+  useEffect(()=>{void refresh()},[refresh,reloadToken]);
 
   // Билет просится на каждый показ заново: он короткоживущий, а открытый кадр должен работать
   // даже тогда, когда вкладка простояла дольше его срока. Отказ — не ошибка панели: приложение
   // остаётся доступным по пути в панели, поэтому кадр просто берётся оттуда.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reloadToken and frameToken are triggers: a fresh frame needs a fresh ticket
   useEffect(()=>{
     if(!preview.running||!preview.publicUrl){setPublicLink("");setPublicLinkPending(false);return}
     let cancelled=false;

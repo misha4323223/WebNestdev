@@ -50,6 +50,8 @@ services:
       # выпуска wildcard — пути к файлам сертификата. Отдельный файл, потому что у Caddyfile нет
       # условий; его переписывает deploy/scripts/wildcard-cert.sh и перечитывает Caddy.
       - ./preview-tls.caddy:/etc/caddy/preview-tls.caddy:ro
+      # То же для публичных сайтов: on_demand до выпуска `*.host` и статический сертификат после.
+      - ./host-tls.caddy:/etc/caddy/host-tls.caddy:ro
       # Сертификаты wildcard (DNS-01). Только чтение: Caddy их не меняет, файлы кладёт скрипт.
       # Каталог рядом с compose, а не в /var/lib: его создаёт выкатка от имени своего пользователя,
       # без root и sudo (на этой ВМ нет интерактивного терминала, спросить пароль не у кого).

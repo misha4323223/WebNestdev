@@ -173,6 +173,7 @@ export function DeploymentWizard({ projectId, onClose, onStarted, onOpenHosting 
   // серверным приложениям пока остаётся статус «Скоро».
   const [target, setTarget] = useState<"external" | null>(null);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reload is a manual retry trigger; projectId is read by the loader
   useEffect(() => {
     let alive = true;
     setLoading(true);

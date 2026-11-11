@@ -86,6 +86,7 @@ export function AuthGate(){
       void refreshPreferences();
     }).catch(()=>{setState("guest");setOnboardingOpen(false);});
   };
+  // biome-ignore lint/correctness/useExhaustiveDependencies: session is checked once on mount; refresh is a local loader
   useEffect(()=>{refresh()},[]);
   useEffect(()=>{localStorage.removeItem("webnestdev.openWorkspace")},[]);
   // A successful OAuth sign-in never mounts AuthScreen, so its query parameter is
@@ -130,7 +131,7 @@ export function AuthGate(){
     }
     localStorage.setItem("webnestdev.openIntegrations","1");
     goHome();
-  },[goHome]);
+  },[goHome,openWorkspace]);
   /** Контакты знакомства к этому моменту уже сохранены на сервере; здесь создаётся проект. */
   async function startFromOnboarding(answers:OnboardingAnswers){
     const project=await startProjectWithAgent({

@@ -41,6 +41,7 @@ export function TerminalPanel({projectId}:{projectId:string}){
 
   // Вывод всегда показывает последние строки: терминал, который остаётся наверху после команды,
   // заставляет прокручивать вручную то, что только что пришло.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: entries and running are triggers: new output should keep the log scrolled to the end
   useEffect(()=>{
     const box=logRef.current;
     if(box)box.scrollTop=box.scrollHeight;

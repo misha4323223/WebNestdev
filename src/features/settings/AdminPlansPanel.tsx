@@ -74,6 +74,7 @@ export function AdminPlansPanel() {
     } finally { setLoading(false); }
   }
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: admin plans are loaded once on mount
   useEffect(() => { void load(); }, []);
 
   function update(id: AdminPlanId, field: keyof Draft, value: string) {

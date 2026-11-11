@@ -149,6 +149,7 @@ export function ChatBookmarks({ containerRef, items, onJump }: {
 
   // Позиции меняет не прокрутка, а длина переписки: пересчитываем на появление сообщений и на
   // изменение окна, а на прокрутке — только если высота контента разошлась с замеренной.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: indices is a trigger: the stream replaces the array while measure reads items from a ref
   useEffect(() => { measure(); }, [indices, measure]);
 
   useEffect(() => {
@@ -183,7 +184,7 @@ export function ChatBookmarks({ containerRef, items, onJump }: {
     // Первый замер — не прокрутка: он только расставляет активную метку.
     onScroll();
     return () => box.removeEventListener("scroll", onUserScroll);
-  }, [containerRef, measure, scheduleMeasure]);
+  }, [containerRef, scheduleMeasure]);
 
   // Прокрутка полоской: доля от высоты рельсы — та же доля от прокручиваемой длины переписки.
   const scrollToRatio = useCallback((ratio: number) => {

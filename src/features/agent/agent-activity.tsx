@@ -590,6 +590,7 @@ async function copyToClipboard(text: string) {
 function ActionDetailView({ action }: { action: AgentAction }) {
   const detail = actionDetail(action);
   const [copied, setCopied] = useState(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: action.id is a trigger: opening another action resets the copied state
   useEffect(() => { setCopied(false); }, [action.id]);
   useEffect(() => {
     if (!copied) return;
@@ -651,6 +652,7 @@ export function ActionsDock({ actions, running, open, onOpenChange }: {
   const currentLabel = current ? describeAction(current.name).label + (current.target ? " · " + current.target : "") : "начинает работу…";
   // Открытый список держится у последнего действия: агент пишет сверху вниз, и новое должно быть
   // видно без ручной прокрутки.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: actions.length is a trigger: a new action should scroll the open list to the end
   useEffect(() => {
     if (!open) return;
     const box = listRef.current;
@@ -757,6 +759,7 @@ function ThinkingTrace({ steps, running }: { steps: ThinkingStep[]; running?: bo
   const [chosen, setChosen] = useState(false);
   const bodyRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => { if (!chosen) setOpen(Boolean(running)); }, [running, chosen]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: steps is a trigger: a new step should scroll the trace to the end
   useEffect(() => {
     const box = bodyRef.current;
     if (!box || !running) return;
@@ -787,6 +790,7 @@ export function MessageThinking({ text, running, steps }: {
   const bodyRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => { if (!chosen) setOpen(Boolean(running)); }, [running, chosen]);
   // Поток мыслей длиннее окна: пока модель говорит, видны её последние строки, а не начало абзаца.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: text is a trigger: new deltas should keep the growing answer scrolled to the end
   useEffect(() => {
     const box = bodyRef.current;
     if (!box || !running) return;

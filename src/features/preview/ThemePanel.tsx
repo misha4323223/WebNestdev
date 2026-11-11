@@ -261,6 +261,7 @@ export function ThemePanel({ projectId, onClose, onApplied }: {
     }
   }
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reload the palette only when the project changes; load reads the current project id
   useEffect(() => { void load() }, [projectId]);
   useEffect(() => () => { if (savedTimer.current) window.clearTimeout(savedTimer.current) }, []);
 

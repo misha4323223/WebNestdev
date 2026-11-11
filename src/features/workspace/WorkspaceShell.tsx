@@ -131,6 +131,7 @@ export function WorkspaceShell({onHome,onAgentState,active=true}:{onHome:()=>voi
   // Смена вкладки — ещё один момент, когда проект мог уехать в архив, пока панель стояла
   // открытой. Живой проект отвечает одним чтением отметки, поэтому проверка дешёвая.
   const firstViewCheck=useRef(true);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: view is a trigger: a tab switch is another moment when the project may have moved to the cold tier
   useEffect(()=>{
     if(firstViewCheck.current){firstViewCheck.current=false;return}
     if(!waking)void recheckWake();

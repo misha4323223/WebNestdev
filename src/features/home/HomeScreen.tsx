@@ -128,6 +128,7 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
   }
 
   // Строка вкладок на телефоне прокручивается: выбранный раздел подъезжает в видимую часть.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: tab is a trigger: the active class changes with it
   useEffect(() => {
     tabsRef.current?.querySelector(".home-tab.active")?.scrollIntoView({ block: "nearest", inline: "center" });
   }, [tab]);
@@ -140,6 +141,7 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
     }catch{}
   },[idea]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the payment return is handled once on mount; pick only calls setters
   useEffect(()=>{
     const params=new URLSearchParams(window.location.search);
     const status=params.get("payment");
@@ -154,6 +156,7 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
 
   const reload=useCallback(async()=>{try{setProjects((await listProjects()).projects)}catch{}},[]);
   useEffect(()=>{void reload()},[reload]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: page is a trigger: a new page starts at the top
   useEffect(()=>{window.scrollTo({top:0})},[page]);
 
   function open(project:Project){

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { previewStatus } from "./preview-manager.js";
+import { listPreviewContainerIds, previewStatus } from "./preview-manager.js";
+import { PREVIEW_LABEL } from "./preview/types.js";
 import { getPreview, removePreview, setPreview } from "./preview/preview-store.js";
 
 /**
@@ -33,6 +34,24 @@ test("a confirmed address is served without a container round-trip on every stat
   } finally {
     removePreview("p1");
   }
+});
+
+/**
+ * Без `--no-trunc` Docker отдаёт короткие ID, а общий реестр хранит полный: уборщик не узнавал
+ * живой предпросмотр и удалял его при каждом старте API (проверено на node-2 11.11.2026).
+ */
+test("the reap lists preview containers with full ids", async () => {
+  const calls: string[][] = [];
+  const ids = await listPreviewContainerIds(async args => {
+    calls.push(args);
+    return { code: 0, stdout: "abc123\n789def\n" };
+  });
+  assert.deepEqual(calls[0], ["ps", "-aq", "--no-trunc", "--filter", "label=" + PREVIEW_LABEL]);
+  assert.deepEqual(ids, ["abc123", "789def"]);
+});
+
+test("a failed container listing reaps nothing", async () => {
+  assert.deepEqual(await listPreviewContainerIds(async () => ({ code: 1, stdout: "ignored" })), []);
 });
 
 test("a project without a preview reports nothing running", async () => {

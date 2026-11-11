@@ -51,9 +51,11 @@
 # латинских букв, цифр и дефисов, а не произвольный Host. Caddy читает SITES_DIR только
 # на чтение.
 *.{$HOSTING_PUBLIC_DOMAIN:host.nestdev.ru} {
-	tls {
-		on_demand
-	}
+	# TLS приходит отдельным файлом-сниппетом, как у preview: после выпуска wildcard
+	# `*.host.nestdev.ru` по DNS-01 скрипт переключает его на статический сертификат.
+	# On-demand для нового имени здесь не работает: ACME-челлендж приходит на CDN и
+	# получает 504, пока у origin нет сертификата (см. deploy/host-tls.caddy).
+	import /etc/caddy/host-tls.caddy
 
 	encode zstd gzip
 

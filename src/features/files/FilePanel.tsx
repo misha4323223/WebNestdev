@@ -94,6 +94,7 @@ export function FilePanel({projectId,projectName,onSaved}:{projectId:string;proj
 
   // Смена проекта — это другой набор файлов: старый черновик к нему не относится и спрашивать
   // о нём нечего.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reload the file list only when the project changes; load reads the current project id
   useEffect(()=>{setOpened(null);setDraft("");setSaved(false);setMobileFocus(false);void load(".",true)},[projectId]);
 
   /** Позиция курсора в строке состояния: по ней видно, что это настоящий редактор, а не просмотр. */

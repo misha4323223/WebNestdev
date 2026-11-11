@@ -525,7 +525,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       chatEndRef.current?.(box.scrollHeight-box.scrollTop-box.clientHeight<120);
     },0);
     return ()=>window.clearTimeout(timer);
-  },[loaded,conversationId]);
+  },[loaded]);
 
   /** Прокрутка к началу: у открытого проекта первым видно самое раннее сообщение переписки. */
   function scrollMessagesToTop(){
@@ -556,6 +556,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
    * в начале, поэтому ответ агента не сдвигает список, пока пользователь сам не ушёл вниз или не
    * отправил сообщение.
    */
+  // biome-ignore lint/correctness/useExhaustiveDependencies: messages and loaded are triggers: they ask to keep the view pinned to the end
   useEffect(()=>{
     const box=messagesBoxRef.current;
     if(!box||!pinnedToEndRef.current)return;
@@ -693,6 +694,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     setQuestionBusy(false);
   }
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: unmount-only cleanup; cancelAutoResume only clears a timer ref
   useEffect(()=>()=>{
     cancelAutoResume();
     if(jumpTimerRef.current)window.clearTimeout(jumpTimerRef.current);
@@ -704,6 +706,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     updateActions(current=>current.map(action=>action.status==="running"?{...action,status:"failed" as const,durationMs:Date.now()-action.startedAt}:action));
   }
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the chat is reloaded only when conversation or project changes; the helpers below only call setters and refs
   useEffect(()=>{
     let cancelled=false;
     setLoaded(false);
@@ -778,6 +781,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
    * агент переключается в планировщик и сам начинает разговор с уточняющих вопросов, а не ждёт,
    * пока человек напишет то же самое ещё раз.
    */
+  // biome-ignore lint/correctness/useExhaustiveDependencies: pending start is consumed once; mode and run helpers are intentionally not re-run on their identity changes
   useEffect(()=>{
     if(!loaded||running||pendingStartRef.current===conversationId)return;
     const pending=takeAgentStart(conversationId);

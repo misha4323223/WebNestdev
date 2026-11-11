@@ -265,6 +265,18 @@ export async function previewLogs(projectId: string) {
  * Оставляет только те контейнеры, на которые не претендует живая строка общего реестра.
  * В JSON-режиме реестра нет, и поведение прежнее: всё с меткой — сирота этого процесса.
  */
+/**
+ * IDs контейнеров предпросмотра на узле. `--no-trunc` обязателен: без него Docker отдаёт короткие
+ * 12-символьные ID, а в общем реестре хранится полный ID. Сравнение короткого с полным не
+ * совпадает никогда, и уборщик при старте API удалял живые предпросмотры как осиротевшие.
+ */
+export async function listPreviewContainerIds(
+  docker: (args: string[]) => Promise<{ code: number; stdout: string }>,
+) {
+  const listed = await docker(["ps", "-aq", "--no-trunc", "--filter", "label=" + PREVIEW_LABEL]);
+  return listed.code === 0 ? listed.stdout.split(/\s+/).filter(Boolean) : [];
+}
+
 async function orphanPreviewIds(ids: string[]) {
   // В общей схеме живой preview принадлежит не этому процессу. Удалять все контейнеры с меткой
   // при старте API нельзя: перезапуск второй реплики уносил бы preview первой. Поэтому
@@ -284,8 +296,7 @@ export async function reapOrphanPreviews() {
   if (process.env.PREVIEW_REAP_ON_START === "0") return { stopped: 0 };
   // Все контейнеры с меткой, а не только работающие: предпросмотр запускается без `--rm`, и
   // упавший остаётся остановленным — на диске он тоже никому не нужен.
-  const listed = await dockerExec(["ps", "-aq", "--filter", "label=" + PREVIEW_LABEL]);
-  const ids = await orphanPreviewIds(listed.stdout.split("\n").map(value => value.trim()).filter(Boolean));
+  const ids = await orphanPreviewIds(await listPreviewContainerIds(dockerExec));
   for (const id of ids) await removePreviewContainer(id);
   return { stopped: ids.length };
 }
@@ -304,9 +315,7 @@ export async function reapRemotePreviews() {
   for (const node of nodes) {
     try {
       const host = await resolveSandboxHost(node.id);
-      const listed = await host.docker(["ps", "-aq", "--filter", "label=" + PREVIEW_LABEL]);
-      if (listed.code !== 0) continue;
-      const ids = await orphanPreviewIds(listed.stdout.split(/\s+/).filter(Boolean));
+      const ids = await orphanPreviewIds(await listPreviewContainerIds(args => host.docker(args)));
       if (ids.length) {
         await host.docker(["rm", "-f", ...ids]);
         stopped += ids.length;

@@ -38,6 +38,7 @@ export function HostingPanel({ projectId }: { projectId: string }) {
   }, [projectId]);
 
   useEffect(() => { void load(); }, [load]);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: projectId is a trigger: switching projects resets the slug editor
   useEffect(() => { setEditingSlug(false); setSlugValue(""); setNewSlug(""); }, [projectId]);
 
   // Сборка идёт на сервере; страница не должна держать WebSocket ради одного статуса.

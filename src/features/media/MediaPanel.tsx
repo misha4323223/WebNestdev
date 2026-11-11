@@ -84,6 +84,8 @@ export function MediaPanel({projectId,onChanged}:{projectId:string;onChanged?:()
     }finally{setLoading(false)}
   }
 
+  // load uses the current project id; the dependency is the project switch itself.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reload media only when the project changes; load reads the current project id
   useEffect(()=>{
     setObjects([]);
     setSelectedKey("");
@@ -92,8 +94,6 @@ export function MediaPanel({projectId,onChanged}:{projectId:string;onChanged?:()
     usageTruncated.current=false;
     usageAvailable.current=true;
     void load();
-    // load uses the current project id; the dependency is the project switch itself.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   },[projectId]);
 
   async function copy(url:string,key:string){

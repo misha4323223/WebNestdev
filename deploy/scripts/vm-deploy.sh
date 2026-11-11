@@ -177,6 +177,7 @@ CADDY_FILE="${CADDY_FILE:-Caddyfile}"
 PREVIEW_TLS_B64="${PREVIEW_TLS_B64:-}"
 PREVIEW_TLS_SRC="${PREVIEW_TLS_SRC:-}"
 PREVIEW_TLS_FILE="${PREVIEW_TLS_FILE:-preview-tls.caddy}"
+HOST_TLS_FILE="${HOST_TLS_FILE:-host-tls.caddy}"
 # Каталог wildcard-сертификатов; должен совпадать с монтированием в docker-compose.yml.
 CERTS_HOST_DIR="${CERTS_HOST_DIR:-$APP_DIR/certs}"
 WILDCARD_CERT="${WILDCARD_CERT:-auto}"
@@ -1048,6 +1049,16 @@ install_preview_tls(){
   log "обновил $PREVIEW_TLS_FILE из репозитория"
 }
 
+# Сниппет host-блока обязан существовать до запуска Caddy: Caddyfile подключает его через
+# `import`, и на свежей ВМ без файла контейнер не поднимется. Wildcard-сертификат ставится
+# отдельно; on_demand оставляет рабочими сайты, у которых сертификат уже выпущен.
+ensure_host_tls_snippet(){
+  local target="$APP_DIR/$HOST_TLS_FILE"
+  [ -e "$target" ] && return 0
+  printf 'tls {\n\ton_demand\n}\n' > "$target"
+  log "$HOST_TLS_FILE отсутствовал — записал on_demand (wildcard ставится отдельно)"
+}
+
 #
 # Конфигурация фронта с сертификатами. Правится она вместе с остальными файлами развёртывания, но
 # в отличие от compose ошибка здесь видна не сразу: Caddy просто не поднимется (или будет отдавать
@@ -1227,20 +1238,29 @@ validate_caddyfile(){
   # Caddyfile подключает сниппет TLS строкой `import`, поэтому проверка без него не проходит.
   # Если сниппета ещё нет (свежая ВМ), подкладываем временный on_demand: именно это состояние
   # и будет записано первым.
-  local extra=() tmp=""
+  local extra=() tmp="" host_tmp=""
   if [ -f "$APP_DIR/$PREVIEW_TLS_FILE" ]; then
     extra=(-v "$APP_DIR/$PREVIEW_TLS_FILE:/etc/caddy/preview-tls.caddy:ro")
-    # Сниппет с wildcard ссылается на файлы сертификата: без этого монтирования `caddy validate`
-    # не смог бы их прочитать и отверг бы правильный конфиг.
-    [ -d "$CERTS_HOST_DIR" ] && extra+=(-v "$CERTS_HOST_DIR:/certs:ro")
   else
     tmp=$(mktemp)
     printf 'tls {\n\ton_demand\n}\n' > "$tmp"
     extra=(-v "$tmp:/etc/caddy/preview-tls.caddy:ro")
   fi
+  # Host-блок Caddyfile тоже подключает сниппет через `import`: без монтирования проверка
+  # отвергает правильный конфиг. На свежей ВМ подкладываем on_demand, как и для preview.
+  if [ -f "$APP_DIR/$HOST_TLS_FILE" ]; then
+    extra+=(-v "$APP_DIR/$HOST_TLS_FILE:/etc/caddy/host-tls.caddy:ro")
+  else
+    host_tmp=$(mktemp)
+    printf 'tls {\n\ton_demand\n}\n' > "$host_tmp"
+    extra+=(-v "$host_tmp:/etc/caddy/host-tls.caddy:ro")
+  fi
+  # Сниппеты с wildcard ссылаются на файлы сертификата: без этого монтирования `caddy validate`
+  # не смог бы их прочитать и отверг бы правильный конфиг.
+  [ -d "$CERTS_HOST_DIR" ] && extra+=(-v "$CERTS_HOST_DIR:/certs:ro")
   local rc=0
   docker run --rm -v "$file:/etc/caddy/Caddyfile:ro" ${extra[@]+"${extra[@]}"} "$CADDY_IMAGE" caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile </dev/null 2>&1 | sed 's/^/[deploy]   /' || rc=$?
-  [ -n "$tmp" ] && rm -f "$tmp"
+  rm -f "$tmp" "$host_tmp"
   return "$rc"
 }
 
@@ -2214,6 +2234,7 @@ case "$MODE" in
     # Сниппет TLS — до Caddyfile: основной файл подключает его строкой `import`, и проверка
     # конфигурации без сниппета не пройдёт.
     install_preview_tls || log "оставляю сниппет TLS, который лежит на ВМ"
+    ensure_host_tls_snippet || log "не удалось создать $HOST_TLS_FILE"
     # Сертификат — после сниппета: при успехе он сам переключает сниппет на wildcard, и
     # проверка Caddyfile ниже увидит итоговое состояние.
     install_wildcard_cert
@@ -2250,6 +2271,7 @@ case "$MODE" in
     # В режиме source Caddyfile лежит в самом чекауте, но если фронт запускают иначе, файла может
     # и не быть: тогда проверяется и ставится тот, что пришёл вместе со скриптом.
     install_caddyfile || true
+    ensure_host_tls_snippet || log "не удалось создать $HOST_TLS_FILE"
     apply_platform_env
     install_app_secrets
     ensure_sandbox_image
@@ -2277,6 +2299,7 @@ case "$MODE" in
     PRUNE_PROTECT_IMAGE="$IMAGE_REF" prune_images
     unset PRUNE_PROTECT_IMAGE
     [ -n "$IMAGE_REF" ] && export WEBNESTDEV_IMAGE="$IMAGE_REF"
+    ensure_host_tls_snippet || log "не удалось создать $HOST_TLS_FILE"
     ensure_sandbox_image
     # --force-recreate, а не простой up: контейнер мог зависнуть в перезапусках, и тогда compose
     # счёл бы его «уже поднятым» и не тронул. Конфигурацию берём ту, что лежит на ВМ: ремонт не

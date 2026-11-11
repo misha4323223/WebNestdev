@@ -40,6 +40,7 @@ export function TasksPanel({ projectId, reloadToken = 0 }: { projectId: string; 
     }
   }, [projectId]);
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reloadToken is a trigger: a manual refresh re-reads the same project
   useEffect(() => { void load(); }, [load, reloadToken]);
 
   useEffect(() => () => {

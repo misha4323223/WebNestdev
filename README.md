@@ -201,9 +201,11 @@ The repository uses npm workspaces, so the frontend and backend dependencies are
 ```bash
 npm install
 npm run dev
+npm run lint
+npm run test:web
 ```
 
-The development UI runs on port 5173 and the API on port 8787. Vite proxies /api and /ws to the API during local development.
+The development UI runs on port 5173 and the API on port 8787. Vite proxies /api and /ws to the API during local development. `npm run lint` runs Biome over `src` with a focused ruleset (React Hooks plus unused imports/variables); see `biome.json`. `npm run test:web` runs the frontend tests with Vitest (jsdom); the tests live next to the code as `*.test.ts` / `*.test.tsx`.
 
 ## Local accounts
 

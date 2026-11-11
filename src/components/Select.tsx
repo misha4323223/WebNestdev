@@ -38,7 +38,7 @@ export function Select({ value, options, onChange, ariaLabel, placeholder = "Ð’Ñ
   const menuRef = useRef<HTMLDivElement>(null);
   const typed = useRef({ text: "", at: 0 });
   const listId = useId();
-  const optionId = (index: number) => listId + "-option-" + index;
+  const optionId = useCallback((index: number) => listId + "-option-" + index, [listId]);
 
   const selectedIndex = options.findIndex(option => option.value === value);
   const selected = selectedIndex >= 0 ? options[selectedIndex] : null;
@@ -79,7 +79,7 @@ export function Select({ value, options, onChange, ariaLabel, placeholder = "Ð’Ñ
   useEffect(() => {
     if (!open) return;
     document.getElementById(optionId(Math.min(active, options.length - 1)))?.scrollIntoView({ block: "nearest" });
-  }, [open, active, options.length]);
+  }, [open, active, options.length, optionId]);
 
   useEffect(() => {
     if (!open) return;

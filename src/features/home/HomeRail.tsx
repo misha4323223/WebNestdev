@@ -60,6 +60,7 @@ export function HomeRail(props: HomeRailProps) {
   }, []);
 
   // A blocked-popup OAuth return asks for the integrations rail from the address bar.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the OAuth return flag is consumed once on mount
   useEffect(() => {
     if (!localStorage.getItem("webnestdev.openIntegrations")) return;
     localStorage.removeItem("webnestdev.openIntegrations");

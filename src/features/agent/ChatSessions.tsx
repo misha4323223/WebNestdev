@@ -21,6 +21,7 @@ export function useChatSessions(projectId: string | null, conversationId: string
   }, [projectId]);
 
   // Список честен после запуска, переключения чата и перезагрузки.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: conversationId is a trigger: the open chat changes without changing the project
   useEffect(() => { void reload() }, [reload, conversationId]);
 
   return { sessions, sessionsError, reload };

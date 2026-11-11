@@ -179,6 +179,7 @@ export function AccountSettingsPanel() {
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setLoading(false); }
   }
+  // biome-ignore lint/correctness/useExhaustiveDependencies: account settings are loaded once on mount
   useEffect(() => { void reload(); }, []);
   // Кнопка «Докупить кредиты» в лимите агента просит сразу открыть тариф, а не профиль.
   // Для кредитов дополнительно открываем окно докупки: человек уже нажал именно эту кнопку.

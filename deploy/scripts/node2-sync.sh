@@ -136,6 +136,16 @@ sync_file(){
 sync_file docker-compose.yml
 sync_file Caddyfile
 sync_file preview-tls.caddy
+sync_file host-tls.caddy
+# Origin-сертификат нужен обеим нодам: CDN ходит на NLB и может попасть в любую.
+if [ "$DRY_RUN" != "1" ]; then
+  ssh2 "mkdir -p '$NODE2_APP_DIR/certs/host'" || log "не удалось создать certs/host на node-2"
+fi
+sync_file certs/host/fullchain.pem
+sync_file certs/host/key.pem
+if [ "$DRY_RUN" != "1" ]; then
+  ssh2 "chmod 600 '$NODE2_APP_DIR/certs/host/key.pem' 2>/dev/null || true"
+fi
 
 # Образ. Если он уже есть на node-2 (например, повторный запуск после сбоя на середине),
 # повторно не гоняем гигабайты: docker save отдаёт весь образ целиком.

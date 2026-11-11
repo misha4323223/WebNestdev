@@ -14,6 +14,7 @@ export function Hint({children,label="Что это"}:{children:ReactNode;label?
   const bubbleRef=useRef<HTMLDivElement|null>(null);
   const id=useId();
 
+  // biome-ignore lint/correctness/useExhaustiveDependencies: children changes the bubble size while open
   useLayoutEffect(()=>{
     if(!open)return;
     const anchor=triggerRef.current?.getBoundingClientRect();

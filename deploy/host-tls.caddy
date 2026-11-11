@@ -1,0 +1,15 @@
+# TLS для публичных адресов статических сайтов (`<slug>.<HOSTING_PUBLIC_DOMAIN>`).
+#
+# Файл подключается из Caddyfile строкой `import /etc/caddy/host-tls.caddy`.
+#
+#   без wildcard — сертификат на каждое имя по запросу (on_demand + ask-endpoint);
+#   с wildcard   — один статический сертификат `*.host.nestdev.ru` из `/certs/host`.
+#
+# Почему для новых сайтов за CDN нужен именно wildcard: ACME-челлендж приходит на CDN, а не на
+# origin, и CDN отвечает 504, пока у origin нет сертификата на это имя. HTTP-01 и TLS-ALPN-01
+# через CDN не проходят, поэтому on_demand для нового имени не спасает. Managed-сертификат
+# `host-wildcard` уже выпущен в MWS Certificate Manager; его копию для origin кладут в
+# `certs/host/fullchain.pem` и `certs/host/key.pem` (см. `docs/PRODUCTION_STATE.md`).
+tls {
+	on_demand
+}

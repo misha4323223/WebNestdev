@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, KeyRound, Loader2, Lock, Plus, Trash2, Upload } from "lucide-react";
 import { deleteProjectSecret, importProjectSecrets, listProjectSecrets, saveProjectSecrets, type ProjectSecret } from "../../lib/project-api";
 
@@ -25,7 +25,7 @@ export function ProjectSecretsPanel({ projectId, projectName }: { projectId: str
   const [dragging, setDragging] = useState(false);
   const fileInput = useRef<HTMLInputElement | null>(null);
 
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
@@ -35,9 +35,9 @@ export function ProjectSecretsPanel({ projectId, projectName }: { projectId: str
     } finally {
       setLoading(false);
     }
-  }
+  }, [projectId]);
 
-  useEffect(() => { void load(); }, [projectId]);
+  useEffect(() => { void load(); }, [load]);
 
   function feedback(message: string) {
     setStatus(message);

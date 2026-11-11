@@ -63,6 +63,7 @@ export function PlatformKeysPanel() {
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setLoading(false); }
   }
+  // biome-ignore lint/correctness/useExhaustiveDependencies: platform keys are loaded once on mount
   useEffect(() => { void load(); }, []);
 
   function setDraft(name: string, value: string) {

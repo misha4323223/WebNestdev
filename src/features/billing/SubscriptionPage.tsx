@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { ArrowLeft, ArrowRight, Check, CreditCard, Plus, RefreshCw, ShieldCheck } from "lucide-react";
 import {
   balanceLabel,
@@ -49,13 +49,13 @@ export function SubscriptionPage({ onBack, selectedPlanId, onSelectPlan }: {
   // The plan the user selected is what they want to move to, so it is named here too.
   const planChoice = usePlanChoice();
 
-  async function load() {
+  const load = useCallback(async () => {
     setLoading(true); setError("");
     try { setBilling(await getBilling()); }
     catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setLoading(false); }
-  }
-  useEffect(() => { void load(); }, []);
+  }, []);
+  useEffect(() => { void load(); }, [load]);
   // «Докупить кредиты» из боковой панели ведёт сразу к окну докупки, а не просто на тарифы.
   useEffect(() => {
     try {
