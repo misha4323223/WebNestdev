@@ -168,8 +168,11 @@ static preview (`server/src/preview/project-kind.ts` decides from structure, dep
 commands — `package.json` alone proves nothing, and a user's `Dockerfile` is never executed).
 Runtime previews are the only counted kind, and the count is **per account**: one container preview
 at a time (`PREVIEW_MAX_PER_USER`, default 1, `0` disables it), so a second preview of the same user
-stops that user's older one instead of refusing them, and other users are not affected. The host-wide
-brake (`PREVIEW_MAX_CONTAINERS`) is derived from host memory by default (about one 1 GB preview per GB, at most 8); set an explicit number to override it, or `0` to remove it.
+stops that user's older one instead of refusing them, and other users are not affected. The
+per-node brake (`PREVIEW_MAX_CONTAINERS`) is derived from host memory by default (about one 1 GB
+preview per GB, at most 8); set an explicit number to override it, or `0` to remove it. With several
+API replicas the account count is shared, while each node counts only the previews running on that
+node.
 An idle preview is stopped after five minutes without use.
 
 ## CI
