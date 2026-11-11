@@ -83,7 +83,13 @@ jobs:
         # выкатка не начинается. Три попытки переживают короткий сбой DNS/зеркала.
         run: |
           for attempt in 1 2 3; do
-            npx playwright install --with-deps chromium && exit 0
+            if npx playwright install --with-deps chromium; then
+              exit 0
+            fi
+            echo "Playwright with-deps failed (attempt $attempt), trying browser only…" >&2
+            if npx playwright install chromium; then
+              exit 0
+            fi
             echo "Playwright install failed (attempt $attempt), retrying…" >&2
             sleep 15
           done
