@@ -12,6 +12,7 @@ import { secretEnvMaskMounts } from "../sandbox/secret-mask.js";
 import { loadProjectSecretFiles } from "../secrets/project-secrets.js";
 import { hostingConfig, hostingLimits } from "./config.js";
 import { copyArtifact, inspectArtifact, removeStaging } from "./artifact.js";
+import { purgeHostingCdn } from "./cdn-purge.js";
 import { assertAccountHostingQuota, assertHostingDiskHasRoom } from "./limits.js";
 import { publicEnvMounts } from "./public-env.js";
 import { projectSecretValuesForScan, redactSecretText } from "./security.js";
@@ -399,6 +400,17 @@ async function runPublish(site: HostingSite, release: HostingRelease, project: P
 
     // Старые релизы удаляются только после успешной публикации и только сверх лимита.
     await pruneOldReleases(site, release.id, limits.keepReleases, config.sitesDir);
+    // Сброс кеша CDN — после успешной фиксации релиза. Ошибка purge не отменяет публикацию:
+    // HTML не кешируется, а ассеты доживут до TTL; важнее не оставить сайт в failed.
+    try {
+      const purged = await purgeHostingCdn(site.slug);
+      if (!purged.skipped) logLine("info", "cdn purge requested", { site: site.slug, task: purged.task });
+    } catch (error) {
+      logLine("warn", "cdn purge failed", {
+        site: site.slug,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
     logLine("info", "publish ok", {
       site: site.slug,
       release: release.id,

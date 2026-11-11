@@ -25,10 +25,15 @@ services:
       # node-1 публикует сайты через общий SANDBOX_DIR, а релизы пишет API node-2
       # в свой SITES_DIR; для сайта проекта с node-1 это общий storage с точки зрения API.
       HOSTING_SHARED_STORAGE: "1"
+      # 6.3: после публикации сайта сбрасываем кеш общего CDN-ресурса.
+      HOSTING_CDN_PURGE: "1"
+      HOSTING_CDN_RESOURCE: hosting
+      HOSTING_CDN_PROJECT: project-pimashin2015
       WEBNESTDEV_TRUSTED_PROXIES: 172.30.0.0/24
-      # Freebuff-тест: фильтр egress не настроен на этой ВМ, прокси не должен блокировать npm.
-      EGRESS_MODE: private-only
-      EGRESS_ENFORCE: "0"
+      # 5.1 включён 10.11.2026: allowlist + правила DOCKER-USER (ставит node2-sync.sh).
+      # Аварийный выключатель — private-only, затем EGRESS_ENFORCE: "0".
+      EGRESS_MODE: allowlist
+      EGRESS_ENFORCE: "1"
       PREVIEW_MAX_CONTAINERS: "2"
       SANDBOX_MAX_CONCURRENT: "2"
     extra_hosts:

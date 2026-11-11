@@ -1,14 +1,19 @@
 # Состояние production и оперативная память
 
-Дата среза: **10.11.2026**. Документ фиксирует факты, которые нельзя терять между
+Дата среза: **11.11.2026**. Документ фиксирует факты, которые нельзя терять между
 сессиями. Секреты здесь не хранятся: только имена переменных, пути и способы проверки.
 
 ## 1. Роли ВМ
 
 | ВМ | Роль | Адрес | Текущее питание |
 | --- | --- | --- | --- |
-| `node-1` | production primary: API, Caddy, HAProxy, PostgreSQL, `node1-runner` | `10.0.0.4`, management `2.59.83.250` | `ON` |
-| `node-2` | вторая production-нода: API/Caddy/runner, PostgreSQL standby, общий storage | `10.0.0.5`; внешний NAT динамический (10.11.2026: `111.88.131.185`), читать из MWS API | `ON` — по решению пользователя оставлена включённой |
+| `node-1` | production primary: API, Caddy, HAProxy, PostgreSQL primary, `node1-runner` | `10.0.0.4`, management `2.59.83.250` | `ON` |
+| `node-2` | вторая нода: API/Caddy/broker/runner, PostgreSQL standby, общий storage | `10.0.0.5`; внешний NAT динамический (10.11.2026: `111.88.131.185`), читать из MWS API | `ON` — включена 11.11.2026 для проверки NLB и CDN |
+
+**С 10.11.2026:** primary PostgreSQL на `node-1`, `node-2` — streaming standby (лаг 0).
+Перед production-запуском primary нужно снова перенести на `node-2` — порядок в
+[`PRODUCTION_LAUNCH.md`](PRODUCTION_LAUNCH.md). API на обеих нодах одинаково ходит в свой
+локальный HAProxy `:5432`.
 
 `node-2` — **не тестовая и не одноразовая машина**. Это вторая нода production-контура.
 10.11.2026 пользователь разрешил оставить её включённой; после production-запуска она
@@ -17,16 +22,16 @@
 
 Правило работы:
 
-1. `node-2` сейчас остаётся включённой — это указание пользователя, а не временный тестовый
-   режим.
+1. `node-2` включена 11.11.2026 для проверки NLB и CDN; решение о постоянном питании — за
+   пользователем.
 2. Довести задачу до конца, не выключая ВМ в середине.
 3. Вернуть прод в исходное состояние.
 4. Питание менять только по явной просьбе пользователя; выключение — с проверкой MWS
    `power=OFF`.
 5. После production-HA — постоянно включена.
 
-Пока `node-2` выключена (если её когда-то выключат), production не должен зависеть от её
-базы или storage как от единственного экземпляра.
+Если `node-2` выключат, production не должен зависеть от её базы или storage как от
+единственного экземпляра.
 
 ## 2. Текущая production-сборка
 
@@ -410,6 +415,267 @@ preview хранила только адрес контейнера в Docker-с
   через `auto`, но автоматического арбитража нет. Нужна третья witness-ВМ.
 - `node-2` 2 vCPU / 4 ГБ хватает текущей нагрузке; preview/sandbox-ёмкость и диск под
   storage — отдельная задача перед production-масштабом.
+
+## 13. Проверки 10.11.2026: общие лимиты, egress, отказ провайдера
+
+### Общие лимиты входа (4.1) — закрыто
+
+Проверено на живой паре, а не на локальном стенде:
+
+- каждая нода — своя реплика API (`127.0.0.1:8787`), база одна (`node-1:5433`);
+- 5 попыток `POST /api/admin/login` с одним адресом на `node-1` + 5 на `node-2` — все 10 прошли
+  проверку лимита (лимит по аккаунту `adminLogin` = 10); 11-я с `node-1` — `429` и
+  `Retry-After: 898`, 12-я с `node-2` — тоже `429`;
+- после `docker restart src-webnestdev-server-1` на `node-2` счётчик остался `13`, ответ — `429`:
+  рестарт окна не обнуляет;
+- тестовые ключи `subject:adminLogin:accept41*` удалены из `webnestdev_rate_limits`; чужие окна
+  не тронуты; `/api/ready` 200 локально и на `https://nestdev.ru`.
+
+### Egress-фильтр (5.1) — включён в проде 10.11.2026
+
+- В `deploy/node1/docker-compose.override.yml` и `deploy/node2/docker-compose.override.yml`:
+  `EGRESS_MODE: allowlist`, `EGRESS_ENFORCE: "1"`.
+- На обеих нодах `webnestdev-egress.service` `active` и `enabled` (на `node-2` установлен
+  впервые), в `DOCKER-USER` — 6 правил с комментарием `webnestdev-egress`.
+- Проверка `MODE=egress` на каждой ноде: прокси жив (`mode=allowlist`, 33 домена), сервер ходит
+  наружу сам (200), через прокси npm registry 200, `example.com` → 403, контейнер проекта
+  ставит пакеты через прокси 200, прямой сокет из контейнера не открывается. Вручную:
+  `github.com` через прокси 200, `example.com` 403.
+- API на обеих нодах 200, публичный `https://nestdev.ru/api/ready` 200.
+- Аварийный выключатель: `EGRESS_MODE: private-only` (публичное разрешено, обход закрыт),
+  затем `EGRESS_ENFORCE: "0"` (полный откат). После изменения — пересоздать контейнер сервера.
+- **Ловушка на `node-2`:** там нет `.env`, compose читает `runtime.env` и `node2.env`; ручной
+  `MODE=egress` без `COMPOSE_ENV_FILES=runtime.env,node2.env` даёт ложное «прокси не отвечает»
+  и снимает правила.
+
+### Отказ провайдера модели (7.3)
+
+- Сетевой трафик контейнера API (`172.30.0.4`) на `:443` отклонялся правилом в `DOCKER-USER`
+  примерно 45 секунд; правило снято в `trap`, остатков нет.
+- Вызов `https://polza.ai/api/v1/models` из контейнера: `200` → `000` (обрыв) → `200` после
+  снятия правила; `/api/ready` и `https://nestdev.ru/` всё время отвечали `200`; контейнер не
+  перезапускался (`StartedAt` тот же, `RestartCount=0`).
+- Ограничение: полноценный запуск агента в окне отказа не выполнялся — проверены изоляция и
+  живучесть API, а не текст ошибки в чате. Обработка кодов провайдера покрыта
+  `provider-errors`/`provider-retry` тестами.
+- Отдельная находка: у запроса к модели (OpenAI-совместимый провайдер) нет собственного
+  таймаута — он полагается на `AbortSignal` запуска. При «чёрной дыре» (соединение без ответа)
+  шаг может ждать, пока запуск не прервёт пользователь. Это кандидат на отдельную правку с
+  тестом, не входившую в сегодняшний блок.
+
+### Переполнение диска (7.3) — не имитировалось
+
+Том реплицируется на `node-2` (19 ГБ), заполнение до 75 % задело бы и прод, и кворум Gluster.
+Логика давления (пороги 75/68, остановка на цели, защита активных проектов) покрыта
+`server/src/storage/archive-scheduler.test.ts`, archive/wake принят в проде в 1.3. Для честного
+учения нужен отдельный том (loop-устройство) или тестовая нода.
+
+## 14. PITR: WAL-архив и восстановление на момент времени (10.11.2026)
+
+Пункт 4.4 в части PITR. Скрипт `deploy/scripts/pg-pitr.sh`, установлен как
+`/usr/local/sbin/webnestdev-pg-pitr`; эксплуатация и drill — `POSTGRES_BACKUP.md` §5.
+
+Что сделано на проде:
+
+- `archive_mode=on`, `archive_command` кладёт WAL в `/var/lib/postgresql/wal-archive`
+  (локальный диск: каталог под `/var/lib/webnestdev` каждую минуту переводит на uid 1000
+  `webnestdev-sandbox-ownership.timer`, WAL там жить не может);
+- таймеры `webnestdev-pg-basebackup.timer` (вс 04:30 UTC, хранится 2 копии) и
+  `webnestdev-pg-wal-prune.timer` (05:00 UTC, WAL старше 21 суток);
+- base backup 88 МБ снимается за ~4 с; WAL-сегмент 16 МБ.
+
+Учение (10.11.2026):
+
+- две метки в рабочей базе с разницей 3 с; restore через `pg-pitr.sh restore` на момент между
+  ними — в восстановленной базе `rows=1:before`, второй метки нет, `webnestdev_projects=18`;
+- восстановление заняло 1–3 с, остановка ровно перед коммитом следующей транзакции
+  (`recovery stopping before commit of transaction ...`) — это и есть PITR, а не «последний дамп»;
+- учебный кластер поднимается на порту 5544 и удаляется `pg-pitr.sh stop`; тестовые таблицы
+  `webnestdev_pitr_probe*` удалены из рабочих баз.
+
+Три ловушки, найденные по ходу (все исправлены в скрипте):
+
+1. `archive_command` с `test ! -f` не идемпотентен: если файл уже в архиве, PostgreSQL считает
+   сегмент неархивированным и повторяет вечно (наблюдали `failed_count=24` и стоящую
+   архивацию). Теперь `cp` во временный файл + `mv`.
+2. Без `recovery.signal` PostgreSQL завершает recovery на конце base backup и игнорирует
+   `recovery_target_time` — выглядит как «восстановление прошло, а метки нет».
+3. Учебный кластер при `promote` с включённым `archive_mode` писал свои timeline-файлы в общий
+   архив, и следующий restore падал на «requested timeline N is not a child of this server's
+   history». Теперь у drill `archive_mode=off`.
+
+**Вывоз в S3 (10.11.2026).** Написан `deploy/scripts/pg-pitr-s3.sh` и таймер
+`webnestdev-pg-pitr-s3.timer` (каждые 5 минут, установлены через `pg-pitr.sh setup`):
+
+- каждый новый сегмент — `<prefix>/pitr/wal/<сегмент>`, рядом `index.txt` (вместо ListObjects);
+- base backup упаковывается в `<ts>.tar.gz` и уходит в `<prefix>/pitr/basebackup/`, рядом
+  `latest.txt` с номером последней копии;
+- в образ добавлены CLI-команды `put-object`, `get-object`, `head-object` с проверкой, что ключ
+  лежит под `<prefix>/pitr/` и без `..`; хост стримит файл в контейнер, своих ключей у него нет;
+- восстановление из бакета — `sudo env RESTORE_TIME='…' /usr/local/sbin/webnestdev-pg-pitr
+  restore-s3` (или `S3_TS=<ts>` для конкретной копии).
+
+**Ещё не включено:** текущий образ `64ad4b1` не содержит этих CLI-команд — выгрузчик честно
+пишет в журнал «этот образ сервера не умеет put-object». Вывоз и `restore-s3` включаются
+следующей выкаткой; до неё историю PITR защищает только локальный диск `node-1`.
+
+Осталось по 4.4: TLS между API и PostgreSQL и вынос primary на отдельный от API инстанс.
+Выкатка пока не ставит `pg-pitr.sh` автоматически — установка выполнена через `MODE=setup`;
+перенос установки в `vm-deploy.sh` — следующий шаг.
+
+## 15. Primary PostgreSQL перенесён на node-2 (10.11.2026)
+
+Пункт 4.4 в части «Postgres отдельно от API». `node-2` остаётся включённой постоянно
+(решение пользователя: production-контур на двух узлах), поэтому отдельная ВМ под базу не
+покупалась.
+
+Как выполнено:
+
+- planned switchover через штатный mailbox `data/ha-switchover.json`: `requested → target_ready
+  → source_stopped → promoted` за ~12 с; `node-2` стал primary, `node-1` остановил локальную
+  базу и продолжил отдавать API через HAProxy на peer;
+- `node-1` возвращён standby'ом (`standby.sh 10.0.0.5 5432 node1`), слот `node1` создан
+  автоматически, лаг 0;
+- приложение не меняло `DATABASE_URL`: оба API ходят в локальный HAProxy `:5432`, цель которого
+  переключает `db_proxy.py`;
+- PITR перенесён на новую primary: `pg-pitr.sh setup` на `node-2`, `archive_mode=on`,
+  `pg_switch_wal` → сегмент в архиве, base backup 88 МБ, drill на момент времени — только
+  `before`-метка, 18 проектов;
+- в `pg-pitr.sh`/`pg-pitr-s3.sh` добавлена защита: таймеры basebackup/prune/выгрузки
+  отрабатывают только на primary (`pg_is_in_recovery() = f`), иначе после switchover обе ноды
+  писали бы в один бакет.
+
+Проверка после переезда: `node-2` — `pg_is_in_recovery()=f`, 18 проектов, API 200;
+`node-1` — `in_recovery=t`, лаг 0, API 200; публичный `https://nestdev.ru/api/ready` — 200.
+
+### Откат 10.11.2026 и простой (важно)
+
+Пользователь решил выключить `node-2` примерно на две недели, поэтому в тот же день primary
+возвращён на `node-1` (плановый switchover `node-2 → node-1`, rejoin `node-2`, слот `node2`,
+лаг 0, оба API 200). Перед production-запуском базу нужно снова перенести на `node-2` —
+порядок в [`PRODUCTION_LAUNCH.md`](PRODUCTION_LAUNCH.md).
+
+Во время обратного переезда прод кратковременно лёг (несколько минут). Причины, чтобы не
+повторить:
+
+1. **Битый TLS-конфиг на `node-2`.** В `postgresql.auto.conf` были прописаны
+   `ssl_cert_file`/`ssl_key_file`/`ssl_ca_file` на `/var/lib/postgresql/tls/*.crt`, а сами
+   файлы — 0 байт. После рестарта PostgreSQL не стартовал (`could not load server certificate
+   file ... no start line`), API остались без базы. Лечение: `ssl = off` (TLS ещё не включён),
+   пустые файлы остались как напоминание — не включать TLS без валидного сертификата.
+2. **Старый worker HAProxy на `node-1`.** После рестарта базы peer'а он держал мёртвые
+   соединения, `/api/ready` висел; `sudo systemctl reload haproxy` вернул 200. Это теперь
+   штатный шаг после рестарта PostgreSQL на соседней ноде.
+3. **`archive_mode` слетает при rejoin.** `standby.sh` перезаписывает `postgresql.auto.conf`
+   (новая `primary_conninfo`/слот), и `archive_mode`/`archive_command` исчезают. После
+   каждого rejoin новой primary: `webnestdev-pg-pitr setup` + `show archive_mode` = `on`.
+   Также исправлен `pg-pitr.sh`: `setup` больше не падает на `install` в самого себя
+   («are the same file»), из-за чего `ALTER SYSTEM archive_mode` раньше не выполнялся.
+
+### Выключение `node-2` 10.11.2026
+
+- Перед выключением: `node-1` — primary, `node-2` — standby, лаг 0, публичный `/api/ready` 200.
+- **`sudo systemctl poweroff` на `node-2` не сработал** (завис на `cloud-init-hotplugd` и закончился
+  перезагрузкой в 22:43). Поэтому: остановлены `postgresql@17-main` и `glusterd`, затем питание
+  снято через MWS (`POST` с `metadata.etag` и `spec.hardware.power=OFF`, `gracefulShutdownTimeout
+  90s`). MWS: `power=OFF`, `ready.state=OK`.
+- После выключения: `ping 10.0.0.5` не проходит, `node-1` — primary, 18 проектов, API 200,
+  `https://nestdev.ru/api/ready` 200; `sandboxes` и `data` читаются, в `gluster volume status`
+  остались только brick'и `10.0.0.4`; контейнеры на `node-1` живы.
+- Ограничения режима: нет failover (потеря `node-1` — ручное восстановление), Gluster — одна
+  реплика, риск split-brain при неаккуратном включении. Включать `node-2` только когда `node-1`
+  жив и является primary.
+
+## 16. NLB и CDN для хостинга (11.11.2026)
+
+### `node-2` включена для проверки
+
+- MWS: `power=ON`, `ready.state=OK`; SSH через `node-1` работает.
+- `postgresql@17-main` — standby (`pg_is_in_recovery()=t`), API 200, `glusterd` и Docker активны.
+- `node-1` — primary, `pg_stat_replication`: 1 реплика, лаг 0; публичный `/api/ready` 200.
+- `gluster volume status`: по 2 brick'а на каждый из трёх томов (`data`, `sandboxes`, `sites`).
+
+### NLB действительно балансирует
+
+Проверка на живом сайте `https://my-furniture.host.nestdev.ru/` (страница ~24 КБ), 40 запросов
+через NLB, счётчики сети контейнера `src-caddy-1` на каждой ноде:
+
+| Нода | Принято (rx) | Отдано (tx) | Доля tx |
+| --- | --- | --- | --- |
+| `node-1` | +57 750 Б | +600 892 Б | 49,7% |
+| `node-2` | +62 738 Б | +607 615 Б | 50,3% |
+
+Вывод: NLB распределяет TCP-соединения между обеими нодами практически поровну; обе отдают
+сайт из общего Gluster. Счётчики хоста для такой проверки не годятся — в них попадает
+репликация Gluster.
+
+### CDN-пилот (удалён 11.11.2026)
+
+- Ресурс: `hosting-pilot` в `project-pimashin2015`, API `cdn.mwsapis.ru`
+  (`POST /cdn/v1/projects/{project}/cdnResources/{name}`).
+- Origin: `https://my-furniture.host.nestdev.ru`, Host header — тот же домен, HTTPS-редирект,
+  кеширование «как у origin» с TTL 1 ч.
+- Сгенерированный адрес: `https://top873590456.mwscdn.ru`, статус `Active` (раскатка по edge
+  заняла ~10 минут, до этого часть edge отвечала 502/SSL-ошибкой — это нормально для
+  `PROCESSING`).
+- Проверки: HTML совпадает с origin побайтно (sha256), отдаётся с `x-edge-cache-status: MISS`
+  всегда, потому что Caddy ставит `Cache-Control: no-cache`; CSS первый раз `MISS`, дальше `HIT`.
+- Purge: `POST /cdn/v1/projects/{project}/cacheTasks/{name}` с
+  `spec.action.purge.paths=["/styles.css"]`; задача дошла до `OK`, после неё CSS снова `MISS`,
+  затем `HIT`.
+- Цена: 0,8418 ₽/ГБ с НДС, без платы за запросы; квота 25 CDN-ресурсов по умолчанию.
+- После проверки общей схемы пилот удалён (`DELETE .../cdnResources/hosting-pilot?ifExist=true`, 204).
+  Превью не подключались.
+
+### Общий wildcard-CDN для всех сайтов (включён 11.11.2026)
+
+Цель — один CDN-ресурс на `*.host.nestdev.ru`, чтобы новые и существующие сайты попадали в
+CDN без отдельных ресурсов.
+
+| Объект | Значение |
+| --- | --- |
+| Сертификат Certificate Manager | `host-wildcard`, домены `*.host.nestdev.ru`, DNS-01, **`valid=true`** |
+| CNAME для делегирования | `_acme-challenge.host.nestdev.ru` → `402a2f9f91e84d2eabe877c343f4c978.certmanager.mwsusercontent.ru.` |
+| CDN-ресурс | `hosting`, FQDN `top3561259317.mwscdn.ru`, **включён**, статус `OK` |
+| CNAME всех сайтов (после сертификата) | `*.host.nestdev.ru` → `top3561259317.mwscdn.ru.` |
+| Origin | `https://178.236.27.102` (NLB), Host и SNI — по имени сайта |
+
+Порядок:
+
+1. ✅ CNAME `_acme-challenge.host.nestdev.ru` добавлен, сертификат стал `valid=true`.
+2. ✅ CDN-ресурс `hosting` включён; проверен через `--resolve` на IP edge без изменения DNS:
+   `my-furniture` — 200, содержимое совпадает с origin; `my-sayt` — 200; кеш по Host
+   раздельный (`my-furniture/styles.css` и `my-sayt/styles.css` не смешиваются); после первого
+   промаха CSS отдаётся `HIT`. Несуществующий и неопубликованный сайты дают 502 — это ожидаемо.
+3. ✅ В REG.RU удалена A `*.host` → `178.236.27.102` и добавлена CNAME-запись
+   `*.host` → `top3561259317.mwscdn.ru.`; авторитетный `ns1.reg.ru` отдаёт CNAME, локальные
+   кеши могут держать старый A до истечения TTL (до ~48 мин, без простоя — NLB ещё работает).
+4. ✅ Проверены `my-furniture` и `my-sayt` уже через CNAME/CDN: 200, содержимое совпадает с
+   origin побайтно, кеш ассетов `HIT`, панель и `api/ready` — 200. Сайт в статусе draft и
+   несуществующий slug дают 502 от origin — ожидаемо.
+
+Ограничения: wildcard-сертификат Let's Encrypt действует 90 дней и обновляется автоматически,
+пока CNAME `_acme-challenge` остаётся на месте. Purge при публикации ещё не автоматизирован;
+пока HTML не кешируется (`no-cache`), а ассеты живут до TTL 1 ч. Черновики и удалённые сайты
+через CDN отдают 502, потому что origin-Caddy не выдаёт на них сертификат — это не дефект CDN.
+
+**Авто-purge (код готов 11.11.2026, ждёт выкатки образа):**
+
+- `server/src/hosting/cdn-purge.ts` — best-effort вызов `POST /cdn/v1/projects/{project}/cacheTasks/{name}`
+  с `paths: ["/*"]` после успешной публикации; ошибка только логируется и не переводит сайт в failed.
+- Включается переменными `HOSTING_CDN_PURGE=1`, `HOSTING_CDN_RESOURCE=hosting`,
+  `HOSTING_CDN_PROJECT=project-pimashin2015` (добавлены в `deploy/node{1,2}/docker-compose.override.yml`).
+- Ресурс общий, поэтому purge чистит кеш **всех** сайтов. Это принятый компромисс: отдельный
+  ресурс на сайт не нужен, а лишний промах кеша дешевле залипшего старого ассета.
+- Проверено: тест `cdn-purge.test.ts` (7/7), `tsc -p server/tsconfig.json --noEmit`; реальная
+  задача `purge-my-furniture-mwbwhmxc` дошла до `OK`.
+
+Все сайты, старые и новые, уже попадают в CDN автоматически за счёт wildcard-CNAME и одного
+ресурса `hosting`; отдельный ресурс на сайт не создаётся.
+
+Осталось: TLS на участке HAProxy ↔ PostgreSQL (меняется `db_proxy.py`: peer-цель должна идти
+напрямую в `5433` с `ssl verify required`; нужны сертификаты и `hostssl` на обеих нодах) и
+проверка `restore-s3` после выкатки образа с CLI-командами.
 
 Связанные документы:
 

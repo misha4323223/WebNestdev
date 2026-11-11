@@ -23,9 +23,15 @@ services:
       WEBNESTDEV_SHARED_SANDBOX: "1"
       WEBNESTDEV_AUTO_MOVE_PROJECTS: "1"
       HOSTING_SHARED_STORAGE: "1"
+      # 6.3: после публикации сайта сбрасываем кеш общего CDN-ресурса.
+      HOSTING_CDN_PURGE: "1"
+      HOSTING_CDN_RESOURCE: hosting
+      HOSTING_CDN_PROJECT: project-pimashin2015
       WEBNESTDEV_TRUSTED_PROXIES: 172.30.0.0/24
-      EGRESS_MODE: private-only
-      EGRESS_ENFORCE: "0"
+      # 5.1 включён 10.11.2026: allowlist + правила DOCKER-USER. Аварийный выключатель —
+      # EGRESS_MODE: private-only, затем EGRESS_ENFORCE: "0" (см. docs/SCALING_3000_PLAN.md 5.1).
+      EGRESS_MODE: allowlist
+      EGRESS_ENFORCE: "1"
       PREVIEW_MAX_CONTAINERS: "2"
       SANDBOX_MAX_CONCURRENT: "2"
     extra_hosts:
