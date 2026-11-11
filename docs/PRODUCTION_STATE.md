@@ -37,12 +37,12 @@
 
 - Публичный адрес: `https://nestdev.ru`.
 - `GET /api/ready` отвечает `ok:true`.
-- Базовая работающая сборка: `30b7bf876c1e83a3f92d26e3ff0a1d2727fd0fd9`.
-- Образ в GHCR: `ghcr.io/misha4323223/webnestdev:sha-30b7bf876c1e`.
-- С 10.11.2026 обе ВМ работают на локальном hotfix-образе
-  `webnestdev:preview-owner-20261110`, собранном `FROM` базового образа с исправлением
-  cross-replica preview (см. §10). Это временный образ до сборки исправления в CI; тег
-  `WEBNESTDEV_BUILD` внутри него по-прежнему `30b7bf876c1e`.
+- Текущая production-сборка: `9725cb780e98bdd1a900ef224030d1cc1b297fdb`.
+- Образ в GHCR: `ghcr.io/misha4323223/webnestdev:sha-9725cb780e98`.
+- Выкачен 11.11.2026 на обе ноды; `/api/health` на node-1 и node-2 отдаёт этот build.
+  В сборке исправлен лимит preview: `PREVIEW_MAX_CONTAINERS` считается по своей ноде,
+  а лимит на аккаунт остаётся общим для кластера. Проверено 4 контейнерных preview (2+2),
+  после теста состояние очищено (`runtime:0` на обеих нодах).
 - Прод работает на базе `node-1`; на базу `node-2` не переключён.
 - NLB `webnestdev-nlb-main` — публичный ingress; DNS при переключении не меняется.
 
