@@ -25,7 +25,19 @@ jobs:
         run: npm audit --omit=dev --audit-level=high
 
       - name: Install Playwright Chromium
-        run: npx playwright install --with-deps chromium
+        # Ставим только браузер. `--with-deps` тянет шрифты и X-библиотеки через apt, а на
+        # ubuntu-latest нужные для тестов библиотеки уже есть. Если зеркало apt не резолвится,
+        # `--with-deps` ждёт по 20 секунд на пакет и растягивает шаг на десять минут — без него
+        # установка занимает секунды. Три попытки переживают сбой CDN Playwright.
+        run: |
+          for attempt in 1 2 3; do
+            if npx playwright install chromium; then
+              exit 0
+            fi
+            echo "Playwright install failed (attempt $attempt), retrying…" >&2
+            sleep 10
+          done
+          exit 1
         working-directory: server
 
       - name: Build server
