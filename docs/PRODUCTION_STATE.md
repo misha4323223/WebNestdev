@@ -8,7 +8,7 @@
 | ВМ | Роль | Адрес | Текущее питание |
 | --- | --- | --- | --- |
 | `node-1` | production primary: API, Caddy, HAProxy, PostgreSQL primary, `node1-runner` | `10.0.0.4`, management `2.59.83.250` | `ON` |
-| `node-2` | вторая нода: API/Caddy/broker/runner, PostgreSQL standby, общий storage | `10.0.0.5`; внешний NAT динамический (10.11.2026: `111.88.131.185`), читать из MWS API | `ON` — включена 11.11.2026 для проверки NLB и CDN |
+| `node-2` | вторая нода: API/Caddy/broker/runner, PostgreSQL standby, общий storage | `10.0.0.5`; внешний NAT динамический, читать из MWS API | `OFF` — выключена 11.11.2026 после тестов 4 preview |
 
 **С 10.11.2026:** primary PostgreSQL на `node-1`, `node-2` — streaming standby (лаг 0).
 Перед production-запуском primary нужно снова перенести на `node-2` — порядок в
@@ -22,8 +22,8 @@
 
 Правило работы:
 
-1. `node-2` включена 11.11.2026 для проверки NLB и CDN; решение о постоянном питании — за
-   пользователем.
+1. `node-2` выключена 11.11.2026 после тестов 4 preview; MWS подтвердил `power=OFF`.
+   Включать только под конкретную работу; решение о постоянном питании — за пользователем.
 2. Довести задачу до конца, не выключая ВМ в середине.
 3. Вернуть прод в исходное состояние.
 4. Питание менять только по явной просьбе пользователя; выключение — с проверкой MWS
@@ -167,8 +167,9 @@ ssh node1 'cd "$HOME/webnestdev/src" && docker compose \
 
 ## 7. Что проверять после работ с `node-2`
 
-1. MWS: `status.hardware.power=ON` — `node-2` остаётся включённой по решению пользователя.
-   Питание меняется только по явной просьбе; после выключения проверять `power=OFF`.
+1. MWS: фактическое `status.hardware.power`. На 11.11.2026 после тестов — `OFF`.
+   Включать только под конкретную работу и по явной просьбе; после выключения проверять
+   `power=OFF`.
 2. SSH к `10.0.0.5` (через `node-1`) и `node2-runner` отвечают, пока узел в строю.
 3. `node-1`: `/api/ready` = `200`.
 4. Токены `node-1` и `node-2` совпадают, если обе ВМ использовались.
@@ -592,9 +593,10 @@ backup `20261110T223005Z.tar.gz` (17 МБ) и `latest.txt`, оба объект�
 
 ## 16. NLB и CDN для хостинга (11.11.2026)
 
-### `node-2` включена для проверки
+### `node-2` включена для проверки (на момент проверки)
 
-- MWS: `power=ON`, `ready.state=OK`; SSH через `node-1` работает.
+- MWS: `power=ON`, `ready.state=OK`; SSH через `node-1` работает. После тестов 4 preview
+  машина снова выключена: `power=OFF`.
 - `postgresql@17-main` — standby (`pg_is_in_recovery()=t`), API 200, `glusterd` и Docker активны.
 - `node-1` — primary, `pg_stat_replication`: 1 реплика, лаг 0; публичный `/api/ready` 200.
 - `gluster volume status`: по 2 brick'а на каждый из трёх томов (`data`, `sandboxes`, `sites`).
