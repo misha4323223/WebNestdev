@@ -79,19 +79,17 @@ jobs:
         run: npm ci
 
       - name: Install Playwright Chromium
-        # apt-зеркала на раннере иногда не резолвятся; без Chromium падает вся сборка и
-        # выкатка не начинается. Три попытки переживают короткий сбой DNS/зеркала.
+        # Ставим только браузер. `--with-deps` тянет шрифты и X-библиотеки через apt, а на
+        # ubuntu-latest нужные для тестов библиотеки уже есть. Если зеркало apt не резолвится,
+        # `--with-deps` ждёт по 20 секунд на пакет и растягивает шаг на десять минут — без него
+        # установка занимает секунды. Три попытки переживают сбой CDN Playwright.
         run: |
           for attempt in 1 2 3; do
-            if npx playwright install --with-deps chromium; then
-              exit 0
-            fi
-            echo "Playwright with-deps failed (attempt $attempt), trying browser only…" >&2
             if npx playwright install chromium; then
               exit 0
             fi
             echo "Playwright install failed (attempt $attempt), retrying…" >&2
-            sleep 15
+            sleep 10
           done
           exit 1
         working-directory: server
