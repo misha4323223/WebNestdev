@@ -12,8 +12,8 @@ import { getTable, initializeStorage, isYdbEnabled, ydbQuery } from "../storage/
  * вечную бронь — у неё есть TTL.
  */
 
-export type LivePreviewRef = { projectId: string; userId: string; lastUsedAt: number };
-export type ActiveReservationRef = { projectId: string; userId: string };
+export type LivePreviewRef = { projectId: string; userId: string; lastUsedAt: number; node?: string };
+export type ActiveReservationRef = { projectId: string; userId: string; node?: string };
 
 export function previewReservationTtlMs(): number {
   const raw = process.env.PREVIEW_RESERVATION_TTL_MS?.trim();
@@ -33,6 +33,8 @@ export type ReservationDecision =
 export function decidePreviewReservation(input: {
   projectId: string;
   userId: string;
+  /** Узел, для которого считается потолок контейнеров. */
+  node?: string;
   perUser: number;
   hostLimit: number;
   live: LivePreviewRef[];
@@ -61,11 +63,18 @@ export function decidePreviewReservation(input: {
   // Останавливаемые preview освободят слот до старта нового, поэтому в проверке потолка хоста
   // они не считаются. Если остановка не удастся, новый контейнер просто не запустится.
   const stopping = new Set(stopProjectIds);
+  // Потолок хоста — про память одной машины. Preview и брони другой реплики живут в общем
+  // реестре, но места на этом хосте не занимают. Строку без узла считаем своей: лучше
+  // перестраховаться, чем разрешить лишний контейнер на неизвестной реплике.
+  const onThisNode = (node: string | undefined) => !input.node || !node || node === input.node;
   const hostLive = input.live.filter(
-    preview => preview.projectId !== input.projectId && !stopping.has(preview.projectId),
+    preview =>
+      preview.projectId !== input.projectId &&
+      !stopping.has(preview.projectId) &&
+      onThisNode(preview.node),
   );
   const hostReserved = input.reservations.filter(
-    reservation => reservation.projectId !== input.projectId,
+    reservation => reservation.projectId !== input.projectId && onThisNode(reservation.node),
   );
   if (input.hostLimit > 0 && hostLive.length + hostReserved.length >= input.hostLimit) {
     return {
@@ -118,7 +127,7 @@ export type PreviewReservationBackend = {
   get?: (projectId: string, now: number) => Promise<PreviewReservationInfo | null>;
 };
 
-type PreviewRow = { project_id: string; owner_user_id: string | null; last_used_at: number | string };
+type PreviewRow = { project_id: string; owner_user_id: string | null; node: string | null; last_used_at: number | string };
 type ReservationRow = {
   project_id: string;
   owner_user_id: string | null;
@@ -150,12 +159,12 @@ const postgresBackend: PreviewReservationBackend = {
       await tx`DELETE FROM ${reservationTable} WHERE expires_at <= ${now}`;
 
       const [liveRows] = await tx<PreviewRow[]>`
-        SELECT project_id, owner_user_id, last_used_at
+        SELECT project_id, owner_user_id, node, last_used_at
           FROM ${previews}
          WHERE mode = 'container' AND expires_at > ${now}
       `;
-      const [reservedRows] = await tx<Array<{ project_id: string; owner_user_id: string | null }>>`
-        SELECT project_id, owner_user_id
+      const [reservedRows] = await tx<Array<{ project_id: string; owner_user_id: string | null; node: string | null }>>`
+        SELECT project_id, owner_user_id, node
           FROM ${reservationTable}
          WHERE expires_at > ${now}
       `;
@@ -171,16 +180,19 @@ const postgresBackend: PreviewReservationBackend = {
       const decision = decidePreviewReservation({
         projectId: input.projectId,
         userId: input.userId,
+        node: input.node,
         perUser: input.perUser,
         hostLimit: input.hostLimit,
         live: liveRows.map(row => ({
           projectId: row.project_id,
           userId: row.owner_user_id ?? "",
+          node: row.node ?? "",
           lastUsedAt: integer(row.last_used_at),
         })),
         reservations: reservedRows.map(row => ({
           projectId: row.project_id,
           userId: row.owner_user_id ?? "",
+          node: row.node ?? "",
         })),
       });
       if (!decision.ok) {

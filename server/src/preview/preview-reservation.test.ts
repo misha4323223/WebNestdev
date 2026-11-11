@@ -11,7 +11,7 @@ import {
 
 afterEach(() => setPreviewReservationBackendForTests(null));
 
-const live = (projectId: string, userId: string, lastUsedAt: number) => ({ projectId, userId, lastUsedAt });
+const live = (projectId: string, userId: string, lastUsedAt: number, node?: string) => ({ projectId, userId, lastUsedAt, node });
 
 test("второй запуск того же аккаунта не обгоняет уже идущий старт", () => {
   const decision = decidePreviewReservation({
@@ -98,6 +98,45 @@ test("без лимита на аккаунт запускаются оба св
     reservations: [],
   });
   assert.deepEqual(decision, { ok: true, stopProjectIds: [] });
+});
+
+test("потолок хоста не считает preview и брони другой реплики", () => {
+  const decision = decidePreviewReservation({
+    projectId: "project-new",
+    userId: "user-3",
+    node: "node-1",
+    perUser: 1,
+    hostLimit: 2,
+    live: [live("project-a", "user-1", 10, "node-2"), live("project-b", "user-2", 20, "node-2")],
+    reservations: [{ projectId: "project-c", userId: "user-2", node: "node-2" }],
+  });
+  assert.deepEqual(decision, { ok: true, stopProjectIds: [] });
+});
+
+test("потолок хоста блокирует только свой узел", () => {
+  const decision = decidePreviewReservation({
+    projectId: "project-new",
+    userId: "user-3",
+    node: "node-1",
+    perUser: 1,
+    hostLimit: 2,
+    live: [live("project-a", "user-1", 10, "node-1"), live("project-b", "user-2", 20, "node-2")],
+    reservations: [{ projectId: "project-c", userId: "user-2", node: "node-1" }],
+  });
+  assert.equal(decision.ok, false);
+});
+
+test("лимит аккаунта остаётся общим для кластера", () => {
+  const decision = decidePreviewReservation({
+    projectId: "project-b",
+    userId: "user-1",
+    node: "node-1",
+    perUser: 1,
+    hostLimit: 8,
+    live: [live("project-a", "user-1", 10, "node-2")],
+    reservations: [],
+  });
+  assert.deepEqual(decision, { ok: true, stopProjectIds: ["project-a"] });
 });
 
 test("бронь снимается тем же токеном и переживает повторный release", async () => {

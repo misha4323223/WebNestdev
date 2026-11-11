@@ -53,7 +53,7 @@ export function liveStaticPreviews(): PreviewState[] {
   return listPreviews().filter(state => state.mode === "static");
 }
 
-export type LiveRuntimePreview = { projectId: string; userId?: string; lastUsedAt: number };
+export type LiveRuntimePreview = { projectId: string; userId?: string; lastUsedAt: number; node?: string };
 export type RuntimeStartDecision = { ok: true; stopProjectId?: string } | { ok: false; reason: string };
 
 /**
@@ -70,6 +70,8 @@ export function decideRuntimePreviewStart(input: {
   live: LiveRuntimePreview[];
   projectId: string;
   userId: string;
+  /** Узел, для которого считается потолок контейнеров. */
+  node?: string;
   /** Лимит на аккаунт; по умолчанию `perUserPreviewLimit()`. */
   perUser?: number;
   /** Предохранитель хоста; по умолчанию `runtimePreviewLimit()` (0 — без предохранителя). */
@@ -83,7 +85,11 @@ export function decideRuntimePreviewStart(input: {
   const own = (input.userId ? others.filter(preview => preview.userId === input.userId) : [])
     .sort((a, b) => a.lastUsedAt - b.lastUsedAt);
   if (perUser > 0 && own.length >= perUser) return { ok: true, stopProjectId: own[0].projectId };
-  if (hostLimit > 0 && others.length >= hostLimit) {
+  // Лимит аккаунта общий для кластера, а потолок контейнеров — про память этой машины.
+  // Preview другой реплики в общем реестре виден, но слот на этом хосте не занимает.
+  const onThisNode = (node: string | undefined) => !input.node || !node || node === input.node;
+  const hostOthers = others.filter(preview => onThisNode(preview.node));
+  if (hostLimit > 0 && hostOthers.length >= hostLimit) {
     return {
       ok: false,
       reason:

@@ -172,10 +172,16 @@ async function startContainerPreview(config: SandboxConfig, staticReason?: strin
       shared.map(async state => ({
         projectId: state.projectId,
         lastUsedAt: state.lastUsedAt,
+        node: state.node,
         userId: state.ownerUserId || (await getProject(state.projectId))?.userId || "",
       })),
     );
-    const decision = decideRuntimePreviewStart({ live, projectId: config.projectId, userId });
+    const decision = decideRuntimePreviewStart({
+      live,
+      projectId: config.projectId,
+      userId,
+      node: config.node ?? nodeId(),
+    });
     if (!decision.ok) throw new Error(decision.reason);
     stopProjectIds = decision.stopProjectId ? [decision.stopProjectId] : [];
   } else {

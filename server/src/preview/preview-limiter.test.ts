@@ -99,6 +99,20 @@ test("заданный предохранитель хоста отвечает 
   assert.match(decision.reason, /2 серверных предпросмотров/);
 });
 
+test("потолок хоста не считает preview другой реплики", () => {
+  const decision = decideRuntimePreviewStart({
+    live: [
+      { ...live("a", "user-1", 100), node: "node-2" },
+      { ...live("b", "user-2", 200), node: "node-2" },
+    ],
+    projectId: "new",
+    userId: "user-3",
+    node: "node-1",
+    limit: 2,
+  });
+  assert.deepEqual(decision, { ok: true });
+});
+
 test("предпросмотр без владельца никогда не останавливается за чужой счёт", () => {
   const decision = decideRuntimePreviewStart({
     live: [live("orphan", "", 100), live("b", "user-2", 200)],
