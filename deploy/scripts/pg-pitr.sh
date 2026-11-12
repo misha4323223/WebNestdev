@@ -52,6 +52,7 @@ WAL_KEEP_DAYS="${WAL_KEEP_DAYS:-21}"
 RESTORE_TIME="${RESTORE_TIME:-}"
 PG_CTL="/usr/lib/postgresql/${PG_VERSION}/bin/pg_ctl"
 SELF=/usr/local/sbin/webnestdev-pg-pitr
+S3_SELF=/usr/local/sbin/webnestdev-pg-pitr-s3
 
 log() { printf '[pg-pitr] %s\n' "$*" >&2; }
 fail() { log "ОШИБКА: $*"; exit 1; }
@@ -74,9 +75,16 @@ setup_units() {
     install -m 0755 "$0" "$SELF"
   fi
   # Выгрузчик в S3 живёт отдельно: у него свой таймер и своя ответственность.
+  # При запуске установленной копии рядом с ней лежит уже `webnestdev-pg-pitr-s3`, а не исходный
+  # `pg-pitr-s3.sh`; без этого fallback setup каждый раз предупреждал и не включал S3-таймер.
   local s3_src="${S3_SRC:-$(dirname "$0")/pg-pitr-s3.sh}"
+  if [ ! -f "$s3_src" ] && [ -x "$S3_SELF" ]; then
+    s3_src="$S3_SELF"
+  fi
   if [ -f "$s3_src" ]; then
-    install -m 0755 "$s3_src" /usr/local/sbin/webnestdev-pg-pitr-s3
+    if [ "$(readlink -f "$s3_src")" != "$(readlink -f "$S3_SELF" 2>/dev/null || echo "$S3_SELF")" ]; then
+      install -m 0755 "$s3_src" "$S3_SELF"
+    fi
   else
     log "pg-pitr-s3.sh не найден рядом — таймер S3 не включится"
   fi

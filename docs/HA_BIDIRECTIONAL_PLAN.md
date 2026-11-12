@@ -10,6 +10,13 @@ automount Gluster, поэтому чистым прохождением он н�
 Это не замена [CLUSTER_HA_PLAN.md](CLUSTER_HA_PLAN.md): общая целевая схема и ограничения
 остаются там, здесь — конкретная работа, порядок, критерии приёмки и откат.
 
+**12.11.2026:** с текущим `deploy/ha` пройдены оба аварийных направления: `node-1` → `node-2`
+(этапы A–C) и `node-2` → `node-1` (этапы D–E), с MWS power-off, takeover, пользовательскими
+проектами, терминалом и preview, rejoin standby и NLB. Отдельно проверен storage-quorum при
+изоляции Gluster-портов; запись замерла, split-brain не возник, после восстановления quorum
+вернулся в `auto`. Финально primary — `node-1`, `node-2` — standby и `power=OFF`; подробности —
+[`PRODUCTION_STATE.md`](PRODUCTION_STATE.md) §19.
+
 ## 0. Результаты live-тестов 08.11 и 10.11.2026
 
 Проверено на реальных ВМ, без ручного promotion базы:
@@ -23,9 +30,11 @@ automount Gluster, поэтому чистым прохождением он н�
 - **21:17–21:18 UTC, `node-2` → `node-1`:** `node-2` выключена; контроллер `node-1`
   выполнил fencing, повысил standby, поднял broker/API/Caddy и переключил DNS на
   `178.236.27.102`. `/api/ready` и `https://nestdev.ru` ответили `200`.
-- **Текущее состояние:** `node-1` — primary, `node-2` — вторая production-нода,
-  `power=OFF` только из-за стоимости до production-запуска. NLB и active-active код
-  готовы; после production-решения `node-2` будет включена постоянно.
+- **Состояние после теста 08.11.2026:** `node-1` — primary, `node-2` — вторая
+  production-нода, `power=OFF` только из-за стоимости до production-запуска. NLB и
+  active-active код готовы; после production-решения `node-2` будет включена постоянно.
+  После обратного прогона 12.11.2026 primary снова `node-1`, `node-2` — standby и `power=OFF`;
+  см. [`PRODUCTION_STATE.md`](PRODUCTION_STATE.md) §19.
 
 В ходе теста исправлены три реальные ошибки: MWS-имя первой ВМ (`webnestdev`, не `node-1`),
 порядок запуска `docker-broker` перед API и сброс старого состояния `done` после rejoin.
@@ -117,7 +126,23 @@ MWS — **2 мин 52 с** и **2 мин 48 с**. RPO под записью не
 > слот и больше не скрывает ошибку. Повторный destructive-прогон прошёл без ручного
 > вмешательства: RTO 79 с в реверсе, RPO 0. См. `PRODUCTION_STATE.md` §12.
 
-### 0.3. Инцидент 09.11.2026: node-2 поднялась как primary
+### 0.3. Обратный прогон и storage split 12.11.2026
+
+- Power-off `node-2` — 17:58:33 UTC, MWS `OFF` — 17:59:28; `node-1` primary — 17:59:42,
+  API/public — 17:59:51. RTO 78 с от команды, RPO 0.
+- `node-2` возвращена 18:00:42; start-guard не пустил старый primary, API через `node-1`
+  поднялся в 18:02:22; rejoin 18:02:58–18:03:05 дал standby `t`, `streaming`, лаг 0.
+- Storage split: Gluster-порты заблокированы в обе стороны 18:17:51–18:18:44; `quorum=auto`,
+  запись `exit=124`, оба PostgreSQL сохранили роли; после unblock запись `exit=0`, оба API 200,
+  split-правил нет. Это проверка storage-сети, не полная изоляция ВМ.
+- Прямой peer-to-peer 80/443 не проходит и с явным private ALLOW: правило создано, `ready=OK`,
+  проверка не изменилась, правило удалено. NLB targets при этом были `OK`.
+- Финально: `node-1` primary, все Gluster-тома `quorum=none` (один brick), `archive_mode=on`,
+  API/public 200; `node-2` `power=OFF`, NLB target `FAILED`. Backup
+  `20261112T182338Z.dump` (4 738 838 байт) и `check` успешны. Режим одной ВМ не даёт failover;
+  перед production-запуском включить `node-2` и перевести primary по runbook.
+
+### 0.4. Инцидент 09.11.2026: node-2 поднялась как primary
 
 После включения `node-2` её PostgreSQL стартовал как **primary**, а не standby: data directory
 остался от прежнего promotion, `standby.signal` и корректный `primary_conninfo` отсутствовали,

@@ -37,6 +37,9 @@ umask 077
 MODE="${MODE:-backup}"
 APP_DIR="${APP_DIR:-$HOME/webnestdev/src}"
 COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}"
+# Обычно compose сам читает `.env`; на node-2 его нет, а общие значения лежат в двух
+# явных файлах. Их можно передать снаружи, иначе скрипт найдёт их рядом с compose.
+COMPOSE_ENV_FILES="${COMPOSE_ENV_FILES:-}"
 SERVICE="${SERVICE:-webnestdev-server}"
 PG_SERVICE="${PG_SERVICE:-postgres}"
 PG_MODE="${PG_MODE:-auto}"        # auto | container | system
@@ -54,7 +57,13 @@ DB_IDENT='^[A-Za-z0-9_][A-Za-z0-9_-]{0,62}$'
 log() { printf '[pg-backup] %s\n' "$*" >&2; }
 fail() { log "ОШИБКА: $*"; exit 1; }
 
-dc_exec() { docker compose -f "$COMPOSE_FILE" exec -T "$@"; }
+dc() {
+  local args=(-f "$COMPOSE_FILE") file
+  for file in ${COMPOSE_ENV_FILES:-}; do args+=(--env-file "$file"); done
+  docker compose "${args[@]}" "$@"
+}
+
+dc_exec() { dc exec -T "$@"; }
 
 # Общие операции с базой. В container-режиме они идут через compose-сервис postgres,
 # в system-режиме — через локальный superuser postgres и отдельный порт кластера.
@@ -108,12 +117,15 @@ trap cleanup EXIT
 cd "$APP_DIR"
 command -v docker >/dev/null 2>&1 || fail "docker не найден на этой машине"
 docker compose version >/dev/null 2>&1 || fail "docker compose недоступен"
+if [ -z "$COMPOSE_ENV_FILES" ] && [ ! -f .env ] && [ -f runtime.env ] && [ -f node2.env ]; then
+  COMPOSE_ENV_FILES="runtime.env node2.env"
+fi
 
 # auto выбирает контейнер, только если compose-сервис postgres действительно запущен.
 # В текущей схеме node-1 контейнер остановлен, поэтому будет выбран системный кластер.
 case "$PG_MODE" in
   auto)
-    if docker compose -f "$COMPOSE_FILE" ps --status running --services 2>/dev/null | grep -Fxq "$PG_SERVICE"; then
+    if dc ps --status running --services 2>/dev/null | grep -Fxq "$PG_SERVICE"; then
       PG_MODE=container
     else
       PG_MODE=system
