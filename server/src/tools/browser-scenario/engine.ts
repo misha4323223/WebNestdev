@@ -460,12 +460,14 @@ export async function runBrowserScenario(
   const current = getPreview(projectId);
   if (!current) throw new Error("Состояние предпросмотра недоступно — предпросмотр не запущен");
 
-    const { name: viewportName, viewport } = viewportFromInput(scenario.viewport);
+  const { name: viewportName, viewport } = viewportFromInput(scenario.viewport);
   const allSteps = [...setup, ...steps];
   const deadline = defaultDeadline(scenario);
 
   const hasTouch = viewportName === "mobile" || allSteps.some(isTouchStep);
-  const launch = deps.launch ?? chromium.launch;
+  // Метод Playwright хранит BrowserType в this: `const launch = chromium.launch` теряет
+  // _playwright и падает уже на первом шаге. Привязка обязательна.
+  const launch = deps.launch ?? chromium.launch.bind(chromium);
   // Запуск Chromium тоже входит в общий timeoutMs: иначе зависший launch не ограничен ничем.
   const browser: Browser = await launch({
     headless: true,
