@@ -1,12 +1,11 @@
 import Fastify,{type FastifyInstance} from "fastify";
 import fastifyStatic from "@fastify/static";
 import path from "node:path";
-import { runInSandbox } from "../sandbox-worker.js";
-import type { DockerCommandResult } from "../sandbox/docker/types.js";
 import type { SandboxConfig } from "../sandbox-manager.js";
 import { removePreview,setPreview,touchPreview } from "./preview-store.js";
 import { indexFileExists,isStaticBuildFresh,planStaticPreview } from "./static-plan.js";
 import { ensureProjectDependencies } from "./dependencies.js";
+import { runStaticBuild,staticBuildLog } from "./static-build.js";
 import { localPreviewOwnerAddress } from "./preview-owner.js";
 import { nodeId } from "../nodes/identity.js";
 import type { PreviewStatus } from "./types.js";
@@ -24,12 +23,8 @@ import type { PreviewStatus } from "./types.js";
 
 /** The listener binds the loopback address: only the server itself talks to a static preview. */
 const STATIC_HOST="127.0.0.1";
-/** One build's output is the whole log; the panel shows it instead of dev-server output. */
-const MAX_LOG_CHARS=8000;
-/** The build is one sandbox command, so a project that cannot build falls back quickly. */
-const BUILD_COMMAND="npm run build";
 
-export type PreviewModeSetting="auto"|"static"|"container";
+export type PreviewModeSetting="auto"|"static"|"container"|"hybrid";
 export type StaticBuildSetting="auto"|"always"|"never";
 
 /**
@@ -39,7 +34,7 @@ export type StaticBuildSetting="auto"|"always"|"never";
  */
 export function previewModeSetting():PreviewModeSetting{
   const value=(process.env.PREVIEW_MODE??"").trim().toLowerCase();
-  return value==="static"||value==="container"?value:"auto";
+  return value==="static"||value==="container"||value==="hybrid"?value:"auto";
 }
 
 export function staticBuildSetting():StaticBuildSetting{
@@ -52,7 +47,8 @@ export function describePreviewMode(){
   const setting=previewModeSetting();
   if(setting==="container")return "container (dev-сервер в контейнере на каждый проект)";
   if(setting==="static")return "static (только сборка, без контейнера предпросмотра)";
-  return "auto (статическая сборка, иначе dev-сервер)";
+  if(setting==="hybrid")return "hybrid (статика + backend в контейнере, только для проектов с preview.mode=hybrid)";
+  return "auto (явный hybrid, иначе статическая сборка, иначе dev-сервер)";
 }
 
 type StaticRun={server:FastifyInstance;dir:string;port:number;log:string;builtAt:number;startedAt:number;/** Files served as they are: nothing was built, so nothing has to be rebuilt. */instant:boolean;/** Конфиг, которым этот предпросмотр поднят: пересборка поднимает тот же каталог заново. */config:SandboxConfig};
@@ -93,9 +89,9 @@ export async function startStaticPreview(config:SandboxConfig):Promise<StaticSta
     // бы на отсутствующем `vite`, а предпросмотр — сразу за ним (см. dependencies.ts).
     const dependencies=await ensureProjectDependencies(config);
     if(!dependencies.ok)return {ok:false,reason:dependencies.reason};
-    const result=await runBuild(config);
+    const result=await runStaticBuild(config);
     if(!("ok" in result))return {ok:false,reason:result.reason};
-    log=dependencies.log?dependencies.log+"\n"+buildLog(result):buildLog(result);
+    log=dependencies.log?dependencies.log+"\n"+staticBuildLog(result):staticBuildLog(result);
     marker=Date.now();
   }
   if(!await indexFileExists(plan.dir)){
@@ -179,29 +175,6 @@ export async function staticAppAnswers(host:string,port:number){
 function statusFor(run:StaticRun):PreviewStatus{
   const ownerAddress=localPreviewOwnerAddress();
   return {running:true,ready:true,port:run.port,host:STATIC_HOST,containerId:"",startedAt:run.startedAt,mode:"static",...(ownerAddress?{ownerAddress}:{})};
-}
-
-async function runBuild(config:SandboxConfig):Promise<DockerCommandResult|{reason:string}>{
-  try{
-    // Сборке нужны те же env-файлы, что и dev-серверу: они монтируются из зашифрованного
-    // хранилища только на время команды и удаляются сразу после неё.
-    return await runInSandbox(config,BUILD_COMMAND,config.root,{injectSecretEnvFile:true});
-  }catch(error){
-    return {reason:"сборка не запустилась: "+(error instanceof Error?error.message:String(error))};
-  }
-}
-
-/** The tail of the build output plus the failure line: enough to fix the project from the log. */
-function buildLog(result:DockerCommandResult){
-  const output=[result.stdout,result.stderr].map(value=>value.replace(/\r/g,"").trim()).filter(Boolean).join("\n");
-  const head="$ "+BUILD_COMMAND+(result.ok?"":failureLine(result));
-  const body=output.length>MAX_LOG_CHARS?output.slice(-MAX_LOG_CHARS):output;
-  return body?head+"\n"+body:head;
-}
-
-function failureLine(result:DockerCommandResult){
-  const failed=result.stderr.split("\n").map(line=>line.trim()).filter(Boolean).at(-1);
-  return " → "+(failed??("код выхода "+result.exitCode));
 }
 
 /**

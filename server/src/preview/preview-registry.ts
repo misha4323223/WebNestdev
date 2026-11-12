@@ -40,6 +40,8 @@ type PreviewRow = {
   host: string | null;
   port: number | string | null;
   container_port: number | string | null;
+  backend_host?: string | null;
+  backend_port?: number | string | null;
   started_at: number | string;
   last_used_at: number | string;
   settled: boolean | null;
@@ -62,10 +64,15 @@ function optionalInteger(value: number | string | null | undefined): number | un
 
 /** Строка БД → состояние; просроченная или неполная строка не считается живым preview. */
 export function previewFromRow(row: PreviewRow, now = Date.now()): PreviewState | null {
-  if ((row.mode !== "container" && row.mode !== "static") || !row.project_id) return null;
+  if ((row.mode !== "container" && row.mode !== "static" && row.mode !== "hybrid") || !row.project_id) return null;
   if (integer(row.expires_at) <= now) return null;
+  const backendHost = row.backend_host?.trim() ?? "";
+  const backendPort = optionalInteger(row.backend_port);
+  // A hybrid row without both backend fields cannot be served: the listener has nowhere to
+  // proxy, and pretending it is alive would produce a permanent 502 in the panel.
+  if (row.mode === "hybrid" && (!backendHost || !backendPort)) return null;
   const state: PreviewState = {
-    mode: row.mode === "static" ? "static" : "container",
+    mode: row.mode,
     projectId: row.project_id,
     containerId: row.container_id ?? "",
     host: row.host ?? "",
@@ -82,6 +89,8 @@ export function previewFromRow(row: PreviewRow, now = Date.now()): PreviewState 
   if (node) state.node = node;
   const containerPort = optionalInteger(row.container_port);
   if (containerPort !== undefined) state.containerPort = containerPort;
+  if (backendHost) state.backendHost = backendHost;
+  if (backendPort !== undefined) state.backendPort = backendPort;
   if (row.exec_only) state.execOnly = true;
   const execCheckedAt = optionalInteger(row.exec_only_checked_at);
   if (execCheckedAt !== undefined) state.execOnlyCheckedAt = execCheckedAt;
@@ -101,11 +110,13 @@ const postgresBackend: SharedPreviewBackend = {
     await ydbQuery()`
       INSERT INTO ${table} (
         project_id, owner_user_id, node, mode, container_id, host, port, container_port,
+        backend_host, backend_port,
         started_at, last_used_at, settled, exec_only, exec_only_checked_at, ready, checked_at,
         owner_address, updated_at, expires_at
       ) VALUES (
         ${state.projectId}, ${state.ownerUserId ?? ""}, ${state.node ?? ""}, ${state.mode},
         ${state.containerId}, ${state.host}, ${state.port}, ${state.containerPort ?? null},
+        ${state.backendHost ?? ""}, ${state.backendPort ?? null},
         ${state.startedAt}, ${state.lastUsedAt}, ${Boolean(state.settled)}, ${Boolean(state.execOnly)},
         ${state.execOnlyCheckedAt ?? null}, ${state.ready ?? null}, ${state.checkedAt ?? null},
         ${state.ownerAddress ?? ""}, ${now}, ${expiresAt}
@@ -118,6 +129,8 @@ const postgresBackend: SharedPreviewBackend = {
         host = EXCLUDED.host,
         port = EXCLUDED.port,
         container_port = EXCLUDED.container_port,
+        backend_host = EXCLUDED.backend_host,
+        backend_port = EXCLUDED.backend_port,
         started_at = EXCLUDED.started_at,
         last_used_at = EXCLUDED.last_used_at,
         settled = EXCLUDED.settled,

@@ -1,8 +1,44 @@
-import test from "node:test";
+import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { listPreviewContainerIds, previewStatus } from "./preview-manager.js";
-import { PREVIEW_LABEL } from "./preview/types.js";
+import { listPreviewContainerIds, previewStatus, setPreviewStartDepsForTests, startPreviewWithFallback } from "./preview-manager.js";
+import { PREVIEW_LABEL, type PreviewStatus } from "./preview/types.js";
+import type { SandboxConfig } from "./sandbox-manager.js";
 import { getPreview, removePreview, setPreview } from "./preview/preview-store.js";
+import type { HybridConfig } from "./preview/hybrid-config.js";
+
+const originalPreviewMode = process.env.PREVIEW_MODE;
+
+afterEach(() => {
+  setPreviewStartDepsForTests(null);
+  if (originalPreviewMode === undefined) delete process.env.PREVIEW_MODE;
+  else process.env.PREVIEW_MODE = originalPreviewMode;
+});
+
+const hybridConfig: HybridConfig = {
+  buildScript: "build",
+  staticDir: "dist",
+  backendScript: "start:preview-api",
+  backendPaths: ["/api"],
+  backendPort: 3000,
+  backendEnv: {},
+};
+
+const startConfig: SandboxConfig = {
+  projectId: "manager-start-test",
+  root: "/srv/projects/manager-start-test",
+  memoryMb: 512,
+  cpuLimit: 0.5,
+  timeoutMs: 5_000,
+};
+
+const running: PreviewStatus = {
+  running: true,
+  ready: true,
+  host: "127.0.0.1",
+  port: 3000,
+  containerId: "container-fallback",
+  startedAt: 1,
+};
 
 /**
  * Подтверждённый адрес — это адрес, на который уже ответил сам сервер, поэтому чтение статуса не должно
@@ -57,4 +93,76 @@ test("a failed container listing reaps nothing", async () => {
 test("a project without a preview reports nothing running", async () => {
   removePreview("p2");
   assert.deepEqual(await previewStatus("p2"), { running: false });
+});
+
+test("auto falls back to the container when hybrid start fails, carrying the hybrid reason", async () => {
+  const calls: string[] = [];
+  process.env.PREVIEW_MODE = "auto";
+  setPreviewStartDepsForTests({
+    readHybridConfig: async () => ({ kind: "configured", config: hybridConfig }),
+    startHybrid: async () => {
+      calls.push("hybrid");
+      return { ok: false, reason: "backend не ответил" };
+    },
+    startContainer: async (_config, reason) => {
+      calls.push("container:" + reason);
+      return running;
+    },
+    startStatic: async () => {
+      throw new Error("static не должен вызываться после hybrid-fallback");
+    },
+  });
+
+  const status = await startPreviewWithFallback(startConfig);
+  assert.deepEqual(status, running);
+  assert.deepEqual(calls, ["hybrid", "container:hybrid не подошёл: backend не ответил"]);
+});
+
+test("strict hybrid reports the failure and never falls back to a container", async () => {
+  const calls: string[] = [];
+  process.env.PREVIEW_MODE = "hybrid";
+  setPreviewStartDepsForTests({
+    readHybridConfig: async () => ({ kind: "configured", config: hybridConfig }),
+    startHybrid: async () => {
+      calls.push("hybrid");
+      return { ok: false, reason: "Нет backend-скрипта" };
+    },
+    startContainer: async () => {
+      calls.push("container");
+      return running;
+    },
+  });
+
+  await assert.rejects(() => startPreviewWithFallback(startConfig), /Нет backend-скрипта/);
+  assert.deepEqual(calls, ["hybrid"]);
+});
+
+test("explicit container mode skips a configured hybrid without touching it", async () => {
+  const calls: string[] = [];
+  process.env.PREVIEW_MODE = "container";
+  setPreviewStartDepsForTests({
+    readHybridConfig: async () => ({ kind: "configured", config: hybridConfig }),
+    startHybrid: async () => {
+      calls.push("hybrid");
+      return { ok: false, reason: "must not run" };
+    },
+    startContainer: async () => {
+      calls.push("container");
+      return running;
+    },
+  });
+
+  const status = await startPreviewWithFallback(startConfig);
+  assert.deepEqual(status, running);
+  assert.deepEqual(calls, ["container"]);
+});
+
+test("strict hybrid refuses a project without preview.mode=hybrid", async () => {
+  process.env.PREVIEW_MODE = "hybrid";
+  setPreviewStartDepsForTests({
+    readHybridConfig: async () => ({ kind: "absent" }),
+    startContainer: async () => running,
+  });
+
+  await assert.rejects(() => startPreviewWithFallback(startConfig), /должен объявить preview\.mode/);
 });

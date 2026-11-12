@@ -374,7 +374,7 @@ export type SandboxRowSource = {
   emails: Map<string, string>;
   directories: Set<string>;
   containers: Map<string, { name: string; state: "running" | "stopped" }>;
-  previews: Map<string, { mode: "container" | "static"; startedAt: number; lastUsedAt: number }>;
+  previews: Map<string, { mode: "container" | "static" | "hybrid"; startedAt: number; lastUsedAt: number }>;
   access: Map<string, number>;
   now: number;
 };
@@ -533,7 +533,7 @@ async function collectSandboxInventory(): Promise<SandboxInventory> {
     issues.push({ section: "sandboxes", reason: "каталог песочниц не прочитан: " + errorText(directoriesResult.reason) });
   }
 
-  const previews = new Map<string, { mode: "container" | "static"; startedAt: number; lastUsedAt: number }>();
+  const previews = new Map<string, { mode: "container" | "static" | "hybrid"; startedAt: number; lastUsedAt: number }>();
   for (const preview of await listPreviewsAcrossReplicas()) {
     previews.set(preview.projectId, { mode: preview.mode, startedAt: preview.startedAt, lastUsedAt: preview.lastUsedAt });
   }

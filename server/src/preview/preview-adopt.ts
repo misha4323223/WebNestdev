@@ -4,7 +4,7 @@ import { nodeId } from "../nodes/identity.js";
 import { addressOnNetworks, firstContainerAddress, previewNetworks } from "./preview-network.js";
 import { previewOwnerAddressForNode } from "./preview-owner.js";
 import { flushPreviewWrites, setPreview } from "./preview-store.js";
-import { PREVIEW_APP_PORT, PREVIEW_LABEL, type PreviewState } from "./types.js";
+import { PREVIEW_APP_PORT, PREVIEW_KIND_LABEL, PREVIEW_LABEL, type PreviewState } from "./types.js";
 
 /**
  * Принять уже запущенный контейнер, если общего состояния нет.
@@ -28,6 +28,10 @@ export async function adoptRunningPreview(
     for (const containerId of listed.stdout.split(/\s+/).filter(Boolean)) {
       const running = await docker(["inspect", "-f", "{{.State.Running}}", containerId]);
       if (running.code !== 0 || running.stdout.trim() !== "true") continue;
+      // A hybrid backend is not a dev server: adopting it here would leave the API without its
+      // listener and then serve a backend whose contract is different.
+      const kind = await docker(["inspect", "-f", `{{index .Config.Labels ${JSON.stringify(PREVIEW_KIND_LABEL)}}}`, containerId]);
+      if (kind.code === 0 && kind.stdout.trim() === "hybrid") continue;
       const networks = host.networks ? await host.networks() : await previewNetworks(docker);
       const address =
         (networks.preview ? await addressOnNetworks(containerId, [networks.preview], docker) : "") ||

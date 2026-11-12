@@ -104,6 +104,10 @@ export async function proxyPreviewRequest(door: PreviewDoor, request: PreviewPro
         // всё это время показывает пустой белый кадр без причины (см. previewProxyTimeoutMs).
         signal: AbortSignal.timeout(timeoutMs),
       });
+      // The hybrid listener itself answers 502 when its backend is unreachable. The listener is
+      // alive, so a direct fetch succeeds and would otherwise leave the row marked settled; clear
+      // the confirmation so the next status re-checks the backend and shows a real failure.
+      if (state.mode === "hybrid" && upstream.status === 502) door.unsettle(request.projectId);
       const contentType = upstream.headers.get("content-type");
       const headers = sanitizedPreviewHeaders(upstream.headers);
       return !contentType || !canRewritePreviewBody(contentType)
@@ -116,6 +120,16 @@ export async function proxyPreviewRequest(door: PreviewDoor, request: PreviewPro
   // Вторая дверь: адрес контейнера серверу недоступен (Docker изолирует bridge-сети друг от друга),
   // но приложение живо и отвечает внутри своего контейнера — тем же путём, каким платформа
   // проверяет его готовность. Без этого живой предпросмотр оставался в панели белым кадром.
+  // Hybrid is served by a listener owned by the API process; `docker exec` is not a second door
+  // for it. Falling back here would hide a dead listener and still leave WebSocket broken, so a
+  // direct failure is reported as a direct failure.
+  if (state.mode === "hybrid") {
+    door.unsettle(request.projectId);
+    const reason = directError
+      ? describeProxyFailure(directError, host, state.port, timeoutMs)
+      : "адрес " + host + ":" + state.port + " недоступен";
+    throw new Error("Прокси hybrid-предпросмотра не сработал: " + reason + " — проверьте listener и логи предпросмотра");
+  }
   const viaExec = await door.execPreview({
     containerId: state.containerId,
     node: state.node,

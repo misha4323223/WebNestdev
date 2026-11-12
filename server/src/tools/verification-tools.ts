@@ -4,6 +4,7 @@ import { previewAppAnswers } from "../preview/app-http.js";
 import { unreachablePreviewDiagnosis } from "../preview/preview-address.js";
 import { getPreview } from "../preview/preview-store.js";
 import { previewStatus } from "../preview-manager.js";
+import { dockerForNode } from "../preview/docker-exec.js";
 import { analyzeForms } from "../qa/form-signal.js";
 import { getSandbox } from "../sandbox/sandbox-service.js";
 import { registerTool } from "../tool-registry.js";
@@ -213,7 +214,15 @@ registerTool({
       // запуск падает на лимите попыток. Поэтому тот же запрос делается внутри контейнера, и
       // разница между «приложение живо, но недоступно снаружи» и «приложение не поднялось»
       // попадает в результат проверки как действие, а не как текст ошибки.
-      const appAnswersInside = current.mode === "container" ? await previewAppAnswers(current).catch(() => false) : false;
+      const appAnswersInside = current.mode === "container"
+        ? await previewAppAnswers(current).catch(() => false)
+        : current.mode === "hybrid"
+          ? await previewAppAnswers({
+            containerId: current.containerId,
+            port: current.backendPort ?? current.port,
+            ...(current.containerPort !== undefined ? { containerPort: current.containerPort } : {}),
+          }, dockerForNode(current.node)).catch(() => false)
+          : false;
       const diagnosis = unreachablePreviewDiagnosis({ message, port: current.port, appAnswersInside });
       return {
         ok: false,

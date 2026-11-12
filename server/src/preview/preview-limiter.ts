@@ -1,6 +1,6 @@
 import os from "node:os";
 import { listPreviews } from "./preview-store.js";
-import type { PreviewState } from "./types.js";
+import { isRuntimePreviewMode, type PreviewState } from "./types.js";
 
 /**
  * Сколько контейнерных предпросмотров держит один аккаунт.
@@ -45,7 +45,7 @@ export function runtimePreviewLimit() {
 
 /** Live runtime previews right now, cheapest source of truth for the cap and for /api/health. */
 export function liveRuntimePreviews(): PreviewState[] {
-  return listPreviews().filter(state => state.mode === "container");
+  return listPreviews().filter(state => isRuntimePreviewMode(state.mode));
 }
 
 /** Live static previews: a listener each, for the same health line. */

@@ -21,6 +21,8 @@ export async function ensurePreviewTable(pool: Pool, table: string): Promise<voi
     host TEXT NOT NULL DEFAULT '',
     port INTEGER NOT NULL DEFAULT 0,
     container_port INTEGER,
+    backend_host TEXT NOT NULL DEFAULT '',
+    backend_port INTEGER,
     started_at BIGINT NOT NULL,
     last_used_at BIGINT NOT NULL,
     settled BOOLEAN NOT NULL DEFAULT FALSE,
@@ -31,13 +33,15 @@ export async function ensurePreviewTable(pool: Pool, table: string): Promise<voi
     owner_address TEXT NOT NULL DEFAULT '',
     updated_at BIGINT NOT NULL,
     expires_at BIGINT NOT NULL,
-    CONSTRAINT previews_mode_check CHECK (mode IN ('container', 'static'))
+    CONSTRAINT previews_mode_check CHECK (mode IN ('container', 'static', 'hybrid'))
   )`);
-  // Совместимость с таблицей, созданной до cross-replica static preview: колонка и ограничение
-  // добавляются на месте, без пересоздания и без потери живых строк.
+  // Совместимость с таблицей, созданной до cross-replica static preview и hybrid: колонки и
+  // ограничение добавляются на месте, без пересоздания и без потери живых строк.
   await pool.query(`ALTER TABLE ${name} ADD COLUMN IF NOT EXISTS owner_address TEXT NOT NULL DEFAULT ''`);
+  await pool.query(`ALTER TABLE ${name} ADD COLUMN IF NOT EXISTS backend_host TEXT NOT NULL DEFAULT ''`);
+  await pool.query(`ALTER TABLE ${name} ADD COLUMN IF NOT EXISTS backend_port INTEGER`);
   await pool.query(`ALTER TABLE ${name} DROP CONSTRAINT IF EXISTS previews_mode_check`);
-  await pool.query(`ALTER TABLE ${name} ADD CONSTRAINT previews_mode_check CHECK (mode IN ('container', 'static'))`);
+  await pool.query(`ALTER TABLE ${name} ADD CONSTRAINT previews_mode_check CHECK (mode IN ('container', 'static', 'hybrid'))`);
   await pool.query(
     `CREATE INDEX IF NOT EXISTS idx_${table}_expires ON ${name} (expires_at)`,
   );

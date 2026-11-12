@@ -15,12 +15,35 @@ import { listSharedPreviews, sharedPreviewRegistryEnabled } from "./preview/prev
 import { startPreviewContainer, previewLogsOf, removePreviewContainer } from "./preview/preview-runner.js";
 import { adoptRunningPreview } from "./preview/preview-adopt.js";
 import { previewModeSetting, startStaticPreview, staticAppAnswers, staticPreviewLogs, stopStaticPreview } from "./preview/static-preview.js";
+import { readHybridConfig } from "./preview/hybrid-config.js";
+import { hybridBackendLogs, hybridPreviewLogs, hybridPreviewStatus, startHybridPreview, stopHybridPreview } from "./preview/hybrid-preview.js";
 import { recordPreviewStart } from "./preview/preview-metrics.js";
 import { PREVIEW_LABEL, type PreviewStatus } from "./preview/types.js";
 import { clearPreviewSecrets } from "./secrets/preview-secrets.js";
 import { recordStorageMutation } from "./account/storage-quota.js";
 
 export type { PreviewState, PreviewStatus } from "./preview/types.js";
+
+/** Test seam for the mode/fallback decision: no Docker or real package build is needed. */
+export type PreviewStartDeps = {
+  readHybridConfig: typeof readHybridConfig;
+  startHybrid: typeof startHybridPreview;
+  startStatic: typeof startStaticPreview;
+  startContainer: (config: SandboxConfig, staticReason?: string) => Promise<PreviewStatus>;
+};
+
+const defaultPreviewStartDeps: PreviewStartDeps = {
+  readHybridConfig,
+  startHybrid: startHybridPreview,
+  startStatic: startStaticPreview,
+  startContainer: startContainerPreview,
+};
+
+let previewStartDeps: PreviewStartDeps = defaultPreviewStartDeps;
+
+export function setPreviewStartDepsForTests(overrides: Partial<PreviewStartDeps> | null): void {
+  previewStartDeps = { ...defaultPreviewStartDeps, ...(overrides ?? {}) };
+}
 
 /**
  * Starts the preview the way the panel's button and the agent's verification do. The mode is
@@ -63,10 +86,28 @@ async function recordPreviewSize(projectId: string) {
   }
 }
 
-async function startPreviewWithFallback(config: SandboxConfig) {
+export async function startPreviewWithFallback(config: SandboxConfig) {
   const setting = previewModeSetting();
+  const hybrid = await previewStartDeps.readHybridConfig(config.root);
+
+  // Hybrid is opt-in only. `auto` must not mistake a node-runtime project for a hybrid just
+  // because it has `dev`/`start`; only an explicit preview.mode="hybrid" reaches this branch.
+  if (hybrid.kind === "invalid" && setting === "hybrid") throw new Error(hybrid.reason);
+  if (hybrid.kind === "configured" && setting !== "static" && setting !== "container") {
+    const result = await previewStartDeps.startHybrid(config);
+    if (result.ok) return result.status;
+    if (setting === "hybrid") throw new Error(result.reason);
+    // A broken hybrid must not leave a backend behind; startHybridPreview cleans it up before
+    // returning. The ordinary container preview remains the safe fallback for node-runtime apps.
+    console.log("[preview] проект " + config.projectId + ": hybrid не подошёл (" + result.reason + ") — поднимаю dev-сервер");
+    return previewStartDeps.startContainer(config, "hybrid не подошёл: " + result.reason);
+  }
+  if (setting === "hybrid") {
+    throw new Error("Для PREVIEW_MODE=hybrid проект должен объявить preview.mode=\"hybrid\" в package.json.");
+  }
+
   if (setting !== "container") {
-    const result = await startStaticPreview(config);
+    const result = await previewStartDeps.startStatic(config);
     if (result.ok) return result.status;
     // A host that requires static previews must not silently start a container, so the reason
     // is the answer there; every other mode falls back and carries the reason as a hint.
@@ -74,9 +115,9 @@ async function startPreviewWithFallback(config: SandboxConfig) {
     // Почему проект не удалось отдать статикой — тоже в лог: на маленькой ВМ поднятый контейнер
     // предпросмотра иначе выглядит случайностью, а не следствием непригодной сборки.
     console.log("[preview] проект " + config.projectId + ": статическая сборка не подошла (" + result.reason + ") — поднимаю dev-сервер");
-    return startContainerPreview(config, result.reason);
+    return previewStartDeps.startContainer(config, result.reason);
   }
-  return startContainerPreview(config);
+  return previewStartDeps.startContainer(config);
 }
 
 function describeError(error: unknown) {
@@ -128,6 +169,11 @@ async function startContainerPreview(config: SandboxConfig, staticReason?: strin
     await stopStaticPreview(config.projectId);
     removePreview(config.projectId);
     current = undefined;
+  } else if (current?.mode === "hybrid") {
+    // A failed hybrid must not be adopted as a dev-server container. Its listener is in this
+    // process, and the backend has a different contract, so stop both before the fallback.
+    await stopHybridPreview(config.projectId);
+    current = undefined;
   } else if (current) {
     const status = await previewStatus(config.projectId);
     if (status.running) return status;
@@ -167,7 +213,7 @@ async function startContainerPreview(config: SandboxConfig, staticReason?: strin
     // Считаем по общему реестру, а не по локальной карте: иначе вторая реплика видит только
     // свои предпросмотры и разрешает аккаунту второй контейнер. Владелец обычно уже записан
     // вместе с состоянием; `getProject` остаётся только для старых строк без owner_user_id.
-    const shared = (await listPreviewsAcrossReplicas()).filter(state => state.mode === "container");
+    const shared = (await listPreviewsAcrossReplicas()).filter(state => state.mode === "container" || state.mode === "hybrid");
     const live = await Promise.all(
       shared.map(async state => ({
         projectId: state.projectId,
@@ -227,6 +273,10 @@ export async function stopPreview(projectId: string) {
     await clearPreviewSecrets(projectId);
     return { stopped: true };
   }
+  if (current.mode === "hybrid") {
+    await stopHybridPreview(projectId);
+    return { stopped: true };
+  }
   await removePreviewContainer(current.containerId,current.node);
   removePreview(projectId);
   await clearPreviewSecrets(projectId);
@@ -245,6 +295,19 @@ export async function previewLogs(projectId: string) {
     // Somebody is reading the logs, so the preview is in use.
     touchPreview(projectId);
     return { running: true, logs: staticPreviewLogs(projectId) };
+  }
+
+  if (current.mode === "hybrid") {
+    touchPreview(projectId);
+    const backend = await hybridBackendLogs(projectId);
+    if (backend.missing) {
+      await stopHybridPreview(projectId);
+      return { running: false, logs: "" };
+    }
+    return {
+      running: true,
+      logs: [hybridPreviewLogs(projectId), backend.logs].filter(Boolean).join("\n\n"),
+    };
   }
 
   const result = await previewLogsOf(current.containerId,dockerForNode(current.node));
@@ -330,6 +393,8 @@ export async function reapRemotePreviews() {
 export async function previewStatus(projectId: string): Promise<PreviewStatus> {
   const current = await hydratePreview(projectId);
   if (!current) return { running: false };
+
+  if (current.mode === "hybrid") return hybridPreviewStatus(projectId);
 
   // Nothing runs in a container for a static preview, so there is nothing to inspect: the
   // listener answers or it does not.

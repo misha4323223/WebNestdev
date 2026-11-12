@@ -50,7 +50,8 @@ export type PlatformModelOption={
 };
 export type FileEntry={name:string;type:"file"|"directory"};
 /** `static` serves the built app without a dev server, so there is no hot reload. */
-export type PreviewMode="container"|"static";
+/** `hybrid` serves a built frontend and proxies its API/WebSocket to a backend container. */
+export type PreviewMode="container"|"static"|"hybrid";
 /**
  * `ready` — приложение ответило внутри контейнера, `settled` — тот же адрес ответил серверу (то
  * есть панели и агенту); `hint` объясняет, чего именно не хватает. Разница видна пользователю:

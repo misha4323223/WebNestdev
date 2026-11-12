@@ -50,6 +50,30 @@ test("сброс удаляет контейнеры, состояние, бро
   ]);
 });
 
+test("сброс закрывает hybrid-listener и сообщает об его ошибке, не оставляя бронь", async () => {
+  const events: string[] = [];
+  const result = await resetProjectPreview("project-hybrid", ["local"], {
+    resolveHost: async () => fakeHost({ ids: [] }),
+    stopStatic: async projectId => { events.push("static:" + projectId); },
+    stopHybrid: async projectId => { events.push("hybrid:" + projectId); throw new Error("listener не закрылся"); },
+    removeState: projectId => { events.push("state:" + projectId); },
+    flushWrites: async projectId => { events.push("flush:" + projectId); },
+    clearReservation: async projectId => { events.push("reservation:" + projectId); return true; },
+    clearSecrets: async projectId => { events.push("secrets:" + projectId); },
+  });
+
+  assert.deepEqual(events, [
+    "static:project-hybrid",
+    "hybrid:project-hybrid",
+    "state:project-hybrid",
+    "flush:project-hybrid",
+    "reservation:project-hybrid",
+    "secrets:project-hybrid",
+  ]);
+  assert.equal(result.reservationCleared, true);
+  assert.equal(result.warnings.some(w => /hybrid-предпросмотр/.test(w)), true);
+});
+
 test("недоступный Docker не мешает снять бронь", async () => {
   const result = await resetProjectPreview("project-b", ["local"], {
     resolveHost: async () => fakeHost({ listFails: true }),

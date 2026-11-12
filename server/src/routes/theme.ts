@@ -9,6 +9,7 @@ import { readPalette, normalizePaletteValue, patchPaletteValue, readPaletteFile,
 import { createProjectPalette } from "../design/palette-create.js";
 import { FONT_OPTIONS } from "../design/theme.js";
 import { refreshStaticPreview } from "../preview/static-preview.js";
+import { refreshHybridPreview } from "../preview/hybrid-preview.js";
 import { hydratePreview } from "../preview/preview-store.js";
 import { startPreview, stopPreview } from "../preview-manager.js";
 
@@ -71,10 +72,16 @@ async function restartServerPreview(projectId: string, userId: string) {
   return true;
 }
 
+async function refreshPreviewAfterTheme(projectId: string) {
+  const state = await hydratePreview(projectId);
+  if (state?.mode === "hybrid") return refreshHybridPreview(projectId);
+  return refreshStaticPreview(projectId);
+}
+
 const defaultDeps: ThemeRouteDeps = {
   authorize: requireProjectUser,
   getSandbox: (projectId, userId) => getSandbox(projectId, userId),
-  refreshPreview: refreshStaticPreview,
+  refreshPreview: refreshPreviewAfterTheme,
   restartPreview: restartServerPreview,
 };
 

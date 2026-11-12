@@ -4,6 +4,7 @@ import { clearPreviewSecrets } from "../secrets/preview-secrets.js";
 import { clearPreviewReservation } from "./preview-reservation.js";
 import { flushPreviewWrites, removePreview } from "./preview-store.js";
 import { stopStaticPreview } from "./static-preview.js";
+import { stopHybridPreview } from "./hybrid-preview.js";
 import { PREVIEW_LABEL } from "./types.js";
 
 /**
@@ -32,6 +33,8 @@ export type PreviewResetDeps = {
   removeState: (projectId: string) => void;
   /** Статический preview живёт слушателем в процессе, а не контейнером. */
   stopStatic: (projectId: string) => Promise<void>;
+  /** Hybrid тоже держит слушатель в процессе; его backend удаляется отдельно. */
+  stopHybrid?: (projectId: string) => Promise<void>;
   flushWrites: (projectId: string) => Promise<void>;
   clearReservation: (projectId: string) => Promise<boolean>;
   clearSecrets: (projectId: string) => Promise<void>;
@@ -41,6 +44,7 @@ const defaultDeps: PreviewResetDeps = {
   resolveHost: node => resolveSandboxHost(node),
   removeState: projectId => removePreview(projectId),
   stopStatic: projectId => stopStaticPreview(projectId),
+  stopHybrid: projectId => stopHybridPreview(projectId),
   flushWrites: projectId => flushPreviewWrites(projectId),
   clearReservation: projectId => clearPreviewReservation(projectId),
   clearSecrets: projectId => clearPreviewSecrets(projectId),
@@ -93,6 +97,11 @@ export async function resetProjectPreview(
     await deps.stopStatic(projectId);
   } catch (error) {
     warnings.push("статический предпросмотр: " + describeError(error));
+  }
+  try {
+    await deps.stopHybrid?.(projectId);
+  } catch (error) {
+    warnings.push("hybrid-предпросмотр: " + describeError(error));
   }
 
   // Локальная карта и общий реестр: removePreview ставит удаление в очередь, flush ждёт, пока

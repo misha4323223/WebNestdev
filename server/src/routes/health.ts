@@ -5,6 +5,7 @@ import { runQueueStats } from "../agent/run-limiter.js";
 import { sandboxQueueStats } from "../sandbox/sandbox-limiter.js";
 import { browserQueueStats } from "../tools/browser-limiter.js";
 import { perUserPreviewLimit, runtimePreviewLimit } from "../preview/preview-limiter.js";
+import { isRuntimePreviewMode } from "../preview/types.js";
 import { listPreviewsAcrossReplicas, previewAddresses } from "../preview/preview-store.js";
 import { previewPublicDomain } from "../preview/preview-host.js";
 import { previewHostBind, previewHostLimits, previewHostPort } from "../preview/preview-host-server.js";
@@ -92,7 +93,7 @@ async function activity(){
     sandbox: sandboxQueueStats(),
     browser: browserQueueStats(),
     previews: {
-      runtime: previewStates.filter(state => state.mode === "container").length,
+      runtime: previewStates.filter(state => isRuntimePreviewMode(state.mode)).length,
       // Сколько контейнерных предпросмотров разрешено одному аккаунту: это правило продукта.
       runtimePerUser: perUserPreviewLimit(),
       // Предохранитель на весь хост; 0 — не задан (см. preview/preview-limiter.ts).

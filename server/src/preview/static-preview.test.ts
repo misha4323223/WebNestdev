@@ -261,7 +261,7 @@ test("a theme edit does not restart a preview that is served from disk", async (
   }
 });
 
-test("PREVIEW_MODE reads container, static, and anything else as auto", () => {
+test("PREVIEW_MODE reads container, static, hybrid, and anything else as auto", () => {
   const restore = env({ PREVIEW_MODE: undefined });
   try {
     assert.equal(previewModeSetting(), "auto");
@@ -269,6 +269,8 @@ test("PREVIEW_MODE reads container, static, and anything else as auto", () => {
     assert.equal(previewModeSetting(), "container");
     process.env.PREVIEW_MODE = "STATIC";
     assert.equal(previewModeSetting(), "static");
+    process.env.PREVIEW_MODE = "HYBRID";
+    assert.equal(previewModeSetting(), "hybrid");
     process.env.PREVIEW_MODE = "nonsense";
     assert.equal(previewModeSetting(), "auto");
   } finally {

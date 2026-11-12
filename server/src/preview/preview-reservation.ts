@@ -161,7 +161,7 @@ const postgresBackend: PreviewReservationBackend = {
       const [liveRows] = await tx<PreviewRow[]>`
         SELECT project_id, owner_user_id, node, last_used_at
           FROM ${previews}
-         WHERE mode = 'container' AND expires_at > ${now}
+         WHERE mode IN ('container', 'hybrid') AND expires_at > ${now}
       `;
       const [reservedRows] = await tx<Array<{ project_id: string; owner_user_id: string | null; node: string | null }>>`
         SELECT project_id, owner_user_id, node

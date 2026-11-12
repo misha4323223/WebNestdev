@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { getPreview } from "./preview-store.js";
+import { getPreview, removePreview } from "./preview-store.js";
 import { adoptRunningPreview } from "./preview-adopt.js";
 import type { SandboxHost } from "../sandbox/host.js";
 import type { SandboxConfig } from "../sandbox/sandbox-types.js";
@@ -13,11 +13,14 @@ const config: SandboxConfig = {
   timeoutMs: 5_000,
 };
 
-function fakeHost(containerId: string, running: boolean): SandboxHost {
+function fakeHost(containerId: string, running: boolean, kind = "container"): SandboxHost {
   const docker = async (args: string[]) => {
     if (args[0] === "ps") return { code: 0, stdout: containerId + "\n", stderr: "" };
     if (args[0] === "inspect" && args[2] === "{{.State.Running}}") {
       return { code: 0, stdout: String(running) + "\n", stderr: "" };
+    }
+    if (args[0] === "inspect" && String(args[2]).includes("Config.Labels")) {
+      return { code: 0, stdout: kind + "\n", stderr: "" };
     }
     if (args[0] === "inspect") {
       return {
@@ -53,4 +56,13 @@ test("остановленный контейнер не принимается"
     resolveHost: async () => fakeHost("container-stopped", false),
   });
   assert.equal(adopted, null);
+});
+
+test("hybrid backend не принимается как обычный dev-контейнер", async () => {
+  removePreview(config.projectId);
+  const adopted = await adoptRunningPreview(config, {
+    resolveHost: async () => fakeHost("container-hybrid", true, "hybrid"),
+  });
+  assert.equal(adopted, null);
+  assert.equal(getPreview(config.projectId), undefined);
 });
