@@ -16,7 +16,7 @@ const { setPreview } = await import("../preview/preview-store.js");
 await import("./browser-tools.js");
 const { getTool } = await import("../tool-registry.js");
 
-const PAGE = `<!doctype html><html><head><meta charset="utf-8"><title>Катание</title>
+const PAGE = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Катание</title>
 <style>body{margin:0;font-family:sans-serif}.screen{width:390px;height:200px;background:#123}</style>
 </head><body><div class="screen">Экран игры</div></body></html>`;
 
