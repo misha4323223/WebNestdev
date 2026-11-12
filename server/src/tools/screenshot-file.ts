@@ -109,9 +109,14 @@ export function screenshotUrl(projectId: string, relative: string) {
  */
 export async function saveScreenshot(
   page: Page,
-  input: { root: string; projectId: string; label: string; fullPage?: boolean },
+  input: { root: string; projectId: string; label: string; fullPage?: boolean; selector?: string; timeout?: number },
 ): Promise<SavedScreenshot> {
-  const buffer = await page.screenshot({ type: "png", fullPage: input.fullPage ?? false });
+  // Снимок региона — это тот же PNG, но от locator: сравнение HUD или отдельной панели не должно
+  // зависеть от остальной страницы.
+  const timeout = input.timeout && Number.isFinite(input.timeout) ? Math.max(1, input.timeout) : undefined;
+  const buffer = input.selector
+    ? await page.locator(input.selector).first().screenshot({ type: "png", ...(timeout ? { timeout } : {}) })
+    : await page.screenshot({ type: "png", fullPage: input.fullPage ?? false, ...(timeout ? { timeout } : {}) });
   const folder = path.join(input.root, SCREENSHOT_DIR);
   await mkdir(folder, { recursive: true });
   const name = input.label.replace(/[^A-Za-z0-9_-]+/g, "-").slice(0, 40) + "-" + Date.now().toString(36) + ".png";

@@ -83,7 +83,9 @@ const TOOL_OUTPUT_CHARS: Record<string, number> = {
   "net.request": 12000,
   "net.download": 1500,
   "browser.runtime": 6000,
-  "browser.scenario": 8000,
+  // Сценарий отдаёт полный хвост Playwright call log, диагностику перекрытия, консоль шага и
+  // снимок. 8000 резало именно хвост, по которому видно причину таймаута; запас важнее экономии.
+  "browser.scenario": 24000,
   "image.inspect": 8000,
   "git.diff": 8000,
   // Разведчик заменяет пачку прочитанных файлов одним ответом: его JSON должен дойти целиком,

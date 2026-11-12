@@ -8,6 +8,21 @@ import { getSandbox } from "../sandbox/sandbox-service.js";
 import { withBrowserSlot } from "./browser-limiter.js";
 import { layoutSummary, readLayout, saveScreenshot, type LayoutAudit, type SavedScreenshot } from "./screenshot-file.js";
 import { BROWSER_VIEWPORTS, readBrowserViewport } from "./browser-viewport.js";
+import { runBrowserScenario as runScenario } from "./browser-scenario/engine.js";
+import { browserScenarioDescription, browserScenarioParameters, browserRuntimeParameters } from "./browser-scenario/schema.js";
+import {
+  MAX_RUNTIME_MS,
+  briefList,
+  classifyRuntimeFailures,
+  loadAndSettle,
+  readPageEvidence,
+  type ConsoleMessage,
+  type PageEvidence,
+  type PageStyleFacts,
+  type RuntimeFailureInput,
+} from "./browser-evidence.js";
+
+export { classifyRuntimeFailures } from "./browser-evidence.js";
 
 const MAX_BODY = 200_000;
 const MAX_DIAGNOSTIC_ITEMS = 100;
@@ -121,236 +136,6 @@ import { chromium,type Browser,type Page } from "playwright";
 
 const MAX_CONSOLE_ITEMS = 100;
 const MAX_NETWORK_ITEMS = 100;
-const MAX_RUNTIME_MS = 20_000;
-/**
- * Сколько символов видимого текста возвращается модели. Раньше обе проверки не возвращали ничего,
- * что описывает *содержимое* страницы: модель получала список ошибок и скриншот в base64, который
- * прочитать не может. Отсюда и запуски, потраченные на «белый экран»: агент видел, что проверка не
- * прошла, но не знал, что именно отрисовано, и перебирал файлы наугад.
- */
-const MAX_EVIDENCE_TEXT = 1200;
-/** Сколько времени страница получает на отрисовку после загрузки — SPA монтируется не в load. */
-const SETTLE_MS = 900;
-/**
- * `networkidle` ждётся не дольше этого. Приложение, которое опрашивает свой API, не становится
- * «тихим» никогда, и прежний `goto(..., {waitUntil:"networkidle"})` на нём висел до таймаута —
- * проверка падала по времени, а не по делу.
- */
-const NETWORK_IDLE_MS = 4_000;
-
-/**
- * Применились ли стили. Без этого «белая страница» остаётся загадкой: DOM полон элементов, текст на
- * месте, а пользователь видит неоформленный экран — и модель ходит по файлам наугад, потому что в
- * отчёте проверки не было ни одного признака внешнего вида.
- */
-export type PageStyleFacts = {
-  /** Объявленные в разметке таблицы стилей (`<link rel="stylesheet">`). */
-  declaredStylesheets: number;
-  /**
-   * Сколько ссылок браузер не отверг (`sheet` не null). Это ещё не признак применения: Chrome
-   * оставляет пустую таблицу и для ответа 404, поэтому о применении судят по правилам, а это число —
-   * только улика рядом с ними.
-   */
-  loadedStylesheets: number;
-  /** `<style>`, вставленные скриптом: так Vite отдаёт CSS, импортированный из JS. */
-  inlineStyles: number;
-  /** Действующих правил CSS: ноль при объявленных стилях означает «стили не применились». */
-  cssRules: number;
-  /** Фон и цвет текста так, как их видит браузер: белое поле с чёрным текстом — вид белой страницы. */
-  bodyBackground: string;
-  bodyColor: string;
-  /** Объявленные стили не действуют: страница неоформленная, то есть выглядит белой. */
-  unstyled: boolean;
-  /**
-   * Ни одного правила CSS на странице. Это не поломка сама по себе (проект может быть без стилей),
-   * но вместе с белым экраном это первое, что нужно проверить: подключён ли CSS вообще.
-   */
-  noStyles: boolean;
-};
-
-/** Что на самом деле видно на странице: то единственное, по чему можно судить о белом экране. */
-export type PageEvidence = {
-  title: string;
-  /** Видимый текст страницы одной строкой (начало, до MAX_EVIDENCE_TEXT символов). */
-  text: string;
-  textChars: number;
-  /** Элементы с ненулевым размером: у пустой страницы их нет. */
-  visibleElements: number;
-  /** Ничего не отрисовано. Картинка, canvas или видео считаются содержимым: это про пустоту. */
-  blank: boolean;
-  /** Вид страницы: объявленные и действующие стили. */
-  styles: PageStyleFacts;
-};
-
-/**
- * Снимок того, что браузер отрисовал. `clientWidth/clientHeight` вместо innerHTML: пустой
- * `<div id="root">` и страница с текстом различаются именно размером видимого содержимого.
- */
-async function readPageEvidence(page: Page): Promise<PageEvidence> {
-  const raw = await page.evaluate(() => {
-    const body = document.body;
-    const text = (body?.innerText ?? "").replace(/\s+/g, " ").trim();
-    let visibleElements = 0;
-    for (const element of Array.from(body?.querySelectorAll("*") ?? [])) {
-      const style = getComputedStyle(element);
-      if (style.display === "none" || style.visibility === "hidden" || style.opacity === "0") continue;
-      if (element.clientWidth > 2 && element.clientHeight > 2) visibleElements++;
-    }
-    const links = Array.from(document.querySelectorAll('link[rel~="stylesheet"][href]')) as HTMLLinkElement[];
-    let cssRules = 0;
-    let sheetsWithRules = 0;
-    let unreadableSheets = 0;
-    for (const sheet of Array.from(document.styleSheets)) {
-      try {
-        const rules = sheet.cssRules.length;
-        cssRules += rules;
-        if (rules > 0) sheetsWithRules++;
-      } catch {
-        // Таблица из другого источника: правила прочитать нельзя, значит о применении судить не по ней.
-        unreadableSheets++;
-      }
-    }
-    const declaredStylesheets = links.length;
-    const loadedStylesheets = links.filter(link => link.sheet !== null).length;
-    const inlineStyles = document.querySelectorAll("style").length;
-    // Всё, что вообще объявляет стили: ссылка в разметке или таблица, добавленная скриптом.
-    const declared = declaredStylesheets + inlineStyles;
-    const bodyStyle = body ? getComputedStyle(body) : null;
-    return {
-      title: document.title,
-      text,
-      textChars: text.length,
-      visibleElements,
-      styles: {
-        declaredStylesheets,
-        loadedStylesheets,
-        inlineStyles,
-        cssRules,
-        bodyBackground: bodyStyle?.backgroundColor ?? "",
-        bodyColor: bodyStyle?.color ?? "",
-        // Стили объявлены (ссылкой или скриптом), а ни одного действующего правила нет: страница
-        // неоформленная. Одной ссылки для вывода мало — Chrome оставляет пустую таблицу даже там,
-        // где ответил 404, — поэтому решают именно правила. Если прочитать их не удалось ни у одной
-        // таблицы (чужие источники), о применении стилей не судим.
-        // Случай «стилей нет вовсе» сюда не входит: так выглядит и проект, которому стили не нужны,
-        // поэтому он называется отдельно (noStyles) и не превращается в провал проверки.
-        unstyled: declared > 0 && sheetsWithRules === 0 && unreadableSheets === 0,
-        noStyles: declared === 0,
-      },
-    };
-  });
-  return {
-    title: raw.title,
-    text: raw.text.slice(0, MAX_EVIDENCE_TEXT),
-    textChars: raw.textChars,
-    visibleElements: raw.visibleElements,
-    blank: raw.textChars === 0 && raw.visibleElements === 0,
-    styles: raw.styles,
-  };
-}
-
-/** Загрузка плюс короткое ожидание отрисовки: SPA рисует себя уже после `load`. */
-async function loadAndSettle(page: Page, url: string) {
-  const response = await page.goto(url, { waitUntil: "domcontentloaded", timeout: MAX_RUNTIME_MS });
-  await page.waitForLoadState("networkidle", { timeout: NETWORK_IDLE_MS }).catch(() => undefined);
-  await page.waitForTimeout(SETTLE_MS);
-  return response;
-}
-
-/** Сообщение консоли: `url` нужен, чтобы отличить фон от настоящей ошибки приложения. */
-export type ConsoleMessage = { text: string; url?: string };
-
-export type RuntimeFailureInput = {
-  pageErrors: string[];
-  consoleErrors: ConsoleMessage[];
-  failedRequests: Array<{ url: string; error: string }>;
-  httpErrors: Array<{ url: string; status: number }>;
-  /** Статус самого документа: 404 на маршруте — это не «фон», а несуществующая страница. */
-  documentStatus: number | null;
-  blank: boolean;
-  /** Вид страницы; без него проверка судит только о наличии текста и не видит неоформленный экран. */
-  styles?: PageStyleFacts;
-};
-
-/**
- * Расширения стилей и скриптов: их отсутствие оставляет белый экран (нет вида или логики), а не фон.
- * `favicon.ico` и картинки сюда не входят: браузер спрашивает их сам, и их 404 ничего не ломает.
- */
-const CODE_ASSET_EXTENSIONS = /\.(css|js|mjs|cjs|jsx|tsx|ts)$/i;
-
-function isCodeAsset(url: string) {
-  return CODE_ASSET_EXTENSIONS.test(url.split(/[?#]/)[0]);
-}
-
-/**
- * Что считать поломкой, а что — фоном.
- *
- * Фон — это 4xx от собственных запросов приложения и отменённые запросы; страница без авторизации
- * обязана отвечать 401, а переход отменяет ещё летящие запросы, и требование «ноль таких ответов»
- * делало проверку непроходимой навсегда: агент бесконечно «чинил» работающее приложение.
- * Тот же 401 приходит второй раз — как ошибка консоли «Failed to load resource: … status of 401»,
- * поэтому сообщения этого вида с ответом 4xx относятся к фону, а не к ошибкам приложения.
- *
- * Поломка — то, что видит пользователь: пустой экран, неоформленная страница (стили объявлены, но
- * ни одно правило не действует), ошибки страницы и консоли, недошедшие запросы, 5xx, несуществующий
- * маршрут и путь к стилю или скрипту, который не отдался. Это и делает проверку строже прежней:
- * `expectVisible body` виден и на белой странице, а DOM с текстом был и когда стили не применились.
- */
-export function classifyRuntimeFailures(input: RuntimeFailureInput) {
-  const aborted = input.failedRequests.filter(item => /ERR_ABORTED|NS_BINDING_ABORTED/i.test(item.error));
-  const broken = input.failedRequests.filter(item => !/ERR_ABORTED|NS_BINDING_ABORTED/i.test(item.error));
-  const serverErrors = input.httpErrors.filter(item => item.status >= 500);
-  const backgroundHttp = input.httpErrors.filter(item => item.status < 500);
-  // Стиль или скрипт, который не отдался, — это белая и нерабочая страница, а не фон: браузер без
-  // него не применяет ни вида, ни логики. Всё остальное 4xx от своего же API — фон.
-  const missingAssets = backgroundHttp.filter(item => isCodeAsset(item.url));
-  const backgroundOnly = backgroundHttp.filter(item => !isCodeAsset(item.url));
-  // Браузер пишет загрузку с 4xx в консоль как ошибку; это тот же фон, а не ошибка приложения.
-  const resourceFailures = input.consoleErrors.filter(isFailedResource);
-  const assetRefusals = resourceFailures.filter(item => isCodeAsset(item.url ?? ""));
-  const consoleErrors = input.consoleErrors.filter(item => !isFailedResource(item));
-
-  const failures: string[] = [];
-  if (input.documentStatus !== null && input.documentStatus >= 400) failures.push("страница ответила HTTP " + input.documentStatus);
-  if (input.blank) failures.push("страница пустая: ни текста, ни видимых элементов — приложение ничего не отрисовало");
-  if (input.pageErrors.length) failures.push("ошибки страницы (" + input.pageErrors.length + "): " + input.pageErrors[0]);
-  if (consoleErrors.length) failures.push("ошибки консоли (" + consoleErrors.length + "): " + consoleErrors[0].text);
-  if (broken.length) failures.push("запросы не дошли (" + broken.length + "): " + broken[0].error + " " + broken[0].url);
-  if (serverErrors.length) failures.push("ответы сервера 5xx (" + serverErrors.length + "): " + serverErrors.slice(0, 3).map(item => item.status + " " + item.url).join(", "));
-  if (missingAssets.length) failures.push("файлы стилей или скриптов не отдались (" + missingAssets.length + "): " + missingAssets.slice(0, 3).map(item => item.status + " " + item.url).join(", ") + " — без них страница остаётся белой");
-  if (assetRefusals.length) failures.push("браузер отказался применить стиль или скрипт: " + assetRefusals[0].text + (assetRefusals[0].url ? " — " + assetRefusals[0].url : ""));
-  // Неоформленная страница с текстом раньше проходила проверку: текст есть, значит «не пусто».
-  if (input.styles?.unstyled) {
-    const facts = input.styles;
-    failures.push(
-      "стили не применились: объявлено таблиц " + facts.declaredStylesheets + ", из них загрузилось " + facts.loadedStylesheets +
-      ", встроенных <style> " + facts.inlineStyles + ", действующих правил CSS " + facts.cssRules +
-      ", фон " + facts.bodyBackground + ", цвет текста " + facts.bodyColor +
-      " — страница неоформленная и выглядит белой, хотя элементы на ней есть",
-    );
-  }
-
-  const background = [
-    ...backgroundOnly.map(item => "HTTP " + item.status + " " + item.url),
-    ...resourceFailures.filter(item => !assetRefusals.includes(item)).map(item => item.text + (item.url ? " — " + item.url : "")),
-    ...aborted.map(item => "отменён запрос " + item.url),
-  ];
-  return { ok: failures.length === 0, failures, background };
-}
-
-/** «Failed to load resource: the server responded with a status of 401» — это загрузка с 4xx. */
-function isFailedResource(item: ConsoleMessage) {
-  const match = /status of (\d{3})/.exec(item.text);
-  if (!match) return false;
-  const status = Number(match[1]);
-  return status >= 400 && status < 500;
-}
-
-/** Короткий хвост ответа для сообщения о поломке: модели нужен адрес, а не весь список. */
-function briefList(values: string[], limit = 3) {
-  return values.slice(0, limit).join("; ") + (values.length > limit ? " …" : "");
-}
-
 /** Что дала одна загрузка страницы: адрес контейнера и прокси панели возвращают одно и то же по форме. */
 type DoorEvidence = {
   url: string;
@@ -373,13 +158,24 @@ type DoorEvidence = {
  * Одна дверь к приложению: адрес контейнера и адрес прокси платформы — два разных пути к одному
  * проекту. Кука нужна только второй двери: прокси пускает лишь владельца проекта.
  */
+export type DoorView = {
+  viewport?: { width: number; height: number };
+  hasTouch?: boolean;
+  isMobile?: boolean;
+};
+
 async function loadDoor(
   browser: Browser,
   url: string,
   cookie?: { name: string; value: string },
   capture?: { root: string; projectId: string; label: string },
+  view: DoorView = {},
 ): Promise<DoorEvidence> {
-  const context = await browser.newContext({ viewport: { width: 1440, height: 900 } });
+  const context = await browser.newContext({
+    viewport: view.viewport ?? { width: 1440, height: 900 },
+    ...(view.hasTouch ? { hasTouch: true } : {}),
+    ...(view.isMobile ? { isMobile: true } : {}),
+  });
   // Кука ставится на весь источник: приложение внутри кадра ходит и в свой /api.
   if (cookie) await context.addCookies([{ name: cookie.name, value: cookie.value, url: new URL(url).origin }]);
   const page = await context.newPage();
@@ -479,12 +275,18 @@ type ProxyDoorResult = {
  * именно так получается «всё запустилось, а у пользователя белая страница». Кука передаётся снаружи,
  * чтобы этот проход можно было проверить тестом без входа в аккаунт.
  */
-export async function inspectPreviewThroughPanelProxy(input: { projectId: string; path: string; selfBase: string; cookie: { name: string; value: string } }): Promise<ProxyDoorResult> {
+export async function inspectPreviewThroughPanelProxy(input: {
+  projectId: string;
+  path: string;
+  selfBase: string;
+  cookie: { name: string; value: string };
+  view?: DoorView;
+}): Promise<ProxyDoorResult> {
   const url = input.selfBase.replace(/\/+$/, "") + previewProxyBase(input.projectId) + input.path.replace(/^\/+/, "");
   try {
     const browser = await chromium.launch({ headless: true, executablePath: process.env.WEBNESTDEV_BROWSER_EXECUTABLE || undefined });
     try {
-      const door = await loadDoor(browser, url, input.cookie);
+      const door = await loadDoor(browser, url, input.cookie, undefined, input.view);
       // Сам вход не открылся: прокси ответил отказом (нет сессии, проект не найден). Это не поломка
       // страницы — проверка честно говорит, что через панель посмотреть не удалось.
       if (door.status === null || door.status === 401 || door.status === 403 || door.status === 404) {
@@ -506,14 +308,14 @@ export async function inspectPreviewThroughPanelProxy(input: { projectId: string
  * «что видит пользователь» — это 127.0.0.1 и тот же маршрут прокси, который отдаёт iframe панели.
  * `WEBNESTDEV_SELF_URL` переопределяет адрес платформы (отдельная сеть, тесты).
  */
-async function inspectProxyDoor(input: { projectId: string; path: string; userId?: string }): Promise<ProxyDoorResult> {
+async function inspectProxyDoor(input: { projectId: string; path: string; userId?: string; view?: DoorView }): Promise<ProxyDoorResult> {
   const selfBase = process.env.WEBNESTDEV_SELF_URL?.trim() || "http://127.0.0.1:" + (process.env.PORT?.trim() || "8787");
   if (!input.userId) return { checked: false, url: selfBase + previewProxyBase(input.projectId), reason: "неизвестен владелец проекта" };
   let sessionId = "";
   try {
     const session = await createSession(input.userId);
     sessionId = session.id;
-    return await inspectPreviewThroughPanelProxy({ projectId: input.projectId, path: input.path, selfBase, cookie: { name: SESSION_COOKIE, value: session.id } });
+    return await inspectPreviewThroughPanelProxy({ projectId: input.projectId, path: input.path, selfBase, cookie: { name: SESSION_COOKIE, value: session.id }, view: input.view });
   } catch (error) {
     return { checked: false, url: selfBase + previewProxyBase(input.projectId), reason: error instanceof Error ? error.message : String(error) };
   } finally {
@@ -522,7 +324,12 @@ async function inspectProxyDoor(input: { projectId: string; path: string; userId
   }
 }
 
-async function inspectRuntimePage(projectId: string, path: string, userId?: string) {
+async function inspectRuntimePage(projectId: string, path: string, userId?: string, input?: unknown) {
+  const viewportName = readBrowserViewport((input as { viewport?: unknown } | null)?.viewport);
+  const view: DoorView = {
+    viewport: BROWSER_VIEWPORTS[viewportName],
+    ...(viewportName === "mobile" ? { hasTouch: true, isMobile: true } : {}),
+  };
   const status = await previewStatus(projectId);
   if (!status.running) {
     throw new Error(String((status as { error?: string }).error ?? "Preview is not running"));
@@ -540,11 +347,12 @@ async function inspectRuntimePage(projectId: string, path: string, userId?: stri
       `http://${current.host}:${current.port}${path}`,
       undefined,
       sandbox ? { root: sandbox.root, projectId, label: "runtime" } : undefined,
+      view,
     );
   } finally {
     await browser.close();
   }
-  const panel = await inspectProxyDoor({ projectId, path, userId });
+  const panel = await inspectProxyDoor({ projectId, path, userId, view });
   const failures = [...door.failures, ...(panel.failures ?? []).map(item => "через прокси панели: " + item)];
   const rendered = door.rendered;
   const ok = failures.length === 0;
@@ -553,6 +361,7 @@ async function inspectRuntimePage(projectId: string, path: string, userId?: stri
     ok,
     status: door.status,
     statusText: door.statusText,
+    viewport: viewportName,
     url: door.url,
     title: rendered.title,
     /** Что видно на странице — по этому и судят о белом экране, а не по скриншоту в base64. */
@@ -590,297 +399,21 @@ async function inspectRuntimePage(projectId: string, path: string, userId?: stri
   };
 }
 
-import type { QaScenarioStep as BrowserScenarioStep, ScenarioPoint } from "../qa/scenario-planner.js";
-
-const MAX_SCENARIO_STEPS = 20;
-const MAX_DRAG_STEPS = 40;
-
-type ScenarioStepResult = {
-  step: number;
-  action: string;
-  ok: boolean;
-  detail?: string;
-  screenshot?: SavedScreenshot;
-  layout?: LayoutAudit;
-};
-
-function readPoint(value: unknown): ScenarioPoint | null {
-  if (!value || typeof value !== "object") return null;
-  const point = value as { x?: unknown; y?: unknown };
-  const x = typeof point.x === "number" && Number.isFinite(point.x) ? point.x : NaN;
-  const y = typeof point.y === "number" && Number.isFinite(point.y) ? point.y : NaN;
-  return Number.isFinite(x) && Number.isFinite(y) ? { x, y } : null;
-}
-
-function clampPoint(point: ScenarioPoint, viewport: { width: number; height: number }): ScenarioPoint {
-  return {
-    x: Math.max(0, Math.min(viewport.width, point.x)),
-    y: Math.max(0, Math.min(viewport.height, point.y)),
-  };
-}
-
-/**
- * Pointer-перетаскивание. Мышь даёт pointerdown → pointermove → pointerup, которых ждут игры на
- * указателях; touch отправляет те же события через CDP, иначе мобильный свайп не проверить.
- */
-async function dragOnPage(
-  page: Page,
-  input: { from: ScenarioPoint; to: ScenarioPoint; steps?: number; touch?: boolean },
-) {
-  const count = Math.max(1, Math.min(MAX_DRAG_STEPS, Math.floor(Number(input.steps) || 8)));
-  if (input.touch) {
-    const client = await page.context().newCDPSession(page);
-    try {
-      const point = (value: ScenarioPoint) => [{ x: value.x, y: value.y }];
-      await client.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: point(input.from) });
-      for (let index = 1; index <= count; index++) {
-        const ratio = index / count;
-        await client.send("Input.dispatchTouchEvent", {
-          type: "touchMove",
-          touchPoints: point({
-            x: input.from.x + (input.to.x - input.from.x) * ratio,
-            y: input.from.y + (input.to.y - input.from.y) * ratio,
-          }),
-        });
-        await page.waitForTimeout(16);
-      }
-      await client.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
-    } finally {
-      await client.detach().catch(() => undefined);
-    }
-    return;
-  }
-  await page.mouse.move(input.from.x, input.from.y);
-  await page.mouse.down();
-  try {
-    await page.mouse.move(input.to.x, input.to.y, { steps: count });
-  } finally {
-    await page.mouse.up();
-  }
-}
-
-async function runBrowserScenario(projectId: string, input: unknown, userId?: string) {
-  const value = (input && typeof input === "object" ? input : {}) as {
-    path?: unknown;
-    viewport?: unknown;
-    steps?: unknown;
-  };
-  const initialPath = typeof value.path === "string" ? getPath({ path: value.path }) : "/";
-  const steps = Array.isArray(value.steps) ? value.steps.slice(0, MAX_SCENARIO_STEPS) as BrowserScenarioStep[] : [];
-  if (!steps.length) return { ok: false, error: "Нужен хотя бы один шаг сценария." };
-
-  const status = await previewStatus(projectId);
-  if (!status.running) throw new Error(String((status as { error?: string }).error ?? "Preview is not running"));
-  const current = getPreview(projectId);
-  if (!current) throw new Error("Состояние предпросмотра недоступно — предпросмотр не запущен");
-
-  const viewportName = readBrowserViewport(value.viewport);
-  const viewport = BROWSER_VIEWPORTS[viewportName];
-  const browser = await chromium.launch({ headless: true, executablePath: process.env.WEBNESTDEV_BROWSER_EXECUTABLE || undefined });
-  const consoleErrors: ConsoleMessage[] = [];
-  const pageErrors: string[] = [];
-  const failedRequests: Array<{ url: string; error: string }> = [];
-  const httpErrors: Array<{ url: string; status: number }> = [];
-  const results: ScenarioStepResult[] = [];
-
-  // Корень проекта нужен только шагам screenshot: сценарий без снимков работает и без песочницы.
-  let captureRoot: string | null | undefined;
-  const ensureCaptureRoot = async () => {
-    if (captureRoot !== undefined) return captureRoot;
-    if (!userId) return null;
-    captureRoot = (await getSandbox(projectId, userId).catch(() => null))?.root ?? null;
-    return captureRoot;
-  };
-
-  try {
-    const page = await browser.newPage({
-      viewport,
-      // hasTouch влияет на pointer-события и media queries: включаем его только когда сценарий
-      // действительно просит touch-drag, чтобы десктопный вид не превращался в мобильный.
-      hasTouch: steps.some(step => step.action === "drag" && step.touch === true),
-    });
-    page.on("console", message => { if (message.type() === "error" && consoleErrors.length < 50) consoleErrors.push({ text: message.text().slice(0, 2000), url: message.location()?.url ?? "" }); });
-    page.on("pageerror", error => { if (pageErrors.length < 50) pageErrors.push(error.message.slice(0, 2000)); });
-    page.on("response", response => { if (response.status() >= 400 && httpErrors.length < 50) httpErrors.push({ url: response.url().slice(0, 2000), status: response.status() }); });
-    page.on("requestfailed", request => { if (failedRequests.length < 50) failedRequests.push({ url: request.url().slice(0, 2000), error: request.failure()?.errorText ?? "request failed" }); });
-
-    const startResponse = await loadAndSettle(page, `http://${current.host}:${current.port}${initialPath}`);
-    let documentStatus: number | null = startResponse?.status() ?? null;
-
-    for (let index = 0; index < steps.length; index++) {
-      const step = steps[index];
-      let screenshot: SavedScreenshot | undefined;
-      let layout: LayoutAudit | undefined;
-      try {
-        switch (step.action) {
-          case "goto": {
-            const response = await loadAndSettle(page, `http://${current.host}:${current.port}${getPath({ path: step.path })}`);
-            documentStatus = response?.status() ?? null;
-            break;
-          }
-          case "click": {
-            const target = page.locator(step.selector).first();
-            await target.waitFor({ state: "visible", timeout: 5000 });
-            if (!(await target.isEnabled())) {
-              throw new Error(`Element is visible but disabled: ${step.selector}`);
-            }
-            await target.click({ timeout: 5000 });
-            await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => undefined);
-            break;
-          }
-          case "fill":
-            await page.locator(step.selector).first().fill(step.value, { timeout: 5000 });
-            break;
-          case "press":
-            await page.locator(step.selector).first().press(step.key, { timeout: 5000 });
-            await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => undefined);
-            break;
-          case "expectText":
-            await page.getByText(step.text, { exact: false }).first().waitFor({ state: "visible", timeout: 5000 });
-            break;
-          case "expectUrl": {
-            const matched = new RegExp(step.pattern).test(page.url());
-            if (!matched) throw new Error(`URL did not match /${step.pattern}/: ${page.url()}`);
-            break;
-          }
-          case "expectVisible":
-            await page.locator(step.selector).first().waitFor({ state: "visible", timeout: 5000 });
-            break;
-          case "expectNotVisible":
-            await page.locator(step.selector).first().waitFor({ state: "hidden", timeout: 5000 });
-            break;
-          case "drag": {
-            const from = readPoint(step.from);
-            const to = readPoint(step.to);
-            if (!from || !to) throw new Error("Для drag нужны точки from:{x,y} и to:{x,y}");
-            await dragOnPage(page, { from: clampPoint(from, viewport), to: clampPoint(to, viewport), steps: step.steps, touch: step.touch });
-            await page.waitForTimeout(150);
-            break;
-          }
-          case "screenshot": {
-            const root = await ensureCaptureRoot();
-            if (!root) throw new Error("Не удалось получить каталог проекта для скриншота: неизвестен владелец проекта");
-            await page.waitForTimeout(100);
-            screenshot = await saveScreenshot(page, {
-              root,
-              projectId,
-              label: step.name?.trim() || "step-" + (index + 1),
-              fullPage: step.fullPage === true,
-            });
-            layout = await readLayout(page);
-            break;
-          }
-          default:
-            throw new Error(`Unsupported scenario action: ${(step as { action?: string }).action ?? "unknown"}`);
-        }
-        results.push({ step: index + 1, action: step.action, ok: true, ...(screenshot ? { screenshot } : {}), ...(layout ? { layout } : {}) });
-      } catch (error) {
-        results.push({ step: index + 1, action: step.action, ok: false, detail: error instanceof Error ? error.message : String(error) });
-        break;
-      }
-    }
-
-    const rendered = await readPageEvidence(page);
-    const stepsPassed = results.length === steps.length && results.every(item => item.ok);
-    const judged = classifyRuntimeFailures({ pageErrors, consoleErrors, failedRequests, httpErrors, documentStatus, blank: rendered.blank, styles: rendered.styles });
-    const ok = stepsPassed && judged.ok;
-    const failedStep = results.find(item => !item.ok);
-    const screenshots = results
-      .filter((item): item is ScenarioStepResult & { screenshot: SavedScreenshot } => Boolean(item.screenshot))
-      .map(item => ({ step: item.step, ...item.screenshot, ...(item.layout ? { layout: item.layout } : {}) }));
-    return {
-      ok,
-      initialPath,
-      viewport: viewportName,
-      steps: results,
-      screenshots,
-      finalUrl: page.url(),
-      documentStatus,
-      /** Что отрисовано на последнем экране сценария — единственное доказательство белого экрана. */
-      rendered,
-      consoleErrors,
-      pageErrors,
-      failedRequests,
-      httpErrors,
-      background: judged.background,
-      failures: judged.failures,
-      diagnostic: ok
-        ? "Сценарий прошёл: шаги выполнились, страница отрисовала содержимое, ошибок страницы, консоли и сети нет." +
-          (screenshots.length ? " Снимков: " + screenshots.length + "." : "")
-        : (!stepsPassed ? "Сценарий остановлен на шаге " + failedStep?.step + " (" + failedStep?.action + "): " + (failedStep?.detail ?? "шаг не выполнился") + ". " : "") +
-          (judged.failures.length ? "Поломки: " + briefList(judged.failures) + ". " : "") +
-          (judged.background.length ? "Фон, который чинить не нужно: " + briefList(judged.background) + "." : ""),
-      nextAction: ok
-        ? "Browser QA passed."
-        : rendered.blank
-          ? "Страница пустая: приложение ничего не отрисовало (0 видимых элементов и 0 символов текста). Проверьте точку входа (монтирование в #root или #app), стартовый маршрут и состояние загрузки до ответа авторизации — экран не должен оставаться пустым, пока запросы сессии не ответили."
-          : !stepsPassed
-            ? "Исправьте то, на чём остановился шаг (selector/text/координаты выше), и запустите сценарий снова. Фоновые 4xx и отменённые запросы чинить не нужно."
-            : "Исправьте перечисленное в failures, затем запустите сценарий снова.",
-    };
-  } finally {
-    await browser.close();
-  }
-}
-
 registerTool({
   name: "browser.scenario",
-  description: "Run a real Chromium user-flow scenario against Preview. Input: {path?:string,viewport?:'desktop'|'tablet'|'mobile',steps:[{action:'goto',path}|{action:'click',selector}|{action:'fill',selector,value}|{action:'press',selector,key}|{action:'expectText',text}|{action:'expectUrl',pattern}|{action:'expectVisible',selector}|{action:'expectNotVisible',selector}|{action:'drag',from:{x,y},to:{x,y},steps?,touch?}|{action:'screenshot',name?,fullPage?}]}. Maximum 20 steps. drag sends pointerdown/move/up (mouse) or real touch events (touch:true), so games and sliders can be checked instead of only asserting that an element exists. screenshot saves a PNG inside the project at an intermediate step and returns path/url + layout — it does not put base64 into the context. Supports visibility assertions, stops on the first failed step, and reports what the page rendered (visible text, blank screen), console/page errors, HTTP 5xx and failed requests; 4xx from the app's own API and aborted requests come back as `background`, not as failures.",
-  parameters: {
-    type: "object",
-    required: ["steps"],
-    properties: {
-      path: { type: "string", description: "Маршрут предпросмотра, с которого начинается сценарий; по умолчанию /" },
-      viewport: { type: "string", enum: ["desktop", "tablet", "mobile"], description: "Размер окна сценария: desktop 1440×900, tablet 820×1180, mobile 390×844; по умолчанию desktop" },
-      steps: {
-        type: "array",
-        maxItems: 20,
-        description: "Шаги сценария по порядку; выполнение останавливается на первом неудачном",
-        items: {
-          type: "object",
-          required: ["action"],
-          properties: {
-            action: { type: "string", enum: ["goto", "click", "fill", "press", "expectText", "expectUrl", "expectVisible", "expectNotVisible", "drag", "screenshot"] },
-            path: { type: "string", description: "Для action=goto" },
-            selector: { type: "string", description: "CSS-селектор для click/fill/press/expectVisible/expectNotVisible" },
-            value: { type: "string", description: "Значение для action=fill" },
-            key: { type: "string", description: "Клавиша для action=press, например Enter" },
-            text: { type: "string", description: "Ожидаемый текст для action=expectText" },
-            pattern: { type: "string", description: "Регулярное выражение URL для action=expectUrl" },
-            from: {
-              type: "object",
-              description: "Начальная точка drag в координатах viewport",
-              additionalProperties: false,
-              required: ["x", "y"],
-              properties: { x: { type: "number" }, y: { type: "number" } },
-            },
-            to: {
-              type: "object",
-              description: "Конечная точка drag в координатах viewport",
-              additionalProperties: false,
-              required: ["x", "y"],
-              properties: { x: { type: "number" }, y: { type: "number" } },
-            },
-            steps: { type: "number", description: "Сколько промежуточных pointermove сделать (1–40, по умолчанию 8)" },
-            touch: { type: "boolean", description: "true — настоящие touch-события вместо мыши (для мобильного свайпа)" },
-            name: { type: "string", description: "Имя снимка для action=screenshot" },
-            fullPage: { type: "boolean", description: "true — снимать страницу целиком" },
-          },
-        },
-      },
-    },
-  },
+  description: browserScenarioDescription,
+  parameters: browserScenarioParameters,
   // Chromium is launched inside the server container without a memory limit, so only a
   // configured number of checks may run at once; withBrowserSlot holds that place.
-  execute: async (input, context) => withBrowserSlot(() => runBrowserScenario(context.projectId, input, context.userId)),
+  execute: async (input, context) => withBrowserSlot(() => runScenario(context.projectId, input, context.userId)),
 });
 
 registerTool({
   name: "browser.runtime",
   description:
     "Open the Preview in a real headless Chromium browser, execute client-side JavaScript, and report what the page actually rendered: visible text, its size, blank screen, and whether styles applied (declared vs loaded stylesheets, CSS rules in effect, body background/color, `unstyled`). A PNG of the checked page is saved inside the project and returned as `screenshot` (path + url — open it with browser.screenshot or the file panel), and `layout` lists layout defects by CSS selector: page wider than the viewport, elements beyond the screen edge, broken images, clipped text. Console errors, failed network requests, HTTP 5xx and the document status come with it. Both doors are checked and returned: `url`/`rendered` is the container address the app itself answers on, `panelDoor` is the same page loaded through the platform's own preview proxy — the door the panel's iframe uses, so a page that only breaks for the user is reported too. Background 4xx from the app's own API calls and aborted requests are listed separately as `background` and are not failures; a 4xx for a .css or .js file is a failure, because without it the page is white. Use this after browser.open or project.verify when runtime behavior matters.",
-  parameters: { type: "object", additionalProperties: false, properties: { path: { type: "string", description: "Маршрут предпросмотра, например / или /about; по умолчанию /" } } },
-  execute: async (input, context) => withBrowserSlot(() => inspectRuntimePage(context.projectId, getPath(input), context.userId)),
+  parameters: browserRuntimeParameters,
+  execute: async (input, context) => withBrowserSlot(() => inspectRuntimePage(context.projectId, getPath(input), context.userId, input)),
 });
 
 registerTool({

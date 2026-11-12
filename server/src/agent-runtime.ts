@@ -334,6 +334,18 @@ export class AgentRuntime {
       }
       let consecutiveVerifyFailures=0;
       let consecutiveScenarioFailures=0;
+      let scenarioLimitNoticeShown=false;
+      const resetScenarioAttempts=(argumentsValue:Record<string,unknown>)=>{
+        if(argumentsValue.resetAttempts!==true&&argumentsValue.retry!==true)return false;
+        consecutiveScenarioFailures=0;
+        scenarioLimitNoticeShown=false;
+        return true;
+      };
+      const noteScenarioLimit=()=>{
+        if(scenarioLimitNoticeShown)return;
+        scenarioLimitNoticeShown=true;
+        messages.push({role:"system",content:"BROWSER QA ATTEMPT LIMIT REACHED. The limit is not a run-ending failure: inspect the full failedStep.detail/callLog, overlap diagnostics and failure screenshot, fix the cause, then call browser.scenario with resetAttempts:true to continue in this same run. Do not repeat the same failing scenario without a change."});
+      };
       let lastVerificationFailure="";
       let verificationPending=false;
       let scenarioPending=false;
@@ -542,13 +554,11 @@ export class AgentRuntime {
             if(verificationPending&&consecutiveVerifyFailures>=MAX_VERIFICATION_ATTEMPTS){
               throw new Error("Проверка не прошла несколько раз подряд — достигнут предел попыток проверки"+(lastVerificationFailure?": "+lastVerificationFailure:""));
             }
-            if(scenarioPending&&consecutiveScenarioFailures>=MAX_VERIFICATION_ATTEMPTS){
-              throw new Error("Сценарий проверки в браузере не прошёл несколько раз подряд — достигнут предел попыток");
-            }
+            if(scenarioPending&&consecutiveScenarioFailures>=MAX_VERIFICATION_ATTEMPTS)noteScenarioLimit();
             messages.push({
               role:"system",
               content:scenarioPending
-              ? "The user-visible change passed build, preview, SSR and browser smoke verification, but Browser QA is still pending. You MUST call browser.scenario now. Derive the shortest meaningful end-to-end user flow from the original task and the changed route, using at most 20 steps. If the scenario fails, inspect its diagnostics, fix the smallest necessary issue, and run the scenario again. Do not finish the task until browser.scenario returns ok=true."
+              ? "The user-visible change passed build, preview, SSR and browser smoke verification, but Browser QA is still pending. You MUST call browser.scenario now. Derive the shortest meaningful end-to-end user flow from the original task and the changed route, using up to 80 steps when the flow genuinely needs them (keep it as short as possible). If the scenario fails, inspect its diagnostics, fix the smallest necessary issue, and run the scenario again. Do not finish the task until browser.scenario returns ok=true."
               : "The requested change is not verified yet. Do not finish the task. Inspect the latest verification diagnostic, make the smallest necessary fix, and run the verification again. A successful tool call is not sufficient proof of completion.",
             });
             continue;
@@ -607,6 +617,7 @@ export class AgentRuntime {
             continue;
           }
           try{
+            if(call.name==="browser.scenario")resetScenarioAttempts(call.arguments);
             const output=await executeTool(call,context);
             if(signal?.aborted)throw new Error("Запуск агента отменён");
             await finishTool(call,output);
@@ -651,15 +662,14 @@ export class AgentRuntime {
               if((output as {ok?:boolean}).ok===true){
                 scenarioPending=false;
                 consecutiveScenarioFailures=0;
+                scenarioLimitNoticeShown=false;
                 setWorkingCheck(working,"сценарий браузера","пройден");
                 messages.push({role:"system",content:"BROWSER QA SCENARIO PASSED: user-visible flow completed successfully with no browser console, page, HTTP, or network errors."});
               }else{
                 scenarioPending=true;
                 setWorkingCheck(working,"сценарий браузера","ошибка");
                 consecutiveScenarioFailures++;
-                if(consecutiveScenarioFailures>=MAX_VERIFICATION_ATTEMPTS){
-                  throw new Error("Сценарий проверки в браузере не прошёл несколько раз подряд — достигнут предел попыток");
-                }
+                if(consecutiveScenarioFailures>=MAX_VERIFICATION_ATTEMPTS)noteScenarioLimit();
               }
             }
 
@@ -723,13 +733,14 @@ export class AgentRuntime {
                 if((scenarioOutput as {ok?:boolean}).ok===true){
                   scenarioPending=false;
                   consecutiveScenarioFailures=0;
+                  scenarioLimitNoticeShown=false;
                   messages.push({role:"system",content:"BROWSER QA SCENARIO PASSED: the automatically planned user flow passed in Chromium with no browser console, page, HTTP, or network errors."});
                 }else{
                   scenarioPending=true;
                   setWorkingCheck(working,"сценарий браузера","ошибка");
                   consecutiveScenarioFailures++;
                   messages.push({role:"system",content:"AUTOMATIC BROWSER QA FAILED. Inspect the scenario diagnostics and failure screenshot, fix the smallest necessary issue, then repeat verification. Do not finish while Browser QA is pending."});
-                  if(consecutiveScenarioFailures>=MAX_VERIFICATION_ATTEMPTS) throw new Error("Сценарий проверки в браузере не прошёл несколько раз подряд — достигнут предел попыток");
+                  if(consecutiveScenarioFailures>=MAX_VERIFICATION_ATTEMPTS)noteScenarioLimit();
                 }
               }catch(error){
                 const message=error instanceof Error?error.message:String(error);
@@ -738,7 +749,7 @@ export class AgentRuntime {
                 consecutiveScenarioFailures++;
                 await finishTool(scenarioCall,{ok:false,error:message});
                 messages.push({role:"tool",content:JSON.stringify({ok:false,error:message}),tool_call_id:scenarioCall.id});
-                if(consecutiveScenarioFailures>=MAX_VERIFICATION_ATTEMPTS) throw new Error("Сценарий проверки в браузере не прошёл несколько раз подряд — достигнут предел попыток");
+                if(consecutiveScenarioFailures>=MAX_VERIFICATION_ATTEMPTS)noteScenarioLimit();
               }
             }else{
               scenarioPending=false;
