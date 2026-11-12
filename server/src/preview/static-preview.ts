@@ -2,7 +2,7 @@ import Fastify,{type FastifyInstance} from "fastify";
 import fastifyStatic from "@fastify/static";
 import path from "node:path";
 import type { SandboxConfig } from "../sandbox-manager.js";
-import { removePreview,setPreview,touchPreview } from "./preview-store.js";
+import { flushPreviewWrites,removePreview,setPreview,touchPreview } from "./preview-store.js";
 import { indexFileExists,isStaticBuildFresh,planStaticPreview } from "./static-plan.js";
 import { ensureProjectDependencies } from "./dependencies.js";
 import { runStaticBuild,staticBuildLog } from "./static-build.js";
@@ -78,6 +78,14 @@ export async function startStaticPreview(config:SandboxConfig):Promise<StaticSta
 
   if(previous&&!needsBuild){
     touchPreview(config.projectId);
+    // The listener can outlive a missing registry row (a lost shared write, a stale row from a
+    // previous process, or a reset that could not remove it). The listener is the truth here,
+    // so restore the row before returning a successful start; otherwise preview.start succeeds
+    // and the very next browser.* call says "Preview is not running".
+    rememberStaticState(previous);
+    // The agent and the panel may land on different API replicas. Flush before returning, just
+    // like hybrid and container starts do, so the next browser.* request can hydrate this row.
+    await flushPreviewWrites(config.projectId);
     return {ok:true,status:statusFor(previous)};
   }
   if(previous)await stopStaticPreview(config.projectId);
@@ -103,9 +111,29 @@ export async function startStaticPreview(config:SandboxConfig):Promise<StaticSta
   runs.set(config.projectId,run);
   // Static слушает только эта реплика, поэтому owner — дверь именно этого процесса. Вторая
   // реплика прочитает строку из общего реестра и проксирует запрос сюда.
-  const ownerAddress=localPreviewOwnerAddress();
-  setPreview({mode:"static",containerId:"",host:STATIC_HOST,port:run.port,projectId:config.projectId,ownerUserId:config.userId,node:nodeId(),startedAt:run.startedAt,lastUsedAt:run.startedAt,ready:true,settled:true,...(ownerAddress?{ownerAddress}:{})});
+  rememberStaticState(run);
+  await flushPreviewWrites(config.projectId);
   return {ok:true,status:statusFor(run)};
+}
+
+/** Re-persist a local static listener after its registry row was lost. */
+function rememberStaticState(run:StaticRun){
+  const ownerAddress=localPreviewOwnerAddress();
+  setPreview({mode:"static",containerId:"",host:STATIC_HOST,port:run.port,projectId:run.config.projectId,ownerUserId:run.config.userId,node:nodeId(),startedAt:run.startedAt,lastUsedAt:run.startedAt,ready:true,settled:true,...(ownerAddress?{ownerAddress}:{})});
+}
+
+/**
+ * A live static listener is stronger evidence than a missing registry row. Kept here rather than
+ * in preview-manager because the run map is private to this module.
+ */
+export async function recoverLocalStaticPreview(projectId:string):Promise<PreviewStatus|null>{
+  const run=runs.get(projectId);
+  if(!run||!run.server.server.listening)return null;
+  rememberStaticState(run);
+  touchPreview(projectId);
+  // Make the recovered row visible to the next API replica before this status returns.
+  await flushPreviewWrites(projectId);
+  return statusFor(run);
 }
 
 export async function stopStaticPreview(projectId:string){

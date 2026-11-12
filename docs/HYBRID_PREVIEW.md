@@ -1,6 +1,6 @@
 # Hybrid preview: реализация и ход работ
 
-Статус: **реализация завершена, ожидается пилот на реальном Docker**
+Статус: **реализация и реальный Docker-пилот на production-паре завершены**
 
 Начат: 12.11.2026
 
@@ -29,7 +29,28 @@
 - `backendPaths` — единственные префиксы, которые уходят в backend. По умолчанию `/api`; WebSocket-путь нужно указать явно.
 - `backendPort` — порт backend внутри контейнера, по умолчанию `3000`. Runner также передаёт `PORT`.
 
-Режим не включается автоматически по наличию `dev`/`start`: это защищает обычные node-runtime проекты от случайного превращения в hybrid.
+Режим не включается по наличию `dev`/`start`: это защищает обычные node-runtime проекты от случайного превращения в hybrid. Но если проект **явно** делится на статический frontend и отдельный backend, сервер сохраняет такой же контракт в локальный `.webnestdev/preview.json` и запускает hybrid без правки пользовательского `package.json`.
+
+### Локальный профиль платформы
+
+`package.json.preview` остаётся высшим приоритетом и единственным способом, которым пользователь может явно выбрать режим. Если его нет, сервер и агент используют один консервативный детектор:
+
+- в корне есть `package.json` и `scripts.build`;
+- есть готовый `dist/`/`build/`/`out/` с `index.html` **или** известный статический framework (Vite, Astro, CRA, SvelteKit и т. п.);
+- есть отдельный npm-скрипт backend с явным именем (`start:server`, `start:api`, `start:preview-api`, `serve:api`, `backend:start` и подобные), и его команда действительно запускает процесс; generic `start`/`dev` не считается;
+- в исходниках есть хотя бы один реальный backend-префикс (`/api`, `/ws`, `/graphql`, `/trpc`, `/socket.io`);
+- проект не использует whole-app framework вроде Next/Nuxt/Remix без явного контракта.
+
+При совпадении сервер пишет только `.webnestdev/preview.json` (атомарно, с evidence) — при импорте GitHub, GitLab, GitVerse и SourceCraft, а также при первом `preview.start`, если профиля не было. Профиль не попадает в git: `.webnestdev/` исключён и в `.git/info/exclude`, и в `.gitignore`; `package.json` пользователя не меняется. Если hybrid не собрался или не поднялся, `auto` откатывается на обычный container preview, а при `PREVIEW_MODE=hybrid` возвращает понятную ошибку. Удаление `.webnestdev/preview.json` — способ сбросить автопрофиль и вернуться к static/container.
+
+### Будущая загрузка файлом/архивом
+
+Сейчас отдельной загрузки проекта файлом или архивом нет. Когда она появится, её обработчик должен вызывать `detectAndSaveHybridProfile(sandbox.root)` после распаковки и записи файлов, до первого `preview.start`, с теми же правилами:
+
+- не менять `package.json`;
+- писать только `.webnestdev/preview.json` после успешной валидации;
+- не блокировать загрузку ошибкой детектора;
+- проверить, что профиль не попадает в git.
 
 ### Настройка WebNestdev
 
@@ -79,10 +100,11 @@ index.html / assets         +-- WebSocket
 ### Этап 1. Типы, конфигурация, план сборки
 
 - [x] `PreviewMode` и `PreviewStatus` знают `hybrid`.
-- [x] `hybrid-config.ts` читает и валидирует `package.json.preview`.
+- [x] `hybrid-config.ts` читает и валидирует `package.json.preview` и локальный `.webnestdev/preview.json`.
+- [x] `hybrid-detect.ts` консервативно определяет явный frontend/backend split и пишет профиль без изменения `package.json`.
 - [x] `hybrid-plan.ts` планирует сборку и static-каталог, не упираясь в отказ `node-runtime`.
 - [x] Невалидный hybrid не запускает контейнер и не делает молчаливый fallback в strict-режиме.
-- [x] Тесты конфигурации и плана.
+- [x] Тесты конфигурации, профиля, детектора и плана.
 
 ### Этап 2. Состояние, БД и реестр
 
@@ -143,7 +165,7 @@ index.html / assets         +-- WebSocket
 - [x] `tsc -p server/tsconfig.json --noEmit`.
 - [x] `tsc -b --noEmit`.
 - [x] Проверка статуса/логов/лимитов без реального Docker.
-- [ ] Отдельный интеграционный прогон hybrid на тестовом проекте (после кода).
+- [x] Отдельный интеграционный прогон hybrid на тестовом проекте (после кода).
 - [x] Отметить фактические результаты в разделе «Ход работ».
 
 ## 4. Критерии готовности
@@ -165,13 +187,15 @@ index.html / assets         +-- WebSocket
 | Дата/время | Этап | Что сделано | Проверка |
 |---|---|---|---|
 | 12.11.2026 | 0 | Создан документ, зафиксированы контракт и этапы | — |
-| 12.11.2026 | 1 | Типы, `hybrid-config.ts`, `hybrid-plan.ts`; тесты конфига и плана | 5/5 тестов конфига и 3/3 плана |
+| 12.11.2026 | 1 | Типы, `hybrid-config.ts`, `hybrid-plan.ts`; тесты конфига и плана | 8/8 тестов конфига и 3/3 плана |
 | 12.11.2026 | 2 | `previews` получила backend-колонки, registry читает hybrid; тесты registry | typecheck + 3/3 registry |
 | 12.11.2026 | 3 | `static-build.ts`, общий `startPreviewProcess`, hybrid-label | fake-Docker аргументы: 2/2 runner-теста; старые runner-тесты |
 | 12.11.2026 | 4 | `hybrid-listener.ts`: static, HTTP proxy, cookies, 502, WebSocket | 4/4 listener |
 | 12.11.2026 | 5 | `hybrid-preview.ts`: start/stop/status/logs/refresh; интеграция в manager, reset, theme; fake lifecycle | 7/7 lifecycle; 3/3 adopt; manager-status без Docker |
 | 12.11.2026 | 6 | Hybrid в limiter/reservation/adopt/reset/theme/health/admin/verification/frontend types; root `package.json` объявляет WebNestdev hybrid | полный серверный прогон |
-| 12.11.2026 | 7 | Проверки кода и тестов | `npm test --workspace=server`: 1737 тестов, 0 fail, 9 skip; `tsc` сервера и frontend — 0 ошибок; реальный Docker-пилот не выполнялся (Docker в окружении отсутствует) |
+| 12.11.2026 | 7 | Проверки кода и тестов | `npm test --workspace=server`: 1746 тестов, 1737 pass, 9 skip, 0 fail; `tsc` сервера и frontend — 0 ошибок |
+| 12.11.2026 | 8 | Локальный `.webnestdev/preview.json` и консервативный детектор для server/agent; профиль также сохраняется при импорте GitHub, GitLab, GitVerse и SourceCraft | полный серверный прогон 1746 тестов, typecheck сервера и frontend |
+| 12.11.2026 | 7 | Реальный hybrid-пилот на production-паре `node-1`/`node-2` | проект размещён на `node-2`, listener — в API на `node-1`; статика, `/api`, POST и WebSocket — 200; stop/cleanup — 200; замеры ниже |
 
 ## 6. Проверки
 
@@ -187,9 +211,39 @@ npx tsc -b --noEmit
 
 ### Фактический результат на 12.11.2026
 
-- `npm test --workspace=server`: **1737 тестов: 1728 pass, 9 skip, 0 fail** (skip — браузерные проверки без Chromium).
+- `npm test --workspace=server`: **1746 тестов: 1737 pass, 9 skip, 0 fail** (skip — браузерные проверки без Chromium).
 - `npx tsc -p server/tsconfig.json --noEmit`: **0 ошибок**.
 - `npx tsc -b --noEmit`: **0 ошибок**.
 - Hybrid listener проверен реальными HTTP/WebSocket-запросами к тестовому backend; lifecycle — с fake build/backend, без Docker.
-- Реальный запуск WebNestdev в hybrid-контейнере не выполнялся: для него нужны Docker, собранный `server/dist`, env-файлы и доступ к API/PostgreSQL. Это следующий пилот, а не скрытая часть уже проверенного.
 - Перед пилотом backend должен получить свои обычные production-переменные (БД, storage, ключи) через смонтированные env-файлы проекта; `backendEnv` в `package.json` не должен содержать секреты.
+
+### Реальный пилот 12.11.2026
+
+Проверено на production-паре, а не на локальном стенде:
+
+- сборка `cf0a57accbdf04d05e2e4e0ad520a34bece064bd` на обеих нодах;
+- временный проект `HYBRID-E2E-20261112T171819Z` создан на `node-2`, запуск preview шёл через API `node-1`;
+- `mode=hybrid`, listener — `127.0.0.1:42477` в процессе API `node-1`, backend — контейнер на `node-2` (`backendHost=10.0.0.5`), `ownerAddress=10.0.0.4:8788`;
+- публичный адрес `https://<project>.preview.nestdev.ru`: тикет обменивается на cookie (`204`), `GET /` и `/app.js` отдают статику, `GET /api/health` и `POST /api/echo` доходят до backend с телом, `/ws` отвечает `echo:hello-ws`, `/api/fail` отдаёт JSON `500`, а не `index.html`;
+- повторный старт при живом preview вернул тот же containerId и listener за **24 мс**;
+- stop закрыл listener и удалил backend за **451 мс**; статус стал `running:false`, контейнер и sandbox удалены;
+- проект и временный аккаунт после теста удалены, `/api/health` снова показывает `previews.runtime=0`.
+
+Замеры (реальные, через публичный preview):
+
+| Что | Результат |
+| --- | --- |
+| первый старт, включая сборку и запуск контейнера | **64,7 с** |
+| повторный старт живого preview | **24 мс** |
+| старт после stop | **63,0 с** |
+| stop | **451 мс** |
+| сборка (`HYBRID-BUILD-OK`) | **20 мс** |
+| `GET /` | **33,2 мс**, 256 Б, marker найден |
+| `GET /app.js` | **11,1 мс**, marker найден |
+| `GET /api/health` | **17,5 мс** |
+| `POST /api/echo` | **19,5 мс**, тело сохранено |
+| WebSocket echo | **31,8 мс** |
+| backend-контейнер | **69,21 MiB / 1 GiB**, 49 PIDs, label `webnestdev.preview.kind=hybrid` |
+| API-контейнер во время preview | **220,6 MiB / 3,795 GiB** |
+
+Вывод: гибридный режим работает на живой паре и корректно переживает stop/повторный запуск. Основная задержка холодного старта — не сборка (20 мс), а запуск sandbox/build-контейнера через Docker/gVisor; это отдельный кандидат на оптимизацию, а не ошибка hybrid-listener. Реальный failover `node-1` → `node-2` выполнен отдельно 12.11.2026 (RTO 119 с, данные и preview восстановлены); hybrid-пилот во время самого отказа не перезапускался. Результат и ограничения — в [`PRODUCTION_STATE.md`](PRODUCTION_STATE.md), раздел 18.

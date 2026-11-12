@@ -12,6 +12,7 @@ import { projectDirectoryBytes, recordStorageMutation } from "../account/storage
 import { getSandbox } from "../sandbox-manager.js";
 import { getPlatformEnv } from "../platform/platform-env.js";
 import { cloneRepository, resetWorkspaceForImport } from "../changes/git-repo.js";
+import { detectAndSaveHybridProfile } from "../preview/hybrid-detect.js";
 
 // read_api/read_repository — импорт, write_repository — отправка коммитов обратно в GitLab.
 const oauthScope = "read_api read_repository write_repository";
@@ -220,6 +221,11 @@ export async function registerGitLabRoutes(app: FastifyInstance) {
       await deleteProject(project.id, user.id);
       throw new Error("Не удалось склонировать " + repository.path_with_namespace + ": " + (error instanceof Error ? error.message : String(error)));
     }
+    // См. GitHub-импорт: один консервативный профиль для панели и агента; ошибка детектора
+    // не отменяет импорт и оставляет проект на обычном static/container пути.
+    await detectAndSaveHybridProfile(sandbox.root).catch(error => {
+      console.warn("[preview] GitLab-импорт " + repository.path_with_namespace + ": hybrid-профиль не создан — " + (error instanceof Error ? error.message : String(error)));
+    });
     // GitLab отдаёт repository_size не всегда и не для всех проектов. Фактический размер
     // проверяем до истории, чтобы на бесплатном тарифе не остался проект больше 50 МБ.
     if (repositoryLimit !== null) {

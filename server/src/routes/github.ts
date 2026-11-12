@@ -12,6 +12,7 @@ import { projectDirectoryBytes, recordStorageMutation } from "../account/storage
 import { getSandbox } from "../sandbox-manager.js";
 import { getPlatformEnv } from "../platform/platform-env.js";
 import { cloneRepository, resetWorkspaceForImport } from "../changes/git-repo.js";
+import { detectAndSaveHybridProfile } from "../preview/hybrid-detect.js";
 
 const oauthScope = "repo";
 
@@ -217,6 +218,12 @@ export async function registerGitHubRoutes(app: FastifyInstance) {
       await deleteProject(project.id, user.id);
       throw new Error("Не удалось склонировать " + repository.full_name + ": " + (error instanceof Error ? error.message : String(error)));
     }
+    // Явный frontend/backend split запоминаем сразу, чтобы и панель, и агент видели один
+    // консервативный профиль. Ошибка детектора не должна отменять импорт: без профиля проект
+    // просто пойдёт обычным static/container путём.
+    await detectAndSaveHybridProfile(sandbox.root).catch(error => {
+      console.warn("[preview] GitHub-импорт " + repository.full_name + ": hybrid-профиль не создан — " + (error instanceof Error ? error.message : String(error)));
+    });
     // Размер из API — сжатый и может отсутствовать. Перед созданием истории проверяем то,
     // что фактически легло на диск: иначе бесплатный тариф мог бы принять больше 50 МБ.
     if (repositoryLimit !== null) {

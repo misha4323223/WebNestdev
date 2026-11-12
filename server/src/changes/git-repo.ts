@@ -75,6 +75,10 @@ const EXCLUDE_RULES = [
   ".DS_Store", "Thumbs.db", "*.log",
 ];
 
+export async function ensureServiceExcludes(root: string) {
+  if (await hasRepo(root)) await writeExcludes(root);
+}
+
 async function writeExcludes(root: string) {
   const file = path.join(root, ".git", "info", "exclude");
   await mkdir(path.dirname(file), { recursive: true });

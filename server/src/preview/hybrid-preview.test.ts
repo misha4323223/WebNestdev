@@ -110,6 +110,14 @@ test("hybrid starts a listener after its backend and stops both on request", asy
     assert.deepEqual(events, ["backend:hybrid", "listener-start"]);
     assert.equal(getPreview(PROJECT_ID)?.mode, "hybrid");
 
+    // The browser check may arrive after the row was lost while the listener is still alive.
+    // Recovering it must not require another start or another backend.
+    removePreview(PROJECT_ID);
+    assert.equal(getPreview(PROJECT_ID), undefined);
+    const recovered = await previewStatus(PROJECT_ID);
+    assert.equal(recovered.running, true);
+    if (recovered.running) assert.equal(recovered.mode, "hybrid");
+
     await stopHybridPreview(PROJECT_ID);
     assert.deepEqual(events, ["backend:hybrid", "listener-start", "listener-close", "backend-remove"]);
     assert.equal(getPreview(PROJECT_ID), undefined);

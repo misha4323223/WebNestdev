@@ -13,6 +13,7 @@ import { accountPlanFor } from "../billing/store.js";
 import { projectDirectoryBytes, recordStorageMutation } from "../account/storage-quota.js";
 import { getSandbox } from "../sandbox-manager.js";
 import { initRepo, resetWorkspaceForImport } from "../changes/git-repo.js";
+import { detectAndSaveHybridProfile } from "../preview/hybrid-detect.js";
 
 /**
  * Authorization Code + PKCE: GitVerse требует PKCE даже у конфиденциального клиента, поэтому
@@ -218,6 +219,12 @@ export async function registerRepoRoutes(app: FastifyInstance, provider: RepoPro
         console.error("[repos] не удалось создать историю импортированного проекта", error);
       }
     }
+    // Единый консервативный профиль для всех провайдеров: GitHub/GitLab вызывают детектор
+    // в своих маршрутах, GitVerse/SourceCraft — здесь. Ошибка детектора не отменяет импорт:
+    // без профиля проект просто пойдёт обычным static/container путём.
+    await detectAndSaveHybridProfile(sandbox.root).catch(error => {
+      console.warn("[preview] " + provider.name + "-импорт " + repository.fullName + ": hybrid-профиль не создан — " + (error instanceof Error ? error.message : String(error)));
+    });
     await recordStorageMutation(project.id, user.id, { heavy: true })
       .catch(error => console.warn("[storage] не удалось обновить размер после импорта", error));
     const conversation = await createConversation(project.id, provider.name + ": " + repository.fullName);

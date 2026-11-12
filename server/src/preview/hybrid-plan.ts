@@ -24,7 +24,7 @@ export type HybridPlan =
 
 export async function planHybridPreview(config: SandboxConfig): Promise<HybridPlan> {
   const read = await readHybridConfig(config.root);
-  if (read.kind === "absent") return { ok: false, reason: "Проект не объявил preview.mode=\"hybrid\" в package.json." };
+  if (read.kind === "absent") return { ok: false, reason: "Проект не объявил preview.mode=\"hybrid\" ни в package.json, ни в .webnestdev/preview.json." };
   if (read.kind === "invalid") return { ok: false, reason: read.reason };
 
   const dir = path.resolve(config.root, read.config.staticDir);

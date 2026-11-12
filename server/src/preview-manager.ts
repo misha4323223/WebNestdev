@@ -14,9 +14,10 @@ import { flushPreviewWrites, hydratePreview, listPreviewsAcrossReplicas, removeP
 import { listSharedPreviews, sharedPreviewRegistryEnabled } from "./preview/preview-registry.js";
 import { startPreviewContainer, previewLogsOf, removePreviewContainer } from "./preview/preview-runner.js";
 import { adoptRunningPreview } from "./preview/preview-adopt.js";
-import { previewModeSetting, startStaticPreview, staticAppAnswers, staticPreviewLogs, stopStaticPreview } from "./preview/static-preview.js";
+import { previewModeSetting, recoverLocalStaticPreview, startStaticPreview, staticAppAnswers, staticPreviewLogs, stopStaticPreview } from "./preview/static-preview.js";
 import { readHybridConfig } from "./preview/hybrid-config.js";
-import { hybridBackendLogs, hybridPreviewLogs, hybridPreviewStatus, startHybridPreview, stopHybridPreview } from "./preview/hybrid-preview.js";
+import { detectAndSaveHybridProfile } from "./preview/hybrid-detect.js";
+import { hybridBackendLogs, hybridPreviewLogs, hybridPreviewStatus, recoverLocalHybridPreview, startHybridPreview, stopHybridPreview } from "./preview/hybrid-preview.js";
 import { recordPreviewStart } from "./preview/preview-metrics.js";
 import { PREVIEW_LABEL, type PreviewStatus } from "./preview/types.js";
 import { clearPreviewSecrets } from "./secrets/preview-secrets.js";
@@ -27,6 +28,7 @@ export type { PreviewState, PreviewStatus } from "./preview/types.js";
 /** Test seam for the mode/fallback decision: no Docker or real package build is needed. */
 export type PreviewStartDeps = {
   readHybridConfig: typeof readHybridConfig;
+  detectHybrid: typeof detectAndSaveHybridProfile;
   startHybrid: typeof startHybridPreview;
   startStatic: typeof startStaticPreview;
   startContainer: (config: SandboxConfig, staticReason?: string) => Promise<PreviewStatus>;
@@ -34,6 +36,7 @@ export type PreviewStartDeps = {
 
 const defaultPreviewStartDeps: PreviewStartDeps = {
   readHybridConfig,
+  detectHybrid: detectAndSaveHybridProfile,
   startHybrid: startHybridPreview,
   startStatic: startStaticPreview,
   startContainer: startContainerPreview,
@@ -88,10 +91,25 @@ async function recordPreviewSize(projectId: string) {
 
 export async function startPreviewWithFallback(config: SandboxConfig) {
   const setting = previewModeSetting();
-  const hybrid = await previewStartDeps.readHybridConfig(config.root);
+  let hybrid = await previewStartDeps.readHybridConfig(config.root);
 
-  // Hybrid is opt-in only. `auto` must not mistake a node-runtime project for a hybrid just
-  // because it has `dev`/`start`; only an explicit preview.mode="hybrid" reaches this branch.
+  // The explicit package contract comes first. When it is absent — or a local profile became
+  // stale — the server applies the same conservative detector the agent would use and saves
+  // only `.webnestdev/preview.json`. A generic dev/start script is never enough; the detector
+  // needs a build, a static frontend, a dedicated backend script and real backend path evidence.
+  // Static and container modes are host decisions and must not get a new hybrid profile behind
+  // their back.
+  if ((hybrid.kind === "absent" || hybrid.kind === "invalid") && setting !== "static" && setting !== "container") {
+    try {
+      const detected = await previewStartDeps.detectHybrid(config.root);
+      if (detected.kind === "configured") hybrid = { kind: "configured", config: detected.config };
+    } catch (error) {
+      // Detection is an optimization, not a reason to lose the ordinary preview: a read error
+      // in a huge project must fall through to static/container, not fail the start.
+      console.warn("[preview] проект " + config.projectId + ": auto-определение hybrid пропущено — " + describeError(error));
+    }
+  }
+
   if (hybrid.kind === "invalid" && setting === "hybrid") throw new Error(hybrid.reason);
   if (hybrid.kind === "configured" && setting !== "static" && setting !== "container") {
     const result = await previewStartDeps.startHybrid(config);
@@ -103,7 +121,7 @@ export async function startPreviewWithFallback(config: SandboxConfig) {
     return previewStartDeps.startContainer(config, "hybrid не подошёл: " + result.reason);
   }
   if (setting === "hybrid") {
-    throw new Error("Для PREVIEW_MODE=hybrid проект должен объявить preview.mode=\"hybrid\" в package.json.");
+    throw new Error("Для PREVIEW_MODE=hybrid проект должен объявить preview.mode=\"hybrid\" в package.json или иметь уверенный hybrid-профиль в .webnestdev/preview.json.");
   }
 
   if (setting !== "container") {
@@ -392,7 +410,15 @@ export async function reapRemotePreviews() {
 
 export async function previewStatus(projectId: string): Promise<PreviewStatus> {
   const current = await hydratePreview(projectId);
-  if (!current) return { running: false };
+  if (!current) {
+    // A listener in this process is the truth even when its registry row was lost. Without this
+    // recovery preview.start could return successfully, then a browser check read no row and
+    // reported "Preview is not running" while the app was still listening on loopback.
+    let recovered = await recoverLocalStaticPreview(projectId);
+    if (!recovered) recovered = await recoverLocalHybridPreview(projectId);
+    if (recovered) return recovered;
+    return { running: false };
+  }
 
   if (current.mode === "hybrid") return hybridPreviewStatus(projectId);
 

@@ -95,6 +95,34 @@ test("a project without a preview reports nothing running", async () => {
   assert.deepEqual(await previewStatus("p2"), { running: false });
 });
 
+test("auto lets the conservative detector choose hybrid before static", async () => {
+  const calls: string[] = [];
+  process.env.PREVIEW_MODE = "auto";
+  setPreviewStartDepsForTests({
+    readHybridConfig: async () => ({ kind: "absent" }),
+    detectHybrid: async () => {
+      calls.push("detect");
+      return { kind: "configured", config: hybridConfig, evidence: ["source src/client.ts содержит /api"], saved: true };
+    },
+    startHybrid: async () => {
+      calls.push("hybrid");
+      return { ok: true, status: running };
+    },
+    startStatic: async () => {
+      calls.push("static");
+      throw new Error("static не должен вызываться после обнаруженного hybrid");
+    },
+    startContainer: async () => {
+      calls.push("container");
+      return running;
+    },
+  });
+
+  const status = await startPreviewWithFallback(startConfig);
+  assert.deepEqual(status, running);
+  assert.deepEqual(calls, ["detect", "hybrid"]);
+});
+
 test("auto falls back to the container when hybrid start fails, carrying the hybrid reason", async () => {
   const calls: string[] = [];
   process.env.PREVIEW_MODE = "auto";

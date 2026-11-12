@@ -391,9 +391,41 @@ export async function refreshHybridPreview(projectId: string): Promise<boolean> 
  * preview; if it is gone, keeping a shared row and a backend container alive would make the door
  * route to a dead address. The next start recreates both.
  */
+export async function recoverLocalHybridPreview(projectId: string): Promise<PreviewStatus | null> {
+  const run = runs.get(projectId);
+  if (!run || !run.listener.app.server.listening) return null;
+  const now = Date.now();
+  const ownerAddress = localPreviewOwnerAddress();
+  setPreview({
+    mode: "hybrid",
+    containerId: run.containerId,
+    host: HYBRID_HOST,
+    port: run.listener.port,
+    backendHost: run.backendHost,
+    backendPort: run.backendPort,
+    ...(run.containerPort !== undefined ? { containerPort: run.containerPort } : {}),
+    projectId,
+    ownerUserId: run.config.userId,
+    node: run.node,
+    startedAt: run.startedAt,
+    lastUsedAt: now,
+    ready: true,
+    settled: true,
+    checkedAt: now,
+    ...(ownerAddress ? { ownerAddress } : {}),
+  });
+  touchPreview(projectId);
+  await flushPreviewWrites(projectId);
+  return statusFor(run);
+}
+
 export async function hybridPreviewStatus(projectId: string): Promise<PreviewStatus> {
   const current = await hydratePreview(projectId);
-  if (!current) return { running: false };
+  if (!current) {
+    // A local listener is the only thing that can serve this preview; if its registry row was
+    // lost, rebuild the row instead of telling the agent the running preview does not exist.
+    return (await recoverLocalHybridPreview(projectId)) ?? { running: false };
+  }
   // A run in this process is the owner even when the preview door is disabled and there is no
   // ownerAddress. Without that, the local listener would be treated as remote and its dead
   // backend would never be cleaned up. A row with neither owner nor local run is left alone:

@@ -114,6 +114,34 @@ test("a static preview serves the build, its assets and client-side routes", asy
   }
 });
 
+test("a live static listener restores its lost preview row instead of reporting not running", async () => {
+  const root = await builtProject();
+  const restore = env({ PREVIEW_MODE: "auto", PREVIEW_STATIC_BUILD: "never", PREVIEW_STATIC_DIR: undefined });
+  try {
+    const started = await startStaticPreview(config(root));
+    assert.equal(started.ok, true);
+    if (!started.ok) return;
+    assert.equal(started.status.running, true);
+    if (!started.status.running) return;
+    const firstPort = started.status.port;
+    // Simulate a lost shared-registry row while the in-process listener is still alive. This is
+    // the state that made preview.start look successful and the next browser check say "Preview
+    // is not running".
+    removePreview(PROJECT_ID);
+    assert.equal(getPreview(PROJECT_ID), undefined);
+
+    const status = await previewStatus(PROJECT_ID);
+    assert.equal(status.running, true);
+    if (!status.running) return;
+    assert.equal(status.mode, "static");
+    assert.equal(status.port, firstPort);
+    assert.equal(getPreview(PROJECT_ID)?.mode, "static");
+  } finally {
+    restore();
+    await cleanup(root);
+  }
+});
+
 test("the workspace proxy serves the static preview through the project's own URL", async () => {
   const root = await builtProject();
   const restore = env({ PREVIEW_MODE: "auto", PREVIEW_STATIC_BUILD: "never", PREVIEW_STATIC_DIR: undefined });
