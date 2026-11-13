@@ -491,13 +491,22 @@ services:
       # оставляет выбор серверу: он читает свои сети у Docker и берёт ту, что кончается на
       # `preview`, никогда не сеть базы (server/src/preview/preview-network.ts).
       PREVIEW_NETWORK: ${PREVIEW_NETWORK:-}
+      # Runtime (Docker/hybrid) без запросов останавливается; static живёт по своему таймеру.
       PREVIEW_IDLE_MS: ${PREVIEW_IDLE_MS:-300000}
-      # Сколько контейнерных предпросмотров держит один аккаунт. 1 — правило продукта: второй
+      PREVIEW_STATIC_IDLE_MS: ${PREVIEW_STATIC_IDLE_MS:-300000}
+      PREVIEW_SWEEP_MS: ${PREVIEW_SWEEP_MS:-60000}
+      # Сколько runtime-предпросмотров держит один аккаунт. 1 — правило продукта: второй
       # предпросмотр того же человека останавливает его же прежний. 0 — без ограничения.
       PREVIEW_MAX_PER_USER: ${PREVIEW_MAX_PER_USER:-1}
-      # Необязательный предохранитель на весь хост (сумма по всем аккаунтам). По умолчанию выключен:
-      # места считаются на аккаунт, а не на машину. Тесному хосту стоит задать число, например 4.
+      # Потолок чистых Docker-preview на ноде. Hybrid считается отдельно и не может занять
+      # эти слоты; 0 — без ограничения.
       PREVIEW_MAX_CONTAINERS: ${PREVIEW_MAX_CONTAINERS:-0}
+      # Потолок hybrid-preview на ноде. Пусто — как PREVIEW_MAX_CONTAINERS.
+      PREVIEW_MAX_HYBRID: ${PREVIEW_MAX_HYBRID:-}
+      # Общий бюджет ноды в hybrid-слотах. Docker весит PREVIEW_CONTAINER_UNITS, hybrid — 1.
+      # Замер: 12 hybrid на ноду, 2 Docker занимают почти всю ноду; production — 12 и 6.
+      PREVIEW_HOST_UNITS: ${PREVIEW_HOST_UNITS:-}
+      PREVIEW_CONTAINER_UNITS: ${PREVIEW_CONTAINER_UNITS:-}
       PREVIEW_PROXY_TIMEOUT_MS: ${PREVIEW_PROXY_TIMEOUT_MS:-30000}
       # Деградировавший режим (панель отдаётся через `docker exec`, см. preview/exec-proxy.ts):
       # сколько запросов идёт внутрь контейнера одновременно, сколько ждёт и как часто повторять

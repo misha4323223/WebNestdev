@@ -94,6 +94,42 @@ index.html / assets         +-- WebSocket
 - Hybrid занимает место в runtime-лимите, а не в static-лимите.
 - `docker exec` fallback для hybrid запрещён: он не даёт WebSocket и скрывает сломанный listener.
 
+### Лимиты: 12 hybrid-слотов на ноду
+
+Замер на одной ноде: **12 hybrid-preview** — максимум, а **2 обычных Docker-preview** занимают
+почти всю ноду. Поэтому Docker и hybrid считаются не как равные контейнеры, а в общем бюджете
+ноды:
+
+```text
+hybrid = 1 слот
+Docker = PREVIEW_CONTAINER_UNITS слотов
+Docker * PREVIEW_CONTAINER_UNITS + hybrid <= PREVIEW_HOST_UNITS
+```
+
+Production-значения:
+
+| Переменная | Значение | Смысл |
+|---|---:|---|
+| `PREVIEW_MAX_CONTAINERS` | `2` | максимум чистых Docker-preview |
+| `PREVIEW_MAX_HYBRID` | `8` | максимум hybrid-preview; 8, а не 12 — запас на реальные backend'ы |
+| `PREVIEW_HOST_UNITS` | `12` | общий бюджет ноды в hybrid-слотах |
+| `PREVIEW_CONTAINER_UNITS` | `6` | один Docker занимает 6 hybrid-слотов |
+
+Отсюда:
+
+| Docker | Hybrid | Слоты |
+|---:|---:|---:|
+| 0 | 8 | 8 из 12 (4 в запасе) |
+| 1 | 6 | 12 из 12 |
+| 2 | 0 | 12 из 12 |
+
+То есть два Docker **не оставляют места** для hybrid, а один Docker оставляет ровно 6 hybrid.
+Static-preview этот бюджет не занимает: его слушатель стоит ~0.5 МБ.
+
+`PREVIEW_MAX_PER_USER=1` по-прежнему общий для кластера: 8 hybrid на ноде — это восемь разных
+аккаунтов, а не восемь проектов одного человека. На двух нодах максимум 8+8=16, но только если
+проекты распределены по нодам; планировщик пока не учитывает лимит preview при выборе узла.
+
 ### Локальный `node_modules` для hybrid
 
 Hybrid читает контракт из `package.json.preview` проекта (или из `.webnestdev/preview.json`) и
@@ -219,6 +255,7 @@ Hybrid читает контракт из `package.json.preview` проекта 
 | 12.11.2026 | 7 | Проверки кода и тестов | `npm test --workspace=server`: 1746 тестов, 1737 pass, 9 skip, 0 fail; `tsc` сервера и frontend — 0 ошибок |
 | 12.11.2026 | 8 | Локальный `.webnestdev/preview.json` и консервативный детектор для server/agent; профиль также сохраняется при импорте GitHub, GitLab, GitVerse и SourceCraft | полный серверный прогон 1746 тестов, typecheck сервера и frontend |
 | 12.11.2026 | 7 | Реальный hybrid-пилот на production-паре `node-1`/`node-2` | проект размещён на `node-2`, listener — в API на `node-1`; статика, `/api`, POST и WebSocket — 200; stop/cleanup — 200; замеры ниже |
+| 13.11.2026 | 9 | Отдельные лимиты Docker/hybrid и общий бюджет ноды в hybrid-слотах | замер 12 hybrid; production 2 Docker / 8 hybrid / 12 слотов / вес Docker 6; точечные тесты и typecheck |
 
 ## 6. Проверки
 
@@ -270,3 +307,9 @@ npx tsc -b --noEmit
 | API-контейнер во время preview | **220,6 MiB / 3,795 GiB** |
 
 Вывод: гибридный режим работает на живой паре и корректно переживает stop/повторный запуск. Основная задержка холодного старта — не сборка (20 мс), а запуск sandbox/build-контейнера через Docker/gVisor; это отдельный кандидат на оптимизацию, а не ошибка hybrid-listener. Реальный failover `node-1` → `node-2` выполнен отдельно 12.11.2026 (RTO 119 с, данные и preview восстановлены); hybrid-пилот во время самого отказа не перезапускался. Результат и ограничения — в [`PRODUCTION_STATE.md`](PRODUCTION_STATE.md), раздел 18.
+
+## 7. Панель и простой runtime
+
+В панели встраивается только `static`. Docker и hybrid показывают ссылку «Открыть в новом окне»; `iframe`, device-панель и выбор элемента для них не рендерятся. Панель не отправляет heartbeat для runtime, а чтение статуса и логов панелью идёт с `touch:false` и не продлевает контейнер. Продлевает только запрос, реально прошедший через preview.
+
+В production `PREVIEW_IDLE_MS=120000`, `PREVIEW_SWEEP_MS=30000`: после возврата из вкладки preview останавливается примерно через 2–2,5 минуты. Static сохраняет `PREVIEW_STATIC_IDLE_MS=300000` и heartbeat, пока панель видима. Остановленный preview отдаёт по старой ссылке страницу «не запущен», а панель после возврата фокуса снова показывает запуск.

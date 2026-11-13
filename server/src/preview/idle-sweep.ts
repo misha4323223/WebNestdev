@@ -4,8 +4,10 @@ import { listPreviews } from "./preview-store.js";
 import { pruneSharedPreviews } from "./preview-registry.js";
 import type { PreviewState } from "./types.js";
 
-/** Five minutes without a single use: the container is stopped and its memory returned. */
+/** Runtime previews are stopped after this long without use; production sets two minutes. */
 export const DEFAULT_IDLE_MS=5*60*1000;
+/** Static previews are only a listener in the API process, so they keep the old, longer idle. */
+export const DEFAULT_STATIC_IDLE_MS=5*60*1000;
 export const DEFAULT_SWEEP_MS=60*1000;
 
 /** The stop step is injected so the sweep can be tested without a Docker daemon. */
@@ -17,15 +19,22 @@ export function idleTimeoutMs(){
   return Number.isFinite(configured)&&configured>=0?configured:DEFAULT_IDLE_MS;
 }
 
+export function staticIdleTimeoutMs(){
+  const configured=Number(process.env.PREVIEW_STATIC_IDLE_MS??DEFAULT_STATIC_IDLE_MS);
+  return Number.isFinite(configured)&&configured>=0?configured:DEFAULT_STATIC_IDLE_MS;
+}
+
 /**
- * Which previews have not been used for longer than the timeout. A preview counts as used when
- * its status is read, its logs are read, or anything is proxied through it — that is what the
- * panel, the logs tab and the agent's verification all do. `PREVIEW_IDLE_MS=0` disables the
- * sweep entirely, which is what a host with a single long-lived preview would want.
+ * Which previews have not been used for longer than their timeout. Runtime (Docker/hybrid) uses
+ * `PREVIEW_IDLE_MS`; static keeps `PREVIEW_STATIC_IDLE_MS` so an inline preview does not disappear
+ * on the runtime timer. `PREVIEW_IDLE_MS=0` disables the sweep entirely, including static.
  */
-export function idlePreviews(states:PreviewState[],now:number,idleMs=idleTimeoutMs()){
+export function idlePreviews(states:PreviewState[],now:number,idleMs=idleTimeoutMs(),staticIdleMs=staticIdleTimeoutMs()){
   if(idleMs<=0)return [];
-  return states.filter(state=>now-(state.lastUsedAt||state.startedAt)>=idleMs);
+  return states.filter(state=>{
+    const limit=state.mode==="static"?staticIdleMs:idleMs;
+    return limit>0&&now-(state.lastUsedAt||state.startedAt)>=limit;
+  });
 }
 
 /**
@@ -34,12 +43,12 @@ export function idlePreviews(states:PreviewState[],now:number,idleMs=idleTimeout
  * Docker is unreachable) leaves the state in place, so the next sweep retries instead of
  * forgetting a container that is still running.
  */
-export async function stopIdlePreviews(now=Date.now(),idleMs=idleTimeoutMs(),deps:IdleSweepDeps=defaultIdleSweepDeps){
+export async function stopIdlePreviews(now=Date.now(),idleMs=idleTimeoutMs(),deps:IdleSweepDeps=defaultIdleSweepDeps,staticIdleMs=staticIdleTimeoutMs()){
   // Просроченные строки чужих реплик не должны копиться после падений: их всё равно не отдаёт
   // чтение, но уборка базы — единственное место, где они исчезают совсем.
   await pruneSharedPreviews().catch(()=>undefined);
   const candidates=[];
-  for(const state of idlePreviews(listPreviews(),now,idleMs)){
+  for(const state of idlePreviews(listPreviews(),now,idleMs,staticIdleMs)){
     // Проверка общая: preview мог быть поднят на этой реплике, а агент ещё работает на другой.
     if(await isRunActiveAnywhere(state.projectId))continue;
     candidates.push(state);

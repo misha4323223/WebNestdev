@@ -119,6 +119,17 @@ test("a failed container listing reaps nothing", async () => {
   assert.deepEqual(await listPreviewContainerIds(async () => ({ code: 1, stdout: "ignored" })), []);
 });
 
+test("a panel status read can skip the use mark", async () => {
+  setPreview({ mode: "container", containerId: "c1", projectId: "p-no-touch", host: "172.19.0.4", port: 5173, startedAt: 1, lastUsedAt: 1, settled: true });
+  try {
+    const status = await previewStatus("p-no-touch", { touch: false });
+    assert.equal(status.running, true);
+    assert.equal(getPreview("p-no-touch")?.lastUsedAt, 1, "панель не должна продлевать runtime-предпросмотр");
+  } finally {
+    removePreview("p-no-touch");
+  }
+});
+
 test("a project without a preview reports nothing running", async () => {
   removePreview("p2");
   assert.deepEqual(await previewStatus("p2"), { running: false });

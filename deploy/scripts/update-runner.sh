@@ -48,19 +48,48 @@ if [ -z "$runner" ]; then
 fi
 
 current=$(docker inspect --format '{{.Config.Image}}' "$runner" 2>/dev/null || true)
-if [ "$current" = "$IMAGE_REF" ]; then
-  log "$runner уже работает на $IMAGE_REF"
-  exit 0
-fi
-log "$runner работает на ${current:-неизвестном образе} — перевожу на $IMAGE_REF"
-
 network=$(docker inspect --format '{{.HostConfig.NetworkMode}}' "$runner" 2>/dev/null || true)
 restart=$(docker inspect --format '{{.HostConfig.RestartPolicy.Name}}' "$runner" 2>/dev/null || true)
 
+# Локальный кэш node_modules. Runner — контейнер вне compose, поэтому обновление образа само
+# по себе не добавляло ему ни каталог, ни bind-mount, ни переменные. В итоге runner создавал
+# кэш внутри своего контейнера, а `docker run -v` монтировал на хосте другой (root-owned)
+# каталог. Здесь конфигурация кэша приводится к тому же виду, что у API.
+cache_dir="${PREVIEW_CACHE_DIR:-/var/lib/webnestdev/preview-cache}"
+case "$cache_dir" in
+  ""|"/") log "небезопасный PREVIEW_CACHE_DIR=$cache_dir"; exit 2 ;;
+  /*) ;;
+  *) log "PREVIEW_CACHE_DIR должен быть абсолютным: $cache_dir"; exit 2 ;;
+esac
+case "$cache_dir" in
+  /var/lib/webnestdev/sandboxes|/var/lib/webnestdev/sandboxes/*)
+    log "PREVIEW_CACHE_DIR не должен лежать внутри песочницы: $cache_dir"; exit 2 ;;
+esac
+if [ ! -d "$cache_dir" ]; then
+  mkdir -p "$cache_dir" 2>/dev/null || sudo -n mkdir -p "$cache_dir" 2>/dev/null || true
+fi
+if [ -d "$cache_dir" ]; then
+  if [ "$(id -u)" = "0" ]; then
+    chown -h 1000:1000 "$cache_dir" 2>/dev/null || true
+  else
+    sudo -n chown -h 1000:1000 "$cache_dir" 2>/dev/null || true
+  fi
+  chmod 0775 "$cache_dir" 2>/dev/null || sudo -n chmod 0775 "$cache_dir" 2>/dev/null || true
+else
+  log "каталог кэша $cache_dir не создан — проверьте права"
+  exit 1
+fi
+cache_bind="$cache_dir:$cache_dir"
+has_cache_bind=0
 binds=()
 while IFS= read -r bind; do
-  [ -n "$bind" ] && binds+=(-v "$bind")
+  [ -n "$bind" ] || continue
+  binds+=(-v "$bind")
+  [ "$bind" = "$cache_bind" ] && has_cache_bind=1
 done < <(docker inspect --format '{{range .HostConfig.Binds}}{{println .}}{{end}}' "$runner")
+if [ "$has_cache_bind" = "0" ]; then
+  binds+=(-v "$cache_bind")
+fi
 
 cmd=()
 while IFS= read -r arg; do
@@ -88,6 +117,30 @@ while IFS= read -r line; do
   esac
   printf '%s\n' "$line" >> "$env_file"
 done < <(docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$runner")
+
+# Значения кэша добавляются только если их ещё нет: существующие настройки узла не
+# перетираются. TTL — тот же, что у API (по умолчанию 30 дней).
+env_added=0
+ensure_env(){
+  local name="$1" value="$2"
+  if ! grep -q "^${name}=" "$env_file"; then
+    printf '%s=%s\n' "$name" "$value" >> "$env_file"
+    env_added=1
+  fi
+}
+ensure_env WEBNESTDEV_PREVIEW_CACHE_DIR "$cache_dir"
+ensure_env WEBNESTDEV_PREVIEW_CACHE_HOST_DIR "$cache_dir"
+ensure_env WEBNESTDEV_PREVIEW_CACHE_TTL_DAYS "${PREVIEW_CACHE_TTL_DAYS:-30}"
+
+if [ "$current" = "$IMAGE_REF" ] && [ "$has_cache_bind" = "1" ] && [ "$env_added" = "0" ]; then
+  log "$runner уже работает на $IMAGE_REF с локальным кэшем $cache_dir"
+  exit 0
+fi
+if [ "$current" = "$IMAGE_REF" ]; then
+  log "$runner уже на $IMAGE_REF, но конфигурация кэша неполная — пересоздаю с $cache_dir"
+else
+  log "$runner работает на ${current:-неизвестном образе} — перевожу на $IMAGE_REF"
+fi
 
 args=(--name "$runner.new")
 [ -n "$network" ] && args+=(--network "$network")

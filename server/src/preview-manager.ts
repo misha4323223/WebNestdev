@@ -6,7 +6,7 @@ import { previewDepsForHost } from "./preview/node-deps.js";
 import { isLocalPreviewOwner } from "./preview/preview-owner.js";
 import { nodeId } from "./nodes/identity.js";
 import { listNodes } from "./nodes/node-store.js";
-import { decideRuntimePreviewStart, perUserPreviewLimit, runtimePreviewLimit } from "./preview/preview-limiter.js";
+import { decideRuntimePreviewStart, perUserPreviewLimit, previewRuntimeLimits } from "./preview/preview-limiter.js";
 import { clearPreviewReservation, reservePreviewStart } from "./preview/preview-reservation.js";
 import { previewAppAnswers } from "./preview/app-http.js";
 import { settlePreviewAddress } from "./preview/preview-address.js";
@@ -230,12 +230,14 @@ async function startContainerPreview(config: SandboxConfig, staticReason?: strin
   // новой строки проходит установка зависимостей, и две реплики иначе обе проходят лимит.
   // Бронь живёт в PostgreSQL и снимается после записи состояния; в JSON-режиме остаётся
   // прежняя локальная проверка.
+  const limits = previewRuntimeLimits();
   const reserved = await reservePreviewStart({
     projectId: config.projectId,
     userId,
     node: config.node,
     perUser: perUserPreviewLimit(),
-    hostLimit: runtimePreviewLimit(),
+    mode: "container",
+    limits,
   });
   if (reserved.kind === "busy") throw new Error(reserved.reason);
 
@@ -250,6 +252,7 @@ async function startContainerPreview(config: SandboxConfig, staticReason?: strin
         projectId: state.projectId,
         lastUsedAt: state.lastUsedAt,
         node: state.node,
+        mode: state.mode,
         userId: state.ownerUserId || (await getProject(state.projectId))?.userId || "",
       })),
     );
@@ -257,7 +260,9 @@ async function startContainerPreview(config: SandboxConfig, staticReason?: strin
       live,
       projectId: config.projectId,
       userId,
+      mode: "container",
       node: config.node ?? nodeId(),
+      limits,
     });
     if (!decision.ok) throw new Error(decision.reason);
     stopProjectIds = decision.stopProjectId ? [decision.stopProjectId] : [];
@@ -319,20 +324,22 @@ export async function stopPreview(projectId: string) {
  * Returns what the panel shows behind the preview: the dev-server output for a container
  * preview, the build output for a static one (nothing runs that could produce more).
  */
-export async function previewLogs(projectId: string) {
+export async function previewLogs(projectId: string, options: { touch?: boolean } = {}) {
+  const touch = options.touch !== false;
   const progress = getPreviewStartProgress(projectId);
   const starting = progress ? previewStartProgressLog(projectId) : "";
   const current = await hydratePreview(projectId);
   if (!current) return { running: false, logs: starting, ...(progress ? { starting: progress } : {}) };
 
   if (current.mode === "static") {
-    // Somebody is reading the logs, so the preview is in use.
-    touchPreview(projectId);
+    // Somebody is reading the logs, so the preview is in use. The panel reads runtime logs
+    // without touching: otherwise an open logs tab would keep a container alive forever.
+    if (touch) touchPreview(projectId);
     return { running: true, logs: [starting, staticPreviewLogs(projectId)].filter(Boolean).join("\n\n") };
   }
 
   if (current.mode === "hybrid") {
-    touchPreview(projectId);
+    if (touch) touchPreview(projectId);
     const backend = await hybridBackendLogs(projectId);
     if (backend.missing) {
       await stopHybridPreview(projectId);
@@ -354,7 +361,7 @@ export async function previewLogs(projectId: string) {
     return { running: false, logs: "" };
   }
   // Somebody is reading the logs, so the preview is in use.
-  touchPreview(projectId);
+  if (touch) touchPreview(projectId);
   return { running: true, logs: [starting, result.logs].filter(Boolean).join("\n\n") };
 }
 
@@ -424,19 +431,20 @@ export async function reapRemotePreviews() {
   return { stopped };
 }
 
-async function readPreviewStatus(projectId: string): Promise<PreviewStatus> {
+async function readPreviewStatus(projectId: string, options: { touch?: boolean } = {}): Promise<PreviewStatus> {
+  const touch = options.touch !== false;
   const current = await hydratePreview(projectId);
   if (!current) {
     // A listener in this process is the truth even when its registry row was lost. Without this
     // recovery preview.start could return successfully, then a browser check read no row and
     // reported "Preview is not running" while the app was still listening on loopback.
-    let recovered = await recoverLocalStaticPreview(projectId);
-    if (!recovered) recovered = await recoverLocalHybridPreview(projectId);
+    let recovered = await recoverLocalStaticPreview(projectId, { touch });
+    if (!recovered) recovered = await recoverLocalHybridPreview(projectId, { touch });
     if (recovered) return recovered;
     return { running: false };
   }
 
-  if (current.mode === "hybrid") return hybridPreviewStatus(projectId);
+  if (current.mode === "hybrid") return hybridPreviewStatus(projectId, { touch });
 
   // Nothing runs in a container for a static preview, so there is nothing to inspect: the
   // listener answers or it does not.
@@ -445,7 +453,7 @@ async function readPreviewStatus(projectId: string): Promise<PreviewStatus> {
     // проксирует запрос на owner_address, поэтому статус берётся из общего реестра.
     const local = isLocalPreviewOwner(current.ownerAddress);
     const ready = local ? await staticAppAnswers(current.host, current.port) : current.ready !== false;
-    touchPreview(projectId);
+    if (touch) touchPreview(projectId);
     return {
       running: true,
       ready,
@@ -470,7 +478,7 @@ async function readPreviewStatus(projectId: string): Promise<PreviewStatus> {
   // по времени, а не на каждом чтении. Приложение при этом отвечает (иначе прокси не поставил бы
   // эту пометку), а прямой адрес вернётся сам, как только заработает.
   if(current.execOnly&&Date.now()-(current.execOnlyCheckedAt??0)<execRetryMs()){
-    touchPreview(projectId);
+    if (touch) touchPreview(projectId);
     return {
       running: true,
       ready: true,
@@ -499,7 +507,7 @@ async function readPreviewStatus(projectId: string): Promise<PreviewStatus> {
   // целиком, но не чаще execRetryMs() (см. ветку выше), иначе сеть не была бы проверена ещё раз,
   // а панель осталась бы на медленном пути навсегда.
   if(current.settled&&!current.execOnly){
-    touchPreview(projectId);
+    if (touch) touchPreview(projectId);
     return {
       running: true,
       ready: true,
@@ -520,7 +528,7 @@ async function readPreviewStatus(projectId: string): Promise<PreviewStatus> {
   // адрес пока не подтверждён. Иначе каждый файл приложения платил бы десятки секунд за проверку,
   // которая ещё не может ничего изменить, и кадр панели оставался бы пустым.
   if(current.checkedAt&&Date.now()-current.checkedAt<addressRetryMs()){
-    touchPreview(projectId);
+    if (touch) touchPreview(projectId);
     return {
       running: true,
       ready: Boolean(current.ready),
@@ -556,9 +564,9 @@ async function readPreviewStatus(projectId: string): Promise<PreviewStatus> {
     return { running: false };
   }
 
-  // Every status read counts as use: the panel refreshes it, the logs tab polls it and the
-  // agent's project.verify/browser.* checks go through it, as does every proxied request.
-  touchPreview(projectId);
+  // A status read from the panel is only a read: it must not keep a runtime preview alive.
+  // Agent checks and proxied requests still count as use by default.
+  if (touch) touchPreview(projectId);
 
   // A dev server that is still compiling has not failed: the container is the truth here,
   // and `ready` says whether the app answers yet. Dropping the state on a slow first start
@@ -611,8 +619,8 @@ async function readPreviewStatus(projectId: string): Promise<PreviewStatus> {
  * Статус для панели: к обычному состоянию добавляется короткая телеметрия текущего запуска.
  * Она нужна именно тогда, когда работающего preview ещё нет, и без неё кнопка выглядела зависшей.
  */
-export async function previewStatus(projectId: string): Promise<PreviewStatus> {
-  const status = await readPreviewStatus(projectId);
+export async function previewStatus(projectId: string, options: { touch?: boolean } = {}): Promise<PreviewStatus> {
+  const status = await readPreviewStatus(projectId, options);
   const starting = getPreviewStartProgress(projectId);
   return starting ? { ...status, starting } : status;
 }

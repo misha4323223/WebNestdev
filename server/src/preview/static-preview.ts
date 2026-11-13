@@ -130,11 +130,11 @@ function rememberStaticState(run:StaticRun){
  * A live static listener is stronger evidence than a missing registry row. Kept here rather than
  * in preview-manager because the run map is private to this module.
  */
-export async function recoverLocalStaticPreview(projectId:string):Promise<PreviewStatus|null>{
+export async function recoverLocalStaticPreview(projectId:string,options:{touch?:boolean}={}):Promise<PreviewStatus|null>{
   const run=runs.get(projectId);
   if(!run||!run.server.server.listening)return null;
   rememberStaticState(run);
-  touchPreview(projectId);
+  if(options.touch!==false)touchPreview(projectId);
   // Make the recovered row visible to the next API replica before this status returns.
   await flushPreviewWrites(projectId);
   return statusFor(run);

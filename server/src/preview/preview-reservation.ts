@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { nodeId } from "../nodes/identity.js";
 import { getTable, initializeStorage, isYdbEnabled, ydbQuery } from "../storage/pg.js";
+import { runtimeCapacityRefusal, type RuntimeLimits, type RuntimePreviewMode } from "./preview-capacity.js";
+import type { PreviewMode } from "./types.js";
 
 /**
  * Бронь на запуск container-preview. Проверка лимита и сам старт не атомарны: между чтением
@@ -12,8 +14,8 @@ import { getTable, initializeStorage, isYdbEnabled, ydbQuery } from "../storage/
  * вечную бронь — у неё есть TTL.
  */
 
-export type LivePreviewRef = { projectId: string; userId: string; lastUsedAt: number; node?: string };
-export type ActiveReservationRef = { projectId: string; userId: string; node?: string };
+export type LivePreviewRef = { projectId: string; userId: string; lastUsedAt: number; node?: string; mode?: PreviewMode };
+export type ActiveReservationRef = { projectId: string; userId: string; node?: string; mode?: PreviewMode };
 
 export function previewReservationTtlMs(): number {
   const raw = process.env.PREVIEW_RESERVATION_TTL_MS?.trim();
@@ -36,7 +38,9 @@ export function decidePreviewReservation(input: {
   /** Узел, для которого считается потолок контейнеров. */
   node?: string;
   perUser: number;
-  hostLimit: number;
+  /** Какой режим запускается: Docker и hybrid считаются по-разному. */
+  mode?: RuntimePreviewMode;
+  limits: RuntimeLimits;
   live: LivePreviewRef[];
   reservations: ActiveReservationRef[];
 }): ReservationDecision {
@@ -62,28 +66,19 @@ export function decidePreviewReservation(input: {
 
   // Останавливаемые preview освободят слот до старта нового, поэтому в проверке потолка хоста
   // они не считаются. Если остановка не удастся, новый контейнер просто не запустится.
-  const stopping = new Set(stopProjectIds);
   // Потолок хоста — про память одной машины. Preview и брони другой реплики живут в общем
   // реестре, но места на этом хосте не занимают. Строку без узла считаем своей: лучше
   // перестраховаться, чем разрешить лишний контейнер на неизвестной реплике.
-  const onThisNode = (node: string | undefined) => !input.node || !node || node === input.node;
-  const hostLive = input.live.filter(
-    preview =>
-      preview.projectId !== input.projectId &&
-      !stopping.has(preview.projectId) &&
-      onThisNode(preview.node),
-  );
-  const hostReserved = input.reservations.filter(
-    reservation => reservation.projectId !== input.projectId && onThisNode(reservation.node),
-  );
-  if (input.hostLimit > 0 && hostLive.length + hostReserved.length >= input.hostLimit) {
-    return {
-      ok: false,
-      reason:
-        "На этом хосте одновременно работают " + input.hostLimit + " серверных предпросмотров (PREVIEW_MAX_CONTAINERS): " +
-        "остановите предпросмотр другого проекта или поднимите лимит. Готовые статические проекты этот лимит не занимают.",
-    };
-  }
+  const refusal = runtimeCapacityRefusal({
+    live: input.live,
+    reservations: input.reservations,
+    projectId: input.projectId,
+    startingMode: input.mode ?? "container",
+    limits: input.limits,
+    node: input.node,
+    ignoreProjectIds: stopProjectIds,
+  });
+  if (refusal) return { ok: false, reason: refusal };
 
   return { ok: true, stopProjectIds };
 }
@@ -102,7 +97,8 @@ type ReserveInput = {
   userId: string;
   node: string;
   perUser: number;
-  hostLimit: number;
+  mode: RuntimePreviewMode;
+  limits: RuntimeLimits;
 };
 
 type BackendReserveResult =
@@ -127,11 +123,18 @@ export type PreviewReservationBackend = {
   get?: (projectId: string, now: number) => Promise<PreviewReservationInfo | null>;
 };
 
-type PreviewRow = { project_id: string; owner_user_id: string | null; node: string | null; last_used_at: number | string };
+type PreviewRow = {
+  project_id: string;
+  owner_user_id: string | null;
+  node: string | null;
+  mode: string | null;
+  last_used_at: number | string;
+};
 type ReservationRow = {
   project_id: string;
   owner_user_id: string | null;
   node: string | null;
+  mode: string | null;
   created_at: number | string;
   expires_at: number | string;
 };
@@ -159,12 +162,12 @@ const postgresBackend: PreviewReservationBackend = {
       await tx`DELETE FROM ${reservationTable} WHERE expires_at <= ${now}`;
 
       const [liveRows] = await tx<PreviewRow[]>`
-        SELECT project_id, owner_user_id, node, last_used_at
+        SELECT project_id, owner_user_id, node, mode, last_used_at
           FROM ${previews}
          WHERE mode IN ('container', 'hybrid') AND expires_at > ${now}
       `;
-      const [reservedRows] = await tx<Array<{ project_id: string; owner_user_id: string | null; node: string | null }>>`
-        SELECT project_id, owner_user_id, node
+      const [reservedRows] = await tx<Array<{ project_id: string; owner_user_id: string | null; node: string | null; mode: string | null }>>`
+        SELECT project_id, owner_user_id, node, mode
           FROM ${reservationTable}
          WHERE expires_at > ${now}
       `;
@@ -182,17 +185,20 @@ const postgresBackend: PreviewReservationBackend = {
         userId: input.userId,
         node: input.node,
         perUser: input.perUser,
-        hostLimit: input.hostLimit,
+        mode: input.mode,
+        limits: input.limits,
         live: liveRows.map(row => ({
           projectId: row.project_id,
           userId: row.owner_user_id ?? "",
           node: row.node ?? "",
+          mode: row.mode === "hybrid" ? "hybrid" : "container",
           lastUsedAt: integer(row.last_used_at),
         })),
         reservations: reservedRows.map(row => ({
           projectId: row.project_id,
           userId: row.owner_user_id ?? "",
           node: row.node ?? "",
+          mode: row.mode === "hybrid" ? "hybrid" : "container",
         })),
       });
       if (!decision.ok) {
@@ -202,9 +208,9 @@ const postgresBackend: PreviewReservationBackend = {
 
       await tx`
         INSERT INTO ${reservationTable}
-          (project_id, reservation_id, owner_user_id, node, created_at, expires_at)
+          (project_id, reservation_id, owner_user_id, node, mode, created_at, expires_at)
         VALUES
-          (${input.projectId}, ${reservationId}, ${input.userId}, ${input.node}, ${now}, ${now + previewReservationTtlMs()})
+          (${input.projectId}, ${reservationId}, ${input.userId}, ${input.node}, ${input.mode}, ${now}, ${now + previewReservationTtlMs()})
       `;
       result = { kind: "acquired", reservationId, stopProjectIds: decision.stopProjectIds };
     });
@@ -228,7 +234,7 @@ const postgresBackend: PreviewReservationBackend = {
     await initializeStorage();
     const table = ydbQuery().identifier(getTable("preview_reservations"));
     const [rows] = await ydbQuery()<ReservationRow[]>`
-      SELECT project_id, owner_user_id, node, created_at, expires_at
+      SELECT project_id, owner_user_id, node, mode, created_at, expires_at
         FROM ${table}
        WHERE project_id = ${projectId} AND expires_at > ${now}
        LIMIT 1`;
@@ -260,7 +266,8 @@ export async function reservePreviewStart(input: {
   userId: string;
   node?: string;
   perUser: number;
-  hostLimit: number;
+  mode: RuntimePreviewMode;
+  limits: RuntimeLimits;
 }): Promise<PreviewReservationResult> {
   if (!backend.enabled()) return { kind: "disabled" };
   try {
@@ -269,7 +276,8 @@ export async function reservePreviewStart(input: {
       userId: input.userId,
       node: input.node || nodeId(),
       perUser: input.perUser,
-      hostLimit: input.hostLimit,
+      mode: input.mode,
+      limits: input.limits,
     });
     if (reserved.kind === "busy") return reserved;
     const reservationId = reserved.reservationId;

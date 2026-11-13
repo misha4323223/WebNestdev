@@ -131,6 +131,11 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
   // Адрес показывается рядом с кнопкой копирования: ссылку отдают другому человеку, поэтому
   // копировать её должно быть можно в один тап, а не выделять текст мышью.
   const [copied,setCopied]=useState(false);
+  // Docker и hybrid не встраиваются в панель: их приложение живёт в отдельной вкладке. Только
+  // static остаётся обычным кадром, поэтому device/theme/picker относятся к нему, а не к runtime.
+  const runtimeMode=preview.mode==="container"||preview.mode==="hybrid";
+  const runtimeLabel=preview.mode==="hybrid"?"Hybrid-предпросмотр":"Docker-предпросмотр";
+  const externalAddress=publicLink||(import.meta.env.PROD?"":previewUrl(projectId));
   // Кадр на своём домене читается из панели напрямую, на публичном адресе — через мост выбора
   // элемента (postMessage): политика одного origin не даёт панели читать чужой документ.
   const crossOrigin=crossOriginAddress(previewAddress(projectId,publicLink));
@@ -211,11 +216,10 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
     finally{setLoadingLogs(false)}
   },[projectId]);
 
-  // An open, visible panel keeps the preview alive: the server stops a preview nobody has
-  // used for PREVIEW_IDLE_MS (five minutes by default), and a closed tab simply stops
-  // sending the heartbeat, so the container is freed.
+  // Только static живёт, пока открыта панель. Docker/hybrid открываются в отдельной вкладке,
+  // и панель не должна продлевать им жизнь: иначе двухминутный простой никогда не наступит.
   useEffect(()=>{
-    if(!preview.running)return;
+    if(!preview.running||runtimeMode)return;
     const beat=()=>{
       if(document.visibilityState!=="visible")return;
       void touchPreview(projectId).catch(()=>undefined);
@@ -223,7 +227,16 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
     beat();
     const timer=window.setInterval(beat,60000);
     return ()=>window.clearInterval(timer);
-  },[preview.running,projectId]);
+  },[preview.running,runtimeMode,projectId]);
+
+  // Вернулись из отдельной вкладки — перечитываем статус без touch. Если preview уже остановлен
+  // по простою, панель уберёт ссылку и снова покажет запуск.
+  useEffect(()=>{
+    if(!runtimeMode)return;
+    const onFocus=()=>void refresh();
+    window.addEventListener("focus",onFocus);
+    return ()=>window.removeEventListener("focus",onFocus);
+  },[runtimeMode,refresh]);
 
   // Logs refresh while the back face is visible, so the dev server output stays current.
   useEffect(()=>{
@@ -287,22 +300,23 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
 
   useElementPicker({
     frame:frameEl,
-    active:picking&&preview.running&&face==="preview"&&!crossOrigin,
+    active:picking&&preview.running&&!runtimeMode&&face==="preview"&&!crossOrigin,
     onPick:element=>{setPicking(false);setPicked(element)},
     onCancel:()=>setPicking(false),
   });
   // Публичный адрес: подсветку и клик делает мост внутри приложения, панель присылает команду.
   useRemoteElementPicker({
     frame:frameEl,
-    active:picking&&preview.running&&face==="preview"&&crossOrigin,
+    active:picking&&preview.running&&!runtimeMode&&face==="preview"&&crossOrigin,
     targetOrigin:previewOrigin,
     onPick:element=>{setPicking(false);setPicked(element)},
     onCancel:()=>setPicking(false),
   });
-  // Кадр остановили или ушли в логи — выбранного элемента больше нет на экране.
+  // Кадр остановили, ушли в логи или открыли runtime-ссылку — выбранного элемента больше нет.
   useEffect(()=>{
-    if(!preview.running||face!=="preview"){setPicking(false);setPicked(null)}
-  },[preview.running,face]);
+    if(!preview.running||face!=="preview"||runtimeMode){setPicking(false);setPicked(null)}
+    if(runtimeMode)setThemeOpen(false);
+  },[preview.running,face,runtimeMode]);
 
   return <>
   {/* Затемнение и панель — одна выезжающая поверх рабочей области пара: на широком экране
@@ -329,10 +343,10 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
         </div>
         {face==="preview"
           ? <>
-              {preview.running&&<button className={"icon-button preview-pick-btn"+(picking?" active":"")} onClick={()=>{setPicked(null);setPicking(value=>!value);setThemeOpen(false)}} aria-pressed={picking} title={crossOrigin?"Выбрать элемент в приложении (публичный адрес панель не читает — работает через мост)":"Выбрать элемент для правки"} aria-label="Выбрать элемент"><MousePointerClick size={14}/></button>}
+              {preview.running&&!runtimeMode&&<button className={"icon-button preview-pick-btn"+(picking?" active":"")} onClick={()=>{setPicked(null);setPicking(value=>!value);setThemeOpen(false)}} aria-pressed={picking} title={crossOrigin?"Выбрать элемент в приложении (публичный адрес панель не читает — работает через мост)":"Выбрать элемент для правки"} aria-label="Выбрать элемент"><MousePointerClick size={14}/></button>}
               {preview.running?<button className="icon-button" onClick={()=>void stop()} title="Остановить"><Square size={14}/></button>:<button className="icon-button" onClick={()=>void start()} disabled={startingNow} title={startingNow?"Предпросмотр запускается":"Запустить"}>{startingNow?<Loader2 className="preview-spin" size={14}/>:<Terminal size={14}/>}</button>}
               <button className="icon-button" onClick={()=>void refresh()} title="Обновить"><RefreshCw size={14}/></button>
-              {preview.running&&<a className="icon-button" href={previewAddress(projectId,publicLink)} target="_blank" rel="noreferrer" title="Открыть"><ExternalLink size={14}/></a>}
+              {preview.running&&externalAddress&&<a className="icon-button" href={externalAddress} target="_blank" rel="noreferrer" title="Открыть"><ExternalLink size={14}/></a>}
             </>
           : <button className="icon-button" onClick={()=>void loadLogs()} disabled={loadingLogs} title="Обновить логи"><RefreshCw size={14}/></button>}
       </div>
@@ -344,10 +358,10 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
     {!error&&preview.running&&(preview.ready===false||(preview.settled===false&&!preview.viaExec))&&<div className="preview-hint">{preview.hint??"Приложение ещё запускается…"}</div>}
     {/* Публичный адрес показывается, а не прячется в подсказке кнопки: это адрес, который видят
         другие, и по нему приложение работает без переписывания ссылок. */}
-    {!error&&preview.running&&preview.publicUrl&&<div className="preview-share">
+    {!error&&preview.running&&preview.publicUrl&&externalAddress&&<div className="preview-share">
       <span className="preview-share-label">Публичный адрес</span>
       <Hint label="Публичный адрес">Ссылка, которую можно отправить другому человеку.</Hint>
-      <a className="preview-share-link" href={previewAddress(projectId,publicLink)} target="_blank" rel="noreferrer">
+      <a className="preview-share-link" href={externalAddress} target="_blank" rel="noreferrer">
         <ExternalLink size={11}/>
         <span>{preview.publicUrl.replace(/^https?:\/\//,"")}</span>
       </a>
@@ -357,7 +371,7 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
     </div>}
     {/* Панель устройств: ширина кадра — настоящая ширина устройства, поэтому медиазапросы
         приложения срабатывают так же, как на телефоне и планшете, а не по ширине колонки. */}
-    {face==="preview"&&<div className="preview-devices" role="group" aria-label="Устройство предпросмотра">
+    {face==="preview"&&!runtimeMode&&<div className="preview-devices" role="group" aria-label="Устройство предпросмотра">
       <div className="preview-devices-group">
         {(["desktop","tablet","phone"] as Device[]).map(id=>{
           const Icon=id==="desktop"?Monitor:id==="tablet"?Tablet:Smartphone;
@@ -398,6 +412,18 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
               // сессия: он смог бы читать её API и DOM. Сервер такую дверь закрывает (503), а панель
               // говорит причину вместо пустого кадра.
               ? <div className="preview-empty"><div className="preview-icon"><Terminal size={20}/></div><strong>Публичный адрес не настроен</strong><span>Предпросмотр в панели выключен: код проекта не должен работать на одном origin с панелью. Задайте PREVIEW_PUBLIC_DOMAIN и перезапустите сервер.</span></div>
+              : runtimeMode
+              // Docker/hybrid не встраиваются: у панели нет кадра, только ссылка на отдельную
+              // вкладку. Так панель не продлевает preview и он может уйти в простой.
+              ? <div className="preview-empty preview-external">
+                <div className="preview-icon"><ExternalLink size={20}/></div>
+                <strong>{runtimeLabel}</strong>
+                <span>Откроется в отдельном окне на публичном адресе. В панели этот режим не встраивается.</span>
+                {externalAddress
+                  ? <a className="ghost-button" href={externalAddress} target="_blank" rel="noreferrer">Открыть в новом окне</a>
+                  : <span>Готовим защищённую ссылку…</span>}
+                <span className="preview-external-note">После 2 минут без запросов preview остановится; ссылка перестанет открывать приложение.</span>
+              </div>
               : publicLinkPending&&!publicLink
               ? <div className="preview-empty"><div className="preview-icon"><Terminal size={20}/></div><strong>Готовим предпросмотр</strong><span>Открываем защищённый адрес приложения…</span></div>
               : <div className="preview-canvas" ref={canvasRef}>

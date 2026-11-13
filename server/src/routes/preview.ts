@@ -101,7 +101,8 @@ export async function registerPreviewRoutes(app:FastifyInstance,deps:PreviewRout
     const p=z.object({id:z.string().min(1)}).parse(request.params);
     if(!await deps.authorize(request,reply,p.id))return;
     const url=deps.publicUrl(p.id);
-    return previewReply(reply,async()=>({...await deps.previewStatus(p.id),...(url?{publicUrl:url}:{})}));
+    // A panel refresh is a control read, not use: it must not keep a runtime preview alive.
+    return previewReply(reply,async()=>({...await deps.previewStatus(p.id,{touch:false}),...(url?{publicUrl:url}:{})}));
   });
   /**
    * Билет на публичный адрес. Панель просит его перед тем, как открыть предпросмотр в отдельной
@@ -134,10 +135,11 @@ export async function registerPreviewRoutes(app:FastifyInstance,deps:PreviewRout
   app.get("/api/projects/:id/preview/logs",async(request,reply)=>{
     const p=z.object({id:z.string().min(1)}).parse(request.params);
     if(!await deps.authorize(request,reply,p.id))return;
-    return previewReply(reply,()=>deps.previewLogs(p.id));
+    return previewReply(reply,()=>deps.previewLogs(p.id,{touch:false}));
   });
-  // The panel's heartbeat: an open, visible preview keeps its container, a closed tab lets it
-  // stop after PREVIEW_IDLE_MS. Deliberately cheap — no Docker call, only the last-use mark.
+  // The panel's heartbeat is used only for a static preview now; Docker/hybrid stay alive through
+  // requests to their public link, so closing that tab lets them stop after PREVIEW_IDLE_MS.
+  // Deliberately cheap — no Docker call, only the last-use mark.
   app.post("/api/projects/:id/preview/touch",async(request,reply)=>{
     const p=z.object({id:z.string().min(1)}).parse(request.params);
     if(!await deps.authorize(request,reply,p.id))return;

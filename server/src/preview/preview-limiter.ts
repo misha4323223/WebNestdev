@@ -1,13 +1,20 @@
 import os from "node:os";
 import { listPreviews } from "./preview-store.js";
 import { isRuntimePreviewMode, type PreviewState } from "./types.js";
+import {
+  describeRuntimeCapacity,
+  runtimeCapacityRefusal,
+  runtimeModeOf,
+  type RuntimeLimits,
+  type RuntimePreviewMode,
+} from "./preview-capacity.js";
 
 /**
- * Сколько контейнерных предпросмотров держит один аккаунт.
+ * Сколько runtime-предпросмотров держит один аккаунт.
  *
  * Правило продукта: **один**. Второй предпросмотр того же пользователя останавливает его же
  * прежний — так счёт за память понятен каждому, а два проекта одного человека не борются за
- * хост. Статический предпросмотр (слушатель в процессе сервера, ~0.5 МБ) этот лимит не занимает:
+ * хост. Static-предпросмотр (слушатель в процессе сервера, ~0.5 МБ) этот лимит не занимает:
  * он не контейнер и памяти почти не стоит.
  *
  * `PREVIEW_MAX_PER_USER=0` снимает ограничение — тот же приём, что у `PREVIEW_IDLE_MS=0`.
@@ -22,14 +29,15 @@ export function perUserPreviewLimit() {
 }
 
 /**
- * Предохранитель на весь хост: сколько контейнерных предпросмотров живёт одновременно у всех
- * пользователей вместе.
+ * Потолок **чистых Docker-preview** на одной ноде.
  *
- * Без него правило «один на аккаунт» ничего не гарантирует хосту: сто аккаунтов — это сто
- * dev-серверов, и память кончается раньше, чем кто-то успевает это заметить. По умолчанию
- * потолок выводится из памяти машины (примерно по 1 ГБ на предпросмотр, не больше 8), потому что
- * он обязан быть, а подбирать число вручную на каждой ВМ никто не станет. Явное значение
- * `PREVIEW_MAX_CONTAINERS` важнее; `0` снимает ограничение полностью.
+ * Раньше это был общий потолок для container и hybrid. Теперь hybrid считается отдельно:
+ * обычный dev-server стоит нескольких hybrid, поэтому общий бюджет ноды считается в
+ * hybrid-слотах (см. `preview-capacity.ts`), а этот лимит запрещает подменять 8 hybrid
+ * восемью Docker-контейнерами.
+ *
+ * По умолчанию число выводится из памяти машины (примерно по 1 ГБ на контейнер, не больше 8).
+ * Явное `PREVIEW_MAX_CONTAINERS` важнее; `0` снимает ограничение.
  */
 export function runtimePreviewLimit() {
   const raw = process.env.PREVIEW_MAX_CONTAINERS?.trim();
@@ -38,9 +46,67 @@ export function runtimePreviewLimit() {
     const parsed = Number(raw);
     if (Number.isFinite(parsed) && parsed > 0) return Math.floor(parsed);
   }
-  // totalmem() — память хоста: контейнер сервера не видит cgroup-лимит, но и хост-потолок
-  // остаётся полезным ориентиром. Один предпросмотр по умолчанию просит 1 ГБ.
   return Math.max(1, Math.min(8, Math.floor(os.totalmem() / 1024 / 1024 / 1024)));
+}
+
+/** Потолок hybrid-preview на ноде; по умолчанию совпадает с потолком Docker. */
+export function hybridPreviewLimit() {
+  const raw = process.env.PREVIEW_MAX_HYBRID?.trim();
+  if (raw === "0") return 0;
+  if (raw) {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed > 0) return Math.floor(parsed);
+  }
+  return runtimePreviewLimit();
+}
+
+/**
+ * Общий бюджет ноды в hybrid-слотах.
+ *
+ * 12 — измеренный максимум hybrid на одной ноде. Если переменная не задана, сохраняется
+ * прежнее поведение: бюджет равен большему из двух потолков, а Docker весит один слот.
+ */
+export function runtimeHostUnits() {
+  const raw = process.env.PREVIEW_HOST_UNITS?.trim();
+  if (raw === "0") return 0;
+  if (raw) {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed > 0) return Math.floor(parsed);
+  }
+  const container = runtimePreviewLimit();
+  const hybrid = hybridPreviewLimit();
+  if (container === 0 || hybrid === 0) return 0;
+  return Math.max(container, hybrid);
+}
+
+/**
+ * Сколько hybrid-слотов занимает чистый Docker-preview.
+ *
+ * Замер: 12 hybrid — максимум ноды, 2 Docker занимают почти всю ноду. Поэтому один Docker
+ * весит 6 hybrid-слотов. Значение задаётся явно, чтобы на другой ВМ можно было пересчитать
+ * бюджет без изменения кода.
+ */
+export function containerRuntimeUnits() {
+  const raw = process.env.PREVIEW_CONTAINER_UNITS?.trim();
+  if (raw) {
+    const parsed = Number(raw);
+    if (Number.isFinite(parsed) && parsed > 0) return Math.floor(parsed);
+  }
+  // Если задан только hybrid-потолок, выводим вес Docker так, чтобы два Docker занимали
+  // весь production-бюджет, а не оставляли место для hybrid. Это безопасный default:
+  // точные 12/6 всё равно задаются явно в production-конфиге.
+  const hybrid = hybridPreviewLimit();
+  const container = runtimePreviewLimit();
+  return hybrid > 0 && container > 0 ? Math.max(1, Math.ceil(hybrid / container)) : 1;
+}
+
+export function previewRuntimeLimits(): RuntimeLimits {
+  return {
+    containerLimit: runtimePreviewLimit(),
+    hybridLimit: hybridPreviewLimit(),
+    hostUnits: runtimeHostUnits(),
+    containerUnits: containerRuntimeUnits(),
+  };
 }
 
 /** Live runtime previews right now, cheapest source of truth for the cap and for /api/health. */
@@ -53,51 +119,56 @@ export function liveStaticPreviews(): PreviewState[] {
   return listPreviews().filter(state => state.mode === "static");
 }
 
-export type LiveRuntimePreview = { projectId: string; userId?: string; lastUsedAt: number; node?: string };
+export type LiveRuntimePreview = {
+  projectId: string;
+  userId?: string;
+  lastUsedAt: number;
+  node?: string;
+  mode?: PreviewState["mode"];
+};
 export type RuntimeStartDecision = { ok: true; stopProjectId?: string } | { ok: false; reason: string };
 
 /**
  * Whether one more runtime preview fits. The account rule comes first, the host brake second:
  *
  * - у пользователя уже есть свой предпросмотр (и лимит на аккаунт = 1) — останавливаем его же
- *   самый старый и запускаем новый: это то, что человек сделал бы сам, и его второй проект не
- *   получает отказ из-за его же первого;
+ *   самый старый и запускаем новый;
  * - предпросмотр без известного владельца чужому не приписывается и не останавливается;
- * - если хост ограничен (`PREVIEW_MAX_CONTAINERS` > 0) и места нет — отказ с причиной, а не
- *   остановка чужого приложения за спиной.
+ * - если на ноде нет места по потолку своего режима или по общему бюджету — отказ с причиной,
+ *   а не остановка чужого приложения за спиной.
  */
 export function decideRuntimePreviewStart(input: {
   live: LiveRuntimePreview[];
   projectId: string;
   userId: string;
-  /** Узел, для которого считается потолок контейнеров. */
+  /** Какой режим запускается: Docker и hybrid считаются по-разному. */
+  mode?: RuntimePreviewMode;
+  /** Узел, для которого считается бюджет. */
   node?: string;
   /** Лимит на аккаунт; по умолчанию `perUserPreviewLimit()`. */
   perUser?: number;
-  /** Предохранитель хоста; по умолчанию `runtimePreviewLimit()` (0 — без предохранителя). */
-  limit?: number;
+  /** Потолки и веса; по умолчанию из окружения. */
+  limits?: RuntimeLimits;
 }): RuntimeStartDecision {
   const perUser = input.perUser ?? perUserPreviewLimit();
-  const hostLimit = input.limit ?? runtimePreviewLimit();
+  const limits = input.limits ?? previewRuntimeLimits();
+  const startingMode = input.mode ?? "container";
   const others = input.live.filter(preview => preview.projectId !== input.projectId);
   // Только предпросмотр с известным владельцем может быть «своим»: запрос без владельца ничего
   // не присваивает, а чужое приложение не останавливается ни при каких условиях.
   const own = (input.userId ? others.filter(preview => preview.userId === input.userId) : [])
     .sort((a, b) => a.lastUsedAt - b.lastUsedAt);
-  if (perUser > 0 && own.length >= perUser) return { ok: true, stopProjectId: own[0].projectId };
-  // Лимит аккаунта общий для кластера, а потолок контейнеров — про память этой машины.
-  // Preview другой реплики в общем реестре виден, но слот на этом хосте не занимает.
-  const onThisNode = (node: string | undefined) => !input.node || !node || node === input.node;
-  const hostOthers = others.filter(preview => onThisNode(preview.node));
-  if (hostLimit > 0 && hostOthers.length >= hostLimit) {
-    return {
-      ok: false,
-      reason:
-        "На этом хосте одновременно работают " + hostLimit + " серверных предпросмотров (PREVIEW_MAX_CONTAINERS): " +
-        "остановите предпросмотр другого проекта или поднимите лимит. Готовые статические проекты этот лимит не занимают.",
-    };
-  }
-  return { ok: true };
+  const stop = perUser > 0 && own.length >= perUser ? own[0] : undefined;
+  const refusal = runtimeCapacityRefusal({
+    live: input.live,
+    projectId: input.projectId,
+    startingMode,
+    limits,
+    node: input.node,
+    ignoreProjectIds: stop ? [stop.projectId] : [],
+  });
+  if (refusal) return { ok: false, reason: refusal };
+  return stop ? { ok: true, stopProjectId: stop.projectId } : { ok: true };
 }
 
 /**
@@ -106,9 +177,19 @@ export function decideRuntimePreviewStart(input: {
  */
 export function describePreviewLimits() {
   const perUser = perUserPreviewLimit();
-  const host = runtimePreviewLimit();
   return (
     "предпросмотров на аккаунт: " + (perUser > 0 ? perUser : "без ограничения") +
-    "; одновременно на хосте: " + (host > 0 ? host : "без ограничения")
+    "; " + describeRuntimeCapacity(previewRuntimeLimits())
   );
+}
+
+/** Для health: сколько слотов занято прямо сейчас, с учётом веса Docker. */
+export function runtimeUnitsInUse(states: PreviewState[], limits = previewRuntimeLimits()): number {
+  return states
+    .filter(state => isRuntimePreviewMode(state.mode))
+    .reduce(
+      (sum, state) =>
+        sum + (runtimeModeOf(state.mode) === "container" ? Math.max(1, limits.containerUnits) : 1),
+      0,
+    );
 }

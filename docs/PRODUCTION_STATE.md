@@ -1,6 +1,6 @@
 # Состояние production и оперативная память
 
-Дата среза: **12.11.2026**. Документ фиксирует факты, которые нельзя терять между
+Дата среза: **13.11.2026**. Документ фиксирует факты, которые нельзя терять между
 сессиями. Секреты здесь не хранятся: только имена переменных, пути и способы проверки.
 
 ## 1. Роли ВМ
@@ -8,13 +8,12 @@
 | ВМ | Роль | Адрес | Текущее питание |
 | --- | --- | --- | --- |
 | `node-1` | production primary: API, Caddy, HAProxy, PostgreSQL primary, `node1-runner` | `10.0.0.4`, management `2.59.83.250` | `ON` |
-| `node-2` | standby/worker: PostgreSQL streaming standby, API/Caddy/broker/runner, общий storage | `10.0.0.5`; внешний NAT динамический, читать из MWS API | `OFF` — проверено в MWS 12.11.2026 |
+| `node-2` | standby/worker: PostgreSQL streaming standby, API/Caddy/broker/runner, общий storage | `10.0.0.5`; внешний NAT динамический, читать из MWS API | `ON` — включена 13.11.2026 для выкатки и проверки локального кэша |
 
-**С 12.11.2026 после обратного аварийного прогона:** primary PostgreSQL — `node-1`,
-`node-2` была возвращена как streaming standby (лаг 0), затем по просьбе пользователя
-выключена. Это рабочее состояние на одной ВМ, а не production-HA: пока `node-2` выключена,
-нет failover, Gluster работает одним brick'ом. API на `node-1` ходит в локальный HAProxy
-`:5432`; публичный ingress — NLB с единственным healthy target `node-1`.
+**С 13.11.2026:** primary PostgreSQL — `node-1`, `node-2` включена и работает streaming
+standby (лаг 0). Обе ноды обслуживают API, runner и общий storage; NLB видит оба target'а.
+API на `node-1` ходит в локальный HAProxy `:5432`. Это двухнодовый режим, а не работа на
+одной ВМ: при падении `node-1` `node-2` должна принять трафик и базу.
 
 **Не включать `node-2`, пока `node-1` не жива и не является primary:** иначе контроллер
 `node-2` может повысить её и получится два primary. Включать только по явной просьбе и под
@@ -22,11 +21,11 @@
 
 `node-2` — **не тестовая и не одноразовая машина**. Это вторая нода production-контура;
 её PostgreSQL, storage, runner и env-файлы — production-конфигурация, а не тестовая
-заготовка. Сейчас она выключена по решению пользователя после завершения теста.
+заготовка. На 13.11.2026 она включена и работает streaming standby.
 
 Правило работы:
 
-1. На 12.11.2026 `node-1` — primary, `node-2` — `power=OFF`; прод работает на одной ВМ.
+1. На 13.11.2026 `node-1` — primary, `node-2` — streaming standby; обе ВМ включены.
 2. Доводить задачу до конца, не выключая работающую ВМ в середине.
 3. Перед production-запуском включить `node-2`, проверить её standby и выполнить плановый
    переезд primary на неё по [`PRODUCTION_LAUNCH.md`](PRODUCTION_LAUNCH.md).
@@ -41,18 +40,19 @@
 
 - Публичный адрес: `https://nestdev.ru`.
 - `GET /api/ready` отвечает `ok:true`.
-- Текущая production-сборка: `cf0a57accbdf04d05e2e4e0ad520a34bece064bd`.
-- Образ в GHCR: `ghcr.io/misha4323223/webnestdev:sha-cf0a57accbdf`.
-- Выкачена 12.11.2026 на обе ноды; `/api/health` на node-1 и node-2 отдаёт этот build.
-  Код включает hybrid preview (коммит `fa4fdb6`, выкатка `cf0a57a` — операционный коммит без
-  изменения кода). Hybrid-пилот выполнен на этой сборке; подробности — в разделе 17 и
-  [`HYBRID_PREVIEW.md`](HYBRID_PREVIEW.md). Состояние preview после теста очищено
-  (`runtime:0` на node-1).
-- Прод работает на базе `node-1`; `node-2` после обратного прогона снова standby, затем
-  выключена. Переключение выполнено аварийным прогоном 12.11.2026, подробности — в разделе 19.
-- NLB `webnestdev-nlb-main` — публичный ingress; DNS при переключении не меняется. После
-  выключения `node-2` target `10.0.0.5` — `FAILED`, `10.0.0.4` — `OK` для TCP 80 и 443;
-  публичный `https://nestdev.ru` и `/api/ready` отвечают `200`.
+- Текущая production-сборка: `a6b28ce115f2` — локальная сборка из рабочего дерева
+  13.11.2026, не коммит и не образ из GHCR.
+- Образ: `ghcr.io/misha4323223/webnestdev:sha-a6b28ce115f2` — собран на `node-1`, в GHCR
+  не публиковался; на обеих нодах закреплён в env.
+- Выкачена 13.11.2026 вручную на обе ноды; `/api/ready` и `/api/health` на node-1 и node-2
+  отдают этот build. Код включает локальный кэш зависимостей preview, hybrid fallback,
+  прогресс запуска, отдельный лимит hybrid/общий бюджет ноды, static-only панель preview
+  и двухминутный idle для Docker/hybrid; подробности — в разделе 20 и
+  [`HYBRID_PREVIEW.md`](HYBRID_PREVIEW.md).
+- Прод работает на базе `node-1`; `node-2` — streaming standby и работает. Переключение
+  выполнялось аварийным прогоном 12.11.2026, подробности — в разделе 19.
+- NLB `webnestdev-nlb-main` — публичный ingress; DNS при переключении не меняется. Обе ноды
+  в строю; публичный `https://nestdev.ru` и `/api/ready` отвечают `200`.
 
 ## 3. Env-файлы
 
@@ -150,7 +150,9 @@ ssh node1 'cd "$HOME/webnestdev/src" && docker compose \
   и сборка. Недоступная `node-2` — не ошибка выкатки (пропуск); `SYNC_NODE2=1` в переменных
   репозитория делает недоступность ошибкой, `SYNC_NODE2=0` выключает шаг.
 - Runner обновляется автоматически на обеих нодах (`deploy/scripts/update-runner.sh`): раньше
-  он оставался на прежней сборке, пока сервис уже работал на новой.
+  он оставался на прежней сборке, пока сервис уже работал на новой. С 13.11.2026 скрипт
+  также гарантирует локальный каталог кэша, bind-mount и переменные `WEBNESTDEV_PREVIEW_CACHE_*`
+  и пересоздаёт runner, если образ тот же, а конфигурация кэша неполная.
 - `MODE=image` больше не поднимает legacy `postgres` из базового compose: с production
   override `up` идёт с `--no-deps`, а запущенный контейнер останавливается после выкатки.
 - Полный деплой на `node-2` вручную по-прежнему возможен (`vm-deploy.sh` на ней), но штатный
@@ -921,6 +923,91 @@ peer-запрос всё равно не открылся. Правило уда
 - **Не включено в текущий режим:** failover при падении `node-1`, вторая Gluster-реплика,
   второй API-target. Для production-запуска сначала включить `node-2`, проверить standby и
   перевести primary на неё по runbook; только после этого выключать её нельзя.
+
+## 20. 13.11.2026: локальный кэш зависимостей preview на обеих нодах
+
+Состояние на 13.11.2026 после выкатки `c1d2d1a`: `node-1` — primary PostgreSQL, `node-2` —
+streaming standby; обе ВМ включены, API/runner/брокер работают на одной сборке.
+`node-2` остаётся включённой до отдельной команды пользователя.
+
+### Где лежит кэш
+
+- Путь на каждой ноде: `/var/lib/webnestdev/preview-cache`.
+- Каталог локальный, не на Gluster; исходники проекта и `dist` по-прежнему лежат в общем
+  storage. `node_modules` монтируется в контейнер как `/workspace/node_modules`.
+- Владелец — uid/gid `1000:1000`, права `0775`, чтобы установка внутри контейнера не
+  получала `EACCES` и Docker не создавал root-owned источник mount'а.
+- Очистка: кэши без обращений дольше `WEBNESTDEV_PREVIEW_CACHE_TTL_DAYS` (по умолчанию 30
+  дней) удаляются при старте и каждые 6 часов. Выключатель — `WEBNESTDEV_PREVIEW_CACHE=0`.
+
+### Что должно быть у API, брокера и runner
+
+| Компонент | Переменные | Mount |
+| --- | --- | --- |
+| API (`src-webnestdev-server-1`) | `WEBNESTDEV_PREVIEW_CACHE_DIR`, `WEBNESTDEV_PREVIEW_CACHE_HOST_DIR`, `WEBNESTDEV_PREVIEW_CACHE_TTL_DAYS` | `/var/lib/webnestdev/preview-cache` → тот же путь |
+| Docker-брокер | `BROKER_PREVIEW_CACHE_ROOT` | `/var/lib/webnestdev/preview-cache` → тот же путь, read-only |
+| `node1-runner` / `node2-runner` | те же три `WEBNESTDEV_PREVIEW_CACHE_*` | `/var/lib/webnestdev/preview-cache` → тот же путь, read-write |
+
+Runner — контейнер вне compose, поэтому одного обновления образа недостаточно.
+`deploy/scripts/update-runner.sh` с 13.11.2026 сам создаёт каталог (при необходимости через
+`sudo -n`), добавляет bind-mount и недостающие переменные и пересоздаёт runner, даже если образ
+уже совпадает. Это закрывает случай, когда API уже видел кэш, а runner создавал его внутри
+своего контейнера.
+
+### Порядок применения
+
+1. Убедиться, что `node-1` жив и является primary PostgreSQL.
+2. Включить `node-2`, дождаться SSH, standby и `node2-runner`.
+3. Обновить runner сначала на `node-1`, затем на `node-2`:
+
+```bash
+# node-1
+ssh node1 "IMAGE_REF='ghcr.io/misha4323223/webnestdev:sha-c1d2d1a19ccc' bash -s" \
+  < deploy/scripts/update-runner.sh
+
+# node-2 (через ProxyCommand на node-1)
+ssh node2 "IMAGE_REF='ghcr.io/misha4323223/webnestdev:sha-c1d2d1a19ccc' bash -s" \
+  < deploy/scripts/update-runner.sh
+```
+
+4. После runner обновить API и брокер штатным compose (на `node-2` — с её двумя env-файлами):
+
+```bash
+# node-1
+cd ~/webnestdev/src && docker compose \
+  -f docker-compose.yml -f docker-compose.override.yml \
+  up -d --no-build --no-deps webnestdev-server docker-broker
+
+# node-2
+cd /home/ubuntu/webnestdev/src && docker compose \
+  --env-file runtime.env --env-file node2.env \
+  -f docker-compose.yml -f docker-compose.override.yml \
+  up -d --no-build --no-deps webnestdev-server docker-broker
+```
+
+5. Проверить на каждой ноде `/api/ready` и что сборка совпадает с выкаченной.
+
+### Проверка без вывода секретов
+
+```bash
+# bind-mount есть и указывает на локальный каталог
+docker inspect node1-runner \
+  --format '{{range .HostConfig.Binds}}{{println .}}{{end}}' | grep preview-cache
+
+# имена переменных (значения не печатаем)
+docker inspect node1-runner \
+  --format '{{range .Config.Env}}{{println .}}{{end}}' | grep -o '^[A-Z_]*' | grep PREVIEW_CACHE
+
+# каталог доступен на запись внутри runner
+docker exec node1-runner sh -lc 'test -w "$WEBNESTDEV_PREVIEW_CACHE_DIR" && echo cache-writable'
+```
+
+Те же команды выполнить с `node2-runner` на `node-2`. Для API и брокера проверяются их
+mount'ы `preview-cache` и ключи `WEBNESTDEV_PREVIEW_CACHE_*` / `BROKER_PREVIEW_CACHE_ROOT`.
+
+Фактическая проверка 13.11.2026: на обеих нодах runner пересоздан с bind-mount, все три
+переменные присутствуют, `cache-writable` подтверждён; API и брокер имеют mount, `/api/ready`
+на обеих нодах — `200`, build `c1d2d1a19cccafac3ed4d6c710a580a75f77fa67`.
 
 Связанные документы:
 

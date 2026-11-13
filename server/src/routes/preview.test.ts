@@ -157,6 +157,30 @@ test("the heartbeat marks the project as used and reports whether a preview is o
   }
 });
 
+test("panel status and logs are read without marking the preview used", async () => {
+  const seen: Array<{ kind: string; touch: boolean | undefined }> = [];
+  const app = await appWith(depsFor(1, {
+    previewStatus: async (_projectId, options) => {
+      seen.push({ kind: "status", touch: options?.touch });
+      return { running: true, ready: true, host: "127.0.0.1", port: 1, containerId: "test", startedAt: 0 };
+    },
+    previewLogs: async (_projectId, options) => {
+      seen.push({ kind: "logs", touch: options?.touch });
+      return { running: true, logs: "" };
+    },
+  }));
+  try {
+    assert.equal((await app.inject({ method: "GET", url: "/api/projects/p1/preview/status" })).statusCode, 200);
+    assert.equal((await app.inject({ method: "GET", url: "/api/projects/p1/preview/logs" })).statusCode, 200);
+    assert.deepEqual(seen, [
+      { kind: "status", touch: false },
+      { kind: "logs", touch: false },
+    ]);
+  } finally {
+    await app.close();
+  }
+});
+
 test("the preview address without the trailing slash is redirected onto the canonical one", async () => {
   const site = await upstream(() => ({ body: Buffer.from("<html><body>ok</body></html>") }));
   const app = await appWith(depsFor(site.port));

@@ -18,7 +18,7 @@ export const PREVIEW_KIND_LABEL="webnestdev.preview.kind";
 export type PreviewMode="container"|"static"|"hybrid";
 /** Hybrid is a runtime preview: its backend container must count against the container cap. */
 export function isRuntimePreviewMode(mode:PreviewMode){return mode==="container"||mode==="hybrid";}
-/** `lastUsedAt` is the last real use (status, logs, proxied request): the idle sweeper reads it. */
+/** `lastUsedAt` is the last real use (a proxied request or an agent check); panel control reads can skip it. */
 /**
  * `port` — адрес, по которому приложение доступно серверу: он может отличаться от порта самой
  * команды (приложение выбрало своё) и от порта внутри контейнера (когда поднят проброс).

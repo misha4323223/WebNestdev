@@ -35,6 +35,15 @@ services:
       EGRESS_MODE: allowlist
       EGRESS_ENFORCE: "1"
       PREVIEW_MAX_CONTAINERS: "2"
+      # Runtime-preview после возврата из отдельной вкладки: две минуты без запросов.
+      # Sweep раз в 30 секунд, чтобы остановка наступала около 2:00–2:30, а не к третьей минуте.
+      PREVIEW_IDLE_MS: "120000"
+      PREVIEW_SWEEP_MS: "30000"
+      # Hybrid легче Docker: замер на ноде — 12 hybrid. Для production берём 8
+      # (запас на реальные backend'ы), общий бюджет 12 слотов, Docker весит 6.
+      PREVIEW_MAX_HYBRID: "8"
+      PREVIEW_HOST_UNITS: "12"
+      PREVIEW_CONTAINER_UNITS: "6"
       SANDBOX_MAX_CONCURRENT: "2"
     extra_hosts:
       - "host.docker.internal:10.0.0.5"

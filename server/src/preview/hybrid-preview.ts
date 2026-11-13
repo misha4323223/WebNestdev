@@ -17,7 +17,7 @@ import { indexFileExists, isStaticBuildFresh } from "./static-plan.js";
 import { runStaticBuild, staticBuildLog } from "./static-build.js";
 import { classifyBuildFailure, classifyStartFailure, type HybridFailureKind } from "./hybrid-failure.js";
 import { clearPreviewReservation, reservePreviewStart } from "./preview-reservation.js";
-import { decideRuntimePreviewStart, perUserPreviewLimit, runtimePreviewLimit } from "./preview-limiter.js";
+import { decideRuntimePreviewStart, perUserPreviewLimit, previewRuntimeLimits } from "./preview-limiter.js";
 import { listPreviewsAcrossReplicas } from "./preview-store.js";
 import { setPreviewStartProgress } from "./preview-start-progress.js";
 
@@ -211,12 +211,14 @@ export async function startHybridPreview(config: SandboxConfig): Promise<HybridS
 
   const project = await getProject(config.projectId).catch(() => null);
   const userId = config.userId || project?.userId || "";
+  const limits = previewRuntimeLimits();
   const reserved = await reservePreviewStart({
     projectId: config.projectId,
     userId,
     node: config.node,
     perUser: perUserPreviewLimit(),
-    hostLimit: runtimePreviewLimit(),
+    mode: "hybrid",
+    limits,
   });
   if (reserved.kind === "busy") return { ok: false, reason: reserved.reason };
 
@@ -229,10 +231,13 @@ export async function startHybridPreview(config: SandboxConfig): Promise<HybridS
         userId: state.ownerUserId || (await getProject(state.projectId).catch(() => null))?.userId || "",
         lastUsedAt: state.lastUsedAt,
         node: state.node,
+        mode: state.mode,
       }))),
       projectId: config.projectId,
       userId,
+      mode: "hybrid",
       node: config.node ?? nodeId(),
+      limits,
     });
     if (!decision.ok) {
       return { ok: false, reason: decision.reason };
@@ -406,7 +411,7 @@ export async function refreshHybridPreview(projectId: string): Promise<boolean> 
  * preview; if it is gone, keeping a shared row and a backend container alive would make the door
  * route to a dead address. The next start recreates both.
  */
-export async function recoverLocalHybridPreview(projectId: string): Promise<PreviewStatus | null> {
+export async function recoverLocalHybridPreview(projectId: string, options: { touch?: boolean } = {}): Promise<PreviewStatus | null> {
   const run = runs.get(projectId);
   if (!run || !run.listener.app.server.listening) return null;
   const now = Date.now();
@@ -423,23 +428,24 @@ export async function recoverLocalHybridPreview(projectId: string): Promise<Prev
     ownerUserId: run.config.userId,
     node: run.node,
     startedAt: run.startedAt,
-    lastUsedAt: now,
+    lastUsedAt: options.touch === false ? run.startedAt : now,
     ready: true,
     settled: true,
     checkedAt: now,
     ...(ownerAddress ? { ownerAddress } : {}),
   });
-  touchPreview(projectId);
+  if (options.touch !== false) touchPreview(projectId);
   await flushPreviewWrites(projectId);
   return statusFor(run);
 }
 
-export async function hybridPreviewStatus(projectId: string): Promise<PreviewStatus> {
+export async function hybridPreviewStatus(projectId: string, options: { touch?: boolean } = {}): Promise<PreviewStatus> {
+  const touch = options.touch !== false;
   const current = await hydratePreview(projectId);
   if (!current) {
     // A local listener is the only thing that can serve this preview; if its registry row was
     // lost, rebuild the row instead of telling the agent the running preview does not exist.
-    return (await recoverLocalHybridPreview(projectId)) ?? { running: false };
+    return (await recoverLocalHybridPreview(projectId, { touch })) ?? { running: false };
   }
   // A run in this process is the owner even when the preview door is disabled and there is no
   // ownerAddress. Without that, the local listener would be treated as remote and its dead
@@ -447,7 +453,7 @@ export async function hybridPreviewStatus(projectId: string): Promise<PreviewSta
   // only the owning process may decide that a listener is gone.
   const local = Boolean(runs.get(projectId)) || (Boolean(current.ownerAddress) && isLocalPreviewOwner(current.ownerAddress!));
   if (!local) {
-    touchPreview(projectId);
+    if (touch) touchPreview(projectId);
     return {
       running: true,
       ready: current.ready !== false,
@@ -477,7 +483,7 @@ export async function hybridPreviewStatus(projectId: string): Promise<PreviewSta
   // `settled`, just like container previews. Without this the panel would run docker inspect and
   // a backend readiness probe for every asset request.
   if (current.settled) {
-    touchPreview(projectId);
+    if (touch) touchPreview(projectId);
     return statusFor(run, current.ready !== false);
   }
   const inspect = await dockerForNode(run.node)([
@@ -501,6 +507,6 @@ export async function hybridPreviewStatus(projectId: string): Promise<PreviewSta
   }, dockerForNode(run.node));
   // Persist the answer: without this the next status would run the same probe again because the
   // row stayed unsettled, and a recovered backend would never take the fast path.
-  setPreview({ ...current, ready, settled: ready, checkedAt: Date.now(), lastUsedAt: Date.now() });
+  setPreview({ ...current, ready, settled: ready, checkedAt: Date.now(), ...(touch ? { lastUsedAt: Date.now() } : {}) });
   return statusFor(run, ready);
 }

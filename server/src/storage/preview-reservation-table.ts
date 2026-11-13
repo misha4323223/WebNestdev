@@ -17,9 +17,13 @@ export async function ensurePreviewReservationTable(pool: Pool, table: string): 
     reservation_id TEXT NOT NULL,
     owner_user_id TEXT NOT NULL DEFAULT '',
     node TEXT NOT NULL DEFAULT '',
+    mode TEXT NOT NULL DEFAULT 'container',
     created_at BIGINT NOT NULL,
     expires_at BIGINT NOT NULL
   )`);
+  // Совместимость с таблицей, созданной до разделения Docker и hybrid: старые брони
+  // считаются Docker-контейнерами, потому что hybrid тогда ещё не было.
+  await pool.query(`ALTER TABLE ${name} ADD COLUMN IF NOT EXISTS mode TEXT NOT NULL DEFAULT 'container'`);
   await pool.query(
     `CREATE INDEX IF NOT EXISTS idx_${table}_expires ON ${name} (expires_at)`,
   );

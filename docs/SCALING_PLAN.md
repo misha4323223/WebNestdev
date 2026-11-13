@@ -29,7 +29,7 @@ Docker-песочницы и превью.
 | Хранилище метаданных | PostgreSQL в контейнере, том `src_webnestdev-data` для маркеров архивов |
 | Лимиты параллелизма | агент: 8 запусков (на аккаунт 1); песочницы: 2 контейнера (очередь 32); превью: 1 на аккаунт, лимит на хост настраивается |
 | Песочница агента | 1 CPU, 1024 МБ RAM, `--read-only`, `/tmp` 256 МБ, сеть `none` по умолчанию |
-| Превью | контейнер из общего образа, авто-остановка через 5 минут простоя |
+| Превью | static — в панели; Docker/hybrid — по ссылке в отдельной вкладке, авто-остановка через 2 минуты простоя (static — 5) |
 
 Схема «как есть»:
 
@@ -62,7 +62,8 @@ Caddy :443 ──────┤ API + WebSocket + preview proxy + preview host 
 - **Изоляция песочниц**: read-only корень, uid 1000, лимиты CPU/RAM/PIDs, сеть по умолчанию
   выключена, секреты монтируются отдельными read-only файлами.
 - **Лимиты уже параметризованы**: `AGENT_MAX_CONCURRENT_RUNS`, `SANDBOX_MAX_CONCURRENT`,
-  `PREVIEW_MAX_PER_USER`, `PREVIEW_MAX_CONTAINERS`, `PREVIEW_IDLE_MS`.
+  `PREVIEW_MAX_PER_USER`, `PREVIEW_MAX_CONTAINERS`,   `PREVIEW_MAX_HYBRID`, `PREVIEW_HOST_UNITS`,
+  `PREVIEW_CONTAINER_UNITS`, `PREVIEW_IDLE_MS`, `PREVIEW_STATIC_IDLE_MS`, `PREVIEW_SWEEP_MS`.
 
 ---
 

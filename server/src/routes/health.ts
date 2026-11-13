@@ -4,7 +4,15 @@ import { isYdbEnabled, ydbQuery } from "../storage/ydb.js";
 import { runQueueStats } from "../agent/run-limiter.js";
 import { sandboxQueueStats } from "../sandbox/sandbox-limiter.js";
 import { browserQueueStats } from "../tools/browser-limiter.js";
-import { perUserPreviewLimit, runtimePreviewLimit } from "../preview/preview-limiter.js";
+import {
+  containerRuntimeUnits,
+  hybridPreviewLimit,
+  perUserPreviewLimit,
+  previewRuntimeLimits,
+  runtimeHostUnits,
+  runtimePreviewLimit,
+  runtimeUnitsInUse,
+} from "../preview/preview-limiter.js";
 import { isRuntimePreviewMode } from "../preview/types.js";
 import { listPreviewsAcrossReplicas, previewAddresses } from "../preview/preview-store.js";
 import { previewPublicDomain } from "../preview/preview-host.js";
@@ -15,6 +23,7 @@ import { execProxyQueueStats } from "../preview/exec-proxy.js";
 import { agentStepLimit,contextBudgetTokensFor,contextMaxMessagesFor,DEFAULT_CHARS_PER_TOKEN } from "../agent/context-budget.js";
 import { sandboxHostRootDir,sandboxRootDir,sandboxRuntime } from "../sandbox/config.js";
 import { lastSandboxMountCheck } from "../sandbox/sandbox-check.js";
+import { nodeId } from "../nodes/identity.js";
 import { diskStatus, memoryStatus } from "../health/host-metrics.js";
 import { hostingConfig } from "../hosting/config.js";
 import { hostingHealth } from "../hosting/site-store.js";
@@ -82,6 +91,10 @@ async function previewDoorInfo(){
  */
 async function activity(){
   const previewStates = await listPreviewsAcrossReplicas().catch(() => []);
+  // Бюджет `runtimeUnits` — про память этой ноды, поэтому чужие preview в него не входят.
+  // Строку без узла считаем своей: старые записи не должны выглядеть как чужая нагрузка.
+  const localNode = nodeId();
+  const localPreviewStates = previewStates.filter(state => !state.node || state.node === localNode);
   return {
     // После этапа 2.2 сервер должен работать не от uid 0. Значение читается из процесса, а не
     // из переменной окружения: именно оно отвечает, сбросил ли entrypoint права на самом деле.
@@ -94,10 +107,16 @@ async function activity(){
     browser: browserQueueStats(),
     previews: {
       runtime: previewStates.filter(state => isRuntimePreviewMode(state.mode)).length,
-      // Сколько контейнерных предпросмотров разрешено одному аккаунту: это правило продукта.
+      runtimeContainer: previewStates.filter(state => state.mode === "container").length,
+      runtimeHybrid: previewStates.filter(state => state.mode === "hybrid").length,
+      // Сколько runtime-предпросмотров разрешено одному аккаунту: это правило продукта.
       runtimePerUser: perUserPreviewLimit(),
-      // Предохранитель на весь хост; 0 — не задан (см. preview/preview-limiter.ts).
+      // Отдельные потолки Docker и hybrid плюс общий бюджет ноды в hybrid-слотах.
       runtimeLimit: runtimePreviewLimit(),
+      runtimeHybridLimit: hybridPreviewLimit(),
+      runtimeUnits: runtimeUnitsInUse(localPreviewStates, previewRuntimeLimits()),
+      runtimeHostUnits: runtimeHostUnits(),
+      runtimeContainerUnits: containerRuntimeUnits(),
       static: previewStates.filter(state => state.mode === "static").length,
       // Адреса живых предпросмотров: `settled` — этот адрес подтверждён запросом самого сервера,
       // то есть приложение видно и панели, и Chromium. `settled: false` у работающего предпросмотра

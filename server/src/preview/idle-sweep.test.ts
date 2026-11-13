@@ -38,6 +38,13 @@ test("only previews untouched for longer than the timeout are selected", () => {
   assert.deepEqual(idlePreviews(states, NOW, 0), []);
 });
 
+test("runtime uses the two-minute timeout, static keeps its longer one", () => {
+  const runtime = state("runtime", 3 * MINUTE);
+  const staticPreview = { ...state("static", 3 * MINUTE), mode: "static" as const, containerId: "" };
+  const ids = idlePreviews([runtime, staticPreview], NOW, 2 * MINUTE, 5 * MINUTE).map(item => item.projectId);
+  assert.deepEqual(ids, ["runtime"]);
+});
+
 test("the sweep stops idle previews and keeps the busy ones", async () => {
   seed([state("idle-project", 10 * MINUTE), state("busy-project", 10 * MINUTE), state("fresh-project", MINUTE)]);
   beginRun("busy-project");
