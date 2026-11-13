@@ -181,6 +181,12 @@ CUSTOM_DOMAINS_CADDY_DIR="${CUSTOM_DOMAINS_CADDY_DIR:-/var/lib/webnestdev/data/c
 CADDY_DATA_HOST_DIR="${CADDY_DATA_HOST_DIR:-/var/lib/webnestdev/data/caddy-data}"
 CADDY_DATA_VOLUME="${CADDY_DATA_VOLUME:-src_caddy-data}"
 CADDY_FILE="${CADDY_FILE:-Caddyfile}"
+# В image-режиме на ВМ может быть старый чекаут; установщик reload-таймера едет из
+# проверенного коммита и раскладывается во временный каталог.
+CADDY_RELOAD_INSTALL_B64="${CADDY_RELOAD_INSTALL_B64:-}"
+CADDY_RELOAD_SCRIPT_B64="${CADDY_RELOAD_SCRIPT_B64:-}"
+CADDY_RELOAD_SERVICE_B64="${CADDY_RELOAD_SERVICE_B64:-}"
+CADDY_RELOAD_TIMER_B64="${CADDY_RELOAD_TIMER_B64:-}"
 PREVIEW_TLS_B64="${PREVIEW_TLS_B64:-}"
 PREVIEW_TLS_SRC="${PREVIEW_TLS_SRC:-}"
 PREVIEW_TLS_FILE="${PREVIEW_TLS_FILE:-preview-tls.caddy}"
@@ -1503,13 +1509,23 @@ update_runner_version(){
 # перерыва. Если admin API недоступен, пересоздаём контейнер: конфигурация важнее перерыва.
 #
 install_caddy_reload_timer(){
-  local script="$APP_DIR/deploy/ha/install-caddy-reload.sh"
+  local script="$APP_DIR/deploy/ha/install-caddy-reload.sh" tmp=""
+  if [ -n "$CADDY_RELOAD_INSTALL_B64" ]; then
+    tmp=$(mktemp -d)
+    printf '%s' "$CADDY_RELOAD_INSTALL_B64" | base64 -d > "$tmp/install-caddy-reload.sh" || { rm -rf "$tmp"; log "не удалось распаковать установщик reload Caddy"; return 1; }
+    printf '%s' "$CADDY_RELOAD_SCRIPT_B64" | base64 -d > "$tmp/caddy-reload.sh" || { rm -rf "$tmp"; log "не удалось распаковать caddy-reload.sh"; return 1; }
+    printf '%s' "$CADDY_RELOAD_SERVICE_B64" | base64 -d > "$tmp/webnestdev-caddy-reload.service" || { rm -rf "$tmp"; log "не удалось распаковать unit Caddy"; return 1; }
+    printf '%s' "$CADDY_RELOAD_TIMER_B64" | base64 -d > "$tmp/webnestdev-caddy-reload.timer" || { rm -rf "$tmp"; log "не удалось распаковать timer Caddy"; return 1; }
+    chmod 755 "$tmp/install-caddy-reload.sh" "$tmp/caddy-reload.sh"
+    script="$tmp/install-caddy-reload.sh"
+  fi
   if [ ! -f "$script" ]; then
     log "install-caddy-reload.sh нет в $APP_DIR/deploy/ha — таймер reload не установлен (установите вручную)"
     return 0
   fi
   if [ "$DRY_RUN" = "1" ]; then
     log "dry-run: установил бы webnestdev-caddy-reload.timer"
+    if [ -n "$tmp" ]; then rm -rf "$tmp"; fi
     return 0
   fi
   if [ "$(id -u)" = "0" ]; then
@@ -1521,6 +1537,7 @@ install_caddy_reload_timer(){
   else
     log "нет sudo для установки таймера reload Caddy — установите $script вручную"
   fi
+  if [ -n "$tmp" ]; then rm -rf "$tmp"; fi
 }
 
 reload_caddy(){

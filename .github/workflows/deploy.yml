@@ -448,6 +448,12 @@ jobs:
           # Правила, закрывающие обход egress-прокси (пункт 5.1 плана), едут так же: они нужны
           # ровно той версии, что прошла тесты в этом коммите, а не той, что лежит в чекауте на ВМ.
           EGRESS_FIREWALL_B64=$(base64 -w0 deploy/scripts/egress-firewall.sh)
+          # Установщик reload-таймера едет вместе с выкаткой: на ВМ в image-режиме может
+          # лежать старый чекаут, а без таймера Caddy не увидит новый custom-domains.caddy.
+          CADDY_RELOAD_INSTALL_B64=$(base64 -w0 deploy/ha/install-caddy-reload.sh)
+          CADDY_RELOAD_SCRIPT_B64=$(base64 -w0 deploy/ha/caddy-reload.sh)
+          CADDY_RELOAD_SERVICE_B64=$(base64 -w0 deploy/ha/webnestdev-caddy-reload.service)
+          CADDY_RELOAD_TIMER_B64=$(base64 -w0 deploy/ha/webnestdev-caddy-reload.timer)
           # Ключи платформы и админ панели — тем же способом: файл, а не аргумент команды.
           # Пустое значение не передаётся вовсе: незаведённый секрет не должен стирать
           # настройку, которую уже сделали на ВМ.
@@ -663,6 +669,10 @@ jobs:
             emit_var RUNSC_INSTALL "$RUNSC_INSTALL"
             emit_var RUNNER_SCRIPT_SRC "$RUNNER_SCRIPT_FILE"
             emit_var EGRESS_FIREWALL_B64 "$EGRESS_FIREWALL_B64"
+            emit_var CADDY_RELOAD_INSTALL_B64 "$CADDY_RELOAD_INSTALL_B64"
+            emit_var CADDY_RELOAD_SCRIPT_B64 "$CADDY_RELOAD_SCRIPT_B64"
+            emit_var CADDY_RELOAD_SERVICE_B64 "$CADDY_RELOAD_SERVICE_B64"
+            emit_var CADDY_RELOAD_TIMER_B64 "$CADDY_RELOAD_TIMER_B64"
             emit_var APP_KEY_FILE "$APP_KEY_FILE"
             emit_var PLATFORM_ENV_FILE "$PLATFORM_ENV_FILE"
             emit_var LOG_TAIL "$LOG_TAIL"
@@ -1017,6 +1027,10 @@ jobs:
           # файл рядом, с правами только для владельца.
           RUNSC_SCRIPT_B64=$(base64 -w0 deploy/scripts/install-runsc.sh)
           EGRESS_FIREWALL_B64=$(base64 -w0 deploy/scripts/egress-firewall.sh)
+          CADDY_RELOAD_INSTALL_B64=$(base64 -w0 deploy/ha/install-caddy-reload.sh)
+          CADDY_RELOAD_SCRIPT_B64=$(base64 -w0 deploy/ha/caddy-reload.sh)
+          CADDY_RELOAD_SERVICE_B64=$(base64 -w0 deploy/ha/webnestdev-caddy-reload.service)
+          CADDY_RELOAD_TIMER_B64=$(base64 -w0 deploy/ha/webnestdev-caddy-reload.timer)
           APP_KEY_FILE=""
           if [ -n "${YANDEX_SA_KEY_JSON:-}" ]; then
             APP_KEY_FILE=$(mktemp)
@@ -1033,6 +1047,10 @@ jobs:
             RUNSC_SCRIPT_B64="$RUNSC_SCRIPT_B64" RUNSC_INSTALL="$RUNSC_INSTALL" \
             RUNNER_SCRIPT_SRC="$PWD/deploy/scripts/update-runner.sh" \
             EGRESS_FIREWALL_B64="$EGRESS_FIREWALL_B64" \
+            CADDY_RELOAD_INSTALL_B64="$CADDY_RELOAD_INSTALL_B64" \
+            CADDY_RELOAD_SCRIPT_B64="$CADDY_RELOAD_SCRIPT_B64" \
+            CADDY_RELOAD_SERVICE_B64="$CADDY_RELOAD_SERVICE_B64" \
+            CADDY_RELOAD_TIMER_B64="$CADDY_RELOAD_TIMER_B64" \
             APP_KEY_FILE="$APP_KEY_FILE" PLATFORM_ENV_FILE="$PLATFORM_ENV_FILE" \
             bash deploy/scripts/vm-deploy.sh
 
