@@ -8,12 +8,11 @@
 | ВМ | Роль | Адрес | Текущее питание |
 | --- | --- | --- | --- |
 | `node-1` | production primary: API, Caddy, HAProxy, PostgreSQL primary, `node1-runner` | `10.0.0.4`, management `2.59.83.250` | `ON` |
-| `node-2` | standby/worker: PostgreSQL streaming standby, API/Caddy/broker/runner, общий storage | `10.0.0.5`; внешний NAT динамический, читать из MWS API | `ON` — включена 13.11.2026 для выкатки и проверки локального кэша |
+| `node-2` | standby/worker: PostgreSQL streaming standby, API/Caddy/broker/runner, общий storage | `10.0.0.5`; внешний NAT динамический, читать из MWS API | `OFF` — выключена 13.11.2026 по решению пользователя |
 
-**С 13.11.2026:** primary PostgreSQL — `node-1`, `node-2` включена и работает streaming
-standby (лаг 0). Обе ноды обслуживают API, runner и общий storage; NLB видит оба target'а.
-API на `node-1` ходит в локальный HAProxy `:5432`. Это двухнодовый режим, а не работа на
-одной ВМ: при падении `node-1` `node-2` должна принять трафик и базу.
+**С 13.11.2026:** primary PostgreSQL — `node-1`, `node-2` выключена. Прод временно
+обслуживается одной ВМ; NLB направляет трафик на `node-1`. Целевой production — две
+включённые ноды, поэтому это ограничение по стоимости, а не смена архитектуры.
 
 **Не включать `node-2`, пока `node-1` не жива и не является primary:** иначе контроллер
 `node-2` может повысить её и получится два primary. Включать только по явной просьбе и под
@@ -21,11 +20,12 @@ API на `node-1` ходит в локальный HAProxy `:5432`. Это дв�
 
 `node-2` — **не тестовая и не одноразовая машина**. Это вторая нода production-контура;
 её PostgreSQL, storage, runner и env-файлы — production-конфигурация, а не тестовая
-заготовка. На 13.11.2026 она включена и работает streaming standby.
+заготовка. На 13.11.2026 она выключена; при включении должна стартовать streaming
+standby, а не primary.
 
 Правило работы:
 
-1. На 13.11.2026 `node-1` — primary, `node-2` — streaming standby; обе ВМ включены.
+1. На 13.11.2026 `node-1` — primary, `node-2` — `power=OFF`; прод работает на одной ВМ.
 2. Доводить задачу до конца, не выключая работающую ВМ в середине.
 3. Перед production-запуском включить `node-2`, проверить её standby и выполнить плановый
    переезд primary на неё по [`PRODUCTION_LAUNCH.md`](PRODUCTION_LAUNCH.md).
@@ -49,10 +49,10 @@ API на `node-1` ходит в локальный HAProxy `:5432`. Это дв�
   прогресс запуска, отдельный лимит hybrid/общий бюджет ноды, static-only панель preview
   и двухминутный idle для Docker/hybrid; подробности — в разделе 20 и
   [`HYBRID_PREVIEW.md`](HYBRID_PREVIEW.md).
-- Прод работает на базе `node-1`; `node-2` — streaming standby и работает. Переключение
-  выполнялось аварийным прогоном 12.11.2026, подробности — в разделе 19.
-- NLB `webnestdev-nlb-main` — публичный ingress; DNS при переключении не меняется. Обе ноды
-  в строю; публичный `https://nestdev.ru` и `/api/ready` отвечают `200`.
+- Прод работает на базе `node-1`; `node-2` выключена. Переключение выполнялось аварийным
+  прогоном 12.11.2026, подробности — в разделе 19.
+- NLB `webnestdev-nlb-main` — публичный ingress; DNS при переключении не меняется. Сейчас
+  трафик обслуживает `node-1`; публичный `https://nestdev.ru` и `/api/ready` отвечают `200`.
 
 ## 3. Env-файлы
 
