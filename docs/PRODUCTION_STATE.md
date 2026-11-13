@@ -40,12 +40,12 @@ API на `node-1` ходит в локальный HAProxy `:5432`. Это дв�
 
 - Публичный адрес: `https://nestdev.ru`.
 - `GET /api/ready` отвечает `ok:true`.
-- Текущая production-сборка: `a6b28ce115f2` — локальная сборка из рабочего дерева
-  13.11.2026, не коммит и не образ из GHCR.
-- Образ: `ghcr.io/misha4323223/webnestdev:sha-a6b28ce115f2` — собран на `node-1`, в GHCR
-  не публиковался; на обеих нодах закреплён в env.
-- Выкачена 13.11.2026 вручную на обе ноды; `/api/ready` и `/api/health` на node-1 и node-2
-  отдают этот build. Код включает локальный кэш зависимостей preview, hybrid fallback,
+- Текущая production-сборка: `c33e4064f2f24d1de975dfb8e48f68cfdb962a5c` — коммит
+  `c33e406` в `main`.
+- Образ: `ghcr.io/misha4323223/webnestdev:sha-c33e4064f2f2` — собран и опубликован
+  workflow `deploy` (run `43436158128`); на обеих нодах закреплён в env.
+- Выкачена 13.11.2026 штатным `deploy` через GitHub Actions на обе ноды; `/api/ready` и
+  `/api/health` на node-1 и node-2 отдают этот build. Код включает локальный кэш зависимостей preview, hybrid fallback,
   прогресс запуска, отдельный лимит hybrid/общий бюджет ноды, static-only панель preview
   и двухминутный idle для Docker/hybrid; подробности — в разделе 20 и
   [`HYBRID_PREVIEW.md`](HYBRID_PREVIEW.md).
