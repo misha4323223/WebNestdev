@@ -71,6 +71,11 @@ export function dependencyCacheMount(config: { projectId: string }): string {
   return dependencyCacheHostDir(config.projectId) + ":/workspace/node_modules";
 }
 
+/** Аргументы Docker для кэша. Без `-v` Docker принимает строку mount за образ. */
+export function dependencyCacheMountArgs(config: { projectId: string }): string[] {
+  return dependencyCacheEnabled() ? ["-v", dependencyCacheMount(config)] : [];
+}
+
 /**
  * Каталог должен существовать до `docker run`, иначе Docker создаст его от root, а
  * `npm install` внутри контейнера (uid 1000) получит EACCES. Владелец — uid контейнера,

@@ -7,6 +7,7 @@ import {
   cleanupDependencyCache,
   dependencyCacheMarkerPath,
   dependencyCacheMount,
+  dependencyCacheMountArgs,
   dependencyEnsureCommand,
   dependencyLockHash,
   ensureDependencyCacheLocal,
@@ -22,6 +23,13 @@ test("mount points the project's local node_modules at /workspace/node_modules",
     dependencyCacheMount({ projectId: "project-a" }),
     path.join(root, "project-a") + ":/workspace/node_modules",
   );
+});
+
+test("the mount is passed to Docker with its -v flag", () => {
+  assert.deepEqual(dependencyCacheMountArgs({ projectId: "project-a" }), [
+    "-v",
+    path.join(root, "project-a") + ":/workspace/node_modules",
+  ]);
 });
 
 test("the install command checks the local marker and only installs on a miss", async () => {

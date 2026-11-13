@@ -5,7 +5,7 @@ import { withSandboxSlot } from "./sandbox/sandbox-limiter.js";
 import { openProjectForSandbox } from "./sandbox/permissions.js";
 import type { SandboxConfig } from "./sandbox-manager.js";
 import { previewSecretMounts } from "./secrets/preview-secrets.js";
-import { dependencyCacheEnabled, dependencyCacheMount, ensureDependencyCache } from "./preview/dependency-cache.js";
+import { dependencyCacheMountArgs, ensureDependencyCache } from "./preview/dependency-cache.js";
 export type CommandResult = DockerCommandResult;
 // Existing callers import the option type from this module; keep that public surface stable.
 export type { SandboxRunOptions } from "./sandbox/host.js";
@@ -27,7 +27,7 @@ export async function runInSandbox(config:SandboxConfig,command:string,cwd:strin
   // Локальный `node_modules` живёт на ноде выполнения, вне общего workspace. Каталог
   // создаётся здесь, до Docker: иначе демон создаст его от root, и uid 1000 не сможет
   // поставить в него ни один пакет.
-  const cacheMounts = dependencyCacheEnabled() ? [dependencyCacheMount(config)] : [];
+  const cacheMounts = dependencyCacheMountArgs(config);
   if (cacheMounts.length) await ensureDependencyCache(host, config.projectId);
   const extraMounts = [...cacheMounts, ...(options.extraMounts ?? [])];
   // Ждать в очереди тоже надо с сигналом: иначе остановленный запуск ещё минуту держал бы

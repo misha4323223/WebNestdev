@@ -15,7 +15,7 @@ import { PREVIEW_APP_PORT, PREVIEW_KIND_LABEL, PREVIEW_LABEL, type PreviewState 
 import { previewSecretMounts } from "../secrets/preview-secrets.js";
 import { egressProxyEnv } from "../egress/config.js";
 import { setPreviewStartProgress } from "./preview-start-progress.js";
-import { dependencyCacheEnabled, dependencyCacheMount, ensureDependencyCache } from "./dependency-cache.js";
+import { dependencyCacheEnabled, dependencyCacheMountArgs, ensureDependencyCache } from "./dependency-cache.js";
 
 const READY_ATTEMPTS=30;
 const READY_DELAY_MS=500;
@@ -92,7 +92,7 @@ export function previewProcessArgs(input: {
     // Путь хоста, а не сервера: docker разбирает его до контейнера (см. sandbox/config.ts).
     "-v", workspaceMountSource(config) + ":/workspace",
     // Локальный `node_modules` ноды: установка и dev-сервер не пишут дерево пакетов в Gluster.
-    ...(dependencyCacheEnabled() ? ["-v", dependencyCacheMount(config)] : []),
+    ...dependencyCacheMountArgs(config),
     ...secretMounts,
     "-w", "/workspace",
     "-e", "HOME=/tmp",
