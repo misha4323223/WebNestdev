@@ -40,14 +40,17 @@ standby, а не primary.
 
 - Публичный адрес: `https://nestdev.ru`.
 - `GET /api/ready` отвечает `ok:true`.
-- Текущая production-сборка: `c33e4064f2f24d1de975dfb8e48f68cfdb962a5c` — коммит
-  `c33e406` в `main`.
-- Образ: `ghcr.io/misha4323223/webnestdev:sha-c33e4064f2f2` — собран и опубликован
-  workflow `deploy` (run `43436158128`); на обеих нодах закреплён в env.
-- Выкачена 13.11.2026 штатным `deploy` через GitHub Actions на обе ноды; `/api/ready` и
-  `/api/health` на node-1 и node-2 отдают этот build. Код включает локальный кэш зависимостей preview, hybrid fallback,
-  прогресс запуска, отдельный лимит hybrid/общий бюджет ноды, static-only панель preview
-  и двухминутный idle для Docker/hybrid; подробности — в разделе 20 и
+- Текущая production-сборка: `55522a0126a39510c929d8b87959dbb1b053127f` — коммит
+  `55522a0` в `main`.
+- Образ: `ghcr.io/misha4323223/webnestdev:sha-55522a0126a3` — собран и опубликован
+  workflow `deploy` (run `43441847699`).
+- Выкачена 13.11.2026 на `node-1`. `node-2` была выключена, и workflow её пропустил: на ней
+  остаётся предыдущий образ `sha-c33e4064f2f2` до следующего включения и выкатки.
+- Исправление: локальный кэш зависимостей передаётся Docker с флагом `-v`; без него
+  установка падала с `invalid reference format`. Флаг проверен на живой установке
+  зависимостей проекта `9ad6af70…` на `node-1`. Код также включает hybrid fallback,
+  отдельный лимит hybrid/общий бюджет ноды, static-only панель preview и двухминутный
+  idle для Docker/hybrid; подробности — в разделе 20 и
   [`HYBRID_PREVIEW.md`](HYBRID_PREVIEW.md).
 - Прод работает на базе `node-1`; `node-2` выключена. Переключение выполнялось аварийным
   прогоном 12.11.2026, подробности — в разделе 19.
