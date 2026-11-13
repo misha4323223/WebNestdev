@@ -33,7 +33,8 @@ if [ -f "$COMPOSE_OVERRIDE" ]; then
   COMPOSE_FILES+=(-f "$COMPOSE_OVERRIDE")
 fi
 
-if ! compose ps -q "$CADDY_SERVICE" >/dev/null 2>&1 || [ -z "$(compose ps -q "$CADDY_SERVICE" 2>/dev/null)" ]; then
+if ! docker compose "${COMPOSE_FILES[@]}" ps -q "$CADDY_SERVICE" >/dev/null 2>&1 \
+    || [ -z "$(docker compose "${COMPOSE_FILES[@]}" ps -q "$CADDY_SERVICE" 2>/dev/null)" ]; then
   log "контейнер $CADDY_SERVICE не запущен — reload отложен"
   exit 0
 fi
