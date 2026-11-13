@@ -9,6 +9,8 @@ process.env.WEBNESTDEV_SANDBOX_DIR = root;
 process.env.WEBNESTDEV_SANDBOX_HOST_DIR = root;
 process.env.WEBNESTDEV_NODE_ID = "runner-test";
 process.env.SANDBOX_IMAGE = "node:22-bookworm";
+process.env.WEBNESTDEV_PREVIEW_CACHE_DIR = path.join(root, "preview-cache");
+process.env.WEBNESTDEV_PREVIEW_CACHE_HOST_DIR = path.join(root, "preview-cache");
 
 const { buildSandboxConfig } = await import("../sandbox/config.js");
 const { dockerRunArgs } = await import("../sandbox/docker/args.js");
@@ -18,6 +20,8 @@ const { assertDockerArgsAllowed, RunnerPolicyError } = await import("./policy.js
 const project = path.join(root, "project");
 const config = buildSandboxConfig("project", project);
 await mkdir(project, { recursive: true });
+const cacheProject = path.join(root, "preview-cache", "project");
+await mkdir(path.join(cacheProject, "node_modules"), { recursive: true });
 
 function baseArgs() {
   return dockerRunArgs(config, project, dockerOptions(config), "npm test");
@@ -55,6 +59,12 @@ test("privileged escape hatches are refused", async () => {
 test("only project mounts are accepted", async () => {
   await rejects(withFlags(["-v", "/etc:/workspace/etc:ro"]), /только внутрь|каталог/);
   await rejects(withFlags(["-v", project + ":/etc:ro"]), /внутрь \/workspace/);
+});
+
+test("the local dependency cache is accepted only at /workspace/node_modules and writable", async () => {
+  await assert.doesNotReject(assertDockerArgsAllowed(withFlags(["-v", cacheProject + ":/workspace/node_modules"])));
+  await rejects(withFlags(["-v", cacheProject + ":/workspace/source"]), /только в \/workspace\/node_modules/);
+  await rejects(withFlags(["-v", cacheProject + ":/workspace/node_modules:ro"]), /на запись/);
 });
 
 test("the remaining preview and job operations stay available", async () => {

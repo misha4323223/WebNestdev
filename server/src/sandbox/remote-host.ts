@@ -218,6 +218,16 @@ export function createRemoteSandboxHost(input: { id: string; address: string; to
         ...(typeof value.path === "string" ? { path: value.path } : {}),
       };
     },
+    async ensureDependencyCache(projectId: string) {
+      const value = asRecord(await requestJson("/v1/dependency-cache/ensure", { projectId }, 15_000));
+      if (value.ok !== true) {
+        throw new RemoteRunnerError("Runner не создал локальный кэш зависимостей", 502, "RUNNER_BAD_RESPONSE");
+      }
+      return {
+        ok: true,
+        ...(typeof value.path === "string" ? { path: value.path } : {}),
+      };
+    },
     async networks() {
       const current = await status();
       return {

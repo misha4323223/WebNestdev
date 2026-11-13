@@ -1,6 +1,7 @@
 import { realpath } from "node:fs/promises";
 import path from "node:path";
 import { sandboxHostRootDir, sandboxImage, sandboxRootDir } from "../sandbox/config.js";
+import { dependencyCacheHostRoot, dependencyCacheRoot } from "../preview/dependency-cache.js";
 
 /**
  * Docker is a root-level capability. The API builds the preview/job arguments, but a runner
@@ -61,20 +62,45 @@ function assertPreviewNetwork(value: string) {
   return value;
 }
 
-function assertInsideSharedWorkspace(source: string) {
+function inside(root: string, candidate: string) {
+  const normalizedRoot = path.resolve(root);
+  const normalized = path.resolve(candidate);
+  return normalized === normalizedRoot || normalized.startsWith(normalizedRoot + path.sep);
+}
+
+function workspaceRoots() {
+  return [...new Set([sandboxRootDir(), sandboxHostRootDir()].map(value => path.resolve(value)))];
+}
+
+function dependencyCacheRoots() {
+  return [...new Set([dependencyCacheRoot(), dependencyCacheHostRoot()].map(value => path.resolve(value)))];
+}
+
+/**
+ * Монтирование либо из общего workspace, либо из локального кэша зависимостей. Второй
+ * разрешён только в одну точку и только на запись: это `node_modules`, а не произвольный
+ * путь ноды.
+ */
+function mountKind(source: string, target: string, mode: string | undefined) {
   if (!path.isAbsolute(source)) reject("Источник монтирования должен быть абсолютным путём");
-  const roots = [...new Set([sandboxRootDir(), sandboxHostRootDir()].map(value => path.resolve(value)))];
-  const resolved = path.resolve(source);
-  if (!roots.some(root => resolved === root || resolved.startsWith(root + path.sep))) {
-    reject("Монтировать можно только каталог своего проекта");
+  // Сначала кэш: если его ошибочно настроили внутри песочницы, ограничения кэша всё равно
+  // должны действовать, а не растворяться в общем правиле workspace.
+  if (dependencyCacheRoots().some(root => inside(root, source))) {
+    if (target !== "/workspace/node_modules") {
+      reject("Локальный кэш зависимостей можно монтировать только в /workspace/node_modules");
+    }
+    if (mode === "ro") reject("Локальный кэш зависимостей должен быть доступен на запись");
+    return "cache" as const;
   }
+  if (workspaceRoots().some(root => inside(root, source))) return "workspace" as const;
+  reject("Монтировать можно только каталог своего проекта или локальный кэш зависимостей");
 }
 
 async function assertMount(value: string) {
   const parts = value.split(":");
   if (parts.length < 2 || parts.length > 3) reject("Некорректное описание монтирования");
   const [source, target, mode] = parts;
-  assertInsideSharedWorkspace(source);
+  const kind = mountKind(source, target, mode);
   if (target !== "/workspace" && !target.startsWith("/workspace/")) {
     reject("Монтирование разрешено только внутрь /workspace");
   }
@@ -86,9 +112,11 @@ async function assertMount(value: string) {
   // lexical prefix.
   try {
     const real = await realpath(source);
-    const roots = [...new Set([sandboxRootDir(), sandboxHostRootDir()].map(item => path.resolve(item)))];
-    if (!roots.some(root => real === root || real.startsWith(root + path.sep))) {
-      reject("Символическая ссылка ведёт за пределы каталога песочниц");
+    const roots = kind === "cache" ? dependencyCacheRoots() : workspaceRoots();
+    if (!roots.some(root => inside(root, real))) {
+      reject(kind === "cache"
+        ? "Символическая ссылка ведёт за пределы локального кэша зависимостей"
+        : "Символическая ссылка ведёт за пределы каталога песочниц");
     }
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") {

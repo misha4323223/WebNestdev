@@ -12,6 +12,8 @@ const policy = {
   runtime: "docker",
   sandboxRoot: "/var/lib/webnestdev/sandboxes",
   realRoot: "/var/lib/webnestdev/sandboxes",
+  previewCacheRoot: "/var/lib/webnestdev/preview-cache",
+  realPreviewCacheRoot: "/var/lib/webnestdev/preview-cache",
   // В тестах путей на диске нет: реальный путь совпадает со строкой. Проверка самого realpath —
   // отдельным тестом ниже, с подставным резолвером.
   realpath: value => value,
@@ -193,6 +195,23 @@ test("create с сетью предпросмотра и монтировани�
     ],
   });
   assert.deepEqual(validateCreate(body, policy), { ok: true });
+});
+
+test("локальный кэш node_modules разрешён только в /workspace/node_modules и только rw", () => {
+  const cache = withHost({
+    Binds: ["/var/lib/webnestdev/preview-cache/proj-1:/workspace/node_modules"],
+  });
+  assert.deepEqual(validateCreate(cache, policy), { ok: true });
+
+  const wrongTarget = withHost({
+    Binds: ["/var/lib/webnestdev/preview-cache/proj-1:/workspace/source"],
+  });
+  assert.equal(validateCreate(wrongTarget, policy).ok, false);
+
+  const readOnly = withHost({
+    Binds: ["/var/lib/webnestdev/preview-cache/proj-1:/workspace/node_modules:ro"],
+  });
+  assert.equal(validateCreate(readOnly, policy).ok, false);
 });
 
 test("NetworkingConfig той же разрешённой сети проходит: так CLI присылает --network", () => {

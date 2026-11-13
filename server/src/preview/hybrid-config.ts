@@ -43,6 +43,8 @@ export type HybridConfig = {
   backendPort: number;
   /** Non-secret environment values for the backend process. */
   backendEnv: Record<string, string>;
+  /** What to do when hybrid cannot start. Default is `auto`: fall back only for an architecture mismatch. */
+  fallback?: "auto" | "none" | "container";
 };
 
 export type HybridConfigRead =
@@ -93,8 +95,18 @@ function scriptsOf(pkg: PackageJson): Record<string, string> {
  * Validate the common hybrid contract used by both package.json.preview and the local profile.
  * Keeping one validator means the server cannot accept a profile the agent could not write.
  */
-export function validateHybridPreview(root: string, preview: unknown, scripts: Record<string, string>): HybridConfigRead {
+export function validateHybridPreview(
+  root: string,
+  preview: unknown,
+  scripts: Record<string, string>,
+): HybridConfigRead {
   if (!isObject(preview) || preview.mode !== "hybrid") return { kind: "absent" };
+
+  const fallbackValue = preview.fallback;
+  if (fallbackValue !== undefined && fallbackValue !== "auto" && fallbackValue !== "none" && fallbackValue !== "container") {
+    return { kind: "invalid", reason: "preview.fallback должен быть auto, none или container." };
+  }
+  const fallback = fallbackValue === "container" ? "container" : fallbackValue === "none" ? "none" : "auto";
 
   const backend = preview.backend;
   if (typeof backend !== "string" || !backend.trim()) {
@@ -169,6 +181,7 @@ export function validateHybridPreview(root: string, preview: unknown, scripts: R
       backendPaths,
       backendPort,
       backendEnv,
+      fallback,
     },
   };
 }
@@ -237,6 +250,7 @@ export async function writePreviewProfile(
     backendPaths: config.backendPaths,
     backendPort: config.backendPort,
     backendEnv: config.backendEnv,
+    fallback: config.fallback,
   }, scriptsOf(packageRead.pkg));
   if (checked.kind !== "configured") {
     throw new Error(checked.kind === "invalid" ? checked.reason : "Hybrid-профиль не прошёл проверку контракта.");
@@ -253,6 +267,7 @@ export async function writePreviewProfile(
     backendPaths: checked.config.backendPaths,
     backendPort: checked.config.backendPort,
     backendEnv: checked.config.backendEnv,
+    fallback: checked.config.fallback,
     savedBy,
     savedAt: new Date().toISOString(),
     evidence: evidence

@@ -8,6 +8,7 @@ import { ensureProjectDependencies } from "./dependencies.js";
 import { runStaticBuild,staticBuildLog } from "./static-build.js";
 import { localPreviewOwnerAddress } from "./preview-owner.js";
 import { nodeId } from "../nodes/identity.js";
+import { setPreviewStartProgress } from "./preview-start-progress.js";
 import type { PreviewStatus } from "./types.js";
 
 /**
@@ -93,10 +94,12 @@ export async function startStaticPreview(config:SandboxConfig):Promise<StaticSta
   let log="";
   let marker=previous?.builtAt??0;
   if(needsBuild){
+    setPreviewStartProgress(config.projectId,"building","Собираем проект…");
     // Зависимости — до сборки: у только что созданного проекта их нет, и `npm run build` падал
     // бы на отсутствующем `vite`, а предпросмотр — сразу за ним (см. dependencies.ts).
     const dependencies=await ensureProjectDependencies(config);
     if(!dependencies.ok)return {ok:false,reason:dependencies.reason};
+    setPreviewStartProgress(config.projectId,"building","Собираем проект…");
     const result=await runStaticBuild(config);
     if(!("ok" in result))return {ok:false,reason:result.reason};
     log=dependencies.log?dependencies.log+"\n"+staticBuildLog(result):staticBuildLog(result);
@@ -106,6 +109,7 @@ export async function startStaticPreview(config:SandboxConfig):Promise<StaticSta
     return {ok:false,reason:(needsBuild?"сборка не создала ":"нет ")+relative(plan.dir,config.root)+"/index.html"};
   }
 
+  setPreviewStartProgress(config.projectId,"starting","Запускаем статический сервер…");
   const listener=await listenStatic(plan.dir);
   const run:StaticRun={server:listener.app,dir:plan.dir,port:listener.port,log,builtAt:marker,startedAt:Date.now(),instant:!plan.build,config};
   runs.set(config.projectId,run);

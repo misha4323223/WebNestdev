@@ -33,7 +33,7 @@
 
 ### Локальный профиль платформы
 
-`package.json.preview` остаётся высшим приоритетом и единственным способом, которым пользователь может явно выбрать режим. Если его нет, сервер и агент используют один консервативный детектор:
+`package.json.preview` остаётся высшим приоритетом, если проект сам объявляет контракт. Если его нет, сервер и агент используют один консервативный детектор и пишут локальный профиль:
 
 - в корне есть `package.json` и `scripts.build`;
 - есть готовый `dist/`/`build/`/`out/` с `index.html` **или** известный статический framework (Vite, Astro, CRA, SvelteKit и т. п.);
@@ -41,7 +41,14 @@
 - в исходниках есть хотя бы один реальный backend-префикс (`/api`, `/ws`, `/graphql`, `/trpc`, `/socket.io`);
 - проект не использует whole-app framework вроде Next/Nuxt/Remix без явного контракта.
 
-При совпадении сервер пишет только `.webnestdev/preview.json` (атомарно, с evidence) — при импорте GitHub, GitLab, GitVerse и SourceCraft, а также при первом `preview.start`, если профиля не было. Профиль не попадает в git: `.webnestdev/` исключён и в `.git/info/exclude`, и в `.gitignore`; `package.json` пользователя не меняется. Если hybrid не собрался или не поднялся, `auto` откатывается на обычный container preview, а при `PREVIEW_MODE=hybrid` возвращает понятную ошибку. Удаление `.webnestdev/preview.json` — способ сбросить автопрофиль и вернуться к static/container.
+При совпадении сервер пишет только `.webnestdev/preview.json` (атомарно, с evidence) — при импорте GitHub, GitLab, GitVerse и SourceCraft, а также при первом `preview.start`, если профиля не было. Профиль не попадает в git: `.webnestdev/` исключён и в `.git/info/exclude`, и в `.gitignore`; `package.json` пользователя не меняется. Если hybrid не собрался или не поднялся:
+
+- по умолчанию `fallback` равен `auto`: временный сбой (сеть, npm, Docker) возвращает ошибку и **не** подменяет hybrid dev-контейнером; архитектурное несоответствие (hybrid собрался, но backend/static не подходит проекту) может один раз откатиться в обычный container preview;
+- `"fallback": "none"` запрещает откат полностью;
+- `"fallback": "container"` возвращает старое поведение — откат при любой ошибке hybrid;
+- настройка живёт в `.webnestdev/preview.json` (или в `package.json.preview`, если проект сам объявляет контракт); `PREVIEW_MODE=hybrid` остаётся строгим для всего хоста.
+
+Удаление `.webnestdev/preview.json` — способ сбросить автопрофиль и вернуться к static/container.
 
 ### Будущая загрузка файлом/архивом
 
@@ -86,6 +93,21 @@ index.html / assets         +-- WebSocket
 - Публичный адрес, билеты, `ownerAddress`, WebSocket и cross-replica forwarding переиспользуются.
 - Hybrid занимает место в runtime-лимите, а не в static-лимите.
 - `docker exec` fallback для hybrid запрещён: он не даёт WebSocket и скрывает сломанный listener.
+
+### Локальный `node_modules` для hybrid
+
+Hybrid читает контракт из `package.json.preview` проекта (или из `.webnestdev/preview.json`) и
+использует тот же локальный кэш зависимостей, что container и static preview:
+
+- `npm install` выполняется в контейнере с `-v <локальный кэш>/<project>:/workspace/node_modules`;
+- frontend-сборка и backend-контейнер видят один и тот же локальный `node_modules`;
+- Gluster хранит только исходники, `dist` и служебные файлы проекта;
+- кэш каждой ноды отдельный: после переезда проекта зависимости один раз установятся заново;
+- кэши, к которым не обращались больше 30 дней, удаляются фоновым уборщиком
+  (`WEBNESTDEV_PREVIEW_CACHE_TTL_DAYS`).
+
+Это важно именно для hybrid: без общего mount backend собирался бы с одним деревом зависимостей,
+а frontend — с другим, и расхождение версий выглядело бы ошибкой приложения.
 
 ## 3. Этапы
 
@@ -147,7 +169,7 @@ index.html / assets         +-- WebSocket
 
 ### Этап 6. Интеграция
 
-- [x] `PREVIEW_MODE=hybrid` и fallback в `auto`.
+- [x] `PREVIEW_MODE=hybrid`; `auto` откатывается только при архитектурном несоответствии, временные сбои ошибку не маскируют.
 - [x] Hybrid считается runtime-предпросмотром в limiter и reservation.
 - [x] `preview-adopt` не принимает hybrid-backend за container.
 - [x] `preview-reset` закрывает listeners.
@@ -177,8 +199,9 @@ index.html / assets         +-- WebSocket
 5. `/api` никогда не отдаёт `index.html` при ошибке backend.
 6. Повторный запуск переиспользует живой preview, а не создаёт второй контейнер.
 7. Stop, idle и reset закрывают listener и удаляют backend.
-8. Hybrid учитывается в per-user и host runtime-лимитах.
-9. Ошибка hybrid в `auto` убирает остатки и не ломает fallback в container.
+8. Hybrid учитывается в per-user и host runtime-лимитах; его build и backend используют локальный
+   `node_modules`, а не Gluster.
+9. Ошибка hybrid в `auto`: временный сбой убирает остатки и возвращает ошибку; архитектурное несоответствие может откатиться в container; `fallback="none"` запрещает откат, `fallback="container"` разрешает его всегда.
 10. Старые static и container preview проходят свои тесты.
 11. Typecheck сервера и frontend проходит.
 

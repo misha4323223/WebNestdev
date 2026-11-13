@@ -22,6 +22,12 @@ import { recordPreviewStart } from "./preview/preview-metrics.js";
 import { PREVIEW_LABEL, type PreviewStatus } from "./preview/types.js";
 import { clearPreviewSecrets } from "./secrets/preview-secrets.js";
 import { recordStorageMutation } from "./account/storage-quota.js";
+import {
+  beginPreviewStart,
+  clearPreviewStartProgress,
+  getPreviewStartProgress,
+  previewStartProgressLog,
+} from "./preview/preview-start-progress.js";
 
 export type { PreviewState, PreviewStatus } from "./preview/types.js";
 
@@ -58,6 +64,7 @@ export function setPreviewStartDepsForTests(overrides: Partial<PreviewStartDeps>
 export async function startPreview(config: SandboxConfig) {
   const startedAt = Date.now();
   let ok = false;
+  beginPreviewStart(config.projectId);
   try {
     const status = await startPreviewWithFallback(config);
     ok = true;
@@ -70,6 +77,7 @@ export async function startPreview(config: SandboxConfig) {
     console.error("[preview] не удалось запустить предпросмотр: проект " + config.projectId + " — " + describeError(error));
     throw error;
   } finally {
+    clearPreviewStartProgress(config.projectId);
     recordPreviewStart(config.node ?? nodeId(), Date.now() - startedAt, ok);
     // Запуск предпросмотра — это ещё и запись: он ставит зависимости и собирает `dist`.
     // Счётчик квоты обязан увидеть это сразу, иначе пользователь видит старый размер, хотя
@@ -114,10 +122,15 @@ export async function startPreviewWithFallback(config: SandboxConfig) {
   if (hybrid.kind === "configured" && setting !== "static" && setting !== "container") {
     const result = await previewStartDeps.startHybrid(config);
     if (result.ok) return result.status;
-    if (setting === "hybrid") throw new Error(result.reason);
+    // Never downgrade a transient failure (network, npm install, Docker daemon): a dev container
+    // cannot repair it and would hide the real reason. Only an incompatibility may use the safe
+    // container preview, and the local profile can force or disable that policy explicitly.
+    const fallback = hybrid.config.fallback ?? "auto";
+    const shouldFallback = fallback === "container" || (fallback === "auto" && result.failure === "incompatible");
+    if (setting === "hybrid" || !shouldFallback) throw new Error(result.reason);
     // A broken hybrid must not leave a backend behind; startHybridPreview cleans it up before
-    // returning. The ordinary container preview remains the safe fallback for node-runtime apps.
-    console.log("[preview] проект " + config.projectId + ": hybrid не подошёл (" + result.reason + ") — поднимаю dev-сервер");
+    // returning. This branch is reached only for an architecture mismatch or an explicit opt-in.
+    console.log("[preview] проект " + config.projectId + ": hybrid не подошёл (" + result.reason + ") — поднимаю dev-сервер (fallback=" + fallback + ")");
     return previewStartDeps.startContainer(config, "hybrid не подошёл: " + result.reason);
   }
   if (setting === "hybrid") {
@@ -278,6 +291,7 @@ export async function touchPreviewAnywhere(projectId: string) {
 export async function stopPreview(projectId: string) {
   // Остановка закрывает и незавершённый старт: иначе бронь переживёт контейнер и следующий
   // запуск снова упрётся в «уже запускается».
+  clearPreviewStartProgress(projectId);
   await clearPreviewReservation(projectId);
   const current = await hydratePreview(projectId);
   if (!current) {
@@ -306,13 +320,15 @@ export async function stopPreview(projectId: string) {
  * preview, the build output for a static one (nothing runs that could produce more).
  */
 export async function previewLogs(projectId: string) {
+  const progress = getPreviewStartProgress(projectId);
+  const starting = progress ? previewStartProgressLog(projectId) : "";
   const current = await hydratePreview(projectId);
-  if (!current) return { running: false, logs: "" };
+  if (!current) return { running: false, logs: starting, ...(progress ? { starting: progress } : {}) };
 
   if (current.mode === "static") {
     // Somebody is reading the logs, so the preview is in use.
     touchPreview(projectId);
-    return { running: true, logs: staticPreviewLogs(projectId) };
+    return { running: true, logs: [starting, staticPreviewLogs(projectId)].filter(Boolean).join("\n\n") };
   }
 
   if (current.mode === "hybrid") {
@@ -324,7 +340,7 @@ export async function previewLogs(projectId: string) {
     }
     return {
       running: true,
-      logs: [hybridPreviewLogs(projectId), backend.logs].filter(Boolean).join("\n\n"),
+      logs: [starting, hybridPreviewLogs(projectId), backend.logs].filter(Boolean).join("\n\n"),
     };
   }
 
@@ -339,7 +355,7 @@ export async function previewLogs(projectId: string) {
   }
   // Somebody is reading the logs, so the preview is in use.
   touchPreview(projectId);
-  return { running: true, logs: result.logs };
+  return { running: true, logs: [starting, result.logs].filter(Boolean).join("\n\n") };
 }
 
 /**
@@ -408,7 +424,7 @@ export async function reapRemotePreviews() {
   return { stopped };
 }
 
-export async function previewStatus(projectId: string): Promise<PreviewStatus> {
+async function readPreviewStatus(projectId: string): Promise<PreviewStatus> {
   const current = await hydratePreview(projectId);
   if (!current) {
     // A listener in this process is the truth even when its registry row was lost. Without this
@@ -589,4 +605,14 @@ export async function previewStatus(projectId: string): Promise<PreviewStatus> {
           : { hint: "Приложение отвечает внутри контейнера, но недоступно по адресу контейнера: платформа пробует подключить его к сети сервера и пробросить порт — обновите статус; если подсказка осталась, задайте PREVIEW_NETWORK." }
         : { hint: "Приложение ещё запускается: первый старт dev-сервера занимает несколько секунд." }),
   };
+}
+
+/**
+ * Статус для панели: к обычному состоянию добавляется короткая телеметрия текущего запуска.
+ * Она нужна именно тогда, когда работающего preview ещё нет, и без неё кнопка выглядела зависшей.
+ */
+export async function previewStatus(projectId: string): Promise<PreviewStatus> {
+  const status = await readPreviewStatus(projectId);
+  const starting = getPreviewStartProgress(projectId);
+  return starting ? { ...status, starting } : status;
 }

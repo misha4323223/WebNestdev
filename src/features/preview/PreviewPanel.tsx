@@ -1,7 +1,7 @@
-import { Check, Copy, ExternalLink, Monitor, MousePointerClick, Palette, RefreshCw, ScrollText, Smartphone, Square, Tablet, Terminal, X, ZoomIn, ZoomOut } from "lucide-react";
+import { Check, Copy, ExternalLink, Loader2, Monitor, MousePointerClick, Palette, RefreshCw, ScrollText, Smartphone, Square, Tablet, Terminal, X, ZoomIn, ZoomOut } from "lucide-react";
 import { useCallback,useEffect,useMemo,useRef,useState } from "react";
 import { getPreviewLogs,getPreviewStatus,requestPreviewTicket,startPreview,stopPreview,touchPreview } from "../../lib/project-api";
-import type { PreviewState } from "../../lib/types";
+import type { PreviewStartProgress, PreviewState } from "../../lib/types";
 import { composeAgentDraft } from "../../lib/agent-compose";
 import { elementPickPrompt, type PickedElement } from "../../lib/element-pick";
 import { Hint } from "../../components/Hint";
@@ -22,6 +22,13 @@ const DEVICES:Record<Device,{label:string;width:number;height:number}> = {
   phone:{label:"Телефон",width:390,height:844},
 };
 const deviceKey="webnestdev.previewDevice";
+const START_STEPS:{phase:PreviewStartProgress["phase"];label:string}[] = [
+  {phase:"checking",label:"Проверка"},
+  {phase:"installing",label:"Зависимости"},
+  {phase:"building",label:"Сборка"},
+  {phase:"starting",label:"Запуск"},
+  {phase:"waiting",label:"Ответ"},
+];
 
 /**
  * Адрес живого превью. Слэш в конце обязателен: без него относительные ссылки приложения
@@ -52,6 +59,9 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
   const [face,setFace]=useState<Face>("preview");
   const [logs,setLogs]=useState("");
   const [error,setError]=useState("");
+  // Клик по «Запустить» сразу включает индикатор: сам POST /preview/start ждёт установку
+  // зависимостей и сборку, и до ответа в панели не было ни одного видимого изменения.
+  const [starting,setStarting]=useState(false);
   const [logsError,setLogsError]=useState("");
   const [loadingLogs,setLoadingLogs]=useState(false);
   // Панель темы — слой поверх кадра: палитра открывается из строки устройств и закрывается
@@ -166,8 +176,13 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
   // Ждём и подтверждения адреса (`settled`), а не только ответа приложения: на первом запуске
   // dev-сервер отвечает позже, чем контейнер начинает считать себя живым.
   const previewReady=Boolean(preview.running&&preview.ready===true&&(preview.settled===true||preview.viaExec===true));
+  const startProgress=preview.starting;
+  const startingNow=starting||Boolean(startProgress);
+  const showStarting=startingNow&&!previewReady;
+  // Пока идёт старт, статус перечитывается чаще обычного ожидания: на первом запуске сервер
+  // проходит установку и сборку, и панель должна показывать актуальный этап, а не только спиннер.
   useEffect(()=>{
-    if(!preview.running||previewReady)return;
+    if(!startingNow&&(!preview.running||previewReady))return;
     let cancelled=false;
     const timer=window.setInterval(()=>{
       void getPreviewStatus(projectId)
@@ -175,11 +190,12 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
           if(cancelled)return;
           setPreview(next);
           if(next.running&&next.ready!==false&&(next.settled!==false||next.viaExec))setFrameToken(value=>value+1);
+          if(next.running&&next.ready===true&&(next.settled!==false||next.viaExec))setStarting(false);
         })
         .catch(()=>undefined);
-    },2200);
+    },1500);
     return ()=>{cancelled=true;window.clearInterval(timer)}
-  },[projectId,preview.running,previewReady]);
+  },[projectId,preview.running,previewReady,startingNow]);
 
   const loadLogs=useCallback(async()=>{
     setLoadingLogs(true);setLogsError("");
@@ -189,7 +205,7 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
       // Логи читаются каждые четыре секунды, а статус — только при открытии проекта и после прогона
       // агента. Контейнер, который к этому моменту завершился или исчез, иначе оставлял панель
       // «запущенной»: кнопка «Остановить» вместо «Запустить», пустой кадр и ошибка запуска.
-      if(!result.running)setPreview({running:false});
+      if(!result.running)setPreview(result.starting?{running:false,starting:result.starting}:{running:false});
     }
     catch(e){setLogsError(e instanceof Error?e.message:"Не удалось получить логи")}
     finally{setLoadingLogs(false)}
@@ -213,9 +229,11 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
   useEffect(()=>{
     if(face!=="logs")return;
     void loadLogs();
-    const timer=setInterval(()=>void loadLogs(),4000);
+    // During the long first start the log line is the progress itself: poll it as often as the
+    // status, not every four seconds like ordinary dev-server output.
+    const timer=setInterval(()=>void loadLogs(),startingNow?1500:4000);
     return ()=>clearInterval(timer);
-  },[face,loadLogs]);
+  },[face,loadLogs,startingNow]);
 
   // On a phone the panel is a drawer, and every other overlay here closes on Escape.
   useEffect(()=>{
@@ -234,18 +252,24 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
   useEffect(()=>{onRunningChange?.(Boolean(preview.running))},[preview.running,onRunningChange]);
 
   async function start(){
+    if(starting)return;
     setError("");
+    setStarting(true);
+    setLogs("");
     try{
       const next=await startPreview(projectId);
       setPreview(next);
       // Если сервер ответил «уже запускается», кадр не ждёт ручного обновления: эффект выше
       // сам дочитает статус до готовности и перезагрузит его один раз.
       if(next.running&&next.ready!==false)setFrameToken(value=>value+1);
+      // Контейнер уже создан, но приложение ещё отвечает: оставляем индикатор до готовности.
+      if(!next.running||next.ready!==false)setStarting(false);
     }
-    catch(e){setError(e instanceof Error?e.message:"Не удалось запустить предпросмотр")}
+    catch(e){setStarting(false);setError(e instanceof Error?e.message:"Не удалось запустить предпросмотр")}
   }
   async function stop(){
     setError("");
+    setStarting(false);
     try{await stopPreview(projectId);setPreview({running:false})}
     catch(e){setError(e instanceof Error?e.message:"Не удалось остановить предпросмотр")}
   }
@@ -306,7 +330,7 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
         {face==="preview"
           ? <>
               {preview.running&&<button className={"icon-button preview-pick-btn"+(picking?" active":"")} onClick={()=>{setPicked(null);setPicking(value=>!value);setThemeOpen(false)}} aria-pressed={picking} title={crossOrigin?"Выбрать элемент в приложении (публичный адрес панель не читает — работает через мост)":"Выбрать элемент для правки"} aria-label="Выбрать элемент"><MousePointerClick size={14}/></button>}
-              {preview.running?<button className="icon-button" onClick={()=>void stop()} title="Остановить"><Square size={14}/></button>:<button className="icon-button" onClick={()=>void start()} title="Запустить"><Terminal size={14}/></button>}
+              {preview.running?<button className="icon-button" onClick={()=>void stop()} title="Остановить"><Square size={14}/></button>:<button className="icon-button" onClick={()=>void start()} disabled={startingNow} title={startingNow?"Предпросмотр запускается":"Запустить"}>{startingNow?<Loader2 className="preview-spin" size={14}/>:<Terminal size={14}/>}</button>}
               <button className="icon-button" onClick={()=>void refresh()} title="Обновить"><RefreshCw size={14}/></button>
               {preview.running&&<a className="icon-button" href={previewAddress(projectId,publicLink)} target="_blank" rel="noreferrer" title="Открыть"><ExternalLink size={14}/></a>}
             </>
@@ -366,7 +390,9 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
     <div className="preview-body">
       <div className={"preview-stage"+(face==="logs"?" flipped":"")}>
         <div className="preview-face preview-front">
-          {preview.running
+          {showStarting
+            ? <StartProgress progress={startProgress}/>
+            : preview.running
             ? import.meta.env.PROD && !preview.publicUrl
               // В production кадр с адреса панели отдал бы код проекта на том же origin, где лежит
               // сессия: он смог бы читать её API и DOM. Сервер такую дверь закрывает (503), а панель
@@ -382,16 +408,16 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
                   <iframe key={reloadToken+"-"+frameToken+publicLink+"-"+device} ref={frameRef} className="preview-frame" title="Живой предпросмотр" src={previewAddress(projectId,publicLink)}/>
                 </div>}
               </div>
-            : <div className="preview-empty"><div className="preview-icon"><Terminal size={20}/></div><strong>Предпросмотр проекта</strong><span>Посмотрите, как выглядит ваш сайт.</span><button className="ghost-button" onClick={()=>void start()}>Запустить предпросмотр</button></div>}
+            : <div className="preview-empty"><div className="preview-icon"><Terminal size={20}/></div><strong>Предпросмотр проекта</strong><span>Посмотрите, как выглядит ваш сайт.</span><button className="ghost-button" onClick={()=>void start()} disabled={startingNow}>Запустить предпросмотр</button></div>}
         </div>
         <div className="preview-face preview-back">
           <div className="preview-logs-head">
-            <span className={preview.running?"preview-logs-live":"preview-logs-idle"}>{preview.running?"Предпросмотр запущен":"Предпросмотр остановлен"}</span>
-            <small>{loadingLogs?"обновляем…":"обновление каждые 4 секунды"}</small>
+            <span className={preview.running||startingNow?"preview-logs-live":"preview-logs-idle"}>{preview.running?"Предпросмотр запущен":startingNow?"Запускаем предпросмотр…":"Предпросмотр остановлен"}</span>
+            <small>{loadingLogs?"обновляем…":startingNow?"обновление каждые 1,5 секунды":"обновление каждые 4 секунды"}</small>
           </div>
           {logsError&&<div className="preview-error preview-logs-error">{logsError}</div>}
-          <pre className="preview-logs">{logs||(preview.running?"Пока нет вывода. Логи появятся, когда приложение что-нибудь напишет.":"Запустите предпросмотр, чтобы увидеть логи запуска.")}</pre>
-          {!preview.running&&<div className="preview-logs-actions"><button className="ghost-button" onClick={()=>void start()}>Запустить предпросмотр</button></div>}
+          <pre className="preview-logs">{logs||(startingNow?"Ждём первый вывод запуска…\n\nУстановка зависимостей и сборка могут занять несколько минут.":preview.running?"Пока нет вывода. Логи появятся, когда приложение что-нибудь напишет.":"Запустите предпросмотр, чтобы увидеть логи запуска.")}</pre>
+          {!preview.running&&<div className="preview-logs-actions"><button className="ghost-button" onClick={()=>void start()} disabled={startingNow}>{startingNow?"Запускается…":"Запустить предпросмотр"}</button></div>}
         </div>
       </div>
     </div>
@@ -400,4 +426,21 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
     {themeOpen&&<ThemePanel projectId={projectId} onClose={()=>setThemeOpen(false)} onApplied={()=>window.setTimeout(()=>setFrameToken(value=>value+1),260)}/>}
   </aside>
   </>;
+}
+
+/**
+ * Экран запуска вместо пустого кадра: человек видит, на каком этапе сейчас preview, а не
+ * решает, что кнопка не сработала, и не жмёт её второй раз.
+ */
+function StartProgress({progress}:{progress?:PreviewStartProgress}){
+  const activeIndex=progress?START_STEPS.findIndex(step=>step.phase===progress.phase):-1;
+  return <div className="preview-starting" role="status" aria-live="polite">
+    <div className="preview-starting-icon"><Loader2 className="preview-spin" size={20}/></div>
+    <strong>{progress?.message??"Запускаем предпросмотр…"}</strong>
+    <span>{progress?.detail??"Это может занять до нескольких минут: зависимости, сборка и первый ответ приложения."}</span>
+    <div className="preview-start-steps" aria-hidden="true">
+      {START_STEPS.map((step,index)=><span key={step.phase} className={"preview-step"+(index<activeIndex?" done":"")+(index===activeIndex?" active":"")}>{step.label}</span>)}
+    </div>
+    <div className="preview-start-track" aria-hidden="true"><span/></div>
+  </div>;
 }

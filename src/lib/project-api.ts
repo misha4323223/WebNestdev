@@ -190,7 +190,7 @@ export const saveProjectTheme=(projectId:string,tokens:Record<string,string>)=>a
 export const getPreviewStatus=(projectId:string)=>apiJson<PreviewState>("/api/projects/"+projectId+"/preview/status");
 export const startPreview=(projectId:string)=>apiJson<PreviewState>("/api/projects/"+projectId+"/preview/start",{method:"POST"});
 export const stopPreview=(projectId:string)=>apiJson<{stopped:boolean}>("/api/projects/"+projectId+"/preview/stop",{method:"POST"});
-export const getPreviewLogs=(projectId:string)=>apiJson<{running:boolean;logs:string}>("/api/projects/"+projectId+"/preview/logs");
+export const getPreviewLogs=(projectId:string)=>apiJson<{running:boolean;logs:string;starting?:PreviewState["starting"]}>("/api/projects/"+projectId+"/preview/logs");
 /**
  * Билет на публичный адрес предпросмотра: адрес открывается в отдельной вкладке без cookie панели,
  * поэтому панель просит ссылку с билетом — она живёт ограниченное время и открывает один проект.

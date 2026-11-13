@@ -5,6 +5,7 @@ import { withSandboxSlot } from "./sandbox/sandbox-limiter.js";
 import { openProjectForSandbox } from "./sandbox/permissions.js";
 import type { SandboxConfig } from "./sandbox-manager.js";
 import { previewSecretMounts } from "./secrets/preview-secrets.js";
+import { dependencyCacheEnabled, dependencyCacheMount, ensureDependencyCache } from "./preview/dependency-cache.js";
 export type CommandResult = DockerCommandResult;
 // Existing callers import the option type from this module; keep that public surface stable.
 export type { SandboxRunOptions } from "./sandbox/host.js";
@@ -23,10 +24,16 @@ export async function runInSandbox(config:SandboxConfig,command:string,cwd:strin
   // The project is pinned to a node. Resolve before taking a slot: a missing runner must not
   // queue work that can never execute, and there is deliberately no fallback to the API host.
   const host=await resolveSandboxHost(config.node||nodeId());
+  // Локальный `node_modules` живёт на ноде выполнения, вне общего workspace. Каталог
+  // создаётся здесь, до Docker: иначе демон создаст его от root, и uid 1000 не сможет
+  // поставить в него ни один пакет.
+  const cacheMounts = dependencyCacheEnabled() ? [dependencyCacheMount(config)] : [];
+  if (cacheMounts.length) await ensureDependencyCache(host, config.projectId);
+  const extraMounts = [...cacheMounts, ...(options.extraMounts ?? [])];
   // Ждать в очереди тоже надо с сигналом: иначе остановленный запуск ещё минуту держал бы
   // место, а потом всё равно стартовал контейнер ради немедленной отмены.
   if (!options.injectSecretEnvFile) {
-    return withSandboxSlot(()=>host.runCommand(config,command,cwd,options),{signal:options.signal,userId:config.userId});
+    return withSandboxSlot(()=>host.runCommand(config,command,cwd,{...options,extraMounts}),{signal:options.signal,userId:config.userId});
   }
 
   // Секреты сборки живут вне проекта: файл создаётся перед запуском и удаляется после него.
@@ -37,7 +44,7 @@ export async function runInSandbox(config:SandboxConfig,command:string,cwd:strin
     return await withSandboxSlot(
       () => host.runCommand(config, command, cwd, {
         ...options,
-        extraMounts: [...(options.extraMounts ?? []), ...injection.mounts],
+        extraMounts: [...extraMounts, ...injection.mounts],
       }),
       { signal: options.signal, userId: config.userId },
     );

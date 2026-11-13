@@ -4,6 +4,7 @@ import { runDockerSandbox, sandboxStatus } from "../docker-sandbox.js";
 import { runDockerCli } from "./docker/cli.js";
 import type { DockerCliResult, DockerCommandResult } from "./docker/types.js";
 import type { SandboxHost, SandboxHostStatus, SandboxRunOptions } from "./host.js";
+import { ensureDependencyCacheLocal } from "../preview/dependency-cache.js";
 
 type LocalSandboxHostDeps = {
   status?: () => Promise<SandboxHostStatus>;
@@ -31,6 +32,10 @@ export function createLocalSandboxHost(deps: LocalSandboxHostDeps = {}): Sandbox
     status: () => status(),
     runCommand: (config, command, cwd, options = {}) => run(config, command, cwd, options),
     docker: (args, timeoutMs) => docker(args, timeoutMs),
+    async ensureDependencyCache(projectId: string) {
+      const cachePath = await ensureDependencyCacheLocal(projectId);
+      return { ok: true, path: cachePath };
+    },
   };
 }
 

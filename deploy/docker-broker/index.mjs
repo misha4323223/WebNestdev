@@ -10,6 +10,7 @@
  *   BROKER_SOCKET      — где слушать (по умолчанию /run/webnestdev-docker/docker.sock);
  *   BROKER_UPSTREAM    — настоящий сокет демона (по умолчанию /var/run/docker.sock);
  *   BROKER_SANDBOX_ROOT— каталог, внутри которого разрешены монтирования;
+ *   BROKER_PREVIEW_CACHE_ROOT — локальный кэш node_modules (только в /workspace/node_modules);
  *   BROKER_IMAGE       — единственный образ, который разрешено запускать;
  *   BROKER_RUNTIME      — единственный разрешённый HostConfig.Runtime (docker|runsc);
  *   PREVIEW_NETWORK    — явно заданная сеть предпросмотра (если имя не кончается на preview);
@@ -23,6 +24,7 @@ import { createBrokerServer } from "./proxy.mjs";
 const socketPath = process.env.BROKER_SOCKET?.trim() || "/run/webnestdev-docker/docker.sock";
 const upstreamPath = process.env.BROKER_UPSTREAM?.trim() || "/var/run/docker.sock";
 const sandboxRoot = path.posix.resolve(process.env.BROKER_SANDBOX_ROOT?.trim() || "/var/lib/webnestdev/sandboxes");
+const previewCacheRoot = path.posix.resolve(process.env.BROKER_PREVIEW_CACHE_ROOT?.trim() || "/var/lib/webnestdev/preview-cache");
 const image = (process.env.BROKER_IMAGE?.trim() || process.env.SANDBOX_IMAGE?.trim() || "node:26-bookworm");
 const previewNetwork = process.env.PREVIEW_NETWORK?.trim() || "";
 const runtime = (process.env.BROKER_RUNTIME?.trim() || process.env.SANDBOX_RUNTIME?.trim() || "docker").toLowerCase();
@@ -51,6 +53,8 @@ const policy = {
   runtime,
   sandboxRoot,
   realRoot: realRootOf(sandboxRoot),
+  previewCacheRoot,
+  realPreviewCacheRoot: realRootOf(previewCacheRoot),
   realpath: source => fs.realpathSync(source),
   // То же правило, что у сервера (preview/preview-network.ts): явное имя оператора или сеть,
   // имя которой кончается на preview. Сеть базы (`…db`) под это правило не подходит.
@@ -98,6 +102,7 @@ server.listen(socketPath, () => {
     "[broker] сокет " + socketPath + " (" + (Number.isFinite(socketMode) ? socketMode.toString(8) : "660") +
     ", gid " + (Number.isFinite(socketGid) ? socketGid : "1000") + ")" +
     ", демон " + upstreamPath + ", образ " + image + ", песочницы " + sandboxRoot +
+    ", кэш зависимостей " + previewCacheRoot +
     ", runtime " + runtime +
     (previewNetwork ? ", сеть предпросмотра " + previewNetwork : ""),
   );

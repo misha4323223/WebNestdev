@@ -91,6 +91,9 @@ services:
       BROKER_SOCKET: /run/webnestdev-docker/docker.sock
       BROKER_UPSTREAM: /var/run/docker.sock
       BROKER_SANDBOX_ROOT: ${SANDBOX_DIR:-/var/lib/webnestdev/sandboxes}
+      # Локальный node_modules: политика разрешает его только в /workspace/node_modules и
+      # только на запись. Каталог не общий — на каждой ноде свой.
+      BROKER_PREVIEW_CACHE_ROOT: ${PREVIEW_CACHE_DIR:-/var/lib/webnestdev/preview-cache}
       BROKER_IMAGE: ${SANDBOX_IMAGE:-node:26-bookworm}
       # Единственный Runtime, который политика разрешает в create. Пустое/`docker` — контейнеры
       # идут на runc; `runsc` — gVisor. Значение должно совпадать с SANDBOX_RUNTIME сервера:
@@ -113,6 +116,8 @@ services:
       # Только чтение: брокер разрешает символические ссылки в путях монтирования и должен видеть
       # те же файлы, что и демон. Записывать ему туда нечего.
       - ${SANDBOX_DIR:-/var/lib/webnestdev/sandboxes}:${SANDBOX_DIR:-/var/lib/webnestdev/sandboxes}:ro
+      # Только чтение: брокеру нужно реально разрешить путь кэша, а не писать в него.
+      - ${PREVIEW_CACHE_DIR:-/var/lib/webnestdev/preview-cache}:${PREVIEW_CACHE_DIR:-/var/lib/webnestdev/preview-cache}:ro
       - docker-broker:/run/webnestdev-docker
     # Те же сети, что у сервера: `/_webnestdev/self` отдаёт серверу свои сети, и по ним выбирается
     # сеть предпросмотра. Если развести сети, предпросмотр потеряет адрес.
@@ -424,6 +429,11 @@ services:
       # Явно, а не через молчаливый фолбэк: если это значение когда-нибудь разойдётся с
       # монтированием ниже, сервер отдаст контейнерам правильный путь вместо угадывания.
       WEBNESTDEV_SANDBOX_HOST_DIR: ${SANDBOX_DIR:-/var/lib/webnestdev/sandboxes}
+      # Локальный кэш зависимостей: на каждой ноде свой, вне Gluster. Путь должен совпадать
+      # с BROKER_PREVIEW_CACHE_ROOT и с монтированием ниже — Docker разбирает его на хосте.
+      WEBNESTDEV_PREVIEW_CACHE_DIR: ${PREVIEW_CACHE_DIR:-/var/lib/webnestdev/preview-cache}
+      WEBNESTDEV_PREVIEW_CACHE_HOST_DIR: ${PREVIEW_CACHE_DIR:-/var/lib/webnestdev/preview-cache}
+      WEBNESTDEV_PREVIEW_CACHE_TTL_DAYS: ${PREVIEW_CACHE_TTL_DAYS:-30}
       # Stable identity of this execution node. Multiple machines must set different values;
       # the node registry and the archive marker read the same variable.
       WEBNESTDEV_NODE_ID: ${WEBNESTDEV_NODE_ID:-local}
@@ -556,6 +566,9 @@ services:
       # чтения; сервер пишет сюда staging/rename. Не удаляется при выкатке.
       - ${HOSTING_SITES_DIR:-/var/lib/webnestdev/sites}:/srv/sites
       - ${SANDBOX_DIR:-/var/lib/webnestdev/sandboxes}:${SANDBOX_DIR:-/var/lib/webnestdev/sandboxes}
+      # Локальный кэш node_modules на диске этой ВМ. Не общий том: после переезда проекта
+      # на другую ноду зависимости один раз установятся там.
+      - ${PREVIEW_CACHE_DIR:-/var/lib/webnestdev/preview-cache}:${PREVIEW_CACHE_DIR:-/var/lib/webnestdev/preview-cache}
       # Ключ сервисного аккаунта Yandex Cloud лежит файлом: это JSON с переносами строк,
       # в .env он неудобен и легко обрезается. Читается тем же путём внутри контейнера,
       # поэтому YANDEX_SA_KEY_FILE=/var/lib/webnestdev/secrets/yandex-sa-key.json.

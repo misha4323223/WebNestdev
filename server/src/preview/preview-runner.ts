@@ -14,6 +14,8 @@ import { flushPreviewWrites, removePreview, setPreview } from "./preview-store.j
 import { PREVIEW_APP_PORT, PREVIEW_KIND_LABEL, PREVIEW_LABEL, type PreviewState } from "./types.js";
 import { previewSecretMounts } from "../secrets/preview-secrets.js";
 import { egressProxyEnv } from "../egress/config.js";
+import { setPreviewStartProgress } from "./preview-start-progress.js";
+import { dependencyCacheEnabled, dependencyCacheMount, ensureDependencyCache } from "./dependency-cache.js";
 
 const READY_ATTEMPTS=30;
 const READY_DELAY_MS=500;
@@ -89,6 +91,8 @@ export function previewProcessArgs(input: {
     ...(options.mode === "hybrid" ? ["--label", PREVIEW_KIND_LABEL + "=hybrid"] : []),
     // Путь хоста, а не сервера: docker разбирает его до контейнера (см. sandbox/config.ts).
     "-v", workspaceMountSource(config) + ":/workspace",
+    // Локальный `node_modules` ноды: установка и dev-сервер не пишут дерево пакетов в Gluster.
+    ...(dependencyCacheEnabled() ? ["-v", dependencyCacheMount(config)] : []),
     ...secretMounts,
     "-w", "/workspace",
     "-e", "HOME=/tmp",
@@ -132,10 +136,16 @@ export async function startPreviewProcess(config: SandboxConfig, options: StartP
     ? await ensureProjectDependencies(config)
     : { ok: true as const, installed: false, log: "" };
   if (!dependencies.ok) throw new Error(dependencies.reason);
+  setPreviewStartProgress(
+    config.projectId,
+    "starting",
+    options.mode === "hybrid" ? "Запускаем backend…" : "Запускаем контейнер предпросмотра…",
+  );
   const image = sandboxImage();
   // The preview belongs to the project's node. Resolve it before any Docker call: a missing
   // runner must be a clear error, not a container silently started on the API machine.
   const host = await resolveSandboxHost(config.node || nodeId());
+  if (dependencyCacheEnabled()) await ensureDependencyCache(host, config.projectId);
   const docker = (args: string[], timeoutMs?: number) => host.docker(args, timeoutMs);
   const networks = host.networks ? await host.networks() : await previewNetworks(docker);
   const network = networks.preview;
@@ -177,6 +187,11 @@ export async function startPreviewProcess(config: SandboxConfig, options: StartP
   // The door of the container's node can serve a preview after an API move; hybrid overwrites
   // this with the API process's own door because its listener lives there.
   const ownerAddress = await previewOwnerAddressForNode(config.node);
+  setPreviewStartProgress(
+    config.projectId,
+    "waiting",
+    options.mode === "hybrid" ? "Ждём ответа backend…" : "Ждём ответа приложения…",
+  );
   const state: PreviewState = {
     mode: "container",
     containerId,

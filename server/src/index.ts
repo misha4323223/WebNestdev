@@ -7,6 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { initializeStorage, closeStorage, describeStorage, assertStorageConfigured } from "./storage/ydb.js";
 import { reapOrphanPreviews, reapRemotePreviews } from "./preview-manager.js";
+import { startDependencyCacheCleanup } from "./preview/dependency-cache.js";
 import { startPreviewSweeper } from "./preview/idle-sweep.js";
 import { describePreviewMode } from "./preview/static-preview.js";
 import { describePreviewHostServer, startPreviewHostServer, stopPreviewHostServer } from "./preview/preview-host-server.js";
@@ -501,6 +502,9 @@ void reapOrphanPreviews()
 void reapRemotePreviews()
   .then(result => { if (result.stopped) app.log.info({ stopped: result.stopped }, "stopped orphan preview containers on remote nodes"); })
   .catch(error => app.log.warn({ error: error instanceof Error ? error.message : error }, "remote preview reap skipped"));
+// Локальные кэши node_modules не должны расти годами. Уборщик обходит только каталоги
+// зависимостей этой ноды и удаляет те, к которым не обращались дольше TTL (по умолчанию 30 дней).
+startDependencyCacheCleanup(message => app.log.info(message));
 // Долгие задания принадлежат контейнерам, а не процессу: после перезапуска прочитать их уже
 // никто не сможет, поэтому они снимаются на старте — как и контейнеры предпросмотра.
 //

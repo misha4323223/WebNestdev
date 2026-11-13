@@ -78,17 +78,18 @@ test("без package.json ставить нечего", async t => {
   assert.deepEqual(result, { ok: true, installed: false, log: "" });
 });
 
-test("проект с готовыми зависимостями не платит установкой", async t => {
+test("совпавший маркер локального кэша не запускает npm install повторно", async t => {
   const root = await project({
     "package.json": JSON.stringify({ dependencies: { vite: "^8.0.0" } }),
     "node_modules/vite/index.js": "",
   });
   t.after(() => rm(root, { recursive: true, force: true }));
 
-  const { calls, run } = recorder();
+  const { calls, run } = recorder({ ok: true, stdout: "webnestdev-deps: cached" });
   const result = await ensureProjectDependencies(config(root), run);
   assert.deepEqual(result, { ok: true, installed: false, log: "" });
-  assert.equal(calls.length, 0);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].command, /webnestdev-deps: cached/);
 });
 
 test("установка идёт с сетью — как npm.install, и её вывод попадает в лог предпросмотра", async t => {
@@ -100,12 +101,35 @@ test("установка идёт с сетью — как npm.install, и её 
   assert.equal(result.ok, true);
   assert.equal(result.ok ? result.installed : false, true);
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].command, "npm install --no-audit --no-fund");
+  assert.match(calls[0].command, /npm install --no-audit --no-fund/);
+  assert.match(calls[0].command, /webnestdev-deps/);
   assert.equal(calls[0].cwd, root);
   // Сеть включается только для установки: остальные команды песочницы остаются без неё.
   assert.equal(calls[0].network, "bridge");
-  assert.match(result.ok ? result.log : "", /vite, react/);
+  assert.match(result.ok ? result.log : "", /локальный кэш ноды/);
   assert.match(result.ok ? result.log : "", /added 120 packages/);
+});
+
+test("изменение package.json меняет хэш и заставляет установить заново", async t => {
+  const root = await project({ "package.json": JSON.stringify({ dependencies: { vite: "^8.0.0" } }) });
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  const first = recorder({ ok: true, stdout: "webnestdev-deps: installed" });
+  await ensureProjectDependencies(config(root), first.run);
+  await writeFile(path.join(root, "package.json"), JSON.stringify({ dependencies: { vite: "^9.0.0" } }));
+  const second = recorder({ ok: true, stdout: "webnestdev-deps: installed" });
+  await ensureProjectDependencies(config(root), second.run);
+  assert.notEqual(first.calls[0].command, second.calls[0].command);
+});
+
+test("установка пишет маркер только после успешного npm install", async t => {
+  const root = await project({ "package.json": JSON.stringify({ dependencies: { vite: "^8.0.0" } }) });
+  t.after(() => rm(root, { recursive: true, force: true }));
+
+  const failing = recorder({ ok: false, stdout: "", stderr: "npm ERR! network" });
+  const result = await ensureProjectDependencies(config(root), failing.run);
+  assert.equal(result.ok, false);
+  assert.match(failing.calls[0].command, /npm install --no-audit --no-fund && mkdir -p node_modules && printf/);
 });
 
 test("неудачная установка — это причина, а не молчаливый запуск без зависимостей", async t => {

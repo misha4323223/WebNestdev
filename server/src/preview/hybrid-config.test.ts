@@ -42,9 +42,39 @@ test("hybrid config is explicit and resolves npm scripts", async () => {
       backendPaths: ["/api", "/ws"],
       backendPort: 3100,
       backendEnv: { NODE_ENV: "production" },
+      fallback: "auto",
     });
   } finally {
     await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("fallback is explicit, defaults to auto and accepts none/container", async () => {
+  const autoRoot = await project(packageWith({ mode: "hybrid", backend: "start:preview-api" }));
+  const noneRoot = await project(packageWith({ mode: "hybrid", backend: "start:preview-api", fallback: "none" }));
+  const containerRoot = await project(packageWith({ mode: "hybrid", backend: "start:preview-api", fallback: "container" }));
+  const brokenRoot = await project(packageWith({ mode: "hybrid", backend: "start:preview-api", fallback: "dev" }));
+  try {
+    const auto = await readHybridConfig(autoRoot);
+    assert.equal(auto.kind, "configured");
+    if (auto.kind === "configured") assert.equal(auto.config.fallback, "auto");
+
+    const none = await readHybridConfig(noneRoot);
+    assert.equal(none.kind, "configured");
+    if (none.kind === "configured") assert.equal(none.config.fallback, "none");
+
+    const container = await readHybridConfig(containerRoot);
+    assert.equal(container.kind, "configured");
+    if (container.kind === "configured") assert.equal(container.config.fallback, "container");
+
+    const broken = await readHybridConfig(brokenRoot);
+    assert.equal(broken.kind, "invalid");
+    if (broken.kind === "invalid") assert.match(broken.reason, /fallback/);
+  } finally {
+    await rm(autoRoot, { recursive: true, force: true });
+    await rm(noneRoot, { recursive: true, force: true });
+    await rm(containerRoot, { recursive: true, force: true });
+    await rm(brokenRoot, { recursive: true, force: true });
   }
 });
 
@@ -113,7 +143,10 @@ test("the platform profile supplies a hybrid config without touching package.jso
     }, ["source src/client.ts содержит /api"]);
     const result = await readHybridConfig(root);
     assert.equal(result.kind, "configured");
-    if (result.kind === "configured") assert.equal(result.config.backendScript, "start:preview-api");
+    if (result.kind === "configured") {
+      assert.equal(result.config.backendScript, "start:preview-api");
+      assert.equal(result.config.fallback, "auto");
+    }
     assert.equal(await readFile(path.join(root, "package.json"), "utf8"), packageBefore);
     assert.ok(await readFile(path.join(root, PREVIEW_PROFILE_PATH), "utf8"));
   } finally {

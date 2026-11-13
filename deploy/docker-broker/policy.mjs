@@ -208,8 +208,19 @@ function checkBind(policy, source, target, readOnly) {
   if (normalizedSource.includes("/../") || normalizedSource.endsWith("/..")) {
     return "монтирование с «..» запрещено: " + source;
   }
-  if (!isInside(policy.sandboxRoot, normalizedSource)) {
-    return "монтировать можно только каталог песочниц, а не " + source;
+  const cacheRoot = policy.previewCacheRoot ? String(policy.previewCacheRoot).replace(/\/+$/, "") : "";
+  const inWorkspace = isInside(policy.sandboxRoot, normalizedSource);
+  const inCache = Boolean(cacheRoot) && isInside(cacheRoot, normalizedSource);
+  if (!inWorkspace && !inCache) {
+    return "монтировать можно только каталог песочниц или локальный кэш зависимостей, а не " + source;
+  }
+  if (inCache) {
+    if (target !== "/workspace/node_modules") {
+      return "локальный кэш зависимостей можно монтировать только в /workspace/node_modules: " + source;
+    }
+    if (readOnly !== false) {
+      return "локальный кэш зависимостей должен монтироваться на запись: " + source;
+    }
   }
   let real = normalizedSource;
   if (typeof policy.realpath === "function") {
@@ -221,8 +232,13 @@ function checkBind(policy, source, target, readOnly) {
       return "источник монтирования не существует: " + source;
     }
   }
-  if (!isInside(policy.realRoot ?? policy.sandboxRoot, real)) {
-    return "источник монтирования ведёт за пределы каталога песочниц: " + source;
+  const realRoot = inCache
+    ? (policy.realPreviewCacheRoot ?? policy.previewCacheRoot)
+    : (policy.realRoot ?? policy.sandboxRoot);
+  if (!isInside(realRoot, real)) {
+    return inCache
+      ? "источник монтирования ведёт за пределы локального кэша зависимостей: " + source
+      : "источник монтирования ведёт за пределы каталога песочниц: " + source;
   }
   if (typeof target !== "string" || !(target === "/workspace" || target.startsWith("/workspace/"))) {
     return "точка монтирования должна быть внутри /workspace: " + String(target);

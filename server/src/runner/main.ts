@@ -4,6 +4,7 @@ import { runDockerCli } from "../sandbox/docker/cli.js";
 import { PREVIEW_LABEL } from "../preview/types.js";
 import { createPreviewRelayManager } from "./preview-relay.js";
 import { createRunnerServer } from "./server.js";
+import { startDependencyCacheCleanup } from "../preview/dependency-cache.js";
 
 const token = process.env.RUNNER_TOKEN?.trim() ?? "";
 if (token.length < 32) {
@@ -33,6 +34,9 @@ server.listen({ host: bind, port }, () => {
       " workspace=" + sandboxRootDir() + " hostWorkspace=" + sandboxHostRootDir(),
   );
   void reapRunnerContainers();
+  // Удалённая нода тоже хранит локальные node_modules; их уборка должна идти на ней,
+  // а не на API, где этого диска нет.
+  startDependencyCacheCleanup(message => console.log(message));
 });
 
 /**

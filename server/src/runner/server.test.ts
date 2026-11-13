@@ -9,6 +9,8 @@ process.env.WEBNESTDEV_SANDBOX_DIR = root;
 process.env.WEBNESTDEV_SANDBOX_HOST_DIR = root;
 process.env.WEBNESTDEV_NODE_ID = "runner-a";
 process.env.SANDBOX_IMAGE = "node:22-bookworm";
+process.env.WEBNESTDEV_PREVIEW_CACHE_DIR = path.join(root, "preview-cache");
+process.env.WEBNESTDEV_PREVIEW_CACHE_HOST_DIR = path.join(root, "preview-cache");
 
 const { createRunnerServer } = await import("./server.js");
 const { createRemoteSandboxHost, RemoteRunnerError } = await import("../sandbox/remote-host.js");
@@ -128,6 +130,14 @@ test("the runner creates a project workspace that the API can see", async () => 
   assert.equal(created?.ok, true);
   assert.equal(created?.path, path.join(root, id));
   assert.equal((await stat(path.join(root, id))).isDirectory(), true);
+});
+
+test("the runner creates the local dependency cache on its own disk", async () => {
+  const id = "cache-project";
+  const created = await host.ensureDependencyCache?.(id);
+  assert.equal(created?.ok, true);
+  assert.equal(created?.path, path.join(root, "preview-cache", id));
+  assert.equal((await stat(path.join(root, "preview-cache", id, "node_modules"))).isDirectory(), true);
 });
 
 test.after(async () => {

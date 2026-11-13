@@ -13,6 +13,18 @@ set -eu
 # NFS workspace on every runner restart is expensive and can change ownership behind the API.
 if [ "${WEBNESTDEV_RUNNER:-0}" = "1" ]; then
   echo "[entrypoint] режим runner: платформенные данные не подготавливаются"
+  # Локальный кэш node_modules нужен и runner'у. Каталог создаётся до Docker, чтобы
+  # контейнер uid 1000 не получил root-owned источник монтирования.
+  runner_cache="${WEBNESTDEV_PREVIEW_CACHE_DIR:-/var/lib/webnestdev/preview-cache}"
+  case "$runner_cache" in
+    ""|"/") echo "[entrypoint] небезопасный WEBNESTDEV_PREVIEW_CACHE_DIR=$runner_cache" >&2; exit 1 ;;
+    /*) ;;
+    *) echo "[entrypoint] WEBNESTDEV_PREVIEW_CACHE_DIR должен быть абсолютным: $runner_cache" >&2; exit 1 ;;
+  esac
+  if [ "$(id -u)" = "0" ]; then
+    mkdir -p "$runner_cache"
+    chown -h "${WEBNESTDEV_UID:-1000}:${WEBNESTDEV_GID:-1000}" "$runner_cache" 2>/dev/null || true
+  fi
   exec "$@"
 fi
 
@@ -20,6 +32,9 @@ uid="${WEBNESTDEV_UID:-1000}"
 gid="${WEBNESTDEV_GID:-1000}"
 data="${WEBNESTDEV_DATA_DIR:-/app/.webnestdev}"
 sandbox="${WEBNESTDEV_SANDBOX_DIR:-$data/sandboxes}"
+# Локальный кэш node_modules. По умолчанию внутри данных сервера; в production compose
+# задаёт отдельный каталог на диске ВМ, чтобы кэш не попадал в общий Gluster.
+preview_cache="${WEBNESTDEV_PREVIEW_CACHE_DIR:-$data/preview-cache}"
 # Релизы статических сайтов. Caddy монтирует этот же путь read-only; сервер обязан писать сюда
 # от uid 1000, иначе первая публикация падает на EACCES после успешной сборки.
 hosting="${WEBNESTDEV_SITES_DIR:-/srv/sites}"
@@ -47,6 +62,19 @@ case "$sandbox" in
   ""|"/") echo "[entrypoint] небезопасный WEBNESTDEV_SANDBOX_DIR=$sandbox" >&2; exit 1 ;;
   /*) ;;
   *) echo "[entrypoint] WEBNESTDEV_SANDBOX_DIR должен быть абсолютным: $sandbox" >&2; exit 1 ;;
+esac
+case "$preview_cache" in
+  ""|"/") echo "[entrypoint] небезопасный WEBNESTDEV_PREVIEW_CACHE_DIR=$preview_cache" >&2; exit 1 ;;
+  /*) ;;
+  *) echo "[entrypoint] WEBNESTDEV_PREVIEW_CACHE_DIR должен быть абсолютным: $preview_cache" >&2; exit 1 ;;
+esac
+# Кэш обязан быть вне песочницы: иначе node_modules снова окажется на Gluster, а chown
+# каталога кэша мог бы затронуть проекты.
+case "$preview_cache" in
+  "$sandbox"|"$sandbox"/*) echo "[entrypoint] WEBNESTDEV_PREVIEW_CACHE_DIR не должен лежать внутри песочницы: $preview_cache" >&2; exit 1 ;;
+esac
+case "$sandbox" in
+  "$preview_cache"/*) echo "[entrypoint] песочница не должна лежать внутри кэша зависимостей: $sandbox" >&2; exit 1 ;;
 esac
 case "$hosting" in
   ""|"/") echo "[entrypoint] небезопасный WEBNESTDEV_SITES_DIR=$hosting" >&2; exit 1 ;;
@@ -100,6 +128,8 @@ fi
 echo "[entrypoint] подготовка томов для uid=$uid gid=$gid"
 mkdir -p "$data"
 mkdir -p "$hosting"
+mkdir -p "$preview_cache"
+chown -h "$uid:$gid" "$preview_cache" 2>/dev/null || true
 
 # Данные сервера: аккаунты, шифрованные секреты, ключи платформы, состояние алертов. Размер
 # небольшой, поэтому рекурсивный chown здесь дешевле, чем разбираться с EACCES на первом запросе.

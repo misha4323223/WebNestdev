@@ -10,6 +10,7 @@ import type { DockerCommandResult } from "../sandbox/docker/types.js";
 import { nodeId } from "../nodes/identity.js";
 import {
   runnerCommandSchema,
+  runnerDependencyCacheSchema,
   runnerDockerSchema,
   runnerRelaySchema,
   runnerWorkspaceSchema,
@@ -20,6 +21,7 @@ import {
 import { SANDBOX_GID, SANDBOX_UID } from "../sandbox/permissions.js";
 import { assertDockerArgsAllowed, assertExtraMountsAllowed, RunnerPolicyError } from "./policy.js";
 import { runnerStatus } from "./status.js";
+import { ensureDependencyCacheLocal } from "../preview/dependency-cache.js";
 import { createPreviewRelayManager, type PreviewRelayManager } from "./preview-relay.js";
 
 const DEFAULT_BODY_LIMIT = 50_000_000;
@@ -248,6 +250,15 @@ export function createRunnerServer(deps: RunnerDeps) {
           uid: info.uid,
           gid: info.gid,
         } satisfies RunnerWorkspaceResult);
+        return;
+      }
+
+      if (url.pathname === "/v1/dependency-cache/ensure") {
+        // Локальный `node_modules` вне общего workspace принадлежит ноде. Создаёт его тот,
+        // кто выполняет установку, иначе Docker создал бы каталог от root.
+        const body = runnerDependencyCacheSchema.parse(await readJson(request, 1_000));
+        const cachePath = await ensureDependencyCacheLocal(body.projectId);
+        sendJson(response, 200, { ok: true, path: cachePath });
         return;
       }
 

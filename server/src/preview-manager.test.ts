@@ -1,9 +1,10 @@
 import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { listPreviewContainerIds, previewStatus, setPreviewStartDepsForTests, startPreviewWithFallback } from "./preview-manager.js";
+import { listPreviewContainerIds, previewLogs, previewStatus, setPreviewStartDepsForTests, startPreviewWithFallback } from "./preview-manager.js";
 import { PREVIEW_LABEL, type PreviewStatus } from "./preview/types.js";
 import type { SandboxConfig } from "./sandbox-manager.js";
 import { getPreview, removePreview, setPreview } from "./preview/preview-store.js";
+import { beginPreviewStart, clearPreviewStartProgress, setPreviewStartProgress } from "./preview/preview-start-progress.js";
 import type { HybridConfig } from "./preview/hybrid-config.js";
 
 const originalPreviewMode = process.env.PREVIEW_MODE;
@@ -49,6 +50,34 @@ const running: PreviewStatus = {
  * Замер времени здесь не украшение: без него проверка молча проходила бы и там, где Docker есть, —
  * `docker exec` успел бы отработать и вернуть то же самое.
  */
+test("status exposes the current preview start phase before a container exists", async () => {
+  const projectId = "manager-progress-test";
+  beginPreviewStart(projectId);
+  setPreviewStartProgress(projectId, "installing", "Устанавливаем зависимости…", "3 пакета");
+  try {
+    const status = await previewStatus(projectId);
+    assert.equal(status.running, false);
+    assert.equal(status.starting?.phase, "installing");
+    assert.equal(status.starting?.message, "Устанавливаем зависимости…");
+  } finally {
+    clearPreviewStartProgress(projectId);
+  }
+});
+
+test("logs show the start phase while there is no container yet", async () => {
+  const projectId = "manager-progress-logs-test";
+  beginPreviewStart(projectId);
+  setPreviewStartProgress(projectId, "building", "Собираем проект…");
+  try {
+    const result = await previewLogs(projectId);
+    assert.equal(result.running, false);
+    assert.match(result.logs, /Собираем проект/);
+    assert.equal(result.starting?.phase, "building");
+  } finally {
+    clearPreviewStartProgress(projectId);
+  }
+});
+
 test("a confirmed address is served without a container round-trip on every status read", async () => {
   setPreview({ mode: "container", containerId: "c1", projectId: "p1", host: "172.19.0.4", port: 5173, startedAt: 1, lastUsedAt: 1, settled: true });
   try {
@@ -123,11 +152,72 @@ test("auto lets the conservative detector choose hybrid before static", async ()
   assert.deepEqual(calls, ["detect", "hybrid"]);
 });
 
-test("auto falls back to the container when hybrid start fails, carrying the hybrid reason", async () => {
+test("auto reports a hybrid failure without a container fallback by default", async () => {
   const calls: string[] = [];
   process.env.PREVIEW_MODE = "auto";
   setPreviewStartDepsForTests({
     readHybridConfig: async () => ({ kind: "configured", config: hybridConfig }),
+    startHybrid: async () => {
+      calls.push("hybrid");
+      return { ok: false, reason: "установка зависимостей не прошла: EAI_AGAIN", failure: "transient" };
+    },
+    startContainer: async () => {
+      calls.push("container");
+      return running;
+    },
+    startStatic: async () => {
+      throw new Error("static не должен вызываться после hybrid");
+    },
+  });
+
+  await assert.rejects(() => startPreviewWithFallback(startConfig), /EAI_AGAIN/);
+  assert.deepEqual(calls, ["hybrid"]);
+});
+
+test("auto falls back only for an architectural incompatibility", async () => {
+  const calls: string[] = [];
+  process.env.PREVIEW_MODE = "auto";
+  setPreviewStartDepsForTests({
+    readHybridConfig: async () => ({ kind: "configured", config: hybridConfig }),
+    startHybrid: async () => {
+      calls.push("hybrid");
+      return { ok: false, reason: "backend не ответил", failure: "incompatible" };
+    },
+    startContainer: async (_config, reason) => {
+      calls.push("container:" + reason);
+      return running;
+    },
+  });
+
+  const status = await startPreviewWithFallback(startConfig);
+  assert.deepEqual(status, running);
+  assert.deepEqual(calls, ["hybrid", "container:hybrid не подошёл: backend не ответил"]);
+});
+
+test("fallback none keeps an incompatible hybrid as an error", async () => {
+  const calls: string[] = [];
+  process.env.PREVIEW_MODE = "auto";
+  setPreviewStartDepsForTests({
+    readHybridConfig: async () => ({ kind: "configured", config: { ...hybridConfig, fallback: "none" } }),
+    startHybrid: async () => {
+      calls.push("hybrid");
+      return { ok: false, reason: "backend не ответил", failure: "incompatible" };
+    },
+    startContainer: async () => {
+      calls.push("container");
+      return running;
+    },
+  });
+
+  await assert.rejects(() => startPreviewWithFallback(startConfig), /backend не ответил/);
+  assert.deepEqual(calls, ["hybrid"]);
+});
+
+test("a profile can explicitly opt back into the container fallback", async () => {
+  const calls: string[] = [];
+  process.env.PREVIEW_MODE = "auto";
+  setPreviewStartDepsForTests({
+    readHybridConfig: async () => ({ kind: "configured", config: { ...hybridConfig, fallback: "container" } }),
     startHybrid: async () => {
       calls.push("hybrid");
       return { ok: false, reason: "backend не ответил" };
@@ -135,9 +225,6 @@ test("auto falls back to the container when hybrid start fails, carrying the hyb
     startContainer: async (_config, reason) => {
       calls.push("container:" + reason);
       return running;
-    },
-    startStatic: async () => {
-      throw new Error("static не должен вызываться после hybrid-fallback");
     },
   });
 

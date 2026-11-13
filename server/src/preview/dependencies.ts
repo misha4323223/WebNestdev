@@ -3,6 +3,8 @@ import path from "node:path";
 import { runInSandbox, type CommandResult, type SandboxRunOptions } from "../sandbox-worker.js";
 import type { SandboxConfig } from "../sandbox-manager.js";
 import { npmInstallTimeoutMs } from "../sandbox/config.js";
+import { setPreviewStartProgress } from "./preview-start-progress.js";
+import { dependencyCacheHit, dependencyEnsureCommand, dependencyLockHash } from "./dependency-cache.js";
 
 /**
  * Зависимости проекта — до сборки и до dev-сервера.
@@ -18,7 +20,7 @@ import { npmInstallTimeoutMs } from "../sandbox/config.js";
 
 /** Источник, который не тянется из реестра: локальный путь или пакет этого же репозитория. */
 const LOCAL_PREFIXES = ["file:", "link:", "workspace:", "portal:", "."];
-/** Та же команда, что у инструмента `npm.install`: один способ установки на всю платформу. */
+/** Команда установки внутри контейнера; проверку локального кэша делает `dependencyEnsureCommand`. */
 const INSTALL_COMMAND = "npm install --no-audit --no-fund";
 /** В лог панели идёт только хвост вывода: он и есть причина, а весь вывод — это счётчик пакетов. */
 const MAX_LOG_CHARS = 4000;
@@ -79,14 +81,18 @@ export async function ensureProjectDependencies(
   run: (config: SandboxConfig, command: string, cwd: string, options: SandboxRunOptions) => Promise<CommandResult> = runInSandbox,
   runOptions: DependencyRunOptions = {},
 ): Promise<DependencyInstallResult> {
-  const missing = await missingDependencies(config.root).catch(() => null);
-  if (missing === null || missing.length === 0) return { ok: true, installed: false, log: "" };
+  // Хэш читается с общего storage (это маленькие файлы), а сама проверка и установка
+  // выполняются в контейнере с локальным `node_modules`: у удалённой ноды API не может
+  // прочитать её кэш, и устаревший Gluster-каталог не должен выглядеть установленным.
+  const hash = await dependencyLockHash(config.root).catch(() => null);
+  if (hash === null) return { ok: true, installed: false, log: "" };
 
+  setPreviewStartProgress(config.projectId, "installing", "Проверяем зависимости…");
   let result: CommandResult;
   try {
     // Lifecycle-скрипты проекта могут читать env; предпросмотр получает канонические секреты,
     // но только на время установки — файл удаляется сразу после команды.
-    result = await run(config, INSTALL_COMMAND, config.root, {
+    result = await run(config, dependencyEnsureCommand(hash), config.root, {
       network: "bridge",
       // Установка не должна упираться в общий лимит команды: большое дерево идёт минуты.
       timeoutMs: npmInstallTimeoutMs(),
@@ -97,17 +103,18 @@ export async function ensureProjectDependencies(
   } catch (error) {
     return { ok: false, reason: "не удалось установить зависимости: " + (error instanceof Error ? error.message : String(error)) };
   }
-  const log = installLog(result, missing);
   if (!result.ok) {
     return { ok: false, reason: "установка зависимостей не прошла: " + (failureLine(result) ?? "код выхода " + result.exitCode) };
   }
-  return { ok: true, installed: true, log };
+  const output = [result.stdout, result.stderr].join("\n");
+  const installed = !dependencyCacheHit(output);
+  return { ok: true, installed, log: installed ? installLog(result) : "" };
 }
 
 /** `$ npm install …` с причиной установки и последней строкой отказа, когда она не прошла. */
-function installLog(result: CommandResult, missing: string[]) {
+function installLog(result: CommandResult) {
   const output = [result.stdout, result.stderr].map(value => value.replace(/\r/g, "").trim()).filter(Boolean).join("\n");
-  const head = "$ " + INSTALL_COMMAND + (missing.length <= 6 ? " (" + missing.join(", ") + ")" : " (" + missing.length + " пакетов)");
+  const head = "$ " + INSTALL_COMMAND + " (локальный кэш ноды)";
   const body = output.length > MAX_LOG_CHARS ? output.slice(-MAX_LOG_CHARS) : output;
   return body ? head + "\n" + body : head;
 }

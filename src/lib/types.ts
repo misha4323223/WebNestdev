@@ -52,6 +52,9 @@ export type FileEntry={name:string;type:"file"|"directory"};
 /** `static` serves the built app without a dev server, so there is no hot reload. */
 /** `hybrid` serves a built frontend and proxies its API/WebSocket to a backend container. */
 export type PreviewMode="container"|"static"|"hybrid";
+/** Этапы долгого запуска: установка зависимостей, сборка, старт контейнера и ожидание ответа. */
+export type PreviewStartPhase="checking"|"installing"|"building"|"starting"|"waiting";
+export type PreviewStartProgress={phase:PreviewStartPhase;message:string;detail?:string;startedAt:number;updatedAt:number};
 /**
  * `ready` — приложение ответило внутри контейнера, `settled` — тот же адрес ответил серверу (то
  * есть панели и агенту); `hint` объясняет, чего именно не хватает. Разница видна пользователю:
@@ -59,6 +62,8 @@ export type PreviewMode="container"|"static"|"hybrid";
  * случай: адрес контейнера серверу недоступен, и приложение отдаётся панели через `docker exec`.
  */
 export type PreviewState={running:boolean;port?:number;ready?:boolean;settled?:boolean;viaExec?:boolean;mode?:PreviewMode;hint?:string;error?:string;
+/** Пока `preview.start` не завершился, здесь лежит текущий этап запуска. */
+starting?:PreviewStartProgress;
 /** Публичный адрес предпросмотра (`https://<проект>.preview.домен`), когда он настроен на сервере. */
 publicUrl?:string};
 

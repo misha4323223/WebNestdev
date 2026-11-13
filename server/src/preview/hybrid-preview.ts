@@ -15,9 +15,11 @@ import { isRuntimePreviewMode, type PreviewState, type PreviewStatus } from "./t
 import { stopStaticPreview, staticBuildSetting } from "./static-preview.js";
 import { indexFileExists, isStaticBuildFresh } from "./static-plan.js";
 import { runStaticBuild, staticBuildLog } from "./static-build.js";
+import { classifyBuildFailure, classifyStartFailure, type HybridFailureKind } from "./hybrid-failure.js";
 import { clearPreviewReservation, reservePreviewStart } from "./preview-reservation.js";
 import { decideRuntimePreviewStart, perUserPreviewLimit, runtimePreviewLimit } from "./preview-limiter.js";
 import { listPreviewsAcrossReplicas } from "./preview-store.js";
+import { setPreviewStartProgress } from "./preview-start-progress.js";
 
 /**
  * Hybrid lifecycle: build the static frontend, start the backend container, then start a listener
@@ -82,7 +84,9 @@ export function setHybridDepsForTests(overrides: Partial<HybridDeps> | null): vo
   deps = { ...defaultDeps, ...(overrides ?? {}) };
 }
 
-export type HybridStartResult = { ok: true; status: PreviewStatus } | { ok: false; reason: string };
+export type HybridStartResult =
+  | { ok: true; status: PreviewStatus }
+  | { ok: false; reason: string; failure?: HybridFailureKind };
 
 function describeError(error: unknown) {
   return error instanceof Error ? error.message : String(error);
@@ -203,7 +207,7 @@ export async function startHybridPreview(config: SandboxConfig): Promise<HybridS
   }
 
   const plan = await deps.plan(config);
-  if (!plan.ok) return plan;
+  if (!plan.ok) return { ...plan, failure: "incompatible" };
 
   const project = await getProject(config.projectId).catch(() => null);
   const userId = config.userId || project?.userId || "";
@@ -249,6 +253,7 @@ export async function startHybridPreview(config: SandboxConfig): Promise<HybridS
     if (current) await stopOtherPreview(config.projectId, true);
     await stopProjectIds(stopIds);
 
+    setPreviewStartProgress(config.projectId, "checking", "Проверяем зависимости hybrid…");
     const dependencies = await deps.ensureDependencies(config);
     if (!dependencies.ok) return { ok: false, reason: dependencies.reason };
 
@@ -260,28 +265,38 @@ export async function startHybridPreview(config: SandboxConfig): Promise<HybridS
     let log = previous?.log ?? "";
     let marker = previous?.builtAt ?? 0;
     if (needsBuild) {
+      setPreviewStartProgress(config.projectId, "building", "Собираем frontend…", "npm run " + plan.config.buildScript);
       const result = await deps.build(config, plan.config.buildScript);
-      if (!("ok" in result)) return { ok: false, reason: result.reason };
-      if (!result.ok) return { ok: false, reason: staticBuildLog(result, plan.config.buildScript) };
+      if (!("ok" in result)) return { ok: false, reason: result.reason, failure: "transient" };
+      if (!result.ok) {
+        const log = staticBuildLog(result, plan.config.buildScript);
+        return { ok: false, reason: log, failure: classifyBuildFailure(log) };
+      }
       log = (dependencies.log ? dependencies.log + "\n" : "") + staticBuildLog(result, plan.config.buildScript);
       marker = Date.now();
     }
     if (!(await indexFileExists(plan.dir))) {
-      return { ok: false, reason: "Сборка hybrid не создала " + plan.config.staticDir + "/index.html" };
+      return { ok: false, reason: "Сборка hybrid не создала " + plan.config.staticDir + "/index.html", failure: "incompatible" };
     }
 
-    started = await deps.startProcess(config, {
-      command: "npm run " + plan.config.backendScript,
-      mode: "hybrid",
-      port: plan.config.backendPort,
-      persistState: false,
-      ensureDependencies: false,
-      env: plan.config.backendEnv,
-    });
+    setPreviewStartProgress(config.projectId, "starting", "Запускаем backend…");
+    try {
+      started = await deps.startProcess(config, {
+        command: "npm run " + plan.config.backendScript,
+        mode: "hybrid",
+        port: plan.config.backendPort,
+        persistState: false,
+        ensureDependencies: false,
+        env: plan.config.backendEnv,
+      });
+    } catch (error) {
+      const reason = "Backend hybrid не запустился: " + describeError(error);
+      return { ok: false, reason, failure: classifyStartFailure(reason) };
+    }
     if (started.state.execOnly) {
       await deps.removeContainer(started.containerId, config.node);
       await deps.clearSecrets(config.projectId);
-      return { ok: false, reason: "Backend hybrid доступен только через docker exec: для API и WebSocket нужен прямой адрес." };
+      return { ok: false, reason: "Backend hybrid доступен только через docker exec: для API и WebSocket нужен прямой адрес.", failure: "incompatible" };
     }
     listener = await deps.createListener({
       dir: plan.dir,

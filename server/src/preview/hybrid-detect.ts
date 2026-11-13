@@ -15,7 +15,8 @@ import {
  * preview, where the command is already the source of truth.
  *
  * The detector is only a candidate producer. The actual start still builds the frontend, starts
- * the backend and verifies both; any failure falls back to the ordinary Docker preview in auto.
+ * the backend and verifies both. A transient failure is reported instead of silently replacing
+ * hybrid with a dev container; an architectural mismatch may use the container fallback.
  */
 
 const BACKEND_SCRIPT_NAMES = [

@@ -58,9 +58,16 @@ export type PreviewState={mode:PreviewMode;containerId:string;port:number;host:s
  * файл приложения, поэтому повторяют её не чаще `PREVIEW_EXEC_RETRY_MS` (см. preview-manager.ts).
  */execOnlyCheckedAt?:number};
 /**
+ * Что сейчас делает долгий `preview.start`: панель показывает это вместо пустого кадра и
+ * неопределённости. `phase` — машинный этап, `message` — готовая строка для человека.
+ */
+export type PreviewStartPhase="checking"|"installing"|"building"|"starting"|"waiting";
+export type PreviewStartProgress={phase:PreviewStartPhase;message:string;detail?:string;startedAt:number;updatedAt:number};
+/**
  * What the panel and the agent see: a running preview always carries its address. `settled` — этот
  * адрес подтверждён запросом самого сервера; без подтверждения панель, агент и Chromium до
  * приложения не доходят, даже когда оно отвечает внутри контейнера (`ready`).
+ * `starting` присутствует, пока идёт установка/сборка/первый ответ приложения.
  */
-export type PreviewStatus={running:false}|{running:true;ready:boolean;port:number;host:string;containerId:string;startedAt:number;mode?:PreviewMode;settled?:boolean;/** Hybrid only: backend endpoint behind the listener, for diagnostics and tests. */backendHost?:string;backendPort?:number;/** Port inside the container for the exec fallback; absent means the same as `port`. */containerPort?:number;/** Execution node that owns the container and relay. */node?:string;/** Приватная дверь, которая умеет отдать этот preview (см. PreviewState.ownerAddress). */ownerAddress?:string;/** Приложение отдаётся панели через `docker exec`: адрес контейнера серверу недоступен. */viaExec?:boolean;hint?:string};
+export type PreviewStatus=({running:false}|{running:true;ready:boolean;port:number;host:string;containerId:string;startedAt:number;mode?:PreviewMode;settled?:boolean;/** Hybrid only: backend endpoint behind the listener, for diagnostics and tests. */backendHost?:string;backendPort?:number;/** Port inside the container for the exec fallback; absent means the same as `port`. */containerPort?:number;/** Execution node that owns the container and relay. */node?:string;/** Приватная дверь, которая умеет отдать этот preview (см. PreviewState.ownerAddress). */ownerAddress?:string;/** Приложение отдаётся панели через `docker exec`: адрес контейнера серверу недоступен. */viaExec?:boolean;hint?:string})&{starting?:PreviewStartProgress};
 export type DockerExecResult={code:number;stdout:string;stderr:string};

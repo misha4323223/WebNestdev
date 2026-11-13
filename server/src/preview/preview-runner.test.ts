@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { containerVanishedMessage, previewLogsOf, previewProcessArgs, previewWatchEnv } from "./preview-runner.js";
+import { dependencyCacheMount } from "./dependency-cache.js";
 import type { SandboxConfig } from "../sandbox/sandbox-types.js";
 import type { DockerExecResult } from "./types.js";
 
@@ -50,6 +51,9 @@ test("a hybrid backend gets its own label, PORT/HOST contract and no dev-server 
   assert.ok(args.includes("--network"));
   assert.ok(args.includes("preview-net"));
   assert.ok(args.includes("/secret/.env:/workspace/.env:ro"));
+  // Hybrid backend uses the same local node_modules as the frontend build; otherwise the two
+  // halves could resolve different dependency versions.
+  assert.ok(args.includes(dependencyCacheMount(runtimeConfig)));
 });
 
 test("a container preview keeps its dev-server command shape without hybrid labels or flags", () => {
@@ -69,6 +73,32 @@ test("a container preview keeps its dev-server command shape without hybrid labe
   assert.ok(!args.includes("webnestdev.preview.kind=hybrid"));
   assert.ok(!args.some(value => value === "PORT=3000" || value === "HOST=0.0.0.0"));
   assert.deepEqual(args.slice(-4), ["sandbox-image", "/bin/sh", "-lc", "npm run dev -- --host 0.0.0.0 --port 3000"]);
+});
+
+test("the runtime mounts the node-local node_modules over the shared workspace", () => {
+  process.env.WEBNESTDEV_PREVIEW_CACHE_DIR = "/var/lib/webnestdev/preview-cache";
+  process.env.WEBNESTDEV_PREVIEW_CACHE_HOST_DIR = "/var/lib/webnestdev/preview-cache";
+  try {
+    const args = previewProcessArgs({
+      config: runtimeConfig,
+      options: {
+        command: "npm run dev",
+        mode: "container",
+        persistState: false,
+        ensureDependencies: false,
+      },
+      image: "sandbox-image",
+      network: "preview-net",
+      secretMounts: [],
+    });
+    const mount = "/var/lib/webnestdev/preview-cache/preview-runner-test:/workspace/node_modules";
+    const index = args.indexOf(mount);
+    assert.ok(index > 0);
+    assert.equal(args[index - 1], "-v");
+  } finally {
+    delete process.env.WEBNESTDEV_PREVIEW_CACHE_DIR;
+    delete process.env.WEBNESTDEV_PREVIEW_CACHE_HOST_DIR;
+  }
 });
 
 test("runsc previews poll the bind mount; runc keeps the native watcher", () => {

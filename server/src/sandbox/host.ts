@@ -88,6 +88,12 @@ export type SandboxHost = {
    * broken shared mount would leave an empty local directory the runner cannot see.
    */
   ensureWorkspace?(projectId: string): Promise<{ ok: boolean; path?: string }>;
+  /**
+   * Create the local dependency-cache directory on this node. It lives outside the shared
+   * workspace, so the API cannot create it for a remote project: Docker would create it as
+   * root and the uid-1000 install would fail with EACCES.
+   */
+  ensureDependencyCache?(projectId: string): Promise<{ ok: boolean; path?: string }>;
   /** Preview networks as they exist on this host, not on the API VM. */
   networks?(): Promise<{ preview: string; attach: string[] }>;
   /**
