@@ -30,6 +30,8 @@ import { cachedCustomDomainForTls } from "../hosting/tls-ask-cache.js";
 import { requestCustomDomainCaddyRefresh } from "../hosting/caddy-refresh.js";
 import { normalizeHostnameLookup } from "../hosting/domain-name.js";
 import { customDomainsEnabled } from "../hosting/domain-config.js";
+import { accountPlanFor } from "../billing/store.js";
+import { customDomainLimitFor } from "../account/plans.js";
 
 /**
  * API хостинга. Панель работает только с проектом, а не с внутренним id сайта: у проекта
@@ -84,14 +86,21 @@ export async function registerHostingRoutes(app: FastifyInstance) {
     const config = hostingConfig();
     const site = await getSiteByProject(params.id);
     const releases = site ? await listReleases(site.id, config.limits.keepReleases + 10) : [];
-    const domains = site && site.userId === auth.user.id && customDomainsEnabled()
+    const domainFeature = customDomainsEnabled();
+    const domains = site && site.userId === auth.user.id && domainFeature
       ? (await domainsForSite(site.id)).map(publicCustomDomain)
       : [];
+    // Панель показывает тарифный gate до попытки подключения. Лимит считается по группам
+    // (apex + www — один домен), поэтому одного числа достаточно.
+    const domainLimit = domainFeature && site && site.userId === auth.user.id
+      ? customDomainLimitFor(await accountPlanFor(auth.user.id))
+      : 0;
     return {
       enabled: config.enabled,
       domain: config.publicDomain,
       tlsMode: config.tlsMode,
       limits: config.limits,
+      customDomains: { enabled: domainFeature, limit: domainLimit },
       domains,
       site: site && site.userId === auth.user.id ? publicSite(site, true) : null,
       releases: site && site.userId === auth.user.id

@@ -7,6 +7,7 @@ import {
   createHosting, deleteHosting, getHosting, getHostingReleaseLog, publishHosting,
   rollbackHosting, unpublishHosting, updateHostingSlug, type HostingRelease, type HostingState,
 } from "../../lib/hosting-api";
+import { CustomDomainCard } from "./CustomDomainCard";
 
 /**
  * Вкладка «Хостинг». Сайт — не процесс: после публикации файлы лежат на диске и отдаются
@@ -245,6 +246,12 @@ export function HostingPanel({ projectId }: { projectId: string }) {
             <button className="ghost-button danger" onClick={remove} disabled={Boolean(busy)}><Trash2 size={13}/> Удалить сайт</button>
           </div>
         </div>
+
+        {state?.customDomains?.enabled ? <CustomDomainCard
+          projectId={projectId}
+          enabled={state.customDomains.enabled}
+          limit={state.customDomains.limit}
+        /> : null}
 
         {state?.releases.length ? <div className="hosting-releases">
           <div className="hosting-section-head"><strong>История публикаций</strong><span>{state.releases.length} из {state.limits.keepReleases} хранимых</span></div>

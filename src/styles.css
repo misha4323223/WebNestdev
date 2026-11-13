@@ -3660,6 +3660,52 @@ button,textarea{font:inherit}button{color:inherit}
 .hosting-slug-editor .ghost-button{height:34px;display:inline-flex;align-items:center;gap:5px;padding:0 10px}
 .hosting-slug-editor .icon-button{height:34px;width:34px}
 .hosting-edit-address{display:inline-flex;align-items:center;gap:5px;height:26px;padding:0 8px;font-size:9.5px}
+
+/* Свой домен: мастер с DNS-записями и статусами. Карточка стоит после сайта, потому что
+   без опубликованного сайта подключать домен некуда. */
+.custom-domain-card{margin-top:22px;padding:18px;border:1px solid #3a4652;border-radius:12px;background:linear-gradient(155deg,#121920,#0c1015 70%);box-shadow:inset 0 1px 0 rgba(255,255,255,.035)}
+.custom-domain-head{display:flex;align-items:flex-start;justify-content:space-between;gap:14px}
+.custom-domain-head h3{display:flex;align-items:center;gap:7px;margin:4px 0 0;color:#eee9e0;font-size:15px;font-weight:650;letter-spacing:-.02em}
+.custom-domain-head h3 svg{color:#b8a17c}
+.custom-domain-head p{max-width:650px;margin:6px 0 0;color:#7f8995;font-size:10px;line-height:1.55}
+.custom-domain-head code,.domain-add code,.domain-footnote code,.domain-locked code,.domain-check code{color:#c5b08c;font:10px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace}
+.domain-plan-badge{flex:none;display:inline-flex;align-items:center;gap:5px;padding:5px 8px;border:1px solid #5d4d32;border-radius:999px;background:#1b1710;color:#cbb998;font-size:8.5px;font-weight:750;letter-spacing:.04em;text-transform:uppercase}
+.domain-steps{display:flex;align-items:center;gap:6px;margin:15px 0 13px;padding:8px 10px;border:1px solid #28323c;border-radius:8px;background:#090d12}
+.domain-step{display:flex;align-items:center;gap:6px;flex:1;min-width:0;color:#5f6975;font-size:9px;font-weight:650;letter-spacing:.03em;text-transform:uppercase}
+.domain-step span{display:grid;place-items:center;width:19px;height:19px;flex:none;border:1px solid #303a45;border-radius:50%;color:#6f7883;font:9px/1 ui-monospace,SFMono-Regular,Menlo,monospace}
+.domain-step.done{color:#93b69a}.domain-step.done span{border-color:#37533c;background:#122017;color:#9fc8a8}
+.domain-step.active{color:#d9c39d}.domain-step.active span{border-color:#7d6744;background:#241d12;color:#e7d4ae}
+.domain-loading{display:flex;align-items:center;justify-content:center;gap:8px;min-height:90px;color:#7f8995;font-size:10.5px}
+.domain-locked{display:flex;align-items:flex-start;gap:11px;padding:14px;border:1px solid #4a402e;border-radius:9px;background:#17140e;color:#cbb998}
+.domain-locked>svg{flex:none;margin-top:2px}.domain-locked strong{display:block;color:#e1d3b9;font-size:11px}.domain-locked p{max-width:680px;margin:5px 0 0;color:#96866f;font-size:10px;line-height:1.55}
+.domain-add{padding:14px;border:1px solid #303a45;border-radius:9px;background:#0b1015}
+.domain-add-after{margin-top:12px}.domain-add-title{display:flex;align-items:center;gap:7px;color:#d7d2c8;font-size:11px}.domain-add-title svg{color:#b8a17c}
+.domain-add>p{margin:5px 0 10px;color:#7c8692;font-size:10px;line-height:1.5}
+.domain-form-row{display:flex;align-items:stretch;gap:7px;max-width:600px}
+.domain-form-row input{flex:1;min-width:0;height:34px;padding:0 10px;border:1px solid #3c4652;border-radius:7px;background:#070b0f;color:#eee9e0;font:600 12px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace;outline:none}
+.domain-form-row input:focus{border-color:#8a7048;box-shadow:0 0 0 2px rgba(138,112,72,.14)}
+.domain-form-row .primary-button{display:inline-flex;align-items:center;gap:6px;height:34px;padding:0 12px;border:1px solid #6d5838;border-radius:7px;background:#3a2d1b;color:#eadbc1;font-size:10.5px;font-weight:650;cursor:pointer;white-space:nowrap}
+.domain-form-row .primary-button:hover{background:#4a3822;border-color:#8a7048}.domain-form-row .primary-button:disabled{opacity:.55;cursor:not-allowed}
+.domain-form-row .ghost-button{display:inline-flex;align-items:center;gap:6px;height:34px;white-space:nowrap}
+.domain-check{display:flex;align-items:center;gap:7px;margin-top:9px;color:#8d97a2;font-size:10px;cursor:pointer}.domain-check input{width:13px;height:13px;accent-color:#a88a58}.domain-add>small{display:block;margin-top:7px;color:#626d78;font-size:9px;line-height:1.5}
+.domain-groups{display:grid;gap:12px;margin-top:13px}.domain-group{padding:13px;border:1px solid #2f3943;border-radius:9px;background:#0b1015}
+.domain-group-head{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.domain-group-title{display:flex;align-items:center;gap:7px;flex-wrap:wrap;min-width:0}.domain-hostname{overflow:hidden;text-overflow:ellipsis;color:#eee9e0;font:600 13px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace}
+.domain-www{padding:2px 5px;border:1px solid #33404c;border-radius:4px;color:#7f8b98;font:8.5px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace}
+.domain-status{padding:3px 6px;border:1px solid #3b4651;border-radius:4px;color:#8d98a4;font:8px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace;text-transform:uppercase;white-space:nowrap}
+.domain-status.active{border-color:#37533c;background:#102017;color:#9fc8a8}.domain-status.error{border-color:#5c3838;background:#1d1212;color:#d99b9b}.domain-status.issuing{border-color:#5d4d32;background:#1b1710;color:#cbb998}.domain-status.waiting{color:#aeb6c0}
+.domain-group-actions{display:flex;align-items:center;gap:5px;flex-wrap:wrap}.domain-group-actions .ghost-button{display:inline-flex;align-items:center;gap:5px;height:27px;font-size:9.5px}.domain-group-actions .ghost-button.danger{color:#c08d8d;border-color:#4a3030;padding:0 7px}
+.domain-active{display:flex;align-items:center;flex-wrap:wrap;gap:6px;margin-top:10px;padding:8px 9px;border:1px solid #34493a;border-radius:6px;background:#101a13;color:#9fc8a8;font-size:10px}.domain-active a{display:inline-flex;align-items:center;gap:4px;color:#c8e0cc;text-decoration:none}.domain-active a:hover{text-decoration:underline;text-underline-offset:2px}
+.domain-note{display:flex;align-items:flex-start;gap:6px;margin-top:9px;padding:7px 8px;border-radius:6px;background:#1b1212;color:#d99b9b;font-size:9.5px;line-height:1.45}.domain-note svg{flex:none;margin-top:1px}
+.domain-dns{margin-top:12px;padding-top:11px;border-top:1px solid #252d36}.domain-dns-head{display:flex;align-items:baseline;justify-content:space-between;gap:8px}.domain-dns-head strong{color:#cbd1d8;font-size:10.5px}.domain-dns-head span{color:#66717d;font-size:8.5px}
+.domain-dns-host{padding:8px 0;border-top:1px solid #1c242c}.domain-dns-host:first-of-type{border-top:0}.domain-dns-host-name{display:flex;align-items:center;gap:6px;margin-bottom:5px;color:#aab4bf;font:600 10px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace}.domain-dns-host-name>span:first-child{overflow:hidden;text-overflow:ellipsis}.domain-canonical{padding:2px 5px;border:1px solid #4a402e;border-radius:4px;color:#cbb998;font:8px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace;text-transform:uppercase}
+.domain-record{display:flex;align-items:center;gap:7px;min-width:0;padding:5px 0}.domain-record-type{flex:none;width:38px;padding:3px 0;border:1px solid #35404b;border-radius:4px;color:#aeb7c1;font:8px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;text-align:center}.domain-record-type.txt{color:#c6ae85;border-color:#574a34}.domain-record-type.cname{color:#9fb7d9;border-color:#34465c}.domain-record-type.a{color:#a9c3ac;border-color:#36503b}
+.domain-record-name{display:grid;gap:1px;min-width:105px;max-width:220px}.domain-record-name strong{overflow:hidden;text-overflow:ellipsis;color:#b9c1ca;font:9px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap}.domain-record-name span{color:#5f6a76;font-size:8px}
+.domain-record code{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;padding:4px 6px;border:1px solid #28323c;border-radius:4px;background:#070b0e;color:#aeb8c2;font:9px/1.3 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:nowrap}
+.domain-record .icon-button{flex:none;width:25px;height:25px;border:1px solid #303b45;border-radius:5px;background:#0c1218;color:#86929e;cursor:pointer}.domain-record .icon-button:hover{color:#d8c7a9;border-color:#6d5838}
+.domain-canonical-button{margin:3px 0 0 45px;padding:0;border:0;background:transparent;color:#9e8a6a;font-size:8.5px;cursor:pointer;text-decoration:underline;text-underline-offset:2px}.domain-canonical-button:hover{color:#d8c7a9}.domain-canonical-button:disabled{opacity:.5;cursor:not-allowed}
+.domain-checks{display:grid;gap:4px;margin-top:9px}.domain-check-row{display:flex;align-items:flex-start;gap:5px;padding:5px 6px;border-radius:4px;background:#10161c;color:#818c98;font-size:8.5px;line-height:1.4}.domain-check-row.ok{color:#93b69a}.domain-check-row.wait{color:#cbb998}.domain-check-row svg{flex:none;margin-top:1px}.domain-check-row span:nth-child(2){color:#aab4bf;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}.domain-check-row span:last-child{color:#707b87}
+.domain-footnote{max-width:800px;margin:13px 0 0;color:#5f6b77;font-size:9px;line-height:1.55}
 @media(max-width:650px){
   .hosting-scroll{padding:16px 12px 26px}
   .hosting-hero{grid-template-columns:1fr;padding:18px}
@@ -3675,6 +3721,12 @@ button,textarea{font:inherit}button{color:inherit}
   .hosting-release{align-items:flex-start;flex-direction:column;gap:6px}
   .hosting-release-actions{width:100%;justify-content:space-between}
   .hosting-actions .ghost-button,.hosting-actions .primary-button{flex:1 1 auto}
+  .custom-domain-head{flex-direction:column}.domain-plan-badge{align-self:flex-start}
+  .domain-steps{padding:7px}.domain-step{font-size:8px;gap:4px}.domain-step span{width:17px;height:17px}
+  .domain-form-row{flex-direction:column}.domain-form-row .primary-button,.domain-form-row .ghost-button{justify-content:center;width:100%}
+  .domain-group-head{flex-direction:column}.domain-group-actions{width:100%}.domain-group-actions .ghost-button{flex:1}
+  .domain-record{flex-wrap:wrap}.domain-record-name{max-width:none;flex:1}.domain-record code{flex:1 1 100%;order:4}.domain-record .icon-button{order:3}
+  .domain-canonical-button{margin-left:0}
 }
 
 /* Медиа проекта: объекты в бакете ведут себя как файлы — их можно найти, заменить,

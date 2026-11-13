@@ -1,4 +1,5 @@
 import { apiJson } from "./api";
+import type { CustomDomain } from "./custom-domains-api";
 
 /** Ответ сервера без внутренних путей: только то, что можно показать в панели. */
 export type HostingSite = {
@@ -48,6 +49,8 @@ export type HostingState = {
   domain: string;
   tlsMode: "on_demand" | "wildcard";
   limits: HostingLimits;
+  customDomains: { enabled: boolean; limit: number };
+  domains: CustomDomain[];
   site: HostingSite | null;
   releases: HostingRelease[];
 };
