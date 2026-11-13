@@ -33,10 +33,6 @@ if [ -f "$COMPOSE_OVERRIDE" ]; then
   COMPOSE_FILES+=(-f "$COMPOSE_OVERRIDE")
 fi
 
-compose(){
-  docker compose "${COMPOSE_FILES[@]}" "$@"
-}
-
 if ! compose ps -q "$CADDY_SERVICE" >/dev/null 2>&1 || [ -z "$(compose ps -q "$CADDY_SERVICE" 2>/dev/null)" ]; then
   log "контейнер $CADDY_SERVICE не запущен — reload отложен"
   exit 0
@@ -62,13 +58,13 @@ if [ -n "$previous_hash" ] && [ "$current_hash" = "$previous_hash" ]; then
 fi
 
 # `</dev/null` обязателен: таймер не должен ждать stdin, а compose exec иначе подключает его.
-if ! timeout 30 compose exec -T "$CADDY_SERVICE" \
+if ! timeout 30 docker compose "${COMPOSE_FILES[@]}" exec -T "$CADDY_SERVICE" \
     caddy validate --config "/etc/caddy/$CADDY_FILE" --adapter caddyfile </dev/null; then
   log "validate не прошёл — оставляю работающий конфиг; исправьте custom-domains.caddy/Caddyfile"
   exit 1
 fi
 
-if ! timeout 30 compose exec -T "$CADDY_SERVICE" \
+if ! timeout 30 docker compose "${COMPOSE_FILES[@]}" exec -T "$CADDY_SERVICE" \
     caddy reload --config "/etc/caddy/$CADDY_FILE" --adapter caddyfile </dev/null; then
   log "reload не удался — Caddy продолжает работать на прежнем конфиге"
   exit 1
