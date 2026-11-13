@@ -32,7 +32,10 @@ FROM node:26-bookworm-slim AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 COPY server/package.json ./server/package.json
-RUN npm ci --omit=dev
+# `server/package.json` — workspace: при конфликте версий npm кладёт зависимость в
+# `server/node_modules`, а не в корень. Без этой копии production-образ не находит,
+# например, `tldts` при импорте из `server/dist`.
+RUN npm ci --omit=dev && mkdir -p /app/server/node_modules
 
 FROM node:26-bookworm-slim AS production
 WORKDIR /app
@@ -58,6 +61,7 @@ COPY --from=docker:29.9-cli /usr/local/bin/docker /usr/local/bin/docker
 COPY --from=build /app/package.json ./package.json
 COPY --from=build /app/server/package.json ./server/package.json
 COPY --from=deps /app/node_modules ./node_modules
+COPY --from=deps /app/server/node_modules ./server/node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/server/dist ./server/dist
 COPY --from=build /app/server/certs ./server/certs
