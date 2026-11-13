@@ -80,7 +80,9 @@ test("при maxAgeMs=0 убирает свежий хвост убитого п
     await mkdir(path.join(sandboxDir, ".restore-local-project-fresh"));
     await mkdir(path.join(sandboxDir, "project-id"));
 
-    const result = await cleanupAbandonedTemp({ maxAgeMs: 0, tempDir, sandboxDir, nodeId: "local" });
+    // mtime файла может быть на доли миллисекунды позже целого Date.now(); сдвигаем
+    // «сейчас» вперёд, чтобы проверка maxAgeMs=0 не зависела от разрешения часов CI.
+    const result = await cleanupAbandonedTemp({ maxAgeMs: 0, now: Date.now() + 1_000, tempDir, sandboxDir, nodeId: "local" });
 
     assert.deepEqual(result, { files: 1, dirs: 1, bytes: 5, failed: 0 });
     assert.deepEqual(await readdir(tempDir), []);
