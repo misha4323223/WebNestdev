@@ -30,6 +30,11 @@
 	}
 }
 
+# Пользовательские домены. Файл целиком генерирует API (site_domains + live sites), Caddy читает
+# каталог только на чтение. `import` с glob допускает пустой набор, но на свежей ВМ deploy
+# заранее создаёт пустой custom-domains.caddy — без него Caddy не примет конфиг.
+import /etc/caddy/custom/*.caddy
+
 # Панель и API. WebSocket (`/ws` — прогоны агента) Caddy проксирует сам, отдельной настройки не нужно.
 {$WEBNESTDEV_SITE_DOMAIN:localhost}, www.{$WEBNESTDEV_SITE_DOMAIN:localhost} {
 	# Один адрес вместо двух: `www` переводится на основной домен. Иначе вход и CORS пришлось бы

@@ -3,6 +3,7 @@ import { mkdir, readFile, rename, rm, unlink, writeFile } from "node:fs/promises
 import path from "node:path";
 import { getTable, initializeStorage, isYdbEnabled, ydbQuery } from "../storage/ydb.js";
 import type { YdbQueryTag } from "../storage/pg.js";
+import { deleteDomainGroupsForSite, transferDomainOwners } from "./domain-store.js";
 import { hostingLimits } from "./config.js";
 import { isHostingSlug } from "./slug.js";
 import {
@@ -326,6 +327,27 @@ export async function getRelease(id: string): Promise<HostingRelease | null> {
   return withJsonLock(async () => (await readJsonState()).releases.find(release => release.id === id) ?? null);
 }
 
+/**
+ * Сайты, которые Caddy может отдавать по custom domain. Отдельный запрос без LIMIT 1000:
+ * обычный `listSites` — панельный и не должен молча терять маршруты после тысячи сайтов.
+ */
+export async function listSitesForRouting(): Promise<HostingSite[]> {
+  if (isYdbEnabled()) {
+    await initializeStorage();
+    const table = sqlTable("sites");
+    const [rows] = await ydbQuery()<SiteRow[]>`
+      SELECT id,user_id,project_id,slug,status,active_release_id,publishing_release_id,node_id,
+             last_error,suspend_reason,created_at,updated_at,published_at,unpublished_at,suspended_at
+        FROM ${table}
+       WHERE status = 'live' AND active_release_id IS NOT NULL
+       ORDER BY slug ASC`;
+    return rows.map(siteFromRow);
+  }
+  return withJsonLock(async () => (await readJsonState()).sites
+    .filter(site => site.status === "live" && Boolean(site.activeReleaseId))
+    .sort((left, right) => left.slug.localeCompare(right.slug)));
+}
+
 export async function listReleases(siteId: string, limit = 20): Promise<HostingRelease[]> {
   if (isYdbEnabled()) return pgReleases(siteId, limit);
   return withJsonLock(async () => (await readJsonState()).releases
@@ -385,8 +407,8 @@ export async function transferSiteOwners(
   fromUserId: string,
   toUserId: string,
   tx?: YdbQueryTag,
-): Promise<{ sites: number; releases: number }> {
-  if (!projectIds.length) return { sites: 0, releases: 0 };
+): Promise<{ sites: number; releases: number; domains: number }> {
+  if (!projectIds.length) return { sites: 0, releases: 0, domains: 0 };
   if (isYdbEnabled()) {
     const sql = tx ?? ydbQuery();
     const sites = sql.identifier(getTable("sites"));
@@ -402,7 +424,8 @@ export async function transferSiteOwners(
        WHERE user_id = ${fromUserId}
          AND site_id IN (SELECT id FROM ${sites} WHERE project_id = ANY(${projectIds}))
        RETURNING id`;
-    return { sites: siteRows.length, releases: releaseRows.length };
+    const domains = await transferDomainOwners(siteRows.map(row => row.id), fromUserId, toUserId, tx);
+    return { sites: siteRows.length, releases: releaseRows.length, domains };
   }
   const ids = new Set(projectIds);
   return withJsonLock(async () => {
@@ -425,7 +448,8 @@ export async function transferSiteOwners(
       }
     }
     if (sites || releases) await writeJsonState(state);
-    return { sites, releases };
+    const domains = await transferDomainOwners([...siteIds], fromUserId, toUserId);
+    return { sites, releases, domains };
   });
 }
 
@@ -959,6 +983,9 @@ export async function markSiteDeleted(siteId: string, now = new Date().toISOStri
          RETURNING id,user_id,project_id,slug,status,active_release_id,publishing_release_id,node_id,
                    last_error,suspend_reason,created_at,updated_at,published_at,unpublished_at,suspended_at`;
       output = rows[0] ? siteFromRow(rows[0]) : null;
+      // Удаление сайта освобождает hostname: иначе домен навсегда остался бы привязан к
+      // tombstone-сайту и не мог быть подключён к новому. Делаем это в той же транзакции.
+      await deleteDomainGroupsForSite(siteId, tx);
     });
     return output;
   }
@@ -971,6 +998,7 @@ export async function markSiteDeleted(siteId: string, now = new Date().toISOStri
     }
     Object.assign(site, { status: "deleted", activeReleaseId: null, publishingReleaseId: null, updatedAt: now });
     await writeJsonState(state);
+    await deleteDomainGroupsForSite(siteId);
     return { ...site };
   });
 }

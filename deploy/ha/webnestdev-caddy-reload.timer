@@ -1,0 +1,13 @@
+[Unit]
+Description=Periodically reload Caddy after custom-domain config changes
+Documentation=file:/home/Misha/webnestdev/src/docs/CUSTOM_DOMAINS_PLAN.md
+
+[Timer]
+OnBootSec=45s
+OnUnitActiveSec=30s
+AccuracySec=5s
+Persistent=true
+Unit=webnestdev-caddy-reload.service
+
+[Install]
+WantedBy=timers.target

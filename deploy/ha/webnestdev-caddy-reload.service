@@ -1,0 +1,11 @@
+[Unit]
+Description=Validate and reload Caddy after generated custom-domain config changes
+Documentation=file:/home/Misha/webnestdev/src/docs/CUSTOM_DOMAINS_PLAN.md
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/default/webnestdev-caddy-reload
+ExecStart=/usr/local/sbin/webnestdev-caddy-reload
+Nice=10

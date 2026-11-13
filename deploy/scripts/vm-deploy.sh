@@ -50,7 +50,11 @@
 #                              (deploy/scripts/wildcard-cert.sh); монтируется в Caddy как /certs
 #   CADDY_SERVICE=caddy        сервис фронта в compose (поднимается вместе с сервером)
 #   BROKER_SERVICE=docker-broker сервис Docker-брокера (docs/DOCKER_BROKER.md)
-#   CADDY_IMAGE=caddy:2.8-alpine  образ для проверки конфигурации
+#   CADDY_IMAGE=caddy:2.11.8-alpine@sha256:…  образ для проверки конфигурации и Caddy
+#   CUSTOM_DOMAINS_CADDY_DIR=$APP_DIR/../data/caddy-custom  общий каталог custom-domains.caddy;
+#                              должен совпадать с монтированием Caddy и сервера в compose
+#   CADDY_DATA_HOST_DIR=$APP_DIR/../data/caddy-data  общий каталог сертификатов Caddy
+#   CADDY_DATA_VOLUME=src_caddy-data  старый локальный том для однократной миграции
 #   MIGRATE_SANDBOXES=1        перенести файлы проектов из старого тома в SANDBOX_DIR,
 #                              если на хосте каталог пуст.
 #   SERVICE=webnestdev-server  сервис в compose
@@ -172,7 +176,10 @@ COMPOSE_SRC="${COMPOSE_SRC:-}"
 CADDY_B64="${CADDY_B64:-}"
 CADDY_SRC="${CADDY_SRC:-}"
 CADDY_SERVICE="${CADDY_SERVICE:-caddy}"
-CADDY_IMAGE="${CADDY_IMAGE:-caddy:2.8-alpine}"
+CADDY_IMAGE="${CADDY_IMAGE:-caddy:2.11.8-alpine@sha256:f6228111e5fafa1a5238258d0858e103f10599b8d1659a146e7726681a002bb9}"
+CUSTOM_DOMAINS_CADDY_DIR="${CUSTOM_DOMAINS_CADDY_DIR:-/var/lib/webnestdev/data/caddy-custom}"
+CADDY_DATA_HOST_DIR="${CADDY_DATA_HOST_DIR:-/var/lib/webnestdev/data/caddy-data}"
+CADDY_DATA_VOLUME="${CADDY_DATA_VOLUME:-src_caddy-data}"
 CADDY_FILE="${CADDY_FILE:-Caddyfile}"
 PREVIEW_TLS_B64="${PREVIEW_TLS_B64:-}"
 PREVIEW_TLS_SRC="${PREVIEW_TLS_SRC:-}"
@@ -1059,6 +1066,83 @@ ensure_host_tls_snippet(){
   log "$HOST_TLS_FILE отсутствовал — записал on_demand (wildcard ставится отдельно)"
 }
 
+# Каталог custom domains должен существовать до проверки Caddyfile: Caddy импортирует его
+# через glob, а на свежей ВМ без файла проверка не видит ни одного site-блока. Пустой файл
+# безопасен — Caddy принимает config без пользовательских доменов.
+ensure_custom_domains_dir(){
+  local dir="$CUSTOM_DOMAINS_CADDY_DIR" file="$CUSTOM_DOMAINS_CADDY_DIR/custom-domains.caddy"
+  if ! mkdir -p "$dir" 2>/dev/null; then
+    if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+      sudo -n mkdir -p "$dir"
+    else
+      log "не удалось создать $dir — Caddy не сможет прочитать custom domains"
+      return 1
+    fi
+  fi
+  if [ ! -f "$file" ]; then
+    if ! printf '# Сгенерировано API; временный пустой файл до первого прохода.\n' > "$file" 2>/dev/null; then
+      if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+        printf '# Сгенерировано API; временный пустой файл до первого прохода.\n' | sudo -n tee "$file" >/dev/null
+      else
+        log "не удалось создать $file"
+        return 1
+      fi
+    fi
+  fi
+  # API работает от uid 1000: ему нужна запись в каталог для атомарного rename. Caddy читает
+  # файл как root, поэтому группе достаточно чтения. Не понижаем права молча, если команда
+  # не разрешена — выкатка продолжается, но первый проход API сообщит об ошибке в журнале.
+  chmod 775 "$dir" 2>/dev/null || true
+  chmod 664 "$file" 2>/dev/null || true
+  # API пишет от uid 1000. Если каталог уже создан root'ом другим установщиком, вернуть
+  # владельца; без этого ошибка записи выглядела бы как «Caddy не перечитывает домены».
+  chown "${WEBNESTDEV_UID:-1000}:${WEBNESTDEV_GID:-1000}" "$dir" 2>/dev/null || \
+    (command -v sudo >/dev/null 2>&1 && sudo -n chown "${WEBNESTDEV_UID:-1000}:${WEBNESTDEV_GID:-1000}" "$dir" 2>/dev/null) || true
+  chmod 775 "$dir" 2>/dev/null || true
+}
+
+# Старый local-volume с сертификатами переносится в общий Gluster-каталог один раз. Без этого
+# после перехода на bind-mount Caddy начал бы с пустого хранилища и заново запрашивал сертификаты
+# на каждый preview/custom domain.
+ensure_caddy_data_dir(){
+  local dir="$CADDY_DATA_HOST_DIR"
+  if ! mkdir -p "$dir" 2>/dev/null; then
+    if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+      sudo -n mkdir -p "$dir"
+    else
+      log "не удалось создать $dir — Caddy не сможет писать сертификаты"; return 1
+    fi
+  fi
+  chmod 775 "$dir" 2>/dev/null || true
+  if find "$dir" -mindepth 1 -maxdepth 1 ! -name lost+found -print -quit 2>/dev/null | grep -q .; then
+    return 0
+  fi
+  if ! docker volume inspect "$CADDY_DATA_VOLUME" >/dev/null 2>&1; then
+    log "старый том $CADDY_DATA_VOLUME не найден — Caddy начнёт с пустого хранилища"
+    return 0
+  fi
+  log "переношу сертификаты из $CADDY_DATA_VOLUME в $dir (один раз)"
+  # Копировать том под работающим Caddy нельзя: он может писать сертификат в это время.
+  # После копирования Caddy поднимется ниже общей командой up; короткий перерыв — часть
+  # однократной миграции.
+  if [ "$DRY_RUN" != "1" ]; then
+    docker compose "${COMPOSE_FILES[@]}" stop "$CADDY_SERVICE" >/dev/null 2>&1 || true
+  fi
+  local rc=0
+  if ! docker run --rm --entrypoint sh \
+      -v "$CADDY_DATA_VOLUME:/from:ro" -v "$dir:/to" "$CADDY_IMAGE" \
+      -c 'cp -a /from/. /to/' </dev/null; then
+    log "перенос сертификатов не удался — Caddy выпустит их заново; проверьте $dir"
+    rc=1
+  fi
+  # Вернуть старый контейнер сразу, не дожидаясь общего up: если следующий шаг выкатки
+  # упадёт, HTTPS не должен остаться выключенным из-за однократной миграции.
+  if [ "$DRY_RUN" != "1" ]; then
+    docker compose "${COMPOSE_FILES[@]}" start "$CADDY_SERVICE" >/dev/null 2>&1 || true
+  fi
+  return "$rc"
+}
+
 #
 # Конфигурация фронта с сертификатами. Правится она вместе с остальными файлами развёртывания, но
 # в отличие от compose ошибка здесь видна не сразу: Caddy просто не поднимется (или будет отдавать
@@ -1239,12 +1323,21 @@ validate_caddyfile(){
   # Если сниппета ещё нет (свежая ВМ), подкладываем временный on_demand: именно это состояние
   # и будет записано первым.
   local extra=() tmp="" host_tmp=""
+  # Caddyfile импортирует custom domains из каталога; без mount проверка не увидит site-блоки.
+  local custom_tmp=""
+  if [ -d "$CUSTOM_DOMAINS_CADDY_DIR" ]; then
+    extra+=(-v "$CUSTOM_DOMAINS_CADDY_DIR:/etc/caddy/custom:ro")
+  else
+    custom_tmp=$(mktemp -d)
+    printf '# empty\n' > "$custom_tmp/custom-domains.caddy"
+    extra+=(-v "$custom_tmp:/etc/caddy/custom:ro")
+  fi
   if [ -f "$APP_DIR/$PREVIEW_TLS_FILE" ]; then
-    extra=(-v "$APP_DIR/$PREVIEW_TLS_FILE:/etc/caddy/preview-tls.caddy:ro")
+    extra+=(-v "$APP_DIR/$PREVIEW_TLS_FILE:/etc/caddy/preview-tls.caddy:ro")
   else
     tmp=$(mktemp)
     printf 'tls {\n\ton_demand\n}\n' > "$tmp"
-    extra=(-v "$tmp:/etc/caddy/preview-tls.caddy:ro")
+    extra+=(-v "$tmp:/etc/caddy/preview-tls.caddy:ro")
   fi
   # Host-блок Caddyfile тоже подключает сниппет через `import`: без монтирования проверка
   # отвергает правильный конфиг. На свежей ВМ подкладываем on_demand, как и для preview.
@@ -1261,6 +1354,7 @@ validate_caddyfile(){
   local rc=0
   docker run --rm -v "$file:/etc/caddy/Caddyfile:ro" ${extra[@]+"${extra[@]}"} "$CADDY_IMAGE" caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile </dev/null 2>&1 | sed 's/^/[deploy]   /' || rc=$?
   rm -f "$tmp" "$host_tmp"
+  rm -rf "$custom_tmp"
   return "$rc"
 }
 
@@ -1408,6 +1502,27 @@ update_runner_version(){
 # и при расхождении пересоздаём контейнер, а если файл тот же — просим перечитать его без
 # перерыва. Если admin API недоступен, пересоздаём контейнер: конфигурация важнее перерыва.
 #
+install_caddy_reload_timer(){
+  local script="$APP_DIR/deploy/ha/install-caddy-reload.sh"
+  if [ ! -f "$script" ]; then
+    log "install-caddy-reload.sh нет в $APP_DIR/deploy/ha — таймер reload не установлен (установите вручную)"
+    return 0
+  fi
+  if [ "$DRY_RUN" = "1" ]; then
+    log "dry-run: установил бы webnestdev-caddy-reload.timer"
+    return 0
+  fi
+  if [ "$(id -u)" = "0" ]; then
+    APP_DIR="$APP_DIR" CUSTOM_DOMAINS_CADDY_DIR="$CUSTOM_DOMAINS_CADDY_DIR" CADDY_DATA_HOST_DIR="$CADDY_DATA_HOST_DIR" bash "$script" || \
+      log "таймер reload Caddy не установлен — custom-домены будут обновляться только при выкатке"
+  elif command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+    sudo -n env APP_DIR="$APP_DIR" CUSTOM_DOMAINS_CADDY_DIR="$CUSTOM_DOMAINS_CADDY_DIR" CADDY_DATA_HOST_DIR="$CADDY_DATA_HOST_DIR" bash "$script" || \
+      log "таймер reload Caddy не установлен — custom-домены будут обновляться только при выкатке"
+  else
+    log "нет sudo для установки таймера reload Caddy — установите $script вручную"
+  fi
+}
+
 reload_caddy(){
   if ! docker compose "${COMPOSE_FILES[@]}" config --services 2>/dev/null | grep -qx "$CADDY_SERVICE"; then
     return 0
@@ -2238,6 +2353,9 @@ case "$MODE" in
     # Сертификат — после сниппета: при успехе он сам переключает сниппет на wildcard, и
     # проверка Caddyfile ниже увидит итоговое состояние.
     install_wildcard_cert
+    # Каталоги общего хранилища — до проверки Caddyfile и до подъёма контейнера.
+    ensure_custom_domains_dir || log "custom domains: каталог конфигурации не готов"
+    ensure_caddy_data_dir || log "caddy-data: общий каталог сертификатов не готов"
     # Конфигурация фронта — до запуска: Caddy читает её, поднимаясь вместе с сервисом.
     install_caddyfile || log "оставляю Caddyfile, который лежит на ВМ"
     # Ключи и .env — до запуска: compose читает .env при подъёме сервиса.
@@ -2256,6 +2374,7 @@ case "$MODE" in
     run docker compose "${COMPOSE_FILES[@]}" up -d --no-build "${COMPOSE_NO_DEPS[@]}" $(services_to_start)
     stop_legacy_postgres
     reload_caddy
+    install_caddy_reload_timer
     # Runner переводится на новую сборку после проверки версии (ниже): упавшая выкатка не
     # должна оставить runner на образе, который сервис не принял.
     ;;
@@ -2270,6 +2389,8 @@ case "$MODE" in
     run npm run build
     # В режиме source Caddyfile лежит в самом чекауте, но если фронт запускают иначе, файла может
     # и не быть: тогда проверяется и ставится тот, что пришёл вместе со скриптом.
+    ensure_custom_domains_dir || log "custom domains: каталог конфигурации не готов"
+    ensure_caddy_data_dir || log "caddy-data: общий каталог сертификатов не готов"
     install_caddyfile || true
     ensure_host_tls_snippet || log "не удалось создать $HOST_TLS_FILE"
     apply_platform_env
@@ -2282,6 +2403,7 @@ case "$MODE" in
     if docker compose "${COMPOSE_FILES[@]}" config --services 2>/dev/null | grep -qx "$CADDY_SERVICE"; then
       run docker compose "${COMPOSE_FILES[@]}" up -d --no-build "${COMPOSE_NO_DEPS[@]}" "$CADDY_SERVICE"
       reload_caddy
+      install_caddy_reload_timer
     fi
     ;;
   repair)
@@ -2299,6 +2421,8 @@ case "$MODE" in
     PRUNE_PROTECT_IMAGE="$IMAGE_REF" prune_images
     unset PRUNE_PROTECT_IMAGE
     [ -n "$IMAGE_REF" ] && export WEBNESTDEV_IMAGE="$IMAGE_REF"
+    ensure_custom_domains_dir || log "custom domains: каталог конфигурации не готов"
+    ensure_caddy_data_dir || log "caddy-data: общий каталог сертификатов не готов"
     ensure_host_tls_snippet || log "не удалось создать $HOST_TLS_FILE"
     ensure_sandbox_image
     # --force-recreate, а не простой up: контейнер мог зависнуть в перезапусках, и тогда compose
@@ -2307,6 +2431,7 @@ case "$MODE" in
     run docker compose "${COMPOSE_FILES[@]}" up -d --no-build --force-recreate "${COMPOSE_NO_DEPS[@]}" $(services_to_start)
     stop_legacy_postgres
     update_runner_version
+    install_caddy_reload_timer
     ;;
   housekeeping)
     log "режим housekeeping: ротация логов, сервис не перезапускаю"

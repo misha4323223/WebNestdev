@@ -48,6 +48,8 @@ export const PLAN_CATALOG = {
       agentTokensPerMonth: 0,
       /** Сколько подключений каждого вида доступно; null — без ограничений. */
       integrations: { cloud: 1, domains: 1, services: 3 },
+      /** Свой домен — возможность платных тарифов; на «Старте» её нет. */
+      customDomains: 0,
     },
     features: [
       "3 проекта",
@@ -100,6 +102,8 @@ export const PLAN_CATALOG = {
       /** Сырые токены для админской аналитики и старых надбавок; пользовательский лимит — кредиты. */
       agentTokensPerMonth: 50_000_000,
       integrations: { cloud: null, domains: null, services: null },
+      /** Один пользовательский домен (группа apex + www) на сайт. */
+      customDomains: 1,
     },
     features: [
       "9 проектов",
@@ -146,6 +150,8 @@ export const PLAN_CATALOG = {
       /** Сырые токены для админской аналитики и старых надбавок; пользовательский лимит — кредиты. */
       agentTokensPerMonth: 100_000_000,
       integrations: { cloud: null, domains: null, services: null },
+      /** Один пользовательский домен (группа apex + www) на сайт. */
+      customDomains: 1,
     },
     features: [
       "15 проектов",
@@ -185,6 +191,11 @@ export type IntegrationKind = "cloud" | "domains" | "services";
 /** Сколько подключений данного вида разрешено тарифом; `null` — без ограничения. */
 export function integrationLimitFor(plan: PlanId, kind: IntegrationKind): number | null {
   return PLAN_CATALOG[plan].limits.integrations[kind];
+}
+
+/** Сколько пользовательских доменов разрешено тарифом; 0 — функция недоступна. */
+export function customDomainLimitFor(plan: PlanId): number {
+  return PLAN_CATALOG[plan].limits.customDomains;
 }
 
 /**

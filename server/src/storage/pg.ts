@@ -4,6 +4,7 @@ import { acquireStorageInitLock } from "./init-lock.js";
 import { ensurePreviewTable } from "./preview-table.js";
 import { ensurePreviewReservationTable } from "./preview-reservation-table.js";
 import { ensureRunLeaseTable } from "./run-lease-table.js";
+import { ensureCustomDomainTable } from "./custom-domain-table.js";
 
 /**
  * PostgreSQL storage backend — API-совместим с прежним YDB-модулем.
@@ -811,6 +812,7 @@ export async function initializeStorage(): Promise<void> {
     await ensurePreviewTable(pool, getTable("previews"));
     await ensurePreviewReservationTable(pool, getTable("preview_reservations"));
     await ensureRunLeaseTable(pool, getTable("run_leases"));
+    await ensureCustomDomainTable(pool, getTable("site_domains"), getTable("sites"));
 
     await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("user_storage")} (
       user_id TEXT NOT NULL PRIMARY KEY,

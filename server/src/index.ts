@@ -86,7 +86,10 @@ import { registerAdminProjectRoutes } from "./routes/admin-projects.js";
 import { registerAdminPreviewResetRoutes } from "./routes/admin-preview.js";
 import { registerAdminProjectPermissionsRoutes } from "./routes/admin-project-permissions.js";
 import { registerHostingRoutes } from "./routes/hosting.js";
+import { registerCustomDomainRoutes } from "./routes/custom-domains.js";
 import { describeHosting, hostingConfig } from "./hosting/config.js";
+import { startCustomDomainCaddyRefresh } from "./hosting/caddy-refresh.js";
+import { startCustomDomainTlsActivation } from "./hosting/domain-activation.js";
 import { reconcileHosting } from "./hosting/reconcile.js";
 import { registerUnsubscribeRoutes } from "./routes/unsubscribe.js";
 import { describePostbox, postboxConfig, postboxStatus } from "./mail/postbox.js";
@@ -275,9 +278,15 @@ let stopStorageReconcile: (() => void) | null = null;
 // вместе с остальными таймерами — в единственном onClose ниже. Свой addHook там уже нельзя:
 // Fastify не принимает хуки после listen.
 let stopSandboxMaintenance: (() => void) | null = null;
+let stopCustomDomainCaddyRefresh: (() => void) | null = null;
+let stopCustomDomainTlsActivation: (() => void) | null = null;
 initializeStorage()
   .then(async () => {
     stopStorageReconcile = startStorageReconcileScheduler();
+    // Custom domains живут отдельно от флага новых публикаций: выключение feature flag не
+    // должно снимать маршруты уже подключённых доменов и мешать продлению сертификатов.
+    stopCustomDomainCaddyRefresh = startCustomDomainCaddyRefresh();
+    stopCustomDomainTlsActivation = startCustomDomainTlsActivation();
     // Отметки холодного яруса переезжают из JSON на хосте в таблицу. Импорт идемпотентен и
     // повторяется при каждом старте: файл, которого ещё нет в базе, будет перенесён. Ошибка
     // импорта не должна мешать серверу подняться — архивы и без неё читаются по старым файлам
@@ -340,7 +349,7 @@ if (demoEnabled) {
   app.log.info({ demoEmail: demo.email, created: demo.created }, "demo account ready");
 }
 
-app.addHook("onClose", async () => { stopSandboxMaintenance?.(); stopBillingSweeper(); stopMailQueue(); stopStorageReconcile?.(); stopNodeHeartbeat(); stopRemoteNodeHeartbeat(); stopProjectRebalance(); await stopPreviewHostServer(); await closeStorage(); });
+app.addHook("onClose", async () => { stopCustomDomainTlsActivation?.(); stopCustomDomainCaddyRefresh?.(); stopSandboxMaintenance?.(); stopBillingSweeper(); stopMailQueue(); stopStorageReconcile?.(); stopNodeHeartbeat(); stopRemoteNodeHeartbeat(); stopProjectRebalance(); await stopPreviewHostServer(); await closeStorage(); });
 
 await registerSecurityHeaders(app);
 
@@ -432,6 +441,7 @@ await registerSupportRoutes(app);
 await registerDonationRoutes(app);
 await registerProjectRoutes(app);
 await registerHostingRoutes(app);
+await registerCustomDomainRoutes(app);
 await registerPreviewRoutes(app);
 // Внутренний канал для двери предпросмотра, когда она работает отдельным процессом (пункт 6.1):
 // состояние проекта и предпросмотра по общему токену. Публичного смысла у маршрутов нет, но

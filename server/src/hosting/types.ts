@@ -115,7 +115,14 @@ export type HostingStateErrorCode =
   | "DISK_LIMIT"
   | "ARTIFACT_INVALID"
   | "BUILD_FAILED"
-  | "PUBLISH_FAILED";
+  | "PUBLISH_FAILED"
+  | "CUSTOM_DOMAINS_DISABLED"
+  | "DOMAIN_INVALID"
+  | "DOMAIN_TAKEN"
+  | "DOMAIN_LIMIT"
+  | "DOMAIN_PLAN_REQUIRED"
+  | "DOMAIN_NOT_FOUND"
+  | "DOMAIN_NOT_READY";
 
 export class HostingError extends Error {
   constructor(

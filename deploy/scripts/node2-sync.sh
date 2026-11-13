@@ -50,6 +50,8 @@ RUNNER_SCRIPT_B64="${RUNNER_SCRIPT_B64:-}"
 RUNNER_SCRIPT_SRC="${RUNNER_SCRIPT_SRC:-}"
 DEPLOY_SCRIPT_SRC="${DEPLOY_SCRIPT_SRC:-}"
 EGRESS_SCRIPT_SRC="${EGRESS_SCRIPT_SRC:-$APP_DIR/deploy/scripts/egress-firewall.sh}"
+CUSTOM_DOMAINS_CADDY_DIR="${CUSTOM_DOMAINS_CADDY_DIR:-/var/lib/webnestdev/data/caddy-custom}"
+CADDY_DATA_HOST_DIR="${CADDY_DATA_HOST_DIR:-/var/lib/webnestdev/data/caddy-data}"
 KEEP_IMAGES="${KEEP_IMAGES:-2}"
 IMAGE_REPO_PATTERN="${IMAGE_REPO_PATTERN:-webnestdev}"
 DRY_RUN="${DRY_RUN:-0}"
@@ -145,6 +147,10 @@ sync_file certs/host/fullchain.pem
 sync_file certs/host/key.pem
 if [ "$DRY_RUN" != "1" ]; then
   ssh2 "chmod 600 '$NODE2_APP_DIR/certs/host/key.pem' 2>/dev/null || true"
+  # Caddyfile импортирует этот каталог; на свежей node-2 пустой каталог не пройдёт validate.
+  # Не перезаписываем файл, если его уже создал API на общей Gluster-точке.
+  ssh2 "mkdir -p '$CUSTOM_DOMAINS_CADDY_DIR' '$CADDY_DATA_HOST_DIR' && { if [ ! -f '$CUSTOM_DOMAINS_CADDY_DIR/custom-domains.caddy' ]; then printf '# Сгенерировано API.\n' > '$CUSTOM_DOMAINS_CADDY_DIR/custom-domains.caddy'; fi; }" || \
+    log "не удалось подготовить каталоги custom/caddy-data на node-2"
 fi
 
 # Образ. Если он уже есть на node-2 (например, повторный запуск после сбоя на середине),
@@ -219,6 +225,32 @@ if ssh2 "test -f '$NODE2_APP_DIR/Caddyfile'"; then
   run ssh2 "cd '$NODE2_APP_DIR' && $(compose_cmd) exec -T caddy caddy reload --config /etc/caddy/Caddyfile --adapter caddyfile </dev/null || $(compose_cmd) restart caddy >/dev/null" || \
     log "Caddy на node-2 не перечитал конфигурацию — проверьте docker compose logs caddy"
 fi
+
+# Таймер reload нужен и на второй ноде: иначе custom-домен, добавленный через API node-1,
+# останется в общем файле, но Caddy node-2 не увидит его до следующей выкатки. Скрипты
+# установщика берём из репозитория node-1, потому что на node-2 лежит только compose/образ.
+install_caddy_reload_node2(){
+  local src="$APP_DIR/deploy/ha"
+  local file
+  for file in caddy-reload.sh webnestdev-caddy-reload.service webnestdev-caddy-reload.timer install-caddy-reload.sh; do
+    [ -f "$src/$file" ] || { log "в $src нет $file — таймер reload на node-2 не установлен"; return 0; }
+  done
+  if [ "$DRY_RUN" = "1" ]; then
+    log "dry-run: установил бы webnestdev-caddy-reload.timer на node-2"
+    return 0
+  fi
+  log "устанавливаю таймер reload Caddy на node-2"
+  ssh2 "mkdir -p '$NODE2_APP_DIR/deploy/ha'" || return 0
+  for file in caddy-reload.sh webnestdev-caddy-reload.service webnestdev-caddy-reload.timer install-caddy-reload.sh; do
+    ssh2_stdin "cat > '$NODE2_APP_DIR/deploy/ha/$file'" < "$src/$file" || {
+      log "не удалось передать $file на node-2 — таймер reload не установлен"
+      return 0
+    }
+  done
+  ssh2 "cd '$NODE2_APP_DIR/deploy/ha' && sudo -n env APP_DIR='$NODE2_APP_DIR' COMPOSE_ENV_FILES='$NODE2_ENV_FILES' CUSTOM_DOMAINS_CADDY_DIR='${CUSTOM_DOMAINS_CADDY_DIR:-/var/lib/webnestdev/data/caddy-custom}' CADDY_DATA_HOST_DIR='${CADDY_DATA_HOST_DIR:-/var/lib/webnestdev/data/caddy-data}' bash ./install-caddy-reload.sh" || \
+    log "таймер reload на node-2 не установлен (нужен sudo -n) — установите deploy/ha/install-caddy-reload.sh вручную"
+}
+install_caddy_reload_node2
 
 # Runner на node-2: тот же шаг, что и на первой ноде, но скрипт выполняется на второй машине.
 if [ -n "$runner_script" ] && [ "$DRY_RUN" != "1" ]; then

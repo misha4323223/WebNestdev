@@ -25,6 +25,11 @@ import { recordAudit } from "../security/audit-journal.js";
 import { requireAdmin } from "./admin.js";
 import { previewHostTarget } from "../preview/preview-host.js";
 import { withSiteLock } from "../hosting/site-lock.js";
+import { domainsForSite, publicCustomDomain, customDomainForTls } from "../hosting/domain-service.js";
+import { cachedCustomDomainForTls } from "../hosting/tls-ask-cache.js";
+import { requestCustomDomainCaddyRefresh } from "../hosting/caddy-refresh.js";
+import { normalizeHostnameLookup } from "../hosting/domain-name.js";
+import { customDomainsEnabled } from "../hosting/domain-config.js";
 
 /**
  * API хостинга. Панель работает только с проектом, а не с внутренним id сайта: у проекта
@@ -60,7 +65,7 @@ function sendHostingError(reply: FastifyReply, error: unknown) {
   throw error;
 }
 
-async function requireProject(request: unknown, reply: FastifyReply, projectId: string) {
+export async function requireProject(request: unknown, reply: FastifyReply, projectId: string) {
   const user = await requireUser(request as never, reply as never);
   if (!user) return null;
   const project = await getProject(projectId);
@@ -79,11 +84,15 @@ export async function registerHostingRoutes(app: FastifyInstance) {
     const config = hostingConfig();
     const site = await getSiteByProject(params.id);
     const releases = site ? await listReleases(site.id, config.limits.keepReleases + 10) : [];
+    const domains = site && site.userId === auth.user.id && customDomainsEnabled()
+      ? (await domainsForSite(site.id)).map(publicCustomDomain)
+      : [];
     return {
       enabled: config.enabled,
       domain: config.publicDomain,
       tlsMode: config.tlsMode,
       limits: config.limits,
+      domains,
       site: site && site.userId === auth.user.id ? publicSite(site, true) : null,
       releases: site && site.userId === auth.user.id
         ? releases.map(release => ({
@@ -187,6 +196,7 @@ export async function registerHostingRoutes(app: FastifyInstance) {
           throw error;
         }
       });
+      requestCustomDomainCaddyRefresh("site slug changed");
       await recordAudit({
         action: "hosting.slug.changed",
         actorType: "user",
@@ -257,6 +267,7 @@ export async function registerHostingRoutes(app: FastifyInstance) {
         code: "UNPUBLISH_FAILED",
       });
     }
+    requestCustomDomainCaddyRefresh("site unpublished");
     await recordAudit({ action: "hosting.unpublished", actorType: "user", actorId: auth.user.id, actorLabel: auth.user.email, target: site.id, targetLabel: site.slug, ip: request.ip }).catch(() => undefined);
     return siteAfter ? publicSite(siteAfter) : { removed: true };
   });
@@ -268,6 +279,7 @@ export async function registerHostingRoutes(app: FastifyInstance) {
     const site = await getSiteByProject(params.id);
     if (!site || site.userId !== auth.user.id) return reply.code(404).send({ error: "Сайт не найден" });
     await markSiteDeleted(site.id);
+    requestCustomDomainCaddyRefresh("site deleted");
     await reconcileSite(site.id).catch(error => console.warn("[hosting] не удалось удалить файлы сайта", error));
     await recordAudit({ action: "hosting.deleted", actorType: "user", actorId: auth.user.id, actorLabel: auth.user.email, target: site.id, targetLabel: site.slug, ip: request.ip }).catch(() => undefined);
     return { deleted: true };
@@ -301,6 +313,18 @@ export async function registerHostingRoutes(app: FastifyInstance) {
       const site = await getSiteBySlug(slug);
       if (!site || site.status !== "live" || !site.activeReleaseId) return reply.code(404).send({ error: "Сайт не найден" });
       return reply.send({ allowed: true, host, slug, kind: "site" });
+    }
+    const customHost = normalizeHostnameLookup(host);
+    // Проверяем существующие домены независимо от feature flag: выключение флага должно
+    // запрещать новые подключения, но не обрывать продление сертификатов уже активных сайтов.
+    if (customHost) {
+      const domain = await cachedCustomDomainForTls(customHost, customDomainForTls);
+      if (domain) {
+        const site = await getSite(domain.siteId);
+        if (site?.status === "live" && site.activeReleaseId) {
+          return reply.send({ allowed: true, host: customHost, siteId: site.id, kind: "custom-domain" });
+        }
+      }
     }
     const preview = previewHostTarget(host);
     if (!preview) return reply.code(404).send({ error: "Этот адрес не обслуживается" });
@@ -340,6 +364,7 @@ export async function registerHostingRoutes(app: FastifyInstance) {
         code: "UNPUBLISH_FAILED",
       });
     }
+    requestCustomDomainCaddyRefresh("site suspended");
     await recordAudit({ action: "hosting.suspended", actorType: "admin", actorId: admin.admin.id, actorLabel: admin.admin.email, target: site.id, targetLabel: site.slug + ": " + body.reason, ip: request.ip });
     return publicSite(site);
   });
@@ -356,6 +381,7 @@ export async function registerHostingRoutes(app: FastifyInstance) {
     // Возвращаем current только если активный релиз действительно есть на диске.
     const { restoreCurrent } = await import("../hosting/paths.js");
     if (site.activeReleaseId) await restoreCurrent(site.slug, site.activeReleaseId).catch(() => undefined);
+    requestCustomDomainCaddyRefresh("site restored");
     await recordAudit({ action: "hosting.restored", actorType: "admin", actorId: admin.admin.id, actorLabel: admin.admin.email, target: site.id, targetLabel: site.slug, ip: request.ip });
     return publicSite(site);
   });

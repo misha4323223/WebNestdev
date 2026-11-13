@@ -401,6 +401,7 @@ export async function registerAdminUserActionRoutes(app: FastifyInstance) {
           projectIds: result.transferred.map(project => project.id).join(","),
           sites: result.moved.sites,
           releases: result.moved.releases,
+          domains: result.moved.domains,
           sizes: result.moved.sizes,
           archives: result.moved.archives,
         },

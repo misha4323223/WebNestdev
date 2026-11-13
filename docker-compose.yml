@@ -22,12 +22,15 @@ services:
   #
   # Фронт с HTTPS: панель на основном домене и публичные адреса предпросмотра
   # (`<проект>.preview.домен`). Сертификаты для поддоменов предпросмотра выдаются по запросу
-  # (`on_demand` + endpoint /api/preview/tls-ask), а лежат они в томе `caddy-data`: без тома
-  # каждая выкатка заново запрашивала бы сертификаты и упиралась в лимиты Let's Encrypt.
+  # (`on_demand` + endpoint /api/tls-ask), а лежат они в общем `CADDY_DATA_HOST_DIR`: без
+  # общего хранилища каждая нода/выкатка заново запрашивала бы сертификаты и упиралась в
+  # лимиты Let's Encrypt.
   # Домены задаются переменными; без них Caddy поднимется с `localhost` и никому не помешает.
   #
   caddy:
-    image: caddy:2.8-alpine
+    # 2.11.8+ нужен для on_demand TLS без гонок и для корректного parse Caddyfile; digest
+    # закреплён, чтобы выкатка не подменила образ незаметно. Обновлять вместе с deploy/scripts/vm-deploy.sh.
+    image: caddy:2.11.8-alpine@sha256:f6228111e5fafa1a5238258d0858e103f10599b8d1659a146e7726681a002bb9
     depends_on:
       - webnestdev-server
     environment:
@@ -59,7 +62,14 @@ services:
       # Только чтение: Caddy отдаёт готовые релизы, но не должен уметь менять сайты.
       # Один и тот же каталог на хосте монтируется серверу для записи.
       - ${HOSTING_SITES_DIR:-/var/lib/webnestdev/sites}:/srv/sites:ro
-      - caddy-data:/data
+      # Сгенерированные site-блоки custom domains. Каталог общий (Gluster/data): одна и та же
+      # версия должна быть у Caddy на обеих нодах, даже если API обслужил запрос только node-1.
+      # Только чтение: файл пишет API атомарным rename.
+      - ${CUSTOM_DOMAINS_CADDY_DIR:-/var/lib/webnestdev/data/caddy-custom}:/etc/caddy/custom:ro
+      # Сертификаты Caddy — на общем Gluster-каталоге, а не в локальном named volume: после
+      # падения node-1 node-2 должна продолжить отдавать домен без перевыпуска сертификата.
+      # Старый том src_caddy-data переносится один раз при выкатке (vm-deploy.sh).
+      - ${CADDY_DATA_HOST_DIR:-/var/lib/webnestdev/data/caddy-data}:/data
       - caddy-config:/config
     # Caddy остаётся в сети, которая уже создана на ВМ. Доверие к X-Forwarded-For задаётся не
     # адресом контейнера (он меняется при пересоздании), а подсетью этой сети: кроме Caddy и
@@ -194,6 +204,10 @@ services:
       HOSTING_GLOBAL_BYTES: ${HOSTING_GLOBAL_BYTES:-16106127360}
       HOSTING_MIN_FREE_BYTES: ${HOSTING_MIN_FREE_BYTES:-5368709120}
       HOSTING_MAX_SITES: ${HOSTING_MAX_SITES:-0}
+      # Каталог внутри контейнера, куда API пишет custom-domains.caddy. Снаружи это общий
+      # CUSTOM_DOMAINS_CADDY_DIR; Caddy читает тот же каталог только на чтение.
+      CUSTOM_DOMAINS_CADDY_DIR: /srv/caddy-custom
+      CUSTOM_DOMAINS_ENABLED: ${CUSTOM_DOMAINS_ENABLED:-0}
       # Кому доверять X-Forwarded-For. Адрес Caddy задан статически выше; контейнер предпросмотра
       # в эту сеть не входит, поэтому подменить адрес клиента он не может.
       WEBNESTDEV_TRUSTED_PROXIES: ${WEBNESTDEV_TRUSTED_PROXIES:-172.30.0.0/24}
@@ -574,6 +588,8 @@ services:
       # Релизы статических сайтов. Тот же каталог на хосте смонтирован Caddy только для
       # чтения; сервер пишет сюда staging/rename. Не удаляется при выкатке.
       - ${HOSTING_SITES_DIR:-/var/lib/webnestdev/sites}:/srv/sites
+      # Тот же общий каталог, что читает Caddy: API пишет один файл атомарно.
+      - ${CUSTOM_DOMAINS_CADDY_DIR:-/var/lib/webnestdev/data/caddy-custom}:/srv/caddy-custom
       - ${SANDBOX_DIR:-/var/lib/webnestdev/sandboxes}:${SANDBOX_DIR:-/var/lib/webnestdev/sandboxes}
       # Локальный кэш node_modules на диске этой ВМ. Не общий том: после переезда проекта
       # на другую ноду зависимости один раз установятся там.
@@ -599,9 +615,9 @@ volumes:
   # Сокет Docker-брокера: общий том сервера и брокера. Не каталог хоста — на ВМ ничего создавать
   # руками не нужно, а права на сокет задаёт сам брокер (0660).
   docker-broker:
-  # Сертификаты и ключи Caddy. Именованный том, а не каталог внутри контейнера: без него каждая
-  # выкатка начиналась бы с пустого хранилища сертификатов, и выдача на поддомены предпросмотра
-  # упиралась бы в недельный лимит Let's Encrypt.
+  # Устаревший локальный том Caddy. Сертификаты теперь лежат в общем CADDY_DATA_HOST_DIR;
+  # том оставлен, чтобы старую установку можно было перенести без потери сертификатов
+  # (deploy/scripts/vm-deploy.sh переносит его в CADDY_DATA_HOST_DIR). После проверки его можно удалить.
   caddy-data:
   caddy-config:
 

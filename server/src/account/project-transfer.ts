@@ -41,7 +41,7 @@ export type ProjectTransferResult = {
   transferred: Array<{ id: string; name: string }>;
   counts: { from: number; to: number };
   /** Сколько связанных записей реально сменило владельца; идёт в журнал, не в ответ. */
-  moved: { projects: number; sites: number; releases: number; sizes: number; archives: number };
+  moved: { projects: number; sites: number; releases: number; domains: number; sizes: number; archives: number };
 };
 
 export type ProjectTransferErrorCode =
@@ -140,7 +140,7 @@ export async function transferProjects(input: ProjectTransferInput): Promise<Pro
   }
 
   const ids = selected.map(project => project.id);
-  const moved = { projects: 0, sites: 0, releases: 0, sizes: 0, archives: 0 };
+  const moved = { projects: 0, sites: 0, releases: 0, domains: 0, sizes: 0, archives: 0 };
 
   if (isYdbEnabled()) {
     await initializeStorage();
@@ -158,6 +158,7 @@ export async function transferProjects(input: ProjectTransferInput): Promise<Pro
       const hosting = await transferSiteOwners(ids, fromUserId, toUserId, tx);
       moved.sites = hosting.sites;
       moved.releases = hosting.releases;
+      moved.domains = hosting.domains;
       moved.sizes = await transferProjectStorage(ids, fromUserId, toUserId, tx);
       moved.archives = await transferArchiveOwners(ids, fromUserId, toUserId, tx);
       await refreshProjectCounters(tx, fromUserId, toUserId);
@@ -174,6 +175,7 @@ export async function transferProjects(input: ProjectTransferInput): Promise<Pro
     const hosting = await transferSiteOwners(ids, fromUserId, toUserId);
     moved.sites = hosting.sites;
     moved.releases = hosting.releases;
+    moved.domains = hosting.domains;
     moved.sizes = await transferProjectStorage(ids, fromUserId, toUserId);
     moved.archives = await transferArchiveOwners(ids, fromUserId, toUserId);
   }
