@@ -621,14 +621,14 @@ hostname отклоняется уникальным ограничением.
 - Исправление `5551969` добавило вложенные зависимости в Dockerfile; затем доставка
   reload-таймера в image-режиме и два исправления вызовов `docker compose` — `64b00c0`,
   `04ef8cc`, `da66041`.
-- Текущая сборка — `9d038bb` (UI этапа 3); `/api/health` сообщает её SHA, `PANEL-BUILD=ok`.
+- Текущая сборка — `9a6cba0` (run `43634687022`); `/api/health` сообщает её SHA на обеих нодах.
 - Caddy 2.11.8 работает; общий `caddy-data` содержит перенесённые сертификаты; публичный
   `https://nestdev.ru` и `/api/ready` — `200`.
 - `webnestdev-caddy-reload.timer` active/enabled; после добавления комментария в общий
   `custom-domains.caddy` сервис сам сделал `validate` и `reload`, затем файл возвращён.
 - На живой БД создана `public.webnestdev_site_domains`; строк `0`, feature flag выключен.
-- `node-2` включена 14.11.2026 и работает standby; API — `200`. Выкатка через Actions должна
-  обновить её до текущей сборки и установить reload-таймер. HA/lock на паре нод ещё не проверены.
+- `node-2` включена 14.11.2026 и работает standby; выкатка `43634687022` обновила её до
+  `9a6cba0`, пересоздала Caddy 2.11.8 и установила active reload-таймер. HA/lock ещё не проверены.
 - `custom.nestdev.ru` резолвится в `178.236.27.102`; реальный клиентский домен и TLS для него
   ещё не выпускались — для приёмки нужен тестовый домен пользователя.
 
@@ -639,8 +639,7 @@ hostname отклоняется уникальным ограничением.
 2. [x] Выкатить образ/сервис на `node-1`; `vm-deploy.sh` перенёс `caddy-data` в
    `/var/lib/webnestdev/data/caddy-data`, создал `caddy-custom` и проверил Caddyfile.
 3. [x] Установить и включить таймер на `node-1`; timer active, автоматический reload проверен.
-   Для `node-2` установка выполняется `node2-sync.sh` при ближайшей выкатке; после неё нужно
-   отдельно проверить `webnestdev-caddy-reload.timer` на второй ноде.
+   `node2-sync.sh` установил и включил `webnestdev-caddy-reload.timer` на `node-2`; timer active.
 4. [x] Создать `custom.nestdev.ru` в DNS (по просьбе пользователя 14.11.2026) и проверить target.
 5. [ ] Включить `CUSTOM_DOMAINS_ENABLED=1`; подключить тестовый домен, проверить
    `https://<домен>` / `https://www.<домен>`, 301, 404, `caddy-data` на обеих нодах и падение
@@ -738,4 +737,4 @@ hostname отклоняется уникальным ограничением.
 | 13.11.2026 | Обновлён живой статус после этапа 1. | Код готов; PostgreSQL-ветка и этап 2 остаются непроверенными/заблокированными. |
 | 13.11.2026 | Этап 2 выкачен на `node-1`: Caddy 2.11.8, общий `caddy-data`, `custom-domains.caddy`, reload-таймер. | Deploy run 43501085787 сначала упал на `tldts` и откатился; после Dockerfile-fix 43502136872 и run 43506233483 — success. Публичный `/api/ready` и `/` — 200; timer active; автоматический reload проверен. |
 | 13.11.2026 | Этап 3: мастер домена в панели хостинга и API-лимит тарифа. | `tsc -b --noEmit` — 0; `npm run build` — ok; deploy 43507645305 — success, build `9d038bb`. Feature flag оставлен выключенным; реальный домен не подключался. |
-| 14.11.2026 | DNS target исправлен и включена `node-2`; подготовлена выкатка обновления через Actions. | `custom.nestdev.ru` → `178.236.27.102` (A, TTL 3600); MWS `power=ON`; `node-1` primary (`f`), `node-2` standby (`t`), API `200` на обеих, Gluster — по два online-brick'а. Feature flag всё ещё `0`; тестовый домен не подключён. |
+| 14.11.2026 | DNS target исправлен, включена `node-2`; обновление выкачено через Actions. | `custom.nestdev.ru` → `178.236.27.102` (A, TTL 3600); MWS `power=ON`; `node-1` primary (`f`), `node-2` standby (`t`), API `200` на обеих, Gluster — по два online-brick'а. Deploy run `43634687022` — success, build `9a6cba0` на обеих, Caddy 2.11.8 и reload-таймер active. Feature flag всё ещё `0`; тестовый домен не подключён. |
