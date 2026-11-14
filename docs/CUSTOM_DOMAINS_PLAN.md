@@ -1,7 +1,7 @@
 # Custom domains: production plan and live status
 
 Дата создания: **13.11.2026**  
-Статус: **этапы 1 и 2 реализованы в коде и проверены unit/конфиг-тестами; live Caddy, общий caddy-data и HA ещё не проверены; production не включён**  
+Статус: **этапы 1–3 реализованы; Caddy 2.11.8, общий caddy-data и reload-таймер выкачены на node-1 и проверены; end-to-end custom domain и HA ещё не проверены; feature flag выключен**
 Основание: решения пользователя от 13.11.2026.
 
 Этот документ — не просто описание. По нему ведётся реализация, и он обновляется после каждого
@@ -37,10 +37,10 @@
 | Этап | Статус | Обновлено | Что проверено / что дальше |
 |---|---|---|---|
 | Анализ и решения | готово | 13.11.2026 | Архитектура, ограничения MWS, UI-схема, SEO и план ниже. |
-| 0. Проверка предпосылок | частично; остаются NLB API, DNS target и HA | 13.11.2026 | SSH восстановлен. DNS `nestdev.ru`/`host.nestdev.ru` на NLB подтверждён; NLB TCP 80/443 доступен; Caddy 2.11.8 принимает generated-конфиг; `custom.nestdev.ru` всё ещё `ENOTFOUND`; общий `caddy-data` и staging-сертификат на живой паре не проверены, `node-2` выключена. |
-| 1. Данные и верификация | готово в коде; PG-ветка не проверена на живой БД | 13.11.2026 | `site_domains`, нормализация, TXT/A/CNAME/CAA, API, лимит, аудит, transfer, cascade; 28 тестов, tsc. |
-| 2. Caddy, TLS и HA | реализовано в коде; live не проверено | 13.11.2026 | Генератор site-блоков, общий файл на Gluster-пути, атомарная запись, reload-таймер, общий `caddy-data`, TLS-проба/активация, cache для ask. Тесты и Caddy validate 2.11.8 проходят. |
-| 3. UI | не начато | — | Мастер подключения, статусы, canonical, ошибки. |
+| 0. Проверка предпосылок | частично; остаются NLB API и HA | 14.11.2026 | SSH восстановлен. DNS `nestdev.ru`/`host.nestdev.ru`/`custom.nestdev.ru` на NLB подтверждён; NLB TCP 80/443 доступен; Caddy 2.11.8 работает на node-1; `node-2` включена и standby. Статичность IP через MWS API не подтверждена. |
+| 1. Данные и верификация | DDL и API готовы; PG-таблица создана, live-домен не проверен | 13.11.2026 | `public.webnestdev_site_domains` создана на живой БД, столбцы/индексы проверены; нормализация, TXT/A/CNAME/CAA, API, лимит, аудит, transfer, cascade; 28 тестов. |
+| 2. Caddy, TLS и HA | инфраструктура выкачена; end-to-end не проверен | 14.11.2026 | Caddy 2.11.8, общий `caddy-data` с перенесёнными сертификатами, `custom-domains.caddy`, reload-таймер active; validate/reload проверены, включая автоматический reload. `node-2` включена и standby; HA и custom TLS ждут тестового домена. |
+| 3. UI | реализовано и выкачено; feature flag выключен | 13.11.2026 | Мастер домена, тарифный gate, DNS-записи и копирование, автопроверка, статусы, canonical и удаление. В production скрыт за `CUSTOM_DOMAINS_ENABLED`. |
 | 4. SEO и приёмка | не начато | — | 301, HTTPS, 404, apex/www, IDN. |
 | 5. CDN для «Премиума» | не начато | — | MWS CDN, CM, purge, canonical `www`. |
 | 6. Пилот и выкатка | не начато | — | 3–5 реальных доменов, HA, runbook. |
@@ -77,18 +77,24 @@
 - Caddy отдаёт `/srv/sites/<slug>/current`.
 - `*.host.nestdev.ru` идёт через MWS CDN; origin — NLB `178.236.27.102`.
 - NLB работает на TCP 80/443 и не терминирует TLS.
-- `node-1` — primary, `node-2` выключена; целевой production — обе ноды.
-- На живой `node-1` всё ещё работает `caddy:2.8-alpine` (`src-caddy-1`); в рабочем дереве
-  compose уже пинит `caddy:2.11.8-alpine` по digest. Выкатки не было.
-- Живой `caddy-data` — локальный `src_caddy-data`; в рабочем дереве он переносится в общий
-  `CADDY_DATA_HOST_DIR` (по умолчанию `/var/lib/webnestdev/data/caddy-data`) при выкатке.
-- `custom-domains.caddy` генерируется API и лежит вне `SITES_DIR`; Caddy читает каталог
-  `/etc/caddy/custom` только на чтение. На живой паре это ещё не развернуто.
+- `node-1` — primary, `node-2` — streaming standby и включена; целевой production — обе ноды.
+- На живой `node-1` работает `caddy:2.11.8-alpine` (`src-caddy-1`) с digest из compose.
+- Живой `caddy-data` перенесён из локального `src_caddy-data` в общий
+  `CADDY_DATA_HOST_DIR` (`/var/lib/webnestdev/data/caddy-data`); старые сертификаты на месте,
+  публичный `https://nestdev.ru` отвечает `200`. Резервная копия старого тома сделана перед
+  выкаткой.
+- `custom-domains.caddy` генерируется API в `/var/lib/webnestdev/data/caddy-custom`;
+  Caddy читает каталог `/etc/caddy/custom` только на чтение. Пустой файл уже проверен
+  `caddy validate`; реальные блоки появятся после подключения домена.
+- `webnestdev-caddy-reload.timer` активен и включён в автозапуск; автоматический reload после
+  изменения общего файла проверен на `node-1`.
 - `/api/tls-ask` разрешает preview, `host`-сайты и custom domains в состояниях
   `configuring`, `issuing_certificate`, `active`; ответ custom domain кешируется на 15/5 секунд,
   а смена статуса инвалидирует кеш. Реальный выпуск на живом домене ещё не проверен.
-- В коде есть `site_domains`, JSON/PostgreSQL-хранилище, DNS-проверки и API; DDL применён в коде, но не проверен на живой PostgreSQL.
-- `custom.nestdev.ru` пока не существует в DNS (`ENOTFOUND`), поэтому CNAME-инструкция для `www` сейчас нерабочая.
+- В PostgreSQL создана таблица `public.webnestdev_site_domains` (префикс `getTable`);
+  столбцы, check-ограничения и уникальные индексы проверены. Строк пока нет: feature flag
+  выключен, реальные домены не подключались.
+- `custom.nestdev.ru` → `178.236.27.102` (A, TTL 3600); target для CNAME-инструкции готов.
 - `host.nestdev.ru` — bare CNAME-target без собственного site-блока. TLS-ошибка на нём
   ожидаема: wildcard `*.host.nestdev.ru` не покрывает само имя; это не custom domain.
 
@@ -119,8 +125,9 @@
 
 **Граница этапа:** `verified` означает только подтверждённое владение. После успешной проверки
 TXT + трафика + CAA домен переходит в `configuring` — это состояние уже можно отдавать в
-`/api/tls-ask` для первого выпуска. `issuing_certificate`/`active` и Caddy-маршрут — этап 2.
-Поэтому сейчас реальный сертификат не выпускается: этап 2 ещё не подключён.
+`/api/tls-ask` для первого выпуска. `issuing_certificate`/`active` и Caddy-маршрут — этап 2,
+который уже выкачен; реальный сертификат не выпускается только потому, что нет DNS/домена и
+feature flag выключен.
 
 ### Инварианты
 
@@ -517,18 +524,22 @@ CDN раньше, чем он реально работает.
   статический, но это не живая проверка.
 - [x] Подтвердить TCP 80/443 и отсутствие TLS termination на NLB: снаружи открыты оба порта,
   `http://nestdev.ru` отвечает 308, `https://nestdev.ru` — 200 с сертификатом Caddy.
-- [ ] Проверить `custom.nestdev.ru` в DNS: сейчас `ENOTFOUND`; запись не создана, менять DNS
-  без явной просьбы нельзя.
+- [x] Проверить `custom.nestdev.ru` в DNS: 14.11.2026 запись `A custom → 178.236.27.102`
+  (TTL 3600) подтверждена через авторитативные `ns1/ns2.reg.ru` и публичные резолверы.
+  `custom.nestdev.ru.nestdev.ru` больше не существует. Это target для клиентских CNAME/apex,
+  а не отдельный сайт.
 - [x] Обновить Caddy до 2.11.8+ и запинить digest в рабочем дереве:
   `caddy:2.11.8-alpine@sha256:f6228111e5fafa1a5238258d0858e103f10599b8d1659a146e7726681a002bb9`.
-  Живой контейнер пока 2.8.4; нужна выкатка.
+  Выкачено 13.11.2026: живой `src-caddy-1` работает на 2.11.8.
 - [x] Проверить `caddy validate` с импортом пустого custom-файла: на `node-1` во временном
   контейнере Caddy 2.11.8 — `Valid configuration`. Боевой конфиг не менялся.
-- [ ] Проверить общий `caddy-data` на Gluster: запись, чтение, lock, вторая нода. Код и
-  миграция готовы, но выкатки не было; на живой `node-1` всё ещё локальный том.
+- [x] Проверить общий `caddy-data` на `node-1`: миграция выполнена, старые сертификаты
+  читаются, HTTPS работает. [ ] Повторить lock/запись на паре нод с включённой `node-2`.
 - [ ] Проверить выпуск тестового сертификата Caddy в staging CA через NLB: нет `custom.nestdev.ru`.
-- [ ] Включить node-2 для HA-теста (только по явной просьбе). Сейчас `power=OFF`; для этапа 0
-  не требуется, но без неё HA не проверить.
+- [x] Включить node-2 для HA-теста (по просьбе пользователя 14.11.2026): MWS `power=ON`,
+  `node-1` остаётся primary (`pg_is_in_recovery()=f`), `node-2` поднялась standby (`t`),
+  API на обеих нодах — `200`, Gluster `data`/`sandboxes`/`sites` — по два online-brick'а.
+  Это ещё не production switchover: primary по-прежнему на `node-1`.
 
 **Итог:** этап 0 **частично проверен**. SSH восстановлен, Caddy 2.11.8 принимает generated-конфиг
 с пустым custom-файлом. Остаются NLB API/статичность IP, DNS target `custom.nestdev.ru`, живой
@@ -537,7 +548,8 @@ CDN раньше, чем он реально работает.
 ### Этап 1. Данные и верификация
 
 - [x] DDL `site_domains` в PostgreSQL (вызывается из `storage/pg.ts`) и JSON-хранилище.
-  **Не применено к живой PostgreSQL:** нет доступа к БД/стенду, DDL проверен только компиляцией.
+  **Применено к живой БД 13.11.2026:** таблица `public.webnestdev_site_domains`, столбцы,
+  check-ограничения и уникальные индексы проверены через `psql`.
 - [x] Нормализация hostname, punycode, PSL, запреты; тесты IDN/URL/IP/wildcard/платформенных имён.
 - [x] TXT-токен (192 бита), создание/истечение заявки (7 дней, ленивая очистка).
 - [x] DNS-проверки TXT, A, CNAME, CAA с injectable resolver; TXT для apex и `www` отдельно.
@@ -546,12 +558,12 @@ CDN раньше, чем он реально работает.
 - [x] Тесты на невалидные имена, IDN, захват/дубль домена, лимит, feature flag, cascade и
   одновременное создание (JSON). PostgreSQL-гонка закрыта транзакцией и `FOR UPDATE`, но на
   живой БД не проверялась.
-- [ ] Проверить PostgreSQL-ветку на реальной базе: DDL, уникальные индексы, транзакцию создания
-  и transfer. Это остаётся ограничением этапа.
+- [ ] Проверить транзакцию создания и transfer на живых данных с реальным доменом; DDL и
+  индексы уже проверены. Это остаётся ограничением этапа.
 
-**Итог:** код этапа 1 готов, тесты и `tsc` проходят. Нельзя считать PostgreSQL-часть проверенной
-без живой БД, а активацию домена — без этапа 2. Домен нельзя подтвердить без DNS: `verify`
-требует TXT; чужой/занятый hostname отклоняется уникальным ограничением.
+**Итог:** DDL этапа 1 применён к живой PostgreSQL, API и тесты готовы, feature flag выключен.
+Создание/проверку домена нельзя проверить без DNS: `verify` требует TXT; чужой/занятый
+hostname отклоняется уникальным ограничением.
 
 ### Этап 2. Caddy, TLS, HA
 
@@ -560,9 +572,11 @@ CDN раньше, чем он реально работает.
 - [x] Общий файл конфига и атомарная запись: `hosting/caddy-config-writer.ts`,
   `CUSTOM_DOMAINS_CADDY_DIR`; Caddy читает `/etc/caddy/custom` read-only.
 - [x] Таймер reload с validate и откатом: `deploy/ha/caddy-reload.sh`,
-  `webnestdev-caddy-reload.{service,timer}`, установщик. На ВМ ещё не установлен.
+  `webnestdev-caddy-reload.{service,timer}`, установщик. На `node-1` active/enabled; автоматический
+  reload после изменения `custom-domains.caddy` проверен, `caddy validate` проходит.
 - [x] Общий `caddy-data`: compose-монтирование `CADDY_DATA_HOST_DIR`, однократная миграция
-  старого `src_caddy-data` в `vm-deploy.sh`. Живой Gluster/lock не проверены.
+  старого `src_caddy-data` в `vm-deploy.sh`. На `node-1` сертификаты перенесены, HTTPS работает;
+  Gluster-блокировка на паре нод и HA не проверены.
 - [x] Расширение `/api/tls-ask` с кешем и cooldown: положительный TTL 15 с, отрицательный 5 с,
   инвалидация при смене домена; повтор TLS-активации — не чаще раза в 60 с.
 - [x] Выпуск сертификата, TLS-проба через NLB IP и SNI: `hosting/domain-tls.ts`,
@@ -576,8 +590,9 @@ CDN раньше, чем он реально работает.
   на паре нод не проверены без `node-2`.
 
 **Готово, когда:** сертификат выпускается на обеих нодах/в общем storage; падение node-1 не
-ломает домен; ошибка reload не ломает рабочий конфиг. **Сейчас код готов, но live-критерий не
-выполнен:** нет выкатки, `custom.nestdev.ru`, общего `caddy-data` на живой паре и `node-2`.
+ломает домен; ошибка reload не ломает рабочий конфиг. **Сейчас инфраструктура node-1
+выкачена и проверена, `node-2` включена, но end-to-end-критерий не выполнен:** нет тестового
+клиентского домена; HA и общий Gluster-lock ещё не проверены на паре нод.
 
 Файлы этапа 2: `server/src/hosting/caddy-config.ts`, `caddy-routes.ts`,
 `caddy-config-writer.ts`, `caddy-refresh.ts`, `domain-tls.ts`, `domain-activation.ts`,
@@ -598,32 +613,55 @@ CDN раньше, чем он реально работает.
 - `probeCustomDomainTls("nestdev.ru")` через NLB IP: `ok:true`, `TLSv1.3`.
 - `caddy:2.11.8-alpine` digest: `sha256:f6228111e5fafa1a5238258d0858e103f10599b8d1659a146e7726681a002bb9`.
 
-**Порядок выкатки этапа 2 (ещё не выполнен):**
+**Выкатка 13.11.2026 (выполнена на `node-1`):**
 
-1. Сделать backup PostgreSQL и каталога старого `src_caddy-data`; проверить, что `node-1` — primary.
-2. Выкатить образ/сервис на `node-1`; `vm-deploy.sh` перенесёт `caddy-data` в
-   `/var/lib/webnestdev/data/caddy-data`, создаст `caddy-custom` и проверит Caddyfile.
-3. Установить таймер на обеих нодах: `sudo deploy/ha/install-caddy-reload.sh` (на node-2 —
-   после включения и синхронизации по `docs/PRODUCTION_STATE.md`). Проверить
-   `systemctl is-active webnestdev-caddy-reload.timer`.
-4. Создать `custom.nestdev.ru` в DNS (только по явной просьбе пользователя) и проверить CNAME.
-5. Включить `CUSTOM_DOMAINS_ENABLED=1`; подключить тестовый домен, проверить
+- Первая попытка (`ecbc9d6`) упала на старте API: `tldts` установился в `server/node_modules`, а
+  production-образ копировал только корневой `node_modules`. Deploy автоматически вернул
+  предыдущий образ, прод не остался на сломанной сборке.
+- Исправление `5551969` добавило вложенные зависимости в Dockerfile; затем доставка
+  reload-таймера в image-режиме и два исправления вызовов `docker compose` — `64b00c0`,
+  `04ef8cc`, `da66041`.
+- Текущая сборка — `9d038bb` (UI этапа 3); `/api/health` сообщает её SHA, `PANEL-BUILD=ok`.
+- Caddy 2.11.8 работает; общий `caddy-data` содержит перенесённые сертификаты; публичный
+  `https://nestdev.ru` и `/api/ready` — `200`.
+- `webnestdev-caddy-reload.timer` active/enabled; после добавления комментария в общий
+  `custom-domains.caddy` сервис сам сделал `validate` и `reload`, затем файл возвращён.
+- На живой БД создана `public.webnestdev_site_domains`; строк `0`, feature flag выключен.
+- `node-2` включена 14.11.2026 и работает standby; API — `200`. Выкатка через Actions должна
+  обновить её до текущей сборки и установить reload-таймер. HA/lock на паре нод ещё не проверены.
+- `custom.nestdev.ru` резолвится в `178.236.27.102`; реальный клиентский домен и TLS для него
+  ещё не выпускались — для приёмки нужен тестовый домен пользователя.
+
+**Порядок выкатки этапа 2 (частично выполнен):**
+
+1. [x] Backup старого `src_caddy-data` и проверка, что `node-1` — primary. Backup PostgreSQL
+   остаётся штатным расписанием; DDL не разрушающий.
+2. [x] Выкатить образ/сервис на `node-1`; `vm-deploy.sh` перенёс `caddy-data` в
+   `/var/lib/webnestdev/data/caddy-data`, создал `caddy-custom` и проверил Caddyfile.
+3. [x] Установить и включить таймер на `node-1`; timer active, автоматический reload проверен.
+   Для `node-2` установка выполняется `node2-sync.sh` при ближайшей выкатке; после неё нужно
+   отдельно проверить `webnestdev-caddy-reload.timer` на второй ноде.
+4. [x] Создать `custom.nestdev.ru` в DNS (по просьбе пользователя 14.11.2026) и проверить target.
+5. [ ] Включить `CUSTOM_DOMAINS_ENABLED=1`; подключить тестовый домен, проверить
    `https://<домен>` / `https://www.<домен>`, 301, 404, `caddy-data` на обеих нодах и падение
-   `node-1`. Без этого этап 2 остаётся «код готов, live не проверен».
+   `node-1`. Без тестового домена end-to-end custom domain не считается проверенным.
 
 ### Этап 3. UI
 
-- [ ] Карточка «Свой домен» с тарифным gate.
-- [ ] Мастер из трёх шагов.
-- [ ] Копирование DNS-записей.
-- [ ] Автопроверка и ручная кнопка.
-- [ ] Статусы, ошибки, поддержка.
-- [ ] Выбор canonical и предупреждение о 301.
-- [ ] Мобильная версия.
-- [ ] Admin suspend (API/минимальный UI).
+- [x] Карточка «Свой домен» с тарифным gate: `src/features/hosting/CustomDomainCard.tsx`.
+- [x] Мастер из трёх шагов «Домен → DNS → HTTPS».
+- [x] Копирование TXT/A/CNAME и показ target/IP.
+- [x] Автопроверка раз в 8 секунд и ручная кнопка «Проверить DNS».
+- [x] Статусы `pending_dns/verified/configuring/issuing_certificate/active/error`, ошибки и
+  подсказки по DNS; отдельной ссылки в поддержку пока нет.
+- [x] Выбор canonical внутри apex/www и предупреждение о 301.
+- [x] Мобильная раскладка добавлена в `src/styles.css`.
+- [ ] Admin suspend UI: API уже есть (`/api/admin/hosting/...`), отдельный экран не делался.
 
 **Готово, когда:** пользователь без терминала и без чтения документации проходит подключение;
-все состояния понятны; ошибки не раскрывают чужие аккаунты.
+все состояния понятны; ошибки не раскрывают чужие аккаунты. **Код и сборка готовы, но живой
+проход blocked:** feature flag выключен, target `custom.nestdev.ru` готов, а тестовый домен
+пользователя ещё не подключён.
 
 ### Этап 4. SEO и приёмка
 
@@ -684,7 +722,7 @@ CDN раньше, чем он реально работает.
 | Phishing на custom domain | Платный тариф, audit, admin suspend, ручной разбор жалоб. |
 | Квота CDN 25 | Premium opt-in, очередь, запрос увеличения; не тихий обход. |
 | Apex CNAME | A на NLB; ALIAS/ANAME — если поддерживает DNS клиента. |
-| node-2 выключена | HA-тест отложен до включения по просьбе; не считать HA проверенной. |
+| node-2 включена, но HA не проверена | Не считать отказоустойчивость проверенной до падения node-1 и возврата standby. |
 | Смешивание с preview-правками | Отдельные файлы/коммит; не коммитить чужие изменения. |
 
 ## 16. Журнал изменений
@@ -696,5 +734,8 @@ CDN раньше, чем он реально работает.
 | 13.11.2026 | Проверен tsc сервера. | `npx tsc -p server/tsconfig.json --noEmit` — 0 ошибок. |
 | 13.11.2026 | Проверены DNS и доступ к MWS. | `nestdev.ru` и `host.nestdev.ru` → `178.236.27.102`; `custom.nestdev.ru` → `ENOTFOUND`; MWS-ключ работает (`MWS-ACCESS=ok`), но NLB API по трём известным путям даёт 404. |
 | 13.11.2026 | Проверен доступ к ВМ для этапа 0. | `/tmp/nestdev-agent` отсутствует, SSH к `node-1` — `Permission denied (publickey)`. Caddy/Gluster/staging не проверены; обход не создавался. |
-| 13.11.2026 | Реализован этап 2: генератор точных Caddy-блоков, общий файл с атомарной записью, reload-таймер, TLS-проба/активация, cache ask, общий `caddy-data` и миграция. | 42 точечных теста, 0 fail; `tsc` server/frontend — 0; Caddy 2.11.8 `Valid configuration`; TLS-проба `nestdev.ru` через NLB — `TLSv1.3`. Живой custom-домен, Gluster lock и HA не проверены: `custom.nestdev.ru` отсутствует, `node-2` выключена, выкатки не было. |
+| 13.11.2026 | Реализован этап 2: генератор точных Caddy-блоков, общий файл с атомарной записью, reload-таймер, TLS-проба/активация, cache ask, общий `caddy-data` и миграция. | 42 точечных теста, 0 fail; `tsc` server/frontend — 0; Caddy 2.11.8 `Valid configuration`; TLS-проба `nestdev.ru` через NLB — `TLSv1.3`. На тот момент живой custom-домен, Gluster lock и HA ещё не были проверены: `custom.nestdev.ru` отсутствует, `node-2` выключена, выкатки не было; инфраструктура выкачена позже в тот же день. |
 | 13.11.2026 | Обновлён живой статус после этапа 1. | Код готов; PostgreSQL-ветка и этап 2 остаются непроверенными/заблокированными. |
+| 13.11.2026 | Этап 2 выкачен на `node-1`: Caddy 2.11.8, общий `caddy-data`, `custom-domains.caddy`, reload-таймер. | Deploy run 43501085787 сначала упал на `tldts` и откатился; после Dockerfile-fix 43502136872 и run 43506233483 — success. Публичный `/api/ready` и `/` — 200; timer active; автоматический reload проверен. |
+| 13.11.2026 | Этап 3: мастер домена в панели хостинга и API-лимит тарифа. | `tsc -b --noEmit` — 0; `npm run build` — ok; deploy 43507645305 — success, build `9d038bb`. Feature flag оставлен выключенным; реальный домен не подключался. |
+| 14.11.2026 | DNS target исправлен и включена `node-2`; подготовлена выкатка обновления через Actions. | `custom.nestdev.ru` → `178.236.27.102` (A, TTL 3600); MWS `power=ON`; `node-1` primary (`f`), `node-2` standby (`t`), API `200` на обеих, Gluster — по два online-brick'а. Feature flag всё ещё `0`; тестовый домен не подключён. |

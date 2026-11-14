@@ -1,18 +1,27 @@
 # Состояние production и оперативная память
 
-Дата среза: **13.11.2026**. Документ фиксирует факты, которые нельзя терять между
-сессиями. Секреты здесь не хранятся: только имена переменных, пути и способы проверки.
+Дата среза: **14.11.2026**. Документ фиксирует факты, которые нельзя терять между
+сессиями.
+ Секреты здесь не хранятся: только имена переменных, пути и способы проверки.
+
+**SSH-ключ агента:** `/tmp/nestdev-agent` (права `600`), в git не хранится. `/tmp` в workspace
+эфемерный: после перезапуска файл нужно восстановить из защищённого источника
+`~/.ssh/nestdev-agent-2026-11-13`, не печатая содержимое.
+
+**13.11.2026, доступ агента:** вход восстановлен без GitHub. Рабочий ключ —
+`~/.ssh/nestdev-agent-2026-11-13` (копия `/tmp/nestdev-agent`), публичная часть установлена в
+`/home/Misha/.ssh/authorized_keys` на `node-1`. Проверено: `hostname=webnestdev`,
+`USER=Misha`, `SUDO=ok`. Старый `~/.ssh/nestdev-agent-new` оставлен как резерв.
 
 ## 1. Роли ВМ
 
 | ВМ | Роль | Адрес | Текущее питание |
 | --- | --- | --- | --- |
 | `node-1` | production primary: API, Caddy, HAProxy, PostgreSQL primary, `node1-runner` | `10.0.0.4`, management `2.59.83.250` | `ON` |
-| `node-2` | standby/worker: PostgreSQL streaming standby, API/Caddy/broker/runner, общий storage | `10.0.0.5`; внешний NAT динамический, читать из MWS API | `OFF` — выключена 13.11.2026 по решению пользователя |
+| `node-2` | standby/worker: PostgreSQL streaming standby, API/Caddy/broker/runner, общий storage | `10.0.0.5`; внешний NAT динамический, читать из MWS API | `ON` — включена 14.11.2026 для работ по HA |
 
-**С 13.11.2026:** primary PostgreSQL — `node-1`, `node-2` выключена. Прод временно
-обслуживается одной ВМ; NLB направляет трафик на `node-1`. Целевой production — две
-включённые ноды, поэтому это ограничение по стоимости, а не смена архитектуры.
+**С 14.11.2026:** primary PostgreSQL — `node-1`, `node-2` включена и работает streaming
+standby. Прод обслуживают обе ноды; целевой production — две включённые ноды.
 
 **Не включать `node-2`, пока `node-1` не жива и не является primary:** иначе контроллер
 `node-2` может повысить её и получится два primary. Включать только по явной просьбе и под
@@ -25,7 +34,7 @@ standby, а не primary.
 
 Правило работы:
 
-1. На 13.11.2026 `node-1` — primary, `node-2` — `power=OFF`; прод работает на одной ВМ.
+1. На 14.11.2026 `node-1` — primary, `node-2` — `power=ON` и standby; HA-тест ещё не завершён.
 2. Доводить задачу до конца, не выключая работающую ВМ в середине.
 3. Перед production-запуском включить `node-2`, проверить её standby и выполнить плановый
    переезд primary на неё по [`PRODUCTION_LAUNCH.md`](PRODUCTION_LAUNCH.md).
@@ -33,29 +42,56 @@ standby, а не primary.
    `power=OFF`.
 5. После production-HA `node-2` работает постоянно; это фиксируется отдельным решением.
 
-Пока `node-2` выключена, production не должен зависеть от её базы или storage как от
-единственного экземпляра.
+Production не должен зависеть от базы или storage одной ноды как от единственного
+экземпляра; после выкатки это проверяется падением `node-1`.
 
 ## 2. Текущая production-сборка
 
 - Публичный адрес: `https://nestdev.ru`.
 - `GET /api/ready` отвечает `ok:true`.
-- Текущая production-сборка: `55522a0126a39510c929d8b87959dbb1b053127f` — коммит
-  `55522a0` в `main`.
-- Образ: `ghcr.io/misha4323223/webnestdev:sha-55522a0126a3` — собран и опубликован
-  workflow `deploy` (run `43441847699`).
-- Выкачена 13.11.2026 на `node-1`. `node-2` была выключена, и workflow её пропустил: на ней
-  остаётся предыдущий образ `sha-c33e4064f2f2` до следующего включения и выкатки.
+- Текущая production-сборка на `node-1`: `9d038bbbb870` — коммит `9d038bb` в `main`.
+- Образ: `ghcr.io/misha4323223/webnestdev:sha-9d038bbbb870` — собран и опубликован
+  workflow `deploy` (run `43507645305`).
+- Выкачена 13.11.2026 на `node-1`. `node-2` была выключена; после включения 14.11.2026 на
+  ней ещё работает старая сборка `c33e4064f2f2` до выкатки обновления через Actions.
 - Исправление: локальный кэш зависимостей передаётся Docker с флагом `-v`; без него
   установка падала с `invalid reference format`. Флаг проверен на живой установке
   зависимостей проекта `9ad6af70…` на `node-1`. Код также включает hybrid fallback,
   отдельный лимит hybrid/общий бюджет ноды, static-only панель preview и двухминутный
   idle для Docker/hybrid; подробности — в разделе 20 и
   [`HYBRID_PREVIEW.md`](HYBRID_PREVIEW.md).
-- Прод работает на базе `node-1`; `node-2` выключена. Переключение выполнялось аварийным
-  прогоном 12.11.2026, подробности — в разделе 19.
+- Прод работает на базе `node-1`; `node-2` включена как standby. Переключение выполнялось
+  аварийным прогоном 12.11.2026, подробности — в разделе 19.
 - NLB `webnestdev-nlb-main` — публичный ingress; DNS при переключении не меняется. Сейчас
   трафик обслуживает `node-1`; публичный `https://nestdev.ru` и `/api/ready` отвечают `200`.
+
+## 2.1. Custom domains: инфраструктура выкачена, feature flag выключен
+
+- 13.11.2026 custom domains этапов 1–3 выкачены на `node-1`; текущая сборка — `9d038bb`.
+- Живой Caddy: `src-caddy-1`, image `caddy:2.11.8-alpine`, version `v2.11.8`.
+- Сертификаты перенесены из `src_caddy-data` в общий
+  `/var/lib/webnestdev/data/caddy-data`; старые сертификаты на месте, `https://nestdev.ru` и
+  `/api/ready` отвечают `200`. Резервная копия старого тома сделана до выкатки.
+- `custom-domains.caddy` лежит в `/var/lib/webnestdev/data/caddy-custom`; Caddy читает его
+  read-only. `webnestdev-caddy-reload.timer` active/enabled; автоматический validate/reload
+  после изменения файла проверен вручную.
+- В PostgreSQL создана `public.webnestdev_site_domains` (префикс `getTable`), строк `0`.
+- `/api/tls-ask` разрешает custom domains в `configuring`/`issuing_certificate`/`active`;
+  TLS-активация проверяет сертификат через NLB IP с SNI и переводит домен в `active`.
+- `CUSTOM_DOMAINS_ENABLED` выключен; UI домена в панели поэтому скрыт. Включать после
+  подключения тестового домена и проверки TLS/301/404.
+- `custom.nestdev.ru` → `178.236.27.102` (A, TTL 3600) — target для CNAME/apex готов.
+- `host.nestdev.ru` — bare CNAME target; TLS-ошибка на нём ожидаема и не является ошибкой
+  custom domains (wildcard `*.host.nestdev.ru` не покрывает bare-имя).
+- `node-2` включена 14.11.2026; выкатка обновления через Actions должна доставить ей
+  актуальные compose/Caddy и reload-таймер. Общий Gluster `caddy-data`, блокировки Caddy и
+  HA-переключение custom domains ещё не проверены.
+- Проверки: полный `npm test` сервера до выкатки — 1828 тестов, 0 fail, 10 skip;
+  `tsc` server/frontend — 0; `npm run build` — ok; Caddy 2.11.8 `Valid configuration`;
+  deploy run 43507645305 — success; публичный `/api/ready` — `200`.
+- Первая выкатка `ecbc9d6` упала на `ERR_MODULE_NOT_FOUND: tldts`; deploy откатил API на
+  предыдущую сборку, затем Dockerfile был исправлен (`5551969`). Не удалять вложенные
+  зависимости `server/node_modules` из production-образа.
 
 ## 3. Env-файлы
 
@@ -1011,6 +1047,23 @@ mount'ы `preview-cache` и ключи `WEBNESTDEV_PREVIEW_CACHE_*` / `BROKER_PR
 Фактическая проверка 13.11.2026: на обеих нодах runner пересоздан с bind-mount, все три
 переменные присутствуют, `cache-writable` подтверждён; API и брокер имеют mount, `/api/ready`
 на обеих нодах — `200`, build `c1d2d1a19cccafac3ed4d6c710a580a75f77fa67`.
+
+## 21. 14.11.2026: DNS target custom domains и включение node-2
+
+Пользователь исправил DNS и попросил обновить документацию, включить вторую ноду и выкатить
+обновление через GitHub Actions. На 14.11.2026 состояние до выкатки:
+
+- `custom.nestdev.ru` → `178.236.27.102` (A, TTL 3600), DNS-only; проверено через reg.ru и
+  публичные резолверы. Это target для пользовательских доменов, отдельного сайта на нём нет.
+- `node-2` включена через MWS (`power=ON`), SSH и Docker доступны. Start-guard не допустил
+  второй primary: `node-1` — primary (`pg_is_in_recovery()=f`), `node-2` — standby (`t`).
+- `/api/ready` на обеих нодах — `200`; Gluster `data`, `sandboxes`, `sites` — по два online-brick'а.
+- `node-2` ещё работает на старой сборке и старом compose: её нужно обновить штатной выкаткой
+  GitHub Actions; `node2-sync.sh` передаёт актуальные compose/Caddy/reload-таймер из workflow.
+- `CUSTOM_DOMAINS_ENABLED` остаётся выключенным (`0`): для включения нужен тестовый домен
+  пользователя и проверка TLS/301/404/HA. Автоматически флаг не включается.
+
+После выкатки сюда добавляются run id, build SHA и результат проверки обеих нод.
 
 Связанные документы:
 
