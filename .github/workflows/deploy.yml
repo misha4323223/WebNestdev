@@ -337,9 +337,9 @@ jobs:
           # Префикс отделяет релизы сайтов от архивов проектов в том же бакете.
           HOSTING_S3_ENABLED: ${{ vars.HOSTING_S3_ENABLED || secrets.HOSTING_S3_ENABLED || 'auto' }}
           HOSTING_S3_PREFIX: ${{ vars.HOSTING_S3_PREFIX || secrets.HOSTING_S3_PREFIX || 'hosting' }}
-          # Свои домены: пустое значение не попадает в .env и оставляет текущий режим; включается
-          # Variable CUSTOM_DOMAINS_ENABLED=1 после проверки тестового домена.
-          CUSTOM_DOMAINS_ENABLED: ${{ vars.CUSTOM_DOMAINS_ENABLED || secrets.CUSTOM_DOMAINS_ENABLED || '' }}
+          # Свои домены включены по умолчанию: карточка должна быть видна в панели.
+          # CUSTOM_DOMAINS_ENABLED=0 в Variable репозитория отключает её без изменения кода.
+          CUSTOM_DOMAINS_ENABLED: ${{ vars.CUSTOM_DOMAINS_ENABLED || secrets.CUSTOM_DOMAINS_ENABLED || '1' }}
           # docker — обычный runc; runsc — gVisor для контейнеров команд и превью. По умолчанию
           # docker: выкатка без этой переменной не меняет рантайм. Для отката вернуть docker.
           # Ручной запуск может переопределить Variable на один запуск: sandbox_runtime=runsc
@@ -820,9 +820,9 @@ jobs:
           # Префикс отделяет релизы сайтов от архивов проектов в том же бакете.
           HOSTING_S3_ENABLED: ${{ vars.HOSTING_S3_ENABLED || secrets.HOSTING_S3_ENABLED || 'auto' }}
           HOSTING_S3_PREFIX: ${{ vars.HOSTING_S3_PREFIX || secrets.HOSTING_S3_PREFIX || 'hosting' }}
-          # Свои домены: пустое значение не попадает в .env и оставляет текущий режим; включается
-          # Variable CUSTOM_DOMAINS_ENABLED=1 после проверки тестового домена.
-          CUSTOM_DOMAINS_ENABLED: ${{ vars.CUSTOM_DOMAINS_ENABLED || secrets.CUSTOM_DOMAINS_ENABLED || '' }}
+          # Свои домены включены по умолчанию: карточка должна быть видна в панели.
+          # CUSTOM_DOMAINS_ENABLED=0 в Variable репозитория отключает её без изменения кода.
+          CUSTOM_DOMAINS_ENABLED: ${{ vars.CUSTOM_DOMAINS_ENABLED || secrets.CUSTOM_DOMAINS_ENABLED || '1' }}
           # docker — обычный runc; runsc — gVisor для контейнеров команд и превью. По умолчанию
           # docker: выкатка без этой переменной не меняет рантайм. Для отката вернуть docker.
           # Ручной запуск может переопределить Variable на один запуск: sandbox_runtime=runsc
@@ -1081,7 +1081,7 @@ jobs:
           IMAGE_INPUT: ${{ inputs.image }}
           BUILT_IMAGE: ${{ needs.build.outputs.image }}
           SYNC_NODE2: ${{ vars.SYNC_NODE2 || 'auto' }}
-          CUSTOM_DOMAINS_ENABLED: ${{ vars.CUSTOM_DOMAINS_ENABLED || secrets.CUSTOM_DOMAINS_ENABLED || '' }}
+          CUSTOM_DOMAINS_ENABLED: ${{ vars.CUSTOM_DOMAINS_ENABLED || secrets.CUSTOM_DOMAINS_ENABLED || '1' }}
         run: |
           set -euo pipefail
           image="$IMAGE_INPUT"
@@ -1138,7 +1138,7 @@ jobs:
           IMAGE_INPUT: ${{ inputs.image }}
           BUILT_IMAGE: ${{ needs.build.outputs.image }}
           SYNC_NODE2: ${{ vars.SYNC_NODE2 || 'auto' }}
-          CUSTOM_DOMAINS_ENABLED: ${{ vars.CUSTOM_DOMAINS_ENABLED || secrets.CUSTOM_DOMAINS_ENABLED || '' }}
+          CUSTOM_DOMAINS_ENABLED: ${{ vars.CUSTOM_DOMAINS_ENABLED || secrets.CUSTOM_DOMAINS_ENABLED || '1' }}
         run: |
           set -euo pipefail
           image="$IMAGE_INPUT"
