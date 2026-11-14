@@ -281,7 +281,7 @@ export function CustomDomainCard({
               {domain.dns.map(record => <div className="domain-record" key={record.type + record.purpose}>
                 <span className={"domain-record-type " + record.type.toLowerCase()}>{record.type}</span>
                 <div className="domain-record-name">
-                  <strong>{record.relativeName || record.name}</strong>
+                  <strong title={record.name}>{record.relativeName || record.name}</strong>
                   <span>{record.purpose === "verification" ? "подтверждение владения" : "трафик на сайт"}</span>
                 </div>
                 <code title={record.name}>{record.value}</code>
@@ -295,6 +295,12 @@ export function CustomDomainCard({
                 disabled={Boolean(busy)}
               >Сделать {domain.kind === "www" ? "www" : "apex"} основным</button> : null}
             </div>)}
+            <p className="domain-dns-hint">
+              Имена указаны без домена — так их вводят reg.ru, RU-Center и большинство панелей: они
+              дописывают зону сами. Если сервис требует полное имя, добавьте домен, например{" "}
+              <code>_nestdev-verify.{group.canonical.hostname}</code>. Если проверка пишет
+              «TXT-запись не найдена», убедитесь, что домен не добавился дважды.
+            </p>
           </div>
 
           {groupChecks.length > 0 ? <div className="domain-checks">

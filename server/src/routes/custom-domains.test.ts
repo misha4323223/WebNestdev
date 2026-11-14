@@ -80,13 +80,19 @@ test("создание, чтение, canonical, проверка и удале�
     const created = await postDomain(app, projectId, headers, { hostname: "Example.RU" });
     assert.equal(created.statusCode, 201, created.body);
     const body = created.json() as {
-      domains: Array<{ id: string; hostname: string; kind: string; isCanonical: boolean; dns: Array<{ type: string; name: string; value: string }> }>;
+      domains: Array<{ id: string; hostname: string; kind: string; isCanonical: boolean; dns: Array<{ type: string; name: string; relativeName: string; value: string }> }>;
     };
     assert.deepEqual(body.domains.map(domain => domain.hostname), ["example.ru", "www.example.ru"]);
     assert.equal(body.domains[0].isCanonical, true);
     assert.equal(body.domains[0].dns.some(record => record.type === "TXT" && record.name.startsWith("_nestdev-verify")), true);
     assert.equal(body.domains[0].dns.some(record => record.type === "A" && record.value === "178.236.27.102"), true);
     assert.equal(body.domains[1].dns.some(record => record.type === "CNAME" && record.value === "custom.nestdev.ru."), true);
+    // Имя в UI — относительно зоны: reg.ru и подобные панели дописывают домен сами.
+    assert.equal(body.domains[0].dns.find(record => record.type === "TXT")?.relativeName, "_nestdev-verify");
+    assert.equal(body.domains[0].dns.find(record => record.type === "A")?.relativeName, "@");
+    assert.equal(body.domains[1].dns.find(record => record.type === "TXT")?.relativeName, "_nestdev-verify.www");
+    assert.equal(body.domains[1].dns.find(record => record.type === "CNAME")?.relativeName, "www");
+    assert.equal(body.domains[1].dns.find(record => record.type === "TXT")?.name, "_nestdev-verify.www.example.ru");
 
     const read = await app.inject({ method: "GET", url: "/api/projects/" + projectId + "/hosting", headers });
     assert.equal(read.statusCode, 200);

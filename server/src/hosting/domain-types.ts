@@ -45,7 +45,7 @@ export type CustomDomainDnsRecord = {
   name: string;
   value: string;
   purpose: "verification" | "traffic";
-  /** Для apex-записи UI показывает `@`, но API всегда отдаёт полное имя. */
+  /** Имя относительно зоны: `@`, `www`, `_nestdev-verify.www`. Полное имя — в `name`. */
   relativeName: string;
 };
 

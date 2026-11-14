@@ -106,6 +106,19 @@ export async function createCustomDomains(
   });
 }
 
+/**
+ * Имя записи относительно зоны. reg.ru, RU-Center и большинство панелей сами дописывают
+ * домен к полю «Имя», поэтому показывать там `_nestdev-verify.example.ru` нельзя —
+ * получится `_nestdev-verify.example.ru.example.ru` и проверка не найдёт запись.
+ * Полное имя остаётся в `name` для тех панелей, которые требуют FQDN.
+ */
+function nameWithinZone(hostname: string): string {
+  const root = getRegistrableDomain(hostname);
+  return root && hostname.endsWith("." + root)
+    ? hostname.slice(0, -root.length - 1)
+    : hostname;
+}
+
 export function dnsRecordsForDomain(
   domain: CustomDomain,
   options: { target?: string; ip?: string } = {},
@@ -115,7 +128,7 @@ export function dnsRecordsForDomain(
   const verification: CustomDomainDnsRecord = {
     type: "TXT",
     name: domain.verificationHost,
-    relativeName: domain.verificationHost,
+    relativeName: nameWithinZone(domain.verificationHost),
     value: "nestdev-verify=" + domain.verificationToken,
     purpose: "verification",
   };
@@ -130,7 +143,7 @@ export function dnsRecordsForDomain(
     : {
         type: "CNAME",
         name: domain.hostname,
-        relativeName: domain.kind === "www" ? "www" : domain.hostname,
+        relativeName: nameWithinZone(domain.hostname),
         value: target + ".",
         purpose: "traffic",
       };
