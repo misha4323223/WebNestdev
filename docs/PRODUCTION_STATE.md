@@ -48,10 +48,10 @@ Production не должен зависеть от базы или storage од�
 
 - Публичный адрес: `https://nestdev.ru`.
 - `GET /api/ready` отвечает `ok:true`.
-- Текущая production-сборка на обеих нодах: `fd5a8aef826c7f7c1e11aae2fb95a44e95e9c272` —
-  коммит `fd5a8ae` в `main`.
-- Образ: `ghcr.io/misha4323223/webnestdev:sha-fd5a8aef826c` — собран и опубликован
-  workflow `deploy` (run `43637265749`).
+- Текущая production-сборка на обеих нодах: `1bb7e8b8432a129285d275ce0ca1589d4d58beb8` —
+  коммит `1bb7e8b` в `main`.
+- Образ: `ghcr.io/misha4323223/webnestdev:sha-1bb7e8b8432a` — собран и опубликован
+  workflow `deploy` (run `43638367364`).
 - Выкачена 14.11.2026 на `node-1` и `node-2`; runner на второй ноде также переведён на эту
   сборку. До выкатки на `node-2` оставался `c33e4064f2f2`.
 - Исправление: локальный кэш зависимостей передаётся Docker с флагом `-v`; без него
@@ -68,7 +68,7 @@ Production не должен зависеть от базы или storage од�
 ## 2.1. Custom domains: инфраструктура выкачена, feature flag включён
 
 - 13.11.2026 custom domains этапов 1–3 выкачены на `node-1`; текущая сборка обеих нод —
-  `fd5a8ae` (run `43637265749`).
+  `1bb7e8b` (run `43638367364`).
 - Живой Caddy: `src-caddy-1` на обеих нодах, image `caddy:2.11.8-alpine`, version `v2.11.8`.
 - Сертификаты перенесены из `src_caddy-data` в общий
   `/var/lib/webnestdev/data/caddy-data`; старые сертификаты на месте, `https://nestdev.ru` и
@@ -85,12 +85,12 @@ Production не должен зависеть от базы или storage од�
 - `custom.nestdev.ru` → `178.236.27.102` (A, TTL 3600) — target для CNAME/apex готов.
 - `host.nestdev.ru` — bare CNAME target; TLS-ошибка на нём ожидаема и не является ошибкой
   custom domains (wildcard `*.host.nestdev.ru` не покрывает bare-имя).
-- `node-2` включена 14.11.2026; выкатка `43637265749` доставила ей актуальные compose/Caddy
+- `node-2` включена 14.11.2026; выкатка `43638367364` доставила ей актуальные compose/Caddy
   и reload-таймер, API на обеих нодах — `200`. Общий Gluster `caddy-data`, блокировки Caddy и
   HA-переключение custom domains ещё не проверены.
 - Проверки: полный `npm test` сервера до выкатки — 1828 тестов, 0 fail, 10 skip;
   `tsc` server/frontend — 0; `npm run build` — ok; Caddy 2.11.8 `Valid configuration`;
-  deploy run `43637265749` — success, сборка `fd5a8ae` на обеих нодах; публичный `/api/ready` — `200`.
+  deploy run `43638367364` — success, сборка `1bb7e8b` на обеих нодах; публичный `/api/ready` — `200`.
 - Первая выкатка `ecbc9d6` упала на `ERR_MODULE_NOT_FOUND: tldts`; deploy откатил API на
   предыдущую сборку, затем Dockerfile был исправлен (`5551969`). Не удалять вложенные
   зависимости `server/node_modules` из production-образа.
@@ -1053,20 +1053,22 @@ mount'ы `preview-cache` и ключи `WEBNESTDEV_PREVIEW_CACHE_*` / `BROKER_PR
 ## 21. 14.11.2026: DNS target custom domains и включение node-2
 
 Пользователь исправил DNS и попросил обновить документацию, включить вторую ноду и выкатить
-обновление через GitHub Actions. Состояние после выкатки `43637265749`:
+обновление через GitHub Actions. Состояние после выкатки `43638367364`:
 
 - `custom.nestdev.ru` → `178.236.27.102` (A, TTL 3600), DNS-only; проверено через reg.ru и
   публичные резолверы. Это target для пользовательских доменов, отдельного сайта на нём нет.
 - `node-2` включена через MWS (`power=ON`), SSH и Docker доступны. Start-guard не допустил
   второй primary: `node-1` — primary (`pg_is_in_recovery()=f`), `node-2` — standby (`t`).
 - `/api/ready` на обеих нодах — `200`; Gluster `data`, `sandboxes`, `sites` — по два online-brick'а.
-- Выкатка `43637265749` — success; обе ноды работают на `fd5a8ae`, `/api/ready` — `200`.
+- Выкатка `43638367364` — success; обе ноды работают на `1bb7e8b`, `/api/ready` — `200`.
   `node2-sync.sh` доставил актуальные compose/Caddy, пересоздал Caddy и runner, установил
   `webnestdev-caddy-reload.timer` (active); хэши compose/Caddyfile на нодах совпадают.
 - `CUSTOM_DOMAINS_ENABLED` включён (`1`) на обеих нодах выкаткой `43637265749`; карточка
   «Свой домен» видна. Тестовый домен пользователя ещё не подключён; TLS/301/404/HA ждут его.
 - HA-переключение (падение `node-1` и возврат её standby) ещё не выполнялось; это следующий
   отдельный шаг после тестового домена.
+- 14.11.2026 исправлена ошибка терминала `Некорректное описание монтирования`: runner policy
+  теперь разбирает `extraMounts` как пары `-v <mount>`; build `1bb7e8b`, run `43638367364`.
 
 Связанные документы:
 
