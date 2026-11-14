@@ -15,7 +15,7 @@ process.env.WEBNESTDEV_PREVIEW_CACHE_HOST_DIR = path.join(root, "preview-cache")
 const { buildSandboxConfig } = await import("../sandbox/config.js");
 const { dockerRunArgs } = await import("../sandbox/docker/args.js");
 const { dockerOptions } = await import("../sandbox/docker/options.js");
-const { assertDockerArgsAllowed, RunnerPolicyError } = await import("./policy.js");
+const { assertDockerArgsAllowed, assertExtraMountsAllowed, RunnerPolicyError } = await import("./policy.js");
 
 const project = path.join(root, "project");
 const config = buildSandboxConfig("project", project);
@@ -59,6 +59,13 @@ test("privileged escape hatches are refused", async () => {
 test("only project mounts are accepted", async () => {
   await rejects(withFlags(["-v", "/etc:/workspace/etc:ro"]), /только внутрь|каталог/);
   await rejects(withFlags(["-v", project + ":/etc:ro"]), /внутрь \/workspace/);
+});
+
+test("extra mounts accept the -v pairs produced by the cache and masks", async () => {
+  await assert.doesNotReject(assertExtraMountsAllowed(["-v", project + ":/workspace/cache"]));
+  await assert.doesNotReject(assertExtraMountsAllowed(["--volume", project + ":/workspace/cache:ro"]));
+  await assert.doesNotReject(assertExtraMountsAllowed([project + ":/workspace/cache"]));
+  await assert.rejects(assertExtraMountsAllowed(["-v"]), /нет значения/);
 });
 
 test("the local dependency cache is accepted only at /workspace/node_modules and writable", async () => {

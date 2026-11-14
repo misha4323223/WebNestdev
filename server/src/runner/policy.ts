@@ -314,7 +314,28 @@ export async function assertDockerArgsAllowed(args: string[]): Promise<void> {
   reject("Операция docker " + head + " не разрешена на runner");
 }
 
-/** Validate only the mounts before a command; `runDockerSandbox` adds the rest of the flags. */
+/**
+ * Validate only the mounts before a command; `runDockerSandbox` adds the rest of the flags.
+ *
+ * The API passes extra mounts as Docker argument pairs (`-v`, `source:target[:mode]`): that is
+ * the shape `dockerRunArgs` appends. Older callers sometimes pass bare mount specs, so accept
+ * both forms. Treating `-v` itself as a mount produced the misleading "Некорректное описание
+ * монтирования" on every remote terminal command as soon as the dependency cache was enabled.
+ */
 export async function assertExtraMountsAllowed(mounts: string[] | undefined): Promise<void> {
-  for (const mount of mounts ?? []) await assertMount(mount);
+  const values = mounts ?? [];
+  for (let index = 0; index < values.length; index++) {
+    const value = values[index];
+    if (value === "-v" || value === "--volume") {
+      const mount = values[++index];
+      if (mount === undefined) reject("У флага " + value + " нет значения монтирования");
+      await assertMount(mount);
+      continue;
+    }
+    if (value.startsWith("--volume=")) {
+      await assertMount(value.slice("--volume=".length));
+      continue;
+    }
+    await assertMount(value);
+  }
 }
