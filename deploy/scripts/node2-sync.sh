@@ -18,13 +18,17 @@
 #
 # Переменные:
 #   IMAGE_REF=ghcr.io/…        выкатываемый образ (обязателен)
-#   APP_DIR=~/webnestdev/src   каталог развёртывания на этой ВМ (источник compose и Caddyfile)
+#   APP_DIR=~/webnestdev/src   каталог развёртывания на этой ВМ (источник файлов по умолчанию)
+#   COMPOSE_SRC=<путь>         актуальный docker-compose.yml из выкатки
+#   CADDY_SRC=<путь>           актуальный Caddyfile из выкатки
+#   PREVIEW_TLS_SRC=<путь>     актуальный preview-tls.caddy из выкатки
+#   CADDY_RELOAD_SRC=<каталог> deploy/ha из выкатки (скрипт и systemd-units)
 #   NODE2_HOST=10.0.0.5        приватный адрес второй ноды
 #   NODE2_USER=ubuntu
 #   NODE2_SSH_KEY=~/.ssh/node2_key
 #   NODE2_APP_DIR=/home/ubuntu/webnestdev/src
 #   NODE2_ENV_FILES="runtime.env node2.env"  env-файлы compose на node-2
-#   NODE2_SERVICES="webnestdev-server docker-broker"
+#   NODE2_SERVICES="webnestdev-server docker-broker caddy"
 #   NODE2_HEALTH_URL=http://127.0.0.1:8787/api/ready
 #   SYNC_NODE2=auto|1|0        auto — молча пропустить, если node-2 недоступна; 1 — ошибка
 #   RUNNER_SCRIPT_B64=…        содержимое deploy/scripts/update-runner.sh в base64
@@ -42,13 +46,20 @@ NODE2_USER="${NODE2_USER:-ubuntu}"
 NODE2_SSH_KEY="${NODE2_SSH_KEY:-$HOME/.ssh/node2_key}"
 NODE2_APP_DIR="${NODE2_APP_DIR:-/home/ubuntu/webnestdev/src}"
 NODE2_ENV_FILES="${NODE2_ENV_FILES:-runtime.env node2.env}"
-NODE2_SERVICES="${NODE2_SERVICES:-webnestdev-server docker-broker}"
+NODE2_SERVICES="${NODE2_SERVICES:-webnestdev-server docker-broker caddy}"
 NODE2_HEALTH_URL="${NODE2_HEALTH_URL:-http://127.0.0.1:8787/api/ready}"
 NODE2_HEALTH_TRIES="${NODE2_HEALTH_TRIES:-30}"
 SYNC_NODE2="${SYNC_NODE2:-auto}"
+CUSTOM_DOMAINS_ENABLED="${CUSTOM_DOMAINS_ENABLED:-}"
 RUNNER_SCRIPT_B64="${RUNNER_SCRIPT_B64:-}"
 RUNNER_SCRIPT_SRC="${RUNNER_SCRIPT_SRC:-}"
 DEPLOY_SCRIPT_SRC="${DEPLOY_SCRIPT_SRC:-}"
+# Файлы из workflow важнее чекаута на node-1: он может быть старше образа, и тогда на node-2
+# уезжала старая версия Caddy. Пустые значения сохраняют прежнее поведение для ручного запуска.
+COMPOSE_SRC="${COMPOSE_SRC:-$APP_DIR/docker-compose.yml}"
+CADDY_SRC="${CADDY_SRC:-$APP_DIR/Caddyfile}"
+PREVIEW_TLS_SRC="${PREVIEW_TLS_SRC:-$APP_DIR/preview-tls.caddy}"
+CADDY_RELOAD_SRC="${CADDY_RELOAD_SRC:-$APP_DIR/deploy/ha}"
 EGRESS_SCRIPT_SRC="${EGRESS_SCRIPT_SRC:-$APP_DIR/deploy/scripts/egress-firewall.sh}"
 CUSTOM_DOMAINS_CADDY_DIR="${CUSTOM_DOMAINS_CADDY_DIR:-/var/lib/webnestdev/data/caddy-custom}"
 CADDY_DATA_HOST_DIR="${CADDY_DATA_HOST_DIR:-/var/lib/webnestdev/data/caddy-data}"
@@ -118,7 +129,7 @@ fi
 # они одинаковы на обеих нодах, а override (системная база, свои пути) остаётся локальным.
 #
 sync_file(){
-  local name="$1" src="$APP_DIR/$1"
+  local name="$1" src="${2:-$APP_DIR/$1}"
   [ -f "$src" ] || { log "$name на этой ВМ нет — оставляю версию node-2"; return 0; }
   local local_sum remote_sum
   local_sum=$(sha256sum "$src" | cut -d' ' -f1)
@@ -135,9 +146,9 @@ sync_file(){
   ssh2_stdin "cat > '$NODE2_APP_DIR/$name'" < "$src"
 }
 
-sync_file docker-compose.yml
-sync_file Caddyfile
-sync_file preview-tls.caddy
+sync_file docker-compose.yml "$COMPOSE_SRC"
+sync_file Caddyfile "$CADDY_SRC"
+sync_file preview-tls.caddy "$PREVIEW_TLS_SRC"
 sync_file host-tls.caddy
 # Origin-сертификат нужен обеим нодам: CDN ходит на NLB и может попасть в любую.
 if [ "$DRY_RUN" != "1" ]; then
@@ -190,6 +201,31 @@ pin_image(){
 }
 pin_image $NODE2_ENV_FILES
 
+# Флаг custom domains не секрет, но без него API на node-2 останется с дефолтом 0 и после
+# переключения трафика не будет отдавать маршруты. Не перезаписываем чужие значения пустым.
+pin_platform_flag(){
+  local name="$1" value="$2" file found=0
+  [ -n "$value" ] || return 0
+  case "$value" in *[!A-Za-z0-9_.:-]*) log "$name: недопустимое значение — не меняю"; return 0 ;; esac
+  for file in $NODE2_ENV_FILES; do
+    if ssh2 "grep -q '^$name=' '$NODE2_APP_DIR/$file' 2>/dev/null"; then
+      found=1
+      if ssh2 "grep -qx '$name=$value' '$NODE2_APP_DIR/$file'"; then
+        log "$name в $file уже $value"
+        continue
+      fi
+      log "$name в $file → $value"
+      run ssh2 "sed -i 's|^$name=.*|$name=$value|' '$NODE2_APP_DIR/$file'"
+    fi
+  done
+  if [ "$found" = "0" ]; then
+    file=${NODE2_ENV_FILES%% *}
+    log "$name не найден в env-файлах node-2 — добавляю в $file"
+    run ssh2 "printf '%s=%s\\n' '$name' '$value' >> '$NODE2_APP_DIR/$file'"
+  fi
+}
+pin_platform_flag CUSTOM_DOMAINS_ENABLED "$CUSTOM_DOMAINS_ENABLED"
+
 #
 # Пересоздание сервиса. `--env-file` передаётся по одному на файл: именно так контейнеры node-2
 # и были созданы, и compose должен видеть те же переменные. `--no-deps` не даёт compose поднять
@@ -205,7 +241,7 @@ compose_cmd(){
   fi
 }
 
-log "пересоздаю на node-2: $NODE2_SERVICES"
+log "пересоздаю на node-2: $NODE2_SERVICES (включая Caddy, чтобы обновился и образ)"
 run ssh2 "cd '$NODE2_APP_DIR' && WEBNESTDEV_IMAGE='$IMAGE_REF' $(compose_cmd) up -d --no-build --no-deps $NODE2_SERVICES"
 
 # Legacy postgres на node-2: тот же дефект, что и на первой ноде, — после `up` он мог остаться
@@ -230,7 +266,7 @@ fi
 # останется в общем файле, но Caddy node-2 не увидит его до следующей выкатки. Скрипты
 # установщика берём из репозитория node-1, потому что на node-2 лежит только compose/образ.
 install_caddy_reload_node2(){
-  local src="$APP_DIR/deploy/ha"
+  local src="$CADDY_RELOAD_SRC"
   local file
   for file in caddy-reload.sh webnestdev-caddy-reload.service webnestdev-caddy-reload.timer install-caddy-reload.sh; do
     [ -f "$src/$file" ] || { log "в $src нет $file — таймер reload на node-2 не установлен"; return 0; }

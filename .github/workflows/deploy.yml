@@ -337,6 +337,9 @@ jobs:
           # Префикс отделяет релизы сайтов от архивов проектов в том же бакете.
           HOSTING_S3_ENABLED: ${{ vars.HOSTING_S3_ENABLED || secrets.HOSTING_S3_ENABLED || 'auto' }}
           HOSTING_S3_PREFIX: ${{ vars.HOSTING_S3_PREFIX || secrets.HOSTING_S3_PREFIX || 'hosting' }}
+          # Свои домены: пустое значение не попадает в .env и оставляет текущий режим; включается
+          # Variable CUSTOM_DOMAINS_ENABLED=1 после проверки тестового домена.
+          CUSTOM_DOMAINS_ENABLED: ${{ vars.CUSTOM_DOMAINS_ENABLED || secrets.CUSTOM_DOMAINS_ENABLED || '' }}
           # docker — обычный runc; runsc — gVisor для контейнеров команд и превью. По умолчанию
           # docker: выкатка без этой переменной не меняет рантайм. Для отката вернуть docker.
           # Ручной запуск может переопределить Variable на один запуск: sandbox_runtime=runsc
@@ -532,6 +535,7 @@ jobs:
           add_platform_env HOSTING_SITES_DIR "$HOSTING_SITES_DIR"
           add_platform_env HOSTING_S3_ENABLED "$HOSTING_S3_ENABLED"
           add_platform_env HOSTING_S3_PREFIX "$HOSTING_S3_PREFIX"
+          add_platform_env CUSTOM_DOMAINS_ENABLED "$CUSTOM_DOMAINS_ENABLED"
           add_platform_env SANDBOX_RUNTIME "$SANDBOX_RUNTIME"
           add_platform_env WEBNESTDEV_ADMIN_EMAILS "$WEBNESTDEV_ADMIN_EMAILS"
           add_platform_env WEBNESTDEV_ADMIN_USER_IDS "$WEBNESTDEV_ADMIN_USER_IDS"
@@ -816,6 +820,9 @@ jobs:
           # Префикс отделяет релизы сайтов от архивов проектов в том же бакете.
           HOSTING_S3_ENABLED: ${{ vars.HOSTING_S3_ENABLED || secrets.HOSTING_S3_ENABLED || 'auto' }}
           HOSTING_S3_PREFIX: ${{ vars.HOSTING_S3_PREFIX || secrets.HOSTING_S3_PREFIX || 'hosting' }}
+          # Свои домены: пустое значение не попадает в .env и оставляет текущий режим; включается
+          # Variable CUSTOM_DOMAINS_ENABLED=1 после проверки тестового домена.
+          CUSTOM_DOMAINS_ENABLED: ${{ vars.CUSTOM_DOMAINS_ENABLED || secrets.CUSTOM_DOMAINS_ENABLED || '' }}
           # docker — обычный runc; runsc — gVisor для контейнеров команд и превью. По умолчанию
           # docker: выкатка без этой переменной не меняет рантайм. Для отката вернуть docker.
           # Ручной запуск может переопределить Variable на один запуск: sandbox_runtime=runsc
@@ -969,6 +976,7 @@ jobs:
           add_platform_env HOSTING_SITES_DIR "$HOSTING_SITES_DIR"
           add_platform_env HOSTING_S3_ENABLED "$HOSTING_S3_ENABLED"
           add_platform_env HOSTING_S3_PREFIX "$HOSTING_S3_PREFIX"
+          add_platform_env CUSTOM_DOMAINS_ENABLED "$CUSTOM_DOMAINS_ENABLED"
           add_platform_env SANDBOX_RUNTIME "$SANDBOX_RUNTIME"
           add_platform_env WEBNESTDEV_ADMIN_EMAILS "$WEBNESTDEV_ADMIN_EMAILS"
           add_platform_env WEBNESTDEV_ADMIN_USER_IDS "$WEBNESTDEV_ADMIN_USER_IDS"
@@ -1073,6 +1081,7 @@ jobs:
           IMAGE_INPUT: ${{ inputs.image }}
           BUILT_IMAGE: ${{ needs.build.outputs.image }}
           SYNC_NODE2: ${{ vars.SYNC_NODE2 || 'auto' }}
+          CUSTOM_DOMAINS_ENABLED: ${{ vars.CUSTOM_DOMAINS_ENABLED || secrets.CUSTOM_DOMAINS_ENABLED || '' }}
         run: |
           set -euo pipefail
           image="$IMAGE_INPUT"
@@ -1089,6 +1098,21 @@ jobs:
           # Скрипт выкатки нужен node-2 для уборки старых образов: на первой ноде это делает
           # vm-deploy.sh в конце каждой выкатки, а вторая без этого копила версии.
           DEPLOY_SCRIPT_FILE="/tmp/.webnestdev-vm-deploy.sh"
+          # Чекаут node-1 может быть старше образа, поэтому compose/Caddy и deploy/ha передаём
+          # из этой сборки, а не читаем из $DEPLOY_APP_DIR. Иначе node-2 получает старый Caddy
+          # без custom domains, даже когда API на ней уже новый.
+          STAGING_DIR="/tmp/.webnestdev-node2-src-$$"
+          ssh -i "$HOME/.ssh/deploy_key" \
+            -p "${DEPLOY_PORT:-22}" \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "rm -rf '$STAGING_DIR'; mkdir -p '$STAGING_DIR'"
+          tar -cf - docker-compose.yml deploy/Caddyfile deploy/preview-tls.caddy deploy/ha \
+            | ssh -i "$HOME/.ssh/deploy_key" \
+              -p "${DEPLOY_PORT:-22}" \
+              -o BatchMode=yes -o StrictHostKeyChecking=yes \
+              "$DEPLOY_USER@$DEPLOY_HOST" \
+              "tar -xf - -C '$STAGING_DIR'"
           ssh -i "$HOME/.ssh/deploy_key" \
             -p "${DEPLOY_PORT:-22}" \
             -o BatchMode=yes -o StrictHostKeyChecking=yes \
@@ -1099,8 +1123,13 @@ jobs:
             -o BatchMode=yes -o StrictHostKeyChecking=yes \
             -o ServerAliveInterval=30 -o ServerAliveCountMax=30 \
             "$DEPLOY_USER@$DEPLOY_HOST" \
-            "IMAGE_REF='$image' APP_DIR='$DEPLOY_APP_DIR' SYNC_NODE2='$SYNC_NODE2' DEPLOY_SCRIPT_SRC='$DEPLOY_SCRIPT_FILE' RUNNER_SCRIPT_B64='$RUNNER_SCRIPT_B64' bash -s" \
+            "IMAGE_REF='$image' APP_DIR='$DEPLOY_APP_DIR' SYNC_NODE2='$SYNC_NODE2' DEPLOY_SCRIPT_SRC='$DEPLOY_SCRIPT_FILE' RUNNER_SCRIPT_B64='$RUNNER_SCRIPT_B64' CUSTOM_DOMAINS_ENABLED='$CUSTOM_DOMAINS_ENABLED' COMPOSE_SRC='$STAGING_DIR/docker-compose.yml' CADDY_SRC='$STAGING_DIR/deploy/Caddyfile' PREVIEW_TLS_SRC='$STAGING_DIR/deploy/preview-tls.caddy' CADDY_RELOAD_SRC='$STAGING_DIR/deploy/ha' bash -s" \
             < deploy/scripts/node2-sync.sh
+          ssh -i "$HOME/.ssh/deploy_key" \
+            -p "${DEPLOY_PORT:-22}" \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "rm -rf '$STAGING_DIR'" || true
 
       - name: Deploy to node-2 (self-hosted runner)
         if: ${{ vars.DEPLOY_RUNNER != '' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'image')) }}
@@ -1109,6 +1138,7 @@ jobs:
           IMAGE_INPUT: ${{ inputs.image }}
           BUILT_IMAGE: ${{ needs.build.outputs.image }}
           SYNC_NODE2: ${{ vars.SYNC_NODE2 || 'auto' }}
+          CUSTOM_DOMAINS_ENABLED: ${{ vars.CUSTOM_DOMAINS_ENABLED || secrets.CUSTOM_DOMAINS_ENABLED || '' }}
         run: |
           set -euo pipefail
           image="$IMAGE_INPUT"
@@ -1117,7 +1147,9 @@ jobs:
             echo "[node2] образ неизвестен — вторую ноду пропускаю"
             exit 0
           fi
-          IMAGE_REF="$image" APP_DIR="$DEPLOY_APP_DIR" SYNC_NODE2="$SYNC_NODE2" \
+          IMAGE_REF="$image" APP_DIR="$DEPLOY_APP_DIR" SYNC_NODE2="$SYNC_NODE2" CUSTOM_DOMAINS_ENABLED="$CUSTOM_DOMAINS_ENABLED" \
+            COMPOSE_SRC="$PWD/docker-compose.yml" CADDY_SRC="$PWD/deploy/Caddyfile" \
+            PREVIEW_TLS_SRC="$PWD/deploy/preview-tls.caddy" CADDY_RELOAD_SRC="$PWD/deploy/ha" \
             RUNNER_SCRIPT_SRC="$PWD/deploy/scripts/update-runner.sh" \
             DEPLOY_SCRIPT_SRC="$PWD/deploy/scripts/vm-deploy.sh" \
             bash deploy/scripts/node2-sync.sh
