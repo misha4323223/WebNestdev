@@ -33,6 +33,7 @@ import mws
 import pitr
 import postgres
 import regru
+import status
 import storage_quorum
 import switchover
 
@@ -157,7 +158,7 @@ def local_primary_role() -> bool | None:
 
     None — не ошибка для вернувшегося старого primary: systemd-guard намеренно не
     пускает его PostgreSQL, пока peer остаётся primary. API при этом может работать
-    через HAProxy peer, поэтому ensure_local_services не должен просто выходить.
+    через PostgreSQL peer напрямую, поэтому ensure_local_services не должен просто выходить.
     """
     try:
         return not postgres.is_in_recovery()
@@ -506,6 +507,13 @@ def main() -> int:
             tick(state)
         except Exception as error:  # noqa: BLE001 - контроллер не должен умирать от одной ошибки
             LOG.exception("ошибка цикла: %s", error)
+        finally:
+            # Снимок нужен и после ошибки: API должен видеть, что контроллер жив, но
+            # конкретная проверка не удалась. Секретов в нём нет.
+            try:
+                status.write(LOCAL_NODE, state, local_primary_role())
+            except Exception as error:  # noqa: BLE001 - health не должен ронять failover
+                LOG.warning("HA-статус не записан: %s", error)
         time.sleep(INTERVAL)
 
 

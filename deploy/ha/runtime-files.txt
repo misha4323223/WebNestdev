@@ -3,6 +3,7 @@
 mws.py
 regru.py
 postgres.py
+status.py
 db_proxy.py
 storage_quorum.py
 pitr.py
@@ -11,6 +12,7 @@ switchover.py
 failover.py
 cli.py
 standby.sh
+pg_tls.sh
 pg_start_guard.py
 pg_hba_probe.sh
 README.md

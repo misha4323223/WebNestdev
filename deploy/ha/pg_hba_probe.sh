@@ -9,14 +9,23 @@ PEER_IP=${1:?usage: pg_hba_probe.sh PEER_PRIVATE_IP}
 PG_VERSION=${PG_VERSION:-17}
 PG_CLUSTER=${PG_CLUSTER:-main}
 HBA="/etc/postgresql/${PG_VERSION}/${PG_CLUSTER}/pg_hba.conf"
-LINE="host postgres replicator ${PEER_IP}/32 scram-sha-256"
+TLS_CERT="/etc/postgresql/${PG_VERSION}/${PG_CLUSTER}/tls/server.crt"
+# После pg_tls.sh PostgreSQL принимает только TLS; hostssl заставляет и guard-проверку
+# идти по TLS. До появления сертификата оставляем прежнее host-правило, иначе установка
+# на свежей ноде сломала бы проверку роли peer.
+if [ -s "$TLS_CERT" ]; then
+  TYPE=hostssl
+else
+  TYPE=host
+fi
+LINE="$TYPE postgres replicator ${PEER_IP}/32 scram-sha-256"
 
 if [ ! -f "$HBA" ]; then
   echo "pg_hba not found: $HBA; peer probe not configured" >&2
   exit 0
 fi
 
-if grep -qE "^[[:space:]]*host[[:space:]]+postgres[[:space:]]+replicator[[:space:]]+${PEER_IP}/32" "$HBA"; then
+if grep -qE "^[[:space:]]*${TYPE}[[:space:]]+postgres[[:space:]]+replicator[[:space:]]+${PEER_IP}/32" "$HBA"; then
   echo "peer probe already allowed from $PEER_IP"
   exit 0
 fi

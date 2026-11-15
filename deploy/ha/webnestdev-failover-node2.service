@@ -16,7 +16,9 @@ Environment=HA_LOCAL_NODE=node-2
 Environment=HA_PEER_NODE=node-1
 Environment=LOCAL_PG_PORT=5433
 Environment=PRIMARY_PG_HOST=10.0.0.4
-Environment=PRIMARY_PG_PORT=5432
+Environment=PRIMARY_PG_PORT=5433
+Environment=HA_PG_TLS=auto
+Environment=HA_PG_TLS_CA=/etc/haproxy/pg-ca.crt
 Environment=MWS_VM_PATH=/compute/v1/projects/project-pimashin2015/virtualMachines/webnestdev
 Environment=API_CONTAINER=src-webnestdev-server-1
 Environment=CADDY_CONTAINER=src-caddy-1
@@ -32,6 +34,7 @@ Environment=DNS_ENABLED=0
 Environment=HA_STORAGE_PATHS=/var/lib/webnestdev/data,/var/lib/webnestdev/sandboxes,/var/lib/webnestdev/sites
 Environment=HA_REQUIRE_STORAGE=1
 Environment=HA_CONTROL_PATH=/var/lib/webnestdev/data/ha-switchover.json
+Environment=HA_STATUS_DIR=/var/lib/webnestdev/data
 Environment=HA_SWITCHOVER_TIMEOUT_SECONDS=180
 ExecStart=/usr/bin/python3 -u /opt/webnestdev-ha/failover.py
 Restart=always

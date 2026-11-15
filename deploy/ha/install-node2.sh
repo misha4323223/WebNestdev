@@ -35,6 +35,14 @@ if [ ! -r "$CONF/node2.env" ]; then
   echo "note: $CONF/node2.env is absent; using the defaults from the service" >&2
 fi
 
+# Сертификат должен прийти с node-1 через deploy/scripts/node2-sync.sh. Не генерируем
+# здесь вторую пару: HAProxy не сможет проверить сертификат соседа.
+if [ -s "$CONF/pg-tls/server.crt" ]; then
+  bash "$SRC/pg_tls.sh" apply
+else
+  echo "pg TLS: $CONF/pg-tls/server.crt отсутствует; TLS включится после node2-sync.sh" >&2
+fi
+
 bash "$SRC/pg_hba_probe.sh" 10.0.0.4
 RUNNER_CONTAINER=node2-runner bash "$SRC/install-storage-guard.sh"
 systemctl daemon-reload

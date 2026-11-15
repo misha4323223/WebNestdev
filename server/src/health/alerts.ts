@@ -15,6 +15,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { diskStatus, memoryStatus } from "./host-metrics.js";
 import { buildHealthChecks, HEALTH_THRESHOLDS, type HealthCheck } from "./thresholds.js";
+import { collectHaChecks } from "./ha.js";
 import { archiveErrorsLastHour } from "../storage/archive-health.js";
 import { objectStoreConfigFromEnv, s3ObjectStore } from "../storage/object-store.js";
 import { readManifest } from "../storage/postgres-backup.js";
@@ -198,10 +199,11 @@ async function backupAgeHours(now: number): Promise<{ applicable: boolean; ageHo
 
 /** Собрать все проверки из фактических метрик хоста. */
 export async function collectHealthChecks(now = Date.now()): Promise<HealthCheck[]> {
-  const [disk, memory, backup] = await Promise.all([
+  const [disk, memory, backup, haChecks] = await Promise.all([
     diskStatus(sandboxRootDir()),
     memoryStatus(),
     backupAgeHours(now),
+    collectHaChecks(now),
   ]);
 
   const memoryUsedPercent =
@@ -214,23 +216,36 @@ export async function collectHealthChecks(now = Date.now()): Promise<HealthCheck
     ? ((memory.swapTotalMb! - memory.swapFreeMb!) / memory.swapTotalMb!) * 100
     : null;
 
-  return buildHealthChecks({
-    diskUsedPercent: disk?.usedPercent ?? null,
-    memoryUsedPercent,
-    swapUsedPercent,
-    swapConfigured,
-    archiveErrorsLastHour: archiveErrorsLastHour(now),
-    backupApplicable: backup.applicable,
-    backupAgeHours: backup.ageHours,
-    ...(backup.detail ? { backupDetail: backup.detail } : {}),
-  });
+  return [
+    ...buildHealthChecks({
+      diskUsedPercent: disk?.usedPercent ?? null,
+      memoryUsedPercent,
+      swapUsedPercent,
+      swapConfigured,
+      archiveErrorsLastHour: archiveErrorsLastHour(now),
+      backupApplicable: backup.applicable,
+      backupAgeHours: backup.ageHours,
+      ...(backup.detail ? { backupDetail: backup.detail } : {}),
+    }),
+    // HA-проверки добавляются отдельно: в обычном dev-режиме файлов нет, и список
+    // остаётся прежним. В HA-развёртывании снимки пишет failover-контроллер.
+    ...haChecks,
+  ];
 }
 
 function valueLabel(check: HealthCheck) {
   if (check.value === null) return "нет данных";
   if (check.unit === "percent") return check.value + "%";
   if (check.unit === "hours") return check.value + " ч";
+  if (check.unit === "bytes") return (check.value / 1024 / 1024).toFixed(1) + " МБ";
   return String(check.value);
+}
+
+function limitLabel(check: HealthCheck) {
+  if (check.unit === "percent") return check.limit + "%";
+  if (check.unit === "hours") return check.limit + " ч";
+  if (check.unit === "bytes") return (check.limit / 1024 / 1024).toFixed(0) + " МБ";
+  return String(check.limit);
 }
 
 export function formatAlertMail(
@@ -254,8 +269,7 @@ export function formatAlertMail(
     lines.push("Проблемы:");
     for (const check of bad) {
       lines.push(
-        "- " + check.label + ": " + valueLabel(check) + " при пороге " + check.limit +
-          (check.unit === "percent" ? "%" : check.unit === "hours" ? " ч" : "") +
+        "- " + check.label + ": " + valueLabel(check) + " при пороге " + limitLabel(check) +
           (check.detail ? " (" + check.detail + ")" : ""),
       );
     }

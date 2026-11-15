@@ -12,10 +12,14 @@ export const HEALTH_THRESHOLDS = {
   swapUsedPercent: 50,
   archiveErrorsLastHour: 0,
   backupMaxAgeHours: 30,
+  /** 16 МБ — заметный разрыв, после которого standby уже не «почти догнал». */
+  replicationLagBytes: 16 * 1024 * 1024,
+  /** Контроллер пишет снимок раз в CHECK_INTERVAL_SECONDS; минута — запас на паузу. */
+  haStatusMaxAgeSeconds: 60,
 } as const;
 
-export type HealthCheckId = "disk" | "memory" | "swap" | "archive" | "backup";
-export type HealthUnit = "percent" | "count" | "hours";
+export type HealthCheckId = "disk" | "memory" | "swap" | "archive" | "backup" | "replication" | "standby" | "controller";
+export type HealthUnit = "percent" | "count" | "hours" | "bytes";
 
 export type HealthCheck = {
   id: HealthCheckId;

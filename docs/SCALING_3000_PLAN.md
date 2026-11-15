@@ -1003,8 +1003,9 @@ WAL старше 21 суток — таймеры `webnestdev-pg-basebackup.time
 
 **Предпродовые шаги (вне плана масштабирования):** переезд primary на `node-2` (чтобы база не
 делила ВМ с API), TLS на участке HAProxy ↔ PostgreSQL и проверка `restore-s3` после выкатки
-образа. Порядок и проверки — [`PRODUCTION_LAUNCH.md`](PRODUCTION_LAUNCH.md), раздел «Перед
-запуском».
+образа. TLS реализован в рабочем дереве (`deploy/ha/pg_tls.sh`, `db_proxy.py`, `standby.sh`),
+но ещё не выкачен. Порядок и проверки — [`PRODUCTION_LAUNCH.md`](PRODUCTION_LAUNCH.md) и
+[`HA_TWO_NODE_REMAINING.md`](HA_TWO_NODE_REMAINING.md).
 
 ---
 

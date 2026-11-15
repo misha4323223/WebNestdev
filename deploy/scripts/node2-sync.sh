@@ -188,6 +188,29 @@ install_ha_node2(){
   log "HA-код node-2: ${#HA_FILES[@]} файлов, SHA подтверждён"
 }
 
+#
+# PostgreSQL TLS. Сертификат и ключ создаются один раз на node-1 (install-node1.sh),
+# затем передаются на node-2 по SSH. Копируем сертификат, ключ (mode 600) и CA;
+# после установки pg_tls.sh переводит HBA на hostssl и перечитывает PostgreSQL.
+#
+sync_pg_tls(){
+  local dir=/etc/webnestdev-ha/pg-tls
+  if [ "$DRY_RUN" = "1" ]; then
+    log "dry-run: передал бы PostgreSQL TLS-сертификат из $dir на node-2"
+    return 0
+  fi
+  if ! sudo -n test -s "$dir/server.crt" || ! sudo -n test -s "$dir/server.key"; then
+    log "pg TLS: на node-1 нет $dir/server.crt — TLS на node-2 не включаю"
+    return 0
+  fi
+  log "передаю PostgreSQL TLS-сертификат на node-2"
+  ssh2 "sudo -n install -d -m 700 -o root -g root '$dir'" || return 1
+  sudo -n tar -C "$dir" -czf - server.crt server.key ca.crt |
+    ssh2_stdin "sudo -n tar -xzf - -C '$dir' && sudo -n chown root:root '$dir/server.crt' '$dir/server.key' '$dir/ca.crt' && sudo -n chmod 600 '$dir/server.key' && sudo -n chmod 644 '$dir/server.crt' '$dir/ca.crt'" || return 1
+  ssh2 "sudo -n env PG_VERSION='${PG_VERSION:-17}' PG_CLUSTER='${PG_CLUSTER:-main}' LOCAL_PG_PORT='${LOCAL_PG_PORT:-5433}' bash '$HA_CODE_DST/pg_tls.sh' apply" || return 1
+  log "PostgreSQL TLS на node-2 применён"
+}
+
 load_ha_files || exit 1
 if [ "$DRY_RUN" = "1" ]; then
   log "dry-run: HA-код node-1 и node-2 не устанавливаю"
@@ -411,6 +434,7 @@ if [ "$DRY_RUN" = "1" ]; then
   log "dry-run: HA-код node-2 не устанавливаю"
 else
   install_ha_node2 || { log "HA-код node-2 не установлен"; exit 1; }
+  sync_pg_tls || { log "PostgreSQL TLS на node-2 не применён"; exit 1; }
 fi
 
 # Runner на node-2: тот же шаг, что и на первой ноде, но скрипт выполняется на второй машине.

@@ -38,7 +38,7 @@ python3 -c 'import json;print(json.load(open("/var/lib/webnestdev/data/ha-switch
 
 # 4. Вернуть node-1 standby'ом от node-2
 sudo bash -c 'set -a; . /etc/webnestdev-ha/replication.env; set +a; \
-  PGPASSWORD="$REPLICATION_PASSWORD" bash /opt/webnestdev-ha/standby.sh 10.0.0.5 5432 node1'
+  PGPASSWORD="$REPLICATION_PASSWORD" bash /opt/webnestdev-ha/standby.sh 10.0.0.5 5433 node1'
 
 # 5. PITR на новой primary: rejoin теряет archive_mode в auto.conf
 ssh -i ~/.ssh/node2_key ubuntu@10.0.0.5 'sudo /usr/local/sbin/webnestdev-pg-pitr setup'
@@ -50,8 +50,12 @@ sudo -u postgres psql -p 5433 -Atc 'show archive_mode'   # ожидается on
 пропускают работу на standby. Если API на какой-то ноде висит после рестарта базы —
 `sudo systemctl reload haproxy` на этой ноде (старый worker держит мёртвые соединения).
 
-Не включать TLS «по пути»: в `node-2` остались пустые `/var/lib/postgresql/tls/*.crt` и
-`ssl=off`. TLS делать отдельным шагом с валидным сертификатом и проверкой соединения.
+TLS на участке HAProxy ↔ PostgreSQL делать отдельным шагом через
+[`deploy/ha/pg_tls.sh`](../deploy/ha/pg_tls.sh), а не «по пути»: на обеих нодах
+`ssl=on` с системным `snakeoil`-сертификатом, `ssl_ca_file` пуст, HBA и HAProxy ещё без TLS;
+в старом `/var/lib/postgresql/tls` на `node-2` лежат пустые `ca.crt`/`server.crt`. Скрипт
+создаёт валидный сертификат с SAN, включает `ssl=on`, переводит HBA на `hostssl` и
+проверяет соединение. Rejoin идёт напрямую в PostgreSQL `5433`, а не через HAProxy `5432`.
 
 Подробности переезда 10.11.2026 и простоя — [`PRODUCTION_STATE.md`](PRODUCTION_STATE.md) §15.
 
@@ -347,7 +351,7 @@ test -f /etc/systemd/system/postgresql@17-main.service.d/webnestdev-pg-guard.con
   `HA_CONTROL_PATH` и `HA_SWITCHOVER_TIMEOUT_SECONDS=180`; это актуальный набор, а не
   старый checkout (image-deploy HA-скрипты не обновляет);
 - `node-1`: `pg_is_in_recovery()=f` (primary), HAProxy → `127.0.0.1:5433`;
-- `node-2`: `pg_is_in_recovery()=t` (standby), HAProxy → `10.0.0.4:5432`;
+- `node-2`: `pg_is_in_recovery()=t` (standby), HAProxy → `10.0.0.4:5433` (после TLS — с проверкой сертификата);
 - оба `/api/ready` = `200`;
 - на `node-2` выполнен `MODE=token` для `runtime.env` и `node2.env`, токены API и
   `node2-runner` совпадают;
@@ -578,7 +582,7 @@ targets и время. После каждого этапа — RTO (от отк
    ssh node1 "curl -fsS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8787/api/ready"
    ```
 
-   Ожидаемо: контроллер `active`, HAProxy → `10.0.0.5:5432`, API `200`.
+   Ожидаемо: контроллер `active`, HAProxy → `10.0.0.5:5433`, API `200`.
 
 4. Принудительно направить публичный трафик на `node-1`, остановив Caddy на `node-2`
    по разделу 5.4. Дождаться NLB: `node-1 OK`, `node-2 FAILED`.
@@ -594,7 +598,7 @@ targets и время. После каждого этапа — RTO (от отк
      . /etc/webnestdev-ha/replication.env
      set +a
      PGPASSWORD=\"\$REPLICATION_PASSWORD\" bash /opt/webnestdev-ha/standby.sh \
-       10.0.0.5 5432 node1
+       10.0.0.5 5433 node1
    '"
    ```
 
@@ -648,7 +652,7 @@ targets и время. После каждого этапа — RTO (от отк
    ssh node2 "curl -fsS -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8787/api/ready"
    ```
 
-   Ожидаемо: HAProxy → `10.0.0.4:5432`, API `200`.
+   Ожидаемо: HAProxy → `10.0.0.4:5433`, API `200`.
 
 4. Остановить Caddy на `node-1`, дождаться NLB: `node-2 OK`, `node-1 FAILED`.
 5. Через публичную панель создать `HA-E2E-E`, pin `node-2`, терминал и preview.
@@ -661,7 +665,7 @@ targets и время. После каждого этапа — RTO (от отк
      . /etc/webnestdev-ha/replication.env
      set +a
      PGPASSWORD=\"\$REPLICATION_PASSWORD\" bash /opt/webnestdev-ha/standby.sh \
-       10.0.0.4 5432 node2
+       10.0.0.4 5433 node2
    '"
    ```
 

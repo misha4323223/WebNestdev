@@ -22,9 +22,14 @@ peer. Если MWS недоступен, promotion не выполняется.
 
 При этом API/Caddy/runner работают **на обеих ВМ**: standby не ждёт promotion, а его API
 ходит через локальный HAProxy в текущий primary. Модуль `db_proxy.py` переключает этот
-HAProxy на локальный PostgreSQL только когда узел стал primary, и на HAProxy peer — когда
-узел снова standby. Поэтому вернувшаяся ВМ сразу принимает проекты и preview, но её
-PostgreSQL остаётся read-only standby.
+HAProxy на локальный PostgreSQL только когда узел стал primary, и напрямую в PostgreSQL
+peer (`:5433`) — когда узел снова standby. Поэтому вернувшаяся ВМ сразу принимает проекты
+и preview, но её PostgreSQL остаётся read-only standby.
+
+После `pg_tls.sh` backend HAProxy идёт с `ssl verify required` по самоподписанному CA.
+Сертификат создаётся на `node-1`, а `node2-sync.sh` передаёт его на `node-2` по SSH. API
+по-прежнему ходит в локальный `host.docker.internal:5432` без TLS: шифруется участок между
+нодами и HAProxy ↔ PostgreSQL, а не loopback внутри одной ВМ.
 
 Если возвращается **старый primary** после promotion на peer, его PostgreSQL намеренно
 не запускается start-guard’ом. Контроллер видит, что локальная база недоступна, проверяет,
@@ -36,9 +41,11 @@ API не поднимается, если primary peer недоступен.
 ## Установка
 
 ```bash
-# node-1
+# node-1: создаёт TLS-сертификат PostgreSQL и CA, затем ставит hostssl-правила
 sudo bash deploy/ha/install-node1.sh
 # node-2 (секреты mws.env/regru.env должны уже лежать в /etc/webnestdev-ha, mode 600)
+# Сертификат появится после deploy/scripts/node2-sync.sh; без него TLS на node-2
+# остаётся выключенным, а API продолжает работать через прежний plaintext.
 sudo bash deploy/ha/install-node2.sh
 ```
 
@@ -65,6 +72,39 @@ sudo systemctl is-active webnestdev-failover-node2.service
 На каждой ВМ её failover-юнит должен быть `active`, а `HA_CONTROL_PATH` — указывать на
 общий `/var/lib/webnestdev/data/ha-switchover.json`. Секреты в репозиторий не добавлять.
 `replication.env` создаётся на узле и копируется на второй узел только защищённым каналом.
+
+## TLS PostgreSQL
+
+`pg_tls.sh` создаёт один самоподписанный сертификат с SAN для `host.docker.internal`,
+`127.0.0.1`, `10.0.0.4` и `10.0.0.5`, кладёт его в `/etc/webnestdev-ha/pg-tls` и
+`/etc/postgresql/17/main/tls`, включает `ssl=on` и переводит все TCP-правила `pg_hba`
+с `host` на `hostssl`. Публичная часть становится `/etc/haproxy/pg-ca.crt`, по ней
+HAProxy проверяет сертификат PostgreSQL. Ключ пары один на две ноды и передаётся только
+по SSH; каталог `/etc/webnestdev-ha/pg-tls` — `700 root`, поэтому читать его может только
+root, а PostgreSQL использует свою копию в `/etc/postgresql/17/main/tls`.
+
+Проверка на каждой ноде:
+
+```bash
+sudo -u postgres psql -p 5433 -Atc 'show ssl'          # on
+sudo -u postgres psql -p 5433 -Atc 'show ssl_cert_file'
+openssl x509 -in /etc/webnestdev-ha/pg-tls/server.crt -noout -subject -dates
+grep -E '^[[:space:]]*(host|hostssl)[[:space:]]' \
+  /etc/postgresql/17/main/pg_hba.conf
+```
+
+Проверка TLS с проверкой цепочки (пароль не печатать):
+
+```bash
+PGSSLMODE=verify-full PGSSLROOTCERT=/etc/postgresql/17/main/tls/ca.crt \
+  psql "host=127.0.0.1 port=5433 dbname=webnestdev user=webnestdev" -c 'select 1'
+```
+
+Если сертификат на `node-2` ещё не пришёл, `db_proxy.py` оставляет plaintext и пишет
+об этом в журнал; после `node2-sync.sh` он сам перепишет HAProxy на TLS. Не запускайте
+`pg_tls.sh setup` на `node-2`: получится вторая пара, и проверка сертификата соседа
+перестанет работать. Для планового rejoin источником должен быть PostgreSQL напрямую
+(`5433`), а не HAProxy (`5432`): иначе TLS заворачивается дважды.
 
 ## Проверка
 
@@ -105,8 +145,8 @@ Guard читает `/etc/webnestdev-ha/guard.env`, `mws.env` и `replication.env
 `replication.env` доступен, он сначала спрашивает фактическую роль peer через
 `replicator` на приватном `5433`: peer standby — локальный primary разрешён, peer
 primary — запрещён. Для этого `pg_hba_probe.sh` добавляет на каждом узле узкое
-правило `host postgres replicator <peer>/32`; оно даёт только чтение
-`pg_is_in_recovery()`, без доступа к данным. Если peer недоступен, используется
+правило `hostssl postgres replicator <peer>/32` (или `host`, пока сертификата ещё
+нет); оно даёт только чтение `pg_is_in_recovery()`, без доступа к данным. Если peer недоступен, используется
 MWS: `power=OFF` разрешает старт после fencing, `power=ON` — запрещает.
 
 Аварийный обход — только осознанно: создать `/etc/webnestdev-ha/ALLOW_PRIMARY`,
@@ -160,6 +200,17 @@ sudo -u postgres psql -p 5433 -Atc 'show archive_mode; show archive_command;'
 systemctl is-active webnestdev-pg-basebackup.timer webnestdev-pg-wal-prune.timer
 ```
 
+## HA-статус для API
+
+Контроллер на каждом узле пишет `data/ha-status-<node>.json` (`status.py`) с ролью,
+лагом `pg_stat_replication`, статусом WAL receiver, фазой и свежестью. API читает оба
+файла из общего `data/` через `server/src/health/ha.ts` и добавляет в письма/админку
+три проверки: `replication`, `standby`, `controller`. Если файлов нет (обычный dev или
+не-HA установка), проверки не добавляются.
+
+Снимок обновляется на каждом тике контроллера (5 секунд). Пропавший или устаревший файл
+считается деградацией, а не «всё хорошо». Секретов в снимке нет.
+
 ## Rejoin вернувшегося узла
 
 После promotion старого primary его нельзя запускать как primary. Узел уже может
@@ -171,14 +222,14 @@ systemctl is-active webnestdev-pg-basebackup.timer webnestdev-pg-wal-prune.timer
 sudo bash -c '
   set -a; . /etc/webnestdev-ha/replication.env; set +a
   PGPASSWORD="$REPLICATION_PASSWORD" bash /opt/webnestdev-ha/standby.sh \
-    10.0.0.5 5432 node1
+    10.0.0.5 5433 node1
 '
 
 # node-2 возвращается как standby от node-1
 sudo bash -c '
   set -a; . /etc/webnestdev-ha/replication.env; set +a
   PGPASSWORD="$REPLICATION_PASSWORD" bash /opt/webnestdev-ha/standby.sh \
-    10.0.0.4 5432 node2
+    10.0.0.4 5433 node2
 '
 ```
 

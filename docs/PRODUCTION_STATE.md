@@ -591,7 +591,10 @@ backup `20261110T223005Z.tar.gz` (17 МБ) и `latest.txt`, оба объект�
 (`dir: unbound variable` под `set -u`) — из-за него после WAL не выгружался base backup;
 исправленный `pg-pitr-s3.sh` стоит на обеих нодах. Вывоз и `restore-s3` работают.
 
-Осталось по 4.4: TLS между API и PostgreSQL и вынос primary на отдельный от API инстанс.
+Осталось по 4.4: вынос primary на отдельный от API инстанс. TLS на участке
+HAProxy ↔ PostgreSQL реализован в рабочем дереве (`deploy/ha/pg_tls.sh`,
+`db_proxy.py`, `standby.sh`), но в прод ещё не выкачен; порядок — в
+[`HA_TWO_NODE_REMAINING.md`](HA_TWO_NODE_REMAINING.md).
 Выкатка пока не ставит `pg-pitr.sh` автоматически — установка выполнена через `MODE=setup`;
 перенос установки в `vm-deploy.sh` — следующий шаг.
 
@@ -785,9 +788,11 @@ Purge при публикации автоматизирован (см. ниже
 Все сайты, старые и новые, уже попадают в CDN автоматически за счёт wildcard-CNAME и одного
 ресурса `hosting`; отдельный ресурс на сайт не создаётся.
 
-Осталось: TLS на участке HAProxy ↔ PostgreSQL (меняется `db_proxy.py`: peer-цель должна идти
-напрямую в `5433` с `ssl verify required`; нужны сертификаты и `hostssl` на обеих нодах) и
-проверка `restore-s3` после выкатки образа с CLI-командами.
+TLS на участке HAProxy ↔ PostgreSQL реализован в рабочем дереве: `deploy/ha/pg_tls.sh`
+создаёт сертификат и CA, `db_proxy.py` ходит в peer напрямую на `5433` с
+`ssl verify required`, `standby.sh` — с `sslmode=verify-full`. В прод ещё не выкачен;
+порядок и критерии — в [`HA_TWO_NODE_REMAINING.md`](HA_TWO_NODE_REMAINING.md). Осталось
+проверить TLS после выкатки и `restore-s3` на текущем образе.
 
 ## 17. 12.11.2026: hybrid preview pilot и синхронизация node-2
 
@@ -1306,6 +1311,7 @@ broker 30/30, оба `tsc` — 0. Для выкатки нужна миграц�
 
 Связанные документы:
 
+- [`HA_TWO_NODE_REMAINING.md`](HA_TWO_NODE_REMAINING.md) — незакрытые шаги двухнодового HA;
 - [`PRODUCTION_LAUNCH.md`](PRODUCTION_LAUNCH.md) — порядок production-запуска и проверки;
 - [`CLUSTER_HA_PLAN.md`](CLUSTER_HA_PLAN.md) — целевая HA-схема;
 - [`HA_BIDIRECTIONAL_PLAN.md`](HA_BIDIRECTIONAL_PLAN.md) — результаты failover;

@@ -12,7 +12,11 @@ EnvironmentFile=/etc/webnestdev-ha/regru.env
 Environment=FAILOVER_GRACE_SECONDS=30
 Environment=CHECK_INTERVAL_SECONDS=5
 Environment=LOCAL_PG_PORT=5433
+# HAProxy ходит в PostgreSQL напрямую; TLS проверяется по самоподписанному CA.
 Environment=PRIMARY_PG_HOST=10.0.0.5
+Environment=PRIMARY_PG_PORT=5433
+Environment=HA_PG_TLS=auto
+Environment=HA_PG_TLS_CA=/etc/haproxy/pg-ca.crt
 Environment=DNS_DOMAIN=nestdev.ru
 Environment=DNS_OLD_IP=2.59.82.143
 Environment=DNS_NEW_IP=178.236.27.102
@@ -28,6 +32,7 @@ Environment=HA_PEER_PUBLIC_IP=2.59.80.174
 Environment=HA_STORAGE_PATHS=/var/lib/webnestdev/data,/var/lib/webnestdev/sandboxes,/var/lib/webnestdev/sites
 Environment=HA_REQUIRE_STORAGE=1
 Environment=HA_CONTROL_PATH=/var/lib/webnestdev/data/ha-switchover.json
+Environment=HA_STATUS_DIR=/var/lib/webnestdev/data
 Environment=HA_SWITCHOVER_TIMEOUT_SECONDS=180
 ExecStart=/usr/bin/python3 -u /opt/webnestdev-ha/failover.py
 Restart=always

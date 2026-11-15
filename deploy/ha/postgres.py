@@ -62,6 +62,26 @@ def wal_receiver_status() -> str | None:
     return sql("select status from pg_stat_wal_receiver") or None
 
 
+def replication_streams() -> tuple[int, int] | None:
+    """Сколько streaming-реплик и максимальный лаг в байтах.
+
+    `None` — запрос не удался или локальная база не primary. Ноль реплик — это не
+    «лага нет», а отдельное состояние: HA-пара деградировала.
+    """
+    try:
+        value = sql(
+            "select count(*)::int, coalesce(max(pg_wal_lsn_diff(pg_current_wal_lsn(), replay_lsn)), 0)::bigint "
+            "from pg_stat_replication where state = 'streaming'"
+        )
+    except RuntimeError:
+        return None
+    count_raw, _, lag_raw = value.partition("|")
+    try:
+        return int(count_raw), int(lag_raw)
+    except ValueError:
+        return None
+
+
 def lsn_diff(source: str, target: str) -> int:
     """How many bytes source is ahead of target; validates both LSN strings."""
     for name, value in (("source", source), ("target", target)):

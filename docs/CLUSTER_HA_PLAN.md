@@ -85,7 +85,8 @@ DNS не меняется. `2.59.83.250` — management-адрес `node-1`; у 
 Что уже сделано для этой схемы:
 
 - `deploy/ha/db_proxy.py` направляет локальный HAProxy каждого API в **текущий primary**:
-  локальный PostgreSQL, если узел primary, или HAProxy peer, если его база standby.
+  локальный PostgreSQL, если узел primary, или PostgreSQL peer напрямую на `5433`, если
+  его база standby. После `pg_tls.sh` backend идёт с `ssl verify required`.
   Поэтому второй API не ходит в свою read-only копию и может принимать проекты.
 - `deploy/ha/storage_quorum.py` держит `cluster.quorum-type=auto`, пока оба узла живы,
   и переводит тома в `none` только после того, как MWS подтвердил `power=OFF` peer.
@@ -374,7 +375,8 @@ override-файлы запускают API с `--no-deps`, поэтому лок
 - выбрать synchronous или asynchronous commit (см. 7.1);
 - добавить стабильный endpoint базы (`DATABASE_URL` не должен указывать на конкретную ВМ,
   которая может уехать);
-- добавить TLS между API и PostgreSQL;
+- TLS между API и PostgreSQL: `deploy/ha/pg_tls.sh` + direct `5433` в `db_proxy.py`
+  (реализовано в рабочем дереве, в прод ещё не выкачено);
 - реализовать fencing и promotion, иначе автоматический failover запрещён.
 
 ### 5.7. Инициализация схемы и фоновые задачи
@@ -608,7 +610,7 @@ Fencing — обязательное условие автоматическог
   на endpoint, не на конкретную ВМ.
 - Убрать обязательный локальный сервис `postgres` из compose (профиль/отдельный файл): иначе
   контейнер API продолжит стартовать с `postgres:5432`, даже если в `.env` уже другой адрес.
-- TLS между API и PostgreSQL; HBA только с приватных адресов.
+- TLS между API и PostgreSQL (`pg_tls.sh`, `hostssl`); HBA только с приватных адресов.
 - Fencing-контроллер (7.4): проверка питания через MWS API, выключение старого primary,
   promotion, запись события в аудит.
 - Возврат node-1: запуск как standby, `pg_rewind`/reclone при необходимости; **без failback**.

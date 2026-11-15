@@ -26,6 +26,7 @@ import { memoryStatus } from "../health/host-metrics.js";
 import { buildHealthChecks, healthStatus, HEALTH_THRESHOLDS, type HealthCheck, type HealthStatus } from "../health/thresholds.js";
 import { getPlatformEnv } from "../platform/platform-env.js";
 import { alertEmail } from "../health/alerts.js";
+import { collectHaChecks } from "../health/ha.js";
 import { sendMail } from "../mail/mailer.js";
 
 /**
@@ -898,6 +899,9 @@ export async function buildInfraSnapshot(
     backupAgeHours,
     ...(backupIssue ? { backupDetail: backupIssue } : {}),
   });
+  // HA-снимки пишет failover-контроллер. В обычном dev-режиме файлов нет, и этот
+  // вызов возвращает пустой список, не меняя прежнюю картину.
+  checks.push(...await collectHaChecks());
   const monitoring: InfraMonitoring = {
     status: healthStatus(checks),
     checks,
