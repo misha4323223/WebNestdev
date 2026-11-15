@@ -1,7 +1,7 @@
 # Состояние production и оперативная память
 
-Дата среза: **15.11.2026**. Документ фиксирует факты, которые нельзя терять между
-сессиями.
+Дата среза: **15.11.2026, 17:20 UTC**. Документ фиксирует факты, которые нельзя терять
+между сессиями.
 Секреты здесь не хранятся: только имена переменных, пути и способы проверки.
 
 **SSH-ключ агента:** `/tmp/nestdev-agent` (права `600`), в git не хранится. `/tmp` в workspace
@@ -20,8 +20,10 @@
 | `node-1` | production primary: API, Caddy, HAProxy, PostgreSQL primary, `node1-runner` | `10.0.0.4`, management `2.59.83.250` | `ON` |
 | `node-2` | standby/worker: PostgreSQL streaming standby, API/Caddy/broker/runner, общий storage | `10.0.0.5`; внешний NAT динамический, читать из MWS API | `ON` — включена 14.11.2026 для работ по HA |
 
-**С 14.11.2026:** primary PostgreSQL — `node-1`, `node-2` включена и работает streaming
-standby. Прод обслуживают обе ноды; целевой production — две включённые ноды.
+**На 15.11.2026, 17:20 UTC:** primary PostgreSQL — `node-1`, `node-2` включена и работает
+streaming standby. Прод обслуживают обе ноды; целевой production — две включённые ноды.
+HA-проверки: конкурентный DDL и `restore-s3` пройдены; TLS, domain/preview failover и
+плановый switchover ещё не выполнены.
 
 **Не включать `node-2`, пока `node-1` не жива и не является primary:** иначе контроллер
 `node-2` может повысить её и получится два primary. Включать только по явной просьбе и под
@@ -33,7 +35,8 @@ standby. Прод обслуживают обе ноды; целевой product
 
 Правило работы:
 
-1. На 14.11.2026 `node-1` — primary, `node-2` — `power=ON` и standby; HA-тест ещё не завершён.
+1. На 15.11.2026, 17:20 UTC `node-1` — primary, `node-2` — `power=ON` и standby; HA-тест
+   завершён не полностью: остались TLS, destructive domain/preview failover и switchover.
 2. Доводить задачу до конца, не выключая работающую ВМ в середине.
 3. Перед production-запуском проверить standby `node-2` и выполнить плановый переезд primary
    на неё по [`PRODUCTION_LAUNCH.md`](PRODUCTION_LAUNCH.md).
@@ -48,12 +51,13 @@ Production не должен зависеть от базы или storage од�
 
 - Публичный адрес: `https://nestdev.ru`.
 - `GET /api/ready` отвечает `ok:true`.
-- Текущая production-сборка на обеих нодах: `18868585d5da9075ff6f0611d6a68097b8a8ba06` —
-  коммит `1886858` в `main` (`fix(hosting): упростить работу с custom domains и preview`).
-- Образ: `ghcr.io/misha4323223/webnestdev:sha-18868585d5da` — собран и опубликован
-  workflow `deploy` (run `43706263691`).
-- Выкачена 15.11.2026 на `node-1` и `node-2`; runner на второй ноде также переведён на эту
-  сборку. Тег `sha-18868585d5da` подтверждён на обеих нодах, deploy run — success.
+- Текущая production-сборка на обеих нодах: `4556b09c7a27076826546b7a4ca6eb2c8e5fe935` —
+  коммит `4556b09` в `main` (`fix(ha): разрешить API второй ноды прямое подключение к PostgreSQL`).
+- Образ: `ghcr.io/misha4323223/webnestdev:sha-4556b09c7a27` — собран и опубликован
+  workflow `deploy` (run `43738404730`).
+- Выкачена 15.11.2026, 17:07 UTC на `node-1` и `node-2`; runner на второй ноде также переведён
+  на эту сборку. Тег `sha-4556b09c7a27` подтверждён на обеих нодах, deploy run — success.
+  Предыдущая сборка `1886858` (run `43706263691`) осталась в истории.
 - Перед ней в тот же день выкачена AI-сборка `d14676f` (run `43704849397`); все `AGENT_*`
   флаги на обеих нодах выключены, reviewer и остальные экспериментальные ветки не активны.
 - Исправление: локальный кэш зависимостей передаётся Docker с флагом `-v`; без него
@@ -69,8 +73,8 @@ Production не должен зависеть от базы или storage од�
 
 ## 2.1. Custom domains: инфраструктура выкачена, feature flag включён
 
-- 13.11.2026 custom domains этапов 1–3 выкачены на `node-1`; текущая сборка обеих нод —
-  `1886858` (run `43706263691`, образ `sha-18868585d5da`).
+- 13.11.2026 custom domains этапов 1–3 выкачены на `node-1`; на 15.11.2026, 17:20 UTC текущая
+  сборка обеих нод — `4556b09` (run `43738404730`, образ `sha-4556b09c7a27`).
 - Живой Caddy: `src-caddy-1` на обеих нодах, image `caddy:2.11.8-alpine`, version `v2.11.8`.
 - Сертификаты перенесены из `src_caddy-data` в общий
   `/var/lib/webnestdev/data/caddy-data`; старые сертификаты на месте, `https://nestdev.ru` и
@@ -592,7 +596,8 @@ backup `20261110T223005Z.tar.gz` (17 МБ) и `latest.txt`, оба объект�
 исправленный `pg-pitr-s3.sh` стоит на обеих нодах. Вывоз и `restore-s3` работают.
 
 Осталось по 4.4: вынос primary на отдельный от API инстанс. TLS на участке
-HAProxy ↔ PostgreSQL выкачен 16.11.2026 в сборке `4556b09` (`deploy/ha/pg_tls.sh`,
+HAProxy ↔ PostgreSQL выкачен 15.11.2026, 17:07 UTC в сборке `4556b09`
+(`deploy/ha/pg_tls.sh`,
 `db_proxy.py`, `standby.sh`), но ещё не включён: сертификат не создан, HAProxy ходит в
 peer `5433` по plaintext. Порядок включения — в
 [`HA_TWO_NODE_REMAINING.md`](HA_TWO_NODE_REMAINING.md).
@@ -789,13 +794,13 @@ Purge при публикации автоматизирован (см. ниже
 Все сайты, старые и новые, уже попадают в CDN автоматически за счёт wildcard-CNAME и одного
 ресурса `hosting`; отдельный ресурс на сайт не создаётся.
 
-TLS на участке HAProxy ↔ PostgreSQL выкачен 16.11.2026 в сборке `4556b09`:
+TLS на участке HAProxy ↔ PostgreSQL выкачен 15.11.2026, 17:07 UTC в сборке `4556b09`:
 `deploy/ha/pg_tls.sh` создаёт сертификат и CA, `db_proxy.py` ходит в peer напрямую на `5433`
 с `ssl verify required`, `standby.sh` — с `sslmode=verify-full`. TLS ещё не включён: сертификат
 не создан, текущий peer-трафик plaintext. Порядок и критерии — в
 [`HA_TWO_NODE_REMAINING.md`](HA_TWO_NODE_REMAINING.md).
 
-**16.11.2026 проверены конкурентный DDL и `restore-s3`:** два процесса одновременно
+**15.11.2026, 17:15 UTC проверены конкурентный DDL и `restore-s3`:** два процесса одновременно
 вызвали `initializeStorage()` на живой primary, один ждал advisory-lock, оба завершились
 успешно; `restore-s3` из base backup `20261115T043406Z` на `2026-11-15 12:00:00+00`
 поднял drill на `5544`, 18 проектов, последнее обновление `2026-11-15T11:08:55.318Z`.
@@ -1256,7 +1261,7 @@ broker 30/30, оба `tsc` — 0. Для выкатки нужна миграц�
   копирует файлы и unit'ы на обе ноды, сверяет SHA-256 и перезапускает контроллер при
   изменении. `SYNC_NODE2` по умолчанию равен `1`; ошибки обновления runner'а и HA-кода теперь
   завершают выкатку ошибкой. В CI добавлены `bash -n` для HA-скриптов и тест манифеста.
-- **Фактическое состояние на 15.11.2026 после выкатки:** `node-1` — primary, `node-2` —
+- **Фактическое состояние на 15.11.2026, 17:20 UTC после выкатки:** `node-1` — primary, `node-2` —
   streaming standby, обе включены (`node-2 power=ON`), все три Gluster-тома смонтированы на
   обеих нодах, `cluster.quorum-type=auto`. На обеих нодах `archive_mode=on`; на `node-2`
   контроллер сам выполнил `pg-pitr setup` и один перезапуск standby, на `node-1` архив уже

@@ -653,29 +653,22 @@ button,textarea{font:inherit}button{color:inherit}
 
 .nest-loader{--nest-size:42px;position:relative;display:inline-grid;width:var(--nest-size);height:var(--nest-size);place-items:center;flex:none;vertical-align:middle;isolation:isolate}
 .nest-loader svg{display:block;width:100%;height:100%;overflow:visible}
-/* Две фазы одного цикла: гнездо и знак кода живут на одной шкале (4.8 s) и встречаются в
-   кроссфейде. Гнездо сжимается, прутья укорачиваются, знак кода проявляется и прорисовывается;
-   при разборке знака всё идёт в обратном порядке и гнездо сплетается заново. Сборка гнезда
-   начинается в конце цикла (88%) и заканчивается в начале следующего (8%): иначе между
-   «знак исчез» и «гнездо появилось» оставалась бы видимая пустота. */
-.nest-loader__nest{transform-box:view-box;transform-origin:44px 35px;animation:nest-nest 4.8s cubic-bezier(.36,.66,.2,1) infinite}
-.nest-loader__code{transform-box:view-box;transform-origin:44px 34px;opacity:0;animation:nest-code 4.8s cubic-bezier(.32,.68,.22,1) infinite}
-.nest-loader__shadow{fill:rgba(0,0,0,.4);transform-box:fill-box;transform-origin:center;animation:nest-shadow 4.8s ease-in-out infinite}
-.nest-loader__strand{fill:none;stroke-width:2.35;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1;stroke-dashoffset:1;opacity:0;transform-box:fill-box;transform-origin:center;animation:nest-strand 4.8s cubic-bezier(.32,.68,.2,1) infinite;animation-delay:var(--delay)}
-.nest-loader__code-stroke{fill:none;stroke-width:3.4;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1;stroke-dashoffset:1;animation:nest-code-draw 4.8s cubic-bezier(.34,.68,.2,1) infinite;animation-delay:var(--delay,0s)}
+/* Две фазы одного цикла: фирменный знак и код живут на одной шкале (4.8 s) и
+   встречаются в кроссфейде. Сегменты знака слетаются из своих секторов, затем
+   расходятся; в центре прорисовывается `</>`, после чего знак собирается заново.
+   Сборка начинается в конце цикла (87%) и заканчивается в начале следующего (9%),
+   поэтому между «код исчез» и «знак появился» нет видимой пустоты. */
+.nest-loader__piece{transform-box:view-box;transform-origin:64px 64px;opacity:.32;transform:translate3d(calc(var(--dx) * .55),calc(var(--dy) * .55),0) rotate(calc(var(--r) * .55)) scale(.9);animation:nest-mark-piece 4.8s cubic-bezier(.36,.66,.2,1) infinite;animation-delay:var(--delay);will-change:transform,opacity}
+.nest-loader__code{transform-box:view-box;transform-origin:64px 64px;opacity:0;animation:nest-code 4.8s cubic-bezier(.32,.68,.22,1) infinite}
+.nest-loader__code-stroke{fill:none;stroke-width:5.2;stroke-linecap:round;stroke-linejoin:round;stroke-dasharray:1;stroke-dashoffset:1;animation:nest-code-draw 4.8s cubic-bezier(.34,.68,.2,1) infinite;animation-delay:var(--delay,0s)}
 .nest-loader__glow{animation:nest-glow 4.8s ease-in-out infinite}
-@keyframes nest-strand{
-  0%{transform:translate3d(calc(var(--dx) * .45),calc(var(--dy) * .45),0) rotate(calc(var(--r) * .45)) scale(.9);opacity:.5;stroke-dashoffset:.55}
-  8%,42%{transform:translate3d(0,0,0) rotate(0) scale(1);opacity:1;stroke-dashoffset:0}
-  54%{transform:translate3d(0,0,0) rotate(0) scale(.84);opacity:.8;stroke-dashoffset:1}
-  88%{transform:translate3d(var(--dx),var(--dy),0) rotate(var(--r)) scale(.82);opacity:0;stroke-dashoffset:1}
-  100%{transform:translate3d(calc(var(--dx) * .45),calc(var(--dy) * .45),0) rotate(calc(var(--r) * .45)) scale(.9);opacity:.5;stroke-dashoffset:.55}
-}
-@keyframes nest-nest{
-  0%,46%{opacity:1;transform:scale(1) rotate(0)}
-  56%{opacity:0;transform:scale(.44) rotate(10deg)}
-  86%{opacity:0;transform:scale(.86) rotate(-4deg)}
-  100%{opacity:1;transform:scale(1) rotate(0)}
+@keyframes nest-mark-piece{
+  0%{transform:translate3d(calc(var(--dx) * .55),calc(var(--dy) * .55),0) rotate(calc(var(--r) * .55)) scale(.9);opacity:.32}
+  9%,42%{transform:translate3d(0,0,0) rotate(0) scale(1);opacity:1}
+  55%{transform:translate3d(calc(var(--dx) * .35),calc(var(--dy) * .35),0) rotate(calc(var(--r) * .35)) scale(.96);opacity:.55}
+  62%{transform:translate3d(var(--dx),var(--dy),0) rotate(var(--r)) scale(.82);opacity:0}
+  87%{transform:translate3d(calc(var(--dx) * .85),calc(var(--dy) * .85),0) rotate(calc(var(--r) * .85)) scale(.86);opacity:0}
+  100%{transform:translate3d(calc(var(--dx) * .55),calc(var(--dy) * .55),0) rotate(calc(var(--r) * .55)) scale(.9);opacity:.32}
 }
 @keyframes nest-code{
   0%,42%{opacity:0;transform:scale(.84)}
@@ -701,17 +694,8 @@ button,textarea{font:inherit}button{color:inherit}
   92%{opacity:0}
   100%{opacity:0}
 }
-@keyframes nest-shadow{
-  0%{opacity:.3;transform:scaleX(.94)}
-  8%,42%{opacity:.34;transform:scaleX(1)}
-  56%,86%{opacity:0;transform:scaleX(.6)}
-  100%{opacity:.3;transform:scaleX(.94)}
-}
 @media(prefers-reduced-motion:reduce){
-  .nest-loader__nest,.nest-loader__code,.nest-loader__strand,.nest-loader__code-stroke,.nest-loader__glow,.nest-loader__shadow{animation:none}
-  .nest-loader__nest{opacity:1;transform:none}
-  .nest-loader__strand{transform:none;opacity:1;stroke-dashoffset:0}
-  .nest-loader__shadow{opacity:.3;transform:scaleX(1)}
+  .nest-loader__piece{animation:none;transform:none;opacity:1}
   .nest-loader__code{display:none}
 }
 

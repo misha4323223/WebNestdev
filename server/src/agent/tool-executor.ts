@@ -64,7 +64,7 @@ export async function executeTool(call:ProviderToolCall,context:AgentContext){
   // а остановка запуска передаётся внутрь инструмента, чтобы ожидание закрылось вместе с ним.
   // Поиск в интернете разрешён только при включённом переключателе в панели ввода: флаг читается
   // здесь, поэтому его видят и web.search, и web.read, и ни один из них не обходит решение человека.
-  const result=await handler(call.arguments,{projectId:context.request.projectId,runId:context.runId,userId:context.request.userId,...(context.request.conversationId?{conversationId:context.request.conversationId}:{}),emit:context.emit,webSearchEnabled:context.request.webSearch===true,browserCheckEnabled:context.request.browserCheck===true,...(context.signal?{signal:context.signal}:{}),...(context.scout?{scout:context.scout}:{})});
+  const result=await handler(call.arguments,{projectId:context.request.projectId,runId:context.runId,userId:context.request.userId,...(context.request.conversationId?{conversationId:context.request.conversationId}:{}),emit:context.emit,...(context.model?{model:context.model}:{}),webSearchEnabled:context.request.webSearch===true,browserCheckEnabled:context.request.browserCheck===true,...(context.signal?{signal:context.signal}:{}),...(context.scout?{scout:context.scout}:{})});
   if(storagePostRecordTools.has(call.name)||projectMemoryWrite){
     await recordStorageMutation(context.request.projectId, context.request.userId, {
       heavy: heavyStorageMutationTools.has(call.name),

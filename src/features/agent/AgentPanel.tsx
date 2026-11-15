@@ -9,6 +9,9 @@ import { deleteUploadedMedia,uploadProjectMedia } from "../../lib/media-api";
 import { cancelProjectAccess,submitProjectAccess } from "../../lib/deployment-api";
 import { ActionsDock,MessageThinking,PlanPanel,actionTarget,chatImagesByMessage,contentBefore,deriveActions,readPlan,writePlan,type ChatImage,type PanelId,type PanelState } from "./agent-activity";
 import { buildReasoningTraces } from "./reasoning-trace";
+import { chatUiByMessage } from "../../lib/ui-history";
+import { parseUiBlocks, type UiBlock } from "../../lib/ui-blocks";
+import { UiBlocks } from "./ui/UiBlocks";
 import type { AgentAction,AgentMode,ChatMessage,PlatformModelOption,PlanState,ReasoningBlock,ReasoningMode,ReasoningSupport } from "../../lib/types";
 import { QuestionSheet,type AgentQuestion } from "./QuestionSheet";
 import { PlanningRoom } from "./PlanningRoom";
@@ -366,6 +369,9 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
    * остаются под ним и после завершения, а при открытии сохранённого чата их заменяет история.
    */
   const [liveImages,setLiveImages]=useState<Array<{messageIndex:number;image:ChatImage}>>([]);
+  // Интерактивный блок, показанный текущим запуском. После перезагрузки его заменяет
+  // chatUiByMessage: сохранённый вызов ui.render лежит в истории вместе с аргументами.
+  const [liveUi,setLiveUi]=useState<UiBlock[]>([]);
   const [panels,setPanels]=useState<PanelState>(readPanelState);
   // Действия живут в доке под полем ввода: открытость — его собственное состояние, а не
   // запомненное свёрнутое состояние панели.
@@ -723,6 +729,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     actionsRef.current=[];setActions([]);
     // Картинки прошлого разговора к новому не относятся: их место заняла загруженная история.
     setLiveImages([]);
+    setLiveUi([]);
     setPlan(readPlan(conversationId));
     // Другой чат — своё окно планирования: у нового проекта оно открыто, у начатого — нет.
     const storedPlanning=readPlanning(conversationId);
@@ -946,6 +953,8 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     setNotice("");
     // Новая задача — новый итог: прошлая точка уже в истории, и напоминание о ней не нужно.
     setChangesNotice(null);
+    // Интерфейс прошлого запуска не должен выглядеть частью нового ответа.
+    setLiveUi([]);
     // Отправленное сообщение и ответ на него — то, что хочется видеть, даже если до этого
     // переписка была отлистана вверх.
     pinnedToEndRef.current=true;
@@ -1084,6 +1093,12 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
         // Агент запускает предпросмотр — панель открывается сразу, не дожидаясь, пока человек
         // найдёт стрелку в шапке. На десктопе она и так на месте, на телефоне это шторка.
         if(name==="preview.start")onPreviewStarted?.();
+        // ui.render показывает интерфейс сразу, а не после финального текста: аргументы вызова
+        // уже проверены сервером, но клиент повторяет разбор, чтобы не рисовать мусор из истории.
+        if(name==="ui.render"){
+          const blocks=parseUiBlocks(event.input);
+          if(blocks)setLiveUi(blocks);
+        }
         const id=event.toolCallId??nextId();
         // Publishing the plan already updates the plan card, so it is not repeated here.
         if(name!=="plan.update")updateActions(current=>{
@@ -1099,6 +1114,8 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
         // Предпросмотр уже поднялся: открытая панель перечитывает статус и показывает кадр
         // без нажатия «Обновить».
         if(event.name==="preview.start"&&!failed)onPreviewStarted?.();
+        // Невалидный ui.render не должен оставлять на экране интерфейс, которого нет в истории.
+        if(event.name==="ui.render"&&failed)setLiveUi([]);
         // Картинка, нарисованная по просьбе пользователя, видна сразу: результата инструмента
         // в списке сообщений ещё нет — он появится только в сохранённой истории.
         if(event.name==="image.generate"&&output&&typeof output==="object"){
@@ -1426,6 +1443,13 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     startRun(item);
   }
 
+  /** Действие интерактивного блока: это обычный текст следующего сообщения агенту. */
+  function sendUiAction(text:string){
+    const value=text.trim();
+    if(!value||!loaded||running)return;
+    startRun({text:value,attachments:[]});
+  }
+
   function sendQueuedNow(id:string){
     const item=queueRef.current.find(entry=>entry.id===id);
     if(!item)return;
@@ -1633,6 +1657,9 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   // Картинки из сохранённой истории: их отмечает результат инструмента, поэтому после
   // перезагрузки страницы они исчезают не вместе с состоянием запуска.
   const chatImages=useMemo(()=>chatImagesByMessage(messages),[messages]);
+  // Сохранённые интерактивные блоки привязаны к следующему ответу агента; при загрузке чата
+  // они приходят из аргументов ui.render, а не из отдельного поля сообщения.
+  const chatUi=useMemo(()=>chatUiByMessage(messages),[messages]);
   // Служебный автозапуск (шаблон, импорт, знакомство) остаётся в истории для модели, но человек
   // видит только смысл — идею проекта или короткую подпись. В закладки такие сообщения не идут:
   // это не запросы пользователя, и метка на каждый автозапуск только путала бы навигацию.
@@ -1712,13 +1739,14 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
           ? (m.reasoning?.trim()?m.reasoning:m.reasoningBlocks?.[0]?.text)
           : undefined;
         const hasReasoning=m.role==="assistant"&&Boolean(reasoningText?.trim());
+        const uiBlocks=chatUi.get(m)??[];
         // Пустой ход ассистента состоял только из вызова инструмента (или из размышления,
         // которое в планировании не показывается): после вопросов такие облака в чате не нужны.
         // Исключение — якорь сгруппированных размышлений: он должен быть виден, даже если текст
         // ответа пустой. Живой ход оставляем — в нём размышление видно, пока модель работает.
         // Размышление, уже вошедшее в общий блок шагов (coveredReasoning), не рисуется отдельно;
         // пустая строка с ним осталась бы в чате пустой полоской.
-        if(m.role==="assistant"&&!m.content.trim()&&!live&&!trace&&(!hasReasoning||coveredReasoning.has(i)))return null;
+        if(m.role==="assistant"&&!m.content.trim()&&!live&&!trace&&!uiBlocks.length&&(!hasReasoning||coveredReasoning.has(i)))return null;
         // Картинки, которые агент показал в этом запуске, и картинки из сохранённой истории —
         // один список без повторов: пока запуск идёт, результата инструмента в сообщениях ещё нет.
         const images=[...(chatImages.get(m)??[]),...liveImages.filter(item=>item.messageIndex===i).map(item=>item.image)]
@@ -1760,6 +1788,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
             </div>}
             {/* Нарисованная картинка — в самой переписке, а не только в списке действий:
                 человек просил её увидеть, а не найти файл в дереве проекта. */}
+            {uiBlocks.length>0&&<UiBlocks blocks={uiBlocks} projectId={projectId} busy={running} onAction={sendUiAction}/>}
             {images.length>0&&<div className="message-images">
               {images.map(image=><figure className="message-image" key={image.url}>
                 <a href={image.url} target="_blank" rel="noreferrer" title="Открыть изображение в новой вкладке">
@@ -1784,6 +1813,11 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
           </div>
         </div>;
       })}
+      {liveUi.length>0&&<div className="message-row assistant ui-live-row">
+        <div className="message-content">
+          <UiBlocks blocks={liveUi} projectId={projectId} busy={running} onAction={sendUiAction}/>
+        </div>
+      </div>}
 
     </div>
     <ChatBookmarks

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import type { ChatMessage } from "../types.js";
-import { attachToolScreenshot, detectToolScreenshot } from "./tool-screenshots.js";
+import { attachToolScreenshot, detectToolImage, detectToolScreenshot } from "./tool-screenshots.js";
 import { MAX_INLINE_IMAGE_BYTES } from "../media/image-limits.js";
 
 const PNG = Buffer.from(
@@ -122,6 +122,39 @@ test("текстовой модели снимок не отправляется
   const images = (result.messages.at(-1) as Extract<ChatMessage, { role: "user" }>).images ?? [];
   assert.equal(images.length, 1, "вложение пользователя не должно исчезнуть");
   assert.equal(images[0]?.data, "user-image");
+});
+
+test("image.view прикладывает файл из любой папки и не загружает его в бакет", async () => {
+  const output = {
+    ok: true,
+    path: "public/hero.png",
+    bytes: BIG.length,
+    contentType: "image/png",
+    viewImage: true,
+  };
+  let uploads = 0;
+  const result = await attachToolScreenshot([baseMessage()], output, {
+    projectId: "p",
+    userId: "u",
+    model: "vision-model",
+    mainCanSee: true,
+    readImage: async () => PNG,
+    upload: async () => {
+      uploads++;
+      return { publicUrl: "https://storage.example/hero.png" };
+    },
+  });
+  assert.equal(result.requestedView, true);
+  assert.equal(result.attached, true);
+  assert.equal(uploads, 0, "просмотр локального файла не тратит квоту бакета");
+  const image = (result.messages.at(-1) as Extract<ChatMessage, { role: "user" }>).images?.at(-1);
+  assert.equal(image?.source, "tool");
+  assert.equal(image?.data, PNG.toString("base64"));
+});
+
+test("image.view понимает файл вне папки скриншотов, а обычный результат — нет", () => {
+  assert.equal(detectToolImage({ viewImage: true, path: "public/images/hero.webp" })?.path, "public/images/hero.webp");
+  assert.equal(detectToolImage({ path: "public/images/hero.webp" }), null, "без viewImage автоматически прикладываются только снимки browser.*");
 });
 
 test("снимок ищется в failureStep и последнем кадре сценария", () => {

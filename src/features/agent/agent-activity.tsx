@@ -20,6 +20,7 @@ import {
   GitBranch,
   Globe,
   KeyRound,
+  LayoutPanelTop,
   ListChecks,
   ListTree,
   LoaderCircle,
@@ -82,6 +83,7 @@ const TOOL_ICONS: Record<string, ActionDescriptor> = {
   "web.read": { icon: Newspaper, label: "Читает страницу" },
   "agent.scout": { icon: ScanSearch, label: "Запускает разведку" },
   "plan.update": { icon: ListChecks, label: "Обновляет план задач" },
+  "ui.render": { icon: LayoutPanelTop, label: "Показывает интерфейс" },
   "secrets.request": { icon: KeyRound, label: "Запрашивает ключ" },
 };
 
@@ -116,6 +118,7 @@ export function actionTarget(name: string, input: unknown): string {
     const pattern = text(value.pattern);
     if (pattern) return "«" + pattern + "» в " + (text(value.path) || "проекте");
   }
+  if (name === "ui.render") return "Интерактивный ответ";
   if (name === "npm.install") {
     const packages = [value.packages, value.dependencies].find(Array.isArray) as unknown[] | undefined;
     const list = (packages ?? []).map(text).filter(Boolean);

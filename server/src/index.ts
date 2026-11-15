@@ -155,6 +155,8 @@ import "./tools/net-tools.js";
 import "./tools/python-tools.js";
 import "./tools/design-tools.js";
 import "./tools/image-tools.js";
+import "./tools/view-image-tools.js";
+import "./tools/ui-tools.js";
 
 // Неизвестный бэкенд или postgres без DATABASE_URL — ошибка конфигурации, а не повод молча
 // работать на JSON-файлах: иначе данные «теряются» при первом же переезде.

@@ -5,6 +5,7 @@ import type { PreviewStartProgress, PreviewState } from "../../lib/types";
 import { composeAgentDraft } from "../../lib/agent-compose";
 import { elementPickPrompt, type PickedElement } from "../../lib/element-pick";
 import { Hint } from "../../components/Hint";
+import { NestLoader } from "../../components/NestLoader";
 import { ThemePanel } from "./ThemePanel";
 import { useElementPicker } from "./use-element-picker";
 import { useRemoteElementPicker } from "./use-remote-picker";
@@ -466,7 +467,7 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
 function StartProgress({progress}:{progress?:PreviewStartProgress}){
   const activeIndex=progress?START_STEPS.findIndex(step=>step.phase===progress.phase):-1;
   return <div className="preview-starting" role="status" aria-live="polite">
-    <div className="preview-starting-icon"><Loader2 className="preview-spin" size={20}/></div>
+    <div className="preview-starting-icon"><NestLoader size={36} /></div>
     <strong>{progress?.message??"Запускаем предпросмотр…"}</strong>
     <span>{progress?.detail??"Это может занять до нескольких минут: зависимости, сборка и первый ответ приложения."}</span>
     <div className="preview-start-steps" aria-hidden="true">

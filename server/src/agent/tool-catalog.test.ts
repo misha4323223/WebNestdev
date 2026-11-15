@@ -8,6 +8,8 @@ test("каталог разработчика оставляет ядро и н�
   assert.ok(names.includes("fs.read"));
   assert.ok(names.includes("fs.edit"));
   assert.ok(names.includes("agent.scout"));
+  assert.ok(names.includes("image.view"), "локальное изображение можно показать главной модели напрямую");
+  assert.ok(names.includes("ui.render"), "интерактивный интерфейс доступен обычному запуску");
   assert.ok(names.includes("net.request"), "внешний API нужен обычной задаче");
   assert.ok(names.includes("net.download"), "скачивание ассета нужен обычной задаче");
   assert.ok(names.includes("database.status"), "проверка базы нужна до кода хранения");

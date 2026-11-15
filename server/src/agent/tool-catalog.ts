@@ -27,7 +27,7 @@ const CORE_TOOLS = [
   "database.status", "database.env",
   "service.status", "service.env", "service.secrets",
   "browser.open", "browser.inspect",
-  "image.inspect", "image.generate",
+  "image.view", "image.inspect", "image.generate", "ui.render",
   "note.remember", "note.find", "chat.history",
   "plan.update", "question.ask", "design.theme", "secrets.request",
   "agent.scout",

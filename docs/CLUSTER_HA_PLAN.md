@@ -87,8 +87,8 @@ DNS не меняется. `2.59.83.250` — management-адрес `node-1`; у 
 - `deploy/ha/db_proxy.py` направляет локальный HAProxy каждого API в **текущий primary**:
   локальный PostgreSQL, если узел primary, или PostgreSQL peer напрямую на `5433`, если
   его база standby. После `pg_tls.sh` backend идёт с `ssl verify required`.
-  Код прямого peer-маршрута выкачен в `4556b09`; HBA для `webnestdev` с приватного IP
-  соседа добавлен в `pg_hba_probe.sh`.
+  Код прямого peer-маршрута выкачен 15.11.2026, 17:07 UTC в `4556b09`; HBA для `webnestdev`
+  с приватного IP соседа добавлен в `pg_hba_probe.sh`.
   Поэтому второй API не ходит в свою read-only копию и может принимать проекты.
 - `deploy/ha/storage_quorum.py` держит `cluster.quorum-type=auto`, пока оба узла живы,
   и переводит тома в `none` только после того, как MWS подтвердил `power=OFF` peer.
@@ -378,7 +378,8 @@ override-файлы запускают API с `--no-deps`, поэтому лок
 - добавить стабильный endpoint базы (`DATABASE_URL` не должен указывать на конкретную ВМ,
   которая может уехать);
 - TLS между API и PostgreSQL: `deploy/ha/pg_tls.sh` + direct `5433` в `db_proxy.py`
-  (код выкачен в `4556b09`; TLS ещё не включён, peer-трафик пока plaintext);
+  (код выкачен 15.11.2026, 17:07 UTC в `4556b09`; TLS ещё не включён, peer-трафик пока
+  plaintext);
 - реализовать fencing и promotion, иначе автоматический failover запрещён.
 
 ### 5.7. Инициализация схемы и фоновые задачи

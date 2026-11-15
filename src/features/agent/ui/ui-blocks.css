@@ -1,0 +1,73 @@
+/* Интерактивные блоки — часть ответа, а не отдельная панель: та же тёплая окантовка,
+   что у сообщений и плана, и никакого холодного «виджета» поверх переписки. */
+.ui-blocks{display:grid;gap:10px;margin-top:12px;max-width:100%}
+.ui-block{padding:11px 12px;border:1px solid var(--line-warm);border-radius:11px;background:linear-gradient(165deg,#10161c,#0b1015);box-shadow:inset 0 1px 0 rgba(255,255,255,.025);min-width:0}
+.ui-block-head{display:grid;gap:3px;min-width:0}
+.ui-block-head strong{color:#eef1f4;font-size:12.5px;font-weight:650;line-height:1.35;overflow-wrap:anywhere}
+.ui-block-head p{margin:0;color:#9ba4ae;font-size:11px;line-height:1.5}
+.ui-block-foot{display:flex;justify-content:flex-end;margin-top:10px}
+.ui-block-submit{min-height:29px;padding:0 11px;border:1px solid var(--camo-line-strong);border-radius:7px;background:linear-gradient(180deg,#282116,#1b1711);color:#ede7dc;font:inherit;font-size:10.5px;font-weight:650;cursor:pointer;transition:border-color .15s ease,background .15s ease,color .15s ease}
+.ui-block-submit:hover{border-color:#e0d6c4;background:linear-gradient(180deg,#30271a,#211b13);color:#fff}
+.ui-block-submit:focus-visible,.ui-choice-option:focus-visible{outline:2px solid var(--camo-line-strong);outline-offset:2px}
+.ui-block-submit:disabled{opacity:.5;cursor:default}
+.ui-action-secondary{border-color:#3c4652;background:#141a21;color:#b8c1cb}
+.ui-action-secondary:hover{border-color:#596675;background:#1a222b;color:#e9edf1}
+.ui-action-danger{border-color:#5a3732;background:#201412;color:#e3aaa1}
+.ui-action-danger:hover{border-color:#8d5148;background:#2a1816;color:#ffd1ca}
+.ui-choice-options{display:grid;gap:5px;margin-top:9px}
+.ui-choice-option{display:flex;align-items:flex-start;gap:8px;width:100%;min-height:34px;padding:6px 8px;border:1px solid #29323b;border-radius:8px;background:#0d141a;color:#cbd2d9;text-align:left;cursor:pointer;transition:border-color .15s ease,background .15s ease}
+.ui-choice-option:hover{border-color:var(--camo-line);background:#121a21}
+.ui-choice-option.is-selected{border-color:var(--camo-line-strong);background:#1d211d;color:#f2efe8}
+.ui-choice-option:disabled{opacity:.55;cursor:default}
+.ui-choice-mark{flex:none;width:14px;height:14px;margin-top:1px;display:grid;place-items:center;border:1px solid #45515d;border-radius:4px;color:#d9cfbd}
+.ui-choice-option.is-selected .ui-choice-mark{border-color:var(--camo-line-strong);background:#2b291f}
+.ui-choice-copy{display:grid;gap:1px;min-width:0}
+.ui-choice-copy strong{font-size:11.5px;font-weight:600;line-height:1.35;overflow-wrap:anywhere}
+.ui-choice-copy span{color:#8e98a3;font-size:10px;line-height:1.4}
+.ui-actions-row{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
+.ui-form-fields{display:grid;gap:8px;margin-top:10px}
+.ui-form-field{display:grid;gap:4px;min-width:0}
+.ui-form-field>span{color:#9ca6b0;font-size:10px;font-weight:600;letter-spacing:.02em}
+.ui-form-field>span em{color:#c9a67d;font-style:normal}
+.ui-form-field input,.ui-form-field textarea,.ui-form-field select{width:100%;min-height:31px;padding:6px 8px;border:1px solid #2b3540;border-radius:7px;background:#0a1016;color:#e4e8ec;font:inherit;font-size:11.5px;outline:none}
+.ui-form-field textarea{resize:vertical;min-height:62px;line-height:1.5}
+.ui-form-field input::placeholder,.ui-form-field textarea::placeholder{color:#69737d}
+.ui-form-field input:focus,.ui-form-field textarea:focus,.ui-form-field select:focus{border-color:var(--camo-line-strong);box-shadow:0 0 0 2px var(--camo-glow)}
+.ui-form-error{margin:7px 0 0;color:#e0a097;font-size:10.5px;line-height:1.4}
+.ui-chart svg{display:block;width:100%;height:auto;margin-top:8px;overflow:visible}
+.ui-chart-axis{stroke:#34404b;stroke-width:1;stroke-dasharray:2 3}
+.ui-chart-label{fill:#7e8994;font:8px ui-sans-serif,system-ui,sans-serif}
+.ui-chart-legend{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-top:5px;color:#94a0ab;font-size:9.5px}
+.ui-chart-legend span{display:inline-flex;align-items:center;gap:4px}
+.ui-chart-legend i{width:6px;height:6px;border-radius:50%}
+.ui-chart-legend em{margin-left:auto;color:#6f7a85;font-style:normal}
+.ui-table-scroll{margin-top:8px;overflow:auto;border:1px solid #29323b;border-radius:7px}
+.ui-table table{width:100%;border-collapse:collapse;font-size:10.5px;line-height:1.45}
+.ui-table th,.ui-table td{padding:5px 7px;border-bottom:1px solid #222b34;text-align:left;vertical-align:top;white-space:nowrap}
+.ui-table th{color:#d8dde2;background:#121920;font-weight:600}
+.ui-table tbody th{color:#c8d0d7;background:transparent;font-weight:550}
+.ui-table td{color:#aeb8c1}
+.ui-table tr:last-child th,.ui-table tr:last-child td{border-bottom:0}
+.ui-diff-head{grid-template-columns:minmax(0,1fr) auto;align-items:center}
+.ui-diff-head strong{min-width:0}
+.ui-diff-head code{color:#b8a98e;font:9.5px ui-monospace,SFMono-Regular,Menlo,monospace;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:220px}
+.ui-diff-count{grid-column:1/-1;color:#8d98a3;font-size:9.5px;font-variant-numeric:tabular-nums}
+.ui-diff-code{max-height:320px;margin-top:7px;overflow:auto;border:1px solid #29323b;border-radius:7px;background:#0a0f14}
+.ui-block-empty{margin:7px 0 0;color:#86919c;font-size:10.5px}
+.ui-preview-tabs{display:flex;flex-wrap:wrap;gap:4px;margin-top:9px}
+.ui-preview-tabs button{height:24px;padding:0 8px;border:1px solid #303a45;border-radius:6px;background:#0d141a;color:#9ca7b2;font:inherit;font-size:10px;cursor:pointer}
+.ui-preview-tabs button:hover{border-color:#5a6673;color:#e4e8ec}
+.ui-preview-tabs button.is-active{border-color:var(--camo-line-strong);background:#201e17;color:#e9e1d4}
+.ui-preview-frame{display:block;margin-top:8px;overflow:hidden;border:1px solid #29323b;border-radius:8px;background:#080c10;line-height:0}
+.ui-preview-frame img{display:block;width:100%;max-height:330px;object-fit:contain;object-position:top center;transition:transform .25s ease}
+.ui-preview-frame:hover img{transform:scale(1.008)}
+.ui-preview-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:5px;color:#8d98a3;font-size:9.5px}
+.ui-preview-foot code{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#6f7a85}
+@media(max-width:650px){
+  .ui-block{padding:9px 10px}
+  .ui-diff-head code{max-width:120px}
+  .ui-preview-frame img{max-height:240px}
+}
+@media(prefers-reduced-motion:reduce){
+  .ui-preview-frame img{transition:none}
+}

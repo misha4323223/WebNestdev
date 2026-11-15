@@ -1003,9 +1003,9 @@ WAL старше 21 суток — таймеры `webnestdev-pg-basebackup.time
 
 **Предпродовые шаги (вне плана масштабирования):** переезд primary на `node-2` (чтобы база не
 делила ВМ с API), TLS на участке HAProxy ↔ PostgreSQL и проверка `restore-s3` после выкатки
-образа. TLS выкачен 16.11.2026 в сборке `4556b09` (`deploy/ha/pg_tls.sh`, `db_proxy.py`,
-`standby.sh`), но ещё не включён: сертификат не создан, peer-трафик plaintext. Порядок и
-проверки — [`PRODUCTION_LAUNCH.md`](PRODUCTION_LAUNCH.md) и
+образа. TLS выкачен 15.11.2026, 17:07 UTC в сборке `4556b09` (`deploy/ha/pg_tls.sh`,
+`db_proxy.py`, `standby.sh`), но ещё не включён: сертификат не создан, peer-трафик plaintext.
+Порядок и проверки — [`PRODUCTION_LAUNCH.md`](PRODUCTION_LAUNCH.md) и
 [`HA_TWO_NODE_REMAINING.md`](HA_TWO_NODE_REMAINING.md).
 
 ---

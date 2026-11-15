@@ -436,7 +436,18 @@ export class AgentRuntime {
         try{
           const prepared=await attachToolScreenshot(messages,output,{projectId:request.projectId,userId:request.userId,model,...(signal?{signal}:{})});
           messages=prepared.messages;
-          if(prepared.attached)console.log("[vision] снимок инструмента добавлен в контекст главной модели");
+          if(prepared.attached)console.log("[vision] изображение инструмента добавлено в контекст главной модели: "+prepared.path+" ("+model+")");
+          // Явный image.view не должен притворяться успешным, если картинку не удалось отдать:
+          // лучше честная ошибка, чем ответ «я посмотрел» по одному пути.
+          if(prepared.requestedView&&!prepared.attached){
+            const base=output&&typeof output==="object"&&!Array.isArray(output)?output as Record<string,unknown>:{};
+            return {...base,ok:false,code:"vision_unavailable",contextImage:"unavailable",error:"Главная модель не приняла изображение: режим зрения выключен, модель отмечена как текстовая или файл не читается. Не утверждайте, что видели его; для текстового разбора используйте image.inspect с direct:false или скажите, что визуальная проверка недоступна.",...(prepared.path?{path:prepared.path}:{})};
+          }
+          // Явная отметка рядом с результатом: модель не должна решать, что картинки нет, только
+          // потому что файл лежит локально. Это факт о текущем шаге, а не обещание на будущее.
+          if(prepared.attached&&prepared.output&&typeof prepared.output==="object"&&!Array.isArray(prepared.output)){
+            return {...prepared.output as Record<string,unknown>,contextImage:"attached_to_this_step"};
+          }
           return prepared.output;
         }catch(error){
           // Снимок не должен валить запуск: путь и layout-диагностика всё равно остаются в ответе.
@@ -478,7 +489,7 @@ export class AgentRuntime {
           if(signal?.aborted)throw new Error("Запуск агента отменён");
           emit({type:"tool.started",runId,toolCallId:verifyCall.id,name:verifyCall.name,input:verifyCall.arguments});
           try{
-            const output=await withToolScreenshot(await executeTool(verifyCall as any,{runId,request,emit,signal,toolNames}));
+            const output=await withToolScreenshot(await executeTool(verifyCall as any,{runId,request,emit,signal,toolNames,model}));
             await finishTool(verifyCall,output);
             messages.push({role:"tool",content:boundToolOutput(verifyCall.name,output),tool_call_id:verifyCall.id});
             if(verifyCall.name==="project.check"){
@@ -585,7 +596,7 @@ export class AgentRuntime {
           changedFiles:changedFiles.size,
           resumed:Boolean(request.resume),
         });
-        const context={runId,request,emit,signal,step:step+1,toolNames,reasoning:stepReasoning,scout};
+        const context={runId,request,emit,signal,step:step+1,toolNames,model,reasoning:stepReasoning,scout};
         const stepStartedAt=new Date().toISOString();
         const stepRun=await runBudgetedStep(provider,messages,model,context,budget,{
           // Шаг и размер контекста идут в панель: видно, что запуск работает и сколько занято.
@@ -870,7 +881,7 @@ export class AgentRuntime {
               const scenarioCall={id:randomUUID(),name:"browser.scenario",arguments:plannedScenario};
               emit({type:"tool.started",runId,toolCallId:scenarioCall.id,name:scenarioCall.name,input:scenarioCall.arguments});
               try{
-                const scenarioOutput=await withToolScreenshot(await executeTool(scenarioCall as any,{runId,request,emit,signal,toolNames}));
+                const scenarioOutput=await withToolScreenshot(await executeTool(scenarioCall as any,{runId,request,emit,signal,toolNames,model}));
                 await finishTool(scenarioCall,scenarioOutput);
                 messages.push({role:"tool",content:boundToolOutput(scenarioCall.name,scenarioOutput),tool_call_id:scenarioCall.id});
                 if((scenarioOutput as {ok?:boolean}).ok===true){
