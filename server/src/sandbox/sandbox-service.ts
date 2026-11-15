@@ -3,6 +3,7 @@ import { getProject, reassignProjectNode } from "../project-store.js";
 import { chooseProjectNode, isNodeFresh } from "../nodes/placement.js";
 import { getNode } from "../nodes/node-store.js";
 import { hydratePreview } from "../preview/preview-store.js";
+import { clearLostPreviewState, isNodeConfirmedLost } from "../preview/preview-failover.js";
 import { listSandboxJobs } from "./jobs.js";
 import { isRunActiveAnywhere } from "../agent/run-activity.js";
 import { ensureProjectWorkspace, noteProjectAccess } from "../storage/project-archive.js";
@@ -88,7 +89,14 @@ export async function getSandbox(projectId:string,userId:string):Promise<Sandbox
     if(process.env.WEBNESTDEV_AUTO_MOVE_PROJECTS==="1"){
       const current=await getNode(node);
       if(!current||current.status==="offline"||!isNodeFresh(current)){
-        if(await hydratePreview(projectId)||listSandboxJobs(projectId).length||await isRunActiveAnywhere(projectId)){
+        const preview=await hydratePreview(projectId);
+        const busy=async()=>Boolean(listSandboxJobs(projectId).length||await isRunActiveAnywhere(projectId));
+        // Preview на подтверждённо потерянной ноде уже мёртв: не даём его старой строке
+        // блокировать перенос. Для живой ноды и сетевой изоляции оставляем прежнюю защиту.
+        if(preview && current && await isNodeConfirmedLost(current)){
+          await clearLostPreviewState(projectId,current.id);
+        }
+        if(await hydratePreview(projectId)||await busy()){
           throw new SandboxNodeUnavailableError(
             node,
             "есть активный предпросмотр или задание; остановите их и повторите — автоматический перенос не трогает живые контейнеры",

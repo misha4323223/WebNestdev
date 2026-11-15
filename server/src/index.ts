@@ -9,6 +9,7 @@ import { initializeStorage, closeStorage, describeStorage, assertStorageConfigur
 import { reapOrphanPreviews, reapRemotePreviews } from "./preview-manager.js";
 import { startDependencyCacheCleanup } from "./preview/dependency-cache.js";
 import { startPreviewSweeper } from "./preview/idle-sweep.js";
+import { describePreviewFailover, startPreviewFailoverSweeper, stopPreviewFailoverSweeper } from "./preview/preview-failover.js";
 import { describePreviewMode } from "./preview/static-preview.js";
 import { describePreviewHostServer, startPreviewHostServer, stopPreviewHostServer } from "./preview/preview-host-server.js";
 import { describePreviewLimits } from "./preview/preview-limiter.js";
@@ -360,7 +361,7 @@ if (demoEnabled) {
   app.log.info({ demoEmail: demo.email, created: demo.created }, "demo account ready");
 }
 
-app.addHook("onClose", async () => { stopCustomDomainTlsActivation?.(); stopCustomDomainCaddyRefresh?.(); stopSandboxMaintenance?.(); stopBillingSweeper(); stopMailQueue(); stopStorageReconcile?.(); stopNodeHeartbeat(); stopRemoteNodeHeartbeat(); stopProjectRebalance(); await stopPreviewHostServer(); await closeStorage(); });
+app.addHook("onClose", async () => { stopCustomDomainTlsActivation?.(); stopCustomDomainCaddyRefresh?.(); stopSandboxMaintenance?.(); stopBillingSweeper(); stopMailQueue(); stopStorageReconcile?.(); stopNodeHeartbeat(); stopRemoteNodeHeartbeat(); stopProjectRebalance(); stopPreviewFailoverSweeper(); await stopPreviewHostServer(); await closeStorage(); });
 
 await registerSecurityHeaders(app);
 
@@ -588,6 +589,9 @@ if (process.env.PREVIEW_DOOR_SEPARATE === "1") {
 // A preview nobody uses is stopped after PREVIEW_IDLE_MS (five minutes by default): without
 // the sweep every project that was ever previewed would keep a dev server and its memory.
 startPreviewSweeper();
+// После подтверждённой потери ноды снимаем её мёртвые preview и перевешиваем проекты на живую.
+startPreviewFailoverSweeper();
+console.log("[preview] failover: " + describePreviewFailover());
 // Давно не открытые проекты уезжают в бакет и освобождают диск (PROJECT_ARCHIVE_ENABLED=1).
 startProjectArchiveScheduler();
 // Каталоги удалённых проектов, которые остались на общем диске: их нет в базе, открыть их некому.
