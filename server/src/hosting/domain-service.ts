@@ -107,10 +107,10 @@ export async function createCustomDomains(
 }
 
 /**
- * Имя записи относительно зоны. reg.ru, RU-Center и большинство панелей сами дописывают
- * домен к полю «Имя», поэтому показывать там `_nestdev-verify.example.ru` нельзя —
- * получится `_nestdev-verify.example.ru.example.ru` и проверка не найдёт запись.
- * Полное имя остаётся в `name` для тех панелей, которые требуют FQDN.
+ * Имя записи относительно зоны. Большинство DNS-панелей сами дописывают домен к полю
+ * «Имя», поэтому показывать там `_nestdev-verify.example.ru` нельзя — получится
+ * `_nestdev-verify.example.ru.example.ru` и проверка не найдёт запись.
+ * Полное имя остаётся в `name` для тех сервисов, которые требуют FQDN.
  */
 function nameWithinZone(hostname: string): string {
   const root = getRegistrableDomain(hostname);

@@ -25,6 +25,7 @@ test("TXT-проверка склеивает чанки и сравнивает
 test("TXT-проверка различает отсутствие и ошибку резолвера", async () => {
   assert.equal((await checkTxt("_nestdev-verify.example.ru", "abc", fake({}))).allowed, false);
   assert.match((await checkTxt("_nestdev-verify.example.ru", "abc", fake({}))).reason, /не найдена/);
+  assert.match((await checkTxt("_nestdev-verify.example.ru", "abc", fake({}))).reason, /попробуйте позже/);
   assert.match(
     (await checkTxt("_nestdev-verify.example.ru", "abc", fake({ resolveTxt: async () => { throw errorWithCode("ESERVFAIL"); } }))).reason,
     /не найдена|недоступен/,
@@ -45,6 +46,7 @@ test("трафик отклоняет чужой CNAME и отсутствие �
 
   const missing = fake({});
   assert.equal((await checkTraffic("example.ru", "custom.nestdev.ru", "178.236.27.102", missing)).allowed, false);
+  assert.match((await checkTraffic("example.ru", "custom.nestdev.ru", "178.236.27.102", missing)).reason, /попробуйте позже/);
 });
 
 test("CAA разрешает Let's Encrypt, отсутствие CAA и iodef-only", async () => {

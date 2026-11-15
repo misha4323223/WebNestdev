@@ -131,7 +131,7 @@ export async function startPreviewWithFallback(config: SandboxConfig) {
     // A broken hybrid must not leave a backend behind; startHybridPreview cleans it up before
     // returning. This branch is reached only for an architecture mismatch or an explicit opt-in.
     console.log("[preview] проект " + config.projectId + ": hybrid не подошёл (" + result.reason + ") — поднимаю dev-сервер (fallback=" + fallback + ")");
-    return previewStartDeps.startContainer(config, "hybrid не подошёл: " + result.reason);
+    return previewStartDeps.startContainer(config, "Предпросмотр не подошёл: " + result.reason);
   }
   if (setting === "hybrid") {
     throw new Error("Для PREVIEW_MODE=hybrid проект должен объявить preview.mode=\"hybrid\" в package.json или иметь уверенный hybrid-профиль в .webnestdev/preview.json.");

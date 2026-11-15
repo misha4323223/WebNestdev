@@ -352,12 +352,13 @@ test("the ticket endpoint hands the panel a link to the project's public preview
   }
 });
 
-test("without a public preview domain the ticket endpoint names the missing variable", async () => {
+test("without a public preview domain the ticket endpoint stays free of server config names", async () => {
   const app = await appWith(depsFor(1));
   try {
     const response = await app.inject({ method: "POST", url: "/api/projects/p1/preview/ticket" });
     assert.equal(response.statusCode, 400);
-    assert.match(response.body, /PREVIEW_PUBLIC_DOMAIN/);
+    assert.match(response.body, /временно недоступен/);
+    assert.doesNotMatch(response.body, /PREVIEW_PUBLIC_DOMAIN/);
   } finally {
     await app.close();
   }
@@ -367,6 +368,25 @@ test("the status tells the panel which public address this project has", async (
   const app = await appWith(depsFor(1, { publicUrl: projectId => "https://" + projectId + ".preview.example" }));
   try {
     const response = await app.inject({ method: "GET", url: "/api/projects/p1/preview/status" });
+    assert.equal(response.statusCode, 200);
+    assert.equal(response.json().publicUrl, "https://p1.preview.example");
+  } finally {
+    await app.close();
+  }
+});
+
+/**
+ * Панель получает адрес сразу в ответе start, а не ждёт следующего опроса статуса. Без этого
+ * после нажатия «Запустить» она показывала «адрес не настроен» и не просила билет, пока
+ * человек не нажимал «Обновить» — хотя предпросмотр уже работал.
+ */
+test("the start response already carries the project's public preview address", async () => {
+  const app = await appWith(depsFor(1, {
+    getSandbox: async () => ({} as never),
+    publicUrl: projectId => "https://" + projectId + ".preview.example",
+  }));
+  try {
+    const response = await app.inject({ method: "POST", url: "/api/projects/p1/preview/start" });
     assert.equal(response.statusCode, 200);
     assert.equal(response.json().publicUrl, "https://p1.preview.example");
   } finally {
@@ -437,7 +457,8 @@ test("в production без публичного домена путь предп
   try {
     const response = await app.inject({ method: "GET", url: "/api/projects/p1/preview/open/" });
     assert.equal(response.statusCode, 503);
-    assert.match(response.body, /PREVIEW_PUBLIC_DOMAIN/);
+    assert.match(response.body, /временно недоступен/);
+    assert.doesNotMatch(response.body, /PREVIEW_PUBLIC_DOMAIN/);
 
     const entrance = await app.inject({ method: "GET", url: "/api/projects/p1/preview/open" });
     assert.equal(entrance.statusCode, 503);

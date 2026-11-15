@@ -72,6 +72,8 @@ test("a static preview serves the build, its assets and client-side routes", asy
     if (!status.running) return;
     assert.equal(status.mode, "static");
     assert.equal(status.ready, true);
+    // Панель получает готовность уже в ответе start и не должна ждать отдельного status.
+    assert.equal(status.settled, true);
     assert.ok(status.port > 0, "порт слушателя должен быть известен");
     assert.equal(getPreview(PROJECT_ID)?.mode, "static");
 

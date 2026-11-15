@@ -74,6 +74,15 @@ production-конфигурация второй ноды. Их нужно до�
   `ssh -i /tmp/nestdev-agent -o 'ProxyCommand=ssh -i /tmp/nestdev-agent -W %h:%p Misha@2.59.83.250' ubuntu@10.0.0.5`.
   Если `/tmp/nestdev-agent` пропал, на проде есть `~/.ssh/node2_key` (`prod-to-node2`): через
   него можно поставить новый публичный ключ в `~/.ssh/authorized_keys` на `node-2`.
+- **`/tmp` не переживает перезапуск workspace, и это ожидаемо.** `/tmp/nestdev-agent`
+  (права `600`) нужно восстанавливать в каждой новой сессии из защищённого источника:
+  `~/.ssh/nestdev-agent-2026-11-13` (рабочая пара) или файла пользователя. Содержимое ключа
+  не печатать, не коммитить и не вставлять в чат. Перед SSH проверить
+  `test -f /tmp/nestdev-agent`.
+  13.11.2026: доступ восстановлен без GitHub. Рабочий ключ — `~/.ssh/nestdev-agent-2026-11-13`
+  (копия `/tmp/nestdev-agent`), публичная часть установлена в
+  `/home/Misha/.ssh/authorized_keys` на `node-1`; старый `~/.ssh/nestdev-agent-new` оставлен
+  резервом. Проверено: `hostname=webnestdev`, `USER=Misha`, `SUDO=ok`.
 - Первая ВМ: `Misha@2.59.83.250` (management-адрес `ea-webnestdev-admin`), тот же
   `/tmp/nestdev-agent`. Публичный `178.236.27.102` теперь принадлежит NLB
   `webnestdev-nlb-main`, а не ВМ; SSH туда не идёт. Ключ из `AGENT_SSH_PUBKEY` deploy-скрипт

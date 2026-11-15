@@ -202,7 +202,7 @@ test("auto falls back only for an architectural incompatibility", async () => {
 
   const status = await startPreviewWithFallback(startConfig);
   assert.deepEqual(status, running);
-  assert.deepEqual(calls, ["hybrid", "container:hybrid не подошёл: backend не ответил"]);
+  assert.deepEqual(calls, ["hybrid", "container:Предпросмотр не подошёл: backend не ответил"]);
 });
 
 test("fallback none keeps an incompatible hybrid as an error", async () => {
@@ -241,7 +241,7 @@ test("a profile can explicitly opt back into the container fallback", async () =
 
   const status = await startPreviewWithFallback(startConfig);
   assert.deepEqual(status, running);
-  assert.deepEqual(calls, ["hybrid", "container:hybrid не подошёл: backend не ответил"]);
+  assert.deepEqual(calls, ["hybrid", "container:Предпросмотр не подошёл: backend не ответил"]);
 });
 
 test("strict hybrid reports the failure and never falls back to a container", async () => {

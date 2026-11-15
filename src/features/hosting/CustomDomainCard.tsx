@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  AlertTriangle, Check, Copy, ExternalLink, Globe2, Loader2, LockKeyhole,
+  AlertTriangle, Check, Copy, ExternalLink, Globe2, Info, Loader2, LockKeyhole,
   RefreshCw, Server, ShieldCheck, Trash2,
 } from "lucide-react";
 import {
@@ -14,6 +14,9 @@ type DomainGroup = {
   domains: CustomDomain[];
   canonical: CustomDomain;
 };
+
+const DNS_PROPAGATION_HINT =
+  "Если домен только что зарегистрирован или DNS-записи изменены недавно, обновление может занять несколько часов — попробуйте проверить позже.";
 
 /**
  * Свой домен — отдельный мастер внутри «Хостинга». Он не прячет DNS-записи за кнопкой
@@ -169,7 +172,11 @@ export function CustomDomainCard({
   if (!enabled) return null;
 
   const allActive = groups.length > 0 && groups.every(group => group.domains.every(domain => domain.status === "active"));
-  const currentStep = groups.length === 0 ? 1 : allActive ? 3 : 2;
+  const httpsPending = groups.some(group => group.domains.some(domain =>
+    domain.status === "configuring" || domain.status === "issuing_certificate"
+    || domain.certificateStatus === "issuing" || domain.certificateStatus === "error"));
+  // 4 — все шаги завершены: иначе активный HTTPS оставался бы жёлтым даже у работающего домена.
+  const currentStep = groups.length === 0 ? 1 : allActive ? 4 : httpsPending ? 3 : 2;
   const steps = [
     { number: 1, label: "Домен" },
     { number: 2, label: "DNS" },
@@ -188,7 +195,7 @@ export function CustomDomainCard({
 
     <div className="domain-steps" aria-label="Шаги подключения">
       {steps.map(step => <div
-        className={"domain-step " + (step.number < currentStep ? "done " : "") + (step.number === currentStep ? "active" : "")}
+        className={"domain-step " + (allActive || step.number < currentStep ? "done " : "") + (!allActive && step.number === currentStep ? "active" : "")}
         key={step.number}
       >
         <span>{step.number < currentStep ? <Check size={10}/> : step.number}</span>
@@ -238,6 +245,8 @@ export function CustomDomainCard({
     {state && groups.length > 0 ? <div className="domain-groups">
       {groups.map(group => {
         const groupChecks = checks?.filter(item => group.domains.some(domain => domain.hostname === item.hostname)) ?? [];
+        const groupDnsWaiting = group.domains.some(domain =>
+          domain.status === "pending_dns" || domain.status === "verified");
         return <div className="domain-group" key={group.id}>
           <div className="domain-group-head">
             <div className="domain-group-title">
@@ -268,10 +277,15 @@ export function CustomDomainCard({
             <span>{group.canonical.lastError || group.canonical.certificateError}</span>
           </div> : null}
 
+          {groupDnsWaiting ? <div className="domain-wait-note">
+            <Info size={12}/>
+            <span>{DNS_PROPAGATION_HINT}</span>
+          </div> : null}
+
           <div className="domain-dns">
             <div className="domain-dns-head">
               <strong>DNS-записи</strong>
-              <span>Добавьте их у регистратора домена</span>
+              <span>Добавьте их в DNS-панели домена</span>
             </div>
             {group.domains.map(domain => <div className="domain-dns-host" key={domain.id}>
               <div className="domain-dns-host-name">
@@ -296,10 +310,10 @@ export function CustomDomainCard({
               >Сделать {domain.kind === "www" ? "www" : "apex"} основным</button> : null}
             </div>)}
             <p className="domain-dns-hint">
-              Имена указаны без домена — так их вводят reg.ru, RU-Center и большинство панелей: они
-              дописывают зону сами. Если сервис требует полное имя, добавьте домен, например{" "}
-              <code>_nestdev-verify.{group.canonical.hostname}</code>. Если проверка пишет
-              «TXT-запись не найдена», убедитесь, что домен не добавился дважды.
+              Имена записей указаны относительно зоны домена: многие DNS-сервисы дописывают
+              зону автоматически. Если ваш сервис требует полное имя, укажите его целиком,
+              например <code>_nestdev-verify.{group.canonical.hostname}</code>. Если проверка
+              пишет «TXT-запись не найдена», убедитесь, что домен не добавился дважды.
             </p>
           </div>
 
@@ -337,7 +351,7 @@ export function CustomDomainCard({
 
     {state ? <p className="domain-footnote">
       Для apex-домена нужна A-запись на <code>{state.ip}</code>; для <code>www</code> — CNAME на <code>{state.target}</code>.
-      Если регистратор не поддерживает A для apex, используйте ALIAS/ANAME на тот же target.
+      Если DNS-провайдер не поддерживает A для apex, используйте ALIAS/ANAME на тот же target.
     </p> : null}
   </section>;
 }

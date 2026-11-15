@@ -80,7 +80,7 @@ export async function checkTxt(
       ? { allowed: true, reason: "TXT-запись найдена" }
       : { allowed: false, reason: "TXT-запись не совпадает с токеном" };
   } catch (error) {
-    return { allowed: false, reason: reasonForError(error, "TXT-запись не найдена") };
+    return { allowed: false, reason: reasonForError(error, "TXT-запись пока не найдена — DNS может обновиться не сразу, попробуйте позже") };
   }
 }
 
@@ -106,7 +106,7 @@ export async function checkTraffic(
     }
   } catch (error) {
     if (!DNS_ERRORS.has(errorCode(error))) {
-      return { allowed: false, reason: reasonForError(error, "CNAME не найден") };
+      return { allowed: false, reason: reasonForError(error, "CNAME пока не найден — DNS может обновиться не сразу, попробуйте позже") };
     }
   }
 
@@ -115,11 +115,11 @@ export async function checkTraffic(
     if (addresses.includes(ip)) return { allowed: true, reason: "A-запись указывает на наш хостинг" };
   } catch (error) {
     if (!DNS_ERRORS.has(errorCode(error))) {
-      return { allowed: false, reason: reasonForError(error, "A-запись не найдена") };
+      return { allowed: false, reason: reasonForError(error, "A-запись пока не найдена — DNS может обновиться не сразу, попробуйте позже") };
     }
   }
 
-  return { allowed: false, reason: "Домен пока не указывает на наш хостинг" };
+  return { allowed: false, reason: "Домен пока не указывает на наш хостинг — DNS может обновиться не сразу, попробуйте позже" };
 }
 
 function issueAllowsLetsEncrypt(records: Array<{ issue?: string; issuewild?: string }>): boolean {

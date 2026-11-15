@@ -74,9 +74,10 @@ function previewPathClosed(deps:PreviewRouteDeps,projectId:string){
   return process.env.NODE_ENV === "production" && !deps.publicUrl(projectId);
 }
 
+// Причина отказа остаётся в описании маршрута и логах запуска, а клиенту уходит понятное
+// действие без названий переменных окружения и внутреннего устройства панели.
 const PREVIEW_PATH_CLOSED_MESSAGE =
-  "Предпросмотр по адресу панели выключен: код проекта не должен выполняться на одном origin с панелью. " +
-  "Задайте PREVIEW_PUBLIC_DOMAIN (например preview.example.ru) и откройте предпросмотр по публичному адресу.";
+  "Предпросмотр временно недоступен. Попробуйте обновить страницу или запустить его ещё раз.";
 
 export async function registerPreviewRoutes(app:FastifyInstance,deps:PreviewRouteDeps=defaultDeps){
   /** Общая дверь к приложению: и панель, и публичный адрес идут через неё (см. preview/preview-proxy.ts). */
@@ -90,7 +91,11 @@ export async function registerPreviewRoutes(app:FastifyInstance,deps:PreviewRout
     const p=z.object({id:z.string().min(1)}).parse(request.params);
     const user=await deps.authorize(request,reply,p.id);
     if(!user)return;
-    return previewReply(reply,async()=>deps.startPreview(await deps.getSandbox(p.id,user.id)));
+    const url=deps.publicUrl(p.id);
+    // Статус запуска должен нести тот же публичный адрес, что и preview/status: иначе панель
+    // после нажатия «Запустить» не знает, куда подставлять кадр, и показывает ошибку настройки,
+    // хотя предпросмотр уже работает. Следующий status это исправлял только вручную.
+    return previewReply(reply,async()=>({...await deps.startPreview(await deps.getSandbox(p.id,user.id)),...(url?{publicUrl:url}:{})}));
   });
   app.post("/api/projects/:id/preview/stop",async(request,reply)=>{
     const p=z.object({id:z.string().min(1)}).parse(request.params);
@@ -113,7 +118,7 @@ export async function registerPreviewRoutes(app:FastifyInstance,deps:PreviewRout
     const p=z.object({id:z.string().min(1)}).parse(request.params);
     if(!await deps.authorize(request,reply,p.id))return;
     const baseUrl=deps.publicUrl(p.id);
-    if(!baseUrl)return reply.code(400).send({error:"Публичные адреса предпросмотра не настроены: задайте PREVIEW_PUBLIC_DOMAIN (docs/PRODUCTION_DEPLOYMENT.md)"});
+    if(!baseUrl)return reply.code(400).send({error:"Предпросмотр временно недоступен. Попробуйте ещё раз."});
     const ticket=deps.mintTicket(p.id);
     return reply.send({baseUrl,url:previewTicketUrl(baseUrl,ticket),expiresAt:Date.now()+deps.ticketTtlMs(),param:PREVIEW_TICKET_PARAM});
   });

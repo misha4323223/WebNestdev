@@ -206,7 +206,10 @@ export async function staticAppAnswers(host:string,port:number){
 
 function statusFor(run:StaticRun):PreviewStatus{
   const ownerAddress=localPreviewOwnerAddress();
-  return {running:true,ready:true,port:run.port,host:STATIC_HOST,containerId:"",startedAt:run.startedAt,mode:"static",...(ownerAddress?{ownerAddress}:{})};
+  // `settled` нужен и в ответе start, а не только в preview/status: для статики ответ сервера —
+  // и есть подтверждение адреса. Без него панель считала запуск ещё неподтверждённым и
+  // продолжала опрашивать статус, лишний раз перезагружая кадр во время тикета.
+  return {running:true,ready:true,settled:true,port:run.port,host:STATIC_HOST,containerId:"",startedAt:run.startedAt,mode:"static",...(ownerAddress?{ownerAddress}:{})};
 }
 
 /**

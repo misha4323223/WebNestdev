@@ -403,7 +403,7 @@ test("a backend that only answers through docker exec is refused instead of star
   try {
     const started = await startHybridPreview(config(root));
     assert.equal(started.ok, false);
-    if (!started.ok) assert.match(started.reason, /docker exec/);
+    if (!started.ok) assert.match(started.reason, /изнутри платформы/);
     assert.equal(listenerStarted, false);
     assert.equal(getPreview(PROJECT_ID), undefined);
   } finally {

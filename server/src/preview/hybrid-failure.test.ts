@@ -20,5 +20,5 @@ test("Docker infrastructure failures do not trigger a mode downgrade", () => {
 });
 
 test("a backend that cannot start is an incompatibility", () => {
-  assert.equal(classifyStartFailure("Backend hybrid не запустился: process exited with code 1"), "incompatible");
+  assert.equal(classifyStartFailure("Сервер приложения не запустился: process exited with code 1"), "incompatible");
 });

@@ -134,7 +134,9 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
   // Docker и hybrid не встраиваются в панель: их приложение живёт в отдельной вкладке. Только
   // static остаётся обычным кадром, поэтому device/theme/picker относятся к нему, а не к runtime.
   const runtimeMode=preview.mode==="container"||preview.mode==="hybrid";
-  const runtimeLabel=preview.mode==="hybrid"?"Hybrid-предпросмотр":"Docker-предпросмотр";
+  // Внутренние режимы (Docker/hybrid) — не часть клиентского интерфейса: человеку важно, что
+  // это предпросмотр его проекта в отдельном окне, а не на какой машине он поднят.
+  const runtimeLabel="Предпросмотр проекта";
   const externalAddress=publicLink||(import.meta.env.PROD?"":previewUrl(projectId));
   // Кадр на своём домене читается из панели напрямую, на публичном адресе — через мост выбора
   // элемента (postMessage): политика одного origin не даёт панели читать чужой документ.
@@ -411,18 +413,18 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
               // В production кадр с адреса панели отдал бы код проекта на том же origin, где лежит
               // сессия: он смог бы читать её API и DOM. Сервер такую дверь закрывает (503), а панель
               // говорит причину вместо пустого кадра.
-              ? <div className="preview-empty"><div className="preview-icon"><Terminal size={20}/></div><strong>Публичный адрес не настроен</strong><span>Предпросмотр в панели выключен: код проекта не должен работать на одном origin с панелью. Задайте PREVIEW_PUBLIC_DOMAIN и перезапустите сервер.</span></div>
+              ? <div className="preview-empty"><div className="preview-icon"><Terminal size={20}/></div><strong>Предпросмотр временно недоступен</strong><span>Не удалось открыть предпросмотр. Попробуйте обновить страницу или запустить его ещё раз.</span></div>
               : runtimeMode
               // Docker/hybrid не встраиваются: у панели нет кадра, только ссылка на отдельную
               // вкладку. Так панель не продлевает preview и он может уйти в простой.
               ? <div className="preview-empty preview-external">
                 <div className="preview-icon"><ExternalLink size={20}/></div>
                 <strong>{runtimeLabel}</strong>
-                <span>Откроется в отдельном окне на публичном адресе. В панели этот режим не встраивается.</span>
+                <span>Откроется в отдельном окне.</span>
                 {externalAddress
                   ? <a className="ghost-button" href={externalAddress} target="_blank" rel="noreferrer">Открыть в новом окне</a>
                   : <span>Готовим защищённую ссылку…</span>}
-                <span className="preview-external-note">После 2 минут без запросов preview остановится; ссылка перестанет открывать приложение.</span>
+                <span className="preview-external-note">После периода бездействия предпросмотр остановится; ссылка перестанет открывать приложение.</span>
               </div>
               : publicLinkPending&&!publicLink
               ? <div className="preview-empty"><div className="preview-icon"><Terminal size={20}/></div><strong>Готовим предпросмотр</strong><span>Открываем защищённый адрес приложения…</span></div>

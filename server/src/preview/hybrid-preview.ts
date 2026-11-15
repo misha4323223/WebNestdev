@@ -134,7 +134,7 @@ function statusFor(run: HybridRun, ready = true): PreviewStatus {
     ...(run.containerPort !== undefined ? { containerPort: run.containerPort } : {}),
     ...(run.node ? { node: run.node } : {}),
     ...(ownerAddress ? { ownerAddress } : {}),
-    ...(ready ? {} : { hint: "Backend hybrid-предпросмотра ещё не ответил: смотрите логи предпросмотра." }),
+    ...(ready ? {} : { hint: "Сервер приложения ещё не ответил: смотрите логи предпросмотра." }),
   };
 }
 
@@ -258,7 +258,7 @@ export async function startHybridPreview(config: SandboxConfig): Promise<HybridS
     if (current) await stopOtherPreview(config.projectId, true);
     await stopProjectIds(stopIds);
 
-    setPreviewStartProgress(config.projectId, "checking", "Проверяем зависимости hybrid…");
+    setPreviewStartProgress(config.projectId, "checking", "Проверяем зависимости…");
     const dependencies = await deps.ensureDependencies(config);
     if (!dependencies.ok) return { ok: false, reason: dependencies.reason };
 
@@ -270,7 +270,7 @@ export async function startHybridPreview(config: SandboxConfig): Promise<HybridS
     let log = previous?.log ?? "";
     let marker = previous?.builtAt ?? 0;
     if (needsBuild) {
-      setPreviewStartProgress(config.projectId, "building", "Собираем frontend…", "npm run " + plan.config.buildScript);
+      setPreviewStartProgress(config.projectId, "building", "Собираем проект…", "npm run " + plan.config.buildScript);
       const result = await deps.build(config, plan.config.buildScript);
       if (!("ok" in result)) return { ok: false, reason: result.reason, failure: "transient" };
       if (!result.ok) {
@@ -281,10 +281,10 @@ export async function startHybridPreview(config: SandboxConfig): Promise<HybridS
       marker = Date.now();
     }
     if (!(await indexFileExists(plan.dir))) {
-      return { ok: false, reason: "Сборка hybrid не создала " + plan.config.staticDir + "/index.html", failure: "incompatible" };
+      return { ok: false, reason: "Сборка не создала " + plan.config.staticDir + "/index.html", failure: "incompatible" };
     }
 
-    setPreviewStartProgress(config.projectId, "starting", "Запускаем backend…");
+    setPreviewStartProgress(config.projectId, "starting", "Запускаем сервер приложения…");
     try {
       started = await deps.startProcess(config, {
         command: "npm run " + plan.config.backendScript,
@@ -295,13 +295,13 @@ export async function startHybridPreview(config: SandboxConfig): Promise<HybridS
         env: plan.config.backendEnv,
       });
     } catch (error) {
-      const reason = "Backend hybrid не запустился: " + describeError(error);
+      const reason = "Сервер приложения не запустился: " + describeError(error);
       return { ok: false, reason, failure: classifyStartFailure(reason) };
     }
     if (started.state.execOnly) {
       await deps.removeContainer(started.containerId, config.node);
       await deps.clearSecrets(config.projectId);
-      return { ok: false, reason: "Backend hybrid доступен только через docker exec: для API и WebSocket нужен прямой адрес.", failure: "incompatible" };
+      return { ok: false, reason: "Сервер приложения доступен только изнутри платформы: для API и WebSocket нужен прямой адрес.", failure: "incompatible" };
     }
     listener = await deps.createListener({
       dir: plan.dir,
@@ -353,7 +353,7 @@ export async function startHybridPreview(config: SandboxConfig): Promise<HybridS
     if (started) await deps.removeContainer(started.containerId, config.node);
     removePreview(config.projectId);
     await deps.clearSecrets(config.projectId);
-    return { ok: false, reason: "Hybrid-предпросмотр не запустился: " + describeError(error) };
+    return { ok: false, reason: "Предпросмотр не запустился: " + describeError(error) };
   } finally {
     if (reserved.kind === "acquired") await reserved.reservation.release();
   }
@@ -383,7 +383,7 @@ export async function stopAllHybridPreviews(): Promise<void> {
 export function hybridPreviewLogs(projectId: string): string {
   const run = runs.get(projectId);
   if (!run) return "";
-  const header = "Hybrid-предпросмотр: frontend из " + run.dir + ", backend в контейнере " + run.containerId.slice(0, 12) + ".";
+  const header = "Предпросмотр: интерфейс из " + run.dir + ", сервер приложения в контейнере " + run.containerId.slice(0, 12) + ".";
   return run.log ? header + "\n\n" + run.log : header;
 }
 
