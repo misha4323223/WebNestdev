@@ -793,8 +793,14 @@ TLS на участке HAProxy ↔ PostgreSQL выкачен 16.11.2026 в сб
 `deploy/ha/pg_tls.sh` создаёт сертификат и CA, `db_proxy.py` ходит в peer напрямую на `5433`
 с `ssl verify required`, `standby.sh` — с `sslmode=verify-full`. TLS ещё не включён: сертификат
 не создан, текущий peer-трафик plaintext. Порядок и критерии — в
-[`HA_TWO_NODE_REMAINING.md`](HA_TWO_NODE_REMAINING.md). Осталось включить TLS и проверить
-`restore-s3` на текущем образе.
+[`HA_TWO_NODE_REMAINING.md`](HA_TWO_NODE_REMAINING.md).
+
+**16.11.2026 проверены конкурентный DDL и `restore-s3`:** два процесса одновременно
+вызвали `initializeStorage()` на живой primary, один ждал advisory-lock, оба завершились
+успешно; `restore-s3` из base backup `20261115T043406Z` на `2026-11-15 12:00:00+00`
+поднял drill на `5544`, 18 проектов, последнее обновление `2026-11-15T11:08:55.318Z`.
+Перед drill штатно вызван `pg_switch_wal`, чтобы открытый сегмент попал в S3; drill
+остановлен и удалён. Осталось включить TLS.
 
 ## 17. 12.11.2026: hybrid preview pilot и синхронизация node-2
 
