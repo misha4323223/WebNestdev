@@ -27,6 +27,7 @@ function fromRow(row: CustomDomainRow): CustomDomain {
     lastError: row.last_error ?? "",
     certificateStatus: row.certificate_status as CustomDomain["certificateStatus"],
     certificateError: row.certificate_error ?? "",
+    certificateStartedAt: row.certificate_started_at ?? null,
     isCanonical: Boolean(row.is_canonical),
     expiresAt: row.expires_at,
     createdAt: row.created_at,
@@ -112,6 +113,7 @@ export async function createPgDomainGroup(input: CreateCustomDomainInput): Promi
     lastError: "",
     certificateStatus: "none",
     certificateError: "",
+    certificateStartedAt: null,
     isCanonical: item.hostname === canonicalHost,
     expiresAt,
     createdAt: now.toISOString(),
@@ -146,12 +148,12 @@ export async function createPgDomainGroup(input: CreateCustomDomainInput): Promi
           INSERT INTO ${tx.identifier(getTable("site_domains"))}
             (id, group_id, site_id, user_id, hostname, display_hostname, kind, status,
              verification_token, verification_host, verified_at, last_checked_at, last_error,
-             certificate_status, certificate_error, is_canonical, expires_at, created_at, updated_at)
+             certificate_status, certificate_error, certificate_started_at, is_canonical, expires_at, created_at, updated_at)
           VALUES (${domain.id}, ${domain.groupId}, ${domain.siteId}, ${domain.userId}, ${domain.hostname},
                   ${domain.displayHostname}, ${domain.kind}, ${domain.status}, ${domain.verificationToken},
                   ${domain.verificationHost}, ${domain.verifiedAt}, ${domain.lastCheckedAt}, ${domain.lastError},
-                  ${domain.certificateStatus}, ${domain.certificateError}, ${domain.isCanonical}, ${domain.expiresAt},
-                  ${domain.createdAt}, ${domain.updatedAt})`;
+                  ${domain.certificateStatus}, ${domain.certificateError}, ${domain.certificateStartedAt},
+                  ${domain.isCanonical}, ${domain.expiresAt}, ${domain.createdAt}, ${domain.updatedAt})`;
       }
     });
   } catch (error) {
@@ -163,7 +165,7 @@ export async function createPgDomainGroup(input: CreateCustomDomainInput): Promi
 
 export async function updatePgDomain(
   id: string,
-  patch: Partial<Pick<CustomDomain, "status" | "verifiedAt" | "lastCheckedAt" | "lastError" | "certificateStatus" | "certificateError" | "isCanonical">>,
+  patch: Partial<Pick<CustomDomain, "status" | "verifiedAt" | "lastCheckedAt" | "lastError" | "certificateStatus" | "certificateError" | "certificateStartedAt" | "isCanonical">>,
 ): Promise<CustomDomain | null> {
   const current = await pgDomain(id);
   if (!current) return null;
@@ -174,6 +176,7 @@ export async function updatePgDomain(
        SET status = ${next.status}, verified_at = ${next.verifiedAt},
            last_checked_at = ${next.lastCheckedAt}, last_error = ${next.lastError},
            certificate_status = ${next.certificateStatus}, certificate_error = ${next.certificateError},
+           certificate_started_at = ${next.certificateStartedAt},
            is_canonical = ${next.isCanonical}, updated_at = ${next.updatedAt}
      WHERE id = ${id}
      RETURNING *`;

@@ -26,6 +26,7 @@ export async function ensureCustomDomainTable(pool: Pool, table: string, sitesTa
     last_error TEXT NOT NULL DEFAULT '',
     certificate_status TEXT NOT NULL DEFAULT 'none',
     certificate_error TEXT NOT NULL DEFAULT '',
+    certificate_started_at TEXT,
     is_canonical BOOLEAN NOT NULL DEFAULT FALSE,
     expires_at TEXT,
     created_at TEXT NOT NULL,
@@ -34,6 +35,8 @@ export async function ensureCustomDomainTable(pool: Pool, table: string, sitesTa
     CONSTRAINT site_domains_status_check CHECK (status IN ('pending_dns','verified','configuring','issuing_certificate','active','error')),
     CONSTRAINT site_domains_certificate_status_check CHECK (certificate_status IN ('none','issuing','active','error'))
   )`);
+  // Таблица уже существует в production: CREATE TABLE IF NOT EXISTS не добавит новую колонку.
+  await pool.query(`ALTER TABLE ${name} ADD COLUMN IF NOT EXISTS certificate_started_at TEXT`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_${table}_site ON ${name} (site_id, created_at)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_${table}_group ON ${name} (group_id)`);
   await pool.query(`CREATE INDEX IF NOT EXISTS idx_${table}_status ON ${name} (status)`);

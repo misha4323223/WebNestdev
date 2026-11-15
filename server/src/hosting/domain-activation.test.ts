@@ -57,3 +57,56 @@ test("TLS-проба активирует домен, а ошибка остав
   assert.equal(second.activated, 1);
   assert.equal((await listDomainsBySite(site.id)).every(domain => domain.status === "active"), true);
 });
+
+test("долгая TLS-серия сохраняет issuing, начало серии и пишет hostname с номером попытки", async () => {
+  const site = await createSite({ projectId: "project-activation-stale", userId: "user-activation", nodeId: "node-activation", slug: "activation-stale-site" });
+  const started = await beginPublish({ siteId: site.id, userId: site.userId, kind: "instant-site", nodeId: "node-activation" });
+  await finishPublish({
+    siteId: site.id,
+    releaseId: started.release.id,
+    userId: site.userId,
+    kind: "instant-site",
+    bytes: 1,
+    files: 1,
+    sha256: "activation-stale",
+    manifestJson: "{}",
+  });
+  const group = normalizeCustomDomainGroup("stale-example.ru");
+  const domains = await createDomainGroup({ siteId: site.id, userId: site.userId, hostnames: group.hostnames });
+  const startedAt = "2026-11-15T11:50:00.000Z";
+  for (const domain of domains) {
+    await updateDomain(domain.id, {
+      status: "configuring",
+      certificateStatus: "issuing",
+      certificateError: "старая ошибка",
+      certificateStartedAt: startedAt,
+    });
+  }
+
+  const warnings: string[] = [];
+  const originalWarn = console.warn;
+  console.warn = (...args: unknown[]) => { warnings.push(args.map(String).join(" ")); };
+  try {
+    await activateCustomDomains({
+      probe: async () => ({ ok: false, error: "certificate is not ready" }),
+      now: () => Date.parse("2026-11-15T12:00:00.000Z"),
+    });
+  } finally {
+    console.warn = originalWarn;
+  }
+
+  const failed = (await listDomainsBySite(site.id)).find(domain => domain.hostname === "stale-example.ru");
+  assert.equal(failed?.status, "issuing_certificate");
+  assert.equal(failed?.certificateStatus, "issuing");
+  assert.equal(failed?.certificateStartedAt, startedAt);
+  assert.match(failed?.certificateError ?? "", /not ready/);
+  const logged = warnings.find(line => line.includes("stale-example.ru"));
+  assert.match(logged ?? "", /попытка 1/);
+  assert.match(logged ?? "", /панель покажет ошибку/);
+
+  await activateCustomDomains({ probe: async () => ({ ok: true }) });
+  const active = (await listDomainsBySite(site.id)).find(domain => domain.hostname === "stale-example.ru");
+  assert.equal(active?.status, "active");
+  assert.equal(active?.certificateStartedAt, null);
+  assert.equal(active?.certificateError, "");
+});

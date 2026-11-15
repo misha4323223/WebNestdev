@@ -3,6 +3,7 @@ import { z } from "zod";
 import { getSiteByProject } from "../hosting/site-store.js";
 import { customDomainIp, customDomainTarget, customDomainsEnabled } from "../hosting/domain-config.js";
 import { requestCustomDomainCaddyRefresh } from "../hosting/caddy-refresh.js";
+import { requestCustomDomainActivation } from "../hosting/domain-activation.js";
 import {
   createCustomDomains,
   domainsForSite,
@@ -98,6 +99,11 @@ export async function registerCustomDomainRoutes(app: FastifyInstance) {
     try {
       const result = await verifyDomainGroup(owner.site.id, params.domainId);
       requestCustomDomainCaddyRefresh("domain checked");
+      // Caddy перечитает конфиг после записи; даём ему короткую фору, но не ждём следующего
+      // минутного тика активации. Если проба всё же опередит reload, она останется issuing.
+      if (result.checks.length > 0 && result.checks.every(check => check.txt.allowed && check.traffic.allowed && check.caa.allowed)) {
+        setTimeout(() => requestCustomDomainActivation("domain checked"), 1_500).unref();
+      }
       await recordAudit({
         action: "hosting.domain.checked",
         actorType: "user",

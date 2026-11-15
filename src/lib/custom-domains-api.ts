@@ -29,6 +29,8 @@ export type CustomDomain = {
   lastError: string;
   certificateStatus: "none" | "issuing" | "active" | "error";
   certificateError: string;
+  /** Начало текущей серии TLS-проб; null — серия ещё не начиналась. */
+  certificateStartedAt: string | null;
   dns: CustomDomainDnsRecord[];
 };
 

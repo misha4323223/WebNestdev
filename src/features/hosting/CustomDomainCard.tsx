@@ -116,18 +116,25 @@ export function CustomDomainCard({
   }, [mergeDomains, projectId]);
 
   // DNS может обновиться не сразу. Пока есть незавершённая группа, повторяем проверку
-  // не чаще раза в 8 секунд; после active опрос прекращается.
+  // не чаще раза в 8 секунд; после active опрос прекращается. Когда сертификат уже
+  // выпускается, DNS-проверка не нужна (и она сбрасывала бы issuing в configuring):
+  // читаем только статус домена, пока активация не закончится.
   const waiting = groups.some(group => group.domains.some(domain =>
     domain.status === "pending_dns" || domain.status === "verified"
     || domain.status === "configuring" || domain.status === "issuing_certificate"));
+  const issuing = groups.some(group => group.domains.some(domain => domain.status === "issuing_certificate"));
   useEffect(() => {
     if (!waiting || busy || loading || !enabled || document.visibilityState !== "visible") return;
+    if (issuing) {
+      const timer = window.setTimeout(() => void load(true), 3000);
+      return () => window.clearTimeout(timer);
+    }
     const timer = window.setTimeout(() => {
       const group = groups.find(item => item.domains.some(domain => domain.status !== "active"));
       if (group) void check(group, true);
     }, 8000);
     return () => window.clearTimeout(timer);
-  }, [busy, check, enabled, groups, loading, waiting]);
+  }, [busy, check, enabled, groups, issuing, load, loading, waiting]);
 
   const add = () => {
     const value = hostname.trim();
@@ -247,6 +254,8 @@ export function CustomDomainCard({
         const groupChecks = checks?.filter(item => group.domains.some(domain => domain.hostname === item.hostname)) ?? [];
         const groupDnsWaiting = group.domains.some(domain =>
           domain.status === "pending_dns" || domain.status === "verified");
+        const groupIssuing = group.domains.some(domain => domain.status === "issuing_certificate");
+        const certificateError = visibleCertificateError(group.canonical);
         return <div className="domain-group" key={group.id}>
           <div className="domain-group-head">
             <div className="domain-group-title">
@@ -272,9 +281,14 @@ export function CustomDomainCard({
             </a>
           </div> : null}
 
-          {group.canonical.lastError || group.canonical.certificateError ? <div className="domain-note">
+          {group.canonical.lastError || certificateError ? <div className="domain-note">
             <AlertTriangle size={12}/>
-            <span>{group.canonical.lastError || group.canonical.certificateError}</span>
+            <span>{group.canonical.lastError || certificateError}</span>
+          </div> : null}
+
+          {groupIssuing && !certificateError ? <div className="domain-wait-note">
+            <Loader2 size={12} className="spin"/>
+            <span>Проверяем HTTPS: сертификат обычно выпускается за 1–2 минуты. Страницу можно не перезагружать.</span>
           </div> : null}
 
           {groupDnsWaiting ? <div className="domain-wait-note">
@@ -354,6 +368,16 @@ export function CustomDomainCard({
       Если DNS-провайдер не поддерживает A для apex, используйте ALIAS/ANAME на тот же target.
     </p> : null}
   </section>;
+}
+
+/** Первые две минуты TLS-проба может не пройти штатно: ошибку показываем только после окна выпуска. */
+function visibleCertificateError(domain: CustomDomain) {
+  if (!domain.certificateError) return "";
+  if (domain.status !== "issuing_certificate") return domain.certificateError;
+  if (!domain.certificateStartedAt) return "";
+  const startedAt = Date.parse(domain.certificateStartedAt);
+  if (!Number.isFinite(startedAt)) return "";
+  return Date.now() - startedAt >= 120_000 ? domain.certificateError : "";
 }
 
 function statusTone(status: CustomDomainStatus) {

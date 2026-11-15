@@ -61,7 +61,7 @@ export type PreviewStartProgress={phase:PreviewStartPhase;message:string;detail?
  * «готов, но недоступен» — это белый экран в панели, а не ожидание запуска. `viaExec` — третий
  * случай: адрес контейнера серверу недоступен, и приложение отдаётся панели через `docker exec`.
  */
-export type PreviewState={running:boolean;port?:number;ready?:boolean;settled?:boolean;viaExec?:boolean;mode?:PreviewMode;hint?:string;error?:string;
+export type PreviewState={running:boolean;port?:number;ready?:boolean;settled?:boolean;viaExec?:boolean;ownerUnavailable?:boolean;mode?:PreviewMode;hint?:string;error?:string;
 /** Пока `preview.start` не завершился, здесь лежит текущий этап запуска. */
 starting?:PreviewStartProgress;
 /** Публичный адрес предпросмотра (`https://<проект>.preview.домен`), когда он настроен на сервере. */

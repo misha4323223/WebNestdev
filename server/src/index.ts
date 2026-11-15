@@ -111,7 +111,7 @@ import { startProjectArchiveScheduler } from "./storage/archive-scheduler.js";
 import { startOrphanProjectSweeper } from "./storage/orphan-sweeper.js";
 import { archiveProject as archiveProjectToBucket, runQueuedRestore } from "./storage/project-archive.js";
 import { startJobWorker } from "./jobs/worker.js";
-import { ProjectRestoreFailedError, ProjectRestoringError } from "./storage/restore-jobs.js";
+import { sendProjectRestoreError } from "./routes/project-restore-error.js";
 import { importArchiveRecordsFromDisk } from "./storage/project-archive-state.js";
 import { startAlertScheduler } from "./health/alerts.js";
 import { describeBilling, robokassaConfig } from "./billing/robokassa.js";
@@ -363,15 +363,7 @@ await registerSecurityHeaders(app);
 app.setErrorHandler((error, request, reply) => {
   // Проект в холодном ярусе: первый доступ ставит восстановление в фон, а клиент получает
   // `409 PROJECT_RESTORING` с прогрессом — это нормальный ход, а не сбой сервера.
-  if (error instanceof ProjectRestoringError || error instanceof ProjectRestoreFailedError) {
-    return reply.code(error.statusCode).send({
-      error: error.message,
-      code: error.code,
-      jobId: error.jobId,
-      bytesDone: error.bytesDone,
-      bytesTotal: error.bytesTotal,
-    });
-  }
+  if (sendProjectRestoreError(error, reply)) return;
   if (error instanceof NoSandboxNodeError || error instanceof NoCapacityError || error instanceof SandboxNodeUnavailableError || error instanceof SharedWorkspaceRequiredError) {
     return reply.code(error.statusCode).send({ error: error.message, code: error.code });
   }

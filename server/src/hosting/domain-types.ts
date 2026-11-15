@@ -27,6 +27,8 @@ export type CustomDomain = {
   lastError: string;
   certificateStatus: CustomDomainCertificateStatus;
   certificateError: string;
+  /** Когда началась текущая серия TLS-проб: по ней панель отличает первые 2 минуты от зависания. */
+  certificateStartedAt: string | null;
   isCanonical: boolean;
   expiresAt: string | null;
   createdAt: string;
@@ -102,6 +104,7 @@ export type CustomDomainRow = {
   last_error: string;
   certificate_status: string;
   certificate_error: string;
+  certificate_started_at: string | null;
   is_canonical: boolean;
   expires_at: string | null;
   created_at: string;

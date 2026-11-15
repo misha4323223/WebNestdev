@@ -39,7 +39,7 @@ import { clearCustomDomainTlsCache } from "./tls-ask-cache.js";
 
 export type CustomDomainPatch = Partial<Pick<
   CustomDomain,
-  "status" | "verifiedAt" | "lastCheckedAt" | "lastError" | "certificateStatus" | "certificateError" | "isCanonical"
+  "status" | "verifiedAt" | "lastCheckedAt" | "lastError" | "certificateStatus" | "certificateError" | "certificateStartedAt" | "isCanonical"
 >>;
 
 export async function listAllDomains(): Promise<CustomDomain[]> {

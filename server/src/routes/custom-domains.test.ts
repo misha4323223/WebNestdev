@@ -121,6 +121,23 @@ test("создание, чтение, canonical, проверка и удале�
     assert.equal(verified.domains.every(domain => domain.status === "configuring"), true);
     assert.equal(verified.checks.every(check => check.txt.allowed && check.traffic.allowed && check.caa.allowed), true);
 
+    // Повторная DNS-проверка во время выпуска не должна сбрасывать issuing обратно в configuring
+    // и не должна возвращать старую ошибку HTTPS.
+    const domainStore = await import("../hosting/domain-store.js");
+    const certificateStartedAt = "2026-11-15T05:30:00.000Z";
+    await domainStore.updateDomain(body.domains[0].id, {
+      status: "issuing_certificate",
+      certificateStatus: "issuing",
+      certificateError: "старая ошибка TLS",
+      certificateStartedAt,
+    });
+    const rechecked = await verifyDomainGroup(siteId, body.domains[0].id, resolver);
+    const issuing = rechecked.domains.find(domain => domain.hostname === "example.ru");
+    assert.equal(issuing?.status, "issuing_certificate");
+    assert.equal(issuing?.certificateStatus, "issuing");
+    assert.equal(issuing?.certificateError, "");
+    assert.equal(issuing?.certificateStartedAt, certificateStartedAt);
+
     const repeated = await postDomain(app, projectId, headers, { hostname: "example.ru" });
     assert.equal(repeated.statusCode, 409);
     assert.equal(repeated.json().code, "DOMAIN_TAKEN");

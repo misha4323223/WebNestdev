@@ -29,7 +29,8 @@ async function readState(): Promise<JsonState> {
   try {
     const parsed = JSON.parse(await readFile(jsonFile(), "utf8")) as Partial<JsonState>;
     if (parsed.version !== 1 || !Array.isArray(parsed.domains)) throw new Error("Повреждённое JSON-хранилище доменов");
-    return { version: 1, domains: parsed.domains };
+    // Старые dev-файлы не знают про поле TLS-серии: не требуем ручной миграции.
+    return { version: 1, domains: parsed.domains.map(domain => ({ ...domain, certificateStartedAt: domain.certificateStartedAt ?? null })) };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return { version: 1, domains: [] };
     throw error;
@@ -117,6 +118,7 @@ export async function createJsonDomainGroup(input: CreateCustomDomainInput): Pro
       lastError: "",
       certificateStatus: "none" as const,
       certificateError: "",
+      certificateStartedAt: null,
       isCanonical: item.hostname === canonicalHost,
       expiresAt,
       createdAt: now.toISOString(),
@@ -130,7 +132,7 @@ export async function createJsonDomainGroup(input: CreateCustomDomainInput): Pro
 
 export async function updateJsonDomain(
   id: string,
-  patch: Partial<Pick<CustomDomain, "status" | "verifiedAt" | "lastCheckedAt" | "lastError" | "certificateStatus" | "certificateError" | "isCanonical">>,
+  patch: Partial<Pick<CustomDomain, "status" | "verifiedAt" | "lastCheckedAt" | "lastError" | "certificateStatus" | "certificateError" | "certificateStartedAt" | "isCanonical">>,
 ): Promise<CustomDomain | null> {
   return withLock(async () => {
     const state = await readState();

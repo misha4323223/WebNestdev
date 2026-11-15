@@ -18,6 +18,8 @@ for (const name of ["PLATFORM_S3_ENDPOINT", "PLATFORM_S3_BUCKET", "PLATFORM_S3_A
 const { createUser, createSession } = await import("../auth/auth-store.js");
 const { createProject } = await import("../project-store.js");
 const { registerProjectRoutes } = await import("./projects.js");
+const { registerChangesRoutes } = await import("./changes.js");
+const { sendProjectRestoreError } = await import("./project-restore-error.js");
 
 after(async () => {
   await rm(dataRoot, { recursive: true, force: true });
@@ -31,6 +33,12 @@ async function appWithProject() {
   const app = Fastify();
   await app.register(cookie);
   await registerProjectRoutes(app);
+  await registerChangesRoutes(app);
+  // В production этот же помощник стоит в общем error handler: тест проверяет настоящий контракт.
+  app.setErrorHandler((error, _request, reply) => {
+    if (sendProjectRestoreError(error, reply)) return;
+    reply.code(500).send({ error: error instanceof Error ? error.message : String(error) });
+  });
   await app.ready();
   return {
     app,
@@ -133,6 +141,39 @@ test("архивный проект отвечает 202 с jobId, а стату
       jobId: job.id,
       error: null,
     });
+  } finally {
+    release();
+    await app.close();
+  }
+});
+
+test("во время restore параллельные /changes получают 409 с Retry-After, а не 500", async () => {
+  const { app, projectId, userId, headers } = await appWithProject();
+  const { startRestoreJob } = await import("../storage/restore-jobs.js");
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  startRestoreJob({
+    projectId,
+    userId,
+    bytesTotal: 2048,
+    run: async progress => {
+      progress(1024, 2048, "downloading");
+      await gate;
+      return false;
+    },
+  });
+  try {
+    const responses = await Promise.all([
+      app.inject({ method: "GET", url: "/api/projects/" + projectId + "/changes", headers }),
+      app.inject({ method: "GET", url: "/api/projects/" + projectId + "/changes", headers }),
+    ]);
+    for (const response of responses) {
+      assert.equal(response.statusCode, 409, response.body);
+      assert.equal(response.headers["retry-after"], "2");
+      assert.equal(response.json().code, "PROJECT_RESTORING");
+      assert.equal(response.json().retryAfter, 2);
+      assert.equal(response.json().bytesDone, 1024);
+    }
   } finally {
     release();
     await app.close();

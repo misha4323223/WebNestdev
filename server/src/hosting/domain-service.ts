@@ -164,6 +164,7 @@ export function publicCustomDomain(domain: CustomDomain) {
     lastError: domain.lastError,
     certificateStatus: domain.certificateStatus,
     certificateError: domain.certificateError,
+    certificateStartedAt: domain.certificateStartedAt ?? null,
     dns: dnsRecordsForDomain(domain),
   };
 }
@@ -215,10 +216,16 @@ export async function verifyDomainGroup(
     const error = !txt.allowed ? txt.reason : !traffic.allowed ? traffic.reason : !caa.allowed ? caa.reason : "";
     // `verified` — только владение. `configuring` — владение + трафик + CAA: именно это
     // состояние Caddy может спросить у `/api/tls-ask` перед первым выпуском сертификата.
+    const allAllowed = txt.allowed && traffic.allowed && caa.allowed;
+    // Проверка DNS идёт каждые 8 секунд, а TLS-активация — дольше. Нельзя возвращать
+    // `issuing_certificate` в `configuring` на каждом успешном опросе: панель снова покажет
+    // «настраиваем», хотя Caddy уже выпускает сертификат.
     const nextStatus = item.status === "active"
       ? "active"
-      : txt.allowed && traffic.allowed && caa.allowed
-        ? "configuring"
+      : allAllowed
+        ? item.status === "issuing_certificate"
+          ? "issuing_certificate"
+          : "configuring"
         : txt.allowed
           ? "verified"
           : "pending_dns";
@@ -227,6 +234,14 @@ export async function verifyDomainGroup(
       verifiedAt: txt.allowed ? item.verifiedAt ?? now : null,
       lastCheckedAt: now,
       lastError: error,
+      // Успешная DNS-проверка снимает старую ошибку HTTPS: она уже не описывает текущее
+      // состояние. Пока выпуск идёт, сохраняем начало серии, чтобы панель знала про 2 минуты.
+      certificateError: allAllowed ? "" : item.certificateError,
+      certificateStartedAt: allAllowed
+        ? item.status === "issuing_certificate"
+          ? item.certificateStartedAt ?? now
+          : null
+        : null,
     });
     if (next) updated.push(next);
     checks.push({ hostname: item.hostname, txt, traffic, caa });
