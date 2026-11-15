@@ -23,13 +23,14 @@ const DEVICES:Record<Device,{label:string;width:number;height:number}> = {
   phone:{label:"Телефон",width:390,height:844},
 };
 const deviceKey="webnestdev.previewDevice";
-const START_STEPS:{phase:PreviewStartProgress["phase"];label:string}[] = [
-  {phase:"checking",label:"Проверка"},
-  {phase:"installing",label:"Зависимости"},
-  {phase:"building",label:"Сборка"},
-  {phase:"starting",label:"Запуск"},
-  {phase:"waiting",label:"Ответ"},
-];
+/** Доля полосы для каждого этапа: текст не нужен, движение само показывает прогресс. */
+const START_PERCENT:Record<PreviewStartProgress["phase"],number> = {
+  checking:8,
+  installing:34,
+  building:66,
+  starting:88,
+  waiting:96,
+};
 
 /**
  * Адрес живого превью. Слэш в конце обязателен: без него относительные ссылки приложения
@@ -465,14 +466,14 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
  * решает, что кнопка не сработала, и не жмёт её второй раз.
  */
 function StartProgress({progress}:{progress?:PreviewStartProgress}){
-  const activeIndex=progress?START_STEPS.findIndex(step=>step.phase===progress.phase):-1;
-  return <div className="preview-starting" role="status" aria-live="polite">
-    <div className="preview-starting-icon"><NestLoader size={36} /></div>
-    <strong>{progress?.message??"Запускаем предпросмотр…"}</strong>
-    <span>{progress?.detail??"Это может занять до нескольких минут: зависимости, сборка и первый ответ приложения."}</span>
-    <div className="preview-start-steps" aria-hidden="true">
-      {START_STEPS.map((step,index)=><span key={step.phase} className={"preview-step"+(index<activeIndex?" done":"")+(index===activeIndex?" active":"")}>{step.label}</span>)}
+  const percent=progress?START_PERCENT[progress.phase]:6;
+  // Видимого текста нет: этапы читаются движением полосы, а для экранного диктора
+  // состояние остаётся в aria-label — человек не теряет обратную связь.
+  const label=progress?progress.message+(progress.detail?". "+progress.detail:""):"Запускаем предпросмотр";
+  return <div className="preview-starting" role="status" aria-live="polite" aria-label={label}>
+    <div className="preview-starting-icon" aria-hidden="true"><NestLoader size={28}/></div>
+    <div className="preview-start-track" aria-hidden="true">
+      <span className="preview-start-fill" style={{width:percent+"%"}}/>
     </div>
-    <div className="preview-start-track" aria-hidden="true"><span/></div>
   </div>;
 }
