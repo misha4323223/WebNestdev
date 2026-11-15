@@ -48,12 +48,14 @@ Production не должен зависеть от базы или storage од�
 
 - Публичный адрес: `https://nestdev.ru`.
 - `GET /api/ready` отвечает `ok:true`.
-- Текущая production-сборка на обеих нодах: `3bb071483fad211b47d0a19e059eef453dd8385b` —
-  коммит `3bb0714` в `main` (`fix(hosting): показывать имена DNS-записей без зоны`).
-- Образ: `ghcr.io/misha4323223/webnestdev:sha-3bb071483fad` — собран и опубликован
-  workflow `deploy` (run `43644567616`).
-- Выкачена 14.11.2026 на `node-1` и `node-2`; runner на второй ноде также переведён на эту
-  сборку. Тег `sha-3bb071483fad` подтверждён на обеих нодах, deploy run — success.
+- Текущая production-сборка на обеих нодах: `18868585d5da9075ff6f0611d6a68097b8a8ba06` —
+  коммит `1886858` в `main` (`fix(hosting): упростить работу с custom domains и preview`).
+- Образ: `ghcr.io/misha4323223/webnestdev:sha-18868585d5da` — собран и опубликован
+  workflow `deploy` (run `43706263691`).
+- Выкачена 15.11.2026 на `node-1` и `node-2`; runner на второй ноде также переведён на эту
+  сборку. Тег `sha-18868585d5da` подтверждён на обеих нодах, deploy run — success.
+- Перед ней в тот же день выкачена AI-сборка `d14676f` (run `43704849397`); все `AGENT_*`
+  флаги на обеих нодах выключены, reviewer и остальные экспериментальные ветки не активны.
 - Исправление: локальный кэш зависимостей передаётся Docker с флагом `-v`; без него
   установка падала с `invalid reference format`. Флаг проверен на живой установке
   зависимостей проекта `9ad6af70…` на `node-1`. Код также включает hybrid fallback,
@@ -68,7 +70,7 @@ Production не должен зависеть от базы или storage од�
 ## 2.1. Custom domains: инфраструктура выкачена, feature flag включён
 
 - 13.11.2026 custom domains этапов 1–3 выкачены на `node-1`; текущая сборка обеих нод —
-  `3bb0714` (run `43644567616`, образ `sha-3bb071483fad`).
+  `1886858` (run `43706263691`, образ `sha-18868585d5da`).
 - Живой Caddy: `src-caddy-1` на обеих нодах, image `caddy:2.11.8-alpine`, version `v2.11.8`.
 - Сертификаты перенесены из `src_caddy-data` в общий
   `/var/lib/webnestdev/data/caddy-data`; старые сертификаты на месте, `https://nestdev.ru` и
@@ -78,7 +80,8 @@ Production не должен зависеть от базы или storage од�
   validate/reload после изменения файла проверен вручную на `node-1`, на `node-2` установлен
   выкаткой 14.11.2026.
 - В PostgreSQL создана `public.webnestdev_site_domains` (префикс `getTable`); 2 строки —
-  `nestdevtest.ru` (apex, canonical) и `www.nestdevtest.ru`, обе в `pending_dns`.
+  `nestdevtest.ru` (apex, canonical) и `www.nestdevtest.ru`, обе `active`,
+  `certificate_status=active`.
 - `/api/tls-ask` разрешает custom domains в `configuring`/`issuing_certificate`/`active`;
   TLS-активация проверяет сертификат через NLB IP с SNI и переводит домен в `active`.
 - `CUSTOM_DOMAINS_ENABLED` включён (`1`) на обеих нодах; карточка «Свой домен» видна в
@@ -1181,6 +1184,21 @@ TLS-пробы как окончательную ошибку, хотя серт
    страницы во время restore/выпуска.
 4. **Наблюдаемость:** писать в лог причину отказа TLS-пробы с hostname и номером попытки,
    чтобы инцидент разбирался без догадок.
+
+## 24. 15.11.2026: выкатка AI-стека и UI custom domains
+
+- `d14676f` (run `43704849397`) — AI-стек: карта репозитория, тесты, память, milestone-план
+  и reviewer. Deploy успешен на обеих нодах; `[agent] экспериментальные возможности
+  выключены (все AGENT_* флаги = 0)`.
+- `1886858` (run `43706263691`) — UI/диагностика custom domains и preview: DNS-имена
+  относительно зоны, подсказка о задержке DNS, `publicUrl` в ответе `preview/start`,
+  `settled` для static, клиентские тексты без имён env-переменных. Deploy успешен на обеих
+  нодах; `node-1` и `node-2` отдают `build=18868585d5da...` на `/api/health` и `/api/ready`.
+- Публичный `https://nestdev.ru/api/health` и `/api/ready` — `200`; таймеры хранения и
+  владельцев песочниц active на обеих нодах; в логах контейнеров нет error/fatal.
+- `AGENT_*` флаги после выкатки остаются выключены. Пункты 23.4 (холодный старт, промежуточный
+  HTTPS-статус, e2e-тесты) и SEO-этапы из [`SEO_PLATFORM_PLAN.md`](SEO_PLATFORM_PLAN.md) пока
+  не реализованы.
 
 Связанные документы:
 
