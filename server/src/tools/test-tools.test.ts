@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { detectTestCommand, runDeclaredTests, scopedTestCommand, shellQuote, summarizeTestOutput } from "./test-tools.js";
+import { detectTestCommand, parseGitStatusPaths, runDeclaredTests, sandboxConcurrencyArgs, scopedTestCommand, shellQuote, summarizeTestOutput } from "./test-tools.js";
 
 async function project(files: Record<string, string>) {
   const root = await mkdtemp(path.join(tmpdir(), "wnd-test-tool-"));
@@ -146,6 +146,37 @@ test("runDeclaredTests различает pass, fail и timeout", async () => {
   });
   assert.equal(timeout.status, "timeout");
   assert.match(timeout.hint ?? "", /лимит/);
+});
+
+test("sandbox-режим добавляет concurrency и сохраняет affected paths", () => {
+  const vitest = {
+    status: "configured" as const,
+    kind: "node" as const,
+    command: "npm test",
+    packageManager: "npm",
+    testScript: "vitest run",
+  };
+  assert.deepEqual(sandboxConcurrencyArgs(vitest), ["--maxWorkers=1"]);
+  assert.deepEqual(scopedTestCommand(vitest, ["src/a.test.ts"], "", false, true), {
+    command: "npm test -- --maxWorkers=1 'src/a.test.ts'",
+    scope: "affected",
+  });
+  assert.deepEqual(
+    sandboxConcurrencyArgs({ ...vitest, testScript: "node --test" }),
+    ["--test-concurrency=1"],
+  );
+  assert.deepEqual(
+    scopedTestCommand({ ...vitest, testScript: "node --test" }, ["src/a.test.ts"], "", false, true),
+    { command: "npm test -- --test-concurrency=1 'src/a.test.ts'", scope: "affected" },
+  );
+});
+
+test("git status -z разбирает обычные, новые и переименованные пути", () => {
+  assert.deepEqual(
+    parseGitStatusPaths(" M src/a.ts\0?? src/new.test.ts\0R  src/b.ts\0src/old.ts\0"),
+    ["src/a.ts", "src/new.test.ts", "src/b.ts"],
+  );
+  assert.deepEqual(parseGitStatusPaths("\0\0"), []);
 });
 
 test("pytest получает пути без npm-разделителя, а кавычки не ломают shell", () => {

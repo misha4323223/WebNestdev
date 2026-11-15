@@ -23,6 +23,8 @@ const MAX_AFFECTED_COMMAND_CHARS = 3500;
 const APPENDABLE_RUNNER = /\b(?:vitest|jest|node\s+--test|tsx\s+--test)\b/i;
 const DEFAULT_TIMEOUT_MS = 300_000;
 const LOCKFILES = ["pnpm-lock.yaml", "yarn.lock", "bun.lockb", "bun.lock", "package-lock.json"] as const;
+const CHANGED_FILE_LIMIT = 200;
+const GIT_STATUS_TIMEOUT_MS = 5_000;
 
 type PackageJson = {
   scripts?: Record<string, string>;
@@ -159,6 +161,60 @@ function tail(text: string) {
   return text.length <= MAX_OUTPUT_CHARS ? text : "…[начало вывода сокращено]\n" + text.slice(-MAX_OUTPUT_CHARS);
 }
 
+/**
+ * `git status --porcelain=v1 -z` — NUL-разделённый список. Для rename/copy после нового пути
+ * идёт старый; его нужно пропустить, иначе affected-граф увидит несуществующий файл. Пути не
+ * нормализуются и не склеиваются: git уже отдал их относительно корня, где запущена команда.
+ */
+export function parseGitStatusPaths(output: string): string[] {
+  const tokens = output.split("\0");
+  const paths: string[] = [];
+  for (let index = 0; index < tokens.length && paths.length < CHANGED_FILE_LIMIT; index++) {
+    const entry = tokens[index];
+    if (!entry || entry.length < 4) continue;
+    const status = entry.slice(0, 2);
+    const target = entry.slice(3).trim();
+    if (!target) continue;
+    paths.push(target);
+    // В porcelain -z за переименованием/копированием идёт исходный путь отдельным токеном.
+    if (status.includes("R") || status.includes("C")) index++;
+  }
+  return [...new Set(paths)];
+}
+
+/**
+ * Один небольшой `git status` перед sandbox-прогоном. Если git недоступен или каталог не
+ * репозиторий, возвращаем причину: запускать полный suite вслепую нельзя.
+ */
+async function gitChangedFiles(
+  sandbox: Parameters<typeof runInSandbox>[0],
+  root: string,
+): Promise<{ files: string[]; reason?: string }> {
+  try {
+    const result = await runInSandbox(
+      sandbox,
+      "git status --porcelain=v1 -z --untracked-files=all",
+      root,
+      { maskSecretEnvFiles: true, timeoutMs: GIT_STATUS_TIMEOUT_MS },
+    );
+    if (!result.ok) {
+      return { files: [], reason: "git status не сработал: " + (result.stderr.trim() || "нет изменённых файлов") };
+    }
+    return { files: parseGitStatusPaths(result.stdout) };
+  } catch (error) {
+    return { files: [], reason: "git status не сработал: " + (error instanceof Error ? error.message : String(error)) };
+  }
+}
+
+/** Аргументы ограничения параллельности для известных Node-раннеров. */
+export function sandboxConcurrencyArgs(detected: Extract<DetectedTestCommand, { status: "configured" }>): string[] {
+  if (detected.kind !== "node") return [];
+  const script = detected.testScript ?? "";
+  if (/\bvitest\b/i.test(script) || /\bjest\b/i.test(script)) return ["--maxWorkers=1"];
+  if (/\b(?:node|tsx)\s+--test\b/i.test(script)) return ["--test-concurrency=1"];
+  return [];
+}
+
 /** POSIX shell quoting for a project-relative path; paths can contain spaces and quotes. */
 export function shellQuote(value: string) {
   return "'" + value.replaceAll("'", "'\\''") + "'";
@@ -234,6 +290,7 @@ export function scopedTestCommand(
   tests: readonly string[],
   cwdRelative: string,
   fullRun = false,
+  sandbox = false,
 ): ScopedTestCommand {
   if (fullRun) return { command: detected.command, scope: "full", reason: "изменена конфигурация проекта" };
   if (!tests.length) return { command: detected.command, scope: "full", reason: "affected tests не найдены; полный набор безопаснее" };
@@ -251,7 +308,9 @@ export function scopedTestCommand(
   if (relative.some(test => test.startsWith("..") || path.posix.isAbsolute(test))) {
     return { command: detected.command, scope: "full", reason: "часть affected tests вне cwd; запускаю полный набор" };
   }
-  const args = relative.map(shellQuote).join(" ");
+  const testArgs = relative.map(shellQuote).join(" ");
+  const concurrencyArgs = sandbox ? sandboxConcurrencyArgs(detected) : [];
+  const args = [...concurrencyArgs, testArgs].filter(Boolean).join(" ");
   const command = detected.kind === "python" ? detected.command + " " + args : detected.command + " -- " + args;
   if (command.length > MAX_AFFECTED_COMMAND_CHARS) {
     return { command: detected.command, scope: "full", reason: "команда с файлами слишком длинная; запускаю полный набор" };
@@ -265,7 +324,8 @@ registerTool({
     "Run the test command declared by the project, once, with a five-minute limit. Input: {cwd?:string,changed?:string[],timeoutMs?:number}. " +
     "It reads package.json scripts.test (npm/pnpm/yarn/bun) or uses pytest when the project has a pytest config or tests directory. " +
     "It never installs packages, never guesses a runner and never appends files to an arbitrary test script. " +
-    "When `changed` is provided, the result also lists the existing tests affected through the import graph; `onlyAffected:true` runs only those paths for Vitest, Jest, node --test or pytest, and falls back to the full suite when that cannot be done safely.",
+    "When `changed` is provided, the result also lists the existing tests affected through the import graph; `onlyAffected:true` runs only those paths for Vitest, Jest, node --test or pytest, and falls back to the full suite when that cannot be done safely. " +
+    "`sandbox:true` is the low-memory mode: it takes changed paths from git status when `changed` is omitted, runs only affected tests with concurrency=1, and reports why it did not run instead of silently launching the full suite.",
   parameters: {
     type: "object",
     additionalProperties: false,
@@ -278,20 +338,36 @@ registerTool({
         description: "Изменённые файлы для расчёта affected tests; команда всё равно запускает объявленный test script",
       },
       onlyAffected: { type: "boolean", description: "Запустить только affected tests, если раннер это безопасно поддерживает; иначе полный набор" },
+      sandbox: { type: "boolean", description: "Режим маленькой песочницы: только affected-тесты, concurrency=1, без молчаливого полного suite" },
       timeoutMs: { type: "number", description: "Предел выполнения, от 1000 до 300000 мс; по умолчанию 300000" },
     },
   },
   execute: async (input, context) => {
-    const value = (input ?? {}) as { cwd?: unknown; changed?: unknown; onlyAffected?: unknown; timeoutMs?: unknown };
+    const value = (input ?? {}) as { cwd?: unknown; changed?: unknown; onlyAffected?: unknown; sandbox?: unknown; timeoutMs?: unknown };
     const sandbox = await getSandbox(context.projectId, context.userId);
     const requestedCwd = typeof value.cwd === "string" ? value.cwd : "";
     const cwd = await resolveInsideSandbox(sandbox.root, sandbox.root + "/" + requestedCwd);
     const detected = await detectTestCommand(sandbox.root, cwd);
-    const changed = Array.isArray(value.changed)
+    const sandboxMode = value.sandbox === true;
+    let changed = Array.isArray(value.changed)
       ? value.changed.filter(item => typeof item === "string").map(item => item.trim()).filter(Boolean).slice(0, 50)
       : [];
-    const onlyAffected = value.onlyAffected === true;
+    let sandboxReason: string | undefined;
+    if (sandboxMode && !changed.length) {
+      const git = await gitChangedFiles(sandbox, sandbox.root);
+      changed = git.files;
+      sandboxReason = git.reason;
+    }
+    const onlyAffected = value.onlyAffected === true || sandboxMode;
     if (onlyAffected && !changed.length) {
+      if (sandboxMode) {
+        return {
+          ok: false,
+          status: "not_run",
+          sandbox: true,
+          reason: sandboxReason ?? "sandbox-режим не нашёл изменённых файлов: запустите affected-тесты с явным changed или обычный project.test",
+        };
+      }
       throw new Error("project.test: onlyAffected требует changed — какие файлы изменены");
     }
     const affected = changed.length
@@ -312,8 +388,18 @@ registerTool({
       : DEFAULT_TIMEOUT_MS;
     const cwdRelative = path.relative(sandbox.root, cwd).split(path.sep).join("/");
     const scoped: ScopedTestCommand = onlyAffected && affected
-      ? scopedTestCommand(detected, affected.tests, cwdRelative, affected.fullRun)
+      ? scopedTestCommand(detected, affected.tests, cwdRelative, affected.fullRun, sandboxMode)
       : { command: detected.command, scope: "full" };
+    if (sandboxMode && scoped.scope !== "affected") {
+      return {
+        ok: false,
+        status: "not_run",
+        sandbox: true,
+        reason: scoped.reason ?? "sandbox-режим не смог безопасно выбрать affected-тесты; полный suite не запускаю",
+        ...(affected ? { affected } : {}),
+        changed,
+      };
+    }
     const run = await runDeclaredTests({
       detected,
       command: scoped.command,
@@ -330,6 +416,7 @@ registerTool({
       scope: scoped.scope,
       ...(scoped.reason ? { scopeReason: scoped.reason } : {}),
       ...(affected ? { affected } : {}),
+      ...(sandboxMode ? { sandbox: true, changed } : {}),
     };
   },
 });

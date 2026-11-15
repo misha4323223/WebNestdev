@@ -1,10 +1,13 @@
+import { lstat } from "node:fs/promises";
+import path from "node:path";
 import { getSandbox } from "../sandbox-manager.js";
-import { resolveInsideSandbox } from "../sandbox/path-guard.js";
+import { readFileInside, resolveInsideSandbox } from "../sandbox/path-guard.js";
 import { runInSandbox } from "../sandbox-worker.js";
 import { listSandboxJobs, startSandboxJob, stopSandboxJob, tailSandboxJob } from "../sandbox/jobs.js";
 import { commandNeedsNetwork, isPackageInstall, networkHint, networkHintForLogs, NO_NETWORK_HINT, PACKAGE_INSTALL_HINT } from "../sandbox/network-hint.js";
 import { registerTool } from "../tool-registry.js";
 import { npmInstallTimeoutMs } from "../sandbox/config.js";
+import { installCommandFor, NODE_LOCKFILES, packageManagerFor } from "./package-manager.js";
 
 /**
  * Контейнерных команд в песочнице нет: проект уже выполняется в контейнере платформы, а `docker`
@@ -20,6 +23,28 @@ const CONTAINER_COMMANDS=new Set(["docker","docker-compose","podman","nerdctl","
 const SYSTEM_PACKAGE_COMMANDS=new Set(["apt","apt-get","aptitude","apk","yum","dnf","pacman","zypper"]);
 /** Долгая команда в одном шаге: от секунды до получаса. */
 const MAX_COMMAND_TIMEOUT_MS=30*60_000;
+const TIMEOUT_ERROR=/Превышено время выполнения команды в песочнице|Runner не ответил|RUNNER_TIMEOUT/i;
+
+/**
+ * Таймаут `terminal.exec` — не повод повторять команду вслепую. Возвращаем агенту готовый
+ * `terminal.start` с тем же command/cwd: он не держит шаг и не теряет вывод. Автоматически не
+ * перезапускаем: команда могла успеть изменить проект, и повторный запуск должен быть решением
+ * агента, а не побочным эффектом таймаута.
+ */
+export function timeoutFallback(error: unknown, command: string, cwd?: string) {
+  const message=error instanceof Error?error.message:String(error);
+  if(!TIMEOUT_ERROR.test(message))return null;
+  return {
+    ok:false as const,
+    exitCode:null,
+    signal:null,
+    stdout:"",
+    stderr:message,
+    truncated:false as const,
+    hint:"Команда не завершилась в пределах таймаута. Запустите её через terminal.start и читайте вывод через terminal.tail; так шаг не будет ждать её целиком.",
+    background:{tool:"terminal.start" as const,arguments:{command,...(cwd?{cwd}:{})}},
+  };
+}
 
 function commandTokens(command:string){
   // `sudo apt install` — тот же apt, только заведомо без root; отказ должен это узнавать.
@@ -109,6 +134,9 @@ registerTool({
         ...(requestedTimeout === undefined ? {} : { timeoutMs: requestedTimeout }),
       });
     } catch (error) {
+      // Таймаут команды и таймаут runner'а должны дать не голую ошибку, а готовый следующий шаг.
+      const fallback=timeoutFallback(error, command, value.cwd?.trim()||undefined);
+      if(fallback)return fallback;
       // Главный симптом выключенной сети — не отказ, а исчерпанный таймаут: установка «висит».
       // Без объяснения агент повторяет её и тратит ещё один срок.
       const hint = isPackageInstall(command) ? PACKAGE_INSTALL_HINT : commandNeedsNetwork(command) ? NO_NETWORK_HINT : undefined;
@@ -208,14 +236,35 @@ registerTool({
 
 registerTool({
   name: "npm.install",
-  description: "Install the project's npm dependencies in the sandbox. This is the only tool that enables outbound network access for package installation. Input: {cwd?:string}. Use only when package.json exists. Use it whenever an `npm install` in the terminal failed or timed out with ENOTFOUND/EAI_AGAIN, and before preview.start on a project without node_modules.",
+  description: "Install the project's Node dependencies in the sandbox. This is the only tool that enables outbound network access for package installation. It selects npm/pnpm/yarn/bun from package.json#packageManager and the lockfile (`npm ci` for npm with a lock). Input: {cwd?:string}. Use only when package.json exists. Use it whenever an `npm install` in the terminal failed or timed out with ENOTFOUND/EAI_AGAIN, and before preview.start on a project without node_modules.",
   parameters: { type: "object", additionalProperties: false, properties: { cwd: { type: "string", description: "Каталог с package.json внутри проекта; по умолчанию корень проекта" } } },
   execute: async (input, context) => {
     const value = input as { cwd?: string };
     const sandbox = await getSandbox(context.projectId, context.userId);
     const cwd = await resolveInsideSandbox(sandbox.root, sandbox.root + "/" + (value.cwd ?? ""));
-    // `npm install` выполняет lifecycle-скрипты проекта; они тоже не должны видеть секреты.
+    let pkg: { packageManager?: string } | null = null;
+    try {
+      const raw = JSON.parse(await readFileInside(sandbox.root, path.join(cwd, "package.json")));
+      if (raw && typeof raw === "object") pkg = raw as { packageManager?: string };
+    } catch {
+      // package.json проверит сам менеджер; lock-файла достаточно для выбора команды.
+    }
+    const lockfiles: string[] = [];
+    for (const entry of NODE_LOCKFILES) {
+      try {
+        await lstat(path.join(cwd, entry.name));
+        lockfiles.push(entry.name);
+      } catch {
+        // Нет lock-файла — это нормальный `install`, а не ошибка.
+      }
+    }
+    const packageManager = packageManagerFor(pkg, lockfiles);
+    // npm-shrinkwrap.json и bun.lock — такие же lock-файлы, как их основные аналоги.
+    const hasLockfile = lockfiles.some(name => NODE_LOCKFILES.some(entry => entry.name === name && entry.manager === packageManager));
+    const command = installCommandFor(packageManager, hasLockfile);
+    // `install` выполняет lifecycle-скрипты проекта; они тоже не должны видеть секреты.
     // Таймаут — установочный, а не общий: дерево из сотен пакетов не укладывается в 120 с.
-    return runInSandbox(sandbox, "npm install --no-audit --no-fund", cwd, { network: "bridge", signal: context.signal, maskSecretEnvFiles: true, timeoutMs: npmInstallTimeoutMs() });
+    const result = await runInSandbox(sandbox, command, cwd, { network: "bridge", signal: context.signal, maskSecretEnvFiles: true, timeoutMs: npmInstallTimeoutMs() });
+    return { ...result, packageManager, installCommand: command };
   },
 });

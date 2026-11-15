@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { containerCommandRefusal } from "./terminal-tools.js";
+import { containerCommandRefusal, timeoutFallback } from "./terminal-tools.js";
 
 /**
  * Агент в песочнице пробовал `docker build` и получал «команда не найдена», после чего писал
@@ -39,6 +39,22 @@ test("an arbitrary git clone is refused: repositories are connected through the 
   // Обычный git-статус и уже подключённый репозиторий не задеты.
   assert.equal(containerCommandRefusal("git status"), null);
   assert.equal(containerCommandRefusal("git pull --ff-only"), null);
+});
+
+test("a sandbox timeout returns a ready terminal.start fallback", () => {
+  const fallback = timeoutFallback(new Error("Превышено время выполнения команды в песочнице: 120 с"), "npm test", "packages/ui");
+  assert.ok(fallback);
+  assert.equal(fallback.hint.includes("terminal.start"), true);
+  assert.deepEqual(fallback.background, { tool: "terminal.start", arguments: { command: "npm test", cwd: "packages/ui" } });
+  assert.equal(fallback.stderr, "Превышено время выполнения команды в песочнице: 120 с");
+  assert.equal(fallback.exitCode, null);
+});
+
+test("non-timeout errors and a missing cwd do not get a background fallback", () => {
+  assert.equal(timeoutFallback(new Error("command not found"), "npm test"), null);
+  const fallback = timeoutFallback(new Error("Runner не ответил за 30 с"), "npm run build");
+  assert.ok(fallback);
+  assert.deepEqual(fallback.background.arguments, { command: "npm run build" });
 });
 
 test("an ordinary project command is not refused", () => {
