@@ -249,6 +249,16 @@ export function platformEnvSetByPanel(name: string) {
   return overrides.has(name);
 }
 
+/**
+ * Откуда взято действующее значение: из панели/API платформы или из окружения. Отдельный
+ * помощник нужен внешней админке и статусам сервисов: им достаточно источника, а само значение
+ * секрета возвращать нельзя.
+ */
+export function platformEnvSource(name: string): PlatformEnvSource {
+  if (overrides.has(name)) return "panel";
+  return process.env[name]?.trim() ? "environment" : "none";
+}
+
 /** Чтение шифрованного хранилища при старте. Ошибка ключа не роняет сервер: значения просто не применяются. */
 async function loadPlatformEnvFromDisk() {
   loaded = true;

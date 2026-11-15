@@ -30,6 +30,8 @@ export const AUDIT_ACTIONS = {
   "admin.logout.all": "Завершены все сеансы администратора",
   "platform.keys.updated": "Изменены ключи платформы",
   "platform.vision.updated": "Изменена модель зрения",
+  "platform.image.updated": "Изменена настройка генерации изображений",
+  "platform.search.updated": "Изменены провайдер или ключи интернет-поиска",
   "platform.ai_model.created": "Добавлена модель платформы",
   "platform.ai_model.updated": "Изменена модель платформы",
   "platform.ai_model.deleted": "Удалена модель платформы",

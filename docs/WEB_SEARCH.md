@@ -13,7 +13,11 @@ agent → tool web.search / web.read → server/src/web/* → провайдер
 | Тариф | Порядок провайдеров | Ключи | Стоимость для платформы |
 |---|---|---|---|
 | `free` | DuckDuckGo (`lite.duckduckgo.com`) | не нужны | 0 |
-| `pro`, `team` | Yandex Search API v2 → Tavily → DuckDuckGo | `YANDEX_SEARCH_API_KEY` + `YANDEX_SEARCH_FOLDER_ID`, `TAVILY_API_KEY` | Yandex — по тарифу Yandex Cloud (≈ ₽488 за 1 000 запросов); Tavily — 1 000 кредитов в месяц бесплатно |
+| `pro`, `team` | Yandex Search API v2 (если задан ключ и каталог) → Tavily → DuckDuckGo | `YANDEX_SEARCH_API_KEY` + `YANDEX_SEARCH_FOLDER_ID`, `TAVILY_API_KEY` | Yandex — по тарифу Yandex Cloud (≈ ₽488 за 1 000 запросов); Tavily — 1 000 кредитов в месяц бесплатно |
+
+Если `YANDEX_SEARCH_API_KEY` не задан, Yandex не попадает в цепочку вовсе: на платных тарифах
+первым работает Tavily, а DuckDuckGo остаётся последней ступенью. Одного `YANDEX_FOLDER_ID`
+недостаточно — это каталог, а не ключ Search API.
 
 Бесплатный тариф намеренно не расширяется: это режим «попробовать», и платные ключи в его цепочку
 не попадают никогда — ни при отказе DuckDuckGo, ни при заданных ключах.
@@ -94,6 +98,11 @@ agent → tool web.search / web.read → server/src/web/* → провайдер
 3. В панели платформы («Ключи сервера» → «Веб-поиск агента») вставьте ключ в `YANDEX_SEARCH_API_KEY`
    и каталог в `YANDEX_SEARCH_FOLDER_ID` (пусто — будет использован `YANDEX_FOLDER_ID`).
 4. `WEB_SEARCH_PROVIDER=auto` оставьте как есть: платные тарифы начнут искать через Yandex сами.
+
+То же можно сделать из внешней админки: `GET /api/admin/search` показывает готовность
+провайдеров и итоговую цепочку, `POST /api/admin/search` сохраняет провайдера, ключ Yandex с
+каталогом и резервный ключ Tavily. Значения ключей в ответ не попадают. Контракт —
+[ADMIN_API.md](ADMIN_API.md), раздел 7.15.
 
 Запрос идёт на `POST https://searchapi.api.cloud.yandex.net/v2/web/search` с заголовком
 `Authorization: Api-Key …`; ответ — `{ "rawData": "<base64>" }`, внутри base64 лежит XML выдачи,

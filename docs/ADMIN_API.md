@@ -201,6 +201,10 @@ curl -s https://panel.example.com/api/admin/2fa/verify -H 'content-type: applica
 | `GET /api/admin/ai/vision` | `Bearer` | модель зрения: режим, модель, адрес и есть ли ключ (раздел 7.12.1) |
 | `POST /api/admin/ai/vision` | `Bearer` | задать модель зрения, адрес, провайдера, ключ или режим `auto\|off` (раздел 7.12.1) |
 | `POST /api/admin/ai/vision/test` | `Bearer` | проверить модель зрения настоящей картинкой (раздел 7.12.1) |
+| `GET /api/admin/ai/image` | `Bearer` | генерация изображений: Base URL, модель, провайдер, наличие ключа (раздел 7.12.2) |
+| `POST /api/admin/ai/image` | `Bearer` | задать Base URL, модель, провайдера и токен генерации изображений (раздел 7.12.2) |
+| `GET /api/admin/search` | `Bearer` | интернет-поиск: провайдер, готовность Yandex/Tavily и цепочки тарифов (раздел 7.15) |
+| `POST /api/admin/search` | `Bearer` | задать провайдера и ключи Yandex Search API / Tavily (раздел 7.15) |
 | `GET /api/admin/ai/providers` | `Bearer` | каталог upstream-провайдеров модели: цены, tools, рекомендация (раздел 7.12) |
 | `GET /api/admin/ai/models` | `Bearer` | дополнительные модели платформы: Max, Mini и другие (раздел 7.13) |
 | `POST /api/admin/ai/models` | `Bearer` | добавить модель; `id` в теле (раздел 7.13) |
@@ -1276,8 +1280,9 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 `POST /api/admin/ai/test` принимает `routing` в теле; без него для того же `baseUrl` и `model`
 используется сохранённая цепочка. `routing: null` в этом запросе проверяет авто-выбор.
 
-Бесплатная модель тарифа «Старт» (`PLATFORM_AI_FREE_*`) и генерация картинок (`PLATFORM_IMAGE_*`)
-этим маршрутом не меняются.
+Бесплатная модель тарифа «Старт» (`PLATFORM_AI_FREE_*`) этим маршрутом не меняется, а генерация
+картинок (`PLATFORM_IMAGE_*`) настраивается отдельно — `GET/POST /api/admin/ai/image`
+(раздел 7.12.2).
 
 ### 7.12.1. Зрение: отдельная модель для изображений
 
@@ -1321,6 +1326,60 @@ curl -s -H "Authorization: Bearer $TOKEN" 'https://nestdev.ru/api/admin/ai/visio
 `{ ok, model, provider, latencyMs, preview }` или `{ ok: false, error }`. Пустой текст в ответе —
 это вердикт «модель не принимает изображения», а не сбой админки; так неверная модель или ключ
 видны до сохранения.
+
+### 7.12.2. Генерация изображений
+
+Код: `server/src/routes/admin-ai-image.ts`, логика — `server/src/provider/image-generation.ts`.
+Тесты: `server/src/routes/admin-ai-image.test.ts`, `server/src/provider/image-generation.test.ts`.
+Это отдельный сервис от главной модели и зрения: агент рисует картинку через `image.generate`,
+а разговор по-прежнему идёт через `PLATFORM_AI_*`.
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" 'https://nestdev.ru/api/admin/ai/image'
+```
+
+```json
+{
+  "image": {
+    "configured": true,
+    "baseUrl": "https://images.example/v1",
+    "model": "image-model-1",
+    "provider": "Image Gateway",
+    "apiStyle": "openai",
+    "hasKey": true,
+    "keyCount": 1,
+    "keySource": "panel",
+    "sources": { "baseUrl": "panel", "model": "panel", "provider": "panel" },
+    "missing": []
+  }
+}
+```
+
+`POST /api/admin/ai/image` принимает частичное тело:
+
+```json
+{
+  "baseUrl": "https://images.example/v1",
+  "model": "image-model-1",
+  "provider": "Image Gateway",
+  "apiKey": "…"
+}
+```
+
+- `baseUrl` — адрес OpenAI-совместимого сервиса (с `/v1`, сервер допишет
+  `/images/generations`) или Cloudflare Workers AI (`…/ai/run`, модель допишется к адресу).
+  Пустая строка удаляет значение из панели и возвращает чтение из окружения.
+- `model` — имя модели; `provider` — необязательная подпись сервиса в логах. Пустая строка
+  сбрасывает значение к окружению или значению по умолчанию.
+- `apiKey` — токен сервиса. Непустое значение сохраняется как `PLATFORM_IMAGE_KEY_1`; пустое или
+  отсутствующее поле оставляет текущий ключ. Резервные ключи 2–3 по-прежнему задаются в панели
+  или окружении и в ответе только учитываются счётчиком.
+- `clearKeys: true` удаляет все сохранённые в панели ключи 1–3 и возвращает чтение из окружения.
+  Одновременно передать новый ключ и `clearKeys` нельзя — это `400`.
+
+Ответ на сохранение: `{ saved: true, image: … }` с новым состоянием. Значение ключа не
+возвращается ни в каком виде — только `hasKey`, `keyCount`, `keySource` и `sources`. Действие
+пишет событие `platform.image.updated` в журнал безопасности.
 
 ### 7.13. Дополнительные модели платформы (Max и Mini)
 
@@ -1504,6 +1563,74 @@ curl -s -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/
 создание новых проектов. Если у получателя после переноса окажется больше проектов, чем даёт
 его тариф, уже существующие проекты продолжат работать, но создание следующего упрётся в лимит.
 Об этом стоит предупредить человека до переноса.
+
+### 7.15. Интернет-поиск агента
+
+Код: `server/src/routes/admin-search.ts`, состояние — `server/src/web/search-settings.ts`,
+выбор провайдера — `server/src/web/search.ts`. Тесты: `server/src/routes/admin-search.test.ts`,
+`server/src/web/search.test.ts`.
+
+| Тариф | Цепочка по умолчанию | Что нужно |
+|---|---|---|
+| `free` | DuckDuckGo | ничего, ключ не требуется |
+| `pro`, `team` | Yandex Search API (если задан ключ и каталог) → Tavily → DuckDuckGo | `YANDEX_SEARCH_API_KEY` + каталог, `TAVILY_API_KEY` как резерв |
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" 'https://nestdev.ru/api/admin/search'
+```
+
+```json
+{
+  "search": {
+    "provider": "auto",
+    "providerSource": "panel",
+    "yandex": {
+      "configured": true,
+      "hasKey": true,
+      "keySource": "panel",
+      "folderId": "b1g…",
+      "folderSource": "panel",
+      "folderVariable": "YANDEX_SEARCH_FOLDER_ID"
+    },
+    "tavily": { "configured": true, "hasKey": true, "keySource": "panel" },
+    "duckduckgo": { "configured": true, "requiresKey": false },
+    "chains": {
+      "free": ["duckduckgo"],
+      "paid": ["yandex", "tavily", "duckduckgo"]
+    },
+    "note": null
+  }
+}
+```
+
+`POST /api/admin/search` принимает частичное тело:
+
+```json
+{
+  "provider": "auto",
+  "yandexApiKey": "…",
+  "yandexFolderId": "b1g…",
+  "tavilyApiKey": "…"
+}
+```
+
+- `provider` — `auto` (по тарифу), `duckduckgo`, `yandex` или `tavily`. `auto` и пустая строка
+  возвращают выбор по тарифу и наличию ключей.
+- `yandexApiKey` и `tavilyApiKey` — ключи провайдеров. Пустое или отсутствующее поле сохраняет
+  текущий ключ; для удаления есть явные `clearYandexKey` и `clearTavilyKey`.
+- `yandexFolderId` — каталог Yandex Cloud. Пустая строка или `clearYandexFolderId: true`
+  удаляют значение из панели; если задан `YANDEX_FOLDER_ID`, он продолжит использоваться как
+  резерв.
+
+Ответ: `{ saved: true, search: … }`. Значения ключей не возвращаются — только `hasKey`,
+`keySource` и рассчитанные цепочки `chains`. `chains.paid` показывает, что реально произойдёт на
+платном тарифе сейчас: провайдер без ключа в цепочку не попадает. Если ключа Yandex нет, эта
+цепочка начинается с `tavily`, даже когда `YANDEX_FOLDER_ID` задан.
+
+`WEB_SEARCH_PROVIDER` — единственное переопределение провайдера, и оно действует только на
+платных тарифах. Бесплатный тариф всегда получает `["duckduckgo"]`, даже если на сервере
+выбран Yandex. После сохранения новые запросы используют настройку без перезапуска сервера.
+Действие пишет событие `platform.search.updated` в журнал безопасности.
 
 ## 8. Обращения поддержки
 
@@ -1861,6 +1988,8 @@ curl -s -H "Authorization: Bearer $TOKEN" \
 | `admin.2fa.reissued` | Коды восстановления перевыпущены |
 | `admin.logout.all` | Завершены все сеансы администратора |
 | `platform.keys.updated` | Изменены ключи платформы |
+| `platform.image.updated` | Изменена настройка генерации изображений |
+| `platform.search.updated` | Изменены провайдер или ключи интернет-поиска |
 | `project.deleted` | Удалён проект |
 | `user.registered` | Зарегистрирован аккаунт |
 | `user.login.failed` | Неудачный вход пользователя |

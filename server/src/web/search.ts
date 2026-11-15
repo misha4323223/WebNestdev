@@ -1,4 +1,5 @@
 import { createLimiter, positiveInt, type LimiterStats, type Slot } from "../concurrency.js";
+import { getPlatformEnv } from "../platform/platform-env.js";
 import { consumeUsage, getUsageSnapshot, UsageLimitError } from "../account/usage-store.js";
 import { limitsForPlan, type PlanId } from "../account/plans.js";
 import { searchDuckDuckGo } from "./duckduckgo.js";
@@ -65,9 +66,13 @@ export function providerForPlan(plan: PlanId): WebSearchProvider {
   return plan === "free" ? "duckduckgo" : "yandex";
 }
 
-/** Переопределение из окружения: `auto` (по тарифу) — значение по умолчанию. */
+/**
+ * Переопределение провайдера: `auto` (по тарифу) — значение по умолчанию. Значение читается
+ * через `getPlatformEnv`, поэтому `WEB_SEARCH_PROVIDER`, сохранённый из панели или внешней
+ * админки, действует сразу и важнее окружения.
+ */
 export function configuredProviderOverride(): WebSearchProvider | null {
-  const value = (process.env.WEB_SEARCH_PROVIDER ?? "").trim().toLowerCase();
+  const value = (getPlatformEnv("WEB_SEARCH_PROVIDER") ?? "").trim().toLowerCase();
   return value === "duckduckgo" || value === "yandex" || value === "tavily" ? value : null;
 }
 

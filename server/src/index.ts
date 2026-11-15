@@ -82,7 +82,9 @@ import { registerAdminBillingRoutes } from "./routes/admin-billing.js";
 import { registerAdminCreditRoutes } from "./routes/admin-credits.js";
 import { registerAdminPlanRoutes } from "./routes/admin-plans.js";
 import { registerAdminAiRoutes } from "./routes/admin-ai.js";
+import { registerAdminAiImageRoutes } from "./routes/admin-ai-image.js";
 import { registerAdminAiModelsRoutes } from "./routes/admin-ai-models.js";
+import { registerAdminSearchRoutes } from "./routes/admin-search.js";
 import { registerAdminProjectRoutes } from "./routes/admin-projects.js";
 import { registerAdminPreviewResetRoutes } from "./routes/admin-preview.js";
 import { registerAdminProjectPermissionsRoutes } from "./routes/admin-project-permissions.js";
@@ -422,8 +424,12 @@ await registerAdminCreditRoutes(app);
 await registerAdminPlanRoutes(app);
 // Главный AI-провайдер: чтение, проверка черновика и переключение из внешней админки.
 await registerAdminAiRoutes(app);
+// Генерация изображений: свой Base URL, модель и токен сервиса — без правки .env.
+await registerAdminAiImageRoutes(app);
 // Дополнительные модели платформы (Max, Mini): каталог, проверка и управление из внешней админки.
 await registerAdminAiModelsRoutes(app);
+// Интернет-поиск агента: провайдер и ключи Yandex Search API / Tavily.
+await registerAdminSearchRoutes(app);
 // Карточка проекта: владелец, репозиторий, превью, переменные секретов, план выкатки.
 await registerAdminProjectRoutes(app);
 // Зависший предпросмотр: оператор видит активную бронь и может сбросить контейнер,

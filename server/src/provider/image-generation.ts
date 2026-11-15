@@ -1,4 +1,4 @@
-import { getPlatformEnv } from "../platform/platform-env.js";
+import { getPlatformEnv, platformEnvSource, type PlatformEnvSource } from "../platform/platform-env.js";
 import { assertPublicUrl, requestPage, type ResolveName } from "../web/read-url.js";
 
 /**
@@ -61,6 +61,58 @@ export function getImageGenerationConfig(): ImageGenerationConfig | null {
     baseUrl,
     model,
     keys,
+  };
+}
+
+/**
+ * Состояние генерации изображений для внешней админки. Ключи сюда не попадают даже
+ * замаскированными: администратору нужно видеть, задан ли ключ и откуда он взят, а не секрет.
+ */
+export type ImageGenerationStatus = {
+  configured: boolean;
+  baseUrl: string;
+  model: string;
+  provider: string;
+  apiStyle: ImageApiStyle | null;
+  hasKey: boolean;
+  keyCount: number;
+  keySource: PlatformEnvSource;
+  sources: {
+    baseUrl: PlatformEnvSource;
+    model: PlatformEnvSource;
+    provider: PlatformEnvSource;
+  };
+  /** Какие переменные ещё не заданы; пустой список означает, что инструмент готов. */
+  missing: string[];
+};
+
+export function imageGenerationStatus(): ImageGenerationStatus {
+  const baseUrl = getPlatformEnv("PLATFORM_IMAGE_BASE_URL")?.trim() ?? "";
+  const model = getPlatformEnv("PLATFORM_IMAGE_MODEL")?.trim() ?? "";
+  const provider = getPlatformEnv("PLATFORM_IMAGE_PROVIDER")?.trim() || DEFAULT_PROVIDER;
+  const keySources = KEY_NAMES.map(name => platformEnvSource(name)).filter(source => source !== "none");
+  const keySource: PlatformEnvSource = keySources.includes("panel")
+    ? "panel"
+    : keySources.includes("environment") ? "environment" : "none";
+  const missing: string[] = [];
+  if (!baseUrl) missing.push("PLATFORM_IMAGE_BASE_URL");
+  if (!model) missing.push("PLATFORM_IMAGE_MODEL");
+  if (!keySources.length) missing.push("PLATFORM_IMAGE_KEY_1");
+  return {
+    configured: missing.length === 0,
+    baseUrl,
+    model,
+    provider,
+    apiStyle: baseUrl ? imageApiStyle(baseUrl) : null,
+    hasKey: keySources.length > 0,
+    keyCount: keySources.length,
+    keySource,
+    sources: {
+      baseUrl: platformEnvSource("PLATFORM_IMAGE_BASE_URL"),
+      model: platformEnvSource("PLATFORM_IMAGE_MODEL"),
+      provider: platformEnvSource("PLATFORM_IMAGE_PROVIDER"),
+    },
+    missing,
   };
 }
 
