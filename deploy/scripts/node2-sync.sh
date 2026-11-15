@@ -23,6 +23,8 @@
 #   CADDY_SRC=<путь>           актуальный Caddyfile из выкатки
 #   PREVIEW_TLS_SRC=<путь>     актуальный preview-tls.caddy из выкатки
 #   CADDY_RELOAD_SRC=<каталог> deploy/ha из выкатки (скрипт и systemd-units)
+#   HA_CODE_SRC=<каталог>      deploy/ha из выкатки для runtime-файлов (по умолчанию CADDY_RELOAD_SRC)
+#   HA_CODE_DST=/opt/webnestdev-ha  куда установить HA-код на обеих нодах
 #   NODE2_HOST=10.0.0.5        приватный адрес второй ноды
 #   NODE2_USER=ubuntu
 #   NODE2_SSH_KEY=~/.ssh/node2_key
@@ -30,7 +32,8 @@
 #   NODE2_ENV_FILES="runtime.env node2.env"  env-файлы compose на node-2
 #   NODE2_SERVICES="webnestdev-server docker-broker caddy"
 #   NODE2_HEALTH_URL=http://127.0.0.1:8787/api/ready
-#   SYNC_NODE2=auto|1|0        auto — молча пропустить, если node-2 недоступна; 1 — ошибка
+#   SYNC_NODE2=1|0|auto        1 — обязательна (по умолчанию); 0 — пропустить; auto — пропустить,
+#                              если node-2 недоступна
 #   RUNNER_SCRIPT_B64=…        содержимое deploy/scripts/update-runner.sh в base64
 #   RUNNER_SCRIPT_SRC=<путь>   тот же скрипт файлом
 #   DEPLOY_SCRIPT_SRC=<путь>   deploy/scripts/vm-deploy.sh файлом: его MODE=prune убирает
@@ -49,7 +52,7 @@ NODE2_ENV_FILES="${NODE2_ENV_FILES:-runtime.env node2.env}"
 NODE2_SERVICES="${NODE2_SERVICES:-webnestdev-server docker-broker caddy}"
 NODE2_HEALTH_URL="${NODE2_HEALTH_URL:-http://127.0.0.1:8787/api/ready}"
 NODE2_HEALTH_TRIES="${NODE2_HEALTH_TRIES:-30}"
-SYNC_NODE2="${SYNC_NODE2:-auto}"
+SYNC_NODE2="${SYNC_NODE2:-1}"
 CUSTOM_DOMAINS_ENABLED="${CUSTOM_DOMAINS_ENABLED:-}"
 RUNNER_SCRIPT_B64="${RUNNER_SCRIPT_B64:-}"
 RUNNER_SCRIPT_SRC="${RUNNER_SCRIPT_SRC:-}"
@@ -60,6 +63,8 @@ COMPOSE_SRC="${COMPOSE_SRC:-$APP_DIR/docker-compose.yml}"
 CADDY_SRC="${CADDY_SRC:-$APP_DIR/Caddyfile}"
 PREVIEW_TLS_SRC="${PREVIEW_TLS_SRC:-$APP_DIR/preview-tls.caddy}"
 CADDY_RELOAD_SRC="${CADDY_RELOAD_SRC:-$APP_DIR/deploy/ha}"
+HA_CODE_SRC="${HA_CODE_SRC:-$CADDY_RELOAD_SRC}"
+HA_CODE_DST="${HA_CODE_DST:-/opt/webnestdev-ha}"
 EGRESS_SCRIPT_SRC="${EGRESS_SCRIPT_SRC:-$APP_DIR/deploy/scripts/egress-firewall.sh}"
 CUSTOM_DOMAINS_CADDY_DIR="${CUSTOM_DOMAINS_CADDY_DIR:-/var/lib/webnestdev/data/caddy-custom}"
 CADDY_DATA_HOST_DIR="${CADDY_DATA_HOST_DIR:-/var/lib/webnestdev/data/caddy-data}"
@@ -70,8 +75,8 @@ DRY_RUN="${DRY_RUN:-0}"
 log(){ printf '[node2] %s\n' "$*"; }
 run(){ if [ "$DRY_RUN" = "1" ]; then log "dry-run: $*"; else "$@"; fi; }
 
-# Недоступный peer — не ошибка выкатки: node-2 может быть выключена. Явное SYNC_NODE2=1
-# делает недоступность ошибкой — это нужно, когда проверяют именно HA-контур.
+# По умолчанию вторая нода обязательна: иначе выкатка зеленеет, а HA-контур
+# остаётся на старой сборке. Для осознанного одиночного режима задайте SYNC_NODE2=0.
 skip_or_fail(){
   if [ "$SYNC_NODE2" = "1" ]; then
     log "$1"
@@ -80,6 +85,115 @@ skip_or_fail(){
   log "$1 — пропускаю (SYNC_NODE2=$SYNC_NODE2)"
   exit 0
 }
+
+#
+# Runtime-файлы HA. Список един для install-node*.sh и этой синхронизации:
+# если файл забыли добавить в манифест, выкатка не должна считать узел готовым.
+#
+HA_FILES=()
+load_ha_files(){
+  local file
+  [ -f "$HA_CODE_SRC/runtime-files.txt" ] || {
+    log "нет $HA_CODE_SRC/runtime-files.txt — HA-код не синхронизирован"
+    return 1
+  }
+  while IFS= read -r file; do
+    case "$file" in ''|'#'*) continue ;; esac
+    case "$file" in *[!A-Za-z0-9._-]*) log "недопустимое имя HA-файла: $file"; return 1 ;; esac
+    [ -f "$HA_CODE_SRC/$file" ] || { log "нет $HA_CODE_SRC/$file"; return 1; }
+    HA_FILES+=("$file")
+  done < "$HA_CODE_SRC/runtime-files.txt"
+  [ "${#HA_FILES[@]}" -gt 0 ] || { log "runtime-files.txt пуст"; return 1; }
+}
+
+ha_source_sha(){
+  sha256sum "$HA_CODE_SRC/$1" | cut -d' ' -f1
+}
+
+install_ha_node1(){
+  local file unit changed=0 active
+  sudo -n install -d -m 755 "$HA_CODE_DST" || return 1
+  for file in "${HA_FILES[@]}"; do
+    if sudo -n cmp -s "$HA_CODE_SRC/$file" "$HA_CODE_DST/$file"; then
+      continue
+    fi
+    sudo -n install -m 644 "$HA_CODE_SRC/$file" "$HA_CODE_DST/$file" || return 1
+    changed=1
+  done
+  for unit in webnestdev-failover.service; do
+    if ! sudo -n cmp -s "$HA_CODE_SRC/$unit" "/etc/systemd/system/$unit"; then
+      sudo -n install -m 644 "$HA_CODE_SRC/$unit" "/etc/systemd/system/$unit" || return 1
+      changed=1
+    fi
+  done
+  active=$(sudo -n systemctl is-active webnestdev-failover.service 2>/dev/null || true)
+  [ "$active" = "active" ] || changed=1
+  if [ "$changed" = "1" ]; then
+    sudo -n systemctl daemon-reload || return 1
+    sudo -n systemctl restart webnestdev-failover.service || return 1
+  fi
+  sudo -n systemctl is-active --quiet webnestdev-failover.service || return 1
+  for file in "${HA_FILES[@]}"; do
+    [ "$(ha_source_sha "$file")" = "$(sudo -n sha256sum "$HA_CODE_DST/$file" | cut -d' ' -f1)" ] || {
+      log "HA-файл $file на node-1 не совпал после установки"
+      return 1
+    }
+  done
+  [ "$(ha_source_sha webnestdev-failover.service)" = "$(sudo -n sha256sum /etc/systemd/system/webnestdev-failover.service | cut -d' ' -f1)" ] || {
+    log "unit webnestdev-failover.service на node-1 не совпал после установки"
+    return 1
+  }
+  log "HA-код node-1: ${#HA_FILES[@]} файлов, SHA подтверждён"
+}
+
+install_ha_node2(){
+  local file unit remote_tmp changed=0 remote_sum active
+  ssh2 "sudo -n install -d -m 755 '$HA_CODE_DST'" || return 1
+  for file in "${HA_FILES[@]}"; do
+    remote_sum=$(ssh2 "sudo -n sha256sum '$HA_CODE_DST/$file' 2>/dev/null | cut -d' ' -f1" || true)
+    if [ "$(ha_source_sha "$file")" = "$remote_sum" ]; then
+      continue
+    fi
+    remote_tmp="/tmp/.webnestdev-ha-$file.$$"
+    ssh2_stdin "umask 077; cat > '$remote_tmp' && sudo -n install -m 644 '$remote_tmp' '$HA_CODE_DST/$file' && rm -f '$remote_tmp'" < "$HA_CODE_SRC/$file" || return 1
+    changed=1
+  done
+  for unit in webnestdev-failover-node2.service; do
+    remote_sum=$(ssh2 "sudo -n sha256sum '/etc/systemd/system/$unit' 2>/dev/null | cut -d' ' -f1" || true)
+    if [ "$(ha_source_sha "$unit")" = "$remote_sum" ]; then
+      continue
+    fi
+    remote_tmp="/tmp/.webnestdev-ha-$unit.$$"
+    ssh2_stdin "umask 077; cat > '$remote_tmp' && sudo -n install -m 644 '$remote_tmp' '/etc/systemd/system/$unit' && rm -f '$remote_tmp'" < "$HA_CODE_SRC/$unit" || return 1
+    changed=1
+  done
+  active=$(ssh2 "sudo -n systemctl is-active webnestdev-failover-node2.service 2>/dev/null" || true)
+  [ "$active" = "active" ] || changed=1
+  if [ "$changed" = "1" ]; then
+    ssh2 "sudo -n systemctl daemon-reload && sudo -n systemctl restart webnestdev-failover-node2.service" || return 1
+  fi
+  ssh2 "sudo -n systemctl is-active --quiet webnestdev-failover-node2.service" || return 1
+  for file in "${HA_FILES[@]}"; do
+    remote_sum=$(ssh2 "sudo -n sha256sum '$HA_CODE_DST/$file' 2>/dev/null | cut -d' ' -f1" || true)
+    [ "$(ha_source_sha "$file")" = "$remote_sum" ] || {
+      log "HA-файл $file на node-2 не совпал после установки"
+      return 1
+    }
+  done
+  remote_sum=$(ssh2 "sudo -n sha256sum /etc/systemd/system/webnestdev-failover-node2.service 2>/dev/null | cut -d' ' -f1" || true)
+  [ "$(ha_source_sha webnestdev-failover-node2.service)" = "$remote_sum" ] || {
+    log "unit webnestdev-failover-node2.service на node-2 не совпал после установки"
+    return 1
+  }
+  log "HA-код node-2: ${#HA_FILES[@]} файлов, SHA подтверждён"
+}
+
+load_ha_files || exit 1
+if [ "$DRY_RUN" = "1" ]; then
+  log "dry-run: HA-код node-1 и node-2 не устанавливаю"
+else
+  install_ha_node1 || { log "HA-код node-1 не установлен"; exit 1; }
+fi
 
 [ "$SYNC_NODE2" = "0" ] && { log "SYNC_NODE2=0 — вторую ноду не трогаю"; exit 0; }
 [ -n "$IMAGE_REF" ] || skip_or_fail "IMAGE_REF не задан"
@@ -120,7 +234,10 @@ elif [ -n "$RUNNER_SCRIPT_SRC" ] && [ -f "$RUNNER_SCRIPT_SRC" ]; then
 fi
 
 if [ -n "$runner_script" ] && [ "$DRY_RUN" != "1" ]; then
-  IMAGE_REF="$IMAGE_REF" bash "$runner_script" || log "runner на этой ВМ не обновился"
+  IMAGE_REF="$IMAGE_REF" bash "$runner_script" || {
+    log "runner на node-1 не обновился — выкатка не завершена"
+    exit 1
+  }
 fi
 
 #
@@ -288,11 +405,20 @@ install_caddy_reload_node2(){
 }
 install_caddy_reload_node2
 
+# HA-код должен быть не только на node-1: иначе после падения первой ноды
+# node-2 поднимет старый контроллер. Ошибка здесь — ошибка выкатки.
+if [ "$DRY_RUN" = "1" ]; then
+  log "dry-run: HA-код node-2 не устанавливаю"
+else
+  install_ha_node2 || { log "HA-код node-2 не установлен"; exit 1; }
+fi
+
 # Runner на node-2: тот же шаг, что и на первой ноде, но скрипт выполняется на второй машине.
 if [ -n "$runner_script" ] && [ "$DRY_RUN" != "1" ]; then
   log "обновляю runner на node-2"
   if ! ssh2_stdin "IMAGE_REF='$IMAGE_REF' bash -s" < "$runner_script"; then
-    log "runner на node-2 не обновился"
+    log "runner на node-2 не обновился — выкатка не завершена"
+    exit 1
   fi
 fi
 [ "$runner_owned" = "1" ] && rm -f "$runner_script"

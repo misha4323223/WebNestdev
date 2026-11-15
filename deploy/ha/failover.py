@@ -30,6 +30,7 @@ from pathlib import Path
 
 import db_proxy
 import mws
+import pitr
 import postgres
 import regru
 import storage_quorum
@@ -49,7 +50,22 @@ PEER_NODE = os.environ.get("HA_PEER_NODE", "node-2")
 DNS_ENABLED = os.environ.get("DNS_ENABLED", "1") == "1"
 DNS_NEW_IP = os.environ.get("HA_LOCAL_PUBLIC_IP", os.environ.get("DNS_NEW_IP", "178.236.27.102"))
 DNS_OLD_IP = os.environ.get("HA_PEER_PUBLIC_IP", os.environ.get("DNS_OLD_IP", "2.59.82.143"))
-STORAGE_PATH = os.environ.get("HA_STORAGE_PATH", "").strip()
+DEFAULT_STORAGE_PATHS = (
+    "/var/lib/webnestdev/data",
+    "/var/lib/webnestdev/sandboxes",
+    "/var/lib/webnestdev/sites",
+)
+
+
+def configured_storage_paths() -> tuple[str, ...]:
+    raw = os.environ.get("HA_STORAGE_PATHS", "").strip()
+    if not raw:
+        return DEFAULT_STORAGE_PATHS
+    paths = tuple(path.strip() for path in raw.split(",") if path.strip())
+    return paths or DEFAULT_STORAGE_PATHS
+
+
+STORAGE_PATHS = configured_storage_paths()
 REQUIRE_STORAGE = os.environ.get("HA_REQUIRE_STORAGE", "1") == "1"
 START_SERVICES = os.environ.get("HA_START_SERVICES", "1") == "1"
 SWITCHOVER_TIMEOUT = float(os.environ.get("HA_SWITCHOVER_TIMEOUT_SECONDS", "180"))
@@ -149,11 +165,15 @@ def local_primary_role() -> bool | None:
         return None
 
 
-def ensure_storage_quorum() -> None:
+def ensure_storage_quorum() -> bool:
     local_primary = local_primary_role()
     if local_primary is None:
-        return
-    storage_quorum.ensure(local_primary, postgres.primary_reachable())
+        return True
+    try:
+        return storage_quorum.ensure(local_primary, postgres.primary_reachable())
+    except Exception as error:  # noqa: BLE001 - сбой quorum не должен убивать контроллер
+        LOG.exception("не удалось проверить quorum storage: %s", error)
+        return False
 
 
 def ensure_local_services(state: dict) -> None:
@@ -172,8 +192,8 @@ def ensure_local_services(state: dict) -> None:
     # Пустой локальный каталог вместо общего тома выглядит как рабочая ВМ, но
     # проекты и платформенные ключи в нём отсутствуют. Пока storage не готов,
     # API не поднимаем: storage-guard и таймер перемонтируют том сами.
-    if REQUIRE_STORAGE and STORAGE_PATH and not storage_probe(STORAGE_PATH):
-        LOG.error("общий storage %s недоступен: API не поднимаю, чтобы не работать с пустыми каталогами", STORAGE_PATH)
+    if REQUIRE_STORAGE and not storage_ready():
+        LOG.error("общий storage не готов: API не поднимаю, чтобы не работать с пустыми каталогами")
         return
     local_primary = local_primary_role()
     if local_primary is None:
@@ -276,12 +296,19 @@ def storage_probe(path: str, timeout: float = 5.0) -> bool:
 
 
 def storage_ready() -> bool:
-    if not STORAGE_PATH:
+    if not STORAGE_PATHS:
         return True
-    if storage_probe(STORAGE_PATH):
-        return True
-    LOG.error("storage %s не смонтирован или не отвечает: promotion опасен, файлы проектов могут быть пустыми", STORAGE_PATH)
-    return not REQUIRE_STORAGE
+    missing = [path for path in STORAGE_PATHS if not storage_probe(path)]
+    if missing:
+        LOG.error(
+            "storage не готов: %s; promotion опасен, файлы проектов могут быть пустыми",
+            ", ".join(missing),
+        )
+        return not REQUIRE_STORAGE
+    if REQUIRE_STORAGE and not ensure_storage_quorum():
+        LOG.error("storage quorum не применён на всех томах: promotion остановлен")
+        return False
+    return True
 
 
 def dns_pending() -> bool:
@@ -313,6 +340,16 @@ def ensure_dns(state: dict) -> None:
 
 
 def finish_failover(state: dict) -> None:
+    # Архив WAL проверяется на каждой primary: после promotion и после rejoin
+    # ошибка не должна оставаться только в журнале ручной команды.
+    archive_ok = pitr.ensure_primary_archive()
+    if state.get("archive_ready") is not archive_ok:
+        state["archive_ready"] = archive_ok
+        if archive_ok:
+            LOG.warning("PITR: WAL-архив подтверждён на primary")
+        else:
+            LOG.error("PITR: primary без WAL-архива; PITR деградирует")
+        save_state(state)
     if not postgres.can_write():
         LOG.error("локальная база после promotion не принимает записи")
         return
@@ -340,6 +377,10 @@ def switchover_controller() -> switchover.Controller:
 def tick(state: dict) -> None:
     # Сначала защищаем общий storage от split-brain, затем поднимаем API.
     ensure_storage_quorum()
+    # Архив WAL готовится на standby заранее: после promotion PostgreSQL уже
+    # нельзя перезапускать без риска для API. Если archive_mode не включился,
+    # finish_failover повторит проверку и оставит явную ошибку в журнале.
+    pitr.ensure_standby_archive()
     # Планируемое переключение идёт отдельным протоколом: старый primary не
     # считается упавшим и не должен быть выключен MWS-fencing.
     if switchover_controller().tick(state):
@@ -353,6 +394,10 @@ def tick(state: dict) -> None:
         LOG.info("локальный PostgreSQL не запущен; promotion не выполняю, API обслуживает %s", PEER_NODE)
         return
     in_recovery = not local_primary
+    if not in_recovery:
+        # После обычного старта/рестарта primary тоже проверяем архив, а не
+        # только после promotion: иначе выключенный WAL-архив останется незамеченным.
+        pitr.ensure_primary_archive()
 
     if state.get("phase") in {"done", "promoted"}:
         # После rejoin этот узел снова standby. Старое состояние done/promoted не должно
@@ -417,6 +462,13 @@ def tick(state: dict) -> None:
     if state.get("phase") != "promoting":
         return
 
+    # Повторно проверяем storage уже после fencing: когда peer подтверждённо
+    # выключен, quorum должен переключиться с auto на none. Если gluster не
+    # применил это значение, promotion оставит API без записи в общий том.
+    if not storage_ready():
+        LOG.error("storage не готов после fencing: promotion остановлен")
+        return
+
     try:
         if in_recovery:
             LOG.warning("повышаю standby PostgreSQL на %s", LOCAL_NODE)
@@ -447,7 +499,7 @@ def main() -> int:
     LOG.info(
         "контроллер запущен: local=%s, peer=%s, pg=%s:%s, storage=%s",
         LOCAL_NODE, PEER_NODE, postgres.PRIMARY_HOST, postgres.PRIMARY_PORT,
-        STORAGE_PATH or "не проверяется",
+        ", ".join(STORAGE_PATHS) or "не проверяется",
     )
     while True:
         try:

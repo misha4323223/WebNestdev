@@ -97,7 +97,10 @@ ${SLOT:+primary_slot_name = '$SLOT'}
 EOF
 
 log "starting local PostgreSQL ${PG_VERSION}/${PG_CLUSTER}"
-sudo -n pg_ctlcluster "$PG_VERSION" "$PG_CLUSTER" start
+# Штатный запуск через systemd, чтобы ExecStartPre start-guard тоже выполнился.
+# data directory уже содержит standby.signal после pg_basebackup, поэтому guard
+# разрешает старт как standby. Прямой `pg_ctlcluster start` обходил бы guard.
+sudo -n systemctl start "postgresql@${PG_VERSION}-${PG_CLUSTER}.service"
 
 for _ in $(seq 1 30); do
   if sudo -n -u postgres psql -p "$LOCAL_PORT" -tAc 'select pg_is_in_recovery()' 2>/dev/null | grep -qx t; then

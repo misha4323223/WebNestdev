@@ -10,7 +10,9 @@ install -d -m 755 "$DST"
 install -d -m 700 /etc/webnestdev-ha
 install -d -m 755 /var/lib/webnestdev-ha
 install -d -m 755 /etc/systemd/system/postgresql@17-main.service.d
-install -m 644 "$SRC/mws.py" "$SRC/regru.py" "$SRC/postgres.py" "$SRC/db_proxy.py" "$SRC/storage_quorum.py" "$SRC/control.py" "$SRC/switchover.py" "$SRC/failover.py" "$SRC/cli.py" "$SRC/standby.sh" "$SRC/pg_start_guard.py" "$SRC/pg_hba_probe.sh" "$SRC/README.md" "$DST/"
+mapfile -t HA_RUNTIME_FILES < <(sed -e 's/#.*//' -e '/^[[:space:]]*$/d' "$SRC/runtime-files.txt")
+[ "${#HA_RUNTIME_FILES[@]}" -gt 0 ] || { echo "$SRC/runtime-files.txt пуст" >&2; exit 1; }
+install -m 644 "${HA_RUNTIME_FILES[@]/#/$SRC/}" "$DST/"
 install -m 600 "$SRC/pg-guard-node1.env" /etc/webnestdev-ha/guard.env
 install -m 644 "$SRC/webnestdev-pg-guard.conf" /etc/systemd/system/postgresql@17-main.service.d/webnestdev-pg-guard.conf
 install -m 644 "$SRC/webnestdev-failover.service" /etc/systemd/system/webnestdev-failover.service

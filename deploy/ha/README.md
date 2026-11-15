@@ -6,8 +6,8 @@ live-теста — в [`docs/HA_BIDIRECTIONAL_PLAN.md`](../../docs/HA_BIDIRECTI
 Проверено 10.11.2026 на рабочей паре: текущий `switchover.py`/`control.py` установлен на
 обе ВМ, плановый switchover прошёл в обе стороны (`node-1 → node-2 → node-1`), оба rejoin
 дали streaming standby, холодный старт `node-2` поднял PostgreSQL standby, API, Caddy,
-broker и runner без ручных команд. После проверки `node-1` — primary, `node-2` — standby и
-выключена до production-запуска.
+broker и runner без ручных команд. На 15.11.2026 `node-1` — primary, `node-2` — streaming
+standby, обе ВМ включены (`node-2 power=ON`).
 
 ## Роли и адреса
 
@@ -42,11 +42,12 @@ sudo bash deploy/ha/install-node1.sh
 sudo bash deploy/ha/install-node2.sh
 ```
 
-**Важно:** image-deploy обновляет только контейнеры приложения и **не** обновляет
-`/opt/webnestdev-ha`. Если checkout на ВМ старый, установка «из него» вернёт старый
-контроллер без `switchover.py`. Перед установкой скопируйте актуальный каталог `deploy/ha`
-из рабочего дерева/релиза на ВМ и запускайте installer из этой копии. После установки
-проверьте на обеих ВМ:
+**Важно:** image-deploy обновляет контейнеры приложения и **не** обновляет
+`/opt/webnestdev-ha`. Выкатка через `deploy/scripts/node2-sync.sh` теперь синхронизирует
+runtime-файлы из `deploy/ha/runtime-files.txt` на обе ноды и сверяет SHA-256. Если
+`node-2` недоступна, выкатка по умолчанию падает; `SYNC_NODE2=0` — только осознанный
+одиночный режим (например, временно выключенная вторая нода). После установки проверьте
+на обеих ВМ:
 
 ```bash
 test -f /opt/webnestdev-ha/switchover.py && test -f /opt/webnestdev-ha/control.py
@@ -138,6 +139,27 @@ API: `GET /api/admin/nodes/switchover`, `POST /api/admin/nodes/:id/switchover` �
 `{"confirm":true}`. Питание: `GET /api/admin/nodes/:id/power`, `POST` только с
 `{"action":"on","confirm":true}`. Выключение ВМ через API не предусмотрено.
 
+## WAL-архив после promotion и rejoin
+
+Контроллер сам готовит архив на standby до promotion и проверяет его на primary
+после promotion. Используется уже установленный `/usr/local/sbin/webnestdev-pg-pitr`:
+модуль `pitr.py` не дублирует `ALTER SYSTEM`, а вызывает `webnestdev-pg-pitr setup`.
+
+- на standby при выключенном `archive_mode` выполняется `setup`, затем один
+  перезапуск `postgresql@17-main` через systemd; повторные перезапуски не делаются;
+- на primary `archive_mode` проверяется после каждого promotion; если он всё ещё
+  выключен, в журнал пишется явная ошибка, но primary не перезапускается;
+- `PG_PITR_BIN` переопределяет путь к установленному скрипту;
+- если `webnestdev-pg-pitr` отсутствует, контроллер пишет ошибку и не пытается
+  угадывать настройки.
+
+Проверка на узле:
+
+```bash
+sudo -u postgres psql -p 5433 -Atc 'show archive_mode; show archive_command;'
+systemctl is-active webnestdev-pg-basebackup.timer webnestdev-pg-wal-prune.timer
+```
+
 ## Rejoin вернувшегося узла
 
 После promotion старого primary его нельзя запускать как primary. Узел уже может
@@ -183,9 +205,23 @@ rejoin нужен, только если `node-1` снова должна ста
 - `storage_quorum.desired()` снимает кворум (`none`) и на standby, как только MWS подтвердил
   `power=OFF` peer'а. Раньше standby возвращал `None`, кворум оставался `auto`, и promotion
   упирался в `no read subvols`. Если peer включён или MWS недоступен — остаётся `auto`.
+- `storage_quorum.ensure()` теперь возвращает результат и проверяет значение после `set`.
+  Ошибка `gluster volume set` больше не теряется: promotion ждёт успешного quorum на всех
+  трёх томах.
 - `control.read()` превращает `Transport endpoint is not connected` в понятную ошибку и
-  приостанавливает failover, а `failover.storage_ready()` проверяет тип моунта и реальное
-  чтение каталога, а не только `ismount`.
+  приостанавливает failover, а `failover.storage_ready()` проверяет **все** тома из
+  `HA_STORAGE_PATHS` (по умолчанию `data`, `sandboxes`, `sites`), тип моунта и реальное
+  чтение каталога, а не только `ismount`. Проверить все три можно так:
+
+  ```bash
+  for path in /var/lib/webnestdev/{data,sandboxes,sites}; do
+    mountpoint -q "$path" && findmnt -no FSTYPE --target "$path" || echo "НЕ СМОНТИРОВАН: $path"
+  done
+  sudo gluster volume get sandboxes cluster.quorum-type
+  ```
+
+  В юнитах задан `HA_STORAGE_PATHS=/var/lib/webnestdev/data,/var/lib/webnestdev/sandboxes,/var/lib/webnestdev/sites`;
+  старый `HA_STORAGE_PATH` больше не используется для promotion-проверки.
 - `install-storage-guard.sh` ставит `webnestdev-storage.{service,timer}`: монтирование через
   systemd-юниты (а не `mount(8)`), проверка чтения с `timeout`, а при мёртвом FUSE-моунте —
   остановка держащих его контейнеров, перемонт и их запуск. При загрузке юнит идёт

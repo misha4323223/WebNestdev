@@ -29,6 +29,7 @@ ENABLED = os.environ.get("HA_STORAGE_QUORUM", "1") == "1"
 CHECK_INTERVAL = float(os.environ.get("HA_STORAGE_QUORUM_INTERVAL", "30"))
 _last_check = 0.0
 _last_desired: str | None = None
+_last_ok = True
 
 
 def _run(*args: str, timeout: int = 20) -> subprocess.CompletedProcess[str]:
@@ -80,26 +81,51 @@ def desired(local_primary: bool, peer_reachable: bool) -> str:
     return "none"
 
 
-def ensure(local_primary: bool, peer_reachable: bool) -> None:
-    global _last_check, _last_desired
+def ensure(local_primary: bool, peer_reachable: bool) -> bool:
+    """Приводит quorum всех томов к нужному значению; False — не все готовы.
+
+    False не означает, что нужно немедленно ронять цикл failover: контроллер
+    сначала проверит storage и только потом разрешит promotion. Но игнорировать
+    ошибку нельзя: с неверным quorum после выключения peer Gluster может
+    заморозить запись, и API на новой primary не заработает.
+    """
+    global _last_check, _last_desired, _last_ok
     if not ENABLED or not VOLUMES:
-        return
+        return True
     now = time.monotonic()
     target = desired(local_primary, peer_reachable)
     if target is None:
-        return
-    # MWS/gluster не дёргаем каждые 5 секунд; роль меняется редко.
+        return True
+    # MWS/gluster не дёргаем каждые 5 секунд; роль меняется редко. Неудачную
+    # попытку тоже кешируем, иначе несколько томов будут дёргать CLI на каждом тике.
     if target == _last_desired and now - _last_check < CHECK_INTERVAL:
-        return
+        return _last_ok
     _last_check = now
     _last_desired = target
+    ok = True
     for volume in VOLUMES:
         try:
             if _current(volume) == target:
                 continue
-            if _set(volume, target):
-                print(f"[storage-quorum] {volume}: cluster.quorum-type={target}", flush=True)
+            if not _set(volume, target):
+                ok = False
+                continue
+            if _current(volume) != target:
+                print(f"[storage-quorum] {volume}: значение не подтвердилось после set {target}", flush=True)
+                ok = False
+                continue
+            print(f"[storage-quorum] {volume}: cluster.quorum-type={target}", flush=True)
         except (OSError, subprocess.SubprocessError) as error:
             # gluster CLI может зависнуть на мёртвом моунте/сети. Это не повод
             # ронять весь цикл failover: promotion решит storage_ready().
             print(f"[storage-quorum] {volume}: ошибка gluster CLI: {error}", flush=True)
+            ok = False
+    _last_ok = ok
+    return ok
+
+
+def reset_for_tests() -> None:
+    global _last_check, _last_desired, _last_ok
+    _last_check = 0.0
+    _last_desired = None
+    _last_ok = True

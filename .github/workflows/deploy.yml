@@ -1069,8 +1069,8 @@ jobs:
       # `unauthorized` (вход в реестр там не настроен). Из-за этого HA-контур держался на ручной
       # выкатке: после падения первой ноды вторая поднимала старую сборку. Скрипт запускается на
       # node-1 и сам передаёт образ на node-2 по SSH (deploy/scripts/node2-sync.sh).
-      # Недоступная node-2 — не ошибка выкатки (её могли выключить); SYNC_NODE2=1 в переменных
-      # репозитория делает недоступность ошибкой.
+      # По умолчанию node-2 обязательна: недоступность — ошибка выкатки, иначе HA-контур
+      # остаётся на старом коде. Для осознанного одиночного режима задайте SYNC_NODE2=0.
       - name: Deploy to node-2 over SSH
         if: ${{ vars.DEPLOY_RUNNER == '' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'image')) }}
         env:
@@ -1080,7 +1080,7 @@ jobs:
           DEPLOY_APP_DIR: ${{ vars.DEPLOY_APP_DIR }}
           IMAGE_INPUT: ${{ inputs.image }}
           BUILT_IMAGE: ${{ needs.build.outputs.image }}
-          SYNC_NODE2: ${{ vars.SYNC_NODE2 || 'auto' }}
+          SYNC_NODE2: ${{ vars.SYNC_NODE2 || '1' }}
           CUSTOM_DOMAINS_ENABLED: ${{ vars.CUSTOM_DOMAINS_ENABLED || secrets.CUSTOM_DOMAINS_ENABLED || '1' }}
         run: |
           set -euo pipefail
@@ -1131,13 +1131,14 @@ jobs:
             "$DEPLOY_USER@$DEPLOY_HOST" \
             "rm -rf '$STAGING_DIR'" || true
 
+      # Тот же обязательный контракт для self-hosted runner.
       - name: Deploy to node-2 (self-hosted runner)
         if: ${{ vars.DEPLOY_RUNNER != '' && (github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'image')) }}
         env:
           DEPLOY_APP_DIR: ${{ vars.DEPLOY_APP_DIR }}
           IMAGE_INPUT: ${{ inputs.image }}
           BUILT_IMAGE: ${{ needs.build.outputs.image }}
-          SYNC_NODE2: ${{ vars.SYNC_NODE2 || 'auto' }}
+          SYNC_NODE2: ${{ vars.SYNC_NODE2 || '1' }}
           CUSTOM_DOMAINS_ENABLED: ${{ vars.CUSTOM_DOMAINS_ENABLED || secrets.CUSTOM_DOMAINS_ENABLED || '1' }}
         run: |
           set -euo pipefail

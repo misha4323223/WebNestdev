@@ -56,3 +56,36 @@ jobs:
 
       - name: Build web
         run: npm run build
+
+  infrastructure:
+    # Проверки, которым нужен Docker или Python-окружение, но не нужен полный Node-образ:
+    # песочница агента их не запускает, поэтому CI — единственное автоматическое место.
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      # Только для `docker compose config`; это не production-секреты.
+      POSTGRES_PASSWORD: ci-postgres-password
+      WEBNESTDEV_ENCRYPTION_KEY: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      WEBNESTDEV_ALLOWED_ORIGINS: http://127.0.0.1:3000
+      NODE2_PG_PASSWORD: ci-node2-password
+      NODE1_RUNNER_TOKEN: ci-runner-token
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Check HA shell syntax
+        run: bash -n deploy/scripts/node2-sync.sh deploy/ha/install-node1.sh deploy/ha/install-node2.sh deploy/ha/standby.sh
+
+      - name: Test HA controller and storage scripts
+        # Тесты не требуют MWS/cryptography: их зависимости подменяются в самих тестах.
+        run: python3 -m unittest discover -p 'test_*.py'
+        working-directory: deploy/ha
+
+      - name: Validate node-1 compose configuration
+        run: docker compose -f docker-compose.yml -f deploy/node1/docker-compose.override.yml config --quiet
+
+      - name: Validate node-2 compose configuration
+        run: docker compose -f docker-compose.yml -f deploy/node2/docker-compose.override.yml config --quiet

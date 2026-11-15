@@ -25,7 +25,7 @@ Environment=BROKER_CONTAINER=src-docker-broker-1
 Environment=RUNNER_CONTAINER=node1-runner
 Environment=HA_LOCAL_PUBLIC_IP=2.59.83.250
 Environment=HA_PEER_PUBLIC_IP=2.59.80.174
-Environment=HA_STORAGE_PATH=/var/lib/webnestdev/sandboxes
+Environment=HA_STORAGE_PATHS=/var/lib/webnestdev/data,/var/lib/webnestdev/sandboxes,/var/lib/webnestdev/sites
 Environment=HA_REQUIRE_STORAGE=1
 Environment=HA_CONTROL_PATH=/var/lib/webnestdev/data/ha-switchover.json
 Environment=HA_SWITCHOVER_TIMEOUT_SECONDS=180

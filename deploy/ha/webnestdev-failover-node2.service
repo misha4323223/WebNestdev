@@ -29,7 +29,7 @@ Environment=DNS_DOMAIN=nestdev.ru
 Environment=DNS_NAMES=@,www,host,*.host,*.preview
 # DNS указывает на NLB, а не на конкретную ВМ: при failover записи не меняются.
 Environment=DNS_ENABLED=0
-Environment=HA_STORAGE_PATH=/var/lib/webnestdev/sandboxes
+Environment=HA_STORAGE_PATHS=/var/lib/webnestdev/data,/var/lib/webnestdev/sandboxes,/var/lib/webnestdev/sites
 Environment=HA_REQUIRE_STORAGE=1
 Environment=HA_CONTROL_PATH=/var/lib/webnestdev/data/ha-switchover.json
 Environment=HA_SWITCHOVER_TIMEOUT_SECONDS=180

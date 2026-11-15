@@ -1,0 +1,16 @@
+# Файлы, которые должны совпадать в /opt/webnestdev-ha на обеих нодах.
+# Список читают install-node*.sh и deploy/scripts/node2-sync.sh.
+mws.py
+regru.py
+postgres.py
+db_proxy.py
+storage_quorum.py
+pitr.py
+control.py
+switchover.py
+failover.py
+cli.py
+standby.sh
+pg_start_guard.py
+pg_hba_probe.sh
+README.md
