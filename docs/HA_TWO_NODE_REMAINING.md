@@ -5,7 +5,7 @@
 и [`deploy/ha/README.md`](../deploy/ha/README.md). Здесь только то, что ещё не закрыто, и
 границы, чтобы не делать уже сделанное.
 
-**Актуально на 15.11.2026, 17:20 UTC, сборка `4556b09`.** `node-1` — primary PostgreSQL,
+**Актуально на 15.11.2026, 20:45 UTC, сборка `79c87ed`.** `node-1` — primary PostgreSQL,
 `node-2` — streaming standby, обе ВМ включены. Проверка после выкатки: API на обеих нодах
 `200`, `pg_stat_replication` — `1|0`, `archive_mode=on`, публичный
 `https://nestdev.ru/api/ready` — `200`. HAProxy уже ходит в primary напрямую на `5433`, но
