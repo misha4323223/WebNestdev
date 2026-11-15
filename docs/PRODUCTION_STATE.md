@@ -592,8 +592,9 @@ backup `20261110T223005Z.tar.gz` (17 МБ) и `latest.txt`, оба объект�
 исправленный `pg-pitr-s3.sh` стоит на обеих нодах. Вывоз и `restore-s3` работают.
 
 Осталось по 4.4: вынос primary на отдельный от API инстанс. TLS на участке
-HAProxy ↔ PostgreSQL реализован в рабочем дереве (`deploy/ha/pg_tls.sh`,
-`db_proxy.py`, `standby.sh`), но в прод ещё не выкачен; порядок — в
+HAProxy ↔ PostgreSQL выкачен 16.11.2026 в сборке `4556b09` (`deploy/ha/pg_tls.sh`,
+`db_proxy.py`, `standby.sh`), но ещё не включён: сертификат не создан, HAProxy ходит в
+peer `5433` по plaintext. Порядок включения — в
 [`HA_TWO_NODE_REMAINING.md`](HA_TWO_NODE_REMAINING.md).
 Выкатка пока не ставит `pg-pitr.sh` автоматически — установка выполнена через `MODE=setup`;
 перенос установки в `vm-deploy.sh` — следующий шаг.
@@ -788,11 +789,12 @@ Purge при публикации автоматизирован (см. ниже
 Все сайты, старые и новые, уже попадают в CDN автоматически за счёт wildcard-CNAME и одного
 ресурса `hosting`; отдельный ресурс на сайт не создаётся.
 
-TLS на участке HAProxy ↔ PostgreSQL реализован в рабочем дереве: `deploy/ha/pg_tls.sh`
-создаёт сертификат и CA, `db_proxy.py` ходит в peer напрямую на `5433` с
-`ssl verify required`, `standby.sh` — с `sslmode=verify-full`. В прод ещё не выкачен;
-порядок и критерии — в [`HA_TWO_NODE_REMAINING.md`](HA_TWO_NODE_REMAINING.md). Осталось
-проверить TLS после выкатки и `restore-s3` на текущем образе.
+TLS на участке HAProxy ↔ PostgreSQL выкачен 16.11.2026 в сборке `4556b09`:
+`deploy/ha/pg_tls.sh` создаёт сертификат и CA, `db_proxy.py` ходит в peer напрямую на `5433`
+с `ssl verify required`, `standby.sh` — с `sslmode=verify-full`. TLS ещё не включён: сертификат
+не создан, текущий peer-трафик plaintext. Порядок и критерии — в
+[`HA_TWO_NODE_REMAINING.md`](HA_TWO_NODE_REMAINING.md). Осталось включить TLS и проверить
+`restore-s3` на текущем образе.
 
 ## 17. 12.11.2026: hybrid preview pilot и синхронизация node-2
 

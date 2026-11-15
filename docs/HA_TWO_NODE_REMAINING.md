@@ -5,12 +5,13 @@
 и [`deploy/ha/README.md`](../deploy/ha/README.md). Здесь только то, что ещё не закрыто, и
 границы, чтобы не делать уже сделанное.
 
-**Актуально на 16.11.2026.** `node-1` — primary PostgreSQL, `node-2` — streaming standby,
-обе ВМ включены. Read-only проверка: API на обеих нодах `200`, `pg_stat_replication` —
-`1|0`, `archive_mode=on`, публичный `https://nestdev.ru/api/ready` — `200`. TLS-идентичности
-пока нет: `ssl=on` с `snakeoil`, HBA на `host`, HAProxy без TLS, `ha-status` ещё не пишется
-(код наблюдаемости не выкачен). Публичный ingress идёт через NLB, DNS при переключении не
-меняется.
+**Актуально на 16.11.2026, сборка `4556b09`.** `node-1` — primary PostgreSQL,
+`node-2` — streaming standby, обе ВМ включены. Проверка после выкатки: API на обеих нодах
+`200`, `pg_stat_replication` — `1|0`, `archive_mode=on`, публичный
+`https://nestdev.ru/api/ready` — `200`. HAProxy уже ходит в primary напрямую на `5433`, но
+**TLS ещё не включён**: на обеих нодах `ssl=on` с `snakeoil`, HBA на `host`, сертификат
+`pg_tls.sh` не создан. `ha-status-node-1.json` и `ha-status-node-2.json` уже пишутся.
+Публичный ingress идёт через NLB, DNS при переключении не меняется.
 
 ## Уже реализовано — не дублировать
 
@@ -31,19 +32,24 @@
 
 ## Осталось
 
-### 1. TLS на участке HAProxy ↔ PostgreSQL — код готов, не выкачен
+### 1. TLS на участке HAProxy ↔ PostgreSQL — код выкачен, TLS не включён
 
-**Сделано в рабочем дереве:** `deploy/ha/pg_tls.sh`, TLS-backend в `db_proxy.py`, прямая
-цель peer `5433`, `sslmode=verify-full` в `standby.sh`, `hostssl` в `pg_hba_probe.sh` и
-передача сертификата через `node2-sync.sh`. Локальные тесты HA и `bash -n` проходят; на
-живых нодах ещё не применялось.
+**Выкачено 16.11.2026, сборка `4556b09`:** `deploy/ha/pg_tls.sh`, TLS-backend в
+`db_proxy.py`, прямая цель peer `5433`, `sslmode=verify-full` в `standby.sh`, `hostssl` в
+`pg_hba_probe.sh` и передача сертификата через `node2-sync.sh`. Локальные тесты HA и
+`bash -n` проходят; на обеих нодах лежит новый runtime-код.
 
-**Сейчас (проверено read-only 16.11.2026):** API ходит в локальный HAProxy `:5432`,
-HAProxy — в локальный PostgreSQL `127.0.0.1:5433` или в HAProxy peer `:5432`; трафик между
-нодами не шифруется. На обеих нодах `ssl=on`, но используется системный
+**Сейчас (проверено после выкатки):** API ходит в локальный HAProxy `:5432`,
+HAProxy — в локальный PostgreSQL `127.0.0.1:5433` или в PostgreSQL peer напрямую на `5433`
+(plaintext, без TLS). На обеих нодах `ssl=on`, но используется системный
 `/etc/ssl/certs/ssl-cert-snakeoil.pem` с пустым `ssl_ca_file`; `pg_hba` остаётся на
 `host`, HAProxy — без `ssl`. На `node-2` в старом `/var/lib/postgresql/tls` лежат пустые
 `ca.crt`/`server.crt`; новый скрипт их не использует.
+
+При выкатке найден и исправлен пропуск: прямому peer-маршруту нужно HBA-правило
+`webnestdev` с приватного IP соседа, а не только `replicator`. Оно добавлено в
+`pg_hba_probe.sh`; на `node-1` применено вручную и проверено через `/api/ready` на
+`node-2`.
 
 **Решение:** PostgreSQL `ssl=on`, самоподписанный сертификат с SAN для
 `host.docker.internal`, `127.0.0.1`, `10.0.0.4`, `10.0.0.5`; HAProxy подключается к
@@ -62,15 +68,16 @@ HAProxy → PostgreSQL) либо расшифровка на промежуто�
 `pg_hba`; не заменять пустые файлы на `node-2` нулевыми сертификатами; не переводить HBA
 на `hostssl` при `ssl=off`.
 
-### 2. HA-наблюдаемость — код готов, не выкачен
+### 2. HA-наблюдаемость — выкачена и работает
 
-**Сделано в рабочем дереве:** `deploy/ha/status.py` пишет снимок роли/лага/фазы в общий
-`data/ha-status-<node>.json`; `server/src/health/ha.ts` добавляет проверки `replication`,
-`standby`, `controller` в существующие алерты и админ-снимок. Локальные тесты проходят.
+**Выкачено 16.11.2026, сборка `4556b09`:** `deploy/ha/status.py` пишет снимок
+роли/лага/фазы в общий `data/ha-status-<node>.json`; `server/src/health/ha.ts` добавляет
+проверки `replication`, `standby`, `controller` в существующие алерты и админ-снимок.
+Локальные тесты проходят.
 
-**Сейчас:** `alerts.ts` видит диск/память/swap/архивацию/backup, но не видит лаг
-репликации, отсутствие standby, состояние контроллера и NLB. `/api/admin/infra` показывает
-хост и БД, но не HA-пару.
+**Сейчас:** снимки обеих нод обновляются, `node-1` — `primary/done`, `node-2` —
+`standby/passive`, `replicationStreams=1`, лаг `0`. `alerts.ts` видит лаг репликации,
+отсутствие standby и состояние контроллера; `/api/admin/infra` показывает HA-пару.
 
 **Решение:** один host-side снимок состояния (роль, LSN/лаг, `pg_stat_replication`,
 `pg_stat_wal_receiver`, `archive_ready`, storage, последний tick контроллера) в общий
