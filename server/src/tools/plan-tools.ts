@@ -1,5 +1,6 @@
 import { registerTool } from "../tool-registry.js";
 import type { PlanItem, PlanItemStatus, PlanState } from "../types.js";
+import { milestoneProgress, normalizeMilestonePlan } from "../agent/orchestrator/milestones.js";
 
 const MAX_ITEMS = 24;
 const MAX_TITLE_CHARS = 200;
@@ -84,6 +85,66 @@ export function normalizePlan(input: unknown): PlanState {
   if (items.length === 0) throw new Error('Each plan step needs a title. Use {"items":[{"title":"Короткий шаг","status":"pending"}]}');
   return { items, updatedAt: new Date().toISOString() };
 }
+
+const PLAN_MILESTONES_PARAMETERS = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    milestones: {
+      type: "array",
+      minItems: 3,
+      maxItems: 7,
+      description: "The complete ordered milestone list. Send the full list every time, not a diff.",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["title", "scope", "files", "tests", "definitionOfDone"],
+        properties: {
+          title: { type: "string", description: "Short milestone title shown to the user" },
+          scope: { type: "string", description: "What is included; what is explicitly not" },
+          files: { type: "array", minItems: 1, items: { type: "string" }, description: "Files or modules expected to change" },
+          tests: { type: "array", minItems: 1, items: { type: "string" }, description: "Commands or checks that prove the milestone" },
+          definitionOfDone: { type: "string", description: "Concrete, verifiable completion condition" },
+          estimatedTokens: { type: "number", minimum: 1, maximum: 2_000_000, description: "Optional run budget estimate" },
+          status: { type: "string", enum: ["pending", "in_progress", "done"], description: "Milestone status" },
+        },
+      },
+    },
+  },
+  required: ["milestones"],
+};
+
+/**
+ * Large tasks are split into run-sized milestones. The plan items mirror the milestones, so the
+ * existing plan panel and commit subject keep working without a second UI structure.
+ */
+registerTool({
+  name: "plan.milestones",
+  description:
+    "Publish or update a milestone plan for a large task. Use it instead of plan.update when the work spans more than one run. " +
+    "Send 3–7 ordered milestones, each with scope, files, tests and a concrete definitionOfDone; send the complete list every time. " +
+    "Exactly one milestone is in_progress. Finish only the current milestone, mark it done, and stop; the next milestone starts in the next run. " +
+    "Input: {milestones:[{title,scope,files:string[],tests:string[],definitionOfDone,estimatedTokens?,status?:'pending'|'in_progress'|'done'}]}.",
+  parameters: PLAN_MILESTONES_PARAMETERS,
+  execute: async (input) => {
+    const plan = normalizeMilestonePlan(input);
+    const progress = milestoneProgress(plan);
+    const current = plan.milestones?.find(item => item.status === "in_progress") ?? null;
+    const next = current
+      ? plan.milestones?.slice(plan.milestones.indexOf(current) + 1).find(item => item.status === "pending") ?? null
+      : plan.milestones?.find(item => item.status === "pending") ?? null;
+    return {
+      ok: true,
+      plan,
+      progress,
+      current: current ? { title: current.title, status: current.status, definitionOfDone: current.definitionOfDone } : null,
+      next: next?.title ?? null,
+      reminder: current
+        ? "Work only on the current milestone, mark it done when its definition of done is verified, then stop and summarize. Do not start the next milestone in this run."
+        : "No milestone is in_progress: this is a checkpoint. Do not start another milestone in this run; summarize and finish.",
+    };
+  },
+});
 
 registerTool({
   name: "plan.update",

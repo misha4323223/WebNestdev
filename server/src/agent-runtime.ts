@@ -10,12 +10,15 @@ import { executeTool } from "./agent/tool-executor.js";
 import { inlineAttachedImages, visionNotice } from "./agent/attachments.js";
 import { runBudgetedStep,type StepBudget } from "./agent/step-runner.js";
 import { createWorkingMemory,recordWorkingChange,setWorkingCheck,setWorkingPlan,withWorkingState } from "./agent/working-memory.js";
+import { currentMilestone,milestoneCheckpointNotice,milestoneTransition } from "./agent/orchestrator/milestones.js";
+import { reviewChanges,reviewFeedback } from "./agent/reviewer.js";
 import type { EventSink } from "./agent/types.js";
 import { createReasoningBlock } from "./agent/reasoning-blocks.js";
 import { selectToolNames } from "./agent/tool-catalog.js";
 import { createScoutRunner,SCOUT_BUDGET_TOKENS,SCOUT_MAX_MESSAGES } from "./agent/scout.js";
 import { resolveReasoning } from "./agent/reasoning-policy.js";
 import { agentStepLimit,contextBudgetTokensFor,contextMaxMessagesFor,boundToolOutput,DEFAULT_CHARS_PER_TOKEN } from "./agent/context-budget.js";
+import { agentFeatureEnabled } from "./agent/features.js";
 import { planQaScenario } from "./qa/scenario-planner.js";
 import { analyzeChangedFiles } from "./qa/diff-analyzer.js";
 import { parseChangedSource, type ParsedChange } from "./qa/change-parser.js";
@@ -26,7 +29,8 @@ import { commitSubject } from "./changes/commit-subject.js";
  * Tools that change the project and therefore trigger the automatic verification cycle.
  * `database.env` writes the project's connection string, so it belongs here too.
  */
-const MUTATING_TOOLS=new Set(["fs.write","fs.edit","fs.rename","fs.delete","terminal.exec","npm.install","pip.install","net.download","database.env"]);
+const MUTATING_TOOLS=new Set(["fs.write","fs.edit","fs.rename","fs.delete","terminal.exec","terminal.start","npm.install","pip.install","net.download","database.env"]);
+const MAX_REVIEW_ATTEMPTS=2;
 
 /** A short fact about a mutation for the run's working memory — never the file body. */
 function mutationSummary(name:string,args:Record<string,unknown>,output:unknown){
@@ -137,6 +141,10 @@ export function changesSomething(name:string,input:unknown){
     const command=(input as {command?:unknown}|null)?.command;
     return typeof command!=="string"||!isReadOnlyCommand(command);
   }
+  // Memory diff/skeleton/read are orientation; only write changes the project.
+  if(name==="project.memory"){
+    return (input as {action?:unknown}|null)?.action==="write";
+  }
   if(MUTATING_TOOLS.has(name)||PLANNER_FORBIDDEN_TOOLS.has(name))return true;
   // Внешний запрос — чтение только для GET/HEAD: POST к чужому API меняет состояние вне проекта,
   // а планировщик обещал ничего не менять.
@@ -146,7 +154,7 @@ export function changesSomething(name:string,input:unknown){
   return method.toUpperCase()!=="GET"&&method.toUpperCase()!=="HEAD";
 }
 
-import { commandSucceeded,countVerificationFailure,MAX_VERIFICATION_ATTEMPTS,routeFromMutation,shouldRunBrowserRuntime,verificationBuildCommand,verificationFailureSummary } from "./agent/verification-policy.js";
+import { commandSucceeded,countVerificationFailure,MAX_VERIFICATION_ATTEMPTS,routeFromMutation,shouldRunBrowserRuntime,testVerificationOutcome,verificationBuildCommand,verificationFailureSummary } from "./agent/verification-policy.js";
 import { getPlatformProviderConfig } from "./provider/platform-provider.js";
 import { resolvePaidPlatformModel, type PaidPlatformModelChoice } from "./platform/platform-models.js";
 import { createFreeModelRoute } from "./provider/free-model.js";
@@ -218,7 +226,20 @@ export class AgentRuntime {
       usageModelId=freeRoute?"nestdev-air":platformChoice?.id??"nestdev";
       usageCreditRates=freeRoute||request.plan==="free"?null:platformChoice?.creditRates??mainCreditRates();
       const provider=freeRoute?.provider??createProvider(config??platformConfig??undefined);
-      const projectContext=await buildProjectContext(project,request.userId);
+      const mode=request.mode==="planner"?"planner":"developer";
+      // Карта репозитория — экспериментальный путь этапа 1. Флаг читается один раз на запуск:
+      // при выключенном AGENT_REPO_MAP контекст, подбор файлов и каталог инструментов идут старым путём.
+      const repoMap=agentFeatureEnabled("repoMap");
+      const testRunner=agentFeatureEnabled("testRunner");
+      const archMemory=agentFeatureEnabled("archMemory");
+      const milestones=agentFeatureEnabled("milestones");
+      const reviewerEnabled=agentFeatureEnabled("reviewer");
+      const projectContext=await buildProjectContext(project,request.userId,{
+        repoMap,
+        archMemory,
+        // Планировщик обещал не менять проект: даже служебный кэш карты ему не пишем.
+        useDiskCache:mode!=="planner",
+      });
       // История — это сохранённый разговор, а не копия из браузера: в ней лежат результаты
       // инструментов, она не растёт от длины переписки в панели и не расходится с тем, что
       // пользователь видит в чате. Присланные сообщения остаются запасным путём для запуска,
@@ -236,7 +257,9 @@ export class AgentRuntime {
       const activeSavedPlan=savedPlan&&Array.isArray(savedPlan.items)&&savedPlan.items.some(item=>item.status!=="done")?savedPlan:undefined;
       const working=createWorkingMemory(task,activeSavedPlan);
       working.planFromPreviousRun=Boolean(activeSavedPlan);
-      const mode=request.mode==="planner"?"planner":"developer";
+      // Kill switch: a plan written while AGENT_MILESTONES was on must not keep milestone
+      // instructions in the prompt after the flag is turned off.
+      if(!milestones&&working.plan?.milestones)working.plan={...working.plan,milestones:undefined};
       // Старые клиенты могли не присылать глубину: для них работает автоматический выбор.
       const requestedReasoning=request.reasoning??"auto";
       // Первый запуск нового проекта: окно планирования просит только вопросы и резюме,
@@ -244,7 +267,11 @@ export class AgentRuntime {
       const planning=mode==="planner"&&request.planning===true;
       // Подбор файлов по задаче — работа для проекта с кодом; в планировании нового проекта
       // он только добавляет пустой контекст и задерживает первый вопрос.
-      const relevantFiles=planning?"":await retrieveRelevantFiles(request.projectId,request.userId,task);
+      const relevantFiles=planning?"":await retrieveRelevantFiles(request.projectId,request.userId,task,{
+        repoMap,
+        // Планировщик обещал не менять проект: даже служебный кэш карты ему не пишем.
+        useDiskCache:mode!=="planner",
+      });
       // Браузерная проверка — разрешение на этот запуск, а не свойство тарифа. Выключенная
       // проверка отключает и автоматическую Chromium-QA после правок.
       const browserCheckEnabled=request.browserCheck===true;
@@ -255,6 +282,10 @@ export class AgentRuntime {
         task,
         webSearch:request.webSearch===true,
         browserCheck:browserCheckEnabled,
+        repoMap,
+        testRunner,
+        archMemory,
+        milestones,
       });
       // Остановленный в прошлый раз запуск не оставляет ответа на просьбу пользователя, и она
       // выглядит для модели действующей задачей. Заметка закрывает такой ход, и новое сообщение
@@ -352,6 +383,9 @@ export class AgentRuntime {
       // The plan is what the user watches during a long run, so it is tracked per run.
       let planSeen=Boolean(activeSavedPlan?.items.length);
       let planNudged=false;
+      let milestoneClosed=false;
+      let milestoneNoticeShown=false;
+      let reviewAttempts=0;
       const changedFiles=new Set<string>();
       const parsedChanges:ParsedChange[]=[];
       // A model can get stuck repeating one failing call. The message is not a hard stop: it names
@@ -395,14 +429,18 @@ export class AgentRuntime {
 
       const runVerification=async (browserRuntime:boolean,routes:string[],checkTypeScript=false)=>{
         const buildCommand=await projectBuildCommand(request.projectId,request.userId);
+        // Typecheck → build → tests → preview → HTTP → browser. Tests come after a successful
+        // build so a missing dependency does not produce a second, less useful failure log.
         const verifyCalls=[
           ...(checkTypeScript?[{id:randomUUID(),name:"project.check",arguments:{typecheck:true,lint:false}}]:[]),
           ...(buildCommand?[{id:randomUUID(),name:"terminal.exec",arguments:{command:buildCommand}}]:[]),
+          ...(testRunner?[{id:randomUUID(),name:"project.test",arguments:{changed:[...changedFiles]}}]:[]),
           {id:randomUUID(),name:"preview.start",arguments:{}},
           {id:randomUUID(),name:"project.verify",arguments:{path:routes[0]??"/"}},
           ...(browserRuntime?routes.map(path=>({id:randomUUID(),name:"browser.runtime",arguments:{path}})):[]),
         ];
-        const qa={build:!buildCommand,preview:false,ssr:false,browser:browserRuntime?false:true};
+        let testsStatus:"off"|"skipped"|"passed"|"failed"=testRunner?"skipped":"off";
+        const qa={build:!buildCommand,tests:!testRunner,preview:false,ssr:false,browser:browserRuntime?false:true};
         // Verification is the runtime's own turn, but its tool results still need a call before
         // them: a strict OpenAI/DeepSeek request rejects a tool message without an assistant
         // tool_call. One synthetic turn covers every check; skipped checks get a paired result too.
@@ -445,6 +483,18 @@ export class AgentRuntime {
                 skipRemaining(verifyCall.id,lastVerificationFailure||"сборка не прошла");
                 return false;
               }
+            }
+            if(verifyCall.name==="project.test"){
+              testsStatus=testVerificationOutcome(output);
+              qa.tests=testsStatus!=="failed";
+              if(testsStatus==="failed"){
+                lastVerificationFailure=verificationFailureSummary(output)||lastVerificationFailure;
+                setWorkingCheck(working,"проверка","ошибка");
+                setWorkingCheck(working,"тесты","ошибка");
+                skipRemaining(verifyCall.id,lastVerificationFailure||"тесты не прошли");
+                return false;
+              }
+              setWorkingCheck(working,"тесты",testsStatus==="skipped"?"не настроены":"пройдены");
             }
             if(verifyCall.name==="preview.start"){
               qa.preview=Boolean((output as {running?:boolean;ok?:boolean}).running??(output as {ok?:boolean}).ok);
@@ -489,10 +539,12 @@ export class AgentRuntime {
         }
         setWorkingCheck(working,"проверка","пройдена");
         setWorkingCheck(working,"сборка",buildCommand?"пройдена":"не требуется");
+        if(testRunner)setWorkingCheck(working,"тесты",testsStatus==="passed"?"пройдены":"не настроены");
         setWorkingCheck(working,"превью","запущено");
         setWorkingCheck(working,"SSR","пройден");
         if(browserRuntime)setWorkingCheck(working,"браузер","пройден");
-        messages.push({role:"system",content:"QA VERIFICATION PASSED: TS="+(checkTypeScript?"CHECKED":"SKIPPED (no TypeScript files changed)")+", BUILD="+(buildCommand?"PASS":"SKIPPED (the project declares no build script)")+", PREVIEW=PASS, SSR=PASS"+(browserRuntime?", BROWSER=PASS":"")});
+        const testsMessage=!testRunner?"SKIPPED (test runner off)":testsStatus==="passed"?"PASS":"SKIPPED (no test script)";
+        messages.push({role:"system",content:"QA VERIFICATION PASSED: TS="+(checkTypeScript?"CHECKED":"SKIPPED (no TypeScript files changed)")+", BUILD="+(buildCommand?"PASS":"SKIPPED (the project declares no build script)")+", TESTS="+testsMessage+", PREVIEW=PASS, SSR=PASS"+(browserRuntime?", BROWSER=PASS":"")});
         return true;
       };
 
@@ -564,6 +616,44 @@ export class AgentRuntime {
             continue;
           }
 
+          // Reviewer runs only after verification has passed, on a clean context and with the real
+          // worktree diff. A failure is fed back as an actionable system message; the model fixes it
+          // and the normal verification cycle runs again. Small changes do not pay for a full review.
+          if(reviewerEnabled&&mode==="developer"&&changedFiles.size){
+            let review: Awaited<ReturnType<typeof reviewChanges>>=null;
+            try{
+              review=await reviewChanges({
+                projectId:request.projectId,userId:request.userId,runId,request,provider,model,
+                task,changedFiles:[...changedFiles],checks:working.checks,
+                ...(working.plan?{plan:working.plan}:{}),
+                ...(signal?{signal}:{}),
+              });
+            }catch(error){
+              if(signal?.aborted)throw new Error("Запуск агента отменён");
+              console.error("Reviewer failed",error);
+              setWorkingCheck(working,"ревью","недоступно");
+            }
+            if(signal?.aborted)throw new Error("Запуск агента отменён");
+            if(review){
+              usageTotals.promptTokens+=review.usage.promptTokens;
+              usageTotals.completionTokens+=review.usage.completionTokens;
+              usageTotals.cachedPromptTokens+=review.usage.cachedPromptTokens;
+              usageTotals.cacheWritePromptTokens+=review.usage.cacheWritePromptTokens;
+              usageTotals.estimated=usageTotals.estimated||review.usage.estimated;
+              if(review.verdict==="fail"){
+                const errorFinding=review.findings.find(item=>item.severity==="error");
+                if(reviewAttempts+1>=MAX_REVIEW_ATTEMPTS){
+                  throw new Error("Ревью не пройдено после "+MAX_REVIEW_ATTEMPTS+" попыток"+(errorFinding?": "+errorFinding.title:": "+review.summary));
+                }
+                reviewAttempts++;
+                setWorkingCheck(working,"ревью","ошибка");
+                messages.push({role:"system",content:reviewFeedback(review)});
+                continue;
+              }
+              setWorkingCheck(working,"ревью","пройдено");
+            }
+          }
+
           const text=result.text||"Модель не вернула ответ.";
           if(!result.text)emit({type:"message.delta",runId,delta:text});
           await persist([{role:"assistant",content:text,...(result.reasoning?{reasoning:result.reasoning}:{}),...(reasoningBlocks?{reasoningBlocks}:{})}]);
@@ -616,6 +706,25 @@ export class AgentRuntime {
             noteToolFailure(call,true);
             continue;
           }
+          // A milestone plan is authoritative for the run. plan.update would drop its metadata and
+          // make the checkpoint unenforceable, so the model must use plan.milestones instead.
+          if(milestones&&working.plan?.milestones?.length&&call.name==="plan.update"){
+            const refusal={error:"Активен milestone-план. Чтобы изменить этапы, используйте plan.milestones с полным списком; plan.update его не заменяет."};
+            await finishTool(call,refusal);
+            messages.push({role:"tool",content:JSON.stringify(refusal),tool_call_id:call.id});
+            noteToolFailure(call,true);
+            continue;
+          }
+          // The checkpoint is a hard stop for changes, not just a sentence in the prompt. Reads and
+          // verification remain available so the model can summarize and the run can finish cleanly.
+          if(milestoneClosed&&(call.name==="plan.update"||call.name==="plan.milestones"||changesSomething(call.name,call.arguments))){
+            const refusal={error:"MILESTONE CHECKPOINT: текущий этап завершён. Не начинайте следующий milestone и не меняйте проект в этом запуске; закончите ответом и дайте пользователю продолжить."};
+            await finishTool(call,refusal);
+            messages.push({role:"tool",content:JSON.stringify(refusal),tool_call_id:call.id});
+            noteToolFailure(call,true);
+            if(!milestoneNoticeShown){milestoneNoticeShown=true;messages.push({role:"system",content:milestoneCheckpointNotice(working.plan)});}
+            continue;
+          }
           try{
             if(call.name==="browser.scenario")resetScenarioAttempts(call.arguments);
             const output=await executeTool(call,context);
@@ -645,15 +754,31 @@ export class AgentRuntime {
               }
             }
 
-            if(call.name==="plan.update"){
+            if(call.name==="plan.update"||call.name==="plan.milestones"){
               const plan=(output as {plan?:PlanState}).plan;
               if(plan){
+                const previousPlan=working.plan;
                 planSeen=true;
                 setWorkingPlan(working,plan);
                 emit({type:"plan.updated",runId,plan});
                 if(request.conversationId){
                   try{await saveConversationPlan(request.conversationId,plan);}
                   catch(error){console.error("Failed to persist the plan",error);}
+                }
+                if(call.name==="plan.milestones"){
+                  const transition=milestoneTransition(previousPlan,plan);
+                  // A single update can mark the old milestone done and the next one in_progress.
+                  // That is a resume transition, but it happened inside this run: close the run here
+                  // and let the next run start the milestone that is now persisted as in_progress.
+                  if(transition.closed){
+                    milestoneClosed=true;
+                    if(!milestoneNoticeShown){
+                      milestoneNoticeShown=true;
+                      messages.push({role:"system",content:transition.advanced
+                        ? "MILESTONE CHECKPOINT: the current milestone changed in this run. Stop changing the project; «"+currentMilestone(plan)!.title+"» starts in a new run."
+                        : milestoneCheckpointNotice(plan)});
+                    }
+                  }
                 }
               }
             }

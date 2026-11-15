@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { commandSucceeded,countVerificationFailure,MAX_VERIFICATION_ATTEMPTS,routeFromMutation,shouldRunBrowserRuntime,verificationBuildCommand,verificationFailureSummary } from "./verification-policy.js";
+import { commandSucceeded,countVerificationFailure,MAX_VERIFICATION_ATTEMPTS,routeFromMutation,shouldRunBrowserRuntime,testVerificationOutcome,verificationBuildCommand,verificationFailureSummary } from "./verification-policy.js";
 
 test("routeFromMutation maps common Next.js page files to concrete smoke-test routes", () => {
   assert.equal(routeFromMutation("fs.write", { path: "pages/index.tsx" }), "/");
@@ -22,6 +22,14 @@ test("commandSucceeded rejects missing, failed, and signaled command results", (
   assert.equal(commandSucceeded({ ok: false, exitCode: 0, signal: null }), false);
   assert.equal(commandSucceeded({ ok: true, exitCode: 0, signal: "SIGTERM" }), false);
   assert.equal(commandSucceeded(null), false);
+});
+
+test("test verification distinguishes a skip from a failed suite", () => {
+  assert.equal(testVerificationOutcome({ ok: true, exitCode: 0, signal: null, status: "passed" }), "passed");
+  assert.equal(testVerificationOutcome({ ok: false, status: "not_configured", reason: "нет scripts.test" }), "skipped");
+  assert.equal(testVerificationOutcome({ ok: false, status: "failed", exitCode: 1, signal: null }), "failed");
+  assert.equal(testVerificationOutcome({ ok: false, status: "timeout", exitCode: 124 }), "failed");
+  assert.equal(testVerificationOutcome(null), "failed");
 });
 
 test("a project that is still being scaffolded can fail the automatic build many times", () => {
@@ -64,6 +72,12 @@ test("the failure summary names the line to fix, not the whole build log", () =>
     }),
     "src/main.tsx(3,17): error TS2307: Cannot find module './App' or its corresponding type declarations.",
   );
+  assert.equal(verificationFailureSummary({
+    ok: false,
+    failureDetails: [{ name: "app > loads", message: "expected 1, got 2" }],
+    stdout: "Tests 1 failed | 2 passed\n",
+  }), "expected 1, got 2");
+  assert.equal(verificationFailureSummary({ ok: false, failureDetails: [{ name: "test_load" }] }), "тест не прошёл: test_load");
   assert.equal(verificationFailureSummary({ ok: false, reason: "Предпросмотр не запущен", status: {} }), "Предпросмотр не запущен");
   assert.equal(verificationFailureSummary({ ok: false, error: "fetch failed" }), "fetch failed");
   assert.equal(verificationFailureSummary(null), "");

@@ -26,6 +26,16 @@ export function countVerificationFailure(current: number, source: VerificationFa
 export function verificationFailureSummary(output: unknown) {
   if (typeof output !== "object" || output === null) return "";
   const value = output as Record<string, unknown>;
+  // Test results carry the first assertion/error per failed test; that line is more useful than
+  // the final summary line of a Jest/Vitest/pytest log.
+  if (Array.isArray(value.failureDetails)) {
+    for (const item of value.failureDetails) {
+      if (typeof item !== "object" || item === null) continue;
+      const detail = item as { name?: unknown; message?: unknown };
+      if (typeof detail.message === "string" && detail.message.trim()) return clip(detail.message);
+      if (typeof detail.name === "string" && detail.name.trim()) return clip("тест не прошёл: " + detail.name);
+    }
+  }
   const direct = [value.reason, value.error].find(item => typeof item === "string" && item.trim());
   if (typeof direct === "string") return clip(direct);
   for (const stream of [value.stderr, value.stdout]) {
@@ -58,6 +68,19 @@ export function commandSucceeded(output: unknown): boolean {
   if (typeof output !== "object" || output === null) return false;
   const result = output as CommandResultLike;
   return result.ok === true && result.exitCode === 0 && result.signal == null;
+}
+
+/**
+ * A project without tests must not fail verification. `project.test` returns
+ * `status:"not_configured"` before running anything; that is a skip, not a red build.
+ */
+export type TestVerificationOutcome = "passed" | "skipped" | "failed";
+
+export function testVerificationOutcome(output: unknown): TestVerificationOutcome {
+  if (typeof output !== "object" || output === null) return "failed";
+  const value = output as { status?: unknown };
+  if (value.status === "not_configured") return "skipped";
+  return commandSucceeded(output) ? "passed" : "failed";
 }
 
 /**

@@ -16,6 +16,10 @@ test("каталог разработчика оставляет ядро и н�
   assert.ok(!names.includes("browser.runtime"), "Chromium выключен по умолчанию");
   assert.ok(!names.includes("deploy.plan"), "деплой не нужен обычной правке");
   assert.ok(!names.includes("expo.build"), "Expo не нужен обычному сайту");
+  assert.ok(!names.includes("repo.map"), "карта репозитория выключена по умолчанию");
+  assert.ok(!names.includes("project.test"), "тестовый контур выключен по умолчанию");
+  assert.ok(!names.includes("project.memory"), "архитектурная память выключена по умолчанию");
+  assert.ok(!names.includes("plan.milestones"), "milestone-план выключен по умолчанию");
   assert.equal(new Set(names).size, names.length, "имена не повторяются");
 });
 
@@ -28,19 +32,31 @@ test("переключатели и задача добавляют только
   assert.ok(deploy.includes("deploy.plan") && deploy.includes("cloud.request") && deploy.includes("yandex.request"));
   const mobile = selectToolNames({ mode: "developer", task: "собери мобильное приложение на Expo" });
   assert.ok(mobile.includes("expo.build") && mobile.includes("expo.setup"));
+  const repo = selectToolNames({ mode: "developer", task: "найди заказы", repoMap: true });
+  assert.ok(repo.includes("repo.map") && repo.includes("repo.find"));
+  const tests = selectToolNames({ mode: "developer", task: "проверь тесты", testRunner: true });
+  assert.ok(tests.includes("project.test"));
+  const memory = selectToolNames({ mode: "developer", task: "прочитай архитектуру", archMemory: true });
+  assert.ok(memory.includes("project.memory"));
+  const milestones = selectToolNames({ mode: "developer", task: "большая задача", milestones: true });
+  assert.ok(milestones.includes("plan.milestones"));
 });
 
 test("планировщик не получает схемы изменяющих инструментов", () => {
   const names = selectToolNames({ mode: "planner", task: "составь план рефакторинга" });
   assert.ok(names.includes("fs.read"));
   assert.ok(names.includes("plan.update"));
+  assert.ok(!names.includes("plan.milestones"), "milestone-план планировщика выключен по умолчанию");
   for (const name of ["fs.write", "fs.edit", "git.commit", "preview.start", "project.check", "image.generate", "database.env", "service.env", "net.download"]) {
     assert.ok(!names.includes(name), "планировщик не должен видеть " + name);
   }
   // Задача про деплой добавляет группу, но запись секретов остаётся запрещённой и там.
-  const deployPlan = selectToolNames({ mode: "planner", task: "подключи базу данных и задеплой сайт" });
+  const deployPlan = selectToolNames({ mode: "planner", task: "подключи базу данных и задеплой сайт", testRunner: true });
   assert.ok(deployPlan.includes("database.status"));
   assert.ok(!deployPlan.includes("database.env") && !deployPlan.includes("service.env"));
+  assert.ok(!deployPlan.includes("project.test"), "планировщик не запускает тесты");
+  const milestonePlan = selectToolNames({ mode: "planner", task: "разбей большую задачу", milestones: true });
+  assert.ok(milestonePlan.includes("plan.milestones"), "планировщик может составить milestone-план");
 });
 
 test("getToolDefinitionsFor отдаёт только выбранные схемы", () => {

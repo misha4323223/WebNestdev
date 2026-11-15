@@ -4,6 +4,8 @@ import { getSandbox } from "../sandbox-manager.js";
 import { readFileInside } from "../sandbox/path-guard.js";
 import { isSecretProjectPath } from "../secrets/secret-paths.js";
 import { isIgnoredProjectDir } from "../project-ignore.js";
+import { getRepoIndex } from "./repo-index/build.js";
+import { findRelevantFiles } from "./repo-index/query.js";
 
 // Контекст — это аванс, а не склад. Восемь файлов и короткий фрагмент каждого дают модели
 // направление, а полный текст она читает через fs.read/fs.outline уже по необходимости.
@@ -57,27 +59,15 @@ async function collectFiles(root: string, current: string, relative: string, res
   }
 }
 
-export async function retrieveRelevantFiles(
-  projectId: string,
-  userId: string,
-  task: string,
-): Promise<string> {
-  const sandbox = await getSandbox(projectId, userId);
-  const files: string[] = [];
-  await collectFiles(sandbox.root, sandbox.root, "", files);
+type RankedFile = { file: string; score: number };
 
-  const taskTokens = tokens(task);
-  const ranked = files
-    .map(file => ({ file, score: score(file, taskTokens) }))
-    .sort((a, b) => b.score - a.score)
-    .slice(0, MAX_FILES);
-
+async function renderExcerpts(root: string, ranked: RankedFile[]): Promise<string> {
   let total = 0;
   const sections: string[] = [];
   for (const item of ranked) {
     if (item.score <= 0 && sections.length >= 4) break;
     try {
-      const content = await readFileInside(sandbox.root, path.join(sandbox.root, item.file));
+      const content = await readFileInside(root, path.join(root, item.file));
       const remaining = MAX_TOTAL_CHARS - total;
       if (remaining <= 0) break;
       const lines = content.split(/\r?\n/);
@@ -94,6 +84,55 @@ export async function retrieveRelevantFiles(
       total += snippet.length;
     } catch {}
   }
+  return sections.join("\n\n");
+}
 
-  return sections.length ? sections.join("\n\n") : "No relevant source files were automatically selected.";
+export type RetrievalOptions = {
+  /** Use the repository index when AGENT_REPO_MAP is on; failures fall back to the old lexical path. */
+  repoMap?: boolean;
+  /** Planner mode is read-only; it must not leave a cache file in the project. */
+  useDiskCache?: boolean;
+};
+
+export async function retrieveRelevantFiles(
+  projectId: string,
+  userId: string,
+  task: string,
+  options: RetrievalOptions = {},
+): Promise<string> {
+  const sandbox = await getSandbox(projectId, userId);
+
+  if (options.repoMap) {
+    try {
+      // Verify the fingerprint on every run start: a run that begins right after an edit must not
+      // inherit a 15-second-old in-memory map from the previous task.
+      const index = await getRepoIndex(sandbox.root, {
+        verify: true,
+        ...(options.useDiskCache === false ? { useDiskCache: false } : {}),
+      });
+      const matches = findRelevantFiles(index, task, { limit: MAX_FILES });
+      if (matches.length) {
+        const rendered = await renderExcerpts(
+          sandbox.root,
+          matches.map(item => ({ file: item.path, score: item.score })),
+        );
+        if (rendered) return rendered;
+      }
+    } catch (error) {
+      // The flag must not turn a map failure into a failed run: the old lexical path is the fallback.
+      console.error("Repository index retrieval failed; using lexical fallback", error);
+    }
+  }
+
+  const files: string[] = [];
+  await collectFiles(sandbox.root, sandbox.root, "", files);
+
+  const taskTokens = tokens(task);
+  const ranked = files
+    .map(file => ({ file, score: score(file, taskTokens) }))
+    .sort((a, b) => b.score - a.score)
+    .slice(0, MAX_FILES);
+
+  const sections = await renderExcerpts(sandbox.root, ranked);
+  return sections || "No relevant source files were automatically selected.";
 }

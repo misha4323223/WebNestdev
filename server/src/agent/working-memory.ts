@@ -1,5 +1,6 @@
 import type { ChatMessage, PlanState } from "../types.js";
 import { clip } from "./context-budget.js";
+import { milestoneStateLines } from "./orchestrator/milestones.js";
 
 /**
  * The state of the current run, kept outside the message log.
@@ -119,9 +120,12 @@ export function workingStateText(memory: WorkingMemory) {
       ? "План (сохранён с прошлого этапа; если задача новая — замени его):"
       : plan.items.some(item => item.status === "in_progress")
         ? "План:"
-        : "План (все пункты отмечены готовыми; если это не так — обнови статусы):";
+        : plan.items.every(item => item.status === "done")
+          ? "План (все пункты отмечены готовыми; если это не так — обнови статусы):"
+          : "План (текущий этап завершён; следующий начнётся в новом запуске):";
     lines.push(header);
     lines.push(...planLines(plan));
+    lines.push(...milestoneStateLines(plan));
   } else {
     lines.push("План: пока не опубликован. Если задача многошаговая, опубликуй его через plan.update и поддерживай статусы.");
   }

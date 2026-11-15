@@ -33,6 +33,14 @@ const CORE_TOOLS = [
   "agent.scout",
 ] as const;
 
+/** Карта репозитория подключается только при включённом AGENT_REPO_MAP. */
+const REPO_TOOLS = ["repo.map", "repo.find"] as const;
+/** Тестовый контур подключается только при включённом AGENT_TEST_RUNNER. */
+const TEST_TOOLS = ["project.test"] as const;
+/** Архитектурная память подключается только при включённом AGENT_ARCH_MEMORY. */
+const MEMORY_TOOLS = ["project.memory"] as const;
+/** Milestone-план подключается только при включённом AGENT_MILESTONES. */
+const MILESTONE_TOOLS = ["plan.milestones"] as const;
 /** Инструменты, которые подключаются только когда пользователь включил поиск. */
 const WEB_TOOLS = ["web.search", "web.read"] as const;
 /** Chromium дорогой и запускается только по явному переключателю. */
@@ -51,7 +59,7 @@ const PLANNER_FORBIDDEN = new Set([
   "fs.write", "fs.edit", "fs.rename", "fs.delete",
   "npm.install", "pip.install", "net.download", "database.env", "service.env",
   "git.pull", "git.add", "git.commit",
-  "preview.start", "preview.stop", "project.check", "image.generate",
+  "preview.start", "preview.stop", "project.check", "project.test", "image.generate",
   "secrets.request", "access.request", "deploy.plan", "cloud.request", "domain.request",
 ]);
 
@@ -63,6 +71,14 @@ export type ToolCatalogOptions = {
   task?: string;
   webSearch?: boolean;
   browserCheck?: boolean;
+  /** Experimental repository map; off unless AGENT_REPO_MAP is enabled. */
+  repoMap?: boolean;
+  /** Experimental test runner; off unless AGENT_TEST_RUNNER is enabled. */
+  testRunner?: boolean;
+  /** Experimental durable project memory; off unless AGENT_ARCH_MEMORY is enabled. */
+  archMemory?: boolean;
+  /** Experimental run-sized milestone plan; off unless AGENT_MILESTONES is enabled. */
+  milestones?: boolean;
 };
 
 function isDeployTool(name: string) {
@@ -84,6 +100,10 @@ export function selectToolNames(options: ToolCatalogOptions): string[] {
   const planner = options.mode === "planner";
   const names: string[] = [
     ...CORE_TOOLS,
+    ...(options.repoMap ? REPO_TOOLS : []),
+    ...(options.testRunner ? TEST_TOOLS : []),
+    ...(options.archMemory ? MEMORY_TOOLS : []),
+    ...(options.milestones ? MILESTONE_TOOLS : []),
     ...(options.webSearch ? WEB_TOOLS : []),
     ...(options.browserCheck ? BROWSER_TOOLS : []),
   ];

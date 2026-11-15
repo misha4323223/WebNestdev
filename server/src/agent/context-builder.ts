@@ -7,6 +7,9 @@ import { runInSandbox } from "../sandbox-worker.js";
 import { isSecretProjectPath } from "../secrets/secret-paths.js";
 import { deployPlanNotice, readDeployPlan } from "../deploy/deploy-plan.js";
 import { isIgnoredProjectDir } from "../project-ignore.js";
+import { getRepoIndex } from "./repo-index/build.js";
+import { repoMapSummary } from "./repo-index/query.js";
+import { readProjectMemory } from "./memory/read.js";
 
 const MAX_TREE_ENTRIES = 500;
 const MAX_TREE_CHARS = 9000;
@@ -114,9 +117,60 @@ export function packageSummary(raw: string): string {
   }
 }
 
-export async function buildProjectContext(project: Project, userId: string): Promise<string> {
+export type ProjectContextOptions = {
+  /** Include the repository index summary; off unless AGENT_REPO_MAP is enabled. */
+  repoMap?: boolean;
+  /** Include ARCHITECTURE.md/DECISIONS.md/CONTRACTS.md; off unless AGENT_ARCH_MEMORY is enabled. */
+  archMemory?: boolean;
+  /** Planner mode is read-only and must not write the index cache. */
+  useDiskCache?: boolean;
+};
+
+function repoMapText(index: Awaited<ReturnType<typeof getRepoIndex>>) {
+  const map = repoMapSummary(index);
+  const packages = map.packages.slice(0, 12).map(pkg => pkg.name + " — " + (pkg.dir || ".") + (pkg.entry ? " (entry " + pkg.entry + ")" : ""));
+  const languages = Object.entries(map.languages).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([name, count]) => name + " " + count);
+  return [
+    "REPOSITORY MAP (metadata only; read exact code with fs.read/fs.outline):",
+    "Files: " + map.stats.files + " (source " + map.stats.sourceFiles + ")" + (map.stats.truncated ? "; TRUNCATED by index limits" : ""),
+    "Languages: " + (languages.length ? languages.join(", ") : "none"),
+    "Packages: " + (packages.length ? packages.join("; ") : "none"),
+    "Entry points: " + (map.entryPoints.slice(0, 12).join(", ") || "none"),
+    "Top directories: " + (map.topDirectories.slice(0, 10).map(item => item.path + " (" + item.files + ")").join(", ") || "none"),
+    "Start with: " + (map.anchors.slice(0, 12).join(", ") || "none"),
+    "Use repo.map/repo.find for task-specific orientation; this is a map, not source.",
+  ].join("\n");
+}
+
+export async function buildProjectContext(
+  project: Project,
+  userId: string,
+  options: ProjectContextOptions = {},
+): Promise<string> {
   const sandbox = await getSandbox(project.id, userId);
   const tree = await collectTree(sandbox.root);
+  let repositoryMap = "";
+  if (options.repoMap) {
+    try {
+      repositoryMap = repoMapText(await getRepoIndex(sandbox.root, {
+        verify: true,
+        ...(options.useDiskCache === false ? { useDiskCache: false } : {}),
+      }));
+    } catch (error) {
+      // The flag must never make the project context fail: the raw tree below is the fallback.
+      console.error("Repository map context failed; using the project tree", error);
+    }
+  }
+
+  let memoryText = "";
+  if (options.archMemory) {
+    try {
+      memoryText = (await readProjectMemory(sandbox.root)).text;
+    } catch (error) {
+      // Memory is orientation, never a reason to fail project context.
+      console.error("Project memory context failed; continuing without it", error);
+    }
+  }
 
   const treeText = tree.map(entry => {
     const size = entry.size == null ? "" : " (" + entry.size + " bytes)";
@@ -169,6 +223,8 @@ export async function buildProjectContext(project: Project, userId: string): Pro
     ...(deployNotice ? ["", deployNotice] : []),
     "",
     packageText,
+    ...(repositoryMap ? ["", repositoryMap] : []),
+    ...(memoryText ? ["", memoryText] : []),
     "",
     "Git status:",
     gitStatus || "clean",

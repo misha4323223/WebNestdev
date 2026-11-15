@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { ChatMessage } from "../types.js";
+import { normalizeMilestonePlan } from "./orchestrator/milestones.js";
 import {
   WORKING_STATE_PREFIX,
   createWorkingMemory,
@@ -65,6 +66,36 @@ test("модель видит остаток контекста и заране�
   assert.match(tight, /осталось ~10000 \(4%\)/);
   assert.match(tight, /fs\.outline/);
   assert.match(tight, /fs\.grep/);
+});
+
+test("рабочее состояние показывает текущий milestone, его проверки и границу запуска", () => {
+  const memory = createWorkingMemory("большая задача");
+  setWorkingPlan(memory, normalizeMilestonePlan({
+    milestones: [
+      { title: "Схема", scope: "Таблицы", files: ["db/schema.ts"], tests: ["npm test schema"], definitionOfDone: "схема применяется" },
+      { title: "API", scope: "Ручки", files: ["api/orders.ts"], tests: ["npm test api"], definitionOfDone: "ручки отвечают" },
+      { title: "UI", scope: "Экран", files: ["src/Orders.tsx"], tests: ["npm run test:web"], definitionOfDone: "экран открывается" },
+    ],
+  }));
+  const text = workingStateText(memory);
+  assert.match(text, /Milestone 1\/3 \(in_progress\): Схема/);
+  assert.match(text, /Files: db\/schema\.ts/);
+  assert.match(text, /Definition of done: схема применяется/);
+  assert.match(text, /Один запуск = один milestone/);
+});
+
+test("checkpoint не выдаёт незавершённый план за полностью готовый", () => {
+  const memory = createWorkingMemory("продолжить");
+  setWorkingPlan(memory, normalizeMilestonePlan({
+    milestones: [
+      { title: "Схема", scope: "Таблицы", files: ["db/schema.ts"], tests: ["npm test schema"], definitionOfDone: "схема применяется", status: "done" },
+      { title: "API", scope: "Ручки", files: ["api/orders.ts"], tests: ["npm test api"], definitionOfDone: "ручки отвечают" },
+      { title: "UI", scope: "Экран", files: ["src/Orders.tsx"], tests: ["npm run test:web"], definitionOfDone: "экран открывается" },
+    ],
+  }));
+  const text = workingStateText(memory);
+  assert.match(text, /текущий этап завершён/);
+  assert.doesNotMatch(text, /все пункты отмечены готовыми/);
 });
 
 test("план с прошлого этапа помечается, чтобы новая задача его заменила", () => {

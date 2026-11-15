@@ -46,6 +46,9 @@ export async function executeTool(call:ProviderToolCall,context:AgentContext){
   }
   const handler=tool.execute??tool.async;
   if(!handler)throw new Error("У инструмента нет обработчика: "+call.name);
+  // Memory read/diff/skeleton are reads; only write touches project bytes and must count toward
+  // the storage quota just like fs.write.
+  const projectMemoryWrite=call.name==="project.memory"&&(call.arguments as {action?:unknown}|null)?.action==="write";
   if(browserCheckTools.has(call.name)){
     if(context.request.browserCheck!==true){
       throw new Error("Браузерная проверка выключена. Включите «Браузерную проверку» в меню «Режимы» у поля ввода: без этого Chromium и автоматическая браузерная QA не запускаются.");
@@ -54,7 +57,7 @@ export async function executeTool(call:ProviderToolCall,context:AgentContext){
     // расход ограничивают кредиты, лимит шагов и очередь Chromium.
     await consumeUsageForCurrentPlan(context.request.userId,"browserChecks");
   }
-  if(storagePreCheckTools.has(call.name)){
+  if(storagePreCheckTools.has(call.name)||projectMemoryWrite){
     await assertWithinCurrentPlan(context.request.userId);
   }
   // Разговоры с пользователем (модальное окно секретов) идут через тот же поток событий запуска,
@@ -62,7 +65,7 @@ export async function executeTool(call:ProviderToolCall,context:AgentContext){
   // Поиск в интернете разрешён только при включённом переключателе в панели ввода: флаг читается
   // здесь, поэтому его видят и web.search, и web.read, и ни один из них не обходит решение человека.
   const result=await handler(call.arguments,{projectId:context.request.projectId,runId:context.runId,userId:context.request.userId,...(context.request.conversationId?{conversationId:context.request.conversationId}:{}),emit:context.emit,webSearchEnabled:context.request.webSearch===true,browserCheckEnabled:context.request.browserCheck===true,...(context.signal?{signal:context.signal}:{}),...(context.scout?{scout:context.scout}:{})});
-  if(storagePostRecordTools.has(call.name)){
+  if(storagePostRecordTools.has(call.name)||projectMemoryWrite){
     await recordStorageMutation(context.request.projectId, context.request.userId, {
       heavy: heavyStorageMutationTools.has(call.name),
     });

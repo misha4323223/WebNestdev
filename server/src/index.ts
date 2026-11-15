@@ -14,6 +14,7 @@ import { describePreviewHostServer, startPreviewHostServer, stopPreviewHostServe
 import { describePreviewLimits } from "./preview/preview-limiter.js";
 import { describeRunLimiter } from "./agent/run-limiter.js";
 import { describeContextBudget } from "./agent/context-budget.js";
+import { describeAgentFeatures } from "./agent/features.js";
 import { describeProviderRetry } from "./provider/provider-retry.js";
 import { describeFreeModelRoute } from "./provider/free-model.js";
 import { describeImageGeneration } from "./provider/image-generation.js";
@@ -122,6 +123,9 @@ import { ensureBootstrapAdmin } from "./admin/bootstrap.js";
 import "./tools/project-tools.js";
 import "./tools/scout-tools.js";
 import "./tools/filesystem-tools.js";
+import "./tools/memory-tools.js";
+import "./tools/repo-tools.js";
+import "./tools/test-tools.js";
 import "./tools/terminal-tools.js";
 import "./tools/git-tools.js";
 import "./tools/preview-tools.js";
@@ -221,6 +225,9 @@ console.log("[agent] " + describeRunLimiter());
 // Сколько контекста сервер готов отправить модели за один шаг: именно это число (а не лимит
 // провайдера) решает, дойдёт ли запрос вообще — см. agent/context-budget.ts.
 console.log("[agent] " + describeContextBudget());
+// Какие экспериментальные ветки развития включены. По умолчанию выключены все: строка нужна,
+// чтобы после выкатки было видно, что новый путь не активен, а не выглядел сломанным.
+console.log("[agent] " + describeAgentFeatures());
 // Что делает отказ провайдера по лимиту частоты: шаг ждёт и повторяется, а запуск продолжается
 // (provider-retry.ts). Без этой строки «агент вдруг думает дольше обычного» выглядит непонятно.
 console.log("[agent] " + describeProviderRetry());

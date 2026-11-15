@@ -11,6 +11,8 @@ import { parseChangedSource } from "../qa/change-parser.js";
 import { splitLines, unifiedPatch } from "../changes/diff.js";
 import { assertNotSecretProjectPath, isSecretProjectPath } from "../secrets/secret-paths.js";
 import { IGNORED_PROJECT_DIRS } from "../project-ignore.js";
+import { getRepoIndex, invalidateRepoIndex } from "../agent/repo-index/build.js";
+import { resolveSearchScope } from "../agent/repo-index/query.js";
 
 /**
  * Сервер пишет от root, а команды проекта выполняются в контейнере от uid 1000: созданные
@@ -267,6 +269,7 @@ registerTool({
     const sandbox = await getSandbox(context.projectId, context.userId);
     const written = await writeFileInside(sandbox.root, path.join(sandbox.root, value.path), value.content);
     invalidateReadCache(context.projectId, context.runId, value.path);
+    invalidateRepoIndex(sandbox.root);
     await openCreated(sandbox.root, written);
     const info = await lstat(written).catch(() => null);
     return {
@@ -318,6 +321,7 @@ registerTool({
     if (after === before) throw new Error("текст не изменился");
     const written = await writeFileInside(sandbox.root, file, after);
     invalidateReadCache(context.projectId, context.runId, value.path);
+    invalidateRepoIndex(sandbox.root);
     await openCreated(sandbox.root, written);
     const info = await lstat(written).catch(() => null);
     // Правка подтверждается не словом «ok», а тем, что изменилось: несколько строк контекста
@@ -357,6 +361,7 @@ registerTool({
     await renameInside(sandbox.root, path.join(sandbox.root, value.from), path.join(sandbox.root, value.to));
     invalidateReadCache(context.projectId, context.runId, value.from);
     invalidateReadCache(context.projectId, context.runId, value.to);
+    invalidateRepoIndex(sandbox.root);
     await openCreated(sandbox.root, path.join(sandbox.root, value.to));
     return { ok: true, from: value.from, to: value.to };
   },
@@ -384,6 +389,7 @@ registerTool({
     }
     await deleteInside(sandbox.root, candidate);
     invalidateReadCache(context.projectId, context.runId, value.path);
+    invalidateRepoIndex(sandbox.root);
     return { ok: true, path: value.path, removedChanges };
   },
 });
@@ -504,7 +510,7 @@ function grepLineWindow(line: string, at: number) {
 
 registerTool({
   name: "fs.grep",
-  description: "Search project text for a regular expression and get structured matches. Input: {pattern:string,path?:string,glob?:string,ignoreCase?:boolean,literal?:boolean,context?:number,maxResults?:number}. Returns {file,line,column,text} without shell noise; dependencies and build output are skipped unless `path` points inside them. Use `glob` like \"*.ts\" or \"src/**/*.{ts,tsx}\". Prefer this over terminal.exec grep.",
+  description: "Search project text for a regular expression and get structured matches. Input: {pattern:string,path?:string,scope?:string,glob?:string,ignoreCase?:boolean,literal?:boolean,context?:number,maxResults?:number}. Returns {file,line,column,text} without shell noise; dependencies and build output are skipped unless `path` points inside them. `scope` narrows the search to a workspace package name or a project directory (for example `@shop/ui` or `packages/ui`); `path` is then relative to that scope. Use `glob` like \"*.ts\" or \"src/**/*.{ts,tsx}\". Prefer this over terminal.exec grep.",
   parameters: {
     type: "object",
     additionalProperties: false,
@@ -512,6 +518,7 @@ registerTool({
     properties: {
       pattern: { type: "string", description: "Регулярное выражение (или литерал при literal:true)" },
       path: { type: "string", description: "Файл или каталог внутри проекта; по умолчанию весь проект" },
+      scope: { type: "string", description: "Сужение до workspace-пакета или каталога: @shop/ui, packages/ui" },
       glob: { type: "string", description: "Фильтр имён: *.ts, src/**/*.{ts,tsx}" },
       ignoreCase: { type: "boolean", description: "Искать без учёта регистра" },
       literal: { type: "boolean", description: "Искать pattern как обычную строку, без регулярных выражений" },
@@ -520,7 +527,7 @@ registerTool({
     },
   },
   execute: async (input, context) => {
-    const value = input as { pattern?: string; path?: string; glob?: string; ignoreCase?: boolean; literal?: boolean; context?: number; maxResults?: number };
+    const value = input as { pattern?: string; path?: string; scope?: string; glob?: string; ignoreCase?: boolean; literal?: boolean; context?: number; maxResults?: number };
     if (!value.pattern) throw new Error("не указан pattern для поиска");
     if (value.path) assertNotSecretProjectPath(value.path, "искать");
     let expression: RegExp;
@@ -530,6 +537,25 @@ registerTool({
       throw new Error("pattern не является корректным регулярным выражением: " + (error instanceof Error ? error.message : String(error)));
     }
     const sandbox = await getSandbox(context.projectId, context.userId);
+    let startRelative = value.path ?? "";
+    let scopeLabel: string | undefined;
+    let scopePath: string | undefined;
+    if (typeof value.scope === "string" && value.scope.trim()) {
+      assertNotSecretProjectPath(value.scope, "искать");
+      const index = await getRepoIndex(sandbox.root, { useDiskCache: false });
+      const resolved = resolveSearchScope(index, value.scope);
+      if (!resolved) {
+        throw new Error("scope «" + value.scope + "» не найден. Укажите имя workspace-пакета из package.json, каталог проекта или посмотрите repo.map.");
+      }
+      if (value.path && (value.path.startsWith("..") || value.path.includes("/../"))) {
+        throw new Error("path не может выходить за scope: scope сужает поиск, а не расширяет его");
+      }
+      scopeLabel = resolved.label;
+      scopePath = resolved.path;
+      startRelative = resolved.path
+        ? (value.path ? path.posix.join(resolved.path, value.path) : resolved.path)
+        : (value.path ?? "");
+    }
     const matches = globMatcher(value.glob ?? "**/*");
     const contextLines = Math.min(GREP_CONTEXT_MAX, Math.max(0, Math.floor(Number(value.context) || 0)));
     const maxResults = Math.min(GREP_MAX_RESULTS, Math.max(1, Math.floor(Number(value.maxResults) || GREP_DEFAULT_RESULTS)));
@@ -540,7 +566,7 @@ registerTool({
     let totalBytes = 0;
     let truncated = false;
     let stopReason = "";
-    outer: for await (const file of walkProjectFiles(sandbox.root, value.path ?? "", skipped)) {
+    outer: for await (const file of walkProjectFiles(sandbox.root, startRelative, skipped)) {
       if (isSecretProjectPath(file.relative)) {
         skipped.secret++;
         continue;
@@ -606,6 +632,7 @@ registerTool({
     return {
       pattern: value.pattern,
       ...(value.path ? { path: value.path } : {}),
+      ...(scopeLabel ? { scope: scopeLabel, scopePath: scopePath || "." } : {}),
       ...(value.glob ? { glob: value.glob } : {}),
       matches: found,
       matchCount: found.length,

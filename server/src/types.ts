@@ -38,7 +38,20 @@ export type ChatMessage=
   | {role:"tool";content:string;tool_call_id:string};
 export type PlanItemStatus="pending"|"in_progress"|"done";
 export type PlanItem={title:string;status:PlanItemStatus;note?:string};
-export type PlanState={items:PlanItem[];updatedAt:string};
+/**
+ * One milestone is the unit a single run is allowed to finish. `definitionOfDone` is a concrete
+ * check, not a restatement of the title; `estimatedTokens` is an estimate for the run budget.
+ */
+export type Milestone={
+  title:string;
+  scope:string;
+  files:string[];
+  tests:string[];
+  definitionOfDone:string;
+  estimatedTokens?:number;
+  status:PlanItemStatus;
+};
+export type PlanState={items:PlanItem[];updatedAt:string;/** Present only for a milestone plan. */milestones?:Milestone[]};
 export type AgentEvent=
   | {type:"run.started";runId:string}
   | {type:"message.delta";runId:string;delta:string}
