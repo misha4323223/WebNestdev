@@ -58,6 +58,12 @@ export const CUT_NOTE_CHARS = 3400;
 /** A user message may carry a pasted file; its own cap keeps that from eating the whole budget. */
 const USER_MESSAGE_CHARS = 4000;
 const USER_MESSAGE_TAIL_CHARS = 1000;
+/**
+ * Одна картинка стоит заметно больше своего текста в бюджете: провайдер считает её отдельными
+ * токенами, а base64-длина об этом не говорит. Оценка консервативная и не зависит от размера
+ * файла, иначе 4 МБ картинки вытеснили бы весь остальной контекст.
+ */
+export const IMAGE_CONTEXT_CHARS = 4000;
 
 const COMPACT_HEAD_CHARS = 1200;
 const COMPACT_TAIL_CHARS = 400;
@@ -223,7 +229,10 @@ export function calibrateCharsPerToken(chars: number, reportedTokens: number) {
 
 export function messageChars(messages: ChatMessage[]) {
   return messages.reduce((sum, message) => {
-    if (message.role !== "assistant") return sum + message.content.length;
+    if (message.role !== "assistant") {
+      const images = message.role === "user" ? (message.images?.length ?? 0) : 0;
+      return sum + message.content.length + images * IMAGE_CONTEXT_CHARS;
+    }
     // DeepSeek thinking mode receives the previous `reasoning_content` back with the history.
     // Ignoring it here made the estimate smaller than the prompt by tens of thousands of tokens.
     return sum + message.content.length + (message.reasoning?.length ?? 0) + JSON.stringify(message.tool_calls ?? []).length;

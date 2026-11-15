@@ -8,6 +8,7 @@ import { buildProjectContext } from "./agent/context-builder.js";
 import { retrieveRelevantFiles } from "./agent/context-retrieval.js";
 import { executeTool } from "./agent/tool-executor.js";
 import { inlineAttachedImages, visionNotice } from "./agent/attachments.js";
+import { attachToolScreenshot } from "./agent/tool-screenshots.js";
 import { runBudgetedStep,type StepBudget } from "./agent/step-runner.js";
 import { createWorkingMemory,recordWorkingChange,setWorkingCheck,setWorkingPlan,withWorkingState } from "./agent/working-memory.js";
 import { currentMilestone,milestoneCheckpointNotice,milestoneTransition } from "./agent/orchestrator/milestones.js";
@@ -426,6 +427,23 @@ export class AgentRuntime {
         emit({type:"tool.finished",runId,toolCallId:call.id,name:call.name,output});
         await persist([{role:"tool",content:JSON.stringify(output??null),tool_call_id:call.id}]);
       };
+      /**
+       * Снимок браузера создаётся в середине запуска, поэтому inlineAttachedImages() его уже не
+       * увидит. Прикладываем последний PNG к следующему шагу до записи результата: публичный
+       * bucketUrl попадает в tool output, а base64 живёт только в памяти этого запуска.
+       */
+      const withToolScreenshot=async (output:unknown)=>{
+        try{
+          const prepared=await attachToolScreenshot(messages,output,{projectId:request.projectId,userId:request.userId,model,...(signal?{signal}:{})});
+          messages=prepared.messages;
+          if(prepared.attached)console.log("[vision] снимок инструмента добавлен в контекст главной модели");
+          return prepared.output;
+        }catch(error){
+          // Снимок не должен валить запуск: путь и layout-диагностика всё равно остаются в ответе.
+          console.error("Failed to attach the tool screenshot",error);
+          return output;
+        }
+      };
 
       const runVerification=async (browserRuntime:boolean,routes:string[],checkTypeScript=false)=>{
         const buildCommand=await projectBuildCommand(request.projectId,request.userId);
@@ -460,7 +478,7 @@ export class AgentRuntime {
           if(signal?.aborted)throw new Error("Запуск агента отменён");
           emit({type:"tool.started",runId,toolCallId:verifyCall.id,name:verifyCall.name,input:verifyCall.arguments});
           try{
-            const output=await executeTool(verifyCall as any,{runId,request,emit,signal,toolNames});
+            const output=await withToolScreenshot(await executeTool(verifyCall as any,{runId,request,emit,signal,toolNames}));
             await finishTool(verifyCall,output);
             messages.push({role:"tool",content:boundToolOutput(verifyCall.name,output),tool_call_id:verifyCall.id});
             if(verifyCall.name==="project.check"){
@@ -727,7 +745,7 @@ export class AgentRuntime {
           }
           try{
             if(call.name==="browser.scenario")resetScenarioAttempts(call.arguments);
-            const output=await executeTool(call,context);
+            const output=await withToolScreenshot(await executeTool(call,context));
             if(signal?.aborted)throw new Error("Запуск агента отменён");
             await finishTool(call,output);
             // Ограниченный вывод: журнал сборки читается один раз, а в истории остаётся до конца запуска.
@@ -852,7 +870,7 @@ export class AgentRuntime {
               const scenarioCall={id:randomUUID(),name:"browser.scenario",arguments:plannedScenario};
               emit({type:"tool.started",runId,toolCallId:scenarioCall.id,name:scenarioCall.name,input:scenarioCall.arguments});
               try{
-                const scenarioOutput=await executeTool(scenarioCall as any,{runId,request,emit,signal,toolNames});
+                const scenarioOutput=await withToolScreenshot(await executeTool(scenarioCall as any,{runId,request,emit,signal,toolNames}));
                 await finishTool(scenarioCall,scenarioOutput);
                 messages.push({role:"tool",content:boundToolOutput(scenarioCall.name,scenarioOutput),tool_call_id:scenarioCall.id});
                 if((scenarioOutput as {ok?:boolean}).ok===true){

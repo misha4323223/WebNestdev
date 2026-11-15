@@ -4,6 +4,9 @@ import { readFileBytesInside, resolveInsideSandbox } from "../sandbox/path-guard
 import { getSandbox } from "../sandbox-manager.js";
 import { describeImage, getDedicatedVisionConfig, visionMode, type VisionMode } from "../provider/vision.js";
 import path from "node:path";
+import { MAX_INLINE_IMAGE_BYTES, MAX_INLINE_IMAGES, MAX_TOOL_IMAGES } from "../media/image-limits.js";
+
+export { MAX_INLINE_IMAGE_BYTES, MAX_INLINE_IMAGES } from "../media/image-limits.js";
 
 /**
  * Вложения пользователя в контексте главной модели.
@@ -25,11 +28,6 @@ import path from "node:path";
  *    описание вставляется в сообщение текстом;
  * 4. если и её нет, модель получает честную заметку «изображение недоступно», а не выдумку.
  */
-
-/** Сколько картинок одного сообщения отправляем модели: каждая — это токены и деньги. */
-export const MAX_INLINE_IMAGES = 2;
-/** Предел одной картинки: больше — это уже не скриншот интерфейса, а фото в полном разрешении. */
-export const MAX_INLINE_IMAGE_BYTES = 4 * 1024 * 1024;
 
 /**
  * Хвост, который панель дописывает к сообщению (`withAttachments` в AgentPanel): по нему сервер
@@ -135,11 +133,16 @@ export function isImageRejection(detail: string) {
 
 /** Изображения, вложенные в сообщения (для отката и описания). */
 export function collectInlineImages(messages: ChatMessage[]): MessageImage[] {
-  const images: MessageImage[] = [];
+  const user: MessageImage[] = [];
+  const tool: MessageImage[] = [];
   for (const message of messages) {
-    if (message.role === "user" && message.images?.length) images.push(...message.images);
+    if (message.role !== "user" || !message.images?.length) continue;
+    for (const image of message.images) {
+      if (image.source === "tool") tool.push(image);
+      else user.push(image);
+    }
   }
-  return images.slice(0, MAX_INLINE_IMAGES);
+  return [...user.slice(0, MAX_INLINE_IMAGES), ...tool.slice(-MAX_TOOL_IMAGES)];
 }
 
 /** Снять base64 со всех сообщений: после отказа провайдеру отправляется тот же шаг, но текстом. */

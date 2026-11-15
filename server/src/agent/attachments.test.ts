@@ -200,6 +200,13 @@ test("картинки снимаются, описание вставляетс
     { role: "user", content: "Посмотри экран", images: [{ contentType: "image/png", data: "AAAA" }] },
   ];
   assert.equal(collectInlineImages(messages).length, 1);
+  const mixed: ChatMessage[] = [
+    { role: "user", content: "Экран", images: [
+      { contentType: "image/png", data: "user" },
+      { contentType: "image/png", data: "tool", source: "tool" },
+    ] },
+  ];
+  assert.deepEqual(collectInlineImages(mixed).map(image => image.data), ["user", "tool"], "снимок инструмента не вытесняет вложение пользователя");
   const dropped = dropInlineImages(messages);
   assert.equal((dropped[1] as { images?: unknown }).images, undefined);
   assert.equal(collectInlineImages(dropped).length, 0);

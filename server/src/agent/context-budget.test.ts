@@ -5,6 +5,7 @@ import {
   CUT_NOTE_CHARS,
   ContextBudgetError,
   DEFAULT_MAX_MESSAGES,
+  IMAGE_CONTEXT_CHARS,
   boundToolOutput,
   calibrateCharsPerToken,
   clip,
@@ -385,6 +386,14 @@ test("схемы инструментов входят в бюджет пром�
 test("если одни схемы инструментов больше бюджета, это тоже ошибка, а не молчание", () => {
   const messages: ChatMessage[] = [{ role: "system", content: "промпт" }];
   assert.throws(() => trimMessagesToBudget(messages, { budgetTokens: 1000, overheadChars: 200000 }), ContextBudgetError);
+});
+
+test("картинка занимает место в бюджете, даже если её base64 не считается текстом", () => {
+  const messages: ChatMessage[] = [
+    { role: "user", content: "Посмотри", images: [{ contentType: "image/png", data: "AAAA" }, { contentType: "image/png", data: "BBBB" }] },
+  ];
+  assert.equal(messageChars(messages), "Посмотри".length + 2 * IMAGE_CONTEXT_CHARS);
+  assert.equal(estimateTokens(messages, 4), Math.ceil(("Посмотри".length + 2 * IMAGE_CONTEXT_CHARS) / 4));
 });
 
 test("оценка токенов считается по символам всей истории, включая вызовы и размышления", () => {

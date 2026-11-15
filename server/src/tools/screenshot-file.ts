@@ -1,6 +1,7 @@
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Page } from "playwright";
+import { makeScreenshotContext, type ScreenshotContext } from "./screenshot-context.js";
 
 /**
  * Снимки проверок лежат внутри проекта, но в служебной папке: `.webnestdev/` исключён из истории
@@ -9,7 +10,15 @@ import type { Page } from "playwright";
  */
 export const SCREENSHOT_DIR = ".webnestdev/screenshots";
 
-export type SavedScreenshot = { path: string; url: string; bytes: number };
+export type SavedScreenshot = {
+  path: string;
+  url: string;
+  bytes: number;
+  /** Уменьшенная копия для модели, если оригинал больше лимита вложения. */
+  model?: ScreenshotContext;
+  /** Публичная ссылка на оригинал, когда он не влезает в контекст и загружен в бакет. */
+  bucketUrl?: string;
+};
 
 export type LayoutFinding = {
   kind: "overflow" | "beyondViewport" | "brokenImage" | "smallTapTarget" | "clippedText";
@@ -123,7 +132,8 @@ export async function saveScreenshot(
   const absolute = path.join(folder, name);
   await writeFile(absolute, buffer);
   const relative = SCREENSHOT_DIR + "/" + name;
-  return { path: relative, url: screenshotUrl(input.projectId, relative), bytes: buffer.length };
+  const model = await makeScreenshotContext(page, buffer, { root: input.root, relative });
+  return { path: relative, url: screenshotUrl(input.projectId, relative), bytes: buffer.length, ...(model ? { model } : {}) };
 }
 
 /** Короткая строка для `diagnostic`: что именно поломалось в вёрстке. */

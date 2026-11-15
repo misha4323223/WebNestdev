@@ -1,8 +1,6 @@
 import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
 import { requireProjectUser } from "../auth/auth.js";
-import { accountPlanFor } from "../billing/store.js";
-import { getStorageSnapshot } from "../account/storage-quota.js";
 import {
   abortMultipartUpload,
   completeMultipartUpload,
@@ -19,6 +17,7 @@ import {
   uploadMultipartPart,
   type MediaConfig,
 } from "../media/media-store.js";
+import { assertMediaQuota } from "../media/media-quota.js";
 import { scanMediaUsage } from "../media/media-usage.js";
 
 /**
@@ -56,20 +55,6 @@ async function usageFor(
     // показывать «не используется». Лучше честно потребовать force для удаления.
     console.warn("[media] не удалось проверить ссылки в проекте", error);
     return null;
-  }
-}
-
-async function assertQuota(userId: string, addBytes: number) {
-  const plan = await accountPlanFor(userId);
-  const { usedBytes, limitBytes } = await getStorageSnapshot(userId, plan);
-  if (limitBytes <= 0) return;
-  if (usedBytes + addBytes > limitBytes) {
-    throw new MediaError(
-      "MEDIA_QUOTA",
-      "Файл не помещается в хранилище тарифа: занято " + Math.round(usedBytes / 1024 / 1024) +
-        " МБ из " + Math.round(limitBytes / 1024 / 1024) + " МБ",
-      429,
-    );
   }
 }
 
@@ -156,7 +141,7 @@ export async function registerMediaRoutes(app: FastifyInstance) {
       }
       // При замене в квоте считается только прирост: старый объект уже занимает место.
       const oldBytes = body.replaceKey ? (await headMediaObject(config, body.replaceKey)).bytes : 0;
-      await assertQuota(user.id, Math.max(0, body.size - oldBytes));
+      await assertMediaQuota(user.id, Math.max(0, body.size - oldBytes));
       const upload = await createMultipartUpload(config, {
         userId: user.id,
         projectId: params.id,
@@ -300,7 +285,7 @@ export async function registerMediaRoutes(app: FastifyInstance) {
       // фактический размер ещё раз, иначе можно начать с одного байта и залить гигабайт.
       // Для замены старый объект ещё лежит в бакете: в квоту идёт только прирост.
       const existing = await listMediaObjects(config, user.id, params.id).then(list => list.objects.find(object => object.key === body.key));
-      await assertQuota(user.id, Math.max(0, body.bytes - (existing?.bytes ?? 0))).catch(async error => {
+      await assertMediaQuota(user.id, Math.max(0, body.bytes - (existing?.bytes ?? 0))).catch(async error => {
         await abortMultipartUpload(config, body.key, body.uploadId).catch(() => undefined);
         throw error;
       });

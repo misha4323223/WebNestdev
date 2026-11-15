@@ -26,7 +26,7 @@ export type ReasoningBlock={
  * публичной ссылкой, а картинка подставляется в запрос на время запуска. Иначе одна фотография
  * занимала бы мегабайты в PostgreSQL и уезжала бы в каждый следующий запрос разговора.
  */
-export type MessageImage={contentType:string;data:string;name?:string};
+export type MessageImage={contentType:string;data:string;name?:string;/** `tool` — временный снимок инструмента, а не вложение пользователя. */source?:"user"|"tool"};
 export type ChatMessage=
   | {role:"user";content:string;/** Только на время запуска: см. MessageImage. */images?:MessageImage[]}
   | {role:"system";content:string}

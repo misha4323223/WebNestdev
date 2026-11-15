@@ -107,7 +107,7 @@ export async function captureScreenshot(input: {
 registerTool({
   name: "browser.screenshot",
   description:
-    "Capture a PNG of the running Preview and audit the layout in the same pass. Input: {path?:string, viewport?:'desktop'|'tablet'|'mobile', fullPage?:boolean}. The PNG is saved inside the project (`.webnestdev/screenshots/…`, excluded from git) and returned as `path` + `url`, so a person can open it. The model gets `layout`: horizontal overflow of the page, elements beyond the viewport (with CSS selectors), broken images, clipped text and too-small tap targets on mobile. Use it after project.verify or browser.runtime to see whether the grid, hero image or mobile layout actually looks right instead of trusting console output.",
+    "Capture a PNG of the running Preview and audit the layout in the same pass. Input: {path?:string, viewport?:'desktop'|'tablet'|'mobile', fullPage?:boolean}. The PNG is saved inside the project (`.webnestdev/screenshots/…`, excluded from git) and returned as `path` + `url`, so a person can open it. The screenshot is also attached to your model context automatically when the main model accepts images; do not call image.inspect just to view this same screenshot. The model gets `layout`: horizontal overflow of the page, elements beyond the viewport (with CSS selectors), broken images, clipped text and too-small tap targets on mobile. Use it after project.verify or browser.runtime to see whether the grid, hero image or mobile layout actually looks right instead of trusting console output.",
   parameters: {
     type: "object",
     additionalProperties: false,
