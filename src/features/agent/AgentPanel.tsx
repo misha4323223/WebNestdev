@@ -10,7 +10,8 @@ import { cancelProjectAccess,submitProjectAccess } from "../../lib/deployment-ap
 import { ActionsDock,MessageThinking,PlanPanel,actionTarget,chatImagesByMessage,contentBefore,deriveActions,readPlan,writePlan,type ChatImage,type PanelId,type PanelState } from "./agent-activity";
 import { buildReasoningTraces } from "./reasoning-trace";
 import { chatUiByMessage } from "../../lib/ui-history";
-import { parseUiBlocks, type UiBlock } from "../../lib/ui-blocks";
+import { flattenLiveUi, removeLiveUiCall, upsertLiveUiCall, type LiveUiCall } from "../../lib/ui-live";
+import { parseUiBlocks } from "../../lib/ui-blocks";
 import { UiBlocks } from "./ui/UiBlocks";
 import type { AgentAction,AgentMode,ChatMessage,PlatformModelOption,PlanState,ReasoningBlock,ReasoningMode,ReasoningSupport } from "../../lib/types";
 import { QuestionSheet,type AgentQuestion } from "./QuestionSheet";
@@ -369,9 +370,9 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
    * остаются под ним и после завершения, а при открытии сохранённого чата их заменяет история.
    */
   const [liveImages,setLiveImages]=useState<Array<{messageIndex:number;image:ChatImage}>>([]);
-  // Интерактивный блок, показанный текущим запуском. После перезагрузки его заменяет
-  // chatUiByMessage: сохранённый вызов ui.render лежит в истории вместе с аргументами.
-  const [liveUi,setLiveUi]=useState<UiBlock[]>([]);
+  // Интерактивные блоки текущего запуска, по одному слоту на вызов ui.render. После
+  // перезагрузки их заменяет chatUiByMessage: сохранённые вызовы лежат в истории.
+  const [liveUi,setLiveUi]=useState<LiveUiCall[]>([]);
   const [panels,setPanels]=useState<PanelState>(readPanelState);
   // Действия живут в доке под полем ввода: открытость — его собственное состояние, а не
   // запомненное свёрнутое состояние панели.
@@ -1090,16 +1091,17 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       }
       if(event.type==="tool.started"&&event.name){
         const name=event.name;
+        const id=event.toolCallId??nextId();
         // Агент запускает предпросмотр — панель открывается сразу, не дожидаясь, пока человек
         // найдёт стрелку в шапке. На десктопе она и так на месте, на телефоне это шторка.
         if(name==="preview.start")onPreviewStarted?.();
         // ui.render показывает интерфейс сразу, а не после финального текста: аргументы вызова
         // уже проверены сервером, но клиент повторяет разбор, чтобы не рисовать мусор из истории.
+        // Каждый вызов занимает свой слот: второй ui.render дополняет первый, а не затирает его.
         if(name==="ui.render"){
           const blocks=parseUiBlocks(event.input);
-          if(blocks)setLiveUi(blocks);
+          if(blocks)setLiveUi(current=>upsertLiveUiCall(current,id,blocks));
         }
-        const id=event.toolCallId??nextId();
         // Publishing the plan already updates the plan card, so it is not repeated here.
         if(name!=="plan.update")updateActions(current=>{
           const before=contentBefore(current,name,event.input);
@@ -1114,8 +1116,8 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
         // Предпросмотр уже поднялся: открытая панель перечитывает статус и показывает кадр
         // без нажатия «Обновить».
         if(event.name==="preview.start"&&!failed)onPreviewStarted?.();
-        // Невалидный ui.render не должен оставлять на экране интерфейс, которого нет в истории.
-        if(event.name==="ui.render"&&failed)setLiveUi([]);
+        // Невалидный ui.render убирает только свои блоки; успешный соседний вызов остаётся.
+        if(event.name==="ui.render"&&failed)setLiveUi(current=>removeLiveUiCall(current,id));
         // Картинка, нарисованная по просьбе пользователя, видна сразу: результата инструмента
         // в списке сообщений ещё нет — он появится только в сохранённой истории.
         if(event.name==="image.generate"&&output&&typeof output==="object"){
@@ -1660,6 +1662,8 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   // Сохранённые интерактивные блоки привязаны к следующему ответу агента; при загрузке чата
   // они приходят из аргументов ui.render, а не из отдельного поля сообщения.
   const chatUi=useMemo(()=>chatUiByMessage(messages),[messages]);
+  // Несколько ui.render в одном ходе дополняют друг друга: flatten сохраняет порядок вызовов.
+  const liveUiBlocks=useMemo(()=>flattenLiveUi(liveUi),[liveUi]);
   // Служебный автозапуск (шаблон, импорт, знакомство) остаётся в истории для модели, но человек
   // видит только смысл — идею проекта или короткую подпись. В закладки такие сообщения не идут:
   // это не запросы пользователя, и метка на каждый автозапуск только путала бы навигацию.
@@ -1813,9 +1817,9 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
           </div>
         </div>;
       })}
-      {liveUi.length>0&&<div className="message-row assistant ui-live-row">
+      {liveUiBlocks.length>0&&<div className="message-row assistant ui-live-row">
         <div className="message-content">
-          <UiBlocks blocks={liveUi} projectId={projectId} busy={running} onAction={sendUiAction}/>
+          <UiBlocks blocks={liveUiBlocks} projectId={projectId} busy={running} onAction={sendUiAction}/>
         </div>
       </div>}
 

@@ -42,4 +42,47 @@ describe("chatUiByMessage", () => {
     const messages: ChatMessage[] = [assistant, result("ui-3")];
     expect(chatUiByMessage(messages).get(assistant)).toEqual(blocks);
   });
+
+  it("сохраняет все вызовы ui.render одного ответа, а не только последний", () => {
+    const preview = {
+      type: "preview" as const,
+      title: "Экраны",
+      images: [{ label: "Desktop", path: ".webnestdev/screenshots/desktop.png" }],
+    };
+    const first = call("ui-4");
+    const second: ChatMessage = {
+      role: "assistant",
+      content: "",
+      tool_calls: [{ id: "ui-5", name: "ui.render", arguments: { blocks: [preview] } }],
+    };
+    const answer: ChatMessage = { role: "assistant", content: "Готово" };
+    const messages: ChatMessage[] = [
+      { role: "user", content: "Покажи интерфейс" },
+      first,
+      result("ui-4"),
+      second,
+      result("ui-5"),
+      answer,
+    ];
+    expect(chatUiByMessage(messages).get(answer)).toEqual([...blocks, preview]);
+  });
+
+  it("сохраняет два ui.render в одном assistant tool_calls", () => {
+    const preview = {
+      type: "preview" as const,
+      title: "Экраны",
+      images: [{ label: "Desktop", path: ".webnestdev/screenshots/desktop.png" }],
+    };
+    const assistant: ChatMessage = {
+      role: "assistant",
+      content: "",
+      tool_calls: [
+        { id: "ui-6", name: "ui.render", arguments: { blocks } },
+        { id: "ui-7", name: "ui.render", arguments: { blocks: [preview] } },
+      ],
+    };
+    const answer: ChatMessage = { role: "assistant", content: "Готово" };
+    const messages: ChatMessage[] = [assistant, result("ui-6"), result("ui-7"), answer];
+    expect(chatUiByMessage(messages).get(answer)).toEqual([...blocks, preview]);
+  });
 });
