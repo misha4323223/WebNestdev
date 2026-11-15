@@ -5,10 +5,11 @@
 и [`deploy/ha/README.md`](../deploy/ha/README.md). Здесь только то, что ещё не закрыто, и
 границы, чтобы не делать уже сделанное.
 
-**Актуально на 15.11.2026, 20:45 UTC, сборка `79c87ed`.** `node-1` — primary PostgreSQL,
-`node-2` — streaming standby, обе ВМ включены. Проверка после выкатки: API на обеих нодах
-`200`, `pg_stat_replication` — `1|0`, `archive_mode=on`, публичный
-`https://nestdev.ru/api/ready` — `200`. HAProxy уже ходит в primary напрямую на `5433`, но
+**Актуально на 15.11.2026, 20:51 UTC, сборка `79c87ed`.** `node-1` — primary PostgreSQL;
+`node-2` выключена (`power=OFF`), поэтому streaming standby и второй API сейчас отсутствуют.
+Публичный `https://nestdev.ru/api/ready` — `200`. Для двухнодовых работ включить `node-2` и
+проверить API на обеих нодах, `pg_stat_replication` — `1|0`, `archive_mode=on`.
+HAProxy уже ходит в primary напрямую на `5433`, но
 **TLS ещё не включён**: на обеих нодах `ssl=on` с `snakeoil`, HBA на `host`, сертификат
 `pg_tls.sh` не создан. `ha-status-node-1.json` и `ha-status-node-2.json` уже пишутся.
 Публичный ingress идёт через NLB, DNS при переключении не меняется.

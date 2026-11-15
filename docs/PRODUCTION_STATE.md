@@ -1,6 +1,6 @@
 # Состояние production и оперативная память
 
-Дата среза: **15.11.2026, 20:45 UTC**. Документ фиксирует факты, которые нельзя терять
+Дата среза: **15.11.2026, 20:51 UTC**. Документ фиксирует факты, которые нельзя терять
 между сессиями.
 Секреты здесь не хранятся: только имена переменных, пути и способы проверки.
 
@@ -18,12 +18,13 @@
 | ВМ | Роль | Адрес | Текущее питание |
 | --- | --- | --- | --- |
 | `node-1` | production primary: API, Caddy, HAProxy, PostgreSQL primary, `node1-runner` | `10.0.0.4`, management `2.59.83.250` | `ON` |
-| `node-2` | standby/worker: PostgreSQL streaming standby, API/Caddy/broker/runner, общий storage | `10.0.0.5`; внешний NAT динамический, читать из MWS API | `ON` — включена 14.11.2026 для работ по HA |
+| `node-2` | standby/worker: PostgreSQL streaming standby, API/Caddy/broker/runner, общий storage | `10.0.0.5`; внешний NAT динамический, читать из MWS API | `OFF` — выключена 15.11.2026, 20:51 UTC; временный режим одной ноды |
 
-**На 15.11.2026, 20:45 UTC:** primary PostgreSQL — `node-1`, `node-2` включена и работает
-streaming standby. Прод обслуживают обе ноды; целевой production — две включённые ноды.
-HA-проверки: конкурентный DDL и `restore-s3` пройдены; TLS, domain/preview failover и
-плановый switchover ещё не выполнены.
+**На 15.11.2026, 20:51 UTC:** primary PostgreSQL — `node-1`; `node-2` выключена
+(`power=OFF`). Прод временно работает на одной ноде: второй API, PostgreSQL standby и
+failover отсутствуют, Gluster — по одному brick на том (`cluster.quorum-type=none`).
+Целевой production — две включённые ноды. HA-проверки: конкурентный DDL и `restore-s3`
+пройдены; TLS, domain/preview failover и плановый switchover ещё не выполнены.
 
 **Не включать `node-2`, пока `node-1` не жива и не является primary:** иначе контроллер
 `node-2` может повысить её и получится два primary. Включать только по явной просьбе и под
@@ -31,12 +32,13 @@ HA-проверки: конкурентный DDL и `restore-s3` пройден
 
 `node-2` — **не тестовая и не одноразовая машина**. Это вторая нода production-контура;
 её PostgreSQL, storage, runner и env-файлы — production-конфигурация, а не тестовая
-заготовка. С 14.11.2026 она включена и работает streaming standby, а не primary.
+заготовка. На 15.11.2026, 20:51 UTC она выключена (`power=OFF`) и включается под
+конкретную работу; после включения должна стартовать standby, а не primary.
 
 Правило работы:
 
-1. На 15.11.2026, 20:45 UTC `node-1` — primary, `node-2` — `power=ON` и standby; HA-тест
-   завершён не полностью: остались TLS, destructive domain/preview failover и switchover.
+1. На 15.11.2026, 20:51 UTC `node-1` — primary, `node-2` — `power=OFF`; HA-тест
+   приостановлен: остались TLS, destructive domain/preview failover и switchover.
 2. Доводить задачу до конца, не выключая работающую ВМ в середине.
 3. Перед production-запуском проверить standby `node-2` и выполнить плановый переезд primary
    на неё по [`PRODUCTION_LAUNCH.md`](PRODUCTION_LAUNCH.md).
@@ -67,10 +69,11 @@ Production не должен зависеть от базы или storage од�
   отдельный лимит hybrid/общий бюджет ноды, static-only панель preview и двухминутный
   idle для Docker/hybrid; подробности — в разделе 20 и
   [`HYBRID_PREVIEW.md`](HYBRID_PREVIEW.md).
-- Прод работает на базе `node-1`; `node-2` включена как standby. Переключение выполнялось
-  аварийным прогоном 12.11.2026, подробности — в разделе 19.
+- Прод работает на базе `node-1`; `node-2` выключена (`power=OFF`), поэтому сейчас нет
+  PostgreSQL standby и автоматического failover. Переключение выполнялось аварийным
+  прогоном 12.11.2026, подробности — в разделе 19.
 - NLB `webnestdev-nlb-main` — публичный ingress; DNS при переключении не меняется. Локальный
-  API отвечает `200` на обеих нодах; публичный `https://nestdev.ru` и `/api/ready` — `200`.
+  API `node-1` отвечает `200`; публичный `https://nestdev.ru` и `/api/ready` — `200`.
 
 ## 2.1. Custom domains: инфраструктура выкачена, feature flag включён
 

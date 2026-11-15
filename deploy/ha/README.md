@@ -6,8 +6,8 @@ live-теста — в [`docs/HA_BIDIRECTIONAL_PLAN.md`](../../docs/HA_BIDIRECTI
 Проверено 10.11.2026 на рабочей паре: текущий `switchover.py`/`control.py` установлен на
 обе ВМ, плановый switchover прошёл в обе стороны (`node-1 → node-2 → node-1`), оба rejoin
 дали streaming standby, холодный старт `node-2` поднял PostgreSQL standby, API, Caddy,
-broker и runner без ручных команд. На 15.11.2026 `node-1` — primary, `node-2` — streaming
-standby, обе ВМ включены (`node-2 power=ON`).
+broker и runner без ручных команд. На 15.11.2026, 20:51 UTC `node-1` — primary, `node-2`
+выключена (`power=OFF`); при включении под работу она должна подняться streaming standby.
 
 ## Роли и адреса
 
