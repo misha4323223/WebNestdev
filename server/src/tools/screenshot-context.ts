@@ -32,8 +32,14 @@ const ATTEMPTS = [
 type Encoded = { dataUrl: string; width: number; height: number };
 
 async function encodeInChromium(page: Page, source: string, edge: number, quality: number): Promise<Encoded | null> {
-  const helper = await page.context().newPage();
+  // Не `page.context().newPage()`: browser.scenario создаёт страницу через `browser.newPage()`,
+  // а у такого контекста Playwright запрещает открывать вторую страницу. Отдельный контекст
+  // работает и там, и для обычных browser.screenshot/browser.runtime.
+  const browser = page.context().browser();
+  if (!browser) return null;
+  const helperContext = await browser.newContext();
   try {
+    const helper = await helperContext.newPage();
     return await helper.evaluate(async input => {
       // Никаких локальных функций внутри evaluate: сборка через tsx подмешивает к ним __name,
       // которого нет в контексте страницы.
@@ -53,7 +59,7 @@ async function encodeInChromium(page: Page, source: string, edge: number, qualit
       return { dataUrl: canvas.toDataURL("image/webp", input.quality), width, height };
     }, { source, edge, quality });
   } finally {
-    await helper.close().catch(() => undefined);
+    await helperContext.close().catch(() => undefined);
   }
 }
 
