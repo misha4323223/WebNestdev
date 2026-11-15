@@ -30,6 +30,10 @@ async function makeApp(options: MakeAppOptions = {}): Promise<{ app: FastifyInst
       calls.push("status:" + projectId);
       return { running: true, ready: true, port: 3000, host: "10.0.0.5", containerId: "c1", startedAt: 1, mode: "container" };
     },
+    logs: async (projectId, options) => {
+      calls.push("logs:" + projectId + ":" + String(options?.touch) + ":" + String(options?.localOnly));
+      return { running: true, logs: "build output" };
+    },
     unsettle: projectId => {
       calls.push("unsettle:" + projectId);
       return true;
@@ -105,6 +109,27 @@ test("без projectId — 400, а не поход в базу", async () => {
   const response = await post(app, "/api/internal/preview/lookup", { projectId: "   " }, previewDoorToken(KEY) ?? "");
   assert.equal(response.statusCode, 400);
   assert.deepEqual(calls, []);
+});
+
+test("с токеном логи отдаются без touch", async () => {
+  const { app, calls } = await makeApp();
+  const response = await post(app, "/api/internal/preview/logs", { projectId: "p1" }, previewDoorToken(KEY) ?? "");
+  assert.equal(response.statusCode, 200);
+  assert.deepEqual(response.json(), { running: true, logs: "build output" });
+  assert.deepEqual(calls, ["logs:p1:false:true"]);
+});
+
+test("ошибка чтения логов отдаётся как 502 с причиной", async () => {
+  const { app } = await makeApp({
+    deps: {
+      logs: async () => {
+        throw new Error("Docker недоступен");
+      },
+    },
+  });
+  const response = await post(app, "/api/internal/preview/logs", { projectId: "p1" }, previewDoorToken(KEY) ?? "");
+  assert.equal(response.statusCode, 502);
+  assert.match(response.json().error, /Docker недоступен/);
 });
 
 test("событие unsettle и exec-only доводятся до состояния предпросмотра", async () => {

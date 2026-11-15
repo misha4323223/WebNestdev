@@ -12,6 +12,8 @@ import { PICK_BRIDGE_PATH, canInjectPickBridge, injectPickBridge, pickBridgeResp
 import { setPreviewExecOnly, unsettlePreview } from "./preview-store.js";
 import { isLocalPreviewOwner } from "./preview-owner.js";
 import { forwardPreviewHttp, forwardPreviewUpgrade } from "./peer-door.js";
+import { PREVIEW_LOGS_DOOR_PATH, type PreviewLogsSnapshot } from "./owner-logs.js";
+import { handlePreviewLogsRequest } from "./preview-logs-door.js";
 import { sessionCookieSecure } from "../auth/auth.js";
 import type { PreviewStatus } from "./types.js";
 import type { FastifyRequest } from "fastify";
@@ -84,6 +86,8 @@ export type PreviewHostDeps = {
   ticketProject: (ticket: string | undefined | null, now?: number) => string;
   /** Флаг Secure у cookie доступа — по схеме самого запроса (за прокси её сообщает `x-forwarded-proto`). */
   secureCookie: (request: IncomingMessage) => boolean;
+  /** Внутренний канал логов; в отдельном процессе двери читает API этого узла. */
+  logs?: (projectId: string) => Promise<PreviewLogsSnapshot>;
 };
 
 const defaultDeps: PreviewHostDeps = {
@@ -95,6 +99,12 @@ const defaultDeps: PreviewHostDeps = {
   setExecOnly: setPreviewExecOnly,
   ticketProject: previewTicketProject,
   secureCookie: request => sessionCookieSecure(request as unknown as FastifyRequest),
+  // Динамический импорт не тянет manager (и его зависимости) в отдельный процесс двери:
+  // если дверь вынесена, `previewDoorDeps` подставляет клиент к API вместо этой функции.
+  logs: async projectId => {
+    const { previewLogs } = await import("../preview-manager.js");
+    return previewLogs(projectId, { touch: false, localOnly: true });
+  },
 };
 
 type Access = { ok: true } | { ok: false; status: number; message: string };
@@ -373,12 +383,22 @@ export function createPreviewHostServer(deps: PreviewHostDeps = defaultDeps, lim
   server.keepAliveTimeout = 5_000;
 
   async function handleRequest(request: IncomingMessage, response: ServerResponse) {
+    const url = new URL(request.url ?? "/", "http://preview.local");
+    // Служебный канал логов принимается до разбора preview-хоста: запрос идёт на приватный
+    // `host:port` двери, а не на публичный поддомен проекта, и защищён токеном, а не билетом.
+    if (url.pathname === PREVIEW_LOGS_DOOR_PATH) {
+      if (!deps.logs) {
+        sendMessage(request, response, 503, "Внутренний канал логов не подключён");
+        return;
+      }
+      await handlePreviewLogsRequest(request, response, { logs: deps.logs });
+      return;
+    }
     const target = deps.target(request.headers.host);
     if (!target) {
       sendMessage(request, response, 404, "Этот адрес не обслуживает предпросмотр проекта.");
       return;
     }
-    const url = new URL(request.url ?? "/", "http://preview.local");
     // Обмен билета стоит до проверки доступа: билет и есть то, чего у браузера ещё нет.
     if (url.pathname === PREVIEW_SESSION_PATH) {
       if (request.method !== "POST") {

@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { getProject } from "../project-store.js";
-import { previewStatus } from "../preview-manager.js";
+import { previewLogs, previewStatus } from "../preview-manager.js";
 import { setPreviewExecOnly, unsettlePreview } from "../preview/preview-store.js";
 import { previewDoorToken, previewDoorTokenValid } from "../preview/door-token.js";
 import type { PreviewStatus } from "../preview/types.js";
@@ -13,10 +13,11 @@ import type { PreviewStatus } from "../preview/types.js";
  * отдельным процессом, эти два маршрута — единственное, что ей нужно от API:
  *
  * - `lookup` — существует ли проект и что сейчас с его предпросмотром (адрес, порт, контейнер);
+ * - `logs` — локальный build/backend вывод static/hybrid для вкладки логов на другой реплике;
  * - `event` — уточнение, которое увидела дверь: адрес перестал отвечать или запросы пошли внутрь
  *   контейнера через `docker exec`.
  *
- * Оба закрыты общим токеном (preview/door-token.ts), а не сетью: Caddy проксирует `/api/*`
+ * Все три закрыты общим токеном (preview/door-token.ts), а не сетью: Caddy проксирует `/api/*`
  * наружу, поэтому «внутренний адрес» сам по себе доступа не ограничивает. Публичного смысла у
  * маршрутов нет — они отдают устройство конкретного предпросмотра.
  *
@@ -27,6 +28,7 @@ import type { PreviewStatus } from "../preview/types.js";
 export type PreviewDoorRouteDeps = {
   projectExists: (projectId: string) => Promise<boolean>;
   status: (projectId: string) => Promise<PreviewStatus>;
+  logs: typeof previewLogs;
   unsettle: (projectId: string) => boolean;
   setExecOnly: (projectId: string, value: boolean) => boolean;
 };
@@ -34,6 +36,7 @@ export type PreviewDoorRouteDeps = {
 const defaultDeps: PreviewDoorRouteDeps = {
   projectExists: async projectId => (await getProject(projectId)) !== null,
   status: previewStatus,
+  logs: previewLogs,
   unsettle: unsettlePreview,
   setExecOnly: setPreviewExecOnly,
 };
@@ -72,6 +75,26 @@ export async function registerPreviewDoorRoutes(app: FastifyInstance, deps: Prev
     const exists = await deps.projectExists(projectId);
     const status = exists ? await deps.status(projectId) : { running: false as const };
     return { ok: true, exists, status };
+  });
+
+  app.post("/api/internal/preview/logs", async (request, reply) => {
+    if (!deny(request, reply)) return reply;
+    const projectId = projectIdFrom(request.body);
+    if (!projectId) return reply.code(400).send({ ok: false, error: "Нужен projectId" });
+    reply.header("cache-control", "no-store");
+    // touch: false — это чтение диагностики, а не использование preview. Иначе открытая
+    // вкладка логов продлевала бы жизнь контейнеру, хотя приложение никто не открывал.
+    // localOnly: этот маршрут уже вызван дверью своего узла; повторно в дверь не идём.
+    try {
+      return await deps.logs(projectId, { touch: false, localOnly: true });
+    } catch (error) {
+      // Дверь должна получить причину, а не общий 500: иначе в панели на другой ноде
+      // останется только «HTTP 500» без строки о том, что именно не прочиталось.
+      return reply.code(502).send({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   });
 
   app.post("/api/internal/preview/event", async (request, reply) => {

@@ -10,6 +10,7 @@ import { setPreviewReservationBackendForTests } from "./preview-reservation.js";
 import { getPreview, removePreview, setPreview } from "./preview-store.js";
 import { flushPreviewWritesForTests } from "./preview-store.js";
 import { previewStatus } from "../preview-manager.js";
+import { resetPreviewOwnerHealthForTests, setPreviewOwnerHealthForTests } from "./owner-health.js";
 import type { HybridConfig } from "./hybrid-config.js";
 import type { PreviewState } from "./types.js";
 
@@ -36,6 +37,7 @@ const hybridConfig: HybridConfig = {
 };
 
 afterEach(async () => {
+  resetPreviewOwnerHealthForTests();
   // Each test must start with no listener from the previous one, even when it used fake deps.
   await stopHybridPreview(PROJECT_ID).catch(() => undefined);
   setHybridDepsForTests(null);
@@ -300,6 +302,7 @@ test("manager status on another replica reads a hybrid row without touching its 
     settled: true,
     ownerAddress: "203.0.113.10:8788",
   });
+  setPreviewOwnerHealthForTests({ probe: async () => true });
   try {
     const status = await previewStatus("hybrid-remote-status");
     assert.equal(status.running, true);
@@ -309,8 +312,39 @@ test("manager status on another replica reads a hybrid row without touching its 
     assert.equal(status.port, 4123);
     assert.equal(status.backendHost, "10.0.0.5");
     assert.equal(status.backendPort, 3000);
+    assert.equal(status.ownerUnavailable, undefined);
   } finally {
     removePreview("hybrid-remote-status");
+    await flushPreviewWritesForTests();
+  }
+});
+
+test("manager status marks a remote hybrid preview when its owner door is down", async () => {
+  setPreview({
+    mode: "hybrid",
+    containerId: "remote-backend-down",
+    host: "127.0.0.1",
+    port: 4124,
+    backendHost: "10.0.0.5",
+    backendPort: 3000,
+    projectId: "hybrid-owner-down",
+    startedAt: 10,
+    lastUsedAt: 10,
+    ready: true,
+    settled: true,
+    ownerAddress: "203.0.113.10:8788",
+  });
+  setPreviewOwnerHealthForTests({ probe: async () => false });
+  try {
+    const status = await previewStatus("hybrid-owner-down");
+    assert.equal(status.running, true);
+    if (!status.running) return;
+    assert.equal(status.ownerUnavailable, true);
+    assert.equal(status.ready, false);
+    assert.equal(status.settled, false);
+    assert.match(status.hint ?? "", /нода-владелец/i);
+  } finally {
+    removePreview("hybrid-owner-down");
     await flushPreviewWritesForTests();
   }
 });

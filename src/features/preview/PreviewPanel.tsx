@@ -155,7 +155,7 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
       const next=await getPreviewStatus(projectId);
       setPreview(next);
       // Приложение могло подняться уже после того, как кадр загрузился: со новым статусом он берётся заново.
-      if(next.running)setFrameToken(value=>value+1);
+      if(next.running&&!next.ownerUnavailable)setFrameToken(value=>value+1);
     }catch(e){setError(e instanceof Error?e.message:"Не удалось получить статус предпросмотра")}
   },[projectId]);
   // Refreshed when the project changes and after every agent run: a preview the agent
@@ -182,7 +182,8 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
   // момент старта, оставался белым, и человеку приходилось вручную нажимать «Обновить».
   // Ждём и подтверждения адреса (`settled`), а не только ответа приложения: на первом запуске
   // dev-сервер отвечает позже, чем контейнер начинает считать себя живым.
-  const previewReady=Boolean(preview.running&&preview.ready===true&&(preview.settled===true||preview.viaExec===true));
+  const ownerUnavailable=Boolean(preview.running&&preview.ownerUnavailable);
+  const previewReady=Boolean(preview.running&&!ownerUnavailable&&preview.ready===true&&(preview.settled===true||preview.viaExec===true));
   const startProgress=preview.starting;
   const startingNow=starting||Boolean(startProgress);
   const showStarting=startingNow&&!previewReady;
@@ -196,8 +197,8 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
         .then(next=>{
           if(cancelled)return;
           setPreview(next);
-          if(next.running&&next.ready!==false&&(next.settled!==false||next.viaExec))setFrameToken(value=>value+1);
-          if(next.running&&next.ready===true&&(next.settled!==false||next.viaExec))setStarting(false);
+          if(next.running&&!next.ownerUnavailable&&next.ready!==false&&(next.settled!==false||next.viaExec))setFrameToken(value=>value+1);
+          if(next.running&&!next.ownerUnavailable&&next.ready===true&&(next.settled!==false||next.viaExec))setStarting(false);
         })
         .catch(()=>undefined);
     },1500);
@@ -264,10 +265,10 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
   },[open,onClose,themeOpen]);
 
   // Whether the preview is live is shown on the top-bar button that opens this drawer.
-  useEffect(()=>{onRunningChange?.(Boolean(preview.running))},[preview.running,onRunningChange]);
+  useEffect(()=>{onRunningChange?.(Boolean(preview.running&&!preview.ownerUnavailable))},[preview.running,preview.ownerUnavailable,onRunningChange]);
 
   async function start(){
-    if(starting)return;
+    if(starting||ownerUnavailable)return;
     setError("");
     setStarting(true);
     setLogs("");
@@ -302,23 +303,23 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
 
   useElementPicker({
     frame:frameEl,
-    active:picking&&preview.running&&!runtimeMode&&face==="preview"&&!crossOrigin,
+    active:picking&&preview.running&&!ownerUnavailable&&!runtimeMode&&face==="preview"&&!crossOrigin,
     onPick:element=>{setPicking(false);setPicked(element)},
     onCancel:()=>setPicking(false),
   });
   // Публичный адрес: подсветку и клик делает мост внутри приложения, панель присылает команду.
   useRemoteElementPicker({
     frame:frameEl,
-    active:picking&&preview.running&&!runtimeMode&&face==="preview"&&crossOrigin,
+    active:picking&&preview.running&&!ownerUnavailable&&!runtimeMode&&face==="preview"&&crossOrigin,
     targetOrigin:previewOrigin,
     onPick:element=>{setPicking(false);setPicked(element)},
     onCancel:()=>setPicking(false),
   });
   // Кадр остановили, ушли в логи или открыли runtime-ссылку — выбранного элемента больше нет.
   useEffect(()=>{
-    if(!preview.running||face!=="preview"||runtimeMode){setPicking(false);setPicked(null)}
-    if(runtimeMode)setThemeOpen(false);
-  },[preview.running,face,runtimeMode]);
+    if(!preview.running||ownerUnavailable||face!=="preview"||runtimeMode){setPicking(false);setPicked(null)}
+    if(runtimeMode||ownerUnavailable)setThemeOpen(false);
+  },[preview.running,ownerUnavailable,face,runtimeMode]);
 
   return <>
   {/* Затемнение и панель — одна выезжающая поверх рабочей области пара: на широком экране
@@ -345,10 +346,10 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
         </div>
         {face==="preview"
           ? <>
-              {preview.running&&!runtimeMode&&<button className={"icon-button preview-pick-btn"+(picking?" active":"")} onClick={()=>{setPicked(null);setPicking(value=>!value);setThemeOpen(false)}} aria-pressed={picking} title={crossOrigin?"Выбрать элемент в приложении (публичный адрес панель не читает — работает через мост)":"Выбрать элемент для правки"} aria-label="Выбрать элемент"><MousePointerClick size={14}/></button>}
-              {preview.running?<button className="icon-button" onClick={()=>void stop()} title="Остановить"><Square size={14}/></button>:<button className="icon-button" onClick={()=>void start()} disabled={startingNow} title={startingNow?"Предпросмотр запускается":"Запустить"}>{startingNow?<Loader2 className="preview-spin" size={14}/>:<Terminal size={14}/>}</button>}
+              {preview.running&&!ownerUnavailable&&!runtimeMode&&<button className={"icon-button preview-pick-btn"+(picking?" active":"")} onClick={()=>{setPicked(null);setPicking(value=>!value);setThemeOpen(false)}} aria-pressed={picking} title={crossOrigin?"Выбрать элемент в приложении (публичный адрес панель не читает — работает через мост)":"Выбрать элемент для правки"} aria-label="Выбрать элемент"><MousePointerClick size={14}/></button>}
+              {preview.running&&!ownerUnavailable?<button className="icon-button" onClick={()=>void stop()} title="Остановить"><Square size={14}/></button>:<button className="icon-button" onClick={()=>void start()} disabled={startingNow||ownerUnavailable} title={ownerUnavailable?"Нода-владелец недоступна":startingNow?"Предпросмотр запускается":"Запустить"}>{startingNow?<Loader2 className="preview-spin" size={14}/>:<Terminal size={14}/>}</button>}
               <button className="icon-button" onClick={()=>void refresh()} title="Обновить"><RefreshCw size={14}/></button>
-              {preview.running&&externalAddress&&<a className="icon-button" href={externalAddress} target="_blank" rel="noreferrer" title="Открыть"><ExternalLink size={14}/></a>}
+              {preview.running&&!ownerUnavailable&&externalAddress&&<a className="icon-button" href={externalAddress} target="_blank" rel="noreferrer" title="Открыть"><ExternalLink size={14}/></a>}
             </>
           : <button className="icon-button" onClick={()=>void loadLogs()} disabled={loadingLogs} title="Обновить логи"><RefreshCw size={14}/></button>}
       </div>
@@ -357,10 +358,10 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
     {/* Подсказка нужна и тому, кто ждёт запуска (ready===false), и тому, у кого страница белая при
         живом приложении (settled===false). Режим `docker exec` — рабочий: приложение видно, и
         отдельная строка об этом только отвлекает, поэтому подсказку для него не показываем. */}
-    {!error&&preview.running&&(preview.ready===false||(preview.settled===false&&!preview.viaExec))&&<div className="preview-hint">{preview.hint??"Приложение ещё запускается…"}</div>}
+    {!error&&!ownerUnavailable&&preview.running&&(preview.ready===false||(preview.settled===false&&!preview.viaExec))&&<div className="preview-hint">{preview.hint??"Приложение ещё запускается…"}</div>}
     {/* Публичный адрес показывается, а не прячется в подсказке кнопки: это адрес, который видят
         другие, и по нему приложение работает без переписывания ссылок. */}
-    {!error&&preview.running&&preview.publicUrl&&externalAddress&&<div className="preview-share">
+    {!error&&!ownerUnavailable&&preview.running&&preview.publicUrl&&externalAddress&&<div className="preview-share">
       <span className="preview-share-label">Публичный адрес</span>
       <Hint label="Публичный адрес">Ссылка, которую можно отправить другому человеку.</Hint>
       <a className="preview-share-link" href={externalAddress} target="_blank" rel="noreferrer">
@@ -373,7 +374,7 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
     </div>}
     {/* Панель устройств: ширина кадра — настоящая ширина устройства, поэтому медиазапросы
         приложения срабатывают так же, как на телефоне и планшете, а не по ширине колонки. */}
-    {face==="preview"&&!runtimeMode&&<div className="preview-devices" role="group" aria-label="Устройство предпросмотра">
+    {face==="preview"&&!ownerUnavailable&&!runtimeMode&&<div className="preview-devices" role="group" aria-label="Устройство предпросмотра">
       <div className="preview-devices-group">
         {(["desktop","tablet","phone"] as Device[]).map(id=>{
           const Icon=id==="desktop"?Monitor:id==="tablet"?Tablet:Smartphone;
@@ -408,6 +409,8 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
         <div className="preview-face preview-front">
           {showStarting
             ? <StartProgress progress={startProgress}/>
+            : ownerUnavailable
+            ? <div className="preview-empty"><div className="preview-icon"><Terminal size={20}/></div><strong>Нода предпросмотра недоступна</strong><span>{preview.hint??"Дождитесь восстановления ноды-владельца и обновите статус."}</span><button className="ghost-button" onClick={()=>void refresh()}>Проверить снова</button></div>
             : preview.running
             ? import.meta.env.PROD && !preview.publicUrl
               // В production кадр с адреса панели отдал бы код проекта на том же origin, где лежит
@@ -440,11 +443,11 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
         </div>
         <div className="preview-face preview-back">
           <div className="preview-logs-head">
-            <span className={preview.running||startingNow?"preview-logs-live":"preview-logs-idle"}>{preview.running?"Предпросмотр запущен":startingNow?"Запускаем предпросмотр…":"Предпросмотр остановлен"}</span>
+            <span className={preview.running||startingNow?"preview-logs-live":"preview-logs-idle"}>{ownerUnavailable?"Нода-владелец недоступна":preview.running?"Предпросмотр запущен":startingNow?"Запускаем предпросмотр…":"Предпросмотр остановлен"}</span>
             <small>{loadingLogs?"обновляем…":startingNow?"обновление каждые 1,5 секунды":"обновление каждые 4 секунды"}</small>
           </div>
           {logsError&&<div className="preview-error preview-logs-error">{logsError}</div>}
-          <pre className="preview-logs">{logs||(startingNow?"Ждём первый вывод запуска…\n\nУстановка зависимостей и сборка могут занять несколько минут.":preview.running?"Пока нет вывода. Логи появятся, когда приложение что-нибудь напишет.":"Запустите предпросмотр, чтобы увидеть логи запуска.")}</pre>
+          <pre className="preview-logs">{logs||(ownerUnavailable?"Нода-владелец предпросмотра недоступна. Логи появятся после её восстановления.":startingNow?"Ждём первый вывод запуска…\n\nУстановка зависимостей и сборка могут занять несколько минут.":preview.running?"Пока нет вывода. Логи появятся, когда приложение что-нибудь напишет.":"Запустите предпросмотр, чтобы увидеть логи запуска.")}</pre>
           {!preview.running&&<div className="preview-logs-actions"><button className="ghost-button" onClick={()=>void start()} disabled={startingNow}>{startingNow?"Запускается…":"Запустить предпросмотр"}</button></div>}
         </div>
       </div>

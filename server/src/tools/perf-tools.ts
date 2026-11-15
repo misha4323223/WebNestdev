@@ -1,5 +1,5 @@
 import { chromium } from "playwright";
-import { getPreview } from "../preview/preview-store.js";
+import { previewAccessFor } from "../preview/owner-access.js";
 import { previewStatus } from "../preview-manager.js";
 import { registerTool } from "../tool-registry.js";
 import { withBrowserSlot } from "./browser-limiter.js";
@@ -62,16 +62,18 @@ async function measure(projectId: string, input: unknown) {
 
   const status = await previewStatus(projectId);
   if (!status.running) throw new Error(String((status as { error?: string }).error ?? "Preview is not running"));
-  const current = getPreview(projectId);
-  if (!current) throw new Error("Состояние предпросмотра недоступно — предпросмотр не запущен");
+  const access = previewAccessFor(projectId, status);
 
   const browser = await chromium.launch({ headless: true, executablePath: process.env.WEBNESTDEV_BROWSER_EXECUTABLE || undefined });
   try {
     const context = await browser.newContext({ viewport: BROWSER_VIEWPORTS[viewportName] });
     try {
+      if (access.cookie) {
+        await context.addCookies([{ ...access.cookie, url: new URL(access.baseUrl).origin }]);
+      }
       const page = await context.newPage();
       await page.addInitScript({ content: INIT_SCRIPT });
-      const response = await page.goto(`http://${current.host}:${current.port}${path}`, {
+      const response = await page.goto(access.urlFor(path), {
         waitUntil: "domcontentloaded",
         timeout: LOAD_TIMEOUT_MS,
       });

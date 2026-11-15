@@ -1,4 +1,4 @@
-import { getPreview } from "../preview/preview-store.js";
+import { previewAccessFor } from "../preview/owner-access.js";
 import { previewStatus } from "../preview-manager.js";
 import { previewProxyBase } from "../preview/preview-rewrite.js";
 import { createSession, deleteSession } from "../auth/auth-store.js";
@@ -46,19 +46,18 @@ async function fetchPreview(projectId: string, path: string) {
     );
   }
 
-  const current = getPreview(projectId);
-  if (!current) throw new Error("Состояние предпросмотра недоступно — предпросмотр не запущен");
-  const url = `http://${current.host}:${current.port}${path}`;
+  const access = previewAccessFor(projectId, status);
+  const url = access.urlFor(path);
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8000);
   try {
-    const response = await fetch(url, {
+    const response = await access.fetch(path, {
       redirect: "manual",
       signal: controller.signal,
     });
     const body = (await response.text()).slice(0, MAX_BODY);
-    return { response, body, path };
+    return { response, body, path, source: access.source, url };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Unable to open Preview at ${path}: ${message}`);
@@ -113,12 +112,13 @@ registerTool({
     "Open the project's running Preview page over HTTP and return status, headers, content type, bounded body, and basic HTML diagnostics. Use this to inspect what the generated website actually serves.",
   execute: async (input, context) => {
     const path = getPath(input);
-    const { response, body } = await fetchPreview(context.projectId, path);
+    const { response, body, source } = await fetchPreview(context.projectId, path);
     return {
       ok: response.ok,
       status: response.status,
       statusText: response.statusText,
       url: path,
+      source,
       contentType: response.headers.get("content-type"),
       headers: Object.fromEntries(response.headers.entries()),
       diagnostics:
@@ -334,8 +334,7 @@ async function inspectRuntimePage(projectId: string, path: string, userId?: stri
   if (!status.running) {
     throw new Error(String((status as { error?: string }).error ?? "Preview is not running"));
   }
-  const current = getPreview(projectId);
-  if (!current) throw new Error("Состояние предпросмотра недоступно — предпросмотр не запущен");
+  const access = previewAccessFor(projectId, status);
 
   // Куда положить PNG: служебная папка проекта. Владельца нет — проверка идёт без снимка.
   const sandbox = userId ? await getSandbox(projectId, userId).catch(() => null) : null;
@@ -344,8 +343,8 @@ async function inspectRuntimePage(projectId: string, path: string, userId?: stri
   try {
     door = await loadDoor(
       browser,
-      `http://${current.host}:${current.port}${path}`,
-      undefined,
+      access.urlFor(path),
+      access.cookie,
       sandbox ? { root: sandbox.root, projectId, label: "runtime" } : undefined,
       view,
     );
@@ -353,10 +352,14 @@ async function inspectRuntimePage(projectId: string, path: string, userId?: stri
     await browser.close();
   }
   const panel = await inspectProxyDoor({ projectId, path, userId, view });
-  const failures = [...door.failures, ...(panel.failures ?? []).map(item => "через прокси панели: " + item)];
+  const panelFailures = (panel.failures ?? []).map(item => "через прокси панели: " + item);
+  // Для чужого preview основная дверь — публичная owner-aware: она уже проверяет то, что
+  // откроет пользователь. Прокси панели на этой реплике может не знать о проекте, и это не
+  // должно превращать успешную проверку приложения в ложный провал.
+  const failures = [...door.failures, ...(access.source === "local" ? panelFailures : [])];
   const rendered = door.rendered;
   const ok = failures.length === 0;
-  const sameBothWays = panel.checked && door.failures.length === 0 && (panel.failures?.length ?? 0) > 0;
+  const sameBothWays = access.source === "local" && panel.checked && door.failures.length === 0 && (panel.failures?.length ?? 0) > 0;
   return {
     ok,
     status: door.status,
@@ -388,7 +391,10 @@ async function inspectRuntimePage(projectId: string, path: string, userId?: stri
       (door.layout ? " " + layoutSummary(door.layout) : "") +
       (rendered.styles.noStyles ? " На странице нет ни одного правила CSS: если проект и должен быть без стилей, это нормально, иначе стили не подключены и экран выглядит белым." : "") +
       (sameBothWays ? " Прямо из контейнера приложение отвечает нормально — значит пользователь видит пустой или неоформленный экран из-за прокси панели, а не из-за самого приложения." : "") +
-      (panel.checked ? "" : " Через прокси панели проверить не удалось: " + (panel.reason ?? "неизвестная причина") + "."),
+      (access.source === "owner" ? " Проверка шла через публичный адрес проекта (owner-aware дверь)." : "") +
+      (access.source === "owner"
+        ? " Прокси панели проверяется отдельно и на этот результат не влияет."
+        : panel.checked ? "" : " Через прокси панели проверить не удалось: " + (panel.reason ?? "неизвестная причина") + "."),
     nextAction: ok
       ? "Runtime verification passed."
       : rendered.styles.unstyled
@@ -411,7 +417,7 @@ registerTool({
 registerTool({
   name: "browser.runtime",
   description:
-    "Open the Preview in a real headless Chromium browser, execute client-side JavaScript, and report what the page actually rendered: visible text, its size, blank screen, and whether styles applied (declared vs loaded stylesheets, CSS rules in effect, body background/color, `unstyled`). A PNG of the checked page is saved inside the project and returned as `screenshot` (path + url — open it with browser.screenshot or the file panel), and `layout` lists layout defects by CSS selector: page wider than the viewport, elements beyond the screen edge, broken images, clipped text. Console errors, failed network requests, HTTP 5xx and the document status come with it. Both doors are checked and returned: `url`/`rendered` is the container address the app itself answers on, `panelDoor` is the same page loaded through the platform's own preview proxy — the door the panel's iframe uses, so a page that only breaks for the user is reported too. Background 4xx from the app's own API calls and aborted requests are listed separately as `background` and are not failures; a 4xx for a .css or .js file is a failure, because without it the page is white. Use this after browser.open or project.verify when runtime behavior matters.",
+    "Open the Preview in a real headless Chromium browser, execute client-side JavaScript, and report what the page actually rendered: visible text, its size, blank screen, and whether styles applied (declared vs loaded stylesheets, CSS rules in effect, body background/color, `unstyled`). A PNG of the checked page is saved inside the project and returned as `screenshot` (path + url — open it with browser.screenshot or the file panel), and `layout` lists layout defects by CSS selector: page wider than the viewport, elements beyond the screen edge, broken images, clipped text. Console errors, failed network requests, HTTP 5xx and the document status come with it. The page is loaded through the owner-aware public door when Preview lives on another node, and directly on the owning node; `url`/`rendered` is the page the user reaches, and `panelDoor` is a separate check through the platform's preview proxy. A page that only breaks for the user is reported too. Background 4xx from the app's own API calls and aborted requests are listed separately as `background` and are not failures; a 4xx for a .css or .js file is a failure, because without it the page is white. Use this after browser.open or project.verify when runtime behavior matters.",
   parameters: browserRuntimeParameters,
   execute: async (input, context) => withBrowserSlot(() => inspectRuntimePage(context.projectId, getPath(input), context.userId, input)),
 });
@@ -422,7 +428,7 @@ registerTool({
     "Inspect a Preview HTML page without returning the full body. Reports title, loaded resource references, counts, and common error strings found in the server-rendered HTML. This does not claim to execute JavaScript.",
   execute: async (input, context) => {
     const path = getPath(input);
-    const { response, body } = await fetchPreview(context.projectId, path);
+    const { response, body, source } = await fetchPreview(context.projectId, path);
     const contentType = response.headers.get("content-type");
     const isHtml = contentType?.toLowerCase().includes("text/html") ?? false;
 
@@ -431,6 +437,7 @@ registerTool({
       status: response.status,
       statusText: response.statusText,
       url: path,
+      source,
       contentType,
       htmlDiagnostics: isHtml ? inspectHtml(body) : null,
       note: "Diagnostics are derived from the HTTP response HTML; browser.inspect does not execute client-side JavaScript or capture a screenshot.",

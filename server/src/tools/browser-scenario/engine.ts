@@ -1,6 +1,6 @@
 import { chromium, type Browser, type Page } from "playwright";
 import { previewStatus } from "../../preview-manager.js";
-import { getPreview } from "../../preview/preview-store.js";
+import { previewAccessFor } from "../../preview/owner-access.js";
 import { getSandbox } from "../../sandbox/sandbox-service.js";
 import { BROWSER_VIEWPORTS, readBrowserViewport } from "../browser-viewport.js";
 import { readLayout, saveScreenshot, type LayoutAudit, type SavedScreenshot } from "../screenshot-file.js";
@@ -457,8 +457,7 @@ export async function runBrowserScenario(
 
   const status = await previewStatus(projectId);
   if (!status.running) throw new Error(String((status as { error?: string }).error ?? "Preview is not running"));
-  const current = getPreview(projectId);
-  if (!current) throw new Error("Состояние предпросмотра недоступно — предпросмотр не запущен");
+  const access = previewAccessFor(projectId, status);
 
   const { name: viewportName, viewport } = viewportFromInput(scenario.viewport);
   const allSteps = [...setup, ...steps];
@@ -514,6 +513,12 @@ export async function runBrowserScenario(
       }
     });
 
+    // Билет публичной двери ставится до первой навигации: иначе owner-aware дверь ответит
+    // страницей входа, а сценарий примет её за приложение.
+    if (access.cookie) {
+      await page.context().addCookies([{ ...access.cookie, url: new URL(access.baseUrl).origin }]);
+    }
+
     if (scenario.storage) {
       await page.context().addInitScript(values => {
         for (const [key, value] of Object.entries(values)) localStorage.setItem(key, value);
@@ -522,7 +527,7 @@ export async function runBrowserScenario(
 
     let startResponse: Awaited<ReturnType<typeof loadAndSettle>> | null = null;
     try {
-      startResponse = await loadAndSettle(page, `http://${current.host}:${current.port}${scenario.path ?? "/"}`, {
+      startResponse = await loadAndSettle(page, access.urlFor(scenario.path ?? "/"), {
         // Первая загрузка тоже подчиняется общему timeoutMs: сцена с моделями может быть
         // заметно тяжелее обычной страницы, и 20 секунд здесь больше не жёсткий потолок.
         timeoutMs: Math.max(1, remainingMs(deadline)),
@@ -558,7 +563,7 @@ export async function runBrowserScenario(
     const common = {
       page,
       projectId,
-      baseUrl: `http://${current.host}:${current.port}`,
+      baseUrl: access.baseUrl,
       deadline,
       ensureRoot: ensureCaptureRoot,
       documentStatus: () => documentStatus,

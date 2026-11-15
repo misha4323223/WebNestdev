@@ -4,6 +4,7 @@ import { sessionCookieSecure } from "../auth/auth.js";
 import { dockerForNode } from "./docker-exec.js";
 import { lookupPreview, reportPreviewEvent, waitForDoorApi } from "./door-client.js";
 import { previewDoorToken } from "./door-token.js";
+import { fetchPreviewLogsFromApi } from "./owner-logs.js";
 import { execFetchPreview } from "./exec-proxy.js";
 import { previewHostTarget, previewPublicDomain } from "./preview-host.js";
 import {
@@ -77,6 +78,8 @@ export function previewDoorDeps(): PreviewHostDeps {
     },
     ticketProject: previewTicketProject,
     secureCookie: request => sessionCookieSecure(request as unknown as FastifyRequest),
+    // Дверь не держит run-map предпросмотров: логи hybrid/static читает API этого узла.
+    logs: projectId => fetchPreviewLogsFromApi(projectId),
   };
 }
 

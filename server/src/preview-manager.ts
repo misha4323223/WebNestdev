@@ -18,6 +18,8 @@ import { previewModeSetting, recoverLocalStaticPreview, startStaticPreview, stat
 import { readHybridConfig } from "./preview/hybrid-config.js";
 import { detectAndSaveHybridProfile } from "./preview/hybrid-detect.js";
 import { hybridBackendLogs, hybridPreviewLogs, hybridPreviewStatus, recoverLocalHybridPreview, startHybridPreview, stopHybridPreview } from "./preview/hybrid-preview.js";
+import { fetchPreviewLogsFromOwner } from "./preview/owner-logs.js";
+import { PREVIEW_OWNER_UNAVAILABLE_HINT, previewOwnerReachable } from "./preview/owner-health.js";
 import { recordPreviewStart } from "./preview/preview-metrics.js";
 import { PREVIEW_LABEL, type PreviewStatus } from "./preview/types.js";
 import { clearPreviewSecrets } from "./secrets/preview-secrets.js";
@@ -324,12 +326,28 @@ export async function stopPreview(projectId: string) {
  * Returns what the panel shows behind the preview: the dev-server output for a container
  * preview, the build output for a static one (nothing runs that could produce more).
  */
-export async function previewLogs(projectId: string, options: { touch?: boolean } = {}) {
+export async function previewLogs(projectId: string, options: { touch?: boolean; localOnly?: boolean } = {}) {
   const touch = options.touch !== false;
   const progress = getPreviewStartProgress(projectId);
   const starting = progress ? previewStartProgressLog(projectId) : "";
   const current = await hydratePreview(projectId);
   if (!current) return { running: false, logs: starting, ...(progress ? { starting: progress } : {}) };
+
+  // Static и hybrid держат build/backend вывод в памяти процесса-владельца. Локальная карта
+  // `runs` на другой реплике пуста, поэтому без этого запроса вкладка «Логи» показывала пустоту
+  // при живом предпросмотре. Контейнерный preview оставляем на прежнем пути: его логи читаются
+  // через Docker/runner по `node`, и лишний сетевой хоп здесь не нужен.
+  // `localOnly` ставит внутренний маршрут двери: он уже пришёл на ноду-владельца и не должен
+  // снова идти в дверь, если адрес в строке реестра оказался нераспознанным (иначе возможен цикл).
+  if (!options.localOnly && (current.mode === "static" || current.mode === "hybrid") && !isLocalPreviewOwner(current.ownerAddress)) {
+    if (touch) touchPreview(projectId);
+    const remote = await fetchPreviewLogsFromOwner(projectId, current.ownerAddress!);
+    // Владелец уже снял состояние, если контейнер/слушатель исчез. Локальный кэш второй реплики
+    // не должен продолжать показывать «запущен» после этого ответа. Исключение — идёт запуск:
+    // `running:false` с `starting` означает «ещё поднимается», и состояние нужно сохранить.
+    if (!remote.running && !remote.starting) removePreview(projectId);
+    return remote;
+  }
 
   if (current.mode === "static") {
     // Somebody is reading the logs, so the preview is in use. The panel reads runtime logs
@@ -452,23 +470,28 @@ async function readPreviewStatus(projectId: string, options: { touch?: boolean }
     // На чужой реплике слушателя нет: проверять 127.0.0.1 бессмысленно. Дверь всё равно
     // проксирует запрос на owner_address, поэтому статус берётся из общего реестра.
     const local = isLocalPreviewOwner(current.ownerAddress);
-    const ready = local ? await staticAppAnswers(current.host, current.port) : current.ready !== false;
+    const ownerUnavailable = !local && Boolean(current.ownerAddress)
+      ? !(await previewOwnerReachable(current.ownerAddress!))
+      : false;
+    const ready = ownerUnavailable ? false : local ? await staticAppAnswers(current.host, current.port) : current.ready !== false;
     if (touch) touchPreview(projectId);
     return {
       running: true,
       ready,
       // Готовность статического предпросмотра — это ответ на запрос самого сервера, поэтому
       // подтверждённый адрес и готовность здесь одно и то же.
-      settled: ready,
+      settled: !ownerUnavailable && ready,
       mode: "static",
       port: current.port,
       host: current.host,
       containerId: current.containerId,
       startedAt: current.startedAt,
       ...(current.ownerAddress ? { ownerAddress: current.ownerAddress } : {}),
-      ...(ready
-        ? {}
-        : { hint: "Статическая сборка не отвечает — запустите предпросмотр заново." }),
+      ...(ownerUnavailable
+        ? { ownerUnavailable: true, hint: PREVIEW_OWNER_UNAVAILABLE_HINT }
+        : ready
+          ? {}
+          : { hint: "Статическая сборка не отвечает — запустите предпросмотр заново." }),
     };
   }
 

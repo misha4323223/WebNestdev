@@ -1,4 +1,3 @@
-import { connect as netConnect } from "node:net";
 import type { SandboxConfig } from "../sandbox-manager.js";
 import { getProject } from "../project-store.js";
 import { nodeId } from "../nodes/identity.js";
@@ -8,7 +7,8 @@ import { clearPreviewSecrets } from "../secrets/preview-secrets.js";
 import { ensureProjectDependencies } from "./dependencies.js";
 import { planHybridPreview } from "./hybrid-plan.js";
 import { createHybridListener, type HybridListener } from "./hybrid-listener.js";
-import { localPreviewOwnerAddress, isLocalPreviewOwner, previewOwnerTarget } from "./preview-owner.js";
+import { localPreviewOwnerAddress, isLocalPreviewOwner } from "./preview-owner.js";
+import { PREVIEW_OWNER_UNAVAILABLE_HINT, previewOwnerReachable, probePreviewOwner } from "./owner-health.js";
 import { previewLogsOf, removePreviewContainer, startPreviewProcess, type StartedPreviewProcess } from "./preview-runner.js";
 import { flushPreviewWrites, hydratePreview, removePreview, setPreview, touchPreview } from "./preview-store.js";
 import { isRuntimePreviewMode, type PreviewState, type PreviewStatus } from "./types.js";
@@ -96,22 +96,7 @@ function describeError(error: unknown) {
  * node) must not make every start on the surviving replica return a stale address for the full
  * registry TTL. The door port is enough: if it is closed, start the preview here instead. */
 function previewDoorReachable(ownerAddress: string): Promise<boolean> {
-  const target = previewOwnerTarget(ownerAddress);
-  if (!target) return Promise.resolve(false);
-  return new Promise(resolve => {
-    let settled = false;
-    const socket = netConnect({ host: target.host, port: target.port });
-    const finish = (value: boolean) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      socket.destroy();
-      resolve(value);
-    };
-    const timer = setTimeout(() => finish(false), 750);
-    socket.once("connect", () => finish(true));
-    socket.once("error", () => finish(false));
-  });
+  return probePreviewOwner(ownerAddress, 750);
 }
 
 function trimLog(value: string) {
@@ -452,12 +437,15 @@ export async function hybridPreviewStatus(projectId: string, options: { touch?: 
   // backend would never be cleaned up. A row with neither owner nor local run is left alone:
   // only the owning process may decide that a listener is gone.
   const local = Boolean(runs.get(projectId)) || (Boolean(current.ownerAddress) && isLocalPreviewOwner(current.ownerAddress!));
+  const ownerUnavailable = !local && Boolean(current.ownerAddress)
+    ? !(await previewOwnerReachable(current.ownerAddress!))
+    : false;
   if (!local) {
     if (touch) touchPreview(projectId);
     return {
       running: true,
-      ready: current.ready !== false,
-      settled: Boolean(current.settled),
+      ready: ownerUnavailable ? false : current.ready !== false,
+      settled: ownerUnavailable ? false : Boolean(current.settled),
       mode: "hybrid",
       host: current.host,
       port: current.port,
@@ -468,6 +456,9 @@ export async function hybridPreviewStatus(projectId: string, options: { touch?: 
       ...(current.containerPort !== undefined ? { containerPort: current.containerPort } : {}),
       ...(current.node ? { node: current.node } : {}),
       ...(current.ownerAddress ? { ownerAddress: current.ownerAddress } : {}),
+      ...(ownerUnavailable
+        ? { ownerUnavailable: true, hint: PREVIEW_OWNER_UNAVAILABLE_HINT }
+        : {}),
     };
   }
   const run = runs.get(projectId);

@@ -8,7 +8,8 @@ import { previewLogs,previewStatus,startPreview,stopPreview } from "../preview-m
 import { registerPreviewRoutes } from "../routes/preview.js";
 import type { SandboxConfig } from "../sandbox-manager.js";
 import { execFetchPreview } from "./exec-proxy.js";
-import { getPreview,removePreview,touchPreview } from "./preview-store.js";
+import { getPreview,removePreview,setPreview,touchPreview } from "./preview-store.js";
+import { resetPreviewOwnerHealthForTests,setPreviewOwnerHealthForTests } from "./owner-health.js";
 import { previewModeSetting,refreshStaticPreview,startStaticPreview,staticPreviewLogs,stopAllStaticPreviews,stopStaticPreview } from "./static-preview.js";
 import { previewHostTarget, previewPublicUrl } from "./preview-host.js";
 import { mintPreviewTicket, previewTicketTtlMs } from "./preview-ticket.js";
@@ -141,6 +142,34 @@ test("a live static listener restores its lost preview row instead of reporting 
   } finally {
     restore();
     await cleanup(root);
+  }
+});
+
+test("static status marks a remote preview when its owner door is down", async () => {
+  setPreview({
+    mode: "static",
+    containerId: "",
+    host: "127.0.0.1",
+    port: 4125,
+    projectId: PROJECT_ID,
+    startedAt: 10,
+    lastUsedAt: 10,
+    ready: true,
+    settled: true,
+    ownerAddress: "203.0.113.10:8788",
+  });
+  setPreviewOwnerHealthForTests({ probe: async () => false });
+  try {
+    const status = await previewStatus(PROJECT_ID);
+    assert.equal(status.running, true);
+    if (!status.running) return;
+    assert.equal(status.ownerUnavailable, true);
+    assert.equal(status.ready, false);
+    assert.equal(status.settled, false);
+    assert.match(status.hint ?? "", /нода-владелец/i);
+  } finally {
+    resetPreviewOwnerHealthForTests();
+    removePreview(PROJECT_ID);
   }
 });
 

@@ -1,8 +1,8 @@
 import { readdir,readFile,stat } from "node:fs/promises";
 import path from "node:path";
 import { previewAppAnswers } from "../preview/app-http.js";
+import { previewAccessFor, type PreviewAccess } from "../preview/owner-access.js";
 import { unreachablePreviewDiagnosis } from "../preview/preview-address.js";
-import { getPreview } from "../preview/preview-store.js";
 import { previewStatus } from "../preview-manager.js";
 import { dockerForNode } from "../preview/docker-exec.js";
 import { analyzeForms } from "../qa/form-signal.js";
@@ -40,13 +40,13 @@ export function referencedAssets(html: string, route: string) {
  * HTML говорит «страница работает» и при 404 у style.css: пользователь видит в консоли браузера
  * отказ применить стили и пустой экран, а агент считает задачу выполненной.
  */
-async function checkReferencedAssets(host: string, port: number, route: string, html: string) {
+async function checkReferencedAssets(access: PreviewAccess, route: string, html: string) {
   const results: { ref: string; status: number; ok: boolean }[] = [];
   for (const ref of referencedAssets(html, route)) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), ASSET_TIMEOUT_MS);
     try {
-      const response = await fetch(`http://${host}:${port}${ref}`, { redirect: "manual", signal: controller.signal });
+      const response = await access.fetch(ref, { redirect: "manual", signal: controller.signal });
       results.push({ ref, status: response.status, ok: response.status < 400 });
     } catch {
       results.push({ ref, status: 0, ok: false });
@@ -125,22 +125,16 @@ registerTool({
       };
     }
 
-    const current = getPreview(context.projectId);
-    if (!current) {
+    let access: PreviewAccess;
+    try {
+      access = previewAccessFor(context.projectId, status);
+    } catch (error) {
       return {
         ok: false,
         stage: "preview",
-        reason: "Состояние предпросмотра недоступно",
-        nextAction: "Restart the Preview and run project.verify again.",
-      };
-    }
-
-    if (!current.port) {
-      return {
-        ok: false,
-        stage: "preview",
-        reason: "Предпросмотр запущен, но его порт недоступен",
-        nextAction: "Restart the Preview and run project.verify again.",
+        reason: error instanceof Error ? error.message : String(error),
+        status,
+        nextAction: "Check the preview owner and PREVIEW_PUBLIC_DOMAIN, restart Preview, then run project.verify again.",
       };
     }
 
@@ -148,7 +142,7 @@ registerTool({
     const timeout = setTimeout(() => controller.abort(), 8000);
 
     try {
-      const response = await fetch(`http://${current.host}:${current.port}${path}`, {
+      const response = await access.fetch(path, {
         redirect: "manual",
         signal: controller.signal,
       });
@@ -167,7 +161,7 @@ registerTool({
       ].some((signal) => body.includes(signal));
 
       // Файлы страницы проверяются только когда ответ — HTML: для JSON или картинки ссылок нет.
-      const assets = isHtml ? await checkReferencedAssets(current.host, current.port, path, body) : [];
+      const assets = isHtml ? await checkReferencedAssets(access, path, body) : [];
       const brokenAssets = assets.filter((asset) => !asset.ok);
       const checks = {
         httpOk: response.ok,
@@ -214,26 +208,36 @@ registerTool({
       // запуск падает на лимите попыток. Поэтому тот же запрос делается внутри контейнера, и
       // разница между «приложение живо, но недоступно снаружи» и «приложение не поднялось»
       // попадает в результат проверки как действие, а не как текст ошибки.
-      const appAnswersInside = current.mode === "container"
-        ? await previewAppAnswers(current).catch(() => false)
-        : current.mode === "hybrid"
+      const appAnswersInside = status.mode === "container"
+        ? await previewAppAnswers(status).catch(() => false)
+        : status.mode === "hybrid"
           ? await previewAppAnswers({
-            containerId: current.containerId,
-            port: current.backendPort ?? current.port,
-            ...(current.containerPort !== undefined ? { containerPort: current.containerPort } : {}),
-          }, dockerForNode(current.node)).catch(() => false)
+            containerId: status.containerId,
+            port: status.backendPort ?? status.port,
+            ...(status.containerPort !== undefined ? { containerPort: status.containerPort } : {}),
+          }, dockerForNode(status.node)).catch(() => false)
           : false;
-      const diagnosis = unreachablePreviewDiagnosis({ message, port: current.port, appAnswersInside });
+      // Для чужого preview ошибка локального порта ничего не объясняет: проверка шла через
+      // публичную дверь, и чинить нужно её (DNS/сертификат/дверь-владельца), а не порт на этой
+      // реплике. Иначе агент снова получает «fetch failed» с ложной подсказкой.
+      const diagnosis = access.source === "owner"
+        ? {
+          reason: "Публичная дверь предпросмотра не ответила: " + message,
+          hint: "Приложение может быть живо на ноде-владельце. Проверьте PREVIEW_PUBLIC_DOMAIN, DNS и сертификат домена предпросмотра, затем доступность двери-владельца; локальный порт этой реплики здесь не поможет.",
+        }
+        : unreachablePreviewDiagnosis({ message, port: status.port, appAnswersInside });
       return {
         ok: false,
         stage: "http",
         path,
         reason: diagnosis.reason,
         hint: diagnosis.hint,
-        preview: { host: current.host, port: current.port, mode: current.mode, appAnswersInside },
-        nextAction: appAnswersInside
-          ? "Restart Preview (preview.stop, then preview.start) so the platform forwards the app's port, then run project.verify again."
-          : "Read the Preview logs (preview.logs), fix the dev command or the project, restart Preview, then run project.verify again.",
+        preview: { host: status.host, port: status.port, mode: status.mode, source: access.source, appAnswersInside },
+        nextAction: access.source === "owner"
+          ? "Check the public Preview domain and the owner node, then run project.verify again."
+          : appAnswersInside
+            ? "Restart Preview (preview.stop, then preview.start) so the platform forwards the app's port, then run project.verify again."
+            : "Read the Preview logs (preview.logs), fix the dev command or the project, restart Preview, then run project.verify again.",
       };
     } finally {
       clearTimeout(timeout);

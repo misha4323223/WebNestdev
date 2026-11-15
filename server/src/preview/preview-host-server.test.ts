@@ -6,6 +6,8 @@ import { createPreviewHostServer, describePreviewHostServer, previewAccess, requ
 import { previewHostTarget } from "./preview-host.js";
 import { PICK_BRIDGE_PATH, PICK_BRIDGE_TAG, PICK_COMMAND } from "./pick-bridge.js";
 import { mintPreviewTicket, previewTicketProject, PREVIEW_SESSION_PATH, PREVIEW_TICKET_COOKIE } from "./preview-ticket.js";
+import { PREVIEW_LOGS_DOOR_PATH } from "./owner-logs.js";
+import { previewDoorToken } from "./door-token.js";
 import type { PreviewStatus } from "./types.js";
 
 /**
@@ -112,6 +114,33 @@ function post(port: number, path: string, body: string, headers: Record<string, 
     request.end(body);
   });
 }
+
+test("внутренний канал логов требует токен и не доходит до приложения", async () => {
+  const site = await upstream();
+  const door = await doorWith(depsFor(site.port, {
+    logs: async projectId => ({
+      running: true,
+      logs: "build output for " + projectId,
+    }),
+  }));
+  try {
+    const denied = await post(door.port, PREVIEW_LOGS_DOOR_PATH, JSON.stringify({ projectId: PROJECT }));
+    assert.equal(denied.status, 401);
+    assert.equal(site.hits.length, 0, "без токена внутренний маршрут не проксируется в приложение");
+
+    const token = previewDoorToken() ?? "";
+    const response = await post(door.port, PREVIEW_LOGS_DOOR_PATH, JSON.stringify({ projectId: PROJECT }), {
+      authorization: "Bearer " + token,
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(JSON.parse(response.body), { running: true, logs: "build output for " + PROJECT });
+    assert.equal(site.hits.length, 0);
+    assert.equal(response.headers["cache-control"], "no-store");
+  } finally {
+    await door.close();
+    await site.close();
+  }
+});
 
 test("без билета приложение не отдаётся, а переход по ссылке получает страницу-дверь", async () => {
   const site = await upstream();

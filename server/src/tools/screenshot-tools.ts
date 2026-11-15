@@ -1,6 +1,6 @@
 import { chromium, type Browser } from "playwright";
 import { getSandbox } from "../sandbox/sandbox-service.js";
-import { getPreview } from "../preview/preview-store.js";
+import { previewAccessFor, type PreviewAccess } from "../preview/owner-access.js";
 import { previewStatus } from "../preview-manager.js";
 import { registerTool } from "../tool-registry.js";
 import { withBrowserSlot } from "./browser-limiter.js";
@@ -34,12 +34,10 @@ function readPath(input: unknown) {
   return requested.startsWith("/") ? requested : "/" + requested;
 }
 
-async function openPreview(projectId: string) {
+async function openPreview(projectId: string): Promise<PreviewAccess> {
   const status = await previewStatus(projectId);
   if (!status.running) throw new Error(String((status as { error?: string }).error ?? "Preview is not running"));
-  const current = getPreview(projectId);
-  if (!current) throw new Error("Состояние предпросмотра недоступно — предпросмотр не запущен");
-  return current;
+  return previewAccessFor(projectId, status);
 }
 
 export type ScreenshotResult = {
@@ -61,7 +59,7 @@ export async function captureScreenshot(input: {
   viewport: ScreenshotViewport;
   fullPage: boolean;
 }): Promise<ScreenshotResult> {
-  const current = await openPreview(input.projectId);
+  const access = await openPreview(input.projectId);
   const sandbox = await getSandbox(input.projectId, input.userId);
   const browser: Browser = await chromium.launch({
     headless: true,
@@ -70,8 +68,11 @@ export async function captureScreenshot(input: {
   try {
     const context = await browser.newContext({ viewport: VIEWPORTS[input.viewport] });
     try {
+      if (access.cookie) {
+        await context.addCookies([{ ...access.cookie, url: new URL(access.baseUrl).origin }]);
+      }
       const page = await context.newPage();
-      await page.goto(`http://${current.host}:${current.port}${input.path}`, { waitUntil: "domcontentloaded", timeout: LOAD_TIMEOUT_MS });
+      await page.goto(access.urlFor(input.path), { waitUntil: "domcontentloaded", timeout: LOAD_TIMEOUT_MS });
       await page.waitForLoadState("networkidle", { timeout: NETWORK_IDLE_MS }).catch(() => undefined);
       await page.waitForTimeout(SETTLE_MS);
       const layout = await readLayout(page);
