@@ -9,11 +9,30 @@ import { registerTool } from "../tool-registry.js";
  */
 const NO_ARGUMENTS = { type: "object", additionalProperties: false, properties: {} };
 
+/**
+ * The agent only needs readiness, mode and progress. Node/container/host/owner fields are server
+ * routing details and must never reach a user-facing answer, so they are dropped here as well as
+ * covered by the platform rule in the system prompt.
+ */
+function previewForAgent(status: Awaited<ReturnType<typeof previewStatus>>) {
+  if (!status.running) return status;
+  return {
+    running: true as const,
+    ready: status.ready,
+    ...(status.mode ? {mode:status.mode} : {}),
+    ...(status.settled === undefined ? {} : {settled:status.settled}),
+    startedAt: status.startedAt,
+    ...(status.starting ? {starting:status.starting} : {}),
+    ...(status.viaExec ? {viaExec:true} : {}),
+    ...(status.ownerUnavailable ? {ownerUnavailable:true} : {}),
+  };
+}
+
 registerTool({
   name:"preview.start",
   description:"Start the project's live preview server after creating or updating the project.",
   parameters:NO_ARGUMENTS,
-  execute: async (_,context) => {return startPreview(await getSandbox(context.projectId,context.userId))}
+  execute: async (_,context) => {return previewForAgent(await startPreview(await getSandbox(context.projectId,context.userId)))}
 });
 registerTool({
   name:"preview.stop",
@@ -23,9 +42,9 @@ registerTool({
 });
 registerTool({
   name:"preview.status",
-  description:"Check whether the project's live preview is running.",
+  description:"Check whether the project's live preview is running and ready. The result belongs to this project only and contains readiness/progress, not platform routing details; still never describe platform infrastructure to the user.",
   parameters:NO_ARGUMENTS,
-  execute: async (_,context) => {await getSandbox(context.projectId,context.userId);return previewStatus(context.projectId)}
+  execute: async (_,context) => {await getSandbox(context.projectId,context.userId);return previewForAgent(await previewStatus(context.projectId))}
 });
 
 /** Сколько символов лога возвращается модели: хвост ошибки, а не весь вывод запуска. */
@@ -34,9 +53,10 @@ const PREVIEW_LOG_MAX_CHARS = 10_000;
 registerTool({
   name:"preview.logs",
   description:
-    "Read the tail of the running Preview's dev-server output. Input: {lines?:number (1–400, default 120), grep?:string (case-insensitive filter)}. " +
+    "Read the tail of this project's running Preview output. Input: {lines?:number (1–400, default 120), grep?:string (case-insensitive filter)}. " +
+    "This is the same project's runtime, never another project's or a foreign environment. Depending on how the Preview is served, the tail is the dev-server output or the build/startup log followed by the server-side runtime log; a static frontend has no separate runtime process, so its build log is the frontend output. " +
     "Use it when the Preview fails to start, a route returns a server error, or project.verify points to startup logs: the error and the exact command are in this output, not in the page HTML. " +
-    "The Preview must be running; start it with preview.start first. Logs are a snapshot: read them after a check, not instead of it.",
+    "The Preview must be running; start it with preview.start first. Logs are a snapshot: read them after a check, not instead of it. Do not try to inspect the Preview process from terminal.exec; use this tool.",
   parameters:{
     type:"object",
     additionalProperties:false,
@@ -70,7 +90,7 @@ registerTool({
           ? grep
             ? "В логе нет строк с «"+grep+"». Попробуйте более короткое слово или вызовите без grep."
             : "Пока нет вывода: приложение ещё ничего не написало."
-          : "Это хвост вывода dev-сервера; ошибки запуска и запросов ищите здесь.",
+          : "Это хвост вывода текущего предпросмотра этого проекта: сборка/запуск и серверная часть; в режиме dev-сервера — его вывод.",
     };
   },
 });

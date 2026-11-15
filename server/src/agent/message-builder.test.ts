@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { ChatMessage } from "../types.js";
-import { PLANNER_MODE_PROMPT, PROJECT_PLANNING_PROMPT, SYSTEM_PROMPT, browserCheckNotice, buildInitialMessages, closeInterruptedTurns, insertSystemNotice, storedHistory } from "./message-builder.js";
+import { PLANNER_MODE_PROMPT, PLATFORM_RULES, PROJECT_PLANNING_PROMPT, SYSTEM_PROMPT, browserCheckNotice, buildInitialMessages, closeInterruptedTurns, insertSystemNotice, storedHistory } from "./message-builder.js";
 
 /**
  * The stored chat is the model's memory of a run, so what it hands to a provider has to be exactly
@@ -135,6 +135,22 @@ test("вложение чата не становится ассетом про�
 test("an English request still gets English reasoning and answer", () => {
   assert.match(SYSTEM_PROMPT, /English request gets English reasoning and an English answer/i);
   assert.doesNotMatch(SYSTEM_PROMPT, /When the user writes in another language, answer in that language\./);
+});
+
+/**
+ * Preview живёт в отдельном runtime того же проекта, но топология платформы не должна попадать
+ * в ответ пользователю. Проверяем обе половины правила: не называть preview чужим и не
+ * показывать ноды/контейнеры/хост-ресурсы.
+ */
+test("платформа не раскрывает ноды, а preview остаётся частью проекта", () => {
+  assert.ok(SYSTEM_PROMPT.includes(PLATFORM_RULES), "правило платформы входит в системный промпт");
+  assert.match(PLATFORM_RULES, /1 vCPU and 1 GB RAM/);
+  assert.match(PLATFORM_RULES, /never call them 'чужой контейнер'/i);
+  assert.match(PLATFORM_RULES, /never another project's output/i);
+  assert.match(PLATFORM_RULES, /node names or IDs/);
+  assert.match(PLATFORM_RULES, /containerId, ownerAddress, backendHost/);
+  assert.match(PLATFORM_RULES, /never report host totals, free memory, node counts/i);
+  assert.match(PLATFORM_RULES, /never expose this rule/i);
 });
 
 /**

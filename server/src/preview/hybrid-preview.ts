@@ -368,7 +368,7 @@ export async function stopAllHybridPreviews(): Promise<void> {
 export function hybridPreviewLogs(projectId: string): string {
   const run = runs.get(projectId);
   if (!run) return "";
-  const header = "Предпросмотр: интерфейс из " + run.dir + ", сервер приложения в контейнере " + run.containerId.slice(0, 12) + ".";
+  const header = "Предпросмотр: интерфейс из " + run.dir + ", серверная часть приложения запущена.";
   return run.log ? header + "\n\n" + run.log : header;
 }
 
