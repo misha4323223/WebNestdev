@@ -351,10 +351,10 @@ export function validateCreate(body, policy) {
   // запроса: argv и env для этого не годятся (тело может быть большим и не должно светиться в
   // `ps`). Разрешаем ровно помеченному контейнеру функции и только без TTY.
   const isFunctionContainer = isObject(body.Labels) && body.Labels["webnestdev.function"] === "1";
-  if (body.Tty || body.StdinOnce) {
-    return fail("TTY и StdinOnce не используются платформой и запрещены");
-  }
-  if (!isFunctionContainer && (body.OpenStdin || body.AttachStdin)) {
+  if (body.Tty) return fail("TTY не используется платформой и запрещён");
+  // Docker CLI для `run -i` выставляет все три поля stdin, включая StdinOnce. Разрешаем их
+  // только помеченному контейнеру функции: остальным stdin не нужен.
+  if (!isFunctionContainer && (body.OpenStdin || body.AttachStdin || body.StdinOnce)) {
     return fail("stdin разрешён только контейнеру serverless-функции");
   }
   if (typeof body.Image !== "string" || body.Image !== policy.image) {

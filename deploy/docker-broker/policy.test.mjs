@@ -207,11 +207,12 @@ test("локальный workspace проекта разрешён как вто
 });
 
 test("stdin разрешён только помеченному контейнеру функции", () => {
-  const ordinary = createBody({ OpenStdin: true, AttachStdin: true });
+  const ordinary = createBody({ OpenStdin: true, AttachStdin: true, StdinOnce: true });
   assert.equal(validateCreate(ordinary, policy).ok, false);
   const fn = createBody({
     OpenStdin: true,
     AttachStdin: true,
+    StdinOnce: true,
     Labels: { "webnestdev.function": "1" },
     HostConfig: { ...createBody().HostConfig, Binds: ["/var/lib/webnestdev/sites/site-1/current/.functions/hello:/workspace:ro"] },
   });
