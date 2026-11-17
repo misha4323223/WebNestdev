@@ -1108,6 +1108,7 @@ jobs:
             "$DEPLOY_USER@$DEPLOY_HOST" \
             "rm -rf '$STAGING_DIR'; mkdir -p '$STAGING_DIR'"
           tar -cf - docker-compose.yml deploy/Caddyfile deploy/preview-tls.caddy deploy/ha \
+            deploy/node1/docker-compose.override.yml deploy/node2/docker-compose.override.yml \
             | ssh -i "$HOME/.ssh/deploy_key" \
               -p "${DEPLOY_PORT:-22}" \
               -o BatchMode=yes -o StrictHostKeyChecking=yes \
