@@ -1,0 +1,68 @@
+name: dns-ops
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "list | add-a"
+        type: choice
+        options: ["list", "add-a"]
+        default: "list"
+      name:
+        description: "Record name inside nestdev.ru, e.g. bmg.host"
+        type: string
+        default: "bmg.host"
+      ip:
+        description: "IPv4 for add-a"
+        type: string
+        default: "178.236.27.102"
+
+permissions:
+  contents: read
+
+jobs:
+  regru:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: REG.RU DNS
+        env:
+          REGRU_USERNAME: ${{ secrets.REGRU_API_USERNAME }}
+          REGRU_PASSWORD: ${{ secrets.REGRU_API_PASSWORD }}
+          ACTION: ${{ inputs.action }}
+          RECORD: ${{ inputs.name }}
+          ADDRESS: ${{ inputs.ip }}
+        run: |
+          python3 - <<'PY'
+          import json, os, urllib.parse, urllib.request
+          url = "https://api.reg.ru/api/regru2/"
+          def call(command, data):
+              form = urllib.parse.urlencode({
+                  "username": os.environ["REGRU_USERNAME"],
+                  "password": os.environ["REGRU_PASSWORD"],
+                  "input_format": "json",
+                  "output_format": "json",
+                  "io_encoding": "utf8",
+                  "input_data": json.dumps(data, separators=(",", ":")),
+              }).encode()
+              req = urllib.request.Request(url + command, data=form, method="POST", headers={
+                  "Content-Type": "application/x-www-form-urlencoded",
+                  "Accept": "application/json",
+              })
+              with urllib.request.urlopen(req, timeout=30) as response:
+                  payload = json.loads(response.read().decode("utf-8", "replace"))
+              result = str(payload.get("result") or payload.get("status") or "").lower()
+              if result != "success":
+                  raise SystemExit(command + ": " + str(payload.get("error_text") or payload.get("error_code") or payload)[:500])
+              return payload
+          domain = {"dname": "nestdev.ru"}
+          if os.environ["ACTION"] == "add-a":
+              call("zone/add_alias", {"domains": [domain], "subdomain": os.environ["RECORD"], "ipaddr": os.environ["ADDRESS"]})
+          payload = call("zone/get_resource_records", {"domains": [domain]})
+          domains = (payload.get("answer") or {}).get("domains") or []
+          records = (domains[0] or {}).get("rrs") or []
+          for r in records:
+              name = str(r.get("subname") or r.get("subdomain") or r.get("name") or "@")
+              if name in {"bmg.host", "*.host", "@"}:
+                  print(name, r.get("rectype") or r.get("record_type"), r.get("content") or r.get("ipaddr") or r.get("value"), "ttl=" + str(r.get("ttl")))
+          PY
