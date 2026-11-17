@@ -37,8 +37,10 @@ registerTool({
   execute: async (_,context) => {
     // Агент запускает тот же preview, что и панель. Контейнерный режим — возможность Премиума;
     // статический остаётся доступен на всех тарифах, поэтому решает сам preview-manager.
-    const allowContainer=planAllows(await accountPlanFor(context.userId),"containerPreview");
-    return previewForAgent(await startPreview(await getSandbox(context.projectId,context.userId),{allowContainer}));
+    const plan=await accountPlanFor(context.userId);
+    const allowContainer=planAllows(plan,"containerPreview");
+    const allowFunctions=planAllows(plan,"serverlessFunctions");
+    return previewForAgent(await startPreview(await getSandbox(context.projectId,context.userId),{allowContainer,allowFunctions}));
   }
 });
 registerTool({

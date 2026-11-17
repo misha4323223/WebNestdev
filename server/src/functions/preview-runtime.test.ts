@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -30,6 +30,36 @@ async function waitForPort(child: ReturnType<typeof spawn>) {
   });
 }
 
+test("preview supervisor restarts a crashed runtime without Docker --restart", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "webnestdev-preview-supervisor-"));
+  const marker = path.join(root, "runs.txt");
+  const fakeRuntime = path.join(root, "runtime.mjs");
+  await writeFile(fakeRuntime, [
+    "import http from 'node:http';",
+    "import { readFileSync, writeFileSync } from 'node:fs';",
+    "let runs = 0; try { runs = Number(readFileSync(process.env.RUNS_MARKER, 'utf8')); } catch {}",
+    "writeFileSync(process.env.RUNS_MARKER, String(runs + 1));",
+    "if (runs === 0) process.exit(1);",
+    "const server = http.createServer((_q, res) => res.end('ok'));",
+    "server.listen(Number(process.env.PORT || 0), '127.0.0.1', () => console.log('listening on 127.0.0.1:' + server.address().port));",
+  ].join("\n"));
+  const child = spawn(process.execPath, [fileURLToPath(new URL("./preview-supervisor.mjs", import.meta.url))], {
+    env: { ...process.env, PORT: "0", RUNS_MARKER: marker, WEBNESTDEV_PREVIEW_RUNTIME: fakeRuntime },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  try {
+    const port = await waitForPort(child);
+    const response = await fetch("http://127.0.0.1:" + port + "/");
+    assert.equal(response.status, 200);
+    assert.equal(await response.text(), "ok");
+    assert.equal((await readFile(marker, "utf8")).trim(), "2");
+  } finally {
+    child.kill("SIGTERM");
+    await new Promise(resolve => child.once("exit", resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("preview runtime routes methods and bodies without starting a container per request", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "webnestdev-preview-runtime-"));
   const functionsDir = path.join(root, "functions");
@@ -38,7 +68,7 @@ test("preview runtime routes methods and bodies without starting a container per
   await writeFile(path.join(functionsDir, "echo", "index.mjs"), [
     "export async function handler(request) {",
     "  return { status: 201, headers: { 'x-preview-function': 'echo' }, body: JSON.stringify({",
-    "    method: request.method, path: request.path, query: request.query, body: request.body.toString(),",
+    "    method: request.method, path: request.path, query: request.query, search: request.search, body: request.body.toString(),",
     "  }) };",
     "}",
   ].join("\n"));
@@ -84,11 +114,11 @@ test("preview runtime routes methods and bodies without starting a container per
     const get = await fetch(base + "/api/echo?x=1");
     assert.equal(get.status, 201);
     assert.equal(get.headers.get("x-preview-function"), "echo");
-    assert.deepEqual(await get.json(), { method: "GET", path: "/api/echo", query: "?x=1", body: "" });
+    assert.deepEqual(await get.json(), { method: "GET", path: "/api/echo", query: { x: "1" }, search: "?x=1", body: "" });
 
     const post = await fetch(base + "/api/echo", { method: "POST", body: "hello" });
     assert.equal(post.status, 201);
-    assert.deepEqual(await post.json(), { method: "POST", path: "/api/echo", query: "", body: "hello" });
+    assert.deepEqual(await post.json(), { method: "POST", path: "/api/echo", query: {}, search: "", body: "hello" });
 
     const missing = await fetch(base + "/api/missing");
     assert.equal(missing.status, 404);

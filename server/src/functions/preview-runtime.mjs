@@ -40,6 +40,14 @@ function json(response, status, body) {
   response.end(data);
 }
 
+function queryParams(url) {
+  const query = {};
+  for (const [key, value] of url.searchParams) {
+    query[key] = query[key] === undefined ? value : query[key] + "," + value;
+  }
+  return query;
+}
+
 function safeHeaders(input) {
   const output = {};
   for (const [name, value] of Object.entries(input || {})) {
@@ -113,7 +121,8 @@ async function handle(request, response, fn, url) {
       handler({
         method: request.method,
         path: url.pathname,
-        query: url.search,
+        query: queryParams(url),
+        search: url.search,
         headers: request.headers,
         body,
       }),

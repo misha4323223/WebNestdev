@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -54,6 +54,8 @@ test("собирает функцию в один ESM-файл и пишет м�
     assert.match(code, /export/);
     const written = JSON.parse(await readFile(path.join(out, "manifest.json"), "utf8"));
     assert.deepEqual(written, built);
+    // Runtime preview работает в контейнере под другим uid: 0600 делает manifest нечитаемым.
+    assert.equal((await stat(path.join(out, "manifest.json"))).mode & 0o777, 0o644);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

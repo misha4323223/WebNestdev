@@ -35,11 +35,16 @@ export type FunctionsPreviewDeps = {
   startProcess: typeof startPreviewProcess;
   removeContainer: typeof removePreviewContainer;
   runtimeSource: () => Promise<string>;
+  supervisorSource: () => Promise<string>;
   readManifest: typeof readFunctionManifest;
 };
 
 async function defaultRuntimeSource() {
   return fileURLToPath(new URL("../functions/preview-runtime.mjs", import.meta.url));
+}
+
+async function defaultSupervisorSource() {
+  return fileURLToPath(new URL("../functions/preview-supervisor.mjs", import.meta.url));
 }
 
 const defaultDeps: FunctionsPreviewDeps = {
@@ -48,6 +53,7 @@ const defaultDeps: FunctionsPreviewDeps = {
   startProcess: startPreviewProcess,
   removeContainer: removePreviewContainer,
   runtimeSource: defaultRuntimeSource,
+  supervisorSource: defaultSupervisorSource,
   readManifest: readFunctionManifest,
 };
 
@@ -129,17 +135,17 @@ export async function startFunctionsPreviewExecutor(
     if (!dependencies.ok) return { ok: false, reason: dependencies.reason };
     await buildInto(currentDir, currentManifest);
     await copyFile(await deps.runtimeSource(), path.join(runtimeDir, "runtime.mjs"));
+    await copyFile(await deps.supervisorSource(), path.join(runtimeDir, "supervisor.mjs"));
     const relativeDir = relativeRuntimeDir(config.root, currentDir);
     started = await deps.startProcess(config, {
-      command: "node " + path.posix.join(relativeRuntimeDir(config.root, runtimeDir), "runtime.mjs"),
+      // Broker запрещает `--restart`, поэтому контейнер запускает supervisor, который
+      // поднимает упавший runtime внутри того же контейнера. Адрес и listener не меняются.
+      command: "node " + path.posix.join(relativeRuntimeDir(config.root, runtimeDir), "supervisor.mjs"),
       mode: "hybrid",
       port: PREVIEW_APP_PORT,
       persistState: false,
       ensureDependencies: false,
       env: { WEBNESTDEV_PREVIEW_FUNCTIONS_DIR: relativeDir },
-      // Упавший runtime поднимается тем же контейнером с тем же адресом; hybrid-listener
-      // продолжает смотреть на него и не требует перезапуска всего preview.
-      restart: "on-failure:3",
     });
     if (!started.ready) {
       await deps.removeContainer(started.containerId, config.node);

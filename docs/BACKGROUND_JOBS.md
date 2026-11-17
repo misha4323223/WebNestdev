@@ -98,7 +98,7 @@ return {
 Обработчик задания получает тот же объект, что и HTTP-функция:
 
 ```ts
-{ method: "JOB", path: "/__job__", query: "", headers: {}, body: Buffer }
+{ method: "JOB", path: "/__job__", query: {}, search: "", headers: {}, body: Buffer }
 ```
 
 `body` — JSON payload задания. Задание не должно слушать порт, хранить состояние между

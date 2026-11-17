@@ -71,6 +71,12 @@ export type PreviewStartOptions = {
    * редактор темы передают результат проверки тарифа явно.
    */
   allowContainer?: boolean;
+  /**
+   * Разрешён ли один контейнер functions-preview для `/api/*`. Это отдельное право серверлес-функций,
+   * а не контейнерного preview: на «Плюсе» функции публикуются, поэтому их нужно проверять до
+   * публикации, но dev-сервер и hybrid остаются недоступны.
+   */
+  allowFunctions?: boolean;
 };
 
 export async function startPreview(config: SandboxConfig, options: PreviewStartOptions = {}) {
@@ -79,7 +85,7 @@ export async function startPreview(config: SandboxConfig, options: PreviewStartO
   beginPreviewStart(config.projectId);
   try {
     // Fail-closed: не полагаемся на то, что каждый новый вызывающий вспомнит про тариф.
-    const status = await startPreviewWithFallback(config, { ...options, allowContainer: options.allowContainer === true });
+    const status = await startPreviewWithFallback(config, { ...options, allowContainer: options.allowContainer === true, allowFunctions: options.allowFunctions === true });
     ok = true;
     return status;
   } catch (error) {
@@ -112,6 +118,7 @@ async function recordPreviewSize(projectId: string) {
 
 export async function startPreviewWithFallback(config: SandboxConfig, options: PreviewStartOptions = {}) {
   const allowContainer = options.allowContainer !== false;
+  const allowFunctions = options.allowFunctions === true;
   // Без права на контейнер глобальный PREVIEW_MODE=container/hybrid не должен ломать запуск:
   // на «Старте» и «Плюсе» preview обязан остаться статическим. Иначе тариф превращался бы в
   // ошибку «нужен Премиум» вместо работающей статики.
@@ -161,7 +168,7 @@ export async function startPreviewWithFallback(config: SandboxConfig, options: P
   }
 
   if (setting !== "container") {
-    const result = await previewStartDeps.startStatic(config, { allowContainer });
+    const result = await previewStartDeps.startStatic(config, { allowContainer, allowFunctions });
     if (result.ok) return result.status;
     // На тарифе без контейнера нельзя подменять причину статической ошибки сообщением про
     // «Премиум»: человек видел бы требование тарифа там, где проект просто не собрался.

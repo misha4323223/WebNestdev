@@ -204,9 +204,12 @@ export async function buildFunctions(input: BuildFunctionsInput): Promise<Functi
     jobs: builtJobs,
     bytes: total,
   };
+  // Манифест читает не только процесс API: runtime functions-preview работает в контейнере
+  // под другим uid. Секретов в нём нет, поэтому файл должен быть читаемым (0644), иначе
+  // preview падает с EACCES на manifest.json.
   await writeFile(path.join(input.outDir, "manifest.json"), JSON.stringify(manifest, null, 2), {
     encoding: "utf8",
-    mode: 0o600,
+    mode: 0o644,
   });
   return manifest;
 }

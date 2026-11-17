@@ -1,23 +1,35 @@
 # Состояние production и оперативная память
 
-Дата среза: **15.11.2026, 20:51 UTC**. Документ фиксирует факты, которые нельзя терять
+Дата среза: **17.11.2026, 21:44 UTC**. Документ фиксирует факты, которые нельзя терять
 между сессиями.
 Секреты здесь не хранятся: только имена переменных, пути и способы проверки.
 
-**Актуально на 17.11.2026, 20:53 UTC:** обе ноды включены, `node-1` — primary,
-`node-2` — streaming standby; обе на сборке `0cd1e8f8b69a` (кеш функций, инвалидация,
-functions-preview, точечный CDN purge). Deploy run `44171584366` завершён успешно
-17.11.2026, 20:49:35 UTC; публичный `/api/health` и `/api/ready` отдают
-`build=0cd1e8f8b69a85701689dd2d021441bb75796249`. Внутренний health обеих нод:
+**Актуально на 17.11.2026, 21:44 UTC:** обе ноды включены, `node-1` — primary,
+`node-2` — streaming standby (лаг ~1 мс); обе на сборке `e0539d7fdfdc`. Deploy run
+`44175603191` завершён успешно 17.11.2026, 21:12 UTC; публичный `/api/ready` отдаёт
+`build=e0539d7fdfdcd59ae918a53af9e4132597111256`. Внутренний health обеих нод:
 `storage=postgres ok`, `sandbox=runsc ok`, `cacheInvalidation=pg_notify`, ошибок в логах
-контейнеров нет. Новые env на node-1: `FUNCTIONS_CACHE_ENABLED=1`,
-`FUNCTIONS_PREVIEW_MAX_CONTAINERS=4`, `HOSTING_CDN_PURGE=1`. Свободно на диске:
-`node-1` 31,3 ГБ (36%), `node-2` 7,2 ГБ (61%). Production работает в
-`WEBNESTDEV_WORKSPACE_MODE=local`, `OWNER_ROUTING=1`; все 18 проектов переведены на локальные
-каталоги `node-1` (696 МБ), 14 cold-архивов восстановлены. Gluster-том `sandboxes` не менялся
-и больше не используется для активных workspace. Deploy синхронизирует override обеих нод;
-токен внутренней двери — общий `NODE1_RUNNER_TOKEN`. Подробности — в
-[`LOCAL_WORKSPACES.md`](LOCAL_WORKSPACES.md).
+контейнеров нет. Свободно на диске: `node-1` ~31 ГБ, `node-2` ~6,9 ГБ. Production работает в
+`WEBNESTDEV_WORKSPACE_MODE=local`, `OWNER_ROUTING=1`; все 18 проектов на локальных каталогах.
+Deploy синхронизирует override обеих нод; токен внутренней двери — общий
+`NODE1_RUNNER_TOKEN`. Подробности — в [`LOCAL_WORKSPACES.md`](LOCAL_WORKSPACES.md).
+
+**Post-deploy 17.11.2026, 21:12–21:44 UTC.** Живые функции: 11 вызовов через временно
+опубликованный `bmg`, все 2xx; после opt-in `cache.ttlSeconds=60` — 1 miss, 2 HIT,
+`hitRatio=0.667`; сайт возвращён в `draft`, тестовые релизы удалены. Медиа: `HEAD` 200,
+`Range: bytes=0-1023` — 206, `Content-Range: bytes 0-1023/438251`. Заказ на origin:
+201, присланная цена `1` проигнорирована, пересчитано `3900 × 2 = 7800`, доставка 390,
+итого 8190. Полный отказ `node-1`: power OFF 21:32:35, `node-2` primary 21:35:23
+(RTO ~75 с), запись в PostgreSQL и Gluster прошла; `node-1` вернулась, rejoin 21:38:27,
+switchover primary обратно 21:39, rejoin `node-2` 21:39:52. Итог — исходная топология,
+`node-1` primary / `node-2` standby.
+
+**Открытые блокеры после проверки.** CDN-ресурс `hosting` отдаёт `405` (Angie) на POST
+`/api/promo` и `/api/orders`; на origin через NLB те же запросы — 200/201. В API CDN-ресурса
+нет поля `allowedHttpMethods`, нужен отдельный ingress для API или разрешение POST на стороне
+MWS. В рабочем дереве (не выкачено) исправлены: query передаётся объектом, manifest функций —
+`0644`, `--restart` убран из functions-preview, в health добавлен `previews.functions`,
+functions-preview разрешён правом `serverlessFunctions`.
 
 **SSH-ключ агента:** `/tmp/nestdev-agent` (права `600`), в git не хранится. `/tmp` в workspace
 эфемерный: после перезапуска файл нужно восстановить из защищённого источника

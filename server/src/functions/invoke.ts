@@ -58,7 +58,10 @@ export function normalizeBackgroundJobRequests(raw: unknown): BackgroundJobReque
 export type FunctionRequest = {
   method: string;
   path: string;
-  query: string;
+  /** Разобранные query-параметры: `{ limit: "2" }`, а не строка `?limit=2`. */
+  query: Record<string, string>;
+  /** Исходная query-строка — для функций, которым нужен точный запрос как есть. */
+  search: string;
   headers: Record<string, string>;
   bodyBase64: string;
 };

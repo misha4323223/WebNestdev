@@ -39,7 +39,8 @@ export async function runBackgroundJob(job: JobRecord): Promise<{ done: number; 
     request: {
       method: "JOB",
       path: "/__job__",
-      query: "",
+      query: {},
+      search: "",
       headers: { "content-type": "application/json" },
       bodyBase64: Buffer.from(JSON.stringify(payload), "utf8").toString("base64"),
     },

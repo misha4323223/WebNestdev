@@ -18,7 +18,8 @@ const fn: BuiltFunction = {
 const request = {
   method: "POST",
   path: "/api/hello",
-  query: "?x=1",
+  query: { x: "1" },
+  search: "?x=1",
   headers: { "content-type": "application/json" },
   bodyBase64: Buffer.from('{"name":"Ada"}').toString("base64"),
 };

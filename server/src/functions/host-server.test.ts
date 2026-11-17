@@ -173,7 +173,7 @@ test("отдаёт 502 с именем функции, когда исполни
 });
 
 test("передаёт функции исходное тело POST, включая JSON и query", async () => {
-  let seen: { method?: string; path?: string; query?: string; bodyBase64?: string } = {};
+  let seen: { method?: string; path?: string; query?: Record<string, string>; search?: string; bodyBase64?: string } = {};
   const app = createFunctionsHostServer(
     deps({
       invoke: async input => {
@@ -192,7 +192,8 @@ test("передаёт функции исходное тело POST, включ
     assert.equal(response.statusCode, 200);
     assert.equal(seen.method, "POST");
     assert.equal(seen.path, "/api/hello");
-    assert.equal(seen.query, "?x=1");
+    assert.deepEqual(seen.query, { x: "1" });
+    assert.equal(seen.search, "?x=1");
     assert.equal(Buffer.from(seen.bodyBase64 ?? "", "base64").toString("utf8"), '{"name":"Ada"}');
   } finally {
     await app.close();

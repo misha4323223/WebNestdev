@@ -65,6 +65,15 @@ async function resolveSite(hostname: string, deps: FunctionsHostDeps) {
   return deps.getSite(custom.siteId);
 }
 
+/** Повторяющиеся параметры склеиваются через запятую: фильтры вида `sizes=S,M` остаются строками. */
+function queryParams(url: URL) {
+  const query: Record<string, string> = {};
+  for (const [key, value] of url.searchParams) {
+    query[key] = query[key] === undefined ? value : query[key] + "," + value;
+  }
+  return query;
+}
+
 function publicHeaders(headers: Record<string, string>) {
   return {
     ...headers,
@@ -121,7 +130,8 @@ export function createFunctionsHostServer(deps: FunctionsHostDeps = defaultDeps)
     const input: FunctionRequest = {
       method: request.method,
       path: url.pathname,
-      query: url.search,
+      query: queryParams(url),
+      search: url.search,
       headers,
       bodyBase64: body.toString("base64"),
     };

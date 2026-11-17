@@ -55,7 +55,7 @@ export function describePreviewMode(){
   return "auto (явный hybrid, иначе статическая сборка; функции — один контейнер на сессию, иначе dev-сервер)";
 }
 
-type StaticRun={server:FastifyInstance;dir:string;port:number;log:string;builtAt:number;startedAt:number;/** Files served as they are: nothing was built, so nothing has to be rebuilt. */instant:boolean;/** Конфиг, которым этот предпросмотр поднят: пересборка поднимает тот же каталог заново. */config:SandboxConfig;/** Один контейнер функций на сессию; есть только у проекта с nestdev.functions.json. */functions?:FunctionsPreviewExecutor;/** Сохраняем право тарифа: пересборка не должна поднять контейнер там, где он запрещён. */allowContainer?:boolean;/** Закрывает listener вместе с открытыми соединениями. */close:()=>Promise<void>};
+type StaticRun={server:FastifyInstance;dir:string;port:number;log:string;builtAt:number;startedAt:number;/** Files served as they are: nothing was built, so nothing has to be rebuilt. */instant:boolean;/** Конфиг, которым этот предпросмотр поднят: пересборка поднимает тот же каталог заново. */config:SandboxConfig;/** Один контейнер функций на сессию; есть только у проекта с nestdev.functions.json. */functions?:FunctionsPreviewExecutor;/** Сохраняем право тарифа: пересборка не должна поднять контейнер там, где он запрещён. */allowContainer?:boolean;/** Право на functions-preview: оно не зависит от контейнерного preview. */allowFunctions?:boolean;/** Закрывает listener вместе с открытыми соединениями. */close:()=>Promise<void>};
 
 const runs=new Map<string,StaticRun>();
 
@@ -69,7 +69,7 @@ export type StaticStartResult={ok:true;status:PreviewStatus}|{ok:false;reason:st
  * A failure is returned as a reason instead of thrown: the caller decides whether the reason
  * becomes a fallback to the dev server (`auto`) or an error (`static`).
  */
-export async function startStaticPreview(config:SandboxConfig, options:{allowContainer?:boolean}={}):Promise<StaticStartResult>{
+export async function startStaticPreview(config:SandboxConfig, options:{allowContainer?:boolean;allowFunctions?:boolean}={}):Promise<StaticStartResult>{
   const plan=await planStaticPreview(config);
   if(!plan.ok)return plan;
   let functions;
@@ -78,9 +78,11 @@ export async function startStaticPreview(config:SandboxConfig, options:{allowCon
   }catch(error){
     return {ok:false,reason:error instanceof Error?error.message:String(error)};
   }
-  // Функции предпросмотра — это отдельный контейнер. На тарифе без контейнерного preview
-  // статика остаётся статикой, а /api честно отвечает 404, как и раньше.
-  const hasFunctions=Boolean(functions?.functions.length)&&options.allowContainer!==false;
+  // Функции предпросмотра — это отдельный контейнер, но право на него даёт тариф функций, а не
+  // контейнерного preview: на «Плюсе» публикация функций разрешена, и их нужно проверять до неё.
+  // Без явного права (и без старого `allowContainer`) статика остаётся статикой.
+  const allowFunctions=options.allowFunctions??(options.allowContainer!==false);
+  const hasFunctions=Boolean(functions?.functions.length)&&allowFunctions;
   const previous=runs.get(config.projectId);
   const build=staticBuildSetting();
   const builtAt=previous?.builtAt??0;
@@ -131,6 +133,8 @@ export async function startStaticPreview(config:SandboxConfig, options:{allowCon
     if(!started.ok)return {ok:false,reason:started.reason};
     executor=started.executor;
     log=(log?log+"\n":"")+"Функции: "+functions.functions.length+" в одном контейнере на предпросмотр; /api/* работает без контейнера на запрос.";
+  }else if(functions?.functions.length){
+    log=(log?log+"\n":"")+"Функции: на текущем тарифе functions-preview недоступен, /api/* в предпросмотре отвечает 404.";
   }
   setPreviewStartProgress(config.projectId,"starting","Запускаем статический сервер…");
   let listener;
@@ -140,7 +144,7 @@ export async function startStaticPreview(config:SandboxConfig, options:{allowCon
     await executor?.stop().catch(()=>undefined);
     throw error;
   }
-  const run:StaticRun={server:listener.app,dir:plan.dir,port:listener.port,log,builtAt:marker,startedAt:Date.now(),instant:!plan.build,config,allowContainer:options.allowContainer,close:listener.close,...(executor?{functions:executor}:{})};
+  const run:StaticRun={server:listener.app,dir:plan.dir,port:listener.port,log,builtAt:marker,startedAt:Date.now(),instant:!plan.build,config,allowContainer:options.allowContainer,allowFunctions:options.allowFunctions,close:listener.close,...(executor?{functions:executor}:{})};
   runs.set(config.projectId,run);
   // Static слушает только эта реплика, поэтому owner — дверь именно этого процесса. Вторая
   // реплика прочитает строку из общего реестра и проксирует запрос сюда.
@@ -190,7 +194,7 @@ export async function stopStaticPreview(projectId:string){
 export async function refreshStaticPreview(projectId:string):Promise<boolean>{
   const run=runs.get(projectId);
   if(!run||(run.instant&&!run.functions))return false;
-  const result=await startStaticPreview(run.config,{allowContainer:run.allowContainer});
+  const result=await startStaticPreview(run.config,{allowContainer:run.allowContainer,allowFunctions:run.allowFunctions});
   if(!result.ok)removePreview(projectId);
   return result.ok;
 }

@@ -32,6 +32,8 @@ export type PreviewRouteDeps={
   getSandbox:(projectId:string,userId:string)=>Promise<Parameters<typeof startPreview>[0]>;
   /** Разрешён ли этому аккаунту контейнерный/hybrid preview; статический не зависит. */
   allowContainerPreview:(userId:string)=>Promise<boolean>;
+  /** Разрешён ли один контейнер functions-preview; это право функций, а не контейнерного preview. */
+  allowFunctionsPreview?:(userId:string)=>Promise<boolean>;
   startPreview:typeof startPreview;
   stopPreview:typeof stopPreview;
   previewStatus:typeof previewStatus;
@@ -55,6 +57,7 @@ const defaultDeps:PreviewRouteDeps={
   execPreview:(input)=>execFetchPreview(input,{docker:dockerForNode(input.node)}),
   getSandbox,
   allowContainerPreview:async userId=>planAllows(await accountPlanFor(userId),"containerPreview"),
+  allowFunctionsPreview:async userId=>planAllows(await accountPlanFor(userId),"serverlessFunctions"),
   startPreview,
   stopPreview,
   previewStatus,
@@ -102,7 +105,8 @@ export async function registerPreviewRoutes(app:FastifyInstance,deps:PreviewRout
     // после нажатия «Запустить» не знает, куда подставлять кадр, и показывает ошибку настройки,
     // хотя предпросмотр уже работает. Следующий status это исправлял только вручную.
     const allowContainer=await deps.allowContainerPreview(user.id);
-    return previewReply(reply,async()=>({...await deps.startPreview(await deps.getSandbox(p.id,user.id),{allowContainer}),...(url?{publicUrl:url}:{})}));
+    const allowFunctions=deps.allowFunctionsPreview?await deps.allowFunctionsPreview(user.id):false;
+    return previewReply(reply,async()=>({...await deps.startPreview(await deps.getSandbox(p.id,user.id),{allowContainer,allowFunctions}),...(url?{publicUrl:url}:{})}));
   });
   app.post("/api/projects/:id/preview/stop",async(request,reply)=>{
     const p=z.object({id:z.string().min(1)}).parse(request.params);

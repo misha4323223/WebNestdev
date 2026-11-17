@@ -17,6 +17,7 @@ import { isRuntimePreviewMode } from "../preview/types.js";
 import { listPreviewsAcrossReplicas, previewAddresses } from "../preview/preview-store.js";
 import { previewPublicDomain } from "../preview/preview-host.js";
 import { previewStartStats } from "../preview/preview-metrics.js";
+import { functionsPreviewStats } from "../preview/functions-preview.js";
 import { functionMetricsSnapshot } from "../functions/metrics.js";
 import { functionCacheInvalidationActive } from "../functions/cache-invalidation.js";
 import { previewHostBind, previewHostLimits, previewHostPort } from "../preview/preview-host-server.js";
@@ -132,6 +133,11 @@ async function activity(){
       runtimeHostUnits: runtimeHostUnits(),
       runtimeContainerUnits: containerRuntimeUnits(),
       static: previewStates.filter(state => state.mode === "static").length,
+      // Статический preview с функциями остаётся mode=static, поэтому его executor не виден
+      // в runtime выше. Отдельный счётчик показывает живой контейнер функций, иначе
+      // `runtime=0` выглядит как «preview-контейнер не запускался».
+      functions: functionsPreviewStats().active,
+      functionsLimit: functionsPreviewStats().limit,
       // Старты за последние 30 минут по узлам: p95 и ошибки. Это история запусков, а не
       // количество живых preview выше; админка уже читает её, health показывает рядом.
       starts: [...previewStartStats().entries()].map(([node, stats]) => ({ node, ...stats })),

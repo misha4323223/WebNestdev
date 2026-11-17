@@ -84,7 +84,8 @@ test("one executor serves every API request and is stopped with the preview", as
     },
   });
   try {
-    const started = await startStaticPreview(config(root));
+    // «Плюс»: контейнерный preview запрещён, но функции публикуются — проверять их можно.
+    const started = await startStaticPreview(config(root), { allowContainer: false, allowFunctions: true });
     assert.equal(started.ok, true);
     if (!started.ok || !started.status.running) return;
     assert.equal(started.status.mode, "static");
@@ -115,7 +116,7 @@ test("one executor serves every API request and is stopped with the preview", as
   }
 });
 
-test("without container permission the static preview does not start a function container", async () => {
+test("without function permission the static preview does not start a function container", async () => {
   const root = await project();
   let starts = 0;
   setFunctionsPreviewDepsForTests({
@@ -126,7 +127,7 @@ test("without container permission the static preview does not start a function 
     },
   });
   try {
-    const started = await startStaticPreview(config(root), { allowContainer: false });
+    const started = await startStaticPreview(config(root), { allowContainer: false, allowFunctions: false });
     assert.equal(started.ok, true);
     if (!started.ok || !started.status.running) return;
     assert.equal(starts, 0);

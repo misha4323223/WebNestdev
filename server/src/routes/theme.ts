@@ -73,7 +73,7 @@ async function restartServerPreview(projectId: string, userId: string) {
   if (!planAllows(await accountPlanFor(userId), "containerPreview")) return false;
   const config = await getSandbox(projectId, userId);
   await stopPreview(projectId);
-  await startPreview(config, { allowContainer: true });
+  await startPreview(config, { allowContainer: true, allowFunctions: true });
   return true;
 }
 
