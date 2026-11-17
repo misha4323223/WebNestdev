@@ -32,7 +32,7 @@ function previewForAgent(status: Awaited<ReturnType<typeof previewStatus>>) {
 
 registerTool({
   name:"preview.start",
-  description:"Start the project's live preview server after creating or updating the project.",
+  description:"Start the platform Preview for this project after creating or updating it. On plans without container preview it builds once and serves static files; on Premium it may use a container/hybrid development runtime. Always use this tool instead of starting a dev server through terminal.exec.",
   parameters:NO_ARGUMENTS,
   execute: async (_,context) => {
     // Агент запускает тот же preview, что и панель. Контейнерный режим — возможность Премиума;

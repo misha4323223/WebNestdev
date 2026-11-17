@@ -71,6 +71,9 @@ Gluster остаётся для `sites`, `data`, сертификатов, custo
 - Для local `SANDBOX_DIR`, `WEBNESTDEV_LOCAL_WORKSPACE_DIR` и
   `WEBNESTDEV_LOCAL_WORKSPACE_HOST_DIR` должны указывать на один и тот же локальный каталог
   ноды; иначе Docker-брокер и контейнеры увидят другой путь.
+- Host-таймер `webnestdev-sandbox-ownership` с 17.11.2026 обходит и `SANDBOX_DIR`, и
+  `WEBNESTDEV_LOCAL_WORKSPACE_DIR` (по умолчанию `/var/lib/webnestdev/workspaces`). Без этого
+  `node_modules` в local-проекте мог остаться `root:root` и давать `EPERM`/`EACCES`.
 - Критерий: проект на `node-1` полностью работает локально, проект на `node-2` — по-прежнему
   через Gluster; запросы маршрутизируются корректно.
 - **Не проверено:** реальные два узла и Docker-брокер на локальном диске.

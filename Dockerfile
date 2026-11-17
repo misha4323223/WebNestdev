@@ -17,6 +17,7 @@ WORKDIR /app
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/server/dist ./server/dist
 COPY --from=build /app/server/src/functions/worker.mjs ./server/dist/functions/worker.mjs
+COPY --from=build /app/server/src/functions/preview-runtime.mjs ./server/dist/functions/preview-runtime.mjs
 COPY --from=build /app/server/package.json ./server/package.json
 COPY --from=build /app/dist ./dist
 

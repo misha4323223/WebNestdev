@@ -59,6 +59,22 @@ function endpointParts(endpoint: string) {
   return { host: url.host, origin: url.origin };
 }
 
+function validatePublicBaseUrl(value: string) {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error("MEDIA_PUBLIC_BASE_URL должен быть абсолютным https:// URL");
+  }
+  if (url.protocol !== "https:") {
+    throw new Error("MEDIA_PUBLIC_BASE_URL должен начинаться с https://");
+  }
+  if (url.search || url.hash) {
+    throw new Error("MEDIA_PUBLIC_BASE_URL не должен содержать query или fragment");
+  }
+  return value.replace(/\/+$/, "");
+}
+
 function positiveInt(value: string, fallback: number, name: string) {
   if (!value) return fallback;
   const parsed = Number(value);
@@ -82,7 +98,9 @@ export function mediaConfigFromEnv(env: NodeJS.ProcessEnv = process.env): MediaC
   if (!prefix || prefix.split("/").some(segment => segment === ".." || segment === ".")) {
     throw new Error("MEDIA_S3_PREFIX не должен быть пустым или содержать ..");
   }
-  const publicBaseUrl = (envValue(env, "MEDIA_PUBLIC_BASE_URL") || endpoint.replace(/\/+$/, "") + "/" + bucket).replace(/\/+$/, "");
+  const publicBaseUrl = validatePublicBaseUrl(
+    envValue(env, "MEDIA_PUBLIC_BASE_URL") || endpoint.replace(/\/+$/, "") + "/" + bucket,
+  );
   const maxFileBytes = positiveInt(envValue(env, "MEDIA_MAX_FILE_BYTES"), 10 * 1024 * 1024 * 1024, "MEDIA_MAX_FILE_BYTES");
   const partSizeBytes = positiveInt(envValue(env, "MEDIA_PART_SIZE_BYTES"), DEFAULT_PART_SIZE, "MEDIA_PART_SIZE_BYTES");
   const maxParts = positiveInt(envValue(env, "MEDIA_MAX_PARTS"), MAX_PARTS, "MEDIA_MAX_PARTS");

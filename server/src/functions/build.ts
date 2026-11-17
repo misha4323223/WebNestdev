@@ -3,7 +3,7 @@ import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { build as esbuildBuild } from "esbuild";
 import { scanTextForSecrets } from "../hosting/security.js";
-import type { FunctionManifest, FunctionManifestEntry, FunctionManifestJob } from "./manifest.js";
+import type { FunctionCachePolicy, FunctionManifest, FunctionManifestEntry, FunctionManifestJob } from "./manifest.js";
 
 /**
  * Сборка функций в один неизменяемый артефакт на функцию.
@@ -28,6 +28,8 @@ export type BuiltFunction = {
   sha256: string;
   timeoutMs: number;
   memoryMb: number;
+  /** Явное разрешение кешировать GET-ответ; отсутствует — функция не кешируется. */
+  cache?: FunctionCachePolicy;
 };
 
 /** Фоновый обработчик: тот же артефакт, но без HTTP-маршрута и методов. */
@@ -178,6 +180,7 @@ export async function buildFunctions(input: BuildFunctionsInput): Promise<Functi
       sha256: output.sha256,
       timeoutMs: entry.timeoutMs,
       memoryMb: entry.memoryMb,
+      ...(entry.cache ? { cache: entry.cache } : {}),
     });
   }
 

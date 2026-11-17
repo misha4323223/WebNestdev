@@ -8,6 +8,7 @@ import { ensureProjectDependencies } from "../preview/dependencies.js";
 import { detectProject } from "../preview/project-kind.js";
 import { readFunctionManifest, FunctionManifestError } from "../functions/manifest.js";
 import { buildFunctions, FunctionBuildError } from "../functions/build.js";
+import { invalidateFunctionCache } from "../functions/cache-invalidation.js";
 import { inspectHostingProject } from "./project-mode.js";
 import { accountPlanFor } from "../billing/store.js";
 import { planAllows } from "../account/entitlements.js";
@@ -18,7 +19,7 @@ import { loadProjectSecretFiles } from "../secrets/project-secrets.js";
 import { hostingConfig, hostingLimits } from "./config.js";
 import { copyArtifact, inspectArtifact, removeStaging } from "./artifact.js";
 import { pruneLocalReleases } from "./cache.js";
-import { purgeHostingCdn } from "./cdn-purge.js";
+import { purgeHostingCdn, purgePathsForArtifact, purgePathsForChange, purgePathsForManifest } from "./cdn-purge.js";
 import { assertAccountHostingQuota, assertHostingDiskHasRoom } from "./limits.js";
 import { publicEnvMounts } from "./public-env.js";
 import { projectSecretValuesForScan, redactSecretText } from "./security.js";
@@ -234,7 +235,22 @@ async function startRollbackLocked(
     throw new HostingError("RELEASE_NOT_READY", "Файлы выбранного релиза не найдены на этом узле", 409);
   }
   try {
-    return await activateRelease({ siteId: site.id, userId, releaseId: release.id });
+    const activated = await activateRelease({ siteId: site.id, userId, releaseId: release.id });
+    // Новый релиз мог изменить функцию, но старый ответ уже не должен отдаваться даже при
+    // совпадении пути. Ключ содержит releaseId, поэтому это ещё и освобождение памяти.
+    await invalidateCache(site.id);
+    // Откат тоже меняет HTML/обычные ассеты на тех же путях. Хешированные файлы не трогаем:
+    // у них immutable-кеш и свой URL для каждого содержимого.
+    try {
+      const purged = await purgeHostingCdn(site.slug, {}, purgePathsForManifest(release.manifestJson));
+      if (!purged.skipped) logLine("info", "cdn purge requested", { site: site.slug, task: purged.task, paths: "release" });
+    } catch (error) {
+      logLine("warn", "cdn purge failed", {
+        site: site.slug,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+    return activated;
   } catch (error) {
     // Если сайт успели удалить или снять, не возвращаем старую ссылку: это снова сделало бы
     // его доступным. В остальных случаях сохраняем работающий релиз.
@@ -248,6 +264,13 @@ async function startRollbackLocked(
     if (hidden || !previous) await removeCurrent(site.slug, config.sitesDir).catch(() => undefined);
     else await switchCurrent(site.slug, previous, config.sitesDir).catch(() => undefined);
     throw error;
+  }
+}
+
+async function invalidateCache(siteId: string) {
+  const result = await invalidateFunctionCache(siteId);
+  if (result.error && result.error !== "storage-json") {
+    logLine("warn", "function cache invalidation failed", { siteId, error: result.error });
   }
 }
 
@@ -265,6 +288,23 @@ async function buildStatic(
   secretValues: string[],
 ): Promise<{ log: string; sourceDir: string }> {
   const limits = hostingLimits();
+  // `static-functions` — это не обязательно проект со сборкой: у него может быть готовый
+  // index.html и только serverless-функции. Раньше для этого типа всегда запускались
+  // `npm install` и `npm run build`, и публикация падала с `Missing script: "build"`,
+  // хотя собирать было нечего. План отвечает на вопрос «нужна ли сборка» до контейнера.
+  const initialPlan = await planStaticPreview(config);
+  if (!initialPlan.ok) {
+    throw new HostingError("BUILD_FAILED", "Не удалось определить каталог сборки: " + initialPlan.reason, 422);
+  }
+  if (!initialPlan.build) {
+    if (!(await indexFileExists(initialPlan.dir))) {
+      throw new HostingError("BUILD_FAILED", "Нет index.html в " + path.basename(initialPlan.dir), 422);
+    }
+    return {
+      log: "Сборка не требуется: готовый index.html в " + path.basename(initialPlan.dir),
+      sourceDir: initialPlan.dir,
+    };
+  }
   const publicEnv = await publicEnvMounts(config);
   // Маски идут раньше публичного env: существующий `.env.local` закрывается пустым файлом,
   // затем поверх монтируется только allowlist публичных переменных.
@@ -323,6 +363,7 @@ async function runPublish(site: HostingSite, release: HostingRelease, project: P
   let buildLog = "";
   let secretValues: string[] = [];
   let publishedBytes = 0;
+  let nextFiles: Array<{ path: string; sha256: string }> = [];
   let releaseStore: ReleaseStore | null = null;
   let stored: StoredRelease | null = null;
 
@@ -358,6 +399,7 @@ async function runPublish(site: HostingSite, release: HostingRelease, project: P
         allowSourceMaps: process.env.HOSTING_ALLOW_SOURCEMAPS === "1",
       });
       publishedBytes = inspected.bytes;
+      nextFiles = inspected.files;
       await assertAccountHostingQuota(project.userId, inspected.bytes);
       await assertHostingDiskHasRoom(config, inspected.bytes);
 
@@ -450,6 +492,7 @@ async function runPublish(site: HostingSite, release: HostingRelease, project: P
           manifestKey: stored?.manifestKey ?? "",
         });
         committed = true;
+        await invalidateCache(site.id);
       } catch (error) {
         // Если сайт успели снять с публикации, current не восстанавливаем: решение
         // модератора/пользователя важнее неудачной гонки публикатора.
@@ -480,8 +523,14 @@ async function runPublish(site: HostingSite, release: HostingRelease, project: P
     // Сброс кеша CDN — после успешной фиксации релиза. Ошибка purge не отменяет публикацию:
     // HTML не кешируется, а ассеты доживут до TTL; важнее не оставить сайт в failed.
     try {
-      const purged = await purgeHostingCdn(site.slug);
-      if (!purged.skipped) logLine("info", "cdn purge requested", { site: site.slug, task: purged.task });
+      const previousManifest = previousRelease
+        ? await getRelease(previousRelease).then(previous => previous?.manifestJson ?? "").catch(() => "")
+        : "";
+      const purgePaths = previousManifest
+        ? purgePathsForChange({ files: nextFiles }, previousManifest)
+        : purgePathsForArtifact({ files: nextFiles });
+      const purged = await purgeHostingCdn(site.slug, {}, purgePaths);
+      if (!purged.skipped) logLine("info", "cdn purge requested", { site: site.slug, task: purged.task, paths: purgePaths.length });
     } catch (error) {
       logLine("warn", "cdn purge failed", {
         site: site.slug,
@@ -607,4 +656,4 @@ export async function cleanupStaging(site: HostingSite, sitesDir = hostingConfig
   }
 }
 
-export { BUILD_COMMAND };
+export { BUILD_COMMAND, buildStatic };

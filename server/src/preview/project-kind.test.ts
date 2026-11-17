@@ -77,6 +77,16 @@ test("framework dev servers that only serve files don't buy a container", () => 
   assert.equal(astro.kind, "static-build", "astro и vite отдают файлы: контейнер не нужен");
 });
 
+test("a Python stdlib file server is not an application runtime", () => {
+  const shape = classifyProject(files({
+    entries: ["package.json", "index.html", "api", "nestdev.functions.json"],
+    packageJson: { scripts: { serve: "python3 -m http.server 5173" } },
+    staticEntry: "index.html",
+  }));
+  assert.equal(shape.kind, "instant-site", "python3 -m http.server отдаёт файлы, а не приложение");
+  assert.deepEqual(shape.evidence, ["index.html"]);
+});
+
 test("an external file server wrapper is not a reason to start a container", () => {
   const shape = classifyProject(files({
     entries: ["package.json", "dist/index.html"],

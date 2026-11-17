@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { isServerBuildCommand } from "./plan-work-guard.js";
+import { isDevServerCommand, isServerBuildCommand } from "./plan-work-guard.js";
 
 test("узнаёт сборку и запуск серверных проектов", () => {
   for (const command of [
@@ -31,6 +31,33 @@ test("не трогает тесты, установку и статическу
     "node --test test/unit.test.mjs",
   ]) {
     assert.equal(isServerBuildCommand(command), false, command);
+  }
+});
+
+test("dev/start/preview — это серверный запуск, а build — нет", () => {
+  for (const command of ["npm run dev", "npm start", "pnpm serve", "vite preview", "next dev", "uvicorn app:app", "python3 -m http.server 5173"]) {
+    assert.equal(isDevServerCommand(command), true, command);
+  }
+  for (const command of ["npm run build", "next build", "vite build", "npm test", "npm install", "python3 scripts/build.py"]) {
+    assert.equal(isDevServerCommand(command), false, command);
+  }
+});
+
+test("на тарифе без контейнера агент не поднимает dev-сервер даже для статики", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "plan-guard-dev-"));
+  try {
+    await writeFile(
+      path.join(root, "package.json"),
+      JSON.stringify({ name: "static-site", scripts: { dev: "vite", build: "vite build" } }),
+    );
+    const { checkPlanCanBuildProject } = await import("./plan-work-guard.js");
+    const result = await checkPlanCanBuildProject({ root, userId: "missing-user", command: "npm run dev" });
+    assert.equal(result.allowed, false);
+    if (!result.allowed) assert.match(result.reason, /preview\.start/);
+    const build = await checkPlanCanBuildProject({ root, userId: "missing-user", command: "npm run build" });
+    assert.equal(build.allowed, true);
+  } finally {
+    await rm(root, { recursive: true, force: true });
   }
 });
 

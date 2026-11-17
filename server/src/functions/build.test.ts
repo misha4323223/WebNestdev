@@ -28,7 +28,7 @@ async function fixture() {
     JSON.stringify({
       version: 1,
       runtime: "node",
-      functions: [{ name: "hello", path: "/api/hello", methods: ["GET"], handler: "functions/hello.ts#handler" }],
+      functions: [{ name: "hello", path: "/api/hello", methods: ["GET"], handler: "functions/hello.ts#handler", cache: { ttlSeconds: 30 } }],
       jobs: [{ name: "send-receipt", handler: "functions/job.ts#handler" }],
     }),
   );
@@ -44,6 +44,7 @@ test("собирает функцию в один ESM-файл и пишет м�
     assert.equal(built.functions.length, 1);
     assert.equal(built.functions[0]!.name, "hello");
     assert.equal(built.functions[0]!.path, "/api/hello");
+    assert.deepEqual(built.functions[0]!.cache, { ttlSeconds: 30 });
     assert.equal(built.jobs?.length, 1);
     assert.equal(built.jobs?.[0]?.name, "send-receipt");
     assert.equal(built.runtime, "node");

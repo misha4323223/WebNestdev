@@ -66,8 +66,9 @@ export function setPreviewStartDepsForTests(overrides: Partial<PreviewStartDeps>
 export type PreviewStartOptions = {
   /**
    * Разрешён ли контейнерный/hybrid preview. Статический preview от этого не зависит.
-   * `undefined` сохраняет прежнее поведение для внутренних вызовов; маршрут и агент передают
-   * право тарифа явно.
+   * У `startPreview` по умолчанию `false`: это публичная точка входа, и забытое право тарифа
+   * должно оставлять пользователя на статике, а не запускать контейнер. Маршрут, агент и
+   * редактор темы передают результат проверки тарифа явно.
    */
   allowContainer?: boolean;
 };
@@ -77,7 +78,8 @@ export async function startPreview(config: SandboxConfig, options: PreviewStartO
   let ok = false;
   beginPreviewStart(config.projectId);
   try {
-    const status = await startPreviewWithFallback(config, options);
+    // Fail-closed: не полагаемся на то, что каждый новый вызывающий вспомнит про тариф.
+    const status = await startPreviewWithFallback(config, { ...options, allowContainer: options.allowContainer === true });
     ok = true;
     return status;
   } catch (error) {
@@ -109,14 +111,11 @@ async function recordPreviewSize(projectId: string) {
 }
 
 export async function startPreviewWithFallback(config: SandboxConfig, options: PreviewStartOptions = {}) {
-  const setting = previewModeSetting();
   const allowContainer = options.allowContainer !== false;
-  // Контейнерный режим — не «попробуем и посмотрим»: на Плюсе он запрещён до запуска, иначе
-  // отклонённый тариф уже успел бы занять память и место в очереди. Статический путь ниже
-  // остаётся доступным.
-  if (!allowContainer && (setting === "container" || setting === "hybrid")) {
-    throw new ContainerPreviewPlanError();
-  }
+  // Без права на контейнер глобальный PREVIEW_MODE=container/hybrid не должен ломать запуск:
+  // на «Старте» и «Плюсе» preview обязан остаться статическим. Иначе тариф превращался бы в
+  // ошибку «нужен Премиум» вместо работающей статики.
+  const setting = allowContainer ? previewModeSetting() : "static";
   const startContainer = (reason?: string) => {
     if (!allowContainer) throw new ContainerPreviewPlanError();
     return reason === undefined
@@ -162,8 +161,11 @@ export async function startPreviewWithFallback(config: SandboxConfig, options: P
   }
 
   if (setting !== "container") {
-    const result = await previewStartDeps.startStatic(config);
+    const result = await previewStartDeps.startStatic(config, { allowContainer });
     if (result.ok) return result.status;
+    // На тарифе без контейнера нельзя подменять причину статической ошибки сообщением про
+    // «Премиум»: человек видел бы требование тарифа там, где проект просто не собрался.
+    if (!allowContainer) throw new Error("Статический предпросмотр не удался: " + result.reason);
     // A host that requires static previews must not silently start a container, so the reason
     // is the answer there; every other mode falls back and carries the reason as a hint.
     if (setting === "static") throw new Error(result.reason);

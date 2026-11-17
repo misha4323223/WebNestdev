@@ -1,6 +1,6 @@
 import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
-import { listPreviewContainerIds, previewLogs, previewStatus, setPreviewStartDepsForTests, startPreviewWithFallback } from "./preview-manager.js";
+import { listPreviewContainerIds, previewLogs, previewStatus, setPreviewStartDepsForTests, startPreview, startPreviewWithFallback } from "./preview-manager.js";
 import { PREVIEW_LABEL, type PreviewStatus } from "./preview/types.js";
 import type { SandboxConfig } from "./sandbox-manager.js";
 import { getPreview, removePreview, setPreview } from "./preview/preview-store.js";
@@ -318,22 +318,35 @@ test("без права на контейнер неудачная статик�
 
   await assert.rejects(
     () => startPreviewWithFallback(startConfig, { allowContainer: false }),
-    /Контейнерный предпросмотр доступен на тарифе «Премиум»/,
+    /Статический предпросмотр не удался: нет скрипта сборки/,
   );
   assert.deepEqual(calls, ["static"]);
 });
 
-test("без права на контейнер явный container-режим отклоняется до запуска", async () => {
+test("без права на контейнер явный container-режим всё равно отдаётся статикой", async () => {
   const calls: string[] = [];
   process.env.PREVIEW_MODE = "container";
   setPreviewStartDepsForTests({
     readHybridConfig: async () => ({ kind: "absent" }),
+    startStatic: async () => { calls.push("static"); return { ok: true, status: running }; },
     startContainer: async () => { calls.push("container"); return running; },
   });
 
-  await assert.rejects(
-    () => startPreviewWithFallback(startConfig, { allowContainer: false }),
-    /Контейнерный предпросмотр доступен на тарифе «Премиум»/,
-  );
-  assert.deepEqual(calls, []);
+  const status = await startPreviewWithFallback(startConfig, { allowContainer: false });
+  assert.deepEqual(status, running);
+  assert.deepEqual(calls, ["static"]);
+});
+
+test("startPreview без явного права не запускает контейнер", async () => {
+  const calls: string[] = [];
+  process.env.PREVIEW_MODE = "container";
+  setPreviewStartDepsForTests({
+    readHybridConfig: async () => ({ kind: "absent" }),
+    startStatic: async () => { calls.push("static"); return { ok: true, status: running }; },
+    startContainer: async () => { calls.push("container"); return running; },
+  });
+
+  const status = await startPreview(startConfig);
+  assert.deepEqual(status, running);
+  assert.deepEqual(calls, ["static"]);
 });

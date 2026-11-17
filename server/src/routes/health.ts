@@ -16,6 +16,9 @@ import {
 import { isRuntimePreviewMode } from "../preview/types.js";
 import { listPreviewsAcrossReplicas, previewAddresses } from "../preview/preview-store.js";
 import { previewPublicDomain } from "../preview/preview-host.js";
+import { previewStartStats } from "../preview/preview-metrics.js";
+import { functionMetricsSnapshot } from "../functions/metrics.js";
+import { functionCacheInvalidationActive } from "../functions/cache-invalidation.js";
 import { previewHostBind, previewHostLimits, previewHostPort } from "../preview/preview-host-server.js";
 import { probePreviewDoor } from "../preview/door-client.js";
 import { egressInfo } from "../egress/proxy-health.js";
@@ -109,6 +112,13 @@ async function activity(){
     runs: runQueueStats(),
     sandbox: sandboxQueueStats(),
     browser: browserQueueStats(),
+    // Дверь функций: сколько запросов дошло до контейнера, сколько ждали слот, сколько
+    // упало и за какое время. Живёт в памяти процесса; после перезапуска начинается заново.
+    functions: {
+      ...functionMetricsSnapshot(),
+      // `pg_notify` — слушатель подключён; `local` — JSON-режим или выключенный кеш.
+      cacheInvalidation: functionCacheInvalidationActive() ? "pg_notify" as const : "local" as const,
+    },
     previews: {
       runtime: previewStates.filter(state => isRuntimePreviewMode(state.mode)).length,
       runtimeContainer: previewStates.filter(state => state.mode === "container").length,
@@ -122,6 +132,9 @@ async function activity(){
       runtimeHostUnits: runtimeHostUnits(),
       runtimeContainerUnits: containerRuntimeUnits(),
       static: previewStates.filter(state => state.mode === "static").length,
+      // Старты за последние 30 минут по узлам: p95 и ошибки. Это история запусков, а не
+      // количество живых preview выше; админка уже читает её, health показывает рядом.
+      starts: [...previewStartStats().entries()].map(([node, stats]) => ({ node, ...stats })),
       // Адреса живых предпросмотров: `settled` — этот адрес подтверждён запросом самого сервера,
       // то есть приложение видно и панели, и Chromium. `settled: false` у работающего предпросмотра
       // — это ответ на «предпросмотр запущен, а в панели белый экран», который иначе искали бы

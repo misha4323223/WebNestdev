@@ -220,6 +220,18 @@ services:
       # Дверь serverless-функций. 0 выключает только новые вызовы; статика продолжает работать.
       HOSTING_FUNCTIONS_ENABLED: ${HOSTING_FUNCTIONS_ENABLED:-1}
       HOSTING_FUNCTIONS_PORT: ${HOSTING_FUNCTIONS_PORT:-8792}
+      # Один вызов функции — контейнер до 0.5 CPU и 256 МБ. Два слота на ноду оставляют
+      # запас API, Caddy и PostgreSQL; один сайт по умолчанию занимает не больше одного.
+      FUNCTIONS_MAX_CONCURRENT: ${FUNCTIONS_MAX_CONCURRENT:-2}
+      FUNCTIONS_MAX_CONCURRENT_PER_SITE: ${FUNCTIONS_MAX_CONCURRENT_PER_SITE:-1}
+      FUNCTIONS_MAX_QUEUE: ${FUNCTIONS_MAX_QUEUE:-16}
+      FUNCTIONS_MAX_WAIT_MS: ${FUNCTIONS_MAX_WAIT_MS:-10000}
+      # Ответный кеш функций включается только для функций с явным cache.ttlSeconds.
+      # Выключатель на весь процесс нужен для аварийного отката без пересборки образа.
+      FUNCTIONS_CACHE_ENABLED: ${FUNCTIONS_CACHE_ENABLED:-1}
+      FUNCTIONS_CACHE_MAX_ENTRIES: ${FUNCTIONS_CACHE_MAX_ENTRIES:-512}
+      FUNCTIONS_CACHE_MAX_BYTES: ${FUNCTIONS_CACHE_MAX_BYTES:-16777216}
+      FUNCTIONS_PREVIEW_MAX_CONTAINERS: ${FUNCTIONS_PREVIEW_MAX_CONTAINERS:-4}
       # Фоновые задания — отдельный пул на «Премиуме». 2 слота на ноду оставляют CPU API.
       BACKGROUND_JOBS_ENABLED: ${BACKGROUND_JOBS_ENABLED:-1}
       BACKGROUND_JOBS_CONCURRENCY: ${BACKGROUND_JOBS_CONCURRENCY:-2}

@@ -55,12 +55,20 @@ const PYTHON_SERVER = ["fastapi", "flask", "django", "uvicorn", "gunicorn", "sta
  * itself, so a build script is the better answer than a container.
  */
 const SERVER_SCRIPT = /^\s*(node|tsx|ts-node|nodemon|next|nuxt|remix|uvicorn|gunicorn|python3?|streamlit|flask|deno|bun)\b/;
+/**
+ * Python's stdlib file server is not an application server. A project can have
+ * `serve: python3 -m http.server 5173` and still be an `instant-site`; treating it as a
+ * runtime made the preview demand a container for a page that needs none.
+ */
+const STATIC_FILE_SERVER_SCRIPT = /^\s*(?:python3?|py)\s+-m\s+(?:http\.server|SimpleHTTPServer)\b/;
 
-/** The script that would keep a process alive, if there is one. */
+/** The script that would keep an application process alive, if there is one. */
 function startsServer(scripts: Record<string, string> | undefined) {
   for (const name of ["start", "serve", "dev"]) {
     const command = scripts?.[name]?.trim();
-    if (command && SERVER_SCRIPT.test(command)) return name + ": " + command;
+    if (command && SERVER_SCRIPT.test(command) && !STATIC_FILE_SERVER_SCRIPT.test(command)) {
+      return name + ": " + command;
+    }
   }
   return "";
 }

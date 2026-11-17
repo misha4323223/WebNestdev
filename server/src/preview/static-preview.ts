@@ -9,6 +9,9 @@ import { runStaticBuild,staticBuildLog } from "./static-build.js";
 import { localPreviewOwnerAddress } from "./preview-owner.js";
 import { nodeId } from "../nodes/identity.js";
 import { setPreviewStartProgress } from "./preview-start-progress.js";
+import { readFunctionManifest } from "../functions/manifest.js";
+import { startFunctionsPreviewExecutor, type FunctionsPreviewExecutor } from "./functions-preview.js";
+import { createHybridListener } from "./hybrid-listener.js";
 import type { PreviewStatus } from "./types.js";
 
 /**
@@ -49,10 +52,10 @@ export function describePreviewMode(){
   if(setting==="container")return "container (dev-сервер в контейнере на каждый проект)";
   if(setting==="static")return "static (только сборка, без контейнера предпросмотра)";
   if(setting==="hybrid")return "hybrid (статика + backend в контейнере, только для проектов с preview.mode=hybrid)";
-  return "auto (явный hybrid, иначе статическая сборка, иначе dev-сервер)";
+  return "auto (явный hybrid, иначе статическая сборка; функции — один контейнер на сессию, иначе dev-сервер)";
 }
 
-type StaticRun={server:FastifyInstance;dir:string;port:number;log:string;builtAt:number;startedAt:number;/** Files served as they are: nothing was built, so nothing has to be rebuilt. */instant:boolean;/** Конфиг, которым этот предпросмотр поднят: пересборка поднимает тот же каталог заново. */config:SandboxConfig};
+type StaticRun={server:FastifyInstance;dir:string;port:number;log:string;builtAt:number;startedAt:number;/** Files served as they are: nothing was built, so nothing has to be rebuilt. */instant:boolean;/** Конфиг, которым этот предпросмотр поднят: пересборка поднимает тот же каталог заново. */config:SandboxConfig;/** Один контейнер функций на сессию; есть только у проекта с nestdev.functions.json. */functions?:FunctionsPreviewExecutor;/** Сохраняем право тарифа: пересборка не должна поднять контейнер там, где он запрещён. */allowContainer?:boolean;/** Закрывает listener вместе с открытыми соединениями. */close:()=>Promise<void>};
 
 const runs=new Map<string,StaticRun>();
 
@@ -66,9 +69,18 @@ export type StaticStartResult={ok:true;status:PreviewStatus}|{ok:false;reason:st
  * A failure is returned as a reason instead of thrown: the caller decides whether the reason
  * becomes a fallback to the dev server (`auto`) or an error (`static`).
  */
-export async function startStaticPreview(config:SandboxConfig):Promise<StaticStartResult>{
+export async function startStaticPreview(config:SandboxConfig, options:{allowContainer?:boolean}={}):Promise<StaticStartResult>{
   const plan=await planStaticPreview(config);
   if(!plan.ok)return plan;
+  let functions;
+  try{
+    functions=await readFunctionManifest(config.root);
+  }catch(error){
+    return {ok:false,reason:error instanceof Error?error.message:String(error)};
+  }
+  // Функции предпросмотра — это отдельный контейнер. На тарифе без контейнерного preview
+  // статика остаётся статикой, а /api честно отвечает 404, как и раньше.
+  const hasFunctions=Boolean(functions?.functions.length)&&options.allowContainer!==false;
   const previous=runs.get(config.projectId);
   const build=staticBuildSetting();
   const builtAt=previous?.builtAt??0;
@@ -76,8 +88,11 @@ export async function startStaticPreview(config:SandboxConfig):Promise<StaticSta
   // a build script does not exist to run: the build flags apply only to projects with a build.
   const fresh=plan.build?await isStaticBuildFresh(config.root,plan.dir,builtAt):true;
   const needsBuild=plan.build&&(build==="always"||(build!=="never"&&!fresh));
+  // Функции пересобираются на каждый запуск: иначе правка обработчика не попадёт в уже
+  // поднятый runtime. Статическая сборка при этом может остаться свежей.
+  const needsFunctions=hasFunctions;
 
-  if(previous&&!needsBuild){
+  if(previous&&!needsBuild&&!needsFunctions){
     touchPreview(config.projectId);
     // The listener can outlive a missing registry row (a lost shared write, a stale row from a
     // previous process, or a reset that could not remove it). The listener is the truth here,
@@ -109,9 +124,23 @@ export async function startStaticPreview(config:SandboxConfig):Promise<StaticSta
     return {ok:false,reason:(needsBuild?"сборка не создала ":"нет ")+relative(plan.dir,config.root)+"/index.html"};
   }
 
+  let executor:FunctionsPreviewExecutor|undefined;
+  if(hasFunctions&&functions){
+    setPreviewStartProgress(config.projectId,"starting","Запускаем один контейнер функций…");
+    const started=await startFunctionsPreviewExecutor(config,functions);
+    if(!started.ok)return {ok:false,reason:started.reason};
+    executor=started.executor;
+    log=(log?log+"\n":"")+"Функции: "+functions.functions.length+" в одном контейнере на предпросмотр; /api/* работает без контейнера на запрос.";
+  }
   setPreviewStartProgress(config.projectId,"starting","Запускаем статический сервер…");
-  const listener=await listenStatic(plan.dir);
-  const run:StaticRun={server:listener.app,dir:plan.dir,port:listener.port,log,builtAt:marker,startedAt:Date.now(),instant:!plan.build,config};
+  let listener;
+  try{
+    listener=await listenStatic(plan.dir,executor);
+  }catch(error){
+    await executor?.stop().catch(()=>undefined);
+    throw error;
+  }
+  const run:StaticRun={server:listener.app,dir:plan.dir,port:listener.port,log,builtAt:marker,startedAt:Date.now(),instant:!plan.build,config,allowContainer:options.allowContainer,close:listener.close,...(executor?{functions:executor}:{})};
   runs.set(config.projectId,run);
   // Static слушает только эта реплика, поэтому owner — дверь именно этого процесса. Вторая
   // реплика прочитает строку из общего реестра и проксирует запрос сюда.
@@ -144,12 +173,7 @@ export async function stopStaticPreview(projectId:string){
   const run=runs.get(projectId);
   if(!run)return;
   runs.delete(projectId);
-  const closing=run.server.close().catch(()=>undefined);
-  // close() waits for connections that are already open, and a browser keeps its sockets
-  // alive; the preview must free its port at once, so the leftovers are dropped.
-  run.server.server.closeIdleConnections?.();
-  run.server.server.closeAllConnections?.();
-  await closing;
+  await Promise.all([run.close(),run.functions?.stop().catch(()=>undefined)]);
 }
 
 /**
@@ -165,8 +189,8 @@ export async function stopStaticPreview(projectId:string){
  */
 export async function refreshStaticPreview(projectId:string):Promise<boolean>{
   const run=runs.get(projectId);
-  if(!run||run.instant)return false;
-  const result=await startStaticPreview(run.config);
+  if(!run||(run.instant&&!run.functions))return false;
+  const result=await startStaticPreview(run.config,{allowContainer:run.allowContainer});
   if(!result.ok)removePreview(projectId);
   return result.ok;
 }
@@ -184,10 +208,11 @@ export async function stopAllStaticPreviews(){
 export function staticPreviewLogs(projectId:string){
   const run=runs.get(projectId);
   if(!run)return "";
+  const functions=run.functions?"\n\nФункции предпросмотра: один постоянный контейнер, /api/* обслуживается без запуска контейнера на запрос.":"";
   const header=run.instant
     ?"Готовая статика: файлы отдаются из "+run.dir+" как есть, сборка не нужна — правки видны сразу после обновления страницы."
     :"Статический предпросмотр: приложение отдаётся из "+run.dir+", горячей перезагрузки нет — обновление после сборки.";
-  return run.log?header+"\n\n"+run.log:header;
+  return (run.log?header+"\n\n"+run.log:header)+functions;
 }
 
 /** Nothing runs in a container here, so readiness is a plain HTTP question. */
@@ -209,7 +234,7 @@ function statusFor(run:StaticRun):PreviewStatus{
   // `settled` нужен и в ответе start, а не только в preview/status: для статики ответ сервера —
   // и есть подтверждение адреса. Без него панель считала запуск ещё неподтверждённым и
   // продолжала опрашивать статус, лишний раз перезагружая кадр во время тикета.
-  return {running:true,ready:true,settled:true,port:run.port,host:STATIC_HOST,containerId:"",startedAt:run.startedAt,mode:"static",...(ownerAddress?{ownerAddress}:{})};
+  return {running:true,ready:true,settled:true,port:run.port,host:STATIC_HOST,containerId:"",startedAt:run.startedAt,mode:"static",...(run.functions?{hint:"Функции предпросмотра работают: /api/* обслуживает один контейнер на сессию."}:{}),...(ownerAddress?{ownerAddress}:{})};
 }
 
 /**
@@ -217,7 +242,13 @@ function statusFor(run:StaticRun):PreviewStatus{
  * is served. An unknown path without a file extension is a client-side route, so index.html is
  * returned; a missing asset keeps its 404 instead of silently becoming HTML.
  */
-async function listenStatic(dir:string){
+async function listenStatic(dir:string,functions?:FunctionsPreviewExecutor){
+  // С функциями нужен тот же listener, что у hybrid: статика из процесса API и только
+  // /api/* в контейнер. Без функций остаётся прежний дешёвый static-сервер.
+  if(functions){
+    const listener=await createHybridListener({dir,backendHost:functions.host,backendPort:functions.port,backendPaths:["/api"]});
+    return {app:listener.app,port:listener.port,close:listener.close};
+  }
   const app=Fastify({logger:false,disableRequestLogging:true});
   await app.register(fastifyStatic,{root:dir,index:["index.html"],maxAge:0,cacheControl:true});
   app.setNotFoundHandler((request,reply)=>{
@@ -238,7 +269,17 @@ async function listenStatic(dir:string){
     await app.close().catch(()=>undefined);
     throw new Error("Не удалось определить порт статического предпросмотра");
   }
-  return {app,port};
+  return {
+    app,
+    port,
+    close:async()=>{
+      // close() waits for connections that are already open, and a browser keeps its sockets
+      // alive; the preview must free its port at once, so the leftovers are dropped.
+      app.server.closeIdleConnections?.();
+      app.server.closeAllConnections?.();
+      await app.close().catch(()=>undefined);
+    },
+  };
 }
 
 function looksLikeFile(url:string){

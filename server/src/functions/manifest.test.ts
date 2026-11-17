@@ -66,6 +66,22 @@ test("имя задания не может совпадать с функцие
   );
 });
 
+test("кеш ответа задаётся явно и ограничен сутками", () => {
+  const manifest = parseFunctionManifest({
+    ...valid,
+    functions: [{ ...valid.functions[0], cache: { ttlSeconds: 60 } }],
+  });
+  assert.deepEqual(manifest.functions[0]?.cache, { ttlSeconds: 60 });
+  assert.throws(
+    () => parseFunctionManifest({ ...valid, functions: [{ ...valid.functions[0], cache: { ttlSeconds: 0 } }] }),
+    FunctionManifestError,
+  );
+  assert.throws(
+    () => parseFunctionManifest({ ...valid, functions: [{ ...valid.functions[0], cache: { ttlSeconds: 60, unknown: true } }] }),
+    FunctionManifestError,
+  );
+});
+
 test("method нормализуется к верхнему регистру без повторов", () => {
   const manifest = parseFunctionManifest({
     ...valid,

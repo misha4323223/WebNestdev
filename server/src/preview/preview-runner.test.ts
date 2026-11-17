@@ -56,6 +56,25 @@ test("a hybrid backend gets its own label, PORT/HOST contract and no dev-server 
   assert.ok(args.includes(dependencyCacheMount(runtimeConfig)));
 });
 
+test("the functions runtime can restart on crash without restarting the dev-server preview", () => {
+  const args = previewProcessArgs({
+    config: runtimeConfig,
+    options: {
+      command: "node .webnestdev/functions-preview/session/runtime.mjs",
+      mode: "hybrid",
+      persistState: false,
+      ensureDependencies: false,
+      restart: "on-failure:3",
+    },
+    image: "sandbox-image",
+    network: "preview-net",
+    secretMounts: [],
+  });
+  const index = args.indexOf("--restart");
+  assert.ok(index > 0);
+  assert.equal(args[index + 1], "on-failure:3");
+});
+
 test("a container preview keeps its dev-server command shape without hybrid labels or flags", () => {
   const args = previewProcessArgs({
     config: runtimeConfig,

@@ -279,11 +279,14 @@ rejoin нужен, только если `node-1` снова должна ста
   `Before=docker.service`; в fstab добавлен `nofail`.
 - `standby.sh` больше не подавляет ошибку слота: проверяет, создаёт и падает явно. `.pgpass`
   использует базу `*`, иначе проверка слота в `postgres` шла без пароля.
-- `webnestdev-sandbox-ownership.timer` теперь обходит дерево проекта рекурсивно (включая
-  `node_modules`) и возвращает чужим элементам uid/gid 1000. До этого лечился только верхний
-  уровень, и `npm install` падал с `EACCES ... unlink .../node_modules/...`, когда вложенные
-  каталоги оставались `root:root` от старых запусков сборки от root. На живой базе 10.11.2026
-  так исправлено 58 вложенных элементов в двух проектах. Ручной запуск на ВМ:
+- `webnestdev-sandbox-ownership.timer` обходит дерево проекта рекурсивно (включая
+  `node_modules`) и возвращает чужим элементам uid/gid 1000. С 17.11.2026 он проверяет оба
+  корня: общий `SANDBOX_DIR` и локальный `WEBNESTDEV_LOCAL_WORKSPACE_DIR` (по умолчанию
+  `/var/lib/webnestdev/workspaces`). Раньше обходился только `SANDBOX_DIR`, поэтому проекты в
+  `local`-режиме оставались с `root:root` в `node_modules`: `npm install` падал с
+  `EACCES ... unlink .../node_modules/...`, а API писал `EPERM` на `chmod`. Символические
+  ссылки в `node_modules/.bin` меняются через `chown -h`, чтобы не затронуть цель ссылки.
+  На живой базе 10.11.2026 так исправлено 58 вложенных элементов в двух проектах. Ручной запуск на ВМ:
   `sudo systemctl start webnestdev-sandbox-ownership.service`; из внешней админки —
   `POST /api/admin/projects/:id/permissions` (появится в проде со следующей сборкой образа).
 

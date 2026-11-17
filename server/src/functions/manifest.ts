@@ -48,6 +48,15 @@ const handlerSchema = z.string().trim().min(3).max(500).refine(value => {
   return HANDLER_EXPORT.test(exportName);
 }, { message: "Обработчик задаётся как path/inside/project.ts#exportName" });
 
+/**
+ * Кеш ответа — только явный opt-in. По умолчанию функция не кешируется: заказ, корзина и
+ * авторизация не должны получить чужой ответ из общего кеша. TTL ограничен сутками, чтобы
+ * случайный `ttlSeconds` не превратил витрину в вечную статику.
+ */
+const cacheSchema = z.object({
+  ttlSeconds: z.number().int().min(1).max(86_400),
+}).strict();
+
 const functionSchema = z.object({
   name: z.string().trim().regex(FUNCTION_NAME, "Имя функции: строчные латинские буквы, цифры и дефис, до 63 символов"),
   path: routeSchema,
@@ -55,6 +64,7 @@ const functionSchema = z.object({
   handler: handlerSchema,
   timeoutMs: z.number().int().min(100).max(30_000).default(10_000),
   memoryMb: z.number().int().min(128).max(1_024).default(256),
+  cache: cacheSchema.optional(),
 }).strict();
 
 /**
@@ -77,6 +87,7 @@ export const functionManifestSchema = z.object({
 }).strict();
 
 export type FunctionManifestEntry = z.infer<typeof functionSchema>;
+export type FunctionCachePolicy = NonNullable<FunctionManifestEntry["cache"]>;
 export type FunctionManifestJob = z.infer<typeof jobSchema>;
 export type FunctionManifest = z.infer<typeof functionManifestSchema>;
 

@@ -106,10 +106,19 @@ test("health отдаёт подробности только loopback-запр�
     assert.ok(internalBody.activity, "loopback-ответ содержит метрики хоста");
     assert.ok(internalBody.hosting, "loopback-ответ содержит срез хостинга");
     assert.equal(publicBody.hosting, undefined, "публичный ответ не раскрывает сайты и пути");
-    const activity = internalBody.activity as { process?: { uid: number | null; gid: number | null } };
+    const activity = internalBody.activity as {
+      process?: { uid: number | null; gid: number | null };
+      functions?: { requests?: number; cache?: { hits?: number }; cacheInvalidation?: string };
+      previews?: { starts?: unknown[] };
+    };
     assert.ok(activity.process, "activity.process показывает реального пользователя процесса");
     assert.equal(typeof activity.process?.uid, "number");
     assert.equal(typeof activity.process?.gid, "number");
+    assert.ok(activity.functions, "activity.functions показывает счётчики двери функций");
+    assert.equal(typeof activity.functions?.requests, "number");
+    assert.equal(typeof activity.functions?.cache?.hits, "number");
+    assert.ok(["pg_notify", "local"].includes(activity.functions?.cacheInvalidation ?? ""), "health называет режим инвалидации кеша");
+    assert.ok(Array.isArray(activity.previews?.starts), "activity.previews.starts — история запусков preview");
   } finally {
     await app.close();
   }

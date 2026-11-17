@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createFunctionsHostServer, type FunctionsHostDeps } from "./host-server.js";
 import { FunctionInvokeError } from "./invoke.js";
+import { FunctionCapacityError } from "./function-limiter.js";
+import { functionMetricsSnapshot, resetFunctionMetricsForTests } from "./metrics.js";
+import { resetFunctionResponseCacheForTests } from "./response-cache.js";
 import type { HostingSite } from "../hosting/types.js";
 import type { FunctionReleaseManifest } from "./build.js";
 
@@ -61,6 +64,73 @@ test("вызывает функцию по Host и пути, возвращая 
     assert.equal(response.statusCode, 200);
     assert.equal(response.body, "ok");
     assert.equal(response.headers["content-type"], "text/plain");
+  } finally {
+    await app.close();
+  }
+});
+
+test("успешный вызов попадает в метрики функции", async () => {
+  resetFunctionMetricsForTests();
+  const app = createFunctionsHostServer(deps());
+  try {
+    const response = await app.inject({ method: "GET", url: "/api/hello", headers: { host: "demo.host.nestdev.ru" } });
+    assert.equal(response.statusCode, 200);
+    const metrics = functionMetricsSnapshot();
+    assert.equal(metrics.requests, 1);
+    assert.equal(metrics.completed, 1);
+    assert.equal(metrics.statuses["2xx"], 1);
+    assert.equal(metrics.responseBytes, 2);
+    assert.equal(metrics.invokeFailed, 0);
+  } finally {
+    await app.close();
+  }
+});
+
+test("кеширует GET с явной политикой и не кеширует запрос с cookie", async () => {
+  resetFunctionMetricsForTests();
+  resetFunctionResponseCacheForTests();
+  let calls = 0;
+  const cachedManifest: FunctionReleaseManifest = {
+    ...manifest,
+    functions: [{ ...manifest.functions[0]!, cache: { ttlSeconds: 60 } }],
+  };
+  const app = createFunctionsHostServer(deps({
+    readManifest: async () => cachedManifest,
+    invoke: async () => {
+      calls += 1;
+      return { status: 200, headers: { "content-type": "text/plain" }, body: Buffer.from("ok") };
+    },
+  }));
+  try {
+    const first = await app.inject({ method: "GET", url: "/api/hello", headers: { host: "demo.host.nestdev.ru" } });
+    const second = await app.inject({ method: "GET", url: "/api/hello", headers: { host: "demo.host.nestdev.ru" } });
+    const withCookie = await app.inject({ method: "GET", url: "/api/hello", headers: { host: "demo.host.nestdev.ru", cookie: "session=1" } });
+    assert.equal(first.statusCode, 200);
+    assert.equal(second.headers["x-function-cache"], "HIT");
+    assert.equal(calls, 2, "второй публичный GET и запрос с cookie не должны брать один ответ");
+    assert.equal(withCookie.statusCode, 200);
+    assert.equal(functionMetricsSnapshot().cache.hits, 1);
+  } finally {
+    await app.close();
+  }
+});
+
+test("при переполнении пула отвечает 503 и не запускает контейнер", async () => {
+  resetFunctionMetricsForTests();
+  let invoked = false;
+  const app = createFunctionsHostServer(deps({
+    acquireSlot: async () => { throw new FunctionCapacityError(); },
+    invoke: async () => { invoked = true; return { status: 200, headers: {}, body: Buffer.from("ok") }; },
+  }));
+  try {
+    const response = await app.inject({ method: "GET", url: "/api/hello", headers: { host: "demo.host.nestdev.ru" } });
+    assert.equal(response.statusCode, 503);
+    assert.equal(response.headers["retry-after"], "1");
+    assert.match(response.body, /слишком много функций/);
+    assert.equal(invoked, false);
+    const metrics = functionMetricsSnapshot();
+    assert.equal(metrics.capacityRejected, 1);
+    assert.equal(metrics.statuses["5xx"], 1);
   } finally {
     await app.close();
   }

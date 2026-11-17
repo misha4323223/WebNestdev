@@ -63,6 +63,19 @@ test("a plain HTML/CSS/JS project is served as is, with no build and no containe
   }
 });
 
+test("a static-functions project with ready files needs no build", async () => {
+  const root = await project({
+    "package.json": JSON.stringify({ private: true, type: "module" }),
+    "index.html": "<html></html>",
+    "nestdev.functions.json": JSON.stringify({ functions: [], jobs: [] }),
+  });
+  try {
+    assert.deepEqual(await planStaticPreview(config(root)), { ok: true, dir: root, built: true, build: false });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("files already present in dist are served even without a build script", async () => {
   const root = await project({ "dist/index.html": "<html></html>", "dist/app.js": "" });
   try {

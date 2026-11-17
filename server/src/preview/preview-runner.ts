@@ -43,6 +43,13 @@ export type StartPreviewProcessOptions = {
   ensureDependencies: boolean;
   /** Non-secret environment values for hybrid backend. */
   env?: Record<string, string>;
+  /**
+   * Docker restart policy. The functions preview uses `on-failure:3`: runtime.mjs is a tiny
+   * process and a crash must not turn the whole preview into a permanent 502 until the user
+   * restarts it. Ordinary dev servers keep the default `no`, so a broken app is not restarted
+   * in a loop.
+   */
+  restart?: string;
 };
 
 export type StartedPreviewProcess = {
@@ -86,6 +93,7 @@ export function previewProcessArgs(input: {
     "--read-only",
     "--tmpfs", "/tmp:rw,nosuid,size=256m",
     "--user", "1000:1000",
+    ...(options.restart ? ["--restart", options.restart] : []),
     ...(network ? ["--network", network] : []),
     // The label is how a restarted server finds previews it no longer knows about.
     "--label", PREVIEW_LABEL + "=" + config.projectId,

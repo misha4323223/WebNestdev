@@ -13,6 +13,7 @@ import { describePreviewFailover, startPreviewFailoverSweeper, stopPreviewFailov
 import { describePreviewMode } from "./preview/static-preview.js";
 import { describePreviewHostServer, startPreviewHostServer, stopPreviewHostServer } from "./preview/preview-host-server.js";
 import { describeFunctionsHostServer, startFunctionsHostServer, stopFunctionsHostServer } from "./functions/host-server.js";
+import { startFunctionCacheInvalidation, stopFunctionCacheInvalidation } from "./functions/cache-invalidation.js";
 import { describePreviewLimits } from "./preview/preview-limiter.js";
 import { describeRunLimiter } from "./agent/run-limiter.js";
 import { describeContextBudget } from "./agent/context-budget.js";
@@ -309,6 +310,20 @@ let stopCustomDomainTlsActivation: (() => void) | null = null;
 initializeStorage()
   .then(async () => {
     stopStorageReconcile = startStorageReconcileScheduler();
+    // Межнодовая инвалидация кеша функций: слушатель pg_notify живёт столько же, сколько
+    // процесс. Ошибка не должна мешать API: локальный TTL и сброс при публикации остаются.
+    try {
+      const listening = await startFunctionCacheInvalidation((level, message) => {
+        if (level === "warn") console.warn("[functions] " + message);
+        else console.log("[functions] " + message);
+      });
+      if (listening) app.log.info("function cache invalidation ready");
+    } catch (error) {
+      app.log.warn(
+        { error: error instanceof Error ? error.message : error },
+        "function cache invalidation listener skipped",
+      );
+    }
     // Custom domains живут отдельно от флага новых публикаций: выключение feature flag не
     // должно снимать маршруты уже подключённых доменов и мешать продлению сертификатов.
     stopCustomDomainCaddyRefresh = startCustomDomainCaddyRefresh();
@@ -375,7 +390,7 @@ if (demoEnabled) {
   app.log.info({ demoEmail: demo.email, created: demo.created }, "demo account ready");
 }
 
-app.addHook("onClose", async () => { stopWorkspaceSnapshotScheduler(); await ownerDoor?.close(); ownerDoor = null; stopCustomDomainTlsActivation?.(); stopCustomDomainCaddyRefresh?.(); stopSandboxMaintenance?.(); stopBillingSweeper(); stopMailQueue(); stopStorageReconcile?.(); stopNodeHeartbeat(); stopRemoteNodeHeartbeat(); stopProjectRebalance(); stopPreviewFailoverSweeper(); await stopPreviewHostServer(); await stopFunctionsHostServer(); await closeStorage(); });
+app.addHook("onClose", async () => { stopWorkspaceSnapshotScheduler(); await ownerDoor?.close(); ownerDoor = null; stopCustomDomainTlsActivation?.(); stopCustomDomainCaddyRefresh?.(); stopSandboxMaintenance?.(); stopBillingSweeper(); stopMailQueue(); stopStorageReconcile?.(); stopNodeHeartbeat(); stopRemoteNodeHeartbeat(); stopProjectRebalance(); stopPreviewFailoverSweeper(); await stopPreviewHostServer(); await stopFunctionsHostServer(); await stopFunctionCacheInvalidation(); await closeStorage(); });
 
 await registerSecurityHeaders(app);
 

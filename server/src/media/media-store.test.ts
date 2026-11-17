@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  createMultipartUpload,
   deleteProjectMedia,
   listMediaObjects,
   mediaConfigFromEnv,
@@ -37,6 +38,17 @@ test("media config refuses a partial bucket instead of silently disabling upload
   );
 });
 
+test("media public URL must be an absolute https address without query or fragment", () => {
+  assert.throws(
+    () => mediaConfigFromEnv({ ...env, MEDIA_PUBLIC_BASE_URL: "http://storage.mwsapis.ru/bucket" } as NodeJS.ProcessEnv),
+    /https:\/\//,
+  );
+  assert.throws(
+    () => mediaConfigFromEnv({ ...env, MEDIA_PUBLIC_BASE_URL: "https://storage.mwsapis.ru/bucket?x=1" } as NodeJS.ProcessEnv),
+    /query или fragment/,
+  );
+});
+
 test("media names are reduced to a safe path segment", () => {
   assert.equal(safeMediaName("../../Мой клип (final).mp4"), "final-.mp4");
   assert.equal(safeMediaName("..."), "file");
@@ -51,6 +63,53 @@ test("media keys stay inside the user's project and foreign keys are rejected", 
   assert.equal(mediaKeyBelongsTo(config, key, "user-2", "project-1"), false);
   assert.equal(mediaKeyBelongsTo(config, key.replace("project-1", "project-2"), "user-1", "project-1"), false);
   assert.equal(mediaPublicUrl(config, "media/a b.png"), "https://storage.mwsapis.ru/nestdev-media/media/a%20b.png");
+});
+
+test("replacement keeps the object key and makes caches revalidate the new bytes", async () => {
+  const config = mediaConfigFromEnv(env);
+  assert.ok(config);
+  const originalFetch = globalThis.fetch;
+  const previousToken = process.env.MWS_IAM_TOKEN;
+  const calls: Array<{ url: string; method: string; headers: Headers }> = [];
+  process.env.MWS_IAM_TOKEN = "test-token";
+  globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = String(input);
+    const method = (init?.method ?? "GET").toUpperCase();
+    calls.push({ url, method, headers: new Headers(init?.headers) });
+    if (url.includes("issueServiceAccountToken")) {
+      return new Response(JSON.stringify({ accessToken: "iam-token", expirationTs: new Date(Date.now() + 10 * 60_000).toISOString() }), { status: 200 });
+    }
+    if (url.includes("issueSessionToken")) {
+      return new Response(JSON.stringify({
+        AccessKeyId: "access", SecretAccessKey: "secret", SessionToken: "session",
+        Expiration: new Date(Date.now() + 10 * 60_000).toISOString(),
+      }), { status: 200 });
+    }
+    if (method === "POST" && url.includes("uploads")) {
+      return new Response("<InitiateMultipartUploadResult><UploadId>upload-1</UploadId></InitiateMultipartUploadResult>", { status: 200 });
+    }
+    return new Response("unexpected", { status: 500 });
+  }) as typeof fetch;
+  try {
+    const key = "media/user-1/project-1/2026/11/existing-photo.jpg";
+    const upload = await createMultipartUpload(config, {
+      userId: "user-1",
+      projectId: "project-1",
+      name: "photo.jpg",
+      size: 1024,
+      contentType: "image/jpeg",
+      key,
+    });
+    assert.equal(upload.key, key, "замена не меняет key и публичный URL");
+    assert.equal(upload.publicUrl, "https://storage.mwsapis.ru/nestdev-media/" + key);
+    const create = calls.find(call => call.method === "POST" && call.url.includes("uploads"));
+    assert.equal(create?.headers.get("content-type"), "image/jpeg");
+    assert.equal(create?.headers.get("cache-control"), "public, max-age=0, must-revalidate");
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (previousToken === undefined) delete process.env.MWS_IAM_TOKEN;
+    else process.env.MWS_IAM_TOKEN = previousToken;
+  }
 });
 
 test("project cleanup lists the project prefix and deletes every object", async () => {

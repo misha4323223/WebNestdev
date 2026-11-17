@@ -459,6 +459,11 @@ preview хранила только адрес контейнера в Docker-с
    `POST /api/admin/projects/:id/permissions` (код готов, в проде — со следующей сборкой образа);
    на ВМ без нового образа ремонт запускается как `sudo systemctl start
    webnestdev-sandbox-ownership.service`.
+   **17.11.2026, 17:19 UTC:** таймер обходил только `SANDBOX_DIR`
+   (`/var/lib/webnestdev/sandboxes`), а проекты в `local`-режиме лежат в
+   `/var/lib/webnestdev/workspaces`. Поэтому `root:root` в `node_modules` там не исправлялся,
+   и API писал `[sandbox] ... EPERM chmod .../node_modules`. Скрипт теперь обходит оба корня с
+   дедупликацией; затронутые деревья нормализованы на `node-1` и `node-2`.
 
 Результаты прогона (реальные `power=OFF`, без ручного обхода quorum):
 

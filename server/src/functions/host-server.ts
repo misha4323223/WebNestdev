@@ -10,6 +10,9 @@ import { enqueueBackgroundJobs } from "../hosting/background-jobs.js";
 import { invokeFunction, FunctionInvokeError, type BackgroundJobRequest, type FunctionRequest } from "./invoke.js";
 import { readReleaseManifest } from "./release-manifest.js";
 import { projectFunctionEnv } from "./runtime-env.js";
+import { functionLimiter, FunctionCapacityError } from "./function-limiter.js";
+import { functionMetrics } from "./metrics.js";
+import { functionCacheKey, functionResponseCache, requestAllowsResponseCache } from "./response-cache.js";
 import type { FunctionReleaseManifest } from "./build.js";
 
 /**
@@ -30,6 +33,8 @@ export type FunctionsHostDeps = {
   secrets: (projectId: string) => Promise<Record<string, string>>;
   /** Ставит задания из ответа функции в очередь до отправки ответа клиенту. */
   enqueueJobs?: (input: { site: NonNullable<Awaited<ReturnType<typeof getSiteBySlug>>>; requests: BackgroundJobRequest[] }) => Promise<unknown>;
+  /** Слот на одновременное выполнение функций; возвращённую функцию вызывают в finally. */
+  acquireSlot?: (siteId: string) => Promise<() => void>;
 };
 
 const defaultDeps: FunctionsHostDeps = {
@@ -40,6 +45,7 @@ const defaultDeps: FunctionsHostDeps = {
   invoke: invokeFunction,
   secrets: projectFunctionEnv,
   enqueueJobs: enqueueBackgroundJobs,
+  acquireSlot: siteId => functionLimiter.acquire(siteId),
 };
 
 function requestHost(request: FastifyRequest) {
@@ -90,9 +96,11 @@ export function createFunctionsHostServer(deps: FunctionsHostDeps = defaultDeps)
     if (!hostname) return sendError(reply, 400, "Не передан Host");
     const site = await resolveSite(hostname, deps).catch(() => null);
     if (!site || site.status !== "live" || !site.activeReleaseId) return sendError(reply, 404, "Сайт не найден");
+    // Фиксируем релиз в локальной переменной: замыкание execute теряет narrowing поля.
+    const activeReleaseId = site.activeReleaseId;
 
     const manifest = await deps.readManifest(
-      path.join(hostingFunctionsDir(site.slug, site.activeReleaseId), "manifest.json"),
+      path.join(hostingFunctionsDir(site.slug, activeReleaseId), "manifest.json"),
     ).catch(() => null);
     if (!manifest?.functions.length) return sendError(reply, 404, "У сайта нет функций");
 
@@ -118,31 +126,88 @@ export function createFunctionsHostServer(deps: FunctionsHostDeps = defaultDeps)
       bodyBase64: body.toString("base64"),
     };
 
+    // Кеш — только явный opt-in функции и только для публичного GET/HEAD без cookie и
+    // Authorization. POST/PUT/PATCH/DELETE не кешируются независимо от манифеста.
+    const cachePolicy = fn.cache && functionResponseCache.enabled &&
+      (request.method === "GET" || request.method === "HEAD") &&
+      requestAllowsResponseCache(request.headers)
+      ? fn.cache
+      : null;
+    const cacheKey = cachePolicy
+      ? functionCacheKey({
+        siteId: site.id,
+        releaseId: activeReleaseId,
+        functionName: fn.name,
+        method: request.method,
+        path: url.pathname,
+        search: url.search,
+        accept: request.headers.accept,
+        acceptLanguage: request.headers["accept-language"],
+      })
+      : "";
+    const cached = cacheKey ? functionResponseCache.lookup(cacheKey) : null;
+
+    let release: (() => void) | undefined;
+    let metricStatus = 502;
+    let metricBytes = 0;
+    const finishMetric = functionMetrics.begin();
     try {
-      const env = await deps.secrets(site.projectId);
-      const result = await deps.invoke({
-        artifactDir: hostingFunctionDir(site.slug, site.activeReleaseId, fn.name),
-        fn,
-        request: input,
-        env,
-      });
-      if (result.jobs?.length) {
-        // Постановка до ответа: если очередь недоступна, клиент не должен получить 202
-        // и решить, что задача принята.
-        await deps.enqueueJobs?.({ site, requests: result.jobs });
+      if (cached) {
+        functionMetrics.recordCacheHit();
+        metricStatus = cached.status;
+        metricBytes = cached.body.byteLength;
+        reply.header("x-function-cache", "HIT");
+        return reply.code(cached.status).headers(publicHeaders(cached.headers)).send(cached.body);
       }
+      if (cacheKey) functionMetrics.recordCacheMiss();
+
+      const execute = async () => {
+        release = await (deps.acquireSlot ?? (siteId => functionLimiter.acquire(siteId)))(site.projectId);
+        const env = await deps.secrets(site.projectId);
+        const result = await deps.invoke({
+          artifactDir: hostingFunctionDir(site.slug, activeReleaseId, fn.name),
+          fn,
+          request: input,
+          env,
+        });
+        if (result.jobs?.length) {
+          // Постановка до ответа: если очередь недоступна, клиент не должен получить 202
+          // и решить, что задача принята.
+          await deps.enqueueJobs?.({ site, requests: result.jobs });
+        }
+        return result;
+      };
+
+      const result = cacheKey ? await functionResponseCache.load(cacheKey, execute) : await execute();
+      if (cachePolicy) functionResponseCache.store(cacheKey, result, cachePolicy.ttlSeconds);
+      metricStatus = result.status;
+      metricBytes = result.body.byteLength;
       return reply.code(result.status).headers(publicHeaders(result.headers)).send(result.body);
     } catch (error) {
+      if (error instanceof FunctionCapacityError) {
+        functionMetrics.recordCapacityRejection();
+        metricStatus = error.statusCode;
+        reply.header("retry-after", "1");
+        return sendError(reply, error.statusCode, error.message, { code: error.code });
+      }
       if (error instanceof FunctionInvokeError) {
+        functionMetrics.recordInvokeFailure();
+        metricStatus = error.statusCode;
         request.log.warn({ error: error.message, function: fn.name, site: site.slug }, "function failed");
         return sendError(reply, error.statusCode, error.message, { function: fn.name });
       }
       if (error instanceof HostingError) {
+        functionMetrics.recordJobEnqueueFailure();
+        metricStatus = error.statusCode;
         request.log.warn({ error: error.message, function: fn.name, site: site.slug }, "function job enqueue failed");
         return sendError(reply, error.statusCode, error.message, { code: error.code, function: fn.name });
       }
+      functionMetrics.recordCrash();
       request.log.error({ error, function: fn.name, site: site.slug }, "function crashed");
       return sendError(reply, 502, "Функция завершилась с ошибкой", { function: fn.name });
+    } finally {
+      finishMetric(metricStatus, metricBytes);
+      release?.();
     }
   });
 
@@ -177,5 +242,5 @@ export async function stopFunctionsHostServer() {
 
 export function describeFunctionsHostServer() {
   if (!functionsHostEnabled()) return "serverless-функции: дверь выключена (HOSTING_FUNCTIONS_ENABLED=0)";
-  return "serverless-функции: дверь 0.0.0.0:" + functionsHostPort() + ", маршрут /api/*, одноразовый контейнер на запрос";
+  return "serverless-функции: дверь 0.0.0.0:" + functionsHostPort() + ", маршрут /api/*, одноразовый контейнер на запрос, " + functionLimiter.describe();
 }

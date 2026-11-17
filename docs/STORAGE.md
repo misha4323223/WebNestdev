@@ -87,6 +87,52 @@ cannot drift between screens. `usedBytes` is what the write check uses: at `full
 `POST /api/account/storage/refresh` re-measures the account's projects and returns the fresh
 overview. It has a 60-second per-account cooldown; the button in settings says how long to wait.
 
+## Project media (S3/CDN)
+
+Chat attachments, screenshots and files uploaded from the media panel are **not** stored on the
+VM disk and are **not** proxied through Caddy or the Node API. The browser receives one presigned
+PUT URL per part and uploads straight to the bucket; the API only creates the multipart upload,
+checks ownership/quota and completes it. Downloads use the public object URL.
+
+```
+browser ──presigned PUT──▶ S3/CDN
+   ▲                         │
+   └── create/complete ── API ┘
+```
+
+What the application guarantees:
+
+- `MEDIA_PUBLIC_BASE_URL` must be an absolute `https://` address without query or fragment. In
+  production point it at the CDN hostname, not at the API hostname.
+- The object key is stored under `media/<userId>/<projectId>/<year>/<month>/<uuid>-<name>`, so a
+  file cannot escape its project prefix.
+- A replacement reuses the **same key** and therefore the same public URL. The object is written
+  with `Cache-Control: public, max-age=0, must-revalidate`, so a browser does not keep the old
+  photo after an admin replaces it. The site release does not need rebuilding.
+- `Content-Type` is sent when the multipart upload starts and is stored by S3. Range requests are
+  handled by S3/CDN; the Node process never reads the video body.
+- Presigned URLs live only in the upload response (TTL `MEDIA_URL_TTL_SECONDS`, one hour by
+  default). They are not written to PostgreSQL or project files.
+
+Limits:
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `MEDIA_MAX_FILE_BYTES` | `10 GiB` | largest single object |
+| `MEDIA_PART_SIZE_BYTES` | `64 MiB` | multipart part size; minimum 5 MiB |
+| `MEDIA_MAX_PARTS` | `10000` | hard multipart limit |
+| `MEDIA_URL_TTL_SECONDS` | `3600` | lifetime of a presigned part URL |
+
+Cost is storage plus egress, not VM CPU. Images are cheap; long video is dominated by egress and
+is the reason to use the CDN hostname and, for very large files, HLS with transcoding outside the
+web node. The web node must not transcode video.
+
+Known boundary: assets built **into a static release** (for example `public/hero.mp4`) are packed
+into the release archive and served from the local `SITES_DIR` hot cache by Caddy. That is fine for
+small images and fonts, but a large video should be referenced by its bucket/CDN URL instead of
+being shipped inside every release. This is a product rule, not something the upload endpoint can
+enforce.
+
 ## Object storage (cold tier)
 
 The VM disk is what a small host runs out of first: `node_modules` alone is 150–400 MB per project.
