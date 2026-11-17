@@ -118,8 +118,9 @@ Gluster остаётся для `sites`, `data`, сертификатов, custo
   защищён общим токеном. Failover восстанавливает последний snapshot; без snapshot проект
   остаётся с явной ошибкой, а не на пустом диске.
 - Критерий: перенос без двух писателей и без потери файлов; destructive-тест только с разрешения.
-- **Не проверено:** реальный перенос между двумя ВМ, поведение epoch при старых запросах,
-  таймауты больших snapshot.
+- **Проверено 17.11.2026:** owner-routing HTTP/WS на реальной паре ВМ, snapshot/restore
+  через реальный S3. **Не проверено:** живой local-режим и перенос проекта между нодами
+  (нужно окно переключения), destructive failover, таймауты больших snapshot.
 
 ### Этап 8. `node-2` local и отключение Gluster для sandboxes — M
 
@@ -184,6 +185,33 @@ Gluster остаётся для `sites`, `data`, сертификатов, custo
   `WEBNESTDEV_API_ADDRESS`; по умолчанию routing и local всё ещё выключены.
 - **Не проверено:** реальные две ВМ, PostgreSQL-миграции на живой базе, Gluster-cutover.
 
+### 17.11.2026, 09:19 UTC — двухнодовый прогон и найденные ошибки
+
+- Выкачены коммиты `9659073` (основной код), `a87d1a6`, `cc2a719`, `0ff5cea` (исправления
+  WebSocket). Обе ноды работают на `0ff5cea`, `/api/ready` — `200`; `node-2` — standby
+  (`pg_is_in_recovery()=t`), `node-1` — primary (`f`).
+- Полный прогон: сервер 2000 тестов (1990 pass, 10 skip, 0 fail), фронтенд 25/25,
+  брокер 30/30, TypeScript — 0 ошибок.
+- Owner-routing проверен на реальном тестовом проекте, закреплённом за `node-2`: запрос через
+  API `node-1` вернул `200`; при остановленном API `node-2` — `502 OWNER_PROXY` без локального
+  fallback; после старта снова `200`. WebSocket через оба прокси — `WS=OPEN`.
+- Snapshot/restore проверены на реальном S3: snapshot 170 байт создан, файл после restore
+  вернулся к состоянию до снимка; удаление проекта удалило и объект snapshot из бакета.
+- **Ошибка 1:** deploy обновляет образ, но не синхронизирует
+  `deploy/node1|node2/docker-compose.override.yml`. Из-за этого `WEBNESTDEV_API_ADDRESS` на
+  ВМ остался пустым, порт `8791` не был опубликован. Для теста override поправлен вручную,
+  затем возвращён из backup. До cutover нужно либо добавить синхронизацию override в deploy,
+  либо выполнять шаг вручную по runbook.
+- **Ошибка 2:** WebSocket через owner-routing отдавал `404`. `owner-door` вырезал
+  `Connection: Upgrade` и `Upgrade: websocket`, а `owner-router` — `Connection: Upgrade`.
+  Исправлено в `0ff5cea`, добавлен `owner-door.test.ts`; после выкатки `WS=OPEN`.
+- **Не проверено:** живой local-режим и перенос между нодами. Включать `local` на общем
+  production API нельзя без окна: все существующие проекты сразу начнут искать файлы в
+  локальном корне. Нужен пилотный проект/отдельный процесс и окно переключения.
+- После проверки production возвращён в `shared`, `OWNER_ROUTING=0`, внутренний порт не
+  опубликован, `WEBNESTDEV_API_ADDRESS` пуст. `node-2` оставлена включённой по просьбе
+  пользователя; Gluster-том `sandboxes` не менялся.
+
 ### 17.11.2026, 08:13 UTC — retention и удаление snapshot
 
 - Новый snapshot удаляет предыдущий hot snapshot и его manifest: на проект остаётся один
@@ -199,8 +227,9 @@ Gluster остаётся для `sites`, `data`, сертификатов, custo
 
 - `bun tsc -b --noEmit` — успешно.
 - `npx tsc -p server/tsconfig.json --noEmit` — успешно.
-- `npm test --workspace=server` — 1999 тестов, 1989 прошли, 10 пропущены (Chromium/среда),
-  0 падений. Включая новые `workspace-local.test.ts` и `workspace-migration.test.ts`.
+- `npm test --workspace=server` — 2000 тестов, 1990 прошли, 10 пропущены (Chromium/среда),
+  0 падений. Включая `workspace-local.test.ts`, `workspace-migration.test.ts` и
+  `owner-door.test.ts`.
 - После retention/delete отдельно: 76 storage/project-store тестов и
   `workspace-snapshot.test.ts` — успешно; `npx tsc -p server/tsconfig.json --noEmit` — успешно.
 - Не проверялось: реальные PostgreSQL-миграции на живой базе, поведение двух ВМ и локальный диск.
