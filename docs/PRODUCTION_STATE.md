@@ -4,8 +4,15 @@
 между сессиями.
 Секреты здесь не хранятся: только имена переменных, пути и способы проверки.
 
-**Актуально на 17.11.2026, 15:32 UTC:** обе ноды включены, `node-1` — primary,
-`node-2` — streaming standby; обе на сборке `960b983` (фоновые задания хостинга). Production работает в
+**Актуально на 17.11.2026, 20:53 UTC:** обе ноды включены, `node-1` — primary,
+`node-2` — streaming standby; обе на сборке `0cd1e8f8b69a` (кеш функций, инвалидация,
+functions-preview, точечный CDN purge). Deploy run `44171584366` завершён успешно
+17.11.2026, 20:49:35 UTC; публичный `/api/health` и `/api/ready` отдают
+`build=0cd1e8f8b69a85701689dd2d021441bb75796249`. Внутренний health обеих нод:
+`storage=postgres ok`, `sandbox=runsc ok`, `cacheInvalidation=pg_notify`, ошибок в логах
+контейнеров нет. Новые env на node-1: `FUNCTIONS_CACHE_ENABLED=1`,
+`FUNCTIONS_PREVIEW_MAX_CONTAINERS=4`, `HOSTING_CDN_PURGE=1`. Свободно на диске:
+`node-1` 31,3 ГБ (36%), `node-2` 7,2 ГБ (61%). Production работает в
 `WEBNESTDEV_WORKSPACE_MODE=local`, `OWNER_ROUTING=1`; все 18 проектов переведены на локальные
 каталоги `node-1` (696 МБ), 14 cold-архивов восстановлены. Gluster-том `sandboxes` не менялся
 и больше не используется для активных workspace. Deploy синхронизирует override обеих нод;
@@ -15,6 +22,13 @@
 **SSH-ключ агента:** `/tmp/nestdev-agent` (права `600`), в git не хранится. `/tmp` в workspace
 эфемерный: после перезапуска файл нужно восстановить из защищённого источника
 `~/.ssh/nestdev-agent-2026-11-13`, не печатая содержимое.
+
+**17.11.2026, 20:53 UTC, нагрузочная проба:** `npm run load:check -- --url
+https://nestdev.ru/api/ready --concurrency 20 --duration 15` — 776 запросов, 50,8 RPS,
+p50 337,5 мс, p95 539,7 мс, p99 2481,7 мс, 0 ошибок, все 200. Это внешний путь через CDN/NLB,
+а не доказательство ёмкости origin; для вывода о масштабе нужен повтор на `/api/products` и
+сравнение до/после. Живого трафика функций после выкатки не было: `activity.functions.requests=0`,
+поэтому кеш и инвалидация проверены unit-тестами и health-режимом, но не реальным вызовом.
 
 **13.11.2026, доступ агента:** вход восстановлен без GitHub. Рабочий ключ —
 `~/.ssh/nestdev-agent-2026-11-13` (копия `/tmp/nestdev-agent`), публичная часть установлена в
