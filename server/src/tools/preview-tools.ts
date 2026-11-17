@@ -2,6 +2,8 @@ import { getSandbox } from "../sandbox-manager.js";
 import { startPreview,stopPreview,previewStatus,previewLogs } from "../preview-manager.js";
 import { tailLogLines } from "../preview/log-lines.js";
 import { registerTool } from "../tool-registry.js";
+import { accountPlanFor } from "../billing/store.js";
+import { planAllows } from "../account/entitlements.js";
 
 /**
  * These three take no arguments at all, and the schema says so. Leaving it open (`additionalProperties`
@@ -32,7 +34,12 @@ registerTool({
   name:"preview.start",
   description:"Start the project's live preview server after creating or updating the project.",
   parameters:NO_ARGUMENTS,
-  execute: async (_,context) => {return previewForAgent(await startPreview(await getSandbox(context.projectId,context.userId)))}
+  execute: async (_,context) => {
+    // Агент запускает тот же preview, что и панель. Контейнерный режим — возможность Премиума;
+    // статический остаётся доступен на всех тарифах, поэтому решает сам preview-manager.
+    const allowContainer=planAllows(await accountPlanFor(context.userId),"containerPreview");
+    return previewForAgent(await startPreview(await getSandbox(context.projectId,context.userId),{allowContainer}));
+  }
 });
 registerTool({
   name:"preview.stop",

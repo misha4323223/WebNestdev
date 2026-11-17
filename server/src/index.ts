@@ -12,6 +12,7 @@ import { startPreviewSweeper } from "./preview/idle-sweep.js";
 import { describePreviewFailover, startPreviewFailoverSweeper, stopPreviewFailoverSweeper } from "./preview/preview-failover.js";
 import { describePreviewMode } from "./preview/static-preview.js";
 import { describePreviewHostServer, startPreviewHostServer, stopPreviewHostServer } from "./preview/preview-host-server.js";
+import { describeFunctionsHostServer, startFunctionsHostServer, stopFunctionsHostServer } from "./functions/host-server.js";
 import { describePreviewLimits } from "./preview/preview-limiter.js";
 import { describeRunLimiter } from "./agent/run-limiter.js";
 import { describeContextBudget } from "./agent/context-budget.js";
@@ -372,7 +373,7 @@ if (demoEnabled) {
   app.log.info({ demoEmail: demo.email, created: demo.created }, "demo account ready");
 }
 
-app.addHook("onClose", async () => { stopWorkspaceSnapshotScheduler(); await ownerDoor?.close(); ownerDoor = null; stopCustomDomainTlsActivation?.(); stopCustomDomainCaddyRefresh?.(); stopSandboxMaintenance?.(); stopBillingSweeper(); stopMailQueue(); stopStorageReconcile?.(); stopNodeHeartbeat(); stopRemoteNodeHeartbeat(); stopProjectRebalance(); stopPreviewFailoverSweeper(); await stopPreviewHostServer(); await closeStorage(); });
+app.addHook("onClose", async () => { stopWorkspaceSnapshotScheduler(); await ownerDoor?.close(); ownerDoor = null; stopCustomDomainTlsActivation?.(); stopCustomDomainCaddyRefresh?.(); stopSandboxMaintenance?.(); stopBillingSweeper(); stopMailQueue(); stopStorageReconcile?.(); stopNodeHeartbeat(); stopRemoteNodeHeartbeat(); stopProjectRebalance(); stopPreviewFailoverSweeper(); await stopPreviewHostServer(); await stopFunctionsHostServer(); await closeStorage(); });
 
 await registerSecurityHeaders(app);
 
@@ -613,6 +614,14 @@ if (process.env.PREVIEW_DOOR_SEPARATE === "1") {
     })
     .catch(error => console.error("[preview] дверь публичных адресов не поднялась: " + (error instanceof Error ? error.message : error)));
 }
+// Serverless-функции опубликованных сайтов. Отдельный слушатель, потому что Caddy отправляет
+// туда только `/api/*` сайта, а панель и её API не должны пересекаться с пользовательским кодом.
+void startFunctionsHostServer()
+  .then(result => {
+    if (result.started) console.log("[functions] " + describeFunctionsHostServer());
+    else console.log("[functions] дверь не поднята: " + result.reason);
+  })
+  .catch(error => console.error("[functions] дверь не поднялась: " + (error instanceof Error ? error.message : error)));
 // A preview nobody uses is stopped after PREVIEW_IDLE_MS (five minutes by default): without
 // the sweep every project that was ever previewed would keep a dev server and its memory.
 startPreviewSweeper();

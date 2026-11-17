@@ -1,4 +1,5 @@
 import { apiJson } from "./api";
+import type { PlanEntitlements } from "./entitlements-api";
 
 export type PlanId = "free" | "pro" | "team";
 export type PlanLimits = {
@@ -155,6 +156,8 @@ export type BillingData = {
   plans: Plan[];
   plan?: PlanId;
   limits: PlanLimits;
+  /** Возможности действующего тарифа; сервер проверяет их сам. */
+  entitlements?: PlanEntitlements;
   usage: Usage;
   credits?: CreditBudget;
   tokens?: TokenBudget;

@@ -12,6 +12,8 @@ import { refreshStaticPreview } from "../preview/static-preview.js";
 import { refreshHybridPreview } from "../preview/hybrid-preview.js";
 import { hydratePreview } from "../preview/preview-store.js";
 import { startPreview, stopPreview } from "../preview-manager.js";
+import { accountPlanFor } from "../billing/store.js";
+import { planAllows } from "../account/entitlements.js";
 
 /**
  * Палитра проекта для панели предпросмотра.
@@ -66,9 +68,12 @@ function liveScriptPalette(palette: Palette) {
 async function restartServerPreview(projectId: string, userId: string) {
   const state = await hydratePreview(projectId);
   if (!state || state.mode !== "container") return false;
+  // Правка палитры не должна обходить тариф: старый контейнер мог остаться с Премиума, но
+  // перезапускать его на Плюсе нельзя. Статический предпросмотр пересобирается отдельно.
+  if (!planAllows(await accountPlanFor(userId), "containerPreview")) return false;
   const config = await getSandbox(projectId, userId);
   await stopPreview(projectId);
-  await startPreview(config);
+  await startPreview(config, { allowContainer: true });
   return true;
 }
 

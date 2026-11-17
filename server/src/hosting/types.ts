@@ -14,7 +14,7 @@
 
 export type SiteStatus = "draft" | "live" | "unpublished" | "suspended" | "deleted";
 export type ReleaseStatus = "building" | "ready" | "failed" | "deleted";
-export type HostingProjectKind = "instant-site" | "static-build";
+export type HostingProjectKind = "instant-site" | "static-build" | "static-functions";
 
 export type HostingSite = {
   id: string;
@@ -110,6 +110,9 @@ export type HostingStateErrorCode =
   | "RELEASE_NOT_READY"
   | "PROJECT_NOT_FOUND"
   | "PROJECT_NOT_STATIC"
+  | "FUNCTIONS_PLAN_REQUIRED"
+  | "FUNCTIONS_MANIFEST_REQUIRED"
+  | "FUNCTIONS_BUILD_FAILED"
   | "PROJECT_REMOTE"
   | "STORAGE_LIMIT"
   | "DISK_LIMIT"

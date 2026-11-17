@@ -11,6 +11,8 @@ import { runInSandbox } from "../sandbox-worker.js";
 import { dockerMissing } from "../sandbox/docker/unavailable.js";
 import { isSecretProjectPath, secretEnvRefusal } from "../secrets/secret-paths.js";
 import { getProject } from "../project-store.js";
+import { accountPlanFor } from "../billing/store.js";
+import { planAllows, planFeatureMessage, requiredPlanFor } from "../account/entitlements.js";
 import { archiveFolderName,zipProject } from "../storage/zip.js";
 import { refreshStaticPreview } from "../preview/static-preview.js";
 import { applyNoStoreToReply } from "./cache-headers.js";
@@ -221,6 +223,18 @@ export async function registerWorkspaceRoutes(app:FastifyInstance){
     const p=z.object({id:z.string().min(1)}).parse(request.params);
     const user=await requireProjectUser(request,reply,p.id);
     if(!user)return;
+    // Терминал панели — возможность Премиума. Это проверка на сервере, а не только скрытая
+    // вкладка: прямой запрос к маршруту не должен обходить тариф. Агентские инструменты сборки
+    // (`terminal.exec` внутри запуска) сюда не относятся — без них Плюс не соберёт проект.
+    const plan=await accountPlanFor(user.id);
+    if(!planAllows(plan,"interactiveTerminal")){
+      return reply.code(403).send({
+        error:planFeatureMessage(plan,"interactiveTerminal"),
+        code:"PLAN_FEATURE_REQUIRED",
+        feature:"interactiveTerminal",
+        requiredPlan:requiredPlanFor("interactiveTerminal"),
+      });
+    }
     const body=z.object({command:z.string().min(1).max(20000),cwd:z.string().max(2000).optional()}).parse(request.body);
     try{
       const sandbox=await getSandbox(p.id,user.id);

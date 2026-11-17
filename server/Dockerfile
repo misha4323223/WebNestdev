@@ -64,6 +64,9 @@ COPY --from=deps /app/node_modules ./node_modules
 COPY --from=deps /app/server/node_modules ./server/node_modules
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/server/dist ./server/dist
+# Исполнитель serverless-функции лежит рядом с invoke.js; tsc не копирует .mjs, поэтому файл
+# приезжает в образ явно. Без него runtime не сможет запустить ни одну функцию.
+COPY --from=build /app/server/src/functions/worker.mjs ./server/dist/functions/worker.mjs
 COPY --from=build /app/server/certs ./server/certs
 # Docker-брокер едет в том же образе и запускается другой командой (docker-compose.yml). Так у него
 # нет отдельного тега и отдельной выкатки: обновление и откат сервера возвращают обе части вместе.
@@ -85,7 +88,7 @@ ENTRYPOINT ["/usr/local/bin/webnestdev-entrypoint"]
 # хватает headless-shell (261 МБ). Системные библиотеки для него ставит `--with-deps`.
 RUN npx playwright install --with-deps --only-shell chromium
 
-EXPOSE 8787
+EXPOSE 8787 8792
 # Супервизор запускает ровно ту команду, что была раньше, когда разделение выключено
 # (PREVIEW_DOOR_SEPARATE≠1) — поэтому старый compose и откат образа ведут себя как прежде.
 CMD ["/usr/local/bin/webnestdev-preview-door","node","server/dist/index.js"]

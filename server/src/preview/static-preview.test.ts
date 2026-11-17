@@ -186,6 +186,7 @@ test("the workspace proxy serves the static preview through the project's own UR
       // Настоящая вторая дверь к приложению: у статического предпросмотра её не спрашивают,
       // но набор соучастников — тот же, что в index.ts.
       execPreview: execFetchPreview,
+      allowContainerPreview: async () => true,
       startPreview,
       stopPreview,
       previewStatus,

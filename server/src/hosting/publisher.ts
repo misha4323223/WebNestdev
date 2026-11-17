@@ -6,6 +6,11 @@ import { getSandbox } from "../sandbox-manager.js";
 import type { SandboxConfig } from "../sandbox/sandbox-types.js";
 import { ensureProjectDependencies } from "../preview/dependencies.js";
 import { detectProject } from "../preview/project-kind.js";
+import { readDeploymentProfile } from "../deployment/profile.js";
+import { readFunctionManifest, FunctionManifestError } from "../functions/manifest.js";
+import { buildFunctions, FunctionBuildError } from "../functions/build.js";
+import { accountPlanFor } from "../billing/store.js";
+import { planAllows } from "../account/entitlements.js";
 import { indexFileExists, planStaticPreview } from "../preview/static-plan.js";
 import { runInSandbox } from "../sandbox-worker.js";
 import { secretEnvMaskMounts } from "../sandbox/secret-mask.js";
@@ -29,6 +34,7 @@ import {
 } from "./site-store.js";
 import {
   ensureSiteLayout,
+  hostingFunctionsDir,
   hostingManifestPath,
   hostingReleaseDir,
   hostingStagingPath,
@@ -152,6 +158,13 @@ async function startPublishLocked(siteId: string, userId: string): Promise<{ sit
   projectOnThisNode(project);
 
   const kind = await hostingKind(project);
+  if (kind === "static-functions" && !planAllows(await accountPlanFor(userId), "serverlessFunctions")) {
+    throw new HostingError(
+      "FUNCTIONS_PLAN_REQUIRED",
+      "Serverless-функции доступны на тарифах «Плюс» и «Премиум». Перейдите на платный тариф, чтобы опубликовать API вместе с сайтом.",
+      403,
+    );
+  }
   const started = await beginPublish({ siteId: site.id, userId, kind, nodeId: config.nodeId });
   // Публикация выполняется в фоне: HTTP не должен держать запрос 10 минут. Ошибка уже
   // записана в release/site, поэтому дополнительно её только логируем.
@@ -232,8 +245,39 @@ async function startRollbackLocked(
 async function hostingKind(project: Project): Promise<HostingProjectKind> {
   const sandbox = await getSandbox(project.id, project.userId);
   const shape = await detectProject(sandbox.root);
-  if (shape.kind === "instant-site" || shape.kind === "static-build") return shape.kind;
-  throw new HostingError("PROJECT_NOT_STATIC", "Хостинг пока умеет только статические сайты: " + shape.reason, 422);
+  if (shape.kind !== "instant-site" && shape.kind !== "static-build") {
+    throw new HostingError("PROJECT_NOT_STATIC", "Хостинг принимает статику и статику с serverless-функциями: " + shape.reason, 422);
+  }
+  let manifest: Awaited<ReturnType<typeof readFunctionManifest>> = null;
+  try {
+    manifest = await readFunctionManifest(sandbox.root);
+  } catch (error) {
+    if (error instanceof FunctionManifestError) {
+      throw new HostingError("FUNCTIONS_MANIFEST_REQUIRED", error.message, 422);
+    }
+    throw error;
+  }
+  if (manifest) return "static-functions";
+  // Манифеста нет, но структура проекта уже выглядит как функции. Молча опубликовать только
+  // статику значило бы потерять API, поэтому просим явный контракт. Это же правило не даёт
+  // агенту на Плюсе протащить произвольный сервер под видом статики.
+  const profile = await readDeploymentProfile(sandbox.root);
+  if (profile.projectType.backend === "server") {
+    throw new HostingError(
+      "PROJECT_NOT_STATIC",
+      "Серверный проект нельзя опубликовать на статическом хостинге: он требует постоянного контейнера. " +
+        "На «Плюсе» доступны статика и serverless-функции; постоянный сервер — только на «Премиуме».",
+      422,
+    );
+  }
+  if (profile.projectType.backend === "functions") {
+    throw new HostingError(
+      "FUNCTIONS_MANIFEST_REQUIRED",
+      "В проекте найдены функции. Добавьте nestdev.functions.json с маршрутами и обработчиками или удалите каталог функций.",
+      422,
+    );
+  }
+  return shape.kind;
 }
 
 async function buildStatic(
@@ -309,7 +353,8 @@ async function runPublish(site: HostingSite, release: HostingRelease, project: P
       await ensureSiteLayout(site.slug, config.sitesDir);
       const sandbox = await getSandbox(project.id, project.userId);
       const shape = await detectProject(sandbox.root);
-      if (shape.kind !== kind) {
+      const staticKind = kind === "static-functions" ? shape.kind : kind;
+      if (shape.kind !== staticKind) {
         throw new HostingError("PROJECT_NOT_STATIC", "Тип проекта изменился во время публикации: " + shape.reason, 422);
       }
 
@@ -352,6 +397,46 @@ async function runPublish(site: HostingSite, release: HostingRelease, project: P
       staging = "";
       targetDir = target;
 
+      let functionBytes = 0;
+      let functionCount = 0;
+      if (kind === "static-functions") {
+        let built: Awaited<ReturnType<typeof buildFunctions>>;
+        try {
+          const functions = await readFunctionManifest(sandbox.root);
+          if (!functions) {
+            throw new HostingError(
+              "FUNCTIONS_MANIFEST_REQUIRED",
+              "nestdev.functions.json исчез во время публикации: обновите проект и повторите",
+              422,
+            );
+          }
+          built = await buildFunctions({
+            root: sandbox.root,
+            outDir: hostingFunctionsDir(site.slug, release.id, config.sitesDir),
+            manifest: functions,
+            secretValues,
+            maxFunctionBytes: Math.min(limits.maxFileBytes, 10 * 1024 * 1024),
+          });
+        } catch (error) {
+          if (error instanceof HostingError) throw error;
+          if (error instanceof FunctionManifestError || error instanceof FunctionBuildError) {
+            throw new HostingError("FUNCTIONS_BUILD_FAILED", error.message, 422);
+          }
+          throw error;
+        }
+        functionBytes = built.bytes;
+        functionCount = built.functions.length;
+        publishedBytes += built.bytes;
+        await assertAccountHostingQuota(project.userId, functionBytes);
+        await assertHostingDiskHasRoom(config, functionBytes);
+        logLine("info", "functions built", {
+          site: site.slug,
+          release: release.id,
+          functions: functionCount,
+          bytes: functionBytes,
+        });
+      }
+
       manifestPath = hostingManifestPath(site.slug, release.id, config.sitesDir);
       await mkdir(path.dirname(manifestPath), { recursive: true, mode: 0o755 });
       await writeFile(manifestPath, JSON.stringify(inspected), { encoding: "utf8", mode: 0o644 });
@@ -377,9 +462,9 @@ async function runPublish(site: HostingSite, release: HostingRelease, project: P
           releaseId: release.id,
           userId: project.userId,
           kind,
-          bytes: inspected.bytes,
-          storedBytes: stored?.storedBytes ?? inspected.bytes,
-          files: inspected.filesCount,
+          bytes: inspected.bytes + functionBytes,
+          storedBytes: stored?.storedBytes ?? inspected.bytes + functionBytes,
+          files: inspected.filesCount + functionCount,
           sha256: inspected.sha256,
           manifestJson: JSON.stringify(inspected),
           storageKey: stored?.storageKey ?? "",

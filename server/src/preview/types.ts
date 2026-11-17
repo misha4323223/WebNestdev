@@ -1,5 +1,17 @@
 /** The port the preview command always listens on inside the container. */
 export const PREVIEW_APP_PORT=3000;
+/**
+ * Контейнерный и hybrid preview — возможность Премиума. Ошибка отдельная, чтобы маршрут
+ * вернул 403 с кодом тарифа, а не общий 400 «предпросмотр не запустился».
+ */
+export const CONTAINER_PREVIEW_PLAN_MESSAGE="Контейнерный предпросмотр доступен на тарифе «Премиум». На «Плюсе» можно смотреть статический предпросмотр, а серверные функции проверяются после публикации.";
+export class ContainerPreviewPlanError extends Error {
+  readonly code="PLAN_FEATURE_REQUIRED";
+  readonly statusCode=403;
+  readonly feature="containerPreview";
+  readonly requiredPlan="team";
+  constructor(){super(CONTAINER_PREVIEW_PLAN_MESSAGE);this.name="ContainerPreviewPlanError"}
+}
 /** Docker label that marks preview containers, so orphans can be found after a restart. */
 export const PREVIEW_LABEL="webnestdev.preview";
 /**

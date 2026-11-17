@@ -27,6 +27,7 @@ const upstreamPath = process.env.BROKER_UPSTREAM?.trim() || "/var/run/docker.soc
 const sandboxRoot = path.posix.resolve(process.env.BROKER_SANDBOX_ROOT?.trim() || "/var/lib/webnestdev/sandboxes");
 const localWorkspaceRoot = path.posix.resolve(process.env.BROKER_LOCAL_WORKSPACE_ROOT?.trim() || "/var/lib/webnestdev/workspaces");
 const previewCacheRoot = path.posix.resolve(process.env.BROKER_PREVIEW_CACHE_ROOT?.trim() || "/var/lib/webnestdev/preview-cache");
+const hostingSitesRoot = path.posix.resolve(process.env.BROKER_HOSTING_SITES_ROOT?.trim() || "/var/lib/webnestdev/sites");
 const image = (process.env.BROKER_IMAGE?.trim() || process.env.SANDBOX_IMAGE?.trim() || "node:26-bookworm");
 const previewNetwork = process.env.PREVIEW_NETWORK?.trim() || "";
 const runtime = (process.env.BROKER_RUNTIME?.trim() || process.env.SANDBOX_RUNTIME?.trim() || "docker").toLowerCase();
@@ -59,6 +60,8 @@ const policy = {
   realLocalWorkspaceRoot: realRootOf(localWorkspaceRoot),
   previewCacheRoot,
   realPreviewCacheRoot: realRootOf(previewCacheRoot),
+  hostingSitesRoot,
+  realHostingSitesRoot: realRootOf(hostingSitesRoot),
   realpath: source => fs.realpathSync(source),
   // То же правило, что у сервера (preview/preview-network.ts): явное имя оператора или сеть,
   // имя которой кончается на preview. Сеть базы (`…db`) под это правило не подходит.

@@ -48,6 +48,20 @@ export function hostingManifestsDir(slug: string, root = hostingSitesDir()) {
   return path.join(hostingSiteDir(slug, root), "manifests");
 }
 
+/**
+ * Скомпилированные функции лежат внутри релиза в скрытом каталоге. Так они переезжают
+ * в S3 вместе с релизом и возвращаются при rollback, но Caddy не отдаёт их как файлы сайта:
+ * правило скрытых путей уже блокирует любой сегмент, начинающийся с точки.
+ */
+export function hostingFunctionsDir(slug: string, releaseId: string, root = hostingSitesDir()) {
+  return path.join(hostingReleaseDir(slug, releaseId, root), ".functions");
+}
+
+export function hostingFunctionDir(slug: string, releaseId: string, name: string, root = hostingSitesDir()) {
+  if (!/^[a-z][a-z0-9-]{0,62}$/.test(name)) throw new Error("Некорректное имя функции: " + name);
+  return path.join(hostingFunctionsDir(slug, releaseId, root), name);
+}
+
 export function hostingReleaseDir(slug: string, releaseId: string, root = hostingSitesDir()) {
   assertHostingReleaseId(releaseId);
   return path.join(hostingReleasesDir(slug, root), releaseId);

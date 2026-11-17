@@ -12,6 +12,9 @@ import { mintPreviewTicket, previewTicketTtlMs, previewTicketUrl, PREVIEW_TICKET
 import { previewHostTarget, previewPublicUrl } from "../preview/preview-host.js";
 import { getProject } from "../project-store.js";
 import { SandboxNodeUnavailableError, SharedWorkspaceRequiredError } from "../sandbox/host.js";
+import { accountPlanFor } from "../billing/store.js";
+import { planAllows } from "../account/entitlements.js";
+import { ContainerPreviewPlanError } from "../preview/types.js";
 
 /**
  * The routes take their collaborators as a parameter (the same way the agent WebSocket takes
@@ -27,6 +30,8 @@ export type PreviewRouteDeps={
    */
   execPreview:(input:{containerId:string;node?:string;port:number;path:string;method:string;headers:Record<string,string>;body?:Buffer;timeoutMs:number})=>Promise<ExecFetchResult|null>;
   getSandbox:(projectId:string,userId:string)=>Promise<Parameters<typeof startPreview>[0]>;
+  /** Разрешён ли этому аккаунту контейнерный/hybrid preview; статический не зависит. */
+  allowContainerPreview:(userId:string)=>Promise<boolean>;
   startPreview:typeof startPreview;
   stopPreview:typeof stopPreview;
   previewStatus:typeof previewStatus;
@@ -49,6 +54,7 @@ const defaultDeps:PreviewRouteDeps={
   authorize:async (request,reply,projectId)=>requireProjectUser(request as never,reply as never,projectId),
   execPreview:(input)=>execFetchPreview(input,{docker:dockerForNode(input.node)}),
   getSandbox,
+  allowContainerPreview:async userId=>planAllows(await accountPlanFor(userId),"containerPreview"),
   startPreview,
   stopPreview,
   previewStatus,
@@ -95,7 +101,8 @@ export async function registerPreviewRoutes(app:FastifyInstance,deps:PreviewRout
     // Статус запуска должен нести тот же публичный адрес, что и preview/status: иначе панель
     // после нажатия «Запустить» не знает, куда подставлять кадр, и показывает ошибку настройки,
     // хотя предпросмотр уже работает. Следующий status это исправлял только вручную.
-    return previewReply(reply,async()=>({...await deps.startPreview(await deps.getSandbox(p.id,user.id)),...(url?{publicUrl:url}:{})}));
+    const allowContainer=await deps.allowContainerPreview(user.id);
+    return previewReply(reply,async()=>({...await deps.startPreview(await deps.getSandbox(p.id,user.id),{allowContainer}),...(url?{publicUrl:url}:{})}));
   });
   app.post("/api/projects/:id/preview/stop",async(request,reply)=>{
     const p=z.object({id:z.string().min(1)}).parse(request.params);
@@ -192,8 +199,11 @@ export async function registerPreviewRoutes(app:FastifyInstance,deps:PreviewRout
     try{
       return reply.send(await action());
     }catch(error){
-      const status=error instanceof SandboxNodeUnavailableError||error instanceof SharedWorkspaceRequiredError?error.statusCode:400;
-      return reply.code(status).send({error:error instanceof Error?error.message:String(error)});
+      const status=error instanceof SandboxNodeUnavailableError||error instanceof SharedWorkspaceRequiredError||error instanceof ContainerPreviewPlanError?error.statusCode:400;
+      return reply.code(status).send({
+        error:error instanceof Error?error.message:String(error),
+        ...(error instanceof ContainerPreviewPlanError?{code:error.code,feature:error.feature,requiredPlan:error.requiredPlan}:{}),
+      });
     }
   }
 }

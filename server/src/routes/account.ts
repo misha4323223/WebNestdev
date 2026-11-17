@@ -8,6 +8,7 @@ import { findPhoneByUserId, formatPhone } from "../auth/phone-store.js";
 import { getUserPreferences, saveUserPreferences, type UserPreferences } from "../account/account-store.js";
 import { getUserProfile, saveUserProfile, updateUserProfile } from "../account/profile-store.js";
 import { FREE_PLAN, PLAN_CATALOG, balanceFor, limitsForPlan, subscriptionFor, type BillingSubscription } from "../account/plans.js";
+import { entitlementsFor, type PlanEntitlements } from "../account/entitlements.js";
 import { getBillingHistory, getCostSnapshot, getCreditBudget, getTokenBudget, getUsageSnapshot } from "../account/usage-store.js";
 import { getStorageOverview, refreshUserStorage } from "../account/storage-quota.js";
 import { accountPlanFor, getSubscriptionRecord, isSubscriptionLive, listPayments } from "../billing/store.js";
@@ -122,6 +123,16 @@ export async function registerAccountRoutes(app: FastifyInstance) {
     }
     return { profile };
   });
+  /**
+   * Возможности действующего тарифа нужны рабочей области, а не всей витрине: панель
+   * спрашивает их при открытии проекта. Отдельный маленький ответ не тянет кредиты,
+   * историю платежей и каталог, которые нужны только странице подписки.
+   */
+  app.get("/api/account/entitlements", async (request, reply) => {
+    const user = await requireUser(request, reply); if (!user) return;
+    const plan = await accountPlanFor(user.id);
+    return { plan, entitlements: entitlementsFor(plan) satisfies PlanEntitlements };
+  });
   app.get("/api/billing", async (request, reply) => {
     const user = await requireUser(request, reply); if (!user) return;
     // Тариф аккаунта — одно место на весь биллинг: лимиты, подписка и история читают его,
@@ -167,6 +178,7 @@ export async function registerAccountRoutes(app: FastifyInstance) {
         paidAt: purchase.paidAt,
       })),
       limits: limitsForPlan(plan),
+      entitlements: entitlementsFor(plan) satisfies PlanEntitlements,
       subscription,
       balance: { ...balanceFor(), paymentsConnected: config.configured },
       paymentsEnabled: config.configured,

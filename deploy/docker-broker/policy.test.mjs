@@ -16,6 +16,8 @@ const policy = {
   realLocalWorkspaceRoot: "/var/lib/webnestdev/workspaces",
   previewCacheRoot: "/var/lib/webnestdev/preview-cache",
   realPreviewCacheRoot: "/var/lib/webnestdev/preview-cache",
+  hostingSitesRoot: "/var/lib/webnestdev/sites",
+  realHostingSitesRoot: "/var/lib/webnestdev/sites",
   // В тестах путей на диске нет: реальный путь совпадает со строкой. Проверка самого realpath —
   // отдельным тестом ниже, с подставным резолвером.
   realpath: value => value,
@@ -202,6 +204,34 @@ test("create с сетью предпросмотра и монтировани�
 test("локальный workspace проекта разрешён как второй корень", () => {
   const body = withHost({ Binds: ["/var/lib/webnestdev/workspaces/proj-1:/workspace"] });
   assert.deepEqual(validateCreate(body, policy), { ok: true });
+});
+
+test("stdin разрешён только помеченному контейнеру функции", () => {
+  const ordinary = createBody({ OpenStdin: true, AttachStdin: true });
+  assert.equal(validateCreate(ordinary, policy).ok, false);
+  const fn = createBody({
+    OpenStdin: true,
+    AttachStdin: true,
+    Labels: { "webnestdev.function": "1" },
+    HostConfig: { ...createBody().HostConfig, Binds: ["/var/lib/webnestdev/sites/site-1/current/.functions/hello:/workspace:ro"] },
+  });
+  assert.deepEqual(validateCreate(fn, policy), { ok: true });
+});
+
+test("артефакт функции разрешён только read-only и только из каталога сайтов", () => {
+  const artifact = "/var/lib/webnestdev/sites/site-1/current/.functions/hello";
+  assert.deepEqual(
+    validateCreate(withHost({ Binds: [artifact + ":/workspace:ro"] }), policy),
+    { ok: true },
+  );
+  const writable = validateCreate(withHost({ Binds: [artifact + ":/workspace"] }), policy);
+  assert.equal(writable.ok, false);
+  assert.match(writable.message, /read-only/);
+  const outside = validateCreate(
+    withHost({ Binds: ["/var/lib/webnestdev/sites-other/site-1:/workspace:ro"] }),
+    policy,
+  );
+  assert.equal(outside.ok, false);
 });
 
 test("локальный кэш node_modules разрешён только в /workspace/node_modules и только rw", () => {

@@ -17,6 +17,10 @@ publishing or team roles, because those features do not exist.
 | Storage | 500 MB | 10 GB | 50 GB |
 | Repository import | up to 50 MB | no limit | no limit |
 | Integrations | databases and S3 only | no limit | no limit |
+| Static hosting | yes | yes | yes |
+| Serverless functions | no | yes | yes |
+| Interactive terminal | no | no | yes |
+| Container / hybrid preview | no | no | yes |
 
 Paid plan prices are base prices before the current promo discount: the catalog defaults are 34%
 for «Плюс» (1 500 ₽ → 990 ₽) and 20% for «Премиум» (2 500 ₽ → 2 000 ₽). The server applies the
@@ -25,6 +29,19 @@ both the base price and the percentage.
 
 Storage is one quota per account, shared by every project, not a per-project allowance. The
 per-plan number is the ceiling the whole account can use; `node_modules` and build output count.
+
+The tier capabilities are a separate matrix in `server/src/account/entitlements.ts`, not a
+rewording of `features`. Static hosting is open on every plan. Serverless functions start on
+«Плюс». The interactive terminal and container/hybrid preview start on «Премиум». The terminal in
+this matrix is the panel's own terminal (`POST /api/projects/:id/terminal`); the agent's internal
+`terminal.exec`/`terminal.start` and package installs are build tools and stay available on «Плюс»,
+otherwise the agent could not build or verify a static site or a function. Those tools refuse a
+build/start command for a project whose deployment profile is a permanent server on a plan without
+container preview: otherwise «Плюс» would spend a build on something it cannot run. Tests, linters,
+installs and static builds are not refused. Static preview remains available on every plan; a
+container is never started for an account that is not allowed one. The API checks the
+same rule as the UI and returns HTTP 403 `PLAN_FEATURE_REQUIRED` with `feature` and `requiredPlan`.
+The architecture and phased serverless plan are in [PLAN_TIERS_SERVERLESS.md](PLAN_TIERS_SERVERLESS.md).
 
 On the free plan `server/src/account/connector-access.ts` is the single policy for connectors:
 repositories (GitHub, GitLab, GitVerse, SourceCraft), databases and S3 services are open; clouds,

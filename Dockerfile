@@ -16,9 +16,10 @@ WORKDIR /app
 
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/server/dist ./server/dist
+COPY --from=build /app/server/src/functions/worker.mjs ./server/dist/functions/worker.mjs
 COPY --from=build /app/server/package.json ./server/package.json
 COPY --from=build /app/dist ./dist
 
-EXPOSE 8787
+EXPOSE 8787 8792
 
 CMD ["node", "server/dist/index.js"]

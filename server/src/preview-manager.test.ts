@@ -292,3 +292,48 @@ test("strict hybrid refuses a project without preview.mode=hybrid", async () => 
 
   await assert.rejects(() => startPreviewWithFallback(startConfig), /должен объявить preview\.mode/);
 });
+
+test("без права на контейнер статический preview запускается, контейнер не трогается", async () => {
+  const calls: string[] = [];
+  process.env.PREVIEW_MODE = "auto";
+  setPreviewStartDepsForTests({
+    readHybridConfig: async () => ({ kind: "absent" }),
+    startStatic: async () => { calls.push("static"); return { ok: true, status: running }; },
+    startContainer: async () => { calls.push("container"); return running; },
+  });
+
+  const status = await startPreviewWithFallback(startConfig, { allowContainer: false });
+  assert.deepEqual(status, running);
+  assert.deepEqual(calls, ["static"]);
+});
+
+test("без права на контейнер неудачная статика не поднимает dev-сервер", async () => {
+  const calls: string[] = [];
+  process.env.PREVIEW_MODE = "auto";
+  setPreviewStartDepsForTests({
+    readHybridConfig: async () => ({ kind: "absent" }),
+    startStatic: async () => { calls.push("static"); return { ok: false, reason: "нет скрипта сборки" }; },
+    startContainer: async () => { calls.push("container"); return running; },
+  });
+
+  await assert.rejects(
+    () => startPreviewWithFallback(startConfig, { allowContainer: false }),
+    /Контейнерный предпросмотр доступен на тарифе «Премиум»/,
+  );
+  assert.deepEqual(calls, ["static"]);
+});
+
+test("без права на контейнер явный container-режим отклоняется до запуска", async () => {
+  const calls: string[] = [];
+  process.env.PREVIEW_MODE = "container";
+  setPreviewStartDepsForTests({
+    readHybridConfig: async () => ({ kind: "absent" }),
+    startContainer: async () => { calls.push("container"); return running; },
+  });
+
+  await assert.rejects(
+    () => startPreviewWithFallback(startConfig, { allowContainer: false }),
+    /Контейнерный предпросмотр доступен на тарифе «Премиум»/,
+  );
+  assert.deepEqual(calls, []);
+});

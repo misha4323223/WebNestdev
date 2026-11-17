@@ -21,7 +21,7 @@ import { hybridBackendLogs, hybridPreviewLogs, hybridPreviewStatus, recoverLocal
 import { fetchPreviewLogsFromOwner } from "./preview/owner-logs.js";
 import { PREVIEW_OWNER_UNAVAILABLE_HINT, previewOwnerReachable } from "./preview/owner-health.js";
 import { recordPreviewStart } from "./preview/preview-metrics.js";
-import { PREVIEW_LABEL, type PreviewStatus } from "./preview/types.js";
+import { ContainerPreviewPlanError, PREVIEW_LABEL, type PreviewStatus } from "./preview/types.js";
 import { clearPreviewSecrets } from "./secrets/preview-secrets.js";
 import { recordStorageMutation } from "./account/storage-quota.js";
 import {
@@ -63,12 +63,21 @@ export function setPreviewStartDepsForTests(overrides: Partial<PreviewStartDeps>
  * default — serves the build when the project has one and falls back to the dev server when
  * it does not (no build script, a failing build, or an output without index.html).
  */
-export async function startPreview(config: SandboxConfig) {
+export type PreviewStartOptions = {
+  /**
+   * Разрешён ли контейнерный/hybrid preview. Статический preview от этого не зависит.
+   * `undefined` сохраняет прежнее поведение для внутренних вызовов; маршрут и агент передают
+   * право тарифа явно.
+   */
+  allowContainer?: boolean;
+};
+
+export async function startPreview(config: SandboxConfig, options: PreviewStartOptions = {}) {
   const startedAt = Date.now();
   let ok = false;
   beginPreviewStart(config.projectId);
   try {
-    const status = await startPreviewWithFallback(config);
+    const status = await startPreviewWithFallback(config, options);
     ok = true;
     return status;
   } catch (error) {
@@ -99,8 +108,21 @@ async function recordPreviewSize(projectId: string) {
   }
 }
 
-export async function startPreviewWithFallback(config: SandboxConfig) {
+export async function startPreviewWithFallback(config: SandboxConfig, options: PreviewStartOptions = {}) {
   const setting = previewModeSetting();
+  const allowContainer = options.allowContainer !== false;
+  // Контейнерный режим — не «попробуем и посмотрим»: на Плюсе он запрещён до запуска, иначе
+  // отклонённый тариф уже успел бы занять память и место в очереди. Статический путь ниже
+  // остаётся доступным.
+  if (!allowContainer && (setting === "container" || setting === "hybrid")) {
+    throw new ContainerPreviewPlanError();
+  }
+  const startContainer = (reason?: string) => {
+    if (!allowContainer) throw new ContainerPreviewPlanError();
+    return reason === undefined
+      ? previewStartDeps.startContainer(config)
+      : previewStartDeps.startContainer(config, reason);
+  };
   let hybrid = await previewStartDeps.readHybridConfig(config.root);
 
   // The explicit package contract comes first. When it is absent — or a local profile became
@@ -109,7 +131,7 @@ export async function startPreviewWithFallback(config: SandboxConfig) {
   // needs a build, a static frontend, a dedicated backend script and real backend path evidence.
   // Static and container modes are host decisions and must not get a new hybrid profile behind
   // their back.
-  if ((hybrid.kind === "absent" || hybrid.kind === "invalid") && setting !== "static" && setting !== "container") {
+  if (allowContainer && (hybrid.kind === "absent" || hybrid.kind === "invalid") && setting !== "static" && setting !== "container") {
     try {
       const detected = await previewStartDeps.detectHybrid(config.root);
       if (detected.kind === "configured") hybrid = { kind: "configured", config: detected.config };
@@ -121,7 +143,7 @@ export async function startPreviewWithFallback(config: SandboxConfig) {
   }
 
   if (hybrid.kind === "invalid" && setting === "hybrid") throw new Error(hybrid.reason);
-  if (hybrid.kind === "configured" && setting !== "static" && setting !== "container") {
+  if (allowContainer && hybrid.kind === "configured" && setting !== "static" && setting !== "container") {
     const result = await previewStartDeps.startHybrid(config);
     if (result.ok) return result.status;
     // Never downgrade a transient failure (network, npm install, Docker daemon): a dev container
@@ -133,7 +155,7 @@ export async function startPreviewWithFallback(config: SandboxConfig) {
     // A broken hybrid must not leave a backend behind; startHybridPreview cleans it up before
     // returning. This branch is reached only for an architecture mismatch or an explicit opt-in.
     console.log("[preview] проект " + config.projectId + ": hybrid не подошёл (" + result.reason + ") — поднимаю dev-сервер (fallback=" + fallback + ")");
-    return previewStartDeps.startContainer(config, "Предпросмотр не подошёл: " + result.reason);
+    return startContainer("Предпросмотр не подошёл: " + result.reason);
   }
   if (setting === "hybrid") {
     throw new Error("Для PREVIEW_MODE=hybrid проект должен объявить preview.mode=\"hybrid\" в package.json или иметь уверенный hybrid-профиль в .webnestdev/preview.json.");
@@ -148,9 +170,9 @@ export async function startPreviewWithFallback(config: SandboxConfig) {
     // Почему проект не удалось отдать статикой — тоже в лог: на маленькой ВМ поднятый контейнер
     // предпросмотра иначе выглядит случайностью, а не следствием непригодной сборки.
     console.log("[preview] проект " + config.projectId + ": статическая сборка не подошла (" + result.reason + ") — поднимаю dev-сервер");
-    return previewStartDeps.startContainer(config, result.reason);
+    return startContainer(result.reason);
   }
-  return previewStartDeps.startContainer(config);
+  return startContainer();
 }
 
 function describeError(error: unknown) {

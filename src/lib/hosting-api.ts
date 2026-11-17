@@ -22,7 +22,7 @@ export type HostingSite = {
 export type HostingRelease = {
   id: string;
   status: "building" | "ready" | "failed" | "deleted";
-  kind: "instant-site" | "static-build" | "";
+  kind: "instant-site" | "static-build" | "static-functions" | "";
   bytes: number;
   files: number;
   createdAt: string;

@@ -91,6 +91,12 @@ import /etc/caddy/custom/*.caddy
 			Referrer-Policy strict-origin-when-cross-origin
 		}
 
+		# Serverless API сайта. Отдельная дверь отвечает 404, если функции на путь нет;
+		# SPA-fallback ниже не должен подменять отсутствующий API страницей.
+		handle /api/* {
+			reverse_proxy webnestdev-server:8792
+		}
+
 		# SPA-fallback только для путей без расширения: `/assets/missing.js` остаётся 404,
 		# а не превращается в index.html.
 		@spa not path_regexp ext \.[a-z0-9]{1,8}$

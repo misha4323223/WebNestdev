@@ -13,7 +13,7 @@ import type { WorkspaceView } from "./WorkspaceNav";
  * а возвращение на «Агент» показывает уже дописанный ход. Остальные панели монтируются
  * только когда видны — у них нет фоновой работы, зато есть запросы к проекту.
  */
-export function WorkspaceContent({view,projectId,projectName,conversationId,onRunFinished,onFileSaved,onOpenModelSettings,onOpenAccountSettings,onRunningChange,onOpenChanges,onPreviewStarted,scrollSignal,onChatEndChange,onScrollBottom,showScroll,writing,taskReload}:{view:WorkspaceView;projectId:string;projectName:string;conversationId:string;onRunFinished:()=>void;onFileSaved?:()=>void;onOpenModelSettings:()=>void;onOpenAccountSettings:()=>void;onRunningChange?:(running:boolean)=>void;onOpenChanges?:()=>void;onPreviewStarted?:()=>void;scrollSignal?:number;onChatEndChange?:(atEnd:boolean)=>void;onScrollBottom?:()=>void;showScroll?:boolean;writing?:boolean;taskReload?:number}){
+export function WorkspaceContent({view,canUseTerminal,projectId,projectName,conversationId,onRunFinished,onFileSaved,onOpenModelSettings,onOpenAccountSettings,onRunningChange,onOpenChanges,onPreviewStarted,scrollSignal,onChatEndChange,onScrollBottom,showScroll,writing,taskReload}:{view:WorkspaceView;canUseTerminal?:boolean;projectId:string;projectName:string;conversationId:string;onRunFinished:()=>void;onFileSaved?:()=>void;onOpenModelSettings:()=>void;onOpenAccountSettings:()=>void;onRunningChange?:(running:boolean)=>void;onOpenChanges?:()=>void;onPreviewStarted?:()=>void;scrollSignal?:number;onChatEndChange?:(atEnd:boolean)=>void;onScrollBottom?:()=>void;showScroll?:boolean;writing?:boolean;taskReload?:number}){
   return <>
     <div className="workspace-view" hidden={view!=="agent"}>
       <AgentPanel projectId={projectId} conversationId={conversationId} onChanged={onRunFinished} onOpenModelSettings={onOpenModelSettings} onOpenAccountSettings={onOpenAccountSettings} onRunningChange={onRunningChange} onOpenChanges={onOpenChanges} onPreviewStarted={onPreviewStarted} scrollSignal={scrollSignal} onChatEndChange={onChatEndChange} onScrollBottom={onScrollBottom} showScroll={showScroll} writing={writing}/>
@@ -22,7 +22,7 @@ export function WorkspaceContent({view,projectId,projectName,conversationId,onRu
     {view==="files"&&<FilePanel projectId={projectId} projectName={projectName} onSaved={onFileSaved}/>}
     {view==="media"&&<MediaPanel projectId={projectId} onChanged={onFileSaved}/>}
     {view==="changes"&&<ChangesPanel projectId={projectId} projectName={projectName} onRolledBack={onRunFinished}/>}
-    {view==="terminal"&&<TerminalPanel projectId={projectId}/>}
+    {view==="terminal"&&canUseTerminal&&<TerminalPanel projectId={projectId}/>}
     {view==="hosting"&&<HostingPanel projectId={projectId}/>}
   </>;
 }

@@ -209,14 +209,19 @@ function checkBind(policy, source, target, readOnly) {
     return "монтирование с «..» запрещено: " + source;
   }
   const cacheRoot = policy.previewCacheRoot ? String(policy.previewCacheRoot).replace(/\/+$/, "") : "";
+  const sitesRoot = policy.hostingSitesRoot ? String(policy.hostingSitesRoot).replace(/\/+$/, "") : "";
   const inWorkspace = isInside(policy.sandboxRoot, normalizedSource);
   const localRoot = policy.localWorkspaceRoot
     ? String(policy.localWorkspaceRoot).replace(/\/+$/, "")
     : "";
   const inLocalWorkspace = Boolean(localRoot) && isInside(localRoot, normalizedSource);
   const inCache = Boolean(cacheRoot) && isInside(cacheRoot, normalizedSource);
-  if (!inWorkspace && !inLocalWorkspace && !inCache) {
-    return "монтировать можно только каталог песочниц или локальный кэш зависимостей, а не " + source;
+  const inSites = Boolean(sitesRoot) && isInside(sitesRoot, normalizedSource);
+  if (!inWorkspace && !inLocalWorkspace && !inCache && !inSites) {
+    return "монтировать можно только каталог песочниц, локальный кэш зависимостей или релизы сайтов, а не " + source;
+  }
+  if (inSites && readOnly !== true) {
+    return "релизы сайтов монтируются только read-only: " + source;
   }
   if (inCache) {
     if (target !== "/workspace/node_modules") {
@@ -238,13 +243,17 @@ function checkBind(policy, source, target, readOnly) {
   }
   const realRoot = inCache
     ? (policy.realPreviewCacheRoot ?? policy.previewCacheRoot)
-    : inLocalWorkspace
-      ? (policy.realLocalWorkspaceRoot ?? policy.localWorkspaceRoot)
-      : (policy.realRoot ?? policy.sandboxRoot);
+    : inSites
+      ? (policy.realHostingSitesRoot ?? policy.hostingSitesRoot)
+      : inLocalWorkspace
+        ? (policy.realLocalWorkspaceRoot ?? policy.localWorkspaceRoot)
+        : (policy.realRoot ?? policy.sandboxRoot);
   if (!isInside(realRoot, real)) {
-    return inCache
-      ? "источник монтирования ведёт за пределы локального кэша зависимостей: " + source
-      : "источник монтирования ведёт за пределы каталога песочниц: " + source;
+    return inSites
+      ? "источник монтирования ведёт за пределы каталога сайтов: " + source
+      : inCache
+        ? "источник монтирования ведёт за пределы локального кэша зависимостей: " + source
+        : "источник монтирования ведёт за пределы каталога песочниц: " + source;
   }
   if (typeof target !== "string" || !(target === "/workspace" || target.startsWith("/workspace/"))) {
     return "точка монтирования должна быть внутри /workspace: " + String(target);
@@ -338,8 +347,15 @@ export function validateCreate(body, policy) {
     return fail("ConsoleSize запрещён");
   }
   if (!EMPTY(body.Healthcheck)) return fail("Healthcheck не используется платформой и запрещён");
-  if (body.Tty || body.OpenStdin || body.AttachStdin || body.StdinOnce) {
-    return fail("TTY и stdin не используются платформой и запрещены");
+  // stdin не нужен обычным контейнерам, но serverless-исполнитель получает через него тело
+  // запроса: argv и env для этого не годятся (тело может быть большим и не должно светиться в
+  // `ps`). Разрешаем ровно помеченному контейнеру функции и только без TTY.
+  const isFunctionContainer = isObject(body.Labels) && body.Labels["webnestdev.function"] === "1";
+  if (body.Tty || body.StdinOnce) {
+    return fail("TTY и StdinOnce не используются платформой и запрещены");
+  }
+  if (!isFunctionContainer && (body.OpenStdin || body.AttachStdin)) {
+    return fail("stdin разрешён только контейнеру serverless-функции");
   }
   if (typeof body.Image !== "string" || body.Image !== policy.image) {
     return fail("Образ контейнера должен быть " + policy.image + ", а не " + String(body.Image));

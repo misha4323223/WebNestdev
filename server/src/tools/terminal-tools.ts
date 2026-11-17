@@ -8,6 +8,7 @@ import { commandNeedsNetwork, isPackageInstall, networkHint, networkHintForLogs,
 import { registerTool } from "../tool-registry.js";
 import { npmInstallTimeoutMs } from "../sandbox/config.js";
 import { installCommandFor, NODE_LOCKFILES, packageManagerFor } from "./package-manager.js";
+import { checkPlanCanBuildProject } from "../agent/plan-work-guard.js";
 
 /**
  * Контейнерных команд в песочнице нет: проект уже выполняется в контейнере платформы, а `docker`
@@ -124,6 +125,8 @@ registerTool({
       ? Math.min(MAX_COMMAND_TIMEOUT_MS, Math.max(1_000, Math.round(value.timeoutMs)))
       : undefined;
     const sandbox = await getSandbox(context.projectId, context.userId);
+    const plan = await checkPlanCanBuildProject({ root: sandbox.root, userId: context.userId, command });
+    if (!plan.allowed) throw new Error(plan.reason);
     // Рабочий каталог — реальный путь: ссылка внутри проекта не должна уводить команду из него.
     const cwd = await resolveInsideSandbox(sandbox.root, sandbox.root + "/" + (value.cwd ?? ""));
     // Команда агента не должна прочитать `.env.local`: файл виден по пути, но пуст.
@@ -172,6 +175,8 @@ registerTool({
     const refusal = containerCommandRefusal(command);
     if (refusal) return refusal;
     const sandbox = await getSandbox(context.projectId, context.userId);
+    const plan = await checkPlanCanBuildProject({ root: sandbox.root, userId: context.userId, command });
+    if (!plan.allowed) throw new Error(plan.reason);
     const cwd = await resolveInsideSandbox(sandbox.root, sandbox.root + "/" + (typeof value.cwd === "string" ? value.cwd : ""));
     const started = await startSandboxJob(sandbox, context.userId, command, cwd, context.signal);
     // Установка в фоне не начнётся вовсе: сеть у задания та же, что у терминала. Сказать об этом

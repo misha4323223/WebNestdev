@@ -10,6 +10,7 @@ import { useChatSessions } from "../agent/ChatSessions";
 import { composeAgentPrompt } from "../../lib/agent-compose";
 import { NestLoader } from "../../components/NestLoader";
 import { createConversation, deleteConversation, type ConversationSummary } from "../../lib/project-api";
+import { getEntitlements, type PlanEntitlements } from "../../lib/entitlements-api";
 
 // Настройки и мастер развёртывания открываются поверх рабочей области и не нужны при каждом
 // входе в проект. Их код приезжает только по нажатию, а до этого рабочая область остаётся легче.
@@ -19,6 +20,20 @@ const DeploymentWizard = lazy(() => import("../deployment/DeploymentWizard").the
 export function WorkspaceShell({onHome,onAgentState,active=true}:{onHome:()=>void;onAgentState?:(state:{running:boolean;projectName:string}|null)=>void;active?:boolean}){
   const {projectId,conversationId,projectName,loading,error,retry,openConversation,renameCurrentProject}=useWorkspace();
   const [view,setView]=useState<WorkspaceView>("agent");
+  // Право на терминал — серверное, здесь только подсказка интерфейсу. Пока ответ не пришёл,
+  // вкладку не показываем: иначе на Плюсе она мигнёт и исчезнет после загрузки.
+  const [entitlements,setEntitlements]=useState<PlanEntitlements|null>(null);
+  useEffect(()=>{
+    if(!active)return;
+    let live=true;
+    void getEntitlements()
+      .then(data=>{if(live)setEntitlements(data.entitlements)})
+      .catch(()=>{if(live)setEntitlements(null)});
+    return ()=>{live=false};
+  },[active]);
+  useEffect(()=>{
+    if(view==="terminal"&&!entitlements?.interactiveTerminal)setView("agent");
+  },[view,entitlements]);
   // Рабочая область остаётся смонтированной, когда пользователь уходит на главную, поэтому
   // запуск продолжается; состояние поднимается наверх, чтобы главная сказала, над чем идёт работа.
   const [agentRunning,setAgentRunning]=useState(false);
@@ -193,7 +208,7 @@ export function WorkspaceShell({onHome,onAgentState,active=true}:{onHome:()=>voi
           <Suspense fallback={<div className="app-loading"><NestLoader size={42} label="Загружаем настройки"/></div>}>
             <SettingsHub key={settingsKey} projectId={projectId} projectName={projectName} onClose={()=>setSettingsOpen(false)}/>
           </Suspense>
-        </div>:<><WorkspaceNav view={view} onChange={setView} onSecrets={openSecrets}/><WorkspaceContent view={view} projectId={projectId} projectName={projectName} conversationId={conversationId} onRunFinished={()=>{setPreviewReload(value=>value+1);setTaskReload(value=>value+1);void sessionsReload()}} onFileSaved={()=>setPreviewReload(value=>value+1)} taskReload={taskReload} onOpenModelSettings={openModelSettings} onOpenAccountSettings={openSettings} onRunningChange={reportAgentState} onOpenChanges={()=>{setSettingsOpen(false);setView("changes")}} onPreviewStarted={previewStarted} scrollSignal={scrollSignal} onChatEndChange={reportChatEnd} onScrollBottom={scrollChatToBottom} showScroll={view==="agent"&&!chatAtEnd} writing={view==="agent"&&!chatAtEnd&&agentRunning}/></>}
+        </div>:<><WorkspaceNav view={view} onChange={setView} onSecrets={openSecrets} canUseTerminal={entitlements?.interactiveTerminal===true}/><WorkspaceContent view={view} canUseTerminal={entitlements?.interactiveTerminal===true} projectId={projectId} projectName={projectName} conversationId={conversationId} onRunFinished={()=>{setPreviewReload(value=>value+1);setTaskReload(value=>value+1);void sessionsReload()}} onFileSaved={()=>setPreviewReload(value=>value+1)} taskReload={taskReload} onOpenModelSettings={openModelSettings} onOpenAccountSettings={openSettings} onRunningChange={reportAgentState} onOpenChanges={()=>{setSettingsOpen(false);setView("changes")}} onPreviewStarted={previewStarted} scrollSignal={scrollSignal} onChatEndChange={reportChatEnd} onScrollBottom={scrollChatToBottom} showScroll={view==="agent"&&!chatAtEnd} writing={view==="agent"&&!chatAtEnd&&agentRunning}/></>}
       </div>
       {!waking&&<PreviewPanel projectId={projectId} reloadToken={previewReload} open={previewOpen} onClose={closePreview} onRunningChange={setPreviewRunning}/>}
       {deployOpen&&<Suspense fallback={<div className="app-loading"><NestLoader size={42} label="Загружаем мастер развёртывания"/></div>}>

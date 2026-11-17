@@ -4,7 +4,7 @@ import { createServer, type Server } from "node:http";
 import Fastify from "fastify";
 import { registerPreviewRoutes, type PreviewRouteDeps } from "./preview.js";
 import { previewProxyBase } from "../preview/preview-rewrite.js";
-import type { PreviewStatus } from "../preview/types.js";
+import { ContainerPreviewPlanError, type PreviewStatus } from "../preview/types.js";
 
 type Upstream = { server: Server; port: number; close: () => Promise<void>; hits: string[] };
 
@@ -34,6 +34,7 @@ function depsFor(port: number, overrides: Partial<PreviewRouteDeps> = {}): Previ
     // Без Docker: вторая дверь к приложению отвечает только там, где её подставил тест.
     execPreview: async () => null,
     getSandbox: async () => { throw new Error("getSandbox не ожидается в этом тесте"); },
+    allowContainerPreview: async () => true,
     startPreview: async () => status,
     stopPreview: async () => ({ stopped: true }),
     previewStatus: async () => status,
@@ -466,5 +467,26 @@ test("в production без публичного домена путь предп
     await app.close();
     if (previous === undefined) delete process.env.NODE_ENV;
     else process.env.NODE_ENV = previous;
+  }
+});
+
+test("start передаёт тариф в preview и отдаёт 403 для контейнерного режима без права", async () => {
+  const app = await appWith(depsFor(1, {
+    allowContainerPreview: async () => false,
+    getSandbox: async () => ({ projectId: "p1", root: "/tmp/p1", memoryMb: 512, cpuLimit: 0.5, timeoutMs: 5_000 }),
+    startPreview: async (_config, options) => {
+      assert.equal(options?.allowContainer, false);
+      throw new ContainerPreviewPlanError();
+    },
+  }));
+  try {
+    const response = await app.inject({ method: "POST", url: "/api/projects/p1/preview/start" });
+    assert.equal(response.statusCode, 403);
+    const body = response.json() as { code?: string; feature?: string; requiredPlan?: string };
+    assert.equal(body.code, "PLAN_FEATURE_REQUIRED");
+    assert.equal(body.feature, "containerPreview");
+    assert.equal(body.requiredPlan, "team");
+  } finally {
+    await app.close();
   }
 });
