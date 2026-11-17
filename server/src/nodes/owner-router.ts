@@ -154,7 +154,13 @@ function websocketHeaders(headers: http.IncomingHttpHeaders, token: string, targ
   const result: http.OutgoingHttpHeaders = {};
   for (const [name, value] of Object.entries(headers)) {
     if (value === undefined) continue;
-    if (name === "connection" || name === "keep-alive" || name === "host") continue;
+    // `Connection: Upgrade` обязателен для WebSocket: без него дверь владельца видит
+    // обычный GET и отдаёт 404 вместо 101.
+    if (name === "connection") {
+      result[name] = value;
+      continue;
+    }
+    if (name === "keep-alive" || name === "host") continue;
     if (name === "proxy-authenticate" || name === "proxy-authorization") continue;
     if (name === "te" || name === "trailer" || name === "transfer-encoding") continue;
     if (name === "x-webnestdev-internal" || name === "x-webnestdev-internal-token") continue;
