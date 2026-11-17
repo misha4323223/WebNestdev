@@ -67,6 +67,9 @@ COPY --from=build /app/server/dist ./server/dist
 # Исполнитель serverless-функции лежит рядом с invoke.js; tsc не копирует .mjs, поэтому файл
 # приезжает в образ явно. Без него runtime не сможет запустить ни одну функцию.
 COPY --from=build /app/server/src/functions/worker.mjs ./server/dist/functions/worker.mjs
+# Тот же случай у runtime предпросмотра функций: tsc его не копирует, а без файла
+# functions-preview не может поднять контейнер сессии.
+COPY --from=build /app/server/src/functions/preview-runtime.mjs ./server/dist/functions/preview-runtime.mjs
 COPY --from=build /app/server/certs ./server/certs
 # Docker-брокер едет в том же образе и запускается другой командой (docker-compose.yml). Так у него
 # нет отдельного тега и отдельной выкатки: обновление и откат сервера возвращают обе части вместе.
