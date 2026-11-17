@@ -185,6 +185,32 @@ Gluster остаётся для `sites`, `data`, сертификатов, custo
   `WEBNESTDEV_API_ADDRESS`; по умолчанию routing и local всё ещё выключены.
 - **Не проверено:** реальные две ВМ, PostgreSQL-миграции на живой базе, Gluster-cutover.
 
+### 17.11.2026, 10:44 UTC — пилотный local-проект на двух нодах
+
+- Добавлен `WEBNESTDEV_LOCAL_PROJECTS` — список ID через запятую. Проект из списка живёт на
+  локальном диске ноды, остальные остаются на Gluster; глобальный режим не менялся. Это
+  позволяет проверять cutover на одном проекте без остановки production.
+- Deploy теперь доставляет `deploy/node1|node2/docker-compose.override.yml` на ВМ. Проверено:
+  после выкатки на обеих нодах опубликован `10.0.0.x:8791` и задан `WEBNESTDEV_API_ADDRESS`.
+  Токен и `WEBNESTDEV_OWNER_ROUTING=1` по-прежнему добавляются оператором: секрет не хранится
+  в репозитории.
+- Пилот `pilot-local-20261117` создан на `node-2` с `workspace_mode=local`. API `node-2`
+  вернул корень `/var/lib/webnestdev/workspaces/pilot-local-20261117`; API `node-1` отказал
+  `WorkspaceOwnerMismatchError`, то есть чужой проект не открывается.
+- Реальный snapshot в S3: 208 байт. Перенос `node-2 → node-1` прошёл, файлы `before.txt` и
+  `nested/file.txt` сохранились, pin и epoch (`1`) обновились.
+- На `node-1` изменён файл, после чего перенос `node-1 → node-2` создал snapshot 255 байт и
+  вернул обновлённые `before.txt` и `after-node1.txt`; epoch `2`.
+- Восстановление после потери владельца: `restoreLostWorkspaceToNode(..., node-1)` восстановил
+  snapshot, вернул файл и переставил pin на `node-1`, epoch `3`.
+- Удаление пилота удалило проект из PostgreSQL и локальный каталог. Локальные каталоги и
+  временный токен на обеих нодах убраны; production возвращён в `shared`, `OWNER_ROUTING=0`,
+  `LOCAL_PROJECTS` пуст. Обе ноды на `a88baf7`, `node-1` — primary, `node-2` — standby.
+- **Не проверено на пилоте:** preview/terminal через runner (runner не получал
+  `WEBNESTDEV_LOCAL_PROJECTS`), реальное выключение `node-2`, полный cutover всех проектов.
+  Для следующего шага нужно добавить список в окружение runner и проверить preview, terminal,
+  git и publish на пилотном проекте, затем планировать общий cutover.
+
 ### 17.11.2026, 09:19 UTC — двухнодовый прогон и найденные ошибки
 
 - Выкачены коммиты `9659073` (основной код), `a87d1a6`, `cc2a719`, `0ff5cea` (исправления
@@ -205,7 +231,9 @@ Gluster остаётся для `sites`, `data`, сертификатов, custo
 - **Ошибка 2:** WebSocket через owner-routing отдавал `404`. `owner-door` вырезал
   `Connection: Upgrade` и `Upgrade: websocket`, а `owner-router` — `Connection: Upgrade`.
   Исправлено в `0ff5cea`, добавлен `owner-door.test.ts`; после выкатки `WS=OPEN`.
-- **Не проверено:** живой local-режим и перенос между нодами. Включать `local` на общем
+- **Проверено 17.11.2026:** пилотный local-проект, snapshot и перенос в обе стороны,
+  восстановление после потери владельца. **Не проверено:** preview/terminal на local-пилоте,
+  реальное выключение ноды и общий cutover. Включать `local` на общем
   production API нельзя без окна: все существующие проекты сразу начнут искать файлы в
   локальном корне. Нужен пилотный проект/отдельный процесс и окно переключения.
 - После проверки production возвращён в `shared`, `OWNER_ROUTING=0`, внутренний порт не

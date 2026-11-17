@@ -4,10 +4,11 @@
 между сессиями.
 Секреты здесь не хранятся: только имена переменных, пути и способы проверки.
 
-**Актуально на 17.11.2026, 09:19 UTC:** обе ноды включены, `node-1` — primary,
-`node-2` — streaming standby; обе на сборке `0ff5cea` (коммит `0ff5cea890a7`). Owner-routing
-проверен на реальной паре, затем production возвращён в `shared` с `OWNER_ROUTING=0`;
-Gluster-том `sandboxes` не менялся. Подробности и результаты — в
+**Актуально на 17.11.2026, 10:44 UTC:** обе ноды включены, `node-1` — primary,
+`node-2` — streaming standby; обе на сборке `a88baf7`. Owner-routing и пилотный local-проект
+проверены на реальной паре, затем production возвращён в `shared` с `OWNER_ROUTING=0` и пустым
+`WEBNESTDEV_LOCAL_PROJECTS`; Gluster-том `sandboxes` не менялся. Deploy теперь синхронизирует
+`docker-compose.override.yml` обеих нод. Подробности — в
 [`LOCAL_WORKSPACES.md`](LOCAL_WORKSPACES.md).
 
 **SSH-ключ агента:** `/tmp/nestdev-agent` (права `600`), в git не хранится. `/tmp` в workspace
