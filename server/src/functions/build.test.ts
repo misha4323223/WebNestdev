@@ -20,11 +20,16 @@ async function fixture() {
   );
   await writeFile(path.join(root, "functions", "greeting.ts"), 'export function greeting(name: string) { return "hi " + name; }\n');
   await writeFile(
+    path.join(root, "functions", "job.ts"),
+    'export async function handler(request: { body: Buffer }) { return { ok: JSON.parse(request.body.toString()).id }; }\n',
+  );
+  await writeFile(
     path.join(root, "nestdev.functions.json"),
     JSON.stringify({
       version: 1,
       runtime: "node",
       functions: [{ name: "hello", path: "/api/hello", methods: ["GET"], handler: "functions/hello.ts#handler" }],
+      jobs: [{ name: "send-receipt", handler: "functions/job.ts#handler" }],
     }),
   );
   return root;
@@ -39,6 +44,8 @@ test("собирает функцию в один ESM-файл и пишет м�
     assert.equal(built.functions.length, 1);
     assert.equal(built.functions[0]!.name, "hello");
     assert.equal(built.functions[0]!.path, "/api/hello");
+    assert.equal(built.jobs?.length, 1);
+    assert.equal(built.jobs?.[0]?.name, "send-receipt");
     assert.equal(built.runtime, "node");
     assert.ok(built.bytes > 0);
     const code = await readFile(path.join(out, "hello", "index.mjs"), "utf8");

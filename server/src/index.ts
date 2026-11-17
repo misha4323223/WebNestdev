@@ -97,6 +97,7 @@ import { registerInternalWorkspaceRoutes } from "./routes/internal-workspace.js"
 import { registerAdminPreviewResetRoutes } from "./routes/admin-preview.js";
 import { registerAdminProjectPermissionsRoutes } from "./routes/admin-project-permissions.js";
 import { registerHostingRoutes } from "./routes/hosting.js";
+import { registerHostingJobRoutes } from "./routes/hosting-jobs.js";
 import { registerCustomDomainRoutes } from "./routes/custom-domains.js";
 import { describeHosting, hostingConfig } from "./hosting/config.js";
 import { startCustomDomainCaddyRefresh } from "./hosting/caddy-refresh.js";
@@ -122,6 +123,7 @@ import { startWorkspaceSnapshotScheduler, stopWorkspaceSnapshotScheduler } from 
 import { startOrphanProjectSweeper } from "./storage/orphan-sweeper.js";
 import { archiveProject as archiveProjectToBucket, runQueuedRestore } from "./storage/project-archive.js";
 import { startJobWorker } from "./jobs/worker.js";
+import { runBackgroundJob } from "./hosting/background-jobs-run.js";
 import { sendProjectRestoreError } from "./routes/project-restore-error.js";
 import { importArchiveRecordsFromDisk } from "./storage/project-archive-state.js";
 import { startAlertScheduler } from "./health/alerts.js";
@@ -468,6 +470,7 @@ await registerSupportRoutes(app);
 await registerDonationRoutes(app);
 await registerProjectRoutes(app);
 await registerHostingRoutes(app);
+await registerHostingJobRoutes(app);
 await registerCustomDomainRoutes(app);
 await registerPreviewRoutes(app);
 // Внутренний канал для двери предпросмотра, когда она работает отдельным процессом (пункт 6.1):
@@ -640,12 +643,28 @@ startOrphanProjectSweeper();
 if (process.env.JOBS_INLINE_WORKER !== "0") {
   startJobWorker({
     concurrency: Number(process.env.JOBS_CONCURRENCY ?? 2),
+    kinds: ["project.archive", "project.restore"],
+    workerId: "archive:" + process.pid,
     handlers: {
       "project.archive": async job => {
         const result = await archiveProjectToBucket(job.projectId, job.userId);
         return { done: result.bytes, total: result.bytes };
       },
       "project.restore": (job, context) => runQueuedRestore(job.projectId, job.userId, context.report),
+    },
+  });
+}
+// Фоновые задания хостинга — отдельный пул. Архивация проекта не должна занимать слоты
+// оплаты и webhook'ов, а фоновые задачи не должны претендовать на архивные задания.
+if (process.env.JOBS_INLINE_WORKER !== "0" && process.env.BACKGROUND_JOBS_ENABLED !== "0") {
+  const concurrency = Math.min(4, Math.max(1, Number(process.env.BACKGROUND_JOBS_CONCURRENCY ?? 2)));
+  startJobWorker({
+    concurrency,
+    kinds: ["hosting.job"],
+    workerId: "background:" + process.pid,
+    log: line => console.log(line),
+    handlers: {
+      "hosting.job": job => runBackgroundJob(job),
     },
   });
 }

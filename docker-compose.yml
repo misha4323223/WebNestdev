@@ -217,6 +217,9 @@ services:
       # Дверь serverless-функций. 0 выключает только новые вызовы; статика продолжает работать.
       HOSTING_FUNCTIONS_ENABLED: ${HOSTING_FUNCTIONS_ENABLED:-1}
       HOSTING_FUNCTIONS_PORT: ${HOSTING_FUNCTIONS_PORT:-8792}
+      # Фоновые задания — отдельный пул на «Премиуме». 2 слота на ноду оставляют CPU API.
+      BACKGROUND_JOBS_ENABLED: ${BACKGROUND_JOBS_ENABLED:-1}
+      BACKGROUND_JOBS_CONCURRENCY: ${BACKGROUND_JOBS_CONCURRENCY:-2}
       # Каталог внутри контейнера, куда API пишет custom-domains.caddy. Снаружи это общий
       # CUSTOM_DOMAINS_CADDY_DIR; Caddy читает тот же каталог только на чтение.
       CUSTOM_DOMAINS_CADDY_DIR: /srv/caddy-custom

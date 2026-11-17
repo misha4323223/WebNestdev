@@ -29,6 +29,41 @@ test("валидный манифест получает безопасные з
   assert.deepEqual(manifest.functions[0]?.methods, ["GET", "POST"]);
   assert.equal(manifest.functions[0]?.timeoutMs, 10_000);
   assert.equal(manifest.functions[0]?.memoryMb, 256);
+  assert.deepEqual(manifest.jobs, []);
+});
+
+test("фоновые задания получают свои лимиты и собираются вместе с функциями", () => {
+  const manifest = parseFunctionManifest({
+    ...valid,
+    jobs: [{ name: "send-receipt", handler: "functions/jobs/receipt.ts#handler" }],
+  });
+  assert.equal(manifest.jobs.length, 1);
+  assert.equal(manifest.jobs[0]?.timeoutMs, 30_000);
+  assert.equal(manifest.jobs[0]?.memoryMb, 256);
+  assert.throws(
+    () => parseFunctionManifest({
+      ...valid,
+      jobs: [{ name: "send-receipt", handler: "functions/jobs/receipt.ts#handler", timeoutMs: 60_001 }],
+    }),
+    FunctionManifestError,
+  );
+  assert.throws(
+    () => parseFunctionManifest({
+      ...valid,
+      jobs: [{ name: "send-receipt", handler: "functions/jobs/receipt.ts#handler", memoryMb: 513 }],
+    }),
+    FunctionManifestError,
+  );
+});
+
+test("имя задания не может совпадать с функцией", () => {
+  assert.throws(
+    () => parseFunctionManifest({
+      ...valid,
+      jobs: [{ name: "orders", handler: "functions/jobs/orders.ts#handler" }],
+    }),
+    (error: unknown) => error instanceof FunctionManifestError && /уже занято/.test(error.message),
+  );
 });
 
 test("method нормализуется к верхнему регистру без повторов", () => {

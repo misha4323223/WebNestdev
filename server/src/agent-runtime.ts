@@ -4,6 +4,7 @@ import { createProvider } from "./provider.js";
 import { appendConversationMessages,getConversationPlan,getProject,getProjectProvider,saveConversationPlan } from "./project-store.js";
 import { browserCheckNotice,buildInitialMessages,closeInterruptedTurns,insertSystemNotice,resumeNotice,storedHistory,webSearchNotice } from "./agent/message-builder.js";
 import { notesNotice,notesUpdateNotice,readNoteLines } from "./agent/notes.js";
+import { hostingPlanNotice } from "./agent/hosting-plan-notice.js";
 import { buildProjectContext } from "./agent/context-builder.js";
 import { retrieveRelevantFiles } from "./agent/context-retrieval.js";
 import { executeTool } from "./agent/tool-executor.js";
@@ -300,6 +301,10 @@ export class AgentRuntime {
       messages=insertSystemNotice(messages,webSearchNotice(request.webSearch===true));
       // Тот же принцип для Chromium: без разрешения модель не должна тратить шаг на отказ.
       messages=insertSystemNotice(messages,browserCheckNotice(browserCheckEnabled));
+      // Тариф и контракт функций известны до первого изменения: иначе агент на «Плюсе» может
+      // начать постоянный сервер и узнать о запрете только из ошибки сборки.
+      const hostingNotice=hostingPlanNotice(request.plan);
+      if(hostingNotice)messages=insertSystemNotice(messages,hostingNotice);
       // Заметка о согласованном — отдельным системным сообщением. Обрезка контекста системные
       // сообщения не выбрасывает и не сокращает, поэтому «какой вариант мы выбрали» остаётся
       // в промпте даже тогда, когда вся история вокруг уже свёрнута в срез.

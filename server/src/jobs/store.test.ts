@@ -46,6 +46,39 @@ test("задание ставится в очередь, повторная по
   assert.notEqual(other.id, first.id);
 });
 
+test("пул забирает только свои виды заданий и соблюдает приоритет", async () => {
+  await freshQueue();
+  await enqueueJob({ kind: "project.archive", projectId: "p-archive", userId: "u1", now: at(0) });
+  await enqueueJob({
+    kind: "hosting.job",
+    projectId: "p-site",
+    userId: "u1",
+    subject: "site:low",
+    siteId: "site-1",
+    releaseId: "rel-1",
+    functionName: "low",
+    priority: 1,
+    now: at(0),
+  });
+  const high = await enqueueJob({
+    kind: "hosting.job",
+    projectId: "p-site",
+    userId: "u1",
+    subject: "site:high",
+    siteId: "site-1",
+    releaseId: "rel-1",
+    functionName: "high",
+    priority: 10,
+    now: at(0),
+  });
+  const claimed = await claimJob({ workerId: "background", kinds: ["hosting.job"], now: at(0) });
+  assert.equal(claimed?.id, high.id, "сначала более приоритетное задание");
+  assert.equal(claimed?.functionName, "high");
+  assert.equal(claimed?.siteId, "site-1");
+  const archive = await claimJob({ workerId: "archive", kinds: ["project.archive"], now: at(0) });
+  assert.equal(archive?.kind, "project.archive");
+});
+
 test("захват помечает задание занятым, второй воркер его не получает", async () => {
   await freshQueue();
   await enqueueJob({ kind: "project.archive", projectId: "p-claim", userId: "u1", now: at(0) });
@@ -115,10 +148,11 @@ test("прогресс и итог видны в задании, фильтры 
   await freshQueue();
   const job = await enqueueJob({ kind: "project.restore", projectId: "p-progress", userId: "u1", now: at(0) });
   await updateJobProgress(job.id, { done: 512, total: 4096 }, at(500));
-  await finishJob(job.id, { state: "done", done: 4096, total: 4096, now: at(1000) });
+  await finishJob(job.id, { state: "done", done: 4096, total: 4096, resultJson: '{"status":200}', now: at(1000) });
 
   const stored = await jobById(job.id);
   assert.equal(stored!.state, "done");
+  assert.equal(stored!.resultJson, '{"status":200}');
   assert.equal(stored!.progressDone, 4096);
   assert.equal(stored!.progressTotal, 4096);
   assert.ok(stored!.finishedAt);

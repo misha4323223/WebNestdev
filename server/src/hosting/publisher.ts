@@ -157,18 +157,26 @@ async function startPublishLocked(siteId: string, userId: string): Promise<{ sit
   if (!project || project.userId !== userId) throw new HostingError("PROJECT_NOT_FOUND", "Проект не найден", 404);
   projectOnThisNode(project);
 
-  const kind = await hostingKind(project);
-  if (kind === "static-functions" && !planAllows(await accountPlanFor(userId), "serverlessFunctions")) {
+  const shape = await hostingKind(project);
+  const plan = await accountPlanFor(userId);
+  if (shape.kind === "static-functions" && !planAllows(plan, "serverlessFunctions")) {
     throw new HostingError(
       "FUNCTIONS_PLAN_REQUIRED",
       "Serverless-функции доступны на тарифах «Плюс» и «Премиум». Перейдите на платный тариф, чтобы опубликовать API вместе с сайтом.",
       403,
     );
   }
-  const started = await beginPublish({ siteId: site.id, userId, kind, nodeId: config.nodeId });
+  if (shape.hasJobs && !planAllows(plan, "backgroundJobs")) {
+    throw new HostingError(
+      "BACKGROUND_JOBS_PLAN_REQUIRED",
+      "Фоновые задания доступны на тарифе «Премиум». На «Плюсе» остаются статические сайты и HTTP-функции.",
+      403,
+    );
+  }
+  const started = await beginPublish({ siteId: site.id, userId, kind: shape.kind, nodeId: config.nodeId });
   // Публикация выполняется в фоне: HTTP не должен держать запрос 10 минут. Ошибка уже
   // записана в release/site, поэтому дополнительно её только логируем.
-  void runPublish(started.site, started.release, project, kind).catch(error => {
+  void runPublish(started.site, started.release, project, shape.kind).catch(error => {
     logLine("error", "publish crashed", { site: site.slug, error: error instanceof Error ? error.message : String(error) });
   });
   return started;
@@ -242,7 +250,7 @@ async function startRollbackLocked(
   }
 }
 
-async function hostingKind(project: Project): Promise<HostingProjectKind> {
+async function hostingKind(project: Project): Promise<{ kind: HostingProjectKind; hasJobs: boolean }> {
   const sandbox = await getSandbox(project.id, project.userId);
   const shape = await detectProject(sandbox.root);
   if (shape.kind !== "instant-site" && shape.kind !== "static-build") {
@@ -257,7 +265,7 @@ async function hostingKind(project: Project): Promise<HostingProjectKind> {
     }
     throw error;
   }
-  if (manifest) return "static-functions";
+  if (manifest) return { kind: "static-functions", hasJobs: (manifest.jobs?.length ?? 0) > 0 };
   // Манифеста нет, но структура проекта уже выглядит как функции. Молча опубликовать только
   // статику значило бы потерять API, поэтому просим явный контракт. Это же правило не даёт
   // агенту на Плюсе протащить произвольный сервер под видом статики.
@@ -265,8 +273,8 @@ async function hostingKind(project: Project): Promise<HostingProjectKind> {
   if (profile.projectType.backend === "server") {
     throw new HostingError(
       "PROJECT_NOT_STATIC",
-      "Серверный проект нельзя опубликовать на статическом хостинге: он требует постоянного контейнера. " +
-        "На «Плюсе» доступны статика и serverless-функции; постоянный сервер — только на «Премиуме».",
+      "Серверный проект нельзя опубликовать на production-хостинге: постоянный сервер здесь пока не поддерживается. " +
+        "Доступны статика и serverless-функции; контейнерный preview на «Премиуме» — отдельный режим разработки.",
       422,
     );
   }
@@ -277,7 +285,7 @@ async function hostingKind(project: Project): Promise<HostingProjectKind> {
       422,
     );
   }
-  return shape.kind;
+  return { kind: shape.kind, hasJobs: false };
 }
 
 async function buildStatic(
@@ -425,7 +433,7 @@ async function runPublish(site: HostingSite, release: HostingRelease, project: P
           throw error;
         }
         functionBytes = built.bytes;
-        functionCount = built.functions.length;
+        functionCount = built.functions.length + (built.jobs?.length ?? 0);
         publishedBytes += built.bytes;
         await assertAccountHostingQuota(project.userId, functionBytes);
         await assertHostingDiskHasRoom(config, functionBytes);

@@ -27,7 +27,7 @@ export type JobHandlerContext = {
   report: (done: number, total?: number) => void;
 };
 
-export type JobHandlerResult = { done?: number; total?: number };
+export type JobHandlerResult = { done?: number; total?: number; resultJson?: string };
 
 export type JobHandler = (job: JobRecord, context: JobHandlerContext) => Promise<JobHandlerResult>;
 
@@ -37,6 +37,8 @@ export type JobWorkerDeps = {
   leaseMs?: number;
   pollMs?: number;
   concurrency?: number;
+  /** Виды заданий этого пула; без фильтра воркер берёт всё. */
+  kinds?: JobKind[];
   workerId?: string;
   /** Лог вынесен наружу: тест не должен писать в stdout сервера. */
   log?: (line: string) => void;
@@ -79,6 +81,7 @@ export function startJobWorker(deps: JobWorkerDeps): JobWorker {
   const now = deps.now ?? (() => new Date());
   const pollMs = Math.max(200, deps.pollMs ?? DEFAULT_POLL_MS);
   const concurrency = Math.max(1, deps.concurrency ?? DEFAULT_CONCURRENCY);
+  const kinds = deps.kinds;
   const leaseMs = deps.leaseMs;
   const workerId = deps.workerId ?? hostname() + ":" + process.pid + ":" + randomUUID().slice(0, 8);
 
@@ -107,6 +110,7 @@ export function startJobWorker(deps: JobWorkerDeps): JobWorker {
         state: "done",
         done: result.done,
         total: result.total,
+        resultJson: result.resultJson,
         now: now(),
       });
       log("[jobs] " + job.kind + " " + job.projectId + ": выполнено");
@@ -140,7 +144,12 @@ export function startJobWorker(deps: JobWorkerDeps): JobWorker {
     let claimed = 0;
     try {
       while (!stopped && running.size < concurrency) {
-        const job = await claimJob({ workerId, now: now(), ...(leaseMs === undefined ? {} : { leaseMs }) });
+        const job = await claimJob({
+          workerId,
+          now: now(),
+          ...(leaseMs === undefined ? {} : { leaseMs }),
+          ...(kinds === undefined ? {} : { kinds }),
+        });
         if (!job) break;
         claimed++;
         const task = execute(job).finally(() => running.delete(task));

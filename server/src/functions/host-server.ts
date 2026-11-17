@@ -1,13 +1,15 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
-import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { hostingPublicDomain } from "../hosting/config.js";
 import { getDomainByHostname } from "../hosting/domain-store.js";
 import { hostingFunctionDir, hostingFunctionsDir } from "../hosting/paths.js";
 import { isHostingSlug } from "../hosting/slug.js";
 import { getSite, getSiteBySlug } from "../hosting/site-store.js";
-import { loadStoredSecretValues } from "../secrets/secret-store.js";
-import { invokeFunction, FunctionInvokeError, type FunctionRequest } from "./invoke.js";
+import { HostingError } from "../hosting/types.js";
+import { enqueueBackgroundJobs } from "../hosting/background-jobs.js";
+import { invokeFunction, FunctionInvokeError, type BackgroundJobRequest, type FunctionRequest } from "./invoke.js";
+import { readReleaseManifest } from "./release-manifest.js";
+import { projectFunctionEnv } from "./runtime-env.js";
 import type { FunctionReleaseManifest } from "./build.js";
 
 /**
@@ -26,33 +28,18 @@ export type FunctionsHostDeps = {
   readManifest: (file: string) => Promise<FunctionReleaseManifest | null>;
   invoke: typeof invokeFunction;
   secrets: (projectId: string) => Promise<Record<string, string>>;
+  /** Ставит задания из ответа функции в очередь до отправки ответа клиенту. */
+  enqueueJobs?: (input: { site: NonNullable<Awaited<ReturnType<typeof getSiteBySlug>>>; requests: BackgroundJobRequest[] }) => Promise<unknown>;
 };
-
-async function readManifestFile(file: string): Promise<FunctionReleaseManifest | null> {
-  const text = await readFile(file, "utf8").catch(() => "");
-  if (!text.trim()) return null;
-  try {
-    const parsed = JSON.parse(text) as FunctionReleaseManifest;
-    return parsed?.version === 1 && Array.isArray(parsed.functions) ? parsed : null;
-  } catch {
-    return null;
-  }
-}
-
-async function projectEnv(projectId: string) {
-  const files = await loadStoredSecretValues(projectId).catch(() => null);
-  if (!files) return {};
-  // Порядок как у приложения: `.env` → `.env.local` → `.env.production`; последний выигрывает.
-  return Object.assign({}, files[".env"] ?? {}, files[".env.local"] ?? {}, files[".env.production"] ?? {});
-}
 
 const defaultDeps: FunctionsHostDeps = {
   getSiteBySlug,
   getSite,
   getDomainByHostname,
-  readManifest: readManifestFile,
+  readManifest: readReleaseManifest,
   invoke: invokeFunction,
-  secrets: projectEnv,
+  secrets: projectFunctionEnv,
+  enqueueJobs: enqueueBackgroundJobs,
 };
 
 function requestHost(request: FastifyRequest) {
@@ -139,11 +126,20 @@ export function createFunctionsHostServer(deps: FunctionsHostDeps = defaultDeps)
         request: input,
         env,
       });
+      if (result.jobs?.length) {
+        // Постановка до ответа: если очередь недоступна, клиент не должен получить 202
+        // и решить, что задача принята.
+        await deps.enqueueJobs?.({ site, requests: result.jobs });
+      }
       return reply.code(result.status).headers(publicHeaders(result.headers)).send(result.body);
     } catch (error) {
       if (error instanceof FunctionInvokeError) {
         request.log.warn({ error: error.message, function: fn.name, site: site.slug }, "function failed");
         return sendError(reply, error.statusCode, error.message, { function: fn.name });
+      }
+      if (error instanceof HostingError) {
+        request.log.warn({ error: error.message, function: fn.name, site: site.slug }, "function job enqueue failed");
+        return sendError(reply, error.statusCode, error.message, { code: error.code, function: fn.name });
       }
       request.log.error({ error, function: fn.name, site: site.slug }, "function crashed");
       return sendError(reply, 502, "Функция завершилась с ошибкой", { function: fn.name });

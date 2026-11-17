@@ -59,6 +59,27 @@ test("разбирает ответ исполнителя и не пропус�
   assert.match(stdin, /"bodyBase64"/);
 });
 
+test("возвращает задания из ответа функции для постановки в очередь", async () => {
+  const response = await invokeFunction({
+    artifactDir: "/srv/sites/demo/releases/abcdef01/.functions/hello",
+    fn,
+    request,
+    run: async () => ({
+      code: 0,
+      stderr: "",
+      stdout: JSON.stringify({
+        ok: true,
+        status: 202,
+        headers: {},
+        body: Buffer.from("accepted").toString("base64"),
+        jobs: [{ name: "send-receipt", idempotencyKey: "order:1", payload: { id: 1 } }],
+      }),
+    }),
+  });
+  assert.equal(response.status, 202);
+  assert.deepEqual(response.jobs, [{ name: "send-receipt", idempotencyKey: "order:1", payload: { id: 1 } }]);
+});
+
 test("превращает ошибку исполнителя в 502 и не отдаёт сырой вывод как успех", async () => {
   await assert.rejects(
     () => invokeFunction({

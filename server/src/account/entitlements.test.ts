@@ -13,6 +13,7 @@ test("Старт получает только статический хости
   assert.deepEqual({ ...entitlementsFor("free") }, {
     staticHosting: true,
     serverlessFunctions: false,
+    backgroundJobs: false,
     interactiveTerminal: false,
     containerPreview: false,
   });
@@ -21,6 +22,7 @@ test("Старт получает только статический хости
 test("Плюс добавляет функции, но не терминал и не контейнерный предпросмотр", () => {
   assert.equal(planAllows("pro", "staticHosting"), true);
   assert.equal(planAllows("pro", "serverlessFunctions"), true);
+  assert.equal(planAllows("pro", "backgroundJobs"), false);
   assert.equal(planAllows("pro", "interactiveTerminal"), false);
   assert.equal(planAllows("pro", "containerPreview"), false);
 });
@@ -29,6 +31,7 @@ test("Премиум открывает все возможности", () => {
   assert.deepEqual({ ...entitlementsFor("team") }, {
     staticHosting: true,
     serverlessFunctions: true,
+    backgroundJobs: true,
     interactiveTerminal: true,
     containerPreview: true,
   });
@@ -44,6 +47,7 @@ test("матрица не меняется через возвращённый �
 
 test("отказ называет тариф, возможность и нужный тариф", () => {
   assert.equal(requiredPlanFor("serverlessFunctions"), "pro");
+  assert.equal(requiredPlanFor("backgroundJobs"), "team");
   assert.equal(requiredPlanFor("interactiveTerminal"), "team");
   assert.equal(requiredPlanFor("containerPreview"), "team");
   assert.match(planFeatureMessage("pro", "interactiveTerminal"), /Плюс/);

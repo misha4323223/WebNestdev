@@ -1,6 +1,7 @@
 import { archiveProject, runQueuedRestore } from "../storage/project-archive.js";
 import { initializeStorage, describeStorage } from "../storage/pg.js";
 import { startJobWorker } from "../jobs/worker.js";
+import { runBackgroundJob } from "../hosting/background-jobs-run.js";
 
 /**
  * Отдельный процесс очереди долгих заданий.
@@ -18,6 +19,7 @@ async function main() {
   await initializeStorage();
   const worker = startJobWorker({
     concurrency: Number(process.env.JOBS_CONCURRENCY ?? 2),
+    kinds: ["project.archive", "project.restore", "hosting.job"],
     workerId: "worker:" + process.pid,
     handlers: {
       "project.archive": async job => {
@@ -25,6 +27,7 @@ async function main() {
         return { done: result.bytes, total: result.bytes };
       },
       "project.restore": (job, context) => runQueuedRestore(job.projectId, job.userId, context.report),
+      "hosting.job": job => runBackgroundJob(job),
     },
   });
   const stop = (signal: string) => {

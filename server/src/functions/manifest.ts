@@ -18,6 +18,7 @@ import { z } from "zod";
 export const FUNCTIONS_MANIFEST_FILE = "nestdev.functions.json";
 export const FUNCTIONS_MANIFEST_MAX_BYTES = 64 * 1024;
 export const FUNCTIONS_MANIFEST_MAX_FUNCTIONS = 20;
+export const FUNCTIONS_MANIFEST_MAX_JOBS = 10;
 
 const FUNCTION_NAME = /^[a-z][a-z0-9-]{0,62}$/;
 const ROUTE = /^\/api(?:\/[A-Za-z0-9._~-]+)*$/;
@@ -56,13 +57,27 @@ const functionSchema = z.object({
   memoryMb: z.number().int().min(128).max(1_024).default(256),
 }).strict();
 
+/**
+ * Фоновое задание — тот же обработчик, но без HTTP-маршрута. Таймаут больше, чем у функции:
+ * задача запускается после ответа и не держит клиента. Потолок 60 секунд оставляет запас
+ * двум слотам на 2 vCPU и не превращает очередь в скрытый постоянный сервер.
+ */
+const jobSchema = z.object({
+  name: z.string().trim().regex(FUNCTION_NAME, "Имя задания: строчные латинские буквы, цифры и дефис, до 63 символов"),
+  handler: handlerSchema,
+  timeoutMs: z.number().int().min(100).max(60_000).default(30_000),
+  memoryMb: z.number().int().min(128).max(512).default(256),
+}).strict();
+
 export const functionManifestSchema = z.object({
   version: z.literal(1),
   runtime: z.enum(["node", "python"]),
   functions: z.array(functionSchema).min(1).max(FUNCTIONS_MANIFEST_MAX_FUNCTIONS),
+  jobs: z.array(jobSchema).max(FUNCTIONS_MANIFEST_MAX_JOBS).default([]),
 }).strict();
 
 export type FunctionManifestEntry = z.infer<typeof functionSchema>;
+export type FunctionManifestJob = z.infer<typeof jobSchema>;
 export type FunctionManifest = z.infer<typeof functionManifestSchema>;
 
 export type FunctionManifestIssue = {
@@ -110,9 +125,16 @@ export function parseFunctionManifest(raw: unknown): FunctionManifest {
     routes.add(entry.path);
     return { ...entry, methods };
   });
+  const jobs = parsed.data.jobs.map((entry, index) => {
+    if (names.has(entry.name)) {
+      issues.push({ field: "jobs." + index + ".name", message: "Имя задания уже занято функцией или другим заданием: " + entry.name });
+    }
+    names.add(entry.name);
+    return entry;
+  });
 
   if (issues.length) throw new FunctionManifestError(issues[0]?.field + " — " + issues[0]?.message, issues);
-  return { ...parsed.data, functions };
+  return { ...parsed.data, functions, jobs };
 }
 
 /** Читает манифест из корня проекта. Отсутствие файла — это `null`, а не ошибка. */

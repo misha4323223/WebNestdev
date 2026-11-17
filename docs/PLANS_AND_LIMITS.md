@@ -19,6 +19,7 @@ publishing or team roles, because those features do not exist.
 | Integrations | databases and S3 only | no limit | no limit |
 | Static hosting | yes | yes | yes |
 | Serverless functions | no | yes | yes |
+| Background jobs | no | no | yes |
 | Interactive terminal | no | no | yes |
 | Container / hybrid preview | no | no | yes |
 
@@ -32,7 +33,11 @@ per-plan number is the ceiling the whole account can use; `node_modules` and bui
 
 The tier capabilities are a separate matrix in `server/src/account/entitlements.ts`, not a
 rewording of `features`. Static hosting is open on every plan. Serverless functions start on
-«Плюс». The interactive terminal and container/hybrid preview start on «Премиум». The terminal in
+«Плюс». Background jobs, the interactive terminal and container/hybrid preview start on «Премиум».
+Background jobs are declared in the `jobs` array of `nestdev.functions.json`, enqueued from an HTTP
+function response and run after it in the same isolated executor (60 seconds, 512 MB maximum).
+They are not a permanent worker: video, OCR and long-running polling still need a separate service.
+The contract and limits are in [BACKGROUND_JOBS.md](BACKGROUND_JOBS.md). The terminal in
 this matrix is the panel's own terminal (`POST /api/projects/:id/terminal`); the agent's internal
 `terminal.exec`/`terminal.start` and package installs are build tools and stay available on «Плюс»,
 otherwise the agent could not build or verify a static site or a function. Those tools refuse a

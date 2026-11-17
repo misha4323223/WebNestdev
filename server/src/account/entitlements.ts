@@ -12,10 +12,12 @@ import type { PlanId } from "./plans.js";
  *   Плюс не сможет собрать и проверить проект.
  * - `containerPreview` — dev-сервер и hybrid preview. Статический preview разрешён всем.
  * - `serverlessFunctions` — публикация и исполнение функций на своём хосте.
+ * - `backgroundJobs` — очередь фоновых заданий после HTTP-ответа; отдельный пул, только «Премиум».
  */
 export type PlanFeature =
   | "staticHosting"
   | "serverlessFunctions"
+  | "backgroundJobs"
   | "interactiveTerminal"
   | "containerPreview";
 
@@ -29,18 +31,21 @@ const PLAN_ENTITLEMENTS: Readonly<Record<PlanId, PlanEntitlements>> = Object.fre
   free: Object.freeze({
     staticHosting: true,
     serverlessFunctions: false,
+    backgroundJobs: false,
     interactiveTerminal: false,
     containerPreview: false,
   }),
   pro: Object.freeze({
     staticHosting: true,
     serverlessFunctions: true,
+    backgroundJobs: false,
     interactiveTerminal: false,
     containerPreview: false,
   }),
   team: Object.freeze({
     staticHosting: true,
     serverlessFunctions: true,
+    backgroundJobs: true,
     interactiveTerminal: true,
     containerPreview: true,
   }),
@@ -49,6 +54,7 @@ const PLAN_ENTITLEMENTS: Readonly<Record<PlanId, PlanEntitlements>> = Object.fre
 export const PLAN_FEATURE_LABELS: Readonly<Record<PlanFeature, string>> = Object.freeze({
   staticHosting: "статические сайты",
   serverlessFunctions: "serverless-функции",
+  backgroundJobs: "фоновые задания",
   interactiveTerminal: "терминал",
   containerPreview: "контейнерный предпросмотр",
 });
@@ -57,6 +63,7 @@ export const PLAN_FEATURE_LABELS: Readonly<Record<PlanFeature, string>> = Object
 const REQUIRED_PLAN: Readonly<Record<PlanFeature, PlanId>> = Object.freeze({
   staticHosting: "free",
   serverlessFunctions: "pro",
+  backgroundJobs: "team",
   interactiveTerminal: "team",
   containerPreview: "team",
 });

@@ -25,6 +25,11 @@ function normalizeBody(value) {
   return Buffer.from(String(value), "utf8").toString("base64");
 }
 
+function normalizeJobs(result) {
+  if (!result || typeof result !== "object" || !Array.isArray(result.jobs)) return undefined;
+  return result.jobs;
+}
+
 function normalizeResponse(result) {
   if (result instanceof Response) {
     return {
@@ -60,6 +65,7 @@ try {
     body: Buffer.from(request.bodyBase64 || "", "base64"),
   });
   const response = normalizeResponse(result);
+  const jobs = normalizeJobs(result);
   if (response.__stream) {
     const reader = response.__stream.getReader();
     const parts = [];
@@ -75,7 +81,7 @@ try {
     delete response.__stream;
   }
   if (response.body && response.body.length > 3 * 1024 * 1024) throw new Error("Ответ функции больше 2 МиБ");
-  process.stdout.write(JSON.stringify({ ok: true, ...response }));
+  process.stdout.write(JSON.stringify({ ok: true, ...response, ...(jobs ? { jobs } : {}) }));
 } catch (error) {
   fail(error instanceof Error ? error.message : String(error));
 }

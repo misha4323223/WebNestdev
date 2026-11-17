@@ -18,7 +18,7 @@ import { getTable, initializeStorage, isYdbEnabled, ydbQuery } from "../storage/
  * и процессов обычно один; для боевого режима есть PostgreSQL.
  */
 
-export type JobKind = "project.archive" | "project.restore";
+export type JobKind = "project.archive" | "project.restore" | "hosting.job";
 export type JobState = "queued" | "running" | "done" | "failed";
 
 export type JobRecord = {
@@ -40,6 +40,15 @@ export type JobRecord = {
   lastError: string;
   progressDone: number;
   progressTotal: number;
+  /** Фоновое задание хостинга: сайт, релиз, имя обработчика и payload. */
+  siteId: string;
+  releaseId: string;
+  functionName: string;
+  payloadJson: string;
+  /** Краткий итог выполнения; тело ответа функции сюда не пишется. */
+  resultJson: string;
+  /** Больше — раньше. Платежи и webhook'и идут выше отчётов. */
+  priority: number;
   createdAt: string;
   updatedAt: string;
   finishedAt: string | null;
@@ -60,6 +69,12 @@ export type JobRow = {
   last_error: string;
   progress_done: number | string;
   progress_total: number | string;
+  site_id?: string;
+  release_id?: string;
+  function_name?: string;
+  payload_json?: string;
+  result_json?: string;
+  priority?: number | string;
   created_at: string;
   updated_at: string;
   finished_at: string | null;
@@ -88,6 +103,12 @@ export function rowToJob(row: JobRow): JobRecord {
     lastError: row.last_error,
     progressDone: Number(row.progress_done),
     progressTotal: Number(row.progress_total),
+    siteId: row.site_id ?? "",
+    releaseId: row.release_id ?? "",
+    functionName: row.function_name ?? "",
+    payloadJson: row.payload_json ?? "",
+    resultJson: row.result_json ?? "",
+    priority: Number(row.priority ?? 0),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     finishedAt: row.finished_at,
@@ -111,8 +132,19 @@ function withFileLock<T>(action: () => Promise<T>): Promise<T> {
 
 async function readFileJobs(): Promise<JobRecord[]> {
   try {
-    const parsed = JSON.parse(await readFile(jobsFile(), "utf8")) as { jobs?: JobRecord[] };
-    return Array.isArray(parsed.jobs) ? parsed.jobs : [];
+    const parsed = JSON.parse(await readFile(jobsFile(), "utf8")) as { jobs?: Array<Partial<JobRecord>> };
+    if (!Array.isArray(parsed.jobs)) return [];
+    // JSON-файл мог быть записан до появления фоновых заданий: новые поля читаются
+    // пустыми, чтобы старые записи не ломали воркер.
+    return parsed.jobs.map(job => ({
+      ...job,
+      siteId: job.siteId ?? "",
+      releaseId: job.releaseId ?? "",
+      functionName: job.functionName ?? "",
+      payloadJson: job.payloadJson ?? "",
+      resultJson: job.resultJson ?? "",
+      priority: Number(job.priority ?? 0),
+    })) as JobRecord[];
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return [];
     throw error;
@@ -138,6 +170,14 @@ export type EnqueueInput = {
   kind: JobKind;
   projectId: string;
   userId: string;
+  /** Ключ активной дедупликации; по умолчанию — projectId. */
+  subject?: string;
+  siteId?: string;
+  releaseId?: string;
+  functionName?: string;
+  /** JSON payload фонового задания; для архивации пустой. */
+  payloadJson?: string;
+  priority?: number;
   /** Отложенный старт: например, «попробовать через десять минут». */
   runAfter?: Date;
   maxAttempts?: number;
@@ -155,7 +195,7 @@ function isActive(job: JobRecord): boolean {
 export async function enqueueJob(input: EnqueueInput): Promise<JobRecord> {
   const now = input.now ?? new Date();
   const iso = now.toISOString();
-  const subject = input.projectId;
+  const subject = input.subject ?? input.projectId;
   if (!isYdbEnabled()) {
     return withFileLock(async () => {
       const jobs = await readFileJobs();
@@ -176,6 +216,12 @@ export async function enqueueJob(input: EnqueueInput): Promise<JobRecord> {
         lastError: "",
         progressDone: 0,
         progressTotal: 0,
+        siteId: input.siteId ?? "",
+        releaseId: input.releaseId ?? "",
+        functionName: input.functionName ?? "",
+        payloadJson: input.payloadJson ?? "",
+        resultJson: "",
+        priority: Math.trunc(input.priority ?? 0),
         createdAt: iso,
         updatedAt: iso,
         finishedAt: null,
@@ -193,10 +239,13 @@ export async function enqueueJob(input: EnqueueInput): Promise<JobRecord> {
   const [inserted] = await ydbQuery()<JobRow[]>`
     INSERT INTO ${table} (id, kind, subject, project_id, user_id, state, attempts, max_attempts,
                           run_after, locked_until, locked_by, last_error, progress_done,
-                          progress_total, created_at, updated_at, finished_at)
+                          progress_total, site_id, release_id, function_name, payload_json,
+                          result_json, priority, created_at, updated_at, finished_at)
     VALUES (${randomUUID()}, ${input.kind}, ${subject}, ${input.projectId}, ${input.userId}, ${"queued"},
             ${0}, ${Math.max(1, input.maxAttempts ?? DEFAULT_MAX_ATTEMPTS)}, ${(input.runAfter ?? now).toISOString()},
-            ${null}, ${""}, ${""}, ${0}, ${0}, ${iso}, ${iso}, ${null})
+            ${null}, ${""}, ${""}, ${0}, ${0}, ${input.siteId ?? ""}, ${input.releaseId ?? ""},
+            ${input.functionName ?? ""}, ${input.payloadJson ?? ""}, ${""},
+            ${Math.trunc(input.priority ?? 0)}, ${iso}, ${iso}, ${null})
     ON CONFLICT (kind, subject) WHERE state IN ('queued', 'running') DO NOTHING
     RETURNING *`;
   if (inserted[0]) return rowToJob(inserted[0]);
@@ -259,6 +308,8 @@ export type ClaimInput = {
   workerId: string;
   leaseMs?: number;
   now?: Date;
+  /** Пул забирает только свои виды заданий: архивация не должна ждать оплату. */
+  kinds?: JobKind[];
 };
 
 /**
@@ -275,8 +326,11 @@ export async function claimJob(input: ClaimInput): Promise<JobRecord | null> {
     return withFileLock(async () => {
       const jobs = await readFileJobs();
       const next = jobs
-        .filter(job => job.state === "queued" && job.runAfter <= iso)
-        .sort((a, b) => (a.runAfter === b.runAfter ? a.createdAt.localeCompare(b.createdAt) : a.runAfter.localeCompare(b.runAfter)))[0];
+        .filter(job => job.state === "queued" && job.runAfter <= iso && (!input.kinds || input.kinds.includes(job.kind)))
+        .sort((a, b) => {
+          if (a.priority !== b.priority) return b.priority - a.priority;
+          return a.runAfter === b.runAfter ? a.createdAt.localeCompare(b.createdAt) : a.runAfter.localeCompare(b.runAfter);
+        })[0];
       if (!next) return null;
       next.state = "running";
       next.attempts += 1;
@@ -294,7 +348,8 @@ export async function claimJob(input: ClaimInput): Promise<JobRecord | null> {
     WITH next AS (
       SELECT id FROM ${table}
        WHERE state = ${"queued"} AND run_after <= ${iso}
-       ORDER BY run_after, created_at
+         AND (${input.kinds ?? null}::text[] IS NULL OR kind = ANY(${input.kinds ?? null}))
+       ORDER BY priority DESC, run_after, created_at
        LIMIT 1
        FOR UPDATE SKIP LOCKED
     )
@@ -340,12 +395,13 @@ export async function updateJobProgress(
 /** Задание выполнено. `progress` фиксирует итог, чтобы админка не показывала «60%» у готового. */
 export async function finishJob(
   id: string,
-  result: { state: "done" | "failed"; error?: string; done?: number; total?: number; now?: Date },
+  result: { state: "done" | "failed"; error?: string; done?: number; total?: number; resultJson?: string; now?: Date },
 ): Promise<void> {
   const now = result.now ?? new Date();
   const iso = now.toISOString();
   const state = result.state;
   const error = result.state === "failed" ? (result.error ?? "неизвестная ошибка").slice(0, 2000) : "";
+  const resultJson = (result.resultJson ?? "").slice(0, 8000);
   if (!isYdbEnabled()) {
     return withFileLock(async () => {
       const jobs = await readFileJobs();
@@ -353,6 +409,7 @@ export async function finishJob(
       if (!job) return;
       job.state = state;
       job.lastError = error;
+      job.resultJson = resultJson;
       job.lockedUntil = null;
       job.lockedBy = "";
       job.updatedAt = iso;
@@ -369,7 +426,7 @@ export async function finishJob(
   await ydbQuery()`
     UPDATE ${table}
        SET state = ${state}, last_error = ${error}, locked_until = ${null}, locked_by = ${""},
-           updated_at = ${iso}, finished_at = ${iso},
+           updated_at = ${iso}, finished_at = ${iso}, result_json = ${resultJson},
            progress_total = COALESCE(${total}, progress_total),
            progress_done = COALESCE(${done}, progress_done)
      WHERE id = ${id}`;
@@ -436,6 +493,7 @@ export type ListJobsInput = {
   state?: JobState;
   kind?: JobKind;
   projectId?: string;
+  siteId?: string;
   limit?: number;
 };
 
@@ -450,7 +508,8 @@ export async function listJobs(input: ListJobsInput = {}): Promise<JobRecord[]> 
     return jobs
       .filter(job => (!input.state || job.state === input.state)
         && (!input.kind || job.kind === input.kind)
-        && (!input.projectId || job.projectId === input.projectId))
+        && (!input.projectId || job.projectId === input.projectId)
+        && (!input.siteId || job.siteId === input.siteId))
       .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       .slice(0, limit);
   }
@@ -462,6 +521,7 @@ export async function listJobs(input: ListJobsInput = {}): Promise<JobRecord[]> 
      WHERE (${input.state ?? null}::text IS NULL OR state = ${input.state ?? null})
        AND (${input.kind ?? null}::text IS NULL OR kind = ${input.kind ?? null})
        AND (${input.projectId ?? null}::text IS NULL OR project_id = ${input.projectId ?? null})
+       AND (${input.siteId ?? null}::text IS NULL OR site_id = ${input.siteId ?? null})
      ORDER BY created_at DESC
      LIMIT ${limit}`;
   return rows.map(rowToJob);

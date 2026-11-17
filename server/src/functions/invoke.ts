@@ -7,6 +7,46 @@ import { sandboxImage, sandboxRuntimeArgs } from "../sandbox/config.js";
 import { hostingSitesDir } from "../hosting/config.js";
 import type { BuiltFunction } from "./build.js";
 
+export type BackgroundJobRequest = {
+  name: string;
+  payload: unknown;
+  idempotencyKey?: string;
+};
+
+export const BACKGROUND_JOB_MAX_PER_RESPONSE = 10;
+export const BACKGROUND_JOB_MAX_PAYLOAD_BYTES = 64 * 1024;
+
+/** Задание, которое HTTP-функция просит поставить в очередь после ответа. */
+export function normalizeBackgroundJobRequests(raw: unknown): BackgroundJobRequest[] {
+  if (!Array.isArray(raw)) return [];
+  if (raw.length > BACKGROUND_JOB_MAX_PER_RESPONSE) {
+    throw new FunctionInvokeError("В одном ответе больше " + BACKGROUND_JOB_MAX_PER_RESPONSE + " заданий", 413);
+  }
+  const out: BackgroundJobRequest[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") throw new FunctionInvokeError("Задание должно быть объектом", 502);
+    const value = item as { name?: unknown; payload?: unknown; idempotencyKey?: unknown };
+    if (typeof value.name !== "string" || !/^[a-z][a-z0-9-]{0,62}$/.test(value.name)) {
+      throw new FunctionInvokeError("Некорректное имя фонового задания", 502);
+    }
+    if (value.idempotencyKey !== undefined && (typeof value.idempotencyKey !== "string" || value.idempotencyKey.length === 0 || value.idempotencyKey.length > 200)) {
+      throw new FunctionInvokeError("idempotencyKey задания должен быть строкой до 200 символов", 502);
+    }
+    const payload = value.payload === undefined ? {} : value.payload;
+    const encoded = JSON.stringify(payload);
+    if (encoded === undefined) throw new FunctionInvokeError("payload задания не сериализуется", 502);
+    if (Buffer.byteLength(encoded, "utf8") > BACKGROUND_JOB_MAX_PAYLOAD_BYTES) {
+      throw new FunctionInvokeError("payload задания больше 64 КиБ", 413);
+    }
+    out.push({
+      name: value.name,
+      payload,
+      ...(typeof value.idempotencyKey === "string" ? { idempotencyKey: value.idempotencyKey } : {}),
+    });
+  }
+  return out;
+}
+
 /**
  * Один HTTP-вызов функции в одноразовом контейнере.
  *
@@ -27,7 +67,12 @@ export type FunctionResponse = {
   status: number;
   headers: Record<string, string>;
   body: Buffer;
+  /** Задания, которые нужно поставить в очередь до отправки ответа клиенту. */
+  jobs?: BackgroundJobRequest[];
 };
+
+/** Общая часть HTTP-функции и фонового задания для исполнителя. */
+export type InvokableFunction = Pick<BuiltFunction, "handler" | "timeoutMs" | "memoryMb"> & { name: string };
 
 export class FunctionInvokeError extends Error {
   readonly code = "FUNCTION_INVOKE_FAILED";
@@ -93,9 +138,11 @@ function normalizeHeaders(input: Record<string, string>) {
 
 export async function invokeFunction(input: {
   artifactDir: string;
-  fn: BuiltFunction;
+  fn: InvokableFunction;
   request: FunctionRequest;
   env?: Record<string, string>;
+  /** HTTP-функции ограничены 30 секундами, фоновые задания — 60. */
+  maxTimeoutMs?: number;
   /** Точка подмены для тестов: по умолчанию настоящий Docker CLI. */
   run?: typeof runDockerCli;
 }): Promise<FunctionResponse> {
@@ -103,7 +150,8 @@ export async function invokeFunction(input: {
   if (Buffer.byteLength(input.request.bodyBase64, "base64") > MAX_REQUEST_BYTES) {
     throw new FunctionInvokeError("Тело запроса больше 1 МиБ", 413);
   }
-  const timeoutMs = Math.min(30_000, Math.max(100, input.fn.timeoutMs || DEFAULT_TIMEOUT_MS));
+  const timeoutLimit = Math.min(60_000, Math.max(100, input.maxTimeoutMs ?? 30_000));
+  const timeoutMs = Math.min(timeoutLimit, Math.max(100, input.fn.timeoutMs || DEFAULT_TIMEOUT_MS));
   const memoryMb = Math.min(1_024, Math.max(128, input.fn.memoryMb || 256));
   const name = "wnd-fn-" + randomUUID().replaceAll("-", "").slice(0, 20);
   const worker = await workerSource();
@@ -152,7 +200,14 @@ export async function invokeFunction(input: {
     throw new FunctionInvokeError(reason, 502);
   }
 
-  let parsed: { ok?: boolean; status?: number; headers?: Record<string, string>; body?: string; error?: string };
+  let parsed: {
+    ok?: boolean;
+    status?: number;
+    headers?: Record<string, string>;
+    body?: string;
+    error?: string;
+    jobs?: unknown;
+  };
   try {
     parsed = JSON.parse(result.stdout.trim()) as typeof parsed;
   } catch {
@@ -162,5 +217,6 @@ export async function invokeFunction(input: {
   const status = Number.isInteger(parsed.status) && parsed.status! >= 100 && parsed.status! <= 599 ? parsed.status! : 200;
   const body = Buffer.from(parsed.body || "", "base64");
   if (body.byteLength > 2 * 1024 * 1024) throw new FunctionInvokeError("Ответ функции больше 2 МиБ", 502);
-  return { status, headers: normalizeHeaders(parsed.headers ?? {}), body };
+  const jobs = parsed.jobs === undefined ? undefined : normalizeBackgroundJobRequests(parsed.jobs);
+  return { status, headers: normalizeHeaders(parsed.headers ?? {}), body, ...(jobs?.length ? { jobs } : {}) };
 }

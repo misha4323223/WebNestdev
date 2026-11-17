@@ -129,6 +129,30 @@ test("передаёт функции исходное тело POST, включ
   }
 });
 
+test("ставит задания из ответа функции в очередь до ответа клиенту", async () => {
+  let seen: unknown = null;
+  const app = createFunctionsHostServer(
+    deps({
+      invoke: async () => ({
+        status: 202,
+        headers: {},
+        body: Buffer.from("accepted"),
+        jobs: [{ name: "send-receipt", payload: { id: 1 }, idempotencyKey: "order:1" }],
+      }),
+      enqueueJobs: async input => {
+        seen = input;
+      },
+    }),
+  );
+  try {
+    const response = await app.inject({ method: "POST", url: "/api/hello", headers: { host: "demo.host.nestdev.ru" } });
+    assert.equal(response.statusCode, 202);
+    assert.deepEqual((seen as { requests: unknown[] }).requests, [{ name: "send-receipt", payload: { id: 1 }, idempotencyKey: "order:1" }]);
+  } finally {
+    await app.close();
+  }
+});
+
 test("custom-domain ищет сайт по домену, а не по slug", async () => {
   const app = createFunctionsHostServer(deps());
   try {

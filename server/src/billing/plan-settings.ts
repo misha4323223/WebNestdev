@@ -173,6 +173,11 @@ const LEGACY_FEATURE_REPLACEMENTS: Record<PaidPlanId, Record<string, string>> = 
  */
 const RETIRED_FEATURE = /без дневного лимита|браузерн[\wа-яё]*\s+провер|поддержк|\d+\s+запусков агента в день/iu;
 
+/** Новые возможности, которые должны появиться в уже сохранённой карточке тарифа. */
+const REQUIRED_FEATURES: Partial<Record<PaidPlanId, string[]>> = {
+  team: ["Фоновые задания после HTTP-ответа"],
+};
+
 function modernFeature(plan: PaidPlanId, feature: string) {
   const normalized = feature.trim();
   if (RETIRED_FEATURE.test(normalized)) return "";
@@ -193,6 +198,9 @@ export function planDisplayFeatures(plan: PlanId): string[] {
     .filter((feature): feature is string => Boolean(feature));
   // Две старые строки могли превратиться в одну; повтор не должен показываться дважды.
   const unique = modern.filter((feature, index) => modern.indexOf(feature) === index);
+  for (const feature of REQUIRED_FEATURES[plan] ?? []) {
+    if (!unique.includes(feature)) unique.push(feature);
+  }
   return unique.length ? unique : [...PLAN_CATALOG[plan].features];
 }
 

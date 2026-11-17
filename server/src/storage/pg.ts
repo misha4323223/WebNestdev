@@ -5,6 +5,7 @@ import { ensurePreviewTable } from "./preview-table.js";
 import { ensurePreviewReservationTable } from "./preview-reservation-table.js";
 import { ensureRunLeaseTable } from "./run-lease-table.js";
 import { ensureCustomDomainTable } from "./custom-domain-table.js";
+import { ensureBackgroundJobColumns } from "./function-jobs-table.js";
 
 /**
  * PostgreSQL storage backend — API-совместим с прежним YDB-модулем.
@@ -829,6 +830,8 @@ export async function initializeStorage(): Promise<void> {
     await pool.query(
       `CREATE UNIQUE INDEX IF NOT EXISTS idx_${getTable("jobs")}_active ON ${tbl("jobs")} (kind, subject) WHERE state IN ('queued', 'running')`,
     );
+    // Фоновые задания хостинга: привязка к релизу, обработчик, payload и результат.
+    await ensureBackgroundJobColumns(pool, getTable("jobs"));
 
     // Общее состояние API-реплик: живые preview и аренды запусков агента. Обе таблицы
     // появились в C1, когда состояние перестало помещаться в память одного процесса.

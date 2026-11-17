@@ -3,7 +3,7 @@ import { mkdir, readFile, realpath, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { build as esbuildBuild } from "esbuild";
 import { scanTextForSecrets } from "../hosting/security.js";
-import type { FunctionManifest, FunctionManifestEntry } from "./manifest.js";
+import type { FunctionManifest, FunctionManifestEntry, FunctionManifestJob } from "./manifest.js";
 
 /**
  * Сборка функций в один неизменяемый артефакт на функцию.
@@ -30,10 +30,22 @@ export type BuiltFunction = {
   memoryMb: number;
 };
 
+/** Фоновый обработчик: тот же артефакт, но без HTTP-маршрута и методов. */
+export type BuiltJob = {
+  name: string;
+  handler: string;
+  file: "index.mjs";
+  bytes: number;
+  sha256: string;
+  timeoutMs: number;
+  memoryMb: number;
+};
+
 export type FunctionReleaseManifest = {
   version: 1;
   runtime: "node";
   functions: BuiltFunction[];
+  jobs?: BuiltJob[];
   bytes: number;
 };
 
@@ -99,9 +111,13 @@ export async function buildFunctions(input: BuildFunctionsInput): Promise<Functi
   const maxFunctionBytes = input.maxFunctionBytes ?? 10 * 1024 * 1024;
   await mkdir(input.outDir, { recursive: true, mode: 0o755 });
   const built: BuiltFunction[] = [];
+  const builtJobs: BuiltJob[] = [];
   let total = 0;
 
-  for (const entry of input.manifest.functions) {
+  async function buildHandler(
+    entry: FunctionManifestEntry | FunctionManifestJob,
+    label: string,
+  ): Promise<{ bytes: number; sha256: string }> {
     const handler = await resolveHandler(input.root, entry.handler);
     const functionDir = path.join(input.outDir, entry.name);
     const outfile = path.join(functionDir, "index.mjs");
@@ -124,16 +140,17 @@ export async function buildFunctions(input: BuildFunctionsInput): Promise<Functi
         external: ["pg-native"],
       });
     } catch (error) {
-      throw new FunctionBuildError("Не удалось собрать функцию «" + entry.name + "»: " + esbuildMessage(error));
+      throw new FunctionBuildError("Не удалось собрать " + label + " «" + entry.name + "»: " + esbuildMessage(error));
     }
 
     const output = await readFile(outfile).catch(() => null);
     if (!output || output.byteLength === 0) {
-      throw new FunctionBuildError("Сборка функции «" + entry.name + "» создала пустой файл");
+      throw new FunctionBuildError("Сборка " + label + " «" + entry.name + "» создала пустой файл");
     }
     if (output.byteLength > maxFunctionBytes) {
       throw new FunctionBuildError(
-        "Функция «" + entry.name + "» больше " + Math.round(maxFunctionBytes / 1024 / 1024) + " МиБ",
+        (label === "функции" ? "Функция" : "Задание") + " «" + entry.name + "» больше " +
+          Math.round(maxFunctionBytes / 1024 / 1024) + " МиБ",
       );
     }
     const text = output.includes(0) ? "" : output.toString("utf8");
@@ -141,19 +158,37 @@ export async function buildFunctions(input: BuildFunctionsInput): Promise<Functi
       const findings = scanTextForSecrets(text, input.secretValues ?? [], entry.name + "/index.mjs");
       if (findings.length) {
         throw new FunctionBuildError(
-          "В собранной функции «" + entry.name + "» найдены данные, похожие на секрет: " + findings[0]!.kind,
+          "В собранной " + label + " «" + entry.name + "» найдены данные, похожие на секрет: " + findings[0]!.kind,
         );
       }
     }
     total += output.byteLength;
+    return { bytes: output.byteLength, sha256: sha256(output) };
+  }
+
+  for (const entry of input.manifest.functions) {
+    const output = await buildHandler(entry, "функции");
     built.push({
       name: entry.name,
       path: entry.path,
       methods: entry.methods,
       handler: input.manifest.runtime + ":" + entry.handler,
       file: "index.mjs",
-      bytes: output.byteLength,
-      sha256: sha256(output),
+      bytes: output.bytes,
+      sha256: output.sha256,
+      timeoutMs: entry.timeoutMs,
+      memoryMb: entry.memoryMb,
+    });
+  }
+
+  for (const entry of input.manifest.jobs) {
+    const output = await buildHandler(entry, "задания");
+    builtJobs.push({
+      name: entry.name,
+      handler: input.manifest.runtime + ":" + entry.handler,
+      file: "index.mjs",
+      bytes: output.bytes,
+      sha256: output.sha256,
       timeoutMs: entry.timeoutMs,
       memoryMb: entry.memoryMb,
     });
@@ -163,6 +198,7 @@ export async function buildFunctions(input: BuildFunctionsInput): Promise<Functi
     version: 1,
     runtime: "node",
     functions: built,
+    jobs: builtJobs,
     bytes: total,
   };
   await writeFile(path.join(input.outDir, "manifest.json"), JSON.stringify(manifest, null, 2), {
