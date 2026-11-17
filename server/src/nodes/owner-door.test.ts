@@ -8,13 +8,13 @@ test("the owner door keeps the WebSocket upgrade headers", async () => {
   process.env.WEBNESTDEV_INTERNAL_TOKEN = token;
 
   let seen: { connection?: string; upgrade?: string } = {};
-  let targetSocket: import("node:stream").Duplex | null = null;
+  const targetSockets: Array<{ destroy: () => void }> = [];
   const target = http.createServer((_request, response) => {
     response.writeHead(404);
     response.end();
   });
   target.on("upgrade", (request, socket) => {
-    targetSocket = socket;
+    targetSockets.push(socket);
     seen = {
       connection: String(request.headers.connection ?? ""),
       upgrade: String(request.headers.upgrade ?? ""),
@@ -64,7 +64,7 @@ test("the owner door keeps the WebSocket upgrade headers", async () => {
     assert.match(seen.connection ?? "", /upgrade/i);
     assert.equal((seen.upgrade ?? "").toLowerCase(), "websocket");
   } finally {
-    targetSocket?.destroy();
+    for (const socket of targetSockets) socket.destroy();
     await door.close();
     await new Promise<void>(resolve => target.close(() => resolve()));
     delete process.env.WEBNESTDEV_OWNER_ROUTING;
