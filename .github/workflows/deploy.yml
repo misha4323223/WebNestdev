@@ -667,6 +667,7 @@ jobs:
             emit_var APP_DIR "$DEPLOY_APP_DIR"
             emit_var AGENT_SSH_PUBKEY "${AGENT_SSH_PUBKEY:-}"
             emit_var COMPOSE_B64 "$COMPOSE_B64"
+            emit_var COMPOSE_OVERRIDE_B64 "${COMPOSE_OVERRIDE_B64:-}"
             emit_var CADDY_B64 "$CADDY_B64"
             emit_var PREVIEW_TLS_B64 "$PREVIEW_TLS_B64"
             emit_var WILDCARD_CERT_B64 "$WILDCARD_CERT_B64"
