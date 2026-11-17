@@ -1,6 +1,8 @@
 name: dns-ops
 
 on:
+  push:
+    branches: ["ops/dns-bmg"]
   workflow_dispatch:
     inputs:
       action:
