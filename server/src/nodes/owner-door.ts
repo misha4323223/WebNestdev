@@ -50,14 +50,23 @@ function allowedPath(url: string | undefined): boolean {
   return false;
 }
 
-function filteredHeaders(headers: http.IncomingHttpHeaders, token: string): http.OutgoingHttpHeaders {
+function filteredHeaders(headers: http.IncomingHttpHeaders, token: string, websocket = false): http.OutgoingHttpHeaders {
   const result: http.OutgoingHttpHeaders = {};
   for (const [name, value] of Object.entries(headers)) {
     if (value === undefined) continue;
-    if (name === "connection" || name === "keep-alive" || name === "host") continue;
+    // Для WebSocket нужны оба заголовка: `Connection: Upgrade` и `Upgrade: websocket`.
+    // Без них целевой API видит обычный GET `/ws` и отвечает 404 вместо 101.
+    if (name === "connection") {
+      if (websocket) result[name] = value;
+      continue;
+    }
+    if (name === "upgrade") {
+      if (websocket) result[name] = String(value);
+      continue;
+    }
+    if (name === "keep-alive" || name === "host") continue;
     if (name === "proxy-authenticate" || name === "proxy-authorization") continue;
     if (name === "te" || name === "trailer" || name === "transfer-encoding") continue;
-    if (name === "upgrade") continue;
     if (name === "x-webnestdev-internal" || name === "x-webnestdev-internal-token") continue;
     result[name] = value;
   }
@@ -128,7 +137,7 @@ export async function startOwnerDoor(options: OwnerDoorOptions = {}): Promise<Ow
       return;
     }
     const upstream = net.connect(apiPort, "127.0.0.1", () => {
-      const headers = filteredHeaders(request.headers, token);
+      const headers = filteredHeaders(request.headers, token, true);
       headers.host = "127.0.0.1:" + apiPort;
       const lines = [request.method + " " + (request.url ?? "/") + " HTTP/" + request.httpVersion];
       for (const [name, value] of Object.entries(headers)) {
@@ -158,9 +167,11 @@ export async function startOwnerDoor(options: OwnerDoorOptions = {}): Promise<Ow
   });
   if (!server.listening) return null;
 
-  console.log("[owner] внутренняя дверь слушает " + host + ":" + port + " → 127.0.0.1:" + apiPort);
+  const bound = server.address();
+  const actualPort = bound && typeof bound !== "string" ? bound.port : port;
+  console.log("[owner] внутренняя дверь слушает " + host + ":" + actualPort + " → 127.0.0.1:" + apiPort);
   return {
-    port,
+    port: actualPort,
     close: () =>
       new Promise<void>(resolve => {
         server.close(() => resolve());
