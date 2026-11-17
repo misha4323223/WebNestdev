@@ -185,6 +185,30 @@ Gluster остаётся для `sites`, `data`, сертификатов, custo
   `WEBNESTDEV_API_ADDRESS`; по умолчанию routing и local всё ещё выключены.
 - **Не проверено:** реальные две ВМ, PostgreSQL-миграции на живой базе, Gluster-cutover.
 
+### 17.11.2026, 11:33 UTC — production переведён на локальные workspace
+
+- Инвентаризация: 18 проектов, все закреплены за `node-1`. Живых каталогов на Gluster — 3
+  (34 МБ), у 14 проектов был только cold-архив в S3.
+- Предварительно скопированы все 18 каталогов в `/var/lib/webnestdev/workspaces`, затем
+  остановлены API и runner на обеих нодах, сделан финальный `rsync -a --delete`, в БД у всех
+  проектов выставлены `workspace_mode='local'` и `workspace_epoch=workspace_epoch+1`.
+- 14 архивов восстановлены в локальные каталоги; отметки архивов сняты, чтобы restore не
+  перезаписал уже развёрнутые файлы. Итоговый размер local-корня — 696 МБ.
+- В `deploy/node1|node2/docker-compose.override.yml` включены `WEBNESTDEV_WORKSPACE_MODE=local`
+  и `WEBNESTDEV_OWNER_ROUTING=1`; внутренний токен берётся из уже существующего общего
+  `NODE1_RUNNER_TOKEN`, второй секрет не хранится в git.
+- Docker-брокер раньше разрешал монтирования только из Gluster. Добавлен второй корень
+  `BROKER_LOCAL_WORKSPACE_ROOT`; без этого sandbox-команды падали с отказом политики.
+- Runner на обеих нодах пересоздан с `WEBNESTDEV_WORKSPACE_MODE=local` и локальными каталогами.
+- Проверено: `getSandbox` для всех 18 проектов возвращает локальный корень; команда в песочнице
+  читает `package.json`; `git log` работает; статический preview поднялся (`ready=true`,
+  HTTP 200); публичный `/api/ready` — 200; `node-1` — primary, `node-2` — standby.
+- Полный прогон: сервер 2001 тест (1991 pass, 10 skip, 0 fail), web 25/25, broker 31/31,
+  `tsc` — без ошибок.
+- **Осталось проверить:** полное выключение `node-2`/failover ВМ, container-preview и publish на
+  реальном проекте. Cold-tier может снова архивировать давно не открытые проекты — это
+  штатное поведение local-режима, доступ восстанавливает архив.
+
 ### 17.11.2026, 10:44 UTC — пилотный local-проект на двух нодах
 
 - Добавлен `WEBNESTDEV_LOCAL_PROJECTS` — список ID через запятую. Проект из списка живёт на

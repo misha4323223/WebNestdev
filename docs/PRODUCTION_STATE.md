@@ -4,11 +4,12 @@
 между сессиями.
 Секреты здесь не хранятся: только имена переменных, пути и способы проверки.
 
-**Актуально на 17.11.2026, 10:44 UTC:** обе ноды включены, `node-1` — primary,
-`node-2` — streaming standby; обе на сборке `a88baf7`. Owner-routing и пилотный local-проект
-проверены на реальной паре, затем production возвращён в `shared` с `OWNER_ROUTING=0` и пустым
-`WEBNESTDEV_LOCAL_PROJECTS`; Gluster-том `sandboxes` не менялся. Deploy теперь синхронизирует
-`docker-compose.override.yml` обеих нод. Подробности — в
+**Актуально на 17.11.2026, 11:33 UTC:** обе ноды включены, `node-1` — primary,
+`node-2` — streaming standby; обе на сборке `7c0a47b`. Production работает в
+`WEBNESTDEV_WORKSPACE_MODE=local`, `OWNER_ROUTING=1`; все 18 проектов переведены на локальные
+каталоги `node-1` (696 МБ), 14 cold-архивов восстановлены. Gluster-том `sandboxes` не менялся
+и больше не используется для активных workspace. Deploy синхронизирует override обеих нод;
+токен внутренней двери — общий `NODE1_RUNNER_TOKEN`. Подробности — в
 [`LOCAL_WORKSPACES.md`](LOCAL_WORKSPACES.md).
 
 **SSH-ключ агента:** `/tmp/nestdev-agent` (права `600`), в git не хранится. `/tmp` в workspace
