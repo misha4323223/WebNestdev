@@ -95,6 +95,8 @@ function statusResult(value: unknown, id: string): SandboxHostStatus {
       memoryTotalMb: number(metrics.memoryTotalMb),
       memoryUsedMb: number(metrics.memoryUsedMb),
       containers: number(metrics.containers),
+      diskTotalMb: number(metrics.diskTotalMb),
+      diskFreeMb: number(metrics.diskFreeMb),
     },
     ...(typeof workspace.root === "string"
       ? {

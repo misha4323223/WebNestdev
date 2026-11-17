@@ -1,7 +1,7 @@
 import { readdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import { sandboxRootDir } from "../sandbox/config.js";
-import { listProjectOwners } from "../project-store.js";
+import { listProjectOwnersOnThisNode } from "../project-store.js";
 
 /**
  * Уборка каталогов проектов, которых больше нет в базе.
@@ -113,7 +113,7 @@ export async function sweepOrphanProjects(options: OrphanSweepOptions = {}): Pro
     return result;
   }
 
-  const ids = await (options.projectIds ?? (async () => new Set((await listProjectOwners()).map(p => p.id))))();
+  const ids = await (options.projectIds ?? (async () => new Set((await listProjectOwnersOnThisNode()).map(p => p.id))))();
   // Пустой список — это почти всегда сбой чтения хранилища, а не «все проекты удалили».
   // По такому списку уборка снесла бы рабочие каталоги, поэтому проход отменяется целиком.
   if (ids.size === 0) {

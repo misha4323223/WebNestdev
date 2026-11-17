@@ -1,6 +1,7 @@
 import path from "node:path";
 import { nodeId } from "../nodes/identity.js";
 import type { SandboxConfig } from "./sandbox-types.js";
+import { localWorkspaceDir, workspaceMode } from "./workspace-mode.js";
 
 /**
  * Образ, в котором выполняются команды агента, `npm install` и контейнер предпросмотра.
@@ -68,7 +69,14 @@ export function describeSandboxRuntime(){
   return "рантайм контейнеров: "+runtime+(runtime==="runsc"?" (gVisor)":" (runc)");
 }
 
-const sandboxRoot=path.resolve(process.env.WEBNESTDEV_SANDBOX_DIR??".webnestdev/sandboxes");
+const sharedSandboxRoot=path.resolve(process.env.WEBNESTDEV_SANDBOX_DIR??".webnestdev/sandboxes");
+const localSandboxRoot=localWorkspaceDir();
+/**
+ * Один корень на процесс. В `shared` это прежний Gluster-каталог; в `local` — диск этой ноды.
+ * Режим выбирается при старте и не переключается на лету: смена корня у работающего API означала
+ * бы, что часть запросов уже пишет в другой каталог.
+ */
+const sandboxRoot=workspaceMode()==="local"?localSandboxRoot:sharedSandboxRoot;
 
 /**
  * The same directory as the Docker daemon sees it. A `-v` path is resolved on the host, never
@@ -77,7 +85,9 @@ const sandboxRoot=path.resolve(process.env.WEBNESTDEV_SANDBOX_DIR??".webnestdev/
  * the real files. `WEBNESTDEV_SANDBOX_HOST_DIR` is that host path; without it the directory is
  * taken to be mounted at the same place on both sides, which is the plain-host case.
  */
-const sandboxHostRoot=path.resolve(process.env.WEBNESTDEV_SANDBOX_HOST_DIR??process.env.WEBNESTDEV_SANDBOX_DIR??".webnestdev/sandboxes");
+const sandboxHostRoot=workspaceMode()==="local"
+  ? path.resolve(process.env.WEBNESTDEV_LOCAL_WORKSPACE_HOST_DIR??localSandboxRoot)
+  : path.resolve(process.env.WEBNESTDEV_SANDBOX_HOST_DIR??process.env.WEBNESTDEV_SANDBOX_DIR??".webnestdev/sandboxes");
 
 /** The directory every project lives in — the path health reports free space for. */
 export function sandboxRootDir(){return sandboxRoot}
@@ -105,12 +115,22 @@ export function workspaceMountSource(config:{root:string;hostRoot?:string}){retu
 /** The two paths in one line, for the startup log and `/api/health`. */
 export function describeSandboxPaths(){
   const same=sandboxHostRoot===sandboxRoot;
-  return `каталог песочниц: сервер ${sandboxRoot}`+(same?"":"; для docker — "+sandboxHostRoot);
+  const mode=workspaceMode();
+  return `каталог песочниц (${mode}): сервер ${sandboxRoot}`+(same?"":"; для docker — "+sandboxHostRoot);
 }
 
 /** Memory a project container normally receives; also the reservation used by node placement. */
 export function sandboxMemoryMb(){
   const value=Number(process.env.SANDBOX_MEMORY_MB??1024);
+  return Number.isFinite(value)&&value>0?value:1024;
+}
+
+/**
+ * Сколько свободного диска резервировать под один локальный workspace. Используется только в
+ * `WEBNESTDEV_WORKSPACE_MODE=local`: в shared-режиме диск общий, и это число ничего не решает.
+ */
+export function workspaceDiskMb(){
+  const value=Number(process.env.WEBNESTDEV_WORKSPACE_DISK_MB??1024);
   return Number.isFinite(value)&&value>0?value:1024;
 }
 

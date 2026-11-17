@@ -407,14 +407,25 @@ export async function initializeStorage(): Promise<void> {
     await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("nodes")} (
       id TEXT NOT NULL PRIMARY KEY,
       address TEXT NOT NULL DEFAULT '',
+      api_address TEXT NOT NULL DEFAULT '',
+      workspace_mode TEXT NOT NULL DEFAULT 'shared',
       status TEXT NOT NULL DEFAULT 'online',
       memory_total_mb INTEGER NOT NULL DEFAULT 0,
       memory_used_mb INTEGER NOT NULL DEFAULT 0,
       containers INTEGER NOT NULL DEFAULT 0,
+      disk_total_mb INTEGER NOT NULL DEFAULT 0,
+      disk_free_mb INTEGER NOT NULL DEFAULT 0,
       last_seen_at TEXT NOT NULL,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL
     )`);
+    // Owner-routing и локальные workspace появились позже: `CREATE TABLE IF NOT EXISTS` не
+    // добавит колонки в уже существующую таблицу, поэтому они дополняются отдельно. Значения по
+    // умолчанию сохраняют текущее shared-поведение.
+    await pool.query(`ALTER TABLE ${tbl("nodes")} ADD COLUMN IF NOT EXISTS api_address TEXT NOT NULL DEFAULT ''`);
+    await pool.query(`ALTER TABLE ${tbl("nodes")} ADD COLUMN IF NOT EXISTS workspace_mode TEXT NOT NULL DEFAULT 'shared'`);
+    await pool.query(`ALTER TABLE ${tbl("nodes")} ADD COLUMN IF NOT EXISTS disk_total_mb INTEGER NOT NULL DEFAULT 0`);
+    await pool.query(`ALTER TABLE ${tbl("nodes")} ADD COLUMN IF NOT EXISTS disk_free_mb INTEGER NOT NULL DEFAULT 0`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("nodes")}_status ON ${tbl("nodes")} (status)`);
 
     await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("projects")} (
@@ -424,12 +435,24 @@ export async function initializeStorage(): Promise<void> {
       updated_at TEXT NOT NULL,
       github_json TEXT NOT NULL DEFAULT '',
       user_id TEXT NOT NULL,
-      node TEXT NOT NULL DEFAULT ''
+      node TEXT NOT NULL DEFAULT '',
+      workspace_mode TEXT NOT NULL DEFAULT 'shared',
+      workspace_epoch INTEGER NOT NULL DEFAULT 0,
+      snapshot_key TEXT NOT NULL DEFAULT '',
+      snapshot_at TEXT,
+      workspace_bytes BIGINT NOT NULL DEFAULT 0
     )`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("projects")}_user ON ${tbl("projects")} (user_id)`);
     // Databases created before node pinning get the column here; an empty value means the
     // project predates the registry and is backfilled to the local node at startup.
     await pool.query(`ALTER TABLE ${tbl("projects")} ADD COLUMN IF NOT EXISTS node TEXT NOT NULL DEFAULT ''`);
+    // Метаданные локального workspace: режим, поколение для fencing, последний snapshot и размер.
+    // Пока код их не читает, но схема готова к этапам 3–5 без отдельной миграции в проде.
+    await pool.query(`ALTER TABLE ${tbl("projects")} ADD COLUMN IF NOT EXISTS workspace_mode TEXT NOT NULL DEFAULT 'shared'`);
+    await pool.query(`ALTER TABLE ${tbl("projects")} ADD COLUMN IF NOT EXISTS workspace_epoch INTEGER NOT NULL DEFAULT 0`);
+    await pool.query(`ALTER TABLE ${tbl("projects")} ADD COLUMN IF NOT EXISTS snapshot_key TEXT NOT NULL DEFAULT ''`);
+    await pool.query(`ALTER TABLE ${tbl("projects")} ADD COLUMN IF NOT EXISTS snapshot_at TEXT`);
+    await pool.query(`ALTER TABLE ${tbl("projects")} ADD COLUMN IF NOT EXISTS workspace_bytes BIGINT NOT NULL DEFAULT 0`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("projects")}_node ON ${tbl("projects")} (node)`);
 
     // Статический хостинг: сайт один на проект, релизы неизменяемы. `node_id` — узел, на

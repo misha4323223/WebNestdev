@@ -443,6 +443,19 @@ services:
       # Явно, а не через молчаливый фолбэк: если это значение когда-нибудь разойдётся с
       # монтированием ниже, сервер отдаст контейнерам правильный путь вместо угадывания.
       WEBNESTDEV_SANDBOX_HOST_DIR: ${SANDBOX_DIR:-/var/lib/webnestdev/sandboxes}
+      # Режим хранения workspace. По умолчанию shared (Gluster), local включается только после
+      # проверки owner-routing. В local SANDBOX_DIR должен указывать на локальный диск ноды.
+      WEBNESTDEV_WORKSPACE_MODE: ${WEBNESTDEV_WORKSPACE_MODE:-shared}
+      WEBNESTDEV_LOCAL_WORKSPACE_DIR: ${WEBNESTDEV_LOCAL_WORKSPACE_DIR:-/var/lib/webnestdev/workspaces}
+      WEBNESTDEV_LOCAL_WORKSPACE_HOST_DIR: ${WEBNESTDEV_LOCAL_WORKSPACE_HOST_DIR:-/var/lib/webnestdev/workspaces}
+      WEBNESTDEV_OWNER_ROUTING: ${WEBNESTDEV_OWNER_ROUTING:-0}
+      # Горячие snapshot: 15 минут, только для незанятых local-проектов. 0 выключает.
+      WORKSPACE_SNAPSHOT_INTERVAL_MS: ${WORKSPACE_SNAPSHOT_INTERVAL_MS:-900000}
+      WORKSPACE_SNAPSHOT_MIN_AGE_MS: ${WORKSPACE_SNAPSHOT_MIN_AGE_MS:-600000}
+      WEBNESTDEV_INTERNAL_API_PORT: ${WEBNESTDEV_INTERNAL_API_PORT:-8791}
+      WEBNESTDEV_INTERNAL_TOKEN: ${WEBNESTDEV_INTERNAL_TOKEN:-}
+      # Приватный адрес API этой ноды для owner-routing; пусто — маршрутизация не настроена.
+      WEBNESTDEV_API_ADDRESS: ${WEBNESTDEV_API_ADDRESS:-}
       # Локальный кэш зависимостей: на каждой ноде свой, вне Gluster. Путь должен совпадать
       # с BROKER_PREVIEW_CACHE_ROOT и с монтированием ниже — Docker разбирает его на хосте.
       WEBNESTDEV_PREVIEW_CACHE_DIR: ${PREVIEW_CACHE_DIR:-/var/lib/webnestdev/preview-cache}

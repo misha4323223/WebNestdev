@@ -975,7 +975,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       let settled=false;
       closedByUsRef.current=false;
       const maxAttempts=3;
-      const socket=createAgentSocket(event=>{
+      const socket=createAgentSocket(projectId,event=>{
       // Строка ожидания снимается первым же признаком работы: ответом, размышлением или действием.
       if(RETRY_NOTICE_CLEAR_EVENTS.has(event.type))clearRetryNotice();
       if(event.type==="message.delta")updateMessages(current=>{

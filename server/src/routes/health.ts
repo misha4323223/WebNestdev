@@ -22,6 +22,7 @@ import { egressInfo } from "../egress/proxy-health.js";
 import { execProxyQueueStats } from "../preview/exec-proxy.js";
 import { agentStepLimit,contextBudgetTokensFor,contextMaxMessagesFor,DEFAULT_CHARS_PER_TOKEN } from "../agent/context-budget.js";
 import { sandboxHostRootDir,sandboxRootDir,sandboxRuntime } from "../sandbox/config.js";
+import { workspaceSettings } from "../sandbox/workspace-mode.js";
 import { lastSandboxMountCheck } from "../sandbox/sandbox-check.js";
 import { nodeId } from "../nodes/identity.js";
 import { diskStatus, memoryStatus } from "../health/host-metrics.js";
@@ -61,6 +62,9 @@ async function dependencyStatus(){
     // каталог, контейнеры монтируют другой» выглядит как жалоба агента на пропавшие файлы,
     // а не как ошибка выкатки с понятным исправлением.
     sandbox:{...sandbox,runtime:sandboxRuntime(),sandboxDir:sandboxRootDir(),sandboxHostDir:sandboxHostRootDir(),mount:lastSandboxMountCheck()},
+    // Режим хранения workspace и готовность owner-маршрутизации. Секретов здесь нет: токен
+    // показывается только как факт настройки, чтобы диагностика не превращалась в утечку.
+    workspace: workspaceSettings(),
   };
 }
 

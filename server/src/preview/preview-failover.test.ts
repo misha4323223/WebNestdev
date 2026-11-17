@@ -16,10 +16,14 @@ function node(overrides: Partial<SandboxNode> = {}): SandboxNode {
   return {
     id: "node-1",
     address: "10.0.0.4:8790",
+    apiAddress: "10.0.0.4:8791",
+    workspaceMode: "shared",
     status: "online",
     memoryTotalMb: 4096,
     memoryUsedMb: 512,
     containers: 0,
+    diskTotalMb: 19_000,
+    diskFreeMb: 12_000,
     lastSeenAt: new Date(NOW - 10_000).toISOString(),
     createdAt: new Date(NOW - 86_400_000).toISOString(),
     updatedAt: new Date(NOW - 10_000).toISOString(),
@@ -88,6 +92,7 @@ function baseDeps(overrides: Partial<FailoverSweepDeps> = {}): FailoverSweepDeps
       const current = projectRows.find(item => item.id === projectId);
       return current && current.userId === userId ? { ...current, node: nodeId } : null;
     },
+    restoreLost: async () => undefined,
     hasJobs: () => false,
     runActive: async () => false,
     log: () => undefined,

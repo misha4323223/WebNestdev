@@ -14,3 +14,11 @@ export function nodeId() {
 export function nodeAddress() {
   return (process.env.WEBNESTDEV_NODE_ADDRESS ?? "").trim();
 }
+
+/**
+ * Private address of the internal owner-routing API. Empty means routing is not configured for this
+ * node; the owner router must refuse to forward instead of guessing a public/Caddy address.
+ */
+export function nodeApiAddress() {
+  return (process.env.WEBNESTDEV_API_ADDRESS ?? "").trim();
+}

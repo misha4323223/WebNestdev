@@ -1,5 +1,5 @@
 import { mkdir, stat } from "node:fs/promises";
-import { getProject, reassignProjectNode } from "../project-store.js";
+import { getProject, reassignProjectNode, WorkspaceMigrationRequiredError } from "../project-store.js";
 import { chooseProjectNode, isNodeFresh } from "../nodes/placement.js";
 import { getNode } from "../nodes/node-store.js";
 import { hydratePreview } from "../preview/preview-store.js";
@@ -8,7 +8,8 @@ import { listSandboxJobs } from "./jobs.js";
 import { isRunActiveAnywhere } from "../agent/run-activity.js";
 import { ensureProjectWorkspace, noteProjectAccess } from "../storage/project-archive.js";
 import { buildSandboxConfig,sandboxMemoryMb,sandboxRootPath } from "./config.js";
-import { resolveSandboxHost, SandboxNodeUnavailableError, SharedWorkspaceRequiredError } from "./host.js";
+import { resolveSandboxHost, SandboxNodeUnavailableError, SharedWorkspaceRequiredError, WorkspaceOwnerMismatchError } from "./host.js";
+import { workspaceMode } from "./workspace-mode.js";
 import { nodeId } from "../nodes/identity.js";
 import { clearRootOwnedBuildCaches,openDirForSandbox,openGitForSandbox,openTreeForSandbox } from "./permissions.js";
 import type { SandboxConfig } from "./sandbox-types.js";
@@ -58,6 +59,13 @@ export async function getSandbox(projectId:string,userId:string):Promise<Sandbox
   if(!project || project.userId!==userId)throw new Error("Проект не найден");
   const root=sandboxRootPath(projectId);
   let node=project.node||nodeId();
+  const workspaceEpoch=Math.max(0,Math.trunc(project.workspaceEpoch??0));
+  // В локальном режиме чужой проект не открывается никогда, даже если старый флаг
+  // WEBNESTDEV_SHARED_SANDBOX=1 остался в окружении. Запрос обязан прийти на владельца через
+  // owner-routing; локальный fallback означал бы запись в пустой каталог.
+  if(workspaceMode()==="local" && node!==nodeId()){
+    throw new WorkspaceOwnerMismatchError(node);
+  }
   if(node!==nodeId()&&process.env.WEBNESTDEV_SHARED_SANDBOX!=="1"){
     // Check before touching the workspace: restoring a remote project's archive into the API's
     // local disk would be a silent wrong-location write that only appears later on the runner.
@@ -86,7 +94,7 @@ export async function getSandbox(projectId:string,userId:string):Promise<Sandbox
     // Recovery after a lost node is opt-in: a transient heartbeat gap must not move a project
     // with a live preview. The shared workspace makes the file move unnecessary; only the pin
     // changes, and only after we prove no preview/job owns a container on the old node.
-    if(process.env.WEBNESTDEV_AUTO_MOVE_PROJECTS==="1"){
+    if(workspaceMode()!=="local" && process.env.WEBNESTDEV_AUTO_MOVE_PROJECTS==="1"){
       const current=await getNode(node);
       if(!current||current.status==="offline"||!isNodeFresh(current)){
         const preview=await hydratePreview(projectId);
@@ -123,5 +131,12 @@ export async function getSandbox(projectId:string,userId:string):Promise<Sandbox
   // раз при первом доступе, а перед каждым обращением: иначе `git add`/`git commit` в контейнере
   // снова упираются в `.git/index: Permission denied`.
   await openGitForSandbox(root);
-  return buildSandboxConfig(projectId,root,node,userId);
+  // Пока шла подготовка (restore, права, git), проект могли перенести. Возвращать конфиг
+  // со старым epoch нельзя: следующий шаг писал бы в уже чужой workspace.
+  const current=await getProject(projectId);
+  const currentEpoch=Math.max(0,Math.trunc(current?.workspaceEpoch??0));
+  if(!current || (current.node||nodeId())!==node || currentEpoch!==workspaceEpoch){
+    throw new WorkspaceMigrationRequiredError("Проект перенесён во время подготовки workspace: повторите запрос");
+  }
+  return {...buildSandboxConfig(projectId,root,node,userId),workspaceEpoch};
 }

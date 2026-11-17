@@ -117,6 +117,10 @@ export async function registerAgentWebSocket(app:FastifyInstance,runtime=new Age
         const message=JSON.parse(raw.toString()) as {type?:string;request?:unknown};
         if(message.type!=="agent.run")throw new Error("Неизвестный тип сообщения");
         const parsed=runSchema.parse(message.request);
+        // Owner-routing выбирает ноду по projectId из query до upgrade. Если query и тело
+        // расходятся, сокет мог бы уйти владельцу одного проекта, а работать с файлами другого.
+        const routedProject=new URL(request.url??"/","http://local").searchParams.get("projectId")?.trim();
+        if(routedProject&&routedProject!==parsed.projectId)throw new Error("projectId в сокете не совпадает с запросом агента");
         const payloadSize=Buffer.byteLength(JSON.stringify(parsed),"utf8");
         if(payloadSize>2_000_000)throw new Error("Запрос агента слишком большой");
         const project=await getProject(parsed.projectId);

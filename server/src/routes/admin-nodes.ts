@@ -111,10 +111,14 @@ export async function registerAdminNodeRoutes(app: FastifyInstance) {
     const node = await upsertNode({
       id: body.id,
       address: body.address.replace(/\/+$/, ""),
+      apiAddress: existing?.apiAddress ?? "",
+      workspaceMode: existing?.workspaceMode ?? "shared",
       status: body.status ?? existing?.status ?? "online",
       memoryTotalMb: existing?.memoryTotalMb ?? 0,
       memoryUsedMb: existing?.memoryUsedMb ?? 0,
       containers: existing?.containers ?? 0,
+      diskTotalMb: existing?.diskTotalMb ?? 0,
+      diskFreeMb: existing?.diskFreeMb ?? 0,
       // A new registration has not been polled yet: lastSeenAt stays at registration time and
       // placement's freshness window decides when it is eligible.
       lastSeenAt: existing?.lastSeenAt ?? now,

@@ -6,7 +6,8 @@ import { addressOnNetworks, firstContainerAddress, previewNetworks } from "./pre
 import { settlePreviewAddress } from "./preview-address.js";
 import { previewDepsForHost } from "./node-deps.js";
 import { previewOwnerAddressForNode } from "./preview-owner.js";
-import { resolveSandboxHost } from "../sandbox/host.js";
+import { resolveSandboxHost, WorkspaceOwnerMismatchError } from "../sandbox/host.js";
+import { workspaceMode } from "../sandbox/workspace-mode.js";
 import { nodeId } from "../nodes/identity.js";
 import { resolvePreviewCommand } from "./preview-command.js";
 import { ensureProjectDependencies } from "./dependencies.js";
@@ -144,6 +145,11 @@ export async function startPreviewProcess(config: SandboxConfig, options: StartP
   const image = sandboxImage();
   // The preview belongs to the project's node. Resolve it before any Docker call: a missing
   // runner must be a clear error, not a container silently started on the API machine.
+  // В локальном режиме preview стартует только там, где лежат файлы. Если запрос не был
+  // маршрутизирован, лучше явная ошибка, чем контейнер с пустым /workspace.
+  if (workspaceMode() === "local" && (config.node || nodeId()) !== nodeId()) {
+    throw new WorkspaceOwnerMismatchError(config.node || nodeId());
+  }
   const host = await resolveSandboxHost(config.node || nodeId());
   if (dependencyCacheEnabled()) await ensureDependencyCache(host, config.projectId);
   const docker = (args: string[], timeoutMs?: number) => host.docker(args, timeoutMs);

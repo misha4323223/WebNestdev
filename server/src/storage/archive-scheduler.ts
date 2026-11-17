@@ -1,5 +1,5 @@
 import { stat } from "node:fs/promises";
-import { listProjectOwners } from "../project-store.js";
+import { listProjectOwnersOnThisNode } from "../project-store.js";
 import { sandboxRootDir, sandboxRootPath } from "../sandbox/config.js";
 import { readProjectSizes } from "../account/storage-quota.js";
 import { isRunActiveAnywhere } from "../agent/run-activity.js";
@@ -190,7 +190,7 @@ const defaultDeps: ArchiveSweepDeps = {
       return false;
     }
   },
-  listProjects: () => listProjectOwners(),
+  listProjects: () => listProjectOwnersOnThisNode(),
   readSizes: () => readProjectSizes(),
   isProjectActive: projectId => isRunActiveAnywhere(projectId),
   hasPreview: async projectId => Boolean(await hydratePreview(projectId)),

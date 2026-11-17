@@ -132,6 +132,28 @@ export function projectArchiveKey(prefix: string, userId: string, projectId: str
   return [normalizePrefix(prefix), "projects", userId, projectId, "workspace.tar.gz"].join("/");
 }
 
+/**
+ * Горячий snapshot — отдельный ключ от холодного архива. Холодный архив удаляет рабочую папку;
+ * snapshot этого делать не имеет права, и смешивать их в одном ключе нельзя.
+ */
+export function projectSnapshotKey(
+  prefix: string,
+  userId: string,
+  projectId: string,
+  createdAt: string,
+  checksum: string,
+) {
+  const stamp = createdAt.replace(/[^0-9A-Za-z]/g, "");
+  return [
+    normalizePrefix(prefix),
+    "projects",
+    userId,
+    projectId,
+    "snapshots",
+    stamp + "-" + checksum.slice(0, 16) + ".tar.gz",
+  ].join("/");
+}
+
 /** Путь для подписи и запроса. Каждый сегмент кодируется по RFC 3986, слэши остаются слэшами. */
 export function objectPathFor(config: Pick<ObjectStoreConfig, "bucket">, key: string) {
   const clean = key.replace(/^\/+/, "");

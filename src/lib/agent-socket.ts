@@ -74,10 +74,14 @@ export type AgentSocketEvent={
   pushError?:string;
 };
 
-export function createAgentSocket(onEvent:(event:AgentSocketEvent)=>void,onError:()=>void){
+export function createAgentSocket(projectId:string,onEvent:(event:AgentSocketEvent)=>void,onError:()=>void){
   const configured=import.meta.env.VITE_WS_URL as string|undefined;
   const protocol=window.location.protocol==="https:"?"wss:":"ws:";
-  const socket=new WebSocket(configured||protocol+"//"+window.location.host+"/ws");
+  const base=configured||protocol+"//"+window.location.host+"/ws";
+  // projectId нужен до upgrade: по нему owner-routing выбирает ноду-владельца. Старый сервер
+  // лишний query игнорирует, поэтому это совместимое изменение.
+  const separator=base.includes("?")?"&":"?";
+  const socket=new WebSocket(base+separator+"projectId="+encodeURIComponent(projectId));
   socket.onmessage=event=>onEvent(JSON.parse(event.data) as AgentSocketEvent);
   socket.onerror=onError;
   return socket;

@@ -1,11 +1,14 @@
-import { memoryStatus } from "../health/host-metrics.js";
+import { diskStatus, memoryStatus } from "../health/host-metrics.js";
 import { runDockerCli } from "../sandbox/docker/cli.js";
-import { nodeAddress, nodeId } from "./identity.js";
+import { sandboxRootDir } from "../sandbox/config.js";
+import { workspaceMode } from "../sandbox/workspace-mode.js";
+import { nodeAddress, nodeApiAddress, nodeId } from "./identity.js";
 import { registerConfiguredRemoteNodes, startRemoteNodeHeartbeat } from "./remote-heartbeat.js";
 import { startProjectRebalance } from "./rebalance.js";
 import {
   backfillProjectNodes,
   getNode,
+  updateNodeIdentity,
   updateNodeMetrics,
   upsertNode,
   type SandboxNode,
@@ -24,6 +27,8 @@ export type NodeMetrics = {
   memoryTotalMb: number;
   memoryUsedMb: number;
   containers: number;
+  diskTotalMb: number;
+  diskFreeMb: number;
 };
 
 function nonNegative(value: number): number {
@@ -42,7 +47,14 @@ export async function localNodeMetrics(): Promise<NodeMetrics> {
   } catch {
     // Docker is an execution dependency, not a prerequisite for serving the API.
   }
-  return { memoryTotalMb: total, memoryUsedMb: used, containers };
+  const disk = await diskStatus(sandboxRootDir());
+  return {
+    memoryTotalMb: total,
+    memoryUsedMb: used,
+    containers,
+    diskTotalMb: disk ? Math.round(disk.totalMb) : 0,
+    diskFreeMb: disk ? Math.round(disk.freeMb) : 0,
+  };
 }
 
 let registration: Promise<SandboxNode> | null = null;
@@ -55,6 +67,8 @@ async function registerLocalNode(): Promise<SandboxNode> {
   return upsertNode({
     id,
     address: nodeAddress(),
+    apiAddress: nodeApiAddress(),
+    workspaceMode: workspaceMode(),
     // A restart must not silently undo an operator's drain or offline decision.
     status: existing?.status ?? "online",
     ...metrics,
@@ -82,7 +96,12 @@ export async function ensureLocalNode(): Promise<SandboxNode> {
       lastSeenAt: now,
       updatedAt: now,
     });
-    if (touched) return touched;
+    if (touched) {
+      return (await updateNodeIdentity(nodeId(), {
+        apiAddress: nodeApiAddress(),
+        workspaceMode: workspaceMode(),
+      })) ?? touched;
+    }
   }
   if (registration) {
     const pending = await registration.catch(() => null);
@@ -108,13 +127,18 @@ export async function heartbeatLocalNode(): Promise<SandboxNode> {
   if (!existing) return ensureLocalNode();
   const metrics = await localNodeMetrics();
   const now = new Date().toISOString();
-  return (await updateNodeMetrics({
+  const refreshed = await updateNodeMetrics({
     ...existing,
     address: nodeAddress(),
     ...metrics,
     lastSeenAt: now,
     updatedAt: now,
-  })) ?? ensureLocalNode();
+  });
+  if (!refreshed) return ensureLocalNode();
+  return (await updateNodeIdentity(nodeId(), {
+    apiAddress: nodeApiAddress(),
+    workspaceMode: workspaceMode(),
+  })) ?? refreshed;
 }
 
 const DEFAULT_HEARTBEAT_MS = 30_000;

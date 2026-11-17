@@ -1,4 +1,4 @@
-import { memoryStatus } from "../health/host-metrics.js";
+import { diskStatus, memoryStatus } from "../health/host-metrics.js";
 import { nodeId } from "../nodes/identity.js";
 import { sandboxStatus } from "../docker-sandbox.js";
 import { runDockerCli } from "../sandbox/docker/cli.js";
@@ -46,7 +46,14 @@ export async function runnerMetrics(): Promise<RunnerMetrics> {
     // A runner without Docker still answers status: the API reports the node as unavailable
     // without taking down its own process.
   }
-  return { memoryTotalMb: total, memoryUsedMb: used, containers };
+  const disk = await diskStatus(sandboxRootDir());
+  return {
+    memoryTotalMb: total,
+    memoryUsedMb: used,
+    containers,
+    diskTotalMb: disk ? Math.round(disk.totalMb) : 0,
+    diskFreeMb: disk ? Math.round(disk.freeMb) : 0,
+  };
 }
 
 export async function runnerStatus(): Promise<RunnerStatus> {

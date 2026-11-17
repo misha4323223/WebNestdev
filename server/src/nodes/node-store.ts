@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { getTable, initializeStorage, isYdbEnabled, ydbQuery } from "../storage/pg.js";
+import type { WorkspaceMode } from "../sandbox/workspace-mode.js";
 import { nodeId } from "./identity.js";
 
 /**
@@ -18,10 +19,16 @@ export type SandboxNode = {
   id: string;
   /** Empty for the local node; a remote runner will publish its private address here. */
   address: string;
+  /** Private address of this node's internal API, used by owner-routing. Empty until configured. */
+  apiAddress: string;
+  /** `shared` keeps the current Gluster workspace; `local` means files live on this node only. */
+  workspaceMode: WorkspaceMode;
   status: SandboxNodeStatus;
   memoryTotalMb: number;
   memoryUsedMb: number;
   containers: number;
+  diskTotalMb: number;
+  diskFreeMb: number;
   lastSeenAt: string;
   createdAt: string;
   updatedAt: string;
@@ -29,16 +36,21 @@ export type SandboxNode = {
 
 export type NodeMetricsUpdate = Pick<
   SandboxNode,
-  "id" | "address" | "memoryTotalMb" | "memoryUsedMb" | "containers" | "lastSeenAt" | "updatedAt"
+  "id" | "address" | "memoryTotalMb" | "memoryUsedMb" | "containers" |
+  "diskTotalMb" | "diskFreeMb" | "lastSeenAt" | "updatedAt"
 >;
 
 type NodeRow = {
   id: string;
   address: string | null;
+  api_address: string | null;
+  workspace_mode: string | null;
   status: string;
   memory_total_mb: number | string | null;
   memory_used_mb: number | string | null;
   containers: number | string | null;
+  disk_total_mb: number | string | null;
+  disk_free_mb: number | string | null;
   last_seen_at: string;
   created_at: string;
   updated_at: string;
@@ -76,10 +88,14 @@ function parseNode(raw: unknown): SandboxNode | null {
   return {
     id,
     address: typeof value.address === "string" ? value.address.trim() : "",
+    apiAddress: typeof value.apiAddress === "string" ? value.apiAddress.trim() : "",
+    workspaceMode: value.workspaceMode === "local" ? "local" : "shared",
     status: status(value.status),
     memoryTotalMb: integer(value.memoryTotalMb),
     memoryUsedMb: integer(value.memoryUsedMb),
     containers: integer(value.containers),
+    diskTotalMb: integer(value.diskTotalMb),
+    diskFreeMb: integer(value.diskFreeMb),
     lastSeenAt,
     createdAt,
     updatedAt,
@@ -90,10 +106,14 @@ function rowToNode(row: NodeRow): SandboxNode {
   return {
     id: row.id,
     address: row.address ?? "",
+    apiAddress: row.api_address ?? "",
+    workspaceMode: row.workspace_mode === "local" ? "local" : "shared",
     status: status(row.status),
     memoryTotalMb: integer(row.memory_total_mb),
     memoryUsedMb: integer(row.memory_used_mb),
     containers: integer(row.containers),
+    diskTotalMb: integer(row.disk_total_mb),
+    diskFreeMb: integer(row.disk_free_mb),
     lastSeenAt: row.last_seen_at,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -139,8 +159,8 @@ export async function listNodes(): Promise<SandboxNode[]> {
   await initializeStorage();
   const table = ydbQuery().identifier(getTable("nodes"));
   const [rows] = await ydbQuery()<NodeRow[]>`
-    SELECT id, address, status, memory_total_mb, memory_used_mb, containers,
-           last_seen_at, created_at, updated_at
+    SELECT id, address, api_address, workspace_mode, status, memory_total_mb, memory_used_mb,
+           containers, disk_total_mb, disk_free_mb, last_seen_at, created_at, updated_at
       FROM ${table}
      ORDER BY id`;
   return rows.map(rowToNode);
@@ -153,8 +173,8 @@ export async function getNode(id: string): Promise<SandboxNode | null> {
   await initializeStorage();
   const table = ydbQuery().identifier(getTable("nodes"));
   const [rows] = await ydbQuery()<NodeRow[]>`
-    SELECT id, address, status, memory_total_mb, memory_used_mb, containers,
-           last_seen_at, created_at, updated_at
+    SELECT id, address, api_address, workspace_mode, status, memory_total_mb, memory_used_mb,
+           containers, disk_total_mb, disk_free_mb, last_seen_at, created_at, updated_at
       FROM ${table}
      WHERE id = ${id}
      LIMIT 1`;
@@ -169,10 +189,14 @@ export async function upsertNode(node: SandboxNode): Promise<SandboxNode> {
   const normalized: SandboxNode = {
     ...node,
     address: node.address.trim(),
+    apiAddress: node.apiAddress.trim(),
+    workspaceMode: node.workspaceMode === "local" ? "local" : "shared",
     status: node.status,
     memoryTotalMb: integer(node.memoryTotalMb),
     memoryUsedMb: integer(node.memoryUsedMb),
     containers: integer(node.containers),
+    diskTotalMb: integer(node.diskTotalMb),
+    diskFreeMb: integer(node.diskFreeMb),
   };
   if (!isYdbEnabled()) {
     return withFileLock(async () => {
@@ -188,19 +212,24 @@ export async function upsertNode(node: SandboxNode): Promise<SandboxNode> {
   const table = ydbQuery().identifier(getTable("nodes"));
   await ydbQuery()`
     INSERT INTO ${table} (
-      id, address, status, memory_total_mb, memory_used_mb, containers,
-      last_seen_at, created_at, updated_at
+      id, address, api_address, workspace_mode, status, memory_total_mb, memory_used_mb, containers,
+      disk_total_mb, disk_free_mb, last_seen_at, created_at, updated_at
     ) VALUES (
-      ${normalized.id}, ${normalized.address}, ${normalized.status},
-      ${normalized.memoryTotalMb}, ${normalized.memoryUsedMb}, ${normalized.containers},
-      ${normalized.lastSeenAt}, ${normalized.createdAt}, ${normalized.updatedAt}
+      ${normalized.id}, ${normalized.address}, ${normalized.apiAddress}, ${normalized.workspaceMode},
+      ${normalized.status}, ${normalized.memoryTotalMb}, ${normalized.memoryUsedMb}, ${normalized.containers},
+      ${normalized.diskTotalMb}, ${normalized.diskFreeMb}, ${normalized.lastSeenAt},
+      ${normalized.createdAt}, ${normalized.updatedAt}
     )
     ON CONFLICT (id) DO UPDATE SET
       address = EXCLUDED.address,
+      api_address = EXCLUDED.api_address,
+      workspace_mode = EXCLUDED.workspace_mode,
       status = EXCLUDED.status,
       memory_total_mb = EXCLUDED.memory_total_mb,
       memory_used_mb = EXCLUDED.memory_used_mb,
       containers = EXCLUDED.containers,
+      disk_total_mb = EXCLUDED.disk_total_mb,
+      disk_free_mb = EXCLUDED.disk_free_mb,
       last_seen_at = EXCLUDED.last_seen_at,
       updated_at = EXCLUDED.updated_at`;
   return normalized;
@@ -217,6 +246,8 @@ export async function updateNodeMetrics(update: NodeMetricsUpdate): Promise<Sand
     memoryTotalMb: integer(update.memoryTotalMb),
     memoryUsedMb: integer(update.memoryUsedMb),
     containers: integer(update.containers),
+    diskTotalMb: integer(update.diskTotalMb),
+    diskFreeMb: integer(update.diskFreeMb),
     lastSeenAt: update.lastSeenAt,
     updatedAt: update.updatedAt,
   };
@@ -239,11 +270,53 @@ export async function updateNodeMetrics(update: NodeMetricsUpdate): Promise<Sand
            memory_total_mb = ${normalized.memoryTotalMb},
            memory_used_mb = ${normalized.memoryUsedMb},
            containers = ${normalized.containers},
+           disk_total_mb = ${normalized.diskTotalMb},
+           disk_free_mb = ${normalized.diskFreeMb},
            last_seen_at = ${normalized.lastSeenAt},
            updated_at = ${normalized.updatedAt}
      WHERE id = ${normalized.id}
-     RETURNING id, address, status, memory_total_mb, memory_used_mb, containers,
-               last_seen_at, created_at, updated_at`;
+     RETURNING id, address, api_address, workspace_mode, status, memory_total_mb, memory_used_mb,
+               containers, disk_total_mb, disk_free_mb, last_seen_at, created_at, updated_at`;
+  return rows[0] ? rowToNode(rows[0]) : null;
+}
+
+/**
+ * Identity fields are separate from observed metrics: a heartbeat may refresh them, but it must not
+ * rewrite `status` or reset capacity. Used when a node starts with a new API address or workspace
+ * mode and the existing registry row already exists.
+ */
+export async function updateNodeIdentity(
+  id: string,
+  identity: { apiAddress: string; workspaceMode: WorkspaceMode },
+): Promise<SandboxNode | null> {
+  const apiAddress = identity.apiAddress.trim();
+  const mode: WorkspaceMode = identity.workspaceMode === "local" ? "local" : "shared";
+  if (!isYdbEnabled()) {
+    return withFileLock(async () => {
+      const nodes = await readFileNodes();
+      const index = nodes.findIndex(node => node.id === id);
+      if (index < 0) return null;
+      const updated = {
+        ...nodes[index],
+        apiAddress,
+        workspaceMode: mode,
+        updatedAt: new Date().toISOString(),
+      };
+      nodes[index] = updated;
+      await writeFileNodes(nodes);
+      return updated;
+    });
+  }
+  await initializeStorage();
+  const table = ydbQuery().identifier(getTable("nodes"));
+  const [rows] = await ydbQuery()<NodeRow[]>`
+    UPDATE ${table}
+       SET api_address = ${apiAddress},
+           workspace_mode = ${mode},
+           updated_at = ${new Date().toISOString()}
+     WHERE id = ${id}
+     RETURNING id, address, api_address, workspace_mode, status, memory_total_mb, memory_used_mb,
+               containers, disk_total_mb, disk_free_mb, last_seen_at, created_at, updated_at`;
   return rows[0] ? rowToNode(rows[0]) : null;
 }
 
@@ -265,8 +338,8 @@ export async function setNodeStatus(id: string, next: SandboxNodeStatus): Promis
     UPDATE ${table}
        SET status = ${next}, updated_at = ${new Date().toISOString()}
      WHERE id = ${id}
-     RETURNING id, address, status, memory_total_mb, memory_used_mb, containers,
-               last_seen_at, created_at, updated_at`;
+     RETURNING id, address, api_address, workspace_mode, status, memory_total_mb, memory_used_mb,
+               containers, disk_total_mb, disk_free_mb, last_seen_at, created_at, updated_at`;
   return rows[0] ? rowToNode(rows[0]) : null;
 }
 

@@ -61,6 +61,9 @@ export type RunnerMetrics = {
   memoryTotalMb: number;
   memoryUsedMb: number;
   containers: number;
+  /** Ёмкость диска, где лежат workspace. 0 — метрика недоступна. */
+  diskTotalMb: number;
+  diskFreeMb: number;
 };
 
 export type RunnerStatus = {

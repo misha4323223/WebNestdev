@@ -27,15 +27,19 @@ import { describeTrustProxy, trustProxyOption } from "./security/client-ip.js";
 import { registerSameOriginGuard } from "./security/same-origin.js";
 import { registerSecurityHeaders } from "./security/headers.js";
 import { describeSandboxPaths, describeSandboxRuntime, npmInstallTimeoutMs, sandboxRuntime } from "./sandbox/config.js";
+import { describeWorkspaceSettings } from "./sandbox/workspace-mode.js";
 import { dockerCliRunner, productionAbuseWatch } from "./security/abuse-watch.js";
 import { initializeNodeRegistry, stopNodeHeartbeat } from "./nodes/local-node.js";
 import { stopRemoteNodeHeartbeat } from "./nodes/remote-heartbeat.js";
 import { describeProjectRebalance, stopProjectRebalance } from "./nodes/rebalance.js";
 import { NoCapacityError, NoSandboxNodeError } from "./nodes/placement.js";
-import { SandboxNodeUnavailableError, SharedWorkspaceRequiredError } from "./sandbox/host.js";
+import { registerOwnerRouting, registerOwnerWebSocket } from "./nodes/owner-router.js";
+import { startOwnerDoor } from "./nodes/owner-door.js";
+import { internalApiTokenConfigured, ownerRoutingEnabled } from "./sandbox/workspace-mode.js";
+import { SandboxNodeUnavailableError, SharedWorkspaceRequiredError, WorkspaceOwnerMismatchError } from "./sandbox/host.js";
 import { configureDockerEndpoint, describeDockerEndpoint } from "./sandbox/docker/endpoint.js";
 import { describeSandboxMount,verifySandboxMount } from "./sandbox/sandbox-check.js";
-import { ensureDataDir } from "./project-store.js";
+import { ensureDataDir, WorkspaceMigrationRequiredError } from "./project-store.js";
 import { clearAllPreviewSecrets } from "./secrets/preview-secrets.js";
 import { cleanupAbandonedTemp } from "./storage/temp-cleanup.js";
 import { registerHealthRoutes } from "./routes/health.js";
@@ -87,6 +91,8 @@ import { registerAdminAiImageRoutes } from "./routes/admin-ai-image.js";
 import { registerAdminAiModelsRoutes } from "./routes/admin-ai-models.js";
 import { registerAdminSearchRoutes } from "./routes/admin-search.js";
 import { registerAdminProjectRoutes } from "./routes/admin-projects.js";
+import { registerWorkspaceMigrationRoutes } from "./routes/workspace-migration.js";
+import { registerInternalWorkspaceRoutes } from "./routes/internal-workspace.js";
 import { registerAdminPreviewResetRoutes } from "./routes/admin-preview.js";
 import { registerAdminProjectPermissionsRoutes } from "./routes/admin-project-permissions.js";
 import { registerHostingRoutes } from "./routes/hosting.js";
@@ -111,6 +117,7 @@ import { startStorageReconcileScheduler } from "./account/storage-scheduler.js";
 import { describeObjectStore } from "./storage/object-store.js";
 import { describeMediaConfig, mediaConfigFromEnv } from "./media/media-store.js";
 import { startProjectArchiveScheduler } from "./storage/archive-scheduler.js";
+import { startWorkspaceSnapshotScheduler, stopWorkspaceSnapshotScheduler } from "./storage/snapshot-scheduler.js";
 import { startOrphanProjectSweeper } from "./storage/orphan-sweeper.js";
 import { archiveProject as archiveProjectToBucket, runQueuedRestore } from "./storage/project-archive.js";
 import { startJobWorker } from "./jobs/worker.js";
@@ -274,6 +281,9 @@ void (async () => {
 // сразу, а не после того, как агент пожалуется на пустой терминал.
 console.log("[sandbox] " + describeSandboxPaths());
 console.log("[sandbox] " + describeSandboxRuntime());
+// Режим workspace печатается отдельно: по одной строке видно, остались ли проекты на общем
+// томе или включён локальный режим, и готова ли owner-маршрутизация. Токен не печатается.
+console.log("[sandbox] " + describeWorkspaceSettings());
 // Установка зависимостей идёт дольше обычной команды; без этой строки «почему install ждал
 // десять минут» и «где менять предел» ищут в коде, а не в логе старта.
 console.log("[sandbox] установка зависимостей: до " + Math.round(npmInstallTimeoutMs() / 1000) + " с (NPM_INSTALL_TIMEOUT_MS)");
@@ -286,6 +296,7 @@ console.log("[egress] " + describeEgress());
 // размеры, а не поднимает сервер. Первый проход отложен, чтобы не спорить с контейнерами,
 // которые поднимаются сразу после деплоя; дальше — раз в сутки (см. storage-scheduler.ts).
 let stopStorageReconcile: (() => void) | null = null;
+let ownerDoor: Awaited<ReturnType<typeof startOwnerDoor>> = null;
 // Сторож песочниц стартует после listen (ему нужен Docker через брокер), а останавливаться должен
 // вместе с остальными таймерами — в единственном onClose ниже. Свой addHook там уже нельзя:
 // Fastify не принимает хуки после listen.
@@ -361,7 +372,7 @@ if (demoEnabled) {
   app.log.info({ demoEmail: demo.email, created: demo.created }, "demo account ready");
 }
 
-app.addHook("onClose", async () => { stopCustomDomainTlsActivation?.(); stopCustomDomainCaddyRefresh?.(); stopSandboxMaintenance?.(); stopBillingSweeper(); stopMailQueue(); stopStorageReconcile?.(); stopNodeHeartbeat(); stopRemoteNodeHeartbeat(); stopProjectRebalance(); stopPreviewFailoverSweeper(); await stopPreviewHostServer(); await closeStorage(); });
+app.addHook("onClose", async () => { stopWorkspaceSnapshotScheduler(); await ownerDoor?.close(); ownerDoor = null; stopCustomDomainTlsActivation?.(); stopCustomDomainCaddyRefresh?.(); stopSandboxMaintenance?.(); stopBillingSweeper(); stopMailQueue(); stopStorageReconcile?.(); stopNodeHeartbeat(); stopRemoteNodeHeartbeat(); stopProjectRebalance(); stopPreviewFailoverSweeper(); await stopPreviewHostServer(); await closeStorage(); });
 
 await registerSecurityHeaders(app);
 
@@ -369,7 +380,7 @@ app.setErrorHandler((error, request, reply) => {
   // Проект в холодном ярусе: первый доступ ставит восстановление в фон, а клиент получает
   // `409 PROJECT_RESTORING` с прогрессом — это нормальный ход, а не сбой сервера.
   if (sendProjectRestoreError(error, reply)) return;
-  if (error instanceof NoSandboxNodeError || error instanceof NoCapacityError || error instanceof SandboxNodeUnavailableError || error instanceof SharedWorkspaceRequiredError) {
+  if (error instanceof NoSandboxNodeError || error instanceof NoCapacityError || error instanceof SandboxNodeUnavailableError || error instanceof SharedWorkspaceRequiredError || error instanceof WorkspaceOwnerMismatchError || error instanceof WorkspaceMigrationRequiredError) {
     return reply.code(error.statusCode).send({ error: error.message, code: error.code });
   }
   if (error instanceof ZodError) {
@@ -392,6 +403,9 @@ await app.register(websocket);
 // `Origin` (серверные вызовы, вебхуки оплаты) пропускаются: подделать cookie межсайтовая
 // страница всё равно не может (см. security/same-origin.ts).
 await registerSameOriginGuard(app);
+// Owner-routing выключен по умолчанию и сразу возвращается. Включённый режим пересылает
+// проектные HTTP-запросы на приватный API ноды-владельца; WS пока не проксируется.
+registerOwnerRouting(app);
 
 await registerHealthRoutes(app);
 await registerAuthRoutes(app);
@@ -433,6 +447,10 @@ await registerAdminAiModelsRoutes(app);
 await registerAdminSearchRoutes(app);
 // Карточка проекта: владелец, репозиторий, превью, переменные секретов, план выкатки.
 await registerAdminProjectRoutes(app);
+// Перенос локального workspace через snapshot: только админ и только на ноде-владельце.
+await registerWorkspaceMigrationRoutes(app);
+// Внутренний restore, который вызывает нода-источник после snapshot. Защищён общим токеном.
+await registerInternalWorkspaceRoutes(app);
 // Зависший предпросмотр: оператор видит активную бронь и может сбросить контейнер,
 // состояние и бронь одной ручкой. Это ручной путь на случай, который не закрыла автоматика.
 await registerAdminPreviewResetRoutes(app);
@@ -482,6 +500,9 @@ await registerTasksRoutes(app);
 await registerPlatformRoutes(app);
 await registerPlatformPlanRoutes(app);
 await registerAgentWebSocket(app);
+// После штатного `/ws`: слой оборачивает его upgrade-listener и пересылает сокет владельцу.
+// При выключенном owner-routing ничего не меняется.
+registerOwnerWebSocket(app);
 
 // Раздача собранной панели: документ никогда не кэшируется, файлы сборки — надолго. Правила и
 // причина такого распределения живут в одном месте и проверяются тестом (routes/panel-static.ts).
@@ -512,6 +533,12 @@ try {
   );
 }
 await app.listen({host:"0.0.0.0",port:Number(process.env.PORT??8787)});
+// Внутренняя дверь поднимается после публичного API: она пересылает запросы на loopback.
+// Без owner-routing и токена она не запускается и не занимает порт.
+if (ownerRoutingEnabled() && !internalApiTokenConfigured()) {
+  console.warn("[owner] WEBNESTDEV_OWNER_ROUTING=1, но WEBNESTDEV_INTERNAL_TOKEN не задан: owner-routing будет отказывать 503");
+}
+ownerDoor = await startOwnerDoor();
 // Preview containers outlive the server that started them, so the ones left from a
 // previous run are stopped on boot instead of running on with nothing owning them.
 void reapOrphanPreviews()
@@ -594,6 +621,8 @@ startPreviewFailoverSweeper();
 console.log("[preview] failover: " + describePreviewFailover());
 // Давно не открытые проекты уезжают в бакет и освобождают диск (PROJECT_ARCHIVE_ENABLED=1).
 startProjectArchiveScheduler();
+// Горячие snapshot локальных проектов для failover. В shared-режиме выключены.
+startWorkspaceSnapshotScheduler();
 // Каталоги удалённых проектов, которые остались на общем диске: их нет в базе, открыть их некому.
 startOrphanProjectSweeper();
 // Очередь долгих заданий: архивация по команде оператора и восстановление, прерванное

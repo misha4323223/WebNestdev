@@ -17,6 +17,7 @@ export type NodePlacement = {
   freeMemoryMb: number;
   /** Free memory left after this project would get its usual sandbox allotment. */
   freeAfterProjectMb: number;
+  freeDiskMb: number;
 };
 
 export const DEFAULT_NODE_STALE_MS = 2 * 60 * 1000;
@@ -34,13 +35,19 @@ export function isNodeFresh(node: SandboxNode, now = Date.now(), staleMs = nodeS
 export function rankNodes(
   nodes: SandboxNode[],
   projectsByNode: Map<string, number>,
-  options: { now?: number; staleMs?: number; requiredMemoryMb?: number } = {},
+  options: { now?: number; staleMs?: number; requiredMemoryMb?: number; requiredDiskMb?: number } = {},
 ): NodePlacement[] {
   const now = options.now ?? Date.now();
   const staleMs = options.staleMs ?? nodeStaleMs();
   const requiredMemoryMb = Math.max(0, Math.round(options.requiredMemoryMb ?? 0));
+  const requiredDiskMb = options.requiredDiskMb === undefined
+    ? undefined
+    : Math.max(0, Math.round(options.requiredDiskMb));
   return nodes
     .filter(node => node.status === "online" && node.memoryTotalMb > 0 && isNodeFresh(node, now, staleMs))
+    // Диск проверяется только когда вызывающий явно просит локальный workspace. В shared-режиме
+    // старые/внешние узлы без disk-метрик должны оставаться доступными, как раньше.
+    .filter(node => requiredDiskMb === undefined || (node.diskTotalMb > 0 && node.diskFreeMb >= requiredDiskMb))
     .map(node => {
       const freeMemoryMb = Math.max(0, node.memoryTotalMb - node.memoryUsedMb);
       return {
@@ -48,6 +55,7 @@ export function rankNodes(
         projectCount: projectsByNode.get(node.id) ?? 0,
         freeMemoryMb,
         freeAfterProjectMb: freeMemoryMb - requiredMemoryMb,
+        freeDiskMb: Math.max(0, node.diskFreeMb),
       };
     })
     .sort((left, right) => {
@@ -101,6 +109,7 @@ type ChooseNodeDeps = {
   now?: () => number;
   staleMs?: number;
   requiredMemoryMb?: number;
+  requiredDiskMb?: number;
 };
 
 /**
@@ -117,6 +126,7 @@ export async function chooseProjectNode(options: ChooseNodeDeps = {}): Promise<S
     ...(options.now ? { now: options.now() } : {}),
     ...(options.staleMs !== undefined ? { staleMs: options.staleMs } : {}),
     ...(options.requiredMemoryMb !== undefined ? { requiredMemoryMb: options.requiredMemoryMb } : {}),
+    ...(options.requiredDiskMb !== undefined ? { requiredDiskMb: options.requiredDiskMb } : {}),
   });
   if (!ranked.length) throw new NoSandboxNodeError();
   const best = ranked[0];

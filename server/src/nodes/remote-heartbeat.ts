@@ -54,10 +54,14 @@ export async function registerConfiguredRemoteNodes(): Promise<number> {
     await upsertNode({
       id,
       address,
+      apiAddress: existing?.apiAddress ?? "",
+      workspaceMode: existing?.workspaceMode ?? "shared",
       status: existing?.status ?? "online",
       memoryTotalMb: existing?.memoryTotalMb ?? 0,
       memoryUsedMb: existing?.memoryUsedMb ?? 0,
       containers: existing?.containers ?? 0,
+      diskTotalMb: existing?.diskTotalMb ?? 0,
+      diskFreeMb: existing?.diskFreeMb ?? 0,
       lastSeenAt: existing?.lastSeenAt ?? now,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
@@ -90,6 +94,8 @@ async function pollOnce() {
         memoryTotalMb: status.metrics.memoryTotalMb,
         memoryUsedMb: status.metrics.memoryUsedMb,
         containers: status.metrics.containers,
+        diskTotalMb: status.metrics.diskTotalMb ?? 0,
+        diskFreeMb: status.metrics.diskFreeMb ?? 0,
         lastSeenAt: now,
         updatedAt: now,
       });

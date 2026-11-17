@@ -1,5 +1,8 @@
 import { isRunActiveAnywhere } from "../agent/run-activity.js";
 import { getProject, reassignProjectNode } from "../project-store.js";
+import { workspaceMode } from "../sandbox/workspace-mode.js";
+import { workspaceDiskMb } from "../sandbox/config.js";
+import { restoreLostWorkspaceToNode } from "../storage/workspace-migration.js";
 import { readNodePower } from "../nodes/mws-power.js";
 import { nodeId } from "../nodes/identity.js";
 import {
@@ -120,7 +123,8 @@ export type ProjectMoveSkip =
   | "active-run"
   | "preview-remains"
   | "no-target"
-  | "move-failed";
+  | "move-failed"
+  | "migration-required";
 
 export type FailoverNodeResult = {
   node: string;
@@ -141,6 +145,7 @@ export type FailoverSweepDeps = {
   getProject: typeof getProject;
   chooseNode: () => Promise<SandboxNode>;
   reassign: typeof reassignProjectNode;
+  restoreLost: (projectId: string, userId: string, targetNode: string) => Promise<unknown>;
   hasJobs: (projectId: string) => boolean;
   runActive: (projectId: string) => Promise<boolean>;
   log: (message: string) => void;
@@ -157,8 +162,12 @@ const defaultDeps: FailoverSweepDeps = {
   clearPreview: clearLostPreviewState,
   hydrate: hydratePreview,
   getProject,
-  chooseNode: () => chooseProjectNode({ requiredMemoryMb: sandboxMemoryMb() }),
+  chooseNode: () => chooseProjectNode({
+    requiredMemoryMb: sandboxMemoryMb(),
+    ...(workspaceMode() === "local" ? { requiredDiskMb: workspaceDiskMb() } : {}),
+  }),
   reassign: reassignProjectNode,
+  restoreLost: restoreLostWorkspaceToNode,
   hasJobs: projectId => listSandboxJobs(projectId).length > 0,
   runActive: isRunActiveAnywhere,
   log: message => console.log("[preview-failover] " + message),
@@ -253,9 +262,16 @@ export async function failoverPreviewCleanupOnce(
         continue;
       }
       try {
-        const moved = await deps.reassign(project.id, project.userId, target.id);
-        if (moved) result.movedProjects.push(project.id);
-        else result.skippedProjects.push({ projectId: project.id, reason: "move-failed" });
+        if (workspaceMode() === "local") {
+          // Pin-only здесь был бы потерей проекта: файлы остались на выключенной ноде.
+          // Сначала snapshot восстанавливается на цели, и только потом меняется pin.
+          await deps.restoreLost(project.id, project.userId, target.id);
+          result.movedProjects.push(project.id);
+        } else {
+          const moved = await deps.reassign(project.id, project.userId, target.id);
+          if (moved) result.movedProjects.push(project.id);
+          else result.skippedProjects.push({ projectId: project.id, reason: "move-failed" });
+        }
       } catch (error) {
         deps.log("не удалось перенести проект " + project.id + ": " + describeError(error));
         result.skippedProjects.push({ projectId: project.id, reason: "move-failed" });

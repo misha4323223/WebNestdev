@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile, readdir, rename, rm, stat, unlink } from "node:fs/promises";
 import path from "node:path";
-import { sandboxMemoryMb, sandboxRootPath } from "./sandbox/config.js";
+import { sandboxMemoryMb, sandboxRootPath, workspaceDiskMb } from "./sandbox/config.js";
+import { ownerRoutingEnabled, workspaceMode } from "./sandbox/workspace-mode.js";
 import { chooseProjectNode, NoSandboxNodeError } from "./nodes/placement.js";
 import { nodeId } from "./nodes/identity.js";
 import type { ChatMessage, PlanState, ReasoningBlock } from "./types.js";
@@ -31,6 +32,13 @@ export type Project = {
   userId: string;
   /** Execution node the project is pinned to; empty on projects created before stage 3.1. */
   node?: string;
+  /** `shared` — Gluster, `local` — only this project's node. */
+  workspaceMode?: "shared" | "local";
+  /** Monotonic generation used to fence stale writers after migration. */
+  workspaceEpoch?: number;
+  snapshotKey?: string;
+  snapshotAt?: string;
+  workspaceBytes?: number;
 };
 export type Conversation = { id:string; projectId:string; title:string; messages:ChatMessage[]; plan?:PlanState|null; createdAt:string; updatedAt:string };
 export type ProjectProviderConfig = { provider:string; baseUrl:string; model:string; token?:string };
@@ -43,8 +51,9 @@ export async function getProject(projectId:string):Promise<Project|null>{
     // The `node` column is added by initializeStorage's migration. Waiting here is what keeps a
     // request that arrives immediately after deploy from selecting a column that does not exist yet.
     await initializeStorage();
-    const [rows]=await ydbQuery()<Array<{id:string;name:string;created_at:string;updated_at:string;github_json:string;user_id:string;node:string}>>`
-      SELECT id,name,created_at,updated_at,github_json,user_id,node
+    const [rows]=await ydbQuery()<Array<{id:string;name:string;created_at:string;updated_at:string;github_json:string;user_id:string;node:string;workspace_mode:string;workspace_epoch:number|string;snapshot_key:string;snapshot_at:string|null;workspace_bytes:number|string}>>`
+      SELECT id,name,created_at,updated_at,github_json,user_id,node,
+             workspace_mode,workspace_epoch,snapshot_key,snapshot_at,workspace_bytes
       FROM ${ydbQuery().identifier(getTable("projects"))}
       WHERE id = ${projectId}
       LIMIT 1
@@ -54,7 +63,12 @@ export async function getProject(projectId:string):Promise<Project|null>{
     return {
       id:row.id,name:row.name,createdAt:row.created_at,updatedAt:row.updated_at,userId:row.user_id,
       ...(row.github_json ? {github:JSON.parse(row.github_json) as GitHubRepositoryRef} : {}),
-      ...(row.node ? {node:row.node} : {})
+      ...(row.node ? {node:row.node} : {}),
+      workspaceMode:row.workspace_mode==="local"?"local":"shared",
+      workspaceEpoch:Number(row.workspace_epoch??0)||0,
+      ...(row.snapshot_key?{snapshotKey:row.snapshot_key}:{}),
+      ...(row.snapshot_at?{snapshotAt:row.snapshot_at}:{}),
+      workspaceBytes:Number(row.workspace_bytes??0)||0
     };
   }
   try{return JSON.parse(await readFile(path.join(root,"projects",projectId+".json"),"utf8")) as Project}catch{return null}
@@ -63,8 +77,9 @@ export async function getProject(projectId:string):Promise<Project|null>{
 export async function listProjects(userId:string){
   if(isYdbEnabled()){
     await initializeStorage();
-    const [rows]=await ydbQuery()<Array<{id:string;name:string;created_at:string;updated_at:string;github_json:string;user_id:string;node:string}>>`
-      SELECT id,name,created_at,updated_at,github_json,user_id,node
+    const [rows]=await ydbQuery()<Array<{id:string;name:string;created_at:string;updated_at:string;github_json:string;user_id:string;node:string;workspace_mode:string;workspace_epoch:number|string;snapshot_key:string;snapshot_at:string|null;workspace_bytes:number|string}>>`
+      SELECT id,name,created_at,updated_at,github_json,user_id,node,
+             workspace_mode,workspace_epoch,snapshot_key,snapshot_at,workspace_bytes
       FROM ${ydbQuery().identifier(getTable("projects"))}
       WHERE user_id = ${userId}
       ORDER BY updated_at DESC
@@ -72,7 +87,12 @@ export async function listProjects(userId:string){
     return rows.map(row=>({
       id:row.id,name:row.name,createdAt:row.created_at,updatedAt:row.updated_at,userId:row.user_id,
       ...(row.github_json ? {github:JSON.parse(row.github_json) as GitHubRepositoryRef} : {}),
-      ...(row.node ? {node:row.node} : {})
+      ...(row.node ? {node:row.node} : {}),
+      workspaceMode:row.workspace_mode==="local"?"local" as const:"shared" as const,
+      workspaceEpoch:Number(row.workspace_epoch??0)||0,
+      ...(row.snapshot_key?{snapshotKey:row.snapshot_key}:{}),
+      ...(row.snapshot_at?{snapshotAt:row.snapshot_at}:{}),
+      workspaceBytes:Number(row.workspace_bytes??0)||0
     }));
   }
   const result:Project[]=[];
@@ -90,19 +110,40 @@ export async function listProjects(userId:string){
 }
 
 /**
+ * Проекты, чей workspace лежит на этом узле. В shared-режиме это все проекты; в локальном —
+ * только проекты с `workspace_mode=local`, закреплённые за этой нодой. Фоновые задачи обязаны
+ * использовать этот список, иначе планировщик одной ноды попытается архивировать/удалить
+ * локальный каталог другой.
+ */
+export async function listProjectOwnersOnThisNode(): Promise<ProjectOwner[]> {
+  const local = nodeId();
+  return (await listProjectOwners()).filter(project =>
+    project.workspaceMode !== "local" || (project.node?.trim() || local) === local,
+  );
+}
+
+/**
  * Все проекты без содержимого — только владение. Нужно сверке хранилища: она обходит диск и
  * должна знать, какому аккаунту принадлежит каталог, не загружая диалоги и секреты проектов.
  */
-export type ProjectOwner = { id:string; name:string; userId:string; updatedAt:string; node?:string };
+export type ProjectOwner = {
+  id:string; name:string; userId:string; updatedAt:string; node?:string;
+  workspaceMode?:"shared"|"local"; workspaceEpoch?:number;
+};
 
 export async function listProjectOwners():Promise<ProjectOwner[]>{
   if(isYdbEnabled()){
     await initializeStorage();
-    const [rows]=await ydbQuery()<Array<{id:string;name:string;user_id:string;updated_at:string;node:string}>>`
-      SELECT id,name,user_id,updated_at,node
+    const [rows]=await ydbQuery()<Array<{id:string;name:string;user_id:string;updated_at:string;node:string;workspace_mode:string;workspace_epoch:number|string}>>`
+      SELECT id,name,user_id,updated_at,node,workspace_mode,workspace_epoch
       FROM ${ydbQuery().identifier(getTable("projects"))}
     `;
-    return rows.map(row=>({id:row.id,name:row.name,userId:row.user_id,updatedAt:row.updated_at,...(row.node?{node:row.node}:{})}));
+    return rows.map(row=>({
+      id:row.id,name:row.name,userId:row.user_id,updatedAt:row.updated_at,
+      ...(row.node?{node:row.node}:{}),
+      workspaceMode:row.workspace_mode==="local"?"local" as const:"shared" as const,
+      workspaceEpoch:Number(row.workspace_epoch??0)||0,
+    }));
   }
   const result:ProjectOwner[]=[];
   try{
@@ -111,7 +152,12 @@ export async function listProjectOwners():Promise<ProjectOwner[]>{
       try{
         const project=JSON.parse(await readFile(path.join(root,"projects",name),"utf8")) as Project;
         if(!project?.id||!project.userId)continue;
-        result.push({id:project.id,name:project.name,userId:project.userId,updatedAt:project.updatedAt,...(project.node?{node:project.node}:{})});
+        result.push({
+          id:project.id,name:project.name,userId:project.userId,updatedAt:project.updatedAt,
+          ...(project.node?{node:project.node}:{}),
+          ...(project.workspaceMode?{workspaceMode:project.workspaceMode}:{}),
+          ...(project.workspaceEpoch!==undefined?{workspaceEpoch:project.workspaceEpoch}:{}),
+        });
       }catch{}
     }
   }catch{}
@@ -120,14 +166,17 @@ export async function listProjectOwners():Promise<ProjectOwner[]>{
 
 function newProject(name:string,github:GitHubRepositoryRef|undefined,userId:string,node:string):Project{
   const now=new Date().toISOString();
-  return {id:randomUUID(),name:name.trim()||"Новый проект",github,userId,node,createdAt:now,updatedAt:now};
+  return {
+    id:randomUUID(),name:name.trim()||"Новый проект",github,userId,node,createdAt:now,updatedAt:now,
+    workspaceMode:workspaceMode(),workspaceEpoch:0,workspaceBytes:0,
+  };
 }
 async function persistProject(project:Project){
   if(isYdbEnabled()){
     await ydbQuery()`
       INSERT INTO ${ydbQuery().identifier(getTable("projects"))}
-        (id,name,created_at,updated_at,github_json,user_id,node)
-      VALUES (${project.id},${project.name},${project.createdAt},${project.updatedAt},${project.github ? JSON.stringify(project.github) : ""},${project.userId},${project.node ?? ""})
+        (id,name,created_at,updated_at,github_json,user_id,node,workspace_mode,workspace_epoch,workspace_bytes)
+      VALUES (${project.id},${project.name},${project.createdAt},${project.updatedAt},${project.github ? JSON.stringify(project.github) : ""},${project.userId},${project.node ?? ""},${project.workspaceMode ?? "shared"},${project.workspaceEpoch ?? 0},${project.workspaceBytes ?? 0})
     `;
     return project;
   }
@@ -136,7 +185,18 @@ async function persistProject(project:Project){
   return project;
 }
 function assertNodeWorkspace(node:{id:string}){
-  if(node.id!==nodeId()&&process.env.WEBNESTDEV_SHARED_SANDBOX!=="1"){
+  if(node.id===nodeId())return;
+  if(workspaceMode()==="local"){
+    // Локальный workspace на другой ноде допустим только если запрос к нему умеет дойти до
+    // владельца. Без owner-routing создавать проект там означало бы создать его в никуда.
+    if(ownerRoutingEnabled())return;
+    throw new NoSandboxNodeError(
+      "Выбран удалённый узел " + node.id + ", но owner-routing выключен: " +
+        "в локальном режиме запрос к проекту обязан доходить до ноды-владельца. " +
+        "Включите WEBNESTDEV_OWNER_ROUTING или выведите узел из обслуживания.",
+    );
+  }
+  if(process.env.WEBNESTDEV_SHARED_SANDBOX!=="1"){
     throw new NoSandboxNodeError(
       "Выбран удалённый узел " + node.id + ", но WEBNESTDEV_SHARED_SANDBOX не включён: " +
         "API и runner должны видеть один SANDBOX_DIR. Включите общий каталог или выведите узел из обслуживания.",
@@ -144,13 +204,29 @@ function assertNodeWorkspace(node:{id:string}){
   }
 }
 
+function placementRequest(){
+  return {
+    requiredMemoryMb: sandboxMemoryMb(),
+    ...(workspaceMode() === "local" ? { requiredDiskMb: workspaceDiskMb() } : {}),
+  };
+}
+
 export async function createProject(name:string,github:GitHubRepositoryRef|undefined,userId:string):Promise<Project>{
-  const node=await chooseProjectNode({requiredMemoryMb:sandboxMemoryMb()});
+  const node=await chooseProjectNode(placementRequest());
   assertNodeWorkspace(node);
   return persistProject(newProject(name,github,userId,node.id));
 }
 
-export class ProjectLimitError extends Error{
+export class WorkspaceMigrationRequiredError extends Error {
+  readonly statusCode=409;
+  readonly code="WORKSPACE_MIGRATION_REQUIRED";
+  constructor(message:string){
+    super(message);
+    this.name="WorkspaceMigrationRequiredError";
+  }
+}
+
+export class ProjectLimitError extends Error {
   readonly statusCode=403;
   constructor(readonly limit:number,readonly used:number){
     super("Достигнут лимит проектов");
@@ -171,7 +247,7 @@ async function withProjectLock<T>(userId:string,action:()=>Promise<T>):Promise<T
 export async function createProjectWithinLimit(name:string,github:GitHubRepositoryRef|undefined,userId:string,limit:number):Promise<Project>{
   // Placement happens before the project row exists: the project must be pinned in the same
   // transaction that creates it, otherwise a failed insert leaves a node decision with no project.
-  const node=await chooseProjectNode({requiredMemoryMb:sandboxMemoryMb()});
+  const node=await chooseProjectNode(placementRequest());
   assertNodeWorkspace(node);
   const project=newProject(name,github,userId,node.id);
   if(isYdbEnabled()){
@@ -200,8 +276,8 @@ export async function createProjectWithinLimit(name:string,github:GitHubReposito
       `;
       await tx`
         INSERT INTO ${projectsTable}
-          (id,name,created_at,updated_at,github_json,user_id,node)
-        VALUES (${project.id},${project.name},${project.createdAt},${project.updatedAt},${project.github?JSON.stringify(project.github):""},${project.userId},${project.node??""})
+          (id,name,created_at,updated_at,github_json,user_id,node,workspace_mode,workspace_epoch,workspace_bytes)
+        VALUES (${project.id},${project.name},${project.createdAt},${project.updatedAt},${project.github?JSON.stringify(project.github):""},${project.userId},${project.node??""},${project.workspaceMode??"shared"},${project.workspaceEpoch??0},${project.workspaceBytes??0})
       `;
     });
     return project;
@@ -258,6 +334,11 @@ export async function transferProjectOwners(
 export async function deleteProject(projectId:string,userId:string):Promise<boolean>{
   const project=await getProject(projectId);
   if(!project||project.userId!==userId)return false;
+  if(workspaceMode()==="local" && (project.node?.trim()||nodeId())!==nodeId()){
+    throw new WorkspaceMigrationRequiredError(
+      "Удалять проект нужно на ноде-владельце " + (project.node||nodeId()) + ": запрос не был маршрутизирован.",
+    );
+  }
   if(isYdbEnabled()){
     const sql=ydbQuery();
     await sql.transaction({idempotent:true},async tx=>{
@@ -298,6 +379,15 @@ export async function deleteProject(projectId:string,userId:string):Promise<bool
     console.warn("[secrets] не удалось удалить секреты удалённого проекта", error);
   }
   await rm(sandboxRootPath(projectId),{recursive:true,force:true});
+  // Горячий snapshot больше не нужен и продолжал бы занимать бакет после удаления проекта.
+  if (project.snapshotKey) {
+    try {
+      const { deleteProjectSnapshot } = await import("./storage/workspace-snapshot.js");
+      await deleteProjectSnapshot(projectId, project.snapshotKey);
+    } catch (error) {
+      console.warn("[storage] не удалось удалить snapshot удалённого проекта", error);
+    }
+  }
   // Сайт — отдельная запись и отдельный каталог релизов, поэтому удаление проекта не
   // удаляет его каскадом. Снимаем public-состояние и файлы здесь, чтобы после удаления
   // проекта не остался оплачиваемый диск и живой адрес. Динамический импорт не создаёт
@@ -349,6 +439,11 @@ export async function linkProjectGithub(projectId:string,userId:string,github:Gi
 export async function reassignProjectNode(projectId:string,userId:string,node:string):Promise<Project|null>{
   const project=await getProject(projectId);
   if(!project||project.userId!==userId)return null;
+  if(workspaceMode()==="local"){
+    throw new WorkspaceMigrationRequiredError(
+      "В локальном режиме pin нельзя менять без переноса файлов: используйте миграцию проекта через snapshot.",
+    );
+  }
   const updated:Project={...project,node,updatedAt:new Date().toISOString()};
   if(isYdbEnabled()){
     await ydbQuery()`

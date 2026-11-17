@@ -8,6 +8,7 @@ import { limitsForPlan, type PlanId } from "./plans.js";
 import { accountPlanFor } from "../billing/store.js";
 import { listProjectOwners, listProjects } from "../project-store.js";
 import { readArchiveRecord } from "../storage/project-archive-state.js";
+import { getProjectWorkspaceMeta } from "../storage/project-workspace-store.js";
 
 const root = process.env.WEBNESTDEV_DATA_DIR ?? path.resolve(".webnestdev");
 
@@ -160,7 +161,11 @@ async function measureProjectSize(projectId: string): Promise<number> {
   // Проект в холодном ярусе: на диске его нет, но место в бакете всё равно занято и входит
   // в квоту аккаунта. Размер берётся из отметки, поставленной при архивации.
   const archived = await readArchiveRecord(projectId).catch(() => null);
-  return archived?.bytes ?? 0;
+  if (archived) return archived.bytes;
+  // Локальный проект на другой ноде недоступен для обхода. Последний snapshot знает размер;
+  // без него квота честно показывает 0, а не сканирует чужой диск.
+  const meta = await getProjectWorkspaceMeta(projectId).catch(() => null);
+  return meta?.workspaceBytes ?? 0;
 }
 
 /** Фактический размер проекта на диске — для лимита импорта до записи в квоту. */

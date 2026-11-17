@@ -40,6 +40,8 @@ export type SandboxHostStatus = {
     memoryTotalMb: number;
     memoryUsedMb: number;
     containers: number;
+    diskTotalMb?: number;
+    diskFreeMb?: number;
   };
   /** The runner reports the path it mounted; the API can compare it with its own shared mount. */
   workspace?: {
@@ -117,6 +119,15 @@ export class SandboxNodeUnavailableError extends Error {
  * API would read an empty local directory, place files on the wrong machine and start a preview
  * from a project the runner cannot see. The deployment must opt in explicitly.
  */
+export class WorkspaceOwnerMismatchError extends Error {
+  readonly statusCode = 409;
+  readonly code = "WRONG_WORKSPACE_OWNER";
+  constructor(readonly node: string, message = "Проект принадлежит узлу " + node + " и не открывается на этом API") {
+    super(message);
+    this.name = "WorkspaceOwnerMismatchError";
+  }
+}
+
 export class SharedWorkspaceRequiredError extends Error {
   readonly statusCode = 503;
   readonly code = "SHARED_WORKSPACE_REQUIRED";
@@ -181,6 +192,8 @@ export async function resolveSandboxHost(id: string): Promise<SandboxHost> {
         memoryTotalMb: status.metrics.memoryTotalMb,
         memoryUsedMb: status.metrics.memoryUsedMb,
         containers: status.metrics.containers,
+        diskTotalMb: status.metrics.diskTotalMb ?? 0,
+        diskFreeMb: status.metrics.diskFreeMb ?? 0,
         lastSeenAt: now,
         updatedAt: now,
       });

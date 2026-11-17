@@ -49,6 +49,7 @@ export const AUDIT_ACTIONS = {
   // Ремонт владельца файлов: админ вручную запускает chown, когда установка падает на
   // root-owned node_modules. Файлы не удаляются, но правка касается всего дерева проекта.
   "admin.project.permissions": "Права файлов проекта восстановлены администратором",
+  "admin.workspace.migrated": "Проект перенесён на другую ноду администратором",
   "hosting.created": "Создан статический сайт",
   "hosting.slug.changed": "Изменён адрес статического сайта",
   "hosting.publish.requested": "Запрошена публикация сайта",

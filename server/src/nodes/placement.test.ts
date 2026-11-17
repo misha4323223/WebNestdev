@@ -15,10 +15,14 @@ function node(overrides: Partial<SandboxNode> = {}): SandboxNode {
   return {
     id: "node-a",
     address: "",
+    apiAddress: "",
+    workspaceMode: "shared",
     status: "online",
     memoryTotalMb: 4096,
     memoryUsedMb: 1024,
     containers: 2,
+    diskTotalMb: 19_000,
+    diskFreeMb: 12_000,
     lastSeenAt: new Date(NOW - 10_000).toISOString(),
     createdAt: new Date(NOW - 86_400_000).toISOString(),
     updatedAt: new Date(NOW - 10_000).toISOString(),
@@ -50,6 +54,18 @@ test("a draining, offline, stale or capacity-less node is never a fallback", () 
   ];
   const ranked = rankNodes(nodes, new Map(), { now: NOW, staleMs: 120_000 });
   assert.deepEqual(ids(ranked), ["online"]);
+});
+
+test("disk is a gate only when local workspace asks for it", () => {
+  const nodes = [
+    node({ id: "full", diskTotalMb: 19_000, diskFreeMb: 100 }),
+    node({ id: "roomy", diskTotalMb: 19_000, diskFreeMb: 8_000 }),
+  ];
+  assert.deepEqual(ids(rankNodes(nodes, new Map(), { now: NOW })), ["full", "roomy"]);
+  assert.deepEqual(
+    ids(rankNodes(nodes, new Map(), { now: NOW, requiredDiskMb: 1024 })),
+    ["roomy"],
+  );
 });
 
 test("project count breaks a full tie between equal nodes", () => {

@@ -30,7 +30,7 @@ const server = createRunnerServer({
     mode: "docker",
     available: true,
     dockerVersion: "test",
-    metrics: { memoryTotalMb: 4096, memoryUsedMb: 1024, containers: 2 },
+    metrics: { memoryTotalMb: 4096, memoryUsedMb: 1024, containers: 2, diskTotalMb: 19_000, diskFreeMb: 12_000 },
     workspace: { root, hostRoot: root, shared: true },
     previewNetwork: "preview",
     previewAttachNetworks: ["preview"],
@@ -65,7 +65,13 @@ const host = createRemoteSandboxHost({ id: "runner-a", address: "127.0.0.1:" + a
 test("a remote host authenticates, reports metrics and runs a project command", async () => {
   const status = await host.status();
   assert.equal(status.nodeId, "runner-a");
-  assert.deepEqual(status.metrics, { memoryTotalMb: 4096, memoryUsedMb: 1024, containers: 2 });
+  assert.deepEqual(status.metrics, {
+    memoryTotalMb: 4096,
+    memoryUsedMb: 1024,
+    containers: 2,
+    diskTotalMb: 19_000,
+    diskFreeMb: 12_000,
+  });
   assert.equal(status.workspace?.shared, true);
   assert.deepEqual(await host.networks?.(), { preview: "preview", attach: ["preview"] });
 
@@ -108,7 +114,7 @@ test("a runner that reports another node id is refused", async () => {
       nodeId: "other",
       mode: "docker",
       available: true,
-      metrics: { memoryTotalMb: 0, memoryUsedMb: 0, containers: 0 },
+      metrics: { memoryTotalMb: 0, memoryUsedMb: 0, containers: 0, diskTotalMb: 0, diskFreeMb: 0 },
       workspace: { root, hostRoot: root, shared: true },
       previewNetwork: "",
       previewAttachNetworks: [],
