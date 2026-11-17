@@ -1,7 +1,7 @@
 import path from "node:path";
 import { nodeId } from "../nodes/identity.js";
 import type { SandboxConfig } from "./sandbox-types.js";
-import { localWorkspaceDir, workspaceMode } from "./workspace-mode.js";
+import { isLocalWorkspace, localWorkspaceDir, workspaceMode } from "./workspace-mode.js";
 
 /**
  * Образ, в котором выполняются команды агента, `npm install` и контейнер предпросмотра.
@@ -89,19 +89,33 @@ const sandboxHostRoot=workspaceMode()==="local"
   ? path.resolve(process.env.WEBNESTDEV_LOCAL_WORKSPACE_HOST_DIR??localSandboxRoot)
   : path.resolve(process.env.WEBNESTDEV_SANDBOX_HOST_DIR??process.env.WEBNESTDEV_SANDBOX_DIR??".webnestdev/sandboxes");
 
+const localSandboxHostRoot=path.resolve(process.env.WEBNESTDEV_LOCAL_WORKSPACE_HOST_DIR??localSandboxRoot);
+const sharedSandboxHostRoot=path.resolve(
+  process.env.WEBNESTDEV_SANDBOX_HOST_DIR??process.env.WEBNESTDEV_SANDBOX_DIR??".webnestdev/sandboxes",
+);
+
+/** Корни одной раскладки: серверный путь и путь, который видит Docker на хосте. */
+export function workspaceRoots(projectId:string){
+  if(isLocalWorkspace(projectId)){
+    return {serverDir:localSandboxRoot,hostDir:localSandboxHostRoot};
+  }
+  return {serverDir:sharedSandboxRoot,hostDir:sharedSandboxHostRoot};
+}
+
 /** The directory every project lives in — the path health reports free space for. */
 export function sandboxRootDir(){return sandboxRoot}
 
 /** Where the sandbox containers look for their projects: the source of every `-v`. */
 export function sandboxHostRootDir(){return sandboxHostRoot}
 
-export function sandboxRootPath(projectId:string){return path.join(sandboxRoot,projectId)}
+export function sandboxRootPath(projectId:string){return path.join(workspaceRoots(projectId).serverDir,projectId)}
 
 /**
  * The host path of one project directory, derived from the server path by swapping the root. One
  * setting keeps every container mount correct without teaching the callers about the two sides.
  */
-export function hostPathFor(root:string,roots={serverDir:sandboxRoot,hostDir:sandboxHostRoot}){
+export function hostPathFor(root:string,roots?:{serverDir:string;hostDir:string}){
+  roots ??= workspaceRoots(path.basename(root));
   if(roots.hostDir===roots.serverDir)return root;
   const relative=path.relative(roots.serverDir,root);
   if(!relative)return roots.hostDir;

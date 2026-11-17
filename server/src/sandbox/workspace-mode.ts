@@ -38,6 +38,24 @@ export function localWorkspaceDir(env: NodeJS.ProcessEnv = process.env): string 
   return path.resolve(env.WEBNESTDEV_LOCAL_WORKSPACE_DIR?.trim() || DEFAULT_LOCAL_WORKSPACE_DIR);
 }
 
+/**
+ * Проекты, которые уже переведены на локальный диск при глобальном `shared`. Пилотный список
+ * позволяет проверить один проект, не останавливая остальные. Значение — ID через запятую.
+ */
+export function localProjectIds(env: NodeJS.ProcessEnv = process.env): Set<string> {
+  return new Set(
+    (env.WEBNESTDEV_LOCAL_PROJECTS ?? "")
+      .split(",")
+      .map(value => value.trim())
+      .filter(Boolean),
+  );
+}
+
+/** Локальная ли раскладка у конкретного проекта: либо глобальный local, либо пилотный список. */
+export function isLocalWorkspace(projectId: string, env: NodeJS.ProcessEnv = process.env): boolean {
+  return workspaceMode(env) === "local" || localProjectIds(env).has(projectId);
+}
+
 export function internalApiPort(env: NodeJS.ProcessEnv = process.env): number {
   const raw = Number(env.WEBNESTDEV_INTERNAL_API_PORT);
   return Number.isInteger(raw) && raw > 0 && raw <= 65535 ? raw : DEFAULT_INTERNAL_API_PORT;

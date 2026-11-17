@@ -9,7 +9,7 @@ import { isRunActiveAnywhere } from "../agent/run-activity.js";
 import { ensureProjectWorkspace, noteProjectAccess } from "../storage/project-archive.js";
 import { buildSandboxConfig,sandboxMemoryMb,sandboxRootPath } from "./config.js";
 import { resolveSandboxHost, SandboxNodeUnavailableError, SharedWorkspaceRequiredError, WorkspaceOwnerMismatchError } from "./host.js";
-import { workspaceMode } from "./workspace-mode.js";
+import { isLocalWorkspace } from "./workspace-mode.js";
 import { nodeId } from "../nodes/identity.js";
 import { clearRootOwnedBuildCaches,openDirForSandbox,openGitForSandbox,openTreeForSandbox } from "./permissions.js";
 import type { SandboxConfig } from "./sandbox-types.js";
@@ -63,7 +63,7 @@ export async function getSandbox(projectId:string,userId:string):Promise<Sandbox
   // В локальном режиме чужой проект не открывается никогда, даже если старый флаг
   // WEBNESTDEV_SHARED_SANDBOX=1 остался в окружении. Запрос обязан прийти на владельца через
   // owner-routing; локальный fallback означал бы запись в пустой каталог.
-  if(workspaceMode()==="local" && node!==nodeId()){
+  if(isLocalWorkspace(projectId) && node!==nodeId()){
     throw new WorkspaceOwnerMismatchError(node);
   }
   if(node!==nodeId()&&process.env.WEBNESTDEV_SHARED_SANDBOX!=="1"){
@@ -94,7 +94,7 @@ export async function getSandbox(projectId:string,userId:string):Promise<Sandbox
     // Recovery after a lost node is opt-in: a transient heartbeat gap must not move a project
     // with a live preview. The shared workspace makes the file move unnecessary; only the pin
     // changes, and only after we prove no preview/job owns a container on the old node.
-    if(workspaceMode()!=="local" && process.env.WEBNESTDEV_AUTO_MOVE_PROJECTS==="1"){
+    if(!isLocalWorkspace(projectId) && process.env.WEBNESTDEV_AUTO_MOVE_PROJECTS==="1"){
       const current=await getNode(node);
       if(!current||current.status==="offline"||!isNodeFresh(current)){
         const preview=await hydratePreview(projectId);

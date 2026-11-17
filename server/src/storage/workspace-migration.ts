@@ -3,7 +3,7 @@ import { getNode } from "../nodes/node-store.js";
 import { nodeId } from "../nodes/identity.js";
 import { internalToken } from "../nodes/internal-auth.js";
 import { ownerTarget } from "../nodes/owner-router.js";
-import { workspaceMode } from "../sandbox/workspace-mode.js";
+import { isLocalWorkspace } from "../sandbox/workspace-mode.js";
 import { hydratePreview } from "../preview/preview-store.js";
 import { listSandboxJobs } from "../sandbox/jobs.js";
 import { isRunActiveAnywhere } from "../agent/run-activity.js";
@@ -99,7 +99,7 @@ export async function restoreLostWorkspaceToNode(
   userId: string,
   targetNode: string,
 ): Promise<MigrationResult> {
-  if (workspaceMode() !== "local") {
+  if (!isLocalWorkspace(projectId)) {
     throw new WorkspaceMigrationRequiredError("Восстановление потерянного workspace доступно только в локальном режиме");
   }
   return withMigrationLock(projectId, async () => {
@@ -137,7 +137,7 @@ export async function migrateProjectWorkspace(
   userId: string,
   targetNode: string,
 ): Promise<MigrationResult> {
-  if (workspaceMode() !== "local") {
+  if (!isLocalWorkspace(projectId)) {
     throw new WorkspaceMigrationRequiredError("Миграция через snapshot доступна только в локальном режиме workspace");
   }
   return withMigrationLock(projectId, async () => {

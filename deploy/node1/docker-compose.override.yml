@@ -11,6 +11,8 @@ services:
       - "10.0.0.4:8788:8788"
       # Приватный внутренний API для owner-routing. Пока routing выключен, дверь не слушает.
       - "10.0.0.4:8791:8791"
+      # Приватный внутренний API для owner-routing. Пока routing выключен, дверь не слушает.
+      - "10.0.0.4:8791:8791"
     # DATA_DIR должен быть общим: при переключении API на node-2 платформенные ключи
     # и настройки должны быть те же, что на node-1. Gluster-том монтируется вместо
     # именованного тома compose.
@@ -20,6 +22,7 @@ services:
       DATABASE_URL: postgres://webnestdev:${NODE2_PG_PASSWORD:?Set NODE2_PG_PASSWORD}@host.docker.internal:5432/webnestdev
       WEBNESTDEV_NODE_ID: node-1
       WEBNESTDEV_NODE_ADDRESS: 10.0.0.4:8790
+      WEBNESTDEV_API_ADDRESS: 10.0.0.4:8791
       WEBNESTDEV_API_ADDRESS: 10.0.0.4:8791
       WEBNESTDEV_RUNNER_TOKEN: ${NODE1_RUNNER_TOKEN:?Set NODE1_RUNNER_TOKEN}
       WEBNESTDEV_REMOTE_NODES: '[{"id":"node-2","address":"10.0.0.5:8790"}]'

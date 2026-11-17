@@ -1,6 +1,6 @@
 import { isRunActiveAnywhere } from "../agent/run-activity.js";
 import { getProject, reassignProjectNode } from "../project-store.js";
-import { workspaceMode } from "../sandbox/workspace-mode.js";
+import { isLocalWorkspace, workspaceMode } from "../sandbox/workspace-mode.js";
 import { workspaceDiskMb } from "../sandbox/config.js";
 import { restoreLostWorkspaceToNode } from "../storage/workspace-migration.js";
 import { readNodePower } from "../nodes/mws-power.js";
@@ -262,7 +262,7 @@ export async function failoverPreviewCleanupOnce(
         continue;
       }
       try {
-        if (workspaceMode() === "local") {
+        if (isLocalWorkspace(project.id)) {
           // Pin-only здесь был бы потерей проекта: файлы остались на выключенной ноде.
           // Сначала snapshot восстанавливается на цели, и только потом меняется pin.
           await deps.restoreLost(project.id, project.userId, target.id);

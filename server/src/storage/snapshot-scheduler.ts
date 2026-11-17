@@ -2,7 +2,7 @@ import { listProjectOwnersOnThisNode } from "../project-store.js";
 import { hydratePreview } from "../preview/preview-store.js";
 import { listSandboxJobs } from "../sandbox/jobs.js";
 import { isRunActiveAnywhere } from "../agent/run-activity.js";
-import { workspaceMode } from "../sandbox/workspace-mode.js";
+import { isLocalWorkspace, localProjectIds, workspaceMode } from "../sandbox/workspace-mode.js";
 import { objectStoreConfigFromEnv } from "./object-store.js";
 import { getProjectWorkspaceMeta } from "./project-workspace-store.js";
 import { snapshotProject } from "./workspace-snapshot.js";
@@ -33,7 +33,7 @@ function snapshotMinAgeMs(value = process.env.WORKSPACE_SNAPSHOT_MIN_AGE_MS): nu
 
 export async function snapshotLocalProjectsOnce(now = Date.now()): Promise<{ snapshotted: number; skipped: number; failed: number }> {
   const result = { snapshotted: 0, skipped: 0, failed: 0 };
-  if (workspaceMode() !== "local") return result;
+  if (workspaceMode() !== "local" && localProjectIds().size === 0) return result;
   let projects;
   try {
     projects = await listProjectOwnersOnThisNode();
@@ -43,7 +43,7 @@ export async function snapshotLocalProjectsOnce(now = Date.now()): Promise<{ sna
   }
   const minAge = snapshotMinAgeMs();
   for (const project of projects) {
-    if (project.workspaceMode !== "local") {
+    if (project.workspaceMode !== "local" && !isLocalWorkspace(project.id)) {
       result.skipped++;
       continue;
     }
@@ -81,7 +81,7 @@ let timer: NodeJS.Timeout | null = null;
 
 export function startWorkspaceSnapshotScheduler(): void {
   if (timer) return;
-  if (workspaceMode() !== "local") return;
+  if (workspaceMode() !== "local" && localProjectIds().size === 0) return;
   const interval = snapshotIntervalMs();
   if (!interval) return;
   try {

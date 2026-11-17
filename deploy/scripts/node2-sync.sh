@@ -287,6 +287,13 @@ sync_file(){
 }
 
 sync_file docker-compose.yml "$COMPOSE_SRC"
+# Override тоже должен приезжать из репозитория: без него на node-2 нет приватного порта и
+# WEBNESTDEV_API_ADDRESS, и owner-routing после выкатки остаётся нерабочим.
+NODE2_OVERRIDE_SRC="${NODE2_OVERRIDE_SRC:-$(dirname "$COMPOSE_SRC")/deploy/node2/docker-compose.override.yml}"
+if [ ! -f "$NODE2_OVERRIDE_SRC" ]; then
+  NODE2_OVERRIDE_SRC="$APP_DIR/deploy/node2/docker-compose.override.yml"
+fi
+sync_file docker-compose.override.yml "$NODE2_OVERRIDE_SRC"
 sync_file Caddyfile "$CADDY_SRC"
 sync_file preview-tls.caddy "$PREVIEW_TLS_SRC"
 sync_file host-tls.caddy

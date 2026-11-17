@@ -80,15 +80,22 @@ else
   exit 1
 fi
 cache_bind="$cache_dir:$cache_dir"
+local_dir="${WEBNESTDEV_LOCAL_WORKSPACE_DIR:-/var/lib/webnestdev/workspaces}"
+local_bind="$local_dir:$local_dir"
+has_local_bind=0
 has_cache_bind=0
 binds=()
 while IFS= read -r bind; do
   [ -n "$bind" ] || continue
   binds+=(-v "$bind")
   [ "$bind" = "$cache_bind" ] && has_cache_bind=1
+  [ "$bind" = "$local_bind" ] && has_local_bind=1
 done < <(docker inspect --format '{{range .HostConfig.Binds}}{{println .}}{{end}}' "$runner")
 if [ "$has_cache_bind" = "0" ]; then
   binds+=(-v "$cache_bind")
+fi
+if [ "$has_local_bind" = "0" ]; then
+  binds+=(-v "$local_bind")
 fi
 
 cmd=()
@@ -131,13 +138,20 @@ ensure_env(){
 ensure_env WEBNESTDEV_PREVIEW_CACHE_DIR "$cache_dir"
 ensure_env WEBNESTDEV_PREVIEW_CACHE_HOST_DIR "$cache_dir"
 ensure_env WEBNESTDEV_PREVIEW_CACHE_TTL_DAYS "${PREVIEW_CACHE_TTL_DAYS:-30}"
+# Пилотные local-проекты: передаём список только когда он явно задан при пересоздании.
+# Пустое значение не добавляем, иначе оно навсегда закрепится в окружении runner'а.
+if [ -n "${WEBNESTDEV_LOCAL_PROJECTS:-}" ]; then
+  ensure_env WEBNESTDEV_LOCAL_PROJECTS "$WEBNESTDEV_LOCAL_PROJECTS"
+  ensure_env WEBNESTDEV_LOCAL_WORKSPACE_DIR "$local_dir"
+  ensure_env WEBNESTDEV_LOCAL_WORKSPACE_HOST_DIR "$local_dir"
+fi
 
-if [ "$current" = "$IMAGE_REF" ] && [ "$has_cache_bind" = "1" ] && [ "$env_added" = "0" ]; then
+if [ "$current" = "$IMAGE_REF" ] && [ "$has_cache_bind" = "1" ] && [ "$has_local_bind" = "1" ] && [ "$env_added" = "0" ]; then
   log "$runner уже работает на $IMAGE_REF с локальным кэшем $cache_dir"
   exit 0
 fi
 if [ "$current" = "$IMAGE_REF" ]; then
-  log "$runner уже на $IMAGE_REF, но конфигурация кэша неполная — пересоздаю с $cache_dir"
+  log "$runner уже на $IMAGE_REF, но конфигурация кэша/local-каталога неполная — пересоздаю с $cache_dir"
 else
   log "$runner работает на ${current:-неизвестном образе} — перевожу на $IMAGE_REF"
 fi

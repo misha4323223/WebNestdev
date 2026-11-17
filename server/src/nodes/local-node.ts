@@ -1,7 +1,7 @@
 import { diskStatus, memoryStatus } from "../health/host-metrics.js";
 import { runDockerCli } from "../sandbox/docker/cli.js";
 import { sandboxRootDir } from "../sandbox/config.js";
-import { workspaceMode } from "../sandbox/workspace-mode.js";
+import { localProjectIds, workspaceMode } from "../sandbox/workspace-mode.js";
 import { nodeAddress, nodeApiAddress, nodeId } from "./identity.js";
 import { registerConfiguredRemoteNodes, startRemoteNodeHeartbeat } from "./remote-heartbeat.js";
 import { startProjectRebalance } from "./rebalance.js";
@@ -68,7 +68,7 @@ async function registerLocalNode(): Promise<SandboxNode> {
     id,
     address: nodeAddress(),
     apiAddress: nodeApiAddress(),
-    workspaceMode: workspaceMode(),
+    workspaceMode: workspaceMode() === "local" || localProjectIds().size > 0 ? "local" : "shared",
     // A restart must not silently undo an operator's drain or offline decision.
     status: existing?.status ?? "online",
     ...metrics,
@@ -99,7 +99,7 @@ export async function ensureLocalNode(): Promise<SandboxNode> {
     if (touched) {
       return (await updateNodeIdentity(nodeId(), {
         apiAddress: nodeApiAddress(),
-        workspaceMode: workspaceMode(),
+        workspaceMode: workspaceMode() === "local" || localProjectIds().size > 0 ? "local" : "shared",
       })) ?? touched;
     }
   }
@@ -137,7 +137,7 @@ export async function heartbeatLocalNode(): Promise<SandboxNode> {
   if (!refreshed) return ensureLocalNode();
   return (await updateNodeIdentity(nodeId(), {
     apiAddress: nodeApiAddress(),
-    workspaceMode: workspaceMode(),
+    workspaceMode: workspaceMode() === "local" || localProjectIds().size > 0 ? "local" : "shared",
   })) ?? refreshed;
 }
 

@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile, readdir, rename, rm, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 import { sandboxMemoryMb, sandboxRootPath, workspaceDiskMb } from "./sandbox/config.js";
-import { ownerRoutingEnabled, workspaceMode } from "./sandbox/workspace-mode.js";
+import { isLocalWorkspace, ownerRoutingEnabled, workspaceMode } from "./sandbox/workspace-mode.js";
 import { chooseProjectNode, NoSandboxNodeError } from "./nodes/placement.js";
 import { nodeId } from "./nodes/identity.js";
 import type { ChatMessage, PlanState, ReasoningBlock } from "./types.js";
@@ -334,7 +334,7 @@ export async function transferProjectOwners(
 export async function deleteProject(projectId:string,userId:string):Promise<boolean>{
   const project=await getProject(projectId);
   if(!project||project.userId!==userId)return false;
-  if(workspaceMode()==="local" && (project.node?.trim()||nodeId())!==nodeId()){
+  if((project.workspaceMode==="local"||isLocalWorkspace(projectId)) && (project.node?.trim()||nodeId())!==nodeId()){
     throw new WorkspaceMigrationRequiredError(
       "Удалять проект нужно на ноде-владельце " + (project.node||nodeId()) + ": запрос не был маршрутизирован.",
     );
@@ -439,7 +439,7 @@ export async function linkProjectGithub(projectId:string,userId:string,github:Gi
 export async function reassignProjectNode(projectId:string,userId:string,node:string):Promise<Project|null>{
   const project=await getProject(projectId);
   if(!project||project.userId!==userId)return null;
-  if(workspaceMode()==="local"){
+  if(project.workspaceMode==="local"||isLocalWorkspace(projectId)){
     throw new WorkspaceMigrationRequiredError(
       "В локальном режиме pin нельзя менять без переноса файлов: используйте миграцию проекта через snapshot.",
     );

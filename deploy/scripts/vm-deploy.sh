@@ -935,6 +935,40 @@ install_compose(){
   mv "$staged" "$APP_DIR/$COMPOSE_FILE"
 }
 
+# Override раньше жил только на ВМ и после выкатки образа оставался старым: приватный порт
+# owner-routing и WEBNESTDEV_API_ADDRESS не появлялись, хотя код уже был готов. Файл берём из
+# репозитория (deploy/node1|node2) и проверяем вместе с base compose до подмены.
+install_compose_override(){
+  if [ "$SYNC_COMPOSE" != "1" ]; then
+    log "override не синхронизирую (SYNC_COMPOSE=0)"
+    return 0
+  fi
+  local src="${COMPOSE_OVERRIDE_SRC:-}"
+  if [ -z "$src" ]; then
+    src="$(dirname "$COMPOSE_SRC")/deploy/node1/docker-compose.override.yml"
+  fi
+  [ -f "$src" ] || src="$APP_DIR/deploy/node1/docker-compose.override.yml"
+  if [ ! -f "$src" ]; then
+    log "override $src не найден — оставляю файл на ВМ"
+    return 0
+  fi
+  local staged="$APP_DIR/.docker-compose.override.yml.synced"
+  cp "$src" "$staged"
+  if ! (cd "$APP_DIR" && docker compose -f "$COMPOSE_FILE" -f "$staged" config -q 2>&1 | sed 's/^/[deploy]   /'); then
+    log "присланный override не проходит проверку — оставляю текущий"
+    rm -f "$staged"
+    return 1
+  fi
+  if cmp -s "$staged" "$APP_DIR/$COMPOSE_OVERRIDE"; then
+    log "$COMPOSE_OVERRIDE уже совпадает с репозиторием"
+    rm -f "$staged"
+    return 0
+  fi
+  log "обновляю $COMPOSE_OVERRIDE из репозитория (прежний — $COMPOSE_OVERRIDE.bak)"
+  cp "$APP_DIR/$COMPOSE_OVERRIDE" "$APP_DIR/$COMPOSE_OVERRIDE.bak" 2>/dev/null || true
+  mv "$staged" "$APP_DIR/$COMPOSE_OVERRIDE"
+}
+
 #
 # Значение переменной окружения сервиса из уже разрешённого compose-файла: домен превью и адрес
 # ACME живут в .env на ВМ, а выкатка его не читает.
@@ -2363,6 +2397,7 @@ case "$MODE" in
     # Сначала файл сервисов, потом перенос файлов проектов, и только потом запуск: контейнеры
     # поднимаются уже с правильным каталогом песочниц.
     install_compose || log "выкатываю на compose, который лежит на ВМ"
+    install_compose_override || log "оставляю override, который лежит на ВМ"
     # Сниппет TLS — до Caddyfile: основной файл подключает его строкой `import`, и проверка
     # конфигурации без сниппета не пройдёт.
     install_preview_tls || log "оставляю сниппет TLS, который лежит на ВМ"

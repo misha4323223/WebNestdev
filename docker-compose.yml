@@ -448,6 +448,8 @@ services:
       WEBNESTDEV_WORKSPACE_MODE: ${WEBNESTDEV_WORKSPACE_MODE:-shared}
       WEBNESTDEV_LOCAL_WORKSPACE_DIR: ${WEBNESTDEV_LOCAL_WORKSPACE_DIR:-/var/lib/webnestdev/workspaces}
       WEBNESTDEV_LOCAL_WORKSPACE_HOST_DIR: ${WEBNESTDEV_LOCAL_WORKSPACE_HOST_DIR:-/var/lib/webnestdev/workspaces}
+      # Пилотные проекты на локальном диске при глобальном shared. ID через запятую; пусто — выкл.
+      WEBNESTDEV_LOCAL_PROJECTS: ${WEBNESTDEV_LOCAL_PROJECTS:-}
       WEBNESTDEV_OWNER_ROUTING: ${WEBNESTDEV_OWNER_ROUTING:-0}
       # Горячие snapshot: 15 минут, только для незанятых local-проектов. 0 выключает.
       WORKSPACE_SNAPSHOT_INTERVAL_MS: ${WORKSPACE_SNAPSHOT_INTERVAL_MS:-900000}
@@ -604,6 +606,7 @@ services:
       # Тот же общий каталог, что читает Caddy: API пишет один файл атомарно.
       - ${CUSTOM_DOMAINS_CADDY_DIR:-/var/lib/webnestdev/data/caddy-custom}:/srv/caddy-custom
       - ${SANDBOX_DIR:-/var/lib/webnestdev/sandboxes}:${SANDBOX_DIR:-/var/lib/webnestdev/sandboxes}
+      - ${WEBNESTDEV_LOCAL_WORKSPACE_DIR:-/var/lib/webnestdev/workspaces}:${WEBNESTDEV_LOCAL_WORKSPACE_DIR:-/var/lib/webnestdev/workspaces}
       # Локальный кэш node_modules на диске этой ВМ. Не общий том: после переезда проекта
       # на другую ноду зависимости один раз установятся там.
       - ${PREVIEW_CACHE_DIR:-/var/lib/webnestdev/preview-cache}:${PREVIEW_CACHE_DIR:-/var/lib/webnestdev/preview-cache}
