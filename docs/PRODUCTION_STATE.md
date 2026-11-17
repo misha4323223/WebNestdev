@@ -4,8 +4,8 @@
 между сессиями.
 Секреты здесь не хранятся: только имена переменных, пути и способы проверки.
 
-**Актуально на 17.11.2026, 11:33 UTC:** обе ноды включены, `node-1` — primary,
-`node-2` — streaming standby; обе на сборке `7c0a47b`. Production работает в
+**Актуально на 17.11.2026, 15:32 UTC:** обе ноды включены, `node-1` — primary,
+`node-2` — streaming standby; обе на сборке `960b983` (фоновые задания хостинга). Production работает в
 `WEBNESTDEV_WORKSPACE_MODE=local`, `OWNER_ROUTING=1`; все 18 проектов переведены на локальные
 каталоги `node-1` (696 МБ), 14 cold-архивов восстановлены. Gluster-том `sandboxes` не менялся
 и больше не используется для активных workspace. Deploy синхронизирует override обеих нод;
@@ -26,27 +26,25 @@
 | ВМ | Роль | Адрес | Текущее питание |
 | --- | --- | --- | --- |
 | `node-1` | production primary: API, Caddy, HAProxy, PostgreSQL primary, `node1-runner` | `10.0.0.4`, management `2.59.83.250` | `ON` |
-| `node-2` | standby/worker: PostgreSQL streaming standby, API/Caddy/broker/runner, общий storage | `10.0.0.5`; внешний NAT динамический, читать из MWS API | `OFF` — выключена 15.11.2026, 20:51 UTC; временный режим одной ноды |
+| `node-2` | standby/worker: PostgreSQL streaming standby, API/Caddy/broker/runner, общий storage | `10.0.0.5`; внешний NAT динамический, читать из MWS API | `ON` — включена, streaming standby |
 
-**На 15.11.2026, 20:51 UTC:** primary PostgreSQL — `node-1`; `node-2` выключена
-(`power=OFF`). Прод временно работает на одной ноде: второй API, PostgreSQL standby и
-failover отсутствуют, Gluster — по одному brick на том (`cluster.quorum-type=none`).
-Целевой production — две включённые ноды. HA-проверки: конкурентный DDL и `restore-s3`
-пройдены; TLS, domain/preview failover и плановый switchover ещё не выполнены.
+**На 17.11.2026, 15:32 UTC:** primary PostgreSQL — `node-1`; `node-2` включена и работает
+streaming standby (`pg_is_in_recovery()=t`, лаг ~1 мс). На обеих нодах доступен `runsc`,
+`/api/ready` отвечает сборкой `960b983`, Gluster видит по два brick'а на каждом томе.
+Целевой production — две включённые ноды; текущий режим уже двухнодовый.
 
-**Не включать `node-2`, пока `node-1` не жива и не является primary:** иначе контроллер
-`node-2` может повысить её и получится два primary. Включать только по явной просьбе и под
-конкретную работу; после включения она должна стартовать standby, а не primary.
+**Не включать и не повышать `node-2`, пока `node-1` не жива и не является primary:** иначе
+контроллер `node-2` может повысить её и получится два primary. После включения она должна
+стартовать standby, а не primary.
 
 `node-2` — **не тестовая и не одноразовая машина**. Это вторая нода production-контура;
 её PostgreSQL, storage, runner и env-файлы — production-конфигурация, а не тестовая
-заготовка. На 15.11.2026, 20:51 UTC она выключена (`power=OFF`) и включается под
-конкретную работу; после включения должна стартовать standby, а не primary.
+заготовка. На 17.11.2026, 15:32 UTC она включена и работает standby.
 
 Правило работы:
 
-1. На 15.11.2026, 20:51 UTC `node-1` — primary, `node-2` — `power=OFF`; HA-тест
-   приостановлен: остались TLS, destructive domain/preview failover и switchover.
+1. На 17.11.2026, 15:32 UTC `node-1` — primary, `node-2` — включённый standby; HA-проверки
+   TLS, domain/preview failover и плановый switchover остаются отдельными задачами.
 2. Доводить задачу до конца, не выключая работающую ВМ в середине.
 3. Перед production-запуском проверить standby `node-2` и выполнить плановый переезд primary
    на неё по [`PRODUCTION_LAUNCH.md`](PRODUCTION_LAUNCH.md).
@@ -61,14 +59,14 @@ Production не должен зависеть от базы или storage од�
 
 - Публичный адрес: `https://nestdev.ru`.
 - `GET /api/ready` отвечает `ok:true`.
-- Текущая production-сборка на обеих нодах: `79c87ede02b084776ef07d8c49332a09de0548ff` —
-  коммит `79c87ed` в `main` (`feat(agent): интерактивные ответы и фирменный загрузчик`).
-- Образ: `ghcr.io/misha4323223/webnestdev:sha-79c87ede02b0` — собран и опубликован
-  workflow `deploy` (run `43758738145`).
-- Выкачена 15.11.2026, 20:41 UTC на `node-1` и `node-2`; runner на второй ноде также переведён
-  на эту сборку. Тег `sha-79c87ede02b0` подтверждён на обеих нодах, deploy run — success.
-  Предыдущие сборки `4556b09` (run `43738404730`) и `1886858` (run `43706263691`) остались
-  в истории.
+- Текущая production-сборка на обеих нодах: `960b983321e44a33526a8b40413de04a9f9cacfa` —
+  коммит `960b983` в `main` (`feat(hosting): добавить фоновые задания после HTTP-ответа`).
+- Образ: `ghcr.io/misha4323223/webnestdev:sha-960b983321e4` — собран и опубликован
+  workflow `deploy` (run `44112641165`).
+- Выкачена 17.11.2026, 15:30 UTC на `node-1` и `node-2`; `GET /api/ready` на обеих нодах
+  и на `https://nestdev.ru/api/ready` отдаёт `build=960b983321e44a33526a8b40413de04a9f9cacfa`,
+  deploy run — success.
+  Предыдущая сборка `e96839a` (run `44092122621`) осталась в истории.
 - Перед ней в тот же день выкачена AI-сборка `d14676f` (run `43704849397`); все `AGENT_*`
   флаги на обеих нодах выключены, reviewer и остальные экспериментальные ветки не активны.
 - Исправление: локальный кэш зависимостей передаётся Docker с флагом `-v`; без него
@@ -77,16 +75,16 @@ Production не должен зависеть от базы или storage од�
   отдельный лимит hybrid/общий бюджет ноды, static-only панель preview и двухминутный
   idle для Docker/hybrid; подробности — в разделе 20 и
   [`HYBRID_PREVIEW.md`](HYBRID_PREVIEW.md).
-- Прод работает на базе `node-1`; `node-2` выключена (`power=OFF`), поэтому сейчас нет
-  PostgreSQL standby и автоматического failover. Переключение выполнялось аварийным
-  прогоном 12.11.2026, подробности — в разделе 19.
+- Прод работает на базе `node-1`; `node-2` включена и является streaming standby
+  (`pg_is_in_recovery()=t`, лаг ~1 мс), поэтому PostgreSQL failover доступен. Аварийное
+  переключение 12.11.2026 описано в разделе 19.
 - NLB `webnestdev-nlb-main` — публичный ingress; DNS при переключении не меняется. Локальный
   API `node-1` отвечает `200`; публичный `https://nestdev.ru` и `/api/ready` — `200`.
 
 ## 2.1. Custom domains: инфраструктура выкачена, feature flag включён
 
-- 13.11.2026 custom domains этапов 1–3 выкачены на `node-1`; на 15.11.2026, 20:45 UTC текущая
-  сборка обеих нод — `79c87ed` (run `43758738145`, образ `sha-79c87ede02b0`).
+- 13.11.2026 custom domains этапов 1–3 выкачены на `node-1`; на 17.11.2026, 15:32 UTC текущая
+  сборка обеих нод — `960b983` (run `44112641165`, образ `sha-960b983321e4`).
 - Живой Caddy: `src-caddy-1` на обеих нодах, image `caddy:2.11.8-alpine`, version `v2.11.8`.
 - Сертификаты перенесены из `src_caddy-data` в общий
   `/var/lib/webnestdev/data/caddy-data`; старые сертификаты на месте, `https://nestdev.ru` и
