@@ -435,6 +435,9 @@ jobs:
           # Файл сервисов едет на ВМ вместе со скриптом: выкатка образа раньше не касалась
           # compose, и ВМ молча оставалась со старым — без SANDBOX_DIR и монтирования песочниц.
           COMPOSE_B64=$(base64 -w0 docker-compose.yml)
+          # Override node-1 едет отдельно: чекаут на ВМ может не содержать deploy/node1, и тогда
+          # приватный порт/API-адрес снова остались бы только в старом файле.
+          COMPOSE_OVERRIDE_B64=$(base64 -w0 deploy/node1/docker-compose.override.yml)
           # Конфигурация фронта с HTTPS едет тем же способом, что и файл сервисов: иначе ВМ
           # осталась бы с прежним Caddyfile, и правка публичных адресов предпросмотра
           # требовала бы захода на сервер руками.
@@ -1049,6 +1052,7 @@ jobs:
             AGENT_SSH_PUBKEY="$AGENT_SSH_PUBKEY" \
             LOG_TAIL="$LOG_TAIL" \
             COMPOSE_SRC="$PWD/docker-compose.yml" CADDY_SRC="$PWD/deploy/Caddyfile" \
+            COMPOSE_OVERRIDE_B64="$COMPOSE_OVERRIDE_B64" \
             PREVIEW_TLS_SRC="$PWD/deploy/preview-tls.caddy" \
             WILDCARD_CERT_SRC="$PWD/deploy/scripts/wildcard-cert.sh" \
             REGRU_API_USERNAME="$REGRU_API_USERNAME" REGRU_API_PASSWORD="$REGRU_API_PASSWORD" \

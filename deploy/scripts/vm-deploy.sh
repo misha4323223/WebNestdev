@@ -944,16 +944,24 @@ install_compose_override(){
     return 0
   fi
   local src="${COMPOSE_OVERRIDE_SRC:-}"
-  if [ -z "$src" ]; then
-    src="$(dirname "$COMPOSE_SRC")/deploy/node1/docker-compose.override.yml"
-  fi
-  [ -f "$src" ] || src="$APP_DIR/deploy/node1/docker-compose.override.yml"
-  if [ ! -f "$src" ]; then
-    log "override $src не найден — оставляю файл на ВМ"
-    return 0
-  fi
   local staged="$APP_DIR/.docker-compose.override.yml.synced"
-  cp "$src" "$staged"
+  if [ -n "${COMPOSE_OVERRIDE_B64:-}" ]; then
+    if ! printf '%s' "$COMPOSE_OVERRIDE_B64" | base64 -d > "$staged" 2>/dev/null; then
+      log "присланный override не распаковался — оставляю файл на ВМ"
+      rm -f "$staged"
+      return 1
+    fi
+  else
+    if [ -z "$src" ]; then
+      src="$(dirname "$COMPOSE_SRC")/deploy/node1/docker-compose.override.yml"
+    fi
+    [ -f "$src" ] || src="$APP_DIR/deploy/node1/docker-compose.override.yml"
+    if [ ! -f "$src" ]; then
+      log "override $src не найден — оставляю файл на ВМ"
+      return 0
+    fi
+    cp "$src" "$staged"
+  fi
   if ! (cd "$APP_DIR" && docker compose -f "$COMPOSE_FILE" -f "$staged" config -q 2>&1 | sed 's/^/[deploy]   /'); then
     log "присланный override не проходит проверку — оставляю текущий"
     rm -f "$staged"
