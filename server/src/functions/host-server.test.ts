@@ -200,6 +200,53 @@ test("передаёт функции исходное тело POST, включ
   }
 });
 
+test("API-хост снимает slug, сохраняет query и отвечает на preflight", async () => {
+  const previous = process.env.HOSTING_API_HOST;
+  process.env.HOSTING_API_HOST = "api.host.nestdev.ru";
+  let seen: { method?: string; path?: string; query?: Record<string, string>; search?: string } = {};
+  const app = createFunctionsHostServer(deps({
+    invoke: async input => {
+      seen = input.request;
+      return { status: 201, headers: { "content-type": "application/json" }, body: Buffer.from("{\"ok\":true}") };
+    },
+  }));
+  try {
+    const response = await app.inject({
+      method: "POST",
+      url: "/demo/api/hello?x=1&x=2",
+      headers: { host: "api.host.nestdev.ru", origin: "https://demo.host.nestdev.ru", "content-type": "application/json" },
+      payload: '{"name":"Ada"}',
+    });
+    assert.equal(response.statusCode, 201);
+    assert.equal(seen.method, "POST");
+    assert.equal(seen.path, "/api/hello");
+    assert.deepEqual(seen.query, { x: "1,2" });
+    assert.equal(seen.search, "?x=1&x=2");
+    assert.equal(response.headers["access-control-allow-origin"], "*");
+
+    const preflight = await app.inject({
+      method: "OPTIONS",
+      url: "/demo/api/hello",
+      headers: {
+        host: "api.host.nestdev.ru",
+        origin: "https://demo.host.nestdev.ru",
+        "access-control-request-method": "POST",
+        "access-control-request-headers": "content-type",
+      },
+    });
+    assert.equal(preflight.statusCode, 204);
+    assert.match(String(preflight.headers["access-control-allow-methods"]), /POST/);
+    assert.equal(preflight.headers["access-control-allow-headers"], "content-type");
+
+    const invalid = await app.inject({ method: "GET", url: "/demo/other/hello", headers: { host: "api.host.nestdev.ru" } });
+    assert.equal(invalid.statusCode, 404);
+  } finally {
+    await app.close();
+    if (previous === undefined) delete process.env.HOSTING_API_HOST;
+    else process.env.HOSTING_API_HOST = previous;
+  }
+});
+
 test("ставит задания из ответа функции в очередь до ответа клиенту", async () => {
   let seen: unknown = null;
   const app = createFunctionsHostServer(

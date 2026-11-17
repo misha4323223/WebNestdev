@@ -31,6 +31,8 @@ services:
       WEBNESTDEV_SHARED_SANDBOX: "1"
       WEBNESTDEV_AUTO_MOVE_PROJECTS: "1"
       HOSTING_SHARED_STORAGE: "1"
+      # POST к функциям идёт на api.host.nestdev.ru, CDN остаётся для статики.
+      HOSTING_API_HOST: api.host.nestdev.ru
       # 6.3: после публикации сайта сбрасываем кеш общего CDN-ресурса.
       HOSTING_CDN_PURGE: "1"
       HOSTING_CDN_RESOURCE: hosting

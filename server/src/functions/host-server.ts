@@ -1,6 +1,6 @@
 import Fastify, { type FastifyInstance, type FastifyReply, type FastifyRequest } from "fastify";
 import path from "node:path";
-import { hostingPublicDomain } from "../hosting/config.js";
+import { hostingApiHost, hostingPublicDomain } from "../hosting/config.js";
 import { getDomainByHostname } from "../hosting/domain-store.js";
 import { hostingFunctionDir, hostingFunctionsDir } from "../hosting/paths.js";
 import { isHostingSlug } from "../hosting/slug.js";
@@ -53,6 +53,32 @@ function requestHost(request: FastifyRequest) {
   return raw.replace(/:\d+$/, "").replace(/\.$/, "");
 }
 
+/**
+ * `api.<домен>/<slug>/api/...` — отдельная дверь для POST в обход CDN. Хост проверяется
+ * точным сравнением с настройкой, а slug — регуляркой; Host из запроса не становится
+ * путём к чужому сайту. Caddy передаёт путь как есть, поэтому префикс снимаем здесь.
+ */
+function apiTarget(hostname: string, pathname: string) {
+  const apiHost = hostingApiHost();
+  if (!apiHost || hostname !== apiHost) return null;
+  const parts = pathname.split("/");
+  const slug = parts[1] ?? "";
+  if (parts[2] !== "api" || !isHostingSlug(slug)) return null;
+  return { slug, pathname: "/api/" + parts.slice(3).join("/") };
+}
+
+function apiCors(reply: FastifyReply, request: FastifyRequest) {
+  reply.header("access-control-allow-origin", "*");
+  reply.header("access-control-allow-methods", "GET, HEAD, POST, PUT, PATCH, DELETE, OPTIONS");
+  const requested = request.headers["access-control-request-headers"];
+  reply.header(
+    "access-control-allow-headers",
+    typeof requested === "string" && requested.trim() ? requested : "content-type, authorization",
+  );
+  reply.header("access-control-expose-headers", "x-function-cache, retry-after");
+  reply.header("access-control-max-age", "600");
+}
+
 async function resolveSite(hostname: string, deps: FunctionsHostDeps) {
   const domain = hostingPublicDomain();
   if (hostname.endsWith("." + domain)) {
@@ -103,7 +129,18 @@ export function createFunctionsHostServer(deps: FunctionsHostDeps = defaultDeps)
   app.all("/*", async (request, reply) => {
     const hostname = requestHost(request);
     if (!hostname) return sendError(reply, 400, "Не передан Host");
-    const site = await resolveSite(hostname, deps).catch(() => null);
+    const url = new URL(request.raw.url ?? "/", "http://site.local");
+    const apiHost = hostingApiHost();
+    const isApiHost = Boolean(apiHost && hostname === apiHost);
+    if (isApiHost) apiCors(reply, request);
+    // Preflight обслуживаем до поиска сайта: браузер не присылает с ним полезное тело.
+    if (isApiHost && request.method === "OPTIONS") return reply.code(204).send();
+
+    const target = isApiHost ? apiTarget(hostname, url.pathname) : null;
+    if (isApiHost && !target) return sendError(reply, 404, "Сайт не найден");
+    const site = target
+      ? await deps.getSiteBySlug(target.slug).catch(() => null)
+      : await resolveSite(hostname, deps).catch(() => null);
     if (!site || site.status !== "live" || !site.activeReleaseId) return sendError(reply, 404, "Сайт не найден");
     // Фиксируем релиз в локальной переменной: замыкание execute теряет narrowing поля.
     const activeReleaseId = site.activeReleaseId;
@@ -113,7 +150,7 @@ export function createFunctionsHostServer(deps: FunctionsHostDeps = defaultDeps)
     ).catch(() => null);
     if (!manifest?.functions.length) return sendError(reply, 404, "У сайта нет функций");
 
-    const url = new URL(request.raw.url ?? "/", "http://site.local");
+    if (target) url.pathname = target.pathname;
     const fn = manifest.functions.find(entry => entry.path === url.pathname);
     if (!fn) return sendError(reply, 404, "Функция не найдена", { path: url.pathname });
     if (!fn.methods.includes(request.method as never)) {

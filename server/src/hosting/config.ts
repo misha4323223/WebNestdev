@@ -144,6 +144,29 @@ export function hostingSiteUrl(slug: string, domain = hostingPublicDomain()) {
   return "https://" + slug + "." + domain;
 }
 
+/**
+ * Отдельный хост для POST-запросов к функциям. Пусто — мост выключен и сайты продолжают
+ * ходить в относительный `/api` (так работает установка без CDN-обхода). Значение задаётся
+ * явно, чтобы выкатка не начала перенаправлять формы до появления DNS/A-записи.
+ */
+export function hostingApiHost(value = process.env.HOSTING_API_HOST ?? "") {
+  const host = value.trim().toLowerCase().replace(/\.$/, "");
+  if (!host) return "";
+  if (host.includes(":") || host.includes("/") || host.includes("*") || host.length > 253) {
+    throw new Error("HOSTING_API_HOST должен быть DNS-именем без схемы, порта и wildcard");
+  }
+  const labels = host.split(".");
+  if (labels.length < 3 || labels.some(label => !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label))) {
+    throw new Error("HOSTING_API_HOST содержит некорректную DNS-метку");
+  }
+  return host;
+}
+
+/** База API для конкретного сайта; null — мост не включён. */
+export function hostingApiBase(slug: string, host = hostingApiHost()) {
+  return host ? "https://" + host + "/" + slug : null;
+}
+
 /** Одна строка для старта: видно, включён ли хостинг и где лежат релизы. */
 export function describeHosting(config = hostingConfig()) {
   const limits = config.limits;

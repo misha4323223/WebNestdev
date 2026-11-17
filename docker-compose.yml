@@ -188,6 +188,9 @@ services:
       # сайтов Caddy: флаг запрещает только новые публикации и изменения из панели.
       HOSTING_ENABLED: ${HOSTING_ENABLED:-0}
       HOSTING_PUBLIC_DOMAIN: ${HOSTING_PUBLIC_DOMAIN:-host.nestdev.ru}
+      # Пусто — мост на отдельный API-хост выключен. В production задаётся
+      # `api.host.nestdev.ru`, чтобы POST не упирался в CDN.
+      HOSTING_API_HOST: ${HOSTING_API_HOST:-}
       HOSTING_TLS_MODE: ${HOSTING_TLS_MODE:-on_demand}
       # SITES_DIR внутри контейнера всегда /srv/sites; снаружи его задаёт HOSTING_SITES_DIR.
       # Это отдельный том состояния, как DATA_DIR: выкатка не должна его пересоздавать.

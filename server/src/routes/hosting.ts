@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyReply } from "fastify";
 import { z } from "zod";
 import { requireUser } from "../auth/auth.js";
 import { getProject } from "../project-store.js";
-import { hostingConfig, hostingSiteUrl } from "../hosting/config.js";
+import { hostingApiHost, hostingConfig, hostingSiteUrl } from "../hosting/config.js";
 import { assertGlobalSiteLimit } from "../hosting/limits.js";
 import { hostSlugForDomain, normalizeHostingSlug } from "../hosting/slug.js";
 import { startPublish, startRollback } from "../hosting/publisher.js";
@@ -324,6 +324,12 @@ export async function registerHostingRoutes(app: FastifyInstance) {
     if (!parsed.success) return reply.code(400).send({ error: "Не передан domain" });
     const host = parsed.data.domain;
     const config = hostingConfig();
+    // Отдельный API-хост не привязан к slug сайта: сертификат на него нужен, когда
+    // wildcard-сниппет ещё не установлен (dev/новая нода).
+    const apiHost = hostingApiHost();
+    if (apiHost && normalizeHostnameLookup(host) === apiHost) {
+      return reply.send({ allowed: true, host: apiHost, kind: "api-host" });
+    }
     const slug = hostSlugForDomain(host, config.publicDomain);
     if (slug) {
       const site = await getSiteBySlug(slug);

@@ -16,7 +16,8 @@ import { indexFileExists, planStaticPreview } from "../preview/static-plan.js";
 import { runInSandbox } from "../sandbox-worker.js";
 import { secretEnvMaskMounts } from "../sandbox/secret-mask.js";
 import { loadProjectSecretFiles } from "../secrets/project-secrets.js";
-import { hostingConfig, hostingLimits } from "./config.js";
+import { hostingApiBase, hostingConfig, hostingLimits } from "./config.js";
+import { installApiBridge } from "./api-bridge.js";
 import { copyArtifact, inspectArtifact, removeStaging } from "./artifact.js";
 import { pruneLocalReleases } from "./cache.js";
 import { purgeHostingCdn, purgePathsForArtifact, purgePathsForChange, purgePathsForManifest } from "./cdn-purge.js";
@@ -412,6 +413,25 @@ async function runPublish(site: HostingSite, release: HostingRelease, project: P
         allowSourceMaps: process.env.HOSTING_ALLOW_SOURCEMAPS === "1",
       });
 
+      // Сайт с функциями получает мост на отдельный API-хост: CDN не пропускает POST.
+      // Мост ставится в staging, а не в проект, и после него манифест считается заново:
+      // иначе sha256 index.html и размер релиза разошлись бы с файлами на диске.
+      let artifact = inspected;
+      const apiBase = kind === "static-functions" ? hostingApiBase(site.slug) : null;
+      if (apiBase) {
+        await installApiBridge(staging, apiBase);
+        artifact = await inspectArtifact(staging, {
+          limits,
+          secretValues,
+          projectRoot: staging,
+          allowSourceMaps: process.env.HOSTING_ALLOW_SOURCEMAPS === "1",
+        });
+        publishedBytes = artifact.bytes;
+        nextFiles = artifact.files;
+        await assertAccountHostingQuota(project.userId, artifact.bytes);
+        await assertHostingDiskHasRoom(config, artifact.bytes);
+      }
+
       const target = hostingReleaseDir(site.slug, release.id, config.sitesDir);
       await rm(target, { recursive: true, force: true });
       await rename(staging, target);
@@ -460,12 +480,12 @@ async function runPublish(site: HostingSite, release: HostingRelease, project: P
 
       manifestPath = hostingManifestPath(site.slug, release.id, config.sitesDir);
       await mkdir(path.dirname(manifestPath), { recursive: true, mode: 0o755 });
-      await writeFile(manifestPath, JSON.stringify(inspected), { encoding: "utf8", mode: 0o644 });
+      await writeFile(manifestPath, JSON.stringify(artifact), { encoding: "utf8", mode: 0o644 });
 
       // Архив загружается до переключения current: если S3 недоступен, старый сайт должен
       // продолжать работать, а не замениться релизом, которого нет в источнике правды.
       if (releaseStore) {
-        stored = await releaseStore.put({ site, releaseId: release.id, dir: target, manifest: inspected });
+        stored = await releaseStore.put({ site, releaseId: release.id, dir: target, manifest: artifact });
         logLine("info", "release archived", {
           site: site.slug,
           release: release.id,
@@ -483,11 +503,11 @@ async function runPublish(site: HostingSite, release: HostingRelease, project: P
           releaseId: release.id,
           userId: project.userId,
           kind,
-          bytes: inspected.bytes + functionBytes,
-          storedBytes: stored?.storedBytes ?? inspected.bytes + functionBytes,
-          files: inspected.filesCount + functionCount,
-          sha256: inspected.sha256,
-          manifestJson: JSON.stringify(inspected),
+          bytes: artifact.bytes + functionBytes,
+          storedBytes: stored?.storedBytes ?? artifact.bytes + functionBytes,
+          files: artifact.filesCount + functionCount,
+          sha256: artifact.sha256,
+          manifestJson: JSON.stringify(artifact),
           storageKey: stored?.storageKey ?? "",
           manifestKey: stored?.manifestKey ?? "",
         });
