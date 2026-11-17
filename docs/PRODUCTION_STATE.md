@@ -1334,9 +1334,10 @@ broker 30/30, оба `tsc` — 0. Для выкатки нужна миграц�
 
 ## 26. 17.11.2026: локальный кэш релизов и выкатка
 
-Проверено **17.11.2026, 16:52 UTC** после выкатки `6e3cffc` (workflow `44128872359`):
+Проверено **17.11.2026, 16:52 UTC** после первой выкатки `6e3cffc` (workflow
+`44128872359`), затем после docs-выкатки `5caacee` (workflow `44130766967`):
 
-- `node-1` и `node-2` отдают `build=6e3cffc88f21044369200ac3542b1b3e90dfc1f4`;
+- `node-1` и `node-2` отдают `build=5caacee1e00b769a2e5edb9652efce246f4009d1`;
 - на обеих нодах `HOSTING_LOCAL_RELEASES=1`, `HOSTING_KEEP_RELEASES=3`,
   `HOSTING_S3_ENABLED=auto`, `HOSTING_SHARED_STORAGE=1`;
 - локальных каталогов релизов на общем `sites` — **4** (по одному активному на сайт),
