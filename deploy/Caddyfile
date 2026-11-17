@@ -114,10 +114,15 @@ import /etc/caddy/custom/*.caddy
 
 # Отдельная дверь для POST-запросов к функциям сайтов. CDN MWS пропускает только
 # GET/HEAD/OPTIONS, поэтому формы идут сюда напрямую в NLB, минуя CDN. Путь имеет вид
-# `/<slug>/api/...`; сервер сам проверяет slug и снимает префикс. TLS берём из того же
-# wildcard-сертификата `*.host.nestdev.ru`: `api.host.nestdev.ru` — одна метка под ним.
-api.{$HOSTING_PUBLIC_DOMAIN:host.nestdev.ru} {
-	import /etc/caddy/host-tls.caddy
+# `/<slug>/api/...`; сервер сам проверяет slug и снимает префикс.
+#
+# Хост намеренно вне `*.host.nestdev.ru`: reg.ru не сохраняет A-запись под
+# wildcard-CNAME, и `api.host` снова уезжает в CDN. `api.nestdev.ru` — отдельное имя
+# с A-записью на NLB; сертификат выпускается on-demand (HTTP-01 идёт напрямую в Caddy).
+{$HOSTING_API_HOST:api.nestdev.ru} {
+	tls {
+		on_demand
+	}
 
 	encode zstd gzip
 	reverse_proxy webnestdev-server:8792

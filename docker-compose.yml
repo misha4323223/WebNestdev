@@ -42,6 +42,9 @@ services:
       # WEBNESTDEV_SITE_DOMAIN: иначе пользовательский JS на поддомене делит registrable
       # domain с панелью и может влиять на её cookie.
       HOSTING_PUBLIC_DOMAIN: ${HOSTING_PUBLIC_DOMAIN:-host.nestdev.ru}
+      # API-хост вне wildcard `*.host`, иначе reg.ru теряет A-запись. Должен совпадать
+      # с HOSTING_API_HOST у webnestdev-server, иначе Caddy и дверь функций разойдутся.
+      HOSTING_API_HOST: ${HOSTING_API_HOST:-api.nestdev.ru}
       ACME_EMAIL: ${ACME_EMAIL:-nestdev@mail.ru}
     ports:
       - "80:80"
@@ -189,7 +192,7 @@ services:
       HOSTING_ENABLED: ${HOSTING_ENABLED:-0}
       HOSTING_PUBLIC_DOMAIN: ${HOSTING_PUBLIC_DOMAIN:-host.nestdev.ru}
       # Пусто — мост на отдельный API-хост выключен. В production задаётся
-      # `api.host.nestdev.ru`, чтобы POST не упирался в CDN.
+      # `api.nestdev.ru`, чтобы POST не упирался в CDN.
       HOSTING_API_HOST: ${HOSTING_API_HOST:-}
       HOSTING_TLS_MODE: ${HOSTING_TLS_MODE:-on_demand}
       # SITES_DIR внутри контейнера всегда /srv/sites; снаружи его задаёт HOSTING_SITES_DIR.
