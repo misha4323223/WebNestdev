@@ -140,6 +140,11 @@ ensure_env WEBNESTDEV_PREVIEW_CACHE_HOST_DIR "$cache_dir"
 ensure_env WEBNESTDEV_PREVIEW_CACHE_TTL_DAYS "${PREVIEW_CACHE_TTL_DAYS:-30}"
 # Пилотные local-проекты: передаём список только когда он явно задан при пересоздании.
 # Пустое значение не добавляем, иначе оно навсегда закрепится в окружении runner'а.
+if [ "${WEBNESTDEV_WORKSPACE_MODE:-}" = "local" ]; then
+  ensure_env WEBNESTDEV_WORKSPACE_MODE "local"
+  ensure_env WEBNESTDEV_LOCAL_WORKSPACE_DIR "$local_dir"
+  ensure_env WEBNESTDEV_LOCAL_WORKSPACE_HOST_DIR "$local_dir"
+fi
 if [ -n "${WEBNESTDEV_LOCAL_PROJECTS:-}" ]; then
   ensure_env WEBNESTDEV_LOCAL_PROJECTS "$WEBNESTDEV_LOCAL_PROJECTS"
   ensure_env WEBNESTDEV_LOCAL_WORKSPACE_DIR "$local_dir"

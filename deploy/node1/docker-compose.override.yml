@@ -21,6 +21,11 @@ services:
       WEBNESTDEV_NODE_ID: node-1
       WEBNESTDEV_NODE_ADDRESS: 10.0.0.4:8790
       WEBNESTDEV_API_ADDRESS: 10.0.0.4:8791
+      WEBNESTDEV_WORKSPACE_MODE: "local"
+      WEBNESTDEV_OWNER_ROUTING: "1"
+      # Внутренняя дверь использует уже существующий общий секрет нод, чтобы не хранить
+      # второй токен в git или в новом файле окружения.
+      WEBNESTDEV_INTERNAL_TOKEN: ${NODE1_RUNNER_TOKEN:?Set NODE1_RUNNER_TOKEN}
       WEBNESTDEV_RUNNER_TOKEN: ${NODE1_RUNNER_TOKEN:?Set NODE1_RUNNER_TOKEN}
       WEBNESTDEV_REMOTE_NODES: '[{"id":"node-2","address":"10.0.0.5:8790"}]'
       WEBNESTDEV_SHARED_SANDBOX: "1"

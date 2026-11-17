@@ -12,6 +12,8 @@ const policy = {
   runtime: "docker",
   sandboxRoot: "/var/lib/webnestdev/sandboxes",
   realRoot: "/var/lib/webnestdev/sandboxes",
+  localWorkspaceRoot: "/var/lib/webnestdev/workspaces",
+  realLocalWorkspaceRoot: "/var/lib/webnestdev/workspaces",
   previewCacheRoot: "/var/lib/webnestdev/preview-cache",
   realPreviewCacheRoot: "/var/lib/webnestdev/preview-cache",
   // В тестах путей на диске нет: реальный путь совпадает со строкой. Проверка самого realpath —
@@ -197,6 +199,11 @@ test("create с сетью предпросмотра и монтировани�
   assert.deepEqual(validateCreate(body, policy), { ok: true });
 });
 
+test("локальный workspace проекта разрешён как второй корень", () => {
+  const body = withHost({ Binds: ["/var/lib/webnestdev/workspaces/proj-1:/workspace"] });
+  assert.deepEqual(validateCreate(body, policy), { ok: true });
+});
+
 test("локальный кэш node_modules разрешён только в /workspace/node_modules и только rw", () => {
   const cache = withHost({
     Binds: ["/var/lib/webnestdev/preview-cache/proj-1:/workspace/node_modules"],
@@ -242,6 +249,7 @@ test("create выходит за песочницу — отказ", () => {
     ["монтирование /", withHost({ Binds: ["/:/host"] })],
     ["монтирование чужих данных", withHost({ Binds: ["/var/lib/webnestdev/secrets:/workspace/secrets:ro"] })],
     ["монтирование вне каталога песочниц", withHost({ Binds: ["/etc:/workspace/etc:ro"] })],
+    ["монтирование чужого локального каталога", withHost({ Binds: ["/var/lib/webnestdev/secrets:/workspace/secrets:ro"] })],
     ["монтирование в /etc контейнера", withHost({ Binds: ["/var/lib/webnestdev/sandboxes/p1:/etc"] })],
     ["«..» в пути", withHost({ Binds: ["/var/lib/webnestdev/sandboxes/../secrets:/workspace/x:ro"] })],
     ["публикация портов", withHost({ PortBindings: { "3000/tcp": [{ HostPort: "3000" }] } })],

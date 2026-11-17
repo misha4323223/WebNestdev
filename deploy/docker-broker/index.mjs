@@ -10,6 +10,7 @@
  *   BROKER_SOCKET      — где слушать (по умолчанию /run/webnestdev-docker/docker.sock);
  *   BROKER_UPSTREAM    — настоящий сокет демона (по умолчанию /var/run/docker.sock);
  *   BROKER_SANDBOX_ROOT— каталог, внутри которого разрешены монтирования;
+ *   BROKER_LOCAL_WORKSPACE_ROOT — локальный корень проектов (второй разрешённый корень);
  *   BROKER_PREVIEW_CACHE_ROOT — локальный кэш node_modules (только в /workspace/node_modules);
  *   BROKER_IMAGE       — единственный образ, который разрешено запускать;
  *   BROKER_RUNTIME      — единственный разрешённый HostConfig.Runtime (docker|runsc);
@@ -24,6 +25,7 @@ import { createBrokerServer } from "./proxy.mjs";
 const socketPath = process.env.BROKER_SOCKET?.trim() || "/run/webnestdev-docker/docker.sock";
 const upstreamPath = process.env.BROKER_UPSTREAM?.trim() || "/var/run/docker.sock";
 const sandboxRoot = path.posix.resolve(process.env.BROKER_SANDBOX_ROOT?.trim() || "/var/lib/webnestdev/sandboxes");
+const localWorkspaceRoot = path.posix.resolve(process.env.BROKER_LOCAL_WORKSPACE_ROOT?.trim() || "/var/lib/webnestdev/workspaces");
 const previewCacheRoot = path.posix.resolve(process.env.BROKER_PREVIEW_CACHE_ROOT?.trim() || "/var/lib/webnestdev/preview-cache");
 const image = (process.env.BROKER_IMAGE?.trim() || process.env.SANDBOX_IMAGE?.trim() || "node:26-bookworm");
 const previewNetwork = process.env.PREVIEW_NETWORK?.trim() || "";
@@ -53,6 +55,8 @@ const policy = {
   runtime,
   sandboxRoot,
   realRoot: realRootOf(sandboxRoot),
+  localWorkspaceRoot,
+  realLocalWorkspaceRoot: realRootOf(localWorkspaceRoot),
   previewCacheRoot,
   realPreviewCacheRoot: realRootOf(previewCacheRoot),
   realpath: source => fs.realpathSync(source),

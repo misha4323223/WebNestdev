@@ -210,8 +210,12 @@ function checkBind(policy, source, target, readOnly) {
   }
   const cacheRoot = policy.previewCacheRoot ? String(policy.previewCacheRoot).replace(/\/+$/, "") : "";
   const inWorkspace = isInside(policy.sandboxRoot, normalizedSource);
+  const localRoot = policy.localWorkspaceRoot
+    ? String(policy.localWorkspaceRoot).replace(/\/+$/, "")
+    : "";
+  const inLocalWorkspace = Boolean(localRoot) && isInside(localRoot, normalizedSource);
   const inCache = Boolean(cacheRoot) && isInside(cacheRoot, normalizedSource);
-  if (!inWorkspace && !inCache) {
+  if (!inWorkspace && !inLocalWorkspace && !inCache) {
     return "монтировать можно только каталог песочниц или локальный кэш зависимостей, а не " + source;
   }
   if (inCache) {
@@ -234,7 +238,9 @@ function checkBind(policy, source, target, readOnly) {
   }
   const realRoot = inCache
     ? (policy.realPreviewCacheRoot ?? policy.previewCacheRoot)
-    : (policy.realRoot ?? policy.sandboxRoot);
+    : inLocalWorkspace
+      ? (policy.realLocalWorkspaceRoot ?? policy.localWorkspaceRoot)
+      : (policy.realRoot ?? policy.sandboxRoot);
   if (!isInside(realRoot, real)) {
     return inCache
       ? "источник монтирования ведёт за пределы локального кэша зависимостей: " + source
