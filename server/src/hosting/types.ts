@@ -158,7 +158,10 @@ export type HostingLimits = {
   maxReleaseBytes: number;
   maxFileBytes: number;
   maxFiles: number;
+  /** Сколько готовых релизов хранить в истории (S3). */
   keepReleases: number;
+  /** Сколько готовых релизов держать в локальном кэше; активный входит в лимит. */
+  keepLocalReleases: number;
   buildTimeoutMs: number;
   maxReleaseSeconds: number;
   buildConcurrency: number;

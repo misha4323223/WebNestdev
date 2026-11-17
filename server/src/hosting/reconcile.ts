@@ -2,8 +2,10 @@ import { lstat, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import { hostingConfig } from "./config.js";
 import { ensureSiteLayout, hostingManifestsDir, hostingReleaseDir, hostingReleasesDir, hostingTmpDir, readCurrentReleaseId, removeCurrent, removeSiteDirectory, switchCurrent } from "./paths.js";
-import { getRelease, listReleases, listSites, markStaleBuilds } from "./site-store.js";
+import { getRelease, getSite, listReleases, listSites, markStaleBuilds } from "./site-store.js";
 import { hostingReleaseStoreSafe } from "./release-store.js";
+import { localReleaseIds } from "./cache.js";
+import { withSiteLock } from "./site-lock.js";
 
 /**
  * Startup/periodic reconciliation. Файловая система — источник истины для `current`, БД —
@@ -139,31 +141,41 @@ export async function reconcileHosting(): Promise<ReconcileResult> {
       // Каталог релиза без строки в БД — остаток упавшего rename/старой версии. Не трогаем
       // `building`: его может писать живой build-процесс на этом же узле.
       const building = new Set(releases.filter(release => release.status === "building").map(release => release.id));
-      const releaseEntries = await readdir(hostingReleasesDir(site.slug, config.sitesDir), { withFileTypes: true }).catch(() => []);
-      for (const entry of releaseEntries) {
-        if (!entry.isDirectory() || building.has(entry.name)) continue;
-        const release = releaseById.get(entry.name);
-        // Готовый релиз ещё нужен для отката; failed/deleted и каталоги без строки — мусор.
-        if (release && release.status === "ready") continue;
-        await removeDirectoryIfExists(path.join(hostingReleasesDir(site.slug, config.sitesDir), entry.name));
-        result.orphanDirectoriesRemoved++;
-      }
+      const localKeep = localReleaseIds(releases, active, config.limits.keepLocalReleases);
+      // Локальный кэш можно чистить только у архивов S3: без storageKey это единственная
+      // копия релиза. И только под site-lock, иначе откат мог бы активировать релиз между
+      // проверкой active и удалением каталога.
+      await withSiteLock(site.id, async () => {
+        const fresh = await getSite(site.id);
+        if (!fresh || fresh.activeReleaseId !== active) return;
 
-      const manifestEntries = await readdir(hostingManifestsDir(site.slug, config.sitesDir), { withFileTypes: true }).catch(() => []);
-      for (const entry of manifestEntries) {
-        const id = entry.name.replace(/\.json$/, "");
-        if (!entry.isFile()) continue;
-        const release = releaseById.get(id);
-        if (release && release.status === "ready") continue;
-        await rm(path.join(hostingManifestsDir(site.slug, config.sitesDir), entry.name), { force: true });
-      }
+        const releaseEntries = await readdir(hostingReleasesDir(site.slug, config.sitesDir), { withFileTypes: true }).catch(() => []);
+        for (const entry of releaseEntries) {
+          if (!entry.isDirectory() || building.has(entry.name)) continue;
+          const release = releaseById.get(entry.name);
+          // Активный и последние релизы локального кэша не трогаем. Релиз без архива в S3
+          // тоже остаётся: иначе откат на него стал бы невозможен.
+          if (release?.status === "ready" && (!store || !release.storageKey || localKeep.has(release.id))) continue;
+          await removeDirectoryIfExists(path.join(hostingReleasesDir(site.slug, config.sitesDir), entry.name));
+          result.orphanDirectoriesRemoved++;
+        }
 
-      const tmpEntries = await readdir(hostingTmpDir(site.slug, config.sitesDir), { withFileTypes: true }).catch(() => []);
-      for (const entry of tmpEntries) {
-        if (!entry.isDirectory() || building.has(entry.name)) continue;
-        await removeDirectoryIfExists(path.join(hostingTmpDir(site.slug, config.sitesDir), entry.name));
-        result.orphanDirectoriesRemoved++;
-      }
+        const manifestEntries = await readdir(hostingManifestsDir(site.slug, config.sitesDir), { withFileTypes: true }).catch(() => []);
+        for (const entry of manifestEntries) {
+          const id = entry.name.replace(/\.json$/, "");
+          if (!entry.isFile()) continue;
+          const release = releaseById.get(id);
+          if (release?.status === "ready" && (!store || !release.storageKey || localKeep.has(release.id))) continue;
+          await rm(path.join(hostingManifestsDir(site.slug, config.sitesDir), entry.name), { force: true });
+        }
+
+        const tmpEntries = await readdir(hostingTmpDir(site.slug, config.sitesDir), { withFileTypes: true }).catch(() => []);
+        for (const entry of tmpEntries) {
+          if (!entry.isDirectory() || building.has(entry.name)) continue;
+          await removeDirectoryIfExists(path.join(hostingTmpDir(site.slug, config.sitesDir), entry.name));
+          result.orphanDirectoriesRemoved++;
+        }
+      });
     }).then(ok => {
       if (!ok) result.errors++;
     });

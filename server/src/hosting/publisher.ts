@@ -6,9 +6,9 @@ import { getSandbox } from "../sandbox-manager.js";
 import type { SandboxConfig } from "../sandbox/sandbox-types.js";
 import { ensureProjectDependencies } from "../preview/dependencies.js";
 import { detectProject } from "../preview/project-kind.js";
-import { readDeploymentProfile } from "../deployment/profile.js";
 import { readFunctionManifest, FunctionManifestError } from "../functions/manifest.js";
 import { buildFunctions, FunctionBuildError } from "../functions/build.js";
+import { inspectHostingProject } from "./project-mode.js";
 import { accountPlanFor } from "../billing/store.js";
 import { planAllows } from "../account/entitlements.js";
 import { indexFileExists, planStaticPreview } from "../preview/static-plan.js";
@@ -17,6 +17,7 @@ import { secretEnvMaskMounts } from "../sandbox/secret-mask.js";
 import { loadProjectSecretFiles } from "../secrets/project-secrets.js";
 import { hostingConfig, hostingLimits } from "./config.js";
 import { copyArtifact, inspectArtifact, removeStaging } from "./artifact.js";
+import { pruneLocalReleases } from "./cache.js";
 import { purgeHostingCdn } from "./cdn-purge.js";
 import { assertAccountHostingQuota, assertHostingDiskHasRoom } from "./limits.js";
 import { publicEnvMounts } from "./public-env.js";
@@ -251,41 +252,11 @@ async function startRollbackLocked(
 }
 
 async function hostingKind(project: Project): Promise<{ kind: HostingProjectKind; hasJobs: boolean }> {
-  const sandbox = await getSandbox(project.id, project.userId);
-  const shape = await detectProject(sandbox.root);
-  if (shape.kind !== "instant-site" && shape.kind !== "static-build") {
-    throw new HostingError("PROJECT_NOT_STATIC", "Хостинг принимает статику и статику с serverless-функциями: " + shape.reason, 422);
+  const inspection = await inspectHostingProject(project);
+  if (inspection.kind === "unsupported" || inspection.kind === "unknown") {
+    throw new HostingError(inspection.errorCode ?? "PROJECT_NOT_STATIC", inspection.reason, 422);
   }
-  let manifest: Awaited<ReturnType<typeof readFunctionManifest>> = null;
-  try {
-    manifest = await readFunctionManifest(sandbox.root);
-  } catch (error) {
-    if (error instanceof FunctionManifestError) {
-      throw new HostingError("FUNCTIONS_MANIFEST_REQUIRED", error.message, 422);
-    }
-    throw error;
-  }
-  if (manifest) return { kind: "static-functions", hasJobs: (manifest.jobs?.length ?? 0) > 0 };
-  // Манифеста нет, но структура проекта уже выглядит как функции. Молча опубликовать только
-  // статику значило бы потерять API, поэтому просим явный контракт. Это же правило не даёт
-  // агенту на Плюсе протащить произвольный сервер под видом статики.
-  const profile = await readDeploymentProfile(sandbox.root);
-  if (profile.projectType.backend === "server") {
-    throw new HostingError(
-      "PROJECT_NOT_STATIC",
-      "Серверный проект нельзя опубликовать на production-хостинге: постоянный сервер здесь пока не поддерживается. " +
-        "Доступны статика и serverless-функции; контейнерный preview на «Премиуме» — отдельный режим разработки.",
-      422,
-    );
-  }
-  if (profile.projectType.backend === "functions") {
-    throw new HostingError(
-      "FUNCTIONS_MANIFEST_REQUIRED",
-      "В проекте найдены функции. Добавьте nestdev.functions.json с маршрутами и обработчиками или удалите каталог функций.",
-      422,
-    );
-  }
-  return { kind: shape.kind, hasJobs: false };
+  return { kind: inspection.kind, hasJobs: inspection.jobs > 0 };
 }
 
 async function buildStatic(
@@ -493,6 +464,19 @@ async function runPublish(site: HostingSite, release: HostingRelease, project: P
 
     // Старые релизы удаляются только после успешной публикации и только сверх лимита.
     await pruneOldReleases(site, release.id, limits.keepReleases, config.sitesDir);
+    // История остаётся в бакете, но с диска убираем всё сверх локального кэша. Ошибка
+    // вытеснения не отменяет уже зафиксированный релиз: это уборка, а не публикация.
+    try {
+      const evicted = await pruneLocalReleases(site);
+      if (evicted.removed.length) {
+        logLine("info", "local cache pruned", { site: site.slug, releases: evicted.removed.length });
+      }
+    } catch (error) {
+      logLine("warn", "local cache prune failed", {
+        site: site.slug,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
     // Сброс кеша CDN — после успешной фиксации релиза. Ошибка purge не отменяет публикацию:
     // HTML не кешируется, а ассеты доживут до TTL; важнее не оставить сайт в failed.
     try {

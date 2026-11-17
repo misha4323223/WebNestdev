@@ -109,11 +109,15 @@ export function assertSitesDirSeparate(sitesDir: string, dataDir = process.env.W
 }
 
 export function hostingLimits(): HostingLimits {
+  const keepReleases = numberEnv("HOSTING_KEEP_RELEASES", 3, 2, 20);
   return {
     maxReleaseBytes: numberEnv("HOSTING_MAX_RELEASE_BYTES", 50 * MIB, 1, 2 * GIB),
     maxFileBytes: numberEnv("HOSTING_MAX_FILE_BYTES", 25 * MIB, 1, 2 * GIB),
     maxFiles: numberEnv("HOSTING_MAX_FILES", 5_000, 1, 100_000),
-    keepReleases: numberEnv("HOSTING_KEEP_RELEASES", 3, 2, 20),
+    keepReleases,
+    // Локальный кэш не может быть больше истории: иначе на диске останутся релизы,
+    // которые уже удалены из бакета и не смогут быть восстановлены.
+    keepLocalReleases: Math.min(keepReleases, numberEnv("HOSTING_LOCAL_RELEASES", 1, 1, 20)),
     buildTimeoutMs: numberEnv("HOSTING_BUILD_TIMEOUT_MS", 600_000, 10_000, 30 * 60_000),
     maxReleaseSeconds: numberEnv("HOSTING_MAX_RELEASE_SECONDS", 600, 10, 3_600),
     buildConcurrency: numberEnv("HOSTING_BUILD_CONCURRENCY", 1, 1, 16),
@@ -162,8 +166,9 @@ export function describeHosting(config = hostingConfig()) {
     Math.round(limits.maxReleaseBytes / MIB) +
     " МиБ / " +
     limits.maxFiles +
-    " файлов / " +
+    " файлов / история " +
     limits.keepReleases +
-    " версии"
+    " / локально " +
+    limits.keepLocalReleases
   );
 }

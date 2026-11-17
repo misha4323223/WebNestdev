@@ -31,11 +31,23 @@ export type HostingRelease = {
   buildLog: string;
 };
 
+export type HostingProject = {
+  kind: "instant-site" | "static-build" | "static-functions" | "unsupported" | "unknown";
+  label: string;
+  functions: number;
+  jobs: number;
+  /** Можно ли публиковать этот проект на текущем тарифе. */
+  canPublish: boolean;
+  /** Причина блокировки для человека; пустая строка, если публикация доступна. */
+  reason: string;
+};
+
 export type HostingLimits = {
   maxReleaseBytes: number;
   maxFileBytes: number;
   maxFiles: number;
   keepReleases: number;
+  keepLocalReleases: number;
   buildTimeoutMs: number;
   maxReleaseSeconds: number;
   buildConcurrency: number;
@@ -51,6 +63,8 @@ export type HostingState = {
   limits: HostingLimits;
   customDomains: { enabled: boolean; limit: number };
   domains: CustomDomain[];
+  /** Состав будущего релиза: статика или статика с функциями. */
+  project: HostingProject;
   site: HostingSite | null;
   releases: HostingRelease[];
 };

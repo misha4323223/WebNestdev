@@ -132,6 +132,12 @@ export function HostingPanel({ projectId }: { projectId: string }) {
   const building = Boolean(site?.publishingReleaseId) || Boolean(state?.releases.some(release => release.status === "building"));
   const latestFailed = state?.releases.find(release => release.status === "failed");
   const failedLog = latestFailed && log?.releaseId === latestFailed.id ? log.text : "";
+  const project = state?.project;
+  const functions = project?.functions ?? 0;
+  const jobs = project?.jobs ?? 0;
+  const withFunctions = project?.kind === "static-functions";
+  const canPublish = Boolean(state?.enabled) && (project?.canPublish ?? true);
+  const publishReason = project && !project.canPublish ? project.reason : "";
 
   return <section className="hosting-panel panel">
     <div className="panel-title hosting-head">
@@ -156,12 +162,19 @@ export function HostingPanel({ projectId }: { projectId: string }) {
         <span>Публикация новых версий временно выключена администратором. Уже опубликованные сайты продолжают работать.</span>
       </div> : null}
 
+      {publishReason ? <div className="hosting-alert warn">
+        <AlertTriangle size={14}/>
+        <span>{publishReason}</span>
+      </div> : null}
+
       {!loading && state && !site ? <div className="hosting-hero">
         <div className="hosting-hero-icon"><Globe2 size={28}/></div>
         <div>
-          <span className="hosting-kicker">Статический хостинг</span>
+          <span className="hosting-kicker">{project?.label ?? "Статический хостинг"}</span>
           <h2>Сайт по адресу <em>{state.domain}</em></h2>
-          <p>Соберём проект в изолированной песочнице и отдадим готовые файлы через HTTPS. Подходит для Vite, React, готового HTML и других статических сборок.</p>
+          <p>{withFunctions
+            ? "Соберём статику и " + functionsLabel(functions) + " в один релиз: файлы отдадим напрямую, а обработчики запустим в изолированных serverless-контейнерах."
+            : "Соберём проект в изолированной песочнице и отдадим готовые файлы через HTTPS. Подходит для Vite, React, готового HTML и других статических сборок."}</p>
         </div>
         <label className="hosting-name-field">
           <span>Название сайта</span>
@@ -180,11 +193,18 @@ export function HostingPanel({ projectId }: { projectId: string }) {
           <small>Латиница, цифры и дефис, 3–63 символа. Например: moy-sayt. Адрес можно будет поменять.</small>
         </label>
         <div className="hosting-hero-facts">
+          {withFunctions ? <span><FileCode2 size={13}/> {functionsLabel(functions)}</span> : null}
+          {jobs > 0 ? <span><Clock3 size={13}/> {jobsLabel(jobs)}</span> : null}
           <span><Rocket size={13}/> до {Math.round(state.limits.maxReleaseBytes / 1024 / 1024)} МБ</span>
           <span><FileCode2 size={13}/> до {state.limits.maxFiles.toLocaleString("ru-RU")} файлов</span>
           <span><Clock3 size={13}/> храним {state.limits.keepReleases} версии</span>
         </div>
-        <button className="primary-button hosting-primary" onClick={() => void createAndPublish()} disabled={!state.enabled || Boolean(busy) || !newSlug.trim()}>
+        <button
+          className="primary-button hosting-primary"
+          onClick={() => void createAndPublish()}
+          disabled={!canPublish || Boolean(busy) || !newSlug.trim()}
+          title={publishReason || undefined}
+        >
           {busy === "create" || busy === "publish" ? <Loader2 size={14} className="spin"/> : <Rocket size={14}/>} Опубликовать сайт
         </button>
       </div> : null}
@@ -230,6 +250,7 @@ export function HostingPanel({ projectId }: { projectId: string }) {
           </div>
           <div className="hosting-meta">
             <span>Релиз: <strong>{site.activeReleaseId ? shortId(site.activeReleaseId) : "нет"}</strong></span>
+            <span>Состав: <strong>{withFunctions ? "статика + " + functionsLabel(functions) : "статика"}</strong></span>
             <span>Обновлён: <strong>{formatDate(site.updatedAt)}</strong></span>
             <span>Хранилище: <strong>{formatBytes(state?.releases.filter(release => release.status === "ready").reduce((sum, release) => sum + release.bytes, 0) ?? 0)}</strong></span>
           </div>
@@ -238,7 +259,12 @@ export function HostingPanel({ projectId }: { projectId: string }) {
           {building ? <div className="hosting-building"><Loader2 size={14} className="spin"/> Собираем и проверяем файлы. Это может занять несколько минут.</div> : null}
           <div className="hosting-actions">
             {site.status === "suspended" ? <span className="hosting-muted">Публикация недоступна до восстановления администратором.</span> : <>
-              <button className="primary-button" onClick={() => void publish()} disabled={!state?.enabled || building || Boolean(busy)}>
+              <button
+                className="primary-button"
+                onClick={() => void publish()}
+                disabled={!canPublish || building || Boolean(busy)}
+                title={publishReason || undefined}
+              >
                 {building ? <Loader2 size={14} className="spin"/> : <Rocket size={14}/>} {site.activeReleaseId ? "Опубликовать заново" : "Опубликовать"}
               </button>
               {site.status === "live" ? <button className="ghost-button" onClick={unpublish} disabled={building || Boolean(busy)}><EyeOff size={13}/> Снять с публикации</button> : null}
@@ -275,7 +301,9 @@ export function HostingPanel({ projectId }: { projectId: string }) {
         </div> : null}
       </> : null}
 
-      {state ? <p className="hosting-footnote">Файлы отдаются напрямую, без PHP и серверного процесса. Секреты проекта в публичную сборку не передаются; `.env`, `.git` и символические ссылки не попадают в релиз.</p> : null}
+      {state ? <p className="hosting-footnote">{withFunctions
+        ? "Статика отдаётся напрямую, функции выполняются в изолированных контейнерах по запросу. Постоянный сервер и PHP не запускаются. Секреты проекта в публичную сборку не передаются; `.env`, `.git` и символические ссылки не попадают в релиз."
+        : "Файлы отдаются напрямую, без PHP и серверного процесса. Секреты проекта в публичную сборку не передаются; `.env`, `.git` и символические ссылки не попадают в релиз."}</p> : null}
     </div>
   </section>;
 }
@@ -297,6 +325,23 @@ function releaseStatusLabel(status: HostingRelease["status"]) {
 
 function shortId(id: string) {
   return id.slice(0, 8);
+}
+
+function plural(count: number, one: string, few: string, many: string) {
+  const mod100 = count % 100;
+  const mod10 = count % 10;
+  if (mod100 >= 11 && mod100 <= 14) return many;
+  if (mod10 === 1) return one;
+  if (mod10 >= 2 && mod10 <= 4) return few;
+  return many;
+}
+
+function functionsLabel(count: number) {
+  return count + " " + plural(count, "функция", "функции", "функций");
+}
+
+function jobsLabel(count: number) {
+  return count + " " + plural(count, "задание", "задания", "заданий");
 }
 
 function formatBytes(bytes: number) {

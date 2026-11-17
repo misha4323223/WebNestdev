@@ -164,6 +164,27 @@
 в релизном `tar.gz` в бакете; рабочая копия проекта остаётся на ВМ, потому что агенту и
 dev-серверу нужен обычный POSIX-доступ, а Caddy отдаёт локальный горячий кэш.
 
+### Этап 9. Локальный кэш и история S3 (17.11.2026)
+
+Сделано:
+
+- `HOSTING_LOCAL_RELEASES` (по умолчанию `1`) отделяет размер локального кэша от
+  `HOSTING_KEEP_RELEASES` — глубины истории в бакете;
+- `server/src/hosting/cache.ts` выбирает релизы для диска и вытесняет только те, у которых
+  есть `storageKey`; релизы без архива и `current` не трогаются;
+- вытеснение с диска больше не помечает релиз `deleted` и не удаляет объект из S3;
+- `reconcile` удаляет лишние готовые каталоги только у архивных релизов и только под
+  per-site lock; активный релиз и `building` защищены;
+- `pruneLocalReleases` вызывается после успешной публикации; ошибка уборки не отменяет
+  уже зафиксированный релиз;
+- тесты `cache.test.ts` — 3/3, профильные тесты хостинга и API — 80/80, typecheck сервера и
+  фронтенда пройден. Полный серверный suite не завершён из-за 180-секундного лимита
+  терминала: до остановки прошло более 2000 тестов без падений, поэтому перед выкаткой
+  опираемся на профильные тесты и typecheck, а полный прогон остаётся за CI.
+
+Не проверено: реальная выкатка и поведение на боевом `/sites`; вытеснение существующих
+релизов произойдёт при следующем reconcile или публикации.
+
 ## Несколько ВМ: что уже учтено и чего ещё нет
 
 Уже учтено:
@@ -228,7 +249,8 @@ HOSTING_SITES_DIR=/var/lib/webnestdev/sites  # хост, монтируется 
 WEBNESTDEV_SITES_DIR=/srv/sites              # внутри контейнера
 HOSTING_SHARED_STORAGE=0|1
 HOSTING_MAX_RELEASE_BYTES, HOSTING_MAX_FILE_BYTES, HOSTING_MAX_FILES
-HOSTING_KEEP_RELEASES, HOSTING_BUILD_TIMEOUT_MS, HOSTING_MAX_RELEASE_SECONDS
+HOSTING_KEEP_RELEASES, HOSTING_LOCAL_RELEASES
+HOSTING_BUILD_TIMEOUT_MS, HOSTING_MAX_RELEASE_SECONDS
 HOSTING_BUILD_CONCURRENCY, HOSTING_GLOBAL_BYTES, HOSTING_MIN_FREE_BYTES
 HOSTING_MAX_SITES
 ```

@@ -87,6 +87,44 @@ test("создание, чтение, снятие с публикации и у
   }
 });
 
+test("GET /hosting описывает статику с функциями и тарифный gate", async () => {
+  const { app, projectId, ownerHeaders } = await fixture();
+  try {
+    const dir = path.join(process.env.WEBNESTDEV_SANDBOX_DIR!, projectId);
+    await mkdir(dir, { recursive: true });
+    await writeFile(path.join(dir, "index.html"), "<h1>Статика</h1>");
+    await writeFile(path.join(dir, "nestdev.functions.json"), JSON.stringify({
+      version: 1,
+      runtime: "node",
+      functions: [{
+        name: "hello",
+        path: "/api/hello",
+        methods: ["GET"],
+        handler: "functions/hello.ts#handler",
+      }],
+      jobs: [{
+        name: "nightly",
+        handler: "functions/nightly.ts#handler",
+      }],
+    }));
+
+    const read = await app.inject({ method: "GET", url: "/api/projects/" + projectId + "/hosting", headers: ownerHeaders });
+    assert.equal(read.statusCode, 200);
+    const project = read.json().project as {
+      kind: string; label: string; functions: number; jobs: number; canPublish: boolean; reason: string;
+    };
+    assert.equal(project.kind, "static-functions");
+    assert.equal(project.label, "Статика + функции");
+    assert.equal(project.functions, 1);
+    assert.equal(project.jobs, 1);
+    // В тестовом окружении у владельца бесплатный тариф: функции и задания должны блокировать кнопку.
+    assert.equal(project.canPublish, false);
+    assert.match(project.reason, /Премиум|недоступны/);
+  } finally {
+    await app.close();
+  }
+});
+
 test("пользователь выбирает адрес сайта и может переименовать его", async () => {
   const { app, projectId, ownerId, ownerHeaders, strangerHeaders } = await fixture();
   try {

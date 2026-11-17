@@ -202,7 +202,10 @@ services:
       HOSTING_MAX_RELEASE_BYTES: ${HOSTING_MAX_RELEASE_BYTES:-52428800}
       HOSTING_MAX_FILE_BYTES: ${HOSTING_MAX_FILE_BYTES:-26214400}
       HOSTING_MAX_FILES: ${HOSTING_MAX_FILES:-5000}
+      # История хранится в бакете; на диске — только горячий кэш. Активный релиз входит
+      # в HOSTING_LOCAL_RELEASES, поэтому 1 означает «на диске только то, что отдаётся».
       HOSTING_KEEP_RELEASES: ${HOSTING_KEEP_RELEASES:-3}
+      HOSTING_LOCAL_RELEASES: ${HOSTING_LOCAL_RELEASES:-1}
       # auto — релизы уезжают в PLATFORM_S3_*, когда бакет настроен; 0 — только диск;
       # 1 — требовать бакет и падать, если он не настроен. Префикс отделяет релизы от
       # архивов проектов в том же бакете.

@@ -32,6 +32,7 @@ import { normalizeHostnameLookup } from "../hosting/domain-name.js";
 import { customDomainsEnabled } from "../hosting/domain-config.js";
 import { accountPlanFor } from "../billing/store.js";
 import { customDomainLimitFor } from "../account/plans.js";
+import { hostingProjectView, inspectHostingProject, unknownHostingProject } from "../hosting/project-mode.js";
 
 /**
  * API хостинга. Панель работает только с проектом, а не с внутренним id сайта: у проекта
@@ -90,11 +91,16 @@ export async function registerHostingRoutes(app: FastifyInstance) {
     const domains = site && site.userId === auth.user.id && domainFeature
       ? (await domainsForSite(site.id)).map(publicCustomDomain)
       : [];
-    // Панель показывает тарифный gate до попытки подключения. Лимит считается по группам
-    // (apex + www — один домен), поэтому одного числа достаточно.
+    // Один тариф нужен и для доменов, и для состава релиза. Считаем его один раз.
+    const plan = await accountPlanFor(auth.user.id);
+    // Лимит считается по группам (apex + www — один домен), поэтому одного числа достаточно.
     const domainLimit = domainFeature && site && site.userId === auth.user.id
-      ? customDomainLimitFor(await accountPlanFor(auth.user.id))
+      ? customDomainLimitFor(plan)
       : 0;
+    // Панель решает по этому ответу, что именно опубликует одна кнопка: статику или
+    // статику с функциями. Публикатор использует тот же инспектор, поэтому UI не врёт.
+    const inspected = await inspectHostingProject(auth.project).catch(() => unknownHostingProject());
+    const project = hostingProjectView(inspected, plan);
     return {
       enabled: config.enabled,
       domain: config.publicDomain,
@@ -102,6 +108,7 @@ export async function registerHostingRoutes(app: FastifyInstance) {
       limits: config.limits,
       customDomains: { enabled: domainFeature, limit: domainLimit },
       domains,
+      project,
       site: site && site.userId === auth.user.id ? publicSite(site, true) : null,
       releases: site && site.userId === auth.user.id
         ? releases.map(release => ({

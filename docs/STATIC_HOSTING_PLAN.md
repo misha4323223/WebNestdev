@@ -449,7 +449,8 @@ WEBNESTDEV_DATA_DIR/hosting/releases/<siteId>.json
 | `HOSTING_MAX_RELEASE_BYTES` | 50 МиБ | весь релиз |
 | `HOSTING_MAX_FILE_BYTES` | 25 МиБ | один файл |
 | `HOSTING_MAX_FILES` | 5 000 | число файлов |
-| `HOSTING_KEEP_RELEASES` | 3 | сколько готовых релизов хранить |
+| `HOSTING_KEEP_RELEASES` | 3 | сколько готовых релизов хранить в истории (S3) |
+| `HOSTING_LOCAL_RELEASES` | 1 | сколько готовых релизов держать в локальном кэше; активный входит в лимит |
 | `HOSTING_BUILD_TIMEOUT_MS` | 600 000 | 10 минут на сборку |
 | `HOSTING_MAX_RELEASE_SECONDS` | 600 | общий предел публикации |
 | `HOSTING_BUILD_CONCURRENCY` | 1 | одновременно собираем один сайт |
