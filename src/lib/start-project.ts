@@ -1,5 +1,5 @@
 import { createConversation, createProject, type Project } from "./project-api";
-import { queueAgentStart } from "./agent-start";
+import { queuePlannerStart } from "./agent-start";
 
 export type ProjectStartOptions = {
   name: string;
@@ -22,8 +22,7 @@ export async function startProjectWithAgent({ name, plannerPrompt, title }: Proj
   if (plannerPrompt) {
     // Флаг ставится до открытия рабочей области: её первый кадр уже показывает планирование,
     // а не пустой чат, который через мгновение сменился бы вопросами.
-    try { localStorage.setItem("webnestdev.planning." + conversation.id, JSON.stringify({ title: title ?? name })); } catch {}
-    queueAgentStart(conversation.id, { prompt: plannerPrompt, planning: true, ...(title ? { title } : {}) });
+    queuePlannerStart(conversation.id, { prompt: plannerPrompt, ...(title ? { title } : {}) });
   }
   localStorage.setItem("webnestdev.projectId", project.id);
   localStorage.setItem("webnestdev.projectName", project.name);

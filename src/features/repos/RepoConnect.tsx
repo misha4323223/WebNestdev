@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ExternalLink, KeyRound, UploadCloud } from "lucide-react";
 import type { BrandId } from "../../components/BrandLogo";
 import { openImportedProject } from "../../lib/project-api";
-import { queueAgentStart } from "../../lib/agent-start";
+import { queuePlannerStart } from "../../lib/agent-start";
+import { importedRepositoryKickoff } from "../../lib/repo-kickoff";
 import { ConnectorCard, type ConnectorStatus } from "../integrations/ConnectorCard";
 import type { ConnectorSurface } from "../github/GitHubConnect";
 
@@ -65,22 +66,6 @@ const notices: Record<string, string> = {
   error: "Не удалось завершить подключение.",
 };
 
-/**
- * Импорт сразу открывает планировщик и первым делом спрашивает, зачем пришли: разобрать проект
- * или запустить его. Без этого человек попадал в чат, где агент молча начинал анализ — даже если
- * ему нужно было просто поднять существующее приложение.
- */
-function kickoff(repository: Repository, name: string) {
-  return `Импортирован репозиторий ${name}: ${repository.fullName} (ветка ${repository.defaultBranch}).\n\n`
-    + "До чтения файлов и любых других действий задай ровно один вопрос через question.ask: «Что сделать с проектом?» "
-    + "Варианты: «Глубокий анализ» (разобрать стек, структуру, зависимости, риски и предложить улучшения, ничего не меняя) "
-    + "и «Запустить» (установить зависимости, поднять предпросмотр и исправить только то, что мешает запуску). "
-    + "Дальше действуй по ответу и не задавай больше одного уточняющего вопроса, если без него действительно нельзя обойтись.\n\n"
-    + "Если выбрали анализ — работай в режиме планировщика: изучи проект (стек, точки входа, сборка, зависимости, качество кода, риски), "
-    + "собери через plan.update выводы и план улучшений. Файлы не меняй.\n\n"
-    + "Если выбрали запуск — составь короткий план из трёх шагов: установить зависимости, запустить предпросмотр, проверить, что приложение открывается. "
-    + "Ничего не меняй до перехода в режим разработчика: после него выполни этот план и покажи, что приложение работает.";
-}
 
 export function RepoConnect({ provider, surface = "home", onImported = openImportedProject }: {
   provider: RepoProviderId;
@@ -231,11 +216,11 @@ export function RepoConnect({ provider, surface = "home", onImported = openImpor
       });
       const data = await response.json() as { error?: string; project?: { id: string }; conversation?: { id: string } };
       if (!response.ok || !data.project || !data.conversation) throw new Error(data.error ?? "Не удалось импортировать репозиторий");
-      // planning: true — сразу окно планировщика с первым вопросом, а не пустой чат.
-      queueAgentStart(data.conversation.id, {
-        prompt: kickoff(selected, config.name),
+      // Окно планировщика и первый запрос ставятся до открытия проекта: агент успевает
+      // проанализировать репозиторий и задать вопрос, а не открыть пустой чат.
+      queuePlannerStart(data.conversation.id, {
+        prompt: importedRepositoryKickoff({ provider: config.name, fullName: selected.fullName, defaultBranch: selected.defaultBranch }),
         title: "Импорт: " + selected.fullName,
-        planning: true,
       });
       onImported(data.project.id, data.conversation.id);
     } catch (e) {

@@ -62,7 +62,14 @@ export async function provisionTenant(
     password: input.password,
     roleExists: exists,
   });
-  for (const statement of statements) await db.query(statement);
+  try {
+    for (const statement of statements) await db.query(statement);
+  } catch (error) {
+    // Если CREATE SCHEMA не удался, временное членство не должно остаться у администратора.
+    // Ошибка очистки не маскирует исходную: провижининг всё равно завершится отказом.
+    await db.query("REVOKE " + names.role + " FROM CURRENT_USER").catch(() => undefined);
+    throw error;
+  }
   await db.query(UPSERT_TENANT_SQL, [input.accountId, names.schema, names.role, input.quotaBytes]);
   return names;
 }

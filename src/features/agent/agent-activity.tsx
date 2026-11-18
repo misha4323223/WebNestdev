@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useStickToBottom } from "./use-stick-to-bottom";
 import {
   Activity,
   Check,
@@ -763,14 +764,8 @@ function stepsWord(count: number) {
 function ThinkingTrace({ steps, running }: { steps: ThinkingStep[]; running?: boolean }) {
   const [open, setOpen] = useState(Boolean(running));
   const [chosen, setChosen] = useState(false);
-  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const { ref: bodyRef, onScroll } = useStickToBottom<HTMLDivElement>(Boolean(running && open), steps);
   useEffect(() => { if (!chosen) setOpen(Boolean(running)); }, [running, chosen]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: steps is a trigger: a new step should scroll the trace to the end
-  useEffect(() => {
-    const box = bodyRef.current;
-    if (!box || !running) return;
-    box.scrollTop = box.scrollHeight;
-  }, [steps, running]);
   return <div className={"thinking thinking-trace" + (open ? " thinking-open" : "") + (running ? " thinking-live" : "")}>
     <button type="button" className="thinking-head" title={open ? "Свернуть размышления" : "Развернуть размышления"} onClick={() => { setChosen(true); setOpen(value => !value); }} aria-expanded={open}>
       {running && <NestLoader size={16} label="NestDev размышляет" />}
@@ -778,7 +773,7 @@ function ThinkingTrace({ steps, running }: { steps: ThinkingStep[]; running?: bo
       <span className="thinking-count">{countThinkingSteps(steps)} {stepsWord(countThinkingSteps(steps))}</span>
       <span className="thinking-toggle"><ChevronDown size={12}/></span>
     </button>
-    {open && <div className="thinking-body thinking-trace-body" ref={bodyRef}>
+    {open && <div className="thinking-body thinking-trace-body" ref={bodyRef} onScroll={onScroll}>
       {steps.map(step => <ThinkingStepView key={step.id} step={step} />)}
     </div>}
   </div>;
@@ -793,15 +788,8 @@ export function MessageThinking({ text, running, steps }: {
 }) {
   const [open, setOpen] = useState(Boolean(running));
   const [chosen, setChosen] = useState(false);
-  const bodyRef = useRef<HTMLDivElement | null>(null);
+  const { ref: bodyRef, onScroll } = useStickToBottom<HTMLDivElement>(Boolean(running && open), text);
   useEffect(() => { if (!chosen) setOpen(Boolean(running)); }, [running, chosen]);
-  // Поток мыслей длиннее окна: пока модель говорит, видны её последние строки, а не начало абзаца.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: text is a trigger: new deltas should keep the growing answer scrolled to the end
-  useEffect(() => {
-    const box = bodyRef.current;
-    if (!box || !running) return;
-    box.scrollTop = box.scrollHeight;
-  }, [text, running]);
   // Все hooks вызваны выше: переключение на набор шагов не меняет их порядок.
   if (steps && countThinkingSteps(steps) > 1) return <ThinkingTrace steps={steps} running={running} />;
   const said = Boolean(text.trim());
@@ -816,7 +804,7 @@ export function MessageThinking({ text, running, steps }: {
       <span className="thinking-title">{running ? "Размышляю…" : "Размышления"}</span>
       <span className="thinking-toggle"><ChevronDown size={12}/></span>
     </button>
-    {open && <div className="thinking-body" ref={bodyRef}>
+    {open && <div className="thinking-body" ref={bodyRef} onScroll={onScroll}>
       <div className="thinking-text">{text}{running && <span className="thinking-cursor" aria-hidden="true"/>}</div>
     </div>}
   </div>;

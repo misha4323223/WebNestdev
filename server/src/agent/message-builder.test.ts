@@ -166,6 +166,8 @@ test("агент знает про hybrid и оставляет чистый Doc
   assert.match(PREVIEW_RUNTIME_RULES, /pure dev container only when/i);
   assert.match(PREVIEW_RUNTIME_RULES, /package\.json\.preview/);
   assert.match(PREVIEW_RUNTIME_RULES, /Telegram bot/);
+  assert.match(PREVIEW_RUNTIME_RULES, /package\.json\.preview\.apiUpstream/);
+  assert.match(PREVIEW_RUNTIME_RULES, /same-origin route \/api\/upstream/);
   assert.match(PREVIEW_RUNTIME_RULES, /never say hybrid, container, listener or runner/i);
 });
 

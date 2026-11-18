@@ -6,5 +6,5 @@ After=webnestdev-client-db.service
 Type=oneshot
 EnvironmentFile=-/etc/webnestdev/client-db.env
 # Скрипт живёт в образе сервера: там же CLIENT_DB_ADMIN_URL и клиент PostgreSQL.
-ExecStart=/bin/sh -c 'cid=$(docker ps -q --filter label=com.docker.compose.service=webnestdev-server | head -n1); [ -n "$cid" ] || { echo "контейнер сервера не найден" >&2; exit 1; }; docker exec "$cid" node dist/scripts/client-db-quota.js'
+ExecStart=/bin/sh -c 'cid=$(docker ps -q --filter label=com.docker.compose.service=webnestdev-server | head -n1); [ -n "$cid" ] || { echo "контейнер сервера не найден" >&2; exit 1; }; docker exec "$cid" node server/dist/scripts/client-db-quota.js'
 TimeoutStartSec=600

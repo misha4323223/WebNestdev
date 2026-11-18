@@ -1,6 +1,8 @@
 import { useCallback,useEffect,useMemo,useRef,useState } from "react";
 import { KeyRound, UploadCloud } from "lucide-react";
 import { openImportedProject } from "../../lib/project-api";
+import { queuePlannerStart } from "../../lib/agent-start";
+import { importedRepositoryKickoff } from "../../lib/repo-kickoff";
 import { ConnectorCard,type ConnectorStatus } from "../integrations/ConnectorCard";
 
 type Repository = { id:number; name:string; full_name:string; private:boolean; default_branch:string; owner:{login:string} };
@@ -191,6 +193,16 @@ export function GitHubConnect({surface="home",onImported=openImportedProject}:{s
       const response=await fetch("/api/github/import",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({owner:selected.owner.login,repo:selected.name})});
       const data=await response.json() as { error?:string; project?:{id:string}; conversation?:{id:string} };
       if(!response.ok||!data.project||!data.conversation)throw new Error(data.error??"Не удалось импортировать репозиторий");
+      // Планировщик и первый запрос ставятся до открытия рабочей области: иначе GitHub-импорт
+      // открывал пустой чат, в отличие от GitVerse/SourceCraft, и агент ничего не спрашивал.
+      queuePlannerStart(data.conversation.id, {
+        prompt: importedRepositoryKickoff({
+          provider: "GitHub",
+          fullName: selected.full_name,
+          defaultBranch: selected.default_branch,
+        }),
+        title: "Импорт: " + selected.full_name,
+      });
       // Сразу в рабочую область с уже склонированным репозиторием: человек не должен искать
       // проект в списке после того, как импорт завершился.
       onImported(data.project.id,data.conversation.id);

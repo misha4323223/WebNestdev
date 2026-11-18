@@ -84,6 +84,9 @@ export function agentPlanBrief(plan: PlanId | undefined): string {
   ];
   if (unavailable.length) lines.push("Not available on this plan: " + unavailable.join("; ") + ".");
   lines.push(
+    "For an imported repository or uploaded project files, inspect the stack, entry points, scripts and backend needs before doing anything else. If the project needs a long-running server or container preview and this plan does not allow it, do not start a dev server and do not try to bypass the limit: say plainly that running it needs «Премиум» and offer analysis or a static build on the current plan.",
+  );
+  lines.push(
     "When the request needs something this plan does not have, say plainly what is missing and which plan provides it (serverless functions start on «Плюс», background jobs, the panel terminal and container preview start on «Премиум»), then continue with the part that is allowed. Never try to reach a plan feature through a workaround: no second project or account, no splitting one project across several projects to dodge a quota, no deleting node_modules or build output to hide real usage, and no external free tier used to imitate a paid platform feature.",
   );
   lines.push(

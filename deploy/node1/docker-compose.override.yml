@@ -16,6 +16,11 @@ services:
     # именованного тома compose.
     volumes:
       - /var/lib/webnestdev/data:/app/.webnestdev
+    # Административная строка клиентской базы — локальный файл ноды, не git и не .env.
+    # Без файла фича остаётся выключенной, deploy не падает.
+    env_file:
+      - path: /etc/webnestdev/client-db-admin.conf
+        required: false
     environment:
       DATABASE_URL: postgres://webnestdev:${NODE2_PG_PASSWORD:?Set NODE2_PG_PASSWORD}@host.docker.internal:5432/webnestdev
       WEBNESTDEV_NODE_ID: node-1
@@ -38,9 +43,8 @@ services:
       HOSTING_CDN_RESOURCE: hosting
       HOSTING_CDN_PROJECT: project-pimashin2015
       WEBNESTDEV_TRUSTED_PROXIES: 172.30.0.0/24
-      # Клиентская база (пилот): без CLIENT_DB_ADMIN_URL фича выключена и маршрут отвечает 503.
-      # Публичный адрес — PgBouncer этой ноды; административная строка приходит из .env.
-      CLIENT_DB_ADMIN_URL: ${CLIENT_DB_ADMIN_URL:-}
+      # Клиентская база (пилот): административная строка приходит из локального env_file.
+      # Без неё фича выключена и маршрут отвечает 503. Публичный адрес — PgBouncer этой ноды.
       CLIENT_DB_PUBLIC_HOST: ${CLIENT_DB_PUBLIC_HOST:-10.0.0.4}
       CLIENT_DB_PORT: ${CLIENT_DB_PORT:-6432}
       CLIENT_DB_NAME: ${CLIENT_DB_NAME:-app}

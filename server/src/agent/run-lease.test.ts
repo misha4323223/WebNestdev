@@ -58,6 +58,22 @@ test("аренда не даёт второму процессу запусти�
   if (third.kind === "acquired") await third.lease.release();
 });
 
+test("просроченная аренда не блокирует аккаунт навсегда", async () => {
+  const { backend, held } = memoryLeaseBackend();
+  setRunLeaseBackendForTests(backend);
+
+  const first = await acquireRunLease("account-1", { signal: signal(), waitMs: 0 });
+  assert.equal(first.kind, "acquired");
+  const row = held.get("account-1");
+  assert.ok(row);
+  // Так выглядит строка после падения процесса: TTL истёк, а release не пришёл.
+  row.expiresAt = Date.now() - 1;
+
+  const second = await acquireRunLease("account-1", { signal: signal(), waitMs: 0 });
+  assert.equal(second.kind, "acquired");
+  if (second.kind === "acquired") await second.lease.release();
+});
+
 test("освободившаяся аренда достаётся ожидающему запросу, а не отказу", async () => {
   const { backend } = memoryLeaseBackend();
   setRunLeaseBackendForTests(backend);

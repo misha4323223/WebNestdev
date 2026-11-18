@@ -406,6 +406,11 @@ All three limits are printed at startup (`[agent] …`, `[sandbox] …`).
   which closes the socket of the running task and starts the queued message right away; without
   it the user's own message was answered `RUN_ALREADY_ACTIVE`, as though a second agent had been
   started. It is bounded and holds no place in either queue.
+- `AGENT_RUN_IDLE_TIMEOUT_MS` (default `900000`, 15 minutes) — сколько runtime может не присылать
+  ни одного события, прежде чем сервер снимет запуск кодом `RUN_IDLE_TIMEOUT`. Сокетный
+  `run.alive` не считается работой: он идёт и у зависшего провайдера. Ожидание `question.ask`
+  не ограничивается. При старте API снимает аренды своей ноды, оставшиеся от предыдущего
+  процесса, поэтому после рестарта аккаунт не выглядит занятым до истечения TTL.
 - `BROWSER_MAX_CONCURRENT` (default `1`) — Chromium instances at once. The browser worker launches
   Chromium **inside the server container**, where no memory limit applies, so this is what keeps a
   browser check from taking the whole platform down. `BROWSER_MAX_QUEUE` (default `8`) and

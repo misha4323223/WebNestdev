@@ -1,6 +1,8 @@
 import { useCallback,useEffect,useMemo,useRef,useState } from "react";
 import { KeyRound, UploadCloud } from "lucide-react";
 import { openImportedProject } from "../../lib/project-api";
+import { queuePlannerStart } from "../../lib/agent-start";
+import { importedRepositoryKickoff } from "../../lib/repo-kickoff";
 import { ConnectorCard,type ConnectorStatus } from "../integrations/ConnectorCard";
 import type { ConnectorSurface } from "../github/GitHubConnect";
 
@@ -188,6 +190,16 @@ export function GitLabConnect({surface="home",onImported=openImportedProject}:{s
       const response=await fetch("/api/gitlab/import",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({id:selected.id})});
       const data=await response.json() as { error?:string; project?:{id:string}; conversation?:{id:string} };
       if(!response.ok||!data.project||!data.conversation)throw new Error(data.error??"Не удалось импортировать репозиторий");
+      // Как и у остальных коннекторов: сначала окно планировщика с анализом проекта и вопросом,
+      // затем рабочая область. Иначе GitLab-импорт открывал пустой чат.
+      queuePlannerStart(data.conversation.id, {
+        prompt: importedRepositoryKickoff({
+          provider: "GitLab",
+          fullName: selected.path_with_namespace,
+          defaultBranch: selected.default_branch,
+        }),
+        title: "Импорт: " + selected.path_with_namespace,
+      });
       // Сразу открываем рабочую область с репозиторием — без лишнего окна и поиска проекта.
       onImported(data.project.id,data.conversation.id);
     }catch(e){setError(e instanceof Error?e.message:"Ошибка импорта")}

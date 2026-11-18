@@ -18,6 +18,16 @@ export function queueAgentStart(conversationId:string,start:Omit<PendingAgentSta
   try{localStorage.setItem(key(conversationId),JSON.stringify({...start,createdAt:Date.now()} satisfies PendingAgentStart))}catch{}
 }
 
+/**
+ * Планировщик и его первый запуск ставятся одним действием. Без флага `webnestdev.planning`
+ * рабочая область успевала показать пустой чат до того, как AgentPanel прочитает pendingStart;
+ * для импорта это выглядело как «планировщик ничего не спрашивает».
+ */
+export function queuePlannerStart(conversationId:string,start:{prompt:string;title?:string}){
+  try{localStorage.setItem("webnestdev.planning."+conversationId,JSON.stringify({title:start.title??"Новый проект"}))}catch{}
+  queueAgentStart(conversationId,{...start,planning:true});
+}
+
 /** Reads and removes the queued run, so a reload or a second panel mount cannot start it twice. */
 export function takeAgentStart(conversationId:string):PendingAgentStart|null{
   if(!conversationId)return null;

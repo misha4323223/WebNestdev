@@ -89,9 +89,9 @@ export function PlanningRoom({ title, loaded, question, questionBusy, questionEr
                     </button>
                   </div>
                 : <div className="planning-room-wait" role="status" aria-live="polite">
-                    <NestLoader size={30} label="Собираем вопросы"/>
-                    <strong>Собираю вопросы…</strong>
-                    <span>Агент смотрит на идею и готовит уточнения.</span>
+                    <NestLoader size={30} label="Анализирую проект"/>
+                    <strong>Анализирую проект и собираю вопросы…</strong>
+                    <span>Агент смотрит на стек, запуск и возможности тарифа.</span>
                   </div>}
       </div>
 

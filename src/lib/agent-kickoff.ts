@@ -39,6 +39,23 @@ const plannerTail = /\s*Сначала работай в режиме плани
 const themeSetup = /^Собери тему проекта/;
 const onboardingContext = /\s*Контекст из знакомства при входе\.[\s\S]*?(?=\s*(?:Сначала работай в режиме планировщика|$))/;
 const attachmentTail = /\s*Эти файлы уже (?:доступны|лежат в проекте, используй их по путям):\s*([\s\S]*)$/;
+
+/**
+ * Инструкция для загрузки файлов проекта. Она остаётся в запросе к модели, но вырезается из
+ * человеческой реплики: пользователь прикрепил файл, а не писал служебный текст.
+ */
+export const PROJECT_ANALYSIS_TAIL = "\n\nПеред выполнением задачи сначала разберись, что за проект в загруженных файлах: определи стек, " +
+  "пакетный менеджер, скрипты установки/сборки/запуска, точки входа, backend и необходимые переменные окружения. " +
+  "Сверь это с PLAN FOR THIS RUN: если проекту нужен постоянный сервер или контейнерный предпросмотр, а тариф его " +
+  "не даёт, не запускай dev/start и предложи «Премиум»; на текущем тарифе сделай только то, что действительно возможно. " +
+  "Не начинай установку зависимостей до этого анализа.";
+
+const projectFilePattern = /(?:^|[\\/])(?:package\.json|pnpm-lock\.yaml|yarn\.lock|package-lock\.json|requirements\.txt|pyproject\.toml|Pipfile|Cargo\.toml|go\.mod|pom\.xml|build\.gradle|composer\.json|Gemfile|docker-compose\.ya?ml|Dockerfile)$|\.(?:zip|tar|tgz|gz|rar|7z|js|jsx|ts|tsx|vue|svelte|py|go|rs|java|kt|php|rb|cs|sql|json|ya?ml|toml|md|html|css|scss|less)$/i;
+
+/** Загружен ли вместе с задачей файл, по которому нужно сначала понять проект. */
+export function looksLikeProjectUpload(files: Array<{name:string}>): boolean {
+  return files.some(file => projectFilePattern.test(file.name));
+}
 const imageFile = /\.(?:png|jpe?g|gif|webp|svg|avif|bmp|ico)(?:[?#].*)?$/i;
 
 function parseAttachments(tail: string): PublicAttachment[] {
@@ -63,7 +80,9 @@ export function publicUserMessage(raw: string): PublicMessage {
   if (/^Разверни проект по квизу\./.test(text)) return { text: "Развернуть проект по выбранным параметрам", internal: false, attachments: [] };
   if (/^Продолжи развёртывание по квизу\./.test(text)) return { text: "Продолжить развёртывание", internal: false, attachments: [] };
   if (/^План утверждён\./.test(text)) return { text: "План утверждён — начинаю разработку", internal: true, attachments: [] };
-  const repository = /^Импортирован репозиторий GitHub:\s*([^\s(]+)/.exec(text);
+  // Все коннекторы используют одну формулировку; раньше скрывался только GitHub, и огромный
+  // служебный промпт GitLab/GitVerse висел в переписке как сообщение пользователя.
+  const repository = /^Импортирован репозиторий (?:[^:]+):\s*([^\s(]+)/.exec(text);
   if (repository) return { text: "Импорт репозитория " + repository[1], internal: true, attachments: [] };
   const template = /^Быстрый старт(?:\s*:\s*[^→]+→\s*|\s+по шаблону\s*)«([^»]+)»/.exec(text);
   if (template) return { text: "Шаблон «" + template[1] + "»", internal: true, attachments: [] };
@@ -74,6 +93,7 @@ export function publicUserMessage(raw: string): PublicMessage {
     .replace(plannerTail, "")
     .replace(onboardingContext, "")
     .replace(attachmentTail, "")
+    .replace(PROJECT_ANALYSIS_TAIL, "")
     .trim();
   // `internal` относится ко всему сообщению, а не к вырезанной части: идея проекта и текст
   // с прикреплёнными файлами остаются запросами пользователя, даже если служебный хвост у них убран.

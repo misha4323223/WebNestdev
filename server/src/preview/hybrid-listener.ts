@@ -3,6 +3,7 @@ import fastifyStatic from "@fastify/static";
 import { request as httpRequest, type IncomingMessage, type ServerResponse } from "node:http";
 import { connect as netConnect, type Socket } from "node:net";
 import { withoutPlatformCookies } from "./preview-proxy.js";
+import { isApiUpstreamPath, proxyApiUpstream, type ApiUpstreamConfig } from "./api-upstream.js";
 
 /**
  * The API-side half of a hybrid preview.
@@ -40,6 +41,8 @@ export type HybridListenerOptions = {
   backendHost: string;
   backendPort: number;
   backendPaths: string[];
+  /** Platform-owned same-origin API proxy; independent of a backend container. */
+  apiUpstream?: ApiUpstreamConfig;
 };
 
 export type HybridListener = {
@@ -204,6 +207,13 @@ export async function createHybridListener(options: HybridListenerOptions): Prom
   // a two-argument hook that returns a promise; static responses also get no-store here.
   app.addHook("onRequest", async (request, reply) => {
     reply.header("cache-control", "no-store, max-age=0");
+    if (options.apiUpstream && isApiUpstreamPath(request.raw.url)) {
+      reply.hijack();
+      void proxyApiUpstream(request.raw, reply.raw, options.apiUpstream).catch(error => {
+        sendError(reply.raw, 502, "API upstream недоступен: " + (error instanceof Error ? error.message : String(error)));
+      });
+      return;
+    }
     if (!isBackendPath(request.raw.url, options.backendPaths)) return;
     reply.hijack();
     void proxyHttp(request.raw, reply.raw, options).catch(error => {

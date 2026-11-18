@@ -8,7 +8,7 @@ import type { ChatMessage } from "../types.js";
 import { consumeAgentRun } from "../account/usage-store.js";
 import { accountPlanFor } from "../billing/store.js";
 import { getPlatformModelForPlan } from "../platform/platform-models.js";
-import { runQueueStats,runWithRunSlot } from "../agent/run-limiter.js";
+import { AccountBusyError,runQueueStats,runWithRunSlot } from "../agent/run-limiter.js";
 import { positiveInt } from "../concurrency.js";
 
 const messageSchema=z.discriminatedUnion("role",[
@@ -43,6 +43,19 @@ export const runSchema=z.object({projectId:z.string().min(1).max(200),conversati
  */
 export function runHeartbeatMs(){
   return positiveInt(process.env.AGENT_RUN_HEARTBEAT_MS,20_000);
+}
+
+/**
+ * Сколько запуск может молчать, прежде чем сервер снимет его сам.
+ *
+ * Сокетный heartbeat говорит только о том, что вкладка ещё открыта: зависший провайдер,
+ * Docker-задание или внешний процесс может молчать часами, а аренда аккаунта всё это время
+ * остаётся занятой, и следующая реплика получает «Агент уже работает» при пустом экране.
+ * Поэтому отдельный watchdog смотрит на события самого runtime. Вопрос пользователю — это
+ * законное ожидание, а не зависание: пока он висит, watchdog молчит.
+ */
+export function runIdleTimeoutMs(){
+  return Math.max(60_000,positiveInt(process.env.AGENT_RUN_IDLE_TIMEOUT_MS,15*60_000));
 }
 
 /**
@@ -98,7 +111,7 @@ export async function registerAgentWebSocket(app:FastifyInstance,runtime=new Age
       socket.close(1008,"Источник запроса не разрешён");
       return;
     }
-    let running=false,closed=false; let controller:AbortController|null=null;
+    let running=false,closed=false; let controller:AbortController|null=null; let idleAborted=false; let runUserId="";
     const safeSend=(payload:unknown)=>{if(!closed)try{socket.send(JSON.stringify(payload))}catch{closed=true}};
     // Aborting on close stops a run in flight *and* a wait for a free run slot, so a closed
     // tab never keeps a place in the queue while the server waits for it to answer.
@@ -107,6 +120,8 @@ export async function registerAgentWebSocket(app:FastifyInstance,runtime=new Age
       if(closed)return;
       if(running){safeSend({type:"error",error:"Агент уже выполняется в этом соединении"});return}
       running=true;
+      idleAborted=false;
+      runUserId="";
       // The controller lives for the whole request, not only for the run: the queue wait below
       // has to end when the connection does.
       const runController=new AbortController();
@@ -114,6 +129,7 @@ export async function registerAgentWebSocket(app:FastifyInstance,runtime=new Age
       try{
         const user=await getCurrentUser(request);
         if(!user){socket.close(1008,"Требуется вход в аккаунт");closed=true;return}
+        runUserId=user.id;
         const message=JSON.parse(raw.toString()) as {type?:string;request?:unknown};
         if(message.type!=="agent.run")throw new Error("Неизвестный тип сообщения");
         const parsed=runSchema.parse(message.request);
@@ -166,11 +182,28 @@ export async function registerAgentWebSocket(app:FastifyInstance,runtime=new Age
         // Сердцебиение охватывает и ожидание в очереди, и сам запуск: и то и другое может молчать
         // минутами, а молчащий сокет закрывает прокси на пути (см. runHeartbeatMs).
         const heartbeat=setInterval(()=>safeSend({type:"run.alive",at:Date.now()}),runHeartbeatMs());
+        // Последнее событие runtime, а не последний heartbeat сокета: heartbeat идёт даже тогда,
+        // когда сама работа зависла. `question.asked` — ожидание ответа человека, его не трогаем.
+        let lastRuntimeEvent=Date.now();
+        let waitingForAnswer=false;
+        const watchdog=setInterval(()=>{
+          if(waitingForAnswer||Date.now()-lastRuntimeEvent<runIdleTimeoutMs())return;
+          console.warn("[agent] запуск остановлен по простою: project="+parsed.projectId+" user="+user.id);
+          idleAborted=true;
+          safeSend({type:"error",error:"Запуск остановлен: агент слишком долго не подавал признаков работы. Повторите задачу — история и проект сохранены.",code:"RUN_IDLE_TIMEOUT"});
+          runController.abort();
+        },Math.min(30_000,Math.max(5_000,Math.floor(runIdleTimeoutMs()/4))));
+        const emitRunEvent=(event:{type:string})=>{
+          lastRuntimeEvent=Date.now();
+          if(event.type==="question.asked")waitingForAnswer=true;
+          else if(event.type!=="run.heartbeat")waitingForAnswer=false;
+          safeSend(event);
+        };
         try{
           await runWithRunSlot(async()=>{
             const usage = await consumeAgentRun(user.id,{ownProvider});
             safeSend({type:"usage.updated",usage});
-            await runtime.run({...parsed,userId:user.id,...(plan?{plan}:{}),...(history?{history}:{})},event=>safeSend(event),runController.signal);
+            await runtime.run({...parsed,userId:user.id,...(plan?{plan}:{}),...(history?{history}:{})},emitRunEvent,runController.signal);
           },{
             signal:runController.signal,
             userId:user.id,
@@ -179,8 +212,12 @@ export async function registerAgentWebSocket(app:FastifyInstance,runtime=new Age
           });
         }finally{
           clearInterval(heartbeat);
+          clearInterval(watchdog);
         }
       }catch(error){
+        // Остановку по простою уже объяснил watchdog; вторая ошибка «AbortError» только
+        // перекрыла бы понятное сообщение и снова показала бы занятость аккаунта.
+        if(idleAborted)return;
         const message = requestErrorMessage(error);
         const statusCode = error && typeof error === "object" && "statusCode" in error ? (error as {statusCode?:unknown}).statusCode : undefined;
         const isQuota = statusCode === 429;
@@ -195,6 +232,7 @@ export async function registerAgentWebSocket(app:FastifyInstance,runtime=new Age
         // passed straight through, so the panel can say what happened instead of "Ошибка".
         const ownCode = error && typeof error === "object" && "code" in error && typeof (error as {code?:unknown}).code === "string" ? (error as {code:string}).code : undefined;
         const quotaCode = isStorage ? "STORAGE_LIMIT_REACHED" : isCreditBudget ? "CREDIT_BUDGET_EXHAUSTED" : "DAILY_QUOTA_EXCEEDED";
+        if(error instanceof AccountBusyError)console.warn("[agent] запуск отклонён: аккаунт ещё занят (user="+runUserId+", project="+(request.url??"")+")");
         safeSend({type:"error",error:message,...(isQuota?{code:quotaCode}:isBusy?{code:"SERVER_BUSY"}:ownCode?{code:ownCode}:{})});
       }
       finally{controller=null;running=false;}

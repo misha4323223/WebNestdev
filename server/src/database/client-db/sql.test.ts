@@ -57,12 +57,22 @@ test("права ограничены своей схемой и public", () => 
   const statements = provisionStatements({ names, database: "app", password: PASSWORD, roleExists: true });
   const joined = statements.join("\n");
   assert.match(joined, /SET search_path = "tenant_[0-9a-f]{16}", public/);
-  assert.match(joined, /REVOKE ALL ON SCHEMA "tenant_[0-9a-f]{16}" FROM PUBLIC/);
-  assert.match(joined, /REVOKE CREATE ON SCHEMA public FROM "tenant_/);
+  assert.match(joined, /GRANT "tenant_[0-9a-f]{16}" TO CURRENT_USER/);
+  assert.match(joined, /REVOKE "tenant_[0-9a-f]{16}" FROM CURRENT_USER/);
   assert.match(joined, /GRANT CONNECT ON DATABASE "app"/);
   assert.match(joined, /statement_timeout/);
   assert.match(joined, /idle_in_transaction_session_timeout/);
-  assert.match(joined, /temp_file_limit/);
+  assert.doesNotMatch(joined, /temp_file_limit/, "temp_file_limit доступен только superuser");
+});
+
+test("членство администратора снимается после создания схемы", () => {
+  const names = tenantNames("user-1");
+  const statements = provisionStatements({ names, database: "app", password: PASSWORD, roleExists: false });
+  const schemaIndex = statements.findIndex(statement => statement.startsWith("CREATE SCHEMA"));
+  const grantIndex = statements.findIndex(statement => statement.startsWith("GRANT \"tenant_"));
+  const revokeIndex = statements.findIndex(statement => statement.startsWith("REVOKE \"tenant_"));
+  assert.ok(grantIndex > 0 && grantIndex < schemaIndex, "членство нужно до AUTHORIZATION");
+  assert.ok(revokeIndex > schemaIndex, "членство снимается сразу после схемы");
 });
 
 test("слабый пароль не проходит", () => {

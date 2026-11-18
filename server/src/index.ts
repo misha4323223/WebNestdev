@@ -16,6 +16,7 @@ import { describeFunctionsHostServer, startFunctionsHostServer, stopFunctionsHos
 import { startFunctionCacheInvalidation, stopFunctionCacheInvalidation } from "./functions/cache-invalidation.js";
 import { describePreviewLimits } from "./preview/preview-limiter.js";
 import { describeRunLimiter } from "./agent/run-limiter.js";
+import { releaseRunLeasesForNode } from "./agent/run-lease.js";
 import { describeContextBudget } from "./agent/context-budget.js";
 import { describeAgentFeatures } from "./agent/features.js";
 import { describeProviderRetry } from "./provider/provider-retry.js";
@@ -310,6 +311,14 @@ let stopCustomDomainCaddyRefresh: (() => void) | null = null;
 let stopCustomDomainTlsActivation: (() => void) | null = null;
 initializeStorage()
   .then(async () => {
+    // Рестарт API не должен оставлять аккаунт «занятым» до истечения TTL: runtime старого
+    // процесса уже нет, а строка аренды ещё существует. Ошибка очистки не мешает старту.
+    try {
+      const released = await releaseRunLeasesForNode();
+      if (released) console.log("[agent] снято зависших аренд запуска после рестарта: " + released);
+    } catch (error) {
+      app.log.warn({ error: error instanceof Error ? error.message : error }, "run lease cleanup skipped");
+    }
     stopStorageReconcile = startStorageReconcileScheduler();
     // Межнодовая инвалидация кеша функций: слушатель pg_notify живёт столько же, сколько
     // процесс. Ошибка не должна мешать API: локальный TTL и сброс при публикации остаются.

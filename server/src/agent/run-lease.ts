@@ -212,6 +212,22 @@ export async function acquireRunLease(
   }
 }
 
+/**
+ * Снимает аренды, оставшиеся от этого процесса до перезапуска. После рестарта API старый
+ * runtime уже не существует, но строка в базе живёт до TTL и две минуты отвечает «Агент уже
+ * работает» на пустом экране. Удаляем только свою ноду: аренды второй реплики не трогаем.
+ */
+export async function releaseRunLeasesForNode(): Promise<number> {
+  if (!backend.enabled()) return 0;
+  await initializeStorage();
+  const table = ydbQuery().identifier(getTable("run_leases"));
+  const [rows] = await ydbQuery()<Array<{ user_id: string }>>`
+    DELETE FROM ${table}
+     WHERE node = ${nodeId()}
+     RETURNING user_id`;
+  return rows.length;
+}
+
 /** Активный запуск проекта на любой реплике; в JSON-режиме всегда false. */
 export async function isProjectRunLeaseActive(projectId: string): Promise<boolean> {
   if (!projectId.trim() || !backend.enabled()) return false;

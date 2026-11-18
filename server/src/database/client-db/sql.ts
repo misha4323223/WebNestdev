@@ -59,14 +59,22 @@ export function provisionStatements(input: {
       ? []
       : ["CREATE ROLE " + role + " LOGIN PASSWORD " + password]),
     "ALTER ROLE " + role + " LOGIN CONNECTION LIMIT 5 PASSWORD " + password,
+    // Отдельный администратор клиентской базы не superuser. `CREATE SCHEMA AUTHORIZATION tenant`
+    // требует права SET ROLE на владельца схемы, поэтому даём членство ровно на время DDL и
+    // снимаем его сразу после создания схемы. Так у администратора нет постоянного доступа к
+    // данным тенантов, а `ALTER ROLE ... SET` ему разрешён благодаря CREATEROLE.
+    "GRANT " + role + " TO CURRENT_USER",
     "CREATE SCHEMA IF NOT EXISTS " + schema + " AUTHORIZATION " + role,
-    "REVOKE ALL ON SCHEMA " + schema + " FROM PUBLIC",
-    "REVOKE CREATE ON SCHEMA public FROM " + role,
+    "REVOKE " + role + " FROM CURRENT_USER",
+    // public в PostgreSQL 15+ не даёт PUBLIC права CREATE; отдельный REVOKE требовал бы
+    // владения схемой public и ломал провижининг под отдельной ролью.
     "GRANT CONNECT ON DATABASE " + database + " TO " + role,
     "ALTER ROLE " + role + " SET search_path = " + schema + ", public",
     "ALTER ROLE " + role + " SET statement_timeout = '10s'",
     "ALTER ROLE " + role + " SET idle_in_transaction_session_timeout = '15s'",
-    "ALTER ROLE " + role + " SET temp_file_limit = '64MB'",
+    // temp_file_limit — SUSET-параметр: его может менять только superuser. Отдельный
+    // администратор клиентской базы не должен быть superuser, поэтому этот лимит остаётся
+    // на уровне сервера, а не в роли клиента.
     "ALTER ROLE " + role + " SET work_mem = '4MB'",
   ];
 }

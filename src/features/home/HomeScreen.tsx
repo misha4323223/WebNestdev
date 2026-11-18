@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { ArrowRight, ArrowUpRight, AppWindow, Bot, Box, Boxes, Building2, ChevronDown, Code2, CreditCard, Database, FolderGit2, Gamepad2, Globe, Home, LayoutDashboard, Layers3, LogOut, MessageCircle, Newspaper, Pencil, Plug, Rocket, ShoppingBag, Smartphone, Sparkles, Store, Trash2, UserRound, Workflow } from "lucide-react";
+import { ArrowRight, ArrowUpRight, AppWindow, Bot, Box, Boxes, Building2, Code2, CreditCard, Database, FolderGit2, Gamepad2, Globe, Home, LayoutDashboard, Layers3, Lock, LogOut, MessageCircle, Newspaper, Pencil, Plug, Rocket, ShoppingBag, Smartphone, Sparkles, Store, Trash2, UserRound, Workflow } from "lucide-react";
 import { deleteProject, listProjects, renameProject, type Project } from "../../lib/project-api";
 import type { PlanId } from "../../lib/billing-api";
+import { getEntitlements, type AccountEntitlements } from "../../lib/entitlements-api";
 import { logout } from "../../lib/auth-api";
 import { HomeRail, type RailSection } from "./HomeRail";
 import { WebNestLogo } from "../../components/WebNestLogo";
@@ -15,7 +16,8 @@ import { ideaKickoff } from "../../lib/agent-kickoff";
 import { startProjectWithAgent } from "../../lib/start-project";
 import { NotificationsBell } from "../notifications/NotificationsBell";
 
-type Template = { name: string; note: string; prompt: string; icon: typeof Globe };
+type TemplateTier = "free" | "pro" | "team";
+type Template = { name: string; note: string; prompt: string; icon: typeof Globe; tier?: Exclude<TemplateTier, "free">; why?: string };
 type TemplateGroup = { id: string; name: string; range: string; blurb: string; icon: typeof Globe; templates: Template[] };
 
 /**
@@ -30,8 +32,8 @@ const templateGroups: TemplateGroup[] = [
     templates: [
       { name: "Лендинг", note: "Одна страница: оффер, преимущества, заявка", icon: Rocket, prompt: "Создай современный лендинг для продукта: первый экран с оффером, преимущества, отзывы, блок с ценами и форма заявки" },
       { name: "Корпоративный сайт", note: "Несколько страниц, услуги, команда и контакты", icon: Building2, prompt: "Создай корпоративный сайт компании: главная, услуги, о компании, кейсы и контакты, с общим меню и адаптивом" },
-      { name: "Интернет-магазин", note: "Каталог, карточки, корзина и оформление заказа", icon: ShoppingBag, prompt: "Создай интернет-магазин: каталог с фильтрами, карточка товара, корзина и оформление заказа" },
-      { name: "Маркетплейс", note: "Продавцы, категории, заказы и кабинеты", icon: Store, prompt: "Создай маркетплейс: продавцы, категории, карточки товаров, заказы и кабинеты покупателя и продавца" },
+      { name: "Интернет-магазин", note: "Каталог, карточки, корзина и оформление заказа", icon: ShoppingBag, tier: "pro", why: "нужны функции и база для заказов", prompt: "Создай интернет-магазин: каталог с фильтрами, карточка товара, корзина и оформление заказа" },
+      { name: "Маркетплейс", note: "Продавцы, категории, заказы и кабинеты", icon: Store, tier: "pro", why: "нужны роли, заказы и база", prompt: "Создай маркетплейс: продавцы, категории, карточки товаров, заказы и кабинеты покупателя и продавца" },
       { name: "Блог или медиа", note: "Статьи, рубрики, поиск и подписка", icon: Newspaper, prompt: "Создай сайт-блог или медиа: лента статей, рубрики, страница статьи, поиск и подписка на обновления" },
     ],
   },
@@ -42,7 +44,7 @@ const templateGroups: TemplateGroup[] = [
       { name: "Мобильное приложение", note: "Экраны для Android и iOS с навигацией", icon: Smartphone, prompt: "Создай мобильное приложение для Android и iOS: 4–6 экранов с навигацией, списками и сохранением данных" },
       { name: "PWA", note: "Устанавливается из браузера, работает офлайн", icon: AppWindow, prompt: "Создай PWA: устанавливается из браузера, работает офлайн, показывает уведомления и хранит данные на устройстве" },
       { name: "Telegram Mini App", note: "Интерфейс внутри Telegram с профилем", icon: MessageCircle, prompt: "Создай Telegram Mini App: интерфейс внутри Telegram, профиль пользователя, основные действия и адаптация под телефон" },
-      { name: "SaaS-сервис", note: "Аккаунты, тарифы и личный кабинет", icon: Layers3, prompt: "Создай SaaS-сервис: регистрация, тарифы, личный кабинет и основная рабочая функция" },
+      { name: "SaaS-сервис", note: "Аккаунты, тарифы и личный кабинет", icon: Layers3, tier: "pro", why: "нужны аккаунты, база и функции", prompt: "Создай SaaS-сервис: регистрация, тарифы, личный кабинет и основная рабочая функция" },
     ],
   },
   {
@@ -59,9 +61,9 @@ const templateGroups: TemplateGroup[] = [
     blurb: "Графики, таблицы, роли, боты и ассистенты — внутренние инструменты, которые сразу работают.",
     templates: [
       { name: "Дашборд", note: "Метрики, графики и фильтры", icon: LayoutDashboard, prompt: "Создай аналитический дашборд: метрики, графики, фильтры и таблица последних событий" },
-      { name: "CRM и админка", note: "Клиенты, таблицы и роли доступа", icon: Database, prompt: "Создай CRM с админкой: клиенты, сделки, таблицы с фильтрами и роли доступа" },
-      { name: "Telegram-бот", note: "Команды, сценарии и рассылки", icon: Bot, prompt: "Создай Telegram-бота: команды, пошаговые сценарии и рассылка подписчикам" },
-      { name: "AI-ассистент", note: "Чат с моделью и базой знаний", icon: Sparkles, prompt: "Создай AI-ассистента: чат с моделью, история диалога и база знаний по документам" },
+      { name: "CRM и админка", note: "Клиенты, таблицы и роли доступа", icon: Database, tier: "pro", why: "нужны база, функции и роли", prompt: "Создай CRM с админкой: клиенты, сделки, таблицы с фильтрами и роли доступа" },
+      { name: "Telegram-бот", note: "Команды, сценарии и рассылки", icon: Bot, tier: "team", why: "нужен постоянный серверный процесс", prompt: "Создай Telegram-бота: команды, пошаговые сценарии и рассылка подписчикам" },
+      { name: "AI-ассистент", note: "Чат с моделью и базой знаний", icon: Sparkles, tier: "pro", why: "нужны функции и ключ AI-провайдера", prompt: "Создай AI-ассистента: чат с моделью, история диалога и база знаний по документам" },
     ],
   },
 ];
@@ -73,6 +75,13 @@ const templateGroups: TemplateGroup[] = [
  */
 function templateKickoff(group:TemplateGroup,template:Template){
   return `Быстрый старт: ${group.name} → «${template.name}».\n\nЗадача: ${template.prompt}.\n\nЭто первый запрос по новому проекту. Сейчас нужен только план: не изучай файлы, не упоминай, что проект пуст, и не пиши промежуточных рассуждений. Задай через question.ask два коротких вопроса по одному — для кого продукт и какие разделы и данные важны, затем какой стиль и тон. После ответов собери резюме проекта через plan.update: цель и аудитория, страницы и экраны, данные, интеграции, визуальный стиль, проверка. Все пункты оставь pending и не начинай разработку.`;
+}
+
+const planLabels:Record<PlanId,string>={free:"Старт",pro:"Плюс",team:"Премиум"};
+const tierLabels:Record<Exclude<TemplateTier,"free">,string>={pro:"Плюс",team:"Премиум"};
+
+function templateTier(template:Template):TemplateTier{
+  return template.tier??"free";
 }
 
 const activeProjectKey = "webnestdev.projectId";
@@ -107,8 +116,11 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
   const [tab,setTab]=useState<HomeTab>("home");
   // Все категории колонки свёрнуты при открытии: человек сначала видит оглавление, а не его раздел.
   const [section,setSection]=useState<RailSection|null>(null);
-  // Все категории шаблонов свёрнуты при открытии: человек сначала видит оглавление, а не его раздел.
-  const [openGroup,setOpenGroup]=useState<string>("");
+  // На главной сразу видно один раздел стартов, остальные — соседние вкладки.
+  const [activeGroup,setActiveGroup]=useState(templateGroups[0]?.id??"sites");
+  const [account,setAccount]=useState<AccountEntitlements|null>(null);
+  const [templateNotice,setTemplateNotice]=useState("");
+  const entitlements=account?.entitlements??null;
   // Возврат со страницы оплаты: платёжная система переводит браузер сюда с отметкой в адресе.
   const [paymentReturn,setPaymentReturn]=useState<"success"|"fail"|null>(null);
 
@@ -156,6 +168,16 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
 
   const reload=useCallback(async()=>{try{setProjects((await listProjects()).projects)}catch{}},[]);
   useEffect(()=>{void reload()},[reload]);
+
+  // Тарифные подсказки у шаблонов должны совпадать с тем, что сервер реально разрешает.
+  // Если запрос не удался, карточки не блокируем: ограничение проверит агент и сам сервер.
+  useEffect(()=>{
+    let active=true;
+    void getEntitlements()
+      .then(data=>{if(active)setAccount(data)})
+      .catch(()=>{})
+    return ()=>{active=false}
+  },[]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: page is a trigger: a new page starts at the top
   useEffect(()=>{window.scrollTo({top:0})},[page]);
 
@@ -243,6 +265,25 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
   const openPlans=()=>setPlansOpen(true);
   const openPlanDetails=(plan:PlanId)=>{setPlansOpen(false);setPlanDetail(plan);setPage("subscription")};
 
+  function templateAvailable(template:Template){
+    if(!entitlements)return true;
+    const tier=templateTier(template);
+    if(tier==="team")return entitlements.containerPreview;
+    if(tier==="pro")return entitlements.serverlessFunctions;
+    return true;
+  }
+
+  function chooseTemplate(group:TemplateGroup,template:Template){
+    if(!templateAvailable(template)){
+      const tier=templateTier(template);
+      setTemplateNotice("«"+template.name+"» появится на тарифе «"+tierLabels[tier as Exclude<TemplateTier,"free">]+"»: "+(template.why??"нужны возможности платного тарифа")+".");
+      openPlans();
+      return;
+    }
+    setTemplateNotice("");
+    void start(template.name,{plannerPrompt:templateKickoff(group,template),title:"Быстрый старт: "+template.name});
+  }
+
   if(page==="subscription")return <>
     <SubscriptionPage
       onBack={()=>{setPlanDetail(null);setPage("home")}}
@@ -278,16 +319,39 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
           </div>}
 
           <section className="home-hero">
-            <span className="home-hero-mark"><WebNestLogo size={168} tone="light"/></span>
-            <span className="home-kicker">ИДЕЯ · ПЛАН · ПРОЕКТ</span>
-            <p>Опишите идею — агент уточнит детали, покажет план и соберёт проект.</p>
+            <div className="home-hero-copy">
+              <span className="home-kicker"><i/>NESTDEV · ТВОЯ СТУДИЯ</span>
+              <h1 className="home-title">Из идеи —<br/>в <em>живой продукт.</em></h1>
+              <p className="home-lede">Опишите, что хотите запустить. Агент уточнит детали, соберёт план и начнёт разработку — без пустых экранов и лишних шагов.</p>
+              <div className="home-hero-meta">
+                <span><b>01</b> План до кода</span>
+                <span><b>02</b> Правки словами</span>
+                <span><b>03</b> Публикация</span>
+              </div>
+            </div>
+            <div className="home-hero-visual" aria-hidden="true">
+              <div className="home-orbit home-orbit-outer"/>
+              <div className="home-orbit home-orbit-inner"/>
+              <span className="home-art-label home-art-label-top">BRIEF</span>
+              <span className="home-art-label home-art-label-right">BUILD</span>
+              <span className="home-art-label home-art-label-bottom">SHIP</span>
+              <div className="home-hero-mark"><WebNestLogo size={150} tone="light"/></div>
+              <span className="home-art-caption">idea → product</span>
+            </div>
+          </section>
+
+          <section className="home-composer-wrap">
             <form className="home-composer" onSubmit={submit}>
-              <div className="home-composer-top"><span className="home-composer-icon"><Code2 size={16}/></span><div className="home-composer-field"><span className="home-composer-label">ЧТО БУДЕМ СОЗДАВАТЬ</span><textarea value={idea} onChange={e=>setIdea(e.target.value)} placeholder="Например: маркетплейс велосипедов с картой и оплатой" rows={2} /></div></div>
+              <div className="home-composer-top"><span className="home-composer-icon"><Code2 size={16}/></span><div className="home-composer-field"><span className="home-composer-label">ОПИШИТЕ ИДЕЮ</span><textarea value={idea} onChange={e=>setIdea(e.target.value)} placeholder="Например: магазин керамики с каталогом, оплатой и доставкой" rows={2} /></div></div>
               <div className="home-composer-bottom">
-                <span className="home-composer-steps"><span>План до кода</span><span>Правки словами</span><span>Публикация</span></span>
-                <button className="send-button home-submit" disabled={busy||!idea.trim()} aria-label="Создать проект и запустить агента"><span>{busy?"Создаём…":"Создать проект"}</span><ArrowRight size={15}/></button>
+                <span className="home-composer-steps"><span>Черновик сохраняется</span><span>Агент задаст вопросы</span></span>
+                <button className="send-button home-submit" disabled={busy||!idea.trim()} aria-label="Создать проект и запустить агента"><span>{busy?"Создаём…":"Начать проект"}</span><ArrowRight size={15}/></button>
               </div>
             </form>
+            <div className="home-quick-ideas" aria-label="Примеры идей">
+              <span>Попробуйте:</span>
+              {["Лендинг для кофейни","Магазин керамики","CRM для студии"].map(text=><button key={text} type="button" onClick={()=>setIdea(text)}>{text}</button>)}
+            </div>
           </section>
 
           {paymentReturn&&<div className={"home-payment "+paymentReturn} role="status">
@@ -305,35 +369,38 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
 
           {error&&<div className="home-error">{error}</div>}
 
-          <section className="home-section">
-            <div className="home-section-head"><div><span className="eyebrow">ШАБЛОНЫ</span><h2>С чего начать</h2></div><span className="home-section-note">Категория — внутри готовые старты</span></div>
-            <div className="starter-groups">
+          <section className="home-section home-starters">
+            <div className="home-section-head"><div><span className="eyebrow">БЫСТРЫЕ СТАРТЫ</span><h2>С чего начать</h2></div><span className="home-section-note">{account?"Ваш тариф: «"+planLabels[account.plan]+"»":"Готовый бриф · агент уточнит детали"}</span></div>
+            <div className="starter-switcher" role="tablist" aria-label="Категории шаблонов">
               {templateGroups.map(group=>{
                 const Icon=group.icon;
-                const open=openGroup===group.id;
-                return <div className={"starter-group"+(open?" open":"")} key={group.id}>
-                  <button className="starter-group-head" onClick={()=>setOpenGroup(open?"":group.id)} aria-expanded={open} aria-controls={"starter-"+group.id} title={open?"Свернуть категорию":"Показать шаблоны категории"}>
-                    <span className="starter-group-icon"><Icon size={14}/></span>
-                    <span className="starter-group-copy"><strong>{group.name}</strong><small>{group.range}</small></span>
-                    <span className="starter-group-count" title={"Шаблонов: "+group.templates.length}>{group.templates.length}</span>
-                    <ChevronDown size={13} className="starter-group-chevron"/>
-                  </button>
-                  {open&&<div className="starter-group-body" id={"starter-"+group.id}>
-                    <p className="starter-group-blurb">{group.blurb}</p>
-                    <div className="starter-list">
-                      {group.templates.map(template=>{
-                        const TemplateIcon=template.icon;
-                        return <button key={template.name} className="starter-card" onClick={()=>void start(template.name,{plannerPrompt:templateKickoff(group,template),title:"Быстрый старт: "+template.name})} title={template.prompt+". Агент начнёт с плана и уточняющих вопросов."}>
-                          <span className="starter-card-icon"><TemplateIcon size={12}/></span>
-                          <span className="starter-card-copy"><strong>{template.name}</strong><small>{template.note}</small></span>
-                          <ArrowUpRight size={12} className="starter-card-go"/>
-                        </button>;
-                      })}
-                    </div>
-                  </div>}
-                </div>;
+                const active=activeGroup===group.id;
+                return <button key={group.id} role="tab" aria-selected={active} aria-controls={"starter-panel-"+group.id} className={"starter-tab"+(active?" active":"")} onClick={()=>setActiveGroup(group.id)}>
+                  <span className="starter-tab-icon"><Icon size={14}/></span>
+                  <span><strong>{group.name}</strong><small>{group.range}</small></span>
+                  <b>{group.templates.length}</b>
+                </button>;
               })}
             </div>
+            {templateGroups.map(group=>{
+              if(group.id!==activeGroup)return null;
+              return <div className="starter-panel" id={"starter-panel-"+group.id} role="tabpanel" key={group.id}>
+                <div className="starter-panel-head"><p>{group.blurb}</p><span>{group.templates.length} стартов</span></div>
+                {templateNotice&&<div className="starter-notice" role="status"><Lock size={13}/><span>{templateNotice}</span><button type="button" onClick={()=>setTemplateNotice("")} aria-label="Закрыть подсказку">×</button></div>}
+                <div className="starter-list">
+                  {group.templates.map((template,index)=>{
+                    const TemplateIcon=template.icon;
+                    const tier=templateTier(template);
+                    const available=templateAvailable(template);
+                    return <button key={template.name} type="button" className={"starter-card"+(available?"":" is-locked")} onClick={()=>chooseTemplate(group,template)} title={(available?template.prompt:(template.why??"Нужен платный тариф"))+". Агент начнёт с плана и уточняющих вопросов."}>
+                      <span className="starter-card-top"><span className="starter-card-icon"><TemplateIcon size={15}/></span><span className="starter-card-index">{String(index+1).padStart(2,"0")}</span>{tier!=="free"&&<span className={"starter-tier tier-"+tier}>{tier==="team"?<Lock size={9}/>:<Sparkles size={9}/>}{tierLabels[tier as Exclude<TemplateTier,"free">]}</span>}</span>
+                      <span className="starter-card-copy"><strong>{template.name}</strong><small>{available?template.note:(template.why??"Нужен платный тариф")}</small></span>
+                      <span className="starter-card-footer"><span>{available?"Выбрать старт":"Открыть тарифы"}</span><ArrowUpRight size={12} className="starter-card-go"/></span>
+                    </button>;
+                  })}
+                </div>
+              </div>;
+            })}
           </section>
 
           {projects.length>0&&<section className="home-section">

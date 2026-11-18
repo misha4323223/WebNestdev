@@ -12,6 +12,7 @@ import { setPreviewStartProgress } from "./preview-start-progress.js";
 import { readFunctionManifest } from "../functions/manifest.js";
 import { startFunctionsPreviewExecutor, type FunctionsPreviewExecutor } from "./functions-preview.js";
 import { createHybridListener } from "./hybrid-listener.js";
+import { readApiUpstream, type ApiUpstreamConfig } from "./api-upstream.js";
 import type { PreviewStatus } from "./types.js";
 
 /**
@@ -72,6 +73,8 @@ export type StaticStartResult={ok:true;status:PreviewStatus}|{ok:false;reason:st
 export async function startStaticPreview(config:SandboxConfig, options:{allowContainer?:boolean;allowFunctions?:boolean}={}):Promise<StaticStartResult>{
   const plan=await planStaticPreview(config);
   if(!plan.ok)return plan;
+  const apiUpstream=await readApiUpstream(config.root);
+  if(apiUpstream.kind==="invalid")return {ok:false,reason:apiUpstream.reason};
   let functions;
   try{
     functions=await readFunctionManifest(config.root);
@@ -136,10 +139,13 @@ export async function startStaticPreview(config:SandboxConfig, options:{allowCon
   }else if(functions?.functions.length){
     log=(log?log+"\n":"")+"Функции: на текущем тарифе functions-preview недоступен, /api/* в предпросмотре отвечает 404.";
   }
+  if(apiUpstream.kind==="configured"){
+    log=(log?log+"\n":"")+"API: /api/upstream → "+apiUpstream.config.base+" (same-origin прокси предпросмотра).";
+  }
   setPreviewStartProgress(config.projectId,"starting","Запускаем статический сервер…");
   let listener;
   try{
-    listener=await listenStatic(plan.dir,executor);
+    listener=await listenStatic(plan.dir,executor,apiUpstream.kind==="configured"?apiUpstream.config:undefined);
   }catch(error){
     await executor?.stop().catch(()=>undefined);
     throw error;
@@ -246,11 +252,18 @@ function statusFor(run:StaticRun):PreviewStatus{
  * is served. An unknown path without a file extension is a client-side route, so index.html is
  * returned; a missing asset keeps its 404 instead of silently becoming HTML.
  */
-async function listenStatic(dir:string,functions?:FunctionsPreviewExecutor){
-  // С функциями нужен тот же listener, что у hybrid: статика из процесса API и только
-  // /api/* в контейнер. Без функций остаётся прежний дешёвый static-сервер.
-  if(functions){
-    const listener=await createHybridListener({dir,backendHost:functions.host,backendPort:functions.port,backendPaths:["/api"]});
+async function listenStatic(dir:string,functions?:FunctionsPreviewExecutor,apiUpstream?:ApiUpstreamConfig){
+  // С функциями или внешним API нужен тот же listener, что у hybrid: статика из процесса API,
+  // /api/* в контейнер, а /api/upstream/* — в настроенный проект API. Без них остаётся прежний
+  // дешёвый static-сервер.
+  if(functions||apiUpstream){
+    const listener=await createHybridListener({
+      dir,
+      backendHost:functions?.host??STATIC_HOST,
+      backendPort:functions?.port??0,
+      backendPaths:functions?["/api"]:[],
+      ...(apiUpstream?{apiUpstream}:{}),
+    });
     return {app:listener.app,port:listener.port,close:listener.close};
   }
   const app=Fastify({logger:false,disableRequestLogging:true});

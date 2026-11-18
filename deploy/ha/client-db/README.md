@@ -38,19 +38,35 @@ Gluster. Gluster — replica 2 для файлов проектов; PostgreSQL 
 0. Поставить пакеты (скрипт их не устанавливает): `sudo apt-get install -y postgresql-17 pgbouncer`.
 1. Создать `/etc/webnestdev/client-db.env` (root:root, 600) по шаблону. Обязательны:
    `PRIVATE_IP`, `PEER_IP`, `REPL_PASSWORD`, `CLIENT_DB_ADMIN_URL`.
-   `CLIENT_DB_ADMIN_URL` — строка администратора схем, например
-   `postgres://postgres:…@127.0.0.1:5434/app`; она не покидает хост.
+   `CLIENT_DB_ADMIN_URL` — строка **отдельной** роли `nestdev_client_admin`, а не `postgres`:
+   `postgres://nestdev_client_admin:…@127.0.0.1:5434/app`; она не покидает хост.
+
+   Роль создаётся на primary один раз (пароль заменить своим, не печатать):
+   ```sql
+   CREATE ROLE nestdev_client_admin LOGIN CREATEROLE PASSWORD '…';
+   GRANT CREATE, CONNECT ON DATABASE app TO nestdev_client_admin WITH GRANT OPTION;
+   ```
+   После первого провижининга выдать права на учётную таблицу:
+   ```sql
+   GRANT USAGE, CREATE ON SCHEMA nestdev_admin TO nestdev_client_admin;
+   GRANT SELECT, INSERT, UPDATE ON TABLE nestdev_admin.tenants TO nestdev_client_admin;
+   ```
+   `CREATEROLE` нужен для `ALTER ROLE … SET` дочерних tenant-роли; членство в tenant-роли
+   выдаётся только на время `CREATE SCHEMA` и сразу снимается. Роль не является superuser и не
+   имеет постоянного доступа к данным клиентов.
 2. На `node-1`:
    `REPL_PASSWORD='…' ./install.sh primary`
 3. Скопировать `/etc/webnestdev/client-db.env` с `node-1` на `node-2`, заменив
    `PRIVATE_IP`/`PEER_IP` (`PGBOUNCER_AUTH_PASSWORD` создаёт primary — без него standby не встанет).
 4. На `node-2` (после включения машины):
    `./install.sh standby`
-5. В `.env` контейнера сервера добавить:
-   `CLIENT_DB_ADMIN_URL`, `CLIENT_DB_PUBLIC_HOST=<приватный IP ноды>`, `CLIENT_DB_PORT=6432`,
-   `CLIENT_DB_NAME=app`.
-6. Перезапустить сервер (фича включается только при заданных адресах; без них маршрут отвечает
-   503 и ничего не ломает).
+5. На каждой ноде создать `/etc/webnestdev/client-db-admin.conf` (владелец пользователя
+   деплоя, режим 600) с одной строкой:
+   `CLIENT_DB_ADMIN_URL=<административная строка через PgBouncer этой ноды>`.
+   Compose-файл сервера подключает этот файл как необязательный `env_file`; в git и `.env`
+   секрет не попадает. `CLIENT_DB_PUBLIC_HOST` уже задан в override (`10.0.0.4`/`10.0.0.5`).
+6. Перезапустить сервер (фича включается только при заданных адресах; без файла маршрут
+   отвечает 503 и ничего не ломает).
 
 ## Обслуживание
 

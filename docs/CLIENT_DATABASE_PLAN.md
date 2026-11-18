@@ -1,10 +1,12 @@
 # Клиентские базы данных: поэтапный план
 
-Дата: 18.11.2026, 12:39 UTC (2026-11-18T12:39:42Z). Обновлено: 18.11.2026, 16:25 UTC.
-Статус: код выкачен на production 18.11.2026, 16:39 UTC (сборка `457a1e9`); кластер и
-провижининг проверены живым smoke-тестом. Фича включается только при заданных
-`CLIENT_DB_ADMIN_URL` и `CLIENT_DB_PUBLIC_HOST`; административная строка пока не задана,
-поэтому маршрут отвечает 503.
+Дата: 18.11.2026, 12:39 UTC (2026-11-18T12:39:42Z). Обновлено: 18.11.2026, 18:08 UTC.
+Статус: на production работает сборка `e86fa39`; отдельная административная роль
+`nestdev_client_admin` создана и проверена на обеих нодах. Новый код провижининга (без
+`temp_file_limit` и без `postgres` в клиентской строке) **ещё не выкачен**; работающие
+контейнеры до выкатки остаются на старом `postgres`-URL. `CLIENT_DB_ADMIN_URL` для новой
+роли лежит в `/etc/webnestdev/client-db-admin.conf` (600), клиентский адрес — PgBouncer
+ноды. Кластер, провижининг и изоляция проверены живыми тестами.
 
 Документ описывает, как выдать клиентам платформы свою базу данных так, чтобы это работало на
 3000+ проектов и не стоило лишних денег. Числа себестоимости — оценки по тарифам MWS на 18.11.2026;
@@ -182,7 +184,8 @@ PostgreSQL primary  ──streaming──▶  standby
 - `schema-size.ts`: сумма `pg_total_relation_size` по `pg_class` схемы; раз в сутки; на 90 % —
   предупреждение в интерфейсе, на 100 % — `ALTER ROLE … SET default_transaction_read_only=on`;
 - лимиты на роль: `statement_timeout` (например 10 с), `idle_in_transaction_session_timeout`,
-  `temp_file_limit`, `work_mem`;
+  `work_mem`; `temp_file_limit` не ставим из-под отдельной административной роли: это SUSET-
+  параметр, его меняет только суперпользователь;
 - PgBouncer: `max_user_connections`, `max_db_connections`, очередь ожидания;
 - запрет `CREATE EXTENSION`, `pg_read_file`, суперпользователя;
 - `search_path`-изоляция проверяется тестом: роль `tenant_a` не читает `tenant_b`.
@@ -259,7 +262,7 @@ PostgreSQL primary  ──streaming──▶  standby
 | Риск | Проявление | Снижение |
 |---|---|---|
 | Исчерпание соединений | 500 при массовом всплеске вызовов | PgBouncer, `max_user_connections`, очередь, алерт |
-| Шумный сосед | один тенант грузит CPU/IOPS | `statement_timeout`, `temp_file_limit`, лимиты роли, топ-тенанты в мониторинге |
+| Шумный сосед | один тенант грузит CPU/IOPS | `statement_timeout`, лимиты PgBouncer, `work_mem`, топ-тенанты в мониторинге; `temp_file_limit` требует superuser и не входит в отдельную роль |
 | Ошибка в `search_path` | тенант видит чужую схему | `ALTER ROLE … SET search_path`, отзыв прав, тест изоляции |
 | Дампы не успевают | окно бэкапа > ночи | дамп с реплики, параллельность, инкрементальный сценарий для крупных |
 | Переезд ломает URL | клиенты теряют базу | стабильный endpoint `db_proxy`, переключение цели без смены строки |
@@ -334,7 +337,23 @@ PostgreSQL primary  ──streaming──▶  standby
 `CLIENT_DB_SSL=0` для локальной проверки без TLS. Без двух первых переменных маршрут отвечает
 503 `CLIENT_DATABASE_NOT_CONFIGURED`, а тарифная карточка и агент продолжают работать как раньше.
 
-Проверки этой части: 34 точечных теста (`client-db/*.test.ts`, `client-database-tools.test.ts`
+Проверено 18.11.2026, 17:37–17:41 UTC на `node-1`: `GET /api/projects/:id/client-database` —
+200 `available=true`; `POST` на бесплатном тарифе — 403 `DATABASE_PLAN_REQUIRED`; провижининг
+тарифа «Плюс» создал схему и роль через PgBouncer, `current_schema` совпал, запись своих строк
+прошла, `publicCreate=denied`, `crossRead=denied`; после уборки 0 схем, 0 ролей, 0 записей
+`nestdev_admin.tenants`. Таймер квот включён на обеих нодах, разовый запуск — success.
+Административная строка больше не использует `postgres`. На обеих нодах создана отдельная
+роль `nestdev_client_admin` (`LOGIN CREATEROLE`), ей выданы `CREATE, CONNECT` на базу `app`
+с `GRANT OPTION`, `USAGE, CREATE` на схему `nestdev_admin` и `SELECT, INSERT, UPDATE` на
+`nestdev_admin.tenants`. Новый SQL на время `CREATE SCHEMA` выдаёт этой роли членство в
+создаваемой tenant-роли и сразу снимает его. Это уже не суперпользователь, но `CREATEROLE`
+всё ещё позволяет менять пароли tenant-ролей; абсолютный least privilege потребует
+`SECURITY DEFINER`-функции для провижининга. Проверено 18.11.2026, 18:00–18:08 UTC:
+временная роль с теми же правами создала схему и роль, tenant вошёл через PgBouncer,
+`current_schema` совпал, запись прошла; после уборки не осталось ни роли, ни схемы, ни
+записи в `nestdev_admin.tenants`.
+
+Проверки этой части: точечные тесты (`client-db/*.test.ts`, `client-database-tools.test.ts`
 и `plan-brief.test.ts`),
 7 тестов политики failover (`deploy/ha/client-db/test_failover.py`), `bash -n` скриптов,
 `python3 -m py_compile`, `tsc -p server/tsconfig.json --noEmit` — без ошибок.

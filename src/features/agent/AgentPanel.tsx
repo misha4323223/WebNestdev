@@ -22,7 +22,7 @@ import { ChatBookmarks } from "./ChatBookmarks";
 import { SupportButton } from "../support/SupportDialog";
 import { takeAgentStart } from "../../lib/agent-start";
 import { AGENT_COMPOSE_EVENT,AGENT_DRAFT_EVENT } from "../../lib/agent-compose";
-import { publicUserMessage } from "../../lib/agent-kickoff";
+import { looksLikeProjectUpload,PROJECT_ANALYSIS_TAIL,publicUserMessage } from "../../lib/agent-kickoff";
 import { copyText } from "../../lib/clipboard";
 import { parseTaskList } from "../../lib/task-parse";
 
@@ -462,6 +462,12 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   const browserCheckRef=useRef<boolean>(browserCheck);
   /** A queued template/import start is consumed once per conversation, never twice. */
   const pendingStartRef=useRef<string|null>(null);
+  /**
+   * Начался следующий шаг модели, но первый текст/размышление этого шага ещё не пришло. Не
+   * создаём пустое облачко заранее: иначе предыдущий ответ на мгновение выглядел как пустой
+   * ход и человеку казалось, что агент стёр уже показанный ответ, когда пошёл рассуждать дальше.
+   */
+  const pendingStepRef=useRef(false);
   const fileRef=useRef<HTMLInputElement|null>(null);
   // The socket callbacks and the queue drain start new runs, so they read the latest
   // conversation and queue from refs instead of the render they were created in.
@@ -506,6 +512,16 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     if(!box)return;
     pinnedToEndRef.current=box.scrollHeight-box.scrollTop-box.clientHeight<120;
     chatEndRef.current?.(pinnedToEndRef.current);
+  }
+
+  /**
+   * Размышления — отдельное окно прокрутки. Если человек читает их середину, новый кусок текста не
+   * должен дёргать ещё и всю переписку: иначе внешний autoscroll возвращает вниз даже тогда, когда
+   * внутренний уже остановлен.
+   */
+  function reasoningIsScrolledBack(box:HTMLElement){
+    return Array.from(box.querySelectorAll<HTMLElement>(".thinking-body"))
+      .some(element=>element.scrollHeight-element.scrollTop-element.clientHeight>24);
   }
 
   /**
@@ -567,6 +583,9 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   useEffect(()=>{
     const box=messagesBoxRef.current;
     if(!box||!pinnedToEndRef.current)return;
+    // Своё новое сообщение показываем всегда; ответ агента не выдёргивает из размышлений,
+    // которые человек сейчас читает выше конца.
+    if(messages.at(-1)?.role!=="user"&&reasoningIsScrolledBack(box))return;
     box.scrollTop=box.scrollHeight;
     chatEndRef.current?.(true);
   },[messages,loaded]);
@@ -936,7 +955,9 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     // поверх только что начатого запуска и заменила его.
     if(!options.auto)cancelAutoResume();
     if(!options.auto)contextCompactionsRef.current=0;
-    const content=item?withAttachments(item.text,item.attachments):"";
+    const content=item
+      ? withAttachments(item.text,item.attachments)+(looksLikeProjectUpload(item.attachments)?PROJECT_ANALYSIS_TAIL:"")
+      : "";
     const history=resuming
       ?toUserTurns(messagesRef.current)
       :[...toUserTurns(messagesRef.current),{role:"user" as const,content}];
@@ -963,6 +984,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     // не должна выглядеть бездействующей, пока идёт повторная попытка.
     if(!resuming)setReconnect(null);
     updateActions(()=>[]);
+    pendingStepRef.current=false;
     completedRef.current=false;
 
     /**
@@ -978,22 +1000,27 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       const socket=createAgentSocket(projectId,event=>{
       // Строка ожидания снимается первым же признаком работы: ответом, размышлением или действием.
       if(RETRY_NOTICE_CLEAR_EVENTS.has(event.type))clearRetryNotice();
-      if(event.type==="message.delta")updateMessages(current=>{
-        const next=[...current];
-        const last=next.at(-1);
-        if(last?.role==="assistant")next[next.length-1]={...last,content:last.content+(event.delta??"")};
-        // Текст без reasoning после восстановления соединения тоже должен попасть в облачко,
-        // иначе он появится только после перезагрузки истории.
-        else next.push({role:"assistant",content:event.delta??""});
-        return next;
-      });
+      if(event.type==="message.delta"){
+        const beginsStep=pendingStepRef.current;
+        pendingStepRef.current=false;
+        updateMessages(current=>{
+          const next=[...current];
+          const last=next.at(-1);
+          if(beginsStep||last?.role!=="assistant")next.push({role:"assistant",content:event.delta??""});
+          else next[next.length-1]={...last,content:last.content+(event.delta??"")};
+          return next;
+        });
+      }
       if(event.type==="reasoning.start"&&event.blockId){
         const blockId=event.blockId;
         const step=event.step??1;
         const startedAt=event.startedAt??new Date().toISOString();
+        const beginsStep=pendingStepRef.current;
+        pendingStepRef.current=false;
         updateMessages(current=>{
           const next=[...current];
           const last=next.at(-1);
+          if(beginsStep)next.push({role:"assistant",content:""});
           // После перезагрузки посреди запуска история может заканчиваться сообщением пользователя:
           // без облачка ассистента live-блок было бы некуда положить, и размышление пропало бы до
           // сохранения. Пустой ход — тот же placeholder, что создаётся при отправке.
@@ -1022,9 +1049,12 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
         // модель работает, и сохраняется вместе с сообщением, поэтому переживает перезагрузку.
         // Структурированный блок обновляется вместе с плоской строкой: старые клиенты и
         // сохранённые сессии без блоков продолжают работать.
+        const beginsStep=pendingStepRef.current;
+        pendingStepRef.current=false;
         updateMessages(current=>{
           const next=[...current];
           const last=next.at(-1);
+          if(beginsStep)next.push({role:"assistant",content:""});
           if(last?.role!=="assistant")next.push({role:"assistant",content:""});
           const target=next[next.length-1]!;
           const blocks=target.reasoningBlocks??[];
@@ -1072,14 +1102,10 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       // Новый шаг модели — новый ход в переписке. Без этого живые размышления склеивались в один
       // блок, а сохранённая история показывала их отдельными шагами: теперь оба вида совпадают.
       if(event.type==="run.progress"&&typeof event.step==="number"&&event.step>1){
-        updateMessages(current=>{
-          const last=current.at(-1);
-          // Тот же placeholder, что и при отправке: шаг не должен терять свой reasoning, если
-          // соединение восстановилось, когда в истории ещё нет ответа ассистента.
-          if(last?.role!=="assistant")return [...current,{role:"assistant",content:""}];
-          if(!last.content.trim()&&!last.reasoning?.trim())return current;
-          return [...current,{role:"assistant",content:""}];
-        });
+        // Новый шаг начнёт своё облачко только с первым текстом или размышлением. Пустой
+        // placeholder здесь не нужен и как раз создавал впечатление, что предыдущий ответ
+        // исчез, когда агент ушёл на следующий шаг.
+        pendingStepRef.current=true;
       }
       // Провайдер ответил «подожди»: запуск не прерывается, шаг ждёт и повторяется сам. Пользователь
       // видит это строкой над полем ввода, а не ошибкой в переписке.
@@ -1177,7 +1203,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
         // Задача записана в историю проекта. Отправка на GitHub — только по кнопке пользователя.
         setChangesNotice({shortSha:event.checkpoint.shortSha});
       }
-      if(event.type==="run.completed"){completedRef.current=true;contextCompactionsRef.current=0;endRun(socket,{drain:true});onChanged();refreshReasoningSupport()}
+      if(event.type==="run.completed"){pendingStepRef.current=false;completedRef.current=true;contextCompactionsRef.current=0;endRun(socket,{drain:true});onChanged();refreshReasoningSupport()}
       if(event.type==="run.failed"){
         // Переполнение контекста — не ответ пользователю, а внутренняя деталь запуска. Сервер
         // уже сокращает старые шаги; панель повторяет запуск сама, чтобы человек видел работу,
@@ -1227,13 +1253,17 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
         const isBusy = event.code === "SERVER_BUSY";
         // One account runs one agent at a time, so a second tab or project is turned away.
         const isAccountBusy = event.code === "RUN_ALREADY_ACTIVE";
+        // Сервер снял зависший запуск: это не ошибка проекта и не занятость аккаунта, а
+        // защита от вечного ожидания. Продолжение доступно с того же шага.
+        const isIdleTimeout = event.code === "RUN_IDLE_TIMEOUT";
         const quotaKind = isStorageLimit ? "storage" : isCreditBudget ? "credits" : isDailyQuota ? "daily" : isSandboxQuota ? "sandbox" : null;
-        updateMessages(current=>[...current,{role:"assistant",content:(quotaKind==="storage"?"Достигнут лимит хранилища вашего тарифа. ":quotaKind==="credits"?"Месячный лимит кредитов тарифа исчерпан. ":quotaKind==="daily"?"Дневной лимит запусков агента исчерпан. ":quotaKind==="sandbox"?"Дневной лимит времени песочницы исчерпан. ":isAccountBusy?"Агент уже работает в этом аккаунте. ":isBusy?"Сервер занят. ":"Ошибка: ")+errorMsg}]);
+        updateMessages(current=>[...current,{role:"assistant",content:(quotaKind==="storage"?"Достигнут лимит хранилища вашего тарифа. ":quotaKind==="credits"?"Месячный лимит кредитов тарифа исчерпан. ":quotaKind==="daily"?"Дневной лимит запусков агента исчерпан. ":quotaKind==="sandbox"?"Дневной лимит времени песочницы исчерпан. ":isAccountBusy?"Агент уже работает в этом аккаунте. ":isIdleTimeout?"Запуск остановлен: агент долго не проявлял активности. ":isBusy?"Сервер занят. ":"Ошибка: ")+errorMsg}]);
         if(quotaKind)setQuotaNotice(quotaKind);
         // Тариф и очередь аккаунта требуют не «Продолжить», а действия с тарифом или ожидания: у этих
-        // отказов запуск даже не начался, и кнопка продолжения только запутала бы.
+        // отказов запуск даже не начался, и кнопка продолжения только запутала бы. Зависший запуск,
+        // наоборот, можно продолжить с сохранённого шага.
         const resumable=!quotaKind&&!isAccountBusy;
-        endRun(socket,{drain:false,notice:quotaKind==="storage"?"Хранилище заполнено — обновите тариф":quotaKind==="credits"?"Кредиты на месяц исчерпаны":quotaKind==="daily"?"Дневной лимит исчерпан":quotaKind==="sandbox"?"Лимит времени песочницы исчерпан — сброс в 00:00 UTC":isAccountBusy?"Агент уже работает в этом аккаунте — дождитесь завершения или остановите его":isBusy?"Сервер занят — повторите запуск позже":"Запуск остановлен",...(resumable?{resume:{reason:"запуск был отклонён сервером: "+errorMsg.slice(0,160),label:"Запуск остановлен — агент продолжит с того же места."}}:{})});
+        endRun(socket,{drain:false,notice:quotaKind==="storage"?"Хранилище заполнено — обновите тариф":quotaKind==="credits"?"Кредиты на месяц исчерпаны":quotaKind==="daily"?"Дневной лимит исчерпан":quotaKind==="sandbox"?"Лимит времени песочницы исчерпан — сброс в 00:00 UTC":isAccountBusy?"Агент уже работает в этом аккаунте — дождитесь завершения или остановите его":isIdleTimeout?"Запуск остановлен по простою — можно продолжить с того же места":isBusy?"Сервер занят — повторите запуск позже":"Запуск остановлен",...(resumable?{resume:{reason:"запуск был отклонён сервером: "+errorMsg.slice(0,160),label:"Запуск остановлен — агент продолжит с того же места."}}:{})});
       }
     },()=>drop());
       socketRef.current=socket;
@@ -1609,6 +1639,9 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
         }
       }
       if(uploaded.length)setAttachments(current=>[...current,...uploaded]);
+      // Проект из файлов сначала разбирается: человек сразу видит, что запуск не начнётся
+      // вслепую, а агент сверит стек и возможности тарифа до установки зависимостей.
+      if(uploaded.length&&looksLikeProjectUpload(uploaded))messages.push("Сначала разберу проект: стек, запуск и подходящий тариф");
       // О сжатии сообщаем: пользователь должен знать, почему файл в проекте называется .webp
       // и весит меньше, чем снимок на диске.
       if(compressed)messages.push("Фото уменьшены до "+IMAGE_MAX_EDGE+" px по длинной стороне");
