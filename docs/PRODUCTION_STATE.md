@@ -14,6 +14,11 @@ Deploy синхронизирует override обеих нод; токен вн�
 `CLIENT_DB_ADMIN_URL` пока пуст, поэтому клиентская база выключена. Подробности — в
 [`LOCAL_WORKSPACES.md`](LOCAL_WORKSPACES.md) и [`CLIENT_DATABASE_PLAN.md`](CLIENT_DATABASE_PLAN.md).
 
+**Медиа (18.11.2026):** изображения и видео из `image.generate`, `net.download` и
+диагностические снимки browser.* уходят в бакет; ассеты проекта локально не хранятся.
+У `net.download` остаётся сетевой предел **50 МБ на файл** — для роликов больше нужна
+потоковая загрузка.
+
 **API-хост выкачен и проверен 18.11.2026, 07:20–07:44 UTC.** `api.nestdev.ru` резолвится в
 NLB `178.236.27.102`, TLS — Let's Encrypt на `api.nestdev.ru` (до 16.02.2027). Внешние
 проверки: `GET /bmg/api/products?limit=1` — 200, preflight `OPTIONS /bmg/api/orders` — 204
