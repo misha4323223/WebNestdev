@@ -131,8 +131,8 @@ Production не должен зависеть от базы или storage од�
 - Исправление: локальный кэш зависимостей передаётся Docker с флагом `-v`; без него
   установка падала с `invalid reference format`. Флаг проверен на живой установке
   зависимостей проекта `9ad6af70…` на `node-1`. Код также включает hybrid fallback,
-  отдельный лимит hybrid/общий бюджет ноды, static-only панель preview и двухминутный
-  idle для Docker/hybrid; подробности — в разделе 20 и
+  отдельный лимит hybrid/общий бюджет ноды, static-only панель preview и трёхминутный
+  idle для Docker/hybrid (static — пятнадцать минут); подробности — в разделе 20 и
   [`HYBRID_PREVIEW.md`](HYBRID_PREVIEW.md).
 - Прод работает на базе `node-1`; `node-2` включена и является streaming standby
   (`pg_is_in_recovery()=t`, лаг ~1 мс), поэтому PostgreSQL failover доступен. Аварийное
@@ -1482,8 +1482,45 @@ rate limit на POST не действуют. Конкурентный `function
 остановит; для этого нужен WAF/anti-DDoS на NLB или включение POST в CDN. Лимит также не
 заменяет антиспам на форме заказа.
 
+## 29. 18.11.2026, 15:25 UTC: клиентская база платформы на двух нодах
+
+Отдельный кластер для баз клиентов поднят на обеих нодах и проверен живым failover.
+Платформенный `17/main` на `:5433` не тронут.
+
+- `17/client` на порту **5434**, данные на локальном диске ноды (не Gluster),
+  `/var/lib/postgresql/17/client`; потоковая репликация, слот `client_standby`.
+- `node-1` — **primary**, `node-2` — **standby**, `streaming`, лаг в норме. Обе машины
+  включены.
+- PgBouncer 1.26.1 на приватных адресах: `10.0.0.4:6432` и `10.0.0.5:6432`,
+  transaction pooling, `auth_query` + `auth_file=/etc/pgbouncer/userlist.txt`.
+- Пароли (репликация и `pgbouncer_auth`) — только в `/etc/webnestdev/client-db.env`
+  (root:root, 600) на каждой ноде; в репозитории и документации их нет.
+- Юниты: `webnestdev-client-db.service`, `webnestdev-client-db-failover.timer` (каждые 20 с,
+  promote после 2 подтверждений), `...-quota.timer` (03:15 UTC), `...-backup.timer`
+  (02:30 UTC). Скрипты: `/usr/local/sbin/webnestdev-client-db-{failover,backup}`,
+  установка — `deploy/ha/client-db/install.sh primary|standby|pgbouncer`.
+- Учения 18.11.2026: остановка кластера `node-1` → `node-2` стала primary за ~30 с,
+  запись через её PgBouncer прошла; rejoin `node-1` — standby, данные на месте (2 строки).
+  Обратно: остановка `node-2` → `node-1` primary за ~50 с; rejoin `node-2` — standby.
+  Итог — исходная топология, `node-1` primary / `node-2` standby.
+- Бэкап проверен: дамп схемы `pg_dump -Fc` создаётся, `backup.sh list` его видит.
+  Тестовая схема, роль и дамп после проверки удалены.
+- Найдено и исправлено по ходу: `pg_hba` без адреса соседа; PgBouncer без `auth_file`;
+  отсутствие слота на новом primary после promotion; ошибка кавычек в `ALTER ROLE`.
+  Главное: старая логика считала ошибку авторизации за «соседа нет» и поднимала второй
+  primary — теперь `unknown` не даёт promotion, только сетевая недоступность.
+
+Ограничения на эту дату: серверный код с `database.client` и `CLIENT_DB_*` **не выкачен**,
+фича в API выключена; таймер квот `webnestdev-client-db-quota.timer` **выключен** на обеих
+нодах до выкатки (в текущем образе нет `dist/scripts/client-db-quota.js` и `CLIENT_DB_ADMIN_URL`),
+включать вместе с выкаткой; PITR для клиентских схем не включён; автоматического rejoin нет —
+вернувшуюся ноду готовят `install.sh standby`; загрузка дампов в S3 — только через хук
+`CLIENT_DB_BACKUP_UPLOAD`. Диск `node-2` — 19 ГБ (свободно ~6,3 ГБ), под реальных клиентов
+его нужно увеличивать по плану.
+
 Связанные документы:
 
+- [`CLIENT_DATABASE_PLAN.md`](CLIENT_DATABASE_PLAN.md) — план и реализация клиентской базы;
 - [`HOSTING_CACHE_PLAN.md`](HOSTING_CACHE_PLAN.md) — план разделения S3-истории и локального кэша;
 - [`HA_TWO_NODE_REMAINING.md`](HA_TWO_NODE_REMAINING.md) — незакрытые шаги двухнодового HA;
 - [`PRODUCTION_LAUNCH.md`](PRODUCTION_LAUNCH.md) — порядок production-запуска и проверки;

@@ -1,4 +1,4 @@
-import { Bot,FolderGit2,GitBranch,Globe2,Images,ListTodo,Terminal } from "lucide-react";
+import { Bot,FolderGit2,GitBranch,Globe2,Images,KeyRound,ListTodo,Terminal } from "lucide-react";
 
 export type WorkspaceView="agent"|"tasks"|"files"|"media"|"changes"|"terminal"|"hosting";
 
@@ -19,7 +19,8 @@ export function WorkspaceNav({view,onChange,onSecrets,canUseTerminal}:{view:Work
     {canUseTerminal&&<button className={view==="terminal"?"active":""} onClick={()=>onChange("terminal")} title="Команды в папке проекта"><Terminal size={15}/> Терминал</button>}
     {/* Хостинг — статический сайт по HTTPS, без процесса и контейнера после публикации. */}
     <button className={view==="hosting"?"active":""} onClick={()=>onChange("hosting")} title="Статический сайт проекта по HTTPS"><Globe2 size={15}/> Хостинг</button>
-    {/* Ключи — текстовая кнопка на месте ракеты: действие, а не раздел, и подпись понятнее значка. */}
-    {onSecrets&&<button className="workspace-tabs-keys" onClick={onSecrets} title="Секреты проекта: ключи и переменные окружения" aria-label="Ключи проекта">Ключи</button>}
+    {/* Ключи — действие, а не раздел, но иконка та же, что у остальных вкладок: без неё
+        подпись выбивалась из строки и читалась как случайная ссылка. */}
+    {onSecrets&&<button className="workspace-tabs-keys" onClick={onSecrets} title="Секреты проекта: ключи и переменные окружения" aria-label="Ключи проекта"><KeyRound size={15}/> Ключи</button>}
   </nav>;
 }

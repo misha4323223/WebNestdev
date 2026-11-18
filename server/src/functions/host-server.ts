@@ -12,6 +12,9 @@ import { readReleaseManifest } from "./release-manifest.js";
 import { projectFunctionEnv } from "./runtime-env.js";
 import { functionLimiter, FunctionCapacityError } from "./function-limiter.js";
 import { checkFunctionsApiRateLimit, describeFunctionsApiRateLimit } from "./api-rate-limit.js";
+import { localBudget, localBudgetKey, localBudgetOptions } from "./local-budget.js";
+import { requestGate, RequestGateError } from "./request-gate.js";
+import { checkFunctionsSharedBudget, describeFunctionsSharedBudget } from "./shared-budget.js";
 import { functionMetrics } from "./metrics.js";
 import { trustProxyOption } from "../security/client-ip.js";
 import type { RateLimitVerdict } from "../storage/rate-limit-store.js";
@@ -40,6 +43,10 @@ export type FunctionsHostDeps = {
   acquireSlot?: (siteId: string) => Promise<() => void>;
   /** Частота запросов к API-хосту; подменяется в тестах, чтобы не трогать хранилище. */
   apiRateLimit?: (siteId: string, ip: string) => Promise<RateLimitVerdict>;
+  /** Общий in-flight слот ноды; подменяется в тестах. */
+  acquireRequest?: () => Promise<() => void>;
+  /** Общие окна на сайт/аккаунт в PostgreSQL; подменяются в тестах. */
+  sharedBudget?: (input: { siteId: string; userId: string }) => Promise<RateLimitVerdict>;
 };
 
 const defaultDeps: FunctionsHostDeps = {
@@ -52,6 +59,8 @@ const defaultDeps: FunctionsHostDeps = {
   enqueueJobs: enqueueBackgroundJobs,
   acquireSlot: siteId => functionLimiter.acquire(siteId),
   apiRateLimit: (siteId, ip) => checkFunctionsApiRateLimit(siteId, ip),
+  acquireRequest: () => requestGate.acquire(),
+  sharedBudget: input => checkFunctionsSharedBudget(input),
 };
 
 function requestHost(request: FastifyRequest) {
@@ -118,7 +127,14 @@ function sendError(reply: FastifyReply, status: number, message: string, extra: 
   return reply.code(status).send({ error: message, ...extra });
 }
 
+function sendRateLimited(reply: FastifyReply, retryAfter: number, message = "Слишком много запросов") {
+  reply.header("retry-after", String(retryAfter));
+  return sendError(reply, 429, message, { code: "RATE_LIMITED" });
+}
+
 export function createFunctionsHostServer(deps: FunctionsHostDeps = defaultDeps): FastifyInstance {
+  const budgetOptions = localBudgetOptions();
+  const heldGates = new WeakMap<FastifyRequest, () => void>();
   const app = Fastify({
     bodyLimit: 1024 * 1024,
     disableRequestLogging: true,
@@ -135,6 +151,28 @@ export function createFunctionsHostServer(deps: FunctionsHostDeps = defaultDeps)
     done(null, body);
   });
 
+  app.addHook("onRequest", async (request, reply) => {
+    // Preflight не занимает слот: это короткий ответ браузеру, а не работа функции.
+    if (request.method === "OPTIONS" || !deps.acquireRequest) return;
+    try {
+      heldGates.set(request, await deps.acquireRequest());
+    } catch (error) {
+      if (requestHost(request) === hostingApiHost()) apiCors(reply, request);
+      if (error instanceof RequestGateError) {
+        reply.header("retry-after", "1");
+        return reply.code(error.statusCode).send({ error: error.message, code: error.code });
+      }
+      request.log.error({ error }, "request gate failed");
+      reply.header("retry-after", "1");
+      return reply.code(503).send({ error: "Сервер временно перегружен", code: "API_BUSY" });
+    }
+  });
+
+  app.addHook("onResponse", async request => {
+    heldGates.get(request)?.();
+    heldGates.delete(request);
+  });
+
   app.all("/*", async (request, reply) => {
     const hostname = requestHost(request);
     if (!hostname) return sendError(reply, 400, "Не передан Host");
@@ -145,20 +183,30 @@ export function createFunctionsHostServer(deps: FunctionsHostDeps = defaultDeps)
     // Preflight обслуживаем до поиска сайта: браузер не присылает с ним полезное тело.
     if (isApiHost && request.method === "OPTIONS") return reply.code(204).send();
 
+    // Первый барьер — память процесса: он не ходит в базу и отсекает всплеск до любых запросов.
+    const globalBudget = localBudget.take(localBudgetKey("global"), budgetOptions.globalRps, budgetOptions.globalBurst);
+    if (!globalBudget.allowed) return sendRateLimited(reply, globalBudget.retryAfter);
+    const ipBudget = localBudget.take(localBudgetKey("ip", request.ip), budgetOptions.ipRps, budgetOptions.ipBurst);
+    if (!ipBudget.allowed) return sendRateLimited(reply, ipBudget.retryAfter);
+
     const target = isApiHost ? apiTarget(hostname, url.pathname) : null;
     if (isApiHost && !target) return sendError(reply, 404, "Сайт не найден");
     const site = target
       ? await deps.getSiteBySlug(target.slug).catch(() => null)
       : await resolveSite(hostname, deps).catch(() => null);
     if (!site || site.status !== "live" || !site.activeReleaseId) return sendError(reply, 404, "Сайт не найден");
+    const siteBudget = localBudget.take(localBudgetKey("site", site.id), budgetOptions.siteRps, budgetOptions.siteBurst);
+    if (!siteBudget.allowed) return sendRateLimited(reply, siteBudget.retryAfter);
     // API-хост идёт напрямую в NLB, мимо CDN. Считаем частоту до чтения манифеста и запуска
     // контейнера, чтобы поток с одного IP не занимал слоты функций.
     if (isApiHost) {
       const verdict = await (deps.apiRateLimit ?? ((siteId, ip) => checkFunctionsApiRateLimit(siteId, ip)))(site.id, request.ip);
-      if (!verdict.allowed) {
-        reply.header("retry-after", String(verdict.retryAfter));
-        return sendError(reply, 429, "Слишком много запросов к API сайта", { code: "RATE_LIMITED" });
-      }
+      if (!verdict.allowed) return sendRateLimited(reply, verdict.retryAfter, "Слишком много запросов к API сайта");
+    }
+    // Общие окна в PostgreSQL: один сайт или аккаунт не должен выесть обе ноды с разных IP.
+    if (deps.sharedBudget) {
+      const shared = await deps.sharedBudget({ siteId: site.id, userId: site.userId });
+      if (!shared.allowed) return sendRateLimited(reply, shared.retryAfter, "Слишком много запросов к функциям сайта");
     }
     // Фиксируем релиз в локальной переменной: замыкание execute теряет narrowing поля.
     const activeReleaseId = site.activeReleaseId;
@@ -307,5 +355,7 @@ export async function stopFunctionsHostServer() {
 
 export function describeFunctionsHostServer() {
   if (!functionsHostEnabled()) return "serverless-функции: дверь выключена (HOSTING_FUNCTIONS_ENABLED=0)";
-  return "serverless-функции: дверь 0.0.0.0:" + functionsHostPort() + ", маршрут /api/*, одноразовый контейнер на запрос, " + functionLimiter.describe() + ", " + describeFunctionsApiRateLimit();
+  return "serverless-функции: дверь 0.0.0.0:" + functionsHostPort() + ", маршрут /api/*, одноразовый контейнер на запрос, " +
+    functionLimiter.describe() + ", " + requestGate.describe() + ", " +
+    describeFunctionsApiRateLimit() + ", " + describeFunctionsSharedBudget();
 }

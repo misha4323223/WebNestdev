@@ -11,10 +11,11 @@ import { creditBalance, recordCreditConsumption } from "../billing/credit-store.
  * Какая граница тарифа отвечает за каждый вид расхода. Таблица, а не тернарный оператор: новый вид
  * расхода добавляется одной строкой, и забыть его в одной из ветвей невозможно.
  */
-const LIMIT_KEY: Record<UsageKind, "agentRunsPerDay" | "browserChecksPerDay" | "webSearchesPerDay"> = {
+const LIMIT_KEY: Record<UsageKind, "agentRunsPerDay" | "browserChecksPerDay" | "webSearchesPerDay" | "imagesPerDay"> = {
   agentRuns: "agentRunsPerDay",
   browserChecks: "browserChecksPerDay",
   webSearches: "webSearchesPerDay",
+  images: "imagesPerDay",
 };
 
 /** Что именно закончилось — эти фразы видит человек, когда лимит исчерпан. */
@@ -22,6 +23,7 @@ const LIMIT_MESSAGE: Record<UsageKind, string> = {
   agentRuns: "Достигнут дневной лимит запусков агента",
   browserChecks: "Достигнут дневной лимит браузерных проверок",
   webSearches: "Достигнут дневной лимит поисков в интернете",
+  images: "Достигнут дневной лимит генерации изображений",
 };
 
 const root = process.env.WEBNESTDEV_DATA_DIR ?? path.resolve(".webnestdev");
@@ -70,6 +72,7 @@ export async function getUsageSnapshot(userId: string, now = new Date()): Promis
       agentRuns: Number(rows.find(row => row.kind === "agentRuns")?.used ?? 0),
       browserChecks: Number(rows.find(row => row.kind === "browserChecks")?.used ?? 0),
       webSearches: Number(rows.find(row => row.kind === "webSearches")?.used ?? 0),
+      images: Number(rows.find(row => row.kind === "images")?.used ?? 0),
     };
   }
   const events = await readJson<UsageEvent[]>(path.join(root, "account", "usage", date + ".json"), []);
@@ -79,6 +82,7 @@ export async function getUsageSnapshot(userId: string, now = new Date()): Promis
     agentRuns: own.filter(event => event.kind === "agentRuns").length,
     browserChecks: own.filter(event => event.kind === "browserChecks").length,
     webSearches: own.filter(event => event.kind === "webSearches").length,
+    images: own.filter(event => event.kind === "images").length,
   };
 }
 

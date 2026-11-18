@@ -32,7 +32,7 @@ function previewForAgent(status: Awaited<ReturnType<typeof previewStatus>>) {
 
 registerTool({
   name:"preview.start",
-  description:"Start the platform Preview for this project after creating or updating it. On plans without container preview it builds once and serves static files; on Premium it may use a container/hybrid development runtime. Always use this tool instead of starting a dev server through terminal.exec.",
+  description:"Start the platform Preview for this project after creating or updating it. On plans without container preview it builds once and serves static files; on Premium it chooses static, then hybrid (built frontend + separate backend), and only then a pure dev container. Hybrid is the normal runtime for a split full-stack project; a pure container is for one combined process, a whole-app framework, a persistent worker or an architectural fallback. The result includes `mode`; if a project clearly has a separate frontend build and backend but mode is 'container', inspect package.json.preview / .webnestdev/preview.json and make the split explicit. Always use this tool instead of starting a dev server through terminal.exec.",
   parameters:NO_ARGUMENTS,
   execute: async (_,context) => {
     // Агент запускает тот же preview, что и панель. Контейнерный режим — возможность Премиума;

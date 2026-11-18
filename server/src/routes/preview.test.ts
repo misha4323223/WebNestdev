@@ -5,6 +5,7 @@ import Fastify from "fastify";
 import { registerPreviewRoutes, type PreviewRouteDeps } from "./preview.js";
 import { previewProxyBase } from "../preview/preview-rewrite.js";
 import { ContainerPreviewPlanError, type PreviewStatus } from "../preview/types.js";
+import { clearIdleStop, markIdleStopped } from "../preview/idle-stop-marker.js";
 
 type Upstream = { server: Server; port: number; close: () => Promise<void>; hits: string[] };
 
@@ -442,6 +443,22 @@ test("a stopped preview answers with an error instead of an empty page", async (
     assert.equal(response.statusCode, 400);
     assert.match(response.body, /Предпросмотр не запущен/);
   } finally {
+    await app.close();
+  }
+});
+
+test("после простоя старая ссылка показывает страницу с причиной", async () => {
+  markIdleStopped("p1", "container", 180_000);
+  const app = await appWith(depsFor(1, { previewStatus: async () => ({ running: false }) }));
+  try {
+    const response = await app.inject({ method: "GET", url: "/api/projects/p1/preview/open/" });
+    assert.equal(response.statusCode, 503);
+    assert.match(response.headers["content-type"] ?? "", /text\/html/);
+    assert.match(response.body, /Контейнер остановлен после простоя/);
+    assert.match(response.body, /после периода бездействия/);
+    assert.doesNotMatch(response.body, /3 мин|3 минут/);
+  } finally {
+    clearIdleStop("p1");
     await app.close();
   }
 });

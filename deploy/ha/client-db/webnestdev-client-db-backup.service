@@ -1,0 +1,11 @@
+[Unit]
+Description=Дампы клиентских баз по схемам аккаунтов
+After=webnestdev-client-db.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/webnestdev/client-db.env
+ExecStart=/usr/local/sbin/webnestdev-client-db-backup backup
+TimeoutStartSec=7200
+Nice=10
+IOSchedulingClass=idle

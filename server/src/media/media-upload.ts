@@ -11,12 +11,13 @@ import {
 export type StoredMedia = { key: string; publicUrl: string; bytes: number };
 
 /**
- * Загрузка одного файла с сервера. Браузерная загрузка идёт через presigned URL, но снимок
- * уже лежит в памяти Node: гонять его через HTTP API панели и обратно незачем. Используется
- * тот же multipart-контракт, что и у вложений чата, поэтому ключ, квота и публичная ссылка
- * получаются одинаковыми.
+ * Загрузка одного файла с сервера. Браузерная загрузка идёт через presigned URL, но готовый
+ * буфер уже лежит в памяти Node: гонять его через HTTP API панели и обратно незачем.
+ * Используется тот же multipart-контракт, что и у вложений чата, поэтому ключ, квота и
+ * публичная ссылка получаются одинаковыми. Это единственный путь для картинок и видео из
+ * инструментов агента: локальная копия после успешной загрузки не нужна.
  */
-export async function uploadScreenshotBuffer(input: {
+export async function uploadMediaBuffer(input: {
   userId: string;
   projectId: string;
   name: string;
@@ -29,7 +30,7 @@ export async function uploadScreenshotBuffer(input: {
   const upload = await createMultipartUpload(config, {
     userId: input.userId,
     projectId: input.projectId,
-    name: path.basename(input.name) || "screenshot.png",
+    name: path.basename(input.name) || "media",
     size: input.bytes.length,
     contentType: input.contentType,
   });
@@ -57,4 +58,18 @@ export async function uploadScreenshotBuffer(input: {
     await abortMultipartUpload(config, upload.key, upload.uploadId).catch(() => undefined);
     throw error;
   }
+}
+
+/** Снимок браузера — такая же картинка, поэтому идёт тем же путём, что и остальное медиа. */
+export async function uploadScreenshotBuffer(input: {
+  userId: string;
+  projectId: string;
+  name: string;
+  bytes: Buffer;
+  contentType: string;
+}): Promise<StoredMedia | null> {
+  return uploadMediaBuffer({
+    ...input,
+    name: path.basename(input.name) || "screenshot.png",
+  });
 }

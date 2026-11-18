@@ -1,0 +1,19 @@
+[Unit]
+Description=PostgreSQL client database cluster (17/client, port 5434)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+EnvironmentFile=-/etc/webnestdev/client-db.env
+# Guard не даёт стартовать локальному primary рядом с живым primary второй ноды.
+ExecStartPre=/usr/local/sbin/webnestdev-client-db-failover guard
+# Старт уже работающего кластера — не ошибка: unit лишь фиксирует, что кластер поднят.
+ExecStart=/bin/sh -c '/usr/bin/pg_ctlcluster 17 client start || /usr/bin/pg_ctlcluster 17 client status'
+ExecStop=/usr/bin/pg_ctlcluster 17 client stop
+TimeoutStartSec=120
+TimeoutStopSec=120
+
+[Install]
+WantedBy=multi-user.target

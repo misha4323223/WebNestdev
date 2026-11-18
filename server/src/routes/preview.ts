@@ -15,6 +15,8 @@ import { SandboxNodeUnavailableError, SharedWorkspaceRequiredError } from "../sa
 import { accountPlanFor } from "../billing/store.js";
 import { planAllows } from "../account/entitlements.js";
 import { ContainerPreviewPlanError } from "../preview/types.js";
+import { idleStopInfo } from "../preview/idle-stop-marker.js";
+import { idleStoppedPage } from "../preview/stopped-page.js";
 
 /**
  * The routes take their collaborators as a parameter (the same way the agent WebSocket takes
@@ -180,6 +182,14 @@ export async function registerPreviewRoutes(app:FastifyInstance,deps:PreviewRout
     const p=z.object({id:z.string().min(1)}).parse(request.params);
     if(!await deps.authorize(request,reply,p.id))return;
     if(previewPathClosed(deps,p.id))return reply.code(503).send({error:PREVIEW_PATH_CLOSED_MESSAGE});
+    // Старая ссылка после простоя объясняет причину: контейнер остановлен сам, а не упал.
+    // Проверяем статус, чтобы не отдать страницу поверх только что запущенного preview.
+    const idle=idleStopInfo(p.id);
+    if(idle){
+      const status=await deps.previewStatus(p.id,{touch:false}).catch(()=>null);
+      // `starting` означает, что preview уже поднимается: страница простоя была бы ложной.
+      if(!status?.running&&!status?.starting)return reply.code(503).type("text/html; charset=utf-8").send(idleStoppedPage(idle));
+    }
     const params=request.params as {id:string;"*":string};
     const incoming=new URL(request.raw.url??"/","http://webnestdev.local");
     return previewReply(reply,()=>proxyPreviewRequest(door,{

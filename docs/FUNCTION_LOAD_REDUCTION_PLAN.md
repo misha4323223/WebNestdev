@@ -39,7 +39,7 @@ misses=1; `HEAD`/`Range` медиа — 200/206; заказ на origin — 201 
 | На каждый вызов выполняется `docker run --rm` | `server/src/functions/invoke.ts` |
 | Контейнер: 0.5 CPU, 128–1024 МБ, read-only, bridge-сеть, timeout 10–30 с | `invoke.ts` |
 | Есть общий лимит: 2 одновременно на ноду, 1 на сайт, очередь 16, ожидание 10 с | `server/src/functions/function-limiter.ts` |
-| Манифест функций явный: до 20 HTTP-функций и 10 jobs | `server/src/functions/manifest.ts` |
+| Манифест функций явный: до 25 HTTP-функций и 10 jobs | `server/src/functions/manifest.ts` |
 | Функции собираются esbuild в один `index.mjs` на функцию | `server/src/functions/build.ts` |
 | У манифеста нет полей кеша, прогрева или статического ответа | `manifest.ts`, `build.ts` |
 | Публикация собирает функции и кладёт их в релиз | `server/src/hosting/publisher.ts` |

@@ -74,7 +74,7 @@ export type PreviewState={mode:PreviewMode;containerId:string;port:number;host:s
  * неопределённости. `phase` — машинный этап, `message` — готовая строка для человека.
  */
 export type PreviewStartPhase="checking"|"installing"|"building"|"starting"|"waiting";
-export type PreviewStartProgress={phase:PreviewStartPhase;message:string;detail?:string;startedAt:number;updatedAt:number};
+export type PreviewStartProgress={phase:PreviewStartPhase;message:string;detail?:string;startedAt:number;updatedAt:number;/** Режим выбранного запуска: нужен панели для подписи простоя. */mode?:PreviewMode};
 /**
  * What the panel and the agent see: a running preview always carries its address. `settled` — этот
  * адрес подтверждён запросом самого сервера; без подтверждения панель, агент и Chromium до

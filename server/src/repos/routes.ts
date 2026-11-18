@@ -8,7 +8,7 @@ import { getRepoConnection, saveRepoConnection, deleteRepoConnection } from "./c
 import { repoToken } from "./tokens.js";
 import type { RepoProvider } from "./types.js";
 import { createConversation, createProjectWithinLimit, deleteProject, ProjectLimitError } from "../project-store.js";
-import { limitsForPlan, repositoryImportLimitFor, repositorySizeLabel } from "../account/plans.js";
+import { limitsForPlan, repositoryImportLimitFor, repositoryImportLimitMessage } from "../account/plans.js";
 import { accountPlanFor } from "../billing/store.js";
 import { projectDirectoryBytes, recordStorageMutation } from "../account/storage-quota.js";
 import { getSandbox } from "../sandbox-manager.js";
@@ -196,7 +196,7 @@ export async function registerRepoRoutes(app: FastifyInstance, provider: RepoPro
       if (importedBytes > repositoryLimit) {
         await deleteProject(project.id, user.id);
         return reply.code(403).send({
-          error: "Репозиторий занимает " + repositorySizeLabel(importedBytes) + ", а на бесплатном тарифе импорт ограничен " + repositorySizeLabel(repositoryLimit) + ". Оформите платный тариф или импортируйте проект меньше " + repositorySizeLabel(repositoryLimit) + ".",
+          error: repositoryImportLimitMessage(plan, importedBytes, repositoryLimit),
           code: "REPOSITORY_TOO_LARGE",
           sizeBytes: importedBytes,
           limitBytes: repositoryLimit,

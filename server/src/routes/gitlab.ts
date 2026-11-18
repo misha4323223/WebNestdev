@@ -6,7 +6,7 @@ import { getGitLabConnection, saveGitLabConnection, deleteGitLabConnection } fro
 import { createOAuthState, consumeOAuthState, originFromOAuthState } from "../github/github-oauth-state.js";
 import { getGitLabLoginFromToken, getGitLabUser, listGitLabRepositories, getGitLabProject, getGitLabTree, gitlabBaseUrl } from "../gitlab/gitlab-api.js";
 import { createConversation, createProjectWithinLimit, deleteProject, ProjectLimitError } from "../project-store.js";
-import { limitsForPlan, repositoryImportLimitFor, repositorySizeLabel } from "../account/plans.js";
+import { limitsForPlan, repositoryImportLimitFor, repositoryImportLimitMessage } from "../account/plans.js";
 import { accountPlanFor } from "../billing/store.js";
 import { projectDirectoryBytes, recordStorageMutation } from "../account/storage-quota.js";
 import { getSandbox } from "../sandbox-manager.js";
@@ -177,7 +177,7 @@ export async function registerGitLabRoutes(app: FastifyInstance) {
     const sizeBytes = Number(repository.statistics?.repository_size ?? 0);
     if (repositoryLimit !== null && sizeBytes > repositoryLimit) {
       return reply.code(403).send({
-        error: "Репозиторий занимает " + repositorySizeLabel(sizeBytes) + ", а на бесплатном тарифе импорт ограничен " + repositorySizeLabel(repositoryLimit) + ". Оформите платный тариф или импортируйте проект меньше " + repositorySizeLabel(repositoryLimit) + ".",
+        error: repositoryImportLimitMessage(plan, sizeBytes, repositoryLimit),
         code: "REPOSITORY_TOO_LARGE",
         sizeBytes,
         limitBytes: repositoryLimit,
@@ -233,7 +233,7 @@ export async function registerGitLabRoutes(app: FastifyInstance) {
       if (importedBytes > repositoryLimit) {
         await deleteProject(project.id, user.id);
         return reply.code(403).send({
-          error: "Репозиторий занимает " + repositorySizeLabel(importedBytes) + ", а на бесплатном тарифе импорт ограничен " + repositorySizeLabel(repositoryLimit) + ". Оформите платный тариф или импортируйте проект меньше " + repositorySizeLabel(repositoryLimit) + ".",
+          error: repositoryImportLimitMessage(plan, importedBytes, repositoryLimit),
           code: "REPOSITORY_TOO_LARGE",
           sizeBytes: importedBytes,
           limitBytes: repositoryLimit,

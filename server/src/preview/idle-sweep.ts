@@ -2,13 +2,15 @@ import { isRunActiveAnywhere } from "../agent/run-activity.js";
 import { stopPreview } from "../preview-manager.js";
 import { listPreviews } from "./preview-store.js";
 import { pruneSharedPreviews } from "./preview-registry.js";
+import { markIdleStopped } from "./idle-stop-marker.js";
 import type { PreviewState } from "./types.js";
 
-/** Runtime previews are stopped after this long without use; production sets two minutes. */
-export const DEFAULT_IDLE_MS=5*60*1000;
-/** Static previews are only a listener in the API process, so they keep the old, longer idle. */
-export const DEFAULT_STATIC_IDLE_MS=5*60*1000;
-export const DEFAULT_SWEEP_MS=60*1000;
+/** Docker/hybrid останавливаются после трёх минут без запросов. */
+export const DEFAULT_IDLE_MS=3*60*1000;
+/** Static — это слушатель в процессе API, а не контейнер: ему даём пятнадцать минут. */
+export const DEFAULT_STATIC_IDLE_MS=15*60*1000;
+/** Проверка раз в 30 секунд: остановка наступает около 3:00–3:30, а не к четвёртой минуте. */
+export const DEFAULT_SWEEP_MS=30*1000;
 
 /** The stop step is injected so the sweep can be tested without a Docker daemon. */
 export type IdleSweepDeps={stopPreview:(projectId:string)=>Promise<unknown>};
@@ -57,6 +59,9 @@ export async function stopIdlePreviews(now=Date.now(),idleMs=idleTimeoutMs(),dep
   for(const state of candidates){
     try{
       await deps.stopPreview(state.projectId);
+      // Отметка ставится после успешной остановки: старая ссылка объяснит причину, а не
+      // покажет общий «не запущен». Ручная остановка и новый запуск её снимают.
+      markIdleStopped(state.projectId, state.mode, state.mode==="static"?staticIdleMs:idleMs, now);
       stopped++;
       console.log("[preview] остановлен по бездействию: проект "+state.projectId+" (контейнер "+state.containerId+")");
     }catch(error){

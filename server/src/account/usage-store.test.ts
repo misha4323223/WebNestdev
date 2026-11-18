@@ -49,6 +49,18 @@ test("browser checks are counted but no longer have a daily plan cap", async () 
   assert.equal((await getUsageSnapshot(userId)).browserChecks, 8);
 });
 
+/** Изображения — отдельная дневная квота: пять на «Старте», двадцать на платных тарифах. */
+test("free plan allows five generated images per day", async () => {
+  const userId = "quota-images-" + randomUUID();
+  for (let index = 0; index < 5; index++) await consumeUsage(userId, "images", "free");
+  assert.equal((await getUsageSnapshot(userId)).images, 5);
+  await assert.rejects(
+    () => consumeUsage(userId, "images", "free"),
+    (error: unknown) => error instanceof UsageLimitError && error.limit === 5 && error.used === 5,
+  );
+  await assert.doesNotReject(() => consumeUsage(userId, "images", "pro"));
+});
+
 /**
  * Свой AI-провайдер проекта: запуск идёт за счёт пользователя (его ключ и его модель), поэтому дневная
  * квота встроенной модели к нему не применяется. Проверяются обе стороны: запуски со своим

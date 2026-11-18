@@ -159,6 +159,7 @@ import "./tools/domain-tools.js";
 import "./tools/service-tools.js";
 import "./tools/expo-tools.js";
 import "./tools/database-tools.js";
+import "./tools/client-database-tools.js";
 import "./tools/deploy-tools.js";
 import "./tools/deploy-check.js";
 import "./tools/access-tools.js";

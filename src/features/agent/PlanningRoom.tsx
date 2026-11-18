@@ -35,7 +35,7 @@ export function PlanningRoom({ title, loaded, question, questionBusy, questionEr
         <div className="planning-room-title">
           <span className="eyebrow">ПЛАНИРОВАНИЕ ПРОЕКТА</span>
           <h2>{title || "Новый проект"}</h2>
-          <p>Ответьте на пару вопросов — агент соберёт резюме. Код начнётся только после перехода в разработку.</p>
+          <p>Ответьте на вопросы — агент разберётся в проекте и соберёт план. Код начнётся только после перехода в разработку.</p>
         </div>
         <button type="button" className="ghost-button planning-room-skip" onClick={onSkip} disabled={questionBusy}>Пропустить</button>
       </header>

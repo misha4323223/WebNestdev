@@ -9,6 +9,7 @@ import {
   planAllows,
   planFeatureMessage,
 } from "../account/entitlements.js";
+import { functionLimitFor, functionLimitMessage } from "../account/plans.js";
 
 /**
  * Состав будущего релиза: нужен и панели, и публикатору.
@@ -126,6 +127,11 @@ export function hostingProjectView(inspection: HostingProjectInspection, plan: P
   if (inspection.jobs > 0 && !planAllows(plan, "backgroundJobs")) {
     canPublish = false;
     reason = planFeatureMessage(plan, "backgroundJobs");
+  }
+  if (inspection.kind === "static-functions" && planAllows(plan, "serverlessFunctions") &&
+    inspection.functions > functionLimitFor(plan)) {
+    canPublish = false;
+    reason = functionLimitMessage(plan, inspection.functions);
   }
 
   return {

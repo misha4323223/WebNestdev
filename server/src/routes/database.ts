@@ -1,8 +1,17 @@
-import type { FastifyInstance } from "fastify";
+import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { requireUser } from "../auth/auth.js";
 import { getDatabaseConnection } from "../database/database-connection-store.js";
 import { checkDatabaseReachable, databaseStatus, disconnectDatabase, saveDatabaseCredential } from "../database/database-api.js";
+import { accountPlanFor } from "../billing/store.js";
+import { getProject } from "../project-store.js";
+import { getSandbox } from "../sandbox-manager.js";
+import {
+  ClientDatabaseError,
+  clientDatabaseStatus,
+  connectClientDatabase,
+  disconnectClientDatabase,
+} from "../database/client-db/service.js";
 
 const credential = z.object({
   provider: z.string().max(60).optional(),
@@ -50,4 +59,59 @@ export async function registerDatabaseRoutes(app: FastifyInstance) {
     await disconnectDatabase(user.id);
     return { connected: false };
   });
+
+  /**
+   * Клиентская база платформы. Путь проектный, потому что `DATABASE_URL` живёт в зашифрованном
+   * хранилище проекта, а схема — у аккаунта: один аккаунт, одна схема, строка в каждом проекте.
+   */
+  app.get("/api/projects/:id/client-database", async (request, reply) => {
+    const scope = await projectScope(request, reply);
+    if (!scope) return;
+    return clientDatabaseStatus(scope);
+  });
+
+  app.post("/api/projects/:id/client-database", async (request, reply) => {
+    const scope = await projectScope(request, reply);
+    if (!scope) return;
+    try {
+      return await connectClientDatabase(scope);
+    } catch (error) {
+      return replyClientDatabaseError(reply, error);
+    }
+  });
+
+  app.delete("/api/projects/:id/client-database", async (request, reply) => {
+    const scope = await projectScope(request, reply);
+    if (!scope) return;
+    try {
+      return await disconnectClientDatabase(scope);
+    } catch (error) {
+      return replyClientDatabaseError(reply, error);
+    }
+  });
+}
+
+/**
+ * Проект, его владелец и текущий тариф. Чужой проект отвечает 404, а не 403: существование
+ * чужого проекта не должно становиться утечкой. Тариф читается на каждый запрос, поэтому
+ * смена подписки действует без перезапуска.
+ */
+async function projectScope(request: FastifyRequest, reply: FastifyReply) {
+  const user = await requireUser(request, reply); if (!user) return null;
+  const { id } = z.object({ id: z.string().min(1).max(120) }).parse(request.params);
+  const project = await getProject(id);
+  if (!project || project.userId !== user.id) {
+    reply.code(404).send({ error: "Проект не найден" });
+    return null;
+  }
+  const sandbox = await getSandbox(id, user.id);
+  const plan = await accountPlanFor(user.id).catch(() => "free" as const);
+  return { userId: user.id, projectId: id, root: sandbox.root, plan };
+}
+
+function replyClientDatabaseError(reply: FastifyReply, error: unknown) {
+  if (error instanceof ClientDatabaseError) {
+    return reply.code(error.statusCode).send({ error: error.message, code: error.code });
+  }
+  return reply.code(500).send({ error: error instanceof Error ? error.message : "Ошибка клиентской базы" });
 }

@@ -31,6 +31,7 @@ test("снимок из результата инструмента станов
     model: "vision-model",
     mainCanSee: true,
     readImage: async () => PNG,
+    upload: async () => null,
   });
   assert.equal(result.attached, true);
   const last = result.messages.at(-1);
@@ -51,6 +52,7 @@ test("новый снимок заменяет предыдущий автома
     model: "vision-model",
     mainCanSee: true,
     readImage: async () => PNG,
+    upload: async () => null,
   });
   const second = await attachToolScreenshot(started.messages, {
     screenshot: { path: ".webnestdev/screenshots/second.png", bytes: PNG.length },
@@ -60,11 +62,39 @@ test("новый снимок заменяет предыдущий автома
     model: "vision-model",
     mainCanSee: true,
     readImage: async relative => relative.endsWith("second.png") ? PNG : Buffer.from("old"),
+    upload: async () => null,
   });
   const images = (second.messages.at(-1) as Extract<ChatMessage, { role: "user" }>).images ?? [];
   assert.equal(images.length, 2);
   assert.equal(images[0]?.data, "user-image");
   assert.match(images[1]?.name ?? "", /second\.png$/);
+});
+
+test("маленький снимок тоже уходит в бакет, а не остаётся только на диске", async () => {
+  const output = {
+    screenshot: {
+      path: ".webnestdev/screenshots/small.png",
+      url: "/api/projects/p/screenshot?path=small.png",
+      bytes: PNG.length,
+    },
+  };
+  let uploads = 0;
+  const result = await attachToolScreenshot([baseMessage()], output, {
+    projectId: "p",
+    userId: "u",
+    model: "vision-model",
+    mainCanSee: true,
+    readImage: async () => PNG,
+    upload: async input => {
+      uploads++;
+      assert.equal(input.bytes.length, PNG.length);
+      return { publicUrl: "https://storage.example/small.png" };
+    },
+  });
+  assert.equal(uploads, 1, "порог по размеру не должен отменять выгрузку");
+  assert.equal(result.bucketUrl, "https://storage.example/small.png");
+  assert.equal((output.screenshot as { bucketUrl?: string }).bucketUrl, "https://storage.example/small.png");
+  assert.equal(result.attached, true);
 });
 
 test("оригинал больше лимита уходит в бакет, а в контекст идёт уменьшенная копия", async () => {

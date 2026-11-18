@@ -148,16 +148,15 @@ test("неизвестное поле не прощается молча", () =>
   );
 });
 
-test("слишком много функций отклоняется", () => {
+test("двадцать пять функций допустимы, двадцать шесть отклоняются", () => {
+  const many = (length: number) => Array.from({ length }, (_, index) => ({
+    ...valid.functions[0],
+    name: "fn-" + index,
+    path: "/api/fn-" + index,
+  }));
+  assert.equal(parseFunctionManifest({ ...valid, functions: many(25) }).functions.length, 25);
   assert.throws(
-    () => parseFunctionManifest({
-      ...valid,
-      functions: Array.from({ length: 21 }, (_, index) => ({
-        ...valid.functions[0],
-        name: "fn-" + index,
-        path: "/api/fn-" + index,
-      })),
-    }),
+    () => parseFunctionManifest({ ...valid, functions: many(26) }),
     FunctionManifestError,
   );
 });

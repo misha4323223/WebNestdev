@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { FunctionCapacityError, FunctionLimiter, type FunctionLimiterOptions } from "./function-limiter.js";
+import { FunctionCapacityError, FunctionLimiter, functionLimiterOptions, type FunctionLimiterOptions } from "./function-limiter.js";
 
 function limiter(overrides: Partial<FunctionLimiterOptions> = {}) {
   return new FunctionLimiter({
@@ -59,6 +59,21 @@ test("лимиты читаются из env и не выходят за без�
     FUNCTIONS_MAX_CONCURRENT_PER_SITE: "3",
     FUNCTIONS_MAX_QUEUE: "8",
     FUNCTIONS_MAX_WAIT_MS: "2500",
-  } as NodeJS.ProcessEnv), { maxConcurrent: 4, maxPerSite: 3, maxQueue: 8, waitMs: 2500 });
-  assert.equal(functionLimiterOptions({ FUNCTIONS_MAX_CONCURRENT: "0" } as NodeJS.ProcessEnv).maxConcurrent, 2);
+  } as NodeJS.ProcessEnv, 2), { maxConcurrent: 4, maxPerSite: 3, maxQueue: 8, waitMs: 2500 });
+  assert.equal(functionLimiterOptions({ FUNCTIONS_MAX_CONCURRENT: "0" } as NodeJS.ProcessEnv, 2).maxConcurrent, 2);
+});
+
+test("без явных env пул растёт вместе с CPU", () => {
+  assert.deepEqual(functionLimiterOptions({} as NodeJS.ProcessEnv, 4), {
+    maxConcurrent: 6,
+    maxPerSite: 2,
+    maxQueue: 96,
+    waitMs: 5_000,
+  });
+  assert.deepEqual(functionLimiterOptions({} as NodeJS.ProcessEnv, 8), {
+    maxConcurrent: 12,
+    maxPerSite: 4,
+    maxQueue: 192,
+    waitMs: 5_000,
+  });
 });

@@ -1,0 +1,10 @@
+[Unit]
+Description=Ежедневная проверка квот клиентских баз
+
+[Timer]
+OnCalendar=*-*-* 03:15:00 UTC
+Persistent=true
+Unit=webnestdev-client-db-quota.service
+
+[Install]
+WantedBy=timers.target

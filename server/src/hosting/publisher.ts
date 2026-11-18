@@ -12,6 +12,7 @@ import { invalidateFunctionCache } from "../functions/cache-invalidation.js";
 import { inspectHostingProject } from "./project-mode.js";
 import { accountPlanFor } from "../billing/store.js";
 import { planAllows } from "../account/entitlements.js";
+import { functionLimitFor, functionLimitMessage } from "../account/plans.js";
 import { indexFileExists, planStaticPreview } from "../preview/static-plan.js";
 import { runInSandbox } from "../sandbox-worker.js";
 import { secretEnvMaskMounts } from "../sandbox/secret-mask.js";
@@ -176,6 +177,10 @@ async function startPublishLocked(siteId: string, userId: string): Promise<{ sit
       403,
     );
   }
+  if (shape.kind === "static-functions" && planAllows(plan, "serverlessFunctions") &&
+    shape.functions > functionLimitFor(plan)) {
+    throw new HostingError("FUNCTIONS_PLAN_LIMIT", functionLimitMessage(plan, shape.functions), 403);
+  }
   const started = await beginPublish({ siteId: site.id, userId, kind: shape.kind, nodeId: config.nodeId });
   // Публикация выполняется в фоне: HTTP не должен держать запрос 10 минут. Ошибка уже
   // записана в release/site, поэтому дополнительно её только логируем.
@@ -275,12 +280,12 @@ async function invalidateCache(siteId: string) {
   }
 }
 
-async function hostingKind(project: Project): Promise<{ kind: HostingProjectKind; hasJobs: boolean }> {
+async function hostingKind(project: Project): Promise<{ kind: HostingProjectKind; hasJobs: boolean; functions: number }> {
   const inspection = await inspectHostingProject(project);
   if (inspection.kind === "unsupported" || inspection.kind === "unknown") {
     throw new HostingError(inspection.errorCode ?? "PROJECT_NOT_STATIC", inspection.reason, 422);
   }
-  return { kind: inspection.kind, hasJobs: inspection.jobs > 0 };
+  return { kind: inspection.kind, hasJobs: inspection.jobs > 0, functions: inspection.functions };
 }
 
 async function buildStatic(

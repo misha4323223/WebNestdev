@@ -186,6 +186,9 @@ function parseToolResult(content: string): unknown {
 /** Картинка, которую агент нарисовал по просьбе пользователя и показал в переписке. */
 export type ChatImage={url:string;path:string;prompt:string};
 
+/** Картинка из бакета приходит абсолютным URL, старые сохранённые картинки — маршрутом проекта. */
+function isOwnImageUrl(url:string){return url.startsWith("/api/projects/")||/^https?:\/\//i.test(url);}
+
 /**
  * Картинки, показанные в чате: инструмент `image.generate` получает их адрес и пометку
  * `shownInChat`, и только тогда человек видит изображение под ответом. Источник — сохранённые
@@ -215,10 +218,10 @@ export function chatImagesByMessage(messages: ChatMessage[]): Map<ChatMessage, C
       if (call.name !== "image.generate") continue;
       const output = asRecord(results.get(call.id));
       const url = stringValue(output.url);
-      if (output.shownInChat !== true || !url.startsWith("/api/projects/")) continue;
+      if (output.shownInChat !== true || !isOwnImageUrl(url)) continue;
       const owner = messages[answerAfter(index)];
       const shown = images.get(owner) ?? [];
-      shown.push({ url, path: stringValue(output.path), prompt: stringValue(asRecord(call.arguments).prompt) });
+      shown.push({ url, path: stringValue(output.name)||stringValue(output.path), prompt: stringValue(asRecord(call.arguments).prompt) });
       images.set(owner, shown);
     }
   }
@@ -400,10 +403,10 @@ function screenshotUrlOf(output: Record<string, unknown> | null) {
   return url.startsWith("/api/projects/") ? url : "";
 }
 
-/** Картинка из результата image.generate: адрес проекта, а не произвольный внешний. */
+/** Картинка из результата image.generate: бакет или старый адрес проекта, не произвольный внешний. */
 function generatedImageUrlOf(output: Record<string, unknown> | null) {
   const url = stringValue(output?.url);
-  return url.startsWith("/api/projects/") ? url : "";
+  return isOwnImageUrl(url) ? url : "";
 }
 
 function prettyValue(value: unknown) {
@@ -541,10 +544,10 @@ function actionDetail(action: AgentAction): ActionDetailData {
     const url = generatedImageUrlOf(output);
     if (url) return {
       title: "Изображение",
-      note: stringValue(output.path) || undefined,
+      note: stringValue(output.name) || stringValue(output.path) || undefined,
       imageUrl: url,
       imageAlt: "Изображение, сгенерированное агентом",
-      copyText: stringValue(output.path) || undefined,
+      copyText: url,
     };
   }
 

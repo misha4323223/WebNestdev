@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { beginRun, endRun } from "../agent/active-runs.js";
 import { idlePreviews, stopIdlePreviews, type IdleSweepDeps } from "./idle-sweep.js";
+import { clearIdleStopsForTests, idleStopInfo } from "./idle-stop-marker.js";
 import { getPreview, removePreview, setPreview } from "./preview-store.js";
 import type { PreviewState } from "./types.js";
 
@@ -38,14 +39,15 @@ test("only previews untouched for longer than the timeout are selected", () => {
   assert.deepEqual(idlePreviews(states, NOW, 0), []);
 });
 
-test("runtime uses the two-minute timeout, static keeps its longer one", () => {
+test("runtime uses three minutes, static keeps fifteen", () => {
   const runtime = state("runtime", 3 * MINUTE);
   const staticPreview = { ...state("static", 3 * MINUTE), mode: "static" as const, containerId: "" };
-  const ids = idlePreviews([runtime, staticPreview], NOW, 2 * MINUTE, 5 * MINUTE).map(item => item.projectId);
+  const ids = idlePreviews([runtime, staticPreview], NOW, 3 * MINUTE, 15 * MINUTE).map(item => item.projectId);
   assert.deepEqual(ids, ["runtime"]);
 });
 
-test("the sweep stops idle previews and keeps the busy ones", async () => {
+test("the sweep stops idle previews, keeps the busy ones and explains the idle stop", async () => {
+  clearIdleStopsForTests();
   seed([state("idle-project", 10 * MINUTE), state("busy-project", 10 * MINUTE), state("fresh-project", MINUTE)]);
   beginRun("busy-project");
   try {
@@ -54,8 +56,10 @@ test("the sweep stops idle previews and keeps the busy ones", async () => {
     assert.equal(getPreview("idle-project"), undefined);
     assert.ok(getPreview("busy-project"), "проект с активным прогоном должен остаться");
     assert.ok(getPreview("fresh-project"), "недавно использованный предпросмотр должен остаться");
+    assert.deepEqual(idleStopInfo("idle-project", NOW), { mode: "container", idleMs: 5 * MINUTE, stoppedAt: NOW });
   } finally {
     endRun("busy-project");
+    clearIdleStopsForTests();
     cleanup(["idle-project", "busy-project", "fresh-project"]);
   }
 });

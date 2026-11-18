@@ -4,13 +4,19 @@ import type { AgentContext } from "./types.js";
 import { consumeUsageForCurrentPlan } from "../account/usage-store.js";
 import { assertWithinCurrentPlan, recordStorageMutation } from "../account/storage-quota.js";
 
-const storagePreCheckTools = new Set(["fs.write", "fs.edit", "terminal.exec", "npm.install", "pip.install", "net.download", "image.generate"]);
+/**
+ * Инструменты, которые могут выйти за квоту хранилища. `terminal.start` и `git.pull` здесь не
+ * для красоты: фоновая сборка пишет файлы после ответа, а выгрузка из репозитория добавляет их
+ * целой веткой — без проверки обе проходили мимо тарифа, потому что не были в списке.
+ */
+const storagePreCheckTools = new Set(["fs.write", "fs.edit", "terminal.exec", "terminal.start", "git.pull", "npm.install", "pip.install", "net.download", "image.generate"]);
 const storagePostRecordTools = new Set([
   "fs.write",
   "fs.edit",
   "fs.delete",
   "fs.rename",
   "terminal.exec",
+  "terminal.start",
   "npm.install",
   "pip.install",
   "net.download",
@@ -20,7 +26,7 @@ const storagePostRecordTools = new Set([
   "git.commit",
   "deploy.plan",
 ]);
-const heavyStorageMutationTools = new Set(["terminal.exec", "npm.install", "pip.install", "net.download"]);
+const heavyStorageMutationTools = new Set(["terminal.exec", "terminal.start", "npm.install", "pip.install", "net.download"]);
 /**
  * Эти инструменты запускают Chromium. Браузерная проверка — режим запуска, а не квота тарифа,
  * поэтому без включённого переключателя они не работают: иначе автоматическая QA обходила бы

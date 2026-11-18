@@ -8,6 +8,7 @@ import { PICK_BRIDGE_PATH, PICK_BRIDGE_TAG, PICK_COMMAND } from "./pick-bridge.j
 import { mintPreviewTicket, previewTicketProject, PREVIEW_SESSION_PATH, PREVIEW_TICKET_COOKIE } from "./preview-ticket.js";
 import { PREVIEW_LOGS_DOOR_PATH } from "./owner-logs.js";
 import { previewDoorToken } from "./door-token.js";
+import { clearIdleStop, markIdleStopped } from "./idle-stop-marker.js";
 import type { PreviewStatus } from "./types.js";
 
 /**
@@ -314,6 +315,24 @@ test("остановленный предпросмотр объясняет с�
     assert.equal(response.status, 503);
     assert.match(response.body, /не запущен/);
   } finally {
+    await door.close();
+    await site.close();
+  }
+});
+
+test("после простоя старая ссылка объясняет остановку контейнера", async () => {
+  const site = await upstream();
+  markIdleStopped(PROJECT, "container", 180_000);
+  const door = await doorWith(depsFor(site.port, { previewStatus: async () => ({ running: false }) }));
+  try {
+    const response = await ask(door.port, "/", { cookie: PREVIEW_TICKET_COOKIE + "=ticket:" + PROJECT, accept: "text/html" });
+    assert.equal(response.status, 503);
+    assert.match(response.body, /Контейнер остановлен после простоя/);
+    assert.match(response.body, /после периода бездействия/);
+    assert.doesNotMatch(response.body, /3 мин|3 минут/);
+    assert.equal(site.hits.length, 0, "остановленный контейнер не получает запрос");
+  } finally {
+    clearIdleStop(PROJECT);
     await door.close();
     await site.close();
   }

@@ -1,0 +1,10 @@
+[Unit]
+Description=Client database failover step (promote standby when primary is gone)
+After=webnestdev-client-db.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/webnestdev/client-db.env
+Environment=STATE_DIR=/var/lib/webnestdev/client-db
+ExecStart=/usr/local/sbin/webnestdev-client-db-failover tick
+TimeoutStartSec=90

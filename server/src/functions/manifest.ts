@@ -17,7 +17,7 @@ import { z } from "zod";
 
 export const FUNCTIONS_MANIFEST_FILE = "nestdev.functions.json";
 export const FUNCTIONS_MANIFEST_MAX_BYTES = 64 * 1024;
-export const FUNCTIONS_MANIFEST_MAX_FUNCTIONS = 20;
+export const FUNCTIONS_MANIFEST_MAX_FUNCTIONS = 25;
 export const FUNCTIONS_MANIFEST_MAX_JOBS = 10;
 
 const FUNCTION_NAME = /^[a-z][a-z0-9-]{0,62}$/;

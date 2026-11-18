@@ -16,9 +16,9 @@ import { readFileBytesInside, resolveInsideSandbox } from "../sandbox/path-guard
  * PNG оставался для человека. Здесь последний снимок становится временным изображением в
  * последнем сообщении пользователя: base64 не попадает ни в историю, ни в базу.
  *
+ * Каждый снимок уходит в публичный бакет — без порога по размеру, включая кадры в 1 КБ.
  * Оригинал больше 4 МБ не отправляется в контекст: для него `saveScreenshot` уже подготовил
- * уменьшенную WebP-копию, а сам PNG при необходимости уходит в публичный бакет. Бакет — это
- * хранение, а не обход лимита провайдера.
+ * уменьшенную WebP-копию. Порог остаётся только у inline-вложения, а не у выгрузки.
  */
 
 export type ScreenshotRef = {
@@ -167,12 +167,12 @@ export async function attachToolScreenshot(
   const readImage = deps.readImage ?? ((relative: string) => readProjectImage(deps.projectId, deps.userId, relative));
 
   let bucketUrl = ref.bucketUrl;
-  // `image.view` — это просмотр уже лежащего файла, а не новый снимок: не тратим квоту
-  // пользователя на загрузку оригинала, если рядом нет готовой контекстной копии.
-  if (!requestedView && !bucketUrl && (ref.bytes ?? 0) > MAX_INLINE_IMAGE_BYTES) {
+  // `image.view` — это просмотр уже лежащего файла, а не новый снимок. Любой новый снимок
+  // выгружается в бакет независимо от размера: маленький PNG не должен оставаться только на диске.
+  if (!requestedView && !bucketUrl) {
     try {
       const bytes = await readImage(ref.path);
-      if (bytes && bytes.length > MAX_INLINE_IMAGE_BYTES && bytes.length <= 24 * 1024 * 1024) {
+      if (bytes && bytes.length) {
         const contentType = imageContentType(bytes);
         if (contentType) {
           const upload = deps.upload ?? (input => uploadScreenshotBuffer({
@@ -190,7 +190,7 @@ export async function attachToolScreenshot(
         }
       }
     } catch (error) {
-      console.warn("[screenshot] не удалось загрузить оригинал в бакет: " + (error instanceof Error ? error.message : String(error)));
+      console.warn("[screenshot] не удалось загрузить снимок в бакет: " + (error instanceof Error ? error.message : String(error)));
     }
   }
 

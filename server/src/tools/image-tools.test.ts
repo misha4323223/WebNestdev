@@ -14,9 +14,14 @@ const data = await mkdtemp(path.join(os.tmpdir(), "webnestdev-image-"));
 process.env.WEBNESTDEV_DATA_DIR = data;
 process.env.WEBNESTDEV_SANDBOX_DIR = path.join(data, "sandboxes");
 const { createProject } = await import("../project-store.js");
+const { consumeUsage } = await import("../account/usage-store.js");
 const { defaultImageName, freeImageName, withImageExtension } = await import("./image-tools.js");
 
-const NAMES = ["PLATFORM_IMAGE_BASE_URL", "PLATFORM_IMAGE_MODEL", "PLATFORM_IMAGE_PROVIDER", "PLATFORM_IMAGE_KEY_1", "PLATFORM_IMAGE_KEY_2", "PLATFORM_IMAGE_KEY_3"];
+const NAMES = [
+  "PLATFORM_IMAGE_BASE_URL", "PLATFORM_IMAGE_MODEL", "PLATFORM_IMAGE_PROVIDER",
+  "PLATFORM_IMAGE_KEY_1", "PLATFORM_IMAGE_KEY_2", "PLATFORM_IMAGE_KEY_3",
+  "MEDIA_S3_ENDPOINT", "MEDIA_S3_BUCKET", "MEDIA_S3_PREFIX", "MEDIA_PUBLIC_BASE_URL",
+];
 
 function configure() {
   process.env.PLATFORM_IMAGE_BASE_URL = "https://api.cloudflare.com/client/v4/accounts/acc/ai/run";
@@ -41,6 +46,37 @@ test("без PLATFORM_IMAGE_* инструмент отвечает отказо
   assert.equal(result.ok, false);
   assert.equal(result.code, "not_configured");
   assert.match(result.error ?? "", /PLATFORM_IMAGE_BASE_URL, PLATFORM_IMAGE_MODEL и PLATFORM_IMAGE_KEY_1/, "модель должна узнать, чего не хватает");
+  clear();
+});
+
+test("без хранилища медиа картинка не пишется на локальный диск", async t => {
+  t.after(() => rm(data, { recursive: true, force: true }));
+  configure();
+  clear();
+  configure();
+  const userId = "u-image-media";
+  const project = await createProject("Картинки без бакета", undefined, userId);
+  const tool = getTool("image.generate");
+  assert.ok(tool?.execute);
+  const result = (await tool.execute({ prompt: "кот в шляпе" }, { projectId: project.id, runId: "r", userId })) as Result;
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "media_not_configured");
+  assert.match(result.error ?? "", /MEDIA_S3_ENDPOINT/);
+  clear();
+});
+
+test("после пяти изображений инструмент отказывает до запроса к сервису", async t => {
+  t.after(() => rm(data, { recursive: true, force: true }));
+  configure();
+  const userId = "u-image-quota";
+  const project = await createProject("Картинки квоты", undefined, userId);
+  for (let index = 0; index < 5; index++) await consumeUsage(userId, "images", "free");
+  const tool = getTool("image.generate");
+  assert.ok(tool?.execute);
+  const result = (await tool.execute({ prompt: "кот в шляпе" }, { projectId: project.id, runId: "r", userId })) as Result;
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "quota");
+  assert.match(result.error ?? "", /5 в день/);
   clear();
 });
 

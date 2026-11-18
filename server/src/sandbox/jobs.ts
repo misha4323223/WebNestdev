@@ -38,6 +38,12 @@ type JobRecord = {
   startedAt: number;
   timer: NodeJS.Timeout;
   host: SandboxHost;
+  /**
+   * Что сделать после снятия контейнера. Задание пишет файлы в проект, но ответ агент получает
+   * раньше: без этого хука размер проекта оставался старым до следующей правки и квота тарифа
+   * не видела фондовую сборку.
+   */
+  onExit?: () => Promise<void> | void;
 };
 
 const jobs = new Map<string, JobRecord>();
@@ -82,6 +88,12 @@ async function removeContainer(record: JobRecord) {
 async function stopInternal(record: JobRecord) {
   forgetJob(record);
   await removeContainer(record);
+  try {
+    await record.onExit?.();
+  } catch (error) {
+    // Команда уже выполнена: сбой учёта не должен превращаться в ошибку терминала.
+    console.warn("[jobs] не удалось выполнить действие после задания", error);
+  }
 }
 
 /** Активные задания проекта: по ним видно, что уже запущено, и можно остановить нужное. */
@@ -114,6 +126,8 @@ export async function startSandboxJob(
   command: string,
   cwd: string,
   signal?: AbortSignal,
+  /** Вызывается после снятия контейнера — на завершении, остановке и по таймауту. */
+  onExit?: () => Promise<void> | void,
 ): Promise<StartedSandboxJob> {
   if ((process.env.SANDBOX_MODE ?? "docker") !== "docker") {
     throw new Error("Выполнение команды на хосте отключено. Установите SANDBOX_MODE=docker.");
@@ -163,6 +177,7 @@ export async function startSandboxJob(
     startedAt: Date.now(),
     timer: setTimeout(() => { void stopInternal(record); }, sandboxJobMaxMs()),
     host,
+    ...(onExit ? { onExit } : {}),
   };
   record.timer.unref?.();
   jobs.set(name, record);

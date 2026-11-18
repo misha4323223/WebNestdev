@@ -4,6 +4,7 @@ import { requireUser } from "../auth/auth.js";
 import { getProject } from "../project-store.js";
 import { hostingApiHost, hostingConfig, hostingSiteUrl } from "../hosting/config.js";
 import { assertGlobalSiteLimit } from "../hosting/limits.js";
+import { assertHostingSiteSlot } from "../hosting/site-quota.js";
 import { hostSlugForDomain, normalizeHostingSlug } from "../hosting/slug.js";
 import { startPublish, startRollback } from "../hosting/publisher.js";
 import { removeCurrent, renameSiteDirectory } from "../hosting/paths.js";
@@ -154,7 +155,10 @@ export async function registerHostingRoutes(app: FastifyInstance) {
           503,
         );
       }
-      if (!existing || existing.status === "deleted") await assertGlobalSiteLimit(config);
+      if (!existing || existing.status === "deleted") {
+        await assertHostingSiteSlot(auth.user.id, await accountPlanFor(auth.user.id));
+        await assertGlobalSiteLimit(config);
+      }
       const site = await createSite({ projectId: params.id, userId: auth.user.id, nodeId: siteNode, slug: requestedSlug });
       await recordAudit({ action: "hosting.created", actorType: "user", actorId: auth.user.id, actorLabel: auth.user.email, target: site.id, targetLabel: site.slug, ip: request.ip }).catch(() => undefined);
       return reply.code(existing ? 200 : 201).send({ site: publicSite(site), enabled: config.enabled, domain: config.publicDomain });

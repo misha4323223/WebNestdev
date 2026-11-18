@@ -3,6 +3,7 @@ import test from "node:test";
 import { createFunctionsHostServer, type FunctionsHostDeps } from "./host-server.js";
 import { FunctionInvokeError } from "./invoke.js";
 import { FunctionCapacityError } from "./function-limiter.js";
+import { RequestGateError } from "./request-gate.js";
 import { functionMetricsSnapshot, resetFunctionMetricsForTests } from "./metrics.js";
 import { resetFunctionResponseCacheForTests } from "./response-cache.js";
 import type { HostingSite } from "../hosting/types.js";
@@ -288,6 +289,46 @@ test("API-хост отдаёт 429 до запуска функции, когд
     await app.close();
     if (previous === undefined) delete process.env.HOSTING_API_HOST;
     else process.env.HOSTING_API_HOST = previous;
+  }
+});
+
+test("перегруженная дверь отвечает 503 до вызова функции", async () => {
+  let invoked = false;
+  const app = createFunctionsHostServer(deps({
+    acquireRequest: async () => { throw new RequestGateError(); },
+    invoke: async () => {
+      invoked = true;
+      return { status: 200, headers: {}, body: Buffer.from("ok") };
+    },
+  }));
+  try {
+    const response = await app.inject({ method: "GET", url: "/api/hello", headers: { host: "demo.host.nestdev.ru" } });
+    assert.equal(response.statusCode, 503);
+    assert.equal(response.headers["retry-after"], "1");
+    assert.match(response.body, /API_BUSY/);
+    assert.equal(invoked, false);
+  } finally {
+    await app.close();
+  }
+});
+
+test("общий бюджет сайта/аккаунта отвечает 429 до вызова функции", async () => {
+  let invoked = false;
+  const app = createFunctionsHostServer(deps({
+    sharedBudget: async () => ({ allowed: false, retryAfter: 9 }),
+    invoke: async () => {
+      invoked = true;
+      return { status: 200, headers: {}, body: Buffer.from("ok") };
+    },
+  }));
+  try {
+    const response = await app.inject({ method: "GET", url: "/api/hello", headers: { host: "demo.host.nestdev.ru" } });
+    assert.equal(response.statusCode, 429);
+    assert.equal(response.headers["retry-after"], "9");
+    assert.match(response.body, /RATE_LIMITED/);
+    assert.equal(invoked, false);
+  } finally {
+    await app.close();
   }
 });
 

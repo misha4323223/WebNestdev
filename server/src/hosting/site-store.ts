@@ -396,6 +396,24 @@ export async function listSites(filters: SiteFilters = {}): Promise<HostingSite[
 }
 
 /**
+ * Сколько сайтов аккаунт держит сейчас. Удалённые сайты не считаются: tombstone нужен для
+ * аудита и не должен занимать место на тарифе.
+ */
+export async function countSitesForUser(userId: string): Promise<number> {
+  if (isYdbEnabled()) {
+    await initializeStorage();
+    const table = sqlTable("sites");
+    const [rows] = await ydbQuery()<Array<{ count: number | string | bigint }>>`
+      SELECT count(*) AS count FROM ${table}
+       WHERE user_id = ${userId} AND status <> 'deleted'`;
+    return toNumber(rows[0]?.count);
+  }
+  return withJsonLock(async () => (await readJsonState()).sites
+    .filter(site => site.userId === userId && site.status !== "deleted")
+    .length);
+}
+
+/**
  * Передаёт владение сайтами и их релизами другому аккаунту. Адрес сайта, релизы и файлы
  * остаются прежними — меняется только `user_id`, иначе перенос проектов ломал бы публикацию.
  *

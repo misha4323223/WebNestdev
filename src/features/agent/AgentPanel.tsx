@@ -805,8 +805,8 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       return;
     }
     pendingStartRef.current=conversationId;
-    // Новый проект открывается окном планирования; импорт репозитория остаётся в обычном чате,
-    // потому что там планировщик должен сначала прочитать уже существующие файлы.
+    // Новый проект и импорт репозитория открываются окном планирования: у импорта первый шаг —
+    // вопрос «анализ или запуск», чтобы человек не попадал в чужой сценарий по умолчанию.
     if(pending.planning){
       const title=pending.title||"Новый проект";
       planningRef.current=true;
@@ -1122,7 +1122,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
         // в списке сообщений ещё нет — он появится только в сохранённой истории.
         if(event.name==="image.generate"&&output&&typeof output==="object"){
           const shown=output as Record<string,unknown>;
-          const url=typeof shown.url==="string"&&shown.url.startsWith("/api/projects/")?shown.url:"";
+          const url=typeof shown.url==="string"&&(shown.url.startsWith("/api/projects/")||/^https?:\/\//i.test(shown.url))?shown.url:"";
           if(shown.shownInChat===true&&url){
             // Номер в переписке считается без tool-сообщений: в загруженном чате они лежат в истории,
             // но в списке видны только реплики.
@@ -1131,7 +1131,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
             const input=actionsRef.current.find(action=>action.id===id)?.input as {prompt?:unknown}|undefined;
             if(last?.role==="assistant")setLiveImages(current=>current.some(item=>item.image.url===url)
               ?current
-              :[...current,{messageIndex:index,image:{url,path:typeof shown.path==="string"?shown.path:"",prompt:typeof input?.prompt==="string"?input.prompt:""}}]);
+              :[...current,{messageIndex:index,image:{url,path:typeof shown.name==="string"?shown.name:typeof shown.path==="string"?shown.path:"",prompt:typeof input?.prompt==="string"?input.prompt:""}}]);
           }
         }
       }
@@ -2073,7 +2073,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
         <div className="modal-body">
           <div className="quota-modal-icon"><AlertTriangle size={18}/></div>
           <p className="modal-lead">{quotaNotice==="storage"
-            ?"Лимит хранилища вашего тарифа достигнут: агент больше не может писать файлы в проект. Освободите место или обновите тариф — лимиты: Старт 500 МБ, Плюс 10 ГБ, Премиум 50 ГБ."
+            ?"Лимит хранилища вашего тарифа достигнут: агент больше не может писать файлы в проект. Освободите место или обновите тариф — лимиты: Старт 500 МБ, Плюс 2 ГБ, Премиум 10 ГБ."
             :quotaNotice==="credits"
             ?"Лимит кредитов израсходован: он считается по фактическому расходу. Докупите кредиты на странице «Тариф и подписка» — дополнительные кредиты не сгорают. Или подключите свой AI-провайдер в настройках проекта: такие запуски идут через ваш ключ и не тратят кредиты платформы."
             :quotaNotice==="sandbox"

@@ -9,6 +9,7 @@ import { registerTool } from "../tool-registry.js";
 import { npmInstallTimeoutMs } from "../sandbox/config.js";
 import { installCommandFor, NODE_LOCKFILES, packageManagerFor } from "./package-manager.js";
 import { checkPlanCanBuildProject } from "../agent/plan-work-guard.js";
+import { recordStorageMutation } from "../account/storage-quota.js";
 
 /**
  * Контейнерных команд в песочнице нет: проект уже выполняется в контейнере платформы, а `docker`
@@ -178,7 +179,11 @@ registerTool({
     const plan = await checkPlanCanBuildProject({ root: sandbox.root, userId: context.userId, command });
     if (!plan.allowed) throw new Error(plan.reason);
     const cwd = await resolveInsideSandbox(sandbox.root, sandbox.root + "/" + (typeof value.cwd === "string" ? value.cwd : ""));
-    const started = await startSandboxJob(sandbox, context.userId, command, cwd, context.signal);
+    const started = await startSandboxJob(sandbox, context.userId, command, cwd, context.signal, () =>
+      // Задание могло записать файлы уже после ответа агента: пересчитываем размер проекта,
+      // иначе квота хранилища тарифа узнает о них только со следующей правкой.
+      recordStorageMutation(context.projectId, context.userId, { heavy: true }),
+    );
     // Установка в фоне не начнётся вовсе: сеть у задания та же, что у терминала. Сказать об этом
     // сразу дешевле, чем ждать пустой лог и повторять запуск.
     return isPackageInstall(command) ? { ...started, hint: PACKAGE_INSTALL_HINT } : started;

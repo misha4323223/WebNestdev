@@ -174,7 +174,7 @@ budget in hybrid slots: `Docker * PREVIEW_CONTAINER_UNITS + hybrid <= PREVIEW_HO
 uses 2 Docker, 8 hybrid, 12 slots and Docker weight 6: two Docker leave no hybrid slot, one Docker
 leaves six. With several API replicas the account count is shared, while each node counts only the
 previews running on that node.
-The panel embeds only a static preview. Docker and hybrid open in a separate tab: the panel shows a link, not a frame, and does not send a heartbeat for them. A runtime preview is stopped after two minutes without a request in production (`PREVIEW_IDLE_MS=120000`, sweep every 30 s); a static preview keeps its longer `PREVIEW_STATIC_IDLE_MS`.
+The panel embeds only a static preview. Docker and hybrid open in a separate tab: the panel shows a link, not a frame, and does not send a heartbeat for them. A runtime preview is stopped after three minutes without a request in production (`PREVIEW_IDLE_MS=180000`, sweep every 30 s); a static preview keeps `PREVIEW_STATIC_IDLE_MS=900000` (fifteen minutes). An old runtime link then shows a «container stopped after idle» page instead of a generic error.
 
 ## CI
 

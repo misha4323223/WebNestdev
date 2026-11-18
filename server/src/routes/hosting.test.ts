@@ -22,6 +22,7 @@ delete process.env.DATABASE_URL;
 
 const { createUser, createSession } = await import("../auth/auth-store.js");
 const { createProject } = await import("../project-store.js");
+const { createPayment, markPaymentPaid } = await import("../billing/store.js");
 const { registerHostingRoutes } = await import("./hosting.js");
 const store = await import("../hosting/site-store.js");
 const { hostingReleaseDir } = await import("../hosting/paths.js");
@@ -32,6 +33,11 @@ after(async () => {
 });
 
 let counter = 0;
+
+async function paidPro(userId: string) {
+  const payment = await createPayment({ userId, plan: "pro", amount: 990 });
+  await markPaymentPaid(payment.invId);
+}
 
 async function fixture() {
   const owner = await createUser("hosting-" + ++counter + "@example.test", "hosting-password-123");
@@ -82,6 +88,20 @@ test("создание, чтение, снятие с публикации и у
     const afterDelete = await app.inject({ method: "GET", url: "/api/projects/" + projectId + "/hosting", headers: ownerHeaders });
     assert.equal(afterDelete.statusCode, 200);
     assert.equal(afterDelete.json().site.status, "deleted");
+  } finally {
+    await app.close();
+  }
+});
+
+test("на бесплатном тарифе второй сайт не создаётся", async () => {
+  const { app, projectId, ownerId, ownerHeaders } = await fixture();
+  try {
+    const first = await app.inject({ method: "POST", url: "/api/projects/" + projectId + "/hosting", headers: ownerHeaders });
+    assert.equal(first.statusCode, 201);
+    const other = await createProject("Второй сайт", undefined, ownerId);
+    const second = await app.inject({ method: "POST", url: "/api/projects/" + other.id + "/hosting", headers: ownerHeaders });
+    assert.equal(second.statusCode, 403);
+    assert.equal(second.json().code, "HOSTING_SITE_LIMIT");
   } finally {
     await app.close();
   }
@@ -163,6 +183,8 @@ test("пользователь выбирает адрес сайта и мож�
     });
     assert.equal(foreign.statusCode, 404);
 
+    // Второй сайт проверяет конфликт slug, а не лимит «Старта»: владельцу нужен платный тариф.
+    await paidPro(ownerId);
     const other = await createProject("Другой сайт", undefined, ownerId);
     const conflict = await app.inject({
       method: "POST",

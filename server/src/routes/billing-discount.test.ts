@@ -21,7 +21,7 @@ delete process.env.ROBOKASSA_RECEIPT;
 process.env.PLAN_SETTINGS = JSON.stringify({
   version: 1,
   plans: {
-    pro: { name: "Профи", description: "Для постоянной работы", features: ["9 проектов", "Свой домен"], priceRub: 1000, discountPercent: 20 },
+    pro: { name: "Профи", description: "Для постоянной работы", features: ["6 проектов", "Свой домен на каждый сайт"], priceRub: 1000, discountPercent: 20 },
     team: { name: "Студия", description: "Для нескольких продуктов", features: ["15 проектов"], priceRub: 3000, discountPercent: 0 },
   },
 });
@@ -56,7 +56,7 @@ test("скидка попадает в счёт и подпись Робокас
   const free = plans.plans.find(plan => plan.id === "free");
   assert.ok(pro);
   assert.equal(pro.name, "Профи");
-  assert.deepEqual(pro.features, ["9 проектов", "Свой домен"]);
+  assert.deepEqual(pro.features, ["6 проектов", "Свой домен на каждый сайт", "20 изображений в день", "До 5 функций на сайт", "Git-репозитории: подключение и отправка коммитов", "Скачивание проекта одним кликом", "Свой AI-провайдер по OpenAI-совместимому API"]);
   assert.ok(free);
   assert.equal(free.features[0], "3 проекта", "пункты бесплатного тарифа не редактируются");
   assert.notDeepEqual(free.features, pro.features);

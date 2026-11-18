@@ -6,6 +6,8 @@ import { createLimiter, positiveInt, type Slot } from "../concurrency.js";
 import { getSandbox } from "../sandbox-manager.js";
 import { writeFileInside } from "../sandbox/path-guard.js";
 import { isSecretEnvFile, openFileForSandbox } from "../sandbox/permissions.js";
+import { mediaContentType, mediaKind } from "../media/media-kind.js";
+import { uploadMediaBuffer } from "../media/media-upload.js";
 import { loadProjectSecretFiles } from "../secrets/project-secrets.js";
 import { askUser } from "../questions/pending-questions.js";
 import { assertPublicUrl, requestPage, WebReadError } from "../web/read-url.js";
@@ -72,6 +74,11 @@ const MAX_RESPONSE_BYTES = 200_000;
 const DEFAULT_RESPONSE_BYTES = 120_000;
 const MAX_DOWNLOAD_BYTES = 50 * 1024 * 1024;
 const DEFAULT_DOWNLOAD_BYTES = 25 * 1024 * 1024;
+
+const MEDIA_NOT_CONFIGURED =
+  "Хранилище медиа не настроено: картинка или видео не сохранены ни в бакет, ни на локальный диск. " +
+  "Нужны MEDIA_S3_ENDPOINT, MEDIA_S3_BUCKET и сервисный аккаунт MWS (MWS_SA_KEY, MWS_SA_KEY_ID или MWS_SA_KEY_FILE). " +
+  "Скажите пользователю, каких переменных не хватает; не сохраняйте медиа в проект.";
 
 function seconds(value: number) {
   return Math.max(1, Math.round(value / 1000));
@@ -305,19 +312,20 @@ registerTool({
 registerTool({
   name: "net.download",
   description:
-    "Download a public file by URL into the project and return its path and size. Input: {url, path, overwrite?:false, maxBytes?:1..52428800}. " +
+    "Download a public file by URL and return where it is stored. Input: {url, path, overwrite?:false, maxBytes?:1..52428800}. " +
     "Use it for a real asset or a sample file that a page links to — not for reading a page (web.read) and not for API JSON (net.request). " +
-    "The destination is a path inside the project; .git and .env files are refused, existing files are kept unless overwrite is true. " +
+    "Images and videos are uploaded to the platform bucket instead of the project: the result has `url` (an absolute public link), `key`, `bytes` and `stored:\"bucket\"`, and there is NO local file; use that URL in the code and never reference the destination path for media. " +
+    "Other files are written to `path` inside the project; .git and .env files are refused, existing files are kept unless overwrite is true. `path` names the bucket object for media and the local file for everything else. " +
     "Only public hosts on ports 80/443 are reachable; redirects are checked hop by hop (up to 4) so a public link cannot forward the download to an internal address. " +
-    "Size is capped at 50 MB and the response is written only after a successful 2xx.",
+    "Size is capped at 50 MB and the response is stored only after a successful 2xx.",
   parameters: {
     type: "object",
     additionalProperties: false,
     required: ["url", "path"],
     properties: {
       url: { type: "string", description: "Absolute http(s) URL of the file." },
-      path: { type: "string", description: "Destination path inside the project, e.g. public/logo.png." },
-      overwrite: { type: "boolean", description: "Replace an existing file. Default false." },
+      path: { type: "string", description: "For other files, a destination path inside the project, e.g. public/logo.png. For an image or video it only names the bucket object; no local media file is created." },
+      overwrite: { type: "boolean", description: "Replace an existing project file (not applicable to media, which always gets a new bucket object). Default false." },
       maxBytes: { type: "integer", minimum: 1, maximum: 52428800, description: "Size limit. Default 25 MB." },
     },
   },
@@ -333,10 +341,6 @@ registerTool({
 
     const sandbox = await getSandbox(context.projectId, context.userId);
     const target = path.join(sandbox.root, destination);
-    if (!parsed.overwrite) {
-      const existing = await lstat(target).catch(() => null);
-      if (existing) throw new Error("Файл " + destination + " уже существует: укажите overwrite=true, если его нужно заменить");
-    }
 
     const maxBytes = Math.min(MAX_DOWNLOAD_BYTES, parsed.maxBytes ?? DEFAULT_DOWNLOAD_BYTES);
     const slot: Slot = await netLimiter.acquire(context.signal);
@@ -383,6 +387,54 @@ registerTool({
             error: "Файл больше лимита " + Math.round(maxBytes / 1024) + " КБ: увеличьте maxBytes или скачайте другой файл",
           };
         }
+        const contentType = response.headers["content-type"] ?? null;
+        const kind = mediaKind({ name: destination, contentType });
+        if (kind) {
+          const name = path.posix.basename(destination);
+          const storedType = mediaContentType({ name, contentType, kind });
+          const stored = await uploadMediaBuffer({
+            userId: context.userId,
+            projectId: context.projectId,
+            name,
+            bytes: response.bytes,
+            contentType: storedType,
+          });
+          if (!stored) {
+            return {
+              ok: false,
+              status: response.status,
+              url: current.url.href,
+              code: "media_not_configured",
+              error: MEDIA_NOT_CONFIGURED,
+            };
+          }
+          console.log(
+            "[net] download " + current.url.hostname + " -> " + stored.key + " bytes=" + stored.bytes + " project=" + context.projectId,
+          );
+          return {
+            ok: true,
+            status: response.status,
+            sourceUrl: current.url.href,
+            url: stored.publicUrl,
+            key: stored.key,
+            name,
+            bytes: stored.bytes,
+            contentType: storedType,
+            mediaKind: kind,
+            stored: "bucket",
+            hint:
+              "Файл загружен в бакет платформы; локальной копии в проекте нет. Пропишите в коде абсолютный URL " +
+              stored.publicUrl +
+              ". Не скачивайте файл повторно в песочницу и не ссылайтесь на локальный путь: его не существует." +
+              (kind === "video"
+                ? " Для видео используйте этот адрес в <video src>, <source> или как внешний ролик."
+                : " Для картинки используйте этот адрес в <img>, CSS background-image, srcset или метаданных."),
+          };
+        }
+        if (!parsed.overwrite) {
+          const existing = await lstat(target).catch(() => null);
+          if (existing) throw new Error("Файл " + destination + " уже существует: укажите overwrite=true, если его нужно заменить");
+        }
         const written = await writeFileInside(sandbox.root, target, response.bytes);
         // Файл, записанный сервером от root, контейнер должен уметь читать и перезаписывать.
         await openFileForSandbox(written);
@@ -395,7 +447,7 @@ registerTool({
           url: current.url.href,
           path: destination,
           bytes: response.bytes.length,
-          contentType: response.headers["content-type"] ?? null,
+          contentType,
         };
       }
       return { ok: false, status: 0, url: parsed.url, error: "Слишком много перенаправлений (больше " + MAX_REDIRECTS + ")" };

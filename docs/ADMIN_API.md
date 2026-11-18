@@ -1047,11 +1047,11 @@ curl -s -H "Authorization: Bearer $TOKEN" 'https://nestdev.ru/api/admin/plans'
 {
   "plans": [
     { "id": "pro", "name": "Плюс", "description": "Для регулярной разработки",
-      "features": ["9 проектов", "5 000 кредитов на агента в месяц"],
+      "features": ["6 проектов", "5 000 кредитов на агента в месяц"],
       "priceRub": 1500, "discountPercent": 34,
       "priceLabel": "990 ₽", "basePriceLabel": "1 500 ₽" },
     { "id": "team", "name": "Премиум", "description": "Для больших проектов",
-      "features": ["15 проектов", "10 000 кредитов на агента в месяц"],
+      "features": ["9 проектов", "10 000 кредитов на агента в месяц"],
       "priceRub": 2500, "discountPercent": 20,
       "priceLabel": "2 000 ₽", "basePriceLabel": "2 500 ₽" }
   ]

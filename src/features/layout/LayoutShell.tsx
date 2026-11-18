@@ -5,7 +5,7 @@ import { Topbar } from "./Topbar";
 
 /** `sidebarHidden` убирает колонку там, где она мешает содержимому: настройки занимают всю
  *  ширину, а телефонная шторка закрывается, чтобы не лежать поверх них. */
-export function LayoutShell({children,projectId,projectName,onRenameProject,onSettings,onSecrets,onDeploy,onHome,onOpenChanges,agentRunning,previewOpen,previewRunning,onPreviewToggle,onRepositoryChanged,sidebarHidden,chats}:{children:ReactNode;projectId:string;projectName:string;onRenameProject:(name:string)=>Promise<unknown>;onSettings:()=>void;onSecrets:()=>void;onDeploy:()=>void;onHome:()=>void;onOpenChanges:()=>void;agentRunning:boolean;previewOpen:boolean;previewRunning:boolean;onPreviewToggle:()=>void;onRepositoryChanged?:()=>void;sidebarHidden?:boolean;chats:SidebarChats}){
+export function LayoutShell({children,projectId,projectName,onRenameProject,onSettings,onSecrets,onDeploy,onHome,onOpenChanges,agentRunning,previewOpen,previewRunning,onPreviewToggle,sidebarHidden,chats}:{children:ReactNode;projectId:string;projectName:string;onRenameProject:(name:string)=>Promise<unknown>;onSettings:()=>void;onSecrets:()=>void;onDeploy:()=>void;onHome:()=>void;onOpenChanges:()=>void;agentRunning:boolean;previewOpen:boolean;previewRunning:boolean;onPreviewToggle:()=>void;sidebarHidden?:boolean;chats:SidebarChats}){
   const [sidebarOpen,setSidebarOpen]=useState(false);
   // Ушли в настройки — шторка на телефоне закрывается вместе с переходом.
   useEffect(()=>{if(sidebarHidden)setSidebarOpen(false)},[sidebarHidden]);
@@ -37,7 +37,7 @@ export function LayoutShell({children,projectId,projectName,onRenameProject,onSe
   };
 
   return <div className={"app-shell"+(sidebarHidden?" sidebar-hidden":"")}>
-    <Topbar projectId={projectId} sidebarOpen={sidebarOpen} onMenu={()=>setSidebarOpen(v=>!v)} onHome={onHome} onOpenChanges={onOpenChanges} onDeploy={onDeploy} previewOpen={previewOpen} previewRunning={previewRunning} onPreviewToggle={onPreviewToggle} onRepositoryChanged={onRepositoryChanged}/>
+    <Topbar projectId={projectId} sidebarOpen={sidebarOpen} onMenu={()=>setSidebarOpen(v=>!v)} onHome={onHome} onOpenChanges={onOpenChanges} onDeploy={onDeploy} previewOpen={previewOpen} previewRunning={previewRunning} onPreviewToggle={onPreviewToggle}/>
     <div className="workspace">
       <div className={"sidebar-backdrop"+(sidebarOpen?" open":"")} onClick={()=>setSidebarOpen(false)} aria-hidden="true"/>
       <Sidebar open={sidebarOpen} projectName={projectName} projectRunning={agentRunning} chats={sidebarChats} onSettings={onSettings} onSecrets={onSecrets} onRenameProject={onRenameProject}/>

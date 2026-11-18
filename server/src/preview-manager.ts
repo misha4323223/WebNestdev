@@ -21,6 +21,7 @@ import { hybridBackendLogs, hybridPreviewLogs, hybridPreviewStatus, recoverLocal
 import { fetchPreviewLogsFromOwner } from "./preview/owner-logs.js";
 import { PREVIEW_OWNER_UNAVAILABLE_HINT, previewOwnerReachable } from "./preview/owner-health.js";
 import { recordPreviewStart } from "./preview/preview-metrics.js";
+import { clearIdleStop } from "./preview/idle-stop-marker.js";
 import { ContainerPreviewPlanError, PREVIEW_LABEL, type PreviewStatus } from "./preview/types.js";
 import { clearPreviewSecrets } from "./secrets/preview-secrets.js";
 import { recordStorageMutation } from "./account/storage-quota.js";
@@ -29,6 +30,7 @@ import {
   clearPreviewStartProgress,
   getPreviewStartProgress,
   previewStartProgressLog,
+  setPreviewStartMode,
 } from "./preview/preview-start-progress.js";
 
 export type { PreviewState, PreviewStatus } from "./preview/types.js";
@@ -82,6 +84,9 @@ export type PreviewStartOptions = {
 export async function startPreview(config: SandboxConfig, options: PreviewStartOptions = {}) {
   const startedAt = Date.now();
   let ok = false;
+  // Новый запуск отменяет объяснение старой ссылки: она снова открывает приложение, а не
+  // страницу «остановлен после простоя».
+  clearIdleStop(config.projectId);
   beginPreviewStart(config.projectId);
   try {
     // Fail-closed: не полагаемся на то, что каждый новый вызывающий вспомнит про тариф.
@@ -125,6 +130,7 @@ export async function startPreviewWithFallback(config: SandboxConfig, options: P
   const setting = allowContainer ? previewModeSetting() : "static";
   const startContainer = (reason?: string) => {
     if (!allowContainer) throw new ContainerPreviewPlanError();
+    setPreviewStartMode(config.projectId, "container");
     return reason === undefined
       ? previewStartDeps.startContainer(config)
       : previewStartDeps.startContainer(config, reason);
@@ -150,6 +156,7 @@ export async function startPreviewWithFallback(config: SandboxConfig, options: P
 
   if (hybrid.kind === "invalid" && setting === "hybrid") throw new Error(hybrid.reason);
   if (allowContainer && hybrid.kind === "configured" && setting !== "static" && setting !== "container") {
+    setPreviewStartMode(config.projectId, "hybrid");
     const result = await previewStartDeps.startHybrid(config);
     if (result.ok) return result.status;
     // Never downgrade a transient failure (network, npm install, Docker daemon): a dev container
@@ -168,6 +175,7 @@ export async function startPreviewWithFallback(config: SandboxConfig, options: P
   }
 
   if (setting !== "container") {
+    setPreviewStartMode(config.projectId, "static");
     const result = await previewStartDeps.startStatic(config, { allowContainer, allowFunctions });
     if (result.ok) return result.status;
     // На тарифе без контейнера нельзя подменять причину статической ошибки сообщением про
@@ -330,6 +338,7 @@ export async function stopPreview(projectId: string) {
   // Остановка закрывает и незавершённый старт: иначе бронь переживёт контейнер и следующий
   // запуск снова упрётся в «уже запускается».
   clearPreviewStartProgress(projectId);
+  clearIdleStop(projectId);
   await clearPreviewReservation(projectId);
   const current = await hydratePreview(projectId);
   if (!current) {

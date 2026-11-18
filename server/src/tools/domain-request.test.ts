@@ -102,16 +102,16 @@ test("a change (and everything else) is refused when the cabinet is not connecte
   assert.match(result.hint ?? "", /«Интеграции» → «Домены»/);
 });
 
-test("domain.request is closed on the free plan before any cabinet call", async () => {
+test("domain.request on the free plan reaches the cabinet check instead of being plan-locked", async () => {
   const tool = getTool("domain.request");
   assert.ok(tool, "инструмент domain.request должен быть зарегистрирован");
   const result = await tool.execute!(
     { registrar: "regru", path: "zone/get_resource_records" },
     { userId: "free-tool-user", projectId: "project-1" } as never,
-  ) as { ok: boolean; restricted?: boolean; code?: string };
+  ) as { ok: boolean; restricted?: boolean; code?: string; blocked?: string };
   assert.equal(result.ok, false);
-  assert.equal(result.restricted, true);
-  assert.equal(result.code, "PLAN_CONNECTOR_LOCKED");
+  assert.equal(result.restricted, undefined);
+  assert.equal(result.blocked, "not_connected");
 });
 
 test("read commands are classified as such, so they never need the switch", async () => {

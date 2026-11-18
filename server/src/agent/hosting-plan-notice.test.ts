@@ -29,6 +29,9 @@ test("Премиум знает тариф и видит контейнерны�
   const notice = hostingPlanNotice("team");
   assert.match(notice, /Current plan: «Премиум» \(team\)/);
   assert.match(notice, /container\/hybrid development runtime/);
+  assert.match(notice, /it prefers hybrid/i);
+  assert.match(notice, /package\.json\.preview/);
+  assert.match(notice, /pure container only when/i);
   assert.match(notice, /does not change the production hosting model/);
   assert.match(notice, /never launch/);
   assert.match(notice, /background jobs/i);

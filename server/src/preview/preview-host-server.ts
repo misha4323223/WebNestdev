@@ -14,6 +14,8 @@ import { isLocalPreviewOwner } from "./preview-owner.js";
 import { forwardPreviewHttp, forwardPreviewUpgrade } from "./peer-door.js";
 import { PREVIEW_LOGS_DOOR_PATH, type PreviewLogsSnapshot } from "./owner-logs.js";
 import { handlePreviewLogsRequest } from "./preview-logs-door.js";
+import { idleStopInfo, type IdleStopInfo } from "./idle-stop-marker.js";
+import { idleStoppedPage } from "./stopped-page.js";
 import { sessionCookieSecure } from "../auth/auth.js";
 import type { PreviewStatus } from "./types.js";
 import type { FastifyRequest } from "fastify";
@@ -178,6 +180,18 @@ function escapeHtml(value: string) {
 
 function wantsJson(request: IncomingMessage) {
   return String(request.headers.accept ?? "").includes("application/json");
+}
+
+function sendIdleStopped(request: IncomingMessage, response: ServerResponse, info: IdleStopInfo) {
+  const message = (info.mode === "container" || info.mode === "hybrid" ? "Контейнер остановлен после простоя" : "Предпросмотр остановлен после простоя") +
+    ": он не запущен. Запустите предпросмотр снова в панели проекта.";
+  if (wantsJson(request)) {
+    sendMessage(request, response, 503, message);
+    return;
+  }
+  const body = Buffer.from(idleStoppedPage(info));
+  response.writeHead(503, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "content-length": String(body.length) });
+  response.end(body);
 }
 
 function sendMessage(request: IncomingMessage, response: ServerResponse, status: number, message: string) {
@@ -440,6 +454,13 @@ export function createPreviewHostServer(deps: PreviewHostDeps = defaultDeps, lim
     // Preview может принадлежать другой реплике: NLB не различает владельца, а чужой Docker-мост
     // с этой машины недоступен. Запись preview несёт приватную дверь владельца — передаём туда.
     const state = await deps.previewStatus(target.projectId).catch(() => null);
+    // После простоя строка preview удалена, но старая ссылка должна сказать, почему контейнер
+    // исчез, а не показывать общий отказ. Отметку снимает новый запуск или ручная остановка.
+    const idle = !state?.running && !state?.starting ? idleStopInfo(target.projectId) : null;
+    if (idle) {
+      sendIdleStopped(request, response, idle);
+      return;
+    }
     if (state?.running && !isLocalPreviewOwner(state.ownerAddress)) {
       await forwardPreviewHttp(request, response, state.ownerAddress!, body);
       return;

@@ -1,8 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { FREE_PLAN, PLAN_CATALOG } from "./account.js";
-import { balanceFor, creditPoolFor, integrationLimitFor, subscriptionFor } from "../account/plans.js";
+import { balanceFor, creditPoolFor, customDomainLimitFor, hostingSiteLimitFor, integrationLimitFor, subscriptionFor } from "../account/plans.js";
 import { assertIntegrationSlot, IntegrationLimitError } from "../account/integration-limits.js";
+import { connectorAllowedForPlan } from "../account/connector-access.js";
 
 test("paid plans carry a monthly price, more projects and no daily run cap", () => {
   assert.equal(PLAN_CATALOG.free.priceLabel, "0 ₽");
@@ -16,8 +17,17 @@ test("paid plans carry a monthly price, more projects and no daily run cap", () 
   assert.equal(PLAN_CATALOG.team.limits.agentCreditsPerMonth, 10_000);
   assert.ok(PLAN_CATALOG.pro.priceLabel.includes("₽"), "цена тарифа видна в интерфейсе");
   assert.equal(PLAN_CATALOG.free.limits.projects, 3);
-  assert.equal(PLAN_CATALOG.pro.limits.projects, 9);
-  assert.equal(PLAN_CATALOG.team.limits.projects, 15);
+  assert.equal(PLAN_CATALOG.pro.limits.projects, 6);
+  assert.equal(PLAN_CATALOG.team.limits.projects, 9);
+  assert.equal(hostingSiteLimitFor("free"), 1, "на «Старте» один сайт на аккаунт");
+  assert.equal(hostingSiteLimitFor("pro"), null, "на платных тарифах сайтов не больше, чем проектов");
+  assert.equal(hostingSiteLimitFor("team"), null);
+  assert.equal(customDomainLimitFor("free"), 0, "свой домен на «Старте» недоступен");
+  assert.ok(customDomainLimitFor("pro") > 0);
+  assert.ok(customDomainLimitFor("team") > 0);
+  assert.equal(PLAN_CATALOG.free.limits.imagesPerDay, 5, "на «Старте» пять изображений в день");
+  assert.equal(PLAN_CATALOG.pro.limits.imagesPerDay, 20, "на «Плюсе» двадцать изображений в день");
+  assert.equal(PLAN_CATALOG.team.limits.imagesPerDay, 20, "на «Премиуме» тоже двадцать изображений в день");
   assert.equal(PLAN_CATALOG.free.limits.agentRunsPerDay, 10, "на бесплатном тарифе дневной лимит остаётся");
   assert.equal(PLAN_CATALOG.pro.limits.agentRunsPerDay, null, "на платных тарифах дневного лимита запусков нет");
   assert.equal(PLAN_CATALOG.team.limits.agentRunsPerDay, null);
@@ -42,6 +52,8 @@ test("plan cards mention neither support nor browser checks", () => {
 /** 500 MiB, not 500 000 000 bytes: the billing formatter divides by 1024 and must print «500 МБ». */
 test("the free plan gives 500 MB of account storage", () => {
   assert.equal(PLAN_CATALOG.free.limits.storageBytes, 500 * 1024 * 1024);
+  assert.equal(PLAN_CATALOG.pro.limits.storageBytes, 2 * 1024 * 1024 * 1024);
+  assert.equal(PLAN_CATALOG.team.limits.storageBytes, 10 * 1024 * 1024 * 1024);
   assert.ok(PLAN_CATALOG.free.features.includes("500 МБ хранилища"));
   assert.ok(PLAN_CATALOG.free.details.some(detail => detail.includes("на все проекты")), "квота подписана как общая на аккаунт");
 });
@@ -77,6 +89,9 @@ test("the monthly credit pool is a paid-plan benefit and grows with the plan", (
   assert.equal(creditPoolFor("free"), 0, "бесплатный тариф живёт дневным лимитом запусков");
   assert.ok(creditPoolFor("pro") > 0 && creditPoolFor("team") > creditPoolFor("pro"));
   assert.ok(PLAN_CATALOG.pro.features.some(feature => feature.includes("кредитов")));
+  assert.equal(PLAN_CATALOG.pro.limits.functionsPerSite, 5);
+  assert.equal(PLAN_CATALOG.free.limits.functionsPerSite, 0);
+  assert.equal(PLAN_CATALOG.team.limits.functionsPerSite, 25);
   assert.ok(PLAN_CATALOG.team.details.some(detail => detail.includes("кредитов")));
   // Бюджет — не бесконечность и не «безлимит»: в описании сказано, по какому факту он считается.
   assert.ok(PLAN_CATALOG.pro.details.some(detail => detail.includes("фактический расход")));
@@ -87,15 +102,29 @@ test("the monthly credit pool is a paid-plan benefit and grows with the plan", (
  * остаётся рабочим при смене тарифа: `replacing` и `used` внутри лимита проходят всегда.
  */
 test("integration slots are a free-plan limit and never disconnect what already works", () => {
-  assert.equal(integrationLimitFor("free", "cloud"), 1);
+  assert.equal(integrationLimitFor("free", "cloud"), 1, "на «Старте» одно облако");
+  assert.equal(integrationLimitFor("free", "domains"), 1, "на «Старте» один регистратор");
+  assert.equal(integrationLimitFor("free", "services"), 3);
   assert.equal(integrationLimitFor("pro", "cloud"), null);
-  assert.doesNotThrow(() => assertIntegrationSlot({ plan: "free", kind: "cloud", used: 0, replacing: false }));
   assert.throws(
     () => assertIntegrationSlot({ plan: "free", kind: "cloud", used: 1, replacing: false }),
     (error: unknown) => error instanceof IntegrationLimitError && error.statusCode === 403 && error.message.includes("«Старт»"),
   );
   assert.doesNotThrow(() => assertIntegrationSlot({ plan: "free", kind: "cloud", used: 1, replacing: true }));
+  assert.throws(
+    () => assertIntegrationSlot({ plan: "free", kind: "services", used: 3, replacing: false }),
+    (error: unknown) => error instanceof IntegrationLimitError && error.statusCode === 403,
+  );
   assert.doesNotThrow(() => assertIntegrationSlot({ plan: "pro", kind: "cloud", used: 9, replacing: false }));
+});
+
+test("the free plan keeps clouds and domain registrars, but only S3 among key services", () => {
+  assert.equal(connectorAllowedForPlan("free", "cloud"), true);
+  assert.equal(connectorAllowedForPlan("free", "domain"), true);
+  assert.equal(connectorAllowedForPlan("free", "yandex"), true);
+  assert.equal(connectorAllowedForPlan("free", "service", "storage"), true);
+  assert.equal(connectorAllowedForPlan("free", "service", "email"), false);
+  assert.equal(connectorAllowedForPlan("pro", "service", "email"), true);
 });
 
 test("every plan ships a tagline, an audience and detailed highlights for the subscription page", () => {

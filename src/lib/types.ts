@@ -54,7 +54,7 @@ export type FileEntry={name:string;type:"file"|"directory"};
 export type PreviewMode="container"|"static"|"hybrid";
 /** Этапы долгого запуска: установка зависимостей, сборка, старт контейнера и ожидание ответа. */
 export type PreviewStartPhase="checking"|"installing"|"building"|"starting"|"waiting";
-export type PreviewStartProgress={phase:PreviewStartPhase;message:string;detail?:string;startedAt:number;updatedAt:number};
+export type PreviewStartProgress={phase:PreviewStartPhase;message:string;detail?:string;startedAt:number;updatedAt:number;/** Режим выбранного запуска: нужен панели для подписи простоя. */mode?:PreviewMode};
 /**
  * `ready` — приложение ответило внутри контейнера, `settled` — тот же адрес ответил серверу (то
  * есть панели и агенту); `hint` объясняет, чего именно не хватает. Разница видна пользователю:

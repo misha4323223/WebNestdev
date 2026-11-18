@@ -226,14 +226,29 @@ services:
       # Дверь serverless-функций. 0 выключает только новые вызовы; статика продолжает работать.
       HOSTING_FUNCTIONS_ENABLED: ${HOSTING_FUNCTIONS_ENABLED:-1}
       HOSTING_FUNCTIONS_PORT: ${HOSTING_FUNCTIONS_PORT:-8792}
-      # Один вызов функции — контейнер до 0.5 CPU и 256 МБ. Два слота на ноду оставляют
-      # запас API, Caddy и PostgreSQL; один сайт по умолчанию занимает не больше одного.
-      FUNCTIONS_MAX_CONCURRENT: ${FUNCTIONS_MAX_CONCURRENT:-2}
-      FUNCTIONS_MAX_CONCURRENT_PER_SITE: ${FUNCTIONS_MAX_CONCURRENT_PER_SITE:-1}
+      # Один вызов функции — контейнер до 0.5 CPU и 256 МБ. 0 означает «подобрать по CPU»:
+      # 2 vCPU → 2 слота, 4 vCPU → 6, 8 vCPU → 12; один сайт занимает не больше трети пула.
+      FUNCTIONS_MAX_CONCURRENT: ${FUNCTIONS_MAX_CONCURRENT:-0}
+      FUNCTIONS_MAX_CONCURRENT_PER_SITE: ${FUNCTIONS_MAX_CONCURRENT_PER_SITE:-0}
       # API-хост идёт мимо CDN, поэтому частота с одного IP считается на двери функций.
       FUNCTIONS_API_RATE_LIMIT_PER_MINUTE: ${FUNCTIONS_API_RATE_LIMIT_PER_MINUTE:-120}
-      FUNCTIONS_MAX_QUEUE: ${FUNCTIONS_MAX_QUEUE:-16}
-      FUNCTIONS_MAX_WAIT_MS: ${FUNCTIONS_MAX_WAIT_MS:-10000}
+      FUNCTIONS_MAX_QUEUE: ${FUNCTIONS_MAX_QUEUE:-0}
+      FUNCTIONS_MAX_WAIT_MS: ${FUNCTIONS_MAX_WAIT_MS:-0}
+      # Общий in-flight предел всей двери: 0 — по CPU (2 vCPU → 128, 4 vCPU → 256).
+      FUNCTIONS_MAX_IN_FLIGHT: ${FUNCTIONS_MAX_IN_FLIGHT:-0}
+      FUNCTIONS_MAX_IN_FLIGHT_QUEUE: ${FUNCTIONS_MAX_IN_FLIGHT_QUEUE:-0}
+      FUNCTIONS_MAX_IN_FLIGHT_WAIT_MS: ${FUNCTIONS_MAX_IN_FLIGHT_WAIT_MS:-0}
+      # Локальный token bucket на ноду: 0 — по CPU (4 vCPU → 100 RPS).
+      FUNCTIONS_LOCAL_GLOBAL_RPS: ${FUNCTIONS_LOCAL_GLOBAL_RPS:-0}
+      FUNCTIONS_LOCAL_GLOBAL_BURST: ${FUNCTIONS_LOCAL_GLOBAL_BURST:-0}
+      FUNCTIONS_LOCAL_IP_RPS: ${FUNCTIONS_LOCAL_IP_RPS:-0}
+      FUNCTIONS_LOCAL_IP_BURST: ${FUNCTIONS_LOCAL_IP_BURST:-0}
+      FUNCTIONS_LOCAL_SITE_RPS: ${FUNCTIONS_LOCAL_SITE_RPS:-0}
+      FUNCTIONS_LOCAL_SITE_BURST: ${FUNCTIONS_LOCAL_SITE_BURST:-0}
+      FUNCTIONS_LOCAL_MAX_KEYS: ${FUNCTIONS_LOCAL_MAX_KEYS:-0}
+      # Общие окна на сайт/аккаунт в PostgreSQL: один сайт не выест обе ноды с разных IP.
+      FUNCTIONS_SITE_RATE_LIMIT_PER_MINUTE: ${FUNCTIONS_SITE_RATE_LIMIT_PER_MINUTE:-0}
+      FUNCTIONS_ACCOUNT_RATE_LIMIT_PER_MINUTE: ${FUNCTIONS_ACCOUNT_RATE_LIMIT_PER_MINUTE:-0}
       # Ответный кеш функций включается только для функций с явным cache.ttlSeconds.
       # Выключатель на весь процесс нужен для аварийного отката без пересборки образа.
       FUNCTIONS_CACHE_ENABLED: ${FUNCTIONS_CACHE_ENABLED:-1}
@@ -560,9 +575,9 @@ services:
       # `preview`, никогда не сеть базы (server/src/preview/preview-network.ts).
       PREVIEW_NETWORK: ${PREVIEW_NETWORK:-}
       # Runtime (Docker/hybrid) без запросов останавливается; static живёт по своему таймеру.
-      PREVIEW_IDLE_MS: ${PREVIEW_IDLE_MS:-300000}
-      PREVIEW_STATIC_IDLE_MS: ${PREVIEW_STATIC_IDLE_MS:-300000}
-      PREVIEW_SWEEP_MS: ${PREVIEW_SWEEP_MS:-60000}
+      PREVIEW_IDLE_MS: ${PREVIEW_IDLE_MS:-180000}
+      PREVIEW_STATIC_IDLE_MS: ${PREVIEW_STATIC_IDLE_MS:-900000}
+      PREVIEW_SWEEP_MS: ${PREVIEW_SWEEP_MS:-30000}
       # Сколько runtime-предпросмотров держит один аккаунт. 1 — правило продукта: второй
       # предпросмотр того же человека останавливает его же прежний. 0 — без ограничения.
       PREVIEW_MAX_PER_USER: ${PREVIEW_MAX_PER_USER:-1}

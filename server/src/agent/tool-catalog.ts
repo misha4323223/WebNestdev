@@ -24,7 +24,7 @@ const CORE_TOOLS = [
   // требует net.request/net.download для внешних API и файлов, database.status — перед
   // написанием хранения, service.status — перед просьбой о ключе интеграции.
   "net.request", "net.download",
-  "database.status", "database.env",
+  "database.status", "database.env", "database.client",
   "service.status", "service.env", "service.secrets",
   "browser.open", "browser.inspect",
   "image.view", "image.inspect", "image.generate", "ui.render",
@@ -57,7 +57,7 @@ const MOBILE_PREFIX = "expo.";
  */
 const PLANNER_FORBIDDEN = new Set([
   "fs.write", "fs.edit", "fs.rename", "fs.delete",
-  "npm.install", "pip.install", "net.download", "database.env", "service.env",
+  "npm.install", "pip.install", "net.download", "database.env", "database.client", "service.env",
   "git.pull", "git.add", "git.commit",
   "preview.start", "preview.stop", "project.check", "project.test", "image.generate",
   "secrets.request", "access.request", "deploy.plan", "cloud.request", "domain.request",

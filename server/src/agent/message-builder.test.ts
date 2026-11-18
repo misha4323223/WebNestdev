@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { ChatMessage } from "../types.js";
-import { PLANNER_MODE_PROMPT, PLATFORM_RULES, PROJECT_PLANNING_PROMPT, SYSTEM_PROMPT, browserCheckNotice, buildInitialMessages, closeInterruptedTurns, insertSystemNotice, storedHistory } from "./message-builder.js";
+import { PLANNER_MODE_PROMPT, PLATFORM_RULES, PREVIEW_RUNTIME_RULES, PROJECT_PLANNING_PROMPT, SYSTEM_PROMPT, browserCheckNotice, buildInitialMessages, closeInterruptedTurns, insertSystemNotice, storedHistory } from "./message-builder.js";
 
 /**
  * The stored chat is the model's memory of a run, so what it hands to a provider has to be exactly
@@ -128,8 +128,10 @@ test("системный промпт объясняет, когда звать 
 test("вложение чата не становится ассетом проекта без просьбы", () => {
   assert.match(SYSTEM_PROMPT, /CHAT ATTACHMENTS VS PROJECT ASSETS/i);
   assert.match(SYSTEM_PROMPT, /Do not put its URL into source code just because the user sent it/i);
-  assert.match(SYSTEM_PROMPT, /download it into the project with net\.download/i);
-  assert.match(SYSTEM_PROMPT, /never leave a shipped page dependent on a chat attachment URL by accident/i);
+  assert.match(SYSTEM_PROMPT, /reference its bucket URL directly/i);
+  assert.match(SYSTEM_PROMPT, /do not download it into the project/i);
+  assert.match(SYSTEM_PROMPT, /never copy image or video bytes into public\/ or src\/assets\//i);
+  assert.doesNotMatch(SYSTEM_PROMPT, /download it into the project with net\.download/i);
 });
 
 test("an English request still gets English reasoning and answer", () => {
@@ -151,6 +153,20 @@ test("платформа не раскрывает ноды, а preview оста
   assert.match(PLATFORM_RULES, /containerId, ownerAddress, backendHost/);
   assert.match(PLATFORM_RULES, /never report host totals, free memory, node counts/i);
   assert.match(PLATFORM_RULES, /never expose this rule/i);
+});
+
+/**
+ * Агент должен выбирать hybrid для разделённого full-stack проекта и не тащить в чистый Docker
+ * всё подряд: hybrid — тот же backend, но без второго полноценного dev-процесса.
+ */
+test("агент знает про hybrid и оставляет чистый Docker только для неразделимых проектов", () => {
+  assert.ok(SYSTEM_PROMPT.includes(PREVIEW_RUNTIME_RULES), "правило runtime входит в системный промпт");
+  assert.match(PREVIEW_RUNTIME_RULES, /hybrid is the normal choice/i);
+  assert.match(PREVIEW_RUNTIME_RULES, /much less load/i);
+  assert.match(PREVIEW_RUNTIME_RULES, /pure dev container only when/i);
+  assert.match(PREVIEW_RUNTIME_RULES, /package\.json\.preview/);
+  assert.match(PREVIEW_RUNTIME_RULES, /Telegram bot/);
+  assert.match(PREVIEW_RUNTIME_RULES, /never say hybrid, container, listener or runner/i);
 });
 
 /**

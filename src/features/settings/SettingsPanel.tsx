@@ -112,14 +112,14 @@ export function SettingsPanel({projectId,projectName,onClose}:{projectId:string;
       const data=await apiJson<{hasToken:boolean}>(`/api/projects/${encodeURIComponent(projectId)}/provider`,{
         method:"PUT",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({
-          provider:config.provider.trim()||"OpenAI-compatible",
+          provider:config.provider.trim()||"OpenAI-совместимый API",
           baseUrl,
           model,
           ...(config.token.trim()?{token:config.token.trim()}: {})
         })
       });
       const savedToken=config.token.trim();
-      const next={provider:config.provider.trim()||"OpenAI-compatible",baseUrl,model};
+      const next={provider:config.provider.trim()||"OpenAI-совместимый API",baseUrl,model};
       persistConfig({...next,token:savedToken});
       // Поле сохраняет ключ после «Сохранить»: это оно и обещает — ключ есть и после перезагрузки.
       setConfig(current=>({...current,...next,token:savedToken}));
@@ -173,15 +173,16 @@ export function SettingsPanel({projectId,projectName,onClose}:{projectId:string;
   if(loading)return <section className="settings-panel"><div className="settings-body">Загрузка настроек…</div></section>;
 
   return <section className="settings-panel">
-    <div className="panel-title"><div><span className="eyebrow">AI-ПРОВАЙДЕР</span><strong>Настройки модели</strong></div><button className="ghost-button" onClick={onClose}>Закрыть</button></div>
+    <div className="panel-title"><div><span className="eyebrow">AI-ПРОВАЙДЕР</span><strong>Свой AI-провайдер</strong></div><button className="ghost-button" onClick={onClose}>Закрыть</button></div>
     <div className="settings-body">
       <label>Проект<span>{projectName}</span></label>
       {!configured&&platformDefault?.available&&<div className="settings-status">{platformDefault.freeModel
         ? "По умолчанию используется бесплатная модель тарифа. Свой провайдер ниже — опция."
         : <>По умолчанию используется модель платформы: {platformDefault.providerName} · {platformDefault.model}. Свой провайдер ниже — опция.</>}</div>}
       <div className="settings-status">{configured
-        ? "Этот проект работает через ваш ключ и модель: запуски агента идут за ваш счёт и дневным лимитом платформы не ограничены."
-        : "Свой AI-провайдер — это ваш ключ и ваша модель. Запуски агента идут за ваш счёт, поэтому дневной лимит платформы (запуски на встроенной модели) к ним не применяется."}</div>
+        ? "Проект работает через вашего AI-провайдера по OpenAI-совместимому API: запуски идут за ваш счёт и не тратят кредиты платформы."
+        : "Свой AI-провайдер по OpenAI-совместимому API: укажите Base URL, модель и ключ. Запуски идут за ваш счёт и не тратят кредиты платформы."}</div>
+      <div className="settings-status">Подойдёт провайдер, который поддерживает OpenAI-совместимый Chat Completions API и вызов инструментов.</div>
       <label>Провайдер<input value={config.provider} onChange={e=>updateConfig({...config,provider:e.target.value})} placeholder="OpenRouter, DeepSeek, OpenAI, YandexGPT…"/></label>
       <label>Base URL<input value={config.baseUrl} onChange={e=>updateConfig({...config,baseUrl:e.target.value})} placeholder="https://api.example.com/v1" type="url" autoComplete="url"/></label>
       <label>API-ключ<div className="secret-field">

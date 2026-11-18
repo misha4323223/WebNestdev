@@ -144,7 +144,13 @@ export function AuthGate(){
     openWorkspace(project.id);
   }
 
-  if(state==="loading") return <div className="app-loading"><NestLoader size={58} label="Проверяем сессию"/><strong>Проверяем сессию…</strong><span>Подготавливаем ваше рабочее пространство</span></div>;
+  // Экран после выкатки: вкладка перезагружается на новую сборку, и это первое, что видит человек.
+  // Знак крупный (в пять раз больше прежнего), подпись объясняет, что происходит и сколько ждать.
+  if(state==="loading") return <div className="app-loading app-loading--boot">
+    <NestLoader size={290} label="Проверяем сессию"/>
+    <strong>Проверяем сессию…</strong>
+    <span>Подготавливаем рабочее пространство. После обновления приложения это занимает несколько секунд.</span>
+  </div>;
   if(state==="guest") return <AuthScreen onAuthenticated={refresh}/>;
   // Обе поверхности живут в дереве одновременно, а показывается одна: скрытая рабочая область
   // продолжает держать сокет запуска, поэтому агент не останавливается на главной.

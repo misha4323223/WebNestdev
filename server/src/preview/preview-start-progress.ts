@@ -43,6 +43,16 @@ export function setPreviewStartProgress(
   });
 }
 
+/**
+ * Режим становится известен после выбора hybrid/static/container. Панель показывает по нему
+ * подпись «режим простоя 3 мин» только у runtime-запусков, не у статики.
+ */
+export function setPreviewStartMode(projectId: string, mode: PreviewStartProgress["mode"]): void {
+  const current = active.get(projectId);
+  if (!current || current.mode === mode) return;
+  active.set(projectId, { ...current, mode, updatedAt: Date.now() });
+}
+
 export function getPreviewStartProgress(projectId: string, now = Date.now()): PreviewStartProgress | null {
   const current = active.get(projectId);
   if (!current) return null;

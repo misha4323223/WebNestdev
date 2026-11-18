@@ -4,7 +4,7 @@ import { createProvider } from "./provider.js";
 import { appendConversationMessages,getConversationPlan,getProject,getProjectProvider,saveConversationPlan } from "./project-store.js";
 import { browserCheckNotice,buildInitialMessages,closeInterruptedTurns,insertSystemNotice,resumeNotice,storedHistory,webSearchNotice } from "./agent/message-builder.js";
 import { notesNotice,notesUpdateNotice,readNoteLines } from "./agent/notes.js";
-import { hostingPlanNotice } from "./agent/hosting-plan-notice.js";
+import { agentPlanBrief } from "./agent/plan-brief.js";
 import { buildProjectContext } from "./agent/context-builder.js";
 import { retrieveRelevantFiles } from "./agent/context-retrieval.js";
 import { executeTool } from "./agent/tool-executor.js";
@@ -301,10 +301,11 @@ export class AgentRuntime {
       messages=insertSystemNotice(messages,webSearchNotice(request.webSearch===true));
       // Тот же принцип для Chromium: без разрешения модель не должна тратить шаг на отказ.
       messages=insertSystemNotice(messages,browserCheckNotice(browserCheckEnabled));
-      // Тариф и контракт функций известны до первого изменения: иначе агент на «Плюсе» может
-      // начать постоянный сервер и узнать о запрете только из ошибки сборки.
-      const hostingNotice=hostingPlanNotice(request.plan);
-      if(hostingNotice)messages=insertSystemNotice(messages,hostingNotice);
+      // Тариф известен до первого изменения: иначе агент на «Плюсе» может начать постоянный
+      // сервер, пообещать фоновые задания или потратить шаг на отказ по квоте, о которой ему
+      // ничего не сказали. Заметка собирается из того же каталога, что и серверные проверки.
+      const planNotice=agentPlanBrief(request.plan);
+      if(planNotice)messages=insertSystemNotice(messages,planNotice);
       // Заметка о согласованном — отдельным системным сообщением. Обрезка контекста системные
       // сообщения не выбрасывает и не сокращает, поэтому «какой вариант мы выбрали» остаётся
       // в промпте даже тогда, когда вся история вокруг уже свёрнута в срез.

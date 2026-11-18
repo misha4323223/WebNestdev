@@ -11,7 +11,13 @@
  * ними нет: у каждой ноды свой пул. Это нормально, пока пул задан с запасом под остальные
  * сервисы; при выключенной ноде оставшаяся получает весь трафик и очередь, а не бесконечные
  * контейнеры.
+ *
+ * По умолчанию пул растёт вместе с CPU: 2 vCPU → 2 контейнера, 4 vCPU → 6, 8 vCPU → 12.
+ * Контейнер резервирует до 0.5 CPU, поэтому на 4 CPU шесть функций занимают 3 vCPU и
+ * оставляют 1 vCPU серверу, Caddy и PostgreSQL. Явные env-значения всегда важнее.
  */
+
+import { availableParallelism } from "node:os";
 
 export class FunctionCapacityError extends Error {
   readonly code = "FUNCTION_BUSY";
@@ -47,15 +53,28 @@ function positiveInt(value: string | undefined, fallback: number, min: number, m
   return Number.isInteger(parsed) && parsed >= min && parsed <= max ? parsed : fallback;
 }
 
-export function functionLimiterOptions(env: NodeJS.ProcessEnv = process.env): FunctionLimiterOptions {
-  const maxConcurrent = positiveInt(env.FUNCTIONS_MAX_CONCURRENT, 2, 1, 64);
+/** 2 CPU оставляют текущие 2 слота; 4 CPU — 6; 8 CPU — 12. */
+export function defaultFunctionConcurrency(cpus = availableParallelism()) {
+  if (cpus <= 2) return 2;
+  return Math.min(16, Math.max(3, Math.floor(cpus * 1.5)));
+}
+
+export function functionLimiterOptions(
+  env: NodeJS.ProcessEnv = process.env,
+  cpus = availableParallelism(),
+): FunctionLimiterOptions {
+  const maxConcurrent = positiveInt(env.FUNCTIONS_MAX_CONCURRENT, defaultFunctionConcurrency(cpus), 1, 64);
   return {
     maxConcurrent,
-    // По умолчанию один сайт не может занять больше одного слота: иначе один магазин с
-    // десятком кнопок вытеснит все остальные сайты.
-    maxPerSite: Math.min(maxConcurrent, positiveInt(env.FUNCTIONS_MAX_CONCURRENT_PER_SITE, 1, 1, 64)),
-    maxQueue: positiveInt(env.FUNCTIONS_MAX_QUEUE, 16, 0, 1_000),
-    waitMs: positiveInt(env.FUNCTIONS_MAX_WAIT_MS, 10_000, 100, 120_000),
+    // Один сайт не может занять весь пул: на 4 CPU это 2 слота из 6, на 8 CPU — 4 из 12.
+    maxPerSite: Math.min(maxConcurrent, positiveInt(
+      env.FUNCTIONS_MAX_CONCURRENT_PER_SITE,
+      Math.max(1, Math.floor(maxConcurrent / 3)),
+      1,
+      64,
+    )),
+    maxQueue: positiveInt(env.FUNCTIONS_MAX_QUEUE, Math.max(16, maxConcurrent * 16), 0, 1_000),
+    waitMs: positiveInt(env.FUNCTIONS_MAX_WAIT_MS, 5_000, 100, 120_000),
   };
 }
 

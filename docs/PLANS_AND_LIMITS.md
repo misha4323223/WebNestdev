@@ -10,13 +10,15 @@ publishing or team roles, because those features do not exist.
 
 | | Старт (free) | Плюс (pro, 1 500 ₽/mo, сейчас 990 ₽) | Премиум (team, 2 500 ₽/mo, сейчас 2 000 ₽) |
 |---|---|---|---|
-| Projects | 3 | 9 | 15 |
+| Projects | 3 | 6 | 9 |
 | Agent credits per agent/month | — (daily run limit) | 5 000 | 10 000 |
 | Agent runs/day | 10 | no limit | no limit |
 | Web searches/day | 25 | 200 | 500 |
-| Storage | 500 MB | 10 GB | 50 GB |
-| Repository import | up to 50 MB | no limit | no limit |
-| Integrations | databases and S3 only | no limit | no limit |
+| Generated images/day | 5 | 20 | 20 |
+| HTTP functions per site | — | 5 | 25 |
+| Storage | 500 MB | 2 GB | 10 GB |
+| Repository import | up to 50 MB | up to 250 MB | up to 500 MB |
+| Integrations | one cloud, one registrar, databases and S3 | no limit | no limit |
 | Static hosting | yes | yes | yes |
 | Serverless functions | no | yes | yes |
 | Background jobs | no | no | yes |
@@ -34,6 +36,8 @@ per-plan number is the ceiling the whole account can use; `node_modules` and bui
 The tier capabilities are a separate matrix in `server/src/account/entitlements.ts`, not a
 rewording of `features`. Static hosting is open on every plan. Serverless functions start on
 «Плюс». Background jobs, the interactive terminal and container/hybrid preview start on «Премиум».
+Production hosting accepts static files and short-lived serverless functions only; a container runs
+for development preview and is not a production hosting target.
 Background jobs are declared in the `jobs` array of `nestdev.functions.json`, enqueued from an HTTP
 function response and run after it in the same isolated executor (60 seconds, 512 MB maximum).
 They are not a permanent worker: video, OCR and long-running polling still need a separate service.
