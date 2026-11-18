@@ -4,13 +4,15 @@
 между сессиями.
 Секреты здесь не хранятся: только имена переменных, пути и способы проверки.
 
-**Актуально на 18.11.2026, 07:44 UTC:** обе ноды включены, `node-1` — primary,
-`node-2` — streaming standby; обе на сборке `db534474f381`. Deploy run `44259985492`
-завершён успешно 18.11.2026, 07:43 UTC; публичный `/api/ready` и локальный health обеих нод
-отдают `build=db534474f381ba13f712c0c696a863a820954fb4`. Production работает в
+**Актуально на 18.11.2026, 16:39 UTC:** обе ноды включены, `node-1` — primary,
+`node-2` — streaming standby; обе на сборке `457a1e923b92`. Deploy run `44347132678`
+завершён успешно 18.11.2026, 16:39 UTC; публичный `/api/ready` и локальный health обеих нод
+отдают `build=457a1e923b92aaa915933d01fbaf3f9204979e43`. Production работает в
 `WEBNESTDEV_WORKSPACE_MODE=local`, `OWNER_ROUTING=1`; проекты на локальных каталогах.
 Deploy синхронизирует override обеих нод; токен внутренней двери — общий
-`NODE1_RUNNER_TOKEN`. Подробности — в [`LOCAL_WORKSPACES.md`](LOCAL_WORKSPACES.md).
+`NODE1_RUNNER_TOKEN`. В контейнер сервера передаются `CLIENT_DB_*`, но
+`CLIENT_DB_ADMIN_URL` пока пуст, поэтому клиентская база выключена. Подробности — в
+[`LOCAL_WORKSPACES.md`](LOCAL_WORKSPACES.md) и [`CLIENT_DATABASE_PLAN.md`](CLIENT_DATABASE_PLAN.md).
 
 **API-хост выкачен и проверен 18.11.2026, 07:20–07:44 UTC.** `api.nestdev.ru` резолвится в
 NLB `178.236.27.102`, TLS — Let's Encrypt на `api.nestdev.ru` (до 16.02.2027). Внешние
@@ -118,14 +120,14 @@ Production не должен зависеть от базы или storage од�
 
 - Публичный адрес: `https://nestdev.ru`.
 - `GET /api/ready` отвечает `ok:true`.
-- Текущая production-сборка на обеих нодах: `db534474f381ba13f712c0c696a863a820954fb4` —
-  коммит `db53447` в `main` (`feat(functions): ограничить частоту запросов к API-хосту`).
-- Образ: `ghcr.io/misha4323223/webnestdev:sha-db534474f381` — собран и опубликован
-  workflow `deploy` (run `44259985492`).
-- Выкачена 18.11.2026, 07:43 UTC на `node-1` и `node-2`; `GET /api/ready` на обеих нодах
-  и на `https://nestdev.ru/api/ready` отдаёт `build=db534474f381ba13f712c0c696a863a820954fb4`,
+- Текущая production-сборка на обеих нодах: `457a1e923b92aaa915933d01fbaf3f9204979e43` —
+  коммит `457a1e9` в `main` (`feat(client-db): передать настройки пилота в контейнер сервера`).
+- Образ: `ghcr.io/misha4323223/webnestdev:sha-457a1e923b92` — собран и опубликован
+  workflow `deploy` (run `44347132678`).
+- Выкачена 18.11.2026, 16:39 UTC на `node-1` и `node-2`; `GET /api/ready` на обеих нодах
+  и на `https://nestdev.ru/api/ready` отдаёт `build=457a1e923b92aaa915933d01fbaf3f9204979e43`,
   deploy run — success.
-  Предыдущая сборка `775d297` (run `44196802706`) осталась в истории.
+  Предыдущая сборка `1a7e994` (run `44342600200`) осталась в истории.
 - Перед ней в тот же день выкачена AI-сборка `d14676f` (run `43704849397`); все `AGENT_*`
   флаги на обеих нодах выключены, reviewer и остальные экспериментальные ветки не активны.
 - Исправление: локальный кэш зависимостей передаётся Docker с флагом `-v`; без него
