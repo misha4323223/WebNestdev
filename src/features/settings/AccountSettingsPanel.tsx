@@ -24,7 +24,8 @@ import { CreditTopUpDialog } from "../billing/CreditTopUpDialog";
 import { PaymentHistory } from "../billing/PaymentHistory";
 import { UsageOverview } from "../billing/UsageOverview";
 import { openCookieSettings } from "../legal/CookieConsent";
-import { ArrowLeft, ArrowRight, Check, CreditCard, LogOut, Receipt, Settings2, ShieldCheck, UserRound, Wallet } from "lucide-react";
+import { ArrowLeft, ArrowRight, Check, CreditCard, Database, LogOut, Receipt, Settings2, ShieldCheck, UserRound, Wallet } from "lucide-react";
+import { ClientDatabaseCard } from "../database/ClientDatabaseCard";
 
 type Preferences = UserPreferences;
 type AccountData = {
@@ -139,8 +140,8 @@ function NewsletterCard({ profile, knownEmail, onProfile }: {
   </div>;
 }
 
-export function AccountSettingsPanel() {
-  const [section, setSection] = useState<"account" | "preferences" | "security" | "subscription">("account");
+export function AccountSettingsPanel({ projectId, projectName }: { projectId?: string; projectName?: string }) {
+  const [section, setSection] = useState<"account" | "database" | "preferences" | "security" | "subscription">("account");
   const [account, setAccount] = useState<AccountData | null>(null);
   const [preferences, setPreferences] = useState<UserPreferences>(initialPreferences);
   const [billing, setBilling] = useState<BillingData | null>(null);
@@ -271,7 +272,7 @@ export function AccountSettingsPanel() {
     finally { setSavingRenew(false); }
   }
 
-  const nav = [{ id: "account", label: "Аккаунт", icon: UserRound }, { id: "security", label: "Безопасность", icon: ShieldCheck }, { id: "preferences", label: "Предпочтения", icon: Settings2 }, { id: "subscription", label: "Тариф и подписка", icon: CreditCard }] as const;
+  const nav = [{ id: "account", label: "Аккаунт", icon: UserRound }, { id: "database", label: "База данных", icon: Database }, { id: "security", label: "Безопасность", icon: ShieldCheck }, { id: "preferences", label: "Предпочтения", icon: Settings2 }, { id: "subscription", label: "Тариф и подписка", icon: CreditCard }] as const;
   const currentPlanId = activePlanId(billing);
   const activePlan = billing?.plans.find(plan => plan.id === currentPlanId);
   const subscription = billing?.subscription;
@@ -342,6 +343,11 @@ export function AccountSettingsPanel() {
                 <a href="/legal/contacts" target="_blank" rel="noopener noreferrer">Реквизиты и контакты</a>
               </div>
             </div>
+          </div>}
+          {section === "database" && <div className="account-section">
+            <span className="eyebrow">ДАННЫЕ</span><h3>База данных</h3>
+            <p className="account-muted">Встроенная PostgreSQL для сайтов и приложений: без отдельного провайдера, с квотой по тарифу. Если нужна своя база — она подключается в «Интеграциях».</p>
+            <ClientDatabaseCard projectId={projectId} projectName={projectName} onUpgrade={() => setSection("subscription")}/>
           </div>}
           {section === "security" && <div className="account-section">
             <span className="eyebrow">БЕЗОПАСНОСТЬ</span><h3>Пароль</h3>

@@ -11,6 +11,7 @@ test("инструмент клиентской базы зарегистрир�
   assert.match(tool.description, /masked address/);
   assert.match(tool.description, /DATABASE_URL/);
   assert.match(tool.description, /128 MB/);
+  assert.match(tool.description, /1024 MB/);
   assert.ok(!/postgres:\/\//.test(tool.description), "в описании не должно быть строки подключения");
 });
 

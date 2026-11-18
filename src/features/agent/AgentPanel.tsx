@@ -2066,7 +2066,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
             <button className="send-button" disabled={!loaded||!prompt.trim()} onClick={send} title={running?"В очередь":"Отправить"} aria-label={running?"В очередь":"Отправить"}>{running?<ListPlus size={15}/>:<Send size={15}/>}</button>
           </div>
         </div>
-        {(dragActive||uploading||running||mode==="planner")&&<div className="composer-hint">{dragActive?"Отпустите файлы здесь — они появятся в папке uploads проекта":uploading?"Загружаем файлы…":running?"Агент работает — сообщение встанет в очередь":"Планировщик только изучает проект и готовит план — файлы не меняются"}</div>}
+        {(dragActive||uploading||mode==="planner")&&<div className="composer-hint">{dragActive?"Отпустите файлы здесь — они появятся в папке uploads проекта":uploading?"Загружаем файлы…":"Планировщик только изучает проект и готовит план — файлы не меняются"}</div>}
       </div>
       {/* Док действий — под полем ввода: это statusbar текущей работы. Развёрнутый список
           поднимается вверх, поверх переписки. */}

@@ -17,7 +17,7 @@ const inputSchema = z.object({
 });
 
 const HINT =
-  "Клиентская база входит в тарифы «Плюс» (128 МБ) и «Премиум» (512 МБ). Строка подключения " +
+  "Клиентская база входит в тарифы «Плюс» (128 МБ) и «Премиум» (1 ГБ). Строка подключения " +
   "хранится в зашифрованном хранилище проекта как DATABASE_URL: читайте её из process.env " +
   "и никогда не печатайте значение в ответе или коде.";
 
@@ -46,9 +46,9 @@ registerTool({
     "action='status' (default) reports availability, provisioned schema, used bytes, quota and read-only state. " +
     "action='provision' creates the account schema and stores DATABASE_URL in the project's encrypted secret store. " +
     "action='disable' only removes DATABASE_URL from this project; the account's schema and data stay. " +
-    "Call it when the project needs a database and the user has no external one, or when asked about the database quota. " +
+    "Call it when the project needs a database and the user has no external one, when the user chose «Встроенная база NestDev» in the planning question, or when asked about the database quota. " +
     "The connection string is never returned — only a masked address. " +
-    "Included in «Плюс» (128 MB) and «Премиум» (512 MB); free plan gets an error.",
+    "Included in «Плюс» (128 MB) and «Премиум» (1024 MB); free plan gets an error.",
   execute: async (input, context) => {
     const { action } = inputSchema.parse(input ?? {});
     try {

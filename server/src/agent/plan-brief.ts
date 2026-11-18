@@ -92,6 +92,15 @@ export function agentPlanBrief(plan: PlanId | undefined): string {
   lines.push(
     "Quotas stop work, they do not fail silently: when a limit is reached, stop, name the exact limit and tell the user what frees it (delete a project, empty storage, wait for the UTC reset, buy credits or move to a higher plan). Do not retry the same refused action with a different tool.",
   );
+  if (databaseBytes > 0) {
+    lines.push(
+      "CLIENT DATABASE: this plan includes a managed PostgreSQL database. If the product needs persistence and the planning history does not already name the database, check database.client status first; when it reports provisioned, reuse that DATABASE_URL instead of asking. Otherwise ask one question with question.ask — «Встроенная база NestDev», «Своя база» or «Без базы» — and do not invent credentials or use an in-memory store. If the user chose the built-in database, call database.client with action='provision' before writing data code; it creates the account schema and stores DATABASE_URL in the project's encrypted secret store. Read process.env.DATABASE_URL, never print the value, never put it in source code or deploy_project.md, and reuse the same database instead of creating another one.",
+    );
+  } else {
+    lines.push(
+      "CLIENT DATABASE: the built-in database is not available on this plan. If the product needs persistence, say plainly that it starts on «Плюс» and offer a user-owned external database; do not fake persistence with an in-memory store and do not create credentials.",
+    );
+  }
   lines.push(hostingPlanNotice(plan));
   return lines.filter(Boolean).join(" ");
 }

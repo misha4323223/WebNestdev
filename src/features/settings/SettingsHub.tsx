@@ -67,7 +67,7 @@ export function SettingsHub({ projectId, projectName, onClose }: { projectId: st
         <ArrowLeft size={13}/> <span>К работе</span>
       </button>}
     </div>
-    {activeTab === "account" && <AccountSettingsPanel/>}
+    {activeTab === "account" && <AccountSettingsPanel projectId={projectId} projectName={projectName}/>}
     {activeTab === "secrets" && <ProjectSecretsPanel projectId={projectId} projectName={projectName}/>}
     {activeTab === "provider" && <SettingsPanel projectId={projectId} projectName={projectName} onClose={() => setTab("account")}/>}
     {activeTab === "integrations" && <IntegrationsPanel/>}

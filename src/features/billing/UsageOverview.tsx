@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Plus, RefreshCw } from "lucide-react";
 import {
   bytesLabel,
@@ -6,11 +7,12 @@ import {
   type BillingData,
   type CostModel,
 } from "../../lib/billing-api";
+import { getAccountClientDatabase, type ClientDatabaseStatus } from "../../lib/client-database-api";
 
 /**
- * Один блок вместо двух отдельных карточек: кредиты агента, хранилище аккаунта и расход
- * по публичным моделям NestDev. Так в кабинете видно, что именно закончится раньше, без
- * переключения между шкалами. Upstream-модель сюда не попадает — только имя продукта.
+ * Один блок вместо отдельных карточек: кредиты агента, хранилище аккаунта, встроенная база
+ * и расход по публичным моделям NestDev. Так в кабинете видно, что именно закончится раньше,
+ * без переключения между шкалами. Upstream-модель сюда не попадает — только имя продукта.
  */
 export function UsageOverview({ billing, paid, onTopUp, onRefreshStorage, refreshingStorage = false }: {
   billing: BillingData;
@@ -40,6 +42,46 @@ export function UsageOverview({ billing, paid, onTopUp, onRefreshStorage, refres
     ? new Date(billing.storage.measuredAt).toLocaleString("ru-RU", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })
     : "";
 
+  const databaseLimit = billing.limits.databaseBytes ?? 0;
+  const [database, setDatabase] = useState<ClientDatabaseStatus | null>(null);
+  const [databaseError, setDatabaseError] = useState("");
+  useEffect(() => {
+    if (databaseLimit <= 0) {
+      setDatabase(null);
+      setDatabaseError("");
+      return;
+    }
+    let cancelled = false;
+    setDatabaseError("");
+    getAccountClientDatabase()
+      .then(status => { if (!cancelled) setDatabase(status); })
+      .catch(() => { if (!cancelled) setDatabaseError("Не удалось проверить базу аккаунта."); });
+    return () => { cancelled = true; };
+  }, [databaseLimit]);
+
+  const activeDatabase = database?.available === true ? database : null;
+  const databaseCapacity = activeDatabase?.limitBytes ?? databaseLimit;
+  const databaseUsed = activeDatabase?.usedBytes ?? 0;
+  const databasePercent = databaseCapacity > 0
+    ? Math.min(100, Math.round(databaseUsed / databaseCapacity * 100))
+    : 0;
+  const databaseState = activeDatabase && (activeDatabase.readOnly || databaseUsed >= databaseCapacity)
+    ? "full"
+    : activeDatabase && databaseUsed >= databaseCapacity * 0.8 ? "warning" : "ok";
+  const databaseNote = databaseError
+    ? databaseError
+    : !database
+      ? "Проверяем базу аккаунта…"
+      : database.available === false
+        ? "Встроенная база не включена на этой установке."
+        : !database.reachable
+          ? "База не отвечает: проверьте подключение и повторите."
+          : !database.provisioned
+            ? "База ещё не создана: подключите её в «Настройки» → «База данных»."
+            : database.readOnly
+              ? "Квота исчерпана: запись остановлена, данные сохранены."
+              : "PostgreSQL для данных приложения. Одна схема на аккаунт.";
+
   const modelRows = modelUsageRows(billing.cost.models ?? []);
   const hasModelUsage = modelRows.some(model => model.promptTokens + model.completionTokens > 0);
 
@@ -47,7 +89,7 @@ export function UsageOverview({ billing, paid, onTopUp, onRefreshStorage, refres
     <div className="usage-overview-head">
       <div>
         <span className="eyebrow">РЕСУРСЫ</span>
-        <h2>Кредиты и хранилище</h2>
+        <h2>Кредиты и ресурсы</h2>
       </div>
       <small>Сегодня · {billing.usage.date}</small>
     </div>
@@ -115,6 +157,19 @@ export function UsageOverview({ billing, paid, onTopUp, onRefreshStorage, refres
           <p className="storage-hint">В размер входит всё, что аккаунт хранит: файлы проектов, зависимости и сборки.{storageMeasuredAt ? " Обновлено " + storageMeasuredAt + "." : ""} Сверка повторяется раз в сутки.</p>
         </details>}
       </article>
+
+      {databaseLimit > 0 && <article className={"usage-resource" + (databaseState === "ok" ? "" : " is-" + databaseState)}>
+        <header>
+          <span>Встроенная база</span>
+          <strong>{activeDatabase ? bytesLabel(databaseUsed) + " / " + bytesLabel(databaseCapacity) : "—"}</strong>
+        </header>
+        <div className="usage-meter-track"><span style={{ width: `${databasePercent}%` }}/></div>
+        <div className="usage-resource-meta">
+          <span><em>Занято</em><b>{activeDatabase ? databasePercent + "%" : "—"}</b></span>
+          <span><em>Свободно</em><b>{activeDatabase ? bytesLabel(Math.max(0, databaseCapacity - databaseUsed)) : "—"}</b></span>
+        </div>
+        <p className={"usage-resource-note" + (databaseState === "ok" ? "" : " " + (databaseState === "warning" ? "warning" : "full"))}>{databaseNote}</p>
+      </article>}
     </div>
 
     <div className="usage-models">

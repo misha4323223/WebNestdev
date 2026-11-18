@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { ArrowRight, ArrowUpRight, AppWindow, Bot, Box, Boxes, Building2, Code2, CreditCard, Database, FolderGit2, Gamepad2, Globe, Home, LayoutDashboard, Layers3, Lock, LogOut, MessageCircle, Newspaper, Pencil, Plug, Rocket, ShoppingBag, Smartphone, Sparkles, Store, Trash2, UserRound, Workflow } from "lucide-react";
+import { ArrowRight, ArrowUpRight, AppWindow, Bot, Box, Boxes, Building2, ChevronDown, Code2, CreditCard, Database, FolderGit2, Gamepad2, Globe, Home, LayoutDashboard, Layers3, Lock, LogOut, MessageCircle, Newspaper, Pencil, Plug, Rocket, ShoppingBag, Smartphone, Sparkles, Store, Trash2, UserRound, Workflow } from "lucide-react";
 import { deleteProject, listProjects, renameProject, type Project } from "../../lib/project-api";
 import type { PlanId } from "../../lib/billing-api";
 import { getEntitlements, type AccountEntitlements } from "../../lib/entitlements-api";
@@ -74,11 +74,11 @@ const templateGroups: TemplateGroup[] = [
  * переводит его в режим разработчика.
  */
 function templateKickoff(group:TemplateGroup,template:Template){
-  return `Быстрый старт: ${group.name} → «${template.name}».\n\nЗадача: ${template.prompt}.\n\nЭто первый запрос по новому проекту. Сейчас нужен только план: не изучай файлы, не упоминай, что проект пуст, и не пиши промежуточных рассуждений. Задай через question.ask два коротких вопроса по одному — для кого продукт и какие разделы и данные важны, затем какой стиль и тон. После ответов собери резюме проекта через plan.update: цель и аудитория, страницы и экраны, данные, интеграции, визуальный стиль, проверка. Все пункты оставь pending и не начинай разработку.`;
+  return `Быстрый старт: ${group.name} → «${template.name}».\n\nЗадача: ${template.prompt}.\n\nЭто первый запрос по новому проекту. Сейчас нужен только план: не изучай файлы, не упоминай, что проект пуст, и не пиши промежуточных рассуждений. Задай через question.ask два коротких вопроса по одному — для кого продукт и какие данные важны; если продукту нужны данные, предложи в этом же вопросе выбрать встроенную базу NestDev, свою базу или работу без базы. Затем спроси про стиль и тон. После ответов собери резюме проекта через plan.update: цель и аудитория, страницы и экраны, данные и выбранная база, интеграции, визуальный стиль, проверка. Все пункты оставь pending и не начинай разработку.`;
 }
 
 const planLabels:Record<PlanId,string>={free:"Старт",pro:"Плюс",team:"Премиум"};
-const tierLabels:Record<Exclude<TemplateTier,"free">,string>={pro:"Плюс",team:"Премиум"};
+const tierLabels:Record<TemplateTier,string>={free:"Старт",pro:"Плюс",team:"Премиум"};
 
 function templateTier(template:Template):TemplateTier{
   return template.tier??"free";
@@ -116,8 +116,9 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
   const [tab,setTab]=useState<HomeTab>("home");
   // Все категории колонки свёрнуты при открытии: человек сначала видит оглавление, а не его раздел.
   const [section,setSection]=useState<RailSection|null>(null);
-  // На главной сразу видно один раздел стартов, остальные — соседние вкладки.
-  const [activeGroup,setActiveGroup]=useState(templateGroups[0]?.id??"sites");
+  // Старты свёрнуты в аккордеон: сначала видны только категории, а карточки
+  // раскрываются по нажатию — так блок остаётся компактным и на телефоне.
+  const [activeGroup,setActiveGroup]=useState<string|null>(null);
   const [account,setAccount]=useState<AccountEntitlements|null>(null);
   const [templateNotice,setTemplateNotice]=useState("");
   const entitlements=account?.entitlements??null;
@@ -314,44 +315,28 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
           {/* Рабочая область живёт дальше на главной, поэтому запуск виден и здесь. */}
           {activeRun && <div className="home-run" role="status">
             <NestLoader size={24} label="Агент работает"/>
-            <div><strong>Агент продолжает работу над проектом «{activeRun.projectName}»</strong><span>Запуск не остановится, пока вы на главной — вернитесь, когда захотите.</span></div>
+            <div><strong>Агент продолжает работу над проектом «{activeRun.projectName}»</strong></div>
             <button className="ghost-button home-run-open" onClick={() => onOpenWorkspace(activeRun.projectId)}>Вернуться в проект</button>
           </div>}
 
           <section className="home-hero">
             <div className="home-hero-copy">
-              <span className="home-kicker"><i/>NESTDEV · ТВОЯ СТУДИЯ</span>
               <h1 className="home-title">Из идеи —<br/>в <em>живой продукт.</em></h1>
-              <p className="home-lede">Опишите, что хотите запустить. Агент уточнит детали, соберёт план и начнёт разработку — без пустых экранов и лишних шагов.</p>
-              <div className="home-hero-meta">
-                <span><b>01</b> План до кода</span>
-                <span><b>02</b> Правки словами</span>
-                <span><b>03</b> Публикация</span>
-              </div>
             </div>
             <div className="home-hero-visual" aria-hidden="true">
               <div className="home-orbit home-orbit-outer"/>
               <div className="home-orbit home-orbit-inner"/>
-              <span className="home-art-label home-art-label-top">BRIEF</span>
-              <span className="home-art-label home-art-label-right">BUILD</span>
-              <span className="home-art-label home-art-label-bottom">SHIP</span>
-              <div className="home-hero-mark"><WebNestLogo size={150} tone="light"/></div>
-              <span className="home-art-caption">idea → product</span>
+              <div className="home-hero-mark"><WebNestLogo size={225} tone="light"/></div>
             </div>
           </section>
 
           <section className="home-composer-wrap">
             <form className="home-composer" onSubmit={submit}>
-              <div className="home-composer-top"><span className="home-composer-icon"><Code2 size={16}/></span><div className="home-composer-field"><span className="home-composer-label">ОПИШИТЕ ИДЕЮ</span><textarea value={idea} onChange={e=>setIdea(e.target.value)} placeholder="Например: магазин керамики с каталогом, оплатой и доставкой" rows={2} /></div></div>
+              <div className="home-composer-top"><div className="home-composer-field"><label className="home-composer-label" htmlFor="home-idea">Опишите идею</label><textarea id="home-idea" value={idea} onChange={e=>setIdea(e.target.value)} rows={3} /></div></div>
               <div className="home-composer-bottom">
-                <span className="home-composer-steps"><span>Черновик сохраняется</span><span>Агент задаст вопросы</span></span>
-                <button className="send-button home-submit" disabled={busy||!idea.trim()} aria-label="Создать проект и запустить агента"><span>{busy?"Создаём…":"Начать проект"}</span><ArrowRight size={15}/></button>
+                <button className="send-button home-submit" disabled={busy||!idea.trim()} aria-label={busy?"Создаём проект":"Создать проект и запустить агента"} title={busy?"Создаём…":"Отправить идею"}><Code2 size={17}/></button>
               </div>
             </form>
-            <div className="home-quick-ideas" aria-label="Примеры идей">
-              <span>Попробуйте:</span>
-              {["Лендинг для кофейни","Магазин керамики","CRM для студии"].map(text=><button key={text} type="button" onClick={()=>setIdea(text)}>{text}</button>)}
-            </div>
           </section>
 
           {paymentReturn&&<div className={"home-payment "+paymentReturn} role="status">
@@ -371,36 +356,35 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
 
           <section className="home-section home-starters">
             <div className="home-section-head"><div><span className="eyebrow">БЫСТРЫЕ СТАРТЫ</span><h2>С чего начать</h2></div><span className="home-section-note">{account?"Ваш тариф: «"+planLabels[account.plan]+"»":"Готовый бриф · агент уточнит детали"}</span></div>
-            <div className="starter-switcher" role="tablist" aria-label="Категории шаблонов">
+            <div className="starter-accordion" aria-label="Категории шаблонов">
               {templateGroups.map(group=>{
                 const Icon=group.icon;
                 const active=activeGroup===group.id;
-                return <button key={group.id} role="tab" aria-selected={active} aria-controls={"starter-panel-"+group.id} className={"starter-tab"+(active?" active":"")} onClick={()=>setActiveGroup(group.id)}>
-                  <span className="starter-tab-icon"><Icon size={14}/></span>
-                  <span><strong>{group.name}</strong><small>{group.range}</small></span>
-                  <b>{group.templates.length}</b>
-                </button>;
+                return <section className={"starter-group"+(active?" is-open":"")} key={group.id}>
+                  <button type="button" className="starter-disclosure" aria-expanded={active} aria-controls={"starter-panel-"+group.id} onClick={()=>{setActiveGroup(active?null:group.id);setTemplateNotice("")}}>
+                    <span className="starter-disclosure-icon"><Icon size={15}/></span>
+                    <span className="starter-disclosure-copy"><strong>{group.name}</strong><small>{group.range}</small></span>
+                    <span className="starter-disclosure-count">{group.templates.length}</span>
+                    <ChevronDown size={15} className="starter-disclosure-arrow"/>
+                  </button>
+                  {active&&<div className="starter-panel" id={"starter-panel-"+group.id}>
+                    {templateNotice&&<div className="starter-notice" role="status"><Lock size={13}/><span>{templateNotice}</span><button type="button" onClick={()=>setTemplateNotice("")} aria-label="Закрыть подсказку">×</button></div>}
+                    <div className="starter-list">
+                      {group.templates.map((template,index)=>{
+                        const TemplateIcon=template.icon;
+                        const tier=templateTier(template);
+                        const available=templateAvailable(template);
+                        return <button key={template.name} type="button" className={"starter-card"+(available?"":" is-locked")} onClick={()=>chooseTemplate(group,template)} title={(available?template.prompt:(template.why??"Нужен платный тариф"))+". Агент начнёт с плана и уточняющих вопросов."}>
+                          <span className="starter-card-top"><span className="starter-card-icon"><TemplateIcon size={14}/></span><span className="starter-card-index">{String(index+1).padStart(2,"0")}</span><span className={"starter-tier tier-"+tier}>{tier==="team"?<Lock size={9}/>:tier==="pro"?<Sparkles size={9}/>:<Code2 size={9}/>}{tierLabels[tier]}</span></span>
+                          <span className="starter-card-copy"><strong>{template.name}</strong><small>{available?template.note:(template.why??"Нужен платный тариф")}</small></span>
+                          <span className="starter-card-footer"><span>{available?"Выбрать":"Тариф"}</span><ArrowUpRight size={12} className="starter-card-go"/></span>
+                        </button>;
+                      })}
+                    </div>
+                  </div>}
+                </section>;
               })}
             </div>
-            {templateGroups.map(group=>{
-              if(group.id!==activeGroup)return null;
-              return <div className="starter-panel" id={"starter-panel-"+group.id} role="tabpanel" key={group.id}>
-                <div className="starter-panel-head"><p>{group.blurb}</p><span>{group.templates.length} стартов</span></div>
-                {templateNotice&&<div className="starter-notice" role="status"><Lock size={13}/><span>{templateNotice}</span><button type="button" onClick={()=>setTemplateNotice("")} aria-label="Закрыть подсказку">×</button></div>}
-                <div className="starter-list">
-                  {group.templates.map((template,index)=>{
-                    const TemplateIcon=template.icon;
-                    const tier=templateTier(template);
-                    const available=templateAvailable(template);
-                    return <button key={template.name} type="button" className={"starter-card"+(available?"":" is-locked")} onClick={()=>chooseTemplate(group,template)} title={(available?template.prompt:(template.why??"Нужен платный тариф"))+". Агент начнёт с плана и уточняющих вопросов."}>
-                      <span className="starter-card-top"><span className="starter-card-icon"><TemplateIcon size={15}/></span><span className="starter-card-index">{String(index+1).padStart(2,"0")}</span>{tier!=="free"&&<span className={"starter-tier tier-"+tier}>{tier==="team"?<Lock size={9}/>:<Sparkles size={9}/>}{tierLabels[tier as Exclude<TemplateTier,"free">]}</span>}</span>
-                      <span className="starter-card-copy"><strong>{template.name}</strong><small>{available?template.note:(template.why??"Нужен платный тариф")}</small></span>
-                      <span className="starter-card-footer"><span>{available?"Выбрать старт":"Открыть тарифы"}</span><ArrowUpRight size={12} className="starter-card-go"/></span>
-                    </button>;
-                  })}
-                </div>
-              </div>;
-            })}
           </section>
 
           {projects.length>0&&<section className="home-section">

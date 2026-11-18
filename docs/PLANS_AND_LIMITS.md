@@ -3,7 +3,7 @@
 Paid plans are sold through Robokassa (`docs/ROBOKASSA.md`). The plan an account actually has is
 read from the paid subscription by `accountPlanFor` (`server/src/billing/store.ts`); the catalog in
 `server/src/account/plans.ts` describes what each plan gives. The catalog sells only what the
-platform really does — projects, model credits, storage, integrations — and never promises
+platform really does — projects, model credits, storage, databases, integrations — and never promises
 publishing or team roles, because those features do not exist.
 
 ## Plans
@@ -17,7 +17,8 @@ publishing or team roles, because those features do not exist.
 | Generated images/day | 5 | 20 | 20 |
 | HTTP functions per site | — | 5 | 25 |
 | Storage | 500 MB | 2 GB | 10 GB |
-| Repository import | up to 50 MB | up to 250 MB | up to 500 MB |
+| Built-in PostgreSQL database | — | 128 MB | 1 GB |
+| Repository import | up to 50 MB | up to 600 MB | up to 1 GB |
 | Integrations | one cloud, one registrar, databases and S3 | no limit | no limit |
 | Static hosting | yes | yes | yes |
 | Serverless functions | no | yes | yes |
@@ -32,6 +33,10 @@ both the base price and the percentage.
 
 Storage is one quota per account, shared by every project, not a per-project allowance. The
 per-plan number is the ceiling the whole account can use; `node_modules` and build output count.
+The built-in database is a separate PostgreSQL schema per account. Its quota is the data size of
+that schema; the connection URL lives in the project's encrypted secrets. The account overview in
+settings shows used and free space next to storage, and the «База данных» tab manages the project
+connection.
 
 The tier capabilities are a separate matrix in `server/src/account/entitlements.ts`, not a
 rewording of `features`. Static hosting is open on every plan. Serverless functions start on

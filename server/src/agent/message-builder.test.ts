@@ -223,6 +223,7 @@ test("project planning asks before the empty project is inspected", () => {
   assert.match(system, /PROJECT PLANNING MODE IS ON/);
   assert.match(system, /do not inspect files/i);
   assert.match(system, /question\.ask/);
+  assert.match(system, /Встроенная база NestDev/);
   assert.doesNotMatch(system, /PLANNER MODE IS ON/);
   assert.equal(system.includes(PROJECT_PLANNING_PROMPT), true);
 });

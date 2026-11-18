@@ -117,7 +117,7 @@ function planDatabaseLimit(plan: PlanId) {
   const limit = databaseLimitFor(plan);
   if (limit <= 0) {
     throw new ClientDatabaseError(
-      "Клиентская база входит в тарифы «Плюс» (128 МБ) и «Премиум» (512 МБ). На тарифе «" +
+      "Клиентская база входит в тарифы «Плюс» (128 МБ) и «Премиум» (1 ГБ). На тарифе «" +
         PLAN_CATALOG[plan].name + "» её нет.",
       403,
       "DATABASE_PLAN_REQUIRED",
@@ -213,6 +213,52 @@ export async function clientDatabaseStatus(input: {
     usedBytes,
     limitBytes,
     // Read-only включает либо фактическое превышение, либо тариф без базы.
+    readOnly: Boolean(tenant?.readOnly) || limitBytes <= 0 || usedBytes >= limitBytes,
+  };
+}
+
+/**
+ * Сводка базы аккаунта для личного кабинета: та же квота и занятое место, что в карточке
+ * проекта, но без чтения секретов конкретного проекта. Строка подключения здесь не нужна —
+ * в настройках аккаунта показывается только использование.
+ */
+export async function accountClientDatabaseStatus(input: {
+  userId: string;
+  plan: PlanId;
+}): Promise<ClientDatabaseStatus> {
+  const config = clientDatabaseConfig();
+  if (!config) {
+    return { available: false, reason: "Клиентская база на этой установке не включена" };
+  }
+  const names = tenantNames(input.userId);
+  const limitBytes = databaseLimitFor(input.plan);
+  let tenant: TenantRecord | null = null;
+  let usedBytes = 0;
+  try {
+    const db = adminExecutor(config);
+    tenant = await getTenant(db, input.userId);
+    if (tenant) usedBytes = await tenantSizeBytes(db, tenant.schema);
+  } catch (error) {
+    return {
+      available: true,
+      reachable: false,
+      provisioned: false,
+      role: names.role,
+      maskedUrl: maskClientDatabaseUrl(config, names.role),
+      usedBytes: 0,
+      limitBytes,
+      readOnly: false,
+      error: error instanceof Error ? error.message : String(error),
+    };
+  }
+  return {
+    available: true,
+    reachable: true,
+    provisioned: Boolean(tenant),
+    role: tenant?.role ?? names.role,
+    maskedUrl: maskClientDatabaseUrl(config, tenant?.role ?? names.role),
+    usedBytes,
+    limitBytes,
     readOnly: Boolean(tenant?.readOnly) || limitBytes <= 0 || usedBytes >= limitBytes,
   };
 }

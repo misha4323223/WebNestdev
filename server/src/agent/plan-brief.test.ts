@@ -18,6 +18,7 @@ test("«Старт» получает лимиты и запреты своег�
   assert.match(brief, /pushing commits back to a repository/);
   assert.match(brief, /custom domains/);
   assert.match(brief, /the client database \(it starts on «Плюс»\)/);
+  assert.match(brief, /CLIENT DATABASE: the built-in database is not available on this plan/);
   assert.doesNotMatch(brief, /serverless function per site/);
   assert.doesNotMatch(brief, /agent credits per month/);
 });
@@ -30,7 +31,10 @@ test("«Плюс» получает кредиты, функции и домен
   assert.match(brief, /5 000 agent credits per month/);
   assert.match(brief, /5 serverless functions per site/);
   assert.match(brief, /a client database of 128 MB/);
-  assert.match(brief, /repository import up to 250 MB/);
+  assert.match(brief, /CLIENT DATABASE: this plan includes a managed PostgreSQL database/);
+  assert.match(brief, /Встроенная база NestDev/);
+  assert.match(brief, /database\.client with action='provision'/);
+  assert.match(brief, /repository import up to 600 MB/);
   assert.match(brief, /pushing commits to a connected repository/);
   assert.match(brief, /a custom domain group \(apex \+ www\) per site/);
   assert.match(brief, /Not available on this plan: background jobs after the HTTP response/);
@@ -45,8 +49,8 @@ test("«Премиум» получает всё, что продаёт ката
   assert.match(brief, /10 GB of account storage/);
   assert.match(brief, /10 000 agent credits per month/);
   assert.match(brief, /25 serverless functions per site/);
-  assert.match(brief, /a client database of 512 MB/);
-  assert.match(brief, /repository import up to 500 MB/);
+  assert.match(brief, /a client database of 1024 MB/);
+  assert.match(brief, /repository import up to 1024 MB/);
   assert.match(brief, /unlimited keyed services/);
   assert.doesNotMatch(brief, /Not available on this plan/);
 });

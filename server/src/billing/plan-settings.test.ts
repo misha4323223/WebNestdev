@@ -37,7 +37,7 @@ test("admin plan settings change the name, features, description and discounted 
     assert.ok(pro && team);
     assert.equal(pro.name, "Профи");
     assert.equal(pro.description, "Для постоянной работы");
-    assert.deepEqual(pro.features, ["6 проектов", "Свой домен на каждый сайт", "20 изображений в день", "До 5 функций на сайт", "Git-репозитории: подключение и отправка коммитов", "Скачивание проекта одним кликом", "Свой AI-провайдер по OpenAI-совместимому API"]);
+    assert.deepEqual(pro.features, ["6 проектов", "Свой домен на каждый сайт", "Встроенная PostgreSQL 128 МБ", "20 изображений в день", "До 5 функций на сайт", "Импорт репозитория до 600 МБ", "Git-репозитории: подключение и отправка коммитов", "Скачивание проекта одним кликом", "Свой AI-провайдер по OpenAI-совместимому API"]);
     assert.equal(pro.priceRub, 800);
     assert.equal(pro.basePriceRub, 1000);
     assert.equal(pro.priceLabel, "800 ₽");
@@ -50,7 +50,7 @@ test("admin plan settings change the name, features, description and discounted 
     assert.deepEqual(admin.map(plan => plan.id), ["pro", "team"]);
     assert.equal(admin[0].priceRub, 1000, "форма редактирует базовую цену, а не итоговую");
     assert.equal(admin[0].priceLabel, "800 ₽");
-    assert.deepEqual(admin[0].features, ["6 проектов", "Свой домен на каждый сайт", "20 изображений в день", "До 5 функций на сайт", "Git-репозитории: подключение и отправка коммитов", "Скачивание проекта одним кликом", "Свой AI-провайдер по OpenAI-совместимому API"]);
+    assert.deepEqual(admin[0].features, ["6 проектов", "Свой домен на каждый сайт", "Встроенная PostgreSQL 128 МБ", "20 изображений в день", "До 5 функций на сайт", "Импорт репозитория до 600 МБ", "Git-репозитории: подключение и отправка коммитов", "Скачивание проекта одним кликом", "Свой AI-провайдер по OpenAI-совместимому API"]);
     assert.deepEqual(admin[1].features, [...PLAN_CATALOG.team.features], "без override остаётся каталог");
   });
 });
@@ -140,9 +140,10 @@ test("legacy token and daily-run features are modernized on read", () => {
       "6 проектов",
       "5 000 кредитов на агента в месяц",
       "2 ГБ хранилища",
-      "Импорт репозитория до 250 МБ",
+      "Импорт репозитория до 600 МБ",
       "Без ограничения числа подключений: облака, домены, сервисы, базы, S3 и Git",
       "Свой домен на каждый сайт",
+      "Встроенная PostgreSQL 128 МБ",
       "20 изображений в день",
       "До 5 функций на сайт",
       "Git-репозитории: подключение и отправка коммитов",
@@ -163,9 +164,10 @@ test("legacy token and daily-run features are modernized on read", () => {
       "6 проектов",
       "5 000 кредитов на агента в месяц",
       "2 ГБ хранилища",
-      "Импорт репозитория до 250 МБ",
+      "Импорт репозитория до 600 МБ",
       "Без ограничения числа подключений: облака, домены, сервисы, базы, S3 и Git",
       "Свой домен на каждый сайт",
+      "Встроенная PostgreSQL 128 МБ",
       "20 изображений в день",
       "До 5 функций на сайт",
       "Git-репозитории: подключение и отправка коммитов",
@@ -209,7 +211,7 @@ test("features are trimmed, capped and never turn the showcase into an error", (
   }, () => {
     const pro = publicPlans().find(plan => plan.id === "pro");
     assert.ok(pro);
-    assert.equal(pro.features.length, 15);
+    assert.equal(pro.features.length, 17);
     assert.equal(pro.features[0], "Свой домен на каждый сайт");
     assert.equal(pro.features[1], "x".repeat(80));
     const free = publicPlans().find(plan => plan.id === "free");

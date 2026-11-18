@@ -10,6 +10,8 @@ export type PlanLimits = {
   browserChecksPerDay: number | null;
   webSearchesPerDay: number;
   storageBytes?: number;
+  /** Квота встроенной базы NestDev; 0 — база не входит в тариф. */
+  databaseBytes?: number;
   /** Месячный бюджет кредитов; 0 или отсутствие — кредитов нет, работает дневной лимит запусков. */
   agentCreditsPerMonth?: number;
   /** Сырые токены для аналитики; пользовательский лимит теперь считается в кредитах. */

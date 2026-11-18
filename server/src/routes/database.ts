@@ -8,6 +8,7 @@ import { getProject } from "../project-store.js";
 import { getSandbox } from "../sandbox-manager.js";
 import {
   ClientDatabaseError,
+  accountClientDatabaseStatus,
   clientDatabaseStatus,
   connectClientDatabase,
   disconnectClientDatabase,
@@ -58,6 +59,16 @@ export async function registerDatabaseRoutes(app: FastifyInstance) {
     const user = await requireUser(request, reply); if (!user) return;
     await disconnectDatabase(user.id);
     return { connected: false };
+  });
+
+  /**
+   * Использование встроенной базы на уровне аккаунта: личный кабинет показывает его в обзоре
+   * ресурсов, где ещё нет выбранного проекта. Секреты проекта здесь не читаются.
+   */
+  app.get("/api/account/client-database", async (request, reply) => {
+    const user = await requireUser(request, reply); if (!user) return;
+    const plan = await accountPlanFor(user.id).catch(() => "free" as const);
+    return accountClientDatabaseStatus({ userId: user.id, plan });
   });
 
   /**
