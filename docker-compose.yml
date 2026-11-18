@@ -230,6 +230,8 @@ services:
       # запас API, Caddy и PostgreSQL; один сайт по умолчанию занимает не больше одного.
       FUNCTIONS_MAX_CONCURRENT: ${FUNCTIONS_MAX_CONCURRENT:-2}
       FUNCTIONS_MAX_CONCURRENT_PER_SITE: ${FUNCTIONS_MAX_CONCURRENT_PER_SITE:-1}
+      # API-хост идёт мимо CDN, поэтому частота с одного IP считается на двери функций.
+      FUNCTIONS_API_RATE_LIMIT_PER_MINUTE: ${FUNCTIONS_API_RATE_LIMIT_PER_MINUTE:-120}
       FUNCTIONS_MAX_QUEUE: ${FUNCTIONS_MAX_QUEUE:-16}
       FUNCTIONS_MAX_WAIT_MS: ${FUNCTIONS_MAX_WAIT_MS:-10000}
       # Ответный кеш функций включается только для функций с явным cache.ttlSeconds.

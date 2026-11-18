@@ -11,7 +11,10 @@ import { invokeFunction, FunctionInvokeError, type BackgroundJobRequest, type Fu
 import { readReleaseManifest } from "./release-manifest.js";
 import { projectFunctionEnv } from "./runtime-env.js";
 import { functionLimiter, FunctionCapacityError } from "./function-limiter.js";
+import { checkFunctionsApiRateLimit, describeFunctionsApiRateLimit } from "./api-rate-limit.js";
 import { functionMetrics } from "./metrics.js";
+import { trustProxyOption } from "../security/client-ip.js";
+import type { RateLimitVerdict } from "../storage/rate-limit-store.js";
 import { functionCacheKey, functionResponseCache, requestAllowsResponseCache } from "./response-cache.js";
 import type { FunctionReleaseManifest } from "./build.js";
 
@@ -35,6 +38,8 @@ export type FunctionsHostDeps = {
   enqueueJobs?: (input: { site: NonNullable<Awaited<ReturnType<typeof getSiteBySlug>>>; requests: BackgroundJobRequest[] }) => Promise<unknown>;
   /** Слот на одновременное выполнение функций; возвращённую функцию вызывают в finally. */
   acquireSlot?: (siteId: string) => Promise<() => void>;
+  /** Частота запросов к API-хосту; подменяется в тестах, чтобы не трогать хранилище. */
+  apiRateLimit?: (siteId: string, ip: string) => Promise<RateLimitVerdict>;
 };
 
 const defaultDeps: FunctionsHostDeps = {
@@ -46,6 +51,7 @@ const defaultDeps: FunctionsHostDeps = {
   secrets: projectFunctionEnv,
   enqueueJobs: enqueueBackgroundJobs,
   acquireSlot: siteId => functionLimiter.acquire(siteId),
+  apiRateLimit: (siteId, ip) => checkFunctionsApiRateLimit(siteId, ip),
 };
 
 function requestHost(request: FastifyRequest) {
@@ -117,6 +123,9 @@ export function createFunctionsHostServer(deps: FunctionsHostDeps = defaultDeps)
     bodyLimit: 1024 * 1024,
     disableRequestLogging: true,
     logger: false,
+    // Запрос приходит от Caddy: без trustProxy `request.ip` был бы одним адресом контейнера
+    // для всех посетителей, и лимит API-двери считался бы на весь сайт сразу.
+    trustProxy: trustProxyOption(),
   });
 
   // Функция получает тело байтами в исходном виде, а не разобранным JSON: иначе
@@ -142,6 +151,15 @@ export function createFunctionsHostServer(deps: FunctionsHostDeps = defaultDeps)
       ? await deps.getSiteBySlug(target.slug).catch(() => null)
       : await resolveSite(hostname, deps).catch(() => null);
     if (!site || site.status !== "live" || !site.activeReleaseId) return sendError(reply, 404, "Сайт не найден");
+    // API-хост идёт напрямую в NLB, мимо CDN. Считаем частоту до чтения манифеста и запуска
+    // контейнера, чтобы поток с одного IP не занимал слоты функций.
+    if (isApiHost) {
+      const verdict = await (deps.apiRateLimit ?? ((siteId, ip) => checkFunctionsApiRateLimit(siteId, ip)))(site.id, request.ip);
+      if (!verdict.allowed) {
+        reply.header("retry-after", String(verdict.retryAfter));
+        return sendError(reply, 429, "Слишком много запросов к API сайта", { code: "RATE_LIMITED" });
+      }
+    }
     // Фиксируем релиз в локальной переменной: замыкание execute теряет narrowing поля.
     const activeReleaseId = site.activeReleaseId;
 
@@ -289,5 +307,5 @@ export async function stopFunctionsHostServer() {
 
 export function describeFunctionsHostServer() {
   if (!functionsHostEnabled()) return "serverless-функции: дверь выключена (HOSTING_FUNCTIONS_ENABLED=0)";
-  return "serverless-функции: дверь 0.0.0.0:" + functionsHostPort() + ", маршрут /api/*, одноразовый контейнер на запрос, " + functionLimiter.describe();
+  return "serverless-функции: дверь 0.0.0.0:" + functionsHostPort() + ", маршрут /api/*, одноразовый контейнер на запрос, " + functionLimiter.describe() + ", " + describeFunctionsApiRateLimit();
 }

@@ -53,6 +53,7 @@ function deps(overrides: Partial<FunctionsHostDeps> = {}): FunctionsHostDeps {
     readManifest: async () => manifest,
     invoke: async () => ({ status: 200, headers: { "content-type": "text/plain" }, body: Buffer.from("ok") }),
     secrets: async () => ({ TOKEN: "secret" }),
+    apiRateLimit: async () => ({ allowed: true, retryAfter: 0 }),
     ...overrides,
   };
 }
@@ -240,6 +241,49 @@ test("API-хост снимает slug, сохраняет query и отвеча
 
     const invalid = await app.inject({ method: "GET", url: "/demo/other/hello", headers: { host: "api.host.nestdev.ru" } });
     assert.equal(invalid.statusCode, 404);
+  } finally {
+    await app.close();
+    if (previous === undefined) delete process.env.HOSTING_API_HOST;
+    else process.env.HOSTING_API_HOST = previous;
+  }
+});
+
+test("API-хост отдаёт 429 до запуска функции, когда лимит частоты исчерпан", async () => {
+  const previous = process.env.HOSTING_API_HOST;
+  process.env.HOSTING_API_HOST = "api.nestdev.ru";
+  const checked: Array<{ siteId: string; ip: string }> = [];
+  let invoked = false;
+  const app = createFunctionsHostServer(deps({
+    apiRateLimit: async (siteId, ip) => {
+      checked.push({ siteId, ip });
+      return { allowed: false, retryAfter: 17 };
+    },
+    invoke: async () => {
+      invoked = true;
+      return { status: 200, headers: {}, body: Buffer.from("ok") };
+    },
+  }));
+  try {
+    const response = await app.inject({
+      method: "POST",
+      url: "/demo/api/hello",
+      headers: { host: "api.nestdev.ru", "content-type": "application/json" },
+      payload: "{}",
+    });
+    assert.equal(response.statusCode, 429);
+    assert.equal(response.headers["retry-after"], "17");
+    assert.equal(response.headers["access-control-allow-origin"], "*");
+    assert.match(response.body, /RATE_LIMITED/);
+    assert.equal(invoked, false);
+    assert.deepEqual(checked, [{ siteId: site.id, ip: "127.0.0.1" }]);
+
+    const preflight = await app.inject({
+      method: "OPTIONS",
+      url: "/demo/api/hello",
+      headers: { host: "api.nestdev.ru", origin: "https://demo.host.nestdev.ru" },
+    });
+    assert.equal(preflight.statusCode, 204);
+    assert.equal(checked.length, 1, "preflight не должен расходовать лимит");
   } finally {
     await app.close();
     if (previous === undefined) delete process.env.HOSTING_API_HOST;
