@@ -38,6 +38,14 @@ services:
       HOSTING_CDN_RESOURCE: hosting
       HOSTING_CDN_PROJECT: project-pimashin2015
       WEBNESTDEV_TRUSTED_PROXIES: 172.30.0.0/24
+      # Клиентская база (пилот): без CLIENT_DB_ADMIN_URL фича выключена и маршрут отвечает 503.
+      # Публичный адрес — PgBouncer этой ноды; административная строка приходит из .env.
+      CLIENT_DB_ADMIN_URL: ${CLIENT_DB_ADMIN_URL:-}
+      CLIENT_DB_PUBLIC_HOST: ${CLIENT_DB_PUBLIC_HOST:-10.0.0.4}
+      CLIENT_DB_PORT: ${CLIENT_DB_PORT:-6432}
+      CLIENT_DB_NAME: ${CLIENT_DB_NAME:-app}
+      # Пилотный PgBouncer слушает без TLS внутри приватной сети.
+      CLIENT_DB_SSL: ${CLIENT_DB_SSL:-0}
       # 5.1 включён 10.11.2026: allowlist + правила DOCKER-USER. Аварийный выключатель —
       # EGRESS_MODE: private-only, затем EGRESS_ENFORCE: "0" (см. docs/SCALING_3000_PLAN.md 5.1).
       EGRESS_MODE: allowlist
