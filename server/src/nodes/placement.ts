@@ -110,6 +110,11 @@ type ChooseNodeDeps = {
   staleMs?: number;
   requiredMemoryMb?: number;
   requiredDiskMb?: number;
+  /**
+   * Импорт пишет файлы сразу после создания проекта, поэтому его нельзя создавать на другой ноде:
+   * запрос всё равно останется на этой и `getSandbox` откажет с WRONG_WORKSPACE_OWNER.
+   */
+  requiredNode?: string;
 };
 
 /**
@@ -129,7 +134,15 @@ export async function chooseProjectNode(options: ChooseNodeDeps = {}): Promise<S
     ...(options.requiredDiskMb !== undefined ? { requiredDiskMb: options.requiredDiskMb } : {}),
   });
   if (!ranked.length) throw new NoSandboxNodeError();
-  const best = ranked[0];
+  const required = options.requiredNode
+    ? ranked.find(item => item.node.id === options.requiredNode)
+    : undefined;
+  if (options.requiredNode && !required) {
+    throw new NoSandboxNodeError(
+      "Узел " + options.requiredNode + " недоступен для нового проекта: выберите другую ноду или дождитесь её возврата",
+    );
+  }
+  const best = required ?? ranked[0];
   // The gate is opt-in through `requiredMemoryMb`, so callers that only rank nodes (tests, the
   // admin view) keep working; every placement path passes the sandbox requirement.
   if (options.requiredMemoryMb !== undefined && best.freeAfterProjectMb < 0) {

@@ -13,6 +13,7 @@ import { getSandbox } from "../sandbox-manager.js";
 import { getPlatformEnv } from "../platform/platform-env.js";
 import { cloneRepository, resetWorkspaceForImport } from "../changes/git-repo.js";
 import { detectAndSaveHybridProfile } from "../preview/hybrid-detect.js";
+import { nodeId } from "../nodes/identity.js";
 
 const oauthScope = "repo";
 
@@ -187,14 +188,22 @@ export async function registerGitHubRoutes(app: FastifyInstance) {
         fullName: repository.full_name,
         defaultBranch: repository.default_branch,
         url: repository.html_url,
-      }, user.id, limit);
+      }, user.id, limit, { node: nodeId() });
     } catch (error) {
       if (error instanceof ProjectLimitError) {
         return reply.code(403).send({ error: error.message, code: "PROJECT_LIMIT_REACHED", limit: error.limit, used: error.used, plan });
       }
       throw error;
     }
-    const sandbox = await getSandbox(project.id,user.id);
+    let sandbox;
+    try {
+      sandbox = await getSandbox(project.id,user.id);
+    } catch (error) {
+      // Проект уже создан, но рабочая область не открылась. Не оставляем пустую строку в
+      // списке и не занимаем ею место на тарифе.
+      await deleteProject(project.id,user.id).catch(() => undefined);
+      throw error;
+    }
     // Новый проект должен начинаться с нуля: остатки прежнего каталога не должны вернуть
     // локальные коммиты, которые пользователь как раз удалил.
     await resetWorkspaceForImport(sandbox.root);

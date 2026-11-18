@@ -13,6 +13,7 @@ import { getSandbox } from "../sandbox-manager.js";
 import { getPlatformEnv } from "../platform/platform-env.js";
 import { cloneRepository, resetWorkspaceForImport } from "../changes/git-repo.js";
 import { detectAndSaveHybridProfile } from "../preview/hybrid-detect.js";
+import { nodeId } from "../nodes/identity.js";
 
 // read_api/read_repository — импорт, write_repository — отправка коммитов обратно в GitLab.
 const oauthScope = "read_api read_repository write_repository";
@@ -195,14 +196,20 @@ export async function registerGitLabRoutes(app: FastifyInstance) {
         defaultBranch: branch,
         url: repository.web_url,
         ...(repository.http_url_to_repo ? { cloneUrl: repository.http_url_to_repo } : {}),
-      }, user.id, projectLimit);
+      }, user.id, projectLimit, { node: nodeId() });
     } catch (error) {
       if (error instanceof ProjectLimitError) {
         return reply.code(403).send({ error: error.message, code: "PROJECT_LIMIT_REACHED", limit: error.limit, used: error.used, plan });
       }
       throw error;
     }
-    const sandbox = await getSandbox(project.id, user.id);
+    let sandbox;
+    try {
+      sandbox = await getSandbox(project.id, user.id);
+    } catch (error) {
+      await deleteProject(project.id, user.id).catch(() => undefined);
+      throw error;
+    }
     // См. GitHub-импорт: импорт не должен наследовать старый каталог и его коммиты.
     await resetWorkspaceForImport(sandbox.root);
     const tree = await getGitLabTree(user.id, repository.id, branch);

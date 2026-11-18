@@ -170,6 +170,14 @@ export async function resetWorkspaceForImport(root: string) {
   await mkdir(root, { recursive: true });
 }
 
+const DEFAULT_CLONE_TIMEOUT_MS = 5 * 60_000;
+
+/** Предел одного клона: сеть GitHub иногда оставляет запрос без конца, и импорт висел вечно. */
+function cloneTimeoutMs() {
+  const raw = Number(process.env.GIT_CLONE_TIMEOUT_MS);
+  return Number.isFinite(raw) && raw >= 30_000 ? Math.round(raw) : DEFAULT_CLONE_TIMEOUT_MS;
+}
+
 /**
  * Импорт клоном — для провайдеров, у которых API не отдаёт файлы (SourceCraft). Клон приносит
  * и файлы, и историю, поэтому первая же задача станет коммитом поверх настоящей ветки.
@@ -183,16 +191,32 @@ export async function cloneRepository(root: string, options: {
 }) {
   if (!options.url) throw new Error("У репозитория нет адреса для git");
   await mkdir(root, { recursive: true });
-  await git.clone({
-    fs,
-    http,
-    dir: root,
-    url: options.url,
-    ref: options.branch || undefined,
-    singleBranch: true,
-    depth: 1,
-    ...(options.token ? { onAuth: () => ({ username: options.username ?? "oauth2", password: options.token as string }) } : {}),
-  });
+  const timeoutMs = cloneTimeoutMs();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const cloneHttp = {
+    request: (request: Parameters<typeof http.request>[0]) =>
+      http.request({ ...request, signal: controller.signal }),
+  };
+  try {
+    await git.clone({
+      fs,
+      http: cloneHttp,
+      dir: root,
+      url: options.url,
+      ref: options.branch || undefined,
+      singleBranch: true,
+      depth: 1,
+      ...(options.token ? { onAuth: () => ({ username: options.username ?? "oauth2", password: options.token as string }) } : {}),
+    });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error("Клонирование не завершилось за " + Math.round(timeoutMs / 1000) + " с: репозиторий не отдал данные. Попробуйте импорт ещё раз.");
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
   // Служебные исключения ставим и здесь: клон чужого проекта не должен притащить в нашу
   // историю .env и node_modules при первой же отправке.
   await writeExcludes(root);

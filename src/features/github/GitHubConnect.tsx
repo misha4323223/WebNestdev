@@ -1,4 +1,4 @@
-import { useCallback,useEffect,useRef,useState } from "react";
+import { useCallback,useEffect,useMemo,useRef,useState } from "react";
 import { KeyRound, UploadCloud } from "lucide-react";
 import { openImportedProject } from "../../lib/project-api";
 import { ConnectorCard,type ConnectorStatus } from "../integrations/ConnectorCard";
@@ -31,6 +31,7 @@ export function GitHubConnect({surface="home",onImported=openImportedProject}:{s
   const [status,setStatus]=useState<ConnectorStatus>("loading");
   const [login,setLogin]=useState<string|null>(null);
   const [repositories,setRepositories]=useState<Repository[]>([]);
+  const [repoQuery,setRepoQuery]=useState("");
   const [selected,setSelected]=useState<Repository|null>(null);
   const [reposOpen,setReposOpen]=useState(false);
   const [busy,setBusy]=useState(false);
@@ -197,6 +198,12 @@ export function GitHubConnect({surface="home",onImported=openImportedProject}:{s
     finally{setImporting(false)}
   }
 
+  const filteredRepositories=useMemo(()=>{
+    const query=repoQuery.trim().toLocaleLowerCase();
+    if(!query)return repositories;
+    return repositories.filter(repository=>repository.full_name.toLocaleLowerCase().includes(query));
+  },[repositories,repoQuery]);
+
   const appOrigin=window.location.origin;
 
   return <>
@@ -246,12 +253,16 @@ export function GitHubConnect({surface="home",onImported=openImportedProject}:{s
     {status==="connected"&&<div className="connector-body">
       <button className="ghost-button connector-toggle" onClick={()=>setReposOpen(open=>!open)}>{reposOpen?"Скрыть репозитории":"Импортировать репозиторий"}</button>
       {reposOpen&&<>
+        <div className="github-repository-search">
+          <input value={repoQuery} onChange={event=>setRepoQuery(event.target.value)} placeholder="Найти репозиторий по имени" aria-label="Поиск репозиториев GitHub" autoFocus/>
+          {repoQuery&&<button className="ghost-button" onClick={()=>setRepoQuery("")}>Сбросить</button>}
+        </div>
         <div className="github-repositories">
-          {repositories.length
-            ? repositories.map(repository=><button key={repository.id} className={"github-repository"+(selected?.id===repository.id?" selected":"")} onClick={()=>setSelected(repository)}>
+          {filteredRepositories.length
+            ? filteredRepositories.map(repository=><button key={repository.id} className={"github-repository"+(selected?.id===repository.id?" selected":"")} onClick={()=>setSelected(repository)}>
                 <span><strong>{repository.full_name}</strong><small>{repository.private?"Приватный":"Публичный"} · {repository.default_branch}</small></span>
               </button>)
-            : <span className="github-login">{loadingRepos?"Загружаем репозитории…":"Репозитории не найдены"}</span>}
+            : <span className="github-login">{loadingRepos?"Загружаем репозитории…":repositories.length?"Ничего не найдено — измените запрос":"Репозитории не найдены"}</span>}
         </div>
         <div className="connector-repo-actions">
           <button className="ghost-button" onClick={()=>void loadRepositories()} disabled={loadingRepos}>Обновить</button>

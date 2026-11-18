@@ -1149,6 +1149,10 @@ button,textarea{font:inherit}button{color:inherit}
 .connector-repo-actions .ghost-button{height:28px;border-color:var(--line-warm)}
 .connector-notice{padding:8px 9px;border:1px solid #3d3030;border-radius:6px;background:#1b1212;color:#d99b9b;font-size:10px;line-height:1.5}
 .connector-notice.ok{border-color:#3a3121;background:#1d170d;color:#b5a993}
+.github-repository-search{display:flex;align-items:center;gap:6px;padding:2px 0 6px}
+.github-repository-search input{flex:1;min-width:0;height:28px;border:1px solid var(--line-warm);border-radius:6px;background:#0b0d10;color:#e5e8ec;padding:0 9px;font:inherit;font-size:10.5px;outline:none}
+.github-repository-search input:focus{border-color:var(--line-warm-strong);box-shadow:0 0 0 3px rgba(204,195,178,.07)}
+.github-repository-search .ghost-button{height:28px;flex:none;border-color:var(--line-warm)}
 .connector .github-repositories{max-height:230px;padding:0;border-top:1px solid var(--line-warm-soft)}
 .github-hint{display:grid;gap:8px;margin:14px 0 0;padding:12px;border:1px dashed var(--line-warm-strong);border-radius:8px;background:#0e1116;color:#8b939e;font-size:10px;line-height:1.6}
 .github-hint strong{color:#dfe3e8;font-size:11px}

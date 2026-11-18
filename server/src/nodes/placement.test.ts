@@ -123,6 +123,30 @@ test("the threshold keeps a node with enough room in play", async () => {
   assert.equal(chosen.id, "node-2");
 });
 
+test("import can require the node that handles the request", async () => {
+  const local = node({ id: "node-2", memoryUsedMb: 3000 });
+  const roomier = node({ id: "node-1", memoryUsedMb: 1000 });
+  const chosen = await chooseProjectNode({
+    ensureLocal: async () => local,
+    list: async () => [roomier, local],
+    projectsByNode: async () => new Map(),
+    now: () => NOW,
+    requiredMemoryMb: 512,
+    requiredNode: "node-2",
+  });
+  assert.equal(chosen.id, "node-2");
+  await assert.rejects(
+    chooseProjectNode({
+      ensureLocal: async () => local,
+      list: async () => [local],
+      projectsByNode: async () => new Map(),
+      now: () => NOW,
+      requiredNode: "node-1",
+    }),
+    (error: unknown) => error instanceof NoSandboxNodeError && /node-1/.test(error.message),
+  );
+});
+
 test("selection fails clearly when every node is unavailable", async () => {
   await assert.rejects(
     chooseProjectNode({

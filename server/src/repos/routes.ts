@@ -14,6 +14,7 @@ import { projectDirectoryBytes, recordStorageMutation } from "../account/storage
 import { getSandbox } from "../sandbox-manager.js";
 import { initRepo, resetWorkspaceForImport } from "../changes/git-repo.js";
 import { detectAndSaveHybridProfile } from "../preview/hybrid-detect.js";
+import { nodeId } from "../nodes/identity.js";
 
 /**
  * Authorization Code + PKCE: GitVerse требует PKCE даже у конфиденциального клиента, поэтому
@@ -175,14 +176,20 @@ export async function registerRepoRoutes(app: FastifyInstance, provider: RepoPro
         defaultBranch: repository.defaultBranch,
         url: repository.url,
         ...(repository.cloneUrl ? { cloneUrl: repository.cloneUrl } : {}),
-      }, user.id, limitsForPlan(plan).projects);
+      }, user.id, limitsForPlan(plan).projects, { node: nodeId() });
     } catch (error) {
       if (error instanceof ProjectLimitError) {
         return reply.code(403).send({ error: error.message, code: "PROJECT_LIMIT_REACHED", limit: error.limit, used: error.used, plan });
       }
       throw error;
     }
-    const sandbox = await getSandbox(project.id, user.id);
+    let sandbox;
+    try {
+      sandbox = await getSandbox(project.id, user.id);
+    } catch (error) {
+      await deleteProject(project.id, user.id).catch(() => undefined);
+      throw error;
+    }
     // Импорт — это новый проект: старый каталог (если он почему-то остался) не должен
     // принести локальные коммиты и файлы, которых нет в репозитории.
     await resetWorkspaceForImport(sandbox.root);

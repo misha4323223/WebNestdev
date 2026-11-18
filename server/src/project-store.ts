@@ -244,10 +244,18 @@ async function withProjectLock<T>(userId:string,action:()=>Promise<T>):Promise<T
   try{return await action()}
   finally{release();if(projectLocks.get(userId)===current)projectLocks.delete(userId)}
 }
-export async function createProjectWithinLimit(name:string,github:GitHubRepositoryRef|undefined,userId:string,limit:number):Promise<Project>{
+export async function createProjectWithinLimit(
+  name:string,
+  github:GitHubRepositoryRef|undefined,
+  userId:string,
+  limit:number,
+  options:{node?:string}={},
+):Promise<Project>{
   // Placement happens before the project row exists: the project must be pinned in the same
   // transaction that creates it, otherwise a failed insert leaves a node decision with no project.
-  const node=await chooseProjectNode(placementRequest());
+  // Импорт передаёт `node`: файлы пишутся в ответ на этот же запрос, поэтому проект должен
+  // оказаться на той ноде, которая его создаёт, а не на самой свободной в кластере.
+  const node=await chooseProjectNode({...placementRequest(),...(options.node?{requiredNode:options.node}:{})});
   assertNodeWorkspace(node);
   const project=newProject(name,github,userId,node.id);
   if(isYdbEnabled()){
