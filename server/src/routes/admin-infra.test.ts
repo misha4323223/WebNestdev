@@ -134,6 +134,7 @@ test("песочницы делятся на running / cold / never и сорт�
     containers: new Map([["p1", { name: "wnd-p1", state: "running" as const }]]),
     previews: new Map([["p1", { mode: "container" as const, startedAt: Date.parse("2026-10-26T09:00:00.000Z"), lastUsedAt: Date.parse("2026-10-26T10:00:00.000Z") }]]),
     access: new Map<string, number>(),
+    startDurations: new Map([["p1", 1234]]),
     now: Date.parse("2026-10-26T12:00:00.000Z"),
   };
 
@@ -147,7 +148,8 @@ test("песочницы делятся на running / cold / never и сорт�
   ]);
   assert.equal(rows[0].container, "wnd-p1");
   assert.equal(rows[0].startedAt, "2026-10-26T09:00:00.000Z");
-  assert.equal(rows[0].startMs, null, "журнала старта нет — время не выдумывается");
+  assert.equal(rows[0].startMs, 1234, "время последнего старта берётся из журнала");
+  assert.equal(rows[1].startMs, null, "у проекта без записи в журнале время не выдумывается");
   assert.equal(rows[0].diskBytes, 100);
   assert.equal(rows[1].email, "two@example.test");
   assert.equal(rows[1].container, "");
@@ -161,6 +163,24 @@ test("песочницы делятся на running / cold / never и сорт�
   assert.deepEqual(filterSandboxRows(rows, "never").map(row => row.projectId), ["p4"]);
   assert.equal(filterSandboxRows(rows, "all").length, 5);
   assert.deepEqual(filterSandboxRows(rows, "cold").slice(0, 1).map(row => row.projectId), ["p2"]);
+});
+
+test("журнал холодных стартов считает только успешные runtime-запуски за сутки", async () => {
+  const { summarizePreviewStarts } = await import("../preview/preview-start-journal.js");
+  const now = Date.parse("2026-11-19T12:00:00.000Z");
+  const summary = summarizePreviewStarts([
+    { id: "1", projectId: "p1", node: "node-1", mode: "container", durationMs: 1000, ok: true, startedAt: now - 60_000 },
+    { id: "2", projectId: "p1", node: "node-1", mode: "container", durationMs: 3000, ok: true, startedAt: now - 30_000 },
+    { id: "3", projectId: "p2", node: "node-2", mode: "hybrid", durationMs: 500, ok: false, startedAt: now - 20_000 },
+    { id: "4", projectId: "p3", node: "node-1", mode: "container", durationMs: 2000, ok: true, startedAt: now - 25 * 60 * 60_000 },
+  ], now, "postgres");
+
+  assert.equal(summary.count, 2, "неудачный старт и старт старше суток не считаются");
+  assert.equal(summary.averageMs, 2000);
+  assert.equal(summary.slowestMs, 3000);
+  assert.equal(summary.latestByProject.get("p1")?.durationMs, 3000);
+  assert.equal(summary.latestByProject.has("p2"), false);
+  assert.equal(summary.source, "postgres");
 });
 
 test("маршруты закрыты админ-токеном и проверяют limit", async () => {

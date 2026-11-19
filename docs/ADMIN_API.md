@@ -173,6 +173,7 @@ curl -s https://panel.example.com/api/admin/2fa/verify -H 'content-type: applica
 | `GET /api/admin/audit` | `Bearer` | журнал безопасности: входы, второй фактор, ключи, удаление проектов (раздел 9) |
 | `GET /api/admin/infra` | `Bearer` | снимок инфраструктуры: хост, диск, Docker, узлы, песочницы, бакеты, база (раздел 7.5) |
 | `GET /api/admin/sandboxes` | `Bearer` | песочницы списком: `state` = `cold` / `running` / `never` / `all`, `limit` 1…200 (раздел 7.5) |
+| `GET /api/admin/cloud/overview` | `Bearer` | облако МТС: машины, диски, внешние адреса и бакеты (раздел 7.16) |
 | `GET /api/admin/nodes` | `Bearer` | реестр узлов, их свободная память и число закреплённых проектов (раздел 7.11) |
 | `POST /api/admin/nodes/:id/status` | `Bearer` | `online` / `draining` / `offline`; тело `{status, confirm: true}` (раздел 7.11) |
 | `GET /api/admin/nodes/:id/power` | `Bearer` | текущее питание ВМ по MWS (раздел 7.11.1) |
@@ -353,14 +354,15 @@ Postgres приводятся на сервере, потому что node-post
 
 | Поле | Смысл |
 |---|---|
-| `pricing` | какие цены действуют: `configured`, `source` (`model-prices` / `single-price` / `none`), `models`, `catchAll`, `freeModels` |
+| `pricing` | какие цены действуют: `configured`, `source` (`model-prices` / `single-price` / `polza-catalog` / `none`), `models`, `catchAll`, `freeModels` |
 | `infra` | постоянные расходы: `monthly`, `perDay`, `period`, `configured` |
 | `totals` | запуски, токены, проекты и активные люди, `modelCost`, `infraCost`, `totalCost`, стоимость на запуск/проект/человека, `complete` |
 | `daily` | дни периода без пропусков: токены, запуски, расход модели, инфраструктуры и всего |
 | `models` | по каждой модели: токены, запуски, люди, `cost`, `tokenShare`, `costShare`, `priced`, `priceSource` |
 | `plans` | `free` / `pro` / `team`: активные люди, токены, запуски, модельный расход, доли |
 | `topUsers`, `topProjects` | до 10 крупнейших потребителей; `cost` и `costComplete` |
-| `warnings` | человеческие объяснения: нет цен, нет инфраструктуры, неизвестная модель, резерв free-model |
+| `sources` | откуда взяты деньги: `ai` (каталог Polza: `configured`, `source`, `fetchedAt`, `stale`, `currency`, `models`) и `infra` (прайс-лист МВС и состав ВМ: `monthly`, `compute`, `disks`, `network`, `resources`, `rates`) |
+| `warnings` | человеческие объяснения: нет цен, нет инфраструктуры, неизвестная модель, резерв free-model, недоступный каталог |
 
 `complete: false` — не ошибка запроса, а честная граница: у какой-то модели нет цены, и её токены
 не вошли в деньги. Такие модели перечислены в `unpriced` (в `totals` — через `warnings`), а не
@@ -382,6 +384,8 @@ Postgres приводятся на сервере, потому что node-post
 | `plans` | по тарифу: подписчики, активные люди, расход модели, доля инфраструктуры, оплаты за период, MRR, маржа |
 | `unit` | расход на активного человека, инфраструктура и дотация free-тарифа на платящего, выручка и маржа на платящего |
 | `priceGuidance` | по платным тарифам: текущая цена, себестоимость, рекомендуемая цена, маржа при текущей цене |
+| `minimumSubscription` | самая дешёвая действующая платная подписка: `plan`, `currentPriceRub`, `breakEvenPrice`, `suggestedPrice`, `targetMargin`, `coversCostAtCurrentPrice`; `null`, если платящих нет |
+| `sources` | те же источники, что у `/stats/costs`: каталог Polza и прайс-лист МВС |
 | `warnings` | те же предупреждения плюс несовпадение валют и отсутствие платящих |
 
 Месячные числа — оценка темпа, а не бухгалтерский месяц: `period × 30 / days`. Инфраструктура
@@ -409,13 +413,34 @@ Postgres приводятся на сервере, потому что node-post
 
 ### 7.3. Цены моделей и инфраструктуры
 
+Цены подтягиваются автоматически из двух источников, а ручные переменные остаются
+переопределением и резервом:
+
+- **AI** — каталог Polza.ai (`GET /v1/models?type=chat&include_providers=true`). Для каждой модели
+  платформы выбирается тот upstream-провайдер, который задан её routing: `fixed` — первый из
+  списка, `cheapest` — первый по цене, `auto` — `top_provider` каталога. Цена в каталоге в рублях
+  за 1M токенов. Результат кэшируется на 15 минут и переживает сбой каталога ещё 6 часов
+  (`stale: true` в `sources.ai`).
+- **Инфраструктура** — официальный прайс-лист МТС (vCPU, RAM, сетевые диски, активные внешние
+  IP) плюс Compute API, из которого берутся фактические ВМ проекта: тип, зона, диски и адреса.
+  Стоимость считается как «ставка × ресурсы». Публичного Billing API у МВС нет, поэтому это
+  оценка по прайс-листу, а не остаток по счёту. Все ВМ включаются в расчёт независимо от
+  текущего питания: целевой production — две ноды, и выключенная вторая не должна занижать
+  минимальную цену подписки. В `sources.infra.resources` видно, какие ВМ и диски вошли.
+
+`PLATFORM_AI_MODEL_PRICES` остаётся главнее автоцены: если модель есть в ручной таблице, её
+правило побеждает. Это нужно для индивидуальных ставок и для случая, когда каталог ошибся.
+
 | Переменная | По умолчанию | Смысл |
 |---|---|---|
-| `PLATFORM_AI_MODEL_PRICES` | пусто | JSON-таблица цен за 1M токенов по моделям |
+| `PLATFORM_AI_MODEL_PRICES` | пусто | JSON-таблица цен за 1M токенов по моделям; перекрывает автоцены Polza |
 | `PLATFORM_AI_PRICE_INPUT_PER_MILLION` | пусто | общая ставка на вход, если таблицы нет или модель не найдена |
 | `PLATFORM_AI_PRICE_OUTPUT_PER_MILLION` | пусто | общая ставка на выход |
 | `PLATFORM_AI_PRICE_CURRENCY` | `USD` | валюта расходов; для сравнения с выручкой — `RUB` |
-| `PLATFORM_INFRA_COST_PER_MONTH` | пусто | постоянные расходы в месяц: ВМ, диск, бакет, SMS, домен |
+| `PLATFORM_INFRA_COST_PER_MONTH` | пусто | ручной резерв, если прайс-лист или Compute API недоступны |
+| `PLATFORM_INFRA_EXTRA_PER_MONTH` | пусто | прочие постоянные расходы сверх ВМ и дисков: S3, SMS, домены |
+| `MTS_PRICING_URL` | страница прайс-листа mws.ru | другой адрес официального прайс-листа |
+| `MWS_PROJECT` | из `keyId` | проект для Compute API, если доступ выдан готовым `MWS_IAM_TOKEN` |
 
 Пример для текущей модели платформы в Yandex Cloud AI Studio (цены за 1M токенов, вкл. НДС —
 сверяйте в консоли). JSON — **одной строкой**: выкатка пишет переменные в `.env` построчно:
@@ -492,8 +517,13 @@ curl -s -H "Authorization: Bearer $TOKEN" 'https://panel.example.com/api/admin/u
   Если не прочитан хотя бы один из источников состояния (отметки архива, контейнеры, каталог
   песочниц), раздел `sandboxes` не присылается вовсе, а `GET /api/admin/sandboxes` отвечает `503`:
   частичные счётчики выглядели бы точными, хотя часть проектов попала бы не в ту категорию.
-- `sandboxes.coldStarts24h`, `averageStartMs`, `slowestStartMs` и `startMs` в списке пока `null`:
-  журнала холодных стартов нет. Когда он появится, менять контракт не придётся — поля уже есть.
+- `sandboxes.coldStarts24h`, `averageStartMs`, `slowestStartMs` считаются по журналу
+  `preview_starts` за последние 24 часа. В счётчик входят только успешные runtime-запуски
+  (`container` и `hybrid`): статическая сборка — не остановленный контейнер, а неудачный запуск
+  не должен раздувать среднее. `averageStartMs` и `slowestStartMs` равны `null` при нуле стартов.
+  В PostgreSQL журнал общий для обеих реплик и переживает рестарт; в JSON-режиме он живёт в
+  памяти процесса, поэтому после рестарта окно начинается заново. `startMs` в строке песочницы —
+  последний успешный runtime-старт этого проекта за те же 24 часа, иначе `null`.
 - `diskBytes` в списке — измеренный размер проекта (для архивного — размер архива, он же входит в
   квоту аккаунта). Если замера ещё нет, приходит `null`, а `sandboxes.diskBytes` тоже становится
   `null`: частичная сумма выдавала бы себя за полную. У проекта без файлов это честный `0`.
@@ -1631,6 +1661,64 @@ curl -s -H "Authorization: Bearer $TOKEN" 'https://nestdev.ru/api/admin/search'
 платных тарифах. Бесплатный тариф всегда получает `["duckduckgo"]`, даже если на сервере
 выбран Yandex. После сохранения новые запросы используют настройку без перезапуска сервера.
 Действие пишет событие `platform.search.updated` в журнал безопасности.
+
+### 7.16. Облако МТС: машины, диски, адреса и бакеты
+
+Код: `server/src/routes/admin-cloud.ts`. Тесты: `server/src/routes/admin-cloud.test.ts`.
+Маршрут только читает, требует `Bearer` админа и ставит `cache-control: no-store`; снимок MWS
+кэшируется на 20 секунд, чтобы открытие экрана не превращалось в три запроса к облаку.
+
+| Маршрут | Что отдаёт |
+|---|---|
+| `GET /api/admin/cloud/overview` | `configured`, `project`, `machines`, `disks`, `addresses`, `buckets`, `totals`, `unavailable` |
+
+Ключ сервисного аккаунта и HMAC-ключи остаются на сервере: маршрут не возвращает ни IAM-токен,
+ни `Access key`/`Secret key`. Машины, диски и внешние адреса читаются из MWS Compute и VPC.
+Бакеты — через S3 `ListBuckets` ключами `PLATFORM_S3_*`; отдельного REST-метода списка бакетов
+у MWS нет. Если S3-ключи не настроены, остальные секции всё равно приходят, а в `unavailable`
+появляется причина `cloud.buckets`.
+
+```json
+{
+  "configured": true,
+  "project": "project-pimashin2015",
+  "machines": [
+    {
+      "id": "webnestdev",
+      "name": "webnestdev",
+      "zone": "ru-central1-b",
+      "power": "ON",
+      "state": "OK",
+      "vmType": "base-2-4",
+      "vcpu": 2,
+      "ramMb": 4096,
+      "disks": [{ "id": "webnestdev-mzayotc0", "sizeBytes": 53687091200, "type": "nbs-pl2", "boot": true, "iops": 2200 }],
+      "addresses": [{ "internalIp": "10.0.0.4", "externalIp": "2.59.83.250", "externalRef": "projects/project-pimashin2015/externalAddresses/ea-webnestdev-admin" }]
+    }
+  ],
+  "disks": [{ "id": "webnestdev-mzayotc0", "sizeBytes": 53687091200, "type": "nbs-pl2", "iops": 2200, "attachedTo": [{ "id": "webnestdev", "name": "webnestdev" }] }],
+  "addresses": [{ "id": "ea-webnestdev", "ipAddress": "178.236.27.102", "active": true, "attachedTo": "nlb/projects/project-pimashin2015/networks/webnestdev-net/nlbs/webnestdev-nlb-main" }],
+  "buckets": [{ "name": "webnest", "configured": true }],
+  "totals": { "machines": 2, "runningMachines": 1, "disks": 2, "diskBytes": 75161927680, "addresses": 2, "activeAddresses": 2, "buckets": 1 },
+  "unavailable": []
+}
+```
+
+Если MWS не настроен, ответ приходит `200` с `configured: false`, пустыми массивами и причиной
+в `unavailable`: экран показывает «облако не подключено», а не ошибку сети. Если не прочитана
+одна секция, её массив пустой, соответствующая сумма в `totals` равна `null`, а причина лежит в
+`unavailable` (`cloud.machines`, `cloud.disks`, `cloud.addresses`, `cloud.buckets`). Ноль в
+`totals` означает, что секция прочитана и ресурсов действительно нет.
+
+Проверка после выкатки:
+
+```bash
+curl -s -H "Authorization: Bearer $TOKEN" 'https://panel.example.com/api/admin/cloud/overview'
+```
+
+Ожидаемо: `configured: true`, проект из ключа, ненулевые `totals.machines`; при настроенных
+`PLATFORM_S3_*` — непустой `buckets`. Если `buckets` пуст, а в `unavailable` есть
+`cloud.buckets`, проверять нужно HMAC-ключ и роль `storage.bucket.editor`, а не Compute.
 
 ## 8. Обращения поддержки
 

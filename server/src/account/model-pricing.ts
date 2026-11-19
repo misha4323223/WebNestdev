@@ -24,7 +24,7 @@
 
 export type ModelPrice = { input: number; output: number };
 
-export type ModelPriceSource = "model-prices" | "single-price" | "free-model";
+export type ModelPriceSource = "model-prices" | "single-price" | "polza-catalog" | "free-model";
 
 export type ModelPriceRule = ModelPrice & {
   /** Ключ таблицы в нижнем регистре: точное имя модели или его часть. */
@@ -40,7 +40,7 @@ export type ModelPriceTable = {
   catchAll: ModelPriceRule | null;
   /** Имена, которые считаются бесплатными, пока для них нет явной цены. */
   freeMatches: string[];
-  source: "model-prices" | "single-price" | "none";
+  source: "model-prices" | "single-price" | "polza-catalog" | "none";
   /** Есть ли хоть одна цена, заданная человеком (бесплатная модель сама по себе — не в счёт). */
   configured: boolean;
   /** Сколько записей таблицы не разобрано: админка покажет это предупреждением. */
@@ -124,6 +124,35 @@ export function legacyModelPrice(env: NodeJS.ProcessEnv = process.env): ModelPri
     input: hasInput ? input : 0,
     output: hasOutput ? output : 0,
     source: "single-price",
+  };
+}
+
+/**
+ * Добавляет автоматические цены каталога к ручной таблице. Ручные правила остаются первыми:
+ * админ должен иметь возможность перекрыть цену провайдера, не отключая автосинхронизацию.
+ * `currency` применяется только когда человек вообще не задавал цен — иначе валюта ручной
+ * таблицы важнее валюты каталога.
+ */
+export function withCatalogPrices(
+  table: ModelPriceTable,
+  rules: ModelPriceRule[],
+  options: { currency?: string } = {},
+): ModelPriceTable {
+  if (rules.length === 0 || table.catchAll) return table;
+  // Ручное правило может быть не точным, а частичным (`deepseek` для всей линейки). Оно всё
+  // равно должно победить автоцену, иначе `modelPriceFor` найдёт точное правило каталога раньше
+  // ручного и админ не сможет переопределить цену без отключения синхронизации.
+  const manualCovers = (model: string) => table.rules.some(rule =>
+    model === rule.match || model.includes(rule.match),
+  );
+  const added = rules.filter(rule => rule.match && !manualCovers(rule.match));
+  if (added.length === 0) return table;
+  return {
+    ...table,
+    currency: table.configured ? table.currency : (options.currency?.trim().toUpperCase() || table.currency),
+    rules: [...table.rules, ...added],
+    source: table.source === "none" ? "polza-catalog" : table.source,
+    configured: true,
   };
 }
 

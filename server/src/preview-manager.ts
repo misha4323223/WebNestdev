@@ -21,6 +21,7 @@ import { hybridBackendLogs, hybridPreviewLogs, hybridPreviewStatus, recoverLocal
 import { fetchPreviewLogsFromOwner } from "./preview/owner-logs.js";
 import { PREVIEW_OWNER_UNAVAILABLE_HINT, previewOwnerReachable } from "./preview/owner-health.js";
 import { recordPreviewStart } from "./preview/preview-metrics.js";
+import { notePreviewStart } from "./preview/preview-start-journal.js";
 import { clearIdleStop } from "./preview/idle-stop-marker.js";
 import { ContainerPreviewPlanError, PREVIEW_LABEL, type PreviewStatus } from "./preview/types.js";
 import { clearPreviewSecrets } from "./secrets/preview-secrets.js";
@@ -83,6 +84,12 @@ export type PreviewStartOptions = {
 
 export async function startPreview(config: SandboxConfig, options: PreviewStartOptions = {}) {
   const startedAt = Date.now();
+  // Холодный старт — это создание нового preview, а не повторный `start` уже работающего.
+  // Поэтому запоминаем идентичность прошлой строки: `startedAt` общего реестра не меняется,
+  // когда `startContainerPreview` просто возвращает живой предпросмотр.
+  const previousStartedAt = await hydratePreview(config.projectId)
+    .then(current => current?.startedAt ?? 0)
+    .catch(() => 0);
   let ok = false;
   // Новый запуск отменяет объяснение старой ссылки: она снова открывает приложение, а не
   // страницу «остановлен после простоя».
@@ -101,8 +108,23 @@ export async function startPreview(config: SandboxConfig, options: PreviewStartO
     console.error("[preview] не удалось запустить предпросмотр: проект " + config.projectId + " — " + describeError(error));
     throw error;
   } finally {
+    // Режим нужен журналу холодных стартов: статическая сборка — это не контейнер, который
+    // поднимают при первом запросе агента, и в счётчик `coldStarts24h` она не входит.
+    const mode = getPreviewStartProgress(config.projectId)?.mode;
+    const durationMs = Date.now() - startedAt;
+    const node = config.node ?? nodeId();
     clearPreviewStartProgress(config.projectId);
-    recordPreviewStart(config.node ?? nodeId(), Date.now() - startedAt, ok);
+    recordPreviewStart(node, durationMs, ok);
+    if (ok && (mode === "container" || mode === "hybrid")) {
+      void hydratePreview(config.projectId)
+        .then(current => {
+          // Строка, которая была до вызова, — это повторное открытие живого preview. Новая
+          // строка появилась только что, значит контейнер действительно поднимали с нуля.
+          if (!current || current.startedAt <= previousStartedAt) return;
+          notePreviewStart({ projectId: config.projectId, node, mode, durationMs, ok, startedAt });
+        })
+        .catch(() => undefined);
+    }
     // Запуск предпросмотра — это ещё и запись: он ставит зависимости и собирает `dist`.
     // Счётчик квоты обязан увидеть это сразу, иначе пользователь видит старый размер, хотя
     // `node_modules` уже лежит на диске. Замер идёт в фоне и не задерживает ответ панели.

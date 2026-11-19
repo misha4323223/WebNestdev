@@ -15,6 +15,7 @@ import { readProjectSizes } from "../account/storage-quota.js";
 import { sandboxRootDir } from "../sandbox/config.js";
 import { sandboxHost, type SandboxHostStatus } from "../sandbox/host.js";
 import { listPreviewsAcrossReplicas } from "../preview/preview-store.js";
+import { previewStartJournal, type PreviewStartJournalSummary } from "../preview/preview-start-journal.js";
 import { PREVIEW_LABEL } from "../preview/types.js";
 import { lastProjectAccess } from "../storage/project-archive.js";
 import { listArchiveRecords, type ProjectArchiveRecord } from "../storage/project-archive-state.js";
@@ -377,6 +378,8 @@ export type SandboxRowSource = {
   containers: Map<string, { name: string; state: "running" | "stopped" }>;
   previews: Map<string, { mode: "container" | "static" | "hybrid"; startedAt: number; lastUsedAt: number }>;
   access: Map<string, number>;
+  /** Последний успешный runtime-старт каждого проекта за сутки; null — журнала нет. */
+  startDurations?: Map<string, number>;
   now: number;
 };
 
@@ -426,9 +429,8 @@ export function buildSandboxRows(source: SandboxRowSource): AdminSandboxRow[] {
         ],
         source.now,
       ),
-      // Время старта измеряется только журналом, которого пока нет: ноль здесь был бы ложью.
       startedAt: preview ? new Date(preview.startedAt).toISOString() : null,
-      startMs: null,
+      startMs: source.startDurations?.get(project.id) ?? null,
       diskBytes: measuredBytes ?? (state === "never" ? 0 : null),
     });
   }
@@ -448,6 +450,8 @@ type SandboxInventory = {
   sizesReady: boolean;
   /** Состояние (running / cold / never) известно, только если прочитаны оба источника. */
   stateReady: boolean;
+  /** Сводка журнала холодных стартов; null — журнал не прочитан. */
+  starts: PreviewStartJournalSummary | null;
   issues: InfraUnavailable[];
 };
 
@@ -497,12 +501,13 @@ async function collectSandboxInventory(): Promise<SandboxInventory> {
   // пустым списком — иначе экран скажет «песочниц нет» вместо «не удалось прочитать».
   const projects = await withTimeout(listProjectOwners(), 5_000, "Список проектов не прочитан за 5 с");
 
-  const [sizesResult, archivesResult, usersResult, containersResult, directoriesResult] = await Promise.allSettled([
+  const [sizesResult, archivesResult, usersResult, containersResult, directoriesResult, startsResult] = await Promise.allSettled([
     withTimeout(readProjectSizes(), 5_000, "Размеры проектов не прочитаны за 5 с"),
     withTimeout(listArchiveRecords(), 5_000, "Отметки холодного яруса не прочитаны за 5 с"),
     withTimeout(listUserIdentities(), 5_000, "Email аккаунтов не прочитаны за 5 с"),
     withTimeout(readPreviewContainers(), 8_000, "Docker не ответил за 8 с"),
     withTimeout(projectDirectoryIds(), 5_000, "Каталог песочниц не прочитан за 5 с"),
+    withTimeout(previewStartJournal(now), 5_000, "Журнал стартов не прочитан за 5 с"),
   ]);
 
   const sizes = sizesResult.status === "fulfilled" ? sizesResult.value : new Map();
@@ -541,12 +546,21 @@ async function collectSandboxInventory(): Promise<SandboxInventory> {
   const access = new Map<string, number>();
   for (const project of projects) access.set(project.id, lastProjectAccess(project.id));
 
+  const starts = startsResult.status === "fulfilled" ? startsResult.value : null;
+  if (startsResult.status === "rejected") {
+    issues.push({ section: "sandboxes.coldStarts24h", reason: "журнал стартов не прочитан: " + errorText(startsResult.reason) });
+  }
+  const startDurations = starts
+    ? new Map([...starts.latestByProject].map(([projectId, value]) => [projectId, value.durationMs]))
+    : undefined;
+
   return {
-    rows: buildSandboxRows({ projects, sizes, archives, emails, directories, containers, previews, access, now }),
+    rows: buildSandboxRows({ projects, sizes, archives, emails, directories, containers, previews, access, startDurations, now }),
     projects: projects.length,
     sizes,
     sizesReady: sizesResult.status === "fulfilled",
     stateReady: archivesResult.status === "fulfilled" && containersResult.status === "fulfilled" && directoriesResult.status === "fulfilled",
+    starts,
     issues,
   };
 }
@@ -861,17 +875,19 @@ export async function buildInfraSnapshot(
           : "размеры проектов не прочитаны — сумма по песочницам неизвестна",
       );
     }
-    mark("sandboxes.coldStarts24h", "журнала холодных стартов нет — счётчик за сутки не ведётся");
-    mark("sandboxes.averageStartMs", "журнала холодных стартов нет — среднее время старта не измеряется");
-    mark("sandboxes.slowestStartMs", "журнала холодных стартов нет — самое долгое время старта не измеряется");
+    if (!inventory.starts) {
+      mark("sandboxes.coldStarts24h", "журнал холодных стартов не прочитан — счётчик за сутки неизвестен");
+      mark("sandboxes.averageStartMs", "журнал холодных стартов не прочитан — среднее время старта неизвестно");
+      mark("sandboxes.slowestStartMs", "журнал холодных стартов не прочитан — самое долгое время старта неизвестно");
+    }
     sandboxes = {
       projects: inventory.projects,
       running: rows.filter(row => row.state === "running").length,
       cold: rows.filter(row => row.state === "cold").length,
       neverStarted: rows.filter(row => row.state === "never").length,
-      coldStarts24h: null,
-      averageStartMs: null,
-      slowestStartMs: null,
+      coldStarts24h: inventory.starts?.count ?? null,
+      averageStartMs: inventory.starts?.averageMs ?? null,
+      slowestStartMs: inventory.starts?.slowestMs ?? null,
       diskBytes: unknownDisk ? null : rows.reduce((sum, row) => sum + (row.diskBytes ?? 0), 0),
     };
   }

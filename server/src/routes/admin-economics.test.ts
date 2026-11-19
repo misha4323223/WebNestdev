@@ -15,7 +15,7 @@ import path from "node:path";
 process.env.WEBNESTDEV_STORAGE = "json";
 process.env.WEBNESTDEV_DATA_DIR = await mkdtemp(path.join(tmpdir(), "admin-economics-"));
 
-const { priceGuidance, priceModelRows, planUsageStats, spendersFromRows, costWarnings } = await import("./admin-economics.js");
+const { priceGuidance, priceModelRows, planUsageStats, spendersFromRows, costWarnings, minimumSubscription } = await import("./admin-economics.js");
 const { readModelPriceTable } = await import("../account/model-pricing.js");
 
 const table = readModelPriceTable({
@@ -126,6 +126,27 @@ test("текущая цена берётся из настройки магаз�
     if (previous === undefined) delete process.env.ROBOKASSA_PRICE_PRO;
     else process.env.ROBOKASSA_PRICE_PRO = previous;
   }
+});
+
+test("минимальная подписка — самая дешёвая из действующих, с ценой покрытия и ценой под маржу", () => {
+  const guidance = priceGuidance({
+    targetMargin: 0.7,
+    monthlyFactor: 1,
+    infraMonthly: 3000,
+    freeModelCostPeriod: 300,
+    paidSubscribers: 10,
+    plans: [
+      { plan: "pro", subscribers: 6, modelCostPeriod: 600 },
+      { plan: "team", subscribers: 4, modelCostPeriod: 1200 },
+    ],
+  });
+  const minimum = minimumSubscription(guidance, 0.7);
+  assert.equal(minimum?.plan, "pro");
+  assert.equal(minimum?.breakEvenPrice, 430);
+  assert.equal(minimum?.suggestedPrice, 1440);
+  assert.equal(minimum?.targetMargin, 0.7);
+  assert.equal(minimum?.basis, "lowest-current-price-among-active-plans");
+  assert.equal(minimumSubscription([], 0.7), null);
 });
 
 test("без платящих цена не выдумывается", () => {

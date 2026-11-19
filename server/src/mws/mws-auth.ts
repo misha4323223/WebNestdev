@@ -461,6 +461,22 @@ export async function mwsIamToken(override?: MwsCredentialOverride): Promise<str
   return token;
 }
 
+/**
+ * Проект, к которому относится ключ. Нужен экономике: Compute API перечисляет ресурсы по
+ * пути `/compute/v1/projects/<проект>/virtualMachines`, и проект нельзя просить у человека,
+ * если он уже зашит в `keyId`. Для готового IAM-токена проект не выводится — тогда работает
+ * `MWS_PROJECT`.
+ */
+export async function mwsProject(override?: MwsCredentialOverride): Promise<string | null> {
+  const credential = resolveCredential(override);
+  if (!credential) return null;
+  if (credential.kind === "token") return firstEnv("MWS_PROJECT") ?? null;
+  const key = credential.kind === "parts"
+    ? mwsKeyFromParts(credential)
+    : parseMwsAuthorizedKey(await readCredential(credential));
+  return key.project;
+}
+
 export type MwsRequest = { method?: string; host?: string; path: string; body?: unknown };
 
 /**

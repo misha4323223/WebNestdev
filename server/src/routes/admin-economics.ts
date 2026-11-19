@@ -7,10 +7,9 @@ import {
   costForTokens,
   isFreeModel,
   modelPriceFor,
-  readInfraCostMonthly,
-  readModelPriceTable,
   type ModelPriceTable,
 } from "../account/model-pricing.js";
+import { pricingSourcesView, resolveAdminPricing } from "../account/pricing-sources.js";
 import { getFreeModelConfig } from "../provider/free-model.js";
 import { getTable, ydbQuery } from "../storage/ydb.js";
 import { requireAdmin } from "./admin.js";
@@ -429,6 +428,33 @@ export type PriceGuidance = {
   coversCostAtCurrentPrice: boolean;
 };
 
+export type MinimumSubscription = PriceGuidance & {
+  targetMargin: number;
+  /** Самая дешёвая действующая платная подписка — по ней видно нижнюю границу окупаемости. */
+  basis: "lowest-current-price-among-active-plans";
+};
+
+/**
+ * Одна строка «с чего начинается окупаемость»: самый дешёвый тариф, на котором сейчас есть
+ * подписчики. Она не заменяет `priceGuidance`, а отвечает на прямой вопрос админки — какая
+ * минимальная цена подписки покрывает себестоимость и целевую маржу.
+ */
+export function minimumSubscription(
+  guidance: PriceGuidance[],
+  targetMargin: number,
+): MinimumSubscription | null {
+  const active = guidance.filter(row => row.subscribers > 0);
+  if (active.length === 0) return null;
+  const cheapest = active.reduce((left, right) =>
+    right.currentPriceRub < left.currentPriceRub ? right : left,
+  );
+  return {
+    ...cheapest,
+    targetMargin,
+    basis: "lowest-current-price-among-active-plans",
+  };
+}
+
 /**
  * Цена «по себестоимости» и цена под целевую маржу.
  *
@@ -525,8 +551,9 @@ export async function registerAdminEconomicsRoutes(app: FastifyInstance) {
     applyNoStoreToReply(reply);
 
     const { days } = costsSchema.parse(request.query);
-    const table = readModelPriceTable();
-    const infra = readInfraCostMonthly();
+    const pricing = await resolveAdminPricing();
+    const table = pricing.table;
+    const infra = pricing.infra;
     const to = isoDate(new Date());
     const fromDate = periodStart(days);
 
@@ -697,13 +724,17 @@ export async function registerAdminEconomicsRoutes(app: FastifyInstance) {
         })),
         table,
       ).map(project => ({ ...project, cost: roundMoney(project.cost) })),
-      warnings: costWarnings({
-        table,
-        unpriced: priced.unpriced,
-        infraConfigured: infra.configured,
-        freeModelTokens,
-        freeFallbackConfigured: freeFallback,
-      }),
+      sources: pricingSourcesView(pricing),
+      warnings: [
+        ...costWarnings({
+          table,
+          unpriced: priced.unpriced,
+          infraConfigured: infra.configured,
+          freeModelTokens,
+          freeFallbackConfigured: freeFallback,
+        }),
+        ...pricing.warnings,
+      ],
     };
   });
 
@@ -717,8 +748,9 @@ export async function registerAdminEconomicsRoutes(app: FastifyInstance) {
     applyNoStoreToReply(reply);
 
     const query = economicsSchema.parse(request.query);
-    const table = readModelPriceTable();
-    const infra = readInfraCostMonthly();
+    const pricing = await resolveAdminPricing();
+    const table = pricing.table;
+    const infra = pricing.infra;
     const now = new Date();
     const nowIso = now.toISOString();
     const to = isoDate(now);
@@ -813,13 +845,16 @@ export async function registerAdminEconomicsRoutes(app: FastifyInstance) {
       .filter(row => isFreeModel(String(row.model), table))
       .reduce((sum, row) => sum + num(row.prompt) + num(row.completion), 0);
     const freeFallback = Boolean(getFreeModelConfig()?.fallback);
-    const warnings = costWarnings({
-      table,
-      unpriced: priced.unpriced,
-      infraConfigured: infra.configured,
-      freeModelTokens,
-      freeFallbackConfigured: freeFallback,
-    });
+    const warnings = [
+      ...costWarnings({
+        table,
+        unpriced: priced.unpriced,
+        infraConfigured: infra.configured,
+        freeModelTokens,
+        freeFallbackConfigured: freeFallback,
+      }),
+      ...pricing.warnings,
+    ];
     if (!comparable) {
       warnings.push(
         "Расходы в " + table.currency + ", выручка в " + REVENUE_CURRENCY +
@@ -838,6 +873,23 @@ export async function registerAdminEconomicsRoutes(app: FastifyInstance) {
         "Стоимость неполная: рекомендация по цене не рассчитана, пока у всех моделей нет цены.",
       );
     }
+
+    const guidance = comparable && priced.complete
+      ? priceGuidance({
+          targetMargin: query.margin,
+          monthlyFactor,
+          infraMonthly: infra.monthly,
+          freeModelCostPeriod: freePlanCostPeriod,
+          paidSubscribers,
+          plans: plansUsage
+            .filter(row => row.plan !== "free")
+            .map(row => ({
+              plan: row.plan,
+              subscribers: subscribers.get(row.plan) ?? 0,
+              modelCostPeriod: row.modelCost,
+            })),
+        })
+      : [];
 
     return {
       generatedAt: nowIso,
@@ -897,22 +949,9 @@ export async function registerAdminEconomicsRoutes(app: FastifyInstance) {
           ? roundMoney((mrr - monthlyTotalCost) / paidSubscribers)
           : null,
       },
-      priceGuidance: comparable && priced.complete
-        ? priceGuidance({
-            targetMargin: query.margin,
-            monthlyFactor,
-            infraMonthly: infra.monthly,
-            freeModelCostPeriod: freePlanCostPeriod,
-            paidSubscribers,
-            plans: plansUsage
-              .filter(row => row.plan !== "free")
-              .map(row => ({
-                plan: row.plan,
-                subscribers: subscribers.get(row.plan) ?? 0,
-                modelCostPeriod: row.modelCost,
-              })),
-          })
-        : [],
+      priceGuidance: guidance,
+      minimumSubscription: minimumSubscription(guidance, query.margin),
+      sources: pricingSourcesView(pricing),
       warnings,
     };
   });

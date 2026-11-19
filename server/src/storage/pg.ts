@@ -3,6 +3,7 @@ import { Pool } from "pg";
 import { acquireStorageInitLock } from "./init-lock.js";
 import { ensurePreviewTable } from "./preview-table.js";
 import { ensurePreviewReservationTable } from "./preview-reservation-table.js";
+import { ensurePreviewStartTable } from "./preview-start-table.js";
 import { ensureRunLeaseTable } from "./run-lease-table.js";
 import { ensureCustomDomainTable } from "./custom-domain-table.js";
 import { ensureBackgroundJobColumns } from "./function-jobs-table.js";
@@ -837,6 +838,7 @@ export async function initializeStorage(): Promise<void> {
     // появились в C1, когда состояние перестало помещаться в память одного процесса.
     await ensurePreviewTable(pool, getTable("previews"));
     await ensurePreviewReservationTable(pool, getTable("preview_reservations"));
+    await ensurePreviewStartTable(pool, getTable("preview_starts"));
     await ensureRunLeaseTable(pool, getTable("run_leases"));
     await ensureCustomDomainTable(pool, getTable("site_domains"), getTable("sites"));
 

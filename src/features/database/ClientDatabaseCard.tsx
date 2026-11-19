@@ -109,7 +109,10 @@ export function ClientDatabaseCard({
         <strong>Встроенная база NestDev</strong>
         <small>PostgreSQL для данных приложения · без внешнего провайдера</small>
       </div>
-      <span className={"client-db-state" + (provisioned ? " ok" : "")}>{state}</span>
+      <div className="client-db-head-tools">
+        <span className={"client-db-state" + (provisioned ? " ok" : "")}>{state}</span>
+        {projectId && <button type="button" className="client-db-refresh" disabled={busy || loading} onClick={() => void reload()} title="Обновить состояние базы" aria-label="Обновить состояние базы"><RefreshCw size={13}/></button>}
+      </div>
     </div>
 
     {!projectId && <p className="account-muted client-db-empty">Откройте проект и вернитесь в настройки: строка подключения создаётся для конкретного проекта.</p>}
@@ -142,12 +145,11 @@ export function ClientDatabaseCard({
       {active.readOnly && <div className="client-db-notice"><Lock size={14}/><span>Сейчас база работает только на чтение: закончилась квота или тариф не включает запись. Данные не удалены.</span></div>}
       <div className="client-db-actions">
         {!provisioned
-          ? <button type="button" className="send-button" disabled={busy || !active.reachable} onClick={() => void connect()}>
-              {busy ? "Создаём…" : "Создать и подключить"}
+          ? <button type="button" className="send-button client-db-connect" disabled={busy || !active.reachable} onClick={() => void connect()}>
+              {busy ? "Подключаем…" : "Подключить базу"}
             </button>
           : <span className="client-db-connected"><Check size={13}/> DATABASE_URL уже в секретах проекта</span>}
-        {provisioned && <button type="button" className="ghost-button" disabled={busy} onClick={() => void disconnect()}>Отключить от проекта</button>}
-        <button type="button" className="ghost-button client-db-refresh" disabled={busy || loading} onClick={() => void reload()} title="Обновить состояние базы" aria-label="Обновить состояние базы"><RefreshCw size={13}/></button>
+        {provisioned && <button type="button" className="ghost-button client-db-disconnect" disabled={busy} onClick={() => void disconnect()}>Отключить от проекта</button>}
       </div>
       {!provisioned && <p className="account-muted client-db-footnote">Создадим схему на аккаунт и положим строку подключения в секреты проекта. Пароль не показывается ни в браузере, ни агенту.</p>}
       {provisioned && <p className="account-muted client-db-footnote">Одна встроенная база на аккаунт. Повторное подключение к другому проекту обновит пароль — не подключайте два проекта одновременно без необходимости.</p>}

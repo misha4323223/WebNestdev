@@ -81,6 +81,7 @@ import { registerAdminAnalyticsRoutes } from "./routes/admin-analytics.js";
 import { registerAdminEconomicsRoutes } from "./routes/admin-economics.js";
 import { registerAdminAuditRoutes } from "./routes/admin-audit.js";
 import { registerAdminInfraRoutes } from "./routes/admin-infra.js";
+import { registerAdminCloudRoutes } from "./routes/admin-cloud.js";
 import { registerAdminNodeRoutes } from "./routes/admin-nodes.js";
 import { registerAdminPruneRoutes } from "./routes/admin-prune.js";
 import { registerAdminReleasesRoutes } from "./routes/admin-releases.js";
@@ -448,6 +449,8 @@ await registerAdminEconomicsRoutes(app);
 await registerAdminAuditRoutes(app);
 // Инфраструктура: диск, Docker, песочницы, бакеты и база. Только чтение и только админ-токен.
 await registerAdminInfraRoutes(app);
+// Облако МТС: машины, диски, внешние адреса и бакеты одним снимком для экрана «Облако».
+await registerAdminCloudRoutes(app);
 // Реестр узлов и drain: администратор видит размещение и может вывести машину из обслуживания.
 await registerAdminNodeRoutes(app);
 // Безопасная очистка Docker: кэш сборки и висячие образы. Контейнеры и тома не трогает.

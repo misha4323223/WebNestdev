@@ -12,6 +12,10 @@ import {
 
 const IMAGE_FILE=/\.(?:png|jpe?g|gif|webp|svg|avif|bmp|ico)$/i;
 
+function isImageObject(object:ProjectMediaObject){
+  return IMAGE_FILE.test(object.name)||IMAGE_FILE.test(object.key);
+}
+
 function formatBytes(bytes:number){
   if(bytes<1024)return bytes+" Б";
   if(bytes<1024*1024)return Math.round(bytes/1024)+" КБ";
@@ -46,6 +50,7 @@ export function MediaPanel({projectId,onChanged}:{projectId:string;onChanged?:()
   const [error,setError]=useState("");
   const [notice,setNotice]=useState("");
   const [selectedKey,setSelectedKey]=useState("");
+  const [selectedKeys,setSelectedKeys]=useState<Set<string>>(()=>new Set());
   const [filter,setFilter]=useState("");
   const [unusedOnly,setUnusedOnly]=useState(false);
   const [busy,setBusy]=useState("");
@@ -69,6 +74,8 @@ export function MediaPanel({projectId,onChanged}:{projectId:string;onChanged?:()
   },[objects,filter,unusedOnly]);
   const totalBytes=useMemo(()=>objects.reduce((sum,object)=>sum+object.bytes,0),[objects]);
   const unusedCount=useMemo(()=>objects.filter(object=>object.usage?.count===0).length,[objects]);
+  const selectedObjects=useMemo(()=>objects.filter(object=>selectedKeys.has(object.key)),[objects,selectedKeys]);
+  const selectedBytes=useMemo(()=>selectedObjects.reduce((sum,object)=>sum+object.bytes,0),[selectedObjects]);
 
   async function load(){
     setLoading(true);
@@ -76,6 +83,10 @@ export function MediaPanel({projectId,onChanged}:{projectId:string;onChanged?:()
     try{
       const data=await listProjectMedia(projectId);
       setObjects(data.objects);
+      setSelectedKeys(current=>{
+        const next=new Set([...current].filter(key=>data.objects.some(object=>object.key===key)));
+        return next.size===current.size?current:next;
+      });
       usageTruncated.current=data.usageTruncated;
       usageAvailable.current=data.usageAvailable;
       setSelectedKey(current=>data.objects.some(object=>object.key===current)?current:(data.objects[0]?.key??""));
@@ -89,6 +100,7 @@ export function MediaPanel({projectId,onChanged}:{projectId:string;onChanged?:()
   useEffect(()=>{
     setObjects([]);
     setSelectedKey("");
+    setSelectedKeys(new Set());
     setError("");
     setNotice("");
     usageTruncated.current=false;
@@ -161,6 +173,60 @@ export function MediaPanel({projectId,onChanged}:{projectId:string;onChanged?:()
     }finally{setBusy("")}
   }
 
+  function toggleSelected(object:ProjectMediaObject){
+    setSelectedKeys(current=>{
+      const next=new Set(current);
+      if(next.has(object.key))next.delete(object.key);
+      else next.add(object.key);
+      return next;
+    });
+    setNotice("");
+    setError("");
+  }
+
+  async function removeSelected(){
+    const targets=objects.filter(object=>selectedKeys.has(object.key)&&isImageObject(object));
+    if(!targets.length)return;
+    const used=targets.filter(object=>(object.usage?.count??0)>0);
+    const unknown=targets.filter(object=>object.usage===null);
+    const names=targets.slice(0,8).map(object=>"• "+object.name).join("\n");
+    const question=[
+      "Удалить выбранные изображения ("+targets.length+")?",
+      "",
+      names+(targets.length>8?"\n• …":""),
+      used.length?"\nИспользуются в проекте: "+used.map(object=>object.name).join(", ")+". Если удалить их, ссылки станут битыми.":"",
+      unknown.length?"\nНе удалось проверить: "+unknown.map(object=>object.name).join(", ")+". Удаление всё равно возможно, но проверьте ссылки вручную.":"",
+    ].filter(Boolean).join("\n");
+    if(!window.confirm(question))return;
+
+    setBusy("delete:selected");
+    setError("");
+    setNotice("");
+    let deleted=0;
+    const failed:string[]=[];
+    const failedKeys=new Set<string>();
+    try{
+      // Сервер удаляет по одному ключу и проверяет владельца проекта. Последовательные
+      // запросы дают точный итог, а не «часть удалилась» без объяснения, какая именно.
+      for(const object of targets){
+        try{
+          await deleteUploadedMedia(projectId,object.key,(object.usage?.count??0)>0||object.usage===null);
+          deleted++;
+        }catch(failure){
+          failedKeys.add(object.key);
+          failed.push(object.name+": "+(failure instanceof Error?failure.message:"не удалось удалить"));
+        }
+      }
+      // Ошибочные файлы остаются выбранными: повторное нажатие не требует искать их заново.
+      setSelectedKeys(failedKeys);
+      setSelectedKey(current=>failedKeys.has(current)?current:targets.some(object=>object.key===current)?"":current);
+      await load();
+      onChanged?.();
+      if(deleted)setNotice("Удалено изображений: "+deleted+".");
+      if(failed.length)setError("Не удалось удалить: "+failed.join("; "));
+    }finally{setBusy("")}
+  }
+
   async function rename(object:ProjectMediaObject){
     if(object.usage?.count){
       setNotice("Файл используется в проекте. Переименование изменит URL и сломает ссылки — используйте «Заменить».");
@@ -202,7 +268,7 @@ export function MediaPanel({projectId,onChanged}:{projectId:string;onChanged?:()
     {error&&<div className="file-error" role="alert">{error}</div>}
     {notice&&<div className="media-notice" role="status">{notice}</div>}
     {!usageAvailable.current&&<div className="media-warning"><AlertTriangle size={13}/> Не удалось проверить ссылки в проекте: удаление потребует подтверждения.</div>}
-    {usageAvailable.current&&usageTruncated.current&&<div className="media-warning"><AlertTriangle size={13}/> Проверены не все файлы проекта — часть ссылок могла остаться незамеченной.</div>}
+    {usageAvailable.current&&usageTruncated.current&&<div className="media-warning" title="Проверка останавливается после 4000 файлов или 32 МБ, а текстовые файлы больше 512 КБ пропускаются."><AlertTriangle size={13}/> Проверены не все файлы проекта — часть ссылок могла остаться незамеченной.</div>}
 
     <div className="media-toolbar">
       <label className="file-filter media-filter">
@@ -216,20 +282,40 @@ export function MediaPanel({projectId,onChanged}:{projectId:string;onChanged?:()
       <span className="media-summary">{objects.length} файлов · {formatBytes(totalBytes)}{usageAvailable.current?" · не используется в проекте: "+unusedCount:""}</span>
     </div>
 
+    {selectedObjects.length>0&&<div className="media-bulk-bar" role="status">
+      <span><Check size={13}/> Выбрано изображений: <strong>{selectedObjects.length}</strong> · {formatBytes(selectedBytes)}</span>
+      <div className="media-bulk-actions">
+        <button className="ghost-button" onClick={()=>setSelectedKeys(new Set())} disabled={Boolean(busy)}>Снять выбор</button>
+        <button className="ghost-button danger" onClick={()=>void removeSelected()} disabled={Boolean(busy)}>
+          {busy==="delete:selected"?<Loader2 size={13} className="spin"/>:<Trash2 size={13}/>} Удалить выбранные
+        </button>
+      </div>
+    </div>}
+
     <div className="media-browser">
       <div className="media-list">
         {visible.map(object=>{
-          const image=IMAGE_FILE.test(object.name)||IMAGE_FILE.test(object.key);
-          return <button className={"media-card"+(selected?.key===object.key?" selected":"")} key={object.key} onClick={()=>selectObject(object)} title={object.name}>
-            <span className="media-thumb">
-              {image?<img src={object.url} alt="" loading="lazy"/>:<FileText size={18}/>}
-            </span>
-            <span className="media-card-text">
-              <strong>{object.name}</strong>
-              <small>{formatBytes(object.bytes)}{object.lastModified?" · "+formatDate(object.lastModified):""}</small>
-              <em className={object.usage?.count?"used":"unused"}>{usageLabel(object)}</em>
-            </span>
-          </button>;
+          const image=isImageObject(object);
+          return <div className="media-card-row" key={object.key}>
+            {image&&<label className="media-check" title="Выбрать изображение для удаления">
+              <input
+                type="checkbox"
+                checked={selectedKeys.has(object.key)}
+                onChange={()=>toggleSelected(object)}
+                aria-label={"Выбрать «"+object.name+"»"}
+              />
+            </label>}
+            <button className={"media-card"+(selected?.key===object.key?" selected":"")} onClick={()=>selectObject(object)} title={object.name}>
+              <span className="media-thumb">
+                {image?<img src={object.url} alt="" loading="lazy"/>:<FileText size={18}/>}
+              </span>
+              <span className="media-card-text">
+                <strong>{object.name}</strong>
+                <small>{formatBytes(object.bytes)}{object.lastModified?" · "+formatDate(object.lastModified):""}</small>
+                <em className={object.usage?.count?"used":"unused"}>{usageLabel(object)}</em>
+              </span>
+            </button>
+          </div>;
         })}
         {!visible.length&&!loading&&<div className="file-empty">{objects.length?"Ничего не нашлось":"В хранилище пока нет файлов"}</div>}
         {loading&&!objects.length&&<div className="media-loading"><Loader2 size={18} className="spin"/> Читаем хранилище…</div>}

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { ArrowRight, ArrowUpRight, AppWindow, Bot, Box, Boxes, Building2, ChevronDown, Code2, CreditCard, Database, FolderGit2, Gamepad2, Globe, Home, LayoutDashboard, Layers3, Lock, LogOut, MessageCircle, Newspaper, Pencil, Plug, Rocket, ShoppingBag, Smartphone, Sparkles, Store, Trash2, UserRound, Workflow } from "lucide-react";
+import { ArrowRight, ArrowUpRight, AppWindow, Bot, Box, Boxes, Building2, Code2, CreditCard, Database, FolderGit2, Gamepad2, Globe, Home, LayoutDashboard, Layers3, Lock, LogOut, MessageCircle, Newspaper, Pencil, Plug, Rocket, ShoppingBag, Smartphone, Sparkles, Store, Trash2, UserRound, Workflow } from "lucide-react";
 import { deleteProject, listProjects, renameProject, type Project } from "../../lib/project-api";
 import type { PlanId } from "../../lib/billing-api";
 import { getEntitlements, type AccountEntitlements } from "../../lib/entitlements-api";
@@ -18,7 +18,7 @@ import { NotificationsBell } from "../notifications/NotificationsBell";
 
 type TemplateTier = "free" | "pro" | "team";
 type Template = { name: string; note: string; prompt: string; icon: typeof Globe; tier?: Exclude<TemplateTier, "free">; why?: string };
-type TemplateGroup = { id: string; name: string; range: string; blurb: string; icon: typeof Globe; templates: Template[] };
+type TemplateGroup = { id: string; name: string; short: string; range: string; blurb: string; icon: typeof Globe; templates: Template[] };
 
 /**
  * Категории шаблонов отвечают на два разных вопроса: «что здесь вообще можно собрать» —
@@ -27,7 +27,7 @@ type TemplateGroup = { id: string; name: string; range: string; blurb: string; i
  */
 const templateGroups: TemplateGroup[] = [
   {
-    id: "sites", name: "Сайты", range: "Лендинг · магазин · маркетплейс", icon: Globe,
+    id: "sites", name: "Сайты", short: "Сайты", range: "Лендинг · магазин · маркетплейс", icon: Globe,
     blurb: "От одной страницы с оффером до маркетплейса с продавцами, каталогом, корзиной и оплатой.",
     templates: [
       { name: "Лендинг", note: "Одна страница: оффер, преимущества, заявка", icon: Rocket, prompt: "Создай современный лендинг для продукта: первый экран с оффером, преимущества, отзывы, блок с ценами и форма заявки" },
@@ -38,7 +38,7 @@ const templateGroups: TemplateGroup[] = [
     ],
   },
   {
-    id: "apps", name: "Приложения", range: "Android · iOS · PWA · Telegram", icon: Smartphone,
+    id: "apps", name: "Приложения", short: "Приложения", range: "Android · iOS · PWA · Telegram", icon: Smartphone,
     blurb: "Экраны под телефон, установка из браузера, Mini App внутри Telegram и SaaS-кабинет с подпиской.",
     templates: [
       { name: "Мобильное приложение", note: "Экраны для Android и iOS с навигацией", icon: Smartphone, prompt: "Создай мобильное приложение для Android и iOS: 4–6 экранов с навигацией, списками и сохранением данных" },
@@ -48,7 +48,7 @@ const templateGroups: TemplateGroup[] = [
     ],
   },
   {
-    id: "games", name: "Игры и 3D", range: "2D · 3D · интерактив", icon: Gamepad2,
+    id: "games", name: "Игры и 3D", short: "Игры и 3D", range: "2D · 3D · интерактив", icon: Gamepad2,
     blurb: "Браузерные игры и объёмные сцены: управление, уровни, счёт и эффекты — без установки.",
     templates: [
       { name: "3D-игра", note: "Сцена, управление, цели и счёт", icon: Box, prompt: "Создай браузерную 3D-игру: управление, цели, счёт и перезапуск раунда" },
@@ -57,7 +57,7 @@ const templateGroups: TemplateGroup[] = [
     ],
   },
   {
-    id: "data", name: "Данные и автоматизация", range: "Дашборд · CRM · боты · AI", icon: Workflow,
+    id: "data", name: "Данные и автоматизация", short: "Данные и AI", range: "Дашборд · CRM · боты · AI", icon: Workflow,
     blurb: "Графики, таблицы, роли, боты и ассистенты — внутренние инструменты, которые сразу работают.",
     templates: [
       { name: "Дашборд", note: "Метрики, графики и фильтры", icon: LayoutDashboard, prompt: "Создай аналитический дашборд: метрики, графики, фильтры и таблица последних событий" },
@@ -295,6 +295,7 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
   </>;
 
   const activeProjectId=localStorage.getItem(activeProjectKey);
+  const openStarterGroup=templateGroups.find(group=>group.id===activeGroup)??null;
 
   return <>
     <main className="home-screen">
@@ -302,9 +303,13 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
         {/* Только на телефоне: там разделы переключаются вкладками, как колонка рядом с ПК. */}
         <nav className="home-tabs" aria-label="Разделы главной">
           <div className="home-tabs-track" ref={tabsRef}>
-            {homeTabs.map(item => { const Icon = item.icon; return <button key={item.id} className={"home-tab" + (tab === item.id ? " active" : "")} onClick={() => pick(item.id)} aria-current={tab === item.id ? true : undefined}>
-              <Icon size={14}/> <span>{item.label}</span>
-            </button>; })}
+            {homeTabs.map(item => {
+              const Icon = item.icon;
+              return <button key={item.id} className={"home-tab" + (tab === item.id ? " active" : "")} onClick={() => pick(item.id)} aria-current={tab === item.id ? true : undefined}>
+                <span className="home-tab-icon"><Icon size={14}/></span>
+                <span className="home-tab-label">{item.label}</span>
+              </button>;
+            })}
           </div>
           {/* На телефоне колонки нет: колокольчик переезжает в строку вкладок, рядом с выходом. */}
           <NotificationsBell variant="tab"/>
@@ -332,10 +337,13 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
 
           <section className="home-composer-wrap">
             <form className="home-composer" onSubmit={submit}>
-              <div className="home-composer-top"><div className="home-composer-field"><label className="home-composer-label" htmlFor="home-idea">Опишите идею</label><textarea id="home-idea" value={idea} onChange={e=>setIdea(e.target.value)} rows={3} /></div></div>
-              <div className="home-composer-bottom">
-                <button className="send-button home-submit" disabled={busy||!idea.trim()} aria-label={busy?"Создаём проект":"Создать проект и запустить агента"} title={busy?"Создаём…":"Отправить идею"}><Code2 size={17}/></button>
+              <div className="home-composer-field">
+                <label className="home-composer-label" htmlFor="home-idea">Опишите идею</label>
+                <textarea id="home-idea" value={idea} onChange={e=>setIdea(e.target.value)} rows={2} placeholder="Например: магазин керамики с каталогом, оплатой и доставкой"/>
               </div>
+              <button className="send-button home-submit" disabled={busy||!idea.trim()} aria-label={busy?"Создаём проект":"Создать проект и запустить агента"} title={busy?"Создаём…":"Создать проект"}>
+                <span>{busy?"Создаём…":"Создать"}</span><ArrowUpRight size={16}/>
+              </button>
             </form>
           </section>
 
@@ -354,53 +362,59 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
 
           {error&&<div className="home-error">{error}</div>}
 
-          <section className="home-section home-starters">
-            <div className="home-section-head"><div><span className="eyebrow">БЫСТРЫЕ СТАРТЫ</span><h2>С чего начать</h2></div><span className="home-section-note">{account?"Ваш тариф: «"+planLabels[account.plan]+"»":"Готовый бриф · агент уточнит детали"}</span></div>
-            <div className="starter-accordion" aria-label="Категории шаблонов">
+          <section className="home-starters" aria-labelledby="home-starters-title">
+            <div className="starter-dock-head">
+              <div><span className="eyebrow">БЫСТРЫЕ СТАРТЫ</span><h2 id="home-starters-title">С чего начать</h2></div>
+              <span className="starter-dock-hint">{openStarterGroup?openStarterGroup.range:"Выберите направление"+(account?" · «"+planLabels[account.plan]+"»":"")}</span>
+            </div>
+            <div className="starter-categories" aria-label="Категории шаблонов">
               {templateGroups.map(group=>{
                 const Icon=group.icon;
                 const active=activeGroup===group.id;
-                return <section className={"starter-group"+(active?" is-open":"")} key={group.id}>
-                  <button type="button" className="starter-disclosure" aria-expanded={active} aria-controls={"starter-panel-"+group.id} onClick={()=>{setActiveGroup(active?null:group.id);setTemplateNotice("")}}>
-                    <span className="starter-disclosure-icon"><Icon size={15}/></span>
-                    <span className="starter-disclosure-copy"><strong>{group.name}</strong><small>{group.range}</small></span>
-                    <span className="starter-disclosure-count">{group.templates.length}</span>
-                    <ChevronDown size={15} className="starter-disclosure-arrow"/>
-                  </button>
-                  {active&&<div className="starter-panel" id={"starter-panel-"+group.id}>
-                    {templateNotice&&<div className="starter-notice" role="status"><Lock size={13}/><span>{templateNotice}</span><button type="button" onClick={()=>setTemplateNotice("")} aria-label="Закрыть подсказку">×</button></div>}
-                    <div className="starter-list">
-                      {group.templates.map((template,index)=>{
-                        const TemplateIcon=template.icon;
-                        const tier=templateTier(template);
-                        const available=templateAvailable(template);
-                        return <button key={template.name} type="button" className={"starter-card"+(available?"":" is-locked")} onClick={()=>chooseTemplate(group,template)} title={(available?template.prompt:(template.why??"Нужен платный тариф"))+". Агент начнёт с плана и уточняющих вопросов."}>
-                          <span className="starter-card-top"><span className="starter-card-icon"><TemplateIcon size={14}/></span><span className="starter-card-index">{String(index+1).padStart(2,"0")}</span><span className={"starter-tier tier-"+tier}>{tier==="team"?<Lock size={9}/>:tier==="pro"?<Sparkles size={9}/>:<Code2 size={9}/>}{tierLabels[tier]}</span></span>
-                          <span className="starter-card-copy"><strong>{template.name}</strong><small>{available?template.note:(template.why??"Нужен платный тариф")}</small></span>
-                          <span className="starter-card-footer"><span>{available?"Выбрать":"Тариф"}</span><ArrowUpRight size={12} className="starter-card-go"/></span>
-                        </button>;
-                      })}
-                    </div>
-                  </div>}
-                </section>;
+                return <button key={group.id} type="button" className={"starter-category"+(active?" is-active":"")} aria-expanded={active} aria-controls={active?"starter-shelf-"+group.id:undefined} onClick={()=>{setActiveGroup(active?null:group.id);setTemplateNotice("")}} title={group.blurb}>
+                  <span className="starter-category-icon"><Icon size={15}/></span>
+                  <span className="starter-category-name">{group.short}</span>
+                  <span className="starter-category-count">{group.templates.length}</span>
+                </button>;
               })}
             </div>
+            {openStarterGroup&&<div className="starter-shelf" id={"starter-shelf-"+openStarterGroup.id} role="region" aria-label={"Шаблоны: "+openStarterGroup.name}>
+              {templateNotice&&<div className="starter-notice" role="status"><Lock size={13}/><span>{templateNotice}</span><button type="button" onClick={()=>setTemplateNotice("")} aria-label="Закрыть подсказку">×</button></div>}
+              <div className="starter-shelf-scroll">
+                {openStarterGroup.templates.map(template=>{
+                  const TemplateIcon=template.icon;
+                  const tier=templateTier(template);
+                  const available=templateAvailable(template);
+                  return <button key={template.name} type="button" className={"starter-tile"+(available?"":" is-locked")} onClick={()=>chooseTemplate(openStarterGroup,template)} title={(available?template.prompt:(template.why??"Нужен платный тариф"))+". Агент начнёт с плана и уточняющих вопросов."}>
+                    <span className="starter-tile-icon"><TemplateIcon size={16}/></span>
+                    <span className="starter-tile-copy">
+                      <span className="starter-tile-title"><strong>{template.name}</strong><span className={"starter-tier tier-"+tier}>{tier==="team"?<Lock size={9}/>:tier==="pro"?<Sparkles size={9}/>:<Code2 size={9}/>}{tierLabels[tier]}</span></span>
+                      <small>{available?template.note:(template.why??"Нужен платный тариф")}</small>
+                    </span>
+                  </button>;
+                })}
+              </div>
+            </div>}
           </section>
 
           {projects.length>0&&<section className="home-section">
             <div className="home-section-head"><div><span className="eyebrow">ВАШИ ПРОЕКТЫ</span><h2>Последние проекты</h2></div><button className="home-link" onClick={()=>void start("Новый проект")}>Новый проект <ArrowRight size={13}/></button></div>
-            <div className="recent-grid">{projects.slice(0,6).map(project=><div key={project.id} className="recent-card">
-              {renaming===project.id
-                ? <ProjectRenameForm initial={project.name} onSubmit={name=>void rename(project,name)} onCancel={()=>setRenaming("")}/>
-                : <button className="recent-open" onClick={()=>open(project)} title={"Открыть проект «"+project.name+"»"}>
-                    <span className="recent-thumb"><Code2 size={14}/></span>
-                    <strong>{project.name}</strong>
-                  </button>}
-              {renaming!==project.id&&<div className="recent-tools">
-                <button onClick={()=>setRenaming(project.id)} title="Переименовать" aria-label={"Переименовать проект "+project.name}><Pencil size={13}/></button>
-                <button className="danger" onClick={()=>void remove(project)} disabled={deleting===project.id} title="Удалить проект" aria-label={"Удалить проект "+project.name}><Trash2 size={13}/></button>
-              </div>}
-            </div>)}</div>
+            <div className="recent-grid">{projects.slice(0,6).map((project,index)=>{
+              const initial=project.name.trim().slice(0,1).toUpperCase()||"N";
+              return <div key={project.id} className="recent-card">
+                {renaming===project.id
+                  ? <ProjectRenameForm initial={project.name} onSubmit={name=>void rename(project,name)} onCancel={()=>setRenaming("")}/>
+                  : <button className="recent-open" onClick={()=>open(project)} title={"Открыть проект «"+project.name+"»"}>
+                      <span className="recent-thumb" aria-hidden="true">{initial}</span>
+                      <span className="recent-copy"><span className="recent-index">Проект {String(index+1).padStart(2,"0")}</span><strong>{project.name}</strong></span>
+                      <ArrowUpRight size={13} className="recent-go" aria-hidden="true"/>
+                    </button>}
+                {renaming!==project.id&&<div className="recent-tools">
+                  <button onClick={()=>setRenaming(project.id)} title="Переименовать" aria-label={"Переименовать проект "+project.name}><Pencil size={12}/></button>
+                  <button className="danger" onClick={()=>void remove(project)} disabled={deleting===project.id} title="Удалить проект" aria-label={"Удалить проект "+project.name}><Trash2 size={12}/></button>
+                </div>}
+              </div>;
+            })}</div>
           </section>}
 
           {/* Подвал — единственное место на главной, где документы видны без открытия меню.

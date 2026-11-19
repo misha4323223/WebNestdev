@@ -61,17 +61,27 @@ type CacheEntry = {
   fetchedAt: number;
 };
 
+export type UpstreamCatalogIndex = {
+  models: Map<string, Omit<UpstreamCatalogModel, "stale">>;
+  fetchedAt: string;
+  stale: boolean;
+};
+
 const CACHE_TTL_MS = 5 * 60_000;
 const STALE_TTL_MS = 60 * 60_000;
+const INDEX_CACHE_TTL_MS = 15 * 60_000;
+const INDEX_STALE_TTL_MS = 6 * 60 * 60_000;
 const FAILURE_BACKOFF_MS = 60_000;
 const FETCH_TIMEOUT_MS = 8_000;
 
 const cache = new Map<string, CacheEntry>();
+const indexCache = new Map<string, { index: UpstreamCatalogIndex; fetchedAt: number }>();
 const failureUntil = new Map<string, number>();
 
 /** Тестам нужна чистая память: каталог одного прогона не должен влиять на следующий. */
 export function resetUpstreamCatalogCache() {
   cache.clear();
+  indexCache.clear();
   failureUntil.clear();
 }
 
@@ -181,6 +191,68 @@ function responseModels(data: unknown): unknown[] {
   if (Array.isArray(data)) return data;
   const record = asRecord(data);
   return record && Array.isArray(record.data) ? record.data : [];
+}
+
+/**
+ * Весь каталог шлюза одним ответом. Нужен экономике: у одной модели десятки провайдеров,
+ * а запрашивать каталог отдельно на каждую модель значило бы несколько одинаковых запросов
+ * по 1,5 МБ. Индекс кэшируется отдельно от каталога одной модели: у них разные сроки жизни.
+ * `null` — каталог недоступен и сохранённой копии нет.
+ */
+export async function getUpstreamCatalogIndex(
+  baseUrl: string,
+  token: string | undefined,
+  options: UpstreamCatalogOptions = {},
+): Promise<UpstreamCatalogIndex | null> {
+  const key = cacheKey(baseUrl, "");
+  const now = options.now ?? Date.now;
+  const current = indexCache.get(key);
+  const currentAge = current ? now() - current.fetchedAt : Infinity;
+  if (!options.refresh && current && currentAge < INDEX_CACHE_TTL_MS) {
+    return { ...current.index, stale: false };
+  }
+  const backoff = failureUntil.get(key) ?? 0;
+  if (!options.refresh && backoff > now()) {
+    return current && currentAge < INDEX_STALE_TTL_MS ? { ...current.index, stale: true } : null;
+  }
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+  const fetchImpl = options.fetch ?? globalThis.fetch;
+  try {
+    const request = catalogRequest(baseUrl, token);
+    const response = await fetchImpl(request.url, {
+      method: "GET",
+      headers: request.headers,
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error("каталог ответил HTTP " + response.status);
+    const payload: unknown = await response.json();
+    const models = new Map<string, Omit<UpstreamCatalogModel, "stale">>();
+    for (const item of responseModels(payload)) {
+      const record = asRecord(item);
+      const id = typeof record?.id === "string" ? record.id.trim() : "";
+      if (!id) continue;
+      const parsed = parseUpstreamModel(record, id);
+      if (parsed) models.set(id, parsed);
+    }
+    if (models.size === 0) throw new Error("каталог не вернул ни одной модели");
+    const index: UpstreamCatalogIndex = {
+      models,
+      fetchedAt: new Date(now()).toISOString(),
+      stale: false,
+    };
+    indexCache.set(key, { index, fetchedAt: now() });
+    failureUntil.delete(key);
+    return index;
+  } catch (error) {
+    failureUntil.set(key, now() + FAILURE_BACKOFF_MS);
+    const reason = error instanceof Error ? (error.name === "AbortError" ? "таймаут" : error.message) : String(error);
+    console.warn("[provider] инвентарь каталога провайдеров недоступен: " + reason);
+    return current && currentAge < INDEX_STALE_TTL_MS ? { ...current.index, stale: true } : null;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
