@@ -1,14 +1,12 @@
 import { useEffect, useState } from "react";
-import { ArrowRight, CreditCard, FolderGit2, LogOut, Pencil, Plug, Trash2, UserRound } from "lucide-react";
+import { ArrowRight, CreditCard, Database, FolderGit2, Globe2, Pencil, Plug, Trash2, UserRound } from "lucide-react";
 import { IntegrationsList } from "../integrations/IntegrationsList";
 import { ProjectRenameForm } from "./ProjectRename";
 import { type Project } from "../../lib/project-api";
-import { apiJson } from "../../lib/api";
-import { balanceLabel, creditsLabel, getBilling, moneyLabel, paymentNotice, type BillingData, type PlanId } from "../../lib/billing-api";
+import { getAccountClientDatabase, type ClientDatabaseStatus } from "../../lib/client-database-api";
+import { balanceLabel, bytesLabel, creditsLabel, getBilling, moneyLabel, paymentNotice, type BillingData, type PlanId } from "../../lib/billing-api";
+import { getAccountHosts, type AccountHost, type AccountHosts } from "../../lib/hosting-api";
 import { activePlanId, chosenPlanId, isPendingChoice, planName, usePlanChoice } from "../../lib/plan-choice";
-import { readCachedPreferences, type UserPreferences } from "../../lib/preferences";
-import { contactEmailOf } from "../../lib/account-contact";
-import type { OnboardingProfile } from "../../lib/onboarding";
 import { SupportButton } from "../support/SupportDialog";
 import { NotificationsBell } from "../notifications/NotificationsBell";
 
@@ -26,7 +24,6 @@ export type HomeRailProps = {
   onDelete: (project: Project) => void;
   onOpenPlans: () => void;
   onOpenSubscriptions: () => void;
-  onExit: () => void;
 };
 
 const nav: Array<{ id: RailSection; label: string; icon: typeof Plug }> = [
@@ -41,7 +38,7 @@ function dateLabel(value: string) {
 }
 
 export function HomeRail(props: HomeRailProps) {
-  const { projects, activeProjectId, section, onSection, onOpen, onRename, onDelete, onOpenPlans, onOpenSubscriptions, onExit } = props;
+  const { projects, activeProjectId, section, onSection, onOpen, onRename, onDelete, onOpenPlans, onOpenSubscriptions } = props;
   const [renaming, setRenaming] = useState("");
   // One billing request for the rail: the billing section and the footer call to action
   // both show the plan the user actually has (or would get next).
@@ -108,7 +105,10 @@ export function HomeRail(props: HomeRailProps) {
           </ul>}
       </section>}
 
-      {section === "account" && <RailAccount/>}
+      {section === "account" && <section className="rail-section">
+        <div className="rail-section-head"><span className="eyebrow">АККАУНТ</span><strong>Профиль и тарифы</strong></div>
+        <p className="account-muted">Полные настройки аккаунта открыты в основной области: профиль, тарифы, база данных и безопасность.</p>
+      </section>}
 
       {section === "billing" && <RailBilling billing={billing} choice={planChoice} error={billingError} onOpenPlans={onOpenPlans} onOpenSubscriptions={onOpenSubscriptions}/>}
     </div>}
@@ -125,56 +125,10 @@ export function HomeRail(props: HomeRailProps) {
         </span>
         <ArrowRight size={13} className="rail-upsell-go"/>
       </button>
-      {/* Поддержка рядом с выходом: это действие аккаунта, а не раздела проекта. */}
+      {/* Поддержка — действие аккаунта; выход теперь в разделе «Аккаунт». */}
       <SupportButton variant="rail"/>
-      <button className="rail-exit" onClick={onExit}><LogOut size={14}/> Выйти</button>
     </div>
   </aside>;
-}
-
-type AccountData = {
-  user: { id: string; email: string; phone?: string; createdAt: string; yandex?: { login: string; email: string | null } };
-  profile: OnboardingProfile | null;
-  preferences: UserPreferences;
-};
-
-function RailAccount() {
-  const [account, setAccount] = useState<AccountData | null>(null);
-  const [error, setError] = useState("");
-
-  useEffect(() => {
-    let active = true;
-    void apiJson<AccountData>("/api/account/settings")
-      .then(data => { if (active) setAccount(data); })
-      .catch(e => { if (active) setError(e instanceof Error ? e.message : String(e)); });
-    return () => { active = false; };
-  }, []);
-
-  const preferences = account?.preferences ?? readCachedPreferences();
-  const profile = account?.profile ?? null;
-  // Служебные адреса входа (…@phone.webnestdev.local) сюда не попадают: телефон и почта
-  // показываются отдельными строками, почта — из контактов знакомства.
-  const email = contactEmailOf({
-    profileEmail: profile?.email,
-    accountEmail: account?.user.email,
-    yandexEmail: account?.user.yandex?.email,
-  });
-  const phone = account?.user.phone ?? "";
-
-  return <section className="rail-section">
-    <div className="rail-section-head"><span className="eyebrow">АККАУНТ</span><strong>Профиль</strong></div>
-    {error && <div className="settings-error">{error}</div>}
-    {!account && !error && <div className="modal-state">Загружаем профиль…</div>}
-    {account && <div className="rail-fields">
-      <div><span>Имя</span><strong title={profile?.name || undefined}>{profile?.name || "Не указано"}</strong></div>
-      <div><span>Email</span><strong title={email || undefined}>{email || "Не указан"}</strong></div>
-      {phone && <div><span>Телефон</span><strong title={phone}>{phone}</strong></div>}
-      <div><span>Дата регистрации</span><strong>{dateLabel(account.user.createdAt)}</strong></div>
-      <div><span>Язык интерфейса</span><strong>{preferences.language === "ru" ? "Русский" : "English"}</strong></div>
-      <div><span>Компактный режим</span><strong>{preferences.compactMode ? "Включён" : "Выключен"}</strong></div>
-    </div>}
-    <p className="account-muted rail-note">Настройки аккаунта и предпочтения открываются внутри рабочей области: «Настройки» → «Аккаунт и тариф».</p>
-  </section>;
 }
 
 function RailBilling({ billing, choice, error, onOpenPlans, onOpenSubscriptions }: { billing: BillingData | null; choice: PlanId | null; error: string; onOpenPlans: () => void; onOpenSubscriptions: () => void }) {
@@ -188,6 +142,60 @@ function RailBilling({ billing, choice, error, onOpenPlans, onOpenSubscriptions 
   // The plan the user selected is what they want to move to, so it is written next
   // to the current plan here as well, not only inside the pricing screens.
   const chosen = billing && choice ? billing.plans.find(item => item.id === choice) : undefined;
+  // Ресурсы аккаунта грузятся отдельно от тарифа: база и сайты принадлежат аккаунту, а не
+  // выбранному проекту. Запросы идут только когда открыт раздел «Оплата и подписка».
+  const [database, setDatabase] = useState<ClientDatabaseStatus | null>(null);
+  const [databaseError, setDatabaseError] = useState("");
+  const [accountHosts, setAccountHosts] = useState<AccountHosts | null>(null);
+  const [hostsError, setHostsError] = useState("");
+  useEffect(() => {
+    let active = true;
+    void getAccountClientDatabase()
+      .then(value => { if (active) setDatabase(value); })
+      .catch(() => { if (active) setDatabaseError("Не удалось проверить базу."); });
+    void getAccountHosts()
+      .then(value => { if (active) setAccountHosts(value); })
+      .catch(() => { if (active) setHostsError("Не удалось загрузить хосты."); });
+    return () => { active = false; };
+  }, []);
+  const activeDatabase = database?.available === true ? database : null;
+  const databaseIncluded = activeDatabase ? activeDatabase.limitBytes > 0 : false;
+  const databasePercent = activeDatabase && activeDatabase.limitBytes > 0
+    ? Math.min(100, Math.round(activeDatabase.usedBytes / activeDatabase.limitBytes * 100))
+    : 0;
+  const databaseConnected = Boolean(activeDatabase?.provisioned && activeDatabase.reachable && databaseIncluded);
+  const databaseState = databaseError
+    ? "не удалось проверить"
+    : !database
+      ? "проверяем…"
+      : !activeDatabase
+        ? "не подключена"
+        : !databaseIncluded
+          ? "не подключена"
+          : !activeDatabase.provisioned
+            ? "не подключена"
+            : !activeDatabase.reachable
+              ? "не отвечает"
+              : activeDatabase.readOnly
+                ? "только чтение"
+                : "подключена";
+  const databaseHint = databaseError
+    ? "Проверьте соединение и обновите страницу."
+    : !database
+      ? "Проверяем подключение…"
+      : !activeDatabase
+        ? "Встроенная база отключена на этой установке."
+        : !databaseIncluded
+          ? "Встроенная база доступна на «Плюсе» и «Премиуме»."
+          : !activeDatabase.provisioned
+            ? "Подключите в «Аккаунт» → «База данных»."
+            : !activeDatabase.reachable
+              ? "База не отвечает: проверьте подключение."
+              : activeDatabase.readOnly
+                ? "Квота исчерпана: запись приостановлена, данные сохранены."
+                : "PostgreSQL для сайтов и приложений аккаунта.";
+  const hosts = accountHosts?.hosts ?? [];
+  const hostsDomain = accountHosts?.domain ?? "";
 
   return <section className="rail-section">
     <div className="rail-section-head"><span className="eyebrow">ОПЛАТА И ПОДПИСКА</span><strong>Текущий тариф</strong></div>
@@ -226,7 +234,32 @@ function RailBilling({ billing, choice, error, onOpenPlans, onOpenSubscriptions 
           <div className="usage-meter-track"><span style={{ width: `${Math.min(100, storageUsed / storageLimit * 100)}%` }}/></div>
         </>}
       </div>
-      <p className="account-muted">На бесплатном тарифе — 10 запусков в день. На платных тарифах расход ограничен кредитами; со своим AI-провайдером кредиты не тратятся.</p>
+      <div className={"rail-database" + (databaseConnected ? " is-connected" : "")}>
+        <div className="rail-database-head">
+          <span><Database size={11}/> База данных</span>
+          <strong>{databaseState}</strong>
+        </div>
+        {databaseConnected && activeDatabase && <>
+          <div className="rail-database-meta">
+            <span>{bytesLabel(activeDatabase.usedBytes)} / {bytesLabel(activeDatabase.limitBytes)}</span>
+            <span>{databasePercent}%</span>
+          </div>
+          <div className="usage-meter-track"><span style={{ width: `${Math.max(2, databasePercent)}%` }}/></div>
+          <small className="rail-database-endpoint" title={activeDatabase.maskedUrl}>{activeDatabase.maskedUrl}</small>
+        </>}
+        <p className="rail-database-note">{databaseHint}</p>
+      </div>
+      <div className="rail-hosts">
+        <div className="rail-hosts-head">
+          <span><Globe2 size={11}/> Хосты аккаунта</span>
+          <strong>{accountHosts ? hosts.length : "—"}</strong>
+        </div>
+        {hostsError && <p className="rail-hosts-empty">{hostsError}</p>}
+        {!accountHosts && !hostsError && <p className="rail-hosts-empty">Загружаем хосты…</p>}
+        {accountHosts && hosts.length === 0 && <p className="rail-hosts-empty">Хостов пока нет. Опубликуйте сайт в проекте — он появится здесь.</p>}
+        {hosts.length > 0 && <ul className="rail-hosts-list">{hosts.map(host => <HostRow key={host.siteId} host={host} domain={hostsDomain}/>)}</ul>}
+      </div>
+      <p className="account-muted">На бесплатном тарифе — 10 запусков в день. На платных тарифах расход ограничен кредитами; свой AI-провайдер доступен на «Плюсе» и «Премиуме».</p>
       <div className="rail-plan-actions">
         <button className="plan-action" onClick={onOpenPlans}>{billing.paymentsEnabled ? (paid ? "Тариф и кредиты" : "Оплатить тариф") : "Сменить тариф"}</button>
         {paid && billing.credits && billing.credits.limit > 0 && <button className="ghost-button" onClick={() => {
@@ -237,4 +270,42 @@ function RailBilling({ billing, choice, error, onOpenPlans, onOpenSubscriptions 
       </div>
     </>}
   </section>;
+}
+
+const hostStatusLabel: Record<AccountHost["status"], string> = {
+  draft: "черновик",
+  live: "опубликован",
+  unpublished: "снят с публикации",
+  suspended: "заблокирован",
+};
+
+const customDomainStatusLabel: Record<AccountHost["customDomains"][number]["status"], string> = {
+  pending_dns: "ждёт DNS",
+  verified: "проверен",
+  configuring: "настраивается",
+  issuing_certificate: "сертификат",
+  active: "активен",
+  error: "ошибка",
+};
+
+/** Один сайт аккаунта: основной адрес платформы и подключённые к нему домены. */
+function HostRow({ host, domain }: { host: AccountHost; domain: string }) {
+  const hostname = host.url
+    ? host.url.replace(/^https?:\/\//, "")
+    : host.slug + (domain ? "." + domain : "");
+  return <li className="rail-host">
+    <div className="rail-host-top">
+      <Globe2 size={10}/>
+      {host.url
+        ? <a href={host.url} target="_blank" rel="noopener noreferrer" title={host.url}>{hostname}</a>
+        : <span title={hostname}>{hostname}</span>}
+      <em className={"rail-host-status " + host.status}>{hostStatusLabel[host.status]}</em>
+    </div>
+    <small className="rail-host-project">{host.projectName}</small>
+    {host.customDomains.length > 0 && <div className="rail-host-domains">{host.customDomains.map(item =>
+      <span key={item.hostname} className={"rail-host-domain " + item.status} title={item.hostname}>
+        {item.hostname}<em>{customDomainStatusLabel[item.status]}</em>{item.isCanonical && <b>основной</b>}
+      </span>,
+    )}</div>}
+  </li>;
 }

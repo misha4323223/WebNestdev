@@ -1,7 +1,20 @@
+import path from "node:path";
 import { renderCustomDomainsCaddy } from "./caddy-config.js";
-import { writeCustomDomainsCaddy, customDomainsCaddyPath } from "./caddy-config-writer.js";
+import {
+  writeCustomDomainsCaddy,
+  writeHostingModesCaddy,
+  writeHostingRedirectsCaddy,
+  customDomainsCaddyPath,
+  hostingModesCaddyPath,
+  hostingRedirectsCaddyPath,
+} from "./caddy-config-writer.js";
+import { buildHostingModeRoutes, renderHostingModesCaddy } from "./caddy-modes.js";
 import { buildCustomDomainRoutes } from "./caddy-routes.js";
+import { hostingPublicDomain, hostingSiteUrl } from "./config.js";
 import { listAllDomains } from "./domain-store.js";
+import { hostingCurrentLink } from "./paths.js";
+import { readRedirectsFromRelease, renderRedirectsCaddy, type HostingRedirectRule } from "./seo/redirects.js";
+import { readSeoSettings, type HostingSeoSettings } from "./seo/settings.js";
 import { listSitesForRouting } from "./site-store.js";
 
 /**
@@ -20,6 +33,12 @@ export type CustomDomainCaddyRefresh = {
   changed: boolean;
   sha256: string;
   routes: number;
+  modesFile: string;
+  modesChanged: boolean;
+  modes: number;
+  redirectsFile: string;
+  redirectsChanged: boolean;
+  redirects: number;
 };
 
 let inFlight: Promise<CustomDomainCaddyRefresh> | null = null;
@@ -33,10 +52,44 @@ export async function refreshCustomDomainsCaddy(): Promise<CustomDomainCaddyRefr
       listAllDomains(),
       listSitesForRouting(),
     ]);
-    const routes = buildCustomDomainRoutes({ domains, sites });
+    // `_redirects` и политика слеша живут в каталоге сайта. Читаем их перед генерацией:
+    // Caddy не умеет разбирать пользовательский файл, а хранить копию в БД — значит
+    // рассинхронизировать её с релизом при rollback.
+    const seoSettings = new Map<string, HostingSeoSettings>();
+    const redirectsBySite = new Map<string, readonly HostingRedirectRule[]>();
+    await Promise.all(sites.map(async site => {
+      const mode = site.effectiveRoutingMode ?? "spa";
+      const settings = await readSeoSettings(site.slug, mode);
+      seoSettings.set(site.id, settings);
+      if (site.status !== "live" || !site.activeReleaseId) return;
+      const redirects = await readRedirectsFromRelease(path.join(hostingCurrentLink(site.slug)));
+      if (redirects.rules.length) redirectsBySite.set(site.id, redirects.rules);
+    }));
+    const routes = buildCustomDomainRoutes({ domains, sites, seoSettings, redirectsBySite });
     const content = renderCustomDomainsCaddy(routes);
     const written = await writeCustomDomainsCaddy(content);
-    const result = { ...written, routes: routes.length };
+    const modeRoutes = buildHostingModeRoutes({ sites, domains, publicDomain: hostingPublicDomain(), seoSettings });
+    const modesContent = renderHostingModesCaddy(modeRoutes);
+    const modesWritten = await writeHostingModesCaddy(modesContent);
+    const platformRedirects = sites
+      .filter(site => site.status === "live" && site.activeReleaseId)
+      .map(site => ({
+        hostname: hostingSiteUrl(site.slug, hostingPublicDomain()).replace(/^https:\/\//, ""),
+        rules: redirectsBySite.get(site.id) ?? [],
+      }))
+      .filter(route => route.rules.length > 0);
+    const redirectsContent = renderRedirectsCaddy(platformRedirects);
+    const redirectsWritten = await writeHostingRedirectsCaddy(redirectsContent);
+    const result = {
+      ...written,
+      routes: routes.length,
+      modesFile: modesWritten.file,
+      modesChanged: modesWritten.changed,
+      modes: modeRoutes.length,
+      redirectsFile: redirectsWritten.file,
+      redirectsChanged: redirectsWritten.changed,
+      redirects: platformRedirects.reduce((sum, route) => sum + route.rules.length, 0),
+    };
     lastResult = result;
     lastError = "";
     return result;
@@ -77,5 +130,12 @@ export function startCustomDomainCaddyRefresh(): () => void {
 
 export function describeCustomDomainCaddy(): string {
   return "custom domains: " + customDomainsCaddyPath() +
-    (lastResult ? "; маршрутов " + lastResult.routes + "; " + lastResult.sha256.slice(0, 12) : "");
+    (lastResult
+      ? "; маршрутов " + lastResult.routes +
+        "; режимов " + lastResult.modes +
+        "; " + lastResult.sha256.slice(0, 12)
+      : "") +
+    "; modes: " + hostingModesCaddyPath() +
+    "; redirects: " + hostingRedirectsCaddyPath() +
+    (lastResult ? " (" + lastResult.redirects + ")" : "");
 }

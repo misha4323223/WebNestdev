@@ -8,6 +8,7 @@ import { readFileBytesInside, resolveInsideSandbox } from "../sandbox/path-guard
 import { assertNotSecretProjectPath } from "../secrets/secret-paths.js";
 import { getVisionConfig, inspectImage, visionMode } from "../provider/vision.js";
 import { getPlatformProviderConfig } from "../provider/platform-provider.js";
+import { planAllows } from "../account/entitlements.js";
 import { getProjectProvider } from "../project-store.js";
 import { imageContentType, loadImageFromUrl, MAX_IMAGE_BYTES, type ImageUrlResult } from "../media/remote-image.js";
 import { MAX_INLINE_IMAGE_BYTES } from "../media/image-limits.js";
@@ -80,7 +81,13 @@ registerTool({
       !isModelTextOnly(context.model) &&
       visionMode() !== "off",
     );
-    let config = canTryDirect ? null : getVisionConfig((await getProjectProvider(context.projectId).catch(() => null)) ?? getPlatformProviderConfig() ?? undefined);
+    // Старый провайдер на «Старте» не должен проходить и через зрение: выбираем его только
+    // когда тариф действительно разрешает свой AI-провайдер.
+    const loadProjectProvider = async () =>
+      context.plan && planAllows(context.plan, "ownAiProvider")
+        ? getProjectProvider(context.projectId).catch(() => null)
+        : null;
+    let config = canTryDirect ? null : getVisionConfig((await loadProjectProvider()) ?? getPlatformProviderConfig() ?? undefined);
     if (!canTryDirect && !config) return { ok: false, code: "not_configured", error: NOT_CONFIGURED };
 
     // Источник изображения: файл проекта или публичная ссылка (вложение из бакета).
@@ -137,7 +144,7 @@ registerTool({
     }
 
     if (!config) {
-      const projectProvider = await getProjectProvider(context.projectId).catch(() => null);
+      const projectProvider = await loadProjectProvider();
       config = getVisionConfig(projectProvider ?? getPlatformProviderConfig() ?? undefined);
       if (!config) return { ok: false, code: "not_configured", error: NOT_CONFIGURED };
     }

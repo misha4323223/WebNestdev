@@ -140,7 +140,7 @@ function NewsletterCard({ profile, knownEmail, onProfile }: {
   </div>;
 }
 
-export function AccountSettingsPanel({ projectId, projectName }: { projectId?: string; projectName?: string }) {
+export function AccountSettingsPanel({ projectId, projectName, onLogout }: { projectId?: string; projectName?: string; onLogout?: () => void }) {
   const [section, setSection] = useState<"account" | "database" | "preferences" | "security" | "subscription">("account");
   const [account, setAccount] = useState<AccountData | null>(null);
   const [preferences, setPreferences] = useState<UserPreferences>(initialPreferences);
@@ -343,10 +343,13 @@ export function AccountSettingsPanel({ projectId, projectName }: { projectId?: s
                 <a href="/legal/contacts" target="_blank" rel="noopener noreferrer">Реквизиты и контакты</a>
               </div>
             </div>
+            {onLogout && <div className="account-logout">
+              <button type="button" className="ghost-button" onClick={onLogout}><LogOut size={13}/> Выйти из аккаунта</button>
+            </div>}
           </div>}
           {section === "database" && <div className="account-section">
             <span className="eyebrow">ДАННЫЕ</span><h3>База данных</h3>
-            <p className="account-muted">Встроенная PostgreSQL для сайтов и приложений: без отдельного провайдера, с квотой по тарифу. Если нужна своя база — она подключается в «Интеграциях».</p>
+            <p className="account-muted">База данных NestDev для сайтов и приложений: без отдельного провайдера, с квотой по тарифу. Если нужна своя база — она подключается в «Интеграциях».</p>
             <ClientDatabaseCard projectId={projectId} projectName={projectName} onUpgrade={() => setSection("subscription")}/>
           </div>}
           {section === "security" && <div className="account-section">
@@ -429,7 +432,7 @@ export function AccountSettingsPanel({ projectId, projectName }: { projectId?: s
               <strong>{chosenPlan.name} · {chosenPlan.priceLabel}</strong>
             </div>}
             {billing && <UsageOverview billing={billing} paid={paid} onTopUp={() => setTopUpOpen(true)} onRefreshStorage={() => void refreshStorageSize()} refreshingStorage={refreshingStorage}/>}
-            <p className="account-muted">На бесплатном тарифе действует 10 запусков в день на встроенной модели. На платных тарифах запуски ограничены месячными кредитами; со своим AI-провайдером кредиты не тратятся.</p>
+            <p className="account-muted">На бесплатном тарифе действует 10 запусков в день на встроенной модели. На платных тарифах запуски ограничены месячными кредитами. Свой AI-провайдер доступен на «Плюсе» и «Премиуме».</p>
             <div className="usage-meter-list"><div className="usage-meter-title"><strong>Последние 7 дней</strong><small>{billing?.cost.pricesConfigured ? moneyLabel(weekSpend, billing.cost.currency) + " за неделю" : "цены модели не заданы"}</small></div>
               <div className="billing-bars">{historyDays.map(day => {
                 return <div className="billing-bar" key={day.date} title={shortDayLabel(day.date) + ": " + day.agentRuns + " запусков" + (day.costEstimate != null ? ", " + moneyLabel(day.costEstimate, billing?.cost.currency ?? "USD") : "")}>

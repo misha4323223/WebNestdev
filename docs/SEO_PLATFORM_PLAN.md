@@ -2,7 +2,7 @@
 
 Дата создания: **15.11.2026**
 
-Статус: **план зафиксирован; реализация не начата**
+Статус: **этапы 1–3 реализованы полностью; SEO-шаблоны агента, Search Console HTML-подтверждение и CDN-статус добавлены; SSR не реализован** (19.11.2026, 21:35 UTC)
 
 Связанные документы: [`CUSTOM_DOMAINS_PLAN.md`](CUSTOM_DOMAINS_PLAN.md),
 [`STATIC_HOSTING_PLAN.md`](STATIC_HOSTING_PLAN.md),
@@ -39,16 +39,16 @@ primary domain и 301.
 
 | Этап | Статус | Обновлено | Следующий шаг |
 |---|---|---|---|
-| 0. Решения и baseline | документ создан; решения нужно утвердить | 15.11.2026 | Утвердить режимы сайта и политику доменов |
-| 1. Static/404/noindex | не начато | — | Строгий 404 для static, 404.html, noindex preview |
-| 2. Route manifest и режимы | не начато | — | Автоопределение static/spa/hybrid, sitemap/robots |
-| 3. SEO-аудит и редиректы | не начато | — | Аудит в панели, `_redirects`, trailing slash |
-| 4. AI-шаблоны и SSG | не начато | — | Astro/SSG по умолчанию для контентных сайтов |
-| 5. SSR/CDN/Search Console | не начато | — | Отдельный рантайм, CDN, интеграции |
+| 0. Решения и baseline | решения приняты и реализованы в коде | 19.11.2026, 10:38 UTC | — |
+| 1. Static/404/noindex | реализовано | 19.11.2026, 10:38 UTC | Live-проверка Caddy на стенде |
+| 2. Route manifest и режимы | реализовано, включая sitemap index >50k | 19.11.2026, 21:35 UTC | — |
+| 3. SEO-аудит и редиректы | реализовано: аудит, API/UI, `_redirects`, trailing slash | 19.11.2026, 21:35 UTC | Live-проверка Caddy на стенде |
+| 4. AI-шаблоны и SSG | частично: `seo.templates`, SEO-правила агента; готового Astro-скаффолда нет | 19.11.2026, 21:35 UTC | Astro/SSG-скаффолд отдельным этапом |
+| 5. SSR/CDN/Search Console | CDN purge и Search Console HTML есть; SSR-рантайма нет | 19.11.2026, 21:35 UTC | SSR-рантайм отдельным этапом |
 
 ---
 
-## 2. Что уже есть на 15.11.2026
+## 2. Что уже есть на 19.11.2026
 
 ### Работает
 
@@ -61,7 +61,7 @@ primary domain и 301.
 - Кэширование хешированных ассетов.
 - Preview-домены и отдельный TLS-ask.
 
-### Чего нет
+### Чего не было на 15.11.2026 (baseline)
 
 - Режима сайта `static | spa | hybrid | ssr`.
 - Настоящего 404 для статического сайта с несколькими страницами.
@@ -73,6 +73,52 @@ primary domain и 301.
 - Управляемых редиректов и политики trailing slash.
 - SSR-рантайма.
 - SEO-шаблонов в AI-агенте.
+
+### Реализовано 19.11.2026, 10:38 UTC
+
+- `routing_mode` (`auto | static | spa | hybrid`) и `effective_routing_mode` у сайта;
+  `route_manifest_json` и режим у релиза; PostgreSQL-колонки с безопасными default.
+- Route manifest из реальных HTML-файлов; `/` и `/about/`; `404.html`; исключение скрытых
+  файлов. `auto` для одностарничной сборки сохраняет SPA, для многостраничной — static.
+- Caddy: strict 404 для static, SPA-fallback только без расширения, hybrid `/app/*`,
+  `404.html` с `noindex`, sitemap/robots из релиза или overlay, `X-Robots-Tag: noindex, nofollow`
+  на всём preview и `/robots.txt` с `Disallow: /`.
+- Сгенерированный `hosting-modes.map` вместо site-блока на каждый платформенный адрес;
+  canonical custom domain даёт 301 с платформенного адреса только после `active`.
+- `sitemap.xml`/`robots.txt` overlay в `/srv/sites/<slug>/seo`; пользовательские файлы
+  главнее; пересборка при публикации, rollback, смене slug/canonical и активации домена;
+  удаление при unpublish/suspend/delete.
+- Технический SEO-аудит: title/description/H1/lang/canonical/noindex/OG-база, alt,
+  внутренние ссылки, sitemap/robots, 404 живым запросом; critical/warning/info без score.
+- API `GET/PATCH /api/projects/:id/hosting/seo`, `POST .../seo/audit`; карточка SEO в панели.
+
+**Добавлено 19.11.2026, 21:35 UTC**
+
+- `_redirects` в корне релиза: строгий парсер (внутренние пути, 301/302, один `*` в конце,
+  `:splat`, сохранение query, лимит 100 правил/256 КБ), проверка циклов, дублей и open
+  redirect; ошибки не валят публикацию, видны в SEO-панели и аудите. Caddy получает общий
+  файл `caddy-custom/hosting-redirects.map`, импортируемый внутрь wildcard-блока; для
+  custom domains правила встраиваются в site-блок.
+- Политика trailing slash `always | never | ignore` хранится в `seo/settings.json` рядом с
+  overlay и переживает публикацию/rollback. Default: `always` для static/hybrid, `ignore`
+  для SPA. Второй вариант отвечает 301, query сохраняется через `{?query}`; sitemap
+  использует тот же вариант.
+- Sitemap index `sitemap-1.xml …` при >50 000 URL; старые куски удаляются, Caddy отдаёт
+  `/sitemap-*.xml` из релиза или overlay, аудит не считает index ошибкой отсутствия
+  главной и проверяет куски.
+- `seo.templates` в AI-агенте: head с title/description/canonical/OG/Twitter, JSON-LD,
+  `404.html` и шаблон `_redirects`; правила агента требуют static/SSG для контентных сайтов,
+  hybrid для SaaS и запрещают говорить «SEO готово» без аудита.
+- Search Console: подтверждение владения HTML-файлом `google<token>.html`; файл пишется в
+  overlay без публикации, отдаётся Caddy и удаляется при отключении. OAuth-интеграции с
+  Search Console нет.
+- CDN: purge уже работает на публикации и rollback (`cdn-purge.ts`); в SEO-панели показан
+  реальный статус, а не обещание. Ограничение общего CDN-ресурса остаётся: purge чистит
+  пути, а не отдельный hostname.
+
+**Осталось:** полноценный SSR-рантайм (сейчас серверные проекты отклоняются, а не молча
+превращаются в SPA), готовый Astro/SSG-скаффолд и OAuth-интеграция Search Console. Живой
+`caddy validate` на стенде не запускался: Caddy в workspace нет.
 
 ### Живой пример
 
@@ -197,7 +243,10 @@ primary domain и 301.
 - отдельный тариф/лимиты;
 - собственные 200/301/404 от приложения.
 
-Не делать в этапе 1.
+**Статус на 19.11.2026:** режим не реализован. `project-mode.ts` явно отклоняет проект с
+постоянным сервером (`PROJECT_NOT_STATIC`) и предлагает статику/serverless-функции; молча
+превращать SSR в SPA платформа не должна. Это отдельный этап с процессом, лимитами и
+соном, а не флаг в map.
 
 ### 4.5. Как выбирать режим
 
@@ -205,7 +254,7 @@ primary domain и 301.
 
 - есть несколько HTML-файлов или `404.html` → `static`;
 - только `index.html` + `/assets/*` → `spa`;
-- есть серверный рантайм → `ssr`;
+- есть серверный рантайм → сейчас отказ с понятной причиной, SSR-рантайма нет;
 - пользователь может переопределить режим в настройках сайта.
 
 Ручной выбор обязателен: автоматика не должна угадывать там, где ошибка ломает сайт.
@@ -464,6 +513,14 @@ Caddy проверяет сначала файл релиза, затем overla
 
 Не отдавать оба варианта с 200. Проверить ссылки в sitemap и canonical.
 
+Реализация: политика `always | never | ignore` лежит в `seo/settings.json` (не в БД, чтобы
+переживать rollback вместе с overlay). Default — `always` для static/hybrid и `ignore` для
+SPA; пользователь меняет её в SEO-карточке. Caddy делает 301 на один вариант, сохраняя
+query через `{?query}`; sitemap генерируется с тем же вариантом. Пользовательский файл
+`_redirects` читается из корня активного релиза, ошибки показываются, но публикацию не
+ломают. Общий `hosting-redirects.map` импортируется внутрь wildcard-блока; deploy создаёт
+пустой файл и обновляет старый `hosting-modes.map` с тремя колонками до четырёх.
+
 ---
 
 ## 11. AI-агент и шаблоны
@@ -486,8 +543,7 @@ Caddy проверяет сначала файл релиза, затем overla
 - отдельные HTML-страницы для публичных URL;
 - title/description на каждую страницу;
 - canonical через `SITE_URL`;
-- `sitemap.xml`;
-- `robots.txt`;
+- `sitemap.xml` и `robots.txt` — по умолчанию их строит hosting overlay из релиза; агент создаёт свои только для явно нестандартного набора;
 - `404.html`;
 - alt у изображений;
 - семантические заголовки;
@@ -495,6 +551,12 @@ Caddy проверяет сначала файл релиза, затем overla
 - корректный `lang`;
 - structured data, если тип страницы очевиден;
 - проверку сборки и SEO-аудит.
+
+Практическая поддержка: инструмент `seo.templates` возвращает head с canonical/OG/Twitter,
+JSON-LD, `public/404.html` и шаблон `public/_redirects`; агент адаптирует их под фреймворк.
+Sitemap/robots и Google-файл он не дублирует — их строит overlay из реального релиза.
+Готового Astro-скаффолда и отдельного `seo.check` пока нет: это следующий этап, а не
+скрытая функция.
 
 ### 11.3. Запрет
 
@@ -528,8 +590,12 @@ Caddy проверяет сначала файл релиза, затем overla
 GET   /api/projects/:id/hosting/seo
 PATCH /api/projects/:id/hosting/seo
 POST  /api/projects/:id/hosting/seo/audit
-GET   /api/projects/:id/hosting/seo/audit
 ```
+
+`PATCH` принимает `routingMode`, `trailingSlash` (`always | never | ignore`) и
+`googleVerification` (токен Search Console или `null`, чтобы удалить проверку). Ответ —
+`HostingSeoView` с реальными `redirects`, `sitemapChunks`, `googleVerificationReady` и
+`cdn.enabled`.
 
 Публикация:
 
@@ -538,15 +604,18 @@ POST /api/projects/:id/hosting/publish
 { "routingMode": "auto" | "static" | "spa" | "hybrid" }
 ```
 
-Ответ аудита:
+Ответ аудита (без score и без обещания позиций):
 
 ```json
 {
-  "score": 86,
-  "critical": [],
-  "warnings": [],
-  "info": [],
-  "checkedAt": "2026-11-15T00:00:00.000Z"
+  "version": 1,
+  "checkedAt": "2026-11-19T10:38:20Z",
+  "mode": "static",
+  "origin": "https://site.example.ru",
+  "pages": 3,
+  "issues": [
+    { "id": "canonical-missing", "level": "warning", "title": "Нет canonical", "detail": "…" }
+  ]
 }
 ```
 
@@ -592,47 +661,47 @@ POST /api/projects/:id/hosting/publish
 
 ### Этап 0. Решения и baseline — 1–2 дня
 
-- [ ] Утвердить режимы сайта.
-- [ ] Утвердить политику custom/platform host.
-- [ ] Утвердить правило sitemap/robots: defaults + override.
-- [ ] Утвердить правило canonical: шаблоны/opt-in, без молчаливой мутации.
-- [ ] Зафиксировать текущий baseline тестами.
+- [x] Утвердить режимы сайта.
+- [x] Утвердить политику custom/platform host.
+- [x] Утвердить правило sitemap/robots: defaults + override.
+- [x] Утвердить правило canonical: шаблоны/opt-in, без молчаливой мутации.
+- [x] Зафиксировать текущий baseline тестами.
 
 **Гейт:** решения записаны, противоречий в документах нет.
 
 ### Этап 1. Static/404/noindex — 1–2 недели
 
-- [ ] `routing_mode` в данных.
-- [ ] Автоопределение static/spa.
-- [ ] Strict 404 для static.
-- [ ] `404.html` с кодом 404.
-- [ ] `noindex` для preview.
-- [ ] 301 platform host → custom после активации.
-- [ ] Тесты матрицы статусов.
+- [x] `routing_mode` в данных.
+- [x] Автоопределение static/spa.
+- [x] Strict 404 для static.
+- [x] `404.html` с кодом 404.
+- [x] `noindex` для preview.
+- [x] 301 platform host → custom после активации.
+- [x] Тесты матрицы статусов (юнит; live Caddy не проверялся).
 
 **Гейт:** static-сайт не отдаёт 200 на неизвестный путь; SPA не сломан; custom host не
 дублируется.
 
 ### Этап 2. Sitemap/robots/route manifest — 2–3 недели
 
-- [ ] Route manifest из артефакта.
-- [ ] Sitemap из реальных страниц.
-- [ ] Robots default + override.
-- [ ] Overlay для сгенерированных файлов.
-- [ ] Пересборка при смене домена.
-- [ ] Тесты sitemap/robots.
+- [x] Route manifest из артефакта.
+- [x] Sitemap из реальных страниц.
+- [x] Robots default + override.
+- [x] Overlay для сгенерированных файлов.
+- [x] Пересборка при смене домена.
+- [x] Тесты sitemap/robots (юнит).
 
 **Гейт:** каждый публичный URL есть в sitemap; 404/preview отсутствуют; пользовательские
 файлы не перезаписаны.
 
 ### Этап 3. SEO-аудит и редиректы — 2–3 недели
 
-- [ ] Аудит title/description/H1/canonical/lang/noindex.
-- [ ] Проверка 404 и sitemap живыми запросами.
-- [ ] UI-карточка SEO.
-- [ ] `_redirects` и trailing slash.
-- [ ] Critical/warning.
-- [ ] Тесты аудита.
+- [x] Аудит title/description/H1/canonical/lang/noindex.
+- [x] Проверка 404 и sitemap живыми запросами (404 — live-probe; sitemap — файл).
+- [x] UI-карточка SEO.
+- [x] `_redirects` и trailing slash.
+- [x] Critical/warning.
+- [x] Тесты аудита.
 
 **Гейт:** аудит ловит критичные ошибки; warnings не блокируют публикацию; редиректы не
 ломают сайт.
@@ -641,8 +710,8 @@ POST /api/projects/:id/hosting/publish
 
 - [ ] Astro/SSG шаблон для контентных сайтов.
 - [ ] Hybrid-шаблон для SaaS.
-- [ ] Агент генерирует SEO-файлы и метаданные.
-- [ ] `seo.check` в агенте.
+- [x] Агент генерирует SEO-фрагменты и метаданные (`seo.templates`).
+- [x] Аудит доступен агенту через панель; отдельный `seo.check` не добавлялся.
 - [ ] Проверка на 5–10 реальных сайтах.
 
 **Гейт:** новый лендинг/блог по умолчанию имеет HTML-страницы, canonical, sitemap, robots,
@@ -650,11 +719,11 @@ POST /api/projects/:id/hosting/publish
 
 ### Этап 5. SSR/CDN/Search Console — 6–10 недель
 
-- [ ] Node/SSR runtime.
-- [ ] Reverse proxy и лимиты.
-- [ ] CDN и purge.
+- [ ] Node/SSR runtime. Сейчас серверные проекты явно отклоняются при публикации; фиктивного режима нет.
+- [ ] Reverse proxy и лимиты для SSR.
+- [x] CDN purge на публикации/rollback (существующий механизм); общего CDN-ресурса на сайт по-прежнему нет.
 - [ ] Оптимизация изображений.
-- [ ] Интеграция Search Console / Яндекс.Вебмастер.
+- [x] Search Console: подтверждение владения HTML-файлом; [ ] OAuth/API.
 - [ ] hreflang.
 
 **Гейт:** SSR не влияет на static-сайты; CDN не кэширует 404/редиректы неправильно;
@@ -683,9 +752,11 @@ POST /api/projects/:id/hosting/publish
 | Preview | 200 + `X-Robots-Tag: noindex, nofollow` |
 | 404 | 404 + `noindex` |
 | HTTP | 308/301 на HTTPS |
-| Trailing slash | 301 на канонический вариант |
-| `_redirects` | 301, без цикла и open redirect |
+| Trailing slash | 301 на канонический вариант, query сохранён |
+| `_redirects` | 301/302, wildcard, без цикла и open redirect |
 | Sitemap | только 200-страницы, primary domain |
+| Sitemap >50k | index + куски, каждый не больше 50k |
+| Search Console | `google<token>.html` отдаётся с 200 |
 | Robots | sitemap URL, preview disallow |
 
 ---
@@ -776,3 +847,5 @@ POST /api/projects/:id/hosting/publish
 | Дата | Что изменилось | Проверка |
 |---|---|---|
 | 15.11.2026 | Создан план SEO-платформы; зафиксированы режимы, домены, sitemap/robots, аудит, этапы и тесты. | Документ создан; реализация не начата. |
+| 19.11.2026, 10:38 UTC | Реализованы режимы сайта, route manifest, strict 404/404.html, Caddy map, sitemap/robots overlay, canonical 301 и preview noindex; добавлены SEO-аудит, API и UI. | `node --test` по caddy/route-manifest/audit/API хостинга; `tsc -p server/tsconfig.json --noEmit`; `tsc -b --noEmit`. Caddy validate на стенде не запускался. |
+| 19.11.2026, 21:35 UTC | Добавлены `_redirects`, trailing slash, sitemap index >50k, `seo.templates`, Search Console HTML-файл и CDN-статус в SEO-панели. SSR и Astro-скаффолд остаются отдельными этапами. | `node --test` по redirects/sitemap/audit/caddy/API/шаблонам/промпту — 63/63; `tsc -p server/tsconfig.json --noEmit`; `tsc -b --noEmit`; Biome; `git diff --check`. Caddy validate на стенде не запускался. |

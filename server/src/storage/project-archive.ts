@@ -528,16 +528,17 @@ export async function projectArchiveInfo(
   return userId ? recoverProjectArchiveRecord(projectId, userId, options) : readArchiveRecord(projectId);
 }
 
-/** Удаление проекта: объект в бакете не должен остаться сиротой и оплачиваться дальше. */
+/** Удаление проекта: все объекты в его префиксе должны исчезнуть из бакета. */
 export async function deleteProjectArchive(projectId: string, userId: string): Promise<void> {
   const record = await readArchiveRecord(projectId);
   if (record && record.userId !== userId) return;
   const config = objectStoreConfigFromEnv();
   if (config) {
     const store = s3ObjectStore(config);
-    // Ключ детерминированный: объект удаляется, даже если отметка уже потерялась. Иначе после
-    // удаления проекта в бакете остался бы оплачиваемый сирота, который никто не найдёт.
-    await store.remove(record?.key ?? projectArchiveKey(store.prefix, userId, projectId));
+    // Не только `workspace.tar.gz`: рядом лежат горячие snapshot'ы и, возможно, объекты
+    // прежних версий. Удаление всего префикса не зависит от того, сохранилась ли отметка
+    // в базе и указывает ли она на актуальный ключ.
+    await store.removePrefix([store.prefix, "projects", userId, projectId].join("/"));
   }
   await clearArchiveRecord(projectId);
 }

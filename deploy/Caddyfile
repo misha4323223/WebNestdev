@@ -35,6 +35,12 @@
 # заранее создаёт пустой custom-domains.caddy — без него Caddy не примет конфиг.
 import /etc/caddy/custom/*.caddy
 
+# Режимы платформенных сайтов и их canonical-хосты. Файл генерирует API из базы; map
+# позволяет обслуживать все `*.host` одним site-блоком, а не создавать Caddy-блок на
+# каждый сайт. На свежей ВМ deploy создаёт файл с `default "spa" "" "ignore"`, пока API не
+# перезаписал его; старый map с тремя колонками заменяется при выкатке.
+import /etc/caddy/custom/hosting-modes.map
+
 # Панель и API. WebSocket (`/ws` — прогоны агента) Caddy проксирует сам, отдельной настройки не нужно.
 {$WEBNESTDEV_SITE_DOMAIN:localhost}, www.{$WEBNESTDEV_SITE_DOMAIN:localhost} {
 	# Один адрес вместо двух: `www` переводится на основной домен. Иначе вход и CORS пришлось бы
@@ -64,11 +70,23 @@ import /etc/caddy/custom/*.caddy
 
 	encode zstd gzip
 
+	# Корень задан на уровне сайта: `file_server` внутри `handle_errors` сохраняет
+	# исходный статус 404 только когда сайт уже знает свой root. Конкретный slug ниже
+	# всё равно проверяется matcher'ом, поэтому невалидный Host не читает чужой каталог.
+	root * /srv/sites/{http.request.host.labels.3}/current
+
+	# `hosting_canonical` непустой только после активации custom domain. Сам
+	# платформенный адрес при этом не отдаёт контент, а делает постоянный 301.
+	@canonical_redirect `{hosting_canonical} != '' && {http.request.host} != {hosting_canonical}`
+	redir @canonical_redirect https://{hosting_canonical}{uri} permanent
+
 	# labels.3 — slug только для домена из трёх меток (host.nestdev.ru). Если домен станет
 	# host.staging.nestdev.ru, индекс нужно пересчитать и проверить в smoke, а не угадывать.
 	@site `{http.request.host.labels.3}.matches('^[a-z0-9][a-z0-9-]{1,61}[a-z0-9]$')`
 	handle @site {
-		root * /srv/sites/{http.request.host.labels.3}/current
+		# 404.html — только шаблон ошибки, а не обычная страница с 200.
+		@errorfile path /404.html
+		respond @errorfile 404
 
 		# Скрытые файлы и служебные каталоги. `hide` не является границей безопасности,
 		# поэтому они ещё и не попадают в артефакт при публикации.
@@ -77,9 +95,16 @@ import /etc/caddy/custom/*.caddy
 			not path /.well-known/*
 		}
 		respond @hidden 404
+		# `_redirects` — входной файл маршрутизации, а не публичная страница.
+		@redirects_file path /_redirects
+		respond @redirects_file 404
 
 		@html path / *.html
 		header @html Cache-Control "no-cache"
+
+		# sitemap/robots/проверка Search Console не должны жить в CDN год.
+		@seo path /sitemap.xml /sitemap-*.xml /robots.txt /google*.html
+		header @seo Cache-Control "public, max-age=300"
 
 		# Годовая immutable-кешировка только для файлов с хешем в имени. Обычный
 		# /assets/logo.png не должен получить max-age=31536000.
@@ -97,19 +122,95 @@ import /etc/caddy/custom/*.caddy
 			reverse_proxy webnestdev-server:8792
 		}
 
-		# SPA-fallback только для путей без расширения: `/assets/missing.js` остаётся 404,
-		# а не превращается в index.html.
-		@spa not path_regexp ext \.[a-z0-9]{1,8}$
-		handle @spa {
-			try_files {path} /index.html
+		# Пользовательский sitemap/robots главнее сгенерированного overlay.
+		handle /sitemap.xml {
+			root * /srv/sites/{http.request.host.labels.3}
+			try_files /current/sitemap.xml /seo/sitemap.xml
 			file_server
 		}
-		handle {
+		handle /sitemap-*.xml {
+			root * /srv/sites/{http.request.host.labels.3}
+			try_files /current{path} /seo{path}
 			file_server
 		}
-	}
+		handle /robots.txt {
+			root * /srv/sites/{http.request.host.labels.3}
+			try_files /current/robots.txt /seo/robots.txt
+			file_server
+		}
+		# Search Console подтверждает владение файлом google<token>.html; он лежит в overlay.
+		handle /google*.html {
+			root * /srv/sites/{http.request.host.labels.3}
+			try_files /current{path} /seo{path}
+			file_server
+		}
+
+		# Пользовательские редиректы из _redirects активного релиза. Они идут раньше
+		# trailing slash: правило /old -> /new должно сработать и при политике always,
+		# иначе первый ответ уводил бы /old на /old/ и правило уже не совпало бы.
+		import /etc/caddy/custom/hosting-redirects.map
+
+		# Один вариант trailing slash; второй отвечает 301.
+		@slash_add {
+			expression {hosting_slash} == 'always'
+			path_regexp slash ^(/.+[^/])$
+			not path_regexp ext (?i)\.[a-z0-9]{1,16}$
+			not path /api/* /.well-known/*
+		}
+		redir @slash_add {http.request.uri.path}/{?query} permanent
+		@slash_remove {
+			expression {hosting_slash} == 'never'
+			path_regexp slash ^(/.+[^/])/$
+			not path /api/* /.well-known/*
+		}
+		redir @slash_remove {re.slash.1}{?query} permanent
+
+		# Режим берётся из map, а не из наличия index.html: Caddy не читает файлы для
+		# маршрутизации и не угадывает SPA по 200 на случайном пути.
+		@mode_static `{hosting_mode} == 'static'`
+		handle @mode_static {
+			try_files {path} {path}/index.html
+			file_server
+		}
+		@mode_hybrid `{hosting_mode} == 'hybrid'`
+		handle @mode_hybrid {
+			@hybrid_spa {
+				path /app/*
+				not path_regexp ext (?i)\.[a-z0-9]{1,16}$
+			}
+			handle @hybrid_spa {
+				try_files {path} /index.html
+				file_server
+			}
+			handle {
+				try_files {path} {path}/index.html
+				file_server
+			}
+		}
+		@mode_spa `{hosting_mode} == 'spa'`
+		handle @mode_spa {
+			@spa not path_regexp ext (?i)\.[a-z0-9]{1,16}$
+			handle @spa {
+				try_files {path} /index.html
+				file_server
+			}
+			handle {
+				file_server
+			}
+		}
 	# Неизвестный или невалидный slug: не отдаём чужой каталог и не подставляем панель.
 	respond 404
+
+	# 404.html отдаём с исходным статусом 404 и noindex. Для static это важно: без
+	# файла остаётся честный 404, а не index.html с кодом 200.
+	handle_errors {
+		@notfound expression int({http.error.status_code}) == 404
+		header @notfound X-Robots-Tag "noindex"
+		header @notfound Cache-Control "no-cache"
+		root * /srv/sites/{http.request.host.labels.3}/current
+		rewrite @notfound /404.html
+		file_server
+	}
 }
 
 # Отдельная дверь для POST-запросов к функциям сайтов. CDN MWS пропускает только

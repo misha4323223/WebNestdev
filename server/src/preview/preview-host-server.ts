@@ -182,6 +182,9 @@ function wantsJson(request: IncomingMessage) {
   return String(request.headers.accept ?? "").includes("application/json");
 }
 
+const PREVIEW_NOINDEX = "noindex, nofollow";
+const PREVIEW_ROBOTS = "User-agent: *\nDisallow: /\n";
+
 function sendIdleStopped(request: IncomingMessage, response: ServerResponse, info: IdleStopInfo) {
   const message = (info.mode === "container" || info.mode === "hybrid" ? "Контейнер остановлен после простоя" : "Предпросмотр остановлен после простоя") +
     ": он не запущен. Запустите предпросмотр снова в панели проекта.";
@@ -190,19 +193,19 @@ function sendIdleStopped(request: IncomingMessage, response: ServerResponse, inf
     return;
   }
   const body = Buffer.from(idleStoppedPage(info));
-  response.writeHead(503, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "content-length": String(body.length) });
+  response.writeHead(503, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "content-length": String(body.length), "x-robots-tag": PREVIEW_NOINDEX });
   response.end(body);
 }
 
 function sendMessage(request: IncomingMessage, response: ServerResponse, status: number, message: string) {
   if (wantsJson(request)) {
     const body = Buffer.from(JSON.stringify({ error: message }));
-    response.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "content-length": String(body.length) });
+    response.writeHead(status, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "content-length": String(body.length), "x-robots-tag": PREVIEW_NOINDEX });
     response.end(body);
     return;
   }
   const body = Buffer.from(htmlMessage(status, message));
-  response.writeHead(status, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "content-length": String(body.length) });
+  response.writeHead(status, { "content-type": "text/html; charset=utf-8", "cache-control": "no-store", "content-length": String(body.length), "x-robots-tag": PREVIEW_NOINDEX });
   response.end(body);
 }
 
@@ -244,6 +247,7 @@ function sendGate(response: ServerResponse) {
     "cache-control": "no-store",
     "referrer-policy": "no-referrer",
     "x-content-type-options": "nosniff",
+    "x-robots-tag": PREVIEW_NOINDEX,
     "content-security-policy": "default-src 'none'; style-src 'nonce-" + nonce + "'; script-src 'nonce-" + nonce + "'; connect-src 'self'; base-uri 'none'; form-action 'none'",
     "content-length": String(body.length),
   });
@@ -331,8 +335,12 @@ async function writeProxyResponse(response: ServerResponse, upstream: Response) 
   const headers: Record<string, string | string[]> = {};
   upstream.headers.forEach((value, name) => {
     if (name.toLowerCase() === "set-cookie") return;
+    // Предпросмотр не является публичной страницей проекта: даже если приложение
+    // само поставило `index`, заголовок платформы должен остаться noindex.
+    if (name.toLowerCase() === "x-robots-tag") return;
     headers[name] = value;
   });
+  headers["x-robots-tag"] = PREVIEW_NOINDEX;
   // `Headers.forEach` склеивает несколько Set-Cookie в одну строку, а браузер разберёт её как одну
   // cookie с куском другой внутри: массив значений сохраняет обе.
   const cookies = upstream.headers.getSetCookie?.() ?? [];
@@ -411,6 +419,20 @@ export function createPreviewHostServer(deps: PreviewHostDeps = defaultDeps, lim
     const target = deps.target(request.headers.host);
     if (!target) {
       sendMessage(request, response, 404, "Этот адрес не обслуживает предпросмотр проекта.");
+      return;
+    }
+    // Единый noindex на всей двери: не только на gate/stopped HTML, но и на ответах
+    // приложения. Иначе поисковик мог бы проиндексировать рабочий предпросмотр.
+    response.setHeader("x-robots-tag", PREVIEW_NOINDEX);
+    if (url.pathname === "/robots.txt" && request.method === "GET") {
+      const body = Buffer.from(PREVIEW_ROBOTS, "utf8");
+      response.writeHead(200, {
+        "content-type": "text/plain; charset=utf-8",
+        "cache-control": "public, max-age=300",
+        "content-length": String(body.length),
+        "x-robots-tag": PREVIEW_NOINDEX,
+      });
+      response.end(body);
       return;
     }
     // Обмен билета стоит до проверки доступа: билет и есть то, чего у браузера ещё нет.

@@ -13,13 +13,16 @@ import type { PlanId } from "./plans.js";
  * - `containerPreview` — dev-сервер и hybrid preview. Статический preview разрешён всем.
  * - `serverlessFunctions` — публикация и исполнение функций на своём хосте.
  * - `backgroundJobs` — очередь фоновых заданий после HTTP-ответа; отдельный пул, только «Премиум».
+ * - `ownAiProvider` — проект работает через ключ и модель пользователя; на «Старте» этой
+ *   возможности нет, потому что бесплатный тариф должен идти через модель платформы.
  */
 export type PlanFeature =
   | "staticHosting"
   | "serverlessFunctions"
   | "backgroundJobs"
   | "interactiveTerminal"
-  | "containerPreview";
+  | "containerPreview"
+  | "ownAiProvider";
 
 export type PlanEntitlements = Readonly<Record<PlanFeature, boolean>>;
 
@@ -34,6 +37,7 @@ const PLAN_ENTITLEMENTS: Readonly<Record<PlanId, PlanEntitlements>> = Object.fre
     backgroundJobs: false,
     interactiveTerminal: false,
     containerPreview: false,
+    ownAiProvider: false,
   }),
   pro: Object.freeze({
     staticHosting: true,
@@ -41,6 +45,7 @@ const PLAN_ENTITLEMENTS: Readonly<Record<PlanId, PlanEntitlements>> = Object.fre
     backgroundJobs: false,
     interactiveTerminal: false,
     containerPreview: false,
+    ownAiProvider: true,
   }),
   team: Object.freeze({
     staticHosting: true,
@@ -48,6 +53,7 @@ const PLAN_ENTITLEMENTS: Readonly<Record<PlanId, PlanEntitlements>> = Object.fre
     backgroundJobs: true,
     interactiveTerminal: true,
     containerPreview: true,
+    ownAiProvider: true,
   }),
 });
 
@@ -57,6 +63,7 @@ export const PLAN_FEATURE_LABELS: Readonly<Record<PlanFeature, string>> = Object
   backgroundJobs: "фоновые задания",
   interactiveTerminal: "терминал",
   containerPreview: "контейнерный предпросмотр",
+  ownAiProvider: "свой AI-провайдер",
 });
 
 /** Минимальный тариф, на котором возможность появляется. */
@@ -66,6 +73,7 @@ const REQUIRED_PLAN: Readonly<Record<PlanFeature, PlanId>> = Object.freeze({
   backgroundJobs: "team",
   interactiveTerminal: "team",
   containerPreview: "team",
+  ownAiProvider: "pro",
 });
 
 const PLAN_NAMES: Readonly<Record<PlanId, string>> = Object.freeze({
@@ -101,8 +109,10 @@ export class PlanFeatureError extends Error {
 
 export function planFeatureMessage(plan: PlanId, feature: PlanFeature): string {
   const required = REQUIRED_PLAN[feature];
+  const unavailable = feature === "ownAiProvider" ? "недоступен" : "недоступны";
+  const opens = feature === "ownAiProvider" ? "чтобы подключить его" : "чтобы включить их";
   return "На тарифе «" + PLAN_NAMES[plan] + "» " + PLAN_FEATURE_LABELS[feature] +
-    " недоступны. Оформите «" + PLAN_NAMES[required] + "», чтобы включить их.";
+    " " + unavailable + ". Оформите «" + PLAN_NAMES[required] + "», " + opens + ".";
 }
 
 export function assertPlanFeature(plan: PlanId, feature: PlanFeature): void {

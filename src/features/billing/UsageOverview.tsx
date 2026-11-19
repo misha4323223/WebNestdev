@@ -65,9 +65,10 @@ export function UsageOverview({ billing, paid, onTopUp, onRefreshStorage, refres
   const databasePercent = databaseCapacity > 0
     ? Math.min(100, Math.round(databaseUsed / databaseCapacity * 100))
     : 0;
-  const databaseState = activeDatabase && (activeDatabase.readOnly || databaseUsed >= databaseCapacity)
+  const databaseOverQuota = Boolean(activeDatabase && databaseCapacity > 0 && databaseUsed >= databaseCapacity);
+  const databaseState = activeDatabase && databaseOverQuota
     ? "full"
-    : activeDatabase && databaseUsed >= databaseCapacity * 0.8 ? "warning" : "ok";
+    : activeDatabase && (activeDatabase.readOnly || databaseUsed >= databaseCapacity * 0.8) ? "warning" : "ok";
   const databaseNote = databaseError
     ? databaseError
     : !database
@@ -79,7 +80,9 @@ export function UsageOverview({ billing, paid, onTopUp, onRefreshStorage, refres
           : !database.provisioned
             ? "База ещё не создана: подключите её в «Настройки» → «База данных»."
             : database.readOnly
-              ? "Квота исчерпана: запись остановлена, данные сохранены."
+              ? databaseOverQuota
+                ? "Квота исчерпана: запись остановлена, данные сохранены."
+                : "База в режиме только для чтения, хотя данные ещё не превышают квоту. Обновите страницу: статус сверит квоту с фактическим размером."
               : "PostgreSQL для данных приложения. Одна схема на аккаунт.";
 
   const modelRows = modelUsageRows(billing.cost.models ?? []);
@@ -188,7 +191,7 @@ export function UsageOverview({ billing, paid, onTopUp, onRefreshStorage, refres
       </table>
       {!hasModelUsage && <p className="usage-models-empty">Сегодня запусков на моделях NestDev ещё не было.</p>}
     </div>
-    <p className="usage-overview-hint">Кредиты считаются только для моделей платформы. Свой AI-провайдер проекта не тратит кредиты NestDev.</p>
+    <p className="usage-overview-hint">Кредиты считаются только для моделей платформы. Свой AI-провайдер доступен на платных тарифах и не тратит кредиты NestDev.</p>
   </section>;
 }
 

@@ -19,7 +19,7 @@
 #
 # ВАЖНО про надёжность: WAL и base backup лежат на локальном диске node-1. Это защищает от
 # ошибки в данных, но не от потери ВМ; от потери ВМ по-прежнему защищает ежедневный дамп в S3
-# (docs/POSTGRES_BACKUP.md). Вывоз WAL в S3 — следующий шаг, отдельная правка.
+# (docs/POSTGRES_BACKUP.md). Вывоз WAL и base backup в S3 — отдельный таймер.
 #
 # Режимы:
 #   MODE=setup       включить archive_mode, поставить юниты и таймеры (нужен root)
@@ -27,7 +27,8 @@
 #   MODE=prune       удалить WAL старше WAL_KEEP_DAYS
 #   MODE=status      состояние: настройки, архив, копии
 #   MODE=restore     восстановить локальный LATEST на момент RESTORE_TIME (порт DRILL_PORT)
-#   MODE=restore-s3  то же из бакета (S3_TS=<ts> — конкретная копия, иначе latest.txt)
+#   MODE=restore-s3  то же из бакета (по умолчанию stable.txt; S3_TS=<ts> — конкретная
+#                    копия, S3_LATEST=1 — самая новая)
 #   MODE=stop        остановить и удалить учебный кластер
 #
 # Переменные:
@@ -305,13 +306,32 @@ s3_prefix() {
 restore_s3() {
   require_root
   require_restore_time
-  local prefix ts name index
+  local prefix ts name index source
   prefix=$(s3_prefix)
-  ts="${S3_TS:-}"
-  if [ -z "$ts" ]; then
-    ts=$(s3_cli get-object --key "$prefix/pitr/basebackup/latest.txt" | tr -d '\r\n')
+  if [ -n "${S3_TS:-}" ]; then
+    # Явный timestamp — для восстановления на конкретную копию.
+    ts="$S3_TS"
+    source="S3_TS"
+  elif [ "${S3_LATEST:-0}" = "1" ]; then
+    # Явный выбор самой новой копии; по умолчанию так не делаем.
+    ts=$(s3_cli get-object --key "$prefix/pitr/basebackup/latest.txt" | tr -d '\r\n' || true)
+    source="latest"
+  else
+    # Основной путь: last known good. latest может быть ещё не проверенной новой копией.
+    ts=$(s3_cli get-object --key "$prefix/pitr/basebackup/stable.txt" 2>/dev/null | tr -d '\r\n' || true)
+    source="stable"
+    if [ -z "$ts" ]; then
+      ts=$(s3_cli get-object --key "$prefix/pitr/basebackup/latest.txt" | tr -d '\r\n' || true)
+      source="latest (stable.txt отсутствует)"
+    fi
   fi
-  [ -n "$ts" ] || fail "в бакете нет последнего base backup (latest.txt)"
+  [ -n "$ts" ] || fail "в бакете нет base backup (stable.txt/latest.txt)"
+  log "base backup: $ts ($source)"
+  if [ "${DRY_RUN:-0}" = "1" ]; then
+    # Безопасная проверка выбора копии: ничего не скачиваем и не запускаем кластер.
+    log "DRY_RUN: восстановление не запускалось"
+    return 0
+  fi
   index=$(mktemp /tmp/wnd-pitr-index.XXXXXX)
   prepare_drill
   log "скачиваю $prefix/pitr/basebackup/$ts.tar.gz"

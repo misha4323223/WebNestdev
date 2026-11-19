@@ -47,6 +47,17 @@ class FakeObjectStore implements ObjectStore {
   async remove(key: string) {
     this.files.delete(key);
   }
+
+  async removePrefix(prefix: string) {
+    let removed = 0;
+    for (const key of [...this.files.keys()]) {
+      if (key.startsWith(prefix)) {
+        this.files.delete(key);
+        removed++;
+      }
+    }
+    return removed;
+  }
 }
 
 const site: HostingSite = {
@@ -135,6 +146,19 @@ test("релиз уезжает в бакет одним архивом и во�
   await store.remove({ site, release });
   assert.equal(objects.files.size, 0);
   assert.equal(await store.has({ site, release }), false);
+});
+
+test("удаление сайта убирает весь его префикс, даже объекты без строки релиза", async () => {
+  const objects = new FakeObjectStore();
+  const store = new S3ReleaseStore(objects, "hosting", { sitesDir: process.env.WEBNESTDEV_SITES_DIR!, limits });
+  objects.files.set("hosting/user-1/site-1/releases/old.tar.gz", Buffer.from("old"));
+  objects.files.set("hosting/user-1/site-1/releases/old.json", Buffer.from("{}"));
+  objects.files.set("hosting/user-1/other-site/releases/keep.tar.gz", Buffer.from("keep"));
+
+  await store.removeSite(site);
+  assert.equal(objects.files.has("hosting/user-1/site-1/releases/old.tar.gz"), false);
+  assert.equal(objects.files.has("hosting/user-1/site-1/releases/old.json"), false);
+  assert.equal(objects.files.has("hosting/user-1/other-site/releases/keep.tar.gz"), true);
 });
 
 test("подменённый или отсутствующий архив не превращается в сайт", async () => {

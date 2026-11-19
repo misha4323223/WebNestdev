@@ -471,6 +471,10 @@ export async function initializeStorage(): Promise<void> {
       node_id TEXT NOT NULL DEFAULT '',
       last_error TEXT NOT NULL DEFAULT '',
       suspend_reason TEXT NOT NULL DEFAULT '',
+      routing_mode TEXT NOT NULL DEFAULT 'spa',
+      effective_routing_mode TEXT NOT NULL DEFAULT 'spa',
+      seo_audit_json TEXT NOT NULL DEFAULT '',
+      seo_audit_at TEXT,
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       published_at TEXT,
@@ -481,6 +485,12 @@ export async function initializeStorage(): Promise<void> {
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("sites")}_user ON ${tbl("sites")} (user_id)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("sites")}_status ON ${tbl("sites")} (status)`);
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("sites")}_node ON ${tbl("sites")} (node_id)`);
+    // Колонки появились после первых выкаток хостинга. DEFAULT 'spa' сохраняет прежнее
+    // поведение существующих сайтов; новый сайт при создании получает явный static.
+    await pool.query(`ALTER TABLE ${tbl("sites")} ADD COLUMN IF NOT EXISTS routing_mode TEXT NOT NULL DEFAULT 'spa'`);
+    await pool.query(`ALTER TABLE ${tbl("sites")} ADD COLUMN IF NOT EXISTS effective_routing_mode TEXT NOT NULL DEFAULT 'spa'`);
+    await pool.query(`ALTER TABLE ${tbl("sites")} ADD COLUMN IF NOT EXISTS seo_audit_json TEXT NOT NULL DEFAULT ''`);
+    await pool.query(`ALTER TABLE ${tbl("sites")} ADD COLUMN IF NOT EXISTS seo_audit_at TEXT`);
     // Старые адреса после переименования остаются занятыми: иначе освободившийся поддомен
     // мог бы занять другой проект, а старые ссылки начали бы вести на чужой сайт.
     await pool.query(`CREATE TABLE IF NOT EXISTS ${tbl("hosting_slug_history")} (
@@ -505,6 +515,8 @@ export async function initializeStorage(): Promise<void> {
       manifest_key TEXT NOT NULL DEFAULT '',
       error TEXT NOT NULL DEFAULT '',
       build_log TEXT NOT NULL DEFAULT '',
+      route_manifest_json TEXT NOT NULL DEFAULT '',
+      routing_mode TEXT NOT NULL DEFAULT '',
       node_id TEXT NOT NULL DEFAULT '',
       created_at TEXT NOT NULL,
       ready_at TEXT,
@@ -516,6 +528,8 @@ export async function initializeStorage(): Promise<void> {
     await pool.query(`CREATE INDEX IF NOT EXISTS idx_${getTable("site_releases")}_user ON ${tbl("site_releases")} (user_id)`);
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_${getTable("site_releases")}_one_building ON ${tbl("site_releases")} (site_id) WHERE status = 'building'`);
     await pool.query(`CREATE UNIQUE INDEX IF NOT EXISTS idx_${getTable("site_releases")}_id_site ON ${tbl("site_releases")} (id, site_id)`);
+    await pool.query(`ALTER TABLE ${tbl("site_releases")} ADD COLUMN IF NOT EXISTS route_manifest_json TEXT NOT NULL DEFAULT ''`);
+    await pool.query(`ALTER TABLE ${tbl("site_releases")} ADD COLUMN IF NOT EXISTS routing_mode TEXT NOT NULL DEFAULT ''`);
     // Составной FK не даёт active/publishing указать на релиз другого сайта. Ограничения
     // отложенные: удаление сайта каскадно убирает релизы и активную ссылку в одной транзакции.
     await pool.query(`DO $$ BEGIN

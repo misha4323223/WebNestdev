@@ -37,7 +37,7 @@ test("admin plan settings change the name, features, description and discounted 
     assert.ok(pro && team);
     assert.equal(pro.name, "Профи");
     assert.equal(pro.description, "Для постоянной работы");
-    assert.deepEqual(pro.features, ["6 проектов", "Свой домен на каждый сайт", "Встроенная PostgreSQL 128 МБ", "20 изображений в день", "До 5 функций на сайт", "Импорт репозитория до 600 МБ", "Git-репозитории: подключение и отправка коммитов", "Скачивание проекта одним кликом", "Свой AI-провайдер по OpenAI-совместимому API"]);
+    assert.deepEqual(pro.features, ["6 проектов", "Свой домен на каждый сайт", "База данных 128 МБ", "20 изображений в день", "До 5 функций на сайт", "Импорт репозитория до 600 МБ", "Git-репозитории: подключение и отправка коммитов", "Скачивание проекта одним кликом", "Свой AI-провайдер по OpenAI-совместимому API"]);
     assert.equal(pro.priceRub, 800);
     assert.equal(pro.basePriceRub, 1000);
     assert.equal(pro.priceLabel, "800 ₽");
@@ -50,7 +50,7 @@ test("admin plan settings change the name, features, description and discounted 
     assert.deepEqual(admin.map(plan => plan.id), ["pro", "team"]);
     assert.equal(admin[0].priceRub, 1000, "форма редактирует базовую цену, а не итоговую");
     assert.equal(admin[0].priceLabel, "800 ₽");
-    assert.deepEqual(admin[0].features, ["6 проектов", "Свой домен на каждый сайт", "Встроенная PostgreSQL 128 МБ", "20 изображений в день", "До 5 функций на сайт", "Импорт репозитория до 600 МБ", "Git-репозитории: подключение и отправка коммитов", "Скачивание проекта одним кликом", "Свой AI-провайдер по OpenAI-совместимому API"]);
+    assert.deepEqual(admin[0].features, ["6 проектов", "Свой домен на каждый сайт", "База данных 128 МБ", "20 изображений в день", "До 5 функций на сайт", "Импорт репозитория до 600 МБ", "Git-репозитории: подключение и отправка коммитов", "Скачивание проекта одним кликом", "Свой AI-провайдер по OpenAI-совместимому API"]);
     assert.deepEqual(admin[1].features, [...PLAN_CATALOG.team.features], "без override остаётся каталог");
   });
 });
@@ -74,6 +74,9 @@ test("the catalog defaults show current promo prices and ten thousand credits on
     assert.equal(team.basePriceLabel.replace(/\u00a0/g, " "), "2 500 ₽");
     assert.ok(team.features.includes("10 000 кредитов на агента в месяц"));
     assert.equal(team.limits.agentCreditsPerMonth, 10_000);
+    assert.ok(!PLAN_CATALOG.free.features.some(feature => /AI-провайдер/i.test(feature)), "на «Старте» нет своего AI-провайдера");
+    assert.ok(pro.features.includes("База данных 128 МБ"));
+    assert.ok(team.features.includes("База данных 1 ГБ"));
   });
 });
 
@@ -143,7 +146,7 @@ test("legacy token and daily-run features are modernized on read", () => {
       "Импорт репозитория до 600 МБ",
       "Без ограничения числа подключений: облака, домены, сервисы, базы, S3 и Git",
       "Свой домен на каждый сайт",
-      "Встроенная PostgreSQL 128 МБ",
+      "База данных 128 МБ",
       "20 изображений в день",
       "До 5 функций на сайт",
       "Git-репозитории: подключение и отправка коммитов",
@@ -167,7 +170,7 @@ test("legacy token and daily-run features are modernized on read", () => {
       "Импорт репозитория до 600 МБ",
       "Без ограничения числа подключений: облака, домены, сервисы, базы, S3 и Git",
       "Свой домен на каждый сайт",
-      "Встроенная PostgreSQL 128 МБ",
+      "База данных 128 МБ",
       "20 изображений в день",
       "До 5 функций на сайт",
       "Git-репозитории: подключение и отправка коммитов",

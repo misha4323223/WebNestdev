@@ -1119,6 +1119,8 @@ ensure_host_tls_snippet(){
 # безопасен — Caddy принимает config без пользовательских доменов.
 ensure_custom_domains_dir(){
   local dir="$CUSTOM_DOMAINS_CADDY_DIR" file="$CUSTOM_DOMAINS_CADDY_DIR/custom-domains.caddy"
+  local modes="$CUSTOM_DOMAINS_CADDY_DIR/hosting-modes.map"
+  local redirects="$CUSTOM_DOMAINS_CADDY_DIR/hosting-redirects.map"
   if ! mkdir -p "$dir" 2>/dev/null; then
     if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
       sudo -n mkdir -p "$dir"
@@ -1137,11 +1139,36 @@ ensure_custom_domains_dir(){
       fi
     fi
   fi
+  # `map` импортируется Caddyfile; без файла Caddy не поднимется на свежей ВМ.
+  # Старый файл с тремя колонками после добавления `hosting_slash` не подходит к новому
+  # Caddyfile. Заменяем его безопасным default; API перезапишет актуальные маршруты.
+  if [ ! -f "$modes" ] || ! grep -q 'hosting_slash' "$modes" 2>/dev/null; then
+    if ! printf 'map {http.request.host} {hosting_mode} {hosting_canonical} {hosting_slash} {\n\tdefault "spa" "" "ignore"\n}\n' > "$modes" 2>/dev/null; then
+      if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+        printf 'map {http.request.host} {hosting_mode} {hosting_canonical} {hosting_slash} {\n\tdefault "spa" "" "ignore"\n}\n' | sudo -n tee "$modes" >/dev/null
+      else
+        log "не удалось создать $modes"
+        return 1
+      fi
+    fi
+  fi
+  # Caddyfile импортирует файл и внутри wildcard-блока. Пустой файл — нормальное состояние
+  # до первой публикации с _redirects.
+  if [ ! -f "$redirects" ]; then
+    if ! printf '# Сгенерировано API; пользовательских редиректов пока нет.\n' > "$redirects" 2>/dev/null; then
+      if command -v sudo >/dev/null 2>&1 && sudo -n true 2>/dev/null; then
+        printf '# Сгенерировано API; пользовательских редиректов пока нет.\n' | sudo -n tee "$redirects" >/dev/null
+      else
+        log "не удалось создать $redirects"
+        return 1
+      fi
+    fi
+  fi
   # API работает от uid 1000: ему нужна запись в каталог для атомарного rename. Caddy читает
   # файл как root, поэтому группе достаточно чтения. Не понижаем права молча, если команда
   # не разрешена — выкатка продолжается, но первый проход API сообщит об ошибке в журнале.
   chmod 775 "$dir" 2>/dev/null || true
-  chmod 664 "$file" 2>/dev/null || true
+  chmod 664 "$file" "$modes" "$redirects" 2>/dev/null || true
   # API пишет от uid 1000. Если каталог уже создан root'ом другим установщиком, вернуть
   # владельца; без этого ошибка записи выглядела бы как «Caddy не перечитывает домены».
   chown "${WEBNESTDEV_UID:-1000}:${WEBNESTDEV_GID:-1000}" "$dir" 2>/dev/null || \
@@ -1378,6 +1405,8 @@ validate_caddyfile(){
   else
     custom_tmp=$(mktemp -d)
     printf '# empty\n' > "$custom_tmp/custom-domains.caddy"
+    printf 'map {http.request.host} {hosting_mode} {hosting_canonical} {hosting_slash} {\n\tdefault "spa" "" "ignore"\n}\n' > "$custom_tmp/hosting-modes.map"
+    printf '# empty\n' > "$custom_tmp/hosting-redirects.map"
     extra+=(-v "$custom_tmp:/etc/caddy/custom:ro")
   fi
   if [ -f "$APP_DIR/$PREVIEW_TLS_FILE" ]; then

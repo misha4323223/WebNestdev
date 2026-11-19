@@ -1,6 +1,8 @@
 import type { CustomDomain, CustomDomainStatus } from "./domain-types.js";
 import type { CustomDomainCaddyRoute } from "./caddy-config.js";
 import { isCustomDomainHostname, normalizeHostnameLookup } from "./domain-name.js";
+import type { HostingRedirectRule } from "./seo/redirects.js";
+import { defaultTrailingSlash, type HostingSeoSettings } from "./seo/settings.js";
 import { isHostingSlug } from "./slug.js";
 import type { HostingSite } from "./types.js";
 
@@ -25,6 +27,8 @@ const ROUTABLE_STATUSES = new Set<CustomDomainStatus>([
 export type CustomDomainRouteSource = {
   domains: readonly CustomDomain[];
   sites: readonly HostingSite[];
+  seoSettings?: ReadonlyMap<string, HostingSeoSettings>;
+  redirectsBySite?: ReadonlyMap<string, readonly HostingRedirectRule[]>;
 };
 
 function validHostname(hostname: string): boolean {
@@ -66,6 +70,10 @@ export function buildCustomDomainRoutes(source: CustomDomainRouteSource): Custom
         canonicalHostname: canonical.hostname,
         siteSlug: site.slug,
         isCanonical: domain === canonical,
+        routingMode: site.effectiveRoutingMode ?? "spa",
+        trailingSlash: source.seoSettings?.get(site.id)?.trailingSlash
+          ?? defaultTrailingSlash(site.effectiveRoutingMode ?? "spa"),
+        redirects: source.redirectsBySite?.get(site.id) ?? [],
       });
     }
   }

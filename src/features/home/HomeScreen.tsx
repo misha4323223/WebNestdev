@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { ArrowRight, ArrowUpRight, AppWindow, Bot, Box, Boxes, Building2, Code2, CreditCard, Database, FolderGit2, Gamepad2, Globe, Home, LayoutDashboard, Layers3, Lock, LogOut, MessageCircle, Newspaper, Pencil, Plug, Rocket, ShoppingBag, Smartphone, Sparkles, Store, Trash2, UserRound, Workflow } from "lucide-react";
+import { ArrowRight, ArrowUpRight, AppWindow, Bot, Box, Boxes, Building2, Code2, CreditCard, Database, FolderGit2, Gamepad2, Globe, Home, LayoutDashboard, Layers3, Lock, MessageCircle, Newspaper, Pencil, Plug, Rocket, ShoppingBag, Smartphone, Sparkles, Store, Trash2, UserRound, Workflow } from "lucide-react";
 import { deleteProject, listProjects, renameProject, type Project } from "../../lib/project-api";
 import type { PlanId } from "../../lib/billing-api";
 import { getEntitlements, type AccountEntitlements } from "../../lib/entitlements-api";
 import { logout } from "../../lib/auth-api";
 import { HomeRail, type RailSection } from "./HomeRail";
+import { AccountSettingsPanel } from "../settings/AccountSettingsPanel";
 import { WebNestLogo } from "../../components/WebNestLogo";
 import { NestLoader } from "../../components/NestLoader";
 import { ProjectRenameForm } from "./ProjectRename";
@@ -141,9 +142,21 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
   }
 
   // Строка вкладок на телефоне прокручивается: выбранный раздел подъезжает в видимую часть.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: tab is a trigger: the active class changes with it
+  // Важно двигать только сам трек: scrollIntoView мог прокрутить ещё и страницу по горизонтали,
+  // из-за чего контент оплаты/аккаунта уезжал вбок.
   useEffect(() => {
-    tabsRef.current?.querySelector(".home-tab.active")?.scrollIntoView({ block: "nearest", inline: "center" });
+    const track = tabsRef.current;
+    const active = track?.querySelector<HTMLElement>(".home-tab.active");
+    if (!track || !active) return;
+    const trackRect = track.getBoundingClientRect();
+    const activeRect = active.getBoundingClientRect();
+    const left = track.scrollLeft + activeRect.left - trackRect.left - (track.clientWidth - activeRect.width) / 2;
+    track.scrollTo({ left: Math.max(0, left), behavior: "smooth" });
+    // Новый раздел открываем с начала, а не с той высоты, на которой осталась предыдущая
+    // страница. На ПК это особенно важно для полной страницы аккаунта.
+    if (tab === "account" || window.matchMedia("(max-width: 900px)").matches) {
+      window.scrollTo({ top: 0, behavior: "smooth" });
+    }
   }, [tab]);
 
   // Идея сохраняется на каждое нажатие, поэтому перезагрузка страницы не теряет написанное.
@@ -295,6 +308,7 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
   </>;
 
   const activeProjectId=localStorage.getItem(activeProjectKey);
+  const activeProject=projects.find(project=>project.id===activeProjectId)??null;
   const openStarterGroup=templateGroups.find(group=>group.id===activeGroup)??null;
 
   return <>
@@ -311,12 +325,18 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
               </button>;
             })}
           </div>
-          {/* На телефоне колонки нет: колокольчик переезжает в строку вкладок, рядом с выходом. */}
+          {/* На телефоне колонки нет: колокольчик занимает место, где раньше был выход.
+              Сам выход теперь живёт в разделе «Аккаунт». */}
           <NotificationsBell variant="tab"/>
-          <button className="home-tab-exit" onClick={() => void exit()} title="Выйти" aria-label="Выйти из аккаунта"><LogOut size={14}/></button>
         </nav>
 
         <div className={"home-main" + (activeRun ? " has-run" : "")}>
+          {/* Аккаунт — не краткая справка в узкой колонке, а тот же полный раздел
+              «Настройки аккаунта», что и в рабочем кабинете: профиль, тарифы, база, безопасность. */}
+          {tab === "account" && <div className="home-account-view">
+            <AccountSettingsPanel projectId={activeProject?.id} projectName={activeProject?.name} onLogout={()=>void exit()}/>
+          </div>}
+
           {/* Рабочая область живёт дальше на главной, поэтому запуск виден и здесь. */}
           {activeRun && <div className="home-run" role="status">
             <NestLoader size={24} label="Агент работает"/>
@@ -443,7 +463,6 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
           onDelete={project=>void remove(project)}
           onOpenPlans={openPlans}
           onOpenSubscriptions={()=>{setPlanDetail(null);setPage("subscription")}}
-          onExit={()=>void exit()}
         />
       </div>
     </main>

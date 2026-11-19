@@ -71,7 +71,9 @@ test("канонический домен отдаёт сайт, второй а
   assert.match(config, /www\.example\.ru \{/);
   assert.match(config, /redir https:\/\/example\.ru\{uri\} permanent/);
   assert.doesNotMatch(config, /http\.request\.host/);
-  assert.equal(config.match(/root \* /g)?.length, 1);
+  assert.equal(config.match(/root \* \/srv\/sites\/my-site\/current/g)?.length, 1);
+  assert.match(config, /handle \/sitemap\.xml/);
+  assert.match(config, /handle_errors/);
 });
 
 test("канонический www и apex-редирект", () => {
@@ -107,6 +109,55 @@ test("pending/verified и неопубликованный сайт не поп�
   assert.equal(unpublished.length, 0);
 });
 
+test("static и hybrid не получают SPA-fallback, у SPA он остаётся", () => {
+  const staticConfig = renderCustomDomainsCaddy(buildCustomDomainRoutes({
+    sites: [site({ effectiveRoutingMode: "static" })],
+    domains: [domain("d1", "static.example.ru")],
+  }));
+  assert.doesNotMatch(staticConfig, /@spa/);
+  assert.match(staticConfig, /# static:/);
+
+  const hybridConfig = renderCustomDomainsCaddy(buildCustomDomainRoutes({
+    sites: [site({ effectiveRoutingMode: "hybrid" })],
+    domains: [domain("d1", "hybrid.example.ru")],
+  }));
+  assert.match(hybridConfig, /path \/app\/\*/);
+  assert.match(hybridConfig, /try_files \{path\} \/index\.html/);
+
+  const spaConfig = renderCustomDomainsCaddy(buildCustomDomainRoutes({
+    sites: [site()],
+    domains: [domain("d1", "spa.example.ru")],
+  }));
+  assert.match(spaConfig, /@spa not path_regexp ext \(\?i\)/);
+});
+
+test("trailing slash сохраняет query и работает в обе стороны", () => {
+  const current = site({ effectiveRoutingMode: "static" });
+  const always = renderCustomDomainsCaddy(buildCustomDomainRoutes({
+    sites: [current],
+    domains: [domain("d1", "example.ru")],
+    seoSettings: new Map([[current.id, { trailingSlash: "always" }]]),
+  }));
+  assert.match(always, /redir @slash_add \{http\.request\.uri\.path\}\/\{\?query\} permanent/);
+});
+
+test("static получает trailing slash и пользовательские _redirects", () => {
+  const current = site({ effectiveRoutingMode: "static" });
+  const routes = buildCustomDomainRoutes({
+    sites: [current],
+    domains: [domain("d1", "example.ru")],
+    seoSettings: new Map([[current.id, { trailingSlash: "never" }]]),
+    redirectsBySite: new Map([[current.id, [{ from: "/old", to: "/new", status: 301, wildcard: false }]]]),
+  });
+  const config = renderCustomDomainsCaddy(routes);
+  assert.match(config, /@slash_remove/);
+  assert.match(config, /redir @slash_remove \{re\.slash\.1\}\{\?query\} permanent/);
+  assert.match(config, /@redirect_custom_my_site_.* \{/);
+  assert.match(config, /path \/old/);
+  assert.match(config, /redir @redirect_.* \/new\{\?query\} 301/);
+  assert.match(config, /try_files \{path\} \{path\}\/index\.html/);
+});
+
 test("если canonical ещё не готов, canonical выбирается из готовых адресов группы", () => {
   const routes = buildCustomDomainRoutes({
     sites: [site()],
@@ -120,6 +171,9 @@ test("если canonical ещё не готов, canonical выбирается 
     canonicalHostname: "www.example.ru",
     siteSlug: "my-site",
     isCanonical: true,
+    routingMode: "spa",
+    trailingSlash: "ignore",
+    redirects: [],
   }]);
 });
 

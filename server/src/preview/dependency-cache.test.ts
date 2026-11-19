@@ -81,6 +81,27 @@ test("cleanup removes caches idle for more than 30 days and keeps recent ones", 
   assert.equal((await readFile(dependencyCacheMarkerPath(freshId), "utf8")), "fresh");
 });
 
+test("cleanup удаляет кэш проекта, которого нет в базе, не дожидаясь 30 дней", async () => {
+  const orphanId = "deleted-project";
+  const liveId = "live-project";
+  await ensureDependencyCacheLocal(orphanId);
+  await ensureDependencyCacheLocal(liveId);
+  const now = Date.now();
+  const twoHoursAgo = new Date(now - 2 * 60 * 60_000);
+  await utimes(path.join(root, orphanId), twoHoursAgo, twoHoursAgo);
+
+  const result = await cleanupDependencyCache({
+    root,
+    now,
+    ttlMs: 30 * 24 * 60 * 60_000,
+    orphanGraceMs: 60 * 60_000,
+    liveProjectIds: async () => new Set([liveId]),
+  });
+  assert.equal(result.removed, 1);
+  assert.equal(await stat(path.join(root, orphanId)).catch(() => null), null);
+  assert.equal((await stat(path.join(root, liveId))).isDirectory(), true);
+});
+
 test.after(async () => {
   delete process.env.WEBNESTDEV_PREVIEW_CACHE_DIR;
   delete process.env.WEBNESTDEV_PREVIEW_CACHE_HOST_DIR;

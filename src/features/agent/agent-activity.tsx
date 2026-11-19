@@ -722,7 +722,7 @@ export function ActionsDock({ actions, running, open, onOpenChange }: {
  * the thinking sits where the answer will appear rather than in a separate window far from the text it
  * explains — and one click folds it away.
  *
- * Строка размышления не спорит с ответом за внимание: это одно слово «Размышляю…» в цвете темы и
+ * Строка размышления не спорит с ответом за внимание: это одно слово «Размышление» в цвете темы и
  * стрелка «развернуть». Ни пилюли, ни рамки, ни служебных чисел — развернув, пользователь читает сам
  * поток мыслей; свёрнутая строка лишь говорит, что модель думает.
  *
@@ -769,7 +769,7 @@ function ThinkingTrace({ steps, running }: { steps: ThinkingStep[]; running?: bo
   return <div className={"thinking thinking-trace" + (open ? " thinking-open" : "") + (running ? " thinking-live" : "")}>
     <button type="button" className="thinking-head" title={open ? "Свернуть размышления" : "Развернуть размышления"} onClick={() => { setChosen(true); setOpen(value => !value); }} aria-expanded={open}>
       {running && <NestLoader size={16} label="NestDev размышляет" />}
-      <span className="thinking-title">{running ? "Размышляю…" : "Размышления"}</span>
+      <span className="thinking-title">{running ? "Размышление" : "Размышления"}</span>
       <span className="thinking-count">{countThinkingSteps(steps)} {stepsWord(countThinkingSteps(steps))}</span>
       <span className="thinking-toggle"><ChevronDown size={12}/></span>
     </button>
@@ -795,13 +795,13 @@ export function MessageThinking({ text, running, steps }: {
   const said = Boolean(text.trim());
   // Ни строчки размышления — не повод для пустого окна с обещанием: пока модель молчит, видно только
   // слово, которое само пульсирует, пока идёт работа. Разворачивать нечего, поэтому без стрелки.
-  if (!said && running) return <div className="thinking-waiting" role="status"><NestLoader size={16} label="NestDev размышляет" /><span className="thinking-title">Размышляю…</span></div>;
+  if (!said && running) return <div className="thinking-waiting" role="status"><NestLoader size={16} label="NestDev размышляет" /><span className="thinking-title">Размышление</span></div>;
   // A finished turn without thinking says nothing: an empty folded row would only be noise.
   if (!said) return null;
   return <div className={"thinking" + (open ? " thinking-open" : "") + (running ? " thinking-live" : "")}>
     <button type="button" className="thinking-head" title={open ? "Свернуть размышления" : "Развернуть размышления"} onClick={() => { setChosen(true); setOpen(value => !value); }} aria-expanded={open}>
       {running && <NestLoader size={16} label="NestDev размышляет" />}
-      <span className="thinking-title">{running ? "Размышляю…" : "Размышления"}</span>
+      <span className="thinking-title">{running ? "Размышление" : "Размышления"}</span>
       <span className="thinking-toggle"><ChevronDown size={12}/></span>
     </button>
     {open && <div className="thinking-body" ref={bodyRef} onScroll={onScroll}>

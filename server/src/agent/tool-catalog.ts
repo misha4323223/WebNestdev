@@ -19,7 +19,7 @@ const CORE_TOOLS = [
   "npm.install", "pip.install",
   "git.status", "git.diff", "git.log", "git.branch", "git.pull", "git.add", "git.commit",
   "preview.start", "preview.stop", "preview.status", "preview.logs",
-  "project.verify", "project.check", "project.assets",
+  "project.verify", "project.check", "project.assets", "seo.templates",
   // Эти инструменты нужны обычной задаче, а не только деплою: системный промпт прямо
   // требует net.request/net.download для внешних API и файлов, database.status — перед
   // написанием хранения, service.status — перед просьбой о ключе интеграции.

@@ -13,6 +13,7 @@ import { createProvider } from "../provider.js";
 import { requireProjectUser, requireUser } from "../auth/auth.js";
 import { accountPlanFor } from "../billing/store.js";
 import type { PlanId } from "../account/plans.js";
+import { planAllows, planFeatureMessage } from "../account/entitlements.js";
 import { creditMultiplier, mainCreditRates } from "../account/credits.js";
 
 type ModelsRequest = { baseUrl?: string; token?: string; };
@@ -165,8 +166,11 @@ export async function registerProviderRoutes(app: FastifyInstance) {
     const { projectId } = request.params as { projectId: string };
     const user = await requireProjectUser(request,reply,projectId);
     if(!user)return;
-    const config = await getProjectProvider(projectId);
     const plan = await accountPlanFor(user.id);
+    // Старый провайдер мог остаться у аккаунта, который перешёл на «Старт»: не показываем его
+    // и не даём считать активным. Запись хранится до удаления, но запуски идут через платформу.
+    const ownAiProvider = planAllows(plan, "ownAiProvider");
+    const config = ownAiProvider ? await getProjectProvider(projectId) : null;
     const freePlan = plan === "free";
     const free = freePlan ? getFreeModelConfig() : null;
     const platform = getPlatformProviderConfig();
@@ -181,13 +185,18 @@ export async function registerProviderRoutes(app: FastifyInstance) {
     const reasoning = effective ? reasoningSupport(effective.baseUrl, effective.model) : null;
     const platformModels = state.options;
     const selectedModelId = config ? null : state.current?.id ?? null;
-    if (!config) return { configured: false, provider: "", baseUrl: "", model: "", hasToken: false, platformDefault, platformModels, selectedModelId, reasoning };
-    return { configured: true, provider: config.provider, baseUrl: config.baseUrl, model: config.model, hasToken: Boolean(config.token), platformDefault, platformModels, selectedModelId, reasoning };
+    if (!config) return { configured: false, provider: "", baseUrl: "", model: "", hasToken: false, ownAiProvider, platformDefault, platformModels, selectedModelId, reasoning };
+    return { configured: true, provider: config.provider, baseUrl: config.baseUrl, model: config.model, hasToken: Boolean(config.token), ownAiProvider, platformDefault, platformModels, selectedModelId, reasoning };
   });
 
   app.put("/api/projects/:projectId/provider", async (request, reply) => {
     const { projectId } = request.params as { projectId: string };
-    if(!await requireProjectUser(request,reply,projectId))return;
+    const user = await requireProjectUser(request,reply,projectId);
+    if(!user)return;
+    const plan = await accountPlanFor(user.id);
+    if (!planAllows(plan, "ownAiProvider")) {
+      return reply.code(403).send({ error: planFeatureMessage(plan, "ownAiProvider"), code: "PLAN_FEATURE_REQUIRED" });
+    }
     const body = (request.body ?? {}) as ModelsRequest & { provider?: string; model?: string };
     const baseUrl = body.baseUrl?.trim() ?? "";
     if (!baseUrl) return reply.code(400).send({ error: "Укажите Base URL провайдера" });
@@ -247,11 +256,12 @@ export async function registerProviderRoutes(app: FastifyInstance) {
     const user = await requireUser(request, reply); if (!user) return;
     const body = z.object({ projectId: z.string().min(1).max(200).optional() }).parse(request.body ?? {});
     let projectConfig: ProjectProviderConfig | null = null;
+    const plan = await accountPlanFor(user.id);
     if (body.projectId) {
       if (!await requireProjectUser(request, reply, body.projectId)) return;
-      projectConfig = await getProjectProvider(body.projectId);
+      // На «Старте» сохранённый старый ключ не должен даже проходить проверку связи.
+      if (planAllows(plan, "ownAiProvider")) projectConfig = await getProjectProvider(body.projectId);
     }
-    const plan = await accountPlanFor(user.id);
     // Бесплатный тариф без своего провайдера проверяет ту же цепочку, которая реально работает:
     // сначала Agnes, затем резерв. Имя модели в ответе не показываем — см. GET выше.
     const freeModel = !projectConfig && plan === "free";

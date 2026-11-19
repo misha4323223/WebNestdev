@@ -14,7 +14,7 @@ import { assertSitesDirSeparate, hostingSitesDir } from "./config.js";
 import { assertHostingReleaseId, assertHostingSlug } from "./slug.js";
 
 /** Внутри одного `SITES_DIR` живут только каталоги сайтов и служебные каталоги. */
-const SITE_DIRS = ["releases", "tmp", "trash", "manifests"] as const;
+const SITE_DIRS = ["releases", "tmp", "trash", "manifests", "seo"] as const;
 
 function inside(root: string, candidate: string) {
   return candidate === root || candidate.startsWith(root + path.sep);
@@ -46,6 +46,12 @@ export function hostingTrashDir(slug: string, root = hostingSitesDir()) {
 
 export function hostingManifestsDir(slug: string, root = hostingSitesDir()) {
   return path.join(hostingSiteDir(slug, root), "manifests");
+}
+
+/** Сгенерированные sitemap/robots. Отдельно от релиза: релиз не мутируется. */
+export function hostingSeoDir(slug: string, root = hostingSitesDir()) {
+  assertHostingSlug(slug);
+  return path.join(hostingSiteDir(slug, root), "seo");
 }
 
 /**

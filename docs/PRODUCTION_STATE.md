@@ -155,8 +155,8 @@ Production не должен зависеть от базы или storage од�
   установка падала с `invalid reference format`. Флаг проверен на живой установке
   зависимостей проекта `9ad6af70…` на `node-1`. Код также включает hybrid fallback,
   отдельный лимит hybrid/общий бюджет ноды, static-only панель preview и трёхминутный
-  idle для Docker/hybrid (static — пятнадцать минут); подробности — в разделе 20 и
-  [`HYBRID_PREVIEW.md`](HYBRID_PREVIEW.md).
+  idle для контейнерного preview (static и hybrid — пятнадцать минут); подробности —
+  в разделе 20 и [`HYBRID_PREVIEW.md`](HYBRID_PREVIEW.md).
 - Прод работает на базе `node-1`; `node-2` включена и является streaming standby
   (`pg_is_in_recovery()=t`, лаг ~1 мс), поэтому PostgreSQL failover доступен. Аварийное
   переключение 12.11.2026 описано в разделе 19.
@@ -691,6 +691,15 @@ backup `20261110T223005Z.tar.gz` (17 МБ) и `latest.txt`, оба объект�
 `head-object`. При первом запуске найден и исправлен баг `local dir="$1" tar="$dir.tar.gz"`
 (`dir: unbound variable` под `set -u`) — из-за него после WAL не выгружался base backup;
 исправленный `pg-pitr-s3.sh` стоит на обеих нодах. Вывоз и `restore-s3` работают.
+
+**Стабильная копия (19.11.2026, 20:23 UTC).** В S3 добавлен отдельный указатель
+`<prefix>/pitr/basebackup/stable.txt`; `latest.txt` теперь означает только самую новую
+загруженную копию, а `restore-s3` по умолчанию берёт `stable.txt`. Новая base backup
+загружается сразу и не переключает stable; после выдержки `STABLE_PROMOTE_DAYS` (7 дней) и
+учебного `restore-s3` оператор выполняет `webnestdev-pg-pitr-s3 promote`. Старые объекты
+base backup в S3 сохраняются, поэтому при плохой новой копии остаётся предыдущая рабочая.
+На момент включения `latest` и `stable` указывают на `20261117T213209Z` (17.11.2026);
+восстановление из S3 не запускалось, только проверены указатели.
 
 Осталось по 4.4: вынос primary на отдельный от API инстанс. TLS на участке
 HAProxy ↔ PostgreSQL выкачен 15.11.2026, 17:07 UTC в сборке `4556b09`

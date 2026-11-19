@@ -13,6 +13,10 @@ import path from "node:path";
  */
 
 export const CUSTOM_DOMAINS_CADDY_FILE = "custom-domains.caddy";
+/** Не `.caddy`: глобальный import custom-каталога не должен подхватить map как site-блок. */
+export const HOSTING_MODES_CADDY_FILE = "hosting-modes.map";
+/** Импортируется внутрь wildcard-блока платформенных сайтов. */
+export const HOSTING_REDIRECTS_CADDY_FILE = "hosting-redirects.map";
 
 export function customDomainsCaddyDir(): string {
   const raw = (process.env.CUSTOM_DOMAINS_CADDY_DIR ?? "/srv/caddy-custom").trim();
@@ -27,18 +31,27 @@ export function customDomainsCaddyPath(): string {
   return path.join(customDomainsCaddyDir(), CUSTOM_DOMAINS_CADDY_FILE);
 }
 
+export function hostingModesCaddyPath(): string {
+  return path.join(customDomainsCaddyDir(), HOSTING_MODES_CADDY_FILE);
+}
+
+export function hostingRedirectsCaddyPath(): string {
+  return path.join(customDomainsCaddyDir(), HOSTING_REDIRECTS_CADDY_FILE);
+}
+
 export type WriteCaddyConfigResult = {
   file: string;
   changed: boolean;
   sha256: string;
 };
 
-export async function writeCustomDomainsCaddy(
+async function writeCaddyTextFile(
+  fileName: string,
   content: string,
   options: { dir?: string } = {},
 ): Promise<WriteCaddyConfigResult> {
   const dir = options.dir ? path.resolve(options.dir) : customDomainsCaddyDir();
-  const file = path.join(dir, CUSTOM_DOMAINS_CADDY_FILE);
+  const file = path.join(dir, fileName);
   const sha256 = createHash("sha256").update(content, "utf8").digest("hex");
 
   await mkdir(dir, { recursive: true, mode: 0o755 });
@@ -59,4 +72,25 @@ export async function writeCustomDomainsCaddy(
     throw error;
   }
   return { file, changed: true, sha256 };
+}
+
+export async function writeCustomDomainsCaddy(
+  content: string,
+  options: { dir?: string } = {},
+): Promise<WriteCaddyConfigResult> {
+  return writeCaddyTextFile(CUSTOM_DOMAINS_CADDY_FILE, content, options);
+}
+
+export async function writeHostingModesCaddy(
+  content: string,
+  options: { dir?: string } = {},
+): Promise<WriteCaddyConfigResult> {
+  return writeCaddyTextFile(HOSTING_MODES_CADDY_FILE, content, options);
+}
+
+export async function writeHostingRedirectsCaddy(
+  content: string,
+  options: { dir?: string } = {},
+): Promise<WriteCaddyConfigResult> {
+  return writeCaddyTextFile(HOSTING_REDIRECTS_CADDY_FILE, content, options);
 }

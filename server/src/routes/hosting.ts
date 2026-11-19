@@ -20,6 +20,7 @@ import {
   restoreSite,
   suspendSite,
   unpublishSite,
+  updateSeoSettings,
 } from "../hosting/site-store.js";
 import { HostingError, type HostingSite } from "../hosting/types.js";
 import { recordAudit } from "../security/audit-journal.js";
@@ -28,12 +29,15 @@ import { previewHostTarget } from "../preview/preview-host.js";
 import { withSiteLock } from "../hosting/site-lock.js";
 import { domainsForSite, publicCustomDomain, customDomainForTls } from "../hosting/domain-service.js";
 import { cachedCustomDomainForTls } from "../hosting/tls-ask-cache.js";
-import { requestCustomDomainCaddyRefresh } from "../hosting/caddy-refresh.js";
+import { refreshCustomDomainsCaddy, requestCustomDomainCaddyRefresh } from "../hosting/caddy-refresh.js";
 import { normalizeHostnameLookup } from "../hosting/domain-name.js";
 import { customDomainsEnabled } from "../hosting/domain-config.js";
 import { accountPlanFor } from "../billing/store.js";
 import { customDomainLimitFor } from "../account/plans.js";
 import { hostingProjectView, inspectHostingProject, unknownHostingProject } from "../hosting/project-mode.js";
+import { hostingSeoView, runHostingSeoAudit } from "../hosting/seo/view.js";
+import { refreshSeoOverlay, removeSeoOverlay } from "../hosting/seo/overlay.js";
+import { normalizeSeoSettings, readSeoSettings, writeSeoSettings } from "../hosting/seo/settings.js";
 
 /**
  * API хостинга. Панель работает только с проектом, а не с внутренним id сайта: у проекта
@@ -46,6 +50,8 @@ function publicSite(site: HostingSite, releases = false) {
     projectId: site.projectId,
     slug: site.slug,
     status: site.status,
+    routingMode: site.routingMode ?? "spa",
+    effectiveRoutingMode: site.effectiveRoutingMode ?? "spa",
     // `unpublished` — это зарезервированный адрес без текущей ссылки: показывать его как
     // рабочий URL значило бы обещать доступ, которого Caddy уже не отдаёт.
     url: site.status === "live" && site.activeReleaseId ? hostingSiteUrl(site.slug) : null,
@@ -89,9 +95,8 @@ export async function registerHostingRoutes(app: FastifyInstance) {
     const site = await getSiteByProject(params.id);
     const releases = site ? await listReleases(site.id, config.limits.keepReleases + 10) : [];
     const domainFeature = customDomainsEnabled();
-    const domains = site && site.userId === auth.user.id && domainFeature
-      ? (await domainsForSite(site.id)).map(publicCustomDomain)
-      : [];
+    const ownDomains = site && site.userId === auth.user.id ? await domainsForSite(site.id) : [];
+    const domains = domainFeature ? ownDomains.map(publicCustomDomain) : [];
     // Один тариф нужен и для доменов, и для состава релиза. Считаем его один раз.
     const plan = await accountPlanFor(auth.user.id);
     // Лимит считается по группам (apex + www — один домен), поэтому одного числа достаточно.
@@ -102,6 +107,9 @@ export async function registerHostingRoutes(app: FastifyInstance) {
     // статику с функциями. Публикатор использует тот же инспектор, поэтому UI не врёт.
     const inspected = await inspectHostingProject(auth.project).catch(() => unknownHostingProject());
     const project = hostingProjectView(inspected, plan);
+    const seo = site && site.userId === auth.user.id
+      ? await hostingSeoView({ site, domains: ownDomains, publicDomain: config.publicDomain })
+      : null;
     return {
       enabled: config.enabled,
       domain: config.publicDomain,
@@ -110,6 +118,7 @@ export async function registerHostingRoutes(app: FastifyInstance) {
       customDomains: { enabled: domainFeature, limit: domainLimit },
       domains,
       project,
+      seo,
       site: site && site.userId === auth.user.id ? publicSite(site, true) : null,
       releases: site && site.userId === auth.user.id
         ? releases.map(release => ({
@@ -125,6 +134,88 @@ export async function registerHostingRoutes(app: FastifyInstance) {
           }))
         : [],
     };
+  });
+
+  app.get("/api/projects/:id/hosting/seo", async (request, reply) => {
+    const params = z.object({ id: z.string().min(1) }).parse(request.params);
+    const auth = await requireProject(request, reply, params.id);
+    if (!auth) return;
+    const site = await getSiteByProject(params.id);
+    if (!site || site.userId !== auth.user.id) return reply.code(404).send({ error: "Сайт не найден", code: "SITE_NOT_FOUND" });
+    const config = hostingConfig();
+    // Существующие active-домены учитываются и при выключенном feature flag: флаг
+    // запрещает новые подключения, но не должен ломать canonical уже работающего сайта.
+    const domains = await domainsForSite(site.id);
+    return hostingSeoView({ site, domains, publicDomain: config.publicDomain });
+  });
+
+  app.patch("/api/projects/:id/hosting/seo", async (request, reply) => {
+    const params = z.object({ id: z.string().min(1) }).parse(request.params);
+    const auth = await requireProject(request, reply, params.id);
+    if (!auth) return;
+    const config = hostingConfig();
+    if (!config.enabled) return reply.code(503).send({ error: "Хостинг выключен", code: "HOSTING_DISABLED" });
+    const parsed = z.object({
+      routingMode: z.enum(["auto", "static", "spa", "hybrid"]).optional(),
+      trailingSlash: z.enum(["always", "never", "ignore"]).optional(),
+      googleVerification: z.union([z.string().trim().max(128).regex(/^[A-Za-z0-9_-]+$/), z.null()]).optional(),
+    }).safeParse(request.body ?? {});
+    if (!parsed.success) {
+      return reply.code(400).send({ error: "Некорректные SEO-настройки", code: "INVALID_SEO_SETTINGS" });
+    }
+    const body = parsed.data;
+    const site = await getSiteByProject(params.id);
+    if (!site || site.userId !== auth.user.id) return reply.code(404).send({ error: "Сайт не найден", code: "SITE_NOT_FOUND" });
+    if (site.status === "deleted") return reply.code(410).send({ error: "Сайт удалён", code: "SITE_DELETED" });
+    if (site.status === "suspended") return reply.code(409).send({ error: "Сайт снят администратором", code: "SITE_SUSPENDED" });
+    if (body.routingMode === undefined && body.trailingSlash === undefined && body.googleVerification === undefined) {
+      return reply.code(400).send({ error: "Нет изменений", code: "INVALID_SEO_SETTINGS" });
+    }
+    const currentSettings = await readSeoSettings(site.slug, site.effectiveRoutingMode ?? "spa");
+    const settings = normalizeSeoSettings({
+      trailingSlash: body.trailingSlash ?? currentSettings.trailingSlash,
+      // undefined — не трогать сохранённый токен; null — удалить проверку.
+      googleVerification: body.googleVerification === null
+        ? undefined
+        : body.googleVerification ?? currentSettings.googleVerification,
+      ...(currentSettings.yandexVerification ? { yandexVerification: currentSettings.yandexVerification } : {}),
+    });
+    const effective = body.routingMode === undefined
+      ? site.effectiveRoutingMode ?? "spa"
+      : body.routingMode === "auto" ? site.effectiveRoutingMode ?? "spa" : body.routingMode;
+    const updated = body.routingMode === undefined
+      ? site
+      : await updateSeoSettings({
+          siteId: site.id,
+          userId: auth.user.id,
+          routingMode: body.routingMode,
+          effectiveRoutingMode: effective,
+        });
+    if (!updated) return reply.code(404).send({ error: "Сайт не найден", code: "SITE_NOT_FOUND" });
+    await writeSeoSettings(site.slug, settings);
+    // Overlay и map общие для платформы и custom domains: обновляем сразу, чтобы политика
+    // начала действовать без ожидания следующей публикации.
+    await refreshSeoOverlay(updated).catch(() => undefined);
+    await refreshCustomDomainsCaddy().catch(() => undefined);
+    const domains = await domainsForSite(site.id);
+    return hostingSeoView({ site: updated, domains, publicDomain: config.publicDomain });
+  });
+
+  app.post("/api/projects/:id/hosting/seo/audit", async (request, reply) => {
+    const params = z.object({ id: z.string().min(1) }).parse(request.params);
+    const auth = await requireProject(request, reply, params.id);
+    if (!auth) return;
+    const config = hostingConfig();
+    if (!config.enabled) return reply.code(503).send({ error: "Хостинг выключен", code: "HOSTING_DISABLED" });
+    const site = await getSiteByProject(params.id);
+    if (!site || site.userId !== auth.user.id) return reply.code(404).send({ error: "Сайт не найден", code: "SITE_NOT_FOUND" });
+    try {
+      const domains = await domainsForSite(site.id);
+      return await runHostingSeoAudit({ site, domains, publicDomain: config.publicDomain });
+    } catch (error) {
+      if (error instanceof HostingError) return sendHostingError(reply, error);
+      return sendHostingError(reply, new HostingError("RELEASE_NOT_READY", error instanceof Error ? error.message : "Аудит не удался", 409));
+    }
   });
 
   app.post("/api/projects/:id/hosting", async (request, reply) => {
@@ -216,6 +307,7 @@ export async function registerHostingRoutes(app: FastifyInstance) {
           throw error;
         }
       });
+      await refreshSeoOverlay(updated).catch(() => undefined);
       requestCustomDomainCaddyRefresh("site slug changed");
       await recordAudit({
         action: "hosting.slug.changed",
@@ -287,6 +379,7 @@ export async function registerHostingRoutes(app: FastifyInstance) {
         code: "UNPUBLISH_FAILED",
       });
     }
+    await removeSeoOverlay(site.slug).catch(() => undefined);
     requestCustomDomainCaddyRefresh("site unpublished");
     await recordAudit({ action: "hosting.unpublished", actorType: "user", actorId: auth.user.id, actorLabel: auth.user.email, target: site.id, targetLabel: site.slug, ip: request.ip }).catch(() => undefined);
     return siteAfter ? publicSite(siteAfter) : { removed: true };
@@ -299,6 +392,7 @@ export async function registerHostingRoutes(app: FastifyInstance) {
     const site = await getSiteByProject(params.id);
     if (!site || site.userId !== auth.user.id) return reply.code(404).send({ error: "Сайт не найден" });
     await markSiteDeleted(site.id);
+    await removeSeoOverlay(site.slug).catch(() => undefined);
     requestCustomDomainCaddyRefresh("site deleted");
     await reconcileSite(site.id).catch(error => console.warn("[hosting] не удалось удалить файлы сайта", error));
     await recordAudit({ action: "hosting.deleted", actorType: "user", actorId: auth.user.id, actorLabel: auth.user.email, target: site.id, targetLabel: site.slug, ip: request.ip }).catch(() => undefined);
@@ -390,6 +484,7 @@ export async function registerHostingRoutes(app: FastifyInstance) {
         code: "UNPUBLISH_FAILED",
       });
     }
+    await removeSeoOverlay(site.slug).catch(() => undefined);
     requestCustomDomainCaddyRefresh("site suspended");
     await recordAudit({ action: "hosting.suspended", actorType: "admin", actorId: admin.admin.id, actorLabel: admin.admin.email, target: site.id, targetLabel: site.slug + ": " + body.reason, ip: request.ip });
     return publicSite(site);
@@ -407,6 +502,7 @@ export async function registerHostingRoutes(app: FastifyInstance) {
     // Возвращаем current только если активный релиз действительно есть на диске.
     const { restoreCurrent } = await import("../hosting/paths.js");
     if (site.activeReleaseId) await restoreCurrent(site.slug, site.activeReleaseId).catch(() => undefined);
+    await refreshSeoOverlay(site).catch(() => undefined);
     requestCustomDomainCaddyRefresh("site restored");
     await recordAudit({ action: "hosting.restored", actorType: "admin", actorId: admin.admin.id, actorLabel: admin.admin.email, target: site.id, targetLabel: site.slug, ip: request.ip });
     return publicSite(site);

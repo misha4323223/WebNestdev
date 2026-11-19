@@ -41,6 +41,8 @@ export type ReleaseStore = {
   put(input: { site: HostingSite; releaseId: string; dir: string; manifest: ArtifactManifest }): Promise<StoredRelease>;
   restore(input: { site: HostingSite; release: HostingRelease; dir: string }): Promise<void>;
   remove(input: { site: HostingSite; release: HostingRelease }): Promise<void>;
+  /** Удаляет весь префикс сайта, включая объекты без строки в БД. */
+  removeSite(site: HostingSite): Promise<void>;
   removeKeys(storageKey: string, manifestKey: string): Promise<void>;
   has(input: { site: HostingSite; release: HostingRelease }): Promise<boolean>;
 };
@@ -224,6 +226,10 @@ export class S3ReleaseStore implements ReleaseStore {
       ? { storageKey: input.release.storageKey, manifestKey: input.release.manifestKey }
       : this.keys(input.site, input.release.id);
     await this.removeKeys(keys.storageKey, keys.manifestKey);
+  }
+
+  async removeSite(site: HostingSite): Promise<void> {
+    await this.objects.removePrefix([this.prefix, site.userId, site.id].join("/"));
   }
 
   async removeKeys(storageKey: string, manifestKey: string): Promise<void> {

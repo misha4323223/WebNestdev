@@ -56,6 +56,16 @@ test("snapshot does not delete the workspace and restores it atomically", async 
       async remove(key: string) {
         objects.delete(key);
       },
+      async removePrefix(prefix: string) {
+        let removed = 0;
+        for (const key of [...objects.keys()]) {
+          if (key.startsWith(prefix)) {
+            objects.delete(key);
+            removed++;
+          }
+        }
+        return removed;
+      },
     };
 
     const { snapshotProject, restoreProjectSnapshot } = await import("./workspace-snapshot.js");

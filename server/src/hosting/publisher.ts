@@ -20,6 +20,9 @@ import { loadProjectSecretFiles } from "../secrets/project-secrets.js";
 import { hostingApiBase, hostingConfig, hostingLimits } from "./config.js";
 import { installApiBridge } from "./api-bridge.js";
 import { copyArtifact, inspectArtifact, removeStaging } from "./artifact.js";
+import { refreshCustomDomainsCaddy } from "./caddy-refresh.js";
+import { refreshSeoOverlay } from "./seo/overlay.js";
+import { resolveRoutingMode, routeManifestFromArtifact } from "./seo/route-manifest.js";
 import { pruneLocalReleases } from "./cache.js";
 import { purgeHostingCdn, purgePathsForArtifact, purgePathsForChange, purgePathsForManifest } from "./cdn-purge.js";
 import { assertAccountHostingQuota, assertHostingDiskHasRoom } from "./limits.js";
@@ -242,6 +245,14 @@ async function startRollbackLocked(
   }
   try {
     const activated = await activateRelease({ siteId: site.id, userId, releaseId: release.id });
+    await refreshSeoOverlay(activated.site).catch(error => {
+      logLine("warn", "seo overlay failed", {
+        site: site.slug,
+        release: release.id,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+    await refreshCustomDomainsCaddy().catch(() => undefined);
     // Новый релиз мог изменить функцию, но старый ответ уже не должен отдаваться даже при
     // совпадении пути. Ключ содержит releaseId, поэтому это ещё и освобождение памяти.
     await invalidateCache(site.id);
@@ -437,6 +448,13 @@ async function runPublish(site: HostingSite, release: HostingRelease, project: P
         await assertHostingDiskHasRoom(config, artifact.bytes);
       }
 
+      const routeManifest = routeManifestFromArtifact(artifact);
+      const routingMode = resolveRoutingMode({
+        requested: site.routingMode,
+        kind,
+        manifest: routeManifest,
+      });
+
       const target = hostingReleaseDir(site.slug, release.id, config.sitesDir);
       await rm(target, { recursive: true, force: true });
       await rename(staging, target);
@@ -503,7 +521,7 @@ async function runPublish(site: HostingSite, release: HostingRelease, project: P
       switched = true;
 
       try {
-        await finishPublish({
+        const finished = await finishPublish({
           siteId: site.id,
           releaseId: release.id,
           userId: project.userId,
@@ -513,10 +531,25 @@ async function runPublish(site: HostingSite, release: HostingRelease, project: P
           files: artifact.filesCount + functionCount,
           sha256: artifact.sha256,
           manifestJson: JSON.stringify(artifact),
+          routeManifestJson: JSON.stringify(routeManifest),
+          routingMode,
           storageKey: stored?.storageKey ?? "",
           manifestKey: stored?.manifestKey ?? "",
         });
         committed = true;
+        await refreshSeoOverlay(finished.site).catch(error => {
+          logLine("warn", "seo overlay failed", {
+            site: site.slug,
+            release: release.id,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
+        await refreshCustomDomainsCaddy().catch(error => {
+          logLine("warn", "caddy mode map refresh failed", {
+            site: site.slug,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        });
         await invalidateCache(site.id);
       } catch (error) {
         // Если сайт успели снять с публикации, current не восстанавливаем: решение

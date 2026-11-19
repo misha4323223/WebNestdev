@@ -42,7 +42,7 @@ import { internalApiTokenConfigured, ownerRoutingEnabled } from "./sandbox/works
 import { SandboxNodeUnavailableError, SharedWorkspaceRequiredError, WorkspaceOwnerMismatchError } from "./sandbox/host.js";
 import { configureDockerEndpoint, describeDockerEndpoint } from "./sandbox/docker/endpoint.js";
 import { describeSandboxMount,verifySandboxMount } from "./sandbox/sandbox-check.js";
-import { ensureDataDir, WorkspaceMigrationRequiredError } from "./project-store.js";
+import { ensureDataDir, listProjectOwners, WorkspaceMigrationRequiredError } from "./project-store.js";
 import { clearAllPreviewSecrets } from "./secrets/preview-secrets.js";
 import { cleanupAbandonedTemp } from "./storage/temp-cleanup.js";
 import { registerHealthRoutes } from "./routes/health.js";
@@ -102,6 +102,7 @@ import { registerAdminProjectPermissionsRoutes } from "./routes/admin-project-pe
 import { registerHostingRoutes } from "./routes/hosting.js";
 import { registerHostingJobRoutes } from "./routes/hosting-jobs.js";
 import { registerCustomDomainRoutes } from "./routes/custom-domains.js";
+import { registerAccountHostRoutes } from "./routes/account-hosts.js";
 import { describeHosting, hostingConfig } from "./hosting/config.js";
 import { startCustomDomainCaddyRefresh } from "./hosting/caddy-refresh.js";
 import { startCustomDomainTlsActivation } from "./hosting/domain-activation.js";
@@ -172,6 +173,7 @@ import "./tools/net-tools.js";
 import "./tools/python-tools.js";
 import "./tools/design-tools.js";
 import "./tools/image-tools.js";
+import "./tools/seo-tools.js";
 import "./tools/view-image-tools.js";
 import "./tools/ui-tools.js";
 
@@ -498,6 +500,7 @@ await registerSupportRoutes(app);
 await registerDonationRoutes(app);
 await registerProjectRoutes(app);
 await registerHostingRoutes(app);
+await registerAccountHostRoutes(app);
 await registerHostingJobRoutes(app);
 await registerCustomDomainRoutes(app);
 await registerPreviewRoutes(app);
@@ -581,7 +584,12 @@ void reapRemotePreviews()
   .catch(error => app.log.warn({ error: error instanceof Error ? error.message : error }, "remote preview reap skipped"));
 // Локальные кэши node_modules не должны расти годами. Уборщик обходит только каталоги
 // зависимостей этой ноды и удаляет те, к которым не обращались дольше TTL (по умолчанию 30 дней).
-startDependencyCacheCleanup(message => app.log.info(message));
+// Список всех проектов, а не только этой ноды: кэш — локальная копия, но проект мог уехать
+// на другую ноду. Если проекта больше нет в базе, его node_modules здесь точно не нужен.
+startDependencyCacheCleanup(
+  message => app.log.info(message),
+  async () => new Set((await listProjectOwners()).map(project => project.id)),
+);
 // Долгие задания принадлежат контейнерам, а не процессу: после перезапуска прочитать их уже
 // никто не сможет, поэтому они снимаются на старте — как и контейнеры предпросмотра.
 //

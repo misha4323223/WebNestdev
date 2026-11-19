@@ -89,8 +89,9 @@ export async function inspectHostingProject(project: Project): Promise<HostingPr
     const profile = await readDeploymentProfile(root);
     if (profile.projectType.backend === "server") {
       return unsupported(
-        "Серверный проект нельзя опубликовать на production-хостинге: постоянный сервер здесь пока не поддерживается. " +
-          "Доступны статика и serverless-функции; контейнерный preview — отдельный режим разработки.",
+        "Серверный проект (SSR/постоянный сервер) нельзя опубликовать на production-хостинге: " +
+          "SSR-рантайм здесь пока не поддерживается. Доступны статика и serverless-функции; " +
+          "контейнерный preview — отдельный режим разработки.",
       );
     }
     if (profile.projectType.backend === "functions") {

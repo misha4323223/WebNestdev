@@ -146,19 +146,44 @@ base backup выгружаются в бакет под `pitr/`:
 | `<prefix>/pitr/wal/<сегмент>` | WAL-сегмент |
 | `<prefix>/pitr/wal/index.txt` | список выгруженных сегментов (вместо ListObjects) |
 | `<prefix>/pitr/basebackup/<ts>.tar.gz` | физическая копия одним архивом |
-| `<prefix>/pitr/basebackup/latest.txt` | какую копию восстанавливать |
+| `<prefix>/pitr/basebackup/latest.txt` | самая новая загруженная копия |
+| `<prefix>/pitr/basebackup/stable.txt` | проверенная копия для restore по умолчанию |
 
 Делает `deploy/scripts/pg-pitr-s3.sh` (`/usr/local/sbin/webnestdev-pg-pitr-s3`, таймер каждые
 5 минут). S3-клиента на хосте нет — файл стримется в контейнер сервера, где ключи уже есть:
 `docker exec -i … node server/dist/scripts/postgres-backup.js put-object --key …`.
 
+`latest.txt` и `stable.txt` намеренно разделены. Новая base backup сразу загружается в S3 и
+становится `latest`, но `restore-s3` по умолчанию берёт `stable` — предыдущую проверенную
+копию. `sync` не переключает `stable` сам: возраст копии не доказывает, что она целая.
+
+Порядок ротации:
+
+1. новая копия уже лежит в S3 и доступна как `latest`;
+2. не раньше чем через `STABLE_PROMOTE_DAYS` (по умолчанию 7 дней) проверить её учебным
+   восстановлением: `restore-s3` с `S3_TS=<новая>`;
+3. если проверка прошла — `webnestdev-pg-pitr-s3 promote` (если за неделю появилась ещё одна
+   копия, укажи проверенную: `PROMOTE_TS=<ts>`); только тогда `stable` переключится, а старая
+   копия останется в S3;
+4. если новая плохая — `stable` не трогать; restore продолжит брать старую копию.
+
 Восстановление из бакета — тот же drill, но данные приезжают из S3:
 
 ```bash
+# по умолчанию — stable; если stable.txt ещё нет, скрипт откатится на latest
 sudo env RESTORE_TIME='2026-11-10 21:41:04.205539+00' /usr/local/sbin/webnestdev-pg-pitr restore-s3
-# конкретная копия вместо latest.txt:
+# конкретная копия:
 sudo env RESTORE_TIME='…' S3_TS=20261110T214324Z /usr/local/sbin/webnestdev-pg-pitr restore-s3
+# явно самая новая, ещё не прошедшая promote:
+sudo env RESTORE_TIME='…' S3_LATEST=1 /usr/local/sbin/webnestdev-pg-pitr restore-s3
+# только проверить, какая копия будет выбрана, ничего не восстанавливая:
+sudo env RESTORE_TIME='…' DRY_RUN=1 /usr/local/sbin/webnestdev-pg-pitr restore-s3
 ```
+
+`STABLE_PROMOTE_DAYS` можно переопределить переменной окружения. `FORCE=1` у `promote`
+предназначен только для первоначальной настройки и ручного восстановления доверия; штатная
+ротация должна ждать выдержку и успешный drill. WAL выгружается каждые 5 минут и не ждёт
+`promote`: без свежего WAL старую base backup нельзя догнать до нужного момента.
 
 **Статус 11.11.2026 — вывоз работает.** Образ `sha-343ee73fc0c4` содержит CLI `put-object`,
 `get-object`, `head-object`; таймер `webnestdev-pg-pitr-s3.timer` на primary выгрузил 18

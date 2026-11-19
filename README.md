@@ -75,12 +75,13 @@ docs/PRODUCTION_DEPLOYMENT.md for the queue settings and what a small host costs
 ### Which runs the daily quota counts
 
 The free plan allows **10 agent runs a day**, and that number is about the model the *platform*
-pays for. A project with its own AI provider spends the owner's key and the owner's tokens, so its
-runs are neither counted nor blocked: `routes/agent-ws.ts` asks once whether the project has a
-provider of its own and hands the answer to `consumeAgentRun` (`account/usage-store.ts`), which
-returns the current usage snapshot instead of reserving a place in the quota. Runs on the built-in
-platform model keep counting exactly as before, and the panel, the settings screen and the plans
-page all say so next to the numbers.
+pays for. A project on a paid plan with its own AI provider spends the owner's key and the owner's
+tokens, so its runs are neither counted nor blocked: `routes/agent-ws.ts` checks the plan and
+whether the project has a provider of its own and hands the answer to `consumeAgentRun`
+(`account/usage-store.ts`), which returns the current usage snapshot instead of reserving a place
+in the quota. On the free plan a saved provider is ignored, so runs keep using the built-in model
+and counting as before; the panel, the settings screen and the plans page all say so next to the
+numbers.
 
 On top of the host-wide limit there is **one run per account**: a second tab or a second project
 of the same user is answered with `RUN_ALREADY_ACTIVE` and the panel says the agent is still
@@ -242,7 +243,7 @@ Nothing is lost when the window drops: the whole conversation stays stored, and 
 
 A project keeps several chats, and they belong to the account rather than to the browser: the **Чаты** button above the conversation opens the project's saved sessions — each labelled by the question it started with, with the last answer as a preview and the time it was last used — any of them reopens, and **Новая сессия** starts the next one. Opening a project returns to the last chat, and a project without chats gets a new one, so the history is there on another device and after the browser storage is cleared.
 
-Two windows that collapse and remember their state — **План задач** and **Действия агента** — sit next to the composer: what is happening right now stays next to the input instead of scrolling away with the chat, and each window has its own scroll, so a long run never pushes the conversation down. The model's thinking is not a window of its own: it belongs to the answer it produced and is folded **above** it, so the model reasons first and writes the answer below — the shape Replit uses. While a run works, that container is open and carries the step, the context size and the elapsed time; a stored answer keeps its thinking folded. When the model's gateway sends no reasoning at all (most non-reasoning models) there is no empty window to stare at: a single live line says the answer is being prepared, with the same step, context and time, and the window appears at the moment the model really says something.
+Two windows that collapse and remember their state — **План задач** and **Действия агента** — sit next to the composer: what is happening right now stays next to the input instead of scrolling away with the chat, and each window has its own scroll, so a long run never pushes the conversation down. The model's thinking is not a window of its own: it belongs to the answer it produced and is folded **above** it, so the model reasons first and writes the answer below. While a run works, that container is open and carries the step, the context size and the elapsed time; a stored answer keeps its thinking folded. When the model's gateway sends no reasoning at all (most non-reasoning models) there is no empty window to stare at: a single live line says the answer is being prepared, with the same step, context and time, and the window appears at the moment the model really says something.
 
 The chain of thought is asked for rather than hoped for, and it is asked for in every request: the
 gateways publish `reasoning_content`/`reasoning`/`reasoning_details` (and a few more names) **only**
@@ -252,7 +253,7 @@ to stop asking, `low`/`high` for the depth) is sent with every step unless the c
 the field answers `400`/`422` to the first attempt, so the provider repeats the very same request
 without it and remembers the address for the rest of the process — the run never ends over a field
 nobody asked for. Folded, the container is not silent: its header keeps the **last line** of the
-thought stream next to «Размышляю…», and a finished answer is labelled with the size of what the
+thought stream next to «Размышление», and a finished answer is labelled with the size of what the
 model thought.
 
 The agent is instructed to think and answer **in Russian first**, switching to another language only where the work itself needs it — code, paths, commands, error messages and quoted documentation.
@@ -439,7 +440,7 @@ Every finished developer run that changed files becomes a checkpoint: a regular 
 
 A checkpoint stays local. **The agent never pushes on its own**: sending commits to a repository is a change to shared code, so it happens only when the user presses **Отправить** in the **Git** tab, after they have seen the result. On the free plan the button and the "push after commit" option are disabled, and the server rejects direct push requests; the local history still works. `createRepositoryForProject` is the one path that creates a repository and sends the initial state, and it too runs from that tab on an explicit click. An imported repository starts from its real GitHub commit — the import fetches the remote branch without touching the files — so the first task produces an ordinary fast-forward commit instead of an unrelated history. A failed or unavailable push never loses work: the commit stays in the project and the panel says why it was not sent, with the same button to retry.
 
-The **Git** tab is shaped like the Git pane in Replit, with a review view closer to VS Code: a branch menu, pull/push, the working tree with per-file `+N/−M` counts and a total, and a commit box. Each file opens a line-numbered diff with both old and new line numbers, so deletions and edits are visible, not only additions. Uncommitted edits — including ones made by hand in **Файлы** or in the terminal — can be selected file by file, given a message and committed without waiting for an agent run; «Отправить» next to the button is the explicit push. Below it, the history lists checkpoints with their files, opens diffs and the commit on the provider, and restores any earlier one. Rollback restores the file tree of that commit and commits the result on top; it never rewrites history, so it needs no force-push and cannot drop other people's commits — and it stays local until the user sends it. The same API lives in `server/src/routes/changes.ts` (`worktree`, `diff`, `commit`, `branches`).
+The **Git** tab is a focused Git pane: a branch menu, pull/push, the working tree with per-file `+N/−M` counts and a total, and a commit box. Each file opens a line-numbered diff with both old and new line numbers, so deletions and edits are visible, not only additions. Uncommitted edits — including ones made by hand in **Файлы** or in the terminal — can be selected file by file, given a message and committed without waiting for an agent run; «Отправить» next to the button is the explicit push. Below it, the history lists checkpoints with their files, opens diffs and the commit on the provider, and restores any earlier one. Rollback restores the file tree of that commit and commits the result on top; it never rewrites history, so it needs no force-push and cannot drop other people's commits — and it stays local until the user sends it. The same API lives in `server/src/routes/changes.ts` (`worktree`, `diff`, `commit`, `branches`).
 
 What never enters history: `node_modules`, build output (`dist`, `build`, `.next`, …), caches, environment files and files above `CHANGES_MAX_FILE_BYTES` (12 MB by default). These rules live in `.git/info/exclude` and in `ignoredPath`, so a project's own `.gitignore` keeps working unchanged. `CHANGES_PUSH_TIMEOUT_MS` (20 s) bounds a push so the panel does not wait on an unreachable GitHub; a timeout is reported as "not sent" while the checkpoint stays local.
 

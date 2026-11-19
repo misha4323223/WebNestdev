@@ -306,8 +306,9 @@ sync_file certs/host/key.pem
 if [ "$DRY_RUN" != "1" ]; then
   ssh2 "chmod 600 '$NODE2_APP_DIR/certs/host/key.pem' 2>/dev/null || true"
   # Caddyfile импортирует этот каталог; на свежей node-2 пустой каталог не пройдёт validate.
-  # Не перезаписываем файл, если его уже создал API на общей Gluster-точке.
-  ssh2 "mkdir -p '$CUSTOM_DOMAINS_CADDY_DIR' '$CADDY_DATA_HOST_DIR' && { if [ ! -f '$CUSTOM_DOMAINS_CADDY_DIR/custom-domains.caddy' ]; then printf '# Сгенерировано API.\n' > '$CUSTOM_DOMAINS_CADDY_DIR/custom-domains.caddy'; fi; }" || \
+  # Актуальный файл API на общей Gluster-точке не перезаписываем; старый map
+  # без `hosting_slash` заменяем безопасным default до первого прохода API.
+  ssh2 "mkdir -p '$CUSTOM_DOMAINS_CADDY_DIR' '$CADDY_DATA_HOST_DIR' && { if [ ! -f '$CUSTOM_DOMAINS_CADDY_DIR/custom-domains.caddy' ]; then printf '# Сгенерировано API.\n' > '$CUSTOM_DOMAINS_CADDY_DIR/custom-domains.caddy'; fi; if [ ! -f '$CUSTOM_DOMAINS_CADDY_DIR/hosting-modes.map' ] || ! grep -q 'hosting_slash' '$CUSTOM_DOMAINS_CADDY_DIR/hosting-modes.map' 2>/dev/null; then printf 'map {http.request.host} {hosting_mode} {hosting_canonical} {hosting_slash} {\n\tdefault \"spa\" \"\" \"ignore\"\n}\n' > '$CUSTOM_DOMAINS_CADDY_DIR/hosting-modes.map'; fi; if [ ! -f '$CUSTOM_DOMAINS_CADDY_DIR/hosting-redirects.map' ]; then printf '# Сгенерировано API.\n' > '$CUSTOM_DOMAINS_CADDY_DIR/hosting-redirects.map'; fi; }" || \
     log "не удалось подготовить каталоги custom/caddy-data на node-2"
 fi
 

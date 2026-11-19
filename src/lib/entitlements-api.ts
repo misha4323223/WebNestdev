@@ -7,6 +7,8 @@ export type PlanEntitlements = {
   serverlessFunctions: boolean;
   interactiveTerminal: boolean;
   containerPreview: boolean;
+  /** Свой AI-провайдер доступен только на платных тарифах. */
+  ownAiProvider: boolean;
 };
 
 export type AccountEntitlements = {

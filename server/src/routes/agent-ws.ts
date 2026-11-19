@@ -7,6 +7,7 @@ import { getProject,getConversation,appendConversationMessages,getProjectProvide
 import type { ChatMessage } from "../types.js";
 import { consumeAgentRun } from "../account/usage-store.js";
 import { accountPlanFor } from "../billing/store.js";
+import { planAllows } from "../account/entitlements.js";
 import { getPlatformModelForPlan } from "../platform/platform-models.js";
 import { AccountBusyError,runQueueStats,runWithRunSlot } from "../agent/run-limiter.js";
 import { positiveInt } from "../concurrency.js";
@@ -141,15 +142,16 @@ export async function registerAgentWebSocket(app:FastifyInstance,runtime=new Age
         if(payloadSize>2_000_000)throw new Error("Запрос агента слишком большой");
         const project=await getProject(parsed.projectId);
         if(!project||project.userId!==user.id)throw new Error("Проект не найден");
-        // Свой AI-провайдер проекта: запуски идут за счёт пользователя, поэтому дневной лимит
-        // встроенной модели к ним не применяется (см. consumeAgentRun).
-        const ownProvider=Boolean(await getProjectProvider(project.id));
         // Тариф нужен всегда: по нему выбирается модель платформы и, главное, права preview и
         // хостинга, о которых агент узнаёт до первого шага. Свой AI-провайдер отменяет только
         // расход кредитов, но не тарифные ограничения проекта.
         // Если биллинг временно недоступен, права сужаются до «Старта»: это безопаснее, чем
         // выдать контейнерный preview и функции по ошибке чтения подписки.
         const plan=await accountPlanFor(user.id).catch(()=>"free" as const);
+        // Свой AI-провайдер проекта доступен только на платных тарифах. Даже если в хранилище
+        // осталась старая запись, на «Старте» запуск идёт через бесплатную модель платформы и
+        // расходует дневной лимит.
+        const ownProvider=planAllows(plan,"ownAiProvider")&&Boolean(await getProjectProvider(project.id));
         // Модель выбирает клиент, но право на неё проверяет сервер: id каталога — не имя
         // upstream-модели, и подставить чужую дорогую модель в обход тарифа нельзя. Основная
         // модель называется «nestdev», бесплатная — «nestdev-air».

@@ -56,6 +56,69 @@ async function fixture() {
   };
 }
 
+test("SEO: режим сохраняется, чужой проект закрыт, аудит без релиза не запускается", async () => {
+  const { app, projectId, ownerHeaders, strangerHeaders } = await fixture();
+  try {
+    await app.inject({ method: "POST", url: "/api/projects/" + projectId + "/hosting", headers: ownerHeaders });
+
+    const initial = await app.inject({ method: "GET", url: "/api/projects/" + projectId + "/hosting/seo", headers: ownerHeaders });
+    assert.equal(initial.statusCode, 200);
+    assert.equal(initial.json().routingMode, "auto");
+    assert.equal(initial.json().effectiveRoutingMode, "static");
+    assert.equal(initial.json().sitemapManaged, false);
+    assert.equal(initial.json().trailingSlash, "always");
+    assert.equal(initial.json().redirects.present, false);
+    assert.equal(initial.json().googleVerification, false);
+
+    const patched = await app.inject({
+      method: "PATCH",
+      url: "/api/projects/" + projectId + "/hosting/seo",
+      headers: ownerHeaders,
+      payload: { routingMode: "spa" },
+    });
+    assert.equal(patched.statusCode, 200);
+    assert.equal(patched.json().routingMode, "spa");
+    assert.equal(patched.json().effectiveRoutingMode, "spa");
+
+    const slash = await app.inject({
+      method: "PATCH",
+      url: "/api/projects/" + projectId + "/hosting/seo",
+      headers: ownerHeaders,
+      payload: { trailingSlash: "never" },
+    });
+    assert.equal(slash.statusCode, 200);
+    assert.equal(slash.json().trailingSlash, "never");
+
+    const google = await app.inject({
+      method: "PATCH",
+      url: "/api/projects/" + projectId + "/hosting/seo",
+      headers: ownerHeaders,
+      payload: { googleVerification: "abcDEF_123" },
+    });
+    assert.equal(google.statusCode, 200);
+    assert.equal(google.json().googleVerification, true);
+    assert.equal(google.json().googleVerificationReady, false);
+    assert.match(google.json().googleVerificationUrl, /\/googleabcDEF_123\.html$/);
+
+    const invalidGoogle = await app.inject({
+      method: "PATCH",
+      url: "/api/projects/" + projectId + "/hosting/seo",
+      headers: ownerHeaders,
+      payload: { googleVerification: "../evil" },
+    });
+    assert.equal(invalidGoogle.statusCode, 400);
+
+    const audit = await app.inject({ method: "POST", url: "/api/projects/" + projectId + "/hosting/seo/audit", headers: ownerHeaders });
+    assert.equal(audit.statusCode, 409);
+    assert.equal(audit.json().code, "RELEASE_NOT_READY");
+
+    const foreign = await app.inject({ method: "GET", url: "/api/projects/" + projectId + "/hosting/seo", headers: strangerHeaders });
+    assert.equal(foreign.statusCode, 404);
+  } finally {
+    await app.close();
+  }
+});
+
 test("создание, чтение, снятие с публикации и удаление сайта через API", async () => {
   const { app, projectId, ownerHeaders } = await fixture();
   try {

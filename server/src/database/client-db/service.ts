@@ -12,7 +12,7 @@ import {
   getTenant,
   listTenants,
   provisionTenant,
-  tenantSizeBytes,
+  reconcileTenantQuota,
   type SqlExecutor,
   type TenantRecord,
 } from "./provision.js";
@@ -190,7 +190,11 @@ export async function clientDatabaseStatus(input: {
   try {
     const db = adminExecutor(config);
     tenant = await getTenant(db, input.userId);
-    if (tenant) usedBytes = await tenantSizeBytes(db, tenant.schema);
+    if (tenant) {
+      const quota = await reconcileTenantQuota(db, tenant, limitBytes);
+      usedBytes = quota.usedBytes;
+      tenant = { ...tenant, quotaBytes: quota.quotaBytes, readOnly: quota.readOnly };
+    }
   } catch (error) {
     return {
       available: true,
@@ -212,8 +216,9 @@ export async function clientDatabaseStatus(input: {
     maskedUrl: maskClientDatabaseUrl(config, tenant?.role ?? names.role),
     usedBytes,
     limitBytes,
-    // Read-only включает либо фактическое превышение, либо тариф без базы.
-    readOnly: Boolean(tenant?.readOnly) || limitBytes <= 0 || usedBytes >= limitBytes,
+    // Read-only считаем только по текущему тарифу и фактическому размеру, а не по
+    // сохранённому флагу: он мог остаться с прошлого тарифа и давать ложную «квоту».
+    readOnly: limitBytes <= 0 || usedBytes >= limitBytes,
   };
 }
 
@@ -237,7 +242,11 @@ export async function accountClientDatabaseStatus(input: {
   try {
     const db = adminExecutor(config);
     tenant = await getTenant(db, input.userId);
-    if (tenant) usedBytes = await tenantSizeBytes(db, tenant.schema);
+    if (tenant) {
+      const quota = await reconcileTenantQuota(db, tenant, limitBytes);
+      usedBytes = quota.usedBytes;
+      tenant = { ...tenant, quotaBytes: quota.quotaBytes, readOnly: quota.readOnly };
+    }
   } catch (error) {
     return {
       available: true,
@@ -259,7 +268,7 @@ export async function accountClientDatabaseStatus(input: {
     maskedUrl: maskClientDatabaseUrl(config, tenant?.role ?? names.role),
     usedBytes,
     limitBytes,
-    readOnly: Boolean(tenant?.readOnly) || limitBytes <= 0 || usedBytes >= limitBytes,
+    readOnly: limitBytes <= 0 || usedBytes >= limitBytes,
   };
 }
 

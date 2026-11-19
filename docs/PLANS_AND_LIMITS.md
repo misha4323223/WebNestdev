@@ -111,9 +111,10 @@ credits = max(credits, minimum_per_run)
   does not offer «Продолжить».
 - The monthly pool does not roll over: unused plan credits are not carried into the next month.
   Purchased credits are different — they have their own ledger and do not expire; see below.
-- A project with its own AI provider spends the user's key and the user's tokens, so those runs
-  neither count nor are blocked — neither by credits nor by the daily run limit. `routes/agent-ws.ts`
-  asks once whether the project has its own provider and passes the answer to `consumeAgentRun`.
+- On a paid plan, a project with its own AI provider spends the user's key and the user's tokens,
+  so those runs neither count nor are blocked — neither by credits nor by the daily run limit.
+  `routes/agent-ws.ts` checks the plan and passes the answer to `consumeAgentRun`; the free plan
+  always uses the built-in model and its daily limit, even if an old provider is still stored.
 - Administrator token grants still work for compatibility: 10 000 granted tokens become 1 credit in
   `getCreditBudget`. The admin route also returns the new `credits` budget next to the legacy token
   budget.

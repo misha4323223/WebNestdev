@@ -53,6 +53,16 @@ function memoryStore(): ObjectStore & { objects: Map<string, Buffer> } {
     async remove(key) {
       objects.delete(key);
     },
+    async removePrefix(prefix) {
+      let removed = 0;
+      for (const key of [...objects.keys()]) {
+        if (key.startsWith(prefix)) {
+          objects.delete(key);
+          removed++;
+        }
+      }
+      return removed;
+    },
   };
 }
 

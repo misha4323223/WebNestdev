@@ -329,7 +329,7 @@ button,textarea{font:inherit}button{color:inherit}
 .run-panel-actions .run-panel-body{max-height:min(48vh,460px)}
 .run-panel-body ul{list-style:none;margin:0;padding:0}
 /*
- * Размышление модели — над её ответом: слово «Размышляю…» в цвете темы и стрелка «развернуть».
+ * Размышление модели — над её ответом: слово «Размышление» в цвете темы и стрелка «развернуть».
  * Ни пилюли, ни рамки, ни служебных чисел: развёрнутый блок показывает сам поток мыслей тонким
  * «рельсом» слева, а свёрнутая строка только говорит, что модель думает. Пока скажет — пульсирует.
  */
@@ -463,10 +463,20 @@ button,textarea{font:inherit}button{color:inherit}
 .messages{padding-right:26px}}
 .workspace-shell{display:flex;flex:1;min-width:0}.workspace-main{min-width:0;min-height:0;flex:1;display:flex;flex-direction:column}.workspace-view{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column}.workspace-view[hidden]{display:none}/* Кромка строки вкладок — тот же какао-токен, что у сайдбара, поля ввода и панелей: во вкладках
    оставался холодный серый контур, и шапка рабочей области выбивалась из общей рамы. */
-.workspace-tabs{height:40px;flex:none;display:flex;align-items:center;gap:3px;padding:0 12px;border-bottom:1px solid var(--line-warm);background:#0e1014;overflow-x:auto;scrollbar-width:none}.workspace-tabs::-webkit-scrollbar{display:none}.workspace-tabs button{height:28px;border:0;background:transparent;color:#747c87;border-radius:5px;padding:0 9px;display:flex;align-items:center;gap:6px;font-size:10px;cursor:pointer}.workspace-tabs button:hover,.workspace-tabs button.active{background:#181b21;color:#e8eaed}
+/* Строка вкладок рабочей области говорит тем же языком, что и главная: тёплые иконки-плитки
+   и мягкая подсветка активного раздела. Высота строки 40px и кнопки 28px прежние. */
+.workspace-tabs{height:40px;flex:none;display:flex;align-items:center;gap:4px;padding:0 10px;border-bottom:1px solid rgba(216,178,122,.12);background:linear-gradient(180deg,#0d1013,#0b0e11);overflow-x:auto;scrollbar-width:none}.workspace-tabs::-webkit-scrollbar{display:none}
+.workspace-tabs button{position:relative;height:28px;flex:none;border:1px solid transparent;background:transparent;color:#8b928c;border-radius:8px;padding:0 7px 0 5px;display:flex;align-items:center;gap:5px;font-size:10px;white-space:nowrap;cursor:pointer;transition:background .15s ease,border-color .15s ease,color .15s ease}
+.workspace-tab-icon{width:20px;height:20px;display:grid;place-items:center;border:1px solid rgba(216,178,122,.12);border-radius:6px;background:rgba(255,255,255,.018);color:#8c8272;transition:background .15s ease,border-color .15s ease,color .15s ease}
+.workspace-tab-label{line-height:1}
+.workspace-tabs button:hover{border-color:rgba(216,178,122,.16);background:rgba(216,178,122,.045);color:#e8e5dc}
+.workspace-tabs button:hover .workspace-tab-icon{border-color:rgba(216,178,122,.25);background:rgba(216,178,122,.08);color:#d8c29f}
+.workspace-tabs button.active{border-color:rgba(216,178,122,.32);background:linear-gradient(180deg,rgba(216,178,122,.16),rgba(216,178,122,.055));color:#f1e7d6;box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 4px 14px rgba(0,0,0,.2)}
+.workspace-tabs button.active .workspace-tab-icon{border-color:rgba(216,178,122,.32);background:rgba(216,178,122,.12);color:#e6c797}
+.workspace-tabs button.active::after{content:"";position:absolute;left:50%;bottom:1px;width:10px;height:1px;transform:translateX(-50%);background:linear-gradient(90deg,transparent,#d8b27a,transparent)}
 @keyframes tabs-scroll-dot{0%{box-shadow:0 0 0 0 rgba(207,188,156,.45)}70%{box-shadow:0 0 0 5px rgba(207,188,156,0)}100%{box-shadow:0 0 0 0 rgba(207,188,156,0)}}
 /* Строка вкладок на телефоне: без уменьшенных отступов последняя вкладка уезжала за край. */
-@media(max-width:650px){.workspace-tabs{gap:2px;padding:0 8px}.workspace-tabs button{padding:0 6px;gap:5px}}
+@media(max-width:650px){.workspace-tabs{gap:2px;padding:0 6px}.workspace-tabs button{padding:0 5px 0 4px;gap:4px}}
 .panel,.files-panel{flex:1;min-width:0;display:flex;flex-direction:column;overflow:hidden}.panel-title{min-height:54px;padding:10px 15px;border-bottom:1px solid var(--edge);display:flex;align-items:center;justify-content:space-between;color:#c5c9cf;font-size:11px}.panel-title strong{display:block;margin-top:3px;font-size:12px}
 .panel-title-strong{display:flex;align-items:center;gap:4px;min-width:0;margin-top:3px}
 .panel-title-strong strong{margin-top:0;min-width:0}
@@ -488,7 +498,7 @@ button,textarea{font:inherit}button{color:inherit}
 .preview-hint{margin:10px 12px;padding:9px;border:1px solid #3a3427;border-radius:6px;background:#171408;color:#cdb171;font-size:10px}
 .preview-spin{animation:agent-spin 1s linear infinite}
 .preview-starting{margin:auto;width:min(280px,100%);padding:24px 16px;display:flex;flex-direction:column;align-items:center;gap:17px}
-.preview-starting-icon{width:85px;height:85px;display:grid;place-items:center;border:1px solid var(--camo-line);border-radius:50%;background:radial-gradient(circle at 50% 28%,#20262e,#14181e);box-shadow:0 0 0 7px rgba(204,195,178,.035),0 10px 30px rgba(0,0,0,.34);color:var(--camo)}
+.preview-starting-icon{width:170px;height:170px;display:grid;place-items:center;border:1px solid var(--camo-line);border-radius:50%;background:radial-gradient(circle at 50% 28%,#20262e,#14181e);box-shadow:0 0 0 10px rgba(204,195,178,.035),0 14px 38px rgba(0,0,0,.38);color:var(--camo)}
 .preview-start-track{position:relative;width:100%;height:5px;border-radius:99px;background:#20252d;box-shadow:inset 0 1px 2px rgba(0,0,0,.45);overflow:hidden}
 .preview-start-track::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,rgba(255,255,255,.2),transparent);transform:translateX(-110%);animation:preview-start-sweep 1.8s ease-in-out infinite;pointer-events:none}
 .preview-start-fill{display:block;height:100%;border-radius:inherit;background:linear-gradient(90deg,#7d5c2b,#c9bda8 55%,#e7e0d3);box-shadow:0 0 14px rgba(204,195,178,.3);transition:width .6s cubic-bezier(.22,1,.36,1)}
@@ -630,8 +640,6 @@ button,textarea{font:inherit}button{color:inherit}
 .home-tab{flex:none;display:flex;align-items:center;gap:6px;height:32px;padding:0 11px;border:1px solid transparent;border-radius:9px;background:#101318;color:#939ba6;font-size:11px;cursor:pointer;white-space:nowrap;transition:background .15s ease,border-color .15s ease,color .15s ease}
 .home-tab:hover{color:#e8eaed;border-color:var(--line-warm)}
 .home-tab.active{border-color:var(--line-warm-strong);background:#171a20;color:#eef0f3}
-.home-tab-exit{flex:none;width:34px;height:32px;display:grid;place-items:center;border:1px solid var(--line-warm);border-radius:9px;background:#101318;color:#939ba6;cursor:pointer}
-.home-tab-exit:hover{border-color:#4a3030;background:#1b1212;color:#d99b9b}
 /* Запуск, который продолжается за спиной: главная говорит об этом и ведёт обратно в проект. */
 .home-run{width:min(980px,100%);margin:22px auto 0;display:flex;align-items:center;gap:12px;padding:12px 14px;border:1px solid #3e3627;border-radius:10px;background:linear-gradient(180deg,#1a1610,#0f1216)}
 .home-run>div{flex:1;min-width:0}
@@ -1271,6 +1279,13 @@ button,textarea{font:inherit}button{color:inherit}
 /* Home sidebar: sections first, then the selected section, account and billing */
 .home-layout{position:relative;z-index:1;display:grid;grid-template-columns:304px minmax(0,1fr);gap:26px;width:100%;align-items:start}
 .home-main{min-width:0;order:1}
+/* Аккаунт — полноценная страница настроек в основной области, как в рабочем кабинете.
+   Рельса на телефоне уступает ей место, на ПК остаётся навигацией по разделам. */
+.home-main>.home-account-view{display:none}
+.home-layout[data-tab="account"] .home-main>.home-account-view{display:block}
+.home-layout[data-tab="account"] .home-main>:not(.home-account-view){display:none}
+.home-account-view{padding-top:18px}
+.home-account-view .account-settings{width:100%;max-width:920px;margin:0 auto 20px}
 /* Высота окна — с запасным `vh` для браузеров без `dvh`: иначе колонка сжималась до высоты
    оглавления, и блок «Тариф / Поддержка / Выйти» оказывался посередине экрана. */
 .home-rail{order:0;position:sticky;top:0;align-self:start;display:flex;flex-direction:column;gap:12px;height:100vh;height:100dvh;min-width:0;padding:0 0 18px}
@@ -1313,6 +1328,30 @@ button,textarea{font:inherit}button{color:inherit}
 .rail-usage{display:grid;gap:6px;padding:10px;border:1px solid var(--line-warm);border-radius:7px;background:#0d1014}
 .rail-usage>div:not(.usage-meter-track){display:flex;justify-content:space-between;gap:10px;color:#9ca4af;font-size:10px}
 .rail-usage>div:not(.usage-meter-track) strong{color:#cbd0d8;font-variant-numeric:tabular-nums}
+.rail-database,.rail-hosts{display:grid;gap:6px;padding:10px;border:1px solid var(--line-warm);border-radius:7px;background:#0d1014}
+.rail-database-head,.rail-hosts-head{display:flex;align-items:center;justify-content:space-between;gap:8px;color:#9ca4af;font-size:10px}
+.rail-database-head span,.rail-hosts-head span{display:flex;align-items:center;gap:5px;min-width:0}
+.rail-database-head strong,.rail-hosts-head strong{color:#cbd0d8;font-size:10px;font-weight:600;font-variant-numeric:tabular-nums;text-align:right}
+.rail-database.is-connected .rail-database-head strong{color:#b9d6b0}
+.rail-database-meta{display:flex;justify-content:space-between;gap:8px;color:#7f8792;font-size:9px;font-variant-numeric:tabular-nums}
+.rail-database-endpoint{min-width:0;overflow:hidden;color:#8e969f;font-size:8px;line-height:1.35;text-overflow:ellipsis;white-space:nowrap}
+.rail-database-note{margin:0;color:#737c87;font-size:9px;line-height:1.45}
+.rail-hosts-list{list-style:none;display:grid;gap:0;margin:0;padding:0}
+.rail-host{display:grid;gap:2px;min-width:0;padding:7px 0 0;margin-top:1px;border-top:1px solid var(--line-warm-soft)}
+.rail-host-top{display:flex;align-items:center;gap:5px;min-width:0}
+.rail-host-top>svg{flex:none;color:#7e8791}
+.rail-host-top a,.rail-host-top>span{min-width:0;overflow:hidden;color:#dfe4e7;font-size:10px;line-height:1.35;text-overflow:ellipsis;white-space:nowrap;text-decoration:none}
+.rail-host-top a:hover{color:#fff;text-decoration:underline}
+.rail-host-status{flex:none;margin-left:auto;padding:1px 4px;border:1px solid var(--line-warm);border-radius:4px;color:#8e969f;font-size:8px;font-style:normal;line-height:1.35}
+.rail-host-status.live{color:#b9d6b0;border-color:#3d5038}
+.rail-host-status.suspended{color:#e3a79c;border-color:#4a2f2b}
+.rail-host-project{color:#7f8792;font-size:8.5px;line-height:1.35;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.rail-host-domains{display:grid;gap:2px;margin:2px 0 0 15px;min-width:0}
+.rail-host-domain{display:flex;align-items:center;gap:4px;min-width:0;color:#9ca4af;font-size:8.5px;line-height:1.35}
+.rail-host-domain>em{margin-left:auto;flex:none;color:#737c87;font-size:8px;font-style:normal}
+.rail-host-domain b{margin-left:4px;color:#b9b29f;font-size:7.5px;font-weight:600}
+.rail-host-domain.active>em{color:#b9d6b0}
+.rail-hosts-empty{margin:0;color:#737c87;font-size:9px;line-height:1.45}
 .rail-plan-actions{display:grid;gap:7px;justify-items:start}
 .rail-plan-actions .plan-action{min-height:32px;padding:0 12px}
 /* Действия аккаунта — у нижней кромки колонки, а не там, где закончилось оглавление: тариф,
@@ -1329,11 +1368,13 @@ button,textarea{font:inherit}button{color:inherit}
 .rail-upsell-line em{min-width:0;color:#cec4b2;font-size:11.5px;font-style:normal;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .rail-upsell-go{flex:none;color:#776e5d}
 .rail-upsell:hover .rail-upsell-go{color:#cec4b2}
-.rail-exit{display:flex;align-items:center;gap:8px;height:32px;padding:0 11px;border:1px solid transparent;border-radius:8px;background:transparent;color:#8f97a2;font-size:11px;cursor:pointer}
-.rail-exit:hover{background:#15181e;border-color:var(--line-warm);color:#e8eaed}
+/* Выход из аккаунта — в самом разделе «Аккаунт», а не отдельной кнопкой в рельсе. */
+.account-logout{margin-top:20px;padding-top:14px;border-top:1px solid var(--line-warm-soft)}
+.account-logout .ghost-button{height:32px;border-color:#4a3030;background:rgba(74,48,48,.12);color:#d9a3a3}
+.account-logout .ghost-button:hover{border-color:#6b3d3d;background:rgba(74,48,48,.24);color:#f0bcbc}
 @media(max-width:1080px){.home-layout{grid-template-columns:268px minmax(0,1fr);gap:20px}}
 @media(max-width:900px){/* Собственный скролл-контейнер отменяется: пока он есть, липкая строка вкладок считается от него и уезжает вместе со страницой. */
-.home-screen{overflow:visible}.home-layout{display:flex;flex-direction:column;align-items:stretch;gap:16px}.home-tabs{display:flex;order:-1}.home-main,.home-rail{order:0;width:100%}.home-rail{position:static;height:auto;padding:0}.home-layout[data-tab="home"] .home-rail{display:none}.home-layout:not([data-tab="home"]) .home-main{display:none}.rail-nav,.rail-foot{display:none}.rail-content{overflow:visible}}
+.home-screen{overflow:visible;overflow-x:clip}.home-layout{display:flex;flex-direction:column;align-items:stretch;gap:16px}.home-tabs{display:flex;order:-1}.home-main,.home-rail{order:0;width:100%}.home-rail{position:static;height:auto;padding:0}.home-layout[data-tab="home"] .home-rail{display:none}.home-layout:not([data-tab="home"]) .home-main{display:none}.home-layout[data-tab="account"] .home-main{display:block}.home-layout[data-tab="account"] .home-rail{display:none}.rail-nav,.rail-foot{display:none}.rail-content{overflow:visible}}
 
 /* The chosen plan: the one that will be paid for, named on every plan surface */
 .rail-chosen{display:grid;gap:3px;padding:9px 10px;border:1px solid var(--line-warm-strong);border-radius:7px;background:#0f1418}
@@ -2741,7 +2782,6 @@ button,textarea{font:inherit}button{color:inherit}
 .home-screen .project-rename input,
 .home-screen .project-rename-actions .icon-button,
 .home-screen .home-tab.active,
-.home-screen .home-tab-exit,
 .home-screen .rail-nav,
 .home-screen .rail-content,
 .home-screen .rail-nav-item.active,
@@ -2750,6 +2790,8 @@ button,textarea{font:inherit}button{color:inherit}
 .home-screen .rail-plan,
 .home-screen .rail-money>div,
 .home-screen .rail-usage,
+.home-screen .rail-database,
+.home-screen .rail-hosts,
 .home-screen .rail-chosen,
 .home-screen .connector,
 .home-screen .connector-key input,
@@ -2764,7 +2806,6 @@ button,textarea{font:inherit}button{color:inherit}
 .home-screen .project-rename input:focus,
 .home-screen .rail-projects li:hover,
 .home-screen .rail-projects li.active,
-.home-screen .rail-exit:hover,
 .home-screen .connector-key input:focus,
 .home-screen .connector-key select:focus{border-color:var(--camo-line-strong)}
 .home-screen .home-tab:hover{border-color:var(--line-warm-strong)}
@@ -3648,6 +3689,67 @@ button,textarea{font:inherit}button{color:inherit}
 .hosting-status.failed{color:#c58d8d;border-color:#4a3030}
 .hosting-log{margin:10px 0 0;padding:11px;max-height:240px;overflow:auto;border:1px solid #303842;border-radius:7px;background:#080a0d;color:#aeb6c0;font:9.5px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
 .hosting-footnote{max-width:760px;margin:20px 0 0;color:#5f6873;font-size:9.5px;line-height:1.6}
+
+/* SEO — техническая карточка, а не «оценка». Спокойные уровни важности и никаких
+   процентов: платформа отвечает за индексируемость, а не за позиции в выдаче. */
+.hosting-seo-card{margin-top:16px;padding:18px;border:1px solid #303842;border-radius:12px;background:linear-gradient(148deg,#13191f,#0e1217 72%);box-shadow:inset 0 1px 0 rgba(255,255,255,.035)}
+.hosting-section-title{display:flex;align-items:center;gap:6px;color:#b6bdc6}
+.hosting-section-title svg{color:#a8926c}
+.seo-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px;margin-top:14px}
+.seo-block{display:grid;gap:6px;min-width:0}
+.seo-label{color:#8d7d63;font-size:8.5px;font-weight:750;letter-spacing:.12em;text-transform:uppercase}
+.seo-block small{color:#6d7681;font-size:9px;line-height:1.55}
+.seo-block small span{color:#9b8a6e;font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.seo-files{display:flex;flex-wrap:wrap;gap:6px}
+.seo-files>a,.seo-files>span{display:inline-flex;align-items:center;gap:5px;padding:5px 7px;border:1px solid #343b44;border-radius:6px;background:#0d1116;color:#aab1ba;font-size:9.5px;text-decoration:none}
+.seo-files>a:hover{border-color:#5d4d32;color:#e7dfd0}
+.seo-files>a span,.seo-files>span span{color:#6d7681;font-size:8.5px}
+.seo-files .seo-good{color:#9fc8a8;border-color:#34493a}
+.seo-files .seo-muted{color:#8a929d}
+.seo-mode{margin-top:16px;padding-top:13px;border-top:1px solid #252c35}
+.seo-mode-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap}
+.seo-effective{color:#6d7681;font-size:9px}
+.seo-effective strong{color:#cbb998;font-weight:600}
+.seo-mode-options{display:grid;grid-template-columns:repeat(auto-fit,minmax(145px,1fr));gap:6px;margin-top:7px}
+.seo-mode-option{display:grid;gap:3px;min-width:0;padding:8px 9px;border:1px solid #303842;border-radius:7px;background:#0d1116;color:#8b949f;text-align:left;cursor:pointer;transition:border-color .15s ease,background .15s ease}
+.seo-mode-option:hover:not(:disabled){border-color:#5d4d32;background:#121820}
+.seo-mode-option.active{border-color:#6d5838;background:#1e1912;color:#e7dfd0;box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
+.seo-mode-option:disabled{cursor:not-allowed;opacity:.7}
+.seo-mode-option strong{font-size:10px;font-weight:650}
+.seo-mode-option span{color:#6d7681;font-size:8.5px;line-height:1.4}
+.seo-mode-option.active span{color:#9b8a6e}
+.seo-redirects,.seo-search-console{margin-top:16px;padding-top:13px;border-top:1px solid #252c35}
+.seo-redirects code,.seo-search-console code{color:#cbb998;font:9px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace}
+.seo-warning{display:flex;align-items:flex-start;gap:6px;padding:7px 8px;border:1px solid #4a402e;border-radius:6px;background:#1a1610;color:#cdbb98;font-size:9.5px;line-height:1.5}
+.seo-warning svg{flex:none;margin-top:1px}
+.seo-search-console .hosting-section-title{margin-bottom:7px}
+.seo-search-console>small{display:block;margin-bottom:8px}
+.seo-token-row{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+.seo-token-row input{flex:1;min-width:190px;padding:7px 9px;border:1px solid #303842;border-radius:6px;background:#0d1116;color:#d7dce2;font:10px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;outline:none}
+.seo-token-row input:focus{border-color:#6d5838;box-shadow:0 0 0 2px rgba(168,146,108,.12)}
+.seo-token-row input::placeholder{color:#555f6a}
+.seo-audit{margin-top:16px;padding-top:13px;border-top:1px solid #252c35}
+.seo-audit-head{display:flex;align-items:baseline;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-bottom:8px}
+.seo-muted{color:#6d7681;font-size:9px}
+.seo-empty{display:flex;align-items:flex-start;gap:8px;padding:10px;border:1px dashed #343b44;border-radius:7px;color:#7d8792;font-size:9.5px;line-height:1.55}
+.seo-empty svg{flex:none;margin-top:1px;color:#8d7d63}
+.seo-stale{display:flex;align-items:flex-start;gap:6px;margin-bottom:8px;padding:7px 8px;border:1px solid #4a402e;border-radius:6px;background:#1a1610;color:#cdbb98;font-size:9.5px;line-height:1.5}
+.seo-ok{display:flex;align-items:center;gap:6px;padding:9px 10px;border:1px solid #34493a;border-radius:7px;background:#102017;color:#9fc8a8;font-size:10px}
+.seo-issues{display:grid;gap:9px}
+.seo-issue-group{display:grid;gap:5px}
+.seo-issue-head{display:flex;align-items:center;gap:5px;font-size:9px;letter-spacing:.04em;text-transform:uppercase}
+.seo-issue-head span{margin-left:auto;opacity:.7}
+.seo-issue-group.critical .seo-issue-head{color:#d99b9b}
+.seo-issue-group.warning .seo-issue-head{color:#cdbb98}
+.seo-issue-group.info .seo-issue-head{color:#93a6bd}
+.seo-issue{padding:7px 9px;border:1px solid #2b333d;border-radius:6px;background:#0d1116}
+.seo-issue-group.critical .seo-issue{border-color:#4a3030;background:#1b1212}
+.seo-issue-group.warning .seo-issue{border-color:#4a402e;background:#1a1610}
+.seo-issue-title{color:#c7ced6;font-size:10px;font-weight:600}
+.seo-issue-detail{margin-top:2px;color:#7d8792;font-size:9px;line-height:1.5}
+.seo-issue a{display:inline-flex;align-items:center;gap:3px;margin-top:4px;color:#9b8a6e;font:9px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;text-decoration:none;overflow-wrap:anywhere}
+.seo-issue a:hover{color:#e7dfd0}
+@media(max-width:640px){.hosting-seo-card{padding:14px}.seo-grid{grid-template-columns:1fr}.seo-mode-options{grid-template-columns:1fr}}
 .hosting-name-field{grid-column:2;display:grid;gap:6px;max-width:520px;margin-top:3px}
 .hosting-name-field>span{color:#b8ad9b;font-size:10px;font-weight:600}
 .hosting-name-field>span em{color:#7d7568;font-style:normal;font-weight:500}
@@ -3916,7 +4018,9 @@ button,textarea{font:inherit}button{color:inherit}
 }
 .home-screen .home-tab.active .home-tab-icon{border-color:rgba(216,178,122,.32);background:rgba(216,178,122,.12);color:#e6c797}
 .home-screen .home-tab.active::after{content:"";position:absolute;left:50%;bottom:3px;width:12px;height:1px;transform:translateX(-50%);background:linear-gradient(90deg,transparent,#d8b27a,transparent)}
-.home-screen .home-tab-exit{width:36px;height:36px;border-radius:11px;border-color:rgba(216,178,122,.14);background:linear-gradient(180deg,#111519,#0c1013)}
+/* Колокольчик занял место вышедшей кнопки: такая же квадратная плитка, только действие другое. */
+.home-screen .notifications-tab-trigger{width:36px;height:36px;padding:0;justify-content:center;border-color:rgba(216,178,122,.14);background:linear-gradient(180deg,#111519,#0c1013)}
+.home-screen .notifications-tab-trigger:hover{border-color:rgba(216,178,122,.3);background:linear-gradient(180deg,#161b1f,#101418)}
 
 .home-composer-wrap{width:min(980px,100%);margin:20px auto 0;position:relative;z-index:1}
 .home-composer{
@@ -4030,7 +4134,7 @@ button,textarea{font:inherit}button{color:inherit}
   .home-screen .home-tabs-track{padding:3px;border-radius:13px}
   .home-screen .home-tab{height:34px;padding:0 8px 0 6px;font-size:10px}
   .home-screen .home-tab-icon{width:22px;height:22px;border-radius:6px}
-  .home-screen .home-tab-exit{width:34px;height:34px;border-radius:9px}
+  .home-screen .notifications-tab-trigger{width:34px;height:34px;border-radius:9px}
   .home-hero{padding-top:14px}
   .home-hero-visual{min-height:188px}
   .home-hero-visual .home-hero-mark img{width:104px;height:104px}

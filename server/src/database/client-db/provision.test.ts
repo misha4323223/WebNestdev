@@ -5,6 +5,7 @@ import {
   getTenant,
   listTenants,
   provisionTenant,
+  reconcileTenantQuota,
   roleExists,
   tenantSizeBytes,
   type SqlExecutor,
@@ -109,6 +110,16 @@ test("квота включает read-only при превышении и сн�
   const second = await applyTenantQuota(under, tenant({ readOnly: true }), 100);
   assert.equal(second.readOnly, false);
   assert.ok(under.calls.some(call => /default_transaction_read_only = off/.test(call.sql)));
+});
+
+test("статус снимает устаревший read-only у пустой базы и обновляет квоту", async () => {
+  const db = fakeDb([{ rows: [{ bytes: "0" }] }, { rows: [] }, { rows: [] }]);
+  const result = await reconcileTenantQuota(db, tenant({ readOnly: true, quotaBytes: 0 }), 134_217_728);
+  assert.equal(result.usedBytes, 0);
+  assert.equal(result.readOnly, false);
+  assert.ok(db.calls.some(call => /default_transaction_read_only = off/.test(call.sql)));
+  const update = db.calls.find(call => call.sql.includes("SET quota_bytes"));
+  assert.deepEqual(update?.values, ["user-1", 134_217_728, false]);
 });
 
 test("нулевая квота (тариф без базы) всегда read-only и данные не удаляет", async () => {

@@ -16,6 +16,7 @@ test("Старт получает только статический хости
     backgroundJobs: false,
     interactiveTerminal: false,
     containerPreview: false,
+    ownAiProvider: false,
   });
 });
 
@@ -25,6 +26,7 @@ test("Плюс добавляет функции, но не терминал и 
   assert.equal(planAllows("pro", "backgroundJobs"), false);
   assert.equal(planAllows("pro", "interactiveTerminal"), false);
   assert.equal(planAllows("pro", "containerPreview"), false);
+  assert.equal(planAllows("pro", "ownAiProvider"), true);
 });
 
 test("Премиум открывает все возможности", () => {
@@ -34,6 +36,7 @@ test("Премиум открывает все возможности", () => {
     backgroundJobs: true,
     interactiveTerminal: true,
     containerPreview: true,
+    ownAiProvider: true,
   });
 });
 
@@ -50,9 +53,11 @@ test("отказ называет тариф, возможность и нужн
   assert.equal(requiredPlanFor("backgroundJobs"), "team");
   assert.equal(requiredPlanFor("interactiveTerminal"), "team");
   assert.equal(requiredPlanFor("containerPreview"), "team");
+  assert.equal(requiredPlanFor("ownAiProvider"), "pro");
   assert.match(planFeatureMessage("pro", "interactiveTerminal"), /Плюс/);
   assert.match(planFeatureMessage("pro", "interactiveTerminal"), /Премиум/);
   assert.match(planFeatureMessage("free", "serverlessFunctions"), /функции/);
+  assert.match(planFeatureMessage("free", "ownAiProvider"), /свой AI-провайдер недоступен/);
 });
 
 test("assertPlanFeature бросает типизированный отказ только при запрете", () => {

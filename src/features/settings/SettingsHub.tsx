@@ -8,7 +8,7 @@ import { PlatformKeysPanel } from "./PlatformKeysPanel";
 import { AdminPlansPanel } from "./AdminPlansPanel";
 import { ProjectSecretsPanel } from "./ProjectSecretsPanel";
 
-export function SettingsHub({ projectId, projectName, onClose }: { projectId: string; projectName: string; onClose?: () => void }) {
+export function SettingsHub({ projectId, projectName, onClose, canUseOwnProvider = false }: { projectId: string; projectName: string; onClose?: () => void; canUseOwnProvider?: boolean }) {
   const [tab, setTab] = useState<"account" | "secrets" | "provider" | "integrations" | "plans" | "platform">("account");
   // Ключи сервера — внутренний инструмент платформы. Обычный пользователь не должен видеть
   // даже вкладку: сервер отвечает только флагом admin, поэтому и запрос здесь лёгкий.
@@ -29,7 +29,7 @@ export function SettingsHub({ projectId, projectName, onClose }: { projectId: st
     const requestedTab = localStorage.getItem("webnestdev.openSettingsTab");
     if (requestedTab === "account" || requestedTab === "secrets" || requestedTab === "provider" || requestedTab === "integrations" || requestedTab === "plans" || requestedTab === "platform") {
       localStorage.removeItem("webnestdev.openSettingsTab");
-      setTab(requestedTab);
+      setTab(requestedTab === "provider" && !canUseOwnProvider ? "account" : requestedTab);
       return;
     }
     if (localStorage.getItem("webnestdev.openSecretsTab")) {
@@ -39,24 +39,24 @@ export function SettingsHub({ projectId, projectName, onClose }: { projectId: st
     }
     if (localStorage.getItem("webnestdev.openProviderTab")) {
       localStorage.removeItem("webnestdev.openProviderTab");
-      setTab("provider");
+      if (canUseOwnProvider) setTab("provider");
       return;
     }
     if (!localStorage.getItem("webnestdev.openIntegrations")) return;
     localStorage.removeItem("webnestdev.openIntegrations");
     setTab("integrations");
-  }, []);
+  }, [canUseOwnProvider]);
   const tabs = [
     { id: "account" as const, label: "Аккаунт и тариф", icon: SlidersHorizontal },
     { id: "secrets" as const, label: "Секреты проекта", icon: KeyRound },
-    { id: "provider" as const, label: "AI-провайдер", icon: Sparkles },
+    ...(canUseOwnProvider ? [{ id: "provider" as const, label: "AI-провайдер", icon: Sparkles }] : []),
     { id: "integrations" as const, label: "Интеграции", icon: Plug },
     ...(platformAdmin ? [
       { id: "plans" as const, label: "Тарифы и скидки", icon: Percent },
       { id: "platform" as const, label: "Ключи сервера", icon: Server },
     ] : []),
   ];
-  const activeTab = (tab === "platform" || tab === "plans") && !platformAdmin ? "account" : tab;
+  const activeTab = ((tab === "platform" || tab === "plans") && !platformAdmin) || (tab === "provider" && !canUseOwnProvider) ? "account" : tab;
   return <div className="settings-hub">
     {/* Боковая колонка в настройках скрыта — значит, нужен явный путь обратно к работе. */}
     <div className="settings-hub-bar">

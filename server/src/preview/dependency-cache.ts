@@ -43,7 +43,7 @@ export function dependencyCacheHostRoot(): string {
   return path.resolve(configured || dependencyCacheRoot());
 }
 
-function safeProjectId(projectId: string) {
+export function safeProjectId(projectId: string) {
   if (/^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$/.test(projectId)) return projectId;
   // Внутренний id может быть не ASCII (локальный тест, старый проект). Каталог кэша не должен
   // зависеть от этого и тем более не должен принимать `/` или `..` как путь.
@@ -164,11 +164,23 @@ export async function cleanupDependencyCache(options: {
   root?: string;
   now?: number;
   ttlMs?: number;
-} = {}): Promise<{ removed: number; scanned: number }> {
+  /** Если задан, кэши проектов вне списка удаляются как сироты, даже если они свежие. */
+  liveProjectIds?: () => Promise<Set<string>>;
+  /** Не трогать свежий кэш отсутствующего проекта: запрос списка мог прийти во время удаления. */
+  orphanGraceMs?: number;
+} = {}): Promise<{ removed: number; scanned: number; aborted?: string }> {
   const root = path.resolve(options.root ?? dependencyCacheRoot());
   const now = options.now ?? Date.now();
   const ttlMs = options.ttlMs ?? dependencyCacheTtlMs();
+  const orphanGraceMs = Math.max(0, options.orphanGraceMs ?? 60 * 60_000);
   const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+  let live: Set<string> | null = null;
+  if (options.liveProjectIds) {
+    const ids = await options.liveProjectIds();
+    // Пустой ответ не должен превращаться в «удалить все кэши»: это может быть сбой БД.
+    if (ids.size === 0) return { removed: 0, scanned: 0, aborted: "список проектов пуст" };
+    live = new Set([...ids].map(safeProjectId));
+  }
   let removed = 0;
   let scanned = 0;
   for (const entry of entries) {
@@ -181,7 +193,9 @@ export async function cleanupDependencyCache(options: {
     // Маркер обновляет установка, каталог — любая команда и запуск preview. Берём свежее из
     // двух: активный проект не должен потерять зависимости только потому, что lock не менялся.
     const lastUsed = Math.max(markerInfo?.mtimeMs ?? 0, dirInfo?.mtimeMs ?? 0);
-    if (!lastUsed || now - lastUsed <= ttlMs) continue;
+    const orphan = live !== null && !live.has(entry.name);
+    // Сироту убираем после короткого окна, а живой кэш — только по обычному TTL.
+    if (!lastUsed || (orphan ? now - lastUsed <= orphanGraceMs : now - lastUsed <= ttlMs)) continue;
     try {
       await rm(projectDir, { recursive: true, force: true });
       removed++;
@@ -193,14 +207,18 @@ export async function cleanupDependencyCache(options: {
 }
 
 /** Фоновый уборщик: один проход вскоре после старта и затем раз в `intervalMs`. */
-export function startDependencyCacheCleanup(log: (message: string) => void = console.log): () => void {
+export function startDependencyCacheCleanup(
+  log: (message: string) => void = console.log,
+  liveProjectIds?: () => Promise<Set<string>>,
+): () => void {
   if (!dependencyCacheEnabled()) return () => undefined;
   const interval = Number(process.env.WEBNESTDEV_PREVIEW_CACHE_CLEANUP_INTERVAL_MS ?? 6 * 60 * 60_000);
   const every = Number.isFinite(interval) && interval >= 60_000 ? Math.round(interval) : 6 * 60 * 60_000;
   const run = () => {
-    void cleanupDependencyCache()
+    void cleanupDependencyCache({ liveProjectIds })
       .then(result => {
-        if (result.removed) log("[preview-cache] удалено устаревших кэшей: " + result.removed + " из " + result.scanned);
+        if (result.aborted) return;
+        if (result.removed) log("[preview-cache] удалено устаревших или осиротевших кэшей: " + result.removed + " из " + result.scanned);
       })
       .catch(error => {
         console.warn("[preview-cache] уборка не удалась: " + (error instanceof Error ? error.message : String(error)));

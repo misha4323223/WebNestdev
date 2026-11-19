@@ -71,6 +71,10 @@ export async function provisionTenant(
     throw error;
   }
   await db.query(UPSERT_TENANT_SQL, [input.accountId, names.schema, names.role, input.quotaBytes]);
+  // Повторный провижининг не должен оставлять роль в старом read-only: если тариф снова
+  // включает базу, право записи возвращается сразу, не дожидаясь ночной проверки квот.
+  const registered = await getTenant(db, input.accountId);
+  if (registered) await reconcileTenantQuota(db, registered, input.quotaBytes);
   return names;
 }
 
@@ -105,10 +109,13 @@ export async function listTenants(db: SqlExecutor): Promise<TenantRecord[]> {
 }
 
 /**
- * Проверяет фактический размер схемы и переводит роль в read-only (или обратно).
- * Квота берётся из тарифа в момент запуска, поэтому смена тарифа подхватывается без переезда.
+ * Сверяет сохранённый read-only с фактическим размером схемы и текущим тарифом.
+ *
+ * Флаг в `nestdev_admin.tenants` мог остаться с прошлого тарифа или старой проверки.
+ * Статус обязан лечить такое расхождение, иначе пустая база навсегда показывает
+ * «квота исчерпана», а её роль остаётся read-only.
  */
-export async function applyTenantQuota(
+export async function reconcileTenantQuota(
   db: SqlExecutor,
   tenant: TenantRecord,
   quotaBytes: number,
@@ -119,8 +126,20 @@ export async function applyTenantQuota(
   if (readOnly !== tenant.readOnly) {
     await db.query(readOnlyStatement({ schema: tenant.schema, role: tenant.role }, readOnly));
   }
-  await db.query(SET_TENANT_QUOTA_SQL, [tenant.accountId, quotaBytes, readOnly]);
+  // Не пишем учётную строку на каждый GET, если ни квота, ни режим не изменились.
+  if (quotaBytes !== tenant.quotaBytes || readOnly !== tenant.readOnly) {
+    await db.query(SET_TENANT_QUOTA_SQL, [tenant.accountId, quotaBytes, readOnly]);
+  }
   return { usedBytes, quotaBytes, readOnly };
+}
+
+/** Фоновая проверка квоты: то же самое, что reconcile, для ежедневного прохода. */
+export async function applyTenantQuota(
+  db: SqlExecutor,
+  tenant: TenantRecord,
+  quotaBytes: number,
+): Promise<{ usedBytes: number; quotaBytes: number; readOnly: boolean }> {
+  return reconcileTenantQuota(db, tenant, quotaBytes);
 }
 
 export const SET_TENANT_QUOTA_SQL =

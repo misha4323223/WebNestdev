@@ -192,8 +192,13 @@ export function WorkspaceShell({onHome,onAgentState,active=true}:{onHome:()=>voi
     if(settingsOpen)setSettingsKey(value=>value+1);
     else openSettings();
   };
-  // The model chip in the composer opens the settings overlay on the AI tab.
-  const openModelSettings=()=>{try{localStorage.setItem("webnestdev.openProviderTab","1")}catch{};openSettings()};
+  // Клик по модели открывает настройки AI-провайдера только на платных тарифах. На «Старте»
+  // свой провайдер недоступен, поэтому ведём в аккаунт и тарифы, а не в скрытую вкладку.
+  const openModelSettings=()=>{
+    if(entitlements&&!entitlements.ownAiProvider){openSettings();return}
+    try{localStorage.setItem("webnestdev.openProviderTab","1")}catch{}
+    openSettings();
+  };
 
   // Ветка и история в шапке открывают тот же раздел, поэтому сначала закрывается облатка настроек:
   // иначе «Изменения» монтировались бы под ней и клик выглядел бы как пустой.
@@ -206,7 +211,7 @@ export function WorkspaceShell({onHome,onAgentState,active=true}:{onHome:()=>voi
       <div className="workspace-main">
         {waking?<ProjectWakeCard progress={wake.progress} error={wake.error} onRetry={wake.retry}/>:settingsOpen?<div className="workspace-overlay-panel">
           <Suspense fallback={<div className="app-loading"><NestLoader size={42} label="Загружаем настройки"/></div>}>
-            <SettingsHub key={settingsKey} projectId={projectId} projectName={projectName} onClose={()=>setSettingsOpen(false)}/>
+            <SettingsHub key={settingsKey} projectId={projectId} projectName={projectName} onClose={()=>setSettingsOpen(false)} canUseOwnProvider={entitlements?.ownAiProvider===true}/>
           </Suspense>
         </div>:<><WorkspaceNav view={view} onChange={setView} onSecrets={openSecrets} canUseTerminal={entitlements?.interactiveTerminal===true}/><WorkspaceContent view={view} canUseTerminal={entitlements?.interactiveTerminal===true} projectId={projectId} projectName={projectName} conversationId={conversationId} onRunFinished={()=>{setPreviewReload(value=>value+1);setTaskReload(value=>value+1);void sessionsReload()}} onFileSaved={()=>setPreviewReload(value=>value+1)} taskReload={taskReload} onOpenModelSettings={openModelSettings} onOpenAccountSettings={openSettings} onRunningChange={reportAgentState} onOpenChanges={()=>{setSettingsOpen(false);setView("changes")}} onPreviewStarted={previewStarted} scrollSignal={scrollSignal} onChatEndChange={reportChatEnd} onScrollBottom={scrollChatToBottom} showScroll={view==="agent"&&!chatAtEnd} writing={view==="agent"&&!chatAtEnd&&agentRunning}/></>}
       </div>

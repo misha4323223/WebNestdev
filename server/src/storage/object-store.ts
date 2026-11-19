@@ -51,12 +51,15 @@ export type ObjectStore = {
   ): Promise<boolean>;
   head(key: string): Promise<{ size: number } | null>;
   remove(key: string): Promise<void>;
+  /** Удаляет все объекты под префиксом и возвращает их число. */
+  removePrefix(prefix: string): Promise<number>;
 };
 
 const DEFAULT_REGION = "ru-1";
 const DEFAULT_PREFIX = "webnestdev";
 const READ_TIMEOUT_MS = 20_000;
 const TRANSFER_TIMEOUT_MS = 15 * 60 * 1000;
+const LIST_MAX_PAGES = 100;
 const EMPTY_SHA256 = createHash("sha256").update("").digest("hex");
 
 function envValue(env: NodeJS.ProcessEnv, name: string) {
@@ -229,6 +232,82 @@ async function signedRequest(
   }
 }
 
+function xmlDecode(value: string) {
+  return value
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&#(\d+);/g, (_match, code) => String.fromCodePoint(Number(code)))
+    .replace(/&amp;/g, "&");
+}
+
+/**
+ * Список ключей под префиксом. Нужен только уборке: удалять по известному имени можно и
+ * без него, но старые snapshot'ы и объекты без строки в БД иначе остаются навсегда.
+ */
+async function listObjectKeys(config: ObjectStoreConfig, prefix: string, deps: Deps = {}): Promise<string[]> {
+  const { host, origin } = endpointParts(config.endpoint, envValue(process.env, "PLATFORM_S3_ALLOW_HTTP") === "1");
+  const path = "/" + awsEncode(config.bucket);
+  let token = "";
+  const keys: string[] = [];
+  for (let page = 0; page < LIST_MAX_PAGES; page++) {
+    const query: Record<string, string> = {
+      "list-type": "2",
+      "max-keys": "1000",
+      prefix,
+    };
+    if (token) query["continuation-token"] = token;
+    const queryString = Object.entries(query)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, value]) => awsEncode(key) + "=" + awsEncode(value))
+      .join("&");
+    const date = amzDate();
+    const headers = { host, "x-amz-content-sha256": EMPTY_SHA256, "x-amz-date": date };
+    const signed = signAwsV4({
+      method: "GET",
+      path,
+      query,
+      headers,
+      payloadHash: EMPTY_SHA256,
+      amzDate: date,
+      region: config.region,
+      accessKey: config.accessKey,
+      secretKey: config.secretKey,
+    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), READ_TIMEOUT_MS);
+    let response: Response;
+    try {
+      response = await (deps.fetch ?? fetch)(origin + path + "?" + queryString, {
+        method: "GET",
+        headers: { ...headers, Authorization: signed.authorization },
+        signal: controller.signal,
+      });
+    } catch (error) {
+      if (error instanceof Error && error.name === "AbortError") {
+        throw new Error("Объектное хранилище не ответило при обходе префикса " + prefix);
+      }
+      throw new Error("Нет ответа от объектного хранилища: " + (error instanceof Error ? error.message : String(error)));
+    } finally {
+      clearTimeout(timer);
+    }
+    if (!response.ok) throw await s3Error(response, "получить список");
+    const text = await response.text();
+    const objectPattern = /<Contents>([\s\S]*?)<\/Contents>/g;
+    let match: RegExpExecArray | null;
+    while ((match = objectPattern.exec(text)) !== null) {
+      const key = /<Key>([\s\S]*?)<\/Key>/.exec(match[1]);
+      if (key) keys.push(xmlDecode(key[1]));
+    }
+    const truncated = /<IsTruncated>true<\/IsTruncated>/i.test(text);
+    const next = /<NextContinuationToken>([^<]+)<\/NextContinuationToken>/.exec(text);
+    token = truncated && next ? next[1].trim() : "";
+    if (!truncated || !token) break;
+  }
+  return keys;
+}
+
 /**
  * Сколько объектов и байт лежит в бакете под нашим префиксом.
  *
@@ -398,6 +477,21 @@ export function s3ObjectStore(config: ObjectStoreConfig | null = objectStoreConf
       }, deps);
       if (response.ok || response.status === 404) return;
       throw await s3Error(response, "удалить");
+    },
+    async removePrefix(prefix) {
+      const clean = prefix.replace(/^\/+/, "").replace(/\/+$/, "");
+      if (!clean || clean.split("/").some(segment => segment === "." || segment === "..")) {
+        throw new Error("Некорректный префикс объекта: " + prefix);
+      }
+      const keys = await listObjectKeys(config, clean + "/", deps);
+      for (const key of keys) {
+        const response = await signedRequest(config, "DELETE", key, {
+          payloadHash: EMPTY_SHA256,
+          timeoutMs: READ_TIMEOUT_MS,
+        }, deps);
+        if (!response.ok && response.status !== 404) throw await s3Error(response, "удалить");
+      }
+      return keys.length;
     },
   };
 }

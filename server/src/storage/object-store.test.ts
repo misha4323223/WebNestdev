@@ -60,20 +60,18 @@ test("загрузка файла подписывает хеш, тип и дл�
     return new Response(null, { status: 200 });
   }) as unknown as typeof fetch;
 
-  try {
-    const client = s3ObjectStore(objectStoreConfigFromEnv(FULL_ENV), { fetch: fakeFetch });
-    const bytes = await client.putFile("webnestdev/projects/u/p/workspace.tar.gz", file, "application/gzip");
-    assert.equal(bytes, Buffer.byteLength("архив"));
-    const call = store.calls[0];
-    assert.equal(call.method, "PUT");
-    assert.equal(call.url, "https://s3.twcstorage.ru/webnestdev-projects/webnestdev/projects/u/p/workspace.tar.gz");
-    assert.equal(call.headers["content-type"], "application/gzip");
-    assert.equal(call.headers["content-length"], String(bytes));
-    assert.match(call.headers["x-amz-content-sha256"], /^[0-9a-f]{64}$/);
-    assert.match(call.headers.Authorization, /SignedHeaders=content-length;content-type;host;x-amz-content-sha256;x-amz-date/);
-  } finally {
-    await rm(dir, { recursive: true, force: true });
-  }
+  const client = s3ObjectStore(objectStoreConfigFromEnv(FULL_ENV), { fetch: fakeFetch });
+  const bytes = await client.putFile("webnestdev/projects/u/p/workspace.tar.gz", file, "application/gzip");
+  assert.equal(bytes, Buffer.byteLength("архив"));
+  const call = store.calls[0];
+  assert.equal(call.method, "PUT");
+  assert.equal(call.url, "https://s3.twcstorage.ru/webnestdev-projects/webnestdev/projects/u/p/workspace.tar.gz");
+  assert.equal(call.headers["content-type"], "application/gzip");
+  assert.equal(call.headers["content-length"], String(bytes));
+  assert.match(call.headers["x-amz-content-sha256"], /^[0-9a-f]{64}$/);
+  assert.match(call.headers.Authorization, /SignedHeaders=content-length;content-type;host;x-amz-content-sha256;x-amz-date/);
+  // Фейковый fetch не читает тело: поток открывается лениво, поэтому каталог не удаляем до
+  // завершения процесса, иначе тест ловит ENOENT уже после успешной проверки.
 });
 
 test("скачивание пишет файл, а отсутствующий объект — это false", async () => {
@@ -142,6 +140,32 @@ test("сводка бакета складывает объекты и чест�
     bytes: 10,
     truncated: true,
   });
+});
+
+test("removePrefix удаляет все объекты проекта, включая снапшоты и старые ключи", async () => {
+  const config = objectStoreConfigFromEnv(FULL_ENV);
+  const calls: Array<{ method: string; url: string }> = [];
+  const fakeFetch = (async (url: string | URL | Request, init?: RequestInit) => {
+    calls.push({ method: String(init?.method), url: String(url) });
+    if (init?.method === "GET") {
+      return new Response(
+        "<ListBucketResult><IsTruncated>false</IsTruncated>" +
+          "<Contents><Key>webnestdev/projects/u/p/workspace.tar.gz</Key><Size>1</Size></Contents>" +
+          "<Contents><Key>webnestdev/projects/u/p/snapshots/old.tar.gz</Key><Size>2</Size></Contents>" +
+          "<Contents><Key>webnestdev/projects/u/p/snapshots/old.tar.gz.json</Key><Size>3</Size></Contents>" +
+          "</ListBucketResult>",
+        { status: 200 },
+      );
+    }
+    return new Response(null, { status: 200 });
+  }) as unknown as typeof fetch;
+
+  const client = s3ObjectStore(config, { fetch: fakeFetch });
+  assert.equal(await client.removePrefix("webnestdev/projects/u/p"), 3);
+  assert.equal(calls.filter(call => call.method === "GET").length, 1);
+  assert.equal(calls.filter(call => call.method === "DELETE").length, 3);
+  assert.match(calls[0].url, /prefix=webnestdev%2Fprojects%2Fu%2Fp%2F/);
+  assert.match(calls[1].url, /webnestdev\/projects\/u\/p\/workspace\.tar\.gz$/);
 });
 
 test("head отдаёт размер, отказ хранилища объясняется кодом", async () => {

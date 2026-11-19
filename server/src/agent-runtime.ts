@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { AgentRunRequest,ChatMessage,PlanState } from "./types.js";
 import { createProvider } from "./provider.js";
+import { planAllows } from "./account/entitlements.js";
 import { appendConversationMessages,getConversationPlan,getProject,getProjectProvider,saveConversationPlan } from "./project-store.js";
 import { browserCheckNotice,buildInitialMessages,closeInterruptedTurns,insertSystemNotice,resumeNotice,storedHistory,webSearchNotice } from "./agent/message-builder.js";
 import { notesNotice,notesUpdateNotice,readNoteLines } from "./agent/notes.js";
@@ -201,7 +202,10 @@ export class AgentRuntime {
     try{
       const project=await getProject(request.projectId);
       if(!project||project.userId!==request.userId)throw new Error("Проект не найден");
-      const config=await getProjectProvider(request.projectId);
+      // Свой провайдер проекта — возможность платных тарифов. Старый ключ на «Старте» не
+      // используется: запуск идёт через бесплатную модель платформы, как и обещает витрина.
+      const ownProviderAllowed=Boolean(request.plan&&planAllows(request.plan,"ownAiProvider"));
+      const config=ownProviderAllowed?await getProjectProvider(request.projectId):null;
       // Свой провайдер проекта — значит токены платит пользователь, а не платформа.
       platformModel=!config;
       const defaultPlatformConfig=getPlatformProviderConfig();

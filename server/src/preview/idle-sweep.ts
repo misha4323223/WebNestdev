@@ -5,9 +5,9 @@ import { pruneSharedPreviews } from "./preview-registry.js";
 import { markIdleStopped } from "./idle-stop-marker.js";
 import type { PreviewState } from "./types.js";
 
-/** Docker/hybrid останавливаются после трёх минут без запросов. */
+/** Контейнерный preview останавливается после трёх минут без запросов. */
 export const DEFAULT_IDLE_MS=3*60*1000;
-/** Static — это слушатель в процессе API, а не контейнер: ему даём пятнадцать минут. */
+/** Static и hybrid (статика + функции) живут дольше: им даём пятнадцать минут. */
 export const DEFAULT_STATIC_IDLE_MS=15*60*1000;
 /** Проверка раз в 30 секунд: остановка наступает около 3:00–3:30, а не к четвёртой минуте. */
 export const DEFAULT_SWEEP_MS=30*1000;
@@ -27,14 +27,15 @@ export function staticIdleTimeoutMs(){
 }
 
 /**
- * Which previews have not been used for longer than their timeout. Runtime (Docker/hybrid) uses
- * `PREVIEW_IDLE_MS`; static keeps `PREVIEW_STATIC_IDLE_MS` so an inline preview does not disappear
- * on the runtime timer. `PREVIEW_IDLE_MS=0` disables the sweep entirely, including static.
+ * Which previews have not been used for longer than their timeout. A container uses
+ * `PREVIEW_IDLE_MS`; static and hybrid (static plus functions) keep `PREVIEW_STATIC_IDLE_MS`,
+ * so they do not disappear on the short container timer. `PREVIEW_IDLE_MS=0` disables the sweep
+ * entirely, including static and hybrid.
  */
 export function idlePreviews(states:PreviewState[],now:number,idleMs=idleTimeoutMs(),staticIdleMs=staticIdleTimeoutMs()){
   if(idleMs<=0)return [];
   return states.filter(state=>{
-    const limit=state.mode==="static"?staticIdleMs:idleMs;
+    const limit=state.mode==="container"?idleMs:staticIdleMs;
     return limit>0&&now-(state.lastUsedAt||state.startedAt)>=limit;
   });
 }
@@ -61,7 +62,7 @@ export async function stopIdlePreviews(now=Date.now(),idleMs=idleTimeoutMs(),dep
       await deps.stopPreview(state.projectId);
       // Отметка ставится после успешной остановки: старая ссылка объяснит причину, а не
       // покажет общий «не запущен». Ручная остановка и новый запуск её снимают.
-      markIdleStopped(state.projectId, state.mode, state.mode==="static"?staticIdleMs:idleMs, now);
+      markIdleStopped(state.projectId, state.mode, state.mode==="container"?idleMs:staticIdleMs, now);
       stopped++;
       console.log("[preview] остановлен по бездействию: проект "+state.projectId+" (контейнер "+state.containerId+")");
     }catch(error){

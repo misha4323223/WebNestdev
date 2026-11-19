@@ -15,6 +15,8 @@ import {
   type FailPublishInput,
   type FinishPublishInput,
   type HostingRelease,
+  type HostingResolvedMode,
+  type HostingRoutingMode,
   type HostingSite,
   type ReleaseStatus,
   type SiteStatus,
@@ -40,6 +42,10 @@ export type SiteRow = {
   node_id: string;
   last_error: string;
   suspend_reason: string;
+  routing_mode?: string | null;
+  effective_routing_mode?: string | null;
+  seo_audit_json?: string | null;
+  seo_audit_at?: string | null;
   created_at: string;
   updated_at: string;
   published_at: string | null;
@@ -62,6 +68,8 @@ export type ReleaseRow = {
   manifest_key: string;
   error: string;
   build_log: string;
+  route_manifest_json?: string | null;
+  routing_mode?: string | null;
   node_id: string;
   created_at: string;
   ready_at: string | null;
@@ -92,6 +100,17 @@ function toNumber(value: number | string | bigint | null | undefined) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function normalizeRoutingMode(value: string | null | undefined): HostingRoutingMode {
+  // Старые записи до SEO-этапа всегда отдавались через SPA-fallback. Не превращаем
+  // их в auto молча: auto при следующей публикации мог бы выбрать static и сломать
+  // работающее клиентское приложение с файлом 404.html.
+  return value === "auto" || value === "static" || value === "hybrid" ? value : "spa";
+}
+
+function normalizeResolvedMode(value: string | null | undefined, fallback: "static" | "spa" | "hybrid" | ""): HostingResolvedMode | "" {
+  return value === "static" || value === "spa" || value === "hybrid" ? value : fallback;
+}
+
 export function siteFromRow(row: SiteRow): HostingSite {
   return {
     id: row.id,
@@ -104,6 +123,11 @@ export function siteFromRow(row: SiteRow): HostingSite {
     nodeId: row.node_id,
     lastError: row.last_error ?? "",
     suspendReason: row.suspend_reason ?? "",
+    routingMode: normalizeRoutingMode(row.routing_mode),
+    // Старые записи до SEO-этапа отдавались через SPA-fallback; не меняем это молча.
+    effectiveRoutingMode: normalizeResolvedMode(row.effective_routing_mode, "spa") as HostingResolvedMode,
+    seoAuditJson: row.seo_audit_json ?? "",
+    seoAuditAt: row.seo_audit_at ?? null,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
     publishedAt: row.published_at,
@@ -128,6 +152,8 @@ export function releaseFromRow(row: ReleaseRow): HostingRelease {
     manifestKey: row.manifest_key ?? "",
     error: row.error ?? "",
     buildLog: row.build_log ?? "",
+    routeManifestJson: row.route_manifest_json ?? "",
+    routingMode: normalizeResolvedMode(row.routing_mode, "") as HostingResolvedMode | "",
     nodeId: row.node_id ?? "",
     createdAt: row.created_at,
     readyAt: row.ready_at,
@@ -150,6 +176,24 @@ type JsonState = {
   /** Старые адреса после переименования: их нельзя занять другому сайту. */
   retiredSlugs: Array<{ slug: string; siteId: string }>;
 };
+
+function normalizeJsonSite(site: HostingSite): HostingSite {
+  return {
+    ...site,
+    routingMode: normalizeRoutingMode(site.routingMode),
+    effectiveRoutingMode: normalizeResolvedMode(site.effectiveRoutingMode, "spa") as HostingResolvedMode,
+    seoAuditJson: site.seoAuditJson ?? "",
+    seoAuditAt: site.seoAuditAt ?? null,
+  };
+}
+
+function normalizeJsonRelease(release: HostingRelease): HostingRelease {
+  return {
+    ...release,
+    routeManifestJson: release.routeManifestJson ?? "",
+    routingMode: normalizeResolvedMode(release.routingMode, "") as HostingResolvedMode | "",
+  };
+}
 
 const jsonQueues = new Map<string, Promise<unknown>>();
 
@@ -174,7 +218,12 @@ async function readJsonState(): Promise<JsonState> {
     const retiredSlugs = Array.isArray(parsed.retiredSlugs)
       ? parsed.retiredSlugs.filter(item => item && typeof item.slug === "string" && typeof item.siteId === "string")
       : [];
-    return { version: 1, sites: parsed.sites, releases: parsed.releases, retiredSlugs };
+    return {
+      version: 1,
+      sites: parsed.sites.map(site => normalizeJsonSite(site)),
+      releases: parsed.releases.map(release => normalizeJsonRelease(release)),
+      retiredSlugs,
+    };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return { version: 1, sites: [], releases: [], retiredSlugs: [] };
     throw error;
@@ -217,7 +266,7 @@ async function pgSiteById(id: string): Promise<HostingSite | null> {
   const table = sqlTable("sites");
   const [rows] = await ydbQuery()<SiteRow[]>`
     SELECT id,user_id,project_id,slug,status,active_release_id,publishing_release_id,node_id,
-           last_error,suspend_reason,created_at,updated_at,published_at,unpublished_at,suspended_at
+           last_error,suspend_reason,routing_mode,effective_routing_mode,seo_audit_json,seo_audit_at,created_at,updated_at,published_at,unpublished_at,suspended_at
       FROM ${table}
      WHERE id = ${id}
      LIMIT 1`;
@@ -229,7 +278,7 @@ async function pgSiteByProject(projectId: string): Promise<HostingSite | null> {
   const table = sqlTable("sites");
   const [rows] = await ydbQuery()<SiteRow[]>`
     SELECT id,user_id,project_id,slug,status,active_release_id,publishing_release_id,node_id,
-           last_error,suspend_reason,created_at,updated_at,published_at,unpublished_at,suspended_at
+           last_error,suspend_reason,routing_mode,effective_routing_mode,seo_audit_json,seo_audit_at,created_at,updated_at,published_at,unpublished_at,suspended_at
       FROM ${table}
      WHERE project_id = ${projectId}
      LIMIT 1`;
@@ -241,7 +290,7 @@ async function pgSiteBySlug(slug: string): Promise<HostingSite | null> {
   const table = sqlTable("sites");
   const [rows] = await ydbQuery()<SiteRow[]>`
     SELECT id,user_id,project_id,slug,status,active_release_id,publishing_release_id,node_id,
-           last_error,suspend_reason,created_at,updated_at,published_at,unpublished_at,suspended_at
+           last_error,suspend_reason,routing_mode,effective_routing_mode,seo_audit_json,seo_audit_at,created_at,updated_at,published_at,unpublished_at,suspended_at
       FROM ${table}
      WHERE slug = ${slug}
      LIMIT 1`;
@@ -285,7 +334,7 @@ async function pgRelease(id: string): Promise<HostingRelease | null> {
   const table = sqlTable("site_releases");
   const [rows] = await ydbQuery()<ReleaseRow[]>`
     SELECT id,site_id,user_id,status,kind,bytes,stored_bytes,files,sha256,manifest_json,
-           storage_key,manifest_key,error,build_log,node_id,created_at,ready_at,activated_at,deleted_at
+           storage_key,manifest_key,error,build_log,route_manifest_json,routing_mode,node_id,created_at,ready_at,activated_at,deleted_at
       FROM ${table}
      WHERE id = ${id}
      LIMIT 1`;
@@ -297,7 +346,7 @@ async function pgReleases(siteId: string, limit = 20): Promise<HostingRelease[]>
   const table = sqlTable("site_releases");
   const [rows] = await ydbQuery()<ReleaseRow[]>`
     SELECT id,site_id,user_id,status,kind,bytes,stored_bytes,files,sha256,manifest_json,
-           storage_key,manifest_key,error,build_log,node_id,created_at,ready_at,activated_at,deleted_at
+           storage_key,manifest_key,error,build_log,route_manifest_json,routing_mode,node_id,created_at,ready_at,activated_at,deleted_at
       FROM ${table}
      WHERE site_id = ${siteId}
      ORDER BY created_at DESC
@@ -306,6 +355,67 @@ async function pgReleases(siteId: string, limit = 20): Promise<HostingRelease[]>
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
+
+/** Меняет SEO-настройки без публикации: Caddy берёт режим из базы, файлы не трогаются. */
+export async function updateSeoSettings(input: {
+  siteId: string;
+  userId: string;
+  routingMode: HostingRoutingMode;
+  effectiveRoutingMode: HostingResolvedMode;
+}): Promise<HostingSite | null> {
+  const now = new Date().toISOString();
+  if (isYdbEnabled()) {
+    await initializeStorage();
+    const table = sqlTable("sites");
+    const [rows] = await ydbQuery()<SiteRow[]>`
+      UPDATE ${table}
+         SET routing_mode = ${input.routingMode}, effective_routing_mode = ${input.effectiveRoutingMode}, updated_at = ${now}
+       WHERE id = ${input.siteId} AND user_id = ${input.userId}
+       RETURNING id,user_id,project_id,slug,status,active_release_id,publishing_release_id,node_id,
+                 last_error,suspend_reason,routing_mode,effective_routing_mode,seo_audit_json,seo_audit_at,created_at,updated_at,published_at,unpublished_at,suspended_at`;
+    return rows[0] ? siteFromRow(rows[0]) : null;
+  }
+  return withJsonLock(async () => {
+    const state = await readJsonState();
+    const site = state.sites.find(item => item.id === input.siteId && item.userId === input.userId);
+    if (!site) return null;
+    site.routingMode = input.routingMode;
+    site.effectiveRoutingMode = input.effectiveRoutingMode;
+    site.updatedAt = now;
+    await writeJsonState(state);
+    return { ...site };
+  });
+}
+
+/** Аудит не влияет на отдачу сайта, поэтому сохраняется отдельно от режима. */
+export async function saveSeoAudit(input: {
+  siteId: string;
+  userId: string;
+  auditJson: string;
+}): Promise<HostingSite | null> {
+  const now = new Date().toISOString();
+  if (isYdbEnabled()) {
+    await initializeStorage();
+    const table = sqlTable("sites");
+    const [rows] = await ydbQuery()<SiteRow[]>`
+      UPDATE ${table}
+         SET seo_audit_json = ${input.auditJson}, seo_audit_at = ${now}, updated_at = ${now}
+       WHERE id = ${input.siteId} AND user_id = ${input.userId}
+       RETURNING id,user_id,project_id,slug,status,active_release_id,publishing_release_id,node_id,
+                 last_error,suspend_reason,routing_mode,effective_routing_mode,seo_audit_json,seo_audit_at,created_at,updated_at,published_at,unpublished_at,suspended_at`;
+    return rows[0] ? siteFromRow(rows[0]) : null;
+  }
+  return withJsonLock(async () => {
+    const state = await readJsonState();
+    const site = state.sites.find(item => item.id === input.siteId && item.userId === input.userId);
+    if (!site) return null;
+    site.seoAuditJson = input.auditJson;
+    site.seoAuditAt = now;
+    site.updatedAt = now;
+    await writeJsonState(state);
+    return { ...site };
+  });
+}
 
 export async function getSite(id: string): Promise<HostingSite | null> {
   if (isYdbEnabled()) return pgSiteById(id);
@@ -337,7 +447,7 @@ export async function listSitesForRouting(): Promise<HostingSite[]> {
     const table = sqlTable("sites");
     const [rows] = await ydbQuery()<SiteRow[]>`
       SELECT id,user_id,project_id,slug,status,active_release_id,publishing_release_id,node_id,
-             last_error,suspend_reason,created_at,updated_at,published_at,unpublished_at,suspended_at
+             last_error,suspend_reason,routing_mode,effective_routing_mode,seo_audit_json,seo_audit_at,created_at,updated_at,published_at,unpublished_at,suspended_at
         FROM ${table}
        WHERE status = 'live' AND active_release_id IS NOT NULL
        ORDER BY slug ASC`;
@@ -365,26 +475,26 @@ export async function listSites(filters: SiteFilters = {}): Promise<HostingSite[
       ? filters.userId
         ? await ydbQuery()<SiteRow[]>`
             SELECT id,user_id,project_id,slug,status,active_release_id,publishing_release_id,node_id,
-                   last_error,suspend_reason,created_at,updated_at,published_at,unpublished_at,suspended_at
+                   last_error,suspend_reason,routing_mode,effective_routing_mode,seo_audit_json,seo_audit_at,created_at,updated_at,published_at,unpublished_at,suspended_at
               FROM ${table}
              WHERE status = ${filters.status} AND user_id = ${filters.userId}
              ORDER BY updated_at DESC LIMIT ${limit}`
         : await ydbQuery()<SiteRow[]>`
             SELECT id,user_id,project_id,slug,status,active_release_id,publishing_release_id,node_id,
-                   last_error,suspend_reason,created_at,updated_at,published_at,unpublished_at,suspended_at
+                   last_error,suspend_reason,routing_mode,effective_routing_mode,seo_audit_json,seo_audit_at,created_at,updated_at,published_at,unpublished_at,suspended_at
               FROM ${table}
              WHERE status = ${filters.status}
              ORDER BY updated_at DESC LIMIT ${limit}`
       : filters.userId
         ? await ydbQuery()<SiteRow[]>`
             SELECT id,user_id,project_id,slug,status,active_release_id,publishing_release_id,node_id,
-                   last_error,suspend_reason,created_at,updated_at,published_at,unpublished_at,suspended_at
+                   last_error,suspend_reason,routing_mode,effective_routing_mode,seo_audit_json,seo_audit_at,created_at,updated_at,published_at,unpublished_at,suspended_at
               FROM ${table}
              WHERE user_id = ${filters.userId}
              ORDER BY updated_at DESC LIMIT ${limit}`
         : await ydbQuery()<SiteRow[]>`
             SELECT id,user_id,project_id,slug,status,active_release_id,publishing_release_id,node_id,
-                   last_error,suspend_reason,created_at,updated_at,published_at,unpublished_at,suspended_at
+                   last_error,suspend_reason,routing_mode,effective_routing_mode,seo_audit_json,seo_audit_at,created_at,updated_at,published_at,unpublished_at,suspended_at
               FROM ${table}
              ORDER BY updated_at DESC LIMIT ${limit}`;
     return rows.map(siteFromRow);
@@ -503,7 +613,7 @@ export async function createSite(input: CreateSiteInput): Promise<HostingSite> {
                    published_at = NULL, unpublished_at = NULL, suspended_at = NULL
              WHERE id = ${existing.id}
              RETURNING id,user_id,project_id,slug,status,active_release_id,publishing_release_id,node_id,
-                       last_error,suspend_reason,created_at,updated_at,published_at,unpublished_at,suspended_at`;
+                       last_error,suspend_reason,routing_mode,effective_routing_mode,seo_audit_json,seo_audit_at,created_at,updated_at,published_at,unpublished_at,suspended_at`;
           if (!rows[0]) throw new HostingError("PUBLISH_FAILED", "Не удалось пересоздать сайт");
           await pgRememberRetiredSlug(existing.slug, existing.id, now, tx);
           output = siteFromRow(rows[0]);
@@ -527,12 +637,12 @@ export async function createSite(input: CreateSiteInput): Promise<HostingSite> {
         const [rows] = await ydbQuery()<SiteRow[]>`
           INSERT INTO ${table}
             (id,user_id,project_id,slug,status,active_release_id,publishing_release_id,node_id,
-             last_error,suspend_reason,created_at,updated_at,published_at,unpublished_at,suspended_at)
+             last_error,suspend_reason,routing_mode,effective_routing_mode,seo_audit_json,seo_audit_at,created_at,updated_at,published_at,unpublished_at,suspended_at)
           VALUES (${existing?.id ?? randomUUID()},${input.userId},${input.projectId},${slug},'draft',NULL,NULL,
-                  ${input.nodeId},'','',${existing?.createdAt ?? now},${now},NULL,NULL,NULL)
+                  ${input.nodeId},'','','auto','static','','',${existing?.createdAt ?? now},${now},NULL,NULL,NULL)
           ON CONFLICT (project_id) DO NOTHING
           RETURNING id,user_id,project_id,slug,status,active_release_id,publishing_release_id,node_id,
-                    last_error,suspend_reason,created_at,updated_at,published_at,unpublished_at,suspended_at`;
+                    last_error,suspend_reason,routing_mode,effective_routing_mode,seo_audit_json,seo_audit_at,created_at,updated_at,published_at,unpublished_at,suspended_at`;
         if (rows[0]) return siteFromRow(rows[0]);
         const raced = await pgSiteByProject(input.projectId);
         if (raced && raced.status !== "deleted") return raced;
@@ -576,6 +686,11 @@ export async function createSite(input: CreateSiteInput): Promise<HostingSite> {
           nodeId: input.nodeId,
           lastError: "",
           suspendReason: "",
+          routingMode: "auto",
+          // Новый сайт до первой публикации считается статическим; publish уточнит режим.
+          effectiveRoutingMode: "static",
+          seoAuditJson: "",
+          seoAuditAt: null,
           createdAt: now,
           updatedAt: now,
           publishedAt: null,
@@ -620,7 +735,7 @@ export async function renameSiteSlug(input: {
       await ydbQuery().transaction({}, async tx => {
         const [rows] = await tx<SiteRow[]>`
           SELECT id,user_id,project_id,slug,status,active_release_id,publishing_release_id,node_id,
-                 last_error,suspend_reason,created_at,updated_at,published_at,unpublished_at,suspended_at
+                 last_error,suspend_reason,routing_mode,effective_routing_mode,seo_audit_json,seo_audit_at,created_at,updated_at,published_at,unpublished_at,suspended_at
             FROM ${sites} WHERE id = ${input.siteId} FOR UPDATE`;
         const row = rows[0];
         if (!row) throw new HostingError("SITE_NOT_FOUND", "Сайт не найден", 404);
@@ -643,7 +758,7 @@ export async function renameSiteSlug(input: {
              SET slug = ${input.slug}, updated_at = ${now}
            WHERE id = ${site.id}
            RETURNING id,user_id,project_id,slug,status,active_release_id,publishing_release_id,node_id,
-                     last_error,suspend_reason,created_at,updated_at,published_at,unpublished_at,suspended_at`;
+                     last_error,suspend_reason,routing_mode,effective_routing_mode,seo_audit_json,seo_audit_at,created_at,updated_at,published_at,unpublished_at,suspended_at`;
         if (!updated[0]) throw new HostingError("SITE_NOT_FOUND", "Сайт не найден", 404);
         await pgRememberRetiredSlug(site.slug, site.id, now, tx);
         output = siteFromRow(updated[0]);
@@ -684,7 +799,7 @@ export async function beginPublish(input: BeginPublishInput): Promise<{ site: Ho
     await ydbQuery().transaction({}, async tx => {
       const [siteRows] = await tx<SiteRow[]>`
         SELECT id,user_id,project_id,slug,status,active_release_id,publishing_release_id,node_id,
-               last_error,suspend_reason,created_at,updated_at,published_at,unpublished_at,suspended_at
+               last_error,suspend_reason,routing_mode,effective_routing_mode,seo_audit_json,seo_audit_at,created_at,updated_at,published_at,unpublished_at,suspended_at
           FROM ${sites} WHERE id = ${input.siteId} FOR UPDATE`;
       const row = siteRows[0];
       if (!row) throw new HostingError("SITE_NOT_FOUND", "Сайт не найден", 404);
@@ -697,10 +812,10 @@ export async function beginPublish(input: BeginPublishInput): Promise<{ site: Ho
       const [releaseRows] = await tx<ReleaseRow[]>`
         INSERT INTO ${releases}
           (id,site_id,user_id,status,kind,bytes,stored_bytes,files,sha256,manifest_json,
-           storage_key,manifest_key,error,build_log,node_id,created_at,ready_at,activated_at,deleted_at)
-        VALUES (${releaseId},${site.id},${site.userId},'building',${input.kind},0,0,0,'','','','','','',${input.nodeId},${now},NULL,NULL,NULL)
+           storage_key,manifest_key,error,build_log,route_manifest_json,routing_mode,node_id,created_at,ready_at,activated_at,deleted_at)
+        VALUES (${releaseId},${site.id},${site.userId},'building',${input.kind},0,0,0,'','','','','','','','',${input.nodeId},${now},NULL,NULL,NULL)
         RETURNING id,site_id,user_id,status,kind,bytes,stored_bytes,files,sha256,manifest_json,
-                  storage_key,manifest_key,error,build_log,node_id,created_at,ready_at,activated_at,deleted_at`;
+                  storage_key,manifest_key,error,build_log,route_manifest_json,routing_mode,node_id,created_at,ready_at,activated_at,deleted_at`;
       await tx`
         UPDATE ${sites}
            SET publishing_release_id = ${releaseId}, node_id = ${input.nodeId}, last_error = '', updated_at = ${now}
@@ -736,6 +851,8 @@ export async function beginPublish(input: BeginPublishInput): Promise<{ site: Ho
       manifestKey: "",
       error: "",
       buildLog: "",
+      routeManifestJson: "",
+      routingMode: "",
       nodeId: input.nodeId,
       createdAt: now,
       readyAt: null,
@@ -759,7 +876,7 @@ export async function finishPublish(input: FinishPublishInput): Promise<{ site: 
     await ydbQuery().transaction({}, async tx => {
       const [siteRows] = await tx<SiteRow[]>`
         SELECT id,user_id,project_id,slug,status,active_release_id,publishing_release_id,node_id,
-               last_error,suspend_reason,created_at,updated_at,published_at,unpublished_at,suspended_at
+               last_error,suspend_reason,routing_mode,effective_routing_mode,seo_audit_json,seo_audit_at,created_at,updated_at,published_at,unpublished_at,suspended_at
           FROM ${sites} WHERE id = ${input.siteId} FOR UPDATE`;
       const row = siteRows[0];
       if (!row) throw new HostingError("SITE_NOT_FOUND", "Сайт не найден", 404);
@@ -775,18 +892,22 @@ export async function finishPublish(input: FinishPublishInput): Promise<{ site: 
            SET status = 'ready', kind = ${input.kind}, bytes = ${input.bytes}, stored_bytes = ${input.storedBytes ?? 0},
                files = ${input.files}, sha256 = ${input.sha256}, manifest_json = ${input.manifestJson},
                storage_key = ${input.storageKey ?? ""}, manifest_key = ${input.manifestKey ?? ""},
+               route_manifest_json = ${input.routeManifestJson ?? ""},
+               routing_mode = ${input.routingMode ?? ""},
                error = '', ready_at = ${now}, activated_at = ${now}, deleted_at = NULL
          WHERE id = ${input.releaseId} AND site_id = ${site.id} AND status = 'building'
          RETURNING id,site_id,user_id,status,kind,bytes,stored_bytes,files,sha256,manifest_json,
-                   storage_key,manifest_key,error,build_log,node_id,created_at,ready_at,activated_at,deleted_at`;
+                   storage_key,manifest_key,error,build_log,route_manifest_json,routing_mode,node_id,created_at,ready_at,activated_at,deleted_at`;
       if (!releaseRows[0]) throw new HostingError("RELEASE_NOT_FOUND", "Релиз не найден", 404);
       const [updatedSiteRows] = await tx<SiteRow[]>`
         UPDATE ${sites}
            SET status = 'live', active_release_id = ${input.releaseId}, publishing_release_id = NULL,
-               last_error = '', published_at = ${now}, unpublished_at = NULL, updated_at = ${now}
+               last_error = '', published_at = ${now}, unpublished_at = NULL, updated_at = ${now},
+               effective_routing_mode = COALESCE(${input.routingMode ?? null}, effective_routing_mode),
+               seo_audit_json = '', seo_audit_at = NULL
          WHERE id = ${site.id}
          RETURNING id,user_id,project_id,slug,status,active_release_id,publishing_release_id,node_id,
-                   last_error,suspend_reason,created_at,updated_at,published_at,unpublished_at,suspended_at`;
+                   last_error,suspend_reason,routing_mode,effective_routing_mode,seo_audit_json,seo_audit_at,created_at,updated_at,published_at,unpublished_at,suspended_at`;
       output = { site: siteFromRow(updatedSiteRows[0]), release: releaseFromRow(releaseRows[0]) };
     });
     if (!output) throw new HostingError("PUBLISH_FAILED", "Не удалось зафиксировать публикацию");
@@ -812,6 +933,8 @@ export async function finishPublish(input: FinishPublishInput): Promise<{ site: 
       manifestJson: input.manifestJson,
       storageKey: input.storageKey ?? "",
       manifestKey: input.manifestKey ?? "",
+      routeManifestJson: input.routeManifestJson ?? "",
+      routingMode: input.routingMode ?? "",
       error: "",
       readyAt: now,
       activatedAt: now,
@@ -822,6 +945,9 @@ export async function finishPublish(input: FinishPublishInput): Promise<{ site: 
       activeReleaseId: release.id,
       publishingReleaseId: null,
       lastError: "",
+      effectiveRoutingMode: input.routingMode ?? site.effectiveRoutingMode,
+      seoAuditJson: "",
+      seoAuditAt: null,
       publishedAt: now,
       unpublishedAt: null,
       updatedAt: now,
@@ -846,7 +972,7 @@ export async function activateRelease(input: ActivateReleaseInput): Promise<{ si
     await ydbQuery().transaction({}, async tx => {
       const [siteRows] = await tx<SiteRow[]>`
         SELECT id,user_id,project_id,slug,status,active_release_id,publishing_release_id,node_id,
-               last_error,suspend_reason,created_at,updated_at,published_at,unpublished_at,suspended_at
+               last_error,suspend_reason,routing_mode,effective_routing_mode,seo_audit_json,seo_audit_at,created_at,updated_at,published_at,unpublished_at,suspended_at
           FROM ${sites} WHERE id = ${input.siteId} FOR UPDATE`;
       const row = siteRows[0];
       if (!row) throw new HostingError("SITE_NOT_FOUND", "Сайт не найден", 404);
@@ -857,7 +983,7 @@ export async function activateRelease(input: ActivateReleaseInput): Promise<{ si
       if (site.publishingReleaseId) throw new HostingBusyError(site.id);
       const [releaseRows] = await tx<ReleaseRow[]>`
         SELECT id,site_id,user_id,status,kind,bytes,stored_bytes,files,sha256,manifest_json,
-               storage_key,manifest_key,error,build_log,node_id,created_at,ready_at,activated_at,deleted_at
+               storage_key,manifest_key,error,build_log,route_manifest_json,routing_mode,node_id,created_at,ready_at,activated_at,deleted_at
           FROM ${releases}
          WHERE id = ${input.releaseId} AND site_id = ${site.id} AND status = 'ready'
          LIMIT 1`;
@@ -865,10 +991,12 @@ export async function activateRelease(input: ActivateReleaseInput): Promise<{ si
       const [updatedRows] = await tx<SiteRow[]>`
         UPDATE ${sites}
            SET status = 'live', active_release_id = ${input.releaseId}, publishing_release_id = NULL,
-               last_error = '', unpublished_at = NULL, updated_at = ${now}
+               last_error = '', unpublished_at = NULL, updated_at = ${now},
+               effective_routing_mode = COALESCE(NULLIF(${releaseRows[0].routing_mode ?? ""}, ''), effective_routing_mode),
+               seo_audit_json = '', seo_audit_at = NULL
          WHERE id = ${site.id}
          RETURNING id,user_id,project_id,slug,status,active_release_id,publishing_release_id,node_id,
-                   last_error,suspend_reason,created_at,updated_at,published_at,unpublished_at,suspended_at`;
+                   last_error,suspend_reason,routing_mode,effective_routing_mode,seo_audit_json,seo_audit_at,created_at,updated_at,published_at,unpublished_at,suspended_at`;
       output = { site: siteFromRow(updatedRows[0]), release: releaseFromRow(releaseRows[0]) };
     });
     if (!output) throw new HostingError("PUBLISH_FAILED", "Не удалось переключить релиз");
@@ -889,6 +1017,9 @@ export async function activateRelease(input: ActivateReleaseInput): Promise<{ si
       publishingReleaseId: null,
       lastError: "",
       unpublishedAt: null,
+      effectiveRoutingMode: release.routingMode || site.effectiveRoutingMode,
+      seoAuditJson: "",
+      seoAuditAt: null,
       updatedAt: now,
     });
     await writeJsonState(state);
@@ -969,7 +1100,7 @@ async function changeSiteStatus(
              suspend_reason = ${extra.suspendReason ?? ""}
        WHERE id = ${siteId}
        RETURNING id,user_id,project_id,slug,status,active_release_id,publishing_release_id,node_id,
-                 last_error,suspend_reason,created_at,updated_at,published_at,unpublished_at,suspended_at`;
+                 last_error,suspend_reason,routing_mode,effective_routing_mode,seo_audit_json,seo_audit_at,created_at,updated_at,published_at,unpublished_at,suspended_at`;
     return rows[0] ? siteFromRow(rows[0]) : null;
   }
   return withJsonLock(async () => {
@@ -999,7 +1130,7 @@ export async function markSiteDeleted(siteId: string, now = new Date().toISOStri
            SET status = 'deleted', active_release_id = NULL, publishing_release_id = NULL, updated_at = ${now}
          WHERE id = ${siteId}
          RETURNING id,user_id,project_id,slug,status,active_release_id,publishing_release_id,node_id,
-                   last_error,suspend_reason,created_at,updated_at,published_at,unpublished_at,suspended_at`;
+                   last_error,suspend_reason,routing_mode,effective_routing_mode,seo_audit_json,seo_audit_at,created_at,updated_at,published_at,unpublished_at,suspended_at`;
       output = rows[0] ? siteFromRow(rows[0]) : null;
       // Удаление сайта освобождает hostname: иначе домен навсегда остался бы привязан к
       // tombstone-сайту и не мог быть подключён к новому. Делаем это в той же транзакции.

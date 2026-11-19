@@ -16,6 +16,17 @@ export type SiteStatus = "draft" | "live" | "unpublished" | "suspended" | "delet
 export type ReleaseStatus = "building" | "ready" | "failed" | "deleted";
 export type HostingProjectKind = "instant-site" | "static-build" | "static-functions";
 
+/**
+ * Как сайт отдаёт страницы. `auto` — это пожелание пользователя: при публикации оно
+ * превращается в один из конкретных режимов и сохраняется в `effectiveRoutingMode`.
+ *
+ * Старые записи без поля читаются как `spa`, потому что до SEO-этапа хостинг отдавал
+ * любой путь без расширения через index.html. Это сохраняет работающие SPA при выкатке,
+ * а не превращает их в 404 до повторной публикации. Новый сайт получает `auto` явно.
+ */
+export type HostingRoutingMode = "auto" | "static" | "spa" | "hybrid";
+export type HostingResolvedMode = "static" | "spa" | "hybrid";
+
 export type HostingSite = {
   id: string;
   userId: string;
@@ -27,6 +38,13 @@ export type HostingSite = {
   nodeId: string;
   lastError: string;
   suspendReason: string;
+  /** Предпочтение пользователя; отсутствует у старых записей. */
+  routingMode?: HostingRoutingMode;
+  /** Режим, который реально применяет Caddy; отсутствует у старых записей. */
+  effectiveRoutingMode?: HostingResolvedMode;
+  /** Последний сохранённый технический SEO-аудит. */
+  seoAuditJson?: string;
+  seoAuditAt?: string | null;
   createdAt: string;
   updatedAt: string;
   publishedAt: string | null;
@@ -45,6 +63,9 @@ export type HostingRelease = {
   files: number;
   sha256: string;
   manifestJson: string;
+  /** Список HTML-маршрутов, построенный при публикации. */
+  routeManifestJson?: string;
+  routingMode?: HostingResolvedMode | "";
   storageKey: string;
   manifestKey: string;
   error: string;
@@ -86,6 +107,8 @@ export type FinishPublishInput = {
   files: number;
   sha256: string;
   manifestJson: string;
+  routeManifestJson?: string;
+  routingMode?: HostingResolvedMode;
   storedBytes?: number;
   storageKey?: string;
   manifestKey?: string;

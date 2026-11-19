@@ -1,6 +1,8 @@
 import { listAllDomains, updateDomain } from "./domain-store.js";
 import { probeCustomDomainTls, type TlsProbe } from "./domain-tls.js";
 import { listSitesForRouting } from "./site-store.js";
+import { refreshCustomDomainsCaddy } from "./caddy-refresh.js";
+import { refreshSeoOverlay } from "./seo/overlay.js";
 import type { CustomDomain } from "./domain-types.js";
 import type { HostingSite } from "./types.js";
 
@@ -84,6 +86,8 @@ export async function activateCustomDomains(options: ActivationOptions = {}): Pr
           certificateStartedAt: null,
         });
         activated++;
+        const site = sites.find(item => item.id === domain.siteId);
+        if (site) await refreshSeoOverlay(site).catch(() => undefined);
       } else {
         const reason = (result.error ?? "TLS-проверка не прошла").slice(0, 500);
         const elapsedMs = Math.max(0, now() - Date.parse(startedAt));
@@ -103,6 +107,9 @@ export async function activateCustomDomains(options: ActivationOptions = {}): Pr
         failed++;
       }
     }
+    // Canonical в map появляется только после `active`; без пересборки платформенный
+    // адрес продолжал бы отдавать 200 вместо 301 до следующего тика.
+    if (activated > 0) await refreshCustomDomainsCaddy().catch(() => undefined);
     lastError = "";
     return { checked: candidates.length, activated, failed };
   })();

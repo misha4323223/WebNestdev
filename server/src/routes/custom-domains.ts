@@ -4,6 +4,7 @@ import { getSiteByProject } from "../hosting/site-store.js";
 import { customDomainIp, customDomainTarget, customDomainsEnabled } from "../hosting/domain-config.js";
 import { requestCustomDomainCaddyRefresh } from "../hosting/caddy-refresh.js";
 import { requestCustomDomainActivation } from "../hosting/domain-activation.js";
+import { refreshSeoOverlay } from "../hosting/seo/overlay.js";
 import {
   createCustomDomains,
   domainsForSite,
@@ -131,6 +132,7 @@ export async function registerCustomDomainRoutes(app: FastifyInstance) {
     if (!body.canonical) return reply.code(400).send({ error: "Поддерживается только canonical=true" });
     try {
       const domains = await setCanonicalForSite(owner.site.id, params.domainId);
+      await refreshSeoOverlay(owner.site).catch(() => undefined);
       requestCustomDomainCaddyRefresh("canonical changed");
       await recordAudit({
         action: "hosting.domain.canonical",
@@ -155,6 +157,7 @@ export async function registerCustomDomainRoutes(app: FastifyInstance) {
     try {
       const deleted = await removeDomainGroup(owner.site.id, params.domainId);
       if (!deleted) return reply.code(404).send({ error: "Домен не найден", code: "DOMAIN_NOT_FOUND" });
+      await refreshSeoOverlay(owner.site).catch(() => undefined);
       requestCustomDomainCaddyRefresh("domain removed");
       await recordAudit({
         action: "hosting.domain.removed",

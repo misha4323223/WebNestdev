@@ -8,6 +8,7 @@ import {
   rollbackHosting, unpublishHosting, updateHostingSlug, type HostingRelease, type HostingState,
 } from "../../lib/hosting-api";
 import { CustomDomainCard } from "./CustomDomainCard";
+import { SeoCard } from "./SeoCard";
 
 /**
  * Вкладка «Хостинг». Сайт — не процесс: после публикации файлы лежат на диске и отдаются
@@ -277,6 +278,14 @@ export function HostingPanel({ projectId }: { projectId: string }) {
           projectId={projectId}
           enabled={state.customDomains.enabled}
           limit={state.customDomains.limit}
+        /> : null}
+
+        {state?.seo ? <SeoCard
+          projectId={projectId}
+          seo={state.seo}
+          onReload={() => load(true)}
+          disabled={building || Boolean(busy)}
+          hasRelease={Boolean(site.activeReleaseId)}
         /> : null}
 
         {state?.releases.length ? <div className="hosting-releases">

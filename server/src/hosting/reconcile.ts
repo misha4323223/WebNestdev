@@ -56,18 +56,19 @@ export async function reconcileHosting(): Promise<ReconcileResult> {
     // Файлы удалённого сайта остаются, если сервер упал между tombstone и очисткой.
     // Удаляем их только на узле, которому принадлежат; на общем SITES_DIR — на любом.
     if (site.status === "deleted") {
-      if (site.nodeId && site.nodeId !== config.nodeId && !config.sharedStorage) continue;
+      // Бакет общий для обеих нод, поэтому его можно чистить с любой машины. Раньше выход
+      // по `nodeId` оставлял объекты сайта навсегда, если нода-владелец была выключена:
+      // локальные файлы принадлежат ей, а S3 — нет. Локальный каталог по-прежнему трогает
+      // только владелец (или узел с общим SITES_DIR).
+      const ownsLocalFiles = !site.nodeId || site.nodeId === config.nodeId || config.sharedStorage;
       await safely(async () => {
+        if (!ownsLocalFiles) return;
         await removeCurrent(site.slug, config.sitesDir);
         await removeSiteDirectory(site.slug, config.sitesDir);
-        if (store) {
-          for (const release of await listReleases(site.id, 100)) {
-            await store.remove({ site, release }).catch(error => {
-              console.warn("[hosting] не удалось удалить объект удалённого сайта:", error instanceof Error ? error.message : String(error));
-            });
-          }
-        }
         result.orphanDirectoriesRemoved++;
+      }).then(ok => { if (!ok) result.errors++; });
+      await safely(async () => {
+        if (store) await store.removeSite(site);
       }).then(ok => { if (!ok) result.errors++; });
       continue;
     }
@@ -195,15 +196,16 @@ export async function reconcileHosting(): Promise<ReconcileResult> {
 /** Очистка одного сайта используется при удалении проекта, когда БД уже помечена deleted. */
 export async function reconcileSite(siteId: string): Promise<void> {
   const config = hostingConfig();
-  const site = (await listSites({ limit: 1_000 })).find(item => item.id === siteId);
+  const site = await getSite(siteId);
   if (!site) return;
-  await removeCurrent(site.slug, config.sitesDir).catch(() => undefined);
-  await removeSiteDirectory(site.slug, config.sitesDir).catch(() => undefined);
-  const store = hostingReleaseStoreSafe();
-  if (!store) return;
-  for (const release of await listReleases(site.id, 100)) {
-    await store.remove({ site, release }).catch(error => {
-      console.warn("[hosting] не удалось удалить архив удалённого сайта:", error instanceof Error ? error.message : String(error));
-    });
+  const ownsLocalFiles = !site.nodeId || site.nodeId === config.nodeId || config.sharedStorage;
+  if (ownsLocalFiles) {
+    await removeCurrent(site.slug, config.sitesDir).catch(() => undefined);
+    await removeSiteDirectory(site.slug, config.sitesDir).catch(() => undefined);
   }
+  // Удаляем префикс, а не только релизы из последних 100 строк: если строку релиза уже
+  // потеряли, объект всё равно должен исчезнуть. Ошибку не глотаем — вызывающий логирует её,
+  // а следующий reconcile повторит уборку.
+  const store = hostingReleaseStoreSafe();
+  if (store) await store.removeSite(site);
 }

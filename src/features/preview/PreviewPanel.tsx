@@ -410,7 +410,7 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
       <div className={"preview-stage"+(face==="logs"?" flipped":"")}>
         <div className="preview-face preview-front">
           {showStarting
-            ? <StartProgress progress={startProgress} runtime={preview.starting?.mode==="container"||preview.starting?.mode==="hybrid"}/>
+            ? <StartProgress progress={startProgress}/>
             : ownerUnavailable
             ? <div className="preview-empty"><div className="preview-icon"><Terminal size={20}/></div><strong>Нода предпросмотра недоступна</strong><span>{preview.hint??"Дождитесь восстановления ноды-владельца и обновите статус."}</span><button className="ghost-button" onClick={()=>void refresh()}>Проверить снова</button></div>
             : preview.running
@@ -465,16 +465,19 @@ export function PreviewPanel({projectId,reloadToken=0,open=false,onClose,onRunni
  * Экран запуска вместо пустого кадра: человек видит, на каком этапе сейчас preview, а не
  * решает, что кнопка не сработала, и не жмёт её второй раз.
  */
-function StartProgress({progress,runtime}:{progress?:PreviewStartProgress;runtime:boolean}){
+function StartProgress({progress}:{progress?:PreviewStartProgress}){
   const percent=progress?START_PERCENT[progress.phase]:6;
   // Видимого текста нет: этапы читаются движением полосы, а для экранного диктора
   // состояние остаётся в aria-label — человек не теряет обратную связь.
   const label=progress?progress.message+(progress.detail?". "+progress.detail:""):"Запускаем предпросмотр";
+  // Контейнер — режим «Премиума»: его останавливает короткий таймер. Статика и статика
+  // с функциями (hybrid) живут дольше, поэтому подпись должна совпадать с фактическим таймером.
+  const idleLabel=progress?.mode==="container" ? "Режим простоя · 3 минуты" : progress?.mode ? "Режим простоя · 15 минут" : "";
   return <div className="preview-starting" role="status" aria-live="polite" aria-label={label}>
-    <div className="preview-starting-icon" aria-hidden="true"><NestLoader size={70}/></div>
+    <div className="preview-starting-icon" aria-hidden="true"><NestLoader size={140}/></div>
     <div className="preview-start-track" aria-hidden="true">
       <span className="preview-start-fill" style={{width:percent+"%"}}/>
     </div>
-    {runtime&&<span className="preview-start-note">Режим простоя · 3 мин</span>}
+    {idleLabel&&<span className="preview-start-note">{idleLabel}</span>}
   </div>;
 }

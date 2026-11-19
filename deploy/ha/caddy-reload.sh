@@ -43,7 +43,10 @@ hash_inputs(){
   {
     sha256sum "$CADDY_FILE" "$PREVIEW_TLS_FILE" "$HOST_TLS_FILE" 2>/dev/null || true
     if [ -d "$CUSTOM_DOMAINS_CADDY_DIR" ]; then
-      find "$CUSTOM_DOMAINS_CADDY_DIR" -maxdepth 1 -type f -name '*.caddy' -print0 \
+      # `.map` тоже импортируется Caddyfile (режимы сайтов и `_redirects`), поэтому
+      # изменение любого из них должно менять хеш и запускать validate/reload.
+      find "$CUSTOM_DOMAINS_CADDY_DIR" -maxdepth 1 -type f \
+        \( -name '*.caddy' -o -name '*.map' \) -print0 \
         | sort -z \
         | xargs -0 -r sha256sum 2>/dev/null || true
     fi

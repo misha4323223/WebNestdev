@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import type { SiteRow } from "./site-store.js";
 
 /**
  * JSON-режим проверяется без базы: это тот же store, который исполняется в разработке и
@@ -18,6 +19,28 @@ process.env.WEBNESTDEV_SITES_DIR = path.join(root, "sites");
 const store = await import("./site-store.js");
 
 test.after(() => rmSync(root, { recursive: true, force: true }));
+
+test("старая строка без SEO-полей остаётся SPA, а не превращается в auto", () => {
+  const old = store.siteFromRow({
+    id: "site-old",
+    user_id: "user-old",
+    project_id: "project-old",
+    slug: "old-site",
+    status: "live",
+    active_release_id: "release-old",
+    publishing_release_id: null,
+    node_id: "node-old",
+    last_error: "",
+    suspend_reason: "",
+    created_at: "2026-01-01T00:00:00.000Z",
+    updated_at: "2026-01-01T00:00:00.000Z",
+    published_at: "2026-01-01T00:00:00.000Z",
+    unpublished_at: null,
+    suspended_at: null,
+  } as unknown as SiteRow);
+  assert.equal(old.routingMode, "spa");
+  assert.equal(old.effectiveRoutingMode, "spa");
+});
 
 test("один проект — один сайт; повторное создание возвращает тот же сайт", async () => {
   await store.resetHostingJsonStore();

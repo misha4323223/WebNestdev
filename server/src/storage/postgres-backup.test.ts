@@ -43,6 +43,16 @@ function fakeStore(prefix = "webnestdev"): FakeStore {
     async remove(key) {
       objects.delete(key);
     },
+    async removePrefix(prefix) {
+      let removed = 0;
+      for (const key of [...objects.keys()]) {
+        if (key.startsWith(prefix)) {
+          objects.delete(key);
+          removed++;
+        }
+      }
+      return removed;
+    },
   };
 }
 

@@ -39,11 +39,23 @@ test("only previews untouched for longer than the timeout are selected", () => {
   assert.deepEqual(idlePreviews(states, NOW, 0), []);
 });
 
-test("runtime uses three minutes, static keeps fifteen", () => {
+test("container uses three minutes, static and hybrid keep fifteen", () => {
   const runtime = state("runtime", 3 * MINUTE);
   const staticPreview = { ...state("static", 3 * MINUTE), mode: "static" as const, containerId: "" };
-  const ids = idlePreviews([runtime, staticPreview], NOW, 3 * MINUTE, 15 * MINUTE).map(item => item.projectId);
+  const hybrid = { ...state("hybrid", 3 * MINUTE), mode: "hybrid" as const };
+  const ids = idlePreviews([runtime, staticPreview, hybrid], NOW, 3 * MINUTE, 15 * MINUTE).map(item => item.projectId);
   assert.deepEqual(ids, ["runtime"]);
+
+  const stillAlive = [
+    { ...state("static-later", 14 * MINUTE), mode: "static" as const, containerId: "" },
+    { ...state("hybrid-later", 14 * MINUTE), mode: "hybrid" as const },
+  ];
+  assert.deepEqual(idlePreviews(stillAlive, NOW, 3 * MINUTE, 15 * MINUTE), []);
+  assert.deepEqual(
+    idlePreviews(stillAlive.map(item => ({ ...item, lastUsedAt: NOW - 16 * MINUTE })), NOW, 3 * MINUTE, 15 * MINUTE)
+      .map(item => item.projectId),
+    ["static-later", "hybrid-later"],
+  );
 });
 
 test("the sweep stops idle previews, keeps the busy ones and explains the idle stop", async () => {
