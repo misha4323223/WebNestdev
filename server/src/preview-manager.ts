@@ -25,6 +25,7 @@ import { notePreviewStart } from "./preview/preview-start-journal.js";
 import { clearIdleStop } from "./preview/idle-stop-marker.js";
 import { ContainerPreviewPlanError, PREVIEW_LABEL, type PreviewStatus } from "./preview/types.js";
 import { clearPreviewSecrets } from "./secrets/preview-secrets.js";
+import { redactPreviewError, redactPreviewLog } from "./preview/log-redaction.js";
 import { recordStorageMutation } from "./account/storage-quota.js";
 import {
   beginPreviewStart,
@@ -99,14 +100,25 @@ export async function startPreview(config: SandboxConfig, options: PreviewStartO
     // Fail-closed: не полагаемся на то, что каждый новый вызывающий вспомнит про тариф.
     const status = await startPreviewWithFallback(config, { ...options, allowContainer: options.allowContainer === true, allowFunctions: options.allowFunctions === true });
     ok = true;
-    return status;
+    // Стартовый статус может нести хвост вывода контейнера/сборки: он уходит в панель и агенту,
+    // поэтому проходит тот же фильтр, что и вкладка логов.
+    const statusWithLogs = status as PreviewStatus & { logs?: string };
+    if (!statusWithLogs.logs) return status;
+    try {
+      return { ...statusWithLogs, logs: await redactPreviewLog(config.projectId, statusWithLogs.logs) };
+    } catch {
+      // Секреты не прочитались: сам предпросмотр мог подняться, поэтому не превращаем успешный
+      // запуск в ошибку — просто не показываем непроверенный хвост.
+      return { ...statusWithLogs, logs: "Логи запуска скрыты: не удалось проверить секреты проекта." };
+    }
   } catch (error) {
+    const safeError = await redactPreviewError(config.projectId, error);
 
     // Причина отказа раньше жила только в ответе панели и в сообщении агенту, а тот, кто смотрит
     // логи контейнера сервера (`docker compose logs webnestdev-server`), видел один факт запуска
     // и не мог отличить отсутствующие зависимости от недоступного Docker.
-    console.error("[preview] не удалось запустить предпросмотр: проект " + config.projectId + " — " + describeError(error));
-    throw error;
+    console.error("[preview] не удалось запустить предпросмотр: проект " + config.projectId + " — " + describeError(safeError));
+    throw safeError;
   } finally {
     // Режим нужен журналу холодных стартов: статическая сборка — это не контейнер, который
     // поднимают при первом запросе агента, и в счётчик `coldStarts24h` она не входит.
@@ -400,7 +412,9 @@ export async function previewLogs(projectId: string, options: { touch?: boolean;
   const progress = getPreviewStartProgress(projectId);
   const starting = progress ? previewStartProgressLog(projectId) : "";
   const current = await hydratePreview(projectId);
-  if (!current) return { running: false, logs: starting, ...(progress ? { starting: progress } : {}) };
+  if (!current) {
+    return { running: false, logs: await redactPreviewLog(projectId, starting), ...(progress ? { starting: progress } : {}) };
+  }
 
   // Static и hybrid держат build/backend вывод в памяти процесса-владельца. Локальная карта
   // `runs` на другой реплике пуста, поэтому без этого запроса вкладка «Логи» показывала пустоту
@@ -415,14 +429,14 @@ export async function previewLogs(projectId: string, options: { touch?: boolean;
     // не должен продолжать показывать «запущен» после этого ответа. Исключение — идёт запуск:
     // `running:false` с `starting` означает «ещё поднимается», и состояние нужно сохранить.
     if (!remote.running && !remote.starting) removePreview(projectId);
-    return remote;
+    return { ...remote, logs: await redactPreviewLog(projectId, remote.logs) };
   }
 
   if (current.mode === "static") {
     // Somebody is reading the logs, so the preview is in use. The panel reads runtime logs
     // without touching: otherwise an open logs tab would keep a container alive forever.
     if (touch) touchPreview(projectId);
-    return { running: true, logs: [starting, staticPreviewLogs(projectId)].filter(Boolean).join("\n\n") };
+    return { running: true, logs: await redactPreviewLog(projectId, [starting, staticPreviewLogs(projectId)].filter(Boolean).join("\n\n")) };
   }
 
   if (current.mode === "hybrid") {
@@ -434,7 +448,7 @@ export async function previewLogs(projectId: string, options: { touch?: boolean;
     }
     return {
       running: true,
-      logs: [starting, hybridPreviewLogs(projectId), backend.logs].filter(Boolean).join("\n\n"),
+      logs: await redactPreviewLog(projectId, [starting, hybridPreviewLogs(projectId), backend.logs].filter(Boolean).join("\n\n")),
     };
   }
 
@@ -449,7 +463,7 @@ export async function previewLogs(projectId: string, options: { touch?: boolean;
   }
   // Somebody is reading the logs, so the preview is in use.
   if (touch) touchPreview(projectId);
-  return { running: true, logs: [starting, result.logs].filter(Boolean).join("\n\n") };
+  return { running: true, logs: await redactPreviewLog(projectId, [starting, result.logs].filter(Boolean).join("\n\n")) };
 }
 
 /**

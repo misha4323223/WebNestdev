@@ -31,6 +31,7 @@
 | Ошибки оплаты | Подпись ResultURL проверяется до поиска счёта и суммы, сравнение постоянное по времени | `server/src/routes/billing.ts`, `server/src/billing/robokassa.ts` |
 | OAuth | `state` одноразовый, с TTL, привязан к пользователю | `server/src/github/github-oauth-state.ts` |
 | Предпросмотр | Билет шифрован, привязан к проекту, с TTL и передаётся во фрагменте адреса (не в query); cookie панели приложению не передаётся | `server/src/preview/preview-ticket.ts`, `server/src/preview/preview-proxy.ts` |
+| Логи предпросмотра | Перед показом панели, агенту и внутренней двери вырезаются точные значения сохранённых секретов проекта; закодированные/разбитые значения — остаточная граница | `server/src/preview/log-redaction.ts` |
 | SSRF в `web.read` (и в `deploy.check`, логах Expo) | Запрет частных адресов, портов, логина в URL, ручные редиректы, соединение идёт на проверенный адрес — DNS не спрашивается второй раз | `server/src/web/read-url.ts` |
 | XSS | Нет `dangerouslySetInnerHTML`; markdown рендерится `react-markdown` (экранирует) | `src/features/agent/AgentPanel.tsx` |
 | Зависимости | Lock-файлы в репозитории, `npm audit` чистый на дату аудита | `package-lock.json` |

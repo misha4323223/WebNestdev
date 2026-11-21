@@ -63,7 +63,7 @@ test("события другого проекта не попадают в вы
   });
 });
 
-test("отдельная соль из runtime-secrets важнее ключа шифрования", async () => {
+test("отдельная соль из общего каталога данных важнее ключа шифрования", async () => {
   await withAuditDir(async () => {
     await mkdir(path.dirname(auditSaltFile()), { recursive: true });
     await writeFile(auditSaltFile(), "file-salt\n", { mode: 0o600 });

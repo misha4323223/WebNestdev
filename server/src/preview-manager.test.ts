@@ -1,11 +1,15 @@
 import test, { afterEach } from "node:test";
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import { listPreviewContainerIds, previewLogs, previewStatus, setPreviewStartDepsForTests, startPreview, startPreviewWithFallback } from "./preview-manager.js";
 import { PREVIEW_LABEL, type PreviewStatus } from "./preview/types.js";
 import type { SandboxConfig } from "./sandbox-manager.js";
 import { getPreview, removePreview, setPreview } from "./preview/preview-store.js";
 import { beginPreviewStart, clearPreviewStartProgress, setPreviewStartProgress } from "./preview/preview-start-progress.js";
 import type { HybridConfig } from "./preview/hybrid-config.js";
+import { saveStoredSecretValues } from "./secrets/secret-store.js";
 
 const originalPreviewMode = process.env.PREVIEW_MODE;
 
@@ -50,6 +54,38 @@ const running: PreviewStatus = {
  * Замер времени здесь не украшение: без него проверка молча проходила бы и там, где Docker есть, —
  * `docker exec` успел бы отработать и вернуть то же самое.
  */
+test("стартовый статус не показывает значение сохранённого секрета", async () => {
+  const previousDir = process.env.WEBNESTDEV_DATA_DIR;
+  const previousKey = process.env.WEBNESTDEV_ENCRYPTION_KEY;
+  const root = await mkdtemp(path.join(tmpdir(), "wnd-manager-redact-"));
+  const projectId = "manager-redact-start-test";
+  process.env.WEBNESTDEV_DATA_DIR = root;
+  process.env.WEBNESTDEV_ENCRYPTION_KEY = "a".repeat(64);
+  process.env.PREVIEW_MODE = "static";
+  try {
+    await saveStoredSecretValues(projectId, {
+      ".env.local": { TOKEN: "super-secret-token-12345" },
+    });
+    setPreviewStartDepsForTests({
+      readHybridConfig: async () => ({ kind: "absent" }),
+      startStatic: async () => ({
+        ok: true,
+        status: { ...running, logs: "boot super-secret-token-12345" },
+      }),
+    });
+    const status = await startPreview({ ...startConfig, projectId }, { allowContainer: false });
+    const logs = "logs" in status && typeof status.logs === "string" ? status.logs : "";
+    assert.doesNotMatch(logs, /super-secret-token-12345/);
+    assert.match(logs, /\[redacted\]/);
+  } finally {
+    if (previousDir === undefined) delete process.env.WEBNESTDEV_DATA_DIR;
+    else process.env.WEBNESTDEV_DATA_DIR = previousDir;
+    if (previousKey === undefined) delete process.env.WEBNESTDEV_ENCRYPTION_KEY;
+    else process.env.WEBNESTDEV_ENCRYPTION_KEY = previousKey;
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("status exposes the current preview start phase before a container exists", async () => {
   const projectId = "manager-progress-test";
   beginPreviewStart(projectId);
