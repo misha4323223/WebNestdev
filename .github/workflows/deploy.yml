@@ -1100,6 +1100,9 @@ jobs:
             exit 1
           fi
           RUNNER_SCRIPT_B64=$(base64 -w0 deploy/scripts/update-runner.sh)
+          # Скрипт firewall берём из чекаута workflow, а не из APP_DIR на node-1: тот может быть
+          # старше образа, и node-2 получала старые правила при новом API.
+          EGRESS_FIREWALL_B64=$(base64 -w0 deploy/scripts/egress-firewall.sh)
           # Скрипт выкатки нужен node-2 для уборки старых образов: на первой ноде это делает
           # vm-deploy.sh в конце каждой выкатки, а вторая без этого копила версии.
           DEPLOY_SCRIPT_FILE="/tmp/.webnestdev-vm-deploy.sh"
@@ -1129,7 +1132,7 @@ jobs:
             -o BatchMode=yes -o StrictHostKeyChecking=yes \
             -o ServerAliveInterval=30 -o ServerAliveCountMax=30 \
             "$DEPLOY_USER@$DEPLOY_HOST" \
-            "IMAGE_REF='$image' APP_DIR='$DEPLOY_APP_DIR' SYNC_NODE2='$SYNC_NODE2' DEPLOY_SCRIPT_SRC='$DEPLOY_SCRIPT_FILE' RUNNER_SCRIPT_B64='$RUNNER_SCRIPT_B64' CUSTOM_DOMAINS_ENABLED='$CUSTOM_DOMAINS_ENABLED' COMPOSE_SRC='$STAGING_DIR/docker-compose.yml' CADDY_SRC='$STAGING_DIR/deploy/Caddyfile' PREVIEW_TLS_SRC='$STAGING_DIR/deploy/preview-tls.caddy' CADDY_RELOAD_SRC='$STAGING_DIR/deploy/ha' bash -s" \
+            "IMAGE_REF='$image' APP_DIR='$DEPLOY_APP_DIR' SYNC_NODE2='$SYNC_NODE2' DEPLOY_SCRIPT_SRC='$DEPLOY_SCRIPT_FILE' RUNNER_SCRIPT_B64='$RUNNER_SCRIPT_B64' EGRESS_FIREWALL_B64='$EGRESS_FIREWALL_B64' CUSTOM_DOMAINS_ENABLED='$CUSTOM_DOMAINS_ENABLED' COMPOSE_SRC='$STAGING_DIR/docker-compose.yml' CADDY_SRC='$STAGING_DIR/deploy/Caddyfile' PREVIEW_TLS_SRC='$STAGING_DIR/deploy/preview-tls.caddy' CADDY_RELOAD_SRC='$STAGING_DIR/deploy/ha' bash -s" \
             < deploy/scripts/node2-sync.sh
           ssh -i "$HOME/.ssh/deploy_key" \
             -p "${DEPLOY_PORT:-22}" \
@@ -1155,6 +1158,7 @@ jobs:
             exit 0
           fi
           IMAGE_REF="$image" APP_DIR="$DEPLOY_APP_DIR" SYNC_NODE2="$SYNC_NODE2" CUSTOM_DOMAINS_ENABLED="$CUSTOM_DOMAINS_ENABLED" \
+            EGRESS_FIREWALL_B64="$(base64 -w0 deploy/scripts/egress-firewall.sh)" \
             COMPOSE_SRC="$PWD/docker-compose.yml" CADDY_SRC="$PWD/deploy/Caddyfile" \
             PREVIEW_TLS_SRC="$PWD/deploy/preview-tls.caddy" CADDY_RELOAD_SRC="$PWD/deploy/ha" \
             RUNNER_SCRIPT_SRC="$PWD/deploy/scripts/update-runner.sh" \

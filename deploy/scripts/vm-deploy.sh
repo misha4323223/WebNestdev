@@ -2323,12 +2323,15 @@ WantedBy=multi-user.target
   if [ "$(id -u)" = "0" ]; then
     printf '%s' "$unit" > /etc/systemd/system/webnestdev-egress.service || return 1
     systemctl daemon-reload || return 1
-    systemctl enable --now webnestdev-egress.service || return 1
+    # `enable --now` не перезапускает уже активный oneshot: старый набор правил остался бы
+    # в ядре после установки нового скрипта. `restart` гарантированно выполняет clear+apply.
+    systemctl enable webnestdev-egress.service || return 1
+    systemctl restart webnestdev-egress.service || return 1
   else
     printf '%s' "$unit" | sudo -n tee /etc/systemd/system/webnestdev-egress.service >/dev/null || return 1
     sudo -n systemctl daemon-reload || return 1
-    # `enable --now`: юнит включается на будущие загрузки и применяет правила сейчас.
-    sudo -n systemctl enable --now webnestdev-egress.service || return 1
+    sudo -n systemctl enable webnestdev-egress.service || return 1
+    sudo -n systemctl restart webnestdev-egress.service || return 1
   fi
   return 0
 }
@@ -2395,7 +2398,7 @@ verify_egress(){
 
 # Режимы: 0 — всё в порядке, 1 — прокси или установка сломаны, 2 — правила не закрывают обход.
 apply_egress_firewall(){
-  local mode enforce script rc=0
+  local mode enforce script rc=0 rules proxy_port
   # `egress` — тот же шаг для второй ноды: она обновляется своим скриптом (node2-sync.sh), и без
   # отдельного режима её правила ставились бы только вручную — то есть никогда.
   case "$MODE" in
@@ -2425,19 +2428,35 @@ apply_egress_firewall(){
     return 0
   fi
   if [ -z "$script" ]; then
-    log "egress: egress-firewall.sh не передан и не найден в $APP_DIR — правила не применены"; return 0
+    log "egress: egress-firewall.sh не передан и не найден в $APP_DIR — правила не применены"; return 1
   fi
   if [ "$(id -u)" != "0" ] && ! sudo -n true 2>/dev/null; then
-    log "egress: нет root и sudo -n недоступен — правила Docker не применены. Прокси работает, но обход возможен; подготовьте sudo без пароля для пользователя $(id -un)"
-    return 0
+    log "egress: нет root и sudo -n недоступен — правила Docker не применены; подготовьте sudo без пароля для пользователя $(id -un)"
+    return 1
   fi
   if ! install_egress_firewall_unit "$script"; then
-    log "egress: юнит правил не установлен — правила не применены"; return 0
+    log "egress: юнит правил не установлен — правила не применены"; return 1
   fi
-  log "egress: правила Docker применены (сеть предпросмотра $(egress_network))"
-  verify_egress || rc=$?
+  proxy_port=$(compose_env_value EGRESS_PROXY_PORT 2>/dev/null || true)
+  proxy_port=${proxy_port:-3128}
+  if [ "$(id -u)" = "0" ]; then
+    rules=$(iptables -S DOCKER-USER 2>/dev/null || true)
+  else
+    rules=$(sudo -n iptables -S DOCKER-USER 2>/dev/null || true)
+  fi
+  # Функциональная проверка прокси прошла бы и на старых правилах, которые разрешали всю
+  # preview-подсеть. Явно проверяем, что в ядре именно новый набор: порт прокси и запрет
+  # private-сети для функций. Иначе зелёная выкатка оставляла бы старую дыру.
+  if ! printf '%s\n' "$rules" | grep -F -- "webnestdev-egress" | grep -F -- "--dport ${proxy_port}" >/dev/null ||
+     ! printf '%s\n' "$rules" | grep -F -- "webnestdev-egress" | grep -F -- "-d 10.0.0.0/8" >/dev/null; then
+    log "egress: новые правила не найдены в DOCKER-USER — старые правила не заменены"
+    rc=2
+  else
+    log "egress: правила Docker применены (сеть предпросмотра $(egress_network))"
+    verify_egress || rc=$?
+  fi
   if [ "$rc" != "0" ]; then
-    log "egress: проверка не прошла (код $rc) — снимаю правила и выключаю юнит, выход остаётся открытым"
+    log "egress: проверка не прошла (код $rc) — снимаю правила и выключаю юнит, выкатка не принята"
     if [ "$(id -u)" = "0" ]; then
       systemctl disable --now webnestdev-egress.service >/dev/null 2>&1 || true
       sh "$script" clear >/dev/null 2>&1 || true
@@ -2445,7 +2464,7 @@ apply_egress_firewall(){
       sudo -n systemctl disable --now webnestdev-egress.service >/dev/null 2>&1 || true
       sudo -n sh "$script" clear >/dev/null 2>&1 || true
     fi
-    return 0
+    return "$rc"
   fi
   log "egress: фильтр исходящей сети проверен на живой системе"
   return 0
@@ -2631,7 +2650,7 @@ case "$MODE" in
     ;;
   egress)
     log "режим egress: правила фильтра исходящей сети, сервис не перезапускаю"
-    apply_egress_firewall
+    apply_egress_firewall || { log "egress: правила не применены — выкатка не принята"; exit 6; }
     exit 0
     ;;
   logs)
@@ -2754,7 +2773,7 @@ verify_preview
 verify_preview_door
 # Фильтр исходящей сети (пункт 5.1): правила Docker, закрывающие обход прокси, и проверка на живой
 # системе — установка пакетов через прокси, отказ постороннему домену, закрытый прямой сокет.
-apply_egress_firewall
+apply_egress_firewall || { log "egress: фильтр не применён — выкатка не принята"; exit 6; }
 # Вход по номеру: печатается в лог выкатки, чтобы «SMS не приходят» читалось из Actions, а не
 # выяснялось из .env на ВМ. Отказ здесь не отменяет выкатку (см. verify_sms).
 verify_sms

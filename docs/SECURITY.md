@@ -241,9 +241,11 @@ Caddy остаются `ok`, `service`, `build` и `sms`; `/api/ready` — то�
   DNS rebinding и прямой `127.0.0.1` не проходят. WebRTC-политика `disable_non_proxied_udp` и
   `--disable-quic` закрывают UDP/QUIC мимо прокси, флаги ограничивают renderer-процессы и heap.
 - **Preview.** `egress-firewall.sh` больше не разрешает всю подсеть preview: только прокси
-  `server:3128`. Внутренние маршруты API, чужие preview и база недоступны. Прокси использует
-  ту же `address-policy` для DNS-ответов, поэтому 6to4, Teredo, NAT64 и mapped-записи не обходят
-  запрет private-сети.
+  `server:3128`. Внутренние маршруты API, чужие preview и база недоступны. Для same-bridge
+  трафика включён `br_netfilter` (`bridge-nf-call-iptables=1`), иначе `DOCKER-USER` не видел бы
+  обращение preview к API и соседнему контейнеру; серверу оставлен только доверенный обратный
+  путь к preview для health и проксирования. Прокси использует ту же `address-policy` для
+  DNS-ответов, поэтому 6to4, Teredo, NAT64 и mapped-записи не обходят запрет private-сети.
 - **Оплата.** `markPaymentPaid` закрывает платёж условным `UPDATE … WHERE status<>'paid'` и
   продлевает подписку в той же транзакции PostgreSQL. Повторное уведомление Robokassa не даёт
   второй месяц; JSON-хранилище делает то же под одним lock. Кредиты получили такой же захват.

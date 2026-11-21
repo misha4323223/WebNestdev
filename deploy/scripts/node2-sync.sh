@@ -66,6 +66,9 @@ CADDY_RELOAD_SRC="${CADDY_RELOAD_SRC:-$APP_DIR/deploy/ha}"
 HA_CODE_SRC="${HA_CODE_SRC:-$CADDY_RELOAD_SRC}"
 HA_CODE_DST="${HA_CODE_DST:-/opt/webnestdev-ha}"
 EGRESS_SCRIPT_SRC="${EGRESS_SCRIPT_SRC:-$APP_DIR/deploy/scripts/egress-firewall.sh}"
+# Workflow передаёт актуальный скрипт из своего чекаута: APP_DIR на node-1 может быть старым,
+# и тогда node-2 получала firewall без новых правил. B64 важнее файла.
+EGRESS_FIREWALL_B64="${EGRESS_FIREWALL_B64:-}"
 FUNCTIONS_NETWORK="${FUNCTIONS_DOCKER_NETWORK:-webnestdev-functions}"
 CUSTOM_DOMAINS_CADDY_DIR="${CUSTOM_DOMAINS_CADDY_DIR:-/var/lib/webnestdev/data/caddy-custom}"
 CADDY_DATA_HOST_DIR="${CADDY_DATA_HOST_DIR:-/var/lib/webnestdev/data/caddy-data}"
@@ -527,16 +530,19 @@ if [ -n "$DEPLOY_SCRIPT_SRC" ] && [ -f "$DEPLOY_SCRIPT_SRC" ]; then
     log "применяю правила egress на node-2"
     # Скрипт передаётся тем же способом, что и в первую ноду: в base64, а не чекаутом на node-2 —
     # там лежит только compose и образ, и старый скрипт правил тихо расходился бы с кодом.
-    if [ -f "$EGRESS_SCRIPT_SRC" ]; then
-      egress_b64=$(base64 -w0 "$EGRESS_SCRIPT_SRC")
-      # У node-2 нет .env: без COMPOSE_ENV_FILES `docker compose config/exec` в MODE=egress
-      # возвращает пустоту, проверка считает прокси мёртвым и снимает уже поставленные правила.
-      node2_compose_envs=$(printf '%s' "$NODE2_ENV_FILES" | tr ' ' ',')
-      ssh2 "MODE='egress' APP_DIR='$NODE2_APP_DIR' COMPOSE_ENV_FILES='$node2_compose_envs' FUNCTIONS_DOCKER_NETWORK='$FUNCTIONS_NETWORK' EGRESS_FIREWALL_B64='$egress_b64' bash '$remote_script'" || \
-        log "правила egress на node-2 не применены — смотрите лог выше"
-    else
-      log "egress-firewall.sh не найден ($EGRESS_SCRIPT_SRC) — правила на node-2 не ставлю"
+    if [ -z "$EGRESS_FIREWALL_B64" ]; then
+      if [ -f "$EGRESS_SCRIPT_SRC" ]; then
+        EGRESS_FIREWALL_B64=$(base64 -w0 "$EGRESS_SCRIPT_SRC")
+      else
+        log "egress-firewall.sh не найден ($EGRESS_SCRIPT_SRC) — правила на node-2 не ставлю"; exit 6
+      fi
     fi
+    # У node-2 нет .env: без COMPOSE_ENV_FILES `docker compose config/exec` в MODE=egress
+    # возвращает пустоту, проверка считает прокси мёртвым и снимает уже поставленные правила.
+    node2_compose_envs=$(printf '%s' "$NODE2_ENV_FILES" | tr ' ' ',')
+    ssh2 "MODE='egress' APP_DIR='$NODE2_APP_DIR' COMPOSE_ENV_FILES='$node2_compose_envs' FUNCTIONS_DOCKER_NETWORK='$FUNCTIONS_NETWORK' EGRESS_FIREWALL_B64='$EGRESS_FIREWALL_B64' bash '$remote_script'" || {
+      log "правила egress на node-2 не применены — выкатка не принята"; exit 6
+    }
     ssh2 "rm -f '$remote_script'" || true
   fi
 else

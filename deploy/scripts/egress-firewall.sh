@@ -9,7 +9,8 @@
 # Что делает:
 #   1) сеть предпросмотра — запрещает исходящие соединения, кроме доступа к egress-прокси API
 #      (порт 3128). Контейнеры предпросмотра больше не видят друг друга и внутренние порты API;
-#      наружу они ходят только через прокси, который проверяет allowlist;
+#      наружу они ходят только через прокси, который проверяет allowlist. Для same-bridge
+#      трафика включаем br_netfilter: иначе DOCKER-USER его не увидит;
 #   2) сеть serverless-функций — разрешает публичный интернет, но отклоняет private, loopback,
 #      link-local, CGNAT и metadata. Функция не может дотянуться до API, PostgreSQL, Docker или
 #      облачного metadata, а внешние API и CDN продолжают работать.
@@ -23,9 +24,8 @@
 #   clear                — снять только свои правила, чужой трафик не трогать;
 #   status               — показать свои правила.
 #
-# Скрипт намеренно ничего не роняет при «нечего делать» (нет сети, нет контейнеров): открытый выход
-# хуже закрытого, но и падение выкатки из-за отсутствия правил хуже обоих — прокси уже стоит и
-# работает, а причина видна в логе.
+# Нет сети/контейнеров — штатная пустота, соответствующая часть правил не ставится. Но отсутствие
+# br_netfilter при apply — ошибка: без него нельзя обещать, что preview не ходит в API.
 set -eu
 
 CHAIN="DOCKER-USER"
@@ -55,6 +55,28 @@ if ! iptables -S "$CHAIN" >/dev/null 2>&1; then
   log "цепочки $CHAIN нет: правила Docker ещё не созданы (демон не поднимал ни одного контейнера?)"
   exit 0
 fi
+
+# Без br_netfilter пакеты внутри одного Docker bridge вообще не проходят через iptables:
+# правила DOCKER-USER не увидят, как preview обращается к API или другому preview на той же
+# сети. Включаем модуль и bridge-nf-call; при загрузке это делает тот же systemd-юнит.
+ensure_bridge_netfilter() {
+  if ! command -v modprobe >/dev/null 2>&1; then
+    log "modprobe не найден — bridge-netfilter не включить"; return 1
+  fi
+  if ! modprobe br_netfilter 2>/dev/null; then
+    log "не удалось загрузить br_netfilter — фильтрация same-bridge трафика недоступна"; return 1
+  fi
+  for key in bridge-nf-call-iptables bridge-nf-call-ip6tables; do
+    path="/proc/sys/net/bridge/$key"
+    if [ ! -e "$path" ]; then
+      log "нет $path — bridge-netfilter не поддерживается ядром"; return 1
+    fi
+    if ! printf '1' > "$path" 2>/dev/null; then
+      log "не удалось включить net.bridge.$key"; return 1
+    fi
+  done
+  log "bridge-netfilter включён: DOCKER-USER видит трафик внутри preview-сети"
+}
 
 # Свои правила узнаются по комментарию: так их можно снять, не зная точного вида, и не задеть
 # правила Docker и чужие цепочки.
@@ -113,28 +135,25 @@ apply_preview_rules() {
     log "у сети $net нет IPv4-подсети — правила preview не ставлю"
     return 0
   fi
-  # Адрес сервера может измениться при пересоздании контейнера, а сеть API остаётся той же.
-  # Поэтому разрешаем прокси по подсети API, а не только по текущему IP: иначе после рестарта
-  # Docker правило /32 устаревало бы и preview терял установку пакетов до следующей выкатки.
-  api_net=$(docker network ls --filter label=com.docker.compose.network=webnestdev --format '{{.Name}}' 2>/dev/null | head -n 1 || true)
-  api_cidr=""
-  if [ -n "$api_net" ]; then api_cidr=$(subnet_of "$api_net"); fi
+  # Адрес сервера определяется по всем его сетям. API и preview-дверь слушают на разных
+  # интерфейсах, но серверу разрешено обращаться к preview для проверки и проксирования.
   exceptions=0
   for address in $(addresses_of "$SERVER_SERVICE"); do
-    # Только egress-прокси. API 8787, health и дверь 8788/8789 из контейнера проекта не нужны:
-    # иначе чужой код мог бы обращаться к внутренним маршрутам платформы напрямую.
+    # Preview может обратиться только к egress-прокси. API 8787, health и дверь 8788/8789 из
+    # контейнера проекта не нужны: иначе чужой код мог бы обращаться к внутренним маршрутам.
     add_rule -s "$cidr" -d "$address/32" -p tcp --dport "${EGRESS_PROXY_PORT:-3128}" -j RETURN
+    # Сервер — доверенный источник: он сам ходит в preview за приложением и health. Без этого
+    # после br_netfilter ломался бы preview, а не только закрывался обход.
+    add_rule -s "$address/32" -d "$cidr" -j RETURN
     exceptions=$((exceptions + 1))
   done
-  if [ -n "$api_cidr" ]; then
-    add_rule -s "$cidr" -d "$api_cidr" -p tcp --dport "${EGRESS_PROXY_PORT:-3128}" -j RETURN
-    exceptions=$((exceptions + 1))
-  fi
+  # Возвратный трафик к разрешённым соединениям (в том числе ответ прокси). Новые соединения
+  # preview -> API/другой preview сюда не попадают и отклоняются ниже.
+  add_rule -s "$cidr" -m conntrack --ctstate ESTABLISHED,RELATED -j RETURN
   # Контейнеры preview не должны видеть друг друга: HMR идёт от браузера через Caddy, а не
-  # контейнер-контейнер. API сам обращается к preview, и его ответный трафик не входит в правило
-  # источника, поэтому панель продолжает работать.
+  # контейнер-контейнер. Сервер и его ответный трафик разрешены выше.
   add_rule -s "$cidr" -j REJECT --reject-with icmp-port-unreachable
-  log "сеть $net ($cidr): разрешён только egress-прокси, адресов: $exceptions; доступ к другим preview закрыт"
+  log "сеть $net ($cidr): разрешён только egress-прокси, адресов: $exceptions; same-bridge доступ закрыт"
 }
 
 apply_functions_rules() {
@@ -177,6 +196,7 @@ apply_functions_rules() {
 }
 
 apply_rules() {
+  ensure_bridge_netfilter || exit 2
   clear_rules
   apply_preview_rules
   apply_functions_rules
