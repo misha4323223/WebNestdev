@@ -42,6 +42,26 @@ test("a paid credit purchase is added to the ledger and repeated payment notices
   assert.equal((await listCreditPurchases(userId)).length, 1);
 });
 
+test("одновременные уведомления о покупке кредитов зачисляют пакет один раз", async () => {
+  const userId = "credit-race-" + randomUUID();
+  const purchase = await createCreditPurchase({
+    userId,
+    packId: "credits-1000",
+    credits: 1_000,
+    amount: 290,
+  });
+
+  const results = await Promise.all([
+    markCreditPurchasePaid(purchase.invId),
+    markCreditPurchasePaid(purchase.invId),
+    markCreditPurchasePaid(purchase.invId),
+  ]);
+
+  assert.equal(results.filter(result => result?.alreadyPaid === false).length, 1);
+  assert.equal(await creditBalance(userId), 1_000);
+  assert.equal((await getCreditPurchase(purchase.invId))?.status, "paid");
+});
+
 test("credit usage is written once per run and never drives the purchased balance below zero", async () => {
   const userId = "credit-usage-" + randomUUID();
   const purchase = await createCreditPurchase({

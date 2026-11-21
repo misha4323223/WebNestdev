@@ -36,7 +36,11 @@ test("api upstream path is exact and slash-delimited", () => {
 });
 
 test("private address detection covers loopback, LAN and IPv6", () => {
-  for (const address of ["127.0.0.1", "10.1.2.3", "172.16.0.1", "192.168.1.1", "169.254.169.254", "::1", "fd00::1", "fe80::1"]) {
+  for (const address of [
+    "127.0.0.1", "10.1.2.3", "172.16.0.1", "192.168.1.1", "169.254.169.254",
+    "::1", "fd00::1", "fe80::1", "::ffff:127.0.0.1", "::ffff:0:127.0.0.1",
+    "64:ff9b::1", "2002:7f00:1::1",
+  ]) {
     assert.equal(isPrivateAddress(address), true, address);
   }
   assert.equal(isPrivateAddress("8.8.8.8"), false);

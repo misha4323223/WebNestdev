@@ -160,6 +160,8 @@ SERVICE="${SERVICE:-webnestdev-server}"
 # Docker-брокер появился в compose позже сервера: на ВМ со старым файлом сервиса его просто нет,
 # и выкатка ведёт себя как раньше (docs/DOCKER_BROKER.md).
 BROKER_SERVICE="${BROKER_SERVICE:-docker-broker}"
+# Сеть serverless-функций создаётся не compose (у неё нет сервиса-владельца), а выкаткой.
+FUNCTIONS_NETWORK="${FUNCTIONS_DOCKER_NETWORK:-webnestdev-functions}"
 GIT_BRANCH="${GIT_BRANCH:-main}"
 SYSTEMD_UNIT="${SYSTEMD_UNIT:-webnestdev}"
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8787/api/ready}"
@@ -2200,8 +2202,97 @@ egress_network(){
   printf '%s' "$net"
 }
 
+functions_network(){
+  local net="${FUNCTIONS_DOCKER_NETWORK:-}"
+  # Явная переменная окружения важнее файла: node2-sync передаёт одно имя и в compose, и в
+  # правила. Иначе сервер и firewall на второй ноде могли взять разные значения из старых файлов.
+  if [ -z "$net" ]; then
+    net=$(compose_env_value FUNCTIONS_DOCKER_NETWORK 2>/dev/null || true)
+  fi
+  printf '%s' "${net:-$FUNCTIONS_NETWORK}"
+}
+
+# Сеть функций не описана сервисом compose, поэтому Docker не создаст её сам. Делаем это до
+# запуска API: `docker run --network` иначе падал бы на каждом вызове функции.
+ensure_functions_network(){
+  local net preview api_net
+  net=$(functions_network)
+  preview=$(egress_network)
+  if [ -z "$net" ]; then
+    log "сеть функций не задана — вызовы функций не смогут стартовать"; return 1
+  fi
+  case "$net" in
+    ""|*[!A-Za-z0-9_.-]*|[!A-Za-z0-9]*)
+      log "сеть функций должна быть именем Docker-сети: $net"; return 1 ;;
+    bridge|host|none|default)
+      log "сеть функций не может быть встроенной сетью Docker: $net"; return 1 ;;
+  esac
+  if [ -n "$preview" ] && [ "$net" = "$preview" ]; then
+    log "сеть функций не может совпадать с сетью предпросмотра: $net"; return 1
+  fi
+  if printf '%s' "$net" | grep -Eq '(^|[-_])preview$'; then
+    log "сеть функций не может называться как сеть предпросмотра: $net"; return 1
+  fi
+  # Сеть API/базы: если имя совпало, функция окажется рядом с postgres и сервером. Проверяем по
+  # фактическим сетям запущенного сервера, а не по догадке о префиксе compose-проекта.
+  local server_nets
+  server_nets=$(docker ps -q --filter "label=com.docker.compose.service=$SERVICE" 2>/dev/null | while read -r id; do
+    docker inspect -f '{{range $name, $_ := .NetworkSettings.Networks}}{{$name}}\n{{end}}' "$id" 2>/dev/null || true
+  done)
+  if [ -n "$server_nets" ] && printf '%s\n' "$server_nets" | grep -Fxq "$net"; then
+    log "сеть функций не может быть сетью API/базы: $net"; return 1
+  fi
+  # Даже если сервер в этом режиме не контейнер, сеть `webnestdev` уже может существовать с
+  # postgres и Caddy. Её compose-метка не зависит от префикса проекта.
+  api_net=$(docker network ls --filter label=com.docker.compose.network=webnestdev --format '{{.Name}}' 2>/dev/null | head -n 1 || true)
+  if [ -n "$api_net" ] && [ "$net" = "$api_net" ]; then
+    log "сеть функций не может быть сетью API/базы: $net"; return 1
+  fi
+  if docker network inspect "$net" >/dev/null 2>&1; then
+    # IPv6-сеть обошла бы IPv4-правила хоста: private IPv6 и metadata IPv6 внутри неё
+    # оказались бы доступны функции. Штатная сеть создаётся без IPv6; чужую не принимаем.
+    if [ "$(docker network inspect -f '{{.EnableIPv6}}' "$net" 2>/dev/null || true)" = "true" ]; then
+      log "сеть функций $net включает IPv6 — правила хоста закрывают только IPv4"; return 1
+    fi
+    # macvlan/overlay/ipvlan не проходят через ожидаемые правила bridge-сети; для фильтра
+    # нужен обычный bridge, который создаёт сама выкатка.
+    if [ "$(docker network inspect -f '{{.Driver}}' "$net" 2>/dev/null || true)" != "bridge" ]; then
+      log "сеть функций $net должна быть bridge, а не $(docker network inspect -f '{{.Driver}}' "$net" 2>/dev/null || true)"; return 1
+    fi
+    log "сеть функций уже есть: $net"
+    return 0
+  fi
+  run docker network create --driver bridge --label webnestdev.functions=1 "$net" || {
+    log "не удалось создать сеть функций $net"; return 1
+  }
+  log "создана сеть функций: $net"
+}
+
 install_egress_firewall_unit(){
-  local script="$1" rc=0
+  local script="$1" rc=0 preview functions proxy_port
+  preview=$(egress_network)
+  functions=$(functions_network)
+  proxy_port=$(compose_env_value EGRESS_PROXY_PORT 2>/dev/null || true)
+  proxy_port=${proxy_port:-3128}
+  case "$functions" in
+    ""|*[!A-Za-z0-9_.-]*|[!A-Za-z0-9]*)
+      log "egress: неверное имя сети функций: $functions"; return 1 ;;
+    bridge|host|none|default)
+      log "egress: сеть функций не может быть встроенной: $functions"; return 1 ;;
+  esac
+  if printf '%s' "$functions" | grep -Eq '(^|[-_])preview$'; then
+    log "egress: сеть функций не может быть сетью предпросмотра: $functions"; return 1
+  fi
+  if [ -n "$preview" ] && [ "$functions" = "$preview" ]; then
+    log "egress: сеть функций не может совпадать с сетью предпросмотра: $functions"; return 1
+  fi
+  case "$preview" in
+    *[!A-Za-z0-9_.-]*|[!A-Za-z0-9]*)
+      log "egress: неверное имя сети предпросмотра: $preview"; return 1 ;;
+  esac
+  case "$proxy_port" in
+    *[!0-9]*|0) log "egress: неверный порт прокси: $proxy_port"; return 1 ;;
+  esac
   if [ "$(id -u)" = "0" ]; then
     install -m 0755 "$script" /usr/local/sbin/webnestdev-egress
   else
@@ -2210,6 +2301,8 @@ install_egress_firewall_unit(){
   if [ "$rc" -ne 0 ]; then
     log "egress: не удалось положить скрипт правил в /usr/local/sbin"; return 1
   fi
+  # Имена сетей передаются юниту явно: после перезагрузки compose может быть ещё не поднят, и
+  # скрипт не должен угадывать функции по суффиксу.
   local unit="[Unit]
 Description=WebNestDev egress firewall for project containers
 After=docker.service
@@ -2218,6 +2311,9 @@ Requires=docker.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+Environment=PREVIEW_NETWORK=${preview}
+Environment=FUNCTIONS_DOCKER_NETWORK=${functions}
+Environment=EGRESS_PROXY_PORT=${proxy_port}
 ExecStart=/usr/local/sbin/webnestdev-egress apply
 ExecStop=/usr/local/sbin/webnestdev-egress clear
 
@@ -2313,6 +2409,9 @@ apply_egress_firewall(){
     log "egress: правила Docker не применяю (dry-run)"
     return 0
   fi
+  # Сеть функций нужна и правилам, и контейнерам; создаём её идемпотентно перед установкой.
+  # Делаем это после проверки dry-run, чтобы проверочный запуск ничего не менял на хосте.
+  ensure_functions_network || log "egress: сеть функций не готова — вызовы функций могут не стартовать"
   mode=$(compose_env_value EGRESS_MODE 2>/dev/null || true)
   mode=${mode:-allowlist}
   enforce=$(compose_env_value EGRESS_ENFORCE 2>/dev/null || true)
@@ -2460,6 +2559,7 @@ case "$MODE" in
     # Образ песочницы скачивается до запуска сервера: проверка монтирования на старте идёт с
     # `--pull=never`, и без образа /api/health показывал бы «image» до следующего перезапуска.
     ensure_sandbox_image
+    ensure_functions_network || { log "выкатка не принята: сеть функций не создана"; exit 3; }
     run docker compose "${COMPOSE_FILES[@]}" up -d --no-build "${COMPOSE_NO_DEPS[@]}" $(services_to_start)
     stop_legacy_postgres
     reload_caddy
@@ -2485,6 +2585,7 @@ case "$MODE" in
     apply_platform_env
     install_app_secrets
     ensure_sandbox_image
+    ensure_functions_network || { log "выкатка не принята: сеть функций не создана"; exit 3; }
     log "перезапускаю сервис systemd: $SYSTEMD_UNIT"
     run sudo systemctl restart "$SYSTEMD_UNIT"
     # Фронт с сертификатами — контейнер, а не systemd-юнит: в этом режиме его поднимает та же
@@ -2517,6 +2618,7 @@ case "$MODE" in
     # --force-recreate, а не простой up: контейнер мог зависнуть в перезапусках, и тогда compose
     # счёл бы его «уже поднятым» и не тронул. Конфигурацию берём ту, что лежит на ВМ: ремонт не
     # приносит новых файлов.
+    ensure_functions_network || log "ремонт: сеть функций не создана — вызовы функций могут не стартовать"
     run docker compose "${COMPOSE_FILES[@]}" up -d --no-build --force-recreate "${COMPOSE_NO_DEPS[@]}" $(services_to_start)
     stop_legacy_postgres
     update_runner_version

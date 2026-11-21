@@ -7,10 +7,10 @@ import {
   TENANT_BY_ACCOUNT_SQL,
   UPSERT_TENANT_SQL,
   provisionStatements,
-  readOnlyStatement,
   tenantNames,
   type TenantNames,
 } from "./sql.js";
+import { setTenantAccess } from "./access.js";
 
 /**
  * Операции над клиентской базой: создание схемы аккаунта, размер данных, квота.
@@ -74,7 +74,9 @@ export async function provisionTenant(
   // Повторный провижининг не должен оставлять роль в старом read-only: если тариф снова
   // включает базу, право записи возвращается сразу, не дожидаясь ночной проверки квот.
   const registered = await getTenant(db, input.accountId);
-  if (registered) await reconcileTenantQuota(db, registered, input.quotaBytes);
+  // forceAccess: провижининг мог заново выдать роли CREATE/LOGIN, а таблицы после прошлого
+  // исчерпания квоты остались у администратора. Состояние нужно привести к текущей квоте сразу.
+  if (registered) await reconcileTenantQuota(db, registered, input.quotaBytes, { forceAccess: true });
   return names;
 }
 
@@ -119,12 +121,15 @@ export async function reconcileTenantQuota(
   db: SqlExecutor,
   tenant: TenantRecord,
   quotaBytes: number,
+  options: { forceAccess?: boolean } = {},
 ): Promise<{ usedBytes: number; quotaBytes: number; readOnly: boolean }> {
   const usedBytes = await tenantSizeBytes(db, tenant.schema);
   // Нулевая квота означает «база не входит в тариф»: писать в неё нельзя, но данные не удаляем.
   const readOnly = quotaBytes <= 0 || usedBytes >= quotaBytes;
-  if (readOnly !== tenant.readOnly) {
-    await db.query(readOnlyStatement({ schema: tenant.schema, role: tenant.role }, readOnly));
+  // При read-only права проверяем каждый раз: после падения процесса или повторного
+  // провижининга роль могла снова получить CREATE, а квота всё ещё исчерпана.
+  if (options.forceAccess === true || readOnly !== tenant.readOnly || readOnly) {
+    await setTenantAccess(db, { schema: tenant.schema, role: tenant.role }, readOnly);
   }
   // Не пишем учётную строку на каждый GET, если ни квота, ни режим не изменились.
   if (quotaBytes !== tenant.quotaBytes || readOnly !== tenant.readOnly) {

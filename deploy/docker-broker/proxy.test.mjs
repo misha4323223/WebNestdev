@@ -26,6 +26,8 @@ const log = { warn() {}, error() {}, log() {} };
 const creates = [];
 /** Тела upgrade-запросов, которые демон прочитал до ответа `101` (exec/start присылает JSON). */
 const upgradeBodies = [];
+/** Тела обычных (detached) `exec/start`, которые дошли до демона. */
+const startBodies = [];
 
 let upstream;
 let broker;
@@ -73,6 +75,10 @@ before(async () => {
         return;
       }
       if (url.pathname === "/containers/abc/exec") return json(response, { Id: "exec1" }, 201);
+      if (url.pathname === "/exec/exec1/start") {
+        startBodies.push(JSON.parse(body));
+        return json(response, {});
+      }
       // Код выхода процесса: `docker exec` спрашивает его этим запросом.
       if (url.pathname === "/exec/exec1/json") return json(response, { Running: false, ExitCode: 0 });
       if (url.pathname === "/system/df") return json(response, { LayersSize: 1 });
@@ -375,6 +381,32 @@ test("exec: своя сессия работает через hijack, чужая
  * проверка готовности приложения, поиск порта по `/proc/net/tcp` и дверь предпросмотра через
  * `docker exec` не работали, хотя контейнер был жив.
  */
+test("exec с root/TTY и network connect с alias не доходят до демона", async () => {
+  const root = await call("POST", "/containers/abc/exec", { Cmd: ["id"], User: "0" });
+  assert.equal(root.status, 403);
+  const tty = await call("POST", "/containers/abc/exec", { Cmd: ["id"], Tty: true });
+  assert.equal(tty.status, 403);
+  const alias = await call("POST", "/networks/src_webnestdev-preview/connect", {
+    Container: "abc",
+    EndpointConfig: { Aliases: ["postgres"] },
+  });
+  assert.equal(alias.status, 403);
+});
+
+test("обычный exec/start пропускает только Detach: true для app-relay", async () => {
+  const created = await call("POST", "/containers/abc/exec", { Cmd: ["node", "-e", "1"], AttachStdout: true });
+  assert.equal(created.status, 201);
+
+  const detached = await call("POST", "/exec/exec1/start", { Detach: true, Tty: false });
+  assert.equal(detached.status, 200);
+  assert.deepEqual(startBodies.at(-1), { Detach: true, Tty: false });
+
+  const attachedWithoutUpgrade = await call("POST", "/exec/exec1/start", { Detach: false, Tty: false });
+  assert.equal(attachedWithoutUpgrade.status, 403);
+  const tty = await call("POST", "/exec/exec1/start", { Detach: true, Tty: true });
+  assert.equal(tty.status, 403);
+});
+
 test("exec: код выхода читается только для своей сессии", async () => {
   const created = await call("POST", "/containers/abc/exec", { Cmd: ["true"] });
   assert.equal(created.status, 201);
@@ -442,6 +474,12 @@ test("attach к своему контейнеру проксируется ка�
 test("network connect: только сеть предпросмотра и только свой контейнер", async () => {
   const preview = await call("POST", "/networks/src_webnestdev-preview/connect", { Container: "abc", EndpointConfig: {} });
   assert.notEqual(preview.status, 403);
+
+  const empty = await call("POST", "/networks/src_webnestdev-preview/connect", {
+    Container: "abc",
+    EndpointConfig: { Aliases: [], IPAMConfig: { IPv4Address: "", IPv6Address: "" } },
+  });
+  assert.notEqual(empty.status, 403, "пустые поля Go-структуры не являются настройкой endpoint");
 
   const database = await call("POST", "/networks/src_webnestdev/connect", { Container: "abc", EndpointConfig: {} });
   assert.equal(database.status, 403);

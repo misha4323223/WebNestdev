@@ -345,38 +345,17 @@ export async function planForUser(userId: string, now = new Date()): Promise<Pla
 export const accountPlanFor = planForUser;
 
 /**
- * Уведомление об оплате подтверждено: платёж закрывается один раз (Робокасса повторяет
- * уведомление, пока не получит `OK{InvId}`), а подписка продлевается от текущего срока, поэтому
- * ранняя оплата не теряет уже оплаченные дни.
- *
- * Автопродление у новой подписки включается только по согласию, которое человек дал при
- * оформлении счёта: настройка магазина разрешает продление, а не включает его.
+ * Подписка после успешного платежа. Функция чистая: одинаковая для JSON и PostgreSQL, поэтому
+ * правило продления нельзя случайно разойтись между хранилищами.
  */
-export async function markPaymentPaid(invId: number, now = new Date()) {
-  const payment = await getPayment(invId);
-  if (!payment) return null;
-  if (payment.status === "paid") return { payment, alreadyPaid: true as const };
-
-  const paidAt = now.toISOString();
-  if (isYdbEnabled()) {
-    await ydbQuery()`
-      UPDATE ${ydbQuery().identifier(getTable("billing_payments"))}
-      SET status = 'paid', paid_at = ${paidAt}
-      WHERE inv_id = ${invId}
-    `;
-  } else {
-    await withLock("billing", async () => {
-      const payments = await readJson<BillingPayment[]>(paymentsFile(), []);
-      const stored = payments.find(item => item.invId === invId);
-      if (stored) { stored.status = "paid"; stored.paidAt = paidAt; }
-      await writeJsonAtomic(paymentsFile(), payments);
-    });
-  }
-
-  const existing = await getSubscriptionRecord(payment.userId);
+function subscriptionAfterPayment(
+  payment: BillingPayment,
+  existing: SubscriptionRecord | null,
+  now: Date,
+): SubscriptionRecord {
   const live = isSubscriptionLive(existing, now);
   const base = live && existing!.plan === payment.plan ? new Date(existing!.renewsAt) : now;
-  const record: SubscriptionRecord = {
+  return {
     userId: payment.userId,
     plan: payment.plan,
     status: "active",
@@ -393,8 +372,100 @@ export async function markPaymentPaid(invId: number, now = new Date()) {
     renewalAttempts: 0,
     updatedAt: now.toISOString(),
   };
-  await saveSubscription(record);
-  return { payment: { ...payment, status: "paid" as const, paidAt }, alreadyPaid: false as const, subscription: record };
+}
+
+type PaymentPaidResult =
+  | { payment: BillingPayment; alreadyPaid: true }
+  | { payment: BillingPayment; alreadyPaid: false; subscription: SubscriptionRecord };
+
+/**
+ * Уведомление об оплате подтверждено: платёж закрывается один раз (Робокасса повторяет
+ * уведомление, пока не получит `OK{InvId}`), а подписка продлевается от текущего срока, поэтому
+ * ранняя оплата не теряет уже оплаченные дни.
+ *
+ * Закрытие платежа и продление подписки — один шаг: `UPDATE … WHERE status <> 'paid'`
+ * возвращает строку только одному из одновременных уведомлений, а в PostgreSQL оба изменения
+ * входят в одну транзакцию. Раньше два запроса читали `pending` до записи, и подписка могла
+ * получить два месяца за одну оплату. Неудачная попытка не закрывает платёж навсегда: успешное
+ * уведомление после неё всё ещё может его активировать.
+ *
+ * Автопродление у новой подписки включается только по согласию, которое человек дал при
+ * оформлении счёта: настройка магазина разрешает продление, а не включает его.
+ */
+export async function markPaymentPaid(invId: number, now = new Date()): Promise<PaymentPaidResult | null> {
+  const paidAt = now.toISOString();
+  if (isYdbEnabled()) {
+    let outcome: PaymentPaidResult | null = null;
+    await ydbQuery().transaction({}, async tx => {
+      const [claimed] = await tx<PaymentRow[]>`
+        UPDATE ${tx.identifier(getTable("billing_payments"))}
+        SET status = 'paid', paid_at = ${paidAt}
+        WHERE inv_id = ${invId} AND status <> 'paid'
+        RETURNING inv_id, user_id, plan, amount, status, kind, parent_inv_id, created_at, paid_at, attempts, auto_renew
+      `;
+      if (!claimed[0]) {
+        const [existing] = await tx<PaymentRow[]>`
+          SELECT inv_id, user_id, plan, amount, status, kind, parent_inv_id, created_at, paid_at, attempts, auto_renew
+          FROM ${tx.identifier(getTable("billing_payments"))}
+          WHERE inv_id = ${invId}
+          LIMIT 1
+        `;
+        // Платёж уже закрыт (или не ждёт оплаты): повторное уведомление ничего не продлевает.
+        outcome = existing[0] ? { payment: paymentFromRow(existing[0]), alreadyPaid: true } : null;
+        return;
+      }
+      const payment = paymentFromRow(claimed[0]);
+      // Разные счета одного человека могут подтвердиться одновременно. Блокировка по user_id
+      // сериализует чтение и запись подписки, поэтому второй платёж увидит уже продлённый срок,
+      // а не перезапишет его устаревшим значением.
+      await tx`SELECT pg_advisory_xact_lock(hashtextextended(${payment.userId}, 0))`;
+      const [subscriptions] = await tx<SubscriptionRow[]>`
+        SELECT user_id, plan, status, started_at, renews_at, auto_renew, parent_inv_id, notice_at, renewal_attempts, updated_at
+        FROM ${tx.identifier(getTable("billing_subscriptions"))}
+        WHERE user_id = ${payment.userId}
+        LIMIT 1
+      `;
+      const record = subscriptionAfterPayment(
+        payment,
+        subscriptions[0] ? subscriptionFromRow(subscriptions[0]) : null,
+        now,
+      );
+      await tx`
+        UPSERT INTO ${tx.identifier(getTable("billing_subscriptions"))}
+          (user_id, plan, status, started_at, renews_at, auto_renew, parent_inv_id, notice_at, renewal_attempts, updated_at)
+        VALUES (${record.userId}, ${record.plan}, ${record.status}, ${record.startedAt}, ${record.renewsAt}, ${record.autoRenew}, ${record.parentInvId}, ${record.noticeAt}, ${record.renewalAttempts}, ${record.updatedAt})
+      `;
+      outcome = { payment, alreadyPaid: false, subscription: record };
+    });
+    return outcome;
+  }
+
+  return withLock("billing", async () => {
+    const payments = await readJson<BillingPayment[]>(paymentsFile(), []);
+    const stored = payments.find(item => item.invId === invId);
+    if (!stored) return null;
+    if (stored.status === "paid") return { payment: stored, alreadyPaid: true as const };
+
+    stored.status = "paid";
+    stored.paidAt = paidAt;
+    await writeJsonAtomic(paymentsFile(), payments);
+
+    try {
+      const subscriptions = await readJson<Record<string, SubscriptionRecord>>(subscriptionsFile(), {});
+      const existing = subscriptions[stored.userId] ?? null;
+      const record = subscriptionAfterPayment(stored, existing, now);
+      subscriptions[stored.userId] = record;
+      await writeJsonAtomic(subscriptionsFile(), subscriptions);
+      return { payment: stored, alreadyPaid: false as const, subscription: record };
+    } catch (error) {
+      // Два файла нельзя записать одной атомарной операцией. Если подписка не сохранилась,
+      // возвращаем платёж в pending: повторное уведомление попробует снова, а не потеряет месяц.
+      stored.status = "pending";
+      stored.paidAt = null;
+      await writeJsonAtomic(paymentsFile(), payments).catch(() => undefined);
+      throw error;
+    }
+  });
 }
 
 export async function markPaymentFailed(invId: number) {
@@ -402,14 +473,14 @@ export async function markPaymentFailed(invId: number) {
     await ydbQuery()`
       UPDATE ${ydbQuery().identifier(getTable("billing_payments"))}
       SET status = 'failed', attempts = attempts + 1
-      WHERE inv_id = ${invId}
+      WHERE inv_id = ${invId} AND status <> 'paid'
     `;
     return;
   }
   await withLock("billing", async () => {
     const payments = await readJson<BillingPayment[]>(paymentsFile(), []);
     const stored = payments.find(item => item.invId === invId);
-    if (stored) { stored.status = "failed"; stored.attempts += 1; }
+    if (stored && stored.status !== "paid") { stored.status = "failed"; stored.attempts += 1; }
     await writeJsonAtomic(paymentsFile(), payments);
   });
 }

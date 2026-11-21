@@ -55,6 +55,22 @@ test("a paid invoice activates the plan for a month and a repeated notification 
   assert.equal(await planForUser(userId, new Date("2026-04-10T10:00:01.000Z")), "free");
 });
 
+test("одновременные уведомления закрывают платёж один раз и продлевают подписку на один месяц", async () => {
+  const userId = newUser();
+  const payment = await createPayment({ userId, plan: "pro", amount: 990, autoRenew: true });
+  const now = new Date("2026-03-10T10:00:00.000Z");
+
+  const results = await Promise.all([
+    markPaymentPaid(payment.invId, now),
+    markPaymentPaid(payment.invId, now),
+    markPaymentPaid(payment.invId, now),
+  ]);
+
+  assert.equal(results.filter(result => result?.alreadyPaid === false).length, 1, "закрывает платёж ровно один запрос");
+  assert.equal(results.filter(result => result?.alreadyPaid === true).length, 2);
+  assert.equal((await getSubscriptionRecord(userId))?.renewsAt, "2026-04-10T10:00:00.000Z");
+});
+
 test("a renewal extends the paid period instead of replacing it and keeps the parent invoice", async () => {
   const userId = newUser();
   const now = new Date("2026-05-01T09:00:00.000Z");

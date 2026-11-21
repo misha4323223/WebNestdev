@@ -213,42 +213,67 @@ export async function creditBalance(userId: string): Promise<number> {
 }
 
 export async function markCreditPurchasePaid(invId: number, now = new Date()) {
-  const purchase = await getCreditPurchase(invId);
-  if (!purchase) return null;
-  if (purchase.status === "paid") return { purchase, alreadyPaid: true as const };
-
   const paidAt = now.toISOString();
-  // Сначала журнал, потом статус: если процесс упадёт между шагами, повторное уведомление
-  // увидит pending, но не добавит кредиты второй раз благодаря id `purchase:<invId>`.
-  await addLedgerEntry({
-    id: "purchase:" + invId,
-    userId: purchase.userId,
-    kind: "purchase",
-    credits: purchase.credits,
-    invId,
-    runId: null,
-    createdAt: paidAt,
-  });
-
+  /**
+   * Закрытие покупки и запись в журнал — один захват. `status <> 'paid'` в UPDATE возвращает
+   * строку только одному из одновременных уведомлений; в PostgreSQL обе операции входят в одну
+   * транзакцию. Идентификатор `purchase:<invId>` остаётся вторым замком для повторной доставки
+   * после падения процесса между старым журналом и старым статусом. Неудачная попытка не делает
+   * покупку неоплачиваемой навсегда: успешное уведомление после неё может её закрыть.
+   */
   if (isYdbEnabled()) {
-    await ydbQuery()`
-      UPDATE ${ydbQuery().identifier(getTable("credit_purchases"))}
-      SET status = 'paid', paid_at = ${paidAt}
-      WHERE inv_id = ${invId}
-    `;
-  } else {
-    await withLock("credit-purchases", async () => {
-      const purchases = await readJson<CreditPurchase[]>(purchasesFile(), []);
-      const stored = purchases.find(item => item.invId === invId);
-      if (stored) { stored.status = "paid"; stored.paidAt = paidAt; }
-      await writeJsonAtomic(purchasesFile(), purchases);
+    let outcome: { purchase: CreditPurchase; alreadyPaid: true } | { purchase: CreditPurchase; alreadyPaid: false } | null = null;
+    await ydbQuery().transaction({}, async tx => {
+      const [claimed] = await tx<PurchaseRow[]>`
+        UPDATE ${tx.identifier(getTable("credit_purchases"))}
+        SET status = 'paid', paid_at = ${paidAt}
+        WHERE inv_id = ${invId} AND status <> 'paid'
+        RETURNING inv_id, user_id, pack_id, credits, amount, status, created_at, paid_at
+      `;
+      if (!claimed[0]) {
+        const [existing] = await tx<PurchaseRow[]>`
+          SELECT inv_id, user_id, pack_id, credits, amount, status, created_at, paid_at
+          FROM ${tx.identifier(getTable("credit_purchases"))}
+          WHERE inv_id = ${invId}
+          LIMIT 1
+        `;
+        outcome = existing[0] ? { purchase: purchaseFromRow(existing[0]), alreadyPaid: true } : null;
+        return;
+      }
+      const purchase = purchaseFromRow(claimed[0]);
+      await tx`
+        INSERT INTO ${tx.identifier(getTable("credit_ledger"))}
+          (id, user_id, kind, credits, inv_id, run_id, created_at)
+        VALUES (${'purchase:' + invId}, ${purchase.userId}, ${'purchase'}, ${purchase.credits}, ${invId}, ${null}, ${paidAt})
+        ON CONFLICT (id) DO NOTHING
+      `;
+      outcome = { purchase, alreadyPaid: false };
     });
+    return outcome;
   }
 
-  return {
-    purchase: { ...purchase, status: "paid" as const, paidAt },
-    alreadyPaid: false as const,
-  };
+  return withLock("credit-purchases", async () => {
+    const purchases = await readJson<CreditPurchase[]>(purchasesFile(), []);
+    const stored = purchases.find(item => item.invId === invId);
+    if (!stored) return null;
+    if (stored.status === "paid") return { purchase: stored, alreadyPaid: true as const };
+
+    // Сначала журнал, потом статус: если процесс упадёт между шагами, повторное уведомление
+    // увидит pending, но не добавит кредиты второй раз благодаря id `purchase:<invId>`.
+    await addLedgerEntry({
+      id: "purchase:" + invId,
+      userId: stored.userId,
+      kind: "purchase",
+      credits: stored.credits,
+      invId,
+      runId: null,
+      createdAt: paidAt,
+    });
+    stored.status = "paid";
+    stored.paidAt = paidAt;
+    await writeJsonAtomic(purchasesFile(), purchases);
+    return { purchase: stored, alreadyPaid: false as const };
+  });
 }
 
 /**

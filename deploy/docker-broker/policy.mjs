@@ -11,6 +11,8 @@
  * клиенте: новая операция должна быть добавлена здесь осознанно.
  */
 
+import path from "node:path";
+
 export const MANAGED_LABEL = "webnestdev.managed";
 
 const VERSION_PREFIX = /^\/v\d+\.\d+(?=\/|$)/;
@@ -294,6 +296,11 @@ function checkTmpfs(tmpfs) {
  * настройки endpoint пусты: aliases, links и IPAM позволяли бы выдать контейнер за другой сервис
  * внутри сети. Поэтому структура разрешена, а её содержимое — нет.
  */
+function isAllowedNetwork(name, policy) {
+  return name === "" || name === "default" || name === "bridge" || name === "none" ||
+    policy.isPreviewNetwork(name) || policy.isFunctionsNetwork?.(name) === true;
+}
+
 function checkNetworkingConfig(networking, policy, networkMode) {
   if (EMPTY(networking)) return null;
   if (!isObject(networking)) return "NetworkingConfig должен быть объектом";
@@ -308,8 +315,8 @@ function checkNetworkingConfig(networking, policy, networkMode) {
   const names = Object.keys(endpoints);
   if (names.length > 1) return "Контейнер может быть только в одной сети";
   const name = names[0];
-  if (!(name === "" || name === "default" || name === "bridge" || name === "none" || policy.isPreviewNetwork(name))) {
-    return "Сеть " + name + " запрещена: разрешены none, bridge и сеть предпросмотра";
+  if (!isAllowedNetwork(name, policy)) {
+    return "Сеть " + name + " запрещена: разрешены none, bridge, сеть предпросмотра и сеть функций";
   }
   if (networkMode && networkMode !== "default" && name !== networkMode) {
     return "NetworkingConfig не совпадает с HostConfig.NetworkMode: " + name + " ≠ " + networkMode;
@@ -437,8 +444,8 @@ export function validateCreate(body, policy) {
   }
 
   const network = host.NetworkMode ?? "";
-  if (!(network === "" || network === "default" || network === "bridge" || network === "none" || policy.isPreviewNetwork(network))) {
-    return fail("Сеть " + network + " запрещена: разрешены none, bridge и сеть предпросмотра");
+  if (!isAllowedNetwork(network, policy)) {
+    return fail("Сеть " + network + " запрещена: разрешены none, bridge, сеть предпросмотра и сеть функций");
   }
   const networkingError = checkNetworkingConfig(body.NetworkingConfig, policy, network);
   if (networkingError) return fail(networkingError);
@@ -494,6 +501,80 @@ export function validateCreate(body, policy) {
     }
   }
 
+  return { ok: true };
+}
+
+/**
+ * Тело `containers/{id}/exec`. Docker CLI присылает пустые Go-поля целиком, поэтому разрешаем
+ * нулевые значения известных полей, но запрещаем ненулевые `Privileged`, `Tty`, чужого
+ * пользователя, рабочий каталог вне /workspace и неизвестные поля. Иначе `exec` мог бы
+ * запустить команду от root или с TTY, хотя контейнер проекта рассчитан на uid 1000.
+ */
+export function validateExecCreate(body) {
+  if (!isObject(body)) return fail("Тело exec должно быть объектом");
+  const allowed = new Set([
+    "AttachStdin", "AttachStdout", "AttachStderr", "DetachKeys", "Tty", "Env", "Cmd",
+    "Privileged", "User", "WorkingDir", "ConsoleSize", "Detach",
+  ]);
+  for (const key of Object.keys(body)) {
+    if (!allowed.has(key) && !UNSET(body[key])) return fail("Неизвестное поле exec запрещено: " + key);
+  }
+  if (body.Privileged) return fail("exec с Privileged запрещён");
+  if (body.Tty) return fail("exec с TTY запрещён");
+  // `Detach` в create разрешён: платформа использует `docker exec -d` для app-relay. Запуск
+  // detached разрешён только на обычном POST `exec/start` с `Detach: true`; upgraded-поток
+  // по-прежнему обязан быть присоединённым.
+  if (body.Detach !== undefined && typeof body.Detach !== "boolean") return fail("exec Detach должен быть boolean");
+  for (const key of ["AttachStdin", "AttachStdout", "AttachStderr"]) {
+    if (body[key] !== undefined && typeof body[key] !== "boolean") return fail("Поле exec " + key + " должно быть boolean");
+  }
+  if (body.DetachKeys !== undefined && body.DetachKeys !== "") return fail("DetachKeys запрещены");
+  if (body.User !== undefined && !(body.User === "" || body.User === "1000" || body.User === "1000:1000")) {
+    return fail("exec разрешён только от uid 1000");
+  }
+  const workingDir = body.WorkingDir ?? "";
+  if (typeof workingDir !== "string") return fail("exec WorkingDir должен быть строкой");
+  const workingDirNormalized = workingDir === "" ? "" : path.posix.normalize(workingDir);
+  if (workingDirNormalized !== "" && !(workingDirNormalized === "/workspace" || workingDirNormalized.startsWith("/workspace/"))) {
+    return fail("exec WorkingDir должен быть внутри /workspace");
+  }
+  if (!Array.isArray(body.Cmd) || body.Cmd.length === 0 || body.Cmd.some(item => typeof item !== "string")) {
+    return fail("exec Cmd должен быть непустым массивом строк");
+  }
+  if (body.Cmd.length > 512) return fail("Слишком много аргументов exec");
+  const commandBytes = body.Cmd.reduce((sum, item) => sum + Buffer.byteLength(item), 0);
+  if (commandBytes > 256 * 1024) return fail("Команда exec больше 256 КиБ");
+  if (body.Env !== undefined && body.Env !== null) {
+    if (!Array.isArray(body.Env) || body.Env.some(item => typeof item !== "string")) return fail("exec Env должен быть массивом строк");
+    if (body.Env.length > 128) return fail("Слишком много переменных exec");
+    if (body.Env.reduce((sum, item) => sum + Buffer.byteLength(item), 0) > 64 * 1024) return fail("exec Env больше 64 КиБ");
+  }
+  if (body.ConsoleSize !== undefined && body.ConsoleSize !== null && !(Array.isArray(body.ConsoleSize) && body.ConsoleSize.length === 2 && body.ConsoleSize.every(value => value === 0))) {
+    return fail("exec ConsoleSize должен быть нулевым");
+  }
+  return { ok: true };
+}
+
+/**
+ * Тело `exec/{id}/start`. У upgraded-запроса платформа ждёт присоединённый поток без TTY;
+ * у обычного POST единственный разрешённый вариант — `Detach: true` для app-relay (`docker exec
+ * -d`). Оба варианта проверяются до демона: иначе detached-запуск обходил бы ограничения TTY.
+ */
+export function validateExecStart(body, options = {}) {
+  if (!isObject(body)) return fail("Тело exec/start должно быть объектом");
+  const allowed = new Set(["Detach", "Tty", "ConsoleSize"]);
+  for (const key of Object.keys(body)) {
+    if (!allowed.has(key) && !UNSET(body[key])) return fail("Неизвестное поле exec/start запрещено: " + key);
+  }
+  if (options.allowDetach === true) {
+    if (body.Detach !== true) return fail("обычный exec/start разрешён только с Detach: true");
+  } else if (body.Detach) {
+    return fail("exec/start с Detach запрещён: платформа ждёт поток");
+  }
+  if (body.Tty) return fail("exec/start с TTY запрещён");
+  if (body.ConsoleSize !== undefined && body.ConsoleSize !== null && !(Array.isArray(body.ConsoleSize) && body.ConsoleSize.length === 2 && body.ConsoleSize.every(value => value === 0))) {
+    return fail("exec/start ConsoleSize должен быть нулевым");
+  }
   return { ok: true };
 }
 

@@ -6,6 +6,7 @@ import { runDockerCli } from "../sandbox/docker/cli.js";
 import { sandboxImage, sandboxRuntimeArgs } from "../sandbox/config.js";
 import { hostingSitesDir } from "../hosting/config.js";
 import type { BuiltFunction } from "./build.js";
+import { functionsNetwork } from "./network.js";
 
 export type BackgroundJobRequest = {
   name: string;
@@ -52,7 +53,9 @@ export function normalizeBackgroundJobRequests(raw: unknown): BackgroundJobReque
  *
  * Контейнер не закреплён за сайтом: он создаётся на запрос, получает read-only артефакт,
  * живёт до ответа и удаляется. Это и есть serverless-модель без постоянного контейнера на
- * проект. Сеть — bridge: функция видит интернет, но не сеть платформы и не PostgreSQL.
+ * проект. Сеть — отдельная `FUNCTIONS_DOCKER_NETWORK`, подключённая только к интернету:
+ * функция видит внешние API, но не сеть платформы, не PostgreSQL и не чужие preview. Хост
+ * дополнительно отклоняет private/link-local/metadata (`egress-firewall.sh`).
  */
 
 export type FunctionRequest = {
@@ -165,7 +168,7 @@ export async function invokeFunction(input: {
   const args = [
     "run", "-i", "--rm", "--init",
     ...sandboxRuntimeArgs(),
-    "--network", process.env.FUNCTIONS_DOCKER_NETWORK?.trim() || "bridge",
+    "--network", functionsNetwork(),
     "--cpus", "0.5",
     "--memory", String(memoryMb) + "m",
     "--pids-limit", "64",

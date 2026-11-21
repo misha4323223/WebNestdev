@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { FunctionInvokeError, invokeFunction, dockerHostPathForSiteArtifact } from "./invoke.js";
 import type { BuiltFunction } from "./build.js";
+import { DEFAULT_FUNCTIONS_NETWORK } from "./network.js";
 
 const fn: BuiltFunction = {
   name: "hello",
@@ -53,6 +54,7 @@ test("разбирает ответ исполнителя и не пропус�
   assert.equal(response.headers.connection, undefined);
   assert.ok(args.includes("-i"));
   assert.ok(args.includes("--read-only"));
+  assert.equal(args[args.indexOf("--network") + 1], DEFAULT_FUNCTIONS_NETWORK, "функция не попадает в общий bridge");
   assert.ok(args.includes("-e"));
   assert.ok(args.includes("TOKEN=secret"));
   assert.equal(args.includes("PATH=/evil"), false);

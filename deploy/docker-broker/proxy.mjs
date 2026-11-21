@@ -20,9 +20,10 @@
 import http from "node:http";
 import net from "node:net";
 import os from "node:os";
-import { classify, isAllowedName, isManagedContainer, validateCreate, MANAGED_LABEL } from "./policy.mjs";
+import { classify, isAllowedName, isManagedContainer, validateCreate, validateExecCreate, validateExecStart, MANAGED_LABEL } from "./policy.mjs";
 
 const MAX_BODY = 2 * 1024 * 1024;
+const isObject = value => typeof value === "object" && value !== null && !Array.isArray(value);
 /** Тело hijack-запроса: `exec/start` шлёт JSON в десятки байт, больше — уже ошибка клиента. */
 const MAX_UPGRADE_BODY = 64 * 1024;
 /**
@@ -224,12 +225,39 @@ export function createBrokerServer({ socketPath, upstreamPath, policy, log = con
       }
     }
 
-    // Создание exec возвращает id сессии, и только её `start` будет разрешён. Ответ небольшой,
-    // поэтому читается целиком, регистрируется и отдаётся клиенту без изменений.
+    // Создание exec возвращает id сессии, и только её `start` будет разрешён. Тело проверяем
+    // до демона: иначе exec мог бы попросить root, TTY или рабочий каталог вне /workspace.
     if (decision.kind === "container" && decision.action === "exec") {
+      let parsed;
+      try {
+        parsed = JSON.parse(body.toString("utf8") || "{}");
+      } catch {
+        return sendError(response, 400, "Тело exec — не JSON");
+      }
+      const verdict = validateExecCreate(parsed);
+      if (!verdict.ok) {
+        log.warn("[broker] отказ exec: " + verdict.message);
+        return sendError(response, 403, verdict.message);
+      }
       return proxyCapture(request, response, body, json => {
         if (json && typeof json.Id === "string") rememberExec(json.Id);
       });
+    }
+
+    // Обычный (не hijack) exec/start — это `docker exec -d` для app-relay. Проверяем и его:
+    // иначе detached-запуск обходил бы validateExecStart, который стоит на upgraded-пути.
+    if (decision.kind === "exec-start") {
+      let parsed;
+      try {
+        parsed = JSON.parse(body.toString("utf8") || "{}");
+      } catch {
+        return sendError(response, 400, "Тело exec/start — не JSON");
+      }
+      const verdict = validateExecStart(parsed, { allowDetach: true });
+      if (!verdict.ok) {
+        log.warn("[broker] отказ exec/start: " + verdict.message);
+        return sendError(response, 403, verdict.message);
+      }
     }
 
     return proxy(request, response, body);
@@ -257,8 +285,25 @@ export function createBrokerServer({ socketPath, upstreamPath, policy, log = con
         } catch {
           return { ok: false, status: 400, message: "Тело network connect — не JSON" };
         }
-        const container = typeof parsed?.Container === "string" ? parsed.Container : "";
+        if (!isObject(parsed)) return { ok: false, status: 400, message: "Тело network connect должно быть объектом" };
+        for (const key of Object.keys(parsed)) {
+          if (key !== "Container" && key !== "EndpointConfig") {
+            return { ok: false, status: 403, message: "Неизвестное поле network connect запрещено: " + key };
+          }
+        }
+        const container = typeof parsed.Container === "string" ? parsed.Container : "";
         if (!container) return { ok: false, status: 400, message: "network connect без имени контейнера" };
+        const endpoint = parsed.EndpointConfig;
+        // Alias/IPAM/links позволили бы выдать один контейнер за другой сервис внутри сети.
+        // Docker CLI может прислать пустые поля (`Aliases: []`, `IPAMConfig: null`) — это не
+        // настройка endpoint, а сериализация Go-структуры, поэтому такие значения допустимы.
+        const emptyEndpointValue = value => value === undefined || value === null || value === "" ||
+          (Array.isArray(value) && value.length === 0) ||
+          (isObject(value) && Object.values(value).every(emptyEndpointValue));
+        if (endpoint !== undefined && endpoint !== null &&
+            (!isObject(endpoint) || !Object.values(endpoint).every(emptyEndpointValue))) {
+          return { ok: false, status: 403, message: "EndpointConfig при network connect должен быть пустым" };
+        }
         const state = await managedState(container);
         if (state !== "managed" && state !== "missing") {
           return { ok: false, status: state === "unmanaged" ? 403 : 502, message: "Подключать можно только контейнеры платформы" };
@@ -514,6 +559,26 @@ export function createBrokerServer({ socketPath, upstreamPath, policy, log = con
     if (bodyLength > 0 && body.length < bodyLength) {
       log.warn("[broker] upgrade: тело " + request.method + " " + request.url + " пришло неполным — " +
         body.length + "/" + bodyLength + " байт");
+    }
+    if (decision.kind === "exec-start") {
+      let parsed;
+      try {
+        parsed = JSON.parse(body.toString("utf8") || "{}");
+      } catch {
+        log.warn("[broker] отказ exec/start: тело не JSON");
+        writeRawError(clientSocket, 400, "Тело exec/start — не JSON");
+        return;
+      }
+      const verdict = validateExecStart(parsed);
+      if (!verdict.ok) {
+        log.warn("[broker] отказ exec/start: " + verdict.message);
+        writeRawError(clientSocket, 403, verdict.message);
+        return;
+      }
+    } else if (decision.kind === "container" && decision.action === "attach" && bodyLength > 0) {
+      log.warn("[broker] отказ attach: тело не ожидается");
+      writeRawError(clientSocket, 403, "attach с телом запрещён");
+      return;
     }
 
     const upstream = net.connect(upstreamPath);

@@ -119,6 +119,9 @@ services:
       # Явно заданная сеть предпросмотра: имя может не кончаться на `preview`, и тогда правило
       # по суффиксу её не узнает. Пустое значение — правило по имени (как в preview-network.ts).
       PREVIEW_NETWORK: ${PREVIEW_NETWORK:-}
+      # Отдельная сеть serverless-функций. Создаётся выкаткой; брокер разрешает ровно это имя,
+      # чтобы контейнер функции не оказался в сети API, базы или preview.
+      FUNCTIONS_DOCKER_NETWORK: ${FUNCTIONS_DOCKER_NETWORK:-webnestdev-functions}
       BROKER_SOCKET_MODE: "0660"
       # Сервер после этапа 2.2 работает от uid 1000; сокет должен быть доступен этой группе.
       BROKER_SOCKET_GID: ${WEBNESTDEV_GID:-1000}
@@ -578,6 +581,9 @@ services:
       # оставляет выбор серверу: он читает свои сети у Docker и берёт ту, что кончается на
       # `preview`, никогда не сеть базы (server/src/preview/preview-network.ts).
       PREVIEW_NETWORK: ${PREVIEW_NETWORK:-}
+      # Сеть serverless-функций: публичный интернет разрешён, private/metadata закрыты правилами
+      # хоста. Это не сеть платформы и не bridge по умолчанию.
+      FUNCTIONS_DOCKER_NETWORK: ${FUNCTIONS_DOCKER_NETWORK:-webnestdev-functions}
       # Runtime (Docker/hybrid) без запросов останавливается; static живёт по своему таймеру.
       PREVIEW_IDLE_MS: ${PREVIEW_IDLE_MS:-180000}
       PREVIEW_STATIC_IDLE_MS: ${PREVIEW_STATIC_IDLE_MS:-900000}

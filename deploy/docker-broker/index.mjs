@@ -19,6 +19,8 @@
  *   BROKER_SOCKET_GID  — группа сокета, чтобы сервер мог ходить в него не от root.
  */
 import fs from "node:fs";
+import http from "node:http";
+import os from "node:os";
 import path from "node:path";
 import { createBrokerServer } from "./proxy.mjs";
 
@@ -30,6 +32,17 @@ const previewCacheRoot = path.posix.resolve(process.env.BROKER_PREVIEW_CACHE_ROO
 const hostingSitesRoot = path.posix.resolve(process.env.BROKER_HOSTING_SITES_ROOT?.trim() || "/var/lib/webnestdev/sites");
 const image = (process.env.BROKER_IMAGE?.trim() || process.env.SANDBOX_IMAGE?.trim() || "node:26-bookworm");
 const previewNetwork = process.env.PREVIEW_NETWORK?.trim() || "";
+const functionsNetwork = process.env.FUNCTIONS_DOCKER_NETWORK?.trim() || "webnestdev-functions";
+if (!/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/.test(functionsNetwork)) {
+  console.error("[broker] FUNCTIONS_DOCKER_NETWORK должен быть именем Docker-сети");
+  process.exit(1);
+}
+if (["bridge", "host", "none", "default"].includes(functionsNetwork.toLowerCase()) ||
+    (previewNetwork && functionsNetwork === previewNetwork) ||
+    /(^|[-_])preview$/i.test(functionsNetwork)) {
+  console.error("[broker] FUNCTIONS_DOCKER_NETWORK не должен быть встроенной или preview-сетью");
+  process.exit(1);
+}
 const runtime = (process.env.BROKER_RUNTIME?.trim() || process.env.SANDBOX_RUNTIME?.trim() || "docker").toLowerCase();
 // Политика умеет только эти два значения. Опечатка должна остановить брокер с понятной
 // причиной, а не оставить его с runtime, который не разрешит ни один create.
@@ -67,6 +80,9 @@ const policy = {
   // имя которой кончается на preview. Сеть базы (`…db`) под это правило не подходит.
   isPreviewNetwork: name =>
     name === previewNetwork || /(^|[-_])preview$/i.test(String(name ?? "")),
+  // Сеть serverless-функций создаётся выкаткой отдельно. Она не входит в compose-проект,
+  // поэтому разрешаем ровно одно имя из окружения, а не шаблон по суффиксу.
+  isFunctionsNetwork: name => name === functionsNetwork,
 };
 
 const socketDir = path.dirname(socketPath);
@@ -85,6 +101,42 @@ try {
   fs.unlinkSync(socketPath);
 } catch (error) {
   if (error.code !== "ENOENT") throw error;
+}
+
+/** Собственные сети брокера: так сеть функций не может случайно оказаться сетью API. */
+function ownNetworks() {
+  return new Promise(resolve => {
+    const request = http.request({
+      socketPath: upstreamPath,
+      path: "/containers/" + encodeURIComponent(os.hostname()) + "/json",
+      method: "GET",
+      timeout: 3_000,
+    }, response => {
+      let body = "";
+      response.setEncoding("utf8");
+      response.on("data", chunk => { if (body.length < 64 * 1024) body += chunk; });
+      response.on("end", () => {
+        if (response.statusCode !== 200) return resolve(null);
+        try {
+          const parsed = JSON.parse(body);
+          resolve(Object.keys(parsed?.NetworkSettings?.Networks ?? {}));
+        } catch {
+          resolve(null);
+        }
+      });
+    });
+    request.on("timeout", () => { request.destroy(); resolve(null); });
+    request.on("error", () => resolve(null));
+    request.end();
+  });
+}
+
+const brokerNetworks = await ownNetworks();
+if (brokerNetworks === null) {
+  console.warn("[broker] не удалось прочитать собственные сети; проверка совпадения с сетью API пропущена");
+} else if (brokerNetworks.includes(functionsNetwork)) {
+  console.error("[broker] FUNCTIONS_DOCKER_NETWORK совпадает с сетью брокера (" + functionsNetwork + ") — это не отдельная сеть функций");
+  process.exit(1);
 }
 
 const server = createBrokerServer({ socketPath, upstreamPath, policy });
@@ -111,7 +163,8 @@ server.listen(socketPath, () => {
     ", демон " + upstreamPath + ", образ " + image + ", песочницы " + sandboxRoot +
     ", кэш зависимостей " + previewCacheRoot +
     ", runtime " + runtime +
-    (previewNetwork ? ", сеть предпросмотра " + previewNetwork : ""),
+    (previewNetwork ? ", сеть предпросмотра " + previewNetwork : "") +
+    ", сеть функций " + functionsNetwork
   );
 });
 

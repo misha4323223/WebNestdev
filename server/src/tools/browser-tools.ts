@@ -133,6 +133,7 @@ registerTool({
 
 
 import { chromium,type Browser,type Page } from "playwright";
+import { launchGuardedBrowser } from "./browser-network.js";
 
 const MAX_CONSOLE_ITEMS = 100;
 const MAX_NETWORK_ITEMS = 100;
@@ -284,9 +285,13 @@ export async function inspectPreviewThroughPanelProxy(input: {
 }): Promise<ProxyDoorResult> {
   const url = input.selfBase.replace(/\/+$/, "") + previewProxyBase(input.projectId) + input.path.replace(/^\/+/, "");
   try {
-    const browser = await chromium.launch({ headless: true, executablePath: process.env.WEBNESTDEV_BROWSER_EXECUTABLE || undefined });
+    const guarded = await launchGuardedBrowser(
+      chromium.launch.bind(chromium),
+      { headless: true, executablePath: process.env.WEBNESTDEV_BROWSER_EXECUTABLE || undefined },
+      [url],
+    );
     try {
-      const door = await loadDoor(browser, url, input.cookie, undefined, input.view);
+      const door = await loadDoor(guarded.browser, url, input.cookie, undefined, input.view);
       // Сам вход не открылся: прокси ответил отказом (нет сессии, проект не найден). Это не поломка
       // страницы — проверка честно говорит, что через панель посмотреть не удалось.
       if (door.status === null || door.status === 401 || door.status === 403 || door.status === 404) {
@@ -294,7 +299,7 @@ export async function inspectPreviewThroughPanelProxy(input: {
       }
       return { checked: true, url, ok: door.failures.length === 0, status: door.status, rendered: door.rendered, failures: door.failures, background: door.background };
     } finally {
-      await browser.close();
+      await guarded.close();
     }
   } catch (error) {
     // Адрес платформы может быть недостижим изнутри проверки: это ограничение среды, а не поломка
@@ -338,18 +343,22 @@ async function inspectRuntimePage(projectId: string, path: string, userId?: stri
 
   // Куда положить PNG: служебная папка проекта. Владельца нет — проверка идёт без снимка.
   const sandbox = userId ? await getSandbox(projectId, userId).catch(() => null) : null;
-  const browser = await chromium.launch({ headless: true, executablePath: process.env.WEBNESTDEV_BROWSER_EXECUTABLE || undefined });
+  const guarded = await launchGuardedBrowser(
+    chromium.launch.bind(chromium),
+    { headless: true, executablePath: process.env.WEBNESTDEV_BROWSER_EXECUTABLE || undefined },
+    [access.baseUrl],
+  );
   let door: DoorEvidence;
   try {
     door = await loadDoor(
-      browser,
+      guarded.browser,
       access.urlFor(path),
       access.cookie,
       sandbox ? { root: sandbox.root, projectId, label: "runtime" } : undefined,
       view,
     );
   } finally {
-    await browser.close();
+    await guarded.close();
   }
   const panel = await inspectProxyDoor({ projectId, path, userId, view });
   const panelFailures = (panel.failures ?? []).map(item => "через прокси панели: " + item);

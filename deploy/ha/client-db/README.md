@@ -52,8 +52,9 @@ Gluster. Gluster — replica 2 для файлов проектов; PostgreSQL 
    GRANT SELECT, INSERT, UPDATE ON TABLE nestdev_admin.tenants TO nestdev_client_admin;
    ```
    `CREATEROLE` нужен для `ALTER ROLE … SET` дочерних tenant-роли; членство в tenant-роли
-   выдаётся только на время `CREATE SCHEMA` и сразу снимается. Роль не является superuser и не
-   имеет постоянного доступа к данным клиентов.
+   выдаётся только на время DDL (создание схемы и смена её владельца) и сразу снимается. Схемой
+   владеет администратор, tenant получает права внутри неё. Роль не является superuser и не имеет
+   постоянного доступа к данным клиентов.
 2. На `node-1`:
    `REPL_PASSWORD='…' ./install.sh primary`
 3. Скопировать `/etc/webnestdev/client-db.env` с `node-1` на `node-2`, заменив

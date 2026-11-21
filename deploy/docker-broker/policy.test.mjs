@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { classify, isAllowedName, isManagedContainer, stripVersion, validateCreate } from "./policy.mjs";
+import { classify, isAllowedName, isManagedContainer, stripVersion, validateCreate, validateExecCreate, validateExecStart } from "./policy.mjs";
 
 /**
  * Политика проверяется без Docker: это и есть её смысл. Тело `create` в фикстуре — то, что
@@ -22,6 +22,7 @@ const policy = {
   // отдельным тестом ниже, с подставным резолвером.
   realpath: value => value,
   isPreviewNetwork: name => name === "webnestdev-preview",
+  isFunctionsNetwork: name => name === "webnestdev-functions",
 };
 
 function createBody(overrides = {}) {
@@ -262,6 +263,15 @@ test("NetworkingConfig той же разрешённой сети проход�
   assert.deepEqual(validateCreate(none, policy), { ok: true });
 });
 
+test("отдельная сеть функций разрешена, но bridge по умолчанию — нет для контейнера функции", () => {
+  const functions = withHost(
+    { NetworkMode: "webnestdev-functions" },
+    { NetworkingConfig: { EndpointsConfig: { "webnestdev-functions": {} } } },
+  );
+  assert.deepEqual(validateCreate(functions, policy), { ok: true });
+  assert.equal(validateCreate(withHost({ NetworkMode: "webnestdev-functions" }), { ...policy, isFunctionsNetwork: undefined }).ok, false);
+});
+
 test("проба без -e и -w проходит: Env null и пустой WorkingDir — дефолты Docker", () => {
   assert.deepEqual(validateCreate(createBody({ Env: null, WorkingDir: "" }), policy), { ok: true });
   assert.deepEqual(validateCreate(createBody({ Env: undefined }), policy), { ok: true });
@@ -332,6 +342,44 @@ test("create выходит за песочницу — отказ", () => {
     assert.equal(verdict.ok, false, "должно быть запрещено: " + name);
     assert.ok(verdict.message.length > 0);
   }
+});
+
+test("exec разрешён только от uid 1000, без TTY/root и внутри /workspace", () => {
+  const valid = {
+    AttachStdin: false,
+    AttachStdout: true,
+    AttachStderr: true,
+    Tty: false,
+    Env: null,
+    Cmd: ["node", "-e", "1+1"],
+    Privileged: false,
+    User: "",
+    WorkingDir: "",
+    DetachKeys: "",
+    ConsoleSize: [0, 0],
+  };
+  assert.deepEqual(validateExecCreate(valid), { ok: true });
+  assert.deepEqual(validateExecCreate({ ...valid, Detach: true }), { ok: true }, "-d нужен app-relay");
+  assert.equal(validateExecCreate({ ...valid, Privileged: true }).ok, false);
+  assert.equal(validateExecCreate({ ...valid, Tty: true }).ok, false);
+  assert.equal(validateExecCreate({ ...valid, User: "0" }).ok, false);
+  assert.equal(validateExecCreate({ ...valid, WorkingDir: "/" }).ok, false);
+  assert.equal(validateExecCreate({ ...valid, WorkingDir: "/workspace/../../etc" }).ok, false);
+  assert.deepEqual(validateExecCreate({ ...valid, WorkingDir: "/workspace/src/../app" }), { ok: true });
+  assert.equal(validateExecCreate({ ...valid, Cmd: [] }).ok, false);
+  assert.equal(validateExecCreate({ ...valid, SomethingNew: { a: 1 } }).ok, false);
+  assert.equal(validateExecCreate({ ...valid, Cmd: ["x".repeat(256 * 1024 + 1)] }).ok, false);
+});
+
+test("exec/start: upgraded — присоединённый, обычный — только Detach: true", () => {
+  assert.deepEqual(validateExecStart({ Detach: false, Tty: false }), { ok: true });
+  assert.equal(validateExecStart({ Detach: true }).ok, false);
+  assert.deepEqual(validateExecStart({ Detach: true, Tty: false }, { allowDetach: true }), { ok: true });
+  assert.equal(validateExecStart({ Detach: false, Tty: false }, { allowDetach: true }).ok, false);
+  assert.equal(validateExecStart({ Detach: true, Tty: true }, { allowDetach: true }).ok, false);
+  assert.equal(validateExecStart({ Tty: true }).ok, false);
+  assert.equal(validateExecStart({ ConsoleSize: [1, 1] }).ok, false);
+  assert.equal(validateExecStart({ SomethingNew: true }).ok, false);
 });
 
 test("корень песочниц разрешён: его монтирует проверка путей", () => {

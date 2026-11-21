@@ -4,6 +4,7 @@ import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { isPrivateAddress as isBlockedAddress } from "../security/address-policy.js";
 import { withoutPlatformCookies } from "./preview-proxy.js";
 
 /**
@@ -58,37 +59,14 @@ function isObject(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-function privateIpv4(address: string) {
-  const parts = address.split(".").map(Number);
-  if (parts.length !== 4 || parts.some(part => !Number.isInteger(part) || part < 0 || part > 255)) return true;
-  const [a = 0, b = 0] = parts;
-  return (
-    a === 0 ||
-    a === 10 ||
-    a === 127 ||
-    (a === 100 && b >= 64 && b <= 127) ||
-    (a === 169 && b === 254) ||
-    (a === 172 && b >= 16 && b <= 31) ||
-    (a === 192 && b === 0) ||
-    (a === 192 && b === 168) ||
-    (a === 198 && (b === 18 || b === 19)) ||
-    (a === 198 && b === 51) ||
-    (a === 203 && b === 0) ||
-    a >= 224
-  );
-}
-
 /** True for loopback, link-local, private, documentation and other non-public addresses. */
 export function isPrivateAddress(address: string) {
-  const family = isIP(address);
-  if (family === 4) return privateIpv4(address);
-  if (family !== 6) return true;
-  const normalized = address.toLowerCase().split("%")[0] ?? "";
-  if (normalized === "::" || normalized === "::1") return true;
-  if (normalized.startsWith("fc") || normalized.startsWith("fd")) return true;
-  if (normalized.startsWith("fe8") || normalized.startsWith("fe9") || normalized.startsWith("fea") || normalized.startsWith("feb")) return true;
-  if (normalized.startsWith("::ffff:")) return privateIpv4(normalized.slice(7));
-  return false;
+  const value = (address ?? "").trim();
+  // Не адрес — отказ: вызывающий передаёт результат DNS, а не имя.
+  if (!value || isIP(value.split("%")[0]!) === 0) return true;
+  // Та же классификация, что у browser-прокси и egress: 6to4/Teredo/NAT64 и translated
+  // записи не должны становиться обходом private-сети в api-прокси проекта.
+  return isBlockedAddress(value);
 }
 
 function literalHostIsPrivate(hostname: string) {
@@ -165,6 +143,10 @@ async function publicAddresses(hostname: string) {
     throw new Error("upstream " + hostname + " не разрешается в IP-адрес");
   }
   if (!addresses.length) throw new Error("upstream " + hostname + " не имеет IP-адреса");
+  // Соединяемся только с IP: имя, возвращённое резолвером, Node разрешил бы заново.
+  if (addresses.some(entry => isIP(entry.address) === 0)) {
+    throw new Error("upstream " + hostname + " разрешился не в IP-адрес");
+  }
   if (addresses.some(entry => isPrivateAddress(entry.address))) {
     throw new Error("upstream " + hostname + " указывает на локальный или приватный адрес");
   }

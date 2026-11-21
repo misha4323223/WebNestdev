@@ -1,4 +1,4 @@
-import { chromium, type Browser } from "playwright";
+import { chromium } from "playwright";
 import { getSandbox } from "../sandbox/sandbox-service.js";
 import { previewAccessFor, type PreviewAccess } from "../preview/owner-access.js";
 import { previewStatus } from "../preview-manager.js";
@@ -6,6 +6,7 @@ import { registerTool } from "../tool-registry.js";
 import { withBrowserSlot } from "./browser-limiter.js";
 import { layoutSummary, readLayout, saveScreenshot, type LayoutAudit, type SavedScreenshot } from "./screenshot-file.js";
 import { BROWSER_VIEWPORTS, readBrowserViewport, type BrowserViewport } from "./browser-viewport.js";
+import { launchGuardedBrowser } from "./browser-network.js";
 
 /**
  * Снимок страницы — вторая половина проверки вёрстки. browser.runtime отвечает, что страница
@@ -61,10 +62,12 @@ export async function captureScreenshot(input: {
 }): Promise<ScreenshotResult> {
   const access = await openPreview(input.projectId);
   const sandbox = await getSandbox(input.projectId, input.userId);
-  const browser: Browser = await chromium.launch({
-    headless: true,
-    executablePath: process.env.WEBNESTDEV_BROWSER_EXECUTABLE || undefined,
-  });
+  const guarded = await launchGuardedBrowser(
+    chromium.launch.bind(chromium),
+    { headless: true, executablePath: process.env.WEBNESTDEV_BROWSER_EXECUTABLE || undefined },
+    [access.baseUrl],
+  );
+  const browser = guarded.browser;
   try {
     const context = await browser.newContext({ viewport: VIEWPORTS[input.viewport] });
     try {
@@ -100,7 +103,7 @@ export async function captureScreenshot(input: {
       await context.close().catch(() => undefined);
     }
   } finally {
-    await browser.close();
+    await guarded.close();
   }
 }
 

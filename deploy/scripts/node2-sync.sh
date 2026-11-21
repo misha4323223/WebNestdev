@@ -66,6 +66,7 @@ CADDY_RELOAD_SRC="${CADDY_RELOAD_SRC:-$APP_DIR/deploy/ha}"
 HA_CODE_SRC="${HA_CODE_SRC:-$CADDY_RELOAD_SRC}"
 HA_CODE_DST="${HA_CODE_DST:-/opt/webnestdev-ha}"
 EGRESS_SCRIPT_SRC="${EGRESS_SCRIPT_SRC:-$APP_DIR/deploy/scripts/egress-firewall.sh}"
+FUNCTIONS_NETWORK="${FUNCTIONS_DOCKER_NETWORK:-webnestdev-functions}"
 CUSTOM_DOMAINS_CADDY_DIR="${CUSTOM_DOMAINS_CADDY_DIR:-/var/lib/webnestdev/data/caddy-custom}"
 CADDY_DATA_HOST_DIR="${CADDY_DATA_HOST_DIR:-/var/lib/webnestdev/data/caddy-data}"
 KEEP_IMAGES="${KEEP_IMAGES:-2}"
@@ -74,6 +75,18 @@ DRY_RUN="${DRY_RUN:-0}"
 
 log(){ printf '[node2] %s\n' "$*"; }
 run(){ if [ "$DRY_RUN" = "1" ]; then log "dry-run: $*"; else "$@"; fi; }
+
+# Отдельная сеть функций не должна быть встроенной или сетью предпросмотра: иначе чужой код
+# получит доступ к чужим preview, а не только к публичному интернету.
+case "$FUNCTIONS_NETWORK" in
+  ""|*[!A-Za-z0-9_.-]*|[!A-Za-z0-9]*)
+    log "FUNCTIONS_DOCKER_NETWORK должен быть именем Docker-сети: $FUNCTIONS_NETWORK"; exit 1 ;;
+  bridge|host|none|default)
+    log "FUNCTIONS_DOCKER_NETWORK не может быть встроенной сетью: $FUNCTIONS_NETWORK"; exit 1 ;;
+esac
+if printf '%s' "$FUNCTIONS_NETWORK" | grep -Eq '(^|[-_])preview$'; then
+  log "FUNCTIONS_DOCKER_NETWORK не может быть сетью предпросмотра: $FUNCTIONS_NETWORK"; exit 1
+fi
 
 # По умолчанию вторая нода обязательна: иначе выкатка зеленеет, а HA-контур
 # остаётся на старой сборке. Для осознанного одиночного режима задайте SYNC_NODE2=0.
@@ -390,7 +403,17 @@ compose_cmd(){
 }
 
 log "пересоздаю на node-2: $NODE2_SERVICES (включая Caddy, чтобы обновился и образ)"
-run ssh2 "cd '$NODE2_APP_DIR' && WEBNESTDEV_IMAGE='$IMAGE_REF' $(compose_cmd) up -d --no-build --no-deps $NODE2_SERVICES"
+# Сеть функций не создаётся compose: без неё первый же вызов функции упал бы на `--network`.
+run ssh2 "docker network inspect '$FUNCTIONS_NETWORK' >/dev/null 2>&1 || docker network create --driver bridge --label webnestdev.functions=1 '$FUNCTIONS_NETWORK'"
+if [ "$DRY_RUN" != "1" ]; then
+  if [ "$(ssh2 "docker network inspect -f '{{.EnableIPv6}}' '$FUNCTIONS_NETWORK' 2>/dev/null" || true)" = "true" ]; then
+    log "сеть функций $FUNCTIONS_NETWORK включает IPv6 — правила хоста закрывают только IPv4"; exit 1
+  fi
+  if [ "$(ssh2 "docker network inspect -f '{{.Driver}}' '$FUNCTIONS_NETWORK' 2>/dev/null" || true)" != "bridge" ]; then
+    log "сеть функций $FUNCTIONS_NETWORK должна быть bridge"; exit 1
+  fi
+fi
+run ssh2 "cd '$NODE2_APP_DIR' && FUNCTIONS_DOCKER_NETWORK='$FUNCTIONS_NETWORK' WEBNESTDEV_IMAGE='$IMAGE_REF' $(compose_cmd) up -d --no-build --no-deps $NODE2_SERVICES"
 
 # Legacy postgres на node-2: тот же дефект, что и на первой ноде, — после `up` он мог остаться
 # в работе с прошлой ручной выкатки.
@@ -509,7 +532,7 @@ if [ -n "$DEPLOY_SCRIPT_SRC" ] && [ -f "$DEPLOY_SCRIPT_SRC" ]; then
       # У node-2 нет .env: без COMPOSE_ENV_FILES `docker compose config/exec` в MODE=egress
       # возвращает пустоту, проверка считает прокси мёртвым и снимает уже поставленные правила.
       node2_compose_envs=$(printf '%s' "$NODE2_ENV_FILES" | tr ' ' ',')
-      ssh2 "MODE='egress' APP_DIR='$NODE2_APP_DIR' COMPOSE_ENV_FILES='$node2_compose_envs' EGRESS_FIREWALL_B64='$egress_b64' bash '$remote_script'" || \
+      ssh2 "MODE='egress' APP_DIR='$NODE2_APP_DIR' COMPOSE_ENV_FILES='$node2_compose_envs' FUNCTIONS_DOCKER_NETWORK='$FUNCTIONS_NETWORK' EGRESS_FIREWALL_B64='$egress_b64' bash '$remote_script'" || \
         log "правила egress на node-2 не применены — смотрите лог выше"
     else
       log "egress-firewall.sh не найден ($EGRESS_SCRIPT_SRC) — правила на node-2 не ставлю"

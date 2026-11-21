@@ -42,7 +42,10 @@ test("провижининг создаёт роль раньше схемы", (
   assert.match(statements[0], /^CREATE ROLE "tenant_[0-9a-f]{16}" LOGIN PASSWORD '/);
   const schemaIndex = statements.findIndex(statement => statement.startsWith("CREATE SCHEMA"));
   assert.ok(schemaIndex > 0, "схема создаётся после роли");
-  assert.match(statements[schemaIndex]!, /AUTHORIZATION "tenant_[0-9a-f]{16}"/);
+  assert.match(statements[schemaIndex]!, /^CREATE SCHEMA IF NOT EXISTS "tenant_[0-9a-f]{16}"$/);
+  assert.ok(statements.some(statement => /ALTER SCHEMA "tenant_[0-9a-f]{16}" OWNER TO CURRENT_USER/.test(statement)),
+    "схемой владеет администратор, а не tenant-роль");
+  assert.ok(statements.some(statement => /GRANT USAGE, CREATE ON SCHEMA/.test(statement)));
 });
 
 test("существующая роль не пересоздаётся, но пароль и лимиты обновляются", () => {
@@ -60,6 +63,7 @@ test("права ограничены своей схемой и public", () => 
   assert.match(joined, /GRANT "tenant_[0-9a-f]{16}" TO CURRENT_USER/);
   assert.match(joined, /REVOKE "tenant_[0-9a-f]{16}" FROM CURRENT_USER/);
   assert.match(joined, /GRANT CONNECT ON DATABASE "app"/);
+  assert.match(joined, /REVOKE CREATE ON DATABASE "app" FROM/);
   assert.match(joined, /statement_timeout/);
   assert.match(joined, /idle_in_transaction_session_timeout/);
   assert.doesNotMatch(joined, /temp_file_limit/, "temp_file_limit доступен только superuser");
@@ -71,8 +75,8 @@ test("членство администратора снимается посл�
   const schemaIndex = statements.findIndex(statement => statement.startsWith("CREATE SCHEMA"));
   const grantIndex = statements.findIndex(statement => statement.startsWith("GRANT \"tenant_"));
   const revokeIndex = statements.findIndex(statement => statement.startsWith("REVOKE \"tenant_"));
-  assert.ok(grantIndex > 0 && grantIndex < schemaIndex, "членство нужно до AUTHORIZATION");
-  assert.ok(revokeIndex > schemaIndex, "членство снимается сразу после схемы");
+  assert.ok(grantIndex > 0 && grantIndex < schemaIndex, "членство нужно для ALTER SCHEMA существующей схемы");
+  assert.ok(revokeIndex > schemaIndex, "членство снимается после настройки схемы");
 });
 
 test("слабый пароль не проходит", () => {

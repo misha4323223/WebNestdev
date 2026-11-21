@@ -130,8 +130,10 @@ test("нулевая квота (тариф без базы) всегда read-o
   assert.ok(!db.calls.some(call => /DROP/i.test(call.sql)));
 });
 
-test("повторная проверка без изменения состояния не трогает роль", async () => {
+test("повторная проверка read-only заново подтверждает запрет, а не доверяет старому флагу", async () => {
   const db = fakeDb([{ rows: [{ bytes: 200 }] }, { rows: [] }]);
   await applyTenantQuota(db, tenant({ readOnly: true }), 100);
-  assert.ok(!db.calls.some(call => /ALTER ROLE/.test(call.sql)));
+  assert.ok(db.calls.some(call => /CONNECTION LIMIT 0/.test(call.sql)), "новые сессии закрыты");
+  assert.ok(db.calls.some(call => /REVOKE ALL PRIVILEGES ON ALL TABLES/.test(call.sql)));
+  assert.ok(db.calls.some(call => /default_transaction_read_only = on/.test(call.sql)));
 });

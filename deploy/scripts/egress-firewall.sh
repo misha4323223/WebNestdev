@@ -1,16 +1,18 @@
 #!/bin/sh
-# Правила, закрывающие выход контейнерам проекта мимо egress-прокси (пункт 5.1 плана
-# масштабирования, docs/SCALING_3000_PLAN.md).
+# Правила, закрывающие сетевые обходы для чужого кода (пункт 5.1 плана масштабирования,
+# docs/SCALING_3000_PLAN.md).
 #
 # Зачем отдельный файл, а не строки в vm-deploy.sh: правила нужны и после перезагрузки ВМ, когда
 # никакой выкатки не было. Поэтому скрипт ставится на хост (выкатка кладёт его в /usr/local/sbin и
 # включает systemd-юнит), а выкатка запускает его же — одна реализация, два повода.
 #
-# Что делает: в цепочке DOCKER-USER (Docker её не пересоздаёт и не чистит) запрещает исходящие
-# соединения из подсети сети предпросмотра. Разрешено ровно два вида трафика:
-#   1) из контейнеров сервера и брокера наружу — они сами ходят в провайдера модели, S3 и GitHub;
-#   2) внутри подсети предпросмотра — API, дверь, сам предпросмотр и прокси на 3128.
-# Всё остальное отклоняется, поэтому «поставить пакет мимо прокси» сырым сокетом больше нельзя.
+# Что делает:
+#   1) сеть предпросмотра — запрещает исходящие соединения, кроме доступа к egress-прокси API
+#      (порт 3128). Контейнеры предпросмотра больше не видят друг друга и внутренние порты API;
+#      наружу они ходят только через прокси, который проверяет allowlist;
+#   2) сеть serverless-функций — разрешает публичный интернет, но отклоняет private, loopback,
+#      link-local, CGNAT и metadata. Функция не может дотянуться до API, PostgreSQL, Docker или
+#      облачного metadata, а внешние API и CDN продолжают работать.
 #
 # DNS работает: контейнеры резолвят через встроенный DNS Docker, а запросы наружу делает демон на
 # хосте — вне этих правил. Это осознанно: иначе вместе с обходом прокси сломался бы и allowlist,
@@ -30,7 +32,7 @@ CHAIN="DOCKER-USER"
 TAG="webnestdev-egress"
 ACTION="${1:-apply}"
 SERVER_SERVICE="${SERVER_SERVICE:-webnestdev-server}"
-BROKER_SERVICE="${BROKER_SERVICE:-docker-broker}"
+FUNCTIONS_NETWORK="${FUNCTIONS_DOCKER_NETWORK:-webnestdev-functions}"
 
 log() { printf '[egress-firewall] %s\n' "$*"; }
 
@@ -85,7 +87,8 @@ subnet_of() {
     grep -E '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+$' | head -n 1
 }
 
-# Адреса контейнеров сервера и брокера: им выход наружу нужен, и они в той же подсети.
+# Адреса контейнеров сервера. Preview-контейнеру нужен только прокси на сервере, но сервер сам
+# ходит наружу и не должен попасть под правило источника.
 addresses_of() {
   service="$1"
   ids=$(docker ps -q --filter "label=com.docker.compose.service=$service" 2>/dev/null || true)
@@ -99,35 +102,91 @@ add_rule() {
   iptables -A "$CHAIN" "$@" -m comment --comment "$TAG" || log "не удалось добавить правило: $*"
 }
 
-apply_rules() {
+apply_preview_rules() {
   net=$(network_name)
   if [ -z "$net" ]; then
-    log "сеть предпросмотра не найдена — правила не ставлю"
-    exit 0
+    log "сеть предпросмотра не найдена — правила preview не ставлю"
+    return 0
   fi
   cidr=$(subnet_of "$net")
   if [ -z "$cidr" ]; then
-    log "у сети $net нет IPv4-подсети — правила не ставлю"
-    exit 0
+    log "у сети $net нет IPv4-подсети — правила preview не ставлю"
+    return 0
   fi
-  clear_rules
+  # Адрес сервера может измениться при пересоздании контейнера, а сеть API остаётся той же.
+  # Поэтому разрешаем прокси по подсети API, а не только по текущему IP: иначе после рестарта
+  # Docker правило /32 устаревало бы и preview терял установку пакетов до следующей выкатки.
+  api_net=$(docker network ls --filter label=com.docker.compose.network=webnestdev --format '{{.Name}}' 2>/dev/null | head -n 1 || true)
+  api_cidr=""
+  if [ -n "$api_net" ]; then api_cidr=$(subnet_of "$api_net"); fi
   exceptions=0
-  for address in $(addresses_of "$SERVER_SERVICE") $(addresses_of "$BROKER_SERVICE"); do
-    add_rule -s "$cidr" -d "$address/32" -j RETURN
+  for address in $(addresses_of "$SERVER_SERVICE"); do
+    # Только egress-прокси. API 8787, health и дверь 8788/8789 из контейнера проекта не нужны:
+    # иначе чужой код мог бы обращаться к внутренним маршрутам платформы напрямую.
+    add_rule -s "$cidr" -d "$address/32" -p tcp --dport "${EGRESS_PROXY_PORT:-3128}" -j RETURN
     exceptions=$((exceptions + 1))
   done
-  # Внутри подсети: API и прокси (3128), дверь (8788/8789) и сам предпросмотр. Это не «дыра»:
-  # выйти наружу отсюда всё равно нельзя, а прокси стоит именно там.
-  add_rule -s "$cidr" -d "$cidr" -j RETURN
+  if [ -n "$api_cidr" ]; then
+    add_rule -s "$cidr" -d "$api_cidr" -p tcp --dport "${EGRESS_PROXY_PORT:-3128}" -j RETURN
+    exceptions=$((exceptions + 1))
+  fi
+  # Контейнеры preview не должны видеть друг друга: HMR идёт от браузера через Caddy, а не
+  # контейнер-контейнер. API сам обращается к preview, и его ответный трафик не входит в правило
+  # источника, поэтому панель продолжает работать.
   add_rule -s "$cidr" -j REJECT --reject-with icmp-port-unreachable
-  log "сеть $net ($cidr): выход закрыт, разрешено адресов платформы: $exceptions и вся подсеть предпросмотра"
+  log "сеть $net ($cidr): разрешён только egress-прокси, адресов: $exceptions; доступ к другим preview закрыт"
+}
+
+apply_functions_rules() {
+  net="$FUNCTIONS_NETWORK"
+  if [ -z "$net" ] || ! docker network inspect "$net" >/dev/null 2>&1; then
+    log "сеть функций $net не найдена — правила функций не ставлю"
+    return 0
+  fi
+  # Ошибка конфигурации не должна отрезать API от базы или запирать функцию в сети preview.
+  # Если имя совпало с сетью сервера, правила функций не ставим: это громко видно в логе.
+  preview=$(network_name)
+  if [ -n "$preview" ] && [ "$net" = "$preview" ]; then
+    log "сеть функций совпадает с сетью предпросмотра ($net) — правила функций не ставлю"
+    return 0
+  fi
+  server_nets=$(docker ps -q --filter "label=com.docker.compose.service=$SERVER_SERVICE" 2>/dev/null |
+    while read -r id; do
+      docker inspect -f '{{range $name, $_ := .NetworkSettings.Networks}}{{$name}}\n{{end}}' "$id" 2>/dev/null || true
+    done)
+  api_net=$(docker network ls --filter label=com.docker.compose.network=webnestdev --format '{{.Name}}' 2>/dev/null | head -n 1 || true)
+  if printf '%s\n%s\n' "$server_nets" "$api_net" | grep -Fxq "$net"; then
+    log "сеть функций совпадает с сетью API ($net) — правила функций не ставлю"
+    return 0
+  fi
+  cidr=$(subnet_of "$net")
+  if [ -z "$cidr" ]; then
+    log "у сети функций $net нет IPv4-подсети — правила не ставлю"
+    return 0
+  fi
+  # Функции должны иметь доступ к публичным API. Поэтому политика не REJECT-all, а список
+  # запрещённых назначений. Он повторяет server/src/security/address-policy.ts; shell-версия
+  # нужна ядру, где JS-проверки уже нет.
+  for destination in 0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12 192.0.0.0/24 192.0.2.0/24 192.88.99.0/24 192.168.0.0/16 198.18.0.0/15 198.51.100.0/24 203.0.113.0/24 224.0.0.0/4 240.0.0.0/4; do
+    add_rule -s "$cidr" -d "$destination" -j REJECT --reject-with icmp-port-unreachable
+  done
+  # Своя сеть — отдельно и явно: даже если подсеть пересечётся с private-диапазоном, контейнеры
+  # функций не должны разговаривать друг с другом.
+  add_rule -s "$cidr" -d "$cidr" -j REJECT --reject-with icmp-port-unreachable
+  log "сеть функций $net ($cidr): публичный интернет разрешён, private/metadata и связь между функциями закрыты"
+}
+
+apply_rules() {
+  clear_rules
+  apply_preview_rules
+  apply_functions_rules
 }
 
 case "$ACTION" in
   apply) apply_rules ;;
   clear)
     clear_rules
-    log "правила сняты: выход из сети предпросмотра снова открыт напрямую"
+    log "правила сняты: выход из сетей снова открыт напрямую"
     ;;
   status)
     if [ -z "$(our_rules)" ]; then log "правил нет"; else our_rules; fi

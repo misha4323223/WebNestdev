@@ -59,16 +59,28 @@ export function provisionStatements(input: {
       ? []
       : ["CREATE ROLE " + role + " LOGIN PASSWORD " + password]),
     "ALTER ROLE " + role + " LOGIN CONNECTION LIMIT 5 PASSWORD " + password,
-    // Отдельный администратор клиентской базы не superuser. `CREATE SCHEMA AUTHORIZATION tenant`
-    // требует права SET ROLE на владельца схемы, поэтому даём членство ровно на время DDL и
-    // снимаем его сразу после создания схемы. Так у администратора нет постоянного доступа к
-    // данным тенантов, а `ALTER ROLE ... SET` ему разрешён благодаря CREATEROLE.
+    // Отдельный администратор клиентской базы не superuser. Схемой владеет он, а не tenant-
+    // роль: иначе роль могла бы `DROP SCHEMA CASCADE`, менять владельца и обходить read-only.
+    // Для `ALTER SCHEMA` на существующей схеме нужно членство в её прежнем владельце, поэтому
+    // даём его ровно на время DDL и снимаем сразу после.
     "GRANT " + role + " TO CURRENT_USER",
-    "CREATE SCHEMA IF NOT EXISTS " + schema + " AUTHORIZATION " + role,
+    "CREATE SCHEMA IF NOT EXISTS " + schema,
+    "ALTER SCHEMA " + schema + " OWNER TO CURRENT_USER",
+    "REVOKE ALL ON SCHEMA " + schema + " FROM " + role,
+    "GRANT USAGE, CREATE ON SCHEMA " + schema + " TO " + role,
+    // Таблицы, которые создаёт администратор, должны быть видны роли без ручного GRANT.
+    // Таблицы, созданные самой ролью, принадлежат ей и доступны как владельцу.
+    "ALTER DEFAULT PRIVILEGES IN SCHEMA " + schema +
+      " GRANT SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON TABLES TO " + role,
+    "ALTER DEFAULT PRIVILEGES IN SCHEMA " + schema +
+      " GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO " + role,
     "REVOKE " + role + " FROM CURRENT_USER",
     // public в PostgreSQL 15+ не даёт PUBLIC права CREATE; отдельный REVOKE требовал бы
     // владения схемой public и ломал провижининг под отдельной ролью.
     "GRANT CONNECT ON DATABASE " + database + " TO " + role,
+    // Клиент работает только в своей схеме. CREATE на базе позволил бы создать вторую схему
+    // и обойти квоту, поэтому он не нужен ни при провижининге, ни при возврате прав.
+    "REVOKE CREATE ON DATABASE " + database + " FROM " + role,
     "ALTER ROLE " + role + " SET search_path = " + schema + ", public",
     "ALTER ROLE " + role + " SET statement_timeout = '10s'",
     "ALTER ROLE " + role + " SET idle_in_transaction_session_timeout = '15s'",

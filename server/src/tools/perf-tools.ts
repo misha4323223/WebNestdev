@@ -4,6 +4,7 @@ import { previewStatus } from "../preview-manager.js";
 import { registerTool } from "../tool-registry.js";
 import { withBrowserSlot } from "./browser-limiter.js";
 import { BROWSER_VIEWPORTS, readBrowserViewport } from "./browser-viewport.js";
+import { launchGuardedBrowser } from "./browser-network.js";
 
 /**
  * `browser.perf` — числа вместо «должно быть быстро».
@@ -64,7 +65,12 @@ async function measure(projectId: string, input: unknown) {
   if (!status.running) throw new Error(String((status as { error?: string }).error ?? "Preview is not running"));
   const access = previewAccessFor(projectId, status);
 
-  const browser = await chromium.launch({ headless: true, executablePath: process.env.WEBNESTDEV_BROWSER_EXECUTABLE || undefined });
+  const guarded = await launchGuardedBrowser(
+    chromium.launch.bind(chromium),
+    { headless: true, executablePath: process.env.WEBNESTDEV_BROWSER_EXECUTABLE || undefined },
+    [access.baseUrl],
+  );
+  const browser = guarded.browser;
   try {
     const context = await browser.newContext({ viewport: BROWSER_VIEWPORTS[viewportName] });
     try {
@@ -137,7 +143,7 @@ async function measure(projectId: string, input: unknown) {
       await context.close().catch(() => undefined);
     }
   } finally {
-    await browser.close();
+    await guarded.close();
   }
 }
 

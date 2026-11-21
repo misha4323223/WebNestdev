@@ -45,8 +45,8 @@
 | Своя пара ВМ gen-4-16, 100 ГБ | ≈ 17 800 ₽/мес | расчёт по тарифам |
 | Хранилище для внешней базы уже поддерживается | `database.env` пишет `DATABASE_URL` в зашифрованное хранилище | `server/src/database/`, `server/src/tools/database-tools.ts` |
 | Стабильный endpoint БД | HAProxy `:5432` + `deploy/ha/db_proxy.py` | `docs/CLUSTER_HA_PLAN.md` |
-| Serverless-функции запускаются в `--network bridge` | видят интернет, не видят сеть платформы | `server/src/functions/invoke.ts` |
-| Egress-фильтр закрывает только preview-подсеть | `bridge` у функций без фильтра | `deploy/scripts/egress-firewall.sh` |
+| Serverless-функции идут в отдельную сеть `webnestdev-functions` | публичный интернет есть, private/metadata/API/БД закрыты | `server/src/functions/invoke.ts`, `server/src/functions/network.ts` |
+| Egress-фильтр закрывает preview и функции | preview — только прокси `:3128`, функции — public без private | `deploy/scripts/egress-firewall.sh` |
 | Egress-прокси разрешает только порты 80/443 и запрещает приватные адреса | PostgreSQL через него не пройдёт | `server/src/egress/allowlist.ts` |
 
 ## 2.1. Целевые машины production и текущий стенд
@@ -346,8 +346,9 @@ PostgreSQL primary  ──streaming──▶  standby
 Административная строка больше не использует `postgres`. На обеих нодах создана отдельная
 роль `nestdev_client_admin` (`LOGIN CREATEROLE`), ей выданы `CREATE, CONNECT` на базу `app`
 с `GRANT OPTION`, `USAGE, CREATE` на схему `nestdev_admin` и `SELECT, INSERT, UPDATE` на
-`nestdev_admin.tenants`. Новый SQL на время `CREATE SCHEMA` выдаёт этой роли членство в
-создаваемой tenant-роли и сразу снимает его. Это уже не суперпользователь, но `CREATEROLE`
+`nestdev_admin.tenants`. Новый SQL на время DDL (создание схемы и смена её владельца) выдаёт
+этой роли членство в tenant-роли и сразу снимает его; схемой владеет администратор. Это уже не
+суперпользователь, но `CREATEROLE`
 всё ещё позволяет менять пароли tenant-ролей; абсолютный least privilege потребует
 `SECURITY DEFINER`-функции для провижининга. Проверено 18.11.2026, 18:00–18:08 UTC:
 временная роль с теми же правами создала схему и роль, tenant вошёл через PgBouncer,
@@ -366,7 +367,7 @@ PostgreSQL primary  ──streaming──▶  standby
 `auth_file` PgBouncer, слот на новом primary, кавычки в `ALTER ROLE`, а главное — promotion
 по ошибке авторизации (теперь `unknown` не продвигает, только сетевая недоступность).
 
-Сознательно не сделано: включение фичи в production `.env`, egress из контейнера функций,
-загрузка дампов в S3 (сейчас только локальный каталог и хук), PITR для клиентских схем и
+Сознательно не сделано: включение фичи в production `.env`, доступ функций к PgBouncer/клиентской
+базе (публичный egress у функций уже есть, private закрыт), загрузка дампов в S3 (сейчас только локальный каталог и хук), PITR для клиентских схем и
 автоматический rejoin вернувшейся ноды. Следующий шаг — задать `CLIENT_DB_ADMIN_URL`
 (через PgBouncer, ведущий на текущий primary) и проверить маршрут на тестовом аккаунте.

@@ -4,6 +4,7 @@ import { previewAccessFor } from "../../preview/owner-access.js";
 import { getSandbox } from "../../sandbox/sandbox-service.js";
 import { BROWSER_VIEWPORTS, readBrowserViewport } from "../browser-viewport.js";
 import { readLayout, saveScreenshot, type LayoutAudit, type SavedScreenshot } from "../screenshot-file.js";
+import { launchGuardedBrowser } from "../browser-network.js";
 import {
   classifyRuntimeFailures,
   loadAndSettle,
@@ -468,11 +469,12 @@ export async function runBrowserScenario(
   // _playwright и падает уже на первом шаге. Привязка обязательна.
   const launch = deps.launch ?? chromium.launch.bind(chromium);
   // Запуск Chromium тоже входит в общий timeoutMs: иначе зависший launch не ограничен ничем.
-  const browser: Browser = await launch({
+  const guarded = await launchGuardedBrowser(launch, {
     headless: true,
     executablePath: process.env.WEBNESTDEV_BROWSER_EXECUTABLE || undefined,
     timeout: Math.max(1, remainingMs(deadline)),
-  });
+  }, [access.baseUrl]);
+  const browser: Browser = guarded.browser;
   const consoleErrors: ConsoleMessage[] = [];
   const pageErrors: string[] = [];
   const failedRequests: Array<{ url: string; error: string }> = [];
@@ -681,7 +683,7 @@ export async function runBrowserScenario(
             : "Исправьте перечисленное в failures, затем запустите сценарий снова.",
     };
   } finally {
-    await browser.close().catch(() => undefined);
+    await guarded.close();
   }
 }
 
