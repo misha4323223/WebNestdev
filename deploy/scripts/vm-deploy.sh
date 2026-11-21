@@ -2393,6 +2393,15 @@ verify_egress(){
     *EGRESS=blocked*) log "egress: обход закрыт (прямое соединение из контейнера проекта не открывается)" ;;
     *) log "egress: проверка обхода не дала ответа (${direct:-пусто}) — считаю неизвестной" ;;
   esac
+  # Same-bridge трафик не виден DOCKER-USER без br_netfilter. Проверка публичного IP этого не
+  # ловит, поэтому отдельно пробуем API по имени сервиса из той же preview-сети: старый
+  # набор правил оставлял этот порт открытым.
+  samebridge=$(timeout 90 docker run --rm --network "$net" --pull=never "$image" node -e 'const s=require("net").connect({host:"webnestdev-server",port:8787});s.setTimeout(3000);s.on("connect",()=>{console.log("SAME_BRIDGE=open");process.exit(0)});s.on("timeout",()=>{console.log("SAME_BRIDGE=blocked:timeout");process.exit(0)});s.on("error",e=>{console.log("SAME_BRIDGE=blocked:"+e.code);process.exit(0)})' </dev/null 2>&1 || true)
+  case "$samebridge" in
+    *SAME_BRIDGE=open*) log "egress: SAME-BRIDGE API ОТКРЫТ (preview достучался до webnestdev-server:8787) — правила не сработали"; return 2 ;;
+    *SAME_BRIDGE=blocked*) log "egress: same-bridge API закрыт (preview не достучался до webnestdev-server:8787)" ;;
+    *) log "egress: проверка same-bridge API не дала ответа (${samebridge:-пусто}) — считаю неизвестной"; return 2 ;;
+  esac
   return 0
 }
 
