@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { changesSomething } from "../agent-runtime.js";
+import { plannerToolVisible } from "./planner-policy.js";
 
 /** Planner mode must be read-only by construction, not only by instruction. */
 test("every tool that writes is refused in planner mode", () => {
@@ -10,9 +11,29 @@ test("every tool that writes is refused in planner mode", () => {
 });
 
 test("reading the project stays possible", () => {
-  for (const name of ["fs.list", "fs.read", "git.status", "git.diff", "git.log", "project.verify", "browser.runtime", "browser.scenario", "plan.update", "database.status"]) {
+  for (const name of ["fs.list", "fs.read", "git.status", "git.diff", "git.log", "project.verify", "browser.inspect", "browser.perf", "plan.update", "database.status", "terminal.tail", "terminal.jobs", "design.theme"]) {
     assert.equal(changesSomething(name, {}), false, name + " must be allowed");
   }
+});
+
+test("unknown tools are denied by default, not allowed until someone adds them to a denylist", () => {
+  assert.equal(changesSomething("future.write.tool", {}), true);
+  assert.equal(changesSomething("terminal.stop", {}), true);
+  assert.equal(changesSomething("project.test", {}), true);
+});
+
+test("browser execution and note writes are not planner reads", () => {
+  for (const name of ["browser.open", "browser.runtime", "browser.scenario", "browser.screenshot", "note.remember"]) {
+    assert.equal(plannerToolVisible(name), false, name);
+    assert.equal(changesSomething(name, {}), true, name);
+  }
+  assert.equal(plannerToolVisible("browser.inspect"), true, "HTTP/HTML inspection is read-only");
+});
+
+test("design.theme reads without input but refuses tokens and create", () => {
+  assert.equal(changesSomething("design.theme", {}), false);
+  assert.equal(changesSomething("design.theme", { create: true }), true);
+  assert.equal(changesSomething("design.theme", { tokens: { "--color-accent": "#000" } }), true);
 });
 
 test("terminal.exec is allowed only for inspection commands", () => {

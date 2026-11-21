@@ -8,7 +8,7 @@ test("«Старт» получает лимиты и запреты своег�
   assert.match(brief, /3 projects/);
   assert.match(brief, /1 hosting site/);
   assert.match(brief, /500 MB of account storage/);
-  assert.match(brief, /10 agent runs per day/);
+  assert.match(brief, /10 agent runs per week/);
   assert.match(brief, /25 web searches per day/);
   assert.match(brief, /5 generated images per day/);
   assert.match(brief, /repository import up to 50 MB/);

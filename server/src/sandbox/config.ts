@@ -45,15 +45,25 @@ export function sandboxImage(){
 /**
  * Рантайм контейнеров проекта. `docker` — обычный runc (поведение до этапа 2), `runsc` — gVisor.
  *
- * Значение читается при каждом запуске контейнера, а не один раз на импорте: переключатель должен
- * работать без пересборки, а тест может подменить окружение. Неизвестное значение — ошибка, а не
- * молчаливый возврат к runc: иначе опечатка в `.env` выглядела бы как «gVisor включён», хотя
- * контейнеры остались на общем ядре.
+ * Значение читается при каждом запуске контейнера, а не один раз на импорте: тест может подменить
+ * окружение. В production значение по умолчанию — runsc, а явный docker запрещён. Неизвестное
+ * значение — ошибка, а не молчаливый возврат к runc: иначе опечатка в `.env` выглядела бы как
+ * «gVisor включён», хотя контейнеры остались на общем ядре.
  */
 export type SandboxRuntime="docker"|"runsc";
-export function sandboxRuntime(setting:string|undefined=process.env.SANDBOX_RUNTIME):SandboxRuntime{
-  const value=(setting??"docker").trim().toLowerCase();
-  if(!value||value==="docker")return "docker";
+export function sandboxRuntime(
+  setting:string|undefined=process.env.SANDBOX_RUNTIME,
+  env:NodeJS.ProcessEnv=process.env,
+):SandboxRuntime{
+  const production=(env.NODE_ENV??"").trim().toLowerCase()==="production";
+  const value=(setting??"").trim().toLowerCase();
+  // В production gVisor — не опция, а условие запуска. Явный docker раньше молча оставлял
+  // контейнеры на общем ядре; теперь это ошибка конфигурации, которую видно при старте.
+  if(!value)return production?"runsc":"docker";
+  if(value==="docker"){
+    if(production)throw new Error("В production SANDBOX_RUNTIME=docker запрещён: нужен runsc (gVisor)");
+    return "docker";
+  }
   if(value==="runsc")return "runsc";
   throw new Error('SANDBOX_RUNTIME="'+value+'" не поддерживается: используйте docker или runsc');
 }

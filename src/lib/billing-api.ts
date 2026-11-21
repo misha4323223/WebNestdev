@@ -4,15 +4,17 @@ import type { PlanEntitlements } from "./entitlements-api";
 export type PlanId = "free" | "pro" | "team";
 export type PlanLimits = {
   projects: number;
-  /** null — дневного лимита нет: на платных тарифах расход ограничен кредитами. */
+  /** @deprecated Дневного лимита запусков больше нет; оставлено для старых клиентов. */
   agentRunsPerDay: number | null;
+  /** null — недельного лимита нет: на платных тарифах расход ограничен кредитами. */
+  agentRunsPerWeek?: number | null;
   /** null — это режим запуска, а не квота тарифа; счётчик остаётся только в аналитике. */
   browserChecksPerDay: number | null;
   webSearchesPerDay: number;
   storageBytes?: number;
   /** Квота встроенной базы NestDev; 0 — база не входит в тариф. */
   databaseBytes?: number;
-  /** Месячный бюджет кредитов; 0 или отсутствие — кредитов нет, работает дневной лимит запусков. */
+  /** Месячный бюджет кредитов; 0 или отсутствие — кредитов нет, работает недельный лимит запусков. */
   agentCreditsPerMonth?: number;
   /** Сырые токены для аналитики; пользовательский лимит теперь считается в кредитах. */
   agentTokensPerMonth?: number;
@@ -35,7 +37,15 @@ export type Plan = {
   features: string[];
   details: string[];
 };
-export type Usage = { date: string; agentRuns: number; browserChecks: number; webSearches: number };
+export type Usage = {
+  date: string;
+  /** Понедельник текущей UTC-недели: с него начинается бесплатная квота. */
+  weekStart: string;
+  agentRuns: number;
+  agentRunsWeek: number;
+  browserChecks: number;
+  webSearches: number;
+};
 /**
  * Бюджет кредитов: `planLimit` — месячный пул тарифа, `purchased` — неистраченные докупленные
  * кредиты, которые не сгорают. `limit` — их общая сумма.

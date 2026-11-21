@@ -79,6 +79,20 @@ export async function previewSecretMounts(config: SandboxConfig): Promise<Previe
       const target = path.join(dir, relative);
       await mkdir(path.dirname(target), { recursive: true });
       await openDirForSandbox(path.dirname(target));
+      // Docker создаёт отсутствующий source bind-mount каталогом, и такой каталог может
+      // остаться на месте файла. Пока он наш, убираем его сами; root-owned уберёт таймер
+      // владельцев, а здесь останется понятная причина вместо EISDIR.
+      const targetInfo = await lstat(target).catch(() => null);
+      if (targetInfo && !targetInfo.isFile()) {
+        try {
+          await rm(target, { recursive: true, force: true });
+        } catch (error) {
+          throw new Error(
+            "Временный файл секретов " + relative + " занят каталогом, который не удалось убрать: " +
+              target + " (" + errorMessage(error) + ")",
+          );
+        }
+      }
       const content = Object.entries(variables)
         .map(([name, value]) => name + "=" + encodeEnvValue(value))
         .join("\n") + "\n";
@@ -101,10 +115,34 @@ export async function previewSecretMounts(config: SandboxConfig): Promise<Previe
 
 /** Убирает временные файлы одного проекта: предпросмотр остановлен. */
 export async function clearPreviewSecrets(projectId: string) {
-  await rm(runtimeProjectDir(projectId), { recursive: true, force: true });
+  await clearRuntimeDir(runtimeProjectDir(projectId), "временные секреты " + projectId);
 }
 
 /** Убирает всё, что осталось после падения сервера: в этих файлах лежит открытый текст. */
 export async function clearAllPreviewSecrets() {
-  await rm(path.join(sandboxRootDir(), RUNTIME_DIR), { recursive: true, force: true });
+  await clearRuntimeDir(path.join(sandboxRootDir(), RUNTIME_DIR), "временные секреты всех проектов");
+}
+
+/**
+ * Каталог `.secret-runtime` может оказаться root:root: Docker создаёт отсутствующий source
+ * bind-mount от root, а API работает от uid 1000. Удаление тогда падает с EACCES/EPERM, и
+ * раньше это валило установку зависимостей, из-за чего watcher функций повторял hot-reload
+ * каждые пару секунд. Владельца исправляет host-таймер `webnestdev-sandbox-ownership`; здесь
+ * ошибку логируем и не превращаем в отказ всего запуска.
+ */
+async function clearRuntimeDir(dir: string, what: string) {
+  try {
+    await rm(dir, { recursive: true, force: true });
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "EACCES" || code === "EPERM" || code === "EBUSY") {
+      console.warn("[preview] " + what + " не удалены (" + code + "): " + dir + " — починит таймер владельцев");
+      return;
+    }
+    throw error;
+  }
+}
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
 }

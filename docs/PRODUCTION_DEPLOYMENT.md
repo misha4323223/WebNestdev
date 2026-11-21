@@ -329,16 +329,13 @@ An installation that predates the host path keeps its project files in the `webn
 
 ## Isolation: gVisor and a non-root server
 
-`SANDBOX_RUNTIME` selects the Docker runtime for every command, long job, preview and self-check container: `docker` (the default, ordinary runc) or `runsc` (gVisor). The flag is deliberately opt-in: deploying this code without the variable changes nothing.
+`SANDBOX_RUNTIME` selects the Docker runtime for every command, long job, preview and self-check container. In production it must be `runsc` (gVisor): the server defaults to `runsc`, and an explicit `docker` stops startup and the deploy instead of silently running on the shared kernel. `docker` remains a development-only mode. The broker has the same default and must receive the same value.
 
-No terminal on the VM is required. The deploy installs gVisor when `SANDBOX_RUNTIME=runsc` and `docker info` does not list `runsc`. There are two equivalent triggers:
-
-- **One run from GitHub:** Actions → `deploy` → Run workflow → `sandbox_runtime=runsc`. This overrides the repository Variable for that run and does not change it permanently.
-- **Normal deploys:** set the repository Variable `SANDBOX_RUNTIME=runsc` and push (or run the workflow with `sandbox_runtime=keep`). A repository Secret with the same name is also read as a fallback, so an existing secret does not have to be moved. Every later deploy reuses the installed runtime and does not reinstall it.
+No terminal on the VM is required. The deploy installs gVisor before switching the application version whenever `docker info` does not list `runsc`; this is now the default path, not an opt-in flag. A deployment that finds neither a usable `runsc` nor permission to install it stops **before** replacing the working stack. `SANDBOX_RUNTIME=docker`, an unknown value and `SANDBOX_RUNTIME_CHECK=0` are all rejected by the production deploy and by the server; there is no bypass switch.
 
 The workflow sends `deploy/scripts/install-runsc.sh` to the VM in base64, so it does not depend on the VM's checkout being current. `vm-deploy.sh` runs it with `sudo -n` before switching the application version. The deploy user therefore needs passwordless sudo (`sudo -n true`). If that is not available, the deploy stops with an explicit log line; a host administrator must install `runsc` once or grant that permission. `RUNSC_INSTALL=0` (a repository Variable or Secret, passed to the deploy) disables automatic installation for a host that is already prepared; `RUNSC_INSTALL=auto` is the default.
 
-The script downloads the pinned gVisor release, verifies `SHA256SUMS`, keeps `runsc` and its `gvisor-bin/` sidecars together, registers the runtime through `runsc install`, and reloads Docker. The release is bzip2-compressed; if the host has `tar` but no `bzip2` binary, the installer installs `bzip2` through apt/apk/dnf/yum. This matters on minimal VM images: `tar --help` can advertise `-j` and still fail with `bzip2: Cannot exec` at extraction. If the reload does not expose `runsc`, the deploy passes `RUNSC_RESTART_DOCKER=1`, and the script restarts Docker, waits for it, and verifies the runtime. Containers with `restart: unless-stopped` come back on their own; the deploy then starts the new version. Expect a short Docker interruption on the first run — do it in a maintenance window. If installation fails, the deploy stops **before** switching the application version, so the previous working stack is not replaced by a server whose sandbox cannot start containers.
+The script downloads the pinned gVisor release, verifies the `SHA256SUMS` file against a SHA256 pinned in this repository (not against a hash served by the same GitHub release), then verifies the tarball against that file, keeps `runsc` and its `gvisor-bin/` sidecars together, registers the runtime through `runsc install`, and reloads Docker. The release is bzip2-compressed; if the host has `tar` but no `bzip2` binary, the installer installs `bzip2` through apt/apk/dnf/yum. This matters on minimal VM images: `tar --help` can advertise `-j` and still fail with `bzip2: Cannot exec` at extraction. If the reload does not expose `runsc`, the deploy passes `RUNSC_RESTART_DOCKER=1`, and the script restarts Docker, waits for it, and verifies the runtime. Containers with `restart: unless-stopped` come back on their own; the deploy then starts the new version. Expect a short Docker interruption on the first run — do it in a maintenance window. If installation fails, the deploy stops **before** switching the application version, so the previous working stack is not replaced by a server whose sandbox cannot start containers.
 
 The deploy log must say `SANDBOX-RUNTIME=runsc: Docker знает gVisor`; the server log prints `[sandbox] рантайм контейнеров: runsc (gVisor)`. The deploy already runs `sandbox-selfcheck` and `preview-selfcheck`; their verdicts are in the Actions log, so no VM shell is needed:
 
@@ -347,7 +344,7 @@ SANDBOX-MOUNT=ok
 PREVIEW-NETWORK=ok
 ```
 
-For a real project, open it through the panel and run `npm install`, `npm run build`, git status and preview/HMR. The checks and ordinary containers use the same runtime; a preview self-check run under runc would not prove anything. Compare build time and memory with `SANDBOX_RUNTIME=docker` and `runsc` and record the numbers in the scaling plan. gVisor is slower on syscall-heavy work such as a cold `npm install`; that is expected, and the rollback is one variable: `SANDBOX_RUNTIME=docker` plus a deploy. The runtime stays installed, so switching back to runsc needs no reinstall.
+For a real project, open it through the panel and run `npm install`, `npm run build`, git status and preview/HMR. The checks and ordinary containers use the same runtime; a preview self-check run under runc would not prove anything. gVisor is slower on syscall-heavy work such as a cold `npm install`; that is expected. A host without a working `runsc` is a deployment failure, not a reason to fall back to `docker`: keep the previous application version running until the host is repaired. The runtime stays installed, so later deploys need no reinstall.
 
 ### Server process is not root
 
@@ -364,7 +361,7 @@ The internal `GET /api/health` response carries `sandbox.runtime` (the runtime t
 
 Rootless Docker on future runner nodes remains part of stage 3; this change makes the API process unprivileged on the current single VM without pretending that the Docker daemon itself is rootless.
 
-Rollback is asymmetric, and this matters during an incident. gVisor is turned off with `SANDBOX_RUNTIME=docker` and a deploy; nothing is uninstalled. The non-root server is reverted by deploying the previous image, because the old image is the one that runs as root. Mounting `/var/run/docker.sock` back into the current image does **not** restore Docker access: the socket is `root:docker 0660`, and uid 1000 is not in that group. `WEBNESTDEV_DOCKER_BROKER=0` is likewise not a rollback for the current image. The full sequence is in `docs/DOCKER_BROKER.md` §6.
+Rollback is asymmetric, and this matters during an incident. gVisor is no longer turned off with `SANDBOX_RUNTIME=docker`: production rejects that value. Roll back to the previous application image or repair the host's `runsc`; do not disable the sandbox to recover. The non-root server is reverted by deploying the previous image, because the old image is the one that runs as root. Mounting `/var/run/docker.sock` back into the current image does **not** restore Docker access: the socket is `root:docker 0660`, and uid 1000 is not in that group. `WEBNESTDEV_DOCKER_BROKER=0` is likewise not a rollback for the current image. The full sequence is in `docs/DOCKER_BROKER.md` §6.
 
 ## Preview details
 
@@ -384,8 +381,8 @@ All three limits are printed at startup (`[agent] …`, `[sandbox] …`).
 - `AGENT_MAX_CONCURRENT_RUNS` (default `150`) — conversations running at once. A run that arrives
   while the limit is reached waits in a queue (`AGENT_MAX_QUEUE`, default `200`) and the panel says
   so instead of looking stuck; `AGENT_QUEUE_TIMEOUT_MS` (default `300000`) bounds the wait, and a
-  closed tab or a pressed stop releases the place at once. The daily run quota is consumed only
-  once the run really starts, so a full queue never spends one of the user's daily runs; a request
+  closed tab or a pressed stop releases the place at once. The weekly run quota is consumed only
+  once the run really starts, so a full queue never spends one of the user's weekly runs; a request
   that finds no place at all is answered with `SERVER_BUSY`. Raise this with the provider's rate
   limit (and the budget), not with the host's memory.
 - `SANDBOX_MAX_CONCURRENT` (default `2`) — **the memory limit of the platform**. Every command
@@ -686,7 +683,7 @@ Repository variables (same page → **Variables**):
 | `PROJECT_ARCHIVE_ENABLED` | optional; `1` turns the idle-project sweeper on. Without it the keys are accepted but nothing is archived |
 | `PROJECT_ARCHIVE_IDLE_MINUTES` | optional; minutes without writes before a project is packed to the bucket, 180 (three hours) by default |
 | `PROJECT_ARCHIVE_IDLE_DAYS` | optional legacy form in days; ignored when the minutes key is set |
-| `SANDBOX_RUNTIME` | optional; `docker` (default, runc) or `runsc` (gVisor). Setting `runsc` makes the deploy install gVisor on first use if Docker does not know it |
+| `SANDBOX_RUNTIME` | production must be `runsc` (the default); `docker` and unknown values are rejected. The deploy installs gVisor before switching versions if Docker does not know it |
 | `RUNSC_INSTALL` | optional; `auto` (default) or `0`. `0` forbids the deploy from touching Docker and requires `runsc` to be pre-installed |
 | `WILDCARD_CERT` | optional; `auto` (default — issue `*.preview.<domain>` when `REGRU_API_USERNAME`/`REGRU_API_PASSWORD` are set) or `0` (never touch certificates) |
 

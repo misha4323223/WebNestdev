@@ -112,10 +112,9 @@ services:
       # чтение. Брокер должен видеть тот же путь хоста, что и Docker daemon.
       BROKER_HOSTING_SITES_ROOT: ${HOSTING_SITES_DIR:-/var/lib/webnestdev/sites}
       BROKER_IMAGE: ${SANDBOX_IMAGE:-node:26-bookworm}
-      # Единственный Runtime, который политика разрешает в create. Пустое/`docker` — контейнеры
-      # идут на runc; `runsc` — gVisor. Значение должно совпадать с SANDBOX_RUNTIME сервера:
-      # иначе политика отклонит create и будет понятная ошибка, а не тихий откат на runc.
-      BROKER_RUNTIME: ${SANDBOX_RUNTIME:-docker}
+      # Единственный Runtime, который политика разрешает в create. В production это runsc;
+      # значение должно совпадать с SANDBOX_RUNTIME сервера, иначе политика отклонит create.
+      BROKER_RUNTIME: ${SANDBOX_RUNTIME:-runsc}
       # Явно заданная сеть предпросмотра: имя может не кончаться на `preview`, и тогда правило
       # по суффиксу её не узнает. Пустое значение — правило по имени (как в preview-network.ts).
       PREVIEW_NETWORK: ${PREVIEW_NETWORK:-}
@@ -540,9 +539,9 @@ services:
       WEBNESTDEV_RUNNER_HEARTBEAT_MS: ${WEBNESTDEV_RUNNER_HEARTBEAT_MS:-30000}
       WEBNESTDEV_AUTO_MOVE_PROJECTS: ${WEBNESTDEV_AUTO_MOVE_PROJECTS:-0}
       SANDBOX_MODE: docker
-      # docker — обычный runc; runsc — gVisor для контейнеров команд, заданий, превью и проб.
-      # По умолчанию docker: выкатка не меняет поведение, пока оператор не включит runsc.
-      SANDBOX_RUNTIME: ${SANDBOX_RUNTIME:-docker}
+      # В production — только runsc (gVisor) для команд, заданий, превью и проб. docker
+      # остаётся явным режимом разработки и в production запрещён конфигурацией сервера.
+      SANDBOX_RUNTIME: ${SANDBOX_RUNTIME:-runsc}
       # uid/gid, на который entrypoint сбрасывает права. Сейчас поддерживается только 1000:1000:
       # контейнеры песочниц и политика брокера уже используют этот uid, и другой сделал бы файлы
       # сервера недоступными для записи контейнеру. Оставлено явно, чтобы entrypoint мог

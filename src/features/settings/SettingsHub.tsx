@@ -1,25 +1,12 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, KeyRound, Percent, Plug, Server, SlidersHorizontal, Sparkles } from "lucide-react";
-import { apiJson } from "../../lib/api";
+import { ArrowLeft, KeyRound, Plug, SlidersHorizontal, Sparkles } from "lucide-react";
 import { SettingsPanel } from "./SettingsPanel";
 import { AccountSettingsPanel } from "./AccountSettingsPanel";
 import { IntegrationsPanel } from "./IntegrationsPanel";
-import { PlatformKeysPanel } from "./PlatformKeysPanel";
-import { AdminPlansPanel } from "./AdminPlansPanel";
 import { ProjectSecretsPanel } from "./ProjectSecretsPanel";
 
 export function SettingsHub({ projectId, projectName, onClose, canUseOwnProvider = false }: { projectId: string; projectName: string; onClose?: () => void; canUseOwnProvider?: boolean }) {
-  const [tab, setTab] = useState<"account" | "secrets" | "provider" | "integrations" | "plans" | "platform">("account");
-  // Ключи сервера — внутренний инструмент платформы. Обычный пользователь не должен видеть
-  // даже вкладку: сервер отвечает только флагом admin, поэтому и запрос здесь лёгкий.
-  const [platformAdmin, setPlatformAdmin] = useState(false);
-  useEffect(() => {
-    let alive = true;
-    void apiJson<{ admin?: boolean }>("/api/platform/keys")
-      .then(data => { if (alive) setPlatformAdmin(data.admin === true); })
-      .catch(() => {});
-    return () => { alive = false; };
-  }, []);
+  const [tab, setTab] = useState<"account" | "secrets" | "provider" | "integrations">("account");
   // Set when the app returns from the GitHub authorization page, or when the composer
   // asks for the model tab. Read in an effect because state initializers run twice
   // under StrictMode.
@@ -27,7 +14,7 @@ export function SettingsHub({ projectId, projectName, onClose, canUseOwnProvider
     // OAuth-возврат в рабочую область просит конкретную вкладку отдельным ключом:
     // `openIntegrations` принадлежит главной и к моменту монтирования хаба уже съеден ею.
     const requestedTab = localStorage.getItem("webnestdev.openSettingsTab");
-    if (requestedTab === "account" || requestedTab === "secrets" || requestedTab === "provider" || requestedTab === "integrations" || requestedTab === "plans" || requestedTab === "platform") {
+    if (requestedTab === "account" || requestedTab === "secrets" || requestedTab === "provider" || requestedTab === "integrations") {
       localStorage.removeItem("webnestdev.openSettingsTab");
       setTab(requestedTab === "provider" && !canUseOwnProvider ? "account" : requestedTab);
       return;
@@ -51,12 +38,8 @@ export function SettingsHub({ projectId, projectName, onClose, canUseOwnProvider
     { id: "secrets" as const, label: "Секреты проекта", icon: KeyRound },
     ...(canUseOwnProvider ? [{ id: "provider" as const, label: "AI-провайдер", icon: Sparkles }] : []),
     { id: "integrations" as const, label: "Интеграции", icon: Plug },
-    ...(platformAdmin ? [
-      { id: "plans" as const, label: "Тарифы и скидки", icon: Percent },
-      { id: "platform" as const, label: "Ключи сервера", icon: Server },
-    ] : []),
   ];
-  const activeTab = ((tab === "platform" || tab === "plans") && !platformAdmin) || (tab === "provider" && !canUseOwnProvider) ? "account" : tab;
+  const activeTab = tab === "provider" && !canUseOwnProvider ? "account" : tab;
   return <div className="settings-hub">
     {/* Боковая колонка в настройках скрыта — значит, нужен явный путь обратно к работе. */}
     <div className="settings-hub-bar">
@@ -71,7 +54,5 @@ export function SettingsHub({ projectId, projectName, onClose, canUseOwnProvider
     {activeTab === "secrets" && <ProjectSecretsPanel projectId={projectId} projectName={projectName}/>}
     {activeTab === "provider" && <SettingsPanel projectId={projectId} projectName={projectName} onClose={() => setTab("account")}/>}
     {activeTab === "integrations" && <IntegrationsPanel/>}
-    {activeTab === "plans" && platformAdmin && <AdminPlansPanel/>}
-    {activeTab === "platform" && platformAdmin && <PlatformKeysPanel/>}
   </div>;
 }

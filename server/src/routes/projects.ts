@@ -15,32 +15,6 @@ import { hydratePreview } from "../preview/preview-store.js";
 import { stopPreview } from "../preview-manager.js";
 import { recordAudit } from "../security/audit-journal.js";
 import { deleteProjectMedia, mediaConfigFromEnv } from "../media/media-store.js";
-import { consumeRateLimit } from "../storage/rate-limit-store.js";
-
-/**
- * Сколько новых проектов можно создать с одного адреса за сутки.
- *
- * Тариф уже ограничивает число проектов у аккаунта, но не число аккаунтов: без счётчика по IP
- * один человек заводит десять бесплатных аккаунтов и получает тридцать проектов, каждый со своей
- * рабочей областью и контейнерами. Счётчик общий на платформу (PostgreSQL), поэтому обход через
- * вторую реплику API не работает. Ошибка хранилища пропускает запрос: недоступная база не должна
- * запрещать создание проектов всем.
- */
-const PROJECT_CREATE_IP_LIMIT = 10;
-const PROJECT_CREATE_WINDOW_MS = 24 * 60 * 60 * 1000;
-
-export async function reserveProjectCreationByIp(ip: string) {
-  try {
-    return await consumeRateLimit("ip:project.create:" + (ip || "unknown"), PROJECT_CREATE_IP_LIMIT, PROJECT_CREATE_WINDOW_MS);
-  } catch (error) {
-    console.warn(
-      "[projects] счётчик создания проектов по адресу недоступен, проверка пропущена: " +
-        (error instanceof Error ? error.message : String(error)),
-    );
-    return { allowed: true, retryAfter: 0 };
-  }
-}
-
 /** How many chats the picker shows. Older sessions stay stored and reachable by id. */
 const CONVERSATION_LIST_LIMIT = 50;
 
@@ -86,12 +60,8 @@ export async function registerProjectRoutes(app:FastifyInstance){
   app.post("/api/projects",async(request,reply)=>{
     const user=await requireUser(request,reply); if(!user)return;
     const body=z.object({name:z.string().max(120).optional()}).parse(request.body);
-    const byIp = await reserveProjectCreationByIp(request.ip);
-    if(!byIp.allowed)return reply.code(429).send({
-      error:"С этого адреса за сутки создано слишком много проектов. Повторите позже или напишите в поддержку.",
-      code:"PROJECT_CREATE_RATE_LIMITED",
-      retryAfter:byIp.retryAfter,
-    });
+    // IP не ограничивает число проектов: счётчик по адресу бил бы по общим сетям, а от фермы
+    // аккаунтов защищает недельная квота запусков и обычный rate limit регистрации.
     const plan = await accountPlanFor(user.id);
     const limit=limitsForPlan(plan).projects;
     try{

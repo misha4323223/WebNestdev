@@ -260,8 +260,14 @@ export async function startFunctionsPreviewExecutor(
           watcher = null;
           try {
             await deps.removeContainer(started!.containerId, config.node);
-            await rm(runtimeDir, { recursive: true, force: true });
+          } catch (error) {
+            // Контейнер мог исчезнуть вместе с Docker или быть удалён уборщиком. Это не повод
+            // оставлять watcher и временные файлы: освобождаем слот и чистим каталог всегда.
+            console.warn("[preview] контейнер функций не удалился: " + describeError(error));
           } finally {
+            await rm(runtimeDir, { recursive: true, force: true }).catch(error => {
+              console.warn("[preview] временный каталог функций не удалился: " + describeError(error));
+            });
             release();
           }
         },

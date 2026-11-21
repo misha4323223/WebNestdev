@@ -43,7 +43,8 @@ if (["bridge", "host", "none", "default"].includes(functionsNetwork.toLowerCase(
   console.error("[broker] FUNCTIONS_DOCKER_NETWORK не должен быть встроенной или preview-сетью");
   process.exit(1);
 }
-const runtime = (process.env.BROKER_RUNTIME?.trim() || process.env.SANDBOX_RUNTIME?.trim() || "docker").toLowerCase();
+// В production gVisor обязателен: пустое значение не должно молча оставлять брокер на runc.
+const runtime = (process.env.BROKER_RUNTIME?.trim() || process.env.SANDBOX_RUNTIME?.trim() || "runsc").toLowerCase();
 // Политика умеет только эти два значения. Опечатка должна остановить брокер с понятной
 // причиной, а не оставить его с runtime, который не разрешит ни один create.
 if (runtime !== "docker" && runtime !== "runsc") {

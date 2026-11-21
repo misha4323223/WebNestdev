@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { addressInRange, describeTrustProxy, isTrustedProxy, normalizeAddress, trustProxyOption, trustedProxyList } from "./client-ip.js";
+import { addressInRange, describeTrustProxy, isTrustedProxy, normalizeAddress, rateLimitAddress, trustProxyOption, trustedProxyList } from "./client-ip.js";
 
 test("адрес приводится к одной форме независимо от записи", () => {
   assert.equal(normalizeAddress("::ffff:172.30.0.10"), "172.30.0.10");
@@ -18,6 +18,16 @@ test("точный адрес и IPv4-сеть сравниваются верн
   // IPv6 нужен только для loopback: сеток IPv6 в Docker здесь нет.
   assert.equal(addressInRange("::1", "::1"), true);
   assert.equal(addressInRange("::2", "::1"), false);
+});
+
+test("IPv6 сворачивается до /64, CGNAT не считается личностью", () => {
+  assert.deepEqual(rateLimitAddress("2001:db8:1:2:3:4:5:6"), { key: "2001:db8:1:2::/64", cgnat: false });
+  assert.deepEqual(rateLimitAddress("2001:db8:1:2:ffff::9"), { key: "2001:db8:1:2::/64", cgnat: false });
+  assert.equal(rateLimitAddress("2001:db8:1:3::1").key, "2001:db8:1:3::/64");
+  assert.deepEqual(rateLimitAddress("100.64.1.2"), { key: "cgnat", cgnat: true });
+  assert.deepEqual(rateLimitAddress("100.127.255.255"), { key: "cgnat", cgnat: true });
+  assert.deepEqual(rateLimitAddress("100.128.0.1"), { key: "100.128.0.1", cgnat: false });
+  assert.deepEqual(rateLimitAddress("203.0.113.5"), { key: "203.0.113.5", cgnat: false });
 });
 
 test("по умолчанию доверяется только loopback, остальное — из окружения", () => {

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  abuseLimitsFromEnv,
   createAbuseWatch,
   createDockerObserver,
   evaluateAbuse,
@@ -17,11 +18,12 @@ const minutes = (count: number) => count * 60_000;
 test("разбор вывода Docker: проценты, id и проект из переменной окружения", () => {
   assert.equal(parseCpuPercent("12.34%"), 12.34);
   assert.equal(parseCpuPercent("--"), 0);
-  assert.deepEqual(parseDockerPsLine('{"ID":"abc","Labels":"webnestdev.managed=1,webnestdev.project=p1"}'), {
+  assert.deepEqual(parseDockerPsLine('{"ID":"abc","Labels":"webnestdev.managed=1,webnestdev.project=p1,webnestdev.load=preview"}'), {
     id: "abc",
     projectId: "p1",
+    load: "preview",
   });
-  assert.deepEqual(parseDockerPsLine('{"ID":"def","Labels":"webnestdev.managed=1"}'), { id: "def", projectId: null });
+  assert.deepEqual(parseDockerPsLine('{"ID":"def","Labels":"webnestdev.managed=1"}'), { id: "def", projectId: null, load: "unknown" });
   assert.equal(parseDockerPsLine("не json"), null);
   assert.equal(projectFromEnvJson('["CI=1","WEBNESTDEV_PROJECT_ID=proj-7"]'), "proj-7");
   assert.equal(projectFromEnvJson('["CI=1"]'), null);
@@ -29,6 +31,29 @@ test("разбор вывода Docker: проценты, id и проект и�
     { id: "aaa", cpuPercent: 95.5 },
     { id: "bbb", cpuPercent: 3.2 },
   ]);
+});
+
+test("одноразовая command-нагрузка не считается майнингом даже выше порога", () => {
+  const samples: AbuseSample[] = [{ containerId: "c1", projectId: "p1", cpuPercent: 99, load: "command" }];
+  const first = evaluateAbuse(new Map(), samples, 0, limits);
+  const later = evaluateAbuse(first.state, samples, minutes(120), limits);
+  assert.deepEqual(later.violations, []);
+  assert.equal(later.state.size, 0);
+});
+
+test("порог по умолчанию выше максимального build/install-таймаута", () => {
+  const previousCpu = process.env.ABUSE_CPU_PERCENT;
+  const previousMs = process.env.ABUSE_SUSTAINED_MS;
+  delete process.env.ABUSE_CPU_PERCENT;
+  delete process.env.ABUSE_SUSTAINED_MS;
+  try {
+    const defaults = abuseLimitsFromEnv();
+    assert.equal(defaults.cpuPercent, 95);
+    assert.equal(defaults.sustainedMs, 45 * 60_000);
+  } finally {
+    if (previousCpu === undefined) delete process.env.ABUSE_CPU_PERCENT; else process.env.ABUSE_CPU_PERCENT = previousCpu;
+    if (previousMs === undefined) delete process.env.ABUSE_SUSTAINED_MS; else process.env.ABUSE_SUSTAINED_MS = previousMs;
+  }
 });
 
 test("короткая нагрузка не считается нарушением", () => {
@@ -136,8 +161,8 @@ test("наблюдатель Docker: проект из метки и из окр
       return {
         code: 0,
         stdout: [
-          '{"ID":"aaaaaaaaaaaa","Labels":"webnestdev.managed=1,webnestdev.project=p1"}',
-          '{"ID":"bbbbbbbbbbbb","Labels":"webnestdev.managed=1"}',
+          '{"ID":"aaaaaaaaaaaa","Labels":"webnestdev.managed=1,webnestdev.project=p1,webnestdev.load=preview"}',
+          '{"ID":"bbbbbbbbbbbb","Labels":"webnestdev.managed=1,webnestdev.load=job"}',
         ].join("\n"),
         stderr: "",
       };
@@ -154,8 +179,8 @@ test("наблюдатель Docker: проект из метки и из окр
   const observe = createDockerObserver(run);
   const samples = await observe();
   assert.deepEqual(samples, [
-    { containerId: "aaaaaaaaaaaa", projectId: "p1", cpuPercent: 91 },
-    { containerId: "bbbbbbbbbbbb", projectId: "p2", cpuPercent: 12.5 },
+    { containerId: "aaaaaaaaaaaa", projectId: "p1", cpuPercent: 91, load: "preview" },
+    { containerId: "bbbbbbbbbbbb", projectId: "p2", cpuPercent: 12.5, load: "job" },
   ]);
   assert.ok(calls.some(args => args[0] === "inspect" && args[3] === "bbbbbbbbbbbb"));
 });

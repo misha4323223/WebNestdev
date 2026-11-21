@@ -2,7 +2,9 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { checkAuthRateLimit } from "../auth/auth-rate-limit.js";
 import {
+  adminUsesBootstrapPassword,
   bearerToken,
+  consumeAdminBootstrapPassword,
   consumeAdminRecoveryCode,
   createAdminSession,
   deleteAdminSession,
@@ -15,6 +17,7 @@ import {
   verifyAdminPassword,
   type AdminUser,
 } from "../admin/admin-store.js";
+import { BOOTSTRAP_EMAIL_ENV, BOOTSTRAP_PASSWORD_ENV } from "../admin/bootstrap.js";
 import { createAdminChallenge, dropAdminChallenge, readAdminChallenge, recordAdminChallengeFailure } from "../admin/challenges.js";
 import { generateRecoveryCodes, generateTotpSecret, hashRecoveryCode, matchTotp, otpauthUri, TOTP_DIGITS, TOTP_PERIOD_SECONDS } from "../admin/totp.js";
 import { applyNoStoreToReply } from "./cache-headers.js";
@@ -80,6 +83,32 @@ function publicAdmin(admin: AdminUser) {
 async function issueSession(admin: AdminUser) {
   const session = await createAdminSession(admin.id);
   return { token: session.token, expiresAt: session.expiresAt, admin: publicAdmin(admin) };
+}
+
+/**
+ * Bootstrap-пароль из окружения мог быть создан до появления префикса в хеше. Поэтому
+ * распознаём и новый маркер, и совпадение с текущими ADMIN_BOOTSTRAP_*; после первого полного
+ * входа `consumeAdminBootstrapPassword` всё равно заменяет хеш.
+ */
+function startedWithBootstrapPassword(admin: AdminUser, password: string): boolean {
+  if (adminUsesBootstrapPassword(admin)) return true;
+  const email = (process.env[BOOTSTRAP_EMAIL_ENV] ?? "").trim().toLowerCase();
+  const value = process.env[BOOTSTRAP_PASSWORD_ENV] ?? "";
+  return Boolean(email && value) && admin.email === email && password === value;
+}
+
+async function consumeBootstrapPassword(state: { bootstrap: boolean }, admin: AdminUser, ip: string): Promise<void> {
+  if (!state.bootstrap) return;
+  if (await consumeAdminBootstrapPassword(admin.id)) {
+    await recordAudit({
+      action: "admin.bootstrap.password.consumed",
+      actorType: "admin",
+      actorId: admin.id,
+      actorLabel: admin.email,
+      ip,
+      details: { passwordChanged: "cli-required" },
+    });
+  }
 }
 
 export type AdminRequest = { admin: AdminUser; token: string; expiresAt: string };
@@ -151,7 +180,11 @@ export async function registerAdminRoutes(app: FastifyInstance) {
       ip: request.ip,
       details: { stage },
     });
-    const challenge = createAdminChallenge({ adminId: admin.id, stage });
+    const challenge = createAdminChallenge({
+      adminId: admin.id,
+      stage,
+      bootstrap: startedWithBootstrapPassword(admin, body.password),
+    });
     return {
       stage,
       challenge,
@@ -178,7 +211,7 @@ export async function registerAdminRoutes(app: FastifyInstance) {
 
     const secret = generateTotpSecret();
     dropAdminChallenge(body.challenge);
-    const challenge = createAdminChallenge({ adminId: admin.id, stage: "enroll", secret });
+    const challenge = createAdminChallenge({ adminId: admin.id, stage: "enroll", secret, bootstrap: state.bootstrap });
     return {
       challenge,
       secret,
@@ -234,6 +267,7 @@ export async function registerAdminRoutes(app: FastifyInstance) {
       step: match.step,
       recoveryHashes: recoveryCodes.map(hashRecoveryCode),
     });
+    await consumeBootstrapPassword(state, admin, request.ip);
     await recordAudit({
       action: "admin.2fa.enabled",
       actorType: "admin",
@@ -292,6 +326,7 @@ export async function registerAdminRoutes(app: FastifyInstance) {
         });
       }
       await setAdminLastTotpStep(admin.id, match.step);
+      await consumeBootstrapPassword(state, admin, request.ip);
       await recordAudit({
         action: "admin.login.success",
         actorType: "admin",
@@ -320,6 +355,7 @@ export async function registerAdminRoutes(app: FastifyInstance) {
         attemptsLeft,
       });
     }
+    await consumeBootstrapPassword(state, admin, request.ip);
     await recordAudit({
       action: "admin.login.recovery",
       actorType: "admin",

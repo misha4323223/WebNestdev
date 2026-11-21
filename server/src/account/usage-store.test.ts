@@ -14,7 +14,7 @@ const { consumeAgentRun, consumeUsage, getBillingHistory, getCreditBudget, getTo
 const { grantSubscription } = await import("../billing/store.js");
 const { createCreditPurchase, creditBalance, markCreditPurchasePaid } = await import("../billing/credit-store.js");
 
-test("daily agent quota blocks the next run and usage is isolated per account", async () => {
+test("weekly free quota blocks the next run and usage is isolated per account", async () => {
   const userId = "quota-test-" + randomUUID();
   const otherUserId = "quota-test-" + randomUUID();
   for (let index = 0; index < 10; index++) await consumeUsage(userId, "agentRuns", "free");
@@ -25,15 +25,34 @@ test("daily agent quota blocks the next run and usage is isolated per account", 
   const own = await getUsageSnapshot(userId);
   const other = await getUsageSnapshot(otherUserId);
   assert.equal(own.agentRuns, 10);
+  assert.equal(own.agentRunsWeek, 10);
   assert.equal(own.browserChecks, 0);
   assert.equal(other.agentRuns, 0);
+  assert.equal(other.agentRunsWeek, 0);
 });
 
 /**
- * На платном тарифе дневного лимита нет: расход ограничивают кредиты, а счётчик запусков остаётся
+ * Недельная квота обнуляется в понедельник 00:00 UTC, а не в полночь каждого дня. Проверяем
+ * переход через границу недели: в воскресенье лимит ещё исчерпан, в понедельник снова доступен.
+ */
+test("free agent quota resets on the next UTC week, not on the next day", async () => {
+  const userId = "quota-week-reset-" + randomUUID();
+  const monday = new Date("2026-01-05T12:00:00.000Z");
+  const tuesday = new Date("2026-01-06T12:00:00.000Z");
+  const nextMonday = new Date("2026-01-12T12:00:00.000Z");
+  for (let index = 0; index < 10; index++) await consumeUsage(userId, "agentRuns", "free", monday);
+  await assert.rejects(() => consumeUsage(userId, "agentRuns", "free", tuesday), UsageLimitError);
+  const nextWeek = await consumeUsage(userId, "agentRuns", "free", nextMonday);
+  assert.equal(nextWeek.agentRuns, 1, "понедельничный запуск попадает в новый день");
+  assert.equal(nextWeek.agentRunsWeek, 1, "и в новую неделю");
+  assert.equal(nextWeek.weekStart, "2026-01-12");
+});
+
+/**
+ * На платном тарифе недельного лимита нет: расход ограничивают кредиты, а счётчик запусков остаётся
  * только для истории. Проверяем больше прежнего потолка в 100 запусков.
  */
-test("paid plans do not stop runs at a daily cap: credits are the limit", async () => {
+test("paid plans do not stop runs at a weekly cap: credits are the limit", async () => {
   const userId = "quota-paid-" + randomUUID();
   for (let index = 0; index < 120; index++) await consumeUsage(userId, "agentRuns", "pro");
   assert.equal((await getUsageSnapshot(userId)).agentRuns, 120);
@@ -70,9 +89,10 @@ test("a run on the project's own provider does not spend the platform quota", as
   const userId = "quota-own-provider-" + randomUUID();
   for (let index = 0; index < 15; index++) await consumeAgentRun(userId, { ownProvider: true });
   assert.equal((await getUsageSnapshot(userId)).agentRuns, 0, "запуски за свой счёт не считаются");
-  // Квота платформы осталась целой: на встроенной модели доступны все 10 запусков дня.
+  // Квота платформы осталась целой: на встроенной модели доступны все 10 запусков недели.
   for (let index = 0; index < 10; index++) await consumeAgentRun(userId, { ownProvider: false });
   assert.equal((await getUsageSnapshot(userId)).agentRuns, 10);
+  assert.equal((await getUsageSnapshot(userId)).agentRunsWeek, 10);
   await assert.rejects(() => consumeAgentRun(userId, { ownProvider: false }), UsageLimitError);
   // И даже с исчерпанной квотой платформы свой провайдер продолжает работать.
   await assert.doesNotReject(() => consumeAgentRun(userId, { ownProvider: true }));
@@ -209,6 +229,7 @@ test("billing history returns a zero-filled week with today's usage in the last 
   const today = history.days[6];
   assert.equal(today.date, new Date().toISOString().slice(0, 10));
   assert.equal(today.agentRuns, 1);
+  assert.equal((await getUsageSnapshot(userId)).agentRunsWeek, 1);
   assert.equal(today.webSearches, 1);
   assert.equal(today.browserChecks, 0);
   assert.deepEqual(
@@ -220,7 +241,7 @@ test("billing history returns a zero-filled week with today's usage in the last 
   assert.equal(yesterday.agentRuns + yesterday.browserChecks + yesterday.webSearches, 0);
 });
 
-test("concurrent reservations never exceed the daily quota", async () => {
+test("concurrent reservations never exceed the weekly quota", async () => {
   const userId = "quota-concurrency-" + randomUUID();
   const results = await Promise.allSettled(
     Array.from({ length: 20 }, () => consumeUsage(userId, "agentRuns", "free")),
@@ -228,4 +249,5 @@ test("concurrent reservations never exceed the daily quota", async () => {
   assert.equal(results.filter(result => result.status === "fulfilled").length, 10);
   assert.equal(results.filter(result => result.status === "rejected" && result.reason instanceof UsageLimitError).length, 10);
   assert.equal((await getUsageSnapshot(userId)).agentRuns, 10);
+  assert.equal((await getUsageSnapshot(userId)).agentRunsWeek, 10);
 });

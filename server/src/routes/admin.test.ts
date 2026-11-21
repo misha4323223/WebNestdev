@@ -16,7 +16,7 @@ process.env.WEBNESTDEV_DATA_DIR = await mkdtemp(path.join(tmpdir(), "admin-route
 
 const Fastify = (await import("fastify")).default;
 const { registerAdminRoutes } = await import("./admin.js");
-const { createAdmin } = await import("../admin/admin-store.js");
+const { adminUsesBootstrapPassword, createAdmin, findAdminByEmail } = await import("../admin/admin-store.js");
 const { totp } = await import("../admin/totp.js");
 const { clearAuthRateLimits } = await import("../auth/auth-rate-limit.js");
 
@@ -26,9 +26,13 @@ const PASSWORD = "correct-horse-battery";
 const app = Fastify();
 await registerAdminRoutes(app);
 
-async function login(password = PASSWORD) {
-  const response = await app.inject({ method: "POST", url: "/api/admin/login", payload: { email: EMAIL, password } });
+async function loginAs(email: string, password: string) {
+  const response = await app.inject({ method: "POST", url: "/api/admin/login", payload: { email, password } });
   return { status: response.statusCode, body: response.json() as Record<string, unknown> };
+}
+
+async function login(password = PASSWORD) {
+  return loginAs(EMAIL, password);
 }
 
 async function verify(challenge: string, code: string) {
@@ -171,6 +175,35 @@ test("новый набор кодов восстановления отменя
   const another = await login();
   const current = await verify(String(another.body.challenge), recoveryCodes[0]);
   assert.equal(current.status, 200);
+});
+
+test("bootstrap-пароль перестаёт работать после подключения TOTP", async () => {
+  await clearAuthRateLimits();
+  const email = "bootstrap-owner@example.test";
+  const password = "bootstrap-routes-password";
+  await createAdmin(email, password, { bootstrap: true });
+
+  const first = await loginAs(email, password);
+  assert.equal(first.status, 200);
+  assert.equal(first.body.stage, "enroll");
+  const setup = await app.inject({
+    method: "POST",
+    url: "/api/admin/2fa/setup",
+    payload: { challenge: first.body.challenge },
+  });
+  const setupBody = setup.json() as { challenge: string; secret: string };
+  const enabled = await app.inject({
+    method: "POST",
+    url: "/api/admin/2fa/enable",
+    payload: { challenge: setupBody.challenge, code: totp(setupBody.secret) },
+  });
+  assert.equal(enabled.statusCode, 200, enabled.body);
+
+  const stored = await findAdminByEmail(email);
+  assert.ok(stored);
+  assert.equal(adminUsesBootstrapPassword(stored), false);
+  const after = await loginAs(email, password);
+  assert.equal(after.status, 401, "старый bootstrap-пароль больше не действует");
 });
 
 test("выход закрывает токен, «выйти везде» — все сессии", async () => {

@@ -160,7 +160,7 @@ export async function startSandboxJob(
     "none",
     name,
     masks,
-    { detached: true, labels: { "webnestdev.job": "1", "webnestdev.project": config.projectId } },
+    { detached: true, labels: { "webnestdev.job": "1", "webnestdev.project": config.projectId, "webnestdev.load": "job" } },
   );
   const result = await host.docker(args);
   if (result.code !== 0) {

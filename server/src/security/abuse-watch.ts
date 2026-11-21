@@ -8,8 +8,9 @@ import { getProject } from "../project-store.js";
  *
  * Майнинг на чужой машине стоит платформе денег и репутации (исходящий трафик уже закрыт сетью
  * 5.1, но CPU-нагрузка остаётся). Признак, который видно без содержимого трафика, — контейнер
- * проекта, который держит почти всё выделенное ему CPU дольше разумного времени. Сборка это
- * секунды-минуты, тесты — тоже; десять минут на 90% — не сборка.
+ * проекта, который держит почти всё выделенное ему CPU дольше любого разрешённого build/install.
+ * Сборка и установка ограничены тридцатью минутами, поэтому порог — 45 минут на 95%; одноразовые
+ * команды с меткой `command` в проверку не входят вообще.
  *
  * Реакция — ограничение аккаунта, а не молчаливое убийство: в журнал `security_audit` пишется
  * запись `security.abuse.blocked` с проектом и минутами нагрузки, у пользователя появляется
@@ -22,21 +23,37 @@ import { getProject } from "../project-store.js";
  * уже решение политики, а не наблюдение.
  */
 
-export type AbuseSample = { containerId: string; projectId: string | null; cpuPercent: number };
+/** `command` — одноразовая команда/установка/сборка; её не блокируем по CPU. */
+export type AbuseLoad = "preview" | "job" | "command" | "unknown";
+export type AbuseSample = { containerId: string; projectId: string | null; cpuPercent: number; load?: AbuseLoad };
 export type AbuseLimits = { cpuPercent: number; sustainedMs: number };
 export type AbuseViolation = { projectId: string; since: number; containers: string[] };
 export type WatchState = Map<string, { firstHighAt: number; containers: Set<string> }>;
 
-export const DEFAULT_ABUSE_LIMITS: AbuseLimits = { cpuPercent: 90, sustainedMs: 10 * 60 * 1000 };
+/**
+ * Майнинг отличается от сборки не одной минутой, а тем, что длится дольше любого разрешённого
+ * build/install-таймаута. Самый долгий лимит платформы — 30 минут (`NPM_INSTALL_TIMEOUT_MS`,
+ * `HOSTING_BUILD_TIMEOUT_MS`, `terminal.exec`), поэтому 45 минут — первый порог, который не может
+ * быть обычной установкой или сборкой. CPU-порог 95%, а не 90: короткий пик на пределе ядер — это
+ * всё ещё нормальная работа. Отдельно исключены одноразовые command-контейнеры.
+ */
+export const DEFAULT_ABUSE_LIMITS: AbuseLimits = { cpuPercent: 95, sustainedMs: 45 * 60 * 1000 };
+const MIN_SUSTAINED_MS = 45 * 60 * 1000;
+const TRANSIENT_LOADS: ReadonlySet<AbuseLoad> = new Set(["command"]);
 
-/** Лимиты из окружения: администратор может смягчить порог на слабой ВМ или ужесточить на сильной. */
+/** Лимиты из окружения: администратор может ужесточить CPU, но не опустить время ниже build/install. */
 export function abuseLimitsFromEnv(): AbuseLimits {
   const cpu = Number(process.env.ABUSE_CPU_PERCENT);
   const sustained = Number(process.env.ABUSE_SUSTAINED_MS);
   return {
     cpuPercent: Number.isFinite(cpu) && cpu > 0 && cpu <= 100 ? cpu : DEFAULT_ABUSE_LIMITS.cpuPercent,
-    sustainedMs: Number.isFinite(sustained) && sustained >= 60_000 ? sustained : DEFAULT_ABUSE_LIMITS.sustainedMs,
+    sustainedMs: Number.isFinite(sustained) && sustained >= MIN_SUSTAINED_MS ? sustained : DEFAULT_ABUSE_LIMITS.sustainedMs,
   };
+}
+
+/** Нагрузка, которая может быть майнингом: preview/job/старые контейнеры без метки. */
+function countsAsPersistent(sample: AbuseSample): boolean {
+  return !TRANSIENT_LOADS.has(sample.load ?? "unknown");
 }
 
 /**
@@ -56,6 +73,8 @@ export function evaluateAbuse(
   const high = new Map<string, Set<string>>();
   for (const sample of samples) {
     if (!sample.projectId) continue;
+    // Одноразовая команда, установка или сборка не становится майнингом только из-за CPU.
+    if (!countsAsPersistent(sample)) continue;
     if (!(sample.cpuPercent >= limits.cpuPercent)) continue;
     const set = high.get(sample.projectId) ?? new Set<string>();
     set.add(sample.containerId);
@@ -89,15 +108,18 @@ export function parseCpuPercent(value: string): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
-/** Одна строка `docker ps --format '{{json .}}'`: id контейнера и метка проекта, если она есть. */
-export function parseDockerPsLine(line: string): { id: string; projectId: string | null } | null {
+/** Одна строка `docker ps --format '{{json .}}'`: id, проект и тип нагрузки. */
+export function parseDockerPsLine(line: string): { id: string; projectId: string | null; load: AbuseLoad } | null {
   try {
     const parsed = JSON.parse(line) as { ID?: unknown; Labels?: unknown };
     const id = typeof parsed.ID === "string" ? parsed.ID : "";
     if (!id) return null;
     const labels = typeof parsed.Labels === "string" ? parsed.Labels : "";
     const match = labels.split(",").find(label => label.startsWith("webnestdev.project="));
-    return { id, projectId: match ? match.slice("webnestdev.project=".length) || null : null };
+    const loadMatch = labels.split(",").find(label => label.startsWith("webnestdev.load="));
+    const rawLoad = loadMatch ? loadMatch.slice("webnestdev.load=".length) : "";
+    const load: AbuseLoad = rawLoad === "preview" || rawLoad === "job" || rawLoad === "command" ? rawLoad : "unknown";
+    return { id, projectId: match ? match.slice("webnestdev.project=".length) || null : null, load };
   } catch {
     return null;
   }
@@ -159,10 +181,11 @@ export function createDockerObserver(run: DockerRunner) {
     const containers = listed.stdout
       .split("\n")
       .map(parseDockerPsLine)
-      .filter((entry): entry is { id: string; projectId: string | null } => entry !== null);
+      .filter((entry): entry is { id: string; projectId: string | null; load: AbuseLoad } => entry !== null);
     if (!containers.length) return [];
 
     const projects = new Map<string, string | null>(containers.map(entry => [entry.id, entry.projectId]));
+    const loads = new Map<string, AbuseLoad>(containers.map(entry => [entry.id, entry.load]));
     // Метка проекта есть у заданий и предпросмотров; у команд агента её нет (контейнер одноразовый),
     // поэтому для таких контейнеров проект читается из переменной окружения — один inspect на
     // контейнер, и только пока он жив.
@@ -189,7 +212,7 @@ export function createDockerObserver(run: DockerRunner) {
       const id = containers.find(entry => entry.id === row.id)?.id ??
         containers.find(entry => entry.id.startsWith(row.id) || row.id.startsWith(entry.id))?.id;
       if (!id) continue;
-      samples.push({ containerId: id, projectId: projects.get(id) ?? null, cpuPercent: row.cpuPercent });
+      samples.push({ containerId: id, projectId: projects.get(id) ?? null, cpuPercent: row.cpuPercent, load: loads.get(id) ?? "unknown" });
     }
     return samples;
   };

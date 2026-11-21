@@ -45,7 +45,7 @@ export async function ensureBootstrapAdmin(): Promise<BootstrapResult> {
   if (await findAdminByEmail(email)) return { status: "exists", email };
 
   try {
-    await createAdmin(email, password);
+    await createAdmin(email, password, { bootstrap: true });
     return { status: "created", email };
   } catch (error) {
     // Две реплики стартовали одновременно: проигравший видит уже созданную запись, и это не ошибка.

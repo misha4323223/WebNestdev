@@ -1,4 +1,5 @@
 import type { AgentMode } from "../types.js";
+import { plannerToolVisible } from "./planner-policy.js";
 
 /**
  * Набор схем инструментов, который получает модель в одном запуске.
@@ -50,18 +51,6 @@ const DEPLOY_PREFIXES = ["deploy.", "domain.", "cloud.", "yandex.", "service.", 
 const DEPLOY_TOOLS = ["access.request"] as const;
 /** Expo нужен только мобильному проекту, а не обычному лендингу. */
 const MOBILE_PREFIX = "expo.";
-
-/**
- * Инструменты, которые планировщик не должен даже видеть в схемах. Сервер всё равно откажет
- * в изменении, но не показывать их модели — дешевле и меньше соблазна.
- */
-const PLANNER_FORBIDDEN = new Set([
-  "fs.write", "fs.edit", "fs.rename", "fs.delete",
-  "npm.install", "pip.install", "net.download", "database.env", "database.client", "service.env",
-  "git.pull", "git.add", "git.commit",
-  "preview.start", "preview.stop", "project.check", "project.test", "image.generate",
-  "secrets.request", "access.request", "deploy.plan", "cloud.request", "domain.request",
-]);
 
 const DEPLOY_RE = /(депло|deploy|хостинг|hosting|домен|domain|dns|ssl|сервер|vps|облак|cloud|yandex|яндекс|s3|storage|хранилищ|почт|email|smtp|оплат|payment|stripe|юkassa|подключ|интеграц|база данных|database|postgres|mysql|mongo|redis)/i;
 const MOBILE_RE = /(expo|react native|мобильн|android|ios)/i;
@@ -132,7 +121,9 @@ export function selectToolNames(options: ToolCatalogOptions): string[] {
     names.push(name);
   }
   const unique = [...new Set(names)];
-  return planner ? unique.filter(name => !PLANNER_FORBIDDEN.has(name)) : unique;
+  // Planner gets an allowlist, not a denylist: a new mutating tool is invisible until its
+  // read/conditional policy is recorded in planner-policy.ts.
+  return planner ? unique.filter(plannerToolVisible) : unique;
 }
 
 /**

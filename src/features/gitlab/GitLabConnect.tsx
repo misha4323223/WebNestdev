@@ -240,7 +240,7 @@ export function GitLabConnect({surface="home",onImported=openImportedProject}:{s
         <div className="connector-copy"><code>{callbackUrl??appOrigin+"/api/gitlab/callback"}</code><button className="ghost-button connector-toggle" onClick={()=>void copyCallback()}>{copied?"Скопировано":"Скопировать"}</button></div>
         <p>3. Снимите галочку <em>Confidential</em> только если GitLab не принимает callback; для серверного приложения она должна оставаться включённой. Отметьте scopes <code>read_api</code>, <code>read_repository</code> и <code>write_repository</code> — последний нужен для отправки коммитов обратно в GitLab.</p>
         <p>4. После сохранения GitLab покажет <em>Application ID</em> и <em>Secret</em>. Secret виден один раз — скопируйте сразу.</p>
-        <p>5. Вставьте значения в <code>GITLAB_CLIENT_ID</code> и <code>GITLAB_CLIENT_SECRET</code>, при своём GitLab ещё <code>GITLAB_BASE_URL</code>. В Freebuff это Settings → Environment или панель «Ключи сервера».</p>
+        <p>5. Вставьте значения в <code>GITLAB_CLIENT_ID</code> и <code>GITLAB_CLIENT_SECRET</code>, при своём GitLab ещё <code>GITLAB_BASE_URL</code>. В Freebuff это Settings → Environment; на своём сервере — <code>.env</code> или API платформенных ключей.</p>
         <p className="connector-warning">Секрет — это пароль приложения: не вставляйте его в чат и не коммитьте в репозиторий.</p>
       </div>}
     </>}

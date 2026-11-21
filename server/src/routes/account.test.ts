@@ -5,7 +5,7 @@ import { balanceFor, creditPoolFor, customDomainLimitFor, hostingSiteLimitFor, i
 import { assertIntegrationSlot, IntegrationLimitError } from "../account/integration-limits.js";
 import { connectorAllowedForPlan } from "../account/connector-access.js";
 
-test("paid plans carry a monthly price, more projects and no daily run cap", () => {
+test("paid plans carry a monthly price, more projects and no run cap", () => {
   assert.equal(PLAN_CATALOG.free.priceLabel, "0 ₽");
   assert.equal(PLAN_CATALOG.free.priceRub, 0);
   assert.equal(PLAN_CATALOG.pro.priceRub, 990);
@@ -28,9 +28,12 @@ test("paid plans carry a monthly price, more projects and no daily run cap", () 
   assert.equal(PLAN_CATALOG.free.limits.imagesPerDay, 5, "на «Старте» пять изображений в день");
   assert.equal(PLAN_CATALOG.pro.limits.imagesPerDay, 20, "на «Плюсе» двадцать изображений в день");
   assert.equal(PLAN_CATALOG.team.limits.imagesPerDay, 20, "на «Премиуме» тоже двадцать изображений в день");
-  assert.equal(PLAN_CATALOG.free.limits.agentRunsPerDay, 10, "на бесплатном тарифе дневной лимит остаётся");
-  assert.equal(PLAN_CATALOG.pro.limits.agentRunsPerDay, null, "на платных тарифах дневного лимита запусков нет");
+  assert.equal(PLAN_CATALOG.free.limits.agentRunsPerDay, null, "дневного лимита на бесплатном тарифе больше нет");
+  assert.equal(PLAN_CATALOG.free.limits.agentRunsPerWeek, 10, "на бесплатном тарифе 10 запусков в неделю");
+  assert.equal(PLAN_CATALOG.pro.limits.agentRunsPerDay, null);
+  assert.equal(PLAN_CATALOG.pro.limits.agentRunsPerWeek, null, "на платных тарифах недельного лимита запусков нет");
   assert.equal(PLAN_CATALOG.team.limits.agentRunsPerDay, null);
+  assert.equal(PLAN_CATALOG.team.limits.agentRunsPerWeek, null);
   assert.equal(PLAN_CATALOG.free.limits.browserChecksPerDay, null, "браузерная проверка — режим, а не квота тарифа");
   assert.equal(PLAN_CATALOG.pro.limits.browserChecksPerDay, null);
   assert.equal(PLAN_CATALOG.team.limits.browserChecksPerDay, null);
@@ -82,11 +85,11 @@ test("the billing account reports an active free plan and an empty balance until
 
 /**
  * Кредиты — то, что человек покупает на платном тарифе: бюджет растёт вместе с ценой, а на
- * бесплатном его нет вовсе (там работает дневной лимит запусков). Это проверяется отдельно,
+ * бесплатном его нет вовсе (там работает недельный лимит запусков). Это проверяется отдельно,
  * потому что ноль в каталоге означает «кредитов нет», а не «бюджет нулевой».
  */
 test("the monthly credit pool is a paid-plan benefit and grows with the plan", () => {
-  assert.equal(creditPoolFor("free"), 0, "бесплатный тариф живёт дневным лимитом запусков");
+  assert.equal(creditPoolFor("free"), 0, "бесплатный тариф живёт недельным лимитом запусков");
   assert.ok(creditPoolFor("pro") > 0 && creditPoolFor("team") > creditPoolFor("pro"));
   assert.ok(PLAN_CATALOG.pro.features.some(feature => feature.includes("кредитов")));
   assert.equal(PLAN_CATALOG.pro.limits.functionsPerSite, 5);

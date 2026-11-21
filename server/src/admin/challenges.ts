@@ -27,6 +27,8 @@ export type AdminChallengeState = {
   stage: AdminChallengeStage;
   /** Base32-секрет, который ещё не подтверждён кодом (только для stage=enroll). */
   secret: string;
+  /** Вход начат одноразовым bootstrap-паролем: после TOTP его нужно погасить. */
+  bootstrap: boolean;
   attempts: number;
   expiresAt: number;
 };
@@ -44,7 +46,7 @@ function sweep(now: number) {
   }
 }
 
-export function createAdminChallenge(input: { adminId: string; stage: AdminChallengeStage; secret?: string }, now = Date.now()): string {
+export function createAdminChallenge(input: { adminId: string; stage: AdminChallengeStage; secret?: string; bootstrap?: boolean }, now = Date.now()): string {
   sweep(now);
   if (challenges.size >= MAX_ENTRIES) {
     const oldest = challenges.keys().next().value;
@@ -55,6 +57,7 @@ export function createAdminChallenge(input: { adminId: string; stage: AdminChall
     adminId: input.adminId,
     stage: input.stage,
     secret: input.secret ?? "",
+    bootstrap: input.bootstrap === true,
     attempts: 0,
     expiresAt: now + ttlMs(),
   });

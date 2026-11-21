@@ -17,6 +17,8 @@
 export const TRUSTED_PROXIES_ENV = "WEBNESTDEV_TRUSTED_PROXIES";
 const DEFAULT_TRUSTED = ["127.0.0.1", "::1"];
 
+import { isIP } from "node:net";
+
 /** `::ffff:10.0.0.2` и `[::1]` приводятся к одной форме, чтобы сравнение не зависело от записи. */
 export function normalizeAddress(address: string | undefined | null): string {
   const value = (address ?? "").trim();
@@ -40,6 +42,61 @@ function ipv4ToNumber(address: string): number | null {
   const numbers = parts.map(part => (/^\d{1,3}$/.test(part) ? Number(part) : Number.NaN));
   if (!numbers.every(number => Number.isFinite(number) && number >= 0 && number <= 255)) return null;
   return ((numbers[0] << 24) | (numbers[1] << 16) | (numbers[2] << 8) | numbers[3]) >>> 0;
+}
+
+/** 100.64.0.0/10 — CGNAT: за одним адресом стоят разные люди, IP не является личностью. */
+export function isCgnatAddress(address: string): boolean {
+  const value = ipv4ToNumber(address);
+  return value !== null && value >= 0x64400000 && value <= 0x647fffff;
+}
+
+function ipv6Words(address: string): number[] | null {
+  const value = normalizeAddress(address).split("%")[0]!;
+  if (isIP(value) !== 6) return null;
+  const halves = value.split("::");
+  if (halves.length > 2) return null;
+  const parseHalf = (half: string): number[] | null => {
+    if (!half) return [];
+    const words: number[] = [];
+    for (const token of half.split(":")) {
+      if (token.includes(".")) {
+        const ipv4 = ipv4ToNumber(token);
+        if (ipv4 === null) return null;
+        words.push((ipv4 >>> 16) & 0xffff, ipv4 & 0xffff);
+        continue;
+      }
+      if (!/^[0-9a-f]{1,4}$/i.test(token)) return null;
+      words.push(parseInt(token, 16));
+    }
+    return words;
+  };
+  const head = parseHalf(halves[0] ?? "");
+  const tail = halves.length === 2 ? parseHalf(halves[1] ?? "") : [];
+  if (!head || !tail) return null;
+  if (halves.length === 1) return head.length === 8 ? head : null;
+  if (head.length + tail.length >= 8) return null;
+  return [...head, ...new Array<number>(8 - head.length - tail.length).fill(0), ...tail];
+}
+
+/**
+ * Ключ IP-двери лимитов.
+ *
+ * IPv6 сворачивается до /64: клиент обычно получает целую подсеть, и перебор с разных адресов
+ * одной /64 не должен получать новое окно на каждый адрес. CGNAT (100.64.0.0/10) не даёт ключа:
+ * за ним тысячи честных людей, поэтому IP-дверь для него пропускается, а лимиты по аккаунту/email
+ * продолжают работать. Обычный IPv4 остаётся точным адресом.
+ */
+export type RateLimitAddress = { key: string; cgnat: boolean };
+export function rateLimitAddress(address: string | undefined | null): RateLimitAddress {
+  const value = normalizeAddress(address);
+  if (!value) return { key: "unknown", cgnat: false };
+  if (isCgnatAddress(value)) return { key: "cgnat", cgnat: true };
+  const words = ipv6Words(value);
+  if (words) {
+    const prefix = words.slice(0, 4).map(word => word.toString(16)).join(":");
+    return { key: prefix + "::/64", cgnat: false };
+  }
+  return { key: value, cgnat: false };
 }
 
 /**

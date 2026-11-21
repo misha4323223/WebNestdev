@@ -45,6 +45,8 @@ export type AdminSession = {
 };
 
 const scrypt = promisify(scryptCallback);
+/** Префикс отличает одноразовый bootstrap-пароль от обычного; формат хеша остаётся прежним. */
+const BOOTSTRAP_PASSWORD_PREFIX = "bootstrap:";
 const root = process.env.WEBNESTDEV_DATA_DIR ?? path.resolve(".webnestdev");
 const adminDir = path.join(root, "admin");
 const adminsFile = path.join(adminDir, "admins.json");
@@ -95,12 +97,22 @@ async function hashPassword(password: string) {
   return salt + ":" + derived.toString("hex");
 }
 
+async function passwordHash(password: string, bootstrap = false) {
+  return (bootstrap ? BOOTSTRAP_PASSWORD_PREFIX : "") + await hashPassword(password);
+}
+
 async function passwordMatches(password: string, stored: string) {
-  const [salt, expected] = stored.split(":");
+  const value = stored.startsWith(BOOTSTRAP_PASSWORD_PREFIX) ? stored.slice(BOOTSTRAP_PASSWORD_PREFIX.length) : stored;
+  const [salt, expected] = value.split(":");
   if (!salt || !expected) return false;
   const derived = (await scrypt(password, salt, 64)) as Buffer;
   const known = Buffer.from(expected, "hex");
   return known.length === derived.length && timingSafeEqual(known, derived);
+}
+
+/** Был ли этот админ создан из ADMIN_BOOTSTRAP_* и ещё не потратил одноразовый пароль. */
+export function adminUsesBootstrapPassword(admin: Pick<AdminUser, "passwordHash">): boolean {
+  return admin.passwordHash.startsWith(BOOTSTRAP_PASSWORD_PREFIX);
 }
 
 /**
@@ -175,7 +187,11 @@ function parseHashes(raw: string | undefined): string[] {
 
 // ─── Аккаунты ────────────────────────────────────────────────────────────────
 
-export async function createAdmin(email: string, password: string): Promise<AdminUser> {
+export async function createAdmin(
+  email: string,
+  password: string,
+  options: { bootstrap?: boolean } = {},
+): Promise<AdminUser> {
   const normalized = normalizeEmail(email);
   if (!normalized) throw new Error("Нужен email администратора");
   if (await findAdminByEmail(normalized)) throw new Error(ADMIN_EMAIL_TAKEN);
@@ -183,7 +199,7 @@ export async function createAdmin(email: string, password: string): Promise<Admi
   const admin: AdminUser = {
     id: randomUUID(),
     email: normalized,
-    passwordHash: await hashPassword(password),
+    passwordHash: await passwordHash(password, options.bootstrap === true),
     totpSecret: "",
     totpEnabledAt: "",
     recoveryHashes: [],
@@ -296,6 +312,18 @@ export async function setAdminRecoveryHashes(id: string, hashes: string[]): Prom
  */
 export async function setAdminPassword(id: string, password: string): Promise<void> {
   await updateAdmin(id, { passwordHash: await hashPassword(password) });
+}
+
+/**
+ * Одноразовый bootstrap-пароль сгорает после первого полного входа. В записи остаётся обычный
+ * scrypt-хеш случайной строки, которую никто не знает: старый пароль из окружения больше не
+ * действует, а новый задаётся только CLI (`admin:password`). Это меняет хеш, но не TOTP и сессии.
+ */
+export async function consumeAdminBootstrapPassword(id: string): Promise<boolean> {
+  const admin = await getAdmin(id);
+  if (!admin || !adminUsesBootstrapPassword(admin)) return false;
+  await updateAdmin(id, { passwordHash: await hashPassword(randomBytes(32).toString("base64url")) });
+  return true;
 }
 
 export async function setAdminLastTotpStep(id: string, step: number): Promise<void> {

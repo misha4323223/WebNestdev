@@ -18,8 +18,8 @@ type SidebarPlanInfo={name:string;chosen:string|null;planId:string;used:number;l
 
 /**
  * Бесплатный лимит в колонке. Считать «шаги» человеку неудобно: внутри одного запуска агент делает
- * много шагов, а ограничение — дневные запуски на встроенной модели. Поэтому показывается доля
- * израсходованного: 4 из 10 — это 40 %, без токенов и без арифметики в голове.
+ * много шагов, а ограничение — 10 запусков на встроенной модели за календарную неделю. Поэтому
+ * показывается доля израсходованного: 4 из 10 — это 40 %, без токенов и без арифметики в голове.
  * Цвет шкалы — не украшение: к концу лимита он плавно уходит от хаки к красному.
  */
 function stepsAccent(ratio:number){
@@ -54,8 +54,8 @@ function usePlanInfo(){
           name:current?.name??"Старт",
           chosen:isPendingChoice(planChoice,data)?planName(data,chosenPlanId(planChoice)):null,
           planId:activePlanId(data),
-          used:data.usage.agentRuns,
-          limit:data.limits.agentRunsPerDay,
+          used:data.usage.agentRunsWeek ?? 0,
+          limit:data.limits.agentRunsPerWeek ?? null,
           storageUsed:data.storage?.usedBytes ?? 0,
           storageLimit:data.limits.storageBytes ?? 0,
         });
@@ -80,7 +80,7 @@ function SidebarRuns({plan}:{plan:SidebarPlanInfo|null}){
   const percent=Math.round(ratio*100);
   const accent=stepsAccent(ratio);
   const left=Math.max(0,limit-plan.used);
-  return <div className="sidebar-steps" title={left>0?"Использовано "+plan.used+" из "+limit+" бесплатных запусков агента · осталось "+left:"Бесплатные запуски агента на сегодня закончились"}>
+  return <div className="sidebar-steps" title={left>0?"Использовано "+plan.used+" из "+limit+" бесплатных запусков агента на этой неделе · осталось "+left:"Бесплатные запуски агента на эту неделю закончились"}>
     <div className="sidebar-steps-head"><span>Бесплатные запуски</span><strong style={{color:accent}}>{percent}%</strong></div>
     <div className="sidebar-steps-track" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent} aria-valuetext={percent+"%"} aria-label="Использование бесплатных запусков агента">
       <span style={{width:percent+"%",background:"linear-gradient(90deg,#876832,"+accent+")",boxShadow:percent>0?"0 0 6px "+accent+"55":"none"}}/>

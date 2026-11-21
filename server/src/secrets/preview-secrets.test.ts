@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { SandboxConfig } from "../sandbox/sandbox-types.js";
@@ -77,6 +77,41 @@ test("без секретов предпросмотр не монтирует �
   const mounts = await previewSecretMounts(sandbox);
   assert.deepEqual(mounts.mounts, []);
   await assert.rejects(() => readFile(path.join(staleDir, ".env.local")), /ENOENT/);
+});
+
+test("каталог на месте временного env-файла заменяется файлом", async () => {
+  const projectId = "preview-dir-target";
+  const sandbox = config(projectId);
+  await mkdir(sandbox.root, { recursive: true });
+  await saveProjectSecrets(projectId, sandbox.root, { TOKEN: "value" });
+  const target = path.join(sandboxRoot, ".secret-runtime", projectId, ".env.local");
+  // Docker создаёт отсутствующий source bind-mount каталогом; такой каталог не должен
+  // навсегда блокировать монтирование секретов.
+  await mkdir(target, { recursive: true });
+
+  const mounts = await previewSecretMounts(sandbox);
+  try {
+    assert.equal(mounts.mounts.length, 2);
+    assert.equal(await readFile(target, "utf8"), "TOKEN=value\n", "на месте каталога должен быть файл с секретами");
+  } finally {
+    await mounts.cleanup();
+  }
+});
+
+test("EACCES на удалении секретов не валит установку зависимостей", async () => {
+  if (process.getuid?.() === 0) return; // root обходит запрет записи в каталог
+  const id = "preview-locked";
+  const dir = path.join(sandboxRoot, ".secret-runtime", id);
+  await mkdir(dir, { recursive: true });
+  await writeFile(path.join(dir, ".env.local"), "A=1\n");
+  const parent = path.join(sandboxRoot, ".secret-runtime");
+  await chmod(parent, 0o500);
+  try {
+    await clearPreviewSecrets(id);
+  } finally {
+    await chmod(parent, 0o755);
+  }
+  assert.ok((await stat(dir)).isDirectory(), "каталог остался на месте и не уронил вызывающего");
 });
 
 test("очистка убирает все временные файлы", async () => {

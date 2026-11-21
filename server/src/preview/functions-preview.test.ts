@@ -8,6 +8,7 @@ import type { SandboxConfig } from "../sandbox-manager.js";
 import { functionsPreviewStats, startFunctionsPreviewExecutor, setFunctionsPreviewDepsForTests } from "./functions-preview.js";
 import { startStaticPreview, stopAllStaticPreviews, stopStaticPreview } from "./static-preview.js";
 import { removePreview } from "./preview-store.js";
+import { stopPreview } from "../preview-manager.js";
 
 const PROJECT_ID = "functions-preview-test";
 
@@ -111,6 +112,50 @@ test("one executor serves every API request and is stopped with the preview", as
   } finally {
     setFunctionsPreviewDepsForTests(null);
     await stopAllStaticPreviews();
+    removePreview(PROJECT_ID);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("stopPreview stops a static functions executor even when the preview state is already gone", async () => {
+  const root = await project();
+  const server = await backend();
+  let stops = 0;
+  setFunctionsPreviewDepsForTests({
+    ensureDependencies: async () => ({ ok: true, installed: false, log: "" }),
+    build: async () => ({ version: 1, runtime: "node", functions: [], jobs: [], bytes: 0 }),
+    startProcess: async () => {
+      const now = Date.now();
+      return {
+        containerId: "orphan-functions-container",
+        host: "127.0.0.1",
+        port: server.port,
+        ready: true,
+        state: { mode: "container", containerId: "orphan-functions-container", projectId: PROJECT_ID, host: "127.0.0.1", port: server.port, startedAt: now, lastUsedAt: now, ready: true, settled: true },
+      };
+    },
+    removeContainer: async () => {
+      stops += 1;
+      await server.close();
+      return true;
+    },
+  });
+  try {
+    const started = await startStaticPreview(config(root), { allowContainer: false, allowFunctions: true });
+    assert.equal(started.ok, true);
+    assert.equal(functionsPreviewStats().active, 1);
+
+    // Так бывает после остановки с другой реплики или после того, как запись снял сборщик:
+    // локальный listener и исполнитель функций при этом остаются в этом процессе.
+    removePreview(PROJECT_ID);
+    await stopPreview(PROJECT_ID);
+
+    assert.equal(stops, 1, "stopPreview обязан погасить локальный исполнитель без записи состояния");
+    assert.equal(functionsPreviewStats().active, 0, "слот контейнера функций освобождён");
+  } finally {
+    setFunctionsPreviewDepsForTests(null);
+    await stopAllStaticPreviews();
+    await server.close();
     removePreview(PROJECT_ID);
     await rm(root, { recursive: true, force: true });
   }

@@ -364,7 +364,14 @@ export async function stopPreview(projectId: string) {
   await clearPreviewReservation(projectId);
   const current = await hydratePreview(projectId);
   if (!current) {
-    // Остановка могла прийти после падения запуска: временный env-файл всё равно убираем.
+    // Запись состояния могла снять другая реплика или сборщик, а listener static/hybrid и
+    // исполнитель functions остались в этом процессе. Без этого шага они продолжали работать
+    // после «остановки»: watcher функций повторял hot-reload, держал контейнер и писал ошибки
+    // в лог, хотя панель уже считала preview остановленным.
+    await stopStaticPreview(projectId);
+    await stopHybridPreview(projectId).catch(error => {
+      console.warn("[preview] локальный hybrid-предпросмотр не остановился: " + describeError(error));
+    });
     await clearPreviewSecrets(projectId);
     return { stopped: false };
   }

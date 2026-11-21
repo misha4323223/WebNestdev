@@ -17,8 +17,10 @@ test("Плюс знает тариф, получает контракт функ
   assert.match(notice, /Current plan: «Плюс» \(pro\)/);
   assert.match(notice, /static hosting AND serverless functions/i);
   assert.match(notice, /Do not create a long-running/);
-  assert.match(notice, /Preview: this plan is static only/);
-  assert.match(notice, /Serverless functions are not executed in static preview/);
+  assert.match(notice, /executes the serverless functions declared in nestdev\.functions\.json in one preview container/);
+  assert.match(notice, /The \/api\/\* routes work in preview/);
+  assert.match(notice, /test them with preview\.start and project\.verify before publishing/);
+  assert.doesNotMatch(notice, /not executed in static preview/);
   assert.match(notice, /nestdev\.functions\.json/);
   assert.match(notice, /\/api\/\*/);
   assert.match(notice, /process\.env/);

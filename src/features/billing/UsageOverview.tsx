@@ -29,7 +29,8 @@ export function UsageOverview({ billing, paid, onTopUp, onRefreshStorage, refres
   const creditState = creditLimit > 0
     ? (creditRemaining <= 0 ? "full" : creditUsed >= creditLimit * 0.8 ? "warning" : "ok")
     : "ok";
-  const runsLimit = billing.limits.agentRunsPerDay ?? null;
+  const runsLimit = billing.limits.agentRunsPerWeek ?? null;
+  const runsUsed = billing.usage.agentRunsWeek ?? 0;
 
   const storageLimit = billing.limits.storageBytes ?? 0;
   const storageUsed = billing.storage?.usedBytes ?? 0;
@@ -94,7 +95,7 @@ export function UsageOverview({ billing, paid, onTopUp, onRefreshStorage, refres
         <span className="eyebrow">РЕСУРСЫ</span>
         <h2>Кредиты и ресурсы</h2>
       </div>
-      <small>Сегодня · {billing.usage.date}</small>
+      <small>Сегодня · {billing.usage.date} · неделя с {billing.usage.weekStart}</small>
     </div>
 
     <div className="usage-overview-grid">
@@ -106,20 +107,20 @@ export function UsageOverview({ billing, paid, onTopUp, onRefreshStorage, refres
         {creditLimit > 0
           ? <div className="usage-meter-track"><span style={{ width: `${Math.min(100, creditUsed / Math.max(1, creditLimit) * 100)}%` }}/></div>
           : runsLimit != null
-            ? <div className="usage-meter-track"><span style={{ width: `${Math.min(100, billing.usage.agentRuns / Math.max(1, runsLimit) * 100)}%` }}/></div>
+            ? <div className="usage-meter-track"><span style={{ width: `${Math.min(100, runsUsed / Math.max(1, runsLimit) * 100)}%` }}/></div>
             : null}
         <div className="usage-resource-meta">
           {creditLimit > 0
             ? <span><em>Осталось</em><b>{creditsLabel(creditRemaining)}</b></span>
             : runsLimit != null
-              ? <span><em>Запуски сегодня</em><b>{billing.usage.agentRuns} / {runsLimit}</b></span>
+              ? <span><em>Запуски на неделе</em><b>{runsUsed} / {runsLimit}</b></span>
               : <span><em>Кредиты</em><b>не подключены</b></span>}
           <span><em>Докуплено</em><b>{creditsLabel(purchased)}</b></span>
         </div>
         <p className="usage-resource-note">{creditLimit > 0
           ? "Месячный лимит сбрасывается 1-го числа. Докупленные кредиты не сгорают."
           : runsLimit != null
-            ? "На бесплатном тарифе запуски считаются по дням."
+            ? "На бесплатном тарифе 10 запусков в неделю; новая неделя начинается в понедельник в 00:00 UTC."
             : "На этом тарифе кредиты не начисляются."}</p>
         {paid && onTopUp && <button type="button" className="ghost-button usage-resource-action" onClick={onTopUp}>
           <Plus size={12}/> Докупить кредиты

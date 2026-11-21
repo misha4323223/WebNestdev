@@ -26,7 +26,10 @@ export function dockerRunArgs(
   // Набор флагов ниже — контракт с Docker-брокером (deploy/docker-broker/policy.mjs): он требует
   // read-only корень, cap-drop ALL, no-new-privileges, uid 1000 и лимиты, а монтирования пускает
   // только внутрь каталога песочниц. Новый флаг здесь появляется вместе с правилом в политике.
-  const labels = Object.entries(mode.labels ?? {}).flatMap(([key, value]) => ["--label", key + "=" + value]);
+  // Тип нагрузки нужен abuse-watch: одноразовая команда/сборка не должна блокировать аккаунт
+  // как длительный preview или job. Явная метка вызывающего важнее значения по умолчанию.
+  const labels = Object.entries({ "webnestdev.load": "command", ...(mode.labels ?? {}) })
+    .flatMap(([key, value]) => ["--label", key + "=" + value]);
   // env — только для конкретной команды (например, EXPO_TOKEN у EAS CLI): значение уходит
   // в окружение контейнера, а не в текст команды, поэтому не печатается в логах шага.
   // Переменные egress-прокси (пункт 5.1) — только контейнерам, которые до него дотягиваются:
@@ -35,7 +38,7 @@ export function dockerRunArgs(
   // адресом, которого нет.
   const proxyEnv = proxyReachableFrom(network) ? egressProxyEnv() : {};
   const envArgs = [...Object.entries({ ...proxyEnv, ...env })].flatMap(([key, value]) => ["-e", key + "=" + value]);
-  // gVisor включается одной переменной. Флаг добавляется ко всем контейнерам команд и заданий;
+  // В production gVisor обязателен; флаг добавляется ко всем контейнерам команд и заданий, а
   // политика брокера разрешает только тот Runtime, который назван в BROKER_RUNTIME.
   const runtimeArgs = options.runtime==="runsc"?["--runtime=runsc"]:[];
   return ["run",...(mode.detached?["-d"]:["--rm"]),"--init",...runtimeArgs,...(name?["--name",name]:[]),...labels,"--network",network,"--cap-drop","ALL","--security-opt","no-new-privileges:true","--cpus",options.cpus,"--memory",options.memory,"--pids-limit",options.pids,"--read-only","--tmpfs","/tmp:rw,nosuid,size=256m","--user","1000:1000","-v",workspaceMountSource(config)+":/workspace",...extraMounts,"-w","/workspace"+suffix,"-e","HOME=/tmp",

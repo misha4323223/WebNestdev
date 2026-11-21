@@ -13,6 +13,15 @@ test("runsc выбирается явно и без учёта регистра"
   assert.equal(sandboxRuntime(" RUNSC "), "runsc");
 });
 
+test("в production gVisor обязателен, явный docker запрещён", () => {
+  const production = { NODE_ENV: "production" };
+  assert.equal(sandboxRuntime(undefined, production), "runsc", "пустое значение означает runsc");
+  assert.equal(sandboxRuntime("runsc", production), "runsc");
+  assert.throws(() => sandboxRuntime("docker", production), /SANDBOX_RUNTIME=docker запрещён/);
+  // В разработке обычный Docker остаётся доступным.
+  assert.equal(sandboxRuntime("docker", { NODE_ENV: "development" }), "docker");
+});
+
 /**
  * Установка зависимостей — не обычная команда: дерево из сотен пакетов не укладывается в общие
  * 120 секунд, и `npm install` умирал на таймауте с недособранным node_modules. У неё свой предел,

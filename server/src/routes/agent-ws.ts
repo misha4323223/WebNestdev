@@ -177,8 +177,8 @@ export async function registerAgentWebSocket(app:FastifyInstance,runtime=new Age
           if(stored.length)history=stored;
         }
         // Only so many runs this host can hold at once, so a busy server makes the new run wait
-        // instead of starting a second build container and a second Chromium. The daily quota is
-        // consumed *inside* the place, so a full queue never burns one of the user's daily runs.
+        // instead of starting a second build container and a second Chromium. The weekly quota is
+        // consumed *inside* the place, so a full queue never burns one of the user's weekly runs.
         // The account is passed along because one account runs one agent at a time: a second tab
         // or a second project of the same user is refused instead of taking another place.
         // Сердцебиение охватывает и ожидание в очереди, и сам запуск: и то и другое может молчать

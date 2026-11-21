@@ -6,6 +6,9 @@
 # Вручную тоже можно: sudo sh deploy/scripts/install-runsc.sh
 #
 # Версию можно закрепить: RUNSC_VERSION=release-20261026.0 sh ...
+# SHA256 файла SHA256SUMS закреплён в репозитории и не берётся из того же релиза: иначе подмена
+# релиза вместе с его контрольными суммами прошла бы проверку. Для другой версии задайте
+# RUNSC_SUMS_SHA256 — installer откажется работать без внешнего закреплённого хеша.
 # RUNSC_RESTART_DOCKER=1 разрешает перезапустить Docker, если reload не зарегистрировал runtime.
 # Автоматическая выкатка передаёт 1: иначе на ВМ без терминала некому сделать restart. Перезапуск
 # кратко останавливает работающие контейнеры; compose поднимает их после установки.
@@ -29,8 +32,20 @@ wait_for_docker(){
   return 1
 }
 
-version="${RUNSC_VERSION:-release-20261026.0}"
+pinned_version="release-20261026.0"
+version="${RUNSC_VERSION:-$pinned_version}"
 base="https://github.com/google/gvisor/releases/download/$version"
+# SHA256 самого файла SHA256SUMS, а не строки из него. Значение закреплено вне релиза.
+pinned_sums_sha256="5d295466f759f2bccc6563f099f24d7850aacab33850684571416de64d1a18b0"
+if [ "$version" = "$pinned_version" ]; then
+  sums_sha256="${RUNSC_SUMS_SHA256:-$pinned_sums_sha256}"
+else
+  sums_sha256="${RUNSC_SUMS_SHA256:-}"
+fi
+if [ -z "$sums_sha256" ]; then
+  echo "для RUNSC_VERSION=$version нужен RUNSC_SUMS_SHA256: закрепите SHA256 файла SHA256SUMS вне релиза" >&2
+  exit 1
+fi
 
 if [ "$(id -u)" != "0" ]; then
   if command -v sudo >/dev/null 2>&1; then
@@ -89,6 +104,8 @@ asset="gvisor-$arch.tar.bz2"
 echo "[runsc] скачиваю $version ($arch)"
 curl -fsSL --retry 3 --connect-timeout 20 --max-time 300 "$base/$asset" -o "$tmp/$asset"
 curl -fsSL --retry 3 --connect-timeout 20 --max-time 60 "$base/SHA256SUMS" -o "$tmp/SHA256SUMS"
+# Сначала проверяем сам список внешним закреплённым хешем, и только потом доверяем строкам внутри.
+printf '%s  %s\n' "$sums_sha256" "$tmp/SHA256SUMS" | sha256sum -c -
 
 expected=$(awk -v name="$asset" '$2 == name { print $1; exit }' "$tmp/SHA256SUMS")
 if [ -z "$expected" ]; then
@@ -157,4 +174,4 @@ else
 fi
 
 echo "[runsc] готово: $(/usr/local/bin/runsc --version 2>&1 | head -1)"
-echo "[runsc] дальше: SANDBOX_RUNTIME=runsc включит его в выкатке; откат — SANDBOX_RUNTIME=docker."
+echo "[runsc] готово: SANDBOX_RUNTIME=runsc обязателен в production; docker там отвергается."

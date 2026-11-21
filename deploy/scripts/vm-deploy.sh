@@ -98,8 +98,8 @@
 #                              расхождения.
 #   SERVER_USER_CHECK=0         не проверять, что процесс сервера работает не от uid 0. Проверка
 #                              читает /proc/1/status; при ошибке entrypoint печатает SERVER-USER=root.
-#   SANDBOX_RUNTIME_CHECK=0     не проверять, что при SANDBOX_RUNTIME=runsc Docker знает этот
-#                              runtime. Проверка ничего не запускает, только читает docker info.
+#   SANDBOX_RUNTIME_CHECK=0     запрещено: в production проверка gVisor обязательна. Проверка
+#                              ничего не запускает, только читает docker info.
 #   RUNSC_INSTALL=auto         при SANDBOX_RUNTIME=runsc и отсутствии runtime установить runsc
 #                              через sudo -n до запуска новой версии. `0` запрещает установку
 #                              (хост уже подготовлен вручную); ошибка установки останавливает
@@ -115,6 +115,7 @@
 #                              обход egress-прокси (пункт 5.1 плана). Без него берётся файл из
 #                              $APP_DIR, а без файла правила не применяются — прокси остаётся.
 #   RUNSC_VERSION=…            переопределить закреплённую версию gVisor (необязательно).
+#   RUNSC_SUMS_SHA256=…        SHA256 файла SHA256SUMS; обязателен при другой версии, иначе встроенный.
 #   ENV_FILE=<путь>            файл переменных развёртывания, по умолчанию $APP_DIR/.env.
 #                              Вынесен в переменную, чтобы шаг установки ключей проверялся
 #                              на копии файла, не трогая настоящий .env.
@@ -213,6 +214,7 @@ RUNSC_SCRIPT_B64="${RUNSC_SCRIPT_B64:-}"
 RUNNER_SCRIPT_B64="${RUNNER_SCRIPT_B64:-}"
 RUNNER_SCRIPT_SRC="${RUNNER_SCRIPT_SRC:-}"
 RUNSC_VERSION="${RUNSC_VERSION:-}"
+RUNSC_SUMS_SHA256="${RUNSC_SUMS_SHA256:-}"
 APP_KEY_FILE="${APP_KEY_FILE:-}"
 PLATFORM_ENV_FILE="${PLATFORM_ENV_FILE:-}"
 # Имя контейнера runner на этой ВМ. По умолчанию ищется node1-runner/node2-runner:
@@ -1300,7 +1302,7 @@ sandbox_runtime_value(){
   if [ -z "$value" ] && [ -f "$ENV_FILE" ]; then
     value=$(grep -m1 '^SANDBOX_RUNTIME=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- || true)
   fi
-  printf '%s' "${value:-docker}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]'
+  printf '%s' "${value:-runsc}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]'
 }
 
 docker_has_runsc(){
@@ -1320,8 +1322,8 @@ ensure_runsc(){
   fi
   runtime=$(sandbox_runtime_value)
   if [ "$runtime" != "runsc" ]; then
-    log "SANDBOX_RUNTIME=$runtime: установка gVisor не нужна"
-    return 0
+    log "SANDBOX_RUNTIME=$runtime запрещён в production: нужен runsc (gVisor)"
+    return 1
   fi
   if docker_has_runsc; then
     log "SANDBOX_RUNTIME=runsc: Docker уже знает runtime runsc"
@@ -1356,14 +1358,14 @@ ensure_runsc(){
   fi
   log "SANDBOX_RUNTIME=runsc: устанавливаю runsc (Docker перезапустится только если reload не хватит; контейнеры кратко остановятся)"
   if [ "$(id -u)" = "0" ]; then
-    if [ -n "$RUNSC_VERSION" ]; then
-      RUNSC_VERSION="$RUNSC_VERSION" RUNSC_RESTART_DOCKER=1 /bin/sh "$script" || rc=$?
+    if [ -n "$RUNSC_VERSION" ] || [ -n "$RUNSC_SUMS_SHA256" ]; then
+      RUNSC_VERSION="$RUNSC_VERSION" RUNSC_SUMS_SHA256="$RUNSC_SUMS_SHA256" RUNSC_RESTART_DOCKER=1 /bin/sh "$script" || rc=$?
     else
       RUNSC_RESTART_DOCKER=1 /bin/sh "$script" || rc=$?
     fi
   else
-    if [ -n "$RUNSC_VERSION" ]; then
-      sudo -n env RUNSC_VERSION="$RUNSC_VERSION" RUNSC_RESTART_DOCKER=1 /bin/sh "$script" || rc=$?
+    if [ -n "$RUNSC_VERSION" ] || [ -n "$RUNSC_SUMS_SHA256" ]; then
+      sudo -n env RUNSC_VERSION="$RUNSC_VERSION" RUNSC_SUMS_SHA256="$RUNSC_SUMS_SHA256" RUNSC_RESTART_DOCKER=1 /bin/sh "$script" || rc=$?
     else
       sudo -n env RUNSC_RESTART_DOCKER=1 /bin/sh "$script" || rc=$?
     fi
@@ -1859,9 +1861,10 @@ verify_server_user(){
 #
 verify_sandbox_runtime(){
   local configured runtimes
+  # В production проверку нельзя выключить: gVisor — условие запуска, а не рекомендация.
   if [ "$SANDBOX_RUNTIME_CHECK" != "1" ]; then
-    log "проверка SANDBOX_RUNTIME пропущена (SANDBOX_RUNTIME_CHECK=0)"
-    return 0
+    log "SANDBOX_RUNTIME_CHECK=$SANDBOX_RUNTIME_CHECK запрещён в production: проверка gVisor обязательна"
+    return 1
   fi
   if [ "$DRY_RUN" = "1" ]; then
     log "dry-run: проверка SANDBOX_RUNTIME пропущена"
@@ -1871,21 +1874,24 @@ verify_sandbox_runtime(){
   if [ -z "$configured" ] && [ -f "$ENV_FILE" ]; then
     configured=$(grep -m1 '^SANDBOX_RUNTIME=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- || true)
   fi
-  configured=$(printf '%s' "${configured:-docker}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
+  configured=$(printf '%s' "${configured:-runsc}" | tr -d '[:space:]' | tr '[:upper:]' '[:lower:]')
   case "$configured" in
     docker)
-      log "SANDBOX-RUNTIME=docker: контейнеры идут на обычном runc"
+      log "SANDBOX-RUNTIME=docker запрещён в production: нужен runsc (gVisor)"
+      return 1
       ;;
     runsc)
       runtimes=$(docker info --format '{{json .Runtimes}}' 2>/dev/null || true)
       if printf '%s' "$runtimes" | grep -q '"runsc"'; then
         log "SANDBOX-RUNTIME=runsc: Docker знает gVisor"
       else
-        log "SANDBOX-RUNTIME=runsc, но Docker НЕ ЗНАЕТ runtime runsc: установите runsc и зарегистрируйте его (docs/PRODUCTION_DEPLOYMENT.md). Ошибка не отменяет выкатку, но контейнеры не запустятся"
+        log "SANDBOX-RUNTIME=runsc, но Docker НЕ ЗНАЕТ runtime runsc: установите runsc и зарегистрируйте его (docs/PRODUCTION_DEPLOYMENT.md)"
+        return 1
       fi
       ;;
     *)
-      log "SANDBOX-RUNTIME=${configured}: неизвестное значение, сервер не стартует. Допустимо docker или runsc"
+      log "SANDBOX-RUNTIME=${configured}: неизвестное значение, сервер не стартует. Допустимо только runsc"
+      return 1
       ;;
   esac
 }
@@ -2763,7 +2769,10 @@ fi
 verify_docker
 # Рантайм: если SANDBOX_RUNTIME=runsc, Docker должен знать это имя. Проверка не запускает
 # контейнер и не отменяет выкатку: причина видна в логе до первого запроса агента.
-verify_sandbox_runtime
+if ! verify_sandbox_runtime; then
+  log "выкатка не принята: gVisor не подтверждён"
+  exit 3
+fi
 # Процесс сервера не root — второй критерий этапа 2.2; проверяется по PID 1, а не по exec.
 verify_server_user
 # Расхождение путей песочницы — не справка, а сломанная выкатка: агент пишет файлы, которых

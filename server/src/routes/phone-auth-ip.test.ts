@@ -5,16 +5,14 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 /**
- * Телефонный вход создаёт обычный аккаунт, поэтому предел адреса действует и здесь: иначе
- * «три аккаунта с IP» обходились бы регистрацией по номеру. Повторный вход в существующий
- * аккаунт места не занимает — иначе человек с тремя аккаунтами не смог бы войти в свой.
+ * Телефонный вход создаёт обычный аккаунт, но IP не является личностью: новый номер с того же
+ * адреса должен проходить. Повторный вход в существующий аккаунт тоже работает.
  */
 const dataDir = await mkdtemp(path.join(tmpdir(), "phone-auth-ip-"));
 process.env.WEBNESTDEV_DATA_DIR = dataDir;
 process.env.NODE_ENV = "test";
 process.env.PHONE_AUTH_ENABLED = "1";
 delete process.env.WEBNESTDEV_SMS_TEST_MODE;
-delete process.env.SIGNUP_IP_LIMIT;
 for (const name of [
   "SMS_RU_API_ID", "SMSC_LOGIN", "SMSC_PASSWORD", "EXOLVE_API_KEY", "SMSAERO_EMAIL", "SMSAERO_API_KEY", "SMS_PROVIDER",
   "YANDEX_NOTIFY_IAM_TOKEN", "YANDEX_SA_KEY", "YANDEX_SA_KEY_FILE", "YANDEX_CLOUD_ID",
@@ -28,7 +26,6 @@ const cookie = (await import("@fastify/cookie")).default;
 const { registerPhoneAuthRoutes } = await import("./phone-auth.js");
 const { registerAuthRoutes } = await import("./auth.js");
 const { clearPendingCodes } = await import("../auth/phone-store.js");
-const { signupIpAccounts } = await import("../auth/signup-ip.js");
 
 async function buildApp() {
   const app = Fastify();
@@ -59,7 +56,7 @@ test.after(async () => {
   await rm(dataDir, { recursive: true, force: true });
 });
 
-test("четвёртый новый номер с одного IP получает отказ, вход в старый аккаунт работает", async t => {
+test("четвёртый новый номер с одного IP проходит, вход в старый аккаунт работает", async t => {
   clearPendingCodes();
   const app = await buildApp();
   t.after(async () => { await app.close(); });
@@ -70,17 +67,13 @@ test("четвёртый новый номер с одного IP получае
     const verified = await signIn(app, phone, ip);
     assert.equal(verified.statusCode, 200, verified.body);
   }
-  assert.equal(await signupIpAccounts(ip), 3);
 
   const fourth = await signIn(app, "+79990000104", ip);
-  assert.equal(fourth.statusCode, 403);
-  assert.equal(fourth.json().code, "SIGNUP_IP_LIMIT");
-  assert.match(fourth.json().error, /уже создано 3 аккаунта/);
+  assert.equal(fourth.statusCode, 200, fourth.body);
 
-  // Тот же номер — тот же аккаунт: лимит не должен запирать вход тем, кто уже зарегистрирован.
+  // Тот же номер — тот же аккаунт: повторный вход не создаёт второй аккаунт.
   const again = await signIn(app, phones[0], ip);
   assert.equal(again.statusCode, 200, again.body);
-  assert.equal(await signupIpAccounts(ip), 3);
 });
 
 test("новый номер с другого адреса проходит", async t => {

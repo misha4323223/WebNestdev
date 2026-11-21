@@ -1,4 +1,5 @@
 import { clearRateLimits, consumeRateLimit } from "../storage/rate-limit-store.js";
+import { rateLimitAddress } from "../security/client-ip.js";
 
 /**
  * Лимиты попыток входа, регистрации и кодов.
@@ -68,35 +69,59 @@ const SUBJECT_LIMITS: Record<AuthAction, number> = {
 };
 
 /**
+ * Действия, для которых недоступное хранилище счётчиков — отказ, а не пропуск. Это двери с
+ * высокой ценой ошибки: вход администратора, второй фактор, сброс пароля и регистрация. SMS-коды
+ * сюда не входят: их отдельные счётчики живут в phone-store, и менять SMS-контур мы не хотим.
+ */
+const FAIL_CLOSED_ACTIONS: ReadonlySet<AuthAction> = new Set([
+  "register",
+  "passwordReset",
+  "passwordResetConfirm",
+  "adminLogin",
+  "adminTotp",
+]);
+
+/**
  * Проверка: адрес, затем аккаунт. `subject` — нормализованный email или телефон; он необязателен,
  * потому что запрос без валидного тела ещё не знает, кого перебирают.
  *
- * Ошибка хранилища не запирает вход: `consumeRateLimit` в этом случае пропускает, а причина
- * остаётся в логе. Иначе недоступная база превращалась бы в «войти нельзя никому».
+ * Для обычного входа ошибка хранилища по-прежнему пропускает попытку: недоступная база не должна
+ * запирать всех. Для admin/TOTP/password reset/register — наоборот, отказ: иначе отказ базы
+ * превращает защиту от перебора в открытую дверь. SMS-действия оставлены на прежнем режиме.
  */
 export async function checkAuthRateLimit(ip: string, action: AuthAction, subject?: string): Promise<RateLimitResult> {
   // Коды SMS дополнительно ограничены по номеру внутри phone-store (сколько отправок и попыток),
   // а здесь — счётчики адреса и аккаунта: они отвечают на «кто и кого перебирает».
-  const byIp = await consume("ip:" + action + ":" + (ip || "unknown"), IP_LIMITS[action]);
-  if (!byIp.allowed) return { allowed: false, retryAfter: byIp.retryAfter };
+  const network = rateLimitAddress(ip);
+  // CGNAT — общий адрес провайдера, а не человек: IP-дверь для него была бы ложной блокировкой.
+  // IPv6 уже сведён к /64, поэтому один клиент не получает новое окно на каждый адрес подсети.
+  if (!network.cgnat) {
+    const byIp = await consume("ip:" + action + ":" + network.key, IP_LIMITS[action], action);
+    if (!byIp.allowed) return byIp;
+  }
 
   const normalized = subject?.trim().toLowerCase();
   if (normalized) {
-    const bySubject = await consume("subject:" + action + ":" + normalized, SUBJECT_LIMITS[action]);
-    if (!bySubject.allowed) return { allowed: false, retryAfter: bySubject.retryAfter };
+    const bySubject = await consume("subject:" + action + ":" + normalized, SUBJECT_LIMITS[action], action);
+    if (!bySubject.allowed) return bySubject;
   }
   return { allowed: true };
 }
 
-async function consume(key: string, limit: number) {
+async function consume(key: string, limit: number, action: AuthAction): Promise<RateLimitResult> {
   try {
     return await consumeRateLimit(key, limit, WINDOW_MS);
   } catch (error) {
+    const failClosed = FAIL_CLOSED_ACTIONS.has(action);
     console.warn(
-      "[auth] счётчик попыток недоступен, проверка лимита пропущена: " +
+      "[auth] счётчик попыток недоступен, " +
+        (failClosed ? "fail-closed для " + action : "проверка лимита пропущена") +
+        ": " +
         (error instanceof Error ? error.message : String(error)),
     );
-    return { allowed: true, retryAfter: 0 };
+    return failClosed
+      ? { allowed: false, retryAfter: Math.ceil(WINDOW_MS / 1000) }
+      : { allowed: true };
   }
 }
 

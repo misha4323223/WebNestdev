@@ -11,8 +11,8 @@ publishing or team roles, because those features do not exist.
 | | Старт (free) | Плюс (pro, 1 500 ₽/mo, сейчас 990 ₽) | Премиум (team, 2 500 ₽/mo, сейчас 2 000 ₽) |
 |---|---|---|---|
 | Projects | 3 | 6 | 9 |
-| Agent credits per agent/month | — (daily run limit) | 5 000 | 10 000 |
-| Agent runs/day | 10 | no limit | no limit |
+| Agent credits per agent/month | — (weekly run limit) | 5 000 | 10 000 |
+| Agent runs/week | 10 | no limit | no limit |
 | Web searches/day | 25 | 200 | 500 |
 | Generated images/day | 5 | 20 | 20 |
 | HTTP functions per site | — | 5 | 25 |
@@ -103,18 +103,18 @@ credits = max(credits, minimum_per_run)
   credit accounting are estimated at 10 000 tokens = 1 credit; rows of the free `free-model` are not
   converted.
 - Plan budgets are `limits.agentCreditsPerMonth`: 5 000 on Pro, 10 000 on Team. `limit: 0` means
-  “this plan has no credit pool”: the free plan counts daily runs instead, and the UI draws no credit
+  “this plan has no credit pool”: the free plan counts weekly runs instead, and the UI draws no credit
   bar for it.
 - `consumeAgentRun` checks the credit pool for a paid plan before counting the run and throws
   `CreditBudgetError` (`code: "CREDIT_BUDGET_EXHAUSTED"`, HTTP 429) when it is used up. The agent
-  panel turns that into «Кредиты исчерпаны» with the reset date instead of the daily-quota text, and
+  panel turns that into «Кредиты исчерпаны» with the reset date instead of the weekly-quota text, and
   does not offer «Продолжить».
 - The monthly pool does not roll over: unused plan credits are not carried into the next month.
   Purchased credits are different — they have their own ledger and do not expire; see below.
 - On a paid plan, a project with its own AI provider spends the user's key and the user's tokens,
-  so those runs neither count nor are blocked — neither by credits nor by the daily run limit.
+  so those runs neither count nor are blocked — neither by credits nor by the weekly run limit.
   `routes/agent-ws.ts` checks the plan and passes the answer to `consumeAgentRun`; the free plan
-  always uses the built-in model and its daily limit, even if an old provider is still stored.
+  always uses the built-in model and its weekly limit, even if an old provider is still stored.
 - Administrator token grants still work for compatibility: 10 000 granted tokens become 1 credit in
   `getCreditBudget`. The admin route also returns the new `credits` budget next to the legacy token
   budget.
@@ -185,26 +185,32 @@ from the host ceiling `SANDBOX_MAX_CONCURRENT`: a second container of the same a
 taking a host place, so another account is not slowed down. `SANDBOX_MAX_PER_USER` overrides the number
 (`0` disables the per-account queue).
 
-Accounts are also limited **per IP address, permanently**: 3 accounts from one address, counting email
-and phone signups (`server/src/auth/signup-ip.ts`, table `signup_ips`). The counter is not windowed on
-purpose — a daily window can be walked around by signing up one account a day — and it is not reduced
-when an account is deleted. The fourth signup gets HTTP 403 `SIGNUP_IP_LIMIT` with the support path, and
-the refusal is written to the audit journal as `security.signup.blocked`. `SIGNUP_IP_LIMIT` changes the
-number (`0` disables the limit); support can reset one address with `resetSignupIp`.
+There is **no permanent per-IP account cap**. IP is a network, not a person: a permanent cap would
+block CGNAT, offices and families, so a second account from the same address is allowed. The short
+rate-limit window in `auth-rate-limit.ts` still throttles bursts, but it never decides whether an
+account may exist. For the window, IPv6 addresses are collapsed to their `/64`: one subscriber cannot
+rotate addresses inside the prefix for fresh attempts. CGNAT addresses get no IP bucket at all, because
+one bucket would punish unrelated customers behind the same carrier NAT; the account/email buckets
+remain.
 
-Project creation is also limited per IP address: 10 new projects per 24 hours, regardless of how many
-accounts that address opens (HTTP 429 `PROJECT_CREATE_RATE_LIMITED`).
+Project creation is not limited per IP address: the plan's project count is per account, and a
+shared address (CGNAT, office, family) must not stop a legitimate project. Weekly runs are the
+anti-farm limit.
 
-A container of one project above `ABUSE_CPU_PERCENT` (90% by default) for `ABUSE_SUSTAINED_MS`
-(10 minutes) blocks its account with the reason «контейнер проекта … держал загрузку CPU» and an audit
-entry `security.abuse.blocked`; the containers are stopped. `ABUSE_WATCH=0` disables the watchdog.
+A container of one project above `ABUSE_CPU_PERCENT` (95% by default) for `ABUSE_SUSTAINED_MS`
+(45 minutes) blocks its account with the reason «контейнер проекта … держал загрузку CPU» and an audit
+entry `security.abuse.blocked`; the containers are stopped. The threshold is deliberately above the
+longest build/install timeout (30 minutes), so a legitimate cold install cannot trip it. Containers
+labelled `webnestdev.load=command` (one-off commands and builds) are not counted; `preview`, `job` and
+unknown workloads are. `ABUSE_WATCH=0` disables the watchdog.
 
 ## Enforcement and usage
 
 - Project creation checks the authenticated user's current plan and project count.
-- Agent runs consume one daily unit at the authenticated WebSocket run boundary on the free plan;
-  paid plans have no daily run cap and check the monthly credit pool instead. The run counter is
-  still recorded for history and analytics, but `agentRunsPerDay: null` means it does not block.
+- Agent runs consume one weekly unit at the authenticated WebSocket run boundary on the free plan;
+  the week is the UTC calendar week starting Monday 00:00. Paid plans have no weekly run cap and
+  check the monthly credit pool instead. The daily counter is still recorded for history and
+  analytics, but `agentRunsPerDay: null` and `agentRunsPerWeek: null` mean it does not block.
 - `browser.runtime`, `browser.scenario` and `browser.screenshot` are available only while the
   «Браузерная проверка» switch is on for the run; the switch is off by default. An off run skips
   both explicit Chromium tools and automatic browser QA. The usage counter remains for analytics,
@@ -212,14 +218,17 @@ entry `security.abuse.blocked`; the containers are stopped. `ABUSE_WATCH=0` disa
 - The plan catalog and saved `PLAN_SETTINGS` no longer promise daily browser checks, daily paid runs
   or support. The saved plan features are migrated on read, so a deploy does not bring the old
   wording back.
-- `GET /api/billing` returns the plan catalog, the limits of the account's plan, the UTC-day usage
-  counters, the monthly credit pool, the account's storage usage and the model cost snapshot. The
-  settings screen shows usage, the per-project storage breakdown and the 80%/100% state.
+- `GET /api/billing` returns the plan catalog, the limits of the account's plan, today's usage,
+  the current UTC week and weekly agent-run counter, the monthly credit pool, the account's storage
+  usage and the model cost snapshot. The settings screen shows usage, the per-project storage
+  breakdown and the 80%/100% state.
 - Storage sizes are reconciled after startup and once a day (one replica at a time), and the account
   can refresh them from settings. The schedule, thresholds and known gaps are in [STORAGE.md](STORAGE.md).
-- Usage is stored as append-only daily events plus per-user/day/kind counters in YDB. Counter updates
-  and usage-event inserts are committed in one serializable read-write transaction; retryable
-  transaction conflicts are retried by the YDB query SDK.
+- Usage is stored as append-only daily events plus per-user/day/kind counters in YDB. The free
+  agent-run limit also keeps a per-user/week counter (`agentRunsWeek`) in the same table, so the
+  Monday reset needs no cleanup job. Counter updates and usage-event inserts are committed in one
+  serializable read-write transaction; retryable transaction conflicts are retried by the YDB query
+  SDK. JSON mode derives the week from daily events.
 - YDB project creation reserves a per-user project counter and inserts the project in one
   serializable transaction. Existing projects are counted when the per-user counter is first
   initialized.

@@ -66,12 +66,17 @@ async function open(target: string, mode: number, fallback: number, keepExec = f
     const info = await lstat(target);
     // chmod по ссылке меняет права её цели, а не ссылки: цель может быть чужим файлом.
     if (info.isSymbolicLink()) return;
-    const owned = await own(target);
+    const alreadyOwned = info.uid === SANDBOX_UID && info.gid === SANDBOX_GID;
+    const owned = alreadyOwned || await own(target);
     // Бит исполнения сохраняется: обход повторяется перед каждой командой контейнера, а скрипт,
     // которому агент выставил `chmod +x`, без этого перестал бы запускаться после первой же
     // команды (`. ./scripts/deploy.sh`).
     const exec = keepExec ? info.mode & 0o111 : 0;
     const desired = (owned ? mode : fallback) | exec;
+    // Повторный chmod той же маски всё равно обновляет ctime inode. На Gluster это событие
+    // видит fs.watch, и hot-reload preview снова запускает обход — получается бесконечный
+    // цикл. Если права уже нужные, делать нечего; chown выше уже была одна попытка.
+    if ((info.mode & 0o777) === desired) return;
     // Каталог, созданный runner на другой ВМ, виден здесь сразу, но первый chmod может
     // вернуть EPERM, пока Gluster не освежил inode. Без повтора новый проект оставался
     // root:root, и контейнер с uid 1000 не мог в него писать.

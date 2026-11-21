@@ -14,7 +14,6 @@ process.env.WEBNESTDEV_STORAGE = "json";
 process.env.NODE_ENV = "test";
 process.env.WEBNESTDEV_ENCRYPTION_KEY = "0123456789abcdef".repeat(4);
 process.env.PLATFORM_URL = "https://nestdev.test";
-process.env.SIGNUP_IP_LIMIT = "0";
 const root = await mkdtemp(path.join(tmpdir(), "auth-password-reset-"));
 process.env.WEBNESTDEV_DATA_DIR = root;
 

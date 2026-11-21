@@ -432,7 +432,7 @@ export function AccountSettingsPanel({ projectId, projectName, onLogout }: { pro
               <strong>{chosenPlan.name} · {chosenPlan.priceLabel}</strong>
             </div>}
             {billing && <UsageOverview billing={billing} paid={paid} onTopUp={() => setTopUpOpen(true)} onRefreshStorage={() => void refreshStorageSize()} refreshingStorage={refreshingStorage}/>}
-            <p className="account-muted">На бесплатном тарифе действует 10 запусков в день на встроенной модели. На платных тарифах запуски ограничены месячными кредитами. Свой AI-провайдер доступен на «Плюсе» и «Премиуме».</p>
+            <p className="account-muted">На бесплатном тарифе действует 10 запусков в неделю на встроенной модели, сброс — в понедельник в 00:00 UTC. На платных тарифах запуски ограничены месячными кредитами. Свой AI-провайдер доступен на «Плюсе» и «Премиуме».</p>
             <div className="usage-meter-list"><div className="usage-meter-title"><strong>Последние 7 дней</strong><small>{billing?.cost.pricesConfigured ? moneyLabel(weekSpend, billing.cost.currency) + " за неделю" : "цены модели не заданы"}</small></div>
               <div className="billing-bars">{historyDays.map(day => {
                 return <div className="billing-bar" key={day.date} title={shortDayLabel(day.date) + ": " + day.agentRuns + " запусков" + (day.costEstimate != null ? ", " + moneyLabel(day.costEstimate, billing?.cost.currency ?? "USD") : "")}>

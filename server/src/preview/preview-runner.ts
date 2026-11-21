@@ -80,8 +80,8 @@ export function previewProcessArgs(input: {
   const backendEnv = options.mode === "hybrid" ? options.env ?? {} : {};
   return [
     "run", "-d", "--init",
-    // Предпросмотр — тоже код проекта. Рантайм тот же, что у команд агента: выключатель
-    // SANDBOX_RUNTIME=docker возвращает обычный Docker и для предпросмотра.
+    // Предпросмотр — тоже код проекта. Рантайм тот же, что у команд агента; в production это
+    // обязательный runsc, а docker остаётся только режимом разработки.
     ...sandboxRuntimeArgs(),
     "--cpus", String(config.cpuLimit),
     "--memory", String(config.memoryMb) + "m",
@@ -95,8 +95,10 @@ export function previewProcessArgs(input: {
     "--user", "1000:1000",
     ...(options.restart ? ["--restart", options.restart] : []),
     ...(network ? ["--network", network] : []),
-    // The label is how a restarted server finds previews it no longer knows about.
+    // The label is how a restarted server finds previews it no longer knows about; the load
+    // label tells abuse-watch that this is a long-lived preview, not a one-off command.
     "--label", PREVIEW_LABEL + "=" + config.projectId,
+    "--label", "webnestdev.load=preview",
     ...(options.mode === "hybrid" ? ["--label", PREVIEW_KIND_LABEL + "=hybrid"] : []),
     // Путь хоста, а не сервера: docker разбирает его до контейнера (см. sandbox/config.ts).
     "-v", workspaceMountSource(config) + ":/workspace",

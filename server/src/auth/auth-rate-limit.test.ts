@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { checkAuthRateLimit, clearAuthRateLimits } from "./auth-rate-limit.js";
@@ -47,6 +47,50 @@ test("без email проверяется только адрес, а разны
   assert.equal((await checkAuthRateLimit("10.5.5.5", "register")).allowed, false);
   // Вход с того же адреса — отдельный счётчик, регистрация его не исчерпала.
   assert.equal((await checkAuthRateLimit("10.5.5.5", "login", "someone@example.test")).allowed, true);
+});
+
+test("разные IPv6 внутри одной /64 делят окно, а не получают новое на каждый адрес", async () => {
+  await clearAuthRateLimits();
+  for (let attempt = 0; attempt < 12; attempt += 1) {
+    const result = await checkAuthRateLimit("2001:db8:1:2::" + attempt.toString(16), "login", "ipv6-" + attempt + "@example.test");
+    assert.equal(result.allowed, true, "попытка " + (attempt + 1) + " должна пройти");
+  }
+  const blocked = await checkAuthRateLimit("2001:db8:1:2:ffff::1", "login", "new@example.test");
+  assert.equal(blocked.allowed, false, "другой адрес той же /64 — то же окно");
+});
+
+test("CGNAT не блокирует честных: IP-дверь пропускается, лимит аккаунта остаётся", async () => {
+  await clearAuthRateLimits();
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const result = await checkAuthRateLimit("100.64.1." + attempt, "login", "cgnat-" + attempt + "@example.test");
+    assert.equal(result.allowed, true, "пользователь " + (attempt + 1) + " за CGNAT");
+  }
+  // Один и тот же аккаунт всё равно упирается в лимит по email.
+  await clearAuthRateLimits();
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    assert.equal((await checkAuthRateLimit("100.64.2.1", "login", "same@example.test")).allowed, true);
+  }
+  assert.equal((await checkAuthRateLimit("100.64.2.2", "login", "same@example.test")).allowed, false);
+});
+
+test("admin/TOTP/password reset/register закрыты при недоступном хранилище, SMS — нет", async () => {
+  const original = process.env.WEBNESTDEV_DATA_DIR!;
+  const broken = path.join(original, "not-a-directory");
+  await writeFile(broken, "файл вместо каталога");
+  process.env.WEBNESTDEV_DATA_DIR = broken;
+  try {
+    for (const action of ["register", "passwordReset", "passwordResetConfirm", "adminLogin", "adminTotp"] as const) {
+      const result = await checkAuthRateLimit("203.0.113.77", action, "user@example.test");
+      assert.equal(result.allowed, false, action + " должен быть fail-closed");
+      assert.ok(!result.allowed && result.retryAfter > 0);
+    }
+    // SMS-действия не меняем: их основная защита — счётчики phone-store, а не этот лимитер.
+    for (const action of ["phone", "phoneVerify", "phoneDemo"] as const) {
+      assert.equal((await checkAuthRateLimit("203.0.113.78", action, "+79990000000")).allowed, true, action + " остаётся fail-open");
+    }
+  } finally {
+    process.env.WEBNESTDEV_DATA_DIR = original;
+  }
 });
 
 test("счётчики не в памяти процесса: окно видно в хранилище и переживает перезагрузку модуля", async () => {

@@ -138,7 +138,8 @@ function RailBilling({ billing, choice, error, onOpenPlans, onOpenSubscriptions 
   const paid = Boolean(subscription?.renewsAt) && (subscription?.plan ?? "free") !== "free";
   const storageLimit = billing?.limits.storageBytes ?? 0;
   const storageUsed = billing?.storage?.usedBytes ?? 0;
-  const runsLimit = billing?.limits.agentRunsPerDay ?? null;
+  const runsLimit = billing?.limits.agentRunsPerWeek ?? null;
+  const runsUsed = billing?.usage.agentRunsWeek ?? 0;
   // The plan the user selected is what they want to move to, so it is written next
   // to the current plan here as well, not only inside the pricing screens.
   const chosen = billing && choice ? billing.plans.find(item => item.id === choice) : undefined;
@@ -221,8 +222,8 @@ function RailBilling({ billing, choice, error, onOpenPlans, onOpenSubscriptions 
       <p className="account-muted">{paymentNotice(billing)}</p>
       <div className="rail-usage">
         {runsLimit != null && <>
-          <div><span>Запуски агента</span><strong>{billing.usage.agentRuns} / {runsLimit}</strong></div>
-          <div className="usage-meter-track"><span style={{ width: `${Math.min(100, billing.usage.agentRuns / Math.max(1, runsLimit) * 100)}%` }}/></div>
+          <div><span>Запуски на неделе</span><strong>{runsUsed} / {runsLimit}</strong></div>
+          <div className="usage-meter-track"><span style={{ width: `${Math.min(100, runsUsed / Math.max(1, runsLimit) * 100)}%` }}/></div>
         </>}
         {billing.credits && billing.credits.limit > 0 && <>
           <div><span>Кредиты на агента</span><strong>{creditsLabel(billing.credits.used)} / {creditsLabel(billing.credits.limit)}</strong></div>
@@ -259,7 +260,7 @@ function RailBilling({ billing, choice, error, onOpenPlans, onOpenSubscriptions 
         {accountHosts && hosts.length === 0 && <p className="rail-hosts-empty">Хостов пока нет. Опубликуйте сайт в проекте — он появится здесь.</p>}
         {hosts.length > 0 && <ul className="rail-hosts-list">{hosts.map(host => <HostRow key={host.siteId} host={host} domain={hostsDomain}/>)}</ul>}
       </div>
-      <p className="account-muted">На бесплатном тарифе — 10 запусков в день. На платных тарифах расход ограничен кредитами; свой AI-провайдер доступен на «Плюсе» и «Премиуме».</p>
+      <p className="account-muted">На бесплатном тарифе — 10 запусков в неделю. На платных тарифах расход ограничен кредитами; свой AI-провайдер доступен на «Плюсе» и «Премиуме».</p>
       <div className="rail-plan-actions">
         <button className="plan-action" onClick={onOpenPlans}>{billing.paymentsEnabled ? (paid ? "Тариф и кредиты" : "Оплатить тариф") : "Сменить тариф"}</button>
         {paid && billing.credits && billing.credits.limit > 0 && <button className="ghost-button" onClick={() => {

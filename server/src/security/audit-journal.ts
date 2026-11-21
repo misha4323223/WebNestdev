@@ -24,6 +24,7 @@ export const AUDIT_ACTIONS = {
   "admin.login.password": "Пароль администратора принят",
   "admin.login.success": "Вход администратора",
   "admin.login.recovery": "Вход администратора по коду восстановления",
+  "admin.bootstrap.password.consumed": "Одноразовый bootstrap-пароль администратора погашен",
   "admin.2fa.failed": "Неверный код второго фактора",
   "admin.2fa.enabled": "Второй фактор подключён",
   "admin.2fa.reissued": "Коды восстановления перевыпущены",

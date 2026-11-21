@@ -51,7 +51,7 @@ export function agentPlanBrief(plan: PlanId | undefined): string {
   included.push(
     credits > 0
       ? count(credits, "agent credit", "agent credits") + " per month"
-      : count(limits.agentRunsPerDay ?? 0, "agent run", "agent runs") + " per day on the built-in model",
+      : count(limits.agentRunsPerWeek ?? 0, "agent run", "agent runs") + " per week on the built-in model",
   );
   included.push(count(limits.webSearchesPerDay ?? 0, "web search", "web searches") + " per day");
   included.push(count(limits.imagesPerDay ?? 0, "generated image", "generated images") + " per day");

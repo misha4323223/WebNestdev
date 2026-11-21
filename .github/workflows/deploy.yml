@@ -12,8 +12,9 @@ name: deploy
 # старые образы с ВМ, mode=cleanup обнуляет логи контейнеров на ВМ (диск, а не версию),
 # mode=logs печатает последние строки логов сервиса в лог выкатки, mode=source собирает
 # образ на самой ВМ из репозитория, mode=disk показывает, чем занят диск (Docker, тома,
-# песочницы, логи) — без уборки и без перезапуска сервиса. Параметр sandbox_runtime=runsc
-# включает gVisor на один запуск: deploy сам установит runsc, если Docker его ещё не знает.
+# песочницы, логи) — без уборки и без перезапуска сервиса. gVisor в production обязателен:
+# параметр sandbox_runtime=runsc закрепляет его на один запуск, deploy сам установит runsc, если
+# Docker его ещё не знает. Режим docker в production отвергается.
 # Подтверждение перед выкаткой включается без изменения файла:
 # Settings → Environments → production → Required reviewers (сейчас их нет).
 
@@ -34,9 +35,9 @@ on:
         type: string
         required: false
       sandbox_runtime:
-        description: "keep — оставить Variable/текущий .env; docker — runc; runsc — gVisor (при отсутствии установится автоматически, Docker может кратко перезапуститься)"
+        description: "keep — оставить Variable/текущий .env; runsc — gVisor (обязателен в production, при отсутствии установится автоматически, Docker может кратко перезапуститься). docker отвергается"
         type: choice
-        options: ["keep", "docker", "runsc"]
+        options: ["keep", "runsc"]
         default: "keep"
   push:
     branches:
@@ -340,15 +341,14 @@ jobs:
           # Свои домены включены по умолчанию: карточка должна быть видна в панели.
           # CUSTOM_DOMAINS_ENABLED=0 в Variable репозитория отключает её без изменения кода.
           CUSTOM_DOMAINS_ENABLED: ${{ vars.CUSTOM_DOMAINS_ENABLED || secrets.CUSTOM_DOMAINS_ENABLED || '1' }}
-          # docker — обычный runc; runsc — gVisor для контейнеров команд и превью. По умолчанию
-          # docker: выкатка без этой переменной не меняет рантайм. Для отката вернуть docker.
-          # Ручной запуск может переопределить Variable на один запуск: sandbox_runtime=runsc
-          # включит gVisor и при отсутствии установит его через deploy (без терминала на ВМ).
+          # runsc — gVisor для контейнеров команд и превью; в production это обязательный режим.
+          # Пустое значение тоже означает runsc по умолчанию, а docker и неизвестное значение
+          # останавливают выкатку. Ручной запуск может закрепить runsc на один запуск.
           # Значение можно хранить и в Secret с тем же именем: старые инструкции называли этот
           # раздел «секретами», и такой секрет не должен молча игнорироваться.
           SANDBOX_RUNTIME: ${{ github.event_name == 'workflow_dispatch' && inputs.sandbox_runtime != 'keep' && inputs.sandbox_runtime || vars.SANDBOX_RUNTIME || secrets.SANDBOX_RUNTIME }}
-          # auto — установить runsc при SANDBOX_RUNTIME=runsc, если Docker его не знает; 0 —
-          # не трогать системный Docker (хост уже подготовлен администратором).
+          # auto — установить runsc, если Docker его не знает; 0 — не трогать системный Docker
+          # (хост уже подготовлен администратором). В production оба режима заканчиваются runsc.
           RUNSC_INSTALL: ${{ vars.RUNSC_INSTALL || secrets.RUNSC_INSTALL }}
           WEBNESTDEV_ADMIN_EMAILS: ${{ secrets.WEBNESTDEV_ADMIN_EMAILS }}
           WEBNESTDEV_ADMIN_USER_IDS: ${{ secrets.WEBNESTDEV_ADMIN_USER_IDS }}
@@ -827,15 +827,14 @@ jobs:
           # Свои домены включены по умолчанию: карточка должна быть видна в панели.
           # CUSTOM_DOMAINS_ENABLED=0 в Variable репозитория отключает её без изменения кода.
           CUSTOM_DOMAINS_ENABLED: ${{ vars.CUSTOM_DOMAINS_ENABLED || secrets.CUSTOM_DOMAINS_ENABLED || '1' }}
-          # docker — обычный runc; runsc — gVisor для контейнеров команд и превью. По умолчанию
-          # docker: выкатка без этой переменной не меняет рантайм. Для отката вернуть docker.
-          # Ручной запуск может переопределить Variable на один запуск: sandbox_runtime=runsc
-          # включит gVisor и при отсутствии установит его через deploy (без терминала на ВМ).
+          # runsc — gVisor для контейнеров команд и превью; в production это обязательный режим.
+          # Пустое значение тоже означает runsc по умолчанию, а docker и неизвестное значение
+          # останавливают выкатку. Ручной запуск может закрепить runsc на один запуск.
           # Значение можно хранить и в Secret с тем же именем: старые инструкции называли этот
           # раздел «секретами», и такой секрет не должен молча игнорироваться.
           SANDBOX_RUNTIME: ${{ github.event_name == 'workflow_dispatch' && inputs.sandbox_runtime != 'keep' && inputs.sandbox_runtime || vars.SANDBOX_RUNTIME || secrets.SANDBOX_RUNTIME }}
-          # auto — установить runsc при SANDBOX_RUNTIME=runsc, если Docker его не знает; 0 —
-          # не трогать системный Docker (хост уже подготовлен администратором).
+          # auto — установить runsc, если Docker его не знает; 0 — не трогать системный Docker
+          # (хост уже подготовлен администратором). В production оба режима заканчиваются runsc.
           RUNSC_INSTALL: ${{ vars.RUNSC_INSTALL || secrets.RUNSC_INSTALL }}
           WEBNESTDEV_ADMIN_EMAILS: ${{ secrets.WEBNESTDEV_ADMIN_EMAILS }}
           WEBNESTDEV_ADMIN_USER_IDS: ${{ secrets.WEBNESTDEV_ADMIN_USER_IDS }}

@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { watch } from "node:fs";
 import { chmod, lstat, mkdir, mkdtemp, rm, stat, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -107,6 +108,30 @@ test("перед командой контейнера открываются к
     assert.equal(await mode(root), DIR);
     assert.equal(await mode(app), DIR, "без записи в server/ сборка не создаст server/dist");
     assert.equal(await mode(path.join(app, "package.json")), FILE);
+  });
+});
+
+test("повторный обход не трогает уже открытый файл и не будит watcher", async () => {
+  await withRoot(async root => {
+    const file = path.join(root, "src", "index.ts");
+    await seedFile(file);
+    await openProjectForSandbox(root);
+
+    let events = 0;
+    const watcher = watch(file, () => {
+      events += 1;
+    });
+    try {
+      await new Promise(resolve => setTimeout(resolve, 100));
+      await openProjectForSandbox(root);
+      await new Promise(resolve => setTimeout(resolve, 200));
+    } finally {
+      watcher.close();
+    }
+
+    // chmod той же маски всё равно меняет ctime. На Gluster это событие видит hot-reload
+    // функций, и обход перед каждой командой превращается в бесконечный цикл.
+    assert.equal(events, 0);
   });
 });
 

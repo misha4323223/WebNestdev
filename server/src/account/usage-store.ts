@@ -3,24 +3,28 @@ import { randomUUID } from "node:crypto";
 import path from "node:path";
 import { isYdbEnabled, ydbQuery, getTable } from "../storage/ydb.js";
 import { creditPoolFor, limitsForPlan, type PlanId, type UsageKind, type UsageSnapshot } from "./plans.js";
+import { utcDay, utcWeekStart, weekDays } from "./usage-week.js";
 import { accountPlanFor } from "../billing/store.js";
 import { tokenBonusFor } from "./token-bonus.js";
 import { creditBalance, recordCreditConsumption } from "../billing/credit-store.js";
 
 /**
- * Какая граница тарифа отвечает за каждый вид расхода. Таблица, а не тернарный оператор: новый вид
- * расхода добавляется одной строкой, и забыть его в одной из ветвей невозможно.
+ * Дневные границы для остальных видов расхода. Запуски агента сюда не входят: у бесплатного тарифа
+ * они считаются календарной неделей, а у платного ограничены кредитами.
  */
-const LIMIT_KEY: Record<UsageKind, "agentRunsPerDay" | "browserChecksPerDay" | "webSearchesPerDay" | "imagesPerDay"> = {
-  agentRuns: "agentRunsPerDay",
+const DAILY_LIMIT_KEY: Record<Exclude<UsageKind, "agentRuns">, "browserChecksPerDay" | "webSearchesPerDay" | "imagesPerDay"> = {
   browserChecks: "browserChecksPerDay",
   webSearches: "webSearchesPerDay",
   images: "imagesPerDay",
 };
 
+/** Вид дневного счётчика и недельной квоты в той же таблице usage_counters. */
+const AGENT_RUNS_KIND = "agentRuns";
+const WEEKLY_AGENT_RUNS_KIND = "agentRunsWeek";
+
 /** Что именно закончилось — эти фразы видит человек, когда лимит исчерпан. */
 const LIMIT_MESSAGE: Record<UsageKind, string> = {
-  agentRuns: "Достигнут дневной лимит запусков агента",
+  agentRuns: "Достигнут недельный лимит запусков агента",
   browserChecks: "Достигнут дневной лимит браузерных проверок",
   webSearches: "Достигнут дневной лимит поисков в интернете",
   images: "Достигнут дневной лимит генерации изображений",
@@ -50,8 +54,6 @@ async function writeJsonAtomic(file: string, value: unknown) {
   try { await writeFile(temp, JSON.stringify(value), { mode: 0o600 }); await rename(temp, file); }
   catch (error) { try { await unlink(temp); } catch {} throw error; }
 }
-function utcDay(now = new Date()) { return now.toISOString().slice(0, 10); }
-
 export class UsageLimitError extends Error {
   readonly statusCode = 429;
   constructor(readonly kind: UsageKind, readonly limit: number, readonly used: number) {
@@ -60,8 +62,35 @@ export class UsageLimitError extends Error {
   }
 }
 
+/** Сколько запусков агента записано в дневных файлах с понедельника по сегодня. */
+async function jsonWeeklyAgentRuns(userId: string, now = new Date()): Promise<number> {
+  let total = 0;
+  for (const date of weekDays(now)) {
+    const events = await readJson<UsageEvent[]>(path.join(root, "account", "usage", date + ".json"), []);
+    total += events.filter(event => event.userId === userId && event.kind === "agentRuns").length;
+  }
+  return total;
+}
+
+/** Недельный счётчик из YDB; если его ещё нет, считаем по дневным строкам этой недели. */
+async function ydbWeeklyAgentRuns(userId: string, weekStart: string, date: string): Promise<number> {
+  const table = ydbQuery().identifier(getTable("usage_counters"));
+  const [weekly] = await ydbQuery()<Array<{used:number|string|bigint}>>`
+    SELECT used FROM ${table}
+    WHERE user_id = ${userId} AND usage_date = ${weekStart} AND kind = ${WEEKLY_AGENT_RUNS_KIND}
+    LIMIT 1
+  `;
+  if (weekly.length) return Math.max(0, Number(weekly[0]?.used ?? 0));
+  const [daily] = await ydbQuery()<Array<{used:number|string|bigint}>>`
+    SELECT used FROM ${table}
+    WHERE user_id = ${userId} AND kind = ${AGENT_RUNS_KIND} AND usage_date >= ${weekStart} AND usage_date <= ${date}
+  `;
+  return daily.reduce((sum, row) => sum + Math.max(0, Number(row.used ?? 0)), 0);
+}
+
 export async function getUsageSnapshot(userId: string, now = new Date()): Promise<UsageSnapshot> {
   const date = utcDay(now);
+  const weekStart = utcWeekStart(now);
   if (isYdbEnabled()) {
     const [rows] = await ydbQuery()<Array<{kind:string;used:number|string|bigint}>>`
       SELECT kind, used FROM ${ydbQuery().identifier(getTable("usage_counters"))}
@@ -69,7 +98,9 @@ export async function getUsageSnapshot(userId: string, now = new Date()): Promis
     `;
     return {
       date,
+      weekStart,
       agentRuns: Number(rows.find(row => row.kind === "agentRuns")?.used ?? 0),
+      agentRunsWeek: await ydbWeeklyAgentRuns(userId, weekStart, date),
       browserChecks: Number(rows.find(row => row.kind === "browserChecks")?.used ?? 0),
       webSearches: Number(rows.find(row => row.kind === "webSearches")?.used ?? 0),
       images: Number(rows.find(row => row.kind === "images")?.used ?? 0),
@@ -79,19 +110,96 @@ export async function getUsageSnapshot(userId: string, now = new Date()): Promis
   const own = events.filter(event => event.userId === userId && event.date === date);
   return {
     date,
+    weekStart,
     agentRuns: own.filter(event => event.kind === "agentRuns").length,
+    agentRunsWeek: await jsonWeeklyAgentRuns(userId, now),
     browserChecks: own.filter(event => event.kind === "browserChecks").length,
     webSearches: own.filter(event => event.kind === "webSearches").length,
     images: own.filter(event => event.kind === "images").length,
   };
 }
 
+/**
+ * Запуск агента: на бесплатном тарифе — 10 записей на календарную UTC-неделю, на платном — без
+ * недельного предела (расход ограничен кредитами). Дневные события всё равно пишутся: по ним
+ * строится история и график, но квота считается по недельному счётчику, а не по сегодняшнему дню.
+ */
+async function consumeAgentRunUsage(userId: string, plan: PlanId, now = new Date()): Promise<UsageSnapshot> {
+  const date = utcDay(now);
+  const weekStart = utcWeekStart(now);
+  const limit = limitsForPlan(plan).agentRunsPerWeek;
+  const event: UsageEvent = { id: randomUUID(), userId, date, kind: "agentRuns", createdAt: now.toISOString() };
+  // Недельный ключ сериализует запуски разных дней одной недели: дневной замок здесь не подходит.
+  // В JSON-режиме он всё равно остаётся на пользователя, а не на всю платформу.
+  const lockKey = isYdbEnabled() ? userId + ":week:" + weekStart : "json:" + userId + ":week:" + weekStart;
+  return withLock(lockKey, async () => {
+    if (isYdbEnabled()) {
+      const sql = ydbQuery();
+      const usageCountersTable = sql.identifier(getTable("usage_counters"));
+      const usageEventsTable = sql.identifier(getTable("usage_events"));
+      await sql.transaction({ idempotent: true }, async tx => {
+        const [weeklyRows] = await tx<Array<{used:number|string|bigint}>>`
+          SELECT used FROM ${usageCountersTable}
+          WHERE user_id = ${userId} AND usage_date = ${weekStart} AND kind = ${WEEKLY_AGENT_RUNS_KIND}
+          LIMIT 1
+        `;
+        let weeklyUsed: number;
+        if (weeklyRows.length) {
+          weeklyUsed = Number(weeklyRows[0]?.used ?? 0);
+        } else {
+          // Первый запуск после выкатки: начинаем с дневных строк этой недели, чтобы не выдать
+          // лишние запуски тем, кто уже израсходовал часть квоты до появления недельного счётчика.
+          const [dailyRows] = await tx<Array<{used:number|string|bigint}>>`
+            SELECT used FROM ${usageCountersTable}
+            WHERE user_id = ${userId} AND kind = ${AGENT_RUNS_KIND} AND usage_date >= ${weekStart} AND usage_date <= ${date}
+          `;
+          weeklyUsed = dailyRows.reduce((sum, row) => sum + Math.max(0, Number(row.used ?? 0)), 0);
+        }
+        if (limit !== null && weeklyUsed >= limit) throw new UsageLimitError("agentRuns", limit, weeklyUsed);
+        const [todayRows] = await tx<Array<{used:number|string|bigint}>>`
+          SELECT used FROM ${usageCountersTable}
+          WHERE user_id = ${userId} AND usage_date = ${date} AND kind = ${AGENT_RUNS_KIND}
+          LIMIT 1
+        `;
+        const todayUsed = Number(todayRows[0]?.used ?? 0);
+        await tx`
+          UPSERT INTO ${usageCountersTable}
+            (user_id, usage_date, kind, used)
+          VALUES (${userId}, ${weekStart}, ${WEEKLY_AGENT_RUNS_KIND}, ${weeklyUsed + 1})
+        `;
+        await tx`
+          UPSERT INTO ${usageCountersTable}
+            (user_id, usage_date, kind, used)
+          VALUES (${userId}, ${date}, ${AGENT_RUNS_KIND}, ${todayUsed + 1})
+        `;
+        await tx`
+          INSERT INTO ${usageEventsTable}
+            (user_id, usage_date, event_id, kind, created_at)
+          VALUES (${userId}, ${date}, ${event.id}, ${AGENT_RUNS_KIND}, ${event.createdAt})
+        `;
+      });
+      return getUsageSnapshot(userId, now);
+    }
+    const weeklyUsed = await jsonWeeklyAgentRuns(userId, now);
+    if (limit !== null && weeklyUsed >= limit) throw new UsageLimitError("agentRuns", limit, weeklyUsed);
+    // Дневной файл общий с остальными видами расхода: его запись сериализуется отдельным замком.
+    await withLock("json:" + date, async () => {
+      const file = path.join(root, "account", "usage", date + ".json");
+      const events = await readJson<UsageEvent[]>(file, []);
+      events.push(event);
+      await writeJsonAtomic(file, events);
+    });
+    return getUsageSnapshot(userId, now);
+  });
+}
+
 export async function consumeUsage(userId: string, kind: UsageKind, plan: PlanId, now = new Date()): Promise<UsageSnapshot> {
+  if (kind === "agentRuns") return consumeAgentRunUsage(userId, plan, now);
   const date = utcDay(now);
   // JSON mode shares a daily file, so serialize all writers. YDB mode serializes per account in this process.
   const lockKey = isYdbEnabled() ? userId + ":" + date : "json:" + date;
   return withLock(lockKey, async () => {
-    const limit = limitsForPlan(plan)[LIMIT_KEY[kind]];
+    const limit = limitsForPlan(plan)[DAILY_LIMIT_KEY[kind]];
     const event: UsageEvent = { id: randomUUID(), userId, date, kind, createdAt: now.toISOString() };
     if (isYdbEnabled()) {
       // Serializable read-write transaction: competing reservations conflict on the same counter key.
@@ -246,7 +354,7 @@ async function monthlyCreditsUsed(userId: string, now = new Date()): Promise<{ m
 
 /**
  * Месячный бюджет кредитов. `limit: 0` — кредитов у тарифа нет (бесплатный тариф живёт
- * дневным лимитом запусков). Надбавка администратора приходит в токенах; 10 000 токенов = 1
+ * недельным лимитом запусков). Надбавка администратора приходит в токенах; 10 000 токенов = 1
  * кредит, поэтому старые подарки продолжают работать и после перехода на кредиты.
  */
 export type CreditBudget = {
@@ -318,8 +426,9 @@ export class TokenBudgetError extends Error {
 
 /**
  * Запуск агента. На бесплатном тарифе считаются запуски встроенной модели: она отвечает за счёт
- * платформы, а кредитов на нём нет. На платном — сначала проверяется месячный бюджет кредитов;
- * дневного лимита запусков там нет, но счётчик всё равно пишется для истории и аналитики.
+ * платформы, а кредитов на нём нет. Лимит — 10 запусков на календарную неделю UTC. На платном —
+ * сначала проверяется месячный бюджет кредитов; недельного лимита запусков там нет, но счётчик
+ * всё равно пишется для истории и аналитики.
  * Проект со своим AI-провайдером тратит свои токены и свой ключ, поэтому его запуски не
  * считаются и не блокируются — вместо ошибки возвращается текущий снимок использования, чтобы
  * панель показала те же цифры, что и раньше.

@@ -29,6 +29,8 @@ import type { PreviewStatus } from "./types.js";
 /** The listener binds the loopback address: only the server itself talks to a static preview. */
 const STATIC_HOST="127.0.0.1";
 
+function describeError(error:unknown){return error instanceof Error?error.message:String(error)}
+
 export type PreviewModeSetting="auto"|"static"|"container"|"hybrid";
 export type StaticBuildSetting="auto"|"always"|"never";
 
@@ -183,7 +185,12 @@ export async function stopStaticPreview(projectId:string){
   const run=runs.get(projectId);
   if(!run)return;
   runs.delete(projectId);
-  await Promise.all([run.close(),run.functions?.stop().catch(()=>undefined)]);
+  // Оба шага выполняются всегда: ошибка закрытия listener не должна отменять остановку
+  // исполнителя функций, и наоборот. Раньше ошибка `functions.stop()` глушилась, контейнер с
+  // watcher продолжал жить после остановки preview и бесконечно повторял hot-reload.
+  const [listener,functions]=await Promise.allSettled([run.close(),run.functions?.stop()]);
+  if(listener.status==="rejected")console.warn("[preview] listener статического preview не закрылся: "+describeError(listener.reason));
+  if(functions.status==="rejected")console.warn("[preview] исполнитель функций не остановился: "+describeError(functions.reason));
 }
 
 /**
