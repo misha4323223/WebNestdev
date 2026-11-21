@@ -1,4 +1,5 @@
 import { createHmac, randomUUID } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { appendFile, mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { getTable, isYdbEnabled, ydbQuery } from "../storage/ydb.js";
@@ -43,17 +44,33 @@ export function secretAuditFile() {
 }
 
 /**
+ * Соль журнала можно положить отдельным файлом в общий runtime-secrets: так её видят обе
+ * ноды, а ключ шифрования секретов не делает вторую работу. Переменная окружения остаётся
+ * главнее — для явного переопределения и будущей ротации.
+ */
+export function auditSaltFile() {
+  return path.join(dataDirectory(), "runtime-secrets", "audit-salt");
+}
+
+function auditSalt() {
+  const configured = process.env.WEBNESTDEV_AUDIT_SALT?.trim();
+  if (configured) return configured;
+  try {
+    const stored = readFileSync(auditSaltFile(), "utf8").trim();
+    if (stored) return stored;
+  } catch {
+    // Файла может не быть на старой ноде: ниже остаётся прежний fallback.
+  }
+  return process.env.WEBNESTDEV_ENCRYPTION_KEY ?? "webnestdev-audit";
+}
+
+/**
  * IP не хранится открытым: по нему нельзя восстановить адрес без соли, а сравнить два события
- * одного источника можно. Соль — отдельная переменная, иначе ключ шифрования секретов отвечал
- * бы ещё и за приватность журнала.
+ * одного источника можно. Соль — отдельная от ключа шифрования секретов.
  */
 export function hashAuditIp(ip?: string) {
   if (!ip) return "";
-  const salt =
-    process.env.WEBNESTDEV_AUDIT_SALT ??
-    process.env.WEBNESTDEV_ENCRYPTION_KEY ??
-    "webnestdev-audit";
-  return createHmac("sha256", salt).update(ip).digest("hex").slice(0, 32);
+  return createHmac("sha256", auditSalt()).update(ip).digest("hex").slice(0, 32);
 }
 
 function clean(input: SecretAuditInput): SecretAuditInput {

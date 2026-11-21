@@ -1,9 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { mkdtemp, readFile } from "node:fs/promises";
+import { createHmac } from "node:crypto";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { hashAuditIp, listSecretAudit, recordSecretAudit, secretAuditFile } from "./secret-audit.js";
+import { auditSaltFile, hashAuditIp, listSecretAudit, recordSecretAudit, secretAuditFile } from "./secret-audit.js";
 
 async function withAuditDir<T>(action: () => Promise<T>): Promise<T> {
   const previous = process.env.WEBNESTDEV_DATA_DIR;
@@ -59,6 +60,29 @@ test("события другого проекта не попадают в вы
     const entries = await listSecretAudit("p1");
     assert.deepEqual(entries.map((entry) => entry.action), ["delete", "import"]);
     assert.deepEqual(entries.map((entry) => entry.projectId), ["p1", "p1"]);
+  });
+});
+
+test("отдельная соль из runtime-secrets важнее ключа шифрования", async () => {
+  await withAuditDir(async () => {
+    await mkdir(path.dirname(auditSaltFile()), { recursive: true });
+    await writeFile(auditSaltFile(), "file-salt\n", { mode: 0o600 });
+
+    const previousSalt = process.env.WEBNESTDEV_AUDIT_SALT;
+    const previousKey = process.env.WEBNESTDEV_ENCRYPTION_KEY;
+    delete process.env.WEBNESTDEV_AUDIT_SALT;
+    process.env.WEBNESTDEV_ENCRYPTION_KEY = "encryption-key";
+    try {
+      const expected = createHmac("sha256", "file-salt").update("203.0.113.5").digest("hex").slice(0, 32);
+      const keyed = createHmac("sha256", "encryption-key").update("203.0.113.5").digest("hex").slice(0, 32);
+      assert.equal(hashAuditIp("203.0.113.5"), expected);
+      assert.notEqual(hashAuditIp("203.0.113.5"), keyed);
+    } finally {
+      if (previousSalt === undefined) delete process.env.WEBNESTDEV_AUDIT_SALT;
+      else process.env.WEBNESTDEV_AUDIT_SALT = previousSalt;
+      if (previousKey === undefined) delete process.env.WEBNESTDEV_ENCRYPTION_KEY;
+      else process.env.WEBNESTDEV_ENCRYPTION_KEY = previousKey;
+    }
   });
 });
 
