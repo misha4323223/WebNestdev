@@ -50,14 +50,12 @@ sudo -u postgres psql -p 5433 -Atc 'show archive_mode'   # ожидается on
 пропускают работу на standby. Если API на какой-то ноде висит после рестарта базы —
 `sudo systemctl reload haproxy` на этой ноде (старый worker держит мёртвые соединения).
 
-TLS на участке HAProxy ↔ PostgreSQL делать отдельным шагом через
-[`deploy/ha/pg_tls.sh`](../deploy/ha/pg_tls.sh), а не «по пути»: код выкачен
-15.11.2026, 17:07 UTC в `4556b09`, но сертификат ещё не создан. На обеих нодах `ssl=on` с
-системным `snakeoil`-сертификатом,
-`ssl_ca_file` пуст, HBA и HAProxy ещё без TLS;
-в старом `/var/lib/postgresql/tls` на `node-2` лежат пустые `ca.crt`/`server.crt`. Скрипт
-создаёт валидный сертификат с SAN, включает `ssl=on`, переводит HBA на `hostssl` и
-проверяет соединение. Rejoin идёт напрямую в PostgreSQL `5433`, а не через HAProxy `5432`.
+TLS на участке HAProxy ↔ PostgreSQL **включён 21.11.2026, 22:08 UTC** через
+[`deploy/ha/pg_tls.sh`](../deploy/ha/pg_tls.sh). На обеих нодах `ssl=on`, HBA только `hostssl`,
+HAProxy ходит в PostgreSQL с проверкой CA и `alpn postgresql`, standby — `sslmode=verify-full`.
+При повторной установке на чистой ноде сертификат создаётся один раз на `node-1` и передаётся
+на `node-2` по SSH; не запускать `pg_tls.sh setup` на `node-2`. Rejoin идёт напрямую в
+PostgreSQL `5433`, а не через HAProxy `5432`.
 
 Подробности переезда 10.11.2026 и простоя — [`PRODUCTION_STATE.md`](PRODUCTION_STATE.md) §15.
 

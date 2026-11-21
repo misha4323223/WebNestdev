@@ -5,13 +5,11 @@
 и [`deploy/ha/README.md`](../deploy/ha/README.md). Здесь только то, что ещё не закрыто, и
 границы, чтобы не делать уже сделанное.
 
-**Актуально на 15.11.2026, 20:51 UTC, сборка `79c87ed`.** `node-1` — primary PostgreSQL;
-`node-2` выключена (`power=OFF`), поэтому streaming standby и второй API сейчас отсутствуют.
-Публичный `https://nestdev.ru/api/ready` — `200`. Для двухнодовых работ включить `node-2` и
-проверить API на обеих нодах, `pg_stat_replication` — `1|0`, `archive_mode=on`.
-HAProxy уже ходит в primary напрямую на `5433`, но
-**TLS ещё не включён**: на обеих нодах `ssl=on` с `snakeoil`, HBA на `host`, сертификат
-`pg_tls.sh` не создан. `ha-status-node-1.json` и `ha-status-node-2.json` уже пишутся.
+**Актуально на 21.11.2026, 22:08 UTC, сборка `d7c491b`; runtime `db_proxy.py` с ALPN
+установлен на обе ноды.** `node-1` — primary PostgreSQL, `node-2` — streaming standby;
+оба API и публичный `https://nestdev.ru/api/ready` — `200`, `pg_stat_replication` —
+`streaming`, лаг близок к нулю, `archive_mode=on`. На обеих нодах `ssl=on`, HBA — только
+`hostssl`, HAProxy ходит в PostgreSQL по TLS 1.3 с проверкой CA, standby — `sslmode=verify-full`.
 Публичный ingress идёт через NLB, DNS при переключении не меняется.
 
 ## Уже реализовано — не дублировать
@@ -31,43 +29,34 @@ HAProxy уже ходит в primary напрямую на `5433`, но
 двухнодовой схемы, а не незакрытый пункт. Для production с постоянными двумя нодами
 нужен третий witness или managed storage — отдельное решение после запуска.
 
-## Осталось
+## Осталось и текущее состояние
 
-### 1. TLS на участке HAProxy ↔ PostgreSQL — код выкачен, TLS не включён
+### 1. TLS на участке HAProxy ↔ PostgreSQL — включён 21.11.2026
 
-**Выкачено 15.11.2026, 17:07 UTC, сборка `4556b09`:** `deploy/ha/pg_tls.sh`, TLS-backend в
-`db_proxy.py`, прямая цель peer `5433`, `sslmode=verify-full` в `standby.sh`, `hostssl` в
-`pg_hba_probe.sh` и передача сертификата через `node2-sync.sh`. Локальные тесты HA и
-`bash -n` проходят; на обеих нодах лежит новый runtime-код.
+**21.11.2026, 22:08 UTC.** TLS включён на живой паре. Один самоподписанный сертификат с SAN
+`host.docker.internal`, `localhost`, `127.0.0.1`, `10.0.0.4`, `10.0.0.5` создан на `node-1` и
+передан на `node-2` по SSH; `server.key` — `600 root`, PostgreSQL использует копии в
+`/etc/postgresql/17/main/tls`. На обеих нодах `ssl=on`, `ssl_cert_file` указывает на новый
+сертификат, `pg_hba` содержит **8 правил `hostssl` и 0 правил `host`**.
 
-**Сейчас (проверено после выкатки):** API ходит в локальный HAProxy `:5432`,
-HAProxy — в локальный PostgreSQL `127.0.0.1:5433` или в PostgreSQL peer напрямую на `5433`
-(plaintext, без TLS). На обеих нодах `ssl=on`, но используется системный
-`/etc/ssl/certs/ssl-cert-snakeoil.pem` с пустым `ssl_ca_file`; `pg_hba` остаётся на
-`host`, HAProxy — без `ssl`. На `node-2` в старом `/var/lib/postgresql/tls` лежат пустые
-`ca.crt`/`server.crt`; новый скрипт их не использует.
+HAProxy на обеих нодах ходит в PostgreSQL напрямую на `5433` с проверкой CA. Ключевая
+деталь: PostgreSQL 17 принимает direct TLS только с ALPN `postgresql`; HAProxy 2.8
+открывает TLS сразу, без `SSLRequest`, поэтому backend-строка обязана содержать
+`alpn postgresql`. Без этого PostgreSQL рвёт новые соединения с сообщением
+`received direct SSL connection request without ALPN protocol negotiation extension`, а
+старые пулы API ещё какое-то время работают — это опасное ложное «всё хорошо». Фикс внесён
+в `deploy/ha/db_proxy.py` и проверен на обеих нодах.
 
-При выкатке найден и исправлен пропуск: прямому peer-маршруту нужно HBA-правило
-`webnestdev` с приватного IP соседа, а не только `replicator`. Оно добавлено в
-`pg_hba_probe.sh`; на `node-1` применено вручную и проверено через `/api/ready` на
-`node-2`.
+`node-2` подключён к `node-1` с `sslmode=verify-full sslrootcert=/etc/postgresql/17/main/tls/ca.crt`;
+`pg_stat_replication` — `streaming`, лаг близок к нулю. API после принудительного пересоздания
+пулов на обеих нодах — `200`; все соединения приложения к `webnestdev` имеют `ssl=true`
+(TLS 1.3). Прямое `sslmode=disable` к `5433` отклоняется, `sslmode=require` доходит до
+authentication, `sslmode=verify-full` проверяет цепочку.
 
-**Решение:** PostgreSQL `ssl=on`, самоподписанный сертификат с SAN для
-`host.docker.internal`, `127.0.0.1`, `10.0.0.4`, `10.0.0.5`; HAProxy подключается к
-PostgreSQL напрямую (`5433`) с `ssl verify required`; HBA переводится на `hostssl`;
-репликация и rejoin идут на `5433` с `sslmode=verify-full`.
-
-**Почему не через peer HAProxy:** иначе получается двойной TLS (клиент → HAProxy и
-HAProxy → PostgreSQL) либо расшифровка на промежуточной ноде. Прямой `5433` с проверкой
-сертификата — один предсказуемый участок.
-
-**Критерий готовности:** на обеих нодах `show ssl = on`; `sslmode=require` к `5433`
-работает, `sslmode=disable` — нет; `pg_stat_replication` остаётся `streaming` с лагом 0;
-`/api/ready` — `200` на обеих нодах; после rejoin standby снова подключается по TLS.
-
-**Не делать:** не включать TLS «по пути» на живой primary без проверки сертификата и
-`pg_hba`; не заменять пустые файлы на `node-2` нулевыми сертификатами; не переводить HBA
-на `hostssl` при `ssl=off`.
+**Остаток:** сертификат самоподписанный и общий для обеих нод; ротация и KMS/HSM — отдельные
+задачи. При плановом rejoin использовать `standby.sh` с `PG_TLS_CA`; он выставляет
+`sslmode=verify-full` автоматически. Не запускать `pg_tls.sh setup` на `node-2`: получится
+вторая пара и проверка сертификата соседа перестанет работать.
 
 ### 2. HA-наблюдаемость — выкачена и работает
 
@@ -132,7 +121,7 @@ primary; после этого `node-2` не выключается.
 
 ## Порядок работ
 
-1. TLS и проверка репликации (пункт 1) — код выкачен, TLS ещё не включён.
+1. TLS и проверка репликации (пункт 1) — **закрыто 21.11.2026, 22:08 UTC**.
 2. HA-снимок и проверки в админке/письмах (пункт 2) — выкачено и работает.
 3. Целевой domain/preview failover (пункт 3) — destructive, нужно окно.
 4. Конкурентный DDL и `restore-s3` (пункт 4) — проверено 15.11.2026, 17:15 UTC.

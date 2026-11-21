@@ -27,8 +27,11 @@ peer (`:5433`) — когда узел снова standby. Поэтому вер
 и preview, но её PostgreSQL остаётся read-only standby.
 
 После `pg_tls.sh` backend HAProxy идёт с `ssl verify required` по самоподписанному CA.
-Сертификат создаётся на `node-1`, а `node2-sync.sh` передаёт его на `node-2` по SSH. API
-по-прежнему ходит в локальный `host.docker.internal:5432` без TLS: шифруется участок между
+HAProxy 2.8 подключается к PostgreSQL 17 по **direct TLS**, поэтому в server-строке обязателен
+`alpn postgresql`: без него PostgreSQL рвёт соединение с `received direct SSL connection
+request without ALPN protocol negotiation extension`, а старые пулы API могут скрывать
+поломку. Сертификат создаётся на `node-1`, а `node2-sync.sh` передаёт его на `node-2` по SSH.
+API по-прежнему ходит в локальный `host.docker.internal:5432` без TLS: шифруется участок между
 нодами и HAProxy ↔ PostgreSQL, а не loopback внутри одной ВМ.
 
 Если возвращается **старый primary** после promotion на peer, его PostgreSQL намеренно
@@ -91,6 +94,8 @@ sudo -u postgres psql -p 5433 -Atc 'show ssl_cert_file'
 openssl x509 -in /etc/webnestdev-ha/pg-tls/server.crt -noout -subject -dates
 grep -E '^[[:space:]]*(host|hostssl)[[:space:]]' \
   /etc/postgresql/17/main/pg_hba.conf
+# В HAProxy server-строке должны быть ssl verify required и alpn postgresql
+grep -E '^[[:space:]]*server primary' /etc/haproxy/haproxy.cfg
 ```
 
 Проверка TLS с проверкой цепочки (пароль не печатать):

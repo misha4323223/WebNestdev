@@ -1,17 +1,17 @@
 # Состояние production и оперативная память
 
-Дата среза: **21.11.2026, 21:35 UTC**. Документ фиксирует факты, которые нельзя терять
+Дата среза: **21.11.2026, 22:08 UTC**. Документ фиксирует факты, которые нельзя терять
 между сессиями.
 Секреты здесь не хранятся: только имена переменных, пути и способы проверки.
 
-**Актуально на 21.11.2026, 21:35 UTC:** обе ноды включены, `node-1` — primary,
-`node-2` — streaming standby; обе на сборке `538865ceed4c`. Deploy run `44950970975`
-завершён успешно 21.11.2026, 21:24–21:28 UTC; публичный `/api/ready` и локальный health обеих
-нод отдают `build=538865ceed4c574267cc551a12d39583d7941b1b`. Первая попытка выкатки
-(21:16 UTC) упала на транзиентном `Connection reset by peer` при SSH к `node-1`; повторная
-выкатка прошла без ошибок. Audit salt лежит отдельно от ключа шифрования в
-`/var/lib/webnestdev/data/audit-salt` (600) на обеих нодах; preview-логи проходят редакцию
-значений сохранённых секретов. Production работает в
+**Актуально на 21.11.2026, 22:08 UTC:** обе ноды включены, `node-1` — primary,
+`node-2` — streaming standby; production image `d7c491b` (docs-only коммит после кода
+`538865c`). Публичный `/api/ready` и локальный health обеих нод отдают
+`build=d7c491b47f4bb7f3502b6cb67e30b51b3d5c0f3d`. PostgreSQL TLS включён на обеих нодах:
+`ssl=on`, HBA только `hostssl`, HAProxy — TLS с проверкой CA и `alpn postgresql`, standby —
+`sslmode=verify-full`; все соединения приложения — TLS 1.3. Audit salt лежит отдельно от ключа
+шифрования в `/var/lib/webnestdev/data/audit-salt` (600) на обеих нодах; preview-логи
+проходят редакцию значений сохранённых секретов. Production работает в
 `WEBNESTDEV_WORKSPACE_MODE=local`, `OWNER_ROUTING=1`; проекты на локальных каталогах.
 Deploy синхронизирует override обеих нод; токен внутренней двери — общий
 `NODE1_RUNNER_TOKEN`. Клиентская база включена на обеих нодах для теста: административная
@@ -140,17 +140,17 @@ Production не должен зависеть от базы или storage од�
 
 - Публичный адрес: `https://nestdev.ru`.
 - `GET /api/ready` отвечает `ok:true`.
-- Текущая production-сборка на обеих нодах: `538865ceed4c574267cc551a12d39583d7941b1b` —
-  коммит `538865c` в `main` (`feat(security): редактировать секреты в логах предпросмотра`).
-  В неё входит и отдельная соль аудита из коммита `3bbf3e5`.
+- Текущая production-сборка на обеих нодах: `d7c491b47f4bb7f3502b6cb67e30b51b3d5c0f3d` —
+  docs-only коммит `d7c491b` после кода `538865c` (`feat(security): редактировать секреты в
+  логах предпросмотра`). В код входит и отдельная соль аудита из `3bbf3e5`; TLS-runtime
+  `db_proxy.py` с ALPN установлен на обе ноды вручную 21.11.2026, 22:08 UTC.
 - Preview-логи редактируются в `server/src/preview/log-redaction.ts`: перед показом панели,
   агенту и внутренней двери вырезаются точные значения сохранённых секретов. Ошибки запуска
   проходят тот же фильтр. Закодированные/разбитые значения остаются остаточной границей.
 - Соль журнала аудита: `/var/lib/webnestdev/data/audit-salt` (600) на общей Gluster-данной;
   `WEBNESTDEV_AUDIT_SALT` остаётся явным override. Не класть её в `runtime-secrets`:
   entrypoint контейнера пересоздаёт этот каталог при каждом старте.
-- Образ: `ghcr.io/misha4323223/webnestdev:sha-e86fa3958616` — собран и опубликован
-  workflow `deploy` (run `44354435262`).
+- Образ: `ghcr.io/misha4323223/webnestdev:sha-d7c491b47f4b` (docs-only; код `538865c`).
 - Выкачена 18.11.2026, 17:18 UTC на `node-1` и `node-2`; `GET /api/ready` на обеих нодах
   и на `https://nestdev.ru/api/ready` отдаёт `build=e86fa39586167d4558f6e20817621d2ff19f64c2`,
   deploy run — success.
@@ -713,11 +713,11 @@ base backup в S3 сохраняются, поэтому при плохой н�
 восстановление из S3 не запускалось, только проверены указатели.
 
 Осталось по 4.4: вынос primary на отдельный от API инстанс. TLS на участке
-HAProxy ↔ PostgreSQL выкачен 15.11.2026, 17:07 UTC в сборке `4556b09`
-(`deploy/ha/pg_tls.sh`,
-`db_proxy.py`, `standby.sh`), но ещё не включён: сертификат не создан, HAProxy ходит в
-peer `5433` по plaintext. Порядок включения — в
-[`HA_TWO_NODE_REMAINING.md`](HA_TWO_NODE_REMAINING.md).
+HAProxy ↔ PostgreSQL **включён 21.11.2026, 22:08 UTC** на обеих нодах: общий сертификат,
+`ssl=on`, HBA только `hostssl`, HAProxy — `ssl verify required ca-file /etc/haproxy/pg-ca.crt`
+с обязательным `alpn postgresql`, standby — `sslmode=verify-full`. Проверено: API обеих нод —
+`200`, все соединения приложения — TLS 1.3, plaintext к `5433` отклоняется. Подробности и
+остаточные риски — в [`HA_TWO_NODE_REMAINING.md`](HA_TWO_NODE_REMAINING.md).
 Выкатка пока не ставит `pg-pitr.sh` автоматически — установка выполнена через `MODE=setup`;
 перенос установки в `vm-deploy.sh` — следующий шаг.
 
@@ -911,11 +911,11 @@ Purge при публикации автоматизирован (см. ниже
 Все сайты, старые и новые, уже попадают в CDN автоматически за счёт wildcard-CNAME и одного
 ресурса `hosting`; отдельный ресурс на сайт не создаётся.
 
-TLS на участке HAProxy ↔ PostgreSQL выкачен 15.11.2026, 17:07 UTC в сборке `4556b09`:
-`deploy/ha/pg_tls.sh` создаёт сертификат и CA, `db_proxy.py` ходит в peer напрямую на `5433`
-с `ssl verify required`, `standby.sh` — с `sslmode=verify-full`. TLS ещё не включён: сертификат
-не создан, текущий peer-трафик plaintext. Порядок и критерии — в
-[`HA_TWO_NODE_REMAINING.md`](HA_TWO_NODE_REMAINING.md).
+TLS на участке HAProxy ↔ PostgreSQL **включён 21.11.2026, 22:08 UTC** на обеих нодах:
+`deploy/ha/pg_tls.sh` создал общий сертификат и CA, `db_proxy.py` ходит в peer напрямую на
+`5433` с `ssl verify required` и `alpn postgresql`, `standby.sh` — с `sslmode=verify-full`.
+На обеих нодах HBA только `hostssl`, API обеих нод — `200`, репликация — `streaming` по TLS.
+Подробности и остаточные риски — в [`HA_TWO_NODE_REMAINING.md`](HA_TWO_NODE_REMAINING.md).
 
 **15.11.2026, 17:15 UTC проверены конкурентный DDL и `restore-s3`:** два процесса одновременно
 вызвали `initializeStorage()` на живой primary, один ждал advisory-lock, оба завершились

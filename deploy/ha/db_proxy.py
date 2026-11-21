@@ -50,7 +50,10 @@ def _render(host: str, port: int, tls: bool | None = None) -> str:
     use_tls = tls_available() if tls is None else tls
     server = f"server primary {host}:{port} check"
     if use_tls:
-        server += f" ssl verify required ca-file {TLS_CA}"
+        # PostgreSQL 17 принимает direct TLS только с ALPN postgresql. HAProxy
+        # открывает TLS сразу, без SSLRequest, поэтому без ALPN сервер рвёт
+        # соединение и новые подключения API не проходят.
+        server += f" ssl verify required ca-file {TLS_CA} alpn postgresql"
     return f"""global
     log /dev/log local0
     maxconn 500

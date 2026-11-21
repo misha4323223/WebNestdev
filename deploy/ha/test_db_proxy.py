@@ -22,7 +22,7 @@ class DbProxyRenderTests(unittest.TestCase):
             text = db_proxy._render("10.0.0.5", 5433, tls=True)
         self.assertIn(
             "server primary 10.0.0.5:5433 check ssl verify required "
-            "ca-file /etc/haproxy/pg-ca.crt",
+            "ca-file /etc/haproxy/pg-ca.crt alpn postgresql",
             text,
         )
 
@@ -68,11 +68,12 @@ class DbProxyEnsureTests(unittest.TestCase):
         text = self.config.read_text(encoding="utf-8")
         self.assertIn("server primary 10.0.0.5:5433 check", text)
         self.assertIn("ssl verify required", text)
+        self.assertIn("alpn postgresql", text)
 
     def test_current_target_ignores_tls_suffix(self) -> None:
         self.config.write_text(
             "backend pg_servers\n"
-            "    server primary 10.0.0.5:5433 check ssl verify required ca-file /etc/haproxy/pg-ca.crt\n",
+            "    server primary 10.0.0.5:5433 check ssl verify required ca-file /etc/haproxy/pg-ca.crt alpn postgresql\n",
             encoding="utf-8",
         )
         with patch.object(db_proxy, "CONFIG_PATH", self.config):

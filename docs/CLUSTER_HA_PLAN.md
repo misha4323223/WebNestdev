@@ -378,8 +378,8 @@ override-файлы запускают API с `--no-deps`, поэтому лок
 - добавить стабильный endpoint базы (`DATABASE_URL` не должен указывать на конкретную ВМ,
   которая может уехать);
 - TLS между API и PostgreSQL: `deploy/ha/pg_tls.sh` + direct `5433` в `db_proxy.py`
-  (код выкачен 15.11.2026, 17:07 UTC в `4556b09`; TLS ещё не включён, peer-трафик пока
-  plaintext);
+  (**включён 21.11.2026, 22:08 UTC**: HBA только `hostssl`, HAProxy — `ssl verify required`
+  с `alpn postgresql`, standby — `sslmode=verify-full`);
 - реализовать fencing и promotion, иначе автоматический failover запрещён.
 
 ### 5.7. Инициализация схемы и фоновые задачи
