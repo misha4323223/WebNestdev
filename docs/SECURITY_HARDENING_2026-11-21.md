@@ -119,11 +119,37 @@ tenant-роли клиентской БД не получают доступ к 
 - На `node-1` и `node-2` файл `.env.production` переведён с `664` на `600`. Содержимое не
   читалось; если файл не используется, его стоит удалить отдельно.
 
+## Соль аудита и редакция preview-логов
+
+**21.11.2026, 21:35 UTC.** Выкатка `538865c` прошла на обе ноды (deploy run `44950970975`).
+Публичный `/api/ready` и обе ноды отдают сборку `538865ceed4c574267cc551a12d39583d7941b1b`.
+
+- Соль аудита вынесена из ключа шифрования в `/var/lib/webnestdev/data/audit-salt` (600,
+  общая Gluster-данная). Код читает её при каждом хешировании; `WEBNESTDEV_AUDIT_SALT` остаётся
+  явным override. Файл не кладётся в `runtime-secrets`: entrypoint контейнера пересоздаёт этот
+  каталог при старте. Проверка на живых нодах: неудачные входы через API `node-1` и `node-2`
+  дали одинаковый `ip_hash`; он совпал с HMAC из файла, а не с fallback-ключом. Значения соли
+  в чат, логи и git не выводились.
+- `server/src/preview/log-redaction.ts` вырезает точные значения сохранённых секретов из логов
+  предпросмотра и ошибок запуска. Фильтр стоит на общем пути `previewLogs`, поэтому его видят
+  панель, агент и внутренняя дверь; при недоступности хранилища секретов вывод закрывается, а не
+  отдаётся сырым. Проверка на `node-1`: собранный `dist/preview/log-redaction.js` загрузил
+  существующий секрет проекта из PostgreSQL, вернул `REDACTED`, `marker-ok` и
+  `ERROR-REDACTED`; само значение не печаталось.
+- `/legal/security` в живом бандле содержит текст о редакции логов; закодированные/разбитые
+  значения явно оставлены остаточной границей.
+- Первая попытка выкатки в 21:16 UTC упала на транзиентном SSH `Connection reset by peer` до
+  `node-2`; код и образ уже были собраны, повторная выкатка завершилась успешно. Это сетевой
+  сбой, а не ошибка приложения.
+
 ## Проверки
 
 Выполнено в рабочем дереве:
 
 ```bash
+cd server && npx tsx --test src/secrets/secret-audit.test.ts src/preview/log-redaction.test.ts src/preview-manager.test.ts
+cd server && npx tsc -p tsconfig.json --noEmit
+npx tsc -b --noEmit
 cd server && node --import tsx --test "src/auth/public-base-url.test.ts"
 cd server && node --import tsx --test "src/security/address-policy.test.ts"
 cd server && node --import tsx --test "src/preview/peer-door.test.ts"
