@@ -35,12 +35,6 @@
 # заранее создаёт пустой custom-domains.caddy — без него Caddy не примет конфиг.
 import /etc/caddy/custom/*.caddy
 
-# Режимы платформенных сайтов и их canonical-хосты. Файл генерирует API из базы; map
-# позволяет обслуживать все `*.host` одним site-блоком, а не создавать Caddy-блок на
-# каждый сайт. На свежей ВМ deploy создаёт файл с `default "spa" "" "ignore"`, пока API не
-# перезаписал его; старый map с тремя колонками заменяется при выкатке.
-import /etc/caddy/custom/hosting-modes.map
-
 # Панель и API. WebSocket (`/ws` — прогоны агента) Caddy проксирует сам, отдельной настройки не нужно.
 {$WEBNESTDEV_SITE_DOMAIN:localhost}, www.{$WEBNESTDEV_SITE_DOMAIN:localhost} {
 	# Один адрес вместо двух: `www` переводится на основной домен. Иначе вход и CORS пришлось бы
@@ -67,6 +61,13 @@ import /etc/caddy/custom/hosting-modes.map
 	# On-demand для нового имени здесь не работает: ACME-челлендж приходит на CDN и
 	# получает 504, пока у origin нет сертификата (см. deploy/host-tls.caddy).
 	import /etc/caddy/host-tls.caddy
+
+	# Режимы платформенных сайтов и их canonical-хосты. Файл генерирует API из базы;
+	# `map` допустим только внутри site-блока, поэтому import стоит здесь, а не на верхнем
+	# уровне Caddyfile. Один map обслуживает все `*.host` без блока на каждый сайт. На свежей
+	# ВМ deploy создаёт `default "spa" "" "ignore"`, пока API не перезаписал файл; старый map
+	# с тремя колонками заменяется при выкатке.
+	import /etc/caddy/custom/hosting-modes.map
 
 	encode zstd gzip
 
@@ -198,6 +199,8 @@ import /etc/caddy/custom/hosting-modes.map
 				file_server
 			}
 		}
+	}
+
 	# Неизвестный или невалидный slug: не отдаём чужой каталог и не подставляем панель.
 	respond 404
 
