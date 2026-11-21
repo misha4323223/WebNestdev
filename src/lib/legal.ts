@@ -15,6 +15,7 @@ export type LegalDocId =
   | "cookies"
   | "payments"
   | "marketing"
+  | "security"
   | "contacts";
 
 export type LegalDocMeta = {
@@ -23,6 +24,8 @@ export type LegalDocMeta = {
   short: string;
   summary: string;
   group: "Договор" | "Данные" | "Оплата" | "Согласия" | "Сведения";
+  /** У страницы безопасности своя дата: она меняется чаще остальных документов. */
+  updated?: string;
 };
 
 export const SITE = {
@@ -123,6 +126,14 @@ export const LEGAL_DOCS: LegalDocMeta[] = [
     group: "Согласия",
   },
   {
+    id: "security",
+    title: "Безопасность ключей и проектов",
+    short: "Безопасность",
+    summary: "Как хранятся ключи и токены, что видит агент и где проходят границы защиты.",
+    group: "Сведения",
+    updated: "21 ноября 2026 г.",
+  },
+  {
     id: "contacts",
     title: "Реквизиты и контакты",
     short: "Реквизиты",
@@ -150,4 +161,4 @@ export function legalDocFromPath(pathname: string): LegalDocId | null {
 }
 
 /** Ссылки для подвала и форм: короткий список того, что нужно видеть до оплаты. */
-export const LEGAL_FOOTER_LINKS: LegalDocId[] = ["offer", "terms", "privacy", "payments", "cookies", "contacts"];
+export const LEGAL_FOOTER_LINKS: LegalDocId[] = ["offer", "terms", "privacy", "security", "payments", "cookies", "contacts"];

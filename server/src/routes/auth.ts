@@ -28,8 +28,7 @@ import {
 } from "../auth/auth-store.js";
 import { emailVerificationLink, EMAIL_VERIFICATION_TTL_MS, sendVerificationEmail } from "../auth/email-verification-mail.js";
 import { passwordResetLink, PASSWORD_RESET_TTL_MS, sendPasswordResetEmail } from "../auth/password-reset-mail.js";
-import { getPlatformEnv } from "../platform/platform-env.js";
-import { originFromRequest } from "../oauth/oauth-flow.js";
+import { publicBaseUrl } from "../auth/public-base-url.js";
 import { findYandexIdentityByUserId } from "../auth/yandex-account-store.js";
 import { findVkIdentityByUserId } from "../auth/vk-account-store.js";
 import { findPhoneByUserId, formatPhone } from "../auth/phone-store.js";
@@ -67,9 +66,7 @@ function passwordResetCooldownMs(){
 
 /** Публичный адрес приложения: в письме нужна абсолютная ссылка, а не localhost из контейнера. */
 function verificationBaseUrl(request:FastifyRequest){
-  const configured = getPlatformEnv("PLATFORM_URL")?.trim();
-  if(configured) return configured.replace(/\/+$/, "");
-  return originFromRequest(request) ?? request.protocol + "://" + (request.headers.host ?? "localhost");
+  return publicBaseUrl(request);
 }
 
 /**

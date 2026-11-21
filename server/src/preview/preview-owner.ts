@@ -1,8 +1,10 @@
 import { networkInterfaces } from "node:os";
 import { nodeAddress, nodeId } from "../nodes/identity.js";
 import { getNode } from "../nodes/node-store.js";
+import { isLinkLocalOrMetadataAddress } from "../security/address-policy.js";
 
 const DEFAULT_PREVIEW_PORT = 8788;
+const METADATA_HOSTS = new Set(["metadata", "metadata.google.internal", "instance-data"]);
 
 /** Порт двери публичных предпросмотров (тот же, что слушает `preview-host-server`). */
 export function previewDoorPort(): number {
@@ -72,9 +74,10 @@ export function previewOwnerTarget(owner: string): { host: string; port: number 
     if (url.protocol !== "http:" && url.protocol !== "https:") return null;
     if (url.username || url.password) return null;
     if (url.pathname !== "/" || url.search || url.hash) return null;
-    const host = url.hostname.replace(/^\[|\]$/g, "");
+    const host = url.hostname.replace(/^\[|\]$/g, "").toLowerCase().replace(/\.$/, "");
+    if (!host || METADATA_HOSTS.has(host) || isLinkLocalOrMetadataAddress(host)) return null;
     const port = url.port ? Number(url.port) : DEFAULT_PREVIEW_PORT;
-    return host && Number.isInteger(port) && port > 0 && port < 65_536 ? { host, port } : null;
+    return Number.isInteger(port) && port > 0 && port < 65_536 ? { host, port } : null;
   } catch {
     return null;
   }

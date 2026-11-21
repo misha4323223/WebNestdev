@@ -432,7 +432,7 @@ export async function registerHostingRoutes(app: FastifyInstance) {
     if (slug) {
       const site = await getSiteBySlug(slug);
       if (!site || site.status !== "live" || !site.activeReleaseId) return reply.code(404).send({ error: "Сайт не найден" });
-      return reply.send({ allowed: true, host, slug, kind: "site" });
+      return reply.send({ allowed: true, host, kind: "site" });
     }
     const customHost = normalizeHostnameLookup(host);
     // Проверяем существующие домены независимо от feature flag: выключение флага должно
@@ -442,7 +442,7 @@ export async function registerHostingRoutes(app: FastifyInstance) {
       if (domain) {
         const site = await getSite(domain.siteId);
         if (site?.status === "live" && site.activeReleaseId) {
-          return reply.send({ allowed: true, host: customHost, siteId: site.id, kind: "custom-domain" });
+          return reply.send({ allowed: true, host: customHost, kind: "custom-domain" });
         }
       }
     }
@@ -450,7 +450,7 @@ export async function registerHostingRoutes(app: FastifyInstance) {
     if (!preview) return reply.code(404).send({ error: "Этот адрес не обслуживается" });
     const project = await getProject(preview.projectId);
     if (!project) return reply.code(404).send({ error: "Проект не найден" });
-    return reply.send({ allowed: true, host, projectId: project.id, kind: "preview" });
+    return reply.send({ allowed: true, host, kind: "preview" });
   };
   app.get("/api/tls-ask", tlsAsk);
   app.get("/api/hosting/tls-ask", tlsAsk);

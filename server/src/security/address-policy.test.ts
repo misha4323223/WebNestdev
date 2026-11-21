@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { isIpLiteral, isPrivateAddress, isPublicAddress } from "./address-policy.js";
+import { isIpLiteral, isLinkLocalOrMetadataAddress, isPrivateAddress, isPublicAddress } from "./address-policy.js";
 
 test("private, loopback и metadata IPv4 запрещены", () => {
   for (const address of [
@@ -66,6 +66,27 @@ test("IPv6 special-use и IPv4-mapped проверяются, а не обход
   }
   assert.equal(isPrivateAddress("2606:4700:4700::1111"), false);
   assert.equal(isPublicAddress("2606:4700:4700::1111"), true);
+});
+
+test("link-local, metadata, unspecified и multicast запрещены, private и loopback разрешены", () => {
+  for (const address of [
+    "0.0.0.0",
+    "169.254.169.254",
+    "169.254.170.2",
+    "100.100.100.200",
+    "224.0.0.1",
+    "::",
+    "fe80::1%eth0",
+    "fec0::1",
+    "ff02::1",
+    "fd00:ec2::254",
+    "::ffff:169.254.169.254",
+  ]) {
+    assert.equal(isLinkLocalOrMetadataAddress(address), true, address);
+  }
+  for (const address of ["10.0.0.5", "127.0.0.1", "::1", "fc00::1", "203.0.114.1", "2606:4700:4700::1111"]) {
+    assert.equal(isLinkLocalOrMetadataAddress(address), false, address);
+  }
 });
 
 test("имя не считается IP-литералом: его обязан разрешить вызывающий", () => {

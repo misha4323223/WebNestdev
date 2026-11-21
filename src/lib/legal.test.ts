@@ -8,11 +8,13 @@ describe("legal routes", () => {
     expect(isLegalPath("/legal/offer/")).toBe(true);
     expect(isLegalPath("/legally")).toBe(false);
     expect(legalDocFromPath("/legal/privacy/")).toBe("privacy");
+    expect(legalDocFromPath("/legal/security")).toBe("security");
     expect(legalDocFromPath("/legal/unknown")).toBeNull();
   });
 
   it("returns document metadata and marks missing requisites", () => {
     expect(legalDoc("offer").title).toBe("Публичная оферта");
+    expect(legalDoc("security").title).toBe("Безопасность ключей и проектов");
     expect(requisite("  Иван ", "ФИО")).toEqual({ pending: false, text: "Иван" });
     expect(requisite("   ", "ФИО")).toEqual({ pending: true, text: "ФИО" });
   });

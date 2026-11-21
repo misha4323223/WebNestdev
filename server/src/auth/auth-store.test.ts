@@ -15,7 +15,9 @@ const {
   deleteUserSessions,
   getSession,
   getUserLastSeenAt,
+  migrateLegacySessions,
   sessionIdleTtlMs,
+  sessionTokenHash,
   sessionTtlMs,
 } = await import("./auth-store.js");
 
@@ -25,13 +27,41 @@ const day = 24 * 60 * 60 * 1000;
 const sessionsFile = () => path.join(root, "auth", "sessions.json");
 type StoredSession = { id: string; userId: string; expiresAt: string; lastSeenAt?: string };
 const readSessions = () => JSON.parse(fs.readFileSync(sessionsFile(), "utf8")) as StoredSession[];
-/** Запись в том виде, в каком её сохранило хранилище. */
-const storedSession = (id: string) => readSessions().find(item => item.id === id);
+/** Запись в том виде, в каком её сохранило хранилище: id — хеш токена из cookie. */
+const storedSession = (token: string) => readSessions().find(item => item.id === sessionTokenHash(token));
 
 test("политика: неделя бездействия, месяц всего, бездействие не длиннее срока", () => {
   assert.equal(sessionIdleTtlMs(), 7 * day);
   assert.equal(sessionTtlMs(), 30 * day);
   assert.ok(sessionTtlMs() > sessionIdleTtlMs());
+});
+
+test("новая сессия хранится хешем, а cookie получает исходный токен", async () => {
+  const session = await createSession("user-hash");
+  assert.ok(session.id);
+  assert.equal(readSessions().some(item => item.id === session.id), false, "raw-токен не должен попадать в базу");
+  assert.ok(storedSession(session.id), "в базе должен лежать sha256 от токена");
+  assert.equal((await getSession(session.id))?.id, session.id);
+});
+
+test("хеш из базы нельзя использовать как cookie", async () => {
+  const session = await createSession("user-hash-replay");
+  const stored = readSessions().find(item => item.id === sessionTokenHash(session.id));
+  assert.ok(stored);
+  assert.equal(await getSession(stored.id), null);
+});
+
+test("стартовая миграция переводит все старые raw-сессии на хеш", async () => {
+  const token = "a".repeat(64);
+  fs.writeFileSync(sessionsFile(), JSON.stringify([{
+    id: token,
+    userId: "user-startup-migration",
+    expiresAt: new Date(Date.now() + day).toISOString(),
+  }]));
+
+  assert.equal(await migrateLegacySessions(), 1);
+  assert.equal(readSessions()[0]?.id, sessionTokenHash(token));
+  assert.equal((await getSession(token))?.userId, "user-startup-migration");
 });
 
 test("старая запись без lastSeenAt не выкидывает пользователя и получает отметку", async () => {

@@ -126,6 +126,49 @@ function ipv6Blocked(value: bigint): boolean {
   return false;
 }
 
+const METADATA_ADDRESSES = new Set(["100.100.100.200", "fd00:ec2::254"]);
+
+function ipv4LinkLocalOrMetadata(value: number): boolean {
+  return value === 0 || value === 0x646464c8 || (value >>> 16) === 0xa9fe || (value >>> 28) === 0xe;
+}
+
+function ipv6LinkLocalOrMetadata(value: bigint): boolean {
+  if (value === 0n) return true;
+  const prefix = (bits: number) => value >> BigInt(128 - bits);
+  // fe80::/10 — link-local, fec0::/10 — устаревший site-local.
+  if (prefix(10) === 0x3fan || prefix(10) === 0x3fbn) return true;
+  // ff00::/8 — multicast.
+  if (prefix(8) === 0xffn) return true;
+  // fd00:ec2::/32 — metadata-адрес AWS, который не является link-local.
+  if (prefix(32) === 0xfd000ec2n) return true;
+  // IPv4-mapped и IPv4-translated записи: проверяем вложенный адрес.
+  if (prefix(96) === 0xffffn || prefix(96) === 0xffff0000n) {
+    return ipv4LinkLocalOrMetadata(Number(value & 0xffffffffn));
+  }
+  return false;
+}
+
+/**
+ * Link-local, metadata, unspecified и multicast адреса. Private и loopback здесь разрешены:
+ * дверь предпросмотра живёт во внутренней сети, а запрещать её приватный адрес нельзя.
+ */
+export function isLinkLocalOrMetadataAddress(address: string): boolean {
+  const value = address.trim().toLowerCase();
+  if (!value) return false;
+  if (METADATA_ADDRESSES.has(value)) return true;
+  const literal = value.split("%")[0]!;
+  const family = isIP(literal);
+  if (family === 4) {
+    const parsed = parseIpv4(literal);
+    return parsed === null ? true : ipv4LinkLocalOrMetadata(parsed);
+  }
+  if (family === 6) {
+    const parsed = parseIpv6(literal);
+    return parsed === null ? true : ipv6LinkLocalOrMetadata(parsed);
+  }
+  return false;
+}
+
 /** IP-литерал ли это (без имени). Зона IPv6 (`%eth0`) допускается. */
 export function isIpLiteral(value: string): boolean {
   return isIP(value.split("%")[0]!) !== 0;

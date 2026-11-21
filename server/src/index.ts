@@ -135,7 +135,7 @@ import { describeBilling, robokassaConfig } from "./billing/robokassa.js";
 import { registerPlatformRoutes } from "./routes/platform.js";
 import { registerPlatformPlanRoutes } from "./routes/platform-plans.js";
 import { loadPlatformEnv } from "./platform/platform-env.js";
-import { ensureDemoUser } from "./auth/auth-store.js";
+import { ensureDemoUser, migrateLegacySessions } from "./auth/auth-store.js";
 import { ensureBootstrapAdmin } from "./admin/bootstrap.js";
 import "./tools/project-tools.js";
 import "./tools/scout-tools.js";
@@ -314,6 +314,17 @@ let stopCustomDomainCaddyRefresh: (() => void) | null = null;
 let stopCustomDomainTlsActivation: (() => void) | null = null;
 initializeStorage()
   .then(async () => {
+    // До первого запроса убираем raw-ID сессий из базы: иначе копия `sessions` остаётся
+    // пригодной для входа до следующего появления пользователя. Ошибка не мешает старту.
+    try {
+      const migrated = await migrateLegacySessions();
+      if (migrated) app.log.info({ migrated }, "legacy sessions hashed");
+    } catch (error) {
+      app.log.warn(
+        { error: error instanceof Error ? error.message : error },
+        "legacy session migration skipped",
+      );
+    }
     // Рестарт API не должен оставлять аккаунт «занятым» до истечения TTL: runtime старого
     // процесса уже нет, а строка аренды ещё существует. Ошибка очистки не мешает старту.
     try {

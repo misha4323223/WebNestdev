@@ -190,6 +190,7 @@ test("tls-ask не выдаёт сертификат до активации, н
     const configuring = await app.inject({ method: "GET", url: "/api/tls-ask?domain=" + domain.hostname });
     assert.equal(configuring.statusCode, 200, configuring.body);
     assert.equal(configuring.json().kind, "custom-domain");
+    assert.equal("siteId" in configuring.json(), false, "tls-ask не отдаёт внутренний id");
 
     await domainStore.updateDomain(domain.id, { status: "active", certificateStatus: "active" });
     const active = await app.inject({ method: "GET", url: "/api/tls-ask?domain=" + domain.hostname });

@@ -45,6 +45,23 @@ export type Session = { id:string; userId:string; expiresAt:string; lastSeenAt:s
 /** Запись старого формата: до появления idle-таймаута отметки активности не было. */
 type StoredSession = Omit<Session,"lastSeenAt"> & { lastSeenAt?:string };
 
+/**
+ * В базе лежит только хеш токена сессии: копия `sessions` больше не даёт войти под
+ * пользователем. В cookie остаётся исходный токен, поэтому вход не меняется. Так же устроены
+ * административные сессии; отличие раньше было только у пользовательских.
+ */
+export function sessionTokenHash(token:string){
+  return "sha256:" + createHash("sha256").update(token).digest("hex");
+}
+
+/**
+ * Сессии до перехода на хеши — это 48–64 hex-символа. Префикс `sha256:` здесь не проходит,
+ * поэтому хеш из базы нельзя подставить в cookie и войти: legacy-поиск ищет только старый формат.
+ */
+function isLegacySessionToken(token:string){
+  return /^[a-f0-9]{48,64}$/i.test(token);
+}
+
 /** Абсолютный срок сессии: 30 дней по умолчанию (было зашито числом в коде и в cookie). */
 const DEFAULT_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
 /** Бездействие: 7 дней по умолчанию — но никогда дольше абсолютного срока. */
@@ -461,16 +478,17 @@ export async function createSession(userId:string, now=Date.now()){
     expiresAt:new Date(now+sessionTtlMs()).toISOString(),
     lastSeenAt:new Date(now).toISOString(),
   };
+  const storedId = sessionTokenHash(session.id);
   if(isYdbEnabled()){
     await ydbQuery()`
       INSERT INTO ${ydbQuery().identifier(getTable("sessions"))}
         (id,user_id,expires_at,last_seen_at)
-      VALUES (${session.id},${session.userId},${session.expiresAt},${session.lastSeenAt})
+      VALUES (${storedId},${session.userId},${session.expiresAt},${session.lastSeenAt})
     `;
     return session;
   }
   const sessions = await readJson<StoredSession[]>(sessionsFile, []);
-  sessions.push(session);
+  sessions.push({...session,id:storedId});
   await writeJson(sessionsFile, sessions);
   return session;
 }
@@ -503,37 +521,66 @@ async function checkSession(session:Session, now:number):Promise<Session|null>{
 }
 
 export async function getSession(sessionId:string, now=Date.now()){
+  const hashedId = sessionTokenHash(sessionId);
   if(isYdbEnabled()){
     const [rows]=await ydbQuery()<Array<{id:string;user_id:string;expires_at:string;last_seen_at?:string}>>`
       SELECT id,user_id,expires_at,last_seen_at
       FROM ${ydbQuery().identifier(getTable("sessions"))}
-      WHERE id = ${sessionId}
+      WHERE id = ${hashedId}
       LIMIT 1
     `;
-    const row=rows?.[0];
+    let row=rows?.[0];
+    if(!row && isLegacySessionToken(sessionId)){
+      // Сессии, созданные до перехода на хеши, лежат под исходным токеном. Первый же запрос
+      // переносит запись на хеш; cookie при этом не меняется.
+      const [legacyRows]=await ydbQuery()<Array<{id:string;user_id:string;expires_at:string;last_seen_at?:string}>>`
+        SELECT id,user_id,expires_at,last_seen_at
+        FROM ${ydbQuery().identifier(getTable("sessions"))}
+        WHERE id = ${sessionId}
+        LIMIT 1
+      `;
+      row=legacyRows?.[0];
+      if(row){
+        // Если запись уже успела исчезнуть или ID занят, вход всё равно проверяется по
+        // прочитанной строке: миграция не должна превращать рабочий вход в 500.
+        await ydbQuery()`
+          UPDATE ${ydbQuery().identifier(getTable("sessions"))}
+          SET id = ${hashedId}
+          WHERE id = ${sessionId}
+        `.catch(() => undefined);
+      }
+    }
     if(!row)return null;
-    const session:Session={id:row.id,userId:row.user_id,expiresAt:row.expires_at,lastSeenAt:row.last_seen_at??""};
+    const session:Session={id:sessionId,userId:row.user_id,expiresAt:row.expires_at,lastSeenAt:row.last_seen_at??""};
     return await checkSession(session, now);
   }
   const sessions = await readJson<StoredSession[]>(sessionsFile, []);
-  const session = sessions.find(item => item.id === sessionId);
-  if(!session) return null;
-  return await checkSession({...session,lastSeenAt:session.lastSeenAt??""}, now);
+  const stored = sessions.find(item => item.id === hashedId);
+  if(stored) return await checkSession({...stored,id:sessionId,lastSeenAt:stored.lastSeenAt??""}, now);
+  if(!isLegacySessionToken(sessionId)) return null;
+  const index = sessions.findIndex(item => item.id === sessionId);
+  if(index<0) return null;
+  // Старый формат: переносим запись на хеш, но возвращаем вызывающему исходный токен.
+  const legacy = sessions[index];
+  sessions[index] = {...legacy,id:hashedId};
+  await writeJson(sessionsFile, sessions);
+  return await checkSession({...legacy,id:sessionId,lastSeenAt:legacy.lastSeenAt??""}, now);
 }
 
 /** Отметка активности. Отдельная функция: её вызывают проверка срока и, при желании, другие входы. */
 async function touchSession(sessionId:string, now=Date.now()){
   const stamp = new Date(now).toISOString();
+  const hashedId = sessionTokenHash(sessionId);
   if(isYdbEnabled()){
     await ydbQuery()`
       UPDATE ${ydbQuery().identifier(getTable("sessions"))}
       SET last_seen_at = ${stamp}
-      WHERE id = ${sessionId}
+      WHERE id = ${hashedId}
     `;
     return;
   }
   const sessions = await readJson<StoredSession[]>(sessionsFile, []);
-  const index = sessions.findIndex(item => item.id === sessionId);
+  const index = sessions.findIndex(item => item.id === hashedId);
   if(index<0) return;
   sessions[index] = {...sessions[index], lastSeenAt:stamp};
   await writeJson(sessionsFile, sessions);
@@ -567,12 +614,55 @@ export async function getUserLastSeenAt(userId:string):Promise<string|null>{
 }
 
 export async function deleteSession(sessionId:string){
+  const hashedId = sessionTokenHash(sessionId);
+  const legacy = isLegacySessionToken(sessionId);
   if(isYdbEnabled()){
-    await ydbQuery()`DELETE FROM ${ydbQuery().identifier(getTable("sessions"))} WHERE id = ${sessionId}`;
+    if(legacy){
+      await ydbQuery()`DELETE FROM ${ydbQuery().identifier(getTable("sessions"))} WHERE id = ${hashedId} OR id = ${sessionId}`;
+    }else{
+      await ydbQuery()`DELETE FROM ${ydbQuery().identifier(getTable("sessions"))} WHERE id = ${hashedId}`;
+    }
     return;
   }
   const sessions = await readJson<StoredSession[]>(sessionsFile, []);
-  await writeJson(sessionsFile, sessions.filter(item => item.id !== sessionId));
+  await writeJson(sessionsFile, sessions.filter(item => item.id !== hashedId && !(legacy && item.id === sessionId)));
+}
+
+/**
+ * Переводит сессии, созданные до хеширования, на `sha256:`. Вызывается при старте: одной
+ * ленивой миграции мало, иначе raw-ID неактивных пользователей лежали бы в базе до их
+ * следующего входа. Повторный запуск и параллельный старт второй ноды безопасны.
+ */
+export async function migrateLegacySessions(){
+  if(isYdbEnabled()){
+    const [rows]=await ydbQuery()<Array<{id:string}>>`
+      SELECT id FROM ${ydbQuery().identifier(getTable("sessions"))}
+      WHERE id ~ '^[a-f0-9]{48,64}$'
+    `;
+    let migrated=0;
+    for(const row of rows ?? []){
+      try{
+        await ydbQuery()`
+          UPDATE ${ydbQuery().identifier(getTable("sessions"))}
+          SET id = ${sessionTokenHash(row.id)}
+          WHERE id = ${row.id}
+        `;
+        migrated++;
+      }catch{
+        // Параллельный старт другой ноды уже перенёс запись — это не ошибка.
+      }
+    }
+    return migrated;
+  }
+  const sessions = await readJson<StoredSession[]>(sessionsFile, []);
+  let migrated=0;
+  const next=sessions.map(item=>{
+    if(!isLegacySessionToken(item.id)) return item;
+    migrated++;
+    return {...item,id:sessionTokenHash(item.id)};
+  });
+  if(migrated) await writeJson(sessionsFile, next);
+  return migrated;
 }
 
 /**

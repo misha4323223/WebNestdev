@@ -177,7 +177,7 @@ function LegalDocumentView({ docId, linkProps, onCookieSettings }: {
         <h1>{meta.title}</h1>
         <div className="legal-doc-meta">
           <span>Редакция {SITE.version}</span>
-          <span>Обновлено {SITE.updated}</span>
+          <span>Обновлено {meta.updated ?? SITE.updated}</span>
           <span>Вступает в силу с даты публикации</span>
         </div>
         <p className="legal-doc-lead">{doc.lead}</p>
@@ -218,7 +218,7 @@ function LegalDocumentView({ docId, linkProps, onCookieSettings }: {
         <ol>{doc.sections.map((section, index) => <li key={section.title}><a href={"#sec-" + (index + 1)}>{section.title}</a></li>)}</ol>
         <div className="legal-side-doc">
           <strong>{meta.title}</strong>
-          <span>{SITE.updated}</span>
+          <span>{meta.updated ?? SITE.updated}</span>
         </div>
       </div>
     </aside>

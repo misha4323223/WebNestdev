@@ -68,6 +68,11 @@ test("адрес двери нормализуется, а пути и учёт�
   assert.equal(normalizePreviewOwnerAddress("http://10.0.0.5:8788/"), "10.0.0.5:8788");
   assert.equal(previewOwnerTarget("http://10.0.0.5:8788/path"), null);
   assert.equal(previewOwnerTarget("http://user:pass@10.0.0.5:8788"), null);
+  assert.equal(previewOwnerTarget("169.254.169.254:8788"), null, "metadata IPv4 запрещён");
+  assert.equal(previewOwnerTarget("http://[fe80::1]:8788"), null, "link-local IPv6 запрещён");
+  assert.equal(previewOwnerTarget("http://metadata.google.internal:8788"), null, "metadata-имя запрещено");
+  assert.deepEqual(previewOwnerTarget("http://[::1]:8788"), { host: "::1", port: 8788 });
+  assert.deepEqual(previewOwnerTarget("203.0.114.1:8788"), { host: "203.0.114.1", port: 8788 });
   assert.equal(isLocalPreviewOwner(undefined), true, "старые строки без owner обслуживаются локально");
 });
 

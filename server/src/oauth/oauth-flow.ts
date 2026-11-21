@@ -55,7 +55,7 @@ function explicitUrl(value?: string) {
  * и заголовков браузера раньше уводил в `http://localhost:8787` — в проде это тупик вместо
  * страницы с сообщением об ошибке. Первый разрешённый origin — это сам сайт.
  */
-function fallbackOrigin() {
+export function fallbackOrigin() {
   const allowed = (process.env.WEBNESTDEV_ALLOWED_ORIGINS ?? "").split(",").map(value => value.trim()).filter(Boolean);
   for (const value of allowed) {
     try { return new URL(value).origin; } catch {}
