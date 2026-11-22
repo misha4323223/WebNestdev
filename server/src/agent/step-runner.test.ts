@@ -270,6 +270,36 @@ test("обрыв посреди потока отдаёт незаконченн
   );
 });
 
+test("случайный пустой ответ без изображений повторяется один раз", async () => {
+  let calls = 0;
+  const provider: Provider = {
+    async *stream(): AsyncGenerator<ProviderChunk> {
+      calls += 1;
+      if (calls === 1) return;
+      yield { type: "text", text: "готово" };
+      yield { type: "usage", promptTokens: 100, completionTokens: 10 };
+    },
+  };
+  const step = await runBudgetedStep(provider, [{ role: "user", content: "сделай" }], "модель", context(), { budgetTokens: 20000, charsPerToken: 3.6, maxMessages: 80 });
+  assert.equal(step.result.text, "готово");
+  assert.equal(calls, 2, "пустой шаг не считается завершением");
+});
+
+test("два пустых ответа подряд останавливают запуск с понятной ошибкой", async () => {
+  let calls = 0;
+  const provider: Provider = {
+    async *stream(): AsyncGenerator<ProviderChunk> {
+      calls += 1;
+      yield { type: "usage", promptTokens: 100, completionTokens: 0 };
+    },
+  };
+  await assert.rejects(
+    runBudgetedStep(provider, [{ role: "user", content: "сделай" }], "модель", context(), { budgetTokens: 20000, charsPerToken: 3.6, maxMessages: 80 }),
+    /пустой ответ/,
+  );
+  assert.equal(calls, 2, "повтор ровно один");
+});
+
 test("размышление приходит структурными событиями с blockId и номером шага", async () => {
   const events: AgentEvent[] = [];
   const provider: Provider = {

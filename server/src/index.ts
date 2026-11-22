@@ -16,6 +16,8 @@ import { describeFunctionsHostServer, startFunctionsHostServer, stopFunctionsHos
 import { startFunctionCacheInvalidation, stopFunctionCacheInvalidation } from "./functions/cache-invalidation.js";
 import { describePreviewLimits } from "./preview/preview-limiter.js";
 import { describeRunLimiter } from "./agent/run-limiter.js";
+import { activeRunTotal } from "./agent/active-runs.js";
+import { beginShutdown } from "./lifecycle.js";
 import { releaseRunLeasesForNode } from "./agent/run-lease.js";
 import { describeContextBudget } from "./agent/context-budget.js";
 import { describeAgentFeatures } from "./agent/features.js";
@@ -579,6 +581,33 @@ try {
   );
 }
 await app.listen({host:"0.0.0.0",port:Number(process.env.PORT??8787)});
+// SIGTERM приходит при каждой выкатке. Без обработчика процесс умирал сразу: идущие
+// запуски обрывались, а расход, который пишется в finally, терялся. Теперь новые запуски
+// не принимаются, активные получают время доработать, затем Fastify закрывается штатно
+// (его onClose останавливает фоновые циклы).
+const shutdownGraceMs=(()=>{
+  const value=Number(process.env.WEBNESTDEV_SHUTDOWN_GRACE_MS);
+  return Number.isFinite(value)&&value>=0?value:120_000;
+})();
+let shutdownPromise:Promise<void>|null=null;
+function shutdown(signal:string):Promise<void>{
+  if(shutdownPromise)return shutdownPromise;
+  shutdownPromise=(async()=>{
+    if(!beginShutdown(signal))return;
+    console.log("[server] "+signal+": новых запусков не принимаю, жду активные до "+Math.round(shutdownGraceMs/1000)+" с");
+    const deadline=Date.now()+shutdownGraceMs;
+    while(activeRunTotal()>0&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,250));
+    const left=activeRunTotal();
+    if(left>0)console.warn("[server] после ожидания осталось запусков: "+left+"; закрываю процесс");
+    // app.close() перестаёт слушать порты и ждёт соединения; открытые WebSocket могут
+    // держать его долго, поэтому выход ограничен вторым таймаутом.
+    await Promise.race([app.close(),new Promise(resolve=>setTimeout(resolve,10_000))]);
+    process.exit(0);
+  })();
+  return shutdownPromise;
+}
+process.on("SIGTERM",()=>void shutdown("SIGTERM"));
+process.on("SIGINT",()=>void shutdown("SIGINT"));
 // Внутренняя дверь поднимается после публичного API: она пересылает запросы на loopback.
 // Без owner-routing и токена она не запускается и не занимает порт.
 if (ownerRoutingEnabled() && !internalApiTokenConfigured()) {

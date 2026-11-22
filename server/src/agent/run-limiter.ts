@@ -87,6 +87,11 @@ export type RunSlotOptions = {
   /** Проект запуска: по нему другие реплики не трогают файлы, пока агент работает. */
   projectId?: string;
   onQueued?: (waiting: number) => void;
+  /**
+   * Общая аренда перешла другому процессу. Вызывающий обязан остановить запуск: писать в проект
+   * параллельно с новым владельцем нельзя. Без колбэка аренда только пишет warn.
+   */
+  onLeaseLost?: () => void;
 };
 
 /** One release per account place, so a double release cannot invent capacity. */
@@ -158,6 +163,7 @@ export async function runWithRunSlot<T>(work: () => Promise<T>, options: RunSlot
       signal: options.signal,
       waitMs: accountWaitMs(),
       projectId: options.projectId,
+      ...(options.onLeaseLost ? { onLost: options.onLeaseLost } : {}),
     });
     if (shared.kind === "aborted") throw new QueueAbortedError("Запуск");
     if (shared.kind === "busy") throw new AccountBusyError();

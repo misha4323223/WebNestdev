@@ -71,8 +71,10 @@ export function plannerToolVisible(name: string): boolean {
 const READ_ONLY_COMMANDS = new Set([
   "ls", "cat", "head", "tail", "wc", "find", "grep", "rg", "tree", "pwd", "file", "stat", "du",
   "df", "which", "whereis", "echo", "jq", "diff", "sort", "cut", "basename", "dirname", "realpath",
-  "eslint", "prettier",
 ]);
+// eslint и prettier сюда сознательно не входят: они загружают конфиг и плагины проекта, а это
+// исполнение кода, а не чтение. Планировщик проверяет проект через project.verify, где запуск
+// инструментов — отдельное явное действие, а не побочный эффект «чтения».
 const WRITE_MARKERS = [
   ">", "<", "tee ", "sed -i", "perl -i", "--in-place", "--write", "--fix", "--output", "rm ",
   "rmdir ", "mv ", "cp ", "mkdir ", "touch ", "truncate ", "chmod ", "chown ", "ln ", "dd ", "patch ",

@@ -159,6 +159,14 @@ export async function runBudgetedStep(
           await retryWithoutImages(images,"пустой ответ на запрос с изображением");
           continue;
         }
+        // Пустой шаг без изображений — сбой провайдера, а не «задача готова». Один повтор
+        // переживает случайный пустой ответ; второй подряд останавливает запуск с понятной
+        // причиной, иначе агент молча завершался бы без ответа пользователю.
+        if(attempt===0){
+          console.warn("[agent] провайдер вернул пустой шаг без изображений — повторяю запрос");
+          continue;
+        }
+        throw new Error("Провайдер модели вернул пустой ответ. Запуск остановлен — повторите задачу.");
       }
       if(!result.usage.estimated&&result.usage.promptTokens>0){
         // The provider counted the real prompt, so it says how many characters a token really is.

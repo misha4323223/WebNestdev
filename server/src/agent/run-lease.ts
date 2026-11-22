@@ -127,9 +127,11 @@ function wait(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-function createLease(userId: string, runId: string): RunLease {
+function createLease(userId: string, runId: string, onLost?: () => void): RunLease {
   let released = false;
+  let lost = false;
   let heartbeatInFlight: Promise<void> | null = null;
+  let timer: NodeJS.Timeout | undefined;
 
   const heartbeat = async () => {
     if (released) return;
@@ -141,8 +143,19 @@ function createLease(userId: string, runId: string): RunLease {
           runId,
           expiresAt: Date.now() + runLeaseTtlMs(),
         });
-        if (!extended) {
-          console.warn("[agent] аренда запуска " + userId + " больше не принадлежит этому процессу");
+        // Пока запрос был в полёте, запуск мог штатно завершиться и снять аренду. Тогда
+        // `heartbeat` вернул false уже после release, и это не потеря аренды.
+        if (released) return;
+        if (!extended && !lost) {
+          lost = true;
+          if (timer) clearInterval(timer);
+          console.warn("[agent] аренда запуска " + userId + " больше не принадлежит этому процессу — останавливаю запуск");
+          try {
+            onLost?.();
+          } catch (error) {
+            // Отмена запуска не должна падать из фонового таймера.
+            console.warn("[agent] не удалось остановить запуск после потери аренды: " + describeError(error));
+          }
         }
       } catch (error) {
         // Сеть до базы могла моргнуть: следующий heartbeat попробует снова, а TTL даёт запас.
@@ -154,7 +167,7 @@ function createLease(userId: string, runId: string): RunLease {
     return heartbeatInFlight;
   };
 
-  const timer = setInterval(() => void heartbeat(), runLeaseHeartbeatMs());
+  timer = setInterval(() => void heartbeat(), runLeaseHeartbeatMs());
   timer.unref();
 
   return {
@@ -162,7 +175,7 @@ function createLease(userId: string, runId: string): RunLease {
     async release() {
       if (released) return;
       released = true;
-      clearInterval(timer);
+      if (timer) clearInterval(timer);
       try {
         await backend.release({ userId, runId });
       } catch (error) {
@@ -183,7 +196,7 @@ function describeError(error: unknown) {
  */
 export async function acquireRunLease(
   userId: string,
-  options: { signal: AbortSignal; waitMs: number; projectId?: string },
+  options: { signal: AbortSignal; waitMs: number; projectId?: string; onLost?: () => void },
 ): Promise<RunLeaseResult> {
   if (!userId.trim() || !backend.enabled()) return { kind: "disabled" };
   const runId = randomUUID();
@@ -206,7 +219,7 @@ export async function acquireRunLease(
       console.warn("[agent] аренда запуска недоступна, остаюсь на локальном лимите: " + describeError(error));
       return { kind: "disabled" };
     }
-    if (acquired) return { kind: "acquired", lease: createLease(userId, runId) };
+    if (acquired) return { kind: "acquired", lease: createLease(userId, runId, options.onLost) };
     if (Date.now() >= deadline) return { kind: "busy" };
     await wait(Math.min(200, deadline - Date.now()), options.signal);
   }

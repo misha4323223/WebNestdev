@@ -61,6 +61,7 @@ registerTool({
     "Ask the user for provider credentials you do not have, right in the chat: cloud (kind 'cloud', provider 'timeweb'|'cloudru'|'mws'|'regru'), Yandex Cloud (kind 'yandex'), domain registrar (kind 'domain', provider 'regru'|'beget'|'timeweb'), a service from service.status (kind 'service', provider = service id), or a database connection string (kind 'database', provider 'database'). " +
     "A card with the provider's exact fields, steps and a documentation link appears in the conversation; the run pauses until the user saves or cancels. " +
     "Input: {kind:'cloud'|'domain'|'service'|'database'|'yandex', provider:string, purpose?:one line explaining what the access is for, allowWrites?:boolean}. " +
+    "allowWrites defaults to false: request it only when the user asked for changes, and every mutation is still shown for approval. " +
     "Use it DURING deployment instead of asking for a token, password or connection string in chat text. " +
     "If the provider is already connected it returns alreadyConnected:true without showing anything — call it anyway before asking the user. " +
     "After ok:true, use the matching tools (cloud.request, domain.request, service.env, database.env, yandex.request) and never print the value. " +
@@ -74,7 +75,7 @@ registerTool({
       kind: { type: "string", enum: ["cloud", "domain", "service", "database", "yandex"], description: "Что именно нужно подключить." },
       provider: { type: "string", description: "Id провайдера из каталога: timeweb, cloudru, mws, regru, beget, id сервиса или 'database'. Для Yandex Cloud укажите kind 'yandex'." },
       purpose: { type: "string", description: "Одна строка: зачем агенту этот доступ." },
-      allowWrites: { type: "boolean", description: "Разрешить агенту создавать и менять ресурсы провайдера. По умолчанию true для облака/домена/Yandex; пользователь подтверждает в карточке." },
+      allowWrites: { type: "boolean", description: "Разрешить агенту создавать и менять ресурсы провайдера. По умолчанию false; даже при включённом флаге каждая мутация отдельно подтверждается в панели." },
     },
   },
   execute: async (input, context) => {
@@ -138,7 +139,7 @@ registerTool({
       ...(target.docsUrl ? { docsUrl: target.docsUrl } : {}),
       verificationNote: target.verificationNote,
       writes: target.writes,
-      defaultAllowWrites: parsed.allowWrites ?? true,
+      defaultAllowWrites: parsed.allowWrites ?? false,
       expiresAt: request.expiresAt,
     });
 

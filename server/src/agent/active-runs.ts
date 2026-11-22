@@ -9,13 +9,17 @@
  */
 const active=new Map<string,number>();
 const activeConversations=new Map<string,number>();
+/** Всего запусков в процессе: по нему дренаж при SIGTERM понимает, кого ещё ждать. */
+let total=0;
 
 export function beginRun(projectId:string,conversationId?:string){
+  total++;
   active.set(projectId,(active.get(projectId)??0)+1);
   if(conversationId)activeConversations.set(conversationId,(activeConversations.get(conversationId)??0)+1);
 }
 
 export function endRun(projectId:string,conversationId?:string){
+  total=Math.max(0,total-1);
   const next=(active.get(projectId)??0)-1;
   if(next>0)active.set(projectId,next);
   else active.delete(projectId);
@@ -23,6 +27,10 @@ export function endRun(projectId:string,conversationId?:string){
   const chats=(activeConversations.get(conversationId)??0)-1;
   if(chats>0)activeConversations.set(conversationId,chats);
   else activeConversations.delete(conversationId);
+}
+
+export function activeRunTotal(){
+  return total;
 }
 
 export function isRunActive(projectId:string){

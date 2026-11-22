@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { beginRun, endRun, isConversationRunning, isRunActive } from "./active-runs.js";
+import { activeRunTotal, beginRun, endRun, isConversationRunning, isRunActive } from "./active-runs.js";
 
 test("a project counts as busy only while a run is in flight", () => {
   assert.equal(isRunActive("p1"), false);
@@ -22,6 +22,17 @@ test("two runs on one project keep it busy until the last one ends", () => {
 test("ending a run that never started does not mark the project busy", () => {
   endRun("p3");
   assert.equal(isRunActive("p3"), false);
+});
+
+test("the process-wide counter follows every started and finished run", () => {
+  const before = activeRunTotal();
+  beginRun("p6");
+  beginRun("p7", "c4");
+  assert.equal(activeRunTotal(), before + 2);
+  endRun("p6");
+  assert.equal(activeRunTotal(), before + 1);
+  endRun("p7", "c4");
+  assert.equal(activeRunTotal(), before);
 });
 
 test("a chat is busy only while its own run is in flight", () => {

@@ -5,6 +5,7 @@ import { listDomainConnections } from "../domains/connections.js";
 import { forbiddenRegistrarAction, isReadOnlyRegistrarCall, listRegistrarDomains, registrarRequest, type RegistrarCall, type RegistrarMethod } from "../domains/registrar-api.js";
 import { DOMAIN_REGISTRARS, type DomainRegistrarId } from "../domains/providers.js";
 import { FREE_CONNECTOR_MESSAGE, connectorRefusal } from "../account/connector-access.js";
+import { approveMutation } from "./mutation-approval.js";
 
 /**
  * Домены без ключей: агент может проверить, свободно ли имя, через публичный RDAP —
@@ -322,6 +323,23 @@ registerTool({
         blocked: "changes_disabled",
         hint: "Изменения в кабинете «" + name + "» выключены. Попросите пользователя включить «Разрешить агенту изменять ресурсы» в карточке регистратора («Интеграции» → «Домены») — без этого DNS не меняется.",
       };
+    }
+    if (!readOnly) {
+      const approved = await approveMutation(context, {
+        provider: name,
+        method: call.method ?? "POST",
+        resource: path,
+        ...(call.input === undefined ? {} : { body: call.input }),
+      });
+      if (!approved) {
+        return {
+          ok: false,
+          registrar,
+          path,
+          blocked: "denied",
+          hint: "Пользователь отклонил изменение: запрос в кабинет регистратора не отправлен.",
+        };
+      }
     }
     const result = await registrarRequest(registrar, JSON.parse(connection.secret) as Record<string, string>, call);
     return {

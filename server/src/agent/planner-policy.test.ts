@@ -70,6 +70,12 @@ test("terminal.exec is allowed only for inspection commands", () => {
   }
 });
 
+test("eslint и prettier не считаются чтением: они исполняют конфиг проекта", () => {
+  for (const command of ["eslint src", "prettier --check src", "eslint --version"]) {
+    assert.equal(changesSomething("terminal.exec", { command }), true, command + " must be refused in planner mode");
+  }
+});
+
 test("project.memory is read-only except the explicit write action", () => {
   for (const action of ["read", "skeleton", "diff", undefined]) {
     assert.equal(changesSomething("project.memory", action ? { action } : {}), false, String(action) + " must be allowed");

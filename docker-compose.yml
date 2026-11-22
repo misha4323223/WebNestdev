@@ -180,6 +180,11 @@ services:
     environment:
       NODE_ENV: production
       PORT: 8787
+      # Окно дренажа при SIGTERM и таймауты провайдера. Compose передаёт в контейнер только
+      # перечисленные переменные, поэтому настройки из .env должны быть названы и здесь.
+      WEBNESTDEV_SHUTDOWN_GRACE_MS: ${WEBNESTDEV_SHUTDOWN_GRACE_MS:-120000}
+      AI_CONNECT_TIMEOUT_MS: ${AI_CONNECT_TIMEOUT_MS:-30000}
+      AI_IDLE_TIMEOUT_MS: ${AI_IDLE_TIMEOUT_MS:-90000}
       WEBNESTDEV_STORAGE: postgres
       WEBNESTDEV_ENCRYPTION_KEY: ${WEBNESTDEV_ENCRYPTION_KEY:?Set a 32-byte base64 or 64-character hex encryption key}
       # Отдельная соль для хеша IP в журнале секретов; пусто — используется ключ шифрования.
@@ -687,6 +692,11 @@ services:
       - webnestdev
       - webnestdev-preview
     restart: unless-stopped
+    # SIGTERM обрабатывается в server/src/index.ts: новые запуски агента не принимаются,
+    # активные получают до 120 с, затем Fastify закрывается. Docker по умолчанию даёт
+    # 10 секунд и убивает контейнер, поэтому окно остановки расширено: иначе дренаж не
+    # успевал бы даже начаться, а расход идущих запусков терялся бы, как раньше.
+    stop_grace_period: 135s
 
 volumes:
   webnestdev-data:

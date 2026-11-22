@@ -30,6 +30,7 @@ import { workspaceSettings } from "../sandbox/workspace-mode.js";
 import { lastSandboxMountCheck } from "../sandbox/sandbox-check.js";
 import { nodeId } from "../nodes/identity.js";
 import { diskStatus, memoryStatus } from "../health/host-metrics.js";
+import { renderPrometheusMetrics } from "../health/metrics.js";
 import { hostingConfig } from "../hosting/config.js";
 import { hostingHealth } from "../hosting/site-store.js";
 import { smsReadiness, smsSummary } from "../auth/sms.js";
@@ -334,4 +335,15 @@ export async function registerHealthRoutes(app:FastifyInstance){
     return reply.code(ok?200:503).send({ok,service:"webnestdev-node",build:buildId(),sandbox:dependencies.sandbox});
   });
   app.get("/api/sandbox/status",async()=>sandboxHost().status());
+  /**
+   * Prometheus scrape. Только loopback: снаружи это карта очередей и памяти, а scrape идёт с
+   * самой ВМ или через `docker compose exec`, как и внутренний `/api/health`. Для внешнего
+   * запроса маршрут не существует, а не отвечает 403 — так он не подтверждает своё наличие.
+   */
+  app.get("/metrics",async(request,reply)=>{
+    if(!isInternalHealthRequest(request))return reply.code(404).send();
+    return reply
+      .type("text/plain; version=0.0.4; charset=utf-8")
+      .send(renderPrometheusMetrics({build:buildId(),node:nodeId()}));
+  });
 }

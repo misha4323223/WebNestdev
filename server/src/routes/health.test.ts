@@ -83,6 +83,28 @@ test("health отличает ключ SMTP от ключа рассылки и 
   }
 });
 
+test("metrics отдаёт Prometheus только loopback-запросу", async () => {
+  const app = Fastify();
+  try {
+    await registerHealthRoutes(app);
+    await app.ready();
+
+    const internal = await app.inject({ method: "GET", url: "/metrics", remoteAddress: "127.0.0.1" });
+    assert.equal(internal.statusCode, 200, internal.body);
+    assert.match(internal.headers["content-type"] ?? "", /text\/plain/);
+    assert.match(internal.body, /webnestdev_build_info\{build="[^"]+",node="[^"]+"\} 1/);
+    assert.match(internal.body, /webnestdev_agent_runs_active \d+/);
+    assert.match(internal.body, /webnestdev_agent_runs_queued \d+/);
+    assert.match(internal.body, /webnestdev_process_resident_memory_bytes \d+/);
+
+    const external = await app.inject({ method: "GET", url: "/metrics", remoteAddress: "203.0.113.10" });
+    assert.equal(external.statusCode, 404, "снаружи метрик нет");
+    assert.doesNotMatch(external.body, /webnestdev_build_info/);
+  } finally {
+    await app.close();
+  }
+});
+
 test("health отдаёт подробности только loopback-запросу", async () => {
   const app = Fastify();
   try {

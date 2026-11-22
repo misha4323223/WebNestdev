@@ -48,6 +48,12 @@ jobs:
         run: npm test
         working-directory: server
 
+      - name: Validate agent eval catalog
+        # Без --adapter harness проверяет только каталог задач и его инварианты; настоящий
+        # прогон требует модель и адаптер и в CI без ключей не запускается.
+        run: npm run agent:eval
+        working-directory: server
+
       - name: Test Docker broker
         run: npm run test:broker
 

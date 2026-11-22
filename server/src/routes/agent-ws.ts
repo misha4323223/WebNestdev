@@ -11,6 +11,7 @@ import { planAllows } from "../account/entitlements.js";
 import { getPlatformModelForPlan } from "../platform/platform-models.js";
 import { AccountBusyError,runQueueStats,runWithRunSlot } from "../agent/run-limiter.js";
 import { positiveInt } from "../concurrency.js";
+import { isShuttingDown } from "../lifecycle.js";
 
 const messageSchema=z.discriminatedUnion("role",[
   z.object({role:z.literal("user"),content:z.string().max(100000)}),
@@ -26,6 +27,7 @@ const messageSchema=z.discriminatedUnion("role",[
  * (context-budget.ts), а размер самого запроса проверяется ниже по байтам.
  */
 export const MAX_REQUEST_MESSAGES=1000;
+const SERVER_RESTARTING_ERROR="Сервер обновляется. Повторите запуск через минуту — история и проект сохранены.";
 // `resume` — продолжение прерванного запуска: сообщения приходят как обычно, а рантайм добавляет
 // модели системную заметку о том, что это продолжение и на каком шаге остановился план.
 // `webSearch` и `browserCheck` — переключатели из меню «Режимы» в панели ввода. Приходят
@@ -112,7 +114,7 @@ export async function registerAgentWebSocket(app:FastifyInstance,runtime=new Age
       socket.close(1008,"Источник запроса не разрешён");
       return;
     }
-    let running=false,closed=false; let controller:AbortController|null=null; let idleAborted=false; let runUserId="";
+    let running=false,closed=false; let controller:AbortController|null=null; let idleAborted=false; let leaseAborted=false; let runUserId="";
     const safeSend=(payload:unknown)=>{if(!closed)try{socket.send(JSON.stringify(payload))}catch{closed=true}};
     // Aborting on close stops a run in flight *and* a wait for a free run slot, so a closed
     // tab never keeps a place in the queue while the server waits for it to answer.
@@ -122,6 +124,7 @@ export async function registerAgentWebSocket(app:FastifyInstance,runtime=new Age
       if(running){safeSend({type:"error",error:"Агент уже выполняется в этом соединении"});return}
       running=true;
       idleAborted=false;
+      leaseAborted=false;
       runUserId="";
       // The controller lives for the whole request, not only for the run: the queue wait below
       // has to end when the connection does.
@@ -202,7 +205,19 @@ export async function registerAgentWebSocket(app:FastifyInstance,runtime=new Age
           safeSend(event);
         };
         try{
+          // Выкатка: сервер уже не принимает новые запуски, но сокет ещё открыт. Честная
+          // ошибка лучше оборванного соединения и потерянного места в очереди.
+          if(isShuttingDown()){
+            safeSend({type:"error",error:SERVER_RESTARTING_ERROR,code:"SERVER_RESTARTING"});
+            return;
+          }
           await runWithRunSlot(async()=>{
+            // Запуск мог ждать в очереди с момента до остановки. Проверяем ещё раз внутри
+            // слота: иначе он стартовал бы уже во время дренажа и не успел бы доработать.
+            if(isShuttingDown()){
+              safeSend({type:"error",error:SERVER_RESTARTING_ERROR,code:"SERVER_RESTARTING"});
+              return;
+            }
             const usage = await consumeAgentRun(user.id,{ownProvider});
             safeSend({type:"usage.updated",usage});
             await runtime.run({...parsed,userId:user.id,...(plan?{plan}:{}),...(history?{history}:{})},emitRunEvent,runController.signal);
@@ -211,15 +226,22 @@ export async function registerAgentWebSocket(app:FastifyInstance,runtime=new Age
             userId:user.id,
             projectId:parsed.projectId,
             onQueued:waiting=>safeSend({type:"run.queued",queued:waiting,limit:runQueueStats().limit}),
+            onLeaseLost:()=>{
+              // Аренду перехватил другой процесс: продолжать нельзя, иначе два агента пишут в
+              // один проект. Останавливаем этот запуск и объясняем это пользователю один раз.
+              leaseAborted=true;
+              safeSend({type:"error",error:"Запуск остановлен: аренду перехватил другой процесс. Повторите задачу — история и проект сохранены.",code:"RUN_LEASE_LOST"});
+              runController.abort();
+            },
           });
         }finally{
           clearInterval(heartbeat);
           clearInterval(watchdog);
         }
       }catch(error){
-        // Остановку по простою уже объяснил watchdog; вторая ошибка «AbortError» только
-        // перекрыла бы понятное сообщение и снова показала бы занятость аккаунта.
-        if(idleAborted)return;
+        // Остановку по простою или потере аренды уже объяснили выше; вторая ошибка «AbortError»
+        // только перекрыла бы понятное сообщение и снова показала бы занятость аккаунта.
+        if(idleAborted||leaseAborted)return;
         const message = requestErrorMessage(error);
         const statusCode = error && typeof error === "object" && "statusCode" in error ? (error as {statusCode?:unknown}).statusCode : undefined;
         const isQuota = statusCode === 429;

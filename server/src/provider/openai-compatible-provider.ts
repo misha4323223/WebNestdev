@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { ChatMessage } from "../types.js";
 import { lines } from "./stream-lines.js";
 import { ProviderHttpError,parseRetryAfterHeader } from "./provider-errors.js";
+import { providerTimeouts,ProviderTimeoutError,withIdleTimeout } from "./provider-timeouts.js";
 import type { Provider,ProviderChunk,ProviderStreamOptions,ProviderToolCall } from "./provider-types.js";
 import { DsmlTextFilter } from "./dsml-tool-calls.js";
 import type { ReasoningEffort } from "../types.js";
@@ -279,10 +280,10 @@ export class OpenAICompatibleProvider implements Provider{
       ? withPromptCacheControl(toWireMessages(messages,wireOptions))
       : toWireMessages(messages,wireOptions);
     const cacheFields=promptCacheRequestFields(cachePolicy,options?.cacheKey);
-    const send=(body:unknown)=>proxyUrl
+    const send=(body:unknown,requestSignal:AbortSignal)=>proxyUrl
       ? fetch(proxyUrl+chatPath,{
         method:"POST",
-        signal,
+        signal:requestSignal,
         headers:{
           "content-type":"application/json",
           "x-ai-proxy-target":normBase,
@@ -293,13 +294,31 @@ export class OpenAICompatibleProvider implements Provider{
       })
       : fetch(targetUrl,{
         method:"POST",
-        signal,
+        signal:requestSignal,
         headers:{
           "content-type":"application/json",
           ...(this.key?{authorization:"Bearer "+this.key}:{})
         },
         body:JSON.stringify(body)
       });
+    // Один AbortController на запрос: внешний сигнал (стоп/закрытие вкладки), таймаут
+    // соединения и таймаут простоя потока отменяют его же, а не весь запуск.
+    const timeouts=providerTimeouts();
+    const local=new AbortController();
+    const forwardAbort=()=>local.abort();
+    signal?.addEventListener("abort",forwardAbort,{once:true});
+    const sendWithTimeout=async(body:unknown)=>{
+      let timedOut=false;
+      const timer=setTimeout(()=>{timedOut=true;local.abort();},timeouts.connectMs);
+      try{
+        return await send(body,local.signal);
+      }catch(error){
+        if(timedOut)throw new ProviderTimeoutError("connect",timeouts.connectMs);
+        throw error;
+      }finally{
+        clearTimeout(timer);
+      }
+    };
     const effort=reasoningEffort(options);
     const key=probeKey(normBase,model);
     const upstreamFields=upstreamRequestFields(options);
@@ -309,12 +328,12 @@ export class OpenAICompatibleProvider implements Provider{
     // следующие шаги запуска не платили за это двумя запросами каждый.
     const askReasoning=Boolean(effort)&&reasoningProbes.get(key)?.accepted!==false;
     let withReasoning=askReasoning;
-    let response=await send(payload(withReasoning));
+    let response=await sendWithTimeout(payload(withReasoning));
     if(!response.ok&&withReasoning&&(response.status===400||response.status===422)){
       try{await response.body?.cancel()}catch{}
       recordProbe(key,{accepted:false});
       withReasoning=false;
-      response=await send(payload(false));
+      response=await sendWithTimeout(payload(false));
     }
     // Принятое поле — тоже наблюдение: по нему индикатор в настройках отличает «шлюз понимает
     // глубину» от «ещё не проверяли». Отсутствие рассуждений в ответе сохраняет статус `silent`.
@@ -339,7 +358,7 @@ export class OpenAICompatibleProvider implements Provider{
     // Шлюзы делятся надвое: одни стримят размышление чанками, другие присылают его готовым
     // сообщением в последнем чанке. Флаг не даёт показать одно и то же дважды.
     let sawReasoning=false;
-    for await(const line of lines(response.body)){
+    for await(const line of withIdleTimeout(lines(response.body),timeouts.idleMs,()=>local.abort())){
       if(!line||line==="[DONE]")continue;
       const data=JSON.parse(line) as any;
       const streamError=streamErrorResponse(data);
@@ -409,6 +428,7 @@ export class OpenAICompatibleProvider implements Provider{
       seen.add(key);
       yield {type:"tool_call",call};
     }
+    signal?.removeEventListener("abort",forwardAbort);
     yield {type:"done"};
   }
 }

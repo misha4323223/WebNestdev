@@ -178,6 +178,40 @@ test("лимитер отпускает общую аренду после за�
   }
 });
 
+test("потеря аренды останавливает запуск, а не только пишет warn", async () => {
+  const { backend } = memoryLeaseBackend();
+  setRunLeaseBackendForTests({ ...backend, heartbeat: async () => false });
+  let lost = 0;
+  const acquired = await acquireRunLease("account-1", { signal: signal(), waitMs: 0, onLost: () => { lost += 1; } });
+  assert.equal(acquired.kind, "acquired");
+  if (acquired.kind !== "acquired") return;
+
+  await acquired.lease.heartbeat();
+  assert.equal(lost, 1, "потеря аренды будит остановку запуска");
+  await acquired.lease.heartbeat();
+  assert.equal(lost, 1, "повторный heartbeat не дублирует остановку");
+  await acquired.lease.release();
+});
+
+test("heartbeat, завершившийся после release, не считается потерей аренды", async () => {
+  const { backend } = memoryLeaseBackend();
+  let finishHeartbeat!: (extended: boolean) => void;
+  setRunLeaseBackendForTests({
+    ...backend,
+    heartbeat: () => new Promise<boolean>(resolve => { finishHeartbeat = resolve; }),
+  });
+  let lost = 0;
+  const acquired = await acquireRunLease("account-1", { signal: signal(), waitMs: 0, onLost: () => { lost += 1; } });
+  assert.equal(acquired.kind, "acquired");
+  if (acquired.kind !== "acquired") return;
+
+  const inFlight = acquired.lease.heartbeat();
+  await acquired.lease.release();
+  finishHeartbeat(false);
+  await inFlight;
+  assert.equal(lost, 0, "штатное завершение уже сняло аренду, это не потеря");
+});
+
 test("без PostgreSQL аренда выключена, и решение остаётся локальному лимитеру", async () => {
   const { backend } = memoryLeaseBackend();
   setRunLeaseBackendForTests({ ...backend, enabled: () => false });

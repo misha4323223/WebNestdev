@@ -2,6 +2,7 @@ import { z } from "zod";
 import { registerTool } from "../tool-registry.js";
 import { listYandexResources, yandexFetch, yandexStatus } from "../yandex/yandex-api.js";
 import { FREE_CONNECTOR_MESSAGE, connectorRefusal } from "../account/connector-access.js";
+import { approveMutation } from "./mutation-approval.js";
 
 const METADATA_HOST = "operation.api.cloud.yandex.net";
 const MAX_RESOURCE_ITEMS = 50;
@@ -85,6 +86,17 @@ registerTool({
     const refusal = await connectorRefusal(context.userId, "yandex");
     if (refusal) return { ok: false, restricted: true, code: refusal.code, error: refusal.error };
     const method = request.method ?? "GET";
+    if (mutationMethods.has(method)) {
+      const approved = await approveMutation(context, {
+        provider: "Yandex Cloud",
+        method,
+        resource: (request.host ?? "resource-manager.api.cloud.yandex.net") + request.path,
+        ...(request.body === undefined ? {} : { body: request.body }),
+      });
+      if (!approved) {
+        return { ok: false, denied: true, error: "Изменение отклонено пользователем: запрос в Yandex Cloud не отправлен." };
+      }
+    }
     const result = await yandexFetch(context.userId, { method, host: request.host, path: request.path, body: request.body });
     const operation = result.body && typeof result.body === "object" ? (result.body as { id?: string; done?: boolean }) : null;
     if (result.ok && mutationMethods.has(method) && operation?.id && operation.done !== true) {

@@ -5,6 +5,7 @@ import { cloudDocsUrl, cloudNotFoundHint, cloudServiceCatalog } from "../cloud/c
 import { listCloudConnections } from "../cloud/connections.js";
 import { CLOUD_PROVIDERS } from "../cloud/providers.js";
 import { FREE_CONNECTOR_MESSAGE, connectorRefusal } from "../account/connector-access.js";
+import { approveMutation } from "./mutation-approval.js";
 
 /**
  * Облака, подключённые пользователем. Агент видит их через эти два инструмента: список
@@ -80,7 +81,8 @@ registerTool({
     "your own initiative — not as a cleanup, a tidy-up or a just-in-case step. Before a mutating call, name the provider, the " +
     "exact resource and what will happen; for a deletion, quote the resource name and id from a fresh read. If the call is " +
     "refused because changes are off, tell the user to enable «Разрешить агенту изменять ресурсы» in the cloud card instead " +
-    "of looking for another way. Always report the real status and body of the call.",
+    "of looking for another way. Every mutating call is also shown to the user for approval before it is sent — wait for that " +
+    "approval instead of retrying. Always report the real status and body of the call.",
   parameters: { type: "object", additionalProperties: false, required: ["provider", "path"], properties: {
     provider: { type: "string", enum: ["timeweb", "cloudru", "mws", "regru"] },
     method: { type: "string", enum: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"] },
@@ -92,6 +94,18 @@ registerTool({
     const request = requestSchema.parse(input);
     const refusal = await connectorRefusal(context.userId, "cloud");
     if (refusal) return { ok: false, restricted: true, code: refusal.code, error: refusal.error };
+    const method = (request.method ?? "GET").toUpperCase();
+    if (method !== "GET" && method !== "HEAD") {
+      const approved = await approveMutation(context, {
+        provider: request.provider,
+        method,
+        resource: request.path,
+        ...(request.body === undefined ? {} : { body: request.body }),
+      });
+      if (!approved) {
+        return { ok: false, denied: true, error: "Изменение отклонено пользователем: запрос в облако не отправлен." };
+      }
+    }
     const result = await cloudFetch(context.userId, request.provider, request);
     // 404 — самая дорогая ошибка в облачном API: путь существует не там или называется иначе.
     // Вместо повторной догадки сразу отдаём каталог сервисов и ссылку на документацию.
