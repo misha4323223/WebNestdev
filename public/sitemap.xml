@@ -1,6 +1,14 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url><loc>https://nestdev.ru/</loc><changefreq>weekly</changefreq><priority>1.0</priority></url>
+  <url><loc>https://nestdev.ru/blog</loc><changefreq>weekly</changefreq><priority>0.7</priority></url>
+  <url><loc>https://nestdev.ru/blog/what-you-can-build</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://nestdev.ru/blog/publish-and-domain</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://nestdev.ru/blog/draft-and-approval</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://nestdev.ru/blog/connectors</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://nestdev.ru/blog/plans-and-limits</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://nestdev.ru/blog/browser-check</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
+  <url><loc>https://nestdev.ru/blog/database-and-secrets</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
   <url><loc>https://nestdev.ru/legal</loc><changefreq>monthly</changefreq><priority>0.6</priority></url>
   <url><loc>https://nestdev.ru/legal/offer</loc><changefreq>monthly</changefreq><priority>0.5</priority></url>
   <url><loc>https://nestdev.ru/legal/terms</loc><changefreq>monthly</changefreq><priority>0.5</priority></url>

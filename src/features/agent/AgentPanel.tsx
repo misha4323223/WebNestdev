@@ -4,7 +4,7 @@ import remarkGfm from "remark-gfm";
 import { AlertTriangle,ArrowDownToLine,Check,Copy,Eye,EyeOff,ExternalLink,FileText,History,KeyRound,ListPlus,Paperclip,Play,RotateCcw,Send,ShieldCheck,Sparkles,Square,X } from "lucide-react";
 import { createAgentSocket } from "../../lib/agent-socket";
 import { apiJson } from "../../lib/api";
-import { addProjectTasks,answerProjectQuestion,cancelProjectSecret,getConversation,listPendingProjectSecrets,projectAssetUrl,skipProjectQuestion,submitProjectSecret,uploadProjectFile,type PendingProjectSecret } from "../../lib/project-api";
+import { addProjectTasks,answerProjectQuestion,cancelProjectSecret,getConversation,getProjectChanges,listPendingProjectSecrets,projectAssetUrl,rollbackProjectChanges,skipProjectQuestion,submitProjectSecret,uploadProjectFile,type PendingProjectSecret } from "../../lib/project-api";
 import { deleteUploadedMedia,uploadProjectMedia } from "../../lib/media-api";
 import { cancelProjectAccess,submitProjectAccess } from "../../lib/deployment-api";
 import { ActionsDock,MessageThinking,PlanPanel,actionTarget,chatImagesByMessage,contentBefore,deriveActions,readPlan,writePlan,type ChatImage,type PanelId,type PanelState } from "./agent-activity";
@@ -345,7 +345,10 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   const copiedMessageTimer=useRef<number|null>(null);
   // Итог задачи в истории проекта: точка, к которой можно вернуться. На GitHub она уходит
   // только по кнопке в «Изменениях», поэтому здесь нет ни статуса отправки, ни ошибки.
-  const [changesNotice,setChangesNotice]=useState<{shortSha:string}|null>(null);
+  const [changesNotice,setChangesNotice]=useState<{shortSha:string;sha:string;filesChanged:number}|null>(null);
+  // Откат к точке перед последним запуском: сначала показываем, куда вернёмся, и только потом трогаем файлы.
+  const [rollbackTarget,setRollbackTarget]=useState<{sha:string;shortSha:string}|null>(null);
+  const [rollbackBusy,setRollbackBusy]=useState(false);
   // The plan and the actions of the latest run are what the user watches while the
   // agent works, so they live here next to the messages.
   const [mode,setMode]=useState<AgentMode>(readStoredMode);
@@ -1202,7 +1205,8 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       }
       if(event.type==="changes.created"&&event.checkpoint){
         // Задача записана в историю проекта. Отправка на GitHub — только по кнопке пользователя.
-        setChangesNotice({shortSha:event.checkpoint.shortSha});
+        setChangesNotice({shortSha:event.checkpoint.shortSha,sha:event.checkpoint.sha,filesChanged:event.checkpoint.filesChanged});
+        setRollbackTarget(null);
       }
       if(event.type==="run.completed"){pendingStepRef.current=false;completedRef.current=true;contextCompactionsRef.current=0;endRun(socket,{drain:true});onChanged();refreshReasoningSupport()}
       if(event.type==="run.failed"){
@@ -1747,6 +1751,45 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     }
   }
 
+  // Карточка точки истории появляется в конце переписки: если человек читает последние сообщения, прокручиваем к ней.
+  useEffect(()=>{
+    if(!changesNotice)return;
+    const box=messagesBoxRef.current;
+    if(!box)return;
+    const atBottom=box.scrollHeight-box.scrollTop-box.clientHeight<160;
+    if(atBottom)window.requestAnimationFrame(()=>{box.scrollTop=box.scrollHeight});
+  },[changesNotice]);
+
+  /** Точка для отката — состояние перед последним запуском, а не сам последний коммит: он и есть текущее. */
+  async function prepareRollback(){
+    if(!changesNotice||rollbackBusy)return;
+    setRollbackBusy(true);
+    try{
+      const overview=await getProjectChanges(projectId);
+      const index=overview.checkpoints.findIndex(item=>item.sha===changesNotice.sha);
+      const previous=index>=0?overview.checkpoints[index+1]:overview.checkpoints[1];
+      if(!previous){setNotice("Откатывать некуда: в истории проекта пока одна точка.");return}
+      setRollbackTarget({sha:previous.sha,shortSha:previous.shortSha});
+    }catch(error){
+      setNotice("Не удалось прочитать историю: "+(error instanceof Error?error.message:String(error)));
+    }finally{setRollbackBusy(false)}
+  }
+
+  async function rollbackChanges(){
+    if(!rollbackTarget||rollbackBusy)return;
+    const target=rollbackTarget;
+    setRollbackBusy(true);
+    try{
+      await rollbackProjectChanges(projectId,target.sha);
+      setRollbackTarget(null);
+      setChangesNotice(null);
+      setNotice("Файлы проекта возвращены к "+target.shortSha+". Точка отката сохранена в истории.");
+      onChanged();
+    }catch(error){
+      setNotice("Не удалось откатить: "+(error instanceof Error?error.message:String(error)));
+    }finally{setRollbackBusy(false)}
+  }
+
   if(planning) return <PlanningRoom
     title={planningTitle}
     loaded={loaded}
@@ -1854,6 +1897,30 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       {liveUiBlocks.length>0&&<div className="message-row assistant ui-live-row">
         <div className="message-content">
           <UiBlocks blocks={liveUiBlocks} projectId={projectId} busy={running} onAction={sendUiAction}/>
+        </div>
+      </div>}
+      {changesNotice&&<div className="message-row assistant changes-row">
+        <div className="message-content changes-card">
+          <div className="changes-card-head">
+            <History size={14}/>
+            <div className="changes-card-text">
+              <strong>Изменения сохранены · {changesNotice.shortSha}</strong>
+              <small>{changesNotice.filesChanged > 0 ? "Файлов: " + changesNotice.filesChanged + ". " : ""}{rollbackTarget
+                ? "Вернуть файлы к точке " + rollbackTarget.shortSha + "? Всё, что было после неё, останется в истории."
+                : "Точка истории проекта. Если последний запуск что-то сломал, можно откатиться."}</small>
+            </div>
+          </div>
+          <div className="changes-card-actions">
+            {rollbackTarget
+              ? <>
+                  <button type="button" className="ghost-button changes-card-rollback" onClick={()=>void rollbackChanges()} disabled={rollbackBusy}>{rollbackBusy?"Откатываю…":"Вернуть"}</button>
+                  <button type="button" className="ghost-button changes-card-cancel" onClick={()=>setRollbackTarget(null)} disabled={rollbackBusy}>Отмена</button>
+                </>
+              : <>
+                  <button type="button" className="ghost-button changes-card-rollback" onClick={()=>void prepareRollback()} disabled={rollbackBusy}>Откатить</button>
+                  {onOpenChanges&&<button type="button" className="ghost-button changes-card-open" onClick={()=>onOpenChanges()}>Открыть историю</button>}
+                </>}
+          </div>
         </div>
       </div>}
 
@@ -2074,14 +2141,6 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       {(actions.length>0||running)&&<div className="actions-dock" ref={actionsDockRef}>
         <ActionsDock actions={actions} running={running} open={actionsOpen} onOpenChange={setActionsOpen}/>
       </div>}
-      {changesNotice&&<button type="button" className="changes-toast" onClick={()=>onOpenChanges?.()} disabled={!onOpenChanges} title={onOpenChanges?"Открыть историю изменений проекта":undefined}>
-        <History size={14}/>
-        <span className="changes-toast-text">
-          <strong>Изменения сохранены · {changesNotice.shortSha}</strong>
-          <small>не отправлено — откройте «Изменения»</small>
-        </span>
-        {onOpenChanges&&<span className="changes-toast-open">Открыть</span>}
-      </button>}
       {notice&&<div className="composer-notice">{notice}</div>}
     </div>
 

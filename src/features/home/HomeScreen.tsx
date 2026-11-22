@@ -97,6 +97,16 @@ function templateKickoff(group:TemplateGroup,template:Template){
 
 const tierLabels:Record<TemplateTier,string>={free:"Старт",pro:"Плюс",team:"Премиум"};
 
+/**
+ * Вход в блог с главной. Это указатель, а не вторая полка карточек: превью уже заняты
+ * шаблонами, поэтому материалы читаются как оглавление — номер, название и тема.
+ */
+const guideLinks = [
+  { href: "/blog/what-you-can-build", title: "Что можно сделать", note: "Сайты, данные и границы платформы" },
+  { href: "/blog/publish-and-domain", title: "Публикация и домен", note: "Что попадает в релиз и как подключить адрес" },
+  { href: "/blog/connectors", title: "Коннекторы", note: "Git, облака, база и сервисы приложения" },
+];
+
 function templateTier(template:Template):TemplateTier{
   return template.tier??"free";
 }
@@ -374,6 +384,9 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
               <h1 className="home-title">Из идеи —<br/>в <em>живой продукт.</em></h1>
             </div>
             <div className="home-hero-visual" aria-hidden="true">
+              {/* Звёздное поле — только CSS-градиенты: ноль запросов, ноль анимации, ноль DOM-узлов
+                  сверх одного контейнера. Оно живёт за логотипом и не участвует в раскладке. */}
+              <div className="home-stars"/>
               <div className="home-orbit home-orbit-outer"/>
               <div className="home-orbit home-orbit-inner"/>
               <div className="home-hero-mark"><WebNestLogo size={225} tone="light"/></div>
@@ -444,6 +457,21 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
             </div>
           </section>
 
+          <section className="home-guide" aria-labelledby="home-guide-title">
+            <div className="home-guide-intro">
+              <span className="eyebrow">БЛОГ</span>
+              <h2 id="home-guide-title">Что можно сделать<br/>и как это работает</h2>
+              <a className="home-guide-all" href="/blog">Все материалы <ArrowUpRight size={12}/></a>
+            </div>
+            <div className="home-guide-list">
+              {guideLinks.map((item, index) => <a className="home-guide-link" href={item.href} key={item.href}>
+                <span className="home-guide-index">{String(index + 1).padStart(2, "0")}</span>
+                <span className="home-guide-copy"><strong>{item.title}</strong><small>{item.note}</small></span>
+                <ArrowUpRight className="home-guide-arrow" size={13} aria-hidden="true"/>
+              </a>)}
+            </div>
+          </section>
+
           {projects.length>0&&<section className="home-section">
             <div className="home-section-head"><div><span className="eyebrow">ВАШИ ПРОЕКТЫ</span><h2>Последние проекты</h2></div><button className="home-link" onClick={()=>void start("Новый проект")}>Новый проект <ArrowRight size={13}/></button></div>
             <div className="recent-grid">{projects.slice(0,6).map((project,index)=>{
@@ -470,6 +498,8 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
             <span>© {new Date().getFullYear()} NestDev</span>
             <nav className="home-footer-legal" aria-label="Юридические документы">
               {LEGAL_FOOTER_LINKS.map(id => <a key={id} href={legalPath(id)} target="_blank" rel="noopener noreferrer">{legalDoc(id).short}</a>)}
+              {/* Информационный раздел живёт отдельным адресом: на главной только вход в него. */}
+              <a className="home-footer-guide" href="/blog">Блог</a>
             </nav>
             <span className="home-footer-note">Создавайте быстрее. Оставайтесь в контроле.</span>
             {/* В подвале оставляем только почту: полные реквизиты доступны на странице
