@@ -46,8 +46,9 @@ from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
 
 
 DEFAULT_KMS_ENDPOINT = "https://kms.api.cloud.yandex.net"
-# Криптооперации (:sign) обслуживает data plane kms.yandex; control plane
-# kms.api.cloud.yandex.net отвечает на них HTTP 404 без тела.
+# Криптооперации (:sign, /publicKey) обслуживает data plane kms.yandex; у
+# control plane kms.api.cloud.yandex.net таких методов нет (404 без тела на
+# :sign, а :getPublicKey разбирается как keyId и даёт «key ... not found»).
 DEFAULT_KMS_CRYPTO_ENDPOINT = "https://kms.yandex"
 DEFAULT_IAM_ENDPOINT = "https://iam.api.cloud.yandex.net"
 DEFAULT_OPERATION_ENDPOINT = "https://operation.api.cloud.yandex.net"
@@ -246,7 +247,7 @@ class KmsClient:
     def public_key(self) -> str:
         response = _http_json(
             "GET",
-            f"{self.endpoint}/kms/v1/asymmetricSignatureKeys/{self._path_key()}:getPublicKey",
+            f"{self.crypto_endpoint}/kms/v1/asymmetricSignatureKeys/{self._path_key()}/publicKey",
             self.auth.token(),
             timeout=self.timeout,
         )

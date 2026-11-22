@@ -210,8 +210,8 @@ class KmsUnitTests(unittest.TestCase):
         ) as http:
             with self.assertRaises(pki_kms.PkiError):
                 client.public_key()
-        self.assertTrue(http.call_args.args[1].endswith("/key-1:getPublicKey"))
-        self.assertTrue(http.call_args.args[1].startswith("https://kms.api.cloud.yandex.net/"))
+        self.assertTrue(http.call_args.args[1].endswith("/key-1/publicKey"))
+        self.assertTrue(http.call_args.args[1].startswith("https://kms.yandex/"))
 
     def test_create_key_does_not_require_an_existing_key_id(self) -> None:
         auth = mock.Mock()

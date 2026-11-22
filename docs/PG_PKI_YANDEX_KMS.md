@@ -205,7 +205,8 @@ python3 -m unittest discover -s deploy/pki-kms -p 'test_*.py' -v
 | --- | --- |
 | `HTTP 401` от KMS | истёк/неверный service account key; `YC_IAM_TOKEN` не задан |
 | `HTTP 403` от KMS | у SA нет `kms.asymmetricSignatureKeys.signer`/`publicKeyViewer` на ключ |
-| `HTTP 404` без тела на `:sign` | запрос ушёл на control plane; `sign` обслуживает только `kms.yandex` |
+| `HTTP 404` без тела на `:sign` или `/publicKey` | запрос ушёл на control plane; обе криптооперации обслуживает только `kms.yandex` |
+| `HTTP 404` тела `Key with id ...:getPublicKey not found` | метода `:getPublicKey` нет; публичный ключ — `GET .../{id}/publicKey` на `kms.yandex` |
 | `KMS не вернул publicKey` | ключ не асимметричный или не ECDSA P-256 |
 | `CA в KMS, но сертификата node-1 нет` | сначала выполните `migrate`, не `setup` |
 | `старый ca.key оставлен` | `REMOVE_OLD_KEY=0`; запустите `kms-retire-key` после проверки |
@@ -214,9 +215,12 @@ python3 -m unittest discover -s deploy/pki-kms -p 'test_*.py' -v
 
 Криптооперации KMS живут на двух разных хостах, и это устройство сервиса, а не настройка:
 
-- `https://kms.api.cloud.yandex.net` — control plane: `GET .../asymmetricSignatureKeys/{id}`,
-  `GET .../{id}:getPublicKey`;
-- `https://kms.yandex` — data plane: `POST .../{id}:sign`.
+- `https://kms.api.cloud.yandex.net` — control plane: создание и чтение самого ключа
+  (`GET .../asymmetricSignatureKeys/{id}`);
+- `https://kms.yandex` — data plane: `POST .../{id}:sign` и `GET .../{id}/publicKey`.
+
+Метода `:getPublicKey` на control plane нет: такой путь разбирается как `keyId`, и KMS
+отвечает `Key with id <id>:getPublicKey not found`.
 
 Переопределяются через `YC_KMS_ENDPOINT`/`YC_KMS_CRYPTO_ENDPOINT` (или `--kms-endpoint`,
 `--kms-crypto-endpoint`).
