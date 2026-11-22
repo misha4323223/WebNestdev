@@ -4090,38 +4090,34 @@ button,textarea{font:inherit}button{color:inherit}
 .starter-dock-head .eyebrow{font-size:8px}
 .starter-dock-head h2{margin:3px 0 0;font-size:16px;line-height:1.1;letter-spacing:-.025em;font-weight:600;color:#ecebe6}
 .starter-dock-hint{max-width:46%;color:#7f867f;font-size:9px;line-height:1.45;text-align:right}
-.starter-categories{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:7px}
-.starter-category{
-  position:relative;display:flex;align-items:center;gap:8px;min-height:52px;padding:7px 9px;
-  border:1px solid rgba(216,178,122,.14);border-radius:12px;
-  background:linear-gradient(165deg,#12171a,#0d1114);color:#a2a9a1;text-align:left;cursor:pointer;
+/* Фильтры-чипы над полкой: выбранный — светлая тёплая плашка с тёмным текстом, как
+   активный пункт списка стартов. На телефоне строка прокручивается вбок. */
+.starter-filters{display:flex;gap:6px;margin:0 0 10px;padding:1px 2px 3px;overflow-x:auto;scrollbar-width:none}
+.starter-filters::-webkit-scrollbar{display:none}
+.starter-filter{flex:none;height:29px;padding:0 12px;border:1px solid rgba(204,195,178,.18);border-radius:999px;background:#11151a;color:#9aa1a8;font-size:10.5px;font-weight:500;line-height:1;cursor:pointer;white-space:nowrap;transition:border-color .16s ease,background .16s ease,color .16s ease}
+.starter-filter:hover{border-color:rgba(216,178,122,.36);background:#161b20;color:#e7e7e3}
+.starter-filter.is-active{border-color:#dcd6c8;background:#dcd6c8;color:#12161a;font-weight:650}
+.starter-filter.is-active:hover{background:#e7e2d6;border-color:#e7e2d6;color:#12161a}
+/* Полка карточек: одна прокручиваемая строка с превью. Шаблон выбирают глазами, поэтому
+   картинка занимает почти всю карточку, а подпись остаётся одной строкой. */
+.starter-gallery{display:grid;grid-auto-flow:column;grid-auto-columns:196px;gap:9px;padding:2px 2px 7px;overflow-x:auto;scroll-snap-type:x proximity;scrollbar-width:none}
+.starter-gallery::-webkit-scrollbar{display:none}
+.starter-card{
+  scroll-snap-align:start;display:grid;align-content:start;gap:0;padding:7px 7px 9px;
+  border:1px solid rgba(216,178,122,.15);border-radius:13px;
+  background:linear-gradient(168deg,#12171a,#0d1014 76%);color:inherit;text-align:left;cursor:pointer;
   transition:border-color .16s ease,background .16s ease,transform .16s ease,box-shadow .16s ease;
 }
-.starter-category:hover{border-color:rgba(216,178,122,.34);background:linear-gradient(165deg,#161b1e,#101416);transform:translateY(-1px)}
-.starter-category.is-active{border-color:rgba(216,178,122,.4);background:linear-gradient(165deg,#1b1a14,#111416);box-shadow:inset 0 1px 0 rgba(255,255,255,.035),0 8px 20px rgba(0,0,0,.18)}
-.starter-category.is-active::after{content:"";position:absolute;left:10px;right:10px;bottom:0;height:1px;background:linear-gradient(90deg,transparent,rgba(216,178,122,.8),transparent)}
-.starter-category-icon{width:29px;height:29px;flex:none;display:grid;place-items:center;border:1px solid rgba(216,178,122,.2);border-radius:8px;background:radial-gradient(circle at 30% 0,rgba(216,178,122,.14),rgba(20,24,27,.8));color:#cbb28d;transition:border-color .16s ease,color .16s ease}
-.starter-category.is-active .starter-category-icon{border-color:rgba(216,178,122,.36);color:#e8cb9c}
-.starter-category-name{flex:1;min-width:0;font-size:10.5px;font-weight:600;line-height:1.2;color:#dfe1da}
-.starter-category-count{flex:none;min-width:18px;padding:1px 5px;border:1px solid rgba(216,178,122,.15);border-radius:999px;color:#8f8473;font-size:8px;text-align:center}
-.starter-category.is-active .starter-category-count{border-color:rgba(216,178,122,.28);color:#c4ab84}
-.starter-shelf{margin-top:7px;padding:8px;border:1px solid rgba(216,178,122,.16);border-radius:14px;background:linear-gradient(165deg,#12171a,#0d1114);animation:starter-in .18s ease both}
-.starter-shelf-scroll{display:grid;grid-auto-flow:column;grid-auto-columns:minmax(185px,1fr);gap:7px;overflow-x:auto;padding:1px 1px 3px;scroll-snap-type:x proximity;scrollbar-width:none}
-.starter-shelf-scroll::-webkit-scrollbar{display:none}
-.starter-tile{
-  scroll-snap-align:start;display:flex;align-items:center;gap:9px;min-height:58px;padding:8px 9px;
-  border:1px solid rgba(216,178,122,.14);border-radius:10px;
-  background:linear-gradient(165deg,#151a1d,#0f1215);color:inherit;text-align:left;cursor:pointer;
-  transition:border-color .16s ease,background .16s ease,transform .16s ease,box-shadow .16s ease;
-}
-.starter-tile:hover{border-color:rgba(216,178,122,.4);background:linear-gradient(165deg,#191e21,#111518);transform:translateY(-1px);box-shadow:0 8px 18px rgba(0,0,0,.16)}
-.starter-tile.is-locked{opacity:.84}
-.starter-tile.is-locked:hover{opacity:1;border-color:rgba(216,178,122,.28)}
-.starter-tile-icon{width:31px;height:31px;flex:none;display:grid;place-items:center;border:1px solid rgba(216,178,122,.21);border-radius:9px;background:radial-gradient(circle at 30% 0,rgba(216,178,122,.17),rgba(20,24,27,.82));color:#d8c29f}
-.starter-tile-copy{flex:1;min-width:0;display:grid;gap:3px}
-.starter-tile-title{display:flex;align-items:center;gap:6px;min-width:0}
-.starter-tile-title strong{flex:1;min-width:0;font-size:11.5px;font-weight:600;letter-spacing:-.01em;color:#e9e8e3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.starter-tile-copy small{color:#7f8781;font-size:8.5px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.starter-card:hover{border-color:rgba(216,178,122,.42);background:linear-gradient(168deg,#171d21,#101418);transform:translateY(-2px);box-shadow:0 12px 26px rgba(0,0,0,.28)}
+.starter-card:focus-visible{outline:2px solid rgba(216,178,122,.55);outline-offset:2px}
+.starter-shot{display:block;aspect-ratio:16/10;border:1px solid rgba(255,255,255,.055);border-radius:9px;overflow:hidden;background:#0b0e12;box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
+.starter-shot-image{display:block;width:100%;height:100%;object-fit:cover;filter:saturate(.96);transition:transform .4s ease,filter .3s ease}
+.starter-card:hover .starter-shot-image{transform:scale(1.035);filter:saturate(1.02)}
+.starter-card.is-locked .starter-shot{opacity:.7}
+.starter-card.is-locked:hover .starter-shot{opacity:.9}
+.starter-card-foot{display:flex;align-items:center;gap:6px;min-width:0;margin-top:8px}
+.starter-card-name{flex:1;min-width:0;font-size:11.5px;font-weight:600;letter-spacing:-.01em;color:#e9e8e3;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.starter-card-note{display:block;margin-top:3px;color:#7b837d;font-size:8.5px;line-height:1.35;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .starter-tier{display:inline-flex;flex:none;align-items:center;gap:3px;margin-left:auto;padding:2px 5px;border:1px solid rgba(216,178,122,.2);border-radius:999px;color:#d2bb96;background:rgba(216,178,122,.06);font-size:7px;font-weight:700;letter-spacing:.03em}
 .starter-tier.tier-free{border-color:rgba(126,145,134,.26);color:#a5b6a9;background:rgba(126,145,134,.06)}
 .starter-tier.tier-team{border-color:rgba(203,143,116,.34);color:#dca48b;background:rgba(203,143,116,.08)}
@@ -4191,16 +4187,13 @@ button,textarea{font:inherit}button{color:inherit}
   .starter-dock-head{margin-bottom:8px}
   .starter-dock-head h2{font-size:15px}
   .starter-dock-hint{max-width:48%;font-size:8.5px}
-  .starter-categories{gap:6px}
-  .starter-category{min-height:48px;padding:6px 8px;gap:7px;border-radius:11px}
-  .starter-category-icon{width:26px;height:26px;border-radius:7px}
-  .starter-category-name{font-size:10px}
-  .starter-category-count{min-width:16px;padding:1px 4px;font-size:7.5px}
-  .starter-shelf{padding:7px;border-radius:12px}
-  .starter-shelf-scroll{grid-auto-columns:minmax(178px,1fr);gap:6px}
-  .starter-tile{min-height:55px;padding:7px 8px;gap:8px}
-  .starter-tile-icon{width:29px;height:29px;border-radius:8px}
-  .starter-tile-title strong{font-size:11px}
+  .starter-filters{margin-bottom:9px}
+  .starter-filter{height:27px;padding:0 10px;font-size:10px}
+  .starter-gallery{grid-auto-columns:168px;gap:7px}
+  .starter-card{padding:6px 6px 8px;border-radius:11px}
+  .starter-card-foot{margin-top:7px;gap:5px}
+  .starter-card-name{font-size:11px}
+  .starter-card-note{font-size:8px}
   .home-section-head{margin-bottom:11px}
   .home-section-head h2{font-size:19px}
   .home-section-note{display:none}

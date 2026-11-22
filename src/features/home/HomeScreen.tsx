@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { ArrowRight, ArrowUpRight, AppWindow, Bot, Box, Boxes, Building2, Code2, CreditCard, Database, FolderGit2, Gamepad2, Globe, Home, LayoutDashboard, Layers3, Lock, MessageCircle, Newspaper, Pencil, Plug, Rocket, ShoppingBag, Smartphone, Sparkles, Store, Trash2, UserRound, Workflow } from "lucide-react";
+import { ArrowRight, ArrowUpRight, Code2, CreditCard, FolderGit2, Home, Lock, Pencil, Plug, Sparkles, Trash2, UserRound } from "lucide-react";
+import { TemplatePreview, type TemplatePreviewKind } from "./TemplatePreview";
 import { deleteProject, listProjects, renameProject, type Project } from "../../lib/project-api";
 import type { PlanId } from "../../lib/billing-api";
 import { getEntitlements, type AccountEntitlements } from "../../lib/entitlements-api";
@@ -18,56 +19,72 @@ import { startProjectWithAgent } from "../../lib/start-project";
 import { NotificationsBell } from "../notifications/NotificationsBell";
 
 type TemplateTier = "free" | "pro" | "team";
-type Template = { name: string; note: string; prompt: string; icon: typeof Globe; tier?: Exclude<TemplateTier, "free">; why?: string };
-type TemplateGroup = { id: string; name: string; short: string; range: string; blurb: string; icon: typeof Globe; templates: Template[] };
+type Template = { name: string; note: string; prompt: string; preview: TemplatePreviewKind; tier?: Exclude<TemplateTier, "free">; why?: string; featured?: boolean };
+type TemplateGroup = { id: string; name: string; short: string; blurb: string; templates: Template[] };
 
 /**
  * Категории шаблонов отвечают на два разных вопроса: «что здесь вообще можно собрать» —
- * заголовок и диапазон, «с чего начать прямо сейчас» — карточки внутри. Плоская сетка этого
- * не показывала: лендинг и маркетплейс стояли рядом как равные, хотя это разные масштабы.
+ * заголовок и описание, «с чего начать прямо сейчас» — карточки внутри. Шаблон выбирают
+ * глазами, поэтому вместо раскрывающегося списка — полка с превью и фильтрами по направлению.
  */
 const templateGroups: TemplateGroup[] = [
   {
-    id: "sites", name: "Сайты", short: "Сайты", range: "Лендинг · магазин · маркетплейс", icon: Globe,
+    id: "sites", name: "Сайты", short: "Сайты",
     blurb: "От одной страницы с оффером до маркетплейса с продавцами, каталогом, корзиной и оплатой.",
     templates: [
-      { name: "Лендинг", note: "Одна страница: оффер, преимущества, заявка", icon: Rocket, prompt: "Создай современный лендинг для продукта: первый экран с оффером, преимущества, отзывы, блок с ценами и форма заявки" },
-      { name: "Корпоративный сайт", note: "Несколько страниц, услуги, команда и контакты", icon: Building2, prompt: "Создай корпоративный сайт компании: главная, услуги, о компании, кейсы и контакты, с общим меню и адаптивом" },
-      { name: "Интернет-магазин", note: "Каталог, карточки, корзина и оформление заказа", icon: ShoppingBag, tier: "pro", why: "нужны функции и база для заказов", prompt: "Создай интернет-магазин: каталог с фильтрами, карточка товара, корзина и оформление заказа" },
-      { name: "Маркетплейс", note: "Продавцы, категории, заказы и кабинеты", icon: Store, tier: "pro", why: "нужны роли, заказы и база", prompt: "Создай маркетплейс: продавцы, категории, карточки товаров, заказы и кабинеты покупателя и продавца" },
-      { name: "Блог или медиа", note: "Статьи, рубрики, поиск и подписка", icon: Newspaper, prompt: "Создай сайт-блог или медиа: лента статей, рубрики, страница статьи, поиск и подписка на обновления" },
+      { name: "Лендинг", note: "Одна страница: оффер, преимущества, заявка", preview: "landing", featured: true, prompt: "Создай современный лендинг для продукта: первый экран с оффером, преимущества, отзывы, блок с ценами и форма заявки" },
+      { name: "Корпоративный сайт", note: "Несколько страниц, услуги, команда и контакты", preview: "corporate", prompt: "Создай корпоративный сайт компании: главная, услуги, о компании, кейсы и контакты, с общим меню и адаптивом" },
+      { name: "Интернет-магазин", note: "Каталог, карточки, корзина и оформление заказа", preview: "shop", featured: true, tier: "pro", why: "нужны функции и база для заказов", prompt: "Создай интернет-магазин: каталог с фильтрами, карточка товара, корзина и оформление заказа" },
+      { name: "Маркетплейс", note: "Продавцы, категории, заказы и кабинеты", preview: "marketplace", tier: "pro", why: "нужны роли, заказы и база", prompt: "Создай маркетплейс: продавцы, категории, карточки товаров, заказы и кабинеты покупателя и продавца" },
+      { name: "Блог или медиа", note: "Статьи, рубрики, поиск и подписка", preview: "blog", prompt: "Создай сайт-блог или медиа: лента статей, рубрики, страница статьи, поиск и подписка на обновления" },
     ],
   },
   {
-    id: "apps", name: "Приложения", short: "Приложения", range: "Android · iOS · PWA · Telegram", icon: Smartphone,
+    id: "apps", name: "Приложения", short: "Приложения",
     blurb: "Экраны под телефон, установка из браузера, Mini App внутри Telegram и SaaS-кабинет с подпиской.",
     templates: [
-      { name: "Мобильное приложение", note: "Экраны для Android и iOS с навигацией", icon: Smartphone, prompt: "Создай мобильное приложение для Android и iOS: 4–6 экранов с навигацией, списками и сохранением данных" },
-      { name: "PWA", note: "Устанавливается из браузера, работает офлайн", icon: AppWindow, prompt: "Создай PWA: устанавливается из браузера, работает офлайн, показывает уведомления и хранит данные на устройстве" },
-      { name: "Telegram Mini App", note: "Интерфейс внутри Telegram с профилем", icon: MessageCircle, prompt: "Создай Telegram Mini App: интерфейс внутри Telegram, профиль пользователя, основные действия и адаптация под телефон" },
-      { name: "SaaS-сервис", note: "Аккаунты, тарифы и личный кабинет", icon: Layers3, tier: "pro", why: "нужны аккаунты, база и функции", prompt: "Создай SaaS-сервис: регистрация, тарифы, личный кабинет и основная рабочая функция" },
+      { name: "Мобильное приложение", note: "Экраны для Android и iOS с навигацией", preview: "mobile", featured: true, prompt: "Создай мобильное приложение для Android и iOS: 4–6 экранов с навигацией, списками и сохранением данных" },
+      { name: "PWA", note: "Устанавливается из браузера, работает офлайн", preview: "pwa", prompt: "Создай PWA: устанавливается из браузера, работает офлайн, показывает уведомления и хранит данные на устройстве" },
+      { name: "Telegram Mini App", note: "Интерфейс внутри Telegram с профилем", preview: "telegram", prompt: "Создай Telegram Mini App: интерфейс внутри Telegram, профиль пользователя, основные действия и адаптация под телефон" },
+      { name: "SaaS-сервис", note: "Аккаунты, тарифы и личный кабинет", preview: "saas", tier: "pro", why: "нужны аккаунты, база и функции", prompt: "Создай SaaS-сервис: регистрация, тарифы, личный кабинет и основная рабочая функция" },
     ],
   },
   {
-    id: "games", name: "Игры и 3D", short: "Игры и 3D", range: "2D · 3D · интерактив", icon: Gamepad2,
+    id: "games", name: "Игры и 3D", short: "Игры и 3D",
     blurb: "Браузерные игры и объёмные сцены: управление, уровни, счёт и эффекты — без установки.",
     templates: [
-      { name: "3D-игра", note: "Сцена, управление, цели и счёт", icon: Box, prompt: "Создай браузерную 3D-игру: управление, цели, счёт и перезапуск раунда" },
-      { name: "2D-игра", note: "Аркада с уровнями и рекордами", icon: Gamepad2, prompt: "Создай браузерную 2D-игру: уровни, управление, счёт и таблица рекордов" },
-      { name: "3D-витрина", note: "Товар или объект, который можно вращать", icon: Boxes, prompt: "Создай интерактивную 3D-витрину: объект или товар, вращение, ракурсы и подписи" },
+      { name: "3D-игра", note: "Сцена, управление, цели и счёт", preview: "game3d", prompt: "Создай браузерную 3D-игру: управление, цели, счёт и перезапуск раунда" },
+      { name: "2D-игра", note: "Аркада с уровнями и рекордами", preview: "game2d", featured: true, prompt: "Создай браузерную 2D-игру: уровни, управление, счёт и таблица рекордов" },
+      { name: "3D-витрина", note: "Товар или объект, который можно вращать", preview: "showcase3d", prompt: "Создай интерактивную 3D-витрину: объект или товар, вращение, ракурсы и подписи" },
     ],
   },
   {
-    id: "data", name: "Данные и автоматизация", short: "Данные и AI", range: "Дашборд · CRM · боты · AI", icon: Workflow,
+    id: "data", name: "Данные и автоматизация", short: "Данные и AI",
     blurb: "Графики, таблицы, роли, боты и ассистенты — внутренние инструменты, которые сразу работают.",
     templates: [
-      { name: "Дашборд", note: "Метрики, графики и фильтры", icon: LayoutDashboard, prompt: "Создай аналитический дашборд: метрики, графики, фильтры и таблица последних событий" },
-      { name: "CRM и админка", note: "Клиенты, таблицы и роли доступа", icon: Database, tier: "pro", why: "нужны база, функции и роли", prompt: "Создай CRM с админкой: клиенты, сделки, таблицы с фильтрами и роли доступа" },
-      { name: "Telegram-бот", note: "Команды, сценарии и рассылки", icon: Bot, tier: "team", why: "нужен постоянный серверный процесс", prompt: "Создай Telegram-бота: команды, пошаговые сценарии и рассылка подписчикам" },
-      { name: "AI-ассистент", note: "Чат с моделью и базой знаний", icon: Sparkles, tier: "pro", why: "нужны функции и ключ AI-провайдера", prompt: "Создай AI-ассистента: чат с моделью, история диалога и база знаний по документам" },
+      { name: "Дашборд", note: "Метрики, графики и фильтры", preview: "dashboard", featured: true, prompt: "Создай аналитический дашборд: метрики, графики, фильтры и таблица последних событий" },
+      { name: "CRM и админка", note: "Клиенты, таблицы и роли доступа", preview: "crm", tier: "pro", why: "нужны база, функции и роли", prompt: "Создай CRM с админкой: клиенты, сделки, таблицы с фильтрами и роли доступа" },
+      { name: "Telegram-бот", note: "Команды, сценарии и рассылки", preview: "bot", tier: "team", why: "нужен постоянный серверный процесс", prompt: "Создай Telegram-бота: команды, пошаговые сценарии и рассылка подписчикам" },
+      { name: "AI-ассистент", note: "Чат с моделью и базой знаний", preview: "ai", featured: true, tier: "pro", why: "нужны функции и ключ AI-провайдера", prompt: "Создай AI-ассистента: чат с моделью, история диалога и база знаний по документам" },
     ],
   },
 ];
+
+/** Фильтры над полкой: «для вас» — отобранное, «все» и по одному на каждое направление. */
+const starterFilters: Array<{ id: string; label: string }> = [
+  { id: "featured", label: "Для вас" },
+  { id: "all", label: "Все" },
+  ...templateGroups.map(group => ({ id: group.id, label: group.short })),
+];
+
+/** Карточки выбранного фильтра. «Для вас» смешивает направления, но остаётся одной строкой. */
+function starterItemsFor(filter: string) {
+  if (filter === "featured") {
+    return templateGroups.flatMap(group => group.templates.filter(template => template.featured).map(template => ({ group, template })));
+  }
+  const groups = filter === "all" ? templateGroups : templateGroups.filter(group => group.id === filter);
+  return groups.flatMap(group => group.templates.map(template => ({ group, template })));
+}
 
 /**
  * Шаблон не сразу пишет код и не открывает обычный чат: рабочая область показывает окно
@@ -78,7 +95,6 @@ function templateKickoff(group:TemplateGroup,template:Template){
   return `Быстрый старт: ${group.name} → «${template.name}».\n\nЗадача: ${template.prompt}.\n\nЭто первый запрос по новому проекту. Сейчас нужен только план: не изучай файлы, не упоминай, что проект пуст, и не пиши промежуточных рассуждений. Задай через question.ask два коротких вопроса по одному — для кого продукт и какие данные важны; если продукту нужны данные, предложи в этом же вопросе выбрать встроенную базу NestDev, свою базу или работу без базы. Затем спроси про стиль и тон. После ответов собери резюме проекта через plan.update: цель и аудитория, страницы и экраны, данные и выбранная база, интеграции, визуальный стиль, проверка. Все пункты оставь pending и не начинай разработку.`;
 }
 
-const planLabels:Record<PlanId,string>={free:"Старт",pro:"Плюс",team:"Премиум"};
 const tierLabels:Record<TemplateTier,string>={free:"Старт",pro:"Плюс",team:"Премиум"};
 
 function templateTier(template:Template):TemplateTier{
@@ -117,9 +133,9 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
   const [tab,setTab]=useState<HomeTab>("home");
   // Все категории колонки свёрнуты при открытии: человек сначала видит оглавление, а не его раздел.
   const [section,setSection]=useState<RailSection|null>(null);
-  // Старты свёрнуты в аккордеон: сначала видны только категории, а карточки
-  // раскрываются по нажатию — так блок остаётся компактным и на телефоне.
-  const [activeGroup,setActiveGroup]=useState<string|null>(null);
+  // Полка шаблонов открыта на «Для вас»: примеры видны сразу, а фильтры переключают
+  // направление, не раскрывая блок заново (как список стартов в референсе).
+  const [starterFilter,setStarterFilter]=useState("featured");
   const [account,setAccount]=useState<AccountEntitlements|null>(null);
   const [templateNotice,setTemplateNotice]=useState("");
   const entitlements=account?.entitlements??null;
@@ -127,6 +143,13 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
   const [paymentReturn,setPaymentReturn]=useState<"success"|"fail"|null>(null);
 
   const tabsRef = useRef<HTMLDivElement | null>(null);
+  // Каждая смена фильтра открывает полку с начала: иначе после прокрутки вправо новая
+  // категория выглядит пустой, потому что её карточки остались левее видимой части.
+  const galleryRef = useRef<HTMLDivElement | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: фильтр — это триггер: смена набора карточек возвращает полку в начало
+  useEffect(()=>{
+    galleryRef.current?.scrollTo({left:0});
+  },[starterFilter]);
 
   function pick(next:HomeTab){
     setTab(next);
@@ -309,7 +332,9 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
 
   const activeProjectId=localStorage.getItem(activeProjectKey);
   const activeProject=projects.find(project=>project.id===activeProjectId)??null;
-  const openStarterGroup=templateGroups.find(group=>group.id===activeGroup)??null;
+  const starterItems=starterItemsFor(starterFilter);
+  const starterGroup=templateGroups.find(group=>group.id===starterFilter)??null;
+  const starterHint=starterGroup?.blurb??"По одному шаблону из каждого направления";
 
   return <>
     <main className="home-screen">
@@ -384,37 +409,39 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
 
           <section className="home-starters" aria-labelledby="home-starters-title">
             <div className="starter-dock-head">
-              <div><span className="eyebrow">БЫСТРЫЕ СТАРТЫ</span><h2 id="home-starters-title">С чего начать</h2></div>
-              <span className="starter-dock-hint">{openStarterGroup?openStarterGroup.range:"Выберите направление"+(account?" · «"+planLabels[account.plan]+"»":"")}</span>
+              <div><span className="eyebrow">БЫСТРЫЕ СТАРТЫ</span><h2 id="home-starters-title">Начните с шаблона</h2></div>
+              <span className="starter-dock-hint">{starterHint}</span>
             </div>
-            <div className="starter-categories" aria-label="Категории шаблонов">
-              {templateGroups.map(group=>{
-                const Icon=group.icon;
-                const active=activeGroup===group.id;
-                return <button key={group.id} type="button" className={"starter-category"+(active?" is-active":"")} aria-expanded={active} aria-controls={active?"starter-shelf-"+group.id:undefined} onClick={()=>{setActiveGroup(active?null:group.id);setTemplateNotice("")}} title={group.blurb}>
-                  <span className="starter-category-icon"><Icon size={15}/></span>
-                  <span className="starter-category-name">{group.short}</span>
-                  <span className="starter-category-count">{group.templates.length}</span>
+            <div className="starter-filters" role="group" aria-label="Категории шаблонов">
+              {starterFilters.map(filter=><button
+                key={filter.id}
+                type="button"
+                className={"starter-filter"+(starterFilter===filter.id?" is-active":"")}
+                aria-pressed={starterFilter===filter.id}
+                onClick={()=>{setStarterFilter(filter.id);setTemplateNotice("")}}
+              >{filter.label}</button>)}
+            </div>
+            {templateNotice&&<div className="starter-notice" role="status"><Lock size={13}/><span>{templateNotice}</span><button type="button" onClick={()=>setTemplateNotice("")} aria-label="Закрыть подсказку">×</button></div>}
+            <div className="starter-gallery" role="region" aria-label="Шаблоны" ref={galleryRef}>
+              {starterItems.map(({group,template})=>{
+                const tier=templateTier(template);
+                const available=templateAvailable(template);
+                return <button
+                  key={group.id+"-"+template.name}
+                  type="button"
+                  className={"starter-card"+(available?"":" is-locked")}
+                  onClick={()=>chooseTemplate(group,template)}
+                  title={(available?template.prompt:(template.why??"Нужен платный тариф"))+". Агент начнёт с плана и уточняющих вопросов."}
+                >
+                  <span className="starter-shot"><TemplatePreview kind={template.preview}/></span>
+                  <span className="starter-card-foot">
+                    <strong className="starter-card-name">{template.name}</strong>
+                    <span className={"starter-tier tier-"+tier}>{tier==="team"?<Lock size={9}/>:tier==="pro"?<Sparkles size={9}/>:<Code2 size={9}/>}{tierLabels[tier]}</span>
+                  </span>
+                  <span className="starter-card-note">{available?template.note:(template.why??"Нужен платный тариф")}</span>
                 </button>;
               })}
             </div>
-            {openStarterGroup&&<div className="starter-shelf" id={"starter-shelf-"+openStarterGroup.id} role="region" aria-label={"Шаблоны: "+openStarterGroup.name}>
-              {templateNotice&&<div className="starter-notice" role="status"><Lock size={13}/><span>{templateNotice}</span><button type="button" onClick={()=>setTemplateNotice("")} aria-label="Закрыть подсказку">×</button></div>}
-              <div className="starter-shelf-scroll">
-                {openStarterGroup.templates.map(template=>{
-                  const TemplateIcon=template.icon;
-                  const tier=templateTier(template);
-                  const available=templateAvailable(template);
-                  return <button key={template.name} type="button" className={"starter-tile"+(available?"":" is-locked")} onClick={()=>chooseTemplate(openStarterGroup,template)} title={(available?template.prompt:(template.why??"Нужен платный тариф"))+". Агент начнёт с плана и уточняющих вопросов."}>
-                    <span className="starter-tile-icon"><TemplateIcon size={16}/></span>
-                    <span className="starter-tile-copy">
-                      <span className="starter-tile-title"><strong>{template.name}</strong><span className={"starter-tier tier-"+tier}>{tier==="team"?<Lock size={9}/>:tier==="pro"?<Sparkles size={9}/>:<Code2 size={9}/>}{tierLabels[tier]}</span></span>
-                      <small>{available?template.note:(template.why??"Нужен платный тариф")}</small>
-                    </span>
-                  </button>;
-                })}
-              </div>
-            </div>}
           </section>
 
           {projects.length>0&&<section className="home-section">
