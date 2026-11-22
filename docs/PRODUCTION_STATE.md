@@ -12,7 +12,7 @@
 `sslmode=verify-full`; все соединения приложения — TLS 1.3. PostgreSQL TLS переведён на
 отдельный CA и уникальные сертификаты нод: `pg_pki.sh` на `node-1`, лист 90 дней, CA 10 лет,
 ротация — `webnestdev-pg-tls-rotate.timer` (проверено 22.11.2026; подробности —
-[`PG_PKI_2026-11-22.md`](PG_PKI_2026-11-22.md); backup CA —
+[`PG_PKI_2026-11-22.md`](PG_PKI_2026-11-22.md); backup CA и restore drill —
 [`PG_PKI_BACKUP.md`](PG_PKI_BACKUP.md)). Audit salt лежит отдельно от ключа
 шифрования в `/var/lib/webnestdev/data/audit-salt` (600) на обеих нодах; preview-логи
 проходят редакцию значений сохранённых секретов. Production работает в

@@ -1,11 +1,11 @@
 # Off-site backup CA-ключа PostgreSQL PKI
 
-**Статус на 22.11.2026, 08:15 UTC:** бакет создан, доступ и Object Lock ещё настраиваются.
-В репозиторий добавлены `deploy/ha/pg_ca_backup.sh` и два GitHub Actions workflow:
-`pki-backup-setup.yml` (установка `age`/`rclone`, secrets и env-файл) и `pki-backup.yml`
-(еженедельный backup). Они **ещё не запускались**: нет GitHub Secrets с ключом Yandex и
-приватного age identity. Первый проверенный архив и restore drill не сделаны. До первого
-успешного restore drill резервная копия CA-ключа **не считается готовой**.
+**Статус на 22.11.2026, 09:12 UTC:** бакет настроен, versioning включён, Object Lock —
+**временная строгая, 1 год**. Setup workflow выполнен (`45004162806`), age identity сохранён
+офлайн, artifact удалён. Первый backup выполнен (`45004810330`):
+`pg-ca-20261122T085222Z.tar.gz.age`, checksum — `ok`. Restore drill на отдельном ПК
+завершён: `RESTORE-DRILL-OK`, checksum и оба листа нод проверены, тестовый лист выпущен и
+проверен. Резервная копия CA-ключа **готова**; KMS/HSM остаётся отдельной задачей.
 
 Этот документ — памятка по защите корневого CA, который выпускает сертификаты PostgreSQL
 на `node-1`/`node-2`. Он дополняет [`PG_PKI_2026-11-22.md`](PG_PKI_2026-11-22.md), где
@@ -241,6 +241,9 @@ Actions → Environment `production`** добавьте:
 
 ### 6.3 Порядок первого запуска
 
+**Выполнено 22.11.2026:** setup — `45004162806`, первый backup — `45004810330`, restore
+drill — `RESTORE-DRILL-OK`. Раздел оставлен как runbook для повторной настройки.
+
 Сначала workflow-файлы должны попасть в репозиторий (коммит в ветку по умолчанию), иначе
 GitHub Actions их не увидит.
 
@@ -271,7 +274,11 @@ GitHub Actions их не увидит.
 
 ## 7. Restore drill
 
-Backup не считается готовым, пока не выполнено восстановление на изолированной машине:
+**Проведён 22.11.2026, 09:12 UTC** на отдельном ПК: архив расшифрован офлайн age-ключом,
+checksum совпал, `ca.key` соответствует `ca.crt`, оба публичных листа нод и тестовый лист
+проверены; итог — `RESTORE-DRILL-OK`. Восстановленный ключ на production не переносился.
+
+Критерий готовности backup — успешное восстановление на изолированной машине:
 
 1. Скачать последний `.age` и его `.sha256` с машины, где есть `rclone`/`aws` и доступ к
    бакету:
@@ -300,16 +307,16 @@ Backup не считается готовым, пока не выполнено 
 ## 8. Чек-лист
 
 - [x] Создан бакет `webnestdev-pg-pki-backup`.
-- [ ] Проверить, что Object Lock сохранён: **строгая**, **1 год**, для новых версий.
-- [ ] Проверить, что версионирование включено.
-- [ ] Создать service account `pg-pki-backup` и выдать `storage.editor` только на бакет.
-- [ ] Создать статический access key и добавить его в GitHub Secrets.
-- [x] Добавить `deploy/ha/pg_ca_backup.sh` и GitHub Actions setup/backup workflow.
-- [ ] Запустить setup workflow и скачать age artifact офлайн; удалить artifact.
-- [ ] Убедиться, что `/etc/webnestdev-ha/pki-backup.env` имеет права `600 root`.
-- [ ] Сделать первый архив и проверить `head-object`/checksum.
-- [ ] Провести restore drill и записать результат.
-- [ ] Убедиться, что `ca.key` никогда не попадал в S3/логи/чат.
+- [x] Object Lock: **строгая**, **1 год**, для новых версий.
+- [x] Версионирование включено.
+- [x] Service account `pg-pki-backup` и `storage.editor` только на бакет.
+- [x] Статический access key добавлен в GitHub Secrets.
+- [x] Добавлены `deploy/ha/pg_ca_backup.sh` и GitHub Actions setup/backup workflow.
+- [x] Setup workflow выполнен; age artifact скачан офлайн и удалён из Actions.
+- [x] `/etc/webnestdev-ha/pki-backup.env` имеет права `600 root`.
+- [x] Первый архив загружен, checksum проверен (`45004810330`).
+- [x] Restore drill выполнен: `RESTORE-DRILL-OK`.
+- [x] `ca.key` не попадал в S3 в открытом виде, логи или чат.
 
 До выполнения restore drill остаточный риск из
 [`PG_PKI_2026-11-22.md`](PG_PKI_2026-11-22.md) остаётся открытым.

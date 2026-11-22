@@ -161,10 +161,10 @@ PostgreSQL по TLS с проверкой CA; `node-2` — с `sslmode=verify-fu
 
 **Обновление 22.11.2026, 07:33 UTC:** остаточная граница снята. Введён отдельный root CA и
 уникальные сертификаты нод (`deploy/ha/pg_pki.sh`), старый общий сертификат выведен из
-trust bundle, ручная ротация и `auto-rotate` проверены на живой паре. KMS/HSM и защищённый
-off-site backup CA-ключа остаются отдельными задачами; скрипт и GitHub Actions workflow
-backup добавлены, но первый архив/restore drill ещё не выполнены. Подробности —
-[`PG_PKI_2026-11-22.md`](PG_PKI_2026-11-22.md) и [`PG_PKI_BACKUP.md`](PG_PKI_BACKUP.md).
+trust bundle, ручная ротация и `auto-rotate` проверены на живой паре. Off-site backup CA
+и restore drill выполнены 22.11.2026 (`RESTORE-DRILL-OK`); KMS/HSM остаётся отдельной
+задачей. Подробности — [`PG_PKI_2026-11-22.md`](PG_PKI_2026-11-22.md) и
+[`PG_PKI_BACKUP.md`](PG_PKI_BACKUP.md).
 
 ## Проверки
 

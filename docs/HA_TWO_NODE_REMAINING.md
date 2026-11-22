@@ -57,8 +57,8 @@ authentication, `sslmode=verify-full` проверяет цепочку.
 
 **Закрыто 22.11.2026:** общий self-signed сертификат заменён на PKI; `pg_pki.sh migrate`
 прошёл на живой паре без простоя, `rotate` и `auto-rotate` проверены, старый CA удалён из
-trust bundle. Остаются отдельные задачи: KMS/HSM и защищённый off-site backup CA-ключа
-(скрипт и workflow добавлены, первый backup/restore drill ещё не выполнены).
+trust bundle. Off-site backup CA-ключа и restore drill выполнены 22.11.2026
+(`RESTORE-DRILL-OK`); остаётся отдельная задача KMS/HSM.
 При плановом rejoin использовать `standby.sh` с `PG_TLS_CA`; он выставляет `sslmode=verify-full`
 автоматически. `pg_tls.sh setup` при активном PKI блокируется; на `node-2` не создавать
 вторую общую пару.
