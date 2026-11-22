@@ -53,7 +53,7 @@ jobs:
       REMOVE_OLD_KEY: ${{ inputs.remove_old_key == true && '1' || '0' }}
       KMS_KEY_ID: ${{ inputs.kms_key_id || vars.YC_KMS_KEY_ID }}
       PYTHON: python3
-      SA_KEY_FILE: ${{ runner.temp }}/pki-kms-sa.json
+      SA_KEY_FILE: /tmp/pki-kms-sa.json
     steps:
       - uses: actions/checkout@v5
 
