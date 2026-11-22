@@ -1,13 +1,13 @@
 # Состояние production и оперативная память
 
-Дата среза: **22.11.2026, 13:10 UTC**. Документ фиксирует факты, которые нельзя терять
+Дата среза: **22.11.2026, 14:36 UTC**. Документ фиксирует факты, которые нельзя терять
 между сессиями.
 Секреты здесь не хранятся: только имена переменных, пути и способы проверки.
 
-**Актуально на 22.11.2026, 13:10 UTC:** обе ноды включены, `node-1` — primary,
-`node-2` — streaming standby; production image `d7c491b` (docs-only коммит после кода
-`538865c`). Публичный `/api/ready` и локальный health обеих нод отдают
-`build=d7c491b47f4bb7f3502b6cb67e30b51b3d5c0f3d`. PostgreSQL TLS включён на обеих нодах:
+**Актуально на 22.11.2026, 14:36 UTC:** обе ноды включены, `node-1` — primary,
+`node-2` — streaming standby; production image `1d177ff` (P0/P1 hardening). Публичный
+`/api/ready` и локальный ready обеих нод отдают
+`build=1d177ff319670b42b73ecd27c565e1ed11700791`. PostgreSQL TLS включён на обеих нодах:
 `ssl=on`, HBA только `hostssl`, HAProxy — TLS с проверкой CA и `alpn postgresql`, standby —
 `sslmode=verify-full`; все соединения приложения — TLS 1.3. PostgreSQL TLS переведён на
 отдельный CA и уникальные сертификаты нод: `pg_pki.sh` на `node-1`, лист 90 дней, CA 10 лет
@@ -28,6 +28,18 @@ Deploy синхронизирует override обеих нод; токен вн�
 строка лежит только в `/etc/webnestdev/client-db-admin.conf` (600), клиентский адрес —
 PgBouncer `10.0.0.4:6432` / `10.0.0.5:6432`. Подробности — в
 [`LOCAL_WORKSPACES.md`](LOCAL_WORKSPACES.md) и [`CLIENT_DATABASE_PLAN.md`](CLIENT_DATABASE_PLAN.md).
+
+**22.11.2026, 14:36 UTC — выкачена сборка `1d177ff`.** Образ
+`ghcr.io/misha4323223/webnestdev:sha-1d177ff31967` работает на обеих нодах; `node-1` —
+primary, `node-2` — streaming standby. Публичный `/api/ready` и локальный ready обеих
+нод отдают `build=1d177ff319670b42b73ecd27c565e1ed11700791`, сайт — 200. Workflow
+`45032216377` собрал образ, но deploy job упал на SSH-таймауте с GitHub runner, прод
+при этом не изменился; выкатка выполнена вручную штатными `vm-deploy.sh` и
+`node2-sync.sh`. Проверено: `StopTimeout=135` на контейнерах обеих нод, `/metrics` 200
+изнутри контейнера и 404 для не-loopback, SIGTERM на `node-2` дал дренаж и возврат
+`/api/ready=200`, egress-фильтр проверен на обеих нодах (22 правила на `node-1`),
+репликация PostgreSQL — `f`/`t`. При ручном `vm-deploy.sh` без `EGRESS_FIREWALL_B64`
+юнит egress был снят; восстановлен актуальным скриптом и проверен через `MODE=egress`.
 
 **18.11.2026, 18:08 UTC — подготовлено, но ещё не выкачено:** отдельная роль
 `nestdev_client_admin` создана на обеих нодах и проверена через PgBouncer
@@ -150,17 +162,19 @@ Production не должен зависеть от базы или storage од�
 
 - Публичный адрес: `https://nestdev.ru`.
 - `GET /api/ready` отвечает `ok:true`.
-- Текущая production-сборка на обеих нодах: `d7c491b47f4bb7f3502b6cb67e30b51b3d5c0f3d` —
-  docs-only коммит `d7c491b` после кода `538865c` (`feat(security): редактировать секреты в
-  логах предпросмотра`). В код входит и отдельная соль аудита из `3bbf3e5`; TLS-runtime
-  `db_proxy.py` с ALPN установлен на обе ноды вручную 21.11.2026, 22:08 UTC.
+- Текущая production-сборка на обеих нодах: `1d177ff319670b42b73ecd27c565e1ed11700791` —
+  коммит `1d177ff` (P0/P1 hardening: SIGTERM-дренаж, таймауты провайдера, подтверждение
+  мутаций, обёртка недоверенного вывода, потеря аренды, пустой ответ, `/metrics`, planner
+  без `eslint`/`prettier`). Подробности — [`AGENT_RUNTIME_HARDENING_2026-11-22.md`](AGENT_RUNTIME_HARDENING_2026-11-22.md)
+  и [`P1_HARDENING_2026-11-22.md`](P1_HARDENING_2026-11-22.md). TLS-runtime `db_proxy.py`
+  с ALPN установлен на обе ноды вручную 21.11.2026, 22:08 UTC.
 - Preview-логи редактируются в `server/src/preview/log-redaction.ts`: перед показом панели,
   агенту и внутренней двери вырезаются точные значения сохранённых секретов. Ошибки запуска
   проходят тот же фильтр. Закодированные/разбитые значения остаются остаточной границей.
 - Соль журнала аудита: `/var/lib/webnestdev/data/audit-salt` (600) на общей Gluster-данной;
   `WEBNESTDEV_AUDIT_SALT` остаётся явным override. Не класть её в `runtime-secrets`:
   entrypoint контейнера пересоздаёт этот каталог при каждом старте.
-- Образ: `ghcr.io/misha4323223/webnestdev:sha-d7c491b47f4b` (docs-only; код `538865c`).
+- Образ: `ghcr.io/misha4323223/webnestdev:sha-1d177ff31967`.
 - Выкачена 18.11.2026, 17:18 UTC на `node-1` и `node-2`; `GET /api/ready` на обеих нодах
   и на `https://nestdev.ru/api/ready` отдаёт `build=e86fa39586167d4558f6e20817621d2ff19f64c2`,
   deploy run — success.

@@ -112,8 +112,9 @@ cd server && npx tsc -p tsconfig.json --noEmit
 ```
 
 Полный `npm test` был разбит на шесть групп и пройден позднее: 2275 тестов, 2265 pass,
-10 skip, 0 fail (408 файлов). Выкатка и проверка Docker `stop_grace_period` на реальном
-контейнере выполняются этим коммитом; результат — в [`PRODUCTION_STATE.md`](PRODUCTION_STATE.md).
+10 skip, 0 fail (408 файлов). Выкачено 22.11.2026, 14:29–14:36 UTC: обе ноды на `1d177ff`,
+`StopTimeout=135` подтверждён на живых контейнерах, SIGTERM на `node-2` дал строку дренажа
+и `/api/ready=200` после возврата; результат — в [`PRODUCTION_STATE.md`](PRODUCTION_STATE.md).
 
 ## Что осталось
 
