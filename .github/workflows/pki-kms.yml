@@ -129,7 +129,10 @@ jobs:
           try:
               client = pki_kms.KmsClient(
                   key_id=os.environ["KMS_KEY_ID"],
-                  auth=pki_kms.IamAuth(sa_key_file=os.environ["SA_KEY_FILE"]),
+                  auth=pki_kms.IamAuth(
+                      sa_key_file=os.environ["SA_KEY_FILE"],
+                      iam_token=None,
+                  ),
               )
           except Exception as exc:
               print("KMS diagnose: client init failed: " + str(exc))
