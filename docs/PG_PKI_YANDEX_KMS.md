@@ -205,11 +205,21 @@ python3 -m unittest discover -s deploy/pki-kms -p 'test_*.py' -v
 | --- | --- |
 | `HTTP 401` от KMS | истёк/неверный service account key; `YC_IAM_TOKEN` не задан |
 | `HTTP 403` от KMS | у SA нет `kms.asymmetricSignatureKeys.signer`/`publicKeyViewer` на ключ |
+| `HTTP 404` без тела на `:sign` | запрос ушёл на control plane; `sign` обслуживает только `kms.yandex` |
 | `KMS не вернул publicKey` | ключ не асимметричный или не ECDSA P-256 |
 | `CA в KMS, но сертификата node-1 нет` | сначала выполните `migrate`, не `setup` |
 | `старый ca.key оставлен` | `REMOVE_OLD_KEY=0`; запустите `kms-retire-key` после проверки |
 | `local timer` остался активным | `systemctl disable --now webnestdev-pg-tls-rotate.timer` |
 | `verify` не проходит после активации | в доверии ещё старый CA; проверьте `kms-stage-trust` и `kms-retire-old-ca` |
+
+Криптооперации KMS живут на двух разных хостах, и это устройство сервиса, а не настройка:
+
+- `https://kms.api.cloud.yandex.net` — control plane: `GET .../asymmetricSignatureKeys/{id}`,
+  `GET .../{id}:getPublicKey`;
+- `https://kms.yandex` — data plane: `POST .../{id}:sign`.
+
+Переопределяются через `YC_KMS_ENDPOINT`/`YC_KMS_CRYPTO_ENDPOINT` (или `--kms-endpoint`,
+`--kms-crypto-endpoint`).
 
 ## 7. Файлы на нодах после миграции
 

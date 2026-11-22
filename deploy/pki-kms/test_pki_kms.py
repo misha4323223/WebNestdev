@@ -197,6 +197,7 @@ class KmsUnitTests(unittest.TestCase):
         first, second, third = http.call_args.args
         self.assertEqual(first, "POST")
         self.assertTrue(second.endswith("/key-1:sign"))
+        self.assertTrue(second.startswith("https://kms.yandex/"))
         self.assertEqual(third, "iam-token")
         self.assertEqual(base64.b64decode(http.call_args.kwargs["payload"]["message"]), b"hello")
 
@@ -204,9 +205,13 @@ class KmsUnitTests(unittest.TestCase):
         auth = mock.Mock()
         auth.token.return_value = "iam-token"
         client = pki_kms.KmsClient(key_id="key-1", auth=auth)
-        with mock.patch.object(pki_kms, "_http_json", return_value={"publicKey": "nope"}):
+        with mock.patch.object(
+            pki_kms, "_http_json", return_value={"publicKey": "nope"}
+        ) as http:
             with self.assertRaises(pki_kms.PkiError):
                 client.public_key()
+        self.assertTrue(http.call_args.args[1].endswith("/key-1:getPublicKey"))
+        self.assertTrue(http.call_args.args[1].startswith("https://kms.api.cloud.yandex.net/"))
 
     def test_create_key_does_not_require_an_existing_key_id(self) -> None:
         auth = mock.Mock()

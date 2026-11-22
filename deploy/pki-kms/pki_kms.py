@@ -46,6 +46,9 @@ from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa
 
 
 DEFAULT_KMS_ENDPOINT = "https://kms.api.cloud.yandex.net"
+# Криптооперации (:sign) обслуживает data plane kms.yandex; control plane
+# kms.api.cloud.yandex.net отвечает на них HTTP 404 без тела.
+DEFAULT_KMS_CRYPTO_ENDPOINT = "https://kms.yandex"
 DEFAULT_IAM_ENDPOINT = "https://iam.api.cloud.yandex.net"
 DEFAULT_OPERATION_ENDPOINT = "https://operation.api.cloud.yandex.net"
 KEY_ALGORITHM = "ECDSA_NIST_P256_SHA_256"
@@ -214,6 +217,7 @@ class KmsClient:
         key_id: str,
         auth: IamAuth,
         endpoint: str = DEFAULT_KMS_ENDPOINT,
+        crypto_endpoint: str = DEFAULT_KMS_CRYPTO_ENDPOINT,
         operation_endpoint: str = DEFAULT_OPERATION_ENDPOINT,
         timeout: float = 30.0,
     ) -> None:
@@ -222,6 +226,7 @@ class KmsClient:
         self.key_id = key_id
         self.auth = auth
         self.endpoint = endpoint.rstrip("/")
+        self.crypto_endpoint = crypto_endpoint.rstrip("/")
         self.operation_endpoint = operation_endpoint.rstrip("/")
         self.timeout = timeout
 
@@ -241,7 +246,7 @@ class KmsClient:
     def public_key(self) -> str:
         response = _http_json(
             "GET",
-            f"{self.endpoint}/kms/v1/asymmetricSignatureKeys/{self._path_key()}/publicKey",
+            f"{self.endpoint}/kms/v1/asymmetricSignatureKeys/{self._path_key()}:getPublicKey",
             self.auth.token(),
             timeout=self.timeout,
         )
@@ -253,7 +258,7 @@ class KmsClient:
     def sign(self, message: bytes) -> bytes:
         response = _http_json(
             "POST",
-            f"{self.endpoint}/kms/v1/asymmetricSignatureKeys/{self._path_key()}:sign",
+            f"{self.crypto_endpoint}/kms/v1/asymmetricSignatureKeys/{self._path_key()}:sign",
             self.auth.token(),
             payload={"message": base64.b64encode(message).decode("ascii")},
             timeout=self.timeout,
@@ -633,6 +638,7 @@ def _client_from_args(args: argparse.Namespace) -> KmsClient:
         key_id=args.kms_key_id or "",
         auth=auth,
         endpoint=args.kms_endpoint,
+        crypto_endpoint=args.kms_crypto_endpoint,
         operation_endpoint=args.operation_endpoint,
         timeout=args.timeout,
     )
@@ -715,6 +721,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--sa-key-file", default=os.getenv("YC_SA_KEY_FILE"))
     parser.add_argument("--iam-token", default=os.getenv("YC_IAM_TOKEN"))
     parser.add_argument("--kms-endpoint", default=os.getenv("YC_KMS_ENDPOINT", DEFAULT_KMS_ENDPOINT))
+    parser.add_argument(
+        "--kms-crypto-endpoint",
+        default=os.getenv("YC_KMS_CRYPTO_ENDPOINT", DEFAULT_KMS_CRYPTO_ENDPOINT),
+    )
     parser.add_argument("--iam-endpoint", default=os.getenv("YC_IAM_ENDPOINT", DEFAULT_IAM_ENDPOINT))
     parser.add_argument(
         "--operation-endpoint",
