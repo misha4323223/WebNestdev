@@ -115,6 +115,8 @@ jobs:
               if not key.get(name):
                   raise SystemExit(f"service account key: нет {name}")
           print("service account key: структура OK")
+          print("service account key: authorized_key_id=" + str(key.get("id")))
+          print("service account key: service_account_id=" + str(key.get("service_account_id")))
           PY
 
       - name: Migrate, rotate or verify PostgreSQL PKI
