@@ -13,14 +13,17 @@ name: PostgreSQL PKI via Yandex KMS
 #
 # migrate меняет доверие: сначала старый+новый CA, затем листья, затем только
 # новый CA. Для запуска нужно ввести MIGRATE. rotate не меняет CA и требует ROTATE.
+#
+# Режим auto (ручной или по расписанию) сначала смотрит остаток срока листьев и
+# запускает rotate только если до истечения осталось <= ROTATE_DAYS дней.
 
 on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "migrate — один раз перейти на KMS; rotate — новые листья; verify — только проверка"
+        description: "auto — ротировать только при остатке ≤ 30 дней; migrate — перейти на KMS; rotate — новые листья; verify — только проверка"
         type: choice
-        options: ["verify", "rotate", "migrate"]
+        options: ["auto", "verify", "rotate", "migrate"]
         default: "verify"
       confirm:
         description: "Для migrate введите MIGRATE, для rotate — ROTATE"
@@ -35,6 +38,11 @@ on:
         type: string
         required: false
 
+  schedule:
+    # Проверка срока листьев раз в неделю; rotate выполняется только при
+    # остатке <= 30 дней. cron в GitHub работает в UTC.
+    - cron: "23 4 * * 1"
+
 concurrency:
   group: pki-kms
   cancel-in-progress: false
@@ -48,9 +56,9 @@ jobs:
     environment: production
     timeout-minutes: 30
     env:
-      MODE: ${{ inputs.mode }}
-      CONFIRM: ${{ inputs.confirm }}
+      REQUESTED_MODE: ${{ inputs.mode || 'auto' }}
       REMOVE_OLD_KEY: ${{ inputs.remove_old_key == true && '1' || '0' }}
+      ROTATE_DAYS: "30"
       KMS_KEY_ID: ${{ inputs.kms_key_id || vars.YC_KMS_KEY_ID }}
       PYTHON: python3
       SA_KEY_FILE: /tmp/pki-kms-sa.json
@@ -94,8 +102,32 @@ jobs:
             echo "DEPLOY_SSH_KEY=$HOME/.ssh/deploy_key"
           } >> "$GITHUB_ENV"
 
+      - name: Check certificate expiry
+        id: expiry
+        if: ${{ github.event_name == 'schedule' || inputs.mode == 'auto' }}
+        run: |
+          set -euo pipefail
+          ssh_opts=(-i "$DEPLOY_SSH_KEY" -p "$DEPLOY_PORT" -o BatchMode=yes
+            -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15)
+          now=$(date -u +%s)
+          min=""
+          for node in node-1 node-2; do
+            end=$(ssh "${ssh_opts[@]}" "$DEPLOY_USER@$DEPLOY_HOST" \
+              "sudo -n openssl x509 -in /etc/webnestdev-ha/pg-pki/nodes/$node/server.crt -noout -enddate" \
+              | cut -d= -f2)
+            [ -n "$end" ] || { echo "::error::$node: не удалось прочитать срок сертификата"; exit 1; }
+            end_ts=$(date -u -d "$end" +%s)
+            days=$(( (end_ts - now) / 86400 ))
+            echo "$node: осталось $days дн. (до $end)"
+            if [ -z "$min" ] || [ "$days" -lt "$min" ]; then min=$days; fi
+          done
+          if [ "$min" -le "$ROTATE_DAYS" ]; then due=true; else due=false; fi
+          echo "due=$due" >> "$GITHUB_OUTPUT"
+          echo "days_left=$min" >> "$GITHUB_OUTPUT"
+          echo "Ближайший сертификат истекает через $min дн.; порог — $ROTATE_DAYS дн.; due=$due"
+
       - name: Write KMS service account key
-        if: ${{ inputs.mode != 'verify' }}
+        if: ${{ inputs.mode != 'verify' && (github.event_name != 'schedule' && inputs.mode != 'auto' || steps.expiry.outputs.due == 'true') }}
         env:
           PKI_KMS_SA_KEY_JSON: ${{ secrets.PKI_KMS_SA_KEY_JSON }}
         run: |
@@ -120,7 +152,7 @@ jobs:
           PY
 
       - name: Diagnose KMS access
-        if: ${{ inputs.mode != 'verify' }}
+        if: ${{ inputs.mode != 'verify' && (github.event_name != 'schedule' && inputs.mode != 'auto' || steps.expiry.outputs.due == 'true') }}
         run: |
           python3 - <<'PY'
           import os, sys
@@ -150,7 +182,15 @@ jobs:
           PY
 
       - name: Migrate, rotate or verify PostgreSQL PKI
+        if: ${{ github.event_name != 'schedule' && inputs.mode != 'auto' || steps.expiry.outputs.due == 'true' }}
+        env:
+          MODE: ${{ (github.event_name == 'schedule' || inputs.mode == 'auto') && 'rotate' || inputs.mode }}
+          CONFIRM: ${{ (github.event_name == 'schedule' || inputs.mode == 'auto' || inputs.mode == 'rotate') && 'ROTATE' || inputs.confirm }}
         run: bash deploy/pki-kms/run.sh
+
+      - name: Rotation not due
+        if: ${{ (github.event_name == 'schedule' || inputs.mode == 'auto') && steps.expiry.outputs.due != 'true' }}
+        run: echo "Сертификаты действительны ещё ${{ steps.expiry.outputs.days_left }} дн. (порог $ROTATE_DAYS) — ротация не нужна."
 
       - name: Summary
         if: always()
@@ -158,14 +198,17 @@ jobs:
           {
             echo "### PostgreSQL PKI via Yandex KMS"
             echo ""
-            echo "- Mode: \`${{ inputs.mode }}\`"
+            echo "- Mode: \`${{ env.REQUESTED_MODE }}\`"
             echo "- KMS key: \`${{ env.KMS_KEY_ID }}\`"
             echo "- Результат: **${{ job.status }}**"
+            if [ -n "${{ steps.expiry.outputs.days_left }}" ]; then
+              echo "- Ближайший сертификат: ${{ steps.expiry.outputs.days_left }} дн. до истечения (порог $ROTATE_DAYS)"
+            fi
             echo ""
             echo "После успешной миграции:"
-            echo "1. Отключи Actions → PostgreSQL CA backup (старый ca.key больше не нужен)."
-            echo "2. Не включай локальный auto-rotate: он не имеет доступа к KMS."
-            echo "3. Проверь, что node-1 и node-2 работают на новых листьях, затем ротируй ключ сервисного аккаунта."
+            echo "1. PostgreSQL CA backup пропускается сам: файлового ca.key больше нет."
+            echo "2. Локальный auto-rotate не включай: у node-1 нет прав KMS."
+            echo "3. Еженедельный auto проверяет срок и ротирует только при остатке ≤ $ROTATE_DAYS дней."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Remove service account key from runner

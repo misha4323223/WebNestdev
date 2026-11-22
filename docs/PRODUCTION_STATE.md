@@ -16,8 +16,9 @@ drill — [`PG_PKI_BACKUP.md`](PG_PKI_BACKUP.md)). **22.11.2026, 13:10 UTC — �
 PostgreSQL PKI переведён на Yandex KMS (workflow `45025874998`): корневой CA создан из
 асимметричного ключа KMS `abjifbufu59nah6fth34`, `ca.key` и `ca.srl` удалены с `node-1`,
 маркер `ca-mode=kms`, локальный `webnestdev-pg-tls-rotate.timer` отключён; листья 89 дней,
-доверие только к новому CA. Ротация — workflow `PostgreSQL PKI via Yandex KMS` (режим
-`rotate`). Порядок — в [`PG_PKI_YANDEX_KMS.md`](PG_PKI_YANDEX_KMS.md). Audit salt лежит
+доверие только к новому CA. Ротация — еженедельный `auto` workflow `PostgreSQL PKI via
+Yandex KMS` (понедельник 04:23 UTC; `rotate` при остатке ≤ 30 дней). Порядок — в
+[`PG_PKI_YANDEX_KMS.md`](PG_PKI_YANDEX_KMS.md). Audit salt лежит
 отдельно от ключа
 шифрования в `/var/lib/webnestdev/data/audit-salt` (600) на обеих нодах; preview-логи
 проходят редакцию значений сохранённых секретов. Production работает в
