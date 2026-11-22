@@ -1,21 +1,23 @@
 # Состояние production и оперативная память
 
-Дата среза: **22.11.2026, 07:35 UTC**. Документ фиксирует факты, которые нельзя терять
+Дата среза: **22.11.2026, 13:10 UTC**. Документ фиксирует факты, которые нельзя терять
 между сессиями.
 Секреты здесь не хранятся: только имена переменных, пути и способы проверки.
 
-**Актуально на 22.11.2026, 07:35 UTC:** обе ноды включены, `node-1` — primary,
+**Актуально на 22.11.2026, 13:10 UTC:** обе ноды включены, `node-1` — primary,
 `node-2` — streaming standby; production image `d7c491b` (docs-only коммит после кода
 `538865c`). Публичный `/api/ready` и локальный health обеих нод отдают
 `build=d7c491b47f4bb7f3502b6cb67e30b51b3d5c0f3d`. PostgreSQL TLS включён на обеих нодах:
 `ssl=on`, HBA только `hostssl`, HAProxy — TLS с проверкой CA и `alpn postgresql`, standby —
 `sslmode=verify-full`; все соединения приложения — TLS 1.3. PostgreSQL TLS переведён на
-отдельный CA и уникальные сертификаты нод: `pg_pki.sh` на `node-1`, лист 90 дней, CA 10 лет,
-ротация — `webnestdev-pg-tls-rotate.timer` (проверено 22.11.2026; подробности —
-[`PG_PKI_2026-11-22.md`](PG_PKI_2026-11-22.md); backup CA и restore drill —
-[`PG_PKI_BACKUP.md`](PG_PKI_BACKUP.md)). **22.11.2026, 10:04 UTC — подготовлено, но ещё
-не выполнено:** переход на Yandex KMS (CA-ключ в KMS, без `ca.key` на `node-1`); код,
-workflow и порядок — в [`PG_PKI_YANDEX_KMS.md`](PG_PKI_YANDEX_KMS.md). Audit salt лежит
+отдельный CA и уникальные сертификаты нод: `pg_pki.sh` на `node-1`, лист 90 дней, CA 10 лет
+(подробности — [`PG_PKI_2026-11-22.md`](PG_PKI_2026-11-22.md); backup старого CA и restore
+drill — [`PG_PKI_BACKUP.md`](PG_PKI_BACKUP.md)). **22.11.2026, 13:10 UTC — выполнено:**
+PostgreSQL PKI переведён на Yandex KMS (workflow `45025874998`): корневой CA создан из
+асимметричного ключа KMS `abjifbufu59nah6fth34`, `ca.key` и `ca.srl` удалены с `node-1`,
+маркер `ca-mode=kms`, локальный `webnestdev-pg-tls-rotate.timer` отключён; листья 89 дней,
+доверие только к новому CA. Ротация — workflow `PostgreSQL PKI via Yandex KMS` (режим
+`rotate`). Порядок — в [`PG_PKI_YANDEX_KMS.md`](PG_PKI_YANDEX_KMS.md). Audit salt лежит
 отдельно от ключа
 шифрования в `/var/lib/webnestdev/data/audit-salt` (600) на обеих нодах; preview-логи
 проходят редакцию значений сохранённых секретов. Production работает в

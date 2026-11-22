@@ -1,8 +1,11 @@
 # PostgreSQL PKI через Yandex KMS
 
-**Статус на 22.11.2026, 10:04 UTC:** код и workflow готовы в рабочем дереве; в production
-миграция **ещё не выполнена**. Пока `node-1` использует прежний файловый CA и
-`webnestdev-pg-tls-rotate.timer`. Этот документ — порядок перехода и дальнейшей ротации.
+**Статус на 22.11.2026, 13:10 UTC:** миграция **выполнена** на production (workflow
+`45025874998`, коммит `7fbcb5a`). Корневой CA выпущен ключом KMS
+`abjifbufu59nah6fth34` (`SHA256 C4:58:F8:70:…:ED:F9:BD`, до 19.11.2036), `ca.key` и
+`ca.srl` удалены с `node-1`, `ca-mode=kms`, локальный `webnestdev-pg-tls-rotate.timer`
+отключён, доверие только к новому CA. Этот документ — порядок перехода и дальнейшей
+ротации.
 
 Цель: убрать `ca.key` с `node-1`. Приватный ключ корневого CA хранится в асимметричном ключе
 Yandex KMS, а подпись CSR выполняет отдельный подписант. На нодах остаются только публичный
@@ -245,13 +248,13 @@ python3 -m unittest discover -s deploy/pki-kms -p 'test_*.py' -v
 
 ## 8. Чек-лист
 
-- [ ] Создан service account `pg-pki-kms`.
-- [ ] Создан асимметричный KMS-ключ `webnestdev-pg-root-ca` (ECDSA P-256, deletion protection).
-- [ ] Выданы только `signer` + `publicKeyViewer`; `kms.admin` снят.
-- [ ] `PKI_KMS_SA_KEY_JSON` добавлен в GitHub Secrets, `YC_KMS_KEY_ID` — в Variables.
+- [x] Создан service account `pg-pki-kms`.
+- [x] Создан асимметричный KMS-ключ `webnestdev-pg-root-ca` (ECDSA P-256, deletion protection).
+- [x] Выданы только `signer` + `publicKeyViewer`; `kms.admin` снят.
+- [x] `PKI_KMS_SA_KEY_JSON` добавлен в GitHub Secrets, `YC_KMS_KEY_ID` — в Variables.
 - [ ] В environment `production` включены Required reviewers.
-- [ ] Workflow `migrate` с `confirm=MIGRATE` завершён.
-- [ ] На обеих нодах `verify`, `show ssl=on`, репликация `streaming`.
-- [ ] `ca.key` отсутствует, локальный timer отключён.
-- [ ] Старый backup workflow отключён; старый age-архив сохранён офлайн.
+- [x] Workflow `migrate` с `confirm=MIGRATE` завершён (`45025874998`).
+- [x] На обеих нодах `verify`, `show ssl=on`, репликация `streaming`.
+- [x] `ca.key` отсутствует, локальный timer отключён.
+- [x] Старый backup workflow пропускается без `ca.key`; старый age-архив в S3 под Object Lock до 22.11.2027.
 - [ ] Service account key ротирован после первого успешного `rotate`.
