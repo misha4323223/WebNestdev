@@ -119,6 +119,33 @@ jobs:
           print("service account key: service_account_id=" + str(key.get("service_account_id")))
           PY
 
+      - name: Diagnose KMS access
+        if: ${{ inputs.mode != 'verify' }}
+        run: |
+          python3 - <<'PY'
+          import os, sys
+          sys.path.insert(0, "deploy/pki-kms")
+          import pki_kms
+          try:
+              client = pki_kms.KmsClient(
+                  key_id=os.environ["KMS_KEY_ID"],
+                  auth=pki_kms.IamAuth(sa_key_file=os.environ["SA_KEY_FILE"]),
+              )
+          except Exception as exc:
+              print("KMS diagnose: client init failed: " + str(exc))
+              raise SystemExit(0)
+          for label, action in (
+              ("get_key", client.get_key),
+              ("sign", lambda: client.sign(b"kms-diagnostic")),
+              ("public_key", client.public_key),
+          ):
+              try:
+                  result = action()
+                  print("KMS diagnose: " + label + "=ok")
+              except Exception as exc:
+                  print("KMS diagnose: " + label + "=failed: " + str(exc))
+          PY
+
       - name: Migrate, rotate or verify PostgreSQL PKI
         run: bash deploy/pki-kms/run.sh
 
