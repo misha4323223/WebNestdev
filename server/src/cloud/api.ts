@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { getCloudConnection, type CloudConnection } from "./connections.js";
 import type { CloudProviderId } from "./providers.js";
 import { mwsHostForPath, mwsRequest } from "../mws/mws-auth.js";
@@ -7,8 +8,8 @@ import { assertNoBillingChange } from "../security/billing-guard.js";
  * Запросы к API подключённых облаков от имени пользователя — и чтение, и изменения.
  *
  * Ключ облака почти всегда открывает оба направления, поэтому запрета «только чтение» здесь нет:
- * есть решение пользователя. Изменения включены на подключении (карточка говорит об этом
- * прямо), выключаются переключателем в карточке и проверяются перед каждым мутирующим запросом
+ * есть решение пользователя. Новые подключения по умолчанию только читают, запись включается
+ * переключателем в карточке и проверяется перед каждым мутирующим запросом
  * (`assertWritesAllowed`). Вторая половина договора — на стороне агента: он выполняет создание,
  * изменение и удаление только по явной просьбе пользователя, а не по своей инициативе
  * (см. описание инструмента `cloud.request` и системный промпт).
@@ -27,6 +28,23 @@ export type CloudApiRequest = { method?: string; path: string; host?: string; bo
 /** Читающий запрос или меняющий ресурсы — только по методу, без догадок о пути. */
 export function needsWriteConsent(method: string) {
   return !READ_METHODS.has(method.toUpperCase());
+}
+
+/**
+ * Cloud.ru не имеет одного общего шлюза для всех сервисов: compute и проекты живут на
+ * разных хостах. Без этой карты модель уходит на api.cloud.ru/v3/vms и получает 404,
+ * хотя правильный адрес — compute.api.cloud.ru/api/v1/vms.
+ */
+const CLOUD_RU_COMPUTE_PREFIXES = [
+  "/api/v1/vms", "/api/v1/volumes", "/api/v1/networks",
+  "/api/v1/subnets", "/api/v1/images", "/api/v1/availability-zones", "/api/v1/tags",
+];
+
+export function cloudRuHostForPath(path: string) {
+  const clean = path.split("?")[0] ?? path;
+  if (clean === "/v3/projects" || clean.startsWith("/v3/projects/")) return "organization.api.cloud.ru";
+  if (CLOUD_RU_COMPUTE_PREFIXES.some(prefix => clean === prefix || clean.startsWith(prefix + "/"))) return "compute.api.cloud.ru";
+  return undefined;
 }
 
 /**
@@ -55,7 +73,7 @@ export function cloudRequestTarget(provider: CloudProviderId, request: CloudApiR
     return { method, url: "https://api.timeweb.cloud" + path, host: "api.timeweb.cloud" };
   }
   if (provider === "cloudru") {
-    const host = request.host?.trim() || "api.cloud.ru";
+    const host = request.host?.trim() || cloudRuHostForPath(path) || "api.cloud.ru";
     if (host !== "cloud.ru" && !host.endsWith(".cloud.ru")) throw new Error("Cloud.ru: разрешены только хосты *.cloud.ru, получен " + host);
     return { method, url: "https://" + host + path, host };
   }
@@ -83,9 +101,9 @@ function fieldsOf(connection: CloudConnection) {
 const tokenCache = new Map<string, { token: string; expiresAt: number }>();
 
 async function cloudRuToken(userId: string, keyId: string, secret: string) {
-  // Ключ в кэше — по паре (пользователь, Key ID): после переподключения с другим ключом
-  // токен старого аккаунта не должен отвечать за нового.
-  const cacheKey = userId + ":" + keyId;
+  // В ключ кэша входит и отпечаток секрета: перевыпуск ключа с тем же Key ID не должен
+  // оставлять в работе токен старого секрета до истечения получаса.
+  const cacheKey = userId + ":" + keyId + ":" + createHash("sha256").update(secret).digest("hex");
   const cached = tokenCache.get(cacheKey);
   if (cached && cached.expiresAt - 60_000 > Date.now()) return cached.token;
   const controller = new AbortController();

@@ -12,8 +12,8 @@ import { accountPlanFor } from "../billing/store.js";
  * Облачные коннекторы. Ключ проверяется до сохранения: подключённым считается только то
  * облако, которое ответило на пробный запрос, — иначе карточка обещала бы доступ, которого нет.
  *
- * Разрешение на изменения приходит от пользователя вместе с подключением (`allowWrites`,
- * по умолчанию включено — карточка говорит об этом до нажатия «Сохранить») и меняется
+ * Разрешение на изменения — отдельное решение пользователя (`allowWrites`): новые подключения
+ * по умолчанию только читают, а запись включается переключателем в карточке и меняется
  * маршрутом `/api/cloud/:provider/writes`. Сам ключ никогда не возвращается.
  */
 
@@ -44,7 +44,7 @@ export async function registerCloudRoutes(app: FastifyInstance) {
           name: provider.name,
           connected: Boolean(connection),
           account: connection?.account ?? null,
-          allowWrites: connection?.allowWrites ?? true,
+          allowWrites: connection?.allowWrites ?? false,
           updatedAt: connection?.updatedAt ?? null,
         };
       }),
@@ -90,8 +90,8 @@ export async function registerCloudRoutes(app: FastifyInstance) {
     }
 
     const now = new Date().toISOString();
-    // Новое подключение разрешает изменения: карточка предупредила об этом до сохранения ключа.
-    const writes = allowWrites ?? existing?.allowWrites ?? true;
+    // Новое подключение по умолчанию только читает; запись — осознанный переключатель.
+    const writes = allowWrites ?? existing?.allowWrites ?? false;
     await saveCloudConnection({
       userId: user.id,
       provider: provider.id,
@@ -158,6 +158,6 @@ export async function registerCloudRoutes(app: FastifyInstance) {
     const provider = providerFrom(request.params);
     if (!provider) return reply.code(404).send({ error: "Неизвестное облако" });
     await deleteCloudConnection(user.id, provider.id);
-    return { id: provider.id, name: provider.name, connected: false, account: null, allowWrites: true };
+    return { id: provider.id, name: provider.name, connected: false, account: null, allowWrites: false };
   });
 }

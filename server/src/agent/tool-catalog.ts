@@ -5,9 +5,10 @@ import { plannerToolVisible } from "./planner-policy.js";
  * Набор схем инструментов, который получает модель в одном запуске.
  *
  * Раньше каждый шаг отправлял все зарегистрированные инструменты: 72 схемы, около 69 000
- * символов. Почти половина из них относится к деплою, облакам, доменам и мобильным сборкам и
- * обычной правке кода не нужна. Здесь набор выбирается один раз на запуск: он остаётся
- * стабильным для кэша префикса DeepSeek и не раздувает каждый следующий шаг.
+ * символов. Почти половина из них относится к деплою и мобильным сборкам и обычной правке кода
+ * не нужна. Здесь набор выбирается один раз на запуск: он остаётся стабильным для кэша
+ * префикса DeepSeek и не раздувает каждый следующий шаг. Инструменты подключённых интеграций
+ * (cloud, yandex, domain) остаются всегда: они зависят от аккаунта, а не от формулировки задачи.
  *
  * Это не замена проверкам безопасности: `executeTool` всё равно откажет в инструменте, которого
  * нет в этом наборе, а планировщик дополнительно запрещает изменения.
@@ -49,6 +50,17 @@ const BROWSER_TOOLS = ["browser.runtime", "browser.scenario", "browser.screensho
 /** Деплой, облака, домены, базы и сервисы — отдельная группа по смыслу задачи. */
 const DEPLOY_PREFIXES = ["deploy.", "domain.", "cloud.", "yandex.", "service.", "database."] as const;
 const DEPLOY_TOOLS = ["access.request"] as const;
+/**
+ * Подключённые облака, домены и Yandex Cloud — состояние аккаунта, а не текст задачи.
+ * Короткое «проверь ещё раз» после включения изменений не должно оставлять модель без
+ * yandex.request: иначе она решает, что инструменты пропали, хотя подключение на месте.
+ * Остальные дорогие группы (deploy, expo) по-прежнему выбираются по задаче.
+ */
+const INTEGRATION_TOOLS = [
+  "cloud.status", "cloud.request", "cloud.catalog",
+  "yandex.status", "yandex.resources", "yandex.request",
+  "domain.check", "domain.list", "domain.request",
+] as const;
 /** Expo нужен только мобильному проекту, а не обычному лендингу. */
 const MOBILE_PREFIX = "expo.";
 
@@ -89,6 +101,7 @@ export function selectToolNames(options: ToolCatalogOptions): string[] {
   const planner = options.mode === "planner";
   const names: string[] = [
     ...CORE_TOOLS,
+    ...INTEGRATION_TOOLS,
     ...(options.repoMap ? REPO_TOOLS : []),
     ...(options.testRunner ? TEST_TOOLS : []),
     ...(options.archMemory ? MEMORY_TOOLS : []),
@@ -109,11 +122,6 @@ export function selectToolNames(options: ToolCatalogOptions): string[] {
   // сохранить стабильный порядок и не включать чужие группы.
   for (const name of [
     "deploy.plan", "deploy.status", "deploy.check",
-    "domain.check", "domain.list", "domain.request",
-    "cloud.status", "cloud.request", "cloud.catalog",
-    "yandex.status", "yandex.resources", "yandex.request",
-    "service.status", "service.env", "service.secrets",
-    "database.status", "database.env",
     "access.request",
     "expo.status", "expo.setup", "expo.build", "expo.build_status",
   ]) {

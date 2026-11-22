@@ -46,7 +46,9 @@ test("only provider hosts are accepted", () => {
   assert.throws(() => cloudRequestTarget("mws", { path: "/v3/projects" }), /endpoint/);
   assert.throws(() => cloudRequestTarget("mws", { path: "/rm/v3/projects", host: "api.mwsapis.ru" }), /каталог эндпоинтов/);
   assert.throws(() => cloudRequestTarget("mws", { path: "/rm/v3/projects", host: "evil.example" }), /mwsapis/);
-  assert.equal(cloudRequestTarget("cloudru", { path: "/v3/projects" }).host, "api.cloud.ru");
+  assert.equal(cloudRequestTarget("cloudru", { path: "/v3/projects" }).host, "organization.api.cloud.ru");
+  assert.equal(cloudRequestTarget("cloudru", { path: "/api/v1/vms" }).host, "compute.api.cloud.ru");
+  assert.equal(cloudRequestTarget("cloudru", { path: "/api/v1/vms", host: "vm.api.cloud.ru" }).url, "https://vm.api.cloud.ru/api/v1/vms");
   assert.equal(cloudRequestTarget("cloudru", { path: "/v3/projects", host: "vm.api.cloud.ru" }).url, "https://vm.api.cloud.ru/v3/projects");
   assert.throws(() => cloudRequestTarget("cloudru", { path: "/v3/projects", host: "cloud.ru.evil.example" }), /cloud\.ru/);
 });

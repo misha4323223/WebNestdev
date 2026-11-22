@@ -24,7 +24,7 @@ const CATALOG: Record<CloudProviderId, CloudServiceEntry[]> = {
   timeweb: [
     { prefix: "/api/v1/servers", example: "/api/v1/servers" },
     { prefix: "/api/v1/databases", example: "/api/v1/databases" },
-    { prefix: "/api/v1/s3-storages", example: "/api/v1/s3-storages" },
+    { prefix: "/api/v1/storages", example: "/api/v1/storages/buckets" },
     { prefix: "/api/v1/domains", example: "/api/v1/domains" },
     { prefix: "/api/v1/firewall-groups", example: "/api/v1/firewall-groups" },
     { prefix: "/api/v1/k8s-clusters", example: "/api/v1/k8s-clusters" },
@@ -32,12 +32,12 @@ const CATALOG: Record<CloudProviderId, CloudServiceEntry[]> = {
     { prefix: "/api/v1/projects", example: "/api/v1/projects" },
   ],
   cloudru: [
-    { prefix: "/v3/projects", example: "/v3/projects" },
-    { prefix: "/v3/vms", example: "/v3/vms" },
-    { prefix: "/v3/volumes", example: "/v3/volumes" },
-    { prefix: "/v3/networks", example: "/v3/networks" },
-    { prefix: "/v3/subnets", example: "/v3/subnets" },
-    { prefix: "/v3/buckets", example: "/v3/buckets" },
+    { prefix: "/v3/projects", host: "organization.api.cloud.ru", example: "/v3/projects" },
+    { prefix: "/api/v1/vms", host: "compute.api.cloud.ru", example: "/api/v1/vms?project_id=<projectId>" },
+    { prefix: "/api/v1/volumes", host: "compute.api.cloud.ru", example: "/api/v1/volumes?project_id=<projectId>" },
+    { prefix: "/api/v1/networks", host: "compute.api.cloud.ru", example: "/api/v1/networks?project_id=<projectId>" },
+    { prefix: "/api/v1/subnets", host: "compute.api.cloud.ru", example: "/api/v1/subnets?project_id=<projectId>" },
+    { prefix: "/api/v1/images", host: "compute.api.cloud.ru", example: "/api/v1/images?project_id=<projectId>" },
   ],
   regru: [
     { prefix: "/v1/reglets", example: "/v1/reglets" },

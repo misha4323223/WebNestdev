@@ -146,6 +146,29 @@ test("IAM-токен запрашивается по спецификации М
   );
 });
 
+test("IAM-токен явного ключа не переиспользуется другим ключом", async t => {
+  clearEnv();
+  t.after(clearEnv);
+  const otherKey = JSON.stringify({
+    ...JSON.parse(AUTHORIZED_KEY),
+    keyId: "projects/webnestdev/serviceAccounts/sa-agent/authorizedKeys/key-2",
+  });
+  let calls = 0;
+  await withFetch(
+    () => {
+      calls += 1;
+      return new Response(JSON.stringify({ accessToken: "t1.per-key", expirationTs: new Date(Date.now() + 3600 * 1000).toISOString() }), { status: 200 });
+    },
+    async () => {
+      assert.equal(await mwsIamToken({ key: AUTHORIZED_KEY }), "t1.per-key");
+      assert.equal(await mwsIamToken({ key: AUTHORIZED_KEY }), "t1.per-key");
+      assert.equal(calls, 1, "повторный вызов того же ключа должен брать токен из кеша");
+      assert.equal(await mwsIamToken({ key: otherKey }), "t1.per-key");
+      assert.equal(calls, 2, "другой ключ не должен получать чужой токен из кеша");
+    },
+  );
+});
+
 test("ключ можно проверить, не занося его в окружение", async t => {
   clearEnv();
   const directory = await mkdtemp(join(tmpdir(), "webnestdev-mws-key-"));

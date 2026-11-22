@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { approveMutation, mutationApprovalQuestion } from "./mutation-approval.js";
+import { approveMutation, mutationApprovalDetails, mutationApprovalQuestion } from "./mutation-approval.js";
 import { resolvePendingQuestion } from "../questions/pending-questions.js";
 
 const baseContext = {
@@ -22,6 +22,25 @@ test("карточка подтверждения называет провай�
   assert.ok(question.length <= 400);
 });
 
+test("структурированная карточка форматирует тело и убирает пустой объект", () => {
+  const details = mutationApprovalDetails({
+    provider: "Timeweb Cloud",
+    method: "POST",
+    resource: "/api/v1/servers",
+    body: { name: "web-1" },
+  });
+  assert.equal(details.kind, "mutation");
+  assert.equal(details.provider, "Timeweb Cloud");
+  assert.equal(details.method, "POST");
+  assert.match(details.body ?? "", /"name": "web-1"/);
+  assert.equal("body" in mutationApprovalDetails({
+    provider: "Timeweb Cloud",
+    method: "POST",
+    resource: "/api/v1/servers",
+    body: {},
+  }), false);
+});
+
 test("без панели мутация не выполняется (fail closed)", async () => {
   const approved = await approveMutation(baseContext, {
     provider: "Timeweb Cloud",
@@ -32,12 +51,14 @@ test("без панели мутация не выполняется (fail close
 });
 
 test("пользователь разрешил — мутация проходит", async () => {
-  const events: Array<{ type: string; requestId: string }> = [];
+  const events: Array<{ type: string; requestId: string; approval?: { kind: string; provider: string } }> = [];
   const pending = approveMutation(
     { ...baseContext, emit: (event: unknown) => events.push(event as { type: string; requestId: string }) },
     { provider: "Yandex Cloud", method: "DELETE", resource: "compute/v1/instances/abc" },
   );
   assert.equal(events[0]?.type, "question.asked");
+  assert.equal(events[0]?.approval?.kind, "mutation");
+  assert.equal(events[0]?.approval?.provider, "Yandex Cloud");
   assert.equal(resolvePendingQuestion(events[0]!.requestId, { ok: true, selected: ["Разрешить изменение"] }), true);
   assert.equal(await pending, true);
 });

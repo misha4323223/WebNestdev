@@ -54,6 +54,7 @@ export const CLOUD_PROVIDERS: CloudProviderInfo[] = [
     fields: [
       { key: "keyId", label: "Key ID", placeholder: "идентификатор ключа" },
       { key: "secret", label: "Key Secret", placeholder: "секрет ключа", secret: true },
+      { key: "projectId", label: "ID проекта", placeholder: "ID проекта из консоли Cloud.ru" },
     ],
   },
   {

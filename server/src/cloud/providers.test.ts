@@ -21,17 +21,18 @@ test("every provider declares the fields its verification reads", () => {
 });
 
 test("credentials are trimmed and only the declared fields are passed on", () => {
-  const fields = readCloudFields(cloudru, { keyId: "  abc  ", secret: " s3cret ", extra: "ignored" });
-  assert.deepEqual(fields, { keyId: "abc", secret: "s3cret" });
+  const fields = readCloudFields(cloudru, { keyId: "  abc  ", secret: " s3cret ", projectId: "  p-1  ", extra: "ignored" });
+  assert.deepEqual(fields, { keyId: "abc", secret: "s3cret", projectId: "p-1" });
 });
 
 test("a missing or blank credential is rejected instead of stored", () => {
   assert.throws(() => readCloudFields(cloudru, { secret: "x" }), /Key ID/);
-  assert.throws(() => readCloudFields(cloudru, { keyId: "   ", secret: "x" }), /Key ID/);
-  assert.throws(() => readCloudFields(cloudru, { keyId: "x", secret: "" }), /Key Secret/);
+  assert.throws(() => readCloudFields(cloudru, { keyId: "   ", secret: "x", projectId: "p-1" }), /Key ID/);
+  assert.throws(() => readCloudFields(cloudru, { keyId: "x", secret: "" , projectId: "p-1" }), /Key Secret/);
+  assert.throws(() => readCloudFields(cloudru, { keyId: "x", secret: "s" }), /ID проекта/);
   assert.throws(() => readCloudFields(cloudru, null), /объект/);
 });
 
 test("an oversized value is rejected before it reaches the provider", () => {
-  assert.throws(() => readCloudFields(cloudru, { keyId: "x", secret: "a".repeat(8001) }), /слишком длинное/);
+  assert.throws(() => readCloudFields(cloudru, { keyId: "x", secret: "a".repeat(8001), projectId: "p-1" }), /слишком длинное/);
 });

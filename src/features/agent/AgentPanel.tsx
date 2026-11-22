@@ -390,7 +390,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   const [accessPrompt,setAccessPrompt]=useState<AccessPrompt|null>(null);
   const [accessValues,setAccessValues]=useState<Record<string,string>>({});
   const [accessVisible,setAccessVisible]=useState<Record<string,boolean>>({});
-  const [accessWrites,setAccessWrites]=useState(true);
+  const [accessWrites,setAccessWrites]=useState(false);
   const [accessBusy,setAccessBusy]=useState(false);
   const [accessError,setAccessError]=useState("");
   // Показать значение можно только на время: окно закрывается — режим показа сбрасывается,
@@ -1184,10 +1184,10 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
           ...(event.docsUrl?{docsUrl:event.docsUrl}:{}),
           verificationNote:event.verificationNote??"",
           writes:Boolean(event.writes),
-          defaultAllowWrites:event.defaultAllowWrites!==false,
+          defaultAllowWrites:event.defaultAllowWrites===true,
         });
         setAccessValues({});setAccessVisible({});setAccessError("");setAccessBusy(false);
-        setAccessWrites(event.defaultAllowWrites!==false);
+        setAccessWrites(event.defaultAllowWrites===true);
       }
       if(event.type==="question.asked"&&event.requestId&&event.question&&event.options?.length){
         // Агент спрашивает о выборе: окно выезжает над полем ввода, а запуск стоит и ждёт ответа.
@@ -1196,6 +1196,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
           multiSelect:Boolean(event.multiSelect),
           ...(event.maxSelections===undefined?{}:{maxSelections:event.maxSelections}),
           allowCustom:event.allowCustom!==false,
+          ...(event.approval?{approval:event.approval}:{}),
         });
         setQuestionError("");setQuestionBusy(false);
       }

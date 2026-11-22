@@ -64,6 +64,8 @@ export type AgentSocketEvent={
   multiSelect?:boolean;
   maxSelections?:number;
   allowCustom?:boolean;
+  /** Структурное подтверждение мутации: панель рисует отдельную карточку вместо текста вопроса. */
+  approval?:{kind:"mutation";provider:string;method:string;resource:string;body?:string};
   /**
    * Set on changes.created: the finished task was written to the project's history.
    * `pushed` is false because only the user sends commits to GitHub.

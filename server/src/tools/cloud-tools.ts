@@ -1,8 +1,8 @@
 import { z } from "zod";
 import { registerTool } from "../tool-registry.js";
-import { cloudFetch } from "../cloud/api.js";
+import { cloudFetch, cloudRequestTarget } from "../cloud/api.js";
 import { cloudDocsUrl, cloudNotFoundHint, cloudServiceCatalog } from "../cloud/catalog.js";
-import { listCloudConnections } from "../cloud/connections.js";
+import { getCloudConnection, listCloudConnections } from "../cloud/connections.js";
 import { CLOUD_PROVIDERS } from "../cloud/providers.js";
 import { FREE_CONNECTOR_MESSAGE, connectorRefusal } from "../account/connector-access.js";
 import { approveMutation } from "./mutation-approval.js";
@@ -25,6 +25,16 @@ const requestSchema = z.object({
   host: z.string().max(120).optional(),
   body: z.unknown().optional(),
 });
+
+/** Только безопасные поля подключения для статуса: секрет и ключи модели не отдаются. */
+function connectionMeta(connection: { secret: string }) {
+  try {
+    const fields = JSON.parse(connection.secret) as Record<string, unknown>;
+    return typeof fields.projectId === "string" && fields.projectId.trim() ? { projectId: fields.projectId.trim() } : {};
+  } catch {
+    return {};
+  }
+}
 
 registerTool({
   name: "cloud.status",
@@ -53,6 +63,7 @@ registerTool({
       // Без этого поля агент не знает, пройдёт ли мутирующий запрос через гейт, и не сможет
       // честно объяснить отказ вместо попытки обойти его.
       allowWrites: connection.allowWrites,
+      ...connectionMeta(connection),
       connectedAt: connection.updatedAt,
     }));
     const missing = CLOUD_PROVIDERS.filter(provider => !connections.some(connection => connection.provider === provider.id)).map(provider => provider.name);
@@ -74,8 +85,10 @@ registerTool({
     "Timeweb Cloud paths start with /api/v1/ (base https://api.timeweb.cloud); REG.RU Облако paths start with /v1/ " +
     "(base https://api.cloudvps.reg.ru, only that host); MWS: omit host — it is derived from the service in the path " +
     "(/rm → iam.mwsapis.ru, /compute → compute.mwsapis.ru, /vpc → vpc.mwsapis.ru, /mpostgres → mpostgres.mwsapis.ru); " +
-    "api.mwsapis.ru is only the endpoint catalog, not an API gateway; " +
-    "Cloud.ru defaults to api.cloud.ru and allows *.cloud.ru. Use it to look up servers, projects, buckets, DNS records or " +
+    "api.mwsapis.ru is only the endpoint catalog, not an API gateway; Cloud.ru has no universal gateway: use " +
+    "host=compute.api.cloud.ru for /api/v1/vms and other compute paths (project_id is required), " +
+    "and host=organization.api.cloud.ru for /v3/projects. api.cloud.ru is not the compute gateway. " +
+    "Use it to look up servers, projects, buckets, DNS records or " +
     "anything else the provider's docs describe. CHANGES RULE: POST/PUT/PATCH/DELETE are executed only when the user " +
     "explicitly asked for that exact action in this conversation — never create, restart, resize or delete a resource on " +
     "your own initiative — not as a cleanup, a tidy-up or a just-in-case step. Before a mutating call, name the provider, the " +
@@ -95,11 +108,19 @@ registerTool({
     const refusal = await connectorRefusal(context.userId, "cloud");
     if (refusal) return { ok: false, restricted: true, code: refusal.code, error: refusal.error };
     const method = (request.method ?? "GET").toUpperCase();
+    const target = cloudRequestTarget(request.provider, request);
     if (method !== "GET" && method !== "HEAD") {
+      const connection = await getCloudConnection(context.userId, request.provider);
+      if (!connection) return { ok: false, error: "Облако не подключено: попросите пользователя подключить его в «Интеграции» → «Облака»." };
+      // Проверяем разрешение до карточки: иначе пользователь подтверждает запрос и только
+      // потом узнаёт, что изменения в карточке выключены.
+      if (!connection.allowWrites) {
+        return { ok: false, denied: true, code: "WRITES_DISABLED", error: "Изменения этого облака выключены: включите «Разрешить агенту изменять ресурсы» в карточке облака." };
+      }
       const approved = await approveMutation(context, {
-        provider: request.provider,
+        provider: CLOUD_PROVIDERS.find(provider => provider.id === request.provider)?.name ?? request.provider,
         method,
-        resource: request.path,
+        resource: target.host + request.path,
         ...(request.body === undefined ? {} : { body: request.body }),
       });
       if (!approved) {

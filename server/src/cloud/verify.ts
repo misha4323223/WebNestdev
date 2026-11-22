@@ -9,6 +9,8 @@ import type { CloudProviderId } from "./providers.js";
 
 const TIMEOUT_MS = 15_000;
 const MAX_DETAIL = 300;
+const CLOUD_RU_COMPUTE = "https://compute.api.cloud.ru";
+const CLOUD_RU_PROJECTS = "https://organization.api.cloud.ru/v3/projects";
 
 async function call(url: string, init: RequestInit) {
   const controller = new AbortController();
@@ -44,7 +46,11 @@ async function verifyTimeweb(fields: Record<string, string>) {
   return { account: "Timeweb Cloud" };
 }
 
-/** Cloud.ru: Key ID + Key Secret обмениваются на токен (живёт час). */
+/**
+ * Cloud.ru: Key ID + Key Secret обмениваются на токен (живёт час), а затем проверяется
+ * реальный доступ к проекту. IAM-токен сам по себе не доказывает, что сервисный аккаунт
+ * видит ресурсы: без роли в проекте первый же compute-запрос вернёт 403.
+ */
 async function verifyCloudRu(fields: Record<string, string>) {
   const response = await call("https://iam.api.cloud.ru/api/v1/auth/token", {
     method: "POST",
@@ -61,7 +67,40 @@ async function verifyCloudRu(fields: Record<string, string>) {
     /* ответ не JSON — ниже это и есть ошибка */
   }
   if (!token) throw new Error("Cloud.ru вернул ответ без токена: " + detail(text));
-  return { account: "Cloud.ru" };
+
+  const projectId = fields.projectId?.trim();
+  if (projectId) {
+    const probe = await call(
+      CLOUD_RU_COMPUTE + "/api/v1/vms?project_id=" + encodeURIComponent(projectId) + "&limit=1",
+      { headers: { Authorization: "Bearer " + token, Accept: "application/json" } },
+    );
+    const probeText = await probe.text();
+    if (!probe.ok) {
+      throw new Error("Cloud.ru не дал доступ к проекту " + projectId + " (HTTP " + probe.status + "): " + detail(probeText));
+    }
+    return { account: "Cloud.ru · проект " + projectId };
+  }
+
+  // Старые подключения без projectId: пробуем хотя бы список проектов, чтобы не считать
+  // подключением один лишь обмен ключа на токен.
+  const projects = await call(CLOUD_RU_PROJECTS, { headers: { Authorization: "Bearer " + token, Accept: "application/json" } });
+  const projectsText = await projects.text();
+  if (projects.status === 401 || projects.status === 403) {
+    throw new Error("Cloud.ru не дал доступ к проектам (HTTP " + projects.status + "): " + detail(projectsText));
+  }
+  if (projects.ok) {
+    let count = 0;
+    try {
+      const parsed = JSON.parse(projectsText) as { projects?: unknown[]; items?: unknown[] };
+      count = Array.isArray(parsed.projects) ? parsed.projects.length : Array.isArray(parsed.items) ? parsed.items.length : 0;
+    } catch {
+      /* ответ не JSON — подпись останется без числа */
+    }
+    return { account: count ? "Cloud.ru · проектов: " + count : "Cloud.ru · проектов: 0" };
+  }
+  // 404/405 означают, что старый ключ всё ещё рабочий, но проект не указан. Не выдаём это
+  // за проверенный доступ к ресурсам: пользователь увидит просьбу указать ID проекта.
+  throw new Error("Cloud.ru принял ключ, но не подтвердил доступ к проекту. Укажите ID проекта в карточке Cloud.ru.");
 }
 
 /**

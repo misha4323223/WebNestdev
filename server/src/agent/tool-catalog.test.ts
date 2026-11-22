@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { selectToolNames } from "./tool-catalog.js";
 import { getToolDefinitionsFor, registerTool } from "../tool-registry.js";
 
-test("каталог разработчика оставляет ядро и не тащит интеграции без задачи", () => {
+test("каталог разработчика всегда оставляет инструменты интеграций, но не деплой", () => {
   const names = selectToolNames({ mode: "developer", task: "поправь кнопку в существующем проекте" });
   assert.ok(names.includes("fs.read"));
   assert.ok(names.includes("fs.edit"));
@@ -14,6 +14,9 @@ test("каталог разработчика оставляет ядро и н�
   assert.ok(names.includes("net.download"), "скачивание ассета нужен обычной задаче");
   assert.ok(names.includes("database.status"), "проверка базы нужна до кода хранения");
   assert.ok(names.includes("service.status"), "проверка интеграций нужна до просьбы о ключе");
+  assert.ok(names.includes("yandex.request"), "подключённый Yandex Cloud не должен зависеть от слов в короткой реплике");
+  assert.ok(names.includes("cloud.request"), "подключённое облако доступно в любом запуске");
+  assert.ok(names.includes("domain.request"), "подключённый регистратор доступен в любом запуске");
   assert.ok(!names.includes("web.search"), "поиск выключен по умолчанию");
   assert.ok(!names.includes("browser.runtime"), "Chromium выключен по умолчанию");
   assert.ok(!names.includes("deploy.plan"), "деплой не нужен обычной правке");
@@ -49,7 +52,7 @@ test("планировщик не получает схемы изменяющи
   assert.ok(names.includes("fs.read"));
   assert.ok(names.includes("plan.update"));
   assert.ok(!names.includes("plan.milestones"), "milestone-план планировщика выключен по умолчанию");
-  for (const name of ["fs.write", "fs.edit", "git.commit", "preview.start", "project.check", "image.generate", "database.env", "service.env", "net.download"]) {
+  for (const name of ["fs.write", "fs.edit", "git.commit", "preview.start", "project.check", "image.generate", "database.env", "service.env", "net.download", "cloud.request", "domain.request"]) {
     assert.ok(!names.includes(name), "планировщик не должен видеть " + name);
   }
   // Задача про деплой добавляет группу, но запись секретов остаётся запрещённой и там.

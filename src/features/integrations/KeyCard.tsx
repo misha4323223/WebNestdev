@@ -60,8 +60,8 @@ export function KeyCard({ provider, state, onChanged, endpoint, keyLabel = "Гд
   fineprint?: string;
   /**
    * Разрешение на изменения. Если передано, у карточки есть переключатель: до подключения —
-   * черновик (включён), после — состояние с сервера. Так пользователь решает про доступ до
-   * того, как ключ сохранён, а не узнаёт о нём потом.
+   * черновик (по умолчанию выключен), после — состояние с сервера. Так пользователь решает
+   * про доступ до того, как ключ сохранён, а не узнаёт о нём потом.
    */
   writes?: { allowed: boolean; busy?: boolean; onToggle: (allowed: boolean) => void };
   /** Перечитать живую подпись (число серверов, домены, аккаунт), не меняя ключ. */
@@ -74,8 +74,8 @@ export function KeyCard({ provider, state, onChanged, endpoint, keyLabel = "Гд
   const [fields, setFields] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  /** Черновик разрешения до подключения: по умолчанию включён, как и на сервере. */
-  const [writesDraft, setWritesDraft] = useState(true);
+  /** Черновик разрешения до подключения: по умолчанию только чтение, как и на сервере. */
+  const [writesDraft, setWritesDraft] = useState(false);
   const connected = Boolean(state?.connected);
   const allowWrites = writes ? (connected ? writes.allowed : writesDraft) : undefined;
 

@@ -29,31 +29,62 @@ export const MUTATION_APPROVAL_OPTIONS = [
   { label: "Отклонить" },
 ];
 
-function bodyPreview(body: unknown): string {
+/** Структурированные данные для карточки подтверждения в панели. */
+export type MutationApprovalDetails = {
+  kind: "mutation";
+  provider: string;
+  method: string;
+  resource: string;
+  body?: string;
+};
+
+function stringifyBody(body: unknown, pretty: boolean): string {
   if (body === undefined) return "";
-  let text: string;
   try {
-    text = JSON.stringify(body) ?? "";
+    return (pretty ? JSON.stringify(body, null, 2) : JSON.stringify(body)) ?? "";
   } catch {
-    text = String(body);
+    return String(body);
   }
+}
+
+function bodyPreview(body: unknown): string {
+  const text = stringifyBody(body, false);
   if (!text) return "";
   return text.length > 160 ? text.slice(0, 160) + "…" : text;
 }
 
-/** Текст карточки; отдельная функция, чтобы его можно было проверить в тесте. */
+/** Тело для карточки: пустой объект не показываем как отдельную строку. */
+function approvalBody(body: unknown): string {
+  const text = stringifyBody(body, true);
+  if (!text || text === "{}") return "";
+  return text.length > 1200 ? text.slice(0, 1200) + "…" : text;
+}
+
+/** Данные карточки; отдельная функция, чтобы их можно было проверить в тесте. */
+export function mutationApprovalDetails(request: MutationRequest): MutationApprovalDetails {
+  const body = approvalBody(request.body);
+  return {
+    kind: "mutation",
+    provider: request.provider,
+    method: request.method,
+    resource: request.resource,
+    ...(body ? { body } : {}),
+  };
+}
+
+/** Текст для клиентов без структурной карточки; панель показывает поля отдельно. */
 export function mutationApprovalQuestion(request: MutationRequest): string {
   const body = bodyPreview(request.body);
   return (
-    "Агент просит изменить ресурс. Провайдер: " +
+    "Агент подготовил изменение. Провайдер: " +
     request.provider +
-    ". Действие: " +
+    ". Метод: " +
     request.method +
     " " +
     request.resource +
     "." +
     (body ? " Тело: " + body + "." : "") +
-    " Выполнить?"
+    " Подтвердить?"
   ).slice(0, 400);
 }
 
@@ -85,6 +116,7 @@ export async function approveMutation(
     options: question.options,
     multiSelect: false,
     allowCustom: false,
+    approval: mutationApprovalDetails(request),
     expiresAt: question.expiresAt,
   });
   const resolution = await answer;

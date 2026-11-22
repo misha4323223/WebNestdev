@@ -11,8 +11,8 @@ import type { CloudProviderId } from "./providers.js";
  * Файловое хранилище — запасной путь для локальной разработки, как у остальных сторов.
  *
  * `allowWrites` — решение пользователя, а не догадка платформы: ключ облака почти всегда
- * открывает и чтение, и изменение ресурсов, поэтому при подключении карточка прямо говорит об
- * этом, разрешение включено по умолчанию и выключается переключателем в той же карточке.
+ * открывает и чтение, и изменение ресурсов, поэтому новые подключения по умолчанию только
+ * читают, а запись включается отдельным переключателем в карточке.
  */
 export type CloudConnection = {
   userId: string;
@@ -87,9 +87,9 @@ export async function listCloudConnections(userId: string): Promise<CloudConnect
       provider: row.provider as CloudProviderId,
       secret: decode(row.secret),
       account: row.account,
-      // Строка, созданная до появления колонки, читается как «изменения разрешены»: именно так
-      // ведёт себя новая карточка, а значит поведение не меняется молча в другую сторону.
-      allowWrites: row.allow_writes === undefined || row.allow_writes === null ? true : Boolean(row.allow_writes),
+      // Строка, созданная до появления колонки, читается как «только чтение»: отсутствие
+      // явного разрешения не должно давать агенту право менять ресурсы.
+      allowWrites: row.allow_writes === undefined || row.allow_writes === null ? false : Boolean(row.allow_writes),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }));
@@ -100,7 +100,7 @@ export async function listCloudConnections(userId: string): Promise<CloudConnect
     provider: provider as CloudProviderId,
     secret: decode(record.secret),
     account: record.account,
-    allowWrites: record.allowWrites ?? true,
+    allowWrites: record.allowWrites ?? false,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
   }));

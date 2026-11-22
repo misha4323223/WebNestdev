@@ -31,7 +31,7 @@ export function CloudConnectors({ locked = false }: { locked?: boolean }) {
         if (!active) return;
         const next: Record<string, CloudConnectionState> = {};
         for (const item of data.providers ?? []) {
-          next[item.id] = { connected: item.connected, account: item.account, allowWrites: item.allowWrites ?? true };
+          next[item.id] = { connected: item.connected, account: item.account, allowWrites: item.allowWrites ?? false };
         }
         setStates(next);
       })
@@ -48,7 +48,7 @@ export function CloudConnectors({ locked = false }: { locked?: boolean }) {
       if (!response.ok) throw new Error(data.error ?? "Не удалось обновить данные");
       setStates(current => ({
         ...current,
-        [id]: { ...(current[id] ?? { connected: true, allowWrites: true }), connected: true, account: data.account ?? null },
+        [id]: { ...(current[id] ?? { connected: true, allowWrites: false }), connected: true, account: data.account ?? null },
       }));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Не удалось обновить данные");
@@ -71,7 +71,7 @@ export function CloudConnectors({ locked = false }: { locked?: boolean }) {
       const allowed = data.allowWrites ?? allowWrites;
       setStates(current => ({
         ...current,
-        [id]: { ...(current[id] ?? { connected: true, account: null, allowWrites: allowed }), allowWrites: allowed },
+        [id]: { ...(current[id] ?? { connected: true, account: null, allowWrites: false }), allowWrites: allowed },
       }));
     } catch (e) {
       setError(e instanceof Error ? e.message : "Не удалось изменить разрешение");
@@ -88,7 +88,7 @@ export function CloudConnectors({ locked = false }: { locked?: boolean }) {
       state={states[provider.id]}
       onChanged={next => setStates(current => ({
         ...current,
-        [provider.id]: { ...(current[provider.id] ?? { allowWrites: true }), ...next },
+        [provider.id]: { ...(current[provider.id] ?? { allowWrites: false }), ...next },
       }))}
       onToggleWrites={allowed => void toggleWrites(provider.id, allowed)}
       writesBusy={writesBusy === provider.id}

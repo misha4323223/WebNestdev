@@ -67,7 +67,7 @@ async function saveAccess(userId: string, pending: AccessRequest, fields: Record
     const existing = await getCloudConnection(userId, provider.id);
     await assertSlot("cloud", userId, (await listCloudConnections(userId)).length, Boolean(existing));
     const verified = await verifyCloudCredential(provider.id, parsed);
-    const writes = allowWrites ?? existing?.allowWrites ?? true;
+    const writes = allowWrites ?? existing?.allowWrites ?? false;
     await saveCloudConnection({
       userId,
       provider: provider.id,
@@ -130,7 +130,7 @@ async function saveAccess(userId: string, pending: AccessRequest, fields: Record
   if (pending.kind === "yandex") {
     const secret = String(fields.secret ?? "").trim();
     if (!secret) throw new Error("Вставьте ключ или токен Yandex Cloud");
-    const status = await saveVerifiedYandexCredential(userId, secret, allowWrites ?? true);
+    const status = await saveVerifiedYandexCredential(userId, secret, allowWrites ?? false);
     if (!status.connected) throw new Error("Yandex Cloud не подтвердил ключ");
     return { name: "Yandex Cloud", account: status.account ?? "Yandex Cloud", allowWrites: status.allowWrites };
   }

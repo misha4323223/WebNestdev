@@ -1,6 +1,19 @@
 // Окно вопроса агента: модальный диалог в том же техно-стиле, что и запрос ключа.
 import { useEffect, useMemo, useState } from "react";
-import { Check, CornerDownLeft, HelpCircle, Sparkles, X } from "lucide-react";
+import { Check, Cloud, CornerDownLeft, HelpCircle, ShieldCheck, Sparkles, X } from "lucide-react";
+
+/**
+ * Данные подтверждения мутации. Текст вопроса остаётся запасным вариантом для клиентов,
+ * которые не знают об этом поле, а панель показывает провайдера, метод, ресурс и тело
+ * отдельными строками — так запрос читается быстрее, чем одна длинная фраза.
+ */
+export type MutationApproval={
+  kind:"mutation";
+  provider:string;
+  method:string;
+  resource:string;
+  body?:string;
+};
 
 /**
  * Вопрос агента, который ждёт решения пользователя. В обычном чате это модальное окно поверх
@@ -15,6 +28,7 @@ export type AgentQuestion={
   multiSelect:boolean;
   maxSelections?:number;
   allowCustom:boolean;
+  approval?:MutationApproval;
 };
 
 export function QuestionSheet({prompt,busy,error,onAnswer,onSkip,embedded=false}:{
@@ -30,6 +44,11 @@ export function QuestionSheet({prompt,busy,error,onAnswer,onSkip,embedded=false}
   const [custom,setCustom]=useState("");
   const limit=prompt.multiSelect?Math.max(1,Math.min(prompt.maxSelections??prompt.options.length,prompt.options.length)):1;
   const atLimit=prompt.multiSelect&&selected.length>=limit;
+  const approval=prompt.approval;
+  // Порядок вариантов задаёт сервер: первый — разрешение, второй — отказ.
+  const allowLabel=prompt.options[0]?.label??"Разрешить изменение";
+  const denyLabel=prompt.options[1]?.label??"Отклонить";
+  const methodClass=approval?approval.method.toLowerCase().replace(/[^a-z]/g,""):"";
 
   function toggle(label:string){
     if(prompt.multiSelect){
@@ -53,6 +72,12 @@ export function QuestionSheet({prompt,busy,error,onAnswer,onSkip,embedded=false}
     if(!ready||busy)return;
     const value=custom.trim();
     onAnswer({selected,...(value?{custom:value}:{})});
+  }
+
+  /** Подтверждение — сразу ответ, без промежуточного выбора радиокнопки и второй кнопки «Ответить». */
+  function decide(allow:boolean){
+    if(busy)return;
+    onAnswer({selected:[allow?allowLabel:denyLabel]});
   }
 
   // Escape — это «пропустить»: агент выберет вариант сам и продолжит, а не будет ждать.
@@ -135,7 +160,7 @@ export function QuestionSheet({prompt,busy,error,onAnswer,onSkip,embedded=false}
 
   return <div className="modal-backdrop tech-backdrop" role="presentation">
     <section
-      className="modal tech-modal question-modal"
+      className={"modal tech-modal question-modal"+(approval?" approval-modal":"")}
       role="dialog"
       aria-modal="true"
       aria-labelledby="agent-question-title"
@@ -143,28 +168,79 @@ export function QuestionSheet({prompt,busy,error,onAnswer,onSkip,embedded=false}
     >
       <header className="modal-head">
         <div className="tech-modal-title">
-          <span className="tech-modal-icon" aria-hidden="true"><HelpCircle size={15}/></span>
+          <span className="tech-modal-icon" aria-hidden="true">
+            {approval?<ShieldCheck size={16}/>:<HelpCircle size={15}/>}
+          </span>
           <div className="tech-modal-heading">
-            <span className="eyebrow">ВОПРОС АГЕНТА</span>
-            <h2 id="agent-question-title">Уточняю детали</h2>
+            <span className="eyebrow">{approval?"ТРЕБУЕТСЯ РЕШЕНИЕ":"ВОПРОС АГЕНТА"}</span>
+            <h2 id="agent-question-title">{approval?"Подтвердите изменение":"Уточняю детали"}</h2>
           </div>
         </div>
-        <button type="button" className="icon-button" onClick={onSkip} disabled={busy} title="Пропустить — агент выберет сам" aria-label="Пропустить вопрос"><X size={16}/></button>
+        <button
+          type="button"
+          className="icon-button"
+          onClick={onSkip}
+          disabled={busy}
+          title={approval?"Закрыть и отклонить":"Пропустить — агент выберет сам"}
+          aria-label={approval?"Закрыть и отклонить":"Пропустить вопрос"}
+        ><X size={16}/></button>
       </header>
 
       <div className="modal-body">
-        <p className="question-text" id="agent-question-text">{prompt.question}</p>
-        {controls}
-        <p className="question-meta"><Sparkles size={12}/><span>Агент продолжит с этого шага.</span></p>
+        {approval?<>
+          <p className="approval-lead" id="agent-question-text">
+            Проверьте параметры запроса. После разрешения агент выполнит его без дополнительных вопросов.
+          </p>
+          <div className="approval-card">
+            <div className="approval-card-head">
+              <span className="approval-provider">
+                <Cloud size={14} aria-hidden="true"/>
+                <span>{approval.provider}</span>
+              </span>
+              <span className={"approval-method"+(methodClass?" method-"+methodClass:"")}>{approval.method}</span>
+            </div>
+            <div className="approval-field">
+              <span className="approval-label">Ресурс</span>
+              <div className="approval-value"><code>{approval.resource}</code></div>
+            </div>
+            <div className="approval-field">
+              <span className="approval-label">Тело</span>
+              <div className="approval-value">
+                {approval.body
+                  ?<pre className="approval-pre">{approval.body}</pre>
+                  :<span className="approval-empty">Без тела</span>}
+              </div>
+            </div>
+            <p className="approval-note">
+              <ShieldCheck size={13} aria-hidden="true"/>
+              <span>Запрос уйдёт провайдеру сразу после подтверждения.</span>
+            </p>
+          </div>
+          {error&&<div className="connector-notice">{error}</div>}
+        </>:<>
+          <p className="question-text" id="agent-question-text">{prompt.question}</p>
+          {controls}
+          <p className="question-meta"><Sparkles size={12}/><span>Агент продолжит с этого шага.</span></p>
+        </>}
       </div>
 
-      <footer className="modal-foot">
+      {approval?<footer className="modal-foot approval-foot">
+        <div className="approval-foot-actions">
+          <button type="button" className="ghost-button approval-deny" onClick={()=>decide(false)} disabled={busy}>
+            {denyLabel}
+          </button>
+          <button type="button" className="send-button approval-allow" onClick={()=>decide(true)} disabled={busy} title={allowLabel}>
+            {busy?"Отправляем…":allowLabel}
+            {!busy?<ShieldCheck size={14} aria-hidden="true"/>:null}
+          </button>
+        </div>
+      </footer>:<footer className="modal-foot">
         <button type="button" className="ghost-button" onClick={onSkip} disabled={busy}>Пропустить</button>
         <button type="button" className="send-button" onClick={submit} disabled={busy||!ready}>
           {busy?"Отправляем…":"Ответить"}
           {!busy&&ready?<CornerDownLeft size={13}/>:null}
         </button>
-      </footer>
+      </footer>}
     </section>
   </div>;
 }

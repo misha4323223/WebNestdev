@@ -11,6 +11,7 @@ const FUNCTIONS = "serverless-functions.api.cloud.yandex.net";
 const OPERATION = "operation.api.cloud.yandex.net";
 const MAX_BODY_CHARS = 8000;
 const MAX_ITEMS = 50;
+const REQUEST_TIMEOUT_MS = 20_000;
 
 /** Every control-plane API of Yandex Cloud lives on this host pattern. */
 const HOST_PATTERN = /^[a-z0-9-]+\.api\.cloud\.yandex\.net$/;
@@ -156,11 +157,17 @@ async function requestIamToken(connection: YandexConnection) {
   const body = connection.kind === "key"
     ? { jwt: signServiceAccountJwt(parseServiceAccountKey(connection.secret)) }
     : { yandexPassportOauthToken: connection.secret };
-  const response = await fetch(IAM_TOKEN_URL, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  let response: Response;
+  try {
+    response = await fetch(IAM_TOKEN_URL, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch (error) {
+    throw new Error("Yandex IAM не ответил за " + REQUEST_TIMEOUT_MS / 1000 + " с: " + (error instanceof Error ? error.message : String(error)));
+  }
   const text = await response.text();
   if (!response.ok) throw new Error("Yandex IAM вернул " + response.status + ": " + text.slice(0, 500));
   const parsed = JSON.parse(text) as { iamToken?: string; expiresAt?: string };
@@ -170,12 +177,15 @@ async function requestIamToken(connection: YandexConnection) {
 
 const tokenCache = new Map<string, { token: string; expiresAt: number }>();
 
-export async function getIamTokenFor(connection: YandexConnection) {
+export async function getIamTokenFor(connection: YandexConnection, options?: { cache?: boolean }) {
   if (connection.kind === "iam") return connection.secret;
-  const cached = tokenCache.get(connection.userId);
+  // Проверка нового ключа не должна пользоваться токеном другого аккаунта: у неё нет
+  // постоянного userId, поэтому кэш для неё отключается явно.
+  const useCache = options?.cache !== false;
+  const cached = useCache ? tokenCache.get(connection.userId) : undefined;
   if (cached && cached.expiresAt - 60_000 > Date.now()) return cached.token;
   const fresh = await requestIamToken(connection);
-  tokenCache.set(connection.userId, fresh);
+  if (useCache) tokenCache.set(connection.userId, fresh);
   return fresh.token;
 }
 
@@ -206,14 +216,20 @@ export async function yandexFetch(userId: string, request: YandexRequest) {
   if (!request.path.startsWith("/") || request.path.includes("..")) throw new Error("Некорректный путь запроса");
 
   const token = await getIamTokenFor(connection);
-  const response = await fetch("https://" + host + request.path, {
-    method,
-    headers: {
-      Authorization: "Bearer " + token,
-      ...(request.body === undefined ? {} : { "Content-Type": "application/json" }),
-    },
-    ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
-  });
+  let response: Response;
+  try {
+    response = await fetch("https://" + host + request.path, {
+      method,
+      headers: {
+        Authorization: "Bearer " + token,
+        ...(request.body === undefined ? {} : { "Content-Type": "application/json" }),
+      },
+      ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch (error) {
+    throw new Error("Yandex Cloud не ответил за " + REQUEST_TIMEOUT_MS / 1000 + " с (" + host + "): " + (error instanceof Error ? error.message : String(error)));
+  }
   const text = await response.text();
   let body: unknown = text.slice(0, MAX_BODY_CHARS);
   try { body = text ? JSON.parse(text) : null; } catch {}
@@ -291,23 +307,41 @@ export async function verifyYandexCredential(secret: string) {
   };
   let token: string;
   try {
-    token = await getIamTokenFor(probe);
+    // cache:false — проверка не должна переиспользовать IAM-токен предыдущего ключа.
+    token = await getIamTokenFor(probe, { cache: false });
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     if (detail.includes("Поле private_key")) throw error;
     throw new Error("Yandex Cloud не принял ключ: " + detail);
   }
-  const response = await fetch("https://" + RESOURCE_MANAGER + "/resource-manager/v1/clouds", { headers: { Authorization: "Bearer " + token } });
+  let response: Response;
+  try {
+    response = await fetch("https://" + RESOURCE_MANAGER + "/resource-manager/v1/clouds", {
+      headers: { Authorization: "Bearer " + token },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch (error) {
+    throw new Error("Yandex Cloud не ответил за " + REQUEST_TIMEOUT_MS / 1000 + " с: " + (error instanceof Error ? error.message : String(error)));
+  }
   const text = await response.text();
   if (!response.ok) throw new Error("Yandex Cloud отклонил ключ (" + response.status + "): " + text.slice(0, 400));
   const clouds = (JSON.parse(text || "{}") as { clouds?: Array<{ id?: string; name?: string }> }).clouds ?? [];
   const cloud = clouds[0];
   let folderId: string | undefined;
   if (cloud?.id) {
-    const foldersResponse = await fetch("https://" + RESOURCE_MANAGER + "/resource-manager/v1/folders?cloudId=" + encodeURIComponent(cloud.id), { headers: { Authorization: "Bearer " + token } });
-    if (foldersResponse.ok) {
-      const folders = (await foldersResponse.json() as { folders?: Array<{ id?: string }> }).folders ?? [];
-      folderId = folders[0]?.id;
+    // Папка нужна только для удобства последующих вызовов: таймаут или отказ списка папок
+    // не должны отменять уже подтверждённый ключ.
+    try {
+      const foldersResponse = await fetch("https://" + RESOURCE_MANAGER + "/resource-manager/v1/folders?cloudId=" + encodeURIComponent(cloud.id), {
+        headers: { Authorization: "Bearer " + token },
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+      if (foldersResponse.ok) {
+        const folders = (await foldersResponse.json() as { folders?: Array<{ id?: string }> }).folders ?? [];
+        folderId = folders[0]?.id;
+      }
+    } catch {
+      // без folderId карточка всё равно рабочая: значение подставит следующий запрос
     }
   }
   return { kind, cloudId: cloud?.id, cloudName: cloud?.name, folderId, iamToken: token };
@@ -316,7 +350,10 @@ export async function verifyYandexCredential(secret: string) {
 /** The Yandex login behind an OAuth token, so the card can name the linked account. */
 export async function fetchYandexLogin(oauthToken: string) {
   try {
-    const response = await fetch("https://login.yandex.ru/info?format=json", { headers: { Authorization: "OAuth " + oauthToken } });
+    const response = await fetch("https://login.yandex.ru/info?format=json", {
+      headers: { Authorization: "OAuth " + oauthToken },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
     if (!response.ok) return undefined;
     const profile = await response.json() as { login?: string; display_name?: string };
     return profile.login ?? profile.display_name;

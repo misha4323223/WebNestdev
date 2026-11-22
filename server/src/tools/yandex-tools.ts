@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { registerTool } from "../tool-registry.js";
 import { listYandexResources, yandexFetch, yandexStatus } from "../yandex/yandex-api.js";
+import { getYandexConnection } from "../yandex/yandex-connection-store.js";
 import { FREE_CONNECTOR_MESSAGE, connectorRefusal } from "../account/connector-access.js";
 import { approveMutation } from "./mutation-approval.js";
 
@@ -87,6 +88,13 @@ registerTool({
     if (refusal) return { ok: false, restricted: true, code: refusal.code, error: refusal.error };
     const method = request.method ?? "GET";
     if (mutationMethods.has(method)) {
+      const connection = await getYandexConnection(context.userId);
+      if (!connection) return { ok: false, error: "Yandex Cloud не подключён: попросите пользователя подключить аккаунт в «Интеграции» → «Yandex Cloud»." };
+      // Разрешение проверяется до карточки: подтверждение запроса при выключенных изменениях
+      // выглядит как ошибка уже после действия пользователя.
+      if (!connection.allowWrites) {
+        return { ok: false, denied: true, code: "WRITES_DISABLED", error: "Изменения в Yandex Cloud выключены: включите «Разрешить агенту изменять ресурсы» в интеграции Yandex Cloud." };
+      }
       const approved = await approveMutation(context, {
         provider: "Yandex Cloud",
         method,

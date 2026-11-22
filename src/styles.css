@@ -1830,7 +1830,46 @@ button,textarea{font:inherit}button{color:inherit}
 .question-meta{display:flex;align-items:flex-start;gap:6px;margin:0;color:#8f8778;font-size:10px;line-height:1.5;overflow-wrap:anywhere}
 .question-meta svg{flex:none;margin-top:1px;color:#a98f62}
 .question-modal .modal-foot .send-button{gap:6px}
-@media(max-width:650px){.question-options{grid-template-columns:1fr;max-height:min(46vh,320px)}.question-option{padding:9px 10px;font-size:11px}.question-option-body strong{font-size:11.5px}.question-option-body small{font-size:10px}}
+/*
+ * Подтверждение мутации — не текстовый вопрос, а карточка запроса: провайдер и метод в шапке,
+ * ресурс и тело отдельными строками, действия сразу внизу. Крупнее набор и спокойнее регистр,
+ * чем у обычного вопроса: человек читает это перед необратимым действием.
+ */
+.question-modal.approval-modal{width:min(620px,100%)}
+.approval-modal{font-family:"Segoe UI Variable Text","Segoe UI",Inter,ui-sans-serif,system-ui,sans-serif;background:linear-gradient(168deg,#121820 0%,#0d1116 58%,#0b0f13 100%)}
+.approval-modal.tech-modal::after{background:linear-gradient(90deg,transparent,rgba(214,178,110,.62),transparent)}
+.approval-modal .modal-head{padding:18px 20px}
+.approval-modal .tech-modal-icon{border-color:rgba(214,178,110,.34);background:linear-gradient(150deg,rgba(214,178,110,.2),rgba(214,178,110,.04));color:#e0c48d}
+.approval-modal .tech-modal-heading{gap:4px}
+.approval-modal .tech-modal-heading .eyebrow{color:#b39a73;letter-spacing:.14em}
+.approval-modal .tech-modal-heading h2{font-family:"Segoe UI Variable Display","Segoe UI",Inter,ui-sans-serif,system-ui,sans-serif;font-size:clamp(18px,4.4vw,20px);font-weight:650;line-height:1.2;letter-spacing:-.025em}
+.approval-modal .modal-body{padding:18px 20px;gap:14px;align-content:start}
+.approval-lead{margin:0;color:#a9a297;font-size:12.5px;line-height:1.6;overflow-wrap:anywhere}
+.approval-card{display:grid;overflow:hidden;border:1px solid #393229;border-radius:14px;background:linear-gradient(180deg,rgba(23,28,34,.94),rgba(14,18,23,.97));box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
+.approval-card-head{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 14px;border-bottom:1px solid #2c2822;background:rgba(255,255,255,.018)}
+.approval-provider{display:inline-flex;align-items:center;gap:8px;min-width:0;color:#eeeae2;font-size:13.5px;font-weight:600;letter-spacing:-.01em}
+.approval-provider svg{flex:none;color:#b9a17a}
+.approval-provider span{overflow-wrap:anywhere}
+.approval-method{flex:none;padding:4px 9px;border:1px solid #5b482d;border-radius:999px;background:#241b10;color:#e3c28d;font:700 9.5px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.1em}
+.approval-method.method-delete{border-color:#5a312b;background:#281513;color:#e7a49a}
+.approval-method.method-put,.approval-method.method-patch{border-color:#334b54;background:#122126;color:#a9cbd5}
+.approval-field{display:grid;grid-template-columns:76px minmax(0,1fr);gap:12px;padding:12px 14px}
+.approval-field+.approval-field{border-top:1px solid #27231e}
+.approval-label{padding-top:1px;color:#8d8679;font-size:10.5px;font-weight:500;line-height:1.5}
+.approval-value{min-width:0;color:#e6e1d8;font-size:12.5px;line-height:1.55;overflow-wrap:anywhere}
+.approval-value code{padding:0;border:0;background:none;color:#eae5dc;font:500 12px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere;word-break:break-word}
+.approval-pre{max-height:160px;margin:0;padding:9px 10px;overflow:auto;border:1px solid #2c2822;border-radius:8px;background:#0a0e12;color:#d7d2c8;font:11.5px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere}
+.approval-empty{color:#756f65;font-size:12px}
+.approval-note{display:flex;align-items:flex-start;gap:7px;margin:0;padding:10px 14px;border-top:1px solid #2c2822;background:rgba(180,145,85,.045);color:#a79d8d;font-size:10.5px;line-height:1.5}
+.approval-note svg{flex:none;margin-top:1px;color:#b9a17a}
+.approval-modal .modal-foot{justify-content:flex-end;padding:13px 20px 15px}
+.approval-foot-actions{display:flex;align-items:center;gap:8px;margin-left:auto}
+.approval-modal .approval-deny{height:36px;padding:0 16px;border:1px solid #3b342a;border-radius:9px;background:#171b20;color:#c4beb4;font-size:11.5px;font-weight:600}
+.approval-modal .approval-deny:hover{border-color:#5a5041;background:#1d2228;color:#e6e1d8}
+.approval-modal .approval-allow{height:36px;padding:0 16px;border:1px solid #947138;border-radius:9px;background:linear-gradient(180deg,#83622e,#6d4f24);color:#f5f0e7;font-size:11.5px;font-weight:600;box-shadow:0 6px 18px rgba(100,77,36,.28),inset 0 1px 0 rgba(255,255,255,.09)}
+.approval-modal .approval-allow:hover{border-color:#ac894c;background:linear-gradient(180deg,#906e37,#78572a)}
+.approval-modal .approval-deny:focus-visible,.approval-modal .approval-allow:focus-visible{outline:2px solid rgba(204,195,178,.46);outline-offset:2px}
+@media(max-width:650px){.question-options{grid-template-columns:1fr;max-height:min(46vh,320px)}.question-option{padding:9px 10px;font-size:11px}.question-option-body strong{font-size:11.5px}.question-option-body small{font-size:10px}.approval-modal .modal-head{padding:15px}.approval-modal .modal-body{padding:15px}.approval-field{grid-template-columns:1fr;gap:5px;padding:11px 13px}.approval-label{padding-top:0}.approval-modal .modal-foot{padding:12px 15px 15px}.approval-foot-actions{display:grid;width:100%;grid-template-columns:1fr;gap:7px;margin-left:0}.approval-modal .approval-deny,.approval-modal .approval-allow{width:100%;justify-content:center}}
 /* Закладки переписки: полоска меток у правого края чата, рядом со скроллом. */
 .messages-wrap{position:relative;flex:1;min-height:0;display:flex;flex-direction:column}
 /* Низ рельсы освобождён под кнопку «вниз»: она стоит на той же вертикали, ниже последней точки.

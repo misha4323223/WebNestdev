@@ -1,4 +1,4 @@
-import { createPrivateKey, sign as signWithKey, type KeyObject } from "node:crypto";
+import { createHash, createPrivateKey, sign as signWithKey, type KeyObject } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { parseAuthorizedKeyJson } from "../yandex/yandex-api.js";
 
@@ -35,6 +35,7 @@ const ES256 = "ES256";
 const MAX_ERROR_CHARS = 400;
 /** Срок готового JWT, если у ключа нет expirationTime (как в SDK: defaultClaimsTTL). */
 const JWT_TTL_SECONDS = 3600;
+const REQUEST_TIMEOUT_MS = 20_000;
 
 /** Разрешены только API-хосты МВС: список хостов — api.mwsapis.ru/endpoint. */
 const HOST_PATTERN = /^[a-z0-9-]+\.mwsapis\.ru$/;
@@ -382,11 +383,22 @@ function summaryOfKey(key: MwsAuthorizedKey, source: "inline" | "file" | "parts"
   };
 }
 
-let cachedToken: { token: string; expiresAt: number } | null = null;
+/** IAM-токены кешируются по отпечатку ключа, а не по глобальной переменной. */
+const cachedTokens = new Map<string, { token: string; expiresAt: number }>();
+const MAX_CACHED_TOKENS = 32;
 
-/** Помощник тестов: токен кешируется на процесс, поэтому тесты начинают с чистого кеша. */
+function tokenCacheKey(credential: MwsCredential): string | null {
+  // Файл может измениться на диске, поэтому путь сам по себе не отпечаток ключа.
+  if (credential.kind === "keyFile" || credential.kind === "token") return null;
+  const material = credential.kind === "key"
+    ? credential.secret
+    : [credential.keyId, credential.privateKey, credential.algorithm, credential.expirationTime].join("\u0000");
+  return createHash("sha256").update(material).digest("hex");
+}
+
+/** Помощник тестов: токены кешируются на процесс, поэтому тесты начинают с чистого кеша. */
 export function resetMwsTokenCache() {
-  cachedToken = null;
+  cachedTokens.clear();
 }
 
 async function readCredential(credential: { kind: "key"; secret: string } | { kind: "keyFile"; file: string }): Promise<string> {
@@ -422,9 +434,10 @@ export async function mwsIamToken(override?: MwsCredentialOverride): Promise<str
     throw new Error("МТС Web Services не настроен: задайте MWS_SA_KEY (содержимое key.json авторизованного ключа) или MWS_SA_KEY_FILE с путём к нему");
   }
   if (credential.kind === "token") return credential.token;
-  // Кеш общий на процесс и относится к окружению: ключ, переданный явно для проверки,
-  // не должен ни читать его, ни оставаться в нём.
-  if (!override && cachedToken && cachedToken.expiresAt - 60_000 > Date.now()) return cachedToken.token;
+  // Отпечаток ключа не даёт переиспользовать токен другого проекта или сервисного аккаунта.
+  const cacheKey = tokenCacheKey(credential);
+  const cached = cacheKey ? cachedTokens.get(cacheKey) : undefined;
+  if (cached && cached.expiresAt - 60_000 > Date.now()) return cached.token;
 
   const key = credential.kind === "parts" ? mwsKeyFromParts(credential) : parseMwsAuthorizedKey(await readCredential(credential));
   const host = firstEnv("MWS_IAM_HOST") ?? DEFAULT_IAM_HOST;
@@ -439,9 +452,10 @@ export async function mwsIamToken(override?: MwsCredentialOverride): Promise<str
       // его отправляет и официальный SDK (`req.Header.Add("Authorization", signed)`),
       // а «Bearer » появляется только у выданного IAM-токена — в запросах к API.
       headers: { Authorization: signMwsJwt(key), Accept: "application/json" },
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
   } catch (error) {
-    throw new Error("Не удалось обратиться к MWS IAM (" + host + "): " + messageOf(error));
+    throw new Error("Не удалось обратиться к MWS IAM (" + host + ") за " + REQUEST_TIMEOUT_MS / 1000 + " с: " + messageOf(error));
   }
 
   const text = await response.text();
@@ -457,7 +471,13 @@ export async function mwsIamToken(override?: MwsCredentialOverride): Promise<str
   if (!token) throw new Error("MWS IAM не выдал токен: " + text.slice(0, MAX_ERROR_CHARS));
   const expiresAt = parseExpiration(parsed.expirationTs ?? parsed.expiresAt);
   // Без срока в ответе токен считается часовым (DefaultTokenTTL в SDK), а не вечным.
-  if (!override) cachedToken = { token, expiresAt: expiresAt ?? Date.now() + 60 * 60 * 1000 };
+  if (cacheKey) {
+    cachedTokens.set(cacheKey, { token, expiresAt: expiresAt ?? Date.now() + 60 * 60 * 1000 });
+    if (cachedTokens.size > MAX_CACHED_TOKENS) {
+      const oldest = cachedTokens.keys().next().value;
+      if (oldest) cachedTokens.delete(oldest);
+    }
+  }
   return token;
 }
 
@@ -493,14 +513,20 @@ export async function mwsRequest(request: MwsRequest, credential?: MwsCredential
   if (!HOST_PATTERN.test(host)) throw new Error("Разрешены только API-хосты МТС Web Services (*.mwsapis.ru), получен " + host);
   const method = (request.method ?? "GET").toUpperCase();
   const token = await mwsIamToken(credential);
-  const response = await fetch("https://" + host + request.path, {
-    method,
-    headers: {
-      Authorization: "Bearer " + token,
-      ...(request.body === undefined ? {} : { "Content-Type": "application/json" }),
-    },
-    ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
-  });
+  let response: Response;
+  try {
+    response = await fetch("https://" + host + request.path, {
+      method,
+      headers: {
+        Authorization: "Bearer " + token,
+        ...(request.body === undefined ? {} : { "Content-Type": "application/json" }),
+      },
+      ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+    });
+  } catch (error) {
+    throw new Error("MWS не ответил за " + REQUEST_TIMEOUT_MS / 1000 + " с (" + host + "): " + messageOf(error));
+  }
   const text = await response.text();
   let body: unknown = text.slice(0, 8000);
   try { body = text ? JSON.parse(text) : null; } catch { /* ответ не JSON — отдаём текстом */ }
