@@ -1,7 +1,7 @@
 import { useEffect,useMemo,useRef,useState,type DragEvent as ReactDragEvent,type MouseEvent as ReactMouseEvent } from "react";
 import Markdown,{type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { AlertTriangle,ArrowDownToLine,Check,Copy,Eye,EyeOff,ExternalLink,FileText,History,KeyRound,ListPlus,Paperclip,Play,RotateCcw,Send,ShieldCheck,Sparkles,Square,X } from "lucide-react";
+import { AlertTriangle,ArrowDownToLine,Check,Copy,Eye,EyeOff,ExternalLink,FileText,KeyRound,ListPlus,Paperclip,Play,RotateCcw,Send,ShieldCheck,Sparkles,Square,X } from "lucide-react";
 import { createAgentSocket } from "../../lib/agent-socket";
 import { apiJson } from "../../lib/api";
 import { addProjectTasks,answerProjectQuestion,cancelProjectSecret,getConversation,getProjectChanges,listPendingProjectSecrets,projectAssetUrl,rollbackProjectChanges,skipProjectQuestion,submitProjectSecret,uploadProjectFile,type PendingProjectSecret } from "../../lib/project-api";
@@ -13,6 +13,8 @@ import { chatUiByMessage } from "../../lib/ui-history";
 import { flattenLiveUi, removeLiveUiCall, upsertLiveUiCall, type LiveUiCall } from "../../lib/ui-live";
 import { parseUiBlocks } from "../../lib/ui-blocks";
 import { UiBlocks } from "./ui/UiBlocks";
+import { CheckpointCard } from "./CheckpointCard";
+import { checkpointCardsByMessage,type CheckpointNotice } from "./checkpoint-cards";
 import type { AgentAction,AgentMode,ChatMessage,PlatformModelOption,PlanState,ReasoningBlock,ReasoningMode,ReasoningSupport } from "../../lib/types";
 import { QuestionSheet,type AgentQuestion } from "./QuestionSheet";
 import { PlanningRoom } from "./PlanningRoom";
@@ -326,6 +328,14 @@ function interruptedSecretRequest(messages:ChatMessage[]):{variable:string;file:
   return null;
 }
 
+/** Ответ, к которому относится только что созданная точка: последняя реплика агента. */
+function lastAssistantIndex(messages:ChatMessage[]){
+  for(let index=messages.length-1;index>=0;index--){
+    if(messages[index]?.role==="assistant")return index;
+  }
+  return -1;
+}
+
 export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettings,onOpenAccountSettings,onRunningChange,onOpenChanges,onPreviewStarted,scrollSignal,onChatEndChange,onScrollBottom,showScroll,writing}:{projectId:string;conversationId:string;onChanged:()=>void;onOpenModelSettings?:()=>void;onOpenAccountSettings?:()=>void;onRunningChange?:(running:boolean)=>void;onOpenChanges?:()=>void;onPreviewStarted?:()=>void;scrollSignal?:number;onChatEndChange?:(atEnd:boolean)=>void;onScrollBottom?:()=>void;showScroll?:boolean;writing?:boolean}){
   const [messages,setMessages]=useState<ChatMessage[]>([]);
   const [prompt,setPrompt]=useState<string>(()=>readDraft(conversationId));
@@ -343,11 +353,11 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
   const [copiedMessage,setCopiedMessage]=useState<number|null>(null);
   const [tasksMessage,setTasksMessage]=useState<number|null>(null);
   const copiedMessageTimer=useRef<number|null>(null);
-  // Итог задачи в истории проекта: точка, к которой можно вернуться. На GitHub она уходит
-  // только по кнопке в «Изменениях», поэтому здесь нет ни статуса отправки, ни ошибки.
-  const [changesNotice,setChangesNotice]=useState<{shortSha:string;sha:string;filesChanged:number}|null>(null);
+  // Итог задачи в истории проекта: своя карточка под каждым ответом, который завершил запуск.
+  // Так точка не пропадает при следующем сообщении и возвращается вместе с историей чата.
+  const [checkpointNotices,setCheckpointNotices]=useState<Map<number,CheckpointNotice>>(new Map());
   // Откат к точке перед последним запуском: сначала показываем, куда вернёмся, и только потом трогаем файлы.
-  const [rollbackTarget,setRollbackTarget]=useState<{sha:string;shortSha:string}|null>(null);
+  const [rollbackTarget,setRollbackTarget]=useState<{sha:string;shortSha:string;cardSha:string}|null>(null);
   const [rollbackBusy,setRollbackBusy]=useState(false);
   // The plan and the actions of the latest run are what the user watches while the
   // agent works, so they live here next to the messages.
@@ -742,7 +752,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     queueRef.current=[];setQueue([]);
     setAttachments([]);setNotice("");
     // Итог прошлой задачи принадлежит прошлому чату: в другом разговоре он не про эту работу.
-    setChangesNotice(null);
+    setCheckpointNotices(new Map());
     retryNoticeRef.current=false;
     // Другой чат — с самого верха: место прокрутки прошлой переписки к новой не относится.
     pinnedToEndRef.current=false;
@@ -769,7 +779,10 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       // Запрос ключа мог остаться от запуска, прерванного перезагрузкой: сервер отдаёт его ещё
       // некоторое время, чтобы поле исчезало не вместе со страницей, а только после ответа.
       listPendingProjectSecrets(projectId,conversationId).catch(()=>({requests:[] as PendingProjectSecret[]})),
-    ]).then(([conversation,pendingSecrets])=>{
+      // Точки истории лежат в git, а не в сообщениях. По времени сообщений возвращаем каждую
+      // карточку к её ответу, поэтому откат доступен и после перезагрузки чата.
+      getProjectChanges(projectId).catch(()=>null),
+    ]).then(([conversation,pendingSecrets,overview])=>{
       if(cancelled)return;
       // The whole stored history comes back: answers, the thinking that now sits above each of them
       // and the tool results that say how each action ended.
@@ -777,6 +790,12 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       // Пустой чат остаётся пустым: задача начинается на главной или с шаблона, и
       // приветственная реплика над полем ввода только занимала место.
       replaceMessages(persisted);
+      setCheckpointNotices(overview?checkpointCardsByMessage({
+        checkpoints:overview.checkpoints,
+        conversationId,
+        messages:persisted,
+        messageTimes:conversation.messageTimes,
+      }):new Map());
       actionsRef.current=deriveActions(persisted);
       setActions(actionsRef.current);
       // The plan is stored with the conversation; localStorage is only the fallback.
@@ -976,8 +995,8 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     setResume(null);
     setRunning(true);
     setNotice("");
-    // Новая задача — новый итог: прошлая точка уже в истории, и напоминание о ней не нужно.
-    setChangesNotice(null);
+    // Прошлая карточка остаётся под своим ответом: точка истории не должна исчезать от
+    // того, что человек начал следующую задачу.
     // Интерфейс прошлого запуска не должен выглядеть частью нового ответа.
     setLiveUi([]);
     // Отправленное сообщение и ответ на него — то, что хочется видеть, даже если до этого
@@ -1163,6 +1182,21 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
               :[...current,{messageIndex:index,image:{url,path:typeof shown.name==="string"?shown.name:typeof shown.path==="string"?shown.path:"",prompt:typeof input?.prompt==="string"?input.prompt:""}}]);
           }
         }
+        // Финальный снимок страницы показываем сразу под ответом, который модель сейчас
+        // допишет. Номер берём следующий после видимых реплик: tool-сообщение в списке
+        // не участвует, а assistant с вызовом инструмента ещё не содержит текста.
+        if(event.name==="browser.screenshot"&&output&&typeof output==="object"){
+          const shown=output as Record<string,unknown>;
+          const shot=shown.screenshot&&typeof shown.screenshot==="object"?shown.screenshot as Record<string,unknown>:{};
+          const url=typeof shot.bucketUrl==="string"?shot.bucketUrl:typeof shot.url==="string"?shot.url:"";
+          const pageUrl=typeof shown.pageUrl==="string"?shown.pageUrl:"";
+          if(shown.shownInChat===true&&url){
+            const index=messagesRef.current.reduce((count,message)=>count+(message.role==="tool"?0:1),0);
+            setLiveImages(current=>current.some(item=>item.image.url===url)
+              ?current
+              :[...current,{messageIndex:index,image:{url,path:typeof shot.path==="string"?shot.path:"",prompt:"Снимок страницы "+(typeof shown.viewport==="string"?shown.viewport:"desktop"),...(pageUrl.startsWith("/api/projects/")||/^https?:\/\//i.test(pageUrl)?{pageUrl}:{}),kind:"screenshot"}}]);
+          }
+        }
       }
       if(event.type==="plan.updated"&&event.plan)updatePlan(event.plan);
       if(event.type==="secret.requested"&&event.requestId&&event.variable){
@@ -1205,7 +1239,13 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
       }
       if(event.type==="changes.created"&&event.checkpoint){
         // Задача записана в историю проекта. Отправка на GitHub — только по кнопке пользователя.
-        setChangesNotice({shortSha:event.checkpoint.shortSha,sha:event.checkpoint.sha,filesChanged:event.checkpoint.filesChanged});
+        // Карточка ставится к последнему ответу агента, а не отдельной строкой в конце чата:
+        // следующее сообщение не должно её стирать.
+        const index=lastAssistantIndex(messagesRef.current);
+        if(index>=0)setCheckpointNotices(current=>new Map(current).set(index,{
+          sha:event.checkpoint!.sha,shortSha:event.checkpoint!.shortSha,
+          subject:event.checkpoint!.subject,filesChanged:event.checkpoint!.filesChanged,
+        }));
         setRollbackTarget(null);
       }
       if(event.type==="run.completed"){pendingStepRef.current=false;completedRef.current=true;contextCompactionsRef.current=0;endRun(socket,{drain:true});onChanged();refreshReasoningSupport()}
@@ -1751,25 +1791,26 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     }
   }
 
-  // Карточка точки истории появляется в конце переписки: если человек читает последние сообщения, прокручиваем к ней.
+  // Карточка точки истории появляется под ответом; если человек читает последние сообщения,
+  // прокручиваем к ней, но не выдёргиваем из архива выше.
   useEffect(()=>{
-    if(!changesNotice)return;
+    if(!checkpointNotices.size)return;
     const box=messagesBoxRef.current;
     if(!box)return;
     const atBottom=box.scrollHeight-box.scrollTop-box.clientHeight<160;
     if(atBottom)window.requestAnimationFrame(()=>{box.scrollTop=box.scrollHeight});
-  },[changesNotice]);
+  },[checkpointNotices]);
 
-  /** Точка для отката — состояние перед последним запуском, а не сам последний коммит: он и есть текущее. */
-  async function prepareRollback(){
-    if(!changesNotice||rollbackBusy)return;
+  /** Точка для отката — состояние перед запуском этой карточки, а не сам последний коммит. */
+  async function prepareRollback(notice:CheckpointNotice){
+    if(rollbackBusy)return;
     setRollbackBusy(true);
     try{
       const overview=await getProjectChanges(projectId);
-      const index=overview.checkpoints.findIndex(item=>item.sha===changesNotice.sha);
+      const index=overview.checkpoints.findIndex(item=>item.sha===notice.sha);
       const previous=index>=0?overview.checkpoints[index+1]:overview.checkpoints[1];
       if(!previous){setNotice("Откатывать некуда: в истории проекта пока одна точка.");return}
-      setRollbackTarget({sha:previous.sha,shortSha:previous.shortSha});
+      setRollbackTarget({sha:previous.sha,shortSha:previous.shortSha,cardSha:notice.sha});
     }catch(error){
       setNotice("Не удалось прочитать историю: "+(error instanceof Error?error.message:String(error)));
     }finally{setRollbackBusy(false)}
@@ -1782,7 +1823,7 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
     try{
       await rollbackProjectChanges(projectId,target.sha);
       setRollbackTarget(null);
-      setChangesNotice(null);
+      // Карточка остаётся: это след запуска в переписке, а не временное уведомление.
       setNotice("Файлы проекта возвращены к "+target.shortSha+". Точка отката сохранена в истории.");
       onChanged();
     }catch(error){
@@ -1821,13 +1862,16 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
           : undefined;
         const hasReasoning=m.role==="assistant"&&Boolean(reasoningText?.trim());
         const uiBlocks=chatUi.get(m)??[];
+        // Карточки хранятся по индексу в полной истории, а здесь список без tool-сообщений:
+        // находим исходную позицию по самому объекту сообщения.
+        const checkpoint=checkpointNotices.get(messages.indexOf(m));
         // Пустой ход ассистента состоял только из вызова инструмента (или из размышления,
         // которое в планировании не показывается): после вопросов такие облака в чате не нужны.
         // Исключение — якорь сгруппированных размышлений: он должен быть виден, даже если текст
         // ответа пустой. Живой ход оставляем — в нём размышление видно, пока модель работает.
         // Размышление, уже вошедшее в общий блок шагов (coveredReasoning), не рисуется отдельно;
         // пустая строка с ним осталась бы в чате пустой полоской.
-        if(m.role==="assistant"&&!m.content.trim()&&!live&&!trace&&!uiBlocks.length&&(!hasReasoning||coveredReasoning.has(i)))return null;
+        if(m.role==="assistant"&&!m.content.trim()&&!live&&!trace&&!uiBlocks.length&&!checkpoint&&(!hasReasoning||coveredReasoning.has(i)))return null;
         // Картинки, которые агент показал в этом запуске, и картинки из сохранённой истории —
         // один список без повторов: пока запуск идёт, результата инструмента в сообщениях ещё нет.
         const images=[...(chatImages.get(m)??[]),...liveImages.filter(item=>item.messageIndex===i).map(item=>item.image)]
@@ -1877,7 +1921,9 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
                 </a>
                 <figcaption>
                   <code title={image.path}>{image.path}</code>
-                  <span>открыть</span>
+                  {image.pageUrl
+                    ? <a href={image.pageUrl} target="_blank" rel="noreferrer">Открыть страницу <ExternalLink size={10}/></a>
+                    : <span>открыть</span>}
                 </figcaption>
               </figure>)}
             </div>}
@@ -1891,6 +1937,17 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
                 <span>{tasksMessage===i?"Добавляю…":"В задачи"}</span>
               </button>
             </div>}
+            {checkpoint&&<div className="message-checkpoint">
+              <CheckpointCard
+                checkpoint={checkpoint}
+                target={rollbackTarget?.cardSha===checkpoint.sha?rollbackTarget:undefined}
+                busy={rollbackBusy}
+                onPrepare={()=>void prepareRollback(checkpoint)}
+                onRollback={()=>void rollbackChanges()}
+                onCancel={()=>setRollbackTarget(null)}
+                onOpenChanges={onOpenChanges}
+              />
+            </div>}
           </div>
         </div>;
       })}
@@ -1899,31 +1956,6 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
           <UiBlocks blocks={liveUiBlocks} projectId={projectId} busy={running} onAction={sendUiAction}/>
         </div>
       </div>}
-      {changesNotice&&<div className="message-row assistant changes-row">
-        <div className="message-content changes-card">
-          <div className="changes-card-head">
-            <History size={14}/>
-            <div className="changes-card-text">
-              <strong>Изменения сохранены · {changesNotice.shortSha}</strong>
-              <small>{changesNotice.filesChanged > 0 ? "Файлов: " + changesNotice.filesChanged + ". " : ""}{rollbackTarget
-                ? "Вернуть файлы к точке " + rollbackTarget.shortSha + "? Всё, что было после неё, останется в истории."
-                : "Точка истории проекта. Если последний запуск что-то сломал, можно откатиться."}</small>
-            </div>
-          </div>
-          <div className="changes-card-actions">
-            {rollbackTarget
-              ? <>
-                  <button type="button" className="ghost-button changes-card-rollback" onClick={()=>void rollbackChanges()} disabled={rollbackBusy}>{rollbackBusy?"Откатываю…":"Вернуть"}</button>
-                  <button type="button" className="ghost-button changes-card-cancel" onClick={()=>setRollbackTarget(null)} disabled={rollbackBusy}>Отмена</button>
-                </>
-              : <>
-                  <button type="button" className="ghost-button changes-card-rollback" onClick={()=>void prepareRollback()} disabled={rollbackBusy}>Откатить</button>
-                  {onOpenChanges&&<button type="button" className="ghost-button changes-card-open" onClick={()=>onOpenChanges()}>Открыть историю</button>}
-                </>}
-          </div>
-        </div>
-      </div>}
-
     </div>
     <ChatBookmarks
       containerRef={messagesBoxRef}

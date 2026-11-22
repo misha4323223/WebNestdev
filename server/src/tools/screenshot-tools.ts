@@ -51,7 +51,20 @@ export type ScreenshotResult = {
   screenshot: SavedScreenshot;
   diagnostic: string;
   nextAction: string;
+  /** Снимок нужно показать в переписке, а не только сохранить для проверки. */
+  shownInChat?: true;
+  /** Ссылка на ту же страницу в предпросмотре — рядом со снимком в чате. */
+  pageUrl?: string;
 };
+
+/**
+ * Ссылка на исправленную страницу для карточки в чате. Это маршрут панели, а не публичный
+ * адрес: он работает в текущей авторизованной сессии и не требует отдельного билета.
+ */
+export function previewPagePath(projectId: string, path: string) {
+  const route = path.trim().replace(/^\/+/, "");
+  return "/api/projects/" + encodeURIComponent(projectId) + "/preview/open/" + route;
+}
 
 export async function captureScreenshot(input: {
   projectId: string;
@@ -59,6 +72,7 @@ export async function captureScreenshot(input: {
   path: string;
   viewport: ScreenshotViewport;
   fullPage: boolean;
+  show: boolean;
 }): Promise<ScreenshotResult> {
   const access = await openPreview(input.projectId);
   const sandbox = await getSandbox(input.projectId, input.userId);
@@ -98,6 +112,7 @@ export async function captureScreenshot(input: {
         nextAction: problems
           ? "Исправьте названные элементы (селектор и причина в layout.findings), затем снимите экран снова: дефект считается закрытым, когда findings пуст."
           : "Вёрстка в этом размере чистая. Для лендинга имеет смысл проверить второй размер — mobile или tablet.",
+        ...(input.show ? { shownInChat: true as const, pageUrl: previewPagePath(input.projectId, input.path) } : {}),
       };
     } finally {
       await context.close().catch(() => undefined);
@@ -110,7 +125,7 @@ export async function captureScreenshot(input: {
 registerTool({
   name: "browser.screenshot",
   description:
-    "Capture a PNG of the running Preview and audit the layout in the same pass. Input: {path?:string, viewport?:'desktop'|'tablet'|'mobile', fullPage?:boolean}. The PNG is saved inside the project (`.webnestdev/screenshots/…`, excluded from git) and returned as `path` + `url`, so a person can open it. The screenshot is also attached to your model context automatically when the main model accepts images; do not call image.inspect just to view this same screenshot. The model gets `layout`: horizontal overflow of the page, elements beyond the viewport (with CSS selectors), broken images, clipped text and too-small tap targets on mobile. Use it after project.verify or browser.runtime to see whether the grid, hero image or mobile layout actually looks right instead of trusting console output.",
+    "Capture a PNG of the running Preview and audit the layout in the same pass. Input: {path?:string, viewport?:'desktop'|'tablet'|'mobile', fullPage?:boolean, show?:boolean}. The PNG is saved inside the project (`.webnestdev/screenshots/…`, excluded from git) and returned as `path` + `url`, so a person can open it. The screenshot is also attached to your model context automatically when the main model accepts images; do not call image.inspect just to view this same screenshot. The model gets `layout`: horizontal overflow of the page, elements beyond the viewport (with CSS selectors), broken images, clipped text and too-small tap targets on mobile. Use it after project.verify or browser.runtime to see whether the grid, hero image or mobile layout actually looks right instead of trusting console output. Pass `show:true` for the final frame the user should see in the conversation; it adds `shownInChat` and `pageUrl` to the result. Intermediate diagnostic shots can omit it.",
   parameters: {
     type: "object",
     additionalProperties: false,
@@ -118,6 +133,7 @@ registerTool({
       path: { type: "string", description: "Маршрут предпросмотра, например / или /about; по умолчанию /" },
       viewport: { type: "string", enum: ["desktop", "tablet", "mobile"], description: "Размер окна: desktop 1440×900, tablet 820×1180, mobile 390×844; по умолчанию desktop" },
       fullPage: { type: "boolean", description: "Снимать страницу целиком, а не первый экран; полезно для длинного лендинга" },
+      show: { type: "boolean", description: "Показать снимок в переписке вместе со ссылкой на страницу; используйте для финального кадра" },
     },
   },
   execute: async (input, context) =>
@@ -128,6 +144,7 @@ registerTool({
         path: readPath(input),
         viewport: readViewport(input),
         fullPage: Boolean((input as { fullPage?: unknown } | null)?.fullPage),
+        show: Boolean((input as { show?: unknown } | null)?.show),
       }),
     ),
 });

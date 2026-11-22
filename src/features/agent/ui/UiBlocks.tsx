@@ -2,6 +2,7 @@ import "./ui-blocks.css";
 import type { UiBlock } from "../../../lib/ui-blocks";
 import { UiActions } from "./UiActions";
 import { UiChart } from "./UiChart";
+import { UiChecklist } from "./UiChecklist";
 import { UiChoice } from "./UiChoice";
 import { UiDiff } from "./UiDiff";
 import { UiForm } from "./UiForm";
@@ -29,6 +30,7 @@ export function UiBlocks({ blocks, projectId, busy, onAction }: {
       if (block.type === "choice") return <UiChoice key={key} block={block} busy={busy} onAction={onAction}/>;
       if (block.type === "form") return <UiForm key={key} block={block} busy={busy} onAction={onAction}/>;
       if (block.type === "actions") return <UiActions key={key} block={block} busy={busy} onAction={onAction}/>;
+      if (block.type === "checklist") return <UiChecklist key={key} block={block} busy={busy} onAction={onAction}/>;
       if (block.type === "chart") return <UiChart key={key} block={block}/>;
       if (block.type === "table") return <UiTable key={key} block={block}/>;
       if (block.type === "diff") return <UiDiff key={key} block={block}/>;

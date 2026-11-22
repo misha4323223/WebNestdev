@@ -8,13 +8,14 @@ import { isSecretProjectPath } from "../secrets/secret-paths.js";
  * React-компонентов. Модель выбирает блок и заполняет поля; сервер проверяет форму и
  * ограничения, а клиент рендерит только известные типы. Поэтому здесь нет ни `html`,
  * ни `script`, ни произвольных ссылок: всё, что модель может сделать, — предложить
- * пользователю кнопку, форму, график, таблицу, diff или набор готовых снимков.
+ * пользователю кнопку, форму, чек-лист, график, таблицу, diff или набор готовых снимков.
  */
 export const UI_LIMITS = {
   blocks: 6,
   options: 12,
   fields: 12,
   actions: 6,
+  checklist: 12,
   columns: 8,
   rows: 30,
   series: 4,
@@ -91,6 +92,23 @@ export const actionsBlock = z.object({
   actions: z.array(action).min(1).max(UI_LIMITS.actions),
 }).strict();
 
+const checklistItem = z.object({
+  label,
+  description: optionalText,
+  /** Готовый текст запроса; без него клиент отправит подпись пункта. */
+  prompt: prompt.optional(),
+  checked: z.boolean().optional(),
+}).strict();
+
+export const checklistBlock = z.object({
+  type: z.literal("checklist"),
+  id: blockId,
+  title: text,
+  description: optionalText,
+  submitLabel: z.string().trim().min(1).max(80).optional(),
+  items: z.array(checklistItem).min(1).max(UI_LIMITS.checklist),
+}).strict();
+
 const chartSeries = z.object({
   label,
   values: z.array(z.number().finite()).min(1).max(UI_LIMITS.points),
@@ -165,6 +183,7 @@ export const uiBlockSchema = z.discriminatedUnion("type", [
   choiceBlock,
   formBlock,
   actionsBlock,
+  checklistBlock,
   chartBlock,
   tableBlock,
   diffBlock,
@@ -196,12 +215,12 @@ export const uiRenderJsonSchema = {
       type: "array",
       minItems: 1,
       maxItems: UI_LIMITS.blocks,
-      description: "1–6 интерактивных блоков. Обязательные поля: choice — title+options; form — title+fields; actions — title+actions; chart — title+labels+series; table — columns+rows; diff — before+after; preview — images.",
+      description: "1–6 интерактивных блоков. Обязательные поля: choice — title+options; form — title+fields; actions — title+actions; checklist — title+items; chart — title+labels+series; table — columns+rows; diff — before+after; preview — images.",
       items: {
         type: "object",
         required: ["type"],
         properties: {
-          type: { type: "string", enum: ["choice", "form", "actions", "chart", "table", "diff", "preview"] },
+          type: { type: "string", enum: ["choice", "form", "actions", "checklist", "chart", "table", "diff", "preview"] },
           id: { type: "string", description: "Необязательный стабильный id блока" },
           title: { type: "string" },
           description: { type: "string" },
@@ -242,6 +261,20 @@ export const uiRenderJsonSchema = {
           },
           submitLabel: { type: "string" },
           submitPrompt: { type: "string", description: "form: текст перед значениями полей" },
+          items: {
+            type: "array",
+            description: "checklist: пункты {label, description?, prompt?, checked?}; отмеченные пункты уходят агенту",
+            items: {
+              type: "object",
+              required: ["label"],
+              properties: {
+                label: { type: "string" },
+                description: { type: "string" },
+                prompt: { type: "string", description: "Готовый запрос, который уйдёт агенту для этого пункта" },
+                checked: { type: "boolean", description: "Пункт отмечен по умолчанию" },
+              },
+            },
+          },
           actions: {
             type: "array",
             description: "actions: кнопки с готовым запросом агенту",

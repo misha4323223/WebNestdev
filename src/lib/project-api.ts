@@ -24,7 +24,7 @@ export type ProjectChanges={
   repository:{provider?:"github"|"gitlab"|"gitverse"|"sourcecraft";connected:boolean;branch:string;remoteUrl:string|null;lastPushAt:string|null;lastPushError:string|null;pushAllowed:boolean;pushBlockedReason:string|null};
   checkpoints:ChangeCheckpoint[];
 };
-export type Conversation={id:string;projectId:string;title:string;messages:ChatMessage[];plan?:PlanState|null;createdAt:string;updatedAt:string};
+export type Conversation={id:string;projectId:string;title:string;messages:ChatMessage[];messageTimes?:string[];plan?:PlanState|null;createdAt:string;updatedAt:string};
 /** Переменная окружения проекта: значение намеренно не приходит — только его форма. */
 export type ProjectSecret={name:string;preview:string;file:string};
 export type ProjectSecrets={file:string;variables:ProjectSecret[]};
@@ -53,6 +53,10 @@ export const getProjectFile=(projectId:string,path:string)=>apiJson<ProjectFile>
  * сгенерированной картинки. Маршрут отдаёт только растровые форматы.
  */
 export const projectAssetUrl=(projectId:string,path:string)=>apiUrl("/api/projects/"+projectId+"/asset?path="+encodeURIComponent(path));
+/** Служебный снимок проверки лежит вне публичных ассетов и отдаётся отдельным маршрутом. */
+export const projectScreenshotUrl=(projectId:string,path:string)=>apiUrl("/api/projects/"+projectId+"/screenshot?path="+encodeURIComponent(path));
+/** Ссылка на живую страницу предпросмотра для карточки в чате. */
+export const projectPreviewPageUrl=(projectId:string)=>apiUrl("/api/projects/"+projectId+"/preview/open/");
 /** Прямое редактирование файла из панели: правка уходит в проект без запуска агента. */
 export const saveProjectFile=(projectId:string,path:string,content:string)=>apiJson<{path:string;content:string;bytes:number}>(
   "/api/projects/"+projectId+"/file",{method:"PUT",headers:{"content-type":"application/json"},body:JSON.stringify({path,content})});

@@ -8,7 +8,7 @@
 .ui-block-foot{display:flex;justify-content:flex-end;margin-top:10px}
 .ui-block-submit{min-height:29px;padding:0 11px;border:1px solid var(--camo-line-strong);border-radius:7px;background:linear-gradient(180deg,#282116,#1b1711);color:#ede7dc;font:inherit;font-size:10.5px;font-weight:650;cursor:pointer;transition:border-color .15s ease,background .15s ease,color .15s ease}
 .ui-block-submit:hover{border-color:#e0d6c4;background:linear-gradient(180deg,#30271a,#211b13);color:#fff}
-.ui-block-submit:focus-visible,.ui-choice-option:focus-visible{outline:2px solid var(--camo-line-strong);outline-offset:2px}
+.ui-block-submit:focus-visible,.ui-choice-option:focus-visible,.ui-checklist-item:focus-visible,.ui-preview-page:focus-visible{outline:2px solid var(--camo-line-strong);outline-offset:2px}
 .ui-block-submit:disabled{opacity:.5;cursor:default}
 .ui-action-secondary{border-color:#3c4652;background:#141a21;color:#b8c1cb}
 .ui-action-secondary:hover{border-color:#596675;background:#1a222b;color:#e9edf1}
@@ -25,6 +25,18 @@
 .ui-choice-copy strong{font-size:11.5px;font-weight:600;line-height:1.35;overflow-wrap:anywhere}
 .ui-choice-copy span{color:#8e98a3;font-size:10px;line-height:1.4}
 .ui-actions-row{display:flex;flex-wrap:wrap;gap:6px;margin-top:9px}
+.ui-checklist-items{display:grid;gap:5px;margin-top:9px}
+.ui-checklist-item{display:flex;align-items:flex-start;gap:8px;width:100%;min-height:34px;padding:6px 8px;border:1px solid #29323b;border-radius:8px;background:#0d141a;color:#cbd2d9;text-align:left;cursor:pointer;transition:border-color .15s ease,background .15s ease}
+.ui-checklist-item:hover{border-color:var(--camo-line);background:#121a21}
+.ui-checklist-item.is-selected{border-color:var(--camo-line-strong);background:#1d211d;color:#f2efe8}
+.ui-checklist-item:disabled{opacity:.55;cursor:default}
+.ui-checklist-mark{flex:none;width:14px;height:14px;margin-top:1px;display:grid;place-items:center;border:1px solid #45515d;border-radius:4px;color:#d9cfbd}
+.ui-checklist-item.is-selected .ui-checklist-mark{border-color:var(--camo-line-strong);background:#2b291f}
+.ui-checklist-copy{display:grid;gap:1px;min-width:0}
+.ui-checklist-copy strong{font-size:11.5px;font-weight:600;line-height:1.35;overflow-wrap:anywhere}
+.ui-checklist-copy span{color:#8e98a3;font-size:10px;line-height:1.4}
+.ui-checklist .ui-block-foot{align-items:center;justify-content:space-between}
+.ui-checklist-count{color:#7e8994;font-size:9.5px;font-variant-numeric:tabular-nums}
 .ui-form-fields{display:grid;gap:8px;margin-top:10px}
 .ui-form-field{display:grid;gap:4px;min-width:0}
 .ui-form-field>span{color:#9ca6b0;font-size:10px;font-weight:600;letter-spacing:.02em}
@@ -63,6 +75,8 @@
 .ui-preview-frame:hover img{transform:scale(1.008)}
 .ui-preview-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:5px;color:#8d98a3;font-size:9.5px}
 .ui-preview-foot code{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#6f7a85}
+.ui-preview-page{display:inline-flex;align-items:center;gap:3px;flex:none;color:#cdbfa7;text-decoration:none;font-size:9.5px}
+.ui-preview-page:hover{color:#f0e8da;text-decoration:underline}
 @media(max-width:650px){
   .ui-block{padding:9px 10px}
   .ui-diff-head code{max-width:120px}

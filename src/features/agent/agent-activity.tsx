@@ -184,8 +184,8 @@ function parseToolResult(content: string): unknown {
   }
 }
 
-/** Картинка, которую агент нарисовал по просьбе пользователя и показал в переписке. */
-export type ChatImage={url:string;path:string;prompt:string};
+/** Картинка или финальный снимок страницы, который агент показал в переписке. */
+export type ChatImage={url:string;path:string;prompt:string;pageUrl?:string;kind?:"image"|"screenshot"};
 
 /** Картинка из бакета приходит абсолютным URL, старые сохранённые картинки — маршрутом проекта. */
 function isOwnImageUrl(url:string){return url.startsWith("/api/projects/")||/^https?:\/\//i.test(url);}
@@ -216,14 +216,33 @@ export function chatImagesByMessage(messages: ChatMessage[]): Map<ChatMessage, C
     const message = messages[index];
     if (message.role !== "assistant" || !message.tool_calls?.length) continue;
     for (const call of message.tool_calls) {
-      if (call.name !== "image.generate") continue;
       const output = asRecord(results.get(call.id));
-      const url = stringValue(output.url);
-      if (output.shownInChat !== true || !isOwnImageUrl(url)) continue;
+      if (output.shownInChat !== true) continue;
       const owner = messages[answerAfter(index)];
       const shown = images.get(owner) ?? [];
-      shown.push({ url, path: stringValue(output.name)||stringValue(output.path), prompt: stringValue(asRecord(call.arguments).prompt) });
-      images.set(owner, shown);
+      if (call.name === "image.generate") {
+        const url = stringValue(output.url);
+        if (!isOwnImageUrl(url)) continue;
+        shown.push({ url, path: stringValue(output.name)||stringValue(output.path), prompt: stringValue(asRecord(call.arguments).prompt) });
+        images.set(owner, shown);
+        continue;
+      }
+      // browser.screenshot сохраняет путь и загружает PNG в бакет; в чат попадает только
+      // кадр с явной пометкой show:true, а не каждый диагностический снимок.
+      if (call.name === "browser.screenshot") {
+        const screenshot = asRecord(output.screenshot);
+        const url = stringValue(screenshot.bucketUrl)||stringValue(output.bucketUrl)||stringValue(screenshot.url);
+        if (!isOwnImageUrl(url)) continue;
+        const pageUrl = stringValue(output.pageUrl);
+        shown.push({
+          url,
+          path: stringValue(screenshot.path)||stringValue(output.path),
+          prompt: "Снимок страницы " + (stringValue(output.viewport)||"desktop"),
+          ...(isOwnImageUrl(pageUrl) ? { pageUrl } : {}),
+          kind: "screenshot" as const,
+        });
+        images.set(owner, shown);
+      }
     }
   }
   return images;

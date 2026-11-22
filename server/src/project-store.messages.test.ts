@@ -30,6 +30,8 @@ test("сообщения дописываются, а размышление и 
     assert.equal(stored?.messages.length, 4, "ходы дописываются к сессии, а не заменяют её");
     assert.equal(stored?.messages[0].content, "задача");
     assert.equal(stored?.messages[3].content, "ещё задача");
+    assert.equal(stored?.messageTimes?.length, 4, "у каждого сообщения есть время для привязки чекпоинта");
+    assert.ok(Date.parse(stored?.messageTimes?.[1] ?? "") >= Date.parse(stored?.messageTimes?.[0] ?? ""), "время идёт по порядку сообщений");
 
     const assistant = stored?.messages[1];
     const reasoning = assistant?.role === "assistant" ? assistant.reasoning ?? "" : "";

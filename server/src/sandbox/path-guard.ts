@@ -146,6 +146,18 @@ export async function writeFileInside(root: string, candidate: string, content: 
   return target;
 }
 
+/** Каталог проекта: промежуточные папки создаются внутри проверенной цепочки. */
+export async function mkdirInside(root: string, candidate: string) {
+  const { path: target } = await safeParent(root, candidate, true);
+  const info = await statOrNull(target);
+  if (info) {
+    if (info.isSymbolicLink() || !info.isDirectory()) throw new Error("По этому пути уже есть файл");
+    return target;
+  }
+  await mkdir(target, { mode: 0o777 });
+  return target;
+}
+
 /** Удаление: сама ссылка удаляется как ссылка, переход по ней не выполняется. */
 export async function deleteInside(root: string, candidate: string) {
   const { path: target } = await safeParent(root, candidate, false);

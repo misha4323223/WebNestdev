@@ -207,14 +207,14 @@ test("the workspace proxy serves the static preview through the project's own UR
     assert.equal(status.json().mode, "static");
 
     const page = await app.inject({ method: "GET", url: "/api/projects/" + PROJECT_ID + "/preview/open/" });
-    assert.equal(page.statusCode, 200);
+    assert.equal(page.statusCode, 200, page.body);
     assert.match(String(page.headers["content-type"]), /text\/html/);
     assert.match(page.body, /WebNestDev static build/);
     // A root-absolute asset URL is rewritten onto the proxy prefix, exactly as for a dev server.
     assert.ok(page.body.includes('src="/api/projects/' + PROJECT_ID + '/preview/open/assets/app.js"'), page.body);
 
     const logs = await app.inject({ method: "GET", url: "/api/projects/" + PROJECT_ID + "/preview/logs" });
-    assert.equal(logs.statusCode, 200);
+    assert.equal(logs.statusCode, 200, logs.body);
     assert.match(logs.json().logs, /Статический предпросмотр/);
   } finally {
     await app.close();

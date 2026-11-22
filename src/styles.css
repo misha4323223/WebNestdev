@@ -2112,6 +2112,8 @@ button,textarea{font:inherit}button{color:inherit}
 .message-image figcaption{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:6px 9px;border-top:1px solid var(--line-warm-soft);color:#7f8792;font:10px/1.4 ui-monospace,"SF Mono","JetBrains Mono",SFMono-Regular,Menlo,monospace}
 .message-image figcaption code{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:#9ba6b2}
 .message-image figcaption span{flex:none;color:#8a7a5e}
+.message-image figcaption a{display:inline-flex;align-items:center;gap:3px;flex:none;line-height:1.4;color:#b9a789;text-decoration:none}
+.message-image figcaption a:hover{color:#e7dcc9;text-decoration:underline}
 
 /*
  * Техно-окна агента (вопрос и ключ): тёмное стекло, тонкая хаки-линия сверху, мелкая сетка
@@ -3040,7 +3042,7 @@ button,textarea{font:inherit}button{color:inherit}
 /* Панель «Файлы»: прямое редактирование и выгрузка архивом. */
 .files-head-actions{display:flex;gap:6px}
 .file-error{margin:8px 12px 0;padding:8px 10px;border:1px solid #4a3030;border-radius:7px;background:#1b1212;color:#d99b9b;font-size:10.5px;line-height:1.5}
-.file-editor{display:flex;flex-direction:column;overflow:hidden}
+.file-editor{display:flex;flex-direction:column;overflow:hidden;min-height:0}
 .editor-head{justify-content:space-between;gap:10px}
 .editor-head>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .editor-actions{display:flex;align-items:center;gap:8px;flex:none}
@@ -3182,7 +3184,7 @@ button,textarea{font:inherit}button{color:inherit}
 @media(max-width:650px){
   .file-browser.editing{display:flex;flex-direction:column;overflow:hidden}
   .file-browser.editing .file-tree{display:none}
-  .file-browser.editing .file-editor{flex:1;height:auto}
+  .file-browser.editing .file-editor-pane{flex:1;height:auto}
   .editor-back{display:inline-flex}
   .editor-mode{display:none}
   .file-status-note{display:none}
@@ -3526,7 +3528,7 @@ button,textarea{font:inherit}button{color:inherit}
 /* Пока файл не выбран, дерево занимает всю панель: подсказка редактора не должна
    отбирать половину ширины у списка папок. */
 .file-browser.is-browsing .file-tree{width:100%;max-height:none;border-right:0;border-bottom:0}
-.file-browser.is-browsing .file-editor{display:none}
+.file-browser.is-browsing .file-editor-pane{display:none}
 
 /* Загрузчик в строке размышления: маленький знак перед словом, а не отдельный блок под ответом. */
 .thinking-waiting{gap:6px}
@@ -4348,27 +4350,167 @@ button,textarea{font:inherit}button{color:inherit}
 }
 
 
-/* ── Вход в блог на главной: оглавление материалов между шаблонами и проектами ─────────── */
-.home-guide{display:grid;grid-template-columns:minmax(0,250px) minmax(0,1fr);gap:20px;width:min(980px,100%);margin:0 auto 32px;padding-top:16px;border-top:1px solid rgba(216,178,122,.14)}
-.home-guide-intro{display:grid;align-content:start;gap:7px}
-.home-guide-intro .eyebrow{font-size:8px}
-.home-guide-intro h2{margin:0;font-size:15px;line-height:1.25;letter-spacing:-.025em;font-weight:600;color:#e6e5e0}
-.home-guide-all{display:inline-flex;align-items:center;gap:5px;margin-top:2px;color:#ad9a7c;font-size:9.5px;text-decoration:none}
-.home-guide-all:hover{color:#e8d2ad}
-.home-guide-list{display:grid;grid-template-columns:repeat(3,minmax(0,1fr))}
-.home-guide-link{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:start;gap:9px;padding:0 14px;border-left:1px solid rgba(216,178,122,.12);color:inherit;text-decoration:none}
-.home-guide-link:first-child{padding-left:0;border-left:0}
-.home-guide-index{padding-top:2px;color:#7d725f;font:8px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.12em}
-.home-guide-copy{display:grid;gap:3px;min-width:0}
-.home-guide-copy strong{color:#e2e4df;font-size:11.5px;font-weight:600;line-height:1.3}
-.home-guide-copy small{color:#7b837d;font-size:9px;line-height:1.45}
-.home-guide-arrow{margin-top:1px;color:#5f6761;transition:color .15s ease,transform .15s ease}
-.home-guide-link:hover .home-guide-copy strong{color:#f0ece2}
-.home-guide-link:hover .home-guide-arrow{color:#d8b27a;transform:translate(1px,-1px)}
+/* ── Блог на главной: три обложки между шаблонами и проектами ─────────────────────────── */
+.home-journal{width:min(980px,100%);margin:0 auto 34px}
+.home-journal-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin:0 2px 12px}
+.home-journal-head>div{min-width:0}
+.home-journal-head .eyebrow{font-size:8px}
+.home-journal-head h2{margin:5px 0 0;font-size:22px;line-height:1.15;letter-spacing:-.035em;font-weight:600;color:#ecebe6}
+.home-journal-all{display:inline-flex;flex:none;align-items:center;gap:5px;padding-bottom:2px;color:#ad9a7c;font-size:10px;text-decoration:none;transition:color .15s ease}
+.home-journal-all:hover{color:#e8d2ad}
+.home-journal-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
+.home-journal-card{display:flex;flex-direction:column;min-width:0;border:1px solid rgba(216,178,122,.16);border-radius:15px;overflow:hidden;background:radial-gradient(120% 90% at 100% 0,rgba(216,178,122,.05),transparent 55%),linear-gradient(168deg,#12171a,#0d1014 76%);color:inherit;text-decoration:none;transition:border-color .16s ease,transform .16s ease,box-shadow .16s ease}
+.home-journal-card:hover{border-color:rgba(216,178,122,.4);transform:translateY(-2px);box-shadow:0 14px 30px rgba(0,0,0,.26)}
+.home-journal-card:focus-visible{outline:2px solid rgba(216,178,122,.55);outline-offset:2px}
+.home-journal-shot{position:relative;display:block;aspect-ratio:16/10;overflow:hidden;background:#090c0e;border-bottom:1px solid rgba(216,178,122,.13)}
+.home-journal-shot::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(6,8,10,.06),transparent 45%,rgba(6,8,10,.5));pointer-events:none}
+.home-journal-shot img{display:block;width:100%;height:100%;object-fit:cover;filter:saturate(.96);transition:transform .5s ease,filter .3s ease}
+.home-journal-card:hover .home-journal-shot img{transform:scale(1.035);filter:saturate(1.03)}
+.home-journal-tag{position:absolute;top:9px;left:9px;z-index:1;padding:3px 7px;border:1px solid rgba(216,178,122,.3);border-radius:999px;background:rgba(9,12,15,.72);backdrop-filter:blur(6px);color:#d6bd95;font-size:7.5px;font-weight:650;letter-spacing:.08em;text-transform:uppercase}
+.home-journal-go{position:absolute;right:9px;bottom:9px;z-index:1;width:26px;height:26px;padding:6px;border:1px solid rgba(216,178,122,.24);border-radius:50%;background:rgba(9,12,15,.72);backdrop-filter:blur(6px);color:#c9b28e;transition:background .16s ease,border-color .16s ease,color .16s ease,transform .16s ease}
+.home-journal-card:hover .home-journal-go{background:#d8b27a;border-color:#d8b27a;color:#17130e;transform:translate(1px,-1px)}
+.home-journal-body{display:flex;flex-direction:column;gap:5px;padding:11px 13px 13px}
+.home-journal-time{color:#8a7c66;font:8px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.06em;text-transform:uppercase}
+.home-journal-body strong{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:13.5px;line-height:1.3;letter-spacing:-.015em;font-weight:600;color:#e9e8e3}
+.home-journal-body small{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:9.5px;line-height:1.45;color:#7b837d}
 @media(max-width:800px){
-  .home-guide{grid-template-columns:1fr;gap:10px;margin-bottom:26px}
-  .home-guide-list{grid-template-columns:1fr}
-  .home-guide-link{padding:9px 0;border-left:0;border-top:1px solid rgba(216,178,122,.1)}
-  .home-guide-link:first-child{padding-top:0;border-top:0}
+  .home-journal{margin-bottom:26px}
+  .home-journal-head h2{font-size:19px}
+  .home-journal-all{font-size:9.5px}
+  .home-journal-grid{grid-template-columns:none;grid-auto-flow:column;grid-auto-columns:minmax(230px,300px);gap:8px;padding:1px 1px 6px;overflow-x:auto;scroll-snap-type:x proximity;scrollbar-width:none}
+  .home-journal-grid::-webkit-scrollbar{display:none}
+  .home-journal-card{scroll-snap-align:start}
 }
-.home-guide-link:focus-visible,.home-guide-all:focus-visible{outline:2px solid rgba(216,178,122,.55);outline-offset:3px;border-radius:6px}
+@media(max-width:520px){
+  .home-journal-head{gap:8px;margin-bottom:9px}
+  .home-journal-head h2{font-size:18px}
+  .home-journal-all{max-width:92px;justify-content:flex-end;text-align:right;line-height:1.25}
+  .home-journal-grid{grid-auto-columns:228px}
+  .home-journal-body{padding:10px 11px 12px}
+}
+
+/*
+ * Панель «Файлы» после разделения на модули: дерево с действиями строки, подсветка
+ * изменений агента и окно создания/переименования. Всё новое собрано здесь, чтобы прежние
+ * правила редактора оставались нетронутыми.
+ */
+.files-panel .panel-title{flex-wrap:wrap;gap:8px}
+.files-head-actions{display:flex;align-items:center;gap:5px;flex-wrap:wrap;justify-content:flex-end}
+.file-tool{height:26px!important;padding:0 8px!important;font-size:10px!important;gap:5px!important;white-space:nowrap}
+.file-tool svg{flex:none}
+.file-upload-input{display:none!important}
+.file-notice{display:flex;align-items:center;gap:8px;margin:8px 12px 0;padding:7px 10px;border:1px solid #3f4431;border-radius:7px;background:#141810;color:#c7cfb6;font-size:10.5px;line-height:1.5}
+.file-notice button{margin-left:auto;border:0;background:none;color:#8e9781;font-size:14px;line-height:1;cursor:pointer;padding:0 2px}
+.file-notice button:hover{color:#e3e7db}
+.file-change-summary{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:7px 12px 0;padding:5px 8px;border:1px solid var(--line-warm-soft);border-radius:6px;background:#0f1318;color:#9c927f;font-size:9.5px;line-height:1.4}
+.file-change-summary>span{display:flex;align-items:center;gap:6px;min-width:0}
+.file-change-summary button{border:0;background:none;color:#bdad91;font:inherit;font-size:9.5px;cursor:pointer;padding:0;white-space:nowrap}
+.file-change-summary button:hover{color:#ece7dd;text-decoration:underline}
+
+.file-browser.has-file{flex-direction:row}
+.file-editor-pane{flex:1;min-width:0;min-height:0;display:flex;flex-direction:column;overflow:hidden}
+.file-editor{display:flex;flex-direction:column;overflow:hidden}
+
+.file-tree{display:flex;flex-direction:column;overflow:hidden;padding:7px}
+.file-tree-tools{flex:none;display:flex;align-items:center;gap:5px;margin:0 0 6px}
+.file-tree-tools .file-filter{margin:0;flex:1;min-width:0}
+.file-change-filter{flex:none;min-width:22px;height:22px;padding:0 5px;border:1px solid #4a402e;border-radius:5px;background:#211b12;color:#c9b68f;font:10px/1 ui-monospace,SFMono-Regular,Menlo,monospace;cursor:pointer;font-variant-numeric:tabular-nums}
+.file-change-filter:hover{border-color:#6b5a3b;color:#eadfc9}
+.file-change-filter.active{background:#3a2d17;border-color:#8c6f38;color:#f0e5d1}
+.file-tree-list{flex:1;min-height:0;overflow:auto;display:grid;gap:1px;align-content:start;scrollbar-width:thin}
+.file-row{display:flex;align-items:center;min-width:0;border-radius:5px;transition:background .12s ease}
+.file-row:hover{background:#12161b}
+.file-row.selected{background:#171a20;box-shadow:inset 0 0 0 1px #2a2e35}
+.file-row.is-changed{background:linear-gradient(90deg,rgba(193,163,105,.15),rgba(193,163,105,.03) 72%,transparent)}
+.file-row.is-changed::before{content:"";flex:none;width:2px;align-self:stretch;margin:5px 0;border-radius:2px;background:#c3a36b}
+.file-row.is-changed:hover{background:linear-gradient(90deg,rgba(193,163,105,.22),rgba(193,163,105,.06) 72%,transparent)}
+.file-row>button.file-item{flex:1;min-width:0;width:auto;padding-right:2px}
+.file-name{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.file-row.is-changed .file-name{color:#e9ddc7}
+.file-row.has-changes:not(.is-changed){background:linear-gradient(90deg,rgba(193,163,105,.07),transparent 72%)}
+.file-row.has-changes .file-name{color:#dbcdb5}
+.file-row.has-changes .file-item.folder>svg:first-child{color:#c6ab79}
+.file-folder-arrow{flex:none;color:#5d6570;opacity:.5;margin-left:1px}
+.file-change-mark{flex:none;width:6px;height:6px;border-radius:50%;font-style:normal}
+.file-change-mark.added{background:#a9bd8f;box-shadow:0 0 0 2px rgba(169,189,143,.12)}
+.file-change-mark.modified{background:#d3af6f;box-shadow:0 0 0 2px rgba(211,175,111,.12)}
+.file-change-mark.deleted{background:#cf8e8e;box-shadow:0 0 0 2px rgba(207,142,142,.12)}
+.file-change-count{flex:none;min-width:16px;height:16px;padding:0 4px;display:inline-grid;place-items:center;border:1px solid #4a3f2d;border-radius:999px;background:#211b12;color:#c9b68f;font:8.5px/1 ui-monospace,SFMono-Regular,Menlo,monospace;font-variant-numeric:tabular-nums}
+.file-actions{flex:none;display:flex;align-items:center;gap:1px;padding:0 3px 0 1px;opacity:0;transition:opacity .12s ease}
+.file-row:hover .file-actions,.file-row.selected .file-actions,.file-actions:focus-within{opacity:1}
+.file-actions button{width:21px;height:21px;display:grid;place-items:center;padding:0;border:1px solid transparent;border-radius:4px;background:transparent;color:#7f8792;cursor:pointer}
+.file-actions button:hover{background:#1b2027;border-color:#2a3038;color:#dfe3e8}
+.file-actions button.danger:hover{background:#1e1414;border-color:#4a3030;color:#d99b9b}
+.file-actions button:disabled{cursor:default;opacity:.35}
+@media(hover:none){.file-actions{opacity:.72}.file-actions button{width:26px;height:26px}}
+
+.editor-format{height:23px;display:inline-flex;align-items:center;gap:3px;padding:0 7px;border:1px solid var(--line-warm);border-radius:5px;background:#14181d;color:#a9b0b8;font-size:9.5px;cursor:pointer}
+.editor-format:hover{background:#1b2027;border-color:#4d4332;color:#e8eaed}
+.file-format-error{color:#d99b9b}
+.file-editor-body{flex:1;min-height:0}
+.file-gutter{overflow:hidden}
+.file-statusbar{gap:10px}
+.file-image{flex:1;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;padding:18px;overflow:auto;background:#0b0d10}
+.file-image img{max-width:100%;max-height:calc(100% - 30px);object-fit:contain;border:1px solid var(--line-warm-soft);border-radius:7px;background:#11151a}
+.file-image a{display:inline-flex;align-items:center;gap:5px;color:#a39378;font-size:10px;text-decoration:none}
+.file-image a:hover{color:#e5dccb;text-decoration:underline}
+
+.file-dialog-backdrop{position:fixed;inset:0;z-index:210;display:grid;place-items:center;padding:16px;background:rgba(4,6,8,.66);backdrop-filter:blur(2px)}
+.file-dialog{width:min(370px,100%);padding:14px;border:1px solid var(--line-warm);border-radius:11px;background:linear-gradient(170deg,#141a21,#0d1116);box-shadow:0 26px 60px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.04);display:grid;gap:12px}
+.file-dialog.danger{border-color:#4a3030}
+.file-dialog-head{display:flex;align-items:flex-start;gap:9px;min-width:0}
+.file-dialog-icon{flex:none;width:30px;height:30px;display:grid;place-items:center;border:1px solid #4a402e;border-radius:8px;background:#211b12;color:#cdbb97}
+.file-dialog.danger .file-dialog-icon{border-color:#4a3030;background:#1e1414;color:#d99b9b}
+.file-dialog-head>div{flex:1;min-width:0;display:grid;gap:2px}
+.file-dialog-head strong{color:#e7eaee;font-size:12px;font-weight:650}
+.file-dialog-head small{color:#7d8590;font-size:9.5px;line-height:1.4;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.file-dialog-close{flex:none;width:24px;height:24px;display:grid;place-items:center;padding:0;border:0;border-radius:5px;background:transparent;color:#7d8590;cursor:pointer}
+.file-dialog-close:hover{background:#1b2027;color:#e7eaee}
+.file-dialog-note{margin:0;padding:9px 10px;border:1px solid #4a3030;border-radius:7px;background:#1b1212;color:#cfa3a3;font-size:10.5px;line-height:1.55}
+.file-dialog-field{display:grid;gap:5px}
+.file-dialog-field>span{color:#8b7d67;font-size:9px;font-weight:600;letter-spacing:.06em;text-transform:uppercase}
+.file-dialog-field input{width:100%;box-sizing:border-box;height:34px;border:1px solid var(--line-warm);border-radius:7px;background:#090c0f;color:#e6e9ed;padding:0 9px;font:11.5px ui-monospace,SFMono-Regular,Menlo,monospace;outline:none}
+.file-dialog-field input:focus{border-color:#8a6c35;box-shadow:0 0 0 3px rgba(161,124,61,.14)}
+.file-dialog-field input::placeholder{color:#5d6570}
+.file-dialog-actions{display:flex;justify-content:flex-end;gap:7px}
+.file-dialog-actions .ghost-button{height:30px;font-size:10.5px}
+.file-dialog-confirm{height:30px;padding:0 13px;border:1px solid #89682e;border-radius:6px;background:#413116;color:#e8e3d9;font-size:10.5px;cursor:pointer}
+.file-dialog-confirm:hover:not(:disabled){background:#533e1c;border-color:#a37c39}
+.file-dialog-confirm:disabled{opacity:.45;cursor:default}
+.file-dialog-confirm.danger{border-color:#6e3636;background:#3a1919;color:#eccfcf}
+.file-dialog-confirm.danger:hover:not(:disabled){background:#4a2020;border-color:#8e4444}
+
+@media(max-width:650px){
+  .files-panel .panel-title{padding:8px 10px;min-height:0}
+  .files-head-actions{width:100%;justify-content:flex-start;flex-wrap:nowrap;overflow-x:auto;padding-bottom:2px;scrollbar-width:none}
+  .files-head-actions::-webkit-scrollbar{display:none}
+  .file-tool span{display:none}
+  .file-tool{padding:0 7px!important}
+  .file-change-summary{margin:6px 10px 0}
+  .file-browser{display:flex!important;flex-direction:column;overflow:hidden}
+  .file-browser .file-tree{width:100%;max-height:none;border-right:0;border-bottom:0;flex:1;min-height:0}
+  .file-browser.is-browsing .file-editor-pane{display:none}
+  .file-browser.editing .file-tree{display:none}
+  .file-browser.editing .file-editor-pane{flex:1;height:auto;min-height:0}
+  .file-editor-pane{height:auto;min-height:0}
+  .file-editor{height:auto!important;min-height:0}
+  .file-placeholder{padding:26px 16px}
+  .file-statusbar{font-size:9px;gap:8px}
+  .file-source{font-size:16px;line-height:1.55;padding:10px 10px 10px 8px}
+  .file-gutter{font-size:10px;line-height:1.55}
+  .file-gutter span{height:24.8px}
+  .file-dialog{width:100%;max-height:calc(100dvh - 32px);overflow:auto}
+  .file-dialog-field input{font-size:16px}
+}
+
+/*
+ * Чекпоинт — часть ответа агента, а не отдельная строка в конце чата: карточка стоит под тем
+ * сообщением, после которого создана точка истории, и не исчезает при следующем запуске.
+ */
+.message-checkpoint{margin-top:10px;padding:10px 11px;border:1px solid var(--line-warm);border-radius:8px;background:linear-gradient(180deg,#11161b,#0d1116);box-shadow:inset 0 1px 0 rgba(255,255,255,.025)}
+.message-checkpoint .changes-card{gap:8px}
+.message-checkpoint .changes-card-text strong{font-size:10.5px}
+@media(max-width:650px){
+  .message-checkpoint{margin-top:8px;padding:9px}
+  .message-checkpoint .changes-card-actions .ghost-button{height:30px}
+}

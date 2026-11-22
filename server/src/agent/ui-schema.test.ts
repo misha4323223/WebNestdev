@@ -25,6 +25,14 @@ const validBlocks = [
     actions: [{ label: "Запустить превью", prompt: "Запусти превью и проверь главную" }],
   },
   {
+    type: "checklist",
+    title: "Что проверить",
+    items: [
+      { label: "Главная", description: "Первый экран и меню", prompt: "Проверь главную", checked: true },
+      { label: "Мобильная вёрстка", prompt: "Проверь мобильный вид" },
+    ],
+  },
+  {
     type: "chart",
     title: "Метрики",
     labels: ["A", "B"],
@@ -93,6 +101,14 @@ test("схема проверяет длины графиков и таблиц,
     blocks: [{ type: "table", columns: ["A", "B"], rows: [["one"]] }],
   });
   assert.equal(table.success, false);
+});
+
+test("схема не принимает пустой чек-лист и пункт без подписи", () => {
+  const empty = uiRenderSchema.safeParse({ blocks: [{ type: "checklist", title: "x", items: [] }] });
+  assert.equal(empty.success, false);
+
+  const blank = uiRenderSchema.safeParse({ blocks: [{ type: "checklist", title: "x", items: [{ description: "без подписи" }] }] });
+  assert.equal(blank.success, false);
 });
 
 test("схема ограничивает количество блоков", () => {

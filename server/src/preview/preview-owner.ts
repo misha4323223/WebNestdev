@@ -29,7 +29,13 @@ function firstExternalHost(): string {
   const candidates: Array<{ name: string; address: string }> = [];
   for (const [name, addresses] of Object.entries(networkInterfaces())) {
     for (const address of addresses ?? []) {
-      if (address.family === "IPv4" && !address.internal) candidates.push({ name, address: address.address });
+      // Link-local и metadata-адреса не являются дверью, доступной другой реплике: на этой
+      // машине единственным внешним адресом может оказаться 169.254.x.x, и тогда owner
+      // становится заведомо некорректным. Лучше не указывать owner вовсе и остаться локальной
+      // дверью, чем записать адрес, который сам же отвергается при чтении.
+      if (address.family === "IPv4" && !address.internal && !isLinkLocalOrMetadataAddress(address.address)) {
+        candidates.push({ name, address: address.address });
+      }
     }
   }
   // docker0/br-* — не адрес машины в приватной сети: по нему вторая реплика не достучится.

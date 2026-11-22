@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { choicePrompt, formPrompt, isSafeUiAssetPath, parseUiBlocks } from "./ui-blocks";
+import { checklistPrompt, choicePrompt, formPrompt, isSafeUiAssetPath, parseUiBlocks } from "./ui-blocks";
 
 describe("ui-blocks", () => {
   it("принимает проверенные блоки и сохраняет готовые запросы", () => {
@@ -14,10 +14,16 @@ describe("ui-blocks", () => {
         title: "Бриф",
         fields: [{ name: "project_name", label: "Название", required: true }],
       },
+      {
+        type: "checklist",
+        title: "Проверка",
+        items: [{ label: "Главная", prompt: "Проверь главную", checked: true }],
+      },
     ] });
-    expect(blocks).toHaveLength(2);
+    expect(blocks).toHaveLength(3);
     expect(blocks?.[0]).toMatchObject({ type: "choice", title: "Стек" });
     expect(blocks?.[1]).toMatchObject({ type: "form", fields: [{ name: "project_name" }] });
+    expect(blocks?.[2]).toMatchObject({ type: "checklist", items: [{ checked: true }] });
   });
 
   it("не пропускает неизвестный тип, HTML и опасный путь", () => {
@@ -64,5 +70,17 @@ describe("ui-blocks", () => {
     };
     expect(formPrompt(form, { project_name: "Nest", notes: "" })).toBe("Создай проект по брифу\n- Название: Nest");
     expect(formPrompt(form, {})).toBe("");
+
+    const checklist = {
+      type: "checklist" as const,
+      title: "Проверка",
+      items: [
+        { label: "Главная", prompt: "Проверь главную" },
+        { label: "Мобильная вёрстка" },
+      ],
+    };
+    expect(checklistPrompt(checklist, ["Главная"])).toBe("Проверка:\n- Проверь главную");
+    expect(checklistPrompt(checklist, ["Главная", "Мобильная вёрстка"])).toContain("- Мобильная вёрстка");
+    expect(checklistPrompt(checklist, [])).toBe("");
   });
 });

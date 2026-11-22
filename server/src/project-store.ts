@@ -40,7 +40,7 @@ export type Project = {
   snapshotAt?: string;
   workspaceBytes?: number;
 };
-export type Conversation = { id:string; projectId:string; title:string; messages:ChatMessage[]; plan?:PlanState|null; createdAt:string; updatedAt:string };
+export type Conversation = { id:string; projectId:string; title:string; messages:ChatMessage[]; /** Время каждого сообщения: по нему чекпоинт возвращается к своему ответу. */ messageTimes?:string[]; plan?:PlanState|null; createdAt:string; updatedAt:string };
 export type ProjectProviderConfig = { provider:string; baseUrl:string; model:string; token?:string };
 const root=process.env.WEBNESTDEV_DATA_DIR ?? path.resolve(".webnestdev");
 
@@ -698,7 +698,8 @@ export async function getConversation(id:string):Promise<Conversation|null>{
       ORDER BY created_at,message_id
     `;
     const messages=messageRows.length ? messageRows.map(messageFromRow) : JSON.parse(row.messages_json || "[]") as ChatMessage[];
-    return {id:row.id,projectId:row.project_id,title:row.title,messages,plan:row.plan_json ? JSON.parse(row.plan_json) as PlanState : null,createdAt:row.created_at,updatedAt:row.updated_at};
+    const messageTimes=messageRows.length ? messageRows.map(messageRow => messageRow.created_at) : undefined;
+    return {id:row.id,projectId:row.project_id,title:row.title,messages,...(messageTimes?{messageTimes}:{}),plan:row.plan_json ? JSON.parse(row.plan_json) as PlanState : null,createdAt:row.created_at,updatedAt:row.updated_at};
   }
   try{return JSON.parse(await readFile(path.join(root,"conversations",id+".json"),"utf8")) as Conversation}catch{return null}
 }
@@ -815,7 +816,12 @@ export async function appendConversationMessages(id:string,messages:ChatMessage[
   }
   const c=await getConversation(id);
   if(!c)throw new Error("Сессия не найдена");
+  const knownTimes=c.messageTimes?.length===c.messages.length
+    ? c.messageTimes
+    : c.messages.map((_,index)=>new Date(Date.parse(c.createdAt)+index).toISOString());
+  const now=Date.now();
   c.messages.push(...bounded);
+  c.messageTimes=[...knownTimes,...bounded.map((_,index)=>new Date(now+index).toISOString())];
   c.updatedAt=updatedAt;
   await writeFile(path.join(await conversationsDir(),id+".json"),JSON.stringify(c,null,2));
   return {id,projectId:c.projectId,updatedAt,appended:bounded.length};

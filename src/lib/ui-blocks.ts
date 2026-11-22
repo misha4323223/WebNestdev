@@ -12,6 +12,7 @@ export const UI_LIMITS = {
   options: 12,
   fields: 12,
   actions: 6,
+  checklist: 12,
   columns: 8,
   rows: 30,
   series: 4,
@@ -50,6 +51,15 @@ export type UiFormBlock = {
 };
 export type UiAction = { label: string; prompt: string; variant?: "primary" | "secondary" | "danger" };
 export type UiActionsBlock = { type: "actions"; id?: string; title: string; description?: string; actions: UiAction[] };
+export type UiChecklistItem = { label: string; description?: string; prompt?: string; checked?: boolean };
+export type UiChecklistBlock = {
+  type: "checklist";
+  id?: string;
+  title: string;
+  description?: string;
+  submitLabel?: string;
+  items: UiChecklistItem[];
+};
 export type UiChartSeries = { label: string; values: number[]; color?: string };
 export type UiChartBlock = {
   type: "chart";
@@ -81,6 +91,7 @@ export type UiBlock =
   | UiChoiceBlock
   | UiFormBlock
   | UiActionsBlock
+  | UiChecklistBlock
   | UiChartBlock
   | UiTableBlock
   | UiDiffBlock
@@ -205,6 +216,32 @@ function parseActions(value: Record<string, unknown>): UiActionsBlock | null {
   };
 }
 
+function parseChecklist(value: Record<string, unknown>): UiChecklistBlock | null {
+  const title = text(value.title);
+  const items = arrayValue(value.items, UI_LIMITS.checklist);
+  if (!title || !items) return null;
+  const parsed = items.map(item => {
+    if (!isRecord(item)) return null;
+    const label = text(item.label, 160);
+    if (!label) return null;
+    return {
+      label,
+      ...(optionalText(item.description) ? { description: optionalText(item.description) } : {}),
+      ...(text(item.prompt, UI_LIMITS.prompt) ? { prompt: text(item.prompt, UI_LIMITS.prompt)! } : {}),
+      ...(item.checked === true ? { checked: true } : {}),
+    };
+  });
+  if (parsed.some(item => !item)) return null;
+  return {
+    type: "checklist",
+    ...(idValue(value.id) ? { id: idValue(value.id) } : {}),
+    title,
+    ...(optionalText(value.description) ? { description: optionalText(value.description) } : {}),
+    ...(text(value.submitLabel, 80) ? { submitLabel: text(value.submitLabel, 80)! } : {}),
+    items: parsed as UiChecklistItem[],
+  };
+}
+
 function parseChart(value: Record<string, unknown>): UiChartBlock | null {
   const title = text(value.title);
   const labels = arrayValue(value.labels, UI_LIMITS.points)?.map(label => text(label, 160));
@@ -301,6 +338,7 @@ function parseBlock(value: unknown): UiBlock | null {
     case "choice": return parseChoice(value);
     case "form": return parseForm(value);
     case "actions": return parseActions(value);
+    case "checklist": return parseChecklist(value);
     case "chart": return parseChart(value);
     case "table": return parseTable(value);
     case "diff": return parseDiff(value);
@@ -325,6 +363,14 @@ export function choicePrompt(block: UiChoiceBlock, labels: string[]) {
   return selected.length === 1
     ? values[0]
     : block.title + ":\n" + values.map(value => "- " + value).join("\n");
+}
+
+/** Текст запроса из чек-листа: отмеченные пункты уходят одним сообщением. */
+export function checklistPrompt(block: UiChecklistBlock, labels: string[]) {
+  const selected = block.items.filter(item => labels.includes(item.label));
+  if (!selected.length) return "";
+  const values = selected.map(item => item.prompt ?? item.label);
+  return block.title + ":\n" + values.map(value => "- " + value).join("\n");
 }
 
 /** Текст запроса из формы: заголовок, подсказка и только заполненные поля. */

@@ -98,13 +98,13 @@ function templateKickoff(group:TemplateGroup,template:Template){
 const tierLabels:Record<TemplateTier,string>={free:"Старт",pro:"Плюс",team:"Премиум"};
 
 /**
- * Вход в блог с главной. Это указатель, а не вторая полка карточек: превью уже заняты
- * шаблонами, поэтому материалы читаются как оглавление — номер, название и тема.
+ * Вход в блог с главной. Материалы показываются обложками, как шаблоны и статьи в самом
+ * блоге: по названию и теме карточку выбирают быстрее, чем по строке оглавления.
  */
 const guideLinks = [
-  { href: "/blog/what-you-can-build", title: "Что можно сделать", note: "Сайты, данные и границы платформы" },
-  { href: "/blog/publish-and-domain", title: "Публикация и домен", note: "Что попадает в релиз и как подключить адрес" },
-  { href: "/blog/connectors", title: "Коннекторы", note: "Git, облака, база и сервисы приложения" },
+  { href: "/blog/what-you-can-build", title: "Что можно сделать в NestDev", note: "Какие сайты собираются и что нужно для публикации", cover: "/blog/build.webp", tag: "Обзор", time: "5 мин" },
+  { href: "/blog/publish-and-domain", title: "Публикация и свой домен", note: "Релизы, история версий и подключение адреса", cover: "/blog/publish.webp", tag: "Хостинг", time: "4 мин" },
+  { href: "/blog/connectors", title: "Коннекторы: что можно подключить", note: "Git, облака, домены, базы и сервисы приложения", cover: "/blog/connectors.webp", tag: "Интеграции", time: "5 мин" },
 ];
 
 function templateTier(template:Template):TemplateTier{
@@ -457,17 +457,26 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
             </div>
           </section>
 
-          <section className="home-guide" aria-labelledby="home-guide-title">
-            <div className="home-guide-intro">
-              <span className="eyebrow">БЛОГ</span>
-              <h2 id="home-guide-title">Что можно сделать<br/>и как это работает</h2>
-              <a className="home-guide-all" href="/blog">Все материалы <ArrowUpRight size={12}/></a>
+          <section className="home-journal" aria-labelledby="home-journal-title">
+            <div className="home-journal-head">
+              <div>
+                <span className="eyebrow">БЛОГ</span>
+                <h2 id="home-journal-title">Что можно сделать и как это работает</h2>
+              </div>
+              <a className="home-journal-all" href="/blog">Все материалы <ArrowUpRight size={12} aria-hidden="true"/></a>
             </div>
-            <div className="home-guide-list">
-              {guideLinks.map((item, index) => <a className="home-guide-link" href={item.href} key={item.href}>
-                <span className="home-guide-index">{String(index + 1).padStart(2, "0")}</span>
-                <span className="home-guide-copy"><strong>{item.title}</strong><small>{item.note}</small></span>
-                <ArrowUpRight className="home-guide-arrow" size={13} aria-hidden="true"/>
+            <div className="home-journal-grid">
+              {guideLinks.map(item => <a className="home-journal-card" href={item.href} key={item.href}>
+                <span className="home-journal-shot">
+                  <img src={item.cover} alt="" loading="lazy" decoding="async"/>
+                  <span className="home-journal-tag">{item.tag}</span>
+                  <ArrowUpRight className="home-journal-go" size={14} aria-hidden="true"/>
+                </span>
+                <span className="home-journal-body">
+                  <span className="home-journal-time">{item.time} чтения</span>
+                  <strong>{item.title}</strong>
+                  <small>{item.note}</small>
+                </span>
               </a>)}
             </div>
           </section>

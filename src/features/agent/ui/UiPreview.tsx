@@ -1,12 +1,18 @@
 import { useState } from "react";
+import { ExternalLink } from "lucide-react";
 import type { UiPreviewBlock } from "../../../lib/ui-blocks";
-import { projectAssetUrl } from "../../../lib/project-api";
+import { projectAssetUrl, projectPreviewPageUrl, projectScreenshotUrl } from "../../../lib/project-api";
+
+/** Снимки проверки лежат в служебной папке и не проходят через маршрут публичных ассетов. */
+function imageUrl(projectId: string, path: string) {
+  return path.startsWith(".webnestdev/screenshots/") ? projectScreenshotUrl(projectId, path) : projectAssetUrl(projectId, path);
+}
 
 export function UiPreview({ block, projectId }: { block: UiPreviewBlock; projectId: string }) {
   const [active, setActive] = useState(0);
   const image = block.images[active] ?? block.images[0];
   if (!image) return null;
-  const url = projectAssetUrl(projectId, image.path);
+  const url = imageUrl(projectId, image.path);
   return <section className="ui-block ui-preview" aria-label={block.title ?? "Снимки интерфейса"}>
     <header className="ui-block-head">
       <strong>{block.title ?? "Снимки интерфейса"}</strong>
@@ -29,7 +35,9 @@ export function UiPreview({ block, projectId }: { block: UiPreviewBlock; project
     </a>
     <footer className="ui-preview-foot">
       <span>{image.label}</span>
-      <code title={image.path}>{image.path}</code>
+      <a className="ui-preview-page" href={projectPreviewPageUrl(projectId)} target="_blank" rel="noreferrer" title="Открыть исправленную страницу в предпросмотре">
+        Открыть страницу <ExternalLink size={10}/>
+      </a>
     </footer>
   </section>;
 }
