@@ -15,6 +15,15 @@
 #   verify         проверить обе ноды
 #   install-units  поставить systemd timer авто-ротации на node-1
 #
+# Режимы для CA в Yandex KMS (ключ CA на ноде отсутствует):
+#   kms-csr <node>        создать next-server.key и next-server.csr для подписи внешним KMS
+#   kms-install-ca <crt>  положить публичный CA (не меняя текущее доверие)
+#   kms-stage-cert <node> проверить next-server.crt/key; server.crt не менять до activate
+#   kms-stage-trust       добавить старый и новый CA в доверие на обеих нодах
+#   kms-activate <node>   установить уже подготовленный сертификат и перечитать TLS
+#   kms-retire-old-ca     оставить в доверии только новый CA
+#   kms-retire-key        удалить старый ca.key/ca.srl после успешной миграции
+#
 # Ни ключи, ни пароли не печатаются. Все операции с ключами — root, mode 600.
 set -euo pipefail
 
@@ -22,6 +31,7 @@ MODE=${1:-status}
 PKI_DIR=${PG_PKI_DIR:-/etc/webnestdev-ha/pg-pki}
 CA_KEY="$PKI_DIR/ca.key"
 CA_CERT="$PKI_DIR/ca.crt"
+CA_MODE="$PKI_DIR/ca-mode"
 NODES_DIR="$PKI_DIR/nodes"
 TLS_DIR=${PG_TLS_SRC:-/etc/webnestdev-ha/pg-tls}
 PG_VERSION=${PG_VERSION:-17}
@@ -87,6 +97,9 @@ ca_cert_valid() {
 }
 
 ca_valid() {
+  # Маркер ставит kms-install-ca. Даже если старый ca.key остался на ноде
+  # (REMOVE_OLD_KEY=0), локальная подпись и авто-ротация должны быть запрещены.
+  [ ! -e "$CA_MODE" ] || return 1
   ca_cert_valid || return 1
   [ -s "$CA_KEY" ] || return 1
   openssl pkey -in "$CA_KEY" -noout >/dev/null 2>&1 || return 1
@@ -94,6 +107,7 @@ ca_valid() {
 
 init_ca() {
   install -d -m 700 -o root -g root "$PKI_DIR" "$NODES_DIR"
+  [ ! -e "$CA_MODE" ] || fail "CA помечен как KMS ($CA_MODE); файловый CA здесь не создаётся"
   if ca_valid; then
     log "CA уже существует: $(openssl x509 -in "$CA_CERT" -noout -subject | sed 's/^subject=//')"
     return 0
@@ -324,14 +338,14 @@ check_streaming_remote() {
 }
 
 create_bundle() {
-  local old="$1" bundle="$PKI_DIR/trust-bundle.crt"
+  local old="$1" cert_name=${2:-server.crt} bundle="$PKI_DIR/trust-bundle.crt"
   [ -s "$old" ] || fail "нет старого CA для промежуточного доверия"
   cat "$old" "$CA_CERT" >"$bundle"
   chmod 644 "$bundle"
   openssl verify -CAfile "$bundle" "$old" >/dev/null 2>&1 || fail "старый CA не проверяется bundle"
-  openssl verify -CAfile "$bundle" "$NODES_DIR/node-1/server.crt" >/dev/null 2>&1 || fail "node-1 cert не проверяется bundle"
-  openssl verify -CAfile "$bundle" "$NODES_DIR/node-2/server.crt" >/dev/null 2>&1 || fail "node-2 cert не проверяется bundle"
-  log "промежуточный bundle: старый + новый CA"
+  openssl verify -CAfile "$bundle" "$NODES_DIR/node-1/$cert_name" >/dev/null 2>&1 || fail "node-1 cert не проверяется bundle"
+  openssl verify -CAfile "$bundle" "$NODES_DIR/node-2/$cert_name" >/dev/null 2>&1 || fail "node-2 cert не проверяется bundle"
+  log "промежуточный bundle: старый + новый CA (проверены $cert_name)"
 }
 
 stage_trust() {
@@ -381,6 +395,157 @@ retire_old_ca() {
   log "старый CA удалён из доверия; остался только новый CA"
 }
 
+#
+# CA в Yandex KMS. На ноде нет ca.key, поэтому выпуск делится на шаги:
+# CSR создаётся здесь, подпись делает отдельный signer, сертификат возвращается
+# сюда. Старые листья при этом не подменяются до kms-activate.
+#
+kms_csr() {
+  local node=$1 dir next_key next_csr san
+  require_root
+  node_ip "$node" >/dev/null
+  install -d -m 700 -o root -g root "$PKI_DIR" "$NODES_DIR"
+  dir="$NODES_DIR/$node"
+  install -d -m 700 -o root -g root "$dir"
+  next_key="$dir/next-server.key"
+  next_csr="$dir/next-server.csr"
+  san=$(node_san "$node")
+  rm -f "$next_key" "$next_csr" "$dir/next-server.crt"
+  (umask 077; openssl req -new -newkey rsa:4096 -sha256 -nodes \
+    -keyout "$next_key" -out "$next_csr" \
+    -subj "/CN=webnestdev-postgres-$node" \
+    -addext "subjectAltName=$san" >/dev/null 2>&1) || fail "$node: не удалось создать CSR для KMS"
+  chmod 600 "$next_key"
+  chmod 644 "$next_csr"
+  log "$node: CSR для KMS: $next_csr"
+  log "$node: новый ключ: $next_key (600); старый сертификат не тронут"
+}
+
+kms_install_ca() {
+  local src=${1:-}
+  require_root
+  [ -n "$src" ] && [ -s "$src" ] || fail "kms-install-ca: укажите публичный ca.crt"
+  openssl x509 -in "$src" -noout -text 2>/dev/null | grep -q 'CA:TRUE' || \
+    fail "kms-install-ca: $src не является CA-сертификатом"
+  install -d -m 700 -o root -g root "$PKI_DIR"
+  if [ "$(readlink -f "$src")" != "$(readlink -f "$CA_CERT")" ]; then
+    install -m 644 -o root -g root "$src" "$CA_CERT"
+  fi
+  printf 'kms\n' >"$CA_MODE"
+  chmod 644 "$CA_MODE"
+  log "CA для KMS установлен в $CA_CERT (доверие пока не менялось)"
+  openssl x509 -in "$CA_CERT" -noout -subject -fingerprint -sha256
+}
+
+kms_stage_cert() {
+  local node=$1 dir next_cert next_key san
+  require_root
+  node_ip "$node" >/dev/null
+  dir="$NODES_DIR/$node"
+  next_cert="$dir/next-server.crt"
+  next_key="$dir/next-server.key"
+  [ -s "$next_cert" ] && [ -s "$next_key" ] || fail "$node: нет next-server.crt/next-server.key"
+  ca_cert_valid || fail "$node: нет нового CA в $CA_CERT"
+  pair_valid "$next_cert" "$next_key" || fail "$node: новый сертификат и ключ не совпадают"
+  openssl verify -CAfile "$CA_CERT" "$next_cert" >/dev/null 2>&1 || \
+    fail "$node: новый сертификат не проверяется новым CA"
+  san=$(node_san "$node")
+  openssl x509 -in "$next_cert" -noout -ext subjectAltName 2>/dev/null | grep -q "IP Address:$(node_ip "$node")" || \
+    fail "$node: в новом сертификате нет SAN IP $(node_ip "$node")"
+  # Не подменяем server.crt/key до kms-activate: иначе параллельная выкатка
+  # node2-sync.sh может установить новый лист раньше, чем обновлено доверие.
+  log "$node: новый сертификат проверен и подготовлен в $dir; live-сертификат ещё не заменён"
+  log "$node: ожидаемый SAN: $san"
+}
+
+# Промежуточное доверие: старый CA, который сейчас лежит в TLS_DIR, плюс новый
+# публичный CA. Не требует ca.key и не выпускает сертификаты.
+kms_stage_trust() {
+  require_root
+  ca_cert_valid || fail "нет нового CA в $CA_CERT"
+  local old="$TLS_DIR/ca.crt" backup="$PKI_DIR/old-ca.crt"
+  [ -s "$old" ] || fail "нет текущего CA в $old"
+  install -m 600 -o root -g root "$old" "$backup"
+  # Доверие проверяем по next-server.crt: новые листья ещё не активированы,
+  # server.crt намеренно остаётся старым до kms-activate.
+  create_bundle "$old" next-server.crt
+  install_bundle_local "$PKI_DIR/trust-bundle.crt"
+  install_ca_remote "$PKI_DIR/trust-bundle.crt"
+  reload_pg_local
+  reload_pg_remote
+  reload_haproxy_local
+  reload_haproxy_remote
+  log "старый и новый CA добавлены в доверие на обеих нодах"
+}
+
+kms_activate() {
+  local node=$1 dir next_cert next_key
+  require_root
+  node_ip "$node" >/dev/null
+  dir="$NODES_DIR/$node"
+  next_cert="$dir/next-server.crt"
+  next_key="$dir/next-server.key"
+  [ -s "$next_cert" ] && [ -s "$next_key" ] || \
+    fail "$node: сначала выполните kms-stage-cert $node"
+  ca_cert_valid || fail "$node: нет нового CA в $CA_CERT"
+  pair_valid "$next_cert" "$next_key" || fail "$node: next-сертификат и ключ не совпадают"
+  openssl verify -CAfile "$CA_CERT" "$next_cert" >/dev/null 2>&1 || \
+    fail "$node: next-сертификат не проверяется новым CA"
+  # Защита от активации до промежуточного доверия: иначе соседняя нода
+  # отвергнет новый лист. Для обычной ротации текущий CA уже в trust.
+  openssl verify -CAfile "$HAPROXY_CA" "$next_cert" >/dev/null 2>&1 || \
+    fail "$node: текущее доверие ещё не содержит новый CA; сначала kms-stage-trust"
+  install -m 600 -o root -g root "$next_key" "$dir/server.key"
+  install -m 644 -o root -g root "$next_cert" "$dir/server.crt"
+  switch_node "$node"
+  rm -f "$next_key" "$next_cert" "$dir/next-server.csr"
+}
+
+kms_retire_old_ca() {
+  require_root
+  ca_cert_valid || fail "нет нового CA в $CA_CERT"
+  local node
+  for node in node-1 node-2; do
+    [ -s "$NODES_DIR/$node/server.crt" ] || fail "$node: нет сертификата"
+    openssl verify -CAfile "$CA_CERT" "$NODES_DIR/$node/server.crt" >/dev/null 2>&1 || \
+      fail "$node: установленный сертификат не проверяется новым CA"
+  done
+  install_ca_local
+  install_ca_remote "$CA_CERT"
+  reload_pg_local
+  reload_pg_remote
+  reload_haproxy_local
+  reload_haproxy_remote
+  log "старый CA удалён из доверия; остался только новый CA"
+}
+
+kms_retire_key() {
+  require_root
+  ca_cert_valid || fail "нет нового CA в $CA_CERT"
+  [ -s "$TLS_DIR/ca.crt" ] || fail "нет $TLS_DIR/ca.crt; сначала kms-retire-old-ca"
+  cmp -s "$TLS_DIR/ca.crt" "$CA_CERT" || \
+    fail "в $TLS_DIR/ca.crt ещё не только новый CA; сначала kms-retire-old-ca"
+  local node
+  for node in node-1 node-2; do
+    pair_valid "$NODES_DIR/$node/server.crt" "$NODES_DIR/$node/server.key" || \
+      fail "$node: сертификат/ключ не готовы к удалению старого CA"
+    openssl verify -CAfile "$CA_CERT" "$NODES_DIR/$node/server.crt" >/dev/null 2>&1 || \
+      fail "$node: сертификат не проверяется новым CA"
+  done
+  if [ -e "$CA_KEY" ]; then
+    rm -f "$CA_KEY" "$PKI_DIR/ca.srl"
+    log "старый ca.key и ca.srl удалены; приватный CA теперь только в Yandex KMS"
+  else
+    log "ca.key уже отсутствует"
+  fi
+  # Локальный таймер не умеет подписывать через KMS; после перехода он только
+  # шумит в журнале. Ротация теперь запускается workflow pki-kms.
+  if systemctl list-unit-files "${UNIT_NAME}.timer" >/dev/null 2>&1; then
+    systemctl disable --now "${UNIT_NAME}.timer" >/dev/null 2>&1 || true
+    log "локальный ${UNIT_NAME}.timer отключён"
+  fi
+}
+
 verify_local() {
   require_root
   ca_cert_valid || fail "CA не найден или повреждён"
@@ -407,6 +572,13 @@ verify_local() {
 status_local() {
   [ -s "$CA_CERT" ] || fail "CA не найден"
   printf 'CA: '; openssl x509 -in "$CA_CERT" -noout -subject -issuer -enddate -fingerprint -sha256 | tr '\n' ' '; echo
+  if [ -e "$CA_MODE" ]; then
+    echo 'CA key: в Yandex KMS (ca.key на ноде не используется)'
+  elif ca_valid; then
+    echo 'CA key: локальный ca.key'
+  else
+    echo 'CA key: отсутствует на ноде или не совпадает с ca.crt'
+  fi
   for node in node-1 node-2; do
     local cert="$NODES_DIR/$node/server.crt"
     if [ -s "$cert" ]; then
@@ -457,6 +629,21 @@ EOF
 
 setup() {
   require_root
+  # После миграции CA живёт в KMS, а на ноде остаётся только ca.crt. Повторный
+  # install-node1.sh не должен пытаться создать файловый ca.key: применяем уже
+  # установленный лист и оставляем выпуск внешнему подписанту.
+  if ca_cert_valid && [ -e "$CA_MODE" ]; then
+    [ -s "$NODES_DIR/node-1/server.crt" ] && [ -s "$NODES_DIR/node-1/server.key" ] || \
+      fail "CA в KMS, но сертификата node-1 нет; выпустите его через pki-kms workflow"
+    log "CA находится в Yandex KMS: локальный ca.key не нужен, применяю готовый лист node-1"
+    install_ca_local
+    install_cert_local node-1
+    reload_pg_local
+    reload_haproxy_local
+    bash "$(dirname "$SELF")/pg_tls.sh" apply
+    verify_local
+    return 0
+  fi
   # На уже работающей ноде с прежним общим сертификатом нельзя сразу ставить
   # новый CA: вторая нода ещё ему не доверяет. Для этого есть migrate.
   if [ -s "$TLS_DIR/server.crt" ] && [ ! -s "$CA_CERT" ]; then
@@ -490,6 +677,9 @@ migrate() {
 
 rotate() {
   require_root
+  if [ -e "$CA_MODE" ]; then
+    fail "CA находится в Yandex KMS: используйте workflow pki-kms (режим rotate), локальный ca.key не нужен"
+  fi
   ca_valid || fail "CA не найден; ротация невозможна"
   ensure_remote
   FORCE=1 issue_all
@@ -502,6 +692,10 @@ rotate() {
 
 auto_rotate() {
   require_root
+  if [ -e "$CA_MODE" ]; then
+    log "CA в Yandex KMS — локальная авто-ротация не выполняется; используйте pki-kms workflow"
+    return 0
+  fi
   ca_valid || { log "CA нет — авто-ротация пропущена"; return 0; }
   local node days
   for node in node-1 node-2; do
@@ -535,5 +729,12 @@ case "$MODE" in
   status) status_local ;;
   verify-local) verify_local ;;
   verify) verify_local; verify_remote ;;
-  *) fail "неизвестный режим '$MODE' (setup|migrate|rotate|auto-rotate|status|verify|verify-local|install-units)" ;;
+  kms-csr) kms_csr "${2:?node-1|node-2}" ;;
+  kms-install-ca) kms_install_ca "${2:-}" ;;
+  kms-stage-cert) kms_stage_cert "${2:?node-1|node-2}" ;;
+  kms-stage-trust) kms_stage_trust ;;
+  kms-activate) kms_activate "${2:?node-1|node-2}" ;;
+  kms-retire-old-ca) kms_retire_old_ca ;;
+  kms-retire-key) kms_retire_key ;;
+  *) fail "неизвестный режим '$MODE' (setup|migrate|rotate|auto-rotate|status|verify|verify-local|install-units|kms-csr|kms-install-ca|kms-stage-cert|kms-stage-trust|kms-activate|kms-retire-old-ca|kms-retire-key)" ;;
 esac

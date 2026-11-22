@@ -1,0 +1,141 @@
+name: PostgreSQL PKI via Yandex KMS
+
+# Одноразовая миграция с файлового ca.key на асимметричный ключ Yandex KMS и
+# последующая ротация листьев. Приватный ключ CA не покидает KMS; на node-1
+# создаются только CSR/листовые ключи. Подписант — этот runner.
+#
+# Требования:
+#   * repository variable YC_KMS_KEY_ID (или input kms_key_id);
+#   * secret PKI_KMS_SA_KEY_JSON — ключ сервисного аккаунта с ролями
+#     kms.asymmetricSignatureKeys.signer и ...publicKeyViewer на ключ;
+#   * environment production (желательно Required reviewers);
+#   * секреты DEPLOY_HOST/DEPLOY_USER/DEPLOY_SSH_KEY уже используются deploy.yml.
+#
+# migrate меняет доверие: сначала старый+новый CA, затем листья, затем только
+# новый CA. Для запуска нужно ввести MIGRATE. rotate не меняет CA и требует ROTATE.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "migrate — один раз перейти на KMS; rotate — новые листья; verify — только проверка"
+        type: choice
+        options: ["verify", "rotate", "migrate"]
+        default: "verify"
+      confirm:
+        description: "Для migrate введите MIGRATE, для rotate — ROTATE"
+        type: string
+        required: false
+      remove_old_key:
+        description: "После успешной миграции удалить старый ca.key/ca.srl с node-1"
+        type: boolean
+        default: true
+      kms_key_id:
+        description: "ID ключа KMS (по умолчанию repository variable YC_KMS_KEY_ID)"
+        type: string
+        required: false
+
+concurrency:
+  group: pki-kms
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  pki:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 30
+    env:
+      MODE: ${{ inputs.mode }}
+      CONFIRM: ${{ inputs.confirm }}
+      REMOVE_OLD_KEY: ${{ inputs.remove_old_key == true && '1' || '0' }}
+      KMS_KEY_ID: ${{ inputs.kms_key_id || vars.YC_KMS_KEY_ID }}
+      PYTHON: python3
+      SA_KEY_FILE: ${{ runner.temp }}/pki-kms-sa.json
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install KMS signer dependencies
+        run: python3 -m pip install --disable-pip-version-check -r deploy/pki-kms/requirements.txt
+
+      - name: Prepare SSH to node-1
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_HOST_RAW: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER_RAW: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT_RAW: ${{ secrets.DEPLOY_PORT }}
+        run: |
+          set -euo pipefail
+          host=$(printf '%s' "$DEPLOY_HOST_RAW" | tr -d '[:space:]')
+          user=$(printf '%s' "${DEPLOY_USER_RAW:-Misha}" | tr -d '[:space:]')
+          port=$(printf '%s' "${DEPLOY_PORT_RAW:-22}" | tr -d '[:space:]')
+          [ -n "$host" ] || { echo "::error::Не задан DEPLOY_HOST"; exit 1; }
+          [ -n "$DEPLOY_SSH_KEY" ] || { echo "::error::Не задан DEPLOY_SSH_KEY"; exit 1; }
+          mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$HOME/.ssh/deploy_key"
+          chmod 600 "$HOME/.ssh/deploy_key"
+          if [ -n "${DEPLOY_KNOWN_HOSTS:-}" ]; then
+            printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          else
+            ssh-keyscan -H "$host" > "$HOME/.ssh/known_hosts" 2>/dev/null
+          fi
+          chmod 600 "$HOME/.ssh/known_hosts"
+          {
+            echo "DEPLOY_HOST=$host"
+            echo "DEPLOY_USER=$user"
+            echo "DEPLOY_PORT=$port"
+            echo "DEPLOY_SSH_KEY=$HOME/.ssh/deploy_key"
+          } >> "$GITHUB_ENV"
+
+      - name: Write KMS service account key
+        if: ${{ inputs.mode != 'verify' }}
+        env:
+          PKI_KMS_SA_KEY_JSON: ${{ secrets.PKI_KMS_SA_KEY_JSON }}
+        run: |
+          set -euo pipefail
+          [ -n "${PKI_KMS_SA_KEY_JSON:-}" ] || {
+            echo "::error::Не задан GitHub secret PKI_KMS_SA_KEY_JSON"
+            exit 1
+          }
+          umask 077
+          printf '%s' "$PKI_KMS_SA_KEY_JSON" > "$SA_KEY_FILE"
+          chmod 600 "$SA_KEY_FILE"
+          python3 - <<'PY'
+          import json, os
+          with open(os.environ["SA_KEY_FILE"], encoding="utf-8") as fh:
+              key = json.load(fh)
+          for name in ("id", "service_account_id", "private_key"):
+              if not key.get(name):
+                  raise SystemExit(f"service account key: нет {name}")
+          print("service account key: структура OK")
+          PY
+
+      - name: Migrate, rotate or verify PostgreSQL PKI
+        run: bash deploy/pki-kms/run.sh
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### PostgreSQL PKI via Yandex KMS"
+            echo ""
+            echo "- Mode: \`${{ inputs.mode }}\`"
+            echo "- KMS key: \`${{ env.KMS_KEY_ID }}\`"
+            echo "- Результат: **${{ job.status }}**"
+            echo ""
+            echo "После успешной миграции:"
+            echo "1. Отключи Actions → PostgreSQL CA backup (старый ca.key больше не нужен)."
+            echo "2. Не включай локальный auto-rotate: он не имеет доступа к KMS."
+            echo "3. Проверь, что node-1 и node-2 работают на новых листьях, затем ротируй ключ сервисного аккаунта."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove service account key from runner
+        if: always()
+        run: rm -f "$SA_KEY_FILE"

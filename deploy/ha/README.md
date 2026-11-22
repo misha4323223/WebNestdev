@@ -85,6 +85,12 @@ sudo systemctl is-active webnestdev-failover-node2.service
 публичный CA и лист/ключ самой `node-2`. Это заменяет прежний общий self-signed
 сертификат, который был одновременно CA и ключом обеих нод.
 
+**Подготовлен переход на Yandex KMS** (код есть, production ещё не мигрирован):
+приватный ключ CA хранится в асимметричном ключе KMS, `ca.key` с `node-1` удаляется,
+подпись выполняет отдельный signer. Команды на `node-1` только создают CSR и ставят
+готовый лист; KMS-прав на ноде нет. Полный порядок, роли и ограничения — в
+[`docs/PG_PKI_YANDEX_KMS.md`](../../docs/PG_PKI_YANDEX_KMS.md).
+
 Раскладка:
 
 - `/etc/webnestdev-ha/pg-pki/ca.crt` — публичный корень; `/etc/haproxy/pg-ca.crt` — его копия
@@ -105,6 +111,21 @@ sudo /opt/webnestdev-ha/pg_pki.sh verify         # проверка обеих �
 sudo /opt/webnestdev-ha/pg_pki.sh status         # CA, листья, сроки, fingerprint
 sudo /opt/webnestdev-ha/pg_pki.sh install-units  # systemd timer авто-ротации
 ```
+
+Режимы KMS (вызываются workflow, вручную — только при наличии подготовленного CA):
+
+```bash
+sudo /opt/webnestdev-ha/pg_pki.sh kms-csr node-1          # next-server.key/.csr
+sudo /opt/webnestdev-ha/pg_pki.sh kms-install-ca ca.crt   # публичный CA, без смены доверия
+sudo /opt/webnestdev-ha/pg_pki.sh kms-stage-cert node-1   # проверить и подготовить лист
+sudo /opt/webnestdev-ha/pg_pki.sh kms-stage-trust         # старый + новый CA в доверие
+sudo /opt/webnestdev-ha/pg_pki.sh kms-activate node-1     # установить подготовленный лист
+sudo /opt/webnestdev-ha/pg_pki.sh kms-retire-old-ca       # оставить только новый CA
+sudo /opt/webnestdev-ha/pg_pki.sh kms-retire-key          # удалить старый ca.key/ca.srl
+```
+
+После `kms-retire-key` локальный `webnestdev-pg-tls-rotate.timer` отключается: он не
+имеет доступа к KMS, ротация выполняется workflow `pki-kms` в GitHub Actions.
 
 `migrate` сначала добавляет старый и новый CA в общий trust bundle на обеих нодах,
 затем заменяет лист `node-1`, потом `node-2`, и только после успешной проверки убирает

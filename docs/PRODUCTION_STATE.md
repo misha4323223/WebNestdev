@@ -13,7 +13,10 @@
 отдельный CA и уникальные сертификаты нод: `pg_pki.sh` на `node-1`, лист 90 дней, CA 10 лет,
 ротация — `webnestdev-pg-tls-rotate.timer` (проверено 22.11.2026; подробности —
 [`PG_PKI_2026-11-22.md`](PG_PKI_2026-11-22.md); backup CA и restore drill —
-[`PG_PKI_BACKUP.md`](PG_PKI_BACKUP.md)). Audit salt лежит отдельно от ключа
+[`PG_PKI_BACKUP.md`](PG_PKI_BACKUP.md)). **22.11.2026, 10:04 UTC — подготовлено, но ещё
+не выполнено:** переход на Yandex KMS (CA-ключ в KMS, без `ca.key` на `node-1`); код,
+workflow и порядок — в [`PG_PKI_YANDEX_KMS.md`](PG_PKI_YANDEX_KMS.md). Audit salt лежит
+отдельно от ключа
 шифрования в `/var/lib/webnestdev/data/audit-salt` (600) на обеих нодах; preview-логи
 проходят редакцию значений сохранённых секретов. Production работает в
 `WEBNESTDEV_WORKSPACE_MODE=local`, `OWNER_ROUTING=1`; проекты на локальных каталогах.

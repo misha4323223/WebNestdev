@@ -62,7 +62,28 @@ jobs:
             'set -e; umask 077; sudo -n install -d -m 755 /opt/webnestdev-ha; cat > /tmp/.pg-ca-backup.sh; sudo -n install -m 755 /tmp/.pg-ca-backup.sh /opt/webnestdev-ha/pg_ca_backup.sh; rm -f /tmp/.pg-ca-backup.sh' \
             < deploy/ha/pg_ca_backup.sh
 
+      - name: Check whether a file CA still exists
+        id: ca
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+        run: |
+          set -euo pipefail
+          host=$(printf '%s' "$DEPLOY_HOST" | tr -d '[:space:]')
+          user=$(printf '%s' "$DEPLOY_USER" | tr -d '[:space:]')
+          port=$(printf '%s' "${DEPLOY_PORT:-22}" | tr -d '[:space:]')
+          enabled=$(ssh -i "$HOME/.ssh/deploy_key" -p "$port" \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$user@$host" \
+            'if sudo -n test -s /etc/webnestdev-ha/pg-pki/ca.key; then echo 1; else echo 0; fi')
+          echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
+          if [ "$enabled" = "0" ]; then
+            echo "ca.key отсутствует: CA перенесён в Yandex KMS, backup файлового CA не нужен."
+          fi
+
       - name: Run backup on node-1
+        if: ${{ steps.ca.outputs.enabled == '1' }}
         env:
           DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
@@ -83,6 +104,11 @@ jobs:
         run: |
           {
             echo "### PostgreSQL CA backup"
-            echo "Backup и проверка последнего объекта завершены на node-1."
-            echo "Архив зашифрован age; приватный ключ на ВМ отсутствует."
+            if [ "${{ steps.ca.outputs.enabled }}" = "1" ]; then
+              echo "Backup и проверка последнего объекта завершены на node-1."
+              echo "Архив зашифрован age; приватный ключ на ВМ отсутствует."
+            else
+              echo "Пропущено: файлового ca.key больше нет (CA в Yandex KMS)."
+              echo "Этот workflow можно отключить; KMS-ключ резервируется средствами Yandex Cloud."
+            fi
           } >> "$GITHUB_STEP_SUMMARY"

@@ -77,7 +77,13 @@ jobs:
           python-version: "3.12"
 
       - name: Check HA shell syntax
-        run: bash -n deploy/scripts/node2-sync.sh deploy/ha/install-node1.sh deploy/ha/install-node2.sh deploy/ha/standby.sh deploy/ha/pg_tls.sh deploy/ha/pg_hba_probe.sh
+        run: bash -n deploy/scripts/node2-sync.sh deploy/ha/install-node1.sh deploy/ha/install-node2.sh deploy/ha/standby.sh deploy/ha/pg_tls.sh deploy/ha/pg_hba_probe.sh deploy/ha/pg_pki.sh deploy/pki-kms/run.sh
+
+      - name: Install PKI KMS signer dependencies
+        run: python3 -m pip install --disable-pip-version-check -r deploy/pki-kms/requirements.txt
+
+      - name: Test PKI KMS signer
+        run: python3 -m unittest discover -s deploy/pki-kms -p 'test_*.py' -v
 
       - name: Test HA controller and storage scripts
         # Тесты не требуют MWS/cryptography: их зависимости подменяются в самих тестах.
