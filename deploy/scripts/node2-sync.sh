@@ -205,24 +205,33 @@ install_ha_node2(){
 }
 
 #
-# PostgreSQL TLS. Сертификат и ключ создаются один раз на node-1 (install-node1.sh),
-# затем передаются на node-2 по SSH. Копируем сертификат, ключ (mode 600) и CA;
-# после установки pg_tls.sh переводит HBA на hostssl и перечитывает PostgreSQL.
+# PostgreSQL TLS. При PKI у каждой ноды свой лист: node-1 и node-2 нельзя
+# копировать одним и тем же server.crt. Берём сертификат node-2 и общий CA из
+# /etc/webnestdev-ha/pg-pki, передаём на node-2; ключ node-2 не подменяется
+# ключом node-1. pg_tls.sh apply только раскладывает уже готовую пару.
 #
 sync_pg_tls(){
   local dir=/etc/webnestdev-ha/pg-tls
+  local pki=/etc/webnestdev-ha/pg-pki
+  local src="$pki/nodes/node-2"
   if [ "$DRY_RUN" = "1" ]; then
-    log "dry-run: передал бы PostgreSQL TLS-сертификат из $dir на node-2"
+    log "dry-run: передал бы TLS-сертификат node-2 из $src на node-2"
     return 0
   fi
-  if ! sudo -n test -s "$dir/server.crt" || ! sudo -n test -s "$dir/server.key"; then
-    log "pg TLS: на node-1 нет $dir/server.crt — TLS на node-2 не включаю"
+  if ! sudo -n test -s "$src/server.crt" || ! sudo -n test -s "$src/server.key" || ! sudo -n test -s "$pki/ca.crt"; then
+    log "pg TLS: нет $src/server.crt или $pki/ca.crt — TLS на node-2 не включаю"
     return 0
   fi
-  log "передаю PostgreSQL TLS-сертификат на node-2"
-  ssh2 "sudo -n install -d -m 700 -o root -g root '$dir'" || return 1
-  sudo -n tar -C "$dir" -czf - server.crt server.key ca.crt |
-    ssh2_stdin "sudo -n tar -xzf - -C '$dir' && sudo -n chown root:root '$dir/server.crt' '$dir/server.key' '$dir/ca.crt' && sudo -n chmod 600 '$dir/server.key' && sudo -n chmod 644 '$dir/server.crt' '$dir/ca.crt'" || return 1
+  log "передаю сертификат node-2 и CA на node-2"
+  ssh2 "sudo -n install -d -m 700 -o root -g root '$dir' '$pki'" || return 1
+  sudo -n tar -C "$src" -czf - server.crt server.key |
+    ssh2_stdin "sudo -n tar -xzf - -C '$dir' && sudo -n chown root:root '$dir/server.crt' '$dir/server.key' && sudo -n chmod 600 '$dir/server.key' && sudo -n chmod 644 '$dir/server.crt'" || return 1
+  sudo -n install -m 644 -o root -g root "$pki/ca.crt" "$dir/ca.crt" || return 1
+  sudo -n tar -C "$pki" -czf - ca.crt |
+    ssh2_stdin "sudo -n tar -xzf - -C '$pki' && sudo -n chown root:root '$pki/ca.crt' && sudo -n chmod 644 '$pki/ca.crt'" || return 1
+  sudo -n tar -C "$dir" -czf - ca.crt |
+    ssh2_stdin "sudo -n tar -xzf - -C '$dir' && sudo -n chown root:root '$dir/ca.crt' && sudo -n chmod 644 '$dir/ca.crt'" || return 1
+  ssh2 "sudo -n install -d -m 700 -o postgres -g postgres /etc/postgresql/${PG_VERSION:-17}/${PG_CLUSTER:-main}/tls" || return 1
   ssh2 "sudo -n env PG_VERSION='${PG_VERSION:-17}' PG_CLUSTER='${PG_CLUSTER:-main}' LOCAL_PG_PORT='${LOCAL_PG_PORT:-5433}' bash '$HA_CODE_DST/pg_tls.sh' apply" || return 1
   log "PostgreSQL TLS на node-2 применён"
 }

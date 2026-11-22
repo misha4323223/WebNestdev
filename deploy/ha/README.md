@@ -26,11 +26,12 @@ HAProxy на локальный PostgreSQL только когда узел ст
 peer (`:5433`) — когда узел снова standby. Поэтому вернувшаяся ВМ сразу принимает проекты
 и preview, но её PostgreSQL остаётся read-only standby.
 
-После `pg_tls.sh` backend HAProxy идёт с `ssl verify required` по самоподписанному CA.
-HAProxy 2.8 подключается к PostgreSQL 17 по **direct TLS**, поэтому в server-строке обязателен
-`alpn postgresql`: без него PostgreSQL рвёт соединение с `received direct SSL connection
-request without ALPN protocol negotiation extension`, а старые пулы API могут скрывать
-поломку. Сертификат создаётся на `node-1`, а `node2-sync.sh` передаёт его на `node-2` по SSH.
+После `pg_pki.sh setup` backend HAProxy идёт с `ssl verify required` по отдельному корневому
+CA, а у каждой ноды свой лист-сертификат. HAProxy 2.8 подключается к PostgreSQL 17 по
+**direct TLS**, поэтому в server-строке обязателен `alpn postgresql`: без него PostgreSQL
+рвёт соединение с `received direct SSL connection request without ALPN protocol negotiation
+extension`, а старые пулы API могут скрывать поломку. CA и приватные ключи нод хранятся
+только на `node-1`; `node2-sync.sh` передаёт на `node-2` её собственный лист и публичный CA.
 API по-прежнему ходит в локальный `host.docker.internal:5432` без TLS: шифруется участок между
 нодами и HAProxy ↔ PostgreSQL, а не loopback внутри одной ВМ.
 
@@ -44,10 +45,10 @@ API не поднимается, если primary peer недоступен.
 ## Установка
 
 ```bash
-# node-1: создаёт TLS-сертификат PostgreSQL и CA, затем ставит hostssl-правила
+# node-1: создаёт отдельный CA и уникальные листья нод, затем ставит hostssl-правила
 sudo bash deploy/ha/install-node1.sh
 # node-2 (секреты mws.env/regru.env должны уже лежать в /etc/webnestdev-ha, mode 600)
-# Сертификат появится после deploy/scripts/node2-sync.sh; без него TLS на node-2
+# Лист node-2 появится после deploy/scripts/node2-sync.sh; без него TLS на node-2
 # остаётся выключенным, а API продолжает работать через прежний plaintext.
 sudo bash deploy/ha/install-node2.sh
 ```
@@ -76,22 +77,56 @@ sudo systemctl is-active webnestdev-failover-node2.service
 общий `/var/lib/webnestdev/data/ha-switchover.json`. Секреты в репозиторий не добавлять.
 `replication.env` создаётся на узле и копируется на второй узел только защищённым каналом.
 
-## TLS PostgreSQL
+## TLS PostgreSQL и PKI
 
-`pg_tls.sh` создаёт один самоподписанный сертификат с SAN для `host.docker.internal`,
-`127.0.0.1`, `10.0.0.4` и `10.0.0.5`, кладёт его в `/etc/webnestdev-ha/pg-tls` и
-`/etc/postgresql/17/main/tls`, включает `ssl=on` и переводит все TCP-правила `pg_hba`
-с `host` на `hostssl`. Публичная часть становится `/etc/haproxy/pg-ca.crt`, по ней
-HAProxy проверяет сертификат PostgreSQL. Ключ пары один на две ноды и передаётся только
-по SSH; каталог `/etc/webnestdev-ha/pg-tls` — `700 root`, поэтому читать его может только
-root, а PostgreSQL использует свою копию в `/etc/postgresql/17/main/tls`.
+`pg_pki.sh` создаёт отдельный корневой CA (`CN=WebNestDev PostgreSQL Root CA`) и
+**уникальный** лист для каждой ноды. Корневой ключ и оба листа лежат только на `node-1`
+в `/etc/webnestdev-ha/pg-pki` (`700 root`, ключи `600`); на `node-2` передаются только
+публичный CA и лист/ключ самой `node-2`. Это заменяет прежний общий self-signed
+сертификат, который был одновременно CA и ключом обеих нод.
+
+Раскладка:
+
+- `/etc/webnestdev-ha/pg-pki/ca.crt` — публичный корень; `/etc/haproxy/pg-ca.crt` — его копия
+  (на время миграции — bundle старого и нового CA).
+- `/etc/webnestdev-ha/pg-pki/nodes/node-N/server.crt` и `server.key` — лист ноды.
+- `/etc/webnestdev-ha/pg-tls` — совместимый путь, из него `pg_tls.sh apply` раскладывает
+  файлы в PostgreSQL; на `node-2` там лежит её собственный лист.
+- `/etc/postgresql/17/main/tls` — рабочие файлы PostgreSQL (`server.crt`, `server.key`,
+  `ca.crt`). HBA остаётся только `hostssl`.
+
+Основные команды (на `node-1`, через `sudo`):
+
+```bash
+sudo /opt/webnestdev-ha/pg_pki.sh setup          # новая установка: CA + оба листа
+sudo /opt/webnestdev-ha/pg_pki.sh migrate        # переход с общего self-signed без простоя
+sudo /opt/webnestdev-ha/pg_pki.sh rotate         # новые листья с тем же CA
+sudo /opt/webnestdev-ha/pg_pki.sh verify         # проверка обеих нод
+sudo /opt/webnestdev-ha/pg_pki.sh status         # CA, листья, сроки, fingerprint
+sudo /opt/webnestdev-ha/pg_pki.sh install-units  # systemd timer авто-ротации
+```
+
+`migrate` сначала добавляет старый и новый CA в общий trust bundle на обеих нодах,
+затем заменяет лист `node-1`, потом `node-2`, и только после успешной проверки убирает
+старый CA. Так ни один шаг не рвёт HAProxy, standby и API. `setup` на существующем PKI
+не перезаписывает CA; `pg_tls.sh setup` при наличии `pg-pki/ca.crt` намеренно завершается
+ошибкой, чтобы не вернуть общий сертификат. `pg_tls.sh apply` по-прежнему используется
+`node2-sync.sh` и берёт именно `ca.crt`, а не лист.
+
+Лист действует 90 дней, CA — 10 лет. `webnestdev-pg-tls-rotate.timer` на `node-1`
+ежедневно запускает `auto-rotate`; ротация происходит, когда до истечения листа осталось
+меньше 30 дней. Ротация ставит новый лист сначала на `node-1`, затем на `node-2` и
+проверяет streaming/API. Если `node-2` недоступна, таймер завершится ошибкой, но
+действующие сертификаты останутся валидными.
 
 Проверка на каждой ноде:
 
 ```bash
 sudo -u postgres psql -p 5433 -Atc 'show ssl'          # on
 sudo -u postgres psql -p 5433 -Atc 'show ssl_cert_file'
-openssl x509 -in /etc/webnestdev-ha/pg-tls/server.crt -noout -subject -dates
+sudo openssl verify -CAfile /etc/haproxy/pg-ca.crt \
+  /etc/postgresql/17/main/tls/server.crt
+openssl x509 -in /etc/postgresql/17/main/tls/server.crt -noout -subject -issuer -dates
 grep -E '^[[:space:]]*(host|hostssl)[[:space:]]' \
   /etc/postgresql/17/main/pg_hba.conf
 # В HAProxy server-строке должны быть ssl verify required и alpn postgresql
@@ -101,15 +136,15 @@ grep -E '^[[:space:]]*server primary' /etc/haproxy/haproxy.cfg
 Проверка TLS с проверкой цепочки (пароль не печатать):
 
 ```bash
-PGSSLMODE=verify-full PGSSLROOTCERT=/etc/postgresql/17/main/tls/ca.crt \
+PGSSLMODE=verify-full PGSSLROOTCERT=/etc/haproxy/pg-ca.crt \
   psql "host=127.0.0.1 port=5433 dbname=webnestdev user=webnestdev" -c 'select 1'
 ```
 
-Если сертификат на `node-2` ещё не пришёл, `db_proxy.py` оставляет plaintext и пишет
-об этом в журнал; после `node2-sync.sh` он сам перепишет HAProxy на TLS. Не запускайте
-`pg_tls.sh setup` на `node-2`: получится вторая пара, и проверка сертификата соседа
-перестанет работать. Для планового rejoin источником должен быть PostgreSQL напрямую
-(`5433`), а не HAProxy (`5432`): иначе TLS заворачивается дважды.
+Если лист на `node-2` ещё не пришёл, `db_proxy.py` оставляет plaintext и пишет об этом
+в журнал; после `node2-sync.sh` он сам перепишет HAProxy на TLS. Не запускайте
+`pg_tls.sh setup` на `node-2`: при активном PKI он откажется работать, а ручная общая
+пара сломает проверку соседа. Для планового rejoin источником должен быть PostgreSQL
+напрямую (`5433`), а не HAProxy (`5432`): иначе TLS заворачивается дважды.
 
 ## Проверка
 

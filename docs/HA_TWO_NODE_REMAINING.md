@@ -5,8 +5,9 @@
 и [`deploy/ha/README.md`](../deploy/ha/README.md). Здесь только то, что ещё не закрыто, и
 границы, чтобы не делать уже сделанное.
 
-**Актуально на 21.11.2026, 22:08 UTC, сборка `d7c491b`; runtime `db_proxy.py` с ALPN
-установлен на обе ноды.** `node-1` — primary PostgreSQL, `node-2` — streaming standby;
+**Актуально на 22.11.2026, 07:35 UTC, сборка `d7c491b`; runtime `db_proxy.py` с ALPN
+установлен на обе ноды.** PostgreSQL TLS работает на отдельном CA и уникальных сертификатах
+нод; подробности — [`PG_PKI_2026-11-22.md`](PG_PKI_2026-11-22.md). `node-1` — primary PostgreSQL, `node-2` — streaming standby;
 оба API и публичный `https://nestdev.ru/api/ready` — `200`, `pg_stat_replication` —
 `streaming`, лаг близок к нулю, `archive_mode=on`. На обеих нодах `ssl=on`, HBA — только
 `hostssl`, HAProxy ходит в PostgreSQL по TLS 1.3 с проверкой CA, standby — `sslmode=verify-full`.
@@ -31,13 +32,14 @@
 
 ## Осталось и текущее состояние
 
-### 1. TLS на участке HAProxy ↔ PostgreSQL — включён 21.11.2026
+### 1. TLS на участке HAProxy ↔ PostgreSQL — включён 21.11.2026, PKI — 22.11.2026
 
-**21.11.2026, 22:08 UTC.** TLS включён на живой паре. Один самоподписанный сертификат с SAN
-`host.docker.internal`, `localhost`, `127.0.0.1`, `10.0.0.4`, `10.0.0.5` создан на `node-1` и
-передан на `node-2` по SSH; `server.key` — `600 root`, PostgreSQL использует копии в
-`/etc/postgresql/17/main/tls`. На обеих нодах `ssl=on`, `ssl_cert_file` указывает на новый
-сертификат, `pg_hba` содержит **8 правил `hostssl` и 0 правил `host`**.
+**21.11.2026, 22:08 UTC.** TLS включён на живой паре. **22.11.2026, 07:33 UTC** общий
+самоподписанный сертификат заменён на отдельный CA и уникальные листья нод (`pg_pki.sh`):
+CA и ключи — только на `node-1`, на `node-2` — её лист и публичный CA; `server.key` — `600`,
+PostgreSQL использует копии в `/etc/postgresql/17/main/tls`. На обеих нодах `ssl=on`,
+`ssl_cert_file` указывает на лист своей ноды, `pg_hba` содержит **8 правил `hostssl` и 0
+правил `host`**.
 
 HAProxy на обеих нодах ходит в PostgreSQL напрямую на `5433` с проверкой CA. Ключевая
 деталь: PostgreSQL 17 принимает direct TLS только с ALPN `postgresql`; HAProxy 2.8
@@ -53,10 +55,13 @@ HAProxy на обеих нодах ходит в PostgreSQL напрямую н�
 (TLS 1.3). Прямое `sslmode=disable` к `5433` отклоняется, `sslmode=require` доходит до
 authentication, `sslmode=verify-full` проверяет цепочку.
 
-**Остаток:** сертификат самоподписанный и общий для обеих нод; ротация и KMS/HSM — отдельные
-задачи. При плановом rejoin использовать `standby.sh` с `PG_TLS_CA`; он выставляет
-`sslmode=verify-full` автоматически. Не запускать `pg_tls.sh setup` на `node-2`: получится
-вторая пара и проверка сертификата соседа перестанет работать.
+**Закрыто 22.11.2026:** общий self-signed сертификат заменён на PKI; `pg_pki.sh migrate`
+прошёл на живой паре без простоя, `rotate` и `auto-rotate` проверены, старый CA удалён из
+trust bundle. Остаются отдельные задачи: KMS/HSM и защищённый off-site backup CA-ключа
+(скрипт и workflow добавлены, первый backup/restore drill ещё не выполнены).
+При плановом rejoin использовать `standby.sh` с `PG_TLS_CA`; он выставляет `sslmode=verify-full`
+автоматически. `pg_tls.sh setup` при активном PKI блокируется; на `node-2` не создавать
+вторую общую пару.
 
 ### 2. HA-наблюдаемость — выкачена и работает
 
@@ -121,7 +126,8 @@ primary; после этого `node-2` не выключается.
 
 ## Порядок работ
 
-1. TLS и проверка репликации (пункт 1) — **закрыто 21.11.2026, 22:08 UTC**.
+1. TLS, отдельный PKI, ротация и проверка репликации (пункт 1) — **закрыто 21.11.2026,
+   22:08 UTC; PKI и ротация — 22.11.2026, 07:33 UTC**.
 2. HA-снимок и проверки в админке/письмах (пункт 2) — выкачено и работает.
 3. Целевой domain/preview failover (пункт 3) — destructive, нужно окно.
 4. Конкурентный DDL и `restore-s3` (пункт 4) — проверено 15.11.2026, 17:15 UTC.

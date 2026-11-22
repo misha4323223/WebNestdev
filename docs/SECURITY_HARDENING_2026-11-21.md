@@ -157,8 +157,14 @@ PostgreSQL по TLS с проверкой CA; `node-2` — с `sslmode=verify-fu
 Проверено на реальных ВМ: новые пулы API обеих нод — `200`; все соединения приложения — TLS
 1.3; `sslmode=disable` к `5433` отклоняется; `sslmode=require` доходит до authentication;
 `sslmode=verify-full` проверяет цепочку; `pg_stat_replication` — `streaming`, лаг близок к
-нулю; `pg_stat_ssl` для walsender — `true`. Остаточная граница: сертификат самоподписанный,
-общий для двух нод; ротация и KMS/HSM — отдельный проект.
+нулю; `pg_stat_ssl` для walsender — `true`.
+
+**Обновление 22.11.2026, 07:33 UTC:** остаточная граница снята. Введён отдельный root CA и
+уникальные сертификаты нод (`deploy/ha/pg_pki.sh`), старый общий сертификат выведен из
+trust bundle, ручная ротация и `auto-rotate` проверены на живой паре. KMS/HSM и защищённый
+off-site backup CA-ключа остаются отдельными задачами; скрипт и GitHub Actions workflow
+backup добавлены, но первый архив/restore drill ещё не выполнены. Подробности —
+[`PG_PKI_2026-11-22.md`](PG_PKI_2026-11-22.md) и [`PG_PKI_BACKUP.md`](PG_PKI_BACKUP.md).
 
 ## Проверки
 

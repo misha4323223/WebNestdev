@@ -50,12 +50,14 @@ sudo -u postgres psql -p 5433 -Atc 'show archive_mode'   # ожидается on
 пропускают работу на standby. Если API на какой-то ноде висит после рестарта базы —
 `sudo systemctl reload haproxy` на этой ноде (старый worker держит мёртвые соединения).
 
-TLS на участке HAProxy ↔ PostgreSQL **включён 21.11.2026, 22:08 UTC** через
-[`deploy/ha/pg_tls.sh`](../deploy/ha/pg_tls.sh). На обеих нодах `ssl=on`, HBA только `hostssl`,
+TLS на участке HAProxy ↔ PostgreSQL **включён 21.11.2026, 22:08 UTC**; **22.11.2026, 07:33 UTC**
+он переведён на отдельный CA и уникальные сертификаты нод через
+[`deploy/ha/pg_pki.sh`](../deploy/ha/pg_pki.sh). На обеих нодах `ssl=on`, HBA только `hostssl`,
 HAProxy ходит в PostgreSQL с проверкой CA и `alpn postgresql`, standby — `sslmode=verify-full`.
-При повторной установке на чистой ноде сертификат создаётся один раз на `node-1` и передаётся
-на `node-2` по SSH; не запускать `pg_tls.sh setup` на `node-2`. Rejoin идёт напрямую в
-PostgreSQL `5433`, а не через HAProxy `5432`.
+При повторной установке на чистой ноде `pg_pki.sh setup` создаёт CA и оба листа на `node-1`, а
+`node2-sync.sh` передаёт `node-2` её собственный лист; не запускать `pg_tls.sh setup` на
+`node-2`. Rejoin идёт напрямую в PostgreSQL `5433`, а не через HAProxy `5432`. Подробности —
+[`PG_PKI_2026-11-22.md`](PG_PKI_2026-11-22.md).
 
 Подробности переезда 10.11.2026 и простоя — [`PRODUCTION_STATE.md`](PRODUCTION_STATE.md) §15.
 

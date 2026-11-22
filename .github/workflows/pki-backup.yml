@@ -1,0 +1,88 @@
+name: PostgreSQL CA backup
+
+# Резервная копия корневого CA PostgreSQL в Yandex Object Storage.
+# Запуск не требует терминала на ВМ: GitHub Actions приезжает по SSH, ставит актуальный
+# скрипт в /opt/webnestdev-ha и запускает его. Секреты S3 лежат только в
+# /etc/webnestdev-ha/pki-backup.env (600 root), а не в workflow.
+#
+# Первый запуск делать только после pki-backup-setup: нужен age recipient и env-файл.
+# Приватный age-ключ на ВМ не нужен; он хранится офлайн для restore drill.
+
+on:
+  schedule:
+    # Воскресенье 04:45 UTC — после недельной проверки/ротации сертификатов.
+    - cron: "45 4 * * 0"
+  workflow_dispatch:
+
+concurrency:
+  group: pki-ca-backup
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Prepare the SSH key
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$HOME/.ssh/deploy_key"
+          chmod 600 "$HOME/.ssh/deploy_key"
+          if [ -n "${DEPLOY_KNOWN_HOSTS:-}" ]; then
+            printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          else
+            ssh-keyscan -H "$DEPLOY_HOST" > "$HOME/.ssh/known_hosts" 2>/dev/null
+          fi
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Install current backup script on node-1
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+        run: |
+          set -euo pipefail
+          host=$(printf '%s' "$DEPLOY_HOST" | tr -d '[:space:]')
+          user=$(printf '%s' "$DEPLOY_USER" | tr -d '[:space:]')
+          port=$(printf '%s' "${DEPLOY_PORT:-22}" | tr -d '[:space:]')
+          ssh -i "$HOME/.ssh/deploy_key" -p "$port" \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$user@$host" \
+            'set -e; umask 077; sudo -n install -d -m 755 /opt/webnestdev-ha; cat > /tmp/.pg-ca-backup.sh; sudo -n install -m 755 /tmp/.pg-ca-backup.sh /opt/webnestdev-ha/pg_ca_backup.sh; rm -f /tmp/.pg-ca-backup.sh' \
+            < deploy/ha/pg_ca_backup.sh
+
+      - name: Run backup on node-1
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+        run: |
+          set -euo pipefail
+          host=$(printf '%s' "$DEPLOY_HOST" | tr -d '[:space:]')
+          user=$(printf '%s' "$DEPLOY_USER" | tr -d '[:space:]')
+          port=$(printf '%s' "${DEPLOY_PORT:-22}" | tr -d '[:space:]')
+          ssh -i "$HOME/.ssh/deploy_key" -p "$port" \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            -o ServerAliveInterval=30 -o ServerAliveCountMax=30 \
+            "$user@$host" \
+            'sudo -n bash /opt/webnestdev-ha/pg_ca_backup.sh backup && sudo -n bash /opt/webnestdev-ha/pg_ca_backup.sh verify'
+
+      - name: Summary
+        if: success()
+        run: |
+          {
+            echo "### PostgreSQL CA backup"
+            echo "Backup и проверка последнего объекта завершены на node-1."
+            echo "Архив зашифрован age; приватный ключ на ВМ отсутствует."
+          } >> "$GITHUB_STEP_SUMMARY"

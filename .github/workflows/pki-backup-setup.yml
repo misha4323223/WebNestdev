@@ -1,0 +1,208 @@
+name: PostgreSQL CA backup setup
+
+# Настраивает node-1 без терминала на ВМ:
+#   * ставит age и rclone;
+#   * создаёт age identity (приватный ключ уходит в artifact, не в лог);
+#   * пишет /etc/webnestdev-ha/pki-backup.env из GitHub Secrets (600 root);
+#   * проверяет доступ к Yandex Object Storage.
+#
+# При повторном запуске существующий PKI_AGE_RECIPIENT сохраняется: новый identity
+# создаётся только при force_new_age_identity=true. Старые архивы после смены identity
+# расшифровываются только старым ключом, поэтому менять identity без причины нельзя.
+
+on:
+  workflow_dispatch:
+    inputs:
+      force_new_age_identity:
+        description: "Создать новый age identity (старые архивы потребуют старый ключ)"
+        type: boolean
+        default: false
+
+concurrency:
+  group: pki-backup-setup
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  setup:
+    runs-on: ubuntu-latest
+    environment: production
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Prepare the SSH key
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.ssh" && chmod 700 "$HOME/.ssh"
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$HOME/.ssh/deploy_key"
+          chmod 600 "$HOME/.ssh/deploy_key"
+          if [ -n "${DEPLOY_KNOWN_HOSTS:-}" ]; then
+            printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+          else
+            ssh-keyscan -H "$DEPLOY_HOST" > "$HOME/.ssh/known_hosts" 2>/dev/null
+          fi
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Install age on the runner
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq age
+          age --version
+
+      - name: Read existing age recipient
+        id: existing
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+        run: |
+          set -euo pipefail
+          host=$(printf '%s' "$DEPLOY_HOST" | tr -d '[:space:]')
+          user=$(printf '%s' "$DEPLOY_USER" | tr -d '[:space:]')
+          port=$(printf '%s' "${DEPLOY_PORT:-22}" | tr -d '[:space:]')
+          recipient=$(ssh -i "$HOME/.ssh/deploy_key" -p "$port" \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$user@$host" \
+            "if sudo -n test -r /etc/webnestdev-ha/pki-backup.env; then sudo -n sed -n 's/^PKI_AGE_RECIPIENT=//p' /etc/webnestdev-ha/pki-backup.env | head -n1; fi" 2>/dev/null || true)
+          recipient=$(printf '%s' "$recipient" | tr -d '\r\n')
+          echo "recipient=$recipient" >> "$GITHUB_OUTPUT"
+          echo "Существующий recipient: ${recipient:+есть}${recipient:-нет}"
+
+      - name: Generate age identity
+        id: generate
+        if: ${{ inputs.force_new_age_identity || steps.existing.outputs.recipient == '' }}
+        run: |
+          set -euo pipefail
+          umask 077
+          identity="$RUNNER_TEMP/pki-age.key"
+          rm -f "$identity"
+          age-keygen -o "$identity" >/dev/null 2>&1
+          recipient=$(age-keygen -y "$identity")
+          [ -n "$recipient" ] || { echo "age-keygen не выдал recipient" >&2; exit 1; }
+          echo "identity=$identity" >> "$GITHUB_OUTPUT"
+          echo "recipient=$recipient" >> "$GITHUB_OUTPUT"
+          echo "generated=true" >> "$GITHUB_OUTPUT"
+          echo "Новый age identity создан; приватный ключ в лог не выводится."
+
+      - name: Upload age identity
+        if: ${{ steps.generate.outputs.generated == 'true' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: pki-age-identity-DO-NOT-SHARE
+          path: ${{ steps.generate.outputs.identity }}
+          retention-days: 1
+          if-no-files-found: error
+
+      - name: Install backup tools on node-1
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+        run: |
+          set -euo pipefail
+          host=$(printf '%s' "$DEPLOY_HOST" | tr -d '[:space:]')
+          user=$(printf '%s' "$DEPLOY_USER" | tr -d '[:space:]')
+          port=$(printf '%s' "${DEPLOY_PORT:-22}" | tr -d '[:space:]')
+          ssh -i "$HOME/.ssh/deploy_key" -p "$port" \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$user@$host" \
+            'if ! command -v age >/dev/null 2>&1 || ! command -v rclone >/dev/null 2>&1; then sudo -n apt-get update -qq && sudo -n env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq age rclone; fi; age --version; rclone version | sed -n "1p"'
+
+      - name: Write pki-backup.env on node-1
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+          PKI_S3_ENDPOINT: ${{ secrets.PKI_S3_ENDPOINT || 'https://storage.yandexcloud.net' }}
+          PKI_S3_REGION: ${{ secrets.PKI_S3_REGION || 'ru-central1' }}
+          PKI_S3_BUCKET: ${{ secrets.PKI_S3_BUCKET || 'webnestdev-pg-pki-backup' }}
+          PKI_S3_PREFIX: ${{ secrets.PKI_S3_PREFIX || 'pki/ca' }}
+          PKI_S3_ACCESS_KEY_ID: ${{ secrets.PKI_S3_ACCESS_KEY_ID }}
+          PKI_S3_SECRET_ACCESS_KEY: ${{ secrets.PKI_S3_SECRET_ACCESS_KEY }}
+          PKI_AGE_RECIPIENT: ${{ steps.generate.outputs.recipient || steps.existing.outputs.recipient }}
+        run: |
+          set -euo pipefail
+          host=$(printf '%s' "$DEPLOY_HOST" | tr -d '[:space:]')
+          user=$(printf '%s' "$DEPLOY_USER" | tr -d '[:space:]')
+          port=$(printf '%s' "${DEPLOY_PORT:-22}" | tr -d '[:space:]')
+          for name in PKI_S3_ACCESS_KEY_ID PKI_S3_SECRET_ACCESS_KEY PKI_AGE_RECIPIENT; do
+            [ -n "${!name:-}" ] || { echo "::error::Не задан GitHub secret $name"; exit 1; }
+          done
+          sanitize() { printf '%s' "$1" | tr -d '\r\n'; }
+          {
+            printf 'PKI_S3_ENDPOINT=%s\n' "$(sanitize "$PKI_S3_ENDPOINT")"
+            printf 'PKI_S3_REGION=%s\n' "$(sanitize "$PKI_S3_REGION")"
+            printf 'PKI_S3_BUCKET=%s\n' "$(sanitize "$PKI_S3_BUCKET")"
+            printf 'PKI_S3_PREFIX=%s\n' "$(sanitize "$PKI_S3_PREFIX")"
+            printf 'PKI_S3_ACCESS_KEY_ID=%s\n' "$(sanitize "$PKI_S3_ACCESS_KEY_ID")"
+            printf 'PKI_S3_SECRET_ACCESS_KEY=%s\n' "$(sanitize "$PKI_S3_SECRET_ACCESS_KEY")"
+            printf 'PKI_AGE_RECIPIENT=%s\n' "$(sanitize "$PKI_AGE_RECIPIENT")"
+          } | ssh -i "$HOME/.ssh/deploy_key" -p "$port" \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$user@$host" \
+            'umask 077; sudo -n install -d -m 700 -o root -g root /etc/webnestdev-ha; sudo -n tee /etc/webnestdev-ha/pki-backup.env >/dev/null; sudo -n chmod 600 /etc/webnestdev-ha/pki-backup.env'
+          ssh -i "$HOME/.ssh/deploy_key" -p "$port" \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$user@$host" \
+            'sudo -n stat -c "%a %U:%G %n" /etc/webnestdev-ha/pki-backup.env; sudo -n grep -Ec "^(PKI_S3_ENDPOINT|PKI_S3_REGION|PKI_S3_BUCKET|PKI_S3_PREFIX|PKI_S3_ACCESS_KEY_ID|PKI_S3_SECRET_ACCESS_KEY|PKI_AGE_RECIPIENT)=" /etc/webnestdev-ha/pki-backup.env'
+
+      - name: Check S3 access from node-1
+        env:
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+          DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+        run: |
+          set -euo pipefail
+          host=$(printf '%s' "$DEPLOY_HOST" | tr -d '[:space:]')
+          user=$(printf '%s' "$DEPLOY_USER" | tr -d '[:space:]')
+          port=$(printf '%s' "${DEPLOY_PORT:-22}" | tr -d '[:space:]')
+          ssh -i "$HOME/.ssh/deploy_key" -p "$port" \
+            -o BatchMode=yes -o StrictHostKeyChecking=yes \
+            "$user@$host" 'sudo -n bash -s' <<'REMOTE'
+          set -euo pipefail
+          set -a
+          . /etc/webnestdev-ha/pki-backup.env
+          set +a
+          export RCLONE_CONFIG_PKI_TYPE=s3
+          export RCLONE_CONFIG_PKI_PROVIDER=Other
+          export RCLONE_CONFIG_PKI_ENV_AUTH=false
+          export RCLONE_CONFIG_PKI_FORCE_PATH_STYLE=true
+          export RCLONE_CONFIG_PKI_ACCESS_KEY_ID="$PKI_S3_ACCESS_KEY_ID"
+          export RCLONE_CONFIG_PKI_SECRET_ACCESS_KEY="$PKI_S3_SECRET_ACCESS_KEY"
+          export RCLONE_CONFIG_PKI_ENDPOINT="$PKI_S3_ENDPOINT"
+          export RCLONE_CONFIG_PKI_REGION="$PKI_S3_REGION"
+          rclone lsf "pki:$PKI_S3_BUCKET" --max-depth 1 >/dev/null
+          echo "S3 access: ok"
+          REMOTE
+
+      - name: Remove private identity from runner
+        if: always()
+        run: |
+          identity='${{ steps.generate.outputs.identity }}'
+          [ -z "$identity" ] || rm -f "$identity"
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### PostgreSQL CA backup setup"
+            if [ "${{ steps.generate.outputs.generated }}" = "true" ]; then
+              echo ""
+              echo "**Скачай artifact \`pki-age-identity-DO-NOT-SHARE\` сейчас.**"
+              echo "Храни его офлайн в двух местах и удали artifact из Actions."
+              echo "Без этого приватного ключа backup CA не расшифровать."
+            else
+              echo "Существующий age recipient сохранён; новый приватный ключ не создавался."
+            fi
+            echo ""
+            echo "Проверь в консоли Yandex Cloud: versioning включён, Object Lock — **строгая**, 1 год."
+            echo "Следующий шаг: Actions → PostgreSQL CA backup → Run workflow."
+          } >> "$GITHUB_STEP_SUMMARY"

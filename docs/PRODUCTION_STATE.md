@@ -1,15 +1,19 @@
 # Состояние production и оперативная память
 
-Дата среза: **21.11.2026, 22:08 UTC**. Документ фиксирует факты, которые нельзя терять
+Дата среза: **22.11.2026, 07:35 UTC**. Документ фиксирует факты, которые нельзя терять
 между сессиями.
 Секреты здесь не хранятся: только имена переменных, пути и способы проверки.
 
-**Актуально на 21.11.2026, 22:08 UTC:** обе ноды включены, `node-1` — primary,
+**Актуально на 22.11.2026, 07:35 UTC:** обе ноды включены, `node-1` — primary,
 `node-2` — streaming standby; production image `d7c491b` (docs-only коммит после кода
 `538865c`). Публичный `/api/ready` и локальный health обеих нод отдают
 `build=d7c491b47f4bb7f3502b6cb67e30b51b3d5c0f3d`. PostgreSQL TLS включён на обеих нодах:
 `ssl=on`, HBA только `hostssl`, HAProxy — TLS с проверкой CA и `alpn postgresql`, standby —
-`sslmode=verify-full`; все соединения приложения — TLS 1.3. Audit salt лежит отдельно от ключа
+`sslmode=verify-full`; все соединения приложения — TLS 1.3. PostgreSQL TLS переведён на
+отдельный CA и уникальные сертификаты нод: `pg_pki.sh` на `node-1`, лист 90 дней, CA 10 лет,
+ротация — `webnestdev-pg-tls-rotate.timer` (проверено 22.11.2026; подробности —
+[`PG_PKI_2026-11-22.md`](PG_PKI_2026-11-22.md); backup CA —
+[`PG_PKI_BACKUP.md`](PG_PKI_BACKUP.md)). Audit salt лежит отдельно от ключа
 шифрования в `/var/lib/webnestdev/data/audit-salt` (600) на обеих нодах; preview-логи
 проходят редакцию значений сохранённых секретов. Production работает в
 `WEBNESTDEV_WORKSPACE_MODE=local`, `OWNER_ROUTING=1`; проекты на локальных каталогах.
@@ -713,11 +717,15 @@ base backup в S3 сохраняются, поэтому при плохой н�
 восстановление из S3 не запускалось, только проверены указатели.
 
 Осталось по 4.4: вынос primary на отдельный от API инстанс. TLS на участке
-HAProxy ↔ PostgreSQL **включён 21.11.2026, 22:08 UTC** на обеих нодах: общий сертификат,
-`ssl=on`, HBA только `hostssl`, HAProxy — `ssl verify required ca-file /etc/haproxy/pg-ca.crt`
-с обязательным `alpn postgresql`, standby — `sslmode=verify-full`. Проверено: API обеих нод —
-`200`, все соединения приложения — TLS 1.3, plaintext к `5433` отклоняется. Подробности и
-остаточные риски — в [`HA_TWO_NODE_REMAINING.md`](HA_TWO_NODE_REMAINING.md).
+HAProxy ↔ PostgreSQL **включён 21.11.2026, 22:08 UTC** на обеих нодах; **22.11.2026, 07:33 UTC**
+он переведён с общего self-signed сертификата на отдельный CA и уникальные сертификаты нод
+(`pg_pki.sh`): `ssl=on`, HBA только `hostssl`, HAProxy — `ssl verify required ca-file
+/etc/haproxy/pg-ca.crt` с обязательным `alpn postgresql`, standby — `sslmode=verify-full`.
+Проверено: API обеих нод — `200`, все соединения приложения — TLS 1.3, plaintext к `5433`
+отклоняется, fingerprint нод разные, старый CA не проходит проверку, ручная ротация и
+`auto-rotate` работают. Подробности и остаточные риски — в
+[`PG_PKI_2026-11-22.md`](PG_PKI_2026-11-22.md) и
+[`HA_TWO_NODE_REMAINING.md`](HA_TWO_NODE_REMAINING.md).
 Выкатка пока не ставит `pg-pitr.sh` автоматически — установка выполнена через `MODE=setup`;
 перенос установки в `vm-deploy.sh` — следующий шаг.
 

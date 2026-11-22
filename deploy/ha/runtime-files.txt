@@ -13,6 +13,8 @@ failover.py
 cli.py
 standby.sh
 pg_tls.sh
+pg_pki.sh
+pg_ca_backup.sh
 pg_start_guard.py
 pg_hba_probe.sh
 README.md

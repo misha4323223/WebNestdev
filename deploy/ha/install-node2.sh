@@ -35,8 +35,9 @@ if [ ! -r "$CONF/node2.env" ]; then
   echo "note: $CONF/node2.env is absent; using the defaults from the service" >&2
 fi
 
-# Сертификат должен прийти с node-1 через deploy/scripts/node2-sync.sh. Не генерируем
-# здесь вторую пару: HAProxy не сможет проверить сертификат соседа.
+# Сертификат node-2 (уникальный лист из PKI) должен прийти с node-1 через
+# deploy/scripts/node2-sync.sh. Не генерируем здесь общую пару: HAProxy проверяет
+# сертификат соседа по отдельному CA и SAN ноды.
 if [ -s "$CONF/pg-tls/server.crt" ]; then
   bash "$SRC/pg_tls.sh" apply
 else

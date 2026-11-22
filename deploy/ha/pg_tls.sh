@@ -74,16 +74,23 @@ generate_cert() {
 
 install_files() {
   cert_valid || fail "нет валидной пары $TLS_CERT / $TLS_KEY; сначала выполните setup на node-1 и синхронизацию на node-2"
+  local ca_file="$TLS_CERT"
+  # Старый режим: самоподписанный server.crt был одновременно CA. Новый режим:
+  # отдельный ca.crt, которым проверяется leaf-сертификат ноды. Не подменяем CA
+  # листом: иначе HAProxy и standby перестанут проверять соседнюю ноду.
+  if [ -s "$TLS_CA" ] && openssl verify -CAfile "$TLS_CA" "$TLS_CERT" >/dev/null 2>&1; then
+    ca_file="$TLS_CA"
+  fi
   install -d -m 700 -o postgres -g postgres "$PG_TLS_DIR"
   install -m 644 -o postgres -g postgres "$TLS_CERT" "$PG_TLS_DIR/server.crt"
   install -m 600 -o postgres -g postgres "$TLS_KEY" "$PG_TLS_DIR/server.key"
-  # Тот же самоподписанный сертификат — корень доверия для проверки. Публичная часть,
-  # секретов здесь нет; ключ в ca.crt не попадает.
-  install -m 644 -o postgres -g postgres "$TLS_CERT" "$PG_TLS_DIR/ca.crt"
-  install -m 644 -o postgres -g postgres "$TLS_CERT" "$TLS_CA"
+  install -m 644 -o postgres -g postgres "$ca_file" "$PG_TLS_DIR/ca.crt"
+  if [ "$ca_file" != "$TLS_CA" ]; then
+    install -m 644 -o postgres -g postgres "$ca_file" "$TLS_CA"
+  fi
   install -d -m 755 -o root -g root /etc/haproxy
-  install -m 644 -o root -g root "$TLS_CERT" "$HAPROXY_CA"
-  log "сертификат установлен в $PG_TLS_DIR и $HAPROXY_CA"
+  install -m 644 -o root -g root "$ca_file" "$HAPROXY_CA"
+  log "сертификат установлен в $PG_TLS_DIR и $HAPROXY_CA (CA: $ca_file)"
 }
 
 configure_postgres() {
@@ -189,6 +196,9 @@ verify() {
 case "$MODE" in
   setup)
     require_root
+    # При активном PKI общий self-signed сертификат больше не создаётся: он
+    # перезаписал бы уникальные листья нод и разрушил доверие HAProxy.
+    [ ! -s /etc/webnestdev-ha/pg-pki/ca.crt ] || fail "PKI уже активен; используйте pg_pki.sh (setup/migrate/rotate)"
     install -d -m 700 -o root -g root "$TLS_SRC"
     if cert_valid; then
       log "использую существующий сертификат $TLS_CERT"

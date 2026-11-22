@@ -1,0 +1,345 @@
+# Off-site backup CA-ключа PostgreSQL PKI
+
+**Статус на 22.11.2026, 08:15 UTC:** бакет создан, доступ и Object Lock ещё настраиваются.
+В репозиторий добавлены `deploy/ha/pg_ca_backup.sh` и два GitHub Actions workflow:
+`pki-backup-setup.yml` (установка `age`/`rclone`, secrets и env-файл) и `pki-backup.yml`
+(еженедельный backup). Они **ещё не запускались**: нет GitHub Secrets с ключом Yandex и
+приватного age identity. Первый проверенный архив и restore drill не сделаны. До первого
+успешного restore drill резервная копия CA-ключа **не считается готовой**.
+
+Этот документ — памятка по защите корневого CA, который выпускает сертификаты PostgreSQL
+на `node-1`/`node-2`. Он дополняет [`PG_PKI_2026-11-22.md`](PG_PKI_2026-11-22.md), где
+описаны сама PKI и ротация листовых сертификатов.
+
+## 1. Что именно защищаем
+
+Корневой CA и листовые ключи лежат только на `node-1`:
+
+```text
+/etc/webnestdev-ha/pg-pki/
+├── ca.key                 # приватный ключ CA, 600 root — критично
+├── ca.crt                 # публичный сертификат CA
+├── ca.srl                 # serial-файл CA
+└── nodes/
+    ├── node-1/server.crt  # публичный лист node-1
+    ├── node-1/server.key  # приватный ключ node-1
+    ├── node-2/server.crt  # публичный лист node-2
+    └── node-2/server.key  # приватный ключ node-2
+```
+
+На `node-2` CA-ключа нет: там только публичный CA и лист/ключ самой `node-2`.
+
+**Если потерять `ca.key` и не иметь его копии**, новые листья выпустить нельзя. Действующие
+сертификаты будут работать до истечения срока (90 дней), после чего TLS/репликация начнут
+ломаться. Поэтому backup CA — обязательная часть PKI.
+
+## 2. Куда кладём
+
+Используется отдельный приватный бакет Yandex Cloud Object Storage:
+
+```text
+webnestdev-pg-pki-backup
+```
+
+Параметры:
+
+| Параметр | Значение |
+| --- | --- |
+| Endpoint | `https://storage.yandexcloud.net` |
+| Регион | `ru-central1` |
+| Класс | `Стандартное` |
+| Макс. размер | `50 ГБ` (CA-архивы крошечные; лимит защищает от раздувания версий) |
+| Чтение объектов | `С авторизацией` |
+| Чтение списка объектов | `С авторизацией` |
+| Чтение настроек | `С авторизацией` |
+| Версионирование | включено |
+| Object Lock | **строгая временная блокировка**, срок 1 год |
+| KMS | не обязателен; основной слой — клиентское `age`-шифрование |
+
+Yandex Cloud — другой провайдер относительно production MWS, поэтому копия находится вне
+`node-1`. Для более сильной изоляции лучше отдельный Yandex Cloud аккаунт, а не только
+отдельный бакет в том же аккаунте.
+
+### Object Lock
+
+В консоли: бакет → **Безопасность** → **Блокировки объектов**.
+
+- `Включить блокировки` — включено.
+- `Блокировки по умолчанию для новых версий` — включено.
+- Тип — **`Временная строгая`**. Управляемая блокировка позволяет `storage.admin` обойти
+  или снять её; для CA-бэкапа это нежелательно.
+- Срок — **1 год**.
+
+**Важно:** если в консоли сохранено «Временная управляемая» с сроком 1 день, это не
+подходит для CA. До первого backup установите **строгую** блокировку на 1 год. Если тип
+уже сохранён и не меняется, создайте новый versioned-бакет с нужным Object Lock и укажите
+его имя в `PKI_S3_BUCKET`.
+
+Строгую блокировку нельзя сократить или снять до окончания срока; срок можно только
+продлевать. Версионирование и Object Lock после включения не отключаются. Это осознанная
+плата за неизменяемость backup.
+
+Проверить настройки после сохранения можно в консоли Yandex Cloud. Если есть машина с
+`awscli` и ключом `pg-pki-backup`, подойдут и команды:
+
+```bash
+aws --endpoint-url https://storage.yandexcloud.net s3api get-bucket-versioning \
+  --bucket webnestdev-pg-pki-backup
+aws --endpoint-url https://storage.yandexcloud.net s3api get-object-lock-configuration \
+  --bucket webnestdev-pg-pki-backup
+```
+
+Ожидается `Status: Enabled` и `ObjectLockEnabled: Enabled`; в конфигурации — строгий режим
+и срок 365 дней.
+
+### Текущие публичные идентификаторы
+
+На 22.11.2026 после ротации:
+
+```text
+CA:     CN=WebNestDev PostgreSQL Root CA
+        notAfter=19.11.2036
+        SHA256=BE:AF:AF:03:F7:BB:44:2F:53:64:6A:07:B6:94:07:85:
+               57:FF:A8:90:DB:2B:8A:AD:36:77:AF:37:DF:6E:E2:25
+node-1: CN=webnestdev-postgres-node-1, notAfter=20.02.2027
+        SHA256=85:AA:43:78:F7:69:4D:E7:A3:94:02:8A:EE:9C:AA:24:
+               2A:A8:F3:7A:A0:5C:00:9D:BC:45:3E:9A:92:4C:AD:83
+node-2: CN=webnestdev-postgres-node-2, notAfter=20.02.2027
+        SHA256=2C:68:DA:C3:E1:A9:8B:60:5C:60:0B:A8:3F:EA:CC:E1:
+               A8:57:C8:4A:1F:11:C0:E5:B6:C8:DB:A5:C1:46:F8:78
+```
+
+Это только публичные fingerprint; приватные ключи в документ не попадают. После новой
+ротации листовые fingerprint изменятся, CA — останется прежним.
+
+## 3. Кто имеет доступ
+
+Нужен отдельный service account, не ключи приложения и не `PLATFORM_S3_*`:
+
+```text
+service account: pg-pki-backup
+роль на бакет: storage.editor
+```
+
+- `storage.editor` — только загрузка/чтение объектов в этом бакете.
+- `storage.admin` — разово для настройки Object Lock; после настройки роль убрать.
+- Статический access key создаётся в консоли Yandex Cloud. Секрет показывается один раз.
+- Ключ хранится на `node-1` в отдельном файле `/etc/webnestdev-ha/pki-backup.env` с
+  правами `600 root`. Не в `.env` приложения, не в Git, не в чате.
+- Владелец не имеет терминала на ВМ, поэтому файл создаёт GitHub Actions workflow
+  `pki-backup-setup.yml`. Значения берутся из GitHub Secrets и в лог не выводятся.
+
+Имена переменных (их пишет setup workflow):
+
+```text
+PKI_S3_ENDPOINT=https://storage.yandexcloud.net
+PKI_S3_REGION=ru-central1
+PKI_S3_BUCKET=webnestdev-pg-pki-backup
+PKI_S3_PREFIX=pki/ca
+PKI_S3_ACCESS_KEY_ID=...
+PKI_S3_SECRET_ACCESS_KEY=...
+PKI_AGE_RECIPIENT=age1...
+```
+
+Значения в документ не записываются.
+
+## 4. Шифрование до загрузки
+
+Перед отправкой в S3 CA-ключ обязательно шифруется **на `node-1`**. Yandex SSE/KMS можно
+включить дополнительно, но оно не заменяет клиентское шифрование.
+
+Рекомендуемая схема — `age` с публичным recipient:
+
+- на `node-1` лежит только публичный `age1...` recipient;
+- приватный identity-ключ хранится **вне сервера**: password manager, бумага или аппаратный
+  носитель, в двух независимых копиях;
+- приватный ключ никогда не попадает на `node-1` и в S3;
+- автоматический backup не требует секрета на сервере — только публичный ключ.
+
+Генерация пары — только на доверенной офлайн-машине:
+
+```bash
+age-keygen -o pki-age.key          # приватный identity: офлайн, две копии
+age-keygen -y pki-age.key > pki-age.pub
+```
+
+На `node-1` копируется только `pki-age.pub` (публичный `age1...`). Приватный
+`pki-age.key` не должен появляться ни на `node-1`, ни в S3, ни в shell history.
+
+### Если отдельной офлайн-машины нет
+
+Владелец не имеет терминала на ВМ и не может выполнить `age-keygen` на сервере. Поэтому
+`pki-backup-setup.yml` генерирует identity на одноразовом GitHub runner:
+
+- приватный ключ остаётся только в artifact `pki-age-identity-DO-NOT-SHARE` с retention
+  1 день; на `node-1` он не передаётся;
+- публичный recipient записывается в `/etc/webnestdev-ha/pki-backup.env`;
+- workflow удаляет файл с runner после загрузки artifact.
+
+Это временный компромисс: artifact видит тот, у кого есть доступ к Actions репозитория.
+Сразу после запуска скачайте artifact на доверенное устройство, сохраните в password
+manager и на второй офлайн-носитель, затем удалите artifact из Actions. Пока ключ не
+скачан, backup считать неготовым. Если artifact удалён до скачивания, старые архивы этим
+новым ключом не расшифровать; `force_new_age_identity` создаёт новый identity, но не
+восстанавливает старый.
+
+В S3 попадает только `.age`-архив и его `sha256`, не `ca.key`.
+
+## 5. Что входит в архив
+
+Минимальный набор:
+
+```text
+ca.key                 # приватный корневой ключ (внутри age-архива)
+ca.crt                 # корневой сертификат
+ca.srl                 # serial CA
+nodes/node-1/server.crt
+nodes/node-2/server.crt
+MANIFEST.txt           # дата, CA subject/fingerprint, срок, host и fingerprint листьев
+SHA256SUMS             # hashes файлов внутри архива
+```
+
+Приватные ключи нод не обязательны: при живом CA их можно перевыпустить. Если нужен полный
+disaster recovery «обе ноды потеряны», можно добавить и их, но это повышает ценность архива.
+Публичные листья нужны для проверки, что восстановленный CA соответствует действующей паре.
+
+## 6. Автоматизация без терминала на ВМ
+
+### 6.1 Что добавлено
+
+- `deploy/ha/pg_ca_backup.sh` — режимы `backup`, `verify`, `status`.
+  `backup` собирает минимальный архив, шифрует его `age`, загружает `.tar.gz.age` и
+  `.sha256` через `rclone` и проверяет наличие объектов.
+  `verify` скачивает последний архив и проверяет `sha256sum` по удалённым байтам.
+  `restore` намеренно нет на сервере: приватный age-ключ не должен появляться на ВМ.
+- `.github/workflows/pki-backup-setup.yml` — одноразовая настройка: ставит `age`/`rclone`
+  на `node-1`, создаёт age identity при отсутствии recipient, пишет env-файл из GitHub
+  Secrets и проверяет доступ к бакету.
+- `.github/workflows/pki-backup.yml` — backup вручную и по расписанию (воскресенье
+  `04:45 UTC`); сам копирует актуальный скрипт в `/opt/webnestdev-ha` и запускает его.
+
+### 6.2 Что нужно добавить в GitHub
+
+Владельцу не нужно вводить команды на ВМ. В GitHub → **Settings → Secrets and variables →
+Actions → Environment `production`** добавьте:
+
+| Secret | Обязателен | Значение |
+| --- | --- | --- |
+| `PKI_S3_ACCESS_KEY_ID` | да | static access key для `pg-pki-backup` |
+| `PKI_S3_SECRET_ACCESS_KEY` | да | secret key, показывается один раз |
+| `PKI_S3_ENDPOINT` | нет | по умолчанию `https://storage.yandexcloud.net` |
+| `PKI_S3_REGION` | нет | по умолчанию `ru-central1` |
+| `PKI_S3_BUCKET` | нет | по умолчанию `webnestdev-pg-pki-backup` |
+| `PKI_S3_PREFIX` | нет | по умолчанию `pki/ca` |
+
+`DEPLOY_SSH_KEY`, `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_PORT` и `DEPLOY_KNOWN_HOSTS` уже
+используются существующими workflow; если deploy работает, они уже добавлены. Значения
+секретов не присылать в чат и не коммитить.
+
+`PKI_AGE_RECIPIENT` **не добавляйте вручную**: setup workflow создаёт его и записывает
+публичный recipient на `node-1`.
+
+### 6.3 Порядок первого запуска
+
+Сначала workflow-файлы должны попасть в репозиторий (коммит в ветку по умолчанию), иначе
+GitHub Actions их не увидит.
+
+1. Добавить `PKI_S3_ACCESS_KEY_ID` и `PKI_S3_SECRET_ACCESS_KEY` в secrets environment
+   `production`.
+2. Actions → **PostgreSQL CA backup setup** → **Run workflow**. Workflow поставит
+   `age`/`rclone`, создаст identity (если его ещё нет), запишет
+   `/etc/webnestdev-ha/pki-backup.env` с правами `600 root` и проверит S3.
+3. **Сразу** скачать artifact `pki-age-identity-DO-NOT-SHARE`, сохранить приватный ключ
+   офлайн в двух местах и удалить artifact. Без этого шага backup бесполезен.
+4. Actions → **PostgreSQL CA backup** → **Run workflow**. Он загрузит первый архив и
+   выполнит `verify` с проверкой checksum.
+5. Проверить в консоли Yandex: versioning включён, Object Lock — **строгая**, 1 год.
+6. Провести restore drill по разделу 7 на изолированной машине и записать результат.
+
+При повторном запуске setup существующий `PKI_AGE_RECIPIENT` сохраняется. Если нужно
+сменить identity, запускать с `force_new_age_identity=true` только осознанно: старые
+архивы потребуют старый приватный ключ.
+
+### 6.4 Ограничения
+
+- Backup запускается только с `node-1`, где лежит `ca.key`; при её падении новый backup
+  не снимается, но офлайн-копия остаётся.
+- GitHub Actions — внешняя зависимость; при недоступности Actions или SSH backup
+  пропускается. Алерт при пропуске пока не настроен: проверяйте историю workflow.
+- Скрипт не удаляет старые версии: Object Lock и versioning оставляют их в бакете.
+- Приватный age-ключ — единственный путь к расшифровке; на `node-1` его нет.
+
+## 7. Restore drill
+
+Backup не считается готовым, пока не выполнено восстановление на изолированной машине:
+
+1. Скачать последний `.age` и его `.sha256` с машины, где есть `rclone`/`aws` и доступ к
+   бакету:
+   ```bash
+   rclone copyto pki:webnestdev-pg-pki-backup/pki/ca/<имя>.tar.gz.age ./<имя>.tar.gz.age
+   rclone copyto pki:webnestdev-pg-pki-backup/pki/ca/<имя>.tar.gz.age.sha256 ./<имя>.tar.gz.age.sha256
+   ```
+2. Проверить `sha256sum -c <имя>.tar.gz.age.sha256` (в файле уже стоит имя архива).
+3. Создать каталог `700` и расшифровать туда архив:
+   ```bash
+   mkdir -p restore && chmod 700 restore
+   age -d -i <offline-identity> <имя>.tar.gz.age | tar -xzf - -C restore
+   ```
+4. Проверить, что `ca.key` соответствует `ca.crt`:
+   `openssl pkey -in ca.key -pubout` == `openssl x509 -in ca.crt -pubkey`.
+5. Проверить fingerprint/срок CA и публичные листья:
+   `openssl verify -CAfile ca.crt nodes/node-1/server.crt nodes/node-2/server.crt`.
+6. Выпустить тестовый лист этим CA и проверить его; только после этого считать restore
+   успешным.
+7. Записать дату, fingerprint, имя объекта и результат drill в журнал. Не переносить
+   восстановленный ключ на production без такой проверки.
+
+Если приватный age-ключ потерян, архив не расшифровать. Поэтому identity хранится в двух
+независимых офлайн-местах; пароль/ключ не должен быть только в голове одного человека.
+
+## 8. Чек-лист
+
+- [x] Создан бакет `webnestdev-pg-pki-backup`.
+- [ ] Проверить, что Object Lock сохранён: **строгая**, **1 год**, для новых версий.
+- [ ] Проверить, что версионирование включено.
+- [ ] Создать service account `pg-pki-backup` и выдать `storage.editor` только на бакет.
+- [ ] Создать статический access key и добавить его в GitHub Secrets.
+- [x] Добавить `deploy/ha/pg_ca_backup.sh` и GitHub Actions setup/backup workflow.
+- [ ] Запустить setup workflow и скачать age artifact офлайн; удалить artifact.
+- [ ] Убедиться, что `/etc/webnestdev-ha/pki-backup.env` имеет права `600 root`.
+- [ ] Сделать первый архив и проверить `head-object`/checksum.
+- [ ] Провести restore drill и записать результат.
+- [ ] Убедиться, что `ca.key` никогда не попадал в S3/логи/чат.
+
+До выполнения restore drill остаточный риск из
+[`PG_PKI_2026-11-22.md`](PG_PKI_2026-11-22.md) остаётся открытым.
+
+## 9. Если node-1 потерян
+
+Порядок восстановления CA без старого диска:
+
+1. Поднять новую `node-1` и восстановить на неё зашифрованный CA-архив; расшифровать его
+   только офлайн, проверить fingerprint и соответствие `ca.key`/`ca.crt`.
+2. Положить `ca.key`, `ca.crt` и `ca.srl` в `/etc/webnestdev-ha/pg-pki` с правами `700` на
+   каталог и `600` на `ca.key`; публичный CA — в `/etc/haproxy/pg-ca.crt` и PostgreSQL.
+3. Взять актуальный `deploy/ha/pg_pki.sh` из репозитория и выпустить новый лист `node-1`
+   (`issue node-1`), затем установить его локально. Лист `node-2` уже подписан тем же CA и
+   менять его не нужно, если он не истёк.
+4. Проверить `openssl verify -CAfile ca.crt` для обоих листьев, `show ssl`, HBA `hostssl`,
+   HAProxy TLS/ALPN и репликацию. Если `node-2` была повышена до primary — сначала вернуть
+   роли по штатной процедуре, а не запускать второй primary.
+5. После восстановления сразу сделать новый backup и restore drill, даже если старый архив
+   был валиден.
+
+Если восстановить `ca.key` невозможно, придётся создавать новый CA и перевыпускать листья
+на обеих нодах. Это уже не восстановление, а замена PKI; до неё действующие листья будут
+работать только до своего срока.
+
+## 10. Границы
+
+- Backup защищает от потери `node-1`, повреждения диска и ошибочного удаления CA-ключа.
+- Backup **не защищает** от компрометации `node-1`, пока CA-ключ находится на ней. Для
+  этого нужен KMS/HSM — отдельная задача с провайдером и бюджетом.
+- Object Lock защищает версии от удаления/перезаписи, но не заменяет резервную копию в
+  другом аккаунте/провайдере; для сильной изоляции используйте отдельный Yandex Cloud
+  аккаунт или вторую офлайн-копию.

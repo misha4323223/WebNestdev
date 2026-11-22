@@ -24,9 +24,9 @@ for file in mws.env replication.env; do
   fi
 done
 
-# TLS обязателен до hostssl-правил: сертификат создаётся один раз, затем
-# node2-sync.sh передаёт его на вторую ноду.
-bash "$SRC/pg_tls.sh" setup
+# TLS обязателен до hostssl-правил. PKI создаёт отдельный CA и уникальные
+# сертификаты нод; node2-sync.sh передаёт node-2 её собственный сертификат.
+bash "$SRC/pg_pki.sh" setup
 bash "$SRC/pg_hba_probe.sh" 10.0.0.5
 RUNNER_CONTAINER=node1-runner bash "$SRC/install-storage-guard.sh"
 systemctl daemon-reload
