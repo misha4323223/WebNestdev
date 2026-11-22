@@ -188,7 +188,7 @@ class IamAuth:
         if not isinstance(private_key, rsa.RSAPrivateKey):
             raise PkiError("service account key должен содержать RSA private key")
         now = int(time.time())
-        header = {"alg": "RS256", "typ": "JWT", "kid": key_id}
+        header = {"alg": "PS256", "typ": "JWT", "kid": key_id}
         payload = {
             "iss": service_account_id,
             "aud": f"{self._iam_endpoint}/iam/v1/tokens",
@@ -196,7 +196,14 @@ class IamAuth:
             "exp": now + 3600,
         }
         signing_input = f"{_b64url(_json_bytes(header))}.{_b64url(_json_bytes(payload))}".encode("ascii")
-        signature = private_key.sign(signing_input, padding.PKCS1v15(), hashes.SHA256())
+        signature = private_key.sign(
+            signing_input,
+            padding.PSS(
+                mgf=padding.MGF1(hashes.SHA256()),
+                salt_length=hashes.SHA256().digest_size,
+            ),
+            hashes.SHA256(),
+        )
         return f"{signing_input.decode('ascii')}.{_b64url(signature)}"
 
 

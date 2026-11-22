@@ -245,12 +245,16 @@ class KmsUnitTests(unittest.TestCase):
         )
         header = decode(header_b64)
         payload = decode(payload_b64)
+        self.assertEqual(header["alg"], "PS256")
         self.assertEqual(header["kid"], "key-id")
         self.assertEqual(payload["iss"], "sa-id")
         key.public_key().verify(
             base64.urlsafe_b64decode(signature_b64 + "=" * (-len(signature_b64) % 4)),
             f"{header_b64}.{payload_b64}".encode("ascii"),
-            padding.PKCS1v15(),
+            padding.PSS(
+                mgf=padding.MGF1(hashes.SHA256()),
+                salt_length=hashes.SHA256().digest_size,
+            ),
             hashes.SHA256(),
         )
 
