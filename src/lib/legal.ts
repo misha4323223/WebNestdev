@@ -10,6 +10,8 @@
 export type LegalDocId =
   | "offer"
   | "terms"
+  | "copyright"
+  | "abuse"
   | "privacy"
   | "consent"
   | "cookies"
@@ -23,7 +25,7 @@ export type LegalDocMeta = {
   title: string;
   short: string;
   summary: string;
-  group: "Договор" | "Данные" | "Оплата" | "Согласия" | "Сведения";
+  group: "Договор" | "Правила" | "Данные" | "Оплата" | "Согласия" | "Сведения";
   /** У страницы безопасности своя дата: она меняется чаще остальных документов. */
   updated?: string;
 };
@@ -33,8 +35,8 @@ export const SITE = {
   domain: "nestdev.ru",
   url: "https://nestdev.ru",
   /** Редакция документов: одна дата на все страницы, чтобы не расходились версии. */
-  updated: "27 октября 2026 г.",
-  version: "2.0",
+  updated: "22 ноября 2026 г.",
+  version: "2.1",
 };
 
 /**
@@ -80,6 +82,7 @@ export const LEGAL_DOCS: LegalDocMeta[] = [
     short: "Оферта",
     summary: "Договор возмездного оказания услуг: предмет, оплата, приёмка, возврат и ответственность.",
     group: "Договор",
+    updated: "27 октября 2026 г.",
   },
   {
     id: "terms",
@@ -87,6 +90,23 @@ export const LEGAL_DOCS: LegalDocMeta[] = [
     short: "Соглашение",
     summary: "Правила работы с аккаунтом, проектами, ИИ-функциями и допустимое использование сервиса.",
     group: "Договор",
+    updated: "27 октября 2026 г.",
+  },
+  {
+    id: "copyright",
+    title: "Авторские права и удаление материалов",
+    short: "Авторские права",
+    summary: "Как правообладатель подаёт заявление, в какие сроки удаляется материал и как оспорить удаление.",
+    group: "Правила",
+    updated: "22 ноября 2026 г.",
+  },
+  {
+    id: "abuse",
+    title: "Жалобы на нарушения и модерация",
+    short: "Жалобы",
+    summary: "Что запрещено размещать, как сообщить о нарушении и как обжаловать ограничение доступа.",
+    group: "Правила",
+    updated: "22 ноября 2026 г.",
   },
   {
     id: "privacy",
@@ -94,6 +114,7 @@ export const LEGAL_DOCS: LegalDocMeta[] = [
     short: "Персональные данные",
     summary: "Какие данные собираем, зачем, кому передаём, сколько храним и как отозвать согласие.",
     group: "Данные",
+    updated: "27 октября 2026 г.",
   },
   {
     id: "consent",
@@ -101,6 +122,7 @@ export const LEGAL_DOCS: LegalDocMeta[] = [
     short: "Согласие",
     summary: "Текст согласия, которое вы даёте при регистрации по номеру телефона.",
     group: "Данные",
+    updated: "27 октября 2026 г.",
   },
   {
     id: "cookies",
@@ -108,6 +130,7 @@ export const LEGAL_DOCS: LegalDocMeta[] = [
     short: "Cookie",
     summary: "Какие cookie и локальные настройки нужны для входа, предпросмотра и удобства.",
     group: "Данные",
+    updated: "27 октября 2026 г.",
   },
   {
     id: "payments",
@@ -115,6 +138,7 @@ export const LEGAL_DOCS: LegalDocMeta[] = [
     short: "Оплата и возврат",
     summary: "Тарифы, способы оплаты, продление подписки и порядок возврата денег.",
     group: "Оплата",
+    updated: "27 октября 2026 г.",
   },
   {
     id: "marketing",
@@ -124,6 +148,7 @@ export const LEGAL_DOCS: LegalDocMeta[] = [
     // Согласие на рекламу — не документ об оплате: подпись группы стоит над заголовком
     // страницы и при печати, и «ОПЛАТА» над текстом, где ничего не оплачивают, путала.
     group: "Согласия",
+    updated: "27 октября 2026 г.",
   },
   {
     id: "security",
@@ -139,6 +164,7 @@ export const LEGAL_DOCS: LegalDocMeta[] = [
     short: "Реквизиты",
     summary: "Продавец, ИНН, контакты поддержки и порядок юридически значимых обращений.",
     group: "Сведения",
+    updated: "27 октября 2026 г.",
   },
 ];
 
@@ -161,4 +187,14 @@ export function legalDocFromPath(pathname: string): LegalDocId | null {
 }
 
 /** Ссылки для подвала и форм: короткий список того, что нужно видеть до оплаты. */
-export const LEGAL_FOOTER_LINKS: LegalDocId[] = ["offer", "terms", "privacy", "security", "payments", "cookies", "contacts"];
+export const LEGAL_FOOTER_LINKS: LegalDocId[] = [
+  "offer",
+  "terms",
+  "copyright",
+  "abuse",
+  "privacy",
+  "security",
+  "payments",
+  "cookies",
+  "contacts",
+];

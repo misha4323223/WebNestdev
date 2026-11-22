@@ -107,7 +107,7 @@ export function LegalScreen() {
 
 function LegalHub({ linkProps }: { linkProps: (to: string) => { href: string; onClick: (event: MouseEvent<HTMLAnchorElement>) => void } }) {
   const groups = useMemo(() => {
-    const order = ["Договор", "Данные", "Оплата", "Согласия", "Сведения"] as const;
+    const order = ["Договор", "Правила", "Данные", "Оплата", "Согласия", "Сведения"] as const;
     return order
       .map(group => ({ group, docs: LEGAL_DOCS.filter(doc => doc.group === group) }))
       .filter(entry => entry.docs.length > 0);
