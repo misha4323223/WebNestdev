@@ -20,6 +20,116 @@ const SESSION_ROOT = path.dirname(path.resolve(INITIAL_ROOT));
 const MAX_REQUEST_BYTES = 1024 * 1024;
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 
+/**
+ * Переменные, которыми управляет контейнер, а не проект. Их нельзя переопределить из
+ * `.env*`: `PORT`/`HOST` увели бы listener с ожидаемого адреса, `NODE_OPTIONS` повлиял бы
+ * на дочерние процессы, а `HTTP_PROXY`/`HTTPS_PROXY` обошли бы egress-фильтр предпросмотра.
+ */
+const RESERVED_ENV = new Set([
+  "PATH", "HOME", "NODE_OPTIONS", "PORT", "HOST", "CI",
+  "HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy",
+  "NO_PROXY", "no_proxy", "ALL_PROXY", "all_proxy",
+  "npm_config_proxy", "npm_config_https_proxy",
+]);
+const ENV_FILES = [".env", ".env.local", ".env.production"];
+
+function reservedEnv(name) {
+  return RESERVED_ENV.has(name) || name.startsWith("WEBNESTDEV_");
+}
+
+/**
+ * Минимальный разбор `.env` в том же формате, в котором платформа пишет секреты: `export`,
+ * комментарии, одинарные/двойные кавычки, экранированный `\\n` и многострочные значения.
+ * Это копия правил `parseEnvFileContent` из platform-env: runtime запускается отдельным
+ * файлом в контейнере и не может импортировать TypeScript сервера.
+ */
+function parseEnvFile(content) {
+  const lines = content.replace(/\r\n?/g, "\n").split("\n");
+  const values = [];
+  for (let index = 0; index < lines.length; index += 1) {
+    const trimmed = lines[index].trim();
+    if (!trimmed || trimmed.startsWith("#")) continue;
+    const match = trimmed.match(/^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*([\s\S]*)$/);
+    if (!match) continue;
+    let raw = match[2];
+    if (raw[0] === '"' || raw[0] === "'") {
+      while (!closedQuote(raw) && index + 1 < lines.length) {
+        index += 1;
+        raw += "\n" + lines[index];
+      }
+    }
+    values.push({ name: match[1], value: decodeEnvValue(raw) });
+  }
+  return values;
+}
+
+function closedQuote(value) {
+  const quote = value[0];
+  const text = value.trimEnd();
+  if (text.length <= 1) return false;
+  let count = 0;
+  for (let index = 0; index < text.length; index += 1) {
+    if (text[index] !== quote) continue;
+    let slashes = 0;
+    for (let back = index - 1; back >= 0 && text[back] === "\\"; back -= 1) slashes += 1;
+    if (slashes % 2 === 0) count += 1;
+  }
+  return count % 2 === 0;
+}
+
+function decodeEnvValue(raw) {
+  const text = raw.trim();
+  const quote = text[0];
+  if (quote === '"' || quote === "'") {
+    const end = text.includes("\n") ? text.lastIndexOf(quote) : closingQuoteIndex(text, quote);
+    if (end > 0) {
+      const inner = text.slice(1, end);
+      if (quote === "'") return inner;
+      return inner.replace(/\\(n|r|t|"|\\)/g, (_, code) => (
+        code === "n" ? "\n" : code === "r" ? "\r" : code === "t" ? "\t" : code === '"' ? '"' : "\\"
+      ));
+    }
+  }
+  // Незакавыченное значение: комментарий после него отбрасывается по правилам dotenv.
+  const comment = text.search(/\s+#/);
+  return (comment >= 0 ? text.slice(0, comment) : text).trim();
+}
+
+function closingQuoteIndex(text, quote) {
+  for (let index = 1; index < text.length; index += 1) {
+    if (text[index] !== quote) continue;
+    let slashes = 0;
+    for (let back = index - 1; back >= 0 && text[back] === "\\"; back -= 1) slashes += 1;
+    if (slashes % 2 === 0) return index;
+  }
+  return -1;
+}
+
+/**
+ * Секреты проекта приходят в контейнер как read-only `.env*` поверх `/workspace` (см.
+ * preview-secrets.ts). Node сам их не читает, поэтому runtime загружает их до импорта
+ * обработчиков: `process.env.DATABASE_URL` должен быть доступен и на верхнем уровне модуля.
+ * Значения не логируются; при ошибке чтения остаётся только имя файла.
+ */
+async function loadProjectEnv() {
+  for (const file of ENV_FILES) {
+    let content;
+    try {
+      content = await readFile(path.join(process.cwd(), file), "utf8");
+    } catch (error) {
+      if (error && error.code !== "ENOENT") console.error("[preview-functions] env " + file + ": " + (error.message || String(error)));
+      continue;
+    }
+    for (const entry of parseEnvFile(content)) {
+      if (!/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(entry.name)) continue;
+      if (reservedEnv(entry.name)) continue;
+      process.env[entry.name] = entry.value;
+    }
+  }
+}
+
+await loadProjectEnv();
+
 let root = INITIAL_ROOT;
 let manifest = await readManifest(root);
 let generation = 0;

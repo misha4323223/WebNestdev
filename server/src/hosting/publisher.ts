@@ -5,6 +5,7 @@ import { getProject, type Project } from "../project-store.js";
 import { getSandbox } from "../sandbox-manager.js";
 import type { SandboxConfig } from "../sandbox/sandbox-types.js";
 import { ensureProjectDependencies } from "../preview/dependencies.js";
+import { dependencyNodePaths } from "../preview/dependency-cache.js";
 import { detectProject } from "../preview/project-kind.js";
 import { readFunctionManifest, FunctionManifestError } from "../functions/manifest.js";
 import { buildFunctions, FunctionBuildError } from "../functions/build.js";
@@ -479,6 +480,8 @@ async function runPublish(site: HostingSite, release: HostingRelease, project: P
             outDir: hostingFunctionsDir(site.slug, release.id, config.sitesDir),
             manifest: functions,
             secretValues,
+            // Зависимости предпросмотра лежат в локальном кэше ноды, не в общем workspace.
+            nodePaths: dependencyNodePaths(sandbox.projectId),
             maxFunctionBytes: Math.min(limits.maxFileBytes, 10 * 1024 * 1024),
           });
         } catch (error) {

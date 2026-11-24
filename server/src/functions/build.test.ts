@@ -61,6 +61,40 @@ test("собирает функцию в один ESM-файл и пишет м�
   }
 });
 
+test("разрешает внешний пакет из локального кэша предпросмотра", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "functions-build-cache-"));
+  const cache = path.join(root, "cache", "node_modules", "fixture-dep");
+  await mkdir(path.join(root, "functions"), { recursive: true });
+  await mkdir(cache, { recursive: true });
+  await writeFile(path.join(cache, "package.json"), JSON.stringify({ name: "fixture-dep", version: "1.0.0", main: "index.js" }));
+  await writeFile(path.join(cache, "index.js"), "module.exports = { value: 'fixture-value' };\n");
+  await writeFile(
+    path.join(root, "functions", "dep.ts"),
+    'import { value } from "fixture-dep";\nexport async function handler() { return value; }\n',
+  );
+  await writeFile(
+    path.join(root, "nestdev.functions.json"),
+    JSON.stringify({
+      version: 1,
+      runtime: "node",
+      functions: [{ name: "dep", path: "/api/dep", methods: ["GET"], handler: "functions/dep.ts#handler" }],
+    }),
+  );
+  const manifest = parseFunctionManifest(JSON.parse(await readFile(path.join(root, "nestdev.functions.json"), "utf8")));
+  const out = path.join(root, "release");
+  try {
+    await assert.rejects(
+      () => buildFunctions({ root, outDir: out, manifest }),
+      (error: unknown) => error instanceof FunctionBuildError && /fixture-dep/.test(error.message),
+    );
+    const built = await buildFunctions({ root, outDir: out, manifest, nodePaths: [path.join(root, "cache", "node_modules")] });
+    assert.equal(built.functions.length, 1);
+    assert.match(await readFile(path.join(out, "dep", "index.mjs"), "utf8"), /fixture-value/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("отказывает обработчику за пределами проекта", async () => {
   const root = await fixture();
   try {

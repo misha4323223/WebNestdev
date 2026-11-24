@@ -8,6 +8,7 @@ import {
   dependencyCacheMarkerPath,
   dependencyCacheMount,
   dependencyCacheMountArgs,
+  dependencyNodePaths,
   dependencyEnsureCommand,
   dependencyLockHash,
   ensureDependencyCacheLocal,
@@ -29,6 +30,12 @@ test("the mount is passed to Docker with its -v flag", () => {
   assert.deepEqual(dependencyCacheMountArgs({ projectId: "project-a" }), [
     "-v",
     path.join(root, "project-a") + ":/workspace/node_modules",
+  ]);
+});
+
+test("nodePaths points the host-side function build at the node's local cache", () => {
+  assert.deepEqual(dependencyNodePaths("project-a"), [
+    path.join(root, "project-a", "node_modules"),
   ]);
 });
 

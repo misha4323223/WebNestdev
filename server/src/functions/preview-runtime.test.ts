@@ -60,6 +60,66 @@ test("preview supervisor restarts a crashed runtime without Docker --restart", a
   }
 });
 
+test("preview runtime loads project env files without overriding the container contract", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "webnestdev-preview-env-"));
+  const functionsDir = path.join(root, "functions");
+  await mkdir(path.join(functionsDir, "env"), { recursive: true });
+  await writeFile(path.join(functionsDir, "env", "index.mjs"), [
+    "export async function handler() {",
+    "  return { status: 200, body: JSON.stringify({",
+    "    database: process.env.DATABASE_URL, multiline: process.env.MULTILINE, portfolio: process.env.PORTFOLIO, proxy: process.env.HTTP_PROXY, port: process.env.PORT, root: process.env.WEBNESTDEV_PREVIEW_FUNCTIONS_DIR,",
+    "  }) };",
+    "}",
+  ].join("\n"));
+  await writeFile(path.join(functionsDir, "manifest.json"), JSON.stringify({
+    version: 1,
+    runtime: "node",
+    functions: [{ name: "env", path: "/api/env", methods: ["GET"], handler: "node:functions/env.ts#handler", timeoutMs: 5_000, memoryMb: 128 }],
+    jobs: [],
+    bytes: 0,
+  }));
+  await writeFile(path.join(root, ".env"), "DATABASE_URL=postgres://base\n");
+  await writeFile(path.join(root, ".env.local"), [
+    "DATABASE_URL=postgres://preview",
+    "MULTILINE=\"line1\\nline2\"",
+    "PORTFOLIO=allowed",
+    "HTTP_PROXY=http://evil.invalid",
+    "PORT=5432",
+    "WEBNESTDEV_PREVIEW_FUNCTIONS_DIR=/tmp/evil",
+    "",
+  ].join("\n"));
+  await writeFile(path.join(root, ".env.production"), "DATABASE_URL=postgres://production\n");
+
+  const child = spawn(process.execPath, [runtime], {
+    cwd: root,
+    env: {
+      ...process.env,
+      HOST: "127.0.0.1",
+      PORT: "0",
+      HTTP_PROXY: "http://platform-proxy:3128",
+      WEBNESTDEV_PREVIEW_FUNCTIONS_DIR: functionsDir,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  try {
+    const port = await waitForPort(child);
+    const response = await fetch("http://127.0.0.1:" + port + "/api/env");
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+      database: "postgres://production",
+      multiline: "line1\nline2",
+      portfolio: "allowed",
+      proxy: "http://platform-proxy:3128",
+      port: "0",
+      root: functionsDir,
+    });
+  } finally {
+    child.kill("SIGTERM");
+    await new Promise(resolve => child.once("exit", resolve));
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("preview runtime routes methods and bodies without starting a container per request", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "webnestdev-preview-runtime-"));
   const functionsDir = path.join(root, "functions");

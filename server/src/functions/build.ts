@@ -56,6 +56,11 @@ export type BuildFunctionsInput = {
   outDir: string;
   manifest: FunctionManifest;
   secretValues?: string[];
+  /**
+   * Дополнительные `node_modules`, которые видит только процесс API: локальный кэш
+   * предпросмотра. В общем каталоге проекта их может не быть (см. dependency-cache.ts).
+   */
+  nodePaths?: string[];
   /** Предел на один собранный файл; общий размер релиза проверяет хостинг. */
   maxFunctionBytes?: number;
 };
@@ -138,6 +143,7 @@ export async function buildFunctions(input: BuildFunctionsInput): Promise<Functi
         minify: false,
         legalComments: "none",
         logLevel: "silent",
+        ...(input.nodePaths?.length ? { nodePaths: input.nodePaths } : {}),
         // Нативный мост pg не является обязательным; без него pg работает на чистом JS.
         external: ["pg-native"],
       });

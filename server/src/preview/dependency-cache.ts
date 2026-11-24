@@ -62,6 +62,15 @@ export function dependencyCacheNodeModulesDir(projectId: string): string {
   return path.join(dependencyCacheProjectDir(projectId), "node_modules");
 }
 
+/**
+ * Каталоги для esbuild `nodePaths`. Сборка функций идёт в процессе API, а зависимости
+ * предпросмотра лежат в локальном кэше ноды, а не в общем каталоге проекта. Без этого
+ * `import { Client } from "pg"` не разрешался бы при сборке, хотя в контейнере пакет есть.
+ */
+export function dependencyNodePaths(projectId: string): string[] {
+  return dependencyCacheEnabled() ? [dependencyCacheNodeModulesDir(projectId)] : [];
+}
+
 export function dependencyCacheMarkerPath(projectId: string): string {
   return path.join(dependencyCacheNodeModulesDir(projectId), DEPENDENCY_CACHE_MARKER);
 }

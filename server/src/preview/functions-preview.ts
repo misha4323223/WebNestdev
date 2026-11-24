@@ -8,6 +8,7 @@ import { buildFunctions } from "../functions/build.js";
 import { readFunctionManifest, type FunctionManifest } from "../functions/manifest.js";
 import { removePreviewContainer, startPreviewProcess, type StartedPreviewProcess } from "./preview-runner.js";
 import { ensureProjectDependencies } from "./dependencies.js";
+import { dependencyNodePaths } from "./dependency-cache.js";
 import { PREVIEW_APP_PORT } from "./types.js";
 
 /**
@@ -165,7 +166,9 @@ export async function startFunctionsPreviewExecutor(
         root: config.root,
         outDir: dir,
         manifest: nextManifest,
-        // Секреты не подставляются в артефакт; runtime получает окружение контейнера.
+        // Сборка идёт в API, а node_modules — в локальном кэше ноды (см. dependency-cache.ts).
+        nodePaths: dependencyNodePaths(config.projectId),
+        // Секреты не подставляются в артефакт; runtime читает смонтированные `.env*`.
         maxFunctionBytes: 10 * 1024 * 1024,
       });
     }
