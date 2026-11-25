@@ -27,6 +27,11 @@ export type SandboxRunOptions = {
   injectSecretEnvFile?: boolean;
   /** Дополнительные `-v` аргументы; используется маскированием и предпросмотром. */
   extraMounts?: string[];
+  /**
+   * Потолок памяти контейнера именно для этой команды; по умолчанию `config.memoryMb`.
+   * Уменьшается только для заведомо дешёвых команд (`command-memory.ts`).
+   */
+  memoryMb?: number;
 };
 
 export type SandboxHostStatus = {

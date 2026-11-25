@@ -9,6 +9,7 @@ import { tailLogLines } from "../preview/log-lines.js";
 import { memoryLimitMb, reserveSandboxMemory, type SandboxMemoryReservation } from "./memory-budget.js";
 import { positiveInt, QueueTimeoutError } from "../concurrency.js";
 import { secretEnvMaskMounts } from "./secret-mask.js";
+import { assertSandboxJobBudget, chargeSandboxJob } from "./job-quota.js";
 import type { SandboxConfig } from "./sandbox-types.js";
 
 /**
@@ -39,6 +40,8 @@ type JobRecord = {
   cwd: string;
   startedAt: number;
   timer: NodeJS.Timeout;
+  /** Учёт времени и освобождение памяти выполняются ровно один раз. */
+  forgotten?: boolean;
   host: SandboxHost;
   /** Возвращает память, занятую под контейнер задания на всё время его жизни. */
   releaseMemory: () => void;
@@ -81,9 +84,16 @@ export function isSandboxJobName(value: string) {
 type DockerResult = DockerCliResult;
 
 function forgetJob(record: JobRecord) {
+  // Задание может «закончиться» сразу с двух сторон: по таймеру срока и через `terminal.tail`,
+  // который увидел остановленный контейнер. Память и время учитываются один раз.
+  if (record.forgotten) return;
+  record.forgotten = true;
   clearTimeout(record.timer);
   jobs.delete(record.name);
   record.releaseMemory();
+  // Секунды жизни контейнера задания — те же «CPU-минуты» тарифа, что у обычной команды.
+  // Списание не ждём: команда уже выполнена, и сбой учёта не должен влиять на ответ.
+  void chargeSandboxJob(record.userId, record.startedAt);
 }
 
 async function removeContainer(record: JobRecord) {
@@ -161,6 +171,10 @@ export async function startSandboxJob(
     );
   }
 
+  // Бюджет минут проверяется до запуска контейнера и до резервации памяти: исчерпанный лимит
+  // получает объяснение сразу, а не держит память полчаса. Только проверка, без очереди —
+  // фоновое задание не должно заставлять обычные команды аккаунта ждать своего конца.
+  await assertSandboxJobBudget(userId);
   await openProjectForSandbox(config.root);
   const host=await resolveSandboxHost(config.node||nodeId());
   const masks = await secretEnvMaskMounts(config);

@@ -12,6 +12,8 @@ export const runnerRunOptionsSchema = z.object({
   network: z.enum(["none", "bridge"]).optional(),
   env: z.record(z.string().min(1).max(256), z.string().max(16_384)).optional(),
   timeoutMs: z.number().int().min(1_000).max(30 * 60_000).optional(),
+  /** Потолок памяти контейнера для этой команды; без него runner берёт свой обычный размер. */
+  memoryMb: z.number().int().min(64).max(8_192).optional(),
   maskSecretEnvFiles: z.boolean().optional(),
   injectSecretEnvFile: z.boolean().optional(),
   extraMounts: z.array(z.string().max(8_192)).max(300).optional(),

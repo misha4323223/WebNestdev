@@ -2,9 +2,13 @@ import { readFile, stat } from "node:fs/promises";
 import path from "node:path";
 import { runInSandbox, type CommandResult, type SandboxRunOptions } from "../sandbox-worker.js";
 import type { SandboxConfig } from "../sandbox-manager.js";
-import { npmInstallTimeoutMs } from "../sandbox/config.js";
+import { npmInstallTimeoutMs, sandboxImage } from "../sandbox/config.js";
+import { nodeId } from "../nodes/identity.js";
 import { setPreviewStartProgress } from "./preview-start-progress.js";
 import { dependencyCacheHit, dependencyEnsureCommand, dependencyLockHash } from "./dependency-cache.js";
+import { recordInstallMetric } from "./install-metrics.js";
+import { npmInstallEnv } from "./npm-registry.js";
+import { seedStarterLayer } from "./starter-layer.js";
 
 /**
  * Зависимости проекта — до сборки и до dev-сервера.
@@ -84,10 +88,34 @@ export async function ensureProjectDependencies(
   // Хэш читается с общего storage (это маленькие файлы), а сама проверка и установка
   // выполняются в контейнере с локальным `node_modules`: у удалённой ноды API не может
   // прочитать её кэш, и устаревший Gluster-каталог не должен выглядеть установленным.
+  const startedAt = performance.now();
   const hash = await dependencyLockHash(config.root).catch(() => null);
   if (hash === null) return { ok: true, installed: false, log: "" };
 
+  // Предустановленный слой: если набор на ноде совпал с проектом до байта, дерево приезжает
+  // жёсткими ссылками, а маркер получает хэш проекта — проверка ниже увидит «cached» и
+  // npm install не запустится. Проект со своими версиями (человек написал промт, агент выбрал
+  // пакеты сам) просто не получит слой и пойдёт обычным путём.
+  const layer = await seedStarterLayer({ projectId: config.projectId, hash })
+    .catch(() => ({ seeded: false, reason: "слой недоступен" }));
+
   setPreviewStartProgress(config.projectId, "installing", "Проверяем зависимости…");
+  // Локальное зеркало реестра: только адрес, без доступа к чему-либо ещё. Не задано или не
+  // отвечает — пустой объект, и установка идёт в публичный реестр, как раньше.
+  const installEnv = await npmInstallEnv().catch(() => ({}));
+  const report = async (result: "ok" | "failed", cached: boolean) => {
+    await recordInstallMetric({
+      at: Date.now(),
+      projectId: config.projectId,
+      node: nodeId(),
+      image: sandboxImage(),
+      result,
+      cached,
+      layer: layer.seeded,
+      mirror: Object.keys(installEnv).length > 0,
+      durationMs: Math.round(performance.now() - startedAt),
+    });
+  };
   let result: CommandResult;
   try {
     // Lifecycle-скрипты проекта могут читать env; предпросмотр получает канонические секреты,
@@ -99,15 +127,19 @@ export async function ensureProjectDependencies(
       injectSecretEnvFile: runOptions.injectSecretEnvFile ?? true,
       maskSecretEnvFiles: runOptions.maskSecretEnvFiles ?? false,
       extraMounts: runOptions.extraMounts ?? [],
+      env: Object.keys(installEnv).length ? installEnv : undefined,
     });
   } catch (error) {
+    await report("failed", false);
     return { ok: false, reason: "не удалось установить зависимости: " + (error instanceof Error ? error.message : String(error)) };
   }
   if (!result.ok) {
+    await report("failed", false);
     return { ok: false, reason: "установка зависимостей не прошла: " + (failureLine(result) ?? "код выхода " + result.exitCode) };
   }
   const output = [result.stdout, result.stderr].join("\n");
   const installed = !dependencyCacheHit(output);
+  await report("ok", !installed);
   return { ok: true, installed, log: installed ? installLog(result) : "" };
 }
 

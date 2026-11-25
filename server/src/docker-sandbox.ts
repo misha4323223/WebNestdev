@@ -37,7 +37,9 @@ export async function runDockerSandbox(config: SandboxConfig, command: string, c
   // `docker run` успевает создать контейнер, который потом приходится убивать отдельно.
   if (runOptions.signal?.aborted) throw Object.assign(new Error("Запуск агента отменён"), { name: "AbortError" });
   if ((process.env.SANDBOX_MODE ?? "docker") !== "docker") throw new Error("Выполнение команды на хосте отключено. Установите SANDBOX_MODE=docker.");
-  const options = dockerOptions(config);
+  // Потолок памяти этой команды (см. sandbox/command-memory.ts): лёгкие команды получают меньше,
+  // чтобы не вытеснять сборки из общего бюджета. Без override поведение прежнее.
+  const options = dockerOptions(runOptions.memoryMb ? { ...config, memoryMb: runOptions.memoryMb } : config);
   const name = containerName(config.projectId);
   // Маска готовится до запуска: если секретный файл нельзя изолировать, команда не выполнится
   // вообще, вместо того чтобы выполниться с доступом к ключам.

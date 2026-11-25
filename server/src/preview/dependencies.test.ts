@@ -19,11 +19,11 @@ async function project(files: Record<string, string>) {
 
 const config = (root: string): SandboxConfig => ({ projectId: "p1", root, memoryMb: 1024, cpuLimit: 1, timeoutMs: 120000 });
 
-/** Установка отмечается здесь: тесту важно, вызывалась ли она и с какой сетью. */
+/** Установка отмечается здесь: тесту важно, вызывалась ли она, с какой сетью и с каким env. */
 function recorder(result: { ok: boolean; stdout?: string; stderr?: string } = { ok: true }) {
-  const calls: { command: string; cwd: string; network?: string }[] = [];
-  const run = async (_config: SandboxConfig, command: string, cwd: string, options: { network?: "none" | "bridge" }) => {
-    calls.push({ command, cwd, network: options.network });
+  const calls: { command: string; cwd: string; network?: string; env?: Record<string, string> }[] = [];
+  const run = async (_config: SandboxConfig, command: string, cwd: string, options: { network?: "none" | "bridge"; env?: Record<string, string> }) => {
+    calls.push({ command, cwd, network: options.network, env: options.env });
     return { ok: result.ok, exitCode: result.ok ? 0 : 1, signal: null, stdout: result.stdout ?? "added 120 packages", stderr: result.stderr ?? "", truncated: false };
   };
   return { calls, run };
@@ -108,6 +108,37 @@ test("установка идёт с сетью — как npm.install, и её 
   assert.equal(calls[0].network, "bridge");
   assert.match(result.ok ? result.log : "", /локальный кэш ноды/);
   assert.match(result.ok ? result.log : "", /added 120 packages/);
+});
+
+test("без зеркала установка не получает лишних переменных", async t => {
+  const root = await project({ "package.json": JSON.stringify({ dependencies: { vite: "^8.0.0" } }) });
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const previous = process.env.WEBNESTDEV_NPM_REGISTRY;
+  delete process.env.WEBNESTDEV_NPM_REGISTRY;
+  t.after(() => {
+    if (previous !== undefined) process.env.WEBNESTDEV_NPM_REGISTRY = previous;
+  });
+
+  const { calls, run } = recorder();
+  await ensureProjectDependencies(config(root), run);
+  assert.equal(calls[0].env, undefined);
+});
+
+test("недоступное зеркало не попадает в установку: только обычный реестр", async t => {
+  const root = await project({ "package.json": JSON.stringify({ dependencies: { vite: "^8.0.0" } }) });
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const previous = process.env.WEBNESTDEV_NPM_REGISTRY;
+  // Порт 9 на loopback закрыт: проверка живости падает мгновенно, без внешней сети.
+  process.env.WEBNESTDEV_NPM_REGISTRY = "http://127.0.0.1:9";
+  t.after(() => {
+    if (previous === undefined) delete process.env.WEBNESTDEV_NPM_REGISTRY;
+    else process.env.WEBNESTDEV_NPM_REGISTRY = previous;
+  });
+
+  const { calls, run } = recorder();
+  const result = await ensureProjectDependencies(config(root), run);
+  assert.equal(result.ok, true);
+  assert.equal(calls[0].env, undefined);
 });
 
 test("изменение package.json меняет хэш и заставляет установить заново", async t => {

@@ -2,6 +2,7 @@ import type { DockerCommandResult } from "./sandbox/docker/types.js";
 import { resolveSandboxHost, type SandboxRunOptions } from "./sandbox/host.js";
 import { nodeId } from "./nodes/identity.js";
 import { withSandboxSlot } from "./sandbox/sandbox-limiter.js";
+import { commandMemoryMb } from "./sandbox/command-memory.js";
 import { openProjectForSandbox } from "./sandbox/permissions.js";
 import type { SandboxConfig } from "./sandbox-manager.js";
 import { previewSecretMounts } from "./secrets/preview-secrets.js";
@@ -30,10 +31,18 @@ export async function runInSandbox(config:SandboxConfig,command:string,cwd:strin
   const cacheMounts = dependencyCacheMountArgs(config);
   if (cacheMounts.length) await ensureDependencyCache(host, config.projectId);
   const extraMounts = [...cacheMounts, ...(options.extraMounts ?? [])];
+  // Потолок памяти этой команды: дешёвая команда занимает меньшую часть общего бюджета, сборка и
+  // всё неизвестное — прежний размер. Резервация и `--memory` контейнера берут одно и то же число:
+  // иначе бюджет считал бы не то, что реально выдано.
+  const memoryMb = commandMemoryMb(command, config.memoryMb);
+  const memoryOption = memoryMb === config.memoryMb ? {} : { memoryMb };
   // Ждать в очереди тоже надо с сигналом: иначе остановленный запуск ещё минуту держал бы
   // место, а потом всё равно стартовал контейнер ради немедленной отмены.
   if (!options.injectSecretEnvFile) {
-    return withSandboxSlot(()=>host.runCommand(config,command,cwd,{...options,extraMounts}),{signal:options.signal,userId:config.userId,memoryMb:config.memoryMb});
+    return withSandboxSlot(
+      () => host.runCommand(config, command, cwd, { ...options, extraMounts, ...memoryOption }),
+      { signal: options.signal, userId: config.userId, memoryMb },
+    );
   }
 
   // Секреты сборки живут вне проекта: файл создаётся перед запуском и удаляется после него.
@@ -45,8 +54,9 @@ export async function runInSandbox(config:SandboxConfig,command:string,cwd:strin
       () => host.runCommand(config, command, cwd, {
         ...options,
         extraMounts: [...extraMounts, ...injection.mounts],
+        ...memoryOption,
       }),
-      { signal: options.signal, userId: config.userId, memoryMb: config.memoryMb },
+      { signal: options.signal, userId: config.userId, memoryMb },
     );
   } finally {
     await injection.cleanup();

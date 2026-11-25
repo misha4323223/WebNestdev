@@ -208,6 +208,9 @@ export function createRunnerServer(deps: RunnerDeps) {
         await assertExtraMountsAllowed(body.options?.extraMounts);
         const config = buildSandboxConfig(body.projectId, root, nodeId());
         if (body.options?.timeoutMs) config.timeoutMs = body.options.timeoutMs;
+        // Потолок памяти, выбранный API по классу команды: контейнер должен получить ровно то,
+        // что было зарезервировано в общем бюджете, а не свой обычный размер по умолчанию.
+        if (body.options?.memoryMb) config.memoryMb = body.options.memoryMb;
         const controller = new AbortController();
         const onClose = () => {
           if (!response.writableEnded) controller.abort();

@@ -200,6 +200,7 @@ export function createRemoteSandboxHost(input: { id: string; address: string; to
           ...(options.network ? { network: options.network } : {}),
           ...(options.env ? { env: options.env } : {}),
           ...(options.timeoutMs ? { timeoutMs: options.timeoutMs } : {}),
+          ...(options.memoryMb ? { memoryMb: options.memoryMb } : {}),
           ...(options.maskSecretEnvFiles ? { maskSecretEnvFiles: true } : {}),
           ...(options.injectSecretEnvFile ? { injectSecretEnvFile: true } : {}),
           ...(options.extraMounts?.length ? { extraMounts: options.extraMounts } : {}),

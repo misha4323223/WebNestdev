@@ -127,14 +127,27 @@ export async function dependencyLockHash(root: string): Promise<string | null> {
     readFile(path.join(root, "package-lock.json"), "utf8").catch(() => ""),
     readFile(path.join(root, "npm-shrinkwrap.json"), "utf8").catch(() => ""),
   ]);
+  return dependencyHashFrom({ packageJson, lock, shrinkwrap, image: sandboxImage() });
+}
+
+/**
+ * Тот же контракт для файлов, которых нет в проекте: предустановленный набор считается по
+ * тем же правилам, поэтому «версии совпали» — это равенство хэшей, а не сравнение строк.
+ */
+export function dependencyHashFrom(files: {
+  packageJson: string;
+  lock?: string;
+  shrinkwrap?: string;
+  image?: string;
+}): string {
   const hash = createHash("sha256");
-  hash.update(sandboxImage());
+  hash.update(files.image ?? sandboxImage());
   hash.update("\0package.json\0");
-  hash.update(packageJson);
+  hash.update(files.packageJson);
   hash.update("\0package-lock.json\0");
-  hash.update(lock);
+  hash.update(files.lock ?? "");
   hash.update("\0npm-shrinkwrap.json\0");
-  hash.update(shrinkwrap);
+  hash.update(files.shrinkwrap ?? "");
   return hash.digest("hex");
 }
 
