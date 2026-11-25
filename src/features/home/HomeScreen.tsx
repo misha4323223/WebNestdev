@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { ArrowRight, ArrowUpRight, Code2, CreditCard, FolderGit2, Home, Lock, Pencil, Plug, Sparkles, Trash2, UserRound } from "lucide-react";
+import { ArrowRight, ArrowUpRight, ChevronLeft, ChevronRight, Code2, CreditCard, FolderGit2, Home, Lock, Pencil, Plug, Sparkles, Trash2, UserRound } from "lucide-react";
 import { TemplatePreview, type TemplatePreviewKind } from "./TemplatePreview";
 import { deleteProject, listProjects, renameProject, type Project } from "../../lib/project-api";
 import type { PlanId } from "../../lib/billing-api";
@@ -7,7 +7,6 @@ import { getEntitlements, type AccountEntitlements } from "../../lib/entitlement
 import { logout } from "../../lib/auth-api";
 import { HomeRail, type RailSection } from "./HomeRail";
 import { AccountSettingsPanel } from "../settings/AccountSettingsPanel";
-import { WebNestLogo } from "../../components/WebNestLogo";
 import { NestLoader } from "../../components/NestLoader";
 import { ProjectRenameForm } from "./ProjectRename";
 import { PlanPickerModal } from "../billing/PlanPickerModal";
@@ -156,10 +155,68 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
   // Каждая смена фильтра открывает полку с начала: иначе после прокрутки вправо новая
   // категория выглядит пустой, потому что её карточки остались левее видимой части.
   const galleryRef = useRef<HTMLDivElement | null>(null);
+
+  // Стрелки у полки показываются только пока есть что листать: в начале ряда гаснет
+  // левая, в конце — правая. Границы пересчитываются при прокрутке и смене фильтра.
+  const [galleryEdges,setGalleryEdges]=useState({prev:false,next:false});
+  const syncGalleryEdges=useCallback(()=>{
+    const gallery=galleryRef.current;
+    if(!gallery)return;
+    // Запас в несколько пикселей: scroll-snap ставит первую карточку на 2 px от края,
+    // и без допуска левая стрелка горела бы активной в самом начале ряда.
+    setGalleryEdges({
+      prev:gallery.scrollLeft>8,
+      next:gallery.scrollLeft+gallery.clientWidth<gallery.scrollWidth-8,
+    });
+  },[]);
+  useEffect(()=>{
+    const gallery=galleryRef.current;
+    if(!gallery)return;
+    const sync=()=>syncGalleryEdges();
+    gallery.addEventListener("scroll",sync,{passive:true});
+    const observer=new ResizeObserver(sync);
+    observer.observe(gallery);
+    return ()=>{gallery.removeEventListener("scroll",sync);observer.disconnect()};
+  },[syncGalleryEdges]);
+
+  // Каждая смена фильтра открывает полку с начала: иначе после прокрутки вправо новая
+  // категория выглядит пустой, потому что её карточки остались левее видимой части.
+  // Ширина ряда тоже меняется, а ResizeObserver видит только размер самой полки.
   // biome-ignore lint/correctness/useExhaustiveDependencies: фильтр — это триггер: смена набора карточек возвращает полку в начало
   useEffect(()=>{
     galleryRef.current?.scrollTo({left:0});
+    syncGalleryEdges();
   },[starterFilter]);
+
+  // Колесо мыши над полкой листает её вбок, а не страницу: горизонтального скроллбара
+  // нет, и без этого карточки на десктопе оставались недоступными. Слушатель нативный:
+  // React вешает onWheel пассивно, а preventDefault здесь нужен, чтобы страница не ехала.
+  useEffect(()=>{
+    const gallery=galleryRef.current;
+    if(!gallery)return;
+    const onWheel=(event:WheelEvent)=>{
+      // Горизонтальный жест трекпада и масштабирование оставляем браузеру.
+      if(event.ctrlKey||Math.abs(event.deltaX)>Math.abs(event.deltaY))return;
+      const max=gallery.scrollWidth-gallery.clientWidth;
+      if(max<=0)return;
+      const delta=event.deltaMode===1?event.deltaY*16:event.deltaY;
+      // На краях ряда прокручивается страница: полка не должна «залипать» под курсором.
+      if((delta<0&&gallery.scrollLeft<=0)||(delta>0&&gallery.scrollLeft>=max-1))return;
+      event.preventDefault();
+      gallery.scrollLeft=Math.max(0,Math.min(max,gallery.scrollLeft+delta));
+    };
+    gallery.addEventListener("wheel",onWheel,{passive:false});
+    return ()=>gallery.removeEventListener("wheel",onWheel);
+  },[]);
+
+  /** Шаг полки — ровно одна карточка с зазором, чтобы ряд листался карточка за карточкой. */
+  function scrollGallery(direction:1|-1){
+    const gallery=galleryRef.current;
+    if(!gallery)return;
+    const card=gallery.querySelector<HTMLElement>(".starter-card");
+    const step=(card?.offsetWidth??196)+10;
+    gallery.scrollBy({left:direction*step,behavior:"smooth"});
+  }
 
   function pick(next:HomeTab){
     setTab(next);
@@ -377,21 +434,13 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
             <button className="ghost-button home-run-open" onClick={() => onOpenWorkspace(activeRun.projectId)}>Вернуться в проект</button>
           </div>}
 
-          {/* Одна панель запуска: шапка с заголовком и логотипом плюс поле идеи. Шаблоны и
-              блог живут ниже, вне панели: так панель читается как пульт, а не как страница целиком. */}
+          {/* Одна панель запуска: шапка с заголовком плюс поле идеи. Шаблоны и обзоры
+              живут ниже, вне панели: так панель читается как пульт, а не как страница целиком. */}
           <div className="home-launch">
           <section className="home-stage">
           <div className="home-hero">
             <div className="home-hero-copy">
               <h1 className="home-title">От идеи – в <em>живой продукт.</em></h1>
-            </div>
-            <div className="home-hero-visual" aria-hidden="true">
-              {/* Звёздное поле — только CSS-градиенты: ноль запросов, ноль анимации, ноль DOM-узлов
-                  сверх одного контейнера. Оно живёт за логотипом и не участвует в раскладке. */}
-              <div className="home-stars"/>
-              <div className="home-orbit home-orbit-outer"/>
-              <div className="home-orbit home-orbit-inner"/>
-              <div className="home-hero-mark"><WebNestLogo size={150} tone="light"/></div>
             </div>
           </div>
           </section>
@@ -416,7 +465,19 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
             </div>
             </div>
             {templateNotice&&<div className="starter-notice" role="status"><Lock size={13}/><span>{templateNotice}</span><button type="button" onClick={()=>setTemplateNotice("")} aria-label="Закрыть подсказку">×</button></div>}
-            <div className="starter-gallery" role="region" aria-label="Шаблоны" ref={galleryRef}>
+            <div className="starter-shelf">
+            <div
+              className="starter-gallery"
+              role="region"
+              aria-label="Шаблоны"
+              ref={galleryRef}
+              tabIndex={0}
+              onKeyDown={event=>{
+                if(event.key!=="ArrowLeft"&&event.key!=="ArrowRight")return;
+                event.preventDefault();
+                scrollGallery(event.key==="ArrowRight"?1:-1);
+              }}
+            >
               {starterItems.map(({group,template})=>{
                 const tier=templateTier(template);
                 const available=templateAvailable(template);
@@ -435,6 +496,9 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
                   <span className="starter-card-note">{available?template.note:(template.why??"Нужен платный тариф")}</span>
                 </button>;
               })}
+            </div>
+            <button type="button" className="gallery-arrow is-prev" onClick={()=>scrollGallery(-1)} disabled={!galleryEdges.prev} aria-label="Пролистать шаблоны влево" title="Листать влево"><ChevronLeft size={16}/></button>
+            <button type="button" className="gallery-arrow is-next" onClick={()=>scrollGallery(1)} disabled={!galleryEdges.next} aria-label="Пролистать шаблоны вправо" title="Листать вправо"><ChevronRight size={16}/></button>
             </div>
           </section>
 
@@ -472,26 +536,32 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
           {error&&<div className="home-error">{error}</div>}
 
           <section className="home-journal" aria-labelledby="home-journal-title">
-            <div className="home-journal-head">
-              <div>
-                <span className="eyebrow">БЛОГ</span>
-                <h2 id="home-journal-title">Что можно сделать и как это работает</h2>
-              </div>
+            {/* Тонкая полоса-ответвление выходит из левой колонки тем же фоном, поэтому
+                стыка не видно; в ней только название раздела, а темы стоят по центру
+                над своими карточками. */}
+            <div className="home-journal-branch">
+              <h2 id="home-journal-title">Ознакомление и детали</h2>
               <a className="home-journal-all" href="/blog">Все материалы <ArrowUpRight size={12} aria-hidden="true"/></a>
             </div>
             <div className="home-journal-grid">
-              {guideLinks.map(item => <a className="home-journal-card" href={item.href} key={item.href}>
-                <span className="home-journal-shot">
-                  <img src={item.cover} alt="" loading="lazy" decoding="async"/>
-                  <span className="home-journal-tag">{item.tag}</span>
-                  <ArrowUpRight className="home-journal-go" size={14} aria-hidden="true"/>
-                </span>
-                <span className="home-journal-body">
-                  <span className="home-journal-time">{item.time} чтения</span>
-                  <strong>{item.title}</strong>
-                  <small>{item.note}</small>
-                </span>
-              </a>)}
+              {guideLinks.map((item, index) => <div className="home-journal-col" key={item.href}>
+                <span className="home-journal-topic">{item.tag}</span>
+                <a className="home-journal-card" href={item.href}>
+                  <span className="home-journal-shot">
+                    <img src={item.cover} alt="" loading="lazy" decoding="async"/>
+                    <span className="home-journal-tag">{item.tag}</span>
+                    <ArrowUpRight className="home-journal-go" size={14} aria-hidden="true"/>
+                  </span>
+                  <span className="home-journal-body">
+                    <span className="home-journal-meta">
+                      <span className="home-journal-index">{String(index + 1).padStart(2, "0")}</span>
+                      <span className="home-journal-time">{item.time} чтения</span>
+                    </span>
+                    <strong>{item.title}</strong>
+                    <small>{item.note}</small>
+                  </span>
+                </a>
+              </div>)}
             </div>
           </section>
 

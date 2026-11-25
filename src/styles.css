@@ -563,15 +563,8 @@ button,textarea{font:inherit}button{color:inherit}
    остаётся главным пятном на странице, и фон не выглядит туманом. */
 .home-screen{position:relative;min-height:100vh;overflow:auto;background:linear-gradient(180deg,#0e1216 0%,#0c0f13 18%,#0b0d10 46%,#0a0c0f 100%);padding:0 28px;color:#e8eaed}
 .home-screen::before{content:"";position:absolute;inset:0;z-index:0;pointer-events:none;background-image:linear-gradient(rgba(204,195,178,.03) 1px,transparent 1px),linear-gradient(90deg,rgba(204,195,178,.03) 1px,transparent 1px);background-size:64px 64px;mask-image:linear-gradient(180deg,#000 0%,transparent 58%);-webkit-mask-image:linear-gradient(180deg,#000 0%,transparent 58%);opacity:.65}
-/* Логотип стоит по центру свободного места между верхом страницы и строкой «Опиши идею…».
-   Отступ сверху и отступ до текста равны, поэтому кольцо оказывается ровно посередине,
-   а положение самого текста и поля ввода не меняется. */
+/* Шапка панели: только заголовок, без логотипа и орбит — они отвлекали от идеи и поля ввода. */
 .home-hero{--home-hero-gap:51px;width:min(860px,100%);margin:0 auto;padding:var(--home-hero-gap) 0 54px;text-align:center}
-/* The hero mark carries no plate: it uses the light artwork straight on the dark page. */
-.home-hero-mark{position:relative;display:grid;place-items:center;margin:0 auto var(--home-hero-gap)}
-.home-hero-mark::before{content:"";position:absolute;z-index:0;width:min(208px,58vw);aspect-ratio:1;border:1px solid rgba(204,195,178,.2);border-radius:50%;background:radial-gradient(circle at 50% 0%,rgba(204,195,178,.7) 0 1.6px,transparent 2.2px);box-shadow:0 0 0 7px rgba(204,195,178,.025)}
-.home-hero-mark::after{content:"";position:absolute;z-index:0;width:min(176px,49vw);aspect-ratio:1;border:1px solid rgba(204,195,178,.24);border-right-color:transparent;border-left-color:transparent;border-radius:50%;transform:rotate(-18deg)}
-.home-hero-mark img{position:relative;z-index:1;display:block;object-fit:contain;filter:drop-shadow(0 12px 26px rgba(0,0,0,.42))}
 .home-kicker{display:inline-flex;margin-bottom:9px;color:#8c8476;font-size:8.5px;font-weight:550;letter-spacing:.18em}
 .home-hero>p{margin:0 auto;color:#777f89;font-size:13px;line-height:1.6;max-width:520px}
 /* Поле идеи — тот же материал, что и блоки шаблонов: тёплая кромка, угловая подсветка и
@@ -647,13 +640,13 @@ button,textarea{font:inherit}button{color:inherit}
 .home-run span{display:block;margin-top:3px;color:#8e877b;font-size:10px;line-height:1.5}
 .home-run .home-run-open{height:30px;flex:none}
 .home-main.has-run .home-hero{--home-hero-gap:23px;padding-top:var(--home-hero-gap)}
-@media(max-width:800px){.home-hero{--home-hero-gap:39px;padding-top:var(--home-hero-gap)}.home-hero-mark img{width:132px;height:132px}.home-hero-mark::before{width:172px}.home-hero-mark::after{width:144px}.recent-grid{grid-template-columns:repeat(2,1fr)}.starter-list{grid-template-columns:repeat(auto-fill,minmax(190px,1fr))}}
+@media(max-width:800px){.home-hero{--home-hero-gap:39px;padding-top:var(--home-hero-gap)}.recent-grid{grid-template-columns:repeat(2,1fr)}.starter-list{grid-template-columns:repeat(auto-fill,minmax(190px,1fr))}}
 /*
  * Шаблоны на телефоне — одна колонка внутри раскрытой категории: заголовок категории остаётся
  * крупным, а старты идут строками с иконкой, именем и одной строкой описания. Так список
  * читается сверху вниз без горизонтальной прокрутки и не уводит проекты за экран.
  */
-@media(max-width:520px){.home-payment{flex-direction:column;align-items:flex-start;gap:9px}.home-payment-actions{width:100%}.home-payment-actions .ghost-button,.home-payment-actions .send-button{flex:1 1 auto;justify-content:center}.home-screen{padding:0 14px}.home-tabs{margin:0 -14px;padding:10px 14px}.home-hero{--home-hero-gap:29px;padding-top:var(--home-hero-gap)}.home-hero-mark img{width:104px;height:104px}.home-hero-mark::before{width:144px}.home-hero-mark::after{width:124px}.home-kicker{font-size:8px;letter-spacing:.14em}.home-composer{margin-top:20px;border-radius:12px}.home-composer-steps>span:nth-child(3){display:none}.home-submit{width:32px;padding:0;justify-content:center}.home-submit span{display:none}.home-section{margin-bottom:26px}.home-section-head{margin-bottom:9px}.home-section-note{display:none}.recent-grid{grid-template-columns:1fr}.home-footer{flex-wrap:wrap}.home-footer span:nth-child(2){display:none}
+@media(max-width:520px){.home-payment{flex-direction:column;align-items:flex-start;gap:9px}.home-payment-actions{width:100%}.home-payment-actions .ghost-button,.home-payment-actions .send-button{flex:1 1 auto;justify-content:center}.home-screen{padding:0 14px}.home-tabs{margin:0 -14px;padding:10px 14px}.home-hero{--home-hero-gap:29px;padding-top:var(--home-hero-gap)}.home-kicker{font-size:8px;letter-spacing:.14em}.home-composer{margin-top:20px;border-radius:12px}.home-composer-steps>span:nth-child(3){display:none}.home-submit{width:32px;padding:0;justify-content:center}.home-submit span{display:none}.home-section{margin-bottom:26px}.home-section-head{margin-bottom:9px}.home-section-note{display:none}.recent-grid{grid-template-columns:1fr}.home-footer{flex-wrap:wrap}.home-footer span:nth-child(2){display:none}
   /* Категория на телефоне — компактная строка: диапазон остаётся, счётчик превращается в подпись. */
   .starter-group-head{padding:8px 10px;gap:8px}
   .starter-group-icon{width:25px;height:25px;border-radius:7px}
@@ -1267,9 +1260,6 @@ button,textarea{font:inherit}button{color:inherit}
 :root[data-density=compact] .nav-item{height:26px}
 :root[data-density=compact] .home-screen{padding:0 20px}
 :root[data-density=compact] .home-hero{--home-hero-gap:38px;padding:var(--home-hero-gap) 0 36px}
-:root[data-density=compact] .home-hero-mark img{width:132px;height:132px}
-:root[data-density=compact] .home-hero-mark::before{width:172px}
-:root[data-density=compact] .home-hero-mark::after{width:144px}
 :root[data-density=compact] .home-section{margin-bottom:26px}
 :root[data-density=compact] .settings-body,:root[data-density=compact] .account-settings-content{padding:14px}
 :root[data-density=compact] .account-toggle{padding:8px 0;margin-bottom:10px!important}
@@ -4015,22 +4005,6 @@ button,textarea{font:inherit}button{color:inherit}
   color:#f0eee8;
 }
 .home-title em{font-style:normal;color:var(--home-accent);white-space:nowrap}
-.home-hero-visual{
-  position:relative;min-height:420px;display:grid;place-items:center;isolation:isolate;
-}
-.home-hero-visual::before{
-  content:"";position:absolute;width:340px;height:340px;border-radius:50%;
-  background:radial-gradient(circle,rgba(216,178,122,.16),transparent 67%);
-  filter:blur(22px);z-index:-1;
-}
-.home-orbit{position:absolute;border-radius:50%;pointer-events:none}
-.home-orbit-outer{width:352px;height:352px;border:1px solid rgba(216,178,122,.24);box-shadow:0 0 0 14px rgba(216,178,122,.025);animation:home-orbit-turn 34s linear infinite}
-.home-orbit-inner{width:278px;height:278px;border:1px dashed rgba(216,178,122,.22);animation:home-orbit-turn 22s linear infinite reverse}
-.home-hero-visual .home-hero-mark{margin:0;position:relative;z-index:2;animation:home-float 7s ease-in-out infinite}
-.home-hero-visual .home-hero-mark::before,.home-hero-visual .home-hero-mark::after{display:none}
-.home-hero-visual .home-hero-mark img{filter:drop-shadow(0 24px 38px rgba(0,0,0,.52))}
-@keyframes home-orbit-turn{to{transform:rotate(360deg)}}
-@keyframes home-float{0%,100%{transform:translateY(0)}50%{transform:translateY(-9px)}}
 
 .home-screen .home-tabs{
   margin:0 -28px;padding:8px 28px;gap:8px;
@@ -4258,10 +4232,6 @@ button,textarea{font:inherit}button{color:inherit}
   .home-hero{grid-template-columns:1fr;gap:6px;padding-top:20px;text-align:center}
   .home-hero-copy{display:flex;flex-direction:column;align-items:center}
   .home-title{font-size:clamp(34px,7.4vw,48px)}
-  .home-hero-visual{min-height:230px;order:-1}
-  .home-hero-visual .home-hero-mark img{width:138px;height:138px}
-  .home-orbit-outer{width:248px;height:248px}
-  .home-orbit-inner{width:194px;height:194px}
   .home-section-head h2{font-size:20px}
   .starter-categories{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
@@ -4273,10 +4243,6 @@ button,textarea{font:inherit}button{color:inherit}
   .home-screen .home-tab-icon{width:22px;height:22px;border-radius:6px}
   .home-screen .notifications-tab-trigger{width:34px;height:34px;border-radius:9px}
   .home-hero{padding-top:14px}
-  .home-hero-visual{min-height:188px}
-  .home-hero-visual .home-hero-mark img{width:104px;height:104px}
-  .home-orbit-outer{width:190px;height:190px}
-  .home-orbit-inner{width:148px;height:148px}
   .home-title{font-size:34px;line-height:.98}
   .home-composer-wrap{margin-top:14px}
   .home-composer{padding:12px;gap:8px;border-radius:14px}
@@ -4311,7 +4277,6 @@ button,textarea{font:inherit}button{color:inherit}
   .home-screen .home-footer{margin-top:34px}
 }
 @media(prefers-reduced-motion:reduce){
-  .home-orbit-outer,.home-orbit-inner,.home-hero-visual .home-hero-mark{animation:none}
   .starter-shelf{animation:none}
 }
 
@@ -4359,30 +4324,6 @@ button,textarea{font:inherit}button{color:inherit}
   .client-db-actions .send-button,.client-db-actions .ghost-button{width:100%;height:38px}
   .client-db-status>div:not(.client-db-meter){align-items:flex-start;flex-direction:column;gap:2px}
   .client-db-status strong{white-space:normal;overflow:visible}
-}
-
-/* Звёздное поле за логотипом. Восемь слоёв точек с разным шагом плитки дают неровное небо
-   без единого запроса и без DOM: один элемент, статичный фон, мягкая маска к краям.
-   Анимации нет намеренно — она стоила бы кадров на каждом экране главной. */
-.home-stars{
-  position:absolute;inset:-72px -54px;z-index:0;pointer-events:none;opacity:.62;
-  background-image:
-    radial-gradient(1.5px 1.5px at 24px 38px,rgba(243,240,232,.72) 38%,transparent 62%),
-    radial-gradient(1.1px 1.1px at 96px 74px,rgba(226,231,236,.55) 38%,transparent 62%),
-    radial-gradient(1px 1px at 142px 22px,rgba(216,178,122,.62) 38%,transparent 62%),
-    radial-gradient(1.3px 1.3px at 62px 128px,rgba(238,240,243,.5) 38%,transparent 62%),
-    radial-gradient(1px 1px at 178px 106px,rgba(232,236,240,.42) 38%,transparent 62%),
-    radial-gradient(1.8px 1.8px at 44px 86px,rgba(250,248,243,.78) 34%,transparent 64%),
-    radial-gradient(1.1px 1.1px at 128px 150px,rgba(226,230,234,.4) 38%,transparent 62%),
-    radial-gradient(1.4px 1.4px at 12px 166px,rgba(223,201,166,.5) 38%,transparent 62%);
-  background-size:196px 196px,232px 232px,268px 268px,204px 204px,244px 244px,288px 288px,252px 252px,276px 276px;
-  background-position:0 0,36px 58px,84px 12px,120px 96px,8px 130px,64px 20px,150px 72px,190px 140px;
-  -webkit-mask-image:radial-gradient(closest-side at 50% 48%,#000 34%,rgba(0,0,0,.6) 62%,transparent 94%);
-  mask-image:radial-gradient(closest-side at 50% 48%,#000 34%,rgba(0,0,0,.6) 62%,transparent 94%);
-}
-
-@media(max-width:800px){
-  .home-stars{inset:-46px -34px;opacity:.5}
 }
 
 /* Информационный раздел. Каркас взят у юридических страниц, поэтому здесь только лента:
@@ -4445,43 +4386,54 @@ button,textarea{font:inherit}button{color:inherit}
 }
 
 
-/* ── Блог на главной: три обложки между шаблонами и проектами ─────────────────────────── */
-.home-journal{width:min(980px,100%);margin:0 auto 34px}
-.home-journal-head{display:flex;align-items:flex-end;justify-content:space-between;gap:16px;margin:0 2px 12px}
-.home-journal-head>div{min-width:0}
-.home-journal-head .eyebrow{font-size:8px}
-.home-journal-head h2{margin:5px 0 0;font-size:22px;line-height:1.15;letter-spacing:-.035em;font-weight:600;color:#ecebe6}
+/* ── Ознакомление и детали: тонкая полоса из левой колонки ──────────────────────────────
+   Ширина в две строки: полоса растёт вправо из панели иконок и на стыке совпадает с ней
+   цветом пиксель в пиксель — шва нет, а к правому краю она растворяется в фоне страницы.
+   Темы стоят по центру над своими карточками, карточки — без обводки, кадр вставлен
+   внутрь плиты, поэтому форма отличается от карточек шаблонов. */
+.home-journal{width:auto;margin:0 0 34px}
+.home-journal-branch{position:relative;display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:36px;padding:0 16px 0 20px;border-radius:0 10px 10px 0;background:linear-gradient(90deg,#11161a 0,#101519 52%,#0b0d10 100%)}
+.home-journal-branch::after{content:"";position:absolute;left:0;right:0;bottom:0;height:1px;pointer-events:none;background:linear-gradient(90deg,rgba(216,178,122,0),rgba(216,178,122,.2) 24%,rgba(216,178,122,.05) 78%,rgba(216,178,122,0))}
+.home-journal-branch h2{margin:0;font-size:13px;line-height:1.2;letter-spacing:-.01em;font-weight:600;color:#e6e4dd}
 .home-journal-all{display:inline-flex;flex:none;align-items:center;gap:5px;padding-bottom:2px;color:#ad9a7c;font-size:10px;text-decoration:none;transition:color .15s ease}
 .home-journal-all:hover{color:#e8d2ad}
-.home-journal-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}
-.home-journal-card{display:flex;flex-direction:column;min-width:0;border:1px solid rgba(216,178,122,.16);border-radius:15px;overflow:hidden;background:radial-gradient(120% 90% at 100% 0,rgba(216,178,122,.05),transparent 55%),linear-gradient(168deg,#12171a,#0d1014 76%);color:inherit;text-decoration:none;transition:border-color .16s ease,transform .16s ease,box-shadow .16s ease}
-.home-journal-card:hover{border-color:rgba(216,178,122,.4);transform:translateY(-2px);box-shadow:0 14px 30px rgba(0,0,0,.26)}
+/* Темы стоят по центру над своими карточками: колонки те же, что у сетки ниже. */
+.home-journal-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:13px 0 0;padding:0 18px 0 20px}
+.home-journal-col{display:flex;flex-direction:column;gap:9px;min-width:0}
+.home-journal-topic{text-align:center;color:#c3ae88;font:8px/1 ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:600;letter-spacing:.16em;text-transform:uppercase;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.home-journal-card{display:flex;flex-direction:column;min-width:0;padding:8px;border-radius:20px 20px 20px 6px;background:radial-gradient(120% 90% at 100% 0,rgba(216,178,122,.05),transparent 56%),linear-gradient(168deg,#141a1f,#0b0e12 82%);color:inherit;text-decoration:none;transition:background .18s ease,transform .18s ease,box-shadow .18s ease}
+.home-journal-card:hover{transform:translateY(-3px);box-shadow:0 18px 36px rgba(0,0,0,.38)}
 .home-journal-card:focus-visible{outline:2px solid rgba(216,178,122,.55);outline-offset:2px}
-.home-journal-shot{position:relative;display:block;aspect-ratio:16/10;overflow:hidden;background:#090c0e;border-bottom:1px solid rgba(216,178,122,.13)}
-.home-journal-shot::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(6,8,10,.06),transparent 45%,rgba(6,8,10,.5));pointer-events:none}
-.home-journal-shot img{display:block;width:100%;height:100%;object-fit:cover;filter:saturate(.96);transition:transform .5s ease,filter .3s ease}
-.home-journal-card:hover .home-journal-shot img{transform:scale(1.035);filter:saturate(1.03)}
-.home-journal-tag{position:absolute;top:9px;left:9px;z-index:1;padding:3px 7px;border:1px solid rgba(216,178,122,.3);border-radius:999px;background:rgba(9,12,15,.72);backdrop-filter:blur(6px);color:#d6bd95;font-size:7.5px;font-weight:650;letter-spacing:.08em;text-transform:uppercase}
-.home-journal-go{position:absolute;right:9px;bottom:9px;z-index:1;width:26px;height:26px;padding:6px;border:1px solid rgba(216,178,122,.24);border-radius:50%;background:rgba(9,12,15,.72);backdrop-filter:blur(6px);color:#c9b28e;transition:background .16s ease,border-color .16s ease,color .16s ease,transform .16s ease}
+.home-journal-shot{position:relative;display:block;aspect-ratio:16/9;overflow:hidden;border-radius:15px;background:#090c0e}
+.home-journal-shot::after{content:"";position:absolute;inset:0;background:linear-gradient(180deg,rgba(6,8,10,.04),transparent 52%,rgba(6,8,10,.46));pointer-events:none}
+.home-journal-shot img{display:block;width:100%;height:100%;object-fit:cover;filter:saturate(.96);transition:transform .55s ease,filter .3s ease}
+.home-journal-card:hover .home-journal-shot img{transform:scale(1.04);filter:saturate(1.04)}
+.home-journal-tag{display:none}
+.home-journal-go{position:absolute;right:8px;bottom:8px;z-index:1;width:26px;height:26px;padding:6px;border:1px solid rgba(216,178,122,.24);border-radius:50%;background:rgba(9,12,15,.72);backdrop-filter:blur(6px);color:#c9b28e;transition:background .16s ease,border-color .16s ease,color .16s ease,transform .16s ease}
 .home-journal-card:hover .home-journal-go{background:#d8b27a;border-color:#d8b27a;color:#17130e;transform:translate(1px,-1px)}
-.home-journal-body{display:flex;flex-direction:column;gap:5px;padding:11px 13px 13px}
-.home-journal-time{color:#8a7c66;font:8px/1.2 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.06em;text-transform:uppercase}
-.home-journal-body strong{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:13.5px;line-height:1.3;letter-spacing:-.015em;font-weight:600;color:#e9e8e3}
+.home-journal-body{display:flex;flex-direction:column;gap:6px;padding:12px 7px 8px}
+.home-journal-meta{display:flex;align-items:center;justify-content:space-between;gap:8px;font:8px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.08em;text-transform:uppercase;color:#8a7c66}
+.home-journal-index{color:#d6bd95;font-weight:700;letter-spacing:.14em}
+.home-journal-time{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.home-journal-body strong{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:14px;line-height:1.3;letter-spacing:-.015em;font-weight:600;color:#efeee8}
 .home-journal-body small{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;font-size:9.5px;line-height:1.45;color:#7b837d}
-@media(max-width:800px){
+@media(max-width:900px){
   .home-journal{margin-bottom:26px}
-  .home-journal-head h2{font-size:19px}
+  .home-journal-branch{min-height:0;padding:0 2px;border-radius:0;background:none}
+  .home-journal-branch::after{display:none}
   .home-journal-all{font-size:9.5px}
-  .home-journal-grid{grid-template-columns:none;grid-auto-flow:column;grid-auto-columns:minmax(230px,300px);gap:8px;padding:1px 1px 6px;overflow-x:auto;scroll-snap-type:x proximity;scrollbar-width:none}
+  .home-journal-grid{grid-template-columns:none;grid-auto-flow:column;grid-auto-columns:minmax(230px,300px);gap:8px;margin:10px 0 0;padding:1px 1px 6px;overflow-x:auto;scroll-snap-type:x proximity;scrollbar-width:none}
   .home-journal-grid::-webkit-scrollbar{display:none}
-  .home-journal-card{scroll-snap-align:start}
+  .home-journal-col{scroll-snap-align:start}
+  .home-journal-topic{display:none}
+  .home-journal-card{border-radius:18px 18px 18px 6px}
+  .home-journal-tag{display:inline-flex;position:absolute;top:8px;left:8px;padding:3px 7px;border:1px solid rgba(216,178,122,.3);border-radius:999px;background:rgba(9,12,15,.72);backdrop-filter:blur(6px);color:#d6bd95;font-size:7.5px;font-weight:650;letter-spacing:.08em;text-transform:uppercase}
 }
 @media(max-width:520px){
-  .home-journal-head{gap:8px;margin-bottom:9px}
-  .home-journal-head h2{font-size:18px}
+  .home-journal-branch h2{font-size:12px}
   .home-journal-all{max-width:92px;justify-content:flex-end;text-align:right;line-height:1.25}
-  .home-journal-grid{grid-auto-columns:228px}
-  .home-journal-body{padding:10px 11px 12px}
+  .home-journal-grid{grid-auto-columns:244px}
+  .home-journal-body{padding:11px 6px 8px}
 }
 
 /*
@@ -4612,30 +4564,28 @@ button,textarea{font:inherit}button{color:inherit}
 
 /* ---------------------------------------------------------------------------
    Home 2026: единая панель запуска
-   Заголовок, логотип и поле идеи — одна поверхность вместо трёх карточек.
-   Скругление панели огибает логотип, а орбиты мягко обрезаются краем: отсюда
-   «литой» вид. Шаблоны и блог намеренно остаются вне панели.
+   Заголовок и поле идеи — одна поверхность вместо трёх карточек. Шаблоны и
+   обзоры намеренно остаются вне панели.
 --------------------------------------------------------------------------- */
-.home-launch{--branch:124px;--fillet:124px;--stage-h:66px;width:100%;margin:0;position:relative;z-index:1;display:grid}
+/* Рукав справа ровно такой же ширины, как левая панель иконок (64 px): стенки
+   плиты читаются симметрично, а изгиб рукава получает тот же радиус. */
+.home-launch{--branch:64px;--fillet:64px;--stage-h:66px;width:100%;margin:0;position:relative;z-index:1;display:grid}
 .home-stage{position:relative;width:100%;margin:0;border:1px solid rgba(216,178,122,.24);border-left:0;border-right-color:rgba(216,178,122,.42);box-shadow:inset -1px 0 0 rgba(216,178,122,.1);border-radius:4px 26px 26px 4px;overflow:hidden;background:linear-gradient(90deg,#11161a 0,rgba(17,22,26,0) 180px),radial-gradient(120% 130% at 100% 0,rgba(216,178,122,.14),transparent 48%),radial-gradient(90% 120% at 0 100%,rgba(96,122,132,.08),transparent 60%),linear-gradient(168deg,#11161a 0%,#0d1114 58%,#0c0f12 100%);box-shadow:0 30px 80px rgba(0,0,0,.42),inset 0 1px 0 rgba(255,255,255,.045)}
 .home-stage::before{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;box-shadow:inset 0 0 0 1px rgba(255,255,255,.02)}
 .home-stage::after{content:"";position:absolute;right:-12%;top:-28%;width:62%;height:74%;pointer-events:none;background:radial-gradient(circle at 70% 30%,rgba(216,178,122,.16),transparent 62%)}
-.home-stage .home-hero{position:relative;z-index:1;width:100%;margin:0;padding:0 34px 16px;grid-template-columns:minmax(0,1fr) 230px;gap:18px;align-items:start;text-align:left}
+.home-stage .home-hero{position:relative;z-index:1;width:100%;margin:0;padding:0 34px 16px;grid-template-columns:minmax(0,1fr);gap:18px;align-items:start;text-align:left}
 .home-stage .home-title{font-size:clamp(16px,2.2vw,28px);max-width:none}
-.home-stage .home-hero-visual{min-height:108px;margin:0 -8px 0 0}
-.home-stage .home-orbit-outer{width:162px;height:162px}
-.home-stage .home-orbit-inner{width:120px;height:120px}
-.home-stage .home-hero-visual::before{width:174px;height:174px}
-.home-stage .home-hero-visual .home-hero-mark img{filter:drop-shadow(0 22px 34px rgba(0,0,0,.5))}
 /* Панель-шапка начинается сразу от боковой панели: слева она делит край с колонкой
-   (поэтому углы почти прямые), справа — скруглена и держит логотип. Контент ниже
+   (поэтому углы почти прямые), справа — скруглена и уходит в рукав. Контент ниже
    (поле ввода, шаблоны, блог) сдвинут внутрь от левого края и доходит до правой стены. */
 .home-layout{gap:0}
 /* Тело панели: под шапкой одна плита — шаблоны, рукав и поле идеи. На телефоне
    панель одноколоночная, поэтому шаблоны идут последними, под полем идеи. */
 .home-deck{display:grid}
 .home-starters,.home-journal,.home-section{width:auto;margin-left:0;margin-right:0}
-.home-starters{order:1;width:min(980px,100%);max-width:100%;min-width:0;margin:12px auto 30px;padding:0 2px;display:grid;gap:10px}
+/* Колонка жёстко равна ширине плиты: обёртка полки со стрелками не должна растягивать
+   ряд по содержимому, иначе карточки уезжают за правый край панели. */
+.home-starters{order:1;width:min(980px,100%);max-width:100%;min-width:0;margin:12px auto 30px;padding:0 2px;display:grid;grid-template-columns:minmax(0,1fr);gap:10px}
 /* Заголовок центрируется над рядом кнопок: колонка ровно по ширине кнопок. */
 .starter-dock{display:grid;gap:8px;grid-template-columns:minmax(0,max-content);max-width:100%;justify-items:start}
 .starter-dock-head{margin:0 2px}
@@ -4674,8 +4624,6 @@ button,textarea{font:inherit}button{color:inherit}
   /* Заголовок стоит по центру шапки по обеим осям; толщина шапки не меняется. */
   .home-stage .home-title{margin:0}
   .home-stage::after{inset:0;width:auto;height:auto;background:radial-gradient(90% 120% at 100% 0,rgba(216,178,122,.16),transparent 60%)}
-  .home-stage .home-hero-visual{position:absolute;top:0;right:0;width:162px;height:162px;min-height:0;margin:0}
-  .home-stage .home-hero-mark img{width:111px;height:111px}
   .home-stage::before{content:"";position:absolute;inset:auto 0 -1px var(--fillet);right:calc(var(--branch) + var(--fillet));height:1px;border-radius:0;box-shadow:none;pointer-events:none;background:linear-gradient(90deg,rgba(216,178,122,.24),rgba(216,178,122,.32))}
   /* Угол у логотипа не прямой: шапка переходит в рукав дугой того же радиуса.
      Уголок залит цветом обеих поверхностей, по его краю идёт та же тёплая кромка. */
@@ -4767,11 +4715,53 @@ button,textarea{font:inherit}button{color:inherit}
   .home-bridge{height:141px}
   .home-composer{border-radius:16px 0 14px 14px}
   .home-stage .home-hero{grid-template-columns:1fr;padding:20px 18px 26px;gap:4px}
-  .home-stage .home-hero-visual{min-height:168px;margin:0 auto}
-  .home-stage .home-orbit-outer{width:186px;height:186px}
-  .home-stage .home-orbit-inner{width:146px;height:146px}
-  .home-stage .home-hero-visual::before{width:196px;height:196px}
   .home-stage .home-title{font-size:clamp(30px,8.2vw,42px);max-width:none}
   .home-layout{gap:0}
   .home-starters,.home-journal,.home-section{margin-left:0}
 }
+
+/* Полка шаблонов и стрелки листания. Кнопки стоят по краям ряда поверх кадров: на
+   десктопе у полки нет скроллбара, и без них карточки правее первого экрана не достать.
+   Ниже 901 px и на тач-экранах стрелки не нужны — там ряд листается свайпом. */
+.starter-shelf{position:relative;min-width:0}
+.gallery-arrow{position:absolute;top:38%;z-index:3;display:none;width:32px;height:32px;padding:0;transform:translateY(-50%);align-items:center;justify-content:center;border:1px solid rgba(216,178,122,.36);border-radius:50%;background:rgba(12,16,20,.86);color:#f0e3ca;box-shadow:0 10px 24px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.06);backdrop-filter:blur(6px);cursor:pointer;transition:border-color .16s ease,background .16s ease,color .16s ease,opacity .16s ease}
+.gallery-arrow.is-prev{left:1px}
+.gallery-arrow.is-next{right:1px}
+.gallery-arrow:hover:not(:disabled){border-color:rgba(216,178,122,.7);background:rgba(26,22,16,.94);color:#fff4dd}
+.gallery-arrow:focus-visible{outline:2px solid rgba(216,178,122,.6);outline-offset:2px}
+.gallery-arrow:disabled{opacity:.26;cursor:default;box-shadow:none}
+@media(min-width:901px) and (hover:hover){.gallery-arrow{display:flex}}
+
+/* Окно выбора тарифа: раньше подписи тонули в тёмной плите. Теперь фон светлее,
+   заголовки и условия белые, карточки тарифов читаются как отдельные поверхности,
+   а выбранный тариф подсвечен латунью — окно выглядит современнее и не «тускнеет». */
+.plan-modal{position:relative;overflow:hidden;width:min(960px,100%);border-radius:20px;border-color:rgba(216,178,122,.28);background:linear-gradient(168deg,#151a1f 0,#0f1318 54%,#0b0e12 100%);box-shadow:0 40px 110px rgba(0,0,0,.62),inset 0 1px 0 rgba(255,255,255,.06)}
+.plan-modal::after{content:"";position:absolute;inset:0;pointer-events:none;background:radial-gradient(120% 90% at 100% 0,rgba(216,178,122,.16),transparent 56%),radial-gradient(90% 70% at 0 0,rgba(120,150,165,.08),transparent 62%)}
+.plan-modal>*{position:relative;z-index:1}
+.plan-modal .modal-head{align-items:flex-start;padding:22px 24px 16px;border-bottom:0}
+.plan-modal .modal-head h2{margin:6px 0 0;font-size:23px;line-height:1.15;letter-spacing:-.03em;font-weight:650;color:#fff}
+.plan-modal .eyebrow{color:#e2c795}
+.plan-modal .modal-body{gap:16px;padding:0 24px 22px}
+.plan-modal .modal-lead{margin:0;max-width:74ch;color:#e3e9f0;font-size:12.5px;line-height:1.62}
+.plan-modal .modal-state{color:#e3e9f0;font-size:12px}
+.plan-modal .account-muted{color:#d2dae3;font-size:12px;line-height:1.62;margin:0}
+.plan-modal .subscription-current{margin:2px 0 0;padding:14px 16px;border-color:rgba(216,178,122,.24);border-radius:12px;background:linear-gradient(150deg,#1a2027,#12161b)}
+.plan-modal .subscription-current>div span{color:#c6cfd9;font-size:10.5px;letter-spacing:.06em;text-transform:uppercase}
+.plan-modal .subscription-current>div strong{margin-top:5px;font-size:19px;color:#fff;letter-spacing:-.02em}
+.plan-modal .plan-pill{padding:5px 9px;border-color:rgba(216,178,122,.4);background:rgba(216,178,122,.13);color:#f5dfb3;font-size:9.5px;font-weight:600}
+.plan-modal .plan-grid{gap:12px;margin-top:2px}
+.plan-modal .plan-card.plan-card-compact{padding:14px;border-radius:14px;border-color:rgba(216,178,122,.22);background:linear-gradient(170deg,#191f26,#11151a);box-shadow:inset 0 1px 0 rgba(255,255,255,.04)}
+.plan-modal .plan-card.plan-card-compact:hover{border-color:rgba(216,178,122,.5);background:linear-gradient(170deg,#1f262e,#13181e);transform:translateY(-2px);box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 18px 34px -22px rgba(0,0,0,.9)}
+.plan-modal .plan-card.plan-card-compact.selected,.plan-modal .plan-card.plan-card-compact.chosen{border-color:rgba(216,178,122,.6);background:linear-gradient(170deg,#242017,#131519);box-shadow:inset 0 0 0 1px rgba(216,178,122,.22),0 0 0 4px rgba(216,178,122,.07)}
+.plan-modal .plan-card.plan-card-compact .plan-card-head strong{font-size:15px;color:#fff;letter-spacing:-.01em}
+.plan-modal .plan-card.plan-card-compact .plan-card-head>span{display:flex;align-items:baseline;gap:6px;font-size:12px;font-weight:650;color:#fff}
+.plan-modal .plan-card.plan-card-compact .plan-card-head>span s{color:#9fa9b4;font-size:10px;font-weight:400}
+.plan-modal .plan-card.plan-card-compact ul{gap:7px;margin:12px 0}
+.plan-modal .plan-card.plan-card-compact li{font-size:11px;line-height:1.45;color:#eaeff5}
+.plan-modal .plan-card.plan-card-compact li svg{color:#d8b27a}
+.plan-modal .plan-card.plan-card-compact .plan-badge{padding:3px 8px;border-color:rgba(216,178,122,.45);background:rgba(216,178,122,.14);color:#f6e2ba;font-size:8.5px;letter-spacing:.06em}
+.plan-modal .plan-card.plan-card-compact .plan-card-open{padding-top:9px;border-top-color:rgba(216,178,122,.16);color:#eedcbb;font-size:10.5px}
+.plan-modal .plan-card.plan-card-compact:hover .plan-card-open{color:#fff0d4}
+.plan-modal .modal-foot{padding:16px 24px;border-top-color:rgba(216,178,122,.16);background:rgba(7,9,12,.42)}
+.plan-modal .modal-foot .send-button{height:36px;padding:0 18px;font-size:11.5px}
+.plan-modal .modal-foot .account-muted{color:#c6cfd9;font-size:10.5px}
