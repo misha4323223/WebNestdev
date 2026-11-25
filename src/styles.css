@@ -4092,13 +4092,12 @@ button,textarea{font:inherit}button{color:inherit}
 .home-section-head h2{margin:6px 0 0;font-size:22px;letter-spacing:-.035em;font-weight:600;color:#ecebe6}
 .home-section-note{max-width:240px;color:#747c76;font-size:10px;line-height:1.5}
 .home-starters{width:min(980px,100%);margin:12px auto 30px}
-.starter-dock-head{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;margin:0 2px 9px}
-.starter-dock-head .eyebrow{font-size:8px}
-.starter-dock-head h2{margin:3px 0 0;font-size:16px;line-height:1.1;letter-spacing:-.025em;font-weight:600;color:#ecebe6}
-.starter-dock-hint{max-width:46%;color:#7f867f;font-size:9px;line-height:1.45;text-align:right}
+/* Заголовок стоит над кнопками по центру их ряда: слева он читался как подпись колонки. */
+.starter-dock-head{display:flex;align-items:flex-end;justify-content:center;gap:12px;width:100%;margin:0 2px 9px}
+.starter-dock-head h2{margin:0;font-size:16px;line-height:1.1;letter-spacing:-.025em;font-weight:600;color:#ecebe6;text-align:center}
 /* Фильтры-чипы над полкой: выбранный — светлая тёплая плашка с тёмным текстом, как
    активный пункт списка стартов. На телефоне строка прокручивается вбок. */
-.starter-filters{display:flex;gap:6px;margin:0 0 10px;padding:1px 2px 3px;overflow-x:auto;scrollbar-width:none}
+.starter-filters{display:flex;gap:6px;width:max-content;max-width:100%;margin:0 0 10px;padding:1px 2px 3px;overflow-x:auto;scrollbar-width:none}
 .starter-filters::-webkit-scrollbar{display:none}
 .starter-filter{flex:none;height:29px;padding:0 12px;border:1px solid rgba(204,195,178,.18);border-radius:999px;background:#11151a;color:#9aa1a8;font-size:10.5px;font-weight:500;line-height:1;cursor:pointer;white-space:nowrap;transition:border-color .16s ease,background .16s ease,color .16s ease}
 .starter-filter:hover{border-color:rgba(216,178,122,.36);background:#161b20;color:#e7e7e3}
@@ -4106,19 +4105,116 @@ button,textarea{font:inherit}button{color:inherit}
 .starter-filter.is-active:hover{background:#e7e2d6;border-color:#e7e2d6;color:#12161a}
 /* Полка карточек: одна прокручиваемая строка с превью. Шаблон выбирают глазами, поэтому
    картинка занимает почти всю карточку, а подпись остаётся одной строкой. */
-.starter-gallery{display:grid;grid-auto-flow:column;grid-auto-columns:196px;gap:9px;padding:2px 2px 7px;overflow-x:auto;scroll-snap-type:x proximity;scrollbar-width:none}
+.starter-gallery{display:grid;grid-auto-flow:column;grid-auto-columns:196px;gap:10px;padding:2px 2px 7px;overflow-x:auto;scroll-snap-type:x proximity;scrollbar-width:none;-webkit-mask-image:linear-gradient(90deg,#000 0,#000 calc(100% - 34px),transparent 100%);mask-image:linear-gradient(90deg,#000 0,#000 calc(100% - 34px),transparent 100%)}
 .starter-gallery::-webkit-scrollbar{display:none}
+/* Карточка живёт на плите панели, а не на фоне страницы: полупрозрачная тёплая
+   подложка повторяет её свет, поэтому полка читается как часть пульта. */
 .starter-card{
-  scroll-snap-align:start;display:grid;align-content:start;gap:0;padding:7px 7px 9px;
-  border:1px solid rgba(216,178,122,.15);border-radius:13px;
-  background:linear-gradient(168deg,#12171a,#0d1014 76%);color:inherit;text-align:left;cursor:pointer;
+  scroll-snap-align:start;display:grid;align-content:start;gap:0;padding:6px 6px 8px;
+  border:1px solid rgba(216,178,122,.17);border-radius:12px;
+  background:linear-gradient(172deg,rgba(255,255,255,.05),rgba(255,255,255,.012) 44%,rgba(0,0,0,.16));color:inherit;text-align:left;cursor:pointer;
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.05),0 14px 28px -22px rgba(0,0,0,.9);
   transition:border-color .16s ease,background .16s ease,transform .16s ease,box-shadow .16s ease;
 }
-.starter-card:hover{border-color:rgba(216,178,122,.42);background:linear-gradient(168deg,#171d21,#101418);transform:translateY(-2px);box-shadow:0 12px 26px rgba(0,0,0,.28)}
+.starter-card:hover{border-color:rgba(216,178,122,.44);background:linear-gradient(172deg,rgba(216,178,122,.11),rgba(255,255,255,.018) 48%,rgba(0,0,0,.16));transform:translateY(-2px);box-shadow:inset 0 1px 0 rgba(255,255,255,.07),0 18px 32px -20px rgba(0,0,0,.95)}
 .starter-card:focus-visible{outline:2px solid rgba(216,178,122,.55);outline-offset:2px}
-.starter-shot{display:block;aspect-ratio:16/10;border:1px solid rgba(255,255,255,.055);border-radius:9px;overflow:hidden;background:#0b0e12;box-shadow:inset 0 1px 0 rgba(255,255,255,.03)}
-.starter-shot-image{display:block;width:100%;height:100%;object-fit:cover;filter:saturate(.96);transition:transform .4s ease,filter .3s ease}
-.starter-card:hover .starter-shot-image{transform:scale(1.035);filter:saturate(1.02)}
+.starter-shot{position:relative;display:block;aspect-ratio:16/10;border:1px solid rgba(216,178,122,.14);border-radius:9px;overflow:hidden;background:#0b0e12;box-shadow:inset 0 1px 0 rgba(255,255,255,.03),0 8px 18px -14px rgba(0,0,0,.9)}
+/* Превью шаблона: сцена из будущего интерфейса, собранная в DOM. Текст настоящий и
+   русский — на 196 px картинка его размывает, а сгенерировать кириллицу без ошибок
+   нельзя. Палитра та же, что у сайта: графит, латунь, тёплая кромка. */
+.starter-shot.tpl{background:
+  radial-gradient(64% 86% at 84% 8%,rgba(216,178,122,.2),transparent 62%),
+  radial-gradient(70% 80% at 8% 110%,rgba(120,142,156,.1),transparent 72%),
+  linear-gradient(158deg,#15191d,#0a0d10 74%)}
+.starter-shot.tpl::after{content:"";position:absolute;inset:0;pointer-events:none;background:
+  linear-gradient(180deg,rgba(255,255,255,.07),transparent 42%),
+  radial-gradient(120% 90% at 50% 128%,rgba(0,0,0,.5),transparent 62%)}
+/* Готовая обложка шаблона: картинка заполняет всё превью, без текстового оверлея —
+   заголовок уже в кадре. Кадр 16:9 обрезается до 16:10 карточки по центру. */
+.tpl-img{position:absolute;inset:0;display:block;width:100%;height:100%;object-fit:cover;object-position:center}
+.starter-shot.is-photo::after{display:none}
+.tpl-copy{position:absolute;left:9px;top:9px;width:54%;display:grid;gap:3px;z-index:2}
+.tpl-copy strong{font-size:10px;line-height:1.12;letter-spacing:-.02em;font-weight:650;color:#f1ede5}
+.tpl-copy small{font-size:6.5px;line-height:1.35;color:#98938a}
+.tpl-art{position:absolute;right:7px;bottom:6px;width:40%;height:62%;z-index:1}
+.tpl-rings,.tpl-columns,.tpl-tiles,.tpl-sheets,.tpl-hills,.tpl-pixels,.tpl-rows,.tpl-plans,.tpl-vitrine,.tpl-bars{position:absolute;inset:0;display:block}
+.tpl-pill{position:absolute;right:0;bottom:0;padding:2px 5px;border-radius:999px;border:1px solid rgba(216,178,122,.42);background:rgba(216,178,122,.16);color:#ecd6ae;font-size:5.5px;font-weight:650;line-height:1.2;white-space:nowrap}
+/* Кольца-тороны: главный образ лендинга. */
+.tpl-rings i{position:absolute;width:46px;height:46px;border-radius:50%;border:7px solid;border-color:#d9c29f #b4966e #8d7350 #c9b08b;box-shadow:0 6px 14px rgba(0,0,0,.55),inset 0 2px 3px rgba(255,255,255,.32)}
+.tpl-rings i:first-child{left:0;bottom:0;transform:rotate(-16deg)}
+.tpl-rings i:last-child{right:0;top:0;width:38px;height:38px;border-width:6px;transform:rotate(16deg);opacity:.9}
+/* Колонны и арики — корпоративный сайт и SaaS. */
+.tpl-columns{display:flex;align-items:flex-end;justify-content:center;gap:5px}
+.tpl-columns i{width:17px;border-radius:9px 9px 3px 3px;border:1px solid rgba(216,178,122,.3);background:linear-gradient(180deg,#dcc6a3,#8d7350);box-shadow:inset 0 1px 0 rgba(255,255,255,.35),0 6px 12px rgba(0,0,0,.45)}
+.tpl-columns i:nth-child(1){height:44%}
+.tpl-columns i:nth-child(2){height:74%;width:21px}
+.tpl-columns i:nth-child(3){height:56%}
+.tpl-vase{position:absolute;right:14px;bottom:6px;width:32px;height:42px;border-radius:46% 46% 42% 42%/34% 34% 54% 54%;background:linear-gradient(160deg,#e2cba8,#b08f64 62%,#7d6446);box-shadow:inset -4px -6px 10px rgba(0,0,0,.35),inset 4px 4px 8px rgba(255,255,255,.4),0 8px 16px rgba(0,0,0,.5)}
+.tpl-shop .tpl-vase::before{content:"";position:absolute;left:50%;top:-3px;width:16px;height:5px;transform:translateX(-50%);border-radius:50%;background:linear-gradient(180deg,#e6d3b2,#b08f64);box-shadow:0 1px 2px rgba(0,0,0,.35)}
+.tpl-shop .tpl-pill{right:auto;left:0;bottom:0}
+.tpl-tiles{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:4px}
+.tpl-tiles i{border:1px solid rgba(216,178,122,.26);border-radius:5px;background:linear-gradient(160deg,rgba(255,255,255,.09),rgba(255,255,255,.015));box-shadow:inset 0 1px 0 rgba(255,255,255,.08)}
+.tpl-tiles i:first-child{background:linear-gradient(160deg,rgba(216,178,122,.36),rgba(216,178,122,.1))}
+/* В плитках видно товар, а не пустые квадраты. */
+.tpl-tiles i{position:relative}
+.tpl-tiles i::after{content:"";position:absolute;left:5px;right:5px;bottom:5px;height:6px;border-radius:2px;background:linear-gradient(180deg,rgba(216,178,122,.5),rgba(216,178,122,.16))}
+/* Стопка листов — блог и медиа. */
+.tpl-sheets i{position:absolute;left:4px;right:4px;height:30px;border-radius:6px;border:1px solid rgba(216,178,122,.26);background:linear-gradient(160deg,rgba(255,255,255,.1),rgba(255,255,255,.02));box-shadow:0 6px 12px rgba(0,0,0,.4)}
+.tpl-sheets i:nth-child(1){bottom:0;transform:rotate(-6deg)}
+.tpl-sheets i:nth-child(2){bottom:9px;transform:rotate(3deg);opacity:.9}
+.tpl-sheets i:nth-child(3){bottom:18px;background:linear-gradient(160deg,rgba(216,178,122,.32),rgba(216,178,122,.08))}
+.tpl-sheets i:nth-child(3)::after{content:"";position:absolute;left:6px;right:26%;top:8px;height:3px;border-radius:2px;background:rgba(20,16,11,.4)}
+/* Телефон и пузыри переписки — мобильные шаблоны. */
+.tpl-phone{position:absolute;right:0;bottom:0;width:32px;height:60px;border-radius:8px;border:1.5px solid rgba(216,178,122,.45);background:linear-gradient(180deg,#1c2126,#0d1114);box-shadow:0 10px 18px rgba(0,0,0,.6),inset 0 1px 0 rgba(255,255,255,.08);display:grid;align-content:start;gap:3px;padding:6px 4px}
+.tpl-phone i{height:13px;border-radius:3px;background:linear-gradient(160deg,rgba(216,178,122,.42),rgba(216,178,122,.08))}
+.tpl-phone i+i{height:7px;background:rgba(255,255,255,.08)}
+.tpl-phone.is-back{right:28px;bottom:6px;transform:scale(.9);opacity:.55}
+.tpl-pwa .tpl-pill{top:0;bottom:auto;right:auto;left:0}
+.tpl-bubble{position:absolute;left:0;bottom:30px;max-width:100%;padding:3px 6px;border-radius:7px 7px 7px 2px;border:1px solid rgba(216,178,122,.26);background:linear-gradient(160deg,rgba(255,255,255,.12),rgba(255,255,255,.03));color:#dcd6c9;font-size:6px;line-height:1.1}
+.tpl-bubble.is-mine{left:auto;right:0;bottom:6px;border-radius:7px 7px 2px 7px;border-color:rgba(216,178,122,.55);background:linear-gradient(160deg,rgba(216,178,122,.5),rgba(216,178,122,.18));color:#1a1611;font-weight:700}
+.tpl-plans{display:grid;align-content:end;gap:4px}
+.tpl-plans i{height:17px;border-radius:6px;border:1px solid rgba(216,178,122,.3);background:linear-gradient(160deg,rgba(255,255,255,.09),rgba(255,255,255,.02))}
+.tpl-plans i:last-child{border-color:rgba(216,178,122,.55);background:linear-gradient(160deg,rgba(216,178,122,.36),rgba(216,178,122,.1))}
+.tpl-saas .tpl-pill{top:0;bottom:auto}
+/* Тарифы читаются как две карточки: строка названия и кнопка. */
+.tpl-plans i{position:relative}
+.tpl-plans i::after{content:"";position:absolute;left:6px;right:30%;bottom:4px;height:3px;border-radius:2px;background:rgba(216,178,122,.45)}
+.tpl-plans i:last-child::after{background:rgba(20,16,11,.45);right:34%}
+/* Холмы и пиксели — игры. */
+.tpl-hills i{position:absolute;left:0;right:0;bottom:0;height:46%;border-radius:50% 50% 0 0/72% 72% 0 0;background:linear-gradient(180deg,#2b2c28,#131614)}
+.tpl-hills i:nth-child(1){height:34%;transform:translateX(-18%) rotate(-6deg);opacity:.75}
+.tpl-hills i:nth-child(2){height:54%;transform:translateX(10%) rotate(4deg);background:linear-gradient(180deg,#3a3830,#15181a)}
+.tpl-hills i:nth-child(3){height:28%;transform:translateX(28%);background:linear-gradient(180deg,#6d5c3d,#191b1a)}
+/* Горизонт: тёплая полоса света отделяет землю от неба. */
+.tpl-hills::after{content:"";position:absolute;left:-6%;right:-6%;bottom:44%;height:1px;background:linear-gradient(90deg,transparent,rgba(216,178,122,.55),transparent)}
+.tpl-spark{position:absolute;left:46%;top:8%;width:5px;height:5px;border-radius:50%;background:#f0d9a8;box-shadow:0 0 10px 3px rgba(240,217,168,.5)}
+.tpl-pixels{display:flex;align-items:flex-end;gap:3px}
+.tpl-pixels i{width:16px;height:16px;border-radius:4px;border:1px solid rgba(216,178,122,.35);background:linear-gradient(160deg,rgba(216,178,122,.6),rgba(216,178,122,.14));box-shadow:0 4px 8px rgba(0,0,0,.35)}
+.tpl-pixels i:nth-child(2){height:24px}
+.tpl-pixels i:nth-child(3){height:12px}
+.tpl-coin{position:absolute;right:0;top:0;width:19px;height:19px;border-radius:50%;border:2px solid #e8cf9f;background:radial-gradient(circle at 34% 28%,#f4e3bd,#c39a63);box-shadow:0 0 14px rgba(232,207,159,.4)}
+/* Витрина и orb — 3D-показ и ассистент. */
+.tpl-vitrine{border-radius:50%;border:1px solid rgba(216,178,122,.35);background:radial-gradient(70% 70% at 50% 40%,rgba(216,178,122,.16),transparent 70%);box-shadow:inset 0 0 18px rgba(0,0,0,.5)}
+.tpl-vitrine i{position:absolute;left:50%;bottom:24%;width:24px;height:32px;transform:translateX(-50%);border-radius:46% 46% 42% 42%/34% 34% 54% 54%;background:linear-gradient(160deg,#e2cba8,#a98a5f 64%,#79613f);box-shadow:0 6px 12px rgba(0,0,0,.45),inset 3px 3px 6px rgba(255,255,255,.35)}
+.tpl-orb{position:absolute;right:4px;bottom:6px;width:42px;height:42px;border-radius:50%;background:radial-gradient(circle at 34% 28%,#f3e2bd,#cfae7d 42%,#7e6544 78%,#33291d);box-shadow:0 0 18px rgba(232,207,159,.35),inset -4px -6px 10px rgba(0,0,0,.4)}
+.tpl-orb::after{content:"";position:absolute;left:50%;top:50%;width:64px;height:17px;transform:translate(-50%,-50%) rotate(-18deg);border-radius:50%;border:1px solid rgba(232,207,159,.45)}
+.tpl-ai .tpl-pill{top:0;bottom:auto}
+/* Столбцы и строки — дашборд и CRM. */
+.tpl-bars{display:flex;align-items:flex-end;gap:4px;height:66%;top:auto;bottom:0}
+.tpl-bars i{flex:1;border-radius:3px 3px 2px 2px;background:linear-gradient(180deg,#e2cba8,#a98a5f);box-shadow:inset 0 1px 0 rgba(255,255,255,.4),0 4px 8px rgba(0,0,0,.4)}
+.tpl-bars i:nth-child(1){height:38%}
+.tpl-bars i:nth-child(2){height:58%}
+.tpl-bars i:nth-child(3){height:44%}
+.tpl-bars i:nth-child(4){height:80%}
+.tpl-bars i:nth-child(5){height:62%}
+.tpl-metric{position:absolute;left:0;top:0;display:grid;gap:1px;padding:3px 5px;border-radius:6px;border:1px solid rgba(216,178,122,.32);background:rgba(11,15,18,.85)}
+.tpl-metric b{font-size:7px;line-height:1.1;color:#f1ede5}
+.tpl-metric small{font-size:5px;line-height:1.1;color:#9a958b}
+.tpl-rows{display:grid;gap:4px;align-content:start}
+.tpl-rows i{position:relative;height:13px;border-radius:4px;border:1px solid rgba(216,178,122,.24);background:linear-gradient(90deg,rgba(216,178,122,.24),rgba(255,255,255,.03) 42%,rgba(255,255,255,.02))}
+.tpl-rows i::before{content:"";position:absolute;left:4px;top:50%;width:5px;height:5px;transform:translateY(-50%);border-radius:50%;background:#d8b27a}
+.tpl-rows i::after{content:"";position:absolute;right:5px;top:50%;width:14px;height:4px;transform:translateY(-50%);border-radius:2px;background:rgba(216,178,122,.3)}
+.tpl-crm .tpl-pill{top:0;bottom:auto}
 .starter-card.is-locked .starter-shot{opacity:.7}
 .starter-card.is-locked:hover .starter-shot{opacity:.9}
 .starter-card-foot{display:flex;align-items:center;gap:6px;min-width:0;margin-top:8px}
@@ -4192,7 +4288,6 @@ button,textarea{font:inherit}button{color:inherit}
   .home-starters{margin-top:10px;margin-bottom:24px}
   .starter-dock-head{margin-bottom:8px}
   .starter-dock-head h2{font-size:15px}
-  .starter-dock-hint{max-width:48%;font-size:8.5px}
   .starter-filters{margin-bottom:9px}
   .starter-filter{height:27px;padding:0 10px;font-size:10px}
   .starter-gallery{grid-auto-columns:168px;gap:7px}
@@ -4536,8 +4631,15 @@ button,textarea{font:inherit}button{color:inherit}
    (поэтому углы почти прямые), справа — скруглена и держит логотип. Контент ниже
    (поле ввода, шаблоны, блог) сдвинут внутрь от левого края и доходит до правой стены. */
 .home-layout{gap:0}
+/* Тело панели: под шапкой одна плита — шаблоны, рукав и поле идеи. На телефоне
+   панель одноколоночная, поэтому шаблоны идут последними, под полем идеи. */
+.home-deck{display:grid}
 .home-starters,.home-journal,.home-section{width:auto;margin-left:0;margin-right:0}
-.home-starters{margin-top:14px}
+.home-starters{order:1;width:min(980px,100%);max-width:100%;min-width:0;margin:12px auto 30px;padding:0 2px;display:grid;gap:10px}
+/* Заголовок центрируется над рядом кнопок: колонка ровно по ширине кнопок. */
+.starter-dock{display:grid;gap:8px;grid-template-columns:minmax(0,max-content);max-width:100%;justify-items:start}
+.starter-dock-head{margin:0 2px}
+.starter-dock .starter-filters{margin:0}
 
 /* Ответвление — тонкий рукав у правого края экрана: он выходит из-под шапки и спускается
    к чату, который стоит ниже на высоту самой шапки. Толщина рукава вдвое меньше шапки.
@@ -4585,6 +4687,16 @@ button,textarea{font:inherit}button{color:inherit}
      от нижней кромки шапки к правому краю колонки. Заливка угла — цвет самой
      колонки, поэтому стык остаётся литым, а по краю идёт та же тёплая кромка. */
   .home-launch::before{content:"";position:absolute;top:var(--stage-h);left:0;width:var(--fillet);height:var(--fillet);pointer-events:none;background:radial-gradient(circle var(--fillet) at 100% 100%,transparent calc(100% - 1px),rgba(216,178,122,.3) calc(100% - 1px) 100%,transparent 100%),#11161a;-webkit-mask-image:radial-gradient(circle var(--fillet) at 100% 100%,transparent 0 calc(var(--fillet) - 1px),#000 calc(var(--fillet) - 1px));mask-image:radial-gradient(circle var(--fillet) at 100% 100%,transparent 0 calc(var(--fillet) - 1px),#000 calc(var(--fillet) - 1px))}
+  /* Оглавление быстрых стартов занимает пустую область панели слева от рукава:
+     надпись, подпись и фильтры стоят между шапкой и полем идеи. Полка карточек
+     остаётся ниже, вне панели. */
+  /* Рукав тянется на всю высоту карточек: он по-прежнему соединяет шапку с полем
+     идеи, только теперь между ними стоят шаблоны. */
+  .home-deck{grid-template-columns:minmax(0,1fr) var(--branch);margin-bottom:44px}
+  .home-starters{grid-column:1;grid-row:1;align-self:start;width:100%;margin:0;padding:24px 34px 30px}
+  .home-bridge{grid-column:2;grid-row:1;align-self:stretch;height:auto}
+  .home-bridge::after{background-size:100% 100%,100% 100%}
+  .home-composer-wrap{grid-column:1/-1;grid-row:2;justify-self:end;margin:0}
 }
 /* Левая колонка — только иконки: кнопка 40×40 с латунной кромкой, а подпись
    выезжает из-под неё вправо при наведении и фокусе. Разделы открываются

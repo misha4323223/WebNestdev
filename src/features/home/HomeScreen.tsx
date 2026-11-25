@@ -343,8 +343,6 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
   const activeProjectId=localStorage.getItem(activeProjectKey);
   const activeProject=projects.find(project=>project.id===activeProjectId)??null;
   const starterItems=starterItemsFor(starterFilter);
-  const starterGroup=templateGroups.find(group=>group.id===starterFilter)??null;
-  const starterHint=starterGroup?.blurb??"По одному шаблону из каждого направления";
 
   return <>
     <main className="home-screen">
@@ -398,42 +396,14 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
           </div>
           </section>
 
-          {/* Тонкий рукав у правого края экрана — единственное, что соединяет шапку с
-              картой ввода, которая стоит ниже на высоту шапки. Между ними больше ничего нет. */}
-          <div className="home-bridge" aria-hidden="true"/>
-
-          <div className="home-composer-wrap">
-            <form className="home-composer" onSubmit={submit}>
-              <div className="home-composer-field">
-                <label className="home-composer-label" htmlFor="home-idea">Опишите идею</label>
-                <textarea id="home-idea" value={idea} onChange={e=>setIdea(e.target.value)} rows={2} placeholder="Например: магазин керамики с каталогом, оплатой и доставкой"/>
-              </div>
-              <button className="send-button home-submit" disabled={busy||!idea.trim()} aria-label={busy?"Создаём проект":"Создать проект и запустить агента"} title={busy?"Создаём…":"Создать проект"}>
-                <span>{busy?"Создаём…":"Создать"}</span><ArrowUpRight size={16}/>
-              </button>
-            </form>
-          </div>
-          </div>
-
-          {paymentReturn&&<div className={"home-payment "+paymentReturn} role="status">
-            <div>
-              <strong>{paymentReturn==="success"?"Оплата принята":"Оплата не прошла"}</strong>
-              <span>{paymentReturn==="success"
-                ?"Тариф или кредиты обновятся автоматически. Если баланс ещё прежний, обновите через минуту."
-                :"Деньги не списаны. Можно вернуться к тарифам и попробовать снова."}</span>
-            </div>
-            <div className="home-payment-actions">
-              <button className="ghost-button" onClick={()=>setPaymentReturn(null)}>Закрыть</button>
-              {paymentReturn==="success"&&<button className="send-button" onClick={()=>window.location.reload()}>Обновить</button>}
-            </div>
-          </div>}
-
-          {error&&<div className="home-error">{error}</div>}
-
+          {/* Тело панели — одна плита под шапкой: шаблоны, рукав и поле идеи. Карточки
+              стоят внутри неё, поэтому панель читается как пульт, а не как рамка
+              вокруг пустоты; рукав тянется на их высоту. */}
+          <div className="home-deck">
           <section className="home-starters" aria-labelledby="home-starters-title">
+            <div className="starter-dock">
             <div className="starter-dock-head">
-              <div><span className="eyebrow">БЫСТРЫЕ СТАРТЫ</span><h2 id="home-starters-title">Начните с шаблона</h2></div>
-              <span className="starter-dock-hint">{starterHint}</span>
+              <h2 id="home-starters-title">Начните с шаблона</h2>
             </div>
             <div className="starter-filters" role="group" aria-label="Категории шаблонов">
               {starterFilters.map(filter=><button
@@ -443,6 +413,7 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
                 aria-pressed={starterFilter===filter.id}
                 onClick={()=>{setStarterFilter(filter.id);setTemplateNotice("")}}
               >{filter.label}</button>)}
+            </div>
             </div>
             {templateNotice&&<div className="starter-notice" role="status"><Lock size={13}/><span>{templateNotice}</span><button type="button" onClick={()=>setTemplateNotice("")} aria-label="Закрыть подсказку">×</button></div>}
             <div className="starter-gallery" role="region" aria-label="Шаблоны" ref={galleryRef}>
@@ -466,6 +437,39 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
               })}
             </div>
           </section>
+
+          {/* Тонкий рукав у правого края экрана — единственное, что соединяет шапку с
+              полем ввода: он занимает всю высоту карточек, поэтому стык остаётся литым. */}
+          <div className="home-bridge" aria-hidden="true"/>
+
+          <div className="home-composer-wrap">
+            <form className="home-composer" onSubmit={submit}>
+              <div className="home-composer-field">
+                <label className="home-composer-label" htmlFor="home-idea">Опишите идею</label>
+                <textarea id="home-idea" value={idea} onChange={e=>setIdea(e.target.value)} rows={2} placeholder="Например: магазин керамики с каталогом, оплатой и доставкой"/>
+              </div>
+              <button className="send-button home-submit" disabled={busy||!idea.trim()} aria-label={busy?"Создаём проект":"Создать проект и запустить агента"} title={busy?"Создаём…":"Создать проект"}>
+                <span>{busy?"Создаём…":"Создать"}</span><ArrowUpRight size={16}/>
+              </button>
+            </form>
+          </div>
+          </div>
+          </div>
+
+          {paymentReturn&&<div className={"home-payment "+paymentReturn} role="status">
+            <div>
+              <strong>{paymentReturn==="success"?"Оплата принята":"Оплата не прошла"}</strong>
+              <span>{paymentReturn==="success"
+                ?"Тариф или кредиты обновятся автоматически. Если баланс ещё прежний, обновите через минуту."
+                :"Деньги не списаны. Можно вернуться к тарифам и попробовать снова."}</span>
+            </div>
+            <div className="home-payment-actions">
+              <button className="ghost-button" onClick={()=>setPaymentReturn(null)}>Закрыть</button>
+              {paymentReturn==="success"&&<button className="send-button" onClick={()=>window.location.reload()}>Обновить</button>}
+            </div>
+          </div>}
+
+          {error&&<div className="home-error">{error}</div>}
 
           <section className="home-journal" aria-labelledby="home-journal-title">
             <div className="home-journal-head">
@@ -533,6 +537,7 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
           projects={projects}
           activeProjectId={activeProjectId}
           section={section}
+          sectionInMain={section === "account"}
           onSection={toggleSection}
           onOpen={open}
           onRename={rename}

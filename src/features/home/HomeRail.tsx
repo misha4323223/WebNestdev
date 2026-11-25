@@ -24,6 +24,9 @@ export type HomeRailProps = {
   onDelete: (project: Project) => void;
   onOpenPlans: () => void;
   onOpenSubscriptions: () => void;
+  /** Раздел раскрыт в основной области, а не только в выезжающей панели (сейчас — «Аккаунт»).
+   *  Клики по такой области — работа с разделом, а не клик мимо колонки. */
+  sectionInMain?: boolean;
 };
 
 const nav: Array<{ id: RailSection; label: string; icon: typeof Plug }> = [
@@ -38,7 +41,7 @@ function dateLabel(value: string) {
 }
 
 export function HomeRail(props: HomeRailProps) {
-  const { projects, activeProjectId, section, onSection, onOpen, onRename, onDelete, onOpenPlans, onOpenSubscriptions } = props;
+  const { projects, activeProjectId, section, onSection, onOpen, onRename, onDelete, onOpenPlans, onOpenSubscriptions, sectionInMain } = props;
   const [renaming, setRenaming] = useState("");
   const railRef = useRef<HTMLElement>(null);
   // One billing request for the rail: the billing section and the footer call to action
@@ -72,6 +75,10 @@ export function HomeRail(props: HomeRailProps) {
     const isDesktop = () => window.matchMedia("(min-width:901px)").matches;
     const close = () => { if (isDesktop()) onSection(section); };
     const onPointer = (event: PointerEvent) => {
+      // У раздела, который раскрыт в основной области («Аккаунт»), клики по этой области —
+      // обычная работа с формой, а не клик мимо панели: закрывать его здесь нельзя, иначе
+      // первое же нажатие в поле или на кнопку прячет раздел.
+      if (sectionInMain) return;
       const root = railRef.current;
       if (root && event.target instanceof Node && root.contains(event.target)) return;
       close();
@@ -85,7 +92,7 @@ export function HomeRail(props: HomeRailProps) {
       document.removeEventListener("pointerdown", onPointer, true);
       document.removeEventListener("keydown", onKey);
     };
-  }, [section, onSection]);
+  }, [section, onSection, sectionInMain]);
 
   return <aside className="home-rail" ref={railRef}>
     <nav className="rail-nav" aria-label="Разделы аккаунта">
