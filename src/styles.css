@@ -4569,7 +4569,8 @@ button,textarea{font:inherit}button{color:inherit}
 --------------------------------------------------------------------------- */
 /* Рукав справа ровно такой же ширины, как левая панель иконок (64 px): стенки
    плиты читаются симметрично, а изгиб рукава получает тот же радиус. */
-.home-launch{--branch:64px;--fillet:64px;--stage-h:66px;width:100%;margin:0;position:relative;z-index:1;display:grid}
+.home-layout{--branch:64px;--fillet:64px;--stage-h:66px}
+.home-launch{width:100%;margin:0;position:relative;z-index:1;display:grid}
 .home-stage{position:relative;width:100%;margin:0;border:1px solid rgba(216,178,122,.24);border-left:0;border-right-color:rgba(216,178,122,.42);box-shadow:inset -1px 0 0 rgba(216,178,122,.1);border-radius:4px 26px 26px 4px;overflow:hidden;background:linear-gradient(90deg,#11161a 0,rgba(17,22,26,0) 180px),radial-gradient(120% 130% at 100% 0,rgba(216,178,122,.14),transparent 48%),radial-gradient(90% 120% at 0 100%,rgba(96,122,132,.08),transparent 60%),linear-gradient(168deg,#11161a 0%,#0d1114 58%,#0c0f12 100%);box-shadow:0 30px 80px rgba(0,0,0,.42),inset 0 1px 0 rgba(255,255,255,.045)}
 .home-stage::before{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;box-shadow:inset 0 0 0 1px rgba(255,255,255,.02)}
 .home-stage::after{content:"";position:absolute;right:-12%;top:-28%;width:62%;height:74%;pointer-events:none;background:radial-gradient(circle at 70% 30%,rgba(216,178,122,.16),transparent 62%)}
@@ -4629,12 +4630,24 @@ button,textarea{font:inherit}button{color:inherit}
      Уголок залит цветом обеих поверхностей, по его краю идёт та же тёплая кромка. */
   /* Заливка угла берёт тот же градиент, что у рукава, и растянута на всю его высоту —
      на стыке с рукавом не появляется ни полосы, ни другого тона. */
-  .home-bridge::after{content:"";position:absolute;top:0;left:calc(-1 * var(--fillet));width:var(--fillet);height:var(--fillet);pointer-events:none;background:radial-gradient(circle var(--fillet) at 0 100%,transparent calc(100% - 1px),rgba(216,178,122,.3) calc(100% - 1px) 100%,transparent 100%),linear-gradient(180deg,#0e1114 0,#101519 38%,#12181c 68%,#141a1e 100%);background-size:100% 100%,100% 248px;background-repeat:no-repeat;-webkit-mask-image:radial-gradient(circle var(--fillet) at 0 100%,transparent 0 calc(var(--fillet) - 1px),#000 calc(var(--fillet) - 1px));mask-image:radial-gradient(circle var(--fillet) at 0 100%,transparent 0 calc(var(--fillet) - 1px),#000 calc(var(--fillet) - 1px))}
+  .home-bridge::after{content:"";position:absolute;top:0;left:calc(-1 * var(--fillet));width:var(--fillet);height:var(--fillet);pointer-events:none;background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='0' y2='1'%3E%3Cstop offset='0' stop-color='%230e1114'/%3E%3Cstop offset='.38' stop-color='%23101519'/%3E%3Cstop offset='.68' stop-color='%2312181c'/%3E%3Cstop offset='1' stop-color='%23141a1e'/%3E%3C/linearGradient%3E%3C/defs%3E%3Cpath d='M0 0A64 64 0 0 1 64 64L64 0Z' fill='url(%23g)'/%3E%3Cpath d='M0 0A64 64 0 0 1 64 64' fill='none' stroke='%23d8b27a' stroke-opacity='.3' stroke-width='1'/%3E%3C/svg%3E") 0 0/100% 100% no-repeat}
   .home-bridge::before{top:calc(var(--fillet) - 1px)}
   /* Слева шапка так же уходит вниз дугой, только не в рукав, а в левую панель:
      от нижней кромки шапки к правому краю колонки. Заливка угла — цвет самой
      колонки, поэтому стык остаётся литым, а по краю идёт та же тёплая кромка. */
-  .home-launch::before{content:"";position:absolute;top:var(--stage-h);left:0;width:var(--fillet);height:var(--fillet);pointer-events:none;background:radial-gradient(circle var(--fillet) at 100% 100%,transparent calc(100% - 1px),rgba(216,178,122,.3) calc(100% - 1px) 100%,transparent 100%),#11161a;-webkit-mask-image:radial-gradient(circle var(--fillet) at 100% 100%,transparent 0 calc(var(--fillet) - 1px),#000 calc(var(--fillet) - 1px));mask-image:radial-gradient(circle var(--fillet) at 100% 100%,transparent 0 calc(var(--fillet) - 1px),#000 calc(var(--fillet) - 1px))}
+  /* Дуга угла — штрих в SVG, а не радиальный градиент под маской: у градиента
+     с жёсткими стопами края не сглаживаются, и линия в 1 px выходила рваной. */
+  .home-launch::before{content:"";position:absolute;top:var(--stage-h);left:0;width:var(--fillet);height:var(--fillet);pointer-events:none;background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cpath d='M64 0A64 64 0 0 0 0 64L0 0Z' fill='%2311161a'/%3E%3Cpath d='M64 0A64 64 0 0 0 0 64' fill='none' stroke='%23d8b27a' stroke-opacity='.3' stroke-width='1'/%3E%3C/svg%3E") 0 0/100% 100% no-repeat}
+  /* Кромка плиты была обведена не целиком: у шапки и рукава линия есть, а левая
+     стена ниже дуги и низ плиты оставались голыми — контур обрывался на дуге.
+     Левую стену ведём по краю колонки иконок до конца колонки контента (она же
+     край журнала ниже), низ — по низу самой плиты, а не по низу сетки: у сетки
+     снизу ещё поле 44 px, из-за которого линия висела в пустоте. */
+  .home-main{position:relative}
+  .home-main::before{content:"";position:absolute;top:calc(var(--stage-h) + var(--fillet));bottom:0;left:0;width:1px;pointer-events:none;background:linear-gradient(180deg,rgba(216,178,122,.3),rgba(216,178,122,.16) 70%,rgba(216,178,122,.22));-webkit-mask-image:linear-gradient(180deg,#000 0,#000 calc(100% - 150px),transparent 100%);mask-image:linear-gradient(180deg,#000 0,#000 calc(100% - 150px),transparent 100%)}
+  /* Короткий вертикальный отрезок справа закрывает зазор под полем идеи: правый
+     край плиты обрывался на скруглении поля, а низ плиты — на 44 px ниже. */
+  .home-launch::after{content:"";position:absolute;inset:0;pointer-events:none;background:linear-gradient(90deg,rgba(216,178,122,.26),rgba(216,178,122,.2)) 0 100%/100% 1px no-repeat,linear-gradient(180deg,rgba(216,178,122,.24),rgba(216,178,122,.3)) 100% 100%/1px 44px no-repeat}
   /* Оглавление быстрых стартов занимает пустую область панели слева от рукава:
      надпись, подпись и фильтры стоят между шапкой и полем идеи. Полка карточек
      остаётся ниже, вне панели. */
@@ -4643,7 +4656,6 @@ button,textarea{font:inherit}button{color:inherit}
   .home-deck{grid-template-columns:minmax(0,1fr) var(--branch);margin-bottom:44px}
   .home-starters{grid-column:1;grid-row:1;align-self:start;width:100%;margin:0;padding:24px 34px 30px}
   .home-bridge{grid-column:2;grid-row:1;align-self:stretch;height:auto}
-  .home-bridge::after{background-size:100% 100%,100% 100%}
   .home-composer-wrap{grid-column:1/-1;grid-row:2;justify-self:end;margin:0}
 }
 /* Левая колонка — только иконки: кнопка 40×40 с латунной кромкой, а подпись
@@ -4710,12 +4722,27 @@ button,textarea{font:inherit}button{color:inherit}
 }
 .home-rail .rail-upsell:hover{border-color:rgba(216,178,122,.55);transform:translateY(-1px)}
 @media(max-width:900px){
-  .home-stage{margin-top:0;border-radius:22px 22px 22px 4px}
+  /* На телефоне панель повторяет десктопную схему: одна плита, где шапка
+     переходит в тело, а не отдельная карточка-герой. Шапка — тонкая полоса
+     с заголовком по центру, как 66-пиксельная полоса на десктопе. */
+  .home-stage{margin-top:0;border-bottom:0;border-left:1px solid rgba(216,178,122,.24);border-radius:18px 18px 0 0}
+  /* Кромка между шапкой и телом — та же латунная линия, что на десктопе
+     рисуется у низа шапки, только во всю ширину: на телефоне дуг нет. */
+  .home-stage::before{inset:auto 0 0;height:1px;border-radius:0;box-shadow:none;background:linear-gradient(90deg,rgba(216,178,122,.22),rgba(216,178,122,.32))}
+  .home-stage .home-hero{grid-template-columns:1fr;padding:12px 16px;gap:2px}
+  .home-stage .home-title{font-size:19px;line-height:1.25;text-align:center;max-width:none}
   .home-launch{width:100%;--branch:88px}
-  .home-bridge{height:141px}
-  .home-composer{border-radius:16px 0 14px 14px}
-  .home-stage .home-hero{grid-template-columns:1fr;padding:20px 18px 26px;gap:4px}
-  .home-stage .home-title{font-size:clamp(30px,8.2vw,42px);max-width:none}
+  /* Рукав — деталь правой стены десктопа: на узком экране он превращался
+     в пустую полосу 141 px под шапкой, его роль берёт контур тела панели. */
+  .home-bridge{display:none}
+  .home-deck{position:relative;grid-template-columns:minmax(0,1fr);border:1px solid rgba(216,178,122,.24);border-top:0;border-radius:0 0 18px 18px;margin-bottom:14px}
+  /* Порядок как на десктопе: шаблоны с категориями, под ними поле идеи. */
+  .home-starters{order:0;padding:14px 12px 16px}
+  .home-composer-wrap{order:0;width:100%;padding:0 12px 14px}
+  .home-composer{border-radius:13px;border-color:rgba(216,178,122,.28)}
+  /* Верхняя кромка поля на десктопе обрывается под рукавом; на телефоне рукава
+     нет, и линия должна идти во всю ширину, иначе в правом углу дырка. */
+  .home-composer::before{right:16px}
   .home-layout{gap:0}
   .home-starters,.home-journal,.home-section{margin-left:0}
 }
