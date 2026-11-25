@@ -68,7 +68,11 @@ services:
       PREVIEW_MAX_HYBRID: "8"
       PREVIEW_HOST_UNITS: "12"
       PREVIEW_CONTAINER_UNITS: "6"
-      SANDBOX_MAX_CONCURRENT: "2"
+      # Те же значения, что на node-1: ноды должны принимать одинаковую нагрузку, иначе после
+      # переключения API ёмкость внезапно меняется. Бюджет памяти задан явно — выведенный из
+      # слотов (4 × 1024 = 4096 МБ) больше всей машины.
+      SANDBOX_MAX_CONCURRENT: "4"
+      SANDBOX_MEMORY_BUDGET_MB: "2048"
     extra_hosts:
       - "host.docker.internal:10.0.0.5"
 
