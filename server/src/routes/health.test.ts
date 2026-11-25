@@ -95,6 +95,18 @@ test("metrics отдаёт Prometheus только loopback-запросу", asy
     assert.match(internal.body, /webnestdev_build_info\{build="[^"]+",node="[^"]+"\} 1/);
     assert.match(internal.body, /webnestdev_agent_runs_active \d+/);
     assert.match(internal.body, /webnestdev_agent_runs_queued \d+/);
+    // Песочница видна эксплуатации так же, как агент: глубина ожидания, места и отказы по причине.
+    // Пользователю эти числа не показываются (см. agent/wait-activity.ts).
+    assert.match(internal.body, /webnestdev_sandbox_active_containers \d+/);
+    assert.match(internal.body, /webnestdev_sandbox_commands_waiting \d+/);
+    assert.match(internal.body, /webnestdev_sandbox_rejected_total\{reason="queue_full"\} \d+/);
+    assert.match(internal.body, /webnestdev_sandbox_rejected_total\{reason="wait_timeout"\} \d+/);
+    // Долгие задания терминала держат контейнер до получаса: их число видно отдельно от очереди.
+    assert.match(internal.body, /webnestdev_sandbox_jobs_running \d+/);
+    assert.match(internal.body, /webnestdev_sandbox_job_slots \d+/);
+    assert.match(internal.body, /webnestdev_sandbox_memory_used_mb \d+/);
+    assert.match(internal.body, /webnestdev_sandbox_memory_budget_mb \d+/);
+    assert.match(internal.body, /webnestdev_sandbox_memory_waiting \d+/);
     assert.match(internal.body, /webnestdev_process_resident_memory_bytes \d+/);
 
     const external = await app.inject({ method: "GET", url: "/metrics", remoteAddress: "203.0.113.10" });

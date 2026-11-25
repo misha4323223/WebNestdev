@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { AgentRunRequest,ChatMessage,PlanState } from "./types.js";
+import type { AgentRunRequest,ChatMessage,PlanState,ReasoningBlock } from "./types.js";
 import { createProvider } from "./provider.js";
 import { planAllows } from "./account/entitlements.js";
 import { appendConversationMessages,getConversationPlan,getProject,getProjectProvider,saveConversationPlan } from "./project-store.js";
@@ -21,6 +21,7 @@ import { selectToolNames } from "./agent/tool-catalog.js";
 import { createScoutRunner,SCOUT_BUDGET_TOKENS,SCOUT_MAX_MESSAGES } from "./agent/scout.js";
 import { resolveReasoning } from "./agent/reasoning-policy.js";
 import { agentStepLimit,contextBudgetTokensFor,contextMaxMessagesFor,boundToolOutput,DEFAULT_CHARS_PER_TOKEN } from "./agent/context-budget.js";
+import { createProgressDetector,softStepLimit,softStepNotice,stepLimitAnswer,stepLimitNotice } from "./agent/step-guard.js";
 import { agentFeatureEnabled } from "./agent/features.js";
 import { planQaScenario } from "./qa/scenario-planner.js";
 import { analyzeChangedFiles } from "./qa/diff-analyzer.js";
@@ -227,6 +228,9 @@ export class AgentRuntime {
       // Имя модели бесплатного тарифа не уходит в журнал расхода: в интерфейсе его тоже нет.
       usageModel=freeRoute?"free-model":model;
       const maxSteps=agentStepLimit();
+      // Мягкий предел: за несколько шагов до жёсткого модель узнаёт, что пора заканчивать
+      // результат, а не начинать новое исследование (agent/step-guard.ts).
+      const softLimit=softStepLimit(maxSteps);
       const contextTier=freeRoute?"free":"paid";
       // Контекст ограничен на каждом шаге, а не только в начале запуска: сообщения добавляются
       // по ходу (выводы инструментов, проверки), а модель получает их целиком. Как именно шаг
@@ -302,6 +306,9 @@ export class AgentRuntime {
       // the repetition and asks for a different action, so a temporary error is still recoverable.
       const repeatedToolFailures=new Map<string,number>();
       let repeatedToolNotice="";
+      // Заметка «шаги повторяются без нового результата»; уходит в начало следующего шага.
+      let stallNotice="";
+      const progress=createProgressDetector();
       const noteToolFailure=(call:{name:string;arguments:Record<string,unknown>},failed:boolean)=>{
         const key=call.name+"\u0000"+JSON.stringify(call.arguments??{}).slice(0,1200);
         if(!failed){repeatedToolFailures.delete(key);return;}
@@ -486,12 +493,57 @@ export class AgentRuntime {
         return true;
       };
 
+      /**
+       * Завершает запуск ответом: сохраняет его в историю, записывает проверенное состояние в
+       * точку проекта и отправляет `run.completed`. Один путь для обычного ответа и для мягкого
+       * финала по пределу шагов: иначе история и чекпоинт разъезжались бы.
+       */
+      const finishRun=async(text:string,details:{reasoning?:string;reasoningBlocks?:ReasoningBlock[]})=>{
+        const answer=text.trim()||"Модель не вернула ответ.";
+        if(!text.trim())emit({type:"message.delta",runId,delta:answer});
+        await persist([{role:"assistant",content:answer,...(details.reasoning?{reasoning:details.reasoning}:{}),...(details.reasoningBlocks?{reasoningBlocks:details.reasoningBlocks}:{})}]);
+        // Изменения записываются в историю проекта только теперь: работа уже проверена или
+        // остановлена по пределу шагов, то есть в точку попадает текущее сохранённое состояние.
+        if(mode==="developer"){
+          try{
+            const title=commitSubject({
+              task,
+              ...(working.plan?{plan:working.plan}:{}),
+              planFromPreviousRun:working.planFromPreviousRun,
+            });
+            const changes=await finalizeRunChanges({
+              projectId:request.projectId,userId:request.userId,runId,
+              ...(request.conversationId?{conversationId:request.conversationId}:{}),
+              title,
+            });
+            if(changes)emit({
+              type:"changes.created",runId,branch:changes.branch,pushed:false,
+              checkpoint:{sha:changes.checkpoint.sha,shortSha:changes.checkpoint.shortSha,subject:changes.checkpoint.subject,filesChanged:changes.checkpoint.filesChanged},
+            });
+          }catch(error){console.error("Failed to record the run checkpoint",error);}
+        }
+        emit({type:"run.completed",runId});
+      };
+
       for(let step=0;step<maxSteps;step++){
         if(signal?.aborted)throw new Error("Запуск агента отменён");
         if(repeatedToolNotice){
           messages.push({role:"system",content:repeatedToolNotice});
           repeatedToolNotice="";
         }
+        if(stallNotice){
+          messages.push({role:"system",content:stallNotice});
+          stallNotice="";
+        }
+        // Один раз за запуск: шагов осталось мало, пора заканчивать сборкой, проверкой и ответом.
+        if(step+1===softLimit&&step+1<maxSteps){
+          messages.push({role:"system",content:softStepNotice(step+1,maxSteps)});
+        }
+        // Последний шаг — не работа, а отчёт: инструменты выключаются, модель подводит итог и
+        // просит команду на продолжение. Запуск завершается как успешный: история, план и
+        // чекпоинт остаются, а «Продолжить» стартует с этого же места.
+        const stepLimitReached=step+1===maxSteps;
+        if(stepLimitReached)messages.push({role:"system",content:stepLimitNotice(step+1,maxSteps)});
         // The run's clipboard goes last, after every tool result and notice of the previous step.
         // Replacing it here (rather than appending another copy) keeps the prompt prefix stable and
         // the tail small; `trimMessagesToBudget` never drops or shrinks a system message.
@@ -505,7 +557,7 @@ export class AgentRuntime {
           changedFiles:changedFiles.size,
           resumed:Boolean(request.resume),
         });
-        const context={runId,request,emit,signal,step:step+1,toolNames,model,reasoning:stepReasoning,scout};
+        const context={runId,request,emit,signal,step:step+1,toolNames:stepLimitReached?[]:toolNames,model,reasoning:stepReasoning,scout};
         const stepStartedAt=new Date().toISOString();
         const stepRun=await runBudgetedStep(provider,messages,model,context,budget,{
           // Шаг и размер контекста идут в панель: видно, что запуск работает и сколько занято.
@@ -535,6 +587,16 @@ export class AgentRuntime {
         usageTotals.cachedPromptTokens+=result.usage.cachedPromptTokens;
         usageTotals.cacheWritePromptTokens+=result.usage.cacheWritePromptTokens;
         usageTotals.estimated=usageTotals.estimated||result.usage.estimated;
+
+        if(stepLimitReached){
+          // Инструменты на этом шаге не выдавались; если провайдер всё же вернул вызовы, они не
+          // выполняются — запуск заканчивается отчётом, а не работой без права ответить.
+          await finishRun(result.text.trim()?result.text:stepLimitAnswer(),{
+            ...(result.reasoning?{reasoning:result.reasoning}:{}),
+            ...(reasoningBlocks?{reasoningBlocks}:{}),
+          });
+          return;
+        }
 
         if(!result.calls.length){
           if(verificationPending||scenarioPending){
@@ -592,35 +654,11 @@ export class AgentRuntime {
             }
           }
 
-          const text=result.text||"Модель не вернула ответ.";
-          if(!result.text)emit({type:"message.delta",runId,delta:text});
-          await persist([{role:"assistant",content:text,...(result.reasoning?{reasoning:result.reasoning}:{}),...(reasoningBlocks?{reasoningBlocks}:{})}]);
-          // Изменения записываются в историю проекта только теперь: сборка, предпросмотр и
-          // браузерная проверка уже прошли, то есть в точку попадает проверенное состояние.
-          // Точка остаётся локальной: отправку на GitHub пользователь запускает сам, агент
-          // не делает пуш по своей инициативе. Отказ git не отменяет выполненную задачу —
-          // он логируется, а задача завершается как обычно.
-          if(mode==="developer"){
-            try{
-              // Тема коммита — сделанное, а не текст запроса: пункты плана этой задачи, а без
-              // плана — первое предложение запроса. Иначе в истории проекта лежала бы вся переписка.
-              const title=commitSubject({
-                task,
-                ...(working.plan?{plan:working.plan}:{}),
-                planFromPreviousRun:working.planFromPreviousRun,
-              });
-              const changes=await finalizeRunChanges({
-                projectId:request.projectId,userId:request.userId,runId,
-                ...(request.conversationId?{conversationId:request.conversationId}:{}),
-                title,
-              });
-              if(changes)emit({
-                type:"changes.created",runId,branch:changes.branch,pushed:false,
-                checkpoint:{sha:changes.checkpoint.sha,shortSha:changes.checkpoint.shortSha,subject:changes.checkpoint.subject,filesChanged:changes.checkpoint.filesChanged},
-              });
-            }catch(error){console.error("Failed to record the run checkpoint",error);}
-          }
-          emit({type:"run.completed",runId}); return;
+          await finishRun(result.text,{
+            ...(result.reasoning?{reasoning:result.reasoning}:{}),
+            ...(reasoningBlocks?{reasoningBlocks}:{}),
+          });
+          return;
         }
 
         const assistantMessage:ChatMessage={role:"assistant",content:result.text,tool_calls:result.calls,...(result.reasoning?{reasoning:result.reasoning}:{}),...(reasoningBlocks?{reasoningBlocks}:{})};
@@ -628,6 +666,10 @@ export class AgentRuntime {
         // The assistant turn is part of the user-visible history, so it is persisted as it
         // is produced — with the thinking behind it — and survives a reload mid-run.
         if(result.calls.length||result.text.trim())await persist([assistantMessage]);
+
+        // Детектор смотрит на вызовы этого шага: одинаковые аргументы несколько шагов подряд —
+        // это застревание, даже если каждый вызов формально успешен.
+        stallNotice=progress.observe(result.calls)??"";
 
         let mutationSucceeded=false;
         let browserRuntimeRequired=false;

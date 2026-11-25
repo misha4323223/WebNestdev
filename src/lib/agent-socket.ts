@@ -26,7 +26,11 @@ export type AgentSocketEvent={
   /** Context size of the step that just started, and the budget it is bounded by. */
   tokens?:number;
   budget?:number;
-  /** Set on run.queued: how many runs are waiting ahead of this one. */
+  /** Set on run.activity: нейтральное состояние подготовки, пока запуск ждёт свободное место. */
+  activity?:string;
+  /** Set on run.paused: платформа перегружена, запуск ждёт места и продолжается сам (не ошибка). */
+  message?:string;
+  /** Legacy: число ожидающих от старого сервера. Панель его не показывает. */
   queued?:number;
   limit?:number;
   /** Set on run.retrying: the provider refused this step, so it waits and tries again by itself. */

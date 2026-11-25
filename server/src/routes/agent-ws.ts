@@ -12,6 +12,7 @@ import { getPlatformModelForPlan } from "../platform/platform-models.js";
 import { AccountBusyError,runQueueStats,runWithRunSlot } from "../agent/run-limiter.js";
 import { positiveInt } from "../concurrency.js";
 import { isShuttingDown } from "../lifecycle.js";
+import { PLATFORM_BUSY_CODE, PLATFORM_BUSY_MESSAGE, PLATFORM_PAUSED_MESSAGE, PLATFORM_PAUSED_REMINDER, startWaitActivity } from "../agent/wait-activity.js";
 
 const messageSchema=z.discriminatedUnion("role",[
   z.object({role:z.literal("user"),content:z.string().max(100000)}),
@@ -46,6 +47,17 @@ export const runSchema=z.object({projectId:z.string().min(1).max(200),conversati
  */
 export function runHeartbeatMs(){
   return positiveInt(process.env.AGENT_RUN_HEARTBEAT_MS,20_000);
+}
+
+/**
+ * Как часто сменяется состояние подготовки, пока запуск ждёт свободного места.
+ *
+ * Человек не должен видеть ни позицию в очереди, ни число ожидающих: ожидание — внутренняя
+ * механика платформы. Вместо этого панель получает короткие нейтральные состояния подготовки
+ * (`wait-activity.ts`) — она выглядит как обычная работа, и запуск не отменяют из-за паузы.
+ */
+export function waitActivityMs(){
+  return positiveInt(process.env.AGENT_WAIT_ACTIVITY_MS,7_000);
 }
 
 /**
@@ -191,6 +203,12 @@ export async function registerAgentWebSocket(app:FastifyInstance,runtime=new Age
         // когда сама работа зависла. `question.asked` — ожидание ответа человека, его не трогаем.
         let lastRuntimeEvent=Date.now();
         let waitingForAnswer=false;
+        // Сколько раз запуск сообщал о паузе: первое сообщение обещает «около 2 минут», дальше —
+        // честное «всё ещё жду», без обещаний и без слова «ошибка».
+        let pauseNotices=0;
+        // Строка подготовки, пока запуск ждёт свободное место; снимается первым же событием работы.
+        let stopWaitActivity:(()=>void)|null=null;
+        const stopWait=()=>{stopWaitActivity?.();stopWaitActivity=null;};
         const watchdog=setInterval(()=>{
           if(waitingForAnswer||Date.now()-lastRuntimeEvent<runIdleTimeoutMs())return;
           console.warn("[agent] запуск остановлен по простою: project="+parsed.projectId+" user="+user.id);
@@ -200,6 +218,9 @@ export async function registerAgentWebSocket(app:FastifyInstance,runtime=new Age
         },Math.min(30_000,Math.max(5_000,Math.floor(runIdleTimeoutMs()/4))));
         const emitRunEvent=(event:{type:string})=>{
           lastRuntimeEvent=Date.now();
+          // Первый признак настоящей работы снимает состояние подготовки: оно не должно пережить
+          // старт запуска и остаться на экране уже во время работы.
+          stopWait();
           if(event.type==="question.asked")waitingForAnswer=true;
           else if(event.type!=="run.heartbeat")waitingForAnswer=false;
           safeSend(event);
@@ -225,7 +246,21 @@ export async function registerAgentWebSocket(app:FastifyInstance,runtime=new Age
             signal:runController.signal,
             userId:user.id,
             projectId:parsed.projectId,
-            onQueued:waiting=>safeSend({type:"run.queued",queued:waiting,limit:runQueueStats().limit}),
+            onQueued:()=>{
+              // Позиция в очереди не отправляется: панель получает только нейтральные состояния
+              // подготовки и никогда — число ожидающих (см. wait-activity.ts).
+              if(stopWaitActivity)return;
+              stopWaitActivity=startWaitActivity(event=>safeSend(event),waitActivityMs());
+            },
+            onPaused:()=>{
+              // Перегрузка — не ошибка и не отказ: запуск ждёт место и продолжается сам. Строку
+              // подготовки снимаем, чтобы она не подменяла собой объяснение паузы, и обновляем
+              // отметку жизни: watchdog не должен снять запуск, который честно ждёт места.
+              stopWait();
+              lastRuntimeEvent=Date.now();
+              pauseNotices++;
+              safeSend({type:"run.paused",message:pauseNotices===1?PLATFORM_PAUSED_MESSAGE:PLATFORM_PAUSED_REMINDER});
+            },
             onLeaseLost:()=>{
               // Аренду перехватил другой процесс: продолжать нельзя, иначе два агента пишут в
               // один проект. Останавливаем этот запуск и объясняем это пользователю один раз.
@@ -237,6 +272,7 @@ export async function registerAgentWebSocket(app:FastifyInstance,runtime=new Age
         }finally{
           clearInterval(heartbeat);
           clearInterval(watchdog);
+          stopWait();
         }
       }catch(error){
         // Остановку по простою или потере аренды уже объяснили выше; вторая ошибка «AbortError»
@@ -250,14 +286,15 @@ export async function registerAgentWebSocket(app:FastifyInstance,runtime=new Age
         // или свой ключ, а не ждать сброса по UTC.
         const isCreditBudget = error instanceof Error
           && (error.name === "CreditBudgetError" || error.name === "TokenBudgetError");
-        // 503 is the limiter: the queue is full at this moment, or the wait ran out.
+        // 503 — это ограничитель: свободных мест нет вовсе (очередь заполнена или ожидание истекло).
+        // Человеку говорим одно и то же понятное предложение, без числа ожидающих и без слова «очередь».
         const isBusy = statusCode === 503;
         // Anything that carries its own code ("this account is already running an agent") is
         // passed straight through, so the panel can say what happened instead of "Ошибка".
         const ownCode = error && typeof error === "object" && "code" in error && typeof (error as {code?:unknown}).code === "string" ? (error as {code:string}).code : undefined;
         const quotaCode = isStorage ? "STORAGE_LIMIT_REACHED" : isCreditBudget ? "CREDIT_BUDGET_EXHAUSTED" : "DAILY_QUOTA_EXCEEDED";
         if(error instanceof AccountBusyError)console.warn("[agent] запуск отклонён: аккаунт ещё занят (user="+runUserId+", project="+(request.url??"")+")");
-        safeSend({type:"error",error:message,...(isQuota?{code:quotaCode}:isBusy?{code:"SERVER_BUSY"}:ownCode?{code:ownCode}:{})});
+        safeSend({type:"error",error:isBusy?PLATFORM_BUSY_MESSAGE:message,...(isQuota?{code:quotaCode}:isBusy?{code:PLATFORM_BUSY_CODE}:ownCode?{code:ownCode}:{})});
       }
       finally{controller=null;running=false;}
     });

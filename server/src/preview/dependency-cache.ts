@@ -5,6 +5,7 @@ import path from "node:path";
 import { sandboxImage } from "../sandbox/config.js";
 import { SANDBOX_GID, SANDBOX_UID } from "../sandbox/permissions.js";
 import type { SandboxHost } from "../sandbox/host.js";
+import { enforceDependencyCacheQuota } from "./cache-quota.js";
 
 /**
  * Локальный кэш зависимостей предпросмотра.
@@ -225,9 +226,23 @@ export function startDependencyCacheCleanup(
   const every = Number.isFinite(interval) && interval >= 60_000 ? Math.round(interval) : 6 * 60 * 60_000;
   const run = () => {
     void cleanupDependencyCache({ liveProjectIds })
-      .then(result => {
+      .then(async result => {
         if (result.aborted) return;
         if (result.removed) log("[preview-cache] удалено устаревших или осиротевших кэшей: " + result.removed + " из " + result.scanned);
+        // TTL ограничивает возраст, но не объём: сотня активных проектов лежит в кэше тридцать
+        // дней и складывается в десятки гигабайт. Потолок размера убирает самые давно
+        // использованные каталоги раньше срока (см. cache-quota.ts).
+        const quota = await enforceDependencyCacheQuota({ root: dependencyCacheRoot() });
+        if (quota.removed) {
+          const mb = (bytes: number) => Math.round(bytes / 1024 / 1024) + " МБ";
+          log("[preview-cache] потолок " + mb(quota.maxBytes) + ": убрано " + quota.removed +
+            " кэшей, освобождено " + mb(quota.freedBytes) + ", осталось " + mb(quota.remainingBytes));
+        } else if (!quota.withinLimit) {
+          // Все каталоги свежие (защита от гонки с установкой) — потолок будет достигнут следующим
+          // проходом. Молчать об этом нельзя: диск кончится раньше, чем сработает TTL.
+          log("[preview-cache] кэш " + Math.round(quota.totalBytes / 1024 / 1024) + " МБ выше потолка " +
+            Math.round(quota.maxBytes / 1024 / 1024) + " МБ, но все каталоги используются — уборка отложена");
+        }
       })
       .catch(error => {
         console.warn("[preview-cache] уборка не удалась: " + (error instanceof Error ? error.message : String(error)));

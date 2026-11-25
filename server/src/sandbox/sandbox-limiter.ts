@@ -1,6 +1,9 @@
-import { createLimiter, positiveInt, type LimiterStats, type Slot } from "../concurrency.js";
+import { QueueFullError, QueueTimeoutError, createLimiter, positiveInt, type LimiterStats, type Slot } from "../concurrency.js";
+import { noteSandboxQueueFull, noteSandboxWaitTimedOut } from "./queue-counters.js";
 import { accountPlanFor } from "../billing/store.js";
 import { addSandboxSeconds, assertSandboxBudget, concurrentSandboxLimitFor } from "../account/resource-quota.js";
+import { sandboxMemoryMb } from "./config.js";
+import { reserveSandboxMemory, sandboxMemoryStats, type SandboxMemoryReservation } from "./memory-budget.js";
 
 /**
  * How many sandbox command containers this host starts at the same time.
@@ -78,12 +81,33 @@ export function sandboxQueueStats(): LimiterStats {
 export function describeSandboxLimiter() {
   const stats = sandboxQueueStats();
   const perUser = process.env.SANDBOX_MAX_PER_USER?.trim();
+  const memory = sandboxMemoryStats();
   return "контейнеров песочницы параллельно: " + stats.limit + ", очередь: " + stats.queueLimit +
     ", ожидание до " + Math.round(positiveInt(process.env.SANDBOX_QUEUE_TIMEOUT_MS, 180_000) / 1000) + " с" +
-    "; на аккаунт: " + (perUser === "0" ? "без ограничения" : perUser || "по тарифу (1–3)");
+    "; на аккаунт: " + (perUser === "0" ? "без ограничения" : perUser || "по тарифу (1–3)") +
+    "; память контейнеров (команды и долгие задания): до " + memory.limitMb + " МБ";
 }
 
-export type SandboxSlotOptions = { signal?: AbortSignal; userId?: string };
+export type SandboxSlotOptions = {
+  signal?: AbortSignal;
+  userId?: string;
+  /** Потолок памяти контейнера (`--memory`). Из него считается общий бюджет песочницы. */
+  memoryMb?: number;
+};
+
+/**
+ * Занимает место и считает отказы: `/metrics` должен видеть, что машина упирается в предел, а не
+ * что команды просто медленные. Само ожидание при этом остаётся молчаливым для пользователя.
+ */
+async function acquireSlot(limiter: ReturnType<typeof createLimiter>, signal?: AbortSignal): Promise<Slot> {
+  try {
+    return await limiter.acquire(signal);
+  } catch (error) {
+    if (error instanceof QueueFullError) noteSandboxQueueFull();
+    else if (error instanceof QueueTimeoutError) noteSandboxWaitTimedOut();
+    throw error;
+  }
+}
 
 /**
  * Runs one sandbox command under the host limit and, when the owner is known, under the account's
@@ -105,25 +129,45 @@ export async function withSandboxSlot<T>(
     typeof (options as AbortSignal)?.addEventListener === "function";
   const signal = looksLikeSignal ? (options as AbortSignal) : (options as SandboxSlotOptions).signal;
   const userId = looksLikeSignal ? undefined : (options as SandboxSlotOptions).userId;
-  if (!userId) return runUnderHost(work, signal);
+  const memoryMb = looksLikeSignal ? undefined : (options as SandboxSlotOptions).memoryMb;
+  if (!userId) return runUnderHost(work, signal, undefined, memoryMb);
 
   const plan = await accountPlanFor(userId);
   await assertSandboxBudget(userId, plan);
   const limit = concurrentSandboxLimitFor(plan);
-  const slot: Slot | null = limit > 0 ? await accountGate(userId, limit).limiter.acquire(signal) : null;
+  const slot: Slot | null = limit > 0 ? await acquireSlot(accountGate(userId, limit).limiter, signal) : null;
   try {
-    return await runUnderHost(work, signal, userId);
+    return await runUnderHost(work, signal, userId, memoryMb);
   } finally {
     slot?.release();
   }
 }
 
-async function runUnderHost<T>(work: () => Promise<T>, signal?: AbortSignal, userId?: string): Promise<T> {
-  const slot: Slot = await hostLimiter.acquire(signal);
+async function runUnderHost<T>(
+  work: () => Promise<T>,
+  signal?: AbortSignal,
+  userId?: string,
+  memoryMb?: number,
+): Promise<T> {
+  const slot: Slot = await acquireSlot(hostLimiter, signal);
   const startedAt = Date.now();
+  // Память занимается после места и отпускается раньше него: если места не дождались, ожидание
+  // памяти не должно держать место хоста. Бюджет общий с долгими заданиями (memory-budget.ts):
+  // иначе четыре задания по 1 ГБ рядом с двумя командами давали 6 ГБ потолков на 2.7 ГБ машины.
+  let memory: SandboxMemoryReservation | null = null;
+  try {
+    memory = await reserveSandboxMemory(memoryMb ?? sandboxMemoryMb(), {
+      ...(signal ? { signal } : {}),
+      label: "Песочница",
+    });
+  } catch (error) {
+    slot.release();
+    throw error;
+  }
   try {
     return await work();
   } finally {
+    memory.release();
     slot.release();
     if (userId) {
       // Списание после освобождения места: сбой учёта не должен задерживать следующий контейнер,

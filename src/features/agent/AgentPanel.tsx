@@ -288,7 +288,7 @@ function withAttachments(text:string,attachments:Attachment[]){
     ? item.image?" (изображение по публичной ссылке)":" (файл по публичной ссылке)"
     : item.image?" (изображение в проекте)":" (файл в проекте)")).join("\n");
   let prompt=text+"\n\nЭти файлы уже доступны:\n"+list;
-  if(remote.length)prompt+="\n\nВложения с публичной ссылкой — это файлы чата, а не автоматически файлы проекта. Не вставляй их URL в код без явной просьбы. Если изображение нужно в интерфейсе, скачай его в проект через net.download (например, в public/ или src/assets/) и используй локальный путь, чтобы файл попал в сборку и на хостинг. Публичную ссылку оставляй только если пользователь явно хочет внешний URL или файл слишком большой для сборки.";
+  if(remote.length)prompt+="\n\nВложения с публичной ссылкой — это файлы чата, а не автоматически файлы проекта. Не вставляй их URL в код без явной просьбы. Если изображение нужно в интерфейсе, скачай его в проект через net.download (например, в public/ или src/assets/) и используй локальный путь, чтобы файл попал в сборку и в публикацию проекта. Публичную ссылку оставляй только если пользователь явно хочет внешний URL или файл слишком большой для сборки.";
   if(remote.length<attachments.length)prompt+="\nДля файлов с локальным путём используй путь в проекте.";
   return prompt;
 }
@@ -1113,13 +1113,26 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
           return next;
         });
       }
-      // The server runs only a few agents at once, so a busy moment makes the run wait instead
-      // of failing. The line says so and disappears the moment the run really starts.
-      if(event.type==="run.queued"||event.type==="run.started"){
-        // Признак начатого запуска снимает и сам факт ожидания: строка очереди и строка лимита
-        // провайдера делят одно место, а ссылка не должна пережить показанную строку.
-        if(event.type==="run.started")retryNoticeRef.current=false;
-        setNotice(event.type==="run.queued"?"Сервер занят другим запуском — вы в очереди"+(typeof event.queued==="number"&&event.queued>0?" (впереди: "+event.queued+")":"")+"…":"");
+      // Пока запуск ждёт свободное место, панель показывает нейтральные состояния подготовки и
+      // никогда — позицию в очереди: ожидание это внутренняя механика платформы, и человек не
+      // должен решать, что она «висит». `run.queued` остался для старого сервера и говорит то же
+      // самое — без числа ожидающих.
+      if(event.type==="run.activity"){
+        setNotice(event.activity||"Готовлю рабочее окружение…");
+      }
+      // Перегрузка — пауза, а не ошибка: запуск сохранён и продолжится сам, когда освободится
+      // место. Поэтому это строка над полем ввода, а не сообщение об ошибке в переписке.
+      if(event.type==="run.paused"){
+        setNotice(event.message||"Платформа сейчас перегружена — это займёт около 2 минут. Работа продолжится автоматически.");
+      }
+      if(event.type==="run.queued"){
+        setNotice("Готовлю рабочее окружение…");
+      }
+      if(event.type==="run.started"){
+        // Признак начатого запуска снимает и строку подготовки, и строку лимита провайдера:
+        // они делят одно место, а ссылка не должна пережить показанную строку.
+        retryNoticeRef.current=false;
+        setNotice("");
       }
       // Новый шаг модели — новый ход в переписке. Без этого живые размышления склеивались в один
       // блок, а сохранённая история показывала их отдельными шагами: теперь оба вида совпадают.
@@ -1294,21 +1307,22 @@ export function AgentPanel({projectId,conversationId,onChanged,onOpenModelSettin
         const isCreditBudget = event.code === "CREDIT_BUDGET_EXHAUSTED" || event.code === "TOKEN_BUDGET_EXHAUSTED";
         // Квота ресурсов: минуты контейнеров, а не число запусков — поэтому и объяснение своё.
         const isSandboxQuota = event.code === "SANDBOX_QUOTA_EXCEEDED";
-        // The server is at its parallel-run limit: the queue was full or the wait ran out.
-        const isBusy = event.code === "SERVER_BUSY";
+        // Свободных мест нет: запуск не начался. Это не «ошибка проекта» и не повод продолжать —
+        // единственное, что человеку нужно знать, — что платформа загружена и стоит попробовать позже.
+        const isBusy = event.code === "PLATFORM_BUSY" || event.code === "SERVER_BUSY";
         // One account runs one agent at a time, so a second tab or project is turned away.
         const isAccountBusy = event.code === "RUN_ALREADY_ACTIVE";
         // Сервер снял зависший запуск: это не ошибка проекта и не занятость аккаунта, а
         // защита от вечного ожидания. Продолжение доступно с того же шага.
         const isIdleTimeout = event.code === "RUN_IDLE_TIMEOUT";
         const quotaKind = isStorageLimit ? "storage" : isCreditBudget ? "credits" : isDailyQuota ? "daily" : isSandboxQuota ? "sandbox" : null;
-        updateMessages(current=>[...current,{role:"assistant",content:(quotaKind==="storage"?"Достигнут лимит хранилища вашего тарифа. ":quotaKind==="credits"?"Месячный лимит кредитов тарифа исчерпан. ":quotaKind==="daily"?"Дневной лимит запусков агента исчерпан. ":quotaKind==="sandbox"?"Дневной лимит времени песочницы исчерпан. ":isAccountBusy?"Агент уже работает в этом аккаунте. ":isIdleTimeout?"Запуск остановлен: агент долго не проявлял активности. ":isBusy?"Сервер занят. ":"Ошибка: ")+errorMsg}]);
+        updateMessages(current=>[...current,{role:"assistant",content:(quotaKind==="storage"?"Достигнут лимит хранилища вашего тарифа. ":quotaKind==="credits"?"Месячный лимит кредитов тарифа исчерпан. ":quotaKind==="daily"?"Дневной лимит запусков агента исчерпан. ":quotaKind==="sandbox"?"Дневной лимит времени песочницы исчерпан. ":isAccountBusy?"Агент уже работает в этом аккаунте. ":isIdleTimeout?"Запуск остановлен: агент долго не проявлял активности. ":isBusy?"":"Ошибка: ")+errorMsg}]);
         if(quotaKind)setQuotaNotice(quotaKind);
         // Тариф и очередь аккаунта требуют не «Продолжить», а действия с тарифом или ожидания: у этих
         // отказов запуск даже не начался, и кнопка продолжения только запутала бы. Зависший запуск,
         // наоборот, можно продолжить с сохранённого шага.
-        const resumable=!quotaKind&&!isAccountBusy;
-        endRun(socket,{drain:false,notice:quotaKind==="storage"?"Хранилище заполнено — обновите тариф":quotaKind==="credits"?"Кредиты на месяц исчерпаны":quotaKind==="daily"?"Дневной лимит исчерпан":quotaKind==="sandbox"?"Лимит времени песочницы исчерпан — сброс в 00:00 UTC":isAccountBusy?"Агент уже работает в этом аккаунте — дождитесь завершения или остановите его":isIdleTimeout?"Запуск остановлен по простою — можно продолжить с того же места":isBusy?"Сервер занят — повторите запуск позже":"Запуск остановлен",...(resumable?{resume:{reason:"запуск был отклонён сервером: "+errorMsg.slice(0,160),label:"Запуск остановлен — агент продолжит с того же места."}}:{})});
+        const resumable=!quotaKind&&!isAccountBusy&&!isBusy;
+        endRun(socket,{drain:false,notice:quotaKind==="storage"?"Хранилище заполнено — обновите тариф":quotaKind==="credits"?"Кредиты на месяц исчерпаны":quotaKind==="daily"?"Дневной лимит исчерпан":quotaKind==="sandbox"?"Лимит времени песочницы исчерпан — сброс в 00:00 UTC":isAccountBusy?"Агент уже работает в этом аккаунте — дождитесь завершения или остановите его":isIdleTimeout?"Запуск остановлен по простою — можно продолжить с того же места":isBusy?"Платформа загружена — попробуйте чуть позже":"Запуск остановлен",...(resumable?{resume:{reason:"запуск был отклонён сервером: "+errorMsg.slice(0,160),label:"Запуск остановлен — агент продолжит с того же места."}}:{})});
       }
     },()=>drop());
       socketRef.current=socket;

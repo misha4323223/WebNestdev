@@ -6,6 +6,8 @@ import { resolveSandboxHost, sandboxHost, type SandboxHost } from "./host.js";
 import { nodeId } from "../nodes/identity.js";
 import type { DockerCliResult } from "./docker/types.js";
 import { tailLogLines } from "../preview/log-lines.js";
+import { memoryLimitMb, reserveSandboxMemory, type SandboxMemoryReservation } from "./memory-budget.js";
+import { positiveInt, QueueTimeoutError } from "../concurrency.js";
 import { secretEnvMaskMounts } from "./secret-mask.js";
 import type { SandboxConfig } from "./sandbox-types.js";
 
@@ -38,6 +40,8 @@ type JobRecord = {
   startedAt: number;
   timer: NodeJS.Timeout;
   host: SandboxHost;
+  /** Возвращает память, занятую под контейнер задания на всё время его жизни. */
+  releaseMemory: () => void;
   /**
    * Что сделать после снятия контейнера. Задание пишет файлы в проект, но ответ агент получает
    * раньше: без этого хука размер проекта оставался старым до следующей правки и квота тарифа
@@ -79,6 +83,7 @@ type DockerResult = DockerCliResult;
 function forgetJob(record: JobRecord) {
   clearTimeout(record.timer);
   jobs.delete(record.name);
+  record.releaseMemory();
 }
 
 async function removeContainer(record: JobRecord) {
@@ -94,6 +99,15 @@ async function stopInternal(record: JobRecord) {
     // Команда уже выполнена: сбой учёта не должен превращаться в ошибку терминала.
     console.warn("[jobs] не удалось выполнить действие после задания", error);
   }
+}
+
+/**
+ * Сколько долгих заданий живёт на хосте и каковы потолки. Нужно метрикам: задание держит
+ * контейнер памяти до получаса, и без числа таких контейнеров перегрузка выглядит как «медленно».
+ * Пределы берутся те же, что проверяет `startSandboxJob` — одна правка не должна разъезжаться с другой.
+ */
+export function sandboxJobCounts() {
+  return { running: jobs.size, limit: jobLimit(), perProjectLimit: perProjectLimit() };
 }
 
 /** Активные задания проекта: по ним видно, что уже запущено, и можно остановить нужное. */
@@ -162,8 +176,37 @@ export async function startSandboxJob(
     masks,
     { detached: true, labels: { "webnestdev.job": "1", "webnestdev.project": config.projectId, "webnestdev.load": "job" } },
   );
-  const result = await host.docker(args);
+  // Память занимается на всё время жизни контейнера задания. Раньше задание в предел
+  // `withSandboxSlot` не входило вовсе: четыре задания по 1 ГБ могли стоять рядом с двумя
+  // командами на машине с 2.7 ГБ доступной памяти, и OOM убивал не обязательно виновника.
+  // Замер 24.11.2026 (node-1/node-2): 3886 МБ всего, 2.7–2.9 ГБ доступно, база платформы
+  // ~0.7 ГБ, поэтому бюджет по умолчанию — 2048 МБ потолков (2 × 1 ГБ).
+  const memoryMb = memoryLimitMb(dockerOptions(config).memory, config.memoryMb);
+  let memory: SandboxMemoryReservation;
+  try {
+    memory = await reserveSandboxMemory(memoryMb, {
+      ...(signal ? { signal } : {}),
+      label: "Память песочницы",
+      waitMs: positiveInt(process.env.SANDBOX_JOB_MEMORY_WAIT_MS, 60_000),
+    });
+  } catch (error) {
+    if (error instanceof QueueTimeoutError) {
+      throw new Error(
+        "Сейчас нет свободной памяти под ещё одно долгое задание. Дождитесь завершения текущего " +
+        "или остановите ненужное через terminal.stop.",
+      );
+    }
+    throw error;
+  }
+  let result: DockerResult;
+  try {
+    result = await host.docker(args);
+  } catch (error) {
+    memory.release();
+    throw error;
+  }
   if (result.code !== 0) {
+    memory.release();
     const detail = (result.stderr || result.stdout).trim().slice(0, 500);
     throw new Error("Не удалось запустить долгую команду" + (detail ? ": " + detail : ""));
   }
@@ -177,6 +220,7 @@ export async function startSandboxJob(
     startedAt: Date.now(),
     timer: setTimeout(() => { void stopInternal(record); }, sandboxJobMaxMs()),
     host,
+    releaseMemory: () => memory.release(),
     ...(onExit ? { onExit } : {}),
   };
   record.timer.unref?.();

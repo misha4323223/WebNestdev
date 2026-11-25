@@ -20,10 +20,15 @@ export type LimiterStats = { limit: number; active: number; queued: number; queu
 export type Slot = { release: () => void };
 export type Limiter = { acquire: (signal?: AbortSignal) => Promise<Slot>; stats: () => LimiterStats };
 
+/**
+ * Тексты отказов читает не только человек: в песочнице такой отказ приходит агенту как результат
+ * инструмента, и по этой строке он объясняет задержку. Поэтому в них нет ни числа ожидающих, ни
+ * слова «очередь» — только что свободных мест нет и что имеет смысл повторить позже.
+ */
 export class QueueFullError extends Error {
   readonly statusCode = 503;
-  constructor(label: string, queueLimit: number) {
-    super(label + " сейчас занят: очередь (" + queueLimit + ") заполнена, повторите запрос позже.");
+  constructor(label: string, _queueLimit: number) {
+    super(label + ": свободных мест нет — повторите попытку через минуту.");
     this.name = "QueueFullError";
   }
 }
@@ -31,7 +36,7 @@ export class QueueFullError extends Error {
 export class QueueTimeoutError extends Error {
   readonly statusCode = 503;
   constructor(label: string, waitTimeoutMs: number) {
-    super(label + " сейчас занят: ожидание в очереди дольше " + Math.round(waitTimeoutMs / 1000) + " с, повторите запрос позже.");
+    super(label + ": свободное место не освободилось за " + Math.round(waitTimeoutMs / 1000) + " с — повторите попытку позже.");
     this.name = "QueueTimeoutError";
   }
 }

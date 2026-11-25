@@ -33,7 +33,7 @@ export async function runInSandbox(config:SandboxConfig,command:string,cwd:strin
   // Ждать в очереди тоже надо с сигналом: иначе остановленный запуск ещё минуту держал бы
   // место, а потом всё равно стартовал контейнер ради немедленной отмены.
   if (!options.injectSecretEnvFile) {
-    return withSandboxSlot(()=>host.runCommand(config,command,cwd,{...options,extraMounts}),{signal:options.signal,userId:config.userId});
+    return withSandboxSlot(()=>host.runCommand(config,command,cwd,{...options,extraMounts}),{signal:options.signal,userId:config.userId,memoryMb:config.memoryMb});
   }
 
   // Секреты сборки живут вне проекта: файл создаётся перед запуском и удаляется после него.
@@ -46,7 +46,7 @@ export async function runInSandbox(config:SandboxConfig,command:string,cwd:strin
         ...options,
         extraMounts: [...extraMounts, ...injection.mounts],
       }),
-      { signal: options.signal, userId: config.userId },
+      { signal: options.signal, userId: config.userId, memoryMb: config.memoryMb },
     );
   } finally {
     await injection.cleanup();

@@ -1,4 +1,4 @@
-import { QueueAbortedError, createLimiter, positiveInt, type LimiterStats, type Slot } from "../concurrency.js";
+import { QueueAbortedError, QueueFullError, QueueTimeoutError, createLimiter, positiveInt, type LimiterStats, type Slot } from "../concurrency.js";
 import { acquireRunLease, type RunLease } from "./run-lease.js";
 import { isYdbEnabled } from "../storage/pg.js";
 
@@ -31,6 +31,72 @@ const limiter = createLimiter(() => ({
 
 export function acquireRunSlot(signal?: AbortSignal): Promise<Slot> {
   return limiter.acquire(signal);
+}
+
+/**
+ * Как часто повторять попытку занять место, пока платформа перегружена.
+ *
+ * Перегрузка — не повод закончить запуск ошибкой: пользователь уже написал задачу, и она должна
+ * выполниться сама, когда место освободится. Повтор редкий, чтобы ожидающие не будили процесс
+ * десятки раз в секунду, и достаточно частый, чтобы пауза кончалась сразу после освобождения места.
+ */
+export function runQueueRetryMs() {
+  return Math.max(250, positiveInt(process.env.AGENT_QUEUE_RETRY_MS, 5_000));
+}
+
+/** Напоминание о паузе: первое — сразу, дальше — не чаще раза в минуту. */
+const PAUSE_NOTICE_INTERVAL_MS = 60_000;
+
+/** Ожидание с уважением к отмене: закрытая вкладка или «стоп» будят сразу, а не через таймер. */
+function pauseDelay(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new QueueAbortedError("Запуск"));
+      return;
+    }
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(new QueueAbortedError("Запуск"));
+    };
+    const timer = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener("abort", onAbort, { once: true });
+  });
+}
+
+/**
+ * Ждёт свободное место столько, сколько нужно, вместо отказа.
+ *
+ * `limiter.acquire` отвечает отказом в двух случаях: очередь заполнена или ожидание в ней истекло.
+ * Для запуска агента оба случая означают одно — сейчас перегружено, — а не «нельзя». Поэтому
+ * попытка повторяется, пока соединение живо: запуск сохраняется и продолжается сам, как только
+ * освободится место (см. `PLATFORM_PAUSED_MESSAGE`). Останавливают его только отмена,
+ * закрытая вкладка или остановка сервера.
+ *
+ * `onPaused` зовётся на входе в паузу и затем не чаще раза в минуту: панель показывает это как
+ * паузу, а не как ошибку.
+ */
+export async function acquireRunSlotPatiently(signal?: AbortSignal, onPaused?: () => void): Promise<Slot> {
+  const retryMs = runQueueRetryMs();
+  let lastPauseNoticeAt = 0;
+  for (;;) {
+    if (signal?.aborted) throw new QueueAbortedError("Запуск");
+    try {
+      return await limiter.acquire(signal);
+    } catch (error) {
+      if (signal?.aborted || error instanceof QueueAbortedError) throw new QueueAbortedError("Запуск");
+      // Остальные ошибки — настоящие: нехватка прав, сломанный лимитер. Их не ждём.
+      if (!(error instanceof QueueFullError || error instanceof QueueTimeoutError)) throw error;
+      const now = Date.now();
+      if (now - lastPauseNoticeAt >= PAUSE_NOTICE_INTERVAL_MS) {
+        lastPauseNoticeAt = now;
+        onPaused?.();
+      }
+      await pauseDelay(retryMs, signal);
+    }
+  }
 }
 
 /** The code the panel shows for a second run inside one account. */
@@ -87,6 +153,11 @@ export type RunSlotOptions = {
   /** Проект запуска: по нему другие реплики не трогают файлы, пока агент работает. */
   projectId?: string;
   onQueued?: (waiting: number) => void;
+  /**
+   * Мест нет: запуск переходит в паузу, а не заканчивается ошибкой. Вызывается на входе в паузу и
+   * дальше не чаще раза в минуту — панель показывает, что платформа перегружена и запуск продолжится сам.
+   */
+  onPaused?: () => void;
   /**
    * Общая аренда перешла другому процессу. Вызывающий обязан остановить запуск: писать в проект
    * параллельно с новым владельцем нельзя. Без колбэка аренда только пишет warn.
@@ -210,7 +281,8 @@ export async function runWithRunSlot<T>(work: () => Promise<T>, options: RunSlot
   try {
     const stats = runQueueStats();
     if (stats.active >= stats.limit) options.onQueued?.(stats.queued + 1);
-    const slot: Slot = await acquireRunSlot(options.signal);
+    // Не `acquireRunSlot`: перегрузка — пауза, а не отказ. Запуск ждёт место и продолжается сам.
+    const slot: Slot = await acquireRunSlotPatiently(options.signal, options.onPaused);
     try {
       return await work();
     } finally {
