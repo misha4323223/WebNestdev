@@ -108,7 +108,7 @@ export function NotificationsBell({ variant = "topbar" }: { variant?: "topbar" |
       aria-haspopup="dialog"
       aria-expanded={open}
       aria-label={"Уведомления" + (unread > 0 ? ", новых: " + unread : "")}
-      title={unread > 0 ? "Уведомления: " + unread + " новых" : "Уведомления"}
+      title={variant === "rail" ? undefined : unread > 0 ? "Уведомления: " + unread + " новых" : "Уведомления"}
     >
       <Bell size={15}/>
       {variant === "rail" && <span className="notifications-trigger-label">Уведомления</span>}

@@ -292,7 +292,7 @@ export function SupportButton({ variant = "sidebar", projectId }: { variant?: "s
   const [open, setOpen] = useState(false);
   return <>
     <button type="button" className={"support-entry support-entry-" + variant} onClick={() => setOpen(true)} aria-haspopup="dialog"
-      title="Поддержка — сообщить о проблеме или предложить идею" aria-label="Поддержка">
+      title={variant === "rail" ? undefined : "Поддержка — сообщить о проблеме или предложить идею"} aria-label="Поддержка">
       <span className="support-entry-icon"><SupportIcon size={variant === "composer" ? 15 : 14}/></span>
       {variant !== "composer" && <span className="support-entry-text">Поддержка</span>}
     </button>

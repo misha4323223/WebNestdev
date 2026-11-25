@@ -103,7 +103,7 @@ const tierLabels:Record<TemplateTier,string>={free:"Старт",pro:"Плюс",t
  */
 const guideLinks = [
   { href: "/blog/what-you-can-build", title: "Что можно сделать в NestDev", note: "Какие сайты собираются и что нужно для публикации", cover: "/blog/build.webp", tag: "Обзор", time: "5 мин" },
-  { href: "/blog/publish-and-domain", title: "Публикация и свой домен", note: "Релизы, история версий и подключение адреса", cover: "/blog/publish.webp", tag: "Хостинг", time: "4 мин" },
+  { href: "/blog/publish-and-domain", title: "Публикация и свой домен", note: "Релизы, история версий и подключение адреса", cover: "/blog/publish.webp", tag: "Публикация", time: "4 мин" },
   { href: "/blog/connectors", title: "Коннекторы: что можно подключить", note: "Git, облака, домены, базы и сервисы приложения", cover: "/blog/connectors.webp", tag: "Интеграции", time: "5 мин" },
 ];
 
@@ -379,9 +379,13 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
             <button className="ghost-button home-run-open" onClick={() => onOpenWorkspace(activeRun.projectId)}>Вернуться в проект</button>
           </div>}
 
-          <section className="home-hero">
+          {/* Одна панель запуска: шапка с заголовком и логотипом плюс поле идеи. Шаблоны и
+              блог живут ниже, вне панели: так панель читается как пульт, а не как страница целиком. */}
+          <div className="home-launch">
+          <section className="home-stage">
+          <div className="home-hero">
             <div className="home-hero-copy">
-              <h1 className="home-title">Из идеи —<br/>в <em>живой продукт.</em></h1>
+              <h1 className="home-title">От идеи – в <em>живой продукт.</em></h1>
             </div>
             <div className="home-hero-visual" aria-hidden="true">
               {/* Звёздное поле — только CSS-градиенты: ноль запросов, ноль анимации, ноль DOM-узлов
@@ -389,11 +393,16 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
               <div className="home-stars"/>
               <div className="home-orbit home-orbit-outer"/>
               <div className="home-orbit home-orbit-inner"/>
-              <div className="home-hero-mark"><WebNestLogo size={225} tone="light"/></div>
+              <div className="home-hero-mark"><WebNestLogo size={150} tone="light"/></div>
             </div>
+          </div>
           </section>
 
-          <section className="home-composer-wrap">
+          {/* Тонкий рукав у правого края экрана — единственное, что соединяет шапку с
+              картой ввода, которая стоит ниже на высоту шапки. Между ними больше ничего нет. */}
+          <div className="home-bridge" aria-hidden="true"/>
+
+          <div className="home-composer-wrap">
             <form className="home-composer" onSubmit={submit}>
               <div className="home-composer-field">
                 <label className="home-composer-label" htmlFor="home-idea">Опишите идею</label>
@@ -403,7 +412,8 @@ export function HomeScreen({onOpenWorkspace,activeRun}:{onOpenWorkspace:(project
                 <span>{busy?"Создаём…":"Создать"}</span><ArrowUpRight size={16}/>
               </button>
             </form>
-          </section>
+          </div>
+          </div>
 
           {paymentReturn&&<div className={"home-payment "+paymentReturn} role="status">
             <div>

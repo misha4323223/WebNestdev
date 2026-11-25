@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowRight, CreditCard, Database, FolderGit2, Globe2, Pencil, Plug, Trash2, UserRound } from "lucide-react";
 import { IntegrationsList } from "../integrations/IntegrationsList";
 import { ProjectRenameForm } from "./ProjectRename";
@@ -40,6 +40,7 @@ function dateLabel(value: string) {
 export function HomeRail(props: HomeRailProps) {
   const { projects, activeProjectId, section, onSection, onOpen, onRename, onDelete, onOpenPlans, onOpenSubscriptions } = props;
   const [renaming, setRenaming] = useState("");
+  const railRef = useRef<HTMLElement>(null);
   // One billing request for the rail: the billing section and the footer call to action
   // both show the plan the user actually has (or would get next).
   const [billing, setBilling] = useState<BillingData | null>(null);
@@ -64,11 +65,33 @@ export function HomeRail(props: HomeRailProps) {
     onSection("integrations");
   }, []);
 
-  return <aside className="home-rail">
+  // На ПК раздел раскрывается панелью поверх страницы, поэтому клик мимо колонки или
+  // Escape её закрывают: иначе панель висела бы над контентом до повторного клика.
+  useEffect(() => {
+    if (!section) return;
+    const isDesktop = () => window.matchMedia("(min-width:901px)").matches;
+    const close = () => { if (isDesktop()) onSection(section); };
+    const onPointer = (event: PointerEvent) => {
+      const root = railRef.current;
+      if (root && event.target instanceof Node && root.contains(event.target)) return;
+      close();
+    };
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape") close(); };
+    // Capture: карточки шаблонов гасят всплытие своего pointerdown, а панель должна
+    // закрываться от любого клика мимо колонки.
+    document.addEventListener("pointerdown", onPointer, true);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("pointerdown", onPointer, true);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [section, onSection]);
+
+  return <aside className="home-rail" ref={railRef}>
     <nav className="rail-nav" aria-label="Разделы аккаунта">
       {nav.map(item => {
         const Icon = item.icon;
-        return <button key={item.id} className={"rail-nav-item" + (section === item.id ? " active" : "")} aria-expanded={section === item.id} title={section === item.id ? "Свернуть раздел" : "Открыть раздел"} onClick={() => { onSection(item.id); setRenaming(""); }}>
+        return <button key={item.id} className={"rail-nav-item" + (section === item.id ? " active" : "")} aria-expanded={section === item.id} aria-label={item.label + (section === item.id ? " — свернуть раздел" : " — открыть раздел")} onClick={() => { onSection(item.id); setRenaming(""); }}>
           <Icon size={14}/> <span>{item.label}</span><ArrowRight size={12} className="rail-nav-chevron"/>
         </button>;
       })}
@@ -114,7 +137,7 @@ export function HomeRail(props: HomeRailProps) {
     </div>}
 
     <div className="rail-foot">
-      <button className="rail-upsell" onClick={onOpenPlans} title="Открыть выбор тарифа">
+      <button className="rail-upsell" onClick={onOpenPlans} aria-label="Подписка и тариф">
         <span className="rail-upsell-icon"><CreditCard size={14}/></span>
         <span className="rail-upsell-copy">
           <small>Подписка</small>

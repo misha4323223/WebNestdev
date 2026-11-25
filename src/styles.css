@@ -1277,7 +1277,7 @@ button,textarea{font:inherit}button{color:inherit}
 @media(max-width:650px){.plan-confirm{flex-direction:column;align-items:stretch}.plan-confirm-actions{justify-content:flex-end}.recent-tools{opacity:1}}
 
 /* Home sidebar: sections first, then the selected section, account and billing */
-.home-layout{position:relative;z-index:1;display:grid;grid-template-columns:304px minmax(0,1fr);gap:26px;width:100%;align-items:start}
+.home-layout{position:relative;z-index:1;display:grid;grid-template-columns:64px minmax(0,1fr);gap:26px;width:100%;align-items:start}
 .home-main{min-width:0;order:1}
 /* Аккаунт — полноценная страница настроек в основной области, как в рабочем кабинете.
    Рельса на телефоне уступает ей место, на ПК остаётся навигацией по разделам. */
@@ -1372,7 +1372,7 @@ button,textarea{font:inherit}button{color:inherit}
 .account-logout{margin-top:20px;padding-top:14px;border-top:1px solid var(--line-warm-soft)}
 .account-logout .ghost-button{height:32px;border-color:#4a3030;background:rgba(74,48,48,.12);color:#d9a3a3}
 .account-logout .ghost-button:hover{border-color:#6b3d3d;background:rgba(74,48,48,.24);color:#f0bcbc}
-@media(max-width:1080px){.home-layout{grid-template-columns:268px minmax(0,1fr);gap:20px}}
+@media(max-width:1080px){.home-layout{grid-template-columns:64px minmax(0,1fr);gap:20px}}
 @media(max-width:900px){/* Собственный скролл-контейнер отменяется: пока он есть, липкая строка вкладок считается от него и уезжает вместе со страницой. */
 .home-screen{overflow:visible;overflow-x:clip}.home-layout{display:flex;flex-direction:column;align-items:stretch;gap:16px}.home-tabs{display:flex;order:-1}.home-main,.home-rail{order:0;width:100%}.home-rail{position:static;height:auto;padding:0}.home-layout[data-tab="home"] .home-rail{display:none}.home-layout:not([data-tab="home"]) .home-main{display:none}.home-layout[data-tab="account"] .home-main{display:block}.home-layout[data-tab="account"] .home-rail{display:none}.rail-nav,.rail-foot{display:none}.rail-content{overflow:visible}}
 
@@ -4513,4 +4513,153 @@ button,textarea{font:inherit}button{color:inherit}
 @media(max-width:650px){
   .message-checkpoint{margin-top:8px;padding:9px}
   .message-checkpoint .changes-card-actions .ghost-button{height:30px}
+}
+
+/* ---------------------------------------------------------------------------
+   Home 2026: единая панель запуска
+   Заголовок, логотип и поле идеи — одна поверхность вместо трёх карточек.
+   Скругление панели огибает логотип, а орбиты мягко обрезаются краем: отсюда
+   «литой» вид. Шаблоны и блог намеренно остаются вне панели.
+--------------------------------------------------------------------------- */
+.home-launch{--branch:124px;--fillet:124px;--stage-h:66px;width:100%;margin:0;position:relative;z-index:1;display:grid}
+.home-stage{position:relative;width:100%;margin:0;border:1px solid rgba(216,178,122,.24);border-left:0;border-right-color:rgba(216,178,122,.42);box-shadow:inset -1px 0 0 rgba(216,178,122,.1);border-radius:4px 26px 26px 4px;overflow:hidden;background:linear-gradient(90deg,#11161a 0,rgba(17,22,26,0) 180px),radial-gradient(120% 130% at 100% 0,rgba(216,178,122,.14),transparent 48%),radial-gradient(90% 120% at 0 100%,rgba(96,122,132,.08),transparent 60%),linear-gradient(168deg,#11161a 0%,#0d1114 58%,#0c0f12 100%);box-shadow:0 30px 80px rgba(0,0,0,.42),inset 0 1px 0 rgba(255,255,255,.045)}
+.home-stage::before{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;box-shadow:inset 0 0 0 1px rgba(255,255,255,.02)}
+.home-stage::after{content:"";position:absolute;right:-12%;top:-28%;width:62%;height:74%;pointer-events:none;background:radial-gradient(circle at 70% 30%,rgba(216,178,122,.16),transparent 62%)}
+.home-stage .home-hero{position:relative;z-index:1;width:100%;margin:0;padding:0 34px 16px;grid-template-columns:minmax(0,1fr) 230px;gap:18px;align-items:start;text-align:left}
+.home-stage .home-title{font-size:clamp(16px,2.2vw,28px);max-width:none}
+.home-stage .home-hero-visual{min-height:108px;margin:0 -8px 0 0}
+.home-stage .home-orbit-outer{width:162px;height:162px}
+.home-stage .home-orbit-inner{width:120px;height:120px}
+.home-stage .home-hero-visual::before{width:174px;height:174px}
+.home-stage .home-hero-visual .home-hero-mark img{filter:drop-shadow(0 22px 34px rgba(0,0,0,.5))}
+/* Панель-шапка начинается сразу от боковой панели: слева она делит край с колонкой
+   (поэтому углы почти прямые), справа — скруглена и держит логотип. Контент ниже
+   (поле ввода, шаблоны, блог) сдвинут внутрь от левого края и доходит до правой стены. */
+.home-layout{gap:0}
+.home-starters,.home-journal,.home-section{width:auto;margin-left:0;margin-right:0}
+.home-starters{margin-top:14px}
+
+/* Ответвление — тонкий рукав у правого края экрана: он выходит из-под шапки и спускается
+   к чату, который стоит ниже на высоту самой шапки. Толщина рукава вдвое меньше шапки.
+   Стыки сверху и снизу без линий: градиент начинается цветом низа шапки и приходит ровно
+   в цвет верха чата, поэтому рукав, шапка и чат читаются одной массой вдоль правой стены. */
+.home-bridge{position:relative;z-index:1;width:min(var(--branch),100%);height:248px;margin:0 0 0 auto;border:0;border-right:1px solid rgba(216,178,122,.3);background:linear-gradient(180deg,#0e1114 0,#101519 38%,#12181c 68%,#141a1e 100%);box-shadow:inset -1px 0 0 rgba(216,178,122,.06)}
+.home-bridge::before{content:"";position:absolute;left:0;top:0;bottom:0;width:1px;pointer-events:none;background:linear-gradient(180deg,rgba(216,178,122,.22),rgba(216,178,122,.06) 58%,rgba(216,178,122,.2));box-shadow:0 0 18px rgba(216,178,122,.14)}
+.home-composer-wrap{position:relative;z-index:1;width:min(580px,100%);margin:0 0 0 auto;padding:0}
+.home-composer{position:relative;border-radius:16px 0 16px 16px;border-top:0;border-color:rgba(216,178,122,.28);background:#141a1e;box-shadow:0 14px 34px rgba(0,0,0,.26)}
+/* Верхняя кромка чата рисуется только на свободном участке: под рукавом линии нет,
+   иначе на стыке появилась бы полоса поперёк соединения. */
+.home-composer::before{content:"";position:absolute;top:0;left:16px;right:var(--branch);height:1px;pointer-events:none;background:linear-gradient(90deg,rgba(216,178,122,.14),rgba(216,178,122,.3))}
+.home-composer:focus-within{border-color:rgba(216,178,122,.6);box-shadow:0 16px 40px rgba(0,0,0,.32),0 0 0 3px rgba(216,178,122,.07)}
+/* Колонка и шапка — одна литая плита, а не два стыкованных блока. На стыке нет ни линии,
+   ни тени, ни скругления: у обеих поверхностей один и тот же цвет, поэтому шва не видно
+   вообще. Общий контур один: слева верхний угол колонки, справа — скругление шапки;
+   нижняя кромка шапки — это её собственный край, колонка уходит вниз из той же массы. */
+@media(min-width:901px){
+  /* Первая кнопка встаёт ровно под нижней границей шапки (66 px), дальше — по порядку. */
+  .home-rail{position:sticky;z-index:2;padding:66px 12px 12px;border:0;border-top:1px solid rgba(216,178,122,.24);border-left:1px solid rgba(216,178,122,.18);border-radius:16px 0 0 0;background:linear-gradient(180deg,#11161a 0,#11161a 74%,#0d1114 100%);box-shadow:-20px 24px 54px -38px rgba(0,0,0,.95)}
+  /* Низ шапки — не рамка по всей ширине: у правого края кромка обрывается и уходит
+     дугой в рукав, поэтому линию рисуем отдельно и только на прямом участке. */
+  /* Знак висит в правом верхнем углу и свисает ниже кромки шапки — там его подхватывает
+     заливка скругления, поэтому шапка больше не режет содержимое; свечение ограничено
+     её габаритами, чтобы не расползаться по странице. */
+  .home-stage{overflow:visible;min-height:var(--stage-h);border-top-left-radius:0;border-bottom-left-radius:0;border-bottom:0;border-bottom-right-radius:0;box-shadow:0 26px 40px -34px rgba(0,0,0,.9),inset 0 1px 0 rgba(255,255,255,.045)}
+  /* Знак выше рукава: иначе его нижняя часть уходила бы под заливку скругления. */
+  .home-stage .home-hero{position:relative;z-index:2;padding:0 34px;min-height:65px;align-content:center}
+  /* Заголовок стоит по центру шапки: по горизонтали — во всю её ширину,
+     по вертикали — по середине тонкой полосы, логотип остаётся в углу. */
+  .home-stage .home-hero-copy{grid-column:1/-1;text-align:center}
+  /* Заголовок стоит по центру шапки по обеим осям; толщина шапки не меняется. */
+  .home-stage .home-title{margin:0}
+  .home-stage::after{inset:0;width:auto;height:auto;background:radial-gradient(90% 120% at 100% 0,rgba(216,178,122,.16),transparent 60%)}
+  .home-stage .home-hero-visual{position:absolute;top:0;right:0;width:162px;height:162px;min-height:0;margin:0}
+  .home-stage .home-hero-mark img{width:111px;height:111px}
+  .home-stage::before{content:"";position:absolute;inset:auto 0 -1px var(--fillet);right:calc(var(--branch) + var(--fillet));height:1px;border-radius:0;box-shadow:none;pointer-events:none;background:linear-gradient(90deg,rgba(216,178,122,.24),rgba(216,178,122,.32))}
+  /* Угол у логотипа не прямой: шапка переходит в рукав дугой того же радиуса.
+     Уголок залит цветом обеих поверхностей, по его краю идёт та же тёплая кромка. */
+  /* Заливка угла берёт тот же градиент, что у рукава, и растянута на всю его высоту —
+     на стыке с рукавом не появляется ни полосы, ни другого тона. */
+  .home-bridge::after{content:"";position:absolute;top:0;left:calc(-1 * var(--fillet));width:var(--fillet);height:var(--fillet);pointer-events:none;background:radial-gradient(circle var(--fillet) at 0 100%,transparent calc(100% - 1px),rgba(216,178,122,.3) calc(100% - 1px) 100%,transparent 100%),linear-gradient(180deg,#0e1114 0,#101519 38%,#12181c 68%,#141a1e 100%);background-size:100% 100%,100% 248px;background-repeat:no-repeat;-webkit-mask-image:radial-gradient(circle var(--fillet) at 0 100%,transparent 0 calc(var(--fillet) - 1px),#000 calc(var(--fillet) - 1px));mask-image:radial-gradient(circle var(--fillet) at 0 100%,transparent 0 calc(var(--fillet) - 1px),#000 calc(var(--fillet) - 1px))}
+  .home-bridge::before{top:calc(var(--fillet) - 1px)}
+  /* Слева шапка так же уходит вниз дугой, только не в рукав, а в левую панель:
+     от нижней кромки шапки к правому краю колонки. Заливка угла — цвет самой
+     колонки, поэтому стык остаётся литым, а по краю идёт та же тёплая кромка. */
+  .home-launch::before{content:"";position:absolute;top:var(--stage-h);left:0;width:var(--fillet);height:var(--fillet);pointer-events:none;background:radial-gradient(circle var(--fillet) at 100% 100%,transparent calc(100% - 1px),rgba(216,178,122,.3) calc(100% - 1px) 100%,transparent 100%),#11161a;-webkit-mask-image:radial-gradient(circle var(--fillet) at 100% 100%,transparent 0 calc(var(--fillet) - 1px),#000 calc(var(--fillet) - 1px));mask-image:radial-gradient(circle var(--fillet) at 100% 100%,transparent 0 calc(var(--fillet) - 1px),#000 calc(var(--fillet) - 1px))}
+}
+/* Левая колонка — только иконки: кнопка 40×40 с латунной кромкой, а подпись
+   выезжает из-под неё вправо при наведении и фокусе. Разделы открываются
+   панелью-выездом, поэтому колонка остаётся чуть шире самих кнопок.
+   Всё это — только для ПК: на телефоне разделы остаются широкими рядами. */
+@media(min-width:901px){
+.home-rail .rail-nav{display:flex;flex-direction:column;gap:8px;padding:0;border:0;background:transparent}
+/* Колокольчик в доке — такая же иконка, без карточки-обёртки вокруг. */
+.home-rail .notifications-rail{width:auto;padding:0;border:0;border-radius:0;background:transparent}
+.home-rail .rail-nav-item,.home-rail .notifications-rail-trigger{position:relative;width:40px;height:40px;min-height:0;display:flex;align-items:center;justify-content:center;gap:0;padding:0;border:1px solid rgba(216,178,122,.16);border-radius:11px;background:linear-gradient(168deg,#12171a,#0d1014 78%);color:#aab2ba;font-size:11px;font-weight:550;letter-spacing:0;text-align:left;transition:border-color .16s ease,background .16s ease,color .16s ease,transform .16s ease,box-shadow .16s ease}
+.home-rail .rail-nav-item > svg:first-child,.home-rail .notifications-rail-trigger > svg:first-child{width:18px;height:18px;padding:0;flex:none;border:0;background:transparent;color:#cdb995;transition:color .16s ease,filter .16s ease}
+.home-rail .rail-nav-chevron{display:none}
+.home-rail .rail-nav-item:hover,.home-rail .notifications-rail-trigger:hover{border-color:rgba(216,178,122,.42);background:radial-gradient(120% 100% at 50% 0,rgba(216,178,122,.12),transparent 70%),linear-gradient(168deg,#171d21,#101418);color:#f0eade;transform:translateY(-1px);box-shadow:0 10px 22px rgba(0,0,0,.3)}
+.home-rail .rail-nav-item:hover > svg:first-child{color:#e8cf9f}
+.home-rail .rail-nav-item.active{border-color:rgba(216,178,122,.5);background:radial-gradient(120% 110% at 50% 0,rgba(216,178,122,.22),transparent 70%),linear-gradient(168deg,#1a1a17,#101418 78%);color:#f4ecdf;box-shadow:inset 0 1px 0 rgba(255,255,255,.06),0 0 22px -8px rgba(216,178,122,.5),0 10px 24px rgba(0,0,0,.3)}
+.home-rail .rail-nav-item.active > svg:first-child{color:#e8cf9f;filter:drop-shadow(0 0 6px rgba(216,178,122,.45))}
+.home-rail .rail-nav-item.active:not(.notifications-rail-trigger)::before{content:"";position:absolute;top:5px;left:50%;width:16px;height:2px;border-radius:2px;transform:translateX(-50%);background:linear-gradient(90deg,rgba(216,178,122,0),#e6cf9f,rgba(216,178,122,0));box-shadow:0 0 10px rgba(230,207,159,.45)}
+/* Подпись кнопки: узкая плашка выезжает вправо из-под иконки. */
+.home-rail .rail-nav-item > span:not(.notifications-badge){position:absolute;top:50%;left:calc(100% + 9px);z-index:6;display:flex;align-items:center;height:26px;padding:0 10px;border:1px solid rgba(216,178,122,.3);border-radius:8px;background:linear-gradient(168deg,#171c21,#0d1014);color:#f2ecdf;font-size:11px;font-weight:550;line-height:1;white-space:nowrap;letter-spacing:0;overflow:visible;box-shadow:0 14px 30px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.05);opacity:0;transform:translate(-8px,-50%);pointer-events:none;transition:opacity .14s ease,transform .2s cubic-bezier(.2,.8,.2,1)}
+.home-rail .rail-nav-item > span:not(.notifications-badge)::before{content:"";position:absolute;left:-4px;top:50%;width:7px;height:7px;border-left:1px solid rgba(216,178,122,.3);border-bottom:1px solid rgba(216,178,122,.3);background:#171c21;transform:translateY(-50%) rotate(45deg)}
+.home-rail .rail-nav-item:hover > span:not(.notifications-badge),.home-rail .rail-nav-item:focus-visible > span:not(.notifications-badge){opacity:1;transform:translate(0,-50%)}
+.home-rail .notifications-rail .notifications-badge{position:absolute;top:3px;right:3px;margin:0;border-color:#0d1014}
+/* Панель уведомлений шире иконки — раскрывается вправо, а не за край экрана. */
+.home-rail .notifications-rail .notifications-panel{left:calc(100% + 9px);right:auto;top:0;width:min(320px,calc(100vw - 140px))}
+/* Раздел раскрывается панелью-выездом справа: 274 px текста читаются, а колонка
+   остаётся узкой. */
+.home-rail .rail-content{position:absolute;top:314px;left:calc(100% + 10px);z-index:5;width:300px;max-height:calc(100dvh - 326px);overflow:auto;padding:12px;border:1px solid rgba(216,178,122,.24);border-radius:14px;background:linear-gradient(170deg,#11161a,#0b0e12);box-shadow:0 28px 64px rgba(0,0,0,.66),inset 0 1px 0 rgba(255,255,255,.045);animation:rail-flyout-in .16s ease both}
+@keyframes rail-flyout-in{from{opacity:0;transform:translateX(-6px)}to{opacity:1;transform:none}}
+.home-rail .rail-content .connectors,
+.home-rail .rail-content .connector{grid-template-columns:minmax(0,1fr)}
+.home-rail .rail-content .connector-head,
+.home-rail .rail-content .connector-identity,
+.home-rail .rail-content .connector-body,
+.home-rail .rail-content .connector-key{min-width:0;max-width:100%}
+.home-rail .rail-content .connector-identity{flex:1 1 0;gap:8px}
+.home-rail .rail-content .brand-logo{width:52px;height:34px;padding:0 6px;border-radius:9px}
+.home-rail .rail-content .brand-logo.is-mark img{width:22px;height:22px}
+.home-rail .rail-content .brand-logo.is-wordmark img{width:40px;height:14px}
+.home-rail .rail-content :where(div,section,article,ul,li,label,p,h2,h3,form){min-width:0}
+.home-rail .rail-content .connector-key label,
+.home-rail .rail-content .connector-key input,
+.home-rail .rail-content .connector-key select,
+.home-rail .rail-content .connector-key textarea{width:100%;min-width:0}
+.home-rail .rail-content .connector-section-note{margin-left:0}
+/* Подписка и поддержка — тоже иконки, подпись выезжает так же. */
+.home-rail .rail-upsell{position:relative;width:40px;height:40px;min-height:0;padding:0;gap:0;justify-content:center;border-radius:11px;border-color:rgba(216,178,122,.3);background:radial-gradient(120% 140% at 100% 0,rgba(216,178,122,.12),transparent 55%),linear-gradient(150deg,#1d1a13,#0f1317 74%)}
+.home-rail .rail-upsell:hover{transform:translateY(-1px);border-color:rgba(216,178,122,.55)}
+.home-rail .rail-upsell-icon{width:18px;height:18px;border:0;border-radius:0;background:transparent;color:#cdb995}
+.home-rail .rail-upsell-icon svg{width:18px;height:18px}
+.home-rail .rail-upsell-go{display:none}
+.home-rail .rail-upsell-copy{position:absolute;top:50%;left:calc(100% + 9px);z-index:6;width:max-content;max-width:240px;min-width:0;display:grid;gap:2px;padding:8px 10px;border:1px solid rgba(216,178,122,.3);border-radius:9px;background:linear-gradient(168deg,#171c21,#0d1014);text-align:left;box-shadow:0 14px 30px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.05);opacity:0;transform:translate(-8px,-50%);pointer-events:none;transition:opacity .14s ease,transform .2s cubic-bezier(.2,.8,.2,1)}
+.home-rail .rail-upsell-copy small{font-size:7.5px;letter-spacing:.08em}
+.home-rail .rail-upsell-line{gap:4px}
+.home-rail .rail-upsell-line strong,.home-rail .rail-upsell-line em{font-size:11px;white-space:nowrap}
+.home-rail .rail-upsell:hover .rail-upsell-copy,.home-rail .rail-upsell:focus-visible .rail-upsell-copy{opacity:1;transform:translate(0,-50%)}
+.home-rail .support-entry-rail{position:relative;width:40px;height:40px;min-height:0;padding:0;gap:0;justify-content:center;border:1px solid rgba(216,178,122,.16);border-radius:11px;background:linear-gradient(168deg,#12171a,#0d1014 78%);color:#aab2ba}
+.home-rail .support-entry-rail:hover{border-color:rgba(216,178,122,.42);background:linear-gradient(168deg,#171d21,#101418);transform:translateY(-1px)}
+.home-rail .support-entry-rail .support-entry-icon{width:18px;height:18px;border:0;background:transparent;color:#cdb995}
+.home-rail .support-entry-icon svg{width:17px;height:17px}
+.home-rail .support-entry-text{position:absolute;top:50%;left:calc(100% + 9px);z-index:6;display:flex;align-items:center;height:26px;padding:0 10px;border:1px solid rgba(216,178,122,.3);border-radius:8px;background:linear-gradient(168deg,#171c21,#0d1014);color:#f2ecdf;font-size:11px;white-space:nowrap;box-shadow:0 14px 30px rgba(0,0,0,.55),inset 0 1px 0 rgba(255,255,255,.05);opacity:0;transform:translate(-8px,-50%);pointer-events:none;transition:opacity .14s ease,transform .2s cubic-bezier(.2,.8,.2,1)}
+.home-rail .support-entry-rail:hover .support-entry-text,.home-rail .support-entry-rail:focus-visible .support-entry-text{opacity:1;transform:translate(0,-50%)}
+.home-rail .rail-foot{padding-top:10px;background:linear-gradient(180deg,rgba(13,17,20,0),#0d1114 40%)}
+}
+.home-rail .rail-upsell:hover{border-color:rgba(216,178,122,.55);transform:translateY(-1px)}
+@media(max-width:900px){
+  .home-stage{margin-top:0;border-radius:22px 22px 22px 4px}
+  .home-launch{width:100%;--branch:88px}
+  .home-bridge{height:141px}
+  .home-composer{border-radius:16px 0 14px 14px}
+  .home-stage .home-hero{grid-template-columns:1fr;padding:20px 18px 26px;gap:4px}
+  .home-stage .home-hero-visual{min-height:168px;margin:0 auto}
+  .home-stage .home-orbit-outer{width:186px;height:186px}
+  .home-stage .home-orbit-inner{width:146px;height:146px}
+  .home-stage .home-hero-visual::before{width:196px;height:196px}
+  .home-stage .home-title{font-size:clamp(30px,8.2vw,42px);max-width:none}
+  .home-layout{gap:0}
+  .home-starters,.home-journal,.home-section{margin-left:0}
 }
