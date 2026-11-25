@@ -177,7 +177,7 @@ export function buildSeoTemplate(input: SeoTemplateInput = {}): SeoTemplateResul
       "lang соответствует языку страницы",
       "публичные страницы — отдельные HTML для static/hybrid",
       "приватные маршруты приложения закрыты noindex",
-      "после публикации запустить SEO-аудит в панели хостинга",
+      "после публикации запустить SEO-аудит в панели публикации",
     ],
   };
 }

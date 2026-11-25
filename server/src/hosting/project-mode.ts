@@ -61,7 +61,7 @@ export async function inspectHostingProject(project: Project): Promise<HostingPr
   try {
     const shape = await detectProject(root);
     if (shape.kind !== "instant-site" && shape.kind !== "static-build") {
-      return unsupported("Хостинг принимает статику и статику с serverless-функциями: " + shape.reason);
+      return unsupported("Публикация принимает статику и статику с serverless-функциями: " + shape.reason);
     }
 
     let manifest: Awaited<ReturnType<typeof readFunctionManifest>> = null;
@@ -89,7 +89,7 @@ export async function inspectHostingProject(project: Project): Promise<HostingPr
     const profile = await readDeploymentProfile(root);
     if (profile.projectType.backend === "server") {
       return unsupported(
-        "Серверный проект (SSR/постоянный сервер) нельзя опубликовать на production-хостинге: " +
+        "Серверный проект (SSR/постоянный сервер) нельзя опубликовать в среде NestDev: " +
           "SSR-рантайм здесь пока не поддерживается. Доступны статика и serverless-функции; " +
           "контейнерный preview — отдельный режим разработки.",
       );

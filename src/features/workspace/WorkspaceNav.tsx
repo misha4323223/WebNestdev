@@ -17,8 +17,8 @@ export function WorkspaceNav({view,onChange,onSecrets,canUseTerminal}:{view:Work
     <button className={view==="changes"?"active":""} onClick={()=>onChange("changes")} title="Git: рабочие изменения, коммиты, ветки и история"><span className="workspace-tab-icon"><GitBranch size={15}/></span><span className="workspace-tab-label">Git</span></button>
     {/* Терминал — возможность Премиума; сервер проверяет то же правило на маршруте. */}
     {canUseTerminal&&<button className={view==="terminal"?"active":""} onClick={()=>onChange("terminal")} title="Команды в папке проекта"><span className="workspace-tab-icon"><Terminal size={15}/></span><span className="workspace-tab-label">Терминал</span></button>}
-    {/* Хостинг — статический сайт по HTTPS, без процесса и контейнера после публикации. */}
-    <button className={view==="hosting"?"active":""} onClick={()=>onChange("hosting")} title="Статический сайт проекта по HTTPS"><span className="workspace-tab-icon"><Globe2 size={15}/></span><span className="workspace-tab-label">Хостинг</span></button>
+    {/* Публикация — статический сайт по HTTPS, без процесса и контейнера после публикации. */}
+    <button className={view==="hosting"?"active":""} onClick={()=>onChange("hosting")} title="Статический сайт проекта по HTTPS"><span className="workspace-tab-icon"><Globe2 size={15}/></span><span className="workspace-tab-label">Публикация</span></button>
     {/* Ключи — действие, а не раздел, но иконка та же, что у остальных вкладок: без неё
         подпись выбивалась из строки и читалась как случайная ссылка. */}
     {onSecrets&&<button className="workspace-tabs-keys" onClick={onSecrets} title="Секреты проекта: ключи и переменные окружения" aria-label="Ключи проекта"><span className="workspace-tab-icon"><KeyRound size={15}/></span><span className="workspace-tab-label">Ключи</span></button>}

@@ -154,7 +154,7 @@ export async function registerHostingRoutes(app: FastifyInstance) {
     const auth = await requireProject(request, reply, params.id);
     if (!auth) return;
     const config = hostingConfig();
-    if (!config.enabled) return reply.code(503).send({ error: "Хостинг выключен", code: "HOSTING_DISABLED" });
+    if (!config.enabled) return reply.code(503).send({ error: "Публикация сейчас недоступна", code: "HOSTING_DISABLED" });
     const parsed = z.object({
       routingMode: z.enum(["auto", "static", "spa", "hybrid"]).optional(),
       trailingSlash: z.enum(["always", "never", "ignore"]).optional(),
@@ -206,7 +206,7 @@ export async function registerHostingRoutes(app: FastifyInstance) {
     const auth = await requireProject(request, reply, params.id);
     if (!auth) return;
     const config = hostingConfig();
-    if (!config.enabled) return reply.code(503).send({ error: "Хостинг выключен", code: "HOSTING_DISABLED" });
+    if (!config.enabled) return reply.code(503).send({ error: "Публикация сейчас недоступна", code: "HOSTING_DISABLED" });
     const site = await getSiteByProject(params.id);
     if (!site || site.userId !== auth.user.id) return reply.code(404).send({ error: "Сайт не найден", code: "SITE_NOT_FOUND" });
     try {
@@ -223,7 +223,7 @@ export async function registerHostingRoutes(app: FastifyInstance) {
     const auth = await requireProject(request, reply, params.id);
     if (!auth) return;
     const config = hostingConfig();
-    if (!config.enabled) return reply.code(503).send({ error: "Хостинг выключен", code: "HOSTING_DISABLED" });
+    if (!config.enabled) return reply.code(503).send({ error: "Публикация сейчас недоступна", code: "HOSTING_DISABLED" });
     const body = z.object({ slug: z.string().trim().max(120).optional() }).parse(request.body ?? {});
     let requestedSlug: string | undefined;
     if (body.slug) {
@@ -263,7 +263,7 @@ export async function registerHostingRoutes(app: FastifyInstance) {
     const auth = await requireProject(request, reply, params.id);
     if (!auth) return;
     const config = hostingConfig();
-    if (!config.enabled) return reply.code(503).send({ error: "Хостинг выключен", code: "HOSTING_DISABLED" });
+    if (!config.enabled) return reply.code(503).send({ error: "Публикация сейчас недоступна", code: "HOSTING_DISABLED" });
     const body = z.object({ slug: z.string().trim().min(1).max(120) }).parse(request.body ?? {});
     let desired: string;
     try {

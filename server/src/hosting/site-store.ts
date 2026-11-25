@@ -213,7 +213,7 @@ async function readJsonState(): Promise<JsonState> {
   try {
     const parsed = JSON.parse(await readFile(jsonFile(), "utf8")) as Partial<JsonState>;
     if (parsed.version !== 1 || !Array.isArray(parsed.sites) || !Array.isArray(parsed.releases)) {
-      throw new Error("Повреждённое JSON-хранилище хостинга");
+      throw new Error("Повреждённое JSON-хранилище публикации");
     }
     const retiredSlugs = Array.isArray(parsed.retiredSlugs)
       ? parsed.retiredSlugs.filter(item => item && typeof item.slug === "string" && typeof item.siteId === "string")

@@ -83,7 +83,7 @@ registerTool({
         additionalProperties: false,
         properties: {
           kind: { type: "string", description: "static | server | container | vm — что именно размещается." },
-          provider: { type: "string", description: "Хостинг или облако, где размещается проект." },
+          provider: { type: "string", description: "Площадка или облако, где размещается проект." },
           region: { type: "string", description: "Регион или зона, если важны." },
           domain: { type: "string", description: "Домен, на котором будет работать проект." },
         },
@@ -91,7 +91,7 @@ registerTool({
       services: {
         type: "array",
         maxItems: 12,
-        description: "Только те сервисы, которые нужны этому проекту: база, хранилище, почта, SMS, хостинг, домен.",
+        description: "Только те сервисы, которые нужны этому проекту: база, хранилище, почта, SMS, площадка, домен.",
         items: {
           type: "object",
           additionalProperties: false,

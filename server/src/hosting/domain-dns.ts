@@ -99,7 +99,7 @@ export async function checkTraffic(
   try {
     const cnames = await resolver.resolveCname(hostname);
     if (cnames.some(name => normalizeTarget(name) === wantedTarget)) {
-      return { allowed: true, reason: "CNAME указывает на наш хостинг" };
+      return { allowed: true, reason: "CNAME указывает на публикацию NestDev" };
     }
     if (cnames.length) {
       return { allowed: false, reason: "CNAME указывает на другой хостинг" };
@@ -112,14 +112,14 @@ export async function checkTraffic(
 
   try {
     const addresses = await resolver.resolve4(hostname);
-    if (addresses.includes(ip)) return { allowed: true, reason: "A-запись указывает на наш хостинг" };
+    if (addresses.includes(ip)) return { allowed: true, reason: "A-запись указывает на публикацию NestDev" };
   } catch (error) {
     if (!DNS_ERRORS.has(errorCode(error))) {
       return { allowed: false, reason: reasonForError(error, "A-запись пока не найдена — DNS может обновиться не сразу, попробуйте позже") };
     }
   }
 
-  return { allowed: false, reason: "Домен пока не указывает на наш хостинг — DNS может обновиться не сразу, попробуйте позже" };
+  return { allowed: false, reason: "Домен пока не указывает на публикацию NestDev — DNS может обновиться не сразу, попробуйте позже" };
 }
 
 function issueAllowsLetsEncrypt(records: Array<{ issue?: string; issuewild?: string }>): boolean {

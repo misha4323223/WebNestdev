@@ -27,7 +27,7 @@ export async function assertHostingDiskHasRoom(config: HostingConfig, incomingBy
   if (free > 0 && free - incomingBytes < config.limits.minFreeBytes) {
     throw new HostingError(
       "DISK_LIMIT",
-      "На диске хостинга недостаточно места: свободно " + Math.round(free / 1024 / 1024) + " МиБ",
+      "На диске публикации недостаточно места: свободно " + Math.round(free / 1024 / 1024) + " МиБ",
       507,
     );
   }

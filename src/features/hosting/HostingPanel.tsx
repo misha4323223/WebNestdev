@@ -11,7 +11,7 @@ import { CustomDomainCard } from "./CustomDomainCard";
 import { SeoCard } from "./SeoCard";
 
 /**
- * Вкладка «Хостинг». Сайт — не процесс: после публикации файлы лежат на диске и отдаются
+ * Вкладка «Публикация». Сайт — не процесс: после публикации файлы лежат на диске и отдаются
  * Caddy, поэтому здесь нет кнопки «запустить сервер». Пока идёт сборка, панель опрашивает
  * статус; после неё показывает URL и историю релизов.
  */
@@ -144,7 +144,7 @@ export function HostingPanel({ projectId }: { projectId: string }) {
     <div className="panel-title hosting-head">
       <div className="panel-title-strong">
         <Globe2 size={15}/>
-        <strong>Хостинг</strong>
+        <strong>Публикация</strong>
       </div>
       <div className="hosting-head-actions">
         <button className="ghost-button" onClick={() => void load()} disabled={loading || Boolean(busy)} title="Перечитать состояние">
@@ -171,7 +171,7 @@ export function HostingPanel({ projectId }: { projectId: string }) {
       {!loading && state && !site ? <div className="hosting-hero">
         <div className="hosting-hero-icon"><Globe2 size={28}/></div>
         <div>
-          <span className="hosting-kicker">{project?.label ?? "Статический хостинг"}</span>
+          <span className="hosting-kicker">{project?.label ?? "Публикация в среде NestDev"}</span>
           <h2>Сайт по адресу <em>{state.domain}</em></h2>
           <p>{withFunctions
             ? "Соберём статику и " + functionsLabel(functions) + " в один релиз: файлы отдадим напрямую, а обработчики запустим в изолированных serverless-контейнерах."

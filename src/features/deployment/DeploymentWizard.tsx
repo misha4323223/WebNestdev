@@ -31,7 +31,7 @@ type StepId = "target" | "project" | "hosting" | "domain" | "database" | "servic
 type KnownArchitecture = Exclude<DeploymentArchitecture, "unknown">;
 
 const STEP_LABEL: Record<StepId, string> = {
-  target: "Хостинг",
+  target: "Площадка",
   project: "Проект",
   hosting: "Размещение",
   domain: "Домен",
@@ -169,7 +169,7 @@ export function DeploymentWizard({ projectId, onClose, onStarted, onOpenHosting 
   const [ignorePlan, setIgnorePlan] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
   // Развилка появляется до сводки: пользователь сначала выбирает, где живёт проект.
-  // Для статики хостинг проекта уже доступен — карточка ведёт во вкладку «Хостинг»;
+  // Для статики публикация уже доступна — карточка ведёт во вкладку «Публикация»;
   // серверным приложениям пока остаётся статус «Скоро».
   const [target, setTarget] = useState<"external" | null>(null);
 
@@ -214,7 +214,7 @@ export function DeploymentWizard({ projectId, onClose, onStarted, onOpenHosting 
   const databaseStep = Boolean(architecture === "server" || (options?.needs.database && architecture !== "static" && architecture !== "unknown"));
 
   const steps = useMemo<StepId[]>(() => {
-    // Пока не выбраны внешние облака, дальше развилки не пускаем: хостинг проекта
+    // Пока не выбраны внешние облака, дальше развилки не пускаем: публикация проекта
     // ещё не подключён и остаётся только статусом в первой карточке.
     if (target !== "external" || !options) return ["target"];
     if (architecture === "unknown") return ["target", "project"];
@@ -264,7 +264,7 @@ export function DeploymentWizard({ projectId, onClose, onStarted, onOpenHosting 
     setShape(defaultShape(next));
     setDatabaseMode(defaultDatabaseMode(next));
     // Смена типа меняет набор шагов: оставаться на «Проверке» старой архитектуры нельзя.
-    // Возвращаемся к сводке, а не к развилке хостинга — она уже пройдена.
+    // Возвращаемся к сводке, а не к развилке площадки — она уже пройдена.
     setStepIndex(1);
     setFormError("");
   }
@@ -283,7 +283,7 @@ export function DeploymentWizard({ projectId, onClose, onStarted, onOpenHosting 
 
   function next() {
     if (step === "target") {
-      if (target !== "external") { setFormError("Выберите хостинг."); return; }
+      if (target !== "external") { setFormError("Выберите, где размещаем проект."); return; }
       goTo(1);
       return;
     }
@@ -365,7 +365,7 @@ export function DeploymentWizard({ projectId, onClose, onStarted, onOpenHosting 
       <div className="modal-body deploy-body">
         {step === "target" && <>
           <div className="deploy-target-lead">
-            <span className="eyebrow">ХОСТИНГ</span>
+            <span className="eyebrow">ПУБЛИКАЦИЯ</span>
             <p>Где размещаем проект.</p>
           </div>
 
@@ -375,24 +375,24 @@ export function DeploymentWizard({ projectId, onClose, onStarted, onOpenHosting 
                   type="button"
                   className="deploy-target"
                   onClick={onOpenHosting}
-                  aria-label="Открыть хостинг статического сайта"
+                  aria-label="Открыть публикацию статического сайта"
                 >
                   <span className="deploy-target-head">
                     <span className="deploy-target-icon"><Server size={18}/></span>
                     <span className="deploy-target-badge live">ДОСТУПНО</span>
                   </span>
                   <span className="deploy-target-kicker">NESTDEV CLOUD</span>
-                  <strong>Хостинг проекта</strong>
-                  <span className="deploy-target-copy">Публичный HTTPS-адрес для статического сайта. Публикация и история версий — во вкладке «Хостинг».</span>
-                  <span className="deploy-target-cta">Открыть хостинг <ArrowRight size={12}/></span>
+                  <strong>Публикация в NestDev</strong>
+                  <span className="deploy-target-copy">Публичный HTTPS-адрес для статического сайта. Публикация и история версий — во вкладке «Публикация».</span>
+                  <span className="deploy-target-cta">Открыть публикацию <ArrowRight size={12}/></span>
                 </button>
-              : <div className="deploy-target is-soon" aria-label="Хостинг проекта — скоро">
+              : <div className="deploy-target is-soon" aria-label="Публикация в NestDev — скоро">
                   <span className="deploy-target-head">
                     <span className="deploy-target-icon"><Server size={18}/></span>
                     <span className="deploy-target-badge soon"><Sparkles size={9}/> СКОРО</span>
                   </span>
                   <span className="deploy-target-kicker">NESTDEV CLOUD</span>
-                  <strong>Хостинг проекта</strong>
+                  <strong>Публикация в NestDev</strong>
                   <span className="deploy-target-copy">Развернуть проект прямо в NestDev: контейнеры, домены и HTTPS — без внешнего облака.</span>
                   <span className="deploy-target-soon-note"><span className="deploy-target-soon-dot" aria-hidden="true"/>Готовим запуск. Пока выберите внешнее облако →</span>
                 </div>}
@@ -720,7 +720,7 @@ export function DeploymentWizard({ projectId, onClose, onStarted, onOpenHosting 
         <div className="deploy-foot-actions">
           <button className="ghost-button" onClick={onClose}>Отмена</button>
           {step === "target" && target !== "external"
-            ? <button className="send-button deploy-next" disabled>Выберите хостинг</button>
+            ? <button className="send-button deploy-next" disabled>Выберите площадку</button>
             : step !== "review"
               ? <button className="send-button deploy-next" onClick={next} disabled={!options || loading || (step !== "target" && architecture === "unknown") || (step === "hosting" && !selectedCloud)}>
                   Далее <ArrowRight size={13}/>
