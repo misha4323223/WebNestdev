@@ -90,9 +90,16 @@ test("лёгкий потолок настраивается и не опуск�
   });
 });
 
-test("общий потолок из SANDBOX_MEMORY отключает деление: админ задал одно число", () => {
-  withEnv({ SANDBOX_MEMORY: "1024m", SANDBOX_COMMAND_MEMORY_CLASS: undefined }, () => {
-    assert.equal(commandMemoryMb("ls -la", 1024), 1024);
+test("общий потолок из SANDBOX_MEMORY становится базой, а не отменой деления", () => {
+  // В production стоит SANDBOX_MEMORY=1g: он задаёт потолок по умолчанию, а лёгкая команда всё
+  // равно получает свой меньший потолок.
+  withEnv({ SANDBOX_MEMORY: "1g", SANDBOX_COMMAND_MEMORY_CLASS: undefined }, () => {
+    assert.equal(commandMemoryMb("ls -la", 1024), 256);
+    assert.equal(commandMemoryMb("npm run build", 1024), 1024);
+  });
+  withEnv({ SANDBOX_MEMORY: "512m", SANDBOX_COMMAND_MEMORY_CLASS: undefined }, () => {
+    assert.equal(commandMemoryMb("npm run build", 1024), 512, "обычная команда идёт по общему потолку");
+    assert.equal(commandMemoryMb("ls -la", 1024), 256);
   });
 });
 

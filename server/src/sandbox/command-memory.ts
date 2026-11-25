@@ -14,13 +14,22 @@
  * где вчера всё собиралось.
  *
  * Потолок лёгкого класса — `SANDBOX_MEMORY_LIGHT_MB` (по умолчанию 256 МБ, минимум 64). Он никогда
- * не поднимается выше базового `config.memoryMb` и никогда не применяется, когда администратор
- * задал единый потолок `SANDBOX_MEMORY`: тогда деление отключено, иначе резервация разошлась бы
- * с реальным `--memory` контейнера. Полный выключатель — `SANDBOX_COMMAND_MEMORY_CLASS=0`.
+ * не поднимается выше базового потолка, а базовым считается `SANDBOX_MEMORY`, если он задан, иначе
+ * `config.memoryMb`: в production `SANDBOX_MEMORY=1g` — это потолок по умолчанию, а не запрет
+ * деления (проверено на node-1 25.11.2026). Потолок команды передаётся в Docker отдельным
+ * аргументом и перекрывает `SANDBOX_MEMORY` (см. `docker/options.ts`), поэтому резервация в
+ * бюджете и реальный `--memory` совпадают. Полный выключатель — `SANDBOX_COMMAND_MEMORY_CLASS=0`.
+ *
+ * Минус, который надо помнить: под 256 МБ загрузка кучи не падает быстро, а тянет время. Замер на
+ * node-1: выделение ~380 МБ под потолком 256 МБ закончилось кодом 134 через 30 с, под 1024 МБ —
+ * успехом за 6.7 с. Поэтому список лёгких команд узкий, а любой сомнительный случай идёт с полным
+ * потолком.
  *
  * Средний класс намеренно отсутствует. «Немного уменьшить всем» — это ровно тот вариант, где
  * ошибка в оценке превращается в падение сборки у части проектов, а выигрыш никто не измерил.
  */
+
+import { memoryLimitMb } from "./memory-budget.js";
 
 export type CommandMemoryClass = "light" | "normal";
 
@@ -101,12 +110,13 @@ export function lightCommandMemoryMb(): number {
 }
 
 /**
- * Потолок памяти для конкретной команды. Обычные команды и всё неизвестное получают базовый
- * `config.memoryMb` без изменений — это и есть гарантия «вчера работало, сегодня работает».
+ * Потолок памяти для конкретной команды. Базовый `config.memoryMb` действует, если администратор не
+ * задал единый потолок `SANDBOX_MEMORY` (`1g` в production): тогда базой считается он. Обычные
+ * команды и всё неизвестное получают базу без изменений — это и есть гарантия «вчера работало,
+ * сегодня работает».
  */
 export function commandMemoryMb(command: string, baseMb: number): number {
-  const base = Math.max(1, Math.floor(baseMb));
-  if ((process.env.SANDBOX_MEMORY ?? "").trim()) return base;
+  const base = Math.max(1, Math.floor(memoryLimitMb(process.env.SANDBOX_MEMORY, baseMb)));
   if (commandMemoryClass(command) !== "light") return base;
   return Math.min(base, lightCommandMemoryMb());
 }
