@@ -177,6 +177,7 @@ import "./tools/python-tools.js";
 import "./tools/design-tools.js";
 import "./tools/image-tools.js";
 import "./tools/seo-tools.js";
+import "./tools/seo-check.js";
 import "./tools/view-image-tools.js";
 import "./tools/ui-tools.js";
 

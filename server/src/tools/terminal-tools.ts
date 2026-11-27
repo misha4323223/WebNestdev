@@ -165,7 +165,8 @@ registerTool({
     "Use it for a build, a test suite or a dev task that may take many minutes, instead of blocking a step with terminal.exec. " +
     "The command runs in the same isolated container (no network, no Docker, secret env files masked) and does not survive a server restart. " +
     "There is no outbound network in a background job either: it is for builds and tests that need no downloads, while packages must be installed first with npm.install. " +
-    "Read its output with terminal.tail {jobId}; stop it with terminal.stop. At most two jobs per project and four per host run at once.",
+    "Read its output with terminal.tail {jobId}; stop it with terminal.stop. At most two jobs per project and four per host run at once, and the sandbox has limited memory. " +
+    "If a job is refused because there is no free memory, wait for a running job to finish (terminal.jobs, terminal.tail) and start it again; do not launch a parallel replacement and do not retry in a loop.",
   parameters: { type: "object", additionalProperties: false, required: ["command"], properties: {
     command: { type: "string", description: "Одна команда оболочки, например `npm test`" },
     cwd: { type: "string", description: "Рабочий каталог внутри проекта; по умолчанию корень проекта" },

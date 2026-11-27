@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { ChatMessage } from "../types.js";
-import { PLANNER_MODE_PROMPT, PLATFORM_RULES, PREVIEW_RUNTIME_RULES, PROJECT_PLANNING_PROMPT, SYSTEM_PROMPT, appendTailNotice, browserCheckNotice, buildInitialMessages, closeInterruptedTurns, insertSystemNotice, mobileProjectNotice, storedHistory } from "./message-builder.js";
+import { INTERACTIVE_UI_RULES, PLANNER_MODE_PROMPT, PLATFORM_RULES, PREVIEW_RUNTIME_RULES, PROJECT_PLANNING_PROMPT, SEO_RULES, SYSTEM_PROMPT, appendTailNotice, browserCheckNotice, buildInitialMessages, closeInterruptedTurns, insertSystemNotice, mobileProjectNotice, storedHistory } from "./message-builder.js";
 
 /**
  * The stored chat is the model's memory of a run, so what it hands to a provider has to be exactly
@@ -169,6 +169,23 @@ test("агент знает про hybrid и оставляет чистый Doc
   assert.match(PREVIEW_RUNTIME_RULES, /package\.json\.preview\.apiUpstream/);
   assert.match(PREVIEW_RUNTIME_RULES, /same-origin route \/api\/upstream/);
   assert.match(PREVIEW_RUNTIME_RULES, /never say hybrid, container, listener or runner/i);
+});
+
+// Агент проверяет проект сам через seo.check, но аудит живого релиза остаётся у панели:
+// иначе модель либо пропускает шаг, либо отчитывается числами, которых не видела.
+test("решение до продолжения идёт через question.ask, а не через ui.render", () => {
+  assert.match(INTERACTIVE_UI_RULES, /is a decision for question\.ask/);
+  assert.match(INTERACTIVE_UI_RULES, /never replaces asking/);
+  assert.doesNotMatch(INTERACTIVE_UI_RULES, /should become a choice before you guess/i);
+});
+
+test("SEO: агент проверяет проект seo.check, аудит релиза делает панель", () => {
+  assert.match(SEO_RULES, /seo\.check/, "промт называет инструмент проверки");
+  assert.match(SEO_RULES, /fix its critical issues/);
+  assert.match(SEO_RULES, /publication panel audits the live release/);
+  assert.match(SEO_RULES, /never invent numbers you did not see/);
+  assert.ok(!/you have no audit tool/i.test(SEO_RULES), "у агента теперь есть проверка проекта");
+  assert.match(SEO_RULES, /Do not say 'SEO готово'/, "запрет на «SEO готово» без проверки остаётся");
 });
 
 /**

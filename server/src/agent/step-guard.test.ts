@@ -69,6 +69,36 @@ test("детектор замечает одно и то же три шага п
   assert.equal(detector.observe(read), null, "заметка не повторяется каждый шаг");
 });
 
+test("детектор замечает чередование A, B, A, B и не повторяет заметку", () => {
+  const detector = createProgressDetector();
+  const a = [{ name: "fs.read", arguments: { path: "a.ts" } }];
+  const b = [{ name: "project.verify", arguments: { path: "/" } }];
+  assert.equal(detector.observe(a), null);
+  assert.equal(detector.observe(b), null);
+  assert.equal(detector.observe(a), null);
+  const notice = detector.observe(b);
+  assert.ok(notice, "четвёртый шаг замыкает цикл");
+  assert.match(notice!, /alternate between the same two actions/);
+  assert.equal(detector.observe(a), null, "продолжение цикла не повторяет заметку");
+  assert.equal(detector.observe(b), null);
+  // Смена действия разрывает цикл и снова разрешает предупреждение.
+  assert.equal(detector.observe([{ name: "fs.grep", arguments: { pattern: "x" } }]), null);
+  assert.equal(detector.observe(a), null);
+  assert.equal(detector.observe(b), null);
+  assert.equal(detector.observe(a), null);
+  assert.ok(detector.observe(b), "после разрыва цикла детектор снова срабатывает");
+});
+
+test("пара «правка → проверка» сама по себе не считается циклом", () => {
+  const detector = createProgressDetector();
+  const edit = [{ name: "fs.edit", arguments: { path: "a.ts" } }];
+  const verify = [{ name: "project.verify", arguments: { path: "/" } }];
+  assert.equal(detector.observe(edit), null);
+  assert.equal(detector.observe(verify), null);
+  assert.equal(detector.observe(edit), null);
+  assert.equal(detector.observe([{ name: "fs.read", arguments: { path: "b.ts" } }]), null);
+});
+
 test("смена действий и ответ без вызовов сбрасывают счётчик", () => {
   const detector = createProgressDetector();
   const first = [{ name: "fs.read", arguments: { path: "a.ts" } }];

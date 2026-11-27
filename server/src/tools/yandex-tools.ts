@@ -58,6 +58,13 @@ registerTool({
     "instances, disks, Object Storage buckets and Serverless functions. Input: {folderId?:string}; without it the " +
     "folder saved in the connection is used. Use this to answer questions about the account and to find the ids " +
     "(folderId, subnetId, imageId) needed for further calls.",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      folderId: { type: "string", description: "Каталог Yandex Cloud; без него используется сохранённый в подключении" },
+    },
+  },
   execute: async (input, context) => {
     const { folderId } = resourcesSchema.parse(input ?? {});
     const refusal = await connectorRefusal(context.userId, "yandex");
@@ -82,6 +89,17 @@ registerTool({
     "create a function with POST serverless-functions.api.cloud.yandex.net /functions/v1/functions {folderId,name}. " +
     "A mutating call usually returns an Operation: poll GET " + METADATA_HOST + " /operation/v1/operations/{operationId} " +
     "until done is true, then read its metadata or response for the created or deleted resource id.",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    required: ["path"],
+    properties: {
+      method: { type: "string", enum: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"], description: "По умолчанию GET" },
+      host: { type: "string", description: "Хост *.api.cloud.yandex.net; по умолчанию resource-manager.api.cloud.yandex.net" },
+      path: { type: "string", description: "Путь, начинающийся с /, например /resource-manager/v1/clouds" },
+      body: { type: "object", additionalProperties: true, description: "Тело запроса для POST/PUT/PATCH" },
+    },
+  },
   execute: async (input, context) => {
     const request = requestSchema.parse(input ?? {});
     const refusal = await connectorRefusal(context.userId, "yandex");

@@ -6,6 +6,7 @@
  * start the agent. Keeping the types here means the catalog, the runner and the report cannot drift
  * apart.
  */
+import type { EvalToolCall, EvalToolPolicyOutcome } from "./tool-usage.js";
 
 /** Task classes from the capability plan: from a one-page site to a real platform repository. */
 export type EvalTaskSize = "landing" | "mvp" | "large" | "monorepo" | "real";
@@ -26,6 +27,10 @@ export type EvalTask = {
   repo?: string;
   /** Soft expectations used by the report, not by the pass/fail rule. */
   expectedFiles?: string[];
+  /** Инструменты, которые обязаны быть вызваны хотя бы раз. Проверяется отчётом, а не `ok`. */
+  mustCall?: string[];
+  /** Инструменты, которые не должны вызываться ни разу. */
+  mustNotCall?: string[];
   maxSteps?: number;
   maxMinutes?: number;
   tags?: string[];
@@ -45,6 +50,8 @@ export type EvalObservation = {
   /** How many times old context had to be trimmed for this task. */
   contextTrims?: number;
   cacheHitRate?: number;
+  /** Фактические вызовы инструментов; отсутствует, если адаптер их не измеряет. */
+  toolCalls?: EvalToolCall[];
   /** A short reason for a failed run; never a whole transcript. */
   error?: string;
   notes?: string;
@@ -72,6 +79,8 @@ export type EvalLimits = {
 export type EvalTaskResult = {
   task: EvalTask;
   ok: boolean;
+  /** Сверка вызовов с `mustCall`/`mustNotCall`; есть только у задач с политикой. */
+  toolPolicy?: EvalToolPolicyOutcome;
   skipped: boolean;
   startedAt: string;
   finishedAt: string;
@@ -98,6 +107,11 @@ export type EvalMetrics = {
   filesChanged: number;
   /** Average of the per-task cache hit rates that the adapter could measure. */
   cacheHitRate: number;
+  /**
+   * Дисциплина вызова инструментов. `checked` — задачи с политикой, `satisfied` — где она
+   * выполнена, `requiredHit` — сколько обязательных имён реально вызвано из `required`.
+   */
+  toolPolicy: { checked: number; satisfied: number; required: number; requiredHit: number; forbiddenCalls: number };
   bySize: Record<EvalTaskSize, { total: number; passed: number; successRate: number }>;
 };
 

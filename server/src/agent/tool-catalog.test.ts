@@ -10,6 +10,7 @@ test("каталог разработчика всегда оставляет и
   assert.ok(names.includes("agent.scout"));
   assert.ok(names.includes("image.view"), "локальное изображение можно показать главной модели напрямую");
   assert.ok(names.includes("ui.render"), "интерактивный интерфейс доступен обычному запуску");
+  assert.ok(names.includes("seo.check"), "проверка SEO до публикации доступна обычному запуску");
   assert.ok(names.includes("net.request"), "внешний API нужен обычной задаче");
   assert.ok(names.includes("net.download"), "скачивание ассета нужен обычной задаче");
   assert.ok(names.includes("database.status"), "проверка базы нужна до кода хранения");
@@ -40,8 +41,22 @@ test("переключатели и задача добавляют только
   // Проект-приложение получает сборку и без слова Expo в короткой реплике.
   const byProject = selectToolNames({ mode: "developer", task: "собери приложение", mobileProject: true });
   assert.ok(byProject.includes("expo.build") && byProject.includes("expo.status"));
+  // Незавершённый план деплоя важнее формулировки: «продолжай» — это продолжение работы.
+  const byPlan = selectToolNames({ mode: "developer", task: "продолжай", deployPlanActive: true });
+  for (const name of ["deploy.status", "deploy.plan", "deploy.check", "access.request"]) {
+    assert.ok(byPlan.includes(name), "план деплоя должен давать " + name);
+  }
+  const noPlan = selectToolNames({ mode: "developer", task: "продолжай" });
+  assert.ok(!noPlan.includes("deploy.status"), "без плана и без слов деплой не выдаётся");
   const notMobile = selectToolNames({ mode: "developer", task: "собери приложение" });
   assert.ok(!notMobile.includes("expo.build"), "обычный сайт не получает Expo");
+  // `ios` без границ слова матчил portfolios, scenarios, studios, radios и выдавал мобильные схемы.
+  for (const word of ["portfolios", "scenarios", "studios", "radios"]) {
+    const names = selectToolNames({ mode: "developer", task: "сделай лендинг с " + word });
+    assert.ok(!names.includes("expo.build"), word + " не должен включать Expo");
+  }
+  const ios = selectToolNames({ mode: "developer", task: "собери приложение для ios" });
+  assert.ok(ios.includes("expo.build"), "настоящий ios остаётся мобильным");
   const repo = selectToolNames({ mode: "developer", task: "найди заказы", repoMap: true });
   assert.ok(repo.includes("repo.map") && repo.includes("repo.find"));
   const tests = selectToolNames({ mode: "developer", task: "проверь тесты", testRunner: true });
@@ -56,6 +71,7 @@ test("планировщик не получает схемы изменяющи
   const names = selectToolNames({ mode: "planner", task: "составь план рефакторинга" });
   assert.ok(names.includes("fs.read"));
   assert.ok(names.includes("plan.update"));
+  assert.ok(names.includes("seo.check"), "планировщик может проверить SEO: инструмент только читает");
   assert.ok(!names.includes("plan.milestones"), "milestone-план планировщика выключен по умолчанию");
   for (const name of ["fs.write", "fs.edit", "git.commit", "preview.start", "project.check", "image.generate", "database.env", "service.env", "net.download", "cloud.request", "domain.request"]) {
     assert.ok(!names.includes(name), "планировщик не должен видеть " + name);

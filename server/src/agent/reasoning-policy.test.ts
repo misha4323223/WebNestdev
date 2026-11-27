@@ -19,6 +19,19 @@ test("сложная задача начинается с высокой глу�
   assert.equal(resolveReasoning({ ...base, task: "x".repeat(700) }), "high");
 });
 
+test("короткая просьба о продукте не идёт на самой дешёвой глубине", () => {
+  assert.equal(resolveReasoning({ ...base, task: "сделай интернет-магазин с корзиной" }), "medium");
+  assert.equal(resolveReasoning({ ...base, task: "нужен личный кабинет с оплатой" }), "medium");
+  assert.equal(resolveReasoning({ ...base, task: "поправь цвет кнопки" }), "low");
+  assert.equal(resolveReasoning({ ...base, task: "поправь цвет кнопки на лендинге" }), "low");
+});
+
+test("большой план держит среднюю глубину на первых шагах", () => {
+  assert.equal(resolveReasoning({ ...base, step: 2, task: "продолжай", planItems: 6, changedFiles: 1 }), "medium");
+  assert.equal(resolveReasoning({ ...base, step: 2, task: "поправь кнопку", planItems: 6, changedFiles: 1 }), "medium");
+  assert.equal(resolveReasoning({ ...base, step: 4, task: "поправь кнопку", planItems: 6, changedFiles: 1 }), "low");
+});
+
 test("после первой ошибки проверки глубина повышается", () => {
   assert.equal(resolveReasoning({ ...base, step: 4, verificationFailures: 1 }), "high");
   assert.equal(resolveReasoning({ ...base, step: 4, verificationFailures: 2 }), "high");

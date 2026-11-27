@@ -1,4 +1,5 @@
 import type { AgentMode, ReasoningEffort, ReasoningMode } from "../types.js";
+import { looksLikeProductBuild } from "./task-scale.js";
 
 /**
  * Насколько глубоко думать на конкретном шаге.
@@ -16,6 +17,8 @@ export type ReasoningPolicyInput = {
   verificationFailures?: number;
   /** Сколько файлов уже изменено: после начала работы рутина дешевле. */
   changedFiles?: number;
+  /** Сколько шагов в опубликованном плане: большой план держит глубину дольше. */
+  planItems?: number;
   resumed?: boolean;
 };
 
@@ -42,6 +45,9 @@ export function resolveReasoning(input: ReasoningPolicyInput): ReasoningEffort {
   if (step === 1) {
     if (input.resumed) return "high";
     if (complex) return "high";
+    // «Сделай интернет-магазин с корзиной» — короткая реплика про большой продукт: low здесь
+    // означал бы самый дешёвый разбор на всю сборку.
+    if (!planner && looksLikeProductBuild(input.task)) return "medium";
     // Очень короткая механическая правка не требует длинной цепи рассуждений.
     if (!planner && input.task.trim().length <= 160) return "low";
     return "medium";
@@ -50,6 +56,9 @@ export function resolveReasoning(input: ReasoningPolicyInput): ReasoningEffort {
   // После первого шага сложная задача ещё держит среднюю глубину, пока не появился изменённый
   // файл; дальше исполнение дешевле. Планировщик дольше остаётся на среднем уровне, потому что
   // его результат — сам план, а не правка.
+  // Большой план — не рутина первого шага: пока шагов много и правок ещё нет, дешёвая
+  // глубина приводит к повторным переделкам.
+  if ((input.planItems ?? 0) >= 4 && step <= 3) return "medium";
   if (complex && (input.changedFiles ?? 0) === 0 && step <= 3) return "medium";
   if (planner && step <= 2) return "medium";
   return "low";

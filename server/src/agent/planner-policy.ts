@@ -14,7 +14,7 @@ const PLANNER_READ_TOOLS = new Set([
   "terminal.tail", "terminal.jobs",
   "git.status", "git.diff", "git.log", "git.branch",
   "preview.status", "preview.logs",
-  "seo.templates",
+  "seo.templates", "seo.check",
   "database.status",
   "service.status", "service.secrets",
   "deploy.status", "deploy.check",

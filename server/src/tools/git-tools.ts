@@ -218,6 +218,19 @@ registerTool({
 registerTool({
   name: "git.add",
   description: "Stage project paths. Input: {paths:string[]}.",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    required: ["paths"],
+    properties: {
+      paths: {
+        type: "array",
+        minItems: 1,
+        items: { type: "string" },
+        description: "Пути внутри проекта, например [\"src/app.ts\"]; секретные env-файлы отклоняются",
+      },
+    },
+  },
   execute: async (input, context) => {
     const value = input as { paths?: string[] };
     if (!value.paths?.length) throw new Error("не указаны пути");
@@ -251,6 +264,14 @@ registerTool({
 registerTool({
   name: "git.commit",
   description: "Create a Git commit. Input: {message:string}.",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    required: ["message"],
+    properties: {
+      message: { type: "string", minLength: 1, description: "Сообщение коммита: что и зачем изменилось" },
+    },
+  },
   execute: async (input, context) => {
     const value = input as { message?: string };
     const message = value.message?.trim();

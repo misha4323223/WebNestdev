@@ -90,15 +90,25 @@ export type ProgressDetector = {
  * повтор бывает нормальным (повторная проверка после правки), три подряд — уже застревание.
  * Шаг без вызовов (модель отвечает) сбрасывает счётчик: работа закончилась, а не застряла.
  */
-export function createProgressDetector(options: { repeatThreshold?: number } = {}): ProgressDetector {
+export function createProgressDetector(options: { repeatThreshold?: number; windowSize?: number } = {}): ProgressDetector {
   const threshold = Math.max(2, Math.floor(options.repeatThreshold ?? 3));
+  // Окно нужно для чередования: A, B, A, B не повторяет один и тот же шаг подряд, но так же
+  // не двигает работу. Восемь шагов хватает, чтобы отличить цикл от пары «правка → проверка».
+  const windowSize = Math.max(4, Math.floor(options.windowSize ?? 8));
   let previous = "";
   let count = 0;
+  let window: string[] = [];
+  let alternatingNotified = false;
+  const clear = () => {
+    previous = "";
+    count = 0;
+    window = [];
+    alternatingNotified = false;
+  };
   return {
     observe(calls) {
       if (!calls.length) {
-        previous = "";
-        count = 0;
+        clear();
         return null;
       }
       const signature = stepSignature(calls);
@@ -108,6 +118,23 @@ export function createProgressDetector(options: { repeatThreshold?: number } = {
         previous = signature;
         count = 1;
       }
+      window.push(signature);
+      if (window.length > windowSize) window.shift();
+      const alternating = window.length >= 4 && (() => {
+        const [first, second, third, fourth] = window.slice(-4);
+        return first === third && second === fourth && first !== second;
+      })();
+      if (alternating && !alternatingNotified) {
+        // Одна заметка на серию: если модель продолжает цикл, повтор предупреждения только
+        // тратит контекст, а смена действий снова включает детектор.
+        alternatingNotified = true;
+        count = 0;
+        previous = "";
+        return "NO PROGRESS: the last steps alternate between the same two actions instead of moving forward. " +
+          "This loop produces no new information. Read the actual output of one of them, change the approach, " +
+          "or stop and name the blocker for the user instead of alternating again.";
+      }
+      if (!alternating) alternatingNotified = false;
       if (count < threshold) return null;
       // Заметка уходит один раз на серию: повторять её каждый шаг значило бы тратить контекст
       // на одно и то же предупреждение вместо работы.
@@ -117,10 +144,7 @@ export function createProgressDetector(options: { repeatThreshold?: number } = {
         "produced no new information. Repeating them will not change the result. Re-read the actual output, " +
         "choose a different approach, or stop and name the blocker for the user instead of retrying.";
     },
-    reset() {
-      previous = "";
-      count = 0;
-    },
+    reset: clear,
     repeats() {
       return count;
     },

@@ -53,6 +53,9 @@ export const EVAL_TASKS: EvalTask[] = [
     repo: "eval://landing-multi-page",
     expectedFiles: ["index.html", "services.html"],
     maxMinutes: 5,
+    // SEO-правка без прогона seo.check — это «сделал и надеюсь»; внешний деплой здесь не нужен.
+    mustCall: ["seo.check"],
+    mustNotCall: ["deploy.plan"],
     tags: ["frontend", "seo"],
   },
   {
@@ -83,6 +86,8 @@ export const EVAL_TASKS: EvalTask[] = [
     verify: ["npm run build"],
     repo: "eval://landing-bug",
     maxMinutes: 5,
+    mustCall: ["project.verify"],
+    mustNotCall: ["deploy.plan"],
     tags: ["frontend", "bug", "debugging"],
   },
   {
@@ -105,6 +110,8 @@ export const EVAL_TASKS: EvalTask[] = [
     verify: ["npm test", "npm run build"],
     repo: "eval://mvp-notes",
     maxMinutes: 10,
+    // Хранение данных: соединение проверяется до кода, а не после падения запроса.
+    mustCall: ["database.status"],
     tags: ["fullstack", "auth", "crud"],
   },
   {
@@ -125,6 +132,7 @@ export const EVAL_TASKS: EvalTask[] = [
     verify: ["npm test", "npm run migrate"],
     repo: "eval://mvp-orders",
     maxMinutes: 10,
+    mustCall: ["database.status"],
     tags: ["database", "migration"],
   },
   {
@@ -155,6 +163,9 @@ export const EVAL_TASKS: EvalTask[] = [
     verify: ["npm test"],
     repo: "eval://mvp-orders",
     maxMinutes: 8,
+    // Ключ уже в окружении: сначала посмотреть имена секретов, а не просить ключ в чате.
+    mustCall: ["service.secrets"],
+    mustNotCall: ["secrets.request"],
     tags: ["backend", "email", "secrets"],
   },
   {
@@ -207,6 +218,7 @@ export const EVAL_TASKS: EvalTask[] = [
     verify: ["npm test", "npm run build"],
     repo: "eval://large-shop",
     maxMinutes: 10,
+    mustCall: ["plan.update"],
     tags: ["fullstack", "feature", "tests"],
   },
   {
@@ -217,6 +229,7 @@ export const EVAL_TASKS: EvalTask[] = [
     verify: ["npm test", "npm run migrate"],
     repo: "eval://large-crm",
     maxMinutes: 10,
+    mustCall: ["database.status"],
     tags: ["database", "migration", "backward-compatibility"],
   },
   {
@@ -341,6 +354,7 @@ export const EVAL_TASKS: EvalTask[] = [
     verify: ["npm test"],
     repo: "eval://nestdev",
     maxMinutes: 10,
+    mustCall: ["project.verify"],
     tags: ["real", "backend", "bug"],
   },
   {
@@ -361,6 +375,7 @@ export const EVAL_TASKS: EvalTask[] = [
     verify: ["npm test"],
     repo: "eval://nestdev",
     maxMinutes: 10,
+    mustCall: ["database.status"],
     tags: ["real", "database", "reliability"],
   },
   {
@@ -371,6 +386,8 @@ export const EVAL_TASKS: EvalTask[] = [
     verify: ["npm test", "npm run build"],
     repo: "eval://nestdev",
     maxMinutes: 10,
+    mustCall: ["seo.check"],
+    mustNotCall: ["deploy.plan"],
     tags: ["real", "seo", "fullstack"],
   },
   {
@@ -397,6 +414,15 @@ export function validateEvalCatalog(tasks: EvalTask[] = EVAL_TASKS): string[] {
     if (!task.verify.length) problems.push(task.id + ": нет команд проверки");
     if (task.maxMinutes !== undefined && (task.maxMinutes <= 0 || task.maxMinutes > 10)) {
       problems.push(task.id + ": maxMinutes должен быть от 1 до 10");
+    }
+    const must = task.mustCall ?? [];
+    const not = task.mustNotCall ?? [];
+    if ([...must, ...not].some(name => !name.trim())) {
+      problems.push(task.id + ": пустое имя инструмента в политике вызовов");
+    }
+    const overlap = must.filter(name => not.includes(name));
+    if (overlap.length) {
+      problems.push(task.id + ": инструмент одновременно обязательный и запрещённый: " + overlap.join(", "));
     }
   }
   if (tasks.length < 30 || tasks.length > 40) problems.push("в каталоге должно быть 30–40 задач, сейчас " + tasks.length);

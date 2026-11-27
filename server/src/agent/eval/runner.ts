@@ -10,6 +10,7 @@ import {
   type EvalTaskResult,
   type EvalTaskSize,
 } from "./types.js";
+import { checkToolPolicy, describeToolPolicy, hasToolPolicy } from "./tool-usage.js";
 
 /** The capability plan forbids a single eval task longer than ten minutes. */
 export const MAX_EVAL_TASK_TIMEOUT_MS = 10 * 60 * 1000;
@@ -114,6 +115,20 @@ function emptyObservation(error: string): EvalObservation {
   return { ok: false, error };
 }
 
+/** Свод по политике вызовов: только задачи, у которых она вообще задана. */
+function toolPolicyMetrics(results: EvalTaskResult[]): EvalMetrics["toolPolicy"] {
+  const outcomes = results
+    .filter(result => !result.skipped && result.toolPolicy)
+    .map(result => result.toolPolicy!);
+  return {
+    checked: outcomes.length,
+    satisfied: outcomes.filter(outcome => outcome.satisfied).length,
+    required: outcomes.reduce((sum, outcome) => sum + outcome.required.length, 0),
+    requiredHit: outcomes.reduce((sum, outcome) => sum + outcome.required.length - outcome.missing.length, 0),
+    forbiddenCalls: outcomes.reduce((sum, outcome) => sum + outcome.forbiddenCalled.length, 0),
+  };
+}
+
 function percentile(sorted: number[], q: number): number {
   if (!sorted.length) return 0;
   return sorted[Math.min(sorted.length - 1, Math.max(0, Math.ceil(q * sorted.length) - 1))];
@@ -175,6 +190,7 @@ export function computeEvalMetrics(results: EvalTaskResult[]): EvalMetrics {
     },
     filesChanged: observations.reduce((sum, observation) => sum + (observation.filesChanged?.length ?? 0), 0),
     cacheHitRate: cacheRates.length ? cacheRates.reduce((sum, value) => sum + value, 0) / cacheRates.length : 0,
+    toolPolicy: toolPolicyMetrics(results),
     bySize,
   };
 }
@@ -234,6 +250,9 @@ export async function runEvalSuite(options: RunEvalOptions): Promise<EvalReport>
     const result: EvalTaskResult = {
       task,
       ok: observation.ok,
+      // Политика вызовов — отдельная строка отчёта: ok остаётся приговором адаптера, иначе
+      // метрика успеха смешалась бы с дисциплиной вызова инструментов.
+      ...(hasToolPolicy(task) ? { toolPolicy: checkToolPolicy(observation.toolCalls ?? [], task) } : {}),
       skipped: false,
       startedAt: new Date(taskStarted).toISOString(),
       finishedAt: new Date(taskFinished).toISOString(),
@@ -298,6 +317,7 @@ export function formatEvalReportMarkdown(report: EvalReport): string {
     "| Тесты | " + m.tests.passed + " / " + m.tests.total + " зелёных |",
     "| Изменено файлов | " + m.filesChanged + " |",
     "| Cache hit | " + percent(m.cacheHitRate) + " |",
+    "| Инструменты | " + m.toolPolicy.requiredHit + " / " + m.toolPolicy.required + " обязательных; политика выполнена в " + m.toolPolicy.satisfied + " / " + m.toolPolicy.checked + " задачах; запрещённых вызовов " + m.toolPolicy.forbiddenCalls + " |",
     "| Регрессии | " + m.regressions + " |",
     "| Вмешательства человека | " + m.interventions + " |",
     "| Сжатия контекста | " + m.contextTrims + " |",
@@ -313,13 +333,14 @@ export function formatEvalReportMarkdown(report: EvalReport): string {
     "",
     "## Задачи",
     "",
-    "| Задача | Размер | Результат | Время | Токены | Причина |",
-    "| --- | --- | --- | ---: | ---: | --- |",
+    "| Задача | Размер | Результат | Время | Токены | Инструменты | Причина |",
+    "| --- | --- | --- | ---: | ---: | --- | --- |",
     ...report.results.map(result => {
       const tokens = (result.observation?.tokens?.input ?? 0) + (result.observation?.tokens?.output ?? 0);
       const status = result.skipped ? "пропущена" : result.ok ? "успех" : "ошибка";
       return "| " + cell(result.task.id) + " | " + result.task.size + " | " + status + " | " +
         (result.skipped ? "—" : duration(result.durationMs)) + " | " + (result.skipped ? "—" : tokens) + " | " +
+        (result.skipped ? "—" : cell(describeToolPolicy(result.toolPolicy))) + " | " +
         cell(result.error ?? result.observation?.error ?? "") + " |";
     }),
     "",

@@ -49,6 +49,13 @@ registerTool({
     "Input: {path?:string} — the env file the app should see, '.env.local' by default. Only DATABASE_URL and the engine's conventional alias " +
     "(MONGODB_URI, REDIS_URL, YDB_CONNECTION_STRING) are written; other variables are preserved. The password is stored encrypted and is never echoed back, " +
     "so never print it in your answer.",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      path: { type: "string", description: "Env-файл, который увидит приложение; по умолчанию .env.local" },
+    },
+  },
   execute: async (input, context) => {
     const { path: requested } = envSchema.parse(input ?? {});
     const connection = await getDatabaseConnection(context.userId);

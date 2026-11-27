@@ -18,6 +18,10 @@ import { reviewChanges,reviewFeedback } from "./agent/reviewer.js";
 import type { EventSink } from "./agent/types.js";
 import { createReasoningBlock } from "./agent/reasoning-blocks.js";
 import { selectToolNames } from "./agent/tool-catalog.js";
+import { systemPromptFor } from "./agent/prompt-assembly.js";
+import { hasActiveDeployPlan } from "./agent/deploy-state.js";
+import { resolveObjective } from "./agent/goal-from-history.js";
+import { readDeployPlan } from "./deploy/deploy-plan.js";
 import { createScoutRunner,SCOUT_BUDGET_TOKENS,SCOUT_MAX_MESSAGES } from "./agent/scout.js";
 import { resolveReasoning } from "./agent/reasoning-policy.js";
 import { agentStepLimit,contextBudgetTokensFor,contextMaxMessagesFor,boundToolOutput,DEFAULT_CHARS_PER_TOKEN } from "./agent/context-budget.js";
@@ -163,7 +167,10 @@ export class AgentRuntime {
         try{savedPlan=await getConversationPlan(request.conversationId);}catch(error){console.error("Failed to read the stored plan",error);}
       }
       const activeSavedPlan=savedPlan&&Array.isArray(savedPlan.items)&&savedPlan.items.some(item=>item.status!=="done")?savedPlan:undefined;
-      const working=createWorkingMemory(task,activeSavedPlan);
+      // Короткое «продолжай» не должно становиться целью запуска: с незавершённым планом цель —
+      // предыдущая содержательная просьба пользователя из этой же истории.
+      const earlierUserTexts=history.filter(message=>message.role==="user").map(message=>message.content).slice(0,-1);
+      const working=createWorkingMemory(resolveObjective({task,previousUserMessages:earlierUserTexts,hasActivePlan:Boolean(activeSavedPlan)}),activeSavedPlan);
       working.planFromPreviousRun=Boolean(activeSavedPlan);
       // Kill switch: a plan written while AGENT_MILESTONES was on must not keep milestone
       // instructions in the prompt after the flag is turned off.
@@ -187,10 +194,16 @@ export class AgentRuntime {
       // короткое «собери приложение» приходило без expo.build, и агент отвечал, что сборку
       // запускать нечем. Expo-приложение может лежать в подкаталоге (admin-app, mobile), поэтому
       // ищем его и ниже корня, а не только в корне.
-      const expoApps=await getSandbox(request.projectId,request.userId)
-        .then(async sandbox=>await findExpoApps(sandbox.root))
-        .catch(()=>[] as string[]);
+      const sandboxForRun=getSandbox(request.projectId,request.userId);
+      // Оба признака — состояние проекта, а не слова в реплике: «продолжай» после перезагрузки
+      // остаётся продолжением деплоя, а короткое «собери приложение» — мобильной сборкой.
+      // Ошибка чтения плана не валит запуск: это «плана нет», а не повод отказать в работе.
+      const [expoApps,deployPlan]=await Promise.all([
+        sandboxForRun.then(async sandbox=>await findExpoApps(sandbox.root)).catch(()=>[] as string[]),
+        sandboxForRun.then(async sandbox=>await readDeployPlan(sandbox.root)).catch(()=>null),
+      ]);
       const mobileProject=expoApps.length>0;
+      const deployPlanActive=hasActiveDeployPlan(deployPlan);
       // Собирать на EAS нужно только тогда, когда об этом просят: наличие Expo-приложения в
       // проекте — ещё не просьба о мобильной сборке, а веб-сборку корня делает npm.
       const mobileIntent=mobileBuildIntent(task);
@@ -206,16 +219,17 @@ export class AgentRuntime {
         archMemory,
         milestones,
         mobileProject,
+        deployPlanActive,
       });
       // Одна строка на запуск: по ней видно, получила ли модель инструменты сборки. Без неё спор
       // «инструмент не выдан или модель его не вызвала» приходится решать догадками.
-      console.log("[agent] mode="+mode+" mobile="+mobileProject+" intent="+mobileIntent+" apps="+JSON.stringify(expoApps)+" expoTools="+toolNames.filter(name=>name.startsWith("expo.")).join(","));
+      console.log("[agent] mode="+mode+" mobile="+mobileProject+" intent="+mobileIntent+" apps="+JSON.stringify(expoApps)+" expoTools="+toolNames.filter(name=>name.startsWith("expo.")).join(",")+" deployPlan="+deployPlanActive+" deployTools="+toolNames.filter(name=>name.startsWith("deploy.")).join(","));
       // Остановленный в прошлый раз запуск не оставляет ответа на просьбу пользователя, и она
       // выглядит для модели действующей задачей. Заметка закрывает такой ход, и новое сообщение
       // («ты тут?») не превращается в продолжение старой команды. При `resume` её быть не должно:
       // там пользователь как раз просит продолжить.
       const cleanHistory=request.resume?history:closeInterruptedTurns(history);
-      let messages:ChatMessage[]=buildInitialMessages(cleanHistory,projectContext+"\n\nTASK-RELEVANT SOURCE FILES\n"+relevantFiles,mode,planning);
+      let messages:ChatMessage[]=buildInitialMessages(cleanHistory,projectContext+"\n\nTASK-RELEVANT SOURCE FILES\n"+relevantFiles,mode,planning,systemPromptFor(toolNames));
       // Переключатель поиска в интернете живёт в панели ввода, поэтому модель узнаёт о нём из
       // заметки, а инструменты проверяют тот же флаг сами (web-tools.ts). Выключенный поиск —
       // не повод выдумывать факты, а повод попросить пользователя включить кнопку.
@@ -578,6 +592,7 @@ export class AgentRuntime {
           mode,
           verificationFailures:consecutiveVerifyFailures,
           changedFiles:changedFiles.size,
+          planItems:working.plan?.items?.length??0,
           resumed:Boolean(request.resume),
         });
         const context={runId,request,emit,signal,step:step+1,toolNames:stepLimitReached?[]:toolNames,model,reasoning:stepReasoning,scout};

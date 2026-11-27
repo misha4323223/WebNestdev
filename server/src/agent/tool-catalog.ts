@@ -21,7 +21,7 @@ const CORE_TOOLS = [
   "npm.install", "pip.install",
   "git.status", "git.diff", "git.log", "git.branch", "git.pull", "git.add", "git.commit",
   "preview.start", "preview.stop", "preview.status", "preview.logs",
-  "project.verify", "project.check", "project.assets", "seo.templates",
+  "project.verify", "project.check", "project.assets", "seo.templates", "seo.check",
   // Эти инструменты нужны обычной задаче, а не только деплою: системный промпт прямо
   // требует net.request/net.download для внешних API и файлов, database.status — перед
   // написанием хранения, service.status — перед просьбой о ключе интеграции.
@@ -65,7 +65,7 @@ const INTEGRATION_TOOLS = [
 const MOBILE_PREFIX = "expo.";
 
 const DEPLOY_RE = /(депло|deploy|хостинг|hosting|домен|domain|dns|ssl|сервер|vps|облак|cloud|yandex|яндекс|s3|storage|хранилищ|почт|email|smtp|оплат|payment|stripe|юkassa|подключ|интеграц|база данных|database|postgres|mysql|mongo|redis)/i;
-const MOBILE_RE = /(expo|react native|мобильн|android|ios)/i;
+const MOBILE_RE = /(expo|react native|мобильн|\bandroid\b|\bios\b)/i;
 
 export type ToolCatalogOptions = {
   mode: AgentMode;
@@ -85,6 +85,12 @@ export type ToolCatalogOptions = {
    * выдаются независимо от формулировки реплики: «собери приложение» тоже про сборку.
    */
   mobileProject?: boolean;
+  /**
+   * В проекте есть незавершённый `deploy_project.md`. Это состояние работы, а не слово в реплике:
+   * «продолжай» после перезагрузки — тоже продолжение деплоя, и без группы `deploy.*` промт
+   * требовал бы инструмент, которого модель не получила.
+   */
+  deployPlanActive?: boolean;
 };
 
 function isDeployTool(name: string) {
@@ -105,6 +111,9 @@ export function selectToolNames(options: ToolCatalogOptions): string[] {
   // Слова в задаче — не единственный признак: проект может быть Expo-приложением, а реплика
   // короткой («собери приложение»). Тогда инструменты сборки нужны так же.
   const mobile = MOBILE_RE.test(task) || options.mobileProject === true;
+  // Незавершённый план развёртывания — такой же признак проекта, как Expo-приложение: реплика
+  // может быть короткой, а работа всё ещё продолжается.
+  const deployPlan = options.deployPlanActive === true;
   const planner = options.mode === "planner";
   const names: string[] = [
     ...CORE_TOOLS,
@@ -117,7 +126,7 @@ export function selectToolNames(options: ToolCatalogOptions): string[] {
     ...(options.browserCheck ? BROWSER_TOOLS : []),
   ];
   // Дополнительные группы добавляются после ядра, чтобы порядок схем оставался предсказуемым.
-  if (deploy) names.push("deploy.plan", "deploy.status", "deploy.check", "access.request");
+  if (deploy || deployPlan) names.push("deploy.plan", "deploy.status", "deploy.check", "access.request");
   // Остальные инструменты групп находятся по префиксу в полном реестре: так новая команда
   // внутри уже выбранной группы не потеряется из-за забытого списка.
   const fromRegistry = (name: string) => {

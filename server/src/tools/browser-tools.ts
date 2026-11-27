@@ -109,7 +109,16 @@ function inspectHtml(body: string) {
 registerTool({
   name: "browser.open",
   description:
-    "Open the project's running Preview page over HTTP and return status, headers, content type, bounded body, and basic HTML diagnostics. Use this to inspect what the generated website actually serves.",
+    "Open the project's running Preview page over HTTP and return status, headers, content type, bounded body, and basic HTML diagnostics. " +
+    "Input: {path?:string} — the Preview route, for example / or /about; default /. " +
+    "Use this to inspect what the generated website actually serves.",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      path: { type: "string", description: "Маршрут предпросмотра, например / или /about; по умолчанию /" },
+    },
+  },
   execute: async (input, context) => {
     const path = getPath(input);
     const { response, body, source } = await fetchPreview(context.projectId, path);
@@ -434,7 +443,16 @@ registerTool({
 registerTool({
   name: "browser.inspect",
   description:
-    "Inspect a Preview HTML page without returning the full body. Reports title, loaded resource references, counts, and common error strings found in the server-rendered HTML. This does not claim to execute JavaScript.",
+    "Inspect a Preview HTML page without returning the full body. Reports title, loaded resource references, counts, and common error strings found in the server-rendered HTML. " +
+    "Input: {path?:string} — the Preview route, for example / or /about; default /. " +
+    "This does not claim to execute JavaScript.",
+  parameters: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      path: { type: "string", description: "Маршрут предпросмотра, например / или /about; по умолчанию /" },
+    },
+  },
   execute: async (input, context) => {
     const path = getPath(input);
     const { response, body, source } = await fetchPreview(context.projectId, path);
