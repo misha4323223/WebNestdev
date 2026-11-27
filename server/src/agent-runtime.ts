@@ -3,7 +3,7 @@ import type { AgentRunRequest,ChatMessage,PlanState,ReasoningBlock } from "./typ
 import { createProvider } from "./provider.js";
 import { planAllows } from "./account/entitlements.js";
 import { appendConversationMessages,getConversationPlan,getProject,getProjectProvider,saveConversationPlan } from "./project-store.js";
-import { browserCheckNotice,buildInitialMessages,closeInterruptedTurns,insertSystemNotice,resumeNotice,storedHistory,webSearchNotice } from "./agent/message-builder.js";
+import { browserCheckNotice,buildInitialMessages,closeInterruptedTurns,insertSystemNotice,mobileProjectNotice,resumeNotice,storedHistory,webSearchNotice } from "./agent/message-builder.js";
 import { notesNotice,notesUpdateNotice,readNoteLines } from "./agent/notes.js";
 import { agentPlanBrief } from "./agent/plan-brief.js";
 import { buildProjectContext } from "./agent/context-builder.js";
@@ -64,7 +64,7 @@ import { createFreeModelRoute } from "./provider/free-model.js";
 import { cacheHitRate } from "./provider/prompt-caching.js";
 import { getSandbox } from "./sandbox-manager.js";
 import { readBuildScript } from "./preview/static-plan.js";
-import { inspectExpoProject } from "./expo/expo-api.js";
+import { findExpoApps } from "./expo/expo-detect.js";
 import { recordRunUsage } from "./account/usage-store.js";
 import { creditsForUsage, mainCreditRates, type CreditRates } from "./account/credits.js";
 import { beginRun,endRun } from "./agent/active-runs.js";
@@ -184,10 +184,12 @@ export class AgentRuntime {
       const browserCheckEnabled=request.browserCheck===true;
       // Мобильный проект определяется по самому проекту, а не по словам в реплике: иначе
       // короткое «собери приложение» приходило без expo.build, и агент отвечал, что сборку
-      // запускать нечем.
-      const mobileProject=await getSandbox(request.projectId,request.userId)
-        .then(async sandbox=>(await inspectExpoProject(sandbox.root,"")).isExpo)
-        .catch(()=>false);
+      // запускать нечем. Expo-приложение может лежать в подкаталоге (admin-app, mobile), поэтому
+      // ищем его и ниже корня, а не только в корне.
+      const expoApps=await getSandbox(request.projectId,request.userId)
+        .then(async sandbox=>await findExpoApps(sandbox.root))
+        .catch(()=>[] as string[]);
+      const mobileProject=expoApps.length>0;
       // Каталог фиксируется один раз на запуск: схемы не должны меняться между шагами,
       // иначе кэш префикса DeepSeek будет промахиваться на каждом запросе.
       const toolNames=selectToolNames({
@@ -213,6 +215,9 @@ export class AgentRuntime {
       messages=insertSystemNotice(messages,webSearchNotice(request.webSearch===true));
       // Тот же принцип для Chromium: без разрешения модель не должна тратить шаг на отказ.
       messages=insertSystemNotice(messages,browserCheckNotice(browserCheckEnabled));
+      // Планировщик не собирает проект и не получает expo.build: заметка про сборку ему только врёт.
+      const mobileNotice=mode==="planner"?"":mobileProjectNotice(expoApps);
+      if(mobileNotice)messages=insertSystemNotice(messages,mobileNotice);
       // Тариф известен до первого изменения: иначе агент на «Плюсе» может начать постоянный
       // сервер, пообещать фоновые задания или потратить шаг на отказ по квоте, о которой ему
       // ничего не сказали. Заметка собирается из того же каталога, что и серверные проверки.

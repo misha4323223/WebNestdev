@@ -2,7 +2,7 @@ import { z } from "zod";
 import path from "node:path";
 import { registerTool } from "../tool-registry.js";
 import { getSandbox } from "../sandbox-manager.js";
-import { resolveInsideSandbox, writeFileInside } from "../sandbox/path-guard.js";
+import { writeFileInside } from "../sandbox/path-guard.js";
 import { openDirsForSandbox, openFileForSandbox } from "../sandbox/permissions.js";
 import { FREE_CONNECTOR_MESSAGE, connectorRefusal } from "../account/connector-access.js";
 import {
@@ -17,6 +17,7 @@ import {
   runEas,
 } from "../expo/expo-api.js";
 import { expoEgressProblem, expoEgressReport } from "../expo/expo-egress.js";
+import { locateExpoApp } from "../expo/expo-detect.js";
 
 /**
  * Expo/EAS для агента.
@@ -58,7 +59,6 @@ function shellQuote(value: string) {
 /** Сеть и контейнер — только для этого вызова; токен берём из карточки или секретов проекта. */
 async function prepare(projectId: string, userId: string, relativeCwd = "") {
   const sandbox = await getSandbox(projectId, userId);
-  const directory = await resolveInsideSandbox(sandbox.root, path.join(sandbox.root, relativeCwd));
   // Секреты проекта и карточка интеграции равноправны: если человек уже положил EXPO_TOKEN
   // в «Секреты проекта», просить его подключить карточку заново нельзя.
   const credential = await getExpoCredential(projectId, userId, sandbox.root);
@@ -70,19 +70,16 @@ async function prepare(projectId: string, userId: string, relativeCwd = "") {
       "Токен текстом в чате не просите: значение вводится только в защищённом окне.",
     );
   }
-  const project = await inspectExpoProject(sandbox.root, relativeCwd);
-  if (!project.isExpo) {
-    throw new Error(
-      "В выбранном каталоге нет проекта Expo. Нужен package.json с зависимостью expo и app.json/app.config.*. " +
-      "Если приложение лежит в подкаталоге, передайте cwd, например 'mobile'.",
-    );
-  }
+  // Приложение может лежать не в корне проекта: без cwd единственный Expo-каталог подставляется
+  // сам, иначе инструмент не находил сборку там, где она есть.
+  const found = await locateExpoApp(sandbox.root, relativeCwd);
+  if (!found.ok) throw new Error(found.problem);
   // EAS CLI работает только через сеть песочницы. Если фильтр платформы не пускает Expo, говорим
   // об этом до запуска контейнера: иначе модель получает сетевую ошибку и объясняет её себе
   // ограничением своих инструментов.
   const blocked = expoEgressProblem();
   if (blocked) throw new Error(blocked);
-  return { credential, sandbox, directory, project };
+  return { credential, sandbox, directory: found.project.directory, project: found.project, cwd: found.cwd, autoCwd: found.auto };
 }
 
 /** EAS — мобильный сервис: на бесплатном тарифе он закрыт вместе с остальными коннекторами. */
@@ -130,32 +127,36 @@ registerTool({
     }
     const sandbox = await getSandbox(context.projectId, context.userId);
     const credential = await getExpoCredential(context.projectId, context.userId, sandbox.root);
-    const project = await inspectExpoProject(sandbox.root, cwd ?? "");
-    const profiles = project.profiles.length ? project.profiles : ["production"];
+    const found = await locateExpoApp(sandbox.root, cwd ?? "");
+    const project = found.ok ? found.project : null;
+    const profiles = project?.profiles.length ? project.profiles : ["production"];
+    const autoNote = found.ok && found.auto ? " Приложение найдено в «" + found.cwd + "», cwd определён автоматически." : "";
+    const note = !credential
+      ? "Expo не подключён: нет ни карточки интеграции, ни EXPO_TOKEN в секретах проекта. Вызовите secrets.request {variable:'EXPO_TOKEN'} — пользователь вставит токен в защищённую карточку, и сборка пойдёт через секрет."
+      : !found.ok
+        ? found.problem
+        : !project?.projectId
+          ? "Проект Expo ещё не связан с EAS. Вызовите expo.setup, затем повторите сборку." + autoNote
+          : !project.hasEasJson
+            ? "В проекте нет eas.json. Вызовите expo.setup — он создаст базовые профили development/preview/production." + autoNote
+            : "Всё готово к сборке: expo.build {platform, profile}." + autoNote;
     return {
       connected: Boolean(credential),
       account: credential?.account || null,
       tokenSource: credential?.source ?? null,
       project: {
-        isExpo: project.isExpo,
-        appConfig: project.appConfigFile,
-        hasEasJson: project.hasEasJson,
-        easProjectId: project.projectId || null,
-        slug: project.slug || null,
-        owner: project.owner || null,
+        isExpo: Boolean(project),
+        cwd: found.ok ? found.cwd || "." : null,
+        appConfig: project?.appConfigFile ?? null,
+        hasEasJson: project?.hasEasJson ?? false,
+        easProjectId: project?.projectId || null,
+        slug: project?.slug || null,
+        owner: project?.owner || null,
         buildProfiles: profiles,
       },
       network: expoEgressReport(),
       expoGo: "not_available",
-      note: !credential
-        ? "Expo не подключён: нет ни карточки интеграции, ни EXPO_TOKEN в секретах проекта. Вызовите secrets.request {variable:'EXPO_TOKEN'} — пользователь вставит токен в защищённую карточку, и сборка пойдёт через секрет."
-        : !project.isExpo
-          ? "Expo подключён, но в этом каталоге не найден проект Expo. Укажите cwd подкаталога приложения."
-          : !project.projectId
-            ? "Проект Expo ещё не связан с EAS. Вызовите expo.setup, затем повторите сборку."
-            : !project.hasEasJson
-              ? "В проекте нет eas.json. Вызовите expo.setup — он создаст базовые профили development/preview/production."
-              : "Всё готово к сборке: expo.build {platform, profile}.",
+      note,
     };
   },
 });
@@ -180,7 +181,7 @@ registerTool({
     const parsed = z.object({ cwd: cwdSchema, account: accountSchema, projectId: projectIdSchema }).parse(input ?? {});
     const refusal = await mobileRefusal(context.userId);
     if (refusal) return { ok: false, restricted: true, code: refusal.code, error: refusal.error };
-    const { credential, sandbox, directory, project } = await prepare(context.projectId, context.userId, parsed.cwd ?? "");
+    const { credential, sandbox, directory, project, cwd: appCwd } = await prepare(context.projectId, context.userId, parsed.cwd ?? "");
     if (!project.hasEasJson) {
       const target = path.join(directory, "eas.json");
       await writeFileInside(sandbox.root, target, JSON.stringify(defaultEasJson, null, 2) + "\n");
@@ -208,7 +209,7 @@ registerTool({
     if (!result.ok) {
       throw new Error("EAS init не завершился: " + tail(result.stderr || result.stdout) + easNetworkHint(result.stderr || result.stdout));
     }
-    const after = await inspectExpoProject(sandbox.root, parsed.cwd ?? "");
+    const after = await inspectExpoProject(sandbox.root, appCwd);
     let raw: unknown = null;
     try {
       raw = parseEasJson(result.stdout);
@@ -260,7 +261,7 @@ registerTool({
     }).parse(input ?? {});
     const refusal = await mobileRefusal(context.userId);
     if (refusal) return { ok: false, restricted: true, code: refusal.code, error: refusal.error };
-    const { credential, sandbox, directory, project } = await prepare(context.projectId, context.userId, parsed.cwd ?? "");
+    const { credential, sandbox, directory, project, cwd: appCwd, autoCwd } = await prepare(context.projectId, context.userId, parsed.cwd ?? "");
     if (!project.hasEasJson) {
       throw new Error("В проекте нет eas.json. Вызовите expo.setup — он создаст базовые профили, затем повторите expo.build.");
     }
@@ -289,14 +290,15 @@ registerTool({
     return {
       ok: true,
       started: true,
-      project: { id: project.projectId, slug: project.slug || null, owner: project.owner || null },
+      project: { id: project.projectId, cwd: appCwd || ".", slug: project.slug || null, owner: project.owner || null },
       profile,
       builds: summaries,
       buildId: summaries[0]?.id ?? null,
       url: summaries[0]?.url || null,
       note:
         "Сборка запущена на серверах EAS. Ссылка уже открывается в браузере. " +
-        "Через 1–2 минуты вызовите expo.build_status {buildId, logs:true}, чтобы прочитать статус и хвост лога.",
+        (autoCwd ? "Приложение найдено в «" + appCwd + "», cwd определён автоматически. " : "") +
+        "Через 1–2 минуты вызовите expo.build_status {buildId, cwd:'" + (appCwd || ".") + "', logs:true}, чтобы прочитать статус и хвост лога.",
     };
   },
 });

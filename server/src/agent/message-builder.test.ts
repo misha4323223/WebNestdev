@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { ChatMessage } from "../types.js";
-import { PLANNER_MODE_PROMPT, PLATFORM_RULES, PREVIEW_RUNTIME_RULES, PROJECT_PLANNING_PROMPT, SYSTEM_PROMPT, browserCheckNotice, buildInitialMessages, closeInterruptedTurns, insertSystemNotice, storedHistory } from "./message-builder.js";
+import { PLANNER_MODE_PROMPT, PLATFORM_RULES, PREVIEW_RUNTIME_RULES, PROJECT_PLANNING_PROMPT, SYSTEM_PROMPT, browserCheckNotice, buildInitialMessages, closeInterruptedTurns, insertSystemNotice, mobileProjectNotice, storedHistory } from "./message-builder.js";
 
 /**
  * The stored chat is the model's memory of a run, so what it hands to a provider has to be exactly
@@ -226,4 +226,19 @@ test("project planning asks before the empty project is inspected", () => {
   assert.match(system, /Встроенная база NestDev/);
   assert.doesNotMatch(system, /PLANNER MODE IS ON/);
   assert.equal(system.includes(PROJECT_PLANNING_PROMPT), true);
+});
+
+/**
+ * Приложение в подкаталоге — причина, по которой запуск оставался без expo.build: модель видела
+ * только текстовый net.request и искала в нём «способ залить архив». Заметка должна называть и
+ * каталог, и единственный путь сборки.
+ */
+test("Expo в подкаталоге: заметка называет cwd и запрещает искать порт в net.request", () => {
+  const notice = mobileProjectNotice(["admin-app"]);
+  assert.match(notice, /admin-app/);
+  assert.match(notice, /cwd/);
+  assert.match(notice, /expo\.build/);
+  assert.match(notice, /net\.request/);
+  assert.match(mobileProjectNotice([""]), /корне проекта/);
+  assert.equal(mobileProjectNotice([]), "");
 });
