@@ -64,6 +64,7 @@ import { createFreeModelRoute } from "./provider/free-model.js";
 import { cacheHitRate } from "./provider/prompt-caching.js";
 import { getSandbox } from "./sandbox-manager.js";
 import { readBuildScript } from "./preview/static-plan.js";
+import { inspectExpoProject } from "./expo/expo-api.js";
 import { recordRunUsage } from "./account/usage-store.js";
 import { creditsForUsage, mainCreditRates, type CreditRates } from "./account/credits.js";
 import { beginRun,endRun } from "./agent/active-runs.js";
@@ -181,6 +182,12 @@ export class AgentRuntime {
       // Браузерная проверка — разрешение на этот запуск, а не свойство тарифа. Выключенная
       // проверка отключает и автоматическую Chromium-QA после правок.
       const browserCheckEnabled=request.browserCheck===true;
+      // Мобильный проект определяется по самому проекту, а не по словам в реплике: иначе
+      // короткое «собери приложение» приходило без expo.build, и агент отвечал, что сборку
+      // запускать нечем.
+      const mobileProject=await getSandbox(request.projectId,request.userId)
+        .then(async sandbox=>(await inspectExpoProject(sandbox.root,"")).isExpo)
+        .catch(()=>false);
       // Каталог фиксируется один раз на запуск: схемы не должны меняться между шагами,
       // иначе кэш префикса DeepSeek будет промахиваться на каждом запросе.
       const toolNames=selectToolNames({
@@ -192,6 +199,7 @@ export class AgentRuntime {
         testRunner,
         archMemory,
         milestones,
+        mobileProject,
       });
       // Остановленный в прошлый раз запуск не оставляет ответа на просьбу пользователя, и она
       // выглядит для модели действующей задачей. Заметка закрывает такой ход, и новое сообщение
@@ -675,9 +683,19 @@ export class AgentRuntime {
         let browserRuntimeRequired=false;
         const verificationRoutes=new Set<string>();
 
+        // Вопрос человеку — остановка работы, а не действие рядом с ней: пока ответа нет,
+        // остальные вызовы этого шага не выполняются. Иначе запуск «спрашивает и делает
+        // одновременно», и человек отвечает уже на сделанное.
+        const questionCall=result.calls.find(pending=>pending.name==="question.ask");
         for(const call of result.calls){
           if(signal?.aborted)throw new Error("Запуск агента отменён");
           emit({type:"tool.started",runId,toolCallId:call.id,name:call.name,input:call.arguments});
+          if(questionCall&&call!==questionCall){
+            const skipped={ok:false,skipped:true,error:"Не выполнено: в этом же шаге агент задал вопрос пользователю, и запуск ждёт ответа. Повторите вызов следующим шагом, если он всё ещё нужен после ответа."};
+            await finishTool(call,skipped);
+            messages.push({role:"tool",content:JSON.stringify(skipped),tool_call_id:call.id});
+            continue;
+          }
           // Planner mode is read-only by construction, not just by instruction.
           if(mode==="planner"&&changesSomething(call.name,call.arguments)){
             const refusal={error:"Режим «Планировщик»: изменения и запуск отключены. Разрешены только чтение файлов, команды из списка только-для-чтения (без перенаправлений, установки пакетов и git add/commit) и GET/HEAD-запросы. Опишите этот шаг в плане и продолжите изучение проекта.",mode:"planner"};

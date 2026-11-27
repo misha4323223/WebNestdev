@@ -6,9 +6,10 @@ import { resolveInsideSandbox, writeFileInside } from "../sandbox/path-guard.js"
 import { openDirsForSandbox, openFileForSandbox } from "../sandbox/permissions.js";
 import { FREE_CONNECTOR_MESSAGE, connectorRefusal } from "../account/connector-access.js";
 import {
+  EXPO_TOKEN_VARIABLE,
   allBuilds,
   buildSummary,
-  getExpoConnection,
+  getExpoCredential,
   inspectExpoProject,
   parseEasJson,
   readBuildLog,
@@ -31,10 +32,6 @@ const buildIdSchema = z.string().trim().max(500).optional();
 const accountSchema = z.string().trim().max(80).regex(/^[A-Za-z0-9][A-Za-z0-9_-]*$/, "Некорректное имя аккаунта Expo").optional();
 const projectIdSchema = z.string().trim().regex(/^[0-9a-fA-F-]{8,64}$/, "Некорректный EAS project id").optional();
 
-function messageOf(error: unknown) {
-  return error instanceof Error ? error.message : String(error);
-}
-
 function tail(text: string, limit = 2500) {
   const value = text.trim();
   return value.length > limit ? value.slice(-limit) : value;
@@ -56,18 +53,21 @@ function shellQuote(value: string) {
   return "'" + value.replace(/'/g, "'\\''") + "'";
 }
 
-/** Сеть и контейнер — только для этого вызова; без подключённого Expo дальше не идём. */
+/** Сеть и контейнер — только для этого вызова; токен берём из карточки или секретов проекта. */
 async function prepare(projectId: string, userId: string, relativeCwd = "") {
-  const connection = await getExpoConnection(userId);
-  if (!connection) {
-    throw new Error(
-      "Expo не подключён. Попросите пользователя подключить Expo через карточку в чате: " +
-      "вызовите access.request {kind:'service', provider:'expo', purpose:'Сборка приложения через EAS Build'}. " +
-      "Не просите токен текстом: значение вводится только в защищённой карточке.",
-    );
-  }
   const sandbox = await getSandbox(projectId, userId);
   const directory = await resolveInsideSandbox(sandbox.root, path.join(sandbox.root, relativeCwd));
+  // Секреты проекта и карточка интеграции равноправны: если человек уже положил EXPO_TOKEN
+  // в «Секреты проекта», просить его подключить карточку заново нельзя.
+  const credential = await getExpoCredential(projectId, userId, sandbox.root);
+  if (!credential) {
+    throw new Error(
+      "Expo не подключён: нет ни карточки интеграции, ни переменной " + EXPO_TOKEN_VARIABLE + " в секретах проекта. " +
+      "Попросите токен одним из двух способов — secrets.request {variable:'" + EXPO_TOKEN_VARIABLE + "', purpose:'Сборка приложения в EAS Build'} " +
+      "или access.request {kind:'service', provider:'expo', purpose:'Сборка приложения через EAS Build'}. " +
+      "Токен текстом в чате не просите: значение вводится только в защищённом окне.",
+    );
+  }
   const project = await inspectExpoProject(sandbox.root, relativeCwd);
   if (!project.isExpo) {
     throw new Error(
@@ -75,7 +75,7 @@ async function prepare(projectId: string, userId: string, relativeCwd = "") {
       "Если приложение лежит в подкаталоге, передайте cwd, например 'mobile'.",
     );
   }
-  return { connection, sandbox, directory, project };
+  return { credential, sandbox, directory, project };
 }
 
 /** EAS — мобильный сервис: на бесплатном тарифе он закрыт вместе с остальными коннекторами. */
@@ -98,7 +98,8 @@ registerTool({
   description:
     "Report whether Expo/EAS is connected for this user and what the project has for EAS Build: app config, EAS project id, slug, owner and build profiles. " +
     "Call it before a build. It does not submit anything and never returns the token. " +
-    "If connected is false, ask for access with access.request {kind:'service', provider:'expo'} — never ask the user to paste a token in chat. " +
+    "The token may come from the Expo integration card OR from a project secret named EXPO_TOKEN — expo.status reports tokenSource, and either one is enough; " +
+    "when connected is false, ask for the token with secrets.request {variable:'EXPO_TOKEN'} (or access.request {kind:'service', provider:'expo'}) — never ask the user to paste a token in chat. " +
     "Expo Go QR preview is NOT available (the sandbox has no public tunnel); EAS Build is the supported path.",
   parameters: {
     type: "object",
@@ -119,15 +120,14 @@ registerTool({
         note: "На этом тарифе Expo/EAS закрыт. Не предлагай подключить Expo: назови, что останется недоступным, и продолжи без него.",
       };
     }
-    const connection = await getExpoConnection(context.userId).catch(error => {
-      throw new Error(messageOf(error));
-    });
     const sandbox = await getSandbox(context.projectId, context.userId);
+    const credential = await getExpoCredential(context.projectId, context.userId, sandbox.root);
     const project = await inspectExpoProject(sandbox.root, cwd ?? "");
     const profiles = project.profiles.length ? project.profiles : ["production"];
     return {
-      connected: Boolean(connection),
-      account: connection?.account ?? null,
+      connected: Boolean(credential),
+      account: credential?.account || null,
+      tokenSource: credential?.source ?? null,
       project: {
         isExpo: project.isExpo,
         appConfig: project.appConfigFile,
@@ -138,8 +138,8 @@ registerTool({
         buildProfiles: profiles,
       },
       expoGo: "not_available",
-      note: !connection
-        ? "Expo не подключён. Вызовите access.request {kind:'service', provider:'expo'}: пользователь вставит токен в защищённую карточку."
+      note: !credential
+        ? "Expo не подключён: нет ни карточки интеграции, ни EXPO_TOKEN в секретах проекта. Вызовите secrets.request {variable:'EXPO_TOKEN'} — пользователь вставит токен в защищённую карточку, и сборка пойдёт через секрет."
         : !project.isExpo
           ? "Expo подключён, но в этом каталоге не найден проект Expo. Укажите cwd подкаталога приложения."
           : !project.projectId
@@ -157,7 +157,7 @@ registerTool({
     "Prepare an Expo project for EAS Build: create a minimal eas.json when it is missing and link the project to an EAS project with `eas init --non-interactive`. " +
     "This CREATES an EAS project in the user's Expo account when none is linked, so call it only when the user asked to set up mobile builds. " +
     "Input: {cwd?, account?: Expo username, projectId?: existing EAS project id to link}. " +
-    "It returns the linked project id/slug/owner; the token is never returned. Requires Expo connected (access.request kind 'service', provider 'expo').",
+    "It returns the linked project id/slug/owner; the token is never returned. Requires a token: the Expo integration card or EXPO_TOKEN in the project secrets.",
   parameters: {
     type: "object",
     additionalProperties: false,
@@ -171,7 +171,7 @@ registerTool({
     const parsed = z.object({ cwd: cwdSchema, account: accountSchema, projectId: projectIdSchema }).parse(input ?? {});
     const refusal = await mobileRefusal(context.userId);
     if (refusal) return { ok: false, restricted: true, code: refusal.code, error: refusal.error };
-    const { connection, sandbox, directory, project } = await prepare(context.projectId, context.userId, parsed.cwd ?? "");
+    const { credential, sandbox, directory, project } = await prepare(context.projectId, context.userId, parsed.cwd ?? "");
     if (!project.hasEasJson) {
       const target = path.join(directory, "eas.json");
       await writeFileInside(sandbox.root, target, JSON.stringify(defaultEasJson, null, 2) + "\n");
@@ -195,7 +195,7 @@ registerTool({
     else if (parsed.account) args.push("--account", "$EAS_ACCOUNT");
     const env: Record<string, string> = {};
     if (parsed.account) env.EAS_ACCOUNT = parsed.account;
-    const result = await runEas(sandbox, directory, connection.token, args, env, 5 * 60_000);
+    const result = await runEas(sandbox, directory, credential.token, args, env, 5 * 60_000);
     if (!result.ok) {
       throw new Error("EAS init не завершился: " + tail(result.stderr || result.stdout));
     }
@@ -223,7 +223,7 @@ registerTool({
   name: "expo.build",
   description:
     "Start a cloud build on EAS Build and return its id and expo.dev link immediately (it does not wait for the build). " +
-    "Requires Expo connected and an EAS-linked project (expo.status / expo.setup). " +
+    "Requires an Expo token (integration card or EXPO_TOKEN in project secrets) and an EAS-linked project (expo.status / expo.setup). " +
     "Input: {platform:'android'|'ios'|'all', profile?: build profile from eas.json (default 'production'), message?: short build description, cwd?: project subdirectory}. " +
     "The token stays in the integration store and is passed to EAS CLI through the container environment; never ask for it in chat. " +
     "After starting, use expo.build_status with the returned buildId to read status and logs. " +
@@ -248,7 +248,7 @@ registerTool({
     }).parse(input ?? {});
     const refusal = await mobileRefusal(context.userId);
     if (refusal) return { ok: false, restricted: true, code: refusal.code, error: refusal.error };
-    const { connection, sandbox, directory, project } = await prepare(context.projectId, context.userId, parsed.cwd ?? "");
+    const { credential, sandbox, directory, project } = await prepare(context.projectId, context.userId, parsed.cwd ?? "");
     if (!project.hasEasJson) {
       throw new Error("В проекте нет eas.json. Вызовите expo.setup — он создаст базовые профили, затем повторите expo.build.");
     }
@@ -264,7 +264,7 @@ registerTool({
 
     const args = ["build", "--platform", parsed.platform, "--profile", profile, "--non-interactive", "--no-wait", "--json"];
     if (parsed.message) args.push("--message", shellQuote(parsed.message));
-    const result = await runEas(sandbox, directory, connection.token, args);
+    const result = await runEas(sandbox, directory, credential.token, args);
     if (!result.ok) {
       throw new Error("EAS не запустил сборку: " + tail(result.stderr || result.stdout));
     }
@@ -310,12 +310,12 @@ registerTool({
     const buildId = normalizeBuildId(parsed.buildId);
     const refusal = await mobileRefusal(context.userId);
     if (refusal) return { ok: false, restricted: true, code: refusal.code, error: refusal.error };
-    const { connection, sandbox, directory, project } = await prepare(context.projectId, context.userId, parsed.cwd ?? "");
+    const { credential, sandbox, directory, project } = await prepare(context.projectId, context.userId, parsed.cwd ?? "");
     if (!project.projectId) {
       throw new Error("Проект Expo не связан с EAS. Вызовите expo.setup, затем повторите сборку.");
     }
     const args = buildId ? ["build:view", buildId, "--json"] : ["build:view", "--json"];
-    const result = await runEas(sandbox, directory, connection.token, args, {}, 4 * 60_000);
+    const result = await runEas(sandbox, directory, credential.token, args, {}, 4 * 60_000);
     if (!result.ok) {
       throw new Error("Не удалось прочитать сборку EAS: " + tail(result.stderr || result.stdout));
     }

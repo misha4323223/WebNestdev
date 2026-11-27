@@ -80,6 +80,11 @@ export type ToolCatalogOptions = {
   archMemory?: boolean;
   /** Experimental run-sized milestone plan; off unless AGENT_MILESTONES is enabled. */
   milestones?: boolean;
+  /**
+   * Проект сам является мобильным (есть expo в package.json или app config). Тогда expo-инструменты
+   * выдаются независимо от формулировки реплики: «собери приложение» тоже про сборку.
+   */
+  mobileProject?: boolean;
 };
 
 function isDeployTool(name: string) {
@@ -97,7 +102,9 @@ function isMobileTool(name: string) {
 export function selectToolNames(options: ToolCatalogOptions): string[] {
   const task = options.task ?? "";
   const deploy = DEPLOY_RE.test(task);
-  const mobile = MOBILE_RE.test(task);
+  // Слова в задаче — не единственный признак: проект может быть Expo-приложением, а реплика
+  // короткой («собери приложение»). Тогда инструменты сборки нужны так же.
+  const mobile = MOBILE_RE.test(task) || options.mobileProject === true;
   const planner = options.mode === "planner";
   const names: string[] = [
     ...CORE_TOOLS,

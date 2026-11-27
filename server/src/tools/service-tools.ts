@@ -110,8 +110,10 @@ registerTool({
 registerTool({
   name: "service.secrets",
   description:
-    "List the project's secret variable names (never the values) — use it to check whether a connected service's variables are already " +
-    "in the project before writing code that reads process.env, and after service.env to confirm what was written.",
+    "List every secret variable of the project — names and files only, never the values — not just a connected service's. " +
+    "Use it before writing code that reads process.env, before asking the user for a key that may already be saved, and after " +
+    "service.env to confirm what was written. To use a value, call the tool that needs it (net.request auth.variable, expo.*) " +
+    "or read it in the app's own code; the value itself is never returned to you.",
   execute: async (_input, context) => {
     const project = await getProject(context.projectId);
     if (!project || project.userId !== context.userId) throw new Error("Проект не найден или недоступен");

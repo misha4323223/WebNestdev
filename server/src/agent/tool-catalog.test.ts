@@ -37,6 +37,11 @@ test("переключатели и задача добавляют только
   assert.ok(deploy.includes("deploy.plan") && deploy.includes("cloud.request") && deploy.includes("yandex.request"));
   const mobile = selectToolNames({ mode: "developer", task: "собери мобильное приложение на Expo" });
   assert.ok(mobile.includes("expo.build") && mobile.includes("expo.setup"));
+  // Проект-приложение получает сборку и без слова Expo в короткой реплике.
+  const byProject = selectToolNames({ mode: "developer", task: "собери приложение", mobileProject: true });
+  assert.ok(byProject.includes("expo.build") && byProject.includes("expo.status"));
+  const notMobile = selectToolNames({ mode: "developer", task: "собери приложение" });
+  assert.ok(!notMobile.includes("expo.build"), "обычный сайт не получает Expo");
   const repo = selectToolNames({ mode: "developer", task: "найди заказы", repoMap: true });
   assert.ok(repo.includes("repo.map") && repo.includes("repo.find"));
   const tests = selectToolNames({ mode: "developer", task: "проверь тесты", testRunner: true });

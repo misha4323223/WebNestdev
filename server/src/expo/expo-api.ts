@@ -4,6 +4,7 @@ import type { SandboxConfig } from "../sandbox-manager.js";
 import { resolveInsideSandbox } from "../sandbox/path-guard.js";
 import { runInSandbox, type SandboxRunOptions } from "../sandbox-worker.js";
 import { getServiceConnection } from "../services/connections.js";
+import { loadProjectSecretFiles } from "../secrets/project-secrets.js";
 import { assertPublicUrl, requestPage } from "../web/read-url.js";
 
 /**
@@ -93,6 +94,64 @@ export async function getExpoConnection(userId: string): Promise<ExpoConnection 
     throw new Error("Сохранённый токен Expo пуст или содержит недопустимые символы: подключите Expo заново");
   }
   return { token, account: connection.account, updatedAt: connection.updatedAt };
+}
+
+/** Переменная, которую читает сам EAS CLI; секреты проекта и карточка интеграции равноправны. */
+export const EXPO_TOKEN_VARIABLE = "EXPO_TOKEN";
+const PROJECT_TOKEN_FILES = [".env.local", ".env", ".env.production", ".env.development", ".env.staging"] as const;
+
+/**
+ * `EXPO_TOKEN` из секретов проекта — вторая, равноправная половина подключения.
+ *
+ * Карточка интеграции и секреты проекта лежат в разных хранилищах, и человек, который уже
+ * положил токен в «Секреты проекта», не обязан повторять его в карточке. Значения достаточно:
+ * EAS CLI читает `EXPO_TOKEN` из окружения контейнера сам.
+ */
+export async function expoTokenFromProjectSecrets(projectId: string, root: string): Promise<string> {
+  let files: Awaited<ReturnType<typeof loadProjectSecretFiles>>;
+  try {
+    files = await loadProjectSecretFiles(projectId, root);
+  } catch (error) {
+    // Секреты могут быть недоступны (например, до миграции файла окружения): это не повод
+    // считать, что токена нет вовсе, но и падать инструменту здесь незачем.
+    console.error("[expo] не удалось прочитать секреты проекта", error);
+    return "";
+  }
+  const names = Object.keys(files);
+  const ordered = [
+    ...PROJECT_TOKEN_FILES.filter(file => names.includes(file)),
+    ...names.filter(file => !(PROJECT_TOKEN_FILES as readonly string[]).includes(file)),
+  ];
+  for (const file of ordered) {
+    const value = files[file]?.[EXPO_TOKEN_VARIABLE]?.trim() ?? "";
+    if (value && tokenLooksValid(value)) return value;
+  }
+  return "";
+}
+
+export type ExpoCredential = {
+  token: string;
+  account: string;
+  updatedAt: string;
+  /** Откуда взят токен: карточка интеграции или секреты проекта. */
+  source: "connector" | "project-secret";
+};
+
+/** Один вход для инструментов: сначала карточка интеграции, затем секрет проекта. */
+export async function getExpoCredential(projectId: string, userId: string, root: string): Promise<ExpoCredential | null> {
+  let connection: ExpoConnection | null = null;
+  try {
+    connection = await getExpoConnection(userId);
+  } catch (error) {
+    // Повреждённая карточка не должна закрывать рабочий путь через секрет проекта.
+    console.error("[expo] сохранённое подключение Expo не читается: " + (error instanceof Error ? error.message : String(error)));
+  }
+  if (connection) {
+    return { token: connection.token, account: connection.account, updatedAt: connection.updatedAt, source: "connector" };
+  }
+  const token = await expoTokenFromProjectSecrets(projectId, root);
+  if (!token) return null;
+  return { token, account: "", updatedAt: "", source: "project-secret" };
 }
 
 export function redactExpoToken(text: string, token: string) {

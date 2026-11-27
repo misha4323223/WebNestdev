@@ -4,6 +4,7 @@ import { hostPathFor, sandboxRootDir } from "../sandbox/config.js";
 import { openDirForSandbox, openFileForSandbox } from "../sandbox/permissions.js";
 import type { SandboxConfig } from "../sandbox/sandbox-types.js";
 import { loadProjectSecretFiles } from "../secrets/project-secrets.js";
+import { productionEnvValues } from "../secrets/env-precedence.js";
 import { encodeEnvValue } from "../secrets/env-value.js";
 import { isPublicEnvName } from "./security.js";
 
@@ -33,12 +34,13 @@ function runtimeDir(projectId: string) {
  */
 export async function publicEnvMounts(config: SandboxConfig): Promise<PublicEnvMount> {
   const files = await loadProjectSecretFiles(config.projectId, config.root);
+  // Сборка публикации — production: файлы в том же порядке, что и у функций. Иначе
+  // `.env.development` подменял бы боевые значения публичных переменных.
+  const production = productionEnvValues(files);
   const values: Record<string, string> = {};
-  for (const variables of Object.values(files)) {
-    for (const [name, value] of Object.entries(variables)) {
-      if (!isPublicEnvName(name)) continue;
-      values[name] = value;
-    }
+  for (const [name, value] of Object.entries(production)) {
+    if (!isPublicEnvName(name)) continue;
+    values[name] = value;
   }
   const names = Object.keys(values).sort();
   if (!names.length) return { mounts: [], cleanup: async () => undefined, names };
