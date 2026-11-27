@@ -65,6 +65,7 @@ import { cacheHitRate } from "./provider/prompt-caching.js";
 import { getSandbox } from "./sandbox-manager.js";
 import { readBuildScript } from "./preview/static-plan.js";
 import { findExpoApps } from "./expo/expo-detect.js";
+import { mobileBuildIntent } from "./expo/mobile-build-intent.js";
 import { recordRunUsage } from "./account/usage-store.js";
 import { creditsForUsage, mainCreditRates, type CreditRates } from "./account/credits.js";
 import { beginRun,endRun } from "./agent/active-runs.js";
@@ -190,6 +191,9 @@ export class AgentRuntime {
         .then(async sandbox=>await findExpoApps(sandbox.root))
         .catch(()=>[] as string[]);
       const mobileProject=expoApps.length>0;
+      // Собирать на EAS нужно только тогда, когда об этом просят: наличие Expo-приложения в
+      // проекте — ещё не просьба о мобильной сборке, а веб-сборку корня делает npm.
+      const mobileIntent=mobileBuildIntent(task);
       // Каталог фиксируется один раз на запуск: схемы не должны меняться между шагами,
       // иначе кэш префикса DeepSeek будет промахиваться на каждом запросе.
       const toolNames=selectToolNames({
@@ -205,7 +209,7 @@ export class AgentRuntime {
       });
       // Одна строка на запуск: по ней видно, получила ли модель инструменты сборки. Без неё спор
       // «инструмент не выдан или модель его не вызвала» приходится решать догадками.
-      console.log("[agent] mode="+mode+" mobile="+mobileProject+" apps="+JSON.stringify(expoApps)+" expoTools="+toolNames.filter(name=>name.startsWith("expo.")).join(","));
+      console.log("[agent] mode="+mode+" mobile="+mobileProject+" intent="+mobileIntent+" apps="+JSON.stringify(expoApps)+" expoTools="+toolNames.filter(name=>name.startsWith("expo.")).join(","));
       // Остановленный в прошлый раз запуск не оставляет ответа на просьбу пользователя, и она
       // выглядит для модели действующей задачей. Заметка закрывает такой ход, и новое сообщение
       // («ты тут?») не превращается в продолжение старой команды. При `resume` её быть не должно:
@@ -220,7 +224,7 @@ export class AgentRuntime {
       messages=insertSystemNotice(messages,browserCheckNotice(browserCheckEnabled));
       // Планировщик не собирает проект и не получает expo.build, поэтому у него свой вариант
       // заметки: без него он утверждает, что сборку запустить нечем.
-      const mobileNotice=mobileProjectNotice(expoApps,{planner:mode==="planner"});
+      const mobileNotice=mobileProjectNotice(expoApps,{planner:mode==="planner",intent:mobileIntent});
       // Тариф известен до первого изменения: иначе агент на «Плюсе» может начать постоянный
       // сервер, пообещать фоновые задания или потратить шаг на отказ по квоте, о которой ему
       // ничего не сказали. Заметка собирается из того же каталога, что и серверные проверки.

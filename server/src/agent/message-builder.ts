@@ -1,4 +1,5 @@
 import type { ChatMessage,PlanState } from "../types.js";
+import type { MobileBuildIntent } from "../expo/mobile-build-intent.js";
 import { CHAT_SCREENSHOT_RULES } from "./chat-screenshot-rules.js";
 
 /**
@@ -213,7 +214,7 @@ export function browserCheckNotice(enabled: boolean): string {
  * архив» в `net.request`: публичный REST/GraphQL Expo сборку не создаёт, её создаёт EAS CLI,
  * который запускает только `expo.build`.
  */
-export function mobileProjectNotice(apps: string[], options: { planner?: boolean } = {}): string {
+export function mobileProjectNotice(apps: string[], options: { planner?: boolean; intent: MobileBuildIntent }): string {
   if (!apps.length) return "";
   const only = apps.length === 1 ? apps[0] : null;
   const where =
@@ -232,13 +233,36 @@ export function mobileProjectNotice(apps: string[], options: { planner?: boolean
   const call = only
     ? "expo.build {platform:'android', cwd:'" + only + "', profile — как в eas.json}"
     : "expo.build {platform:'android', cwd нужного каталога, profile — как в eas.json}";
+  const how =
+    "Сборку на EAS запускает только инструмент expo.build: EAS CLI внутри него сам собирает и загружает архив проекта, токен уже лежит в секретах.";
+  const forbidden =
+    "Запрещено вместо этого искать в REST или GraphQL метод создания сборки, собирать zip «для отправки» и отвечать, что отправить архив нечем, что нужен файл или что EAS CLI должен запустить пользователь.";
+  // Просьба о мобильной сборке — единственный случай, когда expo.build идёт первым действием.
+  // Иначе он тратит кредиты EAS на веб-сборку или на правку кода, о которой просили.
+  if (options.intent === "explicit") {
+    return (
+      "MOBILE APP — ЖЁСТКОЕ ПРАВИЛО: " + where + " " +
+      "Пользователь просит собрать мобильное приложение. " + how + " " +
+      "Первым действием вызови " + call + ", затем покажи id и ссылку. " +
+      forbidden + " " +
+      "Если expo.build вернул ошибку, покажи её текст и устрани причину (eas.json, projectId, профиль, ключи подписи). " +
+      "Ответы в истории выше про «у API нет метода создать сборку» относились к запускам, где инструмента сборки не было; сейчас он есть, не повторяй их и не начинай задачу заново."
+    );
+  }
+  if (options.intent === "ambiguous") {
+    return (
+      "MOBILE APP: " + where + " " +
+      "Просьба «собери приложение» не уточняет, мобильное это приложение или веб-сборка корня проекта. " +
+      "Если речь о мобильном — " + how + " Вызови " + call + ", затем покажи id и ссылку. " +
+      "Если о веб-сборке корня — это npm run build и preview.start, expo.build для неё не нужен и кредиты EAS тратить нельзя. " +
+      "Если из реплики и проекта непонятно, о чём речь, задай один короткий вопрос, а не запускай EAS наугад. " + forbidden
+    );
+  }
   return (
-    "MOBILE APP — ЖЁСТКОЕ ПРАВИЛО: " + where + " " +
-    "Сборку на EAS запускает только инструмент expo.build: EAS CLI внутри него сам собирает и загружает архив проекта, токен уже лежит в секретах. " +
-    "Если пользователь просит собрать приложение или отправить сборку, первым действием вызови " + call + ", затем покажи id и ссылку. " +
-    "Запрещено вместо этого искать в REST или GraphQL метод создания сборки, собирать zip «для отправки» и отвечать, что отправить архив нечем, что нужен файл или что EAS CLI должен запустить пользователь. " +
-    "Если expo.build вернул ошибку, покажи её текст и устрани причину (eas.json, projectId, профиль, ключи подписи). " +
-    "Ответы в истории выше про «у API нет метода создать сборку» относились к запускам, где инструмента сборки не было; сейчас он есть, не повторяй их и не начинай задачу заново."
+    "MOBILE APP, ТОЛЬКО ДЛЯ СПРАВКИ: " + where + " " +
+    "В этом запуске сборку не просят, поэтому expo.build не вызывай: он запускает EAS и тратит кредиты пользователя. " +
+    "Он нужен, когда попросят собрать именно мобильное приложение (android, ios, apk, aab, eas); обычная работа по коду и веб-сборка корня (npm run build, preview.start) его не требуют. " +
+    "Если сборку попросят — " + how + " " + forbidden
   );
 }
 

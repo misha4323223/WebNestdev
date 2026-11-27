@@ -234,14 +234,36 @@ test("project planning asks before the empty project is inspected", () => {
  * каталог, и единственный путь сборки.
  */
 test("Expo в подкаталоге: заметка называет cwd и запрещает искать порт в net.request", () => {
-  const notice = mobileProjectNotice(["admin-app"]);
+  const notice = mobileProjectNotice(["admin-app"], { intent: "explicit" });
   assert.match(notice, /admin-app/);
   assert.match(notice, /cwd/);
   assert.match(notice, /expo\.build/);
   assert.match(notice, /ЖЁСТКОЕ ПРАВИЛО/);
   assert.match(notice, /не повторяй/);
-  assert.match(mobileProjectNotice([""]), /корне проекта/);
-  assert.equal(mobileProjectNotice([]), "");
+  assert.match(mobileProjectNotice([""], { intent: "explicit" }), /корне проекта/);
+  assert.equal(mobileProjectNotice([], { intent: "explicit" }), "");
+});
+
+/**
+ * Expo-приложение в проекте — не повод запускать EAS на любую просьбу о сборке: в проекте с
+ * веб-корнем «собери приложение» может значить npm run build. Заметка не должна требовать
+ * expo.build там, где про сборку не просили.
+ */
+test("сборку не просили: заметка не требует expo.build", () => {
+  const notice = mobileProjectNotice(["admin-app"], { intent: "none" });
+  assert.match(notice, /admin-app/);
+  assert.match(notice, /не вызывай/);
+  assert.match(notice, /npm run build/);
+  assert.doesNotMatch(notice, /ЖЁСТКОЕ ПРАВИЛО/);
+});
+
+/** «Собери приложение» без платформы — вопрос, а не запуск EAS наугад. */
+test("двусмысленная просьба: сначала уточнить, потом сборка", () => {
+  const notice = mobileProjectNotice(["admin-app"], { intent: "ambiguous" });
+  assert.match(notice, /npm run build/);
+  assert.match(notice, /expo\.build/);
+  assert.match(notice, /вопрос/);
+  assert.doesNotMatch(notice, /ЖЁСТКОЕ ПРАВИЛО/);
 });
 
 /**
@@ -249,7 +271,7 @@ test("Expo в подкаталоге: заметка называет cwd и з�
  * нечем: заметка говорит, где лежит приложение и каким инструментом сборка запускается.
  */
 test("Expo в режиме планировщика: заметка не обещает сборку и не отрицает её", () => {
-  const notice = mobileProjectNotice(["admin-app"], { planner: true });
+  const notice = mobileProjectNotice(["admin-app"], { planner: true, intent: "none" });
   assert.match(notice, /admin-app/);
   assert.match(notice, /expo\.build/);
   assert.match(notice, /не утверждай/);
