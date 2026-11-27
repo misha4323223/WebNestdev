@@ -7,6 +7,7 @@ import { listSandboxJobs, startSandboxJob, stopSandboxJob, tailSandboxJob } from
 import { commandNeedsNetwork, isPackageInstall, networkHint, networkHintForLogs, NO_NETWORK_HINT, PACKAGE_INSTALL_HINT } from "../sandbox/network-hint.js";
 import { registerTool } from "../tool-registry.js";
 import { npmInstallTimeoutMs } from "../sandbox/config.js";
+import { egressDenyHint } from "../egress/deny-hint.js";
 import { installCommandFor, NODE_LOCKFILES, packageManagerFor } from "./package-manager.js";
 import { checkPlanCanBuildProject } from "../agent/plan-work-guard.js";
 import { recordStorageMutation } from "../account/storage-quota.js";
@@ -276,6 +277,9 @@ registerTool({
     // `install` выполняет lifecycle-скрипты проекта; они тоже не должны видеть секреты.
     // Таймаут — установочный, а не общий: дерево из сотен пакетов не укладывается в 120 с.
     const result = await runInSandbox(sandbox, command, cwd, { network: "bridge", signal: context.signal, maskSecretEnvFiles: true, timeoutMs: npmInstallTimeoutMs() });
-    return { ...result, packageManager, installCommand: command };
+    // Сеть у этой установки есть, поэтому обычная подсказка «сеть выключена» здесь соврала бы:
+    // если установка упала на отказе прокси, причина — домен в фильтре, а не песочница.
+    const hint = result.ok ? undefined : egressDenyHint(result.stdout + "\n" + result.stderr);
+    return { ...result, packageManager, installCommand: command, ...(hint ? { hint } : {}) };
   },
 });

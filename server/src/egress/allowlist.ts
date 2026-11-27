@@ -64,6 +64,14 @@ const DEFAULT_ALLOWLIST = [
   "*.bootstrapcdn.com",
   "*.cloudflare.com",
   "*.fastly.net",
+  // Expo / EAS Build. `npx eas-cli` ставится из npm (список выше), а сама сборка идёт запросами
+  // к api.expo.dev и загрузкой архива в подписанный бакет на *.googleapis.com. Без этих доменов
+  // мобильная сборка в песочнице не работает вовсе: контейнер выходит в интернет только через
+  // прокси, а прокси отвечает 403 на домен, которого нет в списке.
+  "api.expo.dev",
+  "expo.dev",
+  "*.expo.dev",
+  "*.exp.host",
   // шрифты и карты Google
   "fonts.googleapis.com",
   "fonts.gstatic.com",

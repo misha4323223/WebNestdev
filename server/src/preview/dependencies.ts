@@ -9,6 +9,7 @@ import { dependencyCacheHit, dependencyEnsureCommand, dependencyLockHash } from 
 import { recordInstallMetric } from "./install-metrics.js";
 import { npmInstallEnv } from "./npm-registry.js";
 import { seedStarterLayer } from "./starter-layer.js";
+import { egressDenyHint } from "../egress/deny-hint.js";
 
 /**
  * Зависимости проекта — до сборки и до dev-сервера.
@@ -135,7 +136,16 @@ export async function ensureProjectDependencies(
   }
   if (!result.ok) {
     await report("failed", false);
-    return { ok: false, reason: "установка зависимостей не прошла: " + (failureLine(result) ?? "код выхода " + result.exitCode) };
+    // Установка идёт через прокси платформы: отказ фильтра иначе выглядит как «не удалось
+    // поставить зависимости», и агент ищет причину в package.json вместо списка доменов.
+    const hint = egressDenyHint(result.stdout + "\n" + result.stderr);
+    return {
+      ok: false,
+      reason:
+        "установка зависимостей не прошла: " +
+        (failureLine(result) ?? "код выхода " + result.exitCode) +
+        (hint ? ". " + hint : ""),
+    };
   }
   const output = [result.stdout, result.stderr].join("\n");
   const installed = !dependencyCacheHit(output);

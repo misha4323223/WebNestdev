@@ -239,6 +239,36 @@ export async function inspectExpoProject(root: string, relativeCwd = ""): Promis
   };
 }
 
+/**
+ * Окружение одного запуска EAS CLI. Значения уходят в контейнер через `-e`, а не в текст команды,
+ * поэтому токен не печатается ни в лог шага, ни в историю.
+ *
+ * `NODE_USE_ENV_PROXY` здесь не случаен: контейнер проекта выходит в интернет только через прокси
+ * платформы, а Node сам по себе `HTTP(S)_PROXY` не читает. Без флага встроенный `fetch`
+ * (undici) и голый `node-fetch` в EAS CLI идут напрямую, получают отказ от сети и выглядят как
+ * «сборку отправить нельзя». Флаг включает встроенную поддержку прокси (Node 24+, образ песочницы —
+ * node:26); на старых версиях он просто игнорируется, а `https_proxy` из окружения продолжает
+ * работать так же, как раньше.
+ */
+export function easEnvironment(token: string, extra: Record<string, string> = {}): Record<string, string> {
+  return { EXPO_TOKEN: token, EAS_NO_VCS: "1", NODE_USE_ENV_PROXY: "1", ...extra };
+}
+
+/**
+ * Отказ сети от отказа проекта. EAS CLI ходит через прокси, и закрытый домен выглядит в stderr как
+ * обычная ошибка соединения; без пояснения модель принимает её за свойство инструмента.
+ */
+const EAS_NETWORK_SIGN = /(ECONNREFUSED|ECONNRESET|EAI_AGAIN|ENOTFOUND|ETIMEDOUT|socket hang up|tunneling socket|не входит в список разрешённых)/i;
+
+export function easNetworkHint(text: string): string {
+  if (!EAS_NETWORK_SIGN.test(text)) return "";
+  return (
+    " Похоже на отказ сети, а не на ошибку проекта: EAS CLI ходит через прокси платформы, и домены " +
+    "api.expo.dev/expo.dev должны быть ему доступны. Создавать сборку через net.request не нужно — " +
+    "это не тот инструмент, а не ограничение вашей среды."
+  );
+}
+
 /** Команда без пользовательских аргументов: значения, которые ввёл человек, идут в env. */
 export async function runEas(
   sandbox: SandboxConfig,
@@ -255,7 +285,7 @@ export async function runEas(
     timeoutMs,
     // Собираем текущее дерево, а не последний коммит: агент часто меняет файлы перед сборкой,
     // и «правильная» сборка старого коммита была бы худшим из возможных результатов.
-    env: { EXPO_TOKEN: token, EAS_NO_VCS: "1", ...env },
+    env: easEnvironment(token, env),
   };
   const raw = await runInSandbox(sandbox, command, cwd, options);
   return {

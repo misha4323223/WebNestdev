@@ -48,6 +48,22 @@ test("шаблоны allowlist: точный домен и поддомены ч
   assert.equal(hostAllowlisted("example.com", merged), true);
 });
 
+test("EAS CLI достаёт до Expo, а соседние домены — нет", () => {
+  const allowlist = defaultEgressAllowlist();
+  // Сборка мобильного приложения не работает, если прокси не пускает api.expo.dev.
+  assert.equal(hostAllowlisted("api.expo.dev", allowlist), true);
+  assert.equal(hostAllowlisted("expo.dev", allowlist), true);
+  assert.equal(hostAllowlisted("u.expo.dev", allowlist), true);
+  // Домены не открываются «заодно»: суффикс без точки и чужой поддомен — отказ.
+  assert.equal(hostAllowlisted("notexpo.dev", allowlist), false);
+  assert.equal(hostAllowlisted("expo.dev.evil.example", allowlist), false);
+  // Разрешённый домен, который резолвится внутрь нашей сети, остаётся запрещённым.
+  assert.deepEqual(checkEgress("api.expo.dev", 443, "10.0.0.5", { mode: "allowlist", allowlist }), {
+    allowed: false,
+    reason: "private",
+  });
+});
+
 test("checkEgress: allowlist пускает реестр и не пускает посторонний домен", () => {
   const allowlist = defaultEgressAllowlist();
   assert.deepEqual(checkEgress("registry.npmjs.org", 443, "104.16.0.1", { mode: "allowlist", allowlist }), { allowed: true });

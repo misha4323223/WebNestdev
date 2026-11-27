@@ -9,12 +9,14 @@ import {
   EXPO_TOKEN_VARIABLE,
   allBuilds,
   buildSummary,
+  easNetworkHint,
   getExpoCredential,
   inspectExpoProject,
   parseEasJson,
   readBuildLog,
   runEas,
 } from "../expo/expo-api.js";
+import { expoEgressProblem, expoEgressReport } from "../expo/expo-egress.js";
 
 /**
  * Expo/EAS для агента.
@@ -75,6 +77,11 @@ async function prepare(projectId: string, userId: string, relativeCwd = "") {
       "Если приложение лежит в подкаталоге, передайте cwd, например 'mobile'.",
     );
   }
+  // EAS CLI работает только через сеть песочницы. Если фильтр платформы не пускает Expo, говорим
+  // об этом до запуска контейнера: иначе модель получает сетевую ошибку и объясняет её себе
+  // ограничением своих инструментов.
+  const blocked = expoEgressProblem();
+  if (blocked) throw new Error(blocked);
   return { credential, sandbox, directory, project };
 }
 
@@ -100,6 +107,7 @@ registerTool({
     "Call it before a build. It does not submit anything and never returns the token. " +
     "The token may come from the Expo integration card OR from a project secret named EXPO_TOKEN — expo.status reports tokenSource, and either one is enough; " +
     "when connected is false, ask for the token with secrets.request {variable:'EXPO_TOKEN'} (or access.request {kind:'service', provider:'expo'}) — never ask the user to paste a token in chat. " +
+    "The result also reports network: whether the platform's outbound filter lets EAS CLI reach Expo, so a network refusal is never mistaken for a project or token problem. " +
     "Expo Go QR preview is NOT available (the sandbox has no public tunnel); EAS Build is the supported path.",
   parameters: {
     type: "object",
@@ -137,6 +145,7 @@ registerTool({
         owner: project.owner || null,
         buildProfiles: profiles,
       },
+      network: expoEgressReport(),
       expoGo: "not_available",
       note: !credential
         ? "Expo не подключён: нет ни карточки интеграции, ни EXPO_TOKEN в секретах проекта. Вызовите secrets.request {variable:'EXPO_TOKEN'} — пользователь вставит токен в защищённую карточку, и сборка пойдёт через секрет."
@@ -197,7 +206,7 @@ registerTool({
     if (parsed.account) env.EAS_ACCOUNT = parsed.account;
     const result = await runEas(sandbox, directory, credential.token, args, env, 5 * 60_000);
     if (!result.ok) {
-      throw new Error("EAS init не завершился: " + tail(result.stderr || result.stdout));
+      throw new Error("EAS init не завершился: " + tail(result.stderr || result.stdout) + easNetworkHint(result.stderr || result.stdout));
     }
     const after = await inspectExpoProject(sandbox.root, parsed.cwd ?? "");
     let raw: unknown = null;
@@ -224,6 +233,9 @@ registerTool({
   description:
     "Start a cloud build on EAS Build and return its id and expo.dev link immediately (it does not wait for the build). " +
     "Requires an Expo token (integration card or EXPO_TOKEN in project secrets) and an EAS-linked project (expo.status / expo.setup). " +
+    "No GitHub repository link is needed: EAS CLI sends the current project tree (EAS_NO_VCS=1) and uploads the archive itself, so a project without a repository still builds. " +
+    "Creating a build is a multipart archive upload done by the CLI: net.request sends only text, so never try to start a build through it. " +
+    "An unattended build normally means platform android: iOS needs an Apple Developer account and signing credentials that are already set up in EAS, and a missing Apple login is a user action, not a broken tool. " +
     "Input: {platform:'android'|'ios'|'all', profile?: build profile from eas.json (default 'production'), message?: short build description, cwd?: project subdirectory}. " +
     "The token stays in the integration store and is passed to EAS CLI through the container environment; never ask for it in chat. " +
     "After starting, use expo.build_status with the returned buildId to read status and logs. " +
@@ -266,7 +278,7 @@ registerTool({
     if (parsed.message) args.push("--message", shellQuote(parsed.message));
     const result = await runEas(sandbox, directory, credential.token, args);
     if (!result.ok) {
-      throw new Error("EAS не запустил сборку: " + tail(result.stderr || result.stdout));
+      throw new Error("EAS не запустил сборку: " + tail(result.stderr || result.stdout) + easNetworkHint(result.stderr || result.stdout));
     }
     const raw = parseEasJson(result.stdout);
     const builds = allBuilds(raw);
@@ -317,7 +329,7 @@ registerTool({
     const args = buildId ? ["build:view", buildId, "--json"] : ["build:view", "--json"];
     const result = await runEas(sandbox, directory, credential.token, args, {}, 4 * 60_000);
     if (!result.ok) {
-      throw new Error("Не удалось прочитать сборку EAS: " + tail(result.stderr || result.stdout));
+      throw new Error("Не удалось прочитать сборку EAS: " + tail(result.stderr || result.stdout) + easNetworkHint(result.stderr || result.stdout));
     }
     const raw = parseEasJson(result.stdout);
     const build = allBuilds(raw)[0];

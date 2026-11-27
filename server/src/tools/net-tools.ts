@@ -152,7 +152,8 @@ registerTool({
     "Never put a key, token or cookie into headers yourself — authorization/cookie headers are refused; use auth.variable. The key value never comes back in the response. " +
     "Only public hosts on ports 80/443 are reachable: localhost, private networks and the project's own sandbox are refused by design. " +
     "Redirects are not followed (a 3xx returns its location), the body is capped, and binary responses are not downloaded — use net.download for files. " +
-    "If the secret is missing, request it with secrets.request first; do not invent a value.",
+    "If the secret is missing, request it with secrets.request first; do not invent a value. " +
+    "Not for Expo/EAS builds: starting a build is a multipart archive upload performed by expo.build, and a text body here cannot do it.",
   parameters: {
     type: "object",
     additionalProperties: false,

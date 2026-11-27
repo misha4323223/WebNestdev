@@ -6,6 +6,7 @@ import { getSandbox } from "../sandbox-manager.js";
 import { resolveInsideSandbox } from "../sandbox/path-guard.js";
 import { runInSandbox } from "../sandbox-worker.js";
 import { buildPipInstallCommand } from "./python-command.js";
+import { egressDenyHint } from "../egress/deny-hint.js";
 
 /**
  * Python-зависимости проекта — исключение из правила «в песочнице нет сети», такое же, как
@@ -37,6 +38,10 @@ function installTimeoutMs() {
 /** Понятная причина вместо голого лога pip: образ, права и отсутствие requirements. */
 function explainFailure(result: { stdout: string; stderr: string }, hasRequirements: boolean) {
   const text = result.stdout + "\n" + result.stderr;
+  // pip получает сеть на время установки, но только к разрешённым доменам: отказ прокси — это
+  // не «нет сети» и не ошибка пакета, поэтому объясняем его раньше остальных причин.
+  const egress = egressDenyHint(text);
+  if (egress) return egress;
   if (/No module named pip|pip: not found|python3: not found|executable file not found/i.test(text)) {
     return (
       "В образе песочницы нет Python/pip. Установите python3 и pip в образ проекта (Dockerfile) " +
