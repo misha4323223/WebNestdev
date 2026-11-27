@@ -213,7 +213,7 @@ export function browserCheckNotice(enabled: boolean): string {
  * архив» в `net.request`: публичный REST/GraphQL Expo сборку не создаёт, её создаёт EAS CLI,
  * который запускает только `expo.build`.
  */
-export function mobileProjectNotice(apps: string[]): string {
+export function mobileProjectNotice(apps: string[], options: { planner?: boolean } = {}): string {
   if (!apps.length) return "";
   const only = apps.length === 1 ? apps[0] : null;
   const where =
@@ -222,12 +222,37 @@ export function mobileProjectNotice(apps: string[]): string {
       : only
         ? "Expo-приложение лежит в «" + only + "», а не в корне проекта: передавай cwd:'" + only + "' во все вызовы expo.status, expo.setup, expo.build и expo.build_status."
         : "Expo-приложений несколько (" + apps.map(app => app || "корень проекта").join(", ") + "): перед вызовом expo.* передай cwd нужного каталога.";
+  if (options.planner) {
+    return (
+      "MOBILE APP: " + where + " " +
+      "Сборку запускает инструмент expo.build: он сам вызывает EAS CLI и загружает архив проекта на сервер Expo. " +
+      "В режиме планирования инструменты сборки не выданы, поэтому не запускай её здесь, но и не утверждай, что запустить сборку нечем, и не ищи REST/GraphQL-методы: в рабочем режиме expo.build делает это сам."
+    );
+  }
+  const call = only
+    ? "expo.build {platform:'android', cwd:'" + only + "', profile — как в eas.json}"
+    : "expo.build {platform:'android', cwd нужного каталога, profile — как в eas.json}";
   return (
-    "MOBILE APP: " + where + " " +
-    "Облачную сборку запускает только expo.build: EAS CLI сам загружает архив проекта на сервер Expo. " +
-    "Публичный REST и GraphQL Expo умеют читать сборки, но метода «создать сборку» там нет, а net.request отправляет только текст. " +
-    "Не трать шаги на GraphQL-мутации, multipart-запросы и архивы: если expo.build сообщает о проблеме, сообщи именно её."
+    "MOBILE APP — ЖЁСТКОЕ ПРАВИЛО: " + where + " " +
+    "Сборку на EAS запускает только инструмент expo.build: EAS CLI внутри него сам собирает и загружает архив проекта, токен уже лежит в секретах. " +
+    "Если пользователь просит собрать приложение или отправить сборку, первым действием вызови " + call + ", затем покажи id и ссылку. " +
+    "Запрещено вместо этого искать в REST или GraphQL метод создания сборки, собирать zip «для отправки» и отвечать, что отправить архив нечем, что нужен файл или что EAS CLI должен запустить пользователь. " +
+    "Если expo.build вернул ошибку, покажи её текст и устрани причину (eas.json, projectId, профиль, ключи подписи). " +
+    "Ответы в истории выше про «у API нет метода создать сборку» относились к запускам, где инструмента сборки не было; сейчас он есть, не повторяй их и не начинай задачу заново."
   );
+}
+
+/**
+ * Заметка, которую модель читает последней.
+ *
+ * Обычные системные заметки стоят в начале, до истории. Когда история длинная и в ней модель
+ * уже сделала неверный вывод («сборку запустить нечем»), начало проигрывает: следующий шаг
+ * повторяет собственный прошлый ответ, а не инструкцию. Такая заметка идёт после последней
+ * реплики пользователя — там же, где рабочее состояние шага.
+ */
+export function appendTailNotice(messages: ChatMessage[], content: string): ChatMessage[] {
+  if (!content) return messages;
+  return [...messages, { role: "system" as const, content }];
 }
 
 /**

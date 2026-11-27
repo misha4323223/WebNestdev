@@ -3,7 +3,7 @@ import type { AgentRunRequest,ChatMessage,PlanState,ReasoningBlock } from "./typ
 import { createProvider } from "./provider.js";
 import { planAllows } from "./account/entitlements.js";
 import { appendConversationMessages,getConversationPlan,getProject,getProjectProvider,saveConversationPlan } from "./project-store.js";
-import { browserCheckNotice,buildInitialMessages,closeInterruptedTurns,insertSystemNotice,mobileProjectNotice,resumeNotice,storedHistory,webSearchNotice } from "./agent/message-builder.js";
+import { appendTailNotice,browserCheckNotice,buildInitialMessages,closeInterruptedTurns,insertSystemNotice,mobileProjectNotice,resumeNotice,storedHistory,webSearchNotice } from "./agent/message-builder.js";
 import { notesNotice,notesUpdateNotice,readNoteLines } from "./agent/notes.js";
 import { agentPlanBrief } from "./agent/plan-brief.js";
 import { buildProjectContext } from "./agent/context-builder.js";
@@ -203,6 +203,9 @@ export class AgentRuntime {
         milestones,
         mobileProject,
       });
+      // Одна строка на запуск: по ней видно, получила ли модель инструменты сборки. Без неё спор
+      // «инструмент не выдан или модель его не вызвала» приходится решать догадками.
+      console.log("[agent] mode="+mode+" mobile="+mobileProject+" apps="+JSON.stringify(expoApps)+" expoTools="+toolNames.filter(name=>name.startsWith("expo.")).join(","));
       // Остановленный в прошлый раз запуск не оставляет ответа на просьбу пользователя, и она
       // выглядит для модели действующей задачей. Заметка закрывает такой ход, и новое сообщение
       // («ты тут?») не превращается в продолжение старой команды. При `resume` её быть не должно:
@@ -215,9 +218,9 @@ export class AgentRuntime {
       messages=insertSystemNotice(messages,webSearchNotice(request.webSearch===true));
       // Тот же принцип для Chromium: без разрешения модель не должна тратить шаг на отказ.
       messages=insertSystemNotice(messages,browserCheckNotice(browserCheckEnabled));
-      // Планировщик не собирает проект и не получает expo.build: заметка про сборку ему только врёт.
-      const mobileNotice=mode==="planner"?"":mobileProjectNotice(expoApps);
-      if(mobileNotice)messages=insertSystemNotice(messages,mobileNotice);
+      // Планировщик не собирает проект и не получает expo.build, поэтому у него свой вариант
+      // заметки: без него он утверждает, что сборку запустить нечем.
+      const mobileNotice=mobileProjectNotice(expoApps,{planner:mode==="planner"});
       // Тариф известен до первого изменения: иначе агент на «Плюсе» может начать постоянный
       // сервер, пообещать фоновые задания или потратить шаг на отказ по квоте, о которой ему
       // ничего не сказали. Заметка собирается из того же каталога, что и серверные проверки.
@@ -235,6 +238,9 @@ export class AgentRuntime {
         // модель с большой историей часто начинает задачу заново или переспрашивает пользователя.
         messages=insertSystemNotice(messages,resumeNotice(request.resume.reason,activeSavedPlan));
       }
+      // Ставится после всей истории, а не до неё: при длинном разговоре модель повторяет свой же
+      // прошлый вывод «сборку отправить нечем», и заметка в начале на это не влияет.
+      messages=appendTailNotice(messages,mobileNotice);
       const model=freeRoute?.model
         ??(config?(requestedModel||config.model):platformChoice?.config.model??platformConfig?.model);
       if(!model)throw new Error("Модель AI не настроена");

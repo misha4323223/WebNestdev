@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import type { ChatMessage } from "../types.js";
-import { PLANNER_MODE_PROMPT, PLATFORM_RULES, PREVIEW_RUNTIME_RULES, PROJECT_PLANNING_PROMPT, SYSTEM_PROMPT, browserCheckNotice, buildInitialMessages, closeInterruptedTurns, insertSystemNotice, mobileProjectNotice, storedHistory } from "./message-builder.js";
+import { PLANNER_MODE_PROMPT, PLATFORM_RULES, PREVIEW_RUNTIME_RULES, PROJECT_PLANNING_PROMPT, SYSTEM_PROMPT, appendTailNotice, browserCheckNotice, buildInitialMessages, closeInterruptedTurns, insertSystemNotice, mobileProjectNotice, storedHistory } from "./message-builder.js";
 
 /**
  * The stored chat is the model's memory of a run, so what it hands to a provider has to be exactly
@@ -238,7 +238,35 @@ test("Expo в подкаталоге: заметка называет cwd и з�
   assert.match(notice, /admin-app/);
   assert.match(notice, /cwd/);
   assert.match(notice, /expo\.build/);
-  assert.match(notice, /net\.request/);
+  assert.match(notice, /ЖЁСТКОЕ ПРАВИЛО/);
+  assert.match(notice, /не повторяй/);
   assert.match(mobileProjectNotice([""]), /корне проекта/);
   assert.equal(mobileProjectNotice([]), "");
+});
+
+/**
+ * Планировщик не получает expo.build, но и он не должен отвечать, что сборку запустить
+ * нечем: заметка говорит, где лежит приложение и каким инструментом сборка запускается.
+ */
+test("Expo в режиме планировщика: заметка не обещает сборку и не отрицает её", () => {
+  const notice = mobileProjectNotice(["admin-app"], { planner: true });
+  assert.match(notice, /admin-app/);
+  assert.match(notice, /expo\.build/);
+  assert.match(notice, /не утверждай/);
+});
+
+/**
+ * Заметка должна стоять после последней реплики пользователя: в длинной истории модель иначе
+ * дочитывает свой прошлый ответ («сборку отправить нечем») и повторяет именно его.
+ */
+test("хвостовая заметка встаёт последней и не двигает историю", () => {
+  const messages: ChatMessage[] = [
+    { role: "system", content: "промпт" },
+    { role: "user", content: "собери приложение" },
+  ];
+  const withNotice = appendTailNotice(messages, "MOBILE APP");
+  assert.equal(withNotice.length, 3);
+  assert.deepEqual(withNotice.slice(0, 2), messages);
+  assert.deepEqual(withNotice.at(-1), { role: "system", content: "MOBILE APP" });
+  assert.equal(appendTailNotice(messages, ""), messages);
 });
