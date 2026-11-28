@@ -27,6 +27,20 @@ test("хвост лога npm не скрывает строку с отказо
   assert.doesNotMatch(line, /complete log/);
 });
 
+test("блок Usage из живого вывода docker причиной не считается", () => {
+  // Точный stderr `docker run --runtime=runsc --bogus-flag` на ВМ (28.11.2026): причина — первая
+  // строка, а последними идут блок Usage и подсказка про --help.
+  const stderr = [
+    "unknown flag: --bogus-flag",
+    "",
+    "Usage:  docker run [OPTIONS] IMAGE [COMMAND] [ARG...]",
+    "",
+    "Run 'docker run --help' for more information",
+  ].join("\n");
+
+  assert.equal(failureLine({ stderr }), "unknown flag: --bogus-flag");
+});
+
 test("без явных признаков причины остаётся последняя содержательная строка", () => {
   assert.equal(failureLine({ stderr: "первая строка\nвторая строка\n\n" }), "вторая строка");
 });
