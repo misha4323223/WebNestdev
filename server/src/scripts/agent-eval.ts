@@ -1,21 +1,23 @@
 /**
  * Command-line entry point for the agent eval harness.
  *
- * Without `--adapter` it only validates the catalog. With `--adapter` it imports a module that
- * exports an `adapter` function (or a default function) and runs the selected tasks through it.
- * The adapter is the only part that knows about a model, a sandbox or a fixture; keeping it
- * outside this repository's runtime means an evaluation can use a real agent without making the
- * production process depend on benchmark code.
+ * Three modes:
+ * - no flags: validate the catalog only (safe in CI, no model, no database);
+ * - `--adapter <module>`: run through an external adapter module;
+ * - `--live`: run the real `AgentRuntime` on the configured platform model inside a temporary
+ *   project, with the project's own `verify` commands and a hidden per-task check deciding `ok`.
  *
  * Пример:
  *   npm run agent:eval --workspace=server -- --list
- *   npm run agent:eval --workspace=server -- --adapter ./eval-adapter.mjs --out /tmp/eval
+ *   npm run agent:eval --workspace=server -- --live --size landing --out /tmp/eval
  */
 import path from "node:path";
 import { writeFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { EVAL_TASKS, validateEvalCatalog } from "../agent/eval/tasks.js";
 import { formatEvalReportMarkdown, runEvalSuite } from "../agent/eval/runner.js";
+import { tasksWithFixtures, tasksWithoutFixtures } from "../agent/eval/live/fixtures/index.js";
+import { PLAN_CATALOG, type PlanId } from "../account/plans.js";
 import type { EvalAdapter, EvalLimits, EvalTask, EvalTaskSize } from "../agent/eval/types.js";
 
 const args = process.argv.slice(2);
@@ -23,6 +25,9 @@ const flag = (name: string) => {
   const index = args.indexOf(name);
   return index === -1 ? undefined : args[index + 1];
 };
+/** Повторяемый флаг: `--task a --task b` выбирает несколько задач, а не только первую. */
+const flags = (name: string) =>
+  args.flatMap((arg, index) => (arg === name && args[index + 1] ? [args[index + 1] as string] : []));
 const has = (name: string) => args.includes(name);
 
 function numberFlag(name: string): number | undefined {
@@ -38,8 +43,8 @@ function selectTasks(tasks: EvalTask[]): EvalTask[] {
   if (size && !["landing", "mvp", "large", "monorepo", "real"].includes(size)) {
     throw new Error("--size: ожидается landing, mvp, large, monorepo или real");
   }
-  const id = flag("--task");
-  return tasks.filter(task => (!size || task.size === size) && (!id || task.id === id));
+  const ids = flags("--task");
+  return tasks.filter(task => (!size || task.size === size) && (!ids.length || ids.includes(task.id)));
 }
 
 function printCatalog(tasks: EvalTask[]) {
@@ -61,6 +66,58 @@ async function loadAdapter(specifier: string): Promise<EvalAdapter> {
   return candidate as EvalAdapter;
 }
 
+/** `--user` принимает id или email; без него берётся первый аккаунт базы. */
+async function resolveUserId(specifier: string | undefined): Promise<string> {
+  const store = await import("../auth/auth-store.js");
+  if (specifier?.trim()) {
+    const value = specifier.trim();
+    if (value.includes("@")) {
+      const user = await store.findUserByEmail(value);
+      if (!user) throw new Error("пользователь не найден: " + value);
+      return user.id;
+    }
+    const user = await store.getUser(value);
+    if (!user) throw new Error("пользователь не найден: " + value);
+    return user.id;
+  }
+  const identities = await store.listUserIdentities();
+  const first = identities[0];
+  if (!first) throw new Error("в базе нет ни одного аккаунта: создайте пользователя и повторите");
+  console.log("EVAL-LIVE user=" + first.email);
+  return first.id;
+}
+
+function resolvePlan(): PlanId {
+  const plan = (flag("--plan") ?? "pro").trim();
+  if (!(plan in PLAN_CATALOG)) {
+    throw new Error("--plan: ожидается " + Object.keys(PLAN_CATALOG).join(", "));
+  }
+  return plan as PlanId;
+}
+
+async function liveAdapter(): Promise<EvalAdapter> {
+  // Инструменты регистрируются импортом их модулей — ровно как при старте сервера. Без этого
+  // реестр пуст, и модель получает запрос без `tools`.
+  await import("../tools/register.js");
+  const { toolNames } = await import("../tool-registry.js");
+  if (!toolNames().length) throw new Error("реестр инструментов пуст: eval не сможет измерить агента");
+  // The server initialises storage and reads the panel's platform keys before serving; a standalone
+  // eval process must do both itself, otherwise the first project lookup fails with "PostgreSQL
+  // pool is not initialized" and the model call would silently use the deploy-time env key.
+  const storage = await import("../storage/ydb.js");
+  await storage.initializeStorage();
+  const platform = await import("../platform/platform-env.js");
+  await platform.loadPlatformEnv();
+  const { createLiveEvalAdapter } = await import("../agent/eval/live/adapter.js");
+  const commandTimeoutMs = numberFlag("--command-timeout-ms");
+  return createLiveEvalAdapter({
+    userId: await resolveUserId(flag("--user")),
+    plan: resolvePlan(),
+    keepProjects: has("--keep-projects"),
+    ...(commandTimeoutMs !== undefined ? { commandTimeoutMs } : {}),
+  });
+}
+
 async function main() {
   const selected = selectTasks(EVAL_TASKS);
   if (!selected.length) throw new Error("под выбранные фильтры не подошла ни одна задача");
@@ -70,15 +127,32 @@ async function main() {
     return;
   }
 
-  if (!flag("--adapter")) {
+  if (has("--live") && flag("--adapter")) {
+    throw new Error("--live и --adapter взаимоисключающие: выберите один источник адаптера");
+  }
+
+  if (!has("--live") && !flag("--adapter")) {
     const problems = validateEvalCatalog(EVAL_TASKS);
     if (problems.length) throw new Error(problems.join("; "));
     console.log("EVAL-CATALOG=ok tasks=" + EVAL_TASKS.length + " selected=" + selected.length);
-    console.log("Для настоящего прогона укажите --adapter <модуль>; без него eval не запускается.");
+    console.log("Покрытие фикстурами для --live: " + tasksWithFixtures().length + " из " + EVAL_TASKS.length);
+    console.log("Для настоящего прогона укажите --live или --adapter <модуль>; без них eval не запускается.");
     return;
   }
 
-  const adapter = await loadAdapter(flag("--adapter") as string);
+  let tasks = selected;
+  let adapter: EvalAdapter;
+  if (has("--live")) {
+    tasks = tasksWithFixtures(selected);
+    const missing = tasksWithoutFixtures(selected);
+    console.log("EVAL-LIVE tasks=" + tasks.length + " без фикстуры=" + missing.length +
+      (missing.length ? " (" + missing.map(task => task.id).join(", ") + ")" : ""));
+    if (!tasks.length) throw new Error("у выбранных задач нет ни одной фикстуры для --live");
+    adapter = await liveAdapter();
+  } else {
+    adapter = await loadAdapter(flag("--adapter") as string);
+  }
+
   const limits: EvalLimits = {
     ...(numberFlag("--max-tasks") !== undefined ? { maxTasks: numberFlag("--max-tasks") as number } : {}),
     ...(numberFlag("--duration-ms") !== undefined ? { maxDurationMs: numberFlag("--duration-ms") as number } : {}),
@@ -92,7 +166,7 @@ async function main() {
   process.once("SIGTERM", stop);
   try {
     const report = await runEvalSuite({
-      tasks: selected,
+      tasks,
       adapter,
       limits,
       signal: controller.signal,

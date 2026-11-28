@@ -140,46 +140,9 @@ import { registerPlatformPlanRoutes } from "./routes/platform-plans.js";
 import { loadPlatformEnv } from "./platform/platform-env.js";
 import { ensureDemoUser, migrateLegacySessions } from "./auth/auth-store.js";
 import { ensureBootstrapAdmin } from "./admin/bootstrap.js";
-import "./tools/project-tools.js";
-import "./tools/scout-tools.js";
-import "./tools/filesystem-tools.js";
-import "./tools/memory-tools.js";
-import "./tools/repo-tools.js";
-import "./tools/test-tools.js";
-import "./tools/terminal-tools.js";
-import "./tools/git-tools.js";
-import "./tools/preview-tools.js";
-import "./tools/browser-tools.js";
-import "./tools/screenshot-tools.js";
-import "./tools/verification-tools.js";
-import "./tools/check-tools.js";
-import "./tools/perf-tools.js";
-import "./tools/asset-tools.js";
-import "./tools/vision-tools.js";
-import "./tools/note-tools.js";
-import "./tools/history-tools.js";
-import "./tools/plan-tools.js";
-import "./tools/yandex-tools.js";
-import "./tools/cloud-tools.js";
-import "./tools/domain-tools.js";
-import "./tools/service-tools.js";
-import "./tools/expo-tools.js";
-import "./tools/database-tools.js";
-import "./tools/client-database-tools.js";
-import "./tools/deploy-tools.js";
-import "./tools/deploy-check.js";
-import "./tools/access-tools.js";
-import "./tools/secret-tools.js";
-import "./tools/question-tools.js";
-import "./tools/web-tools.js";
-import "./tools/net-tools.js";
-import "./tools/python-tools.js";
-import "./tools/design-tools.js";
-import "./tools/image-tools.js";
-import "./tools/seo-tools.js";
-import "./tools/seo-check.js";
-import "./tools/view-image-tools.js";
-import "./tools/ui-tools.js";
+// Каталог инструментов регистрируется одним модулем: его же импортирует eval, иначе отдельный
+// процесс отправлял бы модели запрос без `tools`.
+import "./tools/register.js";
 
 // Неизвестный бэкенд или postgres без DATABASE_URL — ошибка конфигурации, а не повод молча
 // работать на JSON-файлах: иначе данные «теряются» при первом же переезде.

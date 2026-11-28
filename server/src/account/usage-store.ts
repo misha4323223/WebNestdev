@@ -747,6 +747,61 @@ export async function recordRunUsage(userId: string, input: RunUsageInput, now =
   return record;
 }
 
+/**
+ * Расход одного запуска — по нему eval берёт настоящие токены, а не оценивает их по длине
+ * сообщений. Запись делает `AgentRuntime` в `finally`, поэтому читать её нужно после того, как
+ * запуск завершился; отсутствие строки означает «ещё не записано», а не нулевой расход.
+ */
+export type RunUsageRecord = {
+  promptTokens: number;
+  completionTokens: number;
+  cachedPromptTokens: number;
+  estimated: boolean;
+  model: string;
+  modelId: string;
+};
+
+export async function getRunUsage(userId: string, runId: string, now = new Date()): Promise<RunUsageRecord | null> {
+  const date = utcDay(now);
+  if (isYdbEnabled()) {
+    const [rows] = await ydbQuery()<Array<{
+      prompt_tokens: number | string | bigint;
+      completion_tokens: number | string | bigint;
+      cached_prompt_tokens: number | string | bigint | null;
+      estimated: boolean;
+      model: string;
+      model_id: string | null;
+    }>>`
+      SELECT prompt_tokens, completion_tokens, cached_prompt_tokens, estimated, model, model_id
+      FROM ${ydbQuery().identifier(getTable("model_usage"))}
+      WHERE user_id = ${userId} AND usage_date = ${date} AND run_id = ${runId}
+      LIMIT 1
+    `;
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      promptTokens: Number(row.prompt_tokens ?? 0),
+      completionTokens: Number(row.completion_tokens ?? 0),
+      cachedPromptTokens: Number(row.cached_prompt_tokens ?? 0),
+      estimated: Boolean(row.estimated),
+      model: row.model,
+      modelId: row.model_id ?? "",
+    };
+  }
+  const file = path.join(root, "account", "costs", date + ".json");
+  const record = (await readJson<UsageCostRecord[]>(file, []))
+    .find(item => item.userId === userId && item.id === runId);
+  if (!record) return null;
+  return {
+    promptTokens: record.promptTokens,
+    completionTokens: record.completionTokens,
+    cachedPromptTokens: record.cachedPromptTokens ?? 0,
+    estimated: record.estimated,
+    model: record.model,
+    modelId: record.modelId ?? "",
+  };
+}
+
 export async function getCostSnapshot(userId: string, now = new Date()): Promise<CostSnapshot> {
   const date = utcDay(now);
   let records: UsageCostRecord[];
