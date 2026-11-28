@@ -33,10 +33,12 @@ test("the mount is passed to Docker with its -v flag", () => {
   ]);
 });
 
-test("nodePaths points the host-side function build at the node's local cache", () => {
-  assert.deepEqual(dependencyNodePaths("project-a"), [
-    path.join(root, "project-a", "node_modules"),
-  ]);
+test("nodePaths указывает на тот каталог кэша, который смонтирован как node_modules", () => {
+  // Сборка функций идёт на хосте и берёт пакеты оттуда же, откуда их видит контейнер:
+  // путь на уровень глубже (`<кэш>/node_modules`) пуст, и esbuild не находил внешний пакет.
+  const source = dependencyCacheMount({ projectId: "project-a" }).split(":")[0];
+  assert.deepEqual(dependencyNodePaths("project-a"), [source]);
+  assert.equal(source, path.join(root, "project-a"));
 });
 
 test("the install command checks the local marker and only installs on a miss", async () => {

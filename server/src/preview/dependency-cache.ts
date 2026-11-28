@@ -59,8 +59,17 @@ export function dependencyCacheHostDir(projectId: string): string {
   return path.join(dependencyCacheHostRoot(), safeProjectId(projectId));
 }
 
+/**
+ * Дерево зависимостей проекта — это сам каталог кэша, а не его `node_modules`.
+ *
+ * Он монтируется в контейнер как `/workspace/node_modules` (see `dependencyCacheMount`), поэтому
+ * `npm install`, запущенный в `/workspace`, пишет пакеты прямо в `<кэш>/pg`, а не в
+ * `<кэш>/node_modules/pg`. Хост-сборка функций получает этот путь в `nodePaths` esbuild'а: путь
+ * на уровень глубже указывал на пустой каталог, и функции с внешним пакетом падали с
+ * `Could not resolve "pg"` при том, что в контейнере пакет есть.
+ */
 export function dependencyCacheNodeModulesDir(projectId: string): string {
-  return path.join(dependencyCacheProjectDir(projectId), "node_modules");
+  return dependencyCacheProjectDir(projectId);
 }
 
 /**
@@ -210,7 +219,10 @@ export async function cleanupDependencyCache(options: {
     if (!entry.isDirectory()) continue;
     scanned++;
     const projectDir = path.join(root, entry.name);
-    const marker = path.join(projectDir, "node_modules", DEPENDENCY_CACHE_MARKER);
+    // Маркер лежит в корне кэша проекта: в контейнере это `node_modules/.webnestdev-deps`
+    // (see `dependencyEnsureCommand`), то есть тот же каталог, что смонтирован как
+    // `/workspace/node_modules`.
+    const marker = path.join(projectDir, DEPENDENCY_CACHE_MARKER);
     const markerInfo = await stat(marker).catch(() => null);
     const dirInfo = await stat(projectDir).catch(() => null);
     // Маркер обновляет установка, каталог — любая команда и запуск preview. Берём свежее из

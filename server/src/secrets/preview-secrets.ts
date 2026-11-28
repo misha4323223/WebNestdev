@@ -29,19 +29,58 @@ function runtimeProjectDir(projectId: string) {
   return path.join(sandboxRootDir(), RUNTIME_DIR, projectId.replace(/[^A-Za-z0-9._-]/g, "_"));
 }
 
+/**
+ * Сколько запусков одновременно пользуются временными файлами проекта.
+ *
+ * Файл монтируется в контейнер по пути на диске, а запусков для одного проекта бывает
+ * несколько сразу: установка зависимостей, сборка и старт предпросмотра ждут место в общем
+ * лимите контейнеров и идут параллельно. Первый завершившийся запуск убирал каталог целиком, и
+ * следующий `docker run` падал с «источник монтирования не существует:
+ * …/.secret-runtime/<проект>/.env.local» — предпросмотр не стартовал, функции не собирались.
+ * Каталог удаляет только последний пользователь.
+ */
+const activeUses = new Map<string, number>();
+
+function acquireRuntimeDir(dir: string) {
+  activeUses.set(dir, (activeUses.get(dir) ?? 0) + 1);
+}
+
+/** `true` — это был последний пользователь, каталог можно убирать. */
+function releaseRuntimeDir(dir: string): boolean {
+  const left = (activeUses.get(dir) ?? 1) - 1;
+  if (left > 0) {
+    activeUses.set(dir, left);
+    return false;
+  }
+  activeUses.delete(dir);
+  return true;
+}
+
+function runtimeDirInUse(dir: string) {
+  return (activeUses.get(dir) ?? 0) > 0;
+}
+
 export async function previewSecretMounts(config: SandboxConfig): Promise<PreviewSecretMounts> {
   const files = await loadProjectSecretFiles(config.projectId, config.root);
   const entries = Object.entries(files).filter(([, variables]) => Object.keys(variables).length);
+  const dir = runtimeProjectDir(config.projectId);
   if (!entries.length) {
     // Предыдущий запуск мог оставить файл, а секреты с тех пор удалили: он не должен пережить
-    // остановку предпросмотра.
-    await clearPreviewSecrets(config.projectId);
+    // остановку предпросмотра. Пока файлы нужны другому запуску, каталог не трогаем.
+    if (!runtimeDirInUse(dir)) await clearPreviewSecrets(config.projectId);
     return { mounts: [], cleanup: async () => {} };
   }
 
-  const dir = runtimeProjectDir(config.projectId);
   await mkdir(dir, { recursive: true });
   await openDirForSandbox(dir);
+  acquireRuntimeDir(dir);
+  let released = false;
+  /** Освободить каталог; удаляет его только последний запуск. */
+  const release = async () => {
+    if (released) return;
+    released = true;
+    if (releaseRuntimeDir(dir)) await clearPreviewSecrets(config.projectId);
+  };
 
   const mounts: string[] = [];
   try {
@@ -102,20 +141,21 @@ export async function previewSecretMounts(config: SandboxConfig): Promise<Previe
       mounts.push("-v", hostPathFor(target) + ":/workspace/" + relative + ":ro");
     }
   } catch (error) {
-    // Неудачный запуск не должен оставлять открытый текст в `.secret-runtime`.
-    await clearPreviewSecrets(config.projectId);
+    // Неудачный запуск не должен оставлять открытый текст в `.secret-runtime` — если файлы не
+    // нужны другому запуску (release удаляет каталог только последним).
+    await release();
     throw error;
   }
 
-  return {
-    mounts,
-    cleanup: () => clearPreviewSecrets(config.projectId),
-  };
+  return { mounts, cleanup: release };
 }
 
 /** Убирает временные файлы одного проекта: предпросмотр остановлен. */
 export async function clearPreviewSecrets(projectId: string) {
-  await clearRuntimeDir(runtimeProjectDir(projectId), "временные секреты " + projectId);
+  const dir = runtimeProjectDir(projectId);
+  // Идущий запуск держит файл смонтированным: удалит его собственный cleanup, когда закончит.
+  if (runtimeDirInUse(dir)) return;
+  await clearRuntimeDir(dir, "временные секреты " + projectId);
 }
 
 /** Убирает всё, что осталось после падения сервера: в этих файлах лежит открытый текст. */

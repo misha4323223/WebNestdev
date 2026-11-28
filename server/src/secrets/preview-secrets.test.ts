@@ -13,6 +13,7 @@ process.env.WEBNESTDEV_SANDBOX_DIR = sandboxRoot;
 const { saveProjectSecrets } = await import("./project-secrets.js");
 const { previewSecretMounts, clearAllPreviewSecrets, clearPreviewSecrets } = await import("./preview-secrets.js");
 
+
 function config(projectId: string): SandboxConfig {
   return {
     projectId,
@@ -96,6 +97,27 @@ test("каталог на месте временного env-файла зам�
   } finally {
     await mounts.cleanup();
   }
+});
+
+test("два одновременных запуска не удаляют файлы друг у друга", async () => {
+  const projectId = "preview-concurrent";
+  const sandbox = config(projectId);
+  await mkdir(sandbox.root, { recursive: true });
+  await saveProjectSecrets(projectId, sandbox.root, { TOKEN: "value" });
+  const target = path.join(sandboxRoot, ".secret-runtime", projectId, ".env.local");
+
+  // Так выглядят установка зависимостей и старт предпросмотра одного проекта: оба готовят
+  // файл до `docker run` и ждут место в лимите контейнеров.
+  const first = await previewSecretMounts(sandbox);
+  const second = await previewSecretMounts(sandbox);
+  await first.cleanup();
+  assert.equal(await readFile(target, "utf8"), "TOKEN=value\n", "второй запуск ещё держит файл смонтированным");
+  // Остановка предпросмотра тоже не должна выдёргивать source у идущего запуска.
+  await clearPreviewSecrets(projectId);
+  assert.equal(await readFile(target, "utf8"), "TOKEN=value\n");
+
+  await second.cleanup();
+  await assert.rejects(() => readFile(target), /ENOENT/, "последний запуск убирает каталог");
 });
 
 test("EACCES на удалении секретов не валит установку зависимостей", async () => {

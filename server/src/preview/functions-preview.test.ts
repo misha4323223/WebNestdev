@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
-import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { SandboxConfig } from "../sandbox-manager.js";
@@ -285,6 +285,37 @@ test("executor build failure is returned as a preview reason", async () => {
     if (result.ok) return;
     assert.match(result.reason, /esbuild failed/);
     assert.equal(functionsPreviewStats().active, 0, "неудачная сборка не занимает слот");
+  } finally {
+    setFunctionsPreviewDepsForTests(null);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("отказ установки зависимостей освобождает слот и временный каталог функций", async () => {
+  const root = await project();
+  let builds = 0;
+  setFunctionsPreviewDepsForTests({
+    // Так выглядит отказ реальной установки: причина есть, а сборки и контейнера нет.
+    ensureDependencies: async () => ({ ok: false, reason: "установка зависимостей не прошла: нет сети" }),
+    build: async () => {
+      builds += 1;
+      throw new Error("сборка не должна запускаться");
+    },
+  });
+  try {
+    const manifest = await readFunctionManifest(root);
+    assert.ok(manifest);
+    if (!manifest) return;
+    const result = await startFunctionsPreviewExecutor(config(root), manifest);
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.match(result.reason, /установка зависимостей не прошла/);
+    assert.equal(builds, 0);
+    // Слот считается занятым с первого шага запуска: возврат из отказа без освобождения
+    // отнимал контейнер функций у следующих предпросмотров до перезапуска API.
+    assert.equal(functionsPreviewStats().active, 0, "неудачная установка освобождает слот контейнера функций");
+    const sessions = await readdir(path.join(root, ".webnestdev", "functions-preview")).catch(() => []);
+    assert.deepEqual(sessions, [], "временный каталог сессии удалён");
   } finally {
     setFunctionsPreviewDepsForTests(null);
     await rm(root, { recursive: true, force: true });

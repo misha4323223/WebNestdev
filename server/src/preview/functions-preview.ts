@@ -150,7 +150,10 @@ export async function startFunctionsPreviewExecutor(
     // Сборка функций идёт esbuild'ом на хосте и должна видеть пакеты проекта. Для готовой
     // статики установки не было, поэтому проверяем зависимости и здесь.
     const dependencies = await deps.ensureDependencies(config);
-    if (!dependencies.ok) return { ok: false, reason: dependencies.reason };
+    // Отказ установки — исключение, а не возврат: вернуться отсюда значило бы пропустить
+    // уборку временного каталога и освобождение слота, и после каждого такого отказа
+    // контейнеров функций становилось бы на один меньше до перезапуска API.
+    if (!dependencies.ok) throw new Error(dependencies.reason);
     await buildInto(currentDir, currentManifest);
     await copyFile(await deps.runtimeSource(), path.join(runtimeDir, "runtime.mjs"));
     await copyFile(await deps.supervisorSource(), path.join(runtimeDir, "supervisor.mjs"));
