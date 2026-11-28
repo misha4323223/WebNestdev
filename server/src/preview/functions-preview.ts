@@ -20,6 +20,11 @@ import { PREVIEW_APP_PORT } from "./types.js";
  * запрос, и функции проверяются до публикации.
  */
 
+/** Сколько ждать ответ runtime на перезагрузку: сборка уже позади, ответ приходит сразу. */
+const RELOAD_TIMEOUT_MS = 10_000;
+/** В лог идёт одна строка причины отказа, а не всё тело ответа. */
+const MAX_RELOAD_DETAIL = 300;
+
 export type FunctionsPreviewExecutor = {
   containerId: string;
   host: string;
@@ -88,6 +93,13 @@ function describeError(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
+/** Тело отказа runtime для лога: одна строка ограниченной длины. */
+async function responseDetail(response: Response) {
+  const raw = await response.text().catch(() => "");
+  const text = raw.replace(/\s+/g, " ").trim();
+  return text.length > MAX_RELOAD_DETAIL ? text.slice(0, MAX_RELOAD_DETAIL) + "…" : text;
+}
+
 function relativeRuntimeDir(root: string, dir: string) {
   const relative = path.relative(root, dir).replaceAll("\\", "/");
   if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
@@ -125,6 +137,11 @@ export async function startFunctionsPreviewExecutor(
   let stopped = false;
   let reloading = false;
   let reloadPending = false;
+  // Идущая перезагрузка: остановка обязана её дождаться, а не убирать каталог и контейнер
+  // у неё из-под рук.
+  let inFlightReload: Promise<boolean> | null = null;
+  /** Обрывает запрос в runtime при остановке: соединение с погашенным контейнером не нужно. */
+  const stopAbort = new AbortController();
   let currentManifest = manifest;
   let currentDir = path.join(runtimeDir, "functions-1");
   let generation = 1;
@@ -173,6 +190,31 @@ export async function startFunctionsPreviewExecutor(
       });
     }
 
+    /**
+     * POST в runtime: таймаут на зависший ответ и обрыв при остановке предпросмотра.
+     * Остановка идёт одновременно с перезагрузкой, поэтому запрос не должен пережить её.
+     */
+    async function requestReload(relativeDir: string) {
+      if (!started) throw new Error("Контейнер функций уже остановлен");
+      if (stopAbort.signal.aborted) throw new Error("Предпросмотр функций остановлен");
+      const controller = new AbortController();
+      const abort = () => controller.abort();
+      stopAbort.signal.addEventListener("abort", abort, { once: true });
+      const timer = setTimeout(abort, RELOAD_TIMEOUT_MS);
+      timer.unref?.();
+      try {
+        return await fetch("http://" + started.host + ":" + started.port + "/__preview/reload", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ root: relativeDir }),
+          signal: controller.signal,
+        });
+      } finally {
+        clearTimeout(timer);
+        stopAbort.signal.removeEventListener("abort", abort);
+      }
+    }
+
     async function rebuildAndReload() {
       if (stopped || !started) return false;
       const nextManifest = await deps.readManifest(config.root);
@@ -183,13 +225,15 @@ export async function startFunctionsPreviewExecutor(
       const nextDir = path.join(runtimeDir, "functions-" + nextGeneration);
       try {
         await buildInto(nextDir, nextManifest);
-        const response = await fetch("http://" + started.host + ":" + started.port + "/__preview/reload", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ root: relativeRuntimeDir(config.root, nextDir) }),
-          signal: AbortSignal.timeout(10_000),
-        });
-        if (!response.ok) throw new Error("runtime не перезагрузился: HTTP " + response.status);
+        const response = await requestReload(relativeRuntimeDir(config.root, nextDir));
+        if (!response.ok) {
+          // Тело ответа runtime — единственное место, где названа причина. Без него в логе
+          // остаётся «HTTP 400», и отказ выглядит как сбой перезагрузки вообще.
+          const detail = await responseDetail(response);
+          throw new Error(
+            "runtime не перезагрузился: HTTP " + response.status + (detail ? ": " + detail : ""),
+          );
+        }
         const previous = currentDir;
         currentDir = nextDir;
         currentManifest = nextManifest;
@@ -209,13 +253,19 @@ export async function startFunctionsPreviewExecutor(
         return false;
       }
       reloading = true;
-      try {
-        return await rebuildAndReload();
-      } catch (error) {
-        console.warn("[preview] функции не перезагрузились: " + describeError(error));
+      // Один промис на перезагрузку: его дожидается и вызывающий, и остановка. Иначе stop
+      // удалил бы контейнер и каталог, пока сборка ещё пишет в них.
+      const task = rebuildAndReload().catch(error => {
+        // Обрыв из-за остановки — ожидаемый конец, а не дефект перезагрузки.
+        if (!stopped) console.warn("[preview] функции не перезагрузились: " + describeError(error));
         return false;
+      });
+      inFlightReload = task;
+      try {
+        return await task;
       } finally {
         reloading = false;
+        if (inFlightReload === task) inFlightReload = null;
         if (reloadPending) {
           reloadPending = false;
           scheduleReload();
@@ -259,8 +309,14 @@ export async function startFunctionsPreviewExecutor(
         stop: async () => {
           stopped = true;
           if (reloadTimer) clearTimeout(reloadTimer);
+          reloadTimer = undefined;
           watcher?.close();
           watcher = null;
+          // Начатую перезагрузку обрываем и дожидаемся: иначе она продолжит писать в каталог,
+          // который мы удаляем, и обращаться к контейнеру, который мы сейчас погасим.
+          stopAbort.abort();
+          await inFlightReload?.catch(() => undefined);
+          inFlightReload = null;
           try {
             await deps.removeContainer(started!.containerId, config.node);
           } catch (error) {

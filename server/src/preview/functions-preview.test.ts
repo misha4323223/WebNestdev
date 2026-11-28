@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import type { SandboxConfig } from "../sandbox-manager.js";
@@ -9,6 +9,7 @@ import { functionsPreviewStats, startFunctionsPreviewExecutor, setFunctionsPrevi
 import { startStaticPreview, stopAllStaticPreviews, stopStaticPreview } from "./static-preview.js";
 import { removePreview } from "./preview-store.js";
 import { stopPreview } from "../preview-manager.js";
+import { readFunctionManifest } from "../functions/manifest.js";
 
 const PROJECT_ID = "functions-preview-test";
 
@@ -46,6 +47,26 @@ async function backend() {
   return {
     port,
     close: () => new Promise<void>(resolve => app.close(() => resolve())),
+  };
+}
+
+/** Ответ с заданным кодом и телом: так проверяется разбор отказа runtime. */
+async function statusServer(status: number, payload: unknown) {
+  const app = http.createServer((request, response) => {
+    request.resume();
+    const body = Buffer.from(JSON.stringify(payload));
+    response.writeHead(status, { "content-type": "application/json", "content-length": String(body.byteLength) });
+    response.end(body);
+  });
+  await new Promise<void>(resolve => app.listen(0, "127.0.0.1", resolve));
+  const address = app.address();
+  const port = typeof address === "object" && address ? address.port : 0;
+  return {
+    port,
+    close: () => new Promise<void>(resolve => {
+      app.closeAllConnections?.();
+      app.close(() => resolve());
+    }),
   };
 }
 
@@ -227,7 +248,6 @@ test("executor rebuilds and reloads without restarting the container", async () 
     },
   });
   try {
-    const { readFunctionManifest } = await import("../functions/manifest.js");
     const manifest = await readFunctionManifest(root);
     assert.ok(manifest);
     if (!manifest) return;
@@ -267,6 +287,120 @@ test("executor build failure is returned as a preview reason", async () => {
     assert.equal(functionsPreviewStats().active, 0, "неудачная сборка не занимает слот");
   } finally {
     setFunctionsPreviewDepsForTests(null);
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("reload называет причину отказа runtime, а не только код ответа", async () => {
+  const root = await project();
+  const server = await statusServer(400, { error: "Каталог функций вне сессии предпросмотра" });
+  const warnings: string[] = [];
+  const original = console.warn;
+  console.warn = (...args: unknown[]) => { warnings.push(args.map(value => String(value)).join(" ")); };
+  setFunctionsPreviewDepsForTests({
+    ensureDependencies: async () => ({ ok: true, installed: false, log: "" }),
+    build: async ({ outDir }) => {
+      await mkdir(outDir, { recursive: true });
+      return { version: 1, runtime: "node", functions: [], jobs: [], bytes: 0 };
+    },
+    startProcess: async () => {
+      const now = Date.now();
+      return {
+        containerId: "reject-container",
+        host: "127.0.0.1",
+        port: server.port,
+        ready: true,
+        state: { mode: "container", containerId: "reject-container", projectId: PROJECT_ID, host: "127.0.0.1", port: server.port, startedAt: now, lastUsedAt: now, ready: true, settled: true },
+      };
+    },
+    removeContainer: async () => true,
+  });
+  try {
+    const manifest = await readFunctionManifest(root);
+    assert.ok(manifest);
+    if (!manifest) return;
+    const result = await startFunctionsPreviewExecutor(config(root), manifest);
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+
+    assert.equal(await result.executor.reload(), false);
+    const logged = warnings.join("\n");
+    assert.match(logged, /HTTP 400/);
+    // Причина — из тела ответа runtime: без него в логе был бы только код.
+    assert.match(logged, /вне сессии предпросмотра/);
+    await result.executor.stop();
+  } finally {
+    console.warn = original;
+    setFunctionsPreviewDepsForTests(null);
+    await server.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("остановка обрывает начатую перезагрузку: без предупреждений и временных каталогов", async () => {
+  const root = await project();
+  const server = await statusServer(200, { ok: true });
+  const warnings: string[] = [];
+  const original = console.warn;
+  console.warn = (...args: unknown[]) => { warnings.push(args.map(value => String(value)).join(" ")); };
+  let builds = 0;
+  let removed = 0;
+  // Резолвер придержанной сборки: объект, а не переменная, иначе TypeScript считает её null.
+  const gate: { release?: () => void } = {};
+  setFunctionsPreviewDepsForTests({
+    ensureDependencies: async () => ({ ok: true, installed: false, log: "" }),
+    build: async ({ outDir }) => {
+      builds += 1;
+      // Вторая сборка — та, что идёт во время перезагрузки: придерживаем её, чтобы остановка
+      // пришлась ровно на неё.
+      if (builds === 2) await new Promise<void>(resolve => { gate.release = resolve; });
+      await mkdir(outDir, { recursive: true });
+      return { version: 1, runtime: "node", functions: [], jobs: [], bytes: 0 };
+    },
+    startProcess: async () => {
+      const now = Date.now();
+      return {
+        containerId: "stop-reload-container",
+        host: "127.0.0.1",
+        port: server.port,
+        ready: true,
+        state: { mode: "container", containerId: "stop-reload-container", projectId: PROJECT_ID, host: "127.0.0.1", port: server.port, startedAt: now, lastUsedAt: now, ready: true, settled: true },
+      };
+    },
+    removeContainer: async () => {
+      removed += 1;
+      return true;
+    },
+  });
+  try {
+    const manifest = await readFunctionManifest(root);
+    assert.ok(manifest);
+    if (!manifest) return;
+    const result = await startFunctionsPreviewExecutor(config(root), manifest);
+    assert.equal(result.ok, true);
+    if (!result.ok) return;
+    const runtimeDir = result.executor.runtimeDir;
+
+    const reloading = result.executor.reload();
+    for (let attempt = 0; attempt < 400 && builds < 2; attempt += 1) {
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+    assert.equal(builds, 2, "перезагрузка началась до остановки");
+
+    const stopping = result.executor.stop();
+    gate.release?.();
+    assert.equal(await reloading, false, "перезагрузка, оборванная остановкой, не считается успешной");
+    await stopping;
+
+    assert.equal(removed, 1, "контейнер убирается один раз и после перезагрузки");
+    assert.deepEqual(warnings, [], "обрыв из-за остановки не выдаётся за дефект перезагрузки");
+    await assert.rejects(stat(runtimeDir), "временный каталог функций удалён");
+    assert.equal(functionsPreviewStats().active, 0);
+  } finally {
+    gate.release?.();
+    console.warn = original;
+    setFunctionsPreviewDepsForTests(null);
+    await server.close();
     await rm(root, { recursive: true, force: true });
   }
 });

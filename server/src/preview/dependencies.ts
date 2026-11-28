@@ -10,6 +10,7 @@ import { recordInstallMetric } from "./install-metrics.js";
 import { npmInstallEnv } from "./npm-registry.js";
 import { seedStarterLayer } from "./starter-layer.js";
 import { egressDenyHint } from "../egress/deny-hint.js";
+import { failureLine } from "./failure-line.js";
 
 /**
  * Зависимости проекта — до сборки и до dev-сервера.
@@ -159,9 +160,4 @@ function installLog(result: CommandResult) {
   const head = "$ " + INSTALL_COMMAND + " (локальный кэш ноды)";
   const body = output.length > MAX_LOG_CHARS ? output.slice(-MAX_LOG_CHARS) : output;
   return body ? head + "\n" + body : head;
-}
-
-function failureLine(result: CommandResult) {
-  const failed = result.stderr.split("\n").map(line => line.trim()).filter(Boolean).at(-1);
-  return failed ?? undefined;
 }
