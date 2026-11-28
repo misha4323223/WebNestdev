@@ -1,0 +1,458 @@
+{
+  "version": "after-panel",
+  "model": "deepseek/deepseek-v4.1-flash-1017",
+  "configSource": "panel",
+  "dist": "/app/server/dist",
+  "generatedAt": "2026-11-27T22:36:04.441Z",
+  "failedImports": [],
+  "tasks": [
+    {
+      "id": "landing-seo-meta",
+      "size": "landing",
+      "mustCall": [
+        "seo.check"
+      ],
+      "mustNotCall": [
+        "deploy.plan"
+      ],
+      "promptChars": 34078,
+      "toolsCount": 64,
+      "calls": [
+        "fs.list",
+        "preview.status"
+      ],
+      "unknownCalls": [],
+      "first": "fs.list",
+      "contentChars": 92,
+      "finishReason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 24627,
+        "completion_tokens": 85,
+        "total_tokens": 24712,
+        "completion_tokens_details": {
+          "reasoning_tokens": 8,
+          "audio_tokens": 0,
+          "image_tokens": 0,
+          "accepted_prediction_tokens": null,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "server_tool_use": null,
+        "cost_rub": 0.52573642,
+        "cost": 0.52573642,
+        "plugins": null
+      },
+      "latencyMs": 1732,
+      "mustCallHit": false,
+      "mustNotCallViolated": false
+    },
+    {
+      "id": "landing-broken-cta",
+      "size": "landing",
+      "mustCall": [
+        "project.verify"
+      ],
+      "mustNotCall": [
+        "deploy.plan"
+      ],
+      "promptChars": 34078,
+      "toolsCount": 64,
+      "calls": [
+        "fs.list",
+        "fs.grep"
+      ],
+      "unknownCalls": [],
+      "first": "fs.list",
+      "contentChars": 60,
+      "finishReason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 24638,
+        "completion_tokens": 84,
+        "total_tokens": 24722,
+        "completion_tokens_details": {
+          "reasoning_tokens": 8,
+          "audio_tokens": 0,
+          "image_tokens": 0,
+          "accepted_prediction_tokens": null,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 24576,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "server_tool_use": null,
+        "cost_rub": 0.01873085,
+        "cost": 0.01873085,
+        "plugins": null
+      },
+      "latencyMs": 2175,
+      "mustCallHit": false,
+      "mustNotCallViolated": false
+    },
+    {
+      "id": "mvp-auth-crud",
+      "size": "mvp",
+      "mustCall": [
+        "database.status"
+      ],
+      "mustNotCall": [],
+      "promptChars": 34078,
+      "toolsCount": 64,
+      "calls": [
+        "fs.list",
+        "preview.status"
+      ],
+      "unknownCalls": [],
+      "first": "fs.list",
+      "contentChars": 63,
+      "finishReason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 24637,
+        "completion_tokens": 79,
+        "total_tokens": 24716,
+        "completion_tokens_details": {
+          "reasoning_tokens": 12,
+          "audio_tokens": 0,
+          "image_tokens": 0,
+          "accepted_prediction_tokens": null,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 24576,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "server_tool_use": null,
+        "cost_rub": 0.0198127,
+        "cost": 0.0198127,
+        "plugins": null
+      },
+      "latencyMs": 2605,
+      "mustCallHit": false,
+      "mustNotCallViolated": false
+    },
+    {
+      "id": "mvp-db-migration",
+      "size": "mvp",
+      "mustCall": [
+        "database.status"
+      ],
+      "mustNotCall": [],
+      "promptChars": 34078,
+      "toolsCount": 64,
+      "calls": [
+        "fs.list",
+        "database.status"
+      ],
+      "unknownCalls": [],
+      "first": "fs.list",
+      "contentChars": 96,
+      "finishReason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 27584,
+        "completion_tokens": 90,
+        "total_tokens": 27674,
+        "completion_tokens_details": {
+          "reasoning_tokens": 9,
+          "audio_tokens": 0,
+          "image_tokens": 0,
+          "accepted_prediction_tokens": null,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "server_tool_use": null,
+        "cost_rub": 0.22044462,
+        "cost": 0.22044462,
+        "plugins": null
+      },
+      "latencyMs": 2894,
+      "mustCallHit": true,
+      "mustNotCallViolated": false
+    },
+    {
+      "id": "mvp-email",
+      "size": "mvp",
+      "mustCall": [
+        "service.secrets"
+      ],
+      "mustNotCall": [
+        "secrets.request"
+      ],
+      "promptChars": 34078,
+      "toolsCount": 64,
+      "calls": [
+        "fs.list",
+        "service.status"
+      ],
+      "unknownCalls": [],
+      "first": "fs.list",
+      "contentChars": 106,
+      "finishReason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 24611,
+        "completion_tokens": 109,
+        "total_tokens": 24720,
+        "completion_tokens_details": {
+          "reasoning_tokens": 13,
+          "audio_tokens": 0,
+          "image_tokens": 0,
+          "accepted_prediction_tokens": null,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "server_tool_use": null,
+        "cost_rub": 0.2388213,
+        "cost": 0.2388213,
+        "plugins": null
+      },
+      "latencyMs": 3471,
+      "mustCallHit": false,
+      "mustNotCallViolated": false
+    },
+    {
+      "id": "large-feature-e2e",
+      "size": "large",
+      "mustCall": [
+        "plan.update"
+      ],
+      "mustNotCall": [],
+      "promptChars": 34078,
+      "toolsCount": 64,
+      "calls": [
+        "fs.list",
+        "fs.read"
+      ],
+      "unknownCalls": [],
+      "first": "fs.list",
+      "contentChars": 89,
+      "finishReason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 24638,
+        "completion_tokens": 122,
+        "total_tokens": 24760,
+        "completion_tokens_details": {
+          "reasoning_tokens": 24,
+          "audio_tokens": 0,
+          "image_tokens": 0,
+          "accepted_prediction_tokens": null,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "server_tool_use": null,
+        "cost_rub": 0.26454226,
+        "cost": 0.26454226,
+        "plugins": null
+      },
+      "latencyMs": 3008,
+      "mustCallHit": false,
+      "mustNotCallViolated": false
+    },
+    {
+      "id": "large-safe-migration",
+      "size": "large",
+      "mustCall": [
+        "database.status"
+      ],
+      "mustNotCall": [],
+      "promptChars": 34078,
+      "toolsCount": 64,
+      "calls": [
+        "project.list_files",
+        "fs.list"
+      ],
+      "unknownCalls": [],
+      "first": "project.list_files",
+      "contentChars": 0,
+      "finishReason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 24634,
+        "completion_tokens": 138,
+        "total_tokens": 24772,
+        "completion_tokens_details": {
+          "reasoning_tokens": 87,
+          "audio_tokens": 0,
+          "image_tokens": 0,
+          "accepted_prediction_tokens": null,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 24576,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "server_tool_use": null,
+        "cost_rub": 0.01159749,
+        "cost": 0.01159749,
+        "plugins": null
+      },
+      "latencyMs": 2360,
+      "mustCallHit": false,
+      "mustNotCallViolated": false
+    },
+    {
+      "id": "real-preview-restore",
+      "size": "real",
+      "mustCall": [
+        "project.verify"
+      ],
+      "mustNotCall": [],
+      "promptChars": 34078,
+      "toolsCount": 64,
+      "calls": [
+        "fs.list",
+        "project.list_files"
+      ],
+      "unknownCalls": [],
+      "first": "fs.list",
+      "contentChars": 77,
+      "finishReason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 24632,
+        "completion_tokens": 121,
+        "total_tokens": 24753,
+        "completion_tokens_details": {
+          "reasoning_tokens": 51,
+          "audio_tokens": 0,
+          "image_tokens": 0,
+          "accepted_prediction_tokens": null,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "server_tool_use": null,
+        "cost_rub": 0.15840206,
+        "cost": 0.15840206,
+        "plugins": null
+      },
+      "latencyMs": 3384,
+      "mustCallHit": false,
+      "mustNotCallViolated": false
+    },
+    {
+      "id": "real-db-recovery",
+      "size": "real",
+      "mustCall": [
+        "database.status"
+      ],
+      "mustNotCall": [],
+      "promptChars": 36192,
+      "toolsCount": 68,
+      "calls": [
+        "fs.list",
+        "fs.grep"
+      ],
+      "unknownCalls": [],
+      "first": "fs.list",
+      "contentChars": 79,
+      "finishReason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 26811,
+        "completion_tokens": 270,
+        "total_tokens": 27081,
+        "completion_tokens_details": {
+          "reasoning_tokens": 152,
+          "audio_tokens": 0,
+          "image_tokens": 0,
+          "accepted_prediction_tokens": null,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "server_tool_use": null,
+        "cost_rub": 0.3771003,
+        "cost": 0.3771003,
+        "plugins": null
+      },
+      "latencyMs": 3698,
+      "mustCallHit": false,
+      "mustNotCallViolated": false
+    },
+    {
+      "id": "real-seo-mode",
+      "size": "real",
+      "mustCall": [
+        "seo.check"
+      ],
+      "mustNotCall": [
+        "deploy.plan"
+      ],
+      "promptChars": 34078,
+      "toolsCount": 64,
+      "calls": [
+        "fs.list",
+        "project.list_files"
+      ],
+      "unknownCalls": [],
+      "first": "fs.list",
+      "contentChars": 92,
+      "finishReason": "tool_calls",
+      "usage": {
+        "prompt_tokens": 24639,
+        "completion_tokens": 153,
+        "total_tokens": 24792,
+        "completion_tokens_details": {
+          "reasoning_tokens": 105,
+          "audio_tokens": 0,
+          "image_tokens": 0,
+          "accepted_prediction_tokens": null,
+          "rejected_prediction_tokens": null
+        },
+        "prompt_tokens_details": {
+          "cached_tokens": 0,
+          "cache_write_tokens": 0,
+          "audio_tokens": 0,
+          "video_tokens": 0
+        },
+        "server_tool_use": null,
+        "cost_rub": 0.35841996,
+        "cost": 0.35841996,
+        "plugins": null
+      },
+      "latencyMs": 3533,
+      "mustCallHit": false,
+      "mustNotCallViolated": false
+    }
+  ],
+  "totals": {
+    "calls": 10,
+    "errors": 0,
+    "mustCallHit": 1,
+    "mustNotCallViolated": 0,
+    "promptTokens": 251451,
+    "completionTokens": 1251,
+    "totalTokens": 252702,
+    "promptChars": 342894
+  }
+}
