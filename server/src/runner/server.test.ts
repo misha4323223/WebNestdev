@@ -143,7 +143,9 @@ test("the runner creates the local dependency cache on its own disk", async () =
   const created = await host.ensureDependencyCache?.(id);
   assert.equal(created?.ok, true);
   assert.equal(created?.path, path.join(root, "preview-cache", id));
-  assert.equal((await stat(path.join(root, "preview-cache", id, "node_modules"))).isDirectory(), true);
+  // Каталог кэша и есть дерево зависимостей: он монтируется в контейнер как
+  // `/workspace/node_modules`, поэтому отдельного `node_modules` внутри нет.
+  assert.equal((await stat(path.join(root, "preview-cache", id))).isDirectory(), true);
 });
 
 test.after(async () => {
